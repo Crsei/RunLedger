@@ -5,9 +5,14 @@
   "type": "module",
   "description": "Enterprise auditable agent runtime (minimal viable scaffold)",
   "license": "MIT",
-  "engines": { "node": ">=22.19.0" },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "runledger": "./bin/runledger.js"
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -39,19 +44,26 @@
       "types": "./dist/utils/*.d.ts"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
+    "demo:tui": "tsx examples/tui-demo.ts",
     "dev": "tsx watch examples/run.ts",
     "generate-models": "node --experimental-strip-types scripts/generate-models.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cli": "tsx src/cli/cli.ts",
+    "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",
     "@aws-sdk/client-bedrock-runtime": "3.1048.0",
+    "@earendil-works/pi-tui": "^0.80.10",
     "@google/genai": "1.52.0",
     "@mistralai/mistralai": "2.2.6",
     "@opentelemetry/api": "1.9.0",
