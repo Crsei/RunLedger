@@ -1,0 +1,80 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "primaryColor": "#1f2937",
+    "primaryTextColor": "#f3f4f6",
+    "primaryBorderColor": "#374151",
+    "lineColor": "#9ca3af",
+    "secondaryColor": "#111827",
+    "tertiaryColor": "#0f172a",
+    "fontFamily": "ui-monospace, SFMono-Regular, Menlo, monospace"
+  }
+}}%%
+flowchart TB
+    %% ===== User / TUI entry =====
+    User([User types /login anthropic]):::userNode
+    TUI[/"TUI interactive-mode<br/>interactive-mode.ts:5223<br/>loginProvider()"/]:::tuiNode
+
+    %% ===== OAuth layer =====
+    subgraph OAuthLayer["OAuth 层  ·  packages/ai/src/auth"]
+      direction TB
+      ModelRuntime1["ModelRuntime.login<br/>model-runtime.ts:493"]:::codingNode
+      ModelsLogin["Models.login<br/>models.ts:431-445<br/>调 provider.auth.oauth"]:::aiNode
+      LazyOAuth["lazyOAuth<br/>auth/helpers.ts:34-47<br/>(动态 import)"]:::aiNode
+      OAuthImpl["OAuthAuth 实现<br/>auth/oauth/anthropic.ts<br/>PKCE + node:http callback"]:::aiNode
+      Callback[["127.0.0.1:53692/callback<br/>verifies state==verifier<br/>exchange code -> token"]]:::ioNode
+      Store["credentials.modify(id, fn)<br/>auth/types.ts:60-88<br/>串行化 RMW"]:::aiNode
+      AuthJson[("auth.json<br/>~/.config/.../auth.json<br/>mode 0600 + proper-lockfile")]:::storeNode
+    end
+
+    %% ===== Provider layer =====
+    subgraph ProviderLayer["Provider 层  ·  packages/ai"]
+      direction TB
+      Models["Models / MutableModels<br/>models.ts:189-247<br/>Map 注册表"]:::aiNode
+      ApplyAuth["applyAuth<br/>models.ts:463-487"]:::aiNode
+      ResolveAuth["resolveProviderAuth<br/>auth/resolve.ts:37"]:::aiNode
+      ResolveStored["resolveStoredOAuth<br/>auth/resolve.ts:84-118<br/>双检锁刷新"]:::aiNode
+      ToAuth>"OAuthAuth.toAuth(cred)<br/>-> { apiKey: access }"]:::aiNode
+      Provider["Provider.stream<br/>models.ts:75-120<br/>(Provider 实例)"]:::aiNode
+      ApiModule["api/anthropic-messages.ts:828-894<br/>isOAuthToken? Bearer+beta : x-api-key<br/>SSE 流"]:::aiNode
+    end
+
+    %% ===== Agent Core layer =====
+    subgraph AgentLayer["Agent Core 层  ·  packages/agent + packages/coding-agent"]
+      direction TB
+      Session["AgentSession.prompt<br/>agent-session.ts:1093<br/>_runAgentPrompt @ 1040"]:::codingNode
+      Agent["Agent.prompt / Agent.continue<br/>agent.ts:171"]:::agentNode
+      Loop["runAgentLoop<br/>agent-loop.ts"]:::agentNode
+      StreamFn[/"streamFn(model, ctx, opts)<br/>types.ts:450<br/>(反向注入)"/]:::agentNode
+      Toolkit["AgentTool.execute<br/>types.ts:372<br/>read/bash/edit/..."]:::agentNode
+      Hooks>"beforeToolCall / afterToolCall<br/>agent-session.ts:449-497<br/>(可拦截/改写)"]:::codingNode
+    end
+
+    %% ===== Login flow =====
+    User --> TUI --> ModelRuntime1 --> ModelsLogin --> LazyOAuth --> OAuthImpl
+    OAuthImpl --> Callback --> OAuthImpl
+    OAuthImpl --> Store --> AuthJson
+
+    %% ===== Runtime flow =====
+    UserPrompt([User sends prompt]):::userNode --> Session --> Agent --> Loop
+
+    Loop -->|"turn"| StreamFn
+    StreamFn --> Models
+    Models --> ApplyAuth --> ResolveAuth --> ResolveStored
+    ResolveStored -->|"未过期"| ToAuth
+    ResolveStored -.->|"过期<br/>lock 内 refresh"| OAuthImpl
+    ToAuth --> Provider --> ApiModule
+
+    ApiModule -->|"SSE AssistantMessageEventStream"| StreamFn
+    StreamFn -->|"tool_calls"| Toolkit
+    Toolkit -.-> Hooks
+    Hooks -.->|"append toolResult"| Loop
+    Toolkit -->|"next turn"| Loop
+
+    classDef userNode    fill:#0ea5e9,color:#0b1220,stroke:#0284c7,stroke-width:2px
+    classDef tuiNode     fill:#1e293b,color:#e2e8f0,stroke:#334155
+    classDef codingNode  fill:#7c3aed,color:#f5f3ff,stroke:#6d28d9
+    classDef aiNode      fill:#0f766e,color:#ecfdf5,stroke:#0d9488
+    classDef agentNode   fill:#b45309,color:#fffbeb,stroke:#92400e
+    classDef ioNode      fill:#9333ea,color:#faf5ff,stroke:#7e22ce
+    classDef storeNode   fill:#1f2937,color:#e5e7eb,stroke:#374151

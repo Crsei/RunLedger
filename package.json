@@ -1,0 +1,73 @@
+{
+  "name": "runledger",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Enterprise auditable agent runtime (minimal viable scaffold)",
+  "license": "MIT",
+  "engines": { "node": ">=22.19.0" },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./package.json": "./package.json",
+    "./api/*": {
+      "import": "./dist/api/*.js",
+      "types": "./dist/api/*.d.ts"
+    },
+    "./auth/*": {
+      "import": "./dist/auth/*.js",
+      "types": "./dist/auth/*.d.ts"
+    },
+    "./bun-oauth": {
+      "import": "./dist/bun-oauth.js",
+      "types": "./dist/bun-oauth.d.ts"
+    },
+    "./providers/*": {
+      "import": "./dist/providers/*.js",
+      "types": "./dist/providers/*.d.ts"
+    },
+    "./storage/*": {
+      "import": "./dist/storage/*.js",
+      "types": "./dist/storage/*.d.ts"
+    },
+    "./utils/*": {
+      "import": "./dist/utils/*.js",
+      "types": "./dist/utils/*.d.ts"
+    }
+  },
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "demo": "tsx examples/run.ts",
+    "dev": "tsx watch examples/run.ts",
+    "generate-models": "node --experimental-strip-types scripts/generate-models.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
+    "@aws-sdk/client-bedrock-runtime": "3.1048.0",
+    "@google/genai": "1.52.0",
+    "@mistralai/mistralai": "2.2.6",
+    "@opentelemetry/api": "1.9.0",
+    "@smithy/node-http-handler": "4.7.3",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "openai": "6.26.0",
+    "partial-json": "0.1.7",
+    "proper-lockfile": "4.1.2",
+    "typebox": "1.1.38"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/proper-lockfile": "4.1.4",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

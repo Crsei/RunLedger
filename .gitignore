@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Test / runtime
+coverage/
+tmp/
+.cache/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store*
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Local session files
+.pi/
+.zcode/

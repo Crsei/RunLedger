@@ -1,0 +1,90 @@
+/**
+ * Ledger (审计账本) 类型定义。
+ *
+ * 对照参考 pi 的 `SessionStorage` / `SessionTreeEntry`,但本期只做扁平、append-only 的 ledger,
+ * 不分叉、不摘要、不树形。
+ *
+ * 物理格式 (JSONL):
+ *   第 1 行:LedgerHeader
+ *   第 2..N 行:LedgerEntry (按时间顺序追加)
+ *
+ * 每条 LedgerEntry 都带 `id` / `sessionId` / `parentId` / `timestamp` / `type` / `payload`,
+ * 即便本期不构建树形结构,也保留 parentId 字段以便未来升级(`// TODO(pi): 分叉 session 树`)。
+ */
+
+export type LedgerEntryType =
+  | "session"
+  | "message"
+  | "tool_call"
+  | "tool_result"
+  | "turn"
+  | "agent_event"
+  | "custom";
+
+/**
+ * 账本文件首行。固定结构,记录 session 元信息。
+ */
+export interface LedgerHeader {
+  type: "ledger";
+  version: 1;
+  id: string;
+  createdAt: number;
+  sessionId: string;
+  /** 可选 metadata,例如 cwd / model / system prompt hash(`// TODO(pi): 完整 metadata`) */
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 账本条目。所有字段保留位置以便未来升级。
+ */
+export interface LedgerEntry {
+  id: string;
+  sessionId: string;
+  /** 父条目 id;扁平实现中始终指向前一条;首条 parentId = header.id(`// TODO(pi): 树形升级`) */
+  parentId: string;
+  timestamp: number;
+  type: LedgerEntryType;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * LedgerSink 抽象。事件 sink 接口。
+ * 实现方负责把 header 与 entries 持久化(或仅留在内存)。
+ *
+ * 约定:实现方不得在 append 中抛错(参考 pi 的 Result 风格)。
+ * 失败以 `lastError` 暴露,本期不强制 try/catch,直接吞错写日志。
+ */
+export interface LedgerSink {
+  readonly sessionId: string;
+  /** 仅 MemoryLedger / JsonlLedger 内部使用 */
+  append(entry: LedgerEntry): Promise<void> | void;
+  /** 读取所有已落盘条目(不含 header) */
+  entries(): Promise<LedgerEntry[]> | LedgerEntry[];
+  /** 按 id 精确查找 */
+  get(id: string): Promise<LedgerEntry | undefined> | LedgerEntry | undefined;
+  /** 按 type 过滤 */
+  findByType(type: LedgerEntryType): Promise<LedgerEntry[]> | LedgerEntry[];
+  /** 返回 header(可空,内存 ledger 可能没有) */
+  header(): LedgerHeader | undefined;
+  /** 关闭资源(文件句柄等) */
+  close(): Promise<void> | void;
+  /** 最近一次错误(若有) */
+  readonly lastError?: unknown;
+}
+
+/**
+ * 工具:生成 8 字符随机 id。优先 try uuidv7,失败回退到 crypto.randomUUID 切片(`// TODO(pi): 引入 uuidv7`)。
+ */
+export function newId(): string {
+  const g = globalThis as { crypto?: Crypto };
+  if (g.crypto && typeof g.crypto.randomUUID === "function") {
+    return g.crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+  }
+  // 兜底:无 crypto.randomUUID 的运行时(理论上 Node 20+ 都有,这里防御性占位)
+  return Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+}
+
+// 把全局 Crypto 类型显式注入当前 module 作用域(避免 lib 配置不全时找不到名)
+type Crypto = {
+  randomUUID(): string;
+};

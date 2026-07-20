@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests",
+    "examples",
+    "scripts",
+    "src/_legacy",
+    "src/index.legacy.ts",
+    "src/tools/echo.legacy.ts",
+    "src/providers/mock-stream.legacy.ts"
+  ]
+}
