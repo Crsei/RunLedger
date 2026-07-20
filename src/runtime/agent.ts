@@ -136,8 +136,8 @@ export class Agent {
       apiKey: this._loopConfig.apiKey,
       convertToLlm: this._convertToLlm as AgentLoopConfig["convertToLlm"],
       toolExecution: this._toolExecution,
-      // 通过闭包把 ledger 透传到 agent-loop(避开类型污染)
-      ...({ ledger: this._ledger } as Record<string, unknown>),
+      // ledger 已是 AgentLoopConfig 第一公民,直接挂入类型契约
+      ledger: this._ledger,
     };
     const finalMessages = await runAgentLoop(
       prompts,

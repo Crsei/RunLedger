@@ -6,6 +6,16 @@
  * 但保留 outer/inner 双层结构与 shouldStopAfterTurn / prepareNextTurn 钩子,
  * 以便后续按 pi 的方式逐步补全(`// TODO(pi):` 注释标出占位)。
  *
+ * 工具执行三段式(prepare → execute → finalize)对齐 pi:
+ *   - prepare: 路由 tools.find + prepareArguments + schema 校验 + beforeToolCall hook
+ *   - execute: tool.execute(...) with try/catch → 兜底 isError ToolResultContent
+ *   - finalize: afterToolCall hook 字段级浅合并到 result
+ *
+ * 与 pi 的差异:
+ *   - 没有 deferred tool loading 维护映射"addedToolNames → 实际新增工具到 Context",
+ *     本期只把 addedToolNames 透传到 ToolResultContent,由调用方自行决定。
+ *   - 没有 onUpdate 中间事件落盘;`tool_execution_update` 仅 emit 到订阅者。
+ *
  * 核心流程(伪代码):
  *   emit agent_start
  *   把 prompts 作为 user 消息入 context
@@ -20,7 +30,7 @@
  *       error → stopReason = "error"
  *     把助理消息 push 到 context
  *     取出 toolCall 块
- *     if stopReason === "length": 全部 toolCall 标 isError
+ *     if stopReason === "length": 全部 toolCall 标 isError, 不真正执行
  *     else: executeToolCalls (parallel | sequential),emit tool_execution_start/end,
  *          把 toolResult 消息 push 到 context
  *     emit turn_end
@@ -45,6 +55,7 @@ import type {
   AgentMessage,
   AgentTool,
   AgentToolCall,
+  AgentToolUpdateCallback,
   AfterToolCallResult,
   AssistantAgentMessage,
   BeforeToolCallResult,
@@ -53,7 +64,8 @@ import type {
   ToolResultAgentMessage,
   ToolResultContent,
 } from "./types.ts";
-import type { Message, StopReason, TextContent, ToolCall } from "../types.ts";
+import type { AssistantMessage, ImageContent, Message, StopReason, TextContent, Tool, ToolCall } from "../types.ts";
+import { validateToolArguments } from "../utils/validation.ts";
 import { newId } from "./ledger/types.ts";
 import type { LedgerSink, LedgerEntry } from "./ledger/types.ts";
 
@@ -69,7 +81,7 @@ export async function runAgentLoop(
   signal?: AbortSignal,
   streamFn?: StreamFn,
 ): Promise<AgentMessage[]> {
-  const ledger = configLedgerExtract(config);
+  const ledger = config.ledger;
   const sessionStart = Date.now();
   const sessionId = ledger?.sessionId ?? newId();
 
@@ -222,13 +234,7 @@ export async function runAgentLoop(
         });
       } else if (ev.type === "toolcall_end") {
         const toolCall = ev.toolCall;
-        // 转 AgentToolCall 视图(input = arguments)
-        const agentToolCall: AgentToolCall = {
-          id: toolCall.id,
-          name: toolCall.name,
-          input: toolCall.arguments,
-        };
-        // 同时把 ToolCall block 存进 assistantContent(以保留 pi-ai 字段命名)
+        // 直接 push pi-ai ToolCall 视图,保留完整字段
         assistantContent.push(toolCall);
         await fire({
           type: "message_update",
@@ -240,8 +246,6 @@ export async function runAgentLoop(
             partial: ev.partial,
           },
         });
-        // 防御性使用 agentToolCall 引用(便于断点调试,不被 verbatim 警告)
-        void agentToolCall;
       } else if (ev.type === "done") {
         assistantStopReason = ev.message.stopReason;
         assistantUsage = ev.message.usage;
@@ -285,26 +289,30 @@ export async function runAgentLoop(
     messages.push(assistantMessage);
     lastStopReason = assistantStopReason;
 
-    // 4. 取出 toolCall 块(从 pi-ai ToolCall 视图转 AgentToolCall 视图)
-    const toolCalls: AgentToolCall[] = assistantContent
-      .filter((c): c is ToolCall => c.type === "toolCall")
-      .map((tc: ToolCall): AgentToolCall => ({
-        id: tc.id,
-        name: tc.name,
-        input: tc.arguments,
-      }));
+    // 4. 取出 toolCall 块(直接复用 pi-ai ToolCall 视图)
+    const toolCalls: AgentToolCall[] = assistantContent.filter(
+      (c): c is ToolCall => c.type === "toolCall",
+    );
 
     if (toolCalls.length > 0) {
-      // 5. 执行
-      const toolResults = await executeToolCalls(
-        toolCalls,
-        context.tools,
-        messages,
-        config,
-        signal ?? new AbortController().signal,
-        fire,
-        sessionId,
-      );
+      let toolResults: ToolResultContent[];
+      if (assistantStopReason === "length") {
+        // 截断降级路径:不真正执行,每工具合成 isError ToolResultContent
+        toolResults = failToolCallsFromTruncatedMessage(toolCalls);
+      } else {
+        // 5. 执行
+        toolResults = await executeToolCalls(
+          toolCalls,
+          context.tools ?? [],
+          messages,
+          assistantMessage,
+          context,
+          config,
+          signal ?? new AbortController().signal,
+          fire,
+          sessionId,
+        );
+      }
       for (const r of toolResults) {
         const msg: ToolResultAgentMessage = {
           role: "toolResult",
@@ -372,7 +380,7 @@ export async function runAgentLoop(
  *   - assistant:直接传 content(转 typecast,pi-ai AssistantMessage 字段更多,
  *     但 streamFn 重新调用时不强制要求完整字段)
  *   - toolResult:把内嵌的 ToolResultContent 摊成多条 pi-ai ToolResultMessage,
- *     每条带 toolCallId / toolName / isError / timestamp
+ *     每条带 toolCallId / toolName / isError / addedToolNames / timestamp
  */
 export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
   const out: Message[] = [];
@@ -411,9 +419,10 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
         out.push({
           role: "toolResult",
           toolCallId: c.toolCallId,
-          toolName: "",
+          toolName: c.toolName,
           content: c.content,
           isError: c.isError === true,
+          addedToolNames: c.addedToolNames,
           timestamp: Date.now(),
         });
       }
@@ -433,49 +442,93 @@ function applyTurnUpdate(update: AgentLoopTurnUpdate, context: AgentContext): vo
   }
 }
 
+/**
+ * 工具调用执行入口:按 config.toolExecution 与每个 tool 自身 executionMode
+ * 决定 sequential / parallel。返回的 ToolResultContent[] 与 toolCalls 同序。
+ */
 async function executeToolCalls(
   toolCalls: AgentToolCall[],
   tools: AgentTool[],
   messages: AgentMessage[],
+  assistantMessage: AssistantAgentMessage,
+  context: AgentContext,
   config: AgentLoopConfig,
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
 ): Promise<ToolResultContent[]> {
-  const mode = config.toolExecution ?? "sequential";
+  const mode = resolveExecutionMode(toolCalls, tools, config.toolExecution ?? "sequential");
   if (mode === "parallel") {
-    return Promise.all(
-      toolCalls.map((tc) => runOneTool(tc, tools, messages, config, signal, fire, sessionId)),
+    // prepare 串行(emit tool_execution_start + 校验 + beforeToolCall),
+    // execute 并发,finalize 按 await 实际完成顺序串行
+    const prepared: PreparedToolCall[] = [];
+    for (const tc of toolCalls) {
+      const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
+      prepared.push(p);
+    }
+    const results = await Promise.all(
+      prepared.map((p) => executePreparedToolCall(p, signal, fire, sessionId)),
     );
+    const out: ToolResultContent[] = [];
+    for (let i = 0; i < prepared.length; i++) {
+      out.push(
+        await finalizeExecutedToolCall(prepared[i]!, results[i]!, context, config, signal, fire, sessionId),
+      );
+    }
+    return out;
   }
   // sequential
   const out: ToolResultContent[] = [];
   for (const tc of toolCalls) {
-    out.push(await runOneTool(tc, tools, messages, config, signal, fire, sessionId));
+    const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
+    const r = await executePreparedToolCall(p, signal, fire, sessionId);
+    out.push(await finalizeExecutedToolCall(p, r, context, config, signal, fire, sessionId));
   }
   return out;
 }
 
-async function runOneTool(
+/**
+ * 解析批次执行模式:任一工具 executionMode === "sequential" 则降级 sequential。
+ */
+function resolveExecutionMode(
+  toolCalls: AgentToolCall[],
+  tools: AgentTool[],
+  fallback: ToolExecutionModeLike,
+): "sequential" | "parallel" {
+  if (fallback === "sequential") return "sequential";
+  for (const tc of toolCalls) {
+    const tool = tools.find((t) => t.name === tc.name);
+    if (tool?.executionMode === "sequential") return "sequential";
+  }
+  return "parallel";
+}
+
+type ToolExecutionModeLike = "sequential" | "parallel";
+
+interface PreparedToolCall {
+  toolCall: AgentToolCall;
+  tool: AgentTool | undefined;
+  args: unknown;
+  /** beforeToolCall 已被调用且返回 block:true,直接合成 isError result */
+  blocked?: { reason?: string };
+}
+
+/**
+ * 阶段1: prepare —— 路由工具、调 prepareArguments、schema 校验、beforeToolCall hook。
+ * 失败时合成 immediate error prepared(后续 execute 会跳过 execute() 直接落 isError)。
+ */
+async function prepareToolCall(
   tc: AgentToolCall,
   tools: AgentTool[],
   messages: AgentMessage[],
+  assistantMessage: AssistantAgentMessage,
+  context: AgentContext,
   config: AgentLoopConfig,
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
-): Promise<ToolResultContent> {
-  const tool = tools.find((t) => t.name === tc.name);
+): Promise<PreparedToolCall> {
   const tStart = Date.now();
-
-  // beforeToolCall hook
-  if (tool) {
-    const before = await config.beforeToolCall?.({ tool, toolCall: tc, messages }, signal);
-    if (before?.block) {
-      return blockedResult(tc, before.reason);
-    }
-  }
-
   await fire(
     { type: "tool_execution_start", timestamp: tStart, toolCallId: tc.id, toolName: tc.name },
     {
@@ -483,50 +536,212 @@ async function runOneTool(
       parentId: sessionId,
       timestamp: tStart,
       type: "tool_call",
-      payload: { toolCallId: tc.id, toolName: tc.name, input: tc.input },
+      payload: { toolCallId: tc.id, toolName: tc.name, input: tc.arguments },
     },
   );
 
-  let result: ToolResultContent;
+  const tool = tools.find((t) => t.name === tc.name);
   if (!tool) {
-    result = {
-      type: "toolResult",
-      toolCallId: tc.id,
-      content: [{ type: "text", text: `Tool not found: ${tc.name}` }],
-      isError: true,
-    };
-  } else {
+    return { toolCall: tc, tool: undefined, args: tc.arguments };
+  }
+
+  // signal 已取消时 immediately 终止
+  if (signal?.aborted) {
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted" } };
+  }
+
+  // schema 校验:先把 raw args 走 prepareArguments,再 validate
+  let preparedArgs: unknown = tc.arguments;
+  try {
+    if (tool.prepareArguments) {
+      preparedArgs = tool.prepareArguments(tc.arguments);
+    }
+    preparedArgs = validateToolArguments(tool as unknown as Tool, {
+      type: "toolCall",
+      id: tc.id,
+      name: tc.name,
+      arguments: preparedArgs as Record<string, unknown>,
+    });
+  } catch (e) {
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e) } };
+  }
+
+  // beforeToolCall hook
+  if (config.beforeToolCall) {
     try {
-      result = await tool.execute(tc.id, tc.input, signal);
+      const before = await config.beforeToolCall({
+        assistantMessage,
+        toolCall: tc,
+        args: preparedArgs,
+        context,
+        tool,
+      }, signal);
+      if (before && (before as BeforeToolCallResult).block) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          blocked: { reason: (before as BeforeToolCallResult).reason },
+        };
+      }
     } catch (e) {
-      result = {
-        type: "toolResult",
-        toolCallId: tc.id,
-        content: [{ type: "text", text: (e as Error).message ?? String(e) }],
-        isError: true,
+      // hook 抛错按 block 处理,不污染主循环
+      void messages;
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        blocked: { reason: (e as Error).message ?? String(e) },
       };
     }
   }
 
-  // afterToolCall hook
-  if (tool) {
-    const after = await config.afterToolCall?.(
-      { tool, toolCall: tc, messages, result },
+  return { toolCall: tc, tool, args: preparedArgs };
+}
+
+/**
+ * 阶段2: execute —— 真正调用 tool.execute();blocked / 不可达工具走 isError 兜底。
+ * onUpdate 回调把流式 partial 转发为 tool_execution_update 事件 + ledger entry。
+ */
+async function executePreparedToolCall(
+  p: PreparedToolCall,
+  signal: AbortSignal,
+  fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
+  _sessionId: string,
+): Promise<AgentToolExecutedResult> {
+  // blocked / tool 未找到 → 立即合成 isError 内容,不调 execute
+  if (p.blocked) {
+    return {
+      content: [{ type: "text", text: p.blocked.reason ?? "blocked by beforeToolCall" }],
+      isError: true,
+      details: undefined,
+    };
+  }
+  if (!p.tool) {
+    return {
+      content: [{ type: "text", text: `Tool not found: ${p.toolCall.name}` }],
+      isError: true,
+      details: undefined,
+    };
+  }
+
+  const onUpdate: AgentToolUpdateCallback = (partialResult) => {
+    const ts = Date.now();
+    void fire({
+      type: "tool_execution_update",
+      timestamp: ts,
+      toolCallId: p.toolCall.id,
+      toolName: p.toolCall.name,
+      partialResult,
+    }).catch(() => {
+      // sink 失败吞掉
+    });
+  };
+
+  try {
+    const result = await p.tool.execute(
+      p.toolCall.id,
+      p.args as never,
       signal,
+      onUpdate,
     );
-    if (after) {
-      applyAfterToolCallResult(result, after);
+    return {
+      content: result.content,
+      isError: false,
+      details: result.details,
+      addedToolNames: result.addedToolNames,
+      terminate: result.terminate,
+    };
+  } catch (e) {
+    return {
+      content: [{ type: "text", text: (e as Error).message ?? String(e) }],
+      isError: true,
+      details: undefined,
+    };
+  }
+}
+
+interface AgentToolExecutedResult {
+  content: (TextContent | ImageContent)[];
+  isError: boolean;
+  details?: unknown;
+  addedToolNames?: string[];
+  terminate?: boolean;
+}
+
+/**
+ * 阶段3: finalize —— afterToolCall hook 字段级浅合并 + emit tool_execution_end + ledger entry。
+ */
+async function finalizeExecutedToolCall(
+  p: PreparedToolCall,
+  r: AgentToolExecutedResult,
+  context: AgentContext,
+  config: AgentLoopConfig,
+  signal: AbortSignal | undefined,
+  fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
+  sessionId: string,
+): Promise<ToolResultContent> {
+  let finalContent: (TextContent | ImageContent)[] = r.content;
+  let finalDetails: unknown = r.details;
+  let finalIsError: boolean = r.isError;
+  let finalAddedToolNames: string[] | undefined = r.addedToolNames;
+  let finalTerminate: boolean | undefined = r.terminate;
+
+  if (p.tool && config.afterToolCall) {
+    try {
+      // 先组装 ToolResultContent 给 hook 看(便于读 result / isError)
+      const finalizedSnapshot: ToolResultContent = {
+        type: "toolResult",
+        toolCallId: p.toolCall.id,
+        toolName: p.toolCall.name,
+        content: finalContent,
+        isError: finalIsError,
+        details: finalDetails,
+        addedToolNames: finalAddedToolNames,
+        terminate: finalTerminate,
+      };
+      const after = await config.afterToolCall(
+        {
+          assistantMessage: contextAssumedAssistant(context, p.toolCall.id),
+          toolCall: p.toolCall,
+          args: p.args,
+          context,
+          tool: p.tool,
+          result: finalizedSnapshot,
+          isError: finalIsError,
+        },
+        signal,
+      ) as AfterToolCallResult | void;
+      if (after) {
+        if (after.content !== undefined) finalContent = after.content;
+        if (after.details !== undefined) finalDetails = after.details;
+        if (after.isError !== undefined) finalIsError = after.isError;
+        if (after.terminate !== undefined) finalTerminate = after.terminate;
+      }
+    } catch {
+      // hook 抛错吞掉,沿用执行结果
     }
   }
 
+  const result: ToolResultContent = {
+    type: "toolResult",
+    toolCallId: p.toolCall.id,
+    toolName: p.toolCall.name,
+    content: finalContent,
+    isError: finalIsError,
+    details: finalDetails,
+  };
+  if (finalAddedToolNames !== undefined) result.addedToolNames = finalAddedToolNames;
+  if (finalTerminate !== undefined) result.terminate = finalTerminate;
+
   const tEnd = Date.now();
-  await fire(
+  void fire(
     {
       type: "tool_execution_end",
       timestamp: tEnd,
-      toolCallId: tc.id,
-      toolName: tc.name,
-      isError: result.isError === true,
+      toolCallId: p.toolCall.id,
+      toolName: p.toolCall.name,
+      isError: finalIsError,
     },
     {
       id: newId(),
@@ -534,40 +749,33 @@ async function runOneTool(
       timestamp: tEnd,
       type: "tool_result",
       payload: {
-        toolCallId: tc.id,
-        toolName: tc.name,
-        isError: result.isError === true,
-        content: result.content.map((c) => c.text).join(""),
+        toolCallId: p.toolCall.id,
+        toolName: p.toolCall.name,
+        isError: finalIsError,
+        content: finalContent.map((c) => (c.type === "text" ? c.text : `[image]`)).join(""),
       },
     },
-  );
+  ).catch(() => {
+    // sink 失败吞掉
+  });
 
   return result;
 }
 
-function applyAfterToolCallResult(
-  target: ToolResultContent,
-  after: AfterToolCallResult,
-): void {
-  if (after.content !== undefined) {
-    target.content = after.content;
-  }
-  if (after.details !== undefined) {
-    // 直接挂在 result 上(扩展字段)。
-    (target as ToolResultContent & { details?: unknown }).details = after.details;
-  }
-  if (after.isError !== undefined) {
-    target.isError = after.isError;
-  }
-}
-
-function blockedResult(tc: AgentToolCall, reason?: string): ToolResultContent {
-  return {
-    type: "toolResult",
+/** length 截断降级:每工具合成 isError ToolResultContent,不真正执行。 */
+function failToolCallsFromTruncatedMessage(toolCalls: AgentToolCall[]): ToolResultContent[] {
+  return toolCalls.map((tc) => ({
+    type: "toolResult" as const,
     toolCallId: tc.id,
-    content: [{ type: "text", text: reason ?? "blocked by beforeToolCall" }],
+    toolName: tc.name,
+    content: [
+      {
+        type: "text" as const,
+        text: "Tool call was truncated because the assistant message reached the maximum length. Please retry with shorter arguments or split the request.",
+      },
+    ],
     isError: true,
-  };
+  }));
 }
 
 function serializeAssistant(content: AssistantAgentMessage["content"]): string {
@@ -576,15 +784,24 @@ function serializeAssistant(content: AssistantAgentMessage["content"]): string {
     .join("");
 }
 
-// 兼容既存配置中可能携带 ledger 字段(本期类型未在 AgentLoopConfig 暴露 ledger,
-// 通过自定义扩展传入,以保持类型契约干净)。
-interface WithLedger {
-  ledger?: LedgerSink;
+/**
+ * findAfterTool:从 context 中找到对应 toolCallId 的 assistant message。
+ * 辅助 afterToolCall 取 assistantMessage,本期维护成本低。
+ */
+function contextAssumedAssistant(context: AgentContext, toolCallId: string): AssistantAgentMessage {
+  // 倒序找最后一条包含此 toolCall.id 的 assistant message
+  for (let i = context.messages.length - 1; i >= 0; i--) {
+    const m = context.messages[i]!;
+    if (m.role !== "assistant") continue;
+    if (m.content.some((c) => c.type === "toolCall" && (c as ToolCall).id === toolCallId)) {
+      return m;
+    }
+  }
+  // 兜底:返回空 assistant(理论上不会走到,因为 finalize 是在 prepare 之后立即调的)
+  return { role: "assistant", content: [], stopReason: "stop" } as AssistantAgentMessage;
 }
-function configLedgerExtract(config: AgentLoopConfig): LedgerSink | undefined {
-  const wl = config as AgentLoopConfig & WithLedger & Record<string, unknown>;
-  return wl.ledger;
-}
+
+// ===== 兼容旧调用点(已无反射 trick,ledger 走 AgentLoopConfig.ledger 第一公民) =====
 
 // 占位:runAgentLoopContinue 暂未实现(本期 demo 不使用)
 // `// TODO(pi): resume without new prompt`
@@ -597,6 +814,3 @@ export async function runAgentLoopContinue(
 ): Promise<AgentMessage[]> {
   throw new Error("runAgentLoopContinue not implemented yet"); // TODO(pi)
 }
-
-// 占位:BeforeToolCallResult 推断辅助
-export type { BeforeToolCallResult };
