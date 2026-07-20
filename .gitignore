@@ -34,3 +34,6 @@ Thumbs.db
 # Local session files
 .pi/
 .zcode/
+
+
+asset/
