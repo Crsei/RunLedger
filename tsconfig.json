@@ -12,8 +12,6 @@
     "examples",
     "scripts",
     "src/_legacy",
-    "src/index.legacy.ts",
-    "src/runtime/agent.ts",
-    "src/runtime/agent-loop.ts"
+    "src/index.legacy.ts"
   ]
 }

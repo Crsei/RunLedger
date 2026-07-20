@@ -10,10 +10,8 @@
  * `// TODO(pi): steer / nextTurn / followUp / abort / state setters / harness 封装`
  */
 
-import { runAgentLoop } from "./agent-loop.js";
-import { newId } from "./ledger/types.js";
-import type { LedgerSink } from "./ledger/types.js";
-import { defaultConvertToLlm } from "./agent-loop.js";
+import { runAgentLoop, defaultConvertToLlm } from "./agent-loop.ts";
+import type { LedgerSink } from "./ledger/types.ts";
 import type {
   AgentContext,
   AgentEvent,
@@ -22,11 +20,10 @@ import type {
   AgentMessage,
   AgentState,
   AgentTool,
-  Message,
   StreamFn,
-  TextContent,
   UserAgentMessage,
-} from "./types.js";
+} from "./types.ts";
+import type { Message } from "../types.ts";
 
 export interface AgentOptions {
   initialState: {
@@ -138,7 +135,6 @@ export class Agent {
       model: this._state.model,
       apiKey: this._loopConfig.apiKey,
       convertToLlm: this._convertToLlm as AgentLoopConfig["convertToLlm"],
-      tools: this._state.tools,
       toolExecution: this._toolExecution,
       // 通过闭包把 ledger 透传到 agent-loop(避开类型污染)
       ...({ ledger: this._ledger } as Record<string, unknown>),
@@ -190,6 +186,3 @@ function normalizePrompts(input: string | UserAgentMessage | UserAgentMessage[])
   }
   return [input];
 }
-
-void newId; // 左移保留 import 不被 tsc 在 verbatim 模式下警告(防御性)
-void ({} as TextContent); // 同上
