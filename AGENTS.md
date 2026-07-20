@@ -46,6 +46,55 @@
 总计 35 测试全绿,`npm run check` 与 `npm test` 应同时通过再行 commit。`examples/run.ts` 已接入真实 deepseek-v4-pro(走现有 pi-ai `openai-completions` adapter)演示 deepseek 完成 turn1 toolUse → turn2 stop 全链路。
 `src/_legacy/` 目录已清空,从 tsconfig exclude 中移除;早期的 `index.legacy.ts` 仍存在但不再被引用,作为防御性占位等待后续清理。
 
+#### 1.2.x 项目层 .runledger/ 与 CLI 入口(M8 §0–§3,2026-04-28)
+
+新增 `src/storage/paths.ts` 项目层与 `src/storage/{settings-manager,session-manager,path-utils}.ts`,以及 `src/cli/{args,main,cli}.ts` 与 `bin/runledger.js`,让"终端运行 `runledger` 命令打开 tui"成立。布局对照 pi `~/.pi/agent/` 但默认在项目内,便于本项目带走完整 .runledger/ 子树:
+
+```
+<cwd>/
+├── .runledger/
+│   ├── settings.json          # ProjectSettings:model/thinkingLevel/theme/sessionDir/enabledModels
+│   ├── sessions/              # 默认 sessionDir;每个文件 1 行 LedgerHeader + N 行 LedgerEntry
+│   └── (后期)tfidf / extensions / commands / hooks / mcp / ...
+└── AGENTS.md                   # 仓库惯例的 codex agent 提示,被注入 systemPrompt
+~/.runledger/agent/             # 用户层
+├── AGENTS.md                   # 全局 systemPrompt 拼接
+├── auth.json                   # 已有 (auth-storage)
+└── (后期)settings.json / mcp.json ...
+```
+
+`src/storage/` 当前形态:
+
+- `paths.ts` —— `getProjectDir / getProjectSessionsDir / getProjectSettingsPath / getProjectAgentsMd / getGlobalAgentsMd`(都受 cwd 与 env `RUNLEDGER_DIR` / `RUNLEDGER_SESSION_DIR` 影响),`resolveSessionDir(cwd, settingsSessionDir?)` 抽出 settings.sessionDir 与 env 的优先级关系;
+- `path-utils.ts` —— 纯函数 `encodeCwd / safeIso / buildSessionFileName`(便于单测,不引 fs);
+- `settings-manager.ts` —— `ProjectSettings` schema + 异步 `loadProjectSettings` / `loadProjectSettingsSync` / `saveProjectSettings`(0o600 文件 + 0o700 父目录),未知字段丢弃、解析失败回退空不抛错(只写 stderr);
+- `session-manager.ts` —— `SessionManager` 在 `JsonlLedger` 上的薄包装,接口 `create / open / continueRecent / forkFrom / list / listAll`。`header.metadata.cwd` 在 create 时写入便于 list 按 cwd 过滤,`forkFrom` 复制源文件全部行并在 metadata 标 `parentSession=源路径`。SessionManager 不修改 LedgerSink 协议,仅暴露文件路径解析与列举能力;`open` 不预热 ledger(避免 append placeholder 污染源会话),该行为已通过单测固化。
+
+`tests/storage/` 当前形态:
+
+- `path-utils.test.ts` —— encodeCwd / safeIso / buildSessionFileName 跨平台(10 测试)
+- `paths.test.ts` —— getProjectDir / resolveSessionDir 优先级(16 测试)
+- `settings-manager.test.ts` —— load/sync/save + 损坏 JSON 回退 + 0o600 mode(9 测试)
+- `session-manager.test.ts` —— create/open/continueRecent/forkFrom/list 跨场景(13 测试)
+
+`src/cli/` 当前形态:
+
+- `args.ts` —— 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`,未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
+- `main.ts` —— 按 §3 计划定流程装配:`parseArgs → handle -h/-v → debug env → loadProjectSettings → resolveSessionDir → SessionManager create/open/continueRecent/forkFrom → buildRuntime(anthropic key 存在走真路径,否则 mock 回退)→ buildSystemPrompt(合并 DEFAULT + cwd/AGENTS.md + ~/.runledger/agent/AGENTS.md,本期两点;祖先链扫描留 M8 后)→ InteractiveMode.run → finally closeAll ledger`;
+- `cli.ts` —— bin 入口,仅 `main(process.argv.slice(2)).catch(exit 1)`;业务全留 main.ts 以便单测 spawnSync 跑。
+
+`bin/runledger.js` —— npm bin shim,`spawnSync('node', ['--import', 'tsx', 'src/cli/cli.ts', ...args])`;后期出 dist/cli/cli.js 后可改该 bin 直接 import dist 产物。
+
+`tests/cli/` 当前形态:
+
+- `args.test.ts` —— parseArgs 全旗 + error 通道 + 未知兜底(23 测试)
+- `main.test.ts` —— `--help / -h / --version / -v / --thinking bogus / --session 缺值` 通过 spawnSync `node --import tsx` 真跑 cli.ts 路径(7 测试)。真 TUI 路径因 stdin 阻塞留 manual smoke test。
+
+总计 158 测试全绿(原 35 + 49 + 30 + mock-runtime 相关等)。`npm run check` 与 `npm test` 应同时通过再行 commit。
+
+`npm link` 后 PATH 上的 `runledger` 命令可直接打开 tui:
+`runledger --help` / `runledger --version` / `runledger`(无 ANTHROPIC_API_KEY 走 mock 回退;有则真 anthropic)、`runledger -c`(continueRecent)、`runledger --session <path>`、`runledger --fork <path>`。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;

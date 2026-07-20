@@ -22,8 +22,18 @@ npm run check          # TypeScript 完整 typecheck(本期已通过)
 npm run demo           # catalog 摘要 + mock loop demo + 真实 deepseek-v4-pro demo(需 asset/api-key.json)
 npm run generate-models  # 重新生成 src/providers/data/*.json 与 src/models.generated.ts
 npm run build          # 编译到 dist/
-npm test               # vitest,tests/agent-loop.test.ts 2/2 通过
+npm test               # vitest,158 测试全绿
+npm link               # 注册全局 PATH 命令 `runledger`(可 `npm unlink runledger` 撤销)
+runledger --version    # 打印版本
+runledger --help       # 看 CLI 旗标
+ANTHROPIC_API_KEY=sk-ant-... runledger   # 真 anthropic provider 起交互 TUI
+runledger                              # 无 key 回退 mock,流程演示
+runledger -c                          # continueRecent 续最近会话
+runledger --session <path>.jsonl      # 直接打开已知 session 文件
+runledger --fork <path>.jsonl         # fork 某 session 到本项目 .runledger/sessions/
 ```
+
+项目层布局(`.runledger/`)在 AGENTS.md §1.2.x 详述;`settings.json` 写 `model/thinkingLevel/theme/sessionDir/enabledModels` 五字段。
 
 ## 架构(本期)
 
@@ -115,6 +125,8 @@ npm run generate-models
 - [x] `tests/agent-loop.test.ts` 恢复(vitest **2/2 通过**)
 - [x] `examples/run.ts` 真实 LLM 串通:用 `asset/api-key.json` 中 deepseek-v4-pro 走现有 pi-ai `openai-completions` adapter 完成 turn-1 toolUse → turn-2 stop 全链路
 - [x] `npm run check` 通过
+- [x] agent-runtime 底座(M8 §A-§G):ToolRegistry/ToolContext + ExecutionEnv(FileSystem/Shell) + git-bash 探测 + stdlib 工具集(read/write/edit/bash/grep/find/ls)+ createAnthropicAgent + stdlibStreamFn 桥接
+- [x] **项目层 `.runledger/` 布局 + SessionManager / SettingsManager / CLI 入口**(M8 §0–§3, 2026-04-28):`src/storage/{paths,path-utils,settings-manager,session-manager}.ts` + `src/cli/{args,main,cli}.ts` + `bin/runledger.js`;`npm link` 后终端 `runledger` 命令可起 TUI;158 测试全绿
 
 ### 待填实(独立任务)
 
