@@ -7,19 +7,18 @@
  * 本期仅为骨架示范。
  */
 
-import type { AgentTool, ToolResultContent } from "../types.js";
+import { Type } from "typebox";
+import type { AgentTool, ToolResultContent } from "../types.ts";
 
 export interface EchoArgs {
   text: string;
 }
 
 /** 类型断言工具:把 unknown 强制转换为 EchoArgs(仅在 mock 演示场景使用) */
-function asEchoArgs(args: unknown): EchoArgs {
-  if (typeof args === "object" && args !== null && "text" in args) {
-    const a = args as { text: unknown };
-    if (typeof a.text === "string") {
-      return { text: a.text };
-    }
+function asEchoArgs(args: Record<string, unknown>): EchoArgs {
+  const candidate = args["text"];
+  if (typeof candidate === "string") {
+    return { text: candidate };
   }
   return { text: "[echo: invalid args]" };
 }
@@ -27,25 +26,17 @@ function asEchoArgs(args: unknown): EchoArgs {
 export const echoTool: AgentTool = {
   name: "echo",
   description: "回显输入文本。用于验证 agent 与工具执行链路。",
-  parameters: {
-    type: "object",
-    properties: {
-      text: {
-        type: "string",
-        description: "需要被回显的文本",
-      },
-    },
-    required: ["text"],
-  },
-  executionMode: "sequential",
+  parameters: Type.Object({
+    text: Type.String({ description: "需要被回显的文本" }),
+  }),
   async execute(
-    _toolCallId: string,
-    args: unknown,
+    toolCallId: string,
+    args: Record<string, unknown>,
   ): Promise<ToolResultContent> {
     const a = asEchoArgs(args);
     return {
       type: "toolResult",
-      toolCallId: _toolCallId,
+      toolCallId,
       content: [{ type: "text", text: a.text }],
     };
   },

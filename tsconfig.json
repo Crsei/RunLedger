@@ -13,11 +13,7 @@
     "scripts",
     "src/_legacy",
     "src/index.legacy.ts",
-    "src/tools/echo.legacy.ts",
-    "src/providers/mock-stream.legacy.ts",
     "src/runtime/agent.ts",
-    "src/runtime/agent-loop.ts",
-    "src/runtime/tools",
-    "src/runtime/providers"
+    "src/runtime/agent-loop.ts"
   ]
 }
