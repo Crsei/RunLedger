@@ -9,8 +9,14 @@
 
 import { describe, expect, it } from "vitest";
 
-import { Agent, MemoryLedger, mockStreamFn, echoTool } from "../src/index.js";
-import type { AgentEvent } from "../src/index.js";
+import {
+  Agent,
+  MemoryLedger,
+  mockStreamFn,
+  mockModel,
+  echoTool,
+} from "../src/index.ts";
+import type { AgentEvent } from "../src/index.ts";
 
 describe("runAgentLoop with mockStreamFn + echoTool", () => {
   it("runs the full start→message→tool→end loop and persists ledger", async () => {
@@ -18,7 +24,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     const agent = new Agent({
       initialState: {
         systemPrompt: "test system prompt",
-        model: { provider: "mock", modelId: "mock-1" },
+        model: mockModel,
         tools: [echoTool],
       },
       streamFn: mockStreamFn,
@@ -88,7 +94,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     const agent = new Agent({
       initialState: {
         systemPrompt: "",
-        model: { provider: "mock", modelId: "mock-1" },
+        model: mockModel,
         tools: [echoTool],
       },
       streamFn: mockStreamFn,
