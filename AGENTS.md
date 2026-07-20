@@ -1,6 +1,6 @@
 # RunLedger 开发规则
 
-> RunLedger 是一个面向 企业级可审计 Agent Runtime 的最小可运行脚手架,参考 `pi` 项目 (`packages/agent` 与 `packages/ai`) 的架构。本期已完成 pi-ai 全量移植,agent-loop 层保留为空骨架,等待后续填实。
+> RunLedger 是一个面向 企业级可审计 Agent Runtime 的最小可运行脚手架,参考 `pi` 项目 (`packages/agent` 与 `packages/ai`) 的架构。本期已完成 pi-ai 全量移植,以及 agent-loop / Agent / ledger / mock-stream / echo tool 的最小可运行复活(真实 LLM 已用 `asset/api-key.json` 中 deepseek-v4-pro 通过 `npm run demo` 验证)。
 
 ## 1. 范围
 
@@ -16,17 +16,21 @@
 - 顶层 `models.ts` / `models-store.ts` / `models.generated.ts` / `images-models.ts` / `image-models.ts` / `image-models.generated.ts` / `images.ts` / `images-api-registry.ts` / `session-resources.ts` / `oauth.ts` / `bun-oauth.ts` / `bedrock-provider.ts`;
 - `scripts/generate-models.ts` —— pi 自动模型 catalog 生成脚本(已迁移,跑 `npm run generate-models` 重新生成 `src/providers/data/*.json` 与 `src/models.generated.ts`)。
 
-### 1.2 待填实(暂存于 `src/_legacy/`,`tsconfig.json` 已暂排除)
+### 1.2 已复活(`src/runtime/`,纳入 typecheck + `npm test` + `npm run demo`)
 
-`agent-loop` 核心循环与 ledger 骨架原本是 RunLedger 自有空骨架,引用了一组 pi `packages/agent-core` 抽象(`AgentContext` / `AgentEvent` / `AgentLoopConfig` / `AgentEventSink` / `LlmContext` / `AgentTool` / `AgentToolCall` / `UserAgentMessage` / `AssistantAgentMessage` / `ToolResultAgentMessage` / `AgentMessage` / `StreamFn` / `AssistantMessageEventStream` / `StreamOptions` 等)。本期只移植 pi-ai 层,不引入 pi-agent-core 与 pi-coding-agent 层。
+`agent-loop` 核心循环与 ledger 在 RunLedger 自研骨架基础上对接 pi-ai `AssistantMessageEventStream` 与 `Model<Api>` 类型:
 
-`src/_legacy/` 下保留:
+`src/runtime/` 下当前形态:
 
-- `agent-loop.ts`、`agent.ts`、`event-stream.ts` —— RunLedger 自研空骨架;
-- `ledger/{memory-ledger,jsonl-ledger,types}.ts` —— 内存/JSONL 审计账本空骨架;
-- `src/index.legacy.ts`、`src/tools/echo.legacy.ts`、`src/providers/mock-stream.legacy.ts` —— 旧 barrel / 工具 / mock provider。
+- `agent-loop.ts` —— `runAgentLoop` 双层循环(outer turn / inner assistant stream),`done.message.stopReason === "toolUse"` 时执行 toolCalls 并进入下一 turn;
+- `agent.ts` —— `Agent` 有状态包装类,`subscribe / on / prompt`,内置 ledger 透传;
+- `types.ts` —— 复用 pi-ai `Message` / `Tool` / `ToolCall` / `StopReason` / `Model` / `StreamOptions` / `AssistantAgentMessage` 等,补 `LlmContext` / `AgentContext` / `AgentEvent` / `AgentEventSink` / `AgentLoopConfig` / `AgentTool` / `AgentToolCall` / `UserAgentMessage` / `ToolResultAgentMessage` / `StreamFn` 等运行循环层接口;
+- `ledger/{types,memory-ledger,jsonl-ledger}.ts` —— 内存与 JSONL 审计账本(append-only,失败不抛错,以 `lastError` 字段保留报告路径);
+- `tools/echo.ts` —— 最简 `AgentTool`(回显 text),用于验证 tool 调用链路;
+- `providers/mock-stream.ts` —— mock LLM provider:同步 `AssistantMessageEventStream`,按 user 文本生成一段文本 + 一个 echo `toolCall`,第二轮直接 `stopReason = "stop"` 收尾,支持 `AbortSignal` 中断。
 
-`tests/agent-loop.test.ts` 引用上述空骨架,在 agent-loop 填实前会失败。修这 2 个 test 属于"agent-loop 填实"独立任务,**不在 pi-ai 移植范围内**。
+`tests/agent-loop.test.ts` 已恢复(vitest 2/2 passed);`examples/run.ts` 已接入真实 deepseek-v4-pro(走现有 pi-ai `openai-completions` adapter)演示 deepseek 完成 turn1 toolUse → turn2 stop 全链路。
+`src/_legacy/` 目录已清空,从 tsconfig exclude 中移除;早期的 `index.legacy.ts` 仍存在但不再被引用,作为防御性占位等待后续清理。
 
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
@@ -80,12 +84,12 @@ src/                pi-ai 移植层 + RunLedger 运行时实现
   storage/          auth-storage / runtime-credentials / paths / resolve-config-value
   utils/            uuid / overflow / diagnostics / retry / validation / event-stream / ... 21 个文件
   compat/           extension-oauth-types.ts(OAuth 类型桥)
-  _legacy/          空 agent-loop / agent / event-stream / ledger,TypeScript 暂 exclude
-  index.legacy.ts / tools/echo.legacy.ts / providers/mock-stream.legacy.ts  旧空骨架备份
+  runtime/          agent-loop / agent / ledger / tools / mock-stream,本期已复活并纳入 typecheck
+  index.legacy.ts   旧 barrel 备份(不再被引用,等待后续清理)
 scripts/
   generate-models.ts  2420 行硬编码模型数据,跑生成 src/providers/data/*.json 与 src/models.generated.ts
-examples/run.ts     命令行 demo —— 列出 providers / models catalog + 报告 agent 目录
-tests/             vitest 单测(agent-loop.test.ts 等待 agent-loop 填实)
+examples/run.ts     命令行 demo —— catalog 摘要 + mock loop + 真实 deepseek-v4-pro 跑 agent-loop
+tests/             vitest 单测(agent-loop.test.ts 2/2 passed)
 dist/              构建输出 tsc 编译产物(NodeNext 模式 + .d.ts 声明)
 tmp/               运行时产物(JSONL ledger 等),已 gitignore
 ```
@@ -94,8 +98,8 @@ tmp/               运行时产物(JSONL ledger 等),已 gitignore
 
 - 单包(非 monorepo);
 - pi-ai 层**全量移植**(api / auth / providers / storage / utils / 类型 / catalog 全部到位),与 pi-ai 等价;
-- agent-loop / agent / ledger / tools / mock-stream 仍是 RunLedger 自研空骨架(暂存 `src/_legacy/`),
-  在 agent-loop 填实独立任务到来前,这些不参与 typecheck;
+- **agent-loop 复活(`src/runtime/`)**,实跑能通过 pi-ai `openai-completions` adapter 调到真实 LLM(本期实测 deepseek-v4-pro),事件协议对齐 pi-ai `AssistantMessageEvent`(start / text_delta / toolcall_end / done / error),`StreamFn` 接口承接 model + LlmContext + options,默认 `convertToLlm` 把 AgentMessage[] 摊平为 pi-ai Message[];
+  - 仍未实现:transformContext / 队列 / AgentHarness / compaction / ExecutionEnv(详见 §1.3);
 - `storage/getAgentDir` 默认 `~/.runledger/agent`,可用环境变量 `RUNLEDGER_DIR` 覆盖(pi 中是 `PI_CODING_AGENT_DIR`);
 - `storage/resolve-config-value.ts` 仅支持字面值与 `${ENV_VAR}` 模板,**不**支持 pi 的 `$(cmd)` shell 命令,
   以避免引入 `utils/shell.ts`(git-bash 检测)这条重链;

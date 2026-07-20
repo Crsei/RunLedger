@@ -1,6 +1,6 @@
 # RunLedger
 
-企业级 **可审计** Agent Runtime 的最小可运行脚手架,本期已接入 pi-ai 全量移植层(provider 抽象 + 凭据 + OAuth 流 + 模型 catalog)。
+企业级 **可审计** Agent Runtime 的最小可运行脚手架,本期已接入 pi-ai 全量移植层(provider 抽象 + 凭据 + OAuth 流 + 模型 catalog),并在其上**复活了 agent-loop + Agent + ledger + echo tool + mock-stream** 的最小可运行形态,经真实 LLM(deepseek-v4-pro)端到端验证。
 
 > 名字来源:`Run` + `Ledger`,即"运行账本"。每次 agent 启动 → LLM 调用 → 工具执行 → 结束的全程事件,以 append-only JSONL 落盘,形成不可篡改的审计线索。
 
@@ -8,8 +8,9 @@
 
 1. **可审计**:全程事件入账,JSONL 单文件 append-only,易于排查、回放、合规;
 2. **pi-ai 全量移植**:30 个 provider 适配 + 35 个 provider 工厂 + 1061 个模型 catalog + 完整 OAuth/pkce/凭据流;
-3. **agent-loop 待填实**:运行循环、Agent 类、Ledger、echo 工具仍是空骨架,暂存 `src/_legacy/`,
-   等待独立任务"agent-loop 填实"补齐(本期不实现)。
+3. **agent-loop 已复活**(`src/runtime/`):`runAgentLoop` + `Agent` + `MemoryLedger` + `echoTool` + `mockStreamFn`,
+   `tests/agent-loop.test.ts` 2/2 通过;`examples/run.ts` 用 `asset/api-key.json` 中 deepseek-v4-pro
+   走现有 pi-ai `openai-completions` adapter 跑通 turn-1 toolUse → turn-2 stop 全链路。
 
 详细架构与对照(参考 `pi` 项目)见 [`docs/pi-architecture.md`](./docs/pi-architecture.md)。
 
@@ -18,10 +19,10 @@
 ```bash
 npm install
 npm run check          # TypeScript 完整 typecheck(本期已通过)
-npm run demo           # 列出 providers / models catalog + 报告 ~/.runledger/agent 目录
+npm run demo           # catalog 摘要 + mock loop demo + 真实 deepseek-v4-pro demo(需 asset/api-key.json)
 npm run generate-models  # 重新生成 src/providers/data/*.json 与 src/models.generated.ts
 npm run build          # 编译到 dist/
-# npm test             # tests/agent-loop.test.ts 等待 agent-loop 填实后再跑
+npm test               # vitest,tests/agent-loop.test.ts 2/2 通过
 ```
 
 ## 架构(本期)
@@ -39,13 +40,13 @@ RunLedger
 │   ├── src/index.ts    pi-style barrel
 │   └── scripts/generate-models.ts  模型 catalog 生成器
 │
-└── agent-loop 层(本期空骨架,暂存 src/_legacy/)
-    ├── agent-loop.ts   runAgentLoop 核心循环(待填实)
-    ├── agent.ts        Agent 类(待填实)
-    ├── event-stream.ts push-based EventStream(待与 pi utils/event-stream.ts 对齐)
-    ├── ledger/         memory-ledger / jsonl-ledger(待填实)
-    ├── tools/echo.ts   echo 工具(待填实)
-    └── providers/mock-stream.ts  mock streamFn(待与 faux provider 对齐)
+└── agent-loop 层(本期已复活,在 src/runtime/)
+    ├── agent-loop.ts   runAgentLoop 双层循环(outer turn / inner stream)
+    ├── agent.ts        Agent 类(subscribe / on / prompt)
+    ├── types.ts        复用 pi-ai 类型并补 LlmContext / AgentEvent / AgentTool 等
+    ├── ledger/         memory-ledger / jsonl-ledger(append-only,失败不抛错)
+    ├── tools/echo.ts   echo 工具(回显 text,验证 tool 调用链路)
+    └── providers/mock-stream.ts  mock provider(对齐 pi-ai AssistantMessageEvent 协议)
 ```
 
 ## 目录结构
@@ -69,16 +70,14 @@ RunLedger/
 │   ├── storage/            # auth-storage / runtime-credentials / paths / resolve-config-value
 │   ├── utils/             # 21 个工具文件
 │   ├── compat/             # extension-oauth-types.ts
-│   ├── _legacy/            # agent-loop / agent / event-stream / ledger 空骨架
-│   ├── index.legacy.ts     # 旧 barrel 备份
-│   ├── tools/echo.legacy.ts  # 旧 echo 工具备份
-│   └── providers/mock-stream.legacy.ts  # 旧 mock provider 备份
+│   ├── runtime/            # 本期已复活:agent-loop / agent / ledger / tools / mock-stream
+│   └── index.legacy.ts     # 旧 barrel 备份(不再被引用,等待后续清理)
 ├── scripts/
 │   └── generate-models.ts  # 2420 行硬编码模型数据,跑 npm run generate-models 重新生成
 ├── examples/
-│   └── run.ts              # demo:列出 providers / models + 报告 agent 目录
+│   └── run.ts              # demo:catalog 摘要 + mock loop + 真实 deepseek-v4-pro
 ├── tests/
-│   └── agent-loop.test.ts  # 等待 agent-loop 填实后再跑
+│   └── agent-loop.test.ts  # vitest,2/2 通过
 ├── docs/
 │   └── pi-architecture.md  # 参考架构说明
 └── AGENTS.md              # 开发规则(范围 / 风格 / 工作流)
@@ -109,16 +108,18 @@ npm run generate-models
 - [x] pi-ai **全量移植**(api / auth / providers / storage / utils / catalog 生成器)
 - [x] `tsconfig.base.json` 与 pi 对齐(NodeNext + allowImportingTsExtensions + rewriteRelativeImportExtensions + erasableSyntaxOnly)
 - [x] `examples/run.ts` demo 跑 pi-ai 移植层(35 providers / 1061 models 列表 + cost 解析)
+- [x] agent-loop / Agent 类:在 `src/runtime/` 复活并对接 pi-ai `AssistantMessageEventStream`(本期)
+- [x] Ledger:`src/runtime/ledger/{memory-ledger,jsonl-ledger}.ts` 复活并接入 typecheck
+- [x] `tools/echo.ts` 重新实现并对接 pi-ai `AgentTool` 抽象(typebox `Type.Object` parameters)
+- [x] `providers/mock-stream.ts` 复活并直接复用 pi-ai `createAssistantMessageEventStream`(放弃骨架自研 EventStream)
+- [x] `tests/agent-loop.test.ts` 恢复(vitest **2/2 通过**)
+- [x] `examples/run.ts` 真实 LLM 串通:用 `asset/api-key.json` 中 deepseek-v4-pro 走现有 pi-ai `openai-completions` adapter 完成 turn-1 toolUse → turn-2 stop 全链路
 - [x] `npm run check` 通过
 
 ### 待填实(独立任务)
 
-- [ ] agent-loop / Agent 类:与 pi types 对齐,把 `src/_legacy/{agent-loop,agent,event-stream}.ts` 与 `pi/utils/event-stream.ts` 对齐后重纳入 typecheck;
-- [ ] Ledger:`src/_legacy/ledger/{memory-ledger,jsonl-ledger}.ts` 填实;
-- [ ] `tests/agent-loop.test.ts` 在 agent-loop 填实后恢复;
-- [ ] `tools/echo.ts` 重新实现并对接 pi-tool 抽象;
 - [ ] `providers/mock-stream.ts` 与 pi `faux` provider 合并(消除重复);
-- [ ] `// TODO(pi):` 真实 LLM 调用串通(用 anthropic-messages stream);
+- [ ] `// TODO(pi):` 真实 LLM 调用串通用 anthropic-messages stream(本期实测走 openai-completions adapter 已通);
 - [ ] `// TODO(pi):` Session 树(分叉/重放);
 - [ ] `// TODO(pi):` Compaction / 摘要;
 - [ ] `// TODO(pi):` Skills / Prompt templates;
