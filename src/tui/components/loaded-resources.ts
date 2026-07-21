@@ -11,6 +11,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export type LoadedResourceKind = "ledger" | "mcp" | "skills" | "hooks" | "slash" | "tools";
 
@@ -51,7 +52,7 @@ export class LoadedResourcesComponent implements Component {
     this.activeLedgerSessionId = id;
   }
 
-  render(_width: number): string[] {
+  render(width: number): string[] {
     const parts: string[] = [];
     if (this.activeLedgerSessionId && this.activeLedgerSessionId.length > 0) {
       parts.push(`ledger:${this.activeLedgerSessionId.slice(0, 8)}`);
@@ -65,6 +66,6 @@ export class LoadedResourcesComponent implements Component {
     if (parts.length === 0) {
       return [""];
     }
-    return [parts.join("  ")];
+    return [fitToWidth(parts.join("  "), width)];
   }
 }

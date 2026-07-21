@@ -11,10 +11,11 @@
  *   - render(width) 失败兜底:Markdown 抛错时回退纯文本输出,记 stderr,不外抛(对照 02 §1)。
  */
 
-import { Markdown, type Component } from "../index.ts";
+import { Markdown, type Component, visibleWidth, wrapTextWithAnsi } from "../index.ts";
 import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from "../../types.ts";
 import type { Theme } from "../theme/theme.ts";
 import { makeMarkdownTheme } from "../theme/factories.ts";
+import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 
 export interface AssistantMessageComponentProps {
   theme: Theme;
@@ -85,19 +86,26 @@ export class AssistantMessageComponent implements Component {
       if (thinking.length > 0) {
         if (this.thinkingExpanded) {
           lines.push("[thinking]");
-          lines.push(...thinking.split("\n").map((line) => `  ${line}`));
+          const indent = "  ";
+          const contentWidth = Math.max(1, width - visibleWidth(indent));
+          for (const rawLine of thinking.split("\n")) {
+            const wrapped = wrapTextWithAnsi(rawLine, contentWidth);
+            for (const line of wrapped.length > 0 ? wrapped : [""]) {
+              lines.push(fitToWidth(indent + line, width));
+            }
+          }
         } else {
           const first = thinking.split("\n")[0] ?? "";
-          lines.push(`[thinking] ${first}${thinking.includes("\n") ? " …" : ""}`.slice(0, width));
+          lines.push(fitToWidth(`[thinking] ${first}${thinking.includes("\n") ? " …" : ""}`, width));
         }
       }
       lines.push(...this.markdown.render(width));
-      return lines;
+      return fitLinesToWidth(lines, width);
     } catch (e) {
       process.stderr.write(`[assistant-message] markdown render failed: ${String(e)}\n`);
       // 兜底:返回纯文本,不抛
       const text = extractText(this.partial);
-      return text.length === 0 ? [] : text.split("\n");
+      return text.length === 0 ? [] : fitLinesToWidth(text.split("\n"), width);
     }
   }
 }

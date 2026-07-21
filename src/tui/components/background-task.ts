@@ -12,6 +12,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export type BackgroundTaskStatus = "running" | "done" | "error";
 
@@ -45,7 +46,6 @@ export class BackgroundTaskComponent implements Component {
 
   render(width: number): string[] {
     const line = `${ICON[this.status]} ${this.label}`;
-    if (line.length <= width) return [line];
-    return [line.slice(0, Math.max(0, width - 1)) + "…"];
+    return [fitToWidth(line, width)];
   }
 }

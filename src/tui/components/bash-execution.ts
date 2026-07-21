@@ -13,6 +13,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 
 export type BashExecStatus = "pending" | "running" | "ok" | "error";
 
@@ -106,26 +107,21 @@ export class BashExecutionComponent implements Component {
   render(width: number): string[] {
     const icon = STATUS_ICON[this.status];
     const bgTag = this.runInBackground ? "(bg) " : "";
-    const cmdShort = this.command.length > Math.max(0, width - 12)
-      ? this.command.slice(0, Math.max(0, width - 13)) + "…"
-      : this.command;
-    const header = `$ ${bgTag}${cmdShort}  ${icon}`;
+    const header = `$ ${bgTag}${this.command}  ${icon}`;
     if (!this.expanded) {
-      return header.length <= width ? [header] : [header.slice(0, Math.max(0, width - 1)) + "…"];
+      return [fitToWidth(header, width)];
     }
     const lines = [header];
     if (this.stdoutLines.length > 0) {
       lines.push("  stdout:");
       for (const l of this.stdoutLines.slice(-Math.max(1, Math.floor(this.maxTailLines / 2)))) {
-        const max = Math.max(0, width - 4);
-        lines.push("    " + (l.length > max ? l.slice(0, max - 1) + "…" : l));
+        lines.push("    " + l);
       }
     }
     if (this.stderrLines.length > 0) {
       lines.push("  stderr:");
       for (const l of this.stderrLines.slice(-Math.max(1, Math.floor(this.maxTailLines / 2)))) {
-        const max = Math.max(0, width - 4);
-        lines.push("    " + (l.length > max ? l.slice(0, max - 1) + "…" : l));
+        lines.push("    " + l);
       }
     }
     if (this.exitCode !== undefined || this.durationMs !== undefined) {
@@ -135,13 +131,8 @@ export class BashExecutionComponent implements Component {
       lines.push(`  ${parts.join("  ")}`);
     }
     if (this.status === "error" && this.errorMessage) {
-      const max = Math.max(0, width - 9);
-      const trimmed =
-        this.errorMessage.length > max
-          ? this.errorMessage.slice(0, Math.max(0, max - 1)) + "…"
-          : this.errorMessage;
-      lines.push(`  ! ERR: ${trimmed}`);
+      lines.push(`  ! ERR: ${this.errorMessage}`);
     }
-    return lines;
+    return fitLinesToWidth(lines, width);
   }
 }

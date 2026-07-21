@@ -9,6 +9,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 
 export type DiffVerb = "read" | "write" | "edit" | "bash";
 export type DiffStatus = "pending" | "running" | "ok" | "error";
@@ -70,23 +71,18 @@ export class DiffPreviewComponent implements Component {
     const icon = STATUS_ICON[this.status];
     const header = `${icon} ▸ ${this.verb} ${this.path}`;
     if (!this.expanded) {
-      return header.length <= width ? [header] : [header.slice(0, Math.max(0, width - 1)) + "…"];
+      return [fitToWidth(header, width)];
     }
     const lines = [header];
     if (this.before !== undefined) {
-      lines.push(`  - ${this.before.slice(0, Math.max(0, width - 4))}`);
+      lines.push(`  - ${this.before}`);
     }
     if (this.after !== undefined) {
-      lines.push(`  + ${this.after.slice(0, Math.max(0, width - 4))}`);
+      lines.push(`  + ${this.after}`);
     }
     if (this.status === "error" && this.errorMessage) {
-      const maxLen = Math.max(0, width - 7);
-      const trimmed =
-        this.errorMessage.length > maxLen
-          ? this.errorMessage.slice(0, Math.max(0, maxLen - 1)) + "…"
-          : this.errorMessage;
-      lines.push(`  ! ERR: ${trimmed}`);
+      lines.push(`  ! ERR: ${this.errorMessage}`);
     }
-    return lines;
+    return fitLinesToWidth(lines, width);
   }
 }

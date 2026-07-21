@@ -11,6 +11,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { padToWidth } from "./render-width.ts";
 
 export interface StatusComponentProps {
   initialTurn?: number;
@@ -63,9 +64,6 @@ export class StatusComponent implements Component {
       parts.push(`queue:s${this.steeringCount}/f${this.followUpCount}`);
     }
     const line = parts.join("  ");
-    if (line.length <= width) {
-      return [line + " ".repeat(Math.max(0, width - line.length))];
-    }
-    return [line.slice(0, Math.max(0, width - 1)) + "…"];
+    return [padToWidth(line, width)];
   }
 }

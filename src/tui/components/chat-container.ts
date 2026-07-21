@@ -17,6 +17,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export class ChatContainer implements Component {
   private readonly children: Component[] = [];
@@ -47,12 +48,12 @@ export class ChatContainer implements Component {
       try {
         const sub = c.render(width);
         for (const line of sub) {
-          lines.push(line);
+          lines.push(fitToWidth(line, width));
         }
       } catch (e) {
         // 不外抛(对照 04 §2 渲染契约表)
         process.stderr.write(`[chat-container] child render failed: ${String(e)}\n`);
-        lines.push("[chat:child-render-error]");
+        lines.push(fitToWidth("[chat:child-render-error]", width));
       }
     }
     return lines;

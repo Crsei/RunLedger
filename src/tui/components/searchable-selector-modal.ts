@@ -1,5 +1,6 @@
 import type { Component, SelectItem } from "../index.ts";
 import { matchesKey } from "../index.ts";
+import { fitLinesToWidth } from "./render-width.ts";
 
 export interface SearchableSelectorModalProps {
   title: string;
@@ -63,16 +64,16 @@ export class SearchableSelectorModal implements Component {
       Math.max(0, items.length - maxVisible),
     ));
     const visible = items.slice(start, start + maxVisible);
-    const lines = [this.props.title.slice(0, width), `/ ${this.query}`.slice(0, width)];
+    const lines = [this.props.title, `/ ${this.query}`];
     for (let i = 0; i < visible.length; i++) {
       const item = visible[i]!;
       const index = start + i;
       const description = item.description ? `  ${item.description}` : "";
-      lines.push(`${index === this.selectedIndex ? "→" : " "} ${item.label}${description}`.slice(0, width));
+      lines.push(`${index === this.selectedIndex ? "→" : " "} ${item.label}${description}`);
     }
-    if (items.length === 0) lines.push("  No matching items".slice(0, width));
-    else lines.push(`  (${this.selectedIndex + 1}/${items.length})`.slice(0, width));
-    return lines;
+    if (items.length === 0) lines.push("  No matching items");
+    else lines.push(`  (${this.selectedIndex + 1}/${items.length})`);
+    return fitLinesToWidth(lines, width);
   }
 
   private filtered(): SelectItem[] {

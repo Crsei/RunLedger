@@ -1,5 +1,6 @@
 import type { Component } from "../index.ts";
 import { matchesKey } from "../index.ts";
+import { fitLinesToWidth } from "./render-width.ts";
 
 export interface AuthInputModalProps {
   title: string;
@@ -48,11 +49,11 @@ export class AuthInputModal implements Component {
   render(width: number): string[] {
     const shown = this.props.secret ? "•".repeat(Array.from(this.value).length) : this.value;
     const placeholder = this.value.length === 0 ? this.props.placeholder ?? "" : "";
-    return [
-      this.props.title.slice(0, width),
-      this.props.message.slice(0, width),
-      `> ${shown || placeholder}`.slice(0, width),
-      "Enter confirm · Esc cancel".slice(0, width),
-    ];
+    return fitLinesToWidth([
+      this.props.title,
+      this.props.message,
+      `> ${shown || placeholder}`,
+      "Enter confirm · Esc cancel",
+    ], width);
   }
 }

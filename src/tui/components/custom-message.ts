@@ -11,6 +11,7 @@
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export interface CustomMessageComponentProps {
   theme: Theme;
@@ -33,11 +34,6 @@ export class CustomMessageComponent implements Component {
   render(width: number): string[] {
     const prefix = `[${this.props.kind}] `;
     void this.props.theme;
-    const visible = prefix.length + this.props.text.length;
-    if (visible <= width) {
-      return [prefix + this.props.text];
-    }
-    const maxText = Math.max(0, width - prefix.length - 1);
-    return [prefix + this.props.text.slice(0, maxText) + "…"];
+    return [fitToWidth(prefix + this.props.text, width)];
   }
 }

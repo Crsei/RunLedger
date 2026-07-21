@@ -13,8 +13,8 @@
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
-import { visibleWidth } from "../index.ts";
 import type { AgentToolResult } from "../../runtime/types.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export type ToolCallStatus = "pending" | "running" | "ok" | "error";
 
@@ -92,20 +92,14 @@ export class ToolCallComponent implements Component {
       const text = this.extractTextResult();
       if (text.length > 0) {
         const oneLine = text.split("\n")[0] ?? "";
-        const maxLen = Math.max(0, width - summary.length - 4);
-        const trimmed = oneLine.length > maxLen ? oneLine.slice(0, maxLen - 1) + "…" : oneLine;
-        summary += " " + trimmed;
+        summary += " " + oneLine;
       }
     }
     if (this.status === "error" && this.errorMessage) {
-      const maxLen = Math.max(0, width - summary.length - 4);
-      const trimmed = this.errorMessage.length > maxLen ? this.errorMessage.slice(0, maxLen - 1) + "…" : this.errorMessage;
-      summary += " | ERR: " + trimmed;
+      summary += " | ERR: " + this.errorMessage;
     }
     const line = `${icon} [${summary}]`;
-    if (visibleWidth(line) <= width) return [line];
-    // 截断兜底
-    return [line.slice(0, Math.max(0, width - 1)) + "…"];
+    return [fitToWidth(line, width)];
   }
 
   private extractTextResult(): string {
@@ -121,7 +115,7 @@ function summarizeArgs(args: unknown): string {
   if (args === undefined) return "";
   try {
     const text = JSON.stringify(args);
-    return text.length > 80 ? text.slice(0, 79) + "…" : text;
+    return fitToWidth(text, 80);
   } catch {
     return String(args);
   }

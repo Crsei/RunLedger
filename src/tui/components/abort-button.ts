@@ -12,6 +12,7 @@
  */
 
 import type { Component } from "../index.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export interface AbortButtonComponentProps {
   label?: string;
@@ -36,7 +37,6 @@ export class AbortButtonComponent implements Component {
 
   render(width: number): string[] {
     const label = this.props.label ?? "[Ctrl+C 中断]";
-    if (label.length <= width) return [label];
-    return [label.slice(0, Math.max(0, width - 1)) + "…"];
+    return [fitToWidth(label, width)];
   }
 }

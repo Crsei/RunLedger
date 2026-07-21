@@ -13,6 +13,7 @@
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import type { FooterSnapshotProvider } from "../types.ts";
+import { padToWidth } from "./render-width.ts";
 
 export interface FooterProps {
   theme: Theme;
@@ -55,10 +56,7 @@ export class Footer implements Component {
     const sep = "  ";
     const parts = [left, middle, right].filter((s) => s.length > 0);
     const joined = parts.join(sep);
-    if (joined.length <= width) {
-      // 左对齐,右边补空格到 width(防止上一帧残余字符)
-      return [joined + " ".repeat(Math.max(0, width - joined.length))];
-    }
-    return [joined.slice(0, Math.max(0, width - 1)) + "…"];
+    // 左对齐,右边补空格到 width(防止上一帧残余字符)
+    return [padToWidth(joined, width)];
   }
 }

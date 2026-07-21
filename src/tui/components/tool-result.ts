@@ -12,7 +12,7 @@
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
-import { visibleWidth } from "../index.ts";
+import { fitToWidth } from "./render-width.ts";
 import type { AgentToolResult } from "../../runtime/types.ts";
 
 export interface ToolResultComponentProps {
@@ -48,10 +48,7 @@ export class ToolResultComponent implements Component {
     const text = extract(this.props.result);
     const oneLine = (text.split("\n")[0] ?? "").trim();
     const prefix = `${icon} ${this.props.toolName} `;
-    const available = Math.max(0, width - prefix.length - 1);
-    const trimmed = oneLine.length > available ? oneLine.slice(0, available - 1) + "…" : oneLine;
-    const line = prefix + trimmed;
-    if (visibleWidth(line) <= width) return [line];
-    return [line.slice(0, Math.max(0, width - 1)) + "…"];
+    const line = prefix + oneLine;
+    return [fitToWidth(line, width)];
   }
 }

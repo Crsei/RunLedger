@@ -9,6 +9,7 @@ import { UserMessageComponent } from "../../src/tui/components/user-message.ts";
 import { CustomMessageComponent } from "../../src/tui/components/custom-message.ts";
 import { ChatContainer } from "../../src/tui/components/chat-container.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
+import { visibleWidth } from "../../src/tui/index.ts";
 
 describe("UserMessageComponent", () => {
   const theme = loadTheme("dark");
@@ -87,6 +88,7 @@ describe("ChatContainer", () => {
     chat.push(badChild);
     const lines = chat.render(20);
     expect(lines.length).toBe(1);
-    expect(lines[0]).toContain("[chat:child-render-error]");
+    expect(lines[0]).toContain("[chat:child-render-");
+    expect(visibleWidth(lines[0] ?? "")).toBeLessThanOrEqual(20);
   });
 });

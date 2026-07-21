@@ -15,6 +15,7 @@
 
 import { Box, SelectList, type SelectItem, type Component, type SelectListTheme, type SelectListLayoutOptions } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
+import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 
 export interface SelectorModalProps {
   /** 主题:本期占位用,M6 阶段补 ANSI 色接入;ImagePasteOverlay 等不传。 */
@@ -60,6 +61,6 @@ export class SelectorModal implements Component {
   }
 
   render(width: number): string[] {
-    return [this.title, ...this.box.render(width)];
+    return [fitToWidth(this.title, width), ...fitLinesToWidth(this.box.render(width), width)];
   }
 }

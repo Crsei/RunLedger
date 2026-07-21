@@ -13,6 +13,7 @@
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
+import { fitToWidth } from "./render-width.ts";
 
 /** 键位 → 动作名映射;由 KeybindingsManager 在 InteractiveMode 装配时构造。 */
 export type KeybindingHintMap = ReadonlyArray<{ key: string; action: string }>;
@@ -41,9 +42,6 @@ export class KeybindingHints implements Component {
     }
     // M1 阶段:逗号分隔的原始字符串拼接;M6 阶段上 ANSI fg/bg。
     const line = this.props.hints.map((h) => `${h.key}:${h.action}`).join("  ");
-    if (line.length <= width) {
-      return [line];
-    }
-    return [line.slice(0, Math.max(0, width - 1)) + "…"];
+    return [fitToWidth(line, width)];
   }
 }

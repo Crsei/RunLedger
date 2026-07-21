@@ -14,7 +14,7 @@
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
-import { visibleWidth } from "../index.ts";
+import { fitToWidth } from "./render-width.ts";
 
 export interface UserMessageComponentProps {
   theme: Theme;
@@ -46,9 +46,7 @@ export class UserMessageComponent implements Component {
     const lines: string[] = [];
     lines.push(OSC_INTERACTIVE_START);
     // 简单按 width 截断并补齐:多行用户输入本期按单行处理,M6 再做 wrapping
-    const visible = visibleWidth(this.text);
-    const display = visible <= width ? this.text : this.text.slice(0, Math.max(0, width - 1)) + "…";
-    lines.push(display);
+    lines.push(fitToWidth(this.text, width));
     lines.push(OSC_INTERACTIVE_END);
     lines.push("");
     void this.timestamp;
