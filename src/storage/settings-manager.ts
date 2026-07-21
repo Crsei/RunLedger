@@ -15,7 +15,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
-import type { ThinkingLevel } from "../types.ts";
+import type { ModelThinkingLevel } from "../types.ts";
+import type { QueueMode } from "../runtime/types.ts";
 import { getProjectSettingsPath } from "./paths.ts";
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
@@ -29,10 +30,12 @@ const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
  * 一律不在此 schema 中,需在引入对应功能时一并通过补字段。
  */
 export interface ProjectSettings {
+  /** 默认 provider ID,与 model 共同组成稳定模型身份。 */
+  provider?: string;
   /** 默认模型 ID;CLI `--model` 优先级高于此字段 */
   model?: string;
   /** 默认 thinking level;CLI `--thinking` 优先级高于此字段 */
-  thinkingLevel?: ThinkingLevel;
+  thinkingLevel?: ModelThinkingLevel;
   /** 主题名,TUI 已用 dark/light 二选一 */
   theme?: "dark" | "light";
   /**
@@ -42,6 +45,8 @@ export interface ProjectSettings {
   sessionDir?: string;
   /** /model 选择器可见模型白名单;空数组或 undefined 表示无白名单(显示全部 known) */
   enabledModels?: string[];
+  steeringMode?: QueueMode;
+  followUpMode?: QueueMode;
 }
 
 /** 空白 settings;loadProjectSettings 缺文件时返回此值 */
@@ -128,6 +133,9 @@ export async function saveProjectSettings(
  */
 function sanitizeProjectSettings(raw: Record<string, unknown>): ProjectSettings {
   const out: ProjectSettings = {};
+  if (typeof raw.provider === "string" && raw.provider.length > 0) {
+    out.provider = raw.provider;
+  }
   if (typeof raw.model === "string" && raw.model.length > 0) {
     out.model = raw.model;
   }
@@ -146,10 +154,17 @@ function sanitizeProjectSettings(raw: Record<string, unknown>): ProjectSettings 
     );
     if (filtered.length > 0) out.enabledModels = filtered;
   }
+  if (raw.steeringMode === "one-at-a-time" || raw.steeringMode === "all") {
+    out.steeringMode = raw.steeringMode;
+  }
+  if (raw.followUpMode === "one-at-a-time" || raw.followUpMode === "all") {
+    out.followUpMode = raw.followUpMode;
+  }
   return out;
 }
 
-const THINKING_LEVELS: ReadonlySet<string> = new Set<ThinkingLevel>([
+const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
+  "off",
   "minimal",
   "low",
   "medium",
@@ -158,6 +173,6 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set<ThinkingLevel>([
   "max",
 ]);
 
-function isThinkingLevel(v: unknown): v is ThinkingLevel {
+function isThinkingLevel(v: unknown): v is ModelThinkingLevel {
   return typeof v === "string" && THINKING_LEVELS.has(v);
 }

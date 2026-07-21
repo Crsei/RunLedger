@@ -2,8 +2,7 @@
  * CLI argv 解析 —— 手写极薄版,本期支持下列旗标:
  *
  *   --continue / -c                    继续最近会话(默认 dir)
- *   --resume / -r                      list all from project sessions dir,弹选择器
- *                                       (本期 placeholder:列最大 mtime 一条)
+ *   --resume / -r                      list all from project sessions dir,弹 TUI 选择器
  *   --session <pathOrId>               直接打开已知 session 文件或 sessionId
  *                                       (本期只支持精确 path)
  *   --session-id <id>                  同 --session,但按精确 id 匹配
@@ -20,9 +19,10 @@
  * 后续插件化时可由 caller 自行解析对照。
  */
 
-import type { ThinkingLevel } from "../types.ts";
+import type { ModelThinkingLevel } from "../types.ts";
 
-const THINKING_LEVELS: ReadonlySet<string> = new Set<ThinkingLevel>([
+const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
+  "off",
   "minimal",
   "low",
   "medium",
@@ -39,8 +39,9 @@ export interface ParsedArgs {
   session?: string;
   sessionId?: string;
   fork?: string;
+  provider?: string;
   model?: string;
-  thinking?: ThinkingLevel;
+  thinking?: ModelThinkingLevel;
   sessionDir?: string;
   debug: boolean;
   /** 未知 flag 兜底,key 不带前导 --;有 =value 时 value 为 string,否则为 true */
@@ -58,19 +59,20 @@ export interface ParseResult {
 const HELP_TEXT = `Usage: runledger [options]
 
   -c, --continue              继续最近会话(默认 .runledger/sessions/)
-  -r, --resume                列出当前项目内所有会话(本期 placeholder 取最近)
+  -r, --resume                在 TUI 中选择当前项目的历史会话
       --session <path>        直接打开已知 session 文件
       --session-id <id>       按 sessionId 直接打开(本期需配合 --session-dir)
       --fork <path>           从源 session 文件 fork 到本项目
   -m, --model <id>            覆盖 settings.model
-      --thinking <level>      minimal|low|medium|high|xhigh|max
+      --provider <id>         覆盖 settings.provider
+      --thinking <level>      off|minimal|low|medium|high|xhigh|max
       --session-dir <dir>     进程级 session 目录覆盖,优先级最高
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
   -h, --help                  本帮助
 
 环境变量:
-  ANTHROPIC_API_KEY            必填(否则回退 mock provider)
+  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login
   RUNLEDGER_DIR                用户层 ~/.runledger/agent 覆盖
   RUNLEDGER_SESSION_DIR        进程级 session 目录覆盖(等价 --session-dir)
 
@@ -88,8 +90,9 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let session: string | undefined;
   let sessionId: string | undefined;
   let fork: string | undefined;
+  let provider: string | undefined;
   let model: string | undefined;
-  let thinking: ThinkingLevel | undefined;
+  let thinking: ModelThinkingLevel | undefined;
   let sessionDir: string | undefined;
   let debug = false;
   const unknown = new Map<string, string | true>();
@@ -135,6 +138,15 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       model = v;
       continue;
     }
+    if (a === "--provider") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      provider = v;
+      continue;
+    }
     if (a === "--session") {
       const v = argv[++i];
       if (v === undefined) {
@@ -169,10 +181,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         break;
       }
       if (!THINKING_LEVELS.has(v)) {
-        error = `--thinking 不合法:${v}(合法值 minimal/low/medium/high/xhigh/max)`;
+        error = `--thinking 不合法:${v}(合法值 off/minimal/low/medium/high/xhigh/max)`;
         break;
       }
-      thinking = v as ThinkingLevel;
+      thinking = v as ModelThinkingLevel;
       continue;
     }
     if (a === "--session-dir") {
@@ -211,6 +223,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       session,
       sessionId,
       fork,
+      provider,
       model,
       thinking,
       sessionDir,

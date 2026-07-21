@@ -26,7 +26,7 @@ export type LedgerEntryType =
  */
 export interface LedgerHeader {
   type: "ledger";
-  version: 1;
+  version: 1 | 2;
   id: string;
   createdAt: number;
   sessionId: string;

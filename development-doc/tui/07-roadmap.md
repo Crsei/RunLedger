@@ -259,14 +259,14 @@ StatusIndicator 在 working/error/idle 三态可显,LoadedResources 启动信息
 
 ## 完成 checklist(填到 README 或验收报告)
 
-- [ ] M0 pi-tui 装好
-- [ ] M1 空骨架跑 UI
-- [ ] M2 消息气泡 + 流式
-- [ ] M3 工具调用
-- [ ] M4 状态 + 资源条
-- [ ] M5 selectors
-- [ ] M6 theme + keybindings
-- [ ] M7 跨平台 + 单测
-- [ ] `npm run check` 绿
-- [ ] `npm test` 绿
-- [ ] vision/docs 与代码无 drift
+- [x] M0 pi-tui 装好
+- [x] M1 空骨架跑 UI
+- [x] M2 消息气泡 + 流式
+- [x] M3 工具调用
+- [x] M4 状态 + 资源条
+- [x] M5 selectors
+- [x] M6 theme + keybindings
+- [x] M7 跨平台 + 单测
+- [x] `npm run check` 绿
+- [x] `npm test` 绿
+- [ ] `01`–`06` 历史组件规格仍需单独清理 pre-production 描述;当前事实以 `AGENTS.md` 与代码/测试为准

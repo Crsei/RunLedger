@@ -2,7 +2,7 @@
  * Agent 循环核心实现。
  *
  * 对照参考 pi 的 `packages/agent/src/agent-loop.ts`。
- * 本期只实现"无队列、无 thinking、无 transformContext"的最简形态,
+ * 当前实现包含 reasoning、steering/follow-up 队列与工具调用;transformContext 仍未实现,
  * 但保留 outer/inner 双层结构与 shouldStopAfterTurn / prepareNextTurn 钩子,
  * 以便后续按 pi 的方式逐步补全(`// TODO(pi):` 注释标出占位)。
  *
@@ -122,29 +122,22 @@ export async function runAgentLoop(
       throw new Error(`runAgentLoop 仅接受 user 角色的 prompt,实际为 ${p.role}`);
     }
     const ts = Date.now();
-    await fire(
-      { type: "message_start", timestamp: ts, role: "user" },
-      {
-        id: newId(),
-        parentId: sessionId,
-        timestamp: ts,
-        type: "message",
-        payload: {
-          role: "user",
-          content: (p.content as TextContent[]).map((c) => c.text).join(""),
-        },
-      },
-    );
+    await fire({ type: "message_start", timestamp: ts, role: "user", message: p });
     messages.push(p);
     const ts2 = Date.now();
     await fire(
-      { type: "message_end", timestamp: ts2, role: "user" },
+      { type: "message_end", timestamp: ts2, role: "user", message: p },
       {
         id: newId(),
         parentId: sessionId,
         timestamp: ts2,
         type: "message",
-        payload: { role: "user", phase: "end" },
+        payload: {
+          schema: "agent-message/v1",
+          role: "user",
+          content: p.content.map((c) => c.text).join(""),
+          message: p,
+        },
       },
     );
   }
@@ -152,6 +145,8 @@ export async function runAgentLoop(
   let turn = 0;
   let lastStopReason: StopReason = "stop";
   let loopModel = config.model;
+  let loopReasoning = config.reasoning;
+  let pendingMessages: AgentMessage[] = await config.getSteeringMessages?.() ?? [];
 
   // inner loop
   while (true) {
@@ -171,6 +166,33 @@ export async function runAgentLoop(
         payload: { turn, phase: "start" },
       },
     );
+
+    // steering/follow-up 进入下一次 LLM 请求前才成为正式会话消息。
+    if (pendingMessages.length > 0) {
+      for (const pending of pendingMessages) {
+        if (pending.role !== "user") continue;
+        const pendingStart = Date.now();
+        await fire({ type: "message_start", timestamp: pendingStart, role: "user", message: pending });
+        messages.push(pending);
+        const pendingEnd = Date.now();
+        await fire(
+          { type: "message_end", timestamp: pendingEnd, role: "user", message: pending },
+          {
+            id: newId(),
+            parentId: sessionId,
+            timestamp: pendingEnd,
+            type: "message",
+            payload: {
+              schema: "agent-message/v1",
+              role: "user",
+              content: pending.content.map((c) => c.text).join(""),
+              message: pending,
+            },
+          },
+        );
+      }
+      pendingMessages = [];
+    }
 
     // 1. AgentMessage → LLM Message[],在边界处做了角色译码
     const convertFn = config.convertToLlm ?? defaultConvertToLlm;
@@ -192,6 +214,7 @@ export async function runAgentLoop(
         apiKey: config.apiKey,
         env: config.env,
         signal,
+        ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
       }),
     );
 
@@ -200,6 +223,7 @@ export async function runAgentLoop(
     let assistantStopReason: StopReason = "stop";
     let assistantUsage: AssistantAgentMessage["usage"] | undefined;
     let assistantErrorMessage: string | undefined;
+    let providerMessage: AssistantMessage | undefined;
     let messageOpen = false;
     for await (const ev of stream) {
       const ts = Date.now();
@@ -251,15 +275,28 @@ export async function runAgentLoop(
           },
         });
       } else if (ev.type === "done") {
+        providerMessage = ev.message;
         assistantStopReason = ev.message.stopReason;
         assistantUsage = ev.message.usage;
         assistantErrorMessage = ev.message.errorMessage;
       } else if (ev.type === "error") {
+        providerMessage = ev.error;
         assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
         assistantErrorMessage = ev.error.errorMessage;
       }
     }
-    if (messageOpen) {
+    const assistantMessage: AssistantAgentMessage = {
+      role: "assistant",
+      content: providerMessage?.content ?? assistantContent,
+      stopReason: assistantStopReason,
+      usage: assistantUsage,
+      errorMessage: assistantErrorMessage,
+      api: providerMessage?.api,
+      provider: providerMessage?.provider,
+      model: providerMessage?.model,
+      timestamp: providerMessage?.timestamp,
+    };
+    if (messageOpen || providerMessage) {
       const ts = Date.now();
       await fire(
         {
@@ -267,6 +304,7 @@ export async function runAgentLoop(
           timestamp: ts,
           role: "assistant",
           stopReason: assistantStopReason,
+          message: assistantMessage,
         },
         {
           id: newId(),
@@ -274,27 +312,22 @@ export async function runAgentLoop(
           timestamp: ts,
           type: "message",
           payload: {
+            schema: "agent-message/v1",
             role: "assistant",
             stopReason: assistantStopReason,
-            content: serializeAssistant(assistantContent),
+            content: serializeAssistant(assistantMessage.content),
             errorMessage: assistantErrorMessage,
+            message: assistantMessage,
           },
         },
       );
     }
-
-    const assistantMessage: AssistantAgentMessage = {
-      role: "assistant",
-      content: assistantContent,
-      stopReason: assistantStopReason,
-      usage: assistantUsage,
-      errorMessage: assistantErrorMessage,
-    };
     messages.push(assistantMessage);
+    context.messages = messages.slice();
     lastStopReason = assistantStopReason;
 
     // 4. 取出 toolCall 块(直接复用 pi-ai ToolCall 视图)
-    const toolCalls: AgentToolCall[] = assistantContent.filter(
+    const toolCalls: AgentToolCall[] = assistantMessage.content.filter(
       (c): c is ToolCall => c.type === "toolCall",
     );
 
@@ -302,7 +335,7 @@ export async function runAgentLoop(
       let toolResults: ToolResultContent[];
       if (assistantStopReason === "length") {
         // 截断降级路径:不真正执行,每工具合成 isError ToolResultContent
-        toolResults = failToolCallsFromTruncatedMessage(toolCalls);
+        toolResults = await failToolCallsFromTruncatedMessage(toolCalls, fire, sessionId);
       } else {
         // 5. 执行
         toolResults = await executeToolCalls(
@@ -323,6 +356,22 @@ export async function runAgentLoop(
           content: [r],
         };
         messages.push(msg);
+        context.messages = messages.slice();
+        if (ledger) {
+          const ts = Date.now();
+          await ledger.append({
+            id: newId(),
+            parentId: sessionId,
+            sessionId,
+            timestamp: ts,
+            type: "message",
+            payload: {
+              schema: "agent-message/v1",
+              role: "toolResult",
+              message: msg,
+            },
+          });
+        }
       }
     }
 
@@ -345,6 +394,9 @@ export async function runAgentLoop(
       if (update.model) {
         loopModel = update.model;
       }
+      if (update.thinkingLevel !== undefined) {
+        loopReasoning = update.thinkingLevel;
+      }
     }
 
     // shouldStopAfterTurn hook
@@ -353,12 +405,16 @@ export async function runAgentLoop(
       break;
     }
 
-    // 内层循环退出条件:无 toolCall 或非 toolUse 原因
-    if (toolCalls.length === 0 || assistantStopReason !== "toolUse") {
-      break;
-    }
+    if (assistantStopReason === "error" || assistantStopReason === "aborted") break;
 
-    // TODO(pi): getSteeringMessages / getFollowUpMessages 队列在此处排空
+    // steering 优先于 follow-up,且只在当前工具批次完成后注入。
+    pendingMessages = await config.getSteeringMessages?.() ?? [];
+    const hasMoreToolCalls = toolCalls.length > 0 && assistantStopReason === "toolUse";
+    if (hasMoreToolCalls || pendingMessages.length > 0) continue;
+
+    pendingMessages = await config.getFollowUpMessages?.() ?? [];
+    if (pendingMessages.length > 0) continue;
+    break;
   }
 
   const agentEnd = Date.now();
@@ -396,17 +452,14 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
         timestamp: Date.now(),
       });
     } else if (m.role === "assistant") {
-      // why any:pi-ai AssistantMessage 必填 api/provider/model/usage/timestamp 等字段,
-      // 我们在 runtime 层只保留 content / stopReason / errorMessage。
-      // streamFn 重新发起 LLM 请求时 provider 实现会重新生成 AssistantMessage,
-      // mock provider 也不依赖这些历史字段,所以这里直接拼最小合法形态再断言。
+      // 旧调用点仍可能只构造最小 assistant；新消息优先保留 provider 元数据。
       out.push({
         role: "assistant",
         content: m.content,
-        api: "mock",
-        provider: "mock",
-        model: "",
-        usage: {
+        api: m.api ?? "unknown",
+        provider: m.provider ?? "unknown",
+        model: m.model ?? "unknown",
+        usage: m.usage ?? {
           input: 0,
           output: 0,
           cacheRead: 0,
@@ -416,7 +469,7 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
         },
         stopReason: m.stopReason,
         errorMessage: m.errorMessage,
-        timestamp: Date.now(),
+        timestamp: m.timestamp ?? Date.now(),
       } as unknown as Message);
     } else if (m.role === "toolResult") {
       for (const c of m.content) {
@@ -543,7 +596,13 @@ async function prepareToolCall(
 ): Promise<PreparedToolCall> {
   const tStart = Date.now();
   await fire(
-    { type: "tool_execution_start", timestamp: tStart, toolCallId: tc.id, toolName: tc.name },
+    {
+      type: "tool_execution_start",
+      timestamp: tStart,
+      toolCallId: tc.id,
+      toolName: tc.name,
+      args: tc.arguments,
+    },
     {
       id: newId(),
       parentId: sessionId,
@@ -639,17 +698,18 @@ async function executePreparedToolCall(
     };
   }
 
+  let updateChain: Promise<void> = Promise.resolve();
   const onUpdate: AgentToolUpdateCallback = (partialResult) => {
     const ts = Date.now();
-    void fire({
-      type: "tool_execution_update",
-      timestamp: ts,
-      toolCallId: p.toolCall.id,
-      toolName: p.toolCall.name,
-      partialResult,
-    }).catch(() => {
-      // sink 失败吞掉
-    });
+    updateChain = updateChain.then(() => fire({
+        type: "tool_execution_update",
+        timestamp: ts,
+        toolCallId: p.toolCall.id,
+        toolName: p.toolCall.name,
+        partialResult,
+      })).catch(() => {
+        // sink 失败吞掉
+      });
   };
 
   // 构造 ToolContext:cwd / env 从 config 取回退到 process.cwd/localExecutionEnv。
@@ -674,17 +734,19 @@ async function executePreparedToolCall(
       onUpdate,
       toolContext,
     );
+    await updateChain;
     // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
     const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
     const content = applyToolResultBudget(result.content, maxChars, p.toolCall.id);
     return {
       content,
-      isError: false,
+      isError: result.isError === true,
       details: result.details,
       addedToolNames: result.addedToolNames,
       terminate: result.terminate,
     };
   } catch (e) {
+    await updateChain;
     return {
       content: [{ type: "text", text: (e as Error).message ?? String(e) }],
       isError: true,
@@ -824,13 +886,14 @@ async function finalizeExecutedToolCall(
   if (finalTerminate !== undefined) result.terminate = finalTerminate;
 
   const tEnd = Date.now();
-  void fire(
+  await fire(
     {
       type: "tool_execution_end",
       timestamp: tEnd,
       toolCallId: p.toolCall.id,
       toolName: p.toolCall.name,
       isError: finalIsError,
+      result,
     },
     {
       id: newId(),
@@ -844,32 +907,82 @@ async function finalizeExecutedToolCall(
         content: finalContent.map((c) => (c.type === "text" ? c.text : `[image]`)).join(""),
       },
     },
-  ).catch(() => {
-    // sink 失败吞掉
-  });
+  );
 
   return result;
 }
 
 /** length 截断降级:每工具合成 isError ToolResultContent,不真正执行。 */
-function failToolCallsFromTruncatedMessage(toolCalls: AgentToolCall[]): ToolResultContent[] {
-  return toolCalls.map((tc) => ({
-    type: "toolResult" as const,
-    toolCallId: tc.id,
-    toolName: tc.name,
-    content: [
+async function failToolCallsFromTruncatedMessage(
+  toolCalls: AgentToolCall[],
+  fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
+  sessionId: string,
+): Promise<ToolResultContent[]> {
+  const results: ToolResultContent[] = [];
+  for (const tc of toolCalls) {
+    const errorText = "Tool call was not executed because the assistant response reached the output limit and its arguments may be incomplete.";
+    const started = Date.now();
+    await fire(
       {
-        type: "text" as const,
-        text: "Tool call was truncated because the assistant message reached the maximum length. Please retry with shorter arguments or split the request.",
+        type: "tool_execution_start",
+        timestamp: started,
+        toolCallId: tc.id,
+        toolName: tc.name,
+        args: tc.arguments,
       },
-    ],
-    isError: true,
-  }));
+      {
+        id: newId(),
+        parentId: sessionId,
+        timestamp: started,
+        type: "tool_call",
+        payload: { toolCallId: tc.id, toolName: tc.name, input: tc.arguments },
+      },
+    );
+    const result: ToolResultContent = {
+      type: "toolResult",
+      toolCallId: tc.id,
+      toolName: tc.name,
+      content: [{
+        type: "text",
+        text: errorText,
+      }],
+      isError: true,
+    };
+    const ended = Date.now();
+    await fire(
+      {
+        type: "tool_execution_end",
+        timestamp: ended,
+        toolCallId: tc.id,
+        toolName: tc.name,
+        isError: true,
+        result,
+      },
+      {
+        id: newId(),
+        parentId: sessionId,
+        timestamp: ended,
+        type: "tool_result",
+        payload: {
+          toolCallId: tc.id,
+          toolName: tc.name,
+          isError: true,
+          content: errorText,
+        },
+      },
+    );
+    results.push(result);
+  }
+  return results;
 }
 
 function serializeAssistant(content: AssistantAgentMessage["content"]): string {
   return content
-    .map((c) => (c.type === "text" ? c.text : `[toolCall ${(c as ToolCall).name}]`))
+    .map((c) => {
+      if (c.type === "text") return c.text;
+      if (c.type === "thinking") return `[thinking]`;
+      return `[toolCall ${(c as ToolCall).name}]`;
+    })
     .join("");
 }
 

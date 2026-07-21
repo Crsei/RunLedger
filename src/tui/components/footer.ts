@@ -40,10 +40,12 @@ export class Footer implements Component {
       const stopReason = this.props.provider.getStopReason();
       const sessionId = this.props.provider.getSessionId();
       const modelId = this.props.provider.getModelId();
+      const providerId = this.props.provider.getProviderId?.();
+      const thinking = this.props.provider.getThinkingLevel?.();
       const status = streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
       left = status;
       middle = sessionId.length > 0 ? sessionId : "<no-session>";
-      right = modelId;
+      right = `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}`;
     } catch {
       // 失败护栏:provider 抛错时给出可观测的占位,不影响整屏渲染
       left = "[footer:err]";

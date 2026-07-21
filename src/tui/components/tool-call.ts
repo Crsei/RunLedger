@@ -22,6 +22,7 @@ export interface ToolCallComponentProps {
   theme: Theme;
   toolCallId: string;
   toolName: string;
+  args?: unknown;
   initialStatus?: ToolCallStatus;
 }
 
@@ -36,6 +37,7 @@ export class ToolCallComponent implements Component {
   private readonly theme: Theme;
   private readonly toolCallId: string;
   private readonly toolName: string;
+  private readonly args: unknown;
   private status: ToolCallStatus;
   private partialResult: AgentToolResult | undefined;
   private errorMessage: string | undefined;
@@ -44,6 +46,7 @@ export class ToolCallComponent implements Component {
     this.theme = props.theme;
     this.toolCallId = props.toolCallId;
     this.toolName = props.toolName;
+    this.args = props.args;
     this.status = props.initialStatus ?? "pending";
   }
 
@@ -83,7 +86,8 @@ export class ToolCallComponent implements Component {
   render(width: number): string[] {
     void this.theme;
     const icon = STATUS_ICON[this.status];
-    let summary = this.toolName;
+    const argsText = summarizeArgs(this.args);
+    let summary = `${this.toolName}${argsText ? ` ${argsText}` : ""}`;
     if (this.status === "ok" || this.status === "error") {
       const text = this.extractTextResult();
       if (text.length > 0) {
@@ -110,5 +114,15 @@ export class ToolCallComponent implements Component {
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
       .map((c) => c.text)
       .join("");
+  }
+}
+
+function summarizeArgs(args: unknown): string {
+  if (args === undefined) return "";
+  try {
+    const text = JSON.stringify(args);
+    return text.length > 80 ? text.slice(0, 79) + "…" : text;
+  } catch {
+    return String(args);
   }
 }

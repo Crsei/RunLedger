@@ -10,7 +10,7 @@
 
 - `src/api/` 30 个 provider 适配实现(anthropic-messages / openai-responses / openai-codex / google-generative-ai / google-vertex / mistral / bedrock / cloudflare / openrouter / azure 等),含 lazy 版本;
 - `src/auth/` 凭据类型、CredentialStore OAuth 流(`oauth/anthropic.ts` / `openai-codex.ts` / `github-copilot.ts` / `xai.ts` / `radius.ts` / `device-code.ts` / `pkce.ts` / `oauth-page.ts`);
-- `src/providers/` 35 个 provider 文件 + 自动生成的 `data/*.json` 模型 catalog(1061 个模型);
+- `src/providers/` 注册 36 个 builtin provider,其中 35 份 `data/*.json` 模型 catalog 自动生成(1061 个模型);
 - `src/storage/` `auth-storage.ts`(auth.json + proper-lockfile)+ `runtime-credentials.ts` + `paths.ts` + `resolve-config-value.ts`;
 - `src/utils/` 工具库(uuid / overflow / diagnostics / retry / validation / encode / decode / event-stream 等 21 个文件);
 - 顶层 `models.ts` / `models-store.ts` / `models.generated.ts` / `images-models.ts` / `image-models.ts` / `image-models.generated.ts` / `images.ts` / `images-api-registry.ts` / `session-resources.ts` / `oauth.ts` / `bun-oauth.ts` / `bedrock-provider.ts`;
@@ -22,10 +22,10 @@
 
 `src/runtime/` 下当前形态:
 
-- `agent-loop.ts` —— `runAgentLoop` 双层循环(outer turn / inner assistant stream),`done.message.stopReason === "toolUse"` 时执行 toolCalls 并进入下一 turn;
-- `agent.ts` —— `Agent` 有状态包装类,`subscribe / on / prompt`,内置 ledger 透传;
+- `agent-loop.ts` —— `runAgentLoop` 双层循环(outer turn / inner assistant stream),支持 reasoning、toolCalls、steering/follow-up 队列与完整 assistant/tool 事件;
+- `agent.ts` —— `Agent` 有状态包装类,`subscribe / on / prompt / steer / followUp / interrupt / waitForIdle`,严格限制同一时刻只有一个活跃 run;
 - `types.ts` —— 复用 pi-ai `Message` / `Tool` / `ToolCall` / `StopReason` / `Model` / `StreamOptions` / `AssistantAgentMessage` 等,补 `LlmContext` / `AgentContext` / `AgentEvent` / `AgentEventSink` / `AgentLoopConfig` / `AgentTool` / `AgentToolCall` / `UserAgentMessage` / `ToolResultAgentMessage` / `StreamFn` 等运行循环层接口;
-- `ledger/{types,memory-ledger,jsonl-ledger}.ts` —— 内存与 JSONL 审计账本(append-only,失败不抛错,以 `lastError` 字段保留报告路径);
+- `ledger/{types,memory-ledger,jsonl-ledger}.ts` —— v2 内存与 JSONL 审计账本(append-only,失败不抛错,以 `lastError` 字段保留报告路径),v1 文件只读兼容;
 - `tools/echo.ts` —— 最简 `AgentTool`(回显 text),用于验证 tool 调用链路;
 - `tools/{tool-support,read,write,edit,bash,grep,find,ls,index}.ts` —— stdlib 工具集(8 个 AgentTool),fork pi `core/tools/*` 的简化版,共享 `truncateHead` / `resolveToCwd` / `pathExists` 路径截断原语;`createStdlibTools(cwd)` 一站式返回 `ToolRegistry`,namespace="stdlib";
 - `tool-registry.ts` —— 多命名空间工具注册表,`register` / `unregister` / `has` / `get` / `toContext`,`toContext()` 输出 `AgentTool[]` 直接喂给 `AgentContext.tools`,
@@ -53,7 +53,7 @@
 ```
 <cwd>/
 ├── .runledger/
-│   ├── settings.json          # ProjectSettings:model/thinkingLevel/theme/sessionDir/enabledModels
+│   ├── settings.json          # ProjectSettings:provider/model/thinkingLevel/theme/sessionDir/enabledModels/queue modes
 │   ├── sessions/              # 默认 sessionDir;每个文件 1 行 LedgerHeader + N 行 LedgerEntry
 │   └── (后期)tfidf / extensions / commands / hooks / mcp / ...
 └── AGENTS.md                   # 仓库惯例的 codex agent 提示,被注入 systemPrompt
@@ -68,7 +68,8 @@
 - `paths.ts` —— `getProjectDir / getProjectSessionsDir / getProjectSettingsPath / getProjectAgentsMd / getGlobalAgentsMd`(都受 cwd 与 env `RUNLEDGER_DIR` / `RUNLEDGER_SESSION_DIR` 影响),`resolveSessionDir(cwd, settingsSessionDir?)` 抽出 settings.sessionDir 与 env 的优先级关系;
 - `path-utils.ts` —— 纯函数 `encodeCwd / safeIso / buildSessionFileName`(便于单测,不引 fs);
 - `settings-manager.ts` —— `ProjectSettings` schema + 异步 `loadProjectSettings` / `loadProjectSettingsSync` / `saveProjectSettings`(0o600 文件 + 0o700 父目录),未知字段丢弃、解析失败回退空不抛错(只写 stderr);
-- `session-manager.ts` —— `SessionManager` 在 `JsonlLedger` 上的薄包装,接口 `create / open / continueRecent / forkFrom / list / listAll`。`header.metadata.cwd` 在 create 时写入便于 list 按 cwd 过滤,`forkFrom` 复制源文件全部行并在 metadata 标 `parentSession=源路径`。SessionManager 不修改 LedgerSink 协议,仅暴露文件路径解析与列举能力;`open` 不预热 ledger(避免 append placeholder 污染源会话),该行为已通过单测固化。
+- `session-manager.ts` —— `SessionManager` 在 `JsonlLedger` 上的薄包装,接口 `create / open / continueRecent / forkFrom / list / listAll / acquireLock`。`open` 显式初始化但不追加 placeholder;fork 生成新 sessionId 并保留 parentSession/parentSessionId;CLI 持有整场独占锁直到退出。
+- `session-codec.ts` —— v2 canonical `AgentMessage` 与 runtime config 无损恢复;legacy v1 仅恢复安全文本并给出 warning,不伪造 tool args/thinking signature。
 
 `tests/storage/` 当前形态:
 
@@ -79,26 +80,25 @@
 
 `src/cli/` 当前形态:
 
-- `args.ts` —— 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`,未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
-- `main.ts` —— 按 §3 计划定流程装配:`parseArgs → handle -h/-v → debug env → loadProjectSettings → resolveSessionDir → SessionManager create/open/continueRecent/forkFrom → buildRuntime(anthropic key 存在走真路径,否则 mock 回退)→ buildSystemPrompt(合并 DEFAULT + cwd/AGENTS.md + ~/.runledger/agent/AGENTS.md,本期两点;祖先链扫描留 M8 后)→ InteractiveMode.run → finally closeAll ledger`;
+- `args.ts` —— 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / --provider <id> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`,未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
+- `main.ts` —— 装配 36 个 builtin provider + `AuthStorage` + v2 session replay + `InteractiveSessionController`;生产 CLI 不回退 mock,无认证时进入 TUI onboarding;`InteractiveMode.run()` 持续到退出后才在 finally 释放整场 ledger lock;
 - `cli.ts` —— bin 入口,仅 `main(process.argv.slice(2)).catch(exit 1)`;业务全留 main.ts 以便单测 spawnSync 跑。
 
-`bin/runledger.js` —— npm bin shim,`spawnSync('node', ['--import', 'tsx', 'src/cli/cli.ts', ...args])`;后期出 dist/cli/cli.js 后可改该 bin 直接 import dist 产物。
+`bin/runledger.js` —— npm bin shim,直接 import 编译后的 `dist/cli/cli.js`;运行时不依赖 tsx 或 src,重新链接前先跑 `npm run build`。
 
 `tests/cli/` 当前形态:
 
 - `args.test.ts` —— parseArgs 全旗 + error 通道 + 未知兜底(23 测试)
 - `main.test.ts` —— `--help / -h / --version / -v / --thinking bogus / --session 缺值` 通过 spawnSync `node --import tsx` 真跑 cli.ts 路径(7 测试)。真 TUI 路径因 stdin 阻塞留 manual smoke test。
 
-总计 158 测试全绿(原 35 + 49 + 30 + mock-runtime 相关等)。`npm run check` 与 `npm test` 应同时通过再行 commit。
+总计 264 测试全绿。`npm run check` 与 `npm test` 应同时通过再行 commit。
 
 `npm link` 后 PATH 上的 `runledger` 命令可直接打开 tui:
-`runledger --help` / `runledger --version` / `runledger`(无 ANTHROPIC_API_KEY 走 mock 回退;有则真 anthropic)、`runledger -c`(continueRecent)、`runledger --session <path>`、`runledger --fork <path>`。
+`runledger --help` / `runledger --version` / `runledger`(无凭据进入 provider onboarding)、`runledger -c`(continueRecent)、`runledger --resume`(TUI 选择历史会话)、`runledger --session <path>`、`runledger --fork <path>`。
 
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;
-- `prepareNextTurn` / `getSteeringMessages` / `getFollowUpMessages` 队列;
 - `thinkingBudgets` / `temperature` / `maxTokens` / `transport` / `maxRetries`;
 - Session 树分叉(JSONL ledger 是扁平的);
 - `AgentHarness` 高级状态机;
@@ -125,8 +125,51 @@
 - 修改代码后必须运行 `npm run check`(完整输出,不得截断),修复所有 error / warning / info 再提交;
 - 修改模型 catalog(增删 provider)后跑 `npm run generate-models`,把生成结果一并提交;
 - 依赖固定版本(`package.json` 中已用 `^` 但锁定主版本),变更 `package-lock.json` 视为已审阅代码;
-- Git:只 `git add <path1> <path2>` 修改的文件;禁止 `git add -A` / `-a` / `--no-verify`;禁止 `git reset --hard` / `git checkout .` / `git stash`;
+- Git:只暂存本任务明确涉及的路径;禁止宽泛的 `git add -A` / `git add .` / `git commit -a` / `--no-verify`;禁止 `git reset --hard` / `git checkout .` / `git stash`;
 - 每个 PR/commit 关注一件小事,描述写"为什么",不写"是什么"(差异本身已说明是什么)。
+
+### Git 提交与推送
+
+提交和推送是独立的状态变更。只有用户明确要求提交时才创建 commit；只有用户明确要求推送时才推送。工作区可能同时存在其他任务的改动，不能把 `git status` 中出现的全部文件视为本任务范围。
+
+提交前先确认当前仓库、分支和改动边界，并审阅本任务实际改动：
+
+```bash
+cd /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger
+git status --short
+git branch --show-current
+git diff --check
+git diff -- <explicit-paths...>
+```
+
+代码、测试、生成物或依赖变更在提交前必须完成对应验证。通常依次执行 `npm run check` 与 `npm test`；模型 catalog 变更还必须先执行 `npm run generate-models` 并审阅生成结果。纯文档变更至少要通过 `git diff --check`，不因无关的既有失败伪造通过状态。
+
+暂存必须逐路径进行。新增或修改文件使用 `git add --`，删除文件使用 `git add -u --`；拆分或重命名为“新增目录 + 删除旧文件”时，先暂存新目录，再单独暂存旧文件删除：
+
+```bash
+git add -- AGENTS.md src/runtime/new-module.ts tests/new-module.test.ts
+git add -u -- src/runtime/old-module.ts
+git diff --cached --name-status
+git diff --cached --check
+git diff --cached
+git commit -m "<one concise purpose-oriented message>"
+git status --short
+git log -1 --oneline
+```
+
+- 不使用 `git add -A`、`git add .`、`git commit -a`、`--no-verify`，也不借用其他仓库的提交脚本。
+- 新增目录模块时使用 `git add -- <new-directory>`；删除的旧文件单独使用 `git add -u -- <deleted-file>`，避免将共享工作区的无关删除带入提交。
+- 提交前用 `git config --get user.name` 和 `git config --get user.email` 确认身份；身份缺失或不正确时先请求明确授权，不能从其他仓库复制身份配置。
+- commit 只覆盖一件小事，消息写明目的或原因；未暂存的无关改动必须保留在工作区。
+
+需要推送时，先核对远端和当前分支。本仓库当前预期的 `origin` 是 `https://github.com/Crsei/RunLedger.git`，但每次推送前仍以本地配置为准：
+
+```bash
+git remote get-url origin
+git push origin "$(git branch --show-current)"
+```
+
+如认证不可交互，使用现有的受控凭据或临时 `GIT_ASKPASS` 帮助程序；关闭 shell xtrace、将帮助程序权限设为 `700`、设置 `GIT_TERMINAL_PROMPT=0`，并在命令结束后立即删除它。不得读取、打印、复制或暂存 token、密码或凭据文件。若只需要本地提交，省略推送步骤。
 
 ## 4. 目录约定
 
@@ -142,7 +185,7 @@ src/                pi-ai 移植层 + RunLedger 运行时实现
   oauth.ts / bun-oauth.ts / bedrock-provider.ts  顶层桥
   api/              30 个 provider 适配实现(stream / streamSimple)
   auth/             凭据 + OAuth 流(pkce / device-code / 各 provider)
-  providers/        35 个 provider 工厂 + data/*.json(自动生成 model catalog)
+  providers/        36 个 builtin provider + 35 份 data/*.json(自动生成 model catalog)
   storage/          auth-storage / runtime-credentials / paths / resolve-config-value
   utils/            uuid / overflow / diagnostics / retry / validation / event-stream / shell(git-bash 探测)/ ... 21+1 个文件
   compat/           extension-oauth-types.ts(OAuth 类型桥)
@@ -182,7 +225,7 @@ tmp/               运行时产物(JSONL ledger 等),已 gitignore
   - **M6 examples + mock-stream phase**:
     - `examples/m3-demo.ts` V2 Task + lockfile + high-water + MultiEdit 6 阶段演示,跑 `npx tsx examples/m3-demo.ts` 全绿;
     - `mockStreamFn` 新增 phase 0(首轮)/phase 1(已有 ≤3 个 toolResult)/phase 2(≥4 个 toolResult final summary);`detectMockPhase(ctx)` 纯函数 + `options.onPhase(phase)` 钩子;新 `MAX_TOOL_TURNS_PER_SESSION = 4`;
-  - 仍未实现:transformContext / 队列 / AgentHarness / compaction(详见 §1.3);
+  - 仍未实现:transformContext / AgentHarness / compaction(详见 §1.3);
 - `storage/getAgentDir` 默认 `~/.runledger/agent`,可用环境变量 `RUNLEDGER_DIR` 覆盖(pi 中是 `PI_CODING_AGENT_DIR`);
 - `storage/resolve-config-value.ts` 仅支持字面值与 `${ENV_VAR}` 模板,**不**支持 pi 的 `$(cmd)` shell 命令,
   以避免引入额外 shell 注入面与近距离依赖;

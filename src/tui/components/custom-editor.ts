@@ -14,7 +14,7 @@
  * CustomEditor 只持有 onSubmit / appInterrupt / appExit 三回调引。
  */
 
-import { Editor, type TUI, type EditorTheme } from "../index.ts";
+import { Editor, matchesKey, type TUI, type EditorTheme } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import type { SelectListTheme } from "../index.ts";
 
@@ -31,6 +31,8 @@ export interface CustomEditorProps {
   onInterrupt?: () => void;
   /** 退出 TUI;对应 app.exit 动作。本期不接通,占位。 */
   onExit?: () => void;
+  onFollowUp?: (text: string) => void;
+  onDequeue?: () => void;
   /** paddingX,默认 0;若需要左侧留白(对照 pi 默认 1)由装配方调。 */
   paddingX?: number;
 }
@@ -44,10 +46,31 @@ export function makeEditorTheme(theme: Theme, selectList: SelectListTheme): Edit
 }
 
 export class CustomEditor extends Editor {
+  private readonly onFollowUp?: (text: string) => void;
+  private readonly onDequeue?: () => void;
+
   constructor(tui: TUI, theme: EditorTheme, props: CustomEditorProps) {
     super(tui, theme, { paddingX: props.paddingX ?? 0 });
     this.onSubmit = props.onSubmit;
     this.onChange = props.onChange;
     this.disableSubmit = false;
+    this.onFollowUp = props.onFollowUp;
+    this.onDequeue = props.onDequeue;
+  }
+
+  override handleInput(data: string): void {
+    if (matchesKey(data, "alt+enter") && this.onFollowUp) {
+      const text = this.getText();
+      if (text.trim().length > 0) {
+        this.setText("");
+        this.onFollowUp(text);
+      }
+      return;
+    }
+    if (matchesKey(data, "alt+up") && this.onDequeue) {
+      this.onDequeue();
+      return;
+    }
+    super.handleInput(data);
   }
 }

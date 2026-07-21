@@ -40,7 +40,6 @@ function extractThinking(partial: AssistantMessage | undefined): string {
     .join("");
 }
 
-void extractThinking as never;
 // 工具:把 toolCalls 抽出供 AssistantMessageComponent 后续(M3)显示
 export function extractToolCalls(partial: AssistantMessage | undefined): ToolCall[] {
   if (!partial) return [];
@@ -51,6 +50,7 @@ export class AssistantMessageComponent implements Component {
   private partial: AssistantMessage | undefined;
   private readonly markdown: Markdown;
   private readonly theme: Theme;
+  private thinkingExpanded = false;
 
   constructor(props: AssistantMessageComponentProps) {
     this.theme = props.theme;
@@ -73,10 +73,26 @@ export class AssistantMessageComponent implements Component {
     // M2 noop
   }
 
+  toggleThinking(): void {
+    this.thinkingExpanded = !this.thinkingExpanded;
+  }
+
   render(width: number): string[] {
     if (!this.partial) return [];
     try {
-      return this.markdown.render(width);
+      const lines: string[] = [];
+      const thinking = extractThinking(this.partial);
+      if (thinking.length > 0) {
+        if (this.thinkingExpanded) {
+          lines.push("[thinking]");
+          lines.push(...thinking.split("\n").map((line) => `  ${line}`));
+        } else {
+          const first = thinking.split("\n")[0] ?? "";
+          lines.push(`[thinking] ${first}${thinking.includes("\n") ? " …" : ""}`.slice(0, width));
+        }
+      }
+      lines.push(...this.markdown.render(width));
+      return lines;
     } catch (e) {
       process.stderr.write(`[assistant-message] markdown render failed: ${String(e)}\n`);
       // 兜底:返回纯文本,不抛

@@ -10,7 +10,7 @@
  *   - FooterSnapshotProvider 由 InteractiveMode 实现,Footer 周期性 pull 状态。
  */
 
-import type { AgentEvent } from "../runtime/types.ts";
+import type { AgentEvent, AgentMessage, ToolResultContent } from "../runtime/types.ts";
 import type { AssistantMessageEvent } from "../types.ts";
 
 /** TUI 主控 switch 标签;对照 03-event-binding.md §1 表。 */
@@ -27,14 +27,23 @@ export type TuiEvent =
       timestamp: number;
       role: "user" | "assistant";
       stopReason?: string;
+      message?: AgentMessage;
     }
   | { type: "message_update"; timestamp: number; assistantMessageEvent: AssistantMessageEvent }
   | {
-      type: "tool_execution_start" | "tool_execution_end";
+      type: "tool_execution_start";
       timestamp: number;
       toolCallId: string;
       toolName: string;
-      isError?: boolean;
+      args: unknown;
+    }
+  | {
+      type: "tool_execution_end";
+      timestamp: number;
+      toolCallId: string;
+      toolName: string;
+      isError: boolean;
+      result: ToolResultContent;
     }
   | {
       type: "tool_execution_update";
@@ -42,6 +51,12 @@ export type TuiEvent =
       toolCallId: string;
       toolName: string;
       partialResult: unknown;
+    }
+  | {
+      type: "queue_update";
+      timestamp: number;
+      steering: AgentMessage[];
+      followUp: AgentMessage[];
     };
 
 /**
@@ -70,6 +85,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         timestamp: ev.timestamp,
         role: ev.role,
         stopReason: ev.stopReason,
+        message: ev.message,
       };
     case "message_update":
       return {
@@ -78,13 +94,21 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         assistantMessageEvent: ev.assistantMessageEvent,
       };
     case "tool_execution_start":
+      return {
+        type: "tool_execution_start",
+        timestamp: ev.timestamp,
+        toolCallId: ev.toolCallId,
+        toolName: ev.toolName,
+        args: ev.args,
+      };
     case "tool_execution_end":
       return {
-        type: ev.type,
+        type: "tool_execution_end",
         timestamp: ev.timestamp,
         toolCallId: ev.toolCallId,
         toolName: ev.toolName,
         isError: ev.isError,
+        result: ev.result,
       };
     case "tool_execution_update":
       return {
@@ -93,6 +117,13 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         toolCallId: ev.toolCallId,
         toolName: ev.toolName,
         partialResult: ev.partialResult,
+      };
+    case "queue_update":
+      return {
+        type: "queue_update",
+        timestamp: ev.timestamp,
+        steering: ev.steering,
+        followUp: ev.followUp,
       };
   }
 }
@@ -119,6 +150,8 @@ export interface FooterSnapshotProvider {
   getStopReason(): string | undefined;
   /** 当前模型 id(显示在 footer 右侧)。 */
   getModelId(): string;
+  getProviderId?(): string;
+  getThinkingLevel?(): import("../types.ts").ModelThinkingLevel;
   /** 当前 session id(显示在 footer 中间)。 */
   getSessionId(): string;
 }

@@ -2,8 +2,7 @@
 /**
  * RunLedger CLI bin 入口 —— 直接调用 src/cli/main.ts 的 main()。
  *
- * 这个文件作为 package.json#bin 的 target;由 npm link / npm install -g 生成
- * PATH 里的 `runledger` 命令。本文件本身只做:
+ * 这个文件编译为 dist/cli/cli.js,由 bin/runledger.js 加载。本文件本身只做:
  *   1. 从 process.argv.slice(2) 取参
  *   2. 调 main + .catch(exit 1)
  *

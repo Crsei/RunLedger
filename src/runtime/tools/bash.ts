@@ -52,6 +52,9 @@ export interface BashToolDetails {
   };
   /** 实际使用的 output_format */
   outputFormat?: "text" | "stream-json";
+  stdoutChunk?: string;
+  stderrChunk?: string;
+  durationMs?: number;
 }
 
 export interface BashOperations {
@@ -62,6 +65,8 @@ export interface BashOperations {
     maxOutputChars?: number;
     signal?: AbortSignal;
     stdin?: string;
+    onStdout?: (chunk: string) => void;
+    onStderr?: (chunk: string) => void;
   }) => Promise<ShellResult>;
 }
 
@@ -89,7 +94,7 @@ export function createBashTool(
     description: "在 shell 中执行一条命令,流式回传 stdout/stderr。非零退出码视为错误。",
     parameters: bashSchema,
     isDestructive: () => true,
-    async execute(_toolCallId, params, signal?): Promise<AgentToolResult<BashToolDetails>> {
+    async execute(_toolCallId, params, signal, onUpdate): Promise<AgentToolResult<BashToolDetails>> {
       const cmd = params.command;
       const stdin = params.stdin;
       const runInBackground = params.run_in_background === true;
@@ -114,6 +119,7 @@ export function createBashTool(
               },
             ],
             details: { exitCode: 127 },
+            isError: true,
             terminate: false,
           };
         }
@@ -134,6 +140,7 @@ export function createBashTool(
 
       // === 前台模式 ===
       let r: ShellResult;
+      const startedAt = Date.now();
       try {
         r = await ops.exec(cmd, {
           cwd,
@@ -141,17 +148,31 @@ export function createBashTool(
           maxOutputChars: defaultMaxOutput,
           signal,
           stdin,
+          onStdout: (chunk) => {
+            onUpdate?.({
+              content: [{ type: "text", text: chunk }],
+              details: { stdoutChunk: chunk, outputFormat },
+            });
+          },
+          onStderr: (chunk) => {
+            onUpdate?.({
+              content: [{ type: "text", text: chunk }],
+              details: { stderrChunk: chunk, outputFormat },
+            });
+          },
         });
       } catch (e) {
         return {
           content: [{ type: "text", text: `bash 执行失败: ${(e as Error).message ?? String(e)}` }],
           details: { exitCode: 127 },
+          isError: true,
           terminate: false,
         };
       }
 
       const details: BashToolDetails = {
         exitCode: r.exitCode,
+        durationMs: Date.now() - startedAt,
       };
       // 截断标记:Shell 内部已截断,这里仅 details 透传
       if (r.stdout && r.stdout.length >= defaultMaxOutput) {
@@ -175,6 +196,7 @@ export function createBashTool(
       return {
         content: [{ type: "text", text }],
         details,
+        isError: r.exitCode !== 0 || r.signaled === true,
         terminate: false,
       };
     },

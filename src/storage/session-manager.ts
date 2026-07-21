@@ -25,8 +25,9 @@ import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import * as path from "node:path";
-import type { LedgerHeader } from "../runtime/ledger/types.ts";
+import { newId, type LedgerEntry, type LedgerHeader } from "../runtime/ledger/types.ts";
 import { JsonlLedger } from "../runtime/ledger/jsonl-ledger.ts";
+import { acquireLedgerLock } from "../runtime/ledger/lockfile.ts";
 import { resolveSessionDir } from "./paths.ts";
 import { buildSessionFileName } from "./path-utils.ts";
 
@@ -66,6 +67,7 @@ export class SessionManager {
   private readonly _cwd: string;
   private readonly _sessionDir: string;
   private readonly _filePath: string;
+  private _releaseLock: (() => Promise<void>) | undefined;
 
   constructor(
     ledger: JsonlLedger,
@@ -103,6 +105,16 @@ export class SessionManager {
   /** 释放底层 ledger 资源(JsonlLedger.close noop,留作未来 write buffer 用) */
   async closeAll(): Promise<void> {
     await this._ledger.close();
+    const release = this._releaseLock;
+    this._releaseLock = undefined;
+    if (release) await release();
+  }
+
+  /** 活跃写会话持整场独占锁;重复调用幂等。 */
+  async acquireLock(): Promise<void> {
+    if (this._releaseLock) return;
+    await this._ledger.initialize();
+    this._releaseLock = await acquireLedgerLock(this._ledger);
   }
 
   /**
@@ -118,17 +130,7 @@ export class SessionManager {
       metadata,
       truncate: opts.truncate ?? false,
     });
-    // 触发 ensureInitialized 写 header(或读现有 header 继承)
-    await ledger.append({
-      id: "placeholder",
-      sessionId: ledger.sessionId,
-      parentId: "init",
-      timestamp: Date.now(),
-      type: "custom",
-      payload: { kind: "session.create" },
-    }).catch(() => {
-      // 失败以内存 entry 为凭,不影响 caller
-    });
+    await ledger.initialize();
     return new SessionManager(ledger, opts.cwd, sessionDir, filePath);
   }
 
@@ -143,6 +145,7 @@ export class SessionManager {
     const absolute = path.resolve(filePath);
     const sessionDir = path.dirname(absolute);
     const ledger = new JsonlLedger({ filePath: absolute });
+    await ledger.initialize();
     const cd = await readHeader(absolute);
     const headerCwd = cd?.metadata?.cwd;
     return new SessionManager(
@@ -185,26 +188,42 @@ export class SessionManager {
     const targetPath = path.join(dir, buildSessionFileName());
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     const content = await fs.readFile(sourcePath, "utf8");
-    // 改新 header 段:替换第一行 JSON 中的 metadata.parentSession 字段
+    // 新 fork 拥有独立 sessionId,历史 entry 改写到新会话并保留父会话元数据。
     const lines = content.split(/\r?\n/).filter((l) => l.length > 0);
     if (lines.length === 0) {
       await fs.writeFile(targetPath, "", "utf8");
     } else {
       const first = JSON.parse(lines[0]!) as LedgerHeader;
+      const newSessionId = newId();
+      const newHeaderId = newId();
       const mergedMeta: Record<string, unknown> = {
         ...(first.metadata ?? {}),
         cwd: targetCwd,
         parentSession: path.resolve(sourcePath),
+        parentSessionId: first.sessionId,
       };
       const newHeader: LedgerHeader = {
         ...first,
-        id: first.id,
-        sessionId: first.sessionId,
+        version: 2,
+        id: newHeaderId,
+        sessionId: newSessionId,
+        createdAt: Date.now(),
         metadata: mergedMeta,
       };
-      // 注:fork 本期沿用旧 sessionId/Header id 以保留可追溯性;
-      // 新文件与源文件可同时存在,互不影响。
       lines[0] = JSON.stringify(newHeader);
+      for (let i = 1; i < lines.length; i++) {
+        try {
+          const entry = JSON.parse(lines[i]!) as LedgerEntry;
+          lines[i] = JSON.stringify({
+            ...entry,
+            sessionId: newSessionId,
+            parentId: entry.parentId === first.id ? newHeaderId : entry.parentId,
+          });
+        } catch {
+          // 损坏行不复制,避免把不可解析内容带入新会话。
+          lines[i] = "";
+        }
+      }
       await fs.writeFile(targetPath, lines.join("\n") + "\n", "utf8");
     }
     return SessionManager.open(targetPath);

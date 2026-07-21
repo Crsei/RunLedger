@@ -22,6 +22,8 @@ export class StatusComponent implements Component {
   private stopReason: string | undefined;
   private inputTokens: number | undefined;
   private outputTokens: number | undefined;
+  private steeringCount = 0;
+  private followUpCount = 0;
 
   constructor(props: StatusComponentProps) {
     this.turn = props.initialTurn;
@@ -45,12 +47,20 @@ export class StatusComponent implements Component {
     this.outputTokens = output;
   }
 
+  setQueueCounts(steering: number, followUp: number): void {
+    this.steeringCount = steering;
+    this.followUpCount = followUp;
+  }
+
   render(width: number): string[] {
     const parts: string[] = [];
     if (this.turn !== undefined) parts.push(`turn:${this.turn}`);
     if (this.stopReason) parts.push(`stop:${this.stopReason}`);
     if (this.inputTokens !== undefined && this.outputTokens !== undefined) {
       parts.push(`tok:${this.inputTokens}/${this.outputTokens}`);
+    }
+    if (this.steeringCount > 0 || this.followUpCount > 0) {
+      parts.push(`queue:s${this.steeringCount}/f${this.followUpCount}`);
     }
     const line = parts.join("  ");
     if (line.length <= width) {

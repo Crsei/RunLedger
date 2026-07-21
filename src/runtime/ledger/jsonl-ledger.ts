@@ -15,6 +15,7 @@
  */
 
 import { promises as fs } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import * as path from "node:path";
 import type {
   LedgerEntry,
@@ -47,11 +48,12 @@ export class JsonlLedger implements LedgerSink {
 
   constructor(opts: JsonlLedgerOptions) {
     this.filePath = opts.filePath;
-    this.sessionId = opts.sessionId ?? newId();
     this._truncate = opts.truncate ?? false;
-    this._header = {
+    const existing = !this._truncate ? readExistingHeader(opts.filePath) : undefined;
+    this.sessionId = existing?.sessionId ?? opts.sessionId ?? newId();
+    this._header = existing ?? {
       type: "ledger",
-      version: 1,
+      version: 2,
       id: newId(),
       createdAt: Date.now(),
       sessionId: this.sessionId,
@@ -86,6 +88,9 @@ export class JsonlLedger implements LedgerSink {
    */
   async append(entry: LedgerEntry): Promise<void> {
     await this.ensureInitialized();
+    if (entry.sessionId !== this.sessionId) {
+      entry = { ...entry, sessionId: this.sessionId };
+    }
     if (!entry.parentId) {
       entry = { ...entry, parentId: this._lastParentId };
     }
@@ -114,7 +119,11 @@ export class JsonlLedger implements LedgerSink {
   async close(): Promise<void> {
     // 本期每次 append 都独立 flush,close 无需做额外持久化。
     // `// TODO(pi): 引入 write buffer + flush-on-close 以提升吞吐`
-    this._initialized = false;
+  }
+
+  /** 显式创建/加载 header 与存量 entries,不追加占位事件。 */
+  async initialize(): Promise<void> {
+    await this.ensureInitialized();
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -144,12 +153,11 @@ export class JsonlLedger implements LedgerSink {
         const lines = content.split(/\r?\n/).filter((l) => l.length > 0);
         if (lines.length > 0) {
           const first = JSON.parse(lines[0]!) as LedgerHeader;
-          // 继承 header 与最后一条 id
-          (this._header as { id: string }).id = first.id;
-          (this._header as { sessionId: string }).sessionId = first.sessionId;
-          (this._header as { createdAt: number }).createdAt = first.createdAt;
-          (this._header as { metadata?: Record<string, unknown> }).metadata =
-            first.metadata;
+          if (first.sessionId !== this.sessionId) {
+            throw new Error(
+              `ledger sessionId mismatch: header=${first.sessionId} runtime=${this.sessionId}`,
+            );
+          }
           // 把已有 entries 加载到内存(for get / findByType)
           for (let i = 1; i < lines.length; i++) {
             try {
@@ -175,5 +183,20 @@ export class JsonlLedger implements LedgerSink {
     } catch (e) {
       this._lastError = e;
     }
+  }
+}
+
+function readExistingHeader(filePath: string): LedgerHeader | undefined {
+  if (!existsSync(filePath)) return undefined;
+  try {
+    const content = readFileSync(filePath, "utf8");
+    const firstLine = content.split(/\r?\n/, 1)[0]?.trim();
+    if (!firstLine) return undefined;
+    const parsed = JSON.parse(firstLine) as LedgerHeader;
+    return parsed.type === "ledger" && (parsed.version === 1 || parsed.version === 2)
+      ? parsed
+      : undefined;
+  } catch {
+    return undefined;
   }
 }

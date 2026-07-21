@@ -51,7 +51,7 @@
 ### 子任务
 1. `src/storage/session-manager.ts` 新建薄包装,每个静态构造方法返回 SessionManager,内部持 `JsonlLedger` 实例;
 2. `create({ cwd, sessionDir?, sessionId?, metadata?, truncate? })` 落 `<sessionDir>/<iso>_<id>.jsonl`,metadata 写 `cwd` 便于 list 过滤;
-3. `open(path)` 触发 `JsonlLedger.ensureInitialized`(ensureInitialized 在 append 时触发);
+3. `open(path)` 显式初始化 `JsonlLedger`,读取现有 header/entries,不追加 placeholder;
 4. `continueRecent` 在 sessionDir 中扫所有 *.jsonl,按 header.metadata.cwd 过滤 + mtime 倒序取首条;若无可匹配则回退 create;
 5. `forkFrom(sourcePath, targetCwd, sessionDir?)` 复制源文件全部行到新文件,metadata 标 `parentSession = path.resolve(sourcePath)`;
 6. `list(cwd, sessionDir?)` 列出 *.jsonl header,跳过损坏文件(只写 stderr),按 mtime 倒序;
@@ -59,8 +59,9 @@
 
 ### 关键设计
 - `SessionManager` 不修改 `LedgerSink` 协议,仅暴露文件路径解析与列举能力;
-- `open` 不预热 ledger(避免 append placeholder 污染源会话),ledger.header() 在调用方首次 append 后才反映文件内真实 sessionId;这一行为已通过单测固化;
-- `forkFrom` 沿用旧 sessionId 与 header id 以保留可追溯性(新文件与源文件可同时存在,互不影响)。
+- `open` 初始化后立即继承文件内真实 sessionId,不污染源会话;
+- `forkFrom` 生成新 sessionId/header id,改写历史 entry 的 sessionId,并在 metadata 保存 parentSession/parentSessionId;
+- CLI 调 `acquireLock()` 持有整场独占锁,只在 InteractiveMode 完整退出后释放。
 
 ## §3 CLI 入口
 
@@ -70,24 +71,24 @@
 
 ### 子任务
 1. `src/cli/args.ts` 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`;未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
-2. `src/cli/main.ts` 按 §3 计划定流程装配:`parseArgs → handle -h/-v → debug env → loadProjectSettings → resolveSessionDir → SessionManager create/open/continueRecent/forkFrom → buildRuntime(anthropic key 存在走真路径,否则 mock 回退)→ buildSystemPrompt(合并 DEFAULT + cwd/AGENTS.md + ~/.runledger/agent/AGENTS.md,本期两点,祖先链扫描留 M8 后)→ InteractiveMode.run → finally closeAll ledger`;
+2. `src/cli/main.ts` 装配全部 builtin providers + AuthStorage + v2 session replay + InteractiveSessionController;生产路径不回退 mock,无凭据时进入 onboarding;
 3. `src/cli/cli.ts` bin 入口,仅 `main(process.argv.slice(2)).catch(exit 1)`;业务全留 main.ts 以便单测;
-4. `bin/runledger.js` npm bin shim,`spawnSync('node', ['--import', 'tsx', 'src/cli/cli.ts', ...args])`;后期出 dist/cli/cli.js 后可改该 bin 直接 import dist 产物;
+4. `bin/runledger.js` npm bin shim,直接 import 编译后的 `dist/cli/cli.js`,运行时不依赖 tsx 或 src;
 5. `package.json` 加 `bin.runledger` 字段、`scripts.cli / cli:debug`;
 6. `npm link` 后 PATH 上的 `runledger` 命令可直接打开 TUI;
-7. `tests/cli/args.test.ts` 23 例覆盖 parseArgs 全旗;`tests/cli/main.test.ts` 7 例通过 spawnSync `node --import tsx` 真跑 cli.ts 的 `--help / -h / --version / -v / --thinking bogus / --session 缺值`(error path);真 TUI 路径因 stdin 阻塞留 manual smoke test。
+7. `tests/cli/` 覆盖 argv 与早期退出;runtime/storage/TUI 新增 16 个专项测试,另用 tmux PTY 验证 onboarding、provider/login/model/thinking、resume、退出与终端恢复。
 
 ### 关键设计
 - 对齐 pi `bin/cli.ts` 形态:cli.ts 仅做参数透传与 .catch exit 1,业务全在 main.ts 以便单测 spawnSync 真跑;
-- `bin/runledger.js` 不引 await import 动态注册(AGENTS.md §2 禁内联),统一 spawnSync 进程;
-- `--thinking` 切换在本期不真生效(`createAnthropicAgent` 在构造时一次性 cake thinking level);切换需重建 streamFn —— 留作 §M8e polish。
+- `bin/runledger.js` 不引 await import 动态注册(AGENTS.md §2 禁内联),只静态加载 dist CLI;
+- provider/model/thinking 由 `InteractiveSessionController` 统一切换,thinking 通过 `SimpleStreamOptions.reasoning` 在下一次请求生效;选择同时写项目 settings 与 session config 事件。
 
 ## 子任务后续(本期不实现,M8 后续 PR)
 
 - 祖先链 AGENTS.md 扫描(本期仅 cwd 直接目录与 global 两点);
-- `--resume` 弹 Overlay 选择列表(本期 placeholder:走 continueRecent 取最大 mtime);
-- 真正的 thinkingLevel 切换生效(`createAnthropicAgent` 接受 `thinkingLevelRef`;
+- [x] `--resume` 启动前 TUI session selector;
+- [x] thinkingLevel 切换进入真实 provider 请求;
 - 用户层 settings 与项目层 settings 合并策略(对照 pi `config.ts` resolveConfigValue);
-- EnabledModels 过滤 `/model` 选择器可见候选(本期简化:候选默认全部 known);
+- [x] EnabledModels 过滤 `/model` 选择器可见候选;
 - trust-manager / extensions / skills / themes 加载;
-- `dist/cli/cli.js` 编译产物稳定后,bin 切到 `import('../dist/cli/cli.js')`(去除 tsx 依赖)。
+- [x] `bin/runledger.js` 已切到 `import('../dist/cli/cli.js')`,去除终端命令对 tsx 与 src 的运行时依赖。

@@ -22,7 +22,7 @@
 
 - 不重写差分渲染引擎、不重写 Kitty 键盘协议、不重写 `Markdown`/`Editor`/`Loader` 这些纯底层组件(pi-tui 已就位);
 - 不引入 pi 的 `extension`/`skill`/`prompt-template`/`first-time-setup`/`oauth-selector`/`branch-summary` 等彩蛋与扩展体系;
-- 不实现 Compaction、Steering、Follow-up 队列、Context usage(这些是 agent-loop 侧能力,本期 agent-loop 仍是骨架);
+- 不实现 Compaction、branch summarization 与 Context usage;Steering / Follow-up 队列已由 runtime 接入;
 - 不做 Windows 原生修饰键 N-API 桥(`pi-tui` 已自带 `native-modifiers.ts`,无需我们重做);
 - `tests/` 中 `agent-loop.test.ts` 仍由 agent-loop 填实独立任务接管,与本计划无关。
 
@@ -102,8 +102,9 @@ development-doc/tui/            本计划所在目录
 | `07-roadmap.md` | 8 个里程碑的子任务拆解、验证标准、风险点 |
 | `08-cross-project-lessons.md` | 从 `claude-code-bun` REPL 提取的、与 TUI 框架无关的设计原则集结,作参照用 |
 | `09-remote-control-roadmap.md` | 进程级 singleton handle + 远程控制桥的远期设计,本期 M0–M7 不实现 |
+| `10-documentation-update-plan.md` | `08` / `09` 两份文档的历史更新计划与验收边界 |
 
-阅读顺序:`00 → 01 → 02 → 03`(主路径)→ `04/05/06`(渲染与定制)→ `07`(落地节奏)→ `08/09`(跨项目参照与远期设计,参考性阅读)。
+阅读顺序:`00 → 01 → 02 → 03`(主路径)→ `04/05/06`(渲染与定制)→ `07`(落地节奏)→ `08/09`(跨项目参照与远期设计,参考性阅读)。`10` 是历史更新计划,仅在追溯设计来源或验收边界时阅读。
 
 ---
 
@@ -130,7 +131,7 @@ development-doc/tui/            本计划所在目录
 | 主题色槽 | 70 个 | 20 个 |
 | 选择器 | 12+ 个 | 3 个 |
 | 事件总线 | `AgentSession.subscribe` 自有 16 个事件 | 直接接 `Agent.subscribe(AgentEvent)`,5 个事件 |
-| Compaction / Steering | 有 | 无 |
+| Compaction / Steering | 有 | Steering/Follow-up 已完成;Compaction 未实现 |
 | Extension / Skill / Prompt template | 有 | 无 |
 | 彩蛋/公告 | 3 个 | 无 |
 | 工具执行展示 | Bash/Edit/Grep/Read/... 等 | Bash 一类(Demo)+ 通用 Tool 兜底 |

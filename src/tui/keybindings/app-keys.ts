@@ -31,9 +31,11 @@ export type InputListener = (data: string) =>
 
 export interface AppKeyCallbacks {
   /** Ctrl+C:中断当前 turn(若 streaming)、否则尝试清空当前输入(默认 Editor 行为)。 */
-  onInterrupt?: () => void;
+  /** 返回 false 时不消费,让当前 overlay/component 自行处理。 */
+  onInterrupt?: () => boolean | void;
   /** Ctrl+D:若 Editor 空且无 streaming,优雅退出 TUI(EOF 语义)。 */
-  onExit?: () => void;
+  /** 返回 true 才消费 Ctrl+D;非空编辑器返回 false 交还 forward-delete。 */
+  onExit?: () => boolean;
   /** Ctrl+L:重新同步终端状态(强制全屏重绘)。 */
   onRefresh?: () => void;
 }
@@ -41,12 +43,10 @@ export interface AppKeyCallbacks {
 export function createAppKeyListener(callbacks: AppKeyCallbacks): InputListener {
   return (data: string): ReturnType<InputListener> => {
     if (matchesKey(data, "ctrl+c") && callbacks.onInterrupt) {
-      callbacks.onInterrupt();
-      return { consume: true };
+      return callbacks.onInterrupt() === false ? undefined : { consume: true };
     }
     if (matchesKey(data, "ctrl+d") && callbacks.onExit) {
-      callbacks.onExit();
-      return { consume: true };
+      return callbacks.onExit() ? { consume: true } : undefined;
     }
     if (matchesKey(data, "ctrl+l") && callbacks.onRefresh) {
       callbacks.onRefresh();

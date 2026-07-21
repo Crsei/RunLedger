@@ -28,7 +28,8 @@ import type {
   ImageContent,
   Message,
   Model,
-  StreamOptions,
+  ModelThinkingLevel,
+  SimpleStreamOptions,
   StopReason,
   TextContent,
   Tool,
@@ -132,6 +133,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
 export interface AgentToolResult<T = unknown> {
   content: (TextContent | ImageContent)[];
   details: T;
+  /** 工具已完成但结果应作为错误回灌,例如 bash 非零退出。 */
+  isError?: boolean;
   addedToolNames?: string[];
   terminate?: boolean;
 }
@@ -145,11 +148,15 @@ export interface UserAgentMessage {
 
 export interface AssistantAgentMessage {
   role: "assistant";
-  /** 直接复用 pi-ai ToolCall,避免译码 */
-  content: (TextContent | ToolCall)[];
+  /** 保留 provider 返回的完整 content,包括 thinking/signature 与 toolCall。 */
+  content: AssistantMessage["content"];
   stopReason: StopReason;
   usage?: AssistantMessage["usage"];
   errorMessage?: string;
+  api?: AssistantMessage["api"];
+  provider?: AssistantMessage["provider"];
+  model?: AssistantMessage["model"];
+  timestamp?: AssistantMessage["timestamp"];
 }
 
 /**
@@ -225,14 +232,23 @@ export type AgentEvent =
       timestamp: number;
       role: "user" | "assistant";
       stopReason?: StopReason;
+      message?: AgentMessage;
     }
   | { type: "message_update"; timestamp: number; assistantMessageEvent: AssistantMessageEvent }
   | {
-      type: "tool_execution_start" | "tool_execution_end";
+      type: "tool_execution_start";
       timestamp: number;
       toolCallId: string;
       toolName: string;
-      isError?: boolean;
+      args: unknown;
+    }
+  | {
+      type: "tool_execution_end";
+      timestamp: number;
+      toolCallId: string;
+      toolName: string;
+      isError: boolean;
+      result: ToolResultContent;
     }
   | {
       type: "tool_execution_update";
@@ -240,6 +256,12 @@ export type AgentEvent =
       toolCallId: string;
       toolName: string;
       partialResult: AgentToolResult;
+    }
+  | {
+      type: "queue_update";
+      timestamp: number;
+      steering: AgentMessage[];
+      followUp: AgentMessage[];
     };
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;
@@ -275,7 +297,7 @@ export interface StreamFn {
   (
     model: Model<Api>,
     context: LlmContext,
-    options?: StreamOptions,
+    options?: SimpleStreamOptions,
   ): AssistantMessageEventStream | Promise<AssistantMessageEventStream>;
 }
 
@@ -287,6 +309,8 @@ export interface StreamFn {
  */
 export interface AgentLoopConfig {
   model: Model<Api>;
+  /** 当前有效 thinking level;off 时请求不发送 reasoning。 */
+  reasoning?: ModelThinkingLevel;
   apiKey?: string;
   /** 透传给 streamFn 的 env overrides,激活 ANTHROPIC_BASE_URL 等 */
   env?: Record<string, string>;
@@ -313,6 +337,10 @@ export interface AgentLoopConfig {
     messages: AgentMessage[];
     turn: number;
   }) => AgentLoopTurnUpdate | Promise<AgentLoopTurnUpdate>;
+  /** 每个 assistant/tool 批次后拉取 steering 消息。 */
+  getSteeringMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
+  /** agent 原本将结束时拉取 follow-up 消息。 */
+  getFollowUpMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
   /**
    * 工具调用前置 hook。返回 `{ block: true, reason }` 阻断执行并生成
    * isError tool result;返回 void/undefined 放行。
@@ -351,10 +379,35 @@ export interface AgentState {
   messages: AgentMessage[];
   tools: AgentTool[];
   model: Model<Api>;
+  thinkingLevel: ModelThinkingLevel;
 }
 
 export interface AgentLoopTurnUpdate {
   systemPrompt?: string;
   tools?: AgentTool[];
   model?: Model<Api>;
+  thinkingLevel?: ModelThinkingLevel;
+}
+
+/** steering/follow-up 每次 drain 一条或全部。 */
+export type QueueMode = "one-at-a-time" | "all";
+
+export interface ToolAuthorizationRequest {
+  assistantMessage: AssistantAgentMessage;
+  toolCall: AgentToolCall;
+  args: unknown;
+  tool: AgentTool | undefined;
+  context: AgentContext;
+}
+
+export type ToolAuthorizationDecision =
+  | { decision: "allow" }
+  | { decision: "deny"; reason: string };
+
+/** 可替换的工具权限策略;TUI 审批以后只需替换此接口实现。 */
+export interface ToolAuthorizationPolicy {
+  authorize(
+    request: ToolAuthorizationRequest,
+    signal?: AbortSignal,
+  ): ToolAuthorizationDecision | Promise<ToolAuthorizationDecision>;
 }

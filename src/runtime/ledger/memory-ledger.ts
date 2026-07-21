@@ -19,7 +19,7 @@ export class MemoryLedger implements LedgerSink {
     const now = Date.now();
     this._header = {
       type: "ledger",
-      version: 1,
+      version: 2,
       id: newId(),
       createdAt: now,
       sessionId: this.sessionId,

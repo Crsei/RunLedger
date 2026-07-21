@@ -57,6 +57,9 @@ export interface ShellExecOptions {
   maxOutputChars?: number;
   stdin?: string;
   signal?: AbortSignal;
+  /** 子进程输出增量,供 TUI 实时渲染。 */
+  onStdout?: (chunk: string) => void;
+  onStderr?: (chunk: string) => void;
 }
 
 /** ExecutionEnv = fs + shell + cwd。 */
@@ -153,13 +156,17 @@ function localShell(): Shell {
       };
 
       child.stdout?.on("data", (chunk: Buffer) => {
-        stdoutBuf += chunk.toString("utf8");
+        const text = chunk.toString("utf8");
+        stdoutBuf += text;
+        opts?.onStdout?.(text);
         if (stdoutBuf.length > maxChars * 2) {
           stdoutBuf = stdoutBuf.slice(-maxChars * 2);
         }
       });
       child.stderr?.on("data", (chunk: Buffer) => {
-        stderrBuf += chunk.toString("utf8");
+        const text = chunk.toString("utf8");
+        stderrBuf += text;
+        opts?.onStderr?.(text);
         if (stderrBuf.length > maxChars * 2) {
           stderrBuf = stderrBuf.slice(-maxChars * 2);
         }
