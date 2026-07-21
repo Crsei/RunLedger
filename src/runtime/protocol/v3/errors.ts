@@ -1,0 +1,39 @@
+/**
+ * Runtime v3 的错误码占位合同。
+ *
+ * TODO(runtime-phase-0): 完成错误码注册表、公开/内部字段分层、重试语义和
+ * unknown schema/version 的持久化诊断；调用方不得把未知错误降级成成功。
+ */
+
+export type RuntimeErrorCode =
+	| "invalid_id"
+	| "invalid_canonical_json"
+	| "unknown_schema_version"
+	| "unknown_event_type"
+	| "oversized_payload"
+	| "expected_revision_conflict"
+	| "invariant_violation"
+	| "boundary_violation"
+	| "contract_unavailable"
+	| "legacy_read_only";
+
+export interface RuntimeErrorShape {
+	readonly code: RuntimeErrorCode;
+	readonly message: string;
+	readonly retryable: boolean;
+	readonly details?: Readonly<Record<string, string | number | boolean>>;
+}
+
+export class RuntimeContractError extends Error implements RuntimeErrorShape {
+	public readonly code: RuntimeErrorCode;
+	public readonly retryable: boolean;
+	public readonly details?: Readonly<Record<string, string | number | boolean>>;
+
+	public constructor(shape: RuntimeErrorShape) {
+		super(shape.message);
+		this.name = "RuntimeContractError";
+		this.code = shape.code;
+		this.retryable = shape.retryable;
+		this.details = shape.details;
+	}
+}

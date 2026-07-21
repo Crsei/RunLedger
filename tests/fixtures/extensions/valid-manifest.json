@@ -1,0 +1,7 @@
+{
+  "_purpose": "M0 valid manifest fixture; parser and exact identity tests are still pending",
+  "schemaVersion": 1,
+  "id": "example.safe",
+  "version": "0.1.0",
+  "components": []
+}

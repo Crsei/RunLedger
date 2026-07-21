@@ -1,0 +1,6 @@
+{
+  "_purpose": "M0 invalid schema fixture; unknown major versions must fail closed",
+  "schemaVersion": 99,
+  "id": "example.invalid",
+  "version": "0.1.0"
+}

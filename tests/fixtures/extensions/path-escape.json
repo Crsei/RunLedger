@@ -1,0 +1,6 @@
+{
+  "_purpose": "M0 path escape fixture; canonical path validation is not implemented yet",
+  "schemaVersion": 1,
+  "id": "example.escape",
+  "path": "../../outside"
+}
