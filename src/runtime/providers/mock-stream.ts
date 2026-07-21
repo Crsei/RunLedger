@@ -54,13 +54,45 @@ function isMockModel(m: Model<Api>): boolean {
 }
 
 /**
+ * Mock stream 阶段 —— V2 引入,便于 M6 examples 与单测 mock 调用按轮次切换行为。
+ *
+ * - phase 0首轮:仅 user 消息 → emit 文本 + echo toolCall,stopReason=toolUse
+ * - phase 1:toolResult 已存在但 ≤ MAX_TOOL_TURNS_PER_SESSION → 继续 emit toolCall
+ * - phase 2:toolResult 已存在且超过 MAX → emit 文本总结并 stopReason=stop
+ *
+ * 调用方在 options 中传 `onPhase?: (phase) => void`,流式时回调一次,可用此
+ * 在 demo 或 test 中按阶段约束 assert 与日志。
+ */
+export type MockStreamPhase = 0 | 1 | 2;
+
+/** 单 session 内 toolResult 引用次数上限,超过即转 phase 2 final summary。 */
+export const MAX_TOOL_TURNS_PER_SESSION = 4;
+
+/**
+ * 根据 context 决定 phase:
+ *  - 无 toolResult → 0
+ *  - 有 toolResult 但 toolResult count < MAX → 1
+ *  - >= MAX → 2
+ */
+export function detectMockPhase(context: LlmContext): MockStreamPhase {
+  const toolResults = context.messages.filter((m) => m.role === "toolResult");
+  if (toolResults.length === 0) return 0;
+  if (toolResults.length < MAX_TOOL_TURNS_PER_SESSION) return 1;
+  return 2;
+}
+
+/**
  * 默认 mock streamFn —— 同步返回 AssistantMessageEventStream,
  * 内部 queueMicrotask 异步推进事件流,模拟真实 LLM 流式延迟。
  */
 export const mockStreamFn: StreamFn = (model, context, options) => {
   const stream = createAssistantMessageEventStream();
+  const phase = detectMockPhase(context);
+  // phase 钩子:仅在 options.onPhase 中调用一次
+  const opts = options as StreamOptions & { onPhase?: (phase: MockStreamPhase) => void };
+  opts.onPhase?.(phase);
   queueMicrotask(() => {
-    void runMockTurn(model, context, options, stream);
+    void runMockTurn(model, context, options, stream, phase);
   });
   return stream;
 };
@@ -70,6 +102,7 @@ async function runMockTurn(
   context: LlmContext,
   options: StreamOptions | undefined,
   stream: AssistantMessageEventStream,
+  phase: MockStreamPhase = 0,
 ): Promise<void> {
   const signal = options?.signal;
 
@@ -86,12 +119,14 @@ async function runMockTurn(
     return;
   }
 
-  const hasToolResult = context.messages.some((m) => m.role === "toolResult");
+  // V2 phase:0/1 都是"调一个 echo toolCall",2 是"总结并 stop"
+  const shouldRefuseTool = phase === 2;
+  const hasToolResult = phase >= 1;
   const partialBase = buildPartialAssistant([]);
 
   stream.push({ type: "start", partial: partialBase });
 
-  if (!hasToolResult) {
+  if (!shouldRefuseTool) {
     // 模拟一轮"说话 + 调用工具":先文本,再一个 echo toolCall
     await delay(20);
     if (signal?.aborted) {
@@ -100,7 +135,9 @@ async function runMockTurn(
       stream.end(err);
       return;
     }
-    const intro = "我会调用 echo 工具来回应你。";
+    const intro = phase === 0
+      ? "我会调用 echo 工具来回应你。"
+      : "我会再次调用 echo 工具。";
     const introBlocks: TextContent[] = [];
     stream.push({
       type: "text_start",
@@ -169,7 +206,8 @@ async function runMockTurn(
     return;
   }
 
-  // 已有 toolResult:输出总结并结束
+  // phase 2:已有 toolResult 且 ≥ MAX:输出总结并结束
+  void hasToolResult;
   await delay(20);
   const summary = "echo 已回显了你的输入,任务完成。";
   const summaryBlocks: TextContent[] = [];

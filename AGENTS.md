@@ -164,6 +164,24 @@ tmp/               运行时产物(JSONL ledger 等),已 gitignore
   - **stdlib 工具集复活**:fork pi `core/tools/{read,write,edit,bash,grep,find,ls}.ts`,简化路径:不引 pi 的 ToolContext 闭包、render-prompt hooks、`wrapToolDefinition` 双层 ToolDefinition 包装,直接 cwd 闭包 + 可选 `operations` 注入 IO/shell;`grep`/`find` 在 rg/fd 不可用时自动回退到 grep/find,probe 后再 spawn 他命令;
   - **ExecutionEnv 复活**:`FileSystem` + `Shell` 抽象加入(`runtime/execution-env.ts`),`utils/shell.ts` 探测 win 下 git-bash;`storage/resolve-config-value.ts` 仍**不**引 `$(cmd)`,防止无量引入命令注入面;
   - **stdlibStreamFn 桥接**:提供 `createStdlibAgent(opts)` 一站式将 stdlib 工具集 + mock/真实 streamFn + Agent 类组合,便于示例与 review;`stdlibStreamFn` 本身就是 `mockStreamFn` 别名(非新协议);
+  - **M3 V2 Task 系列 + lockfile + high-water mark**(`src/runtime/tasks/`、`src/runtime/ledger/lockfile.ts`):
+    - `tasks/{types,task-tools}.ts` 定义 `TaskSnapshot` / `TaskStatus` / `TaskPriority` 与 `Task`/`TaskUpdate`/`TaskList` 三个 V2 工具;任务作为 ledger `custom` entry 持久化(`kind: "task"` / `"task_update"`);
+    - `replayTaskSnapshots(entries)` 单调重放产生最新快照;V2 排他机制保证同一时刻只有一个 in_progress 任务(新 in_progress 自动把旧 in_progress 落 pending);
+    - `lockfile.ts` 基于 `proper-lockfile` 提供 `acquireLedgerLock(ledger, opts)`:50×100ms 内 acquire 失败 throw `LedgerLockError`;`forceUnlock(fp)` 紧急干预;
+    - `LedgerSink.highWaterMark?()` V2 新增,默认实现 = 已 append 的 entry 数(跨重启在 JsonlLedger 加载时继承);
+  - **M4 5 个新占位工具**(`src/runtime/tools/`):
+    - `multi-edit.ts` 一次调用 N 处编辑同文件;先在内存里依次应用 edits,任一 oldString 不存在 → 整体 abort(不写文件);`replaceAll=true` 全替换;
+    - `web-fetch.ts` 原生 fetch + 最 trivial HTML→平文;HTTP(n=localhost/.local 不升级)自动升级 HTTPS,跨 host redirect throw,响应超 maxBytes(默认 2MB)截断;
+    - `skill.ts` 占位:在 `handlers[name]` 中查找 handler;不存在返回友好提示,命中则把 string/JSON 结果透传;
+    - `notebook-edit.ts` 占位:V2 future,任何调用都返回 not-implemented 提示;
+    - `todo-write.ts` 整盘覆写当前任务表,内部调用 V2 Task 系列实现 `n written + n updated + n deleted` 语义;
+  - **M5 TUI 三态组件升级**:
+    - `ToolCallComponent` 已支持四态(pending ⏳ / running … / ok ✓ / error ✗)+ setError/finalize;
+    - `DiffPreviewComponent` M5 升级加 status 字段,表头 icon 与 V2 ToolCall 对齐;展开态追加 `  - before / + after / ! ERR:` 行;
+    - 新增 `BashExecutionComponent` 实时执行块:status / appendStdout/appendStderr / runInBackground "(bg)" 标记 / finalize exitCode+duration;tail 默认 200 行(可配置),`maxTailLines / 2` 上限防长跑日志炸内存;
+  - **M6 examples + mock-stream phase**:
+    - `examples/m3-demo.ts` V2 Task + lockfile + high-water + MultiEdit 6 阶段演示,跑 `npx tsx examples/m3-demo.ts` 全绿;
+    - `mockStreamFn` 新增 phase 0(首轮)/phase 1(已有 ≤3 个 toolResult)/phase 2(≥4 个 toolResult final summary);`detectMockPhase(ctx)` 纯函数 + `options.onPhase(phase)` 钩子;新 `MAX_TOOL_TURNS_PER_SESSION = 4`;
   - 仍未实现:transformContext / 队列 / AgentHarness / compaction(详见 §1.3);
 - `storage/getAgentDir` 默认 `~/.runledger/agent`,可用环境变量 `RUNLEDGER_DIR` 覆盖(pi 中是 `PI_CODING_AGENT_DIR`);
 - `storage/resolve-config-value.ts` 仅支持字面值与 `${ENV_VAR}` 模板,**不**支持 pi 的 `$(cmd)` shell 命令,

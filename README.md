@@ -127,6 +127,12 @@ npm run generate-models
 - [x] `npm run check` 通过
 - [x] agent-runtime 底座(M8 §A-§G):ToolRegistry/ToolContext + ExecutionEnv(FileSystem/Shell) + git-bash 探测 + stdlib 工具集(read/write/edit/bash/grep/find/ls)+ createAnthropicAgent + stdlibStreamFn 桥接
 - [x] **项目层 `.runledger/` 布局 + SessionManager / SettingsManager / CLI 入口**(M8 §0–§3, 2026-04-28):`src/storage/{paths,path-utils,settings-manager,session-manager}.ts` + `src/cli/{args,main,cli}.ts` + `bin/runledger.js`;`npm link` 后终端 `runledger` 命令可起 TUI;158 测试全绿
+- [x] **M2 stdlib 工具集升级**(glob + read cat -n 缓存 + edit replaceAll/findActualString + bash run_in_background + grep -A/-B/-U/-output_format):192 tests pass
+- [x] **M3 V2 Task 系统 + lockfile + high-water mark**(2026-04-28):`src/runtime/tasks/{types,task-tools}.ts` `Task/TaskUpdate/TaskList` 三工具 + `src/runtime/ledger/lockfile.ts` `acquireLedgerLock`/`LedgerLockError` + `LedgerSink.highWaterMark()`;208 tests pass;`examples/m3-demo.ts` 可跑 `npx tsx examples/m3-demo.ts`
+- [x] **M4 5 新占位工具**(2026-04-28):`MultiEdit` / `WebFetch` / `Skill` / `NotebookEdit` / `TodoWrite`;219 tests pass;`createStdlibTools()` 注册数 8 → 13
+- [x] **M5 TUI 三态组件升级**(2026-04-28):`DiffPreviewComponent` 加 status 字段 + `BashExecutionComponent` 新组件(pending/running/ok/error + stdout/stderr tail + run_in_background + exitCode+duration);234 tests pass
+- [x] **M6 examples + mock-stream phase + doc sync**(2026-04-28):`mockStreamFn` 加 phase 0/1/2 + `detectMockPhase` + `MAX_TOOL_TURNS_PER_SESSION=4` + `options.onPhase` 钩子;`AGENTS.md` 与 `development-doc/tui/02-component-spec.md` §10 同步 M3/M4/M5/M6 变更;237 tests pass
+- [x] **M7 TUI 补强 + integration**(2026-04-28):`tests/tui/m7-components.test.ts` 9 用例覆盖 ToolResult/AbortButton/BackgroundTask/Footer/DiffPreview 边界;`tests/integration/m7-e2e.test.ts` e2e 串 mockStreamFn → BashExecution tail → ToolCall 三态
 
 ### 待填实(独立任务)
 
