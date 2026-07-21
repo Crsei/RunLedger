@@ -37,6 +37,14 @@ export class MemoryLedger implements LedgerSink {
     return this._header;
   }
 
+  /**
+   * V2 high-water mark:返回已 append 的 entry 数。
+   * 写过的 entry 不会再被修改(append-only),所以此值单调递增。
+   */
+  highWaterMark(): number {
+    return this._entries.length;
+  }
+
   append(entry: LedgerEntry): void {
     // 在 sink 层做 parentId 自动继承:扁平 ledger 中 parentId 永远指向前一条(*)。
     // 调用方传入的 parentId 会被覆盖,除非显式传 null。

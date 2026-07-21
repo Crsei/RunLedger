@@ -56,6 +56,10 @@ export class Agent {
   private readonly _loopConfig: Partial<AgentLoopConfig>;
   private readonly _toolExecution: "sequential" | "parallel";
   private readonly _signal?: AbortSignal;
+  /** M8c:中断当前 turn 用的内部 controller;每次 prompt() 重建 */
+  private _abortController: AbortController | undefined;
+  /** true 当 prompt() 在 flight;用于 interrupt 区分 cold/warm 状态 */
+  private _inFlight: boolean = false;
 
   constructor(opts: AgentOptions) {
     this._state = {
@@ -93,6 +97,22 @@ export class Agent {
 
   setModel(model: AgentState["model"]): void {
     this._state.model = model;
+  }
+
+  /**
+   * M8c:中断当前正在跑的 turn。仅当 prompt() in flight 时生效;
+   * 冷状态下调用为 no-op。abort 会让 runAgentLoop 在 turn 起点 / tool-execute 中途
+   * 触发 stopReason="aborted" 终止;mock 与 anthropic stream 都已支持 signal.aborted 路径。
+   */
+  interrupt(): void {
+    if (this._inFlight && this._abortController) {
+      this._abortController.abort();
+    }
+  }
+
+  /** 是否在 flight;供 TUI 状态指示器语义查询。 */
+  get inFlight(): boolean {
+    return this._inFlight;
   }
 
   /**
@@ -139,18 +159,35 @@ export class Agent {
       // ledger 已是 AgentLoopConfig 第一公民,直接挂入类型契约
       ledger: this._ledger,
     };
-    const finalMessages = await runAgentLoop(
-      prompts,
-      context,
-      config,
-      (ev) => this.dispatch(ev),
-      this._signal,
-      this._streamFn,
-    );
-    // 更新本地 state
-    this._state.messages = finalMessages.slice();
-    // 给 ledger 追加 sessionId 占位的最终 custom entry(可选)
-    return finalMessages;
+    // M8c:每次 prompt() 实例化新 AbortController,使 interrupt 在 inflight 期间可触发
+    this._abortController = new AbortController();
+    // 若外部 signal 已传入,绑一个转发,确保外部 abort 也能传到本 controller
+    if (this._signal) {
+      const externalSignal = this._signal;
+      const onExternalAbort = () => this._abortController?.abort();
+      if (externalSignal.aborted) {
+        this._abortController.abort();
+      } else {
+        externalSignal.addEventListener("abort", onExternalAbort, { once: true });
+      }
+    }
+    this._inFlight = true;
+    try {
+      const finalMessages = await runAgentLoop(
+        prompts,
+        context,
+        config,
+        (ev) => this.dispatch(ev),
+        this._abortController.signal,
+        this._streamFn,
+      );
+      // 更新本地 state
+      this._state.messages = finalMessages.slice();
+      // 给 ledger 追加 sessionId 占位的最终 custom entry(可选)
+      return finalMessages;
+    } finally {
+      this._inFlight = false;
+    }
   }
 
   /** ledger 句柄(便于外部读取) */

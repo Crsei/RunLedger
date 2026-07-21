@@ -39,6 +39,8 @@ export const echoTool: AgentTool<typeof echoSchema, EchoDetails> = {
   label: "Echo",
   description: "回显输入文本。用于验证 agent 与工具执行链路。",
   parameters: echoSchema,
+  isReadOnly: () => true,
+  isConcurrencySafe: () => true,
   prepareArguments(args: unknown): EchoArgs {
     if (args && typeof args === "object" && typeof (args as Record<string, unknown>)["text"] === "string") {
       return { text: (args as Record<string, unknown>)["text"] as string };

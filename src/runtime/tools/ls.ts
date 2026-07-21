@@ -57,6 +57,8 @@ export function createLsTool(
     label: "ls",
     description: `列目录内容,按字母序排序;目录条目尾部加 '/';默认条目上限 ${DEFAULT_LIMIT}。`,
     parameters: lsSchema,
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<LsToolDetails>> {
       const dirPath = resolveToCwd(params.path ?? "", cwd);
       const limit = params.limit ?? DEFAULT_LIMIT;

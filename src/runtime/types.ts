@@ -36,6 +36,7 @@ import type {
 } from "../types.ts";
 import type { Static, TSchema } from "typebox";
 import type { LedgerSink } from "./ledger/types.ts";
+import type { ToolContext } from "./tool-context.ts";
 
 // ===== 工具 =====
 
@@ -59,6 +60,16 @@ export type AgentToolUpdateCallback<T = unknown> = (partialResult: AgentToolResu
  * - `execute` 契约 = throw on failure:工具内部抛错由 agent-loop 兜底转
  *   `isError: true` 的 ToolResultMessage。pi 同款契约。
  * - `executionMode` 让每个工具声明自己能否与批次内其他工具并发(默认走 AgentLoopConfig.toolExecution)。
+ * - `isReadOnly()` / `isConcurrencySafe()` / `isDestructive()`(可选):
+ *   agent-loop 在 resolveExecutionMode 时优先看 isConcurrencySafe(任一非 concurrency-safe
+ *   → 强制 sequential),toolResult 预算与 ledger 主动记账看 isReadOnly,isDestructive
+ *   暂未消费,留给后续 trust gate hooks(对齐 claude-code-bun docs/tools/what-are-tools.mdx)。
+ *
+ * `execute` 签名本期采用**最小破坏**形态:`context?: ToolContext` 留在 5 位
+ * 可选位置,`signal` / `onUpdate` 仍居 3/4 位。这样老调用点(包括 13 个 stdlib
+ * 单测 + 8 个 stdlib 内工具)与 mock-stream 不用一次性改完,agent-loop 仅在
+ * dispatch 时主动构造 ToolContext 并以 5 位传入。后期(M5+ TUI 渲染接入后)
+ * 可继续把 context 收编到 3 位,届时破坏性变更集中在一个 PR。
  */
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unknown> extends Tool<TParameters> {
   /** UI 显示用的 label;不参与 LLM 请求。Runtime 字段中性化。 */
@@ -72,15 +83,41 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
    * 执行工具。失败时 throw,由 agent-loop 转为 isError tool result。
    * `onUpdate` 给流式工具推送 partial 结果(如 bash 长输出),agent-loop
    * 在收到后透传为 `tool_execution_update` 事件。
+   * `context` 由 agent-loop 在 dispatch 阶段构造,可选注入 cwd / env / ledger /
+   * signal / sessionId / toolCallId;工具可选消费 context.cwd 与 context.env.shell
+   * 以替代工厂闭包(本期两者并存,后期完全切换到 context)。
    */
   execute: (
     toolCallId: string,
     params: Static<TParameters>,
     signal?: AbortSignal,
     onUpdate?: AgentToolUpdateCallback<TDetails>,
+    context?: ToolContext,
   ) => Promise<AgentToolResult<TDetails>>;
   /** 工具级执行模式覆写;未指定时跟随 AgentLoopConfig.toolExecution。 */
   executionMode?: ToolExecutionMode;
+  /**
+   * 工具是否只读(无副作用)。read-only 工具可放心并发且不污染审计 ledger。
+   * 缺省 = false。
+   */
+  isReadOnly?: () => boolean;
+  /**
+   * 工具是否可与其他工具并发执行。任一非 concurrency-safe 工具在 batch 内时,
+   * agent-loop 把整批降级为 sequential(对齐 claude-code-bun
+   * docs/tools/what-are-tools.mdx §"并行执行模式")。缺省 = false。
+   */
+  isConcurrencySafe?: () => boolean;
+  /**
+   * 工具是否破坏性(写文件 / 改 ledger / 删除资源)。本期仅作 metadata 显式
+   * 标注不消费,留待后续 trust gate hooks(对齐 what-are-tools.mdx)。
+   */
+  isDestructive?: () => boolean;
+  /**
+   * 工具结果最大字符预算;超额部分由 agent-loop 落 `tmp/tool-output-<id>.txt`
+   * 并在 content 末尾附路径提示(对齐 what-are-tools.mdx §"大结果落盘")。
+   * 缺省 = DEFAULT_MAX_BYTES。
+   */
+  maxResultSizeChars?: number;
 }
 
 /**
@@ -253,6 +290,17 @@ export interface AgentLoopConfig {
   apiKey?: string;
   /** 透传给 streamFn 的 env overrides,激活 ANTHROPIC_BASE_URL 等 */
   env?: Record<string, string>;
+  /**
+   * 工具执行基目录;缺省 = process.cwd()。dispatch 阶段把 cwd 写进每个
+   * toolCall 的 ToolContext(对齐 claude-code-bun docs/tools 中的 cwd 概念)。
+   */
+  cwd?: string;
+  /**
+   * 工具执行环境(fs + shell);缺省 = `localExecutionEnv(cwd)`。注入自定义
+   * env 是测试 / 沙箱 / 远端 streamProxy 的入口。注意与 `env` 字段(环境变量字典)
+   * 区分:本字段是 ExecutionEnv runtime 接口。
+   */
+  executionEnv?: import("./execution-env.ts").ExecutionEnv;
   /** 默认 = defaultConvertToLlm */
   convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
   /** 工具执行模式;缺省 sequential */

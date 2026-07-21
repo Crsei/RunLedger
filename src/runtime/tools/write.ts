@@ -52,6 +52,7 @@ export function createWriteTool(
     label: "write",
     description: "写入文件;目录不存在会递归创建。会覆盖已有文件。",
     parameters: writeSchema,
+    isDestructive: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<WriteToolDetails>> {
       const { path: rawPath, content } = params;
       const absolutePath = resolveToCwd(rawPath, cwd);

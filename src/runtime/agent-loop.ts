@@ -68,6 +68,10 @@ import type { AssistantMessage, ImageContent, Message, StopReason, TextContent, 
 import { validateToolArguments } from "../utils/validation.ts";
 import { newId } from "./ledger/types.ts";
 import type { LedgerSink, LedgerEntry } from "./ledger/types.ts";
+import { localExecutionEnv } from "./execution-env.ts";
+import { makeToolContext } from "./tool-context.ts";
+import { DEFAULT_MAX_BYTES } from "./tools/tool-support.ts";
+import { writeFileSync, mkdirSync } from "node:fs";
 
 /**
  * 与 pi 对齐的对外接口。本期只实现 runAgentLoop 与 runAgentLoopContinue,
@@ -467,7 +471,7 @@ async function executeToolCalls(
       prepared.push(p);
     }
     const results = await Promise.all(
-      prepared.map((p) => executePreparedToolCall(p, signal, fire, sessionId)),
+      prepared.map((p) => executePreparedToolCall(p, config, signal, fire, sessionId)),
     );
     const out: ToolResultContent[] = [];
     for (let i = 0; i < prepared.length; i++) {
@@ -481,7 +485,7 @@ async function executeToolCalls(
   const out: ToolResultContent[] = [];
   for (const tc of toolCalls) {
     const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
-    const r = await executePreparedToolCall(p, signal, fire, sessionId);
+    const r = await executePreparedToolCall(p, config, signal, fire, sessionId);
     out.push(await finalizeExecutedToolCall(p, r, context, config, signal, fire, sessionId));
   }
   return out;
@@ -495,10 +499,19 @@ function resolveExecutionMode(
   tools: AgentTool[],
   fallback: ToolExecutionModeLike,
 ): "sequential" | "parallel" {
+  // 显式 sequential 走 sequential
   if (fallback === "sequential") return "sequential";
+  // 任一工具自身声明 executionMode="sequential" → 整批 sequential
   for (const tc of toolCalls) {
     const tool = tools.find((t) => t.name === tc.name);
     if (tool?.executionMode === "sequential") return "sequential";
+  }
+  // 任一工具 isConcurrencySafe?.() 不返回 true → 整批 sequential
+  // (对齐 claude-code-bun docs/tools/what-are-tools.mdx §"并行执行模式")
+  for (const tc of toolCalls) {
+    const tool = tools.find((t) => t.name === tc.name);
+    const safe = tool?.isConcurrencySafe?.();
+    if (safe !== true) return "sequential";
   }
   return "parallel";
 }
@@ -605,9 +618,10 @@ async function prepareToolCall(
  */
 async function executePreparedToolCall(
   p: PreparedToolCall,
+  config: AgentLoopConfig,
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
-  _sessionId: string,
+  sessionId: string,
 ): Promise<AgentToolExecutedResult> {
   // blocked / tool 未找到 → 立即合成 isError 内容,不调 execute
   if (p.blocked) {
@@ -638,15 +652,33 @@ async function executePreparedToolCall(
     });
   };
 
+  // 构造 ToolContext:cwd / env 从 config 取回退到 process.cwd/localExecutionEnv。
+  // 对齐 claude-code-bun docs/tools/what-are-tools.mdx §"ToolContext 的语义"。
+  const cwd = config.cwd ?? process.cwd();
+  const env = config.executionEnv ?? localExecutionEnv(cwd);
+  const toolContext = makeToolContext({
+    cwd,
+    env,
+    ledger: config.ledger,
+    envVars: config.env ?? {},
+    signal,
+    sessionId,
+    toolCallId: p.toolCall.id,
+  });
+
   try {
     const result = await p.tool.execute(
       p.toolCall.id,
       p.args as never,
       signal,
       onUpdate,
+      toolContext,
     );
+    // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
+    const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
+    const content = applyToolResultBudget(result.content, maxChars, p.toolCall.id);
     return {
-      content: result.content,
+      content,
       isError: false,
       details: result.details,
       addedToolNames: result.addedToolNames,
@@ -667,6 +699,63 @@ interface AgentToolExecutedResult {
   details?: unknown;
   addedToolNames?: string[];
   terminate?: boolean;
+}
+
+/**
+ * 工具结果字符预算:超出 maxChars 的 text content 落盘到
+ * `tmp/tool-output-<toolCallId>.txt`,在 content 中以一个简短的
+ * "exceeds maximum size ..." 提示 + 文件路径替换。
+ *
+ * 对齐 claude-code-bun docs/tools/what-are-tools.mdx §"大结果落盘":
+ * 不抛错 / 不截断 inline,而是把超量结果导到磁盘并把路径回灌给 LLM,
+ * 让后续 turn 自行决定是否 grep / read 重新读那段。
+ *
+ * 不可写的临时目录下退化为「inline 截断 + 提示」,仍不抛错。
+ */
+function applyToolResultBudget(
+  content: (TextContent | ImageContent)[],
+  maxChars: number,
+  toolCallId: string,
+): (TextContent | ImageContent)[] {
+  const out: (TextContent | ImageContent)[] = [];
+  let totalChars = 0;
+  let overflowStarted = false;
+  for (const block of content) {
+    if (block.type !== "text") {
+      out.push(block);
+      continue;
+    }
+    const len = block.text.length;
+    if (totalChars + len <= maxChars) {
+      out.push(block);
+      totalChars += len;
+      continue;
+    }
+    // 第一次超预算:把"剩余配额"那一截留下用,剩余部分落盘
+    if (!overflowStarted) {
+      overflowStarted = true;
+      const remain = Math.max(0, maxChars - totalChars);
+      const inlineTail = remain > 0 ? block.text.slice(0, remain) : "";
+      const droppedTail = remain > 0 ? block.text.slice(remain) : block.text;
+      // 落盘 best-effort,失败退化为 inline 截断
+      let path = "";
+      try {
+        const dir = "tmp";
+        path = `${dir}/tool-output-${toolCallId}.txt`;
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(path, droppedTail, "utf-8");
+      } catch {
+        path = "";
+      }
+      const hint = path
+        ? `\n\nOutput exceeds ${maxChars} chars; remaining content written to: ${path}`
+        : `\n\nOutput exceeds ${maxChars} chars; remaining content truncated (tmp dir unavailable).`;
+      out.push({ type: "text", text: `${inlineTail}${hint}` });
+      totalChars = maxChars;
+    }
+    // 后续 text block 全部丢弃(只在第一次溢出时落盘一次);不丢图像
+  }
+  return out;
 }
 
 /**

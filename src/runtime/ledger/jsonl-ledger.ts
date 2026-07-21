@@ -70,6 +70,18 @@ export class JsonlLedger implements LedgerSink {
   }
 
   /**
+   * V2 high-water mark:返回已 append (含从存量文件加载)的 entry 数。
+   *
+   * 注意:跨重启继承时,我们应在初始化时把已加载 entry 数写进 header.metadata.highWaterMark;
+   * 但本期保持简单 —— 直接从内存 entries.length 计算,即"已加载并付过 id 的 entry 数"。
+   * 后续重启再次配置 ledger 后,highWaterMark 会等于加载到的 entry 数(已稳定);
+   * 进程再 append 时 highWaterMark 增长。
+   */
+  highWaterMark(): number {
+    return this._entries.length;
+  }
+
+  /**
    * 首次调用 append 时会触发文件 init(ensureDir + 写 header 或读取既有 header)。
    */
   async append(entry: LedgerEntry): Promise<void> {

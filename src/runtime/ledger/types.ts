@@ -70,6 +70,15 @@ export interface LedgerSink {
   close(): Promise<void> | void;
   /** 最近一次错误(若有) */
   readonly lastError?: unknown;
+  /**
+   * 单调递增的 turn / entry 序号(本期实现是 entry-based high-water mark)。
+   * V2 默认实现:返回该 ledger 已 append 的 entry 数,即"下次 append 时此值会 +1"。
+   * 实现可重写以持久化进 header.metadata.highWaterMark,跨重启继承。
+   *
+   * 这是 M3 的 V2 high-water mark 跟踪;task / turn 系列工具与 lockfile
+   * 都依赖此值判断"已处理过的 entry 最大序号"。
+   */
+  highWaterMark?(): number;
 }
 
 /**

@@ -24,7 +24,22 @@ const grepSchema = Type.Object({
   glob: Type.Optional(Type.String({ description: "文件名 glob 过滤" })),
   ignoreCase: Type.Optional(Type.Boolean({ description: "大小写不敏感" })),
   literal: Type.Optional(Type.Boolean({ description: "原文匹配(fixed strings)" })),
-  context: Type.Optional(Type.Number({ description: "上下文行数" })),
+  context: Type.Optional(Type.Number({ description: "上下文行数(对称 before+after)" })),
+  afterContext: Type.Optional(
+    Type.Number({ description: "匹配行后的上下文行数;不设时由 context 填充" }),
+  ),
+  beforeContext: Type.Optional(
+    Type.Number({ description: "匹配行前的上下文行数;不设时由 context 填充" }),
+  ),
+  multiline: Type.Optional(
+    Type.Boolean({ description: "允许多行 pattern(?<NL>...) 匹配;rg 加 -U, grep 加 -P -z。缺省 false。" }),
+  ),
+  outputFormat: Type.Optional(
+    Type.String({
+      description:
+        '"text"(缺省) | "files-with-matches"(只输出命中文件名,等价 rg -l / grep -l)。用于快速 inventory 哪些文件含某 pattern。',
+    }),
+  ),
   limit: Type.Optional(Type.Number({ description: "结果行数上限,默认 100" })),
 });
 
@@ -52,12 +67,19 @@ export function createGrepTool(
     label: "grep",
     description: `在文件或目录内搜索文本。默认上限 ${DEFAULT_LIMIT} 个匹配。优先 ripgrep,失败回退 grep。`,
     parameters: grepSchema,
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<GrepToolDetails>> {
       const searchPath = resolveToCwd(params.path, cwd);
       const limit = params.limit ?? DEFAULT_LIMIT;
       const ignoreCase = params.ignoreCase === true;
       const literal = params.literal === true;
       const context = params.context ?? 0;
+      const afterContext = params.afterContext ?? context;
+      const beforeContext = params.beforeContext ?? context;
+      const multiline = params.multiline === true;
+      const outputFormat: "text" | "files-with-matches" =
+        params.outputFormat === "files-with-matches" ? "files-with-matches" : "text";
       const glob = params.glob;
 
       // 探测 rg 可用;失败直接走 grep -rn fallback
@@ -67,12 +89,30 @@ export function createGrepTool(
       let r;
       let isError: boolean;
       if (hasRg) {
-        const rgArgs = buildRgArgs(params.pattern, searchPath, { ignoreCase, literal, context, glob, limit });
+        const rgArgs = buildRgArgs(params.pattern, searchPath, {
+          ignoreCase,
+          literal,
+          afterContext,
+          beforeContext,
+          multiline,
+          outputFormat,
+          glob,
+          limit,
+        });
         r = await shell.exec(rgArgs.cmd, { cwd, maxOutputChars: DEFAULT_MAX_BYTES, signal, timeoutMs: 30_000 });
         // rg exit=1 表示无匹配,不算错误
         isError = r.exitCode !== 0 && r.exitCode !== 1;
       } else {
-        const grepCmd = buildGrepArgs(params.pattern, searchPath, { ignoreCase, literal, context, glob, limit });
+        const grepCmd = buildGrepArgs(params.pattern, searchPath, {
+          ignoreCase,
+          literal,
+          afterContext,
+          beforeContext,
+          multiline,
+          outputFormat,
+          glob,
+          limit,
+        });
         r = await shell.exec(grepCmd.cmd, { cwd, maxOutputChars: DEFAULT_MAX_BYTES, signal, timeoutMs: 30_000 });
         isError = r.exitCode !== 0 && r.exitCode !== 1;
       }
@@ -101,14 +141,33 @@ export function createGrepTool(
 function buildRgArgs(
   pattern: string,
   searchPath: string,
-  opts: { ignoreCase: boolean; literal: boolean; context: number; glob?: string; limit: number },
+  opts: {
+    ignoreCase: boolean;
+    literal: boolean;
+    afterContext: number;
+    beforeContext: number;
+    multiline: boolean;
+    outputFormat: "text" | "files-with-matches";
+    glob?: string;
+    limit: number;
+  },
 ): { cmd: string } {
   const parts: string[] = ["rg", "--line-number", "--color=never", "--hidden"];
   if (opts.ignoreCase) parts.push("--ignore-case");
   if (opts.literal) parts.push("--fixed-strings");
-  if (opts.context > 0) parts.push("--context", String(opts.context));
+  if (opts.afterContext > 0 && opts.afterContext !== opts.beforeContext) {
+    parts.push("-A", String(opts.afterContext));
+  }
+  if (opts.beforeContext > 0 && opts.beforeContext !== opts.afterContext) {
+    parts.push("-B", String(opts.beforeContext));
+  }
+  if (opts.afterContext > 0 && opts.beforeContext > 0 && opts.afterContext === opts.beforeContext) {
+    parts.push("--context", String(opts.afterContext));
+  }
+  if (opts.multiline) parts.push("-U", "--multiline-dotall");
+  if (opts.outputFormat === "files-with-matches") parts.push("--files-with-matches");
   if (opts.glob) parts.push("--glob", quote(opts.glob));
-  parts.push("--max-count", String(opts.limit));
+  if (opts.outputFormat !== "files-with-matches") parts.push("--max-count", String(opts.limit));
   parts.push("--", quote(pattern), quote(toPosixPath(searchPath)));
   return { cmd: parts.join(" ") };
 }
@@ -116,12 +175,31 @@ function buildRgArgs(
 function buildGrepArgs(
   pattern: string,
   searchPath: string,
-  opts: { ignoreCase: boolean; literal: boolean; context: number; glob?: string; limit: number },
+  opts: {
+    ignoreCase: boolean;
+    literal: boolean;
+    afterContext: number;
+    beforeContext: number;
+    multiline: boolean;
+    outputFormat: "text" | "files-with-matches";
+    glob?: string;
+    limit: number;
+  },
 ): { cmd: string } {
   const parts: string[] = ["grep", "-rn", "--color=never"];
   if (opts.ignoreCase) parts.push("-i");
   if (opts.literal) parts.push("-F");
-  if (opts.context > 0) parts.push("-C", String(opts.context));
+  if (opts.afterContext > 0 && opts.afterContext !== opts.beforeContext) {
+    parts.push("-A", String(opts.afterContext));
+  }
+  if (opts.beforeContext > 0 && opts.beforeContext !== opts.afterContext) {
+    parts.push("-B", String(opts.beforeContext));
+  }
+  if (opts.afterContext > 0 && opts.beforeContext > 0 && opts.afterContext === opts.beforeContext) {
+    parts.push("-C", String(opts.afterContext));
+  }
+  if (opts.multiline) parts.push("-P", "-z");
+  if (opts.outputFormat === "files-with-matches") parts.push("-l");
   if (opts.glob) parts.push("--include", quote(opts.glob));
   parts.push("--", quote(pattern), quote(toPosixPath(searchPath)));
   return { cmd: parts.join(" ") };

@@ -34,6 +34,7 @@ Thumbs.db
 # Local session files
 .pi/
 .zcode/
+.runledger/
 
 
 asset/

@@ -50,6 +50,8 @@ export function createFindTool(
     label: "find",
     description: "按 glob pattern 查找文件。默认上限 1000 个。优先 fd, 失败回退 find。",
     parameters: findSchema,
+    isReadOnly: () => true,
+    isConcurrencySafe: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<FindToolDetails>> {
       const searchPath = resolveToCwd(params.path, cwd);
       const limit = params.limit ?? DEFAULT_LIMIT;
