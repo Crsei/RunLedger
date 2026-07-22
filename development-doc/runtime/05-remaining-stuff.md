@@ -1,13 +1,14 @@
 # Governed Agent Harness Runtime 剩余事项与取证问题
 
 > 文档状态:open issues / handoff ledger,不是第二份实施计划或完成状态真源
-> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00
+> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00
 > 目标 worktree:`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-governed-runtime`
 > 分支:`worktree/governed-agent-harness-runtime`
 > 基线 commit:`65f905452195e034c99fa5ac560a7e23a822f052`
 > 本轮实现检查点 commit:`004a2521934be745e8887f40f2b2631c392829dd`
 > governed startup 切片 commit:`830a7232c0aec570917fc55c69145cce45fa31ab`
 > production durability hardening commit:`2ca6f30b834410023ee77831c79d98714b11c103`
+> continuous Workspace mutation gate commit:`ac524f42ea2033ac3aa1b8fd95aac654e372e68c`
 > 权威计划:[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)
 
 本文件只记录本轮参考审查、计划审计和实现 worktree 检查中遇到的问题、未完成项与恢复顺序。任何条目都不能因为“已有文件”“定向测试曾通过”或“代码量较大”而视为完成。完成状态必须回写到同步后的 `04`，并附目标分支 commit、定向测试、完整门禁和专项联合证据。
@@ -16,7 +17,7 @@
 
 ### 1.1 权威计划已去分叉
 
-2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
+2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
 
 - [x] 以 2124 行版本作为唯一 canonical 文件，保留新增证据规则、I0-I7 串行账本、兼容矩阵和 13 类 mutation restart 要求。
 - [x] 没有迁移旧版 147 个无完整证据的勾选；当前 `04` 有 343 个真实未勾选任务，唯一 `[x]` 位于 §9.2 模板示例，不是完成声明。
@@ -77,11 +78,31 @@
 | pi-ai fixed snapshot audit | PASS | `pi@3f1762c...`，164/164 source files、72 catalog files |
 | live DeepSeek smoke | PASS | one-off `deepseek-v4-pro` tool loop：4 messages、59 events、12 ledger entries、1 tool call、1 tool result；不是 governed/Verification 全生命周期 E2E |
 
-### 1.6 本轮查找与验证过程中的问题
+### 1.6 Continuous Workspace mutation gate 验证
+
+`ac524f42ea2033ac3aa1b8fd95aac654e372e68c` 已作为独立代码/测试提交落入目标分支，完整门禁也已按本切片重新执行；这里只关闭 Workspace 持续复检边界，不提升 Phase 11、Approval 或最终验收状态。
+
+| 命令/阶段 | 结果 | 说明 |
+|---|---|---|
+| production Workspace red test | RED | `production-interactive-runtime.test.ts` 初次 4 tests 中 2 failed：canonical `workspace.bound=[]`、`workspace.released=[]` |
+| mutation gate red test | RED | `continuous-mutation-gate.test.ts` 与 `mutation-gate-adapters.test.ts` 初次因 `src/runtime/lifecycle/mutation-gate.ts` 不存在而 0 tests collected |
+| continuous mutation targeted | PASS | 8 files，75/75 tests；覆盖 gate 核心、model/tool adapters、production bind/release/rebind、CLI provider ownership、factory start/resume/fork、daemon runtime 与 model request correlation |
+| code commit | PASS | `ac524f42ea2033ac3aa1b8fd95aac654e372e68c`；20 条显式代码/测试路径，2266 insertions / 93 deletions |
+| full gate | PASS | `npm run check`；`npm test` 245 files / 1424 tests；`npm run build`；Harness Regression 11 files / 52 tests；pi audit 164/164 upstream files + 72 catalog files；`git diff --check` |
+| live DeepSeek recheck | PASS | 正常 `AuthStorage`/provider 路径的 one-off `deepseek-v4-pro` tool loop：4 messages、56 events、12 ledger entries、1 tool call、1 tool result、2 turn ends；不经过 governed state-root/mutation gate |
+
+定向命令:
+
+```bash
+npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests/runtime-v3/lifecycle/mutation-gate-adapters.test.ts tests/runtime-v3/integration/production-interactive-runtime.test.ts tests/cli/production-interactive-options.test.ts tests/runtime-v3/control-plane/v3-session-adapters.test.ts tests/runtime-v3/control-plane/v3-session-startup-gate.test.ts tests/runtime-v3/orchestrator/daemon-agent-runtime.test.ts tests/runtime-v3/session/agent-loop-events.test.ts
+```
+
+### 1.7 本轮查找与验证过程中的问题
 
 - 一次范围过宽的 `/tmp` 只读搜索从旧的、与当前仓库无关的临时日志中把一条 credential 显示到了工具输出。该值没有被复述、使用、写入仓库或提交；当前 20 条代码/测试路径已用只输出文件名的私钥、AWS key、`sk-*` 模式复检，无命中。由于轮换凭据和清理旧临时日志属于额外外部/破坏性状态变更，本轮没有擅自执行；相关 credential 应尽快轮换，并单独清理或收紧旧日志权限。
 - live smoke 首次预检误把实际 `AuthCheck = { type, source? }` 当成含 `configured` 字段，因此在网络请求前主动失败。按真实契约改为检查返回值是否存在后重跑成功；没有为这个 one-off runner 修改仓库代码。
-- live smoke 使用内联 runner，当前没有可持久复跑的脚本、durable session 或 governed state-root；所以证据只记录 provider/Agent/tool/ledger 连通性，不能提升任何 governed startup、Verification 或 Phase 11 复选框。
+- 本阶段 live smoke 的第一次 runner 选择了 Node 原生 `--experimental-strip-types`，因该 loader 不解析 `src/runtime/ledger/memory-ledger.ts` 中现有 `.js` 相对导入而在网络请求前以 `ERR_MODULE_NOT_FOUND` 退出；随后改用项目已安装的 `tsx`，同一 auth/provider/Agent/tool 路径成功。失败尝试未读取或输出凭据，也没有修改仓库。
+- 两次成功 live smoke 都使用内联 runner，当前没有可持久复跑的脚本、durable session、governed state-root 或真实 mutation-gate audit；所以证据只记录 provider/Agent/tool/ledger 连通性，不能提升任何 governed startup、Verification 或 Phase 11 复选框。
 
 ## 2. 四个参考仓库审查中遇到的边界问题
 
@@ -175,7 +196,7 @@
 
 ### P0:Production state root 已接线，持续执行门禁、replacement 与 durable cleanup 仍未闭合
 
-`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失。两者仍只构成 startup/admission 与错误可见性切片，不等于整个 session 生命周期持续受外部 receipt 约束。
+`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 进一步关闭 Workspace lease 的持续 mutation gate。但 Approval active dependency、production child spawn、replacement/idle 与 durable cleanup 仍不闭合。
 
 - [x] 既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 统一先经过 `GovernedV3SessionRuntime`；审计未通过时不会进入 controller/model/tool、candidate authority、agent binding 或 child creation。
 - [x] Workspace lease 与 Approval receipt 的 exact digest/revision/expiry/state、partial/unknown completeness、missing/store throw/timeout/abort/畸形 receipt 均 fail closed；非 `allowed` Approval 即使被 adapter 伪报 valid 也只能 paused。
@@ -184,9 +205,12 @@
 - [x] 标准 CLI `--state-root` 与 daemon `--state-root`/startup option 会从同一 deployment-owned canonical root 组合 `FileWorkspaceLeaseMutationPort`、`FileApprovalStateStore` 与 `DurableStartupExternalReceiptAuditor`；root 必须预先存在、私有、非 symlink、realpath 精确一致并在子 store 创建前后保持 dev/inode。raw auditor 冲突、CLI/dependency/provider root 不一致均在 open 前拒绝。
 - [x] CLI 与 daemon 的真实 file-store 联合 E2E 覆盖 exact、stale Workspace、revoked Workspace、expired Approval、missing Workspace；CLI 无效状态在 TUI/controller/model/tool composition 前失败，provider-admitted root 也必须在 session open 前参与审计。
 - [x] canonical Approval projector 只接收完整 principal/session/runtime/generation/turn/toolCall 与 request/ticket/receipt binding；decided/expired/revoked exact projection、完全重复幂等和 evidence/binding drift fail-closed 均有回归。
-- [ ] admission callback 只在入口复检 Approval `validThrough`，随后 CLI/factory 仍持有裸 `V3SessionManager`；尚无 model/tool/child 每次 mutation 的持续 expiry/revocation 复检，Workspace lease 在 admission 后被撤销也不会自动关闭 mutation gate。
+- [x] Workspace 持续 gate 窄边界：session-scoped gate 在 production `model_request`、`tool_authorize`、`tool_execute` 和 factory `session_fork` 前重新读取 canonical external refs，复检 active Workspace lease 的 exact digest/revision/audit receipt 与稳定 event head；CLI/daemon/factory 传递同一 gate，拒绝时 model/tool/fork delegate 或 fork child genesis 为零调用。timeout/throw/abort/corruption/mismatch 会永久 latch。证据固定到 `ac524f4`、8 files / 75 targeted tests 与 §1.6 独立完整门禁。
+- [x] production Workspace bind/release 已进入 canonical session truth：`workspace.bound -> lease.acquired -> flush`，release 成功后 `workspace.released -> flush`；resume 新 lease/revision 会重新 bound/acquired，projector 不保留已 terminal 的旧 lease。
+- [ ] Approval 持续授权仍未闭合：当前 gate 只审计 canonical source 已有 refs，Tool Gateway 未把当前 approval 作为 active dependency 完整发射 `permission.requested/decided/expired/revoked`；file store 缺通用 revisioned CAS/revoke/expiry，authorize cache/execute 缺当前 grant receipt 强绑定与 crash/restart reconcile。不能用已有 Approval projector 或 generic gate 单测宣称完成。
+- [ ] `SessionMutationKind` 已包含 `child_spawn`，但 `ProductionChildSessionLauncher` 尚未接线；child launch 前外部 receipt 复检和零调用 fault assertion 仍缺失。
 - [ ] idle unload/reload 与 same-session hot replacement 尚未接入同一 governed gate；replacement 仍缺 standby candidate、fencing promotion、commit-before-old-drain 和 commit 后失败终态的 fault E2E。
-- [ ] injected-auditor tests 已覆盖 timeout/throw/partial/abort，真实 file-store E2E 已覆盖 exact/stale/revoked/expired/missing；仍缺权限突变、文件损坏、root/store TOCTOU、进程 kill 与 restart reconciliation 的 CLI/daemon 联合矩阵，以及所有入口统一的 model/tool/child 零调用断言。
+- [ ] injected-auditor tests 已覆盖 timeout/throw/partial/abort，真实 file-store startup E2E 已覆盖 exact/stale/revoked/expired/missing，持续 gate deterministic tests 已覆盖 Workspace mismatch/latch；仍缺真实 file-store 活跃期权限突变、文件损坏、root/store TOCTOU、进程 kill 与 restart reconciliation 的 CLI/daemon 联合矩阵，以及 production child 的零调用断言。
 - [x] `src/cli/main.ts`、governed open 与 factory start/resume/fork 不再吞掉已知 close/discard failure；多资源 cleanup 会等待并展开全部错误，durable start/fork ownership transfer 前失败会返回不可重试 uncertain effect 与 session correlation，fork parent close 失败不会遗留 active child runtime。
 - [ ] 全仓 cleanup 尚未闭合：`src/daemon/local-v3-daemon.ts` 在 runtime-generation/shutdown-protocol 早期失败时仍吞 `authorityRuntime.close()` 错误，`src/storage/authority-runtime-manager.ts` open 失败仍吞 event-store close 错误。后续必须保留 primary + cleanup failure，并增加故障注入。
 - [ ] cleanup failure 目前对调用方可见，但尚未形成独立 canonical terminal cleanup event/receipt，也没有覆盖 kill-after-side-effect、process restart 后 orphan writer/lease/child 的自动 reconciliation；因此仍不能宣称所有资源均有 durable terminal cleanup outcome。
@@ -229,11 +253,12 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 
 ## 5. 建议恢复顺序
 
-1. 把外部 receipt 的持续 expiry/revocation/lease 复检接到 model/tool/child mutation、idle reload 与 replacement，并保持同一 canonical state root/generation。
-2. 清除 daemon/authority 剩余吞错 close，为 cleanup 增加 canonical terminal receipt、kill/restart orphan reconciliation，并补权限突变、store corruption 与 root/store TOCTOU 联合 E2E。
-3. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
-4. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、Production AgentSupervisor、remote/handoff/hot replacement。
-5. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。
+1. 为 Tool Gateway 补 canonical permission request/decision/expiry/revoke 发射、revisioned Approval CAS 与 active grant dependency；在 authorize cache/execute 前审计当前 receipt，并增加真实 file-store revoke/expire/restart reconcile E2E。
+2. 将同一 gate 接入 `ProductionChildSessionLauncher.child_spawn`，再接 idle reload 与 same-session replacement；replacement 必须具备 standby candidate、writer fencing promotion、commit-before-old-drain 和 post-commit failure terminal。
+3. 清除 daemon/authority 剩余吞错 close，为 cleanup 增加 canonical terminal receipt、kill/restart orphan reconciliation，并补活跃期权限突变、store corruption 与 root/store TOCTOU 联合 E2E。
+4. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
+5. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、Production AgentSupervisor、remote/handoff/hot replacement。
+6. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。
 
 ## 6. 禁止用来“完成”本计划的捷径
 

@@ -1896,6 +1896,21 @@ Canonical event/reducer 闭环:
 - specialty gate:仍为 INCOMPLETE；持续 model/tool/child mutation 的 expiry/revocation/lease 复检、idle reload、same-session hot replacement、cleanup terminal receipt/crash reconciliation、daemon/authority 早期初始化剩余吞错 close 路径、真实 Verification/Compaction/forge/remote 联合 E2E 仍未完成。
 - verified_at:`2026-07-23T03:27:40+08:00`。
 
+#### 2026-07-23 continuous Workspace mutation gate 切片证据（只关闭 Workspace 持续复检边界）
+
+- 状态:活跃 session 的 production Workspace receipt 已从“一次 startup admission”推进为 session-scoped、串行、fail-closed 的每次 mutation 复检；本切片只关闭 Workspace lease 在 model/tool/fork 边界的持续 gate，不关闭 Approval、child spawn、replacement/idle、cleanup 或 Phase 11。
+- commit/worktree:`ac524f42ea2033ac3aa1b8fd95aac654e372e68c`，`worktree/governed-agent-harness-runtime`；源码与测试共 20 条显式路径，提交后实现工作区干净。该提交不据此勾选 Phase 11 或最终验收清单。
+- red tests:`tests/runtime-v3/integration/production-interactive-runtime.test.ts` 初次 4 tests 中 2 failed，分别证明 production bind/release 后 canonical `workspace.bound`/`workspace.released` 都为空；`tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts` 与 `tests/runtime-v3/lifecycle/mutation-gate-adapters.test.ts` 初次因 `src/runtime/lifecycle/mutation-gate.ts` 不存在而 0 tests collected。
+- targeted:`npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests/runtime-v3/lifecycle/mutation-gate-adapters.test.ts tests/runtime-v3/integration/production-interactive-runtime.test.ts tests/cli/production-interactive-options.test.ts tests/runtime-v3/control-plane/v3-session-adapters.test.ts tests/runtime-v3/control-plane/v3-session-startup-gate.test.ts tests/runtime-v3/orchestrator/daemon-agent-runtime.test.ts tests/runtime-v3/session/agent-loop-events.test.ts` -> Linux，8 files / 75 tests，PASS。
+- mutation gate:`ContinuousExternalReceiptMutationGate` 在每次 `model_request`、`tool_authorize`、`tool_execute` 与 factory `session_fork` 前重新读取 canonical external refs；校验 authority/tenant/session scope、complete set、重复 ID、active Workspace lease、exact audit receipt 与审计前后 event head。外部调用受单次/总 deadline 约束，请求串行；timeout、throw、abort、corruption、stale head 或 receipt mismatch 首次失败后永久 latch，后续调用不再访问 auditor。
+- production wiring:CLI 创建并持有同一 mutation gate，production option provider 不能替换 active CLI 的 manager/models/gate；production interactive model preparation 与 Tool Gateway authorize/execute delegate 均在 gate 之后，拒绝时 delegate 为零调用。daemon managed runtime 持有并传递该 gate；factory start/resume 创建 gate，active/inactive parent fork 复用或建立 parent gate，并在读取同一 admitted canonical snapshot、创建 fork child/genesis 前用 expected parent head 复检。fork projection 与 conversation history 均来自该 snapshot，不再二次调用 active parent replay。
+- canonical Workspace lifecycle:production bind durable 写入 `workspace.bound` 后紧邻 `lease.acquired` 并 flush；release 成功后 durable 写入 `workspace.released` 并 flush。resume 的新 revision 重新写 `workspace.bound`/`lease.acquired`，projector 移除旧 terminal lease，只保留新 active lease；cleanup release 本身不被 mutation gate 阻断。
+- Approval 未完成边界:gate 只能复检 canonical source 当时已经列出的 Approval refs；production Tool Gateway 尚未把当前 ask/allow 作为 active dependency 完整写入 `permission.requested/decided/expired/revoked`，file store 仍缺通用 revisioned CAS/revoke/expiry 流，authorize cache 与 execute 尚无“当前 grant 对应 receipt”强绑定及 crash/restart reconcile。因此不得把通用 Approval expiry/revocation 视为闭合。
+- 其他未完成边界:`ProductionChildSessionLauncher` 尚未接 `child_spawn` gate；same-session replacement、idle unload/reload、cleanup canonical terminal receipt、kill/restart orphan reconciliation 与 daemon/authority 剩余吞错路径均未闭合。
+- live provider recheck:按用户确认使用 `AuthStorage` 中现有 `deepseek:api_key`，经 `builtinModels -> models.streamSimple -> Agent -> echo -> MemoryLedger` 对 `deepseek-v4-pro` 再跑一次真实网络 smoke，结果 `messages=4 events=56 ledger=12 toolCalls=1 toolResults=1 turnEnds=2 finalRole=assistant`。凭据只由正常 provider 路径在进程内解析，未被人工查看、打印、复制或写入 runner 输出；该 one-off 仍不经过 governed state-root/mutation gate，也不冒充 Verification 或 Phase 11 全生命周期 E2E。
+- full gate:`npm run check`、`npm test`（245 files / 1424 tests）、`npm run build`、`npm run test:harness-regression`（11 files / 52 tests）、`git diff --check` 全部 PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。不复用上一阶段门禁结果。
+- verified_at:`2026-07-23T04:31:28+08:00`。
+
 ## 8. 阶段依赖与发布里程碑
 
 ```text
