@@ -1,12 +1,13 @@
 # Governed Agent Harness Runtime 剩余事项与取证问题
 
 > 文档状态:open issues / handoff ledger,不是第二份实施计划或完成状态真源
-> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00
+> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00
 > 目标 worktree:`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-governed-runtime`
 > 分支:`worktree/governed-agent-harness-runtime`
 > 基线 commit:`65f905452195e034c99fa5ac560a7e23a822f052`
 > 本轮实现检查点 commit:`004a2521934be745e8887f40f2b2631c392829dd`
 > governed startup 切片 commit:`830a7232c0aec570917fc55c69145cce45fa31ab`
+> production durability hardening commit:`2ca6f30b834410023ee77831c79d98714b11c103`
 > 权威计划:[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)
 
 本文件只记录本轮参考审查、计划审计和实现 worktree 检查中遇到的问题、未完成项与恢复顺序。任何条目都不能因为“已有文件”“定向测试曾通过”或“代码量较大”而视为完成。完成状态必须回写到同步后的 `04`，并附目标分支 commit、定向测试、完整门禁和专项联合证据。
@@ -15,11 +16,12 @@
 
 ### 1.1 权威计划已去分叉
 
-2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，当前 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。本轮只在目标 worktree 追加 `830a723` 的 scoped evidence；主 checkout 保持干净且未被旁路修改，待该分支正常合并后再同步。
+2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
 
 - [x] 以 2124 行版本作为唯一 canonical 文件，保留新增证据规则、I0-I7 串行账本、兼容矩阵和 13 类 mutation restart 要求。
 - [x] 没有迁移旧版 147 个无完整证据的勾选；当前 `04` 有 343 个真实未勾选任务，唯一 `[x]` 位于 §9.2 模板示例，不是完成声明。
 - [x] `00-reference.md`、`04`、三份专项 owner 计划与 `development-doc/00-index.md` 由本文件所在文档提交落入当前目标分支；实现证据固定到 `004a2521934be745e8887f40f2b2631c392829dd`。
+- [x] `00-reference.md` 的双 hash 已解释：主 checkout 原始文件为 22810 bytes、838 个 LF、末尾无 LF，目标 worktree 只补终止 LF而成为 839 个 LF；原始字节范围逐字相同，不是设计内容漂移。
 
 ### 1.2 本轮整体检查点的边界
 
@@ -59,6 +61,27 @@
 | `npm run test:harness-regression` | PASS | 11 files，52/52 tests；pretest 再次完整执行 `npm run check` |
 | `git diff --check` | PASS | 实现提交前 diff 与提交后文档 diff 均无 whitespace error |
 | pi-ai fixed snapshot audit | PASS | `pi@3f1762c...`，164/164 source files、72 catalog files |
+
+### 1.5 Production durability hardening 验证
+
+`2ca6f30b834410023ee77831c79d98714b11c103` 已作为独立代码/测试提交落入目标分支，关闭标准入口 state-root 接线、canonical Approval projection 和 governed open/CLI/factory cleanup failure 丢失；Phase 11 与最终验收仍保持未完成。
+
+| 命令 | 结果 | 说明 |
+|---|---|---|
+| durability targeted | PASS | 14 files，96/96 tests；覆盖 CLI/daemon durable root、exact、stale/revoked Workspace、expired Approval、missing Workspace、root identity、Approval projection 与 cleanup faults |
+| `npm run check` | PASS | TypeScript、runtime boundary、execution boundary 全部通过 |
+| `npm test` | PASS | 243 files，1391/1391 tests passed |
+| `npm run build` | PASS | NodeNext production build 成功 |
+| `npm run test:harness-regression` | PASS | 11 files，52/52 tests；pretest 再次完整执行 `npm run check` |
+| `git diff --check` | PASS | 代码提交前与当前文档 diff 均无 whitespace error |
+| pi-ai fixed snapshot audit | PASS | `pi@3f1762c...`，164/164 source files、72 catalog files |
+| live DeepSeek smoke | PASS | one-off `deepseek-v4-pro` tool loop：4 messages、59 events、12 ledger entries、1 tool call、1 tool result；不是 governed/Verification 全生命周期 E2E |
+
+### 1.6 本轮查找与验证过程中的问题
+
+- 一次范围过宽的 `/tmp` 只读搜索从旧的、与当前仓库无关的临时日志中把一条 credential 显示到了工具输出。该值没有被复述、使用、写入仓库或提交；当前 20 条代码/测试路径已用只输出文件名的私钥、AWS key、`sk-*` 模式复检，无命中。由于轮换凭据和清理旧临时日志属于额外外部/破坏性状态变更，本轮没有擅自执行；相关 credential 应尽快轮换，并单独清理或收紧旧日志权限。
+- live smoke 首次预检误把实际 `AuthCheck = { type, source? }` 当成含 `configured` 字段，因此在网络请求前主动失败。按真实契约改为检查返回值是否存在后重跑成功；没有为这个 one-off runner 修改仓库代码。
+- live smoke 使用内联 runner，当前没有可持久复跑的脚本、durable session 或 governed state-root；所以证据只记录 provider/Agent/tool/ledger 连通性，不能提升任何 governed startup、Verification 或 Phase 11 复选框。
 
 ## 2. 四个参考仓库审查中遇到的边界问题
 
@@ -150,19 +173,23 @@
 
 ## 4. 当前明确未完成的功能边界
 
-### P0:Governed startup 已有入口门禁，但生产状态根与持续执行门禁仍未闭合
+### P0:Production state root 已接线，持续执行门禁、replacement 与 durable cleanup 仍未闭合
 
-`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路，但只构成 startup/admission 切片，不等于整个 session 生命周期持续受外部 receipt 约束。
+`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失。两者仍只构成 startup/admission 与错误可见性切片，不等于整个 session 生命周期持续受外部 receipt 约束。
 
 - [x] 既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 统一先经过 `GovernedV3SessionRuntime`；审计未通过时不会进入 controller/model/tool、candidate authority、agent binding 或 child creation。
 - [x] Workspace lease 与 Approval receipt 的 exact digest/revision/expiry/state、partial/unknown completeness、missing/store throw/timeout/abort/畸形 receipt 均 fail closed；非 `allowed` Approval 即使被 adapter 伪报 valid 也只能 paused。
 - [x] 单调用 timeout 与整次 scan deadline 有界；adapter 忽略 `AbortSignal` 时，首个 timeout/abort 后停止启动后续 audits，不会按 10,000-item 上限继续制造悬挂调用。
 - [x] 缺 auditor 的默认 sentinel 对含 external refs 的 session fail closed；确无 external refs 的 clean/new session 不需要伪造 Workspace/Approval receipt。
-- [ ] 标准 CLI/daemon 目前只有可选 auditor 注入，尚未从 deployment-owned canonical state root 自动组合 `FileWorkspaceLeaseMutationPort`、`FileApprovalStateStore` 与 `DurableStartupExternalReceiptAuditor`；缺少“同一 scope/root 的真实 file stores -> auditor -> CLI/daemon”联合 E2E。
+- [x] 标准 CLI `--state-root` 与 daemon `--state-root`/startup option 会从同一 deployment-owned canonical root 组合 `FileWorkspaceLeaseMutationPort`、`FileApprovalStateStore` 与 `DurableStartupExternalReceiptAuditor`；root 必须预先存在、私有、非 symlink、realpath 精确一致并在子 store 创建前后保持 dev/inode。raw auditor 冲突、CLI/dependency/provider root 不一致均在 open 前拒绝。
+- [x] CLI 与 daemon 的真实 file-store 联合 E2E 覆盖 exact、stale Workspace、revoked Workspace、expired Approval、missing Workspace；CLI 无效状态在 TUI/controller/model/tool composition 前失败，provider-admitted root 也必须在 session open 前参与审计。
+- [x] canonical Approval projector 只接收完整 principal/session/runtime/generation/turn/toolCall 与 request/ticket/receipt binding；decided/expired/revoked exact projection、完全重复幂等和 evidence/binding drift fail-closed 均有回归。
 - [ ] admission callback 只在入口复检 Approval `validThrough`，随后 CLI/factory 仍持有裸 `V3SessionManager`；尚无 model/tool/child 每次 mutation 的持续 expiry/revocation 复检，Workspace lease 在 admission 后被撤销也不会自动关闭 mutation gate。
 - [ ] idle unload/reload 与 same-session hot replacement 尚未接入同一 governed gate；replacement 仍缺 standby candidate、fencing promotion、commit-before-old-drain 和 commit 后失败终态的 fault E2E。
-- [ ] 当前 CLI invalid-lease 与 daemon cold-recovery E2E 只证明代表性入口；仍需对 stale/revoked/unavailable Workspace、Approval、timeout/throw/partial 分别跑 durable-store 联合 E2E，并精确断言 model/tool/child instrumentation 全程为零。
-- [ ] 资源清理仍有非 CLI-command 漏洞：`src/cli/main.ts` 最终 `closeSessionRuntime()` 继续吞掉 close/lease-release 错误；`src/storage/v3-runtime-adapter.ts` 的 open 失败 close，以及 `src/daemon/v3-session-adapters.ts` 的 resume/start/fork cleanup 仍有 `catch(() => undefined)`。这阻止宣称“所有 writer/lease 都有可见 terminal cleanup outcome”。
+- [ ] injected-auditor tests 已覆盖 timeout/throw/partial/abort，真实 file-store E2E 已覆盖 exact/stale/revoked/expired/missing；仍缺权限突变、文件损坏、root/store TOCTOU、进程 kill 与 restart reconciliation 的 CLI/daemon 联合矩阵，以及所有入口统一的 model/tool/child 零调用断言。
+- [x] `src/cli/main.ts`、governed open 与 factory start/resume/fork 不再吞掉已知 close/discard failure；多资源 cleanup 会等待并展开全部错误，durable start/fork ownership transfer 前失败会返回不可重试 uncertain effect 与 session correlation，fork parent close 失败不会遗留 active child runtime。
+- [ ] 全仓 cleanup 尚未闭合：`src/daemon/local-v3-daemon.ts` 在 runtime-generation/shutdown-protocol 早期失败时仍吞 `authorityRuntime.close()` 错误，`src/storage/authority-runtime-manager.ts` open 失败仍吞 event-store close 错误。后续必须保留 primary + cleanup failure，并增加故障注入。
+- [ ] cleanup failure 目前对调用方可见，但尚未形成独立 canonical terminal cleanup event/receipt，也没有覆盖 kill-after-side-effect、process restart 后 orphan writer/lease/child 的自动 reconciliation；因此仍不能宣称所有资源均有 durable terminal cleanup outcome。
 
 ### P0:Verification/Compaction 只有模块，不是生产生命周期
 
@@ -202,8 +229,8 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 
 ## 5. 建议恢复顺序
 
-1. 从 deployment-owned state root 组合真实 lease/approval stores 与 durable auditor，并补 CLI/daemon durable-store 联合 E2E。
-2. 把外部 receipt 的持续 expiry/revocation 复检接到 model/tool/child mutation、idle reload 与 replacement；同时让所有 close/lease-release failure 形成可见 terminal outcome。
+1. 把外部 receipt 的持续 expiry/revocation/lease 复检接到 model/tool/child mutation、idle reload 与 replacement，并保持同一 canonical state root/generation。
+2. 清除 daemon/authority 剩余吞错 close，为 cleanup 增加 canonical terminal receipt、kill/restart orphan reconciliation，并补权限突变、store corruption 与 root/store TOCTOU 联合 E2E。
 3. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
 4. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、Production AgentSupervisor、remote/handoff/hot replacement。
 5. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。

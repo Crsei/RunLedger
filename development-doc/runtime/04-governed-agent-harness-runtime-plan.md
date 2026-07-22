@@ -172,7 +172,7 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 | 仓库 | 审查快照 | 工作区状态 | 许可证取样 | 本计划主要参考 |
 |---|---|---|---|---|
 | RunLedger | `feat/agent-loop-resurrect@65f905452195e034c99fa5ac560a7e23a822f052` | 主工作区已有文档修改/未跟踪文件;审阅未把这些文件视为已完成实现 | `package.json`:MIT | 当前代码、Phase 0 前置 scaffold 与缺口基线 |
-| `runtime/00-reference.md` | `sha256:2de7660e6726729deacbb320b670863eb5518760b4ab2294d3e7cb5655894428`(838 行) | 本地未跟踪设计输入 | 仓库内设计输入,不单独授权源码复制 | 11 类问题、总体架构、执行闭环、硬约束与推荐落地顺序 |
+| `runtime/00-reference.md` | 原始主 checkout `sha256:2de7660e6726729deacbb320b670863eb5518760b4ab2294d3e7cb5655894428`(838 个 LF,末尾无 LF);目标 worktree `sha256:61355b650f38a9f916064bc6fa8e0754ec68a466abc27bcfb81f65ee2860db94`(839 个 LF) | 本地设计输入;两份文件在原始 22810 bytes 内逐字相同,worktree 只补了终止 LF,不是内容漂移 | 仓库内设计输入,不单独授权源码复制 | 11 类问题、总体架构、执行闭环、硬约束与推荐落地顺序 |
 | codex | `main@0b175e6439a8608ba7726ee153fd8590619e8f34` | 仅用户未跟踪 `codex-rs/WEBSOCKET_PROXY_ISSUES.md` | 根 `LICENSE`:Apache-2.0 | 权限、sandbox、control plane、延迟工具、MCP/Skill/Plugin、多 Agent、分页历史与 fork lineage |
 | pi | `main@3f1762cc7d3af39898aa5d21891335935011287f` | 干净 | 根 `LICENSE`:MIT | AgentHarness、Session v3、Compaction、生命周期、本地 RPC |
 | grok-build | `main@c68e39f60462f28d9be5e683d9cbe2c57b1a5027` | 干净 | 根 `LICENSE`:Apache-2.0 | actor、workspace/checkpoint、permission、shell policy、有界 subagent |
@@ -1879,8 +1879,22 @@ Canonical event/reducer 闭环:
 - 已覆盖:`ExternalReceiptAuditReceipt` 绑定 canonical subject/authoritative digest、revision、Approval expiry 与自身 digest；durable Workspace/Approval auditor 对 stale/revoked/expired/missing/store failure fail closed；partial/unknown、throw、timeout、abort 或畸形结果只会 paused，首个 timeout/abort 后不会继续制造悬挂审计调用。
 - 已接线:既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 先经过 governed admission；缺 auditor 时 external refs 使用 fail-closed sentinel，新建或确无 external refs 的 session 不伪造审计调用。CLI invalid-lease fixture 证明 controller/model/tool composition 不会先于审计启动，factory fixture 证明 candidate authority/agent binding 不会先于审计启动。
 - cleanup:CLI migration/fork 的异常路径会按 target/child/parent 顺序完成 discard/close，清理失败通过 `AggregateError` 保留原始错误与所有清理错误；managed runtime 只有 close 成功才标记 closed/unregister。
-- specialty gate:仍为 INCOMPLETE；标准 CLI/daemon 尚未从 deployment-owned canonical state root 自动组合 file-backed lease/approval stores 与 durable auditor，admission 后也没有 model/tool/child 每次 mutation 的持续撤销/expiry 复检，idle unload/reload、same-session hot replacement 和部分非 CLI cleanup fault E2E 仍缺失，详见 `05-remaining-stuff.md`。
+- specialty gate:在 `830a723` 时仍为 INCOMPLETE；后续 `2ca6f30` 已关闭标准 CLI/daemon state-root 组合、durable-store 联合 E2E 与 governed open/CLI/factory cleanup failure 可见性缺口。admission 后 model/tool/child 每次 mutation 的持续撤销/expiry 复检、idle unload/reload、same-session hot replacement、durable cleanup terminal receipt 与 crash reconciliation 仍缺失，详见下一个证据块和 `05-remaining-stuff.md`。
 - verified_at:`2026-07-23T02:12:47+08:00`。
+
+#### 2026-07-23 production state-root 与 cleanup hardening 证据（仍不关闭 Phase 11）
+
+- 状态:在 governed startup/admission 基线上关闭 production durable-store 入口接线、canonical Approval projection 和本切片涉及的 cleanup-error 丢失；这不是持续运行期授权、Verification 生命周期或 Phase 11 完成声明。
+- commit/worktree:`2ca6f30b834410023ee77831c79d98714b11c103`，`worktree/governed-agent-harness-runtime`；源码与测试共 20 条显式路径，提交后实现工作区干净。
+- targeted:`npx vitest run tests/storage/production-startup-receipt-auditor.test.ts tests/e2e/production-durable-startup-auditor-wiring.test.ts tests/daemon/stdio-cli.test.ts tests/cli/args.test.ts tests/cli/production-interactive-options.test.ts tests/cli/runtime-resource-cleanup.test.ts tests/cli/startup-external-receipt-gate.test.ts tests/runtime-v3/control-plane/v3-session-cleanup-faults.test.ts tests/runtime-v3/lifecycle/canonical-references.test.ts tests/runtime-v3/lifecycle/governed-session-runtime.test.ts tests/runtime-v3/control-plane/v3-session-adapters.test.ts tests/runtime-v3/control-plane/v3-session-startup-gate.test.ts tests/cli/v3-session-command-cleanup.test.ts tests/e2e/daemon-startup-external-receipt-gate.test.ts` -> Linux，14 files / 96 tests，PASS。
+- full gate:`npm run check`、`npm test`（243 files / 1391 tests）、`npm run build`、`npm run test:harness-regression`（11 files / 52 tests）、`git diff --check` 全部 PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。
+- production wiring:普通 CLI 暴露 `--state-root`，daemon 暴露并透传同一部署参数；startup auditor、production workspace 与 Tool Gateway 必须绑定完全一致的 canonical absolute root。root 必须预先存在、权限不宽于 `0700`、不是 symlink、`realpath` 精确一致，且子 store 创建前后 `dev/inode` 不变；raw auditor 与 state root 并存、CLI/dependency/provider root 漂移一律在 session open 前拒绝。
+- durable-store E2E:CLI 与 daemon 均用真实 `FileWorkspaceLeaseMutationPort`、`FileApprovalStateStore` 和 `DurableStartupExternalReceiptAuditor` 覆盖 exact、stale Workspace、revoked Workspace、expired Approval、missing Workspace；无效状态在 TUI/provider/controller/model/tool/child composition 前 fail closed。
+- canonical Approval:terminal projection 绑定 principal、session、runtime、generation、turn、toolCall、approval/request/ticket/receipt digest 与 decision revision；`permission.decided` 只投影 `ApprovalReceiptRef` 字段，expired/revoked 从 canonical request/前序 allowed receipt 重建。完全重复事件幂等，evidence 或 binding 漂移返回 integrity failure。
+- cleanup/uncertainty:CLI 用 `Promise.allSettled` 等待并递归展开全部 cleanup failure，同时保留 primary failure；governed open 与 factory start/resume/fork 保留业务失败和 close/discard failure。durable start/fork 在 ownership transfer 前失败返回不可重试 `effect="uncertain"` 并带 `sessionId`/`childSessionId`；fork parent close 失败会关闭未转移 child，不留下 active runtime。
+- live provider smoke:使用 `AuthStorage` 中现有 `deepseek:api_key`，经 `builtinModels -> models.streamSimple -> Agent -> echo -> MemoryLedger` 对 `deepseek-v4-pro` 做一次 one-off 真实网络 smoke，结果 `messages=4 events=59 ledger=12 toolCalls=1 toolResults=1`。凭据只由正常 provider 路径在进程内解析，未被人工查看、打印、复制或写入 runner 输出；该结果也不冒充 governed startup、durable session 或 Verification 全生命周期 E2E，当前未新增持久 smoke 脚本。
+- specialty gate:仍为 INCOMPLETE；持续 model/tool/child mutation 的 expiry/revocation/lease 复检、idle reload、same-session hot replacement、cleanup terminal receipt/crash reconciliation、daemon/authority 早期初始化剩余吞错 close 路径、真实 Verification/Compaction/forge/remote 联合 E2E 仍未完成。
+- verified_at:`2026-07-23T03:27:40+08:00`。
 
 ## 8. 阶段依赖与发布里程碑
 
