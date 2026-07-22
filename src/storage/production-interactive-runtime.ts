@@ -1,6 +1,7 @@
 /** Production interactive runtime 的独立 composition root。 */
 
 import { join } from "node:path";
+import type { Static } from "typebox";
 import type { Models } from "../models.ts";
 import {
 	createProductionAdapterEvidence,
@@ -15,13 +16,20 @@ import {
 } from "../extensions/integration/production-runtime.ts";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
+	MutationGatedToolExecutionGateway,
+	mutationGatedModelPreparation,
+	type SessionMutationAdmissionGatePort,
+} from "../runtime/lifecycle/mutation-gate.ts";
+import {
 	createRuntimeId,
 	type CommandId,
 	type RepositoryId,
 	type WorkspaceId,
 } from "../runtime/protocol/v3/ids.ts";
 import {
+	workspaceBindingDigest,
 	workspaceExecutionEnvelopeDigest,
+	WorkspaceBindingRefSchema,
 	type WorkspaceBindingRef,
 	type WorkspaceExecutionEnvelope,
 } from "../runtime/protocol/v3/workspace.ts";
@@ -168,6 +176,8 @@ export interface ProductionInteractiveRuntimeOptions {
 	/** Composition 接管 manager；启动失败或 close 时均会关闭 writer 与 lease。 */
 	manager: V3SessionManager;
 	models: Models;
+	/** 由 session owner 创建；model/tool 必须共享同一个永久 latch。 */
+	mutationGate: SessionMutationAdmissionGatePort;
 	tools: readonly AgentTool[];
 	workspace: ProductionInteractiveWorkspaceOptions;
 	toolGateway: ProductionInteractiveToolGatewayOptions;
@@ -343,6 +353,59 @@ async function bindWorkspace(
 	return result.value;
 }
 
+async function recordWorkspaceBinding(
+	manager: V3SessionManager,
+	workspace: WorktreeCreateResult,
+	traceId: ReturnType<typeof createRuntimeId<"trace">>,
+): Promise<void> {
+	const runtimeBinding: Static<typeof WorkspaceBindingRefSchema> = (() => {
+		const binding = workspace.runtimeBinding;
+		const base = {
+			authorityId: binding.authorityId,
+			tenantId: binding.tenantId,
+			workspaceId: binding.workspaceId,
+			repositoryId: binding.repositoryId,
+			canonicalCwd: binding.canonicalCwd,
+			effectiveCwd: binding.effectiveCwd,
+			branch: binding.branch,
+			baseCommit: binding.baseCommit,
+			headCommit: binding.headCommit,
+		};
+		if (binding.bindingKind === "source") return { ...base, bindingKind: "source" as const };
+		if (!binding.worktreeId) throw new Error("production workspace binding is missing its worktree id");
+		return { ...base, bindingKind: binding.bindingKind, worktreeId: binding.worktreeId };
+	})();
+	const bound = await manager.writer().append({
+		type: "workspace.bound",
+		principalId: manager.identity().principalId,
+		traceId,
+		payload: {
+			binding: runtimeBinding,
+			bindingDigest: workspaceBindingDigest(workspace.runtimeBinding),
+			lease: workspace.lease,
+		},
+	});
+	if (!bound.ok) {
+		throw new Error(`production workspace binding event failed: ${bound.error.code}: ${bound.error.message}`);
+	}
+	const acquired = await manager.writer().append({
+		type: "lease.acquired",
+		principalId: manager.identity().principalId,
+		traceId,
+		payload: {
+			lease: workspace.lease,
+			receiptId: workspace.receiptId,
+		},
+	});
+	if (!acquired.ok) {
+		throw new Error(`production workspace lease event failed: ${acquired.error.code}: ${acquired.error.message}`);
+	}
+	const flushed = await manager.writer().flush();
+	if (!flushed.ok) {
+		throw new Error(`production workspace binding durability failed: ${flushed.error.code}: ${flushed.error.message}`);
+	}
+}
+
 function releaseEnvelope(
 	manager: V3SessionManager,
 	workspace: WorktreeCreateResult,
@@ -395,6 +458,25 @@ async function releaseWorkspace(
 		expectedLeaseRevision: envelope.leaseRevision,
 	});
 	if (!result.ok) throw new Error(`production workspace release failed: ${result.error.code}: ${result.error.message}`);
+	const released = await manager.writer().append({
+		type: "workspace.released",
+		principalId: identity.principalId,
+		traceId,
+		payload: {
+			workspaceId: workspace.runtimeBinding.workspaceId,
+			leaseId: workspace.lease.leaseId,
+			leaseRevision: workspace.lease.leaseRevision,
+			bindingDigest: workspaceBindingDigest(workspace.runtimeBinding),
+			receiptId: result.value.receiptId,
+		},
+	});
+	if (!released.ok) {
+		throw new Error(`production workspace release event failed: ${released.error.code}: ${released.error.message}`);
+	}
+	const flushed = await manager.writer().flush();
+	if (!flushed.ok) {
+		throw new Error(`production workspace release durability failed: ${flushed.error.code}: ${flushed.error.message}`);
+	}
 }
 
 function assertBaseTools(tools: readonly AgentTool[]): void {
@@ -842,6 +924,7 @@ export async function createProductionInteractiveRuntime(
 		if (!registered.ok || registered.value?.state !== "active" || registered.value.leaseRevision !== binding.leaseRevision) {
 			throw new Error("production workspace registry probe failed");
 		}
+		await recordWorkspaceBinding(manager, workspaceResult, traceId);
 
 		const sandboxCapability = await options.toolGateway.sandboxBackend.probe();
 		if (!restrictiveSandbox(sandboxCapability)) throw new Error("production sandbox does not provide restrictive enforcement");
@@ -873,7 +956,9 @@ export async function createProductionInteractiveRuntime(
 			sandboxBackend: options.toolGateway.sandboxBackend,
 			clock,
 		});
-		gateway = new StartupGatedToolExecutionGateway(toolGatewayComposition.toolExecutionGateway);
+		gateway = new StartupGatedToolExecutionGateway(
+			new MutationGatedToolExecutionGateway(options.mutationGate, toolGatewayComposition.toolExecutionGateway),
+		);
 
 		const registry = new ToolRegistry();
 		registerBaseTools(registry, options.tools);
@@ -979,7 +1064,7 @@ export async function createProductionInteractiveRuntime(
 				extensionRuntime: extensionAdapter.runtime,
 				extensionCatalog,
 			} : {}),
-			prepareModelRequest: modelRuntime.prepare,
+			prepareModelRequest: mutationGatedModelPreparation(options.mutationGate, modelRuntime.prepare),
 			toolExecutionGateway: gateway,
 			sessionEvents: manager.sessionEvents(),
 			toolResultArtifactSink: manager.toolResultArtifactSink(),

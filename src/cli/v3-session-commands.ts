@@ -7,6 +7,7 @@ import type {
 	LifecycleResult,
 	StartupExternalReceiptAuditPort,
 } from "../runtime/lifecycle/recovery.ts";
+import type { SessionMutationAdmissionGatePort } from "../runtime/lifecycle/mutation-gate.ts";
 import {
 	createStableForkPlan,
 	type StableForkGoalMode,
@@ -36,7 +37,7 @@ function unavailableExternalReceiptAudit(): Promise<LifecycleResult<ExternalRece
 	});
 }
 
-const FAIL_CLOSED_STARTUP_AUDITOR: StartupExternalReceiptAuditPort = Object.freeze({
+export const FAIL_CLOSED_STARTUP_AUDITOR: StartupExternalReceiptAuditPort = Object.freeze({
 	auditWorkspaceLease: unavailableExternalReceiptAudit,
 	auditApprovalDecision: unavailableExternalReceiptAudit,
 });
@@ -157,10 +158,15 @@ function openGovernedRuntimeFromCli(options: CliGovernedV3OpenOptions): Promise<
 	});
 }
 
-export async function openGovernedV3FromCli(options: CliGovernedV3OpenOptions): Promise<V3SessionManager> {
+export interface CliGovernedV3Session {
+	manager: V3SessionManager;
+	mutationGate: SessionMutationAdmissionGatePort;
+}
+
+export async function openGovernedV3FromCli(options: CliGovernedV3OpenOptions): Promise<CliGovernedV3Session> {
 	const governed = await openGovernedRuntimeFromCli(options);
 	const admitted = await governed.runIfResumable(async (manager) => manager);
-	if (admitted.ok) return admitted.value;
+	if (admitted.ok) return { manager: admitted.value, mutationGate: governed.mutationGate() };
 	const startup = governed.startupReport().sessions[0];
 	return throwAfterGovernedClose("V3 governed startup", options.filePath, governed, new Error(
 		`V3 governed startup not approved after external receipt audit: ${startup?.reasons.join(",") || startup?.disposition || "unknown"}`,
@@ -297,7 +303,7 @@ export async function forkV3FromCli(options: {
 	parentRootAgentId: AgentId;
 }> {
 	if (!options.features.sessionV3) throw new Error("Runtime v3 fork is disabled");
-	const parent = await openGovernedV3FromCli({
+	const governedParent = await openGovernedV3FromCli({
 		filePath: options.sourcePath,
 		features: options.features,
 		...(options.externalReceiptAuditor === undefined
@@ -307,6 +313,7 @@ export async function forkV3FromCli(options: {
 			? {}
 			: { externalReceiptAuditTimeoutMs: options.externalReceiptAuditTimeoutMs }),
 	});
+	const parent = governedParent.manager;
 	let child: V3SessionManager | undefined;
 	let operationError: Error | undefined;
 	try {
@@ -314,6 +321,17 @@ export async function forkV3FromCli(options: {
 		if (!eventsResult.ok) throw new Error(eventsResult.error.message);
 		const projection = reduceSessionEvents(eventsResult.value);
 		if (!projection.ok) throw new Error(projection.error.message);
+		const parentHead = parent.writer().currentHead();
+		if (!parentHead) throw new Error("V3 session fork parent has no canonical head");
+		const forkCommandId = createRuntimeId("command");
+		const admitted = await governedParent.mutationGate.revalidate({
+			kind: "session_fork",
+			correlationId: forkCommandId,
+			expectedHead: parentHead,
+		});
+		if (!admitted.ok) {
+			throw new Error(`V3 session fork external receipt revalidation failed: ${admitted.error.message}`);
+		}
 		const goalMode = options.goalMode ?? "continue_existing_goal";
 		const initialGoalId = options.initialGoalId ?? (
 			goalMode === "continue_existing_goal"
@@ -334,7 +352,7 @@ export async function forkV3FromCli(options: {
 			goalMode,
 			initialGoalId,
 			rootAgentId,
-			idempotencyKey: createRuntimeId("command"),
+			idempotencyKey: forkCommandId,
 			principalId: child.identity().principalId,
 			traceId: createRuntimeId("trace"),
 		});

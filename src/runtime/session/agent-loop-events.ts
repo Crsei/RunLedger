@@ -692,7 +692,8 @@ export class AgentLoopSessionEvents {
 			queueItems.push(item);
 		}
 		const turnId = createRuntimeId("turn");
-		const modelRequestId = queueItems.length > 0 ? createRuntimeId("modelRequest") : undefined;
+		// mutation gate 必须在 model.requested 前绑定稳定 correlation，因此每个 turn 预分配 request ID。
+		const modelRequestId = createRuntimeId("modelRequest");
 		await this.append("turn.started", {
 			turnId,
 			goalId: this.goalId,
@@ -700,7 +701,7 @@ export class AgentLoopSessionEvents {
 		});
 		this.activeTurnId = turnId;
 		const first = queueItems[0];
-		if (first && modelRequestId) {
+		if (first) {
 			await this.append("queue.claimed", {
 				queueItemId: first.reference.queueItemId,
 				sourceCommandId: first.reference.sourceCommandId,
@@ -713,7 +714,7 @@ export class AgentLoopSessionEvents {
 		}
 		return {
 			turnId,
-			...(modelRequestId ? { modelRequestId } : {}),
+			modelRequestId,
 			queueReferences: queueItems.map((item) => item.reference),
 		};
 	}

@@ -9,6 +9,13 @@ import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json
 import { createIdempotencyKey } from "../../../src/runtime/protocol/v3/coordination.ts";
 import type { EventCursor } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/v3/ids.ts";
+import {
+	MutationGatedToolExecutionGateway,
+	mutationGatedModelPreparation,
+	type SessionMutationAdmissionGatePort,
+	type SessionMutationAdmissionReceipt,
+	type SessionMutationAdmissionRequest,
+} from "../../../src/runtime/lifecycle/mutation-gate.ts";
 import type {
 	ControlPlaneRequestContext,
 	PromptPreflightReceipt,
@@ -388,7 +395,10 @@ class RecordingProductionRuntimeFactory implements ProductionInteractiveRuntimeF
 		this.#events = options.events;
 	}
 
-	public async create(manager: V3SessionManager): Promise<ProductionInteractiveRuntime> {
+	public async create(
+		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<ProductionInteractiveRuntime> {
 		const identity = manager.identity();
 		const workspaceId = createRuntimeId("workspace", "daemon-production-runtime");
 		const repositoryId = createRuntimeId("repository", "daemon-production-runtime");
@@ -396,18 +406,19 @@ class RecordingProductionRuntimeFactory implements ProductionInteractiveRuntimeF
 		if (!registry.register(this.#tool, { namespace: "production", version: "1" })) {
 			throw new Error("fixture tool registration failed");
 		}
-		const prepareModelRequest = async (input: ModelRequestPreparationInput) => {
+		const rawPrepareModelRequest = async (input: ModelRequestPreparationInput) => {
 			this.#events.push("prepare:model");
 			this.prepareCalls.push(input);
 			return { model: input.model, context: input.context };
 		};
+		const prepareModelRequest = mutationGatedModelPreparation(mutationGate, rawPrepareModelRequest);
 		let closePromise: Promise<void> | undefined;
 		const runtime = {
 			sessionId: manager.sessionId(),
 			cwd: this.#cwd,
 			tools: [this.#tool],
 			prepareModelRequest,
-			toolExecutionGateway: this.#gateway,
+			toolExecutionGateway: new MutationGatedToolExecutionGateway(mutationGate, this.#gateway),
 			sessionEvents: manager.sessionEvents(),
 			toolResultArtifactSink: manager.toolResultArtifactSink(),
 			operationBudget: this.#budget,
@@ -568,7 +579,10 @@ class RecordingBindingFactory implements DaemonAgentSessionBindingFactoryPort {
 	public readonly bindings: RecordingBinding[] = [];
 	public configure?: (binding: RecordingBinding) => void;
 
-	public create(manager: V3SessionManager): Promise<DaemonAgentSessionBindingPort> {
+	public create(
+		manager: V3SessionManager,
+		_mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<DaemonAgentSessionBindingPort> {
 		const binding = new RecordingBinding(manager);
 		this.configure?.(binding);
 		this.bindings.push(binding);
@@ -624,10 +638,41 @@ class CompletionCapturingFactory implements DaemonAgentSessionBindingFactoryPort
 		this.#delegate = delegate;
 	}
 
-	public async create(manager: V3SessionManager): Promise<DaemonAgentSessionBindingPort> {
-		const binding = new CompletionCapturingBinding(await this.#delegate.create(manager));
+	public async create(
+		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<DaemonAgentSessionBindingPort> {
+		const binding = new CompletionCapturingBinding(await this.#delegate.create(manager, mutationGate));
 		this.binding = binding;
 		return binding;
+	}
+}
+
+class FixtureMutationGate implements SessionMutationAdmissionGatePort {
+	readonly #manager: V3SessionManager;
+
+	public constructor(manager: V3SessionManager) {
+		this.#manager = manager;
+	}
+
+	public async revalidate(
+		request: SessionMutationAdmissionRequest,
+	): Promise<{ ok: true; value: SessionMutationAdmissionReceipt }> {
+		const head = this.#manager.writer().currentHead();
+		if (!head) throw new Error("fixture mutation gate requires a canonical head");
+		const identity = this.#manager.identity();
+		const body = {
+			schemaVersion: 1 as const,
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			sessionId: this.#manager.sessionId(),
+			kind: request.kind,
+			correlationId: request.correlationId,
+			eventHead: structuredClone(head),
+			checkedAt: "2026-07-22T00:00:00.000Z",
+			auditReceipts: [],
+		};
+		return { ok: true, value: { ...body, receiptDigest: canonicalDigest(body) } };
 	}
 }
 
@@ -635,14 +680,20 @@ class ManagedFixture implements ManagedV3SessionRuntimePort {
 	public readonly sessionId: SessionId;
 	public teardownCount = 0;
 	readonly #manager: V3SessionManager;
+	readonly #mutationGate: SessionMutationAdmissionGatePort;
 
 	public constructor(manager: V3SessionManager) {
 		this.#manager = manager;
+		this.#mutationGate = new FixtureMutationGate(manager);
 		this.sessionId = manager.sessionId();
 	}
 
 	public manager(): V3SessionManager {
 		return this.#manager;
+	}
+
+	public mutationGate(): SessionMutationAdmissionGatePort {
+		return this.#mutationGate;
 	}
 
 	public head(): EventCursor | null {

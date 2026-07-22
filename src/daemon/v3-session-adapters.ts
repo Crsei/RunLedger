@@ -29,9 +29,9 @@ import type {
 	LifecycleResult,
 	StartupExternalReceiptAuditPort,
 } from "../runtime/lifecycle/recovery.ts";
-import { CanonicalEventExternalReferenceSource } from "../runtime/lifecycle/canonical-references.ts";
-import { StartupRecoveryCoordinator } from "../runtime/lifecycle/startup.ts";
+import type { SessionMutationAdmissionGatePort } from "../runtime/lifecycle/mutation-gate.ts";
 import { createStableForkPlan } from "../runtime/session/checkpoint.ts";
+import { replayConversationEvents } from "../runtime/session/conversation-replay.ts";
 import { verifyRuntimeEventChain } from "../runtime/session/chain-verification.ts";
 import type { RuntimeEventStore } from "../runtime/session/event-store.ts";
 import { scanJsonlV3EventLog } from "../runtime/session/jsonl-v3-store.ts";
@@ -92,7 +92,10 @@ import type {
 } from "./recovery-adapter.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { resolveSessionDir } from "../storage/paths.ts";
-import { GovernedV3SessionRuntime } from "../storage/v3-runtime-adapter.ts";
+import {
+	GovernedV3SessionRuntime,
+	createV3SessionMutationAdmissionGate,
+} from "../storage/v3-runtime-adapter.ts";
 import { V3SessionManager } from "../storage/v3-session-manager.ts";
 import {
 	DurableQueueBindingError,
@@ -562,15 +565,18 @@ export class V3ManagedSessionRuntime implements ManagedSessionRuntime {
 	public readonly sessionId: SessionId;
 	public readonly authorityBinding?: () => CandidateAuthorityBinding;
 	readonly #manager: V3SessionManager;
+	readonly #mutationGate: SessionMutationAdmissionGatePort;
 	readonly #onClosed: (runtime: V3ManagedSessionRuntime) => void;
 	#closed = false;
 
 	public constructor(
 		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
 		onClosed: (runtime: V3ManagedSessionRuntime) => void,
 		authorityBinding?: CandidateAuthorityBinding,
 	) {
 		this.#manager = manager;
+		this.#mutationGate = mutationGate;
 		this.sessionId = manager.sessionId();
 		this.#onClosed = onClosed;
 		if (authorityBinding) {
@@ -581,6 +587,10 @@ export class V3ManagedSessionRuntime implements ManagedSessionRuntime {
 
 	public manager(): V3SessionManager {
 		return this.#manager;
+	}
+
+	public mutationGate(): SessionMutationAdmissionGatePort {
+		return this.#mutationGate;
 	}
 
 	public isClosed(): boolean {
@@ -656,7 +666,10 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		return runtime && !runtime.isClosed() ? runtime : undefined;
 	}
 
-	async #manage(manager: V3SessionManager): Promise<ControlPlaneResult<V3ManagedSessionRuntime>> {
+	async #manage(
+		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<ControlPlaneResult<V3ManagedSessionRuntime>> {
 		if (manager.sessionId() === undefined || !sameIdentity(manager, this.#identity)) {
 			return controlPlaneFailure("adapter_contract_violation", "v3 session manager scope is inconsistent");
 		}
@@ -669,7 +682,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 			if (!bound.ok) return bound;
 			authorityBinding = bound.value;
 		}
-		const runtime = new V3ManagedSessionRuntime(manager, (closed) => {
+		const runtime = new V3ManagedSessionRuntime(manager, mutationGate, (closed) => {
 			if (this.#active.get(closed.sessionId) === closed) this.#active.delete(closed.sessionId);
 		}, authorityBinding);
 		this.#active.set(runtime.sessionId, runtime);
@@ -708,7 +721,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 							"opened v3 session authority correlation is invalid",
 						);
 					}
-					return this.#manage(manager);
+					return this.#manage(manager, governed.mutationGate());
 				});
 				if (!admitted.ok) {
 					const startup = governed.startupReport().sessions[0];
@@ -747,7 +760,12 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				runtimeId,
 				sessionId,
 			});
-			outcome = await this.#manage(manager);
+			outcome = await this.#manage(
+				manager,
+				createV3SessionMutationAdmissionGate(manager, this.#externalReceiptAuditor, {
+					externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+				}),
+			);
 		} catch (error) {
 			outcome = adapterUnavailable("v3 session start", error, "uncertain");
 		}
@@ -767,42 +785,6 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		return this.#openResumable(sessionId);
 	}
 
-	async #revalidateActiveForkParent(parent: V3SessionManager): Promise<ControlPlaneResult<void>> {
-		try {
-			const identity = parent.identity();
-			const sessionId = parent.sessionId();
-			const references = new CanonicalEventExternalReferenceSource(parent.eventStore(), {
-				authorityId: identity.authorityId,
-				tenantId: identity.tenantId,
-				sessionId,
-			});
-			const startup = await new StartupRecoveryCoordinator({
-				references,
-				auditor: this.#externalReceiptAuditor,
-				externalOperationTimeoutMs: this.#externalReceiptAuditTimeoutMs,
-			}).scan([{
-				authorityId: identity.authorityId,
-				tenantId: identity.tenantId,
-				sessionId,
-				sessionDirectory: parent.stateDirectory(),
-				store: parent.eventStore(),
-				snapshotFilePath: join(parent.stateDirectory(), "snapshot.json"),
-			}]);
-			const report = startup.sessions[0];
-			if (!report || report.disposition !== "resumable") {
-				return recoveryRequired("active fork parent did not pass governed external receipt revalidation", {
-					startupDisposition: report?.disposition ?? "missing",
-					startupReasons: report?.reasons.join(",") || "none",
-				});
-			}
-			return { ok: true, value: undefined };
-		} catch (error) {
-			return recoveryRequired("active fork parent external receipt revalidation is unavailable", {
-				errorName: error instanceof Error ? error.name : "UnknownError",
-			});
-		}
-	}
-
 	public async fork(
 		parentSessionId: SessionId,
 		parentCursor: EventCursor,
@@ -818,6 +800,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		const location = await this.#locator.locate(parentSessionId);
 		if (!location.ok) return location;
 		let parent: V3SessionManager | undefined;
+		let parentMutationGate: SessionMutationAdmissionGatePort | undefined;
 		let governedParent: GovernedV3SessionRuntime | undefined;
 		let child: V3SessionManager | undefined;
 		let childSessionId: SessionId | undefined;
@@ -829,8 +812,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				const activeParent = this.activeRuntime(parentSessionId);
 				if (activeParent) {
 					parent = activeParent.manager();
-					const revalidated = await this.#revalidateActiveForkParent(parent);
-					if (!revalidated.ok) return revalidated;
+					parentMutationGate = activeParent.mutationGate();
 				} else {
 					governedParent = await GovernedV3SessionRuntime.open({
 						filePath: location.value.filePath,
@@ -849,6 +831,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 						});
 					}
 					parent = admitted.value;
+					parentMutationGate = governedParent.mutationGate();
 				}
 				if (parent.sessionId() !== parentSessionId || !sameIdentity(parent, this.#identity)) {
 					return controlPlaneFailure("adapter_contract_violation", "fork parent manager correlation is invalid");
@@ -856,6 +839,28 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				const recovered = parent.recoveryDecision();
 				if (!recovered || recovered.kind === "corrupted" || recovered.kind === "pause_for_approval") {
 					return recoveryRequired("fork parent is not at a trusted stable boundary");
+				}
+				if (!parentMutationGate) {
+					return recoveryRequired("fork parent mutation gate is unavailable");
+				}
+				const admissionHead = parent.writer().currentHead();
+				if (!admissionHead || !sameCursor(admissionHead, parentCursor)) {
+					return controlPlaneFailure("cursor_mismatch", "fork parent cursor is not the current stable head");
+				}
+				const forkCorrelationId = createRuntimeId("command", `session-fork-${canonicalDigest({
+					parentSessionId,
+					parentCursor,
+					goalMode,
+				}).slice(0, 48)}`);
+				const revalidated = await parentMutationGate.revalidate({
+					kind: "session_fork",
+					correlationId: forkCorrelationId,
+					expectedHead: parentCursor,
+				});
+				if (!revalidated.ok) {
+					return recoveryRequired("fork parent did not pass continuous external receipt revalidation", {
+						errorCode: revalidated.error.code,
+					});
 				}
 				const events = await readAllRuntimeEvents(parent.eventStore());
 				if (!events.ok) return recoveryRequired("fork parent replay failed");
@@ -869,6 +874,12 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				};
 				if (!sameCursor(actualCursor, parentCursor)) {
 					return controlPlaneFailure("cursor_mismatch", "fork parent cursor is not the current stable head");
+				}
+				const snapshotMessages = replayConversationEvents(events.value);
+				if (!snapshotMessages.ok) return recoveryRequired("fork parent conversation replay failed");
+				const preCreateHead = parent.writer().currentHead();
+				if (!preCreateHead || !sameCursor(preCreateHead, parentCursor)) {
+					return controlPlaneFailure("cursor_mismatch", "fork parent advanced before child creation");
 				}
 				childSessionId = createRuntimeId("session");
 				const initialGoalId = goalMode === "continue_existing_goal"
@@ -891,7 +902,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 					goalMode,
 					initialGoalId,
 					rootAgentId,
-					idempotencyKey: createRuntimeId("command"),
+					idempotencyKey: forkCorrelationId,
 					principalId: this.#identity.principalId,
 					traceId: createRuntimeId("trace"),
 				});
@@ -901,8 +912,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				const genesis = await child.writer().append(plan.value.genesisDraft);
 				if (!genesis.ok) return recoveryRequired("fork genesis was not durably committed");
 				childHasDurableGenesis = true;
-				const messages = await parent.replayMessages();
-				for (const message of messages) await child.sessionEvents().recordMessage(message);
+				for (const message of snapshotMessages.value) await child.sessionEvents().recordMessage(message);
 				const copiedHistory = await child.writer().flush();
 				if (!copiedHistory.ok) throw new Error("forked session history was not durably copied");
 				if (governedParent) {
@@ -920,7 +930,12 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 						);
 					}
 				}
-				const managed = await this.#manage(child);
+				const managed = await this.#manage(
+					child,
+					createV3SessionMutationAdmissionGate(child, this.#externalReceiptAuditor, {
+						externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+					}),
+				);
 				if (!managed.ok) return managed;
 				child = undefined;
 				return managed;

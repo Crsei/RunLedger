@@ -30,6 +30,7 @@ import {
 } from "../session/agent-loop-events.ts";
 import { readAllRuntimeEvents } from "../session/snapshot.ts";
 import type { V3SessionManager } from "../../storage/v3-session-manager.ts";
+import type { SessionMutationAdmissionGatePort } from "../lifecycle/mutation-gate.ts";
 import type {
 	DaemonAgentSessionBindingFactoryPort,
 	DaemonAgentSessionBindingPort,
@@ -57,12 +58,14 @@ export interface DaemonOwnedAgentRuntimeOptions {
 
 export interface ManagedV3SessionRuntimePort extends ManagedSessionRuntime {
 	manager(): V3SessionManager;
+	mutationGate(): SessionMutationAdmissionGatePort;
 }
 
 function isManagedV3SessionRuntime(
 	runtime: ManagedSessionRuntime,
 ): runtime is ManagedV3SessionRuntimePort {
-	return typeof (runtime as ManagedSessionRuntime & { manager?: unknown }).manager === "function";
+	const candidate = runtime as ManagedSessionRuntime & { manager?: unknown; mutationGate?: unknown };
+	return typeof candidate.manager === "function" && typeof candidate.mutationGate === "function";
 }
 
 function promptText(command: PromptCommand): ControlPlaneResult<string> {
@@ -203,7 +206,7 @@ export class DaemonOwnedAgentRuntime implements PromptEnqueuePort, MutationExecu
 				return controlPlaneFailure("session_replacing", "daemon Agent session is already bound", true);
 			}
 			try {
-				const binding = await this.#factory.create(runtime.manager());
+				const binding = await this.#factory.create(runtime.manager(), runtime.mutationGate());
 				if (
 					binding.sessionId !== runtime.sessionId ||
 					binding.manager !== runtime.manager() ||

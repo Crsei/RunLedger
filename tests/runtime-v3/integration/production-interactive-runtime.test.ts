@@ -1,8 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createModels } from "../../../src/models.ts";
+import type { Api, Model } from "../../../src/types.ts";
 import { ArtifactAccessService } from "../../../src/runtime/artifacts/access.ts";
 import type {
 	ArtifactAccessLogPort,
@@ -10,8 +11,20 @@ import type {
 	ArtifactResult,
 } from "../../../src/runtime/artifacts/types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
+import type { RuntimeEventV3 } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type { InputSourceRef } from "../../../src/runtime/protocol/v3/taint.ts";
+import { workspaceBindingDigest } from "../../../src/runtime/protocol/v3/workspace.ts";
+import { projectExternalReceiptReferences } from "../../../src/runtime/lifecycle/canonical-references.ts";
+import type { SessionMutationAdmissionGatePort } from "../../../src/runtime/lifecycle/mutation-gate.ts";
+import {
+	createExternalReceiptAuditReceipt,
+	type ExternalReceiptAuditReceipt,
+	type LifecycleResult,
+	type StartupExternalReceiptAuditPort,
+} from "../../../src/runtime/lifecycle/recovery.ts";
+import type { ApprovalReceiptRef } from "../../../src/runtime/protocol/v3/capability.ts";
+import { readAllRuntimeEvents } from "../../../src/runtime/session/snapshot.ts";
 import type { SecuritySnapshot } from "../../../src/security/types.ts";
 import type {
 	EnterprisePortResult,
@@ -20,6 +33,7 @@ import type {
 } from "../../../src/runtime/identity/enterprise-types.ts";
 import type { CredentialAudienceBindingResolverPort } from "../../../src/security/integration/credential-broker-adapter.ts";
 import { MemoryCapabilityRateLimiter } from "../../../src/security/integration/capability-rate-limiter.ts";
+import { PortBackedToolExecutionGateway } from "../../../src/security/integration/tool-execution-gateway.ts";
 import {
 	createProductionToolManifest,
 	type ToolInvocationInputClassificationPort,
@@ -35,7 +49,11 @@ import type { SecurityResult } from "../../../src/security/types.ts";
 import { BUDGET_DIMENSIONS, type BudgetLimits } from "../../../src/runtime/orchestrator/budget-guard.ts";
 import { LoopBreaker } from "../../../src/runtime/orchestrator/loop-breaker.ts";
 import type { OperationBindings } from "../../../src/runtime/orchestrator/types.ts";
-import type { AgentTool, ToolExecutionGatewayRequest } from "../../../src/runtime/types.ts";
+import type {
+	AgentTool,
+	ToolExecutionAuthorizationGrant,
+	ToolExecutionGatewayRequest,
+} from "../../../src/runtime/types.ts";
 import { TrustedBaselineCoordinator } from "../../../src/runtime/verification/baseline.ts";
 import { VerificationPipeline } from "../../../src/runtime/verification/pipeline.ts";
 import { TrustedVerifierIssuerRegistry } from "../../../src/runtime/verification/security.ts";
@@ -54,6 +72,9 @@ import {
 	type ProductionInteractiveRuntimeOptions,
 } from "../../../src/storage/production-interactive-runtime.ts";
 import { V3SessionManager } from "../../../src/storage/v3-session-manager.ts";
+import { createV3SessionMutationAdmissionGate } from "../../../src/storage/v3-runtime-adapter.ts";
+import { WorktreeManager } from "../../../src/worktree/manager.ts";
+import type { WorktreeCreateResult } from "../../../src/worktree/types.ts";
 import type { WorktreeForensicAuthorizationPort } from "../../../src/worktree/ports.ts";
 import { createArtifactHarness, type ArtifactHarness, NOW } from "../artifacts/helpers.ts";
 import { createWorktreeHarness, type WorktreeTestHarness } from "../../worktree/fixtures.ts";
@@ -68,10 +89,141 @@ const artifacts: ArtifactHarness[] = [];
 const managers: V3SessionManager[] = [];
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	await Promise.all(managers.splice(0).map((manager) => manager.closeAll().catch(() => undefined)));
 	for (const harness of worktrees.splice(0)) await harness.cleanup();
 	for (const harness of artifacts.splice(0)) await harness.cleanup();
 });
+
+type CapturedWorkspaceBind = Pick<WorktreeCreateResult, "runtimeBinding" | "lease" | "receiptId">;
+
+interface WorkspaceOperationCapture {
+	readonly bindings: CapturedWorkspaceBind[];
+	readonly releaseReceiptIds: WorktreeCreateResult["receiptId"][];
+}
+
+type MutationAdmissionRequest = Parameters<SessionMutationAdmissionGatePort["revalidate"]>[0];
+
+class RejectingRecordingMutationGate implements SessionMutationAdmissionGatePort {
+	public readonly requests: MutationAdmissionRequest[] = [];
+
+	public async revalidate(
+		request: MutationAdmissionRequest,
+	): Promise<Awaited<ReturnType<SessionMutationAdmissionGatePort["revalidate"]>>> {
+		this.requests.push(structuredClone(request));
+		return {
+			ok: false,
+			error: {
+				code: "external_unavailable",
+				message: "production mutation gate rejected the operation",
+				retryable: false,
+			},
+		};
+	}
+}
+
+class ExactExternalReceiptAuditor implements StartupExternalReceiptAuditPort {
+	public async auditWorkspaceLease(
+		sessionId: ReturnType<typeof createRuntimeId<"session">>,
+		lease: Parameters<StartupExternalReceiptAuditPort["auditWorkspaceLease"]>[1],
+	): Promise<LifecycleResult<ExternalReceiptAuditReceipt>> {
+		const subjectDigest = canonicalDigest(lease);
+		return {
+			ok: true,
+			value: createExternalReceiptAuditReceipt({
+				authorityId: lease.authorityId,
+				tenantId: lease.tenantId,
+				sessionId,
+				subjectKind: "workspace_lease",
+				subjectId: lease.leaseId,
+				subjectDigest,
+				authoritativeDigest: subjectDigest,
+				observedRevision: lease.leaseRevision,
+				status: "valid",
+				outcomeReason: "exact_match",
+				checkedAt: NOW,
+				validThrough: null,
+			}),
+		};
+	}
+
+	public async auditApprovalDecision(
+		sessionId: ReturnType<typeof createRuntimeId<"session">>,
+		receipt: ApprovalReceiptRef,
+	): Promise<LifecycleResult<ExternalReceiptAuditReceipt>> {
+		const subjectDigest = canonicalDigest(receipt);
+		return {
+			ok: true,
+			value: createExternalReceiptAuditReceipt({
+				authorityId: receipt.authorityId,
+				tenantId: receipt.tenantId,
+				sessionId,
+				subjectKind: "approval_decision",
+				subjectId: receipt.receiptId,
+				subjectDigest,
+				authoritativeDigest: subjectDigest,
+				observedRevision: receipt.decisionRevision,
+				status: "valid",
+				outcomeReason: "exact_match",
+				checkedAt: NOW,
+				validThrough: receipt.expiresAt ?? null,
+			}),
+		};
+	}
+}
+
+/** Production composition 丢弃了 adapter receipt，因此测试只截取可持久化 refs，不保留 raw fencing token。 */
+function captureWorkspaceOperations(): WorkspaceOperationCapture {
+	const capture: WorkspaceOperationCapture = { bindings: [], releaseReceiptIds: [] };
+	const bindSource = WorktreeManager.prototype.bindSource;
+	const resume = WorktreeManager.prototype.resume;
+	const release = WorktreeManager.prototype.release;
+	vi.spyOn(WorktreeManager.prototype, "bindSource").mockImplementation(async function (request) {
+		const result = await bindSource.call(this, request);
+		if (result.ok) {
+			capture.bindings.push({
+				runtimeBinding: structuredClone(result.value.runtimeBinding),
+				lease: structuredClone(result.value.lease),
+				receiptId: result.value.receiptId,
+			});
+		}
+		return result;
+	});
+	vi.spyOn(WorktreeManager.prototype, "resume").mockImplementation(async function (
+		workspaceId,
+		context,
+		ownerRuntimeId,
+	) {
+		const result = await resume.call(this, workspaceId, context, ownerRuntimeId);
+		if (result.ok) {
+			capture.bindings.push({
+				runtimeBinding: structuredClone(result.value.runtimeBinding),
+				lease: structuredClone(result.value.lease),
+				receiptId: result.value.receiptId,
+			});
+		}
+		return result;
+	});
+	vi.spyOn(WorktreeManager.prototype, "release").mockImplementation(async function (request) {
+		const result = await release.call(this, request);
+		if (result.ok) capture.releaseReceiptIds.push(result.value.receiptId);
+		return result;
+	});
+	return capture;
+}
+
+async function canonicalEvents(manager: V3SessionManager): Promise<readonly RuntimeEventV3[]> {
+	const replay = await readAllRuntimeEvents(manager.eventStore());
+	if (!replay.ok) throw new Error(`canonical event replay failed: ${replay.error.message}`);
+	return replay.value;
+}
+
+function eventsOfType<TType extends RuntimeEventV3["type"]>(
+	events: readonly RuntimeEventV3[],
+	type: TType,
+): readonly Extract<RuntimeEventV3, { type: TType }>[] {
+	return events.filter((event) => event.type === type) as readonly Extract<RuntimeEventV3, { type: TType }>[];
+}
 
 class AllowArtifactGateway implements ArtifactCapabilityGatewayPort {
 	public async recheckArtifactAccess(request: Parameters<ArtifactCapabilityGatewayPort["recheckArtifactAccess"]>[0]) {
@@ -355,6 +507,11 @@ async function fixture(): Promise<Fixture> {
 		return {
 			manager: activeManager,
 			models: createModels(),
+			mutationGate: createV3SessionMutationAdmissionGate(
+				activeManager,
+				new ExactExternalReceiptAuditor(),
+				{ clock: () => new Date(NOW_DATE) },
+			),
 			tools: [tool],
 			workspace: {
 				managedRoot: join(worktree.root, "production-managed"),
@@ -435,6 +592,7 @@ function unavailableCredential() {
 
 function invocation(tool: AgentTool, cwd: string, seed: string): ToolExecutionGatewayRequest {
 	return {
+		turnId: createRuntimeId("turn", seed),
 		toolCallId: createRuntimeId("toolCall", seed),
 		providerToolCallId: `provider-${seed}`,
 		tool,
@@ -442,6 +600,68 @@ function invocation(tool: AgentTool, cwd: string, seed: string): ToolExecutionGa
 		cwd,
 		envVars: {},
 	};
+}
+
+function rejectedExecutionGrant(request: ToolExecutionGatewayRequest): ToolExecutionAuthorizationGrant {
+	const authorityId = createRuntimeId("authority", "production-mutation-gate");
+	const tenantId = createRuntimeId("tenant", "production-mutation-gate");
+	const principalId = createRuntimeId("principal", "production-mutation-gate");
+	const workspaceEnvelopeDigest = canonicalDigest("production mutation gate workspace envelope");
+	const authorizationBody = {
+		receiptId: createRuntimeId("receipt", "production-mutation-gate-authorization"),
+		requestId: createRuntimeId("command", "production-mutation-gate-authorization"),
+		approvalId: createRuntimeId("approval", "production-mutation-gate-authorization"),
+		sessionId: createRuntimeId("session", "production-mutation-gate"),
+		runtimeId: createRuntimeId("runtime", "production-mutation-gate"),
+		runtimeGeneration: 1,
+		turnId: request.turnId,
+		toolCallId: request.toolCallId,
+		requestDigest: canonicalDigest("production mutation gate request"),
+		decisionDigest: canonicalDigest("production mutation gate decision"),
+	};
+	const sandboxBody = {
+		receiptId: createRuntimeId("receipt", "production-mutation-gate-sandbox"),
+		profileId: createRuntimeId("resource", "production-mutation-gate-sandbox"),
+		requested: "workspace-write" as const,
+		resolved: "workspace-write" as const,
+		policyDigest: canonicalDigest("production mutation gate policy"),
+		backendId: "production-mutation-gate-fixture",
+		effectiveEnforcement: "enforced" as const,
+	};
+	const body = {
+		schemaVersion: 1 as const,
+		toolCallId: request.toolCallId,
+		providerToolCallDigest: canonicalDigest(request.providerToolCallId),
+		toolIdentityDigest: canonicalDigest(request.tool.name),
+		argumentsDigest: canonicalDigest(request.arguments),
+		invocationDigest: canonicalDigest({
+			toolCallId: request.toolCallId,
+			arguments: request.arguments,
+		}),
+		workspaceEnvelopeDigest,
+		workspaceValidation: {
+			authorityId,
+			tenantId,
+			principalId,
+			receiptId: createRuntimeId("receipt", "production-mutation-gate-workspace"),
+			workspaceId: createRuntimeId("workspace", "production-mutation-gate"),
+			envelopeDigest: workspaceEnvelopeDigest,
+			validatorId: principalId,
+			validatedAt: NOW,
+			outcome: "valid" as const,
+		},
+		authorization: {
+			...authorizationBody,
+			receiptDigest: canonicalDigest(authorizationBody),
+		},
+		capability: "repository_read" as const,
+		policyDigest: sandboxBody.policyDigest,
+		sandbox: {
+			...sandboxBody,
+			resolutionDigest: canonicalDigest(sandboxBody),
+		},
+	};
+	return { ...body, grantDigest: canonicalDigest(body) };
 }
 
 describe("production interactive runtime composition", () => {
@@ -474,6 +694,106 @@ describe("production interactive runtime composition", () => {
 		expect(registry).toContain('"state":"retained"');
 	});
 
+	it("uses the exact injected mutation gate for model preparation and both Tool Gateway phases", async () => {
+		const setup = await fixture();
+		const gate = new RejectingRecordingMutationGate();
+		const rawAuthorize = vi.spyOn(PortBackedToolExecutionGateway.prototype, "authorize");
+		const rawExecute = vi.spyOn(PortBackedToolExecutionGateway.prototype, "execute");
+		const options = setup.options();
+		const runtime = await createProductionInteractiveRuntime({ ...options, mutationGate: gate });
+		const modelDelegate = vi.spyOn(runtime.modelRuntime.coordinator, "prepare");
+		const selectedModel: Model<Api> = {
+			id: "production-mutation-gate-fixture",
+			name: "production mutation gate fixture",
+			api: "openai-completions",
+			provider: "fixture",
+			baseUrl: "https://example.invalid",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 8_192,
+			maxTokens: 1_024,
+		};
+		const modelRequestId = createRuntimeId("modelRequest", "production-mutation-gate");
+		const toolRequest = invocation(setup.tool, runtime.cwd, "production-mutation-gate");
+		const grant = rejectedExecutionGrant(toolRequest);
+
+		await expect(runtime.prepareModelRequest({
+			turn: 1,
+			turnId: toolRequest.turnId,
+			modelRequestId,
+			model: selectedModel,
+			context: { systemPrompt: "production mutation gate fixture", messages: [], tools: [] },
+			messages: [],
+		})).rejects.toMatchObject({
+			name: "SessionMutationAdmissionError",
+			message: "production mutation gate rejected the operation",
+		});
+		expect(await runtime.toolExecutionGateway.authorize(toolRequest)).toMatchObject({
+			status: "unavailable",
+			reason: "production mutation gate rejected the operation",
+		});
+		expect(await runtime.toolExecutionGateway.execute(
+			{ invocation: toolRequest, grant },
+			() => undefined,
+		)).toEqual({
+			status: "unavailable",
+			grantDigest: grant.grantDigest,
+			reason: "production mutation gate rejected the operation",
+			outcomeCertain: true,
+		});
+
+		expect(gate.requests).toStrictEqual([
+			{ kind: "model_request", correlationId: modelRequestId },
+			{ kind: "tool_authorize", correlationId: toolRequest.toolCallId },
+			{ kind: "tool_execute", correlationId: toolRequest.toolCallId },
+		]);
+		expect(modelDelegate).not.toHaveBeenCalled();
+		expect(rawAuthorize).not.toHaveBeenCalled();
+		expect(rawExecute).not.toHaveBeenCalled();
+		await runtime.close();
+	});
+
+	it("records the exact production workspace binding, lease, and adapter receipt in canonical events", async () => {
+		const setup = await fixture();
+		const capture = captureWorkspaceOperations();
+		const runtime = await createProductionInteractiveRuntime(setup.options());
+		expect(capture.bindings).toHaveLength(1);
+		const boundResult = capture.bindings[0];
+		if (!boundResult) throw new Error("production workspace bind result was not captured");
+
+		const events = await canonicalEvents(setup.manager);
+		const boundEvents = eventsOfType(events, "workspace.bound");
+		expect(boundEvents).toHaveLength(1);
+		const bound = boundEvents[0];
+		if (!bound) throw new Error("canonical workspace.bound event is missing");
+		expect(bound.payload).toEqual({
+			binding: boundResult.runtimeBinding,
+			bindingDigest: workspaceBindingDigest(boundResult.runtimeBinding),
+			lease: boundResult.lease,
+		});
+		expect(bound.payload.binding).toEqual(runtime.runtimeWorkspace);
+		expect(bound.payload.lease).toMatchObject({
+			leaseId: runtime.workspace.leaseId,
+			workspaceId: runtime.workspace.workspaceId,
+			ownerRuntimeId: runtime.workspace.ownerRuntimeId,
+			leaseRevision: runtime.workspace.leaseRevision,
+			state: "active",
+		});
+
+		const acquiredEvents = eventsOfType(events, "lease.acquired");
+		expect(acquiredEvents).toHaveLength(1);
+		const acquired = acquiredEvents[0];
+		if (!acquired) throw new Error("canonical lease.acquired event is missing");
+		expect(acquired.sequence).toBe(bound.sequence + 1);
+		expect(acquired.payload).toEqual({
+			lease: boundResult.lease,
+			receiptId: boundResult.receiptId,
+		});
+
+		await runtime.close();
+	});
+
 	it("fails closed when a required production manifest is absent", async () => {
 		const setup = await fixture();
 		const options = setup.options();
@@ -486,22 +806,87 @@ describe("production interactive runtime composition", () => {
 
 	it("reopens the durable session and resumes the released workspace without duplicate goal genesis", async () => {
 		const setup = await fixture();
+		const capture = captureWorkspaceOperations();
 		const first = await createProductionInteractiveRuntime(setup.options());
 		const firstGoal = first.sessionRuntime.goal.snapshot();
 		const workspaceId = first.workspace.workspaceId;
 		const sessionId = first.sessionId;
 		const filePath = setup.manager.filePath();
-		const sequence = setup.manager.writer().currentHead()?.sequence;
+		const firstEvents = await canonicalEvents(setup.manager);
+		const goalGenesisCount = eventsOfType(firstEvents, "goal.created").length;
+		expect(goalGenesisCount).toBe(1);
+		expect(capture.bindings).toHaveLength(1);
+		const firstBinding = capture.bindings[0];
+		if (!firstBinding) throw new Error("initial production workspace bind result was not captured");
 		await first.close();
+		expect(capture.releaseReceiptIds).toHaveLength(1);
+		const firstReleaseReceiptId = capture.releaseReceiptIds[0];
+		if (!firstReleaseReceiptId) throw new Error("initial production workspace release result was not captured");
 
 		const reopenedManager = await V3SessionManager.open(filePath, setup.features);
 		managers.push(reopenedManager);
+		const releasedEvents = await canonicalEvents(reopenedManager);
+		const releases = eventsOfType(releasedEvents, "workspace.released");
+		expect(releases).toHaveLength(1);
+		const released = releases[0];
+		if (!released) throw new Error("canonical workspace.released event is missing");
+		expect(released.payload).toEqual({
+			workspaceId: firstBinding.runtimeBinding.workspaceId,
+			leaseId: firstBinding.lease.leaseId,
+			leaseRevision: firstBinding.lease.leaseRevision,
+			bindingDigest: workspaceBindingDigest(firstBinding.runtimeBinding),
+			receiptId: firstReleaseReceiptId,
+		});
+		expect(releasedEvents.at(-1)).toEqual(released);
+		const identity = reopenedManager.identity();
+		const releasedReferences = projectExternalReceiptReferences(releasedEvents, {
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			sessionId: reopenedManager.sessionId(),
+		});
+		if (!releasedReferences.ok) throw new Error(releasedReferences.error.message);
+		expect(releasedReferences.value.workspaceLeases).toEqual([]);
+
 		const reopenedOptions = setup.options({ kind: "resume", workspaceId }, reopenedManager);
 		const second = await createProductionInteractiveRuntime(reopenedOptions);
 		expect(second.sessionId).toBe(sessionId);
 		expect(second.workspace).toMatchObject({ workspaceId, leaseRevision: 2, ownerRuntimeId: reopenedManager.runtimeId() });
 		expect(second.sessionRuntime.goal.snapshot()).toEqual(firstGoal);
-		expect(reopenedManager.writer().currentHead()?.sequence).toBe(sequence);
+		expect(capture.bindings).toHaveLength(2);
+		const secondBinding = capture.bindings[1];
+		if (!secondBinding) throw new Error("resumed production workspace bind result was not captured");
+		expect(secondBinding.lease).toMatchObject({
+			leaseId: firstBinding.lease.leaseId,
+			workspaceId,
+			ownerRuntimeId: reopenedManager.runtimeId(),
+			leaseRevision: firstBinding.lease.leaseRevision + 1,
+			state: "active",
+		});
+
+		const reboundEvents = await canonicalEvents(reopenedManager);
+		expect(eventsOfType(reboundEvents, "goal.created")).toHaveLength(goalGenesisCount);
+		const rebound = eventsOfType(reboundEvents, "workspace.bound").at(-1);
+		const reacquired = eventsOfType(reboundEvents, "lease.acquired").at(-1);
+		if (!rebound || !reacquired) throw new Error("resumed workspace canonical binding is incomplete");
+		expect(rebound.sequence).toBeGreaterThan(released.sequence);
+		expect(rebound.payload).toEqual({
+			binding: secondBinding.runtimeBinding,
+			bindingDigest: workspaceBindingDigest(secondBinding.runtimeBinding),
+			lease: secondBinding.lease,
+		});
+		expect(reacquired.sequence).toBe(rebound.sequence + 1);
+		expect(reacquired.payload).toEqual({
+			lease: secondBinding.lease,
+			receiptId: secondBinding.receiptId,
+		});
+		const reboundReferences = projectExternalReceiptReferences(reboundEvents, {
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			sessionId: reopenedManager.sessionId(),
+		});
+		if (!reboundReferences.ok) throw new Error(reboundReferences.error.message);
+		expect(reboundReferences.value.workspaceLeases).toEqual([secondBinding.lease]);
+		expect(reboundReferences.value.workspaceLeases).not.toContainEqual(firstBinding.lease);
 		await second.close();
 	});
 });

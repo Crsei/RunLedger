@@ -45,6 +45,7 @@ import {
 } from "../runtime/runtime-features.ts";
 import { parseArgs, USAGE } from "./args.ts";
 import {
+  FAIL_CLOSED_STARTUP_AUDITOR,
   forkV3FromCli,
   migrateLegacyFromCli,
   migrationEvidenceDigest,
@@ -70,6 +71,11 @@ import {
   type ProductionInteractiveOptionsProvider,
 } from "./production-interactive-options.ts";
 import { createProductionStartupExternalReceiptAuditor } from "../storage/production-startup-receipt-auditor.ts";
+import { createV3SessionMutationAdmissionGate } from "../storage/v3-runtime-adapter.ts";
+import {
+  mutationGatedModelPreparation,
+  type SessionMutationAdmissionGatePort,
+} from "../runtime/lifecycle/mutation-gate.ts";
 import { closeCliRuntimeResources } from "./runtime-resource-cleanup.ts";
 
 const VERSION = readVersionFromPackage();
@@ -217,6 +223,17 @@ export async function main(
 
   let legacyManager: SessionManager | undefined;
   let v3Manager: V3SessionManager | undefined;
+  let v3MutationGate: SessionMutationAdmissionGatePort | undefined;
+  const attachNewV3Manager = (manager: V3SessionManager): void => {
+    v3Manager = manager;
+    v3MutationGate = createV3SessionMutationAdmissionGate(
+      manager,
+      startupExternalReceiptAuditor ?? FAIL_CLOSED_STARTUP_AUDITOR,
+      dependencies.startupExternalReceiptAuditTimeoutMs === undefined
+        ? {}
+        : { externalReceiptAuditTimeoutMs: dependencies.startupExternalReceiptAuditTimeoutMs },
+    );
+  };
   const openSelected = async (filePath: string): Promise<void> => {
     const fence = await inspectSessionVersionFence(filePath, "continue");
     if (!("format" in fence)) {
@@ -224,7 +241,7 @@ export async function main(
     }
     if (fence.format === "v3") {
       requireSessionAction(3, "append");
-      v3Manager = await openGovernedV3FromCli({
+      const governed = await openGovernedV3FromCli({
         filePath,
         features: runtimeFeatures,
         ...(startupExternalReceiptAuditor === undefined
@@ -234,6 +251,8 @@ export async function main(
           ? {}
           : { externalReceiptAuditTimeoutMs: dependencies.startupExternalReceiptAuditTimeoutMs }),
       });
+      v3Manager = governed.manager;
+      v3MutationGate = governed.mutationGate;
       return;
     }
     const sourceVersion = fence.sourceVersion;
@@ -300,13 +319,13 @@ export async function main(
     const sessions = await SessionManager.list(cwd, sessionDir);
     if (sessions[0]) await openSelected(sessions[0].filePath);
     else if (selectedNewSessionVersion() === 3) {
-      v3Manager = await V3SessionManager.create({ cwd, sessionDir, features: runtimeFeatures });
+      attachNewV3Manager(await V3SessionManager.create({ cwd, sessionDir, features: runtimeFeatures }));
     } else {
       legacyManager = await SessionManager.create({ cwd, sessionDir, metadata: { cwd } });
     }
   } else {
     if (selectedNewSessionVersion() === 3) {
-      v3Manager = await V3SessionManager.create({ cwd, sessionDir, features: runtimeFeatures });
+      attachNewV3Manager(await V3SessionManager.create({ cwd, sessionDir, features: runtimeFeatures }));
     } else {
       legacyManager = await SessionManager.create({ cwd, sessionDir, metadata: { cwd } });
     }
@@ -363,10 +382,12 @@ export async function main(
     }
     let localController: InteractiveSessionController;
     if (v3Manager && runtimeFeatures.daemon) {
+      if (!v3MutationGate) throw new Error("daemon interactive mode requires a session mutation gate");
       const productionOptions = await createCliProductionInteractiveOptions({
         cwd,
         manager: v3Manager,
         models,
+        mutationGate: v3MutationGate,
       }, dependencies.productionInteractiveOptions, startupExternalReceiptStateRoot);
       // createProductionInteractiveRuntime 从调用开始接管 manager；失败路径也负责关闭。
       productionOwnsV3Manager = true;
@@ -413,7 +434,9 @@ export async function main(
         sessionId: v3Manager?.sessionId(),
         sessionEvents: v3Manager?.sessionEvents(),
         toolResultArtifactSink: v3Manager?.toolResultArtifactSink(),
-        prepareModelRequest: modelRuntime?.prepare,
+        prepareModelRequest: modelRuntime && v3MutationGate
+          ? mutationGatedModelPreparation(v3MutationGate, modelRuntime.prepare)
+          : modelRuntime?.prepare,
         overrides: {
           provider: args.provider,
           model: args.model,

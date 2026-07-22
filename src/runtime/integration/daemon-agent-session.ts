@@ -12,6 +12,7 @@ import {
 } from "../interactive-session-controller.ts";
 import type { DurableQueueReceipt } from "../session/agent-loop-events.ts";
 import type { SessionId } from "../protocol/v3/ids.ts";
+import type { SessionMutationAdmissionGatePort } from "../lifecycle/mutation-gate.ts";
 
 export interface DaemonAgentSessionBindingPort {
 	readonly sessionId: SessionId;
@@ -29,12 +30,18 @@ export interface DaemonAgentSessionBindingPort {
 }
 
 export interface DaemonAgentSessionBindingFactoryPort {
-	create(manager: V3SessionManager): Promise<DaemonAgentSessionBindingPort>;
+	create(
+		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<DaemonAgentSessionBindingPort>;
 }
 
 export interface ProductionInteractiveRuntimeFactoryPort {
 	/** createProductionInteractiveRuntime 的部署层封装；成功后接管 manager。 */
-	create(manager: V3SessionManager): Promise<ProductionInteractiveRuntime>;
+	create(
+		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<ProductionInteractiveRuntime>;
 }
 
 type SessionValueProvider<T> = T | ((manager: V3SessionManager) => T | Promise<T>);
@@ -155,7 +162,10 @@ export class ProductionDaemonAgentSessionFactory implements DaemonAgentSessionBi
 		this.#overrides = options.overrides ? { ...options.overrides } : undefined;
 	}
 
-	public async create(manager: V3SessionManager): Promise<DaemonAgentSessionBindingPort> {
+	public async create(
+		manager: V3SessionManager,
+		mutationGate: SessionMutationAdmissionGatePort,
+	): Promise<DaemonAgentSessionBindingPort> {
 		if (manager.isClosed()) throw new Error("daemon Agent factory requires an open v3 manager");
 		const [systemPrompt, settings, messages, config] = await Promise.all([
 			resolveSessionValue(this.#systemPrompt, manager),
@@ -169,7 +179,7 @@ export class ProductionDaemonAgentSessionFactory implements DaemonAgentSessionBi
 			auditEntries: [],
 			warnings: [],
 		};
-		const runtime = await this.#runtime.create(manager);
+		const runtime = await this.#runtime.create(manager, mutationGate);
 		try {
 			assertProductionRuntimeBinding(manager, runtime);
 			const controller = await InteractiveSessionController.create({

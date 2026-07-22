@@ -18,6 +18,7 @@ import { projectRuntimeActivityEvents } from "../../../src/runtime/activity/proj
 import { runtimeActivityProjectionBody } from "../../../src/runtime/activity/types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import type { EventCursor } from "../../../src/runtime/protocol/v3/events.ts";
+import type { SessionMutationAdmissionGatePort } from "../../../src/runtime/lifecycle/mutation-gate.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type { RuntimeIdentityContext } from "../../../src/runtime/identity/types.ts";
 import { DEFAULT_RUNTIME_FEATURES, type RuntimeFeatureFlags } from "../../../src/runtime/runtime-features.ts";
@@ -123,7 +124,15 @@ describe("V3SessionManager lifecycle adapters", () => {
 		});
 		const onClosed = vi.fn();
 		const close = vi.spyOn(manager, "closeAll").mockRejectedValue(new Error("injected close failure"));
-		const runtime = new V3ManagedSessionRuntime(manager, onClosed);
+		const mutationGate: SessionMutationAdmissionGatePort = {
+			async revalidate() {
+				return {
+					ok: false,
+					error: { code: "external_unavailable", message: "fixture gate", retryable: false },
+				};
+			},
+		};
+		const runtime = new V3ManagedSessionRuntime(manager, mutationGate, onClosed);
 
 		try {
 			await expect(runtime.teardown("shutdown")).resolves.toMatchObject({
@@ -185,8 +194,13 @@ describe("V3SessionManager lifecycle adapters", () => {
 		expect(await resumedParent?.replayMessages()).toEqual([
 			{ role: "user", content: [{ type: "text", text: "forked history" }] },
 		]);
+		if (!resumedParent) throw new Error("resumed parent runtime missing");
+		const lateReplay = vi.spyOn(resumedParent, "replayMessages")
+			.mockRejectedValue(new Error("fork must use the admitted canonical snapshot"));
 
 		const forked = await registry.fork(parentId, parentCursor, "continue_existing_goal");
+		expect(lateReplay).not.toHaveBeenCalled();
+		lateReplay.mockRestore();
 		if (!forked.ok) throw new Error(`${forked.error.code}: ${forked.error.message}`);
 		expect(forked).toMatchObject({ ok: true, value: { recovery: "forked" } });
 		expect(forked.value.sessionId).not.toBe(parentId);

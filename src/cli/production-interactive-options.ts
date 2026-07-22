@@ -5,6 +5,7 @@ import type { Models } from "../models.ts";
 import type { InteractiveSessionControllerOptions } from "../runtime/interactive-session-controller.ts";
 import type { AgentLoopConfig, AgentTool, ToolResultArtifactSink } from "../runtime/types.ts";
 import type { AgentLoopSessionEvents } from "../runtime/session/agent-loop-events.ts";
+import type { SessionMutationAdmissionGatePort } from "../runtime/lifecycle/mutation-gate.ts";
 import type {
 	ProductionInteractiveRuntime,
 	ProductionInteractiveRuntimeOptions,
@@ -50,11 +51,12 @@ export interface ProductionInteractiveOptionsRequest {
 	readonly cwd: string;
 	readonly manager: V3SessionManager;
 	readonly models: Models;
+	readonly mutationGate: SessionMutationAdmissionGatePort;
 }
 
 export type ProductionInteractiveAdapterOptions = Omit<
 	ProductionInteractiveRuntimeOptions,
-	"manager" | "models"
+	"manager" | "models" | "mutationGate"
 >;
 
 /** 部署层的 production adapter provider；测试替身不得注册到 CLI 默认入口。 */
@@ -127,9 +129,10 @@ export async function createCliProductionInteractiveOptions(
 	}
 	return {
 		...adapters,
-		// manager/models 始终由当前 CLI session 注入，provider 不能替换所有权。
+		// manager/models/gate 始终由当前 CLI session 注入，provider 不能替换所有权。
 		manager: request.manager,
 		models: request.models,
+		mutationGate: request.mutationGate,
 	};
 }
 

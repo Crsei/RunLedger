@@ -392,7 +392,7 @@ describe("V3 session production startup gate", () => {
 		});
 	});
 
-	it("revalidates an active fork parent and creates no child after its lease becomes invalid", async () => {
+	it("latches an active fork parent after its lease becomes invalid and does not reopen after audit recovery", async () => {
 		const session = await fixture();
 		const order: string[] = [];
 		const auditor = new RecordingAuditor("valid", order);
@@ -424,6 +424,70 @@ describe("V3 session production startup gate", () => {
 		});
 		expect(auditor.calls).toBe(2);
 		expect(order).toEqual(["audit"]);
+		expect(candidateAuthority.calls).toBe(1);
+		expect(agentBindings.calls).toBe(1);
+
+		auditor.setMode("valid");
+		order.length = 0;
+		const retried = await composed.factory.fork(
+			session.sessionId,
+			session.parentCursor,
+			"continue_existing_goal",
+		);
+		expect(retried).toMatchObject({
+			ok: false,
+			error: { code: "recovery_required" },
+		});
+		expect(auditor.calls).toBe(2);
+		expect(order).toEqual([]);
+		expect(candidateAuthority.calls).toBe(1);
+		expect(agentBindings.calls).toBe(1);
+
+		const locations = await composed.locator.list();
+		expect(locations).toMatchObject({
+			ok: true,
+			value: [{ sessionId: session.sessionId, filePath: session.filePath }],
+		});
+		await cleanupUnexpectedSuccess(forked);
+		await cleanupUnexpectedSuccess(retried);
+		await resumed.value.teardown("shutdown");
+	});
+
+	it("rejects a stale active-parent cursor without an external audit or child creation", async () => {
+		const session = await fixture();
+		const order: string[] = [];
+		const auditor = new RecordingAuditor("valid", order);
+		const candidateAuthority = new RecordingCandidateAuthority(order);
+		const agentBindings = new RecordingAgentBindingFactory(order);
+		const composed = composedFactory({
+			root: session.root,
+			sessionDir: session.sessionDir,
+			auditor,
+			candidateAuthority,
+			agentBindings,
+		});
+
+		const resumed = await composed.factory.resume(session.sessionId);
+		expect(resumed).toMatchObject({ ok: true, value: { sessionId: session.sessionId } });
+		if (!resumed.ok) throw new Error(resumed.error.message);
+		expect(auditor.calls).toBe(1);
+
+		const staleCursor: EventCursor = {
+			...session.parentCursor,
+			sequence: session.parentCursor.sequence + 1,
+		};
+		order.length = 0;
+		const forked = await composed.factory.fork(
+			session.sessionId,
+			staleCursor,
+			"continue_existing_goal",
+		);
+		expect(forked).toMatchObject({
+			ok: false,
+			error: { code: "cursor_mismatch" },
+		});
+		expect(auditor.calls).toBe(1);
+		expect(order).toEqual([]);
 		expect(candidateAuthority.calls).toBe(1);
 		expect(agentBindings.calls).toBe(1);
 

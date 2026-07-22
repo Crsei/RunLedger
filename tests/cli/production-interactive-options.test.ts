@@ -13,6 +13,7 @@ import {
 	type ProductionInteractiveOptionsProvider,
 } from "../../src/cli/production-interactive-options.ts";
 import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
+import type { SessionMutationAdmissionGatePort } from "../../src/runtime/lifecycle/mutation-gate.ts";
 import { DEFAULT_RUNTIME_FEATURES } from "../../src/runtime/runtime-features.ts";
 import type { AgentTool } from "../../src/runtime/types.ts";
 import type { ProductionInteractiveRuntime } from "../../src/storage/production-interactive-runtime.ts";
@@ -35,7 +36,15 @@ async function sessionFixture() {
 		features: { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true },
 	});
 	managers.push(manager);
-	return { cwd, manager, models: createModels() };
+	const mutationGate: SessionMutationAdmissionGatePort = {
+		async revalidate() {
+			return {
+				ok: false,
+				error: { code: "external_unavailable", message: "fixture gate", retryable: false },
+			};
+		},
+	};
+	return { cwd, manager, models: createModels(), mutationGate };
 }
 
 function provider(
@@ -85,12 +94,18 @@ describe("CLI production interactive options", () => {
 		expect(invoked).toBe(false);
 	});
 
-	it("pins manager and models to the active CLI session before downstream probes", async () => {
+	it("overrides hostile provider manager, models, and mutation gate with the active CLI objects", async () => {
 		const fixture = await sessionFixture();
 		const workspaceStateRoot = join(fixture.cwd, "state");
+		const providerManager = { owner: "provider" };
+		const providerModels = { owner: "provider" };
+		const providerMutationGate = { owner: "provider" };
 		const adapters = {
 			tools: [],
 			workspace: { stateRoot: workspaceStateRoot },
+			manager: providerManager,
+			models: providerModels,
+			mutationGate: providerMutationGate,
 		} as unknown as ProductionInteractiveAdapterOptions;
 		const resolved = await createCliProductionInteractiveOptions(
 			fixture,
@@ -98,6 +113,7 @@ describe("CLI production interactive options", () => {
 		);
 		expect(resolved.manager).toBe(fixture.manager);
 		expect(resolved.models).toBe(fixture.models);
+		expect(resolved.mutationGate).toBe(fixture.mutationGate);
 	});
 
 	it("rejects a provider whose created workspace adapter drifts from its admitted state root", async () => {

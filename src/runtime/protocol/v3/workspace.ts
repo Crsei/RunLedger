@@ -191,7 +191,14 @@ export const WorkspaceLeaseRefSchema = exact({
 	ownerRuntimeId: runtimeId("runtime"),
 	leaseRevision: revision,
 	fencingTokenDigest: digest,
-	state: Type.Union(WORKSPACE_LEASE_STATES.map((state) => Type.Literal(state))),
+	// 显式 tuple 保留 TypeBox Static 的 literal union；动态 map 会把这里推成 never。
+	state: Type.Union([
+		Type.Literal("requested"),
+		Type.Literal("active"),
+		Type.Literal("released"),
+		Type.Literal("stale"),
+		Type.Literal("revoked"),
+	]),
 });
 
 export const WorkspaceValidationReceiptRefSchema = exact({

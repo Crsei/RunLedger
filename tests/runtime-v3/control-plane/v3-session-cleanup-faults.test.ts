@@ -66,7 +66,10 @@ function failAfterActualClose(manager: V3SessionManager, failure: Error): void {
 	});
 }
 
-async function closedSession(root: string): Promise<{
+async function closedSession(
+	root: string,
+	options: { withConversationMessage?: boolean } = {},
+): Promise<{
 	filePath: string;
 	sessionId: ReturnType<V3SessionManager["sessionId"]>;
 	cursor: EventCursor;
@@ -77,6 +80,12 @@ async function closedSession(root: string): Promise<{
 		features: FEATURES,
 		identity: IDENTITY,
 	});
+	if (options.withConversationMessage) {
+		await manager.sessionEvents().recordMessage({
+			role: "user",
+			content: [{ type: "text", text: "fork snapshot history" }],
+		});
+	}
 	const cursor = manager.writer().currentHead();
 	if (!cursor) throw new Error("cleanup fault fixture has no durable cursor");
 	const result = { filePath: manager.filePath(), sessionId: manager.sessionId(), cursor };
@@ -204,21 +213,22 @@ describe("V3 session factory cleanup faults", () => {
 		expect(opened?.isClosed()).toBe(true);
 	});
 
-	it("keeps both replay and durable-child close failures visible during fork", async () => {
+	it("keeps both snapshot history copy and durable-child close failures visible during fork", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-v3-fork-cleanup-fault-"));
 		roots.push(root);
-		const session = await closedSession(root);
-		const primary = namedError("InjectedForkReplayError", "fork parent replay failed");
+		const session = await closedSession(root, { withConversationMessage: true });
+		const primary = namedError("InjectedForkHistoryCopyError", "fork snapshot history copy failed");
 		const cleanup = namedError("InjectedForkCleanupError", "durable child writer close failed");
 		const realCreate = V3SessionManager.create.bind(V3SessionManager);
 		let child: V3SessionManager | undefined;
 		vi.spyOn(V3SessionManager, "create").mockImplementation(async (...args) => {
 			child = await realCreate(...args);
 			managers.add(child);
+			vi.spyOn(child.sessionEvents(), "recordMessage").mockRejectedValueOnce(primary);
 			failAfterActualClose(child, cleanup);
 			return child;
 		});
-		vi.spyOn(V3SessionManager.prototype, "replayMessages").mockRejectedValueOnce(primary);
+		const legacyReplay = vi.spyOn(V3SessionManager.prototype, "replayMessages");
 
 		const result = await factory(root).fork(
 			session.sessionId,
@@ -232,6 +242,7 @@ describe("V3 session factory cleanup faults", () => {
 		expect(visible).toContain(cleanup.name);
 		expect(child?.writer().currentHead()).toBeDefined();
 		expect(child?.isClosed()).toBe(true);
+		expect(legacyReplay).not.toHaveBeenCalled();
 	});
 
 	it("keeps a durable child correlation when fork binding fails and cleanup succeeds", async () => {

@@ -13,6 +13,10 @@ import {
 import { validateRuntimeEvent } from "../runtime/protocol/v3/schemas.ts";
 import { CanonicalEventExternalReferenceSource } from "../runtime/lifecycle/canonical-references.ts";
 import {
+	ContinuousExternalReceiptMutationGate,
+	type SessionMutationAdmissionGatePort,
+} from "../runtime/lifecycle/mutation-gate.ts";
+import {
 	RuntimeGcCoordinator,
 	type RuntimeGcMutationPort,
 	type RuntimeGcMutationReceipt,
@@ -50,6 +54,39 @@ export interface GovernedV3SessionOpenOptions {
 	externalReceiptAuditTimeoutMs?: number;
 	signal?: AbortSignal;
 	clock?: () => Date;
+}
+
+export function createV3SessionMutationAdmissionGate(
+	manager: V3SessionManager,
+	auditor: StartupExternalReceiptAuditPort,
+	options: {
+		clock?: () => Date;
+		externalReceiptAuditTimeoutMs?: number;
+		externalReceiptScanTimeoutMs?: number;
+	} = {},
+): ContinuousExternalReceiptMutationGate {
+	const identity = manager.identity();
+	return new ContinuousExternalReceiptMutationGate({
+		references: new CanonicalEventExternalReferenceSource(manager.eventStore(), {
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			sessionId: manager.sessionId(),
+		}),
+		auditor,
+		scope: {
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			sessionId: manager.sessionId(),
+		},
+		currentHead: () => manager.writer().currentHead(),
+		...(options.clock === undefined ? {} : { clock: options.clock }),
+		...(options.externalReceiptAuditTimeoutMs === undefined
+			? {}
+			: { externalOperationTimeoutMs: options.externalReceiptAuditTimeoutMs }),
+		...(options.externalReceiptScanTimeoutMs === undefined
+			? {}
+			: { externalScanTimeoutMs: options.externalReceiptScanTimeoutMs }),
+	});
 }
 
 export interface V3SessionTelemetryProjection {
@@ -177,13 +214,20 @@ export class GovernedV3SessionRuntime {
 	readonly #manager: V3SessionManager;
 	readonly #startup: StartupRecoveryReport;
 	readonly #clock: () => Date;
+	readonly #mutationGate: SessionMutationAdmissionGatePort;
 	#shutdown: RuntimeShutdownCoordinator | undefined;
 	#admissionConsumed = false;
 
-	private constructor(manager: V3SessionManager, startup: StartupRecoveryReport, clock: () => Date) {
+	private constructor(
+		manager: V3SessionManager,
+		startup: StartupRecoveryReport,
+		clock: () => Date,
+		mutationGate: SessionMutationAdmissionGatePort,
+	) {
 		this.#manager = manager;
 		this.#startup = cloneStartupReport(startup);
 		this.#clock = clock;
+		this.#mutationGate = mutationGate;
 	}
 
 	public static async open(options: GovernedV3SessionOpenOptions): Promise<GovernedV3SessionRuntime> {
@@ -219,7 +263,17 @@ export class GovernedV3SessionRuntime {
 					? withArtifactReconciliationSuccess(startup)
 					: withArtifactFailure(startup);
 			}
-			return new GovernedV3SessionRuntime(manager, startup, clock);
+			return new GovernedV3SessionRuntime(
+				manager,
+				startup,
+				clock,
+				createV3SessionMutationAdmissionGate(manager, options.externalReceiptAuditor, {
+					clock,
+					...(options.externalReceiptAuditTimeoutMs === undefined
+						? {}
+						: { externalReceiptAuditTimeoutMs: options.externalReceiptAuditTimeoutMs }),
+				}),
+			);
 		} catch (cause) {
 			try {
 				await manager.closeAll();
@@ -236,6 +290,7 @@ export class GovernedV3SessionRuntime {
 	public sessionId(): SessionId { return this.#manager.sessionId(); }
 	public filePath(): string { return this.#manager.filePath(); }
 	public startupReport(): StartupRecoveryReport { return cloneStartupReport(this.#startup); }
+	public mutationGate(): SessionMutationAdmissionGatePort { return this.#mutationGate; }
 	public isClosed(): boolean { return this.#manager.isClosed(); }
 	public close(): Promise<void> { return this.#manager.closeAll(); }
 
