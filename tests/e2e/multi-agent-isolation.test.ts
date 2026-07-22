@@ -41,6 +41,10 @@ import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts
 import { createIdempotencyKey } from "../../src/runtime/protocol/v3/coordination.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import { DEFAULT_RUNTIME_FEATURES } from "../../src/runtime/runtime-features.ts";
+import type {
+	SessionMutationAdmissionGatePort,
+	SessionMutationAdmissionReceipt,
+} from "../../src/runtime/lifecycle/mutation-gate.ts";
 import { readAllRuntimeEvents } from "../../src/runtime/session/snapshot.ts";
 import { createProductionWorkspaceComposition } from "../../src/storage/worktree-production.ts";
 import { V3SessionManager } from "../../src/storage/v3-session-manager.ts";
@@ -185,6 +189,35 @@ describe("multi-agent production isolation E2E", () => {
 		openManagers.push(rootManager);
 		const identity = rootManager.identity();
 		const principalId = identity.principalId;
+		const parentMutationRequests: Parameters<SessionMutationAdmissionGatePort["revalidate"]>[0][] = [];
+		const parentMutationGate: SessionMutationAdmissionGatePort = {
+			revalidate: async (request) => {
+				parentMutationRequests.push(structuredClone(request));
+				const eventHead = rootManager.writer().currentHead();
+				if (!eventHead) {
+					return {
+						ok: false,
+						error: {
+							code: "external_unavailable",
+							message: "root session event head is unavailable",
+							retryable: false,
+						},
+					};
+				}
+				const body: Omit<SessionMutationAdmissionReceipt, "receiptDigest"> = {
+					schemaVersion: 1,
+					authorityId: identity.authorityId,
+					tenantId: identity.tenantId,
+					sessionId: rootManager.sessionId(),
+					kind: request.kind,
+					correlationId: request.correlationId,
+					eventHead,
+					checkedAt: NOW,
+					auditReceipts: [],
+				};
+				return { ok: true, value: { ...body, receiptDigest: canonicalDigest(body) } };
+			},
+		};
 		const repositoryId = createRuntimeId("repository", "multi-agent-e2e");
 		const rootAgentId = createRuntimeId("agent", "multi-agent-root");
 		const goalId = createRuntimeId("goal", "multi-agent-goal");
@@ -280,6 +313,7 @@ describe("multi-agent production isolation E2E", () => {
 		const launcher = new ProductionChildSessionLauncher({
 			workspace,
 			capabilitySubset: subset,
+			parentMutationGate,
 			sessionDir: join(rootDir, "child-sessions"),
 			features: FEATURES,
 			identity,
@@ -375,8 +409,13 @@ describe("multi-agent production isolation E2E", () => {
 		const parentCredential = "parent-credential-material-must-not-cross";
 		await writeFile(join(sourceRepo, ".parent-temp"), parentSecret, { mode: 0o600 });
 		await writeFile(join(sourceRepo, ".parent-credential"), parentCredential, { mode: 0o600 });
-		const spawned = await supervisor.spawn(spawn("production", [allowedCapability]));
+		const productionSpawn = spawn("production", [allowedCapability]);
+		const spawned = await supervisor.spawn(productionSpawn);
 		if (!spawned.ok) throw new Error(spawned.error.message);
+		expect(parentMutationRequests).toEqual([{
+			kind: "child_spawn",
+			correlationId: productionSpawn.requestId,
+		}]);
 		const child = spawned.value.node;
 		expect(child.workspaceReceipt.workspaceId).not.toBe(rootWorkspace.value.workspaceId);
 		expect(child.sessionId).not.toBe(rootManager.sessionId());

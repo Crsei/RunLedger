@@ -13,6 +13,7 @@ import {
 } from "../../protocol/v3/ids.ts";
 import type { RuntimeIdentityContext } from "../../identity/types.ts";
 import type { RuntimeFeatureFlags } from "../../runtime-features.ts";
+import type { SessionMutationAdmissionGatePort } from "../../lifecycle/mutation-gate.ts";
 import { V3SessionManager } from "../../../storage/v3-session-manager.ts";
 import { pathWithin } from "../../../worktree/paths.ts";
 import { createAgentResidencyReceipt } from "../residency.ts";
@@ -32,6 +33,7 @@ import type { ProductionAgentWorkspaceAdapter } from "./worktree-workspace.ts";
 export interface ProductionChildSessionLauncherOptions {
 	workspace: ProductionAgentWorkspaceAdapter;
 	capabilitySubset: GatewayBoundCapabilitySubsetEvaluator;
+	parentMutationGate: SessionMutationAdmissionGatePort;
 	sessionDir: string;
 	features: Readonly<RuntimeFeatureFlags>;
 	identity: RuntimeIdentityContext;
@@ -296,7 +298,7 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		request: AgentLaunchRequest,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentLaunchResult>> {
-		if (this.#closed || signal?.aborted) {
+		if (this.#closed) {
 			return { ok: true, value: { status: "unavailable", reasonDigest: canonicalDigest("launcher unavailable"), retryable: true } };
 		}
 		if (request.requestDigest !== canonicalDigest(launchRequestBody(request))) {
@@ -304,6 +306,20 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		}
 		if (!this.#options.capabilitySubset.validatesDelegation(request.delegationReceipt)) {
 			return fail("delegation_denied", "child launch delegation receipt is stale or invalid");
+		}
+		if (signal?.aborted) {
+			return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
+		}
+		try {
+			const admitted = await this.#options.parentMutationGate.revalidate({
+				kind: "child_spawn",
+				correlationId: request.requestId,
+			}, signal);
+			if (!admitted.ok || signal?.aborted || this.#closed) {
+				return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
+			}
+		} catch {
+			return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
 		}
 		const existing = this.#children.get(request.agentId);
 		if (existing) {
@@ -314,7 +330,7 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		if (this.#children.size >= this.#options.maxActiveChildren) {
 			return { ok: true, value: { status: "rejected", reasonDigest: canonicalDigest("active child bound reached"), retryable: true } };
 		}
-			return this.#options.workspace.withValidatedWorkspace(
+		return this.#options.workspace.withValidatedWorkspace(
 			{
 				requestId: request.requestId,
 				agentId: request.agentId,
@@ -322,8 +338,19 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 				receipt: request.workspaceReceipt,
 			},
 			async (workspace) => {
+				if (signal?.aborted || this.#closed) {
+					return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
+				}
 				const claim = await this.#claimDurableSession(request.sessionId);
 				if (!claim.ok) return claim;
+				if (signal?.aborted || this.#closed) {
+					try {
+						await rm(claim.value, { force: true });
+						return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
+					} catch {
+						return fail("reference_unavailable", "child launch claim cleanup is uncertain");
+					}
+				}
 				let manager: V3SessionManager;
 				try {
 					manager = await V3SessionManager.create({
@@ -343,6 +370,15 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 				} catch {
 					await rm(claim.value, { force: true });
 					return fail("launch_failed", "durable child V3 session could not be created", true);
+				}
+				if (signal?.aborted || this.#closed) {
+					const cleanup = await Promise.allSettled([
+						manager.closeAll(),
+						rm(claim.value, { force: true }),
+					]);
+					return cleanup.some((result) => result.status === "rejected")
+						? fail("reference_unavailable", "child session creation lost admission and cleanup is uncertain")
+						: fail("reference_unavailable", "child session creation lost admission and requires explicit recovery");
 				}
 				const started = this.#createStartedResult(request, manager, 1);
 				if (!started.ok) {
