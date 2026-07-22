@@ -10,6 +10,7 @@ import {
 	SandboxProfileNameSchema,
 	approvalReceiptMatchesTicket,
 	capabilityGatewayRequestDigest,
+	isApprovalReceiptRef,
 	isSandboxExecutionReceiptRef,
 	type ApprovalCoordinatorPort,
 	type ApprovalReceiptRef,
@@ -42,8 +43,10 @@ import type {
 	ToolExecutionGatewayExecuteResult,
 	ToolExecutionGatewayPort,
 	ToolExecutionGatewayRequest,
+	ToolExecutionGatewayStartResult,
 	ToolSandboxResolutionReceiptRef,
 } from "../../runtime/types.ts";
+import type { ApprovalStateStorePort } from "../permission/approval-coordinator.ts";
 
 export interface ToolExecutionWorkspaceResolverPort {
 	/** raw fencing token 仅存在于此 adapter-owned envelope，不进入 grant/event。 */
@@ -132,8 +135,11 @@ export interface PortBackedToolExecutionGatewayOptions {
 	capability: CapabilityGatewayPort;
 	capabilityRequestFactory: ToolExecutionCapabilityRequestFactoryPort;
 	approval?: ApprovalCoordinatorPort;
+	/** interactive grant 的 durable truth 与 start linearization fence。 */
+	approvalState?: ApprovalStateStorePort;
 	environment: RestrictedToolExecutionEnvironmentPort;
 	attempts: ToolExecutionAttemptStorePort;
+	clock?: () => Date;
 }
 
 interface PreparedAuthorization {
@@ -231,6 +237,19 @@ function grantMatchesRequest(
 		decisionDigest: grant.authorization.decisionDigest,
 		resolutionDigest: grant.sandbox.resolutionDigest,
 	});
+	const approval = grant.approvalReceipt;
+	const approvalBindingMatches = approval
+		? isApprovalReceiptRef(approval) &&
+			approval.decision === "allowed" &&
+			approval.approvalId === grant.authorization.approvalId &&
+			approval.requestId === grant.authorization.requestId &&
+			approval.originalInputDigest === canonicalDigest(request.arguments) &&
+			grant.authorization.approvalReceiptId === approval.receiptId &&
+			grant.authorization.approvalReceiptDigest === approval.receiptDigest &&
+			grant.authorization.approvalDecisionRevision === approval.decisionRevision
+		: grant.authorization.approvalReceiptId === undefined &&
+			grant.authorization.approvalReceiptDigest === undefined &&
+			grant.authorization.approvalDecisionRevision === undefined;
 	return (
 		grant.schemaVersion === 1 &&
 		grant.toolCallId === request.toolCallId &&
@@ -241,6 +260,7 @@ function grantMatchesRequest(
 		grant.argumentsDigest === canonicalDigest(JSON.stringify(request.arguments)) &&
 		grant.invocationDigest === expectedInvocationDigest &&
 		grant.authorization.receiptDigest === canonicalDigest(authorizationReceiptBody(grant.authorization)) &&
+		approvalBindingMatches &&
 		grant.sandbox.resolutionDigest === canonicalDigest(resolutionBody(grant.sandbox)) &&
 		grant.grantDigest === canonicalDigest(grantBody(grant))
 	);
@@ -256,11 +276,33 @@ function terminal(
 
 export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort {
 	readonly #options: PortBackedToolExecutionGatewayOptions;
+	readonly #clock: () => Date;
 	readonly #authorizations = new Map<string, PreparedAuthorization>();
 	readonly #leases = new Map<string, RestrictedToolExecutionLease>();
+	readonly #startTokens = new Set<string>();
+	readonly #startTails = new Map<string, Promise<void>>();
 
 	public constructor(options: PortBackedToolExecutionGatewayOptions) {
 		this.#options = options;
+		this.#clock = options.clock ?? (() => new Date());
+	}
+
+	async #approvalIsCurrent(receipt: ApprovalReceiptRef | undefined): Promise<boolean> {
+		if (!receipt) return true;
+		if (!this.#options.approvalState || receipt.decision !== "allowed") return false;
+		if (receipt.expiresAt !== undefined && Date.parse(receipt.expiresAt) <= this.#clock().getTime()) return false;
+		try {
+			const current = await this.#options.approvalState.read(receipt.approvalId);
+			return current !== undefined &&
+				isApprovalReceiptRef(current) &&
+				current.decision === "allowed" &&
+				current.decisionRevision === receipt.decisionRevision &&
+				current.receiptDigest === receipt.receiptDigest &&
+				current.receiptId === receipt.receiptId &&
+				(current.expiresAt === undefined || Date.parse(current.expiresAt) > this.#clock().getTime());
+		} catch {
+			return false;
+		}
 	}
 
 	public async authorize(
@@ -269,9 +311,15 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 	): Promise<ToolExecutionAuthorizationResult> {
 		const digest = requestDigest(request);
 		const cached = this.#authorizations.get(request.toolCallId);
-		if (cached) return cached.requestDigest === digest
-			? cached.result
-			: terminal("denied", createRuntimeId("command", `tool-collision-${request.toolCallId}`), "tool call id was reused with different input");
+		if (cached) {
+			if (cached.requestDigest !== digest) {
+				return terminal("denied", createRuntimeId("command", `tool-collision-${request.toolCallId}`), "tool call id was reused with different input");
+			}
+			if (cached.result.status === "authorized" && !await this.#approvalIsCurrent(cached.result.grant.approvalReceipt)) {
+				return terminal("denied", cached.result.grant.authorization.requestId, "approval receipt is no longer current");
+			}
+			return cached.result;
+		}
 		const fallbackRequestId = createRuntimeId("command", `tool-${canonicalDigest({ toolCallId: request.toolCallId, digest }).slice(0, 48)}`);
 		if (signal?.aborted) return terminal("aborted", fallbackRequestId, "tool authorization was aborted");
 		if (request.tool.governedExecution !== "tool-context") {
@@ -410,6 +458,9 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 			authorization.sandboxProfile.tenantId !== envelope.tenantId ||
 			authorization.sandboxProfile.policyDigest !== capabilityRequest.request.policyDigest
 		) return terminal("denied", authorization.requestId, "authorized sandbox profile is outside the request scope");
+		if (!await this.#approvalIsCurrent(authorization.approvalReceipt)) {
+			return terminal("denied", authorization.requestId, "approval receipt is no longer current");
+		}
 
 		let prepared: RestrictedToolExecutionPrepareResult;
 		try {
@@ -427,6 +478,7 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 			return terminal("denied", authorization.requestId, "sandbox resolution receipt is invalid or uncorrelated");
 		}
 
+		const approvalReceipt = authorization.approvalReceipt;
 		const authBody = {
 			receiptId: createRuntimeId("receipt", `tool-authorization-${canonicalDigest({
 				request: capabilityRequest.request,
@@ -443,6 +495,11 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 			toolCallId: capabilityRequest.request.toolCallId,
 			requestDigest: capabilityRequest.authentication.requestDigest,
 			decisionDigest: authorization.decisionDigest,
+			...(approvalReceipt ? {
+				approvalReceiptId: approvalReceipt.receiptId,
+				approvalReceiptDigest: approvalReceipt.receiptDigest,
+				approvalDecisionRevision: approvalReceipt.decisionRevision,
+			} : {}),
 		};
 		const authorizationReceipt = { ...authBody, receiptDigest: canonicalDigest(authBody) };
 		const invocationDigest = canonicalDigest({
@@ -464,6 +521,7 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 			workspaceEnvelopeDigest: envelopeDigest,
 			workspaceValidation: workspaceResult.validation,
 			authorization: authorizationReceipt,
+			...(approvalReceipt ? { approvalReceipt } : {}),
 			capability: capabilityRequest.request.capability,
 			policyDigest: authorization.sandboxProfile.policyDigest,
 			sandbox: prepared.lease.resolution,
@@ -492,6 +550,111 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 		}
 	}
 
+	async #linearizeStart(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ToolExecutionGatewayStartResult> {
+		const { grant } = request;
+		if (signal?.aborted) {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool start was aborted", outcomeCertain: true };
+		}
+		let existing: ToolExecutionAttemptRecord | undefined;
+		try {
+			existing = await this.#options.attempts.read(grant.grantDigest);
+		} catch {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool execution idempotency state is unavailable", outcomeCertain: true };
+		}
+		if (existing?.status === "completed") {
+			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "tool execution already has a durable terminal receipt", outcomeCertain: false };
+		}
+		if (existing?.status === "started" || existing?.status === "uncertain") {
+			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "a prior side-effect attempt has no replay-safe terminal receipt", outcomeCertain: false };
+		}
+		if (signal?.aborted) {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool start was aborted", outcomeCertain: true };
+		}
+		try {
+			await durableStart();
+		} catch {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "durable tool start could not be committed", outcomeCertain: true };
+		}
+		let claimed: "claimed" | ToolExecutionAttemptRecord;
+		try {
+			claimed = await this.#options.attempts.claim(grant.grantDigest, grant.invocationDigest);
+		} catch {
+			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "tool execution idempotency claim is unavailable after durable start", outcomeCertain: false };
+		}
+		if (claimed !== "claimed") {
+			if (claimed.status === "completed") {
+				return { status: "uncertain", grantDigest: grant.grantDigest, reason: "tool execution already has a durable terminal receipt", outcomeCertain: false };
+			}
+			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "tool execution idempotency claim is already active", outcomeCertain: false };
+		}
+		this.#startTokens.add(grant.grantDigest);
+		return { status: "ready", grantDigest: grant.grantDigest };
+	}
+
+	async #startOne(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ToolExecutionGatewayStartResult> {
+		const { grant, invocation } = request;
+		if (!grantMatchesRequest(grant, invocation)) {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "authorization grant is invalid or uncorrelated", outcomeCertain: true };
+		}
+		const approval = grant.approvalReceipt;
+		if (!approval) return this.#linearizeStart(request, durableStart, signal);
+		const approvalState = this.#options.approvalState;
+		if (!approvalState) {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "approval state linearization is unavailable", outcomeCertain: true };
+		}
+		try {
+			const fenced = await approvalState.withCurrentApproval(approval, async () => {
+				if (approval.expiresAt !== undefined && Date.parse(approval.expiresAt) <= this.#clock().getTime()) {
+					return { status: "unavailable", grantDigest: grant.grantDigest, reason: "approval receipt is no longer current", outcomeCertain: true } satisfies ToolExecutionGatewayStartResult;
+				}
+				return this.#linearizeStart(request, durableStart, signal);
+			});
+			return fenced.ok
+				? fenced.value
+				: { status: "unavailable", grantDigest: grant.grantDigest, reason: "approval receipt is no longer current", outcomeCertain: true };
+		} catch {
+			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "approval state linearization is unavailable", outcomeCertain: true };
+		}
+	}
+
+	async #serializeStart(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ToolExecutionGatewayStartResult> {
+		const key = request.grant.grantDigest;
+		const predecessor = this.#startTails.get(key) ?? Promise.resolve();
+		let release: () => void = () => undefined;
+		const current = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const tail = predecessor.then(() => current);
+		this.#startTails.set(key, tail);
+		await predecessor;
+		try {
+			return await this.#startOne(request, durableStart, signal);
+		} finally {
+			release();
+			if (this.#startTails.get(key) === tail) this.#startTails.delete(key);
+		}
+	}
+
+	public start(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ToolExecutionGatewayStartResult> {
+		return this.#serializeStart(request, durableStart, signal);
+	}
+
 	public async execute(
 		request: ToolExecutionGatewayExecuteRequest,
 		onUpdate: AgentToolUpdateCallback,
@@ -501,25 +664,27 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 		if (!grantMatchesRequest(grant, invocation)) {
 			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "authorization grant is invalid or uncorrelated", outcomeCertain: true };
 		}
+		const ownsStartToken = this.#startTokens.delete(grant.grantDigest);
 		let existing: ToolExecutionAttemptRecord | undefined;
 		try {
 			existing = await this.#options.attempts.read(grant.grantDigest);
 		} catch {
-			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool execution idempotency state is unavailable", outcomeCertain: true };
+			return ownsStartToken
+				? { status: "uncertain", grantDigest: grant.grantDigest, reason: "tool execution idempotency state is unavailable after claim", outcomeCertain: false }
+				: { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool execution idempotency state is unavailable", outcomeCertain: true };
 		}
-		if (existing?.status === "completed") return existing.result;
-		if (existing?.status === "started" || existing?.status === "uncertain") {
-			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "a prior side-effect attempt has no replay-safe terminal receipt", outcomeCertain: false };
+		if (existing?.status === "completed") {
+			return existing.invocationDigest === grant.invocationDigest && existing.result.grantDigest === grant.grantDigest
+				? existing.result
+				: { status: "uncertain", grantDigest: grant.grantDigest, reason: "durable tool terminal receipt is invalid or uncorrelated", outcomeCertain: false };
 		}
-		let claimed: "claimed" | ToolExecutionAttemptRecord;
-		try {
-			claimed = await this.#options.attempts.claim(grant.grantDigest, grant.invocationDigest);
-		} catch {
-			return { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool execution idempotency claim is unavailable", outcomeCertain: true };
+		if (!ownsStartToken) {
+			return existing?.status === "started" || existing?.status === "uncertain"
+				? { status: "uncertain", grantDigest: grant.grantDigest, reason: "a prior side-effect attempt has no replay-safe terminal receipt", outcomeCertain: false }
+				: { status: "unavailable", grantDigest: grant.grantDigest, reason: "tool execution was not durably started", outcomeCertain: true };
 		}
-		if (claimed !== "claimed") {
-			if (claimed.status === "completed") return claimed.result;
-			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "tool execution idempotency claim is already active", outcomeCertain: false };
+		if (existing?.status !== "started" || existing.invocationDigest !== grant.invocationDigest) {
+			return { status: "uncertain", grantDigest: grant.grantDigest, reason: "durable tool start claim is missing or uncorrelated after claim", outcomeCertain: false };
 		}
 		const lease = this.#leases.get(grant.grantDigest);
 		const preparedAuthorization = this.#authorizations.get(invocation.toolCallId);

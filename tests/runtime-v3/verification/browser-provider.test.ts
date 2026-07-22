@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+	approvalTicketDigest,
+	approvalTicketRequestDigest,
 	isCapabilityGatewayRequest,
+	type ApprovalTicket,
 	type CapabilityGatewayPort,
 	type CapabilityGatewayRequest,
 	type CapabilityGatewayResult,
@@ -147,6 +150,15 @@ class BrowserCapability implements CapabilityGatewayPort {
 		this.requests.push(request);
 		const raw = request.invocation.rawArguments as { operation?: { kind?: string } };
 		if (raw.operation?.kind === this.denyKind) {
+			const ticket: ApprovalTicket = {
+				authorityId: request.request.authorityId,
+				tenantId: request.request.tenantId,
+				principalId: request.request.principalId,
+				approvalId: request.request.approvalId,
+				request: request.request,
+				scope: "once",
+				createdAt: "2026-07-22T08:00:00.000Z",
+			};
 			const receiptBody = {
 				authorityId: request.request.authorityId,
 				tenantId: request.request.tenantId,
@@ -154,10 +166,11 @@ class BrowserCapability implements CapabilityGatewayPort {
 				receiptId: createRuntimeId("receipt", `deny-${this.requests.length}`),
 				approvalId: request.request.approvalId,
 				requestId: request.request.requestId,
-				requestDigest: canonicalDigest(request.request),
-				ticketDigest: digest(`ticket-${this.requests.length}`),
+				requestDigest: approvalTicketRequestDigest(ticket),
+				ticketDigest: approvalTicketDigest(ticket),
 				decision: "denied" as const,
 				decisionRevision: 1,
+				decidedBy: request.request.principalId,
 				decidedAt: "2026-07-22T08:00:00.000Z",
 				evidenceComplete: true,
 				evidenceTruncated: false,

@@ -303,6 +303,7 @@ describe("runledger-daemon stdio process", () => {
 				ticketDigest: DIGEST,
 				decision: "denied" as const,
 				decisionRevision: 1,
+				decidedBy: createRuntimeId("principal", "unsupported-approval-decider"),
 				decidedAt: "2026-07-22T00:00:00.000Z",
 				evidenceComplete: true,
 				evidenceTruncated: false,

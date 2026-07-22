@@ -48,6 +48,7 @@ import type {
 import type { AgentToolUpdateCallback } from "../runtime/types.ts";
 import type { AgentLoopSessionEvents } from "../runtime/session/agent-loop-events.ts";
 import type { SandboxBackend, SandboxBackendCapability } from "../security/sandbox/types.ts";
+import { SYSTEM_APPROVAL_PRINCIPAL_ID } from "../security/permission/approval-coordinator.ts";
 import type { ProductionToolManifest } from "../security/integration/production-tool-components.ts";
 import {
 	MemoryContextProvider,
@@ -122,7 +123,7 @@ export interface ProductionInteractiveWorkspaceOptions
 export interface ProductionInteractiveToolGatewayOptions
 	extends Omit<
 		ProductionToolGatewayCompositionOptions,
-		"stateRoot" | "workspace" | "workspaceResolver" | "fallbackPrincipalId" | "sandboxBackend" | "clock"
+		"stateRoot" | "workspace" | "workspaceResolver" | "approvalEvents" | "fallbackPrincipalId" | "sandboxBackend" | "approvalStore" | "clock"
 	> {
 	/** Platform backend 必须由 production caller 显式选择，composition 会实际 probe。 */
 	sandboxBackend: SandboxBackend;
@@ -215,8 +216,25 @@ export interface ProductionInteractiveRuntime {
 	close(): Promise<void>;
 }
 
+function startupToolExecutionIdentity(request: ToolExecutionGatewayExecuteRequest): string {
+	return canonicalDigest({
+		grant: request.grant,
+		invocation: {
+			turnId: request.invocation.turnId,
+			toolCallId: request.invocation.toolCallId,
+			providerToolCallId: request.invocation.providerToolCallId,
+			toolIdentityDigest: canonicalDigest(request.invocation.tool.name.trim() || "unknown"),
+			argumentsDigest: canonicalDigest(request.invocation.arguments),
+			cwd: request.invocation.cwd,
+			environmentDigest: canonicalDigest(request.invocation.envVars),
+		},
+	});
+}
+
 class StartupGatedToolExecutionGateway implements ToolExecutionGatewayPort {
 	readonly #delegate: ToolExecutionGatewayPort;
+	readonly #starting = new Set<string>();
+	readonly #started = new Map<string, string>();
 	#state: "starting" | "ready" | "closing" | "closed" = "starting";
 	#active = 0;
 	#drainWaiters: Array<() => void> = [];
@@ -255,19 +273,168 @@ class StartupGatedToolExecutionGateway implements ToolExecutionGatewayPort {
 		onUpdate: AgentToolUpdateCallback,
 		signal?: AbortSignal,
 	): Promise<ToolExecutionGatewayExecuteResult> {
-		if (this.#state !== "ready") {
+		const grantDigest = request.grant.grantDigest;
+		const startedIdentity = this.#started.get(grantDigest);
+		if (startedIdentity === undefined) {
 			return {
 				status: "unavailable",
-				grantDigest: request.grant.grantDigest,
-				reason: "production interactive Tool Gateway is closing",
+				grantDigest,
+				reason: "production interactive Tool Gateway has no active start lease",
 				outcomeCertain: true,
 			};
 		}
-		this.#active += 1;
+		let executeIdentity: string;
+		try {
+			executeIdentity = startupToolExecutionIdentity(request);
+		} catch {
+			return {
+				status: "uncertain",
+				grantDigest,
+				reason: "production interactive Tool Gateway received a malformed execute for an active start",
+				outcomeCertain: false,
+			};
+		}
+		if (executeIdentity !== startedIdentity) {
+			return {
+				status: "uncertain",
+				grantDigest,
+				reason: "production interactive Tool Gateway received an uncorrelated execute for an active start",
+				outcomeCertain: false,
+			};
+		}
+		this.#started.delete(grantDigest);
 		try {
 			return await this.#delegate.execute(request, onUpdate, signal);
 		} finally {
 			this.#settleActive();
+		}
+	}
+
+	public async start(
+		request: Parameters<ToolExecutionGatewayPort["start"]>[0],
+		durableStart: Parameters<ToolExecutionGatewayPort["start"]>[1],
+		signal?: AbortSignal,
+	): ReturnType<ToolExecutionGatewayPort["start"]> {
+		if (this.#state !== "ready") {
+			return {
+				status: "unavailable",
+				grantDigest: request.grant.grantDigest,
+				reason: "production interactive Tool Gateway is not accepting new starts",
+				outcomeCertain: true,
+			};
+		}
+		const grantDigest = request.grant.grantDigest;
+		if (this.#starting.has(grantDigest) || this.#started.has(grantDigest)) {
+			return {
+				status: "uncertain",
+				grantDigest,
+				reason: "production interactive Tool Gateway rejected a duplicate active start",
+				outcomeCertain: false,
+			};
+		}
+		let startIdentity: string;
+		try {
+			startIdentity = startupToolExecutionIdentity(request);
+		} catch {
+			return {
+				status: "unavailable",
+				grantDigest,
+				reason: "production interactive Tool Gateway rejected a malformed start",
+				outcomeCertain: true,
+			};
+		}
+		this.#starting.add(grantDigest);
+		this.#active += 1;
+		let keepLease = false;
+		let callbackInvoked = false;
+		let callbackCompleted = false;
+		let callbackRepeated = false;
+		let callbackWindowOpen = true;
+		let callbackPromise: Promise<void> | undefined;
+		const guardedDurableStart = (): Promise<void> => {
+			if (!callbackWindowOpen) {
+				if (callbackInvoked) callbackRepeated = true;
+				return callbackPromise ?? Promise.resolve();
+			}
+			if (callbackInvoked) {
+				callbackRepeated = true;
+				return callbackPromise ?? Promise.resolve();
+			}
+			callbackInvoked = true;
+			callbackPromise = Promise.resolve()
+				.then(durableStart)
+				.then(() => { callbackCompleted = true; });
+			return callbackPromise;
+		};
+		try {
+			let result: Awaited<ReturnType<ToolExecutionGatewayPort["start"]>>;
+			try {
+				try {
+					result = await this.#delegate.start(request, guardedDurableStart, signal);
+				} finally {
+					callbackWindowOpen = false;
+				}
+			} catch (error) {
+				if (callbackPromise) {
+					try {
+						await callbackPromise;
+					} catch {
+						// delegate failure 仍是主结果；这里只等待 callback 静默收敛。
+					}
+				}
+				if (!callbackRepeated) throw error;
+				return {
+					status: "uncertain",
+					grantDigest,
+					reason: "production interactive Tool Gateway observed a repeated durable start callback",
+					outcomeCertain: false,
+				};
+			}
+			if (callbackPromise) {
+				try {
+					await callbackPromise;
+				} catch (error) {
+					if (result.status !== "ready") return result;
+					return {
+						status: "uncertain",
+						grantDigest,
+						reason: `production interactive Tool Gateway returned ready before durable start completed: ${error instanceof Error ? error.name : "UnknownError"}`,
+						outcomeCertain: false,
+					};
+				}
+			}
+			if (callbackRepeated) {
+				return {
+					status: "uncertain",
+					grantDigest,
+					reason: "production interactive Tool Gateway observed a repeated durable start callback",
+					outcomeCertain: false,
+				};
+			}
+			if (result.status === "ready" && (!callbackInvoked || !callbackCompleted)) {
+				return {
+					status: "uncertain",
+					grantDigest,
+					reason: "production interactive Tool Gateway returned ready without one completed durable start callback",
+					outcomeCertain: false,
+				};
+			}
+			if (result.status === "ready" && result.grantDigest !== request.grant.grantDigest) {
+				return {
+					status: "uncertain",
+					grantDigest,
+					reason: "production interactive Tool Gateway received an uncorrelated start",
+					outcomeCertain: false,
+				};
+			}
+			if (result.status === "ready") {
+				this.#started.set(grantDigest, startIdentity);
+				keepLease = true;
+			}
+			return result;
+		} finally {
+			this.#starting.delete(grantDigest);
+			if (!keepLease) this.#settleActive();
 		}
 	}
 
@@ -900,6 +1067,9 @@ export async function createProductionInteractiveRuntime(
 	};
 
 	try {
+		if ("approvalStore" in options.toolGateway) {
+			throw new Error("production interactive Approval store is owned by the canonical state root");
+		}
 		assertBaseTools(options.tools);
 		assertVerificationServices(manager, options.session.verification);
 		assertPeerBinding(manager, options.toolGateway.peerBinding, clock());
@@ -952,7 +1122,8 @@ export async function createProductionInteractiveRuntime(
 			stateRoot: join(workspaceComposition.paths.stateRoot, "tool-gateway"),
 			workspace: workspaceComposition.workspaceService,
 			workspaceResolver: resolver,
-			fallbackPrincipalId: identity.principalId,
+			approvalEvents: manager.sessionEvents(),
+			fallbackPrincipalId: SYSTEM_APPROVAL_PRINCIPAL_ID,
 			sandboxBackend: options.toolGateway.sandboxBackend,
 			clock,
 		});

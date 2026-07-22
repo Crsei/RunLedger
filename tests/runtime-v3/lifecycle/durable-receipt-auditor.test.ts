@@ -134,7 +134,8 @@ function approval(
 		requestId: value.request.requestId,
 		requestDigest: approvalTicketRequestDigest(value),
 		ticketDigest: approvalTicketDigest(value),
-		decisionRevision: 1,
+		decisionRevision: decision === "allowed" ? 1 : 2,
+		decidedBy: createRuntimeId("principal", `approver-${value.approvalId}`),
 		evidenceComplete: true,
 		evidenceTruncated: false,
 		originalInputDigest: value.request.argumentsDigest,
@@ -303,14 +304,17 @@ describe("DurableStartupExternalReceiptAuditor store-port contract", () => {
 		const stores = await durableStores("terminal");
 		const sessionId = createRuntimeId("session", "terminal");
 		const revokedLease = lease(stores.configuredScope, "terminal", { state: "revoked" });
-		const revokedApproval = approval(ticket(stores.configuredScope, sessionId, "revoked"), "revoked");
-		const expiredApproval = approval(
-			ticket(stores.configuredScope, sessionId, "expired", PAST_EXPIRY),
-			"expired",
-		);
+		const revokedTicket = ticket(stores.configuredScope, sessionId, "revoked");
+		const expiredTicket = ticket(stores.configuredScope, sessionId, "expired", PAST_EXPIRY);
+		const allowedBeforeRevocation = approval(revokedTicket);
+		const allowedBeforeExpiry = approval(expiredTicket);
+		const revokedApproval = approval(revokedTicket, "revoked");
+		const expiredApproval = approval(expiredTicket, "expired");
 		expect(await stores.workspaceLeaseStore.create(revokedLease.secret)).toBe("applied");
-		expect(await stores.approvalStore.commit(revokedApproval, 0)).toMatchObject({ ok: true });
-		expect(await stores.approvalStore.commit(expiredApproval, 0)).toMatchObject({ ok: true });
+		expect(await stores.approvalStore.commit(allowedBeforeRevocation, 0)).toMatchObject({ ok: true });
+		expect(await stores.approvalStore.commit(revokedApproval, 1)).toMatchObject({ ok: true });
+		expect(await stores.approvalStore.commit(allowedBeforeExpiry, 0)).toMatchObject({ ok: true });
+		expect(await stores.approvalStore.commit(expiredApproval, 1)).toMatchObject({ ok: true });
 
 		const durable = auditor(stores);
 		const leaseAudit = valueOf(await durable.auditWorkspaceLease(sessionId, revokedLease.reference));
@@ -387,6 +391,7 @@ describe("DurableStartupExternalReceiptAuditor store-port contract", () => {
 				ok: false,
 				error: { code: "approval_stale", message: "unused", retryable: false },
 			}),
+			withCurrentApproval: async () => { throw new Error(secretFailure); },
 		};
 		const durable = auditor({ workspaceLeaseStore, approvalStore });
 

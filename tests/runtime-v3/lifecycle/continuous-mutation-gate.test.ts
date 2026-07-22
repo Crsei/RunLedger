@@ -30,6 +30,7 @@ const scope = {
 	sessionId: createRuntimeId("session", "continuous-mutation-gate"),
 };
 const principalId = createRuntimeId("principal", "continuous-mutation-gate");
+const approvalDeciderId = createRuntimeId("principal", "continuous-mutation-gate-approver");
 const runtimeId = createRuntimeId("runtime", "continuous-mutation-gate");
 const stream = createSessionEventStreamRef(scope, scope.sessionId);
 
@@ -65,9 +66,9 @@ function workspaceLease(
 
 function approvalReceipt(
 	seed: string,
-	overrides: Partial<ApprovalReceiptRef> = {},
+	overrides: Partial<Omit<ApprovalReceiptRef, "receiptDigest">> = {},
 ): ApprovalReceiptRef {
-	return {
+	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
 		authorityId: scope.authorityId,
 		tenantId: scope.tenantId,
 		principalId,
@@ -78,14 +79,15 @@ function approvalReceipt(
 		ticketDigest: E,
 		decision: "allowed",
 		decisionRevision: 1,
+		decidedBy: approvalDeciderId,
 		decidedAt: "2026-07-23T00:00:00.000Z",
 		expiresAt: FUTURE,
-		receiptDigest: canonicalDigest({ kind: "approval", seed }),
 		evidenceComplete: true,
 		evidenceTruncated: false,
 		originalInputDigest: D,
 		...overrides,
 	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 function referenceSet(

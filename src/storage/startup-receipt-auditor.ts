@@ -15,7 +15,7 @@ import type { WorkspaceLeaseMutationPort } from "../worktree/ports.ts";
 
 export interface DurableStartupExternalReceiptAuditorOptions {
 	workspaceLeaseStore: Pick<WorkspaceLeaseMutationPort, "read">;
-	approvalStore: Pick<ApprovalStateStorePort, "read">;
+	approvalStore: ApprovalStateStorePort;
 	clock?: () => Date;
 }
 
@@ -55,13 +55,18 @@ function unavailable(
  */
 export class DurableStartupExternalReceiptAuditor implements StartupExternalReceiptAuditPort {
 	readonly #workspaceLeaseStore: Pick<WorkspaceLeaseMutationPort, "read">;
-	readonly #approvalStore: Pick<ApprovalStateStorePort, "read">;
+	readonly #approvalStore: ApprovalStateStorePort;
 	readonly #clock: () => Date;
 
 	public constructor(options: DurableStartupExternalReceiptAuditorOptions) {
 		this.#workspaceLeaseStore = options.workspaceLeaseStore;
 		this.#approvalStore = options.approvalStore;
 		this.#clock = options.clock ?? (() => new Date());
+	}
+
+	/** governed startup reconciler 与 auditor 必须读取同一份 canonical Approval store。 */
+	public approvalStateStore(): ApprovalStateStorePort {
+		return this.#approvalStore;
 	}
 
 	public async auditWorkspaceLease(

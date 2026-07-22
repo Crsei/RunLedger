@@ -9,7 +9,9 @@ import type {
 	EnterprisePortResult,
 } from "../../../src/runtime/identity/enterprise-types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
+import type { ApprovalReceiptRef, ApprovalTicket } from "../../../src/runtime/protocol/v3/capability.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
+import type { ApprovalLifecycleEventPort, ApprovalRequestEventEvidence } from "../../../src/runtime/protocol/v3/security-events.ts";
 import type { InputSourceRef } from "../../../src/runtime/protocol/v3/taint.ts";
 import {
 	workspaceExecutionEnvelopeDigest,
@@ -21,8 +23,15 @@ import {
 import type {
 	AgentTool,
 	AgentToolResult,
+	ToolExecutionAuthorizationGrant,
 	ToolExecutionGatewayRequest,
 } from "../../../src/runtime/types.ts";
+import { projectExternalReceiptReferences } from "../../../src/runtime/lifecycle/canonical-references.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
+import { AgentLoopSessionEvents } from "../../../src/runtime/session/agent-loop-events.ts";
+import { EventWriter } from "../../../src/runtime/session/event-writer.ts";
+import { MemoryEventStore } from "../../../src/runtime/session/memory-event-store.ts";
+import type { WriterFence } from "../../../src/runtime/session/types.ts";
 import { MemoryCapabilityRateLimiter } from "../../../src/security/integration/capability-rate-limiter.ts";
 import type {
 	CredentialAudienceBindingRef,
@@ -34,6 +43,7 @@ import {
 	type ToolInvocationInputClassificationPort,
 } from "../../../src/security/integration/production-tool-components.ts";
 import type { ToolExecutionWorkspaceResolverPort } from "../../../src/security/integration/tool-execution-gateway.ts";
+import type { ApprovalStateStorePort } from "../../../src/security/permission/approval-coordinator.ts";
 import type {
 	SandboxBackend,
 	SandboxBackendCapability,
@@ -41,11 +51,12 @@ import type {
 	SandboxPrepareRequest,
 	SandboxProcessResult,
 } from "../../../src/security/sandbox/types.ts";
-import type { SecurityResult, SecuritySnapshot } from "../../../src/security/types.ts";
+import type { PermissionPrompter, SecurityResult, SecuritySnapshot } from "../../../src/security/types.ts";
 import {
 	createProductionToolGatewayComposition,
 	type ProductionToolGatewayComposition,
 } from "../../../src/storage/production-tool-gateway.ts";
+import { FileApprovalStateStore } from "../../../src/storage/security-runtime-state.ts";
 
 const NOW = new Date("2026-07-22T00:00:00.000Z");
 const SECRET = "credential-value-must-never-escape";
@@ -65,6 +76,22 @@ const validatorId = createRuntimeId("principal", "production-workspace-validator
 const executorId = createRuntimeId("resource", "production-tool-executor");
 const rateLimitId = createRuntimeId("rateLimit", "production-tool-gateway");
 const toolSchema = Type.Object({ path: Type.String(), content: Type.String() });
+
+class RecordingApprovalEvents implements ApprovalLifecycleEventPort {
+	public readonly events: string[] = [];
+	public readonly requested: Array<{ ticket: ApprovalTicket; evidence: ApprovalRequestEventEvidence }> = [];
+	public readonly terminal: Array<{ ticket: ApprovalTicket; receipt: ApprovalReceiptRef }> = [];
+
+	public async recordApprovalRequested(ticket: ApprovalTicket, evidence: ApprovalRequestEventEvidence): Promise<void> {
+		this.events.push("requested");
+		this.requested.push({ ticket: structuredClone(ticket), evidence: structuredClone(evidence) });
+	}
+
+	public async recordApprovalTerminal(ticket: ApprovalTicket, receipt: ApprovalReceiptRef): Promise<void> {
+		this.events.push(`terminal:${receipt.decision}`);
+		this.terminal.push({ ticket: structuredClone(ticket), receipt: structuredClone(receipt) });
+	}
+}
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -137,6 +164,15 @@ class UnavailableSandbox extends AvailableSandbox {
 			supportsChildIsolation: false,
 			reason: "sandbox unavailable by construction",
 		};
+	}
+}
+
+class RecordingAvailableSandbox extends AvailableSandbox {
+	public probeCalls = 0;
+
+	public override async probe(): Promise<SandboxBackendCapability> {
+		this.probeCalls += 1;
+		return super.probe();
 	}
 }
 
@@ -265,7 +301,14 @@ interface Harness {
 	stateRoot: string;
 	resolver: ToolExecutionWorkspaceResolverPort;
 	snapshots: FixedSnapshotResolver;
-	composition(backend?: SandboxBackend): Promise<ProductionToolGatewayComposition>;
+	composition(options?: HarnessCompositionOptions): Promise<ProductionToolGatewayComposition>;
+}
+
+interface HarnessCompositionOptions {
+	backend?: SandboxBackend;
+	approvalStore?: ApprovalStateStorePort;
+	approvalEvents?: ApprovalLifecycleEventPort;
+	prompter?: PermissionPrompter;
 }
 
 async function createHarness(): Promise<Harness> {
@@ -293,7 +336,7 @@ async function createHarness(): Promise<Harness> {
 		stateRoot,
 		resolver,
 		snapshots,
-		composition: async (backend = new AvailableSandbox()) => createProductionToolGatewayComposition({
+		composition: async (options = {}) => createProductionToolGatewayComposition({
 			stateRoot,
 			workspace: new StrictWorkspaceService(),
 			workspaceResolver: resolver,
@@ -317,9 +360,11 @@ async function createHarness(): Promise<Harness> {
 				maxWindowMs: 60_000,
 			}], () => NOW),
 			rateLimitPolicy: () => ({ rateLimitId, windowMs: 60_000, units: 1 }),
-			prompter: {
+			prompter: options.prompter ?? {
 				request: async () => ({ decision: "allow-once", decidedBy: principalId }),
 			},
+			approvalEvents: options.approvalEvents ?? new RecordingApprovalEvents(),
+			...(options.approvalStore === undefined ? {} : { approvalStore: options.approvalStore }),
 			fallbackPrincipalId: principalId,
 			credentials: {
 				materials: {
@@ -357,7 +402,7 @@ async function createHarness(): Promise<Harness> {
 				maxRequestAgeMs: 60_000,
 				allowedClockSkewMs: 0,
 			},
-			sandboxBackend: backend,
+			sandboxBackend: options.backend ?? new AvailableSandbox(),
 			baseEnvironment: { PATH: "/usr/bin:/bin" },
 			allowedEnvironmentKeys: ["PATH", "LANG"],
 			clock: () => NOW,
@@ -384,7 +429,382 @@ async function allAttemptText(path: string): Promise<string> {
 	return (await Promise.all(files.filter((file) => file.endsWith(".json")).map((file) => readFile(join(path, file), "utf8")))).join("\n");
 }
 
+function canonicalApprovalSession() {
+	const stream = createSessionEventStreamRef({ authorityId, tenantId }, sessionId);
+	const fence: WriterFence = {
+		authorityId,
+		tenantId,
+		stream,
+		leaseId: createRuntimeId("lease", "production-tool-gateway-session"),
+		ownerRuntimeId: runtimeId,
+		writerEpoch: 1,
+		fencingToken: "production-tool-gateway-writer-fence",
+	};
+	const store = new MemoryEventStore({
+		authorityId,
+		tenantId,
+		stream,
+		validateFence: (candidate) => candidate.fencingToken === fence.fencingToken,
+	});
+	const writer = new EventWriter({
+		authorityId,
+		tenantId,
+		stream,
+		store,
+		fence,
+		clock: () => NOW,
+	});
+	return {
+		store,
+		events: new AgentLoopSessionEvents({
+			writer,
+			principalId,
+			runtimeId,
+			agentId,
+			featureDigest: canonicalDigest("production Tool Gateway canonical approval fixture"),
+		}),
+	};
+}
+
+function supersedingApprovalReceipt(
+	current: ApprovalReceiptRef,
+	decision: "revoked" | "expired",
+): ApprovalReceiptRef {
+	const { receiptDigest: _receiptDigest, ...currentBody } = current;
+	const decidedAt = decision === "expired"
+		? current.expiresAt
+		: new Date(Date.parse(current.decidedAt) + 1_000).toISOString();
+	if (decidedAt === undefined) throw new Error("expiring an approval requires its exact expiration time");
+	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
+		...currentBody,
+		receiptId: createRuntimeId("receipt", `${current.approvalId}-${decision}-${current.decisionRevision + 1}`),
+		decision,
+		decisionRevision: current.decisionRevision + 1,
+		decidedAt,
+		...(decision === "revoked" ? { revokedAt: decidedAt } : {}),
+	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
+}
+
+function bindApprovalToGrant(
+	grant: ToolExecutionAuthorizationGrant,
+	approvalReceipt: ApprovalReceiptRef,
+): ToolExecutionAuthorizationGrant {
+	const { receiptDigest: _authorizationDigest, ...authorizationWithoutDigest } = grant.authorization;
+	const authorizationBody = {
+		...authorizationWithoutDigest,
+		approvalReceiptId: approvalReceipt.receiptId,
+		approvalReceiptDigest: approvalReceipt.receiptDigest,
+		approvalDecisionRevision: approvalReceipt.decisionRevision,
+	};
+	const authorization = { ...authorizationBody, receiptDigest: canonicalDigest(authorizationBody) };
+	const { grantDigest: _grantDigest, ...grantWithoutDigest } = grant;
+	const body: Omit<ToolExecutionAuthorizationGrant, "grantDigest"> = {
+		...grantWithoutDigest,
+		authorization,
+		approvalReceipt,
+	};
+	return { ...body, grantDigest: canonicalDigest(body) };
+}
+
 describe("production Tool Gateway composition", () => {
+	it("projects the production ask approval as active without changing the Gateway request digest domain", async () => {
+		const harness = await createHarness();
+		const session = canonicalApprovalSession();
+		await session.events.ensureInitialized("test");
+		const turn = await session.events.beginTurn();
+		const tool = createTool({ value: 0 });
+		const argumentsValue = { path: join(harness.workspaceRoot, "canonical-approval.txt"), content: "approved" };
+		const handle = await session.events.requestTool(
+			turn,
+			"provider-canonical-approval",
+			tool.name,
+			argumentsValue,
+		);
+		const composition = await harness.composition({ approvalEvents: session.events });
+		const request: ToolExecutionGatewayRequest = {
+			turnId: handle.turnId,
+			toolCallId: handle.toolCallId,
+			providerToolCallId: handle.providerToolCallId,
+			tool,
+			arguments: argumentsValue,
+			cwd: harness.workspaceRoot,
+			envVars: {},
+		};
+
+		const authorization = await composition.toolExecutionGateway.authorize(request);
+
+		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		const approval = authorization.grant.approvalReceipt;
+		if (!approval) throw new Error("production ask flow omitted its approval receipt");
+		await session.events.authorizeAndStartTool(handle, authorization.grant, tool);
+		const page = await session.store.readPage(session.store.streamRef(), { limit: 100 });
+		if (!page.ok) throw new Error(page.error.message);
+		const requested = page.value.events.find((event) => event.type === "permission.requested");
+		const authorized = page.value.events.find((event) => event.type === "tool.authorized");
+		expect(requested?.payload.requestDigest).toBe(approval.requestDigest);
+		expect(authorized?.payload.requestDigest).toBe(authorization.grant.authorization.requestDigest);
+		expect(authorized?.payload.requestDigest).not.toBe(approval.requestDigest);
+		const projected = projectExternalReceiptReferences(page.value.events, {
+			authorityId,
+			tenantId,
+			sessionId,
+		});
+		expect(projected).toMatchObject({
+			ok: true,
+			value: { approvalDecisions: [approval] },
+		});
+	});
+
+	it("records requested before prompting and terminal allowed before returning the exact bound grant", async () => {
+		const harness = await createHarness();
+		const events = new RecordingApprovalEvents();
+		const approvalStore = new FileApprovalStateStore(join(harness.stateRoot, "approval-order"));
+		const composition = await harness.composition({
+			approvalStore,
+			approvalEvents: events,
+			prompter: {
+				request: async () => {
+					expect(events.events).toEqual(["requested"]);
+					expect(events.requested).toHaveLength(1);
+					expect(events.terminal).toHaveLength(0);
+					events.events.push("prompt");
+					return { decision: "allow-once", decidedBy: principalId };
+				},
+			},
+		});
+		const request = invocation(createTool({ value: 0 }), harness.workspaceRoot, "approval-order");
+
+		const authorization = await composition.toolExecutionGateway.authorize(request);
+
+		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		expect(events.events).toEqual(["requested", "prompt", "terminal:allowed"]);
+		expect(events.terminal).toHaveLength(1);
+		const recorded = events.terminal[0];
+		if (!recorded) throw new Error("terminal approval event was not recorded");
+		expect(recorded.ticket).toEqual(events.requested[0]?.ticket);
+		expect(recorded.receipt.decidedBy).toBe(principalId);
+		expect(authorization.grant.approvalReceipt).toEqual(recorded.receipt);
+		expect(await approvalStore.read(recorded.receipt.approvalId)).toEqual(recorded.receipt);
+		expect(authorization.grant.authorization).toMatchObject({
+			approvalReceiptId: recorded.receipt.receiptId,
+			approvalReceiptDigest: recorded.receipt.receiptDigest,
+			approvalDecisionRevision: recorded.receipt.decisionRevision,
+		});
+	});
+
+	it.each(["revoked", "expired"] as const)(
+		"rejects execution before claiming an attempt when allowed approval becomes %s",
+		async (decision) => {
+			const harness = await createHarness();
+			const approvalStore = new FileApprovalStateStore(join(harness.stateRoot, `approval-${decision}`));
+			const counter = { value: 0 };
+			const request = invocation(createTool(counter), harness.workspaceRoot, `approval-${decision}`);
+			const composition = await harness.composition({ approvalStore });
+			const authorization = await composition.toolExecutionGateway.authorize(request);
+			if (authorization.status !== "authorized") throw new Error(authorization.reason);
+			const allowed = authorization.grant.approvalReceipt;
+			if (!allowed) throw new Error("interactive authorization omitted its approval receipt");
+			const superseding = supersedingApprovalReceipt(allowed, decision);
+
+			expect(await approvalStore.commit(superseding, allowed.decisionRevision)).toEqual({
+				ok: true,
+				value: superseding,
+			});
+			expect(await composition.toolExecutionGateway.start({
+				invocation: request,
+				grant: authorization.grant,
+			}, async () => undefined)).toMatchObject({
+				status: "unavailable",
+				outcomeCertain: true,
+				reason: "approval receipt is no longer current",
+			});
+			expect(counter.value).toBe(0);
+			expect(await readdir(composition.paths.attemptsRoot)).toEqual([]);
+		},
+	);
+
+	it("linearizes durable start and attempt claim before a concurrent approval revocation", async () => {
+		const harness = await createHarness();
+		const approvalStore = new FileApprovalStateStore(join(harness.stateRoot, "approval-start-race"));
+		const counter = { value: 0 };
+		const request = invocation(createTool(counter), harness.workspaceRoot, "approval-start-race");
+		const composition = await harness.composition({ approvalStore });
+		const authorization = await composition.toolExecutionGateway.authorize(request);
+		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		const allowed = authorization.grant.approvalReceipt;
+		if (!allowed) throw new Error("interactive authorization omitted its approval receipt");
+		const revoked = supersedingApprovalReceipt(allowed, "revoked");
+		let signalDurableStart: () => void = () => undefined;
+		const durableStartEntered = new Promise<void>((resolve) => {
+			signalDurableStart = resolve;
+		});
+		let releaseDurableStart: () => void = () => undefined;
+		const durableStartRelease = new Promise<void>((resolve) => {
+			releaseDurableStart = resolve;
+		});
+		const started = composition.toolExecutionGateway.start({
+			invocation: request,
+			grant: authorization.grant,
+		}, async () => {
+			signalDurableStart();
+			await durableStartRelease;
+		});
+		await durableStartEntered;
+		let revocationSettled = false;
+		const revocation = approvalStore.commit(revoked, allowed.decisionRevision).finally(() => {
+			revocationSettled = true;
+		});
+		await Promise.resolve();
+
+		expect(revocationSettled).toBe(false);
+		releaseDurableStart();
+		expect(await started).toEqual({ status: "ready", grantDigest: authorization.grant.grantDigest });
+		expect(await revocation).toEqual({ ok: true, value: revoked });
+		expect(await composition.toolExecutionGateway.execute({
+			invocation: request,
+			grant: authorization.grant,
+		}, () => undefined)).toMatchObject({ status: "completed" });
+		expect(counter.value).toBe(1);
+	});
+
+	it("serializes concurrent starts and never lends one caller another callback's ready result", async () => {
+		const harness = await createHarness();
+		const request = invocation(createTool({ value: 0 }), harness.workspaceRoot, "concurrent-starts");
+		const composition = await harness.composition();
+		const authorization = await composition.toolExecutionGateway.authorize(request);
+		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		let signalFirstStart: () => void = () => undefined;
+		const firstStartEntered = new Promise<void>((resolve) => {
+			signalFirstStart = resolve;
+		});
+		let releaseFirstStart: () => void = () => undefined;
+		const firstStartRelease = new Promise<void>((resolve) => {
+			releaseFirstStart = resolve;
+		});
+		const first = composition.toolExecutionGateway.start({
+			invocation: request,
+			grant: authorization.grant,
+		}, async () => {
+			signalFirstStart();
+			await firstStartRelease;
+		});
+		await firstStartEntered;
+		let secondCallbackCalls = 0;
+		const second = composition.toolExecutionGateway.start({
+			invocation: request,
+			grant: authorization.grant,
+		}, async () => {
+			secondCallbackCalls += 1;
+		});
+		releaseFirstStart();
+
+		expect(await first).toEqual({ status: "ready", grantDigest: authorization.grant.grantDigest });
+		expect(await second).toMatchObject({ status: "uncertain", outcomeCertain: false });
+		expect(secondCallbackCalls).toBe(0);
+	});
+
+	it.each(["revoked", "expired"] as const)(
+		"denies an outer-cache authorization hit without new environment or tool effects when approval becomes %s",
+		async (decision) => {
+			const harness = await createHarness();
+			const approvalStore = new FileApprovalStateStore(join(harness.stateRoot, `approval-cache-${decision}`));
+			const approvalEvents = new RecordingApprovalEvents();
+			const backend = new RecordingAvailableSandbox();
+			const counter = { value: 0 };
+			const request = invocation(createTool(counter), harness.workspaceRoot, `approval-cache-${decision}`);
+			const composition = await harness.composition({
+				approvalStore,
+				approvalEvents,
+				backend,
+			});
+			const authorization = await composition.toolExecutionGateway.authorize(request);
+			if (authorization.status !== "authorized") throw new Error(authorization.reason);
+			const allowed = authorization.grant.approvalReceipt;
+			if (!allowed) throw new Error("interactive authorization omitted its approval receipt");
+			const superseding = supersedingApprovalReceipt(allowed, decision);
+			const probeCallsAfterGrant = backend.probeCalls;
+			const approvalEventCountAfterGrant = approvalEvents.events.length;
+
+			expect(await approvalStore.commit(superseding, allowed.decisionRevision)).toEqual({
+				ok: true,
+				value: superseding,
+			});
+			expect(await composition.toolExecutionGateway.authorize(request)).toMatchObject({
+				status: "denied",
+				reason: "approval receipt is no longer current",
+			});
+			expect(backend.probeCalls).toBe(probeCallsAfterGrant);
+			expect(approvalEvents.events).toHaveLength(approvalEventCountAfterGrant);
+			expect(counter.value).toBe(0);
+			expect(await readdir(composition.paths.attemptsRoot)).toEqual([]);
+		},
+	);
+
+	it("does not prepare an environment when approval becomes stale after coordinator resolution", async () => {
+		const harness = await createHarness();
+		const approvalStore = new FileApprovalStateStore(join(harness.stateRoot, "approval-before-prepare"));
+		const recordedEvents = new RecordingApprovalEvents();
+		const backend = new RecordingAvailableSandbox();
+		const counter = { value: 0 };
+		let superseding: ApprovalReceiptRef | undefined;
+		const approvalEvents: ApprovalLifecycleEventPort = {
+			recordApprovalRequested: (ticket, evidence) => recordedEvents.recordApprovalRequested(ticket, evidence),
+			recordApprovalTerminal: async (ticket, receipt) => {
+				await recordedEvents.recordApprovalTerminal(ticket, receipt);
+				if (receipt.decision !== "allowed") return;
+				superseding = supersedingApprovalReceipt(receipt, "revoked");
+				const committed = await approvalStore.commit(superseding, receipt.decisionRevision);
+				if (!committed.ok) throw new Error("failed to supersede approval before environment preparation");
+			},
+		};
+		const composition = await harness.composition({ approvalStore, approvalEvents, backend });
+		const request = invocation(createTool(counter), harness.workspaceRoot, "approval-before-prepare");
+
+		expect(await composition.toolExecutionGateway.authorize(request)).toMatchObject({
+			status: "denied",
+			reason: "approval receipt is no longer current",
+		});
+		expect(superseding).toMatchObject({ decision: "revoked", decisionRevision: 2 });
+		expect(backend.probeCalls).toBe(0);
+		expect(counter.value).toBe(0);
+		expect(await readdir(composition.paths.attemptsRoot)).toEqual([]);
+	});
+
+	it.each(["receiptDigest", "decisionRevision"] as const)(
+		"rejects a grant with tampered approval %s before claiming an attempt",
+		async (field) => {
+			const harness = await createHarness();
+			const approvalStore = new FileApprovalStateStore(join(harness.stateRoot, `approval-tamper-${field}`));
+			const counter = { value: 0 };
+			const request = invocation(createTool(counter), harness.workspaceRoot, `approval-tamper-${field}`);
+			const composition = await harness.composition({ approvalStore });
+			const authorization = await composition.toolExecutionGateway.authorize(request);
+			if (authorization.status !== "authorized") throw new Error(authorization.reason);
+			const allowed = authorization.grant.approvalReceipt;
+			if (!allowed) throw new Error("interactive authorization omitted its approval receipt");
+			let tamperedApproval: ApprovalReceiptRef;
+			if (field === "receiptDigest") {
+				tamperedApproval = { ...allowed, receiptDigest: canonicalDigest("tampered approval receipt") };
+			} else {
+				const { receiptDigest: _receiptDigest, ...allowedBody } = allowed;
+				const tamperedBody: Omit<ApprovalReceiptRef, "receiptDigest"> = {
+					...allowedBody,
+					decisionRevision: allowed.decisionRevision + 1,
+				};
+				tamperedApproval = { ...tamperedBody, receiptDigest: canonicalDigest(tamperedBody) };
+			}
+			const tamperedGrant = bindApprovalToGrant(authorization.grant, tamperedApproval);
+
+			expect(await composition.toolExecutionGateway.execute({
+				invocation: request,
+				grant: tamperedGrant,
+			}, () => undefined)).toMatchObject({ status: "unavailable", outcomeCertain: true });
+			expect(counter.value).toBe(0);
+			expect(await readdir(composition.paths.attemptsRoot)).toEqual([]);
+		},
+	);
+
 	it("persists a redacted terminal attempt and replays it after reconstruction without repeating the side effect", async () => {
 		const harness = await createHarness();
 		const counter = { value: 0 };
@@ -395,6 +815,10 @@ describe("production Tool Gateway composition", () => {
 		if (authorization.status !== "authorized") throw new Error(authorization.reason);
 		expect(JSON.stringify(authorization.grant)).not.toContain(FENCING_TOKEN);
 		expect(JSON.stringify(authorization.grant)).not.toContain("fencingToken");
+		expect(await first.toolExecutionGateway.start(
+			{ invocation: request, grant: authorization.grant },
+			async () => undefined,
+		)).toEqual({ status: "ready", grantDigest: authorization.grant.grantDigest });
 		const executed = await first.toolExecutionGateway.execute({ invocation: request, grant: authorization.grant }, () => undefined);
 		expect(executed.status).toBe("completed");
 		expect(counter.value).toBe(1);
@@ -408,6 +832,18 @@ describe("production Tool Gateway composition", () => {
 		expect((await stat(join(first.paths.attemptsRoot, attemptFiles[0]!))).mode & 0o777).toBe(0o600);
 
 		const restarted = await harness.composition();
+		let replayStartCalls = 0;
+		expect(await restarted.toolExecutionGateway.start(
+			{ invocation: request, grant: authorization.grant },
+			async () => {
+				replayStartCalls += 1;
+			},
+		)).toMatchObject({
+			status: "uncertain",
+			outcomeCertain: false,
+			reason: "tool execution already has a durable terminal receipt",
+		});
+		expect(replayStartCalls).toBe(0);
 		const replay = await restarted.toolExecutionGateway.execute({ invocation: request, grant: authorization.grant }, () => undefined);
 		expect(replay).toEqual(executed);
 		expect(counter.value).toBe(1);
@@ -444,6 +880,7 @@ describe("production Tool Gateway composition", () => {
 			rateLimiter: new MemoryCapabilityRateLimiter([{ rateLimitId, capability: "workspace_write", maxUnits: 10, maxWindowMs: 60_000 }], () => NOW),
 			rateLimitPolicy: () => ({ rateLimitId, windowMs: 60_000, units: 1 }),
 			prompter: { request: async () => ({ decision: "allow-once", decidedBy: principalId }) },
+			approvalEvents: new RecordingApprovalEvents(),
 			fallbackPrincipalId: principalId,
 			credentials: {
 				materials: { resolve: async () => ({ ok: false, error: { code: "credential_unavailable", message: "unavailable", retryable: false } }), revoke: async () => ({ ok: true, value: undefined }) },
@@ -521,6 +958,7 @@ describe("production Tool Gateway composition", () => {
 			rateLimiter: new MemoryCapabilityRateLimiter([{ rateLimitId, capability: "workspace_write", maxUnits: 10, maxWindowMs: 60_000 }], () => NOW),
 			rateLimitPolicy: () => ({ rateLimitId, windowMs: 60_000, units: 1 }),
 			prompter: { request: async () => ({ decision: "deny", decidedBy: principalId }) },
+			approvalEvents: new RecordingApprovalEvents(),
 			fallbackPrincipalId: principalId,
 			credentials: {
 				materials: { resolve: async () => ({ ok: false, error: { code: "credential_unavailable", message: "unavailable", retryable: false } }), revoke: async () => ({ ok: true, value: undefined }) },

@@ -43,6 +43,9 @@ import type { CostTrace } from "../runtime/telemetry/cost.ts";
 import type { TelemetryResult } from "../runtime/telemetry/types.ts";
 import type { RuntimeIdentityContext } from "../runtime/identity/types.ts";
 import type { RuntimeFeatureFlags } from "../runtime/runtime-features.ts";
+import type { ApprovalStateStorePort } from "../security/permission/approval-coordinator.ts";
+import { reconcileApprovalEvents } from "./approval-event-reconciler.ts";
+import { DurableStartupExternalReceiptAuditor } from "./startup-receipt-auditor.ts";
 import { V3SessionManager } from "./v3-session-manager.ts";
 
 export interface GovernedV3SessionOpenOptions {
@@ -51,6 +54,7 @@ export interface GovernedV3SessionOpenOptions {
 	identity?: RuntimeIdentityContext;
 	runtimeId?: RuntimeInstanceId;
 	externalReceiptAuditor: StartupExternalReceiptAuditPort;
+	approvalStateStore?: ApprovalStateStorePort;
 	externalReceiptAuditTimeoutMs?: number;
 	signal?: AbortSignal;
 	clock?: () => Date;
@@ -242,6 +246,18 @@ export class GovernedV3SessionRuntime {
 			},
 		);
 		try {
+			const approvalStateStore = options.approvalStateStore ?? (
+				options.externalReceiptAuditor instanceof DurableStartupExternalReceiptAuditor
+					? options.externalReceiptAuditor.approvalStateStore()
+					: undefined
+			);
+			if (approvalStateStore) {
+				const reconciled = await reconcileApprovalEvents(manager, approvalStateStore, clock);
+				if (!reconciled.ok) {
+					throw new Error(`approval startup reconciliation failed: ${reconciled.error.message}`);
+				}
+				if (reconciled.value.appended > 0) await manager.refreshRecoveryDecision();
+			}
 			const identity = manager.identity();
 			const references = new CanonicalEventExternalReferenceSource(manager.eventStore(), {
 				authorityId: identity.authorityId,

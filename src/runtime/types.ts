@@ -473,6 +473,10 @@ export interface ToolAuthorizationReceiptRef {
 	toolCallId: ToolCallId;
   requestDigest: string;
   decisionDigest: string;
+	/** human approval 存在时，组合 receipt 必须绑定其 exact current revision。 */
+	approvalReceiptId?: ReceiptId;
+	approvalReceiptDigest?: string;
+	approvalDecisionRevision?: number;
   receiptDigest: string;
 }
 
@@ -504,6 +508,8 @@ export interface ToolExecutionAuthorizationGrant {
   workspaceEnvelopeDigest: string;
   workspaceValidation: WorkspaceValidationReceiptRef;
   authorization: ToolAuthorizationReceiptRef;
+	/** policy auto-allow 时缺省；interactive allow 时必须携带完整 exact receipt。 */
+	approvalReceipt?: ApprovalReceiptRef;
   capability: CapabilityName;
   policyDigest: string;
   sandbox: ToolSandboxResolutionReceiptRef;
@@ -522,6 +528,12 @@ export interface ToolExecutionGatewayExecuteRequest {
   grant: ToolExecutionAuthorizationGrant;
 }
 
+/** start 成功表示 durable tool.started 与 attempt claim 已在 approval fence 内线性化。 */
+export type ToolExecutionGatewayStartResult =
+	| { status: "ready"; grantDigest: string }
+	| { status: "unavailable"; grantDigest: string; reason: string; outcomeCertain: true }
+	| { status: "uncertain"; grantDigest: string; reason: string; outcomeCertain: false };
+
 export type ToolExecutionGatewayExecuteResult =
   | {
       status: "completed";
@@ -535,14 +547,19 @@ export type ToolExecutionGatewayExecuteResult =
   | { status: "uncertain"; grantDigest: string; reason: string; outcomeCertain: false };
 
 /**
- * 两阶段端口让 durable authorized/started barrier 位于真实副作用之前。authorize
- * 只能返回 receipt-bearing grant；execute 必须使用 grant 对应的受限执行环境。
+ * 三阶段端口让 durable authorized/started barrier 与 attempt claim 在 approval
+ * identity fence 内完成。execute 只消费 start 签发的一次性进程内许可。
  */
 export interface ToolExecutionGatewayPort {
   authorize(
     request: ToolExecutionGatewayRequest,
     signal?: AbortSignal,
   ): Promise<ToolExecutionAuthorizationResult>;
+	start(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+		signal?: AbortSignal,
+	): Promise<ToolExecutionGatewayStartResult>;
   execute(
     request: ToolExecutionGatewayExecuteRequest,
     onUpdate: AgentToolUpdateCallback,

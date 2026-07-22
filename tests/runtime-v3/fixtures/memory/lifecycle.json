@@ -33,8 +33,9 @@
       "ticketDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "decision": "allowed",
       "decisionRevision": 1,
+      "decidedBy": "principal_fixture-approver",
       "decidedAt": "2026-07-22T00:00:01.000Z",
-      "receiptDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "receiptDigest": "718d33436760e09950fa362980097185d30758503229ed57e6761a2926a0712f",
       "evidenceComplete": true,
       "evidenceTruncated": false,
       "originalInputDigest": "7777777777777777777777777777777777777777777777777777777777777777"
@@ -106,8 +107,9 @@
       "ticketDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "decision": "allowed",
       "decisionRevision": 1,
+      "decidedBy": "principal_fixture-approver",
       "decidedAt": "2026-07-22T00:00:01.000Z",
-      "receiptDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "receiptDigest": "718d33436760e09950fa362980097185d30758503229ed57e6761a2926a0712f",
       "evidenceComplete": true,
       "evidenceTruncated": false,
       "originalInputDigest": "7777777777777777777777777777777777777777777777777777777777777777"

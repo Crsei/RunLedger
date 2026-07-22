@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { approvalReceiptMatchesTicket } from "../../src/runtime/protocol/v3/capability.ts";
+import {
+	approvalReceiptMatchesTicket,
+	isApprovalReceiptRef,
+} from "../../src/runtime/protocol/v3/capability.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import type { WorkspaceExecutionEnvelope } from "../../src/runtime/protocol/v3/workspace.ts";
 import {
 	ApprovalCoordinator,
+	createApprovalSupersessionReceipt,
 	HeadlessDenyPrompter,
+	SYSTEM_APPROVAL_PRINCIPAL_ID,
 	type ApprovalCoordinatorOptions,
 } from "../../src/security/permission/approval-coordinator.ts";
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
@@ -66,6 +71,67 @@ describe("ApprovalCoordinator", () => {
 		expect(first).toMatchObject({ ok: true, value: { outcome: "allow", approval: { decision: "allowed" } } });
 		if (!first.ok || !first.value.approval) return;
 		expect(first.value.approval.requestDigest).toHaveLength(64);
+		expect(first.value.approval.decidedBy).toBe(createRuntimeId("principal", "approver"));
+	});
+
+	it("binds the terminal actor into the receipt identity and digest", async () => {
+		const requester = request();
+		const evaluation = new PermissionEngine().evaluate(requester.requests, requester.snapshot);
+		const first = await coordinator({
+			request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver-a") }),
+		}).authorize(requester, evaluation, () => ({
+			argumentsDigest: requester.argumentsDigest,
+			cwd: requester.cwd,
+			policyDigest: requester.snapshot.policyDigest,
+		}));
+		const second = await coordinator({
+			request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver-b") }),
+		}).authorize(requester, evaluation, () => ({
+			argumentsDigest: requester.argumentsDigest,
+			cwd: requester.cwd,
+			policyDigest: requester.snapshot.policyDigest,
+		}));
+		if (!first.ok || !first.value.approval || !second.ok || !second.value.approval) {
+			throw new Error("approval fixture did not produce receipts");
+		}
+
+		expect(first.value.approval.decidedBy).toBe(createRuntimeId("principal", "approver-a"));
+		expect(second.value.approval.decidedBy).toBe(createRuntimeId("principal", "approver-b"));
+		expect(first.value.approval.receiptId).not.toBe(second.value.approval.receiptId);
+		expect(first.value.approval.receiptDigest).not.toBe(second.value.approval.receiptDigest);
+		expect(isApprovalReceiptRef({ ...first.value.approval, receiptDigest: "f".repeat(64) })).toBe(false);
+		expect(isApprovalReceiptRef({ ...first.value.approval, decisionRevision: 0 })).toBe(false);
+	});
+
+	it("binds a supersession actor into the receipt identity and digest", async () => {
+		const requester = request();
+		const evaluation = new PermissionEngine().evaluate(requester.requests, requester.snapshot);
+		const allowed = await coordinator({
+			request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }),
+		}).authorize(requester, evaluation, () => ({
+			argumentsDigest: requester.argumentsDigest,
+			cwd: requester.cwd,
+			policyDigest: requester.snapshot.policyDigest,
+		}));
+		if (!allowed.ok || !allowed.value.approval) {
+			throw new Error("approval fixture did not produce an allowed receipt");
+		}
+		const decidedAt = "2026-07-22T00:01:00.000Z";
+		const first = createApprovalSupersessionReceipt(
+			allowed.value.approval,
+			"revoked",
+			decidedAt,
+			createRuntimeId("principal", "revoker-a"),
+		);
+		const second = createApprovalSupersessionReceipt(
+			allowed.value.approval,
+			"revoked",
+			decidedAt,
+			createRuntimeId("principal", "revoker-b"),
+		);
+
+		expect(first.receiptId).not.toBe(second.receiptId);
+		expect(first.receiptDigest).not.toBe(second.receiptDigest);
 	});
 
 	it("cancels an allow response when args, cwd, or policy changed while prompting", async () => {
@@ -76,14 +142,67 @@ describe("ApprovalCoordinator", () => {
 			argumentsDigest: "d".repeat(64), cwd: requester.cwd, policyDigest: requester.snapshot.policyDigest,
 		}));
 		expect(result).toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "cancelled" } } });
+		expect(result).toMatchObject({ ok: true, value: { approval: { decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID } } });
+	});
+
+	it.each(["pre-abort", "channel-failure"] as const)("attributes automatic %s to the stable system actor", async (kind) => {
+		const requester = request();
+		const evaluation = new PermissionEngine().evaluate(requester.requests, requester.snapshot);
+		const controller = new AbortController();
+		if (kind === "pre-abort") controller.abort("test");
+		const approval = coordinator({
+			request: async () => {
+				throw new Error("approval channel unavailable");
+			},
+		});
+		const result = await approval.authorize(requester, evaluation, () => ({
+			argumentsDigest: requester.argumentsDigest,
+			cwd: requester.cwd,
+			policyDigest: requester.snapshot.policyDigest,
+		}), kind === "pre-abort" ? controller.signal : undefined);
+
+		expect(result).toMatchObject({
+			ok: true,
+			value: {
+				outcome: "deny",
+				approval: {
+					decision: kind === "pre-abort" ? "cancelled" : "channel_failed",
+					decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID,
+				},
+			},
+		});
+	});
+
+	it("attributes an approval timeout to the stable system actor", async () => {
+		const requester = request();
+		const evaluation = new PermissionEngine().evaluate(requester.requests, requester.snapshot);
+		const approval = coordinator({
+			request: async () => new Promise(() => undefined),
+		}, { timeoutMs: 1 });
+		const result = await approval.authorize(requester, evaluation, () => ({
+			argumentsDigest: requester.argumentsDigest,
+			cwd: requester.cwd,
+			policyDigest: requester.snapshot.policyDigest,
+		}));
+
+		expect(result).toMatchObject({
+			ok: true,
+			value: {
+				outcome: "deny",
+				approval: { decision: "cancelled", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID },
+			},
+		});
 	});
 
 	it("headless prompting fails closed", async () => {
 		const requester = request();
 		const evaluation = new PermissionEngine().evaluate(requester.requests, requester.snapshot);
-		const approval = coordinator(new HeadlessDenyPrompter(createRuntimeId("principal", "headless")));
+		const approval = coordinator(new HeadlessDenyPrompter());
 		const result = await approval.authorize(requester, evaluation, () => ({ argumentsDigest: requester.argumentsDigest, cwd: requester.cwd, policyDigest: requester.snapshot.policyDigest }));
-		expect(result).toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "denied" } } });
+		expect(result).toMatchObject({
+			ok: true,
+			value: { outcome: "deny", approval: { decision: "denied", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID } },
+		});
 	});
 
 	it("the runtime receipt validator rejects cross-ticket replay", async () => {

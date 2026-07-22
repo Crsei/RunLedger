@@ -7,7 +7,7 @@ import { startLocalV3Daemon } from "../../src/daemon/local-v3-daemon.ts";
 import { createLocalIdentityContext } from "../../src/runtime/identity/local-principal.ts";
 import type { RuntimeIdentityContext } from "../../src/runtime/identity/types.ts";
 import type { StartupExternalReceiptAuditPort } from "../../src/runtime/lifecycle/recovery.ts";
-import type { ApprovalReceiptRef } from "../../src/runtime/protocol/v3/capability.ts";
+import type { ApprovalReceiptRef, ApprovalTicket } from "../../src/runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import type { WorkspaceLeaseRef } from "../../src/runtime/protocol/v3/workspace.ts";
@@ -16,6 +16,7 @@ import {
 	type RuntimeFeatureFlags,
 } from "../../src/runtime/runtime-features.ts";
 import { FileApprovalStateStore } from "../../src/storage/security-runtime-state.ts";
+import { createApprovalReceipt } from "../../src/security/permission/approval-coordinator.ts";
 import { saveProjectSettings } from "../../src/storage/settings-manager.ts";
 import { V3SessionManager } from "../../src/storage/v3-session-manager.ts";
 import {
@@ -53,8 +54,8 @@ const DAEMON_FEATURES: RuntimeFeatureFlags = {
 	daemon: true,
 };
 
-const ISSUED_AT = "2026-07-23T00:00:00.000Z";
-const DECIDED_AT = "2026-07-23T00:01:00.000Z";
+const ISSUED_AT = "2026-07-22T00:00:00.000Z";
+const DECIDED_AT = "2026-07-22T00:01:00.000Z";
 const FUTURE_EXPIRY = "2099-07-23T01:00:00.000Z";
 const PAST_EXPIRY = "2000-07-23T00:01:30.000Z";
 const roots: string[] = [];
@@ -123,29 +124,41 @@ function workspaceLease(
 	};
 }
 
-function approvalReceipt(
-	identity: RuntimeIdentityContext,
+function approvalTicket(
+	manager: V3SessionManager,
 	seed: string,
 	expiresAt: string,
-): ApprovalReceiptRef {
-	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
+): ApprovalTicket {
+	const identity = manager.identity();
+	const approvalId = createRuntimeId("approval", seed);
+	return {
 		authorityId: identity.authorityId,
 		tenantId: identity.tenantId,
 		principalId: identity.principalId,
-		receiptId: createRuntimeId("receipt", `approval-${seed}`),
-		approvalId: createRuntimeId("approval", seed),
-		requestId: createRuntimeId("command", `request-${seed}`),
-		requestDigest: canonicalDigest({ seed, kind: "request" }),
-		ticketDigest: canonicalDigest({ seed, kind: "ticket" }),
-		decision: "allowed",
-		decisionRevision: 1,
-		decidedAt: DECIDED_AT,
+		approvalId,
+		request: {
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			principalId: identity.principalId,
+			requestId: createRuntimeId("command", `request-${seed}`),
+			approvalId,
+			sessionId: manager.sessionId(),
+			runtimeId: manager.runtimeId(),
+			runtimeGeneration: 1,
+			turnId: createRuntimeId("turn", seed),
+			toolCallId: createRuntimeId("toolCall", seed),
+			capability: "workspace_write",
+			argumentsDigest: canonicalDigest({ seed, kind: "input" }),
+			policyDigest: canonicalDigest({ seed, kind: "policy" }),
+			workspaceEnvelopeDigest: canonicalDigest({ seed, kind: "workspace-envelope" }),
+			serverScope: "tool_server",
+			resourceScopeDigest: canonicalDigest({ seed, kind: "resource-scope" }),
+			commandScopeDigest: canonicalDigest({ seed, kind: "command-scope" }),
+		},
+		scope: "once",
+		createdAt: ISSUED_AT,
 		expiresAt,
-		evidenceComplete: true,
-		evidenceTruncated: false,
-		originalInputDigest: canonicalDigest({ seed, kind: "input" }),
 	};
-	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 async function appendWorkspaceReference(
@@ -167,75 +180,21 @@ async function appendWorkspaceReference(
 
 async function appendApprovalReference(
 	manager: V3SessionManager,
+	ticket: ApprovalTicket,
 	approval: ApprovalReceiptRef,
 	seed: string,
 ): Promise<void> {
-	const turnId = createRuntimeId("turn", seed);
-	const toolCallId = createRuntimeId("toolCall", seed);
-	const requested = await manager.writer().append({
-		type: "permission.requested",
-		principalId: manager.identity().principalId,
-		traceId: createRuntimeId("trace", `approval-request-${seed}`),
-		payload: {
-			approvalId: approval.approvalId,
-			requestId: approval.requestId,
-			sessionId: manager.sessionId(),
-			runtimeId: manager.runtimeId(),
-			runtimeGeneration: 1,
-			turnId,
-			toolCallId,
-			capability: "workspace_write",
-			resourceKind: "filesystem",
-			requestDigest: approval.requestDigest,
-			policyDigest: canonicalDigest({ seed, kind: "policy" }),
-			workspaceEnvelopeDigest: canonicalDigest({ seed, kind: "workspace-envelope" }),
-			ticketDigest: approval.ticketDigest,
-			scope: "once",
-			requestedAt: ISSUED_AT,
-			expiresAt: approval.expiresAt,
-			attemptId: createRuntimeId("command", `attempt-${seed}`),
-			serverScope: "tool_server",
-			resourceScopeDigest: canonicalDigest({ seed, kind: "resource-scope" }),
-			commandScopeDigest: canonicalDigest({ seed, kind: "command-scope" }),
-			evidenceComplete: true,
-			evidenceTruncated: false,
-			originalInputDigest: approval.originalInputDigest,
-			summary: {
-				operation: "write",
-				toolIdentityDigest: canonicalDigest({ seed, kind: "tool" }),
-				targetDigest: canonicalDigest({ seed, kind: "target" }),
-				environmentKeyDigests: [],
-			},
+	await manager.sessionEvents().recordApprovalRequested(ticket, {
+		attemptId: createRuntimeId("command", `attempt-${seed}`),
+		resourceKind: "filesystem",
+		summary: {
+			operation: "write",
+			toolIdentityDigest: canonicalDigest({ seed, kind: "tool" }),
+			targetDigest: canonicalDigest({ seed, kind: "target" }),
+			environmentKeyDigests: [],
 		},
 	});
-	if (!requested.ok) throw new Error(requested.error.message);
-
-	const decided = await manager.writer().append({
-		type: "permission.decided",
-		principalId: manager.identity().principalId,
-		traceId: createRuntimeId("trace", `approval-decision-${seed}`),
-		payload: {
-			approvalId: approval.approvalId,
-			requestId: approval.requestId,
-			requestDigest: approval.requestDigest,
-			ticketDigest: approval.ticketDigest,
-			sessionId: manager.sessionId(),
-			runtimeId: manager.runtimeId(),
-			runtimeGeneration: 1,
-			turnId,
-			toolCallId,
-			decision: "allowed",
-			decisionRevision: approval.decisionRevision,
-			receiptId: approval.receiptId,
-			receiptDigest: approval.receiptDigest,
-			decidedAt: approval.decidedAt,
-			expiresAt: approval.expiresAt,
-			evidenceComplete: approval.evidenceComplete,
-			evidenceTruncated: approval.evidenceTruncated,
-			originalInputDigest: approval.originalInputDigest,
-		},
-	});
-	if (!decided.ok) throw new Error(decided.error.message);
+	await manager.sessionEvents().recordApprovalTerminal(ticket, approval);
 }
 
 async function createFixture(
@@ -264,13 +223,18 @@ async function createFixture(
 		runtimeId: createRuntimeId("runtime", `${surface}-${scenario}`),
 	});
 	const lease = workspaceLease(identity, manager.runtimeId(), `${surface}-${scenario}`);
-	const approval = approvalReceipt(
-		identity,
+	const ticket = approvalTicket(
+		manager,
 		`${surface}-${scenario}`,
 		scenario === "expired" ? PAST_EXPIRY : FUTURE_EXPIRY,
 	);
+	const approval = createApprovalReceipt(
+		ticket,
+		{ decision: "allow-once", decidedBy: createRuntimeId("principal", `approver-${surface}-${scenario}`) },
+		DECIDED_AT,
+	);
 	if (scenario === "expired") {
-		await appendApprovalReference(manager, approval, `${surface}-${scenario}`);
+		await appendApprovalReference(manager, ticket, approval, `${surface}-${scenario}`);
 	} else {
 		await appendWorkspaceReference(manager, lease.reference, `${surface}-${scenario}`);
 	}

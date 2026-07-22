@@ -257,6 +257,14 @@ class RecordingGateway implements ToolExecutionGatewayPort {
 	public async execute(request: Parameters<ToolExecutionGatewayPort["execute"]>[0]) {
 		return { status: "unavailable" as const, grantDigest: request.grant.grantDigest, reason: "fixture execution unavailable", outcomeCertain: true as const };
 	}
+
+	public async start(
+		request: Parameters<ToolExecutionGatewayPort["execute"]>[0],
+		durableStart: () => Promise<void>,
+	) {
+		await durableStart();
+		return { status: "ready" as const, grantDigest: request.grant.grantDigest };
+	}
 }
 
 function v3Audit(entries: ExtensionLifecycleAudit[]): ProductionExtensionAuditPort {

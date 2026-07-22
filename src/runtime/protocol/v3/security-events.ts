@@ -10,7 +10,9 @@ import {
 	SandboxEffectiveEnforcementSchema,
 	SandboxExecutionReceiptRefSchema,
 	SandboxProfileNameSchema,
+	type ApprovalReceiptRef,
 	type ApprovalReceiptDecision,
+	type ApprovalTicket,
 	type ApprovalScope,
 	type AuthorizationServerScope,
 	type CapabilityName,
@@ -24,6 +26,7 @@ import type {
 	ArtifactId,
 	CommandId,
 	ReceiptId,
+	PrincipalId,
 	ResourceId,
 	RuntimeInstanceId,
 	SessionId,
@@ -39,6 +42,7 @@ const timestamp = Type.String({
 	maxLength: 24,
 });
 const revision = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+const approvalDecisionRevision = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const exact = <T extends Record<string, TSchema>>(properties: T) =>
 	Type.Object(properties, { additionalProperties: false });
 
@@ -103,6 +107,7 @@ export interface PermissionDecidedPayload {
 	toolCallId: ToolCallId;
 	decision: Exclude<ApprovalReceiptDecision, "expired" | "revoked">;
 	decisionRevision: number;
+	decidedBy: PrincipalId;
 	receiptId: ReceiptId;
 	receiptDigest: string;
 	decidedAt: string;
@@ -123,6 +128,7 @@ export interface PermissionExpiredPayload {
 	requestDigest: string;
 	ticketDigest: string;
 	decisionRevision: number;
+	decidedBy: PrincipalId;
 	expiredAt: string;
 	receiptId: ReceiptId;
 	receiptDigest: string;
@@ -139,6 +145,7 @@ export interface PermissionRevokedPayload {
 	requestDigest: string;
 	ticketDigest: string;
 	decisionRevision: number;
+	decidedBy: PrincipalId;
 	revokedAt: string;
 	receiptId: ReceiptId;
 	receiptDigest: string;
@@ -158,6 +165,21 @@ export interface ToolAuthorizedPayload {
 	policyDigest: string;
 	workspaceEnvelopeDigest: string;
 	sandboxResolutionReceiptId: ReceiptId;
+	approvalReceiptId?: ReceiptId;
+	approvalReceiptDigest?: string;
+	approvalDecisionRevision?: number;
+}
+
+export interface ApprovalRequestEventEvidence {
+	attemptId: CommandId;
+	resourceKind: CapabilityResourceKind;
+	summary: PermissionRequestSummary;
+}
+
+/** session-owned canonical journal；producer 必须等待 append+flush 后才继续 prompt/grant。 */
+export interface ApprovalLifecycleEventPort {
+	recordApprovalRequested(ticket: ApprovalTicket, evidence: ApprovalRequestEventEvidence): Promise<void>;
+	recordApprovalTerminal(ticket: ApprovalTicket, receipt: ApprovalReceiptRef): Promise<void>;
 }
 
 export interface SandboxResolvedPayload {
@@ -194,7 +216,7 @@ export const PermissionRequestSummarySchema = exact({
 	environmentKeyDigests: Type.Array(digest, { maxItems: 64, uniqueItems: true }),
 });
 
-export const PermissionRequestedPayloadSchema = exact({
+export const PermissionRequestedPayloadSchema = Type.Unsafe<PermissionRequestedPayload>(exact({
 	approvalId: runtimeId("approval"),
 	requestId: runtimeId("command"),
 	sessionId: runtimeId("session"),
@@ -221,7 +243,7 @@ export const PermissionRequestedPayloadSchema = exact({
 	originalArtifactId: Type.Optional(runtimeId("artifact")),
 	originalArtifactDigest: Type.Optional(digest),
 	summary: PermissionRequestSummarySchema,
-});
+}));
 
 const permissionDecidedBaseProperties = {
 	approvalId: runtimeId("approval"),
@@ -233,7 +255,8 @@ const permissionDecidedBaseProperties = {
 	runtimeGeneration: revision,
 	turnId: runtimeId("turn"),
 	toolCallId: runtimeId("toolCall"),
-	decisionRevision: revision,
+	decisionRevision: approvalDecisionRevision,
+	decidedBy: runtimeId("principal"),
 	receiptId: runtimeId("receipt"),
 	receiptDigest: digest,
 	decidedAt: timestamp,
@@ -241,7 +264,7 @@ const permissionDecidedBaseProperties = {
 	expiresAt: Type.Optional(timestamp),
 } as const;
 
-export const PermissionDecidedPayloadSchema = Type.Union([
+export const PermissionDecidedPayloadSchema = Type.Unsafe<PermissionDecidedPayload>(Type.Union([
 	exact({
 		...permissionDecidedBaseProperties,
 		decision: Type.Literal("allowed"),
@@ -256,7 +279,7 @@ export const PermissionDecidedPayloadSchema = Type.Union([
 			evidenceTruncated: Type.Boolean(),
 		}),
 	),
-]);
+]));
 
 export const PermissionExpiredPayloadSchema = exact({
 	approvalId: runtimeId("approval"),
@@ -268,7 +291,8 @@ export const PermissionExpiredPayloadSchema = exact({
 	toolCallId: runtimeId("toolCall"),
 	requestDigest: digest,
 	ticketDigest: digest,
-	decisionRevision: revision,
+	decisionRevision: approvalDecisionRevision,
+	decidedBy: runtimeId("principal"),
 	expiredAt: timestamp,
 	receiptId: runtimeId("receipt"),
 	receiptDigest: digest,
@@ -284,13 +308,14 @@ export const PermissionRevokedPayloadSchema = exact({
 	toolCallId: runtimeId("toolCall"),
 	requestDigest: digest,
 	ticketDigest: digest,
-	decisionRevision: revision,
+	decisionRevision: approvalDecisionRevision,
+	decidedBy: runtimeId("principal"),
 	revokedAt: timestamp,
 	receiptId: runtimeId("receipt"),
 	receiptDigest: digest,
 });
 
-export const ToolAuthorizedPayloadSchema = exact({
+const toolAuthorizedBaseProperties = {
 	toolCallId: runtimeId("toolCall"),
 	requestId: runtimeId("command"),
 	decisionReceiptId: runtimeId("receipt"),
@@ -304,7 +329,17 @@ export const ToolAuthorizedPayloadSchema = exact({
 	policyDigest: digest,
 	workspaceEnvelopeDigest: digest,
 	sandboxResolutionReceiptId: runtimeId("receipt"),
-});
+} as const;
+
+export const ToolAuthorizedPayloadSchema = Type.Unsafe<ToolAuthorizedPayload>(Type.Union([
+	exact(toolAuthorizedBaseProperties),
+	exact({
+		...toolAuthorizedBaseProperties,
+		approvalReceiptId: runtimeId("receipt"),
+		approvalReceiptDigest: digest,
+		approvalDecisionRevision,
+	}),
+]));
 
 const sandboxResolvedBaseProperties = {
 	requestId: runtimeId("command"),

@@ -13,7 +13,13 @@ import type {
 	GovernedContextFragmentRequest,
 	GovernedContextFragmentResult,
 } from "../../runtime/integration/governed-model-request.ts";
-import type { AgentToolHookContext, AfterToolCallResult, BeforeToolCallResult, ToolExecutionGatewayPort } from "../../runtime/types.ts";
+import type {
+	AgentToolHookContext,
+	AfterToolCallResult,
+	BeforeToolCallResult,
+	ToolExecutionGatewayExecuteRequest,
+	ToolExecutionGatewayPort,
+} from "../../runtime/types.ts";
 import type { ToolRegistry } from "../../runtime/tool-registry.ts";
 import type { SecuritySnapshot } from "../../security/types.ts";
 import type { Tool } from "../../types.ts";
@@ -94,6 +100,11 @@ export interface ProductionSecureMcpPorts {
 	scheduler?: McpSchedulerPort;
 }
 
+/** Extension hook 没有 AgentLoop turn handle，必须由独立受信 journal 提供 durable start barrier。 */
+export interface HookToolStartJournalPort {
+	commitStart(request: ToolExecutionGatewayExecuteRequest): Promise<void>;
+}
+
 export interface ProductionExtensionFactoryOptions {
 	scope: ExtensionRuntimeScope;
 	securitySnapshot: SecuritySnapshot;
@@ -103,6 +114,7 @@ export interface ProductionExtensionFactoryOptions {
 	sessionRoots?: readonly string[];
 	environment?: Readonly<Record<string, string | undefined>>;
 	secureMcp?: ProductionSecureMcpPorts;
+	hookToolStartJournal?: HookToolStartJournalPort;
 	modelContextChars?: number;
 	resolvePaths?: (input: { cwd: string; sessionId: string }) => ProductionExtensionPersistencePaths;
 	now?: () => Date;
@@ -515,17 +527,35 @@ export class GatewayHookCommandExecutor implements HookCommandExecutorPort {
 	readonly #gateway: ToolExecutionGatewayPort;
 	readonly #cwd: string;
 	readonly #policyDigest: string;
+	readonly #startJournal: HookToolStartJournalPort | undefined;
 	#sequence = 0;
 
-	public constructor(options: { registry: ToolRegistry; gateway: ToolExecutionGatewayPort; cwd: string; policyDigest: string }) {
+	public constructor(options: {
+		registry: ToolRegistry;
+		gateway: ToolExecutionGatewayPort;
+		cwd: string;
+		policyDigest: string;
+		startJournal?: HookToolStartJournalPort;
+	}) {
 		this.#registry = options.registry;
 		this.#gateway = options.gateway;
 		this.#cwd = options.cwd;
 		this.#policyDigest = options.policyDigest;
+		this.#startJournal = options.startJournal;
 	}
 
 	public async execute(request: HookCommandRequest, signal?: AbortSignal): Promise<HookCommandExecution> {
 		const startedAt = Date.now();
+		const startJournal = this.#startJournal;
+		if (!startJournal) {
+			return {
+				status: "failed",
+				exitCode: null,
+				stdout: "",
+				stderr: "hook execution requires a trusted durable tool-start journal",
+				durationMs: Date.now() - startedAt,
+			};
+		}
 		const tool = this.#registry.get("bash");
 		if (!tool || tool.name !== "bash" || tool.governedExecution !== "tool-context") return { status: "failed", exitCode: null, stdout: "", stderr: "production bash tool is unavailable", durationMs: Date.now() - startedAt };
 		this.#sequence += 1;
@@ -564,9 +594,31 @@ export class GatewayHookCommandExecutor implements HookCommandExecutorPort {
 		) {
 			return { status: authorized.status === "aborted" ? "aborted" : "failed", exitCode: null, stdout: "", stderr: authorized.status === "authorized" ? "hook did not receive a process grant" : boundedReason("hook authorization was not granted", authorized.reason), durationMs: Date.now() - startedAt };
 		}
+		const executionRequest = { invocation, grant: authorized.grant };
+		const start = await this.#gateway.start(
+			executionRequest,
+			() => startJournal.commitStart(executionRequest),
+			signal,
+		).catch((error: unknown) => ({
+			status: "unavailable" as const,
+			grantDigest: authorized.grant.grantDigest,
+			reason: boundedFailure("hook start failed", error),
+			outcomeCertain: true as const,
+		}));
+		if (start.status !== "ready" || start.grantDigest !== authorized.grant.grantDigest) {
+			return {
+				status: "failed",
+				exitCode: null,
+				stdout: "",
+				stderr: start.status === "ready"
+					? "hook start returned an uncorrelated grant"
+					: boundedReason("hook execution could not be durably started", start.reason),
+				durationMs: Date.now() - startedAt,
+			};
+		}
 		let stdout = "";
 		let stderr = "";
-		const executed = await this.#gateway.execute({ invocation, grant: authorized.grant }, (update) => {
+		const executed = await this.#gateway.execute(executionRequest, (update) => {
 			const details = detailRecord(update.details);
 			if (typeof details?.stdoutChunk === "string") stdout = appendBoundedUtf8(stdout, details.stdoutChunk, request.maxStdoutBytes);
 			if (typeof details?.stderrChunk === "string") stderr = appendBoundedUtf8(stderr, details.stderrChunk, request.maxStderrBytes);
@@ -696,6 +748,7 @@ export class ProductionExtensionFactory {
 			gateway: input.gateway,
 			cwd: input.cwd,
 			policyDigest: this.#options.securitySnapshot.policyDigest,
+			...(this.#options.hookToolStartJournal ? { startJournal: this.#options.hookToolStartJournal } : {}),
 		});
 		const extensionManager = new ExtensionManager({
 			scope: this.#options.scope,

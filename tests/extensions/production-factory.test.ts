@@ -188,6 +188,7 @@ class RecordingGateway implements ToolExecutionGatewayPort {
 	public sandboxEnforcement: "enforced" | "degraded" | "unavailable" | "off" = "enforced";
 	public hookResponse: unknown = { decision: "allow", updatedInput: { path: "README.md" }, additionalContext: "checked" };
 	public readonly requests: ToolExecutionGatewayRequest[] = [];
+	public starts = 0;
 	public executions = 0;
 
 	public async authorize(request: ToolExecutionGatewayRequest): Promise<ToolExecutionAuthorizationResult> {
@@ -227,6 +228,15 @@ class RecordingGateway implements ToolExecutionGatewayPort {
 				invocationDigest: request.grant.invocationDigest,
 			},
 		};
+	}
+
+	public async start(
+		request: Parameters<ToolExecutionGatewayPort["execute"]>[0],
+		durableStart: () => Promise<void>,
+	): Promise<{ status: "ready"; grantDigest: string }> {
+		this.starts += 1;
+		await durableStart();
+		return { status: "ready", grantDigest: request.grant.grantDigest };
 	}
 }
 
@@ -407,9 +417,19 @@ describe("ProductionExtensionFactory", () => {
 
 		const writer = new RecordingWriter();
 		const gateway = new RecordingGateway();
+		const startCommits: string[] = [];
 		const registry = new ToolRegistry();
 		registry.register(bashTool(), { namespace: "production" });
-		const adapter = await createProductionExtensionFactory({ scope: TEST_SCOPE, securitySnapshot: snapshot, writer, userRoot: null, resolvePaths: () => paths }).create({ registry, gateway, sessionId: SESSION_ID, cwd: root });
+		const adapter = await createProductionExtensionFactory({
+			scope: TEST_SCOPE,
+			securitySnapshot: snapshot,
+			writer,
+			userRoot: null,
+			resolvePaths: () => paths,
+			hookToolStartJournal: {
+				commitStart: async (request) => { startCommits.push(request.grant.grantDigest); },
+			},
+		}).create({ registry, gateway, sessionId: SESSION_ID, cwd: root });
 		try {
 			expect((await adapter.runtime.start()).status).toBe("ready");
 			expect(adapter.runtime.beginTurn().status).toBe("ready");
@@ -420,6 +440,7 @@ describe("ProductionExtensionFactory", () => {
 			expect(gateway.requests[0]).toMatchObject({ tool: { name: "bash" }, cwd: root, arguments: { stdin: expect.any(String), timeout: 2_000 } });
 			expect((gateway.requests[0]?.arguments as { command: string }).command).toContain("cd --");
 			expect(gateway.executions).toBe(1);
+			expect(startCommits).toEqual([expect.any(String)]);
 			expect(writer.drafts.map((draft) => draft.type)).toEqual(["resource.snapshot", "resource.lifecycle_recorded"]);
 
 			gateway.hookResponse = { decision: "allow", updatedInput: { path: "README.md", injected: true } };
@@ -428,6 +449,7 @@ describe("ProductionExtensionFactory", () => {
 				reason: expect.stringContaining("PreToolUse updatedInput failed schema validation"),
 			});
 			expect(gateway.executions).toBe(2);
+			expect(startCommits).toHaveLength(2);
 
 			gateway.authorizeMode = "deny";
 			expect(await adapter.beforeToolCall(hookContext)).toMatchObject({ block: true, reason: expect.stringContaining("reasonDigest=") });
@@ -587,8 +609,21 @@ describe("ProductionExtensionFactory", () => {
 				provenance: { observedAt: adapter.runtime.catalog()?.createdAt, toSequence: 7 },
 			});
 
+			const missingJournal = new GatewayHookCommandExecutor({ registry, gateway, cwd: root, policyDigest: snapshot.policyDigest });
+			const noJournal = await missingJournal.execute({ command: "node", args: [], cwd: root, environment: {}, stdin: "{}", timeoutMs: 1_000, maxStdoutBytes: 1_024, maxStderrBytes: 1_024, hookId: "hook:no-journal", commandDigest: "0".repeat(64) });
+			expect(noJournal).toMatchObject({ status: "failed", stderr: "hook execution requires a trusted durable tool-start journal" });
+			expect(gateway.requests).toHaveLength(0);
+			expect(gateway.starts).toBe(0);
+			expect(gateway.executions).toBe(0);
+
 			gateway.authorizeError = new Error("Bearer super-secret-token");
-			const executor = new GatewayHookCommandExecutor({ registry, gateway, cwd: root, policyDigest: snapshot.policyDigest });
+			const executor = new GatewayHookCommandExecutor({
+				registry,
+				gateway,
+				cwd: root,
+				policyDigest: snapshot.policyDigest,
+				startJournal: { commitStart: async () => undefined },
+			});
 			const failed = await executor.execute({ command: "node", args: [], cwd: root, environment: {}, stdin: "{}", timeoutMs: 1_000, maxStdoutBytes: 1_024, maxStderrBytes: 1_024, hookId: "hook:fixture", commandDigest: "a".repeat(64) });
 			expect(failed).toMatchObject({ status: "failed", stderr: expect.stringContaining("errorDigest=") });
 			expect(failed.stderr).toContain("Error");

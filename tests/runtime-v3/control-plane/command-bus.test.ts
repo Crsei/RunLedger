@@ -25,6 +25,7 @@ import type {
 const AUTHORITY_ID = createRuntimeId("authority", "command-bus");
 const TENANT_ID = createRuntimeId("tenant", "command-bus");
 const PRINCIPAL_ID = createRuntimeId("principal", "command-bus");
+const APPROVER_ID = createRuntimeId("principal", "command-bus-approver");
 const SESSION_ID = createRuntimeId("session", "command-bus");
 const SESSION_STREAM = createSessionEventStreamRef({ authorityId: AUTHORITY_ID, tenantId: TENANT_ID }, SESSION_ID);
 const DIGEST_A = "a".repeat(64);
@@ -89,6 +90,7 @@ function approvalCommand(): ApprovalResolveCommand {
 		ticketDigest: DIGEST_A,
 		decision: "allowed" as const,
 		decisionRevision: 3,
+		decidedBy: APPROVER_ID,
 		decidedAt: "2026-07-22T00:00:00.000Z",
 		evidenceComplete: true as const,
 		evidenceTruncated: false as const,

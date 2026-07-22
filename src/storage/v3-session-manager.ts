@@ -519,6 +519,19 @@ export class V3SessionManager {
 		return this.runtime.recovery;
 	}
 
+	public async refreshRecoveryDecision(): Promise<RecoveryDecision> {
+		const recovery = await recoverSession({
+			store: this.runtime.store,
+			sessionDirectory: this.runtime.stateDirectory,
+			authorityId: this.runtime.identity.authorityId,
+			tenantId: this.runtime.identity.tenantId,
+			sessionId: this.runtime.sessionId,
+			snapshotFilePath: join(this.runtime.stateDirectory, "snapshot.json"),
+		});
+		this.runtime.recovery = recovery;
+		return recovery;
+	}
+
 	public async replayMessages(): Promise<readonly AgentMessage[]> {
 		const events = resultValue(await readAllRuntimeEvents(this.runtime.store), "v3 event replay failed");
 		return resultValue(replayConversationEvents(events), "v3 conversation replay failed");

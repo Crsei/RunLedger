@@ -24,9 +24,11 @@ import type {
 } from "./types.ts";
 
 export const MANDATORY_FLUSH_EVENT_TYPES: ReadonlySet<RuntimeEventType> = new Set([
+	"permission.requested",
 	"permission.decided",
 	"permission.expired",
 	"permission.revoked",
+	"tool.started",
 	"tool.finished",
 	"tool.interrupted",
 	"tool.failed",

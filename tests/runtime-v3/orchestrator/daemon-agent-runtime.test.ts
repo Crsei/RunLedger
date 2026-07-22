@@ -273,6 +273,7 @@ class RecordingBudget implements AgentOperationBudgetPort {
 
 class RecordingToolGateway implements ToolExecutionGatewayPort {
 	public readonly authorizeCalls: ToolExecutionGatewayRequest[] = [];
+	public readonly startCalls: ToolExecutionGatewayExecuteRequest[] = [];
 	public readonly executeCalls: ToolExecutionGatewayExecuteRequest[] = [];
 	readonly #manager: V3SessionManager;
 	readonly #events: string[];
@@ -369,6 +370,16 @@ class RecordingToolGateway implements ToolExecutionGatewayPort {
 				isError: false,
 			},
 		};
+	}
+
+	public async start(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+	): Promise<{ status: "ready"; grantDigest: string }> {
+		this.#events.push("start:tool");
+		this.startCalls.push(request);
+		await durableStart();
+		return { status: "ready", grantDigest: request.grant.grantDigest };
 	}
 }
 
@@ -831,6 +842,7 @@ describe("daemon-owned Agent runtime", () => {
 		});
 		expect(productionRuntime.prepareCalls).toHaveLength(2);
 		expect(gateway.authorizeCalls).toHaveLength(1);
+		expect(gateway.startCalls).toHaveLength(1);
 		expect(gateway.executeCalls).toHaveLength(1);
 		expect(directExecutions.value).toBe(0);
 		expect(productionRuntime.closeCount).toBe(1);

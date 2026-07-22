@@ -1,10 +1,20 @@
 /** Agent loop 到 Session Kernel v3 的 durable 事件桥。 */
 
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
-import type { ArtifactRef } from "../protocol/v3/capability.ts";
+import {
+	approvalReceiptMatchesTicket,
+	approvalTicketDigest,
+	approvalTicketRequestDigest,
+	isApprovalReceiptRef,
+	isApprovalTicket,
+	type ApprovalReceiptRef,
+	type ApprovalTicket,
+	type ArtifactRef,
+} from "../protocol/v3/capability.ts";
 import { sameRuntimeEventStream, type EventCursor, type ExpectedRevision } from "../protocol/v3/events.ts";
 import type { RuntimeEventPayloadMap } from "../protocol/v3/event-payloads.ts";
 import type { RuntimeEventType } from "../protocol/v3/event-catalog.ts";
+import type { ApprovalLifecycleEventPort, ApprovalRequestEventEvidence } from "../protocol/v3/security-events.ts";
 import { contextAssembledEventPayload } from "../context/context-engine.ts";
 import type { ContextAssemblyReceipt } from "../context/types.ts";
 import { modelRoutedEventPayload } from "../model-routing/router.ts";
@@ -250,6 +260,18 @@ function sandboxResolutionBody(
 
 function assertGrantMatchesHandle(handle: DurableToolHandle, grant: ToolExecutionAuthorizationGrant): void {
 	const sandbox = grant.sandbox;
+	const approval = grant.approvalReceipt;
+	const approvalBindingValid = approval
+		? isApprovalReceiptRef(approval) &&
+			approval.decision === "allowed" &&
+			approval.approvalId === grant.authorization.approvalId &&
+			approval.requestId === grant.authorization.requestId &&
+			approval.receiptId === grant.authorization.approvalReceiptId &&
+			approval.receiptDigest === grant.authorization.approvalReceiptDigest &&
+			approval.decisionRevision === grant.authorization.approvalDecisionRevision
+		: grant.authorization.approvalReceiptId === undefined &&
+			grant.authorization.approvalReceiptDigest === undefined &&
+			grant.authorization.approvalDecisionRevision === undefined;
 	if (
 		grant.schemaVersion !== 1 ||
 		grant.toolCallId !== handle.toolCallId ||
@@ -265,6 +287,7 @@ function assertGrantMatchesHandle(handle: DurableToolHandle, grant: ToolExecutio
 		!isRuntimeId(grant.authorization.requestId, "command") ||
 		!isDigest(grant.authorization.requestDigest) ||
 		!isDigest(grant.authorization.decisionDigest) ||
+		!approvalBindingValid ||
 		grant.authorization.receiptDigest !== canonicalDigest(authorizationReceiptBody(grant)) ||
 		grant.policyDigest !== sandbox.policyDigest ||
 		!isRuntimeId(sandbox.receiptId, "receipt") ||
@@ -282,7 +305,7 @@ function assertGrantMatchesHandle(handle: DurableToolHandle, grant: ToolExecutio
  * 每个方法只有在 EventWriter 返回 durable cursor 后才 resolve。调用方必须 await，
  * 这样 tool terminal 与下一次 model.requested 之间形成真实持久化屏障。
  */
-export class AgentLoopSessionEvents {
+export class AgentLoopSessionEvents implements ApprovalLifecycleEventPort {
 	private readonly writer: EventWriter;
 	private readonly principalId: PrincipalId;
 	private readonly runtimeId: RuntimeInstanceId;
@@ -913,6 +936,106 @@ export class AgentLoopSessionEvents {
 		};
 	}
 
+	public async recordApprovalRequested(
+		ticket: ApprovalTicket,
+		evidence: ApprovalRequestEventEvidence,
+	): Promise<void> {
+		const head = this.writer.currentHead();
+		if (
+			!isApprovalTicket(ticket) ||
+			!head || head.stream.scope !== "session" ||
+			ticket.principalId !== this.principalId ||
+			ticket.request.principalId !== this.principalId ||
+			ticket.request.runtimeId !== this.runtimeId ||
+			ticket.request.sessionId !== head.stream.sessionId
+		) throw new DurableQueueBindingError("approval request is outside the active session identity");
+		await this.append("permission.requested", {
+			approvalId: ticket.approvalId,
+			requestId: ticket.request.requestId,
+			sessionId: ticket.request.sessionId,
+			runtimeId: ticket.request.runtimeId,
+			runtimeGeneration: ticket.request.runtimeGeneration,
+			turnId: ticket.request.turnId,
+			toolCallId: ticket.request.toolCallId,
+			capability: ticket.request.capability,
+			resourceKind: evidence.resourceKind,
+			requestDigest: approvalTicketRequestDigest(ticket),
+			policyDigest: ticket.request.policyDigest,
+			workspaceEnvelopeDigest: ticket.request.workspaceEnvelopeDigest,
+			ticketDigest: approvalTicketDigest(ticket),
+			scope: ticket.scope,
+			requestedAt: ticket.createdAt,
+			...(ticket.expiresAt ? { expiresAt: ticket.expiresAt } : {}),
+			attemptId: evidence.attemptId,
+			serverScope: ticket.request.serverScope,
+			resourceScopeDigest: ticket.request.resourceScopeDigest,
+			commandScopeDigest: ticket.request.commandScopeDigest,
+			evidenceComplete: true,
+			evidenceTruncated: false,
+			originalInputDigest: ticket.request.argumentsDigest,
+			summary: {
+				...evidence.summary,
+				environmentKeyDigests: [...evidence.summary.environmentKeyDigests],
+			},
+		});
+	}
+
+	public async recordApprovalTerminal(ticket: ApprovalTicket, receipt: ApprovalReceiptRef): Promise<void> {
+		const head = this.writer.currentHead();
+		if (
+			!approvalReceiptMatchesTicket(receipt, ticket) ||
+			!head || head.stream.scope !== "session" ||
+			ticket.principalId !== this.principalId ||
+			ticket.request.sessionId !== head.stream.sessionId
+		) {
+			throw new DurableQueueBindingError("approval terminal receipt is not bound to the requested ticket");
+		}
+		const binding = {
+			approvalId: receipt.approvalId,
+			requestId: receipt.requestId,
+			sessionId: ticket.request.sessionId,
+			runtimeId: ticket.request.runtimeId,
+			runtimeGeneration: ticket.request.runtimeGeneration,
+			turnId: ticket.request.turnId,
+			toolCallId: ticket.request.toolCallId,
+			requestDigest: receipt.requestDigest,
+			ticketDigest: receipt.ticketDigest,
+			decisionRevision: receipt.decisionRevision,
+			decidedBy: receipt.decidedBy,
+			receiptId: receipt.receiptId,
+			receiptDigest: receipt.receiptDigest,
+		};
+		if (receipt.decision === "expired") {
+			await this.append("permission.expired", { ...binding, expiredAt: receipt.decidedAt });
+			return;
+		}
+		if (receipt.decision === "revoked") {
+			await this.append("permission.revoked", { ...binding, revokedAt: receipt.revokedAt ?? receipt.decidedAt });
+			return;
+		}
+		const commonDecision = {
+			...binding,
+			decidedAt: receipt.decidedAt,
+			originalInputDigest: receipt.originalInputDigest,
+			...(receipt.expiresAt ? { expiresAt: receipt.expiresAt } : {}),
+		};
+		if (receipt.decision === "allowed") {
+			await this.append("permission.decided", {
+				...commonDecision,
+				decision: "allowed",
+				evidenceComplete: true,
+				evidenceTruncated: false,
+			});
+			return;
+		}
+		await this.append("permission.decided", {
+			...commonDecision,
+			decision: receipt.decision,
+			evidenceComplete: receipt.evidenceComplete,
+			evidenceTruncated: receipt.evidenceTruncated,
+		});
+	}
+
 	public async authorizeAndStartTool(
 		handle: DurableToolHandle,
 		grant: ToolExecutionAuthorizationGrant,
@@ -944,7 +1067,12 @@ export class AgentLoopSessionEvents {
 			policyDigest: grant.policyDigest,
 			workspaceEnvelopeDigest: grant.workspaceEnvelopeDigest,
 			sandboxResolutionReceiptId: grant.sandbox.receiptId,
-		} as unknown as RuntimeEventPayloadMap["tool.authorized"]);
+			...(grant.approvalReceipt ? {
+				approvalReceiptId: grant.approvalReceipt.receiptId,
+				approvalReceiptDigest: grant.approvalReceipt.receiptDigest,
+				approvalDecisionRevision: grant.approvalReceipt.decisionRevision,
+			} : {}),
+		});
 		await this.append("tool.started", {
 			toolCallId: handle.toolCallId,
 			invocationDigest: grant.invocationDigest,

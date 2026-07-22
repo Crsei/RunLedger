@@ -1229,23 +1229,18 @@ async function prepareToolCall(
         durableTool,
       };
     }
-    try {
-      durableTool = await config.sessionEvents?.authorizeAndStartTool(
-        durableTool,
-        authorization.grant,
-        tool,
-      );
-    } catch (error) {
+    const sessionEvents = config.sessionEvents;
+    if (!sessionEvents) {
       try {
         await refundToolBudget(config, budgetReservation, "not_started");
-      } catch (budgetError) {
+      } catch (error) {
         return {
           toolCall: tc,
           tool,
           args: preparedArgs,
           gatewayRequest,
           blocked: {
-            reason: `tool start and budget refund both failed: ${(error as Error).message ?? String(error)}; ${(budgetError as Error).message ?? String(budgetError)}`,
+            reason: `governed session event bridge disappeared before start and budget refund failed: ${(error as Error).message ?? String(error)}`,
             terminalKind: "failed",
             outcomeCertain: false,
             gateClosed: true,
@@ -1259,13 +1254,125 @@ async function prepareToolCall(
         args: preparedArgs,
         gatewayRequest,
         blocked: {
-          reason: `governed authorization receipt rejected: ${(error as Error).message ?? String(error)}`,
+          reason: "governed session event bridge disappeared before start",
           terminalKind: "failed",
           outcomeCertain: true,
         },
         durableTool,
       };
     }
+    const authorizedTool = durableTool;
+    const started: { handle?: DurableToolHandle } = {};
+    let startResult: Awaited<ReturnType<NonNullable<AgentLoopConfig["toolExecutionGateway"]>["start"]>>;
+    try {
+      startResult = await config.toolExecutionGateway.start(
+        { invocation: gatewayRequest, grant: authorization.grant },
+        async () => {
+          if (started.handle) throw new Error("governed durable start callback was invoked more than once");
+          started.handle = await sessionEvents.authorizeAndStartTool(
+            authorizedTool,
+            authorization.grant,
+            tool,
+          );
+        },
+        signal,
+      );
+    } catch (error) {
+      try {
+        await refundToolBudget(config, budgetReservation, "not_started");
+      } catch (budgetError) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          gatewayRequest,
+          blocked: {
+            reason: `governed start barrier and budget refund both failed: ${(error as Error).message ?? String(error)}; ${(budgetError as Error).message ?? String(budgetError)}`,
+            terminalKind: "failed",
+            outcomeCertain: false,
+            gateClosed: true,
+          },
+          durableTool,
+        };
+      }
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: `governed start barrier unavailable: ${(error as Error).message ?? String(error)}`,
+          terminalKind: "failed",
+          outcomeCertain: true,
+        },
+        durableTool,
+      };
+    }
+    if (startResult.grantDigest !== authorization.grant.grantDigest) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: "governed start barrier returned an uncorrelated grant receipt",
+          terminalKind: "failed",
+          outcomeCertain: false,
+          gateClosed: true,
+        },
+        durableTool,
+      };
+    }
+    if (startResult.status !== "ready") {
+      if (startResult.outcomeCertain) {
+        try {
+          await refundToolBudget(config, budgetReservation, "not_started");
+        } catch (error) {
+          return {
+            toolCall: tc,
+            tool,
+            args: preparedArgs,
+            gatewayRequest,
+            blocked: {
+              reason: `governed start rejected and budget refund failed: ${startResult.reason}; ${(error as Error).message ?? String(error)}`,
+              terminalKind: "failed",
+              outcomeCertain: false,
+              gateClosed: true,
+            },
+            durableTool,
+          };
+        }
+      }
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: startResult.reason,
+          terminalKind: "failed",
+          outcomeCertain: startResult.outcomeCertain,
+          gateClosed: !startResult.outcomeCertain,
+        },
+        durableTool,
+      };
+    }
+    if (!started.handle?.started) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: "governed start barrier did not durably start the tool",
+          terminalKind: "failed",
+          outcomeCertain: false,
+          gateClosed: true,
+        },
+        durableTool,
+      };
+    }
+    durableTool = started.handle;
     return {
       toolCall: tc,
       tool,

@@ -192,6 +192,7 @@ function grant(request: ToolExecutionGatewayRequest): ToolExecutionAuthorization
 
 class RecordingToolGateway implements ToolExecutionGatewayPort {
 	public readonly authorizeRequests: ToolExecutionGatewayRequest[] = [];
+	public readonly startRequests: ToolExecutionGatewayExecuteRequest[] = [];
 	public readonly executeRequests: ToolExecutionGatewayExecuteRequest[] = [];
 	public readonly events: string[];
 
@@ -217,6 +218,16 @@ class RecordingToolGateway implements ToolExecutionGatewayPort {
 			grantDigest: request.grant.grantDigest,
 			result: { content: [{ type: "text" as const, text: "delegate result" }], details: {} },
 		};
+	}
+
+	public async start(
+		request: ToolExecutionGatewayExecuteRequest,
+		durableStart: () => Promise<void>,
+	): Promise<{ status: "ready"; grantDigest: string }> {
+		this.events.push("delegate:start");
+		this.startRequests.push(request);
+		await durableStart();
+		return { status: "ready", grantDigest: request.grant.grantDigest };
 	}
 }
 
@@ -255,7 +266,7 @@ describe("session mutation gate adapters", () => {
 		}]);
 	});
 
-	it("revalidates tool execution before the delegate can claim a durable attempt", async () => {
+	it("revalidates tool execution before durable start or attempt claim", async () => {
 		const events: string[] = [];
 		const gate = new RecordingGate("reject", events);
 		const delegate = new RecordingToolGateway(events);
@@ -263,9 +274,10 @@ describe("session mutation gate adapters", () => {
 		const invocation = toolRequest();
 		const authorizationGrant = grant(invocation);
 
-		const result = await gateway.execute(
+		const durableStart = vi.fn(async () => undefined);
+		const result = await gateway.start(
 			{ invocation, grant: authorizationGrant },
-			() => undefined,
+			durableStart,
 		);
 
 		expect(result).toEqual({
@@ -274,7 +286,8 @@ describe("session mutation gate adapters", () => {
 			reason: "continuous receipt audit rejected the mutation",
 			outcomeCertain: true,
 		});
-		expect(delegate.executeRequests).toHaveLength(0);
+		expect(delegate.startRequests).toHaveLength(0);
+		expect(durableStart).not.toHaveBeenCalled();
 		expect(events).toEqual(["gate:tool_execute"]);
 		expect(gate.requests).toStrictEqual([{
 			kind: "tool_execute",
@@ -297,6 +310,7 @@ describe("session mutation gate adapters", () => {
 
 		await guardedPrepare(modelRequest());
 		await gateway.authorize(invocation);
+		await gateway.start({ invocation, grant: authorizationGrant }, async () => undefined);
 		await gateway.execute({ invocation, grant: authorizationGrant }, () => undefined);
 
 		expect(gate.requests).toStrictEqual([
@@ -306,12 +320,14 @@ describe("session mutation gate adapters", () => {
 		]);
 		expect(prepare).toHaveBeenCalledOnce();
 		expect(delegate.authorizeRequests).toEqual([invocation]);
+		expect(delegate.startRequests).toEqual([{ invocation, grant: authorizationGrant }]);
 		expect(delegate.executeRequests).toEqual([{ invocation, grant: authorizationGrant }]);
 		expect(events).toEqual([
 			"gate:model_request",
 			"gate:tool_authorize",
 			"delegate:authorize",
 			"gate:tool_execute",
+			"delegate:start",
 			"delegate:execute",
 		]);
 	});

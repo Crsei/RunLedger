@@ -21,6 +21,7 @@ import {
 	type CapabilityRequestRef,
 	type SandboxExecutionReceiptRef,
 } from "../../../src/runtime/protocol/v3/capability.ts";
+import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import type { RuntimeEventPayloadMap } from "../../../src/runtime/protocol/v3/event-payloads.ts";
 import type { RuntimeEventType } from "../../../src/runtime/protocol/v3/event-catalog.ts";
 import {
@@ -45,6 +46,7 @@ const DIGEST_D = "d".repeat(64);
 const AUTHORITY_ID = createRuntimeId("authority", "security");
 const TENANT_ID = createRuntimeId("tenant", "security");
 const PRINCIPAL_ID = createRuntimeId("principal", "security");
+const APPROVER_ID = createRuntimeId("principal", "security-approver");
 const SESSION_ID = createRuntimeId("session", "security");
 const RUNTIME_ID = createRuntimeId("runtime", "security");
 const TURN_ID = createRuntimeId("turn", "security");
@@ -100,7 +102,7 @@ function ticket(): ApprovalTicket {
 
 function receipt(decision: ApprovalReceiptRef["decision"] = "allowed"): ApprovalReceiptRef {
 	const value = ticket();
-	return {
+	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
 		authorityId: AUTHORITY_ID,
 		tenantId: TENANT_ID,
 		principalId: PRINCIPAL_ID,
@@ -110,15 +112,16 @@ function receipt(decision: ApprovalReceiptRef["decision"] = "allowed"): Approval
 		requestDigest: approvalTicketRequestDigest(value),
 		ticketDigest: approvalTicketDigest(value),
 		decision,
-		decisionRevision: 1,
+		decisionRevision: decision === "allowed" ? 1 : 2,
+		decidedBy: APPROVER_ID,
 		decidedAt: decision === "expired" ? "2026-07-22T00:05:00.000Z" : "2026-07-22T00:01:00.000Z",
 		expiresAt: value.expiresAt,
 		evidenceComplete: true,
 		evidenceTruncated: false,
 		originalInputDigest: value.request.argumentsDigest,
 		...(decision === "revoked" ? { revokedAt: "2026-07-22T00:02:00.000Z" } : {}),
-		receiptDigest: DIGEST_D,
 	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 function workspaceEnvelope() {

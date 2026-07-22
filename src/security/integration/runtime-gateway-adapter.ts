@@ -7,6 +7,7 @@ import {
 	gatewayRateLimitReceiptMatchesRequest,
 	validateCapabilityGatewayRequest,
 	type ApprovalReceiptRef,
+	type ApprovalCoordinatorPort,
 	type ApprovalTicket,
 	type CapabilityAuthenticationPort,
 	type CapabilityGatewayPort,
@@ -21,9 +22,13 @@ import {
 } from "../../runtime/protocol/v3/capability.ts";
 import { createRuntimeId } from "../../runtime/protocol/v3/ids.ts";
 import { workspaceExecutionEnvelopeDigest } from "../../runtime/protocol/v3/workspace.ts";
+import type { ApprovalLifecycleEventPort, ApprovalRequestEventEvidence } from "../../runtime/protocol/v3/security-events.ts";
 import { PermissionEngine } from "../permission/engine.ts";
 import { resolveBrowserAccessRequests, resolveToolAccessRequests } from "../permission/access-resolver.ts";
-import { createApprovalReceipt } from "../permission/approval-coordinator.ts";
+import {
+	createApprovalReceipt,
+	SYSTEM_APPROVAL_PRINCIPAL_ID,
+} from "../permission/approval-coordinator.ts";
 import { pathWithin } from "../policy-filesystem.ts";
 import type {
 	AccessRequest,
@@ -65,6 +70,8 @@ export interface RuntimeCapabilityGatewayAdapterOptions {
 	snapshotResolver: SecuritySnapshotResolverPort;
 	permissionEngine: PermissionEngine;
 	approvals: PendingApprovalRegistry;
+	approvalEvents: ApprovalLifecycleEventPort;
+	approvalCanceller: Pick<ApprovalCoordinatorPort, "cancel">;
 	replayGuard?: CapabilityReplayGuard;
 	revokedKeyRevisions?: ReadonlySet<number>;
 	clock?: () => Date;
@@ -90,6 +97,30 @@ function requiredCapability(request: AccessRequest): CapabilityName | undefined 
 	}
 }
 
+function approvalResourceKind(request: AccessRequest): ApprovalRequestEventEvidence["resourceKind"] {
+	switch (request.kind) {
+		case "filesystem": return "filesystem";
+		case "shell": return "process";
+		case "network": return "network";
+		case "worktree": return "workspace";
+		case "credential": return "credential";
+		case "browser": return "browser_tool";
+		case "tool": return "native_tool";
+	}
+}
+
+function approvalOperation(request: AccessRequest): ApprovalRequestEventEvidence["summary"]["operation"] {
+	switch (request.kind) {
+		case "filesystem": return request.operation === "read" ? "read" : "write";
+		case "shell": return "execute";
+		case "network": return "connect";
+		case "worktree": return "cross_workspace";
+		case "credential": return "credential_use";
+		case "browser": return "connect";
+		case "tool": return "execute";
+	}
+}
+
 function denialTicket(request: CapabilityGatewayRequest, now: string): ApprovalTicket {
 	return {
 		authorityId: request.request.authorityId,
@@ -106,7 +137,7 @@ function deniedResult(request: CapabilityGatewayRequest, reason: string, now: st
 	const ticket = denialTicket(request, now);
 	const approvalReceipt = createApprovalReceipt(
 		ticket,
-		{ decision: "deny", decidedBy: request.request.principalId, reason },
+		{ decision: "deny", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID, reason },
 		now,
 	);
 	return {
@@ -304,6 +335,26 @@ export class RuntimeCapabilityGatewayAdapter implements CapabilityGatewayPort {
 					policyDigest: await this.#options.snapshotResolver.currentPolicyDigest(request.invocation.envelope.workspaceId),
 				}),
 			})) return deniedResult(request, "approval registry collision", nowText);
+			const primaryAccess = access.value[0];
+			if (!primaryAccess) {
+				this.#options.approvals.remove(ticket);
+				throw new Error("approval request lacks a derived access target");
+			}
+			try {
+				await this.#options.approvalEvents.recordApprovalRequested(ticket, {
+					attemptId: request.idempotencyKey,
+					resourceKind: approvalResourceKind(primaryAccess),
+					summary: {
+						operation: approvalOperation(primaryAccess),
+						toolIdentityDigest: manifest.value.manifestDigest,
+						targetDigest: canonicalDigest(access.value),
+						environmentKeyDigests: [],
+					},
+				});
+			} catch {
+				this.#options.approvals.remove(ticket);
+				throw new Error("canonical approval request could not be committed");
+			}
 			result = {
 				requestId: request.request.requestId,
 				decision: "ask",
@@ -316,15 +367,6 @@ export class RuntimeCapabilityGatewayAdapter implements CapabilityGatewayPort {
 	}
 
 	public async cancel(request: SecurityPortCancelRequest): Promise<SecurityPortCancelResult> {
-		const cancelled = this.#options.approvals.cancelByRequest(request.requestId);
-		return {
-			authorityId: request.authorityId,
-			tenantId: request.tenantId,
-			principalId: request.principalId,
-			requestId: request.requestId,
-			...(cancelled.length > 0
-				? { status: "accepted" as const, receiptId: createRuntimeId("receipt", `gateway-cancel-${request.requestId}`) }
-				: { status: "not_found" as const }),
-		};
+		return this.#options.approvalCanceller.cancel(request);
 	}
 }

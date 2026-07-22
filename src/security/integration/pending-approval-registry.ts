@@ -1,6 +1,7 @@
 /** Gateway 与 ApprovalCoordinator adapter 共享的 pending ticket registry。 */
 
 import { approvalTicketDigest, type ApprovalReceiptRef, type ApprovalTicket } from "../../runtime/protocol/v3/capability.ts";
+import type { SecurityPortCancelRequest } from "../../runtime/protocol/v3/capability.ts";
 import type { ApprovalRevalidation } from "../permission/approval-coordinator.ts";
 import type { PermissionPrompt } from "../types.ts";
 
@@ -27,8 +28,33 @@ export class PendingApprovalRegistry {
 		return record && approvalTicketDigest(record.ticket) === approvalTicketDigest(ticket) ? record : undefined;
 	}
 
+	public remove(ticket: ApprovalTicket): boolean {
+		const record = this.read(ticket);
+		if (!record) return false;
+		this.#records.delete(ticket.approvalId);
+		return true;
+	}
+
 	public terminal(approvalId: ApprovalTicket["approvalId"]): ApprovalReceiptRef | undefined {
 		return this.#terminal.get(approvalId);
+	}
+
+	public recordsByRequest(request: SecurityPortCancelRequest): readonly PendingApprovalRecord[] {
+		return [...this.#records.values()].filter((record) =>
+			record.ticket.authorityId === request.authorityId &&
+			record.ticket.tenantId === request.tenantId &&
+			record.ticket.principalId === request.principalId &&
+			record.ticket.request.requestId === request.requestId
+		);
+	}
+
+	public terminalByRequest(request: SecurityPortCancelRequest): readonly ApprovalReceiptRef[] {
+		return [...this.#terminal.values()].filter((receipt) =>
+			receipt.authorityId === request.authorityId &&
+			receipt.tenantId === request.tenantId &&
+			receipt.principalId === request.principalId &&
+			receipt.requestId === request.requestId
+		);
 	}
 
 	public complete(ticket: ApprovalTicket, receipt: ApprovalReceiptRef): boolean {
@@ -39,13 +65,4 @@ export class PendingApprovalRegistry {
 		return true;
 	}
 
-	public cancelByRequest(requestId: ApprovalTicket["request"]["requestId"]): readonly PendingApprovalRecord[] {
-		const cancelled: PendingApprovalRecord[] = [];
-		for (const [approvalId, record] of this.#records) {
-			if (record.ticket.request.requestId !== requestId) continue;
-			this.#records.delete(approvalId);
-			cancelled.push(record);
-		}
-		return cancelled;
-	}
 }

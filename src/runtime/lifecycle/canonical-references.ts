@@ -204,12 +204,68 @@ type ApprovalTerminalEvent = Extract<
 	{ type: "permission.decided" | "permission.expired" | "permission.revoked" }
 >;
 
+type ToolAuthorizedEvent = Extract<RuntimeEventV3, { type: "tool.authorized" }>;
+
+interface CanonicalApprovalToolLifecycle {
+	approvalId: string;
+	authorizationDigest: string;
+	started: boolean;
+}
+
+function isExactApprovalRevision(
+	event: ApprovalTerminalEvent,
+	previous: ApprovalReceiptRef | undefined,
+): boolean {
+	if (!previous) return event.type !== "permission.revoked" && event.payload.decisionRevision === 1;
+	const duplicateDecision =
+		(event.type === "permission.decided" && event.payload.decision === previous.decision) ||
+		(event.type === "permission.expired" && previous.decision === "expired") ||
+		(event.type === "permission.revoked" && previous.decision === "revoked");
+	if (duplicateDecision) return event.payload.decisionRevision === previous.decisionRevision;
+	if (
+		previous.decision !== "allowed" ||
+		(event.type !== "permission.expired" && event.type !== "permission.revoked")
+	) return false;
+	return (
+		event.payload.decisionRevision === previous.decisionRevision + 1
+	);
+}
+
+function toolAuthorizationMatchesApproval(
+	event: ToolAuthorizedEvent,
+	request: CanonicalApprovalRequest,
+	receipt: ApprovalReceiptRef,
+): boolean {
+	const payload = event.payload;
+	if (!("approvalReceiptId" in payload)) return false;
+	return (
+		receipt.decision === "allowed" &&
+		event.principalId === request.principalId &&
+		payload.approvalId === request.payload.approvalId &&
+		payload.requestId === request.payload.requestId &&
+		payload.sessionId === request.payload.sessionId &&
+		payload.runtimeId === request.payload.runtimeId &&
+		payload.runtimeGeneration === request.payload.runtimeGeneration &&
+		payload.turnId === request.payload.turnId &&
+		payload.toolCallId === request.payload.toolCallId &&
+		payload.capability === request.payload.capability &&
+		// tool.authorized 绑定的是完整 Gateway/authentication request；permission.requested
+		// 绑定的是 Approval ticket.request。两个 canonical digest 属于不同域，不能互相覆盖或等同比较。
+		payload.policyDigest === request.payload.policyDigest &&
+		payload.workspaceEnvelopeDigest === request.payload.workspaceEnvelopeDigest &&
+		payload.approvalReceiptId === receipt.receiptId &&
+		payload.approvalReceiptDigest === receipt.receiptDigest &&
+		payload.approvalDecisionRevision === receipt.decisionRevision
+	);
+}
+
 function approvalReceipt(
 	event: ApprovalTerminalEvent,
 	request: CanonicalApprovalRequest | undefined,
 	previous: ApprovalReceiptRef | undefined,
 ): ApprovalReceiptRef | undefined {
 	if (!request || !sameApprovalRequest(event, event.payload, request)) return undefined;
+	if (!isExactApprovalRevision(event, previous)) return undefined;
 	const requestPayload = request.payload;
 	let candidate: unknown;
 	switch (event.type) {
@@ -227,6 +283,7 @@ function approvalReceipt(
 				ticketDigest: payload.ticketDigest,
 				decision: payload.decision,
 				decisionRevision: payload.decisionRevision,
+				decidedBy: payload.decidedBy,
 				decidedAt: payload.decidedAt,
 				receiptDigest: payload.receiptDigest,
 				evidenceComplete: payload.evidenceComplete,
@@ -256,8 +313,10 @@ function approvalReceipt(
 				ticketDigest: event.payload.ticketDigest,
 				decision: "expired",
 				decisionRevision: event.payload.decisionRevision,
+				decidedBy: event.payload.decidedBy,
 				decidedAt: event.payload.expiredAt,
-				expiresAt: event.payload.expiredAt,
+				// expiredAt 是实际持久化 terminal 的时刻；receipt 仍绑定 request 的原始 expiry。
+				expiresAt: requestPayload.expiresAt,
 				receiptDigest: event.payload.receiptDigest,
 				evidenceComplete: evidence.evidenceComplete,
 				evidenceTruncated: evidence.evidenceTruncated,
@@ -284,6 +343,7 @@ function approvalReceipt(
 				ticketDigest: event.payload.ticketDigest,
 				decision: "revoked",
 				decisionRevision: event.payload.decisionRevision,
+				decidedBy: event.payload.decidedBy,
 				decidedAt: event.payload.revokedAt,
 				revokedAt: event.payload.revokedAt,
 				receiptDigest: event.payload.receiptDigest,
@@ -327,7 +387,10 @@ export function projectExternalReceiptReferences(
 	}
 	const workspaceLeases = new Map<string, WorkspaceLeaseRef>();
 	const approvalRequests = new Map<string, CanonicalApprovalRequest>();
-	const approvalDecisions = new Map<string, ApprovalReceiptRef>();
+	const approvalReceipts = new Map<string, ApprovalReceiptRef>();
+	const activeApprovalDecisions = new Map<string, ApprovalReceiptRef>();
+	const approvalToolLifecycles = new Map<string, CanonicalApprovalToolLifecycle>();
+	const consumedApprovals = new Set<string>();
 	for (const event of events) {
 		switch (event.type) {
 			case "workspace.bound":
@@ -369,10 +432,62 @@ export function projectExternalReceiptReferences(
 				const receipt = approvalReceipt(
 					event,
 					approvalRequests.get(event.payload.approvalId),
-					approvalDecisions.get(event.payload.approvalId),
+					approvalReceipts.get(event.payload.approvalId),
 				);
 				if (!receipt) return failure("integrity_failed", "canonical approval receipt reference is invalid");
-				approvalDecisions.set(receipt.approvalId, receipt);
+				approvalReceipts.set(receipt.approvalId, receipt);
+				if (
+					!consumedApprovals.has(receipt.approvalId) &&
+					(receipt.decision === "allowed" || receipt.decision === "expired" || receipt.decision === "revoked")
+				) activeApprovalDecisions.set(receipt.approvalId, receipt);
+				else activeApprovalDecisions.delete(receipt.approvalId);
+				break;
+			}
+			case "tool.authorized": {
+				const request = approvalRequests.get(event.payload.approvalId);
+				const receipt = approvalReceipts.get(event.payload.approvalId);
+				if (!request && !receipt) {
+					if ("approvalReceiptId" in event.payload) {
+						return failure("integrity_failed", "canonical tool authorization names an approval receipt without its request lifecycle");
+					}
+					break;
+				}
+				if (!request || !receipt || !toolAuthorizationMatchesApproval(event, request, receipt)) {
+					return failure("integrity_failed", "canonical tool authorization is not bound to the active approval receipt");
+				}
+				const authorizationDigest = canonicalDigest(event.payload);
+				const previous = approvalToolLifecycles.get(event.payload.toolCallId);
+				if (
+					previous &&
+					(previous.approvalId !== event.payload.approvalId || previous.authorizationDigest !== authorizationDigest)
+				) {
+					return failure("integrity_failed", "canonical tool authorization lifecycle is inconsistent");
+				}
+				if (!previous) {
+					approvalToolLifecycles.set(event.payload.toolCallId, {
+						approvalId: event.payload.approvalId,
+						authorizationDigest,
+						started: false,
+					});
+				}
+				break;
+			}
+			case "tool.started": {
+				const lifecycle = approvalToolLifecycles.get(event.payload.toolCallId);
+				if (lifecycle) lifecycle.started = true;
+				break;
+			}
+			case "tool.finished":
+			case "tool.failed":
+			case "tool.interrupted": {
+				const lifecycle = approvalToolLifecycles.get(event.payload.toolCallId);
+				if (!lifecycle?.started) break;
+				const request = approvalRequests.get(lifecycle.approvalId);
+				if (request?.payload.scope === "once") {
+					consumedApprovals.add(lifecycle.approvalId);
+					activeApprovalDecisions.delete(lifecycle.approvalId);
+				}
+				approvalToolLifecycles.delete(event.payload.toolCallId);
 				break;
 			}
 			default:
@@ -386,7 +501,9 @@ export function projectExternalReceiptReferences(
 			...scope,
 			completeness: "complete",
 			workspaceLeases: [...workspaceLeases.values()].sort((left, right) => left.leaseId.localeCompare(right.leaseId)),
-			approvalDecisions: [...approvalDecisions.values()].sort((left, right) => left.approvalId.localeCompare(right.approvalId)),
+			approvalDecisions: [...activeApprovalDecisions.values()].sort((left, right) =>
+				left.approvalId.localeCompare(right.approvalId)
+			),
 		},
 	};
 }

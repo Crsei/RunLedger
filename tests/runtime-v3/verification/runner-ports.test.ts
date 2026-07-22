@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
-import type {
-	CapabilityGatewayPort,
-	CapabilityGatewayRequest,
-	CapabilityGatewayResult,
-	SandboxExecutorPort,
-	SandboxExecutorRequest,
-	SecurityPortCancelRequest,
-	SecurityPortCancelResult,
+import {
+	approvalTicketDigest,
+	approvalTicketRequestDigest,
+	type ApprovalTicket,
+	type CapabilityGatewayPort,
+	type CapabilityGatewayRequest,
+	type CapabilityGatewayResult,
+	type SandboxExecutorPort,
+	type SandboxExecutorRequest,
+	type SecurityPortCancelRequest,
+	type SecurityPortCancelResult,
 } from "../../../src/runtime/protocol/v3/capability.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type { WorkspaceServicePort, WorkspaceServiceRequest, WorkspaceServiceResult } from "../../../src/runtime/protocol/v3/workspace.ts";
@@ -111,6 +114,15 @@ class FakeCapability implements CapabilityGatewayPort {
 				},
 			};
 		}
+		const ticket: ApprovalTicket = {
+			authorityId: request.request.authorityId,
+			tenantId: request.request.tenantId,
+			principalId: request.request.principalId,
+			approvalId: request.request.approvalId,
+			request: request.request,
+			scope: "once",
+			createdAt: "2026-07-22T08:00:00.000Z",
+		};
 		const deniedReceiptBody = {
 			authorityId: request.request.authorityId,
 			tenantId: request.request.tenantId,
@@ -118,10 +130,11 @@ class FakeCapability implements CapabilityGatewayPort {
 			receiptId: createRuntimeId("receipt", "verification-denied"),
 			approvalId: request.request.approvalId,
 			requestId: request.request.requestId,
-			requestDigest: canonicalDigest(request.request),
-			ticketDigest: digest("ticket"),
+			requestDigest: approvalTicketRequestDigest(ticket),
+			ticketDigest: approvalTicketDigest(ticket),
 			decision: "denied" as const,
 			decisionRevision: 1,
+			decidedBy: request.request.principalId,
 			decidedAt: "2026-07-22T08:00:00.000Z",
 			evidenceComplete: true,
 			evidenceTruncated: false,

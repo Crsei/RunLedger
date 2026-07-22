@@ -44,6 +44,7 @@ const timestamp = Type.String({ pattern: timestampPattern, maxLength: 24 });
 const token = Type.String({ minLength: 1, maxLength: 128 });
 const nonce = Type.String({ pattern: "^[A-Za-z0-9._~-]+$", minLength: 16, maxLength: 128 });
 const revision = Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+const approvalDecisionRevision = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const exact = <T extends Record<string, TSchema>>(properties: T) =>
 	Type.Object(properties, { additionalProperties: false });
 
@@ -212,6 +213,8 @@ export interface ApprovalReceiptRef extends AuthorizationContext {
 	ticketDigest: string;
 	decision: ApprovalReceiptDecision;
 	decisionRevision: number;
+	/** 作出当前 terminal decision 的 principal；不能用被授权主体 principalId 代替。 */
+	decidedBy: PrincipalId;
 	decidedAt: string;
 	expiresAt?: string;
 	revokedAt?: string;
@@ -391,8 +394,10 @@ const approvalReceiptBaseProperties = {
 	requestId: runtimeId("command"),
 	requestDigest: digest,
 	ticketDigest: digest,
-	decisionRevision: revision,
+	decisionRevision: approvalDecisionRevision,
+	decidedBy: runtimeId("principal"),
 	decidedAt: timestamp,
+	expiresAt: Type.Optional(timestamp),
 	receiptDigest: digest,
 	evidenceComplete: Type.Boolean(),
 	evidenceTruncated: Type.Boolean(),
@@ -407,7 +412,6 @@ export const ApprovalReceiptRefSchema = Type.Union([
 		decision: Type.Literal("allowed"),
 		evidenceComplete: Type.Literal(true),
 		evidenceTruncated: Type.Literal(false),
-		expiresAt: Type.Optional(timestamp),
 	}),
 	exact({ ...approvalReceiptBaseProperties, decision: Type.Literal("denied") }),
 	exact({ ...approvalReceiptBaseProperties, decision: Type.Literal("cancelled") }),
@@ -696,6 +700,11 @@ export function isApprovalTicket(value: unknown): value is ApprovalTicket {
 	);
 }
 
+function approvalReceiptBody(receipt: ApprovalReceiptRef): Omit<ApprovalReceiptRef, "receiptDigest"> {
+	const { receiptDigest: _receiptDigest, ...body } = receipt;
+	return body;
+}
+
 export function isApprovalReceiptRef(value: unknown): value is ApprovalReceiptRef {
 	if (!Check(ApprovalReceiptRefSchema, value)) return false;
 	const receipt = value as ApprovalReceiptRef;
@@ -703,6 +712,7 @@ export function isApprovalReceiptRef(value: unknown): value is ApprovalReceiptRe
 	const hasArtifactDigest = receipt.originalArtifactDigest !== undefined;
 	if (hasArtifactId !== hasArtifactDigest) return false;
 	if (receipt.evidenceTruncated && receipt.evidenceComplete) return false;
+	if (receipt.receiptDigest !== canonicalDigest(approvalReceiptBody(receipt))) return false;
 	return receipt.decision !== "allowed" || (receipt.evidenceComplete && !receipt.evidenceTruncated);
 }
 
@@ -738,6 +748,7 @@ export function approvalReceiptMatchesTicket(receipt: ApprovalReceiptRef, ticket
 		receipt.requestId !== ticket.request.requestId ||
 		receipt.requestDigest !== approvalTicketRequestDigest(ticket) ||
 		receipt.ticketDigest !== approvalTicketDigest(ticket) ||
+		receipt.originalInputDigest !== ticket.request.argumentsDigest ||
 		receipt.expiresAt !== ticket.expiresAt
 	) {
 		return false;

@@ -52,7 +52,7 @@ export function approvalReceipt(
 	approvalId = createRuntimeId("approval", "pcm-test"),
 	decision: ApprovalReceiptRef["decision"] = "allowed",
 ): ApprovalReceiptRef {
-	const base = {
+	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
 		authorityId,
 		tenantId,
 		principalId,
@@ -61,29 +61,15 @@ export function approvalReceipt(
 		requestId: createRuntimeId("command", "approval-request"),
 		requestDigest: DIGEST,
 		ticketDigest: DIGEST,
+		decision,
 		decisionRevision: 1,
+		decidedBy: createRuntimeId("principal", "pcm-approver"),
 		decidedAt: NOW,
-		receiptDigest: DIGEST,
-	};
-	const incompleteEvidence = {
-		evidenceComplete: false,
+		...(decision === "expired" ? { expiresAt: NOW } : {}),
+		...(decision === "revoked" ? { revokedAt: NOW } : {}),
+		evidenceComplete: decision === "allowed",
 		evidenceTruncated: false,
 		originalInputDigest: DIGEST,
-	} as const;
-	if (decision === "allowed") {
-		return {
-			...base,
-			decision,
-			evidenceComplete: true,
-			evidenceTruncated: false,
-			originalInputDigest: DIGEST,
-		};
-	}
-	if (decision === "denied") return { ...base, ...incompleteEvidence, decision };
-	if (decision === "cancelled") return { ...base, ...incompleteEvidence, decision };
-	if (decision === "follow_up_replaced") return { ...base, ...incompleteEvidence, decision };
-	if (decision === "channel_failed") return { ...base, ...incompleteEvidence, decision };
-	if (decision === "transferred_to_human") return { ...base, ...incompleteEvidence, decision };
-	if (decision === "expired") return { ...base, ...incompleteEvidence, decision, expiresAt: NOW };
-	return { ...base, ...incompleteEvidence, decision, revokedAt: NOW };
+	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }

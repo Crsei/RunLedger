@@ -34,6 +34,7 @@ import type {
 import type { CredentialAudienceBindingResolverPort } from "../../../src/security/integration/credential-broker-adapter.ts";
 import { MemoryCapabilityRateLimiter } from "../../../src/security/integration/capability-rate-limiter.ts";
 import { PortBackedToolExecutionGateway } from "../../../src/security/integration/tool-execution-gateway.ts";
+import { MemoryApprovalStateStore } from "../../../src/security/permission/approval-coordinator.ts";
 import {
 	createProductionToolManifest,
 	type ToolInvocationInputClassificationPort,
@@ -686,19 +687,27 @@ describe("production interactive runtime composition", () => {
 		})).not.toContain("fencingToken");
 
 		await Promise.all([runtime.close(), runtime.close()]);
-		expect(setup.manager.isClosed()).toBe(true);
-		expect(await runtime.toolExecutionGateway.authorize(invocation(setup.tool, runtime.cwd, "after-close"))).toMatchObject({
-			status: "unavailable",
-		});
+			expect(setup.manager.isClosed()).toBe(true);
+			const afterCloseRequest = invocation(setup.tool, runtime.cwd, "after-close");
+			expect(await runtime.toolExecutionGateway.authorize(afterCloseRequest)).toMatchObject({
+				status: "unavailable",
+			});
+			const afterCloseStart = vi.fn(async () => undefined);
+			expect(await runtime.toolExecutionGateway.start(
+				{ invocation: afterCloseRequest, grant: rejectedExecutionGrant(afterCloseRequest) },
+				afterCloseStart,
+			)).toMatchObject({ status: "unavailable", outcomeCertain: true });
+			expect(afterCloseStart).not.toHaveBeenCalled();
 		const registry = await readFile(runtime.paths.workspace.registryFile, "utf8");
 		expect(registry).toContain('"state":"retained"');
 	});
 
-	it("uses the exact injected mutation gate for model preparation and both Tool Gateway phases", async () => {
+	it("uses the exact injected mutation gate for model preparation, authorization, and durable start", async () => {
 		const setup = await fixture();
 		const gate = new RejectingRecordingMutationGate();
-		const rawAuthorize = vi.spyOn(PortBackedToolExecutionGateway.prototype, "authorize");
-		const rawExecute = vi.spyOn(PortBackedToolExecutionGateway.prototype, "execute");
+			const rawAuthorize = vi.spyOn(PortBackedToolExecutionGateway.prototype, "authorize");
+			const rawStart = vi.spyOn(PortBackedToolExecutionGateway.prototype, "start");
+			const rawExecute = vi.spyOn(PortBackedToolExecutionGateway.prototype, "execute");
 		const options = setup.options();
 		const runtime = await createProductionInteractiveRuntime({ ...options, mutationGate: gate });
 		const modelDelegate = vi.spyOn(runtime.modelRuntime.coordinator, "prepare");
@@ -733,23 +742,234 @@ describe("production interactive runtime composition", () => {
 			status: "unavailable",
 			reason: "production mutation gate rejected the operation",
 		});
-		expect(await runtime.toolExecutionGateway.execute(
-			{ invocation: toolRequest, grant },
-			() => undefined,
-		)).toEqual({
+			const durableStart = vi.fn(async () => undefined);
+			expect(await runtime.toolExecutionGateway.start(
+				{ invocation: toolRequest, grant },
+				durableStart,
+			)).toEqual({
 			status: "unavailable",
 			grantDigest: grant.grantDigest,
 			reason: "production mutation gate rejected the operation",
 			outcomeCertain: true,
-		});
+			});
+			expect(durableStart).not.toHaveBeenCalled();
 
 		expect(gate.requests).toStrictEqual([
 			{ kind: "model_request", correlationId: modelRequestId },
 			{ kind: "tool_authorize", correlationId: toolRequest.toolCallId },
 			{ kind: "tool_execute", correlationId: toolRequest.toolCallId },
 		]);
-		expect(modelDelegate).not.toHaveBeenCalled();
-		expect(rawAuthorize).not.toHaveBeenCalled();
+			expect(modelDelegate).not.toHaveBeenCalled();
+			expect(rawAuthorize).not.toHaveBeenCalled();
+			expect(rawStart).not.toHaveBeenCalled();
+			expect(rawExecute).not.toHaveBeenCalled();
+		await runtime.close();
+	});
+
+	it("keeps startup start leases only after one correlated completed durable callback", async () => {
+		const setup = await fixture();
+		type StartMode = "missing_callback" | "late_callback" | "repeated_callback" | "duplicate" | "uncorrelated";
+		let mode: StartMode = "missing_callback";
+		let releaseDuplicate: () => void = () => undefined;
+		let reportDuplicateEntered: () => void = () => undefined;
+		let reportLateCallback: () => void = () => undefined;
+		const duplicateRelease = new Promise<void>((resolve) => { releaseDuplicate = resolve; });
+		const duplicateEntered = new Promise<void>((resolve) => { reportDuplicateEntered = resolve; });
+		const lateCallbackAttempted = new Promise<void>((resolve) => { reportLateCallback = resolve; });
+		const delegateTokens = new Set<string>();
+		const rawStart = vi.spyOn(PortBackedToolExecutionGateway.prototype, "start").mockImplementation(async (request, durableStart) => {
+			if (mode === "missing_callback") {
+				delegateTokens.add(request.grant.grantDigest);
+				return { status: "ready", grantDigest: request.grant.grantDigest };
+			}
+			if (mode === "late_callback") {
+				delegateTokens.add(request.grant.grantDigest);
+				setTimeout(() => {
+					void durableStart().finally(reportLateCallback);
+				}, 0);
+				return { status: "ready", grantDigest: request.grant.grantDigest };
+			}
+			if (mode === "repeated_callback") {
+				await durableStart();
+				void durableStart();
+				delegateTokens.add(request.grant.grantDigest);
+				return { status: "ready", grantDigest: request.grant.grantDigest };
+			}
+			await durableStart();
+			delegateTokens.add(request.grant.grantDigest);
+			if (mode === "duplicate") {
+				reportDuplicateEntered();
+				await duplicateRelease;
+				return { status: "ready", grantDigest: request.grant.grantDigest };
+			}
+			return { status: "ready", grantDigest: "f".repeat(64) };
+		});
+		const rawExecute = vi.spyOn(PortBackedToolExecutionGateway.prototype, "execute").mockImplementation(async (request) => {
+			delegateTokens.delete(request.grant.grantDigest);
+			return {
+				status: "completed",
+				grantDigest: request.grant.grantDigest,
+				result: { content: [{ type: "text", text: "fixture completed" }] },
+			};
+		});
+		const runtime = await createProductionInteractiveRuntime(setup.options());
+
+		const missingRequest = invocation(setup.tool, runtime.cwd, "startup-missing-callback");
+		const missingGrant = rejectedExecutionGrant(missingRequest);
+		const missingCallback = vi.fn(async () => undefined);
+		expect(await runtime.toolExecutionGateway.start(
+			{ invocation: missingRequest, grant: missingGrant },
+			missingCallback,
+		)).toMatchObject({
+			status: "uncertain",
+			grantDigest: missingGrant.grantDigest,
+			reason: expect.stringContaining("without one completed durable start callback"),
+		});
+		expect(missingCallback).not.toHaveBeenCalled();
+
+		mode = "late_callback";
+		const lateRequest = invocation(setup.tool, runtime.cwd, "startup-late-callback");
+		const lateGrant = rejectedExecutionGrant(lateRequest);
+		const lateCallback = vi.fn(async () => undefined);
+		expect(await runtime.toolExecutionGateway.start(
+			{ invocation: lateRequest, grant: lateGrant },
+			lateCallback,
+		)).toMatchObject({
+			status: "uncertain",
+			grantDigest: lateGrant.grantDigest,
+			reason: expect.stringContaining("without one completed durable start callback"),
+		});
+		await lateCallbackAttempted;
+		expect(lateCallback).not.toHaveBeenCalled();
+
+		mode = "repeated_callback";
+		const repeatedRequest = invocation(setup.tool, runtime.cwd, "startup-repeated-callback");
+		const repeatedGrant = rejectedExecutionGrant(repeatedRequest);
+		const repeatedCallback = vi.fn(async () => undefined);
+		expect(await runtime.toolExecutionGateway.start(
+			{ invocation: repeatedRequest, grant: repeatedGrant },
+			repeatedCallback,
+		)).toMatchObject({
+			status: "uncertain",
+			grantDigest: repeatedGrant.grantDigest,
+			reason: expect.stringContaining("repeated durable start callback"),
+		});
+		expect(repeatedCallback).toHaveBeenCalledOnce();
+
+		mode = "duplicate";
+		const duplicateRequest = invocation(setup.tool, runtime.cwd, "startup-duplicate");
+		const duplicateGrant = rejectedExecutionGrant(duplicateRequest);
+		const firstCallback = vi.fn(async () => undefined);
+		const firstStart = runtime.toolExecutionGateway.start(
+			{ invocation: duplicateRequest, grant: duplicateGrant },
+			firstCallback,
+		);
+		await duplicateEntered;
+		const delegateCallsBeforeDuplicate = rawStart.mock.calls.length;
+		const duplicateCallback = vi.fn(async () => undefined);
+		expect(await runtime.toolExecutionGateway.start(
+			{ invocation: duplicateRequest, grant: duplicateGrant },
+			duplicateCallback,
+		)).toMatchObject({
+			status: "uncertain",
+			grantDigest: duplicateGrant.grantDigest,
+			reason: expect.stringContaining("duplicate active start"),
+		});
+		expect(rawStart).toHaveBeenCalledTimes(delegateCallsBeforeDuplicate);
+		expect(duplicateCallback).not.toHaveBeenCalled();
+		releaseDuplicate();
+		expect(await firstStart).toEqual({ status: "ready", grantDigest: duplicateGrant.grantDigest });
+		expect(firstCallback).toHaveBeenCalledOnce();
+		expect(await runtime.toolExecutionGateway.execute(
+			{ invocation: duplicateRequest, grant: duplicateGrant },
+			() => undefined,
+		)).toMatchObject({ status: "completed", grantDigest: duplicateGrant.grantDigest });
+
+		mode = "uncorrelated";
+		const uncorrelatedRequest = invocation(setup.tool, runtime.cwd, "startup-uncorrelated");
+		const uncorrelatedGrant = rejectedExecutionGrant(uncorrelatedRequest);
+		const uncorrelatedCallback = vi.fn(async () => undefined);
+		expect(await runtime.toolExecutionGateway.start(
+			{ invocation: uncorrelatedRequest, grant: uncorrelatedGrant },
+			uncorrelatedCallback,
+		)).toMatchObject({
+			status: "uncertain",
+			grantDigest: uncorrelatedGrant.grantDigest,
+			reason: expect.stringContaining("uncorrelated start"),
+		});
+		expect(uncorrelatedCallback).toHaveBeenCalledOnce();
+		expect(rawExecute).toHaveBeenCalledOnce();
+		expect(delegateTokens).toEqual(new Set([
+			missingGrant.grantDigest,
+			lateGrant.grantDigest,
+			repeatedGrant.grantDigest,
+			uncorrelatedGrant.grantDigest,
+		]));
+		await runtime.close();
+	});
+
+	it("does not let an uncorrelated same-digest execute consume an active startup lease", async () => {
+		const setup = await fixture();
+		const rawStart = vi.spyOn(PortBackedToolExecutionGateway.prototype, "start").mockImplementation(async (request, durableStart) => {
+			await durableStart();
+			return { status: "ready", grantDigest: request.grant.grantDigest };
+		});
+		const rawExecute = vi.spyOn(PortBackedToolExecutionGateway.prototype, "execute").mockImplementation(async (request) => ({
+			status: "completed",
+			grantDigest: request.grant.grantDigest,
+			result: { content: [{ type: "text", text: "fixture completed" }] },
+		}));
+		const runtime = await createProductionInteractiveRuntime(setup.options());
+		const request = invocation(setup.tool, runtime.cwd, "startup-malformed-execute");
+		const grant = rejectedExecutionGrant(request);
+		const executionRequest = { invocation: request, grant };
+		expect(await runtime.toolExecutionGateway.start(executionRequest, async () => undefined)).toEqual({
+			status: "ready",
+			grantDigest: grant.grantDigest,
+		});
+		expect(rawStart).toHaveBeenCalledOnce();
+
+		const malformedGrant = { ...grant, invocationDigest: "f".repeat(64) };
+		expect(await runtime.toolExecutionGateway.execute(
+			{ invocation: request, grant: malformedGrant },
+			() => undefined,
+		)).toMatchObject({
+			status: "uncertain",
+			grantDigest: grant.grantDigest,
+			reason: expect.stringContaining("uncorrelated execute"),
+			outcomeCertain: false,
+		});
+		expect(rawExecute).not.toHaveBeenCalled();
+
+		let closeSettled = false;
+		const close = runtime.close().then(() => { closeSettled = true; });
+		await Promise.resolve();
+		expect(closeSettled).toBe(false);
+		expect(await runtime.toolExecutionGateway.execute(executionRequest, () => undefined)).toMatchObject({
+			status: "completed",
+			grantDigest: grant.grantDigest,
+		});
+		expect(rawExecute).toHaveBeenCalledOnce();
+		await close;
+		expect(closeSettled).toBe(true);
+	});
+
+	it("rejects execute without an exact startup lease before calling the delegate", async () => {
+		const setup = await fixture();
+		const rawExecute = vi.spyOn(PortBackedToolExecutionGateway.prototype, "execute");
+		const runtime = await createProductionInteractiveRuntime(setup.options());
+		const request = invocation(setup.tool, runtime.cwd, "startup-no-start-execute");
+		const grant = rejectedExecutionGrant(request);
+
+		expect(await runtime.toolExecutionGateway.execute(
+			{ invocation: request, grant },
+			() => undefined,
+		)).toEqual({
+			status: "unavailable",
+			grantDigest: grant.grantDigest,
+			reason: "production interactive Tool Gateway has no active start lease",
+			outcomeCertain: true,
+		});
 		expect(rawExecute).not.toHaveBeenCalled();
 		await runtime.close();
 	});
@@ -801,6 +1021,21 @@ describe("production interactive runtime composition", () => {
 			...options,
 			toolGateway: { ...options.toolGateway, manifests: [] },
 		})).rejects.toThrow(/manifest/u);
+		expect(setup.manager.isClosed()).toBe(true);
+	});
+
+	it("rejects a provider-owned Approval store instead of creating a second source of truth", async () => {
+		const setup = await fixture();
+		const options = setup.options();
+		const toolGateway = {
+			...options.toolGateway,
+			approvalStore: new MemoryApprovalStateStore(),
+		};
+
+		await expect(createProductionInteractiveRuntime({
+			...options,
+			toolGateway,
+		})).rejects.toThrow(/Approval store is owned by the canonical state root/u);
 		expect(setup.manager.isClosed()).toBe(true);
 	});
 

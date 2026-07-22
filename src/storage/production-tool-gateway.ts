@@ -22,6 +22,7 @@ import type {
 	CapabilityRateLimitPort,
 } from "../runtime/protocol/v3/capability.ts";
 import type { PrincipalId } from "../runtime/protocol/v3/ids.ts";
+import type { ApprovalLifecycleEventPort } from "../runtime/protocol/v3/security-events.ts";
 import type { CredentialBrokerPort } from "../runtime/identity/enterprise-ports.ts";
 import type { WorkspaceServicePort } from "../runtime/protocol/v3/workspace.ts";
 import type { ToolExecutionGatewayPort } from "../runtime/types.ts";
@@ -287,6 +288,7 @@ export interface ProductionToolGatewayCompositionOptions {
 	rateLimiter: CapabilityRateLimitPort;
 	rateLimitPolicy(capability: CapabilityName): GatewayRateLimitPolicy;
 	prompter: PermissionPrompter;
+	approvalEvents: ApprovalLifecycleEventPort;
 	fallbackPrincipalId: PrincipalId;
 	credentials: ProductionCredentialCompositionOptions;
 	sandboxBackend?: SandboxBackend;
@@ -351,8 +353,7 @@ export async function createProductionToolGatewayComposition(
 	const approvalCoordinator = new RuntimeApprovalCoordinatorAdapter({
 		coordinator: approvalDomain,
 		registry: pendingApprovals,
-		fallbackPrincipalId: options.fallbackPrincipalId,
-		clock,
+		events: options.approvalEvents,
 	});
 	const authentication = new CapabilityAuthenticationAdapter({
 		peerBindings: [options.peerBinding],
@@ -366,6 +367,8 @@ export async function createProductionToolGatewayComposition(
 		snapshotResolver: options.snapshots,
 		permissionEngine: new PermissionEngine(),
 		approvals: pendingApprovals,
+		approvalEvents: options.approvalEvents,
+		approvalCanceller: approvalCoordinator,
 		clock,
 		...(options.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: options.approvalTimeoutMs }),
 	});
@@ -393,8 +396,10 @@ export async function createProductionToolGatewayComposition(
 		capability: capabilityGateway,
 		capabilityRequestFactory,
 		approval: approvalCoordinator,
+		approvalState: approvalStore,
 		environment,
 		attempts: attemptStore,
+		clock,
 	});
 	const credentialDomain = new CredentialBroker(
 		options.credentials.materials,

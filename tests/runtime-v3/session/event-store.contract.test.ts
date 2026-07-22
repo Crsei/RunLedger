@@ -4,7 +4,11 @@ import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json
 import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { verifyRuntimeEventChain } from "../../../src/runtime/session/chain-verification.ts";
-import { EventWriter, openEventWriter } from "../../../src/runtime/session/event-writer.ts";
+import {
+	EventWriter,
+	MANDATORY_FLUSH_EVENT_TYPES,
+	openEventWriter,
+} from "../../../src/runtime/session/event-writer.ts";
 import { MemoryEventStore } from "../../../src/runtime/session/memory-event-store.ts";
 import type { WriterFence } from "../../../src/runtime/session/types.ts";
 
@@ -164,6 +168,7 @@ describe("RuntimeEventStore memory contract", () => {
 	});
 
 	it("flushes tool terminal events before allowing later work", async () => {
+		expect(MANDATORY_FLUSH_EVENT_TYPES.has("tool.started")).toBe(true);
 		const context = setup();
 		expect((await appendGenesis(context)).ok).toBe(true);
 		const flush = vi.spyOn(context.store, "flushThrough");

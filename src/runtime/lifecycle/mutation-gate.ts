@@ -450,6 +450,14 @@ export class MutationGatedToolExecutionGateway implements ToolExecutionGatewayPo
 		onUpdate: AgentToolUpdateCallback,
 		signal?: AbortSignal,
 	): Promise<ToolExecutionGatewayExecuteResult> {
+		return this.#delegate.execute(request, onUpdate, signal);
+	}
+
+	public async start(
+		request: Parameters<ToolExecutionGatewayPort["start"]>[0],
+		durableStart: Parameters<ToolExecutionGatewayPort["start"]>[1],
+		signal?: AbortSignal,
+	): ReturnType<ToolExecutionGatewayPort["start"]> {
 		const admitted = await this.#gate.revalidate({
 			kind: "tool_execute",
 			correlationId: request.invocation.toolCallId,
@@ -462,6 +470,6 @@ export class MutationGatedToolExecutionGateway implements ToolExecutionGatewayPo
 				outcomeCertain: true,
 			};
 		}
-		return this.#delegate.execute(request, onUpdate, signal);
+		return this.#delegate.start(request, durableStart, signal);
 	}
 }

@@ -26,6 +26,7 @@ import {
 	type SecurityPortCancelRequest,
 	type SecurityPortCancelResult,
 } from "../../../src/runtime/protocol/v3/capability.ts";
+import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 
 const DIGEST_A = "a".repeat(64);
@@ -34,6 +35,7 @@ const DIGEST_C = "c".repeat(64);
 const AUTHORITY_ID = createRuntimeId("authority", "security-port");
 const TENANT_ID = createRuntimeId("tenant", "security-port");
 const PRINCIPAL_ID = createRuntimeId("principal", "security-port");
+const APPROVER_ID = createRuntimeId("principal", "security-port-approver");
 const REQUEST_ID = createRuntimeId("command", "security-port");
 const APPROVAL_ID = createRuntimeId("approval", "security-port");
 const PROFILE_ID = createRuntimeId("resource", "security-port-profile");
@@ -73,7 +75,7 @@ function approvalTicket(): ApprovalTicket {
 }
 
 function approvalReceipt(ticket: ApprovalTicket): ApprovalReceiptRef {
-	return {
+	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
 		authorityId: AUTHORITY_ID,
 		tenantId: TENANT_ID,
 		principalId: PRINCIPAL_ID,
@@ -84,12 +86,13 @@ function approvalReceipt(ticket: ApprovalTicket): ApprovalReceiptRef {
 		ticketDigest: approvalTicketDigest(ticket),
 		decision: "allowed",
 		decisionRevision: 1,
+		decidedBy: APPROVER_ID,
 		decidedAt: "2026-07-22T00:01:00.000Z",
 		evidenceComplete: true,
 		evidenceTruncated: false,
 		originalInputDigest: ticket.request.argumentsDigest,
-		receiptDigest: DIGEST_A,
 	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 function cancelResult(request: SecurityPortCancelRequest): SecurityPortCancelResult {

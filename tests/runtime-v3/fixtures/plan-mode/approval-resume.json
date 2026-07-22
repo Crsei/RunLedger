@@ -46,8 +46,9 @@
       "ticketDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "decision": "allowed",
       "decisionRevision": 1,
+      "decidedBy": "principal_fixture-approver",
       "decidedAt": "2026-07-22T00:00:02.000Z",
-      "receiptDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "receiptDigest": "709362b53fc5b783f6da3afff0da861045bb5231acd261918f23b87a881daf9f",
       "evidenceComplete": true,
       "evidenceTruncated": false,
       "originalInputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -85,8 +86,9 @@
       "ticketDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "decision": "allowed",
       "decisionRevision": 1,
+      "decidedBy": "principal_fixture-approver",
       "decidedAt": "2026-07-22T00:00:02.000Z",
-      "receiptDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "receiptDigest": "709362b53fc5b783f6da3afff0da861045bb5231acd261918f23b87a881daf9f",
       "evidenceComplete": true,
       "evidenceTruncated": false,
       "originalInputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -149,8 +151,9 @@
         "ticketDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "decision": "allowed",
         "decisionRevision": 1,
+        "decidedBy": "principal_fixture-approver",
         "decidedAt": "2026-07-22T00:00:02.000Z",
-        "receiptDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "receiptDigest": "709362b53fc5b783f6da3afff0da861045bb5231acd261918f23b87a881daf9f",
         "evidenceComplete": true,
         "evidenceTruncated": false,
         "originalInputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -222,8 +225,9 @@
         "ticketDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "decision": "allowed",
         "decisionRevision": 1,
+        "decidedBy": "principal_fixture-approver",
         "decidedAt": "2026-07-22T00:00:02.000Z",
-        "receiptDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "receiptDigest": "709362b53fc5b783f6da3afff0da861045bb5231acd261918f23b87a881daf9f",
         "evidenceComplete": true,
         "evidenceTruncated": false,
         "originalInputDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

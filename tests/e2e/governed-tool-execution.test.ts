@@ -1,9 +1,11 @@
 import * as path from "node:path";
 import { Type } from "typebox";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../../src/runtime/agent.ts";
 import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
 import {
+	approvalTicketDigest,
+	approvalTicketRequestDigest,
 	capabilityGatewayRequestDigest,
 	type ApprovalCoordinatorPort,
 	type ApprovalCoordinatorRequest,
@@ -27,6 +29,7 @@ import {
 import { AgentLoopSessionEvents } from "../../src/runtime/session/agent-loop-events.ts";
 import { EventWriter } from "../../src/runtime/session/event-writer.ts";
 import { MemoryEventStore } from "../../src/runtime/session/memory-event-store.ts";
+import { reduceSessionEvents } from "../../src/runtime/session/reducer.ts";
 import {
 	createSessionEventStreamRef,
 	type RuntimeEventV3,
@@ -40,6 +43,10 @@ import {
 	type ToolExecutionCapabilityRequestFactoryPort,
 	type ToolExecutionWorkspaceResolverPort,
 } from "../../src/security/integration/tool-execution-gateway.ts";
+import {
+	createApprovalSupersessionReceipt,
+	MemoryApprovalStateStore,
+} from "../../src/security/permission/approval-coordinator.ts";
 import type {
 	AgentTool,
 	AgentToolResult,
@@ -139,8 +146,10 @@ function approvalReceipt(ticket: ApprovalTicket, decision: ApprovalReceiptRef["d
 	const body = {
 		authorityId: AUTHORITY, tenantId: TENANT, principalId: PRINCIPAL,
 		receiptId: createRuntimeId("receipt", `approval-${decision}-${ticket.approvalId}`), approvalId: ticket.approvalId,
-		requestId: ticket.request.requestId, requestDigest: canonicalDigest(ticket.request), ticketDigest: canonicalDigest(ticket),
-		decision, decisionRevision: 1, decidedAt: NOW,
+		requestId: ticket.request.requestId,
+		requestDigest: approvalTicketRequestDigest(ticket),
+		ticketDigest: approvalTicketDigest(ticket),
+		decision, decisionRevision: 1, decidedBy: PRINCIPAL, decidedAt: NOW,
 		evidenceComplete: true, evidenceTruncated: false,
 		originalInputDigest: ticket.request.argumentsDigest,
 	};
@@ -177,19 +186,32 @@ class StrictCapability implements CapabilityGatewayPort {
 }
 
 class AllowApproval implements ApprovalCoordinatorPort {
+	public readonly state = new MemoryApprovalStateStore();
 	public receipt: ApprovalReceiptRef | undefined;
+	public ticket: ApprovalTicket | undefined;
 	public forgeReceiptDigest = false;
 
 	public async request(request: ApprovalCoordinatorRequest): Promise<ApprovalCoordinatorResult> {
 		const receipt = approvalReceipt(request.ticket, "allowed");
-		this.receipt = this.forgeReceiptDigest
+		this.ticket = request.ticket;
+		const candidate = this.forgeReceiptDigest
 			? { ...receipt, receiptDigest: "f".repeat(64) }
 			: receipt;
+		if (this.forgeReceiptDigest) {
+			this.receipt = candidate;
+		} else {
+			const committed = await this.state.commit(candidate, 0);
+			if (!committed.ok) throw new Error(committed.error.message);
+			this.receipt = committed.value;
+		}
 		return {
 			approvalId: request.ticket.approvalId,
-			ticketDigest: canonicalDigest(request.ticket),
+			ticketDigest: approvalTicketDigest(request.ticket),
 			receipt: this.receipt,
 		};
+	}
+	public async read(approvalId: ApprovalReceiptRef["approvalId"]): Promise<ApprovalReceiptRef | undefined> {
+		return this.state.read(approvalId);
 	}
 	public async cancel(request: SecurityPortCancelRequest): Promise<SecurityPortCancelResult> {
 		return { ...request, status: "not_found" };
@@ -349,6 +371,7 @@ function gateway(options: {
 	environment?: StrictEnvironment;
 	attempts?: MemoryToolExecutionAttemptStore;
 	approval?: ApprovalCoordinatorPort;
+	approvalState?: { read(approvalId: ApprovalReceiptRef["approvalId"]): Promise<ApprovalReceiptRef | undefined> };
 	factory?: ToolExecutionCapabilityRequestFactoryPort;
 } = {}) {
 	const workspace = new StrictWorkspace();
@@ -361,7 +384,10 @@ function gateway(options: {
 		value: new PortBackedToolExecutionGateway({
 			workspace, workspaceResolver, capability,
 			capabilityRequestFactory: options.factory ?? new StrictFactory(),
-			environment, attempts, ...(options.approval ? { approval: options.approval } : {}),
+			environment,
+			attempts,
+			...(options.approval ? { approval: options.approval } : {}),
+			...(options.approvalState ? { approvalState: options.approvalState } : {}),
 		}),
 	};
 }
@@ -388,6 +414,8 @@ describe("governed tool execution path", () => {
 	it("validates Workspace, Capability and sandbox receipts before the context-bound side effect", async () => {
 		const ports = gateway();
 		const session = sessionSetup();
+		const flush = vi.spyOn(session.store, "flushThrough");
+		const claim = vi.spyOn(ports.attempts, "claim");
 		const call: ToolCall = { type: "toolCall", id: "provider-write", name: "write", arguments: { path: "inside.txt", content: "ok" } };
 		const agent = new Agent({
 			initialState: { systemPrompt: "test", model: MODEL, tools: [governedTool()] },
@@ -406,6 +434,76 @@ describe("governed tool execution path", () => {
 		const authorized = durable.find((event) => event.type === "tool.authorized");
 		const started = durable.find((event) => event.type === "tool.started");
 		expect(authorized?.payload.decisionReceiptId).not.toBe(started?.payload.workspaceReceiptId);
+		const startedFlush = flush.mock.calls.findIndex(([, cursor]) => cursor.sequence === started?.sequence);
+		expect(startedFlush).toBeGreaterThanOrEqual(0);
+		expect(claim).toHaveBeenCalledOnce();
+		expect(flush.mock.invocationCallOrder[startedFlush]).toBeLessThan(claim.mock.invocationCallOrder[0] ?? 0);
+	});
+
+	it("does not claim an execution attempt when the durable tool.started flush fails", async () => {
+		const ports = gateway();
+		const session = sessionSetup();
+		vi.spyOn(session.store, "flushThrough").mockResolvedValueOnce({
+			ok: false,
+			error: {
+				code: "durable_write_failed",
+				message: "injected tool start flush failure",
+				retryable: false,
+				effect: "uncertain",
+			},
+		});
+		const claim = vi.spyOn(ports.attempts, "claim");
+		const execute = vi.spyOn(ports.value, "execute");
+		const call: ToolCall = {
+			type: "toolCall",
+			id: "provider-start-flush-failure",
+			name: "write",
+			arguments: { path: "inside.txt", content: "must-not-run" },
+		};
+
+		await expect(new Agent({
+			initialState: { systemPrompt: "test", model: MODEL, tools: [governedTool()] },
+			streamFn: oneToolThenStop(call),
+			loopConfig: {
+				cwd: ROOT,
+				sessionEvents: session.sessionEvents,
+				toolExecutionGateway: ports.value,
+			},
+		}).prompt("fail durable start flush")).rejects.toThrow("durable event barrier failed");
+
+		expect(claim).not.toHaveBeenCalled();
+		expect(execute).not.toHaveBeenCalled();
+		expect(ports.environment.effects).toBe(0);
+	});
+
+	it("closes the model gate when attempt claim fails after durable tool start", async () => {
+		const ports = gateway();
+		const session = sessionSetup();
+		const modelCalls = { value: 0 };
+		const claim = vi.spyOn(ports.attempts, "claim").mockRejectedValueOnce(new Error("injected claim failure"));
+		const call: ToolCall = {
+			type: "toolCall",
+			id: "provider-claim-after-start-failure",
+			name: "write",
+			arguments: { path: "inside.txt", content: "must-not-run" },
+		};
+
+		await new Agent({
+			initialState: { systemPrompt: "test", model: MODEL, tools: [governedTool()] },
+			streamFn: oneToolThenStop(call, modelCalls),
+			loopConfig: {
+				cwd: ROOT,
+				sessionEvents: session.sessionEvents,
+				toolExecutionGateway: ports.value,
+			},
+		}).prompt("fail claim after durable start");
+
+		const durable = await events(session.store);
+		expect(claim).toHaveBeenCalledOnce();
+		expect(durable.some((event) => event.type === "tool.started")).toBe(true);
+		expect(durable.find((event) => event.type === "tool.failed")?.payload.outcomeCertain).toBe(false);
+		expect(modelCalls.value).toBe(1);
+		expect(ports.environment.effects).toBe(0);
 	});
 
 	it("binds the durable tool request and Gateway grant to validated PreToolUse updatedInput", async () => {
@@ -490,7 +588,7 @@ describe("governed tool execution path", () => {
 	it("resumes an approved request only with the coordinator's exact receipt", async () => {
 		const approval = new AllowApproval();
 		const capability = new ResumingCapability(approval);
-		const ports = gateway({ approval, capability });
+		const ports = gateway({ approval, approvalState: approval.state, capability });
 		const result = await ports.value.authorize({
 			turnId: createRuntimeId("turn", "approval-resume"),
 			toolCallId: createRuntimeId("toolCall", "approval-resume"),
@@ -509,7 +607,7 @@ describe("governed tool execution path", () => {
 		const approval = new AllowApproval();
 		approval.forgeReceiptDigest = true;
 		const capability = new ResumingCapability(approval);
-		const ports = gateway({ approval, capability });
+		const ports = gateway({ approval, approvalState: approval.state, capability });
 		const result = await ports.value.authorize({
 			turnId: createRuntimeId("turn", "approval-forged-digest"),
 			toolCallId: createRuntimeId("toolCall", "approval-forged-digest"),
@@ -527,6 +625,87 @@ describe("governed tool execution path", () => {
 		expect(ports.environment.effects).toBe(0);
 	});
 
+	it("does not publish a stale tool start when durable approval is revoked after authorize", async () => {
+		const approval = new AllowApproval();
+		const capability = new ResumingCapability(approval);
+		const ports = gateway({ approval, approvalState: approval.state, capability });
+		const session = sessionSetup();
+		const execute = vi.spyOn(ports.value, "execute");
+		let authorizedGrant: ToolExecutionAuthorizationGrant | undefined;
+		const revokingGateway: ToolExecutionGatewayPort = {
+			authorize: async (request, signal) => {
+				const result = await ports.value.authorize(request, signal);
+				if (result.status !== "authorized") return result;
+				const ticket = approval.ticket;
+				const allowed = approval.receipt;
+				if (!ticket || !allowed) throw new Error("approval fixture did not persist an allowed receipt");
+				authorizedGrant = result.grant;
+				await session.sessionEvents.recordApprovalRequested(ticket, {
+					attemptId: createRuntimeId("command", "revoke-after-authorize-attempt"),
+					resourceKind: "filesystem",
+					summary: {
+						operation: "write",
+						toolIdentityDigest: canonicalDigest("write"),
+						targetDigest: canonicalDigest("inside.txt"),
+						environmentKeyDigests: [],
+					},
+				});
+				await session.sessionEvents.recordApprovalTerminal(ticket, allowed);
+				const revoked = createApprovalSupersessionReceipt(
+					allowed,
+					"revoked",
+					"2026-07-22T00:00:01.000Z",
+					PRINCIPAL,
+				);
+				const committed = await approval.state.commit(revoked, allowed.decisionRevision);
+				if (!committed.ok) throw new Error(committed.error.message);
+				approval.receipt = committed.value;
+				await session.sessionEvents.recordApprovalTerminal(ticket, committed.value);
+				return result;
+			},
+			start: (request, durableStart, signal) => ports.value.start(request, durableStart, signal),
+			execute: (request, onUpdate, signal) => ports.value.execute(request, onUpdate, signal),
+		};
+		const call: ToolCall = {
+			type: "toolCall",
+			id: "provider-revoked-after-authorize",
+			name: "write",
+			arguments: { path: "inside.txt", content: "must-not-run" },
+		};
+
+		await new Agent({
+			initialState: { systemPrompt: "test", model: MODEL, tools: [governedTool()] },
+			streamFn: oneToolThenStop(call),
+			loopConfig: {
+				cwd: ROOT,
+				sessionEvents: session.sessionEvents,
+				toolExecutionGateway: revokingGateway,
+			},
+		}).prompt("revoke after authorize");
+
+		const durable = await events(session.store);
+		const revoked = durable.find((event) => event.type === "permission.revoked");
+		const currentApproval = approval.ticket
+			? await approval.state.read(approval.ticket.approvalId)
+			: undefined;
+		expect(currentApproval).toMatchObject({ decision: "revoked", decisionRevision: 2 });
+		expect(revoked?.payload).toMatchObject({
+			decisionRevision: 2,
+			receiptId: currentApproval?.receiptId,
+			receiptDigest: currentApproval?.receiptDigest,
+		});
+		expect(durable.some((event) => event.type === "sandbox.resolved")).toBe(false);
+		expect(durable.some((event) => event.type === "tool.authorized")).toBe(false);
+		expect(durable.some((event) => event.type === "tool.started")).toBe(false);
+		const projection = reduceSessionEvents(durable);
+		if (!projection.ok) throw new Error(projection.error.message);
+		expect(projection.value.toolCalls).toMatchObject([{ status: "failed", uncertain: false }]);
+		expect(ports.environment.effects).toBe(0);
+		expect(execute).not.toHaveBeenCalled();
+		if (!authorizedGrant) throw new Error("authorization grant was not captured");
+		expect(await ports.attempts.read(authorizedGrant.grantDigest)).toBeUndefined();
+	});
+
 	it("rejects a fake authorized grant before durable authorization events", async () => {
 		const backing = gateway();
 		const session = sessionSetup();
@@ -540,6 +719,7 @@ describe("governed tool execution path", () => {
 					grant: { ...result.grant, argumentsDigest: "f".repeat(64) },
 				};
 			},
+			start: (request, durableStart, signal) => backing.value.start(request, durableStart, signal),
 			execute: async (request) => {
 				executeCalls += 1;
 				return {
@@ -580,6 +760,10 @@ describe("governed tool execution path", () => {
 		};
 		const authorization = await ports.value.authorize(invocation);
 		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		expect(await ports.value.start(
+			{ invocation, grant: authorization.grant },
+			async () => undefined,
+		)).toMatchObject({ status: "ready", grantDigest: authorization.grant.grantDigest });
 		const result = await ports.value.execute({ invocation, grant: authorization.grant }, () => undefined);
 		expect(result).toMatchObject({
 			status: "uncertain",
@@ -621,6 +805,7 @@ describe("governed tool execution path", () => {
 		const modelCalls = { value: 0 };
 		const aborting: ToolExecutionGatewayPort = {
 			authorize: (request, signal) => backing.value.authorize(request, signal),
+			start: (request, durableStart, signal) => backing.value.start(request, durableStart, signal),
 			execute: async (request) => ({
 				status: "aborted",
 				grantDigest: request.grant.grantDigest,
@@ -654,6 +839,10 @@ describe("governed tool execution path", () => {
 		};
 		const authorization = await first.value.authorize(invocation);
 		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		expect(await first.value.start(
+			{ invocation, grant: authorization.grant },
+			async () => undefined,
+		)).toMatchObject({ status: "ready", grantDigest: authorization.grant.grantDigest });
 		const firstResult = await first.value.execute({ invocation, grant: authorization.grant }, () => undefined);
 		expect(firstResult.status).toBe("completed");
 		expect(environment.effects).toBe(1);
@@ -662,6 +851,66 @@ describe("governed tool execution path", () => {
 		const replay = await restarted.value.execute({ invocation, grant: authorization.grant }, () => undefined);
 		expect(replay).toEqual(firstResult);
 		expect(environment.effects).toBe(1);
+	});
+
+	it.each([
+		"read failure",
+		"missing record",
+		"mismatched invocation",
+		"mismatched terminal identity",
+	] as const)("keeps a consumed durable start claim uncertain after %s", async (mode) => {
+		const ports = gateway();
+		const caseId = canonicalDigest(mode).slice(0, 16);
+		const invocation: ToolExecutionGatewayRequest = {
+			turnId: createRuntimeId("turn", `claimed-${caseId}`),
+			toolCallId: createRuntimeId("toolCall", `claimed-${caseId}`),
+			providerToolCallId: `provider-claimed-${caseId}`,
+			tool: governedTool(),
+			arguments: { path: "inside.txt", content: "must-not-run" },
+			cwd: ROOT,
+			envVars: {},
+		};
+		const authorization = await ports.value.authorize(invocation);
+		if (authorization.status !== "authorized") throw new Error(authorization.reason);
+		expect(await ports.value.start(
+			{ invocation, grant: authorization.grant },
+			async () => undefined,
+		)).toEqual({ status: "ready", grantDigest: authorization.grant.grantDigest });
+
+		const foreignInvocationDigest = `${authorization.grant.invocationDigest[0] === "0" ? "1" : "0"}${authorization.grant.invocationDigest.slice(1)}`;
+		const foreignGrantDigest = `${authorization.grant.grantDigest[0] === "0" ? "1" : "0"}${authorization.grant.grantDigest.slice(1)}`;
+		const read = vi.spyOn(ports.attempts, "read");
+		if (mode === "read failure") read.mockRejectedValueOnce(new Error("injected attempt read failure"));
+		if (mode === "missing record") read.mockResolvedValueOnce(undefined);
+		if (mode === "mismatched invocation") {
+			read.mockResolvedValueOnce({ status: "started", invocationDigest: foreignInvocationDigest });
+		}
+		if (mode === "mismatched terminal identity") {
+			read.mockResolvedValueOnce({
+				status: "completed",
+				invocationDigest: authorization.grant.invocationDigest,
+				result: {
+					status: "unavailable",
+					grantDigest: foreignGrantDigest,
+					reason: "foreign terminal result",
+					outcomeCertain: true,
+				},
+			});
+		}
+
+		const result = await ports.value.execute({ invocation, grant: authorization.grant }, () => undefined);
+		expect(result).toMatchObject({
+			status: "uncertain",
+			grantDigest: authorization.grant.grantDigest,
+			outcomeCertain: false,
+		});
+		expect(ports.environment.effects).toBe(0);
+		expect(await ports.value.execute({ invocation, grant: authorization.grant }, () => undefined)).toMatchObject({
+			status: "uncertain",
+			grantDigest: authorization.grant.grantDigest,
+			outcomeCertain: false,
+		});
+		expect(ports.environment.effects).toBe(0);
 	});
 
 	it.each([
@@ -698,6 +947,10 @@ describe("governed tool execution path", () => {
 				return status === "approval_required"
 					? { status, requestId: ticketRequestId, ticket, reason: "approval required" }
 					: { status, requestId: ticketRequestId, reason: status };
+			},
+			start: async (request, durableStart) => {
+				await durableStart();
+				return { status: "ready", grantDigest: request.grant.grantDigest };
 			},
 			execute: async () => { throw new Error("must not execute"); },
 		};

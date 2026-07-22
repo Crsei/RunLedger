@@ -185,8 +185,12 @@ function workspaceLease(context: StartupContext, seed: string, overrides: Partia
 	};
 }
 
-function approvalReceipt(context: StartupContext, seed: string): ApprovalReceiptRef {
-	return {
+function approvalReceipt(
+	context: StartupContext,
+	seed: string,
+	overrides: Partial<Omit<ApprovalReceiptRef, "receiptDigest">> = {},
+): ApprovalReceiptRef {
+	const body: Omit<ApprovalReceiptRef, "receiptDigest"> = {
 		authorityId: context.authorityId,
 		tenantId: context.tenantId,
 		principalId: context.principalId,
@@ -197,12 +201,14 @@ function approvalReceipt(context: StartupContext, seed: string): ApprovalReceipt
 		ticketDigest: E,
 		decision: "allowed",
 		decisionRevision: 1,
+		decidedBy: createRuntimeId("principal", `approver-${seed}`),
 		decidedAt: "2026-07-22T00:00:00.000Z",
-		receiptDigest: canonicalDigest({ seed, kind: "approval" }),
 		evidenceComplete: true,
 		evidenceTruncated: false,
 		originalInputDigest: D,
+		...overrides,
 	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 function referenceSet(
@@ -611,10 +617,9 @@ describe("startup recovery audit", () => {
 
 	it("rejects a valid approval audit whose validity horizon differs from the canonical expiry", async () => {
 		const context = await setup("approval-valid-through");
-		const approval = {
-			...approvalReceipt(context, "approval-valid-through"),
+		const approval = approvalReceipt(context, "approval-valid-through", {
 			expiresAt: "2026-07-22T00:10:00.000Z",
-		};
+		});
 		const auditor = new Auditor({
 			approval: async (sessionId, candidate) => ({
 				ok: true,
@@ -647,10 +652,9 @@ describe("startup recovery audit", () => {
 
 	it("rejects a non-allowed canonical approval even when the auditor reports it as valid", async () => {
 		const context = await setup("approval-denied-valid-audit");
-		const approval = {
-			...approvalReceipt(context, "approval-denied-valid-audit"),
+		const approval = approvalReceipt(context, "approval-denied-valid-audit", {
 			decision: "denied" as const,
-		};
+		});
 		const auditor = new Auditor({
 			approval: async (sessionId, candidate) => ({
 				ok: true,

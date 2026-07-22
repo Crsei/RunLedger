@@ -11,7 +11,10 @@ import {
 	type ApprovalReceiptRef,
 } from "../runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
-import type { ApprovalStateStorePort } from "../security/permission/approval-coordinator.ts";
+import {
+	validateApprovalStateCommit,
+	type ApprovalStateStorePort,
+} from "../security/permission/approval-coordinator.ts";
 import type { SecurityResult } from "../security/types.ts";
 import type {
 	ToolExecutionAttemptRecord,
@@ -270,6 +273,20 @@ class PrivateRecordDirectory {
 			await release();
 		}
 	}
+
+	/** 尚未 materialize 的 identity 也必须先锁定，避免并发首写和 final-path torn create。 */
+	public async lockIdentity<T>(path: string, operation: () => Promise<T>): Promise<T> {
+		const release = await lockfile.lock(path, {
+			realpath: false,
+			stale: 30_000,
+			retries: { retries: 50, minTimeout: 10, maxTimeout: 50, factor: 1 },
+		});
+		try {
+			return await operation();
+		} finally {
+			await release();
+		}
+	}
 }
 
 export class FileToolExecutionAttemptStore implements ToolExecutionAttemptStorePort {
@@ -343,20 +360,44 @@ export class FileApprovalStateStore implements ApprovalStateStorePort {
 		receipt: ApprovalReceiptRef,
 		expectedRevision: number,
 	): Promise<SecurityResult<ApprovalReceiptRef>> {
-		if (!isApprovalReceiptRef(receipt) || expectedRevision !== 0 || receipt.decisionRevision !== 1) {
-			return { ok: false, error: { code: "approval_stale", message: "approval decision revision is invalid", retryable: false } };
+		if (!isApprovalReceiptRef(receipt) || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+			return { ok: false, error: { code: "approval_stale", message: "approval decision or expected revision is invalid", retryable: false } };
 		}
 		await this.#records.verify();
 		const path = this.#records.path(receipt.approvalId);
-		const created = await this.#records.create(path, JSON.stringify(storedApproval(receipt)));
-		if (created === "created") return { ok: true, value: structuredClone(receipt) };
-		const raw = await this.#records.read(path);
-		if (raw === undefined) {
-			return { ok: false, error: { code: "approval_stale", message: "approval terminal record disappeared", retryable: false } };
+		return this.#records.lockIdentity(path, async () => {
+			const raw = await this.#records.read(path);
+			const current = raw === undefined ? undefined : parseApproval(raw, receipt.approvalId).receipt;
+			const validation = validateApprovalStateCommit(current, receipt, expectedRevision);
+			if (!validation.ok) return validation;
+			if (validation.value === "idempotent" && current) return { ok: true, value: structuredClone(current) };
+			const stored = structuredClone(receipt);
+			await this.#records.replace(path, JSON.stringify(storedApproval(stored)));
+			return { ok: true, value: structuredClone(stored) };
+		});
+	}
+
+	public async withCurrentApproval<T>(
+		receipt: ApprovalReceiptRef,
+		operation: () => Promise<T>,
+	): Promise<SecurityResult<T>> {
+		if (!isApprovalReceiptRef(receipt) || receipt.decision !== "allowed") {
+			return { ok: false, error: { code: "approval_stale", message: "approval receipt is invalid or not allowed", retryable: false } };
 		}
-		const current = parseApproval(raw, receipt.approvalId).receipt;
-		return current.receiptDigest === receipt.receiptDigest
-			? { ok: true, value: structuredClone(current) }
-			: { ok: false, error: { code: "approval_stale", message: "approval already has a different terminal decision", retryable: false } };
+		await this.#records.verify();
+		const path = this.#records.path(receipt.approvalId);
+		return this.#records.lockIdentity(path, async () => {
+			const raw = await this.#records.read(path);
+			const current = raw === undefined ? undefined : parseApproval(raw, receipt.approvalId).receipt;
+			if (
+				current === undefined || current.decision !== "allowed" ||
+				current.receiptId !== receipt.receiptId ||
+				current.decisionRevision !== receipt.decisionRevision ||
+				current.receiptDigest !== receipt.receiptDigest
+			) {
+				return { ok: false, error: { code: "approval_stale", message: "approval receipt is no longer the exact current allowed revision", retryable: false } };
+			}
+			return { ok: true, value: await operation() };
+		});
 	}
 }

@@ -18,7 +18,10 @@ import {
 	RuntimeCapabilityGatewayAdapter,
 	type SecurityToolManifest,
 } from "../../src/security/integration/runtime-gateway-adapter.ts";
-import { ApprovalCoordinator } from "../../src/security/permission/approval-coordinator.ts";
+import {
+	ApprovalCoordinator,
+	SYSTEM_APPROVAL_PRINCIPAL_ID,
+} from "../../src/security/permission/approval-coordinator.ts";
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
 import type { SecuritySnapshot } from "../../src/security/types.ts";
 
@@ -152,6 +155,19 @@ function harness(maxUnits = 20): {
 		...(["repository_read", "browser", "credential"] as const).map((capability) => ({ rateLimitId: rateLimitId(capability), capability, maxUnits, maxWindowMs: 60_000 })),
 	], () => NOW);
 	const security = snapshot();
+	const events = {
+		recordApprovalRequested: async () => undefined,
+		recordApprovalTerminal: async () => undefined,
+	};
+	const coordinator = new ApprovalCoordinator({
+		prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }) },
+		clock: () => NOW, timeoutMs: 60_000, fallbackPrincipalId: createRuntimeId("principal", "fallback"),
+	});
+	const approval = new RuntimeApprovalCoordinatorAdapter({
+		coordinator,
+		registry,
+		events,
+	});
 	const gateway = new RuntimeCapabilityGatewayAdapter({
 		authentication, rateLimiter: limiter,
 		rateLimitPolicy: (capability) => ({ rateLimitId: rateLimitId(capability), windowMs: 60_000, units: 1 }),
@@ -163,16 +179,13 @@ function harness(maxUnits = 20): {
 			resolve: async (digest) => digest === security.policyDigest ? { ok: true, value: security } : { ok: false, error: { code: "invalid_config", message: "stale", retryable: false } },
 			currentPolicyDigest: async () => security.policyDigest,
 		},
-		permissionEngine: new PermissionEngine(), approvals: registry, clock: () => NOW,
-	});
-	const coordinator = new ApprovalCoordinator({
-		prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }) },
-		clock: () => NOW, timeoutMs: 60_000, fallbackPrincipalId: createRuntimeId("principal", "fallback"),
+		permissionEngine: new PermissionEngine(), approvals: registry,
+		approvalEvents: events, approvalCanceller: approval, clock: () => NOW,
 	});
 	return {
 		gateway,
 		registry,
-		approval: new RuntimeApprovalCoordinatorAdapter({ coordinator, registry, fallbackPrincipalId: createRuntimeId("principal", "fallback"), clock: () => NOW }),
+		approval,
 	};
 }
 
@@ -191,7 +204,14 @@ describe("authenticated Runtime capability gateway", () => {
 		const first = gatewayRequest({ idempotency: "nonce-first", nonce: "nonce-replay-shared" });
 		const replay = gatewayRequest({ idempotency: "nonce-second", nonce: "nonce-replay-shared" });
 		expect((await gateway.authorize(first)).decision).toBe("allow");
-		expect(await gateway.authorize(replay)).toMatchObject({ decision: "deny", approvalReceipt: { decision: "denied" } });
+		expect(await gateway.authorize(replay)).toMatchObject({
+			decision: "deny",
+			approvalReceipt: {
+				decision: "denied",
+				principalId: replay.request.principalId,
+				decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID,
+			},
+		});
 	});
 
 	it("enforces the independent gateway rate limit", async () => {
