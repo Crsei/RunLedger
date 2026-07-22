@@ -1870,6 +1870,18 @@ Canonical event/reducer 闭环:
 3. `runtime: add attested remote executor ports and session handoff schemas`
 4. `runtime: harden shutdown recovery GC and harness regressions`
 
+#### 2026-07-23 governed startup external-receipt 切片证据（不关闭 Phase 11）
+
+- 状态:受治理 startup/admission 的有界实现检查点；Phase 11 的 startup、idle reload、runtime replacement、完整 Harness Regression 与最终验收复选框继续保持未勾选。
+- commit/worktree:`830a7232c0aec570917fc55c69145cce45fa31ab`，`worktree/governed-agent-harness-runtime`；实现与测试共 16 条显式路径，提交后无实现 diff。
+- targeted:`npx vitest run tests/runtime-v3/lifecycle/startup.test.ts tests/runtime-v3/lifecycle/durable-receipt-auditor.test.ts tests/runtime-v3/lifecycle/governed-session-runtime.test.ts tests/runtime-v3/control-plane/v3-session-adapters.test.ts tests/runtime-v3/control-plane/v3-session-startup-gate.test.ts tests/cli/startup-external-receipt-gate.test.ts tests/cli/v3-session-command-cleanup.test.ts tests/e2e/daemon-startup-external-receipt-gate.test.ts` -> Linux，8 files / 65 tests，PASS。
+- full gate:`npm run check`、`npm test`（237 files / 1351 tests）、`npm run build`、`npm run test:harness-regression`（11 files / 52 tests）、`git diff --check` 全部 PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。
+- 已覆盖:`ExternalReceiptAuditReceipt` 绑定 canonical subject/authoritative digest、revision、Approval expiry 与自身 digest；durable Workspace/Approval auditor 对 stale/revoked/expired/missing/store failure fail closed；partial/unknown、throw、timeout、abort 或畸形结果只会 paused，首个 timeout/abort 后不会继续制造悬挂审计调用。
+- 已接线:既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 先经过 governed admission；缺 auditor 时 external refs 使用 fail-closed sentinel，新建或确无 external refs 的 session 不伪造审计调用。CLI invalid-lease fixture 证明 controller/model/tool composition 不会先于审计启动，factory fixture 证明 candidate authority/agent binding 不会先于审计启动。
+- cleanup:CLI migration/fork 的异常路径会按 target/child/parent 顺序完成 discard/close，清理失败通过 `AggregateError` 保留原始错误与所有清理错误；managed runtime 只有 close 成功才标记 closed/unregister。
+- specialty gate:仍为 INCOMPLETE；标准 CLI/daemon 尚未从 deployment-owned canonical state root 自动组合 file-backed lease/approval stores 与 durable auditor，admission 后也没有 model/tool/child 每次 mutation 的持续撤销/expiry 复检，idle unload/reload、same-session hot replacement 和部分非 CLI cleanup fault E2E 仍缺失，详见 `05-remaining-stuff.md`。
+- verified_at:`2026-07-23T02:12:47+08:00`。
+
 ## 8. 阶段依赖与发布里程碑
 
 ```text

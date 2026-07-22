@@ -1,11 +1,12 @@
 # Governed Agent Harness Runtime 剩余事项与取证问题
 
 > 文档状态:open issues / handoff ledger,不是第二份实施计划或完成状态真源
-> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00
+> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00
 > 目标 worktree:`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-governed-runtime`
 > 分支:`worktree/governed-agent-harness-runtime`
 > 基线 commit:`65f905452195e034c99fa5ac560a7e23a822f052`
 > 本轮实现检查点 commit:`004a2521934be745e8887f40f2b2631c392829dd`
+> governed startup 切片 commit:`830a7232c0aec570917fc55c69145cce45fa31ab`
 > 权威计划:[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)
 
 本文件只记录本轮参考审查、计划审计和实现 worktree 检查中遇到的问题、未完成项与恢复顺序。任何条目都不能因为“已有文件”“定向测试曾通过”或“代码量较大”而视为完成。完成状态必须回写到同步后的 `04`，并附目标分支 commit、定向测试、完整门禁和专项联合证据。
@@ -14,7 +15,7 @@
 
 ### 1.1 权威计划已去分叉
 
-2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。当前 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。
+2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，当前 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。本轮只在目标 worktree 追加 `830a723` 的 scoped evidence；主 checkout 保持干净且未被旁路修改，待该分支正常合并后再同步。
 
 - [x] 以 2124 行版本作为唯一 canonical 文件，保留新增证据规则、I0-I7 串行账本、兼容矩阵和 13 类 mutation restart 要求。
 - [x] 没有迁移旧版 147 个无完整证据的勾选；当前 `04` 有 343 个真实未勾选任务，唯一 `[x]` 位于 §9.2 模板示例，不是完成声明。
@@ -44,6 +45,20 @@
 | pi-ai focused + snapshot audit | PASS | provider tests 2 files / 14 tests；固定 `pi@3f1762c...` 审计 164/164 source files、72 catalog files |
 
 修复前的 `/tmp/runledger-governed-vitest-current.json` 曾记录 1286/1299、13 个失败，只是故障暴露快照，不再代表当前状态。最后五个失败文件均已定向关闭：Control Plane/daemon/core attack 联合 25 files / 173 tests、orchestrator session journal 6/6、enterprise boundary 4/4。
+
+### 1.4 Governed startup 切片验证
+
+`830a7232c0aec570917fc55c69145cce45fa31ab` 已作为独立实现提交落入目标分支；它不替换 §1.3 的整体检查点，也不关闭 Phase 11。
+
+| 命令 | 结果 | 说明 |
+|---|---|---|
+| governed startup targeted | PASS | 8 files，65/65 tests；覆盖 lifecycle、durable auditor、CLI、factory、daemon 与 cleanup |
+| `npm run check` | PASS | TypeScript、runtime boundary、execution boundary 全部通过 |
+| `npm test` | PASS | 237 files，1351/1351 tests passed |
+| `npm run build` | PASS | NodeNext production build 成功 |
+| `npm run test:harness-regression` | PASS | 11 files，52/52 tests；pretest 再次完整执行 `npm run check` |
+| `git diff --check` | PASS | 实现提交前 diff 与提交后文档 diff 均无 whitespace error |
+| pi-ai fixed snapshot audit | PASS | `pi@3f1762c...`，164/164 source files、72 catalog files |
 
 ## 2. 四个参考仓库审查中遇到的边界问题
 
@@ -135,13 +150,19 @@
 
 ## 4. 当前明确未完成的功能边界
 
-### P0:生产 startup/resume 仍可能绕过外部 receipt 审计
+### P0:Governed startup 已有入口门禁，但生产状态根与持续执行门禁仍未闭合
 
-当前 CLI 会直接 `V3SessionManager.open()` 并检查本地 `recoveryDecision`；真正构造 `StartupRecoveryCoordinator` 和外部 receipt auditor 的 governed runtime open 路径没有成为所有生产入口的唯一入口。
+`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路，但只构成 startup/admission 切片，不等于整个 session 生命周期持续受外部 receipt 约束。
 
-- [ ] CLI、daemon resume、idle reload 和 runtime replacement 统一经过 `openGovernedSession`/等价受治理 factory，再由 `runIfResumable` 放行。
-- [ ] 对 stale/revoked/unavailable Workspace lease、Approval receipt、auditor timeout/throw/partial 注入 E2E，断言 model/tool/child 在审核完成前均未启动。
-- [ ] startup 任一外部 receipt 不可验证时进入 paused/reconciliation_required，不能回退本地普通 session。
+- [x] 既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 统一先经过 `GovernedV3SessionRuntime`；审计未通过时不会进入 controller/model/tool、candidate authority、agent binding 或 child creation。
+- [x] Workspace lease 与 Approval receipt 的 exact digest/revision/expiry/state、partial/unknown completeness、missing/store throw/timeout/abort/畸形 receipt 均 fail closed；非 `allowed` Approval 即使被 adapter 伪报 valid 也只能 paused。
+- [x] 单调用 timeout 与整次 scan deadline 有界；adapter 忽略 `AbortSignal` 时，首个 timeout/abort 后停止启动后续 audits，不会按 10,000-item 上限继续制造悬挂调用。
+- [x] 缺 auditor 的默认 sentinel 对含 external refs 的 session fail closed；确无 external refs 的 clean/new session 不需要伪造 Workspace/Approval receipt。
+- [ ] 标准 CLI/daemon 目前只有可选 auditor 注入，尚未从 deployment-owned canonical state root 自动组合 `FileWorkspaceLeaseMutationPort`、`FileApprovalStateStore` 与 `DurableStartupExternalReceiptAuditor`；缺少“同一 scope/root 的真实 file stores -> auditor -> CLI/daemon”联合 E2E。
+- [ ] admission callback 只在入口复检 Approval `validThrough`，随后 CLI/factory 仍持有裸 `V3SessionManager`；尚无 model/tool/child 每次 mutation 的持续 expiry/revocation 复检，Workspace lease 在 admission 后被撤销也不会自动关闭 mutation gate。
+- [ ] idle unload/reload 与 same-session hot replacement 尚未接入同一 governed gate；replacement 仍缺 standby candidate、fencing promotion、commit-before-old-drain 和 commit 后失败终态的 fault E2E。
+- [ ] 当前 CLI invalid-lease 与 daemon cold-recovery E2E 只证明代表性入口；仍需对 stale/revoked/unavailable Workspace、Approval、timeout/throw/partial 分别跑 durable-store 联合 E2E，并精确断言 model/tool/child instrumentation 全程为零。
+- [ ] 资源清理仍有非 CLI-command 漏洞：`src/cli/main.ts` 最终 `closeSessionRuntime()` 继续吞掉 close/lease-release 错误；`src/storage/v3-runtime-adapter.ts` 的 open 失败 close，以及 `src/daemon/v3-session-adapters.ts` 的 resume/start/fork cleanup 仍有 `catch(() => undefined)`。这阻止宣称“所有 writer/lease 都有可见 terminal cleanup outcome”。
 
 ### P0:Verification/Compaction 只有模块，不是生产生命周期
 
@@ -181,10 +202,11 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 
 ## 5. 建议恢复顺序
 
-1. 统一 CLI、daemon resume、idle reload 与 replacement 的 external-receipt governed startup gate。
-2. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
-3. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、Production AgentSupervisor、remote/handoff/hot replacement。
-4. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。
+1. 从 deployment-owned state root 组合真实 lease/approval stores 与 durable auditor，并补 CLI/daemon durable-store 联合 E2E。
+2. 把外部 receipt 的持续 expiry/revocation 复检接到 model/tool/child mutation、idle reload 与 replacement；同时让所有 close/lease-release failure 形成可见 terminal outcome。
+3. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
+4. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、Production AgentSupervisor、remote/handoff/hot replacement。
+5. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。
 
 ## 6. 禁止用来“完成”本计划的捷径
 
