@@ -17,7 +17,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { selectSessionInTui } from "../tui/session-selector.ts";
 import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
@@ -61,12 +61,16 @@ import type { GovernedContextFragmentProvider } from "../runtime/integration/gov
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId, type AuthorityId, type PrincipalId, type TenantId } from "../runtime/protocol/v3/ids.ts";
 import type { StartupExternalReceiptAuditPort } from "../runtime/lifecycle/recovery.ts";
+import { createLocalIdentityContext } from "../runtime/identity/local-principal.ts";
 import { installCliRuntimeLifecycle, type InstalledCliRuntimeLifecycle } from "./runtime-lifecycle.ts";
 import {
   createCliProductionInteractiveOptions,
+  productionInteractiveWorkspaceStateRoot,
   productionInteractiveControllerBindings,
   type ProductionInteractiveOptionsProvider,
 } from "./production-interactive-options.ts";
+import { createProductionStartupExternalReceiptAuditor } from "../storage/production-startup-receipt-auditor.ts";
+import { closeCliRuntimeResources } from "./runtime-resource-cleanup.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -79,6 +83,8 @@ export interface CliMainDependencies {
   /** 嵌入式 deployment 可注入真实 adapters；标准 CLI 缺失时必须 fail closed。 */
   productionInteractiveOptions?: ProductionInteractiveOptionsProvider;
   startupExternalReceiptAuditor?: StartupExternalReceiptAuditPort;
+  /** Production workspace/tool-gateway 共用的 durable state root。 */
+  startupExternalReceiptStateRoot?: string;
   startupExternalReceiptAuditTimeoutMs?: number;
 }
 
@@ -107,6 +113,42 @@ export async function main(
   let settings = await loadProjectSettings(cwd);
   const runtimeConfiguration = resolveCliRuntimeConfiguration(settings);
   const runtimeFeatures = runtimeConfiguration.features;
+  const providerWorkspaceStateRoot = productionInteractiveWorkspaceStateRoot(
+    dependencies.productionInteractiveOptions,
+  );
+  const cliWorkspaceStateRoot = args.stateRoot === undefined ? undefined : resolve(args.stateRoot);
+  const dependencyWorkspaceStateRoot = dependencies.startupExternalReceiptStateRoot;
+  if (
+    cliWorkspaceStateRoot !== undefined &&
+    dependencyWorkspaceStateRoot !== undefined &&
+    cliWorkspaceStateRoot !== dependencyWorkspaceStateRoot
+  ) {
+    throw new TypeError("CLI and dependency workspace state roots must exactly match");
+  }
+  const explicitWorkspaceStateRoot = cliWorkspaceStateRoot ?? dependencyWorkspaceStateRoot;
+  if (
+    dependencies.startupExternalReceiptAuditor !== undefined &&
+    (providerWorkspaceStateRoot !== undefined || explicitWorkspaceStateRoot !== undefined)
+  ) {
+    throw new TypeError("raw startup external receipt auditor cannot be combined with a workspace state root");
+  }
+  if (
+    providerWorkspaceStateRoot !== undefined &&
+    explicitWorkspaceStateRoot !== undefined &&
+    providerWorkspaceStateRoot !== explicitWorkspaceStateRoot
+  ) {
+    throw new TypeError("explicit and provider workspace state roots must exactly match");
+  }
+  const startupExternalReceiptStateRoot = explicitWorkspaceStateRoot ?? providerWorkspaceStateRoot;
+  let startupExternalReceiptAuditor = dependencies.startupExternalReceiptAuditor;
+  if (startupExternalReceiptAuditor === undefined && startupExternalReceiptStateRoot !== undefined) {
+    const identity = createLocalIdentityContext();
+    startupExternalReceiptAuditor = await createProductionStartupExternalReceiptAuditor({
+      stateRoot: startupExternalReceiptStateRoot,
+      authorityId: identity.authorityId,
+      tenantId: identity.tenantId,
+    });
+  }
   if (runtimeConfiguration.requiresHistoryPersistence) {
     settings = {
       ...settings,
@@ -185,9 +227,9 @@ export async function main(
       v3Manager = await openGovernedV3FromCli({
         filePath,
         features: runtimeFeatures,
-        ...(dependencies.startupExternalReceiptAuditor === undefined
+        ...(startupExternalReceiptAuditor === undefined
           ? {}
-          : { externalReceiptAuditor: dependencies.startupExternalReceiptAuditor }),
+          : { externalReceiptAuditor: startupExternalReceiptAuditor }),
         ...(dependencies.startupExternalReceiptAuditTimeoutMs === undefined
           ? {}
           : { externalReceiptAuditTimeoutMs: dependencies.startupExternalReceiptAuditTimeoutMs }),
@@ -229,9 +271,9 @@ export async function main(
         cwd,
         sessionDir,
         features: runtimeFeatures,
-        ...(dependencies.startupExternalReceiptAuditor === undefined
+        ...(startupExternalReceiptAuditor === undefined
           ? {}
-          : { externalReceiptAuditor: dependencies.startupExternalReceiptAuditor }),
+          : { externalReceiptAuditor: startupExternalReceiptAuditor }),
         ...(dependencies.startupExternalReceiptAuditTimeoutMs === undefined
           ? {}
           : { externalReceiptAuditTimeoutMs: dependencies.startupExternalReceiptAuditTimeoutMs }),
@@ -275,17 +317,27 @@ export async function main(
   let productionOwnsV3Manager = false;
   let closePromise: Promise<void> | undefined;
   const closeSessionRuntime = (): Promise<void> => {
-    closePromise ??= Promise.all([
-      productionRuntime
-        ? productionRuntime.close()
-        : Promise.all([
-            legacyManager?.closeAll(),
-            productionOwnsV3Manager ? undefined : v3Manager?.closeAll(),
-          ]).then(() => undefined),
-      authorityRuntime?.close(),
-    ]).then(() => undefined);
+    const closeOperations: Array<() => Promise<void>> = [];
+    const activeProductionRuntime = productionRuntime;
+    const activeLegacyManager = legacyManager;
+    const activeV3Manager = v3Manager;
+    const activeAuthorityRuntime = authorityRuntime;
+    if (activeProductionRuntime) {
+      closeOperations.push(() => activeProductionRuntime.close());
+    } else {
+      if (activeLegacyManager) closeOperations.push(() => activeLegacyManager.closeAll());
+      if (!productionOwnsV3Manager && activeV3Manager) {
+        closeOperations.push(() => activeV3Manager.closeAll());
+      }
+    }
+    if (activeAuthorityRuntime) closeOperations.push(() => activeAuthorityRuntime.close());
+    closePromise ??= closeCliRuntimeResources(closeOperations);
     return closePromise;
   };
+  let primaryFailure: unknown;
+  let cleanupFailure: unknown;
+  let hasPrimaryFailure = false;
+  let hasCleanupFailure = false;
   try {
     await legacyManager?.acquireLock();
     const models = builtinModels({ credentials: AuthStorage.create() });
@@ -315,7 +367,7 @@ export async function main(
         cwd,
         manager: v3Manager,
         models,
-      }, dependencies.productionInteractiveOptions);
+      }, dependencies.productionInteractiveOptions, startupExternalReceiptStateRoot);
       // createProductionInteractiveRuntime 从调用开始接管 manager；失败路径也负责关闭。
       productionOwnsV3Manager = true;
       productionRuntime = await createProductionInteractiveRuntime(productionOptions);
@@ -425,17 +477,31 @@ export async function main(
         process.stderr.write("[runledger] shutdown completed with recovery-required participants\n");
       }
     }
+  } catch (error) {
+    hasPrimaryFailure = true;
+    primaryFailure = error;
   } finally {
     lifecycle?.dispose();
-    await closeSessionRuntime().catch(() => {
-      // close 失败不阻断退出
-    });
+    try {
+      await closeSessionRuntime();
+    } catch (error) {
+      hasCleanupFailure = true;
+      cleanupFailure = error;
+    }
     if (process.env.RUNLEDGER_DEBUG === "1") {
       process.stderr.write(
         `[runledger] exit. session=${legacyManager?.filePath() ?? v3Manager?.filePath() ?? "unknown"}\n`,
       );
     }
   }
+  if (hasPrimaryFailure && hasCleanupFailure) {
+    throw new AggregateError(
+      [primaryFailure, cleanupFailure],
+      "CLI execution failed and session cleanup was incomplete",
+    );
+  }
+  if (hasPrimaryFailure) throw primaryFailure;
+  if (hasCleanupFailure) throw cleanupFailure;
 }
 
 /**

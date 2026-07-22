@@ -20,12 +20,21 @@ import { DEFAULT_RUNTIME_FEATURES } from "../../src/runtime/runtime-features.ts"
 import { saveProjectSettings } from "../../src/storage/settings-manager.ts";
 import { V3SessionManager } from "../../src/storage/v3-session-manager.ts";
 
-const surfaceCalls = vi.hoisted(() => ({ constructed: 0, run: 0 }));
+const surfaceCalls = vi.hoisted(() => ({
+	constructed: 0,
+	run: 0,
+	quit: 0,
+	runFailure: undefined as Error | undefined,
+}));
 
 vi.mock("../../src/tui/interactive-mode.ts", () => ({
 	InteractiveMode: class {
 		public constructor() { surfaceCalls.constructed += 1; }
-		public async run(): Promise<void> { surfaceCalls.run += 1; }
+		public async run(): Promise<void> {
+			surfaceCalls.run += 1;
+			if (surfaceCalls.runFailure) throw surfaceCalls.runFailure;
+		}
+		public quit(): void { surfaceCalls.quit += 1; }
 	},
 }));
 
@@ -38,6 +47,9 @@ afterEach(async () => {
 	process.chdir(originalCwd);
 	surfaceCalls.constructed = 0;
 	surfaceCalls.run = 0;
+	surfaceCalls.quit = 0;
+	surfaceCalls.runFailure = undefined;
+	vi.restoreAllMocks();
 	await Promise.all(managers.splice(0).map((manager) => manager.closeAll().catch(() => undefined)));
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -66,6 +78,44 @@ function invalidAudit(
 }
 
 describe("CLI governed startup receipt gate", () => {
+	it("preserves both an interactive failure and the final writer-close failure", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-cli-final-cleanup-"));
+		roots.push(root);
+		process.chdir(root);
+		const features = { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true };
+		await saveProjectSettings(root, {
+			sessionV3FeatureState: "default",
+			runtimeFeatures: features,
+		});
+		const runFailure = new Error("injected CLI interactive failure");
+		const cleanupFailure = new Error("injected CLI writer close failure");
+		surfaceCalls.runFailure = runFailure;
+		const realCreate = V3SessionManager.create.bind(V3SessionManager);
+		let created: V3SessionManager | undefined;
+		vi.spyOn(V3SessionManager, "create").mockImplementation(async (...args) => {
+			created = await realCreate(...args);
+			managers.push(created);
+			const close = created.closeAll.bind(created);
+			vi.spyOn(created, "closeAll").mockImplementation(async () => {
+				await close();
+				throw cleanupFailure;
+			});
+			return created;
+		});
+
+		let error: Error | undefined;
+		try {
+			await main([]);
+		} catch (cause) {
+			if (cause instanceof Error) error = cause;
+		}
+
+		expect(error).toBeInstanceOf(AggregateError);
+		expect((error as AggregateError).errors.map(String).join("\n")).toContain(runFailure.message);
+		expect((error as AggregateError).errors.map(String).join("\n")).toContain(cleanupFailure.message);
+		expect(created?.isClosed()).toBe(true);
+	});
+
 	it("rejects a locally resumable V3 session before controller, model, or tool composition when its lease is invalid", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-cli-startup-gate-"));
 		roots.push(root);
@@ -126,7 +176,7 @@ describe("CLI governed startup receipt gate", () => {
 		await expect(main(["--session", filePath], {
 			startupExternalReceiptAuditor: auditor,
 		})).rejects.toThrow(/external receipt|governed startup|not approved/u);
-		expect(surfaceCalls).toEqual({ constructed: 0, run: 0 });
+		expect(surfaceCalls).toEqual({ constructed: 0, run: 0, quit: 0, runFailure: undefined });
 
 		const reopened = await V3SessionManager.open(filePath, features);
 		managers.push(reopened);

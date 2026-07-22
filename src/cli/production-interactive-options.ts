@@ -1,5 +1,6 @@
 /** CLI 到 production interactive composition 的严格 adapter 边界。 */
 
+import { isAbsolute, resolve } from "node:path";
 import type { Models } from "../models.ts";
 import type { InteractiveSessionControllerOptions } from "../runtime/interactive-session-controller.ts";
 import type { AgentLoopConfig, AgentTool, ToolResultArtifactSink } from "../runtime/types.ts";
@@ -61,12 +62,17 @@ export interface ProductionInteractiveOptionsProvider {
 	readonly implementation: "production";
 	readonly providerId: string;
 	readonly evidenceDigest: string;
+	/** Admission 前声明，startup auditor 与 workspace/tool-gateway 必须共用此 root。 */
+	readonly workspaceStateRoot: string;
 	create(
 		request: Readonly<ProductionInteractiveOptionsRequest>,
 	): ProductionInteractiveAdapterOptions | Promise<ProductionInteractiveAdapterOptions>;
 }
 
-function validProviderIdentity(provider: ProductionInteractiveOptionsProvider): boolean {
+function validProviderIdentity(
+	provider: ProductionInteractiveOptionsProvider,
+	workspaceStateRoot: unknown,
+): workspaceStateRoot is string {
 	const tokens = provider.providerId.toLowerCase().split(/[^a-z0-9]+/u).filter(Boolean);
 	return (
 		provider.implementation === "production" &&
@@ -74,24 +80,50 @@ function validProviderIdentity(provider: ProductionInteractiveOptionsProvider): 
 		provider.providerId.length <= 256 &&
 		!tokens.some((token) => ["fake", "memory", "mock", "stub", "test"].includes(token)) &&
 		/^[a-f0-9]{64}$/u.test(provider.evidenceDigest) &&
-		new Set(provider.evidenceDigest).size >= 4
+		new Set(provider.evidenceDigest).size >= 4 &&
+		typeof workspaceStateRoot === "string" &&
+		isAbsolute(workspaceStateRoot) &&
+		resolve(workspaceStateRoot) === workspaceStateRoot &&
+		!workspaceStateRoot.includes("\0")
 	);
+}
+
+/** 只读取已通过 identity/evidence admission 的 root，不触发 provider create。 */
+export function productionInteractiveWorkspaceStateRoot(
+	provider?: ProductionInteractiveOptionsProvider,
+): string | undefined {
+	if (!provider) return undefined;
+	const workspaceStateRoot: unknown = provider.workspaceStateRoot;
+	if (!validProviderIdentity(provider, workspaceStateRoot)) {
+		throw new ProductionInteractiveAdaptersUnavailableError();
+	}
+	return workspaceStateRoot;
 }
 
 export async function createCliProductionInteractiveOptions(
 	request: ProductionInteractiveOptionsRequest,
 	provider?: ProductionInteractiveOptionsProvider,
+	admittedWorkspaceStateRoot?: string,
 ): Promise<ProductionInteractiveRuntimeOptions> {
 	if (!provider) throw new ProductionInteractiveAdaptersUnavailableError();
-	if (!validProviderIdentity(provider)) {
-		throw new ProductionInteractiveAdaptersUnavailableError();
+	const providerWorkspaceStateRoot = productionInteractiveWorkspaceStateRoot(provider);
+	if (!providerWorkspaceStateRoot) throw new ProductionInteractiveAdaptersUnavailableError();
+	if (
+		admittedWorkspaceStateRoot !== undefined &&
+		providerWorkspaceStateRoot !== admittedWorkspaceStateRoot
+	) {
+		throw new Error("production interactive provider workspace state root changed after admission");
 	}
+	const workspaceStateRoot = admittedWorkspaceStateRoot ?? providerWorkspaceStateRoot;
 	if (request.manager.isClosed()) {
 		throw new Error("production interactive options require an open V3 session manager");
 	}
 	const adapters = await provider.create(Object.freeze({ ...request }));
 	if (!adapters || typeof adapters !== "object") {
 		throw new ProductionInteractiveAdaptersUnavailableError();
+	}
+	if (!adapters.workspace || adapters.workspace.stateRoot !== workspaceStateRoot) {
+		throw new Error("production interactive workspace state root does not match the admitted provider root");
 	}
 	return {
 		...adapters,

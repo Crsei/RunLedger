@@ -90,6 +90,13 @@ describe("parseArgs model/thinking/session-dir", () => {
     expect(parseArgs(["--session-dir", "/tmp/s"]).args.sessionDir).toBe("/tmp/s");
   });
 
+  it("--state-root <dir> 给字符串并写入帮助", () => {
+    expect(parseArgs(["--state-root", "/srv/runledger/state"]).args.stateRoot)
+      .toBe("/srv/runledger/state");
+    expect(parseArgs(["--state-root"]).error).toContain("--state-root");
+    expect(USAGE).toContain("--state-root <dir>");
+  });
+
   it("--session-version 只接受显式 v2/v3", () => {
     expect(parseArgs(["--session-version", "2"]).args.sessionVersion).toBe(2);
     expect(parseArgs(["--session-version", "3"]).args.sessionVersion).toBe(3);

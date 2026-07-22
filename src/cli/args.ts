@@ -11,6 +11,7 @@
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
  *   --session-dir <dir>                进程级 override,优先级最高
+ *   --state-root <dir>                  预先存在的私有 deployment state root
  *   --debug                            打开 RUNLEDGER_DEBUG=1 stderr log
  *   --version / -v                     打 version 退出
  *   --help / -h                        打 usage 退出
@@ -46,6 +47,7 @@ export interface ParsedArgs {
   model?: string;
   thinking?: ModelThinkingLevel;
   sessionDir?: string;
+  stateRoot?: string;
   /** opt_in rollout 下显式选择新 session 格式。 */
   sessionVersion?: 2 | 3;
   debug: boolean;
@@ -75,6 +77,7 @@ const HELP_TEXT = `Usage: runledger [options]
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
       --session-dir <dir>     进程级 session 目录覆盖,优先级最高
+      --state-root <dir>      预先存在的私有 deployment state root
       --session-version <2|3> 显式选择新 session 格式(opt_in 默认仍为 v2)
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
@@ -106,6 +109,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
   let sessionDir: string | undefined;
+  let stateRoot: string | undefined;
   let sessionVersion: 2 | 3 | undefined;
   let debug = false;
   const unknown = new Map<string, string | true>();
@@ -220,6 +224,15 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       sessionDir = v;
       continue;
     }
+    if (a === "--state-root") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      stateRoot = v;
+      continue;
+    }
     if (a === "--session-version") {
       const v = argv[++i];
       if (v === undefined) {
@@ -267,6 +280,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       model,
       thinking,
       sessionDir,
+      stateRoot,
       sessionVersion,
       debug,
       unknown,

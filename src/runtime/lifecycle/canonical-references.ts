@@ -146,43 +146,171 @@ function failure(
 	return { ok: false, error: { code, message, retryable } };
 }
 
-function approvalReceipt(event: RuntimeEventV3): ApprovalReceiptRef | undefined {
+type ApprovalRequestPayload = Extract<RuntimeEventV3, { type: "permission.requested" }>["payload"];
+
+interface CanonicalApprovalRequest {
+	principalId: string;
+	payload: ApprovalRequestPayload;
+}
+
+function sameApprovalRequest(
+	event: ApprovalTerminalEvent,
+	payload: {
+		approvalId: string;
+		requestId: string;
+		requestDigest: string;
+		ticketDigest: string;
+	},
+	request: CanonicalApprovalRequest,
+): boolean {
+	return (
+		event.principalId === request.principalId &&
+		payload.approvalId === request.payload.approvalId &&
+		payload.requestId === request.payload.requestId &&
+		payload.requestDigest === request.payload.requestDigest &&
+		payload.ticketDigest === request.payload.ticketDigest &&
+		event.payload.sessionId === request.payload.sessionId &&
+		event.payload.runtimeId === request.payload.runtimeId &&
+		event.payload.runtimeGeneration === request.payload.runtimeGeneration &&
+		event.payload.turnId === request.payload.turnId &&
+		event.payload.toolCallId === request.payload.toolCallId
+	);
+}
+
+interface ApprovalEvidenceProjection {
+	evidenceComplete: boolean;
+	evidenceTruncated: boolean;
+	originalInputDigest: string;
+	originalArtifactId?: string;
+	originalArtifactDigest?: string;
+}
+
+function approvalEvidence(request: ApprovalRequestPayload): ApprovalEvidenceProjection {
+	return {
+		evidenceComplete: request.evidenceComplete,
+		evidenceTruncated: request.evidenceTruncated,
+		originalInputDigest: request.originalInputDigest,
+		...(request.originalArtifactId === undefined
+			? {}
+			: {
+				originalArtifactId: request.originalArtifactId,
+				originalArtifactDigest: request.originalArtifactDigest,
+			}),
+	};
+}
+
+type ApprovalTerminalEvent = Extract<
+	RuntimeEventV3,
+	{ type: "permission.decided" | "permission.expired" | "permission.revoked" }
+>;
+
+function approvalReceipt(
+	event: ApprovalTerminalEvent,
+	request: CanonicalApprovalRequest | undefined,
+	previous: ApprovalReceiptRef | undefined,
+): ApprovalReceiptRef | undefined {
+	if (!request || !sameApprovalRequest(event, event.payload, request)) return undefined;
+	const requestPayload = request.payload;
 	let candidate: unknown;
 	switch (event.type) {
-		case "permission.decided":
+		case "permission.decided": {
+			const payload = event.payload;
+			if (payload.originalInputDigest !== requestPayload.originalInputDigest) return undefined;
 			candidate = {
 				authorityId: event.authorityId,
 				tenantId: event.tenantId,
 				principalId: event.principalId,
-				...event.payload,
+				receiptId: payload.receiptId,
+				approvalId: payload.approvalId,
+				requestId: payload.requestId,
+				requestDigest: payload.requestDigest,
+				ticketDigest: payload.ticketDigest,
+				decision: payload.decision,
+				decisionRevision: payload.decisionRevision,
+				decidedAt: payload.decidedAt,
+				receiptDigest: payload.receiptDigest,
+				evidenceComplete: payload.evidenceComplete,
+				evidenceTruncated: payload.evidenceTruncated,
+				originalInputDigest: payload.originalInputDigest,
+				...(requestPayload.originalArtifactId === undefined
+					? {}
+					: {
+						originalArtifactId: requestPayload.originalArtifactId,
+						originalArtifactDigest: requestPayload.originalArtifactDigest,
+					}),
+				...(payload.expiresAt === undefined ? {} : { expiresAt: payload.expiresAt }),
 			};
 			break;
-		case "permission.expired":
+		}
+		case "permission.expired": {
+			if (previous && previous.decision !== "allowed" && previous.decision !== "expired") return undefined;
+			const evidence = previous ?? approvalEvidence(requestPayload);
 			candidate = {
 				authorityId: event.authorityId,
 				tenantId: event.tenantId,
 				principalId: event.principalId,
-				...event.payload,
+				receiptId: event.payload.receiptId,
+				approvalId: event.payload.approvalId,
+				requestId: event.payload.requestId,
+				requestDigest: event.payload.requestDigest,
+				ticketDigest: event.payload.ticketDigest,
 				decision: "expired",
+				decisionRevision: event.payload.decisionRevision,
 				decidedAt: event.payload.expiredAt,
 				expiresAt: event.payload.expiredAt,
+				receiptDigest: event.payload.receiptDigest,
+				evidenceComplete: evidence.evidenceComplete,
+				evidenceTruncated: evidence.evidenceTruncated,
+				originalInputDigest: evidence.originalInputDigest,
+				...(evidence.originalArtifactId === undefined
+					? {}
+					: {
+						originalArtifactId: evidence.originalArtifactId,
+						originalArtifactDigest: evidence.originalArtifactDigest,
+					}),
 			};
 			break;
-		case "permission.revoked":
+		}
+		case "permission.revoked": {
+			if (!previous || (previous.decision !== "allowed" && previous.decision !== "revoked")) return undefined;
 			candidate = {
 				authorityId: event.authorityId,
 				tenantId: event.tenantId,
 				principalId: event.principalId,
-				...event.payload,
+				receiptId: event.payload.receiptId,
+				approvalId: event.payload.approvalId,
+				requestId: event.payload.requestId,
+				requestDigest: event.payload.requestDigest,
+				ticketDigest: event.payload.ticketDigest,
 				decision: "revoked",
+				decisionRevision: event.payload.decisionRevision,
 				decidedAt: event.payload.revokedAt,
 				revokedAt: event.payload.revokedAt,
+				receiptDigest: event.payload.receiptDigest,
+				evidenceComplete: previous.evidenceComplete,
+				evidenceTruncated: previous.evidenceTruncated,
+				originalInputDigest: previous.originalInputDigest,
+				...(previous.expiresAt === undefined ? {} : { expiresAt: previous.expiresAt }),
+				...(previous.originalArtifactId === undefined
+					? {}
+					: {
+						originalArtifactId: previous.originalArtifactId,
+						originalArtifactDigest: previous.originalArtifactDigest,
+					}),
 			};
 			break;
+		}
 		default:
 			return undefined;
 	}
-	return isApprovalReceiptRef(candidate) ? candidate : undefined;
+	if (!isApprovalReceiptRef(candidate)) return undefined;
+	if (!previous) return candidate;
+	const isDuplicate =
+		event.type === "permission.decided" ||
+		(event.type === "permission.expired" && previous?.decision === "expired") ||
+		(event.type === "permission.revoked" && previous?.decision === "revoked");
+	if (!isDuplicate) return candidate;
+	return canonicalDigest(previous) === canonicalDigest(candidate) ? previous : undefined;
 }
 
 export function projectExternalReceiptReferences(
@@ -198,6 +326,7 @@ export function projectExternalReceiptReferences(
 		return failure("integrity_failed", "external receipt references require a valid canonical event chain");
 	}
 	const workspaceLeases = new Map<string, WorkspaceLeaseRef>();
+	const approvalRequests = new Map<string, CanonicalApprovalRequest>();
 	const approvalDecisions = new Map<string, ApprovalReceiptRef>();
 	for (const event of events) {
 		switch (event.type) {
@@ -215,10 +344,33 @@ export function projectExternalReceiptReferences(
 			case "lease.released":
 				workspaceLeases.delete(event.payload.lease.leaseId);
 				break;
+			case "permission.requested": {
+				if (event.payload.sessionId !== scope.sessionId) {
+					return failure("integrity_failed", "canonical approval request session binding is invalid");
+				}
+				const current = {
+					principalId: event.principalId,
+					payload: event.payload,
+				};
+				const previous = approvalRequests.get(event.payload.approvalId);
+				if (
+					previous &&
+					(previous.principalId !== current.principalId ||
+						canonicalDigest(previous.payload) !== canonicalDigest(current.payload))
+				) {
+					return failure("integrity_failed", "canonical approval request duplicate is inconsistent");
+				}
+				if (!previous) approvalRequests.set(event.payload.approvalId, current);
+				break;
+			}
 			case "permission.decided":
 			case "permission.expired":
 			case "permission.revoked": {
-				const receipt = approvalReceipt(event);
+				const receipt = approvalReceipt(
+					event,
+					approvalRequests.get(event.payload.approvalId),
+					approvalDecisions.get(event.payload.approvalId),
+				);
 				if (!receipt) return failure("integrity_failed", "canonical approval receipt reference is invalid");
 				approvalDecisions.set(receipt.approvalId, receipt);
 				break;

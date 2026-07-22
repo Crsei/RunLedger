@@ -24,6 +24,7 @@ Requires runtimeFeatures.daemon=true and all declared rollout dependencies.
 Options:
   --cwd <path>                 Project working directory (default: process.cwd())
   --session-dir <path>         Override the v3 session directory
+  --state-root <path>          Pre-existing private deployment state root
   --shutdown-timeout-ms <ms>   Bounded drain timeout, 1..300000 (default: 30000)
   -h, --help                   Show this help
   -v, --version                Show the package version
@@ -32,6 +33,7 @@ Options:
 interface ParsedDaemonArgs {
 	cwd?: string;
 	sessionDir?: string;
+	stateRoot?: string;
 	shutdownTimeoutMs: number;
 	help: boolean;
 	version: boolean;
@@ -156,6 +158,13 @@ export function parseDaemonArgs(argv: readonly string[]): { args?: ParsedDaemonA
 				index += 1;
 				break;
 			}
+			case "--state-root": {
+				const value = argv[index + 1];
+				if (!value || value.startsWith("-")) return { error: "--state-root requires a path" };
+				args.stateRoot = value;
+				index += 1;
+				break;
+			}
 			case "--shutdown-timeout-ms": {
 				const value = parsePositiveTimeout(argv[index + 1]);
 				if (value === undefined) return { error: "--shutdown-timeout-ms must be an integer from 1 to 300000" };
@@ -209,6 +218,9 @@ export async function daemonMain(
 		sessionDir,
 		features,
 		shutdownTimeoutMs: parsed.args.shutdownTimeoutMs,
+		...(parsed.args.stateRoot === undefined
+			? {}
+			: { startupExternalReceiptStateRoot: resolve(parsed.args.stateRoot) }),
 	});
 	if (!started.ok) {
 		write(io.error, `[runledger-daemon] startup failed: ${started.error.code}: ${started.error.message}\n`);

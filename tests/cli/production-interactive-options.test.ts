@@ -7,6 +7,7 @@ import {
 	ProductionInteractiveAdaptersUnavailableError,
 	REQUIRED_PRODUCTION_INTERACTIVE_ADAPTERS,
 	createCliProductionInteractiveOptions,
+	productionInteractiveWorkspaceStateRoot,
 	productionInteractiveControllerBindings,
 	type ProductionInteractiveAdapterOptions,
 	type ProductionInteractiveOptionsProvider,
@@ -40,13 +41,23 @@ async function sessionFixture() {
 function provider(
 	providerId: string,
 	create: ProductionInteractiveOptionsProvider["create"],
+	workspaceStateRoot = "/runledger-production-state",
 ): ProductionInteractiveOptionsProvider {
 	return {
 		implementation: "production",
 		providerId,
 		evidenceDigest: canonicalDigest({ providerId, contract: "production-interactive-options" }),
+		workspaceStateRoot,
 		create,
 	};
+}
+
+function providerWithStateRoot(
+	providerId: string,
+	workspaceStateRoot: string,
+	create: ProductionInteractiveOptionsProvider["create"],
+): ProductionInteractiveOptionsProvider {
+	return provider(providerId, create, workspaceStateRoot);
 }
 
 describe("CLI production interactive options", () => {
@@ -76,13 +87,54 @@ describe("CLI production interactive options", () => {
 
 	it("pins manager and models to the active CLI session before downstream probes", async () => {
 		const fixture = await sessionFixture();
-		const adapters = { tools: [] } as unknown as ProductionInteractiveAdapterOptions;
+		const workspaceStateRoot = join(fixture.cwd, "state");
+		const adapters = {
+			tools: [],
+			workspace: { stateRoot: workspaceStateRoot },
+		} as unknown as ProductionInteractiveAdapterOptions;
 		const resolved = await createCliProductionInteractiveOptions(
 			fixture,
-			provider("runledger-local-production", () => adapters),
+			provider("runledger-local-production", () => adapters, workspaceStateRoot),
 		);
 		expect(resolved.manager).toBe(fixture.manager);
 		expect(resolved.models).toBe(fixture.models);
+	});
+
+	it("rejects a provider whose created workspace adapter drifts from its admitted state root", async () => {
+		const fixture = await sessionFixture();
+		const admittedRoot = join(fixture.cwd, "admitted-state");
+		const drifted = {
+			tools: [],
+			workspace: { stateRoot: join(fixture.cwd, "different-state") },
+		} as unknown as ProductionInteractiveAdapterOptions;
+		await expect(createCliProductionInteractiveOptions(
+			fixture,
+			providerWithStateRoot("runledger-local-production", admittedRoot, () => drifted),
+		)).rejects.toThrow("workspace state root");
+	});
+
+	it("pins the provider root value across admission and create", async () => {
+		const fixture = await sessionFixture();
+		const admittedRoot = join(fixture.cwd, "admitted-state");
+		let exposedRoot = admittedRoot;
+		let invoked = false;
+		const mutableProvider = providerWithStateRoot("runledger-local-production", admittedRoot, () => {
+			invoked = true;
+			return { tools: [] } as unknown as ProductionInteractiveAdapterOptions;
+		});
+		Object.defineProperty(mutableProvider, "workspaceStateRoot", {
+			configurable: true,
+			get: () => exposedRoot,
+		});
+		const pinnedRoot = productionInteractiveWorkspaceStateRoot(mutableProvider);
+		exposedRoot = join(fixture.cwd, "drifted-state");
+
+		await expect(createCliProductionInteractiveOptions(
+			fixture,
+			mutableProvider,
+			pinnedRoot,
+		)).rejects.toThrow("changed after admission");
+		expect(invoked).toBe(false);
 	});
 
 	it("projects every governed controller binding by identity, including extension reload tools", () => {

@@ -116,18 +116,120 @@ export interface DirectoryV3SessionLocatorOptions {
 	sessionDir?: string;
 }
 
-function adapterUnavailable<T>(operation: string, error?: unknown, effect: "none" | "uncertain" = "none"): ControlPlaneResult<T> {
+function adapterUnavailable<T>(
+	operation: string,
+	error?: unknown,
+	effect: "none" | "uncertain" = "none",
+	aggregateCleanupOperation?: SessionCleanupOperation,
+): ControlPlaneResult<T> {
 	return controlPlaneFailure(
 		"adapter_unavailable",
 		`${operation} is unavailable`,
-		true,
-		{ errorName: error instanceof Error ? error.name : "UnknownError" },
+		effect === "none",
+		controlPlaneErrorDetails(error, aggregateCleanupOperation),
 		effect,
 	);
 }
 
-function recoveryRequired<T>(message: string, details?: Readonly<Record<string, string | number | boolean>>): ControlPlaneResult<T> {
-	return controlPlaneFailure("recovery_required", message, false, details);
+function recoveryRequired<T>(
+	message: string,
+	details?: Readonly<Record<string, string | number | boolean>>,
+	effect: "none" | "uncertain" = "none",
+): ControlPlaneResult<T> {
+	return controlPlaneFailure("recovery_required", message, false, details, effect);
+}
+
+type SessionCleanupOperation =
+	| "session_writer_close"
+	| "fork_parent_close"
+	| "fork_child_close"
+	| "fork_child_discard";
+
+interface SessionCleanupFault {
+	operation: SessionCleanupOperation;
+	errorName: string;
+}
+
+function boundedErrorName(error: unknown): string {
+	const name = error instanceof Error && error.name.length > 0 ? error.name : "UnknownError";
+	return name.slice(0, 128);
+}
+
+function controlPlaneErrorDetails(
+	error: unknown,
+	aggregateCleanupOperation?: SessionCleanupOperation,
+): Readonly<Record<string, string | number | boolean>> {
+	const details: Record<string, string | number | boolean> = {
+		errorName: boundedErrorName(error),
+	};
+	if (!(error instanceof AggregateError) || aggregateCleanupOperation === undefined) return details;
+	const innerErrors: readonly unknown[] = Array.from(error.errors);
+	details.aggregateErrorCount = innerErrors.length;
+	if (innerErrors[0] !== undefined) details.primaryErrorName = boundedErrorName(innerErrors[0]);
+	const cleanupErrors = innerErrors.slice(1);
+	if (cleanupErrors.length > 0) {
+		const visibleCleanupErrors = cleanupErrors.slice(0, 3);
+		details.cleanupErrorCount = cleanupErrors.length;
+		details.cleanupOperations = aggregateCleanupOperation;
+		details.cleanupErrorNames = visibleCleanupErrors.map(boundedErrorName).join(",").slice(0, 512);
+		if (visibleCleanupErrors.length !== cleanupErrors.length) details.cleanupEvidenceTruncated = true;
+	}
+	return details;
+}
+
+async function collectSessionCleanupFault(
+	faults: SessionCleanupFault[],
+	operation: SessionCleanupOperation,
+	cleanup: () => Promise<void>,
+): Promise<void> {
+	try {
+		await cleanup();
+	} catch (error) {
+		faults.push({ operation, errorName: boundedErrorName(error) });
+	}
+}
+
+function mergeSessionCleanupFaults<T>(
+	primary: ControlPlaneResult<T>,
+	faults: readonly SessionCleanupFault[],
+): ControlPlaneResult<T> {
+	if (faults.length === 0) return primary;
+	const cleanupDetails = {
+		cleanupFailed: true,
+		cleanupErrorCount: faults.length,
+		cleanupOperations: faults.map((fault) => fault.operation).join(",").slice(0, 512),
+		cleanupErrorNames: faults.map((fault) => fault.errorName).join(",").slice(0, 512),
+	};
+	if (primary.ok) {
+		return controlPlaneFailure(
+			"recovery_required",
+			"v3 session operation completed but cleanup outcome is uncertain",
+			false,
+			cleanupDetails,
+			"uncertain",
+		);
+	}
+	return controlPlaneFailure(
+		primary.error.code,
+		primary.error.message,
+		false,
+		{ ...primary.error.details, ...cleanupDetails },
+		"uncertain",
+	);
+}
+
+function preserveSessionSideEffect<T>(
+	primary: ControlPlaneResult<T>,
+	correlation: Readonly<{ sessionId?: SessionId; childSessionId?: SessionId }>,
+): ControlPlaneResult<T> {
+	if (primary.ok) return primary;
+	return controlPlaneFailure(
+		primary.error.code,
+		primary.error.message,
+		false,
+		{ ...primary.error.details, ...correlation },
+		"uncertain",
+	);
 }
 
 function unavailableExternalReceiptAudit(): Promise<LifecycleResult<ExternalReceiptAuditReceipt>> {
@@ -588,56 +690,74 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
 			});
 		} catch (error) {
-			return recoveryRequired("v3 session could not establish a trusted writable recovery state", {
-				errorName: error instanceof Error ? error.name : "UnknownError",
-			});
+			return recoveryRequired(
+				"v3 session could not establish a trusted writable recovery state",
+				controlPlaneErrorDetails(error, "session_writer_close"),
+				error instanceof AggregateError ? "uncertain" : "none",
+			);
 		}
-		if (governed.sessionId() !== sessionId) {
-			await governed.close().catch(() => undefined);
-			return controlPlaneFailure("adapter_contract_violation", "opened v3 session correlation is invalid");
-		}
-		const admitted = await governed.runIfResumable(async (manager) => {
-			if (!sameIdentity(manager, this.#identity)) {
-				return controlPlaneFailure<V3ManagedSessionRuntime>(
-					"adapter_contract_violation",
-					"opened v3 session authority correlation is invalid",
-				);
+		let outcome: ControlPlaneResult<V3ManagedSessionRuntime>;
+		try {
+			if (governed.sessionId() !== sessionId) {
+				outcome = controlPlaneFailure("adapter_contract_violation", "opened v3 session correlation is invalid");
+			} else {
+				const admitted = await governed.runIfResumable(async (manager) => {
+					if (!sameIdentity(manager, this.#identity)) {
+						return controlPlaneFailure<V3ManagedSessionRuntime>(
+							"adapter_contract_violation",
+							"opened v3 session authority correlation is invalid",
+						);
+					}
+					return this.#manage(manager);
+				});
+				if (!admitted.ok) {
+					const startup = governed.startupReport().sessions[0];
+					outcome = recoveryRequired("v3 session did not pass governed startup external receipt audit", {
+						recoveryState: startup?.disposition === "paused"
+							? "pause_for_approval"
+							: startup?.disposition ?? "missing",
+						startupDisposition: startup?.disposition ?? "missing",
+						startupReasons: startup?.reasons.join(",") || "none",
+						reasonCount: startup?.reasons.length ?? 0,
+					});
+				} else {
+					outcome = admitted.value;
+				}
 			}
-			return this.#manage(manager);
-		});
-		if (!admitted.ok) {
-			const startup = governed.startupReport().sessions[0];
-			await governed.close().catch(() => undefined);
-			return recoveryRequired("v3 session did not pass governed startup external receipt audit", {
-				recoveryState: startup?.disposition === "paused"
-					? "pause_for_approval"
-					: startup?.disposition ?? "missing",
-				startupDisposition: startup?.disposition ?? "missing",
-				startupReasons: startup?.reasons.join(",") || "none",
-				reasonCount: startup?.reasons.length ?? 0,
-			});
+		} catch (error) {
+			outcome = adapterUnavailable("v3 session resume", error, "uncertain");
 		}
-		const managed = admitted.value;
-		if (!managed.ok) await governed.close().catch(() => undefined);
-		return managed;
+		if (outcome.ok) return outcome;
+		const cleanupFaults: SessionCleanupFault[] = [];
+		await collectSessionCleanupFault(cleanupFaults, "session_writer_close", () => governed.close());
+		return mergeSessionCleanupFaults(outcome, cleanupFaults);
 	}
 
 	public async start(): Promise<ControlPlaneResult<ManagedSessionRuntime>> {
+		const sessionId = createRuntimeId("session");
+		let manager: V3SessionManager | undefined;
+		let outcome: ControlPlaneResult<V3ManagedSessionRuntime>;
 		try {
 			const runtimeId: RuntimeInstanceId = createRuntimeId("runtime");
-			const manager = await V3SessionManager.create({
+			manager = await V3SessionManager.create({
 				cwd: this.#cwd,
 				sessionDir: this.#sessionDir,
 				features: this.#features,
 				identity: this.#identity,
 				runtimeId,
+				sessionId,
 			});
-			const managed = await this.#manage(manager);
-			if (!managed.ok) await manager.closeAll().catch(() => undefined);
-			return managed;
+			outcome = await this.#manage(manager);
 		} catch (error) {
-			return adapterUnavailable("v3 session start", error, "uncertain");
+			outcome = adapterUnavailable("v3 session start", error, "uncertain");
 		}
+		if (outcome.ok) return outcome;
+		outcome = preserveSessionSideEffect(outcome, { sessionId });
+		const cleanupFaults: SessionCleanupFault[] = [];
+		if (manager) {
+			await collectSessionCleanupFault(cleanupFaults, "session_writer_close", () => manager!.closeAll());
+		}
+		return mergeSessionCleanupFaults(outcome, cleanupFaults);
 	}
 
 	public resume(sessionId: SessionId): Promise<ControlPlaneResult<ManagedSessionRuntime>> {
@@ -700,102 +820,134 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		let parent: V3SessionManager | undefined;
 		let governedParent: GovernedV3SessionRuntime | undefined;
 		let child: V3SessionManager | undefined;
+		let childSessionId: SessionId | undefined;
 		let childHasDurableGenesis = false;
-		try {
-			const activeParent = this.activeRuntime(parentSessionId);
-			if (activeParent) {
-				parent = activeParent.manager();
-				const revalidated = await this.#revalidateActiveForkParent(parent);
-				if (!revalidated.ok) return revalidated;
-			} else {
-				governedParent = await GovernedV3SessionRuntime.open({
-					filePath: location.value.filePath,
+		let governedParentCleanupAttempted = false;
+		const cleanupFaults: SessionCleanupFault[] = [];
+		const execute = async (): Promise<ControlPlaneResult<ManagedSessionRuntime>> => {
+			try {
+				const activeParent = this.activeRuntime(parentSessionId);
+				if (activeParent) {
+					parent = activeParent.manager();
+					const revalidated = await this.#revalidateActiveForkParent(parent);
+					if (!revalidated.ok) return revalidated;
+				} else {
+					governedParent = await GovernedV3SessionRuntime.open({
+						filePath: location.value.filePath,
+						features: this.#features,
+						identity: this.#identity,
+						runtimeId: createRuntimeId("runtime"),
+						externalReceiptAuditor: this.#externalReceiptAuditor,
+						externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+					});
+					const admitted = await governedParent.runIfResumable(async (manager) => manager);
+					if (!admitted.ok) {
+						const startup = governedParent.startupReport().sessions[0];
+						return recoveryRequired("fork parent did not pass governed startup external receipt audit", {
+							startupDisposition: startup?.disposition ?? "missing",
+							startupReasons: startup?.reasons.join(",") || "none",
+						});
+					}
+					parent = admitted.value;
+				}
+				if (parent.sessionId() !== parentSessionId || !sameIdentity(parent, this.#identity)) {
+					return controlPlaneFailure("adapter_contract_violation", "fork parent manager correlation is invalid");
+				}
+				const recovered = parent.recoveryDecision();
+				if (!recovered || recovered.kind === "corrupted" || recovered.kind === "pause_for_approval") {
+					return recoveryRequired("fork parent is not at a trusted stable boundary");
+				}
+				const events = await readAllRuntimeEvents(parent.eventStore());
+				if (!events.ok) return recoveryRequired("fork parent replay failed");
+				const projection = reduceSessionEvents(events.value);
+				if (!projection.ok) return recoveryRequired("fork parent projection failed");
+				const actualCursor: EventCursor = {
+					stream: parent.eventStore().streamRef(),
+					sequence: projection.value.headSequence,
+					eventId: projection.value.headEventId,
+					eventHash: projection.value.headEventHash,
+				};
+				if (!sameCursor(actualCursor, parentCursor)) {
+					return controlPlaneFailure("cursor_mismatch", "fork parent cursor is not the current stable head");
+				}
+				childSessionId = createRuntimeId("session");
+				const initialGoalId = goalMode === "continue_existing_goal"
+					? projection.value.genesis.initialGoalId
+					: createRuntimeId("goal");
+				const rootAgentId = createRuntimeId("agent");
+				child = await V3SessionManager.create({
+					cwd: this.#cwd,
+					sessionDir: this.#sessionDir,
 					features: this.#features,
 					identity: this.#identity,
 					runtimeId: createRuntimeId("runtime"),
-					externalReceiptAuditor: this.#externalReceiptAuditor,
-					externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+					sessionId: childSessionId,
+					writeGenesis: false,
+					lineage: { goalId: initialGoalId, agentId: rootAgentId },
 				});
-				const admitted = await governedParent.runIfResumable(async (manager) => manager);
-				if (!admitted.ok) {
-					const startup = governedParent.startupReport().sessions[0];
-					return recoveryRequired("fork parent did not pass governed startup external receipt audit", {
-						startupDisposition: startup?.disposition ?? "missing",
-						startupReasons: startup?.reasons.join(",") || "none",
-					});
+				const plan = createStableForkPlan(projection.value, {
+					newSessionId: childSessionId,
+					parentLeafId: projection.value.activeLeafId,
+					goalMode,
+					initialGoalId,
+					rootAgentId,
+					idempotencyKey: createRuntimeId("command"),
+					principalId: this.#identity.principalId,
+					traceId: createRuntimeId("trace"),
+				});
+				if (!plan.ok || !sameCursor(plan.value.parentCursor, parentCursor)) {
+					return controlPlaneFailure("cursor_mismatch", "fork plan did not preserve the requested parent cursor");
 				}
-				parent = admitted.value;
-			}
-			if (parent.sessionId() !== parentSessionId || !sameIdentity(parent, this.#identity)) {
-				return controlPlaneFailure("adapter_contract_violation", "fork parent manager correlation is invalid");
-			}
-			const recovered = parent.recoveryDecision();
-			if (!recovered || recovered.kind === "corrupted" || recovered.kind === "pause_for_approval") {
-				return recoveryRequired("fork parent is not at a trusted stable boundary");
-			}
-			const events = await readAllRuntimeEvents(parent.eventStore());
-			if (!events.ok) return recoveryRequired("fork parent replay failed");
-			const projection = reduceSessionEvents(events.value);
-			if (!projection.ok) return recoveryRequired("fork parent projection failed");
-			const actualCursor: EventCursor = {
-				stream: parent.eventStore().streamRef(),
-				sequence: projection.value.headSequence,
-				eventId: projection.value.headEventId,
-				eventHash: projection.value.headEventHash,
-			};
-			if (!sameCursor(actualCursor, parentCursor)) {
-				return controlPlaneFailure("cursor_mismatch", "fork parent cursor is not the current stable head");
-			}
-			const childSessionId = createRuntimeId("session");
-			const initialGoalId = goalMode === "continue_existing_goal"
-				? projection.value.genesis.initialGoalId
-				: createRuntimeId("goal");
-			const rootAgentId = createRuntimeId("agent");
-			child = await V3SessionManager.create({
-				cwd: this.#cwd,
-				sessionDir: this.#sessionDir,
-				features: this.#features,
-				identity: this.#identity,
-				runtimeId: createRuntimeId("runtime"),
-				sessionId: childSessionId,
-				writeGenesis: false,
-				lineage: { goalId: initialGoalId, agentId: rootAgentId },
-			});
-			const plan = createStableForkPlan(projection.value, {
-				newSessionId: childSessionId,
-				parentLeafId: projection.value.activeLeafId,
-				goalMode,
-				initialGoalId,
-				rootAgentId,
-				idempotencyKey: createRuntimeId("command"),
-				principalId: this.#identity.principalId,
-				traceId: createRuntimeId("trace"),
-			});
-			if (!plan.ok || !sameCursor(plan.value.parentCursor, parentCursor)) {
-				await child.discardEmptyTarget();
+				const genesis = await child.writer().append(plan.value.genesisDraft);
+				if (!genesis.ok) return recoveryRequired("fork genesis was not durably committed");
+				childHasDurableGenesis = true;
+				const messages = await parent.replayMessages();
+				for (const message of messages) await child.sessionEvents().recordMessage(message);
+				const copiedHistory = await child.writer().flush();
+				if (!copiedHistory.ok) throw new Error("forked session history was not durably copied");
+				if (governedParent) {
+					governedParentCleanupAttempted = true;
+					await collectSessionCleanupFault(
+						cleanupFaults,
+						"fork_parent_close",
+						() => governedParent!.close(),
+					);
+					if (cleanupFaults.length > 0) {
+						return recoveryRequired(
+							"fork parent cleanup failed before child ownership transfer",
+							{ childSessionId },
+							"uncertain",
+						);
+					}
+				}
+				const managed = await this.#manage(child);
+				if (!managed.ok) return managed;
 				child = undefined;
-				return controlPlaneFailure("cursor_mismatch", "fork plan did not preserve the requested parent cursor");
+				return managed;
+			} catch (error) {
+				return adapterUnavailable(
+					"v3 session fork",
+					error,
+					childHasDurableGenesis || error instanceof AggregateError ? "uncertain" : "none",
+					"session_writer_close",
+				);
 			}
-			const genesis = await child.writer().append(plan.value.genesisDraft);
-			if (!genesis.ok) return recoveryRequired("fork genesis was not durably committed");
-			childHasDurableGenesis = true;
-			const messages = await parent.replayMessages();
-			for (const message of messages) await child.sessionEvents().recordMessage(message);
-			const copiedHistory = await child.writer().flush();
-			if (!copiedHistory.ok) throw new Error("forked session history was not durably copied");
-			const managed = await this.#manage(child);
-			if (!managed.ok) return managed;
-			child = undefined;
-			return managed;
-		} catch (error) {
-			return adapterUnavailable("v3 session fork", error, childHasDurableGenesis ? "uncertain" : "none");
-		} finally {
-			if (governedParent) await governedParent.close().catch(() => undefined);
-			if (child) {
-				if (childHasDurableGenesis) await child.closeAll().catch(() => undefined);
-				else await child.discardEmptyTarget().catch(() => undefined);
+		};
+		const outcome = await execute();
+		const correlatedOutcome = childHasDurableGenesis && childSessionId
+			? preserveSessionSideEffect(outcome, { childSessionId })
+			: outcome;
+		if (governedParent && !governedParentCleanupAttempted) {
+			await collectSessionCleanupFault(cleanupFaults, "fork_parent_close", () => governedParent!.close());
+		}
+		if (child) {
+			if (childHasDurableGenesis) {
+				await collectSessionCleanupFault(cleanupFaults, "fork_child_close", () => child!.closeAll());
+			} else {
+				await collectSessionCleanupFault(cleanupFaults, "fork_child_discard", () => child!.discardEmptyTarget());
 			}
 		}
+		return mergeSessionCleanupFaults(correlatedOutcome, cleanupFaults);
 	}
 }
 

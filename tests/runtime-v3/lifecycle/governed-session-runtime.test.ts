@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	createExternalReceiptAuditReceipt,
 	type StartupExternalReceiptAuditPort,
@@ -17,8 +17,19 @@ const roots: string[] = [];
 const features = { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true };
 
 afterEach(async () => {
+	vi.restoreAllMocks();
 	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
+
+async function rejectedError(operation: Promise<unknown>): Promise<Error> {
+	try {
+		await operation;
+	} catch (cause) {
+		if (cause instanceof Error) return cause;
+		throw new Error("operation rejected with a non-Error value");
+	}
+	throw new Error("operation unexpectedly resolved");
+}
 
 const unexpectedAuditor: StartupExternalReceiptAuditPort = {
 	auditWorkspaceLease: async () => { throw new Error("workspace audit should not run without references"); },
@@ -35,6 +46,38 @@ async function createSession(root: string): Promise<{ filePath: string; manager:
 }
 
 describe("GovernedV3SessionRuntime admission", () => {
+	it("preserves both startup and writer-close failures when governed open aborts", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-governed-open-cleanup-"));
+		roots.push(root);
+		const created = await createSession(root);
+		await created.manager.closeAll();
+		const startupFailure = new Error("injected governed startup failure");
+		const cleanupFailure = new Error("injected governed writer close failure");
+		const realOpen = V3SessionManager.open.bind(V3SessionManager);
+		let opened: V3SessionManager | undefined;
+		vi.spyOn(V3SessionManager, "open").mockImplementation(async (...args) => {
+			opened = await realOpen(...args);
+			vi.spyOn(opened, "reconcileArtifacts").mockRejectedValue(startupFailure);
+			const close = opened.closeAll.bind(opened);
+			vi.spyOn(opened, "closeAll").mockImplementation(async () => {
+				await close();
+				throw cleanupFailure;
+			});
+			return opened;
+		});
+
+		const error = await rejectedError(GovernedV3SessionRuntime.open({
+			filePath: created.filePath,
+			features,
+			externalReceiptAuditor: unexpectedAuditor,
+		}));
+
+		expect(error).toBeInstanceOf(AggregateError);
+		expect((error as AggregateError).errors.map(String).join("\n")).toContain(startupFailure.message);
+		expect((error as AggregateError).errors.map(String).join("\n")).toContain(cleanupFailure.message);
+		expect(opened?.isClosed()).toBe(true);
+	});
+
 	it("runs at most one resumable callback for a governed handle", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-governed-admission-"));
 		roots.push(root);

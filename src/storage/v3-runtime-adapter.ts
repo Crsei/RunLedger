@@ -221,7 +221,14 @@ export class GovernedV3SessionRuntime {
 			}
 			return new GovernedV3SessionRuntime(manager, startup, clock);
 		} catch (cause) {
-			await manager.closeAll().catch(() => undefined);
+			try {
+				await manager.closeAll();
+			} catch (cleanupError) {
+				throw new AggregateError(
+					[cause, cleanupError],
+					"governed V3 session startup failed and cleanup was incomplete",
+				);
+			}
 			throw cause;
 		}
 	}

@@ -29,6 +29,7 @@ import {
 import { validateRuntimeFeatureFlags, type RuntimeFeatureFlags } from "../runtime/runtime-features.ts";
 import { getProjectDir, resolveSessionDir } from "../storage/paths.ts";
 import { AuthorityRuntimeManager } from "../storage/authority-runtime-manager.ts";
+import { createProductionStartupExternalReceiptAuditor } from "../storage/production-startup-receipt-auditor.ts";
 import {
 	createHeadlessDaemonComposition,
 	type HeadlessDaemonComposition,
@@ -72,6 +73,8 @@ export interface StartLocalV3DaemonOptions {
 	shutdown?: ShutdownCoordinator;
 	shutdownTimeoutMs?: number;
 	startupExternalReceiptAuditor?: StartupExternalReceiptAuditPort;
+	/** Production workspace/tool-gateway 共用的 durable state root。 */
+	startupExternalReceiptStateRoot?: string;
 	startupExternalReceiptAuditTimeoutMs?: number;
 	clock?: () => Date;
 	/** 此入口当前只实现继承 stdio JSONL；socket/pipe 必须由独立 secure host 提供。 */
@@ -354,6 +357,15 @@ export async function startLocalV3Daemon(
 			firstError: featureErrors[0] ?? "unknown dependency error",
 		});
 	}
+	if (
+		options.startupExternalReceiptAuditor !== undefined &&
+		options.startupExternalReceiptStateRoot !== undefined
+	) {
+		return controlPlaneFailure(
+			"invalid_request",
+			"raw startup external receipt auditor cannot be combined with a durable state root",
+		);
+	}
 	const productionEvidence = validateProductionPortBindings(options.production);
 	if (!productionEvidence.ok) return productionEvidence;
 
@@ -363,6 +375,21 @@ export async function startLocalV3Daemon(
 	const identity = options.identity ?? createLocalIdentityContext(clock());
 	const shutdown = options.shutdown ?? new ShutdownCoordinator(clock);
 	const serverInstanceId = options.serverInstanceId ?? createRuntimeId("runtime");
+	let startupExternalReceiptAuditor = options.startupExternalReceiptAuditor;
+	if (!startupExternalReceiptAuditor && options.startupExternalReceiptStateRoot !== undefined) {
+		try {
+			startupExternalReceiptAuditor = await createProductionStartupExternalReceiptAuditor({
+				stateRoot: options.startupExternalReceiptStateRoot,
+				authorityId: identity.authorityId,
+				tenantId: identity.tenantId,
+				clock,
+			});
+		} catch (error) {
+			return controlPlaneFailure("adapter_unavailable", "startup external receipt stores are unavailable", true, {
+				errorName: error instanceof Error ? error.name : "UnknownError",
+			});
+		}
+	}
 	let consumerCheckpoints: FileDurableProjectionCheckpointStore<DaemonConsumerProjection> | undefined;
 	let eventDeliveryEvidence: ProductionAdapterEvidence | undefined;
 	if (options.production?.eventDelivery) {
@@ -445,9 +472,9 @@ export async function startLocalV3Daemon(
 			identity,
 			locator,
 			candidateAuthority: runtimeGeneration.value,
-			...(options.startupExternalReceiptAuditor === undefined
+			...(startupExternalReceiptAuditor === undefined
 				? {}
-				: { externalReceiptAuditor: options.startupExternalReceiptAuditor }),
+				: { externalReceiptAuditor: startupExternalReceiptAuditor }),
 			...(options.startupExternalReceiptAuditTimeoutMs === undefined
 				? {}
 				: { externalReceiptAuditTimeoutMs: options.startupExternalReceiptAuditTimeoutMs }),
