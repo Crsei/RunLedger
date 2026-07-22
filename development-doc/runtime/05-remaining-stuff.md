@@ -120,7 +120,7 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - `MemoryApprovalStateStore` 与 `FileApprovalStateStore` 共用 expected-revision CAS 规则并以 approval identity lock 串行 commit/current-grant operation；只允许 `allowed -> revoked | expired`，duplicate exact commit 幂等，binding/evidence/revision drift fail closed。
 - production interactive composition 不再允许 provider 注入第二份 Approval store；startup auditor、reconciler 和 Tool Gateway 统一使用 canonical `<stateRoot>/tool-gateway/approvals` 真源。
 - authorize cache、environment prepare 与 start 都复检 exact current allowed receipt；grant、`tool.authorized` 和 start identity 绑定 Approval receipt ID/digest/revision。`authorize -> start -> execute` 三阶段中，`start` 在同一 Approval fence 内完成 `sandbox.resolved/tool.authorized/tool.started` mandatory flush 与 attempt claim，`execute` 只消费 exact 一次性 start lease。
-- startup reconciler 可补写 store-only terminal、拒绝 event-only/漂移状态，并把已到期 allowed receipt 以 revision CAS 转为 expired；claim/read/terminal 不可证明、missing/repeated/late callback、same-digest 错配与 no-start execute 全部 fail closed 为 uncertain 或 unavailable，真实工具副作用保持零调用。
+- startup reconciler 可补写 store-only terminal、拒绝 event-only/漂移状态，并把已到期 allowed receipt 以 revision CAS 转为 expired。真实 `tool.execute` 调用前的 attempt claim/read、callback、identity 与 no-start failure 全部 fail closed 为 uncertain 或 unavailable，工具副作用保持零调用；调用已经开始后的 settlement、terminal commit 或 completed read-back failure 返回不可继续的 uncertain，但工具副作用可能已经发生。
 
 仍未闭合的 Approval/Gateway 边界:
 
@@ -133,7 +133,7 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ### 1.8 本轮查找与验证过程中的问题
 
-- 一次范围过宽的 `/tmp` 只读搜索从旧的、与当前仓库无关的临时日志中把一条 credential 显示到了工具输出。该值没有被复述、使用、写入仓库或提交；当前 20 条代码/测试路径已用只输出文件名的私钥、AWS key、`sk-*` 模式复检，无命中。由于轮换凭据和清理旧临时日志属于额外外部/破坏性状态变更，本轮没有擅自执行；相关 credential 应尽快轮换，并单独清理或收紧旧日志权限。
+- 一次范围过宽的 `/tmp` 只读搜索从旧的、与当前仓库无关的临时日志中把一条 credential 显示到了工具输出。该值没有被复述、使用、写入仓库或提交；当时实现检查点涉及的 20 条代码/测试路径已用只输出文件名的私钥、AWS key、`sk-*` 模式复检，无命中。由于轮换凭据和清理旧临时日志属于额外外部/破坏性状态变更，本轮没有擅自执行；相关 credential 应尽快轮换，并单独清理或收紧旧日志权限。
 - live smoke 首次预检误把实际 `AuthCheck = { type, source? }` 当成含 `configured` 字段，因此在网络请求前主动失败。按真实契约改为检查返回值是否存在后重跑成功；没有为这个 one-off runner 修改仓库代码。
 - 本阶段 live smoke 的第一次 runner 选择了 Node 原生 `--experimental-strip-types`，因该 loader 不解析 `src/runtime/ledger/memory-ledger.ts` 中现有 `.js` 相对导入而在网络请求前以 `ERR_MODULE_NOT_FOUND` 退出；随后改用项目已安装的 `tsx`，同一 auth/provider/Agent/tool 路径成功。失败尝试未读取或输出凭据，也没有修改仓库。
 - 两次成功 live smoke 都使用内联 runner，当前没有可持久复跑的脚本、durable session、governed state-root 或真实 mutation-gate audit；所以证据只记录 provider/Agent/tool/ledger 连通性，不能提升任何 governed startup、Verification 或 Phase 11 复选框。
