@@ -7,7 +7,8 @@ import {
 	isApprovalReceiptRef,
 	type ApprovalReceiptRef,
 } from "../protocol/v3/capability.ts";
-import { isRuntimeId } from "../protocol/v3/ids.ts";
+import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
+import { createRuntimeId, isRuntimeId } from "../protocol/v3/ids.ts";
 import type {
 	AuthorityId,
 	ReceiptId,
@@ -41,7 +42,7 @@ export interface ExternalReceiptReferenceSet {
 	authorityId: AuthorityId;
 	tenantId: TenantId;
 	sessionId: SessionId;
-	completeness: "complete" | "unknown";
+	completeness: "complete" | "partial" | "unknown";
 	workspaceLeases: readonly WorkspaceLeaseRef[];
 	approvalDecisions: readonly ApprovalReceiptRef[];
 }
@@ -54,10 +55,32 @@ export interface ExternalReceiptAuditReceipt {
 	auditReceiptId: ReceiptId;
 	subjectKind: "workspace_lease" | "approval_decision";
 	subjectId: string;
+	/** 被审计的 canonical reference；同 ID 的旧 revision 不能复用 receipt。 */
+	subjectDigest: string;
+	/** authoritative store 返回对象时才存在；not_found/unavailable 不得伪造。 */
+	authoritativeDigest?: string;
+	observedRevision?: number;
 	status: "valid" | "invalid" | "unavailable";
+	outcomeReason:
+		| "exact_match"
+		| "stale"
+		| "revoked"
+		| "expired"
+		| "not_found"
+		| "scope_mismatch"
+		| "digest_mismatch"
+		| "timeout"
+		| "store_unavailable"
+		| "external_unavailable";
 	checkedAt: string;
+	validThrough: string | null;
 	receiptDigest: string;
 }
+
+export type ExternalReceiptAuditReceiptInput = Omit<
+	ExternalReceiptAuditReceipt,
+	"schemaVersion" | "auditReceiptId" | "receiptDigest"
+>;
 
 export interface StartupExternalReferenceSourcePort {
 	loadReferences(
@@ -86,7 +109,7 @@ const exact = <T extends Record<string, TSchema>>(properties: T) => Type.Object(
 
 export const ExternalReceiptReferenceSetSchema = exact({
 	schemaVersion: Type.Literal(LIFECYCLE_SCHEMA_VERSION), authorityId: runtimeId("authority"), tenantId: runtimeId("tenant"), sessionId: runtimeId("session"),
-	completeness: Type.Union([Type.Literal("complete"), Type.Literal("unknown")]),
+	completeness: Type.Union([Type.Literal("complete"), Type.Literal("partial"), Type.Literal("unknown")]),
 	workspaceLeases: Type.Array(WorkspaceLeaseRefSchema, { maxItems: 10_000 }),
 	approvalDecisions: Type.Array(ApprovalReceiptRefSchema, { maxItems: 10_000 }),
 });
@@ -94,8 +117,16 @@ export const ExternalReceiptReferenceSetSchema = exact({
 export const ExternalReceiptAuditReceiptSchema = exact({
 	schemaVersion: Type.Literal(LIFECYCLE_SCHEMA_VERSION), authorityId: runtimeId("authority"), tenantId: runtimeId("tenant"), sessionId: runtimeId("session"),
 	auditReceiptId: runtimeId("receipt"), subjectKind: Type.Union([Type.Literal("workspace_lease"), Type.Literal("approval_decision")]),
-	subjectId: Type.String({ minLength: 1, maxLength: 128 }), status: Type.Union([Type.Literal("valid"), Type.Literal("invalid"), Type.Literal("unavailable")]),
-	checkedAt: timestamp, receiptDigest: digest,
+	subjectId: Type.String({ minLength: 1, maxLength: 128 }), subjectDigest: digest,
+	authoritativeDigest: Type.Optional(digest),
+	observedRevision: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+	status: Type.Union([Type.Literal("valid"), Type.Literal("invalid"), Type.Literal("unavailable")]),
+	outcomeReason: Type.Union([
+		Type.Literal("exact_match"), Type.Literal("stale"), Type.Literal("revoked"), Type.Literal("expired"),
+		Type.Literal("not_found"), Type.Literal("scope_mismatch"), Type.Literal("digest_mismatch"),
+		Type.Literal("timeout"), Type.Literal("store_unavailable"), Type.Literal("external_unavailable"),
+	]),
+	checkedAt: timestamp, validThrough: Type.Union([timestamp, Type.Null()]), receiptDigest: digest,
 });
 
 export function isExternalReceiptReferenceSet(value: unknown): value is ExternalReceiptReferenceSet {
@@ -107,9 +138,39 @@ export function isExternalReceiptReferenceSet(value: unknown): value is External
 }
 
 export function isExternalReceiptAuditReceipt(value: unknown): value is ExternalReceiptAuditReceipt {
-	return Check(ExternalReceiptAuditReceiptSchema, value) &&
-		isRuntimeId(value.authorityId, "authority") && isRuntimeId(value.tenantId, "tenant") &&
-		isRuntimeId(value.sessionId, "session") && isRuntimeId(value.auditReceiptId, "receipt");
+	if (!Check(ExternalReceiptAuditReceiptSchema, value) ||
+		!isRuntimeId(value.authorityId, "authority") || !isRuntimeId(value.tenantId, "tenant") ||
+		!isRuntimeId(value.sessionId, "session") || !isRuntimeId(value.auditReceiptId, "receipt") ||
+		!Number.isFinite(Date.parse(value.checkedAt)) ||
+		(value.validThrough !== null && (
+			!Number.isFinite(Date.parse(value.validThrough)) || Date.parse(value.validThrough) < Date.parse(value.checkedAt)
+		))) return false;
+	const validReason = value.status === "valid" && value.outcomeReason === "exact_match" &&
+		value.authoritativeDigest === value.subjectDigest && value.observedRevision !== undefined;
+	const invalidReason = value.status === "invalid" && [
+		"stale", "revoked", "expired", "scope_mismatch", "digest_mismatch",
+	].includes(value.outcomeReason);
+	const unavailableReason = value.status === "unavailable" &&
+		["not_found", "timeout", "store_unavailable", "external_unavailable"].includes(value.outcomeReason) &&
+		value.authoritativeDigest === undefined && value.observedRevision === undefined;
+	if (!validReason && !invalidReason && !unavailableReason) return false;
+	const { receiptDigest, ...body } = value;
+	return canonicalDigest(body) === receiptDigest;
+}
+
+export function createExternalReceiptAuditReceipt(
+	input: ExternalReceiptAuditReceiptInput,
+): ExternalReceiptAuditReceipt {
+	const auditReceiptId = createRuntimeId(
+		"receipt",
+		`startup-audit-${canonicalDigest({ domain: "runledger.startup-external-receipt-audit.v1", input }).slice(0, 48)}`,
+	);
+	const body: Omit<ExternalReceiptAuditReceipt, "receiptDigest"> = {
+		schemaVersion: LIFECYCLE_SCHEMA_VERSION,
+		auditReceiptId,
+		...input,
+	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 export function auditReceiptMatchesWorkspaceLease(
@@ -119,7 +180,8 @@ export function auditReceiptMatchesWorkspaceLease(
 ): boolean {
 	return isExternalReceiptAuditReceipt(audit) && audit.subjectKind === "workspace_lease" &&
 		audit.authorityId === lease.authorityId && audit.tenantId === lease.tenantId && audit.sessionId === sessionId &&
-		audit.subjectId === lease.leaseId;
+		audit.subjectId === lease.leaseId && audit.subjectDigest === canonicalDigest(lease) &&
+		(audit.status !== "valid" || audit.observedRevision === lease.leaseRevision);
 }
 
 export function auditReceiptMatchesApproval(
@@ -129,5 +191,7 @@ export function auditReceiptMatchesApproval(
 ): boolean {
 	return isExternalReceiptAuditReceipt(audit) && audit.subjectKind === "approval_decision" &&
 		audit.authorityId === receipt.authorityId && audit.tenantId === receipt.tenantId && audit.sessionId === sessionId &&
-		audit.subjectId === receipt.receiptId;
+		audit.subjectId === receipt.receiptId && audit.subjectDigest === canonicalDigest(receipt) &&
+		(audit.status !== "valid" || audit.observedRevision === receipt.decisionRevision) &&
+		(audit.status !== "valid" || audit.validThrough === (receipt.expiresAt ?? null));
 }

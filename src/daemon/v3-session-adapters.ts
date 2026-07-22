@@ -24,6 +24,13 @@ import {
 import { validateRuntimeEvent } from "../runtime/protocol/v3/schemas.ts";
 import type { RuntimeIdentityContext } from "../runtime/identity/types.ts";
 import type { RuntimeFeatureFlags } from "../runtime/runtime-features.ts";
+import type {
+	ExternalReceiptAuditReceipt,
+	LifecycleResult,
+	StartupExternalReceiptAuditPort,
+} from "../runtime/lifecycle/recovery.ts";
+import { CanonicalEventExternalReferenceSource } from "../runtime/lifecycle/canonical-references.ts";
+import { StartupRecoveryCoordinator } from "../runtime/lifecycle/startup.ts";
 import { createStableForkPlan } from "../runtime/session/checkpoint.ts";
 import { verifyRuntimeEventChain } from "../runtime/session/chain-verification.ts";
 import type { RuntimeEventStore } from "../runtime/session/event-store.ts";
@@ -85,6 +92,7 @@ import type {
 } from "./recovery-adapter.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { resolveSessionDir } from "../storage/paths.ts";
+import { GovernedV3SessionRuntime } from "../storage/v3-runtime-adapter.ts";
 import { V3SessionManager } from "../storage/v3-session-manager.ts";
 import {
 	DurableQueueBindingError,
@@ -121,6 +129,22 @@ function adapterUnavailable<T>(operation: string, error?: unknown, effect: "none
 function recoveryRequired<T>(message: string, details?: Readonly<Record<string, string | number | boolean>>): ControlPlaneResult<T> {
 	return controlPlaneFailure("recovery_required", message, false, details);
 }
+
+function unavailableExternalReceiptAudit(): Promise<LifecycleResult<ExternalReceiptAuditReceipt>> {
+	return Promise.resolve({
+		ok: false,
+		error: {
+			code: "external_unavailable",
+			message: "startup external receipt auditor is not configured",
+			retryable: true,
+		},
+	});
+}
+
+const FAIL_CLOSED_STARTUP_AUDITOR: StartupExternalReceiptAuditPort = Object.freeze({
+	auditWorkspaceLease: unavailableExternalReceiptAudit,
+	auditApprovalDecision: unavailableExternalReceiptAudit,
+});
 
 /**
  * Session effect 描述此前待 flush 的 canonical mutation；Control Plane effect 描述本次只读 query。
@@ -467,15 +491,14 @@ export class V3ManagedSessionRuntime implements ManagedSessionRuntime {
 
 	public async teardown(_reason: "replacement" | "shutdown"): Promise<ControlPlaneResult<void>> {
 		if (this.#closed) return { ok: true, value: undefined };
-		this.#closed = true;
 		try {
 			await this.#manager.closeAll();
-			return { ok: true, value: undefined };
 		} catch (error) {
 			return adapterUnavailable("v3 session teardown", error, "uncertain");
-		} finally {
-			this.#onClosed(this);
 		}
+		this.#closed = true;
+		this.#onClosed(this);
+		return { ok: true, value: undefined };
 	}
 }
 
@@ -490,6 +513,8 @@ export interface V3SessionRuntimeFactoryAdapterOptions {
 	identity: RuntimeIdentityContext;
 	locator?: V3SessionLocatorPort;
 	candidateAuthority?: V3CandidateAuthorityBindingPort;
+	externalReceiptAuditor?: StartupExternalReceiptAuditPort;
+	externalReceiptAuditTimeoutMs?: number;
 }
 
 /** create/open/fork 始终持有 V3SessionManager 的 writer lease，teardown 后才释放。 */
@@ -500,6 +525,8 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 	readonly #identity: RuntimeIdentityContext;
 	readonly #locator: V3SessionLocatorPort;
 	readonly #candidateAuthority: V3CandidateAuthorityBindingPort | undefined;
+	readonly #externalReceiptAuditor: StartupExternalReceiptAuditPort;
+	readonly #externalReceiptAuditTimeoutMs: number;
 	readonly #active = new Map<SessionId, V3ManagedSessionRuntime>();
 
 	public constructor(options: V3SessionRuntimeFactoryAdapterOptions) {
@@ -510,6 +537,8 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		this.#identity = options.identity;
 		this.#locator = options.locator ?? new DirectoryV3SessionLocator({ cwd: this.#cwd, sessionDir: this.#sessionDir });
 		this.#candidateAuthority = options.candidateAuthority;
+		this.#externalReceiptAuditor = options.externalReceiptAuditor ?? FAIL_CLOSED_STARTUP_AUDITOR;
+		this.#externalReceiptAuditTimeoutMs = options.externalReceiptAuditTimeoutMs ?? 5_000;
 	}
 
 	public identity(): RuntimeIdentityContext {
@@ -548,30 +577,48 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 	async #openResumable(sessionId: SessionId): Promise<ControlPlaneResult<V3ManagedSessionRuntime>> {
 		const location = await this.#locator.locate(sessionId);
 		if (!location.ok) return location;
-		let manager: V3SessionManager;
+		let governed: GovernedV3SessionRuntime;
 		try {
-			manager = await V3SessionManager.open(location.value.filePath, this.#features, this.#identity, {
+			governed = await GovernedV3SessionRuntime.open({
+				filePath: location.value.filePath,
+				features: this.#features,
+				identity: this.#identity,
 				runtimeId: createRuntimeId("runtime"),
+				externalReceiptAuditor: this.#externalReceiptAuditor,
+				externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
 			});
 		} catch (error) {
 			return recoveryRequired("v3 session could not establish a trusted writable recovery state", {
 				errorName: error instanceof Error ? error.name : "UnknownError",
 			});
 		}
-		if (manager.sessionId() !== sessionId || !sameIdentity(manager, this.#identity)) {
-			await manager.closeAll().catch(() => undefined);
+		if (governed.sessionId() !== sessionId) {
+			await governed.close().catch(() => undefined);
 			return controlPlaneFailure("adapter_contract_violation", "opened v3 session correlation is invalid");
 		}
-		const decision = manager.recoveryDecision();
-		if (!decision || decision.kind !== "resume") {
-			await manager.closeAll().catch(() => undefined);
-			return recoveryRequired("v3 session is not safe for automatic resume", {
-				recoveryState: decision?.kind ?? "missing",
-				...(decision?.kind === "pause_for_approval" ? { reasonCount: decision.reasons.length } : {}),
+		const admitted = await governed.runIfResumable(async (manager) => {
+			if (!sameIdentity(manager, this.#identity)) {
+				return controlPlaneFailure<V3ManagedSessionRuntime>(
+					"adapter_contract_violation",
+					"opened v3 session authority correlation is invalid",
+				);
+			}
+			return this.#manage(manager);
+		});
+		if (!admitted.ok) {
+			const startup = governed.startupReport().sessions[0];
+			await governed.close().catch(() => undefined);
+			return recoveryRequired("v3 session did not pass governed startup external receipt audit", {
+				recoveryState: startup?.disposition === "paused"
+					? "pause_for_approval"
+					: startup?.disposition ?? "missing",
+				startupDisposition: startup?.disposition ?? "missing",
+				startupReasons: startup?.reasons.join(",") || "none",
+				reasonCount: startup?.reasons.length ?? 0,
 			});
 		}
-		const managed = await this.#manage(manager);
-		if (!managed.ok) await manager.closeAll().catch(() => undefined);
+		const managed = admitted.value;
+		if (!managed.ok) await governed.close().catch(() => undefined);
 		return managed;
 	}
 
@@ -600,6 +647,42 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		return this.#openResumable(sessionId);
 	}
 
+	async #revalidateActiveForkParent(parent: V3SessionManager): Promise<ControlPlaneResult<void>> {
+		try {
+			const identity = parent.identity();
+			const sessionId = parent.sessionId();
+			const references = new CanonicalEventExternalReferenceSource(parent.eventStore(), {
+				authorityId: identity.authorityId,
+				tenantId: identity.tenantId,
+				sessionId,
+			});
+			const startup = await new StartupRecoveryCoordinator({
+				references,
+				auditor: this.#externalReceiptAuditor,
+				externalOperationTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+			}).scan([{
+				authorityId: identity.authorityId,
+				tenantId: identity.tenantId,
+				sessionId,
+				sessionDirectory: parent.stateDirectory(),
+				store: parent.eventStore(),
+				snapshotFilePath: join(parent.stateDirectory(), "snapshot.json"),
+			}]);
+			const report = startup.sessions[0];
+			if (!report || report.disposition !== "resumable") {
+				return recoveryRequired("active fork parent did not pass governed external receipt revalidation", {
+					startupDisposition: report?.disposition ?? "missing",
+					startupReasons: report?.reasons.join(",") || "none",
+				});
+			}
+			return { ok: true, value: undefined };
+		} catch (error) {
+			return recoveryRequired("active fork parent external receipt revalidation is unavailable", {
+				errorName: error instanceof Error ? error.name : "UnknownError",
+			});
+		}
+	}
+
 	public async fork(
 		parentSessionId: SessionId,
 		parentCursor: EventCursor,
@@ -615,16 +698,33 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		const location = await this.#locator.locate(parentSessionId);
 		if (!location.ok) return location;
 		let parent: V3SessionManager | undefined;
-		let closeParent = false;
+		let governedParent: GovernedV3SessionRuntime | undefined;
 		let child: V3SessionManager | undefined;
 		let childHasDurableGenesis = false;
 		try {
 			const activeParent = this.activeRuntime(parentSessionId);
 			if (activeParent) {
 				parent = activeParent.manager();
+				const revalidated = await this.#revalidateActiveForkParent(parent);
+				if (!revalidated.ok) return revalidated;
 			} else {
-				parent = await V3SessionManager.open(location.value.filePath, this.#features, this.#identity);
-				closeParent = true;
+				governedParent = await GovernedV3SessionRuntime.open({
+					filePath: location.value.filePath,
+					features: this.#features,
+					identity: this.#identity,
+					runtimeId: createRuntimeId("runtime"),
+					externalReceiptAuditor: this.#externalReceiptAuditor,
+					externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+				});
+				const admitted = await governedParent.runIfResumable(async (manager) => manager);
+				if (!admitted.ok) {
+					const startup = governedParent.startupReport().sessions[0];
+					return recoveryRequired("fork parent did not pass governed startup external receipt audit", {
+						startupDisposition: startup?.disposition ?? "missing",
+						startupReasons: startup?.reasons.join(",") || "none",
+					});
+				}
+				parent = admitted.value;
 			}
 			if (parent.sessionId() !== parentSessionId || !sameIdentity(parent, this.#identity)) {
 				return controlPlaneFailure("adapter_contract_violation", "fork parent manager correlation is invalid");
@@ -690,7 +790,7 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		} catch (error) {
 			return adapterUnavailable("v3 session fork", error, childHasDurableGenesis ? "uncertain" : "none");
 		} finally {
-			if (parent && closeParent) await parent.closeAll().catch(() => undefined);
+			if (governedParent) await governedParent.close().catch(() => undefined);
 			if (child) {
 				if (childHasDurableGenesis) await child.closeAll().catch(() => undefined);
 				else await child.discardEmptyTarget().catch(() => undefined);

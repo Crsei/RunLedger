@@ -11,6 +11,7 @@ import {
 	V3QueryExecutorAdapter,
 	V3SessionControlStateAdapter,
 	V3SessionEvidenceReader,
+	V3ManagedSessionRuntime,
 	V3SessionRuntimeFactoryAdapter,
 } from "../../../src/daemon/v3-session-adapters.ts";
 import { projectRuntimeActivityEvents } from "../../../src/runtime/activity/projection.ts";
@@ -112,6 +113,39 @@ function cursor(manager: V3SessionManager): EventCursor {
 }
 
 describe("V3SessionManager lifecycle adapters", () => {
+	it("does not mark or unregister a managed runtime when manager close fails", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FEATURES,
+			identity: IDENTITY,
+		});
+		const onClosed = vi.fn();
+		const close = vi.spyOn(manager, "closeAll").mockRejectedValue(new Error("injected close failure"));
+		const runtime = new V3ManagedSessionRuntime(manager, onClosed);
+
+		try {
+			await expect(runtime.teardown("shutdown")).resolves.toMatchObject({
+				ok: false,
+				error: { code: "adapter_unavailable" },
+			});
+			expect(runtime.isClosed()).toBe(false);
+			expect(onClosed).not.toHaveBeenCalled();
+
+			await expect(runtime.teardown("shutdown")).resolves.toMatchObject({
+				ok: false,
+				error: { code: "adapter_unavailable" },
+			});
+			expect(close).toHaveBeenCalledTimes(2);
+			expect(runtime.isClosed()).toBe(false);
+			expect(onClosed).not.toHaveBeenCalled();
+		} finally {
+			close.mockRestore();
+			await manager.closeAll();
+		}
+	});
+
 	it("releases the replaced writer lease and fences the old Control Plane handle", async () => {
 		const root = temporaryRoot();
 		const { factory, registry } = setup(root);

@@ -48,6 +48,7 @@ import {
   forkV3FromCli,
   migrateLegacyFromCli,
   migrationEvidenceDigest,
+  openGovernedV3FromCli,
   resolveCliRuntimeConfiguration,
 } from "./v3-session-commands.ts";
 import { createCliGovernedInteractiveController } from "./interactive-control-plane.ts";
@@ -59,6 +60,7 @@ import {
 import type { GovernedContextFragmentProvider } from "../runtime/integration/governed-model-request.ts";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId, type AuthorityId, type PrincipalId, type TenantId } from "../runtime/protocol/v3/ids.ts";
+import type { StartupExternalReceiptAuditPort } from "../runtime/lifecycle/recovery.ts";
 import { installCliRuntimeLifecycle, type InstalledCliRuntimeLifecycle } from "./runtime-lifecycle.ts";
 import {
   createCliProductionInteractiveOptions,
@@ -76,6 +78,8 @@ const DEFAULT_SYSTEM_PROMPT =
 export interface CliMainDependencies {
   /** 嵌入式 deployment 可注入真实 adapters；标准 CLI 缺失时必须 fail closed。 */
   productionInteractiveOptions?: ProductionInteractiveOptionsProvider;
+  startupExternalReceiptAuditor?: StartupExternalReceiptAuditPort;
+  startupExternalReceiptAuditTimeoutMs?: number;
 }
 
 export async function main(
@@ -178,7 +182,16 @@ export async function main(
     }
     if (fence.format === "v3") {
       requireSessionAction(3, "append");
-      v3Manager = await V3SessionManager.open(filePath, runtimeFeatures);
+      v3Manager = await openGovernedV3FromCli({
+        filePath,
+        features: runtimeFeatures,
+        ...(dependencies.startupExternalReceiptAuditor === undefined
+          ? {}
+          : { externalReceiptAuditor: dependencies.startupExternalReceiptAuditor }),
+        ...(dependencies.startupExternalReceiptAuditTimeoutMs === undefined
+          ? {}
+          : { externalReceiptAuditTimeoutMs: dependencies.startupExternalReceiptAuditTimeoutMs }),
+      });
       return;
     }
     const sourceVersion = fence.sourceVersion;
@@ -211,7 +224,18 @@ export async function main(
     }
     if (source.format === "v3") {
       requireSessionAction(3, "fork_to_v3");
-      const fork = await forkV3FromCli({ sourcePath: args.fork, cwd, sessionDir, features: runtimeFeatures });
+      const fork = await forkV3FromCli({
+        sourcePath: args.fork,
+        cwd,
+        sessionDir,
+        features: runtimeFeatures,
+        ...(dependencies.startupExternalReceiptAuditor === undefined
+          ? {}
+          : { externalReceiptAuditor: dependencies.startupExternalReceiptAuditor }),
+        ...(dependencies.startupExternalReceiptAuditTimeoutMs === undefined
+          ? {}
+          : { externalReceiptAuditTimeoutMs: dependencies.startupExternalReceiptAuditTimeoutMs }),
+      });
       await openSelected(fork.filePath);
     } else {
       if (source.sourceVersion !== 2 || runtimeConfiguration.sessionV3State === "default" || runtimeConfiguration.sessionV3State === "required") {

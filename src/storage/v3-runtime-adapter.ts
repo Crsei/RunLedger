@@ -2,7 +2,14 @@
 
 import { readFile, rm } from "node:fs/promises";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
-import { createRuntimeId, type ArtifactId, type AuthorityId, type SessionId, type TenantId } from "../runtime/protocol/v3/ids.ts";
+import {
+	createRuntimeId,
+	type ArtifactId,
+	type AuthorityId,
+	type RuntimeInstanceId,
+	type SessionId,
+	type TenantId,
+} from "../runtime/protocol/v3/ids.ts";
 import { validateRuntimeEvent } from "../runtime/protocol/v3/schemas.ts";
 import { CanonicalEventExternalReferenceSource } from "../runtime/lifecycle/canonical-references.ts";
 import {
@@ -38,7 +45,10 @@ export interface GovernedV3SessionOpenOptions {
 	filePath: string;
 	features: Readonly<RuntimeFeatureFlags>;
 	identity?: RuntimeIdentityContext;
+	runtimeId?: RuntimeInstanceId;
 	externalReceiptAuditor: StartupExternalReceiptAuditPort;
+	externalReceiptAuditTimeoutMs?: number;
+	signal?: AbortSignal;
 	clock?: () => Date;
 }
 
@@ -131,6 +141,34 @@ function withArtifactFailure(report: StartupRecoveryReport): StartupRecoveryRepo
 	};
 }
 
+function withArtifactReconciliationSuccess(report: StartupRecoveryReport): StartupRecoveryReport {
+	const sessions = report.sessions.map((session): StartupSessionReport => {
+		if (session.disposition === "corrupted" || session.disposition === "stopped") return session;
+		const reasons = session.reasons.filter((reason) => reason !== "pending_artifact_intent");
+		return {
+			...session,
+			disposition: reasons.length === 0 ? "resumable" : "paused",
+			reasons,
+		};
+	});
+	return {
+		...report,
+		sessions,
+		resumableSessionIds: sessions.filter((session) => session.disposition === "resumable").map((session) => session.sessionId),
+		pausedSessionIds: sessions.filter((session) => session.disposition === "paused").map((session) => session.sessionId),
+	};
+}
+
+function cloneStartupReport(report: StartupRecoveryReport): StartupRecoveryReport {
+	return structuredClone(report);
+}
+
+function auditReceiptsRemainValid(report: StartupSessionReport, now: Date): boolean {
+	const nowMs = now.getTime();
+	return report.auditReceipts.every((receipt) =>
+		receipt.status !== "valid" || receipt.validThrough === null || Date.parse(receipt.validThrough) > nowMs);
+}
+
 /**
  * Governed open 不直接返回裸 manager：只有 startup report 为 resumable 时才调用 runIfResumable。
  * paused/stopped/corrupted 会保留 canonical state，但不会重放 tool/child 等副作用。
@@ -140,10 +178,11 @@ export class GovernedV3SessionRuntime {
 	readonly #startup: StartupRecoveryReport;
 	readonly #clock: () => Date;
 	#shutdown: RuntimeShutdownCoordinator | undefined;
+	#admissionConsumed = false;
 
 	private constructor(manager: V3SessionManager, startup: StartupRecoveryReport, clock: () => Date) {
 		this.#manager = manager;
-		this.#startup = startup;
+		this.#startup = cloneStartupReport(startup);
 		this.#clock = clock;
 	}
 
@@ -153,43 +192,95 @@ export class GovernedV3SessionRuntime {
 			options.filePath,
 			options.features,
 			options.identity,
-			{ reconcileArtifacts: false },
+			{
+				reconcileArtifacts: false,
+				...(options.runtimeId === undefined ? {} : { runtimeId: options.runtimeId }),
+			},
 		);
-		const identity = manager.identity();
-		const references = new CanonicalEventExternalReferenceSource(manager.eventStore(), {
-			authorityId: identity.authorityId,
-			tenantId: identity.tenantId,
-			sessionId: manager.sessionId(),
-		});
-		const coordinator = new StartupRecoveryCoordinator({
-			references,
-			auditor: options.externalReceiptAuditor,
-			clock,
-		});
-		let startup = await coordinator.scan([startupCandidate(manager)]);
-		if (reconciliationIsSafe(startup)) {
-			const reconciliation = await manager.reconcileArtifacts();
-			startup = reconciliation.ok && reconciliation.value.failed.length === 0
-				? await coordinator.scan([startupCandidate(manager)])
-				: withArtifactFailure(startup);
+		try {
+			const identity = manager.identity();
+			const references = new CanonicalEventExternalReferenceSource(manager.eventStore(), {
+				authorityId: identity.authorityId,
+				tenantId: identity.tenantId,
+				sessionId: manager.sessionId(),
+			});
+			const coordinator = new StartupRecoveryCoordinator({
+				references,
+				auditor: options.externalReceiptAuditor,
+				clock,
+				...(options.externalReceiptAuditTimeoutMs === undefined
+					? {}
+					: { externalOperationTimeoutMs: options.externalReceiptAuditTimeoutMs }),
+			});
+			let startup = await coordinator.scan([startupCandidate(manager)], options.signal);
+			if (reconciliationIsSafe(startup)) {
+				const reconciliation = await manager.reconcileArtifacts();
+				startup = reconciliation.ok && reconciliation.value.failed.length === 0
+					? withArtifactReconciliationSuccess(startup)
+					: withArtifactFailure(startup);
+			}
+			return new GovernedV3SessionRuntime(manager, startup, clock);
+		} catch (cause) {
+			await manager.closeAll().catch(() => undefined);
+			throw cause;
 		}
-		return new GovernedV3SessionRuntime(manager, startup, clock);
 	}
 
 	public sessionId(): SessionId { return this.#manager.sessionId(); }
 	public filePath(): string { return this.#manager.filePath(); }
-	public startupReport(): StartupRecoveryReport { return this.#startup; }
+	public startupReport(): StartupRecoveryReport { return cloneStartupReport(this.#startup); }
 	public isClosed(): boolean { return this.#manager.isClosed(); }
+	public close(): Promise<void> { return this.#manager.closeAll(); }
+
+	#claimAdmission(): boolean {
+		if (this.#admissionConsumed) return false;
+		this.#admissionConsumed = true;
+		return true;
+	}
 
 	public async runIfResumable<T>(operation: (manager: V3SessionManager) => Promise<T>): Promise<LifecycleResult<T>> {
 		const report = this.#startup.sessions[0];
-		if (!report || report.disposition !== "resumable" || this.#manager.isClosed()) {
+		if (
+			!report ||
+			report.disposition !== "resumable" ||
+			!auditReceiptsRemainValid(report, this.#clock()) ||
+			this.#manager.isClosed() ||
+			!this.#claimAdmission()
+		) {
 			return lifecycleFailure("external_unavailable", "v3 session is not approved for side-effect replay");
 		}
 		try {
 			return { ok: true, value: await operation(this.#manager) };
 		} catch (cause) {
 			return lifecycleFailure("mutation_failed", cause instanceof Error ? cause.message : "v3 session operation failed", true);
+		}
+	}
+
+	/** partial legacy migration 只能在外部审计通过且唯一 pause 原因为该 migration 自身时显式续跑。 */
+	public async runIfMigrationRecoveryApproved<T>(
+		operation: (manager: V3SessionManager) => Promise<T>,
+	): Promise<LifecycleResult<T>> {
+		const report = this.#startup.sessions[0];
+		const recovery = this.#manager.recoveryDecision();
+		if (
+			!report ||
+			report.disposition !== "paused" ||
+			report.reasons.length !== 1 ||
+			report.reasons[0] !== "uncertain_operation" ||
+			!report.checks.includes("external_receipts") ||
+			!auditReceiptsRemainValid(report, this.#clock()) ||
+			!recovery ||
+			recovery.kind !== "pause_for_approval" ||
+			recovery.projection.migration?.status !== "in_progress" ||
+			this.#manager.isClosed() ||
+			!this.#claimAdmission()
+		) {
+			return lifecycleFailure("external_unavailable", "v3 migration recovery is not approved by governed startup");
+		}
+		try {
+			return { ok: true, value: await operation(this.#manager) };
+		} catch (cause) {
+			return lifecycleFailure("mutation_failed", cause instanceof Error ? cause.message : "v3 migration recovery failed", true);
 		}
 	}
 

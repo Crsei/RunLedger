@@ -51,24 +51,82 @@ export interface StartupRecoveryCoordinatorOptions {
 	references: StartupExternalReferenceSourcePort;
 	auditor: StartupExternalReceiptAuditPort;
 	clock?: () => Date;
+	/** 单个外部读取/审计的硬上限；adapter 忽略 AbortSignal 也不能卡住 startup。 */
+	externalOperationTimeoutMs?: number;
+	/** 整次 scan 的外部调用总时限；耗尽后不再启动新的 reference/audit 调用。 */
+	externalScanTimeoutMs?: number;
+}
+
+type ExternalCallResult<T> =
+	| { kind: "value"; value: T }
+	| { kind: "unavailable"; cause: "aborted" | "throw" | "timeout" };
+
+async function boundedExternalCall<T>(
+	operation: (signal: AbortSignal) => Promise<T>,
+	parentSignal: AbortSignal | undefined,
+	timeoutMs: number,
+): Promise<ExternalCallResult<T>> {
+	if (parentSignal?.aborted) return { kind: "unavailable", cause: "aborted" };
+	const controller = new AbortController();
+	let resolveParentAbort: ((result: ExternalCallResult<T>) => void) | undefined;
+	const parentAbort = new Promise<ExternalCallResult<T>>((resolve) => {
+		resolveParentAbort = resolve;
+	});
+	const onParentAbort = () => {
+		resolveParentAbort?.({ kind: "unavailable", cause: "aborted" });
+		controller.abort(parentSignal?.reason);
+	};
+	parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const work = Promise.resolve()
+		.then(() => operation(controller.signal))
+		.then(
+			(value): ExternalCallResult<T> => ({ kind: "value", value }),
+			(): ExternalCallResult<T> => ({ kind: "unavailable", cause: "throw" }),
+		);
+	const deadline = new Promise<ExternalCallResult<T>>((resolve) => {
+		timer = setTimeout(() => {
+			resolve({ kind: "unavailable", cause: "timeout" });
+			controller.abort("startup_external_operation_timeout");
+		}, timeoutMs);
+	});
+	try {
+		return await Promise.race([work, deadline, parentAbort]);
+	} finally {
+		if (timer) clearTimeout(timer);
+		parentSignal?.removeEventListener("abort", onParentAbort);
+	}
 }
 
 export class StartupRecoveryCoordinator {
 	readonly #references: StartupExternalReferenceSourcePort;
 	readonly #auditor: StartupExternalReceiptAuditPort;
 	readonly #clock: () => Date;
+	readonly #externalOperationTimeoutMs: number;
+	readonly #externalScanTimeoutMs: number;
 
 	public constructor(options: StartupRecoveryCoordinatorOptions) {
 		this.#references = options.references;
 		this.#auditor = options.auditor;
 		this.#clock = options.clock ?? (() => new Date());
+		this.#externalOperationTimeoutMs = options.externalOperationTimeoutMs ?? 5_000;
+		this.#externalScanTimeoutMs = options.externalScanTimeoutMs ?? 30_000;
+		if (!Number.isSafeInteger(this.#externalOperationTimeoutMs) ||
+			this.#externalOperationTimeoutMs < 1 || this.#externalOperationTimeoutMs > 300_000) {
+			throw new TypeError("startup external operation timeout is outside the supported range");
+		}
+		if (!Number.isSafeInteger(this.#externalScanTimeoutMs) ||
+			this.#externalScanTimeoutMs < 1 || this.#externalScanTimeoutMs > 300_000) {
+			throw new TypeError("startup external scan timeout is outside the supported range");
+		}
 	}
 
 	public async scan(candidates: readonly StartupSessionCandidate[], signal?: AbortSignal): Promise<StartupRecoveryReport> {
 		const startedAt = this.#clock().toISOString();
+		const externalDeadlineMs = Date.now() + this.#externalScanTimeoutMs;
 		const sessions: StartupSessionReport[] = [];
 		for (const candidate of [...candidates].sort((left, right) => left.sessionId.localeCompare(right.sessionId))) {
-			sessions.push(await this.#scanOne(candidate, signal));
+			sessions.push(await this.#scanOne(candidate, externalDeadlineMs, signal));
 		}
 		return {
 			startedAt,
@@ -79,7 +137,15 @@ export class StartupRecoveryCoordinator {
 		};
 	}
 
-	async #scanOne(candidate: StartupSessionCandidate, signal?: AbortSignal): Promise<StartupSessionReport> {
+	#remainingExternalScanMs(externalDeadlineMs: number): number {
+		return Math.max(0, externalDeadlineMs - Date.now());
+	}
+
+	async #scanOne(
+		candidate: StartupSessionCandidate,
+		externalDeadlineMs: number,
+		signal?: AbortSignal,
+	): Promise<StartupSessionReport> {
 		const recoveryBase = {
 			authorityId: candidate.authorityId,
 			tenantId: candidate.tenantId,
@@ -101,34 +167,104 @@ export class StartupRecoveryCoordinator {
 		const base = { ...recoveryBase, checks: [...recoveryBase.checks, "external_receipts"] as const };
 
 		const reasons = new Set<StartupPauseReason>(recovery.kind === "pause_for_approval" ? recovery.reasons : []);
-		let loaded;
-		try {
-			loaded = await this.#references.loadReferences(base, signal);
-		} catch {
+		const referenceTimeoutMs = Math.min(
+			this.#externalOperationTimeoutMs,
+			this.#remainingExternalScanMs(externalDeadlineMs),
+		);
+		if (referenceTimeoutMs < 1) {
 			reasons.add("external_reference_unavailable");
 			return { ...base, disposition: "paused", reasons: [...reasons], cursor: recovery.cursor, auditReceipts: [] };
 		}
+		const loadedCall = await boundedExternalCall(
+			(boundedSignal) => this.#references.loadReferences(base, boundedSignal),
+			signal,
+			referenceTimeoutMs,
+		);
+		if (loadedCall.kind !== "value") {
+			reasons.add("external_reference_unavailable");
+			return { ...base, disposition: "paused", reasons: [...reasons], cursor: recovery.cursor, auditReceipts: [] };
+		}
+		const loaded = loadedCall.value;
 		if (!loaded.ok || !isExternalReceiptReferenceSet(loaded.value) ||
 			loaded.value.authorityId !== candidate.authorityId || loaded.value.tenantId !== candidate.tenantId || loaded.value.sessionId !== candidate.sessionId) {
 			reasons.add("external_reference_unavailable");
 			return { ...base, disposition: "paused", reasons: [...reasons], cursor: recovery.cursor, auditReceipts: [] };
 		}
-		if (loaded.value.completeness === "unknown") reasons.add("external_reference_unknown");
+		if (loaded.value.completeness !== "complete") reasons.add("external_reference_unknown");
 
 		const auditReceipts: ExternalReceiptAuditReceipt[] = [];
+		let auditBudgetExhausted = false;
 		for (const lease of loaded.value.workspaceLeases) {
-			try {
-				const audited = await this.#auditor.auditWorkspaceLease(candidate.sessionId, lease, signal);
-				if (!audited.ok || !auditReceiptMatchesWorkspaceLease(audited.value, candidate.sessionId, lease)) reasons.add("external_receipt_unavailable");
-				else { auditReceipts.push(audited.value); if (audited.value.status === "invalid") reasons.add("external_receipt_invalid"); if (audited.value.status === "unavailable") reasons.add("external_receipt_unavailable"); }
-			} catch { reasons.add("external_receipt_unavailable"); }
+			const auditTimeoutMs = Math.min(
+				this.#externalOperationTimeoutMs,
+				this.#remainingExternalScanMs(externalDeadlineMs),
+			);
+			if (auditTimeoutMs < 1 || signal?.aborted) {
+				reasons.add("external_receipt_unavailable");
+				auditBudgetExhausted = true;
+				break;
+			}
+			const auditedCall = await boundedExternalCall(
+				(boundedSignal) => this.#auditor.auditWorkspaceLease(candidate.sessionId, lease, boundedSignal),
+				signal,
+				auditTimeoutMs,
+			);
+			if (auditedCall.kind !== "value") {
+				reasons.add("external_receipt_unavailable");
+				if (auditedCall.cause === "timeout" || auditedCall.cause === "aborted") {
+					auditBudgetExhausted = true;
+					break;
+				}
+				continue;
+			}
+			if (!auditedCall.value.ok) {
+				reasons.add("external_receipt_unavailable");
+				continue;
+			}
+			const audited = auditedCall.value.value;
+			if (!auditReceiptMatchesWorkspaceLease(audited, candidate.sessionId, lease)) {
+				reasons.add("external_receipt_invalid");
+				continue;
+			}
+			auditReceipts.push(audited);
+			if (lease.state !== "active" || audited.status === "invalid") reasons.add("external_receipt_invalid");
+			if (audited.status === "unavailable") reasons.add("external_receipt_unavailable");
 		}
-		for (const approval of loaded.value.approvalDecisions) {
-			try {
-				const audited = await this.#auditor.auditApprovalDecision(candidate.sessionId, approval, signal);
-				if (!audited.ok || !auditReceiptMatchesApproval(audited.value, candidate.sessionId, approval)) reasons.add("external_receipt_unavailable");
-				else { auditReceipts.push(audited.value); if (audited.value.status === "invalid") reasons.add("external_receipt_invalid"); if (audited.value.status === "unavailable") reasons.add("external_receipt_unavailable"); }
-			} catch { reasons.add("external_receipt_unavailable"); }
+		for (const approval of auditBudgetExhausted ? [] : loaded.value.approvalDecisions) {
+			const auditTimeoutMs = Math.min(
+				this.#externalOperationTimeoutMs,
+				this.#remainingExternalScanMs(externalDeadlineMs),
+			);
+			if (auditTimeoutMs < 1 || signal?.aborted) {
+				reasons.add("external_receipt_unavailable");
+				break;
+			}
+			const auditedCall = await boundedExternalCall(
+				(boundedSignal) => this.#auditor.auditApprovalDecision(candidate.sessionId, approval, boundedSignal),
+				signal,
+				auditTimeoutMs,
+			);
+			if (auditedCall.kind !== "value") {
+				reasons.add("external_receipt_unavailable");
+				if (auditedCall.cause === "timeout" || auditedCall.cause === "aborted") break;
+				continue;
+			}
+			if (!auditedCall.value.ok) {
+				reasons.add("external_receipt_unavailable");
+				continue;
+			}
+			const audited = auditedCall.value.value;
+			if (!auditReceiptMatchesApproval(audited, candidate.sessionId, approval)) {
+				reasons.add("external_receipt_invalid");
+				continue;
+			}
+			auditReceipts.push(audited);
+			const expiredAllowed = approval.decision === "allowed" && approval.expiresAt !== undefined &&
+				Date.parse(approval.expiresAt) <= this.#clock().getTime();
+			if (approval.decision !== "allowed" || expiredAllowed || audited.status === "invalid") {
+				reasons.add("external_receipt_invalid");
+			}
+			if (audited.status === "unavailable") reasons.add("external_receipt_unavailable");
 		}
 		return {
 			...base,

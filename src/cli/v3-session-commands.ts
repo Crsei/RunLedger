@@ -2,6 +2,11 @@
 
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId, type AgentId, type GoalId } from "../runtime/protocol/v3/ids.ts";
+import type {
+	ExternalReceiptAuditReceipt,
+	LifecycleResult,
+	StartupExternalReceiptAuditPort,
+} from "../runtime/lifecycle/recovery.ts";
 import {
 	createStableForkPlan,
 	type StableForkGoalMode,
@@ -17,7 +22,160 @@ import {
 	type SessionV3FeatureState,
 } from "../runtime/runtime-features.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
+import { GovernedV3SessionRuntime } from "../storage/v3-runtime-adapter.ts";
 import { V3SessionManager } from "../storage/v3-session-manager.ts";
+
+function unavailableExternalReceiptAudit(): Promise<LifecycleResult<ExternalReceiptAuditReceipt>> {
+	return Promise.resolve({
+		ok: false,
+		error: {
+			code: "external_unavailable",
+			message: "CLI startup external receipt auditor is not configured",
+			retryable: true,
+		},
+	});
+}
+
+const FAIL_CLOSED_STARTUP_AUDITOR: StartupExternalReceiptAuditPort = Object.freeze({
+	auditWorkspaceLease: unavailableExternalReceiptAudit,
+	auditApprovalDecision: unavailableExternalReceiptAudit,
+});
+
+interface CliGovernedV3OpenOptions {
+	filePath: string;
+	features: Readonly<RuntimeFeatureFlags>;
+	externalReceiptAuditor?: StartupExternalReceiptAuditPort;
+	externalReceiptAuditTimeoutMs?: number;
+	signal?: AbortSignal;
+}
+
+interface CliSessionCleanup {
+	manager: V3SessionManager;
+	label: string;
+	discardIfEmpty: boolean;
+}
+
+function errorFrom(cause: unknown): Error {
+	if (cause instanceof Error) return cause;
+	return new Error(typeof cause === "string" ? cause : "unknown failure");
+}
+
+function commandError(operation: string, locator: string, cause: unknown): Error {
+	const error = errorFrom(cause);
+	return new Error(`${operation} failed; ${locator}: ${error.message}`, { cause: error });
+}
+
+async function cleanupSession(resource: CliSessionCleanup): Promise<Error | undefined> {
+	const { manager, label } = resource;
+	let discard = false;
+	if (resource.discardIfEmpty) {
+		try {
+			discard = manager.writer().currentHead() === undefined;
+		} catch (inspectionCause) {
+			const errors = [errorFrom(inspectionCause)];
+			try {
+				await manager.closeAll();
+			} catch (closeCause) {
+				errors.push(errorFrom(closeCause));
+			}
+			return new AggregateError(
+				errors,
+				`${label} cleanup could not inspect the durable head: ${errors.map((error) => error.message).join("; ")}`,
+			);
+		}
+	}
+	if (discard) {
+		try {
+			await manager.discardEmptyTarget();
+			return undefined;
+		} catch (discardCause) {
+			const errors = [errorFrom(discardCause)];
+			try {
+				await manager.closeAll();
+			} catch (closeCause) {
+				errors.push(errorFrom(closeCause));
+			}
+			const details = errors.map((error) => error.message).join("; ");
+			return errors.length === 1
+				? new Error(`${label} cleanup failed: ${details}`, { cause: errors[0] })
+				: new AggregateError(errors, `${label} cleanup failed: ${details}`);
+		}
+	}
+	try {
+		await manager.closeAll();
+		return undefined;
+	} catch (closeCause) {
+		const error = errorFrom(closeCause);
+		return new Error(`${label} cleanup failed: ${error.message}`, { cause: error });
+	}
+}
+
+async function settleSessions(
+	operation: string,
+	resources: readonly CliSessionCleanup[],
+	operationError?: Error,
+): Promise<void> {
+	const cleanupErrors: Error[] = [];
+	for (const resource of resources) {
+		const cleanupError = await cleanupSession(resource);
+		if (cleanupError) cleanupErrors.push(cleanupError);
+	}
+	if (cleanupErrors.length === 0) return;
+	throw new AggregateError(
+		operationError ? [operationError, ...cleanupErrors] : cleanupErrors,
+		`${operation} cleanup was incomplete: ${cleanupErrors.map((error) => error.message).join("; ")}`,
+	);
+}
+
+async function throwAfterGovernedClose(
+	operation: string,
+	filePath: string,
+	governed: GovernedV3SessionRuntime,
+	failure: Error,
+): Promise<never> {
+	try {
+		await governed.close();
+	} catch (closeCause) {
+		const cleanupError = errorFrom(closeCause);
+		throw new AggregateError(
+			[failure, cleanupError],
+			`${operation} rejected and target=${filePath} cleanup failed: ${cleanupError.message}`,
+		);
+	}
+	throw failure;
+}
+
+function openGovernedRuntimeFromCli(options: CliGovernedV3OpenOptions): Promise<GovernedV3SessionRuntime> {
+	return GovernedV3SessionRuntime.open({
+		filePath: options.filePath,
+		features: options.features,
+		externalReceiptAuditor: options.externalReceiptAuditor ?? FAIL_CLOSED_STARTUP_AUDITOR,
+		...(options.externalReceiptAuditTimeoutMs === undefined
+			? {}
+			: { externalReceiptAuditTimeoutMs: options.externalReceiptAuditTimeoutMs }),
+		...(options.signal === undefined ? {} : { signal: options.signal }),
+	});
+}
+
+export async function openGovernedV3FromCli(options: CliGovernedV3OpenOptions): Promise<V3SessionManager> {
+	const governed = await openGovernedRuntimeFromCli(options);
+	const admitted = await governed.runIfResumable(async (manager) => manager);
+	if (admitted.ok) return admitted.value;
+	const startup = governed.startupReport().sessions[0];
+	return throwAfterGovernedClose("V3 governed startup", options.filePath, governed, new Error(
+		`V3 governed startup not approved after external receipt audit: ${startup?.reasons.join(",") || startup?.disposition || "unknown"}`,
+	));
+}
+
+async function openGovernedMigrationTargetFromCli(options: CliGovernedV3OpenOptions): Promise<V3SessionManager> {
+	const governed = await openGovernedRuntimeFromCli(options);
+	const admitted = await governed.runIfMigrationRecoveryApproved(async (manager) => manager);
+	if (admitted.ok) return admitted.value;
+	const startup = governed.startupReport().sessions[0];
+	return throwAfterGovernedClose("V3 governed migration recovery", options.filePath, governed, new Error(
+		`V3 migration recovery not approved after external receipt audit: ${startup?.reasons.join(",") || startup?.disposition || "unknown"}`,
+	));
+}
 
 export interface CliRuntimeConfiguration {
 	features: RuntimeFeatureFlags;
@@ -60,46 +218,64 @@ export async function migrateLegacyFromCli(options: {
 	features: RuntimeFeatureFlags;
 	/** partial target 的显式续跑路径；不提供时始终创建全新 target。 */
 	resumeTargetPath?: string;
+	externalReceiptAuditor?: StartupExternalReceiptAuditPort;
+	externalReceiptAuditTimeoutMs?: number;
 }): Promise<{ filePath: string; importedMessageCount: number; sourceDigest: string; headDigest: string }> {
 	if (!options.features.sessionV3) {
 		throw new Error("Runtime v3 migration is disabled; enable runtimeFeatures.sessionV3 explicitly");
 	}
 	const target = options.resumeTargetPath
-		? await V3SessionManager.open(options.resumeTargetPath, options.features)
+		? await openGovernedMigrationTargetFromCli({
+				filePath: options.resumeTargetPath,
+				features: options.features,
+				...(options.externalReceiptAuditor === undefined
+					? {}
+					: { externalReceiptAuditor: options.externalReceiptAuditor }),
+				...(options.externalReceiptAuditTimeoutMs === undefined
+					? {}
+					: { externalReceiptAuditTimeoutMs: options.externalReceiptAuditTimeoutMs }),
+			})
 		: await V3SessionManager.create({
 				cwd: options.cwd,
 				sessionDir: options.sessionDir,
 				features: options.features,
 				writeGenesis: false,
 			});
-	const result = await migrateLegacySessionToV3({
-		sourcePath: options.sourcePath,
-		mode: options.mode,
-		targetSessionId: target.sessionId(),
-		writer: target.writer(),
-		eventStore: target.eventStore(),
-		principalId: target.identity().principalId,
-		traceId: createRuntimeId("trace"),
-		idempotencyKey: createRuntimeId("command"),
-	});
-	if (result.status === "forensic_required" || result.status === "rejected") {
-		if (!options.resumeTargetPath && target.writer().currentHead() === undefined) await target.discardEmptyTarget();
-		else await target.closeAll().catch(() => undefined);
-		const reason = result.status === "forensic_required" ? result.report.message : result.error.message;
-		throw new Error(`legacy session migration refused: ${reason}`);
+	let operationError: Error | undefined;
+	try {
+		const result = await migrateLegacySessionToV3({
+			sourcePath: options.sourcePath,
+			mode: options.mode,
+			targetSessionId: target.sessionId(),
+			writer: target.writer(),
+			eventStore: target.eventStore(),
+			principalId: target.identity().principalId,
+			traceId: createRuntimeId("trace"),
+			idempotencyKey: createRuntimeId("command"),
+		});
+		if (result.status === "forensic_required" || result.status === "rejected") {
+			const reason = result.status === "forensic_required" ? result.report.message : result.error.message;
+			throw new Error(`legacy session migration refused: ${reason}`);
+		}
+		if (result.status === "partial" || result.status === "failed") {
+			throw new Error(`legacy session migration did not commit: ${result.error.message}`);
+		}
+		return {
+			filePath: target.filePath(),
+			importedMessageCount: result.importedMessages.length,
+			sourceDigest: result.source.sourceDigest,
+			headDigest: result.head.eventHash,
+		};
+	} catch (cause) {
+		operationError = commandError("legacy session migration", `target=${target.filePath()}`, cause);
+		throw operationError;
+	} finally {
+		await settleSessions("legacy session migration", [{
+			manager: target,
+			label: `migration target=${target.filePath()}`,
+			discardIfEmpty: operationError !== undefined && options.resumeTargetPath === undefined,
+		}], operationError);
 	}
-	if (result.status === "partial" || result.status === "failed") {
-		await target.closeAll().catch(() => undefined);
-		throw new Error(`legacy session migration did not commit: ${result.error.message}; target=${target.filePath()}`);
-	}
-	const response = {
-		filePath: target.filePath(),
-		importedMessageCount: result.importedMessages.length,
-		sourceDigest: result.source.sourceDigest,
-		headDigest: result.head.eventHash,
-	};
-	await target.closeAll();
-	return response;
 }
 
 export async function forkV3FromCli(options: {
@@ -109,6 +285,8 @@ export async function forkV3FromCli(options: {
 	features: RuntimeFeatureFlags;
 	goalMode?: StableForkGoalMode;
 	initialGoalId?: GoalId;
+	externalReceiptAuditor?: StartupExternalReceiptAuditPort;
+	externalReceiptAuditTimeoutMs?: number;
 }): Promise<{
 	filePath: string;
 	parentHeadDigest: string;
@@ -119,7 +297,18 @@ export async function forkV3FromCli(options: {
 	parentRootAgentId: AgentId;
 }> {
 	if (!options.features.sessionV3) throw new Error("Runtime v3 fork is disabled");
-	const parent = await V3SessionManager.open(options.sourcePath, options.features);
+	const parent = await openGovernedV3FromCli({
+		filePath: options.sourcePath,
+		features: options.features,
+		...(options.externalReceiptAuditor === undefined
+			? {}
+			: { externalReceiptAuditor: options.externalReceiptAuditor }),
+		...(options.externalReceiptAuditTimeoutMs === undefined
+			? {}
+			: { externalReceiptAuditTimeoutMs: options.externalReceiptAuditTimeoutMs }),
+	});
+	let child: V3SessionManager | undefined;
+	let operationError: Error | undefined;
 	try {
 		const eventsResult = await readAllRuntimeEvents(parent.eventStore());
 		if (!eventsResult.ok) throw new Error(eventsResult.error.message);
@@ -132,7 +321,7 @@ export async function forkV3FromCli(options: {
 				: createRuntimeId("goal")
 		);
 		const rootAgentId = createRuntimeId("agent");
-		const child = await V3SessionManager.create({
+		child = await V3SessionManager.create({
 			cwd: options.cwd,
 			sessionDir: options.sessionDir,
 			features: options.features,
@@ -150,19 +339,17 @@ export async function forkV3FromCli(options: {
 			traceId: createRuntimeId("trace"),
 		});
 		if (!plan.ok) {
-			await child.discardEmptyTarget();
 			throw new Error(plan.error.message);
 		}
 		const genesis = await child.writer().append(plan.value.genesisDraft);
 		if (!genesis.ok) {
-			await child.discardEmptyTarget();
 			throw new Error(genesis.error.message);
 		}
 		const messages = await parent.replayMessages();
 		for (const message of messages) await child.sessionEvents().recordMessage(message);
 		const childHead = child.writer().currentHead();
 		if (!childHead) throw new Error("v3 fork produced no child head");
-		const response = {
+		return {
 			filePath: child.filePath(),
 			parentHeadDigest: plan.value.parentCursor.eventHash,
 			childHeadDigest: childHead.eventHash,
@@ -171,10 +358,20 @@ export async function forkV3FromCli(options: {
 			rootAgentId: plan.value.rootAgentId,
 			parentRootAgentId: plan.value.parentRootAgentId,
 		};
-		await child.closeAll();
-		return response;
+	} catch (cause) {
+		operationError = commandError(
+			"V3 session fork",
+			child ? `child=${child.filePath()}` : `parent=${parent.filePath()}`,
+			cause,
+		);
+		throw operationError;
 	} finally {
-		await parent.closeAll().catch(() => undefined);
+		await settleSessions("V3 session fork", [
+			...(child
+				? [{ manager: child, label: `fork child=${child.filePath()}`, discardIfEmpty: operationError !== undefined }]
+				: []),
+			{ manager: parent, label: `fork parent=${parent.filePath()}`, discardIfEmpty: false },
+		], operationError);
 	}
 }
 

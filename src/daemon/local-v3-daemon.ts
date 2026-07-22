@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import { createLocalIdentityContext } from "../runtime/identity/local-principal.ts";
 import type { RuntimeIdentityContext } from "../runtime/identity/types.ts";
+import type { StartupExternalReceiptAuditPort } from "../runtime/lifecycle/recovery.ts";
 import { createRuntimeId, type RuntimeInstanceId, type SessionId } from "../runtime/protocol/v3/ids.ts";
 import { controlPlaneFailure, type ControlPlaneResult } from "../runtime/control-plane/errors.ts";
 import { AuthorityCommandIdempotencyRepository } from "../runtime/control-plane/authority-command-idempotency.ts";
@@ -70,6 +71,8 @@ export interface StartLocalV3DaemonOptions {
 	authorityStateDirectory?: string;
 	shutdown?: ShutdownCoordinator;
 	shutdownTimeoutMs?: number;
+	startupExternalReceiptAuditor?: StartupExternalReceiptAuditPort;
+	startupExternalReceiptAuditTimeoutMs?: number;
 	clock?: () => Date;
 	/** 此入口当前只实现继承 stdio JSONL；socket/pipe 必须由独立 secure host 提供。 */
 	transport?: ControlPlaneTransport;
@@ -442,6 +445,12 @@ export async function startLocalV3Daemon(
 			identity,
 			locator,
 			candidateAuthority: runtimeGeneration.value,
+			...(options.startupExternalReceiptAuditor === undefined
+				? {}
+				: { externalReceiptAuditor: options.startupExternalReceiptAuditor }),
+			...(options.startupExternalReceiptAuditTimeoutMs === undefined
+				? {}
+				: { externalReceiptAuditTimeoutMs: options.startupExternalReceiptAuditTimeoutMs }),
 		});
 		const evidence = new V3SessionEvidenceReader({ locator, identity });
 		const states = new V3SessionControlStateAdapter({ sessions: sessionFactory, evidence });
