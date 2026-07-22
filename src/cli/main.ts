@@ -20,14 +20,51 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { selectSessionInTui } from "../tui/session-selector.ts";
-import { loadProjectSettings } from "../storage/settings-manager.ts";
+import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
 import { resolveSessionDir, getGlobalAgentsMd } from "../storage/paths.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { replaySession } from "../storage/session-codec.ts";
+import type { SessionReplay } from "../storage/session-codec.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
+import { V3SessionManager } from "../storage/v3-session-manager.ts";
+import { AuthorityRuntimeManager } from "../storage/authority-runtime-manager.ts";
+import {
+  createProductionInteractiveRuntime,
+  type ProductionInteractiveRuntime,
+} from "../storage/production-interactive-runtime.ts";
 import { builtinModels } from "../providers/all.ts";
-import { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
+import {
+  InteractiveSessionController,
+  type InteractiveSessionControllerPort,
+} from "../runtime/interactive-session-controller.ts";
+import { inspectSessionVersionFence } from "../runtime/session/legacy-migration.ts";
+import {
+  resolveSessionCliCompatibility,
+  type SessionCliAction,
+  type SessionFormatVersion,
+} from "../runtime/runtime-features.ts";
 import { parseArgs, USAGE } from "./args.ts";
+import {
+  forkV3FromCli,
+  migrateLegacyFromCli,
+  migrationEvidenceDigest,
+  resolveCliRuntimeConfiguration,
+} from "./v3-session-commands.ts";
+import { createCliGovernedInteractiveController } from "./interactive-control-plane.ts";
+import { createProductionModelRuntime } from "../runtime/integration/production-model-runtime.ts";
+import {
+  ClassifiedTextContextProvider,
+  TrustedTextContextProvider,
+} from "../runtime/integration/production-context-providers.ts";
+import type { GovernedContextFragmentProvider } from "../runtime/integration/governed-model-request.ts";
+import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
+import { createRuntimeId, type AuthorityId, type PrincipalId, type TenantId } from "../runtime/protocol/v3/ids.ts";
+import { installCliRuntimeLifecycle, type InstalledCliRuntimeLifecycle } from "./runtime-lifecycle.ts";
+import {
+  createCliProductionInteractiveOptions,
+  productionInteractiveControllerBindings,
+  type ProductionInteractiveOptionsProvider,
+} from "./production-interactive-options.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -36,7 +73,15 @@ const DEFAULT_SYSTEM_PROMPT =
   "Use Read/Write/Edit/Bash/grep/find/ls tools to inspect and modify files. " +
   "Keep replies concise and ask before destructive operations.";
 
-export async function main(argv: readonly string[]): Promise<void> {
+export interface CliMainDependencies {
+  /** 嵌入式 deployment 可注入真实 adapters；标准 CLI 缺失时必须 fail closed。 */
+  productionInteractiveOptions?: ProductionInteractiveOptionsProvider;
+}
+
+export async function main(
+  argv: readonly string[],
+  dependencies: CliMainDependencies = {},
+): Promise<void> {
   const { args, error } = parseArgs(argv);
   if (error) {
     process.stderr.write(`[runledger] ${error}\n\n${USAGE}`);
@@ -55,21 +100,125 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   const cwd = process.cwd();
-  const settings = await loadProjectSettings(cwd);
+  let settings = await loadProjectSettings(cwd);
+  const runtimeConfiguration = resolveCliRuntimeConfiguration(settings);
+  const runtimeFeatures = runtimeConfiguration.features;
+  if (runtimeConfiguration.requiresHistoryPersistence) {
+    settings = {
+      ...settings,
+      sessionV3HighestActivatedState: runtimeConfiguration.sessionV3HighestActivatedState,
+    };
+    await saveProjectSettings(cwd, settings);
+  }
+
+  const requireSessionAction = (
+    sessionVersion: SessionFormatVersion | "new",
+    action: SessionCliAction,
+  ): 2 | 3 | undefined => {
+    const decision = resolveSessionCliCompatibility({
+      featureState: runtimeConfiguration.sessionV3State,
+      highestActivatedState: runtimeConfiguration.sessionV3HighestActivatedState,
+      sessionVersion,
+      action,
+    });
+    if (!decision.allowed) {
+      throw new Error(
+        `session action denied [${decision.diagnostic}]: ${action} for ${sessionVersion === "new" ? "new session" : `v${sessionVersion}`}`,
+      );
+    }
+    return decision.writeVersion;
+  };
+
+  const selectedNewSessionVersion = (): 2 | 3 => {
+    const action = args.sessionVersion === 2
+      ? "create_v2"
+      : args.sessionVersion === 3
+        ? "create_v3"
+        : "create_default";
+    const version = requireSessionAction("new", action);
+    if (!version) throw new Error(`session action ${action} did not select a write format`);
+    return version;
+  };
 
   const sessionDir =
     args.sessionDir ?? resolveSessionDir(cwd, settings.sessionDir);
 
-  let mgr: SessionManager;
+  if (args.downgrade) {
+    throw new Error("Runtime v3 downgrade is forbidden; use read-only export instead");
+  }
+  if (args.migrate || args.forkToV3) {
+    const sourcePath = args.migrate ?? args.forkToV3!;
+    const source = await inspectSessionVersionFence(sourcePath, args.migrate ? "migrate" : "fork-to-v3");
+    if (!("format" in source) || source.format !== "legacy" || source.sourceVersion === undefined) {
+      throw new Error("legacy session migration requires an intact v1/v2 source");
+    }
+    requireSessionAction(source.sourceVersion, args.migrate ? "migrate_to_v3" : "fork_to_v3");
+    const migrated = await migrateLegacyFromCli({
+      sourcePath,
+      mode: args.migrate ? "migrate" : "fork-to-v3",
+      cwd,
+      sessionDir,
+      features: runtimeFeatures,
+    });
+    process.stdout.write(`${JSON.stringify({
+      status: "migrated",
+      mode: args.migrate ? "migrate" : "fork-to-v3",
+      ...migrated,
+      evidenceDigest: migrationEvidenceDigest(migrated),
+    })}\n`);
+    return;
+  }
+
+  let legacyManager: SessionManager | undefined;
+  let v3Manager: V3SessionManager | undefined;
+  const openSelected = async (filePath: string): Promise<void> => {
+    const fence = await inspectSessionVersionFence(filePath, "continue");
+    if (!("format" in fence)) {
+      throw new Error(`session requires forensic inspection: ${fence.report.message}`);
+    }
+    if (fence.format === "v3") {
+      requireSessionAction(3, "append");
+      v3Manager = await V3SessionManager.open(filePath, runtimeFeatures);
+      return;
+    }
+    const sourceVersion = fence.sourceVersion;
+    if (sourceVersion === undefined) throw new Error("legacy session version is unavailable");
+    const decision = resolveSessionCliCompatibility({
+      featureState: runtimeConfiguration.sessionV3State,
+      highestActivatedState: runtimeConfiguration.sessionV3HighestActivatedState,
+      sessionVersion: sourceVersion,
+      action: "append",
+    });
+    if (!decision.allowed) {
+      throw new Error(
+        `[${decision.diagnostic}] Legacy session v1/v2 is read-only; use --migrate or --fork-to-v3 before continuing`,
+      );
+    }
+    if (fence.status === "blocked" && fence.format === "unknown") throw new Error(fence.error.message);
+    legacyManager = await SessionManager.open(filePath);
+  };
   if (args.session) {
-    mgr = await SessionManager.open(args.session);
+    await openSelected(args.session);
   } else if (args.sessionId) {
     const match = (await SessionManager.list(cwd, sessionDir))
       .find((session) => session.id === args.sessionId);
     if (!match) throw new Error(`session id not found: ${args.sessionId}`);
-    mgr = await SessionManager.open(match.filePath);
+    await openSelected(match.filePath);
   } else if (args.fork) {
-    mgr = await SessionManager.forkFrom(args.fork, cwd, sessionDir);
+    const source = await inspectSessionVersionFence(args.fork, "fork-to-v3");
+    if (!("format" in source)) {
+      throw new Error(`session requires forensic inspection: ${source.report.message}`);
+    }
+    if (source.format === "v3") {
+      requireSessionAction(3, "fork_to_v3");
+      const fork = await forkV3FromCli({ sourcePath: args.fork, cwd, sessionDir, features: runtimeFeatures });
+      await openSelected(fork.filePath);
+    } else {
+      if (source.sourceVersion !== 2 || runtimeConfiguration.sessionV3State === "default" || runtimeConfiguration.sessionV3State === "required") {
+        throw new Error("Legacy session v1/v2 is read-only; use --fork-to-v3 for an explicit v3 fork");
+      }
+      legacyManager = await SessionManager.forkFrom(args.fork, cwd, sessionDir);
+    }
   } else if (args.resume) {
     const sessions = await SessionManager.list(cwd, sessionDir);
     if (sessions.length === 0) {
@@ -80,57 +229,186 @@ export async function main(argv: readonly string[]): Promise<void> {
       ? await selectSessionInTui(sessions)
       : sessions[0];
     if (!selected) return;
-    mgr = await SessionManager.open(selected.filePath);
+    await openSelected(selected.filePath);
   } else if (args.continueRecent) {
-    mgr = await SessionManager.continueRecent(cwd, sessionDir);
+    const sessions = await SessionManager.list(cwd, sessionDir);
+    if (sessions[0]) await openSelected(sessions[0].filePath);
+    else if (selectedNewSessionVersion() === 3) {
+      v3Manager = await V3SessionManager.create({ cwd, sessionDir, features: runtimeFeatures });
+    } else {
+      legacyManager = await SessionManager.create({ cwd, sessionDir, metadata: { cwd } });
+    }
   } else {
-    mgr = await SessionManager.create({
-      cwd,
-      sessionDir,
-      metadata: { cwd },
-    });
+    if (selectedNewSessionVersion() === 3) {
+      v3Manager = await V3SessionManager.create({ cwd, sessionDir, features: runtimeFeatures });
+    } else {
+      legacyManager = await SessionManager.create({ cwd, sessionDir, metadata: { cwd } });
+    }
   }
-  let removeSigint: (() => void) | undefined;
-  let removeStdinEnd: (() => void) | undefined;
+  let lifecycle: InstalledCliRuntimeLifecycle | undefined;
+  let productionRuntime: ProductionInteractiveRuntime | undefined;
+  let authorityRuntime: AuthorityRuntimeManager | undefined;
+  let productionOwnsV3Manager = false;
+  let closePromise: Promise<void> | undefined;
+  const closeSessionRuntime = (): Promise<void> => {
+    closePromise ??= Promise.all([
+      productionRuntime
+        ? productionRuntime.close()
+        : Promise.all([
+            legacyManager?.closeAll(),
+            productionOwnsV3Manager ? undefined : v3Manager?.closeAll(),
+          ]).then(() => undefined),
+      authorityRuntime?.close(),
+    ]).then(() => undefined);
+    return closePromise;
+  };
   try {
-    await mgr.acquireLock();
+    await legacyManager?.acquireLock();
     const models = builtinModels({ credentials: AuthStorage.create() });
     await models.refresh({ allowNetwork: false });
-    const replay = await replaySession(mgr.ledger());
-    const controller = await InteractiveSessionController.create({
-      cwd,
-      systemPrompt: buildSystemPrompt(cwd),
-      models,
-      settings,
-      replay,
-      ledger: mgr.ledger(),
-      overrides: {
-        provider: args.provider,
-        model: args.model,
-        thinkingLevel: args.thinking,
-      },
-    });
+    let replay: SessionReplay;
+    if (legacyManager) {
+      replay = await replaySession(legacyManager.ledger());
+    } else if (v3Manager) {
+      const recovery = v3Manager.recoveryDecision();
+      if (recovery?.kind === "corrupted") throw new Error(`v3 session corrupted: ${recovery.error.message}`);
+      if (recovery?.kind === "stopped") throw new Error(`v3 session is stopped: ${recovery.reason}`);
+      if (recovery?.kind === "pause_for_approval") {
+        throw new Error(`v3 session requires explicit recovery approval: ${recovery.reasons.join(",")}`);
+      }
+      replay = {
+        messages: [...await v3Manager.replayMessages()],
+        config: { ...await v3Manager.replayRuntimeConfig() },
+        auditEntries: [],
+        warnings: [],
+      };
+    } else {
+      throw new Error("session composition did not produce a runtime");
+    }
+    let localController: InteractiveSessionController;
+    if (v3Manager && runtimeFeatures.daemon) {
+      const productionOptions = await createCliProductionInteractiveOptions({
+        cwd,
+        manager: v3Manager,
+        models,
+      }, dependencies.productionInteractiveOptions);
+      // createProductionInteractiveRuntime 从调用开始接管 manager；失败路径也负责关闭。
+      productionOwnsV3Manager = true;
+      productionRuntime = await createProductionInteractiveRuntime(productionOptions);
+      localController = await InteractiveSessionController.create({
+        ...productionInteractiveControllerBindings(productionRuntime),
+        systemPrompt: DEFAULT_SYSTEM_PROMPT,
+        models,
+        settings,
+        replay,
+        overrides: {
+          provider: args.provider,
+          model: args.model,
+          thinkingLevel: args.thinking,
+        },
+      });
+    } else {
+      const modelRuntime = v3Manager
+        ? createProductionModelRuntime({
+            models,
+            sessionEvents: v3Manager.sessionEvents(),
+            identity: {
+              authorityId: v3Manager.identity().authorityId,
+              tenantId: v3Manager.identity().tenantId,
+              principalId: v3Manager.identity().principalId,
+              sessionId: v3Manager.sessionId(),
+            },
+            fragmentProviders: governedInstructionProviders(cwd, {
+              authorityId: v3Manager.identity().authorityId,
+              tenantId: v3Manager.identity().tenantId,
+              principalId: v3Manager.identity().principalId,
+            }),
+          })
+        : undefined;
+      localController = await InteractiveSessionController.create({
+        cwd,
+        // v3 的原始 prompt 必须由 BasePromptContextProvider 唯一收编；
+        // repository/user instruction 将在分类 provider 接线后单独注入。
+        systemPrompt: v3Manager ? DEFAULT_SYSTEM_PROMPT : buildSystemPrompt(cwd),
+        models,
+        settings,
+        replay,
+        ledger: legacyManager?.ledger(),
+        sessionId: v3Manager?.sessionId(),
+        sessionEvents: v3Manager?.sessionEvents(),
+        toolResultArtifactSink: v3Manager?.toolResultArtifactSink(),
+        prepareModelRequest: modelRuntime?.prepare,
+        overrides: {
+          provider: args.provider,
+          model: args.model,
+          thinkingLevel: args.thinking,
+        },
+      });
+    }
+    let controller: InteractiveSessionControllerPort = localController;
+    if (runtimeFeatures.daemon) {
+      if (!v3Manager || !productionRuntime) {
+        throw new Error("daemon interactive mode requires an active production Runtime v3 composition");
+      }
+      authorityRuntime = await AuthorityRuntimeManager.open({
+        cwd,
+        identity: v3Manager.identity(),
+        runtimeId: v3Manager.runtimeId(),
+      });
+      controller = await createCliGovernedInteractiveController({
+        controller: localController,
+        manager: v3Manager,
+        authorityRuntime,
+        featureEvidence: productionRuntime.featureEvidence,
+      });
+    }
     const interactive = new InteractiveMode({ controller });
-    const onSigint = (): void => {
-      if (controller.inFlight) controller.interrupt();
-      else interactive.quit();
-    };
-    process.on("SIGINT", onSigint);
-    removeSigint = () => process.off("SIGINT", onSigint);
-    const onStdinEnd = (): void => interactive.quit();
-    process.stdin.once("end", onStdinEnd);
-    removeStdinEnd = () => process.stdin.off("end", onStdinEnd);
-    if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
-    await interactive.run();
+    const lifecycleScope = v3Manager
+      ? {
+          authorityId: v3Manager.identity().authorityId,
+          tenantId: v3Manager.identity().tenantId,
+          runtimeId: v3Manager.runtimeId(),
+        }
+      : {
+          authorityId: createRuntimeId("authority", "runledger-local-authority"),
+          tenantId: createRuntimeId("tenant", "runledger-local-tenant"),
+          runtimeId: createRuntimeId("runtime", canonicalDigest({
+            pid: process.pid,
+            sessionId: controller.sessionId,
+            cwd,
+          }).slice(0, 48)),
+        };
+    lifecycle = installCliRuntimeLifecycle({
+      scope: lifecycleScope,
+      controller,
+      surface: interactive,
+      writer: {
+        close: closeSessionRuntime,
+      },
+      onFatal: () => { process.exitCode = 1; },
+    });
+    try {
+      await interactive.run();
+    } catch (runError) {
+      await lifecycle.terminalError(runError);
+      throw runError;
+    }
+    const shutdown = lifecycle.pending();
+    if (shutdown) {
+      const receipt = await shutdown;
+      if (!receipt.ok || receipt.value.recoveryRequired) {
+        process.exitCode = 1;
+        process.stderr.write("[runledger] shutdown completed with recovery-required participants\n");
+      }
+    }
   } finally {
-    removeSigint?.();
-    removeStdinEnd?.();
-    await mgr.closeAll().catch(() => {
+    lifecycle?.dispose();
+    await closeSessionRuntime().catch(() => {
       // close 失败不阻断退出
     });
     if (process.env.RUNLEDGER_DEBUG === "1") {
       process.stderr.write(
-        `[runledger] exit. session=${mgr.filePath()}\n`,
+        `[runledger] exit. session=${legacyManager?.filePath() ?? v3Manager?.filePath() ?? "unknown"}\n`,
       );
     }
   }
@@ -161,6 +439,65 @@ function buildSystemPrompt(cwd: string): string {
     }
   }
   return parts.join("\n\n---\n\n");
+}
+
+function governedInstructionProviders(
+  cwd: string,
+  identity: { authorityId: AuthorityId; tenantId: TenantId; principalId: PrincipalId },
+): GovernedContextFragmentProvider[] {
+  const providers: GovernedContextFragmentProvider[] = [];
+  const observedAt = new Date().toISOString();
+  const globalPath = getGlobalAgentsMd();
+  if (globalPath && existsSync(globalPath)) {
+    try {
+      const content = readFileSync(globalPath, "utf8");
+      const sourceDigest = canonicalDigest(content);
+      providers.push(new TrustedTextContextProvider({
+        key: "global-agents",
+        content,
+        principalId: identity.principalId,
+        source: {
+          schemaVersion: 1,
+          authorityId: identity.authorityId,
+          tenantId: identity.tenantId,
+          sourceId: createRuntimeId("inputSource", `global-agents-${sourceDigest.slice(0, 48)}`),
+          kind: "user",
+          sourceDigest,
+          trust: "trusted",
+          taintLabels: [],
+          observedAt,
+        },
+      }));
+    } catch {
+      // 读失败时不创建无来源 fragment。
+    }
+  }
+  const localPath = getProjectAgentsMd(cwd);
+  if (existsSync(localPath)) {
+    try {
+      const content = readFileSync(localPath, "utf8");
+      const sourceDigest = canonicalDigest(content);
+      providers.push(new ClassifiedTextContextProvider({
+        key: "repository-agents",
+        content,
+        source: {
+          schemaVersion: 1,
+          authorityId: identity.authorityId,
+          tenantId: identity.tenantId,
+          sourceId: createRuntimeId("inputSource", `repository-agents-${sourceDigest.slice(0, 48)}`),
+          kind: "instruction",
+          sourceDigest,
+          trust: "tainted",
+          taintLabels: ["repository_controlled", "executable_instruction"],
+          observedAt,
+        },
+        declassificationReceipts: [],
+      }));
+    } catch {
+      // repository instruction 不可读取时 fail closed，不回退隐式拼接。
+    }
+  }
+  return providers;
 }
 
 /**

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "team-tools",
+  "version": "1.0.0",
+  "description": "Fixture plugin with all three component kinds",
+  "author": { "name": "RunLedger tests" },
+  "keywords": ["fixture"],
+  "skills": ["./skills"],
+  "hooks": ["./hooks/hooks.json"],
+  "mcpServers": "./mcp.json"
+}

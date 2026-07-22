@@ -1,0 +1,4 @@
+{"type":"ledger","version":1,"id":"legacy-v1-header","createdAt":1,"sessionId":"legacy-v1-session","metadata":{"cwd":"/fixture/v1"}}
+{"id":"v1-user","sessionId":"legacy-v1-session","parentId":"legacy-v1-header","timestamp":2,"type":"message","payload":{"role":"user","content":"legacy text"}}
+{"id":"v1-assistant","sessionId":"legacy-v1-session","parentId":"v1-user","timestamp":3,"type":"message","payload":{"role":"assistant","content":"legacy assistant","stopReason":"toolUse"}}
+{"id":"v1-tool","sessionId":"legacy-v1-session","parentId":"v1-assistant","timestamp":4,"type":"tool_result","payload":{"toolCallId":"unverifiable","toolName":"bash","content":"must stay audit-only"}}

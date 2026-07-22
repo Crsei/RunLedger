@@ -4,13 +4,29 @@ import type {
   ToolAuthorizationRequest,
 } from "./types.ts";
 
-/** 第一版默认策略:所有已注册工具自动执行。 */
+/** 仅供显式测试/兼容 fixture 注入；生产 composition 不得把它设为默认。 */
 export class AllowAllToolAuthorizationPolicy implements ToolAuthorizationPolicy {
   authorize(
     _request: ToolAuthorizationRequest,
     _signal?: AbortSignal,
   ): ToolAuthorizationDecision {
     return { decision: "allow" };
+  }
+}
+
+/**
+ * 生产安全基线：没有真实 Gateway/Approval receipt 时拒绝所有工具执行。
+ * 只读工具也必须由上层 capability composition 显式授权，不能在此处猜测放行。
+ */
+export class DenyAllToolAuthorizationPolicy implements ToolAuthorizationPolicy {
+  authorize(
+    _request: ToolAuthorizationRequest,
+    _signal?: AbortSignal,
+  ): ToolAuthorizationDecision {
+    return {
+      decision: "deny",
+      reason: "tool execution is unavailable until an authorization policy is explicitly composed",
+    };
   }
 }
 

@@ -36,8 +36,46 @@ import type {
   ToolCall,
 } from "../types.ts";
 import type { Static, TSchema } from "typebox";
+import type {
+  ApprovalReceiptRef,
+  ApprovalTicket,
+  ArtifactRef,
+  CapabilityName,
+  SandboxExecutionReceiptRef,
+  SandboxProfileName,
+} from "./protocol/v3/capability.ts";
+import type {
+	ApprovalId,
+  CommandId,
+  ModelRequestId,
+  ReceiptId,
+  ResourceId,
+	RuntimeInstanceId,
+	SessionId,
+  ToolCallId,
+  TurnId,
+} from "./protocol/v3/ids.ts";
+import type { WorkspaceValidationReceiptRef } from "./protocol/v3/workspace.ts";
+
+// Governed v3 的稳定关联类型；行为接口仍由 session kernel 独立提供。
+export type { EventCursor, ExpectedRevision, RuntimeEventV3 } from "./protocol/v3/events.ts";
+export type {
+	AgentId,
+	ApprovalId,
+	ArtifactId,
+	AuthorityId,
+	GoalId,
+	PrincipalId,
+	RepositoryId,
+	SessionId,
+	TenantId,
+	ToolCallId,
+	TraceId,
+	WorkspaceId,
+} from "./protocol/v3/ids.ts";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
+import type { AgentLoopSessionEvents } from "./session/agent-loop-events.ts";
 
 // ===== 工具 =====
 
@@ -114,11 +152,16 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
    */
   isDestructive?: () => boolean;
   /**
-   * 工具结果最大字符预算;超额部分由 agent-loop 落 `tmp/tool-output-<id>.txt`
-   * 并在 content 末尾附路径提示(对齐 what-are-tools.mdx §"大结果落盘")。
+   * 工具结果最大 prompt 字符预算。配置 Artifact sink 时完整结果写 CAS，prompt
+   * 只保留 bounded summary + ArtifactRef；legacy 路径仍使用 tmp fallback。
    * 缺省 = DEFAULT_MAX_BYTES。
    */
   maxResultSizeChars?: number;
+  /**
+   * 受治理会话只接受显式声明通过 ToolContext 消费 I/O 的工具。未声明的旧工具
+   * 仍可用于非 v3 legacy loop，但 Gateway 必须拒绝把它们当成已隔离工具执行。
+   */
+  governedExecution?: "tool-context";
 }
 
 /**
@@ -178,6 +221,8 @@ export interface ToolResultContent {
   isError?: boolean;
   /** 自由形态 details,工具实现可填写,afterToolCall 也可改写 */
   details?: unknown;
+  /** 完整工具输出已进入 Artifact CAS 时的可授权引用。 */
+  artifactRef?: ArtifactRef;
   /** deferred tool loading 提示;convertToLlm 时透传到 pi-ai ToolResultMessage */
   addedToolNames?: string[];
   /** 与 pi 一致的早停 hint;agent-loop 按"批次内全部 finalized 都置 true"判定 */
@@ -204,6 +249,8 @@ export type AgentToolCall = Extract<AssistantMessage["content"][number], { type:
 export interface BeforeToolCallResult {
   block?: boolean;
   reason?: string;
+  /** Hook 产生的新入参；Runtime 必须重新 prepare/schema 校验后再授权。 */
+  updatedInput?: unknown;
 }
 
 /**
@@ -337,6 +384,14 @@ export interface AgentLoopConfig {
     messages: AgentMessage[];
     turn: number;
   }) => AgentLoopTurnUpdate | Promise<AgentLoopTurnUpdate>;
+  /**
+   * provider 调用前的 governed 准备 seam。实现必须先完成 model compatibility、
+   * context assembly 与 durable receipts；抛错时本轮不会写 model.requested 或调用 provider。
+   */
+  prepareModelRequest?: (
+    request: ModelRequestPreparationInput,
+    signal?: AbortSignal,
+  ) => ModelRequestPreparationResult | Promise<ModelRequestPreparationResult>;
   /** 每个 assistant/tool 批次后拉取 steering 消息。 */
   getSteeringMessages?: () => AgentMessage[] | Promise<AgentMessage[]>;
   /** agent 原本将结束时拉取 follow-up 消息。 */
@@ -350,6 +405,14 @@ export interface AgentLoopConfig {
     signal?: AbortSignal,
   ) => Promise<BeforeToolCallResult | void> | BeforeToolCallResult | void;
   /**
+   * schema 与 PreToolUse hook 完成后的唯一授权 seam。updatedInput 会先重新校验，
+   * 因而 authorization 观察到的始终是最终 canonical arguments。
+   */
+  authorizeToolCall?: (
+    ctx: AgentToolHookContext,
+    signal?: AbortSignal,
+  ) => Promise<BeforeToolCallResult | void> | BeforeToolCallResult | void;
+  /**
    * 工具执行后置 hook。返回的字段以浅合并语义覆盖到 `AgentToolResult`。
    */
   afterToolCall?: (
@@ -358,6 +421,151 @@ export interface AgentLoopConfig {
   ) => Promise<AfterToolCallResult | void> | AfterToolCallResult | void;
   /** 可选:LedgerSink,直接挂入类型契约;agent-loop 把事件与 entry 联合写入。 */
   ledger?: LedgerSink;
+  /** 可选 Session Kernel v3 桥；所有方法都以 durable cursor 为成功边界。 */
+  sessionEvents?: AgentLoopSessionEvents;
+  /**
+   * v3 governed session 的唯一工具授权与执行端口。只要启用 sessionEvents 就必须
+   * 同时提供本端口；缺失时 fail closed，绝不回退 localExecutionEnv/tool.execute。
+   */
+  toolExecutionGateway?: ToolExecutionGatewayPort;
+  /** 可选 Artifact CAS 桥；启用后 prompt 只接收 bounded summary + ArtifactRef。 */
+  toolResultArtifactSink?: ToolResultArtifactSink;
+  /** provider/tool 副作用开始前的 durable BudgetGuard seam。 */
+  operationBudget?: import("./operation-budget.ts").AgentOperationBudgetPort;
+}
+
+export interface ModelRequestPreparationInput {
+  turn: number;
+  turnId?: TurnId;
+  modelRequestId?: ModelRequestId;
+  model: Model<Api>;
+  context: LlmContext;
+  messages: readonly AgentMessage[];
+}
+
+export interface ModelRequestPreparationResult {
+  model: Model<Api>;
+  context: LlmContext;
+}
+
+// ===== Governed tool execution =====
+
+/** Gateway 收到的是 hook 改写并重新通过 schema 校验后的最终调用。 */
+export interface ToolExecutionGatewayRequest {
+	turnId: TurnId;
+  toolCallId: ToolCallId;
+  providerToolCallId: string;
+  tool: AgentTool;
+  arguments: unknown;
+  cwd: string;
+  envVars: Readonly<Record<string, string>>;
+}
+
+/** Capability 决策之上的组合 receipt；它必须绑定 Workspace 与 Sandbox resolution。 */
+export interface ToolAuthorizationReceiptRef {
+  receiptId: ReceiptId;
+  requestId: CommandId;
+	approvalId: ApprovalId;
+	sessionId: SessionId;
+	runtimeId: RuntimeInstanceId;
+	runtimeGeneration: number;
+	turnId: TurnId;
+	toolCallId: ToolCallId;
+  requestDigest: string;
+  decisionDigest: string;
+  receiptDigest: string;
+}
+
+/** Sandbox prepare/probe 的真实 resolution receipt，不代表工具已经执行。 */
+export interface ToolSandboxResolutionReceiptRef {
+  receiptId: ReceiptId;
+  profileId: ResourceId;
+  requested: SandboxProfileName;
+  resolved: SandboxProfileName;
+  policyDigest: string;
+  backendId: string;
+  effectiveEnforcement: "enforced" | "degraded" | "unavailable" | "off";
+  reasonDigest?: string;
+  /** canonical digest of every resolution field above (except this field). */
+  resolutionDigest: string;
+}
+
+/**
+ * 仅由受信 ToolExecutionGatewayPort 签发。grantDigest 覆盖除自身外全部字段；
+ * AgentLoopSessionEvents 会在写 durable authorized/started 前再次做精确关联校验。
+ */
+export interface ToolExecutionAuthorizationGrant {
+  schemaVersion: 1;
+  toolCallId: ToolCallId;
+  providerToolCallDigest: string;
+  toolIdentityDigest: string;
+  argumentsDigest: string;
+  invocationDigest: string;
+  workspaceEnvelopeDigest: string;
+  workspaceValidation: WorkspaceValidationReceiptRef;
+  authorization: ToolAuthorizationReceiptRef;
+  capability: CapabilityName;
+  policyDigest: string;
+  sandbox: ToolSandboxResolutionReceiptRef;
+  grantDigest: string;
+}
+
+export type ToolExecutionAuthorizationResult =
+  | { status: "authorized"; grant: ToolExecutionAuthorizationGrant }
+  | { status: "approval_required"; requestId: CommandId; ticket: ApprovalTicket; reason: string }
+  | { status: "denied"; requestId: CommandId; reason: string; approvalReceipt?: ApprovalReceiptRef }
+  | { status: "aborted"; requestId: CommandId; reason: string; approvalReceipt?: ApprovalReceiptRef }
+  | { status: "unavailable"; requestId: CommandId; reason: string };
+
+export interface ToolExecutionGatewayExecuteRequest {
+  invocation: ToolExecutionGatewayRequest;
+  grant: ToolExecutionAuthorizationGrant;
+}
+
+export type ToolExecutionGatewayExecuteResult =
+  | {
+      status: "completed";
+      grantDigest: string;
+      result: AgentToolResult;
+      /** shell/process 执行时必须提供；纯受限 filesystem 调用可省略。 */
+      sandboxReceipt?: SandboxExecutionReceiptRef;
+    }
+  | { status: "aborted"; grantDigest: string; reason: string; outcomeCertain: boolean }
+  | { status: "unavailable"; grantDigest: string; reason: string; outcomeCertain: true }
+  | { status: "uncertain"; grantDigest: string; reason: string; outcomeCertain: false };
+
+/**
+ * 两阶段端口让 durable authorized/started barrier 位于真实副作用之前。authorize
+ * 只能返回 receipt-bearing grant；execute 必须使用 grant 对应的受限执行环境。
+ */
+export interface ToolExecutionGatewayPort {
+  authorize(
+    request: ToolExecutionGatewayRequest,
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionAuthorizationResult>;
+  execute(
+    request: ToolExecutionGatewayExecuteRequest,
+    onUpdate: AgentToolUpdateCallback,
+    signal?: AbortSignal,
+  ): Promise<ToolExecutionGatewayExecuteResult>;
+}
+
+export interface ToolResultArtifactRequest {
+  toolCallId: string;
+  toolName: string;
+  content: readonly (TextContent | ImageContent)[];
+  isError: boolean;
+  maxPromptChars: number;
+}
+
+export interface ToolResultArtifactProjection {
+  content: (TextContent | ImageContent)[];
+  artifactRef: ArtifactRef;
+  resultDigest: string;
+}
+
+export interface ToolResultArtifactSink {
+  storeToolResult(request: ToolResultArtifactRequest): Promise<ToolResultArtifactProjection>;
 }
 
 /** beforeToolCall / afterToolCall 共享的上下文,对齐 pi Before/AfterToolCallContext。 */

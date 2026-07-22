@@ -51,6 +51,13 @@ describe("parseArgs 会话操作旗", () => {
   it("--fork <path> 给出字符串", () => {
     expect(parseArgs(["--fork", "/x.jsonl"]).args.fork).toBe("/x.jsonl");
   });
+
+  it("显式 v3 migrate/fork/downgrade 旗标保留源路径", () => {
+    expect(parseArgs(["--migrate", "/v1.jsonl"]).args.migrate).toBe("/v1.jsonl");
+    expect(parseArgs(["--fork-to-v3", "/v2.jsonl"]).args.forkToV3).toBe("/v2.jsonl");
+    expect(parseArgs(["--downgrade", "/v3.jsonl"]).args.downgrade).toBe("/v3.jsonl");
+    expect(parseArgs(["--migrate"]).error).toContain("--migrate");
+  });
 });
 
 describe("parseArgs model/thinking/session-dir", () => {
@@ -81,6 +88,13 @@ describe("parseArgs model/thinking/session-dir", () => {
 
   it("--session-dir <dir> 给字符串", () => {
     expect(parseArgs(["--session-dir", "/tmp/s"]).args.sessionDir).toBe("/tmp/s");
+  });
+
+  it("--session-version 只接受显式 v2/v3", () => {
+    expect(parseArgs(["--session-version", "2"]).args.sessionVersion).toBe(2);
+    expect(parseArgs(["--session-version", "3"]).args.sessionVersion).toBe(3);
+    expect(parseArgs(["--session-version", "1"]).error).toContain("合法值 2/3");
+    expect(parseArgs(["--session-version"]).error).toContain("缺少值");
   });
 });
 

@@ -1,7 +1,0 @@
-{
-  "_purpose": "v2 read-only golden fixture; v3 migration must write a new session",
-  "version": 2,
-  "messages": [
-    { "role": "assistant", "text": "legacy assistant text" }
-  ]
-}

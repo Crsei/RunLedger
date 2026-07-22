@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "mcpServers": {
+    "fixture": {
+      "transport": "stdio",
+      "command": "node",
+      "args": ["./bin/fake-mcp-server.mjs"],
+      "cwd": ".",
+      "enabled": true,
+      "required": true,
+      "startupTimeoutMs": 5000,
+      "toolTimeoutMs": 2000,
+      "toolTimeouts": { "slow": 50 },
+      "enabledTools": ["echo", "slow"],
+      "disabledTools": [],
+      "pinnedTools": ["echo"],
+      "supportsParallelToolCalls": false
+    }
+  }
+}

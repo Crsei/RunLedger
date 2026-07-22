@@ -85,7 +85,7 @@ export function createBashTool(
   cwd: string,
   options: BashToolOptions = {},
 ): AgentTool<typeof bashSchema, BashToolDetails> {
-  const ops: BashOperations = options.operations ?? bashOpsFromLocalEnv();
+  const legacyOps: BashOperations = options.operations ?? bashOpsFromLocalEnv();
   const defaultTimeout = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const defaultMaxOutput = options.defaultMaxOutputChars ?? DEFAULT_MAX_BYTES;
   return {
@@ -93,11 +93,17 @@ export function createBashTool(
     label: "bash",
     description: "在 shell 中执行一条命令,流式回传 stdout/stderr。非零退出码视为错误。",
     parameters: bashSchema,
+    governedExecution: "tool-context",
     isDestructive: () => true,
-    async execute(_toolCallId, params, signal, onUpdate): Promise<AgentToolResult<BashToolDetails>> {
+    async execute(_toolCallId, params, signal, onUpdate, context): Promise<AgentToolResult<BashToolDetails>> {
       const cmd = params.command;
       const stdin = params.stdin;
       const runInBackground = params.run_in_background === true;
+      const activeCwd = context ? context.cwd : cwd;
+      const activeSignal = context ? context.signal : signal;
+      const ops: BashOperations = context
+        ? { exec: (command, execOptions) => context.env.shell.exec(command, execOptions) }
+        : legacyOps;
       const outputFormat: "text" | "stream-json" =
         params.output_format === "stream-json" ? "stream-json" : "text";
 
@@ -109,7 +115,15 @@ export function createBashTool(
 
       // === 后台模式 ===
       if (runInBackground) {
-        const bg = spawnBackground(cmd, { cwd, stdin });
+        if (context) {
+          return {
+            content: [{ type: "text", text: "bash: governed ToolContext 不允许绕过受限 shell 启动 detached background process。" }],
+            details: { exitCode: 126, outputFormat },
+            isError: true,
+            terminate: false,
+          };
+        }
+        const bg = spawnBackground(cmd, { cwd: activeCwd, stdin });
         if (bg === null) {
           return {
             content: [
@@ -143,10 +157,11 @@ export function createBashTool(
       const startedAt = Date.now();
       try {
         r = await ops.exec(cmd, {
-          cwd,
+          cwd: activeCwd,
+          ...(context ? { env: context.envVars } : {}),
           timeoutMs,
           maxOutputChars: defaultMaxOutput,
-          signal,
+          signal: activeSignal,
           stdin,
           onStdout: (chunk) => {
             onUpdate?.({

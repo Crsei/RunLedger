@@ -46,19 +46,28 @@ export function createWriteTool(
   cwd: string,
   options: WriteToolOptions = {},
 ): AgentTool<typeof writeSchema, WriteToolDetails> {
-  const ops = options.operations ?? defaultWriteOperations;
+  const legacyOps = options.operations ?? defaultWriteOperations;
   return {
     name: "write",
     label: "write",
     description: "写入文件;目录不存在会递归创建。会覆盖已有文件。",
     parameters: writeSchema,
+    governedExecution: "tool-context",
     isDestructive: () => true,
-    async execute(_toolCallId, params, signal?): Promise<AgentToolResult<WriteToolDetails>> {
+    async execute(_toolCallId, params, signal?, _onUpdate?, context?): Promise<AgentToolResult<WriteToolDetails>> {
       const { path: rawPath, content } = params;
-      const absolutePath = resolveToCwd(rawPath, cwd);
+      const activeCwd = context ? context.cwd : cwd;
+      const activeSignal = context ? context.signal : signal;
+      const ops: WriteOperations = context
+        ? {
+            writeFile: (p, value) => context.env.fs.writeFile(p, value),
+            mkdir: (dir) => context.env.fs.mkdir(dir, { recursive: true }),
+          }
+        : legacyOps;
+      const absolutePath = resolveToCwd(rawPath, activeCwd);
       const dir = path.dirname(absolutePath);
       await ops.mkdir(dir);
-      if (signal?.aborted) throw new Error("Operation aborted");
+      if (activeSignal?.aborted) throw new Error("Operation aborted");
       await ops.writeFile(absolutePath, content);
       const bytes = Buffer.byteLength(content, "utf8");
       return {

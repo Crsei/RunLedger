@@ -70,6 +70,34 @@ export interface ExecutionEnv {
 }
 
 /**
+ * 受治理执行环境的 opaque correlation proof。它只证明 trusted adapter 返回的
+ * env 绑定到了既有 receipts；真实 enforcement 仍由该 adapter/broker 实现。
+ */
+export interface GovernedExecutionEnv extends ExecutionEnv {
+  governance: {
+    kind: "governed";
+    grantDigest: string;
+    workspaceEnvelopeDigest: string;
+    workspaceValidationReceiptId: string;
+    authorizationReceiptId: string;
+    sandboxResolutionReceiptId: string;
+  };
+}
+
+export function isGovernedExecutionEnv(value: ExecutionEnv): value is GovernedExecutionEnv {
+  const governance = (value as Partial<GovernedExecutionEnv>).governance;
+  return Boolean(
+    governance &&
+      governance.kind === "governed" &&
+      /^[a-f0-9]{64}$/u.test(governance.grantDigest) &&
+      /^[a-f0-9]{64}$/u.test(governance.workspaceEnvelopeDigest) &&
+      governance.workspaceValidationReceiptId.startsWith("receipt_") &&
+      governance.authorizationReceiptId.startsWith("receipt_") &&
+      governance.sandboxResolutionReceiptId.startsWith("receipt_"),
+  );
+}
+
+/**
  * 默认本地 ExecutionEnv。基于 `node:fs/promises` + `node:child_process`。
  * Windows 下走 git-bash(由 utils/shell.ts 探测),其他平台走 `bash`/`sh`。
  */

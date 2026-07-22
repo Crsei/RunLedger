@@ -1,0 +1,25 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "baseUrl": "../../..",
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "noEmit": true,
+    "paths": {
+      "runledger": ["src/index.ts"],
+      "runledger/daemon": ["src/daemon/index.ts"],
+      "runledger/runtime/agents": ["src/runtime/agents/index.ts"],
+      "runledger/runtime/control-plane": ["src/runtime/control-plane/index.ts"],
+      "runledger/runtime/executors": ["src/runtime/executors/index.ts"],
+      "runledger/runtime/identity/enterprise": ["src/runtime/identity/enterprise.ts"],
+      "runledger/runtime/lifecycle": ["src/runtime/lifecycle/index.ts"],
+      "runledger/runtime/orchestrator": ["src/runtime/orchestrator/index.ts"],
+      "runledger/runtime/telemetry": ["src/runtime/telemetry/index.ts"],
+      "runledger/runtime/verification": ["src/runtime/verification/index.ts"],
+      "runledger/verification-runner": ["src/verification-runner/index.ts"]
+    }
+  },
+  "include": ["consumer.ts"]
+}

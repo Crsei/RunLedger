@@ -51,16 +51,36 @@ export function createLsTool(
   cwd: string,
   options: LsToolOptions = {},
 ): AgentTool<typeof lsSchema, LsToolDetails> {
-  const ops = options.operations ?? defaultLsOperations;
+  const legacyOps = options.operations ?? defaultLsOperations;
   return {
     name: "ls",
     label: "ls",
     description: `列目录内容,按字母序排序;目录条目尾部加 '/';默认条目上限 ${DEFAULT_LIMIT}。`,
     parameters: lsSchema,
+    governedExecution: "tool-context",
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    async execute(_toolCallId, params, signal?): Promise<AgentToolResult<LsToolDetails>> {
-      const dirPath = resolveToCwd(params.path ?? "", cwd);
+    async execute(_toolCallId, params, signal?, _onUpdate?, context?): Promise<AgentToolResult<LsToolDetails>> {
+      const activeCwd = context ? context.cwd : cwd;
+      const activeSignal = context ? context.signal : signal;
+      const ops: LsOperations = context
+        ? {
+            exists: async (p) => {
+              try {
+                await context.env.fs.stat(p);
+                return true;
+              } catch {
+                return false;
+              }
+            },
+            stat: async (p) => {
+              const result = await context.env.fs.stat(p);
+              return { isDirectory: () => result.isDirectory };
+            },
+            readdir: (p) => context.env.fs.readdir(p),
+          }
+        : legacyOps;
+      const dirPath = resolveToCwd(params.path ?? "", activeCwd);
       const limit = params.limit ?? DEFAULT_LIMIT;
       if (!(await ops.exists(dirPath))) {
         throw new Error(`Path not found: ${dirPath}`);
@@ -75,7 +95,7 @@ export function createLsTool(
       const lines: string[] = [];
       let entryLimitReached: number | undefined;
       for (let i = 0; i < entries.length; i++) {
-        if (signal?.aborted) throw new Error("Operation aborted");
+        if (activeSignal?.aborted) throw new Error("Operation aborted");
         if (i >= limit) {
           entryLimitReached = limit;
           break;

@@ -1,0 +1,26 @@
+{
+  "contract": "runledger.resource/v1",
+  "manifest": {
+    "schemaVersion": 1,
+    "rootDigest": "b945bea4c8369efc00c7e30fb2c2ac0872a0b05c8dff38a34d6032624fb750ec",
+    "manifestDigest": "ddf219e76bfe9b299fe3a586ec59c9c92a082c6aa337636bb8eab7c79ec12548",
+    "configDigest": "03b46a1093d33756d3df902f2787805bc57392d414725799f5b769cc7a1bcec7",
+    "commandDigest": "ddedc7f0286b85b5d9777eaf60ecf22b5a0d0b878c8448c1b6a39674e0fccb2b",
+    "assetsDigest": "41955608f3d0960630471c4f9132dc2d6b432155b5ffba2c778e885205afbd8f",
+    "capabilityDigest": "042961b99cc5c1aa1346c5f551853f53fa7c2043e02472df00bbf51f97b26c88",
+    "combinedDigest": "5a2845b3ee737155cf48f7d71ebc91e0f542eac192733c3566c68d6a51ccbc50"
+  },
+  "identity": {
+    "schemaVersion": 1,
+    "authorityId": "authority_resource-fixture",
+    "tenantId": "tenant_resource-fixture",
+    "resourceId": "resource_golden-tool",
+    "kind": "mcp-tool",
+    "qualifiedId": "golden.server/read",
+    "version": "1.0.0",
+    "source": "project",
+    "digest": "5a2845b3ee737155cf48f7d71ebc91e0f542eac192733c3566c68d6a51ccbc50"
+  },
+  "expectedIdentityKey": "authority_resource-fixture/tenant_resource-fixture/resource_golden-tool/mcp-tool:golden.server/read@1.0.0:project:5a2845b3ee737155cf48f7d71ebc91e0f542eac192733c3566c68d6a51ccbc50",
+  "expectedIdentityDigest": "0f276b21ac4a61a0cf7ef4174bc6e5ef900e3434d1fda4e9343bf262af8eb696"
+}

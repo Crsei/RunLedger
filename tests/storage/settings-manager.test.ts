@@ -10,9 +10,22 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_RUNTIME_FEATURES,
+  resolveSessionCompatibilityDecision,
+  sessionCompatibilityDecision,
+  type SessionCompatibilityOperation,
+  type SessionFormatVersion,
+} from "../../src/runtime/runtime-features.ts";
+import {
+  loadMergedSettings,
+  loadMergedSettingsSync,
   loadProjectSettings,
   loadProjectSettingsSync,
+  loadUserSettings,
+  loadUserSettingsSync,
+  mergeUserAndProjectSettings,
   saveProjectSettings,
+  saveUserSettings,
 } from "../../src/storage/settings-manager.ts";
 
 // Windows 上 chmod 不生效,mode 校验跳过即可。
@@ -91,6 +104,71 @@ describe("loadProjectSettings", () => {
     );
     expect(await loadProjectSettings(cwd)).toEqual({});
   });
+
+  it("只保留 runtimeFeatures 中已知且为 boolean 的字段", async () => {
+    makeSettings(cwd, {
+      runtimeFeatures: {
+        sessionV3: true,
+        workspaceContracts: false,
+        artifactCas: "enabled",
+        unknownFeature: true,
+      },
+    });
+
+    expect(await loadProjectSettings(cwd)).toEqual({
+      runtimeFeatures: {
+        sessionV3: true,
+        workspaceContracts: false,
+      },
+    });
+  });
+
+  it("保留合法 sessionV3 feature-state 与单调历史字段", async () => {
+    makeSettings(cwd, {
+      sessionV3FeatureState: "opt_in",
+      sessionV3HighestActivatedState: "default",
+    });
+    expect(await loadProjectSettings(cwd)).toEqual({
+      sessionV3FeatureState: "opt_in",
+      sessionV3HighestActivatedState: "default",
+    });
+
+    makeSettings(cwd, {
+      sessionV3FeatureState: "enabled",
+      sessionV3HighestActivatedState: 3,
+    });
+    expect(await loadProjectSettings(cwd)).toEqual({});
+  });
+});
+
+describe("runtime session compatibility rollout", () => {
+  const versions: readonly SessionFormatVersion[] = [1, 2, 3];
+  const operations: readonly SessionCompatibilityOperation[] = [
+    "read",
+    "append",
+    "migrate_to_v3",
+    "fork_to_v3",
+    "downgrade",
+  ];
+
+  it("sessionV3 关闭时保留 v2 append 且禁止创建或迁移 v3", () => {
+    expect(resolveSessionCompatibilityDecision(DEFAULT_RUNTIME_FEATURES, 2, "append")).toBe("allow");
+    expect(resolveSessionCompatibilityDecision(DEFAULT_RUNTIME_FEATURES, 2, "migrate_to_v3")).toBe("deny");
+    expect(resolveSessionCompatibilityDecision(DEFAULT_RUNTIME_FEATURES, 2, "fork_to_v3")).toBe("deny");
+    expect(resolveSessionCompatibilityDecision(DEFAULT_RUNTIME_FEATURES, 3, "append")).toBe("deny");
+    expect(resolveSessionCompatibilityDecision(DEFAULT_RUNTIME_FEATURES, 3, "read")).toBe("legacy_read_only");
+  });
+
+  it("sessionV3 开启时完整使用目标兼容矩阵", () => {
+    const enabled = { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true };
+    for (const version of versions) {
+      for (const operation of operations) {
+        expect(resolveSessionCompatibilityDecision(enabled, version, operation)).toBe(
+          sessionCompatibilityDecision(version, operation),
+        );
+      }
+    }
+  });
 });
 
 describe("loadProjectSettingsSync", () => {
@@ -153,5 +231,77 @@ describe("saveProjectSettings", () => {
     await saveProjectSettings(cwd, { theme: "dark" });
     expect(existsSync(join(cwd, ".runledger"))).toBe(true);
     expect(existsSync(join(cwd, ".runledger", "settings.json"))).toBe(true);
+  });
+});
+
+describe("user and merged settings", () => {
+  let cwd: string;
+  let agentDir: string;
+  let originalAgentDir: string | undefined;
+
+  beforeEach(() => {
+    cwd = tmpCwd();
+    agentDir = tmpCwd();
+    originalAgentDir = process.env.RUNLEDGER_DIR;
+    process.env.RUNLEDGER_DIR = agentDir;
+  });
+
+  afterEach(() => {
+    if (originalAgentDir === undefined) delete process.env.RUNLEDGER_DIR;
+    else process.env.RUNLEDGER_DIR = originalAgentDir;
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(agentDir, { recursive: true, force: true });
+  });
+
+  it("loads and saves the bounded user schema without extension declarations", async () => {
+    writeFileSync(join(agentDir, "settings.json"), JSON.stringify({
+      provider: "user-provider",
+      theme: "dark",
+      plugins: ["must-not-live-in-settings"],
+      skills: ["must-not-live-in-settings"],
+      mcpServers: { unsafe: true },
+      unknownField: "drop",
+    }));
+
+    expect(await loadUserSettings()).toEqual({ provider: "user-provider", theme: "dark" });
+    expect(loadUserSettingsSync()).toEqual({ provider: "user-provider", theme: "dark" });
+
+    await saveUserSettings({ model: "user-model", runtimeFeatures: { sessionV3: true } });
+    expect(await loadUserSettings()).toEqual({ model: "user-model", runtimeFeatures: { sessionV3: true } });
+    if (!IS_WIN) expect(statSync(join(agentDir, "settings.json")).mode & 0o777).toBe(0o600);
+  });
+
+  it("merges user defaults with project overrides and nested runtime feature keys", async () => {
+    await saveUserSettings({
+      provider: "user-provider",
+      model: "user-model",
+      theme: "dark",
+      enabledModels: ["user-model"],
+      runtimeFeatures: { sessionV3: true, workspaceContracts: false },
+    });
+    await saveProjectSettings(cwd, {
+      model: "project-model",
+      theme: "light",
+      enabledModels: ["project-model"],
+      runtimeFeatures: { workspaceContracts: true },
+    });
+
+    const expected = {
+      provider: "user-provider",
+      model: "project-model",
+      theme: "light",
+      enabledModels: ["project-model"],
+      runtimeFeatures: { sessionV3: true, workspaceContracts: true },
+    };
+    expect(await loadMergedSettings(cwd)).toEqual(expected);
+    expect(loadMergedSettingsSync(cwd)).toEqual(expected);
+    expect(mergeUserAndProjectSettings(
+      { provider: "user-provider", runtimeFeatures: { sessionV3: true } },
+      { model: "project-model", runtimeFeatures: { artifactCas: true } },
+    )).toEqual({
+      provider: "user-provider",
+      model: "project-model",
+      runtimeFeatures: { sessionV3: true, artifactCas: true },
+    });
   });
 });

@@ -1,0 +1,211 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "memoryId": "memory_fixture",
+    "scope": { "scope": "workspace", "workspaceId": "workspace_fixture" },
+    "revision": 1,
+    "status": "approved",
+    "title": "Repository verification preference",
+    "content": "Run the repository verification command before reporting completion.",
+    "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "sourceRefs": [
+      {
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "trust": "user_approved",
+        "taint": [],
+        "observedAt": "2026-07-22T00:00:00.000Z",
+        "sourceType": "user",
+        "principalId": "principal_fixture"
+      }
+    ],
+    "approvalReceipt": {
+      "authorityId": "authority_fixture",
+      "tenantId": "tenant_fixture",
+      "principalId": "principal_fixture",
+      "receiptId": "receipt_memory-approval",
+      "approvalId": "approval_memory",
+      "requestId": "command_memory-approval",
+      "requestDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "ticketDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "decision": "allowed",
+      "decisionRevision": 1,
+      "decidedAt": "2026-07-22T00:00:01.000Z",
+      "receiptDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "evidenceComplete": true,
+      "evidenceTruncated": false,
+      "originalInputDigest": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "createdByPrincipalId": "principal_fixture",
+    "createdAt": "2026-07-22T00:00:00.000Z",
+    "updatedAt": "2026-07-22T00:00:01.000Z",
+    "expiresAt": "2027-07-22T00:00:00.000Z",
+    "revocationRevision": 0
+  },
+  "proposal": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "proposalId": "memoryProposal_fixture",
+    "memory": {
+      "schemaVersion": 1,
+      "authorityId": "authority_fixture",
+      "tenantId": "tenant_fixture",
+      "memoryId": "memory_fixture",
+      "scope": { "scope": "workspace", "workspaceId": "workspace_fixture" },
+      "revision": 1,
+      "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "status": "approved"
+    },
+    "diff": {
+      "kind": "create",
+      "after": {
+        "schemaVersion": 1,
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "memoryId": "memory_fixture",
+        "scope": { "scope": "workspace", "workspaceId": "workspace_fixture" },
+        "revision": 1,
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "approved"
+      },
+      "changes": [
+        {
+          "field": "content",
+          "afterDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "diffArtifact": {
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "artifactId": "artifact_memory-diff",
+        "storedDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "kind": "diff",
+        "originalSize": 256,
+        "storedSize": 256,
+        "mediaType": "application/json",
+        "redaction": "redacted",
+        "transformReceipt": "receipt_transform-memory-diff",
+        "workspaceId": "workspace_fixture"
+      },
+      "diffDigest": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "status": "approved",
+    "approvalId": "approval_memory",
+    "approvalReceipt": {
+      "authorityId": "authority_fixture",
+      "tenantId": "tenant_fixture",
+      "principalId": "principal_fixture",
+      "receiptId": "receipt_memory-approval",
+      "approvalId": "approval_memory",
+      "requestId": "command_memory-approval",
+      "requestDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "ticketDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "decision": "allowed",
+      "decisionRevision": 1,
+      "decidedAt": "2026-07-22T00:00:01.000Z",
+      "receiptDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "evidenceComplete": true,
+      "evidenceTruncated": false,
+      "originalInputDigest": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    "proposedByPrincipalId": "principal_fixture",
+    "createdAt": "2026-07-22T00:00:00.000Z",
+    "expiresAt": "2026-07-23T00:00:00.000Z"
+  },
+  "searchRequest": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "requestId": "command_memory-search",
+    "query": "verification command",
+    "queryDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "scopes": [
+      { "scope": "user", "ownerPrincipalId": "principal_fixture" },
+      { "scope": "workspace", "workspaceId": "workspace_fixture" }
+    ],
+    "maxResults": 10,
+    "maxSnippetChars": 512,
+    "maxTotalTokens": 2048,
+    "includeStale": false
+  },
+  "searchReceipt": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "requestId": "command_memory-search",
+    "receiptId": "receipt_memory-search",
+    "queryDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "mode": "lexical",
+    "indexDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "results": [
+      {
+        "memory": {
+          "schemaVersion": 1,
+          "authorityId": "authority_fixture",
+          "tenantId": "tenant_fixture",
+          "memoryId": "memory_fixture",
+          "scope": { "scope": "workspace", "workspaceId": "workspace_fixture" },
+          "revision": 1,
+          "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "status": "approved"
+        },
+        "score": 0.9,
+        "stale": false,
+        "snippet": "Run the repository verification command",
+        "lineStart": 1,
+        "lineEnd": 1,
+        "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "diagnostics": [],
+    "searchedAt": "2026-07-22T00:00:02.000Z"
+  },
+  "injectionReceipt": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "receiptId": "receipt_memory-injection",
+    "contextRequestId": "contextRequest_fixture",
+    "memories": [
+      {
+        "schemaVersion": 1,
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "memoryId": "memory_fixture",
+        "scope": { "scope": "workspace", "workspaceId": "workspace_fixture" },
+        "revision": 1,
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "status": "approved"
+      }
+    ],
+    "injectionDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "injectedAt": "2026-07-22T00:00:03.000Z"
+  },
+  "revoked": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "memoryId": "memory_revoked",
+    "scope": { "scope": "user", "ownerPrincipalId": "principal_fixture" },
+    "revision": 2,
+    "contentDigest": "5555555555555555555555555555555555555555555555555555555555555555",
+    "status": "revoked"
+  },
+  "expired": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "memoryId": "memory_expired",
+    "scope": { "scope": "session", "sessionId": "session_fixture" },
+    "revision": 1,
+    "contentDigest": "6666666666666666666666666666666666666666666666666666666666666666",
+    "status": "expired"
+  }
+}

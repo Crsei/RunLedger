@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "authorityId": "authority_fixture",
+  "tenantId": "tenant_fixture",
+  "principalId": "principal_fixture",
+  "requestId": "command_route-2",
+  "decisionId": "receipt_route-2",
+  "outcome": "fork",
+  "targetModelId": "provider/model-b",
+  "profileId": "resource_profile-b",
+  "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "profileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+  "adapterState": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "sourceProfileId": "resource_profile-a",
+    "targetProfileId": "resource_profile-b",
+    "reasoningState": "fork_required",
+    "toolReplayState": "drop",
+    "cacheState": "drop",
+    "stateDescriptorDigest": "4444444444444444444444444444444444444444444444444444444444444444",
+    "compatible": false
+  },
+	"inputSources": [
+	  {
+		"schemaVersion": 1,
+		"authorityId": "authority_fixture",
+		"tenantId": "tenant_fixture",
+		"sourceId": "inputSource_model-context",
+		"kind": "model",
+		"sourceDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+		"trust": "derived",
+		"taintLabels": ["model_derived"],
+		"observedAt": "2026-07-22T00:00:00.000Z"
+	  }
+	],
+	"declassificationReceipts": [],
+  "diagnostics": [
+    {
+      "code": "adapter_state_private",
+      "severity": "error",
+      "messageDigest": "5555555555555555555555555555555555555555555555555555555555555555"
+    }
+  ],
+  "reason": "provider-private reasoning state requires a fork",
+  "decisionDigest": "6666666666666666666666666666666666666666666666666666666666666666",
+  "mustForkReason": "provider_private_state"
+}

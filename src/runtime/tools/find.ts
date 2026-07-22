@@ -44,35 +44,58 @@ export function createFindTool(
   cwd: string,
   options: FindToolOptions = {},
 ): AgentTool<typeof findSchema, FindToolDetails> {
-  const shell = options.shell ?? localExecutionEnv(cwd).shell;
+  const legacyShell = options.shell ?? localExecutionEnv(cwd).shell;
   return {
     name: "find",
     label: "find",
     description: "按 glob pattern 查找文件。默认上限 1000 个。优先 fd, 失败回退 find。",
     parameters: findSchema,
+    governedExecution: "tool-context",
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    async execute(_toolCallId, params, signal?): Promise<AgentToolResult<FindToolDetails>> {
-      const searchPath = resolveToCwd(params.path, cwd);
+    async execute(_toolCallId, params, signal?, _onUpdate?, context?): Promise<AgentToolResult<FindToolDetails>> {
+      const activeCwd = context ? context.cwd : cwd;
+      const activeSignal = context ? context.signal : signal;
+      const shell = context ? context.env.shell : legacyShell;
+      const shellEnv = context ? context.envVars : undefined;
+      const searchPath = resolveToCwd(params.path, activeCwd);
       const limit = params.limit ?? DEFAULT_LIMIT;
       const pattern = params.pattern;
 
       // 探测 fd 是否可用;失败即直接走 find fallback
-      const probe = await shell.exec("fd --version", { cwd, maxOutputChars: 1024, timeoutMs: 5_000, signal });
+      const probe = await shell.exec("fd --version", {
+        cwd: activeCwd,
+        ...(shellEnv ? { env: shellEnv } : {}),
+        maxOutputChars: 1024,
+        timeoutMs: 5_000,
+        signal: activeSignal,
+      });
       const hasFd = probe.exitCode === 0;
 
       let r;
       let isError: boolean;
       if (hasFd) {
         const fdCmd = "fd --glob --hidden --color=never --max-results " + limit + " -- " + quote(pattern) + " " + quote(toPosixPath(searchPath));
-        r = await shell.exec(fdCmd, { cwd, maxOutputChars: DEFAULT_MAX_BYTES, signal, timeoutMs: 30_000 });
+        r = await shell.exec(fdCmd, {
+          cwd: activeCwd,
+          ...(shellEnv ? { env: shellEnv } : {}),
+          maxOutputChars: DEFAULT_MAX_BYTES,
+          signal: activeSignal,
+          timeoutMs: 30_000,
+        });
         isError = r.exitCode !== 0;
       } else {
         // 降级 find -name;pattern 形如 `src/*/.ts` 不归一为 simple glob
         const simpleGlob = pattern.replace(/^\*\*\//, "").replace(/\/.*$/, "");
         const effective = simpleGlob === "" ? pattern : simpleGlob;
         const findCmd = "find " + quote(toPosixPath(searchPath)) + " -name " + quote(effective) + " -print | head -n " + limit;
-        r = await shell.exec(findCmd, { cwd, maxOutputChars: DEFAULT_MAX_BYTES, signal, timeoutMs: 60_000 });
+        r = await shell.exec(findCmd, {
+          cwd: activeCwd,
+          ...(shellEnv ? { env: shellEnv } : {}),
+          maxOutputChars: DEFAULT_MAX_BYTES,
+          signal: activeSignal,
+          timeoutMs: 60_000,
+        });
         isError = r.exitCode !== 0;
       }
 

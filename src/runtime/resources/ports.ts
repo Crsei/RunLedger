@@ -1,34 +1,53 @@
 /**
- * Runtime 资源 adapter ports。
+ * 动态资源 adapter ports。
  *
- * TODO(runtime-phase-5): 明确 bounded search、cancel、release 和 event sink 的
- * backpressure/idempotency 语义。实现侧不得通过这些 port 暴露可执行对象。
+ * 所有参数均为可序列化合同；实现方式可以是内存 adapter、扩展控制面或远程
+ * 服务，但本层不规定文件扫描、transport、runner、安装或进程生命周期。
  */
 
 import type {
-	ResourceIdentity,
-	ResourceLifecycleEvent,
-	RuntimeResourceSnapshot,
-	RuntimeToolDescriptor,
+	ResourceCancellationRequest,
+	ResourceCancellationResult,
+	ResourceClaimDerivationResult,
+	ResourceEventEmissionRequest,
+	ResourceEventEmissionResult,
+	ResourceResolveRequest,
+	ResourceResolveResult,
+	ResourceSearchRequest,
+	ResourceSearchResult,
+	ResourceSnapshotAcquireRequest,
+	ResourceSnapshotAcquireResult,
+	ResourceSnapshotReleaseRequest,
+	ResourceSnapshotReleaseResult,
 	RuntimeToolInvocation,
-	RuntimeToolResult,
+	RuntimeResourceInvocationFrame,
+	RuntimeToolInvocationRequest,
 } from "./types.ts";
 
 export interface RuntimeResourceCatalogPort {
-	resolveExact(identity: ResourceIdentity): Promise<RuntimeToolDescriptor | undefined>;
-	search(query: string, limit: number): Promise<readonly RuntimeToolDescriptor[]>;
+	resolveExact(request: ResourceResolveRequest): Promise<ResourceResolveResult>;
+	search(request: ResourceSearchRequest): Promise<ResourceSearchResult>;
 }
 
+/** raw input 到 canonical input/trusted claims 的唯一中立切点。 */
+export interface RuntimeResourceClaimDerivationPort {
+	canonicalizeAndDerive(
+		request: RuntimeToolInvocationRequest,
+		signal?: AbortSignal,
+	): Promise<ResourceClaimDerivationResult>;
+}
+
+/** invoke 不接受 raw input，也不接受调用者自报 claims。 */
 export interface RuntimeResourceInvocationPort {
-	invoke(invocation: RuntimeToolInvocation, signal?: AbortSignal): Promise<RuntimeToolResult>;
-	cancel(requestId: string, reason: string): Promise<void>;
+	invoke(invocation: RuntimeToolInvocation, signal?: AbortSignal): AsyncIterable<RuntimeResourceInvocationFrame>;
+	cancel(request: ResourceCancellationRequest): Promise<ResourceCancellationResult>;
 }
 
 export interface RuntimeResourceEventSink {
-	append(event: ResourceLifecycleEvent): Promise<void>;
+	emit(request: ResourceEventEmissionRequest): Promise<ResourceEventEmissionResult>;
 }
 
 export interface RuntimeResourceSnapshotProvider {
-	acquire(): Promise<RuntimeResourceSnapshot>;
-	release(snapshotId: string): Promise<void>;
+	acquire(request: ResourceSnapshotAcquireRequest): Promise<ResourceSnapshotAcquireResult>;
+	release(request: ResourceSnapshotReleaseRequest): Promise<ResourceSnapshotReleaseResult>;
 }

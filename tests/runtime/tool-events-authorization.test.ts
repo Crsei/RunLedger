@@ -1,7 +1,11 @@
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../../src/runtime/agent.ts";
-import { authorizationBeforeToolCall } from "../../src/runtime/tool-authorization.ts";
+import {
+  AllowAllToolAuthorizationPolicy,
+  DenyAllToolAuthorizationPolicy,
+  authorizationBeforeToolCall,
+} from "../../src/runtime/tool-authorization.ts";
 import type {
   AgentEvent,
   AgentTool,
@@ -70,6 +74,15 @@ function oneToolThenStopStream(toolCall: ToolCall): StreamFn {
 const parameters = Type.Object({ value: Type.String() });
 
 describe("tool event payload and authorization", () => {
+  it("defaults can fail closed while AllowAll remains an explicit fixture", () => {
+    const request = {} as Parameters<DenyAllToolAuthorizationPolicy["authorize"]>[0];
+    expect(new DenyAllToolAuthorizationPolicy().authorize(request)).toEqual({
+      decision: "deny",
+      reason: "tool execution is unavailable until an authorization policy is explicitly composed",
+    });
+    expect(new AllowAllToolAuthorizationPolicy().authorize(request)).toEqual({ decision: "allow" });
+  });
+
   it("start/update/end 保留参数、串行 partial 和完整结果", async () => {
     const call: ToolCall = {
       type: "toolCall",
@@ -161,5 +174,43 @@ describe("tool event payload and authorization", () => {
     expect(ends).toHaveLength(1);
     expect(ends[0]).toMatchObject({ isError: true });
     expect(ends[0]!.result.content[0]).toMatchObject({ text: "policy denied fixture" });
+  });
+
+  it("按 schema -> PreToolUse rewrite -> revalidate -> authorization -> execute 排序", async () => {
+    const observed: string[] = [];
+    const call: ToolCall = {
+      type: "toolCall",
+      id: "call-rewrite",
+      name: "fixture",
+      arguments: { value: "original" },
+    };
+    const tool: AgentTool<typeof parameters> = {
+      name: "fixture",
+      label: "fixture",
+      description: "fixture tool",
+      parameters,
+      async execute(_id, args) {
+        observed.push(`execute:${args.value}`);
+        return { content: [{ type: "text", text: args.value }], details: {} };
+      },
+    };
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: MODEL, tools: [tool] },
+      streamFn: oneToolThenStopStream(call),
+      loopConfig: {
+        beforeToolCall: ({ args }) => {
+          observed.push(`hook:${(args as { value: string }).value}`);
+          return { updatedInput: { value: "rewritten" } };
+        },
+        authorizeToolCall: ({ args }) => {
+          observed.push(`authorize:${(args as { value: string }).value}`);
+        },
+      },
+    });
+
+    const messages = await agent.prompt("rewrite");
+    expect(observed).toEqual(["hook:original", "authorize:rewritten", "execute:rewritten"]);
+    const result = messages.find((message) => message.role === "toolResult");
+    expect(result?.content[0]?.content).toEqual([{ type: "text", text: "rewritten" }]);
   });
 });

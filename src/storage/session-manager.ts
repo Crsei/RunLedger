@@ -30,6 +30,7 @@ import { JsonlLedger } from "../runtime/ledger/jsonl-ledger.ts";
 import { acquireLedgerLock } from "../runtime/ledger/lockfile.ts";
 import { resolveSessionDir } from "./paths.ts";
 import { buildSessionFileName } from "./path-utils.ts";
+import { validateRuntimeEvent } from "../runtime/protocol/v3/schemas.ts";
 
 const SESSION_FILE_GLOB = "*.jsonl";
 
@@ -56,6 +57,8 @@ export interface SessionInfo {
   cwd?: string;
   /** 文件 mtime ms */
   modifiedMs: number;
+  format?: "legacy" | "v3";
+  version?: 1 | 2 | 3;
 }
 
 /**
@@ -242,16 +245,31 @@ export class SessionManager {
     const out: SessionInfo[] = [];
     for (const fp of files) {
       try {
-        const header = await readHeader(fp);
-        if (!header) continue;
-        if (cwd.length > 0 && header.metadata?.cwd !== cwd) continue;
         const st = await stat(fp);
-        out.push({
-          id: header.sessionId,
+        const header = await readHeader(fp);
+        if (header) {
+          if (cwd.length > 0 && header.metadata?.cwd !== cwd) continue;
+          out.push({
+            id: header.sessionId,
+            filePath: fp,
+            createdAt: header.createdAt,
+            cwd: typeof header.metadata?.cwd === "string" ? header.metadata.cwd : undefined,
+            modifiedMs: st.mtimeMs,
+            format: "legacy",
+            version: header.version,
+          });
+          continue;
+        }
+		const genesis = await readV3Genesis(fp);
+		if (!genesis || genesis.stream.scope !== "session") continue;
+		out.push({
+		  id: genesis.stream.sessionId,
           filePath: fp,
-          createdAt: header.createdAt,
-          cwd: typeof header.metadata?.cwd === "string" ? header.metadata.cwd : undefined,
+          createdAt: Date.parse(genesis.timestamp),
+          ...(cwd.length > 0 ? { cwd } : {}),
           modifiedMs: st.mtimeMs,
+          format: "v3",
+          version: 3,
         });
       } catch (e) {
         process.stderr.write(
@@ -298,6 +316,24 @@ async function readHeader(filePath: string): Promise<LedgerHeader | undefined> {
   }
 }
 
+async function readV3Genesis(filePath: string) {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, "utf8");
+  } catch {
+    return undefined;
+  }
+  const newline = content.indexOf("\n");
+  if (newline < 0) return undefined;
+  try {
+    const validation = validateRuntimeEvent(JSON.parse(content.slice(0, newline)) as unknown);
+    if (!validation.ok || validation.value.sequence !== 0) return undefined;
+    return validation.value;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * 扫目录找 mtime 最大的会话文件;按 header.metadata.cwd 过滤。
  * 无可匹配则返回 undefined。
@@ -306,35 +342,6 @@ async function findMostRecentSession(
   dir: string,
   cwd: string,
 ): Promise<string | undefined> {
-  if (!existsSync(dir)) return undefined;
-  let files: string[];
-  try {
-    files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl"));
-  } catch {
-    return undefined;
-  }
-  let bestPath: string | undefined;
-  let bestMtime = -1;
-  for (const f of files) {
-    const fp = path.join(dir, f);
-    let header: LedgerHeader | undefined;
-    try {
-      header = await readHeader(fp);
-    } catch {
-      continue;
-    }
-    if (!header) continue;
-    if (cwd.length > 0 && header.metadata?.cwd !== cwd) continue;
-    let mtime: number;
-    try {
-      mtime = (await stat(fp)).mtimeMs;
-    } catch {
-      continue;
-    }
-    if (mtime > bestMtime) {
-      bestMtime = mtime;
-      bestPath = fp;
-    }
-  }
-  return bestPath;
+  const sessions = await SessionManager.list(cwd, dir);
+  return sessions[0]?.filePath;
 }

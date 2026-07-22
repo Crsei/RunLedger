@@ -8,17 +8,25 @@ import { appendRuntimeConfig } from "../storage/session-codec.ts";
 import { Agent } from "./agent.ts";
 import type {
   AgentEventSink,
+  AgentLoopConfig,
   AgentMessage,
   AgentTool,
   QueueMode,
   StreamFn,
   ToolAuthorizationPolicy,
+  ToolResultArtifactSink,
   UserAgentMessage,
 } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
+import type { LedgerEntry } from "./ledger/types.ts";
+import type {
+  AgentLoopSessionEvents,
+  DurableQueueReceipt,
+} from "./session/agent-loop-events.ts";
+import { canonicalDigest } from "./protocol/v3/canonical-json.ts";
 import { createStdlibTools } from "./tools/index.ts";
 import {
-  AllowAllToolAuthorizationPolicy,
+  DenyAllToolAuthorizationPolicy,
   authorizationBeforeToolCall,
 } from "./tool-authorization.ts";
 
@@ -34,10 +42,74 @@ export interface InteractiveSessionControllerOptions {
   models: Models;
   settings: ProjectSettings;
   replay: SessionReplay;
-  ledger: LedgerSink;
+  ledger?: LedgerSink;
+  sessionId?: string;
+  sessionEvents?: AgentLoopSessionEvents;
+  toolResultArtifactSink?: ToolResultArtifactSink;
   overrides?: RuntimeSelectionOverrides;
   tools?: AgentTool[];
   authorizationPolicy?: ToolAuthorizationPolicy;
+  /** Extension PreToolUse adapter；授权在该 hook 完成并重新校验入参后执行。 */
+  beforeToolCall?: AgentLoopConfig["beforeToolCall"];
+  /** Extension PostToolUse adapter。 */
+  afterToolCall?: AgentLoopConfig["afterToolCall"];
+  /** v3 model route + ContextEngine 的生产准备入口。 */
+  prepareModelRequest?: AgentLoopConfig["prepareModelRequest"];
+  /** v3 Workspace/Capability/Sandbox 工具执行唯一入口。 */
+  toolExecutionGateway?: AgentLoopConfig["toolExecutionGateway"];
+  /** production provider/tool operation 的 durable BudgetGuard seam。 */
+  operationBudget?: AgentLoopConfig["operationBudget"];
+  /** Extension snapshot 生命周期；reload 只在 active run 结束后的安全点生效。 */
+  extensionLifecycle?: InteractiveExtensionLifecyclePort;
+  /** ToolRegistry 的当前只读投影；Extension generation 交换后用它刷新 Agent。 */
+  toolProvider?: () => readonly AgentTool[];
+}
+
+export interface InteractiveExtensionCatalogResource {
+  identity: { qualifiedId: string };
+  kind: string;
+  displayName: string;
+  enabled: boolean;
+  trust: string;
+  activation: string;
+}
+
+export interface InteractiveExtensionCatalog {
+  snapshotId: string;
+  generation: number;
+  resources: readonly InteractiveExtensionCatalogResource[];
+}
+
+export interface InteractiveExtensionLifecyclePort {
+  catalog(): InteractiveExtensionCatalog | undefined;
+  beginTurn(): { status: "ready" | "failed"; reason?: string };
+  endTurn(): Promise<
+    | { status: "applied" | "pending" | "failed"; reason?: string }
+    | undefined
+  >;
+  userPromptSubmit(
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<{ status: "allowed" | "blocked"; reason?: string }>;
+  reload(signal?: AbortSignal): Promise<{
+    status: "applied" | "pending" | "failed";
+    reason?: string;
+  }>;
+}
+
+export interface InteractiveExtensionResourceView {
+  id: string;
+  kind: string;
+  displayName: string;
+  enabled: boolean;
+  trust: string;
+  activation: string;
+}
+
+export interface InteractiveExtensionSnapshotView {
+  snapshotId: string;
+  generation: number;
+  resources: readonly InteractiveExtensionResourceView[];
 }
 
 export interface ProviderStatus {
@@ -55,19 +127,65 @@ export interface RuntimeSelection {
   thinkingLevel: ModelThinkingLevel;
 }
 
+/** 仅供 CLI composition adapter 使用，不属于 InteractiveSessionControllerPort。 */
+export interface GovernedPromptRuntimeAcceptance {
+  /** 首个 turn_start 发出前，v3 turn.started 已越过 durable barrier。 */
+  started: Promise<void>;
+  /** 整个 active run 的完成状态；command accepted 不等待此 Promise。 */
+  completion: Promise<void>;
+}
+
+/** TUI 只依赖此 facade；生产模式可把 mutation 路由到 Control Plane。 */
+export interface InteractiveSessionControllerPort {
+  readonly sessionId: string;
+  readonly inFlight: boolean;
+  readonly currentSelection: RuntimeSelection;
+  readonly messages: readonly AgentMessage[];
+  readonly warnings: readonly string[];
+  readonly auditEntries: readonly LedgerEntry[];
+  readonly toolCount: number;
+  getExtensionSnapshot?(): InteractiveExtensionSnapshotView | undefined;
+  reloadExtensions?(): Promise<{ status: "applied" | "pending" | "failed"; reason?: string }>;
+  subscribe(listener: AgentEventSink): () => void;
+  getProviderStatuses(): Promise<ProviderStatus[]>;
+  getProvider(id: string): Provider | undefined;
+  getAvailableModels(provider?: string): Promise<readonly Model<Api>[]>;
+  login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential>;
+  logout(providerId: string): Promise<void>;
+  selectModel(model: Model<Api>): Promise<void>;
+  setThinkingLevel(level: ModelThinkingLevel): Promise<ModelThinkingLevel>;
+  prompt(text: string, behavior?: "steer" | "followUp"): Promise<void>;
+  interrupt(): void;
+  cancelAllQueues(reason?: string): Promise<{ steering: UserAgentMessage[]; followUp: UserAgentMessage[] }>;
+  waitForIdle(): Promise<void>;
+  dispose(): void;
+}
+
 /**
  * CLI/TUI 的统一运行时控制器。Models 负责 provider/auth,Agent 负责单次活跃 run,
  * controller 负责选择持久化、恢复与命令前置检查。
  */
-export class InteractiveSessionController {
+export class InteractiveSessionController implements InteractiveSessionControllerPort {
   private readonly cwd: string;
   private readonly systemPrompt: string;
   private readonly models: Models;
   private settings: ProjectSettings;
   private readonly replay: SessionReplay;
-  private readonly ledger: LedgerSink;
-  private readonly tools: AgentTool[];
+  private readonly ledger: LedgerSink | undefined;
+  private readonly runtimeSessionId: string;
+  private readonly sessionEvents: AgentLoopSessionEvents | undefined;
+  private readonly toolResultArtifactSink: ToolResultArtifactSink | undefined;
+  private tools: AgentTool[];
   private readonly policy: ToolAuthorizationPolicy;
+  private readonly authorizationPolicyConfigured: boolean;
+  private readonly beforeToolCall: AgentLoopConfig["beforeToolCall"] | undefined;
+  private readonly afterToolCall: AgentLoopConfig["afterToolCall"] | undefined;
+  private readonly prepareModelRequest: AgentLoopConfig["prepareModelRequest"] | undefined;
+  private readonly toolExecutionGateway: AgentLoopConfig["toolExecutionGateway"] | undefined;
+  private readonly operationBudget: AgentLoopConfig["operationBudget"] | undefined;
+  private readonly extensionLifecycle: InteractiveExtensionLifecyclePort | undefined;
+  private readonly toolProvider: (() => readonly AgentTool[]) | undefined;
+  private readonly governedPromptPreflights = new Map<string, string>();
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -83,8 +201,19 @@ export class InteractiveSessionController {
     this.settings = { ...opts.settings };
     this.replay = opts.replay;
     this.ledger = opts.ledger;
+    this.runtimeSessionId = opts.sessionId ?? opts.ledger?.sessionId ?? "<no-session>";
+    this.sessionEvents = opts.sessionEvents;
+    this.toolResultArtifactSink = opts.toolResultArtifactSink;
     this.tools = opts.tools ?? productionTools(opts.cwd);
-    this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
+    this.policy = opts.authorizationPolicy ?? new DenyAllToolAuthorizationPolicy();
+    this.authorizationPolicyConfigured = opts.authorizationPolicy !== undefined;
+    this.beforeToolCall = opts.beforeToolCall;
+    this.afterToolCall = opts.afterToolCall;
+    this.prepareModelRequest = opts.prepareModelRequest;
+    this.toolExecutionGateway = opts.toolExecutionGateway;
+    this.operationBudget = opts.operationBudget;
+    this.extensionLifecycle = opts.extensionLifecycle;
+    this.toolProvider = opts.toolProvider;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -92,7 +221,7 @@ export class InteractiveSessionController {
   static async create(opts: InteractiveSessionControllerOptions): Promise<InteractiveSessionController> {
     const selection = await resolveInitialSelection(opts);
     const controller = new InteractiveSessionController(opts, selection);
-    if (selection.model) {
+    if (selection.model && opts.ledger) {
       await appendRuntimeConfig(
         opts.ledger,
         controller.configSnapshot(),
@@ -108,7 +237,7 @@ export class InteractiveSessionController {
   }
 
   get sessionId(): string {
-    return this.ledger.sessionId;
+    return this.runtimeSessionId;
   }
 
   get inFlight(): boolean {
@@ -133,6 +262,33 @@ export class InteractiveSessionController {
 
   get toolCount(): number {
     return this.tools.length;
+  }
+
+  getExtensionSnapshot(): InteractiveExtensionSnapshotView | undefined {
+    const catalog = this.extensionLifecycle?.catalog();
+    if (!catalog) return undefined;
+    return {
+      snapshotId: catalog.snapshotId,
+      generation: catalog.generation,
+      resources: catalog.resources.map((resource) => ({
+        id: resource.identity.qualifiedId,
+        kind: resource.kind,
+        displayName: resource.displayName,
+        enabled: resource.enabled,
+        trust: resource.trust,
+        activation: resource.activation,
+      })),
+    };
+  }
+
+  async reloadExtensions(): Promise<{ status: "applied" | "pending" | "failed"; reason?: string }> {
+    if (!this.extensionLifecycle) {
+      return { status: "failed", reason: "production Extension runtime is not configured" };
+    }
+    if (this.inFlight) return { status: "pending", reason: "reload is deferred until the active run settles" };
+    const result = await this.extensionLifecycle.reload();
+    if (result.status === "applied") this.refreshTools();
+    return result;
   }
 
   getSteeringMessages(): readonly UserAgentMessage[] {
@@ -182,6 +338,7 @@ export class InteractiveSessionController {
   }
 
   async selectModel(model: Model<Api>): Promise<void> {
+    await this.waitForIdle();
     const thinkingLevel = clampThinkingLevel(model, this.selection.thinkingLevel);
     this.selection = { provider: model.provider, model, thinkingLevel };
     this.ensureAgent();
@@ -191,6 +348,7 @@ export class InteractiveSessionController {
   }
 
   async setThinkingLevel(level: ModelThinkingLevel): Promise<ModelThinkingLevel> {
+    await this.waitForIdle();
     const model = this.selection.model;
     if (!model) throw new Error("Select a model before configuring thinking.");
     const effective = clampThinkingLevel(model, level);
@@ -204,22 +362,92 @@ export class InteractiveSessionController {
     const agent = this.agent;
     const model = this.selection.model;
     if (!agent || !model) throw new Error("No model selected. Use /provider or /model.");
+    const auth = await this.models.getAuth(model);
+    if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
     if (agent.inFlight) {
+      await this.authorizeExtensionPrompt(text);
       if (behavior === "followUp") agent.followUp(text);
       else agent.steer(text);
       return;
     }
+    await this.runInitialPrompt(agent, text);
+  }
+
+  /** Control Plane preflight：任何 durable enqueue 之前完成 model/auth 与状态校验。 */
+  async preflightGovernedPrompt(
+    expectsActiveTurn: boolean,
+    prompt?: { commandId: string; text: string },
+  ): Promise<void> {
+    const agent = this.agent;
+    const model = this.selection.model;
+    if (!agent || !model) throw new Error("No model selected. Use /provider or /model.");
+    if (agent.inFlight !== expectsActiveTurn) {
+      throw new Error(expectsActiveTurn
+        ? "The durable session has an active turn but the local runtime is idle."
+        : "The durable session is idle but the local runtime is already processing.");
+    }
     const auth = await this.models.getAuth(model);
     if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
-    await agent.prompt(text);
+    if (this.extensionLifecycle) {
+      if (!prompt) throw new Error("governed Extension preflight requires exact command and prompt correlation");
+      await this.authorizeExtensionPrompt(prompt.text);
+      this.rememberGovernedPromptPreflight(prompt.commandId, prompt.text);
+    }
+  }
+
+  /**
+   * Control Plane 专用内部入口。调用方必须先持有 queue.enqueued receipt；本方法
+   * 不再写 queue event，从而保证 append 失败时内存队列完全不变。
+   */
+  acceptDurablyEnqueuedPrompt(
+    text: string,
+    behavior: "start" | "steer" | "followUp",
+    commandId?: string,
+    receipt?: DurableQueueReceipt,
+  ): GovernedPromptRuntimeAcceptance {
+    const agent = this.agent;
+    if (!agent) throw new Error("No model selected. Use /provider or /model.");
+    if (this.extensionLifecycle && !this.consumeGovernedPromptPreflight(commandId, text)) {
+      throw new Error("durable prompt has no matching Extension preflight receipt");
+    }
+    if (behavior !== "start") {
+      if (!agent.inFlight) throw new Error("Cannot enqueue into an inactive turn.");
+      agent.acceptDurablyEnqueued(
+        behavior === "followUp" ? "follow_up" : "steer",
+        text,
+        receipt,
+      );
+      return { started: Promise.resolve(), completion: agent.waitForIdle() };
+    }
+    if (agent.inFlight) throw new Error("Cannot start a second active run.");
+
+    let resolveStarted: (() => void) | undefined;
+    let rejectStarted: ((reason?: unknown) => void) | undefined;
+    const started = new Promise<void>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    let unsubscribe = (): void => undefined;
+    unsubscribe = agent.on("turn_start", () => {
+      unsubscribe();
+      resolveStarted?.();
+    });
+    const completion = this.runInitialPrompt(agent, text, true, receipt);
+    void completion.catch((error: unknown) => {
+      unsubscribe();
+      rejectStarted?.(error);
+    });
+    return { started, completion };
   }
 
   interrupt(): void {
     this.agent?.interrupt();
   }
 
-  clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] } {
-    return this.agent?.clearAllQueues() ?? { steering: [], followUp: [] };
+  cancelAllQueues(
+    reason: string = "operator cleared queued messages",
+  ): Promise<{ steering: UserAgentMessage[]; followUp: UserAgentMessage[] }> {
+    return this.agent?.cancelAllQueues(reason) ?? Promise.resolve({ steering: [], followUp: [] });
   }
 
   waitForIdle(): Promise<void> {
@@ -229,7 +457,82 @@ export class InteractiveSessionController {
   dispose(): void {
     this.unsubscribeAgent?.();
     this.unsubscribeAgent = undefined;
+    this.governedPromptPreflights.clear();
     this.listeners.clear();
+  }
+
+  private async authorizeExtensionPrompt(text: string): Promise<void> {
+    const result = await this.extensionLifecycle?.userPromptSubmit(text);
+    if (result?.status === "blocked") {
+      throw new Error(`Extension UserPromptSubmit blocked the prompt: ${result.reason ?? "no reason supplied"}`);
+    }
+  }
+
+  private rememberGovernedPromptPreflight(commandId: string, text: string): void {
+    if (!commandId || commandId.length > 128) throw new Error("governed prompt command id is invalid");
+    if (this.governedPromptPreflights.size >= 256) {
+      const oldest = this.governedPromptPreflights.keys().next().value;
+      if (oldest !== undefined) this.governedPromptPreflights.delete(oldest);
+    }
+    this.governedPromptPreflights.set(commandId, canonicalDigest(text));
+  }
+
+  private consumeGovernedPromptPreflight(commandId: string | undefined, text: string): boolean {
+    if (!commandId) return false;
+    const expected = this.governedPromptPreflights.get(commandId);
+    this.governedPromptPreflights.delete(commandId);
+    return expected === canonicalDigest(text);
+  }
+
+  private refreshTools(): void {
+    if (!this.toolProvider) return;
+    const next = [...this.toolProvider()];
+    const names = new Set<string>();
+    for (const tool of next) {
+      if (names.has(tool.name)) throw new Error(`Extension tool refresh produced duplicate name: ${tool.name}`);
+      names.add(tool.name);
+    }
+    this.tools = next;
+    this.agent?.setTools(next);
+  }
+
+  private async runInitialPrompt(
+    agent: Agent,
+    text: string,
+    extensionPreflighted = false,
+    receipt?: DurableQueueReceipt,
+  ): Promise<void> {
+    if (this.extensionLifecycle && !extensionPreflighted) await this.authorizeExtensionPrompt(text);
+    const begun = this.extensionLifecycle?.beginTurn();
+    if (begun?.status === "failed") {
+      throw new Error(`Extension generation could not be pinned: ${begun.reason ?? "unknown failure"}`);
+    }
+    if (begun) this.refreshTools();
+
+    let promptError: unknown;
+    try {
+      await agent.prompt(text, receipt ? [receipt] : undefined);
+    } catch (error) {
+      promptError = error;
+    }
+
+    let extensionError: unknown;
+    if (begun) {
+      try {
+        const ended = await this.extensionLifecycle?.endTurn();
+        if (ended?.status === "failed") {
+          throw new Error(`Extension generation failed to settle: ${ended.reason ?? "unknown failure"}`);
+        }
+        this.refreshTools();
+      } catch (error) {
+        extensionError = error;
+      }
+    }
+    if (promptError && extensionError) {
+      throw new AggregateError([promptError, extensionError], "agent prompt and Extension settlement both failed");
+    }
+    if (promptError) throw promptError;
+    if (extensionError) throw extensionError;
   }
 
   private ensureAgent(): void {
@@ -238,7 +541,11 @@ export class InteractiveSessionController {
     if (this.agent) return;
     const streamFn: StreamFn = (requestModel, context, options) =>
       this.models.streamSimple(requestModel, context as Context, options);
-    const beforeToolCall = authorizationBeforeToolCall(this.policy);
+    // Gateway 已执行完整 capability/approval/sandbox 判定时，不再叠加默认
+    // DenyAll legacy policy；显式传入的 policy 仍可作为额外收窄门。
+    const authorizeToolCall = this.toolExecutionGateway && !this.authorizationPolicyConfigured
+      ? undefined
+      : authorizationBeforeToolCall(this.policy);
     this.agent = new Agent({
       initialState: {
         systemPrompt: this.systemPrompt,
@@ -249,7 +556,17 @@ export class InteractiveSessionController {
       },
       streamFn,
       ledger: this.ledger,
-      loopConfig: { cwd: this.cwd, beforeToolCall },
+      loopConfig: {
+        cwd: this.cwd,
+        beforeToolCall: this.beforeToolCall,
+        ...(authorizeToolCall ? { authorizeToolCall } : {}),
+        afterToolCall: this.afterToolCall,
+        prepareModelRequest: this.prepareModelRequest,
+        sessionEvents: this.sessionEvents,
+        toolExecutionGateway: this.toolExecutionGateway,
+        toolResultArtifactSink: this.toolResultArtifactSink,
+        operationBudget: this.operationBudget,
+      },
       toolExecution: "sequential",
       steeringMode: this.settings.steeringMode ?? "one-at-a-time",
       followUpMode: this.settings.followUpMode ?? "one-at-a-time",
@@ -284,7 +601,7 @@ export class InteractiveSessionController {
       thinkingLevel: config.thinkingLevel,
     };
     await saveProjectSettings(this.cwd, this.settings);
-    await appendRuntimeConfig(this.ledger, config, source);
+    if (this.ledger) await appendRuntimeConfig(this.ledger, config, source);
   }
 }
 

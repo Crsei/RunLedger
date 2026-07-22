@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "rules": {
+    "encoding": "UTF-8",
+    "keyOrder": "UTF-16 code units",
+    "unicodeNormalization": "none",
+    "trailingNewline": false,
+    "integers": "safe integers only"
+  },
+  "vectors": [
+    {
+      "name": "nested-key-order",
+      "input": { "z": 1, "a": { "d": true, "c": [2, 1] } },
+      "canonical": "{\"a\":{\"c\":[2,1],\"d\":true},\"z\":1}",
+      "sha256": "d6ce0de83ce6da77f3f8f630966449a74b769cd6d980fcdcd77bd79b6cc814bc"
+    },
+    {
+      "name": "unicode-and-newline",
+      "input": { "😀": "emoji", "消息": "你好\n世界", "é": "composed", "é": "decomposed" },
+      "canonical": "{\"é\":\"decomposed\",\"é\":\"composed\",\"消息\":\"你好\\n世界\",\"😀\":\"emoji\"}",
+      "sha256": "01e69da93e040cf235fe2a24c5fe50d14360f88d7d2be386eed51d438c7cad59"
+    },
+    {
+      "name": "safe-integer-boundaries",
+      "input": { "negativeZero": 0, "max": 9007199254740991, "min": -9007199254740991 },
+      "canonical": "{\"max\":9007199254740991,\"min\":-9007199254740991,\"negativeZero\":0}",
+      "sha256": "7728d06946509ad2a5102e01f0f4ce2089ca70337167807bfae8965174236dae"
+    },
+    {
+      "name": "linux-and-windows-paths",
+      "input": { "windows": "C:\\repo\\x\r\n", "linux": "/tmp/a\nb" },
+      "canonical": "{\"linux\":\"/tmp/a\\nb\",\"windows\":\"C:\\\\repo\\\\x\\r\\n\"}",
+      "sha256": "d3d91daf8a3b7724f5d723c6956f9a6136dd3802ec85d95555a2b1b329142975"
+    }
+  ]
+}

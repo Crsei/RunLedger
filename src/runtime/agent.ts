@@ -26,6 +26,10 @@ import type {
 } from "./types.ts";
 import type { Message, ModelThinkingLevel } from "../types.ts";
 import { clampThinkingLevel } from "../models.ts";
+import type {
+  DurableQueueReceipt,
+  DurableQueueReference,
+} from "./session/agent-loop-events.ts";
 
 export interface AgentOptions {
   initialState: {
@@ -53,38 +57,76 @@ export interface AgentOptions {
   followUpMode?: QueueMode;
 }
 
+interface PendingMessageEntry {
+  message: UserAgentMessage;
+  reference?: DurableQueueReference;
+  state: "queued" | "reserved";
+}
+
 class PendingMessageQueue {
-  private messages: UserAgentMessage[] = [];
+  private entries: PendingMessageEntry[] = [];
   mode: QueueMode;
 
   constructor(mode: QueueMode) {
     this.mode = mode;
   }
 
-  enqueue(message: UserAgentMessage): void {
-    this.messages.push(message);
+  enqueue(message: UserAgentMessage, reference?: DurableQueueReference): PendingMessageEntry {
+    const entry: PendingMessageEntry = {
+      message,
+      ...(reference ? { reference } : {}),
+      state: "queued",
+    };
+    this.entries.push(entry);
+    return entry;
   }
 
   snapshot(): UserAgentMessage[] {
-    return this.messages.slice();
+    this.removeSettled();
+    return this.entries.map((entry) => entry.message);
   }
 
-  drain(): UserAgentMessage[] {
-    if (this.mode === "all") {
-      const drained = this.messages.slice();
-      this.messages = [];
-      return drained;
+  reserve(): UserAgentMessage[] {
+    this.removeSettled();
+    const queued = this.entries.filter((entry) => entry.state === "queued");
+    const selected = this.mode === "all" ? queued : queued.slice(0, 1);
+    const selectedSet = new Set(selected);
+    for (const entry of selected) {
+      if (entry.reference) entry.state = "reserved";
     }
-    const first = this.messages[0];
-    if (!first) return [];
-    this.messages = this.messages.slice(1);
-    return [first];
+    // 非 durable queue 保持既有 drain 语义；durable entry 等 terminal event 再移除。
+    this.entries = this.entries.filter((entry) => !selectedSet.has(entry) || entry.reference !== undefined);
+    return selected.map((entry) => entry.message);
   }
 
   clear(): UserAgentMessage[] {
-    const cleared = this.messages.slice();
-    this.messages = [];
+    this.removeSettled();
+    const cleared = this.entries.map((entry) => entry.message);
+    this.entries = [];
     return cleared;
+  }
+
+  references(): readonly DurableQueueReference[] {
+    this.removeSettled();
+    return this.entries.map((entry) => {
+      if (!entry.reference) throw new Error("durable queue item has no confirmed queue reference");
+      return entry.reference;
+    });
+  }
+
+  releaseReservations(): void {
+    this.removeSettled();
+    for (const entry of this.entries) {
+      if (entry.state === "reserved") entry.state = "queued";
+    }
+  }
+
+  private removeSettled(): void {
+    this.entries = this.entries.filter(
+      (entry) => entry.reference === undefined ||
+        entry.reference.status === "pending" ||
+        entry.reference.status === "claimed",
+    );
   }
 }
 
@@ -104,6 +146,7 @@ export class Agent {
   /** true 当 prompt() 在 flight;用于 interrupt 区分 cold/warm 状态 */
   private _inFlight: boolean = false;
   private _activePromise: Promise<AgentMessage[]> | undefined;
+  private _queueDurability: Promise<void> = Promise.resolve();
 
   constructor(opts: AgentOptions) {
     this._state = {
@@ -124,6 +167,11 @@ export class Agent {
     this._signal = opts.signal;
     this.steeringQueue = new PendingMessageQueue(opts.steeringMode ?? "one-at-a-time");
     this.followUpQueue = new PendingMessageQueue(opts.followUpMode ?? "one-at-a-time");
+    for (const item of this._loopConfig.sessionEvents?.adoptPendingQueueItems() ?? []) {
+      if (!item.message) throw new Error(`durable queue item ${item.reference.queueItemId} requires artifact resolution`);
+      const queue = item.reference.kind === "steer" ? this.steeringQueue : this.followUpQueue;
+      queue.enqueue(item.message, item.reference);
+    }
     this.subscribers = new Set();
   }
 
@@ -190,12 +238,38 @@ export class Agent {
   }
 
   steer(input: string | UserAgentMessage): void {
-    this.steeringQueue.enqueue(normalizePrompts(input)[0]!);
+    const message = normalizePrompts(input)[0]!;
+    const entry = this.steeringQueue.enqueue(message);
+    this.recordDurableQueueItem("steer", message, entry);
     void this.emitQueueUpdate();
   }
 
   followUp(input: string | UserAgentMessage): void {
-    this.followUpQueue.enqueue(normalizePrompts(input)[0]!);
+    const message = normalizePrompts(input)[0]!;
+    const entry = this.followUpQueue.enqueue(message);
+    this.recordDurableQueueItem("follow_up", message, entry);
+    void this.emitQueueUpdate();
+  }
+
+  /**
+   * Control Plane 专用内部入口：调用方已确认 queue.enqueued durable 后，才把消息
+   * 放入内存队列。普通 Agent/TUI 调用必须继续走 steer()/followUp()。
+   */
+  acceptDurablyEnqueued(
+    kind: "steer" | "follow_up",
+    input: string | UserAgentMessage,
+    receipt?: DurableQueueReceipt,
+  ): void {
+    const message = normalizePrompts(input)[0]!;
+    const sessionEvents = this._loopConfig.sessionEvents;
+    const reference = receipt
+      ? sessionEvents?.claimQueueReceipt(receipt, message)
+      : sessionEvents?.claimNextPendingQueueItem(kind, message);
+    if (sessionEvents && !reference) {
+      throw new Error(`no durable ${kind} queue item is available for runtime acceptance`);
+    }
+    if (kind === "steer") this.steeringQueue.enqueue(message, reference);
+    else this.followUpQueue.enqueue(message, reference);
     void this.emitQueueUpdate();
   }
 
@@ -208,6 +282,9 @@ export class Agent {
   }
 
   clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] } {
+    if (this._loopConfig.sessionEvents) {
+      throw new Error("durable queue clear requires awaiting cancelAllQueues()");
+    }
     const cleared = {
       steering: this.steeringQueue.clear(),
       followUp: this.followUpQueue.clear(),
@@ -216,8 +293,30 @@ export class Agent {
     return cleared;
   }
 
+  /** Durable session 的 versioned clear：每条 cancellation 落盘后才从内存队列移除。 */
+  async cancelAllQueues(
+    reason: string = "operator cleared queued messages",
+  ): Promise<{ steering: UserAgentMessage[]; followUp: UserAgentMessage[] }> {
+    await this._queueDurability;
+    const sessionEvents = this._loopConfig.sessionEvents;
+    if (!sessionEvents) return this.clearAllQueues();
+    const cleared = {
+      steering: this.steeringQueue.snapshot(),
+      followUp: this.followUpQueue.snapshot(),
+    };
+    await sessionEvents.cancelQueueReferences(
+      [...this.steeringQueue.references(), ...this.followUpQueue.references()],
+      reason,
+    );
+    this.steeringQueue.releaseReservations();
+    this.followUpQueue.releaseReservations();
+    await this.emitQueueUpdate();
+    return cleared;
+  }
+
   waitForIdle(): Promise<void> {
-    return this._activePromise?.then(() => undefined, () => undefined) ?? Promise.resolve();
+    const active = this._activePromise?.then(() => undefined, () => undefined) ?? Promise.resolve();
+    return Promise.all([active, this._queueDurability]).then(() => undefined);
   }
 
   /**
@@ -248,11 +347,26 @@ export class Agent {
   /**
    * 提交一段文本(或预组装的 user 消息),跑一轮 agent loop,await 到 messages 返回。
    */
-  async prompt(input: string | UserAgentMessage | UserAgentMessage[]): Promise<AgentMessage[]> {
+  async prompt(
+    input: string | UserAgentMessage | UserAgentMessage[],
+    durableReceipts?: readonly DurableQueueReceipt[],
+  ): Promise<AgentMessage[]> {
     if (this._inFlight) {
       throw new Error("Agent is already processing. Use steer() or followUp().");
     }
+    await this._queueDurability;
     const prompts: UserAgentMessage[] = normalizePrompts(input);
+    if (durableReceipts && durableReceipts.length !== prompts.length) {
+      throw new Error("durable prompt receipt count does not match the submitted prompt count");
+    }
+    // Governed turn:start 在进入 Agent 前已经 queue.enqueued；按 steer FIFO 精确
+    // 认领对应引用。Daemon 必须提供精确 receipt；普通本地 prompt 没有 pending
+    // receipt 时保持 legacy unbound/FIFO 兼容路径。
+    for (const [index, prompt] of prompts.entries()) {
+      const receipt = durableReceipts?.[index];
+      if (receipt) this._loopConfig.sessionEvents?.claimQueueReceipt(receipt, prompt);
+      else this._loopConfig.sessionEvents?.claimNextPendingQueueItem("steer", prompt);
+    }
     const context: AgentContext = {
       systemPrompt: this._state.systemPrompt,
       messages: this._state.messages.slice(),
@@ -268,12 +382,14 @@ export class Agent {
       // ledger 已是 AgentLoopConfig 第一公民,直接挂入类型契约
       ledger: this._ledger,
       getSteeringMessages: async () => {
-        const drained = this.steeringQueue.drain();
+        await this._queueDurability;
+        const drained = this.steeringQueue.reserve();
         await this.emitQueueUpdate();
         return drained;
       },
       getFollowUpMessages: async () => {
-        const drained = this.followUpQueue.drain();
+        await this._queueDurability;
+        const drained = this.followUpQueue.reserve();
         await this.emitQueueUpdate();
         return drained;
       },
@@ -313,6 +429,10 @@ export class Agent {
       this._inFlight = false;
       this._activePromise = undefined;
       this._abortController = undefined;
+      // beginTurn/model.requested 之前发生 abort/error 时，durable ref 仍是 pending；
+      // 把 reservation 归还，避免同进程内静默吞掉 queue item。
+      this.steeringQueue.releaseReservations();
+      this.followUpQueue.releaseReservations();
     }
   }
 
@@ -345,6 +465,22 @@ export class Agent {
       timestamp: Date.now(),
       steering: this.steeringQueue.snapshot(),
       followUp: this.followUpQueue.snapshot(),
+    });
+  }
+
+  private recordDurableQueueItem(
+    kind: "steer" | "follow_up",
+    message: UserAgentMessage,
+    entry: PendingMessageEntry,
+  ): void {
+    const sessionEvents = this._loopConfig.sessionEvents;
+    if (!sessionEvents) return;
+    this._queueDurability = this._queueDurability.then(async () => {
+      const receipt = await sessionEvents.enqueueWithReceipt(kind, message);
+      entry.reference = sessionEvents.claimQueueReference(receipt.reference, message);
+    });
+    void this._queueDurability.catch(() => {
+      // prompt()/waitForIdle() 会观察同一个 rejected barrier；这里只抑制未处理 rejection 警告。
     });
   }
 }

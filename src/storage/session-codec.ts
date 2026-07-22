@@ -27,7 +27,7 @@ export async function replaySession(ledger: LedgerSink): Promise<SessionReplay> 
   for (const entry of entries) {
     if (entry.type === "message") {
       const canonical = entry.payload.schema === "agent-message/v1"
-        ? toAgentMessage(entry.payload.message)
+        ? decodeCanonicalAgentMessage(entry.payload.message)
         : undefined;
       if (canonical) {
         messages.push(canonical);
@@ -80,7 +80,7 @@ export async function appendRuntimeConfig(
   });
 }
 
-function toAgentMessage(value: unknown): AgentMessage | undefined {
+export function decodeCanonicalAgentMessage(value: unknown): AgentMessage | undefined {
   if (!isRecord(value) || typeof value.role !== "string") return undefined;
   if (value.role === "user" && Array.isArray(value.content)) {
     return value as unknown as AgentMessage;

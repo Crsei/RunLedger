@@ -1,9 +1,8 @@
 /**
  * 内置标准工具集 —— stdlib namespace。
  *
- * pi 的对应文件是 `core/tools/index.ts`。RunLedger 简化:不接收 ToolContext
- * 闭包(因为 our 工具直接 cwd 闭包即可),只暴露一组工厂 createXxxTool +
- * 一个 `createStdlibTools(cwd)` 一站式构造器返回 AgentTool[] / ToolRegistry。
+ * pi 的对应文件是 `core/tools/index.ts`。RunLedger 保留 cwd 闭包供 legacy 直接
+ * 调用；受治理执行必须通过 execute 的 ToolContext 注入 ExecutionEnv 与 cwd。
  *
  * 工具集(对齐 pi):
  *   - read  : 读文件,行/字节截断 + cat -n 行号 + mtime 去重缓存
@@ -39,21 +38,26 @@ import { createNotebookEditTool } from "./notebook-edit.ts";
 /**
  * 一站式构造标准库工具集。返回 ToolRegistry,namespace="stdlib"。
  *
- * 与 pi 的差异:不接收 ToolContext 闭包;cwd 直接进工厂。
- * 若工具需要 ToolContext(fs / shell 注入 ledger 等),在调用 AgentLoop 前
- * 自行 prepareContext 时把 ExecutionEnv 通过 ops 注入。
+ * 已迁移的 I/O 工具必须声明 governedExecution="tool-context"；其余工具在迁移
+ * 前保持未声明，Gateway 会 fail closed，不能被误当成受治理实现。
  */
 export function createStdlibTools(cwd: string = process.cwd()): ToolRegistry {
   const r = createToolRegistry([], { namespace: "stdlib" });
-  r.register(createReadTool(cwd), { namespace: "stdlib" });
-  r.register(createWriteTool(cwd), { namespace: "stdlib" });
-  r.register(createEditTool(cwd), { namespace: "stdlib" });
-  r.register(createMultiEditTool(cwd), { namespace: "stdlib" });
-  r.register(createBashTool(cwd), { namespace: "stdlib" });
-  r.register(createGrepTool(cwd), { namespace: "stdlib" });
-  r.register(createFindTool(cwd), { namespace: "stdlib" });
+  const registerGoverned = (tool: AgentTool): void => {
+    if (tool.governedExecution !== "tool-context") {
+      throw new Error(`stdlib tool ${tool.name} is missing ToolContext governance metadata`);
+    }
+    r.register(tool, { namespace: "stdlib" });
+  };
+  registerGoverned(createReadTool(cwd));
+  registerGoverned(createWriteTool(cwd));
+  registerGoverned(createEditTool(cwd));
+  registerGoverned(createMultiEditTool(cwd));
+  registerGoverned(createBashTool(cwd));
+  registerGoverned(createGrepTool(cwd));
+  registerGoverned(createFindTool(cwd));
   r.register(createGlobTool(cwd), { namespace: "stdlib" });
-  r.register(createLsTool(cwd), { namespace: "stdlib" });
+  registerGoverned(createLsTool(cwd));
   r.register(createWebFetchTool(), { namespace: "stdlib" });
   r.register(createSkillTool(), { namespace: "stdlib" });
   r.register(createNotebookEditTool(), { namespace: "stdlib" });
