@@ -1926,6 +1926,20 @@ Canonical event/reducer 闭环:
 - 剩余边界:pending prompt/revalidation closure/waiter 仍是进程内 registry；system actor 未绑定 authority/deployment，interactive actor 缺 channel proof；early Gateway denial 需独立 canonical audit 而不是伪造 Approval；hook journal、public revoke command、真实活跃期 corruption/kill/root-store TOCTOU、child/idle/replacement、cleanup terminal/orphan reconciliation 仍未闭合。`tool.started` 与 attempt claim 是可恢复的顺序写而非跨存储原子事务，claim 后失败保持 uncertain。
 - verified_at:`2026-07-23T06:32:57+08:00`。
 
+#### 2026-07-23 child-spawn launcher gate 证据（只关闭 production class seam）
+
+- 状态:`ProductionChildSessionLauncher.launch()` 现在强制接收 parent session 的 `SessionMutationAdmissionGatePort`，在 request digest/delegation 本地校验后、cached result/max-active 判断和任何 launcher side effect 前执行 `child_spawn` 复检。本切片只关闭该 production class seam；仓库仍没有 CLI/daemon/factory 的真实 `AgentSupervisor` composition，不能宣称 production multi-agent 已接线。
+- commit/worktree:`7e6f7714bd145fdbd88beb9df91511e65f1d9e73`，`worktree/governed-agent-harness-runtime`；3 条显式源码/测试路径，569 insertions / 3 deletions，提交后实现工作区干净。
+- red tests:新增 launcher fault suite 初次为 6 tests / 5 failed，证明旧实现忽略 parent gate、pre-abort 返回可重试 unavailable，且 idempotent cached launch 绕过复检；实现后扩展为 10 tests。
+- targeted:`npx vitest run tests/runtime-v3/agents/child-session-launcher.test.ts tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests/e2e/multi-agent-isolation.test.ts` -> Linux，3 files / 37 tests，PASS。
+- fail-closed order:gate `!ok`、throw、pre-abort 与 gate 内 abort 统一返回不可重试 `reference_unavailable`；invalid request/delegation 不调用 gate；相同 launch request 的 cached result 也必须先重新复检。拒绝路径中 launcher Workspace validation、launch claim、`V3SessionManager.create`、snapshot 与 launch/residency receipt 均为零。
+- abort/close races:Workspace validation 期间 abort 不创建 claim；claim 创建进行中 abort 会在 `V3SessionManager.create` 前尝试删除 claim，删除失败映射为 typed cleanup uncertainty。若 abort/close 在 durable create 已经开始后获胜，代码尝试关闭新 manager并删除 claim，且不注册 child/不签发 launch receipt；两项 cleanup 都成功才返回“requires explicit recovery”，任一失败返回 cleanup uncertain。已写 JSONL genesis 始终保留，该路径不是零 durable side effect，后续 orphan reconciliation 仍未完成。
+- production-isolation E2E:现有 production Workspace/capability/session/Artifact merge 测试注入 recording allow gate，并验证 exact `{ kind: "child_spawn", correlationId: requestId }`。这只证明真实 launcher class 与测试 production adapters 的联合 seam；allow receipt 不是由真实 `ContinuousExternalReceiptMutationGate`/parent runtime composition 提供。
+- live provider recheck:使用 `AuthStorage` 的现有 deepseek credential，经 `builtinModels -> models.streamSimple -> Agent -> echo -> MemoryLedger` 对 `deepseek-v4-pro` 真实网络 smoke，结果 `messages=4 events=74 ledger=12 toolCalls=1 toolResults=1 turnEnds=2 finalRole=assistant`。未打印凭据或模型正文；该 one-off 与 child gate/production multi-agent/Verification 无关，不能提升 Phase 9、Phase 11 或 Runtime-M2 状态。
+- full gate:`npm run check`、`npm test`（250 files / 1510 tests）、`npm run build`、`npm run test:harness-regression`（11 files / 63 tests）、`git diff --check` 全部 PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。不复用竞态修正前的门禁结果。
+- 剩余边界:必须建立真实 production `AgentSupervisor`/launcher composition，并从 active parent runtime 注入同一个 canonical mutation gate；supervisor 在 launcher 前已可能写 `agent.spawn_requested`、分配 Workspace、reserve budget，不能把 launcher 零调用扩大成整个 spawn 零副作用。pre-create claim cleanup failure 尚无 fault injection；child resume/isolated execution、idle/replacement、post-create orphan reconciliation 与 cleanup terminal receipt 仍未闭合，在这些 lifecycle 门禁完成前不得 advertise production multi-agent。
+- verified_at:`2026-07-23T07:09:46+08:00`。
+
 ## 8. 阶段依赖与发布里程碑
 
 ```text
