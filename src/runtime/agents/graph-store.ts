@@ -171,6 +171,7 @@ function budgetIsValid(node: AgentNode, isRoot: boolean): boolean {
 
 function workspaceReceiptIsValid(node: AgentNode): boolean {
 	const receipt = node.workspaceReceipt;
+	const { receiptDigest, ...body } = receipt;
 	return (
 		isRuntimeId(receipt.receiptId, "receipt") &&
 		isRuntimeId(receipt.sessionId, "session") &&
@@ -179,7 +180,8 @@ function workspaceReceiptIsValid(node: AgentNode): boolean {
 		isRuntimeId(receipt.strategy.strategyId, "resource") &&
 		digestIsValid(receipt.strategy.strategyDigest) &&
 		digestIsValid(receipt.bindingDigest) &&
-		digestIsValid(receipt.receiptDigest) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body) &&
 		Number.isSafeInteger(receipt.bindingRevision) &&
 		receipt.bindingRevision >= 0
 	);
@@ -424,6 +426,39 @@ export function applyAgentGraphCommand(
 			ok: true,
 			value: { ...withNode(projection, command.node), rootAgentId: command.node.agentId, goalId: command.node.goalId },
 		};
+	}
+	if (command.type === "agent.root_revalidated") {
+		const root = projection.rootAgentId ? projection.nodes.get(projection.rootAgentId) : undefined;
+		if (
+			!root ||
+			root.agentId !== command.agentId ||
+			root.parentAgentId !== undefined ||
+			root.state !== "running" ||
+			root.sessionId !== command.workspaceReceipt.sessionId ||
+			root.workspaceReceipt.workspaceId !== command.workspaceReceipt.workspaceId ||
+			root.workspaceReceipt.repositoryId !== command.workspaceReceipt.repositoryId ||
+			root.workspaceReceipt.strategy.strategyId !== command.workspaceReceipt.strategy.strategyId ||
+			root.workspaceReceipt.strategy.kind !== command.workspaceReceipt.strategy.kind ||
+			root.workspaceReceipt.strategy.strategyDigest !== command.workspaceReceipt.strategy.strategyDigest ||
+			root.workspaceReceipt.leaseId !== command.workspaceReceipt.leaseId ||
+			command.workspaceReceipt.bindingRevision <= root.workspaceReceipt.bindingRevision ||
+			(command.workspaceReceipt.leaseRevision ?? -1) <= (root.workspaceReceipt.leaseRevision ?? -1) ||
+			(command.workspaceReceipt.strategy.kind === "readonly_checkout"
+				? command.workspaceReceipt.status !== "readonly"
+				: command.workspaceReceipt.status !== "active") ||
+			!workspaceReceiptIsValid({ ...root, workspaceReceipt: command.workspaceReceipt }) ||
+			!root.capabilityGrant ||
+			root.capabilityGrant.receiptId !== command.capabilityGrant.receiptId ||
+			root.capabilityGrant.receiptDigest !== command.capabilityGrant.receiptDigest ||
+			root.capabilityGrant.decisionRevision !== command.capabilityGrant.decisionRevision ||
+			root.capabilityGrant.expiresAt !== command.capabilityGrant.expiresAt
+		) return fail("invalid_graph", "root Agent revalidation is stale or outside its durable scope");
+		return withNodeResult(projection, {
+			...root,
+			workspaceReceipt: { ...command.workspaceReceipt },
+			capabilityGrant: { ...command.capabilityGrant },
+			updatedAt: command.occurredAt,
+		});
 	}
 
 	if (!projection.rootAgentId || !projection.goalId) return fail("orphan_agent", "agent event precedes its root");

@@ -11,6 +11,38 @@ import {
 } from "./helpers.ts";
 
 describe("bounded agent supervisor", () => {
+	it("rejects a root Workspace receipt whose body does not match its digest", async () => {
+		const runtime = runtimeFakes();
+		const root = rootRegistration();
+		const result = await runtime.supervisor.registerRoot({
+			...root,
+			workspaceReceipt: {
+				...root.workspaceReceipt,
+				receiptDigest: "f".repeat(64),
+			},
+		});
+
+		expect(result).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+	});
+
+	it("rejects a root registration retry whose opaque grant fields drift behind the same digest", async () => {
+		const runtime = runtimeFakes();
+		const root = rootRegistration();
+		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
+
+		const drifted = await runtime.supervisor.registerRoot({
+			...root,
+			requestId: createRuntimeId("command", "register-root-drifted-grant"),
+			idempotencyKey: key("register-root-drifted-grant"),
+			capabilityGrant: {
+				...root.capabilityGrant,
+				decisionRevision: root.capabilityGrant.decisionRevision + 1,
+			},
+		});
+
+		expect(drifted).toMatchObject({ ok: false, error: { code: "agent_exists" } });
+	});
+
 	it("spawns a child with independent session/workspace and durable receipts", async () => {
 		const runtime = runtimeFakes();
 		const root = rootRegistration();

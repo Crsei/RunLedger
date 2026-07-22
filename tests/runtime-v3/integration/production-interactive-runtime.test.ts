@@ -16,6 +16,8 @@ import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type { InputSourceRef } from "../../../src/runtime/protocol/v3/taint.ts";
 import { workspaceBindingDigest } from "../../../src/runtime/protocol/v3/workspace.ts";
 import { projectExternalReceiptReferences } from "../../../src/runtime/lifecycle/canonical-references.ts";
+import { createProductionCapabilityGrantPolicy } from "../../../src/runtime/agents/integration/capability-subset.ts";
+import type { ParentCapabilityGrantRef } from "../../../src/runtime/agents/types.ts";
 import type { SessionMutationAdmissionGatePort } from "../../../src/runtime/lifecycle/mutation-gate.ts";
 import {
 	createExternalReceiptAuditReceipt,
@@ -280,12 +282,16 @@ class EnforcedSandbox implements SandboxBackend {
 }
 
 class WorkspaceSnapshotResolver {
-	readonly #workspaceRoot: string;
+	#workspaceRoot: string;
 	readonly #stateRoot: string;
 
 	public constructor(workspaceRoot: string, stateRoot: string) {
 		this.#workspaceRoot = workspaceRoot;
 		this.#stateRoot = stateRoot;
+	}
+
+	public setWorkspaceRoot(workspaceRoot: string): void {
+		this.#workspaceRoot = workspaceRoot;
 	}
 
 	#snapshot(): SecuritySnapshot {
@@ -666,6 +672,115 @@ function rejectedExecutionGrant(request: ToolExecutionGatewayRequest): ToolExecu
 }
 
 describe("production interactive runtime composition", () => {
+	it.each(["source", "readonly_checkout"] as const)(
+		"constructs the production supervisor from an active %s Workspace and exact canonical gate without advertising it",
+		async (bindingKind) => {
+		const setup = await fixture();
+		let compositionSnapshots: WorkspaceSnapshotResolver | undefined;
+		let options = setup.options(bindingKind === "source" ? undefined : {
+			kind: "readonly_checkout",
+			repositoryId: createRuntimeId("repository", "production-interactive"),
+			sourceRepo: setup.worktree.sourceRepo,
+			sourceCwd: setup.worktree.sourceCwd,
+			label: "production-readonly-root",
+		});
+		if (bindingKind === "readonly_checkout") {
+			const snapshots = new WorkspaceSnapshotResolver(setup.worktree.sourceRepo, setup.stateRoot);
+			compositionSnapshots = snapshots;
+			const create = WorktreeManager.prototype.create;
+			vi.spyOn(WorktreeManager.prototype, "create").mockImplementation(async function (request, signal) {
+				const result = await create.call(this, request, signal);
+				if (result.ok) snapshots.setWorkspaceRoot(result.value.binding.worktreePath);
+				return result;
+			});
+			options = { ...options, toolGateway: { ...options.toolGateway, snapshots } };
+		}
+		const identity = setup.manager.identity();
+		const parentGrant: ParentCapabilityGrantRef = {
+			receiptId: createRuntimeId("receipt", "production-interactive-root-grant"),
+			receiptDigest: canonicalDigest("production interactive root grant"),
+			decisionRevision: 1,
+		};
+		const agents: NonNullable<ProductionInteractiveRuntimeOptions["agents"]> = {
+			root: {
+				role: "build",
+				capabilityGrant: parentGrant,
+				capabilityPolicies: [createProductionCapabilityGrantPolicy({
+					policyReceiptId: createRuntimeId("receipt", "production-interactive-delegation-policy"),
+					parentGrant,
+					allowedRequests: [],
+					delegableToolKinds: [],
+					childSpawnAllowed: false,
+					decisionRevision: 1,
+					evaluatorId: identity.principalId,
+					issuedAt: NOW,
+				})],
+				denialPolicy: {
+					policyDigest: canonicalDigest("production interactive Agent denial policy"),
+					decisionRevision: 1,
+					deniedAgentIds: new Set(),
+				},
+				inputSources: [],
+				declassificationReceipts: [],
+			},
+			child: {
+				sessionDir: join(setup.worktree.root, "production-child-sessions"),
+				features: setup.features,
+				maxActiveChildren: 2,
+			},
+		};
+		const runtime = await createProductionInteractiveRuntime({
+			...options,
+			agents,
+		});
+
+		const graph = await runtime.agents?.supervisor.graph();
+		expect(graph).toMatchObject({
+			ok: true,
+			value: {
+				rootAgentId: setup.manager.sessionEvents().lineage().agentId,
+				nodes: expect.any(Map),
+			},
+		});
+		if (graph?.ok) {
+			expect(graph.value.nodes.get(graph.value.rootAgentId!)).toMatchObject({
+				sessionId: setup.manager.sessionId(),
+				workspaceReceipt: {
+					workspaceId: runtime.workspace.workspaceId,
+					strategy: { kind: bindingKind === "source" ? "isolated_lease" : "readonly_checkout" },
+					status: bindingKind === "source" ? "active" : "readonly",
+				},
+			});
+		}
+		expect(runtime.featureEvidence.features).not.toContain("multi-agent");
+		const workspaceId = runtime.workspace.workspaceId;
+		const firstWorkspaceRevision = graph?.ok
+			? graph.value.nodes.get(graph.value.rootAgentId!)?.workspaceReceipt.bindingRevision
+			: undefined;
+		const filePath = setup.manager.filePath();
+		await runtime.close();
+		const reopened = await V3SessionManager.open(filePath, setup.features, identity);
+		managers.push(reopened);
+		const resumedOptions = setup.options({ kind: "resume", workspaceId }, reopened);
+		const resumed = await createProductionInteractiveRuntime({
+			...resumedOptions,
+			...(compositionSnapshots ? {
+				toolGateway: { ...resumedOptions.toolGateway, snapshots: compositionSnapshots },
+			} : {}),
+			agents,
+		});
+		const resumedGraph = await resumed.agents?.supervisor.graph();
+		expect(resumedGraph?.ok).toBe(true);
+		if (resumedGraph?.ok) {
+			expect(resumedGraph.value.nodes.get(resumedGraph.value.rootAgentId!)?.workspaceReceipt.bindingRevision)
+				.toBeGreaterThan(firstWorkspaceRevision ?? -1);
+		}
+		const resumedEvents = await readAllRuntimeEvents(reopened.eventStore());
+		expect(resumedEvents.ok && resumedEvents.value.some((event) => event.type === "agent.root_revalidated")).toBe(true);
+		await resumed.close();
+		},
+	);
+
 	it("returns controller-ready bindings without advertising an absent extension and closes idempotently", async () => {
 		const setup = await fixture();
 		const runtime = await createProductionInteractiveRuntime(setup.options());

@@ -1656,6 +1656,12 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 		...agentCommandBase,
 		node: agentNode,
 	}),
+	"agent.root_revalidated": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		workspaceReceipt: agentWorkspaceReceipt,
+		capabilityGrant: agentParentGrant,
+	}),
 	"agent.spawn_requested": exact({
 		...agentCommandBase,
 		intent: agentSpawnIntent,

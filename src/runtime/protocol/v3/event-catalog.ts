@@ -114,6 +114,7 @@ export const RUNTIME_EVENT_TYPES = [
 	"telemetry.delivery_recorded",
 	"finding.transitioned",
 	"agent.root_registered",
+	"agent.root_revalidated",
 	"agent.spawn_requested",
 	"agent.spawned",
 	"agent.spawn_failed",

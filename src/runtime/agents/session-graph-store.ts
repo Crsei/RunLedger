@@ -26,6 +26,7 @@ import { DEFAULT_AGENT_GRAPH_LIMITS } from "./types.ts";
 
 const AGENT_GRAPH_EVENT_TYPES = [
 	"agent.root_registered",
+	"agent.root_revalidated",
 	"agent.spawn_requested",
 	"agent.spawned",
 	"agent.spawn_failed",
@@ -104,6 +105,7 @@ function commandIdentityIsValid(command: AgentGraphSemanticCommand): boolean {
 function isAgentGraphEvent(event: RuntimeEventV3): event is AgentGraphRuntimeEvent {
 	switch (event.type) {
 		case "agent.root_registered":
+		case "agent.root_revalidated":
 		case "agent.spawn_requested":
 		case "agent.spawned":
 		case "agent.spawn_failed":
@@ -152,6 +154,15 @@ function decodeAgentGraphEvent(event: AgentGraphRuntimeEvent): AgentResult<Decod
 	switch (event.type) {
 		case "agent.root_registered":
 			command = { ...base, type: event.type, node: event.payload.node };
+			break;
+		case "agent.root_revalidated":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				workspaceReceipt: event.payload.workspaceReceipt,
+				capabilityGrant: event.payload.capabilityGrant,
+			};
 			break;
 		case "agent.spawn_requested":
 			command = { ...base, type: event.type, intent: event.payload.intent };
@@ -322,6 +333,9 @@ async function appendAgentGraphCommand(
 	switch (command.type) {
 		case "agent.root_registered":
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, node: command.node } });
+			break;
+		case "agent.root_revalidated":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, workspaceReceipt: command.workspaceReceipt, capabilityGrant: command.capabilityGrant } });
 			break;
 		case "agent.spawn_requested":
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, intent: command.intent } });

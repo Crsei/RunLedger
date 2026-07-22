@@ -529,6 +529,12 @@ interface AgentGraphCommandBase {
 /** Supervisor 只提交 canonical semantic command；不存在通用 record batch 或 JSON sidecar。 */
 export type AgentGraphSemanticCommand =
 	| (AgentGraphCommandBase & { type: "agent.root_registered"; node: AgentNode })
+	| (AgentGraphCommandBase & {
+			type: "agent.root_revalidated";
+			agentId: AgentId;
+			workspaceReceipt: AgentWorkspaceReceiptRef;
+			capabilityGrant: ParentCapabilityGrantRef;
+	  })
 	| (AgentGraphCommandBase & { type: "agent.spawn_requested"; intent: AgentSpawnIntent })
 	| (AgentGraphCommandBase & {
 			type: "agent.spawned";

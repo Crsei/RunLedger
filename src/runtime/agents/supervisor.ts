@@ -165,6 +165,7 @@ function workspaceReceiptMatches(
 		strategy: AgentWorkspaceReceiptRef["strategy"];
 	},
 ): boolean {
+	const { receiptDigest, ...body } = receipt;
 	return (
 		isRuntimeId(receipt.receiptId, "receipt") &&
 		isRuntimeId(receipt.workspaceId, "workspace") &&
@@ -177,7 +178,8 @@ function workspaceReceiptMatches(
 		Number.isSafeInteger(receipt.bindingRevision) &&
 		receipt.bindingRevision >= 0 &&
 		DIGEST_PATTERN.test(receipt.bindingDigest) &&
-		DIGEST_PATTERN.test(receipt.receiptDigest) &&
+		DIGEST_PATTERN.test(receiptDigest) &&
+		receiptDigest === canonicalDigest(body) &&
 		(receipt.strategy.kind !== "isolated_lease" ||
 			(Boolean(receipt.leaseId) && Number.isSafeInteger(receipt.leaseRevision) && (receipt.leaseRevision ?? -1) >= 0))
 	);
@@ -340,19 +342,49 @@ export class AgentSupervisor {
 		if (!existing.ok) return existing;
 		if (existing.value.rootAgentId) {
 			const root = existing.value.nodes.get(existing.value.rootAgentId);
-			return root &&
+			if (root &&
 				root.agentId === request.agentId &&
 				root.sessionId === request.sessionId &&
 				root.goalId === request.goalId &&
 				root.role === request.role &&
-				root.workspaceReceipt.receiptId === request.workspaceReceipt.receiptId &&
-				root.workspaceReceipt.receiptDigest === request.workspaceReceipt.receiptDigest &&
-				root.capabilityGrant?.receiptId === request.capabilityGrant.receiptId &&
-				root.capabilityGrant.receiptDigest === request.capabilityGrant.receiptDigest &&
+				canonicalDigest(root.workspaceReceipt) === canonicalDigest(request.workspaceReceipt) &&
+				root.capabilityGrant !== undefined &&
+				canonicalDigest(root.capabilityGrant) === canonicalDigest(request.capabilityGrant) &&
 				canonicalDigest(root.inputSources) === canonicalDigest(request.inputSources) &&
 				canonicalDigest(root.declassificationReceipts) === canonicalDigest(request.declassificationReceipts)
-				? existing
-				: fail("agent_exists", "agent graph root registration conflicts with durable state");
+			) return existing;
+			if (
+				!root ||
+				root.agentId !== request.agentId ||
+				root.state !== "running" ||
+				root.sessionId !== request.sessionId ||
+				root.goalId !== request.goalId ||
+				root.role !== request.role ||
+				root.workspaceReceipt.workspaceId !== request.workspaceReceipt.workspaceId ||
+				root.workspaceReceipt.repositoryId !== request.workspaceReceipt.repositoryId ||
+				root.workspaceReceipt.strategy.strategyId !== request.workspaceReceipt.strategy.strategyId ||
+				root.workspaceReceipt.strategy.kind !== request.workspaceReceipt.strategy.kind ||
+				root.workspaceReceipt.strategy.strategyDigest !== request.workspaceReceipt.strategy.strategyDigest ||
+				root.workspaceReceipt.leaseId !== request.workspaceReceipt.leaseId ||
+				root.workspaceReceipt.status !== request.workspaceReceipt.status ||
+				request.workspaceReceipt.bindingRevision <= root.workspaceReceipt.bindingRevision ||
+				(request.workspaceReceipt.leaseRevision ?? -1) <= (root.workspaceReceipt.leaseRevision ?? -1) ||
+				root.capabilityGrant?.receiptId !== request.capabilityGrant.receiptId ||
+				root.capabilityGrant.receiptDigest !== request.capabilityGrant.receiptDigest ||
+				root.capabilityGrant.decisionRevision !== request.capabilityGrant.decisionRevision ||
+				root.capabilityGrant.expiresAt !== request.capabilityGrant.expiresAt ||
+				canonicalDigest(root.inputSources) !== canonicalDigest(request.inputSources) ||
+				canonicalDigest(root.declassificationReceipts) !== canonicalDigest(request.declassificationReceipts)
+			) return fail("agent_exists", "agent graph root registration conflicts with durable state");
+			return this.commit({
+				type: "agent.root_revalidated",
+				requestId: request.requestId,
+				idempotencyKey: request.idempotencyKey,
+				occurredAt: request.registeredAt ?? this.clock().toISOString(),
+				agentId: root.agentId,
+				workspaceReceipt: { ...request.workspaceReceipt },
+				capabilityGrant: { ...request.capabilityGrant },
+			});
 		}
 		const timestamp = request.registeredAt ?? this.clock().toISOString();
 		const node: AgentNode = {

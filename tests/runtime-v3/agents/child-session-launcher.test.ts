@@ -460,6 +460,41 @@ describe("production child session launcher mutation gate", () => {
 		expect(launcher.snapshots()).toHaveLength(1);
 	});
 
+	it("binds the durable child runtime identity to the validated Workspace owner", async () => {
+		const { launcher, request, controller } = await fixture("allow");
+		const launched = await launcher.launch(request, controller.signal);
+
+		expect(launched).toMatchObject({ ok: true, value: { status: "started" } });
+		expect(launcher.snapshots()).toEqual([
+			expect.objectContaining({
+				agentId: request.agentId,
+				sessionId: request.sessionId,
+				runtimeInstanceId: createRuntimeId("runtime", "child-gate-workspace"),
+			}),
+		]);
+	});
+
+	it("retains a child whose manager failed to close so shutdown can be retried", async () => {
+		const { launcher, request, controller } = await fixture("allow");
+		expect(await launcher.launch(request, controller.signal)).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+		const closeAll = V3SessionManager.prototype.closeAll;
+		let attempts = 0;
+		vi.spyOn(V3SessionManager.prototype, "closeAll").mockImplementation(async function () {
+			attempts += 1;
+			if (attempts === 1) throw new Error("injected child close failure");
+			return closeAll.call(this);
+		});
+
+		await expect(launcher.close()).rejects.toThrow("production child launcher close failed");
+		expect(launcher.snapshots()).toHaveLength(1);
+		await expect(launcher.close()).resolves.toBeUndefined();
+		expect(launcher.snapshots()).toEqual([]);
+		expect(attempts).toBe(2);
+	});
+
 	it("rejects malformed local inputs before consulting the parent gate", async () => {
 		const { launcher, gate, workspace, request, sessionDir } = await fixture("allow");
 		const create = vi.spyOn(V3SessionManager, "create");

@@ -67,6 +67,12 @@ import {
 import type { CompactionSummarySampler } from "../runtime/context/compaction/summarizer.ts";
 import type { BudgetLimits } from "../runtime/orchestrator/budget-guard.ts";
 import type { LoopBreaker } from "../runtime/orchestrator/loop-breaker.ts";
+import {
+	createProductionAgentSupervisorRuntime,
+	type ProductionAgentSupervisorComposition,
+	type ProductionAgentSupervisorConfiguration,
+	type ProductionAgentSupervisorRuntimeHandle,
+} from "../runtime/agents/integration/production-composition.ts";
 import { VerificationPipeline } from "../runtime/verification/pipeline.ts";
 import { VerificationSessionRuntime } from "../runtime/verification/session-runtime.ts";
 import type { V3SessionManager } from "./v3-session-manager.ts";
@@ -183,6 +189,8 @@ export interface ProductionInteractiveRuntimeOptions {
 	workspace: ProductionInteractiveWorkspaceOptions;
 	toolGateway: ProductionInteractiveToolGatewayOptions;
 	session: ProductionInteractiveSessionOptions;
+	/** 缺省保持 multi-agent unsupported；提供时仍不自动加入 Control Plane advertisement。 */
+	agents?: ProductionAgentSupervisorConfiguration;
 	extension?: ProductionInteractiveExtensionFactoryPort;
 	clock?: () => Date;
 }
@@ -209,6 +217,7 @@ export interface ProductionInteractiveRuntime {
 	readonly toolRegistry: ToolRegistry;
 	readonly sessionRuntime: ProductionSessionRuntime;
 	readonly modelRuntime: ProductionModelRuntime;
+	readonly agents?: ProductionAgentSupervisorRuntimeHandle;
 	readonly featureEvidence: ValidatedProductionComposition;
 	readonly paths: ProductionInteractiveRuntimePaths;
 	readonly extensionRuntime?: ProductionExtensionRuntime;
@@ -1042,6 +1051,7 @@ export async function createProductionInteractiveRuntime(
 	let workspaceComposition: Awaited<ReturnType<typeof createProductionWorkspaceComposition>> | undefined;
 	let workspaceResult: WorktreeCreateResult | undefined;
 	let gateway: StartupGatedToolExecutionGateway | undefined;
+	let agentComposition: ProductionAgentSupervisorComposition | undefined;
 	let extensionAdapter: ProductionInteractiveExtensionAdapter | undefined;
 	let extensionStarted = false;
 	let workspaceReleased = false;
@@ -1056,6 +1066,7 @@ export async function createProductionInteractiveRuntime(
 			});
 		}
 		if (extensionAdapter) await collectCloseError(errors, () => extensionAdapter!.runtime.close());
+		if (agentComposition) await collectCloseError(errors, () => agentComposition!.close());
 		if (workspaceComposition && workspaceResult && !workspaceReleased) {
 			await collectCloseError(errors, async () => {
 				await releaseWorkspace(manager, workspaceComposition!, workspaceResult!, traceId);
@@ -1187,6 +1198,18 @@ export async function createProductionInteractiveRuntime(
 			...(options.session.memoryRoots === undefined ? {} : { memoryRoots: options.session.memoryRoots }),
 			clock,
 		});
+		if (options.agents) {
+			agentComposition = await createProductionAgentSupervisorRuntime({
+				manager,
+				parentMutationGate: options.mutationGate,
+				workspaceManager: workspaceComposition.manager,
+				rootWorkspace: workspaceResult,
+				artifactAccess: workspaceOptions.artifactAccess,
+				budget: sessionRuntime.budget,
+				configuration: options.agents,
+				clock,
+			});
+		}
 		const fragmentProviders: GovernedContextFragmentProvider[] = [
 			new WorkspaceContextProvider(workspaceResult.runtimeBinding),
 			new MemoryContextProvider({ service: sessionRuntime.memory, scopes: sessionRuntime.memoryScopes }),
@@ -1245,6 +1268,12 @@ export async function createProductionInteractiveRuntime(
 			toolRegistry: registry,
 			sessionRuntime,
 			modelRuntime,
+			...(agentComposition ? {
+				agents: {
+					supervisor: agentComposition.supervisor,
+					childSnapshots: () => agentComposition!.childSnapshots(),
+				},
+			} : {}),
 			featureEvidence,
 			paths: {
 				workspace: { ...workspaceComposition.paths },

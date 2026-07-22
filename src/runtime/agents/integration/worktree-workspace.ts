@@ -14,7 +14,12 @@ import {
 	type TenantId,
 	type TraceId,
 } from "../../protocol/v3/ids.ts";
-import type { WorkspaceExecutionEnvelope } from "../../protocol/v3/workspace.ts";
+import {
+	isWorkspaceBindingRef,
+	isWorkspaceLeaseRef,
+	type WorkspaceBindingKind,
+	type WorkspaceExecutionEnvelope,
+} from "../../protocol/v3/workspace.ts";
 import type { WorktreeManager } from "../../../worktree/manager.ts";
 import type { WorktreeCreateResult } from "../../../worktree/types.ts";
 import type {
@@ -137,6 +142,76 @@ function releaseDigest(request: AgentWorkspaceReleaseRequest): string {
 	});
 }
 
+function bindingKindForStrategy(kind: AgentWorkspaceStrategyRef["kind"]): WorkspaceBindingKind {
+	if (kind === "isolated_lease") return "source";
+	return kind;
+}
+
+function persistedBindingDigestIsValid(binding: WorktreeCreateResult["binding"]): boolean {
+	const { bindingDigest, ...body } = binding;
+	return bindingDigest === canonicalDigest(body);
+}
+
+function resultHasExactScope(result: WorktreeCreateResult): boolean {
+	const { record, binding, runtimeBinding, lease } = result;
+	const expectedRuntimeBinding = {
+		authorityId: binding.authorityId,
+		tenantId: binding.tenantId,
+		workspaceId: binding.workspaceId,
+		repositoryId: binding.repositoryId,
+		bindingKind: binding.bindingKind,
+		canonicalCwd: binding.worktreePath,
+		effectiveCwd: binding.effectiveCwd,
+		branch: binding.branch,
+		baseCommit: binding.baseCommit,
+		headCommit: binding.headCommit,
+		...(binding.worktreeId === undefined ? {} : { worktreeId: binding.worktreeId }),
+	};
+	return (
+		persistedBindingDigestIsValid(binding) &&
+		isWorkspaceBindingRef(runtimeBinding) &&
+		canonicalDigest(runtimeBinding) === canonicalDigest(expectedRuntimeBinding) &&
+		isWorkspaceLeaseRef(lease) &&
+		result.fencingToken.length > 0 &&
+		result.fencingToken.length <= 512 &&
+		Number.isFinite(Date.parse(record.lastAccessedAt)) &&
+		lease.authorityId === binding.authorityId &&
+		lease.tenantId === binding.tenantId &&
+		lease.principalId === binding.principalId &&
+		lease.workspaceId === binding.workspaceId &&
+		lease.leaseId === binding.leaseId &&
+		lease.leaseRevision === binding.leaseRevision &&
+		lease.ownerRuntimeId === binding.ownerRuntimeId &&
+		lease.fencingTokenDigest === canonicalDigest(result.fencingToken) &&
+		lease.state === "active" &&
+		record.authorityId === binding.authorityId &&
+		record.tenantId === binding.tenantId &&
+		record.principalId === binding.principalId &&
+		record.sessionId === binding.sessionId &&
+		record.bindingKind === binding.bindingKind &&
+		record.workspaceId === binding.workspaceId &&
+		record.repositoryId === binding.repositoryId &&
+		record.sourceRepo === binding.sourceRepo &&
+		record.sourceCwd === binding.sourceCwd &&
+		record.effectiveCwd === binding.effectiveCwd &&
+		record.worktreePath === binding.worktreePath &&
+		record.subdirOffset === binding.subdirOffset &&
+		record.baseCommit === binding.baseCommit &&
+		record.headCommit === binding.headCommit &&
+		record.branch === binding.branch &&
+		record.worktreeId === binding.worktreeId &&
+		record.ownerRuntimeId === binding.ownerRuntimeId &&
+		record.leaseRevision === binding.leaseRevision &&
+		record.state === "active" &&
+		record.lease !== undefined &&
+		canonicalDigest(record.lease) === canonicalDigest(lease) &&
+		result.receiptId === createRuntimeId(
+			"receipt",
+			canonicalDigest({ record, lease }).slice(0, 48),
+		)
+	);
+}
+
 export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 	readonly #options: ProductionAgentWorkspaceOptions;
 	readonly #clock: () => Date;
@@ -184,7 +259,7 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 			leaseId: result.lease.leaseId,
 			leaseRevision: result.lease.leaseRevision,
 			status: strategy.kind === "readonly_checkout" ? "readonly" : "active",
-			issuedAt: this.#clock().toISOString(),
+			issuedAt: result.record.lastAccessedAt,
 		};
 		return { ...body, receiptDigest: canonicalDigest(receiptBody(body)) };
 	}
@@ -207,7 +282,10 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 			!isRuntimeId(request.requestId, "command") ||
 			!isRuntimeId(request.agentId, "agent") ||
 			!isRuntimeId(request.sessionId, "session") ||
-			request.strategy.kind === "readonly_checkout"
+			!isRuntimeId(request.strategy.strategyId, "resource") ||
+			!/^[a-f0-9]{64}$/u.test(request.strategy.strategyDigest) ||
+			request.agentId !== this.#options.rootAgentId ||
+			request.strategy.kind !== "isolated_lease"
 		) return fail("workspace_invalid", "root Agent Workspace binding is invalid");
 		const bound = await this.#options.manager.bindSource({
 			authorityId: this.#options.authorityId,
@@ -221,9 +299,58 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 			ownerRuntimeId: this.#owner(request.agentId, request.sessionId, true),
 			requestId: request.requestId,
 		});
-		return bound.ok
+		if (!bound.ok) return fail("workspace_invalid", bound.error.message, bound.error.retryable);
+		return resultHasExactScope(bound.value)
 			? { ok: true, value: this.#store(request.agentId, request.sessionId, bound.value, request.strategy) }
-			: fail("workspace_invalid", bound.error.message, bound.error.retryable);
+			: fail("workspace_invalid", "root Agent Workspace result is internally inconsistent");
+	}
+
+	/**
+	 * 接入父 runtime 已经完成的 production Workspace binding。raw fencing token 只存入
+	 * 本 adapter 的私有 handle，不进入 Agent graph 或 composition 返回值。
+	 */
+	public async adoptRoot(
+		request: BindRootAgentWorkspaceRequest,
+		result: WorktreeCreateResult,
+	): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
+		const binding = result.binding;
+		if (
+			!isRuntimeId(request.requestId, "command") ||
+			!isRuntimeId(request.agentId, "agent") ||
+			!isRuntimeId(request.sessionId, "session") ||
+			!isRuntimeId(request.strategy.strategyId, "resource") ||
+			!/^[a-f0-9]{64}$/u.test(request.strategy.strategyDigest) ||
+			request.agentId !== this.#options.rootAgentId ||
+			request.sessionId !== binding.sessionId ||
+			binding.bindingKind !== bindingKindForStrategy(request.strategy.kind) ||
+			binding.authorityId !== this.#options.authorityId ||
+			binding.tenantId !== this.#options.tenantId ||
+			binding.principalId !== this.#options.principalId ||
+			binding.repositoryId !== this.#options.repositoryId ||
+			binding.sourceRepo !== this.#options.sourceRepo ||
+			binding.sourceCwd !== this.#options.sourceCwd ||
+			binding.ownerRuntimeId !== this.#options.rootOwnerRuntimeId ||
+			result.record.workspaceId !== binding.workspaceId ||
+			result.lease.workspaceId !== binding.workspaceId ||
+			result.lease.leaseId !== binding.leaseId ||
+			result.lease.leaseRevision !== binding.leaseRevision ||
+			result.lease.state !== "active" ||
+			!resultHasExactScope(result)
+		) return fail("workspace_invalid", "existing root Workspace binding is outside the production Agent scope");
+		const receipt = this.#receipt(result, request.sessionId, request.strategy);
+		const handle = { agentId: request.agentId, sessionId: request.sessionId, result, receipt };
+		try {
+			const validated = await this.#options.manager.validate(this.#envelope(handle, request.requestId));
+			if (
+				!validated.ok ||
+				validated.value.validation.outcome !== "valid" ||
+				canonicalDigest(validated.value.binding) !== canonicalDigest(binding)
+			) return fail("workspace_invalid", "existing root Workspace binding is not current in the production registry");
+		} catch {
+			return fail("workspace_invalid", "existing root Workspace binding could not be revalidated", true);
+		}
+		this.#handles.set(receipt.receiptId, handle);
+		return { ok: true, value: receipt };
 	}
 
 	public async allocate(

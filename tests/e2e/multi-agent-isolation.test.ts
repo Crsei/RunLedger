@@ -2,16 +2,16 @@ import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { AgentSupervisor, RootBudgetGuardAdapter } from "../../src/runtime/agents/supervisor.ts";
+import { RootBudgetGuardAdapter } from "../../src/runtime/agents/supervisor.ts";
 import { SessionAgentGraphStore } from "../../src/runtime/agents/session-graph-store.ts";
 import {
 	GatewayBoundCapabilitySubsetEvaluator,
 	ProductionAgentDenialEvaluator,
 	ProductionAgentWorkspaceAdapter,
 	ProductionArtifactMergeAdapter,
-	ProductionChildSessionLauncher,
 	createProductionCapabilityGrantPolicy,
 } from "../../src/runtime/agents/integration/index.ts";
+import { createProductionAgentSupervisorComposition } from "../../src/runtime/agents/integration/production-composition.ts";
 import type {
 	AgentBudgetRequest,
 	AgentCapabilityRequestRef,
@@ -59,10 +59,10 @@ const NOW = "2026-07-22T00:00:00.000Z";
 const FEATURES = { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true };
 const temporaryRoots: string[] = [];
 const openManagers: V3SessionManager[] = [];
-const openLaunchers: ProductionChildSessionLauncher[] = [];
+const openCompositions: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {
-	await Promise.all(openLaunchers.splice(0).map((launcher) => launcher.close().catch(() => undefined)));
+	await Promise.all(openCompositions.splice(0).map((composition) => composition.close().catch(() => undefined)));
 	await Promise.all(openManagers.splice(0).map((manager) => manager.closeAll().catch(() => undefined)));
 	await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -219,8 +219,7 @@ describe("multi-agent production isolation E2E", () => {
 			},
 		};
 		const repositoryId = createRuntimeId("repository", "multi-agent-e2e");
-		const rootAgentId = createRuntimeId("agent", "multi-agent-root");
-		const goalId = createRuntimeId("goal", "multi-agent-goal");
+		const { agentId: rootAgentId, goalId } = rootManager.sessionEvents().lineage();
 
 		const artifactRoot = join(rootDir, "artifact-state");
 		const artifactCas = new ArtifactCasStore({ rootDir: artifactRoot });
@@ -259,7 +258,7 @@ describe("multi-agent production isolation E2E", () => {
 		});
 		const rootStrategy = {
 			strategyId: createRuntimeId("resource", "root-source-workspace"),
-			kind: "managed_worktree" as const,
+			kind: "isolated_lease" as const,
 			strategyDigest: canonicalDigest("root source Workspace strategy"),
 		};
 		const childStrategy = {
@@ -310,22 +309,6 @@ describe("multi-agent production isolation E2E", () => {
 				issuedAt: NOW,
 			}),
 		], () => new Date(NOW));
-		const launcher = new ProductionChildSessionLauncher({
-			workspace,
-			capabilitySubset: subset,
-			parentMutationGate,
-			sessionDir: join(rootDir, "child-sessions"),
-			features: FEATURES,
-			identity,
-			maxActiveChildren: 3,
-			clock: () => new Date(NOW),
-		});
-		openLaunchers.push(launcher);
-		const graphStore = new SessionAgentGraphStore({
-			writer: rootManager.writer(),
-			store: rootManager.eventStore(),
-			principalId,
-		});
 		const budgetGuard = new BudgetGuard({
 			goalId,
 			limits: limits(),
@@ -345,33 +328,45 @@ describe("multi-agent production isolation E2E", () => {
 			principalId,
 			clock: () => new Date(NOW),
 		});
-		const ports = {
-			graphStore,
+		const deniedAgents = new ProductionAgentDenialEvaluator({
+			policyDigest: canonicalDigest("multi-agent denial policy"),
+			decisionRevision: 1,
+			deniedAgentIds: new Set(),
+		}, () => new Date(NOW));
+		const budgetAdapter = new RootBudgetGuardAdapter(budgetGuard);
+		const adapters = {
 			capabilitySubset: subset,
 			workspace,
-			deniedAgents: new ProductionAgentDenialEvaluator({
-				policyDigest: canonicalDigest("multi-agent denial policy"),
-				decisionRevision: 1,
-				deniedAgentIds: new Set(),
-			}, () => new Date(NOW)),
-			budget: new RootBudgetGuardAdapter(budgetGuard),
-			launcher,
+			deniedAgents,
+			budget: budgetAdapter,
 			merge,
 		};
-		const supervisor = new AgentSupervisor({ rootAgentId, ports, clock: () => new Date(NOW) });
-		expect((await supervisor.registerRoot({
-			requestId: createRuntimeId("command", "register-production-root"),
-			idempotencyKey: key("register-root"),
-			agentId: rootAgentId,
-			sessionId: rootManager.sessionId(),
-			goalId,
-			role: "build",
-			workspaceReceipt: rootWorkspace.value,
-			capabilityGrant: parentGrant,
-			inputSources: [],
-			declassificationReceipts: [],
-			registeredAt: NOW,
-		})).ok).toBe(true);
+		const composition = await createProductionAgentSupervisorComposition({
+			manager: rootManager,
+			parentMutationGate,
+			root: {
+				requestId: createRuntimeId("command", "register-production-root"),
+				idempotencyKey: key("register-root"),
+				agentId: rootAgentId,
+				goalId,
+				role: "build",
+				workspaceReceipt: rootWorkspace.value,
+				capabilityGrant: parentGrant,
+				inputSources: [],
+				declassificationReceipts: [],
+				registeredAt: NOW,
+			},
+			adapters,
+			child: {
+				sessionDir: join(rootDir, "child-sessions"),
+				features: FEATURES,
+				maxActiveChildren: 3,
+				clock: () => new Date(NOW),
+			},
+			clock: () => new Date(NOW),
+		});
+		openCompositions.push(composition);
+		const { supervisor } = composition;
 
 		const spawn = (seed: string, capabilities: readonly AgentCapabilityRequestRef[]): SpawnAgentRequest => ({
 			requestId: createRuntimeId("command", `spawn-${seed}`),
@@ -419,7 +414,7 @@ describe("multi-agent production isolation E2E", () => {
 		const child = spawned.value.node;
 		expect(child.workspaceReceipt.workspaceId).not.toBe(rootWorkspace.value.workspaceId);
 		expect(child.sessionId).not.toBe(rootManager.sessionId());
-		expect(launcher.snapshots()).toEqual([
+		expect(composition.childSnapshots()).toEqual([
 			expect.objectContaining({
 				agentId: child.agentId,
 				sessionId: child.sessionId,
@@ -427,7 +422,7 @@ describe("multi-agent production isolation E2E", () => {
 				eventSequence: 0,
 			}),
 		]);
-		expect(JSON.stringify({ node: child, launcher: launcher.snapshots() })).not.toMatch(/cwd|fencingToken|envVars|credential/i);
+		expect(JSON.stringify({ node: child, launcher: composition.childSnapshots() })).not.toMatch(/cwd|fencingToken|envVars|credential/i);
 
 		const childRecord = await workspaceComposition.registry.get(child.workspaceReceipt.workspaceId);
 		if (!childRecord.ok || !childRecord.value) throw new Error("production child worktree record is missing");
@@ -528,32 +523,28 @@ describe("multi-agent production isolation E2E", () => {
 		expect(await readFile(join(sourceRepo, ".parent-temp"), "utf8")).toBe(parentSecret);
 		expect(await readFile(join(sourceRepo, ".parent-credential"), "utf8")).toBe(parentCredential);
 
+		await composition.close();
+		openCompositions.splice(openCompositions.indexOf(composition), 1);
+		expect(rootManager.isClosed()).toBe(false);
 		const rootFile = rootManager.filePath();
 		await rootManager.closeAll();
 		openManagers.splice(openManagers.indexOf(rootManager), 1);
 		const reopened = await V3SessionManager.open(rootFile, FEATURES, identity);
 		openManagers.push(reopened);
-		const replayed = await new AgentSupervisor({
-			rootAgentId,
-			ports: {
-				...ports,
-				graphStore: new SessionAgentGraphStore({
-					writer: reopened.writer(),
-					store: reopened.eventStore(),
-					principalId,
-				}),
-			},
-			clock: () => new Date(NOW),
-		}).graph();
+		const replayed = await new SessionAgentGraphStore({
+			writer: reopened.writer(),
+			store: reopened.eventStore(),
+			principalId,
+		}).load(rootAgentId);
 		expect(replayed.ok).toBe(true);
 		if (!replayed.ok) return;
-		expect(replayed.value.nodes.get(child.agentId)).toMatchObject({
+		expect(replayed.value.projection.nodes.get(child.agentId)).toMatchObject({
 			state: "completed",
 			sessionId: child.sessionId,
 			workspaceReceipt: { workspaceId: child.workspaceReceipt.workspaceId },
 			artifacts: [{ artifact: { artifactId: patchRef.artifactId } }],
 		});
-		expect(replayed.value.mergeReceipts).toEqual([
+		expect(replayed.value.projection.mergeReceipts).toEqual([
 			expect.objectContaining({
 				childAgentId: child.agentId,
 				targetWorkspaceId: rootWorkspace.value.workspaceId,

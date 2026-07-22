@@ -76,7 +76,7 @@ export function workspaceReceipt(
 	kind: "managed_worktree" | "isolated_lease" | "readonly_checkout" = "managed_worktree",
 ): AgentWorkspaceReceiptRef {
 	const workspaceStrategy = strategy(kind);
-	return {
+	const body: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = {
 		receiptId: createRuntimeId("receipt", `workspace-${seed}`),
 		strategy: workspaceStrategy,
 		sessionId,
@@ -90,8 +90,8 @@ export function workspaceReceipt(
 		status: kind === "readonly_checkout" ? "readonly" : "active",
 		issuedAt: "2026-07-22T00:00:00.000Z",
 		expiresAt: "2026-07-23T00:00:00.000Z",
-		receiptDigest: digest("d"),
 	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 export function artifact(
@@ -198,26 +198,29 @@ export class FakeWorkspacePort implements AgentWorkspacePort {
 	public allocate(request: Parameters<AgentWorkspacePort["allocate"]>[0]): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
 		this.allocations.push(request);
 		const receipt = workspaceReceipt(request.childSessionId, nextSeed("child-workspace"), request.strategy.kind);
+		const { receiptDigest: _receiptDigest, ...receiptBody } = receipt;
+		const body = {
+			...receiptBody,
+			strategy: request.strategy,
+			...(this.sharedWorkspaceId ? { workspaceId: this.sharedWorkspaceId } : {}),
+		};
 		return Promise.resolve({
 			ok: true,
-			value: {
-				...receipt,
-				strategy: request.strategy,
-				...(this.sharedWorkspaceId ? { workspaceId: this.sharedWorkspaceId } : {}),
-			},
+			value: { ...body, receiptDigest: canonicalDigest(body) },
 		});
 	}
 
 	public validate(request: Parameters<AgentWorkspacePort["validate"]>[0]): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
 		this.validations.push(request);
+		const { receiptDigest: _previousDigest, ...previousBody } = request.previousReceipt;
+		const body: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = {
+			...previousBody,
+			receiptId: createRuntimeId("receipt", nextSeed("workspace-revalidation")),
+			status: this.validationStatus,
+		};
 		return Promise.resolve({
 			ok: true,
-			value: {
-				...request.previousReceipt,
-				receiptId: createRuntimeId("receipt", nextSeed("workspace-revalidation")),
-				status: this.validationStatus,
-				receiptDigest: digest("f"),
-			},
+			value: { ...body, receiptDigest: canonicalDigest(body) },
 		});
 	}
 

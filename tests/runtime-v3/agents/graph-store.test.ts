@@ -1,11 +1,73 @@
 import { describe, expect, it } from "vitest";
+import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type { AgentGraphSemanticCommand } from "../../../src/runtime/agents/types.ts";
-import { artifact, key, rootRegistration, runtimeFakes, spawnRequest } from "./helpers.ts";
+import {
+	artifact,
+	key,
+	rootRegistration,
+	runtimeFakes,
+	spawnRequest,
+	workspaceReceipt as createWorkspaceReceipt,
+} from "./helpers.ts";
 
 const NOW = "2026-07-22T00:00:02.000Z";
 
 describe("durable agent graph", () => {
+	it("accepts only an exact monotonic root Workspace revalidation", async () => {
+		const runtime = runtimeFakes();
+		const baseRoot = rootRegistration();
+		const root = {
+			...baseRoot,
+			workspaceReceipt: createWorkspaceReceipt(baseRoot.sessionId, "root-revalidation", "isolated_lease"),
+		};
+		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
+		const loaded = await runtime.store.load(root.agentId);
+		if (!loaded.ok) throw new Error(loaded.error.message);
+		const { receiptDigest: _receiptDigest, ...previousBody } = root.workspaceReceipt;
+		const nextBody = {
+			...previousBody,
+			bindingRevision: previousBody.bindingRevision + 1,
+			leaseRevision: 2,
+			issuedAt: NOW,
+		};
+		const workspaceReceipt = { ...nextBody, receiptDigest: canonicalDigest(nextBody) };
+		const revalidated: AgentGraphSemanticCommand = {
+			type: "agent.root_revalidated",
+			requestId: createRuntimeId("command", "root-revalidated"),
+			idempotencyKey: key("root-revalidated"),
+			occurredAt: NOW,
+			agentId: root.agentId,
+			workspaceReceipt,
+			capabilityGrant: root.capabilityGrant,
+		};
+		const committed = await runtime.store.commit(root.agentId, loaded.value.revision, revalidated);
+		expect(committed).toMatchObject({ ok: true, value: { status: "committed" } });
+		expect(await runtime.store.commit(root.agentId, loaded.value.revision, revalidated)).toMatchObject({
+			ok: true,
+			value: { status: "duplicate" },
+		});
+		const current = await runtime.store.load(root.agentId);
+		if (!current.ok) throw new Error(current.error.message);
+		expect(await runtime.store.commit(root.agentId, current.value.revision, {
+			...revalidated,
+			requestId: createRuntimeId("command", "root-revalidated-stale"),
+			idempotencyKey: key("root-revalidated-stale"),
+		})).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
+		const driftedBody = {
+			...nextBody,
+			repositoryId: createRuntimeId("repository", "root-revalidated-drift"),
+			bindingRevision: nextBody.bindingRevision + 1,
+			leaseRevision: nextBody.leaseRevision + 1,
+		};
+		expect(await runtime.store.commit(root.agentId, current.value.revision, {
+			...revalidated,
+			requestId: createRuntimeId("command", "root-revalidated-drift"),
+			idempotencyKey: key("root-revalidated-drift"),
+			workspaceReceipt: { ...driftedBody, receiptDigest: canonicalDigest(driftedBody) },
+		})).toMatchObject({ ok: false, error: { code: "invalid_graph" } });
+	});
+
 	it("loads the canonical projection/head after a supervisor restart", async () => {
 		const runtime = runtimeFakes();
 		const root = rootRegistration();

@@ -192,8 +192,12 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 	#closed = false;
 
 	public constructor(options: ProductionChildSessionLauncherOptions) {
-		if (!Number.isSafeInteger(options.maxActiveChildren) || options.maxActiveChildren < 1) {
-			throw new RangeError("production child launcher requires a positive active-child bound");
+		if (
+			!exactAbsolutePath(options.sessionDir) ||
+			!Number.isSafeInteger(options.maxActiveChildren) ||
+			options.maxActiveChildren < 1
+		) {
+			throw new RangeError("production child launcher requires an absolute session root and positive active-child bound");
 		}
 		if (options.processIsolation) {
 			const maxOutputBytes = options.processIsolation.maxOutputBytes ?? DEFAULT_PROCESS_OUTPUT_BYTES;
@@ -216,6 +220,10 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 	async #claimDurableSession(sessionId: AgentLaunchRequest["sessionId"]): Promise<AgentResult<string>> {
 		try {
 			await mkdir(this.#options.sessionDir, { recursive: true, mode: 0o700 });
+			const canonicalSessionDir = resolve(await realpath(this.#options.sessionDir));
+			if (canonicalSessionDir !== this.#options.sessionDir) {
+				return fail("launch_failed", "durable child session root changed identity");
+			}
 			const entries = await readdir(this.#options.sessionDir, { withFileTypes: true });
 			if (entries.some((entry) => entry.isFile() && entry.name.endsWith(`_${sessionId}.jsonl`))) {
 				return fail("launch_failed", "durable child session already exists and requires explicit worker recovery");
@@ -358,6 +366,7 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 						sessionDir: this.#options.sessionDir,
 						identity: this.#options.identity,
 						sessionId: request.sessionId,
+						runtimeId: workspace.envelope.ownerRuntimeId,
 						features: this.#options.features,
 						lineage: {
 							goalId: createRuntimeId(
@@ -545,10 +554,18 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 	}
 
 	public async close(): Promise<void> {
-		if (this.#closed) return;
 		this.#closed = true;
-		const children = [...this.#children.values()];
-		this.#children.clear();
-		await Promise.all(children.map((child) => child.manager.closeAll()));
+		const children = [...this.#children.entries()];
+		const closed = await Promise.allSettled(children.map(([, child]) => child.manager.closeAll()));
+		const errors: unknown[] = [];
+		for (const [index, result] of closed.entries()) {
+			const [agentId, child] = children[index]!;
+			if (result.status === "fulfilled") {
+				if (this.#children.get(agentId) === child) this.#children.delete(agentId);
+			} else {
+				errors.push(result.reason);
+			}
+		}
+		if (errors.length > 0) throw new AggregateError(errors, "production child launcher close failed");
 	}
 }
