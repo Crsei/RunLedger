@@ -151,6 +151,45 @@ mutation:
 
 注:`attachToolExecution` 应在 spec 中也是 first-class mutation API(`attachToolExecution(toolCall: ToolCall): ToolExecutionComponent`),见 02 文档 §1。
 
+#### 3.8.4 真实 provider 大参数工具调用的进度可见性(已确认缺口)
+
+> 状态:截至 `1658fe2`,问题已完成取证但尚未修复。它是 `toolcall_start` / `toolcall_delta` 的 TUI 可观察性缺口,不是 Runtime 退出或 pi-tui 崩溃。
+
+2026-07-21 使用 `deepseek/deepseek-v4-pro` 在
+`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/allthecodes-test` 构建地球页面时,session `c59e37a5` 在界面停留于 turn 3 的 thinking 文本,用户侧表现为“意外退出”或“假死”。ledger 取证结果如下:
+
+| 证据 | 结果 |
+|------|------|
+| session 文件 | `.runledger/sessions/2026-07-21T14-42-09-904Z_a3ce9654.jsonl` |
+| turn 3 时间窗 | `2026-07-21 22:42:37.583 +0800` → `22:44:39.050 +0800`,静默 `121.467s` |
+| 正在生成的调用 | `write`;ledger 中序列化 `input` 为 `39,683 B` |
+| 实际写入结果 | `earth.html`,文件大小 `38,362 B`;`tool_result.isError=false` |
+| 后续状态 | 同一 session 继续执行至 turn 12,最终 `stopReason=stop`;取证时进程、前台 PTY 与 ledger lock 均仍存在 |
+| crash 证据 | 没有 `c59e37a5` 的新 crash log;`~/.pi/agent/pi-crash.log` 仍是较早 session `d457c66a` 的 143 列宽度错误,与本次无关 |
+
+根因链路:
+
+1. `src/runtime/agent-loop.ts` 已把 provider 的 `toolcall_start` 与 `toolcall_delta` 原样转发为 `message_update`;
+2. `src/tui/interactive-mode.ts` 的 `message_update` 分支只用 `partial` 更新 `AssistantMessageComponent`,没有为参数接收建立 running/progress 组件;
+3. `ToolCallComponent` / `DiffPreviewComponent` 直到 `toolcall_end` 之后的 `tool_execution_start` 才创建;
+4. 因此模型生成大型 `write.content` 时 Runtime 一直在工作,但 TUI 在完整参数到达前没有任何可见变化。
+
+修复时必须保持以下边界:
+
+- `toolcall_start`:按 `toolCallId` 建立轻量 pending 状态,显示 `Receiving <toolName> arguments...`;
+- `toolcall_delta`:只累计已接收字节数并限频刷新,例如 `Receiving write arguments... 24 KiB`;不得把 `write.content`、`MultiEdit` 的替换正文或完整 partial JSON 渲染到屏幕;
+- `toolcall_end`:结束参数接收态并衔接既有 `tool_execution_start` 组件,同一 `toolCallId` 不得产生两块重复 UI;
+- `error` / `aborted` / `agent_end`:清理未完成的参数接收状态,保留明确的失败或中断结果;
+- 所有进度行继续经过 `visibleWidth()` / `truncateToWidth()` 限宽,不得绕过 `ChatContainer` 的最终宽度防线。
+
+回归验收:
+
+- [ ] 构造至少 `64 KiB` 的分块 `write.content` 流,在参数仍未结束时能看到 pending 状态与递增字节数;
+- [ ] TUI 不渲染或额外缓存完整正文,日志与 ledger 之外不泄漏工具参数内容;
+- [ ] `toolcall_end → tool_execution_start → tool_execution_end` 只生成一个工具展示块,状态依次为 receiving / running / ok 或 error;
+- [ ] 参数接收期间按 `Ctrl+C` 可中断,界面回到可继续输入状态,session 可续接;
+- [ ] 60、80、143 列 PTY 下均无超宽行,并通过 `npm run check`、全量 `npm test` 与 `npm run build`。
+
 ### 3.9 `tool_execution_start`
 
 - 入选:无条件
