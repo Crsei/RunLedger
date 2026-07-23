@@ -18,6 +18,7 @@ import {
 import { ProductionAgentWorkspaceAdapter } from "../../../src/runtime/agents/integration/worktree-workspace.ts";
 import type { SessionMutationAdmissionGatePort } from "../../../src/runtime/lifecycle/mutation-gate.ts";
 import type { V3SessionManager } from "../../../src/storage/v3-session-manager.ts";
+import { MemoryChildRuntimeAuthorityStore } from "../../../src/runtime/agents/child-runtime-authority.ts";
 
 const NOW = "2026-07-23T00:00:00.000Z";
 const AGENT_ID = createRuntimeId("agent", "production-composition-root");
@@ -90,8 +91,10 @@ function fixture(): { options: ProductionAgentSupervisorCompositionOptions; clos
 				declassificationReceipts: [],
 				registeredAt: NOW,
 			},
-			adapters,
-			child: {
+				adapters,
+				authorityStore:
+					new MemoryChildRuntimeAuthorityStore(),
+				child: {
 				sessionDir: "/tmp/runledger-production-composition-test",
 				features: { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true },
 				maxActiveChildren: 1,
@@ -150,6 +153,39 @@ describe("production Agent supervisor composition lifecycle", () => {
 		expect(closeAll).not.toHaveBeenCalled();
 	});
 
+	it("runs cold cleanup reconciliation during startup and fails closed before exposure", async () => {
+		const { options, closeAll } = fixture();
+		vi.spyOn(AgentSupervisor.prototype, "registerRoot").mockResolvedValue({
+			ok: true,
+			value: {} as Awaited<ReturnType<AgentSupervisor["graph"]>> extends { ok: true; value: infer T } ? T : never,
+		});
+		const reconcile = vi
+			.spyOn(
+				AgentSupervisor.prototype,
+				"reconcilePendingCleanups",
+			)
+			.mockResolvedValue({
+				ok: false,
+				error: {
+					code: "reference_unavailable",
+					message: "injected cold cleanup failure",
+					retryable: true,
+				},
+			});
+		const close = vi
+			.spyOn(ProductionChildSessionLauncher.prototype, "close")
+			.mockResolvedValue(undefined);
+
+		await expect(
+			createProductionAgentSupervisorComposition(options),
+		).rejects.toThrow(
+			"startup cleanup reconciliation failed: reference_unavailable",
+		);
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(close).toHaveBeenCalledTimes(1);
+		expect(closeAll).not.toHaveBeenCalled();
+	});
+
 	it("allows composition close to retry a failed idle-launcher shutdown without taking parent ownership", async () => {
 		const { options, closeAll } = fixture();
 		vi.spyOn(AgentSupervisor.prototype, "registerRoot").mockResolvedValue({
@@ -169,7 +205,7 @@ describe("production Agent supervisor composition lifecycle", () => {
 		await expect(composition.close()).rejects.toBe(closeFailure);
 		await expect(composition.close()).resolves.toBeUndefined();
 		expect(close).toHaveBeenCalledTimes(2);
-		expect(reconcile).toHaveBeenCalledTimes(2);
+			expect(reconcile).toHaveBeenCalledTimes(3);
 		expect(closeAll).not.toHaveBeenCalled();
 	});
 
@@ -189,7 +225,7 @@ describe("production Agent supervisor composition lifecycle", () => {
 		expect(Object.getOwnPropertyNames(composition.supervisor)).not.toContain("ports");
 		expect(Reflect.get(composition.supervisor, "ports")).toBeUndefined();
 		await composition.close();
-		expect(reconcile).toHaveBeenCalledTimes(1);
+			expect(reconcile).toHaveBeenCalledTimes(2);
 	});
 
 	it("refuses to close an active child without inventing terminal usage", async () => {
@@ -211,7 +247,7 @@ describe("production Agent supervisor composition lifecycle", () => {
 		await expect(composition.close()).rejects.toThrow(
 			"requires governed terminal cleanup for 1 active child runtime(s)",
 		);
-		expect(reconcile).toHaveBeenCalledTimes(1);
+			expect(reconcile).toHaveBeenCalledTimes(2);
 		expect(close).toHaveBeenCalledTimes(1);
 		expect(unsafeClose).not.toHaveBeenCalled();
 		expect(closeAll).not.toHaveBeenCalled();
@@ -272,13 +308,77 @@ describe("production Agent supervisor composition lifecycle", () => {
 		await spawning;
 		await closing;
 		expect(order).toEqual(["spawn_completed", "launcher_closed", "composition_closed"]);
-		expect(reconcile).toHaveBeenCalledTimes(1);
+			expect(reconcile).toHaveBeenCalledTimes(2);
 		expect(closeAll).not.toHaveBeenCalled();
 		expect(await composition.supervisor.spawn({} as SpawnAgentRequest)).toMatchObject({
 			ok: false,
 			error: { code: "reference_unavailable", retryable: true },
 		});
 		expect(spawn).toHaveBeenCalledTimes(1);
+	});
+
+	it("serializes production mutations so a parent terminal cannot overtake child authority claim", async () => {
+		const { options } = fixture();
+		vi.spyOn(AgentSupervisor.prototype, "registerRoot").mockResolvedValue({
+			ok: true,
+			value: {} as Awaited<ReturnType<AgentSupervisor["graph"]>> extends { ok: true; value: infer T } ? T : never,
+		});
+		vi.spyOn(ProductionChildSessionLauncher.prototype, "closeIfIdle").mockResolvedValue(undefined);
+		vi.spyOn(AgentSupervisor.prototype, "reconcilePendingCleanups").mockResolvedValue({
+			ok: true,
+			value: {} as Awaited<ReturnType<AgentSupervisor["graph"]>> extends { ok: true; value: infer T } ? T : never,
+		});
+		let releaseSpawn: (() => void) | undefined;
+		const spawnGate = new Promise<void>((resolve) => {
+			releaseSpawn = resolve;
+		});
+		let spawnEntered: (() => void) | undefined;
+		const entered = new Promise<void>((resolve) => {
+			spawnEntered = resolve;
+		});
+		const order: string[] = [];
+		vi.spyOn(AgentSupervisor.prototype, "spawn").mockImplementation(async () => {
+			order.push("spawn_entered");
+			spawnEntered?.();
+			await spawnGate;
+			order.push("spawn_completed");
+			return {
+				ok: false,
+				error: {
+					code: "launch_failed",
+					message: "serialized test spawn completed",
+					retryable: false,
+				},
+			};
+		});
+		const finish = vi.spyOn(AgentSupervisor.prototype, "finish").mockImplementation(async () => {
+			order.push("finish_entered");
+			return {
+				ok: false,
+				error: {
+					code: "invalid_request",
+					message: "serialized test finish completed",
+					retryable: false,
+				},
+			};
+		});
+		const composition = await createProductionAgentSupervisorComposition(options);
+
+		const spawning = composition.supervisor.spawn({} as SpawnAgentRequest);
+		await entered;
+		const finishing = composition.supervisor.finish(
+			{} as Parameters<AgentSupervisor["finish"]>[0],
+		);
+		await Promise.resolve();
+		expect(finish).not.toHaveBeenCalled();
+		releaseSpawn?.();
+		await Promise.all([spawning, finishing]);
+		expect(order).toEqual([
+			"spawn_entered",
+			"spawn_completed",
+			"finish_entered",
+		]);
+		await composition.close();
 	});
 
 	it("reconciles an already-terminal child before closing the now-idle launcher", async () => {
@@ -308,7 +408,7 @@ describe("production Agent supervisor composition lifecycle", () => {
 		const composition = await createProductionAgentSupervisorComposition(options);
 
 		await expect(composition.close()).resolves.toBeUndefined();
-		expect(reconcile).toHaveBeenCalledTimes(1);
+			expect(reconcile).toHaveBeenCalledTimes(2);
 		expect(close).toHaveBeenCalledTimes(1);
 		expect(closeAll).not.toHaveBeenCalled();
 	});

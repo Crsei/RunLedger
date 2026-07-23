@@ -29,6 +29,7 @@ import type {
 } from "../../../src/runtime/lifecycle/mutation-gate.ts";
 import { DEFAULT_RUNTIME_FEATURES } from "../../../src/runtime/runtime-features.ts";
 import type {
+	AgentCancelRequest,
 	AgentLaunchRequest,
 	AgentResult,
 	AgentResumeLaunchRequest,
@@ -36,8 +37,13 @@ import type {
 	AgentWorkspaceReceiptRef,
 } from "../../../src/runtime/agents/types.ts";
 import { JsonlV3EventStore } from "../../../src/runtime/session/jsonl-v3-store.ts";
+import { AgentLoopSessionEvents } from "../../../src/runtime/session/agent-loop-events.ts";
 import { V3SessionManager } from "../../../src/storage/v3-session-manager.ts";
 import type { WorktreeManager } from "../../../src/worktree/manager.ts";
+import {
+	MemoryChildRuntimeAuthorityStore,
+	type ChildRuntimeAuthorityStorePort,
+} from "../../../src/runtime/agents/child-runtime-authority.ts";
 
 const NOW = "2026-07-23T00:00:00.000Z";
 const IDENTITY: RuntimeIdentityContext = {
@@ -49,6 +55,10 @@ const IDENTITY: RuntimeIdentityContext = {
 };
 const PARENT_SESSION_ID = createRuntimeId("session", "child-gate-parent");
 const ROOT_AGENT_ID = createRuntimeId("agent", "child-gate-root");
+const PARENT_RUNTIME_ID = createRuntimeId(
+	"runtime",
+	"child-gate-parent",
+);
 const DIGEST = canonicalDigest("child gate fixture");
 const roots: string[] = [];
 const launchers: ProductionChildSessionLauncher[] = [];
@@ -74,6 +84,35 @@ function admissionReceipt(request: GateRequest): SessionMutationAdmissionReceipt
 		auditReceipts: [],
 	};
 	return { ...body, receiptDigest: canonicalDigest(body) };
+}
+
+function parentWriterFence() {
+	const body = {
+		authorityId: IDENTITY.authorityId,
+		tenantId: IDENTITY.tenantId,
+		sessionId: PARENT_SESSION_ID,
+		runtimeId: PARENT_RUNTIME_ID,
+		stream: createSessionEventStreamRef(
+			IDENTITY,
+			PARENT_SESSION_ID,
+		),
+		leaseId: createRuntimeId("lease", "child-gate-parent"),
+		writerEpoch: 1,
+		fencingTokenDigest: canonicalDigest(
+			"child gate parent fence",
+		),
+		acquiredAt: NOW,
+		expiresAt: "2026-07-23T00:01:00.000Z",
+	};
+	const receiptDigest = canonicalDigest(body);
+	return {
+		...body,
+		receiptId: createRuntimeId(
+			"receipt",
+			`writer-fence-${receiptDigest.slice(0, 48)}`,
+		),
+		receiptDigest,
+	};
 }
 
 class ControlledParentMutationGate implements SessionMutationAdmissionGatePort {
@@ -252,6 +291,19 @@ function runtimeReleaseRequest(
 	return { ...body, requestDigest: canonicalDigest(body) };
 }
 
+function runtimeCancelRequest(
+	launch: AgentLaunchRequest,
+	seed = "child-gate-cancel",
+): AgentCancelRequest {
+	const body: Omit<AgentCancelRequest, "requestDigest"> = {
+		requestId: createRuntimeId("command", seed),
+		agentId: launch.agentId,
+		sessionId: launch.sessionId,
+		reasonDigest: canonicalDigest("child gate cancellation"),
+	};
+	return { ...body, requestDigest: canonicalDigest(body) };
+}
+
 function runtimeResumeRequest(
 	launch: AgentLaunchRequest,
 	seed = "child-gate-resume",
@@ -273,6 +325,8 @@ function runtimeResumeRequest(
 async function fixture(
 	mode: GateMode,
 	processIsolation?: ProductionChildSessionLauncherOptions["processIsolation"],
+	authorityStore: ChildRuntimeAuthorityStorePort =
+		new MemoryChildRuntimeAuthorityStore(),
 ): Promise<{
 	launcher: ProductionChildSessionLauncher;
 	gate: ControlledParentMutationGate;
@@ -280,6 +334,8 @@ async function fixture(
 	request: AgentLaunchRequest;
 	sessionDir: string;
 	controller: AbortController;
+	authorityStore: ChildRuntimeAuthorityStorePort;
+	launcherOptions: ProductionChildSessionLauncherOptions;
 }> {
 	const root = await mkdtemp(join(tmpdir(), "runledger-child-gate-"));
 	roots.push(root);
@@ -314,7 +370,7 @@ async function fixture(
 		},
 	});
 	const sessionDir = join(root, "child-sessions");
-	const launcher = new ProductionChildSessionLauncher({
+	const launcherOptions: ProductionChildSessionLauncherOptions = {
 		workspace,
 		capabilitySubset: new GatewayBoundCapabilitySubsetEvaluator([
 			createProductionCapabilityGrantPolicy({
@@ -339,11 +395,62 @@ async function fixture(
 		features: { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true },
 		identity: IDENTITY,
 		maxActiveChildren: 2,
+		authorityStore,
+			parentAuthority: {
+				parentSessionId: PARENT_SESSION_ID,
+				resolve: async (activation) => {
+					const revision =
+						activation.activationType === "resume" ? 2 : 1;
+					const cursor = admissionReceipt({
+						kind: "child_spawn",
+						correlationId: activation.request.requestId,
+					}).eventHead;
+					return {
+						ok: true,
+						value: {
+							parentSessionId: PARENT_SESSION_ID,
+							ownerParentRuntimeId: PARENT_RUNTIME_ID,
+							parentGraphRevision: revision,
+							parentGraphCursor: {
+								...cursor,
+								sequence: revision,
+								eventId: createRuntimeId(
+									"event",
+									`child-gate-head-${revision}`,
+								),
+								eventHash: canonicalDigest({
+									revision,
+									requestId:
+										activation.request.requestId,
+								}),
+							},
+							parentNodeDigest: canonicalDigest({
+								revision,
+								parent: "child gate parent node",
+							}),
+							ownerParentWriterFence:
+								parentWriterFence(),
+						},
+					};
+				},
+			},
 		...(processIsolation ? { processIsolation } : {}),
 		clock: () => new Date(NOW),
-	});
+	};
+	const launcher = new ProductionChildSessionLauncher(
+		launcherOptions,
+	);
 	launchers.push(launcher);
-	return { launcher, gate, workspace, request, sessionDir, controller };
+	return {
+		launcher,
+		gate,
+		workspace,
+		request,
+		sessionDir,
+		controller,
+		authorityStore,
+		launcherOptions,
+	};
 }
 
 afterEach(async () => {
@@ -417,8 +524,16 @@ describe("production child session launcher mutation gate", () => {
 		await expect(readdir(sessionDir)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
-	it("removes the durable claim when the caller aborts while it is being written", async () => {
-		const { launcher, gate, workspace, request, sessionDir, controller } = await fixture("allow");
+	it("quarantines the durable authority claim when the caller aborts before create", async () => {
+		const {
+			launcher,
+			gate,
+			workspace,
+			request,
+			sessionDir,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
 		const create = vi.spyOn(V3SessionManager, "create");
 		workspace.beforeOperation = () => queueMicrotask(() => controller.abort("caller cancelled during launch claim"));
 
@@ -435,6 +550,12 @@ describe("production child session launcher mutation gate", () => {
 		expect(create).not.toHaveBeenCalled();
 		expect(launcher.snapshots()).toEqual([]);
 		expect(await readdir(sessionDir)).toEqual([]);
+		expect(
+			await authorityStore.read(request.agentId),
+		).toMatchObject({
+			state: "quarantined",
+			reason: "launch_admission_lost_before_create",
+		});
 	});
 
 	it.each(["abort", "close"] as const)(
@@ -483,7 +604,7 @@ describe("production child session launcher mutation gate", () => {
 		},
 	);
 
-	it("latches admission and drains a deferred durable create before idle close succeeds", async () => {
+	it("latches admission, drains deferred create, and refuses idle close on the cold partial authority", async () => {
 		const { launcher, gate, request, controller } = await fixture("allow");
 		const createManager = V3SessionManager.create.bind(V3SessionManager);
 		let created: (() => void) | undefined;
@@ -504,7 +625,7 @@ describe("production child session launcher mutation gate", () => {
 		const launched = launcher.launch(request, controller.signal);
 		await createdManager;
 		let closeSettled = false;
-		const closing = launcher.closeIfIdle().then(() => {
+		const closing = launcher.closeIfIdle().finally(() => {
 			closeSettled = true;
 		});
 		await Promise.resolve();
@@ -523,15 +644,20 @@ describe("production child session launcher mutation gate", () => {
 				message: "child session creation lost admission and requires explicit recovery",
 			},
 		});
-		await expect(closing).resolves.toBeUndefined();
+		await expect(closing).rejects.toThrow(
+			"active or cold-partial child runtime",
+		);
 		expect(closeSettled).toBe(true);
 		expect(create).toHaveBeenCalledTimes(1);
 		expect(launcher.snapshots()).toEqual([]);
 		expect(await launcher.launch(request, controller.signal)).toMatchObject({
-			ok: true,
-			value: { status: "unavailable", retryable: true },
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
 		});
-		expect(gate.requests).toHaveLength(1);
+		expect(gate.requests).toHaveLength(2);
 	});
 
 	it("revalidates before serving an idempotent cached launch result", async () => {
@@ -561,7 +687,12 @@ describe("production child session launcher mutation gate", () => {
 	});
 
 	it("binds the durable child runtime identity to the validated Workspace owner", async () => {
-		const { launcher, request, controller } = await fixture("allow");
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
 		const launched = await launcher.launch(request, controller.signal);
 
 		expect(launched).toMatchObject({ ok: true, value: { status: "started" } });
@@ -570,12 +701,838 @@ describe("production child session launcher mutation gate", () => {
 				agentId: request.agentId,
 				sessionId: request.sessionId,
 				runtimeInstanceId: createRuntimeId("runtime", "child-gate-workspace"),
-			}),
+				}),
+			]);
+		expect(await authorityStore.read(request.agentId)).toMatchObject({
+			state: "resident",
+			launchRequestDigest: request.requestDigest,
+			runtimeInstanceId: createRuntimeId(
+				"runtime",
+				"child-gate-workspace",
+			),
+			parentSessionId: PARENT_SESSION_ID,
+			parentAgentId: request.parentAgentId,
+		});
+	});
+
+	it("durably claims exact parent authority before creating a child session", async () => {
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		const createManager =
+			V3SessionManager.create.bind(V3SessionManager);
+		const create = vi
+			.spyOn(V3SessionManager, "create")
+			.mockImplementation(async (options) => {
+					expect(
+						await authorityStore.read(request.agentId),
+					).toMatchObject({
+						state: "creating",
+						claimAttemptId:
+							expect.stringMatching(/^command_/u),
+						sessionFilePath: options.filePath,
+						initialActivationEvidence: {
+							activationType: "launch",
+							requestId: request.requestId,
+							requestDigest: request.requestDigest,
+							parentGraphRevision: 1,
+							parentGraphCursor: {
+								stream: {
+									scope: "session",
+									sessionId: PARENT_SESSION_ID,
+								},
+							},
+						},
+						ownerParentRuntimeId: PARENT_RUNTIME_ID,
+				});
+				expect(options).toMatchObject({
+					writeGenesis: false,
+					filePath: expect.stringMatching(
+						new RegExp(`_${request.sessionId}\\.jsonl$`, "u"),
+					),
+				});
+				return createManager(options);
+			});
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+		expect(create).toHaveBeenCalledTimes(1);
+		expect(
+			await authorityStore.read(request.agentId),
+		).toMatchObject({ state: "resident", revision: 4 });
+	});
+
+	it("persists creating and provisional authority before create and genesis effects", async () => {
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		const transitions: string[] = [];
+		const compareAndSwap =
+			authorityStore.compareAndSwap.bind(authorityStore);
+		vi.spyOn(authorityStore, "compareAndSwap").mockImplementation(
+			async (
+				agentId,
+				expectedRevision,
+				expectedRecordDigest,
+				next,
+			) => {
+				transitions.push(next.state);
+				return compareAndSwap(
+					agentId,
+					expectedRevision,
+					expectedRecordDigest,
+					next,
+				);
+			},
+		);
+		const ensureInitialized =
+			AgentLoopSessionEvents.prototype.ensureInitialized;
+		vi.spyOn(
+			AgentLoopSessionEvents.prototype,
+			"ensureInitialized",
+		).mockImplementation(async function (
+			this: AgentLoopSessionEvents,
+			origin,
+		) {
+			const provisional = await authorityStore.read(
+				request.agentId,
+			);
+			expect(provisional).toMatchObject({
+				state: "provisional",
+				sessionFilePath:
+					expect.stringMatching(
+						new RegExp(`_${request.sessionId}\\.jsonl$`, "u"),
+					),
+				childWriterFence: {
+					runtimeId: createRuntimeId(
+						"runtime",
+						"child-gate-workspace",
+					),
+				},
+			});
+			if (!provisional) {
+				throw new Error("provisional authority is unavailable");
+			}
+			expect(await readFile(provisional.sessionFilePath, "utf8")).toBe("");
+			return ensureInitialized.call(this, origin);
+		});
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+		expect(transitions).toEqual([
+			"creating",
+			"provisional",
+			"resident",
 		]);
+		const resident = await authorityStore.read(request.agentId);
+		expect(resident).toMatchObject({
+			state: "resident",
+			revision: 4,
+			genesisCursor: { sequence: 0 },
+		});
+		if (!resident) throw new Error("resident authority is unavailable");
+		expect(await readFile(resident.sessionFilePath, "utf8")).toContain(
+			'"type":"session.created"',
+		);
+	});
+
+	it("quarantines provisional evidence when genesis cannot be established", async () => {
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		vi.spyOn(
+			AgentLoopSessionEvents.prototype,
+			"ensureInitialized",
+		).mockRejectedValueOnce(
+			new Error("injected genesis initialization failure"),
+		);
+		const close = vi.spyOn(
+			V3SessionManager.prototype,
+			"closeAll",
+		);
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
+		});
+		expect(launcher.snapshots()).toEqual([]);
+		expect(close).toHaveBeenCalledTimes(1);
+		const quarantined = await authorityStore.read(request.agentId);
+		expect(quarantined).toMatchObject({
+			state: "quarantined",
+			reason: "genesis_write_failed",
+			createStartedAt: NOW,
+			launchReceipt: { launchRevision: 1 },
+			residencyReceipt: { revision: 1 },
+			childWriterFence: {
+				runtimeId: createRuntimeId(
+					"runtime",
+					"child-gate-workspace",
+				),
+			},
+		});
+		if (!quarantined) {
+			throw new Error("quarantined authority is unavailable");
+		}
+		expect(await readFile(quarantined.sessionFilePath, "utf8")).toBe("");
+	});
+
+	it("recovers a durable genesis barrier acknowledgement loss by exact retry", async () => {
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		const flushCurrentHead =
+			V3SessionManager.prototype.flushCurrentHead;
+		const flush = vi
+			.spyOn(V3SessionManager.prototype, "flushCurrentHead")
+			.mockImplementationOnce(async function (
+				this: V3SessionManager,
+			) {
+				const durable = await flushCurrentHead.call(this);
+				if (!durable.ok) return durable;
+				throw new Error(
+					"injected durable genesis receipt acknowledgement loss",
+				);
+			});
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+		expect(flush).toHaveBeenCalledTimes(2);
+		expect(await authorityStore.read(request.agentId)).toMatchObject({
+			state: "resident",
+			genesisCursor: { sequence: 0 },
+		});
+	});
+
+	it("preserves the exact genesis cursor when resident record construction fails", async () => {
+		const {
+			request,
+			controller,
+			authorityStore,
+			launcherOptions,
+		} = await fixture("allow");
+		let failNextClockRead = false;
+		const launcher = new ProductionChildSessionLauncher({
+			...launcherOptions,
+			clock: () => {
+				if (failNextClockRead) {
+					failNextClockRead = false;
+					return new Date(Number.NaN);
+				}
+				return new Date(NOW);
+			},
+		});
+		launchers.push(launcher);
+		const ensureInitialized =
+			AgentLoopSessionEvents.prototype.ensureInitialized;
+		vi.spyOn(
+			AgentLoopSessionEvents.prototype,
+			"ensureInitialized",
+		).mockImplementation(async function (
+			this: AgentLoopSessionEvents,
+			origin,
+		) {
+			const initialized = await ensureInitialized.call(this, origin);
+			failNextClockRead = true;
+			return initialized;
+		});
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "launch_failed",
+				retryable: false,
+			},
+		});
+		const quarantined = await authorityStore.read(request.agentId);
+		expect(quarantined).toMatchObject({
+			state: "quarantined",
+			reason: "resident_evidence_invalid",
+			genesisCursor: { sequence: 0 },
+		});
+		if (!quarantined) {
+			throw new Error("quarantined authority is unavailable");
+		}
+		expect(await readFile(quarantined.sessionFilePath, "utf8")).toContain(
+			'"type":"session.created"',
+		);
+	});
+
+	it.each(["manager close", "authority quarantine"] as const)(
+		"keeps resident-construction cleanup retryable when %s is uncertain",
+		async (fault) => {
+			const {
+				request,
+				controller,
+				authorityStore,
+				launcherOptions,
+			} = await fixture("allow");
+			let failNextClockRead = false;
+			const launcher = new ProductionChildSessionLauncher({
+				...launcherOptions,
+				clock: () => {
+					if (failNextClockRead) {
+						failNextClockRead = false;
+						return new Date(Number.NaN);
+					}
+					return new Date(NOW);
+				},
+			});
+			launchers.push(launcher);
+			const ensureInitialized =
+				AgentLoopSessionEvents.prototype.ensureInitialized;
+			vi.spyOn(
+				AgentLoopSessionEvents.prototype,
+				"ensureInitialized",
+			).mockImplementation(async function (
+				this: AgentLoopSessionEvents,
+				origin,
+			) {
+				const initialized = await ensureInitialized.call(
+					this,
+					origin,
+				);
+				failNextClockRead = true;
+				return initialized;
+			});
+			const createManager = V3SessionManager.create;
+			let createdManager: V3SessionManager | undefined;
+			vi.spyOn(V3SessionManager, "create").mockImplementation(
+				async (options) => {
+					createdManager = await createManager(options);
+					return createdManager;
+				},
+			);
+			if (fault === "manager close") {
+				const closeAll = V3SessionManager.prototype.closeAll;
+				let injectFailure = true;
+				vi.spyOn(
+					V3SessionManager.prototype,
+					"closeAll",
+				).mockImplementation(async function (
+					this: V3SessionManager,
+				) {
+					if (injectFailure) {
+						injectFailure = false;
+						throw new Error(
+							"injected manager close uncertainty",
+						);
+					}
+					return closeAll.call(this);
+				});
+			} else {
+				const compareAndSwap =
+					authorityStore.compareAndSwap.bind(authorityStore);
+				vi.spyOn(
+					authorityStore,
+					"compareAndSwap",
+				).mockImplementation(
+					(
+						agentId,
+						expectedRevision,
+						expectedRecordDigest,
+						next,
+					) =>
+						next.state === "quarantined"
+							? Promise.resolve("conflict")
+							: compareAndSwap(
+									agentId,
+									expectedRevision,
+									expectedRecordDigest,
+									next,
+								),
+				);
+			}
+
+			expect(
+				await launcher.launch(request, controller.signal),
+			).toMatchObject({
+				ok: false,
+				error: {
+					code: "reference_unavailable",
+					retryable: true,
+				},
+			});
+			expect(await authorityStore.read(request.agentId)).toMatchObject({
+				state:
+					fault === "manager close"
+						? "quarantined"
+						: "provisional",
+			});
+			await createdManager?.closeAll();
+		},
+	);
+
+	it.each(["provisional", "resident"] as const)(
+		"preserves exact recovery evidence when the %s authority CAS conflicts",
+		async (failedState) => {
+			const {
+				launcher,
+				request,
+				controller,
+				authorityStore,
+			} = await fixture("allow");
+			const compareAndSwap =
+				authorityStore.compareAndSwap.bind(authorityStore);
+			let injected = false;
+			vi.spyOn(authorityStore, "compareAndSwap").mockImplementation(
+				(
+					agentId,
+					expectedRevision,
+					expectedRecordDigest,
+					next,
+				) => {
+					if (!injected && next.state === failedState) {
+						injected = true;
+						return Promise.resolve("conflict");
+					}
+					return compareAndSwap(
+						agentId,
+						expectedRevision,
+						expectedRecordDigest,
+						next,
+					);
+				},
+			);
+			const ensure = vi.spyOn(
+				AgentLoopSessionEvents.prototype,
+				"ensureInitialized",
+			);
+
+			expect(
+				await launcher.launch(request, controller.signal),
+			).toMatchObject({
+				ok: false,
+				error: {
+					code: "reference_unavailable",
+					retryable: true,
+				},
+			});
+			expect(launcher.snapshots()).toEqual([]);
+			const quarantined = await authorityStore.read(
+				request.agentId,
+			);
+			expect(quarantined).toMatchObject({
+				state: "quarantined",
+				reason:
+					failedState === "provisional"
+						? "provisional_activation_failed"
+						: "resident_activation_failed",
+				sessionFilePath:
+					expect.stringMatching(
+						new RegExp(`_${request.sessionId}\\.jsonl$`, "u"),
+					),
+				launchReceipt: { launchRevision: 1 },
+				residencyReceipt: { revision: 1 },
+				childWriterFence: {
+					runtimeId: createRuntimeId(
+						"runtime",
+						"child-gate-workspace",
+					),
+				},
+				...(failedState === "resident"
+					? { genesisCursor: { sequence: 0 } }
+					: {}),
+			});
+			if (!quarantined) {
+				throw new Error("quarantined authority is unavailable");
+			}
+			expect(
+				await readFile(
+					`${quarantined.sessionFilePath}.state/writer-lease.json`,
+					"utf8",
+				).then((source) => JSON.parse(source) as unknown),
+			).toMatchObject({ state: "released" });
+			const sessionSource = await readFile(
+				quarantined.sessionFilePath,
+				"utf8",
+			);
+			expect(sessionSource.includes('"type":"session.created"')).toBe(
+				failedState === "resident",
+			);
+			expect(ensure).toHaveBeenCalledTimes(
+				failedState === "resident" ? 1 : 0,
+			);
+		},
+	);
+
+	it.each(["creating", "provisional", "resident"] as const)(
+		"uses exact read-back after the %s authority CAS loses its acknowledgement",
+		async (lostState) => {
+			const {
+				launcher,
+				request,
+				controller,
+				authorityStore,
+			} = await fixture("allow");
+			const compareAndSwap =
+				authorityStore.compareAndSwap.bind(authorityStore);
+			let injected = false;
+			vi.spyOn(authorityStore, "compareAndSwap").mockImplementation(
+				async (
+					agentId,
+					expectedRevision,
+					expectedRecordDigest,
+					next,
+				) => {
+					const result = await compareAndSwap(
+						agentId,
+						expectedRevision,
+						expectedRecordDigest,
+						next,
+					);
+					if (!injected && next.state === lostState) {
+						injected = true;
+						throw new Error(
+							`injected ${lostState} CAS acknowledgement loss`,
+						);
+					}
+					return result;
+				},
+			);
+			const create = vi.spyOn(V3SessionManager, "create");
+
+			expect(
+				await launcher.launch(request, controller.signal),
+			).toMatchObject({
+				ok: true,
+				value: { status: "started" },
+			});
+			expect(create).toHaveBeenCalledTimes(1);
+			expect(await authorityStore.read(request.agentId)).toMatchObject({
+				state: "resident",
+				revision: 4,
+				genesisCursor: { sequence: 0 },
+			});
+		},
+	);
+
+	it("reserves the active-child bound before await and shares the exact in-flight launch", async () => {
+		const {
+			launcherOptions,
+			request,
+			controller,
+		} = await fixture("allow");
+		const bounded = new ProductionChildSessionLauncher({
+			...launcherOptions,
+			maxActiveChildren: 1,
+		});
+		launchers.push(bounded);
+		const createManager =
+			V3SessionManager.create.bind(V3SessionManager);
+		let enteredCreate: (() => void) | undefined;
+		let releaseCreate: (() => void) | undefined;
+		const createEntered = new Promise<void>((resolve) => {
+			enteredCreate = resolve;
+		});
+		const createGate = new Promise<void>((resolve) => {
+			releaseCreate = resolve;
+		});
+		const create = vi
+			.spyOn(V3SessionManager, "create")
+			.mockImplementation(async (options) => {
+				enteredCreate?.();
+				await createGate;
+				return createManager(options);
+			});
+		const first = bounded.launch(request, controller.signal);
+		expect(bounded.launch(request, controller.signal)).toBe(first);
+		await createEntered;
+
+			const {
+				requestDigest: _requestDigest,
+				...originalBody
+			} = request;
+			const secondBody: Omit<AgentLaunchRequest, "requestDigest"> = {
+				...originalBody,
+				requestId: createRuntimeId(
+					"command",
+					"child-gate-concurrent-bound",
+			),
+			agentId: createRuntimeId(
+				"agent",
+				"child-gate-concurrent-bound",
+			),
+			sessionId: createRuntimeId(
+				"session",
+				"child-gate-concurrent-bound",
+			),
+		};
+		const second = {
+			...secondBody,
+			requestDigest: canonicalDigest(secondBody),
+		};
+		expect(
+			await bounded.launch(second, controller.signal),
+		).toMatchObject({
+			ok: true,
+			value: { status: "rejected", retryable: true },
+		});
+		expect(create).toHaveBeenCalledTimes(1);
+		releaseCreate?.();
+		expect(await first).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+	});
+
+	it("performs no create when parent graph or writer authority changes after the claim", async () => {
+		const {
+			launcherOptions,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		const resolveParent =
+			launcherOptions.parentAuthority.resolve.bind(
+				launcherOptions.parentAuthority,
+			);
+		let resolutions = 0;
+		const guarded = new ProductionChildSessionLauncher({
+			...launcherOptions,
+			parentAuthority: {
+				parentSessionId:
+					launcherOptions.parentAuthority.parentSessionId,
+				resolve: async (activation) => {
+					const resolved = await resolveParent(activation);
+					resolutions += 1;
+					if (!resolved.ok || resolutions === 1) {
+						return resolved;
+					}
+					return {
+						ok: true,
+						value: {
+							...resolved.value,
+							parentGraphRevision:
+								resolved.value.parentGraphRevision + 1,
+							parentNodeDigest: canonicalDigest(
+								"changed parent authority",
+							),
+						},
+					};
+				},
+			},
+		});
+		launchers.push(guarded);
+		const create = vi.spyOn(V3SessionManager, "create");
+
+		expect(
+			await guarded.launch(request, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
+		});
+		expect(resolutions).toBe(2);
+		expect(create).not.toHaveBeenCalled();
+		expect(
+			await authorityStore.read(request.agentId),
+		).toMatchObject({
+			state: "quarantined",
+			reason: "parent_authority_changed_before_create",
+		});
+	});
+
+	it("advances resident authority on resume without changing the durable session or writer fence", async () => {
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const before = await authorityStore.read(request.agentId);
+		if (!before || before.state !== "resident") {
+			throw new Error("resident child authority is unavailable");
+		}
+
+			const resumeRequest = runtimeResumeRequest(request);
+			const resumed = await launcher.resume(
+				resumeRequest,
+				controller.signal,
+			);
+		expect(resumed).toMatchObject({
+			ok: true,
+			value: {
+				status: "started",
+				launchReceipt: { launchRevision: 2 },
+				residencyReceipt: { state: "resident", revision: 2 },
+			},
+		});
+		const after = await authorityStore.read(request.agentId);
+		expect(after).toMatchObject({
+			state: "resident",
+			revision: before.revision + 1,
+			previousRecordDigest: before.recordDigest,
+			sessionFilePath: before.sessionFilePath,
+			genesisCursor: before.genesisCursor,
+				childWriterFence: before.childWriterFence,
+				initialActivationEvidence:
+					before.initialActivationEvidence,
+				activationEvidence: {
+					activationType: "resume",
+					requestId: resumeRequest.requestId,
+					requestDigest: resumeRequest.requestDigest,
+					parentGraphRevision: 2,
+					delegationReceiptDigest:
+						resumeRequest.delegationReceipt.receiptDigest,
+					workspaceReceiptDigest:
+						resumeRequest.workspaceReceipt.receiptDigest,
+					budgetReservationDigest: canonicalDigest(
+						resumeRequest.budgetReservation,
+					),
+				},
+				launchReceipt: { launchRevision: 2 },
+				residencyReceipt: { state: "resident", revision: 2 },
+			});
+			const revisionAfterResume = after?.revision;
+			expect(
+				await launcher.resume(
+					resumeRequest,
+					controller.signal,
+				),
+			).toEqual(resumed);
+			expect(
+				(await authorityStore.read(request.agentId))?.revision,
+			).toBe(revisionAfterResume);
+		});
+
+	it("performs no child create when the durable authority claim conflicts", async () => {
+		const authorityStore =
+			new MemoryChildRuntimeAuthorityStore();
+		vi.spyOn(authorityStore, "begin").mockResolvedValue(
+			"conflict",
+		);
+		const { launcher, request, controller } = await fixture(
+			"allow",
+			undefined,
+			authorityStore,
+		);
+		const create = vi.spyOn(V3SessionManager, "create");
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
+		});
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it("performs no child create when an applied authority claim cannot be read back exactly", async () => {
+		const authorityStore =
+			new MemoryChildRuntimeAuthorityStore();
+		const read = authorityStore.read.bind(authorityStore);
+		let reads = 0;
+		vi.spyOn(authorityStore, "read").mockImplementation(
+			async (agentId) => {
+				reads += 1;
+				return reads === 2 ? undefined : read(agentId);
+			},
+		);
+		const { launcher, request, controller } = await fixture(
+			"allow",
+			undefined,
+			authorityStore,
+		);
+		const create = vi.spyOn(V3SessionManager, "create");
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
+		});
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it("creates exactly once when claim begin commits but loses its acknowledgement", async () => {
+		const authorityStore =
+			new MemoryChildRuntimeAuthorityStore();
+		const begin = authorityStore.begin.bind(authorityStore);
+		vi.spyOn(authorityStore, "begin").mockImplementation(
+			async (record) => {
+				await begin(record);
+				throw new Error(
+					"injected acknowledgement loss after child claim commit",
+				);
+			},
+		);
+		const { launcher, request, controller } = await fixture(
+			"allow",
+			undefined,
+			authorityStore,
+		);
+		const create = vi.spyOn(V3SessionManager, "create");
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+		expect(create).toHaveBeenCalledTimes(1);
+		expect(
+			await authorityStore.read(request.agentId),
+		).toMatchObject({
+			state: "resident",
+			claimAttemptId: expect.stringMatching(/^command_/u),
+		});
 	});
 
 	it("releases a child runtime with an exact replayable nonresident receipt", async () => {
-		const { launcher, request, controller } = await fixture("allow");
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+			launcherOptions,
+		} = await fixture("allow");
 		const launched = await launcher.launch(request, controller.signal);
 		if (!launched.ok || launched.value.status !== "started") throw new Error("child launch failed");
 		const release = runtimeReleaseRequest(request, launched.value.launchReceipt, launched.value.residencyReceipt);
@@ -602,7 +1559,7 @@ describe("production child session launcher mutation gate", () => {
 					state: "nonresident",
 					revision: launched.value.residencyReceipt.revision + 1,
 				}),
-				releasedAt: NOW,
+					releasedAt: expect.any(String),
 				receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
 			},
 		});
@@ -622,6 +1579,276 @@ describe("production child session launcher mutation gate", () => {
 		expect(await launcher.release(conflicting, controller.signal)).toMatchObject({
 			ok: false,
 			error: { code: "idempotency_conflict", retryable: false },
+		});
+
+		const durable = await authorityStore.read(request.agentId);
+		expect(durable).toMatchObject({
+			state: "released",
+			releaseRequest: {
+				requestDigest: release.requestDigest,
+			},
+			releaseReceipt: first.value,
+			writerLeaseReleasedEvidence: {
+				releasedAt: first.value.releasedAt,
+				evidenceDigest: expect.stringMatching(
+					/^[a-f0-9]{64}$/u,
+				),
+			},
+		});
+		const fresh = new ProductionChildSessionLauncher(
+			launcherOptions,
+		);
+		launchers.push(fresh);
+		const stop = vi.spyOn(
+			V3SessionManager.prototype,
+			"requestStop",
+		);
+		const close = vi.spyOn(
+			V3SessionManager.prototype,
+			"closeAll",
+		);
+		expect(
+			await fresh.release(release, controller.signal),
+		).toEqual(first);
+		expect(stop).not.toHaveBeenCalled();
+		expect(close).not.toHaveBeenCalled();
+	});
+
+	it("releases successfully after the child writer heartbeat refreshes its fence receipt", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(NOW));
+		try {
+			const {
+				launcher,
+				request,
+				controller,
+				authorityStore,
+			} = await fixture("allow");
+			const launched = await launcher.launch(
+				request,
+				controller.signal,
+			);
+			if (!launched.ok || launched.value.status !== "started") {
+				throw new Error("child launch failed");
+			}
+			const before = await authorityStore.read(request.agentId);
+			if (before?.state !== "resident") {
+				throw new Error("resident authority is unavailable");
+			}
+
+			await vi.advanceTimersByTimeAsync(10_001);
+			const release = runtimeReleaseRequest(
+				request,
+				launched.value.launchReceipt,
+				launched.value.residencyReceipt,
+				"completed",
+				"child-gate-release-after-heartbeat",
+			);
+			expect(
+				await launcher.release(release, controller.signal),
+			).toMatchObject({ ok: true });
+			const released = await authorityStore.read(request.agentId);
+			expect(released).toMatchObject({
+				state: "released",
+				preStopWriterFence: {
+					leaseId: before.childWriterFence.leaseId,
+					writerEpoch: before.childWriterFence.writerEpoch,
+				},
+			});
+			if (released?.state !== "released") {
+				throw new Error("released authority is unavailable");
+			}
+			expect(
+				Date.parse(released.preStopWriterFence.expiresAt),
+			).toBeGreaterThan(
+				Date.parse(before.childWriterFence.expiresAt),
+			);
+			expect(released.preStopWriterFence.receiptDigest).not.toBe(
+				before.childWriterFence.receiptDigest,
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("persists release_pending before stop and performs no stop when the CAS conflicts", async () => {
+		const authorityStore =
+			new MemoryChildRuntimeAuthorityStore();
+		const {
+			launcher,
+			request,
+			controller,
+		} = await fixture("allow", undefined, authorityStore);
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const release = runtimeReleaseRequest(
+			request,
+			launched.value.launchReceipt,
+			launched.value.residencyReceipt,
+			"completed",
+			"child-gate-release-cas-conflict",
+		);
+		const compareAndSwap =
+			authorityStore.compareAndSwap.bind(authorityStore);
+		vi.spyOn(
+			authorityStore,
+			"compareAndSwap",
+		).mockImplementation(
+			async (
+				agentId,
+				expectedRevision,
+				expectedDigest,
+				next,
+			) =>
+				next.state === "release_pending"
+					? "conflict"
+					: compareAndSwap(
+							agentId,
+							expectedRevision,
+							expectedDigest,
+							next,
+						),
+		);
+		const stop = vi.spyOn(
+			V3SessionManager.prototype,
+			"requestStop",
+		);
+
+		expect(
+			await launcher.release(release, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
+		});
+		expect(stop).not.toHaveBeenCalled();
+		expect(
+			await authorityStore.read(request.agentId),
+		).toMatchObject({ state: "resident" });
+	});
+
+	it("makes release_pending durable before the first stop effect", async () => {
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture("allow");
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const release = runtimeReleaseRequest(
+			request,
+			launched.value.launchReceipt,
+			launched.value.residencyReceipt,
+			"completed",
+			"child-gate-release-order",
+		);
+		const originalStop =
+			V3SessionManager.prototype.requestStop;
+		const stop = vi
+			.spyOn(V3SessionManager.prototype, "requestStop")
+			.mockImplementation(async function (reason) {
+				expect(
+					await authorityStore.read(request.agentId),
+				).toMatchObject({
+					state: "release_pending",
+					releaseRequest: {
+						requestDigest: release.requestDigest,
+					},
+				});
+				return originalStop.call(this, reason);
+			});
+
+		expect(
+			await launcher.release(release, controller.signal),
+		).toMatchObject({ ok: true });
+		expect(stop).toHaveBeenCalledTimes(1);
+	});
+
+	it("recovers a released authority CAS acknowledgement loss by exact read-back", async () => {
+		const authorityStore =
+			new MemoryChildRuntimeAuthorityStore();
+		const {
+			launcher,
+			request,
+			controller,
+		} = await fixture("allow", undefined, authorityStore);
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const release = runtimeReleaseRequest(
+			request,
+			launched.value.launchReceipt,
+			launched.value.residencyReceipt,
+			"completed",
+			"child-gate-release-ack-loss",
+		);
+		const compareAndSwap =
+			authorityStore.compareAndSwap.bind(authorityStore);
+		let injected = false;
+		vi.spyOn(
+			authorityStore,
+			"compareAndSwap",
+		).mockImplementation(
+			async (
+				agentId,
+				expectedRevision,
+				expectedDigest,
+				next,
+			) => {
+				const result = await compareAndSwap(
+					agentId,
+					expectedRevision,
+					expectedDigest,
+					next,
+				);
+				if (!injected && next.state === "released") {
+					injected = true;
+					throw new Error(
+						"injected acknowledgement loss after released authority commit",
+					);
+				}
+				return result;
+			},
+		);
+		const stop = vi.spyOn(
+			V3SessionManager.prototype,
+			"requestStop",
+		);
+
+		const released = await launcher.release(
+			release,
+			controller.signal,
+		);
+		expect(released).toMatchObject({
+			ok: true,
+			value: {
+				requestDigest: release.requestDigest,
+				releasedAt: expect.any(String),
+			},
+		});
+		expect(injected).toBe(true);
+		expect(stop).toHaveBeenCalledTimes(1);
+		expect(launcher.snapshots()).toEqual([]);
+		expect(await authorityStore.read(request.agentId)).toMatchObject({
+			state: "released",
+			releaseRequest: { requestDigest: release.requestDigest },
 		});
 	});
 
@@ -674,13 +1901,114 @@ describe("production child session launcher mutation gate", () => {
 		expect(closeAll).toHaveBeenCalledTimes(1);
 	});
 
+	it("deduplicates concurrent cancel through public release while preserving its receipt-id result", async () => {
+		const authorityStore =
+			new MemoryChildRuntimeAuthorityStore();
+		const {
+			launcher,
+			request,
+			controller,
+		} = await fixture("allow", undefined, authorityStore);
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const seed = "child-gate-concurrent-cancel";
+		const cancel = runtimeCancelRequest(request, seed);
+		const compareAndSwap =
+			authorityStore.compareAndSwap.bind(authorityStore);
+		let releasePendingCas: (() => void) | undefined;
+		const releasePendingCasGate = new Promise<void>((resolve) => {
+			releasePendingCas = resolve;
+		});
+		const authorityCas = vi
+			.spyOn(authorityStore, "compareAndSwap")
+			.mockImplementation(
+				async (
+					agentId,
+					expectedRevision,
+					expectedDigest,
+					next,
+				) => {
+					const result = await compareAndSwap(
+						agentId,
+						expectedRevision,
+						expectedDigest,
+						next,
+					);
+					if (next.state === "release_pending") {
+						await releasePendingCasGate;
+					}
+					return result;
+				},
+			);
+		const originalStop =
+			V3SessionManager.prototype.requestStop;
+		let sharedStop: Promise<void> | undefined;
+		const stop = vi
+			.spyOn(V3SessionManager.prototype, "requestStop")
+			.mockImplementation(function (reason) {
+				sharedStop ??= originalStop.call(this, reason);
+				return sharedStop;
+			});
+
+		const firstCancellation = launcher.cancel(
+			cancel,
+			controller.signal,
+		);
+		const secondCancellation = launcher.cancel(
+			cancel,
+			controller.signal,
+		);
+		await vi.waitFor(() => {
+			expect(
+				authorityCas.mock.calls.some(
+					([, , , next]) =>
+						next.state === "release_pending",
+				),
+			).toBe(true);
+		});
+		await new Promise<void>((resolveImmediate) => {
+			setImmediate(resolveImmediate);
+		});
+		releasePendingCas?.();
+
+		const [first, second] = await Promise.all([
+			firstCancellation,
+			secondCancellation,
+		]);
+		expect(stop).toHaveBeenCalledTimes(1);
+		expect(first).toMatchObject({
+			ok: true,
+			value: expect.stringMatching(/^receipt_/u),
+		});
+		expect(second).toEqual(first);
+		const replayed = await launcher.release(
+			runtimeReleaseRequest(
+				request,
+				launched.value.launchReceipt,
+				launched.value.residencyReceipt,
+				"stopped",
+				seed,
+			),
+			controller.signal,
+		);
+		expect(replayed).toMatchObject({
+			ok: true,
+			value: { receiptId: first.ok ? first.value : undefined },
+		});
+	});
+
 	it("reopens admission after active-child close refusal so governed cleanup and close can retry", async () => {
 		const { launcher, request, controller } = await fixture("allow");
 		const launched = await launcher.launch(request, controller.signal);
 		if (!launched.ok || launched.value.status !== "started") throw new Error("child launch failed");
 
 		await expect(launcher.closeIfIdle()).rejects.toThrow(
-			"requires governed terminal cleanup for 1 active child runtime(s)",
+			"requires governed terminal cleanup for 1 active or cold-partial child runtime(s)",
 		);
 		const release = runtimeReleaseRequest(
 			request,
@@ -691,6 +2019,37 @@ describe("production child session launcher mutation gate", () => {
 		);
 		expect(await launcher.release(release, controller.signal)).toMatchObject({ ok: true });
 		await expect(launcher.closeIfIdle()).resolves.toBeUndefined();
+	});
+
+	it("performs startup and idle decisions through the authority root audit primitive", async () => {
+		const authorityStore = new MemoryChildRuntimeAuthorityStore();
+		const { launcher } = await fixture("allow", undefined, authorityStore);
+		const audit = vi.spyOn(authorityStore, "withExclusiveRootAudit");
+		const list = vi.spyOn(authorityStore, "list");
+
+		await expect(launcher.auditAuthority()).resolves.toBeUndefined();
+		await expect(launcher.closeIfIdle()).resolves.toBeUndefined();
+
+		expect(audit).toHaveBeenCalledTimes(2);
+		expect(list).not.toHaveBeenCalled();
+	});
+
+	it("fails startup closed when a fresh launcher observes a cold resident authority", async () => {
+		const {
+			launcher,
+			launcherOptions,
+			request,
+			controller,
+		} = await fixture("allow");
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({ ok: true, value: { status: "started" } });
+		const fresh = new ProductionChildSessionLauncher(launcherOptions);
+		launchers.push(fresh);
+
+		await expect(fresh.auditAuthority()).rejects.toThrow(
+			"requires explicit recovery for 1 cold partial or resident runtime",
+		);
 	});
 
 	it("retains a stopped child after close failure and retries without duplicating stop", async () => {

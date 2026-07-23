@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -789,9 +789,22 @@ describe("production interactive runtime composition", () => {
 					status: bindingKind === "source" ? "active" : "readonly",
 				},
 			});
-		}
-		expect(runtime.featureEvidence.features).not.toContain("multi-agent");
-		const workspaceId = runtime.workspace.workspaceId;
+			}
+			expect(runtime.featureEvidence.features).not.toContain("multi-agent");
+			const authorityRoot = join(
+				runtime.paths.workspace.stateRoot,
+				"agents",
+				"child-runtime-authority",
+				canonicalDigest({
+					authorityId: identity.authorityId,
+					tenantId: identity.tenantId,
+					parentSessionId: setup.manager.sessionId(),
+				}),
+			);
+			expect((await stat(authorityRoot)).isDirectory()).toBe(
+				true,
+			);
+			const workspaceId = runtime.workspace.workspaceId;
 		const firstWorkspaceRevision = graph?.ok
 			? graph.value.nodes.get(graph.value.rootAgentId!)?.workspaceReceipt.bindingRevision
 			: undefined;

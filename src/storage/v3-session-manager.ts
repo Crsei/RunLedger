@@ -1,7 +1,7 @@
 /** Runtime v3 session composition root：event store、writer lease、recovery 与 model-history replay。 */
 
 import { readFile, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
 	createRuntimeId,
@@ -43,7 +43,11 @@ import {
 	type WriterLeaseScope,
 } from "../runtime/session/writer-lease.ts";
 import type { RuntimeEventStore } from "../runtime/session/event-store.ts";
-import type { SessionResult } from "../runtime/session/types.ts";
+import type {
+	AcceptedEventCursor,
+	DurableEventReceipt,
+	SessionResult,
+} from "../runtime/session/types.ts";
 import type { AgentMessage } from "../runtime/types.ts";
 import type { SessionRuntimeConfig } from "./session-codec.ts";
 import type { ToolResultArtifactSink } from "../runtime/types.ts";
@@ -77,6 +81,8 @@ const LEASE_DURATION_MS = 30_000;
 export interface V3SessionCreateOptions {
 	cwd: string;
 	sessionDir?: string;
+	/** 已预分配的 exact target；必须与 resolved sessionDir 和 sessionId 双重绑定。 */
+	filePath?: string;
 	identity?: RuntimeIdentityContext;
 	runtimeId?: RuntimeInstanceId;
 	sessionId?: SessionId;
@@ -109,6 +115,19 @@ export interface V3SessionWriterFenceReceipt {
 	receiptDigest: string;
 }
 
+/** confirmed durable release；不跨边界暴露 raw fencing token。 */
+export interface V3SessionWriterLeaseReleasedEvidence {
+	readonly authorityId: RuntimeIdentityContext["authorityId"];
+	readonly tenantId: RuntimeIdentityContext["tenantId"];
+	readonly sessionId: SessionId;
+	readonly runtimeInstanceId: RuntimeInstanceId;
+	readonly leaseId: WriterLeaseRecord["leaseId"];
+	readonly writerEpoch: number;
+	readonly fencingTokenDigest: string;
+	readonly releasedAt: string;
+	readonly evidenceDigest: string;
+}
+
 interface OpenedV3Runtime {
 	filePath: string;
 	stateDirectory: string;
@@ -138,6 +157,117 @@ function resultValue<T>(result: SessionResult<T>, operation: string): T {
 
 function stateDirectoryFor(filePath: string): string {
 	return `${filePath}.state`;
+}
+
+function createFilePath(
+	sessionDir: string,
+	sessionId: SessionId,
+	exactFilePath: string | undefined,
+): string {
+	if (exactFilePath === undefined) return join(sessionDir, buildSessionFileName(new Date(), sessionId));
+	if (!isAbsolute(exactFilePath)) {
+		throw new TypeError("v3 exact session filePath must be absolute");
+	}
+	const resolvedSessionDir = resolve(sessionDir);
+	if (dirname(exactFilePath) !== resolvedSessionDir) {
+		throw new TypeError("v3 exact session filePath dirname must equal the resolved session directory");
+	}
+	if (!basename(exactFilePath).endsWith(`_${sessionId}.jsonl`)) {
+		throw new TypeError("v3 exact session filePath filename must be bound to sessionId");
+	}
+	return exactFilePath;
+}
+
+function cleanupError(cause: unknown): Error {
+	if (cause instanceof Error) return cause;
+	return new Error(typeof cause === "string" ? cause : "unknown runtime cleanup failure");
+}
+
+function resultError(
+	operation: string,
+	error: { code: string; message: string },
+): Error {
+	return new Error(`${operation}: ${error.code}: ${error.message}`);
+}
+
+function aggregateCleanupErrors(cause: unknown): readonly unknown[] {
+	return cause instanceof AggregateError ? cause.errors : [cause];
+}
+
+async function closeWriterAndStore(
+	writer: EventWriter | undefined,
+	store: JsonlV3EventStore | undefined,
+	onWriterSettled?: () => void,
+): Promise<Error[]> {
+	const errors: Error[] = [];
+	let writerThrew = false;
+	if (writer) {
+		try {
+			const closed = await writer.close();
+			if (!closed.ok) {
+				errors.push(resultError("v3 event writer close failed", closed.error));
+			}
+		} catch (cause) {
+			writerThrew = true;
+			errors.push(cleanupError(cause));
+		} finally {
+			onWriterSettled?.();
+		}
+	}
+	if (!writer) onWriterSettled?.();
+	if (store && (!writer || writerThrew)) {
+		try {
+			const closed = await store.close();
+			if (!closed.ok) {
+				errors.push(resultError("v3 event store close failed", closed.error));
+			}
+		} catch (cause) {
+			errors.push(cleanupError(cause));
+		}
+	}
+	return errors;
+}
+
+function releaseWriterLease(
+	leaseStore: FileWriterLeaseStore,
+	fence: WriterLeaseRecord,
+): { releasedRecord?: WriterLeaseRecord; errors: Error[] } {
+	let releaseFailure: Error | undefined;
+	try {
+		const released = leaseStore.release(fence);
+		if (released.ok) return { releasedRecord: released.value, errors: [] };
+		releaseFailure = resultError("v3 writer lease release failed", released.error);
+	} catch (cause) {
+		releaseFailure = cleanupError(cause);
+	}
+	try {
+		const inspected = leaseStore.inspectReleased(fence);
+		if (inspected.ok && inspected.value) {
+			return { releasedRecord: inspected.value, errors: [] };
+		}
+		if (!inspected.ok) {
+			return {
+				errors: [
+					releaseFailure,
+					resultError("v3 writer lease release inspection failed", inspected.error),
+				],
+			};
+		}
+	} catch (cause) {
+		return { errors: [releaseFailure, cleanupError(cause)] };
+	}
+	return { errors: [releaseFailure] };
+}
+
+async function cleanupComposedRuntime(
+	leaseStore: FileWriterLeaseStore,
+	fence: WriterLeaseRecord,
+	store: JsonlV3EventStore | undefined,
+	writer: EventWriter | undefined,
+): Promise<Error[]> {
+	const errors = await closeWriterAndStore(writer, store);
+	errors.push(...releaseWriterLease(leaseStore, fence).errors);
+	return errors;
 }
 
 function deterministicLineage(sessionId: SessionId): { goalId: GoalId; agentId: AgentId } {
@@ -211,98 +341,111 @@ async function composeRuntime(options: {
 	};
 	const leaseStore = new FileWriterLeaseStore(join(stateDirectory, "writer-lease.json"), { scope });
 	const fence = acquireWriterLease(leaseStore, scope, options.runtimeId);
-	const eventStoreResult = options.create
-		? await JsonlV3EventStore.create({
-				filePath: options.filePath,
-				...scope,
-				validateFence: (candidate) => leaseStore.validate(candidate).ok,
-			})
-		: await JsonlV3EventStore.open({
-				filePath: options.filePath,
-				...scope,
-				validateFence: (candidate) => leaseStore.validate(candidate).ok,
-			});
-	if (!eventStoreResult.ok) {
-		leaseStore.release(fence);
-		throw new Error(`v3 event store open failed: ${eventStoreResult.error.code}: ${eventStoreResult.error.message}`);
-	}
-	const store = eventStoreResult.value;
-	const writerResult = options.create
-		? { ok: true as const, value: new EventWriter({ ...scope, store, fence }) }
-		: await openEventWriter({ ...scope, store, fence });
-	if (!writerResult.ok) {
-		await store.close();
-		leaseStore.release(fence);
-		throw new Error(`v3 event writer open failed: ${writerResult.error.code}: ${writerResult.error.message}`);
-	}
-	const writer = writerResult.value;
-	let restoredEvents: readonly RuntimeEventV3[] = [];
-	if (!options.create) {
-		restoredEvents = resultValue(await readAllRuntimeEvents(store), "v3 session state replay failed");
-	}
-	const lineage = options.create
-		? options.lineage ?? deterministicLineage(options.sessionId)
-		: restoreLineage(restoredEvents);
-	const restoredQueue = replayDurableQueue(restoredEvents);
-	const artifactRoot = join(stateDirectory, "artifacts");
-	const artifactCas = new ArtifactCasStore({ rootDir: artifactRoot });
-	const artifactMetadata = new ArtifactMetadataStore({ rootDir: artifactRoot });
-	const artifactReadLeases = new ArtifactReadLeaseRegistry();
-	const artifactJournal = new SessionArtifactJournal({
-		writer,
-		store,
-		principalId: options.identity.principalId,
-	});
-	const artifactRepository = new ArtifactRepository({
-		cas: artifactCas,
-		metadata: artifactMetadata,
-		journal: artifactJournal,
-		keyProvider: new UnavailableArtifactKeyProvider(),
-	});
-	return {
-		filePath: options.filePath,
-		stateDirectory,
-		identity: options.identity,
-		runtimeId: options.runtimeId,
-		sessionId: options.sessionId,
-		stream,
-		leaseStore,
-		fence,
-		store,
-		writer,
-		sessionEvents: new AgentLoopSessionEvents({
+	let store: JsonlV3EventStore | undefined;
+	let writer: EventWriter | undefined;
+	try {
+		const eventStoreResult = options.create
+			? await JsonlV3EventStore.create({
+					filePath: options.filePath,
+					...scope,
+					validateFence: (candidate) => leaseStore.validate(candidate).ok,
+				})
+			: await JsonlV3EventStore.open({
+					filePath: options.filePath,
+					...scope,
+					validateFence: (candidate) => leaseStore.validate(candidate).ok,
+				});
+		if (!eventStoreResult.ok) {
+			throw resultError("v3 event store open failed", eventStoreResult.error);
+		}
+		store = eventStoreResult.value;
+		const writerResult = options.create
+			? { ok: true as const, value: new EventWriter({ ...scope, store, fence }) }
+			: await openEventWriter({ ...scope, store, fence });
+		if (!writerResult.ok) {
+			throw resultError("v3 event writer open failed", writerResult.error);
+		}
+		writer = writerResult.value;
+		let restoredEvents: readonly RuntimeEventV3[] = [];
+		if (!options.create) {
+			restoredEvents = resultValue(await readAllRuntimeEvents(store), "v3 session state replay failed");
+		}
+		const lineage = options.create
+			? options.lineage ?? deterministicLineage(options.sessionId)
+			: restoreLineage(restoredEvents);
+		const restoredQueue = replayDurableQueue(restoredEvents);
+		const artifactRoot = join(stateDirectory, "artifacts");
+		const artifactCas = new ArtifactCasStore({ rootDir: artifactRoot });
+		const artifactMetadata = new ArtifactMetadataStore({ rootDir: artifactRoot });
+		const artifactReadLeases = new ArtifactReadLeaseRegistry();
+		const artifactJournal = new SessionArtifactJournal({
 			writer,
+			store,
 			principalId: options.identity.principalId,
-			runtimeId: options.runtimeId,
-			goalId: lineage.goalId,
-			agentId: lineage.agentId,
-			featureDigest: canonicalDigest(options.features),
-			restoredQueue,
-		}),
-		artifactCas,
-		artifactRepository,
-		artifactMetadata,
-		artifactReadLeases,
-		artifactRetention: new ArtifactRetentionService({
+		});
+		const artifactRepository = new ArtifactRepository({
 			cas: artifactCas,
 			metadata: artifactMetadata,
-			readLeases: artifactReadLeases,
-		}),
-		toolResultArtifactSink: new ArtifactToolResultSink({
-			repository: artifactRepository,
-			authorityId: options.identity.authorityId,
-			tenantId: options.identity.tenantId,
-			principalId: options.identity.principalId,
+			journal: artifactJournal,
+			keyProvider: new UnavailableArtifactKeyProvider(),
+		});
+		return {
+			filePath: options.filePath,
+			stateDirectory,
+			identity: options.identity,
+			runtimeId: options.runtimeId,
 			sessionId: options.sessionId,
-			producerId: options.identity.principalId,
-		}),
-	};
+			stream,
+			leaseStore,
+			fence,
+			store,
+			writer,
+			sessionEvents: new AgentLoopSessionEvents({
+				writer,
+				principalId: options.identity.principalId,
+				runtimeId: options.runtimeId,
+				goalId: lineage.goalId,
+				agentId: lineage.agentId,
+				featureDigest: canonicalDigest(options.features),
+				restoredQueue,
+			}),
+			artifactCas,
+			artifactRepository,
+			artifactMetadata,
+			artifactReadLeases,
+			artifactRetention: new ArtifactRetentionService({
+				cas: artifactCas,
+				metadata: artifactMetadata,
+				readLeases: artifactReadLeases,
+			}),
+			toolResultArtifactSink: new ArtifactToolResultSink({
+				repository: artifactRepository,
+				authorityId: options.identity.authorityId,
+				tenantId: options.identity.tenantId,
+				principalId: options.identity.principalId,
+				sessionId: options.sessionId,
+				producerId: options.identity.principalId,
+			}),
+		};
+	} catch (cause) {
+		const cleanupErrors = await cleanupComposedRuntime(leaseStore, fence, store, writer);
+		if (cleanupErrors.length > 0) {
+			throw new AggregateError(
+				[cause, ...cleanupErrors],
+				"v3 runtime composition failed and cleanup was incomplete",
+			);
+		}
+		throw cause;
+	}
 }
 
 export class V3SessionManager {
 	private readonly runtime: OpenedV3Runtime;
 	private heartbeat: ReturnType<typeof setInterval> | undefined;
 	private closePromise: Promise<void> | undefined;
+	private closeWithWriterLeaseEvidencePromise: Promise<V3SessionWriterLeaseReleasedEvidence> | undefined;
+	private releasedWriterLeaseEvidence: V3SessionWriterLeaseReleasedEvidence | undefined;
+	private writerFenceFailure: string | undefined;
 	private closed = false;
 
 	private constructor(runtime: OpenedV3Runtime) {
@@ -311,13 +454,14 @@ export class V3SessionManager {
 	}
 
 	private startHeartbeat(): void {
-		if (this.heartbeat || this.closed) return;
+		if (this.heartbeat || this.closed || this.writerFenceFailure) return;
 		this.heartbeat = setInterval(() => {
 			const renewed = this.runtime.leaseStore.heartbeat(this.runtime.fence, LEASE_DURATION_MS);
-			if (!renewed.ok && this.heartbeat) {
-				clearInterval(this.heartbeat);
-				this.heartbeat = undefined;
+			if (!renewed.ok) {
+				this.latchWriterFenceFailure(renewed.error.code, renewed.error.message);
+				return;
 			}
+			this.runtime.fence = renewed.value;
 		}, LEASE_DURATION_MS / 3);
 		this.heartbeat.unref();
 	}
@@ -326,6 +470,24 @@ export class V3SessionManager {
 		if (!this.heartbeat) return;
 		clearInterval(this.heartbeat);
 		this.heartbeat = undefined;
+	}
+
+	private latchWriterFenceFailure(code: string, message: string): void {
+		this.writerFenceFailure ??= `${code}: ${message}`;
+		this.stopHeartbeat();
+	}
+
+	private currentWriterFence(): WriterLeaseRecord {
+		if (this.writerFenceFailure) {
+			throw new Error(`v3 writer lease is fenced: ${this.writerFenceFailure}`);
+		}
+		const current = this.runtime.leaseStore.validate(this.runtime.fence);
+		if (!current.ok) {
+			this.latchWriterFenceFailure(current.error.code, current.error.message);
+			throw new Error(`v3 writer lease is fenced: ${this.writerFenceFailure}`);
+		}
+		this.runtime.fence = current.value;
+		return current.value;
 	}
 
 	public static async create(options: V3SessionCreateOptions): Promise<V3SessionManager> {
@@ -337,7 +499,7 @@ export class V3SessionManager {
 			options.lineage &&
 			(!isRuntimeId(options.lineage.goalId, "goal") || !isRuntimeId(options.lineage.agentId, "agent"))
 		) throw new TypeError("v3 session lineage override is invalid");
-		const filePath = join(sessionDir, buildSessionFileName(new Date(), sessionId));
+		const filePath = createFilePath(sessionDir, sessionId, options.filePath);
 		const runtime = await composeRuntime({
 			filePath,
 			identity,
@@ -348,8 +510,20 @@ export class V3SessionManager {
 			...(options.lineage ? { lineage: options.lineage } : {}),
 		});
 		const manager = new V3SessionManager(runtime);
-		if (options.writeGenesis !== false) await runtime.sessionEvents.ensureInitialized();
-		return manager;
+		try {
+			if (options.writeGenesis !== false) await runtime.sessionEvents.ensureInitialized();
+			return manager;
+		} catch (cause) {
+			try {
+				await manager.closeAll();
+			} catch (cleanupCause) {
+				throw new AggregateError(
+					[cause, ...aggregateCleanupErrors(cleanupCause)],
+					"v3 session create failed and cleanup was incomplete",
+				);
+			}
+			throw cause;
+		}
 	}
 
 	public static async open(
@@ -418,17 +592,18 @@ export class V3SessionManager {
 
 	/** 不暴露 raw fencing token；receipt 可安全跨越 replacement adapter 边界。 */
 	public writerFenceReceipt(): V3SessionWriterFenceReceipt {
+		const fence = this.currentWriterFence();
 		const body = {
 			authorityId: this.runtime.identity.authorityId,
 			tenantId: this.runtime.identity.tenantId,
 			sessionId: this.runtime.sessionId,
 			runtimeId: this.runtime.runtimeId,
 			stream: { ...this.runtime.stream },
-			leaseId: this.runtime.fence.leaseId,
-			writerEpoch: this.runtime.fence.writerEpoch,
-			fencingTokenDigest: this.runtime.fence.fencingTokenDigest,
-			acquiredAt: this.runtime.fence.acquiredAt,
-			expiresAt: this.runtime.fence.expiresAt,
+			leaseId: fence.leaseId,
+			writerEpoch: fence.writerEpoch,
+			fencingTokenDigest: fence.fencingTokenDigest,
+			acquiredAt: fence.acquiredAt,
+			expiresAt: fence.expiresAt,
 		};
 		const receiptDigest = canonicalDigest(body);
 		return {
@@ -448,6 +623,48 @@ export class V3SessionManager {
 
 	public writer(): EventWriter {
 		return this.runtime.writer;
+	}
+
+	/**
+	 * 对当前 exact head 重做 durable barrier。即使前一次 flush receipt 丢失，
+	 * 调用方也能用同一 writer epoch 取得可验证的 committed receipt。
+	 */
+	public flushCurrentHead(): Promise<SessionResult<DurableEventReceipt>> {
+		const head = this.runtime.writer.currentHead();
+		if (!head) {
+			return Promise.resolve({
+				ok: false,
+				error: {
+					code: "sequence_conflict",
+					message: "v3 session has no current event head to flush",
+					retryable: false,
+					effect: "none",
+				},
+			});
+		}
+		let fence: WriterLeaseRecord;
+		try {
+			fence = this.currentWriterFence();
+		} catch {
+			return Promise.resolve({
+				ok: false,
+				error: {
+					code: "writer_fenced",
+					message: "v3 session writer fence is unavailable",
+					retryable: false,
+					effect: "uncertain",
+				},
+			});
+		}
+		const cursor: AcceptedEventCursor = {
+			...head,
+			writerEpoch: fence.writerEpoch,
+		};
+		return this.runtime.store.flushThrough(
+			this.runtime.stream,
+			cursor,
+			fence,
+		);
 	}
 
 	public eventStore(): RuntimeEventStore {
@@ -617,22 +834,62 @@ export class V3SessionManager {
 	}
 
 	public closeAll(): Promise<void> {
+		if (this.closePromise) return this.closePromise;
 		if (this.closed) return Promise.resolve();
-		this.closePromise ??= this.closeRuntime();
+		this.closePromise = this.closeRuntime();
 		return this.closePromise;
 	}
 
-	private async closeRuntime(): Promise<void> {
-		try {
-			const closed = await this.runtime.writer.close();
-			if (!closed.ok) throw new Error(`v3 event writer close failed: ${closed.error.code}`);
-		} finally {
-			// close 落定失败时 store 可能已关闭；停止续租，让未确认 lease 进入 cold takeover。
-			this.stopHeartbeat();
+	/** 与 closeAll 共用同一次 close/release effect，并返回 confirmed durable release evidence。 */
+	public closeAllWithWriterLeaseEvidence(): Promise<V3SessionWriterLeaseReleasedEvidence> {
+		this.closeWithWriterLeaseEvidencePromise ??= this.closeAll().then(
+			() => this.writerLeaseReleasedEvidence(),
+		);
+		return this.closeWithWriterLeaseEvidencePromise;
+	}
+
+	/** release 未经 exact durable confirmation 前拒绝生成证据。 */
+	public writerLeaseReleasedEvidence(): V3SessionWriterLeaseReleasedEvidence {
+		if (!this.releasedWriterLeaseEvidence) {
+			throw new Error("v3 writer lease release is not confirmed");
 		}
-		const released = this.runtime.leaseStore.release(this.runtime.fence);
-		if (!released.ok) throw new Error(`v3 writer lease release failed: ${released.error.code}`);
-		this.closed = true;
+		return { ...this.releasedWriterLeaseEvidence };
+	}
+
+	private async closeRuntime(): Promise<void> {
+		const errors = await closeWriterAndStore(
+			this.runtime.writer,
+			this.runtime.store,
+			() => this.stopHeartbeat(),
+		);
+		const released = releaseWriterLease(this.runtime.leaseStore, this.runtime.fence);
+		errors.push(...released.errors);
+		if (released.releasedRecord) {
+			const releasedAt = released.releasedRecord.releasedAt;
+			if (releasedAt === undefined) {
+				errors.push(new Error("v3 writer lease release failed: durable_write_failed: releasedAt is missing"));
+			} else {
+				const evidenceBody = {
+					authorityId: this.runtime.identity.authorityId,
+					tenantId: this.runtime.identity.tenantId,
+					sessionId: this.runtime.sessionId,
+					runtimeInstanceId: this.runtime.runtimeId,
+					leaseId: released.releasedRecord.leaseId,
+					writerEpoch: released.releasedRecord.writerEpoch,
+					fencingTokenDigest: released.releasedRecord.fencingTokenDigest,
+					releasedAt,
+				};
+				this.releasedWriterLeaseEvidence = {
+					...evidenceBody,
+					evidenceDigest: canonicalDigest(evidenceBody),
+				};
+				this.closed = true;
+			}
+		}
+		if (errors.length === 1) throw errors[0];
+		if (errors.length > 1) {
+			throw new AggregateError(errors, "v3 session runtime close failed");
+		}
 	}
 
 	/** 仅用于失败于首个 event 前的显式迁移 target 回收。 */

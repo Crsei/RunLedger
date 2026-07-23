@@ -11,6 +11,7 @@ import {
 	ProductionArtifactMergeAdapter,
 	createProductionCapabilityGrantPolicy,
 } from "../../src/runtime/agents/integration/index.ts";
+import { FileChildRuntimeAuthorityStore } from "../../src/storage/child-runtime-authority-state.ts";
 import { createProductionAgentSupervisorComposition } from "../../src/runtime/agents/integration/production-composition.ts";
 import type {
 	AgentBudgetRequest,
@@ -341,7 +342,11 @@ describe("multi-agent production isolation E2E", () => {
 			budget: budgetAdapter,
 			merge,
 		};
-		const composition = await createProductionAgentSupervisorComposition({
+			const authorityStore =
+				new FileChildRuntimeAuthorityStore(
+					join(rootDir, "child-runtime-authority"),
+				);
+			const composition = await createProductionAgentSupervisorComposition({
 			manager: rootManager,
 			parentMutationGate,
 			root: {
@@ -356,8 +361,9 @@ describe("multi-agent production isolation E2E", () => {
 				declassificationReceipts: [],
 				registeredAt: NOW,
 			},
-			adapters,
-			child: {
+				adapters,
+				authorityStore,
+				child: {
 				sessionDir: join(rootDir, "child-sessions"),
 				features: FEATURES,
 				maxActiveChildren: 3,
@@ -498,7 +504,7 @@ describe("multi-agent production isolation E2E", () => {
 				reportedAt: NOW,
 			},
 		})).ok).toBe(true);
-		expect((await supervisor.finish({
+			expect((await supervisor.finish({
 			requestId: createRuntimeId("command", "finish-child-production"),
 			idempotencyKey: key("finish-child"),
 			agentId: child.agentId,
@@ -514,7 +520,18 @@ describe("multi-agent production isolation E2E", () => {
 				artifactCount: 1,
 				verifications: 1,
 			},
-		})).ok).toBe(true);
+			})).ok).toBe(true);
+			expect(await authorityStore.list()).toEqual([
+				expect.objectContaining({
+					agentId: child.agentId,
+					sessionId: child.sessionId,
+					state: "released",
+					releaseReceipt: expect.objectContaining({
+						requestDigest:
+							expect.stringMatching(/^[a-f0-9]{64}$/u),
+					}),
+				}),
+			]);
 		const handoffId = createRuntimeId("command", "handoff-child-production");
 		expect((await supervisor.handoff({
 			requestId: handoffId,
@@ -575,8 +592,8 @@ describe("multi-agent production isolation E2E", () => {
 			await readFile(workspaceComposition.paths.registryFile, "utf8"),
 			await readFile(workspaceComposition.paths.leaseFile, "utf8"),
 			JSON.stringify(replayed.value),
-		].join("\n");
-		expect(persistedState).not.toContain(parentSecret);
-		expect(persistedState).not.toContain(parentCredential);
+			].join("\n");
+			expect(persistedState).not.toContain(parentSecret);
+			expect(persistedState).not.toContain(parentCredential);
+		}, 15_000);
 	});
-});

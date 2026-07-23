@@ -245,9 +245,25 @@ export class AuthorityRuntimeGenerationCoordinator
 			candidateGeneration: record.binding.generation,
 			durableCursor: context.prepared.durableCursor,
 		})) return Promise.resolve(candidateFailure("writer fencing references another preparation"));
-		const current = record.manager.writerFenceReceipt();
+		if (record.manager.isClosed()) {
+			return Promise.resolve(controlPlaneFailure(
+				"recovery_required",
+				"candidate writer fence changed before activation",
+				false,
+			));
+		}
+		let current: ReturnType<V3SessionManager["writerFenceReceipt"]>;
+		try {
+			current = record.manager.writerFenceReceipt();
+		} catch {
+			return Promise.resolve(controlPlaneFailure(
+				"recovery_required",
+				"candidate writer fence changed before activation",
+				false,
+			));
+		}
 		if (
-			record.manager.isClosed() || current.receiptId !== record.fencing.receiptId ||
+			current.receiptId !== record.fencing.receiptId ||
 			current.receiptDigest !== record.fencing.receiptDigest ||
 			canonicalDigest({
 				runtimeId: record.binding.runtimeId,

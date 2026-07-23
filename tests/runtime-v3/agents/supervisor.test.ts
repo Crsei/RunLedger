@@ -63,7 +63,7 @@ describe("bounded agent supervisor", () => {
 		expect(runtime.launcher.launches).toHaveLength(1);
 	});
 
-	it("rejects a launcher response whose launch receipt digest is not self-validating", async () => {
+	it("keeps a child pending when a started launcher response cannot prove its runtime receipts", async () => {
 		const runtime = runtimeFakes();
 		const root = rootRegistration();
 		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
@@ -84,13 +84,49 @@ describe("bounded agent supervisor", () => {
 		};
 
 		const spawned = await runtime.supervisor.spawn(spawnRequest(root.capabilityGrant));
-		expect(spawned).toMatchObject({ ok: false, error: { code: "launch_failed" } });
+		expect(spawned).toMatchObject({
+			ok: false,
+			error: { code: "launch_failed", retryable: true },
+		});
 		const graph = await runtime.supervisor.graph();
 		const child = graph.ok
 			? [...graph.value.nodes.values()].find((node) => node.parentAgentId === root.agentId)
 			: undefined;
-		expect(child).toMatchObject({ state: "failed", stateReason: "launch_rejected" });
+		expect(child).toMatchObject({ state: "pending" });
 		expect(child?.launchReceipt).toBeUndefined();
+		expect(runtime.workspace.releases).toHaveLength(0);
+		expect(runtime.budget.settlementExecutions).toBe(0);
+	});
+
+	it("does not run not-started cleanup while a retryable launcher failure may have created a runtime", async () => {
+		const runtime = runtimeFakes();
+		const root = rootRegistration();
+		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
+		runtime.launcher.launch = async () => ({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				message: "child create outcome is uncertain",
+				retryable: true,
+			},
+		});
+
+		const spawned = await runtime.supervisor.spawn(
+			spawnRequest(root.capabilityGrant),
+		);
+		expect(spawned).toMatchObject({
+			ok: false,
+			error: { code: "reference_unavailable", retryable: true },
+		});
+		const graph = await runtime.supervisor.graph();
+		const child = graph.ok
+			? [...graph.value.nodes.values()].find(
+					(node) => node.parentAgentId === root.agentId,
+				)
+			: undefined;
+		expect(child).toMatchObject({ state: "pending" });
+		expect(runtime.workspace.releases).toHaveLength(0);
+		expect(runtime.budget.settlementExecutions).toBe(0);
 	});
 
 	it("makes an identical retry idempotent without another evaluator or launch", async () => {

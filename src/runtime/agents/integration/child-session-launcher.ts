@@ -1,7 +1,7 @@
 /** 有界 child launcher：从私有 Workspace broker 取 cwd，创建独立 durable V3 session。 */
 
 import { spawn } from "node:child_process";
-import { mkdir, open, readdir, realpath, rm } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { canonicalDigest } from "../../protocol/v3/canonical-json.ts";
 import {
@@ -10,12 +10,37 @@ import {
 	type AgentId,
 	type CommandId,
 	type ReceiptId,
+	type RuntimeInstanceId,
+	type SessionId,
 } from "../../protocol/v3/ids.ts";
+import type { EventCursor } from "../../protocol/v3/events.ts";
 import type { RuntimeIdentityContext } from "../../identity/types.ts";
 import type { RuntimeFeatureFlags } from "../../runtime-features.ts";
 import type { SessionMutationAdmissionGatePort } from "../../lifecycle/mutation-gate.ts";
+import { readAllRuntimeEvents } from "../../session/snapshot.ts";
 import { V3SessionManager } from "../../../storage/v3-session-manager.ts";
+import { buildSessionFileName } from "../../../storage/path-utils.ts";
 import { pathWithin } from "../../../worktree/paths.ts";
+import {
+	classifyChildRuntimeColdRecord,
+	createChildRuntimeActivationEvidence,
+	createClaimedChildRuntimeAuthorityRecord,
+	createCreatingChildRuntimeAuthorityRecord,
+	createProvisionalChildRuntimeAuthorityRecord,
+	createQuarantinedChildRuntimeAuthorityRecord,
+	createReleasedChildRuntimeAuthorityRecord,
+	createReleasePendingChildRuntimeAuthorityRecord,
+	createResumedChildRuntimeAuthorityRecord,
+	createResidentChildRuntimeAuthorityRecord,
+	type ChildRuntimeAuthorityRecord,
+	type ChildRuntimeAuthorityStorePort,
+	type ChildRuntimeActivationEvidence,
+	type ChildRuntimeLaunchActivationEvidence,
+	type ChildRuntimeResumeActivationEvidence,
+	type ChildRuntimeWriterFenceReceipt,
+	type ReleasePendingChildRuntimeAuthorityRecord,
+	type ResidentChildRuntimeAuthorityRecord,
+} from "../child-runtime-authority.ts";
 import { createAgentResidencyReceipt } from "../residency.ts";
 import type {
 	AgentCancelRequest,
@@ -40,6 +65,8 @@ export interface ProductionChildSessionLauncherOptions {
 	features: Readonly<RuntimeFeatureFlags>;
 	identity: RuntimeIdentityContext;
 	maxActiveChildren: number;
+	authorityStore: ChildRuntimeAuthorityStorePort;
+	parentAuthority: ChildRuntimeParentAuthorityPort;
 	processIsolation?: {
 		rootDir: string;
 		allowedExecutables: readonly string[];
@@ -47,6 +74,30 @@ export interface ProductionChildSessionLauncherOptions {
 		timeoutMs?: number;
 	};
 	clock?: () => Date;
+}
+
+export interface ChildRuntimeParentAuthorityEvidence {
+	parentSessionId: SessionId;
+	ownerParentRuntimeId: RuntimeInstanceId;
+	parentGraphRevision: number;
+	parentGraphCursor: EventCursor;
+	parentNodeDigest: string;
+	ownerParentWriterFence: ChildRuntimeWriterFenceReceipt;
+}
+
+export interface ChildRuntimeParentAuthorityPort {
+	readonly parentSessionId: SessionId;
+	resolve(
+		activation:
+			| {
+					activationType: "launch";
+					request: AgentLaunchRequest;
+			  }
+			| {
+					activationType: "resume";
+					request: AgentResumeLaunchRequest;
+			  },
+	): Promise<AgentResult<ChildRuntimeParentAuthorityEvidence>>;
 }
 
 export interface ChildSessionRuntimeSnapshot {
@@ -80,6 +131,9 @@ interface ChildRuntimeRecord {
 	launchRevision: number;
 	launchRequestDigest: string;
 	launchResult: Extract<AgentLaunchResult, { status: "started" }>;
+	authority:
+		| ResidentChildRuntimeAuthorityRecord
+		| ReleasePendingChildRuntimeAuthorityRecord;
 }
 
 type ChildRuntimeReleaseAttempt =
@@ -105,9 +159,31 @@ interface ChildRuntimeReleaseOperation {
 	promise: Promise<AgentResult<AgentRuntimeReleaseReceiptRef>>;
 }
 
+interface ChildRuntimeLaunchOperation {
+	requestDigest: string;
+	promise: Promise<AgentResult<AgentLaunchResult>>;
+}
+
+interface ChildRuntimeResumeOperation {
+	requestDigest: string;
+	promise: Promise<AgentResult<AgentLaunchResult>>;
+}
+
 interface ChildIsolatedCommandOperation {
 	controller: AbortController;
 	settled: Promise<void>;
+}
+
+interface ChildRuntimeQuarantineAdditionalEvidence {
+	provisionalEvidence?: {
+		launchReceipt: AgentLaunchReceiptRef;
+		residencyReceipt: Extract<
+			AgentLaunchResult,
+			{ status: "started" }
+		>["residencyReceipt"];
+		childWriterFence: ChildRuntimeWriterFenceReceipt;
+	};
+	genesisCursor?: EventCursor;
 }
 
 function fail<T>(code: AgentErrorCode, message: string, retryable = false): AgentResult<T> {
@@ -134,6 +210,71 @@ function releaseRequestBody(
 ): Omit<AgentRuntimeReleaseRequest, "requestDigest"> {
 	const { requestDigest: _requestDigest, ...body } = request;
 	return body;
+}
+
+function activationEvidence(
+	activationType: "launch",
+	request: AgentLaunchRequest,
+	parent: ChildRuntimeParentAuthorityEvidence,
+): ChildRuntimeLaunchActivationEvidence;
+function activationEvidence(
+	activationType: "resume",
+	request: AgentResumeLaunchRequest,
+	parent: ChildRuntimeParentAuthorityEvidence,
+): ChildRuntimeResumeActivationEvidence;
+function activationEvidence(
+	activationType: ChildRuntimeActivationEvidence["activationType"],
+	request: AgentLaunchRequest | AgentResumeLaunchRequest,
+	parent: ChildRuntimeParentAuthorityEvidence,
+): ChildRuntimeActivationEvidence {
+	return createChildRuntimeActivationEvidence({
+		activationType,
+		requestId: request.requestId,
+		requestDigest: request.requestDigest,
+		parentGraphRevision: parent.parentGraphRevision,
+		parentGraphCursor: parent.parentGraphCursor,
+		parentNodeDigest: parent.parentNodeDigest,
+		delegationReceiptDigest: request.delegationReceipt.receiptDigest,
+		workspaceReceiptDigest: request.workspaceReceipt.receiptDigest,
+		budgetReservationDigest: canonicalDigest(request.budgetReservation),
+		ownerParentWriterFence: parent.ownerParentWriterFence,
+	});
+}
+
+function writerFenceIdentityMatches(
+	previous: ChildRuntimeWriterFenceReceipt,
+	current: ChildRuntimeWriterFenceReceipt,
+): boolean {
+	return (
+		previous.authorityId === current.authorityId &&
+		previous.tenantId === current.tenantId &&
+		previous.sessionId === current.sessionId &&
+		previous.runtimeId === current.runtimeId &&
+		canonicalDigest(previous.stream) === canonicalDigest(current.stream) &&
+		previous.leaseId === current.leaseId &&
+		previous.writerEpoch === current.writerEpoch &&
+		previous.fencingTokenDigest === current.fencingTokenDigest &&
+		previous.acquiredAt === current.acquiredAt &&
+		Date.parse(current.expiresAt) >= Date.parse(previous.expiresAt)
+	);
+}
+
+function parentAuthorityRevalidates(
+	previous: ChildRuntimeParentAuthorityEvidence,
+	current: ChildRuntimeParentAuthorityEvidence,
+): boolean {
+	return (
+		previous.parentSessionId === current.parentSessionId &&
+		previous.ownerParentRuntimeId === current.ownerParentRuntimeId &&
+		previous.parentGraphRevision === current.parentGraphRevision &&
+		canonicalDigest(previous.parentGraphCursor) ===
+			canonicalDigest(current.parentGraphCursor) &&
+		previous.parentNodeDigest === current.parentNodeDigest &&
+		writerFenceIdentityMatches(
+			previous.ownerParentWriterFence,
+			current.ownerParentWriterFence,
+		)
+	);
 }
 
 function residencyReceiptDigestIsValid(receipt: AgentRuntimeReleaseRequest["previousResidencyReceipt"]): boolean {
@@ -282,6 +423,9 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 	readonly #options: ProductionChildSessionLauncherOptions;
 	readonly #clock: () => Date;
 	readonly #children = new Map<AgentId, ChildRuntimeRecord>();
+	readonly #launchOperations = new Map<AgentId, ChildRuntimeLaunchOperation>();
+	readonly #launchReservations = new Set<AgentId>();
+	readonly #resumeOperations = new Map<AgentId, ChildRuntimeResumeOperation>();
 	readonly #releaseAttempts = new Map<AgentId, ChildRuntimeReleaseAttempt>();
 	readonly #releaseOperations = new Map<AgentId, ChildRuntimeReleaseOperation>();
 	readonly #released = new Map<AgentId, ChildRuntimeReleaseTombstone>();
@@ -294,7 +438,8 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		if (
 			!exactAbsolutePath(options.sessionDir) ||
 			!Number.isSafeInteger(options.maxActiveChildren) ||
-			options.maxActiveChildren < 1
+			options.maxActiveChildren < 1 ||
+			!isRuntimeId(options.parentAuthority.parentSessionId, "session")
 		) {
 			throw new RangeError("production child launcher requires an absolute session root and positive active-child bound");
 		}
@@ -394,31 +539,198 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		}
 	}
 
-	async #claimDurableSession(sessionId: AgentLaunchRequest["sessionId"]): Promise<AgentResult<string>> {
+	async #readAuthority(
+		agentId: AgentId,
+	): Promise<AgentResult<ChildRuntimeAuthorityRecord | undefined>> {
 		try {
-			await mkdir(this.#options.sessionDir, { recursive: true, mode: 0o700 });
-			const canonicalSessionDir = resolve(await realpath(this.#options.sessionDir));
-			if (canonicalSessionDir !== this.#options.sessionDir) {
-				return fail("launch_failed", "durable child session root changed identity");
+			return {
+				ok: true,
+				value: await this.#options.authorityStore.read(agentId),
+			};
+		} catch {
+			return fail(
+				"reference_unavailable",
+				"child runtime authority record is unavailable",
+				true,
+			);
+		}
+	}
+
+	async #advanceAuthority<T extends ChildRuntimeAuthorityRecord>(
+		previous: ChildRuntimeAuthorityRecord,
+		next: T,
+		stage: string,
+	): Promise<AgentResult<T>> {
+		try {
+			const advanced = await this.#options.authorityStore.compareAndSwap(
+				previous.agentId,
+				previous.revision,
+				previous.recordDigest,
+				next,
+			);
+			if (advanced === "applied" || advanced === "replay") {
+				return { ok: true, value: next };
 			}
-			const entries = await readdir(this.#options.sessionDir, { withFileTypes: true });
-			if (entries.some((entry) => entry.isFile() && entry.name.endsWith(`_${sessionId}.jsonl`))) {
-				return fail("launch_failed", "durable child session already exists and requires explicit worker recovery");
-			}
-			const claimPath = join(this.#options.sessionDir, `.${sessionId}.launch-claim`);
-			const claim = await open(claimPath, "wx", 0o600);
-			try {
-				await claim.writeFile(JSON.stringify({ schemaVersion: 1, sessionId }));
-				await claim.sync();
-			} finally {
-				await claim.close();
-			}
-			return { ok: true, value: claimPath };
-		} catch (cause) {
-			const code = (cause as NodeJS.ErrnoException).code;
-			return code === "EEXIST"
-				? fail("launch_failed", "durable child session launch is already claimed")
-				: fail("reference_unavailable", "durable child session claim is unavailable", true);
+		} catch {
+			// after-commit acknowledgement loss 只能由 exact read-back 消歧。
+		}
+		const observed = await this.#readAuthority(previous.agentId);
+		if (
+			observed.ok &&
+			observed.value?.recordDigest === next.recordDigest
+		) {
+			return { ok: true, value: next };
+		}
+		return fail(
+			"reference_unavailable",
+			`child runtime authority ${stage} is conflicting or uncertain`,
+			true,
+		);
+	}
+
+	async #quarantineAuthority(
+		previous: ChildRuntimeAuthorityRecord,
+		reason: string,
+		additionalEvidence: ChildRuntimeQuarantineAdditionalEvidence = {},
+	): Promise<boolean> {
+		if (previous.state === "released" || previous.state === "quarantined") {
+			return false;
+		}
+		let quarantined;
+		try {
+			quarantined = createQuarantinedChildRuntimeAuthorityRecord({
+				previous,
+				reason,
+				evidenceDigest: canonicalDigest({
+					agentId: previous.agentId,
+					previousRecordDigest: previous.recordDigest,
+					reason,
+					...additionalEvidence,
+				}),
+				...additionalEvidence,
+				updatedAt: this.#clock().toISOString(),
+			});
+		} catch {
+			return false;
+		}
+		const advanced = await this.#advanceAuthority(
+			previous,
+			quarantined,
+			"quarantine",
+		);
+		return advanced.ok;
+	}
+
+	async #closeAndQuarantineUnregisteredManager(
+		manager: V3SessionManager,
+		previous: ChildRuntimeAuthorityRecord,
+		reason: string,
+		additionalEvidence: ChildRuntimeQuarantineAdditionalEvidence = {},
+	): Promise<boolean> {
+		const closed = await manager
+			.closeAll()
+			.then(() => true, () => false);
+		const quarantined = await this.#quarantineAuthority(
+			previous,
+			reason,
+			additionalEvidence,
+		);
+		return closed && quarantined;
+	}
+
+	#coldLaunch(
+		record: ChildRuntimeAuthorityRecord,
+		request: AgentLaunchRequest,
+	): AgentResult<AgentLaunchResult> {
+		if (
+			record.sessionId !== request.sessionId ||
+			record.launchRequestId !== request.requestId ||
+			record.launchRequestDigest !== request.requestDigest
+		) {
+			return fail(
+				"idempotency_conflict",
+				"child Agent launch identity is already bound to another durable authority record",
+			);
+		}
+		return fail(
+			"reference_unavailable",
+			record.state === "released"
+				? "child runtime is already durably released"
+				: `cold child runtime authority is ${record.state} and requires explicit reconciliation`,
+			record.state !== "released",
+		);
+	}
+
+	#coldRelease(
+		record: ChildRuntimeAuthorityRecord,
+		request: AgentRuntimeReleaseRequest,
+	): AgentResult<AgentRuntimeReleaseReceiptRef> {
+		if (
+			record.agentId !== request.agentId ||
+			record.sessionId !== request.sessionId
+		) {
+			return fail(
+				"idempotency_conflict",
+				"child runtime authority belongs to another release identity",
+			);
+		}
+		const classified = classifyChildRuntimeColdRecord(record);
+		if (classified.kind === "replay_released") {
+			return classified.receipt.requestId === request.requestId &&
+				classified.receipt.requestDigest === request.requestDigest
+				? { ok: true, value: structuredClone(classified.receipt) }
+				: fail(
+						"idempotency_conflict",
+						"child runtime is already released by another request",
+					);
+		}
+		if (
+			record.state === "release_pending" &&
+			record.releaseRequest.requestDigest !== request.requestDigest
+		) {
+			return fail(
+				"idempotency_conflict",
+				"child runtime release is already claimed by another request",
+			);
+		}
+		return fail(
+			"reference_unavailable",
+			`cold child runtime authority is ${record.state} and cannot be taken over automatically`,
+			true,
+		);
+	}
+
+	async #auditColdAuthority<T>(
+		audit: (records: readonly ChildRuntimeAuthorityRecord[]) => T,
+	): Promise<AgentResult<T>> {
+		try {
+			return await this.#options.authorityStore.withExclusiveRootAudit(
+				(records) => {
+					if (
+						records.some(
+							(record) =>
+								record.authorityId !==
+									this.#options.identity.authorityId ||
+								record.tenantId !==
+									this.#options.identity.tenantId ||
+								record.parentSessionId !==
+									this.#options.parentAuthority.parentSessionId,
+						)
+					) {
+						return fail(
+							"launch_failed",
+							"child runtime authority root contains a foreign scope",
+						);
+					}
+					return { ok: true, value: audit(records) };
+				},
+			);
+		} catch {
+			return fail(
+				"reference_unavailable",
+				"child runtime authority startup scan is unavailable",
+				true,
+			);
 		}
 	}
 
@@ -483,19 +795,73 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		request: AgentLaunchRequest,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentLaunchResult>> {
-		return this.#runOperation(
+		if (request.requestDigest !== canonicalDigest(launchRequestBody(request))) {
+			return Promise.resolve(
+				fail("launch_failed", "child launch request digest is invalid"),
+			);
+		}
+		if (this.#closed) {
+			return Promise.resolve({
+				ok: true,
+				value: {
+					status: "unavailable",
+					reasonDigest: canonicalDigest("launcher unavailable"),
+					retryable: true,
+				},
+			});
+		}
+		const inFlight = this.#launchOperations.get(request.agentId);
+		if (inFlight) {
+			return inFlight.requestDigest === request.requestDigest
+				? inFlight.promise
+				: Promise.resolve(
+						fail(
+							"idempotency_conflict",
+							"child Agent launch is already in progress for another request",
+						),
+					);
+		}
+		const reserved = !this.#children.has(request.agentId);
+		if (
+			reserved &&
+			this.#children.size + this.#launchReservations.size >=
+				this.#options.maxActiveChildren
+		) {
+			return Promise.resolve({
+				ok: true,
+				value: {
+					status: "rejected",
+					reasonDigest: canonicalDigest("active child bound reached"),
+					retryable: true,
+				},
+			});
+		}
+		if (reserved) this.#launchReservations.add(request.agentId);
+		const operation = this.#runOperation<AgentLaunchResult>(
 			() => this.#launch(request, signal),
 			() => ({ ok: true, value: { status: "unavailable", reasonDigest: canonicalDigest("launcher unavailable"), retryable: true } }),
 		);
+		let coordinated: Promise<AgentResult<AgentLaunchResult>>;
+		coordinated = operation.finally(() => {
+			if (
+				this.#launchOperations.get(request.agentId)?.promise ===
+				coordinated
+			) {
+				this.#launchOperations.delete(request.agentId);
+			}
+			if (reserved) this.#launchReservations.delete(request.agentId);
+		});
+		this.#launchOperations.set(request.agentId, {
+			requestDigest: request.requestDigest,
+			promise: coordinated,
+		});
+		return coordinated;
 	}
 
 	async #launch(
 		request: AgentLaunchRequest,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentLaunchResult>> {
-		if (request.requestDigest !== canonicalDigest(launchRequestBody(request))) {
-			return fail("launch_failed", "child launch request digest is invalid");
-		}
 		if (!this.#options.capabilitySubset.validatesDelegation(request.delegationReceipt)) {
 			return fail("delegation_denied", "child launch delegation receipt is stale or invalid");
 		}
@@ -525,70 +891,496 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		if (this.#children.size >= this.#options.maxActiveChildren) {
 			return { ok: true, value: { status: "rejected", reasonDigest: canonicalDigest("active child bound reached"), retryable: true } };
 		}
-		return this.#options.workspace.withValidatedWorkspace<AgentLaunchResult>(
+			return this.#options.workspace.withValidatedWorkspace<AgentLaunchResult>(
 			{
 				requestId: request.requestId,
 				agentId: request.agentId,
 				sessionId: request.sessionId,
 				receipt: request.workspaceReceipt,
 			},
-			async (workspace) => {
-				if (signal?.aborted || this.#closed) {
-					return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
-				}
-				const claim = await this.#claimDurableSession(request.sessionId);
-				if (!claim.ok) return claim;
-				if (signal?.aborted || this.#closed) {
-					try {
-						await rm(claim.value, { force: true });
+				async (workspace) => {
+					if (signal?.aborted || this.#closed) {
 						return fail("reference_unavailable", "parent session child-spawn admission is unavailable");
-					} catch {
-						return fail("reference_unavailable", "child launch claim cleanup is uncertain");
 					}
-				}
-				let manager: V3SessionManager;
-				try {
-					manager = await V3SessionManager.create({
-						cwd: workspace.envelope.cwd,
-						sessionDir: this.#options.sessionDir,
-						identity: this.#options.identity,
-						sessionId: request.sessionId,
-						runtimeId: workspace.envelope.ownerRuntimeId,
-						features: this.#options.features,
-						lineage: {
-							goalId: createRuntimeId(
-								"goal",
-								`delegated-${canonicalDigest({ parentAgentId: request.parentAgentId, agentId: request.agentId }).slice(0, 40)}`,
+					const currentAuthority = await this.#readAuthority(request.agentId);
+					if (!currentAuthority.ok) return currentAuthority;
+					if (currentAuthority.value) {
+						return this.#coldLaunch(currentAuthority.value, request);
+					}
+						let parentAuthority: AgentResult<ChildRuntimeParentAuthorityEvidence>;
+						try {
+							parentAuthority =
+								await this.#options.parentAuthority.resolve({
+									activationType: "launch",
+									request,
+								});
+						} catch {
+						return fail(
+							"reference_unavailable",
+							"parent graph authority evidence is unavailable",
+							true,
+						);
+					}
+					if (!parentAuthority.ok) return parentAuthority;
+					if (
+						parentAuthority.value.parentSessionId !==
+							this.#options.parentAuthority.parentSessionId ||
+						parentAuthority.value.ownerParentWriterFence.authorityId !==
+							this.#options.identity.authorityId ||
+						parentAuthority.value.ownerParentWriterFence.tenantId !==
+							this.#options.identity.tenantId
+					) {
+						return fail(
+							"launch_failed",
+							"parent graph authority evidence is outside the launcher scope",
+						);
+						}
+						try {
+							await mkdir(this.#options.sessionDir, {
+								recursive: true,
+								mode: 0o700,
+							});
+							if (
+								resolve(await realpath(this.#options.sessionDir)) !==
+								this.#options.sessionDir
+							) {
+								throw new Error(
+									"durable child session root changed identity",
+								);
+							}
+						} catch {
+							return fail(
+								"reference_unavailable",
+								"durable child session root is unavailable",
+								true,
+							);
+						}
+						const sessionFilePath = join(
+							this.#options.sessionDir,
+							buildSessionFileName(
+								this.#clock(),
+								request.sessionId,
 							),
-							agentId: request.agentId,
-						},
-					});
-				} catch {
-					await rm(claim.value, { force: true });
-					return fail("launch_failed", "durable child V3 session could not be created", true);
-				}
-				if (signal?.aborted || this.#closed) {
-					const cleanup = await Promise.allSettled([
-						manager.closeAll(),
-						rm(claim.value, { force: true }),
-					]);
-					return cleanup.some((result) => result.status === "rejected")
-						? fail("reference_unavailable", "child session creation lost admission and cleanup is uncertain")
-						: fail("reference_unavailable", "child session creation lost admission and requires explicit recovery");
-				}
-				const started = this.#createStartedResult(request, manager, 1);
-				if (!started.ok) {
-					await manager.closeAll();
-					await rm(claim.value, { force: true });
-					return started;
-				}
-				this.#children.set(request.agentId, {
-					manager,
+						);
+						let claimed;
+						try {
+							const launchActivation = activationEvidence(
+								"launch",
+								request,
+								parentAuthority.value,
+							);
+							claimed = createClaimedChildRuntimeAuthorityRecord({
+								revision: 1,
+								authorityId: this.#options.identity.authorityId,
+								tenantId: this.#options.identity.tenantId,
+								principalId: this.#options.identity.principalId,
+								parentSessionId: parentAuthority.value.parentSessionId,
+								parentAgentId: request.parentAgentId,
+								agentId: request.agentId,
+								sessionId: request.sessionId,
+							workspaceId: request.workspaceReceipt.workspaceId,
+							runtimeInstanceId:
+								workspace.envelope.ownerRuntimeId,
+								sessionFilePath,
+								launchRequestId: request.requestId,
+								launchRequestDigest: request.requestDigest,
+								artifactContractDigest:
+									request.artifactContract.contractDigest,
+								ownerParentRuntimeId:
+									parentAuthority.value.ownerParentRuntimeId,
+								initialActivationEvidence: launchActivation,
+								activationEvidence: launchActivation,
+								updatedAt: this.#clock().toISOString(),
+							});
+					} catch {
+						return fail(
+							"launch_failed",
+							"child runtime authority claim evidence is invalid",
+						);
+					}
+						let began:
+							| "applied"
+							| "replay"
+							| "conflict"
+							| undefined;
+						try {
+							began =
+								await this.#options.authorityStore.begin(claimed);
+						} catch {
+							// after-commit acknowledgement loss 只能由 attempt token + exact readback 消歧。
+						}
+						const observedClaim = await this.#readAuthority(
+							request.agentId,
+						);
+						const ownsClaim =
+							began !== "conflict" &&
+							observedClaim.ok &&
+							observedClaim.value?.state === "claimed" &&
+							observedClaim.value.claimAttemptId ===
+								claimed.claimAttemptId &&
+							observedClaim.value.recordDigest ===
+								claimed.recordDigest;
+						if (!ownsClaim) {
+							if (
+								began === "conflict" &&
+								observedClaim.ok &&
+								observedClaim.value
+							) {
+								return this.#coldLaunch(
+									observedClaim.value,
+									request,
+								);
+							}
+							return fail(
+								"reference_unavailable",
+								"child runtime authority claim is conflicting or uncertain",
+								true,
+							);
+						}
+					if (signal?.aborted || this.#closed) {
+						const quarantined = await this.#quarantineAuthority(
+							claimed,
+							"launch_admission_lost_before_create",
+						);
+						return quarantined
+							? fail(
+									"reference_unavailable",
+									"parent session child-spawn admission is unavailable",
+								)
+							: fail(
+									"reference_unavailable",
+									"child launch claim cleanup is uncertain",
+									true,
+								);
+					}
+						let revalidatedParent: AgentResult<ChildRuntimeParentAuthorityEvidence>;
+						try {
+							revalidatedParent =
+								await this.#options.parentAuthority.resolve({
+									activationType: "launch",
+									request,
+								});
+						} catch {
+							revalidatedParent = fail(
+								"reference_unavailable",
+								"parent graph authority revalidation is unavailable",
+								true,
+							);
+						}
+						if (
+							!revalidatedParent.ok ||
+							!parentAuthorityRevalidates(
+								parentAuthority.value,
+								revalidatedParent.value,
+							)
+						) {
+							await this.#quarantineAuthority(
+								claimed,
+								"parent_authority_changed_before_create",
+							);
+							return fail(
+								"reference_unavailable",
+								"parent graph authority changed before child create",
+								true,
+							);
+						}
+						const createStartedAt = this.#clock().toISOString();
+						let creating;
+						try {
+							creating =
+								createCreatingChildRuntimeAuthorityRecord({
+									previous: claimed,
+									createStartedAt,
+									updatedAt: createStartedAt,
+								});
+						} catch {
+							await this.#quarantineAuthority(
+								claimed,
+								"create_boundary_invalid",
+							);
+							return fail(
+								"launch_failed",
+								"child runtime create boundary is invalid",
+							);
+						}
+						const createAuthorized = await this.#advanceAuthority(
+							claimed,
+							creating,
+							"create boundary",
+						);
+						if (!createAuthorized.ok) return createAuthorized;
+						if (signal?.aborted || this.#closed) {
+							const quarantined = await this.#quarantineAuthority(
+								creating,
+								"launch_admission_lost_before_create",
+							);
+							return quarantined
+								? fail(
+										"reference_unavailable",
+										"parent session child-spawn admission is unavailable",
+									)
+								: fail(
+										"reference_unavailable",
+										"child create boundary cleanup is uncertain",
+										true,
+									);
+						}
+						let manager: V3SessionManager;
+						try {
+							manager = await V3SessionManager.create({
+								cwd: workspace.envelope.cwd,
+								sessionDir: this.#options.sessionDir,
+								filePath: creating.sessionFilePath,
+								identity: this.#options.identity,
+								sessionId: request.sessionId,
+								runtimeId: workspace.envelope.ownerRuntimeId,
+								features: this.#options.features,
+								writeGenesis: false,
+								lineage: {
+									goalId: createRuntimeId(
+										"goal",
+										`delegated-${canonicalDigest({ parentAgentId: request.parentAgentId, agentId: request.agentId }).slice(0, 40)}`,
+									),
+									agentId: request.agentId,
+								},
+							});
+						} catch {
+							const quarantined = await this.#quarantineAuthority(
+								creating,
+								"session_create_failed",
+							);
+							return quarantined
+								? fail(
+										"launch_failed",
+										"durable child V3 session could not be created",
+										true,
+									)
+								: fail(
+										"reference_unavailable",
+										"durable child V3 session create outcome is uncertain",
+										true,
+									);
+						}
+							const started = this.#createStartedResult(request, manager, 1);
+							if (!started.ok) {
+								const recovered =
+									await this.#closeAndQuarantineUnregisteredManager(
+								manager,
+									creating,
+									"launch_receipt_invalid",
+								);
+								return recovered
+									? started
+									: fail(
+											"reference_unavailable",
+											"invalid child launch receipt cleanup is uncertain",
+											true,
+										);
+							}
+						let provisional;
+						try {
+							provisional =
+								createProvisionalChildRuntimeAuthorityRecord({
+									previous: creating,
+									launchReceipt: started.value.launchReceipt,
+									residencyReceipt:
+										started.value.residencyReceipt,
+									childWriterFence:
+										manager.writerFenceReceipt(),
+									updatedAt: this.#clock().toISOString(),
+								});
+							} catch {
+								const recovered =
+									await this.#closeAndQuarantineUnregisteredManager(
+								manager,
+									creating,
+									"provisional_evidence_invalid",
+								);
+								return recovered
+									? fail(
+											"launch_failed",
+											"child runtime provisional evidence is invalid",
+										)
+									: fail(
+											"reference_unavailable",
+											"invalid child provisional evidence cleanup is uncertain",
+											true,
+										);
+						}
+						const provisioned = await this.#advanceAuthority(
+							creating,
+							provisional,
+							"provisional activation",
+						);
+						if (!provisioned.ok) {
+							await this.#quarantineAuthority(
+								creating,
+								"provisional_activation_failed",
+								{
+									provisionalEvidence: {
+										launchReceipt:
+											provisional.launchReceipt,
+										residencyReceipt:
+											provisional.residencyReceipt,
+										childWriterFence:
+											provisional.childWriterFence,
+									},
+								},
+							);
+							await manager.closeAll().catch(() => undefined);
+							return provisioned;
+						}
+						let genesisWriteFailed = false;
+						let durableGenesisCursor: EventCursor | undefined;
+						try {
+							await manager.sessionEvents().ensureInitialized();
+						} catch {
+							genesisWriteFailed = true;
+						}
+						for (
+							let attempt = 0;
+							attempt < 2 && !durableGenesisCursor;
+							attempt += 1
+						) {
+							try {
+								const flushed =
+									await manager.flushCurrentHead();
+								if (flushed.ok) {
+									durableGenesisCursor =
+										flushed.value.cursor;
+								} else {
+									genesisWriteFailed = true;
+								}
+							} catch {
+								genesisWriteFailed = true;
+							}
+						}
+						let genesisCursor: EventCursor | undefined;
+						try {
+							const replay = await readAllRuntimeEvents(
+								manager.eventStore(),
+							);
+							const event =
+								replay.ok && replay.value.length === 1
+									? replay.value[0]
+									: undefined;
+							const head = manager.writer().currentHead();
+							if (
+								event?.type === "session.created" &&
+								event.sequence === 0 &&
+								event.stream.scope === "session" &&
+								event.stream.sessionId === request.sessionId &&
+								head?.sequence === 0 &&
+								head.stream.scope === "session" &&
+								head.stream.sessionId === request.sessionId &&
+								durableGenesisCursor?.eventId ===
+									event.eventId &&
+								durableGenesisCursor.eventHash ===
+									event.currentEventHash &&
+								durableGenesisCursor.sequence === 0 &&
+								head.eventId === event.eventId &&
+								head.eventHash === event.currentEventHash
+							) {
+								genesisCursor = head;
+							}
+						} catch {
+							// exact replay 失败时不能把 writer 内存 head 当 durable genesis。
+						}
+							if (!genesisCursor) {
+								await this.#closeAndQuarantineUnregisteredManager(
+									manager,
+									provisional,
+									genesisWriteFailed
+										? "genesis_write_failed"
+										: "genesis_cursor_unavailable",
+								);
+							return fail(
+								"reference_unavailable",
+								"child runtime genesis cursor is unavailable",
+								true,
+							);
+						}
+						let resident;
+						try {
+							resident =
+								createResidentChildRuntimeAuthorityRecord({
+									previous: provisional,
+									genesisCursor,
+									updatedAt: this.#clock().toISOString(),
+								});
+							} catch {
+								const recovered =
+									await this.#closeAndQuarantineUnregisteredManager(
+								manager,
+									provisional,
+									"resident_evidence_invalid",
+									{ genesisCursor },
+								);
+								return recovered
+									? fail(
+											"launch_failed",
+											"child runtime resident evidence is invalid",
+										)
+									: fail(
+											"reference_unavailable",
+											"invalid child resident evidence cleanup is uncertain",
+											true,
+										);
+						}
+						const activated = await this.#advanceAuthority(
+							provisional,
+							resident,
+							"resident activation",
+						);
+						if (!activated.ok) {
+							await manager.closeAll().catch(() => undefined);
+							const observed = await this.#readAuthority(
+								request.agentId,
+							);
+							if (
+								observed.ok &&
+								observed.value?.state === "provisional" &&
+								observed.value.recordDigest ===
+									provisional.recordDigest
+							) {
+								await this.#quarantineAuthority(
+									provisional,
+									"resident_activation_failed",
+									{ genesisCursor },
+								);
+							}
+							return activated;
+						}
+					if (signal?.aborted || this.#closed) {
+						const closed = await manager
+							.closeAll()
+							.then(() => true, () => false);
+						const quarantined =
+							await this.#quarantineAuthority(
+								resident,
+								closed
+									? "launch_admission_lost_after_resident"
+									: "launch_admission_lost_close_uncertain",
+							);
+						return closed && quarantined
+							? fail(
+									"reference_unavailable",
+									"child session creation lost admission and requires explicit recovery",
+								)
+							: fail(
+									"reference_unavailable",
+									"child session creation lost admission and cleanup is uncertain",
+									true,
+								);
+					}
+					this.#children.set(request.agentId, {
+						manager,
 					workspaceId: request.workspaceReceipt.workspaceId,
 					launchRevision: 1,
-					launchRequestDigest: request.requestDigest,
-					launchResult: structuredClone(started.value),
-				});
+						launchRequestDigest: request.requestDigest,
+						launchResult: structuredClone(started.value),
+						authority: resident,
+					});
 				return { ok: true, value: started.value };
 			},
 		);
@@ -598,10 +1390,50 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		request: AgentResumeLaunchRequest,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentLaunchResult>> {
-		return this.#runOperation(
+		if (request.requestDigest !== canonicalDigest(resumeRequestBody(request))) {
+			return Promise.resolve(
+				fail("launch_failed", "child resume request digest is invalid"),
+			);
+		}
+		if (this.#closed) {
+			return Promise.resolve({
+				ok: true,
+				value: {
+					status: "unavailable",
+					reasonDigest: canonicalDigest("launcher unavailable"),
+					retryable: true,
+				},
+			});
+		}
+		const inFlight = this.#resumeOperations.get(request.agentId);
+		if (inFlight) {
+			return inFlight.requestDigest === request.requestDigest
+				? inFlight.promise
+				: Promise.resolve(
+						fail(
+							"idempotency_conflict",
+							"child Agent resume is already in progress for another request",
+						),
+					);
+		}
+		const operation = this.#runOperation<AgentLaunchResult>(
 			() => this.#resume(request, signal),
 			() => ({ ok: true, value: { status: "unavailable", reasonDigest: canonicalDigest("launcher unavailable"), retryable: true } }),
 		);
+		let coordinated: Promise<AgentResult<AgentLaunchResult>>;
+		coordinated = operation.finally(() => {
+			if (
+				this.#resumeOperations.get(request.agentId)?.promise ===
+				coordinated
+			) {
+				this.#resumeOperations.delete(request.agentId);
+			}
+		});
+		this.#resumeOperations.set(request.agentId, {
+			requestDigest: request.requestDigest,
+			promise: coordinated,
+		});
+		return coordinated;
 	}
 
 	async #resume(
@@ -611,12 +1443,35 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		if (signal?.aborted) {
 			return { ok: true, value: { status: "unavailable", reasonDigest: canonicalDigest("launcher unavailable"), retryable: true } };
 		}
-		if (request.requestDigest !== canonicalDigest(resumeRequestBody(request))) {
-			return fail("launch_failed", "child resume request digest is invalid");
-		}
-		if (!this.#options.capabilitySubset.validatesDelegation(request.delegationReceipt)) {
-			return fail("resume_denied", "child resume delegation receipt is stale or invalid");
-		}
+			if (request.requestDigest !== canonicalDigest(resumeRequestBody(request))) {
+				return fail("launch_failed", "child resume request digest is invalid");
+			}
+			try {
+				const admitted =
+					await this.#options.parentMutationGate.revalidate(
+						{
+							kind: "child_spawn",
+							correlationId: request.requestId,
+						},
+						signal,
+					);
+				if (!admitted.ok || signal?.aborted || this.#closed) {
+					return fail(
+						"reference_unavailable",
+						"parent session child-resume admission is unavailable",
+						true,
+					);
+				}
+			} catch {
+				return fail(
+					"reference_unavailable",
+					"parent session child-resume admission is unavailable",
+					true,
+				);
+			}
+			if (!this.#options.capabilitySubset.validatesDelegation(request.delegationReceipt)) {
+				return fail("resume_denied", "child resume delegation receipt is stale or invalid");
+			}
 		if (this.#releaseAttempts.has(request.agentId)) {
 			return fail("reference_unavailable", "child runtime release is in progress or its outcome is uncertain", true);
 		}
@@ -639,19 +1494,118 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 				if (signal?.aborted || this.#closed) {
 					return { ok: true, value: { status: "unavailable", reasonDigest: canonicalDigest("launcher unavailable"), retryable: true } };
 				}
-				if (
-					this.#releaseAttempts.has(request.agentId) ||
-					this.#children.get(request.agentId) !== existing ||
+					if (
+						this.#releaseAttempts.has(request.agentId) ||
+						this.#children.get(request.agentId) !== existing ||
 					existing.manager.isClosed()
-				) {
-					return fail("reference_unavailable", "child runtime release is in progress or its outcome is uncertain", true);
-				}
-				const revision = existing.launchRevision + 1;
-				const started = this.#createStartedResult(request, existing.manager, revision);
-				if (!started.ok) return started;
-				existing.launchRevision = revision;
-				existing.launchResult = structuredClone(started.value);
-				return { ok: true, value: started.value };
+					) {
+						return fail("reference_unavailable", "child runtime release is in progress or its outcome is uncertain", true);
+					}
+					if (existing.authority.state !== "resident") {
+						return fail(
+							"reference_unavailable",
+							"child runtime release is in progress or its outcome is uncertain",
+							true,
+						);
+					}
+					const durable = await this.#readAuthority(request.agentId);
+					if (
+						!durable.ok ||
+						durable.value?.state !== "resident" ||
+						durable.value.recordDigest !==
+							existing.authority.recordDigest
+					) {
+						return fail(
+							"reference_unavailable",
+							"resident child runtime authority is missing or changed",
+							true,
+						);
+					}
+					let parentAuthority: AgentResult<ChildRuntimeParentAuthorityEvidence>;
+					try {
+						parentAuthority =
+							await this.#options.parentAuthority.resolve({
+								activationType: "resume",
+								request,
+							});
+					} catch {
+						return fail(
+							"reference_unavailable",
+							"parent graph resume authority evidence is unavailable",
+							true,
+						);
+					}
+					if (!parentAuthority.ok) return parentAuthority;
+					if (
+						parentAuthority.value.parentSessionId !==
+							this.#options.parentAuthority.parentSessionId ||
+						parentAuthority.value.ownerParentRuntimeId !==
+							existing.authority.ownerParentRuntimeId
+					) {
+						return fail(
+							"resume_denied",
+							"parent graph resume authority is outside the launcher scope",
+						);
+					}
+					const currentActivation =
+						existing.authority.activationEvidence;
+					if (currentActivation.requestId === request.requestId) {
+						return currentActivation.requestDigest ===
+							request.requestDigest
+							? {
+									ok: true,
+									value: structuredClone(
+										existing.launchResult,
+									),
+								}
+							: fail(
+									"idempotency_conflict",
+									"child resume request identity conflicts with durable activation",
+								);
+					}
+					const revision = existing.launchRevision + 1;
+					const started = this.#createStartedResult(
+						request,
+						existing.manager,
+						revision,
+					);
+					if (!started.ok) return started;
+					let resumedAuthority;
+					try {
+						const latestActivation =
+							activationEvidence(
+								"resume",
+								request,
+								parentAuthority.value,
+							);
+						resumedAuthority =
+							createResumedChildRuntimeAuthorityRecord({
+								previous: existing.authority,
+								activationEvidence: latestActivation,
+								launchReceipt:
+									started.value.launchReceipt,
+								residencyReceipt:
+									started.value.residencyReceipt,
+								childWriterFence:
+									existing.manager.writerFenceReceipt(),
+								updatedAt: this.#clock().toISOString(),
+							});
+					} catch {
+						return fail(
+							"launch_failed",
+							"child runtime resume authority evidence is invalid",
+						);
+					}
+					const persisted = await this.#advanceAuthority(
+						existing.authority,
+						resumedAuthority,
+						"resume activation",
+					);
+					if (!persisted.ok) return persisted;
+					existing.authority = resumedAuthority;
+					existing.launchRevision = revision;
+					existing.launchResult = structuredClone(started.value);
+					return { ok: true, value: started.value };
 			},
 		);
 	}
@@ -831,9 +1785,26 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		if (signal?.aborted) {
 			return fail("reference_unavailable", "child runtime release is unavailable", true);
 		}
+		const authority = await this.#readAuthority(request.agentId);
+		if (!authority.ok) return authority;
+		if (authority.value?.state === "released") {
+			return this.#coldRelease(authority.value, request);
+		}
 		const existing = this.#children.get(request.agentId);
 		if (!existing || existing.manager.sessionId() !== request.sessionId) {
-			return fail("agent_not_found", "child runtime is not registered");
+			return authority.value
+				? this.#coldRelease(authority.value, request)
+				: fail("agent_not_found", "child runtime is not registered");
+		}
+		if (
+			!authority.value ||
+			authority.value.recordDigest !== existing.authority.recordDigest
+		) {
+			return fail(
+				"reference_unavailable",
+				"resident child runtime authority is missing or changed",
+				true,
+			);
 		}
 		if (
 			request.launchReceipt.agentId !== request.agentId ||
@@ -856,7 +1827,43 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 			return fail("reference_unavailable", "child runtime stop outcome is uncertain", true);
 		}
 		if (!attempt) {
-			const writerFence = existing.manager.writerFenceReceipt();
+			let pending: ReleasePendingChildRuntimeAuthorityRecord;
+			if (existing.authority.state === "release_pending") {
+				if (
+					existing.authority.releaseRequest.requestDigest !==
+					request.requestDigest
+				) {
+					return fail(
+						"idempotency_conflict",
+						"child runtime release is already claimed by another request",
+					);
+				}
+				pending = existing.authority;
+			} else {
+				try {
+					pending =
+						createReleasePendingChildRuntimeAuthorityRecord({
+							previous: existing.authority,
+							releaseRequest: request,
+							preStopWriterFence:
+								existing.manager.writerFenceReceipt(),
+							updatedAt: this.#clock().toISOString(),
+						});
+				} catch {
+					return fail(
+						"launch_failed",
+						"child runtime release authority evidence is invalid",
+					);
+				}
+				const persisted = await this.#advanceAuthority(
+					existing.authority,
+					pending,
+					"release intent",
+				);
+				if (!persisted.ok) return persisted;
+				existing.authority = pending;
+			}
+			const writerFence = pending.preStopWriterFence;
 			this.#releaseAttempts.set(request.agentId, {
 				requestDigest: request.requestDigest,
 				state: "stop_uncertain",
@@ -890,7 +1897,18 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		} catch {
 			return fail("reference_unavailable", "child runtime release failed", true);
 		}
-		const releasedAt = this.#clock().toISOString();
+		let writerLeaseReleasedEvidence;
+		try {
+			writerLeaseReleasedEvidence =
+				existing.manager.writerLeaseReleasedEvidence();
+		} catch {
+			return fail(
+				"reference_unavailable",
+				"child writer lease release evidence is unavailable",
+				true,
+			);
+		}
+		const releasedAt = writerLeaseReleasedEvidence.releasedAt;
 		const residency = createAgentResidencyReceipt({
 			agentId: request.agentId,
 			sessionId: request.sessionId,
@@ -931,6 +1949,35 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 			...body,
 			receiptDigest: canonicalDigest(body),
 		};
+		const pending = existing.authority;
+		if (pending.state !== "release_pending") {
+			return fail(
+				"reference_unavailable",
+				"child runtime release intent vanished before completion",
+				true,
+			);
+		}
+		let releasedAuthority;
+		try {
+			releasedAuthority =
+				createReleasedChildRuntimeAuthorityRecord({
+					previous: pending,
+					releaseReceipt: receipt,
+					writerLeaseReleasedEvidence,
+					updatedAt: releasedAt,
+				});
+		} catch {
+			return fail(
+				"launch_failed",
+				"child runtime released authority evidence is invalid",
+			);
+		}
+		const persisted = await this.#advanceAuthority(
+			pending,
+			releasedAuthority,
+			"release completion",
+		);
+		if (!persisted.ok) return persisted;
 		this.#released.set(request.agentId, {
 			requestDigest: request.requestDigest,
 			receipt: structuredClone(receipt),
@@ -962,14 +2009,22 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		if (!existing || existing.manager.sessionId() !== request.sessionId) {
 			return fail("agent_not_found", "child runtime is not registered");
 		}
-		try {
-			await existing.manager.requestStop("parent cancelled delegated Agent");
-			await existing.manager.closeAll();
-			this.#children.delete(request.agentId);
-			return { ok: true, value: createRuntimeId("receipt", `agent-cancel-${canonicalDigest(request).slice(0, 48)}`) };
-		} catch {
-			return fail("reference_unavailable", "child runtime cancellation failed", true);
-		}
+		const body: Omit<AgentRuntimeReleaseRequest, "requestDigest"> = {
+			requestId: request.requestId,
+			agentId: request.agentId,
+			sessionId: request.sessionId,
+			launchReceipt: existing.launchResult.launchReceipt,
+			previousResidencyReceipt:
+				existing.launchResult.residencyReceipt,
+			reason: "stopped",
+		};
+		const released = await this.release(
+			{ ...body, requestDigest: canonicalDigest(body) },
+			signal,
+		);
+		return released.ok
+			? { ok: true, value: released.value.receiptId }
+			: released;
 	}
 
 	public snapshots(): readonly ChildSessionRuntimeSnapshot[] {
@@ -985,18 +2040,51 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		}));
 	}
 
+	/** Startup 只接受可 cold replay 的 released authority；任何 partial/resident 状态先恢复再暴露。 */
+	public async auditAuthority(): Promise<void> {
+		const audited = await this.#auditColdAuthority(
+			(records) =>
+				records.filter((record) => record.state !== "released").length,
+		);
+		if (!audited.ok) {
+			throw new Error(
+				`production child runtime authority audit failed: ${audited.error.code}`,
+			);
+		}
+		if (audited.value > 0) {
+			throw new Error(
+				`production child runtime authority audit requires explicit recovery for ${audited.value} cold partial or resident runtime(s)`,
+			);
+		}
+	}
+
 	/**
-	 * Production composition 的 fail-closed shutdown 原语。检查与 closed latch 在同一
-	 * 同步调用栈内完成，避免先观察 snapshots、再被并发 spawn 插入 resident child。
+	 * Production composition 的 fail-closed shutdown 原语。closed latch + operation
+	 * drain 固定本地视图，cold/local 空判断在 authority root 排他 fence 内完成。
 	 */
 	public async closeIfIdle(): Promise<void> {
 		const reopenOnFailure = !this.#closed;
 		this.#closed = true;
 		await this.#drainOperations();
-		if (this.#children.size > 0) {
+		const cold = await this.#auditColdAuthority((records) => ({
+			activeChildren: this.#children.size,
+			partialChildren: records.filter(
+				(record) => record.state !== "released",
+			).length,
+		}));
+		if (
+			!cold.ok ||
+			cold.value.activeChildren > 0 ||
+			cold.value.partialChildren > 0
+		) {
 			if (reopenOnFailure) this.#closed = false;
+			if (!cold.ok) {
+				throw new Error(
+					`production Agent supervisor close could not audit child runtime authority: ${cold.error.code}`,
+				);
+			}
 			throw new Error(
-				`production Agent supervisor close requires governed terminal cleanup for ${this.#children.size} active child runtime(s)`,
+				`production Agent supervisor close requires governed terminal cleanup for ${Math.max(cold.value.activeChildren, cold.value.partialChildren)} active or cold-partial child runtime(s)`,
 			);
 		}
 	}
@@ -1005,7 +2093,20 @@ export class ProductionChildSessionLauncher implements AgentLauncherPort {
 		this.#closed = true;
 		await this.#drainOperations();
 		const children = [...this.#children.entries()];
-		const closed = await Promise.allSettled(children.map(([, child]) => child.manager.closeAll()));
+		const closed = await Promise.allSettled(
+			children.map(async ([, child]) => {
+				const quarantined = await this.#quarantineAuthority(
+					child.authority,
+					"launcher_forced_close",
+				);
+				if (!quarantined) {
+					throw new Error(
+						"child runtime authority quarantine failed before forced close",
+					);
+				}
+				await child.manager.closeAll();
+			}),
+		);
 		const errors: unknown[] = [];
 		for (const [index, result] of closed.entries()) {
 			const [agentId, child] = children[index]!;

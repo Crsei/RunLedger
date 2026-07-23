@@ -10,6 +10,7 @@ import { SessionArtifactJournal } from "../../../src/runtime/artifacts/session-j
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { DEFAULT_RUNTIME_FEATURES, type RuntimeFeatureFlags } from "../../../src/runtime/runtime-features.ts";
+import { AgentLoopSessionEvents } from "../../../src/runtime/session/agent-loop-events.ts";
 import { EventWriter } from "../../../src/runtime/session/event-writer.ts";
 import { JsonlV3EventStore } from "../../../src/runtime/session/jsonl-v3-store.ts";
 import { FileWriterLeaseStore } from "../../../src/runtime/session/writer-lease.ts";
@@ -33,14 +34,205 @@ afterEach(() => {
 });
 
 describe("V3SessionManager", () => {
+	it("creates at an exact absolute session-bound file path", async () => {
+		const root = temporaryRoot();
+		const sessionDir = join(root, "sessions");
+		const sessionId = createRuntimeId("session", "exact-create-path");
+		const filePath = join(sessionDir, `2026-07-23T00-00-00-000Z_${sessionId}.jsonl`);
+
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir,
+			sessionId,
+			filePath,
+			features: FLAGS,
+		});
+
+		expect(manager.filePath()).toBe(filePath);
+		expect(manager.sessionId()).toBe(sessionId);
+		await manager.closeAll();
+	});
+
+	it("reissues an exact durable receipt for the current delayed-genesis head", async () => {
+		const root = temporaryRoot();
+		const sessionId = createRuntimeId(
+			"session",
+			"delayed-genesis-durable-head",
+		);
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			sessionId,
+			features: FLAGS,
+			writeGenesis: false,
+		});
+
+		expect(await manager.flushCurrentHead()).toMatchObject({
+			ok: false,
+			error: {
+				code: "sequence_conflict",
+				effect: "none",
+			},
+		});
+		await manager.sessionEvents().ensureInitialized();
+		const first = await manager.flushCurrentHead();
+		const replay = await manager.flushCurrentHead();
+		expect(first).toMatchObject({
+			ok: true,
+			value: {
+				cursor: {
+					stream: {
+						scope: "session",
+						sessionId,
+					},
+					sequence: 0,
+				},
+			},
+		});
+		expect(replay).toMatchObject({
+			ok: true,
+			value: {
+				cursor:
+					first.ok
+						? first.value.cursor
+						: expect.any(Object),
+			},
+		});
+		await manager.closeAll();
+	});
+
+	it.each([
+		{
+			label: "relative",
+			path: (root: string, sessionId: string) => join("sessions", `exact_${sessionId}.jsonl`),
+			message: "must be absolute",
+		},
+		{
+			label: "outside the resolved session directory",
+			path: (root: string, sessionId: string) => join(root, "other", `exact_${sessionId}.jsonl`),
+			message: "resolved session directory",
+		},
+		{
+			label: "not bound to the session id",
+			path: (root: string) => join(root, "sessions", "2026-07-23T00-00-00-000Z_session_other.jsonl"),
+			message: "must be bound to sessionId",
+		},
+	])("rejects an exact create path that is $label", async ({ path, message }) => {
+		const root = temporaryRoot();
+		const sessionId = createRuntimeId("session", "exact-create-path");
+		await expect(V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			sessionId,
+			filePath: path(root, sessionId),
+			features: FLAGS,
+		})).rejects.toThrow(message);
+	});
+
+	it("closes writer and store, releases the lease, and stops heartbeat when automatic genesis fails", async () => {
+		vi.useFakeTimers();
+		const root = temporaryRoot();
+		const sessionDir = join(root, "sessions");
+		const sessionId = createRuntimeId("session", "genesis-cleanup");
+		const filePath = join(sessionDir, `2026-07-23T00-00-00-000Z_${sessionId}.jsonl`);
+		const primary = new Error("injected automatic genesis failure");
+		vi.spyOn(AgentLoopSessionEvents.prototype, "ensureInitialized").mockRejectedValueOnce(primary);
+		const writerClose = vi.spyOn(EventWriter.prototype, "close");
+		const storeClose = vi.spyOn(JsonlV3EventStore.prototype, "close");
+		const release = vi.spyOn(FileWriterLeaseStore.prototype, "release");
+		const heartbeat = vi.spyOn(FileWriterLeaseStore.prototype, "heartbeat");
+
+		await expect(V3SessionManager.create({
+			cwd: root,
+			sessionDir,
+			sessionId,
+			filePath,
+			features: FLAGS,
+		})).rejects.toBe(primary);
+
+		expect(writerClose).toHaveBeenCalledTimes(1);
+		expect(storeClose).toHaveBeenCalled();
+		expect(release).toHaveBeenCalledTimes(1);
+		await vi.advanceTimersByTimeAsync(31_000);
+		expect(heartbeat).not.toHaveBeenCalled();
+	});
+
+	it("retains automatic-genesis primary and every cleanup failure", async () => {
+		const root = temporaryRoot();
+		const primary = new Error("injected automatic genesis failure");
+		const writerFailure = new Error("injected writer close failure");
+		vi.spyOn(AgentLoopSessionEvents.prototype, "ensureInitialized").mockRejectedValueOnce(primary);
+		vi.spyOn(EventWriter.prototype, "close").mockRejectedValueOnce(writerFailure);
+		const originalStoreClose = JsonlV3EventStore.prototype.close;
+		vi.spyOn(JsonlV3EventStore.prototype, "close").mockImplementationOnce(async function () {
+			await originalStoreClose.call(this);
+			return {
+				ok: false,
+				error: {
+					code: "durable_write_failed",
+					message: "injected store close failure",
+					retryable: false,
+					effect: "uncertain",
+				},
+			};
+		});
+		const release = vi.spyOn(FileWriterLeaseStore.prototype, "release").mockReturnValueOnce({
+			ok: false,
+			error: {
+				code: "durable_write_failed",
+				message: "injected lease release failure",
+				retryable: true,
+				effect: "none",
+			},
+		});
+
+		let caught: unknown;
+		try {
+			await V3SessionManager.create({
+				cwd: root,
+				sessionDir: join(root, "sessions"),
+				features: FLAGS,
+			});
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(AggregateError);
+		expect((caught as AggregateError).errors).toEqual([
+			primary,
+			writerFailure,
+			expect.objectContaining({ message: expect.stringContaining("injected store close failure") }),
+			expect.objectContaining({ message: expect.stringContaining("injected lease release failure") }),
+		]);
+		expect(release).toHaveBeenCalledTimes(1);
+	});
+
 	it("creates, releases, reopens, recovers, and replays canonical model history", async () => {
 		const root = temporaryRoot();
 		const sessions = join(root, "sessions");
 		const manager = await V3SessionManager.create({ cwd: root, sessionDir: sessions, features: FLAGS });
+		const fence = manager.writerFenceReceipt();
+		expect(() => manager.writerLeaseReleasedEvidence()).toThrow("release is not confirmed");
 		await manager.sessionEvents().recordMessage({ role: "user", content: [{ type: "text", text: "hello" }] });
 		const filePath = manager.filePath();
 		const sessionId = manager.sessionId();
-		await manager.closeAll();
+		const closeWithEvidence = manager.closeAllWithWriterLeaseEvidence();
+		expect(manager.closeAllWithWriterLeaseEvidence()).toBe(closeWithEvidence);
+		const evidence = await closeWithEvidence;
+		const { evidenceDigest, ...evidenceBody } = evidence;
+		expect(evidenceBody).toEqual({
+			authorityId: fence.authorityId,
+			tenantId: fence.tenantId,
+			sessionId,
+			runtimeInstanceId: fence.runtimeId,
+			leaseId: fence.leaseId,
+			writerEpoch: fence.writerEpoch,
+			fencingTokenDigest: fence.fencingTokenDigest,
+			releasedAt: expect.any(String),
+		});
+		expect(evidenceDigest).toBe(canonicalDigest(evidenceBody));
+		expect(evidence).not.toHaveProperty("fencingToken");
+		expect(manager.writerLeaseReleasedEvidence()).toEqual(evidence);
 
 		const reopened = await V3SessionManager.open(filePath, FLAGS);
 		expect(reopened.sessionId()).toBe(sessionId);
@@ -51,7 +243,115 @@ describe("V3SessionManager", () => {
 		await reopened.closeAll();
 	});
 
-	it("stops renewing an uncertain partial close and permits cold takeover only after lease expiry", async () => {
+	it("recovers exact released evidence when the release commit acknowledgement is lost", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const originalRelease = FileWriterLeaseStore.prototype.release;
+		const release = vi.spyOn(FileWriterLeaseStore.prototype, "release").mockImplementationOnce(function (fence) {
+			const committed = originalRelease.call(this, fence);
+			expect(committed.ok).toBe(true);
+			return {
+				ok: false,
+				error: {
+					code: "durable_write_failed",
+					message: "injected acknowledgement loss after durable release",
+					retryable: true,
+					effect: "uncertain",
+				},
+			};
+		});
+		const inspectReleased = vi.spyOn(FileWriterLeaseStore.prototype, "inspectReleased");
+
+		await expect(manager.closeAll()).resolves.toBeUndefined();
+		expect(manager.isClosed()).toBe(true);
+		expect(release).toHaveBeenCalledTimes(1);
+		expect(inspectReleased).toHaveBeenCalledTimes(1);
+		expect(manager.writerLeaseReleasedEvidence()).toMatchObject({
+			runtimeInstanceId: manager.runtimeId(),
+			releasedAt: expect.any(String),
+			evidenceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+		});
+	});
+
+	it("publishes the latest durable writer lease expiry after heartbeat renewal", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-07-23T02:00:00.000Z"));
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const initial = manager.writerFenceReceipt();
+
+		await vi.advanceTimersByTimeAsync(10_000);
+		const renewed = manager.writerFenceReceipt();
+
+		expect(renewed.acquiredAt).toBe(initial.acquiredAt);
+		expect(renewed.expiresAt).toBe("2026-07-23T02:00:40.000Z");
+		expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.parse(initial.expiresAt));
+		expect(renewed.receiptDigest).not.toBe(initial.receiptDigest);
+		await manager.closeAll();
+	});
+
+	it("permanently fences writer-fence claims after a heartbeat failure", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-07-23T03:00:00.000Z"));
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const heartbeat = vi.spyOn(FileWriterLeaseStore.prototype, "heartbeat").mockReturnValueOnce({
+			ok: false,
+			error: {
+				code: "durable_write_failed",
+				message: "injected heartbeat failure",
+				retryable: true,
+				effect: "uncertain",
+			},
+		});
+
+		await vi.advanceTimersByTimeAsync(10_000);
+		expect(heartbeat).toHaveBeenCalledTimes(1);
+		expect(() => manager.writerFenceReceipt()).toThrow("v3 writer lease is fenced");
+
+		heartbeat.mockRestore();
+		expect(() => manager.writerFenceReceipt()).toThrow("v3 writer lease is fenced");
+		await manager.closeAll();
+	});
+
+	it("fails writer-fence claims closed when the exact durable lease cannot be validated", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const validate = vi.spyOn(FileWriterLeaseStore.prototype, "validate").mockReturnValueOnce({
+			ok: false,
+			error: {
+				code: "writer_fenced",
+				message: "injected exact-fence mismatch",
+				retryable: false,
+				effect: "none",
+			},
+		});
+
+		expect(() => manager.writerFenceReceipt()).toThrow("v3 writer lease is fenced");
+		expect(validate).toHaveBeenCalledTimes(1);
+
+		validate.mockRestore();
+		expect(() => manager.writerFenceReceipt()).toThrow("v3 writer lease is fenced");
+		await manager.closeAll();
+	});
+
+	it("releases the lease and keeps release evidence when writer close acknowledgement is uncertain", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-07-23T00:00:00.000Z"));
 		const root = temporaryRoot();
@@ -83,28 +383,112 @@ describe("V3SessionManager", () => {
 
 		const failedClose = manager.closeAll();
 		await expect(failedClose).rejects.toThrow("v3 event writer close failed");
-		expect(manager.isClosed()).toBe(false);
+		expect(manager.isClosed()).toBe(true);
+		expect(manager.writerLeaseReleasedEvidence()).toMatchObject({
+			runtimeInstanceId: manager.runtimeId(),
+			writerEpoch: firstFence.writerEpoch,
+			releasedAt: expect.any(String),
+		});
 		expect(manager.closeAll()).toBe(failedClose);
-		await expect(manager.closeAll()).rejects.toThrow("v3 event writer close failed");
 		expect(closeAttempts).toBe(1);
-		await expect(V3SessionManager.open(
-			manager.filePath(),
-			FLAGS,
-			manager.identity(),
-			{ runtimeId: createRuntimeId("runtime", "competing-close") },
-		)).rejects.toThrow("v3 writer lease unavailable");
-
 		await vi.advanceTimersByTimeAsync(31_000);
 		expect(heartbeat).not.toHaveBeenCalled();
 		const recovered = await V3SessionManager.open(
 			manager.filePath(),
 			FLAGS,
 			manager.identity(),
-			{ runtimeId: createRuntimeId("runtime", "cold-takeover") },
+			{ runtimeId: createRuntimeId("runtime", "released-takeover") },
 		);
+
 		expect(recovered.writerFenceReceipt().writerEpoch).toBe(firstFence.writerEpoch + 1);
 		expect(recovered.recoveryDecision()).toMatchObject({ kind: "resume" });
 		await recovered.closeAll();
+	});
+
+	it("releases compose resources when replay fails after writer construction", async () => {
+		const root = temporaryRoot();
+		const seed = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const filePath = seed.filePath();
+		const identity = seed.identity();
+		await seed.closeAll();
+		const readPage = vi.spyOn(JsonlV3EventStore.prototype, "readPage").mockResolvedValueOnce({
+			ok: false,
+			error: {
+				code: "corrupted_log",
+				message: "injected replay failure",
+				retryable: false,
+				effect: "none",
+			},
+		});
+		const writerClose = vi.spyOn(EventWriter.prototype, "close");
+		const storeClose = vi.spyOn(JsonlV3EventStore.prototype, "close");
+		const release = vi.spyOn(FileWriterLeaseStore.prototype, "release");
+
+		await expect(V3SessionManager.open(filePath, FLAGS, identity)).rejects.toThrow(
+			"v3 session state replay failed",
+		);
+		expect(writerClose).toHaveBeenCalledTimes(1);
+		expect(storeClose).toHaveBeenCalled();
+		expect(release).toHaveBeenCalledTimes(1);
+
+		readPage.mockRestore();
+		const recovered = await V3SessionManager.open(filePath, FLAGS, identity);
+		await recovered.closeAll();
+	});
+
+	it("continues store close and lease release after writer close throws, retaining all failures", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const writerFailure = new Error("injected writer close throw");
+		vi.spyOn(EventWriter.prototype, "close").mockRejectedValueOnce(writerFailure);
+		const originalStoreClose = JsonlV3EventStore.prototype.close;
+		const storeClose = vi.spyOn(JsonlV3EventStore.prototype, "close").mockImplementationOnce(async function () {
+			await originalStoreClose.call(this);
+			return {
+				ok: false,
+				error: {
+					code: "durable_write_failed",
+					message: "injected store close failure",
+					retryable: false,
+					effect: "uncertain",
+				},
+			};
+		});
+		const release = vi.spyOn(FileWriterLeaseStore.prototype, "release").mockReturnValueOnce({
+			ok: false,
+			error: {
+				code: "durable_write_failed",
+				message: "injected lease release failure",
+				retryable: true,
+				effect: "none",
+			},
+		});
+
+		let caught: unknown;
+		try {
+			await manager.closeAll();
+		} catch (error) {
+			caught = error;
+		}
+
+		expect(caught).toBeInstanceOf(AggregateError);
+		expect((caught as AggregateError).errors).toEqual([
+			writerFailure,
+			expect.objectContaining({ message: expect.stringContaining("injected store close failure") }),
+			expect.objectContaining({ message: expect.stringContaining("injected lease release failure") }),
+		]);
+		expect(storeClose).toHaveBeenCalledTimes(1);
+		expect(release).toHaveBeenCalledTimes(1);
+		expect(manager.isClosed()).toBe(false);
+		expect(() => manager.writerLeaseReleasedEvidence()).toThrow("release is not confirmed");
 	});
 
 	it("does not revive its heartbeat when lease release fails after a confirmed writer close", async () => {
@@ -131,6 +515,7 @@ describe("V3SessionManager", () => {
 		const failedClose = manager.closeAll();
 		await expect(failedClose).rejects.toThrow("v3 writer lease release failed");
 		expect(manager.isClosed()).toBe(false);
+		expect(() => manager.writerLeaseReleasedEvidence()).toThrow("release is not confirmed");
 		expect(manager.closeAll()).toBe(failedClose);
 		expect(release).toHaveBeenCalledTimes(1);
 

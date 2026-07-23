@@ -7,8 +7,8 @@ import {
   lstat,
   mkdir,
   open,
+  opendir,
   realpath,
-  readdir,
   rename,
   unlink,
 } from "node:fs/promises";
@@ -30,8 +30,23 @@ import {
 import { isRuntimeId, type AgentId } from "../runtime/protocol/v3/ids.ts";
 
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
+const MAX_RECORDS = 1_024;
+const MAX_PUBLISH_TEMPORARIES = 16;
+const ROOT_LOCK_NAME = ".child-runtime-authority.root.lock";
+const MAX_ROOT_ENTRIES = MAX_RECORDS + MAX_PUBLISH_TEMPORARIES + 1;
+const MAX_ROOT_NAME_BYTES =
+  MAX_RECORDS * Buffer.byteLength(`${"f".repeat(64)}.json`, "utf8") +
+  MAX_PUBLISH_TEMPORARIES *
+    Buffer.byteLength(".00000000-0000-0000-0000-000000000000.tmp", "utf8") +
+  Buffer.byteLength(ROOT_LOCK_NAME, "utf8");
+const RECORD_FILE = /^[a-f0-9]{64}\.json$/u;
 const PUBLISH_TEMP =
   /^\.[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.tmp$/u;
+
+interface AuthorityRootEntries {
+  recordPaths: readonly string[];
+  temporaryPaths: readonly string[];
+}
 
 function privateRecordIdentityStats(stats: Stats): boolean {
   return (
@@ -47,6 +62,17 @@ function privateRecordStats(stats: Stats): boolean {
     privateRecordIdentityStats(stats) &&
     stats.size > 0 &&
     stats.size <= MAX_RECORD_BYTES
+  );
+}
+
+function privatePublishTempStats(stats: Stats): boolean {
+  return (
+    stats.isFile() &&
+    !stats.isSymbolicLink() &&
+    (stats.nlink === 1 || stats.nlink === 2) &&
+    stats.size >= 0 &&
+    stats.size <= MAX_RECORD_BYTES &&
+    (process.platform === "win32" || (stats.mode & 0o077) === 0)
   );
 }
 
@@ -95,7 +121,7 @@ async function readBoundedRecord(handle: FileHandle): Promise<Buffer> {
 
 function parseRecord(
   raw: Buffer,
-  agentId: AgentId,
+  agentId?: AgentId,
 ): ChildRuntimeAuthorityRecord {
   if (raw.byteLength <= 0 || raw.byteLength > MAX_RECORD_BYTES) {
     throw new Error(
@@ -114,7 +140,10 @@ function parseRecord(
   } catch {
     throw new Error("child runtime authority record is corrupted");
   }
-  if (!isChildRuntimeAuthorityRecord(parsed) || parsed.agentId !== agentId) {
+  if (
+    !isChildRuntimeAuthorityRecord(parsed) ||
+    (agentId !== undefined && parsed.agentId !== agentId)
+  ) {
     throw new Error(
       "child runtime authority record identity, digest, or encoding is invalid",
     );
@@ -161,9 +190,102 @@ class PrivateAuthorityDirectory {
     return join(this.#root, `${canonicalDigest(agentId)}.json`);
   }
 
+  async #scanRoot(): Promise<AuthorityRootEntries> {
+    const recordPaths: string[] = [];
+    const temporaryPaths: string[] = [];
+    let entryCount = 0;
+    let nameBytes = 0;
+    let sawRootLock = false;
+    const directory = await opendir(this.#root);
+    try {
+      while (true) {
+        const entry = await directory.read();
+        if (!entry) break;
+        entryCount += 1;
+        nameBytes += Buffer.byteLength(entry.name, "utf8");
+        if (
+          entryCount > MAX_ROOT_ENTRIES ||
+          nameBytes > MAX_ROOT_NAME_BYTES
+        ) {
+          throw new Error(
+            "child runtime authority root entries exceed their bound",
+          );
+        }
+        const path = join(this.#root, entry.name);
+        if (entry.name === ROOT_LOCK_NAME) {
+          const stats = await lstat(path);
+          if (
+            !entry.isDirectory() ||
+            !stats.isDirectory() ||
+            stats.isSymbolicLink() ||
+            resolve(await realpath(path)) !== path
+          ) {
+            throw new Error(
+              "child runtime authority root lock entry is unsafe",
+            );
+          }
+          sawRootLock = true;
+          continue;
+        }
+        if (RECORD_FILE.test(entry.name)) {
+          if (!entry.isFile()) {
+            throw new Error(
+              "child runtime authority .json entry is not a regular file",
+            );
+          }
+          recordPaths.push(path);
+          if (recordPaths.length > MAX_RECORDS) {
+            throw new Error(
+              "child runtime authority record count exceeds its bound",
+            );
+          }
+          continue;
+        }
+        if (PUBLISH_TEMP.test(entry.name)) {
+          if (!entry.isFile()) {
+            throw new Error(
+              "child runtime authority publish temporary entry is unsafe",
+            );
+          }
+          const stats = await lstat(path);
+          if (
+            !privatePublishTempStats(stats) ||
+            resolve(await realpath(path)) !== path
+          ) {
+            throw new Error(
+              "child runtime authority publish temporary entry is unsafe",
+            );
+          }
+          temporaryPaths.push(path);
+          if (temporaryPaths.length > MAX_PUBLISH_TEMPORARIES) {
+            throw new Error(
+              "child runtime authority publish temporary count exceeds its bound",
+            );
+          }
+          continue;
+        }
+        throw new Error(
+          "child runtime authority root contains an unexpected entry",
+        );
+      }
+    } finally {
+      await directory.close();
+    }
+    if (!sawRootLock) {
+      throw new Error(
+        "child runtime authority root lock disappeared during audit",
+      );
+    }
+    return {
+      recordPaths: recordPaths.sort(),
+      temporaryPaths: temporaryPaths.sort(),
+    };
+  }
+
   private async recoverInterruptedPublish(
     path: string,
     stats: Stats,
+    knownTemporaryPaths?: readonly string[],
   ): Promise<Stats> {
     if (stats.nlink === 1) return stats;
     if (
@@ -175,9 +297,9 @@ class PrivateAuthorityDirectory {
       return stats;
 
     const candidates: string[] = [];
-    for (const entry of await readdir(this.#root, { withFileTypes: true })) {
-      if (!PUBLISH_TEMP.test(entry.name)) continue;
-      const candidate = join(this.#root, entry.name);
+    const temporaryPaths =
+      knownTemporaryPaths ?? (await this.#scanRoot()).temporaryPaths;
+    for (const candidate of temporaryPaths) {
       let candidateStats: Stats;
       try {
         candidateStats = await lstat(candidate);
@@ -219,6 +341,33 @@ class PrivateAuthorityDirectory {
       );
     }
     return recovered;
+  }
+
+  async #cleanupOrphanedTemporaries(
+    temporaryPaths: readonly string[],
+  ): Promise<void> {
+    let changed = false;
+    for (const path of temporaryPaths) {
+      let stats: Stats;
+      try {
+        stats = await lstat(path);
+      } catch (error) {
+        if (errno(error) === "ENOENT") continue;
+        throw error;
+      }
+      if (
+        !privatePublishTempStats(stats) ||
+        stats.nlink !== 1 ||
+        resolve(await realpath(path)) !== path
+      ) {
+        throw new Error(
+          "child runtime authority orphaned publish temporary is unsafe",
+        );
+      }
+      await unlink(path);
+      changed = true;
+    }
+    if (changed) await syncDirectory(this.#root);
   }
 
   public async read(
@@ -338,10 +487,10 @@ class PrivateAuthorityDirectory {
     }
   }
 
-  public async lock<T>(path: string, operation: () => Promise<T>): Promise<T> {
-    const release = await lockfile.lock(path, {
+  public async lockRoot<T>(operation: () => Promise<T>): Promise<T> {
+    const release = await lockfile.lock(this.#root, {
       realpath: false,
-      lockfilePath: `${path}.lock`,
+      lockfilePath: join(this.#root, ROOT_LOCK_NAME),
       stale: 30_000,
       retries: { retries: 50, minTimeout: 10, maxTimeout: 50, factor: 1 },
     });
@@ -352,12 +501,57 @@ class PrivateAuthorityDirectory {
     }
   }
 
-  public async files(): Promise<readonly string[]> {
-    const entries = await readdir(this.#root, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-      .map((entry) => join(this.#root, entry.name))
-      .sort();
+  public async list(): Promise<readonly ChildRuntimeAuthorityRecord[]> {
+    const records: ChildRuntimeAuthorityRecord[] = [];
+    const entries = await this.#scanRoot();
+    for (const path of entries.recordPaths) {
+      let stats = await lstat(path);
+      stats = await this.recoverInterruptedPublish(
+        path,
+        stats,
+        entries.temporaryPaths,
+      );
+      if (
+        !privateRecordIdentityStats(stats) ||
+        resolve(await realpath(path)) !== path
+      ) {
+        throw new Error(
+          "child runtime authority record file identity or permissions are unsafe",
+        );
+      }
+      const handle = await open(
+        path,
+        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+      );
+      try {
+        const opened = await handle.stat();
+        if (!privateRecordStats(opened) || !sameRecordFile(stats, opened)) {
+          throw new Error(
+            "child runtime authority opened record identity, link count, size, or permissions are unsafe",
+          );
+        }
+        const raw = await readBoundedRecord(handle);
+        const after = await handle.stat();
+        if (!privateRecordStats(after) || !sameRecordFile(opened, after)) {
+          throw new Error(
+            "child runtime authority record changed while it was being read",
+          );
+        }
+        const record = parseRecord(raw);
+        if (this.path(record.agentId) !== path) {
+          throw new Error(
+            "child runtime authority record filename does not match its Agent identity",
+          );
+        }
+        records.push(record);
+      } finally {
+        await handle.close();
+      }
+    }
+    await this.#cleanupOrphanedTemporaries(entries.temporaryPaths);
+    return records.sort((left, right) =>
+      left.agentId.localeCompare(right.agentId),
+    );
   }
 }
 
@@ -368,13 +562,34 @@ export class FileChildRuntimeAuthorityStore implements ChildRuntimeAuthorityStor
     this.#records = new PrivateAuthorityDirectory(root);
   }
 
+  async #withRootLock<T>(operation: () => Promise<T>): Promise<T> {
+    await this.#records.verify();
+    return this.#records.lockRoot(async () => {
+      await this.#records.verify();
+      return operation();
+    });
+  }
+
   public async read(
     agentId: AgentId,
   ): Promise<ChildRuntimeAuthorityRecord | undefined> {
     if (!isRuntimeId(agentId, "agent"))
       throw new TypeError("child runtime authority Agent identity is invalid");
-    await this.#records.verify();
-    return this.#records.read(this.#records.path(agentId), agentId);
+    return this.#withRootLock(() =>
+      this.#records.read(this.#records.path(agentId), agentId),
+    );
+  }
+
+  public async withExclusiveRootAudit<T>(
+    audit: (
+      records: readonly ChildRuntimeAuthorityRecord[],
+    ) => T | Promise<T>,
+  ): Promise<T> {
+    return this.#withRootLock(async () => audit(await this.#records.list()));
+  }
+
+  public async list(): Promise<readonly ChildRuntimeAuthorityRecord[]> {
+    return this.withExclusiveRootAudit((records) => records);
   }
 
   public async begin(
@@ -385,10 +600,8 @@ export class FileChildRuntimeAuthorityStore implements ChildRuntimeAuthorityStor
         "child runtime authority begin requires an initial claimed record",
       );
     }
-    await this.#records.verify();
     const path = this.#records.path(record.agentId);
-    return this.#records.lock(path, async () => {
-      await this.#records.verify();
+    return this.#withRootLock(async () => {
       const current = await this.#records.read(path, record.agentId);
       if (current)
         return current.recordDigest === record.recordDigest
@@ -421,12 +634,8 @@ export class FileChildRuntimeAuthorityStore implements ChildRuntimeAuthorityStor
     ) {
       throw new TypeError("child runtime authority CAS input is invalid");
     }
-    await this.#records.verify();
     const path = this.#records.path(agentId);
-    const existing = await this.#records.read(path, agentId);
-    if (!existing) return "conflict";
-    return this.#records.lock(path, async () => {
-      await this.#records.verify();
+    return this.#withRootLock(async () => {
       const current = await this.#records.read(path, agentId);
       if (!current) return "conflict";
       if (current.recordDigest === next.recordDigest)

@@ -207,14 +207,20 @@ describe("FileWriterLeaseStore persistence", () => {
 			const firstStore = createStore(filePath, clock, "first", [TOKEN_A]);
 			const releaseStore = createStore(filePath, clock, "release", [TOKEN_B]);
 			const first = resultValue(acquire(firstStore));
+			expect(resultValue(releaseStore.inspectReleased(first))).toBeUndefined();
 			clock.nowMs += 100;
 			const released = resultValue(releaseStore.release(first));
 			expect(released.releasedAt).toBe("2026-07-22T00:00:00.100Z");
+			expect(resultValue(firstStore.inspectReleased(first))).toEqual(released);
+			expect(
+				resultValue(firstStore.inspectReleased({ ...first, ownerRuntimeId: OWNER_B })),
+			).toBeUndefined();
 
 			const reacquireStore = createStore(filePath, clock, "reacquire", [TOKEN_A, TOKEN_C]);
 			const second = resultValue(acquire(reacquireStore, OWNER_C));
 			expect(second.writerEpoch).toBe(2);
 			expect(second.fencingToken).toBe(TOKEN_C);
+			expect(resultValue(reacquireStore.inspectReleased(first))).toBeUndefined();
 			expect(resultError(reacquireStore.validate(first)).code).toBe("writer_fenced");
 			expect(resultError(reacquireStore.release(first)).code).toBe("writer_fenced");
 

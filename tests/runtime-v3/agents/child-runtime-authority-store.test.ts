@@ -22,12 +22,23 @@ import {
   MemoryChildRuntimeAuthorityStore,
   childRuntimeAuthorityRecordDigest,
   classifyChildRuntimeColdRecord,
+  createChildRuntimeActivationEvidence,
   createClaimedChildRuntimeAuthorityRecord,
+  createCreatingChildRuntimeAuthorityRecord,
+  createProvisionalChildRuntimeAuthorityRecord,
   createQuarantinedChildRuntimeAuthorityRecord,
   createReleasePendingChildRuntimeAuthorityRecord,
   createReleasedChildRuntimeAuthorityRecord,
   createResidentChildRuntimeAuthorityRecord,
+  createResumedChildRuntimeAuthorityRecord,
   isChildRuntimeAuthorityRecord,
+  validateChildRuntimeAuthorityTransition,
+} from "../../../src/runtime/agents/child-runtime-authority.ts";
+import type {
+  ChildRuntimeActivationEvidence,
+  CreatingChildRuntimeAuthorityRecord,
+  ProvisionalChildRuntimeAuthorityRecord,
+  ResidentChildRuntimeAuthorityRecord,
 } from "../../../src/runtime/agents/child-runtime-authority.ts";
 import type {
   AgentLaunchReceiptRef,
@@ -45,6 +56,8 @@ import type { V3SessionWriterFenceReceipt } from "../../../src/storage/v3-sessio
 import { FileChildRuntimeAuthorityStore } from "../../../src/storage/child-runtime-authority-state.ts";
 
 const NOW = "2026-07-23T01:00:00.000Z";
+const CREATE_STARTED_AT = "2026-07-23T01:00:00.250Z";
+const PROVISIONAL_AT = "2026-07-23T01:00:00.750Z";
 const RESIDENT_AT = "2026-07-23T01:00:01.000Z";
 const RELEASE_PENDING_AT = "2026-07-23T01:00:02.000Z";
 const RELEASED_AT = "2026-07-23T01:00:03.000Z";
@@ -84,6 +97,8 @@ function writerFence(
   seed: string,
   targetSessionId = sessionId,
   targetRuntimeId = runtimeInstanceId,
+  expiresAt = "2026-07-23T01:05:00.000Z",
+  acquiredAt = NOW,
 ): V3SessionWriterFenceReceipt {
   const body = {
     authorityId,
@@ -97,8 +112,8 @@ function writerFence(
     leaseId: createRuntimeId("lease", `child-runtime-${seed}`),
     writerEpoch: 1,
     fencingTokenDigest: canonicalDigest({ seed, fence: true }),
-    acquiredAt: NOW,
-    expiresAt: "2026-07-23T01:05:00.000Z",
+    acquiredAt,
+    expiresAt,
   };
   const receiptDigest = canonicalDigest(body);
   return {
@@ -108,15 +123,75 @@ function writerFence(
   };
 }
 
-function launchReceipt(): AgentLaunchReceiptRef {
+function renewedWriterFence(
+  previous: V3SessionWriterFenceReceipt,
+  expiresAt: string,
+): V3SessionWriterFenceReceipt {
+  const {
+    receiptId: _receiptId,
+    receiptDigest: _receiptDigest,
+    ...previousBody
+  } = previous;
+  const body = { ...previousBody, expiresAt };
+  return {
+    ...body,
+    receiptId: createRuntimeId(
+      "receipt",
+      `renewed-${canonicalDigest(body).slice(0, 32)}`,
+    ),
+    receiptDigest: canonicalDigest(body),
+  };
+}
+
+function launchReceipt(
+  revision = 1,
+  launchedAt = RESIDENT_AT,
+): AgentLaunchReceiptRef {
   const body: Omit<AgentLaunchReceiptRef, "receiptDigest"> = {
-    receiptId: createRuntimeId("receipt", "child-runtime-launch"),
+    receiptId: createRuntimeId("receipt", `child-runtime-launch-${revision}`),
     agentId,
     sessionId,
-    launchRevision: 1,
-    launchedAt: RESIDENT_AT,
+    launchRevision: revision,
+    launchedAt,
   };
   return { ...body, receiptDigest: canonicalDigest(body) };
+}
+
+function activationEvidence(
+  activationType: ChildRuntimeActivationEvidence["activationType"] = "launch",
+  seed = "one",
+  parentGraphRevision = 7,
+  parentGraphSequence = 12,
+  parentFence = writerFence("parent", parentSessionId, parentRuntimeId),
+): ChildRuntimeActivationEvidence {
+  const requestId =
+    activationType === "launch"
+      ? launchRequestId
+      : createRuntimeId("command", `child-runtime-resume-${seed}`);
+  const requestDigest =
+    activationType === "launch" && seed === "one"
+      ? launchRequestDigest
+      : canonicalDigest(`${activationType}-${seed}`);
+  return createChildRuntimeActivationEvidence({
+    activationType,
+    requestId,
+    requestDigest,
+    parentGraphRevision,
+    parentGraphCursor: cursor(
+      `parent-graph-${activationType}-${seed}`,
+      parentSessionId,
+      parentGraphSequence,
+    ),
+    parentNodeDigest: canonicalDigest({
+      activationType,
+      seed,
+      parentGraphRevision,
+    }),
+    delegationReceiptDigest: canonicalDigest(`delegation-${seed}`),
+    workspaceReceiptDigest: canonicalDigest(`workspace-${seed}`),
+    budgetReservationDigest: canonicalDigest(`budget-${seed}`),
+    ownerParentWriterFence: parentFence,
+  });
 }
 
 function residencyReceipt(
@@ -172,54 +247,108 @@ function releaseReceipt(seed = "one"): AgentRuntimeReleaseReceiptRef {
 }
 
 function claimedRecord(seed = "one") {
+  const launchActivation = activationEvidence("launch", seed);
   return createClaimedChildRuntimeAuthorityRecord({
     authorityId,
     tenantId,
     principalId,
     parentSessionId,
     parentAgentId,
-    parentGraphRevision: 7,
-    parentGraphCursor: cursor("parent-graph", parentSessionId, 12),
-    parentNodeDigest: canonicalDigest("parent graph node"),
     agentId,
     sessionId,
     workspaceId,
     runtimeInstanceId,
+    sessionFilePath,
     launchRequestId,
     launchRequestDigest:
       seed === "one" ? launchRequestDigest : canonicalDigest(`launch-${seed}`),
-    delegationReceiptDigest: canonicalDigest("delegation receipt"),
-    workspaceReceiptDigest: canonicalDigest("workspace receipt"),
-    budgetReservationDigest: canonicalDigest("budget reservation"),
     artifactContractDigest: canonicalDigest("artifact contract"),
     ownerParentRuntimeId: parentRuntimeId,
-    ownerParentWriterFence: writerFence(
-      "parent",
-      parentSessionId,
-      parentRuntimeId,
-    ),
+    initialActivationEvidence: launchActivation,
+    activationEvidence: launchActivation,
     revision: 1,
     updatedAt: NOW,
   });
 }
 
-function residentRecord() {
-  return createResidentChildRuntimeAuthorityRecord({
-    previous: claimedRecord(),
-    sessionFilePath,
-    genesisCursor: cursor("genesis"),
+function creatingRecord(previous = claimedRecord()) {
+  return createCreatingChildRuntimeAuthorityRecord({
+    previous,
+    createStartedAt: CREATE_STARTED_AT,
+    updatedAt: CREATE_STARTED_AT,
+  });
+}
+
+function provisionalRecord(
+  previous: CreatingChildRuntimeAuthorityRecord = creatingRecord(),
+  childWriterFence = writerFence("child"),
+) {
+  return createProvisionalChildRuntimeAuthorityRecord({
+    previous,
     launchReceipt: launchReceipt(),
     residencyReceipt: residencyReceipt(),
-    childWriterFence: writerFence("child"),
+    childWriterFence,
+    updatedAt: PROVISIONAL_AT,
+  });
+}
+
+function residentRecord(
+  claimed = claimedRecord(),
+  childWriterFence = writerFence("child"),
+) {
+  const provisional = provisionalRecord(creatingRecord(claimed), childWriterFence);
+  return createResidentChildRuntimeAuthorityRecord({
+    previous: provisional,
+    genesisCursor: cursor("genesis"),
     updatedAt: RESIDENT_AT,
   });
 }
 
-function releasePendingRecord(seed = "one") {
+function resumedRecord(
+  previous: ResidentChildRuntimeAuthorityRecord = residentRecord(),
+  seed = "one",
+  parentGraphRevision = 8,
+  parentGraphSequence = 13,
+  childWriterFence = renewedWriterFence(
+    previous.childWriterFence,
+    "2026-07-23T01:10:00.000Z",
+  ),
+) {
+  return createResumedChildRuntimeAuthorityRecord({
+    previous,
+    activationEvidence: activationEvidence(
+      "resume",
+      seed,
+      parentGraphRevision,
+      parentGraphSequence,
+      renewedWriterFence(
+        previous.activationEvidence.ownerParentWriterFence,
+        "2026-07-23T01:10:00.000Z",
+      ),
+    ),
+    launchReceipt: launchReceipt(
+      previous.launchReceipt.launchRevision + 1,
+      RELEASE_PENDING_AT,
+    ),
+    residencyReceipt: residencyReceipt(
+      "resident",
+      previous.residencyReceipt.revision + 1,
+      RELEASE_PENDING_AT,
+    ),
+    childWriterFence,
+    updatedAt: RELEASE_PENDING_AT,
+  });
+}
+
+function releasePendingRecord(
+  seed = "one",
+  previous: ResidentChildRuntimeAuthorityRecord = residentRecord(),
+  preStopWriterFence = previous.childWriterFence,
+) {
   return createReleasePendingChildRuntimeAuthorityRecord({
-    previous: residentRecord(),
+    previous,
     releaseRequest: releaseRequest(seed),
-    preStopWriterFence: writerFence("child"),
+    preStopWriterFence,
     updatedAt: RELEASE_PENDING_AT,
   });
 }
@@ -239,18 +368,18 @@ function writerLeaseReleasedEvidence() {
   return { ...body, evidenceDigest: canonicalDigest(body) };
 }
 
-function releasedRecord(seed = "one") {
+function releasedRecord(seed = "one", previous = releasePendingRecord(seed)) {
   return createReleasedChildRuntimeAuthorityRecord({
-    previous: releasePendingRecord(seed),
+    previous,
     releaseReceipt: releaseReceipt(seed),
     writerLeaseReleasedEvidence: writerLeaseReleasedEvidence(),
     updatedAt: RELEASED_AT,
   });
 }
 
-function quarantinedRecord() {
+function quarantinedRecord(previous = claimedRecord()) {
   return createQuarantinedChildRuntimeAuthorityRecord({
-    previous: claimedRecord(),
+    previous,
     reason: "cold_recovery_unsupported",
     evidenceDigest: canonicalDigest("operator review required"),
     updatedAt: RELEASE_PENDING_AT,
@@ -323,6 +452,8 @@ describe("child runtime authority sidecar store", () => {
   it("validates every self-digested state and cold-replays only complete released evidence", () => {
     const records = [
       claimedRecord(),
+      creatingRecord(),
+      provisionalRecord(),
       residentRecord(),
       releasePendingRecord(),
       releasedRecord(),
@@ -330,6 +461,8 @@ describe("child runtime authority sidecar store", () => {
     ] as const;
     expect(records.map((record) => record.state)).toEqual([
       "claimed",
+      "creating",
+      "provisional",
       "resident",
       "release_pending",
       "released",
@@ -340,13 +473,37 @@ describe("child runtime authority sidecar store", () => {
       expect(recordDigest).toBe(childRuntimeAuthorityRecordDigest(body));
       expect(isChildRuntimeAuthorityRecord(record)).toBe(true);
     }
-    expect(residentRecord()).toMatchObject({
+    expect(claimedRecord()).toMatchObject({
       sessionFilePath,
-      genesisCursor: { sequence: 0 },
+    });
+    expect(creatingRecord()).toMatchObject({
+      sessionFilePath,
+      createStartedAt: CREATE_STARTED_AT,
+    });
+    expect(provisionalRecord()).toMatchObject({
+      sessionFilePath,
+      createStartedAt: CREATE_STARTED_AT,
       launchReceipt: { agentId, sessionId },
       residencyReceipt: { runtimeInstanceId, state: "resident" },
       childWriterFence: { runtimeId: runtimeInstanceId },
     });
+    expect(residentRecord()).toMatchObject({
+      sessionFilePath,
+      createStartedAt: CREATE_STARTED_AT,
+      genesisCursor: { sequence: 0 },
+      initialActivationEvidence: {
+        activationType: "launch",
+        requestId: launchRequestId,
+      },
+      activationEvidence: {
+        activationType: "launch",
+        requestId: launchRequestId,
+      },
+    });
+    expect(claimedRecord().claimAttemptId).toMatch(
+      /^command_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
+    );
+    expect(claimedRecord().claimAttemptId).not.toBe(launchRequestId);
     expect(releasePendingRecord()).toMatchObject({
       releaseRequest: {
         agentId,
@@ -374,6 +531,8 @@ describe("child runtime authority sidecar store", () => {
     });
     for (const record of [
       claimedRecord(),
+      creatingRecord(),
+      provisionalRecord(),
       residentRecord(),
       releasePendingRecord(),
       quarantinedRecord(),
@@ -399,6 +558,505 @@ describe("child runtime authority sidecar store", () => {
         },
       }),
     ).toBe(false);
+  });
+
+  it("seals activation evidence and rejects unknown, forged, or foreign authority fields", () => {
+    const claimed = claimedRecord();
+    const { recordDigest: _recordDigest, ...claimedBody } = claimed;
+    const { evidenceDigest: _evidenceDigest, ...activationBody } =
+      claimed.activationEvidence;
+
+    const unknownActivationBody = {
+      ...activationBody,
+      rawWriterToken: "must-not-persist",
+    };
+    const unknownActivation = {
+      ...unknownActivationBody,
+      evidenceDigest: canonicalDigest(unknownActivationBody),
+    };
+    const unknownBody = {
+      ...claimedBody,
+      initialActivationEvidence: unknownActivation,
+      activationEvidence: unknownActivation,
+    };
+    expect(
+      isChildRuntimeAuthorityRecord({
+        ...unknownBody,
+        recordDigest: childRuntimeAuthorityRecordDigest(unknownBody),
+      }),
+    ).toBe(false);
+
+    const forgedEvidence = {
+      ...claimed.activationEvidence,
+      parentNodeDigest: canonicalDigest("changed without resealing"),
+    };
+    const forgedBody = {
+      ...claimedBody,
+      initialActivationEvidence: forgedEvidence,
+      activationEvidence: forgedEvidence,
+    };
+    expect(
+      isChildRuntimeAuthorityRecord({
+        ...forgedBody,
+        recordDigest: childRuntimeAuthorityRecordDigest(forgedBody),
+      }),
+    ).toBe(false);
+
+    const foreignFence = writerFence(
+      "foreign-parent-runtime",
+      parentSessionId,
+      createRuntimeId("runtime", "foreign-parent-runtime"),
+    );
+    const foreignFenceActivationBody = {
+      ...activationBody,
+      ownerParentWriterFence: foreignFence,
+    };
+    const foreignFenceActivation = {
+      ...foreignFenceActivationBody,
+      evidenceDigest: canonicalDigest(foreignFenceActivationBody),
+    };
+    const foreignFenceBody = {
+      ...claimedBody,
+      initialActivationEvidence: foreignFenceActivation,
+      activationEvidence: foreignFenceActivation,
+    };
+    expect(
+      isChildRuntimeAuthorityRecord({
+        ...foreignFenceBody,
+        recordDigest: childRuntimeAuthorityRecordDigest(foreignFenceBody),
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects a parent writer fence that is stale at claim or create authorization", () => {
+    const staleAtClaim = activationEvidence(
+      "launch",
+      "one",
+      7,
+      12,
+      writerFence(
+        "parent-stale-at-claim",
+        parentSessionId,
+        parentRuntimeId,
+        NOW,
+        "2026-07-23T00:59:59.000Z",
+      ),
+    );
+    expect(() =>
+      createClaimedChildRuntimeAuthorityRecord({
+        authorityId,
+        tenantId,
+        principalId,
+        parentSessionId,
+        parentAgentId,
+        agentId,
+        sessionId,
+        workspaceId,
+        runtimeInstanceId,
+        sessionFilePath,
+        launchRequestId,
+        launchRequestDigest,
+        artifactContractDigest: canonicalDigest("artifact contract"),
+        ownerParentRuntimeId: parentRuntimeId,
+        initialActivationEvidence: staleAtClaim,
+        activationEvidence: staleAtClaim,
+        revision: 1,
+        updatedAt: NOW,
+      }),
+    ).toThrow(/invalid/u);
+
+    const expiresAtCreate = activationEvidence(
+      "launch",
+      "one",
+      7,
+      12,
+      writerFence(
+        "parent-stale-at-create",
+        parentSessionId,
+        parentRuntimeId,
+        CREATE_STARTED_AT,
+      ),
+    );
+    const claimed = createClaimedChildRuntimeAuthorityRecord({
+      authorityId,
+      tenantId,
+      principalId,
+      parentSessionId,
+      parentAgentId,
+      agentId,
+      sessionId,
+      workspaceId,
+      runtimeInstanceId,
+      sessionFilePath,
+      launchRequestId,
+      launchRequestDigest,
+      artifactContractDigest: canonicalDigest("artifact contract"),
+      ownerParentRuntimeId: parentRuntimeId,
+      initialActivationEvidence: expiresAtCreate,
+      activationEvidence: expiresAtCreate,
+      revision: 1,
+      updatedAt: NOW,
+    });
+    expect(() =>
+      createCreatingChildRuntimeAuthorityRecord({
+        previous: claimed,
+        createStartedAt: CREATE_STARTED_AT,
+        updatedAt: CREATE_STARTED_AT,
+      }),
+    ).toThrow(/invalid/u);
+  });
+
+  it("uses a random immutable claim attempt to distinguish competing creators", async () => {
+    const first = claimedRecord();
+    const competitor = claimedRecord();
+    expect(competitor.launchRequestId).toBe(first.launchRequestId);
+    expect(competitor.launchRequestDigest).toBe(first.launchRequestDigest);
+    expect(competitor.claimAttemptId).not.toBe(first.claimAttemptId);
+    expect(competitor.recordDigest).not.toBe(first.recordDigest);
+
+    const store = new MemoryChildRuntimeAuthorityStore();
+    await expect(store.begin(first)).resolves.toBe("applied");
+    await expect(store.begin(structuredClone(first))).resolves.toBe("replay");
+    await expect(store.begin(competitor)).resolves.toBe("conflict");
+
+    const { recordDigest: _recordDigest, ...firstBody } = first;
+    const reusedRequestAttemptBody = {
+      ...firstBody,
+      claimAttemptId: launchRequestId,
+    };
+    expect(
+      isChildRuntimeAuthorityRecord({
+        ...reusedRequestAttemptBody,
+        recordDigest: childRuntimeAuthorityRecordDigest(
+          reusedRequestAttemptBody,
+        ),
+      }),
+    ).toBe(false);
+  });
+
+  it("durably fences every pre-resident effect boundary without allowing a skipped state", async () => {
+    const claimed = claimedRecord();
+    const creating = creatingRecord(claimed);
+    const provisional = provisionalRecord(creating);
+    const resident = createResidentChildRuntimeAuthorityRecord({
+      previous: provisional,
+      genesisCursor: cursor("pre-resident-genesis"),
+      updatedAt: RESIDENT_AT,
+    });
+    const store = new MemoryChildRuntimeAuthorityStore();
+
+    await expect(store.begin(claimed)).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        claimed.revision,
+        claimed.recordDigest,
+        provisional,
+      ),
+    ).rejects.toThrow(/transition|previous|revision|skip/u);
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        claimed.revision,
+        claimed.recordDigest,
+        creating,
+      ),
+    ).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        creating.revision,
+        creating.recordDigest,
+        resident,
+      ),
+    ).rejects.toThrow(/transition|previous|revision|skip/u);
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        creating.revision,
+        creating.recordDigest,
+        provisional,
+      ),
+    ).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        provisional.revision,
+        provisional.recordDigest,
+        resident,
+      ),
+    ).resolves.toBe("applied");
+
+    expect(resident).toMatchObject({
+      sessionFilePath,
+      createStartedAt: CREATE_STARTED_AT,
+      launchReceipt: provisional.launchReceipt,
+      residencyReceipt: provisional.residencyReceipt,
+      childWriterFence: provisional.childWriterFence,
+      genesisCursor: { sequence: 0 },
+    });
+    expect(resident.activationEvidence).toEqual(claimed.activationEvidence);
+  });
+
+  it("keeps the planned path immutable and quarantines with all accumulated evidence", () => {
+    const claimed = claimedRecord();
+    const creating = creatingRecord(claimed);
+    const provisional = provisionalRecord(creating);
+    const resident = createResidentChildRuntimeAuthorityRecord({
+      previous: provisional,
+      genesisCursor: cursor("quarantine-genesis"),
+      updatedAt: RESIDENT_AT,
+    });
+    const stages = [claimed, creating, provisional, resident] as const;
+
+    for (const previous of stages) {
+      const quarantined = createQuarantinedChildRuntimeAuthorityRecord({
+        previous,
+        reason: "operator_review",
+        evidenceDigest: canonicalDigest({
+          previousRecordDigest: previous.recordDigest,
+        }),
+        updatedAt: RELEASED_AT,
+      });
+      expect(quarantined.sessionFilePath).toBe(sessionFilePath);
+      expect(Object.hasOwn(quarantined, "createStartedAt")).toBe(
+        Object.hasOwn(previous, "createStartedAt"),
+      );
+      expect(Object.hasOwn(quarantined, "childWriterFence")).toBe(
+        Object.hasOwn(previous, "childWriterFence"),
+      );
+      expect(Object.hasOwn(quarantined, "genesisCursor")).toBe(
+        Object.hasOwn(previous, "genesisCursor"),
+      );
+    }
+    const quarantineAfterCreateEffect =
+      createQuarantinedChildRuntimeAuthorityRecord({
+        previous: creating,
+        reason: "provisional_cas_uncertain",
+        evidenceDigest: canonicalDigest("provisional CAS evidence"),
+        provisionalEvidence: {
+          launchReceipt: provisional.launchReceipt,
+          residencyReceipt: provisional.residencyReceipt,
+          childWriterFence: provisional.childWriterFence,
+        },
+        updatedAt: RELEASED_AT,
+      });
+    expect(quarantineAfterCreateEffect).toMatchObject({
+      state: "quarantined",
+      sessionFilePath,
+      launchReceipt: provisional.launchReceipt,
+      residencyReceipt: provisional.residencyReceipt,
+      childWriterFence: provisional.childWriterFence,
+    });
+    const genesisCursor = cursor("quarantine-provisional-genesis");
+    const quarantineAfterGenesis =
+      createQuarantinedChildRuntimeAuthorityRecord({
+        previous: provisional,
+        reason: "resident_cas_uncertain",
+        evidenceDigest: canonicalDigest("resident CAS evidence"),
+        genesisCursor,
+        updatedAt: RELEASED_AT,
+      });
+    expect(quarantineAfterGenesis).toMatchObject({
+      state: "quarantined",
+      sessionFilePath,
+      childWriterFence: provisional.childWriterFence,
+      genesisCursor,
+    });
+    expect(() =>
+      createQuarantinedChildRuntimeAuthorityRecord({
+        previous: claimed,
+        reason: "invalid_evidence_skip",
+        evidenceDigest: canonicalDigest("invalid skipped evidence"),
+        provisionalEvidence: {
+          launchReceipt: provisional.launchReceipt,
+          residencyReceipt: provisional.residencyReceipt,
+          childWriterFence: provisional.childWriterFence,
+        },
+        updatedAt: RELEASED_AT,
+      }),
+    ).toThrow(/evidence|transition|invalid/u);
+
+    const { recordDigest: _recordDigest, ...creatingBody } = creating;
+    const changedPathBody = {
+      ...creatingBody,
+      sessionFilePath: "/tmp/runledger-child-runtime-authority/other.jsonl",
+    };
+    const changedPath = {
+      ...changedPathBody,
+      recordDigest: childRuntimeAuthorityRecordDigest(changedPathBody),
+    };
+    expect(isChildRuntimeAuthorityRecord(changedPath)).toBe(true);
+    expect(() =>
+      validateChildRuntimeAuthorityTransition(claimed, changedPath),
+    ).toThrow(/identity|path|immutable/u);
+    expect(() =>
+      createResidentChildRuntimeAuthorityRecord({
+        previous:
+          claimed as unknown as ProvisionalChildRuntimeAuthorityRecord,
+        genesisCursor: cursor("invalid-direct-resident"),
+        updatedAt: RESIDENT_AT,
+      }),
+    ).toThrow(/provisional|resident|invalid/u);
+  });
+
+  it("advances only to a newer sealed resume activation and refreshed child fence", async () => {
+    const claimed = claimedRecord();
+    const creating = creatingRecord(claimed);
+    const provisional = provisionalRecord(creating);
+    const resident = createResidentChildRuntimeAuthorityRecord({
+      previous: provisional,
+      genesisCursor: cursor("resume-genesis"),
+      updatedAt: RESIDENT_AT,
+    });
+    const resumed = resumedRecord(resident);
+
+    expect(resumed.claimAttemptId).toBe(claimed.claimAttemptId);
+    expect(resumed.launchRequestId).toBe(claimed.launchRequestId);
+    expect(resumed.launchRequestDigest).toBe(claimed.launchRequestDigest);
+    expect(resumed.initialActivationEvidence).toEqual(
+      claimed.initialActivationEvidence,
+    );
+    expect(resumed.activationEvidence).toMatchObject({
+      activationType: "resume",
+      parentGraphRevision: 8,
+      parentGraphCursor: { sequence: 13 },
+    });
+    expect(Date.parse(resumed.childWriterFence.expiresAt)).toBeGreaterThan(
+      Date.parse(resident.childWriterFence.expiresAt),
+    );
+
+    const store = new MemoryChildRuntimeAuthorityStore();
+    await expect(store.begin(claimed)).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        claimed.revision,
+        claimed.recordDigest,
+        creating,
+      ),
+    ).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        creating.revision,
+        creating.recordDigest,
+        provisional,
+      ),
+    ).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        provisional.revision,
+        provisional.recordDigest,
+        resident,
+      ),
+    ).resolves.toBe("applied");
+    await expect(
+      store.compareAndSwap(
+        agentId,
+        resident.revision,
+        resident.recordDigest,
+        resumed,
+      ),
+    ).resolves.toBe("applied");
+  });
+
+  it("rejects resume activation replay, graph rollback, and fence identity changes", async () => {
+    const cases = [
+      () => resumedRecord(residentRecord(), "one", 7, 13),
+      () => resumedRecord(residentRecord(), "one", 8, 12),
+      () => {
+        const resident = residentRecord();
+        return createResumedChildRuntimeAuthorityRecord({
+          previous: resident,
+          activationEvidence: {
+            ...resident.activationEvidence,
+            activationType: "resume",
+          },
+          launchReceipt: launchReceipt(2, RELEASE_PENDING_AT),
+          residencyReceipt: residencyReceipt(
+            "resident",
+            2,
+            RELEASE_PENDING_AT,
+          ),
+          childWriterFence: renewedWriterFence(
+            resident.childWriterFence,
+            "2026-07-23T01:10:00.000Z",
+          ),
+          updatedAt: RELEASE_PENDING_AT,
+        });
+      },
+      () =>
+        resumedRecord(
+          residentRecord(),
+          "changed-child-lease",
+          8,
+          13,
+          writerFence(
+            "changed-child-lease",
+            sessionId,
+            runtimeInstanceId,
+            "2026-07-23T01:10:00.000Z",
+          ),
+        ),
+      () =>
+        resumedRecord(
+          residentRecord(),
+          "expired-child-fence",
+          8,
+          13,
+          renewedWriterFence(
+            residentRecord().childWriterFence,
+            "2026-07-23T01:04:00.000Z",
+          ),
+        ),
+    ];
+
+    for (const createInvalidResume of cases) {
+      expect(createInvalidResume).toThrow(
+        /activation|cursor|graph|request|fence|lease|resume|invalid/u,
+      );
+    }
+  });
+
+  it("accepts heartbeat-refreshed pre-stop fences and preserves latest activation", () => {
+    const resumed = resumedRecord();
+    const preStopWriterFence = renewedWriterFence(
+      resumed.childWriterFence,
+      "2026-07-23T01:15:00.000Z",
+    );
+    const requestBody: Omit<AgentRuntimeReleaseRequest, "requestDigest"> = {
+      requestId: createRuntimeId("command", "child-runtime-release-resumed"),
+      agentId,
+      sessionId,
+      launchReceipt: resumed.launchReceipt,
+      previousResidencyReceipt: resumed.residencyReceipt,
+      reason: "completed",
+    };
+    const request = {
+      ...requestBody,
+      requestDigest: canonicalDigest(requestBody),
+    };
+    const pending = createReleasePendingChildRuntimeAuthorityRecord({
+      previous: resumed,
+      releaseRequest: request,
+      preStopWriterFence,
+      updatedAt: RELEASED_AT,
+    });
+    const quarantined = createQuarantinedChildRuntimeAuthorityRecord({
+      previous: resumed,
+      reason: "operator_review",
+      evidenceDigest: canonicalDigest("operator review"),
+      updatedAt: RELEASED_AT,
+    });
+
+    expect(pending.preStopWriterFence).toEqual(preStopWriterFence);
+    expect(pending.preStopWriterFence.receiptDigest).not.toBe(
+      pending.childWriterFence.receiptDigest,
+    );
+    expect(pending.activationEvidence).toEqual(resumed.activationEvidence);
+    expect(quarantined.activationEvidence).toEqual(resumed.activationEvidence);
   });
 
   it("rejects released evidence assembled from different child writer fences", () => {
@@ -474,10 +1132,14 @@ describe("child runtime authority sidecar store", () => {
   it("rejects foreign canonical stream IDs and unknown sensitive stream fields", () => {
     const claimed = claimedRecord();
     const { recordDigest: _foreignDigest, ...claimedBody } = claimed;
-    const foreignStreamBody = {
-      ...claimedBody,
+    const {
+      evidenceDigest: _foreignEvidenceDigest,
+      ...activationBody
+    } = claimed.activationEvidence;
+    const foreignActivationBody = {
+      ...activationBody,
       parentGraphCursor: {
-        ...claimed.parentGraphCursor,
+        ...claimed.activationEvidence.parentGraphCursor,
         stream: createSessionEventStreamRef(
           {
             authorityId: createRuntimeId("authority", "foreign-stream"),
@@ -487,12 +1149,21 @@ describe("child runtime authority sidecar store", () => {
         ),
       },
     };
+    const foreignActivation = {
+      ...foreignActivationBody,
+      evidenceDigest: canonicalDigest(foreignActivationBody),
+    };
+    const foreignStreamBody = {
+      ...claimedBody,
+      initialActivationEvidence: foreignActivation,
+      activationEvidence: foreignActivation,
+    };
     const foreignStreamRecord = {
       ...foreignStreamBody,
       recordDigest: childRuntimeAuthorityRecordDigest(foreignStreamBody),
     };
 
-    const fence = claimed.ownerParentWriterFence;
+    const fence = claimed.activationEvidence.ownerParentWriterFence;
     const {
       receiptId,
       receiptDigest: _receiptDigest,
@@ -511,9 +1182,22 @@ describe("child runtime authority sidecar store", () => {
       receiptDigest: canonicalDigest(extendedFenceBody),
     };
     const { recordDigest: _extendedDigest, ...extendedClaimedBody } = claimed;
+    const {
+      evidenceDigest: _extendedEvidenceDigest,
+      ...extendedActivationBody
+    } = claimed.activationEvidence;
+    const extendedEvidenceBody = {
+      ...extendedActivationBody,
+      ownerParentWriterFence: extendedFence,
+    };
+    const extendedEvidence = {
+      ...extendedEvidenceBody,
+      evidenceDigest: canonicalDigest(extendedEvidenceBody),
+    };
     const extendedStreamBody = {
       ...extendedClaimedBody,
-      ownerParentWriterFence: extendedFence,
+      initialActivationEvidence: extendedEvidence,
+      activationEvidence: extendedEvidence,
     };
     const extendedStreamRecord = {
       ...extendedStreamBody,
@@ -540,9 +1224,15 @@ describe("child runtime authority sidecar store", () => {
   it("uses revision plus record digest CAS and forbids skipped or terminal transitions", async () => {
     const store = new MemoryChildRuntimeAuthorityStore();
     const claimed = claimedRecord();
-    const resident = residentRecord();
-    const pending = releasePendingRecord();
-    const released = releasedRecord();
+    const creating = creatingRecord(claimed);
+    const provisional = provisionalRecord(creating);
+    const resident = createResidentChildRuntimeAuthorityRecord({
+      previous: provisional,
+      genesisCursor: cursor("cas-genesis"),
+      updatedAt: RESIDENT_AT,
+    });
+    const pending = releasePendingRecord("one", resident);
+    const released = releasedRecord("one", pending);
     await store.begin(claimed);
 
     await expect(
@@ -554,16 +1244,32 @@ describe("child runtime authority sidecar store", () => {
       ),
     ).rejects.toThrow(/transition|revision|previous/u);
     expect(
-      await store.compareAndSwap(agentId, 0, claimed.recordDigest, resident),
+      await store.compareAndSwap(agentId, 0, claimed.recordDigest, creating),
     ).toBe("conflict");
     expect(
-      await store.compareAndSwap(agentId, 1, "f".repeat(64), resident),
+      await store.compareAndSwap(agentId, 1, "f".repeat(64), creating),
     ).toBe("conflict");
     expect(
       await store.compareAndSwap(
         agentId,
         claimed.revision,
         claimed.recordDigest,
+        creating,
+      ),
+    ).toBe("applied");
+    expect(
+      await store.compareAndSwap(
+        agentId,
+        creating.revision,
+        creating.recordDigest,
+        provisional,
+      ),
+    ).toBe("applied");
+    expect(
+      await store.compareAndSwap(
+        agentId,
+        provisional.revision,
+        provisional.recordDigest,
         resident,
       ),
     ).toBe("applied");
@@ -622,7 +1328,7 @@ describe("child runtime authority sidecar store", () => {
     ).rejects.toThrow(/terminal|released|transition/u);
 
     const quarantinedStore = new MemoryChildRuntimeAuthorityStore();
-    const quarantined = quarantinedRecord();
+    const quarantined = quarantinedRecord(claimed);
     await quarantinedStore.begin(claimed);
     expect(
       await quarantinedStore.compareAndSwap(
@@ -649,7 +1355,7 @@ describe("child runtime authority sidecar store", () => {
       new FileChildRuntimeAuthorityStore(join(parent, "state")),
     ] as const;
     const claimed = claimedRecord();
-    const resident = residentRecord();
+    const creating = creatingRecord(claimed);
     const results: string[] = [];
 
     for (const store of stores) {
@@ -659,7 +1365,7 @@ describe("child runtime authority sidecar store", () => {
           agentId,
           claimed.revision,
           claimed.recordDigest,
-          resident,
+          creating,
         ),
       ).toBe("applied");
       expect(
@@ -667,20 +1373,128 @@ describe("child runtime authority sidecar store", () => {
           agentId,
           claimed.revision,
           claimed.recordDigest,
-          structuredClone(resident),
+          structuredClone(creating),
         ),
       ).toBe("replay");
       results.push(
         await store.compareAndSwap(
           agentId,
-          resident.revision + 1,
+          creating.revision + 1,
           "f".repeat(64),
-          structuredClone(resident),
+          structuredClone(creating),
         ),
       );
     }
 
     expect(results).toEqual(["conflict", "conflict"]);
+  });
+
+  it("serializes an in-memory root audit with begin", async () => {
+    const store = new MemoryChildRuntimeAuthorityStore();
+    let enteredAudit!: () => void;
+    let releaseAudit!: () => void;
+    const auditEntered = new Promise<void>((resolve) => {
+      enteredAudit = resolve;
+    });
+    const auditGate = new Promise<void>((resolve) => {
+      releaseAudit = resolve;
+    });
+    const auditing = store.withExclusiveRootAudit(async (records) => {
+      expect(records).toEqual([]);
+      enteredAudit();
+      await auditGate;
+      return "audited";
+    });
+    await auditEntered;
+
+    let beginSettled = false;
+    const beginning = store.begin(claimedRecord()).finally(() => {
+      beginSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(beginSettled).toBe(false);
+
+    releaseAudit();
+    await expect(auditing).resolves.toBe("audited");
+    await expect(beginning).resolves.toBe("applied");
+  });
+
+  it("serializes a cross-instance file root audit with begin", async () => {
+    const parent = await temporaryRoot("root-fence");
+    const root = join(parent, "state");
+    const auditor = new FileChildRuntimeAuthorityStore(root);
+    const writer = new FileChildRuntimeAuthorityStore(root);
+    let enteredAudit!: () => void;
+    let releaseAudit!: () => void;
+    const auditEntered = new Promise<void>((resolve) => {
+      enteredAudit = resolve;
+    });
+    const auditGate = new Promise<void>((resolve) => {
+      releaseAudit = resolve;
+    });
+    const auditing = auditor.withExclusiveRootAudit(async (records) => {
+      expect(records).toEqual([]);
+      enteredAudit();
+      await auditGate;
+      return "audited";
+    });
+    await auditEntered;
+
+    let beginSettled = false;
+    const beginning = writer.begin(claimedRecord()).finally(() => {
+      beginSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(beginSettled).toBe(false);
+
+    releaseAudit();
+    await expect(auditing).resolves.toBe("audited");
+    await expect(beginning).resolves.toBe("applied");
+  });
+
+  it("fails closed on .json symlinks and non-regular directory entries", async () => {
+    const parent = await temporaryRoot("non-regular-json");
+    const root = join(parent, "state");
+    await mkdir(root, { mode: 0o700 });
+    const target = join(parent, "target.json");
+    const suspicious = join(root, `${"a".repeat(64)}.json`);
+    await writeFile(target, "{}", { mode: 0o600 });
+    await symlink(target, suspicious);
+
+    const store = new FileChildRuntimeAuthorityStore(root);
+    await expect(store.list()).rejects.toThrow(/entry|file|identity|unsafe/u);
+
+    await rm(suspicious);
+    await mkdir(suspicious, { mode: 0o700 });
+    await expect(store.list()).rejects.toThrow(/entry|file|identity|unsafe/u);
+  });
+
+  it("removes one private orphaned publish temporary under the root fence", async () => {
+    const parent = await temporaryRoot("orphaned-publish-temp");
+    const root = join(parent, "state");
+    await mkdir(root, { mode: 0o700 });
+    const temporary = join(root, `.${randomUUID()}.tmp`);
+    await writeFile(temporary, "", { mode: 0o600 });
+
+    await expect(
+      new FileChildRuntimeAuthorityStore(root).list(),
+    ).resolves.toEqual([]);
+    await expect(lstat(temporary)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("bounds all authority-root entries, including safe publish temporaries", async () => {
+    const parent = await temporaryRoot("root-entry-bound");
+    const root = join(parent, "state");
+    await mkdir(root, { mode: 0o700 });
+    for (let index = 0; index < 1_025; index += 1) {
+      await writeFile(join(root, `.${randomUUID()}.tmp`), "", {
+        mode: 0o600,
+      });
+    }
+
+    await expect(
+      new FileChildRuntimeAuthorityStore(root).list(),
+    ).rejects.toThrow(/bound|count|entries/u);
   });
 
   it("recovers only one interrupted hard-link publish for the exact final record", async () => {
@@ -870,9 +1684,15 @@ describe("child runtime authority sidecar store", () => {
     const root = join(parent, "state");
     await mkdir(root, { mode: 0o700 });
     const claimed = claimedRecord();
-    const resident = residentRecord();
-    const pending = releasePendingRecord();
-    const released = releasedRecord();
+    const creating = creatingRecord(claimed);
+    const provisional = provisionalRecord(creating);
+    const resident = createResidentChildRuntimeAuthorityRecord({
+      previous: provisional,
+      genesisCursor: cursor("file-genesis"),
+      updatedAt: RESIDENT_AT,
+    });
+    const pending = releasePendingRecord("one", resident);
+    const released = releasedRecord("one", pending);
     const first = new FileChildRuntimeAuthorityStore(root);
     expect(await first.begin(claimed)).toBe("applied");
     expect(
@@ -880,6 +1700,22 @@ describe("child runtime authority sidecar store", () => {
         agentId,
         claimed.revision,
         claimed.recordDigest,
+        creating,
+      ),
+    ).toBe("applied");
+    expect(
+      await first.compareAndSwap(
+        agentId,
+        creating.revision,
+        creating.recordDigest,
+        provisional,
+      ),
+    ).toBe("applied");
+    expect(
+      await first.compareAndSwap(
+        agentId,
+        provisional.revision,
+        provisional.recordDigest,
         resident,
       ),
     ).toBe("applied");

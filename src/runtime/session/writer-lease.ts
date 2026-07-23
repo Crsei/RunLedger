@@ -692,6 +692,33 @@ export class FileWriterLeaseStore implements WriterLeaseStore {
 		});
 	}
 
+	/**
+	 * 只读确认 exact fence 已 durable release。
+	 *
+	 * release 的 canonical replace 已完成、但调用方没有收到成功返回时，可用此读取
+	 * 消除 ack loss。任何 active、已换代或不同 fence 都不会被误判成已释放。
+	 */
+	public inspectReleased(fence: WriterFence): SessionResult<WriterLeaseRecord | undefined> {
+		const identityFailure = this.validateFenceIdentity(fence);
+		if (identityFailure) return identityFailure;
+		const scopeFailure = this.validateExpectedScope(fence);
+		if (scopeFailure) return scopeFailure;
+
+		return this.withStateLock(() => {
+			const loaded = this.readState();
+			if (!loaded.ok) return loaded;
+			const current = loaded.value;
+			if (!current) return success(undefined);
+			if (!matchesScope(current.scope, fence)) {
+				return failure("identity_mismatch", "writer lease state is bound to another scope", false);
+			}
+			if (current.state !== "released" || !matchesFence(current.record, fence)) {
+				return success(undefined);
+			}
+			return success(copyRecord(current.record));
+		});
+	}
+
 	public heartbeat(fence: WriterFence, durationMs?: number): SessionResult<WriterLeaseRecord> {
 		return this.renew(fence, durationMs);
 	}

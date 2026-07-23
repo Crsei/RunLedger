@@ -10,27 +10,33 @@ import type { RuntimeFeatureFlags } from "../../runtime-features.ts";
 import type { SessionMutationAdmissionGatePort } from "../../lifecycle/mutation-gate.ts";
 import type { DeclassificationReceiptRef, InputSourceRef } from "../../protocol/v3/taint.ts";
 import type { V3SessionManager } from "../../../storage/v3-session-manager.ts";
+import { FileChildRuntimeAuthorityStore } from "../../../storage/child-runtime-authority-state.ts";
 import type { WorktreeManager } from "../../../worktree/manager.ts";
 import { GitOperations } from "../../../worktree/git-operations.ts";
 import type { WorktreeCreateResult } from "../../../worktree/types.ts";
 import { NodeGitCommandPort } from "../../../storage/worktree-node-adapter.ts";
 import { SessionAgentGraphStore } from "../session-graph-store.ts";
 import { AgentSupervisor, RootBudgetGuardAdapter } from "../supervisor.ts";
+import { isParentCapabilityGrantRef } from "../delegation.ts";
 import type {
 	AgentGraphLimits,
 	AgentResult,
 	AgentRole,
 	AgentSupervisorPorts,
 	AgentWorkspaceStrategyRef,
+	DurableAgentGraphStorePort,
 	ParentCapabilityGrantRef,
 	RegisterRootAgentRequest,
 } from "../types.ts";
+import type { ChildRuntimeAuthorityStorePort } from "../child-runtime-authority.ts";
 import {
 	GatewayBoundCapabilitySubsetEvaluator,
 	type ProductionCapabilityGrantPolicy,
 } from "./capability-subset.ts";
 import {
 	ProductionChildSessionLauncher,
+	type ChildRuntimeParentAuthorityEvidence,
+	type ChildRuntimeParentAuthorityPort,
 	type ChildSessionRuntimeSnapshot,
 	type ProductionChildSessionLauncherOptions,
 } from "./child-session-launcher.ts";
@@ -56,8 +62,15 @@ export interface ProductionAgentSupervisorCompositionOptions {
 	};
 	child: Omit<
 		ProductionChildSessionLauncherOptions,
-		"workspace" | "capabilitySubset" | "parentMutationGate" | "identity"
+		| "workspace"
+		| "capabilitySubset"
+		| "parentMutationGate"
+		| "identity"
+		| "authorityStore"
+		| "parentAuthority"
 	>;
+	/** 由 composition root 注入的 scoped store；不得由 launch request 选择。 */
+	authorityStore: ChildRuntimeAuthorityStorePort;
 	limits?: Partial<AgentGraphLimits>;
 	clock?: () => Date;
 }
@@ -103,6 +116,8 @@ export interface ProductionAgentSupervisorRuntimeOptions {
 	artifactAccess: ArtifactAccessService;
 	budget: BudgetGuard;
 	configuration: ProductionAgentSupervisorConfiguration;
+	/** 必须来自 canonical production state root，而不是 child session/worktree cwd。 */
+	authorityRoot: string;
 	clock?: () => Date;
 }
 
@@ -110,6 +125,7 @@ class SupervisorOperationAdmission {
 	readonly #drainWaiters = new Set<() => void>();
 	#accepting = true;
 	#active = 0;
+	#tail: Promise<void> = Promise.resolve();
 
 	#completeOperation(): void {
 		this.#active -= 1;
@@ -130,12 +146,12 @@ class SupervisorOperationAdmission {
 			});
 		}
 		this.#active += 1;
-		try {
-			return operation().finally(() => this.#completeOperation());
-		} catch (error) {
-			this.#completeOperation();
-			return Promise.reject(error);
-		}
+		const result = this.#tail.then(operation, operation);
+		this.#tail = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result.finally(() => this.#completeOperation());
 	}
 
 	public beginShutdown(): void {
@@ -259,6 +275,106 @@ function assertParentScope(options: ProductionAgentSupervisorCompositionOptions)
 }
 
 /**
+ * parent graph 是 launch/resume activation 的唯一 authority。独立 factory 便于用
+ * exact graph head 做 fail-closed contract tests，production composition 仍保持 port 私有。
+ */
+export function createProductionChildRuntimeParentAuthority(input: {
+	manager: V3SessionManager;
+	rootAgentId: RegisterRootAgentRequest["agentId"];
+	graphStore: Pick<DurableAgentGraphStorePort, "load">;
+	clock?: () => Date;
+}): ChildRuntimeParentAuthorityPort {
+	return {
+		parentSessionId: input.manager.sessionId(),
+		resolve: async (
+			activation,
+		): Promise<AgentResult<ChildRuntimeParentAuthorityEvidence>> => {
+			const request = activation.request;
+			if (input.manager.isClosed()) {
+				return {
+					ok: false,
+					error: {
+						code: "reference_unavailable",
+						message: "parent runtime authority is closed",
+						retryable: true,
+					},
+				};
+			}
+			const loaded = await input.graphStore.load(input.rootAgentId);
+			if (!loaded.ok) return loaded;
+			const parent =
+				loaded.value.projection.nodes.get(request.parentAgentId);
+			const child =
+				loaded.value.projection.nodes.get(request.agentId);
+			const cursor = loaded.value.cursor;
+			if (
+				!parent ||
+				!child ||
+				!cursor ||
+				loaded.value.revision < 1 ||
+				parent.state !== "running" ||
+				!parent.capabilityGrant ||
+				!isParentCapabilityGrantRef(
+					parent.capabilityGrant,
+					(input.clock ?? (() => new Date()))(),
+				) ||
+				(activation.activationType === "launch"
+					? child.state !== "pending"
+					: child.state !== "paused" &&
+						child.state !== "partial") ||
+				child.parentAgentId !== request.parentAgentId ||
+				child.sessionId !== request.sessionId ||
+				!child.delegationReceipt ||
+				child.delegationReceipt.parentGrantReceiptId !==
+					parent.capabilityGrant.receiptId ||
+				child.delegationReceipt.parentGrantDigest !==
+					parent.capabilityGrant.receiptDigest ||
+				canonicalDigest(child.delegationReceipt) !==
+					canonicalDigest(request.delegationReceipt) ||
+				canonicalDigest(child.workspaceReceipt) !==
+					canonicalDigest(request.workspaceReceipt) ||
+				canonicalDigest(child.budgetReservation) !==
+					canonicalDigest(request.budgetReservation) ||
+				canonicalDigest(child.inputSources) !==
+					canonicalDigest(request.inputSources) ||
+				canonicalDigest(child.declassificationReceipts) !==
+					canonicalDigest(request.declassificationReceipts) ||
+				(activation.activationType === "launch" &&
+					(child.role !== activation.request.role ||
+						child.objectiveDigest !==
+							canonicalDigest(activation.request.objective) ||
+						canonicalDigest(child.artifactContract) !==
+							canonicalDigest(
+								activation.request.artifactContract,
+							)))
+			) {
+				return {
+					ok: false,
+					error: {
+						code: "invalid_graph",
+						message:
+							"parent graph does not contain the exact current child authority",
+						retryable: false,
+					},
+				};
+			}
+			return {
+				ok: true,
+				value: {
+					parentSessionId: input.manager.sessionId(),
+					ownerParentRuntimeId: input.manager.runtimeId(),
+					parentGraphRevision: loaded.value.revision,
+					parentGraphCursor: cursor,
+					parentNodeDigest: canonicalDigest(parent),
+					ownerParentWriterFence:
+						input.manager.writerFenceReceipt(),
+				},
+			};
+		},
+	};
+}
+
+/**
  * 构造顺序固定为 graph store -> launcher -> supervisor -> durable root registration。
  * 任一 registration 失败都会先关闭 launcher；父 manager 的所有权始终留给 caller。
  */
@@ -278,7 +394,16 @@ export async function createProductionAgentSupervisorComposition(
 		capabilitySubset: options.adapters.capabilitySubset,
 		parentMutationGate: options.parentMutationGate,
 		identity,
+		authorityStore: options.authorityStore,
+		parentAuthority:
+			createProductionChildRuntimeParentAuthority({
+				manager: options.manager,
+				rootAgentId: options.root.agentId,
+				graphStore,
+				...(options.clock ? { clock: options.clock } : {}),
+			}),
 	});
+	await launcher.auditAuthority();
 	const supervisor = new AgentSupervisor({
 		rootAgentId: options.root.agentId,
 		ports: { ...options.adapters, graphStore, launcher },
@@ -298,6 +423,22 @@ export async function createProductionAgentSupervisorComposition(
 		return closeLauncherAfterStartupFailure(
 			launcher,
 			new Error(`production Agent supervisor root registration failed: ${registered.error.code}`),
+		);
+	}
+	let startupReconciled: Awaited<
+		ReturnType<AgentSupervisor["reconcilePendingCleanups"]>
+	>;
+	try {
+		startupReconciled = await supervisor.reconcilePendingCleanups();
+	} catch (error) {
+		return closeLauncherAfterStartupFailure(launcher, error);
+	}
+	if (!startupReconciled.ok) {
+		return closeLauncherAfterStartupFailure(
+			launcher,
+			new Error(
+				`production Agent supervisor startup cleanup reconciliation failed: ${startupReconciled.error.code}`,
+			),
 		);
 	}
 	const admission = new SupervisorOperationAdmission();
@@ -328,6 +469,9 @@ export async function createProductionAgentSupervisorRuntime(
 	if (manager.isClosed()) throw new Error("production Agent runtime requires an open parent manager");
 	if (!isAbsolute(configuration.child.sessionDir) || resolve(configuration.child.sessionDir) !== configuration.child.sessionDir) {
 		throw new Error("production Agent child session directory must be an exact absolute path");
+	}
+	if (!isAbsolute(options.authorityRoot) || resolve(options.authorityRoot) !== options.authorityRoot) {
+		throw new Error("production Agent authority root must be an exact absolute path");
 	}
 	const identity = manager.identity();
 	const lineage = manager.sessionEvents().lineage();
@@ -413,6 +557,9 @@ export async function createProductionAgentSupervisorRuntime(
 			...configuration.child,
 			clock,
 		},
+		authorityStore: new FileChildRuntimeAuthorityStore(
+			options.authorityRoot,
+		),
 		...(configuration.limits ? { limits: configuration.limits } : {}),
 		clock,
 	});

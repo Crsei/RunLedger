@@ -1263,6 +1263,16 @@ export async function createProductionInteractiveRuntime(
 				artifactAccess: workspaceOptions.artifactAccess,
 				budget: sessionRuntime.budget,
 				configuration: options.agents,
+				authorityRoot: join(
+					workspaceComposition.paths.stateRoot,
+					"agents",
+					"child-runtime-authority",
+					canonicalDigest({
+						authorityId: identity.authorityId,
+						tenantId: identity.tenantId,
+						parentSessionId: manager.sessionId(),
+					}),
+				),
 				clock,
 			});
 		}

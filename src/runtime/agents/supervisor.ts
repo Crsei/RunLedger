@@ -727,24 +727,35 @@ export class AgentSupervisor {
 				{ ...launchBody, requestDigest: canonicalDigest(launchBody) },
 				signal,
 			);
-		} catch {
-			launched = fail<AgentLaunchResult>("launch_failed", "agent launcher is unavailable", true);
-		}
-		if (!launched.ok) return this.rejectPendingLaunch(node, request, launched.error);
-		if (launched.value.status !== "started") {
-			return this.rejectPendingLaunch(node, request, {
-				code: "launch_failed",
-				message: "agent launcher rejected admission",
-				retryable: launched.value.retryable,
-			});
-		}
-		if (!launchReceiptsMatch(node, launched.value)) {
-			return this.rejectPendingLaunch(node, request, {
-				code: "launch_failed",
-				message: "agent launcher returned uncorrelated launch receipts",
-				retryable: false,
-			});
-		}
+			} catch {
+				launched = fail<AgentLaunchResult>("launch_failed", "agent launcher is unavailable", true);
+			}
+			if (!launched.ok) {
+				return launched.error.retryable
+					? launched
+					: this.rejectPendingLaunch(node, request, launched.error);
+			}
+			if (launched.value.status !== "started") {
+				const error: AgentError = {
+					code: "launch_failed",
+					message: "agent launcher rejected admission",
+					retryable: launched.value.retryable,
+				};
+				return error.retryable
+					? { ok: false, error }
+					: this.rejectPendingLaunch(node, request, error);
+			}
+			if (!launchReceiptsMatch(node, launched.value)) {
+				return {
+					ok: false,
+					error: {
+					code: "launch_failed",
+						message:
+							"agent launcher returned uncorrelated launch receipts; runtime outcome requires reconciliation",
+						retryable: true,
+					},
+				};
+			}
 		const timestamp = this.clock().toISOString();
 		const graph = await this.commitSequence([
 			{
@@ -1242,39 +1253,44 @@ export class AgentSupervisor {
 				{ ...resumeBody, requestDigest: canonicalDigest(resumeBody) },
 				signal,
 			);
-		} catch {
-			return fail("reference_unavailable", "agent launcher resume is unavailable", true);
-		}
-		if (!launched.ok) {
-			await this.#ports.budget.settle(budgetSettlementRequest({
-				idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-unavailable"),
-				reservation: current.budgetReservation,
+			} catch {
+				return fail("reference_unavailable", "agent launcher resume is unavailable", true);
+			}
+			if (!launched.ok) {
+				if (launched.error.retryable) return launched;
+				await this.#ports.budget.settle(budgetSettlementRequest({
+					idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-unavailable"),
+					reservation: current.budgetReservation,
 				outcome: "not_started",
 				partialResults: current.artifacts.map((report) => report.artifact),
 				settledAt: revalidatedAt,
 			}));
 			return launched;
-		}
-		if (launched.value.status !== "started") {
-			await this.#ports.budget.settle(budgetSettlementRequest({
-				idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-abort"),
-				reservation: current.budgetReservation,
+			}
+			if (launched.value.status !== "started") {
+				if (launched.value.retryable) {
+					return fail(
+						"launch_failed",
+						"agent launcher resume outcome requires reconciliation",
+						true,
+					);
+				}
+				await this.#ports.budget.settle(budgetSettlementRequest({
+					idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-abort"),
+					reservation: current.budgetReservation,
 				outcome: "not_started",
 				partialResults: current.artifacts.map((report) => report.artifact),
 				settledAt: revalidatedAt,
 			}));
-			return fail("launch_failed", "agent launcher rejected resume", launched.value.retryable);
-		}
-		if (!launchReceiptsMatch(current, launched.value)) {
-			await this.#ports.budget.settle(budgetSettlementRequest({
-				idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-invalid"),
-				reservation: current.budgetReservation,
-				outcome: "not_started",
-				partialResults: current.artifacts.map((report) => report.artifact),
-				settledAt: revalidatedAt,
-			}));
-			return fail("launch_failed", "agent launcher returned uncorrelated resume receipts");
-		}
+				return fail("launch_failed", "agent launcher rejected resume", launched.value.retryable);
+			}
+			if (!launchReceiptsMatch(current, launched.value)) {
+				return fail(
+					"launch_failed",
+					"agent launcher returned uncorrelated resume receipts; runtime outcome requires reconciliation",
+					true,
+				);
+			}
 		const timestamp = this.clock().toISOString();
 		const resumed = await this.commitSequence([
 			{

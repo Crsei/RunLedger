@@ -91,4 +91,32 @@ describe("agent resume revalidation", () => {
 		if (!resumed.ok) expect(resumed.error.code).toBe("resume_denied");
 		expect(runtime.denied.checks).toHaveLength(0);
 	});
+
+	it("keeps rebound budget reserved when a retryable launcher resume may have taken effect", async () => {
+		const { runtime, child } = await pausedChild();
+		const settlementsBefore = runtime.budget.settlementExecutions;
+		runtime.launcher.resume = async () => ({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				message: "resume activation outcome is uncertain",
+				retryable: true,
+			},
+		});
+
+		const resumed = await runtime.supervisor.resume({
+			requestId: createRuntimeId("command", "resume-uncertain"),
+			idempotencyKey: key("resume-uncertain"),
+			agentId: child.agentId,
+		});
+		expect(resumed).toMatchObject({
+			ok: false,
+			error: { code: "reference_unavailable", retryable: true },
+		});
+		expect(runtime.budget.settlementExecutions).toBe(settlementsBefore);
+		const graph = await runtime.supervisor.graph();
+		expect(graph.ok && graph.value.nodes.get(child.agentId)?.state).toBe(
+			"paused",
+		);
+	});
 });
