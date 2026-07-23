@@ -26,6 +26,7 @@ import {
 	ControlPlaneCommandBus,
 	validateControlPlaneV2AgentCommand,
 	type AgentSpawnCommandV2,
+	type PeerCredentialAttestorPort,
 } from "runledger/runtime/control-plane";
 import type { RemoteExecutorPort } from "runledger/runtime/executors";
 import { EnterprisePrincipalRefSchema } from "runledger/runtime/identity/enterprise";
@@ -45,6 +46,7 @@ import {
 } from "runledger/runtime/verification";
 import {
 	startHeadlessDaemonCore,
+	HttpSseControlPlaneListener,
 	V3SessionRuntimeFactoryAdapter,
 } from "runledger/daemon";
 import { PortBackedVerificationRunner } from "runledger/verification-runner";
@@ -66,6 +68,7 @@ export interface PublicConsumerBindings {
 	childFactory: ProductionHeadlessChildRuntimeFactoryPort;
 	childRecovery: ChildRuntimeRecoveryDecision;
 	childAdmission: ChildGovernedOperationAdmissionPort;
+	peerAttestor: PeerCredentialAttestorPort;
 }
 
 // 本文件由 public-surface 测试编译；这些值引用同时证明根命名空间和稳定子路径可消费。
@@ -85,6 +88,7 @@ export const PUBLIC_RUNTIME_VALUES = [
 	EnterprisePrincipalRefSchema,
 	projectRuntimeActivity,
 	startHeadlessDaemonCore,
+	HttpSseControlPlaneListener,
 	V3SessionRuntimeFactoryAdapter,
 	MODEL_ROUTING_CONTRACT_VERSION,
 	ModelSwitchConversionReceiptSchema,
