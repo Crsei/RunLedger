@@ -1,7 +1,7 @@
 /** 有界 Agent supervisor：admission、receipt 协调、durable graph 与 resume。 */
 
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
-import { createIdempotencyKey } from "../protocol/v3/coordination.ts";
+import { createIdempotencyKey, parseIdempotencyKey } from "../protocol/v3/coordination.ts";
 import { createRuntimeId, isRuntimeId } from "../protocol/v3/ids.ts";
 import { createBudgetVector } from "../orchestrator/budget-guard.ts";
 import type { BudgetGuard as BudgetGuardType } from "../orchestrator/budget-guard.ts";
@@ -17,16 +17,30 @@ import {
 	validateSpawnAgentRequest,
 } from "./delegation.ts";
 import {
+	agentBudgetSettlementRequestDigest,
+	agentCleanupReceiptDigest,
+	agentCleanupRequestDigest,
+	agentRuntimeReleaseRequestDigest,
+	agentWorkspaceReleaseRequestDigest,
+	createAgentSemanticTerminalRecord,
 	isAgentTerminal,
 	normalizeAgentGraphLimits,
 } from "./graph-store.ts";
 import { createAgentHandoffManifest } from "./handoff.ts";
 import { buildDeclarativeMergeRequest, executeDeclarativeMerge } from "./merge.ts";
-import { createAgentInterruptionCommands, validateAgentResidencyReceipt } from "./residency.ts";
+import {
+	createAgentInterruptionCommands,
+	stateForAgentInterruption,
+	validateAgentResidencyReceipt,
+} from "./residency.ts";
 import type {
 	AgentArtifactReportRequest,
+	AgentBudgetSettlementReceiptRef,
 	AgentBudgetUsage,
 	AgentBudgetReservationRef,
+	AgentCleanupRecord,
+	AgentCleanupReceiptRef,
+	AgentCleanupStage,
 	AgentCursorAdvanceRequest,
 	AgentDenialReceiptRef,
 	AgentError,
@@ -43,6 +57,7 @@ import type {
 	AgentResult,
 	AgentResumeOutcome,
 	AgentResumeRequest,
+	AgentRuntimeReleaseReceiptRef,
 	AgentSpawnOutcome,
 	AgentSupervisorOptions,
 	AgentTerminalRequest,
@@ -60,6 +75,14 @@ const MAX_GRAPH_CAS_ATTEMPTS = 32;
 
 function fail<T>(code: AgentErrorCode, message: string, retryable = false): AgentResult<T> {
 	return { ok: false, error: { code, message, retryable } };
+}
+
+function terminalReasonMatchesOutcome(request: AgentTerminalRequest): boolean {
+	if (request.outcome === "completed") return request.reason === undefined;
+	if (request.outcome === "stopped") {
+		return request.reason === undefined || ["cancelled", "budget_exhausted", "delegation_revoked"].includes(request.reason);
+	}
+	return request.reason === undefined || ["timeout", "crash", "workspace_lost"].includes(request.reason);
 }
 
 function fromBudgetError<T>(error: {
@@ -84,6 +107,12 @@ function derivedKey(base: string, purpose: string) {
 
 function budgetRequestDigest(agentId: RootAgentBudgetReserveRequest["agentId"], budget: RootAgentBudgetReserveRequest["budget"]): string {
 	return canonicalDigest({ agentId, budget });
+}
+
+function budgetSettlementRequest(
+	request: Omit<RootAgentBudgetSettleRequest, "requestDigest">,
+): RootAgentBudgetSettleRequest {
+	return { ...request, requestDigest: agentBudgetSettlementRequestDigest(request) };
 }
 
 /** 把 Phase 7 root BudgetGuard 收敛为 Multi-Agent 只需的 reserve/settle 端口。 */
@@ -129,32 +158,56 @@ export class RootBudgetGuardAdapter implements RootAgentBudgetPort {
 		};
 	}
 
-	public async settle(request: RootAgentBudgetSettleRequest): Promise<AgentResult<void>> {
-		if (!request.usage || request.outcome === "not_started") {
+	public async settle(request: RootAgentBudgetSettleRequest): Promise<AgentResult<AgentBudgetSettlementReceiptRef>> {
+		const { requestDigest, ...requestBody } = request;
+		if (
+			requestDigest !== agentBudgetSettlementRequestDigest(requestBody) ||
+			!Number.isFinite(Date.parse(request.settledAt))
+		) return fail("invalid_request", "root budget settlement request is invalid");
+		if (request.outcome !== "not_started" && !request.usage) {
+			return fail("invalid_request", "started child budget settlement requires exact usage");
+		}
+		if (request.outcome === "not_started") {
 			const refunded = await this.guard.refund({
 				reservationId: request.reservation.reservationId,
 				idempotencyKey: request.idempotencyKey,
-				reason: request.outcome === "not_started" ? "not_started" : "cancelled",
+				reason: "not_started",
 			});
-			return refunded.ok ? { ok: true, value: undefined } : fromBudgetError(refunded.error);
+			if (!refunded.ok) return fromBudgetError(refunded.error);
+		} else {
+			const usage = request.usage;
+			if (!usage) return fail("invalid_request", "started child budget settlement requires exact usage");
+			const committed = await this.guard.commit({
+				reservationId: request.reservation.reservationId,
+				idempotencyKey: request.idempotencyKey,
+				actual: createBudgetVector({
+					inputTokens: usage.inputTokens,
+					outputTokens: usage.outputTokens,
+					usdMicros: usage.usdMicros,
+					wallTimeMs: usage.wallTimeMs,
+					toolCalls: usage.toolCalls,
+					networkBytes: usage.networkBytes,
+					storageBytes: usage.storageBytes,
+					artifactCount: usage.artifactCount,
+					verifications: usage.verifications,
+				}),
+				partialResults: request.partialResults,
+			});
+			if (!committed.ok) return fromBudgetError(committed.error);
 		}
-		const committed = await this.guard.commit({
+		const body: Omit<AgentBudgetSettlementReceiptRef, "receiptDigest"> = {
+			receiptId: createRuntimeId(
+				"receipt",
+				`agent-budget-settlement-${canonicalDigest({ reservationId: request.reservation.reservationId, requestDigest: request.requestDigest }).slice(0, 40)}`,
+			),
 			reservationId: request.reservation.reservationId,
-			idempotencyKey: request.idempotencyKey,
-			actual: createBudgetVector({
-				inputTokens: request.usage.inputTokens,
-				outputTokens: request.usage.outputTokens,
-				usdMicros: request.usage.usdMicros,
-				wallTimeMs: request.usage.wallTimeMs,
-				toolCalls: request.usage.toolCalls,
-				networkBytes: request.usage.networkBytes,
-				storageBytes: request.usage.storageBytes,
-				artifactCount: request.usage.artifactCount,
-				verifications: request.usage.verifications,
-			}),
-			partialResults: request.partialResults,
-		});
-		return committed.ok ? { ok: true, value: undefined } : fromBudgetError(committed.error);
+			outcome: request.outcome,
+			usageDigest: canonicalDigest(request.usage ?? null),
+			partialResultsDigest: canonicalDigest(request.partialResults),
+			requestDigest: request.requestDigest,
+			settledAt: request.settledAt,
+		};
+		return { ok: true, value: { ...body, receiptDigest: canonicalDigest(body) } };
 	}
 }
 
@@ -202,12 +255,20 @@ function launchReceiptsMatch(
 	result: AgentLaunchResult,
 ): boolean {
 	if (result.status !== "started") return false;
+	const { receiptDigest, ...launchBody } = result.launchReceipt;
+	const launchedAt = Date.parse(result.launchReceipt.launchedAt);
 	return (
 		result.launchReceipt.agentId === node.agentId &&
 		result.launchReceipt.sessionId === node.sessionId &&
 		isRuntimeId(result.launchReceipt.receiptId, "receipt") &&
-		DIGEST_PATTERN.test(result.launchReceipt.receiptDigest) &&
+		Number.isSafeInteger(result.launchReceipt.launchRevision) &&
+		result.launchReceipt.launchRevision >= 1 &&
+		Number.isFinite(launchedAt) &&
+		DIGEST_PATTERN.test(receiptDigest) &&
+		receiptDigest === canonicalDigest(launchBody) &&
 		result.residencyReceipt.state === "resident" &&
+		result.residencyReceipt.revision === result.launchReceipt.launchRevision &&
+		Date.parse(result.residencyReceipt.observedAt) >= launchedAt &&
 		validateAgentResidencyReceipt(result.residencyReceipt, node).ok
 	);
 }
@@ -256,15 +317,79 @@ function graphFailure(
 	};
 }
 
+function residencyReceiptsAreExact(
+	left: AgentResidencyReceiptRef,
+	right: AgentResidencyReceiptRef | undefined,
+): boolean {
+	if (!right) return false;
+	try {
+		return canonicalDigest(left) === canonicalDigest(right);
+	} catch {
+		return false;
+	}
+}
+
+function interruptionResidencyMatches(
+	projection: AgentGraphProjection,
+	node: AgentNode,
+	receipt: AgentResidencyReceiptRef,
+): boolean {
+	if (residencyReceiptsAreExact(receipt, node.residency)) return true;
+	const runtimeRelease = projection.cleanups.get(node.agentId)?.runtimeRelease;
+	if (!runtimeRelease || !node.launchReceipt || !node.terminal) return false;
+	const expected = agentRuntimeReleaseRequestDigest({
+		requestId: runtimeRelease.receipt.requestId,
+		agentId: node.agentId,
+		sessionId: node.sessionId,
+		launchReceipt: node.launchReceipt,
+		previousResidencyReceipt: receipt,
+		reason: node.terminal.outcome,
+	});
+	return expected === runtimeRelease.requestDigest;
+}
+
+function cleanupRequestId(node: AgentNode) {
+	if (!node.terminal) throw new TypeError("cleanup identity requires a semantic terminal");
+	return createRuntimeId(
+		"command",
+		`agent-cleanup-${canonicalDigest({ agentId: node.agentId, terminalDigest: node.terminal.terminalDigest }).slice(0, 40)}`,
+	);
+}
+
+function cleanupIdempotencyKey(node: AgentNode, purpose: string) {
+	if (!node.terminal) throw new TypeError("cleanup identity requires a semantic terminal");
+	return createIdempotencyKey(
+		`agent-cleanup-${purpose}-${canonicalDigest({ agentId: node.agentId, terminalDigest: node.terminal.terminalDigest }).slice(0, 40)}`,
+	);
+}
+
+function cleanupStageRequestId(node: AgentNode, stage: AgentCleanupStage | "completed") {
+	if (!node.terminal) throw new TypeError("cleanup stage identity requires a semantic terminal");
+	return createRuntimeId(
+		"command",
+		`agent-cleanup-${stage}-${canonicalDigest({ agentId: node.agentId, terminalDigest: node.terminal.terminalDigest }).slice(0, 32)}`,
+	);
+}
+
+function latestTimestamp(values: readonly string[]): string {
+	return values.reduce((latest, value) => Date.parse(value) > Date.parse(latest) ? value : latest);
+}
+
+interface ActiveCleanupOperation {
+	requestDigest: string;
+	promise: Promise<AgentResult<AgentGraphProjection>>;
+}
+
 export class AgentSupervisor {
 	private readonly rootAgentId: AgentSupervisorOptions["rootAgentId"];
-	private readonly ports: AgentSupervisorOptions["ports"];
+	readonly #ports: AgentSupervisorOptions["ports"];
 	private readonly limitsResult: AgentResult<AgentGraphLimits>;
 	private readonly clock: () => Date;
+	private readonly cleanupOperations = new Map<AgentNode["agentId"], ActiveCleanupOperation>();
 
 	public constructor(options: AgentSupervisorOptions) {
 		this.rootAgentId = options.rootAgentId;
-		this.ports = options.ports;
+		this.#ports = options.ports;
 		this.limitsResult = normalizeAgentGraphLimits(options.limits);
 		this.clock = options.clock ?? (() => new Date());
 	}
@@ -272,7 +397,7 @@ export class AgentSupervisor {
 	private async load(): Promise<AgentResult<AgentGraphProjection>> {
 		if (!this.limitsResult.ok) return this.limitsResult;
 		try {
-			const loaded = await this.ports.graphStore.load(this.rootAgentId);
+			const loaded = await this.#ports.graphStore.load(this.rootAgentId);
 			if (!loaded.ok) return loaded;
 			return { ok: true, value: loaded.value.projection };
 		} catch {
@@ -285,14 +410,14 @@ export class AgentSupervisor {
 		for (let attempt = 0; attempt < MAX_GRAPH_CAS_ATTEMPTS; attempt += 1) {
 			let loaded;
 			try {
-				loaded = await this.ports.graphStore.load(this.rootAgentId);
+				loaded = await this.#ports.graphStore.load(this.rootAgentId);
 			} catch {
 				return fail("store_unavailable", "agent graph store is unavailable", true);
 			}
 			if (!loaded.ok) return loaded;
 			let committed;
 			try {
-				committed = await this.ports.graphStore.commit(
+				committed = await this.#ports.graphStore.commit(
 					this.rootAgentId,
 					loaded.value.revision,
 					command,
@@ -474,7 +599,7 @@ export class AgentSupervisor {
 			strategy: request.workspaceStrategy,
 		};
 		try {
-			const allocated = await this.ports.workspace.allocate(
+			const allocated = await this.#ports.workspace.allocate(
 				{ ...body, requestDigest: canonicalDigest(body) },
 				signal,
 			);
@@ -504,7 +629,7 @@ export class AgentSupervisor {
 			reason,
 		};
 		try {
-			await this.ports.workspace.release({ ...body, requestDigest: canonicalDigest(body) });
+			await this.#ports.workspace.release({ ...body, requestDigest: canonicalDigest(body) });
 		} catch {
 			// 外部清理失败由 Workspace 专项 reconciliation；Runtime 不伪造 released receipt。
 		}
@@ -512,12 +637,13 @@ export class AgentSupervisor {
 
 	private async settleNotStarted(node: AgentNode, baseKey: string): Promise<void> {
 		if (!node.budgetReservation) return;
-		await this.ports.budget.settle({
+		await this.#ports.budget.settle(budgetSettlementRequest({
 			idempotencyKey: derivedKey(baseKey, "budget-abort"),
 			reservation: node.budgetReservation,
 			outcome: "not_started",
 			partialResults: [],
-		});
+			settledAt: this.clock().toISOString(),
+		}));
 	}
 
 	private async continueLaunch(
@@ -571,7 +697,7 @@ export class AgentSupervisor {
 		};
 		let launched: AgentResult<AgentLaunchResult>;
 		try {
-			launched = await this.ports.launcher.launch(
+			launched = await this.#ports.launcher.launch(
 				{ ...launchBody, requestDigest: canonicalDigest(launchBody) },
 				signal,
 			);
@@ -625,15 +751,25 @@ export class AgentSupervisor {
 		error: AgentError,
 	): Promise<AgentResult<AgentSpawnOutcome>> {
 		const timestamp = this.clock().toISOString();
-		const failedGraph = await this.commit({
-			type: "agent.failed",
+		const launchFailedKey = derivedKey(request.idempotencyKey, "launch-failed");
+		const terminal = createAgentSemanticTerminalRecord({
+			agentId: node.agentId,
 			requestId: request.requestId,
-			idempotencyKey: derivedKey(request.idempotencyKey, "launch-failed"),
+			idempotencyKey: launchFailedKey,
+			outcome: "failed",
+			reason: "launch_rejected",
+			partialResults: node.artifacts.map((report) => report.artifact),
+		});
+		const failedGraph = await this.commit({
+				type: "agent.failed",
+				requestId: request.requestId,
+				idempotencyKey: launchFailedKey,
 			occurredAt: timestamp,
 			agentId: node.agentId,
 			from: node.state,
 			reason: "launch_rejected",
 			error: graphFailure(error),
+			terminal,
 		});
 		await this.settleNotStarted(node, request.idempotencyKey);
 		await this.releaseWorkspace(node, "spawn_aborted");
@@ -709,7 +845,7 @@ export class AgentSupervisor {
 			});
 			if (!intent.ok) return intent;
 		}
-		const delegation = await evaluateSpawnDelegation(request, this.ports.capabilitySubset, signal, this.clock());
+		const delegation = await evaluateSpawnDelegation(request, this.#ports.capabilitySubset, signal, this.clock());
 		if (!delegation.ok) return this.failSpawnIntent(request, delegation.error);
 		const workspace = await this.allocateWorkspace(parent, request, signal);
 		if (!workspace.ok) return this.failSpawnIntent(request, workspace.error);
@@ -729,7 +865,7 @@ export class AgentSupervisor {
 			);
 		}
 		const budgetDigest = budgetRequestDigest(request.childAgentId, request.budget);
-		const budget = await this.ports.budget.reserve({
+		const budget = await this.#ports.budget.reserve({
 			requestId: request.requestId,
 			idempotencyKey: derivedKey(request.idempotencyKey, "budget-reserve"),
 			agentId: request.childAgentId,
@@ -866,7 +1002,7 @@ export class AgentSupervisor {
 		if (!graph.ok) return graph;
 		const node = graph.value.nodes.get(request.report.agentId);
 		if (!node) return fail("agent_not_found", "artifact agent does not exist");
-		if (isAgentTerminal(node) && node.state !== "failed") return fail("invalid_transition", "terminal agent cannot report new artifacts");
+		if (isAgentTerminal(node)) return fail("invalid_transition", "terminal agent cannot report new artifacts");
 		return this.commit({
 			type: "agent.artifact_reported",
 			requestId: request.requestId,
@@ -887,22 +1023,64 @@ export class AgentSupervisor {
 		if (!graph.ok) return graph;
 		const node = graph.value.nodes.get(agentId);
 		if (!node) return fail("agent_not_found", "interrupted agent does not exist");
+		if (node.budgetReservation && !usage) {
+			return fail("invalid_request", "interrupted child requires exact budget usage before state mutation");
+		}
+		const interruptionRequestId = createRuntimeIdForCompensation(
+			node.agentId,
+			`interrupt-${cause}-${idempotencyKey}`,
+		);
+		if (isAgentTerminal(node)) {
+			const expectedState = stateForAgentInterruption(node, cause);
+			if (expectedState !== "stopped" && expectedState !== "failed") {
+				return fail("invalid_transition", "terminal interruption retry conflicts with durable state");
+			}
+			const expectedTerminal = createAgentSemanticTerminalRecord({
+				agentId: node.agentId,
+				requestId: interruptionRequestId,
+				idempotencyKey: createIdempotencyKey(
+					`agent-interruption-${canonicalDigest(idempotencyKey).slice(0, 48)}`,
+				),
+				outcome: expectedState,
+				reason: cause,
+				...(usage ? { usage } : {}),
+				partialResults: node.artifacts.map((report) => report.artifact),
+			});
+			if (
+				node.state !== expectedState ||
+				node.terminal?.terminalDigest !== expectedTerminal.terminalDigest ||
+				!interruptionResidencyMatches(graph.value, node, residencyReceipt)
+			) {
+				return fail("invalid_transition", "terminal interruption retry conflicts with durable state");
+			}
+			if (!node.parentAgentId) return graph;
+			const requested = await this.ensureCleanupRequested(graph.value, node);
+			return requested.ok ? this.continueCleanup(requested.value, node.agentId) : requested;
+		}
 		const commands = createAgentInterruptionCommands(node, cause, residencyReceipt, {
-			requestId: createRuntimeIdForCompensation(node.agentId, `interrupt-${cause}-${idempotencyKey}`),
+			requestId: interruptionRequestId,
 			idempotencyKey,
 			occurredAt: this.clock().toISOString(),
+			...(usage ? { usage } : {}),
 		});
 		if (!commands.ok) return commands;
 		const committed = await this.commitSequence(commands.value);
 		if (!committed.ok) return committed;
+		const current = committed.value.nodes.get(node.agentId);
+		if (!current) return fail("invalid_graph", "interrupted Agent vanished from durable graph");
+		if (isAgentTerminal(current)) {
+			const requested = await this.ensureCleanupRequested(committed.value, current);
+			return requested.ok ? this.continueCleanup(requested.value, current.agentId) : requested;
+		}
 		if (node.budgetReservation) {
-			const settled = await this.ports.budget.settle({
+			const settled = await this.#ports.budget.settle(budgetSettlementRequest({
 				idempotencyKey: derivedKey(idempotencyKey, "interrupt-budget"),
 				reservation: node.budgetReservation,
 				outcome: cause === "cancelled" ? "stopped" : "failed",
 				...(usage ? { usage } : {}),
 				partialResults: node.artifacts.map((report) => report.artifact),
-			});
+				settledAt: this.clock().toISOString(),
+			}));
 			if (!settled.ok) return settled;
 		}
 		return committed;
@@ -910,35 +1088,22 @@ export class AgentSupervisor {
 
 	public async cancel(
 		request: AgentResumeRequest,
-		residencyReceipt: AgentResidencyReceiptRef,
 		reasonDigest: string,
+		usage?: AgentBudgetUsage,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentGraphProjection>> {
-		const graph = await this.load();
-		if (!graph.ok) return graph;
-		const node = graph.value.nodes.get(request.agentId);
-		if (!node) return fail("agent_not_found", "cancelled agent does not exist");
-		try {
-			const cancelled = await this.ports.launcher.cancel(
-				{
-					requestId: request.requestId,
-					agentId: node.agentId,
-					sessionId: node.sessionId,
-					reasonDigest,
-					requestDigest: canonicalDigest({
-						requestId: request.requestId,
-						agentId: node.agentId,
-						sessionId: node.sessionId,
-						reasonDigest,
-					}),
-				},
-				signal,
-			);
-			if (!cancelled.ok) return cancelled;
-		} catch {
-			return fail("reference_unavailable", "agent launcher cancel is unavailable", true);
-		}
-		return this.interrupt(node.agentId, "cancelled", residencyReceipt, request.idempotencyKey);
+		if (!DIGEST_PATTERN.test(reasonDigest)) return fail("invalid_request", "cancel reason digest is invalid");
+		return this.finish(
+			{
+				requestId: request.requestId,
+				idempotencyKey: request.idempotencyKey,
+				agentId: request.agentId,
+				outcome: "stopped",
+				reason: "cancelled",
+				...(usage ? { usage } : {}),
+			},
+			signal,
+		);
 	}
 
 	public async resume(request: AgentResumeRequest, signal?: AbortSignal): Promise<AgentResult<AgentResumeOutcome>> {
@@ -950,11 +1115,11 @@ export class AgentSupervisor {
 		const parent = graph.value.nodes.get(node.parentAgentId);
 		if (!parent) return fail("orphan_agent", "resumable child parent is missing");
 		if (parent.state !== "running") return fail("resume_denied", "child cannot resume under a non-running parent");
-		const delegation = await revalidateDelegation(node, parent, request.requestId, this.ports.capabilitySubset, signal, this.clock());
+		const delegation = await revalidateDelegation(node, parent, request.requestId, this.#ports.capabilitySubset, signal, this.clock());
 		if (!delegation.ok) return delegation;
 		let denial;
 		try {
-			denial = await this.ports.deniedAgents.check(node.agentId, node.sessionId, signal);
+			denial = await this.#ports.deniedAgents.check(node.agentId, node.sessionId, signal);
 		} catch {
 			return fail("reference_unavailable", "denied-agent evaluator is unavailable", true);
 		}
@@ -968,7 +1133,7 @@ export class AgentSupervisor {
 		};
 		let workspace;
 		try {
-			workspace = await this.ports.workspace.validate(
+			workspace = await this.#ports.workspace.validate(
 				{ ...workspaceBody, requestDigest: canonicalDigest(workspaceBody) },
 				signal,
 			);
@@ -985,7 +1150,7 @@ export class AgentSupervisor {
 			return fail("resume_denied", "resume cannot replace a missing workspace or fall back to parent cwd");
 		}
 		const reboundBudgetDigest = budgetRequestDigest(node.agentId, node.budget);
-		const reboundBudget = await this.ports.budget.reserve({
+		const reboundBudget = await this.#ports.budget.reserve({
 			requestId: request.requestId,
 			idempotencyKey: derivedKey(request.idempotencyKey, "resume-budget-reserve"),
 			agentId: node.agentId,
@@ -1016,12 +1181,13 @@ export class AgentSupervisor {
 			},
 		]);
 		if (!revalidated.ok) {
-			await this.ports.budget.settle({
+			await this.#ports.budget.settle(budgetSettlementRequest({
 				idempotencyKey: derivedKey(request.idempotencyKey, "resume-budget-abort"),
 				reservation: reboundBudget.value,
 				outcome: "not_started",
 				partialResults: node.artifacts.map((report) => report.artifact),
-			});
+				settledAt: revalidatedAt,
+			}));
 			return revalidated;
 		}
 		const current = revalidated.value.nodes.get(node.agentId);
@@ -1041,7 +1207,7 @@ export class AgentSupervisor {
 		};
 		let launched: AgentResult<AgentLaunchResult>;
 		try {
-			launched = await this.ports.launcher.resume(
+			launched = await this.#ports.launcher.resume(
 				{ ...resumeBody, requestDigest: canonicalDigest(resumeBody) },
 				signal,
 			);
@@ -1049,30 +1215,33 @@ export class AgentSupervisor {
 			return fail("reference_unavailable", "agent launcher resume is unavailable", true);
 		}
 		if (!launched.ok) {
-			await this.ports.budget.settle({
+			await this.#ports.budget.settle(budgetSettlementRequest({
 				idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-unavailable"),
 				reservation: current.budgetReservation,
 				outcome: "not_started",
 				partialResults: current.artifacts.map((report) => report.artifact),
-			});
+				settledAt: revalidatedAt,
+			}));
 			return launched;
 		}
 		if (launched.value.status !== "started") {
-			await this.ports.budget.settle({
+			await this.#ports.budget.settle(budgetSettlementRequest({
 				idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-abort"),
 				reservation: current.budgetReservation,
 				outcome: "not_started",
 				partialResults: current.artifacts.map((report) => report.artifact),
-			});
+				settledAt: revalidatedAt,
+			}));
 			return fail("launch_failed", "agent launcher rejected resume", launched.value.retryable);
 		}
 		if (!launchReceiptsMatch(current, launched.value)) {
-			await this.ports.budget.settle({
+			await this.#ports.budget.settle(budgetSettlementRequest({
 				idempotencyKey: derivedKey(request.idempotencyKey, "resume-launch-invalid"),
 				reservation: current.budgetReservation,
 				outcome: "not_started",
 				partialResults: current.artifacts.map((report) => report.artifact),
-			});
+				settledAt: revalidatedAt,
+			}));
 			return fail("launch_failed", "agent launcher returned uncorrelated resume receipts");
 		}
 		const timestamp = this.clock().toISOString();
@@ -1103,65 +1272,364 @@ export class AgentSupervisor {
 			: fail("invalid_graph", "resumed child vanished from graph");
 	}
 
-	public async finish(request: AgentTerminalRequest): Promise<AgentResult<AgentGraphProjection>> {
+	private async recordCleanupFailure(
+		node: AgentNode,
+		cleanup: AgentCleanupRecord,
+		stage: AgentCleanupStage,
+		error: AgentError,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		if (cleanup.reconciliationRequired?.stage === stage) return { ok: false, error };
+		const recorded = await this.commit({
+			type: "agent.cleanup_reconciliation_required",
+			requestId: cleanupStageRequestId(node, stage),
+			idempotencyKey: cleanupIdempotencyKey(node, `${stage}-reconciliation`),
+			occurredAt: cleanup.requestedAt,
+			agentId: node.agentId,
+			cleanupRequestId: cleanup.requestId,
+			stage,
+			error: graphFailure(error, { outcomeCertain: false, effect: "uncertain" }),
+		});
+		return recorded.ok ? { ok: false, error } : recorded;
+	}
+
+	private async ensureCleanupRequested(
+		projection: AgentGraphProjection,
+		node: AgentNode,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		if (!node.parentAgentId) return { ok: true, value: projection };
+		if (!node.terminal) return fail("cleanup_invalid", "child cleanup requires a semantic terminal");
+		const requestId = cleanupRequestId(node);
+		const requestDigest = agentCleanupRequestDigest({
+			requestId,
+			agentId: node.agentId,
+			sessionId: node.sessionId,
+			terminalDigest: node.terminal.terminalDigest,
+		});
+		const existing = projection.cleanups.get(node.agentId);
+		if (existing) {
+			return existing.requestId === requestId &&
+				existing.requestDigest === requestDigest &&
+				existing.terminalDigest === node.terminal.terminalDigest
+				? { ok: true, value: projection }
+				: fail("cleanup_invalid", "child cleanup identity conflicts with durable state");
+		}
+		return this.commit({
+			type: "agent.cleanup_requested",
+			requestId,
+			idempotencyKey: cleanupIdempotencyKey(node, "requested"),
+			occurredAt: node.updatedAt,
+			agentId: node.agentId,
+			terminalDigest: node.terminal.terminalDigest,
+			requestDigest,
+		});
+	}
+
+	private async continueCleanup(
+		initial: AgentGraphProjection,
+		agentId: AgentNode["agentId"],
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		let projection = initial;
+		let node = projection.nodes.get(agentId);
+		let cleanup = projection.cleanups.get(agentId);
+		if (!node?.terminal || !node.parentAgentId || !cleanup) {
+			return fail("cleanup_invalid", "child cleanup projection is incomplete");
+		}
+		if (cleanup.completionReceipt) return { ok: true, value: projection };
+
+		if (!cleanup.runtimeRelease) {
+			if (!node.launchReceipt || !node.residency) {
+				return fail("cleanup_invalid", "child runtime release lacks launch or residency evidence");
+			}
+			const requestBody = {
+				requestId: cleanupStageRequestId(node, "runtime_release"),
+				agentId: node.agentId,
+				sessionId: node.sessionId,
+				launchReceipt: node.launchReceipt,
+				previousResidencyReceipt: node.residency,
+				reason: node.terminal.outcome,
+			};
+			let released: AgentResult<AgentRuntimeReleaseReceiptRef>;
+			try {
+				released = await this.#ports.launcher.release(
+					{ ...requestBody, requestDigest: agentRuntimeReleaseRequestDigest(requestBody) },
+					signal,
+				);
+			} catch {
+				released = fail("reference_unavailable", "child runtime release adapter is unavailable", true);
+			}
+			if (!released.ok) return this.recordCleanupFailure(node, cleanup, "runtime_release", released.error);
+			const committed = await this.commit({
+				type: "agent.runtime_released",
+				requestId: requestBody.requestId,
+				idempotencyKey: cleanupIdempotencyKey(node, "runtime-released"),
+				occurredAt: released.value.releasedAt,
+				agentId: node.agentId,
+				cleanupRequestId: cleanup.requestId,
+				receipt: released.value,
+			});
+			if (!committed.ok) return committed;
+			projection = committed.value;
+			node = projection.nodes.get(agentId);
+			cleanup = projection.cleanups.get(agentId);
+			if (!node?.terminal || !cleanup) return fail("cleanup_invalid", "runtime release vanished from projection");
+		}
+
+		if (!cleanup.workspaceRelease) {
+			const requestBody = {
+				requestId: cleanupStageRequestId(node, "workspace_release"),
+				agentId: node.agentId,
+				sessionId: node.sessionId,
+				previousReceipt: node.workspaceReceipt,
+				reason: node.terminal.outcome,
+			};
+			const requestDigest = agentWorkspaceReleaseRequestDigest(requestBody);
+			let released: AgentResult<AgentWorkspaceReceiptRef>;
+			try {
+				released = await this.#ports.workspace.release({ ...requestBody, requestDigest }, signal);
+			} catch {
+				released = fail("reference_unavailable", "Workspace release adapter is unavailable", true);
+			}
+			if (!released.ok) return this.recordCleanupFailure(node, cleanup, "workspace_release", released.error);
+			const committed = await this.commit({
+				type: "agent.workspace_released",
+				requestId: requestBody.requestId,
+				idempotencyKey: cleanupIdempotencyKey(node, "workspace-released"),
+				occurredAt: cleanup.requestedAt,
+				agentId: node.agentId,
+				cleanupRequestId: cleanup.requestId,
+				requestDigest,
+				receipt: released.value,
+			});
+			if (!committed.ok) return committed;
+			projection = committed.value;
+			node = projection.nodes.get(agentId);
+			cleanup = projection.cleanups.get(agentId);
+			if (!node?.terminal || !cleanup) return fail("cleanup_invalid", "Workspace release vanished from projection");
+		}
+
+		if (!cleanup.budgetSettlement) {
+			if (!node.budgetReservation) return fail("cleanup_invalid", "child cleanup lacks a budget reservation");
+			const settlement = budgetSettlementRequest({
+				idempotencyKey: cleanupIdempotencyKey(node, "budget-settlement-adapter"),
+				reservation: node.budgetReservation,
+				outcome: node.terminal.outcome,
+				...(node.terminal.usage ? { usage: node.terminal.usage } : {}),
+				partialResults: node.terminal.partialResults,
+				settledAt: cleanup.requestedAt,
+			});
+			let settled: AgentResult<AgentBudgetSettlementReceiptRef>;
+			try {
+				settled = await this.#ports.budget.settle(settlement);
+			} catch {
+				settled = fail("reference_unavailable", "budget settlement adapter is unavailable", true);
+			}
+			if (!settled.ok) return this.recordCleanupFailure(node, cleanup, "budget_settlement", settled.error);
+			const committed = await this.commit({
+				type: "agent.budget_settled",
+				requestId: cleanupStageRequestId(node, "budget_settlement"),
+				idempotencyKey: cleanupIdempotencyKey(node, "budget-settled"),
+				occurredAt: settled.value.settledAt,
+				agentId: node.agentId,
+				cleanupRequestId: cleanup.requestId,
+				receipt: settled.value,
+			});
+			if (!committed.ok) return committed;
+			projection = committed.value;
+			node = projection.nodes.get(agentId);
+			cleanup = projection.cleanups.get(agentId);
+			if (!node?.terminal || !cleanup) return fail("cleanup_invalid", "budget settlement vanished from projection");
+		}
+
+		if (!cleanup.runtimeRelease || !cleanup.workspaceRelease || !cleanup.budgetSettlement) {
+			return fail("cleanup_invalid", "cleanup completion is missing a required release receipt");
+		}
+		if (cleanup.completionReceipt) return { ok: true, value: projection };
+		const completedAt = latestTimestamp([
+			cleanup.runtimeRelease.receipt.releasedAt,
+			cleanup.workspaceRelease.receipt.issuedAt,
+			cleanup.budgetSettlement.receipt.settledAt,
+		]);
+		const receiptBody: Omit<AgentCleanupReceiptRef, "receiptDigest"> = {
+			receiptId: createRuntimeId(
+				"receipt",
+				`agent-cleanup-${canonicalDigest({ requestDigest: cleanup.requestDigest, agentId: node.agentId }).slice(0, 40)}`,
+			),
+			requestId: cleanup.requestId,
+			requestDigest: cleanup.requestDigest,
+			agentId: node.agentId,
+			sessionId: node.sessionId,
+			terminalDigest: node.terminal.terminalDigest,
+			runtimeReleaseReceiptId: cleanup.runtimeRelease.receipt.receiptId,
+			runtimeReleaseReceiptDigest: cleanup.runtimeRelease.receipt.receiptDigest,
+			workspaceReleaseReceiptId: cleanup.workspaceRelease.receipt.receiptId,
+			workspaceReleaseReceiptDigest: cleanup.workspaceRelease.receipt.receiptDigest,
+			budgetSettlementReceiptId: cleanup.budgetSettlement.receipt.receiptId,
+			budgetSettlementReceiptDigest: cleanup.budgetSettlement.receipt.receiptDigest,
+			completedAt,
+		};
+		const receipt = { ...receiptBody, receiptDigest: agentCleanupReceiptDigest(receiptBody) };
+		return this.commit({
+			type: "agent.cleanup_completed",
+			requestId: cleanupStageRequestId(node, "completed"),
+			idempotencyKey: cleanupIdempotencyKey(node, "completed"),
+			occurredAt: completedAt,
+			agentId: node.agentId,
+			cleanupRequestId: cleanup.requestId,
+			receipt,
+		});
+	}
+
+	public async reconcilePendingCleanups(signal?: AbortSignal): Promise<AgentResult<AgentGraphProjection>> {
+		let graph = await this.load();
+		if (!graph.ok) return graph;
+		const candidateIds = [...graph.value.nodes.keys()];
+		let firstFailure: AgentError | undefined;
+		for (const agentId of candidateIds) {
+			const candidate = graph.value.nodes.get(agentId);
+			if (!candidate) continue;
+			if (!candidate.parentAgentId || !candidate.terminal) continue;
+			if (
+				candidate.stateReason === "launch_rejected" &&
+				!candidate.launchReceipt &&
+				!candidate.residency
+			) continue;
+			const requested = await this.ensureCleanupRequested(graph.value, candidate);
+			if (!requested.ok) {
+				firstFailure ??= requested.error;
+				if (signal?.aborted) break;
+				const reloaded = await this.load();
+				if (!reloaded.ok) {
+					firstFailure ??= reloaded.error;
+					break;
+				}
+				graph = reloaded;
+				continue;
+			}
+			const cleaned = await this.continueCleanup(requested.value, candidate.agentId, signal);
+			if (!cleaned.ok) {
+				firstFailure ??= cleaned.error;
+				if (signal?.aborted) break;
+				const reloaded = await this.load();
+				if (!reloaded.ok) {
+					firstFailure ??= reloaded.error;
+					break;
+				}
+				graph = reloaded;
+				continue;
+			}
+			graph = cleaned;
+		}
+		return firstFailure ? { ok: false, error: firstFailure } : graph;
+	}
+
+	public finish(
+		request: AgentTerminalRequest,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		const requestDigest = canonicalDigest(request);
+		const active = this.cleanupOperations.get(request.agentId);
+		if (active) {
+			return active.requestDigest === requestDigest
+				? active.promise
+				: Promise.resolve(fail("idempotency_conflict", "another terminal cleanup is already active for this Agent"));
+		}
+		const promise = this.finishOnce(request, signal);
+		this.cleanupOperations.set(request.agentId, { requestDigest, promise });
+		const clear = () => {
+			if (this.cleanupOperations.get(request.agentId)?.promise === promise) {
+				this.cleanupOperations.delete(request.agentId);
+			}
+		};
+		void promise.then(clear, clear);
+		return promise;
+	}
+
+	private async finishOnce(
+		request: AgentTerminalRequest,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		if (!isRuntimeId(request.requestId, "command") || !parseIdempotencyKey(request.idempotencyKey)) {
+			return fail("invalid_request", "terminal command identity is invalid");
+		}
 		const graph = await this.load();
 		if (!graph.ok) return graph;
 		const node = graph.value.nodes.get(request.agentId);
 		if (!node) return fail("agent_not_found", "terminal agent does not exist");
-		if (isAgentTerminal(node)) return node.state === request.outcome ? graph : fail("invalid_transition", "agent is already terminal");
+		if (!terminalReasonMatchesOutcome(request)) {
+			return fail("invalid_request", "terminal outcome and reason are contradictory");
+		}
+		if (node.parentAgentId && node.budgetReservation && !request.usage) {
+			return fail("invalid_request", "terminal child requires exact budget usage before semantic terminal");
+		}
 		if (request.outcome === "completed" && !completionArtifactsSatisfied(node)) {
 			return fail("artifact_contract_mismatch", "agent cannot complete without declared artifacts");
 		}
-		const occurredAt = this.clock().toISOString();
-		const terminal: AgentGraphSemanticCommand = request.outcome === "completed"
-			? {
-					type: "agent.finished",
-					requestId: request.requestId,
-					idempotencyKey: request.idempotencyKey,
-					occurredAt,
-					agentId: node.agentId,
-					from: node.state,
-				}
-			: request.outcome === "stopped"
+		const reason = request.outcome === "completed"
+			? undefined
+			: request.reason ?? (request.outcome === "stopped" ? "cancelled" : "crash");
+		const terminalRecord = createAgentSemanticTerminalRecord({
+			agentId: node.agentId,
+			requestId: request.requestId,
+			idempotencyKey: request.idempotencyKey,
+			outcome: request.outcome,
+			...(reason ? { reason } : {}),
+			...(request.usage ? { usage: request.usage } : {}),
+			partialResults: node.artifacts.map((report) => report.artifact),
+		});
+		let finished: AgentResult<AgentGraphProjection> = graph;
+		if (isAgentTerminal(node)) {
+			if (node.state !== request.outcome || node.terminal?.terminalDigest !== terminalRecord.terminalDigest) {
+				return fail("invalid_transition", "agent terminal retry conflicts with durable semantic outcome");
+			}
+		} else {
+			const occurredAt = this.clock().toISOString();
+			const terminal: AgentGraphSemanticCommand = request.outcome === "completed"
 				? {
-						type: "agent.stopped",
+						type: "agent.finished",
 						requestId: request.requestId,
 						idempotencyKey: request.idempotencyKey,
 						occurredAt,
 						agentId: node.agentId,
 						from: node.state,
-						reason: request.reason ?? "cancelled",
+						terminal: terminalRecord,
 					}
-				: {
-						type: "agent.failed",
-						requestId: request.requestId,
-						idempotencyKey: request.idempotencyKey,
-						occurredAt,
-						agentId: node.agentId,
-						from: node.state,
-						reason: request.reason ?? "crash",
-						error: {
-							code: request.reason ?? "agent_failed",
-							messageDigest: canonicalDigest({ agentId: node.agentId, outcome: request.outcome, reason: request.reason }),
-							retryable: false,
-							outcomeCertain: true,
-							effect: "none",
-						},
-					};
-		const finished = await this.commit(terminal);
-		if (!finished.ok) return finished;
-		if (node.budgetReservation) {
-			const settled = await this.ports.budget.settle({
-				idempotencyKey: derivedKey(request.idempotencyKey, "terminal-budget"),
-				reservation: node.budgetReservation,
-				outcome: request.outcome,
-				...(request.usage ? { usage: request.usage } : {}),
-				partialResults: node.artifacts.map((report) => report.artifact),
-			});
-			if (!settled.ok) return settled;
+				: request.outcome === "stopped"
+					? {
+							type: "agent.stopped",
+							requestId: request.requestId,
+							idempotencyKey: request.idempotencyKey,
+							occurredAt,
+							agentId: node.agentId,
+							from: node.state,
+							reason: reason ?? "cancelled",
+							terminal: terminalRecord,
+						}
+					: {
+							type: "agent.failed",
+							requestId: request.requestId,
+							idempotencyKey: request.idempotencyKey,
+							occurredAt,
+							agentId: node.agentId,
+							from: node.state,
+							reason: reason ?? "crash",
+							error: {
+								code: reason ?? "agent_failed",
+								messageDigest: canonicalDigest({ agentId: node.agentId, outcome: request.outcome, reason }),
+								retryable: false,
+								outcomeCertain: true,
+								effect: "none",
+							},
+							terminal: terminalRecord,
+						};
+			finished = await this.commit(terminal);
+			if (!finished.ok) return finished;
 		}
-		if (finished.ok && node.parentAgentId) await this.releaseWorkspace(node, request.outcome);
-		return finished;
+		const current = finished.value.nodes.get(node.agentId);
+		if (!current) return fail("cleanup_invalid", "terminal Agent vanished from durable graph");
+		if (!current.parentAgentId) return finished;
+		const requested = await this.ensureCleanupRequested(finished.value, current);
+		return requested.ok ? this.continueCleanup(requested.value, current.agentId, signal) : requested;
 	}
 
 	public async handoff(request: AgentHandoffRequest): Promise<AgentResult<AgentGraphProjection>> {
@@ -1213,7 +1681,7 @@ export class AgentSupervisor {
 			request: built.value,
 		});
 		if (!requested.ok) return requested;
-		const merged = await executeDeclarativeMerge(built.value, this.ports.merge, signal);
+		const merged = await executeDeclarativeMerge(built.value, this.#ports.merge, signal);
 		if (!merged.ok) {
 			const failed = await this.commit({
 				type: "agent.merge_failed",

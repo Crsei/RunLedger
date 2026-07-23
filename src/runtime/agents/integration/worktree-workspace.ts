@@ -73,6 +73,11 @@ interface PrivateWorkspaceHandle {
 	receipt: AgentWorkspaceReceiptRef;
 }
 
+interface WorkspaceReleaseOperation {
+	requestDigest: string;
+	promise: Promise<AgentResult<AgentWorkspaceReceiptRef>>;
+}
+
 function fail<T>(code: AgentErrorCode, message: string, retryable = false): AgentResult<T> {
 	return { ok: false, error: { code, message, retryable } };
 }
@@ -216,6 +221,7 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 	readonly #options: ProductionAgentWorkspaceOptions;
 	readonly #clock: () => Date;
 	readonly #handles = new Map<string, PrivateWorkspaceHandle>();
+	readonly #releaseOperations = new Map<string, WorkspaceReleaseOperation>();
 
 	public constructor(options: ProductionAgentWorkspaceOptions) {
 		if (
@@ -553,14 +559,40 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 		return validated.ok ? { ok: true, value: validated.value.workspaceReceipt } : validated;
 	}
 
-	public async release(
+	public release(
 		request: AgentWorkspaceReleaseRequest,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
-		if (signal?.aborted) return fail("reference_unavailable", "Agent Workspace release was aborted", true);
 		if (request.requestDigest !== releaseDigest(request)) {
-			return fail("workspace_invalid", "Agent Workspace release request digest is invalid");
+			return Promise.resolve(fail("workspace_invalid", "Agent Workspace release request digest is invalid"));
 		}
+		const previous = this.#releaseOperations.get(request.requestId);
+		if (previous) {
+			return previous.requestDigest === request.requestDigest
+				? previous.promise
+				: Promise.resolve(fail("idempotency_conflict", "Agent Workspace release request identity was reused"));
+		}
+		if (signal?.aborted) {
+			return Promise.resolve(fail("reference_unavailable", "Agent Workspace release was aborted", true));
+		}
+		const promise = this.#releaseOnce(request);
+		this.#releaseOperations.set(request.requestId, { requestDigest: request.requestDigest, promise });
+		void promise.then(
+			(result) => {
+				if (!result.ok && this.#releaseOperations.get(request.requestId)?.promise === promise) {
+					this.#releaseOperations.delete(request.requestId);
+				}
+			},
+			() => {
+				if (this.#releaseOperations.get(request.requestId)?.promise === promise) {
+					this.#releaseOperations.delete(request.requestId);
+				}
+			},
+		);
+		return promise;
+	}
+
+	async #releaseOnce(request: AgentWorkspaceReleaseRequest): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
 		const handle = this.#handle(request.previousReceipt, request.agentId, request.sessionId);
 		if (!handle.ok) return handle;
 		const envelope = this.#envelope(handle.value, request.requestId);
@@ -585,6 +617,6 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 		};
 		const receipt = { ...body, receiptDigest: canonicalDigest(body) };
 		this.#handles.set(request.previousReceipt.receiptId, { ...handle.value, receipt });
-		return { ok: true, value: receipt };
+		return { ok: true, value: structuredClone(receipt) };
 	}
 }

@@ -18,6 +18,7 @@ import { SessionAgentGraphStore } from "../session-graph-store.ts";
 import { AgentSupervisor, RootBudgetGuardAdapter } from "../supervisor.ts";
 import type {
 	AgentGraphLimits,
+	AgentResult,
 	AgentRole,
 	AgentSupervisorPorts,
 	AgentWorkspaceStrategyRef,
@@ -65,7 +66,7 @@ export interface ProductionAgentSupervisorComposition {
 	readonly supervisor: AgentSupervisor;
 	/** 只暴露脱敏 residency snapshot；writer、launcher 与 canonical gate 保持私有。 */
 	childSnapshots(): readonly ChildSessionRuntimeSnapshot[];
-	/** 只关闭 composition 自己持有的 child runtime，不关闭父 manager。 */
+	/** 只在 child 已完成 governed cleanup 后关闭 idle launcher；不关闭父 manager。 */
 	close(): Promise<void>;
 }
 
@@ -105,6 +106,108 @@ export interface ProductionAgentSupervisorRuntimeOptions {
 	clock?: () => Date;
 }
 
+class SupervisorOperationAdmission {
+	readonly #drainWaiters = new Set<() => void>();
+	#accepting = true;
+	#active = 0;
+
+	#completeOperation(): void {
+		this.#active -= 1;
+		if (this.#active !== 0) return;
+		for (const resolveDrain of this.#drainWaiters) resolveDrain();
+		this.#drainWaiters.clear();
+	}
+
+	public run<T>(operation: () => Promise<AgentResult<T>>): Promise<AgentResult<T>> {
+		if (!this.#accepting) {
+			return Promise.resolve({
+				ok: false,
+				error: {
+					code: "reference_unavailable",
+					message: "production Agent supervisor is shutting down",
+					retryable: true,
+				},
+			});
+		}
+		this.#active += 1;
+		try {
+			return operation().finally(() => this.#completeOperation());
+		} catch (error) {
+			this.#completeOperation();
+			return Promise.reject(error);
+		}
+	}
+
+	public beginShutdown(): void {
+		this.#accepting = false;
+	}
+
+	public drain(): Promise<void> {
+		if (this.#active === 0) return Promise.resolve();
+		return new Promise((resolveDrain) => this.#drainWaiters.add(resolveDrain));
+	}
+
+	public reopen(): void {
+		this.#accepting = true;
+	}
+}
+
+/**
+ * Production composition 只暴露受 shutdown admission 约束的 facade。Proxy 内所有方法
+ * 都绑定 raw supervisor，避免 native private fields 以 Proxy receiver 调用。
+ */
+function governedSupervisor(
+	supervisor: AgentSupervisor,
+	admission: SupervisorOperationAdmission,
+): AgentSupervisor {
+	return new Proxy(supervisor, {
+		get(target, property) {
+			switch (property) {
+				case "registerRoot":
+					return (...args: Parameters<AgentSupervisor["registerRoot"]>) =>
+						admission.run(() => target.registerRoot(...args));
+				case "spawn":
+					return (...args: Parameters<AgentSupervisor["spawn"]>) =>
+						admission.run(() => target.spawn(...args));
+				case "advanceCursor":
+					return (...args: Parameters<AgentSupervisor["advanceCursor"]>) =>
+						admission.run(() => target.advanceCursor(...args));
+				case "recordTurn":
+					return (...args: Parameters<AgentSupervisor["recordTurn"]>) =>
+						admission.run(() => target.recordTurn(...args));
+				case "reportArtifact":
+					return (...args: Parameters<AgentSupervisor["reportArtifact"]>) =>
+						admission.run(() => target.reportArtifact(...args));
+				case "interrupt":
+					return (...args: Parameters<AgentSupervisor["interrupt"]>) =>
+						admission.run(() => target.interrupt(...args));
+				case "cancel":
+					return (...args: Parameters<AgentSupervisor["cancel"]>) =>
+						admission.run(() => target.cancel(...args));
+				case "resume":
+					return (...args: Parameters<AgentSupervisor["resume"]>) =>
+						admission.run(() => target.resume(...args));
+				case "reconcilePendingCleanups":
+					return (...args: Parameters<AgentSupervisor["reconcilePendingCleanups"]>) =>
+						admission.run(() => target.reconcilePendingCleanups(...args));
+				case "finish":
+					return (...args: Parameters<AgentSupervisor["finish"]>) =>
+						admission.run(() => target.finish(...args));
+				case "handoff":
+					return (...args: Parameters<AgentSupervisor["handoff"]>) =>
+						admission.run(() => target.handoff(...args));
+				case "merge":
+					return (...args: Parameters<AgentSupervisor["merge"]>) =>
+						admission.run(() => target.merge(...args));
+				default: {
+					const value = Reflect.get(target, property, target) as unknown;
+					return typeof value === "function" ? value.bind(target) : value;
+				}
+			}
+		},
+	});
+}
+
 async function closeLauncherAfterStartupFailure(
 	launcher: ProductionChildSessionLauncher,
 	primaryError: unknown,
@@ -118,6 +221,27 @@ async function closeLauncherAfterStartupFailure(
 		);
 	}
 	throw primaryError;
+}
+
+async function closeGovernedLauncher(
+	supervisor: AgentSupervisor,
+	launcher: ProductionChildSessionLauncher,
+	admission: SupervisorOperationAdmission,
+): Promise<void> {
+	admission.beginShutdown();
+	try {
+		await admission.drain();
+		const reconciled = await supervisor.reconcilePendingCleanups();
+		if (!reconciled.ok) {
+			throw new Error(
+				`production Agent supervisor cleanup reconciliation failed: ${reconciled.error.code}`,
+			);
+		}
+		await launcher.closeIfIdle();
+	} catch (error) {
+		admission.reopen();
+		throw error;
+	}
 }
 
 function assertParentScope(options: ProductionAgentSupervisorCompositionOptions): void {
@@ -176,12 +300,14 @@ export async function createProductionAgentSupervisorComposition(
 			new Error(`production Agent supervisor root registration failed: ${registered.error.code}`),
 		);
 	}
+	const admission = new SupervisorOperationAdmission();
+	const exposedSupervisor = governedSupervisor(supervisor, admission);
 	let closePromise: Promise<void> | undefined;
 	return {
-		supervisor,
+		supervisor: exposedSupervisor,
 		childSnapshots: () => launcher.snapshots(),
 		close: () => {
-			closePromise ??= launcher.close().catch((error: unknown) => {
+			closePromise ??= closeGovernedLauncher(supervisor, launcher, admission).catch((error: unknown) => {
 				closePromise = undefined;
 				throw error;
 			});

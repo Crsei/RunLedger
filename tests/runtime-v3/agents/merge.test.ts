@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createAgentResidencyReceipt } from "../../../src/runtime/agents/residency.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
-import { artifact, digest, key, rootRegistration, runtimeFakes, spawnRequest } from "./helpers.ts";
+import { artifact, digest, key, rootRegistration, runtimeFakes, spawnRequest, zeroUsage } from "./helpers.ts";
 
 async function handoffWithVerification(verification: "verified" | "unverified") {
 	const runtime = runtimeFakes();
@@ -33,7 +33,13 @@ async function handoffWithVerification(verification: "verified" | "unverified") 
 		reasonDigest: digest("4"),
 	});
 	if (!receipt.ok) throw new Error(receipt.error.message);
-	await runtime.supervisor.interrupt(child.agentId, "crash", receipt.value, key(`crash-${verification}`));
+	await runtime.supervisor.interrupt(
+		child.agentId,
+		"crash",
+		receipt.value,
+		key(`crash-${verification}`),
+		zeroUsage(),
+	);
 	const handoffId = createRuntimeId("command", `handoff-${verification}`);
 	const handedOff = await runtime.supervisor.handoff({
 		requestId: handoffId,

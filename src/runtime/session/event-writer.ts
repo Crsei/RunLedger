@@ -86,8 +86,15 @@ export const MANDATORY_FLUSH_EVENT_TYPES: ReadonlySet<RuntimeEventType> = new Se
 	"human_gate.decided",
 	"agent.spawned",
 	"agent.transitioned",
+	"agent.stopped",
 	"agent.finished",
 	"agent.failed",
+	"agent.cleanup_requested",
+	"agent.runtime_released",
+	"agent.workspace_released",
+	"agent.budget_settled",
+	"agent.cleanup_reconciliation_required",
+	"agent.cleanup_completed",
 ]);
 
 export interface EventWriterOptions {

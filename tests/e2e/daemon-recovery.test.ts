@@ -14,6 +14,7 @@ import type { RuntimeEventType } from "../../src/runtime/protocol/v3/event-catal
 import { createSessionEventStreamRef } from "../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import { createLocalIdentityContext } from "../../src/runtime/identity/local-principal.ts";
+import { createAgentSemanticTerminalRecord } from "../../src/runtime/agents/graph-store.ts";
 import { workspaceBindingDigest } from "../../src/runtime/protocol/v3/workspace.ts";
 import { FileCommandIdempotencyRepository } from "../../src/daemon/durable-command-store.ts";
 import {
@@ -284,10 +285,18 @@ async function appendChildAgentEffect(
 		},
 	}, `agent-spawned-${seed}`);
 	if (terminal) {
+		const terminalBase = agentCommandBase(rootAgentId, 2, `${seed}-finish`);
 		await appendEvent(manager, "agent.finished", {
-			...agentCommandBase(rootAgentId, 2, `${seed}-finish`),
+			...terminalBase,
 			agentId,
 			from: "running",
+			terminal: createAgentSemanticTerminalRecord({
+				agentId,
+				requestId: terminalBase.requestId,
+				idempotencyKey: terminalBase.idempotencyKey,
+				outcome: "completed",
+				partialResults: node.artifacts.map((report) => report.artifact),
+			}),
 		}, `agent-finished-${seed}`);
 	}
 	return agentId;

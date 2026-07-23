@@ -325,6 +325,33 @@ export interface AgentCancelRequest {
 	requestDigest: string;
 }
 
+export interface AgentRuntimeReleaseRequest {
+	requestId: CommandId;
+	agentId: AgentId;
+	sessionId: SessionId;
+	launchReceipt: AgentLaunchReceiptRef;
+	previousResidencyReceipt: AgentResidencyReceiptRef;
+	reason: "completed" | "failed" | "stopped";
+	requestDigest: string;
+}
+
+export interface AgentRuntimeReleaseReceiptRef {
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	requestDigest: string;
+	agentId: AgentId;
+	sessionId: SessionId;
+	runtimeInstanceId: RuntimeInstanceId;
+	launchReceiptId: ReceiptId;
+	launchRevision: number;
+	writerFenceReceiptId: ReceiptId;
+	writerFenceReceiptDigest: string;
+	finalCursor: EventCursor;
+	residencyReceipt: AgentResidencyReceiptRef;
+	releasedAt: string;
+	receiptDigest: string;
+}
+
 export interface AgentResumeLaunchRequest {
 	requestId: CommandId;
 	agentId: AgentId;
@@ -341,6 +368,10 @@ export interface AgentResumeLaunchRequest {
 export interface AgentLauncherPort {
 	launch(request: AgentLaunchRequest, signal?: AbortSignal): Promise<AgentResult<AgentLaunchResult>>;
 	resume(request: AgentResumeLaunchRequest, signal?: AbortSignal): Promise<AgentResult<AgentLaunchResult>>;
+	release(
+		request: AgentRuntimeReleaseRequest,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentRuntimeReleaseReceiptRef>>;
 	cancel(request: AgentCancelRequest, signal?: AbortSignal): Promise<AgentResult<ReceiptId>>;
 }
 
@@ -358,11 +389,24 @@ export interface RootAgentBudgetSettleRequest {
 	outcome: "completed" | "failed" | "stopped" | "not_started";
 	usage?: AgentBudgetUsage;
 	partialResults: readonly ArtifactRef[];
+	settledAt: string;
+	requestDigest: string;
+}
+
+export interface AgentBudgetSettlementReceiptRef {
+	receiptId: ReceiptId;
+	reservationId: BudgetReservationId;
+	outcome: RootAgentBudgetSettleRequest["outcome"];
+	usageDigest: string;
+	partialResultsDigest: string;
+	requestDigest: string;
+	settledAt: string;
+	receiptDigest: string;
 }
 
 export interface RootAgentBudgetPort {
 	reserve(request: RootAgentBudgetReserveRequest): Promise<AgentResult<AgentBudgetReservationRef>>;
-	settle(request: RootAgentBudgetSettleRequest): Promise<AgentResult<void>>;
+	settle(request: RootAgentBudgetSettleRequest): Promise<AgentResult<AgentBudgetSettlementReceiptRef>>;
 }
 
 export interface SpawnAgentRequest {
@@ -404,6 +448,20 @@ export interface AgentGraphEdge {
 	createdAt: string;
 }
 
+export type AgentTerminalOutcome = "completed" | "failed" | "stopped";
+export type AgentTerminalReason = AgentInterruptionCause | "launch_rejected" | "resume_rejected";
+
+/** 语义终态独立于资源清理终态；digest 同时绑定原始请求与精确结果集合。 */
+export interface AgentSemanticTerminalRecord {
+	requestId: CommandId;
+	requestDigest: string;
+	outcome: AgentTerminalOutcome;
+	reason?: AgentTerminalReason;
+	usage?: AgentBudgetUsage;
+	partialResults: readonly ArtifactRef[];
+	terminalDigest: string;
+}
+
 export interface AgentNode {
 	agentId: AgentId;
 	rootAgentId: AgentId;
@@ -431,6 +489,7 @@ export interface AgentNode {
 	cursor?: EventCursor;
 	residency?: AgentResidencyReceiptRef;
 	launchReceipt?: AgentLaunchReceiptRef;
+	terminal?: AgentSemanticTerminalRecord;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -520,6 +579,66 @@ export interface AgentGraphReconciliationFailure {
 	error: AgentGraphFailureRef;
 }
 
+export type AgentCleanupStage = "runtime_release" | "workspace_release" | "budget_settlement";
+
+export interface AgentCleanupRuntimeReleaseRecord {
+	requestId: CommandId;
+	requestDigest: string;
+	receipt: AgentRuntimeReleaseReceiptRef;
+}
+
+export interface AgentCleanupWorkspaceReleaseRecord {
+	requestId: CommandId;
+	requestDigest: string;
+	receipt: AgentWorkspaceReceiptRef;
+}
+
+export interface AgentCleanupBudgetSettlementRecord {
+	requestId: CommandId;
+	requestDigest: string;
+	receipt: AgentBudgetSettlementReceiptRef;
+}
+
+export interface AgentCleanupReconciliationRecord {
+	requestId: CommandId;
+	stage: AgentCleanupStage;
+	error: AgentGraphFailureRef;
+	recordedAt: string;
+}
+
+export interface AgentCleanupReceiptRef {
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	requestDigest: string;
+	agentId: AgentId;
+	sessionId: SessionId;
+	terminalDigest: string;
+	runtimeReleaseReceiptId: ReceiptId;
+	runtimeReleaseReceiptDigest: string;
+	workspaceReleaseReceiptId: ReceiptId;
+	workspaceReleaseReceiptDigest: string;
+	budgetSettlementReceiptId: ReceiptId;
+	budgetSettlementReceiptDigest: string;
+	completedAt: string;
+	receiptDigest: string;
+}
+
+/** 每个 Agent 最多一个 cleanup saga；终态与清理完成态可由 replay 分开判断。 */
+export interface AgentCleanupRecord {
+	agentId: AgentId;
+	sessionId: SessionId;
+	requestId: CommandId;
+	requestDigest: string;
+	terminalDigest: string;
+	requestedAt: string;
+	runtimeRelease?: AgentCleanupRuntimeReleaseRecord;
+	workspaceRelease?: AgentCleanupWorkspaceReleaseRecord;
+	budgetSettlement?: AgentCleanupBudgetSettlementRecord;
+	reconciliationRequired?: AgentCleanupReconciliationRecord;
+	completionReceipt?: AgentCleanupReceiptRef;
+	updatedAt: string;
+}
+
 interface AgentGraphCommandBase {
 	requestId: CommandId;
 	idempotencyKey: IdempotencyKey;
@@ -566,6 +685,7 @@ export type AgentGraphSemanticCommand =
 			agentId: AgentId;
 			from: AgentState;
 			reason: NonNullable<AgentNode["stateReason"]>;
+			terminal: AgentSemanticTerminalRecord;
 	  })
 	| (AgentGraphCommandBase & {
 			type: "agent.partial_committed";
@@ -577,6 +697,7 @@ export type AgentGraphSemanticCommand =
 			type: "agent.finished";
 			agentId: AgentId;
 			from: AgentState;
+			terminal: AgentSemanticTerminalRecord;
 	  })
 	| (AgentGraphCommandBase & {
 			type: "agent.failed";
@@ -584,6 +705,45 @@ export type AgentGraphSemanticCommand =
 			from: AgentState;
 			reason: NonNullable<AgentNode["stateReason"]>;
 			error: AgentGraphFailureRef;
+			terminal: AgentSemanticTerminalRecord;
+	  })
+	| (AgentGraphCommandBase & {
+			type: "agent.cleanup_requested";
+			agentId: AgentId;
+			terminalDigest: string;
+			requestDigest: string;
+	  })
+	| (AgentGraphCommandBase & {
+			type: "agent.runtime_released";
+			agentId: AgentId;
+			cleanupRequestId: CommandId;
+			receipt: AgentRuntimeReleaseReceiptRef;
+	  })
+	| (AgentGraphCommandBase & {
+			type: "agent.workspace_released";
+			agentId: AgentId;
+			cleanupRequestId: CommandId;
+			requestDigest: string;
+			receipt: AgentWorkspaceReceiptRef;
+	  })
+	| (AgentGraphCommandBase & {
+			type: "agent.budget_settled";
+			agentId: AgentId;
+			cleanupRequestId: CommandId;
+			receipt: AgentBudgetSettlementReceiptRef;
+	  })
+	| (AgentGraphCommandBase & {
+			type: "agent.cleanup_reconciliation_required";
+			agentId: AgentId;
+			cleanupRequestId: CommandId;
+			stage: AgentCleanupStage;
+			error: AgentGraphFailureRef;
+	  })
+	| (AgentGraphCommandBase & {
+			type: "agent.cleanup_completed";
+			agentId: AgentId;
+			cleanupRequestId: CommandId;
+			receipt: AgentCleanupReceiptRef;
 	  })
 	| (AgentGraphCommandBase & {
 			type: "agent.cursor_advanced";
@@ -665,6 +825,7 @@ export interface AgentGraphProjection {
 	pendingSpawns: ReadonlyMap<AgentId, AgentSpawnIntent>;
 	pendingHandoffs: ReadonlyMap<CommandId, AgentHandoffManifest>;
 	pendingMerges: ReadonlyMap<CommandId, DeclarativeMergeRequest>;
+	cleanups: ReadonlyMap<AgentId, AgentCleanupRecord>;
 	reconciliationFailures: readonly AgentGraphReconciliationFailure[];
 }
 
@@ -691,6 +852,7 @@ export const AGENT_ERROR_CODES = [
 	"handoff_invalid",
 	"merge_invalid",
 	"resume_denied",
+	"cleanup_invalid",
 	"reference_unavailable",
 	"revision_conflict",
 	"idempotency_conflict",

@@ -6,9 +6,12 @@ import { createAgentResidencyReceipt } from "../../../src/runtime/agents/residen
 import { AgentSupervisor } from "../../../src/runtime/agents/supervisor.ts";
 import type {
 	AgentCapabilityRequestRef,
+	AgentBudgetUsage,
 	AgentBudgetReservationRef,
+	AgentBudgetSettlementReceiptRef,
 	AgentDenialEvaluatorPort,
 	AgentDenialReceiptRef,
+	AgentError,
 	AgentGraphLimits,
 	AgentLaunchRequest,
 	AgentLauncherPort,
@@ -16,6 +19,8 @@ import type {
 	AgentMergeReceiptRef,
 	AgentResult,
 	AgentResumeLaunchRequest,
+	AgentRuntimeReleaseReceiptRef,
+	AgentRuntimeReleaseRequest,
 	AgentSupervisorPorts,
 	AgentWorkspacePort,
 	AgentWorkspaceReceiptRef,
@@ -51,6 +56,20 @@ export function digest(character = "a"): string {
 
 export function key(prefix: string) {
 	return createIdempotencyKey(`${prefix}-${nextSeed("key")}-${"x".repeat(24)}`);
+}
+
+export function zeroUsage(): AgentBudgetUsage {
+	return {
+		inputTokens: 0,
+		outputTokens: 0,
+		usdMicros: 0,
+		wallTimeMs: 0,
+		toolCalls: 0,
+		networkBytes: 0,
+		storageBytes: 0,
+		artifactCount: 0,
+		verifications: 0,
+	};
 }
 
 export function grant(seed = nextSeed("grant")): ParentCapabilityGrantRef {
@@ -194,6 +213,10 @@ export class FakeWorkspacePort implements AgentWorkspacePort {
 	public readonly releases: Parameters<AgentWorkspacePort["release"]>[0][] = [];
 	public sharedWorkspaceId: AgentWorkspaceReceiptRef["workspaceId"] | undefined;
 	public validationStatus: AgentWorkspaceReceiptRef["status"] = "active";
+	public releaseError: AgentError | undefined;
+	public throwRelease = false;
+	public releaseExecutions = 0;
+	private readonly released = new Map<string, { requestDigest: string; receipt: AgentWorkspaceReceiptRef }>();
 
 	public allocate(request: Parameters<AgentWorkspacePort["allocate"]>[0]): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
 		this.allocations.push(request);
@@ -226,7 +249,25 @@ export class FakeWorkspacePort implements AgentWorkspacePort {
 
 	public release(request: Parameters<AgentWorkspacePort["release"]>[0]): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
 		this.releases.push(request);
-		return Promise.resolve({ ok: true, value: { ...request.previousReceipt, status: "released" } });
+		if (this.throwRelease) throw new Error("injected test Workspace release throw");
+		const replay = this.released.get(request.requestId);
+		if (replay) {
+			return Promise.resolve(
+				replay.requestDigest === request.requestDigest
+					? { ok: true, value: structuredClone(replay.receipt) }
+					: {
+							ok: false,
+							error: { code: "idempotency_conflict", message: "test Workspace release identity drifted", retryable: false },
+						},
+			);
+		}
+		if (this.releaseError) return Promise.resolve({ ok: false, error: this.releaseError });
+		this.releaseExecutions += 1;
+		const { receiptDigest: _receiptDigest, ...previous } = request.previousReceipt;
+		const body: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = { ...previous, status: "released" };
+		const receipt = { ...body, receiptDigest: canonicalDigest(body) };
+		this.released.set(request.requestId, { requestDigest: request.requestDigest, receipt });
+		return Promise.resolve({ ok: true, value: structuredClone(receipt) });
 	}
 }
 
@@ -234,6 +275,10 @@ export class FakeBudgetPort implements RootAgentBudgetPort {
 	public readonly reservations: RootAgentBudgetReserveRequest[] = [];
 	public readonly settlements: RootAgentBudgetSettleRequest[] = [];
 	public deny = false;
+	public settlementError: AgentError | undefined;
+	public throwSettlement = false;
+	public settlementExecutions = 0;
+	private readonly settled = new Map<string, { requestDigest: string; receipt: AgentBudgetSettlementReceiptRef }>();
 
 	public reserve(request: RootAgentBudgetReserveRequest): Promise<AgentResult<AgentBudgetReservationRef>> {
 		this.reservations.push(request);
@@ -253,17 +298,52 @@ export class FakeBudgetPort implements RootAgentBudgetPort {
 		});
 	}
 
-	public settle(request: RootAgentBudgetSettleRequest): Promise<AgentResult<void>> {
+	public settle(request: RootAgentBudgetSettleRequest): Promise<AgentResult<AgentBudgetSettlementReceiptRef>> {
 		this.settlements.push(request);
-		return Promise.resolve({ ok: true, value: undefined });
+		if (this.throwSettlement) throw new Error("injected test budget settlement throw");
+		const replay = this.settled.get(request.idempotencyKey);
+		if (replay) {
+			return Promise.resolve(
+				replay.requestDigest === request.requestDigest
+					? { ok: true, value: structuredClone(replay.receipt) }
+					: {
+							ok: false,
+							error: { code: "idempotency_conflict", message: "test budget settlement identity drifted", retryable: false },
+						},
+			);
+		}
+		if (this.settlementError) return Promise.resolve({ ok: false, error: this.settlementError });
+		this.settlementExecutions += 1;
+		const body: Omit<AgentBudgetSettlementReceiptRef, "receiptDigest"> = {
+			receiptId: createRuntimeId(
+				"receipt",
+				`budget-settlement-${canonicalDigest({ reservationId: request.reservation.reservationId, requestDigest: request.requestDigest }).slice(0, 40)}`,
+			),
+			reservationId: request.reservation.reservationId,
+			outcome: request.outcome,
+			usageDigest: canonicalDigest(request.usage ?? null),
+			partialResultsDigest: canonicalDigest(request.partialResults),
+			requestDigest: request.requestDigest,
+			settledAt: request.settledAt,
+		};
+		const receipt = { ...body, receiptDigest: canonicalDigest(body) };
+		this.settled.set(request.idempotencyKey, { requestDigest: request.requestDigest, receipt });
+		return Promise.resolve({ ok: true, value: structuredClone(receipt) });
 	}
 }
 
 export class FakeLauncher implements AgentLauncherPort {
 	public readonly launches: AgentLaunchRequest[] = [];
 	public readonly resumes: AgentResumeLaunchRequest[] = [];
+	public readonly releases: AgentRuntimeReleaseRequest[] = [];
+	public cancelCalls = 0;
 	public reject = false;
+	public releaseError: AgentError | undefined;
+	public throwRelease = false;
+	public releaseExecutions = 0;
 	private readonly revisions = new Map<string, number>();
+	private readonly started = new Map<string, Extract<AgentLaunchResult, { status: "started" }>>();
+	private readonly released = new Map<string, { requestDigest: string; receipt: AgentRuntimeReleaseReceiptRef }>();
 
 	private result(agentId: AgentLaunchRequest["agentId"], sessionId: AgentLaunchRequest["sessionId"]): AgentResult<AgentLaunchResult> {
 		if (this.reject) {
@@ -280,20 +360,25 @@ export class FakeLauncher implements AgentLauncherPort {
 			observedAt: "2026-07-22T00:00:00.000Z",
 		});
 		if (!residency.ok) return residency;
+		const launchBody = {
+			receiptId: createRuntimeId("receipt", nextSeed("launch")),
+			agentId,
+			sessionId,
+			launchRevision: revision,
+			launchedAt: "2026-07-22T00:00:00.000Z",
+		};
+		const value: Extract<AgentLaunchResult, { status: "started" }> = {
+			status: "started",
+			launchReceipt: {
+				...launchBody,
+				receiptDigest: canonicalDigest(launchBody),
+			},
+			residencyReceipt: residency.value,
+		};
+		this.started.set(agentId, value);
 		return {
 			ok: true,
-			value: {
-				status: "started",
-				launchReceipt: {
-					receiptId: createRuntimeId("receipt", nextSeed("launch")),
-					agentId,
-					sessionId,
-					launchRevision: revision,
-					launchedAt: "2026-07-22T00:00:00.000Z",
-					receiptDigest: digest("8"),
-				},
-				residencyReceipt: residency.value,
-			},
+			value,
 		};
 	}
 
@@ -307,7 +392,71 @@ export class FakeLauncher implements AgentLauncherPort {
 		return Promise.resolve(this.result(request.agentId, request.sessionId));
 	}
 
+	public release(request: AgentRuntimeReleaseRequest): Promise<AgentResult<AgentRuntimeReleaseReceiptRef>> {
+		this.releases.push(request);
+		if (this.throwRelease) throw new Error("injected test child runtime release throw");
+		const replay = this.released.get(request.agentId);
+		if (replay) {
+			return Promise.resolve(
+				replay.requestDigest === request.requestDigest
+					? { ok: true, value: structuredClone(replay.receipt) }
+					: {
+							ok: false,
+							error: { code: "idempotency_conflict", message: "test runtime release identity drifted", retryable: false },
+						},
+			);
+		}
+		const started = this.started.get(request.agentId);
+		if (!started) {
+			return Promise.resolve({
+				ok: false,
+				error: { code: "agent_not_found", message: "test child runtime is missing", retryable: false },
+			});
+		}
+		if (this.releaseError) return Promise.resolve({ ok: false, error: this.releaseError });
+		this.releaseExecutions += 1;
+		const releasedAt = "2026-07-22T00:00:02.000Z";
+		const residency = createAgentResidencyReceipt({
+			agentId: request.agentId,
+			sessionId: request.sessionId,
+			runtimeInstanceId: started.residencyReceipt.runtimeInstanceId,
+			state: "nonresident",
+			revision: request.previousResidencyReceipt.revision + 1,
+			observedAt: releasedAt,
+			reasonDigest: canonicalDigest(request.reason),
+		});
+		if (!residency.ok) return Promise.resolve(residency);
+		const body: Omit<AgentRuntimeReleaseReceiptRef, "receiptDigest"> = {
+			receiptId: createRuntimeId("receipt", `runtime-release-${canonicalDigest(request.requestDigest).slice(0, 40)}`),
+			requestId: request.requestId,
+			requestDigest: request.requestDigest,
+			agentId: request.agentId,
+			sessionId: request.sessionId,
+			runtimeInstanceId: started.residencyReceipt.runtimeInstanceId,
+			launchReceiptId: request.launchReceipt.receiptId,
+			launchRevision: request.launchReceipt.launchRevision,
+			writerFenceReceiptId: createRuntimeId("receipt", `writer-fence-${request.agentId}`),
+			writerFenceReceiptDigest: canonicalDigest({ agentId: request.agentId, sessionId: request.sessionId }),
+			finalCursor: {
+				stream: {
+					scope: "session",
+					streamId: createRuntimeId("eventStream", `runtime-release-${request.sessionId}`),
+					sessionId: request.sessionId,
+				},
+				sequence: 1,
+				eventId: createRuntimeId("event", `runtime-release-${request.agentId}`),
+				eventHash: canonicalDigest({ agentId: request.agentId, requestDigest: request.requestDigest }),
+			},
+			residencyReceipt: residency.value,
+			releasedAt,
+		};
+		const receipt = { ...body, receiptDigest: canonicalDigest(body) };
+		this.released.set(request.agentId, { requestDigest: request.requestDigest, receipt });
+		return Promise.resolve({ ok: true, value: structuredClone(receipt) });
+	}
+
 	public cancel(): Promise<AgentResult<ReturnType<typeof createRuntimeId<"receipt">>>> {
+		this.cancelCalls += 1;
 		return Promise.resolve({ ok: true, value: createRuntimeId("receipt", nextSeed("cancel")) });
 	}
 }

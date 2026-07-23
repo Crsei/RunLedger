@@ -2,6 +2,7 @@
 
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import { parseIdempotencyKey } from "../protocol/v3/coordination.ts";
+import type { IdempotencyKey } from "../protocol/v3/coordination.ts";
 import { isRuntimeId } from "../protocol/v3/ids.ts";
 import type { AgentId } from "../protocol/v3/ids.ts";
 import {
@@ -16,6 +17,10 @@ import { declarativeMergeRequestDigest } from "./merge.ts";
 import type {
 	AgentArtifactContract,
 	AgentArtifactReport,
+	AgentBudgetSettlementReceiptRef,
+	AgentCleanupReceiptRef,
+	AgentCleanupRecord,
+	AgentCleanupStage,
 	AgentErrorCode,
 	AgentGraphCommitOutcome,
 	AgentGraphEdge,
@@ -28,15 +33,44 @@ import type {
 	AgentNode,
 	AgentMergeReceiptRef,
 	AgentResult,
+	AgentRuntimeReleaseReceiptRef,
+	AgentRuntimeReleaseRequest,
+	AgentSemanticTerminalRecord,
 	AgentSpawnIntent,
 	AgentState,
+	AgentWorkspaceReleaseRequest,
+	AgentWorkspaceReceiptRef,
 	DurableAgentGraphStorePort,
+	RootAgentBudgetSettleRequest,
 } from "./types.ts";
 import { DEFAULT_AGENT_GRAPH_LIMITS } from "./types.ts";
 import { AGENT_ROLES } from "./types.ts";
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const FINAL_STATES: ReadonlySet<AgentState> = new Set(["completed", "failed", "stopped"]);
+const AGENT_BUDGET_USAGE_FIELDS = [
+	"inputTokens",
+	"outputTokens",
+	"usdMicros",
+	"wallTimeMs",
+	"toolCalls",
+	"networkBytes",
+	"storageBytes",
+	"artifactCount",
+	"verifications",
+] as const satisfies readonly (keyof NonNullable<AgentSemanticTerminalRecord["usage"]>)[];
+const STOPPED_TERMINAL_REASONS: ReadonlySet<AgentSemanticTerminalRecord["reason"]> = new Set([
+	"cancelled",
+	"budget_exhausted",
+	"delegation_revoked",
+]);
+const FAILED_TERMINAL_REASONS: ReadonlySet<AgentSemanticTerminalRecord["reason"]> = new Set([
+	"timeout",
+	"crash",
+	"workspace_lost",
+	"launch_rejected",
+	"resume_rejected",
+]);
 
 export const AGENT_STATE_TRANSITIONS: Readonly<Record<AgentState, readonly AgentState[]>> = {
 	pending: ["starting", "running", "paused", "failed", "stopped"],
@@ -61,8 +95,82 @@ function digestIsValid(value: string): boolean {
 	return DIGEST_PATTERN.test(value);
 }
 
+function timestampIsValid(value: string): boolean {
+	return Number.isFinite(Date.parse(value));
+}
+
 function numberIsBounded(value: number, minimum: number, maximum = Number.MAX_SAFE_INTEGER): boolean {
 	return Number.isSafeInteger(value) && value >= minimum && value <= maximum;
+}
+
+function cloneArtifactRef<T extends AgentSemanticTerminalRecord["partialResults"][number]>(artifact: T): T {
+	return { ...artifact };
+}
+
+function cloneSemanticTerminalRecord(record: AgentSemanticTerminalRecord): AgentSemanticTerminalRecord {
+	return {
+		...record,
+		...(record.usage ? { usage: { ...record.usage } } : {}),
+		partialResults: record.partialResults.map(cloneArtifactRef),
+	};
+}
+
+export function createAgentSemanticTerminalRecord(
+	input: Omit<AgentSemanticTerminalRecord, "requestDigest" | "terminalDigest"> & {
+		agentId: AgentId;
+		idempotencyKey: IdempotencyKey;
+	},
+): AgentSemanticTerminalRecord {
+	const requestBody = {
+		requestId: input.requestId,
+		idempotencyKey: input.idempotencyKey,
+		agentId: input.agentId,
+		outcome: input.outcome,
+		...(input.reason ? { reason: input.reason } : {}),
+		...(input.usage ? { usage: { ...input.usage } } : {}),
+		partialResults: input.partialResults.map(cloneArtifactRef),
+	};
+	const body = {
+		requestId: input.requestId,
+		requestDigest: canonicalDigest(requestBody),
+		outcome: input.outcome,
+		...(input.reason ? { reason: input.reason } : {}),
+		...(input.usage ? { usage: { ...input.usage } } : {}),
+		partialResults: input.partialResults.map(cloneArtifactRef),
+	};
+	return { ...body, terminalDigest: canonicalDigest(body) };
+}
+
+export function agentCleanupRequestDigest(input: {
+	requestId: AgentCleanupRecord["requestId"];
+	agentId: AgentId;
+	sessionId: AgentCleanupRecord["sessionId"];
+	terminalDigest: string;
+}): string {
+	return canonicalDigest(input);
+}
+
+export function agentRuntimeReleaseRequestDigest(
+	request: Omit<AgentRuntimeReleaseRequest, "requestDigest">,
+): string {
+	return canonicalDigest(request);
+}
+
+export function agentWorkspaceReleaseRequestDigest(
+	request: Omit<AgentWorkspaceReleaseRequest, "requestDigest">,
+): string {
+	return canonicalDigest(request);
+}
+
+export function agentBudgetSettlementRequestDigest(
+	request: Omit<RootAgentBudgetSettleRequest, "requestDigest">,
+): string {
+	const { idempotencyKey: _idempotencyKey, ...semantic } = request;
+	return canonicalDigest(semantic);
+}
+
+export function agentCleanupReceiptDigest(receipt: Omit<AgentCleanupReceiptRef, "receiptDigest">): string {
+	return canonicalDigest(receipt);
 }
 
 export function normalizeAgentGraphLimits(limits: Partial<AgentGraphLimits> = {}): AgentResult<AgentGraphLimits> {
@@ -169,8 +277,7 @@ function budgetIsValid(node: AgentNode, isRoot: boolean): boolean {
 	);
 }
 
-function workspaceReceiptIsValid(node: AgentNode): boolean {
-	const receipt = node.workspaceReceipt;
+function workspaceReceiptRefIsValid(receipt: AgentWorkspaceReceiptRef): boolean {
 	const { receiptDigest, ...body } = receipt;
 	return (
 		isRuntimeId(receipt.receiptId, "receipt") &&
@@ -183,7 +290,218 @@ function workspaceReceiptIsValid(node: AgentNode): boolean {
 		digestIsValid(receiptDigest) &&
 		receiptDigest === canonicalDigest(body) &&
 		Number.isSafeInteger(receipt.bindingRevision) &&
-		receipt.bindingRevision >= 0
+		receipt.bindingRevision >= 0 &&
+		timestampIsValid(receipt.issuedAt) &&
+		(!receipt.expiresAt || timestampIsValid(receipt.expiresAt))
+	);
+}
+
+function workspaceReceiptIsValid(node: AgentNode): boolean {
+	return workspaceReceiptRefIsValid(node.workspaceReceipt);
+}
+
+function budgetUsageIsValid(usage: AgentSemanticTerminalRecord["usage"]): boolean {
+	return Boolean(
+		usage &&
+			Object.keys(usage).length === AGENT_BUDGET_USAGE_FIELDS.length &&
+			AGENT_BUDGET_USAGE_FIELDS.every((field) => Number.isSafeInteger(usage[field]) && usage[field] >= 0),
+	);
+}
+
+function terminalOutcomeReasonIsValid(record: AgentSemanticTerminalRecord): boolean {
+	if (record.outcome === "completed") return record.reason === undefined;
+	if (record.outcome === "stopped") return STOPPED_TERMINAL_REASONS.has(record.reason);
+	return FAILED_TERMINAL_REASONS.has(record.reason);
+}
+
+function terminalUsageCoversGraphFacts(
+	usage: NonNullable<AgentSemanticTerminalRecord["usage"]>,
+	node: AgentNode,
+): boolean {
+	const verifiedArtifacts = node.artifacts.filter((report) => report.verification === "verified").length;
+	// turn 数没有对应 usage 字段；verified 标签只作为 graph 内部下界，不证明外部验证真实性。
+	return usage.artifactCount >= node.artifacts.length && usage.verifications >= verifiedArtifacts;
+}
+
+function semanticTerminalUsageIsValid(
+	record: AgentSemanticTerminalRecord,
+	node: AgentNode,
+): boolean {
+	if (record.usage !== undefined) {
+		return budgetUsageIsValid(record.usage) && terminalUsageCoversGraphFacts(record.usage, node);
+	}
+	if (!node.parentAgentId) return true;
+	return (
+		record.reason === "launch_rejected" &&
+		node.budgetReservation !== undefined &&
+		node.launchReceipt === undefined &&
+		node.residency === undefined
+	);
+}
+
+function semanticTerminalIsValid(
+	record: AgentSemanticTerminalRecord,
+	node: AgentNode,
+	requestId: AgentSemanticTerminalRecord["requestId"],
+	idempotencyKey: IdempotencyKey,
+	outcome: AgentSemanticTerminalRecord["outcome"],
+	reason?: AgentSemanticTerminalRecord["reason"],
+): boolean {
+	if (
+		record.requestId !== requestId ||
+		record.outcome !== outcome ||
+		record.reason !== reason ||
+		!terminalOutcomeReasonIsValid(record) ||
+		!semanticTerminalUsageIsValid(record, node) ||
+		canonicalDigest(record.partialResults) !== canonicalDigest(node.artifacts.map((report) => report.artifact))
+	) return false;
+	const expected = createAgentSemanticTerminalRecord({
+		agentId: node.agentId,
+		requestId: record.requestId,
+		idempotencyKey,
+		outcome: record.outcome,
+		...(record.reason ? { reason: record.reason } : {}),
+		...(record.usage ? { usage: record.usage } : {}),
+		partialResults: record.partialResults,
+	});
+	return (
+		digestIsValid(record.requestDigest) &&
+		digestIsValid(record.terminalDigest) &&
+		record.requestDigest === expected.requestDigest &&
+		record.terminalDigest === expected.terminalDigest
+	);
+}
+
+function residencyReceiptIsValid(receipt: AgentRuntimeReleaseReceiptRef["residencyReceipt"]): boolean {
+	const { receiptDigest, ...body } = receipt;
+	return (
+		isRuntimeId(receipt.receiptId, "receipt") &&
+		isRuntimeId(receipt.agentId, "agent") &&
+		isRuntimeId(receipt.sessionId, "session") &&
+		isRuntimeId(receipt.runtimeInstanceId, "runtime") &&
+		Number.isSafeInteger(receipt.revision) &&
+		receipt.revision >= 0 &&
+		timestampIsValid(receipt.observedAt) &&
+		(!receipt.reasonDigest || digestIsValid(receipt.reasonDigest)) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body)
+	);
+}
+
+function launchReceiptsAreValid(
+	launchReceipt: NonNullable<AgentNode["launchReceipt"]>,
+	residencyReceipt: NonNullable<AgentNode["residency"]>,
+	node: AgentNode,
+): boolean {
+	const { receiptDigest, ...body } = launchReceipt;
+	return (
+		isRuntimeId(launchReceipt.receiptId, "receipt") &&
+		launchReceipt.agentId === node.agentId &&
+		launchReceipt.sessionId === node.sessionId &&
+		Number.isSafeInteger(launchReceipt.launchRevision) &&
+		launchReceipt.launchRevision >= 1 &&
+		timestampIsValid(launchReceipt.launchedAt) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body) &&
+		residencyReceipt.agentId === node.agentId &&
+		residencyReceipt.sessionId === node.sessionId &&
+		residencyReceipt.state === "resident" &&
+		residencyReceipt.revision === launchReceipt.launchRevision &&
+		Date.parse(residencyReceipt.observedAt) >= Date.parse(launchReceipt.launchedAt) &&
+		residencyReceiptIsValid(residencyReceipt) &&
+		(node.launchReceipt === undefined || launchReceipt.launchRevision > node.launchReceipt.launchRevision) &&
+		(node.residency === undefined || residencyReceipt.revision > node.residency.revision)
+	);
+}
+
+function finalCursorIsValidForNode(
+	cursor: AgentRuntimeReleaseReceiptRef["finalCursor"],
+	node: AgentNode,
+): boolean {
+	if (
+		cursor.stream.scope !== "session" ||
+		!isRuntimeId(cursor.stream.streamId, "eventStream") ||
+		cursor.stream.sessionId !== node.sessionId ||
+		!numberIsBounded(cursor.sequence, 0) ||
+		!isRuntimeId(cursor.eventId, "event") ||
+		!digestIsValid(cursor.eventHash)
+	) return false;
+	// cursor 缺失时 graph 没有 durable stream identity，只能约束 child session 与 cursor 形状。
+	if (!node.cursor) return true;
+	if (
+		node.cursor.stream.scope !== "session" ||
+		node.cursor.stream.sessionId !== node.sessionId ||
+		cursor.stream.streamId !== node.cursor.stream.streamId ||
+		cursor.sequence < node.cursor.sequence
+	) return false;
+	return cursor.sequence !== node.cursor.sequence || (
+		cursor.eventId === node.cursor.eventId && cursor.eventHash === node.cursor.eventHash
+	);
+}
+
+function runtimeReleaseReceiptIsValid(receipt: AgentRuntimeReleaseReceiptRef, node: AgentNode): boolean {
+	if (!node.launchReceipt || !node.residency || !node.terminal) return false;
+	const { receiptDigest, ...body } = receipt;
+	const expectedRequestDigest = agentRuntimeReleaseRequestDigest({
+		requestId: receipt.requestId,
+		agentId: node.agentId,
+		sessionId: node.sessionId,
+		launchReceipt: node.launchReceipt,
+		previousResidencyReceipt: node.residency,
+		reason: node.terminal.outcome,
+	});
+	return (
+		isRuntimeId(receipt.receiptId, "receipt") &&
+		isRuntimeId(receipt.requestId, "command") &&
+		receipt.agentId === node.agentId &&
+		receipt.sessionId === node.sessionId &&
+		receipt.runtimeInstanceId === node.residency.runtimeInstanceId &&
+		receipt.launchReceiptId === node.launchReceipt.receiptId &&
+		receipt.launchRevision === node.launchReceipt.launchRevision &&
+		Number.isSafeInteger(receipt.launchRevision) &&
+		receipt.launchRevision >= 0 &&
+		isRuntimeId(receipt.writerFenceReceiptId, "receipt") &&
+		digestIsValid(receipt.writerFenceReceiptDigest) &&
+		receipt.requestDigest === expectedRequestDigest &&
+		receipt.residencyReceipt.agentId === node.agentId &&
+		receipt.residencyReceipt.sessionId === node.sessionId &&
+		receipt.residencyReceipt.runtimeInstanceId === receipt.runtimeInstanceId &&
+		receipt.residencyReceipt.state === "nonresident" &&
+		receipt.residencyReceipt.revision > node.residency.revision &&
+		residencyReceiptIsValid(receipt.residencyReceipt) &&
+		timestampIsValid(receipt.releasedAt) &&
+		receipt.residencyReceipt.observedAt === receipt.releasedAt &&
+		finalCursorIsValidForNode(receipt.finalCursor, node) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body)
+	);
+}
+
+function budgetSettlementReceiptIsValid(
+	receipt: AgentBudgetSettlementReceiptRef,
+	node: AgentNode,
+	authoritySettledAt: string,
+): boolean {
+	if (!node.budgetReservation || !node.terminal) return false;
+	const { receiptDigest, ...body } = receipt;
+	const semantic = {
+		reservation: node.budgetReservation,
+		outcome: node.terminal.outcome,
+		...(node.terminal.usage ? { usage: node.terminal.usage } : {}),
+		partialResults: node.terminal.partialResults,
+		settledAt: authoritySettledAt,
+	};
+	return (
+		isRuntimeId(receipt.receiptId, "receipt") &&
+		receipt.reservationId === node.budgetReservation.reservationId &&
+		receipt.outcome === node.terminal.outcome &&
+		receipt.usageDigest === canonicalDigest(node.terminal.usage ?? null) &&
+		receipt.partialResultsDigest === canonicalDigest(node.terminal.partialResults) &&
+		receipt.settledAt === authoritySettledAt &&
+		receipt.requestDigest === canonicalDigest(semantic) &&
+		timestampIsValid(authoritySettledAt) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body)
 	);
 }
 
@@ -198,6 +516,7 @@ function rootNodeIsValid(node: AgentNode): boolean {
 		node.parentAgentId === undefined &&
 		node.depth === 0 &&
 		node.state === "running" &&
+		node.terminal === undefined &&
 		node.capabilityGrant !== undefined &&
 		node.delegationReceipt === undefined &&
 		node.budgetReservation === undefined &&
@@ -228,6 +547,7 @@ function childNodeIsValid(node: AgentNode, parent: AgentNode): boolean {
 		digestIsValid(node.objectiveDigest) &&
 		node.parentAgentId === parent.agentId &&
 		node.rootAgentId === parent.rootAgentId &&
+		node.terminal === undefined &&
 		node.goalId === parent.goalId &&
 		node.depth === parent.depth + 1 &&
 		node.sessionId !== parent.sessionId &&
@@ -282,6 +602,51 @@ function cloneNode(node: AgentNode): AgentNode {
 			inputSources: report.inputSources.map((source) => ({ ...source, taintLabels: [...source.taintLabels] })),
 			declassificationReceipts: report.declassificationReceipts.map((receipt) => ({ ...receipt })),
 		})),
+		...(node.terminal ? { terminal: cloneSemanticTerminalRecord(node.terminal) } : {}),
+	};
+}
+
+function cloneCleanupRecord(record: AgentCleanupRecord): AgentCleanupRecord {
+	return {
+		...record,
+		...(record.runtimeRelease
+			? {
+				runtimeRelease: {
+					...record.runtimeRelease,
+					receipt: {
+						...record.runtimeRelease.receipt,
+						finalCursor: {
+							...record.runtimeRelease.receipt.finalCursor,
+							stream: { ...record.runtimeRelease.receipt.finalCursor.stream },
+						},
+						residencyReceipt: { ...record.runtimeRelease.receipt.residencyReceipt },
+					},
+				},
+			}
+			: {}),
+		...(record.workspaceRelease
+			? {
+				workspaceRelease: {
+					...record.workspaceRelease,
+					receipt: {
+						...record.workspaceRelease.receipt,
+						strategy: { ...record.workspaceRelease.receipt.strategy },
+					},
+				},
+			}
+			: {}),
+		...(record.budgetSettlement
+			? { budgetSettlement: { ...record.budgetSettlement, receipt: { ...record.budgetSettlement.receipt } } }
+			: {}),
+		...(record.reconciliationRequired
+			? {
+				reconciliationRequired: {
+					...record.reconciliationRequired,
+					error: { ...record.reconciliationRequired.error },
+				},
+			}
+			: {}),
+		...(record.completionReceipt ? { completionReceipt: { ...record.completionReceipt } } : {}),
 	};
 }
 
@@ -295,6 +660,7 @@ export function createEmptyAgentGraphProjection(): AgentGraphProjection {
 		pendingSpawns: new Map(),
 		pendingHandoffs: new Map(),
 		pendingMerges: new Map(),
+		cleanups: new Map(),
 		reconciliationFailures: [],
 	};
 }
@@ -365,22 +731,98 @@ function applyStateTransition(
 	to: AgentState,
 	reason: AgentNode["stateReason"] | undefined,
 	changedAt: string,
+	terminal?: AgentSemanticTerminalRecord,
 ): AgentResult<AgentGraphProjection> {
 	const node = projection.nodes.get(agentId);
 	if (!node) return fail("agent_not_found", "state event references a missing agent");
+	if (node.terminal) return fail("invalid_transition", "semantic terminal forbids further Agent lifecycle transitions");
 	if (node.state !== from || !AGENT_STATE_TRANSITIONS[from].includes(to)) {
 		return fail("invalid_transition", "agent state transition is invalid");
 	}
 	if (to === "completed" && !completionContractSatisfied(node)) {
 		return fail("artifact_contract_mismatch", "agent cannot complete without declared artifacts");
 	}
+	if ((FINAL_STATES.has(to) && !terminal) || (!FINAL_STATES.has(to) && terminal)) {
+		return fail("invalid_transition", "agent terminal transition requires one semantic terminal record");
+	}
 	const { stateReason: _stateReason, ...nodeWithoutReason } = node;
 	return withNodeResult(projection, {
 		...nodeWithoutReason,
 		state: to,
 		...(reason ? { stateReason: reason } : {}),
+		...(terminal ? { terminal: cloneSemanticTerminalRecord(terminal) } : {}),
 		updatedAt: changedAt,
 	});
+}
+
+function withCleanupRecord(projection: AgentGraphProjection, record: AgentCleanupRecord): AgentGraphProjection {
+	const cleanups = new Map(projection.cleanups);
+	cleanups.set(record.agentId, cloneCleanupRecord(record));
+	return { ...projection, cleanups };
+}
+
+function nextCleanupStage(record: AgentCleanupRecord): AgentCleanupStage | undefined {
+	if (!record.runtimeRelease) return "runtime_release";
+	if (!record.workspaceRelease) return "workspace_release";
+	if (!record.budgetSettlement) return "budget_settlement";
+	return undefined;
+}
+
+function cleanupRecordFor(
+	projection: AgentGraphProjection,
+	agentId: AgentId,
+	cleanupRequestId: AgentCleanupRecord["requestId"],
+): AgentResult<{ node: AgentNode; cleanup: AgentCleanupRecord }> {
+	const node = projection.nodes.get(agentId);
+	const cleanup = projection.cleanups.get(agentId);
+	if (!node || !node.terminal || !cleanup || cleanup.requestId !== cleanupRequestId) {
+		return fail("cleanup_invalid", "cleanup stage has no correlated semantic terminal and durable intent");
+	}
+	if (cleanup.completionReceipt) return fail("cleanup_invalid", "cleanup saga is already complete");
+	return { ok: true, value: { node, cleanup } };
+}
+
+function releasedWorkspaceReceiptIsValid(
+	receipt: AgentNode["workspaceReceipt"],
+	previous: AgentNode["workspaceReceipt"],
+): boolean {
+	return (
+		receipt.status === "released" &&
+		receipt.sessionId === previous.sessionId &&
+		receipt.workspaceId === previous.workspaceId &&
+		receipt.repositoryId === previous.repositoryId &&
+		receipt.strategy.strategyId === previous.strategy.strategyId &&
+		receipt.strategy.kind === previous.strategy.kind &&
+		receipt.strategy.strategyDigest === previous.strategy.strategyDigest &&
+		receipt.bindingRevision >= previous.bindingRevision &&
+		workspaceReceiptRefIsValid(receipt)
+	);
+}
+
+function cleanupReceiptIsValid(
+	receipt: AgentCleanupReceiptRef,
+	node: AgentNode,
+	cleanup: AgentCleanupRecord,
+): boolean {
+	if (!cleanup.runtimeRelease || !cleanup.workspaceRelease || !cleanup.budgetSettlement) return false;
+	const { receiptDigest, ...body } = receipt;
+	return (
+		isRuntimeId(receipt.receiptId, "receipt") &&
+		receipt.requestId === cleanup.requestId &&
+		receipt.requestDigest === cleanup.requestDigest &&
+		receipt.agentId === node.agentId &&
+		receipt.sessionId === node.sessionId &&
+		receipt.terminalDigest === node.terminal?.terminalDigest &&
+		receipt.runtimeReleaseReceiptId === cleanup.runtimeRelease.receipt.receiptId &&
+		receipt.runtimeReleaseReceiptDigest === cleanup.runtimeRelease.receipt.receiptDigest &&
+		receipt.workspaceReleaseReceiptId === cleanup.workspaceRelease.receipt.receiptId &&
+		receipt.workspaceReleaseReceiptDigest === cleanup.workspaceRelease.receipt.receiptDigest &&
+		receipt.budgetSettlementReceiptId === cleanup.budgetSettlement.receipt.receiptId &&
+		receipt.budgetSettlementReceiptDigest === cleanup.budgetSettlement.receipt.receiptDigest &&
+		timestampIsValid(receipt.completedAt) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body)
+	);
 }
 
 function applyMergeReceipt(
@@ -431,6 +873,7 @@ export function applyAgentGraphCommand(
 		const root = projection.rootAgentId ? projection.nodes.get(projection.rootAgentId) : undefined;
 		if (
 			!root ||
+			root.terminal !== undefined ||
 			root.agentId !== command.agentId ||
 			root.parentAgentId !== undefined ||
 			root.state !== "running" ||
@@ -466,6 +909,7 @@ export function applyAgentGraphCommand(
 	if (command.type === "agent.spawn_requested") {
 		const parent = projection.nodes.get(command.intent.parentAgentId);
 		if (!parent || !spawnIntentIsValid(command.intent, parent)) return fail("spawn_denied", "spawn intent is invalid");
+		if (parent.terminal) return fail("invalid_transition", "semantic terminal parent cannot request a child spawn");
 		if (projection.nodes.has(command.intent.childAgentId) || projection.pendingSpawns.has(command.intent.childAgentId)) {
 			return fail("agent_exists", "spawn intent reuses an agent identity");
 		}
@@ -491,6 +935,7 @@ export function applyAgentGraphCommand(
 		}
 		const parent = projection.nodes.get(command.edge.parentAgentId);
 		if (!parent || parent.agentId !== command.node.parentAgentId) return fail("orphan_agent", "child parent is missing");
+		if (parent.terminal) return fail("invalid_transition", "semantic terminal parent cannot accept a spawned child");
 		if (
 			command.edge.childAgentId !== command.node.agentId ||
 			command.node.sessionId !== intent.childSessionId ||
@@ -562,22 +1007,222 @@ export function applyAgentGraphCommand(
 		return applyStateTransition(projection, command.agentId, command.from, "paused", command.reason, command.occurredAt);
 	}
 	if (command.type === "agent.stopped") {
-		return applyStateTransition(projection, command.agentId, command.from, "stopped", command.reason, command.occurredAt);
+		const node = projection.nodes.get(command.agentId);
+		if (!node || !semanticTerminalIsValid(command.terminal, node, command.requestId, command.idempotencyKey, "stopped", command.reason)) {
+			return fail("invalid_transition", "stopped terminal record is invalid or uncorrelated");
+		}
+		return applyStateTransition(
+			projection,
+			command.agentId,
+			command.from,
+			"stopped",
+			command.reason,
+			command.occurredAt,
+			command.terminal,
+		);
 	}
 	if (command.type === "agent.partial_committed") {
 		return applyStateTransition(projection, command.agentId, command.from, "partial", command.reason, command.occurredAt);
 	}
 	if (command.type === "agent.finished") {
-		return applyStateTransition(projection, command.agentId, command.from, "completed", undefined, command.occurredAt);
+		const node = projection.nodes.get(command.agentId);
+		if (!node || !semanticTerminalIsValid(command.terminal, node, command.requestId, command.idempotencyKey, "completed")) {
+			return fail("invalid_transition", "completed terminal record is invalid or uncorrelated");
+		}
+		return applyStateTransition(
+			projection,
+			command.agentId,
+			command.from,
+			"completed",
+			undefined,
+			command.occurredAt,
+			command.terminal,
+		);
 	}
 	if (command.type === "agent.failed") {
 		if (!failureRefIsValid(command.error)) return fail("invalid_graph", "agent failure receipt is invalid");
-		return applyStateTransition(projection, command.agentId, command.from, "failed", command.reason, command.occurredAt);
+		const node = projection.nodes.get(command.agentId);
+		if (!node || !semanticTerminalIsValid(command.terminal, node, command.requestId, command.idempotencyKey, "failed", command.reason)) {
+			return fail("invalid_transition", "failed terminal record is invalid or uncorrelated");
+		}
+		return applyStateTransition(
+			projection,
+			command.agentId,
+			command.from,
+			"failed",
+			command.reason,
+			command.occurredAt,
+			command.terminal,
+		);
+	}
+
+	if (command.type === "agent.cleanup_requested") {
+		const node = projection.nodes.get(command.agentId);
+		if (
+			!node?.parentAgentId ||
+			!node.terminal ||
+			!node.launchReceipt ||
+			!node.residency ||
+			!node.budgetReservation ||
+			projection.cleanups.has(node.agentId) ||
+			command.terminalDigest !== node.terminal.terminalDigest ||
+			command.requestDigest !== agentCleanupRequestDigest({
+				requestId: command.requestId,
+				agentId: node.agentId,
+				sessionId: node.sessionId,
+				terminalDigest: node.terminal.terminalDigest,
+			})
+		) return fail("cleanup_invalid", "cleanup intent is not correlated to a terminal resident child");
+		return {
+			ok: true,
+			value: withCleanupRecord(projection, {
+				agentId: node.agentId,
+				sessionId: node.sessionId,
+				requestId: command.requestId,
+				requestDigest: command.requestDigest,
+				terminalDigest: command.terminalDigest,
+				requestedAt: command.occurredAt,
+				updatedAt: command.occurredAt,
+			}),
+		};
+	}
+
+	if (command.type === "agent.runtime_released") {
+		const current = cleanupRecordFor(projection, command.agentId, command.cleanupRequestId);
+		if (!current.ok) return current;
+		const { node, cleanup } = current.value;
+		if (
+			nextCleanupStage(cleanup) !== "runtime_release" ||
+			command.receipt.requestId !== command.requestId ||
+			command.receipt.releasedAt !== command.occurredAt ||
+			!runtimeReleaseReceiptIsValid(command.receipt, node)
+		) return fail("cleanup_invalid", "runtime release receipt is invalid, stale, or out of order");
+		const { reconciliationRequired: _reconciliationRequired, ...withoutFailure } = cleanup;
+		const nextCleanup = withCleanupRecord(projection, {
+			...withoutFailure,
+			runtimeRelease: {
+				requestId: command.requestId,
+				requestDigest: command.receipt.requestDigest,
+				receipt: command.receipt,
+			},
+			updatedAt: command.occurredAt,
+		});
+		return withNodeResult(nextCleanup, {
+			...node,
+			residency: { ...command.receipt.residencyReceipt },
+			updatedAt: command.occurredAt,
+		});
+	}
+
+	if (command.type === "agent.workspace_released") {
+		const current = cleanupRecordFor(projection, command.agentId, command.cleanupRequestId);
+		if (!current.ok) return current;
+		const { node, cleanup } = current.value;
+		if (!node.terminal) return fail("cleanup_invalid", "workspace release lacks semantic terminal");
+		const expectedRequestDigest = agentWorkspaceReleaseRequestDigest({
+			requestId: command.requestId,
+			agentId: node.agentId,
+			sessionId: node.sessionId,
+			previousReceipt: node.workspaceReceipt,
+			reason: node.terminal.outcome,
+		});
+		if (
+			nextCleanupStage(cleanup) !== "workspace_release" ||
+			command.requestDigest !== expectedRequestDigest ||
+			!releasedWorkspaceReceiptIsValid(command.receipt, node.workspaceReceipt)
+		) return fail("cleanup_invalid", "Workspace release receipt is invalid, stale, or out of order");
+		const { reconciliationRequired: _reconciliationRequired, ...withoutFailure } = cleanup;
+		const nextCleanup = withCleanupRecord(projection, {
+			...withoutFailure,
+			workspaceRelease: {
+				requestId: command.requestId,
+				requestDigest: command.requestDigest,
+				receipt: command.receipt,
+			},
+			updatedAt: command.occurredAt,
+		});
+		return withNodeResult(nextCleanup, {
+			...node,
+			workspaceReceipt: { ...command.receipt },
+			updatedAt: command.occurredAt,
+		});
+	}
+
+	if (command.type === "agent.budget_settled") {
+		const current = cleanupRecordFor(projection, command.agentId, command.cleanupRequestId);
+		if (!current.ok) return current;
+		const { node, cleanup } = current.value;
+		if (
+			nextCleanupStage(cleanup) !== "budget_settlement" ||
+			command.occurredAt !== cleanup.requestedAt ||
+			!budgetSettlementReceiptIsValid(command.receipt, node, cleanup.requestedAt)
+		) return fail("cleanup_invalid", "budget settlement receipt is invalid, stale, or out of order");
+		const { reconciliationRequired: _reconciliationRequired, ...withoutFailure } = cleanup;
+		return {
+			ok: true,
+			value: withCleanupRecord(projection, {
+				...withoutFailure,
+				budgetSettlement: {
+					requestId: command.requestId,
+					requestDigest: command.receipt.requestDigest,
+					receipt: command.receipt,
+				},
+				updatedAt: command.occurredAt,
+			}),
+		};
+	}
+
+	if (command.type === "agent.cleanup_reconciliation_required") {
+		const current = cleanupRecordFor(projection, command.agentId, command.cleanupRequestId);
+		if (!current.ok) return current;
+		const { cleanup } = current.value;
+		if (
+			nextCleanupStage(cleanup) !== command.stage ||
+			!failureRefIsValid(command.error) ||
+			command.error.outcomeCertain ||
+			command.error.effect !== "uncertain"
+		) {
+			return fail("cleanup_invalid", "cleanup reconciliation stage is invalid or already passed");
+		}
+		return {
+			ok: true,
+			value: withCleanupRecord(projection, {
+				...cleanup,
+				reconciliationRequired: {
+					requestId: command.requestId,
+					stage: command.stage,
+					error: { ...command.error },
+					recordedAt: command.occurredAt,
+				},
+				updatedAt: command.occurredAt,
+			}),
+		};
+	}
+
+	if (command.type === "agent.cleanup_completed") {
+		const current = cleanupRecordFor(projection, command.agentId, command.cleanupRequestId);
+		if (!current.ok) return current;
+		const { node, cleanup } = current.value;
+		if (
+			nextCleanupStage(cleanup) !== undefined ||
+			cleanup.reconciliationRequired !== undefined ||
+			command.receipt.completedAt !== command.occurredAt ||
+			!cleanupReceiptIsValid(command.receipt, node, cleanup)
+		) return fail("cleanup_invalid", "cleanup completion receipt is invalid or precedes a required stage");
+		return {
+			ok: true,
+			value: withCleanupRecord(projection, {
+				...cleanup,
+				completionReceipt: { ...command.receipt },
+				updatedAt: command.occurredAt,
+			}),
+		};
 	}
 
 	if (command.type === "agent.cursor_advanced") {
 		const node = projection.nodes.get(command.agentId);
 		if (!node) return fail("agent_not_found", "cursor record references a missing agent");
+		if (node.terminal) return fail("invalid_transition", "semantic terminal forbids cursor advancement");
 		if (
 			command.cursor.stream.scope !== "session" ||
 			command.cursor.stream.sessionId !== node.sessionId ||
@@ -593,6 +1238,7 @@ export function applyAgentGraphCommand(
 	if (command.type === "agent.artifact_reported") {
 		const node = projection.nodes.get(command.report.agentId);
 		if (!node) return fail("agent_not_found", "artifact record references a missing agent");
+		if (node.terminal) return fail("invalid_transition", "semantic terminal forbids new Artifact reports");
 		if (!reportMatchesContract(command.report, node)) {
 			return fail("artifact_contract_mismatch", "reported artifact was not declared by the child contract");
 		}
@@ -611,6 +1257,9 @@ export function applyAgentGraphCommand(
 		if (!node || command.receipt.sessionId !== node.sessionId) {
 			return fail("agent_not_found", "residency receipt does not match an agent session");
 		}
+		if (node.terminal) {
+			return fail("invalid_transition", "semantic terminal residency may only change through cleanup release");
+		}
 		if (node.residency && command.receipt.revision <= node.residency.revision) {
 			return fail("invalid_graph", "residency revision must advance monotonically");
 		}
@@ -619,6 +1268,7 @@ export function applyAgentGraphCommand(
 
 	if (command.type === "agent.budget_rebound") {
 		const node = projection.nodes.get(command.agentId);
+		if (node?.terminal) return fail("invalid_transition", "semantic terminal forbids budget rebound");
 		if (
 			!node?.budgetReservation ||
 			node.budgetReservation.reservationId !== command.previousReservationId ||
@@ -636,6 +1286,7 @@ export function applyAgentGraphCommand(
 
 	if (command.type === "agent.turn_recorded") {
 		const node = projection.nodes.get(command.agentId);
+		if (node?.terminal) return fail("invalid_transition", "semantic terminal forbids new turns");
 		if (
 			!node ||
 			node.state !== "running" ||
@@ -656,13 +1307,10 @@ export function applyAgentGraphCommand(
 
 	if (command.type === "agent.launch_recorded") {
 		const node = projection.nodes.get(command.agentId);
+		if (node?.terminal) return fail("invalid_transition", "semantic terminal forbids launch receipt mutation");
 		if (
 			!node ||
-			command.launchReceipt.agentId !== node.agentId ||
-			command.launchReceipt.sessionId !== node.sessionId ||
-			command.residencyReceipt.agentId !== node.agentId ||
-			command.residencyReceipt.sessionId !== node.sessionId ||
-			command.residencyReceipt.state !== "resident"
+			!launchReceiptsAreValid(command.launchReceipt, command.residencyReceipt, node)
 		) {
 			return fail("invalid_graph", "launch receipt is not correlated to the child");
 		}
@@ -676,6 +1324,7 @@ export function applyAgentGraphCommand(
 
 	if (command.type === "agent.resume_revalidated") {
 		const node = projection.nodes.get(command.agentId);
+		if (node?.terminal) return fail("invalid_transition", "semantic terminal forbids resume revalidation");
 		const parent = node?.parentAgentId ? projection.nodes.get(node.parentAgentId) : undefined;
 		const subsetDigest =
 			node && parent?.capabilityGrant
@@ -867,6 +1516,7 @@ function cloneProjection(projection: AgentGraphProjection): AgentGraphProjection
 		pendingSpawns: new Map([...projection.pendingSpawns].map(([agentId, intent]) => [agentId, { ...intent }])),
 		pendingHandoffs: new Map([...projection.pendingHandoffs].map(([handoffId, handoff]) => [handoffId, { ...handoff }])),
 		pendingMerges: new Map([...projection.pendingMerges].map(([requestId, request]) => [requestId, { ...request }])),
+		cleanups: new Map([...projection.cleanups].map(([agentId, cleanup]) => [agentId, cloneCleanupRecord(cleanup)])),
 		reconciliationFailures: projection.reconciliationFailures.map(cloneReconciliationFailure),
 	};
 }

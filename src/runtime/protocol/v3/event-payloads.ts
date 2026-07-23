@@ -203,6 +203,17 @@ const agentBudgetRequest = exact({
 	maxNetworkBytes: revision,
 	maxStorageBytes: revision,
 });
+const agentBudgetUsage = exact({
+	inputTokens: revision,
+	outputTokens: revision,
+	usdMicros: revision,
+	wallTimeMs: revision,
+	toolCalls: revision,
+	networkBytes: revision,
+	storageBytes: revision,
+	artifactCount: revision,
+	verifications: revision,
+});
 const agentBudgetReservation = exact({
 	reservationId: brandedId("budgetReservation"),
 	operationId: brandedId("command"),
@@ -334,6 +345,67 @@ const agentLaunchReceipt = exact({
 	launchedAt: timestamp,
 	receiptDigest: digest,
 });
+const agentSemanticTerminal = exact({
+	requestId: brandedId("command"),
+	requestDigest: digest,
+	outcome: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("stopped")]),
+	reason: Type.Optional(agentStateReason),
+	usage: Type.Optional(agentBudgetUsage),
+	partialResults: readonlyArray(ArtifactRefSchema, { maxItems: 64 }),
+	terminalDigest: digest,
+});
+const agentRuntimeReleaseReceipt = exact({
+	receiptId: brandedId("receipt"),
+	requestId: brandedId("command"),
+	requestDigest: digest,
+	agentId: brandedId("agent"),
+	sessionId: brandedId("session"),
+	runtimeInstanceId: brandedId("runtime"),
+	launchReceiptId: brandedId("receipt"),
+	launchRevision: revision,
+	writerFenceReceiptId: brandedId("receipt"),
+	writerFenceReceiptDigest: digest,
+	finalCursor: agentEventCursor,
+	residencyReceipt: agentResidencyReceipt,
+	releasedAt: timestamp,
+	receiptDigest: digest,
+});
+const agentBudgetSettlementReceipt = exact({
+	receiptId: brandedId("receipt"),
+	reservationId: brandedId("budgetReservation"),
+	outcome: Type.Union([
+		Type.Literal("completed"),
+		Type.Literal("failed"),
+		Type.Literal("stopped"),
+		Type.Literal("not_started"),
+	]),
+	usageDigest: digest,
+	partialResultsDigest: digest,
+	requestDigest: digest,
+	settledAt: timestamp,
+	receiptDigest: digest,
+});
+const agentCleanupStage = Type.Union([
+	Type.Literal("runtime_release"),
+	Type.Literal("workspace_release"),
+	Type.Literal("budget_settlement"),
+]);
+const agentCleanupReceipt = exact({
+	receiptId: brandedId("receipt"),
+	requestId: brandedId("command"),
+	requestDigest: digest,
+	agentId: brandedId("agent"),
+	sessionId: brandedId("session"),
+	terminalDigest: digest,
+	runtimeReleaseReceiptId: brandedId("receipt"),
+	runtimeReleaseReceiptDigest: digest,
+	workspaceReleaseReceiptId: brandedId("receipt"),
+	workspaceReleaseReceiptDigest: digest,
+	budgetSettlementReceiptId: brandedId("receipt"),
+	budgetSettlementReceiptDigest: digest,
+	completedAt: timestamp,
+	receiptDigest: digest,
+});
 const agentDenialReceipt = exact({
 	receiptId: brandedId("receipt"),
 	agentId: brandedId("agent"),
@@ -375,6 +447,7 @@ const agentNode = exact({
 	cursor: Type.Optional(agentEventCursor),
 	residency: Type.Optional(agentResidencyReceipt),
 	launchReceipt: Type.Optional(agentLaunchReceipt),
+	terminal: Type.Optional(agentSemanticTerminal),
 	createdAt: timestamp,
 	updatedAt: timestamp,
 });
@@ -1696,6 +1769,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 		agentId: brandedId("agent"),
 		from: agentState,
 		reason: agentStateReason,
+		terminal: agentSemanticTerminal,
 	}),
 	"agent.partial_committed": exact({
 		...agentCommandBase,
@@ -1777,6 +1851,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 		...agentCommandBase,
 		agentId: brandedId("agent"),
 		from: agentState,
+		terminal: agentSemanticTerminal,
 	}),
 	"agent.failed": exact({
 		...agentCommandBase,
@@ -1784,6 +1859,45 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 		from: agentState,
 		reason: agentStateReason,
 		error: agentFailure,
+		terminal: agentSemanticTerminal,
+	}),
+	"agent.cleanup_requested": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		terminalDigest: digest,
+		requestDigest: digest,
+	}),
+	"agent.runtime_released": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		cleanupRequestId: brandedId("command"),
+		receipt: agentRuntimeReleaseReceipt,
+	}),
+	"agent.workspace_released": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		cleanupRequestId: brandedId("command"),
+		requestDigest: digest,
+		receipt: agentWorkspaceReceipt,
+	}),
+	"agent.budget_settled": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		cleanupRequestId: brandedId("command"),
+		receipt: agentBudgetSettlementReceipt,
+	}),
+	"agent.cleanup_reconciliation_required": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		cleanupRequestId: brandedId("command"),
+		stage: agentCleanupStage,
+		error: agentFailure,
+	}),
+	"agent.cleanup_completed": exact({
+		...agentCommandBase,
+		agentId: brandedId("agent"),
+		cleanupRequestId: brandedId("command"),
+		receipt: agentCleanupReceipt,
 	}),
 	"lease.acquired": LeaseAcquiredPayloadSchema,
 	"lease.taken_over": LeaseTakenOverPayloadSchema,

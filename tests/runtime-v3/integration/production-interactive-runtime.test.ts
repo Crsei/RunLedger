@@ -17,6 +17,7 @@ import type { InputSourceRef } from "../../../src/runtime/protocol/v3/taint.ts";
 import { workspaceBindingDigest } from "../../../src/runtime/protocol/v3/workspace.ts";
 import { projectExternalReceiptReferences } from "../../../src/runtime/lifecycle/canonical-references.ts";
 import { createProductionCapabilityGrantPolicy } from "../../../src/runtime/agents/integration/capability-subset.ts";
+import { ProductionChildSessionLauncher } from "../../../src/runtime/agents/integration/child-session-launcher.ts";
 import type { ParentCapabilityGrantRef } from "../../../src/runtime/agents/types.ts";
 import type { SessionMutationAdmissionGatePort } from "../../../src/runtime/lifecycle/mutation-gate.ts";
 import {
@@ -590,6 +591,43 @@ async function fixture(): Promise<Fixture> {
 	return { worktree, artifact, manager, features, stateRoot, tool, options };
 }
 
+function agentOptions(setup: Fixture): NonNullable<ProductionInteractiveRuntimeOptions["agents"]> {
+	const identity = setup.manager.identity();
+	const parentGrant: ParentCapabilityGrantRef = {
+		receiptId: createRuntimeId("receipt", "production-interactive-close-root-grant"),
+		receiptDigest: canonicalDigest("production interactive close root grant"),
+		decisionRevision: 1,
+	};
+	return {
+		root: {
+			role: "build",
+			capabilityGrant: parentGrant,
+			capabilityPolicies: [createProductionCapabilityGrantPolicy({
+				policyReceiptId: createRuntimeId("receipt", "production-interactive-close-policy"),
+				parentGrant,
+				allowedRequests: [],
+				delegableToolKinds: [],
+				childSpawnAllowed: false,
+				decisionRevision: 1,
+				evaluatorId: identity.principalId,
+				issuedAt: NOW,
+			})],
+			denialPolicy: {
+				policyDigest: canonicalDigest("production interactive close denial policy"),
+				decisionRevision: 1,
+				deniedAgentIds: new Set(),
+			},
+			inputSources: [],
+			declassificationReceipts: [],
+		},
+		child: {
+			sessionDir: join(setup.worktree.root, "production-close-child-sessions"),
+			features: setup.features,
+			maxActiveChildren: 2,
+		},
+	};
+}
+
 function unavailableCredential() {
 	return {
 		ok: false as const,
@@ -815,6 +853,60 @@ describe("production interactive runtime composition", () => {
 			expect(afterCloseStart).not.toHaveBeenCalled();
 		const registry = await readFile(runtime.paths.workspace.registryFile, "utf8");
 		expect(registry).toContain('"state":"retained"');
+	});
+
+	it("keeps parent Workspace and manager open when Agent close fails, then retries teardown", async () => {
+		const setup = await fixture();
+		const closeFailure = new Error("injected production Agent close failure");
+		const childClose = vi.spyOn(ProductionChildSessionLauncher.prototype, "closeIfIdle")
+			.mockRejectedValueOnce(closeFailure);
+		const runtime = await createProductionInteractiveRuntime({
+			...setup.options(),
+			agents: agentOptions(setup),
+		});
+		const workspaceRelease = vi.spyOn(WorktreeManager.prototype, "release");
+		const managerClose = vi.spyOn(setup.manager, "closeAll");
+
+		await expect(runtime.close()).rejects.toThrow(
+			"production interactive Agent close blocked parent resource teardown",
+		);
+		expect(setup.manager.isClosed()).toBe(false);
+		expect(workspaceRelease).not.toHaveBeenCalled();
+		expect(managerClose).not.toHaveBeenCalled();
+
+		await expect(runtime.close()).resolves.toBeUndefined();
+		expect(childClose).toHaveBeenCalledTimes(2);
+		expect(workspaceRelease).toHaveBeenCalledTimes(1);
+		expect(managerClose).toHaveBeenCalledTimes(1);
+		expect(setup.manager.isClosed()).toBe(true);
+	});
+
+	it("keeps the manager open when Workspace release persistence fails, then retries the exact teardown", async () => {
+		const setup = await fixture();
+		const runtime = await createProductionInteractiveRuntime(setup.options());
+		const workspaceRelease = vi.spyOn(WorktreeManager.prototype, "release");
+		const managerClose = vi.spyOn(setup.manager, "closeAll");
+		vi.spyOn(setup.manager.writer(), "append").mockResolvedValueOnce({
+			ok: false,
+			error: {
+				code: "durable_write_failed",
+				message: "injected workspace release event failure",
+				retryable: true,
+				effect: "none",
+			},
+		});
+
+		await expect(runtime.close()).rejects.toThrow(
+			"production interactive Workspace release blocked parent manager teardown",
+		);
+		expect(setup.manager.isClosed()).toBe(false);
+		expect(workspaceRelease).toHaveBeenCalledTimes(1);
+		expect(managerClose).not.toHaveBeenCalled();
+
+		await expect(runtime.close()).resolves.toBeUndefined();
+		expect(workspaceRelease).toHaveBeenCalledTimes(1);
+		expect(managerClose).toHaveBeenCalledTimes(1);
+		expect(setup.manager.isClosed()).toBe(true);
 	});
 
 	it("uses the exact injected mutation gate for model preparation, authorization, and durable start", async () => {

@@ -307,14 +307,25 @@ export class V3SessionManager {
 
 	private constructor(runtime: OpenedV3Runtime) {
 		this.runtime = runtime;
+		this.startHeartbeat();
+	}
+
+	private startHeartbeat(): void {
+		if (this.heartbeat || this.closed) return;
 		this.heartbeat = setInterval(() => {
-			const renewed = runtime.leaseStore.heartbeat(runtime.fence, LEASE_DURATION_MS);
+			const renewed = this.runtime.leaseStore.heartbeat(this.runtime.fence, LEASE_DURATION_MS);
 			if (!renewed.ok && this.heartbeat) {
 				clearInterval(this.heartbeat);
 				this.heartbeat = undefined;
 			}
 		}, LEASE_DURATION_MS / 3);
 		this.heartbeat.unref();
+	}
+
+	private stopHeartbeat(): void {
+		if (!this.heartbeat) return;
+		clearInterval(this.heartbeat);
+		this.heartbeat = undefined;
 	}
 
 	public static async create(options: V3SessionCreateOptions): Promise<V3SessionManager> {
@@ -606,18 +617,20 @@ export class V3SessionManager {
 	}
 
 	public closeAll(): Promise<void> {
+		if (this.closed) return Promise.resolve();
 		this.closePromise ??= this.closeRuntime();
 		return this.closePromise;
 	}
 
 	private async closeRuntime(): Promise<void> {
-		if (this.heartbeat) {
-			clearInterval(this.heartbeat);
-			this.heartbeat = undefined;
+		try {
+			const closed = await this.runtime.writer.close();
+			if (!closed.ok) throw new Error(`v3 event writer close failed: ${closed.error.code}`);
+		} finally {
+			// close 落定失败时 store 可能已关闭；停止续租，让未确认 lease 进入 cold takeover。
+			this.stopHeartbeat();
 		}
-		const closed = await this.runtime.writer.close();
 		const released = this.runtime.leaseStore.release(this.runtime.fence);
-		if (!closed.ok) throw new Error(`v3 event writer close failed: ${closed.error.code}`);
 		if (!released.ok) throw new Error(`v3 writer lease release failed: ${released.error.code}`);
 		this.closed = true;
 	}

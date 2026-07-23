@@ -613,27 +613,34 @@ async function releaseWorkspace(
 	composition: Awaited<ReturnType<typeof createProductionWorkspaceComposition>>,
 	workspace: WorktreeCreateResult,
 	traceId: ReturnType<typeof createRuntimeId<"trace">>,
+	operation: { receiptId?: ReturnType<typeof createRuntimeId<"receipt">> },
 ): Promise<void> {
 	const envelope = releaseEnvelope(manager, workspace, traceId);
 	const identity = manager.identity();
-	const result = await composition.manager.release({
-		schemaVersion: 1,
-		kind: "release",
-		requestId: createRuntimeId("command", `interactive-release-${canonicalDigest({
-			workspaceId: envelope.workspaceId,
-			leaseRevision: envelope.leaseRevision,
-		}).slice(0, 48)}`),
-		authorityId: identity.authorityId,
-		tenantId: identity.tenantId,
-		principalId: identity.principalId,
-		sessionId: manager.sessionId(),
-		agentId: manager.sessionEvents().lineage().agentId,
-		traceId,
-		envelope,
-		envelopeDigest: workspaceExecutionEnvelopeDigest(envelope),
-		expectedLeaseRevision: envelope.leaseRevision,
-	});
-	if (!result.ok) throw new Error(`production workspace release failed: ${result.error.code}: ${result.error.message}`);
+	if (!operation.receiptId) {
+		const result = await composition.manager.release({
+			schemaVersion: 1,
+			kind: "release",
+			requestId: createRuntimeId("command", `interactive-release-${canonicalDigest({
+				workspaceId: envelope.workspaceId,
+				leaseRevision: envelope.leaseRevision,
+			}).slice(0, 48)}`),
+			authorityId: identity.authorityId,
+			tenantId: identity.tenantId,
+			principalId: identity.principalId,
+			sessionId: manager.sessionId(),
+			agentId: manager.sessionEvents().lineage().agentId,
+			traceId,
+			envelope,
+			envelopeDigest: workspaceExecutionEnvelopeDigest(envelope),
+			expectedLeaseRevision: envelope.leaseRevision,
+		});
+		if (!result.ok) {
+			throw new Error(`production workspace release failed: ${result.error.code}: ${result.error.message}`);
+		}
+		// 外部 release 已生效后立即保留 receipt；durable event 失败时只补写，不重复外部副作用。
+		operation.receiptId = result.value.receiptId;
+	}
 	const released = await manager.writer().append({
 		type: "workspace.released",
 		principalId: identity.principalId,
@@ -643,7 +650,7 @@ async function releaseWorkspace(
 			leaseId: workspace.lease.leaseId,
 			leaseRevision: workspace.lease.leaseRevision,
 			bindingDigest: workspaceBindingDigest(workspace.runtimeBinding),
-			receiptId: result.value.receiptId,
+			receiptId: operation.receiptId,
 		},
 	});
 	if (!released.ok) {
@@ -1054,24 +1061,66 @@ export async function createProductionInteractiveRuntime(
 	let agentComposition: ProductionAgentSupervisorComposition | undefined;
 	let extensionAdapter: ProductionInteractiveExtensionAdapter | undefined;
 	let extensionStarted = false;
+	let gatewayClosed = false;
+	let extensionSessionEnded = false;
+	let extensionClosed = false;
 	let workspaceReleased = false;
+	const workspaceReleaseOperation: { receiptId?: ReturnType<typeof createRuntimeId<"receipt">> } = {};
 
 	const closeOwnedResources = async (): Promise<void> => {
 		const errors: unknown[] = [];
-		if (gateway) await collectCloseError(errors, () => gateway!.close());
-		if (extensionAdapter && extensionStarted) {
+		if (gateway && !gatewayClosed) {
+			await collectCloseError(errors, async () => {
+				await gateway!.close();
+				gatewayClosed = true;
+			});
+		}
+		if (extensionAdapter && extensionStarted && !extensionSessionEnded) {
 			await collectCloseError(errors, async () => {
 				const ended = await extensionAdapter!.runtime.sessionEnd({ reason: "interactive runtime shutdown" });
 				if (ended.status === "blocked") throw new Error(`extension SessionEnd blocked: ${ended.reason}`);
+				extensionSessionEnded = true;
 			});
 		}
-		if (extensionAdapter) await collectCloseError(errors, () => extensionAdapter!.runtime.close());
-		if (agentComposition) await collectCloseError(errors, () => agentComposition!.close());
-		if (workspaceComposition && workspaceResult && !workspaceReleased) {
+		if (extensionAdapter && !extensionClosed) {
 			await collectCloseError(errors, async () => {
-				await releaseWorkspace(manager, workspaceComposition!, workspaceResult!, traceId);
-				workspaceReleased = true;
+				await extensionAdapter!.runtime.close();
+				extensionClosed = true;
 			});
+		}
+		let agentCloseFailed = false;
+		if (agentComposition) {
+			try {
+				await agentComposition.close();
+			} catch (error) {
+				errors.push(error);
+				agentCloseFailed = true;
+			}
+		}
+		if (agentCloseFailed) {
+			throw new AggregateError(errors, "production interactive Agent close blocked parent resource teardown");
+		}
+		let workspaceReleaseFailed = false;
+		if (workspaceComposition && workspaceResult && !workspaceReleased) {
+			try {
+				await releaseWorkspace(
+					manager,
+					workspaceComposition!,
+					workspaceResult!,
+					traceId,
+					workspaceReleaseOperation,
+				);
+				workspaceReleased = true;
+			} catch (error) {
+				errors.push(error);
+				workspaceReleaseFailed = true;
+			}
+		}
+		if (workspaceReleaseFailed) {
+			throw new AggregateError(
+				errors,
+				"production interactive Workspace release blocked parent manager teardown",
+			);
 		}
 		await collectCloseError(errors, () => manager.closeAll());
 		if (errors.length > 0) throw new AggregateError(errors, "production interactive runtime close failed");
@@ -1245,7 +1294,10 @@ export async function createProductionInteractiveRuntime(
 
 		let closePromise: Promise<void> | undefined;
 		const close = (): Promise<void> => {
-			closePromise ??= closeOwnedResources();
+			closePromise ??= closeOwnedResources().catch((error: unknown) => {
+				closePromise = undefined;
+				throw error;
+			});
 			return closePromise;
 		};
 		return {

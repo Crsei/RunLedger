@@ -503,6 +503,17 @@ describe("multi-agent production isolation E2E", () => {
 			idempotencyKey: key("finish-child"),
 			agentId: child.agentId,
 			outcome: "completed",
+			usage: {
+				inputTokens: 0,
+				outputTokens: 0,
+				usdMicros: 0,
+				wallTimeMs: 0,
+				toolCalls: 0,
+				networkBytes: 0,
+				storageBytes: 0,
+				artifactCount: 1,
+				verifications: 1,
+			},
 		})).ok).toBe(true);
 		const handoffId = createRuntimeId("command", "handoff-child-production");
 		expect((await supervisor.handoff({

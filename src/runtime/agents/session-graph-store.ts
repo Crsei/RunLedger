@@ -50,6 +50,12 @@ const AGENT_GRAPH_EVENT_TYPES = [
 	"agent.merge_failed",
 	"agent.finished",
 	"agent.failed",
+	"agent.cleanup_requested",
+	"agent.runtime_released",
+	"agent.workspace_released",
+	"agent.budget_settled",
+	"agent.cleanup_reconciliation_required",
+	"agent.cleanup_completed",
 ] as const;
 
 type AgentGraphEventType = (typeof AGENT_GRAPH_EVENT_TYPES)[number];
@@ -129,6 +135,12 @@ function isAgentGraphEvent(event: RuntimeEventV3): event is AgentGraphRuntimeEve
 		case "agent.merge_failed":
 		case "agent.finished":
 		case "agent.failed":
+		case "agent.cleanup_requested":
+		case "agent.runtime_released":
+		case "agent.workspace_released":
+		case "agent.budget_settled":
+		case "agent.cleanup_reconciliation_required":
+		case "agent.cleanup_completed":
 			return true;
 		default:
 			return false;
@@ -199,7 +211,14 @@ function decodeAgentGraphEvent(event: AgentGraphRuntimeEvent): AgentResult<Decod
 			command = { ...base, type: event.type, agentId: event.payload.agentId, from: event.payload.from, reason: event.payload.reason };
 			break;
 		case "agent.stopped":
-			command = { ...base, type: event.type, agentId: event.payload.agentId, from: event.payload.from, reason: event.payload.reason };
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				from: event.payload.from,
+				reason: event.payload.reason,
+				terminal: event.payload.terminal,
+			};
 			break;
 		case "agent.partial_committed":
 			command = { ...base, type: event.type, agentId: event.payload.agentId, from: event.payload.from, reason: event.payload.reason };
@@ -280,7 +299,13 @@ function decodeAgentGraphEvent(event: AgentGraphRuntimeEvent): AgentResult<Decod
 			};
 			break;
 		case "agent.finished":
-			command = { ...base, type: event.type, agentId: event.payload.agentId, from: event.payload.from };
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				from: event.payload.from,
+				terminal: event.payload.terminal,
+			};
 			break;
 		case "agent.failed":
 			command = {
@@ -290,6 +315,63 @@ function decodeAgentGraphEvent(event: AgentGraphRuntimeEvent): AgentResult<Decod
 				from: event.payload.from,
 				reason: event.payload.reason,
 				error: event.payload.error,
+				terminal: event.payload.terminal,
+			};
+			break;
+		case "agent.cleanup_requested":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				terminalDigest: event.payload.terminalDigest,
+				requestDigest: event.payload.requestDigest,
+			};
+			break;
+		case "agent.runtime_released":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				cleanupRequestId: event.payload.cleanupRequestId,
+				receipt: event.payload.receipt,
+			};
+			break;
+		case "agent.workspace_released":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				cleanupRequestId: event.payload.cleanupRequestId,
+				requestDigest: event.payload.requestDigest,
+				receipt: event.payload.receipt,
+			};
+			break;
+		case "agent.budget_settled":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				cleanupRequestId: event.payload.cleanupRequestId,
+				receipt: event.payload.receipt,
+			};
+			break;
+		case "agent.cleanup_reconciliation_required":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				cleanupRequestId: event.payload.cleanupRequestId,
+				stage: event.payload.stage,
+				error: event.payload.error,
+			};
+			break;
+		case "agent.cleanup_completed":
+			command = {
+				...base,
+				type: event.type,
+				agentId: event.payload.agentId,
+				cleanupRequestId: event.payload.cleanupRequestId,
+				receipt: event.payload.receipt,
 			};
 			break;
 	}
@@ -350,9 +432,11 @@ async function appendAgentGraphCommand(
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, to: command.to, ...(command.reason ? { reason: command.reason } : {}) } });
 			break;
 		case "agent.paused":
-		case "agent.stopped":
 		case "agent.partial_committed":
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, reason: command.reason } });
+			break;
+		case "agent.stopped":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, reason: command.reason, terminal: command.terminal } });
 			break;
 		case "agent.cursor_advanced":
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cursor: command.cursor } });
@@ -393,10 +477,28 @@ async function appendAgentGraphCommand(
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, parentAgentId: command.parentAgentId, childAgentId: command.childAgentId, error: command.error } });
 			break;
 		case "agent.finished":
-			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from } });
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, terminal: command.terminal } });
 			break;
 		case "agent.failed":
-			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, reason: command.reason, error: command.error } });
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, reason: command.reason, error: command.error, terminal: command.terminal } });
+			break;
+		case "agent.cleanup_requested":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, terminalDigest: command.terminalDigest, requestDigest: command.requestDigest } });
+			break;
+		case "agent.runtime_released":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cleanupRequestId: command.cleanupRequestId, receipt: command.receipt } });
+			break;
+		case "agent.workspace_released":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cleanupRequestId: command.cleanupRequestId, requestDigest: command.requestDigest, receipt: command.receipt } });
+			break;
+		case "agent.budget_settled":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cleanupRequestId: command.cleanupRequestId, receipt: command.receipt } });
+			break;
+		case "agent.cleanup_reconciliation_required":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cleanupRequestId: command.cleanupRequestId, stage: command.stage, error: command.error } });
+			break;
+		case "agent.cleanup_completed":
+			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cleanupRequestId: command.cleanupRequestId, receipt: command.receipt } });
 			break;
 	}
 	if (!appended.ok) {

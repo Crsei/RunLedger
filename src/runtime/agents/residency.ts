@@ -4,6 +4,7 @@ import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import { createIdempotencyKey, type IdempotencyKey } from "../protocol/v3/coordination.ts";
 import { createRuntimeId, isRuntimeId } from "../protocol/v3/ids.ts";
 import type { CommandId } from "../protocol/v3/ids.ts";
+import { createAgentSemanticTerminalRecord } from "./graph-store.ts";
 import type {
 	AgentErrorCode,
 	AgentGraphSemanticCommand,
@@ -12,6 +13,7 @@ import type {
 	AgentResidencyReceiptRef,
 	AgentResidencyState,
 	AgentResult,
+	AgentSemanticTerminalRecord,
 	AgentState,
 } from "./types.ts";
 
@@ -24,6 +26,18 @@ function fail<T>(code: AgentErrorCode, message: string): AgentResult<T> {
 function receiptDigest(receipt: AgentResidencyReceiptRef): string {
 	const { receiptDigest: _receiptDigest, ...body } = receipt;
 	return canonicalDigest(body);
+}
+
+function receiptsAreExact(
+	left: AgentResidencyReceiptRef,
+	right: AgentResidencyReceiptRef | undefined,
+): boolean {
+	if (!right) return false;
+	try {
+		return canonicalDigest(left) === canonicalDigest(right);
+	} catch {
+		return false;
+	}
 }
 
 export function createAgentResidencyReceipt(input: {
@@ -98,13 +112,17 @@ export function createAgentInterruptionCommands(
 		requestId: CommandId;
 		idempotencyKey: IdempotencyKey;
 		occurredAt?: string;
+		usage?: AgentSemanticTerminalRecord["usage"];
 	},
 ): AgentResult<readonly AgentGraphSemanticCommand[]> {
 	if (["completed", "failed", "stopped"].includes(node.state)) {
 		return fail("invalid_transition", "terminal agent cannot be interrupted again");
 	}
-	const validated = validateAgentResidencyReceipt(receipt, node);
-	if (!validated.ok) return validated;
+	const residencyAlreadyCommitted = receiptsAreExact(receipt, node.residency);
+	if (!residencyAlreadyCommitted) {
+		const validated = validateAgentResidencyReceipt(receipt, node);
+		if (!validated.ok) return validated;
+	}
 	if (cause === "residency_evicted" && receipt.state !== "evicted") {
 		return fail("invalid_request", "residency eviction requires an evicted receipt");
 	}
@@ -128,15 +146,27 @@ export function createAgentInterruptionCommands(
 		reason: cause,
 	} as const;
 	const state = stateForAgentInterruption(node, cause);
+	const terminal = state === "stopped" || state === "failed"
+		? createAgentSemanticTerminalRecord({
+				agentId: node.agentId,
+				requestId: request.requestId,
+				idempotencyKey: common.idempotencyKey,
+				outcome: state,
+				reason: cause,
+				...(request.usage ? { usage: request.usage } : {}),
+				partialResults: node.artifacts.map((report) => report.artifact),
+			})
+		: undefined;
 	const transition: AgentGraphSemanticCommand = state === "paused"
 		? { ...common, type: "agent.paused" }
 		: state === "partial"
 			? { ...common, type: "agent.partial_committed" }
 			: state === "stopped"
-				? { ...common, type: "agent.stopped" }
+				? { ...common, type: "agent.stopped", terminal: terminal! }
 				: {
 						...common,
 						type: "agent.failed",
+						terminal: terminal!,
 						error: {
 							code: cause,
 							messageDigest: canonicalDigest({ cause, residencyReceiptDigest: receipt.receiptDigest }),
@@ -145,5 +175,5 @@ export function createAgentInterruptionCommands(
 							effect: "none",
 						},
 					};
-	return { ok: true, value: [residency, transition] };
+	return { ok: true, value: residencyAlreadyCommitted ? [transition] : [residency, transition] };
 }

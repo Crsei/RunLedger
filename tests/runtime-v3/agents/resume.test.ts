@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createAgentResidencyReceipt } from "../../../src/runtime/agents/residency.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
-import { digest, key, rootRegistration, runtimeFakes, spawnRequest } from "./helpers.ts";
+import { digest, key, rootRegistration, runtimeFakes, spawnRequest, zeroUsage } from "./helpers.ts";
 
 async function pausedChild() {
 	const runtime = runtimeFakes();
@@ -23,6 +23,7 @@ async function pausedChild() {
 		"residency_evicted",
 		receipt.value,
 		key("pause"),
+		zeroUsage(),
 	);
 	if (!interrupted.ok) throw new Error(interrupted.error.message);
 	return { runtime, child: interrupted.value.nodes.get(spawned.value.node.agentId)! };

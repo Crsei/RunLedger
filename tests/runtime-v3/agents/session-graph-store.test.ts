@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SessionAgentGraphStore } from "../../../src/runtime/agents/session-graph-store.ts";
+import { createAgentSemanticTerminalRecord } from "../../../src/runtime/agents/graph-store.ts";
 import { AgentSupervisor } from "../../../src/runtime/agents/supervisor.ts";
 import type { AgentGraphSemanticCommand } from "../../../src/runtime/agents/types.ts";
 import { createEventStreamId, createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { EventWriter, openEventWriter } from "../../../src/runtime/session/event-writer.ts";
 import { JsonlV3EventStore } from "../../../src/runtime/session/jsonl-v3-store.ts";
 import type { WriterFence } from "../../../src/runtime/session/types.ts";
-import { artifact, digest, key, rootRegistration, runtimeFakes, spawnRequest } from "./helpers.ts";
+import { artifact, digest, key, rootRegistration, runtimeFakes, spawnRequest, zeroUsage } from "./helpers.ts";
 
 const NOW = "2026-07-22T00:00:00.000Z";
 
@@ -102,6 +103,7 @@ describe("SessionAgentGraphStore", () => {
 				idempotencyKey: key("durable-agent-finish"),
 				agentId: completed.value.node.agentId,
 				outcome: "completed",
+				usage: { ...zeroUsage(), artifactCount: 1, verifications: 1 },
 			})).ok).toBe(true);
 
 			const failedRequest = spawnRequest(root.capabilityGrant);
@@ -113,6 +115,7 @@ describe("SessionAgentGraphStore", () => {
 				agentId: failed.value.node.agentId,
 				outcome: "failed",
 				reason: "crash",
+				usage: zeroUsage(),
 			})).ok).toBe(true);
 			expect((await writer.close()).ok).toBe(true);
 
@@ -147,10 +150,24 @@ describe("SessionAgentGraphStore", () => {
 				state: "completed",
 				sessionId: completedRequest.childSessionId,
 				artifacts: [{ verification: "verified", integrity: "valid" }],
+				terminal: { outcome: "completed" },
+				residency: { state: "nonresident" },
+				workspaceReceipt: { status: "released" },
 			});
 			expect(restartedProjection.value.nodes.get(failed.value.node.agentId)).toMatchObject({
 				state: "failed",
 				sessionId: failedRequest.childSessionId,
+				terminal: { outcome: "failed", reason: "crash" },
+				residency: { state: "nonresident" },
+				workspaceReceipt: { status: "released" },
+			});
+			expect(restartedProjection.value.cleanups.get(completed.value.node.agentId)).toMatchObject({
+				terminalDigest: restartedProjection.value.nodes.get(completed.value.node.agentId)?.terminal?.terminalDigest,
+				completionReceipt: { agentId: completed.value.node.agentId },
+			});
+			expect(restartedProjection.value.cleanups.get(failed.value.node.agentId)).toMatchObject({
+				terminalDigest: restartedProjection.value.nodes.get(failed.value.node.agentId)?.terminal?.terminalDigest,
+				completionReceipt: { agentId: failed.value.node.agentId },
 			});
 			const stopKey = key("agent-graph-stop");
 			const stopped: AgentGraphSemanticCommand = {
@@ -161,6 +178,14 @@ describe("SessionAgentGraphStore", () => {
 				agentId: root.agentId,
 				from: "running",
 				reason: "cancelled",
+				terminal: createAgentSemanticTerminalRecord({
+					agentId: root.agentId,
+					requestId: createRuntimeId("command", "agent-graph-stop"),
+					idempotencyKey: stopKey,
+					outcome: "stopped",
+					reason: "cancelled",
+					partialResults: [],
+				}),
 			};
 			const committed = await restartedGraphStore.commit(root.agentId, restarted.value.revision, stopped);
 			expect(committed.ok && committed.value.status).toBe("committed");
@@ -172,14 +197,23 @@ describe("SessionAgentGraphStore", () => {
 				reason: "budget_exhausted",
 			});
 			expect(idempotencyConflict).toMatchObject({ ok: false, error: { code: "idempotency_conflict" } });
+			const staleKey = key("agent-graph-stale");
 			const stale: AgentGraphSemanticCommand = {
 				type: "agent.failed",
 				requestId: createRuntimeId("command", "agent-graph-stale"),
-				idempotencyKey: key("agent-graph-stale"),
+				idempotencyKey: staleKey,
 				occurredAt: NOW,
 				agentId: root.agentId,
 				from: "running",
 				reason: "crash",
+				terminal: createAgentSemanticTerminalRecord({
+					agentId: root.agentId,
+					requestId: createRuntimeId("command", "agent-graph-stale"),
+					idempotencyKey: staleKey,
+					outcome: "failed",
+					reason: "crash",
+					partialResults: [],
+				}),
 				error: {
 					code: "crash",
 					messageDigest: digest("9"),
@@ -203,6 +237,11 @@ describe("SessionAgentGraphStore", () => {
 				expect(agentTypes).toContain("agent.transitioned");
 				expect(agentTypes).toContain("agent.finished");
 				expect(agentTypes).toContain("agent.failed");
+				expect(agentTypes).toContain("agent.cleanup_requested");
+				expect(agentTypes).toContain("agent.runtime_released");
+				expect(agentTypes).toContain("agent.workspace_released");
+				expect(agentTypes).toContain("agent.budget_settled");
+				expect(agentTypes).toContain("agent.cleanup_completed");
 			}
 			expect((await reopenedWriter.value.close()).ok).toBe(true);
 			reopenedStore = undefined;

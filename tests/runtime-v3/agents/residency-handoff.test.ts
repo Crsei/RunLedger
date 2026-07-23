@@ -11,6 +11,7 @@ import {
 	rootRegistration,
 	runtimeFakes,
 	spawnRequest,
+	zeroUsage,
 } from "./helpers.ts";
 
 describe("agent residency and handoff", () => {
@@ -49,6 +50,7 @@ describe("agent residency and handoff", () => {
 			idempotencyKey: key("finish-lineage"),
 			agentId: child.agentId,
 			outcome: "completed",
+			usage: { ...zeroUsage(), artifactCount: 1, verifications: 1 },
 		});
 		const handoffId = createRuntimeId("command", "handoff-lineage");
 		const result = await runtime.supervisor.handoff({
@@ -97,7 +99,13 @@ describe("agent residency and handoff", () => {
 			reasonDigest: digest("4"),
 		});
 		if (!residency.ok) throw new Error(residency.error.message);
-		const interrupted = await runtime.supervisor.interrupt(child.agentId, "crash", residency.value, key("crash"));
+		const interrupted = await runtime.supervisor.interrupt(
+			child.agentId,
+			"crash",
+			residency.value,
+			key("crash"),
+			zeroUsage(),
+		);
 		expect(interrupted.ok).toBe(true);
 		if (!interrupted.ok) return;
 		expect(interrupted.value.nodes.get(child.agentId)?.state).toBe("partial");
@@ -131,7 +139,13 @@ describe("agent residency and handoff", () => {
 			reasonDigest: digest("5"),
 		});
 		if (!evicted.ok) throw new Error(evicted.error.message);
-		const paused = await runtime.supervisor.interrupt(first.value.node.agentId, "residency_evicted", evicted.value, key("evicted"));
+		const paused = await runtime.supervisor.interrupt(
+			first.value.node.agentId,
+			"residency_evicted",
+			evicted.value,
+			key("evicted"),
+			zeroUsage(),
+		);
 		expect(paused.ok && paused.value.nodes.get(first.value.node.agentId)?.state).toBe("paused");
 
 		const second = await runtime.supervisor.spawn(spawnRequest(root.capabilityGrant));
@@ -145,7 +159,13 @@ describe("agent residency and handoff", () => {
 			reasonDigest: digest("6"),
 		});
 		if (!unavailable.ok) throw new Error(unavailable.error.message);
-		const failed = await runtime.supervisor.interrupt(second.value.node.agentId, "timeout", unavailable.value, key("timeout"));
+		const failed = await runtime.supervisor.interrupt(
+			second.value.node.agentId,
+			"timeout",
+			unavailable.value,
+			key("timeout"),
+			zeroUsage(),
+		);
 		expect(failed.ok && failed.value.nodes.get(second.value.node.agentId)?.state).toBe("failed");
 	});
 
@@ -161,6 +181,7 @@ describe("agent residency and handoff", () => {
 			idempotencyKey: key("premature"),
 			agentId: child.agentId,
 			outcome: "completed",
+			usage: zeroUsage(),
 		});
 		expect(premature.ok).toBe(false);
 		if (!premature.ok) expect(premature.error.code).toBe("artifact_contract_mismatch");
@@ -184,6 +205,7 @@ describe("agent residency and handoff", () => {
 			idempotencyKey: key("finish"),
 			agentId: child.agentId,
 			outcome: "completed",
+			usage: { ...zeroUsage(), artifactCount: 1, verifications: 1 },
 		});
 		expect(finished.ok && finished.value.nodes.get(child.agentId)?.state).toBe("completed");
 		const handoff = await runtime.supervisor.handoff({
@@ -223,6 +245,7 @@ describe("agent residency and handoff", () => {
 				idempotencyKey: key(`finish-${verification}`),
 				agentId: child.agentId,
 				outcome: "completed",
+				usage: zeroUsage(),
 			});
 			expect(finished).toMatchObject({
 				ok: false,
@@ -246,6 +269,7 @@ describe("agent residency and handoff", () => {
 			agentId: spawned.value.node.agentId,
 			outcome: "failed",
 			reason: "crash",
+			usage: zeroUsage(),
 		});
 		expect(failed.ok && failed.value.nodes.get(spawned.value.node.agentId)?.state).toBe("failed");
 		expect(failed.ok && failed.value.nodes.get(root.agentId)?.state).toBe("running");

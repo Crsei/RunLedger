@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RootBudgetGuardAdapter } from "../../../src/runtime/agents/supervisor.ts";
+import { agentBudgetSettlementRequestDigest } from "../../../src/runtime/agents/graph-store.ts";
 import type { AgentBudgetRequest } from "../../../src/runtime/agents/types.ts";
 import {
 	BUDGET_DIMENSIONS,
@@ -75,16 +76,47 @@ describe("root BudgetGuard adapter", () => {
 		const denied = await adapter.reserve(reserveRequest("second"));
 		expect(denied.ok).toBe(false);
 		if (!denied.ok) expect(denied.error.code).toBe("budget_denied");
-		expect(
-			(
-				await adapter.settle({
-					idempotencyKey: key("settle-first"),
-					reservation: first.value,
-					outcome: "stopped",
-					partialResults: [],
-				})
-			).ok,
-		).toBe(true);
+		const missingUsageBody = {
+			idempotencyKey: key("settle-first-missing-usage"),
+			reservation: first.value,
+			outcome: "stopped" as const,
+			partialResults: [],
+			settledAt: "2026-07-22T00:00:01.000Z",
+		};
+		expect(await adapter.settle({
+			...missingUsageBody,
+			requestDigest: agentBudgetSettlementRequestDigest(missingUsageBody),
+		})).toMatchObject({ ok: false, error: { code: "invalid_request" } });
+		const settlementBody = {
+			idempotencyKey: key("settle-first"),
+			reservation: first.value,
+			outcome: "stopped" as const,
+			usage: {
+				inputTokens: 0,
+				outputTokens: 0,
+				usdMicros: 0,
+				wallTimeMs: 0,
+				toolCalls: 0,
+				networkBytes: 0,
+				storageBytes: 0,
+				artifactCount: 0,
+				verifications: 0,
+			},
+			partialResults: [],
+			settledAt: "2026-07-22T00:00:02.000Z",
+		};
+		const settled = await adapter.settle({
+			...settlementBody,
+			requestDigest: agentBudgetSettlementRequestDigest(settlementBody),
+		});
+		expect(settled).toMatchObject({
+			ok: true,
+			value: {
+				reservationId: first.value.reservationId,
+				outcome: "stopped",
+				receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+			},
+		});
 		expect((await adapter.reserve(reserveRequest("third"))).ok).toBe(true);
 	});
 });

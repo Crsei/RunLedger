@@ -63,6 +63,36 @@ describe("bounded agent supervisor", () => {
 		expect(runtime.launcher.launches).toHaveLength(1);
 	});
 
+	it("rejects a launcher response whose launch receipt digest is not self-validating", async () => {
+		const runtime = runtimeFakes();
+		const root = rootRegistration();
+		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
+		const originalLaunch = runtime.launcher.launch.bind(runtime.launcher);
+		runtime.launcher.launch = async (request) => {
+			const launched = await originalLaunch(request);
+			if (!launched.ok || launched.value.status !== "started") return launched;
+			return {
+				ok: true,
+				value: {
+					...launched.value,
+					launchReceipt: {
+						...launched.value.launchReceipt,
+						receiptDigest: "f".repeat(64),
+					},
+				},
+			};
+		};
+
+		const spawned = await runtime.supervisor.spawn(spawnRequest(root.capabilityGrant));
+		expect(spawned).toMatchObject({ ok: false, error: { code: "launch_failed" } });
+		const graph = await runtime.supervisor.graph();
+		const child = graph.ok
+			? [...graph.value.nodes.values()].find((node) => node.parentAgentId === root.agentId)
+			: undefined;
+		expect(child).toMatchObject({ state: "failed", stateReason: "launch_rejected" });
+		expect(child?.launchReceipt).toBeUndefined();
+	});
+
 	it("makes an identical retry idempotent without another evaluator or launch", async () => {
 		const runtime = runtimeFakes();
 		const root = rootRegistration();

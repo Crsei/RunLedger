@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createLocalIdentityContext } from "../../src/runtime/identity/local-principal.ts";
 import { canonicalDigest, canonicalJson } from "../../src/runtime/protocol/v3/canonical-json.ts";
+import { createIdempotencyKey } from "../../src/runtime/protocol/v3/coordination.ts";
 import {
 	createSessionEventStreamRef,
 	isAllowedGoalTransition,
@@ -116,6 +117,140 @@ describe("Runtime v3 exact event schemas", () => {
 		expect(isRuntimeEventSchemaCatalogExhaustive()).toBe(true);
 		expect(Object.keys(RUNTIME_EVENT_PAYLOAD_SCHEMAS)).toEqual([...RUNTIME_EVENT_TYPES]);
 		expect(new Set(Object.values(RUNTIME_EVENT_PAYLOAD_SCHEMAS)).size).toBe(RUNTIME_EVENT_TYPES.length);
+	});
+
+	it("freezes semantic terminal and ordered Agent cleanup event payloads", () => {
+		const base = validEvent();
+		const agentId = createRuntimeId("agent", "cleanup-schema");
+		const sessionId = base.stream.scope === "session" ? base.stream.sessionId : createRuntimeId("session", "cleanup-schema");
+		const requestId = createRuntimeId("command", "cleanup-schema");
+		const cleanupRequestId = createRuntimeId("command", "cleanup-schema-intent");
+		const common = {
+			rootAgentId: createRuntimeId("agent", "cleanup-schema-root"),
+			graphRevision: 1,
+			requestId,
+			idempotencyKey: createIdempotencyKey("cleanup-schema-idempotency-key"),
+			commandDigest: digest,
+		};
+		const terminal = {
+			requestId,
+			requestDigest: digest,
+			outcome: "failed" as const,
+			reason: "crash" as const,
+			partialResults: [],
+			terminalDigest: digest,
+		};
+		const residencyReceipt = {
+			receiptId: createRuntimeId("receipt", "cleanup-schema-residency"),
+			agentId,
+			sessionId,
+			runtimeInstanceId: createRuntimeId("runtime", "cleanup-schema"),
+			state: "nonresident" as const,
+			revision: 2,
+			observedAt: base.timestamp,
+			receiptDigest: digest,
+		};
+		const runtimeReceipt = {
+			receiptId: createRuntimeId("receipt", "cleanup-schema-runtime"),
+			requestId,
+			requestDigest: digest,
+			agentId,
+			sessionId,
+			runtimeInstanceId: residencyReceipt.runtimeInstanceId,
+			launchReceiptId: createRuntimeId("receipt", "cleanup-schema-launch"),
+			launchRevision: 1,
+			writerFenceReceiptId: createRuntimeId("receipt", "cleanup-schema-fence"),
+			writerFenceReceiptDigest: digest,
+			finalCursor: {
+				stream: {
+					scope: "session" as const,
+					streamId: createRuntimeId("eventStream", "cleanup-schema-child"),
+					sessionId,
+				},
+				sequence: 2,
+				eventId: createRuntimeId("event", "cleanup-schema-child-final"),
+				eventHash: digest,
+			},
+			residencyReceipt,
+			releasedAt: base.timestamp,
+			receiptDigest: digest,
+		};
+		const workspaceReceipt = {
+			receiptId: createRuntimeId("receipt", "cleanup-schema-workspace"),
+			strategy: {
+				strategyId: createRuntimeId("resource", "cleanup-schema-strategy"),
+				kind: "managed_worktree" as const,
+				strategyDigest: digest,
+			},
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "cleanup-schema"),
+			repositoryId: createRuntimeId("repository", "cleanup-schema"),
+			bindingRevision: 1,
+			bindingDigest: digest,
+			status: "released" as const,
+			issuedAt: base.timestamp,
+			receiptDigest: digest,
+		};
+		const budgetReceipt = {
+			receiptId: createRuntimeId("receipt", "cleanup-schema-budget"),
+			reservationId: createRuntimeId("budgetReservation", "cleanup-schema"),
+			outcome: "failed" as const,
+			usageDigest: digest,
+			partialResultsDigest: digest,
+			requestDigest: digest,
+			settledAt: base.timestamp,
+			receiptDigest: digest,
+		};
+		const cleanupReceipt = {
+			receiptId: createRuntimeId("receipt", "cleanup-schema-completed"),
+			requestId: cleanupRequestId,
+			requestDigest: digest,
+			agentId,
+			sessionId,
+			terminalDigest: terminal.terminalDigest,
+			runtimeReleaseReceiptId: runtimeReceipt.receiptId,
+			runtimeReleaseReceiptDigest: runtimeReceipt.receiptDigest,
+			workspaceReleaseReceiptId: workspaceReceipt.receiptId,
+			workspaceReleaseReceiptDigest: workspaceReceipt.receiptDigest,
+			budgetSettlementReceiptId: budgetReceipt.receiptId,
+			budgetSettlementReceiptDigest: budgetReceipt.receiptDigest,
+			completedAt: base.timestamp,
+			receiptDigest: digest,
+		};
+		const payloads = {
+			"agent.finished": {
+				...common,
+				agentId,
+				from: "running" as const,
+				terminal: {
+					requestId: terminal.requestId,
+					requestDigest: terminal.requestDigest,
+					outcome: "completed" as const,
+					partialResults: terminal.partialResults,
+					terminalDigest: terminal.terminalDigest,
+				},
+			},
+			"agent.cleanup_requested": { ...common, agentId, terminalDigest: terminal.terminalDigest, requestDigest: digest },
+			"agent.runtime_released": { ...common, agentId, cleanupRequestId, receipt: runtimeReceipt },
+			"agent.workspace_released": { ...common, agentId, cleanupRequestId, requestDigest: digest, receipt: workspaceReceipt },
+			"agent.budget_settled": { ...common, agentId, cleanupRequestId, receipt: budgetReceipt },
+			"agent.cleanup_reconciliation_required": {
+				...common,
+				agentId,
+				cleanupRequestId,
+				stage: "runtime_release" as const,
+				error: { code: "close_uncertain", messageDigest: digest, retryable: true, outcomeCertain: false, effect: "uncertain" as const },
+			},
+			"agent.cleanup_completed": { ...common, agentId, cleanupRequestId, receipt: cleanupReceipt },
+		} as const;
+		for (const [type, payload] of Object.entries(payloads)) {
+			expect(validateRuntimeEvent({ ...base, type, payload })).toMatchObject({ ok: true });
+			expect(validateRuntimeEvent({ ...base, type, payload: { ...payload, future: true } })).toMatchObject({
+				ok: false,
+				code: "unknown_field",
+			});
+			expect(MANDATORY_FLUSH_EVENT_TYPES.has(type as keyof typeof payloads)).toBe(true);
+		}
 	});
 
 	it("publishes fail-closed goal transition rules", () => {

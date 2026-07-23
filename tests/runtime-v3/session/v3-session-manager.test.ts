@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { forkV3FromCli, migrateLegacyFromCli } from "../../../src/cli/v3-session-commands.ts";
 import { ArtifactCasStore, ArtifactRepository } from "../../../src/runtime/artifacts/cas-store.ts";
 import { UnavailableArtifactKeyProvider } from "../../../src/runtime/artifacts/key-provider.ts";
@@ -10,6 +10,9 @@ import { SessionArtifactJournal } from "../../../src/runtime/artifacts/session-j
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { DEFAULT_RUNTIME_FEATURES, type RuntimeFeatureFlags } from "../../../src/runtime/runtime-features.ts";
+import { EventWriter } from "../../../src/runtime/session/event-writer.ts";
+import { JsonlV3EventStore } from "../../../src/runtime/session/jsonl-v3-store.ts";
+import { FileWriterLeaseStore } from "../../../src/runtime/session/writer-lease.ts";
 import { readAllRuntimeEvents } from "../../../src/runtime/session/snapshot.ts";
 import { SessionManager } from "../../../src/storage/session-manager.ts";
 import { V3SessionManager } from "../../../src/storage/v3-session-manager.ts";
@@ -24,6 +27,8 @@ function temporaryRoot(): string {
 }
 
 afterEach(() => {
+	vi.useRealTimers();
+	vi.restoreAllMocks();
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -44,6 +49,130 @@ describe("V3SessionManager", () => {
 			{ role: "user", content: [{ type: "text", text: "hello" }] },
 		]);
 		await reopened.closeAll();
+	});
+
+	it("stops renewing an uncertain partial close and permits cold takeover only after lease expiry", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-07-23T00:00:00.000Z"));
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const firstFence = manager.writerFenceReceipt();
+		const originalClose = JsonlV3EventStore.prototype.close;
+		let closeAttempts = 0;
+		vi.spyOn(JsonlV3EventStore.prototype, "close").mockImplementation(async function () {
+			closeAttempts += 1;
+			const result = await originalClose.call(this);
+			if (closeAttempts === 1 && result.ok) {
+				return {
+					ok: false,
+					error: {
+						code: "durable_write_failed",
+						message: "injected result loss after the event store closed",
+						retryable: false,
+						effect: "uncertain",
+					},
+				};
+			}
+			return result;
+		});
+		const heartbeat = vi.spyOn(FileWriterLeaseStore.prototype, "heartbeat");
+
+		const failedClose = manager.closeAll();
+		await expect(failedClose).rejects.toThrow("v3 event writer close failed");
+		expect(manager.isClosed()).toBe(false);
+		expect(manager.closeAll()).toBe(failedClose);
+		await expect(manager.closeAll()).rejects.toThrow("v3 event writer close failed");
+		expect(closeAttempts).toBe(1);
+		await expect(V3SessionManager.open(
+			manager.filePath(),
+			FLAGS,
+			manager.identity(),
+			{ runtimeId: createRuntimeId("runtime", "competing-close") },
+		)).rejects.toThrow("v3 writer lease unavailable");
+
+		await vi.advanceTimersByTimeAsync(31_000);
+		expect(heartbeat).not.toHaveBeenCalled();
+		const recovered = await V3SessionManager.open(
+			manager.filePath(),
+			FLAGS,
+			manager.identity(),
+			{ runtimeId: createRuntimeId("runtime", "cold-takeover") },
+		);
+		expect(recovered.writerFenceReceipt().writerEpoch).toBe(firstFence.writerEpoch + 1);
+		expect(recovered.recoveryDecision()).toMatchObject({ kind: "resume" });
+		await recovered.closeAll();
+	});
+
+	it("does not revive its heartbeat when lease release fails after a confirmed writer close", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date("2026-07-23T01:00:00.000Z"));
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const firstFence = manager.writerFenceReceipt();
+		const release = vi.spyOn(FileWriterLeaseStore.prototype, "release").mockReturnValueOnce({
+			ok: false,
+			error: {
+				code: "durable_write_failed",
+				message: "injected lease release failure",
+				retryable: true,
+				effect: "none",
+			},
+		});
+		const heartbeat = vi.spyOn(FileWriterLeaseStore.prototype, "heartbeat");
+
+		const failedClose = manager.closeAll();
+		await expect(failedClose).rejects.toThrow("v3 writer lease release failed");
+		expect(manager.isClosed()).toBe(false);
+		expect(manager.closeAll()).toBe(failedClose);
+		expect(release).toHaveBeenCalledTimes(1);
+
+		await vi.advanceTimersByTimeAsync(31_000);
+		expect(heartbeat).not.toHaveBeenCalled();
+		const recovered = await V3SessionManager.open(
+			manager.filePath(),
+			FLAGS,
+			manager.identity(),
+			{ runtimeId: createRuntimeId("runtime", "release-failure-takeover") },
+		);
+		expect(recovered.writerFenceReceipt().writerEpoch).toBe(firstFence.writerEpoch + 1);
+		await recovered.closeAll();
+	});
+
+	it("keeps renewing its writer lease while a slow writer close is still pending", async () => {
+		vi.useFakeTimers();
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const originalClose = EventWriter.prototype.close;
+		let releaseClose: (() => void) | undefined;
+		const closeGate = new Promise<void>((resolve) => {
+			releaseClose = resolve;
+		});
+		vi.spyOn(EventWriter.prototype, "close").mockImplementationOnce(async function () {
+			await closeGate;
+			return originalClose.call(this);
+		});
+		const heartbeat = vi.spyOn(FileWriterLeaseStore.prototype, "heartbeat");
+
+		const closing = manager.closeAll();
+		await vi.advanceTimersByTimeAsync(20_000);
+		expect(heartbeat).toHaveBeenCalledTimes(2);
+		expect(manager.isClosed()).toBe(false);
+
+		releaseClose?.();
+		await expect(closing).resolves.toBeUndefined();
+		expect(manager.isClosed()).toBe(true);
 	});
 
 	it("migrates legacy v2 through an explicit empty v3 target and lists it as v3", async () => {
