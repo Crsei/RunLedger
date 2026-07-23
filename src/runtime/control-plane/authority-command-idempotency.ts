@@ -26,6 +26,10 @@ import {
 	type ControlPlaneErrorShape,
 	type ControlPlaneResult,
 } from "./errors.ts";
+import {
+	canonicalCommandEffectMatches,
+	type CanonicalCommandEffect,
+} from "./canonical-command.ts";
 import type {
 	CommandClaimContext,
 	CommandClaimOutcome,
@@ -35,10 +39,6 @@ import type {
 	CommittedCommandReceipt,
 	RejectedCommandReceipt,
 } from "./idempotency.ts";
-import {
-	isControlPlaneCommandEffect,
-	type ControlPlaneCommandEffect,
-} from "./types.ts";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -49,7 +49,7 @@ export interface AuthorityCommandReplay {
 
 export interface AuthorityCommandCommitCursorInput {
 	readonly claim: CanonicalCommandProjection["claim"];
-	readonly result: ControlPlaneCommandEffect;
+	readonly result: CanonicalCommandEffect;
 	readonly events: readonly RuntimeEventV3[];
 }
 
@@ -71,7 +71,7 @@ export interface AuthorityCommandIdempotencyOptions {
 	) => MaybePromise<EventCursor | null>;
 	readonly resolveAppliedEffect?: (
 		input: AuthorityCommandAppliedResolutionInput,
-	) => MaybePromise<ControlPlaneCommandEffect | null>;
+	) => MaybePromise<CanonicalCommandEffect | null>;
 	readonly resolveRejectedError?: (
 		input: AuthorityCommandRejectedResolutionInput,
 	) => MaybePromise<ControlPlaneErrorShape | null>;
@@ -157,7 +157,7 @@ function matchRequest(
 	return { status: "matched", command: byCommandId };
 }
 
-function inferAppliedCursor(result: ControlPlaneCommandEffect): EventCursor | null {
+function inferAppliedCursor(result: CanonicalCommandEffect): EventCursor | null {
 	switch (result.type) {
 		case "session:start":
 		case "session:resume":
@@ -170,6 +170,11 @@ function inferAppliedCursor(result: ControlPlaneCommandEffect): EventCursor | nu
 		case "turn:followUp":
 			return result.durableCursor;
 		case "turn:interrupt":
+			return result.durableCursor;
+		case "agent:spawn":
+		case "agent:cancel":
+		case "agent:resume":
+		case "agent:handoff":
 			return result.durableCursor;
 		case "queue:cancel":
 			return result.receipts.at(-1)?.durableCursor ?? null;
@@ -203,7 +208,7 @@ export class AuthorityCommandIdempotencyRepository implements CommandIdempotency
 	readonly #resolveAppliedCursor: AuthorityCommandIdempotencyOptions["resolveAppliedCursor"];
 	readonly #resolveAppliedEffect: AuthorityCommandIdempotencyOptions["resolveAppliedEffect"];
 	readonly #resolveRejectedError: AuthorityCommandIdempotencyOptions["resolveRejectedError"];
-	readonly #appliedCache = new Map<CommandId, ControlPlaneCommandEffect>();
+	readonly #appliedCache = new Map<CommandId, CanonicalCommandEffect>();
 	readonly #rejectedCache = new Map<CommandId, ControlPlaneErrorShape>();
 	#serial: Promise<void> = Promise.resolve();
 
@@ -298,8 +303,7 @@ export class AuthorityCommandIdempotencyRepository implements CommandIdempotency
 			return controlPlaneFailure("recovery_required", "canonical command applied event is missing");
 		}
 		if (
-			!isControlPlaneCommandEffect(command.outcome.result) ||
-			command.outcome.result.type !== command.claim.commandType ||
+			!canonicalCommandEffectMatches(command.claim.commandType, command.outcome.result) ||
 			canonicalDigest(command.outcome.result) !== command.outcome.resultDigest ||
 			canonicalDigest(terminal.payload.result) !== command.outcome.resultDigest
 		) return controlPlaneFailure("recovery_required", "canonical command effect conflicts with terminal evidence");
@@ -314,8 +318,7 @@ export class AuthorityCommandIdempotencyRepository implements CommandIdempotency
 				// advisory resolver 失败不能遮蔽 canonical terminal。
 			}
 		}
-		const result = accelerated && isControlPlaneCommandEffect(accelerated) &&
-			accelerated.type === command.claim.commandType &&
+		const result = accelerated && canonicalCommandEffectMatches(command.claim.commandType, accelerated) &&
 			canonicalDigest(accelerated) === command.outcome.resultDigest
 			? accelerated
 			: command.outcome.result;
@@ -467,7 +470,7 @@ export class AuthorityCommandIdempotencyRepository implements CommandIdempotency
 	async #resolveCommitCursor(
 		replay: AuthorityCommandReplay,
 		matched: MatchedClaim,
-		result: ControlPlaneCommandEffect,
+		result: CanonicalCommandEffect,
 	): Promise<ControlPlaneResult<EventCursor>> {
 		let cursor = inferAppliedCursor(result);
 		if (!cursor && this.#resolveAppliedCursor) {
@@ -535,7 +538,7 @@ export class AuthorityCommandIdempotencyRepository implements CommandIdempotency
 	#receiptFromKnownEffect(
 		replay: AuthorityCommandReplay,
 		command: CanonicalCommandProjection,
-		result: ControlPlaneCommandEffect,
+		result: CanonicalCommandEffect,
 	): ControlPlaneResult<CommittedCommandReceipt> {
 		if (command.outcome.status !== "applied") {
 			return controlPlaneFailure("idempotency_conflict", "command is not durably applied");
@@ -560,10 +563,10 @@ export class AuthorityCommandIdempotencyRepository implements CommandIdempotency
 
 	public commit(
 		claim: CommandClaimToken,
-		result: ControlPlaneCommandEffect,
+		result: CanonicalCommandEffect,
 	): Promise<ControlPlaneResult<CommittedCommandReceipt>> {
 		return this.#exclusive(async () => {
-			if (!isControlPlaneCommandEffect(result) || result.type !== claim.commandType) {
+			if (!canonicalCommandEffectMatches(claim.commandType, result)) {
 				return controlPlaneFailure("adapter_contract_violation", "command result type does not match claim", false, undefined, "uncertain");
 			}
 			const replay = await this.#replay();

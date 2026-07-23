@@ -3,9 +3,9 @@
 import { Type, type Static, type TSchema } from "typebox";
 import { ArtifactRefSchema, GatewayRateLimitReceiptSchema } from "./capability.ts";
 import {
-	CONTROL_PLANE_COMMAND_TYPES,
+	CANONICAL_COMMAND_TYPES,
 	IdempotencyKeySchema,
-	type ControlPlaneCommandType,
+	type CanonicalCommandType,
 } from "./coordination.ts";
 import type { RuntimeEventType } from "./event-catalog.ts";
 import { EventCursorSchema, ExpectedRevisionSchema } from "./event-references.ts";
@@ -580,8 +580,8 @@ const commandDomain = Type.Union([
 	Type.Literal("lifecycle"),
 	Type.Literal("policy"),
 ]);
-const controlPlaneCommandType = Type.Unsafe<ControlPlaneCommandType>(
-	Type.Union(CONTROL_PLANE_COMMAND_TYPES.map((entry) => Type.Literal(entry))),
+const canonicalCommandType = Type.Unsafe<CanonicalCommandType>(
+	Type.Union(CANONICAL_COMMAND_TYPES.map((entry) => Type.Literal(entry))),
 );
 const commandClaimRef = exact({
 	commandId: id("command"),
@@ -642,6 +642,42 @@ const commandHumanGateDecision = exact({
 	decidedAt: timestamp,
 	receiptDigest: digest,
 });
+const commandAgentSummary = exact({
+	agentId: id("agent"),
+	parentAgentId: Type.Union([id("agent"), Type.Null()]),
+	sessionId: id("session"),
+	role: Type.Union([
+		Type.Literal("search"),
+		Type.Literal("build"),
+		Type.Literal("review"),
+		Type.Literal("qa"),
+	]),
+	state: Type.Union([
+		Type.Literal("pending"),
+		Type.Literal("starting"),
+		Type.Literal("running"),
+		Type.Literal("paused"),
+		Type.Literal("partial"),
+		Type.Literal("completed"),
+		Type.Literal("failed"),
+		Type.Literal("stopped"),
+	]),
+	residency: Type.Union([
+		Type.Literal("nonresident"),
+		Type.Literal("resident"),
+		Type.Literal("evicted"),
+		Type.Literal("recovering"),
+		Type.Literal("unavailable"),
+	]),
+	artifactCount: Type.Integer({ minimum: 0, maximum: 4096 }),
+});
+const commandAgentEffectBase = {
+	sessionId: id("session"),
+	agent: commandAgentSummary,
+	graphRevision: revision,
+	durableCursor: eventCursor,
+	receiptDigest: digest,
+} as const;
 /**
  * command terminal 必须自包含完整结果，不能只保留 digest 再依赖进程内 cache。
  * 事件层仍受 64 KiB payload 总上限约束，内部集合另设显式上限。
@@ -696,6 +732,10 @@ const commandEffect = Type.Union([
 	exact({ type: Type.Literal("changeProposal:requestDraftPr"), receipt: commandDraftPrProviderReceipt }),
 	exact({ type: Type.Literal("humanGate:resolve"), decision: commandHumanGateDecision }),
 	exact({ type: Type.Literal("shutdown"), acceptedAt: timestamp, drainDeadline: timestamp }),
+	exact({ type: Type.Literal("agent:spawn"), ...commandAgentEffectBase }),
+	exact({ type: Type.Literal("agent:cancel"), ...commandAgentEffectBase }),
+	exact({ type: Type.Literal("agent:resume"), ...commandAgentEffectBase }),
+	exact({ type: Type.Literal("agent:handoff"), ...commandAgentEffectBase }),
 ]);
 const commandErrorDetailValue = Type.Union([
 	Type.String({ maxLength: 512 }),
@@ -1649,7 +1689,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 	}),
 	"command.claimed": exact({
 		commandId: id("command"),
-		commandType: controlPlaneCommandType,
+		commandType: canonicalCommandType,
 		idempotencyKey: IdempotencyKeySchema,
 		requestDigest: digest,
 		requestedBy: id("principal"),

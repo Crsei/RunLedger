@@ -99,6 +99,18 @@ function claimRequest(command: ControlPlaneCommand): CommandClaimRequest {
 	};
 }
 
+function committedEffect(
+	command: ControlPlaneCommand,
+	effect: unknown,
+): ControlPlaneResult<ControlPlaneCommandEffect> {
+	return isControlPlaneCommandEffect(effect) && effect.type === command.type
+		? { ok: true, value: effect }
+		: controlPlaneFailure(
+				"recovery_required",
+				"canonical command receipt does not match the schema v1 command",
+			);
+}
+
 function claimContext(
 	command: ControlPlaneCommand,
 	context: ControlPlaneRequestContext,
@@ -322,6 +334,8 @@ export class ControlPlaneCommandBus {
 			return previous;
 		}
 		if (previous.value?.status === "duplicate") {
+			const effect = committedEffect(command, previous.value.receipt.result);
+			if (!effect.ok) return effect;
 			return {
 				ok: true,
 				value: {
@@ -329,7 +343,7 @@ export class ControlPlaneCommandBus {
 					commandId: command.commandId,
 					type: command.type,
 					status: "duplicate",
-					result: previous.value.receipt.result,
+					result: effect.value,
 				},
 			};
 		}
@@ -362,6 +376,8 @@ export class ControlPlaneCommandBus {
 			return claimed;
 		}
 		if (claimed.value.status === "duplicate") {
+			const effect = committedEffect(command, claimed.value.receipt.result);
+			if (!effect.ok) return effect;
 			return {
 				ok: true,
 				value: {
@@ -369,7 +385,7 @@ export class ControlPlaneCommandBus {
 					commandId: command.commandId,
 					type: command.type,
 					status: "duplicate",
-					result: claimed.value.receipt.result,
+					result: effect.value,
 				},
 			};
 		}
@@ -418,6 +434,14 @@ export class ControlPlaneCommandBus {
 			), "commit");
 		}
 		this.#afterCommit?.(command, executed.value, committed.value);
+		const committedResult = committedEffect(command, committed.value.result);
+		if (!committedResult.ok) {
+			return this.#markClaimUncertain(command, request, claim, {
+				ok: false,
+				error: committedResult.error,
+				effect: "uncertain",
+			}, "commit");
+		}
 		return {
 			ok: true,
 			value: {
@@ -425,7 +449,7 @@ export class ControlPlaneCommandBus {
 				commandId: command.commandId,
 				type: command.type,
 				status: "executed",
-				result: committed.value.result,
+				result: committedResult.value,
 			},
 		};
 	}

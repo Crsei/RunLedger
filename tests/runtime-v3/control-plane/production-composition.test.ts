@@ -175,6 +175,29 @@ describe("production composition receipt", () => {
 		});
 	});
 
+	it("advertises multi_agent only with the frozen Supervisor and child-runtime evidence set", () => {
+		const withoutChildFactory = receipt([
+			...turnAdapters(),
+			adapter("agent_supervisor", ["multi_agent"]),
+		]);
+		if (!withoutChildFactory.ok) throw new Error(withoutChildFactory.error.message);
+		expect(validate(withoutChildFactory.value)).toMatchObject({
+			ok: true,
+			value: { features: expect.not.arrayContaining(["multi_agent"]) },
+		});
+
+		const complete = receipt([
+			...turnAdapters(),
+			adapter("agent_supervisor", ["multi_agent"]),
+			adapter("child_runtime_factory", ["multi_agent"]),
+		]);
+		if (!complete.ok) throw new Error(complete.error.message);
+		expect(validate(complete.value)).toMatchObject({
+			ok: true,
+			value: { features: expect.arrayContaining(["multi_agent"]) },
+		});
+	});
+
 	it("rejects fake identities, expired trust, and caller-tampered advertisement or signature", () => {
 		const fake = createProductionCompositionReceipt({
 			...scope,

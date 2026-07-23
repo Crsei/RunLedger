@@ -35,7 +35,7 @@ export const IdempotencyKeySchema = Type.Unsafe<IdempotencyKey>(
 	}),
 );
 
-/** Control Plane API 与 canonical command event 共用的封闭命令名。 */
+/** schema v1 Control Plane API 的封闭命令名；wire shape 保持不变。 */
 export const CONTROL_PLANE_COMMAND_TYPES = [
 	"session:start",
 	"session:resume",
@@ -58,6 +58,31 @@ const CONTROL_PLANE_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(CONTROL_PLAN
 
 export function isControlPlaneCommandType(value: unknown): value is ControlPlaneCommandType {
 	return typeof value === "string" && CONTROL_PLANE_COMMAND_TYPE_SET.has(value);
+}
+
+/** canonical command journal 对 schema v2 agent mutation 的 additive 扩展。 */
+export const AGENT_CONTROL_PLANE_COMMAND_TYPES = [
+	"agent:spawn",
+	"agent:cancel",
+	"agent:resume",
+	"agent:handoff",
+] as const;
+
+export type AgentControlPlaneCommandType =
+	(typeof AGENT_CONTROL_PLANE_COMMAND_TYPES)[number];
+export type CanonicalCommandType =
+	| ControlPlaneCommandType
+	| AgentControlPlaneCommandType;
+
+export const CANONICAL_COMMAND_TYPES = [
+	...CONTROL_PLANE_COMMAND_TYPES,
+	...AGENT_CONTROL_PLANE_COMMAND_TYPES,
+] as const satisfies readonly CanonicalCommandType[];
+
+const CANONICAL_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(CANONICAL_COMMAND_TYPES);
+
+export function isCanonicalCommandType(value: unknown): value is CanonicalCommandType {
+	return typeof value === "string" && CANONICAL_COMMAND_TYPE_SET.has(value);
 }
 
 export function createIdempotencyKey(seed: string = randomUUID()): IdempotencyKey {

@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { EventCursor, ExpectedRevision } from "../protocol/v3/events.ts";
+import type { CanonicalCommandType } from "../protocol/v3/coordination.ts";
 import type {
 	AuthorityId,
 	CommandId,
@@ -14,12 +15,12 @@ import type {
 import type { IdempotencyKey } from "../protocol/v3/coordination.ts";
 import type { ControlPlaneErrorShape, ControlPlaneResult } from "./errors.ts";
 import { controlPlaneFailure } from "./errors.ts";
-import type { ControlPlaneCommandEffect, ControlPlaneCommandType } from "./types.ts";
+import type { CanonicalCommandEffect } from "./canonical-command.ts";
 
 export interface CommandClaimRequest {
 	commandId: CommandId;
 	idempotencyKey: IdempotencyKey;
-	commandType: ControlPlaneCommandType;
+	commandType: CanonicalCommandType;
 	requestDigest: string;
 }
 
@@ -41,7 +42,7 @@ export interface CommandClaimToken extends CommandClaimRequest {
 }
 
 export interface CommittedCommandReceipt extends CommandClaimRequest {
-	result: ControlPlaneCommandEffect;
+	result: CanonicalCommandEffect;
 	committedAt: string;
 	appliedCursor?: EventCursor;
 }
@@ -65,7 +66,7 @@ export type CommandClaimOutcome =
 export interface CommandIdempotencyRepository {
 	lookup(request: CommandClaimRequest, context?: CommandClaimContext): Promise<ControlPlaneResult<CommandClaimOutcome | null>>;
 	claim(request: CommandClaimRequest, context?: CommandClaimContext): Promise<ControlPlaneResult<CommandClaimOutcome>>;
-	commit(claim: CommandClaimToken, result: ControlPlaneCommandEffect): Promise<ControlPlaneResult<CommittedCommandReceipt>>;
+	commit(claim: CommandClaimToken, result: CanonicalCommandEffect): Promise<ControlPlaneResult<CommittedCommandReceipt>>;
 	reject(claim: CommandClaimToken, error: ControlPlaneErrorShape): Promise<ControlPlaneResult<RejectedCommandReceipt>>;
 	markReconciliationRequired(claim: CommandClaimToken, reasonDigest: string): Promise<ControlPlaneResult<void>>;
 	/** legacy/test-only rollback；production canonical repository 会把它持久化为 rejected。 */
@@ -181,7 +182,7 @@ export class InMemoryCommandIdempotencyRepository implements CommandIdempotencyR
 
 	public commit(
 		claim: CommandClaimToken,
-		result: ControlPlaneCommandEffect,
+		result: CanonicalCommandEffect,
 	): Promise<ControlPlaneResult<CommittedCommandReceipt>> {
 		return this.#exclusive(() => {
 			const stored = this.#byCommandId.get(claim.commandId);

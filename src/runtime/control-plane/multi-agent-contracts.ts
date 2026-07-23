@@ -20,6 +20,7 @@ import { controlPlaneFailure } from "./errors.ts";
 import {
 	ControlPlaneSessionHandleSchema,
 	type ControlPlaneSessionHandle,
+	type ControlPlaneRequestContext,
 } from "./types.ts";
 
 export const CONTROL_PLANE_V2_AGENT_COMMAND_TYPES = [
@@ -128,6 +129,32 @@ export interface AgentInspectionV2 {
 	projectionDigest: string;
 }
 
+export interface ControlPlaneV2AgentCommandResponse {
+	kind: "command_result";
+	commandId: CommandId;
+	type: ControlPlaneV2AgentCommandType;
+	status: "executed" | "duplicate";
+	result: ControlPlaneAgentMutationEffectV2;
+}
+
+export interface ControlPlaneV2AgentQueryResponse {
+	kind: "query_result";
+	queryId: string;
+	type: "agent:inspect";
+	result: AgentInspectionV2;
+}
+
+export interface MultiAgentControlPlanePort {
+	execute(
+		command: ControlPlaneV2AgentCommand,
+		context: ControlPlaneRequestContext,
+	): Promise<ControlPlaneResult<ControlPlaneV2AgentCommandResponse>>;
+	inspect(
+		query: AgentInspectQueryV2,
+		context: ControlPlaneRequestContext,
+	): Promise<ControlPlaneResult<ControlPlaneV2AgentQueryResponse>>;
+}
+
 const exact = <T extends Record<string, TSchema>>(properties: T) =>
 	Type.Object(properties, { additionalProperties: false });
 const runtimeId = (kind: string) =>
@@ -225,6 +252,23 @@ export const ControlPlaneAgentSummarySchema = exact({
 	artifactCount: revision,
 });
 
+const ControlPlaneAgentMutationEffectBaseSchema = {
+	sessionId: runtimeId("session"),
+	agent: ControlPlaneAgentSummarySchema,
+	graphRevision: revision,
+	durableCursor: EventCursorSchema,
+	receiptDigest: digest,
+} as const;
+
+export const ControlPlaneAgentMutationEffectV2Schema = Type.Union(
+	CONTROL_PLANE_V2_AGENT_COMMAND_TYPES.map((type) =>
+		exact({
+			type: Type.Literal(type),
+			...ControlPlaneAgentMutationEffectBaseSchema,
+		}),
+	),
+);
+
 function invalid(schema: TSchema, value: unknown): ControlPlaneResult<never> {
 	const first = [...Errors(schema, value)][0];
 	return controlPlaneFailure(
@@ -251,6 +295,10 @@ export function validateControlPlaneV2AgentCommand(
 		command.payload.sessionId !== command.sessionHandle.sessionId ||
 		(command.type === "agent:spawn" &&
 			(command.payload.spec.childAgentId === command.payload.spec.parentAgentId ||
+				command.payload.spec.launchSpecArtifact.authorityId !== command.authorityId ||
+				command.payload.spec.launchSpecArtifact.tenantId !== command.tenantId ||
+				command.payload.spec.promptArtifact.authorityId !== command.authorityId ||
+				command.payload.spec.promptArtifact.tenantId !== command.tenantId ||
 				command.payload.spec.launchSpecDigest !== command.payload.spec.launchSpecArtifact.storedDigest ||
 				command.payload.spec.promptDigest !== command.payload.spec.promptArtifact.storedDigest))
 	) return controlPlaneFailure("invalid_request", "Control Plane v2 Agent command correlation is invalid");
@@ -266,4 +314,15 @@ export function validateAgentInspectQueryV2(
 		return controlPlaneFailure("invalid_request", "Agent inspect handle does not match session");
 	}
 	return { ok: true, value: query };
+}
+
+export function isControlPlaneV2AgentCommandType(
+	value: unknown,
+): value is ControlPlaneV2AgentCommandType {
+	return typeof value === "string" &&
+		(CONTROL_PLANE_V2_AGENT_COMMAND_TYPES as readonly string[]).includes(value);
+}
+
+export function isAgentInspectQueryTypeV2(value: unknown): value is "agent:inspect" {
+	return value === "agent:inspect";
 }

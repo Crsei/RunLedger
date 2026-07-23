@@ -61,6 +61,8 @@ import {
 	type ProductionCompositionReceipt,
 } from "./production-composition.ts";
 import { HeadlessDaemonServer, type HeadlessDaemonServerAccess } from "./server.ts";
+import type { MultiAgentControlPlanePort } from "../runtime/control-plane/multi-agent-contracts.ts";
+import type { SupervisorMultiAgentControlPlaneAdapter } from "../runtime/control-plane/supervisor-control-plane.ts";
 
 export interface SessionControlState {
 	sessionId: SessionId;
@@ -289,6 +291,7 @@ interface HeadlessDaemonCompositionPorts {
 	queryExecutor: QueryExecutorPort;
 	eventSource: EventSubscriptionSourcePort;
 	subscriptionLifecycle?: SessionSubscriptionLifecyclePort;
+	multiAgent?: MultiAgentControlPlanePort;
 	idempotency?: CommandIdempotencyRepository;
 	/** production authority projection 提供；fixture 缺省时沿用 command bus 的兼容推导。 */
 	runtimeGeneration?: (command: ControlPlaneCommand) => number;
@@ -298,6 +301,7 @@ interface HeadlessDaemonCompositionPorts {
 }
 
 export interface HeadlessDaemonCompositionOptions extends HeadlessDaemonCompositionPorts {
+	multiAgent?: SupervisorMultiAgentControlPlaneAdapter;
 	compositionReceipt: ProductionCompositionReceipt;
 	/** Production replacement 必须先提交 canonical generation/fencing transition。 */
 	runtimeGenerationTransition: RuntimeGenerationTransitionPort;
@@ -391,6 +395,7 @@ function createComposition(
 		commands,
 		queries,
 		subscriptions,
+		...(options.multiAgent ? { multiAgent: options.multiAgent } : {}),
 		...(options.subscriptionLifecycle ? { subscriptionLifecycle: options.subscriptionLifecycle } : {}),
 		access,
 	});
@@ -415,6 +420,32 @@ export function createHeadlessDaemonComposition(options: HeadlessDaemonCompositi
 		serverInstanceId: options.serverInstanceId,
 	});
 	if (!validated.ok) throw new ControlPlaneError(validated.error);
+	if (validated.value.features.includes("multi_agent") && !options.multiAgent) {
+		throw new ControlPlaneError({
+			code: "adapter_contract_violation",
+			message: "production multi_agent advertisement requires the Supervisor Control Plane adapter",
+			retryable: false,
+		});
+	}
+	if (
+		validated.value.features.includes("multi_agent") &&
+		(
+			!options.idempotency ||
+			!options.shutdown ||
+			!options.runtimeGeneration ||
+			!options.multiAgent?.matchesProductionBinding({
+				idempotency: options.idempotency,
+				mutationGate: options.shutdown,
+				runtimeGeneration: validated.value.receipt.runtimeGeneration,
+			})
+		)
+	) {
+		throw new ControlPlaneError({
+			code: "adapter_contract_violation",
+			message: "production multi_agent must share the daemon command journal, generation, and shutdown gate",
+			retryable: false,
+		});
+	}
 	return createComposition(options, {
 		environment: "production",
 		features: validated.value.features,

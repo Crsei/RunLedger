@@ -59,6 +59,10 @@ import type {
 } from "../verification/types.ts";
 import type { ControlPlaneErrorShape, ControlPlaneResult } from "./errors.ts";
 import { controlPlaneFailure } from "./errors.ts";
+import type {
+	ControlPlaneV2AgentCommandResponse,
+	ControlPlaneV2AgentQueryResponse,
+} from "./multi-agent-contracts.ts";
 
 export const CONTROL_PLANE_PROTOCOL_MAJOR = 1 as const;
 export const CONTROL_PLANE_PROTOCOL_MINOR = 1 as const;
@@ -479,6 +483,8 @@ export type ControlPlaneResponse =
 	| ControlPlaneCommandResponse
 	| ControlPlaneQueryResponse
 	| ControlPlaneSubscriptionResponse
+	| ControlPlaneV2AgentCommandResponse
+	| ControlPlaneV2AgentQueryResponse
 	| ControlPlaneErrorResponse;
 
 export interface LocalPeerIdentity {

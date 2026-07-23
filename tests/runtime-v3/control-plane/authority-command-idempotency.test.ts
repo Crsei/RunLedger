@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createLocalIdentityContext } from "../../../src/runtime/identity/local-principal.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import {
+	AGENT_CONTROL_PLANE_COMMAND_TYPES,
 	CONTROL_PLANE_COMMAND_TYPES,
 	createIdempotencyKey,
+	type AgentControlPlaneCommandType,
 	type ControlPlaneCommandType,
 } from "../../../src/runtime/protocol/v3/coordination.ts";
 import {
@@ -22,6 +24,7 @@ import type {
 	CommandClaimToken,
 } from "../../../src/runtime/control-plane/idempotency.ts";
 import type { ControlPlaneCommandEffect } from "../../../src/runtime/control-plane/types.ts";
+import type { ControlPlaneAgentMutationEffectV2 } from "../../../src/runtime/control-plane/multi-agent-contracts.ts";
 import { AuthorityLifecycleRepository } from "../../../src/runtime/session/authority-lifecycle-repository.ts";
 import { EventWriter } from "../../../src/runtime/session/event-writer.ts";
 import { MemoryEventStore } from "../../../src/runtime/session/memory-event-store.ts";
@@ -135,6 +138,29 @@ function effect(
 		durableCursor: domainCursor(test, seed),
 		preflightDigest: canonicalDigest({ preflight: seed }),
 	};
+}
+
+function agentEffect(
+	test: Awaited<ReturnType<typeof fixture>>,
+	commandType: AgentControlPlaneCommandType,
+	seed: string,
+): ControlPlaneAgentMutationEffectV2 {
+	const body = {
+		type: commandType,
+		sessionId: test.sessionId,
+		agent: {
+			agentId: createRuntimeId("agent", `${seed}-child`),
+			parentAgentId: createRuntimeId("agent", `${seed}-root`),
+			sessionId: createRuntimeId("session", `${seed}-child`),
+			role: "build" as const,
+			state: commandType === "agent:cancel" ? "stopped" as const : "running" as const,
+			residency: commandType === "agent:cancel" ? "nonresident" as const : "resident" as const,
+			artifactCount: commandType === "agent:handoff" ? 1 : 0,
+		},
+		graphRevision: 4,
+		durableCursor: domainCursor(test, seed),
+	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 function effectFor(
@@ -409,6 +435,34 @@ describe("AuthorityCommandIdempotencyRepository", () => {
 			expect(await repository.commit(token, result)).toMatchObject({ ok: true, value: { result } });
 
 			const restarted = new AuthorityCommandIdempotencyRepository(test.authority, { clock: () => NOW });
+			expect(await restarted.lookup(input, claimContext)).toMatchObject({
+				ok: true,
+				value: { status: "duplicate", receipt: { result } },
+			});
+		},
+	);
+
+	it.each(AGENT_CONTROL_PLANE_COMMAND_TYPES)(
+		"restores the exact schema v2 %s result from canonical terminal events after restart",
+		async (commandType) => {
+			const seed = `agent-restart-${commandType.replaceAll(":", "-")}`;
+			const test = await fixture(seed);
+			const repository = new AuthorityCommandIdempotencyRepository(test.authority, {
+				clock: () => NOW,
+			});
+			const input = request(seed, { commandType });
+			const claimContext = context(test, seed);
+			const token = claimed(await repository.claim(input, claimContext));
+			const result = agentEffect(test, commandType, seed);
+			expect(await repository.commit(token, result)).toMatchObject({
+				ok: true,
+				value: { result },
+			});
+
+			const restarted = new AuthorityCommandIdempotencyRepository(
+				test.authority,
+				{ clock: () => NOW },
+			);
 			expect(await restarted.lookup(input, claimContext)).toMatchObject({
 				ok: true,
 				value: { status: "duplicate", receipt: { result } },

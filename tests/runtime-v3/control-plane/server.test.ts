@@ -7,6 +7,11 @@ import { LocalPeerIdentityResolver } from "../../../src/runtime/control-plane/lo
 import { controlPlaneFailure } from "../../../src/runtime/control-plane/errors.ts";
 import { DEFAULT_MAX_SUBSCRIPTIONS_PER_CONNECTION } from "../../../src/daemon/server.ts";
 import type { ControlPlaneFeature } from "../../../src/runtime/control-plane/types.ts";
+import type {
+	AgentCancelCommandV2,
+	AgentInspectQueryV2,
+	MultiAgentControlPlanePort,
+} from "../../../src/runtime/control-plane/multi-agent-contracts.ts";
 
 const AUTHORITY_ID = createRuntimeId("authority", "server");
 const TENANT_ID = createRuntimeId("tenant", "server");
@@ -20,7 +25,10 @@ const SESSION_HEAD = {
 	eventHash: DIGEST,
 } as const;
 
-function composition(features: readonly ControlPlaneFeature[] = ["session", "health"]) {
+function composition(
+	features: readonly ControlPlaneFeature[] = ["session", "health"],
+	multiAgent?: MultiAgentControlPlanePort,
+) {
 	return createTestHeadlessDaemonComposition({
 		testOnly: true,
 		authorityId: AUTHORITY_ID,
@@ -69,7 +77,74 @@ function composition(features: readonly ControlPlaneFeature[] = ["session", "hea
 				});
 			},
 		},
+		...(multiAgent ? { multiAgent } : {}),
 		features,
+	});
+}
+
+function agentCommand(principalId = PRINCIPAL_ID): AgentCancelCommandV2 {
+	return {
+		kind: "command",
+		type: "agent:cancel",
+		commandId: createRuntimeId("command", "server-agent-cancel"),
+		idempotencyKey: createIdempotencyKey("server-agent-cancel-key"),
+		authorityId: AUTHORITY_ID,
+		tenantId: TENANT_ID,
+		principalId,
+		expectedSessionRevision: {
+			stream: SESSION_HEAD.stream,
+			sequence: SESSION_HEAD.sequence,
+			eventHash: SESSION_HEAD.eventHash,
+		},
+		expectedAgentGraphRevision: 2,
+		sessionHandle: {
+			handleId: "handle_0123456789abcdef",
+			sessionId: SESSION_ID,
+			generation: 1,
+		},
+		payload: {
+			sessionId: SESSION_ID,
+			agentId: createRuntimeId("agent", "server-child"),
+			reasonDigest: DIGEST,
+		},
+	};
+}
+
+function agentQuery(principalId = PRINCIPAL_ID): AgentInspectQueryV2 {
+	return {
+		kind: "query",
+		type: "agent:inspect",
+		queryId: "server-agent-inspect",
+		authorityId: AUTHORITY_ID,
+		tenantId: TENANT_ID,
+		principalId,
+		payload: {
+			sessionId: SESSION_ID,
+			sessionHandle: {
+				handleId: "handle_0123456789abcdef",
+				sessionId: SESSION_ID,
+				generation: 1,
+			},
+			agentId: null,
+		},
+	};
+}
+
+async function handshake(
+	dispatcher: ReturnType<ReturnType<typeof composition>["server"]["createDispatcher"]>,
+	options: { schema: 1 | 2; features: readonly ControlPlaneFeature[] },
+) {
+	return dispatcher.dispatch({
+		kind: "handshake",
+		requestId: `hello-agent-${options.schema}-${options.features.length}`,
+		clientName: "test-client",
+		clientVersion: "1.0.0",
+		protocol: { major: 1, minMinor: 0, maxMinor: 1 },
+		controlPlaneSchemaVersions: [options.schema],
+		runtimeSchemaVersions: [3],
+		requestedFeatures: options.features,
+		requiredFeatures: [],
+		transport: "jsonl",
 	});
 }
 
@@ -197,5 +272,102 @@ describe("headless daemon server", () => {
 			error: { code: "overloaded", retryable: true },
 		});
 		await daemon.server.closeConnection("connection-overload");
+	});
+
+	it("keeps schema v1 blind to Agent commands and requires negotiated multi_agent in v2", async () => {
+		const daemon = composition(["session", "multi_agent"]);
+		const v1 = daemon.server.createDispatcher("connection-agent-v1", {
+			transport: "jsonl",
+			peerCredentialsVerified: true,
+		});
+		await handshake(v1, { schema: 1, features: ["session", "multi_agent"] });
+		await expect(v1.dispatch(agentCommand())).resolves.toMatchObject({
+			kind: "error",
+			error: { code: "unsupported_schema" },
+		});
+
+		const v2 = daemon.server.createDispatcher("connection-agent-v2-no-feature", {
+			transport: "jsonl",
+			peerCredentialsVerified: true,
+		});
+		await handshake(v2, { schema: 2, features: ["session"] });
+		await expect(v2.dispatch(agentCommand())).resolves.toMatchObject({
+			kind: "error",
+			error: { code: "unsupported_feature" },
+		});
+	});
+
+	it("routes schema v2 Agent mutations and queries through one injected port with peer scope checks", async () => {
+		const calls: string[] = [];
+		const port: MultiAgentControlPlanePort = {
+			execute: async (command) => {
+				calls.push(command.type);
+				return {
+					ok: true,
+					value: {
+						kind: "command_result",
+						commandId: command.commandId,
+						type: command.type,
+						status: "executed",
+						result: {
+							type: command.type,
+							sessionId: SESSION_ID,
+							agent: {
+								agentId: command.payload.agentId,
+								parentAgentId: createRuntimeId("agent", "server-root"),
+								sessionId: createRuntimeId("session", "server-child"),
+								role: "build",
+								state: "stopped",
+								residency: "nonresident",
+								artifactCount: 0,
+							},
+							graphRevision: 3,
+							durableCursor: SESSION_HEAD,
+							receiptDigest: DIGEST,
+						},
+					},
+				};
+			},
+			inspect: async (query) => {
+				calls.push(query.type);
+				return {
+					ok: true,
+					value: {
+						kind: "query_result",
+						queryId: query.queryId,
+						type: "agent:inspect",
+						result: {
+							type: "agent:inspect",
+							sessionId: SESSION_ID,
+							graphRevision: 3,
+							durableCursor: SESSION_HEAD,
+							agents: [],
+							projectionDigest: DIGEST,
+						},
+					},
+				};
+			},
+		};
+		const daemon = composition(["session", "multi_agent"], port);
+		const dispatcher = daemon.server.createDispatcher("connection-agent-v2", {
+			transport: "jsonl",
+			peerCredentialsVerified: true,
+		});
+		await handshake(dispatcher, { schema: 2, features: ["session", "multi_agent"] });
+		await expect(dispatcher.dispatch(agentQuery())).resolves.toMatchObject({
+			kind: "query_result",
+			type: "agent:inspect",
+		});
+		await expect(dispatcher.dispatch(agentCommand())).resolves.toMatchObject({
+			kind: "command_result",
+			type: "agent:cancel",
+		});
+		await expect(
+			dispatcher.dispatch(agentCommand(createRuntimeId("principal", "wrong-peer"))),
+		).resolves.toMatchObject({
+			kind: "error",
+			error: { code: "unauthorized_peer" },
+		});
+		expect(calls).toEqual(["agent:inspect", "agent:cancel"]);
 	});
 });

@@ -2,9 +2,9 @@
 
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import {
-	isControlPlaneCommandType,
+	isCanonicalCommandType,
 	parseIdempotencyKey,
-	type ControlPlaneCommandType,
+	type CanonicalCommandType,
 	type IdempotencyKey,
 } from "../protocol/v3/coordination.ts";
 import {
@@ -33,16 +33,16 @@ import {
 	type ControlPlaneResult,
 } from "./errors.ts";
 import {
-	isControlPlaneCommandEffect,
-	type ControlPlaneCommandEffect,
-} from "./types.ts";
+	canonicalCommandEffectMatches,
+	type CanonicalCommandEffect,
+} from "./canonical-command.ts";
 
 export type CanonicalCommandDomain = "session" | "daemon" | "lifecycle" | "policy";
 export type CanonicalCommandStatus = "claimed" | "applied" | "rejected" | "reconciliation_required";
 
 export interface CanonicalCommandClaimProjection {
 	commandId: CommandId;
-	commandType: ControlPlaneCommandType;
+	commandType: CanonicalCommandType;
 	idempotencyKey: IdempotencyKey;
 	requestDigest: string;
 	requestedBy: PrincipalId;
@@ -64,7 +64,7 @@ export type CanonicalCommandOutcome =
 			status: "applied";
 			terminalCursor: EventCursor;
 			appliedCursor: EventCursor;
-			result: ControlPlaneCommandEffect;
+			result: CanonicalCommandEffect;
 			resultDigest: string;
 	  }
 	| {
@@ -155,7 +155,7 @@ function applyClaim(
 	}
 	const expectedRevision = event.payload.domainExpectedRevision;
 	if (
-		!commandId || !isControlPlaneCommandType(commandType) || !idempotencyKey || !requestedBy || !runtimeId ||
+		!commandId || !isCanonicalCommandType(commandType) || !idempotencyKey || !requestedBy || !runtimeId ||
 		(expectedRevision !== null && !isExpectedRevision(expectedRevision)) ||
 		requestedBy !== event.principalId ||
 		!subjectMatchesRevision(subjectSessionId, expectedRevision)
@@ -221,8 +221,7 @@ function applyTerminal(
 				return invalid("command applied cursor is invalid", event.sequence);
 			}
 			if (
-				!isControlPlaneCommandEffect(event.payload.result) ||
-				event.payload.result.type !== command.claim.commandType ||
+				!canonicalCommandEffectMatches(command.claim.commandType, event.payload.result) ||
 				canonicalDigest(event.payload.result) !== event.payload.resultDigest
 			) return invalid("command applied result conflicts with its canonical digest or type", event.sequence);
 			const appliedCursor = event.payload.appliedCursor;

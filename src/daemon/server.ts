@@ -36,6 +36,13 @@ import {
 	controlPlaneFeatureForCommand,
 	controlPlaneFeatureForQuery,
 } from "./production-composition.ts";
+import {
+	isAgentInspectQueryTypeV2,
+	isControlPlaneV2AgentCommandType,
+	validateAgentInspectQueryV2,
+	validateControlPlaneV2AgentCommand,
+	type MultiAgentControlPlanePort,
+} from "../runtime/control-plane/multi-agent-contracts.ts";
 
 export interface HeadlessDaemonServerAccess {
 	environment: "production" | "test";
@@ -57,6 +64,7 @@ export interface HeadlessDaemonServerOptions {
 	subscriptionLifecycle?: SessionSubscriptionLifecyclePort;
 	maxSubscriptionsPerConnection?: number;
 	access: HeadlessDaemonServerAccess;
+	multiAgent?: MultiAgentControlPlanePort;
 }
 
 interface DaemonSubscription {
@@ -92,6 +100,7 @@ export class HeadlessDaemonServer {
 	readonly #commandTypes: ReadonlySet<ControlPlaneCommandType>;
 	readonly #queryTypes: ReadonlySet<ControlPlaneQueryType>;
 	readonly #eventSubscription: boolean;
+	readonly #multiAgent: MultiAgentControlPlanePort | undefined;
 	readonly #connections = new Map<string, DaemonConnection>();
 
 	public constructor(options: HeadlessDaemonServerOptions) {
@@ -113,6 +122,7 @@ export class HeadlessDaemonServer {
 		this.#commandTypes = new Set(options.access.commandTypes);
 		this.#queryTypes = new Set(options.access.queryTypes);
 		this.#eventSubscription = options.access.eventSubscription;
+		this.#multiAgent = options.multiAgent;
 		this.#handshakeCapabilities = {
 			serverInstanceId: options.serverInstanceId,
 			features: [...options.access.features],
@@ -134,6 +144,88 @@ export class HeadlessDaemonServer {
 				message: "Control Plane connection is not registered",
 				retryable: false,
 			});
+		}
+		if (
+			typeof frame === "object" &&
+			frame !== null &&
+			"type" in frame &&
+			(isControlPlaneV2AgentCommandType(frame.type) ||
+				isAgentInspectQueryTypeV2(frame.type))
+		) {
+			if (!connection.context) {
+				return errorResponse(requestIdOf(frame), {
+					code: "handshake_required",
+					message: "Control Plane handshake must complete before requests",
+					retryable: false,
+				});
+			}
+			if (connection.context.handshake.controlPlaneSchemaVersion < 2) {
+				return errorResponse(requestIdOf(frame), {
+					code: "unsupported_schema",
+					message: "multi-agent requests require Control Plane schema v2",
+					retryable: false,
+				});
+			}
+			if (!connection.context.handshake.features.includes("multi_agent")) {
+				return errorResponse(requestIdOf(frame), {
+					code: "unsupported_feature",
+					message: "feature multi_agent was not negotiated",
+					retryable: false,
+				});
+			}
+			if (!this.#multiAgent) {
+				return errorResponse(requestIdOf(frame), {
+					code: "unsupported_feature",
+					message: "multi-agent Control Plane adapter is unavailable",
+					retryable: false,
+				});
+			}
+			if (isControlPlaneV2AgentCommandType(frame.type)) {
+				const validatedAgent = validateControlPlaneV2AgentCommand(frame);
+				if (!validatedAgent.ok) {
+					return errorResponse(requestIdOf(frame), validatedAgent.error);
+				}
+				if (
+					validatedAgent.value.authorityId !== this.#authorityId ||
+					validatedAgent.value.tenantId !== this.#tenantId ||
+					validatedAgent.value.principalId !== connection.context.peer.principalId
+				) {
+					return errorResponse(validatedAgent.value.commandId, {
+						code: "unauthorized_peer",
+						message: "Agent command scope does not match authenticated peer",
+						retryable: false,
+					});
+				}
+				const result = await this.#multiAgent.execute(
+					validatedAgent.value,
+					connection.context,
+				);
+				return result.ok
+					? result.value
+					: errorResponse(validatedAgent.value.commandId, result.error);
+			}
+			const validatedQuery = validateAgentInspectQueryV2(frame);
+			if (!validatedQuery.ok) {
+				return errorResponse(requestIdOf(frame), validatedQuery.error);
+			}
+			if (
+				validatedQuery.value.authorityId !== this.#authorityId ||
+				validatedQuery.value.tenantId !== this.#tenantId ||
+				validatedQuery.value.principalId !== connection.context.peer.principalId
+			) {
+				return errorResponse(validatedQuery.value.queryId, {
+					code: "unauthorized_peer",
+					message: "Agent query scope does not match authenticated peer",
+					retryable: false,
+				});
+			}
+			const result = await this.#multiAgent.inspect(
+				validatedQuery.value,
+				connection.context,
+			);
+			return result.ok
+				? result.value
+				: errorResponse(validatedQuery.value.queryId, result.error);
 		}
 		const validated = validateControlPlaneRequest(frame);
 		if (!validated.ok) return errorResponse(requestIdOf(frame), validated.error);
