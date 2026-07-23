@@ -2003,6 +2003,21 @@ Canonical event/reducer 闭环:
 - live provider boundary:本切片没有运行或虚构 governed DeepSeek child E2E。既有auth中的`deepseek-v4-pro`可供真实child runtime接通后测试；此前证据仍只是单Agent provider smoke，不能提升Phase 9、Phase 11、Verification或multi-agent状态。
 - verified_at:`2026-07-23T12:55:47+08:00`。
 
+#### 2026-07-23 child runtime authority sidecar foundation 证据（不关闭 launcher/cold cleanup integration）
+
+- 状态:新增 authority-owned child runtime sidecar 合同与 Memory/File store foundation。状态机固定为`claimed -> resident -> release_pending -> released`，任一非终态可进入不可逆`quarantined`；revision、previous record digest、immutable identity、nested receipt correlation与terminal transition均精确验证。本切片不接线`ProductionChildSessionLauncher`、startup reconciler或parent cleanup saga。
+- commit/worktree:`eea7b67b58da05d9687c9d5cf4e3a2da688c5793`，`worktree/governed-agent-harness-runtime`；4条显式源码/测试路径，2468 insertions。
+- RED:domain模块尚不存在时，首个authority store测试为1 failed suite / 0 collected；第一轮安全审查补出的6项RED为10 tests中6 failed，覆盖双writer-fence拼接、foreign/扩展stream、错误CAS expectation replay、首次写入torn final、超限后读与unsafe opened handle；第二轮审查补出的4项RED为14 tests中4 failed，覆盖hard-link发布中断恢复、release timestamp correlation、并发增长bounded read与malformed UTF-8。最终同文件14/14通过。
+- targeted:`npx vitest run tests/runtime-v3/agents` -> Linux，14 files / 130 tests，PASS；authority store单文件14/14。
+- durable identity:`claimed` exact绑定authority/tenant/principal、parent graph revision/cursor/node digest、parent Agent/session/runtime/writer fence、child Agent/session/Workspace/runtime、launch request以及delegation/Workspace/Budget/Artifact digests；`resident`再绑定canonical child session file、genesis cursor、launch/residency与child writer fence；`release_pending`绑定完整release request和pre-stop fence；`released`绑定runtime release receipt、final cursor、同一时刻的nonresident receipt与writer-lease released evidence。
+- cold boundary:`classifyChildRuntimeColdRecord()`只允许完整`released`记录返回exact runtime receipt；`claimed`、`resident`、`release_pending`与`quarantined`均分类为`takeoverAllowed=false`的quarantine。本切片没有自动takeover、stop probe、external effect执行或terminal-only cleanup。
+- persistence/security:record与nested stream/receipt均exact-key/self-digest/canonical correlation；Memory/File CAS同时要求revision、previous digest与candidate expectation。File store使用0700 root、0600 record、8 MiB+1有界读取、fatal UTF-8和canonical byte equality；leaf在open后复核dev/ino/mode/size/nlink。首次写入采用临时文件write+file fsync、hard-link publish、temp unlink与directory fsync；只在final与唯一UUID temp的dev/ino/mode/size/nlink完全一致时恢复中断发布，多候选/foreign hardlink fail closed；replacement走同目录原子rename。
+- full gate:`npm run check`、`npm test`（255 files / 1612 tests）、`npm run build`、`npm run test:harness-regression`（11 files / 63 tests）、`git diff --check`全部PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。最终只读复审无P0/P1提交阻断。
+- 剩余集成边界:现有`.launch-claim`与launcher进程内children/release attempt/tombstone尚未迁移到该store；没有startup scan、orphan reconciliation、external-success/ack-loss后的fresh-launcher receipt replay，也没有把sidecar receipt提交到parent canonical cleanup event。因此runtime release cold read-back、authority-owned cold claim/reconciler与`stop_uncertain`仍未关闭。
+- filesystem边界:root/leaf检查与后续open/link/rename仍是分离的pathname操作；尚未采用逐ancestor验证加dirfd/`openat`/`linkat`/`renameat`或等价机制关闭ancestor/root/closed-temp swap TOCTOU。该项明确保留为后续安全边界。
+- live provider boundary:现有auth中的`deepseek-v4-pro` API key可在真实child runtime接通后通过正常`AuthStorage`路径使用；本提交没有governed child E2E，真实controller/model/tool/Gateway/Sandbox仍未接通，不得读取、打印、复制或提交key。
+- verified_at:`2026-07-23T14:07:08+08:00`。
+
 ## 8. 阶段依赖与发布里程碑
 
 ```text
