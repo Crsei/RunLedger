@@ -4,7 +4,7 @@
 > 分阶段索引:[`README.md`](README.md)
 > 导航:[Phase 0](phase-00-protocol-baseline.md) / [Phase 2](phase-02-workspace-contracts.md)
 > 状态规则:当前实现状态以主计划 §0.0 为唯一汇总真源;严格开发顺序、并行 lane 与 join gate 以主计划 §12 为准。本文件只承载本 Phase 的完整需求、门槛、故障注入与历史证据。
-> 当前执行状态:W0-01 已由 `c4cd3e6` 完成;W0-02 候选证据矩阵、W0-03 execution ledger 与 W0-04 基线结果已准备但尚未形成目标分支 evidence commit。W0-G 仍 pending,因此 W1-A1 尚未打开代码写路径。
+> 当前执行状态:W0 evidence baseline 已由 `431681f` 冻结,W0-G 已关闭。W1-A1 现已打开,先用 RED 测试约束 restore dependency registration 必须发生在 Event Store replay/reduction 之前。
 
 目标:用严格、可重放、可验证的事件内核替代“消息即 session”的假设。
 

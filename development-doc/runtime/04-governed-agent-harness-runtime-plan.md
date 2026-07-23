@@ -1410,7 +1410,8 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 
 计划基线:
 
-- documentation handoff:`c4cd3e66689dc56b296c05712a52301e9d712e9f`;该提交把 Phase 0–11 拆分文档和状态证据入口落入目标分支。当前 W0 evidence update 尚未提交,W0-G 继续保持 pending。
+- documentation handoff:`c4cd3e66689dc56b296c05712a52301e9d712e9f`;该提交把 Phase 0–11 拆分文档和状态证据入口落入目标分支。
+- implementation evidence baseline:`431681f`;该提交冻结 W0-02/03/04 证据矩阵、execution ledger 与验证记录。本次门禁状态提交只更新文档状态,Phase 1 代码从其后开始。
 - 代码基线:`9a3d8c8`;Phase 0 统一 ID registry 已包含 Worktree,并由后续 documentation handoff 包含在当前 HEAD。
 - 外围专项冻结基线:`81556acb16e2d4ba39e8fffeb0f4c5bdeccf40c7`;冻结状态、路径和定向测试见 `06-specialty-implementation-freeze.md`。
 - 初始状态:W0–W6 全部 `pending`;同一时刻只能有一个全局 Wave 为 `in_progress`。
@@ -1465,14 +1466,14 @@ W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production 
 | ID | 状态 | 顺序/依赖 | 工作内容 | 产物与验证 |
 |---|---|---|---|---|
 | W0-01 | completed | first | 提交本节、当前状态复核与`06`冻结说明,记录 documentation handoff commit、branch、dirty paths和当前HEAD | `c4cd3e6`;分支`worktree/governed-agent-harness-runtime`;当前唯一非本任务 dirty path 为用户维护的`AGENTS.md` |
-| W0-02 | in_progress | after W0-01 | 对§0.5、Phase 0/2/3/5/6 contract及三个冻结专项做逐项证据映射,严格区分implemented/partial/deferred | 下方候选矩阵已生成;形成目标分支 evidence commit 前不标 completed |
-| W0-03 | pending | after W0-02 | 为W1–W6的Runtime lane登记owner、worktree、allowlist、共享锁和expected join commit | execution ledger无空owner/重叠路径;allowlist与06冻结路径无交集 |
-| W0-04 | pending | after W0-03 | 复跑当前基线并保存计数/平台/skip原因 | 完整门禁、pi audit、06 §6三组只读专项门禁、`git diff --check` |
-| W0-G | pending | join | 冻结implementation baseline | 工作区只有已解释diff;所有后续lane从同一commit创建 |
+| W0-02 | completed | after W0-01 | 对§0.5、Phase 0/2/3/5/6 contract及三个冻结专项做逐项证据映射,严格区分implemented/partial/deferred | `431681f`;下方矩阵区分 implemented、behavior unavailable 与 frozen gap |
+| W0-03 | completed | after W0-02 | 为W1–W6的Runtime lane登记owner、worktree、allowlist、共享锁和expected join commit | `431681f`;execution ledger无空owner/重叠写路径,冻结专项保持只读 |
+| W0-04 | completed | after W0-03 | 复跑当前基线并保存计数/平台/skip原因 | `431681f`;完整门禁、pi audit、06 §6三组只读专项门禁、`git diff --check`全绿 |
+| W0-G | completed | join | 冻结implementation baseline | evidence baseline=`431681f`;唯一额外 dirty path 为不纳入本任务的用户`AGENTS.md`;W1-A1可打开 |
 
 #### W0-02 候选证据矩阵
 
-本矩阵基于`c4cd3e6`代码树和`81556ac`专项冻结基线生成。当前文件未提交前只表示 candidate evidence,不提升 W0-02 状态。
+本矩阵基于`c4cd3e6`代码树和`81556ac`专项冻结基线生成,由`431681f`冻结为 W0-02 evidence。
 
 | 范围 | 状态 | source / contract | test evidence | commit / 未关闭边界 |
 |---|---|---|---|---|
@@ -1488,7 +1489,7 @@ W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production 
 
 #### W0-03 候选 execution ledger
 
-本轮不启用并行 agent/lane。所有 lane 由`/root`按 Wave 顺序在当前专用 worktree 串行执行;同一时刻只打开一行 allowlist,因此原计划允许并行的 P1/W3/P5 也不会发生共享路径并发写。下表在 evidence commit 前不提升 W0-03 状态。
+本轮不启用并行 agent/lane。所有 lane 由`/root`按 Wave 顺序在当前专用 worktree 串行执行;同一时刻只打开一行 allowlist,因此原计划允许并行的 P1/W3/P5 也不会发生共享路径并发写。下表由`431681f`冻结为 W0-03 execution ledger。
 
 | lane | owner / worktree | 写路径 allowlist | lock / 顺序 | expected join |
 |---|---|---|---|---|
@@ -1520,7 +1521,7 @@ W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production 
 | Security/Worktree冻结门禁 | 21 files / 119 tests PASS |
 | `git diff --check` | PASS;工作区另有已解释的用户`AGENTS.md`修改 |
 
-W0-01 已在用户明确要求提交并推送全部更新后由`c4cd3e6`完成。本轮新增的 W0-02/03/04 evidence update 仍需新的明确提交授权;形成目标分支 commit 前 W0-02 保持`in_progress`、W0-G保持`pending`,后续代码 Wave 不得启动。
+W0-01 由`c4cd3e6`完成,W0-02/03/04 evidence 由`431681f`冻结。当前状态提交关闭 W0-G 后,W1-A1 按 RED→GREEN→REFACTOR 顺序启动;用户维护的`AGENTS.md`继续留在工作区且不进入本任务提交。
 
 W0 退出门槛:
 
