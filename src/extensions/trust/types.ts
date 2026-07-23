@@ -13,6 +13,12 @@ export interface TrustRecord {
 	issuedAt: string;
 	expiresAt: string | null;
 	revocationRevision: number;
+	locatorDigest: string;
+	publisherDigest: string | null;
+	policyRevision: number;
+	hookRevision: number;
+	adapterGeneration: number;
+	adapterGenerationDigest: string;
 	revokedAt?: string;
 	receiptDigest: string;
 }

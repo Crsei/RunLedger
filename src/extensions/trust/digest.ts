@@ -110,7 +110,7 @@ export function buildResourceManifestDigest(input: {
 }): ResourceManifestDigest {
 	const empty = sha256("");
 	const body = {
-		schemaVersion: 1 as const,
+		schemaVersion: 2 as const,
 		rootDigest: input.rootDigest,
 		manifestDigest: input.manifestDigest ?? empty,
 		configDigest: input.configDigest ?? empty,

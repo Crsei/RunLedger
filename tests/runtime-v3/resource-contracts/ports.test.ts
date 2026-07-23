@@ -5,16 +5,21 @@ import type {
 	RuntimeResourceCatalogPort,
 	RuntimeResourceClaimDerivationPort,
 	RuntimeResourceEventSink,
+	RuntimeResourceFacetReadPort,
+	RuntimeResourceHookTransformPort,
 	RuntimeResourceInvocationPort,
 	RuntimeResourceSnapshotProvider,
 } from "../../../src/runtime/resources/ports.ts";
 import {
 	createResourceCacheTicket,
 	createResourceClaimDerivationReceipt,
+	createResourceHookTransformReceipt,
 	isResourceCancellationResult,
 	isResourceClaimDerivationResult,
 	isResourceEventEmissionRequest,
 	isResourceEventEmissionResult,
+	isResourceFacetReadResult,
+	isResourceHookTransformResult,
 	isResourceResolveRequest,
 	isResourceResolveResult,
 	isResourceSearchRequest,
@@ -35,6 +40,10 @@ import type {
 	ResourceClaimDerivationResult,
 	ResourceEventEmissionRequest,
 	ResourceEventEmissionResult,
+	ResourceFacetReadRequest,
+	ResourceFacetReadResult,
+	ResourceHookTransformRequest,
+	ResourceHookTransformResult,
 	ResourceResolveRequest,
 	ResourceResolveResult,
 	ResourceSearchRequest,
@@ -73,6 +82,8 @@ class InMemoryResourceAdapter
 		RuntimeResourceClaimDerivationPort,
 		RuntimeResourceInvocationPort,
 		RuntimeResourceEventSink,
+		RuntimeResourceFacetReadPort,
+		RuntimeResourceHookTransformPort,
 		RuntimeResourceSnapshotProvider
 {
 	public readonly effects = { fileReads: 0, processStarts: 0, networkRequests: 0 };
@@ -85,12 +96,28 @@ class InMemoryResourceAdapter
 		this.#snapshot = current;
 	}
 
+	public async validateLocator(request: {
+		canonicalLocator: string;
+		sourceRoot: string;
+	}): Promise<
+		| { status: "valid"; canonicalLocator: string; containmentDigest: string }
+		| { status: "rejected"; reasonDigest: string }
+	> {
+		return request.canonicalLocator.startsWith(`${request.sourceRoot}/`)
+			? {
+					status: "valid",
+					canonicalLocator: request.canonicalLocator,
+					containmentDigest: canonicalDigest({ ...request, contained: true }),
+				}
+			: { status: "rejected", reasonDigest: digest("locator escape") };
+	}
+
 	public async resolveExact(request: ResourceResolveRequest): Promise<ResourceResolveResult> {
 		if (resourceIdentityKey(request.identity) !== resourceIdentityKey(this.#descriptor.identity)) {
 			return { ...request, status: "not_found" };
 		}
 		const cacheTicket = createResourceCacheTicket({
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			ticketId: createRuntimeId("receipt", "fake-cache-ticket"),
 			snapshotId: this.#snapshot.snapshotId,
@@ -104,7 +131,7 @@ class InMemoryResourceAdapter
 			expiresAt: "2030-01-01T00:00:00.000Z",
 		});
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: request.requestId,
 			snapshotId: request.snapshotId,
@@ -134,7 +161,7 @@ class InMemoryResourceAdapter
 				].slice(0, request.limit)
 			: [];
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: request.requestId,
 			snapshotId: request.snapshotId,
@@ -149,7 +176,7 @@ class InMemoryResourceAdapter
 	): Promise<ResourceClaimDerivationResult> {
 		if (resourceIdentityKey(request.tool) !== resourceIdentityKey(this.#descriptor.identity)) {
 			return {
-				schemaVersion: 1,
+				schemaVersion: 2,
 				...authorizationContext(),
 				requestId: request.requestId,
 				status: "rejected",
@@ -159,7 +186,7 @@ class InMemoryResourceAdapter
 		const canonicalInputJson = canonicalJson(request.rawInput);
 		const claims = this.#descriptor.capabilities.map((item) => item.claim);
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			status: "derived",
 			receipt: createResourceClaimDerivationReceipt({
 				...authorizationContext(),
@@ -171,8 +198,57 @@ class InMemoryResourceAdapter
 				descriptorDigest: this.#descriptor.descriptorDigest,
 				canonicalInputJson,
 				canonicalInputDigest: canonicalDigest(request.rawInput),
+				inputRevision: 0,
 				claims,
 				claimsDigest: canonicalDigest(claims),
+				issuedAt: "2026-07-22T00:00:00.000Z",
+			}),
+		};
+	}
+
+	public async readFacet(request: ResourceFacetReadRequest): Promise<ResourceFacetReadResult> {
+		const content = [{ type: "text" as const, text: "snapshot facet" }];
+		return {
+			schemaVersion: 2,
+			...authorizationContext(),
+			requestId: request.requestId,
+			status: "read",
+			snapshotId: request.snapshotId,
+			adapterGeneration: request.adapterGeneration,
+			adapterGenerationDigest: request.adapterGenerationDigest,
+			resource: request.resource,
+			facet: request.facet,
+			content,
+			contentDigest: canonicalDigest(content),
+			byteLength: 14,
+			entryCount: 1,
+		};
+	}
+
+	public async transform(request: ResourceHookTransformRequest): Promise<ResourceHookTransformResult> {
+		return {
+			schemaVersion: 2,
+			status: "transformed",
+			receipt: createResourceHookTransformReceipt({
+				...authorizationContext(),
+				receiptId: createRuntimeId("receipt", "fake-hook-transform"),
+				requestId: request.requestId,
+				handshakeDigest: request.handshake.handshakeDigest,
+				snapshotId: request.snapshotId,
+				inputRevision: request.inputRevision,
+				outputRevision: request.inputRevision + 1,
+				originalInputDigest: request.canonicalInputDigest,
+				updatedInputJson: request.canonicalInputJson,
+				updatedInputDigest: request.canonicalInputDigest,
+				patches: [],
+				handled: false,
+				shortCircuit: false,
+				systemPromptChainDigest: request.systemPromptChainDigest,
+				hookIdentityDigest: digest("no-hooks"),
+				hookGeneration: request.handshake.adapterGeneration,
+				hookGenerationDigest: request.handshake.adapterGenerationDigest,
+				claimsDigest: canonicalDigest([]),
+				authorizationDecisionDigest: digest("fake-transform-allow"),
 				issuedAt: "2026-07-22T00:00:00.000Z",
 			}),
 		};
@@ -181,7 +257,7 @@ class InMemoryResourceAdapter
 	public async *invoke(request: RuntimeToolInvocation): AsyncIterable<RuntimeResourceInvocationFrame> {
 		const content = [{ type: "text" as const, text: "fake result" }];
 		const result: RuntimeToolResult = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			receiptId: createRuntimeId("receipt", "fake-result"),
 			requestId: request.requestId,
@@ -199,7 +275,7 @@ class InMemoryResourceAdapter
 			contentDigest: canonicalDigest(content),
 		};
 		yield {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			kind: "terminal",
 			requestId: request.requestId,
@@ -212,7 +288,7 @@ class InMemoryResourceAdapter
 
 	public async cancel(request: ResourceCancellationRequest): Promise<ResourceCancellationResult> {
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			authorityId: request.authorityId,
 			tenantId: request.tenantId,
 			principalId: request.principalId,
@@ -225,7 +301,7 @@ class InMemoryResourceAdapter
 	public async emit(request: ResourceEventEmissionRequest): Promise<ResourceEventEmissionResult> {
 		this.emitted.push(request);
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			idempotencyKey: request.idempotencyKey,
 			status: "emitted",
@@ -236,7 +312,7 @@ class InMemoryResourceAdapter
 
 	public async acquire(request: ResourceSnapshotAcquireRequest): Promise<ResourceSnapshotAcquireResult> {
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			authorityId: request.authorityId,
 			tenantId: request.tenantId,
 			principalId: request.principalId,
@@ -249,7 +325,7 @@ class InMemoryResourceAdapter
 
 	public async release(request: ResourceSnapshotReleaseRequest): Promise<ResourceSnapshotReleaseResult> {
 		const context = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			authorityId: request.authorityId,
 			tenantId: request.tenantId,
 			principalId: request.principalId,
@@ -268,7 +344,7 @@ describe("resource adapter ports", () => {
 		const current = snapshot(tool);
 		const adapter = new InMemoryResourceAdapter(tool, current);
 		const acquireRequest: ResourceSnapshotAcquireRequest = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: createRuntimeId("command", "acquire"),
 			minimumGeneration: 7,
@@ -276,9 +352,13 @@ describe("resource adapter ports", () => {
 		expect(isResourceSnapshotAcquireRequest(acquireRequest)).toBe(true);
 		const acquired = await adapter.acquire(acquireRequest);
 		expect(isResourceSnapshotAcquireResult(acquired)).toBe(true);
+		expect(await adapter.validateLocator({
+			canonicalLocator: "/repo/fixture",
+			sourceRoot: "/repo",
+		})).toMatchObject({ status: "valid" });
 
 		const resolveRequest: ResourceResolveRequest = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: createRuntimeId("command", "resolve"),
 			snapshotId: current.snapshotId,
@@ -297,7 +377,7 @@ describe("resource adapter ports", () => {
 		expect(missing.status).toBe("not_found");
 
 		const searchRequest: ResourceSearchRequest = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: createRuntimeId("command", "search"),
 			snapshotId: current.snapshotId,
@@ -312,12 +392,25 @@ describe("resource adapter ports", () => {
 
 		const raw = invocationRequest(tool);
 		expect(isRuntimeToolInvocationRequest(raw)).toBe(true);
+		const transformed = await adapter.transform({
+			schemaVersion: 2,
+			...authorizationContext(),
+			requestId: raw.requestId,
+			handshake: raw.handshake,
+			snapshotId: raw.snapshotId,
+			tool: raw.tool,
+			inputRevision: 0,
+			canonicalInputJson: canonicalJson(raw.rawInput),
+			canonicalInputDigest: canonicalDigest(raw.rawInput),
+			systemPromptChainDigest: digest("system-prompt"),
+		});
+		expect(isResourceHookTransformResult(transformed)).toBe(true);
 		const derived = await adapter.canonicalizeAndDerive(raw);
 		expect(isResourceClaimDerivationResult(derived)).toBe(true);
 		expect(derived.status).toBe("derived");
 		if (derived.status !== "derived") throw new Error("fixture derivation failed");
 		const prepared: RuntimeToolInvocation = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: raw.requestId,
 			handshake: raw.handshake,
@@ -329,15 +422,32 @@ describe("resource adapter ports", () => {
 			decision: "allow",
 			authorizationReceiptId: createRuntimeId("receipt", "fake-authorization"),
 			authorizationDecisionDigest: digest("fake-authorization"),
+			inputRevision: 0,
 		};
 		expect(isRuntimeToolInvocation(prepared)).toBe(true);
 		const streamed = await consumeResourceInvocation(prepared, adapter.invoke(prepared));
 		expect(streamed.ok).toBe(true);
 		if (!streamed.ok) throw new Error("fixture invocation failed");
 		expect(isRuntimeToolResult(streamed.result)).toBe(true);
+		const body = { ...tool.identity, kind: "skill-body" as const };
+		const facetRequest: ResourceFacetReadRequest = {
+			schemaVersion: 2,
+			...authorizationContext(),
+			requestId: createRuntimeId("command", "facet-read"),
+			snapshotId: current.snapshotId,
+			adapterGeneration: current.adapterGeneration,
+			adapterGenerationDigest: current.adapterGenerationDigest,
+			resource: body,
+			facet: "body",
+			budget: { maxBytes: 1024, maxEntries: 4 },
+		};
+		expect(isResourceFacetReadResult(
+			await adapter.readFacet(facetRequest),
+			facetRequest,
+		)).toBe(true);
 
 		const cancellation: ResourceCancellationRequest = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: prepared.requestId,
 			reasonDigest: digest("cancel"),
@@ -356,7 +466,7 @@ describe("resource adapter ports", () => {
 			occurredAt: "2026-07-22T00:00:00.000Z",
 		});
 		const eventRequest: ResourceEventEmissionRequest = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			idempotencyKey: createRuntimeId("command", "emit-resource-event"),
 			event: lifecycle,
@@ -366,7 +476,7 @@ describe("resource adapter ports", () => {
 		expect(adapter.emitted).toHaveLength(1);
 
 		const releaseRequest: ResourceSnapshotReleaseRequest = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			requestId: createRuntimeId("command", "release"),
 			snapshotId: SNAPSHOT_ID,

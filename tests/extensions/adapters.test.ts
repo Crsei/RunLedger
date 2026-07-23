@@ -7,7 +7,10 @@ import { parseExtensionCommand } from "../../src/extensions/control-plane/comman
 import { ExtensionControlPlane, renderExtensionControlPlane } from "../../src/extensions/control-plane/control-plane.ts";
 import { extensionViewModels } from "../../src/extensions/control-plane/view-model.ts";
 import { ExtensionManager } from "../../src/extensions/extension-manager.ts";
-import { createExtensionResourceIdentity } from "../../src/extensions/identity.ts";
+import {
+	createExtensionResourceIdentity,
+	createExtensionResourceProvenance,
+} from "../../src/extensions/identity.ts";
 import { boundedAuditPayload, ExtensionRuntimeEventSinkAdapter, lifecycleEvent, resourceAudit } from "../../src/extensions/integration/runtime-audit-adapter.ts";
 import { ExtensionRuntimeCatalogAdapter, ExtensionRuntimeInvocationAdapter, projectRuntimeSnapshot } from "../../src/extensions/integration/runtime-resource-adapter.ts";
 import { buildExtensionSnapshot } from "../../src/extensions/snapshot.ts";
@@ -44,7 +47,12 @@ function toolDescriptor(): ExtensionResourceDescriptor {
 		schemaVersion: 1,
 		kind: "mcp-tool",
 		identity,
-		provenance: { schemaVersion: 1, authorityId: TEST_SCOPE.authorityId, tenantId: TEST_SCOPE.tenantId, source: "project", canonicalLocator: "/fixture/mcp.json" },
+		provenance: createExtensionResourceProvenance({
+			scope: TEST_SCOPE,
+			source: "project",
+			canonicalLocator: "/fixture/mcp.json",
+			sourceRoot: "/fixture",
+		}),
 		manifest,
 		displayName: "echo",
 		description: "Echo a value",
@@ -105,17 +113,17 @@ describe("Extension control plane and Runtime adapters", () => {
 		const descriptor = toolDescriptor();
 		const snapshot = buildExtensionSnapshot({ generation: 7, createdAt: "2026-07-22T00:00:00.000Z", descriptors: [descriptor], diagnostics: [] });
 		const projected = projectRuntimeSnapshot(snapshot, TEST_SCOPE);
-		expect(projected).toMatchObject({ schemaVersion: 1, adapterGeneration: 7, resources: [{ descriptorType: "tool", runtimeName: "mcp__fixture__echo", identity: descriptor.identity }] });
+		expect(projected).toMatchObject({ schemaVersion: 2, adapterGeneration: 7, resources: [{ descriptorType: "tool", runtimeName: "mcp__fixture__echo", identity: descriptor.identity }] });
 		expect(projected.digest).toHaveLength(64);
 		const catalog = new ExtensionRuntimeCatalogAdapter(snapshot, TEST_SCOPE);
-		const resolveRequest = { schemaVersion: 1 as const, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-resolve"), snapshotId: snapshot.snapshotId, identity: descriptor.identity };
+		const resolveRequest = { schemaVersion: 2 as const, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-resolve"), snapshotId: snapshot.snapshotId, identity: descriptor.identity };
 		const resolved = await catalog.resolveExact(resolveRequest);
 		expect(resolved).toMatchObject({ status: "found", descriptor: { descriptorType: "tool" } });
-		const searched = await catalog.search({ schemaVersion: 1, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-search"), snapshotId: snapshot.snapshotId, query: "echo", limit: 10 });
+		const searched = await catalog.search({ schemaVersion: 2, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-search"), snapshotId: snapshot.snapshotId, query: "echo", limit: 10 });
 		expect(searched.items).toHaveLength(1);
-		const acquired = await catalog.acquire({ schemaVersion: 1, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-acquire"), minimumGeneration: 7 });
+		const acquired = await catalog.acquire({ schemaVersion: 2, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-acquire"), minimumGeneration: 7 });
 		expect(acquired.snapshot.snapshotId).toBe(snapshot.snapshotId);
-		const releaseRequest = { schemaVersion: 1 as const, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-release"), snapshotId: snapshot.snapshotId, expectedGeneration: 7 };
+		const releaseRequest = { schemaVersion: 2 as const, ...TEST_SCOPE, requestId: createRuntimeId("command", "extension-release"), snapshotId: snapshot.snapshotId, expectedGeneration: 7 };
 		expect(await catalog.release(releaseRequest)).toMatchObject({ status: "released" });
 		expect(await catalog.release(releaseRequest)).toMatchObject({ status: "already_released" });
 	});
@@ -132,17 +140,17 @@ describe("Extension control plane and Runtime adapters", () => {
 		const requestId = createRuntimeId("command", "extension-invoke");
 		const correlationId = createRuntimeId("trace", "extension-invoke");
 		const projected = projectRuntimeSnapshot(snapshot, TEST_SCOPE);
-		const handshake = createResourceProtocolHandshake({ schemaVersion: 1, ...TEST_SCOPE, protocol: "runledger.resource", protocolVersion: 1, sessionId: createRuntimeId("session", "extension-invoke"), adapterId: projected.adapterId, adapterGeneration: projected.adapterGeneration, snapshotId: snapshot.snapshotId, snapshotSequence: 0, catalogDigest: projected.digest, peerFeatures: [] });
-		const derived = await adapter.canonicalizeAndDerive({ schemaVersion: 1, ...TEST_SCOPE, requestId, handshake, tool: descriptor.identity, snapshotId: snapshot.snapshotId, rawInput: { text: "hello" }, requestedClaims: [], correlationId });
+		const handshake = createResourceProtocolHandshake({ schemaVersion: 2, ...TEST_SCOPE, protocol: "runledger.resource", protocolVersion: 2, sessionId: createRuntimeId("session", "extension-invoke"), adapterId: projected.adapterId, adapterGeneration: projected.adapterGeneration, adapterGenerationDigest: projected.adapterGenerationDigest, snapshotId: snapshot.snapshotId, snapshotSequence: 0, catalogDigest: projected.digest, peerFeatures: [] });
+		const derived = await adapter.canonicalizeAndDerive({ schemaVersion: 2, ...TEST_SCOPE, requestId, handshake, tool: descriptor.identity, snapshotId: snapshot.snapshotId, rawInput: { text: "hello" }, requestedClaims: [], correlationId });
 		expect(derived.status).toBe("derived");
 		if (derived.status !== "derived") return;
-		const invocation: RuntimeToolInvocation = { schemaVersion: 1, ...TEST_SCOPE, requestId, handshake, invocationSequence: 0, tool: descriptor.identity, snapshotId: snapshot.snapshotId, correlationId, derivationReceipt: derived.receipt, decision: "allow", authorizationReceiptId: createRuntimeId("receipt", "extension-invoke-approval"), authorizationDecisionDigest: canonicalDigest("allow") };
+		const invocation: RuntimeToolInvocation = { schemaVersion: 2, ...TEST_SCOPE, requestId, handshake, invocationSequence: 0, tool: descriptor.identity, snapshotId: snapshot.snapshotId, correlationId, derivationReceipt: derived.receipt, decision: "allow", authorizationReceiptId: createRuntimeId("receipt", "extension-invoke-approval"), authorizationDecisionDigest: canonicalDigest("allow"), inputRevision: 0 };
 		const first = await consumeResourceInvocation(invocation, adapter.invoke(invocation));
 		const second = await consumeResourceInvocation(invocation, adapter.invoke(invocation));
 		expect(first).toEqual(second);
 		expect(first).toMatchObject({ ok: true, result: { isError: false, content: [{ type: "text", text: '{"text":"hello"}' }] } });
 		expect(calls).toBe(1);
-		expect(await adapter.cancel({ schemaVersion: 1, ...TEST_SCOPE, requestId, reasonDigest: canonicalDigest("late") })).toMatchObject({ status: "already_terminal" });
+		expect(await adapter.cancel({ schemaVersion: 2, ...TEST_SCOPE, requestId, reasonDigest: canonicalDigest("late") })).toMatchObject({ status: "already_terminal" });
 	});
 
 	it("redacts and bounds audit payloads and fails closed when the durable event sink is unavailable", async () => {
@@ -155,7 +163,7 @@ describe("Extension control plane and Runtime adapters", () => {
 		expect(lifecycleEvent({ scope: TEST_SCOPE, descriptor, snapshot, state: "approved", correlationSeed: "approved", occurredAt: snapshot.createdAt, receiptId: descriptor.approvalReceiptId })).toMatchObject({ state: "approved", receiptId: descriptor.approvalReceiptId });
 		const sink = new ExtensionRuntimeEventSinkAdapter(TEST_SCOPE);
 		const event = lifecycleEvent({ scope: TEST_SCOPE, descriptor, snapshot, state: "discovered", correlationSeed: "discovered", occurredAt: snapshot.createdAt });
-		const emitted = await sink.emit({ schemaVersion: 1, ...TEST_SCOPE, idempotencyKey: createRuntimeId("command", "extension-event"), event });
+		const emitted = await sink.emit({ schemaVersion: 2, ...TEST_SCOPE, idempotencyKey: createRuntimeId("command", "extension-event"), event });
 		expect(emitted).toMatchObject({ status: "rejected", error: { code: "unavailable" } });
 	});
 });

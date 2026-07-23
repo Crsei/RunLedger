@@ -3,6 +3,8 @@ import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { describe, expect, it } from "vitest";
 import {
 	createResourceClaimDerivationReceipt,
+	createResourceLocatorReceipt,
+	createResourceProvenance,
 	createRuntimeInstructionDescriptor,
 	createRuntimeToolDescriptor,
 	isResourceClaimDerivationReceipt,
@@ -126,17 +128,22 @@ describe("resource descriptor and invocation contracts", () => {
 		const binding = manifest("repository-instruction");
 		const instructionDigest = canonicalDigest("Never publish candidate output without verification");
 		const instruction = createRuntimeInstructionDescriptor({
-			schemaVersion: 1,
+			schemaVersion: 2,
 			authorityId: AUTHORITY_ID,
 			tenantId: TENANT_ID,
-			identity: identity("instruction", "repository.instructions/agents", "repository-instruction", binding),
-			provenance: {
-				schemaVersion: 1,
+			identity: identity("repository-instruction", "repository.instructions/agents", "repository-instruction", binding),
+			provenance: createResourceProvenance({
 				authorityId: AUTHORITY_ID,
 				tenantId: TENANT_ID,
 				source: "project",
 				canonicalLocator: "/repo/AGENTS.md",
-			},
+				locatorReceipt: createResourceLocatorReceipt({
+					authorityId: AUTHORITY_ID,
+					tenantId: TENANT_ID,
+					canonicalLocator: "/repo/AGENTS.md",
+					sourceRoot: "/repo",
+				}),
+			}),
 			manifest: binding,
 			descriptorType: "instruction",
 			displayName: "Repository instructions",
@@ -184,29 +191,54 @@ describe("resource descriptor and invocation contracts", () => {
 		const assetsBinding = manifest("skill-assets");
 		const scriptBinding = manifest("skill-script");
 		const skill: SkillResourceSet = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			authorityId: AUTHORITY_ID,
 			tenantId: TENANT_ID,
 			qualifiedId: base,
+			budget: { maxBytes: 4096, maxEntries: 8 },
 			metadata: {
 				role: "metadata",
 				identity: identity("skill", `${base}/metadata`, "skill-metadata", metadataBinding),
 				capabilities: [filesystemCapability("skill-metadata-read", metadataBinding.combinedDigest)],
+				snapshotId: SNAPSHOT_ID,
+				adapterGeneration: 7,
+				adapterGenerationDigest: digest("adapter-generation-7"),
+				contentDigest: metadataBinding.combinedDigest,
+				byteLength: 128,
+				entryCount: 1,
 			},
 			body: {
 				role: "body",
 				identity: identity("skill-body", `${base}/body`, "skill-body", bodyBinding),
 				capabilities: [filesystemCapability("skill-body-read", bodyBinding.combinedDigest)],
+				snapshotId: SNAPSHOT_ID,
+				adapterGeneration: 7,
+				adapterGenerationDigest: digest("adapter-generation-7"),
+				contentDigest: bodyBinding.combinedDigest,
+				byteLength: 256,
+				entryCount: 1,
 			},
 			assets: {
 				role: "assets",
 				identity: identity("skill-assets", `${base}/assets`, "skill-assets", assetsBinding),
 				capabilities: [filesystemCapability("skill-assets-read", assetsBinding.combinedDigest)],
+				snapshotId: SNAPSHOT_ID,
+				adapterGeneration: 7,
+				adapterGenerationDigest: digest("adapter-generation-7"),
+				contentDigest: assetsBinding.combinedDigest,
+				byteLength: 512,
+				entryCount: 2,
 			},
 			script: {
 				role: "script",
 				identity: identity("skill-script", `${base}/script`, "skill-script", scriptBinding),
 				capabilities: [processCapability("skill-script-process")],
+				snapshotId: SNAPSHOT_ID,
+				adapterGeneration: 7,
+				adapterGenerationDigest: digest("adapter-generation-7"),
+				contentDigest: scriptBinding.combinedDigest,
+				byteLength: 64,
+				entryCount: 1,
 			},
 		};
 
@@ -270,6 +302,7 @@ describe("resource descriptor and invocation contracts", () => {
 			descriptorDigest: tool.descriptorDigest,
 			canonicalInputJson: canonicalJson({ path: "OTHER.md" }),
 			canonicalInputDigest: canonicalDigest(request.rawInput),
+			inputRevision: 0,
 			claims: tool.capabilities.map((item) => item.claim),
 			claimsDigest: canonicalDigest(tool.capabilities.map((item) => item.claim)),
 			issuedAt: "2026-07-22T00:00:00.000Z",
@@ -283,7 +316,7 @@ describe("resource descriptor and invocation contracts", () => {
 		const prepared = invocation();
 		const content: readonly ResourceContent[] = [{ type: "text", text: "fixture result" }];
 		const result = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			...authorizationContext(),
 			receiptId: createRuntimeId("receipt", "tool-result"),
 			requestId: prepared.requestId,

@@ -4,7 +4,10 @@ import { canonicalDigest, canonicalJson } from "../../src/runtime/protocol/v3/ca
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import { ToolRegistry } from "../../src/runtime/tool-registry.ts";
 import type { AgentTool, ToolExecutionGatewayPort, ToolExecutionGatewayRequest } from "../../src/runtime/types.ts";
-import { createExtensionResourceIdentity } from "../../src/extensions/identity.ts";
+import {
+	createExtensionResourceIdentity,
+	createExtensionResourceProvenance,
+} from "../../src/extensions/identity.ts";
 import type { HookDescriptor, HookDispatchResult, HookEnvelope, HookEvent, HookRunOutcome } from "../../src/extensions/hooks/types.ts";
 import type {
 	ProductionExtensionAuditPort,
@@ -37,7 +40,12 @@ function resourceDescriptor(kind: "skill" | "hook" | "mcp-tool", qualifiedId: st
 		schemaVersion: 1,
 		kind,
 		identity,
-		provenance: { schemaVersion: 1, authorityId: TEST_SCOPE.authorityId, tenantId: TEST_SCOPE.tenantId, source: "project", canonicalLocator: `/fixture/${qualifiedId}` },
+		provenance: createExtensionResourceProvenance({
+			scope: TEST_SCOPE,
+			source: "project",
+			canonicalLocator: `/fixture/${qualifiedId}`,
+			sourceRoot: "/fixture",
+		}),
 		manifest,
 		displayName: qualifiedId,
 		description: `${kind} fixture`,

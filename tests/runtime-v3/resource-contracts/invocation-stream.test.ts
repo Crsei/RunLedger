@@ -12,7 +12,7 @@ import { authorizationContext, invocation } from "./fixtures.ts";
 function result(request: RuntimeToolInvocation, terminalSequence: number): RuntimeToolResult {
 	const content = [{ type: "text" as const, text: "done" }];
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		receiptId: createRuntimeId("receipt", `stream-${terminalSequence}`),
 		requestId: request.requestId,
@@ -33,7 +33,7 @@ function result(request: RuntimeToolInvocation, terminalSequence: number): Runti
 
 function terminal(request: RuntimeToolInvocation, sequence: number): RuntimeResourceInvocationFrame {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		kind: "terminal",
 		requestId: request.requestId,
@@ -52,7 +52,7 @@ describe("resource invocation stream", () => {
 	it("accepts bounded ordered progress followed by exactly one terminal", async () => {
 		const request = invocation();
 		const progress: RuntimeResourceInvocationFrame = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			kind: "progress",
 			requestId: request.requestId,
@@ -76,7 +76,7 @@ describe("resource invocation stream", () => {
 		).resolves.toMatchObject({ ok: false });
 		const postTerminal = terminal(request, 0);
 		const progressAfter: RuntimeResourceInvocationFrame = {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...authorizationContext(),
 			kind: "progress",
 			requestId: request.requestId,

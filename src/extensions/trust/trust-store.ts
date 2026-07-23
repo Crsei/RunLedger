@@ -2,6 +2,7 @@
 
 import { canonicalDigest } from "../../runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../runtime/protocol/v3/ids.ts";
+import { createResourceApprovalReceipt } from "../../runtime/resources/schemas.ts";
 import type { ResourceApprovalReceipt, ResourceApprovalScope, ResourceIdentity, ResourceManifestDigest } from "../../runtime/resources/types.ts";
 import type { PrincipalId } from "../../runtime/protocol/v3/ids.ts";
 import type { TrustDocument, TrustEvaluation, TrustRecord } from "./types.ts";
@@ -30,8 +31,7 @@ function parseDocument(value: unknown): TrustDocument | undefined {
 }
 
 export function trustRecordToApprovalReceipt(record: TrustRecord): ResourceApprovalReceipt {
-	return {
-		schemaVersion: 1,
+	return createResourceApprovalReceipt({
 		authorityId: record.identity.authorityId,
 		tenantId: record.identity.tenantId,
 		principalId: record.principalId,
@@ -43,8 +43,14 @@ export function trustRecordToApprovalReceipt(record: TrustRecord): ResourceAppro
 		issuedAt: record.issuedAt,
 		expiresAt: record.expiresAt,
 		revocationRevision: record.revocationRevision,
-		receiptDigest: record.receiptDigest,
-	};
+		locatorDigest: record.locatorDigest,
+		publisherDigest: record.publisherDigest,
+		policyRevision: record.policyRevision,
+		hookRevision: record.hookRevision,
+		adapterGeneration: record.adapterGeneration,
+		adapterGenerationDigest: record.adapterGenerationDigest,
+		approvalState: "approved",
+	});
 }
 
 export class TrustStore {
@@ -79,6 +85,11 @@ export class TrustStore {
 		scope: ResourceApprovalScope;
 		expiresAt?: string | null;
 		issuedAt?: string;
+		publisherDigest?: string | null;
+		policyRevision?: number;
+		hookRevision?: number;
+		adapterGeneration?: number;
+		adapterGenerationDigest?: string;
 	}): Promise<TrustRecord> {
 		const current = await this.load();
 		const issuedAt = input.issuedAt ?? new Date().toISOString();
@@ -93,6 +104,15 @@ export class TrustStore {
 			issuedAt,
 			expiresAt: input.expiresAt ?? null,
 			revocationRevision: current.revision + 1,
+			locatorDigest: canonicalDigest(input.canonicalPath),
+			publisherDigest: input.publisherDigest ?? null,
+			policyRevision: input.policyRevision ?? 0,
+			hookRevision: input.hookRevision ?? 0,
+			adapterGeneration: input.adapterGeneration ?? 0,
+			adapterGenerationDigest: input.adapterGenerationDigest ?? canonicalDigest({
+				generation: input.adapterGeneration ?? 0,
+				identity: input.identity,
+			}),
 		};
 		const receiptId = createRuntimeId("receipt", canonicalDigest(bodyWithoutId).slice(0, 32));
 		const body: Omit<TrustRecord, "receiptDigest"> = { ...bodyWithoutId, receiptId };
@@ -127,6 +147,11 @@ export class TrustStore {
 		binding: ResourceManifestDigest;
 		principalId: PrincipalId;
 		at?: Date;
+		publisherDigest?: string | null;
+		policyRevision?: number;
+		hookRevision?: number;
+		adapterGeneration?: number;
+		adapterGenerationDigest?: string;
 	}): Promise<TrustEvaluation> {
 		const current = await this.load();
 		const record = current.records.find((item) => item.identity.qualifiedId === input.identity.qualifiedId);
@@ -138,6 +163,18 @@ export class TrustStore {
 		}
 		if (record.binding.combinedDigest !== input.binding.combinedDigest || canonicalDigest(record.binding) !== canonicalDigest(input.binding)) {
 			return { state: "stale", reason: "resource content or capability binding changed", record };
+		}
+		if (
+			record.publisherDigest !== (input.publisherDigest ?? null) ||
+			record.policyRevision !== (input.policyRevision ?? 0) ||
+			record.hookRevision !== (input.hookRevision ?? 0) ||
+			record.adapterGeneration !== (input.adapterGeneration ?? 0) ||
+			record.adapterGenerationDigest !== (input.adapterGenerationDigest ?? canonicalDigest({
+				generation: input.adapterGeneration ?? 0,
+				identity: input.identity,
+			}))
+		) {
+			return { state: "stale", reason: "policy, Hook, or adapter generation changed", record };
 		}
 		const at = input.at ?? new Date();
 		if (record.expiresAt && new Date(record.expiresAt).getTime() <= at.getTime()) {

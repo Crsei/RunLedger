@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { canonicalDigest } from "../../runtime/protocol/v3/canonical-json.ts";
 import { extensionDiagnostic } from "../diagnostics.ts";
 import type { ExtensionDiagnostic } from "../diagnostics.ts";
-import { createExtensionResourceIdentity, qualifiedResourceId } from "../identity.ts";
+import {
+	createExtensionResourceIdentity,
+	createExtensionResourceProvenance,
+	qualifiedResourceId,
+} from "../identity.ts";
 import { resolveDeclaredPath, resolveContainedPath } from "../paths.ts";
 import type { ExtensionStoragePort } from "../storage-port.ts";
 import { buildResourceManifestDigest, digestDirectory, digestFile } from "../trust/digest.ts";
@@ -88,7 +92,12 @@ export async function discoverPlugins(options: {
 					schemaVersion: 1,
 					kind: "plugin",
 					identity,
-					provenance: { schemaVersion: 1, authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, source: root.source, canonicalLocator: manifestPath },
+					provenance: createExtensionResourceProvenance({
+						scope: options.scope,
+						source: root.source,
+						canonicalLocator: manifestPath,
+						sourceRoot: root.rootPath,
+					}),
 					manifest: binding,
 					displayName: parsed.manifest.name,
 					description: parsed.manifest.description,

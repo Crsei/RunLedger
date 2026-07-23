@@ -17,8 +17,15 @@ import type {
 	ResourceIdentity,
 	ResourceLifecycleEvent,
 	ResourceManifestDigest,
+	ResourceLocatorReceipt,
 	ResourceProvenance,
 	ResourceProtocolHandshake,
+	ResourceFacetReadRequest,
+	ResourceFacetReadResult,
+	ResourceHookTransformRequest,
+	ResourceHookTransformReceipt,
+	ResourceHookTransformResult,
+	ResourceMcpAnnotation,
 	ResourceResolveRequest,
 	ResourceResolveResult,
 	ResourceSearchRequest,
@@ -73,6 +80,10 @@ export const MAX_RESOURCE_RESULT_ITEMS = 128;
 export const MAX_RESOURCE_RESULT_TEXT_BYTES = 256 * 1_024;
 export const MAX_RESOURCE_PEER_FEATURES = 64;
 export const MAX_RESOURCE_PROGRESS_FRAMES = 1_024;
+export const MAX_RESOURCE_FACET_BYTES = 8 * 1_024 * 1_024;
+export const MAX_RESOURCE_FACET_ENTRIES = 512;
+export const MAX_RESOURCE_HOOK_PATCHES = 128;
+export const MAX_RESOURCE_MCP_ANNOTATION_BYTES = 16 * 1_024;
 
 const digestPattern = "^[a-f0-9]{64}$";
 const timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$";
@@ -121,6 +132,19 @@ export const ResourcePublisherRefSchema = exact({
 	tenantId: runtimeId("tenant"),
 	publisherId: token,
 	identityDigest: digest,
+	signatureDigest: digest,
+});
+
+export const ResourceLocatorReceiptSchema = exact({
+	schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+	authorityId: runtimeId("authority"),
+	tenantId: runtimeId("tenant"),
+	canonicalLocator: Type.String({ minLength: 1, maxLength: MAX_RESOURCE_LOCATOR_LENGTH }),
+	sourceRoot: Type.String({ minLength: 1, maxLength: MAX_RESOURCE_LOCATOR_LENGTH }),
+	locatorDigest: digest,
+	sourceRootDigest: digest,
+	containmentDigest: digest,
+	contained: Type.Literal(true),
 });
 
 export const ResourceProvenanceSchema = exact({
@@ -129,9 +153,11 @@ export const ResourceProvenanceSchema = exact({
 	tenantId: runtimeId("tenant"),
 	source: ResourceSourceSchema,
 	canonicalLocator: Type.String({ minLength: 1, maxLength: MAX_RESOURCE_LOCATOR_LENGTH }),
+	locatorReceipt: ResourceLocatorReceiptSchema,
 	publisher: Type.Optional(ResourcePublisherRefSchema),
 	signatureReceiptId: Type.Optional(runtimeId("receipt")),
 	parentPlugin: Type.Optional(ResourceIdentitySchema),
+	provenanceBindingDigest: digest,
 });
 
 export const ResourceManifestDigestSchema = exact({
@@ -156,6 +182,13 @@ export const ResourceApprovalReceiptSchema = exact({
 	issuedAt: timestamp,
 	expiresAt: Type.Union([timestamp, Type.Null()]),
 	revocationRevision: revision,
+	locatorDigest: digest,
+	publisherDigest: Type.Union([digest, Type.Null()]),
+	policyRevision: revision,
+	hookRevision: revision,
+	adapterGeneration: revision,
+	adapterGenerationDigest: digest,
+	approvalState: Type.Literal("approved"),
 	receiptDigest: digest,
 });
 
@@ -203,6 +236,7 @@ export const ResourceProtocolHandshakeSchema = exact({
 	sessionId: runtimeId("session"),
 	adapterId: runtimeId("resource"),
 	adapterGeneration: revision,
+	adapterGenerationDigest: digest,
 	snapshotId: runtimeId("snapshot"),
 	snapshotSequence: revision,
 	catalogDigest: digest,
@@ -281,6 +315,12 @@ export const SkillResourceFacetSchema = exact({
 	role: Type.Union([Type.Literal("metadata"), Type.Literal("body"), Type.Literal("assets"), Type.Literal("script")]),
 	identity: ResourceIdentitySchema,
 	capabilities: Type.Array(ResourceCapabilityDeclarationSchema, { maxItems: MAX_RESOURCE_CAPABILITIES }),
+	snapshotId: runtimeId("snapshot"),
+	adapterGeneration: revision,
+	adapterGenerationDigest: digest,
+	contentDigest: digest,
+	byteLength: Type.Integer({ minimum: 0, maximum: MAX_RESOURCE_FACET_BYTES }),
+	entryCount: Type.Integer({ minimum: 0, maximum: MAX_RESOURCE_FACET_ENTRIES }),
 });
 
 export const SkillResourceSetSchema = exact({
@@ -292,6 +332,10 @@ export const SkillResourceSetSchema = exact({
 	body: SkillResourceFacetSchema,
 	assets: Type.Optional(SkillResourceFacetSchema),
 	script: Type.Optional(SkillResourceFacetSchema),
+	budget: exact({
+		maxBytes: Type.Integer({ minimum: 1, maximum: MAX_RESOURCE_FACET_BYTES }),
+		maxEntries: Type.Integer({ minimum: 1, maximum: MAX_RESOURCE_FACET_ENTRIES }),
+	}),
 });
 
 export const RuntimeToolInvocationRequestSchema = exact({
@@ -317,6 +361,7 @@ export const ResourceClaimDerivationReceiptSchema = exact({
 	descriptorDigest: digest,
 	canonicalInputJson: Type.String({ minLength: 1, maxLength: MAX_RESOURCE_INPUT_BYTES }),
 	canonicalInputDigest: digest,
+	inputRevision: revision,
 	claims: Type.Array(CapabilityClaimSchema, { maxItems: MAX_RESOURCE_CAPABILITIES }),
 	claimsDigest: digest,
 	issuedAt: timestamp,
@@ -364,6 +409,83 @@ export const RuntimeToolInvocationSchema = exact({
 	decision: Type.Literal("allow"),
 	authorizationReceiptId: runtimeId("receipt"),
 	authorizationDecisionDigest: digest,
+	inputRevision: revision,
+	hookTransformReceiptId: Type.Optional(runtimeId("receipt")),
+});
+
+export const ResourceHookPatchSchema = exact({
+	sourceOrder: revision,
+	hook: ResourceIdentitySchema,
+	beforeInputDigest: digest,
+	afterInputDigest: digest,
+	patchDigest: digest,
+	handled: Type.Boolean(),
+	shortCircuit: Type.Boolean(),
+});
+
+export const ResourceHookTransformRequestSchema = exact({
+	schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+	...authorizationProperties,
+	requestId: runtimeId("command"),
+	handshake: ResourceProtocolHandshakeSchema,
+	snapshotId: runtimeId("snapshot"),
+	tool: ResourceIdentitySchema,
+	inputRevision: revision,
+	canonicalInputJson: Type.String({ minLength: 1, maxLength: MAX_RESOURCE_INPUT_BYTES }),
+	canonicalInputDigest: digest,
+	systemPromptChainDigest: digest,
+});
+
+export const ResourceHookTransformReceiptSchema = exact({
+	schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+	...authorizationProperties,
+	receiptId: runtimeId("receipt"),
+	requestId: runtimeId("command"),
+	handshakeDigest: digest,
+	snapshotId: runtimeId("snapshot"),
+	inputRevision: revision,
+	outputRevision: revision,
+	originalInputDigest: digest,
+	updatedInputJson: Type.String({ minLength: 1, maxLength: MAX_RESOURCE_INPUT_BYTES }),
+	updatedInputDigest: digest,
+	patches: Type.Array(ResourceHookPatchSchema, { maxItems: MAX_RESOURCE_HOOK_PATCHES }),
+	handled: Type.Boolean(),
+	shortCircuit: Type.Boolean(),
+	systemPromptChainDigest: digest,
+	hookIdentityDigest: digest,
+	hookGeneration: revision,
+	hookGenerationDigest: digest,
+	claimsDigest: digest,
+	authorizationDecisionDigest: digest,
+	issuedAt: timestamp,
+	receiptDigest: digest,
+});
+
+export const ResourceHookTransformResultSchema = Type.Union([
+	exact({
+		schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+		status: Type.Literal("transformed"),
+		receipt: ResourceHookTransformReceiptSchema,
+	}),
+	exact({
+		schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+		...authorizationProperties,
+		requestId: runtimeId("command"),
+		status: Type.Literal("rejected"),
+		error: ResourcePortErrorSchema,
+	}),
+]);
+
+export const ResourceMcpAnnotationSchema = exact({
+	schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+	server: ResourceIdentitySchema,
+	tool: ResourceIdentitySchema,
+	adapterGeneration: revision,
+	adapterGenerationDigest: digest,
+	metadataJson: Type.String({ minLength: 2, maxLength: MAX_RESOURCE_MCP_ANNOTATION_BYTES }),
+	metadataDigest: digest,
+	byteLength: Type.Integer({ minimum: 2, maximum: MAX_RESOURCE_MCP_ANNOTATION_BYTES }),
+	trust: Type.Literal("untrusted_metadata"),
 });
 
 export const ResourceContentSchema = Type.Union([
@@ -569,6 +691,58 @@ export const ResourceSearchResultSchema = exact({
 	truncated: Type.Boolean(),
 });
 
+const resourceFacetBudgetProperties = {
+	maxBytes: Type.Integer({ minimum: 1, maximum: MAX_RESOURCE_FACET_BYTES }),
+	maxEntries: Type.Integer({ minimum: 1, maximum: MAX_RESOURCE_FACET_ENTRIES }),
+} as const;
+
+export const ResourceFacetReadRequestSchema = exact({
+	schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+	...authorizationProperties,
+	requestId: runtimeId("command"),
+	snapshotId: runtimeId("snapshot"),
+	adapterGeneration: revision,
+	adapterGenerationDigest: digest,
+	resource: ResourceIdentitySchema,
+	facet: Type.Union([
+		Type.Literal("metadata"),
+		Type.Literal("body"),
+		Type.Literal("assets"),
+		Type.Literal("script"),
+	]),
+	budget: exact(resourceFacetBudgetProperties),
+});
+
+export const ResourceFacetReadResultSchema = Type.Union([
+	exact({
+		schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+		...authorizationProperties,
+		requestId: runtimeId("command"),
+		status: Type.Literal("read"),
+		snapshotId: runtimeId("snapshot"),
+		adapterGeneration: revision,
+		adapterGenerationDigest: digest,
+		resource: ResourceIdentitySchema,
+		facet: Type.Union([
+			Type.Literal("metadata"),
+			Type.Literal("body"),
+			Type.Literal("assets"),
+			Type.Literal("script"),
+		]),
+		content: Type.Array(ResourceContentSchema, { maxItems: MAX_RESOURCE_FACET_ENTRIES }),
+		contentDigest: digest,
+		byteLength: Type.Integer({ minimum: 0, maximum: MAX_RESOURCE_FACET_BYTES }),
+		entryCount: Type.Integer({ minimum: 0, maximum: MAX_RESOURCE_FACET_ENTRIES }),
+	}),
+	exact({
+		schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
+		...authorizationProperties,
+		requestId: runtimeId("command"),
+		status: Type.Literal("rejected"),
+		error: ResourcePortErrorSchema,
+	}),
+]);
+
 export const ResourceCancellationRequestSchema = exact({
 	schemaVersion: Type.Literal(RESOURCE_CONTRACT_SCHEMA_VERSION),
 	...authorizationProperties,
@@ -712,11 +886,65 @@ export function isResourceIdentity(value: unknown): value is ResourceIdentity {
 export function isResourceProvenance(value: unknown): value is ResourceProvenance {
 	if (!Check(ResourceProvenanceSchema, value)) return false;
 	const provenance = value as unknown as ResourceProvenance;
+	const { provenanceBindingDigest: _provenanceBindingDigest, ...body } = provenance;
 	return (
+		isResourceLocatorReceipt(provenance.locatorReceipt) &&
+		scopeMatches(provenance.locatorReceipt, provenance) &&
+		provenance.locatorReceipt.canonicalLocator === provenance.canonicalLocator &&
 		(provenance.publisher === undefined || scopeMatches(provenance.publisher, provenance)) &&
+		((provenance.publisher === undefined) === (provenance.signatureReceiptId === undefined)) &&
 		(provenance.parentPlugin === undefined ||
-			(provenance.parentPlugin.kind === "plugin" && scopeMatches(provenance.parentPlugin, provenance)))
+			(provenance.parentPlugin.kind === "plugin" && scopeMatches(provenance.parentPlugin, provenance))) &&
+		provenance.provenanceBindingDigest === canonicalDigest(body)
 	);
+}
+
+export function createResourceLocatorReceipt(
+	input: Omit<ResourceLocatorReceipt, "schemaVersion" | "locatorDigest" | "sourceRootDigest" | "containmentDigest" | "contained">,
+): ResourceLocatorReceipt {
+	const locatorDigest = canonicalDigest(input.canonicalLocator);
+	const sourceRootDigest = canonicalDigest(input.sourceRoot);
+	const contained = true as const;
+	return {
+		schemaVersion: RESOURCE_CONTRACT_SCHEMA_VERSION,
+		...input,
+		locatorDigest,
+		sourceRootDigest,
+		containmentDigest: canonicalDigest({
+			canonicalLocator: input.canonicalLocator,
+			sourceRoot: input.sourceRoot,
+			contained,
+		}),
+		contained,
+	};
+}
+
+export function isResourceLocatorReceipt(value: unknown): value is ResourceLocatorReceipt {
+	if (!Check(ResourceLocatorReceiptSchema, value)) return false;
+	const receipt = value as ResourceLocatorReceipt;
+	const normalizedRoot = receipt.sourceRoot.endsWith("/")
+		? receipt.sourceRoot.slice(0, -1)
+		: receipt.sourceRoot;
+	const isContained = receipt.canonicalLocator === normalizedRoot ||
+		receipt.canonicalLocator.startsWith(`${normalizedRoot}/`) ||
+		receipt.canonicalLocator.startsWith(`${normalizedRoot}#`);
+	return (
+		isContained &&
+		receipt.locatorDigest === canonicalDigest(receipt.canonicalLocator) &&
+		receipt.sourceRootDigest === canonicalDigest(receipt.sourceRoot) &&
+		receipt.containmentDigest === canonicalDigest({
+			canonicalLocator: receipt.canonicalLocator,
+			sourceRoot: receipt.sourceRoot,
+			contained: true,
+		})
+	);
+}
+
+export function createResourceProvenance(
+	input: Omit<ResourceProvenance, "schemaVersion" | "provenanceBindingDigest">,
+): ResourceProvenance {
+	const body = { schemaVersion: RESOURCE_CONTRACT_SCHEMA_VERSION, ...input };
+	return { ...body, provenanceBindingDigest: canonicalDigest(body) };
 }
 
 type ResourceManifestDigestInput = Omit<ResourceManifestDigest, "schemaVersion" | "combinedDigest">;
@@ -757,6 +985,8 @@ export function isResourceApprovalReceipt(value: unknown, at: Date = new Date())
 		isResourceManifestDigest(receipt.binding) &&
 		scopeMatches(receipt.identity, receipt) &&
 		receipt.identity.digest === receipt.binding.combinedDigest &&
+		receipt.locatorDigest.length === 64 &&
+		receipt.publisherDigest === (receipt.identity.source === "builtin" ? null : receipt.publisherDigest) &&
 		receipt.receiptDigest === canonicalDigest(bodyWithoutDigest(receipt, "receiptDigest"))
 	);
 }
@@ -770,6 +1000,12 @@ export function resourceApprovalReceiptMatches(
 		scope: ResourceApprovalReceipt["scope"];
 		scopeBindingDigest: string;
 		revocationRevision: number;
+		locatorDigest: string;
+		publisherDigest: string | null;
+		policyRevision: number;
+		hookRevision: number;
+		adapterGeneration: number;
+		adapterGenerationDigest: string;
 		at: Date;
 	},
 ): boolean {
@@ -783,7 +1019,13 @@ export function resourceApprovalReceiptMatches(
 		receipt.principalId === expected.principalId &&
 		receipt.scope === expected.scope &&
 		receipt.scopeBindingDigest === expected.scopeBindingDigest &&
-		receipt.revocationRevision === expected.revocationRevision
+		receipt.revocationRevision === expected.revocationRevision &&
+		receipt.locatorDigest === expected.locatorDigest &&
+		receipt.publisherDigest === expected.publisherDigest &&
+		receipt.policyRevision === expected.policyRevision &&
+		receipt.hookRevision === expected.hookRevision &&
+		receipt.adapterGeneration === expected.adapterGeneration &&
+		receipt.adapterGenerationDigest === expected.adapterGenerationDigest
 	);
 }
 
@@ -886,7 +1128,7 @@ export function isRuntimeInstructionDescriptor(value: unknown): value is Runtime
 	const descriptor = value as unknown as RuntimeInstructionDescriptor;
 	return (
 		descriptorCommonIsValid(descriptor) &&
-		descriptor.identity.kind === "instruction" &&
+		descriptor.identity.kind === `${descriptor.priority}-instruction` &&
 		isInputSourceRef(descriptor.inputSource) &&
 		descriptor.inputSource.authorityId === descriptor.authorityId &&
 		descriptor.inputSource.tenantId === descriptor.tenantId &&
@@ -938,7 +1180,15 @@ export function isSkillResourceSet(value: unknown): value is SkillResourceSet {
 			.filter((facet): facet is SkillResourceSet["metadata"] => facet !== undefined)
 			.every((facet) => facet.capabilities.every((item) => item.boundary.kind !== "process")) &&
 		new Set(resourceIds).size === resourceIds.length &&
-		new Set(capabilityIds).size === capabilityIds.length
+		new Set(capabilityIds).size === capabilityIds.length &&
+		facets.every(
+			(facet) =>
+				facet.snapshotId === skill.metadata.snapshotId &&
+				facet.adapterGeneration === skill.metadata.adapterGeneration &&
+				facet.adapterGenerationDigest === skill.metadata.adapterGenerationDigest &&
+				facet.byteLength <= skill.budget.maxBytes &&
+				facet.entryCount <= skill.budget.maxEntries,
+		)
 	);
 }
 
@@ -999,6 +1249,67 @@ export function isResourceClaimDerivationResult(value: unknown): value is Resour
 	return result.status === "rejected" || isResourceClaimDerivationReceipt(result.receipt);
 }
 
+export function isResourceHookTransformRequest(value: unknown): value is ResourceHookTransformRequest {
+	if (!Check(ResourceHookTransformRequestSchema, value)) return false;
+	const request = value as unknown as ResourceHookTransformRequest;
+	return (
+		isResourceProtocolHandshake(request.handshake) &&
+		scopeMatches(request.handshake, request) &&
+		scopeMatches(request.tool, request) &&
+		request.snapshotId === request.handshake.snapshotId &&
+		canonicalStringMatches(request.canonicalInputJson, request.canonicalInputDigest)
+	);
+}
+
+export function createResourceHookTransformReceipt(
+	input: Omit<ResourceHookTransformReceipt, "schemaVersion" | "receiptDigest">,
+): ResourceHookTransformReceipt {
+	const body = { schemaVersion: RESOURCE_CONTRACT_SCHEMA_VERSION, ...input };
+	return { ...body, receiptDigest: canonicalDigest(body) };
+}
+
+export function isResourceHookTransformReceipt(value: unknown): value is ResourceHookTransformReceipt {
+	if (!Check(ResourceHookTransformReceiptSchema, value)) return false;
+	const receipt = value as unknown as ResourceHookTransformReceipt;
+	const { receiptDigest: _receiptDigest, ...body } = receipt;
+	return (
+		receipt.outputRevision === receipt.inputRevision + 1 &&
+		canonicalStringMatches(receipt.updatedInputJson, receipt.updatedInputDigest) &&
+		receipt.patches.every(
+			(patch, index) =>
+				patch.sourceOrder === index &&
+				scopeMatches(patch.hook, receipt) &&
+				(index === 0
+					? patch.beforeInputDigest === receipt.originalInputDigest
+					: patch.beforeInputDigest === receipt.patches[index - 1]?.afterInputDigest),
+		) &&
+		(receipt.patches.length === 0
+			? receipt.updatedInputDigest === receipt.originalInputDigest
+			: receipt.patches.at(-1)?.afterInputDigest === receipt.updatedInputDigest) &&
+		receipt.handled === receipt.patches.some((patch) => patch.handled) &&
+		receipt.shortCircuit === receipt.patches.some((patch) => patch.shortCircuit) &&
+		receipt.receiptDigest === canonicalDigest(body)
+	);
+}
+
+export function isResourceHookTransformResult(value: unknown): value is ResourceHookTransformResult {
+	if (!Check(ResourceHookTransformResultSchema, value)) return false;
+	const result = value as ResourceHookTransformResult;
+	return result.status === "rejected" || isResourceHookTransformReceipt(result.receipt);
+}
+
+export function isResourceMcpAnnotation(value: unknown): value is ResourceMcpAnnotation {
+	if (!Check(ResourceMcpAnnotationSchema, value)) return false;
+	const annotation = value as unknown as ResourceMcpAnnotation;
+	return (
+		annotation.server.kind === "mcp-server" &&
+		annotation.tool.kind === "mcp-tool" &&
+		scopeMatches(annotation.server, annotation.tool) &&
+		canonicalStringMatches(annotation.metadataJson, annotation.metadataDigest) &&
+		Buffer.byteLength(annotation.metadataJson, "utf8") === annotation.byteLength
+	);
+}
+
 export function isRuntimeToolInvocation(value: unknown): value is RuntimeToolInvocation {
 	if (!Check(RuntimeToolInvocationSchema, value)) return false;
 	const invocation = value as unknown as RuntimeToolInvocation;
@@ -1015,6 +1326,7 @@ export function isRuntimeToolInvocation(value: unknown): value is RuntimeToolInv
 		receipt.requestId === invocation.requestId &&
 		receipt.snapshotId === invocation.snapshotId &&
 		receipt.toolIdentityDigest === resourceIdentityDigest(invocation.tool)
+		&& receipt.inputRevision === invocation.inputRevision
 	);
 }
 
@@ -1159,6 +1471,38 @@ export function isResourceSearchResult(
 				value.snapshotId === request.snapshotId &&
 				value.queryDigest === canonicalDigest(request.query) &&
 				value.items.length <= request.limit))
+	);
+}
+
+export function isResourceFacetReadRequest(value: unknown): value is ResourceFacetReadRequest {
+	return (
+		checked<ResourceFacetReadRequest>(ResourceFacetReadRequestSchema, value) &&
+		scopeMatches(value.resource, value) &&
+		(value.facet !== "body" || value.resource.kind === "skill-body") &&
+		(value.facet !== "assets" || value.resource.kind === "skill-assets") &&
+		(value.facet !== "script" || value.resource.kind === "skill-script")
+	);
+}
+
+export function isResourceFacetReadResult(
+	value: unknown,
+	request?: ResourceFacetReadRequest,
+): value is ResourceFacetReadResult {
+	if (!checked<ResourceFacetReadResult>(ResourceFacetReadResultSchema, value)) return false;
+	if (value.status === "rejected") return true;
+	return (
+		scopeMatches(value.resource, value) &&
+		value.entryCount === value.content.length &&
+		value.contentDigest === canonicalDigest(value.content) &&
+		(request === undefined ||
+			(value.requestId === request.requestId &&
+				value.snapshotId === request.snapshotId &&
+				value.adapterGeneration === request.adapterGeneration &&
+				value.adapterGenerationDigest === request.adapterGenerationDigest &&
+				resourceIdentityDigest(value.resource) === resourceIdentityDigest(request.resource) &&
+				value.facet === request.facet &&
+				value.byteLength <= request.budget.maxBytes &&
+				value.entryCount <= request.budget.maxEntries))
 	);
 }
 

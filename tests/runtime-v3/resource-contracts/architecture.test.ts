@@ -41,7 +41,10 @@ describe("resource contract architecture boundary", () => {
 	it("keeps the adapter surface exact and transport agnostic", () => {
 		const ports = source("ports.ts");
 		expect(ports).toContain("resolveExact(request: ResourceResolveRequest)");
+		expect(ports).toContain("validateLocator(request: ResourceLocatorValidationRequest)");
 		expect(ports).toContain("search(request: ResourceSearchRequest)");
+		expect(ports).toContain("readFacet(request: ResourceFacetReadRequest");
+		expect(ports).toContain("transform(");
 		expect(ports).toContain("canonicalizeAndDerive(");
 		expect(ports).toContain("invoke(invocation: RuntimeToolInvocation");
 		expect(ports).toContain("cancel(request: ResourceCancellationRequest)");

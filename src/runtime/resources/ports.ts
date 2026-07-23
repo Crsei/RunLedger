@@ -11,6 +11,10 @@ import type {
 	ResourceClaimDerivationResult,
 	ResourceEventEmissionRequest,
 	ResourceEventEmissionResult,
+	ResourceFacetReadRequest,
+	ResourceFacetReadResult,
+	ResourceHookTransformRequest,
+	ResourceHookTransformResult,
 	ResourceResolveRequest,
 	ResourceResolveResult,
 	ResourceSearchRequest,
@@ -25,8 +29,22 @@ import type {
 } from "./types.ts";
 
 export interface RuntimeResourceCatalogPort {
+	validateLocator(request: ResourceLocatorValidationRequest): Promise<ResourceLocatorValidationResult>;
 	resolveExact(request: ResourceResolveRequest): Promise<ResourceResolveResult>;
 	search(request: ResourceSearchRequest): Promise<ResourceSearchResult>;
+}
+
+export interface ResourceLocatorValidationRequest {
+	canonicalLocator: string;
+	sourceRoot: string;
+}
+
+export type ResourceLocatorValidationResult =
+	| { status: "valid"; canonicalLocator: string; containmentDigest: string }
+	| { status: "rejected"; reasonDigest: string };
+
+export interface RuntimeResourceFacetReadPort {
+	readFacet(request: ResourceFacetReadRequest, signal?: AbortSignal): Promise<ResourceFacetReadResult>;
 }
 
 /** raw input 到 canonical input/trusted claims 的唯一中立切点。 */
@@ -35,6 +53,13 @@ export interface RuntimeResourceClaimDerivationPort {
 		request: RuntimeToolInvocationRequest,
 		signal?: AbortSignal,
 	): Promise<ResourceClaimDerivationResult>;
+}
+
+export interface RuntimeResourceHookTransformPort {
+	transform(
+		request: ResourceHookTransformRequest,
+		signal?: AbortSignal,
+	): Promise<ResourceHookTransformResult>;
 }
 
 /** invoke 不接受 raw input，也不接受调用者自报 claims。 */

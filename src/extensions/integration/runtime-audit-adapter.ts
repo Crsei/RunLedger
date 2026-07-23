@@ -79,7 +79,7 @@ export function lifecycleEvent(input: {
 	revocationRevision?: number;
 }): ResourceLifecycleEvent {
 	const common = {
-		schemaVersion: 1 as const,
+		schemaVersion: 2 as const,
 		...input.scope,
 		identity: input.descriptor.identity,
 		identityDigest: canonicalDigest(input.descriptor.identity),
@@ -126,7 +126,7 @@ export class ExtensionRuntimeEventSinkAdapter implements RuntimeResourceEventSin
 	public async emit(request: ResourceEventEmissionRequest): Promise<ResourceEventEmissionResult> {
 		if (!this.#writer) {
 			return {
-				schemaVersion: 1,
+				schemaVersion: 2,
 				...this.#scope,
 				idempotencyKey: request.idempotencyKey,
 				status: "rejected",

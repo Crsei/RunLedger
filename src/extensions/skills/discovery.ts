@@ -6,7 +6,11 @@ import { createRuntimeId } from "../../runtime/protocol/v3/ids.ts";
 import type { ResourceCapabilityDeclaration, ResourceIdentity, SkillResourceFacet, SkillResourceSet } from "../../runtime/resources/types.ts";
 import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, sortExtensionDiagnostics } from "../diagnostics.ts";
 import type { ExtensionDiagnostic } from "../diagnostics.ts";
-import { createExtensionResourceIdentity, qualifiedResourceId } from "../identity.ts";
+import {
+	createExtensionResourceIdentity,
+	createExtensionResourceProvenance,
+	qualifiedResourceId,
+} from "../identity.ts";
 import { resolveContainedPath } from "../paths.ts";
 import { buildResourceManifestDigest, digestDirectory, digestFile, sha256 } from "../trust/digest.ts";
 import type { TrustStore } from "../trust/trust-store.ts";
@@ -27,6 +31,31 @@ function readCapability(scope: ExtensionRuntimeScope, identity: ResourceIdentity
 		capabilityId: createRuntimeId("resource", canonicalDigest({ identity: identity.qualifiedId, access: "read" }).slice(0, 32)),
 		claim: { authorityId: scope.authorityId, tenantId: scope.tenantId, name: "repository_read", resourceKind: "filesystem", resourceDigest: identity.digest, constraintsDigest: pathDigest },
 		boundary: { kind: "filesystem", access: "read", pathScopeDigest: pathDigest },
+		required: true,
+	};
+}
+
+function scriptCapability(
+	scope: ExtensionRuntimeScope,
+	identity: ResourceIdentity,
+	commandDigest: string,
+): ResourceCapabilityDeclaration {
+	return {
+		authorityId: scope.authorityId,
+		tenantId: scope.tenantId,
+		capabilityId: createRuntimeId(
+			"resource",
+			canonicalDigest({ identity: identity.qualifiedId, access: "spawn" }).slice(0, 32),
+		),
+		claim: {
+			authorityId: scope.authorityId,
+			tenantId: scope.tenantId,
+			name: "dependency_install",
+			resourceKind: "process",
+			resourceDigest: identity.digest,
+			constraintsDigest: commandDigest,
+		},
+		boundary: { kind: "process", access: "spawn", commandScopeDigest: commandDigest },
 		required: true,
 	};
 }
@@ -96,18 +125,79 @@ export async function discoverSkills(options: {
 			const referencesPath = await optionalDirectory(options.storage, contained.path, "references");
 			const assetsPath = await optionalDirectory(options.storage, contained.path, "assets");
 			const scriptsPath = await optionalDirectory(options.storage, contained.path, "scripts");
-			const metadataFacet: SkillResourceFacet = { role: "metadata", identity: facetIdentity(identity, "metadata", canonicalDigest(parsed.frontmatter)), capabilities: [] };
+			const facetSnapshotId = createRuntimeId(
+				"snapshot",
+				canonicalDigest({ qualifiedId, binding: binding.combinedDigest }).slice(0, 32),
+			);
+			const facetGenerationDigest = canonicalDigest({
+				snapshotId: facetSnapshotId,
+				generation: 0,
+				binding: binding.combinedDigest,
+			});
+			const facetCommon = {
+				snapshotId: facetSnapshotId,
+				adapterGeneration: 0,
+				adapterGenerationDigest: facetGenerationDigest,
+			};
+			const metadataDigest = canonicalDigest(parsed.frontmatter);
+			const metadataFacet: SkillResourceFacet = {
+				role: "metadata",
+				identity: facetIdentity(identity, "metadata", metadataDigest),
+				capabilities: [],
+				...facetCommon,
+				contentDigest: metadataDigest,
+				byteLength: Buffer.byteLength(JSON.stringify(parsed.frontmatter), "utf8"),
+				entryCount: 1,
+			};
 			const bodyIdentity = facetIdentity(identity, "body", fileDigest.digest);
-			const bodyFacet: SkillResourceFacet = { role: "body", identity: bodyIdentity, capabilities: [readCapability(options.scope, bodyIdentity, sha256(skillFile))] };
+			const bodyFacet: SkillResourceFacet = {
+				role: "body",
+				identity: bodyIdentity,
+				capabilities: [readCapability(options.scope, bodyIdentity, sha256(skillFile))],
+				...facetCommon,
+				contentDigest: fileDigest.digest,
+				byteLength: fileDigest.bytes,
+				entryCount: 1,
+			};
+			const assetsIdentity = facetIdentity(identity, "assets", rootDigest.digest);
+			const scriptIdentity = facetIdentity(identity, "script", rootDigest.digest);
 			const resourceSet: SkillResourceSet = {
-				schemaVersion: 1,
+				schemaVersion: 2,
 				authorityId: options.scope.authorityId,
 				tenantId: options.scope.tenantId,
 				qualifiedId,
 				metadata: metadataFacet,
 				body: bodyFacet,
-				...(assetsPath ? { assets: { role: "assets" as const, identity: facetIdentity(identity, "assets", rootDigest.digest), capabilities: [readCapability(options.scope, facetIdentity(identity, "assets", rootDigest.digest), sha256(assetsPath))] } } : {}),
-				...(scriptsPath ? { script: { role: "script" as const, identity: facetIdentity(identity, "script", rootDigest.digest), capabilities: [] } } : {}),
+				...(assetsPath
+					? {
+							assets: {
+								role: "assets" as const,
+								identity: assetsIdentity,
+								capabilities: [readCapability(options.scope, assetsIdentity, sha256(assetsPath))],
+								...facetCommon,
+								contentDigest: rootDigest.digest,
+								byteLength: rootDigest.bytes,
+								entryCount: rootDigest.files,
+							},
+						}
+					: {}),
+				...(scriptsPath
+					? {
+							script: {
+								role: "script" as const,
+								identity: scriptIdentity,
+								capabilities: [scriptCapability(options.scope, scriptIdentity, sha256(scriptsPath))],
+								...facetCommon,
+								contentDigest: rootDigest.digest,
+								byteLength: rootDigest.bytes,
+								entryCount: rootDigest.files,
+							},
+						}
+					: {}),
+				budget: {
+					maxBytes: DEFAULT_EXTENSION_LIMITS.maxDirectoryBytes,
+					maxEntries: DEFAULT_EXTENSION_LIMITS.maxFiles,
+				},
 			};
 			const localDiagnostics = trustState === "trusted" ? [] : [extensionDiagnostic(`skill.${trustState}`, "warning", trust.state === "untrusted" ? trust.reason : trust.reason, "skill", skillFile)];
 			skills.push({
@@ -115,7 +205,12 @@ export async function discoverSkills(options: {
 					schemaVersion: 1,
 					kind: "skill",
 					identity,
-					provenance: { schemaVersion: 1, authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, source: root.pluginId ? "plugin" : root.source, canonicalLocator: skillFile },
+					provenance: createExtensionResourceProvenance({
+						scope: options.scope,
+						source: root.pluginId ? "plugin" : root.source,
+						canonicalLocator: skillFile,
+						sourceRoot: root.rootPath,
+					}),
 					manifest: binding,
 					displayName: parsed.frontmatter.name,
 					description: parsed.frontmatter.description,

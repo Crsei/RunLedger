@@ -7,6 +7,8 @@ import {
 	ResourceManifestDigestSchema,
 	ResourceProvenanceSchema,
 	createResourceManifestDigest,
+	createResourceLocatorReceipt,
+	createResourceProvenance,
 	isResourceApprovalReceipt,
 	isResourceIdentity,
 	isResourceManifestDigest,
@@ -42,7 +44,7 @@ describe("resource identity, provenance, and approval contracts", () => {
 
 	it("rejects unknown versions, unknown fields, missing digest, and ambiguous IDs", () => {
 		const resource = identity();
-		expect(isResourceIdentity({ ...resource, schemaVersion: 2 })).toBe(false);
+		expect(isResourceIdentity({ ...resource, schemaVersion: 3 })).toBe(false);
 		expect(isResourceIdentity({ ...resource, digest: undefined })).toBe(false);
 		expect(isResourceIdentity({ ...resource, qualifiedId: "read" })).toBe(false);
 		expect(isResourceIdentity({ ...resource, kind: "mcp" })).toBe(false);
@@ -51,21 +53,27 @@ describe("resource identity, provenance, and approval contracts", () => {
 
 	it("represents source, publisher/signature, and parent plugin without parsing configuration", () => {
 		const parent = identity("plugin", "fixture.plugin/root", "fixture-plugin", manifest("fixture-plugin"));
-		const provenance = {
-			schemaVersion: 1 as const,
+		const provenance = createResourceProvenance({
 			authorityId: AUTHORITY_ID,
 			tenantId: TENANT_ID,
 			source: "plugin" as const,
 			canonicalLocator: "/repo/.runledger/plugins/fixture",
+			locatorReceipt: createResourceLocatorReceipt({
+				authorityId: AUTHORITY_ID,
+				tenantId: TENANT_ID,
+				canonicalLocator: "/repo/.runledger/plugins/fixture",
+				sourceRoot: "/repo",
+			}),
 			publisher: {
 				authorityId: AUTHORITY_ID,
 				tenantId: TENANT_ID,
 				publisherId: "fixture.publisher",
 				identityDigest: digest("publisher"),
+				signatureDigest: digest("publisher-signature"),
 			},
 			signatureReceiptId: createRuntimeId("receipt", "signature"),
 			parentPlugin: parent,
-		};
+		});
 
 		expect(Check(ResourceProvenanceSchema, provenance)).toBe(true);
 		expect(isResourceProvenance(provenance)).toBe(true);
@@ -116,6 +124,12 @@ describe("resource identity, provenance, and approval contracts", () => {
 			scope: "project" as const,
 			scopeBindingDigest: digest("project-scope"),
 			revocationRevision: 3,
+			locatorDigest: digest("resource-locator"),
+			publisherDigest: digest("publisher"),
+			policyRevision: 5,
+			hookRevision: 7,
+			adapterGeneration: 7,
+			adapterGenerationDigest: digest("adapter-generation-7"),
 			at: NOW,
 		};
 

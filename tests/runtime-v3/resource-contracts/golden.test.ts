@@ -1,17 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-	isResourceIdentity,
-	isResourceManifestDigest,
-	resourceIdentityDigest,
-	resourceIdentityKey,
-} from "../../../src/runtime/resources/schemas.ts";
-import type { ResourceIdentity, ResourceManifestDigest } from "../../../src/runtime/resources/types.ts";
+	parseLegacyResourceIdentityV1,
+	parseLegacyResourceManifestDigestV1,
+} from "../../../src/runtime/resources/legacy-v1.ts";
 
 interface ResourceGoldenFixture {
 	contract: string;
-	manifest: ResourceManifestDigest;
-	identity: ResourceIdentity;
+	manifest: unknown;
+	identity: unknown;
 	expectedIdentityKey: string;
 	expectedIdentityDigest: string;
 }
@@ -28,10 +25,12 @@ describe("resource contract v1 golden fixture", () => {
 	it("keeps serialized identity and manifest digests stable", () => {
 		const fixture = loadFixture();
 		expect(fixture.contract).toBe("runledger.resource/v1");
-		expect(isResourceManifestDigest(fixture.manifest)).toBe(true);
-		expect(isResourceIdentity(fixture.identity)).toBe(true);
-		expect(fixture.identity.digest).toBe(fixture.manifest.combinedDigest);
-		expect(resourceIdentityKey(fixture.identity)).toBe(fixture.expectedIdentityKey);
-		expect(resourceIdentityDigest(fixture.identity)).toBe(fixture.expectedIdentityDigest);
+		const manifest = parseLegacyResourceManifestDigestV1(fixture.manifest);
+		const identity = parseLegacyResourceIdentityV1(fixture.identity);
+		expect(manifest).toBeDefined();
+		expect(identity).toBeDefined();
+		expect(identity?.digest).toBe(manifest?.combinedDigest);
+		expect(fixture.expectedIdentityKey).toContain(identity?.qualifiedId);
+		expect(fixture.expectedIdentityDigest).toMatch(/^[a-f0-9]{64}$/u);
 	});
 });

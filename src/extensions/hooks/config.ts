@@ -6,7 +6,11 @@ import { createRuntimeId } from "../../runtime/protocol/v3/ids.ts";
 import type { ResourceCapabilityDeclaration } from "../../runtime/resources/types.ts";
 import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic } from "../diagnostics.ts";
 import type { ExtensionDiagnostic } from "../diagnostics.ts";
-import { createExtensionResourceIdentity, qualifiedResourceId } from "../identity.ts";
+import {
+	createExtensionResourceIdentity,
+	createExtensionResourceProvenance,
+	qualifiedResourceId,
+} from "../identity.ts";
 import { resolveDeclaredPath } from "../paths.ts";
 import { schemaAccepts, HooksConfigSchema } from "../schemas.ts";
 import { buildResourceManifestDigest, digestFile, sha256 } from "../trust/digest.ts";
@@ -155,7 +159,12 @@ export async function loadHookConfig(options: {
 					schemaVersion: 1,
 					kind: "hook",
 					identity,
-					provenance: { schemaVersion: 1, authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, source: options.root.pluginId ? "plugin" : options.root.source, canonicalLocator: options.configPath },
+					provenance: createExtensionResourceProvenance({
+						scope: options.scope,
+						source: options.root.pluginId ? "plugin" : options.root.source,
+						canonicalLocator: options.configPath,
+						sourceRoot: options.root.rootPath,
+					}),
 					manifest: binding,
 					displayName: name,
 					description: `${event} hook`,

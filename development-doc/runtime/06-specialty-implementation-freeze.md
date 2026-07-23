@@ -10,7 +10,9 @@
 
 ### 1.1 Phase 5 合同窄解冻窗口
 
-自`worktree/governed-agent-harness-runtime@72767ff`起,仅为 Resource Contract v2 协议迁移临时解冻 Phase 5 文档登记的精确 allowlist。owner 为`Codex /root`,当前状态为`RED/unfreeze`。本窗口允许迁移`src/runtime/resources/**`及其现有 Extension 直接消费者,不允许新增 Extension CLI、TUI、installer、runner、store 或领域状态机。GREEN 门禁通过后必须在本文件登记新的 refreeze baseline；未在 allowlist 内的 Specialty 路径继续只读。
+自`worktree/governed-agent-harness-runtime@72767ff`起,仅为 Resource Contract v2 协议迁移临时解冻 Phase 5 文档登记的精确 allowlist。owner 为`Codex /root`;RED commit为`cb83538`。本窗口已完成GREEN门禁并在当前refreeze commit重新冻结。实施只迁移`src/runtime/resources/**`及其现有 Extension 直接消费者,未新增 Extension CLI、TUI、installer、runner、store 或领域状态机。
+
+新冻结基线:`cb83538 + 当前 Phase 5 GREEN/refreeze commit`;Resource v2 contract已完成,Extension specialty行为状态继续使用`implemented-frozen/partial-frozen/deferred-frozen`。Phase 6未显式解冻前,Plan/Model/Context/Compaction/Memory路径继续只读。
 
 从本冻结基线开始,以下三个专项域停止继续实现:
 

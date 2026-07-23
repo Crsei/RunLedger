@@ -1,6 +1,6 @@
 # RunLedger 可治理 Agent Harness Runtime 主计划
 
-> 文档状态:完整计划,当前权威执行入口;实现状态:总体未完成,但 §0.5、Phase 0/2/3/5/6 contract 已实现,Phase 1/4/7–11 为部分实现或仍缺联合生产门禁;Phase 复选框只有附当前目标分支/工作树的逐项证据后才能在对应拆分文档中勾选
+> 文档状态:完整计划,当前权威执行入口;实现状态:总体未完成,但 §0.5、Phase 0/2/3与Phase 5 Resource v2 contract已实现,Phase 1/4/6–11 为部分实现或仍缺联合生产门禁;Phase 复选框只有附当前目标分支/工作树的逐项证据后才能在对应拆分文档中勾选
 > 基线日期:2026-07-22
 > 当前实现复核:2026-07-24T01:11:34+08:00,`worktree/governed-agent-harness-runtime@a6416e086457db6bb3f438d9a3cab24fd9e953d1` + 当前交付工作树
 > 适用范围:`src/runtime/`、Runtime-owned `src/storage/`、`src/cli/`、`src/tui/`、`src/daemon/` 与对应测试;三个外围专项已按冻结说明转为只读依赖
@@ -42,7 +42,7 @@
 | Phase 2 | contract 已实现 | Workspace envelope/binding/lease/validation/checkpoint events、projection/reducer与 architecture/contract tests | 真实 Git/worktree/lease/TOCTOU 行为已冻结为外部依赖,未完成项不由 Runtime 接管 |
 | Phase 3 | contract 已实现 | exact v2 Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer;local channel 绑定受信 session current head,remote 保持 signature verifier;approval terminal 复核 runtime generation/turn/toolCall 复合相关性 | pending Approval 跨重启、真实 actor/OS peer identity、完整 Gateway/Sandbox/credential 强制行为仍为冻结外部缺口 |
 | Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
-| Phase 5 | Runtime contract 已实现 | neutral resource types/schema/ports/events/invocation stream与 resource-contract tests | Extension M1/M4/M5 主体和 M2/M3/M6/M7 部分实现已冻结;剩余行为不由 Runtime 接管 |
+| Phase 5 | v2 contract completed; specialty behavior frozen/unavailable | Resource v2 identity/provenance/approval/Skill facet/Hook transform/MCP annotation、完整 ports、legacy-v1显式只读导入与Extension consumer回归 | Extension M1/M4/M5 主体和 M2/M3/M6/M7 部分实现继续冻结;CLI/TUI/installer/runner/store与剩余行为不由 Runtime 接管 |
 | Phase 6 | 公共 contract 已实现 | model/plan/context/compaction/memory types/schema/events/fixtures、ownership与 public-surface tests | router/context/plan/compaction/memory 核心已有窄证据并已冻结;工具/UI/overflow/完整生产生命周期缺口不由 Runtime 接管 |
 | Phase 7 | 主体实现,发布门禁未关闭 | Orchestrator、Goal/Task canonical truth、queue/save-point、retry/loop breaker、BudgetGuard与 agent-loop 接线 tests | 完整 prompt-to-verification 生命周期、全维预算与 Runtime-M1 production join gate 未完成 |
 | Phase 8 | 部分实现 | Verification core、trusted baseline、dependency/secret scan、review/finding、EpisodeSeal、keyring issuer、runner/browser adapter与 trust tests | Browser 联合 E2E 仍使用受控测试替身;production forge/Draft PR/HumanGate 与完整 prompt 生命周期缺失 |

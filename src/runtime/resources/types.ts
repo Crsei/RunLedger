@@ -5,6 +5,8 @@
  * 进程句柄或具体 Plugin/MCP/Skill/Hook 配置。
  */
 
+export * as resourceLegacyV1 from "./legacy-v1.ts";
+
 import type { ArtifactRef, CapabilityClaim, CapabilityDecision } from "../protocol/v3/capability.ts";
 import type { InputSourceRef } from "../protocol/v3/taint.ts";
 import type {
@@ -19,14 +21,16 @@ import type {
 	TraceId,
 } from "../protocol/v3/ids.ts";
 
-export const RESOURCE_CONTRACT_SCHEMA_VERSION = 1 as const;
+export const RESOURCE_CONTRACT_SCHEMA_VERSION = 2 as const;
 export type ResourceContractSchemaVersion = typeof RESOURCE_CONTRACT_SCHEMA_VERSION;
-export const RESOURCE_PROTOCOL_VERSION = 1 as const;
+export const RESOURCE_PROTOCOL_VERSION = 2 as const;
 
 export const RESOURCE_KINDS = [
 	"native-tool",
 	"browser-tool",
-	"instruction",
+	"repository-instruction",
+	"user-instruction",
+	"organization-instruction",
 	"plugin",
 	"plugin-component",
 	"skill",
@@ -88,6 +92,7 @@ export interface ResourceProtocolHandshake extends ResourceAuthorizationContext 
 	sessionId: SessionId;
 	adapterId: ResourceId;
 	adapterGeneration: number;
+	adapterGenerationDigest: string;
 	snapshotId: SnapshotId;
 	snapshotSequence: number;
 	catalogDigest: string;
@@ -109,15 +114,28 @@ export interface ResourceIdentity extends ResourceScope {
 export interface ResourcePublisherRef extends ResourceScope {
 	publisherId: string;
 	identityDigest: string;
+	signatureDigest: string;
+}
+
+export interface ResourceLocatorReceipt extends ResourceScope {
+	schemaVersion: ResourceContractSchemaVersion;
+	canonicalLocator: string;
+	sourceRoot: string;
+	locatorDigest: string;
+	sourceRootDigest: string;
+	containmentDigest: string;
+	contained: true;
 }
 
 export interface ResourceProvenance extends ResourceScope {
 	schemaVersion: ResourceContractSchemaVersion;
 	source: ResourceSource;
 	canonicalLocator: string;
+	locatorReceipt: ResourceLocatorReceipt;
 	publisher?: ResourcePublisherRef;
 	signatureReceiptId?: ReceiptId;
 	parentPlugin?: ResourceIdentity;
+	provenanceBindingDigest: string;
 }
 
 /**
@@ -147,7 +165,22 @@ export interface ResourceApprovalReceipt extends ResourceAuthorizationContext {
 	issuedAt: string;
 	expiresAt: string | null;
 	revocationRevision: number;
+	locatorDigest: string;
+	publisherDigest: string | null;
+	policyRevision: number;
+	hookRevision: number;
+	adapterGeneration: number;
+	adapterGenerationDigest: string;
+	approvalState: "approved";
 	receiptDigest: string;
+}
+
+export interface LegacyResourceApprovalImport {
+	legacySchemaVersion: 1;
+	receiptId: ReceiptId;
+	identityDigest: string;
+	receiptDigest: string;
+	state: "reapproval_required";
 }
 
 export type ResourceCapabilityBoundary =
@@ -267,6 +300,12 @@ export interface SkillResourceFacet {
 	role: SkillResourceRole;
 	identity: ResourceIdentity;
 	capabilities: readonly ResourceCapabilityDeclaration[];
+	snapshotId: SnapshotId;
+	adapterGeneration: number;
+	adapterGenerationDigest: string;
+	contentDigest: string;
+	byteLength: number;
+	entryCount: number;
 }
 
 /**
@@ -280,7 +319,46 @@ export interface SkillResourceSet extends ResourceScope {
 	body: SkillResourceFacet;
 	assets?: SkillResourceFacet;
 	script?: SkillResourceFacet;
+	budget: ResourceFacetBudget;
 }
+
+export interface ResourceFacetBudget {
+	maxBytes: number;
+	maxEntries: number;
+}
+
+export interface ResourceFacetReadRequest extends ResourceAuthorizationContext {
+	schemaVersion: ResourceContractSchemaVersion;
+	requestId: CommandId;
+	snapshotId: SnapshotId;
+	adapterGeneration: number;
+	adapterGenerationDigest: string;
+	resource: ResourceIdentity;
+	facet: SkillResourceRole;
+	budget: ResourceFacetBudget;
+}
+
+export type ResourceFacetReadResult =
+	| (ResourceAuthorizationContext & {
+			schemaVersion: ResourceContractSchemaVersion;
+			requestId: CommandId;
+			status: "read";
+			snapshotId: SnapshotId;
+			adapterGeneration: number;
+			adapterGenerationDigest: string;
+			resource: ResourceIdentity;
+			facet: SkillResourceRole;
+			content: readonly ResourceContent[];
+			contentDigest: string;
+			byteLength: number;
+			entryCount: number;
+	  })
+	| (ResourceAuthorizationContext & {
+			schemaVersion: ResourceContractSchemaVersion;
+			requestId: CommandId;
+			status: "rejected";
+			error: ResourcePortError;
+	  });
 
 /** 调用者输入。requestedClaims 只表示请求，不能直接用于最终授权。 */
 export interface RuntimeToolInvocationRequest extends ResourceAuthorizationContext {
@@ -305,6 +383,7 @@ export interface ResourceClaimDerivationReceipt extends ResourceAuthorizationCon
 	descriptorDigest: string;
 	canonicalInputJson: string;
 	canonicalInputDigest: string;
+	inputRevision: number;
 	claims: readonly CapabilityClaim[];
 	claimsDigest: string;
 	issuedAt: string;
@@ -346,6 +425,79 @@ export interface RuntimeToolInvocation extends ResourceAuthorizationContext {
 	decision: Extract<CapabilityDecision, "allow">;
 	authorizationReceiptId: ReceiptId;
 	authorizationDecisionDigest: string;
+	inputRevision: number;
+	hookTransformReceiptId?: ReceiptId;
+}
+
+export interface ResourceHookPatch {
+	sourceOrder: number;
+	hook: ResourceIdentity;
+	beforeInputDigest: string;
+	afterInputDigest: string;
+	patchDigest: string;
+	handled: boolean;
+	shortCircuit: boolean;
+}
+
+export interface ResourceHookTransformRequest extends ResourceAuthorizationContext {
+	schemaVersion: ResourceContractSchemaVersion;
+	requestId: CommandId;
+	handshake: ResourceProtocolHandshake;
+	snapshotId: SnapshotId;
+	tool: ResourceIdentity;
+	inputRevision: number;
+	canonicalInputJson: string;
+	canonicalInputDigest: string;
+	systemPromptChainDigest: string;
+}
+
+export interface ResourceHookTransformReceipt extends ResourceAuthorizationContext {
+	schemaVersion: ResourceContractSchemaVersion;
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	handshakeDigest: string;
+	snapshotId: SnapshotId;
+	inputRevision: number;
+	outputRevision: number;
+	originalInputDigest: string;
+	updatedInputJson: string;
+	updatedInputDigest: string;
+	patches: readonly ResourceHookPatch[];
+	handled: boolean;
+	shortCircuit: boolean;
+	systemPromptChainDigest: string;
+	hookIdentityDigest: string;
+	hookGeneration: number;
+	hookGenerationDigest: string;
+	claimsDigest: string;
+	authorizationDecisionDigest: string;
+	issuedAt: string;
+	receiptDigest: string;
+}
+
+export type ResourceHookTransformResult =
+	| {
+			schemaVersion: ResourceContractSchemaVersion;
+			status: "transformed";
+			receipt: ResourceHookTransformReceipt;
+	  }
+	| (ResourceAuthorizationContext & {
+			schemaVersion: ResourceContractSchemaVersion;
+			requestId: CommandId;
+			status: "rejected";
+			error: ResourcePortError;
+	  });
+
+export interface ResourceMcpAnnotation {
+	schemaVersion: ResourceContractSchemaVersion;
+	server: ResourceIdentity;
+	tool: ResourceIdentity;
+	adapterGeneration: number;
+	adapterGenerationDigest: string;
+	metadataJson: string;
+	metadataDigest: string;
+	byteLength: number;
+	trust: "untrusted_metadata";
 }
 
 export type ResourceContent =

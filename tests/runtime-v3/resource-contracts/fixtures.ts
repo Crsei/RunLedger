@@ -5,6 +5,8 @@ import {
 	createResourceCacheTicket,
 	createResourceClaimDerivationReceipt,
 	createResourceManifestDigest,
+	createResourceLocatorReceipt,
+	createResourceProvenance,
 	createResourceProtocolHandshake,
 	createRuntimeResourceSnapshot,
 	createRuntimeToolDescriptor,
@@ -58,7 +60,7 @@ export function identity(
 	binding = manifest(seed),
 ): ResourceIdentity {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: AUTHORITY_ID,
 		tenantId: TENANT_ID,
 		resourceId: createRuntimeId("resource", seed),
@@ -154,6 +156,13 @@ export function approvalReceipt(
 		issuedAt: "2026-07-22T00:00:00.000Z",
 		expiresAt: "2030-01-01T00:00:00.000Z",
 		revocationRevision: 3,
+		locatorDigest: digest("resource-locator"),
+		publisherDigest: digest("publisher"),
+		policyRevision: 5,
+		hookRevision: 7,
+		adapterGeneration: 7,
+		adapterGenerationDigest: digest("adapter-generation-7"),
+		approvalState: "approved",
 	});
 }
 
@@ -167,24 +176,30 @@ export function descriptor(): RuntimeToolDescriptor {
 		type: "object",
 	};
 	return createRuntimeToolDescriptor({
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: AUTHORITY_ID,
 		tenantId: TENANT_ID,
 		identity: toolIdentity,
-		provenance: {
-			schemaVersion: 1,
+		provenance: createResourceProvenance({
 			authorityId: AUTHORITY_ID,
 			tenantId: TENANT_ID,
 			source: "project",
 			canonicalLocator: "/repo/.runledger/mcp.json#fixture/read",
+			locatorReceipt: createResourceLocatorReceipt({
+				authorityId: AUTHORITY_ID,
+				tenantId: TENANT_ID,
+				canonicalLocator: "/repo/.runledger/mcp.json#fixture/read",
+				sourceRoot: "/repo",
+			}),
 			publisher: {
 				authorityId: AUTHORITY_ID,
 				tenantId: TENANT_ID,
 				publisherId: "fixture.publisher",
 				identityDigest: digest("publisher"),
+				signatureDigest: digest("publisher-signature"),
 			},
 			signatureReceiptId: createRuntimeId("receipt", "signature"),
-		},
+		}),
 		manifest: binding,
 		descriptorType: "tool",
 		displayName: "Fixture read",
@@ -197,7 +212,7 @@ export function descriptor(): RuntimeToolDescriptor {
 		approvalReceiptId: createRuntimeId("receipt", "resource-approval"),
 		runtimeName: "mcp__fixture__read",
 		inputSchema: {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			mediaType: "application/schema+json",
 			schemaJson: canonicalJson(schemaValue),
 			schemaDigest: canonicalDigest(schemaValue),
@@ -210,7 +225,7 @@ export function descriptor(): RuntimeToolDescriptor {
 
 export function snapshot(tool = descriptor()): RuntimeResourceSnapshot {
 	return createRuntimeResourceSnapshot({
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		snapshotId: SNAPSHOT_ID,
 		adapterId: ADAPTER_ID,
@@ -224,7 +239,7 @@ export function snapshot(tool = descriptor()): RuntimeResourceSnapshot {
 
 export function cacheTicket(tool = descriptor(), current = snapshot(tool)): ResourceCacheTicket {
 	return createResourceCacheTicket({
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		ticketId: createRuntimeId("receipt", "resource-cache"),
 		snapshotId: current.snapshotId,
@@ -241,20 +256,21 @@ export function cacheTicket(tool = descriptor(), current = snapshot(tool)): Reso
 
 export function invocationRequest(tool = descriptor()): RuntimeToolInvocationRequest {
 	const handshake = createResourceProtocolHandshake({
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		protocol: "runledger.resource",
-		protocolVersion: 1,
+		protocolVersion: 2,
 		sessionId: SESSION_ID,
 		adapterId: ADAPTER_ID,
 		adapterGeneration: 7,
+		adapterGenerationDigest: digest("adapter-generation-7"),
 		snapshotId: SNAPSHOT_ID,
 		snapshotSequence: 0,
 		catalogDigest: digest("resource-catalog"),
 		peerFeatures: [],
 	});
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		requestId: createRuntimeId("command", "resource-invoke"),
 		handshake,
@@ -281,12 +297,13 @@ export function invocation(tool = descriptor(), request = invocationRequest(tool
 		descriptorDigest: tool.descriptorDigest,
 		canonicalInputJson,
 		canonicalInputDigest: canonicalDigest(request.rawInput),
+		inputRevision: 0,
 		claims,
 		claimsDigest: canonicalDigest(claims),
 		issuedAt: "2026-07-22T00:00:00.000Z",
 	});
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		...authorizationContext(),
 		requestId: request.requestId,
 		handshake: request.handshake,
@@ -298,5 +315,6 @@ export function invocation(tool = descriptor(), request = invocationRequest(tool
 		decision: "allow",
 		authorizationReceiptId: createRuntimeId("receipt", "gateway-allow"),
 		authorizationDecisionDigest: digest("gateway-decision"),
+		inputRevision: 0,
 	};
 }

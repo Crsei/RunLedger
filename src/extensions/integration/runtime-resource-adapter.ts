@@ -41,7 +41,7 @@ import { redactDiagnosticText } from "../diagnostics.ts";
 
 function toRuntimeDescriptor(descriptor: ExtensionResourceDescriptor): RuntimeResourceDescriptor {
 	const common = {
-		schemaVersion: 1 as const,
+		schemaVersion: 2 as const,
 		authorityId: descriptor.identity.authorityId,
 		tenantId: descriptor.identity.tenantId,
 		identity: descriptor.identity,
@@ -63,7 +63,7 @@ function toRuntimeDescriptor(descriptor: ExtensionResourceDescriptor): RuntimeRe
 			descriptorType: "tool",
 			runtimeName: descriptor.runtimeName,
 			inputSchema: {
-				schemaVersion: 1,
+				schemaVersion: 2,
 				mediaType: "application/schema+json",
 				schemaJson,
 				schemaDigest: canonicalDigest(JSON.parse(schemaJson)),
@@ -81,7 +81,7 @@ function toRuntimeDescriptor(descriptor: ExtensionResourceDescriptor): RuntimeRe
 export function projectRuntimeSnapshot(snapshot: ExtensionSnapshot, scope: ExtensionRuntimeScope): RuntimeResourceSnapshot {
 	const resources = snapshot.descriptors.map(toRuntimeDescriptor);
 	const body: RuntimeResourceSnapshotBody = {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: scope.authorityId,
 		tenantId: scope.tenantId,
 		principalId: scope.principalId,
@@ -118,15 +118,46 @@ export class ExtensionRuntimeCatalogAdapter implements RuntimeResourceCatalogPor
 		this.#snapshot = projectRuntimeSnapshot(snapshot, scope);
 	}
 
+	public async validateLocator(request: {
+		canonicalLocator: string;
+		sourceRoot: string;
+	}): Promise<
+		| { status: "valid"; canonicalLocator: string; containmentDigest: string }
+		| { status: "rejected"; reasonDigest: string }
+	> {
+		const root = request.sourceRoot.endsWith("/")
+			? request.sourceRoot.slice(0, -1)
+			: request.sourceRoot;
+		if (
+			request.canonicalLocator !== root &&
+			!request.canonicalLocator.startsWith(`${root}/`) &&
+			!request.canonicalLocator.startsWith(`${root}#`)
+		) {
+			return {
+				status: "rejected",
+				reasonDigest: canonicalDigest("resource locator escapes source root"),
+			};
+		}
+		return {
+			status: "valid",
+			canonicalLocator: request.canonicalLocator,
+			containmentDigest: canonicalDigest({
+				canonicalLocator: request.canonicalLocator,
+				sourceRoot: request.sourceRoot,
+				contained: true,
+			}),
+		};
+	}
+
 	public async resolveExact(request: ResourceResolveRequest): Promise<ResourceResolveResult> {
 		const descriptor = request.snapshotId === this.#snapshot.snapshotId
 			? this.#snapshot.resources.find((item) => sameIdentity(item.identity, request.identity))
 			: undefined;
-		if (!descriptor) return { schemaVersion: 1, status: "not_found", ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, identity: request.identity };
+		if (!descriptor) return { schemaVersion: 2, status: "not_found", ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, identity: request.identity };
 		const issuedAt = new Date().toISOString();
 		const expiresAt = new Date(Date.now() + 5 * 60_000).toISOString();
 		const ticketBody = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			...this.#scope,
 			ticketId: createRuntimeId("receipt", canonicalDigest({ requestId: request.requestId, descriptor: descriptor.descriptorDigest }).slice(0, 32)),
 			snapshotId: this.#snapshot.snapshotId,
@@ -139,7 +170,7 @@ export class ExtensionRuntimeCatalogAdapter implements RuntimeResourceCatalogPor
 			issuedAt,
 			expiresAt,
 		};
-		return { schemaVersion: 1, status: "found", ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, descriptor, cacheTicket: { ...ticketBody, ticketDigest: canonicalDigest(ticketBody) } };
+		return { schemaVersion: 2, status: "found", ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, descriptor, cacheTicket: { ...ticketBody, ticketDigest: canonicalDigest(ticketBody) } };
 	}
 
 	public async search(request: ResourceSearchRequest): Promise<ResourceSearchResult> {
@@ -149,7 +180,7 @@ export class ExtensionRuntimeCatalogAdapter implements RuntimeResourceCatalogPor
 			: [];
 		const selected = all.slice(0, request.limit);
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...this.#scope,
 			requestId: request.requestId,
 			snapshotId: request.snapshotId,
@@ -164,23 +195,23 @@ export class ExtensionRuntimeCatalogAdapter implements RuntimeResourceCatalogPor
 			throw new Error("requested extension generation is unavailable");
 		}
 		this.#acquired.set(this.#snapshot.snapshotId, (this.#acquired.get(this.#snapshot.snapshotId) ?? 0) + 1);
-		return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, snapshot: this.#snapshot, acquisitionReceiptId: createRuntimeId("receipt", canonicalDigest({ requestId: request.requestId, snapshotId: this.#snapshot.snapshotId }).slice(0, 32)), acquiredAt: new Date().toISOString() };
+		return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, snapshot: this.#snapshot, acquisitionReceiptId: createRuntimeId("receipt", canonicalDigest({ requestId: request.requestId, snapshotId: this.#snapshot.snapshotId }).slice(0, 32)), acquiredAt: new Date().toISOString() };
 	}
 
 	public async release(request: ResourceSnapshotReleaseRequest): Promise<ResourceSnapshotReleaseResult> {
 		const count = this.#acquired.get(request.snapshotId) ?? 0;
 		if (request.snapshotId !== this.#snapshot.snapshotId) {
-			return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, status: "not_found" };
+			return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, status: "not_found" };
 		}
 		if (request.expectedGeneration !== this.#snapshot.adapterGeneration) {
-			return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, status: "generation_conflict" };
+			return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, status: "generation_conflict" };
 		}
 		if (count === 0) {
-			return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, status: "already_released" };
+			return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, snapshotId: request.snapshotId, status: "already_released" };
 		}
 		this.#acquired.set(request.snapshotId, count - 1);
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...this.#scope,
 			requestId: request.requestId,
 			snapshotId: request.snapshotId,
@@ -226,30 +257,31 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 			request.handshake.principalId !== this.#scope.principalId ||
 			request.handshake.adapterId !== this.#snapshot.adapterId ||
 			request.handshake.adapterGeneration !== this.#snapshot.adapterGeneration ||
+			request.handshake.adapterGenerationDigest !== this.#snapshot.adapterGenerationDigest ||
 			request.handshake.snapshotId !== this.#snapshot.snapshotId ||
 			request.handshake.catalogDigest !== this.#snapshot.digest
 		) {
-			return { schemaVersion: 1, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "conflict", messageDigest: canonicalDigest("resource handshake is stale or uncorrelated"), retryable: false } };
+			return { schemaVersion: 2, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "conflict", messageDigest: canonicalDigest("resource handshake is stale or uncorrelated"), retryable: false } };
 		}
 		const descriptor = this.#snapshot.resources.find((item): item is RuntimeToolDescriptor => item.descriptorType === "tool" && sameIdentity(item.identity, request.tool));
 		if (!descriptor || descriptor.activation !== "ready" || descriptor.trust !== "trusted") {
-			return { schemaVersion: 1, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "not_ready", messageDigest: canonicalDigest("extension tool is not ready"), retryable: false } };
+			return { schemaVersion: 2, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "not_ready", messageDigest: canonicalDigest("extension tool is not ready"), retryable: false } };
 		}
-		if (signal?.aborted) return { schemaVersion: 1, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "unavailable", messageDigest: canonicalDigest("request aborted"), retryable: false } };
+		if (signal?.aborted) return { schemaVersion: 2, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "unavailable", messageDigest: canonicalDigest("request aborted"), retryable: false } };
 		let canonicalInputJson: string;
 		try {
 			canonicalInputJson = canonicalJson(request.rawInput);
 		} catch {
-			return { schemaVersion: 1, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "invalid_request", messageDigest: canonicalDigest("input is not canonical JSON"), retryable: false } };
+			return { schemaVersion: 2, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "invalid_request", messageDigest: canonicalDigest("input is not canonical JSON"), retryable: false } };
 		}
 		if (Buffer.byteLength(canonicalInputJson) > descriptor.inputSchema.maxInputBytes) {
-			return { schemaVersion: 1, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "invalid_request", messageDigest: canonicalDigest("input exceeds descriptor bound"), retryable: false } };
+			return { schemaVersion: 2, status: "rejected", ...this.#scope, requestId: request.requestId, error: { code: "invalid_request", messageDigest: canonicalDigest("input exceeds descriptor bound"), retryable: false } };
 		}
 		const canonicalInput = JSON.parse(canonicalInputJson) as unknown;
 		const claims = await this.#deriver.derive(descriptor, canonicalInput);
 		const issuedAt = new Date().toISOString();
 		const body = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			...this.#scope,
 			receiptId: createRuntimeId("receipt", canonicalDigest({ requestId: request.requestId, descriptor: descriptor.descriptorDigest, canonicalInputJson }).slice(0, 32)),
 			requestId: request.requestId,
@@ -259,11 +291,12 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 			descriptorDigest: descriptor.descriptorDigest,
 			canonicalInputJson,
 			canonicalInputDigest: canonicalDigest(canonicalInput),
+			inputRevision: 0,
 			claims,
 			claimsDigest: canonicalDigest(claims),
 			issuedAt,
 		};
-		return { schemaVersion: 1, status: "derived", receipt: { ...body, receiptDigest: canonicalDigest(body) } };
+		return { schemaVersion: 2, status: "derived", receipt: { ...body, receiptDigest: canonicalDigest(body) } };
 	}
 
 	public async *invoke(
@@ -274,6 +307,7 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 			!isResourceProtocolHandshake(invocation.handshake) ||
 			invocation.handshake.adapterId !== this.#snapshot.adapterId ||
 			invocation.handshake.adapterGeneration !== this.#snapshot.adapterGeneration ||
+			invocation.handshake.adapterGenerationDigest !== this.#snapshot.adapterGenerationDigest ||
 			invocation.handshake.snapshotId !== this.#snapshot.snapshotId ||
 			invocation.handshake.catalogDigest !== this.#snapshot.digest
 		) {
@@ -288,7 +322,13 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 		}
 		const descriptor = this.#snapshot.resources.find((item): item is RuntimeToolDescriptor => item.descriptorType === "tool" && sameIdentity(item.identity, invocation.tool));
 		const handler = descriptor ? this.#handlers.get(descriptor.identity.qualifiedId) : undefined;
-		if (!descriptor || !handler || invocation.decision !== "allow" || invocation.derivationReceipt.descriptorDigest !== descriptor.descriptorDigest) {
+		if (
+			!descriptor ||
+			!handler ||
+			invocation.decision !== "allow" ||
+			invocation.derivationReceipt.descriptorDigest !== descriptor.descriptorDigest ||
+			invocation.inputRevision !== invocation.derivationReceipt.inputRevision
+		) {
 			const result = this.#result(invocation, [{ type: "text", text: "extension invocation denied" }], true, 27, false);
 			this.#terminal.set(invocation.requestId, result);
 			yield this.#terminalFrame(invocation, result);
@@ -331,7 +371,7 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 	): RuntimeToolResult {
 		const contentDigest = canonicalDigest(content);
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...this.#scope,
 			receiptId: createRuntimeId("receipt", canonicalDigest({ requestId: invocation.requestId, contentDigest, isError }).slice(0, 32)),
 			requestId: invocation.requestId,
@@ -355,7 +395,7 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 		result: RuntimeToolResult,
 	): RuntimeResourceInvocationFrame {
 		return {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			...this.#scope,
 			kind: "terminal",
 			requestId: invocation.requestId,
@@ -367,10 +407,10 @@ export class ExtensionRuntimeInvocationAdapter implements RuntimeResourceClaimDe
 	}
 
 	public async cancel(request: ResourceCancellationRequest): Promise<ResourceCancellationResult> {
-		if (this.#terminal.has(request.requestId)) return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, status: "already_terminal", receiptId: this.#terminal.get(request.requestId)?.receiptId };
+		if (this.#terminal.has(request.requestId)) return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, status: "already_terminal", receiptId: this.#terminal.get(request.requestId)?.receiptId };
 		const controller = this.#inflight.get(request.requestId);
-		if (!controller) return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, status: "not_found" };
+		if (!controller) return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, status: "not_found" };
 		controller.abort("runtime cancellation");
-		return { schemaVersion: 1, ...this.#scope, requestId: request.requestId, status: "accepted", receiptId: createRuntimeId("receipt", canonicalDigest(request).slice(0, 32)) };
+		return { schemaVersion: 2, ...this.#scope, requestId: request.requestId, status: "accepted", receiptId: createRuntimeId("receipt", canonicalDigest(request).slice(0, 32)) };
 	}
 }

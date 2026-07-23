@@ -42,7 +42,7 @@ describe("resource snapshot, cache ticket, and lifecycle contracts", () => {
 		expect(current).not.toHaveProperty("client");
 		expect(current).not.toHaveProperty("handler");
 
-		expect(isRuntimeResourceSnapshot({ ...current, schemaVersion: 2 })).toBe(false);
+		expect(isRuntimeResourceSnapshot({ ...current, schemaVersion: 3 })).toBe(false);
 		expect(isRuntimeResourceSnapshot({ ...current, resources: [...current.resources, current.resources[0]!] })).toBe(false);
 		expect(isRuntimeResourceSnapshot({ ...current, adapterGeneration: 8 })).toBe(false);
 		expect(isRuntimeResourceSnapshot({ ...current, client: { close: () => undefined } })).toBe(false);
@@ -123,7 +123,7 @@ describe("resource snapshot, cache ticket, and lifecycle contracts", () => {
 	it("rejects non-exhaustive lifecycle states and invalid state-specific fields", () => {
 		const tool = descriptor();
 		const common = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			...authorizationContext(),
 			identity: tool.identity,
 			identityDigest: digest("wrong until replaced"),

@@ -2,7 +2,16 @@
 
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../runtime/protocol/v3/ids.ts";
-import type { ResourceIdentity, ResourceKind, ResourceSource } from "../runtime/resources/types.ts";
+import {
+	createResourceLocatorReceipt,
+	createResourceProvenance,
+} from "../runtime/resources/schemas.ts";
+import type {
+	ResourceIdentity,
+	ResourceKind,
+	ResourceProvenance,
+	ResourceSource,
+} from "../runtime/resources/types.ts";
 import type { ExtensionKind, ExtensionRuntimeScope } from "./types.ts";
 
 const extensionKindToResourceKind: Readonly<Record<ExtensionKind, ResourceKind>> = {
@@ -33,7 +42,7 @@ export function createExtensionResourceIdentity(input: {
 	digest: string;
 }): ResourceIdentity {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: input.scope.authorityId,
 		tenantId: input.scope.tenantId,
 		resourceId: createRuntimeId("resource", canonicalDigest({ kind: input.kind, qualifiedId: input.qualifiedId }).slice(0, 32)),
@@ -43,6 +52,29 @@ export function createExtensionResourceIdentity(input: {
 		source: input.source,
 		digest: input.digest,
 	};
+}
+
+export function createExtensionResourceProvenance(input: {
+	scope: ExtensionRuntimeScope;
+	source: ResourceSource;
+	canonicalLocator: string;
+	sourceRoot: string;
+	parentPlugin?: ResourceIdentity;
+}): ResourceProvenance {
+	const locatorReceipt = createResourceLocatorReceipt({
+		authorityId: input.scope.authorityId,
+		tenantId: input.scope.tenantId,
+		canonicalLocator: input.canonicalLocator,
+		sourceRoot: input.sourceRoot,
+	});
+	return createResourceProvenance({
+		authorityId: input.scope.authorityId,
+		tenantId: input.scope.tenantId,
+		source: input.source,
+		canonicalLocator: input.canonicalLocator,
+		locatorReceipt,
+		...(input.parentPlugin ? { parentPlugin: input.parentPlugin } : {}),
+	});
 }
 
 export function sanitizeRuntimeSegment(value: string): string {

@@ -5,7 +5,10 @@ import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts
 import { buildExtensionSnapshot } from "../../src/extensions/snapshot.ts";
 import { mergeExtensionConfigLayers } from "../../src/extensions/config-layers.ts";
 import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic } from "../../src/extensions/diagnostics.ts";
-import { createExtensionResourceIdentity } from "../../src/extensions/identity.ts";
+import {
+	createExtensionResourceIdentity,
+	createExtensionResourceProvenance,
+} from "../../src/extensions/identity.ts";
 import { resolveContainedPath } from "../../src/extensions/paths.ts";
 import { HooksConfigSchema, schemaAccepts } from "../../src/extensions/schemas.ts";
 import { ExtensionStateStore } from "../../src/extensions/state-store.ts";
@@ -34,7 +37,12 @@ function descriptor(qualifiedId = "skill:project:fixture", runtimeName?: string)
 		schemaVersion: 1,
 		kind: "skill",
 		identity: createExtensionResourceIdentity({ scope: TEST_SCOPE, kind: "skill", qualifiedId, version: "1", source: "project", digest: manifest.combinedDigest }),
-		provenance: { schemaVersion: 1, authorityId: TEST_SCOPE.authorityId, tenantId: TEST_SCOPE.tenantId, source: "project", canonicalLocator: `/repo/.runledger/skills/${qualifiedId}` },
+		provenance: createExtensionResourceProvenance({
+			scope: TEST_SCOPE,
+			source: "project",
+			canonicalLocator: `/repo/.runledger/skills/${qualifiedId}`,
+			sourceRoot: "/repo",
+		}),
 		manifest,
 		displayName: qualifiedId,
 		description: "fixture skill",
