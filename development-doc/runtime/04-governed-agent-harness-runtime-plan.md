@@ -1410,8 +1410,9 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 
 计划基线:
 
-- 代码基线:`81556acb16e2d4ba39e8fffeb0f4c5bdeccf40c7`;开始实现前必须把本节所在文档提交记为新的 documentation handoff commit。
-- 外围专项冻结基线:同一 commit;冻结状态、路径和定向测试见 `06-specialty-implementation-freeze.md`。
+- documentation handoff:`c4cd3e66689dc56b296c05712a52301e9d712e9f`;该提交把 Phase 0–11 拆分文档和状态证据入口落入目标分支。当前 W0 evidence update 尚未提交,W0-G 继续保持 pending。
+- 代码基线:`9a3d8c8`;Phase 0 统一 ID registry 已包含 Worktree,并由后续 documentation handoff 包含在当前 HEAD。
+- 外围专项冻结基线:`81556acb16e2d4ba39e8fffeb0f4c5bdeccf40c7`;冻结状态、路径和定向测试见 `06-specialty-implementation-freeze.md`。
 - 初始状态:W0–W6 全部 `pending`;同一时刻只能有一个全局 Wave 为 `in_progress`。
 - Runtime-only 执行顺序:`evidence freeze -> Runtime-M0 kernel -> single-agent Runtime integration -> (Agent/Supervisor || Headless) -> Runtime enterprise/telemetry adapters -> hardening -> runtime-scope acceptance`。
 - 允许并行只表示可在不同 worktree/branch 上开发独占路径;共享文件仍必须等待本 Wave 的串行 integration window。
@@ -1463,13 +1464,63 @@ W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production 
 
 | ID | 状态 | 顺序/依赖 | 工作内容 | 产物与验证 |
 |---|---|---|---|---|
-| W0-01 | pending | first | 提交本节、当前状态复核与`06`冻结说明,记录 documentation handoff commit、branch、dirty paths和当前HEAD | 本文件、05和06交叉链接;`git diff --check` |
-| W0-02 | pending | after W0-01 | 对§0.5、Phase 0/2/3/5/6 contract及三个冻结专项做逐项证据映射,严格区分implemented/partial/deferred | task -> source -> test -> commit矩阵;固定pi snapshot与专项冻结基线 |
+| W0-01 | completed | first | 提交本节、当前状态复核与`06`冻结说明,记录 documentation handoff commit、branch、dirty paths和当前HEAD | `c4cd3e6`;分支`worktree/governed-agent-harness-runtime`;当前唯一非本任务 dirty path 为用户维护的`AGENTS.md` |
+| W0-02 | in_progress | after W0-01 | 对§0.5、Phase 0/2/3/5/6 contract及三个冻结专项做逐项证据映射,严格区分implemented/partial/deferred | 下方候选矩阵已生成;形成目标分支 evidence commit 前不标 completed |
 | W0-03 | pending | after W0-02 | 为W1–W6的Runtime lane登记owner、worktree、allowlist、共享锁和expected join commit | execution ledger无空owner/重叠路径;allowlist与06冻结路径无交集 |
 | W0-04 | pending | after W0-03 | 复跑当前基线并保存计数/平台/skip原因 | 完整门禁、pi audit、06 §6三组只读专项门禁、`git diff --check` |
 | W0-G | pending | join | 冻结implementation baseline | 工作区只有已解释diff;所有后续lane从同一commit创建 |
 
-W0-01 中的commit必须取得用户对“提交”的单独明确授权;本轮只交付文档改动,不会自行提交。授权前W0-01与W0-G保持`pending`,后续代码Wave不得启动。
+#### W0-02 候选证据矩阵
+
+本矩阵基于`c4cd3e6`代码树和`81556ac`专项冻结基线生成。当前文件未提交前只表示 candidate evidence,不提升 W0-02 状态。
+
+| 范围 | 状态 | source / contract | test evidence | commit / 未关闭边界 |
+|---|---|---|---|---|
+| §0.5 pi-ai parity | implemented | parity manifest、provider/API/Auth本地映射与只读审计器 | `audit:pi-ai` 164/164 source、72 catalog PASS | `004a252`;上游漂移仍需重新审计 |
+| Phase 0 protocol | implemented | `src/runtime/protocol/v3/**`、identity、feature matrix、boundary scripts | Phase 0 schema/canonical/legacy/CLI/public-surface tests;`npm run check` | `65f9054`、`004a252`、`9a3d8c8`;历史I0–I7 handoff不能倒推 |
+| Phase 2 Workspace contract | implemented contract;behavior unavailable | Workspace envelope/ref/receipt、event/reducer/projection | `tests/runtime-v3/workspace-contracts/**` | `65f9054`、`004a252`;真实Git/worktree/TOCTOU属于冻结专项 |
+| Phase 3 Capability contract | implemented contract;behavior unavailable | capability/approval/sandbox/taint/rate-limit schema与ports | `tests/runtime-v3/security-contracts/**` | `65f9054`、`004a252`;真实Gateway/Sandbox/Approval recovery未由contract证明 |
+| Phase 5 Resource contract | implemented contract;behavior frozen | neutral identity/provenance/snapshot/invocation/lifecycle schema与ports | `tests/runtime-v3/resource-contracts/**` | `65f9054`、`004a252`;Extension行为只按冻结矩阵消费 |
+| Phase 6 Model/Plan/Context contract | implemented contract;behavior frozen | model routing、Plan、Context、Compaction、Memory public schema/events | contract/behavior/production consumer gate 16 files / 94 tests PASS | `65f9054`、`004a252`;专项用户面/overflow/完整生命周期保持冻结 |
+| Plan/Context/Memory专项 | implemented-frozen + partial/deferred | `06` §2.1/§3.1列出的公开面 | 16 files / 94 tests PASS | `81556ac`;Runtime只能消费,不能补实现 |
+| Extension专项 | implemented-frozen + partial/deferred | `06` §2.2/§3.2列出的公开面 | 12 files / 52 tests PASS | `81556ac`;缺publisher/marketplace/完整管理面 |
+| Workspace/Security专项 | implemented-frozen + partial/deferred | `06` §2.3/§3.3列出的公开面 | 21 files / 119 tests PASS | `81556ac`;真实process-tree/Sandbox/Approval recovery仍是external gap |
+
+#### W0-03 候选 execution ledger
+
+本轮不启用并行 agent/lane。所有 lane 由`/root`按 Wave 顺序在当前专用 worktree 串行执行;同一时刻只打开一行 allowlist,因此原计划允许并行的 P1/W3/P5 也不会发生共享路径并发写。下表在 evidence commit 前不提升 W0-03 状态。
+
+| lane | owner / worktree | 写路径 allowlist | lock / 顺序 | expected join |
+|---|---|---|---|---|
+| W1-A Session | `/root`;当前 governed-runtime worktree | `src/runtime/session/**`、`src/storage/v3-session-manager.ts`、`tests/runtime-v3/session/**` | L0/L2关闭;先A1→A2→A3 | W1-J1 |
+| W1-B Artifact | `/root`;同 worktree,A3后串行 | `src/runtime/artifacts/**`、`tests/runtime-v3/artifacts/**`；`tests/worktree/artifact-checkpoint*`只读 | 不与W1-A并发;不得写`src/worktree/**` | W1-J1 |
+| W1-J | `/root`;同 worktree | 仅主计划列出的L0/L2/L4 Runtime-owned接线面、对应tests/docs | W1-A3+B2后唯一join owner | W1-G |
+| W2 Runtime integration | `/root`;同 worktree | `src/runtime/{integration,orchestrator,verification}/**`、Runtime-owned storage/daemon adapters、`tests/runtime-v3/{integration,orchestrator,verification}/**` | 冻结专项全程只读;D→R/V→J串行 | W2-G |
+| W3-M2 Agent/Supervisor | `/root`;同 worktree | `src/runtime/agents/**`、`tests/runtime-v3/agents/**`、scoped e2e | 不与M3并发;不打开最终composition | W3-J |
+| W3-M3 Headless | `/root`;M2后同 worktree | `src/runtime/control-plane/**`、Runtime-owned daemon/activity、对应tests | L3只在M3/J打开 | W3-J |
+| W3-J | `/root`;同 worktree | L2/L3/L4列出的Runtime-owned composition与consumer tests | M2+M3后唯一join owner | W3-G |
+| W4 Enterprise/Telemetry | `/root`;同 worktree | `src/runtime/{identity,executors,telemetry,lifecycle}/**`、Runtime-owned adapters/tests | 冻结credential/policy实现只读 | W4-G |
+| W5 Hardening | `/root`;同 worktree | `tests/runtime-v3/harness-regression/**`、Runtime-owned fault/e2e tests及其直接修复路径 | P5按A→E顺序串行;专项失败只记external gap | W5-G |
+| W6 Acceptance | `/root`;同 worktree | Runtime docs、test manifests与发布核验;无新feature code | L5唯一owner | W6-G |
+
+所有 allowlist 均排除`06` §3冻结路径;若后续任务需要扩大路径,必须先修改本 ledger 并形成新的 evidence commit。
+
+#### W0-04 候选验证记录
+
+执行环境:`Linux 5.4.0-150-generic x86_64`、Node `v22.23.1`、npm `10.9.8`;代码HEAD=`c4cd3e6`。当前未提交的`AGENTS.md`是用户维护的提交规范更新,未进入测试输入或本候选证据范围。
+
+| gate | 结果 |
+|---|---|
+| `npm run check` | PASS;TypeScript、runtime boundary v1、execution boundary全绿 |
+| `npm test` | 261 files / 1703 tests PASS;1个`RUNLEDGER_LIVE_E2E` opt-in测试默认SKIP |
+| `npm run build` | PASS |
+| pi-ai audit | 164/164 upstream files、72 catalog files PASS |
+| Plan/Context/Memory冻结门禁 | 16 files / 94 tests PASS |
+| Extension冻结门禁 | 12 files / 52 tests PASS |
+| Security/Worktree冻结门禁 | 21 files / 119 tests PASS |
+| `git diff --check` | PASS;工作区另有已解释的用户`AGENTS.md`修改 |
+
+W0-01 已在用户明确要求提交并推送全部更新后由`c4cd3e6`完成。本轮新增的 W0-02/03/04 evidence update 仍需新的明确提交授权;形成目标分支 commit 前 W0-02 保持`in_progress`、W0-G保持`pending`,后续代码 Wave 不得启动。
 
 W0 退出门槛:
 
