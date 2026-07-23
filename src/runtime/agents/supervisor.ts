@@ -1088,11 +1088,11 @@ export class AgentSupervisor {
 
 	public async cancel(
 		request: AgentResumeRequest,
-		reasonDigest: string,
+		reasonEvidenceDigest: string,
 		usage?: AgentBudgetUsage,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentGraphProjection>> {
-		if (!DIGEST_PATTERN.test(reasonDigest)) return fail("invalid_request", "cancel reason digest is invalid");
+		if (!DIGEST_PATTERN.test(reasonEvidenceDigest)) return fail("invalid_request", "cancel reason digest is invalid");
 		return this.finish(
 			{
 				requestId: request.requestId,
@@ -1100,6 +1100,7 @@ export class AgentSupervisor {
 				agentId: request.agentId,
 				outcome: "stopped",
 				reason: "cancelled",
+				reasonEvidenceDigest,
 				...(usage ? { usage } : {}),
 			},
 			signal,
@@ -1552,6 +1553,16 @@ export class AgentSupervisor {
 		if (!isRuntimeId(request.requestId, "command") || !parseIdempotencyKey(request.idempotencyKey)) {
 			return fail("invalid_request", "terminal command identity is invalid");
 		}
+		if (
+			request.reasonEvidenceDigest !== undefined &&
+			(
+				!DIGEST_PATTERN.test(request.reasonEvidenceDigest) ||
+				request.outcome !== "stopped" ||
+				(request.reason !== undefined && request.reason !== "cancelled")
+			)
+		) {
+			return fail("invalid_request", "terminal reason evidence is invalid or inapplicable");
+		}
 		const graph = await this.load();
 		if (!graph.ok) return graph;
 		const node = graph.value.nodes.get(request.agentId);
@@ -1574,12 +1585,34 @@ export class AgentSupervisor {
 			idempotencyKey: request.idempotencyKey,
 			outcome: request.outcome,
 			...(reason ? { reason } : {}),
+			...(request.reasonEvidenceDigest !== undefined
+				? { reasonEvidenceDigest: request.reasonEvidenceDigest }
+				: {}),
 			...(request.usage ? { usage: request.usage } : {}),
 			partialResults: node.artifacts.map((report) => report.artifact),
 		});
 		let finished: AgentResult<AgentGraphProjection> = graph;
 		if (isAgentTerminal(node)) {
 			if (node.state !== request.outcome || node.terminal?.terminalDigest !== terminalRecord.terminalDigest) {
+				const existingEvidenceRetry = node.terminal &&
+					node.state === request.outcome &&
+					node.terminal.reasonEvidenceDigest !== terminalRecord.reasonEvidenceDigest
+					? createAgentSemanticTerminalRecord({
+							agentId: node.agentId,
+							requestId: request.requestId,
+							idempotencyKey: request.idempotencyKey,
+							outcome: request.outcome,
+							...(reason ? { reason } : {}),
+							...(node.terminal.reasonEvidenceDigest !== undefined
+								? { reasonEvidenceDigest: node.terminal.reasonEvidenceDigest }
+								: {}),
+							...(request.usage ? { usage: request.usage } : {}),
+							partialResults: node.artifacts.map((report) => report.artifact),
+						})
+					: undefined;
+				if (existingEvidenceRetry?.terminalDigest === node.terminal?.terminalDigest) {
+					return fail("idempotency_conflict", "cancel reason evidence conflicts with durable semantic outcome");
+				}
 				return fail("invalid_transition", "agent terminal retry conflicts with durable semantic outcome");
 			}
 		} else {

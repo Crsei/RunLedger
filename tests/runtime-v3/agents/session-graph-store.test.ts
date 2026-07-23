@@ -15,7 +15,7 @@ import { artifact, digest, key, rootRegistration, runtimeFakes, spawnRequest, ze
 const NOW = "2026-07-22T00:00:00.000Z";
 
 describe("SessionAgentGraphStore", () => {
-	it("replays a completed and failed child from canonical v3 agent events after a JSONL restart", async () => {
+	it("replays completed, failed, and cancelled children from canonical v3 agent events after a JSONL restart", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "runledger-agent-graph-"));
 		const filePath = join(directory, "session.jsonl");
 		const root = rootRegistration();
@@ -117,6 +117,21 @@ describe("SessionAgentGraphStore", () => {
 				reason: "crash",
 				usage: zeroUsage(),
 			})).ok).toBe(true);
+
+			const cancelledRequest = spawnRequest(root.capabilityGrant);
+			const cancelled = await supervisor.spawn(cancelledRequest);
+			if (!cancelled.ok) throw new Error(cancelled.error.message);
+			const cancellationReasonEvidenceDigest = digest("8");
+			const cancellationRequest = {
+				requestId: createRuntimeId("command", "durable-agent-cancelled"),
+				idempotencyKey: key("durable-agent-cancelled"),
+				agentId: cancelled.value.node.agentId,
+			};
+			expect((await supervisor.cancel(
+				cancellationRequest,
+				cancellationReasonEvidenceDigest,
+				zeroUsage(),
+			)).ok).toBe(true);
 			expect((await writer.close()).ok).toBe(true);
 
 			const reopened = await JsonlV3EventStore.open(storeOptions);
@@ -139,13 +154,14 @@ describe("SessionAgentGraphStore", () => {
 			const restarted = await restartedGraphStore.load(root.agentId);
 			expect(restarted.ok).toBe(true);
 			if (!restarted.ok) return;
-			const restartedProjection = await new AgentSupervisor({
+			const restartedSupervisor = new AgentSupervisor({
 				rootAgentId: root.agentId,
 				ports: { ...fakes.ports, graphStore: restartedGraphStore },
-			}).graph();
+			});
+			const restartedProjection = await restartedSupervisor.graph();
 			expect(restartedProjection.ok).toBe(true);
 			if (!restartedProjection.ok) return;
-			expect(restartedProjection.value.edges).toHaveLength(2);
+			expect(restartedProjection.value.edges).toHaveLength(3);
 			expect(restartedProjection.value.nodes.get(completed.value.node.agentId)).toMatchObject({
 				state: "completed",
 				sessionId: completedRequest.childSessionId,
@@ -161,6 +177,17 @@ describe("SessionAgentGraphStore", () => {
 				residency: { state: "nonresident" },
 				workspaceReceipt: { status: "released" },
 			});
+			expect(restartedProjection.value.nodes.get(cancelled.value.node.agentId)).toMatchObject({
+				state: "stopped",
+				sessionId: cancelledRequest.childSessionId,
+				terminal: {
+					outcome: "stopped",
+					reason: "cancelled",
+					reasonEvidenceDigest: cancellationReasonEvidenceDigest,
+				},
+				residency: { state: "nonresident" },
+				workspaceReceipt: { status: "released" },
+			});
 			expect(restartedProjection.value.cleanups.get(completed.value.node.agentId)).toMatchObject({
 				terminalDigest: restartedProjection.value.nodes.get(completed.value.node.agentId)?.terminal?.terminalDigest,
 				completionReceipt: { agentId: completed.value.node.agentId },
@@ -168,6 +195,26 @@ describe("SessionAgentGraphStore", () => {
 			expect(restartedProjection.value.cleanups.get(failed.value.node.agentId)).toMatchObject({
 				terminalDigest: restartedProjection.value.nodes.get(failed.value.node.agentId)?.terminal?.terminalDigest,
 				completionReceipt: { agentId: failed.value.node.agentId },
+			});
+			expect(restartedProjection.value.cleanups.get(cancelled.value.node.agentId)).toMatchObject({
+				terminalDigest: restartedProjection.value.nodes.get(cancelled.value.node.agentId)?.terminal?.terminalDigest,
+				completionReceipt: {
+					agentId: cancelled.value.node.agentId,
+					terminalDigest: restartedProjection.value.nodes.get(cancelled.value.node.agentId)?.terminal?.terminalDigest,
+				},
+			});
+			expect(await restartedSupervisor.cancel(
+				cancellationRequest,
+				cancellationReasonEvidenceDigest,
+				zeroUsage(),
+			)).toMatchObject({ ok: true });
+			expect(await restartedSupervisor.cancel(
+				cancellationRequest,
+				digest("7"),
+				zeroUsage(),
+			)).toMatchObject({
+				ok: false,
+				error: { code: "idempotency_conflict" },
 			});
 			const stopKey = key("agent-graph-stop");
 			const stopped: AgentGraphSemanticCommand = {
@@ -249,5 +296,5 @@ describe("SessionAgentGraphStore", () => {
 			if (reopenedStore) await reopenedStore.close();
 			await rm(directory, { recursive: true, force: true });
 		}
-	});
+	}, 15_000);
 });

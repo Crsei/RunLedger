@@ -457,6 +457,8 @@ export interface AgentSemanticTerminalRecord {
 	requestDigest: string;
 	outcome: AgentTerminalOutcome;
 	reason?: AgentTerminalReason;
+	/** 调用方提供的取消理由/证据摘要；不在 graph 中持久化原始敏感内容。 */
+	reasonEvidenceDigest?: string;
 	usage?: AgentBudgetUsage;
 	partialResults: readonly ArtifactRef[];
 	terminalDigest: string;
@@ -919,6 +921,8 @@ export interface AgentTerminalRequest {
 	outcome: "completed" | "failed" | "stopped";
 	usage?: AgentBudgetUsage;
 	reason?: AgentInterruptionCause;
+	/** 仅 cancelled 终态使用；必须是调用方理由/证据的 canonical digest。 */
+	reasonEvidenceDigest?: string;
 }
 
 export interface AgentCursorAdvanceRequest {

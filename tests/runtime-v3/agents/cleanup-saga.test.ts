@@ -8,6 +8,7 @@ import type {
 	AgentResult,
 	DurableAgentGraphStorePort,
 } from "../../../src/runtime/agents/types.ts";
+import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId, type AgentId } from "../../../src/runtime/protocol/v3/ids.ts";
 import {
 	digest,
@@ -324,13 +325,15 @@ describe("Agent child cleanup saga", () => {
 
 	it("routes parent cancellation through semantic stopped and the same typed release saga", async () => {
 		const runtime = await spawnedRuntime();
+		const request = {
+			requestId: createRuntimeId("command", "cleanup-saga-cancel"),
+			idempotencyKey: key("cleanup-saga-cancel"),
+			agentId: runtime.child.agentId,
+		};
+		const reasonEvidenceDigest = digest("9");
 		const cancelled = await runtime.supervisor.cancel(
-			{
-				requestId: createRuntimeId("command", "cleanup-saga-cancel"),
-				idempotencyKey: key("cleanup-saga-cancel"),
-				agentId: runtime.child.agentId,
-			},
-			digest("9"),
+			request,
+			reasonEvidenceDigest,
 			zeroUsage(),
 		);
 		expect(cancelled.ok && cancelled.value.nodes.get(runtime.child.agentId)).toMatchObject({
@@ -341,6 +344,65 @@ describe("Agent child cleanup saga", () => {
 		expect(cancelled.ok && cancelled.value.cleanups.get(runtime.child.agentId)?.completionReceipt).toBeDefined();
 		expect(runtime.launcher.cancelCalls).toBe(0);
 		expect(runtime.launcher.releaseExecutions).toBe(1);
+	});
+
+	it("binds cancellation reason evidence into the semantic terminal and cleanup identity", async () => {
+		const runtime = await spawnedRuntime();
+		const request = {
+			requestId: createRuntimeId("command", "cleanup-saga-cancel-evidence"),
+			idempotencyKey: key("cleanup-saga-cancel-evidence"),
+			agentId: runtime.child.agentId,
+		};
+		const reasonEvidenceDigest = digest("8");
+		const usage = zeroUsage();
+		const cancelled = await runtime.supervisor.cancel(request, reasonEvidenceDigest, usage);
+		expect(cancelled.ok).toBe(true);
+		if (!cancelled.ok) return;
+
+		const expectedRequestDigest = canonicalDigest({
+			...request,
+			outcome: "stopped",
+			reason: "cancelled",
+			reasonEvidenceDigest,
+			usage,
+			partialResults: [],
+		});
+		const expectedTerminalDigest = canonicalDigest({
+			requestId: request.requestId,
+			requestDigest: expectedRequestDigest,
+			outcome: "stopped",
+			reason: "cancelled",
+			reasonEvidenceDigest,
+			usage,
+			partialResults: [],
+		});
+		const node = cancelled.value.nodes.get(runtime.child.agentId);
+		const cleanup = cancelled.value.cleanups.get(runtime.child.agentId);
+		expect(node?.terminal).toMatchObject({
+			reasonEvidenceDigest,
+			requestDigest: expectedRequestDigest,
+			terminalDigest: expectedTerminalDigest,
+		});
+		expect(cleanup).toMatchObject({
+			terminalDigest: expectedTerminalDigest,
+			completionReceipt: { terminalDigest: expectedTerminalDigest },
+		});
+	});
+
+	it("rejects an exact cancellation retry when its reason evidence digest drifts", async () => {
+		const runtime = await spawnedRuntime();
+		const request = {
+			requestId: createRuntimeId("command", "cleanup-saga-cancel-reason-drift"),
+			idempotencyKey: key("cleanup-saga-cancel-reason-drift"),
+			agentId: runtime.child.agentId,
+		};
+		const usage = zeroUsage();
+		expect(await runtime.supervisor.cancel(request, digest("7"), usage)).toMatchObject({ ok: true });
+		expect(await runtime.supervisor.cancel(request, digest("7"), usage)).toMatchObject({ ok: true });
+		expect(await runtime.supervisor.cancel(request, digest("6"), usage)).toMatchObject({
+			ok: false,
+			error: { code: "idempotency_conflict" },
+		});
 	});
 
 	it("routes a terminal interruption through cleanup after durably recording unavailable residency", async () => {

@@ -504,6 +504,59 @@ describe("durable agent graph", () => {
 		});
 	});
 
+	it.each([
+		["failed", "crash"],
+		["stopped", "budget_exhausted"],
+	] as const)("rejects reason evidence on an inapplicable %s/%s terminal", async (outcome, reason) => {
+		const runtime = runtimeFakes();
+		const root = rootRegistration();
+		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
+		const spawned = await runtime.supervisor.spawn(spawnRequest(root.capabilityGrant));
+		if (!spawned.ok) throw new Error(spawned.error.message);
+		const loaded = await runtime.store.load(root.agentId);
+		if (!loaded.ok) throw new Error(loaded.error.message);
+		const child = loaded.value.projection.nodes.get(spawned.value.node.agentId);
+		if (!child) throw new Error("spawned child vanished from graph");
+		const requestId = createRuntimeId("command", `terminal-evidence-${outcome}-${reason}`);
+		const terminalKey = key(`terminal-evidence-${outcome}-${reason}`);
+		const terminal = createAgentSemanticTerminalRecord({
+			agentId: child.agentId,
+			requestId,
+			idempotencyKey: terminalKey,
+			outcome,
+			reason,
+			reasonEvidenceDigest: digest("7"),
+			usage: zeroUsage(),
+			partialResults: [],
+		});
+		const common = {
+			requestId,
+			idempotencyKey: terminalKey,
+			occurredAt: NOW,
+			agentId: child.agentId,
+			from: child.state,
+		};
+		const command: AgentGraphSemanticCommand = outcome === "stopped"
+			? { ...common, type: "agent.stopped", reason, terminal }
+			: {
+					...common,
+					type: "agent.failed",
+					reason,
+					error: {
+						code: "terminal_evidence",
+						messageDigest: digest("6"),
+						retryable: false,
+						outcomeCertain: true,
+						effect: "none",
+					},
+					terminal,
+				};
+		expect(applyAgentGraphCommand(loaded.value.projection, command, DEFAULT_AGENT_GRAPH_LIMITS)).toMatchObject({
+			ok: false,
+			error: { code: "invalid_transition" },
+		});
+	});
+
 	it("permits a no-usage launch_rejected terminal only before runtime start", async () => {
 		const runtime = runtimeFakes();
 		const root = rootRegistration();

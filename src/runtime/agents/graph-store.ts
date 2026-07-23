@@ -127,6 +127,7 @@ export function createAgentSemanticTerminalRecord(
 		agentId: input.agentId,
 		outcome: input.outcome,
 		...(input.reason ? { reason: input.reason } : {}),
+		...(input.reasonEvidenceDigest !== undefined ? { reasonEvidenceDigest: input.reasonEvidenceDigest } : {}),
 		...(input.usage ? { usage: { ...input.usage } } : {}),
 		partialResults: input.partialResults.map(cloneArtifactRef),
 	};
@@ -135,6 +136,7 @@ export function createAgentSemanticTerminalRecord(
 		requestDigest: canonicalDigest(requestBody),
 		outcome: input.outcome,
 		...(input.reason ? { reason: input.reason } : {}),
+		...(input.reasonEvidenceDigest !== undefined ? { reasonEvidenceDigest: input.reasonEvidenceDigest } : {}),
 		...(input.usage ? { usage: { ...input.usage } } : {}),
 		partialResults: input.partialResults.map(cloneArtifactRef),
 	};
@@ -314,6 +316,13 @@ function terminalOutcomeReasonIsValid(record: AgentSemanticTerminalRecord): bool
 	return FAILED_TERMINAL_REASONS.has(record.reason);
 }
 
+function terminalReasonEvidenceIsValid(record: AgentSemanticTerminalRecord): boolean {
+	return (
+		record.reasonEvidenceDigest === undefined ||
+		(record.outcome === "stopped" && record.reason === "cancelled" && digestIsValid(record.reasonEvidenceDigest))
+	);
+}
+
 function terminalUsageCoversGraphFacts(
 	usage: NonNullable<AgentSemanticTerminalRecord["usage"]>,
 	node: AgentNode,
@@ -352,6 +361,7 @@ function semanticTerminalIsValid(
 		record.outcome !== outcome ||
 		record.reason !== reason ||
 		!terminalOutcomeReasonIsValid(record) ||
+		!terminalReasonEvidenceIsValid(record) ||
 		!semanticTerminalUsageIsValid(record, node) ||
 		canonicalDigest(record.partialResults) !== canonicalDigest(node.artifacts.map((report) => report.artifact))
 	) return false;
@@ -361,6 +371,7 @@ function semanticTerminalIsValid(
 		idempotencyKey,
 		outcome: record.outcome,
 		...(record.reason ? { reason: record.reason } : {}),
+		...(record.reasonEvidenceDigest !== undefined ? { reasonEvidenceDigest: record.reasonEvidenceDigest } : {}),
 		...(record.usage ? { usage: record.usage } : {}),
 		partialResults: record.partialResults,
 	});

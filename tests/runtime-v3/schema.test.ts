@@ -230,6 +230,18 @@ describe("Runtime v3 exact event schemas", () => {
 					terminalDigest: terminal.terminalDigest,
 				},
 			},
+			"agent.stopped": {
+				...common,
+				agentId,
+				from: "running" as const,
+				reason: "cancelled" as const,
+				terminal: {
+					...terminal,
+					outcome: "stopped" as const,
+					reason: "cancelled" as const,
+					reasonEvidenceDigest: digest,
+				},
+			},
 			"agent.cleanup_requested": { ...common, agentId, terminalDigest: terminal.terminalDigest, requestDigest: digest },
 			"agent.runtime_released": { ...common, agentId, cleanupRequestId, receipt: runtimeReceipt },
 			"agent.workspace_released": { ...common, agentId, cleanupRequestId, requestDigest: digest, receipt: workspaceReceipt },
@@ -251,6 +263,21 @@ describe("Runtime v3 exact event schemas", () => {
 			});
 			expect(MANDATORY_FLUSH_EVENT_TYPES.has(type as keyof typeof payloads)).toBe(true);
 		}
+		const stoppedPayload = payloads["agent.stopped"];
+		const { reasonEvidenceDigest: _reasonEvidenceDigest, ...legacyTerminal } = stoppedPayload.terminal;
+		expect(validateRuntimeEvent({
+			...base,
+			type: "agent.stopped",
+			payload: { ...stoppedPayload, terminal: legacyTerminal },
+		})).toMatchObject({ ok: true });
+		expect(validateRuntimeEvent({
+			...base,
+			type: "agent.stopped",
+			payload: {
+				...stoppedPayload,
+				terminal: { ...stoppedPayload.terminal, reasonEvidenceDigest: "malformed" },
+			},
+		})).toMatchObject({ ok: false, code: "invalid_schema" });
 	});
 
 	it("publishes fail-closed goal transition rules", () => {

@@ -350,6 +350,7 @@ const agentSemanticTerminal = exact({
 	requestDigest: digest,
 	outcome: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("stopped")]),
 	reason: Type.Optional(agentStateReason),
+	reasonEvidenceDigest: Type.Optional(digest),
 	usage: Type.Optional(agentBudgetUsage),
 	partialResults: readonlyArray(ArtifactRefSchema, { maxItems: 64 }),
 	terminalDigest: digest,
