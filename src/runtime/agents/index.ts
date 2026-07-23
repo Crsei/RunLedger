@@ -9,3 +9,5 @@ export * from "./supervisor.ts";
 export * from "./child-runtime-authority.ts";
 export * from "./child-runtime-contracts.ts";
 export * from "./headless-child-runtime.ts";
+export * from "./governed-operation-admission.ts";
+export * from "./child-runtime-generation.ts";
