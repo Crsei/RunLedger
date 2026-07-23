@@ -210,7 +210,7 @@ function captureWorkspaceOperations(): WorkspaceOperationCapture {
 	});
 	vi.spyOn(WorktreeManager.prototype, "release").mockImplementation(async function (request) {
 		const result = await release.call(this, request);
-		if (result.ok) capture.releaseReceiptIds.push(result.value.receiptId);
+		if (result.ok) capture.releaseReceiptIds.push(result.value.receipt.receiptId);
 		return result;
 	});
 	return capture;

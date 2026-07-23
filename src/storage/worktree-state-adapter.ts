@@ -15,21 +15,31 @@ import lockfile from "proper-lockfile";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
 	isRuntimeId,
+	parseRuntimeId,
 	type AuthorityId,
+	type CommandId,
 	type TenantId,
 	type WorkspaceId,
 } from "../runtime/protocol/v3/ids.ts";
 import {
 	isWorkspaceCheckpointDescriptor,
 	isWorkspaceLeaseRef,
+	isWorkspaceReleaseReceiptRef,
 	parseWorktreeId,
 } from "../runtime/protocol/v3/workspace.ts";
 import type {
 	WorkspaceLeaseMutationPort,
 	WorkspaceLeaseSecret,
+	WorktreeReleaseIntent,
+	WorktreeReleaseJournalPort,
+	WorktreeReleaseJournalRecord,
 	WorktreeRegistryMutationPort,
 } from "../worktree/ports.ts";
 import { pathWithin } from "../worktree/paths.ts";
+import {
+	isValidWorktreeReleaseJournalRecord,
+	WorktreeReleaseJournalCorruptionError,
+} from "../worktree/release-journal.ts";
 import type { WorktreeRecord, WorktreeRegistryEntry } from "../worktree/types.ts";
 
 export interface DurableWorktreeScope {
@@ -62,6 +72,17 @@ interface WorkspaceLeaseStateBody {
 }
 
 interface WorkspaceLeaseState extends WorkspaceLeaseStateBody {
+	stateDigest: string;
+}
+
+interface WorktreeReleaseJournalStateBody {
+	schemaVersion: 1;
+	kind: "worktree_release_journal";
+	scope: DurableWorktreeScope;
+	records: readonly WorktreeReleaseJournalRecord[];
+}
+
+interface WorktreeReleaseJournalState extends WorktreeReleaseJournalStateBody {
 	stateDigest: string;
 }
 
@@ -244,6 +265,190 @@ function parseLeaseState(raw: string, expectedScope: DurableWorktreeScope): Work
 	return parsed;
 }
 
+function isReleaseJournalRecord(
+	value: unknown,
+	scope: DurableWorktreeScope,
+): value is WorktreeReleaseJournalRecord {
+	if (
+		!isObject(value) ||
+		!exactKeys(value, ["schemaVersion", "kind", "intent", "recordDigest"], ["receipt"]) ||
+		value.schemaVersion !== 1 ||
+		value.kind !== "worktree_release_journal_record" ||
+		!isDigest(value.recordDigest) ||
+		!isObject(value.intent)
+	) return false;
+	const intent = value.intent;
+	const operationId = typeof intent.operationId === "string"
+		? parseRuntimeId("command", intent.operationId)
+		: undefined;
+	const requestId = typeof intent.requestId === "string"
+		? parseRuntimeId("command", intent.requestId)
+		: undefined;
+	const authorityId = typeof intent.authorityId === "string"
+		? parseRuntimeId("authority", intent.authorityId)
+		: undefined;
+	const tenantId = typeof intent.tenantId === "string"
+		? parseRuntimeId("tenant", intent.tenantId)
+		: undefined;
+	const principalId = typeof intent.principalId === "string"
+		? parseRuntimeId("principal", intent.principalId)
+		: undefined;
+	const sessionId = typeof intent.sessionId === "string"
+		? parseRuntimeId("session", intent.sessionId)
+		: undefined;
+	const agentId = typeof intent.agentId === "string"
+		? parseRuntimeId("agent", intent.agentId)
+		: undefined;
+	const workspaceId = typeof intent.workspaceId === "string"
+		? parseRuntimeId("workspace", intent.workspaceId)
+		: undefined;
+	const repositoryId = typeof intent.repositoryId === "string"
+		? parseRuntimeId("repository", intent.repositoryId)
+		: undefined;
+	const leaseId = typeof intent.leaseId === "string"
+		? parseRuntimeId("lease", intent.leaseId)
+		: undefined;
+	const receiptId = typeof intent.receiptId === "string"
+		? parseRuntimeId("receipt", intent.receiptId)
+		: undefined;
+	const checkpoint = intent.checkpoint;
+	const receipt = value.receipt;
+	if (
+		!exactKeys(intent, [
+			"schemaVersion", "kind", "operationId", "requestId", "requestDigest",
+			"callerRequestDigest",
+			"authorityId", "tenantId", "principalId", "sessionId", "agentId",
+			"workspaceId", "repositoryId", "envelopeDigest", "leaseId", "leaseRevision",
+			"releasedAt", "releasedLease", "releasedLeaseDigest", "retainedRecord",
+			"retainedRecordDigest", "receiptId", "intentDigest",
+		], ["checkpoint"]) ||
+		intent.schemaVersion !== 1 ||
+		intent.kind !== "worktree_release_intent" ||
+		operationId === undefined ||
+		requestId === undefined ||
+		!isDigest(intent.requestDigest) ||
+		!isDigest(intent.callerRequestDigest) ||
+		authorityId === undefined ||
+		tenantId === undefined ||
+		principalId === undefined ||
+		sessionId === undefined ||
+		agentId === undefined ||
+		workspaceId === undefined ||
+		repositoryId === undefined ||
+		!isDigest(intent.envelopeDigest) ||
+		leaseId === undefined ||
+		typeof intent.leaseRevision !== "number" ||
+		!Number.isSafeInteger(intent.leaseRevision) ||
+		intent.leaseRevision < 0 ||
+		!isTimestamp(intent.releasedAt) ||
+		!isWorkspaceLeaseRef(intent.releasedLease) ||
+		!isDigest(intent.releasedLeaseDigest) ||
+		!isWorktreeRecord(intent.retainedRecord) ||
+		!isDigest(intent.retainedRecordDigest) ||
+		receiptId === undefined ||
+		!isDigest(intent.intentDigest) ||
+		(checkpoint !== undefined && !isWorkspaceCheckpointDescriptor(checkpoint)) ||
+		(receipt !== undefined && !isWorkspaceReleaseReceiptRef(receipt))
+	) return false;
+	const parsedIntent: WorktreeReleaseIntent = {
+		schemaVersion: 1,
+		kind: "worktree_release_intent",
+		operationId,
+		requestId,
+		requestDigest: intent.requestDigest,
+		callerRequestDigest: intent.callerRequestDigest,
+		authorityId,
+		tenantId,
+		principalId,
+		sessionId,
+		agentId,
+		workspaceId,
+		repositoryId,
+		envelopeDigest: intent.envelopeDigest,
+		leaseId,
+		leaseRevision: intent.leaseRevision,
+		releasedAt: intent.releasedAt,
+		releasedLease: intent.releasedLease,
+		releasedLeaseDigest: intent.releasedLeaseDigest,
+		retainedRecord: intent.retainedRecord,
+		retainedRecordDigest: intent.retainedRecordDigest,
+		receiptId,
+		...(checkpoint === undefined ? {} : { checkpoint }),
+		intentDigest: intent.intentDigest,
+	};
+	const candidate: WorktreeReleaseJournalRecord = {
+		schemaVersion: 1,
+		kind: "worktree_release_journal_record",
+		intent: parsedIntent,
+		...(receipt === undefined ? {} : { receipt }),
+		recordDigest: value.recordDigest,
+	};
+	return (
+		candidate.intent.authorityId === scope.authorityId &&
+		candidate.intent.tenantId === scope.tenantId &&
+		isValidWorktreeReleaseJournalRecord(candidate)
+	);
+}
+
+function releaseJournalState(
+	scope: DurableWorktreeScope,
+	records: readonly WorktreeReleaseJournalRecord[],
+): WorktreeReleaseJournalState {
+	const ordered = [...records].sort((left, right) =>
+		left.intent.operationId.localeCompare(right.intent.operationId));
+	const body: WorktreeReleaseJournalStateBody = {
+		schemaVersion: 1,
+		kind: "worktree_release_journal",
+		scope,
+		records: ordered,
+	};
+	return { ...body, stateDigest: canonicalDigest(body) };
+}
+
+function parseReleaseJournalState(
+	raw: string,
+	expectedScope: DurableWorktreeScope,
+): WorktreeReleaseJournalState {
+	let value: unknown;
+	try {
+		value = JSON.parse(raw) as unknown;
+	} catch {
+		throw new WorktreeReleaseJournalCorruptionError("worktree release journal JSON is corrupted");
+	}
+	if (
+		!isObject(value) ||
+		!exactKeys(value, ["schemaVersion", "kind", "scope", "records", "stateDigest"]) ||
+		value.schemaVersion !== 1 ||
+		value.kind !== "worktree_release_journal" ||
+		!isScope(value.scope) ||
+		!sameScope(value.scope, expectedScope) ||
+		!Array.isArray(value.records) ||
+		!isDigest(value.stateDigest)
+	) {
+		throw new WorktreeReleaseJournalCorruptionError("worktree release journal schema or scope is corrupted");
+	}
+	const records: WorktreeReleaseJournalRecord[] = [];
+	let previous: string | undefined;
+	const requestIds = new Set<CommandId>();
+	for (const candidate of value.records) {
+		if (
+			!isReleaseJournalRecord(candidate, expectedScope) ||
+			requestIds.has(candidate.intent.requestId) ||
+			(previous !== undefined && previous.localeCompare(candidate.intent.operationId) >= 0)
+		) {
+			throw new WorktreeReleaseJournalCorruptionError("worktree release journal record, order, scope, or digest is corrupted");
+		}
+		records.push(candidate);
+		requestIds.add(candidate.intent.requestId);
+		previous = candidate.intent.operationId;
+	}
+	const parsed = releaseJournalState(expectedScope, records);
+	if (parsed.stateDigest !== value.stateDigest) {
+		throw new WorktreeReleaseJournalCorruptionError("worktree release journal state digest is corrupted");
+	}
+	return parsed;
+}
+
 function errnoCode(cause: unknown): string | undefined {
 	return cause instanceof Error && "code" in cause ? String(cause.code) : undefined;
 }
@@ -422,6 +627,7 @@ export class FileWorkspaceLeaseMutationPort implements WorkspaceLeaseMutationPor
 	public compareAndSwap(
 		workspaceId: WorkspaceId,
 		expectedRevision: number,
+		expectedSecretDigest: string,
 		next: WorkspaceLeaseSecret,
 	): Promise<"applied" | "conflict"> {
 		return this.#state.mutate(async (state) => {
@@ -429,7 +635,11 @@ export class FileWorkspaceLeaseMutationPort implements WorkspaceLeaseMutationPor
 				throw new Error("workspace lease CAS replacement is invalid or outside the configured scope");
 			}
 			const index = state.leases.findIndex((entry) => entry.workspaceId === workspaceId);
-			if (index < 0 || state.leases[index]!.secret.record.leaseRevision !== expectedRevision) return { value: "conflict" as const };
+			if (
+				index < 0 ||
+				state.leases[index]!.secret.record.leaseRevision !== expectedRevision ||
+				state.leases[index]!.secretDigest !== expectedSecretDigest
+			) return { value: "conflict" as const };
 			const current = state.leases[index]!.secret;
 			if (
 				next.record.authorityId !== current.record.authorityId ||
@@ -453,14 +663,128 @@ export class FileWorkspaceLeaseMutationPort implements WorkspaceLeaseMutationPor
 		});
 	}
 
-	public remove(workspaceId: WorkspaceId, expectedRevision: number): Promise<"applied" | "conflict" | "not_found"> {
+	public remove(
+		workspaceId: WorkspaceId,
+		expectedRevision: number,
+		expectedSecretDigest: string,
+	): Promise<"applied" | "conflict" | "not_found"> {
 		return this.#state.mutate(async (state) => {
 			const index = state.leases.findIndex((entry) => entry.workspaceId === workspaceId);
 			if (index < 0) return { value: "not_found" as const };
-			if (state.leases[index]!.secret.record.leaseRevision !== expectedRevision) return { value: "conflict" as const };
+			if (
+				state.leases[index]!.secret.record.leaseRevision !== expectedRevision ||
+				state.leases[index]!.secretDigest !== expectedSecretDigest
+			) return { value: "conflict" as const };
 			return {
 				value: "applied" as const,
 				next: leaseState(this.#scope, state.leases.filter((_, candidate) => candidate !== index)),
+			};
+		});
+	}
+}
+
+export class FileWorktreeReleaseJournalPort implements WorktreeReleaseJournalPort {
+	readonly #scope: DurableWorktreeScope;
+	readonly #state: AtomicScopedStateFile<WorktreeReleaseJournalState>;
+
+	public constructor(filePath: string, scope: DurableWorktreeScope) {
+		this.#scope = structuredClone(scope);
+		this.#state = new AtomicScopedStateFile(
+			filePath,
+			releaseJournalState(this.#scope, []),
+			(raw) => parseReleaseJournalState(raw, this.#scope),
+		);
+	}
+
+	async #mutate<R>(operation: AtomicMutation<WorktreeReleaseJournalState, R>): Promise<R> {
+		try {
+			return await this.#state.mutate(operation);
+		} catch (cause) {
+			if (cause instanceof WorktreeReleaseJournalCorruptionError) throw cause;
+			const message = cause instanceof Error ? cause.message : "";
+			if (/corrupt|scope|private canonical|identity or mode/u.test(message)) {
+				throw new WorktreeReleaseJournalCorruptionError(
+					message || "worktree release journal durable identity is corrupted",
+				);
+			}
+			throw cause;
+		}
+	}
+
+	public async verify(): Promise<void> {
+		await this.#mutate(async (state) => ({ value: state }));
+	}
+
+	public read(operationId: CommandId): Promise<WorktreeReleaseJournalRecord | undefined> {
+		return this.#mutate(async (state) => ({
+			value: structuredClone(
+				state.records.find((record) => record.intent.operationId === operationId),
+			),
+		}));
+	}
+
+	public begin(
+		record: WorktreeReleaseJournalRecord,
+	): Promise<"applied" | "replay" | "conflict"> {
+		return this.#mutate(async (state) => {
+			if (!isReleaseJournalRecord(record, this.#scope) || record.receipt !== undefined) {
+				throw new Error("worktree release journal begin record is invalid or outside the configured scope");
+			}
+			const current = state.records.find((candidate) =>
+				candidate.intent.operationId === record.intent.operationId);
+			if (current) {
+				return {
+					value: current.intent.requestId === record.intent.requestId &&
+						current.intent.requestDigest === record.intent.requestDigest
+						? "replay" as const
+						: "conflict" as const,
+				};
+			}
+			if (state.records.some((candidate) =>
+				candidate.intent.requestId === record.intent.requestId)) {
+				return { value: "conflict" as const };
+			}
+			return {
+				value: "applied" as const,
+				next: releaseJournalState(this.#scope, [...state.records, structuredClone(record)]),
+			};
+		});
+	}
+
+	public complete(
+		operationId: CommandId,
+		expectedRequestDigest: string,
+		record: WorktreeReleaseJournalRecord,
+	): Promise<"applied" | "replay" | "conflict"> {
+		return this.#mutate(async (state) => {
+			if (
+				!isReleaseJournalRecord(record, this.#scope) ||
+				record.receipt === undefined ||
+				record.intent.operationId !== operationId ||
+				record.intent.requestDigest !== expectedRequestDigest
+			) {
+				throw new Error("worktree release journal completion record is invalid or outside the configured scope");
+			}
+			const index = state.records.findIndex((candidate) =>
+				candidate.intent.operationId === operationId);
+			if (index < 0) return { value: "conflict" as const };
+			const current = state.records[index]!;
+			if (
+				current.intent.requestDigest !== expectedRequestDigest ||
+				current.intent.intentDigest !== record.intent.intentDigest
+			) return { value: "conflict" as const };
+			if (current.receipt) {
+				return {
+					value: current.recordDigest === record.recordDigest
+						? "replay" as const
+						: "conflict" as const,
+				};
+			}
+			const records = [...state.records];
+			records[index] = structuredClone(record);
+			return {
+				value: "applied" as const,
+				next: releaseJournalState(this.#scope, records),
 			};
 		});
 	}

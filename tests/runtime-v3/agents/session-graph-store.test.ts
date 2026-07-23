@@ -127,12 +127,12 @@ describe("SessionAgentGraphStore", () => {
 				idempotencyKey: key("durable-agent-cancelled"),
 				agentId: cancelled.value.node.agentId,
 			};
-			expect((await supervisor.cancel(
-				cancellationRequest,
-				cancellationReasonEvidenceDigest,
-				zeroUsage(),
-			)).ok).toBe(true);
-			expect((await writer.close()).ok).toBe(true);
+				expect((await supervisor.cancel(
+					cancellationRequest,
+					cancellationReasonEvidenceDigest,
+					zeroUsage(),
+				)).ok).toBe(true);
+				expect((await writer.close()).ok).toBe(true);
 
 			const reopened = await JsonlV3EventStore.open(storeOptions);
 			if (!reopened.ok) throw new Error(reopened.error.message);
@@ -161,7 +161,7 @@ describe("SessionAgentGraphStore", () => {
 			const restartedProjection = await restartedSupervisor.graph();
 			expect(restartedProjection.ok).toBe(true);
 			if (!restartedProjection.ok) return;
-			expect(restartedProjection.value.edges).toHaveLength(3);
+				expect(restartedProjection.value.edges).toHaveLength(3);
 			expect(restartedProjection.value.nodes.get(completed.value.node.agentId)).toMatchObject({
 				state: "completed",
 				sessionId: completedRequest.childSessionId,
@@ -190,19 +190,27 @@ describe("SessionAgentGraphStore", () => {
 			});
 			expect(restartedProjection.value.cleanups.get(completed.value.node.agentId)).toMatchObject({
 				terminalDigest: restartedProjection.value.nodes.get(completed.value.node.agentId)?.terminal?.terminalDigest,
+				workspaceRelease: {
+					receipt: {
+						schemaVersion: 1,
+						kind: "agent_workspace_release_receipt",
+						releasedWorkspaceReceipt: { status: "released" },
+						authorityReceipt: { kind: "workspace_release_receipt" },
+					},
+				},
 				completionReceipt: { agentId: completed.value.node.agentId },
 			});
 			expect(restartedProjection.value.cleanups.get(failed.value.node.agentId)).toMatchObject({
 				terminalDigest: restartedProjection.value.nodes.get(failed.value.node.agentId)?.terminal?.terminalDigest,
 				completionReceipt: { agentId: failed.value.node.agentId },
 			});
-			expect(restartedProjection.value.cleanups.get(cancelled.value.node.agentId)).toMatchObject({
-				terminalDigest: restartedProjection.value.nodes.get(cancelled.value.node.agentId)?.terminal?.terminalDigest,
-				completionReceipt: {
-					agentId: cancelled.value.node.agentId,
+				expect(restartedProjection.value.cleanups.get(cancelled.value.node.agentId)).toMatchObject({
 					terminalDigest: restartedProjection.value.nodes.get(cancelled.value.node.agentId)?.terminal?.terminalDigest,
-				},
-			});
+					completionReceipt: {
+					agentId: cancelled.value.node.agentId,
+						terminalDigest: restartedProjection.value.nodes.get(cancelled.value.node.agentId)?.terminal?.terminalDigest,
+					},
+				});
 			expect(await restartedSupervisor.cancel(
 				cancellationRequest,
 				cancellationReasonEvidenceDigest,
@@ -286,10 +294,156 @@ describe("SessionAgentGraphStore", () => {
 				expect(agentTypes).toContain("agent.failed");
 				expect(agentTypes).toContain("agent.cleanup_requested");
 				expect(agentTypes).toContain("agent.runtime_released");
-				expect(agentTypes).toContain("agent.workspace_released");
-				expect(agentTypes).toContain("agent.budget_settled");
-				expect(agentTypes).toContain("agent.cleanup_completed");
-			}
+					expect(agentTypes).toContain("agent.workspace_released");
+					expect(agentTypes).toContain("agent.budget_settled");
+					expect(agentTypes).toContain("agent.cleanup_completed");
+				}
+			expect((await reopenedWriter.value.close()).ok).toBe(true);
+			reopenedStore = undefined;
+		} finally {
+			if (reopenedStore) await reopenedStore.close();
+			await rm(directory, { recursive: true, force: true });
+		}
+		}, 15_000);
+
+	it("replays a launch-rejected not-started cleanup across a JSONL close and open", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "runledger-agent-not-started-"));
+		const filePath = join(directory, "session.jsonl");
+		const root = rootRegistration();
+		const authorityId = createRuntimeId("authority", "agent-not-started");
+		const tenantId = createRuntimeId("tenant", "agent-not-started");
+		const principalId = createRuntimeId("principal", "agent-not-started");
+		const runtimeId = createRuntimeId("runtime", "agent-not-started");
+		const stream = {
+			scope: "session" as const,
+			streamId: createEventStreamId({ authorityId, tenantId }, root.sessionId),
+			sessionId: root.sessionId,
+		};
+		const fence: WriterFence = {
+			authorityId,
+			tenantId,
+			stream,
+			leaseId: createRuntimeId("lease", "agent-not-started"),
+			ownerRuntimeId: runtimeId,
+			writerEpoch: 1,
+			fencingToken: "agent-not-started-test-fence",
+		};
+		const storeOptions = {
+			filePath,
+			authorityId,
+			tenantId,
+			stream,
+			validateFence: (candidate: WriterFence) =>
+				candidate.writerEpoch === fence.writerEpoch &&
+				candidate.fencingToken === fence.fencingToken,
+		};
+		let reopenedStore: JsonlV3EventStore | undefined;
+		try {
+			const created = await JsonlV3EventStore.create(storeOptions);
+			if (!created.ok) throw new Error(created.error.message);
+			const writer = new EventWriter({
+				authorityId,
+				tenantId,
+				stream,
+				store: created.value,
+				fence,
+				clock: () => new Date(NOW),
+			});
+			expect((await writer.append({
+				type: "session.created",
+				principalId,
+				traceId: createRuntimeId("trace", "agent-not-started-genesis"),
+				payload: {
+					origin: "test",
+					runtimeId,
+					featureDigest: digest("0"),
+					initialGoalId: root.goalId,
+					rootAgentId: root.agentId,
+				},
+			})).ok).toBe(true);
+			let traceSequence = 0;
+			const graphStore = new SessionAgentGraphStore({
+				writer,
+				store: created.value,
+				principalId,
+				traceIdFactory: () => createRuntimeId("trace", `agent-not-started-${++traceSequence}`),
+			});
+			const fakes = runtimeFakes();
+			const supervisor = new AgentSupervisor({
+				rootAgentId: root.agentId,
+				ports: { ...fakes.ports, graphStore },
+				clock: () => new Date(NOW),
+			});
+			expect((await supervisor.registerRoot(root)).ok).toBe(true);
+			const request = spawnRequest(root.capabilityGrant);
+			fakes.launcher.reject = true;
+			expect(await supervisor.spawn(request)).toMatchObject({
+				ok: false,
+				error: { code: "launch_failed" },
+			});
+			fakes.launcher.reject = false;
+			const effectsBeforeRestart = {
+				runtime: fakes.launcher.releaseExecutions,
+				workspace: fakes.workspace.releaseExecutions,
+				budget: fakes.budget.settlementExecutions,
+			};
+			expect(effectsBeforeRestart).toEqual({ runtime: 0, workspace: 1, budget: 1 });
+			expect((await writer.close()).ok).toBe(true);
+
+			const reopened = await JsonlV3EventStore.open(storeOptions);
+			if (!reopened.ok) throw new Error(reopened.error.message);
+			reopenedStore = reopened.value;
+			const reopenedWriter = await openEventWriter({
+				authorityId,
+				tenantId,
+				stream,
+				store: reopenedStore,
+				fence,
+				clock: () => new Date(NOW),
+			});
+			if (!reopenedWriter.ok) throw new Error(reopenedWriter.error.message);
+			const restartedGraphStore = new SessionAgentGraphStore({
+				writer: reopenedWriter.value,
+				store: reopenedStore,
+				principalId,
+			});
+			const restartedSupervisor = new AgentSupervisor({
+				rootAgentId: root.agentId,
+				ports: { ...fakes.ports, graphStore: restartedGraphStore },
+				clock: () => new Date(NOW),
+			});
+			expect(await restartedSupervisor.reconcilePendingCleanups()).toMatchObject({ ok: true });
+			const replayed = await restartedSupervisor.graph();
+			if (!replayed.ok) throw new Error(replayed.error.message);
+			const node = replayed.value.nodes.get(request.childAgentId);
+			const cleanup = replayed.value.cleanups.get(request.childAgentId);
+			expect(node).toMatchObject({
+				state: "failed",
+				stateReason: "launch_rejected",
+				workspaceReceipt: { status: "released" },
+			});
+			expect(node?.launchReceipt).toBeUndefined();
+			expect(node?.residency).toBeUndefined();
+			expect(cleanup).toMatchObject({
+				kind: "not_started",
+				workspaceRelease: {
+					receipt: { releasedWorkspaceReceipt: { status: "released" } },
+				},
+				budgetSettlement: { receipt: { outcome: "not_started" } },
+				completionReceipt: { schemaVersion: 1, kind: "not_started" },
+			});
+			expect(cleanup && "runtimeRelease" in cleanup).toBe(false);
+			expect({
+				runtime: fakes.launcher.releaseExecutions,
+				workspace: fakes.workspace.releaseExecutions,
+				budget: fakes.budget.settlementExecutions,
+			}).toEqual(effectsBeforeRestart);
+			const page = await reopenedStore.readPage(stream, { limit: 1000 });
+			if (!page.ok) throw new Error(page.error.message);
+			expect(page.value.events.some((event) =>
+				event.type === "agent.runtime_released" &&
+				event.payload.agentId === request.childAgentId
+			)).toBe(false);
 			expect((await reopenedWriter.value.close()).ok).toBe(true);
 			reopenedStore = undefined;
 		} finally {

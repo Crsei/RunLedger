@@ -132,6 +132,30 @@ export interface WorkspaceValidationReceiptRef {
 	outcome: WorkspaceValidationOutcome;
 }
 
+/** Workspace manager 对 release CAS 与 retained registry projection 的权威证明。 */
+export interface WorkspaceReleaseReceiptRef {
+	schemaVersion: 1;
+	kind: "workspace_release_receipt";
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	requestDigest: string;
+	callerRequestDigest: string;
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	principalId: PrincipalId;
+	sessionId: SessionId;
+	agentId: AgentId;
+	workspaceId: WorkspaceId;
+	repositoryId: RepositoryId;
+	envelopeDigest: string;
+	leaseId: LeaseId;
+	leaseRevision: number;
+	releasedLeaseDigest: string;
+	retainedRecordDigest: string;
+	releasedAt: string;
+	receiptDigest: string;
+}
+
 export interface WorkspaceCheckpointDescriptor {
 	authorityId: AuthorityId;
 	tenantId: TenantId;
@@ -213,6 +237,29 @@ export const WorkspaceValidationReceiptRefSchema = exact({
 	outcome: Type.Union(WORKSPACE_VALIDATION_OUTCOMES.map((outcome) => Type.Literal(outcome))),
 });
 
+export const WorkspaceReleaseReceiptRefSchema = exact({
+	schemaVersion: Type.Literal(1),
+	kind: Type.Literal("workspace_release_receipt"),
+	receiptId: runtimeId("receipt"),
+	requestId: runtimeId("command"),
+	requestDigest: digest,
+	callerRequestDigest: digest,
+	authorityId: runtimeId("authority"),
+	tenantId: runtimeId("tenant"),
+	principalId: runtimeId("principal"),
+	sessionId: runtimeId("session"),
+	agentId: runtimeId("agent"),
+	workspaceId: runtimeId("workspace"),
+	repositoryId: runtimeId("repository"),
+	envelopeDigest: digest,
+	leaseId: runtimeId("lease"),
+	leaseRevision: revision,
+	releasedLeaseDigest: digest,
+	retainedRecordDigest: digest,
+	releasedAt: timestamp,
+	receiptDigest: digest,
+});
+
 const eventCursor = EventCursorSchema;
 const workspaceCheckpointBase = {
 	authorityId: runtimeId("authority"),
@@ -253,6 +300,12 @@ export function isWorkspaceLeaseRef(value: unknown): value is WorkspaceLeaseRef 
 
 export function isWorkspaceValidationReceiptRef(value: unknown): value is WorkspaceValidationReceiptRef {
 	return Check(WorkspaceValidationReceiptRefSchema, value);
+}
+
+export function isWorkspaceReleaseReceiptRef(value: unknown): value is WorkspaceReleaseReceiptRef {
+	if (!Check(WorkspaceReleaseReceiptRefSchema, value)) return false;
+	const { receiptDigest, ...body } = value as WorkspaceReleaseReceiptRef;
+	return receiptDigest === canonicalDigest(body);
 }
 
 export function isWorkspaceCheckpointDescriptor(value: unknown): value is WorkspaceCheckpointDescriptor {
@@ -329,6 +382,8 @@ export interface WorkspaceReleaseRequest extends WorkspaceServiceRequestContext 
 	kind: "release";
 	envelope: WorkspaceExecutionEnvelope;
 	envelopeDigest: string;
+	callerRequestDigest: string;
+	expectedLeaseId: LeaseId;
 	expectedLeaseRevision: number;
 	checkpoint?: WorkspaceCheckpointDescriptor;
 }
@@ -364,10 +419,7 @@ export interface WorkspaceCheckpointedResult extends WorkspaceServiceResultConte
 
 export interface WorkspaceReleasedResult extends WorkspaceServiceResultContext {
 	kind: "released";
-	receiptId: ReceiptId;
-	workspaceId: WorkspaceId;
-	leaseId: LeaseId;
-	leaseRevision: number;
+	receipt: WorkspaceReleaseReceiptRef;
 }
 
 export interface WorkspaceRejectedResult extends WorkspaceServiceResultContext {
@@ -424,6 +476,8 @@ export const WorkspaceServiceRequestSchema = Type.Union([
 		kind: Type.Literal("release"),
 		envelope: WorkspaceExecutionEnvelopeSchema,
 		envelopeDigest: digest,
+		callerRequestDigest: digest,
+		expectedLeaseId: runtimeId("lease"),
 		expectedLeaseRevision: revision,
 		checkpoint: Type.Optional(WorkspaceCheckpointDescriptorSchema),
 	}),
@@ -456,10 +510,7 @@ export const WorkspaceServiceResultSchema = Type.Union([
 	exact({
 		...serviceResultContext,
 		kind: Type.Literal("released"),
-		receiptId: runtimeId("receipt"),
-		workspaceId: runtimeId("workspace"),
-		leaseId: runtimeId("lease"),
-		leaseRevision: revision,
+		receipt: WorkspaceReleaseReceiptRefSchema,
 	}),
 	exact({
 		...serviceResultContext,
@@ -475,7 +526,8 @@ export function isWorkspaceServiceRequest(value: unknown): value is WorkspaceSer
 }
 
 export function isWorkspaceServiceResult(value: unknown): value is WorkspaceServiceResult {
-	return Check(WorkspaceServiceResultSchema, value);
+	if (!Check(WorkspaceServiceResultSchema, value)) return false;
+	return value.kind !== "released" || isWorkspaceReleaseReceiptRef(value.receipt);
 }
 
 /** Adapter 只能交换封闭 request/result，不暴露 manager、store、path handle 或 broker。 */

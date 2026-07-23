@@ -206,6 +206,7 @@ export {
 	WorkspaceCheckpointDescriptorSchema,
 	WorkspaceExecutionEnvelopeSchema,
 	WorkspaceLeaseRefSchema,
+	WorkspaceReleaseReceiptRefSchema,
 	WorkspaceServiceRequestSchema,
 	WorkspaceServiceResultSchema,
 	WorkspaceValidationReceiptRefSchema,

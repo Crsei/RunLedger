@@ -47,6 +47,7 @@ import {
 } from "./worktree-node-adapter.ts";
 import {
 	FileWorkspaceLeaseMutationPort,
+	FileWorktreeReleaseJournalPort,
 	FileWorktreeRegistryMutationPort,
 	type DurableWorktreeScope,
 } from "./worktree-state-adapter.ts";
@@ -56,6 +57,7 @@ export interface ProductionWorkspaceStatePaths {
 	stateRoot: string;
 	registryFile: string;
 	leaseFile: string;
+	releaseFile: string;
 	effectFile: string;
 }
 
@@ -209,14 +211,17 @@ export async function createProductionWorkspaceComposition(
 		stateRoot,
 		registryFile: join(stateRoot, "worktree-registry.json"),
 		leaseFile: join(stateRoot, "workspace-leases.json"),
+		releaseFile: join(stateRoot, "workspace-release-journal.json"),
 		effectFile: join(stateRoot, "workspace-checkpoint-effects.json"),
 	};
 	const registryStorage = new FileWorktreeRegistryMutationPort(paths.registryFile, options.scope);
 	const leases = new FileWorkspaceLeaseMutationPort(paths.leaseFile, options.scope);
+	const releaseJournal = new FileWorktreeReleaseJournalPort(paths.releaseFile, options.scope);
 	const effects = new FileWorktreeCheckpointEffectPort(paths.effectFile);
 	await Promise.all([
 		registryStorage.verify(),
 		leases.verify(),
+		releaseJournal.verify(),
 		effects.read(createRuntimeId("command", "production-workspace-effect-preflight")),
 	]);
 	const registry = new WorktreeRegistry(registryStorage);
@@ -237,6 +242,7 @@ export async function createProductionWorkspaceComposition(
 		git,
 		registry,
 		leases,
+		releaseJournal,
 		tokens: options.tokens ?? new NodeWorktreeTokenPort(),
 		liveness: options.liveness,
 		snapshots,

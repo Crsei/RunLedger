@@ -633,13 +633,20 @@ async function releaseWorkspace(
 			traceId,
 			envelope,
 			envelopeDigest: workspaceExecutionEnvelopeDigest(envelope),
+			callerRequestDigest: canonicalDigest({
+				kind: "interactive_workspace_release",
+				workspaceId: envelope.workspaceId,
+				leaseId: workspace.lease.leaseId,
+				leaseRevision: envelope.leaseRevision,
+			}),
+			expectedLeaseId: workspace.lease.leaseId,
 			expectedLeaseRevision: envelope.leaseRevision,
 		});
 		if (!result.ok) {
 			throw new Error(`production workspace release failed: ${result.error.code}: ${result.error.message}`);
 		}
 		// 外部 release 已生效后立即保留 receipt；durable event 失败时只补写，不重复外部副作用。
-		operation.receiptId = result.value.receiptId;
+		operation.receiptId = result.value.receipt.receiptId;
 	}
 	const released = await manager.writer().append({
 		type: "workspace.released",

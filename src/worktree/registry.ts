@@ -91,4 +91,35 @@ export class WorktreeRegistry {
 		}
 		return failure("worktree registry CAS conflict", true);
 	}
+
+	/**
+	 * 只在目标 workspace 的 latest projection 仍与调用方读取值一致时追加。
+	 * 全局 registry 的无关并发可重试，目标 workspace 漂移则不得盲写旧 projection。
+	 */
+	public async appendIfCurrent(
+		operation: WorktreeRegistryEntry["operation"],
+		record: WorktreeRecord,
+		expectedCurrentDigest: string,
+	): Promise<WorktreeResult<WorktreeRegistryEntry>> {
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const loaded = await this.#load();
+			if (!loaded.ok) return loaded;
+			const current = [...loaded.value]
+				.reverse()
+				.find((entry) => entry.record.workspaceId === record.workspaceId)?.record;
+			if (!current || canonicalDigest(current) !== expectedCurrentDigest) {
+				return failure("worktree registry target changed during conditional append", true);
+			}
+			const body = { revision: loaded.value.length + 1, operation, record } as const;
+			const entry: WorktreeRegistryEntry = { ...body, entryDigest: entryDigest(body) };
+			try {
+				if (await this.#storage.append(entry, loaded.value.length) === "applied") {
+					return { ok: true, value: entry };
+				}
+			} catch {
+				return failure("worktree registry conditional append outcome is uncertain", true);
+			}
+		}
+		return failure("worktree registry conditional append CAS conflict", true);
+	}
 }

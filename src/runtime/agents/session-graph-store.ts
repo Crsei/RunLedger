@@ -318,14 +318,15 @@ function decodeAgentGraphEvent(event: AgentGraphRuntimeEvent): AgentResult<Decod
 				terminal: event.payload.terminal,
 			};
 			break;
-		case "agent.cleanup_requested":
-			command = {
-				...base,
-				type: event.type,
-				agentId: event.payload.agentId,
-				terminalDigest: event.payload.terminalDigest,
-				requestDigest: event.payload.requestDigest,
-			};
+			case "agent.cleanup_requested":
+				command = {
+					...base,
+					type: event.type,
+					agentId: event.payload.agentId,
+					kind: event.payload.kind,
+					terminalDigest: event.payload.terminalDigest,
+					requestDigest: event.payload.requestDigest,
+				};
 			break;
 		case "agent.runtime_released":
 			command = {
@@ -482,9 +483,9 @@ async function appendAgentGraphCommand(
 		case "agent.failed":
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, from: command.from, reason: command.reason, error: command.error, terminal: command.terminal } });
 			break;
-		case "agent.cleanup_requested":
-			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, terminalDigest: command.terminalDigest, requestDigest: command.requestDigest } });
-			break;
+			case "agent.cleanup_requested":
+				appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, kind: command.kind, terminalDigest: command.terminalDigest, requestDigest: command.requestDigest } });
+				break;
 		case "agent.runtime_released":
 			appended = await writer.append({ type: command.type, principalId, traceId, timestamp: command.occurredAt, payload: { ...common, agentId: command.agentId, cleanupRequestId: command.cleanupRequestId, receipt: command.receipt } });
 			break;

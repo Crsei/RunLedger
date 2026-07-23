@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { agentCleanupRequestDigest } from "../../../src/runtime/agents/graph-store.ts";
 import { AgentSupervisor } from "../../../src/runtime/agents/supervisor.ts";
 import { createAgentResidencyReceipt } from "../../../src/runtime/agents/residency.ts";
 import type {
@@ -6,6 +7,7 @@ import type {
 	AgentGraphSemanticCommand,
 	AgentGraphStoreHead,
 	AgentResult,
+	AgentRuntimeReleaseReceiptRef,
 	DurableAgentGraphStorePort,
 } from "../../../src/runtime/agents/types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
@@ -22,6 +24,7 @@ import {
 class RecordingGraphStore implements DurableAgentGraphStorePort {
 	public readonly commands: AgentGraphSemanticCommand[] = [];
 	public failOnce: AgentGraphSemanticCommand["type"] | undefined;
+	public loseAcknowledgementOnce: AgentGraphSemanticCommand["type"] | undefined;
 	readonly #delegate: DurableAgentGraphStorePort;
 
 	public constructor(delegate: DurableAgentGraphStorePort) {
@@ -32,7 +35,7 @@ class RecordingGraphStore implements DurableAgentGraphStorePort {
 		return this.#delegate.load(rootAgentId);
 	}
 
-	public commit(
+	public async commit(
 		rootAgentId: AgentId,
 		expectedRevision: number,
 		command: AgentGraphSemanticCommand,
@@ -49,7 +52,19 @@ class RecordingGraphStore implements DurableAgentGraphStorePort {
 				},
 			});
 		}
-		return this.#delegate.commit(rootAgentId, expectedRevision, command);
+		const committed = await this.#delegate.commit(rootAgentId, expectedRevision, command);
+		if (this.loseAcknowledgementOnce === command.type) {
+			this.loseAcknowledgementOnce = undefined;
+			return {
+				ok: false,
+				error: {
+					code: "store_unavailable",
+					message: `injected ${command.type} flush acknowledgement loss`,
+					retryable: true,
+				},
+			};
+		}
+		return committed;
 	}
 }
 
@@ -68,6 +83,29 @@ async function spawnedRuntime() {
 	return { ...runtime, root, store, supervisor, child: spawned.value.node };
 }
 
+async function launchRejectedRuntime() {
+	const runtime = runtimeFakes();
+	const root = rootRegistration();
+	const store = new RecordingGraphStore(runtime.store);
+	const ports = { ...runtime.ports, graphStore: store };
+	const supervisor = new AgentSupervisor({
+		rootAgentId: root.agentId,
+		ports,
+		clock: () => new Date("2026-07-22T02:00:00.000Z"),
+	});
+	expect((await supervisor.registerRoot(root)).ok).toBe(true);
+	store.commands.length = 0;
+	runtime.launcher.reject = true;
+	return {
+		...runtime,
+		root,
+		store,
+		ports,
+		supervisor,
+		request: spawnRequest(root.capabilityGrant),
+	};
+}
+
 function terminalRequest(agentId: AgentId, suffix = "") {
 	const seed = suffix ? `cleanup-saga-terminal-${suffix}` : "cleanup-saga-terminal";
 	return {
@@ -81,6 +119,311 @@ function terminalRequest(agentId: AgentId, suffix = "") {
 }
 
 describe("Agent child cleanup saga", () => {
+	it("durably cleans a launch-rejected child without invoking runtime release", async () => {
+		const runtime = await launchRejectedRuntime();
+		const order: string[] = [];
+		const originalCommit = runtime.store.commit.bind(runtime.store);
+		runtime.store.commit = async (...args) => {
+			order.push(`graph:${args[2].type}`);
+			return originalCommit(...args);
+		};
+		const originalRuntimeRelease = runtime.launcher.release.bind(runtime.launcher);
+		runtime.launcher.release = async (...args) => {
+			order.push("external:runtime");
+			return originalRuntimeRelease(...args);
+		};
+		const originalWorkspaceRelease = runtime.workspace.release.bind(runtime.workspace);
+		runtime.workspace.release = async (...args) => {
+			order.push("external:workspace");
+			return originalWorkspaceRelease(...args);
+		};
+		const originalBudgetSettle = runtime.budget.settle.bind(runtime.budget);
+		runtime.budget.settle = async (...args) => {
+			order.push("external:budget");
+			return originalBudgetSettle(...args);
+		};
+
+		expect(await runtime.supervisor.spawn(runtime.request)).toMatchObject({
+			ok: false,
+			error: { code: "launch_failed" },
+		});
+		const terminalIndex = order.indexOf("graph:agent.failed");
+		expect(terminalIndex).toBeGreaterThanOrEqual(0);
+		expect(order.slice(terminalIndex)).toEqual([
+			"graph:agent.failed",
+			"graph:agent.cleanup_requested",
+			"external:workspace",
+			"graph:agent.workspace_released",
+			"external:budget",
+			"graph:agent.budget_settled",
+			"graph:agent.cleanup_completed",
+		]);
+
+		const graph = await runtime.supervisor.graph();
+		const child = graph.ok ? graph.value.nodes.get(runtime.request.childAgentId) : undefined;
+		const cleanup = graph.ok ? graph.value.cleanups.get(runtime.request.childAgentId) : undefined;
+		expect(child).toMatchObject({
+			state: "failed",
+			stateReason: "launch_rejected",
+			workspaceReceipt: { status: "released" },
+		});
+		expect(child?.launchReceipt).toBeUndefined();
+		expect(child?.residency).toBeUndefined();
+		expect(cleanup).toMatchObject({
+			kind: "not_started",
+			workspaceRelease: { receipt: { releasedWorkspaceReceipt: { status: "released" } } },
+			budgetSettlement: { receipt: { outcome: "not_started" } },
+			completionReceipt: {
+				schemaVersion: 1,
+				kind: "not_started",
+				terminalDigest: child?.terminal?.terminalDigest,
+			},
+		});
+		expect(cleanup && "runtimeRelease" in cleanup).toBe(false);
+		expect(cleanup?.completionReceipt && "runtimeReleaseReceiptId" in cleanup.completionReceipt).toBe(false);
+		expect(runtime.launcher.releases).toHaveLength(0);
+		expect(runtime.workspace.releases[0]?.reason).toBe("spawn_aborted");
+		expect(runtime.workspace.releaseExecutions).toBe(1);
+		expect(runtime.budget.settlementExecutions).toBe(1);
+	});
+
+	it("restarts and reconciles a launch-rejected cleanup only after Workspace release succeeds", async () => {
+		const runtime = await launchRejectedRuntime();
+		runtime.workspace.releaseError = {
+			code: "workspace_invalid",
+			message: "injected launch-rejected Workspace release uncertainty",
+			retryable: true,
+		};
+
+		expect(await runtime.supervisor.spawn(runtime.request)).toMatchObject({
+			ok: false,
+			error: { code: "workspace_invalid" },
+		});
+		const pending = await runtime.supervisor.graph();
+		expect(pending.ok && pending.value.cleanups.get(runtime.request.childAgentId)).toMatchObject({
+			reconciliationRequired: { stage: "workspace_release" },
+		});
+		expect(runtime.launcher.releases).toHaveLength(0);
+		expect(runtime.workspace.releases).toHaveLength(1);
+		expect(runtime.budget.settlements).toHaveLength(0);
+
+		runtime.workspace.releaseError = undefined;
+		const restarted = new AgentSupervisor({
+			rootAgentId: runtime.root.agentId,
+			ports: runtime.ports,
+			clock: () => new Date("2026-07-22T02:00:00.000Z"),
+		});
+		const reconciled = await restarted.reconcilePendingCleanups();
+		expect(reconciled.ok && reconciled.value.cleanups.get(runtime.request.childAgentId)).toMatchObject({
+			kind: "not_started",
+			workspaceRelease: { receipt: { releasedWorkspaceReceipt: { status: "released" } } },
+			budgetSettlement: { receipt: { outcome: "not_started" } },
+			completionReceipt: { schemaVersion: 1, kind: "not_started" },
+		});
+		const reconciledCleanup = reconciled.ok
+			? reconciled.value.cleanups.get(runtime.request.childAgentId)
+			: undefined;
+		expect(reconciledCleanup && "runtimeRelease" in reconciledCleanup).toBe(false);
+		expect(runtime.launcher.releases).toHaveLength(0);
+		expect(runtime.workspace.releaseExecutions).toBe(1);
+		expect(runtime.budget.settlementExecutions).toBe(1);
+	});
+
+	it("keeps a launch-rejected cleanup incomplete when Budget settlement is uncertain", async () => {
+		const runtime = await launchRejectedRuntime();
+		runtime.budget.settlementError = {
+			code: "store_unavailable",
+			message: "injected launch-rejected Budget uncertainty",
+			retryable: true,
+		};
+
+		expect(await runtime.supervisor.spawn(runtime.request)).toMatchObject({
+			ok: false,
+			error: { code: "store_unavailable" },
+		});
+		const pending = await runtime.supervisor.graph();
+		const pendingCleanup = pending.ok
+			? pending.value.cleanups.get(runtime.request.childAgentId)
+			: undefined;
+		expect(pendingCleanup).toMatchObject({
+			kind: "not_started",
+			workspaceRelease: expect.any(Object),
+			reconciliationRequired: { stage: "budget_settlement" },
+		});
+		expect(pendingCleanup?.completionReceipt).toBeUndefined();
+		expect(runtime.launcher.releases).toHaveLength(0);
+		expect(runtime.workspace.releaseExecutions).toBe(1);
+		expect(runtime.budget.settlementExecutions).toBe(0);
+		expect(runtime.budget.settlements.at(-1)).toMatchObject({
+			outcome: "not_started",
+			partialResults: [],
+		});
+		expect(runtime.budget.settlements.at(-1)).not.toHaveProperty("usage");
+
+		runtime.budget.settlementError = undefined;
+		const reconciled = await runtime.supervisor.reconcilePendingCleanups();
+		expect(reconciled.ok && reconciled.value.cleanups.get(runtime.request.childAgentId)).toMatchObject({
+			kind: "not_started",
+			completionReceipt: { schemaVersion: 1, kind: "not_started" },
+		});
+		expect(runtime.workspace.releaseExecutions).toBe(1);
+		expect(runtime.budget.settlementExecutions).toBe(1);
+		expect(runtime.budget.settlements.at(-1)).not.toHaveProperty("usage");
+	});
+
+	it("rejects a wrong cleanup kind and every runtime-release stage for a not-started child", async () => {
+		const runtime = await launchRejectedRuntime();
+		runtime.store.failOnce = "agent.cleanup_requested";
+		expect(await runtime.supervisor.spawn(runtime.request)).toMatchObject({
+			ok: false,
+			error: { code: "store_unavailable" },
+		});
+		const failedRequest = runtime.store.commands.find(
+			(command) => command.type === "agent.cleanup_requested",
+		);
+		if (!failedRequest || failedRequest.type !== "agent.cleanup_requested") {
+			throw new Error("launch-rejected cleanup request was not attempted");
+		}
+		let loaded = await runtime.store.load(runtime.root.agentId);
+		if (!loaded.ok) throw new Error(loaded.error.message);
+		expect(await runtime.store.commit(runtime.root.agentId, loaded.value.revision, {
+			...failedRequest,
+			kind: "started",
+			requestDigest: agentCleanupRequestDigest({
+				requestId: failedRequest.requestId,
+				agentId: runtime.request.childAgentId,
+				sessionId: runtime.request.childSessionId,
+				kind: "started",
+				terminalDigest: failedRequest.terminalDigest,
+			}),
+		})).toMatchObject({ ok: false, error: { code: "cleanup_invalid" } });
+
+		runtime.workspace.releaseError = {
+			code: "workspace_invalid",
+			message: "hold not-started cleanup at Workspace release",
+			retryable: true,
+		};
+		expect(await runtime.supervisor.reconcilePendingCleanups()).toMatchObject({
+			ok: false,
+			error: { code: "workspace_invalid" },
+		});
+		loaded = await runtime.store.load(runtime.root.agentId);
+		if (!loaded.ok) throw new Error(loaded.error.message);
+		const cleanup = loaded.value.projection.cleanups.get(runtime.request.childAgentId);
+		if (!cleanup) throw new Error("not-started cleanup intent was not durably recorded");
+		const runtimeInstanceId = createRuntimeId("runtime", "not-started-forbidden-runtime");
+		const releasedAt = "2026-07-22T02:00:00.000Z";
+		const forbiddenRuntimeReceipt: AgentRuntimeReleaseReceiptRef = {
+			receiptId: createRuntimeId("receipt", "not-started-forbidden-runtime"),
+			requestId: createRuntimeId("command", "not-started-forbidden-runtime"),
+			requestDigest: digest("1"),
+			agentId: runtime.request.childAgentId,
+			sessionId: runtime.request.childSessionId,
+			runtimeInstanceId,
+			launchReceiptId: createRuntimeId("receipt", "not-started-missing-launch"),
+			launchRevision: 1,
+			writerFenceReceiptId: createRuntimeId("receipt", "not-started-forbidden-fence"),
+			writerFenceReceiptDigest: digest("2"),
+			finalCursor: {
+				stream: {
+					scope: "session",
+					streamId: createRuntimeId("eventStream", "not-started-forbidden-runtime"),
+					sessionId: runtime.request.childSessionId,
+				},
+				sequence: 0,
+				eventId: createRuntimeId("event", "not-started-forbidden-runtime"),
+				eventHash: digest("3"),
+			},
+			residencyReceipt: {
+				receiptId: createRuntimeId("receipt", "not-started-forbidden-residency"),
+				agentId: runtime.request.childAgentId,
+				sessionId: runtime.request.childSessionId,
+				runtimeInstanceId,
+				state: "nonresident",
+				revision: 1,
+				observedAt: releasedAt,
+				receiptDigest: digest("4"),
+			},
+			releasedAt,
+			receiptDigest: digest("5"),
+		};
+		expect(await runtime.store.commit(runtime.root.agentId, loaded.value.revision, {
+			type: "agent.runtime_released",
+			requestId: forbiddenRuntimeReceipt.requestId,
+			idempotencyKey: key("not-started-forbidden-runtime"),
+			occurredAt: releasedAt,
+			agentId: runtime.request.childAgentId,
+			cleanupRequestId: cleanup.requestId,
+			receipt: forbiddenRuntimeReceipt,
+		})).toMatchObject({ ok: false, error: { code: "cleanup_invalid" } });
+		expect(loaded.value.projection.cleanups.get(runtime.request.childAgentId)).not.toHaveProperty("runtimeRelease");
+	});
+
+	it.each([
+		["append", "agent.cleanup_requested", 0, 0],
+		["flush", "agent.cleanup_requested", 0, 0],
+		["append", "agent.workspace_released", 1, 0],
+		["flush", "agent.workspace_released", 1, 0],
+		["append", "agent.budget_settled", 1, 1],
+		["flush", "agent.budget_settled", 1, 1],
+		["append", "agent.cleanup_completed", 1, 1],
+		["flush", "agent.cleanup_completed", 1, 1],
+	] as const)(
+		"exactly retries a launch-rejected cleanup after a one-shot %s failure at %s",
+		async (failureMode, failedType, workspaceExecutions, budgetExecutions) => {
+			const runtime = await launchRejectedRuntime();
+			if (failureMode === "append") runtime.store.failOnce = failedType;
+			else runtime.store.loseAcknowledgementOnce = failedType;
+
+			expect(await runtime.supervisor.spawn(runtime.request)).toMatchObject({
+				ok: false,
+				error: { code: "store_unavailable" },
+			});
+			expect(runtime.launcher.releases).toHaveLength(0);
+			expect(runtime.workspace.releaseExecutions).toBe(workspaceExecutions);
+			expect(runtime.budget.settlementExecutions).toBe(budgetExecutions);
+
+			const reconciled = await runtime.supervisor.reconcilePendingCleanups();
+			expect(reconciled.ok && reconciled.value.cleanups.get(runtime.request.childAgentId)).toMatchObject({
+				kind: "not_started",
+				workspaceRelease: expect.any(Object),
+				budgetSettlement: { receipt: { outcome: "not_started" } },
+				completionReceipt: { schemaVersion: 1, kind: "not_started" },
+			});
+			const reconciledCleanup = reconciled.ok
+				? reconciled.value.cleanups.get(runtime.request.childAgentId)
+				: undefined;
+			expect(reconciledCleanup && "runtimeRelease" in reconciledCleanup).toBe(false);
+			expect(runtime.launcher.releases).toHaveLength(0);
+			expect(runtime.workspace.releaseExecutions).toBe(1);
+			expect(runtime.budget.settlementExecutions).toBe(1);
+		},
+	);
+
+	it("replays a completed launch-rejected cleanup aggregate after restart", async () => {
+		const runtime = await launchRejectedRuntime();
+		expect(await runtime.supervisor.spawn(runtime.request)).toMatchObject({
+			ok: false,
+			error: { code: "launch_failed" },
+		});
+		const beforeRestart = await runtime.supervisor.graph();
+		const beforeCleanup = beforeRestart.ok
+			? beforeRestart.value.cleanups.get(runtime.request.childAgentId)
+			: undefined;
+		expect(beforeCleanup?.completionReceipt).toBeDefined();
+
+		const restarted = new AgentSupervisor({
+			rootAgentId: runtime.root.agentId,
+			ports: runtime.ports,
+			clock: () => new Date("2026-07-22T02:00:00.000Z"),
+		});
+		const replayed = await restarted.reconcilePendingCleanups();
+		expect(replayed.ok && replayed.value.cleanups.get(runtime.request.childAgentId)).toEqual(beforeCleanup);
+		expect(runtime.launcher.releases).toHaveLength(0);
+		expect(runtime.workspace.releaseExecutions).toBe(1);
+		expect(runtime.budget.settlementExecutions).toBe(1);
+	});
+
 	it("rejects a terminal child without exact usage before semantic state mutation", async () => {
 		const runtime = await spawnedRuntime();
 		const request = {
@@ -200,9 +543,9 @@ describe("Agent child cleanup saga", () => {
 			residency: { state: "nonresident" },
 			workspaceReceipt: { status: "released" },
 		});
-		expect(finished.value.cleanups.get(runtime.child.agentId)).toMatchObject({
-			runtimeRelease: { receipt: { receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/u) } },
-			workspaceRelease: { receipt: { status: "released" } },
+			expect(finished.value.cleanups.get(runtime.child.agentId)).toMatchObject({
+				runtimeRelease: { receipt: { receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/u) } },
+				workspaceRelease: { receipt: { releasedWorkspaceReceipt: { status: "released" } } },
 			budgetSettlement: { receipt: { outcome: "failed" } },
 			completionReceipt: { receiptDigest: expect.stringMatching(/^[a-f0-9]{64}$/u) },
 		});

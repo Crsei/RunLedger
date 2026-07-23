@@ -17,17 +17,20 @@ import {
 import {
 	isWorkspaceBindingRef,
 	isWorkspaceLeaseRef,
+	isWorkspaceReleaseReceiptRef,
 	type WorkspaceBindingKind,
 	type WorkspaceExecutionEnvelope,
+	type WorkspaceReleaseRequest,
 } from "../../protocol/v3/workspace.ts";
 import type { WorktreeManager } from "../../../worktree/manager.ts";
-import type { WorktreeCreateResult } from "../../../worktree/types.ts";
+import type { WorktreeCreateResult, WorktreeRecord } from "../../../worktree/types.ts";
 import type {
 	AgentErrorCode,
 	AgentResult,
 	AgentWorkspaceAllocateRequest,
 	AgentWorkspacePort,
 	AgentWorkspaceReceiptRef,
+	AgentWorkspaceReleaseReceiptRef,
 	AgentWorkspaceReleaseRequest,
 	AgentWorkspaceStrategyRef,
 	AgentWorkspaceValidateRequest,
@@ -74,8 +77,7 @@ interface PrivateWorkspaceHandle {
 }
 
 interface WorkspaceReleaseOperation {
-	requestDigest: string;
-	promise: Promise<AgentResult<AgentWorkspaceReceiptRef>>;
+	promise: Promise<AgentResult<AgentWorkspaceReleaseReceiptRef>>;
 }
 
 function fail<T>(code: AgentErrorCode, message: string, retryable = false): AgentResult<T> {
@@ -145,6 +147,123 @@ function releaseDigest(request: AgentWorkspaceReleaseRequest): string {
 		previousReceipt: request.previousReceipt,
 		reason: request.reason,
 	});
+}
+
+function releasedRecordMatches(
+	record: WorktreeRecord,
+	authorityReceipt: AgentWorkspaceReleaseReceiptRef["authorityReceipt"],
+	request: WorkspaceReleaseRequest,
+	previous: AgentWorkspaceReceiptRef,
+): boolean {
+	return (
+		isWorkspaceReleaseReceiptRef(authorityReceipt) &&
+		authorityReceipt.requestId === request.requestId &&
+		authorityReceipt.requestDigest === canonicalDigest(request) &&
+		authorityReceipt.callerRequestDigest === request.callerRequestDigest &&
+		authorityReceipt.authorityId === request.authorityId &&
+		authorityReceipt.tenantId === request.tenantId &&
+		authorityReceipt.principalId === request.principalId &&
+		authorityReceipt.sessionId === request.sessionId &&
+		authorityReceipt.agentId === request.agentId &&
+		authorityReceipt.workspaceId === previous.workspaceId &&
+		authorityReceipt.repositoryId === previous.repositoryId &&
+		authorityReceipt.envelopeDigest === request.envelopeDigest &&
+		authorityReceipt.leaseId === previous.leaseId &&
+		authorityReceipt.leaseRevision === previous.leaseRevision &&
+		record.authorityId === request.authorityId &&
+		record.tenantId === request.tenantId &&
+		record.principalId === request.principalId &&
+		record.sessionId === request.sessionId &&
+		record.workspaceId === previous.workspaceId &&
+		record.repositoryId === previous.repositoryId &&
+		record.state === "retained" &&
+		record.lease?.state === "released" &&
+		record.lease.leaseId === previous.leaseId &&
+		record.lease.leaseRevision === previous.leaseRevision &&
+		authorityReceipt.releasedLeaseDigest === canonicalDigest(record.lease) &&
+		authorityReceipt.retainedRecordDigest === canonicalDigest(record)
+	);
+}
+
+function replayedRecordMatches(
+	record: WorktreeRecord,
+	authorityReceipt: AgentWorkspaceReleaseReceiptRef["authorityReceipt"],
+	request: AgentWorkspaceReleaseRequest,
+	options: ProductionAgentWorkspaceOptions,
+): boolean {
+	const previous = request.previousReceipt;
+	return (
+		isWorkspaceReleaseReceiptRef(authorityReceipt) &&
+		authorityReceipt.requestId === request.requestId &&
+		authorityReceipt.callerRequestDigest === request.requestDigest &&
+		authorityReceipt.authorityId === options.authorityId &&
+		authorityReceipt.tenantId === options.tenantId &&
+		authorityReceipt.principalId === options.principalId &&
+		authorityReceipt.sessionId === request.sessionId &&
+		authorityReceipt.agentId === request.agentId &&
+		authorityReceipt.workspaceId === previous.workspaceId &&
+		authorityReceipt.repositoryId === previous.repositoryId &&
+		authorityReceipt.leaseId === previous.leaseId &&
+		authorityReceipt.leaseRevision === previous.leaseRevision &&
+		record.authorityId === options.authorityId &&
+		record.tenantId === options.tenantId &&
+		record.principalId === options.principalId &&
+		record.sessionId === request.sessionId &&
+		record.workspaceId === previous.workspaceId &&
+		record.repositoryId === previous.repositoryId &&
+		record.state === "retained" &&
+		record.lease?.state === "released" &&
+		record.lease.leaseId === previous.leaseId &&
+		record.lease.leaseRevision === previous.leaseRevision &&
+		authorityReceipt.releasedLeaseDigest === canonicalDigest(record.lease) &&
+		authorityReceipt.retainedRecordDigest === canonicalDigest(record)
+	);
+}
+
+function agentReleaseReceipt(
+	request: AgentWorkspaceReleaseRequest,
+	authorityReceipt: AgentWorkspaceReleaseReceiptRef["authorityReceipt"],
+): AgentResult<AgentWorkspaceReleaseReceiptRef> {
+	const previous = request.previousReceipt;
+	if (!previous.leaseId || previous.leaseRevision === undefined) {
+		return fail("workspace_invalid", "Agent Workspace release lacks a durable lease correlation");
+	}
+	const releasedBody: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = {
+		...receiptBody(previous),
+		receiptId: authorityReceipt.receiptId,
+		status: "released",
+		issuedAt: authorityReceipt.releasedAt,
+	};
+	const releasedWorkspaceReceipt: AgentWorkspaceReceiptRef = {
+		...releasedBody,
+		receiptDigest: canonicalDigest(releasedBody),
+	};
+	const body: Omit<AgentWorkspaceReleaseReceiptRef, "receiptDigest"> = {
+		schemaVersion: 1,
+		kind: "agent_workspace_release_receipt",
+		receiptId: authorityReceipt.receiptId,
+		requestId: request.requestId,
+		requestDigest: request.requestDigest,
+		agentId: request.agentId,
+		sessionId: request.sessionId,
+		workspaceId: previous.workspaceId,
+		repositoryId: previous.repositoryId,
+		previousReceiptId: previous.receiptId,
+		previousReceiptDigest: previous.receiptDigest,
+		bindingDigest: previous.bindingDigest,
+		leaseId: previous.leaseId,
+		leaseRevision: previous.leaseRevision,
+		releasedWorkspaceReceipt,
+		authorityReceipt,
+		releasedAt: authorityReceipt.releasedAt,
+	};
+	return {
+		ok: true,
+		value: {
+			...body,
+			receiptDigest: canonicalDigest(body),
+		},
+	};
 }
 
 function bindingKindForStrategy(kind: AgentWorkspaceStrategyRef["kind"]): WorkspaceBindingKind {
@@ -221,6 +340,7 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 	readonly #options: ProductionAgentWorkspaceOptions;
 	readonly #clock: () => Date;
 	readonly #handles = new Map<string, PrivateWorkspaceHandle>();
+	readonly #releaseRequestDigests = new Map<string, string>();
 	readonly #releaseOperations = new Map<string, WorkspaceReleaseOperation>();
 
 	public constructor(options: ProductionAgentWorkspaceOptions) {
@@ -562,21 +682,24 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 	public release(
 		request: AgentWorkspaceReleaseRequest,
 		signal?: AbortSignal,
-	): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
+	): Promise<AgentResult<AgentWorkspaceReleaseReceiptRef>> {
 		if (request.requestDigest !== releaseDigest(request)) {
 			return Promise.resolve(fail("workspace_invalid", "Agent Workspace release request digest is invalid"));
 		}
+		const claimedDigest = this.#releaseRequestDigests.get(request.requestId);
+		if (claimedDigest !== undefined && claimedDigest !== request.requestDigest) {
+			return Promise.resolve(fail("idempotency_conflict", "Agent Workspace release request identity was reused"));
+		}
+		this.#releaseRequestDigests.set(request.requestId, request.requestDigest);
 		const previous = this.#releaseOperations.get(request.requestId);
 		if (previous) {
-			return previous.requestDigest === request.requestDigest
-				? previous.promise
-				: Promise.resolve(fail("idempotency_conflict", "Agent Workspace release request identity was reused"));
+			return previous.promise;
 		}
 		if (signal?.aborted) {
 			return Promise.resolve(fail("reference_unavailable", "Agent Workspace release was aborted", true));
 		}
 		const promise = this.#releaseOnce(request);
-		this.#releaseOperations.set(request.requestId, { requestDigest: request.requestDigest, promise });
+		this.#releaseOperations.set(request.requestId, { promise });
 		void promise.then(
 			(result) => {
 				if (!result.ok && this.#releaseOperations.get(request.requestId)?.promise === promise) {
@@ -592,11 +715,55 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 		return promise;
 	}
 
-	async #releaseOnce(request: AgentWorkspaceReleaseRequest): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
-		const handle = this.#handle(request.previousReceipt, request.agentId, request.sessionId);
-		if (!handle.ok) return handle;
+	async #releaseOnce(request: AgentWorkspaceReleaseRequest): Promise<AgentResult<AgentWorkspaceReleaseReceiptRef>> {
+		let handle = this.#handle(request.previousReceipt, request.agentId, request.sessionId);
+		if (!handle.ok) {
+			if (this.#handles.has(request.previousReceipt.receiptId)) return handle;
+			if (!request.previousReceipt.leaseId || request.previousReceipt.leaseRevision === undefined) {
+				return fail("workspace_invalid", "Agent Workspace release lacks a durable lease correlation");
+			}
+			const replayed = await this.#options.manager.replayRelease({
+				requestId: request.requestId,
+				callerRequestDigest: request.requestDigest,
+				authorityId: this.#options.authorityId,
+				tenantId: this.#options.tenantId,
+				principalId: this.#options.principalId,
+				sessionId: request.sessionId,
+				agentId: request.agentId,
+				workspaceId: request.previousReceipt.workspaceId,
+				leaseId: request.previousReceipt.leaseId,
+				leaseRevision: request.previousReceipt.leaseRevision,
+			});
+			if (replayed.ok) {
+				if (
+					!replayedRecordMatches(
+						replayed.value.record,
+						replayed.value.receipt,
+						request,
+						this.#options,
+					)
+				) {
+					return fail("workspace_invalid", "Workspace release replay returned uncorrelated authority evidence");
+				}
+				const wrapped = agentReleaseReceipt(request, replayed.value.receipt);
+				return wrapped.ok
+					? { ok: true, value: structuredClone(wrapped.value) }
+					: wrapped;
+			}
+			if (replayed.error.code !== "not_found") {
+				return replayed.error.code === "invalid_request"
+					? fail("idempotency_conflict", "Agent Workspace release request identity was reused")
+					: fail("workspace_invalid", replayed.error.message, replayed.error.retryable);
+			}
+			handle = await this.#rehydrateHandle(
+				request.previousReceipt,
+				request.agentId,
+				request.sessionId,
+			);
+			if (!handle.ok) return handle;
+		}
 		const envelope = this.#envelope(handle.value, request.requestId);
-		const released = await this.#options.manager.release({
+		const managerRequest: WorkspaceReleaseRequest = {
 			schemaVersion: 1,
 			kind: "release",
 			requestId: request.requestId,
@@ -605,18 +772,31 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 			principalId: this.#options.principalId,
 			sessionId: request.sessionId,
 			agentId: request.agentId,
-			traceId: createRuntimeId("trace", `agent-release-${canonicalDigest(request.requestId).slice(0, 40)}`),
+			traceId: envelope.traceId,
 			envelope,
 			envelopeDigest: canonicalDigest(envelope),
+			callerRequestDigest: request.requestDigest,
+			expectedLeaseId: handle.value.result.lease.leaseId,
 			expectedLeaseRevision: request.previousReceipt.leaseRevision ?? -1,
-		});
-		if (!released.ok) return fail("workspace_invalid", released.error.message, released.error.retryable);
-		const body: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = {
-			...receiptBody(request.previousReceipt),
-			status: "released",
 		};
-		const receipt = { ...body, receiptDigest: canonicalDigest(body) };
-		this.#handles.set(request.previousReceipt.receiptId, { ...handle.value, receipt });
-		return { ok: true, value: structuredClone(receipt) };
+		const released = await this.#options.manager.release(managerRequest);
+		if (!released.ok) return fail("workspace_invalid", released.error.message, released.error.retryable);
+		if (
+			!releasedRecordMatches(
+				released.value.record,
+				released.value.receipt,
+				managerRequest,
+				request.previousReceipt,
+			)
+		) {
+			return fail("workspace_invalid", "Workspace manager returned uncorrelated release authority evidence");
+		}
+		const wrapped = agentReleaseReceipt(request, released.value.receipt);
+		if (!wrapped.ok) return wrapped;
+		this.#handles.set(request.previousReceipt.receiptId, {
+			...handle.value,
+			receipt: wrapped.value.releasedWorkspaceReceipt,
+		});
+		return { ok: true, value: structuredClone(wrapped.value) };
 	}
 }

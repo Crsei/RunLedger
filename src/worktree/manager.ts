@@ -3,6 +3,10 @@
 import { dirname, join, resolve } from "node:path";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
+	createSessionEventStreamRef,
+	sameRuntimeEventStream,
+} from "../runtime/protocol/v3/events.ts";
+import {
 	createRuntimeId,
 	type RuntimeInstanceId,
 	type WorkspaceId,
@@ -14,6 +18,7 @@ import {
 	type WorkspaceBindingRef,
 	type WorkspaceCheckpointRequest,
 	type WorkspaceExecutionEnvelope,
+	type WorkspaceReleaseReceiptRef,
 	type WorkspaceReleaseRequest,
 } from "../runtime/protocol/v3/workspace.ts";
 import { GitOperations } from "./git-operations.ts";
@@ -24,9 +29,20 @@ import type {
 	WorktreeFileSystemPort,
 	WorktreeForceApprovalPort,
 	WorktreeLivenessPort,
+	WorktreeReleaseIntent,
+	WorktreeReleaseJournalPort,
+	WorktreeReleaseJournalRecord,
 	WorktreeSnapshotPort,
 	WorktreeTokenPort,
 } from "./ports.ts";
+import {
+	isValidWorktreeReleaseJournalRecord,
+	MemoryWorktreeReleaseJournalPort,
+	WorktreeReleaseJournalCorruptionError,
+	worktreeReleaseIntentDigest,
+	worktreeReleaseJournalRecordDigest,
+	worktreeReleaseOperationId,
+} from "./release-journal.ts";
 import { WorktreeRegistry } from "./registry.ts";
 import type {
 	PersistedWorkspaceBinding,
@@ -39,6 +55,8 @@ import type {
 	WorktreeRecord,
 	WorktreeRemovePreview,
 	WorktreeRemoveRequest,
+	WorktreeReleaseReplayRequest,
+	WorktreeRegistryEntry,
 	WorktreeResult,
 	WorktreeRuntimeContext,
 	WorktreeValidationResult,
@@ -53,6 +71,15 @@ function failure(
 	retryable = false,
 ): WorktreeResult<never> {
 	return { ok: false, error: { code, message, retryable } };
+}
+
+function releaseJournalFailure(cause: unknown, message: string): WorktreeResult<never> {
+	const corrupted = cause instanceof WorktreeReleaseJournalCorruptionError;
+	return failure(
+		"uncertain",
+		corrupted ? `${message}: durable release journal is corrupted` : message,
+		!corrupted,
+	);
 }
 
 function workspaceIdFor(request: WorktreeCreateRequest | SourceBindingRequest): WorkspaceId {
@@ -119,6 +146,7 @@ export interface WorktreeManagerOptions {
 	git: GitOperations;
 	registry: WorktreeRegistry;
 	leases: WorkspaceLeaseMutationPort;
+	releaseJournal?: WorktreeReleaseJournalPort;
 	tokens: WorktreeTokenPort;
 	liveness: WorktreeLivenessPort;
 	forceApproval?: WorktreeForceApprovalPort;
@@ -136,6 +164,7 @@ export class WorktreeManager {
 	readonly #git: GitOperations;
 	readonly #registry: WorktreeRegistry;
 	readonly #leases: WorkspaceLeaseMutationPort;
+	readonly #releaseJournal: WorktreeReleaseJournalPort;
 	readonly #tokens: WorktreeTokenPort;
 	readonly #liveness: WorktreeLivenessPort;
 	readonly #forceApproval?: WorktreeForceApprovalPort;
@@ -151,6 +180,7 @@ export class WorktreeManager {
 		this.#git = options.git;
 		this.#registry = options.registry;
 		this.#leases = options.leases;
+		this.#releaseJournal = options.releaseJournal ?? new MemoryWorktreeReleaseJournalPort();
 		this.#tokens = options.tokens;
 		this.#liveness = options.liveness;
 		this.#forceApproval = options.forceApproval;
@@ -246,6 +276,25 @@ export class WorktreeManager {
 		};
 	}
 
+	async #appendProjection(
+		operation: WorktreeRegistryEntry["operation"],
+		expectedCurrent: WorktreeRecord,
+		next: WorktreeRecord,
+	): Promise<WorktreeResult<void>> {
+		const appended = await this.#registry.appendIfCurrent(
+			operation,
+			next,
+			canonicalDigest(expectedCurrent),
+		);
+		const readBack = await this.#registry.get(next.workspaceId);
+		if (!readBack.ok) return readBack;
+		if (readBack.value && canonicalDigest(readBack.value) === canonicalDigest(next)) {
+			return { ok: true, value: undefined };
+		}
+		if (!appended.ok) return appended;
+		return failure("uncertain", "worktree registry projection changed before exact read-back", true);
+	}
+
 	public async create(request: WorktreeCreateRequest, signal?: AbortSignal): Promise<WorktreeResult<WorktreeCreateResult>> {
 		const existing = await this.#registry.findByCreateRequest(request.requestId);
 		if (!existing.ok) return existing;
@@ -307,7 +356,7 @@ export class WorktreeManager {
 			await this.#filesystem.mkdir(dirname(target.value));
 		} catch {
 			const failed = { ...creating, state: "failed" as const, errorDigest: canonicalDigest("managed parent creation failed") };
-			await this.#registry.append("upsert", failed);
+			await this.#appendProjection("upsert", creating, failed);
 			return failure("cleanup_failed", "managed worktree parent cannot be created", true);
 		}
 		const created = bindingKind === "readonly_checkout"
@@ -315,7 +364,7 @@ export class WorktreeManager {
 			: await this.#git.createWorktree(source.value.sourceRepo, target.value, branch, baseCommit.value, signal);
 		if (!created.ok) {
 			const failed = { ...creating, state: "failed" as const, errorDigest: canonicalDigest(created.error) };
-			await this.#registry.append("upsert", failed);
+			await this.#appendProjection("upsert", creating, failed);
 			return created;
 		}
 		let canonicalWorktree: string;
@@ -342,9 +391,13 @@ export class WorktreeManager {
 			return failure("lease_conflict", "workspace lease already exists");
 		}
 		const active: WorktreeRecord = { ...activeBase, lease: secret.value.record };
-		const finalized = await this.#registry.append("upsert", active);
+		const finalized = await this.#appendProjection("upsert", creating, active);
 		if (!finalized.ok) {
-			await this.#leases.remove(workspaceId, secret.value.record.leaseRevision);
+			await this.#leases.remove(
+				workspaceId,
+				secret.value.record.leaseRevision,
+				canonicalDigest(secret.value),
+			);
 			const cleanup = await this.#git.removeWorktree(source.value.sourceRepo, canonicalWorktree, true, signal);
 			return cleanup.ok
 				? failure("registry_failed", "worktree was rolled back after registry finalization failed", true)
@@ -382,7 +435,11 @@ export class WorktreeManager {
 		const active = { ...record, lease: secret.value.record };
 		const persisted = await this.#registry.append("upsert", active);
 		if (!persisted.ok) {
-			await this.#leases.remove(record.workspaceId, secret.value.record.leaseRevision);
+			await this.#leases.remove(
+				record.workspaceId,
+				secret.value.record.leaseRevision,
+				canonicalDigest(secret.value),
+			);
 			return persisted;
 		}
 		return { ok: true, value: this.#result(active, secret.value) };
@@ -420,7 +477,7 @@ export class WorktreeManager {
 		}
 		const now = this.#clock().toISOString();
 		const current: WorktreeRecord = { ...record, headCommit: inspected.value.headCommit, lastAccessedAt: now, state: "active" };
-		const updated = await this.#registry.append("upsert", current);
+		const updated = await this.#appendProjection("upsert", record, current);
 		if (!updated.ok) return updated;
 		const binding = persistedBinding(current, secret.record);
 		return {
@@ -472,41 +529,408 @@ export class WorktreeManager {
 				: {}),
 			completeness: snapshot?.value.completeness ?? "metadata_only" as const,
 		};
-		const stored = await this.#registry.append("upsert", { ...record.value, headCommit: status.value.headCommit, lastCheckpoint: checkpoint });
+		const checkpointed = { ...record.value, headCommit: status.value.headCommit, lastCheckpoint: checkpoint };
+		const stored = await this.#appendProjection("upsert", record.value, checkpointed);
 		if (!stored.ok) return stored;
 		return { ok: true, value: { checkpoint, receiptId: createRuntimeId("receipt", canonicalDigest(checkpoint).slice(0, 48)) } };
 	}
 
-	public async release(request: WorkspaceReleaseRequest): Promise<WorktreeResult<{ receiptId: ReturnType<typeof createRuntimeId<"receipt">>; record: WorktreeRecord }>> {
-		if (request.envelopeDigest !== workspaceExecutionEnvelopeDigest(request.envelope)) return failure("invalid_request", "release envelope digest is invalid");
+	public async release(
+		request: WorkspaceReleaseRequest,
+	): Promise<WorktreeResult<{ receipt: WorkspaceReleaseReceiptRef; record: WorktreeRecord }>> {
+		if (request.envelopeDigest !== workspaceExecutionEnvelopeDigest(request.envelope)) {
+			return failure("invalid_request", "release envelope digest is invalid");
+		}
+		if (
+			request.authorityId !== request.envelope.authorityId ||
+			request.tenantId !== request.envelope.tenantId ||
+			request.principalId !== request.envelope.principalId ||
+			request.sessionId !== request.envelope.sessionId
+		) {
+			return failure("invalid_scope", "release request context does not match its workspace envelope");
+		}
+		if (
+			request.agentId !== request.envelope.agentId ||
+			request.traceId !== request.envelope.traceId
+		) {
+			return failure("invalid_request", "release agent or trace identity does not match its workspace envelope");
+		}
+		if (request.expectedLeaseRevision !== request.envelope.leaseRevision) {
+			return failure("lease_conflict", "release lease revision is stale");
+		}
+		const requestDigest = canonicalDigest(request);
+		const operationId = worktreeReleaseOperationId(
+			request.envelope.workspaceId,
+			request.expectedLeaseId,
+			request.expectedLeaseRevision,
+		);
+		let durable: WorktreeReleaseJournalRecord | undefined;
+		try {
+			durable = await this.#releaseJournal.read(operationId);
+		} catch (cause) {
+			return releaseJournalFailure(cause, "workspace release journal is unavailable");
+		}
+		if (durable) {
+			if (!isValidWorktreeReleaseJournalRecord(durable)) {
+				return failure("uncertain", "workspace release journal record is corrupted");
+			}
+			if (
+				durable.intent.requestId !== request.requestId ||
+				durable.intent.requestDigest !== requestDigest
+			) {
+				return failure("invalid_request", "release request identity was reused with another payload");
+			}
+			if (durable.receipt) {
+				return {
+					ok: true,
+					value: {
+						receipt: structuredClone(durable.receipt),
+						record: structuredClone(durable.intent.retainedRecord),
+					},
+				};
+			}
+			return this.#reconcileRelease(durable);
+		}
+		let current: WorkspaceLeaseSecret | undefined;
+		try {
+			current = await this.#leases.read(request.envelope.workspaceId);
+		} catch {
+			return failure("uncertain", "workspace release lease state is unavailable", true);
+		}
+		if (
+			!current ||
+			current.record.leaseId !== request.expectedLeaseId ||
+			current.record.leaseRevision !== request.expectedLeaseRevision
+		) {
+			return failure("lease_conflict", "workspace release lease identity is stale");
+		}
+		if (current.record.state !== "active") {
+			return failure("stale", "workspace release has no durable intent for the current lease");
+		}
 		const validated = await this.validate(request.envelope);
 		if (!validated.ok) return validated;
-		if (request.expectedLeaseRevision !== request.envelope.leaseRevision) return failure("lease_conflict", "release lease revision is stale");
-		const current = await this.#leases.read(request.envelope.workspaceId);
-		if (!current) return failure("lease_conflict", "workspace lease disappeared");
+		try {
+			current = await this.#leases.read(request.envelope.workspaceId);
+		} catch {
+			return failure("uncertain", "workspace release lease state is unavailable after validation", true);
+		}
+		if (
+			!current ||
+			current.record.state !== "active" ||
+			current.record.leaseId !== request.expectedLeaseId ||
+			current.record.leaseId !== validated.value.binding.leaseId ||
+			current.record.leaseRevision !== request.expectedLeaseRevision
+		) {
+			return failure("lease_conflict", "workspace lease changed during release validation");
+		}
 		if (request.checkpoint) {
+			const expectedStream = createSessionEventStreamRef(request, request.sessionId);
+			if (
+				request.checkpoint.authorityId !== request.authorityId ||
+				request.checkpoint.tenantId !== request.tenantId ||
+				request.checkpoint.workspaceId !== request.envelope.workspaceId ||
+				request.checkpoint.baseCommit !== request.envelope.baseCommit ||
+				!sameRuntimeEventStream(request.checkpoint.eventCursor.stream, expectedStream)
+			) {
+				return failure("checkpoint_required", "release checkpoint authority or event stream is not correlated");
+			}
 			const status = await this.#git.status(request.envelope.worktreePath, request.envelope.baseCommit);
 			if (!status.ok) return status;
-			if (request.checkpoint.workspaceId !== request.envelope.workspaceId || request.checkpoint.headCommit !== status.value.headCommit || request.checkpoint.statusDigest !== statusDigest(status.value)) {
+			if (
+				request.checkpoint.workspaceId !== request.envelope.workspaceId ||
+				request.checkpoint.headCommit !== status.value.headCommit ||
+				request.checkpoint.statusDigest !== statusDigest(status.value)
+			) {
 				return failure("checkpoint_required", "release checkpoint is stale");
 			}
 		}
-		const releasedSecret: WorkspaceLeaseSecret = { ...current, record: { ...current.record, state: "released" }, lastRenewedAt: this.#clock().toISOString() };
-		if (await this.#leases.compareAndSwap(request.envelope.workspaceId, request.expectedLeaseRevision, releasedSecret) !== "applied") {
-			return failure("lease_conflict", "workspace lease changed during release");
-		}
-		const record = await this.#registry.get(request.envelope.workspaceId);
-		if (!record.ok || !record.value) return failure("not_found", "workspace disappeared during release");
-		const checkpoint = request.checkpoint ?? record.value.lastCheckpoint;
-		const retained = {
-			...record.value,
-			state: "retained" as const,
-			lease: releasedSecret.record,
+		const registered = await this.#registry.get(request.envelope.workspaceId);
+		if (!registered.ok) return registered;
+		if (!registered.value) return failure("not_found", "workspace disappeared during release");
+		const releasedAt = this.#clock().toISOString();
+		const releasedLease = { ...current.record, state: "released" as const };
+		const checkpoint = request.checkpoint ?? registered.value.lastCheckpoint;
+		const retainedRecord: WorktreeRecord = {
+			...registered.value,
+			state: "retained",
+			lease: releasedLease,
 			...(checkpoint === undefined ? {} : { lastCheckpoint: checkpoint }),
 		};
-		const stored = await this.#registry.append("upsert", retained);
-		if (!stored.ok) return stored;
-		return { ok: true, value: { receiptId: createRuntimeId("receipt", canonicalDigest({ requestId: request.requestId, lease: releasedSecret.record }).slice(0, 48)), record: retained } };
+		const receiptId = createRuntimeId("receipt", canonicalDigest({
+			operationId,
+			requestDigest,
+		}).slice(0, 48));
+		const intentBody: Omit<WorktreeReleaseIntent, "intentDigest"> = {
+			schemaVersion: 1,
+			kind: "worktree_release_intent",
+			operationId,
+			requestId: request.requestId,
+			requestDigest,
+			callerRequestDigest: request.callerRequestDigest,
+			authorityId: request.authorityId,
+			tenantId: request.tenantId,
+			principalId: request.principalId,
+			sessionId: request.sessionId,
+			agentId: request.agentId,
+			workspaceId: request.envelope.workspaceId,
+			repositoryId: request.envelope.repositoryId,
+			envelopeDigest: request.envelopeDigest,
+			leaseId: releasedLease.leaseId,
+			leaseRevision: releasedLease.leaseRevision,
+			releasedAt,
+			releasedLease,
+			releasedLeaseDigest: canonicalDigest(releasedLease),
+			retainedRecord,
+			retainedRecordDigest: canonicalDigest(retainedRecord),
+			receiptId,
+			...(checkpoint === undefined ? {} : { checkpoint }),
+		};
+		const intent: WorktreeReleaseIntent = {
+			...intentBody,
+			intentDigest: worktreeReleaseIntentDigest(intentBody),
+		};
+		const journalBody = {
+			schemaVersion: 1 as const,
+			kind: "worktree_release_journal_record" as const,
+			intent,
+		};
+		const proposed: WorktreeReleaseJournalRecord = {
+			...journalBody,
+			recordDigest: worktreeReleaseJournalRecordDigest(journalBody),
+		};
+		let begun: "applied" | "replay" | "conflict";
+		try {
+			begun = await this.#releaseJournal.begin(proposed);
+		} catch (cause) {
+			return releaseJournalFailure(cause, "workspace release intent could not be persisted");
+		}
+		if (begun === "conflict") {
+			return failure("invalid_request", "release request identity was reused with another payload");
+		}
+		try {
+			durable = await this.#releaseJournal.read(operationId);
+		} catch (cause) {
+			return releaseJournalFailure(cause, "workspace release intent read-back failed");
+		}
+		if (!durable || !isValidWorktreeReleaseJournalRecord(durable)) {
+			return failure("uncertain", "workspace release intent read-back is missing or corrupted", true);
+		}
+		if (durable.intent.requestId !== request.requestId || durable.intent.requestDigest !== requestDigest) {
+			return failure("invalid_request", "release request identity was reused with another payload");
+		}
+		return this.#reconcileRelease(durable);
+	}
+
+	public async replayRelease(
+		request: WorktreeReleaseReplayRequest,
+	): Promise<WorktreeResult<{ receipt: WorkspaceReleaseReceiptRef; record: WorktreeRecord }>> {
+		const operationId = worktreeReleaseOperationId(
+			request.workspaceId,
+			request.leaseId,
+			request.leaseRevision,
+		);
+		let durable: WorktreeReleaseJournalRecord | undefined;
+		try {
+			durable = await this.#releaseJournal.read(operationId);
+		} catch (cause) {
+			return releaseJournalFailure(cause, "workspace release journal replay is unavailable");
+		}
+		if (!durable) return failure("not_found", "workspace release journal record is missing");
+		if (!isValidWorktreeReleaseJournalRecord(durable)) {
+			return failure("uncertain", "workspace release journal record is corrupted");
+		}
+		if (
+			durable.intent.requestId !== request.requestId ||
+			durable.intent.callerRequestDigest !== request.callerRequestDigest ||
+			durable.intent.authorityId !== request.authorityId ||
+			durable.intent.tenantId !== request.tenantId ||
+			durable.intent.principalId !== request.principalId ||
+			durable.intent.sessionId !== request.sessionId ||
+			durable.intent.agentId !== request.agentId
+		) {
+			return failure("invalid_request", "release replay identity was reused with another payload");
+		}
+		return durable.receipt
+			? {
+				ok: true,
+				value: {
+					receipt: structuredClone(durable.receipt),
+					record: structuredClone(durable.intent.retainedRecord),
+				},
+			}
+			: this.#reconcileRelease(durable);
+	}
+
+	async #reconcileRelease(
+		journal: WorktreeReleaseJournalRecord,
+	): Promise<WorktreeResult<{ receipt: WorkspaceReleaseReceiptRef; record: WorktreeRecord }>> {
+		const intent = journal.intent;
+		let current: WorkspaceLeaseSecret | undefined;
+		try {
+			current = await this.#leases.read(intent.workspaceId);
+		} catch {
+			return failure("uncertain", "workspace release lease reconcile is unavailable", true);
+		}
+		if (!current) return failure("lease_conflict", "workspace release lease disappeared");
+		if (current.record.state === "active") {
+			const expectedActive = { ...intent.releasedLease, state: "active" as const };
+			if (canonicalDigest(current.record) !== canonicalDigest(expectedActive)) {
+				return failure("lease_conflict", "workspace release active lease no longer matches its durable intent");
+			}
+			const releasedSecret: WorkspaceLeaseSecret = {
+				...current,
+				record: intent.releasedLease,
+				lastRenewedAt: intent.releasedAt,
+			};
+			let swapped: "applied" | "conflict";
+			try {
+				swapped = await this.#leases.compareAndSwap(
+					intent.workspaceId,
+					intent.leaseRevision,
+					canonicalDigest(current),
+					releasedSecret,
+				);
+			} catch {
+				return failure("uncertain", "workspace release lease CAS outcome is uncertain", true);
+			}
+			if (swapped !== "applied") {
+				try {
+					current = await this.#leases.read(intent.workspaceId);
+				} catch {
+					return failure("uncertain", "workspace release lease CAS read-back failed", true);
+				}
+			} else {
+				current = releasedSecret;
+			}
+		}
+		if (
+			!current ||
+			current.record.state !== "released" ||
+			canonicalDigest(current.record) !== intent.releasedLeaseDigest ||
+			current.lastRenewedAt !== intent.releasedAt
+		) {
+			return failure("lease_conflict", "workspace released lease does not match its durable intent");
+		}
+		const projected = await this.#ensureReleaseProjection(intent);
+		if (!projected.ok) return projected;
+		let latestJournal: WorktreeReleaseJournalRecord | undefined;
+		try {
+			latestJournal = await this.#releaseJournal.read(intent.operationId);
+		} catch (cause) {
+			return releaseJournalFailure(cause, "workspace release journal read-back is unavailable");
+		}
+		if (!latestJournal || !isValidWorktreeReleaseJournalRecord(latestJournal)) {
+			return failure("uncertain", "workspace release journal read-back is missing or corrupted");
+		}
+		if (latestJournal.receipt) {
+			return {
+				ok: true,
+				value: {
+					receipt: structuredClone(latestJournal.receipt),
+					record: structuredClone(latestJournal.intent.retainedRecord),
+				},
+			};
+		}
+		try {
+			current = await this.#leases.read(intent.workspaceId);
+		} catch {
+			return failure("uncertain", "workspace release lease final read-back is unavailable", true);
+		}
+		if (
+			!current ||
+			current.record.state !== "released" ||
+			canonicalDigest(current.record) !== intent.releasedLeaseDigest ||
+			current.lastRenewedAt !== intent.releasedAt
+		) {
+			return failure("lease_conflict", "workspace release lease changed before receipt persistence");
+		}
+		const receiptBody: Omit<WorkspaceReleaseReceiptRef, "receiptDigest"> = {
+			schemaVersion: 1,
+			kind: "workspace_release_receipt",
+			receiptId: intent.receiptId,
+			requestId: intent.requestId,
+			requestDigest: intent.requestDigest,
+			callerRequestDigest: intent.callerRequestDigest,
+			authorityId: intent.authorityId,
+			tenantId: intent.tenantId,
+			principalId: intent.principalId,
+			sessionId: intent.sessionId,
+			agentId: intent.agentId,
+			workspaceId: intent.workspaceId,
+			repositoryId: intent.repositoryId,
+			envelopeDigest: intent.envelopeDigest,
+			leaseId: intent.leaseId,
+			leaseRevision: intent.leaseRevision,
+			releasedLeaseDigest: intent.releasedLeaseDigest,
+			retainedRecordDigest: intent.retainedRecordDigest,
+			releasedAt: intent.releasedAt,
+		};
+		const receipt: WorkspaceReleaseReceiptRef = {
+			...receiptBody,
+			receiptDigest: canonicalDigest(receiptBody),
+		};
+		const completedBody = {
+			schemaVersion: 1 as const,
+			kind: "worktree_release_journal_record" as const,
+			intent,
+			receipt,
+		};
+		const completed: WorktreeReleaseJournalRecord = {
+			...completedBody,
+			recordDigest: worktreeReleaseJournalRecordDigest(completedBody),
+		};
+		let completion: "applied" | "replay" | "conflict";
+		try {
+			completion = await this.#releaseJournal.complete(
+				intent.operationId,
+				intent.requestDigest,
+				completed,
+			);
+		} catch (cause) {
+			return releaseJournalFailure(cause, "workspace release receipt persistence is uncertain");
+		}
+		if (completion === "conflict") {
+			return failure("uncertain", "workspace release receipt conflicts with its durable intent");
+		}
+		return {
+			ok: true,
+			value: {
+				receipt: structuredClone(receipt),
+				record: structuredClone(intent.retainedRecord),
+			},
+		};
+	}
+
+	async #ensureReleaseProjection(intent: WorktreeReleaseIntent): Promise<WorktreeResult<void>> {
+		const registered = await this.#registry.get(intent.workspaceId);
+		if (!registered.ok) return registered;
+		if (!registered.value) return failure("not_found", "workspace disappeared during release reconcile");
+		if (canonicalDigest(registered.value) === intent.retainedRecordDigest) {
+			return { ok: true, value: undefined };
+		}
+		const expectedActiveRecord: WorktreeRecord = {
+			...intent.retainedRecord,
+			state: "active",
+			lease: { ...intent.releasedLease, state: "active" },
+		};
+		if (
+			registered.value.state !== "active" ||
+			canonicalDigest(registered.value) !== canonicalDigest(expectedActiveRecord)
+		) {
+			return failure("uncertain", "workspace registry changed outside the durable release intent");
+		}
+		const repaired = await this.#registry.appendIfCurrent(
+			"upsert",
+			intent.retainedRecord,
+			canonicalDigest(registered.value),
+		);
+		if (!repaired.ok) return repaired;
+		const readBack = await this.#registry.get(intent.workspaceId);
+		if (!readBack.ok) return readBack;
+		if (!readBack.value || canonicalDigest(readBack.value) !== intent.retainedRecordDigest) {
+			return failure("uncertain", "workspace retained projection read-back failed", true);
+		}
+		return { ok: true, value: undefined };
 	}
 
 	public async resume(
@@ -514,19 +938,79 @@ export class WorktreeManager {
 		context: WorktreeRuntimeContext,
 		ownerRuntimeId: RuntimeInstanceId,
 	): Promise<WorktreeResult<WorktreeCreateResult>> {
-		const registered = await this.#registry.get(workspaceId);
+		let registered = await this.#registry.get(workspaceId);
 		if (!registered.ok) return registered;
-		const record = registered.value;
-		if (!record || record.state === "removed" || record.state === "failed") return failure("not_found", "workspace cannot be resumed");
+		let record = registered.value;
+		if (!record || record.state === "removed" || record.state === "removing" || record.state === "failed") {
+			return failure("not_found", "workspace cannot be resumed");
+		}
 		if (record.authorityId !== context.authorityId || record.tenantId !== context.tenantId || record.principalId !== context.principalId || record.sessionId !== context.sessionId) {
 			return failure("invalid_scope", "workspace resume scope does not match");
 		}
-		const current = await this.#leases.read(workspaceId);
+		let current = await this.#leases.read(workspaceId);
 		if (!current) return failure("lease_conflict", "workspace lease is missing");
+		if (current.record.state === "released") {
+			const operationId = worktreeReleaseOperationId(
+				workspaceId,
+				current.record.leaseId,
+				current.record.leaseRevision,
+			);
+			let pending: WorktreeReleaseJournalRecord | undefined;
+			try {
+				pending = await this.#releaseJournal.read(operationId);
+			} catch (cause) {
+				return releaseJournalFailure(cause, "workspace release journal is unavailable during resume");
+			}
+			if (pending) {
+				if (
+					!isValidWorktreeReleaseJournalRecord(pending) ||
+					pending.intent.authorityId !== context.authorityId ||
+					pending.intent.tenantId !== context.tenantId ||
+					pending.intent.principalId !== context.principalId ||
+					pending.intent.sessionId !== context.sessionId
+				) {
+					return failure("uncertain", "workspace release journal does not match resume scope");
+				}
+				const settled = pending.receipt
+					? await this.#ensureReleaseProjection(pending.intent)
+					: await this.#reconcileRelease(pending);
+				if (!settled.ok) return settled;
+				registered = await this.#registry.get(workspaceId);
+				if (!registered.ok) return registered;
+				record = registered.value;
+				current = await this.#leases.read(workspaceId);
+				if (!record || !current || current.record.state !== "released") {
+					return failure("lease_conflict", "workspace release changed during resume reconciliation");
+				}
+			}
+		}
 		if (current.record.state === "active") {
-			return current.record.ownerRuntimeId === ownerRuntimeId
-				? { ok: true, value: this.#result(record, current) }
-				: failure("active", "workspace is owned by another live runtime");
+			if (current.record.ownerRuntimeId !== ownerRuntimeId) {
+				return failure("active", "workspace is owned by another live runtime");
+			}
+			if (
+				record.state !== "active" ||
+				record.ownerRuntimeId !== current.record.ownerRuntimeId ||
+				record.leaseRevision !== current.record.leaseRevision ||
+				record.lease === undefined ||
+				canonicalDigest(record.lease) !== canonicalDigest(current.record)
+			) {
+				const recovered: WorktreeRecord = {
+					...record,
+					ownerRuntimeId: current.record.ownerRuntimeId,
+					leaseRevision: current.record.leaseRevision,
+					lease: current.record,
+					state: "active",
+					lastAccessedAt: this.#clock().toISOString(),
+				};
+				const projected = await this.#appendProjection("upsert", record, recovered);
+				if (!projected.ok) return projected;
+				record = recovered;
+			}
+			return { ok: true, value: this.#result(record, current) };
+		}
+		if (current.record.state === "revoked") {
+			return failure("lease_conflict", "workspace lease was revoked and cannot be resumed");
 		}
 		const token = await this.#tokens.issue();
 		const nextRecord = {
@@ -537,9 +1021,14 @@ export class WorktreeManager {
 			state: "active" as const,
 		};
 		const next: WorkspaceLeaseSecret = { record: nextRecord, fencingToken: token, issuedAt: this.#clock().toISOString(), lastRenewedAt: this.#clock().toISOString() };
-		if (await this.#leases.compareAndSwap(workspaceId, current.record.leaseRevision, next) !== "applied") return failure("lease_conflict", "workspace resume lost its lease CAS");
+		if (await this.#leases.compareAndSwap(
+			workspaceId,
+			current.record.leaseRevision,
+			canonicalDigest(current),
+			next,
+		) !== "applied") return failure("lease_conflict", "workspace resume lost its lease CAS");
 		const resumed = { ...record, ownerRuntimeId, leaseRevision: nextRecord.leaseRevision, lease: nextRecord, state: "active" as const, lastAccessedAt: this.#clock().toISOString() };
-		const stored = await this.#registry.append("upsert", resumed);
+		const stored = await this.#appendProjection("upsert", record, resumed);
 		if (!stored.ok) return stored;
 		return { ok: true, value: this.#result(resumed, next) };
 	}
@@ -553,16 +1042,61 @@ export class WorktreeManager {
 		const registered = await this.#registry.get(workspaceId);
 		if (!registered.ok || !registered.value) return failure("not_found", "workspace handoff target is missing");
 		const record = registered.value;
+		if (record.state === "removed" || record.state === "removing" || record.state === "failed") {
+			return failure("not_found", "workspace handoff target is unavailable");
+		}
 		const current = await this.#leases.read(workspaceId);
+		if (
+			current?.record.state === "active" &&
+			current.record.ownerRuntimeId === toRuntimeId &&
+			current.record.leaseRevision === expectedRevision + 1 &&
+			record.ownerRuntimeId === fromRuntimeId &&
+			record.leaseRevision === expectedRevision
+		) {
+			const recovered: WorktreeRecord = {
+				...record,
+				ownerRuntimeId: toRuntimeId,
+				leaseRevision: current.record.leaseRevision,
+				lease: current.record,
+				state: "active",
+				lastAccessedAt: this.#clock().toISOString(),
+			};
+			const projected = await this.#appendProjection("upsert", record, recovered);
+			if (!projected.ok) return projected;
+			const handoff: WorktreeLeaseHandoff = {
+				authorityId: record.authorityId,
+				tenantId: record.tenantId,
+				principalId: record.principalId,
+				workspaceId,
+				leaseId: current.record.leaseId,
+				fromRuntimeId,
+				toRuntimeId,
+				expectedRevision,
+				nextRevision: current.record.leaseRevision,
+				handoffTokenDigest: current.record.fencingTokenDigest,
+				receiptId: createRuntimeId("receipt", canonicalDigest({
+					workspaceId,
+					fromRuntimeId,
+					toRuntimeId,
+					expectedRevision,
+				}).slice(0, 48)),
+			};
+			return { ok: true, value: { handoff, result: this.#result(recovered, current) } };
+		}
 		if (!current || current.record.ownerRuntimeId !== fromRuntimeId || current.record.leaseRevision !== expectedRevision || current.record.state !== "active") {
 			return failure("lease_conflict", "workspace handoff lease is stale");
 		}
 		const token = await this.#tokens.issue();
 		const nextRecord = { ...current.record, ownerRuntimeId: toRuntimeId, leaseRevision: expectedRevision + 1, fencingTokenDigest: canonicalDigest(token), state: "active" as const };
 		const next: WorkspaceLeaseSecret = { record: nextRecord, fencingToken: token, issuedAt: this.#clock().toISOString(), lastRenewedAt: this.#clock().toISOString() };
-		if (await this.#leases.compareAndSwap(workspaceId, expectedRevision, next) !== "applied") return failure("lease_conflict", "workspace handoff lost its lease CAS");
+		if (await this.#leases.compareAndSwap(
+			workspaceId,
+			expectedRevision,
+			canonicalDigest(current),
+			next,
+		) !== "applied") return failure("lease_conflict", "workspace handoff lost its lease CAS");
 		const moved = { ...record, ownerRuntimeId: toRuntimeId, leaseRevision: nextRecord.leaseRevision, lease: nextRecord, lastAccessedAt: this.#clock().toISOString() };
-		const stored = await this.#registry.append("upsert", moved);
+		const stored = await this.#appendProjection("upsert", record, moved);
 		if (!stored.ok) return stored;
 		const handoff: WorktreeLeaseHandoff = {
 			authorityId: record.authorityId, tenantId: record.tenantId, principalId: record.principalId,
@@ -661,18 +1195,47 @@ export class WorktreeManager {
 		const second = await this.removePreview(request);
 		if (!second.ok) return second;
 		if (second.value.previewDigest !== first.value.previewDigest) return failure("stale", "worktree changed after removal preview");
-		const removing = { ...record.value, state: "removing" as const, lastAccessedAt: this.#clock().toISOString() };
-		const intent = await this.#registry.append("upsert", removing);
+		let currentLease = await this.#leases.read(request.workspaceId);
+		if (!currentLease || currentLease.record.leaseRevision !== request.expectedLeaseRevision) {
+			return failure("lease_conflict", "workspace lease changed before removal");
+		}
+		if (currentLease.record.state !== "revoked") {
+			const revoked: WorkspaceLeaseSecret = {
+				...currentLease,
+				record: { ...currentLease.record, state: "revoked" },
+				lastRenewedAt: this.#clock().toISOString(),
+			};
+			if (await this.#leases.compareAndSwap(
+				request.workspaceId,
+				request.expectedLeaseRevision,
+				canonicalDigest(currentLease),
+				revoked,
+			) !== "applied") {
+				return failure("lease_conflict", "workspace removal lost its exact lease fence");
+			}
+			currentLease = revoked;
+		}
+		const removing = {
+			...record.value,
+			state: "removing" as const,
+			lease: currentLease.record,
+			lastAccessedAt: this.#clock().toISOString(),
+		};
+		const intent = await this.#appendProjection("upsert", record.value, removing);
 		if (!intent.ok) return intent;
 		const removed = await this.#git.removeWorktree(record.value.sourceRepo, record.value.worktreePath, request.force);
 		if (!removed.ok) return removed;
 		const remaining = await this.#filesystem.stat(record.value.worktreePath);
 		if (remaining.exists) return failure("uncertain", "Git reported removal but worktree path still exists", true);
-		const leaseRemoved = await this.#leases.remove(request.workspaceId, request.expectedLeaseRevision);
+		const leaseRemoved = await this.#leases.remove(
+			request.workspaceId,
+			request.expectedLeaseRevision,
+			canonicalDigest(currentLease),
+		);
 		if (leaseRemoved === "conflict") return failure("lease_conflict", "workspace lease changed during removal");
 		const { lease: _lease, ...withoutLease } = removing;
 		const tombstone: WorktreeRecord = { ...withoutLease, state: "removed" };
-		const finalized = await this.#registry.append("remove", tombstone);
+		const finalized = await this.#appendProjection("remove", removing, tombstone);
 		if (!finalized.ok) return failure("uncertain", "worktree was removed but registry tombstone failed", true);
 		return { ok: true, value: second.value };
 	}

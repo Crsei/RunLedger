@@ -175,8 +175,8 @@ describe("Runtime v3 exact event schemas", () => {
 			releasedAt: base.timestamp,
 			receiptDigest: digest,
 		};
-		const workspaceReceipt = {
-			receiptId: createRuntimeId("receipt", "cleanup-schema-workspace"),
+			const workspaceReceipt = {
+				receiptId: createRuntimeId("receipt", "cleanup-schema-workspace"),
 			strategy: {
 				strategyId: createRuntimeId("resource", "cleanup-schema-strategy"),
 				kind: "managed_worktree" as const,
@@ -185,12 +185,56 @@ describe("Runtime v3 exact event schemas", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "cleanup-schema"),
 			repositoryId: createRuntimeId("repository", "cleanup-schema"),
-			bindingRevision: 1,
-			bindingDigest: digest,
-			status: "released" as const,
-			issuedAt: base.timestamp,
-			receiptDigest: digest,
-		};
+				bindingRevision: 1,
+				bindingDigest: digest,
+				leaseId: createRuntimeId("lease", "cleanup-schema"),
+				leaseRevision: 1,
+				status: "released" as const,
+				issuedAt: base.timestamp,
+				receiptDigest: digest,
+			};
+			const workspaceAuthorityReceipt = {
+				schemaVersion: 1 as const,
+				kind: "workspace_release_receipt" as const,
+				receiptId: workspaceReceipt.receiptId,
+				requestId: cleanupRequestId,
+				requestDigest: digest,
+				callerRequestDigest: digest,
+				authorityId: base.authorityId,
+				tenantId: base.tenantId,
+				principalId: base.principalId,
+				sessionId,
+				agentId,
+				workspaceId: workspaceReceipt.workspaceId,
+				repositoryId: workspaceReceipt.repositoryId,
+				envelopeDigest: digest,
+				leaseId: workspaceReceipt.leaseId,
+				leaseRevision: workspaceReceipt.leaseRevision,
+				releasedLeaseDigest: digest,
+				retainedRecordDigest: digest,
+				releasedAt: base.timestamp,
+				receiptDigest: digest,
+			};
+			const workspaceReleaseReceipt = {
+				schemaVersion: 1 as const,
+				kind: "agent_workspace_release_receipt" as const,
+				receiptId: workspaceReceipt.receiptId,
+				requestId: cleanupRequestId,
+				requestDigest: digest,
+				agentId,
+				sessionId,
+				workspaceId: workspaceReceipt.workspaceId,
+				repositoryId: workspaceReceipt.repositoryId,
+				previousReceiptId: createRuntimeId("receipt", "cleanup-schema-workspace-previous"),
+				previousReceiptDigest: digest,
+				bindingDigest: workspaceReceipt.bindingDigest,
+				leaseId: workspaceReceipt.leaseId,
+				leaseRevision: workspaceReceipt.leaseRevision,
+				releasedWorkspaceReceipt: workspaceReceipt,
+				authorityReceipt: workspaceAuthorityReceipt,
+				releasedAt: base.timestamp,
+				receiptDigest: digest,
+			};
 		const budgetReceipt = {
 			receiptId: createRuntimeId("receipt", "cleanup-schema-budget"),
 			reservationId: createRuntimeId("budgetReservation", "cleanup-schema"),
@@ -200,9 +244,11 @@ describe("Runtime v3 exact event schemas", () => {
 			requestDigest: digest,
 			settledAt: base.timestamp,
 			receiptDigest: digest,
-		};
-		const cleanupReceipt = {
-			receiptId: createRuntimeId("receipt", "cleanup-schema-completed"),
+			};
+			const cleanupReceipt = {
+				schemaVersion: 1 as const,
+				kind: "started" as const,
+				receiptId: createRuntimeId("receipt", "cleanup-schema-completed"),
 			requestId: cleanupRequestId,
 			requestDigest: digest,
 			agentId,
@@ -210,8 +256,8 @@ describe("Runtime v3 exact event schemas", () => {
 			terminalDigest: terminal.terminalDigest,
 			runtimeReleaseReceiptId: runtimeReceipt.receiptId,
 			runtimeReleaseReceiptDigest: runtimeReceipt.receiptDigest,
-			workspaceReleaseReceiptId: workspaceReceipt.receiptId,
-			workspaceReleaseReceiptDigest: workspaceReceipt.receiptDigest,
+				workspaceReleaseReceiptId: workspaceReleaseReceipt.receiptId,
+				workspaceReleaseReceiptDigest: workspaceReleaseReceipt.receiptDigest,
 			budgetSettlementReceiptId: budgetReceipt.receiptId,
 			budgetSettlementReceiptDigest: budgetReceipt.receiptDigest,
 			completedAt: base.timestamp,
@@ -242,9 +288,21 @@ describe("Runtime v3 exact event schemas", () => {
 					reasonEvidenceDigest: digest,
 				},
 			},
-			"agent.cleanup_requested": { ...common, agentId, terminalDigest: terminal.terminalDigest, requestDigest: digest },
+			"agent.cleanup_requested": {
+				...common,
+				agentId,
+				kind: "started" as const,
+				terminalDigest: terminal.terminalDigest,
+				requestDigest: digest,
+			},
 			"agent.runtime_released": { ...common, agentId, cleanupRequestId, receipt: runtimeReceipt },
-			"agent.workspace_released": { ...common, agentId, cleanupRequestId, requestDigest: digest, receipt: workspaceReceipt },
+				"agent.workspace_released": {
+					...common,
+					agentId,
+					cleanupRequestId,
+					requestDigest: digest,
+					receipt: workspaceReleaseReceipt,
+				},
 			"agent.budget_settled": { ...common, agentId, cleanupRequestId, receipt: budgetReceipt },
 			"agent.cleanup_reconciliation_required": {
 				...common,
@@ -255,14 +313,126 @@ describe("Runtime v3 exact event schemas", () => {
 			},
 			"agent.cleanup_completed": { ...common, agentId, cleanupRequestId, receipt: cleanupReceipt },
 		} as const;
-		for (const [type, payload] of Object.entries(payloads)) {
+			for (const [type, payload] of Object.entries(payloads)) {
 			expect(validateRuntimeEvent({ ...base, type, payload })).toMatchObject({ ok: true });
 			expect(validateRuntimeEvent({ ...base, type, payload: { ...payload, future: true } })).toMatchObject({
 				ok: false,
 				code: "unknown_field",
 			});
-			expect(MANDATORY_FLUSH_EVENT_TYPES.has(type as keyof typeof payloads)).toBe(true);
-		}
+				expect(MANDATORY_FLUSH_EVENT_TYPES.has(type as keyof typeof payloads)).toBe(true);
+			}
+			const workspaceReleasedPayload = payloads["agent.workspace_released"];
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.workspace_released",
+				payload: { ...workspaceReleasedPayload, receipt: workspaceReceipt },
+			})).toMatchObject({ ok: false, code: "invalid_schema" });
+			const { schemaVersion: _schemaVersion, ...missingVersion } = workspaceReleaseReceipt;
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.workspace_released",
+				payload: { ...workspaceReleasedPayload, receipt: missingVersion },
+			})).toMatchObject({ ok: false, code: "invalid_schema" });
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.workspace_released",
+				payload: {
+					...workspaceReleasedPayload,
+					receipt: { ...workspaceReleaseReceipt, schemaVersion: 2 },
+				},
+			})).toMatchObject({ ok: false, code: "invalid_schema" });
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.workspace_released",
+				payload: {
+					...workspaceReleasedPayload,
+					receipt: {
+						...workspaceReleaseReceipt,
+						authorityReceipt: {
+							...workspaceAuthorityReceipt,
+							schemaVersion: 2,
+						},
+					},
+				},
+			})).toMatchObject({ ok: false, code: "invalid_schema" });
+			const cleanupRequestedPayload = payloads["agent.cleanup_requested"];
+			const { kind: _cleanupRequestKind, ...cleanupRequestWithoutKind } = cleanupRequestedPayload;
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_requested",
+				payload: cleanupRequestWithoutKind,
+			})).toMatchObject({ ok: false });
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_requested",
+				payload: { ...cleanupRequestedPayload, kind: "unknown" },
+			})).toMatchObject({ ok: false });
+
+			const cleanupCompletedPayload = payloads["agent.cleanup_completed"];
+			const {
+				runtimeReleaseReceiptId: _runtimeReleaseReceiptId,
+				runtimeReleaseReceiptDigest: _runtimeReleaseReceiptDigest,
+				...cleanupReceiptWithoutRuntime
+			} = cleanupReceipt;
+			const notStartedCleanupReceipt = {
+				...cleanupReceiptWithoutRuntime,
+				kind: "not_started" as const,
+			};
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_completed",
+				payload: { ...cleanupCompletedPayload, receipt: notStartedCleanupReceipt },
+			})).toMatchObject({ ok: true });
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_completed",
+				payload: {
+					...cleanupCompletedPayload,
+					receipt: {
+						...notStartedCleanupReceipt,
+						runtimeReleaseReceiptId: runtimeReceipt.receiptId,
+						runtimeReleaseReceiptDigest: runtimeReceipt.receiptDigest,
+					},
+				},
+			})).toMatchObject({ ok: false });
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_completed",
+				payload: {
+					...cleanupCompletedPayload,
+					receipt: cleanupReceiptWithoutRuntime,
+				},
+			})).toMatchObject({ ok: false });
+			const { kind: _cleanupKind, ...cleanupReceiptWithoutKind } = cleanupReceipt;
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_completed",
+				payload: { ...cleanupCompletedPayload, receipt: cleanupReceiptWithoutKind },
+			})).toMatchObject({ ok: false });
+			const { schemaVersion: _cleanupSchemaVersion, ...cleanupReceiptWithoutVersion } = cleanupReceipt;
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_completed",
+				payload: { ...cleanupCompletedPayload, receipt: cleanupReceiptWithoutVersion },
+			})).toMatchObject({ ok: false });
+			for (const schemaVersion of [0, 2]) {
+				expect(validateRuntimeEvent({
+					...base,
+					type: "agent.cleanup_completed",
+					payload: {
+						...cleanupCompletedPayload,
+						receipt: { ...cleanupReceipt, schemaVersion },
+					},
+				})).toMatchObject({ ok: false });
+			}
+			expect(validateRuntimeEvent({
+				...base,
+				type: "agent.cleanup_completed",
+				payload: {
+					...cleanupCompletedPayload,
+					receipt: { ...cleanupReceipt, kind: "unknown" },
+				},
+			})).toMatchObject({ ok: false });
 		const stoppedPayload = payloads["agent.stopped"];
 		const { reasonEvidenceDigest: _reasonEvidenceDigest, ...legacyTerminal } = stoppedPayload.terminal;
 		expect(validateRuntimeEvent({

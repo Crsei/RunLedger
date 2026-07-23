@@ -5,6 +5,7 @@ import { parseIdempotencyKey } from "../protocol/v3/coordination.ts";
 import type { IdempotencyKey } from "../protocol/v3/coordination.ts";
 import { isRuntimeId } from "../protocol/v3/ids.ts";
 import type { AgentId } from "../protocol/v3/ids.ts";
+import { isWorkspaceReleaseReceiptRef } from "../protocol/v3/workspace.ts";
 import {
 	capabilitySubsetRequestDigest,
 	delegationReceiptMatches,
@@ -18,6 +19,8 @@ import type {
 	AgentArtifactContract,
 	AgentArtifactReport,
 	AgentBudgetSettlementReceiptRef,
+	AgentCleanupKind,
+	AgentCleanupReceiptBody,
 	AgentCleanupReceiptRef,
 	AgentCleanupRecord,
 	AgentCleanupStage,
@@ -39,6 +42,7 @@ import type {
 	AgentSpawnIntent,
 	AgentState,
 	AgentWorkspaceReleaseRequest,
+	AgentWorkspaceReleaseReceiptRef,
 	AgentWorkspaceReceiptRef,
 	DurableAgentGraphStorePort,
 	RootAgentBudgetSettleRequest,
@@ -147,6 +151,7 @@ export function agentCleanupRequestDigest(input: {
 	requestId: AgentCleanupRecord["requestId"];
 	agentId: AgentId;
 	sessionId: AgentCleanupRecord["sessionId"];
+	kind: AgentCleanupKind;
 	terminalDigest: string;
 }): string {
 	return canonicalDigest(input);
@@ -171,7 +176,7 @@ export function agentBudgetSettlementRequestDigest(
 	return canonicalDigest(semantic);
 }
 
-export function agentCleanupReceiptDigest(receipt: Omit<AgentCleanupReceiptRef, "receiptDigest">): string {
+export function agentCleanupReceiptDigest(receipt: AgentCleanupReceiptBody): string {
 	return canonicalDigest(receipt);
 }
 
@@ -491,23 +496,27 @@ function runtimeReleaseReceiptIsValid(receipt: AgentRuntimeReleaseReceiptRef, no
 function budgetSettlementReceiptIsValid(
 	receipt: AgentBudgetSettlementReceiptRef,
 	node: AgentNode,
+	kind: AgentCleanupKind,
 	authoritySettledAt: string,
 ): boolean {
 	if (!node.budgetReservation || !node.terminal) return false;
 	const { receiptDigest, ...body } = receipt;
+	const outcome = kind === "not_started" ? "not_started" : node.terminal.outcome;
+	const usage = kind === "not_started" ? undefined : node.terminal.usage;
+	const partialResults = kind === "not_started" ? [] : node.terminal.partialResults;
 	const semantic = {
 		reservation: node.budgetReservation,
-		outcome: node.terminal.outcome,
-		...(node.terminal.usage ? { usage: node.terminal.usage } : {}),
-		partialResults: node.terminal.partialResults,
+		outcome,
+		...(usage ? { usage } : {}),
+		partialResults,
 		settledAt: authoritySettledAt,
 	};
 	return (
 		isRuntimeId(receipt.receiptId, "receipt") &&
 		receipt.reservationId === node.budgetReservation.reservationId &&
-		receipt.outcome === node.terminal.outcome &&
-		receipt.usageDigest === canonicalDigest(node.terminal.usage ?? null) &&
-		receipt.partialResultsDigest === canonicalDigest(node.terminal.partialResults) &&
+		receipt.outcome === outcome &&
+		receipt.usageDigest === canonicalDigest(usage ?? null) &&
+		receipt.partialResultsDigest === canonicalDigest(partialResults) &&
 		receipt.settledAt === authoritySettledAt &&
 		receipt.requestDigest === canonicalDigest(semantic) &&
 		timestampIsValid(authoritySettledAt) &&
@@ -604,6 +613,10 @@ function cloneNode(node: AgentNode): AgentNode {
 		requestedCapabilities: [...node.requestedCapabilities],
 		inputSources: node.inputSources.map((source) => ({ ...source, taintLabels: [...source.taintLabels] })),
 		declassificationReceipts: node.declassificationReceipts.map((receipt) => ({ ...receipt })),
+		workspaceReceipt: {
+			...node.workspaceReceipt,
+			strategy: { ...node.workspaceReceipt.strategy },
+		},
 		budget: { ...node.budget },
 		turnIds: [...node.turnIds],
 		artifactContract: { ...node.artifactContract, expected: [...node.artifactContract.expected] },
@@ -618,6 +631,40 @@ function cloneNode(node: AgentNode): AgentNode {
 }
 
 function cloneCleanupRecord(record: AgentCleanupRecord): AgentCleanupRecord {
+	if (record.kind === "not_started") {
+		return {
+			...record,
+			...(record.workspaceRelease
+				? {
+					workspaceRelease: {
+						...record.workspaceRelease,
+						receipt: {
+							...record.workspaceRelease.receipt,
+							releasedWorkspaceReceipt: {
+								...record.workspaceRelease.receipt.releasedWorkspaceReceipt,
+								strategy: {
+									...record.workspaceRelease.receipt.releasedWorkspaceReceipt.strategy,
+								},
+							},
+							authorityReceipt: { ...record.workspaceRelease.receipt.authorityReceipt },
+						},
+					},
+				}
+				: {}),
+			...(record.budgetSettlement
+				? { budgetSettlement: { ...record.budgetSettlement, receipt: { ...record.budgetSettlement.receipt } } }
+				: {}),
+			...(record.reconciliationRequired
+				? {
+					reconciliationRequired: {
+						...record.reconciliationRequired,
+						error: { ...record.reconciliationRequired.error },
+					},
+				}
+				: {}),
+			...(record.completionReceipt ? { completionReceipt: { ...record.completionReceipt } } : {}),
+		};
+	}
 	return {
 		...record,
 		...(record.runtimeRelease
@@ -633,15 +680,21 @@ function cloneCleanupRecord(record: AgentCleanupRecord): AgentCleanupRecord {
 						residencyReceipt: { ...record.runtimeRelease.receipt.residencyReceipt },
 					},
 				},
-			}
-			: {}),
+				}
+				: {}),
 		...(record.workspaceRelease
 			? {
 				workspaceRelease: {
 					...record.workspaceRelease,
 					receipt: {
 						...record.workspaceRelease.receipt,
-						strategy: { ...record.workspaceRelease.receipt.strategy },
+						releasedWorkspaceReceipt: {
+							...record.workspaceRelease.receipt.releasedWorkspaceReceipt,
+							strategy: {
+								...record.workspaceRelease.receipt.releasedWorkspaceReceipt.strategy,
+							},
+						},
+						authorityReceipt: { ...record.workspaceRelease.receipt.authorityReceipt },
 					},
 				},
 			}
@@ -773,10 +826,35 @@ function withCleanupRecord(projection: AgentGraphProjection, record: AgentCleanu
 }
 
 function nextCleanupStage(record: AgentCleanupRecord): AgentCleanupStage | undefined {
-	if (!record.runtimeRelease) return "runtime_release";
+	if (record.kind === "started" && !record.runtimeRelease) return "runtime_release";
 	if (!record.workspaceRelease) return "workspace_release";
 	if (!record.budgetSettlement) return "budget_settlement";
 	return undefined;
+}
+
+function cleanupKindForNode(node: AgentNode): AgentResult<AgentCleanupKind> {
+	if (!node.parentAgentId || !node.terminal || !node.budgetReservation) {
+		return fail("cleanup_invalid", "child cleanup lacks terminal or budget evidence");
+	}
+	const hasLaunch = node.launchReceipt !== undefined;
+	const hasResidency = node.residency !== undefined;
+	if (
+		node.stateReason === "launch_rejected" &&
+		node.terminal.reason === "launch_rejected" &&
+		!hasLaunch &&
+		!hasResidency
+	) {
+		return { ok: true, value: "not_started" };
+	}
+	if (
+		node.stateReason !== "launch_rejected" &&
+		node.terminal.reason !== "launch_rejected" &&
+		hasLaunch &&
+		hasResidency
+	) {
+		return { ok: true, value: "started" };
+	}
+	return fail("cleanup_invalid", "child cleanup start evidence is incomplete or contradictory");
 }
 
 function cleanupRecordFor(
@@ -789,24 +867,90 @@ function cleanupRecordFor(
 	if (!node || !node.terminal || !cleanup || cleanup.requestId !== cleanupRequestId) {
 		return fail("cleanup_invalid", "cleanup stage has no correlated semantic terminal and durable intent");
 	}
+	const kind = cleanupKindForNode(node);
+	if (
+		!kind.ok ||
+		cleanup.agentId !== node.agentId ||
+		cleanup.sessionId !== node.sessionId ||
+		cleanup.kind !== kind.value ||
+		cleanup.terminalDigest !== node.terminal.terminalDigest ||
+		cleanup.requestDigest !== agentCleanupRequestDigest({
+			requestId: cleanup.requestId,
+			agentId: node.agentId,
+			sessionId: node.sessionId,
+			kind: cleanup.kind,
+			terminalDigest: node.terminal.terminalDigest,
+		}) ||
+		(cleanup.kind === "not_started" && "runtimeRelease" in cleanup)
+	) {
+		return fail("cleanup_invalid", "cleanup record is not correlated to durable child start evidence");
+	}
 	if (cleanup.completionReceipt) return fail("cleanup_invalid", "cleanup saga is already complete");
 	return { ok: true, value: { node, cleanup } };
 }
 
 function releasedWorkspaceReceiptIsValid(
-	receipt: AgentNode["workspaceReceipt"],
+	receipt: AgentWorkspaceReleaseReceiptRef,
 	previous: AgentNode["workspaceReceipt"],
+	input: {
+		requestId: AgentWorkspaceReleaseRequest["requestId"];
+		requestDigest: AgentWorkspaceReleaseRequest["requestDigest"];
+		agentId: AgentId;
+		occurredAt: string;
+	},
 ): boolean {
+	const released = receipt.releasedWorkspaceReceipt;
+	const authority = receipt.authorityReceipt;
+	if (!released || !authority) return false;
+	const { receiptDigest, ...body } = receipt;
 	return (
-		receipt.status === "released" &&
+		receipt.schemaVersion === 1 &&
+		receipt.kind === "agent_workspace_release_receipt" &&
+		isRuntimeId(receipt.receiptId, "receipt") &&
+		receipt.receiptId !== previous.receiptId &&
+		receipt.requestId === input.requestId &&
+		receipt.requestDigest === input.requestDigest &&
+		receipt.agentId === input.agentId &&
 		receipt.sessionId === previous.sessionId &&
 		receipt.workspaceId === previous.workspaceId &&
 		receipt.repositoryId === previous.repositoryId &&
-		receipt.strategy.strategyId === previous.strategy.strategyId &&
-		receipt.strategy.kind === previous.strategy.kind &&
-		receipt.strategy.strategyDigest === previous.strategy.strategyDigest &&
-		receipt.bindingRevision >= previous.bindingRevision &&
-		workspaceReceiptRefIsValid(receipt)
+		receipt.previousReceiptId === previous.receiptId &&
+		receipt.previousReceiptDigest === previous.receiptDigest &&
+		receipt.bindingDigest === previous.bindingDigest &&
+		previous.leaseId !== undefined &&
+		previous.leaseRevision !== undefined &&
+		receipt.leaseId === previous.leaseId &&
+		receipt.leaseRevision === previous.leaseRevision &&
+		receipt.releasedAt === input.occurredAt &&
+		timestampIsValid(receipt.releasedAt) &&
+		digestIsValid(receiptDigest) &&
+		receiptDigest === canonicalDigest(body) &&
+		released.receiptId === receipt.receiptId &&
+		released.status === "released" &&
+		released.sessionId === previous.sessionId &&
+		released.workspaceId === previous.workspaceId &&
+		released.repositoryId === previous.repositoryId &&
+		released.strategy.strategyId === previous.strategy.strategyId &&
+		released.strategy.kind === previous.strategy.kind &&
+		released.strategy.strategyDigest === previous.strategy.strategyDigest &&
+		released.bindingRevision === previous.bindingRevision &&
+		released.bindingDigest === previous.bindingDigest &&
+		released.leaseId === previous.leaseId &&
+		released.leaseRevision === previous.leaseRevision &&
+		released.issuedAt === receipt.releasedAt &&
+		released.expiresAt === previous.expiresAt &&
+		workspaceReceiptRefIsValid(released) &&
+		isWorkspaceReleaseReceiptRef(authority) &&
+		authority.receiptId === receipt.receiptId &&
+		authority.requestId === input.requestId &&
+		authority.callerRequestDigest === receipt.requestDigest &&
+		authority.agentId === input.agentId &&
+		authority.sessionId === previous.sessionId &&
+		authority.workspaceId === previous.workspaceId &&
+		authority.repositoryId === previous.repositoryId &&
+		authority.leaseId === previous.leaseId &&
+		authority.leaseRevision === previous.leaseRevision &&
+		authority.releasedAt === receipt.releasedAt
 	);
 }
 
@@ -815,8 +959,36 @@ function cleanupReceiptIsValid(
 	node: AgentNode,
 	cleanup: AgentCleanupRecord,
 ): boolean {
-	if (!cleanup.runtimeRelease || !cleanup.workspaceRelease || !cleanup.budgetSettlement) return false;
+	if (!cleanup.workspaceRelease || !cleanup.budgetSettlement) return false;
+	if (receipt.schemaVersion !== 1 || receipt.kind !== cleanup.kind) return false;
 	const { receiptDigest, ...body } = receipt;
+	const completionTimes = [
+		cleanup.workspaceRelease.receipt.releasedAt,
+		cleanup.budgetSettlement.receipt.settledAt,
+	];
+	if (cleanup.kind === "started") {
+		if (
+			receipt.kind !== "started" ||
+			!cleanup.runtimeRelease ||
+			!("runtimeReleaseReceiptId" in receipt) ||
+			!("runtimeReleaseReceiptDigest" in receipt)
+		) return false;
+		completionTimes.push(cleanup.runtimeRelease.receipt.releasedAt);
+		if (
+			receipt.runtimeReleaseReceiptId !== cleanup.runtimeRelease.receipt.receiptId ||
+			receipt.runtimeReleaseReceiptDigest !== cleanup.runtimeRelease.receipt.receiptDigest
+		) return false;
+	} else if (
+		receipt.kind !== "not_started" ||
+		"runtimeReleaseReceiptId" in receipt ||
+		"runtimeReleaseReceiptDigest" in receipt ||
+		"runtimeRelease" in cleanup
+	) {
+		return false;
+	}
+	const expectedCompletedAt = completionTimes.reduce(
+		(latest, value) => Date.parse(value) > Date.parse(latest) ? value : latest,
+	);
 	return (
 		isRuntimeId(receipt.receiptId, "receipt") &&
 		receipt.requestId === cleanup.requestId &&
@@ -824,12 +996,11 @@ function cleanupReceiptIsValid(
 		receipt.agentId === node.agentId &&
 		receipt.sessionId === node.sessionId &&
 		receipt.terminalDigest === node.terminal?.terminalDigest &&
-		receipt.runtimeReleaseReceiptId === cleanup.runtimeRelease.receipt.receiptId &&
-		receipt.runtimeReleaseReceiptDigest === cleanup.runtimeRelease.receipt.receiptDigest &&
 		receipt.workspaceReleaseReceiptId === cleanup.workspaceRelease.receipt.receiptId &&
 		receipt.workspaceReleaseReceiptDigest === cleanup.workspaceRelease.receipt.receiptDigest &&
 		receipt.budgetSettlementReceiptId === cleanup.budgetSettlement.receipt.receiptId &&
 		receipt.budgetSettlementReceiptDigest === cleanup.budgetSettlement.receipt.receiptDigest &&
+		receipt.completedAt === expectedCompletedAt &&
 		timestampIsValid(receipt.completedAt) &&
 		digestIsValid(receiptDigest) &&
 		receiptDigest === canonicalDigest(body)
@@ -1069,24 +1240,26 @@ export function applyAgentGraphCommand(
 
 	if (command.type === "agent.cleanup_requested") {
 		const node = projection.nodes.get(command.agentId);
+		if (!node) return fail("cleanup_invalid", "cleanup intent references a missing child");
+		const kind = cleanupKindForNode(node);
 		if (
-			!node?.parentAgentId ||
+			!kind.ok ||
 			!node.terminal ||
-			!node.launchReceipt ||
-			!node.residency ||
-			!node.budgetReservation ||
+			command.kind !== kind.value ||
 			projection.cleanups.has(node.agentId) ||
 			command.terminalDigest !== node.terminal.terminalDigest ||
 			command.requestDigest !== agentCleanupRequestDigest({
 				requestId: command.requestId,
 				agentId: node.agentId,
 				sessionId: node.sessionId,
+				kind: command.kind,
 				terminalDigest: node.terminal.terminalDigest,
 			})
-		) return fail("cleanup_invalid", "cleanup intent is not correlated to a terminal resident child");
+		) return fail("cleanup_invalid", "cleanup intent is not correlated to durable child start evidence");
 		return {
 			ok: true,
 			value: withCleanupRecord(projection, {
+				kind: command.kind,
 				agentId: node.agentId,
 				sessionId: node.sessionId,
 				requestId: command.requestId,
@@ -1103,6 +1276,7 @@ export function applyAgentGraphCommand(
 		if (!current.ok) return current;
 		const { node, cleanup } = current.value;
 		if (
+			cleanup.kind !== "started" ||
 			nextCleanupStage(cleanup) !== "runtime_release" ||
 			command.receipt.requestId !== command.requestId ||
 			command.receipt.releasedAt !== command.occurredAt ||
@@ -1130,17 +1304,25 @@ export function applyAgentGraphCommand(
 		if (!current.ok) return current;
 		const { node, cleanup } = current.value;
 		if (!node.terminal) return fail("cleanup_invalid", "workspace release lacks semantic terminal");
+		const reason = cleanup.kind === "not_started" ? "spawn_aborted" : node.terminal.outcome;
 		const expectedRequestDigest = agentWorkspaceReleaseRequestDigest({
 			requestId: command.requestId,
 			agentId: node.agentId,
 			sessionId: node.sessionId,
 			previousReceipt: node.workspaceReceipt,
-			reason: node.terminal.outcome,
+			reason,
 		});
 		if (
 			nextCleanupStage(cleanup) !== "workspace_release" ||
 			command.requestDigest !== expectedRequestDigest ||
-			!releasedWorkspaceReceiptIsValid(command.receipt, node.workspaceReceipt)
+			command.receipt.requestDigest !== command.requestDigest ||
+			command.receipt.releasedAt !== command.occurredAt ||
+			!releasedWorkspaceReceiptIsValid(command.receipt, node.workspaceReceipt, {
+				requestId: command.requestId,
+				requestDigest: expectedRequestDigest,
+				agentId: node.agentId,
+				occurredAt: command.occurredAt,
+			})
 		) return fail("cleanup_invalid", "Workspace release receipt is invalid, stale, or out of order");
 		const { reconciliationRequired: _reconciliationRequired, ...withoutFailure } = cleanup;
 		const nextCleanup = withCleanupRecord(projection, {
@@ -1154,7 +1336,10 @@ export function applyAgentGraphCommand(
 		});
 		return withNodeResult(nextCleanup, {
 			...node,
-			workspaceReceipt: { ...command.receipt },
+			workspaceReceipt: {
+				...command.receipt.releasedWorkspaceReceipt,
+				strategy: { ...command.receipt.releasedWorkspaceReceipt.strategy },
+			},
 			updatedAt: command.occurredAt,
 		});
 	}
@@ -1166,7 +1351,7 @@ export function applyAgentGraphCommand(
 		if (
 			nextCleanupStage(cleanup) !== "budget_settlement" ||
 			command.occurredAt !== cleanup.requestedAt ||
-			!budgetSettlementReceiptIsValid(command.receipt, node, cleanup.requestedAt)
+			!budgetSettlementReceiptIsValid(command.receipt, node, cleanup.kind, cleanup.requestedAt)
 		) return fail("cleanup_invalid", "budget settlement receipt is invalid, stale, or out of order");
 		const { reconciliationRequired: _reconciliationRequired, ...withoutFailure } = cleanup;
 		return {
@@ -1195,6 +1380,27 @@ export function applyAgentGraphCommand(
 		) {
 			return fail("cleanup_invalid", "cleanup reconciliation stage is invalid or already passed");
 		}
+		if (cleanup.kind === "not_started" && command.stage === "runtime_release") {
+			return fail("cleanup_invalid", "not-started cleanup forbids a runtime release stage");
+		}
+		if (cleanup.kind === "not_started") {
+			if (command.stage !== "workspace_release" && command.stage !== "budget_settlement") {
+				return fail("cleanup_invalid", "not-started cleanup stage is invalid");
+			}
+			return {
+				ok: true,
+				value: withCleanupRecord(projection, {
+					...cleanup,
+					reconciliationRequired: {
+						requestId: command.requestId,
+						stage: command.stage,
+						error: { ...command.error },
+						recordedAt: command.occurredAt,
+					},
+					updatedAt: command.occurredAt,
+				}),
+			};
+		}
 		return {
 			ok: true,
 			value: withCleanupRecord(projection, {
@@ -1220,6 +1426,25 @@ export function applyAgentGraphCommand(
 			command.receipt.completedAt !== command.occurredAt ||
 			!cleanupReceiptIsValid(command.receipt, node, cleanup)
 		) return fail("cleanup_invalid", "cleanup completion receipt is invalid or precedes a required stage");
+		if (cleanup.kind === "started" && command.receipt.kind !== "started") {
+			return fail("cleanup_invalid", "started cleanup completion kind is invalid");
+		}
+		if (cleanup.kind === "not_started" && command.receipt.kind !== "not_started") {
+			return fail("cleanup_invalid", "not-started cleanup completion kind is invalid");
+		}
+		if (cleanup.kind === "started" && command.receipt.kind === "started") {
+			return {
+				ok: true,
+				value: withCleanupRecord(projection, {
+					...cleanup,
+					completionReceipt: { ...command.receipt },
+					updatedAt: command.occurredAt,
+				}),
+			};
+		}
+		if (cleanup.kind !== "not_started" || command.receipt.kind !== "not_started") {
+			return fail("cleanup_invalid", "cleanup completion kind is invalid");
+		}
 		return {
 			ok: true,
 			value: withCleanupRecord(projection, {

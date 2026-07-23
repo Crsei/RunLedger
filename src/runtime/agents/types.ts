@@ -4,6 +4,7 @@ import type { ArtifactRef, CapabilityName } from "../protocol/v3/capability.ts";
 import type { IdempotencyKey } from "../protocol/v3/coordination.ts";
 import type { EventCursor, IntegrityStatus } from "../protocol/v3/events.ts";
 import type { DeclassificationReceiptRef, InputSourceRef } from "../protocol/v3/taint.ts";
+import type { WorkspaceReleaseReceiptRef } from "../protocol/v3/workspace.ts";
 import type {
 	AgentId,
 	BudgetReservationId,
@@ -235,6 +236,28 @@ export interface AgentWorkspaceReleaseRequest {
 	requestDigest: string;
 }
 
+/** Agent graph 保存的 release aggregate；真源证据仍由 Workspace authority receipt 提供。 */
+export interface AgentWorkspaceReleaseReceiptRef {
+	schemaVersion: 1;
+	kind: "agent_workspace_release_receipt";
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	requestDigest: string;
+	agentId: AgentId;
+	sessionId: SessionId;
+	workspaceId: WorkspaceId;
+	repositoryId: RepositoryId;
+	previousReceiptId: ReceiptId;
+	previousReceiptDigest: string;
+	bindingDigest: string;
+	leaseId: LeaseId;
+	leaseRevision: number;
+	releasedWorkspaceReceipt: AgentWorkspaceReceiptRef;
+	authorityReceipt: WorkspaceReleaseReceiptRef;
+	releasedAt: string;
+	receiptDigest: string;
+}
+
 export interface AgentWorkspacePort {
 	allocate(
 		request: AgentWorkspaceAllocateRequest,
@@ -244,7 +267,10 @@ export interface AgentWorkspacePort {
 		request: AgentWorkspaceValidateRequest,
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentWorkspaceReceiptRef>>;
-	release(request: AgentWorkspaceReleaseRequest, signal?: AbortSignal): Promise<AgentResult<AgentWorkspaceReceiptRef>>;
+	release(
+		request: AgentWorkspaceReleaseRequest,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentWorkspaceReleaseReceiptRef>>;
 }
 
 export interface ExpectedAgentArtifact {
@@ -581,7 +607,10 @@ export interface AgentGraphReconciliationFailure {
 	error: AgentGraphFailureRef;
 }
 
+export type AgentCleanupKind = "started" | "not_started";
+
 export type AgentCleanupStage = "runtime_release" | "workspace_release" | "budget_settlement";
+export type AgentNotStartedCleanupStage = Exclude<AgentCleanupStage, "runtime_release">;
 
 export interface AgentCleanupRuntimeReleaseRecord {
 	requestId: CommandId;
@@ -592,7 +621,7 @@ export interface AgentCleanupRuntimeReleaseRecord {
 export interface AgentCleanupWorkspaceReleaseRecord {
 	requestId: CommandId;
 	requestDigest: string;
-	receipt: AgentWorkspaceReceiptRef;
+	receipt: AgentWorkspaceReleaseReceiptRef;
 }
 
 export interface AgentCleanupBudgetSettlementRecord {
@@ -601,22 +630,23 @@ export interface AgentCleanupBudgetSettlementRecord {
 	receipt: AgentBudgetSettlementReceiptRef;
 }
 
-export interface AgentCleanupReconciliationRecord {
+export interface AgentCleanupReconciliationRecord<
+	TStage extends AgentCleanupStage = AgentCleanupStage,
+> {
 	requestId: CommandId;
-	stage: AgentCleanupStage;
+	stage: TStage;
 	error: AgentGraphFailureRef;
 	recordedAt: string;
 }
 
-export interface AgentCleanupReceiptRef {
+interface AgentCleanupReceiptCommon {
+	schemaVersion: 1;
 	receiptId: ReceiptId;
 	requestId: CommandId;
 	requestDigest: string;
 	agentId: AgentId;
 	sessionId: SessionId;
 	terminalDigest: string;
-	runtimeReleaseReceiptId: ReceiptId;
-	runtimeReleaseReceiptDigest: string;
 	workspaceReleaseReceiptId: ReceiptId;
 	workspaceReleaseReceiptDigest: string;
 	budgetSettlementReceiptId: ReceiptId;
@@ -625,21 +655,62 @@ export interface AgentCleanupReceiptRef {
 	receiptDigest: string;
 }
 
-/** 每个 Agent 最多一个 cleanup saga；终态与清理完成态可由 replay 分开判断。 */
-export interface AgentCleanupRecord {
+export interface AgentStartedCleanupReceiptRef extends AgentCleanupReceiptCommon {
+	kind: "started";
+	runtimeReleaseReceiptId: ReceiptId;
+	runtimeReleaseReceiptDigest: string;
+}
+
+export interface AgentNotStartedCleanupReceiptRef extends AgentCleanupReceiptCommon {
+	kind: "not_started";
+}
+
+export type AgentCleanupReceiptRef =
+	| AgentStartedCleanupReceiptRef
+	| AgentNotStartedCleanupReceiptRef;
+
+export type AgentStartedCleanupReceiptBody = Omit<
+	AgentStartedCleanupReceiptRef,
+	"receiptDigest"
+>;
+export type AgentNotStartedCleanupReceiptBody = Omit<
+	AgentNotStartedCleanupReceiptRef,
+	"receiptDigest"
+>;
+export type AgentCleanupReceiptBody =
+	| AgentStartedCleanupReceiptBody
+	| AgentNotStartedCleanupReceiptBody;
+
+interface AgentCleanupRecordCommon {
 	agentId: AgentId;
 	sessionId: SessionId;
 	requestId: CommandId;
 	requestDigest: string;
 	terminalDigest: string;
 	requestedAt: string;
-	runtimeRelease?: AgentCleanupRuntimeReleaseRecord;
 	workspaceRelease?: AgentCleanupWorkspaceReleaseRecord;
 	budgetSettlement?: AgentCleanupBudgetSettlementRecord;
-	reconciliationRequired?: AgentCleanupReconciliationRecord;
 	completionReceipt?: AgentCleanupReceiptRef;
 	updatedAt: string;
 }
+
+export interface AgentStartedCleanupRecord extends AgentCleanupRecordCommon {
+	kind: "started";
+	runtimeRelease?: AgentCleanupRuntimeReleaseRecord;
+	reconciliationRequired?: AgentCleanupReconciliationRecord;
+	completionReceipt?: AgentStartedCleanupReceiptRef;
+}
+
+export interface AgentNotStartedCleanupRecord extends AgentCleanupRecordCommon {
+	kind: "not_started";
+	reconciliationRequired?: AgentCleanupReconciliationRecord<AgentNotStartedCleanupStage>;
+	completionReceipt?: AgentNotStartedCleanupReceiptRef;
+}
+
+/** 每个 Agent 最多一个 cleanup saga；终态与清理完成态可由 replay 分开判断。 */
+export type AgentCleanupRecord =
+	| AgentStartedCleanupRecord
+	| AgentNotStartedCleanupRecord;
 
 interface AgentGraphCommandBase {
 	requestId: CommandId;
@@ -712,6 +783,7 @@ export type AgentGraphSemanticCommand =
 	| (AgentGraphCommandBase & {
 			type: "agent.cleanup_requested";
 			agentId: AgentId;
+			kind: AgentCleanupKind;
 			terminalDigest: string;
 			requestDigest: string;
 	  })
@@ -726,7 +798,7 @@ export type AgentGraphSemanticCommand =
 			agentId: AgentId;
 			cleanupRequestId: CommandId;
 			requestDigest: string;
-			receipt: AgentWorkspaceReceiptRef;
+			receipt: AgentWorkspaceReleaseReceiptRef;
 	  })
 	| (AgentGraphCommandBase & {
 			type: "agent.budget_settled";

@@ -35,7 +35,7 @@ import type {
 	WorktreeFileSystemPort,
 } from "./ports.ts";
 import { WorktreeRegistry } from "./registry.ts";
-import type { WorktreeRecord } from "./types.ts";
+import type { WorktreeRecord, WorktreeRegistryEntry } from "./types.ts";
 
 interface LoadedWorkspaceCheckpoint {
 	composite: CompositeCheckpoint;
@@ -186,6 +186,29 @@ export class ArtifactWorkspaceCheckpoint implements WorkspaceCheckpointPort {
 		this.#checkpointArtifacts = options.checkpointArtifacts;
 		this.#effects = options.effects;
 		this.#clock = options.clock ?? (() => new Date());
+	}
+
+	async #appendProjection(
+		operation: WorktreeRegistryEntry["operation"],
+		expectedCurrent: WorktreeRecord,
+		next: WorktreeRecord,
+	): Promise<ArtifactResult<void>> {
+		const appended = await this.#registry.appendIfCurrent(
+			operation,
+			next,
+			canonicalDigest(expectedCurrent),
+		);
+		const readBack = await this.#registry.get(next.workspaceId);
+		if (!readBack.ok) {
+			return failure("durable_write_failed", readBack.error.message, readBack.error.retryable);
+		}
+		if (readBack.value && canonicalDigest(readBack.value) === canonicalDigest(next)) {
+			return { ok: true, value: undefined };
+		}
+		if (!appended.ok) {
+			return failure("durable_write_failed", appended.error.message, appended.error.retryable);
+		}
+		return failure("durable_write_failed", "workspace registry projection changed before exact read-back", true);
 	}
 
 	async #readExact(reference: ArtifactRef, envelope: WorkspaceExecutionEnvelope): Promise<ArtifactResult<ArtifactReadResult>> {
@@ -474,13 +497,14 @@ export class ArtifactWorkspaceCheckpoint implements WorkspaceCheckpointPort {
 		if (!workspace.ok) return workspace;
 		const restored = await this.#restore(workspace.value, loaded.value);
 		if (!restored.ok) return restored;
-		const persisted = await this.#registry.append("upsert", {
+		const rewoundRecord: WorktreeRecord = {
 			...registered.value.record,
 			headCommit: loaded.value.manifest.headCommit,
 			lastCheckpoint: loaded.value.composite.workspace,
 			lastAccessedAt: this.#clock().toISOString(),
-		});
-		if (!persisted.ok) return failure("durable_write_failed", "rewound workspace registry state is not durable", true);
+		};
+		const persisted = await this.#appendProjection("upsert", registered.value.record, rewoundRecord);
+		if (!persisted.ok) return persisted;
 		const body = {
 			authorityId: request.checkpoint.authorityId,
 			tenantId: request.checkpoint.tenantId,
@@ -533,11 +557,22 @@ export class ArtifactWorkspaceCheckpoint implements WorkspaceCheckpointPort {
 				const stillRegistered = await this.#git.isRegistered(registered.value.record.sourceRepo, registered.value.record.worktreePath);
 				if (!stillRegistered.ok) return failure("durable_write_failed", "workspace Git registration is unavailable", true);
 				if (stillRegistered.value) return failure("corrupted_metadata", "missing worktree path remains registered in Git");
-				const removedLease = await this.#leases.remove(request.envelope.workspaceId, request.expectedLeaseRevision);
-				if (removedLease === "conflict") return failure("fenced", "workspace cleanup lease changed during reconciliation");
+				const currentLease = await this.#leases.read(request.envelope.workspaceId);
+				if (!currentLease) return failure("fenced", "workspace cleanup lease disappeared during reconciliation");
+				const removedLease = await this.#leases.remove(
+					request.envelope.workspaceId,
+					request.expectedLeaseRevision,
+					canonicalDigest(currentLease),
+				);
+				if (removedLease !== "applied") return failure("fenced", "workspace cleanup lease changed during reconciliation");
 				const { lease: _lease, ...withoutLease } = registered.value.record;
-				const tombstone = await this.#registry.append("remove", { ...withoutLease, state: "removed", lastAccessedAt: this.#clock().toISOString() });
-				if (!tombstone.ok) return failure("durable_write_failed", "workspace cleanup tombstone is not durable", true);
+				const tombstoneRecord: WorktreeRecord = {
+					...withoutLease,
+					state: "removed",
+					lastAccessedAt: this.#clock().toISOString(),
+				};
+				const tombstone = await this.#appendProjection("remove", registered.value.record, tombstoneRecord);
+				if (!tombstone.ok) return tombstone;
 				return this.#completeEffect(effect.value.intent, this.#cleanupReceipt(effect.value.intent, request, "completed"));
 			}
 		}
@@ -554,15 +589,23 @@ export class ArtifactWorkspaceCheckpoint implements WorkspaceCheckpointPort {
 		let revoked = await this.#leases.read(request.envelope.workspaceId);
 		if (!registered.value.cleanupResume) {
 			if (!revoked) return failure("fenced", "workspace cleanup lease disappeared");
+			const expectedSecretDigest = canonicalDigest(revoked);
 			revoked = { ...revoked, record: { ...revoked.record, state: "revoked" as const }, lastRenewedAt: this.#clock().toISOString() };
-			if (await this.#leases.compareAndSwap(request.envelope.workspaceId, request.expectedLeaseRevision, revoked) !== "applied") {
+			if (await this.#leases.compareAndSwap(
+				request.envelope.workspaceId,
+				request.expectedLeaseRevision,
+				expectedSecretDigest,
+				revoked,
+			) !== "applied") {
 				return failure("fenced", "workspace cleanup lost its lease CAS");
 			}
 		}
 		if (!revoked || revoked.record.state !== "revoked") return failure("fenced", "workspace cleanup revocation state is invalid");
+		let removingRecord = registered.value.record;
 		if (registered.value.record.state !== "removing") {
-			const intent = await this.#registry.append("upsert", { ...registered.value.record, state: "removing", lease: revoked.record });
-			if (!intent.ok) return failure("durable_write_failed", "workspace cleanup intent is not durable", true);
+			removingRecord = { ...registered.value.record, state: "removing", lease: revoked.record };
+			const intent = await this.#appendProjection("upsert", registered.value.record, removingRecord);
+			if (!intent.ok) return intent;
 		}
 
 		const registeredInGit = await this.#git.isRegistered(registered.value.record.sourceRepo, workspace.value);
@@ -572,11 +615,20 @@ export class ArtifactWorkspaceCheckpoint implements WorkspaceCheckpointPort {
 		if (!removed.ok) return failure("durable_write_failed", "physical worktree cleanup failed", true);
 		const remaining = await this.#filesystem.stat(workspace.value);
 		if (remaining.exists) return failure("durable_write_failed", "Git removed the worktree registration but the path remains", true);
-		const leaseRemoved = await this.#leases.remove(request.envelope.workspaceId, request.expectedLeaseRevision);
-		if (leaseRemoved === "conflict") return failure("fenced", "workspace cleanup lease revision changed after physical removal");
-		const { lease: _lease, ...withoutLease } = registered.value.record;
-		const tombstone = await this.#registry.append("remove", { ...withoutLease, state: "removed", lastAccessedAt: this.#clock().toISOString() });
-		if (!tombstone.ok) return failure("durable_write_failed", "workspace cleanup tombstone is not durable", true);
+		const leaseRemoved = await this.#leases.remove(
+			request.envelope.workspaceId,
+			request.expectedLeaseRevision,
+			canonicalDigest(revoked),
+		);
+		if (leaseRemoved !== "applied") return failure("fenced", "workspace cleanup lease changed after physical removal");
+		const { lease: _lease, ...withoutLease } = removingRecord;
+		const tombstoneRecord: WorktreeRecord = {
+			...withoutLease,
+			state: "removed",
+			lastAccessedAt: this.#clock().toISOString(),
+		};
+		const tombstone = await this.#appendProjection("remove", removingRecord, tombstoneRecord);
+		if (!tombstone.ok) return tombstone;
 		return this.#completeEffect(effect.value.intent, this.#cleanupReceipt(effect.value.intent, request, "completed"));
 	}
 

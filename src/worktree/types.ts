@@ -207,6 +207,19 @@ export interface WorktreeCheckpointResult {
 	receiptId: ReceiptId;
 }
 
+export interface WorktreeReleaseReplayRequest {
+	requestId: CommandId;
+	callerRequestDigest: string;
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	principalId: PrincipalId;
+	sessionId: SessionId;
+	agentId: AgentId;
+	workspaceId: WorkspaceId;
+	leaseId: LeaseId;
+	leaseRevision: number;
+}
+
 export type WorktreeErrorCode =
 	| "invalid_request"
 	| "invalid_scope"

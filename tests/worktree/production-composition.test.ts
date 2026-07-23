@@ -12,6 +12,7 @@ import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts
 import { createSessionEventStreamRef } from "../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import {
+	isWorkspaceServiceResult,
 	workspaceExecutionEnvelopeDigest,
 	type WorkspaceBindRequest,
 } from "../../src/runtime/protocol/v3/workspace.ts";
@@ -23,6 +24,7 @@ import {
 } from "../../src/storage/worktree-production.ts";
 import {
 	FileWorkspaceLeaseMutationPort,
+	FileWorktreeReleaseJournalPort,
 	FileWorktreeRegistryMutationPort,
 	type DurableWorktreeScope,
 } from "../../src/storage/worktree-state-adapter.ts";
@@ -227,6 +229,7 @@ describe("production workspace persistence and composition", () => {
 		expect(await new FileWorkspaceLeaseMutationPort(leasePath, configuredScope).compareAndSwap(
 			initialLease.record.workspaceId,
 			1,
+			canonicalDigest(initialLease),
 			nextLease,
 		)).toBe("applied");
 		expect((await new FileWorkspaceLeaseMutationPort(leasePath, configuredScope).read(initialLease.record.workspaceId))?.record.leaseRevision).toBe(2);
@@ -305,9 +308,9 @@ describe("production workspace persistence and composition", () => {
 		const invocation = toolRequest("production-resume-old", bound.binding.effectiveCwd);
 		const envelope = await oldResolver.resolve(invocation);
 		if (!envelope) throw new Error("managed envelope was not resolved");
-		const released = await first.workspaceService.request({
+		const releaseRequest = {
 			schemaVersion: 1,
-			kind: "release",
+			kind: "release" as const,
 			requestId: createRuntimeId("command", "production-release"),
 			authorityId: request.authorityId,
 			tenantId: request.tenantId,
@@ -317,11 +320,25 @@ describe("production workspace persistence and composition", () => {
 			traceId: request.traceId,
 			envelope,
 			envelopeDigest: workspaceExecutionEnvelopeDigest(envelope),
+			callerRequestDigest: canonicalDigest("production-release"),
+			expectedLeaseId: bound.lease.leaseId,
 			expectedLeaseRevision: envelope.leaseRevision,
+		};
+		const released = await first.workspaceService.request(releaseRequest);
+		expect(released).toMatchObject({
+			kind: "released",
+			receipt: { leaseRevision: 1, requestId: releaseRequest.requestId },
 		});
-		expect(released).toMatchObject({ kind: "released", leaseRevision: 1 });
+		if (released.kind !== "released") throw new Error("workspace release failed");
+		expect(isWorkspaceServiceResult({
+			...released,
+			receipt: { ...released.receipt, receiptDigest: "0".repeat(64) },
+		})).toBe(false);
+		expect((await stat(first.paths.releaseFile)).mode & 0o077).toBe(0);
+		expect(await readFile(first.paths.releaseFile, "utf8")).not.toContain(envelope.fencingToken);
 
 		const reopened = await createProductionWorkspaceComposition(setup.options);
+		expect(await reopened.workspaceService.request(releaseRequest)).toEqual(released);
 		const nextOwner = createRuntimeId("runtime", "production-resume-next");
 		const resumed = await reopened.manager.resume(bound.binding.workspaceId, {
 			authorityId: request.authorityId,
@@ -348,6 +365,20 @@ describe("production workspace persistence and composition", () => {
 			leaseRevision: 2,
 			ownerRuntimeId: nextOwner,
 		});
+
+		await expect(new FileWorktreeReleaseJournalPort(
+			first.paths.releaseFile,
+			scope("production-resume-wrong"),
+		).verify()).rejects.toThrow(/scope/u);
+		await chmod(first.paths.releaseFile, 0o644);
+		await expect(createProductionWorkspaceComposition(setup.options)).rejects.toThrow(/private/u);
+		await chmod(first.paths.releaseFile, 0o600);
+		const rawReleaseJournal = JSON.parse(
+			await readFile(first.paths.releaseFile, "utf8"),
+		) as Record<string, unknown>;
+		rawReleaseJournal.stateDigest = "0".repeat(64);
+		await writeFile(first.paths.releaseFile, JSON.stringify(rawReleaseJournal));
+		await expect(createProductionWorkspaceComposition(setup.options)).rejects.toThrow(/digest/u);
 	});
 
 	it("wires encrypted Artifact checkpoints and a private durable effect journal", async () => {

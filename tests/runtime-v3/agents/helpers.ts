@@ -24,6 +24,7 @@ import type {
 	AgentSupervisorPorts,
 	AgentWorkspacePort,
 	AgentWorkspaceReceiptRef,
+	AgentWorkspaceReleaseReceiptRef,
 	CapabilitySubsetEvaluationRequest,
 	CapabilitySubsetEvaluatorPort,
 	CapabilitySubsetRevalidationRequest,
@@ -103,9 +104,8 @@ export function workspaceReceipt(
 		repositoryId: createRuntimeId("repository", "test"),
 		bindingRevision: 1,
 		bindingDigest: digest("c"),
-		...(kind === "isolated_lease"
-			? { leaseId: createRuntimeId("lease", seed), leaseRevision: 1 }
-			: {}),
+		leaseId: createRuntimeId("lease", seed),
+		leaseRevision: 1,
 		status: kind === "readonly_checkout" ? "readonly" : "active",
 		issuedAt: "2026-07-22T00:00:00.000Z",
 		expiresAt: "2026-07-23T00:00:00.000Z",
@@ -216,7 +216,10 @@ export class FakeWorkspacePort implements AgentWorkspacePort {
 	public releaseError: AgentError | undefined;
 	public throwRelease = false;
 	public releaseExecutions = 0;
-	private readonly released = new Map<string, { requestDigest: string; receipt: AgentWorkspaceReceiptRef }>();
+	private readonly released = new Map<string, {
+		requestDigest: string;
+		receipt: AgentWorkspaceReleaseReceiptRef;
+	}>();
 
 	public allocate(request: Parameters<AgentWorkspacePort["allocate"]>[0]): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
 		this.allocations.push(request);
@@ -247,7 +250,9 @@ export class FakeWorkspacePort implements AgentWorkspacePort {
 		});
 	}
 
-	public release(request: Parameters<AgentWorkspacePort["release"]>[0]): Promise<AgentResult<AgentWorkspaceReceiptRef>> {
+	public release(
+		request: Parameters<AgentWorkspacePort["release"]>[0],
+	): Promise<AgentResult<AgentWorkspaceReleaseReceiptRef>> {
 		this.releases.push(request);
 		if (this.throwRelease) throw new Error("injected test Workspace release throw");
 		const replay = this.released.get(request.requestId);
@@ -262,10 +267,94 @@ export class FakeWorkspacePort implements AgentWorkspacePort {
 			);
 		}
 		if (this.releaseError) return Promise.resolve({ ok: false, error: this.releaseError });
+		if (!request.previousReceipt.leaseId || request.previousReceipt.leaseRevision === undefined) {
+			return Promise.resolve({
+				ok: false,
+				error: {
+					code: "workspace_invalid",
+					message: "test Workspace release lacks lease correlation",
+					retryable: false,
+				},
+			});
+		}
 		this.releaseExecutions += 1;
+		const releasedAt = "2026-07-22T00:00:03.000Z";
+		const receiptId = createRuntimeId(
+			"receipt",
+			`workspace-release-${canonicalDigest(request.requestId).slice(0, 40)}`,
+		);
 		const { receiptDigest: _receiptDigest, ...previous } = request.previousReceipt;
-		const body: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = { ...previous, status: "released" };
-		const receipt = { ...body, receiptDigest: canonicalDigest(body) };
+		const releasedBody: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = {
+			...previous,
+			receiptId,
+			status: "released",
+			issuedAt: releasedAt,
+		};
+		const releasedWorkspaceReceipt = {
+			...releasedBody,
+			receiptDigest: canonicalDigest(releasedBody),
+		};
+		const authorityBody: Omit<
+			AgentWorkspaceReleaseReceiptRef["authorityReceipt"],
+			"receiptDigest"
+		> = {
+			schemaVersion: 1,
+			kind: "workspace_release_receipt",
+			receiptId,
+			requestId: request.requestId,
+			requestDigest: canonicalDigest({
+				requestId: request.requestId,
+				callerRequestDigest: request.requestDigest,
+				workspaceId: request.previousReceipt.workspaceId,
+				leaseId: request.previousReceipt.leaseId,
+				leaseRevision: request.previousReceipt.leaseRevision,
+			}),
+			callerRequestDigest: request.requestDigest,
+			authorityId: createRuntimeId("authority", "test-workspace-release"),
+			tenantId: createRuntimeId("tenant", "test-workspace-release"),
+			principalId: createRuntimeId("principal", "test-workspace-release"),
+			sessionId: request.sessionId,
+			agentId: request.agentId,
+			workspaceId: request.previousReceipt.workspaceId,
+			repositoryId: request.previousReceipt.repositoryId,
+			envelopeDigest: digest("6"),
+			leaseId: request.previousReceipt.leaseId,
+			leaseRevision: request.previousReceipt.leaseRevision,
+			releasedLeaseDigest: canonicalDigest({
+				leaseId: request.previousReceipt.leaseId,
+				leaseRevision: request.previousReceipt.leaseRevision,
+				state: "released",
+			}),
+			retainedRecordDigest: canonicalDigest({
+				workspaceId: request.previousReceipt.workspaceId,
+				state: "retained",
+			}),
+			releasedAt,
+		};
+		const authorityReceipt = {
+			...authorityBody,
+			receiptDigest: canonicalDigest(authorityBody),
+		};
+		const releaseBody: Omit<AgentWorkspaceReleaseReceiptRef, "receiptDigest"> = {
+			schemaVersion: 1,
+			kind: "agent_workspace_release_receipt",
+			receiptId,
+			requestId: request.requestId,
+			requestDigest: request.requestDigest,
+			agentId: request.agentId,
+			sessionId: request.sessionId,
+			workspaceId: request.previousReceipt.workspaceId,
+			repositoryId: request.previousReceipt.repositoryId,
+			previousReceiptId: request.previousReceipt.receiptId,
+			previousReceiptDigest: request.previousReceipt.receiptDigest,
+			bindingDigest: request.previousReceipt.bindingDigest,
+			leaseId: request.previousReceipt.leaseId,
+			leaseRevision: request.previousReceipt.leaseRevision,
+			releasedWorkspaceReceipt,
+			authorityReceipt,
+			releasedAt,
+		};
+		const receipt = { ...releaseBody, receiptDigest: canonicalDigest(releaseBody) };
 		this.released.set(request.requestId, { requestDigest: request.requestDigest, receipt });
 		return Promise.resolve({ ok: true, value: structuredClone(receipt) });
 	}

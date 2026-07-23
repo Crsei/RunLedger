@@ -28,6 +28,10 @@ import {
 	WorkspaceValidationRecordedPayloadSchema,
 } from "./workspace-events.ts";
 import {
+	WorkspaceReleaseReceiptRefSchema,
+	type WorkspaceReleaseReceiptRef,
+} from "./workspace.ts";
+import {
 	DeclassificationReceiptRefSchema,
 	InputSourceRefSchema,
 	type DeclassificationReceiptRef,
@@ -301,6 +305,28 @@ const agentWorkspaceReceipt = exact({
 	expiresAt: Type.Optional(timestamp),
 	receiptDigest: digest,
 });
+const workspaceReleaseAuthorityReceipt =
+	Type.Unsafe<WorkspaceReleaseReceiptRef>(WorkspaceReleaseReceiptRefSchema);
+const agentWorkspaceReleaseReceipt = exact({
+	schemaVersion: Type.Literal(1),
+	kind: Type.Literal("agent_workspace_release_receipt"),
+	receiptId: brandedId("receipt"),
+	requestId: brandedId("command"),
+	requestDigest: digest,
+	agentId: brandedId("agent"),
+	sessionId: brandedId("session"),
+	workspaceId: brandedId("workspace"),
+	repositoryId: brandedId("repository"),
+	previousReceiptId: brandedId("receipt"),
+	previousReceiptDigest: digest,
+	bindingDigest: digest,
+	leaseId: brandedId("lease"),
+	leaseRevision: revision,
+	releasedWorkspaceReceipt: agentWorkspaceReceipt,
+	authorityReceipt: workspaceReleaseAuthorityReceipt,
+	releasedAt: timestamp,
+	receiptDigest: digest,
+});
 const agentExpectedArtifact = exact({
 	kind: artifactKind,
 	mediaType: Type.String({ minLength: 1, maxLength: 256 }),
@@ -391,22 +417,37 @@ const agentCleanupStage = Type.Union([
 	Type.Literal("workspace_release"),
 	Type.Literal("budget_settlement"),
 ]);
-const agentCleanupReceipt = exact({
+const agentCleanupKind = Type.Union([
+	Type.Literal("started"),
+	Type.Literal("not_started"),
+]);
+const agentCleanupReceiptCommon = {
+	schemaVersion: Type.Literal(1),
 	receiptId: brandedId("receipt"),
 	requestId: brandedId("command"),
 	requestDigest: digest,
 	agentId: brandedId("agent"),
 	sessionId: brandedId("session"),
 	terminalDigest: digest,
-	runtimeReleaseReceiptId: brandedId("receipt"),
-	runtimeReleaseReceiptDigest: digest,
 	workspaceReleaseReceiptId: brandedId("receipt"),
 	workspaceReleaseReceiptDigest: digest,
 	budgetSettlementReceiptId: brandedId("receipt"),
 	budgetSettlementReceiptDigest: digest,
 	completedAt: timestamp,
 	receiptDigest: digest,
-});
+} as const;
+const agentCleanupReceipt = Type.Union([
+	exact({
+		...agentCleanupReceiptCommon,
+		kind: Type.Literal("started"),
+		runtimeReleaseReceiptId: brandedId("receipt"),
+		runtimeReleaseReceiptDigest: digest,
+	}),
+	exact({
+		...agentCleanupReceiptCommon,
+		kind: Type.Literal("not_started"),
+	}),
+]);
 const agentDenialReceipt = exact({
 	receiptId: brandedId("receipt"),
 	agentId: brandedId("agent"),
@@ -1865,6 +1906,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 	"agent.cleanup_requested": exact({
 		...agentCommandBase,
 		agentId: brandedId("agent"),
+		kind: agentCleanupKind,
 		terminalDigest: digest,
 		requestDigest: digest,
 	}),
@@ -1879,7 +1921,7 @@ export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = {
 		agentId: brandedId("agent"),
 		cleanupRequestId: brandedId("command"),
 		requestDigest: digest,
-		receipt: agentWorkspaceReceipt,
+		receipt: agentWorkspaceReleaseReceipt,
 	}),
 	"agent.budget_settled": exact({
 		...agentCommandBase,

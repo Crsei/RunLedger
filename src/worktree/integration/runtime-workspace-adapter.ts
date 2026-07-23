@@ -11,11 +11,6 @@ import {
 import { WorktreeManager } from "../manager.ts";
 import type { WorktreeError } from "../types.ts";
 
-interface CachedWorkspaceResult {
-	requestDigest: string;
-	result: WorkspaceServiceResult;
-}
-
 function rejected(request: WorkspaceServiceRequest, error: WorktreeError | { code: string; message: string; retryable: boolean }): WorkspaceServiceResult {
 	return {
 		schemaVersion: 1,
@@ -29,7 +24,8 @@ function rejected(request: WorkspaceServiceRequest, error: WorktreeError | { cod
 
 export class RuntimeWorkspaceServiceAdapter implements WorkspaceServicePort {
 	readonly #manager: WorktreeManager;
-	readonly #cache = new Map<WorkspaceServiceRequest["requestId"], CachedWorkspaceResult>();
+	readonly #requestDigests = new Map<WorkspaceServiceRequest["requestId"], string>();
+	readonly #terminalResults = new Map<WorkspaceServiceRequest["requestId"], WorkspaceServiceResult>();
 
 	public constructor(manager: WorktreeManager) {
 		this.#manager = manager;
@@ -38,10 +34,13 @@ export class RuntimeWorkspaceServiceAdapter implements WorkspaceServicePort {
 	public async request(request: WorkspaceServiceRequest, signal?: AbortSignal): Promise<WorkspaceServiceResult> {
 		if (!isWorkspaceServiceRequest(request)) return rejected(request, { code: "invalid_request", message: "workspace request schema is invalid", retryable: false });
 		const requestDigest = canonicalDigest(request);
-		const cached = this.#cache.get(request.requestId);
-		if (cached) return cached.requestDigest === requestDigest
-			? cached.result
-			: rejected(request, { code: "idempotency_conflict", message: "workspace request id was reused with another payload", retryable: false });
+		const claimedDigest = this.#requestDigests.get(request.requestId);
+		if (claimedDigest !== undefined && claimedDigest !== requestDigest) {
+			return rejected(request, { code: "idempotency_conflict", message: "workspace request id was reused with another payload", retryable: false });
+		}
+		this.#requestDigests.set(request.requestId, requestDigest);
+		const terminal = this.#terminalResults.get(request.requestId);
+		if (terminal) return terminal;
 		let result: WorkspaceServiceResult;
 		switch (request.kind) {
 			case "bind": {
@@ -94,9 +93,10 @@ export class RuntimeWorkspaceServiceAdapter implements WorkspaceServicePort {
 				const released = await this.#manager.release(request);
 				result = released.ok && released.value.record.lease
 					? {
-						schemaVersion: 1, requestId: request.requestId, kind: "released", receiptId: released.value.receiptId,
-						workspaceId: released.value.record.workspaceId, leaseId: released.value.record.lease.leaseId,
-						leaseRevision: released.value.record.lease.leaseRevision,
+						schemaVersion: 1,
+						requestId: request.requestId,
+						kind: "released",
+						receipt: released.value.receipt,
 					}
 					: rejected(request, released.ok
 						? { code: "lease_conflict", message: "released record lacks a lease receipt", retryable: false }
@@ -104,7 +104,9 @@ export class RuntimeWorkspaceServiceAdapter implements WorkspaceServicePort {
 				break;
 			}
 		}
-		this.#cache.set(request.requestId, { requestDigest, result });
+		if (result.kind !== "rejected" || !result.retryable) {
+			this.#terminalResults.set(request.requestId, result);
+		}
 		return result;
 	}
 }

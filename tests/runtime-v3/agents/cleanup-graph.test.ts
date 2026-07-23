@@ -11,24 +11,29 @@ import {
 import { createAgentResidencyReceipt } from "../../../src/runtime/agents/residency.ts";
 import type {
 	AgentBudgetSettlementReceiptRef,
-	AgentCleanupReceiptRef,
 	AgentGraphSemanticCommand,
 	AgentRuntimeReleaseReceiptRef,
+	AgentStartedCleanupReceiptBody,
+	AgentWorkspaceReleaseReceiptRef,
 	AgentWorkspaceReceiptRef,
 } from "../../../src/runtime/agents/types.ts";
 import { DEFAULT_AGENT_GRAPH_LIMITS } from "../../../src/runtime/agents/types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
-import { digest, key, rootRegistration, runtimeFakes, spawnRequest, zeroUsage } from "./helpers.ts";
+import type { WorkspaceReleaseReceiptRef } from "../../../src/runtime/protocol/v3/workspace.ts";
+import { digest, key, rootRegistration, runtimeFakes, spawnRequest, strategy, zeroUsage } from "./helpers.ts";
 
 const NOW = "2026-07-23T01:02:03.000Z";
+const WORKSPACE_RELEASED_AT = "2026-07-23T01:02:04.000Z";
 
 describe("Agent cleanup graph", () => {
 	it("keeps semantic terminal and cleanup terminal separate while enforcing the release order", async () => {
 		const runtime = runtimeFakes();
 		const root = rootRegistration();
 		expect((await runtime.supervisor.registerRoot(root)).ok).toBe(true);
-		const spawned = await runtime.supervisor.spawn(spawnRequest(root.capabilityGrant));
+		const spawned = await runtime.supervisor.spawn(spawnRequest(root.capabilityGrant, {
+			workspaceStrategy: strategy("isolated_lease"),
+		}));
 		if (!spawned.ok) throw new Error(spawned.error.message);
 		const child = spawned.value.node;
 		const usage = zeroUsage();
@@ -95,6 +100,7 @@ describe("Agent cleanup graph", () => {
 			requestId: cleanupRequestId,
 			agentId: child.agentId,
 			sessionId: child.sessionId,
+			kind: "started",
 			terminalDigest: terminal.terminalDigest,
 		});
 		const cleanupRequested: AgentGraphSemanticCommand = {
@@ -103,6 +109,7 @@ describe("Agent cleanup graph", () => {
 			idempotencyKey: key("cleanup-request"),
 			occurredAt: NOW,
 			agentId: child.agentId,
+			kind: "started",
 			terminalDigest: terminal.terminalDigest,
 			requestDigest: cleanupDigest,
 		};
@@ -115,9 +122,11 @@ describe("Agent cleanup graph", () => {
 		const { receiptDigest: _workspaceDigest, ...workspaceBody } = child.workspaceReceipt;
 		const releasedWorkspaceBody: Omit<AgentWorkspaceReceiptRef, "receiptDigest"> = {
 			...workspaceBody,
+			receiptId: createRuntimeId("receipt", "cleanup-workspace-authority-release"),
 			status: "released",
+			issuedAt: WORKSPACE_RELEASED_AT,
 		};
-		const releasedWorkspace = {
+		const releasedWorkspaceReceipt = {
 			...releasedWorkspaceBody,
 			receiptDigest: canonicalDigest(releasedWorkspaceBody),
 		};
@@ -128,11 +137,66 @@ describe("Agent cleanup graph", () => {
 			previousReceipt: child.workspaceReceipt,
 			reason: "failed",
 		});
+		if (!child.workspaceReceipt.leaseId || child.workspaceReceipt.leaseRevision === undefined) {
+			throw new Error("spawned child lacks Workspace lease correlations");
+		}
+		const authorityReceiptBody: Omit<WorkspaceReleaseReceiptRef, "receiptDigest"> = {
+			schemaVersion: 1,
+			kind: "workspace_release_receipt",
+			receiptId: releasedWorkspaceReceipt.receiptId,
+			requestId: workspaceRequestId,
+			requestDigest: canonicalDigest({
+				requestId: workspaceRequestId,
+				envelopeDigest: digest("6"),
+				expectedLeaseRevision: child.workspaceReceipt.leaseRevision,
+			}),
+			callerRequestDigest: workspaceRequestDigest,
+			authorityId: createRuntimeId("authority", "cleanup-workspace-release"),
+			tenantId: createRuntimeId("tenant", "cleanup-workspace-release"),
+			principalId: createRuntimeId("principal", "cleanup-workspace-release"),
+			sessionId: child.sessionId,
+			agentId: child.agentId,
+			workspaceId: child.workspaceReceipt.workspaceId,
+			repositoryId: child.workspaceReceipt.repositoryId,
+			envelopeDigest: digest("6"),
+			leaseId: child.workspaceReceipt.leaseId,
+			leaseRevision: child.workspaceReceipt.leaseRevision,
+			releasedLeaseDigest: digest("7"),
+			retainedRecordDigest: digest("8"),
+			releasedAt: WORKSPACE_RELEASED_AT,
+		};
+		const authorityReceipt = {
+			...authorityReceiptBody,
+			receiptDigest: canonicalDigest(authorityReceiptBody),
+		};
+		const workspaceReleaseBody: Omit<AgentWorkspaceReleaseReceiptRef, "receiptDigest"> = {
+			schemaVersion: 1,
+			kind: "agent_workspace_release_receipt",
+			receiptId: authorityReceipt.receiptId,
+			requestId: workspaceRequestId,
+			requestDigest: workspaceRequestDigest,
+			agentId: child.agentId,
+			sessionId: child.sessionId,
+			workspaceId: child.workspaceReceipt.workspaceId,
+			repositoryId: child.workspaceReceipt.repositoryId,
+			previousReceiptId: child.workspaceReceipt.receiptId,
+			previousReceiptDigest: child.workspaceReceipt.receiptDigest,
+			bindingDigest: child.workspaceReceipt.bindingDigest,
+			leaseId: child.workspaceReceipt.leaseId,
+			leaseRevision: child.workspaceReceipt.leaseRevision,
+			releasedWorkspaceReceipt,
+			authorityReceipt,
+			releasedAt: WORKSPACE_RELEASED_AT,
+		};
+		const releasedWorkspace = {
+			...workspaceReleaseBody,
+			receiptDigest: canonicalDigest(workspaceReleaseBody),
+		};
 		const prematureWorkspace: AgentGraphSemanticCommand = {
 			type: "agent.workspace_released",
 			requestId: workspaceRequestId,
 			idempotencyKey: key("cleanup-workspace-premature"),
-			occurredAt: NOW,
+			occurredAt: WORKSPACE_RELEASED_AT,
 			agentId: child.agentId,
 			cleanupRequestId,
 			requestDigest: workspaceRequestDigest,
@@ -277,10 +341,58 @@ describe("Agent cleanup graph", () => {
 		expect(loaded.value.projection.nodes.get(child.agentId)?.residency?.state).toBe("nonresident");
 		expect(loaded.value.projection.cleanups.get(child.agentId)?.reconciliationRequired).toBeUndefined();
 
+		const mistimedWorkspace: AgentGraphSemanticCommand = {
+			...prematureWorkspace,
+			idempotencyKey: key("cleanup-workspace-mistimed"),
+			occurredAt: NOW,
+		};
+		expect(await runtime.store.commit(root.agentId, loaded.value.revision, mistimedWorkspace)).toMatchObject({
+			ok: false,
+			error: { code: "cleanup_invalid" },
+		});
+
+		const tamperedWorkspace: AgentGraphSemanticCommand = {
+			...prematureWorkspace,
+			idempotencyKey: key("cleanup-workspace-tampered"),
+			receipt: {
+				...releasedWorkspace,
+				authorityReceipt: {
+					...releasedWorkspace.authorityReceipt,
+					retainedRecordDigest: digest("9"),
+				},
+			},
+		};
+		expect(await runtime.store.commit(root.agentId, loaded.value.revision, tamperedWorkspace)).toMatchObject({
+			ok: false,
+			error: { code: "cleanup_invalid" },
+		});
+		const wrongCallerAuthorityBody = {
+			...authorityReceiptBody,
+			callerRequestDigest: digest("4"),
+		};
+		const wrongCallerAuthority = {
+			...wrongCallerAuthorityBody,
+			receiptDigest: canonicalDigest(wrongCallerAuthorityBody),
+		};
+		const wrongCallerReleaseBody = {
+			...workspaceReleaseBody,
+			authorityReceipt: wrongCallerAuthority,
+		};
+		expect(await runtime.store.commit(root.agentId, loaded.value.revision, {
+			...prematureWorkspace,
+			idempotencyKey: key("cleanup-workspace-wrong-caller"),
+			receipt: {
+				...wrongCallerReleaseBody,
+				receiptDigest: canonicalDigest(wrongCallerReleaseBody),
+			},
+		})).toMatchObject({ ok: false, error: { code: "cleanup_invalid" } });
+
 		const workspaceReleased = await runtime.store.commit(root.agentId, loaded.value.revision, prematureWorkspace);
 		expect(workspaceReleased).toMatchObject({ ok: true, value: { status: "committed" } });
 		if (!workspaceReleased.ok || workspaceReleased.value.status === "conflict") return;
 		loaded = { ok: true, value: workspaceReleased.value.head };
+		expect(loaded.value.projection.nodes.get(child.agentId)?.workspaceReceipt).toEqual(releasedWorkspaceReceipt);
+		expect(loaded.value.projection.cleanups.get(child.agentId)?.workspaceRelease?.receipt).toEqual(releasedWorkspace);
 
 		const settledAt = NOW;
 		const budgetRequest = {
@@ -332,8 +444,10 @@ describe("Agent cleanup graph", () => {
 		if (!budgetSettled.ok || budgetSettled.value.status === "conflict") return;
 		loaded = { ok: true, value: budgetSettled.value.head };
 
-		const completedAt = "2026-07-23T01:02:05.000Z";
-		const cleanupReceiptBody: Omit<AgentCleanupReceiptRef, "receiptDigest"> = {
+		const completedAt = WORKSPACE_RELEASED_AT;
+		const cleanupReceiptBody: AgentStartedCleanupReceiptBody = {
+			schemaVersion: 1,
+			kind: "started",
 			receiptId: createRuntimeId("receipt", "cleanup-complete"),
 			requestId: cleanupRequestId,
 			requestDigest: cleanupDigest,
@@ -352,6 +466,20 @@ describe("Agent cleanup graph", () => {
 			...cleanupReceiptBody,
 			receiptDigest: agentCleanupReceiptDigest(cleanupReceiptBody),
 		};
+		const earlyCleanupReceiptBody = { ...cleanupReceiptBody, completedAt: NOW };
+		const earlyCleanupReceipt = {
+			...earlyCleanupReceiptBody,
+			receiptDigest: agentCleanupReceiptDigest(earlyCleanupReceiptBody),
+		};
+		expect(await runtime.store.commit(root.agentId, loaded.value.revision, {
+			type: "agent.cleanup_completed",
+			requestId: createRuntimeId("command", "cleanup-completed-too-early"),
+			idempotencyKey: key("cleanup-completed-too-early"),
+			occurredAt: NOW,
+			agentId: child.agentId,
+			cleanupRequestId,
+			receipt: earlyCleanupReceipt,
+		})).toMatchObject({ ok: false, error: { code: "cleanup_invalid" } });
 		const cleanupCompleted = await runtime.store.commit(root.agentId, loaded.value.revision, {
 			type: "agent.cleanup_completed",
 			requestId: createRuntimeId("command", "cleanup-completed-event"),
@@ -367,7 +495,7 @@ describe("Agent cleanup graph", () => {
 		expect(final.nodes.get(child.agentId)).toMatchObject({
 			state: "failed",
 			residency: { state: "nonresident" },
-			workspaceReceipt: { status: "released" },
+			workspaceReceipt: releasedWorkspaceReceipt,
 			terminal: { outcome: "failed", terminalDigest: terminal.terminalDigest },
 		});
 		expect(final.cleanups.get(child.agentId)?.completionReceipt).toEqual(cleanupReceipt);

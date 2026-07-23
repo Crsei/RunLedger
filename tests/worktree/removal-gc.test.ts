@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
 import { createSessionEventStreamRef } from "../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import { workspaceExecutionEnvelopeDigest, type WorkspaceExecutionEnvelope } from "../../src/runtime/protocol/v3/workspace.ts";
@@ -50,7 +51,9 @@ async function checkpointAndRelease(setupValue: Awaited<ReturnType<typeof setup>
 		schemaVersion: 1, kind: "release", requestId: createRuntimeId("command", `release-${request.sessionId.split("_").at(-1)}`),
 		authorityId: request.authorityId, tenantId: request.tenantId, principalId: request.principalId, sessionId: request.sessionId,
 		agentId: execution.agentId, traceId: execution.traceId, envelope: execution, envelopeDigest: workspaceExecutionEnvelopeDigest(execution),
-		expectedLeaseRevision: 1, checkpoint: checkpoint.value.checkpoint,
+		callerRequestDigest: canonicalDigest({ kind: "removal_gc_release", workspaceId: execution.workspaceId }),
+		expectedLeaseId: setupValue.created.lease.leaseId, expectedLeaseRevision: 1,
+		checkpoint: checkpoint.value.checkpoint,
 	});
 	if (!released.ok) throw new Error(released.error.message);
 	return checkpoint.value.checkpoint;

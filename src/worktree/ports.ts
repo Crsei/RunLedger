@@ -13,14 +13,27 @@ import type {
 } from "../runtime/artifacts/types.ts";
 import type { ArtifactReconciliationReport } from "../runtime/artifacts/cas-store.ts";
 import type {
+	AgentId,
 	ApprovalId,
 	ArtifactId,
+	AuthorityId,
 	CheckpointId,
 	CommandId,
+	LeaseId,
+	PrincipalId,
+	ReceiptId,
+	RepositoryId,
 	RuntimeInstanceId,
+	SessionId,
+	TenantId,
 	WorkspaceId,
 } from "../runtime/protocol/v3/ids.ts";
 import type { EventCursor } from "../runtime/protocol/v3/events.ts";
+import type {
+	WorkspaceCheckpointDescriptor,
+	WorkspaceLeaseRef,
+	WorkspaceReleaseReceiptRef,
+} from "../runtime/protocol/v3/workspace.ts";
 import type { WorktreeRecord, WorktreeRegistryEntry, WorktreeRemoveRequest, WorktreeResult } from "./types.ts";
 
 export interface WorktreePathStats {
@@ -73,8 +86,63 @@ export interface WorkspaceLeaseSecret {
 export interface WorkspaceLeaseMutationPort {
 	read(workspaceId: WorkspaceId): Promise<WorkspaceLeaseSecret | undefined>;
 	create(secret: WorkspaceLeaseSecret): Promise<"applied" | "conflict">;
-	compareAndSwap(workspaceId: WorkspaceId, expectedRevision: number, next: WorkspaceLeaseSecret): Promise<"applied" | "conflict">;
-	remove(workspaceId: WorkspaceId, expectedRevision: number): Promise<"applied" | "conflict" | "not_found">;
+	compareAndSwap(
+		workspaceId: WorkspaceId,
+		expectedRevision: number,
+		expectedSecretDigest: string,
+		next: WorkspaceLeaseSecret,
+	): Promise<"applied" | "conflict">;
+	remove(
+		workspaceId: WorkspaceId,
+		expectedRevision: number,
+		expectedSecretDigest: string,
+	): Promise<"applied" | "conflict" | "not_found">;
+}
+
+export interface WorktreeReleaseIntent {
+	schemaVersion: 1;
+	kind: "worktree_release_intent";
+	operationId: CommandId;
+	requestId: CommandId;
+	requestDigest: string;
+	callerRequestDigest: string;
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	principalId: PrincipalId;
+	sessionId: SessionId;
+	agentId: AgentId;
+	workspaceId: WorkspaceId;
+	repositoryId: RepositoryId;
+	envelopeDigest: string;
+	leaseId: LeaseId;
+	leaseRevision: number;
+	releasedAt: string;
+	releasedLease: WorkspaceLeaseRef;
+	releasedLeaseDigest: string;
+	retainedRecord: WorktreeRecord;
+	retainedRecordDigest: string;
+	receiptId: ReceiptId;
+	checkpoint?: WorkspaceCheckpointDescriptor;
+	intentDigest: string;
+}
+
+export interface WorktreeReleaseJournalRecord {
+	schemaVersion: 1;
+	kind: "worktree_release_journal_record";
+	intent: WorktreeReleaseIntent;
+	receipt?: WorkspaceReleaseReceiptRef;
+	recordDigest: string;
+}
+
+/** 同一个 operationId 只能绑定一个 requestDigest；complete 也必须 CAS 校验。 */
+export interface WorktreeReleaseJournalPort {
+	read(operationId: CommandId): Promise<WorktreeReleaseJournalRecord | undefined>;
+	begin(record: WorktreeReleaseJournalRecord): Promise<"applied" | "replay" | "conflict">;
+	complete(
+		operationId: CommandId,
+		expectedRequestDigest: string,
+		record: WorktreeReleaseJournalRecord,
+	): Promise<"applied" | "replay" | "conflict">;
 }
 
 export interface WorktreeTokenPort {
