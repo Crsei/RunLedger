@@ -1,7 +1,7 @@
 # Governed Agent Harness Runtime 剩余事项与取证问题
 
 > 文档状态:open issues / handoff ledger,不是第二份实施计划或完成状态真源
-> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00；Approval active dependency 复核:2026-07-23T06:32:57+08:00；child launcher gate 复核:2026-07-23T07:09:46+08:00；active-parent composition 复核:2026-07-23T07:58:47+08:00；child terminal cleanup 复核:2026-07-23T10:23:15+08:00；cancel evidence 复核:2026-07-23T11:18:41+08:00；durable Workspace release 复核:2026-07-23T12:55:47+08:00；child runtime authority sidecar 复核:2026-07-23T14:07:08+08:00；pre-resident authority integration 复核:2026-07-23T18:47:00+08:00
+> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00；Approval active dependency 复核:2026-07-23T06:32:57+08:00；child launcher gate 复核:2026-07-23T07:09:46+08:00；active-parent composition 复核:2026-07-23T07:58:47+08:00；child terminal cleanup 复核:2026-07-23T10:23:15+08:00；cancel evidence 复核:2026-07-23T11:18:41+08:00；durable Workspace release 复核:2026-07-23T12:55:47+08:00；child runtime authority sidecar 复核:2026-07-23T14:07:08+08:00；pre-resident authority integration 复核:2026-07-23T18:47:00+08:00；post-graph child execution 复核:2026-07-23T20:12:26+08:00
 > 目标 worktree:`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-governed-runtime`
 > 分支:`worktree/governed-agent-harness-runtime`
 > 基线 commit:`65f905452195e034c99fa5ac560a7e23a822f052`
@@ -17,6 +17,9 @@
 > durable Workspace release authority commit:`10f29082e7057698747757fedf287cc3db3ca269`
 > child runtime authority sidecar commit:`eea7b67b58da05d9687c9d5cf4e3a2da688c5793`
 > child runtime authority integration commit:`93d9226d817b4a24873252c542944aebeaa9b1a7`
+> child operation budget commit:`754b9033a96d48d2cfa2b627cc89411b7638092b`
+> headless child prepare/activate commit:`bb533d32aed1eeaf491b6b0f4763bb11a6c14070`
+> post-graph child execution/E2E commit:`e741c884cc19a7eac2dc70747b06004db1540888`
 > 权威计划:[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)
 
 本文件只记录本轮参考审查、计划审计和实现 worktree 检查中遇到的问题、未完成项与恢复顺序。任何条目都不能因为“已有文件”“定向测试曾通过”或“代码量较大”而视为完成。完成状态必须回写到同步后的 `04`，并附目标分支 commit、定向测试、完整门禁和专项联合证据。
@@ -25,7 +28,7 @@
 
 ### 1.1 权威计划已去分叉
 
-2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4`、`f3e2ba6`、`7e6f771`、`b175b84`、`33b58ed`、`c0ade82` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
+2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4`、`f3e2ba6`、`7e6f771`、`b175b84`、`33b58ed`、`c0ade82`、`10f2908`、`eea7b67`、`93d9226`、`754b903`、`bb533d3`、`e741c88` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
 
 - [x] 以 2124 行版本作为唯一 canonical 文件，保留新增证据规则、I0-I7 串行账本、兼容矩阵和 13 类 mutation restart 要求。
 - [x] 没有迁移旧版 147 个无完整证据的勾选；当前 `04` 有 343 个真实未勾选任务，唯一 `[x]` 位于 §9.2 模板示例，不是完成声明。
@@ -407,6 +410,52 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - 最终审查确认当前checkpoint无已证实提交阻断，同时留下三个不能隐藏的策略/协议缺口：resume resolve-to-CAS fence freshness、manager composition+cleanup双失败的structured partial evidence、以及local close+quarantine后not-started cleanup的正式授权条件。它们已写入§1.14和§5第一顺位。
 - 本轮没有因为用户确认auth已有`deepseek-v4-pro`就提前运行governed child E2E：真实child controller/model/tool/Gateway/Sandbox仍未接通。后续接通后可通过正常`AuthStorage`路径使用现有credential，但不得读取、打印、复制或提交API key。
 
+### 1.16 Post-graph process-resident child execution 与 DeepSeek E2E 验证
+
+`754b9033a96d48d2cfa2b627cc89411b7638092b`、`bb533d32aed1eeaf491b6b0f4763bb11a6c14070`和`e741c884cc19a7eac2dc70747b06004db1540888`已落入目标分支。本节替代§1.14/§1.15中“没有真实child loop”“没有运行governed DeepSeek E2E”的当前态断言；旧段落仍保留为各自checkpoint的历史证据。它只关闭进程驻留 executable seam与happy-path E2E，不关闭production入口、cold activation truth、真实Gateway/Sandbox/Verification或Runtime-M2。
+
+| 命令/阶段 | 结果 | 说明 |
+|---|---|---|
+| child operation budget | PASS | `754b903`；1 file / 8 tests，child provider/tool operation exact usage聚合，父reservation不下沉双计 |
+| headless runtime host | PASS | `bb533d3`；1 file / 6 tests，prepare无provider/tool side effect，activate后才prompt，completion/usage/cursor不确定时fail closed |
+| post-graph targeted | PASS | 5 files / 80 tests；post-commit ordering、running commit failure零activation、exact/changed/transient retry、completion uncertain、release/drain race与composition接线 |
+| deterministic governed E2E | PASS | `tests/e2e/governed-child-runtime.test.ts`，1/1；V3 parent/child、production Workspace/composition、File authority、2 turns、1 tool、1 Artifact、test attestation、exact cursor/usage/terminal/cleanup/replay |
+| live DeepSeek E2E | PASS | `RUNLEDGER_LIVE_E2E=1 npx vitest run tests/e2e/live-deepseek-child-runtime.test.ts --no-file-parallelism`，1 file / 1 test；test 5.789s、总11.02s，`deepseek/deepseek-v4-pro`、256 max tokens、2 provider dispatch、1 tool、1 Artifact、1 test verification、completed与三阶段cleanup |
+| `npm run check` | PASS | TypeScript、runtime boundary、execution boundary全部通过 |
+| `npm test` | PASS | 261 files / 1701 tests passed；live 1 test默认skip，因此总发现262 files / 1702 tests |
+| `npm run build` | PASS | NodeNext production build成功 |
+| `npm run test:harness-regression` | PASS | 11 files / 63 tests；pretest再次完整执行`npm run check` |
+| pi-ai fixed snapshot audit | PASS | `pi@3f1762c...`，164/164 upstream files、72 catalog files |
+| `git diff --check` | PASS | code staged/commit后与文档回写均无whitespace error |
+
+已闭合的窄边界:
+
+- `ChildOperationBudget`对每个provider/tool operation做reserve/commit/refund并聚合exact usage；Supervisor只在semantic terminal后结算父child reservation一次。
+- `runtimeFactory.prepare()`只构造未激活host；launcher完成durable genesis、resident authority和本地注册后返回，Supervisor再等parent graph的`launch_recorded`与`running`都durable，读取exact graph revision/cursor/node digest后activate。running commit失败时provider/tool为零调用。
+- activation request/receipt绑定launch/residency、parent graph revision/cursor、child node digest；同进程exact retry去重、changed evidence冲突、transient adapter failure可重试。
+- completion只接受exact usage、唯一terminal turn IDs与匹配durable replay的final cursor，顺序固定为`turn_recorded* -> cursor_advanced -> semantic terminal -> runtime -> Workspace -> Budget`；completion uncertain不调用`finish()`或任何cleanup adapter。
+- release先interrupt/drain host，再停止isolated commands与manager；forced close同样先drain，避免completion coordinator与release互相等待。
+- deterministic E2E通过child Artifact sink保存真实tool output；测试attestor在第二轮放行前显式`reportArtifact`并补记verification usage。live测试只通过`AuthStorage.create() -> builtinModels -> deepseek-v4-pro`内部解析credential；测试代码没有直接读取、复制、透传或输出API key，也没有输出回复正文、headers、credential或raw provider cause。
+
+查找、实现与验证中遇到的问题:
+
+- `e741c88`的最终targeted/full/live证据完整，但当前continuation没有保留可信的原始RED console transcript；因此文档没有补造RED数量。`754b903`与`bb533d3`只记录其各自最终8/8与6/6。
+- post-commit activation首次审查发现Supervisor会永久缓存一次retryable activation failure，导致相同durable head无法恢复；新增transient failure回归并只在success时保留cache后，`post-commit-child-activation.test.ts`为5/5。
+- E2E最初helper暴露`apiKey/env`透传入口，虽然未读取credential，仍扩大了live测试误用面；最终删除该入口，live StreamFn只调用`Models.streamSimple()`，credential留在`Models/AuthStorage`内部。
+- E2E初稿只靠模型自然在第二轮停止，预算仍允许4 turns/8 tools；最终同时把child budget收窄为2 turns/1 tool，并加`shouldStopAfterTurn(({ turn }) => turn >= 2)`、110s abort、115s wait与120s Vitest timeout。
+- 成功`completed`必须满足非空Artifact contract；当前production host没有Artifact report/Verification port。测试用child-scoped Artifact sink保存tool output，再由明确标注的test attestor手工report并记verification usage。该替身只证明lifecycle协调，不代表production Artifact/Verification已闭合。
+- 最终credential-pattern scan的第一次复杂shell regex因引号嵌套在执行前语法失败，没有形成安全证据；改为两个固定、只输出命中文件名的模式后重跑，12条code/test路径无命中。失败命令没有读取credential文件或修改工作树。
+
+仍未闭合的边界:
+
+- activation receipt与completion Promise仍只在进程内；parent graph和authority sidecar没有durable activation truth，running后crash不能判断provider/tool是否已经开始。
+- child provider/model选择、objective/prompt和pending run没有持久化，无法cold reconstruct或跨重启继续。
+- `requestedCapabilities`已绑定launch request不等于`resourceId/manifest -> tool registry`实际enforcement；child-scoped continuous mutation gate、真实Capability Gateway、Sandbox、Verification和process-tree isolation没有闭合。
+- process-resident final cursor已精确取得，但cold partial仍不能恢复active orphan/writer/stop/final cursor；resume freshness、structured partial-create、local-close policy、`stop_uncertain`、kill-after-effect、idle/replacement继续未完成。
+- Artifact reporting/test attestation不是production Artifact/Verification；partial Artifact、handoff/merge、root cost迟到对账仍缺。
+- CLI/daemon/factory没有默认注入production runtime factory，也没有machine-verifiable multi-agent feature/required-adapter row；production multi-agent继续unsupported。
+- Phase 9、Runtime-M2、全维BudgetGuard、完整Multi-Agent限制和Harness Regression最终项均保持未完成。
+
 ## 2. 四个参考仓库审查中遇到的边界问题
 
 四个本地 checkout 与计划记录的 commit 一致；本轮没有 fetch/pull，因此这些结论只针对固定快照，不代表远端最新状态。每次真正移植前仍需重新核验 commit、许可证、NOTICE、行为测试和 RunLedger 本地约束。
@@ -497,9 +546,9 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ## 4. 当前明确未完成的功能边界
 
-### P0:Production state root、持续门禁、interactive child composition 与进程驻留 cleanup seam 已接线，真实 child loop/cold reconciliation/daemon activation 仍未闭合
+### P0:Production state root、持续门禁与进程驻留 child execution seam 已接线，cold reconciliation/真实安全适配/入口 activation 仍未闭合
 
-`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 关闭 Workspace lease 的持续 mutation gate；`f3e2ba6` 再关闭 production Tool Gateway 的 interactive Approval active dependency 与 durable start fence；`7e6f771` 关闭 `ProductionChildSessionLauncher` class seam 的 `child_spawn` gate；`b175b84` 接通 active-parent production interactive `AgentSupervisor` composition、root adoption/revalidation 与 child owner correlation；`33b58ed` 接通同一进程内 semantic terminal到runtime/Workspace/Budget aggregate cleanup，并加固active-child close、writer lease和isolated-command/release race；`c0ade82` 只把parent `AgentSupervisor.cancel()`的reason evidence绑定到durable terminal identity与restart replay；`10f2908`进一步关闭Workspace release authority evidence/cold read-back与`launch_rejected` not-started aggregate；`eea7b67`建立child runtime authority sidecar foundation；`93d9226`把该store接入launcher，完成pre-resident linearization、released-only cold replay和cold partial fail-closed。真实 child controller/model/tool runtime、active/partial takeover与`stop_uncertain` resolution、CLI/daemon/factory activation、replacement/idle、pending prompt重启恢复与extension hook journal仍不闭合。
+`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 关闭 Workspace lease 的持续 mutation gate；`f3e2ba6` 再关闭 production Tool Gateway 的 interactive Approval active dependency 与 durable start fence；`7e6f771` 关闭 `ProductionChildSessionLauncher` class seam 的 `child_spawn` gate；`b175b84` 接通 active-parent production interactive `AgentSupervisor` composition、root adoption/revalidation 与 child owner correlation；`33b58ed` 接通同一进程内 semantic terminal到runtime/Workspace/Budget aggregate cleanup，并加固active-child close、writer lease和isolated-command/release race；`c0ade82` 只把parent `AgentSupervisor.cancel()`的reason evidence绑定到durable terminal identity与restart replay；`10f2908`进一步关闭Workspace release authority evidence/cold read-back与`launch_rejected` not-started aggregate；`eea7b67`建立child runtime authority sidecar foundation；`93d9226`把该store接入launcher，完成pre-resident linearization、released-only cold replay和cold partial fail-closed；`754b903`、`bb533d3`与`e741c88`再闭合process-resident child operation usage、prepare/activate分相、post-graph completion coordinator与deterministic/live happy-path E2E。active/partial takeover与`stop_uncertain` resolution、真实child Gateway/Sandbox/Verification、CLI/daemon/factory activation、replacement/idle、pending prompt重启恢复与extension hook journal仍不闭合。
 
 - [x] 既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 统一先经过 `GovernedV3SessionRuntime`；审计未通过时不会进入 controller/model/tool、candidate authority、agent binding 或 child creation。
 - [x] Workspace lease 与 Approval receipt 的 exact digest/revision/expiry/state、partial/unknown completeness、missing/store throw/timeout/abort/畸形 receipt 均 fail closed；非 `allowed` Approval 即使被 adapter 伪报 valid 也只能 paused。
@@ -514,11 +563,15 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - [ ] Approval 全局可操作性仍未闭合：pending prompt/waiter 不能跨重启恢复，system/interactive actor 尚无 authority/deployment 与 channel-bound identity proof，自动 Gateway admission deny 缺独立 canonical 审计事件，extension hook 缺 production start journal，公开 revoke 命令与真实活跃期 corruption/kill/TOCTOU 矩阵仍缺失。不能把 Tool Gateway 窄切片写成 Approval 系统整体完成。
 - [x] `ProductionChildSessionLauncher` 的 `child_spawn` seam 已闭合：parent gate 位于 cache/Workspace validation/claim/V3 create 前，deny/throw/abort 与 cache bypass fault 均 fail closed；durable create in-flight 的 abort/close 不注册 child，并尝试关闭 manager/删除 claim，成功进入 explicit recovery、失败返回 cleanup uncertain。证据固定到 `7e6f771`、3 files / 37 targeted tests 与 §1.8。
 - [x] active-parent production interactive composition seam 已闭合：同一 parent manager/gate、root Workspace/Artifact/Budget adapters、private graph store/launcher、source/managed/readonly root revalidation 与 child runtime owner correlation均有 production integration/E2E；证据固定到 `b175b84`、9 files / 55 targeted tests 与 §1.9。该勾选不包含 child Agent loop或CLI/daemon activation；进程驻留 terminal cleanup由下一项独立记账。
-- [ ] 真实 production child lifecycle 与入口 activation 仍缺失：launcher 必须创建 child controller/model/tool governed runtime，CLI/daemon/factory 必须消费同一 composition，并以 machine-verifiable feature/required-adapter row 与联合 E2E证明；在此之前不得 advertise production multi-agent。
+- [x] process-resident executable child seam已闭合：`ChildOperationBudget`、headless prepare/activate、durable running后的activation与completion coordinator、deterministic两轮/单tool/Artifact/terminal/cleanup E2E均有证据；opt-in DeepSeek通过正常AuthStorage路径实跑。证据固定到`754b903`、`bb533d3`、`e741c88`与§1.16；该勾选不包含真实安全adapter或production入口。
+- [ ] production入口activation仍缺失：CLI/daemon/factory尚未默认注入production runtime factory，没有machine-verifiable multi-agent feature/required-adapter row；在此之前不得advertise production multi-agent。
+- [x] post-graph completion窄边界已闭合：exact turn IDs/final cursor/usage按`turn -> cursor -> terminal -> runtime -> Workspace -> Budget`推进，completion uncertain时不调用`finish()`或cleanup；activation transient retry不被永久缓存。
+- [x] deterministic governed-lifecycle E2E已覆盖真实child Agent/tool result/ArtifactRef/terminal/cleanup与parent/child replay；Echo Gateway与attestor是测试替身，不外推为production Gateway/Sandbox/Verification。
+- [x] opt-in DeepSeek E2E已通过`AuthStorage -> builtinModels -> deepseek-v4-pro`，最多2 turns/1 tool/256 max tokens；它只是一条live provider/process-resident lifecycle证据，不替代fault/security/restart测试。
 - [x] process-resident semantic/cleanup terminal seam已闭合：`finish()`/terminal interrupt/cancel durable写semantic terminal与cleanup intent，按runtime release -> Workspace release -> budget settlement提交typed receipt和aggregate `cleanup_completed`；前一阶段不确定时后续adapter零调用。exact schema/replay、missing usage、append fault、active-child close、V3 TTL takeover与process drain证据固定到`33b58ed`、19 files / 139 targeted tests及§1.10。该勾选不包含process crash后的external-effect证明。
 - [x] child runtime authority sidecar store foundation已具备exact`claimed -> creating -> provisional -> resident -> release_pending -> released | quarantined`状态、self digest、immutable identity、revision+recordDigest CAS、private atomic File store与released-only cold classification；foundation证据固定到`eea7b67`与§1.13，后续schema/launcher集成以`93d9226`为当前真值。
 - [x] authority store已接入launcher与parent cleanup窄边界：random creator token、exact claim read-back、create前`creating`、genesis前`provisional`、exact durable sequence-0 genesis、resident/release CAS、released fresh-launcher replay、parent append/flush ack-loss恢复与六类cold partial阻断均有回归；证据固定到`93d9226`、12 files / 161 targeted tests与§1.14。该勾选不包含partial takeover、`stop_uncertain`、真实child loop、完整Sandbox或production feature activation。
-- [ ] authority recovery仍未闭合：resume fence在resolve与sidecar CAS之间存在freshness窄窗；manager create+cleanup双失败没有结构化partial evidence；local close+quarantine是否足以允许not-started Workspace/Budget cleanup尚无正式策略。cold partial仍只quarantine/fail closed，不恢复active orphan、writer、final cursor或operator resolution。
+- [ ] authority recovery仍未闭合：process-resident completion已取得exact final cursor，但resume fence在resolve与sidecar CAS之间存在freshness窄窗；manager create+cleanup双失败没有结构化partial evidence；local close+quarantine是否足以允许not-started Workspace/Budget cleanup尚无正式策略。cold partial仍只quarantine/fail closed，不恢复active orphan、writer、stop/final cursor或operator resolution。
 - [ ] child runtime authority File store尚未关闭ancestor/root/closed-temp pathname swap：需dirfd/逐ancestor identity与`openat`/`linkat`/`renameat`或等价机制；当前leaf open后的dev/ino/mode/size/nlink复核、0700/0600与`O_NOFOLLOW`不能替代该证明。
 - [x] `launch_rejected` 的not-started Budget/Workspace compensation已进入独立`not_started` cleanup aggregate，按Workspace(`spawn_aborted`) -> Budget(`not_started`)完成，类型/schema/event禁止runtime release，JSONL replay/reconcile与uncertain stage均有回归。证据固定到`10f2908`、9 files / 85 targeted tests与§1.12；该勾选不包含authority-owned launch claim或runtime cold reconciliation。
 - [x] parent `AgentSupervisor.cancel()` 的`reasonEvidenceDigest`已进入semantic terminal request/terminal digest、exact event与restart replay，cleanup通过terminal digest关联；same evidence幂等、changed evidence冲突。证据固定到`c0ade82`、5 files / 60 targeted tests与§1.11。该勾选不包含direct finish、terminal interrupt、legacy optional terminal或reason evidence authority/provenance。
@@ -529,7 +582,7 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - [ ] injected-auditor tests 已覆盖 timeout/throw/partial/abort，真实 file-store startup E2E 已覆盖 exact/stale/revoked/expired/missing，持续 gate deterministic tests 已覆盖 Workspace/Approval mutation 与 latch；仍缺真实 file-store 活跃期文件损坏、root/store TOCTOU、进程 kill 与 restart reconciliation 的 CLI/daemon 联合矩阵，以及 child controller/model/tool/cleanup 的 same-gate/故障断言。
 - [x] `src/cli/main.ts`、governed open 与 factory start/resume/fork 不再吞掉已知 close/discard failure；多资源 cleanup 会等待并展开全部错误，durable start/fork ownership transfer 前失败会返回不可重试 uncertain effect 与 session correlation，fork parent close 失败不会遗留 active child runtime。
 - [ ] 全仓 cleanup 尚未闭合：`src/daemon/local-v3-daemon.ts` 在 runtime-generation/shutdown-protocol 早期失败时仍吞 `authorityRuntime.close()` 错误，`src/storage/authority-runtime-manager.ts` open 失败仍吞 event-store close 错误。后续必须保留 primary + cleanup failure，并增加故障注入。
-- [ ] child cleanup现已具备Workspace authority cold read-back与not-started aggregate，但全仓其他cleanup owner尚未统一，且没有覆盖runtime kill-after-external-side-effect、process restart后orphan writer/lease/child的自动reconciliation；因此仍不能宣称所有资源均有cold durable terminal cleanup outcome。
+- [ ] child cleanup现已具备Workspace authority cold read-back、not-started aggregate和process-resident host drain，但activation receipt/completion仍process-local；全仓其他cleanup owner尚未统一，且没有覆盖runtime kill-after-external-side-effect、process restart后orphan writer/lease/child的自动reconciliation，因此仍不能宣称所有资源均有cold durable terminal cleanup outcome。
 
 ### P0:Verification/Compaction 只有模块，不是生产生命周期
 
@@ -559,7 +612,8 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - [x] 本地 production interactive `AgentSupervisor` composition seam 已存在，并复用 root BudgetGuard、Workspace/capability/denial/merge adapters 与同一 parent gate；该窄边界证据固定到 `b175b84`。
 - [x] started child 的process-resident terminal cleanup saga已按runtime -> Workspace -> Budget顺序提交typed receipt和aggregate completion，cancel/terminal interrupt/active-child close/process drain均走同一fail-closed边界；证据固定到`33b58ed`与§1.10。
 - [x] `launch_rejected` not-started aggregate与Workspace authority receipt/cold replay已按`10f2908`及§1.12闭合；该窄勾选不激活任何production feature。
-- [ ] root/per-agent budget默认策略、真实child Agent loop、cold partial runtime recovery、`stop_uncertain` resolution与residency eviction/reload条件仍未形成可advertise的完整production lifecycle；released-only runtime receipt replay不等于active/orphan takeover。
+- [x] 本地process-resident child loop、provider/tool operation usage聚合与父reservation单次结算已按`754b903`、`bb533d3`、`e741c88`及§1.16闭合；deterministic/live happy path均通过。
+- [ ] root/per-agent budget默认策略、迟到provider成本reconciliation、cold partial runtime recovery、`stop_uncertain` resolution与residency eviction/reload条件仍未形成可advertise的完整production lifecycle；released-only runtime receipt replay不等于active/orphan takeover。
 - [ ] remote executor/agent handoff 的 terminal idempotency、attestation、uncertain side-effect reconciliation 和 restart replay 尚未闭合。
 - [ ] same-session hot replacement 缺 standby candidate、lease/fencing promotion、commit-before-old-drain 和 commit 后失败终态的完整实现/故障注入。
 - [ ] multi-agent partial Artifact、merge conflict、child workspace/capability subset 与 root cost reconciliation 仍需联合 E2E；POSIX process group与Windows fail-closed fixture也不能替代真实Sandbox/cgroup/PID namespace/Job Object联合证明。
@@ -572,8 +626,8 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 
 ## 5. 建议恢复顺序
 
-1. 在`93d9226`已完成的claim/create/provisional/resident/released-only replay上，先关闭resume resolve-to-CAS freshness窄窗、为`V3SessionManager.create()`提供结构化partial-create/cleanup evidence，并正式定义local close+quarantine与not-started cleanup的关系；随后实现cold partial writer/stop/final-cursor/operator reconciliation、`stop_uncertain` resolution与runtime kill-after-effect/restart fault E2E。不得把released-only replay、launcher进程内map、manager级Workspace journal或V3 TTL takeover冒充整个child cleanup exactly-once。
-2. 为 launcher 创建真实 child controller/model/tool governed runtime，所有 model/tool/resume/cancel/isolated-command 路径继续复用 parent gate 与 child Gateway/Sandbox；补真实 child Agent loop、Artifact/handoff/merge E2E，而不是测试手工写文件。process tree必须由Sandbox/cgroup/PID namespace或Windows Job Object形成authority evidence，并把非`ESRCH` group-kill failure保持uncertain/quarantine。
+1. 在`93d9226`与`e741c88`已完成的claim/create/provisional/resident/released-only replay和process-resident final cursor上，先持久化activation receipt与immutable child model selection，关闭resume resolve-to-CAS freshness窄窗，为`V3SessionManager.create()`提供结构化partial-create/cleanup evidence，并正式定义local close+quarantine与not-started cleanup的关系；随后实现cold partial writer/stop/final-cursor/operator reconciliation、`stop_uncertain` resolution与runtime kill-after-effect/restart fault E2E。不得把process-local activation/completion、released-only replay、launcher map、Workspace journal或V3 TTL takeover冒充整个child cleanup exactly-once。
+2. 把`requestedCapabilities`的`resourceId/manifest`闭合到实际tool registry enforcement，所有model/tool/resume/cancel/isolated-command路径复用parent gate与child-scoped continuous mutation gate，并接入真实Capability Gateway、Sandbox和Verification；再实现production Artifact report/partial/handoff/merge。process tree必须由Sandbox/cgroup/PID namespace或Windows Job Object形成authority evidence，并把非`ESRCH` group-kill failure保持uncertain/quarantine；不能用当前Echo Gateway/test attestor替身宣称完成。
 3. 激活 CLI/daemon/factory composition，增加 machine-verifiable multi-agent feature/required-adapter row；补进程退出后的 cold resume/orphan quarantine、terminal-only cleanup与 kill/restart联合 E2E。在步骤 1–3 全部闭合前保持 production multi-agent unsupported。
 4. 接 idle unload/reload 与 same-session replacement；replacement 必须具备 standby candidate、writer fencing promotion、commit-before-old-drain 和 post-commit failure terminal。
 5. 清除 daemon/authority 剩余吞错 close，并补活跃期 store corruption、root/store TOCTOU、release-journal leaf symlink与真实Git物理remove暂停式并发联合 E2E；child authority File store使用dirfd/逐ancestor identity及`openat`/`linkat`/`renameat`或等价机制关闭ancestor/root/closed-temp swap。
