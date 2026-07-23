@@ -460,25 +460,28 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ### 1.17 Current-HEAD 实现状态复核
 
-本次复核以`81556ac`为准。`e741c88`之后只有文档提交,没有新的代码实现可以把 §4 的未完成项提升为完成。当前 42 个`[x]`与28个`[ ]`的状态保持不变;`[x]`只表示条目写明的 scoped seam,不表示所在 Phase、Runtime-M2 或 production multi-agent 已完成。
+本次复核以`ac54e38`为准。此前以`81556ac`为准的“只有process-resident seam”“没有HTTP/SSE listener/feature row”“CLI/daemon/factory完全未激活”等断言已被W3实现取代;§1.1–§1.16继续作为历史checkpoint保留,不能覆盖本节当前真值。
 
 | 复核项 | 当前结果 |
 |---|---|
 | `npm run check` | PASS；TypeScript、runtime boundary、execution boundary全部通过 |
-| `npm test` | PASS；261 files / 1701 tests，另1个live test默认skip |
+| `npm test` | PASS；277 files / 1790 tests，另1个live test默认skip |
 | `npm run build` | PASS |
+| `npm run test:harness-regression` | PASS；11 files / 63 tests |
+| public-surface/ownership | PASS；3 files / 7 tests，稳定agents/control-plane子路径可消费 |
+| pi-ai fixed snapshot audit | PASS；164/164 upstream files、72 catalog files |
+| 三组冻结门禁 | PASS；PCM 16/95、Extension 12/52、Security/Worktree 21/119 |
 | `git diff --check` | PASS |
-| Agent child targeted | PASS；5 files / 80 tests，覆盖launcher、production composition、headless host、post-commit activation与child budget |
-| deterministic governed child E2E | PASS；1 file / 1 test |
-| public-surface/module-boundaries | PASS；2 files / 4 tests，但consumer只验证`AgentSupervisor`,不验证executable child factory |
 | live DeepSeek | 本轮未联网重跑；仅保留`e741c88`的opt-in PASS,默认suite仍明确skip |
 
 当前实现边界:
 
-- production interactive runtime 可以持有可选`AgentSupervisor`,但高层 production Agent 配置不接受`runtimeFactory`;CLI/controller/daemon没有spawn命令或projection,Control Plane feature/adapter matrix也没有multi-agent/child-runtime row。该 handle 不能解释为production activation。
-- `headless-child-runtime.ts`与`child-operation-budget.ts`未从稳定 agents/integration public surface导出;deterministic/live E2E使用源码深导入的test-owned runtime factory、Echo Gateway与attestor。因此§1.16与§4中的完成项统一解释为internal/test-injected process-resident seam。
-- activation receipt/completion Promise与`stop_uncertain`仍在进程内状态中;parent graph/authority sidecar没有durable activation truth。process group kill对任意group-kill错误仍回退direct PID。这些事实继续支撑cold recovery、operator resolution与完整process-tree authority保持未完成。
-- Draft PR/HumanGate已有schema与纯协调模块,但缺durable repository/production composition;Control Plane OS peer identity/listener、部分turn/approval/artifact/queue入口也仍显式返回`unsupported_feature`。Verification/Compaction已有模块和局部production adapter,仍没有本计划要求的完整prompt-to-EpisodeSeal和overflow-to-CAS生命周期E2E。
+- W3-M2由`203fde6`完成authority v2、durable activation/completion/cold recovery、`stop_uncertain`、public child factory/admission、budget reconcile、Artifact handoff/merge及idle/replacement/fencing;`d545918`已汇入。
+- W3-M3由`0c6d1a1`完成HTTP/SSE listener lifecycle、peer attestor port、bounded transport/subscription、durable generation replacement与轻客户端;`2448385`已汇入。
+- W3-J由`ac54e38`完成schema v2 Agent spawn/cancel/resume/handoff/inspect、canonical claim/terminal replay、production adapter identity与同一Supervisor/graph/authority接线。W3-G只在Runtime-owned范围标记completed。
+- `multi_agent`只有`agent_supervisor`、`child_runtime_factory`及完整production required-adapter evidence全部ready才advertise。默认daemon在真实Gateway/Sandbox/Artifact/resource/verification/Budget或平台peer attestor不齐时继续fail closed,不能用test-only adapter解锁production。
+- Unix peer credential/Windows pipe ACL、真实Gateway/Sandbox/process-tree authority、pending Approval交互恢复、organization/forge/credential及remote/CI仍是external gap;因此Runtime-M2/M3产品声明保持blocked。
+- Draft PR/HumanGate本轮只有versioned contract、durable command correlation和转发port;repository与真实provider仍归W4。Verification/Compaction外围专项缺口也不因W3关闭。
 
 ### 1.18 外围专项冻结
 
@@ -640,10 +643,10 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ### P1:Control Plane transport 与本地身份
 
-- [ ] HTTP/SSE listener 仍未完成生产闭环；必须复用同一 command/query/event schema，而非第二套状态机。
+- [x] Runtime-owned HTTP/SSE listener lifecycle已由`0c6d1a1`闭合；复用同一command/query/event schema、bounded body/input/client buffer、SSE cursor/resync与durable consumer checkpoint。
 - [ ] Unix socket/Windows pipe 的 peer credential/channel binding 与 principal 映射未完成；socket 路径权限或 bearer 自报不能替代身份。
-- [ ] bounded input queue、slow consumer、disconnect/resync、durable consumer checkpoint 和 overload typed error 需要完整 E2E。
-- [ ] 默认 local daemon 因 production adapter matrix 不齐可能不 advertise shutdown/其他 mutation；需要明确 feature row 与真实 adapter receipt，而不是占位启用。
+- [x] bounded input queue、slow-consumer disconnect、disconnect/resync、durable consumer checkpoint与overload typed error已有listener/daemon E2E；缺production attestor时listener不绑定。
+- [x] production feature matrix已有`agent_supervisor`、`child_runtime_factory`与可选`peer_identity_attestor` evidence row；默认local daemon在真实adapter不齐时明确不advertise,不会占位启用。
 
 ### P1:Agent Supervisor、Budget 与远程终态
 
@@ -651,10 +654,10 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - [x] started child 的process-resident terminal cleanup saga已按runtime -> Workspace -> Budget顺序提交typed receipt和aggregate completion，cancel/terminal interrupt/active-child close/process drain均走同一fail-closed边界；证据固定到`33b58ed`与§1.10。
 - [x] `launch_rejected` not-started aggregate与Workspace authority receipt/cold replay已按`10f2908`及§1.12闭合；该窄勾选不激活任何production feature。
 - [x] 本地process-resident child loop、provider/tool operation usage聚合与父reservation单次结算已按`754b903`、`bb533d3`、`e741c88`及§1.16闭合；deterministic/live happy path均通过。
-- [ ] root/per-agent budget默认策略、迟到provider成本reconciliation、cold partial runtime recovery、`stop_uncertain` resolution与residency eviction/reload条件仍未形成可advertise的完整production lifecycle；released-only runtime receipt replay不等于active/orphan takeover。
+- [x] Runtime-owned authority v2、root/per-agent budget与late usage reconciliation、cold partial decision、`stop_uncertain`、residency unload/reload和standby replacement已由`203fde6`闭合；真实Gateway/Sandbox/process-tree receipt缺失时仍不可advertise。
 - [ ] remote executor/agent handoff 的 terminal idempotency、attestation、uncertain side-effect reconciliation 和 restart replay 尚未闭合。
-- [ ] same-session hot replacement 缺 standby candidate、lease/fencing promotion、commit-before-old-drain 和 commit 后失败终态的完整实现/故障注入。
-- [ ] multi-agent partial Artifact、merge conflict、child workspace/capability subset 与 root cost reconciliation 仍需联合 E2E；POSIX process group与Windows fail-closed fixture也不能替代真实Sandbox/cgroup/PID namespace/Job Object联合证明。
+- [x] same-session replacement已有standby candidate、fencing promotion、commit-before-old-drain、旧handle失效及commit前后故障矩阵；证据固定到`203fde6`/`0c6d1a1`。
+- [x] Runtime-owned partial/final Artifact、handoff、deterministic merge/conflict与root cost reconciliation已有联合E2E；POSIX process group与Windows fail-closed fixture仍不能替代真实Sandbox/cgroup/PID namespace/Job Object联合证明。
 
 ### P1:跨域故障注入矩阵
 
@@ -675,9 +678,9 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 | Extension resource enforcement与管理面 | `06`冻结external gap；Runtime消费snapshot/catalog/hook为W2-D、W2-R2、W2-J |
 | Model/Plan/Context/Compaction/Memory专项生命周期 | `06`冻结external gap；Runtime request/session adapter为W2-D、W2-R1、W2-J |
 | Verification/Orchestrator/Runtime-M1闭环 | W2-V、W2-J |
-| child activation/cold recovery/partial merge | W3-M2；Gateway/Sandbox专项缺口保持`06`冻结 |
-| HTTP/SSE、peer identity、queue、replacement与轻客户端 | W3-M3 |
-| production multi-agent/daemon feature activation | W3-J |
+| child activation/cold recovery/partial merge | W3-M2 Runtime-owned completed；Gateway/Sandbox专项缺口保持`06`冻结 |
+| HTTP/SSE、peer identity、queue、replacement与轻客户端 | W3-M3 Runtime-owned completed；OS peer adapter保持external gap |
+| production multi-agent/daemon feature activation | W3-J Runtime-owned completed；缺required-adapter evidence时不advertise |
 | managed policy、credential、真实remote/forge/supply-chain | `06`冻结external gap |
 | Runtime remote/handoff、ChangeProposal/HumanGate repository、telemetry、GC | W4 |
 | Runtime跨域故障注入与Harness Regression | W5；专项测试只读,失败转external gap |

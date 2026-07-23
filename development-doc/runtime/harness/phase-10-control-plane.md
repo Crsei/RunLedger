@@ -17,6 +17,17 @@
 - schema v2冻结`agent:spawn/cancel/resume/handoff`、`agent:inspect`、`expectedAgentGraphRevision`、session generation及有界effect/summary合同;13类v1 mutation wire shape未修改。
 - production minimum matrix新增`agent_supervisor`、`child_runtime_factory`与可选`peer_identity_attestor`证据;W3-J前`multi_agent`不advertise。
 
+2026-07-24 W3-M3/W3-J交付状态:`Runtime-owned completed`。
+
+- `0c6d1a1`交付真实loopback HTTP command与SSE event listener lifecycle,复用typed command/query schema、at-least-once cursor与bounded subscription;listener只有在production `PeerCredentialAttestorPort`完成preflight/channel binding时才绑定和advertise。
+- bounded request body/input queue/per-client buffer、slow-consumer disconnect、overload、disconnect/resync与durable consumer checkpoint已有故障回归。Unix peer credential和Windows pipe ACL仍由外部production adapter提供;缺attestor时HTTP/SSE不绑定,stdio production路径保持可用。
+- durable runtime generation replacement遵守prepare/replay/reconcile/health完成后再activate;commit前失败保留旧runtime,commit后失败只允许新generation进入paused/stopped recovery。idle unload/resume与subscription lifecycle共用锁并受old-handle fencing。
+- schema-negotiated轻客户端同时提供`[1,2]`;v1客户端看不到`multi_agent`,v2 Agent mutation/query只接受Control Plane projection。未接入的turn/approval/artifact/queue provider继续`unsupported_feature`,不生成占位receipt。
+- `ac54e38`完成W3-J:四类Agent mutation在任何Supervisor/provider/tool副作用前durable claim,unknown effect保持`in_flight/recovery_required`,exact duplicate从canonical terminal恢复原bounded effect;production adapter必须与daemon共享command journal、shutdown gate及runtime generation。
+- ChangeProposal/HumanGate本轮只保留versioned contract、durable command correlation和转发port;repository、forge、credential与organization gate仍归W4。OS peer attestor与这些外部依赖未ready时Runtime-M3产品声明保持blocked/external_gap。
+
+本阶段下列复选框继续表达完整产品语义。平台peer identity、真实外部adapter和W4能力不会因Runtime-owned W3-M3/W3-J关闭而机械勾选;当前执行状态以主计划§12.7为准。
+
 计划文件:
 
 - 新增 `src/runtime/control-plane/{types,errors,handshake,composition-requirements,command-bus,query-service,subscriptions,idempotency,jsonl-transport,sse-transport}.ts`。

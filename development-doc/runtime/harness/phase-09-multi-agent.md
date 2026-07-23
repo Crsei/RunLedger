@@ -15,6 +15,16 @@
 - child execution v2 状态冻结为 `prepared -> activation_pending -> active -> completion_pending -> completed/stop_uncertain/stopped`,另有 fail-closed `quarantined`;本节点只冻结合同,不声称 cold recovery/replacement 已实现。
 - `runtimeFeatures.multiAgent` 默认关闭,且 `daemon` rollout不依赖它;完整 production advertisement 仍等待W3-M2与W3-J。
 
+2026-07-24 W3-M2交付状态:`Runtime-owned completed`。
+
+- `203fde6`把child authority升级为v2 execution record,持久化activation/completion receipts、immutable runtime descriptor、final cursor与reconciliation evidence;v1 released只读重放,v1 active/partial及不完整writer/stop/final-cursor记录fail closed quarantine。
+- cold recovery只在identity与receipt完整时按原descriptor恢复;provider/tool outcome unknown进入`stop_uncertain`,不自动重发。idle unload/reload、standby replacement和fencing promotion均先durable commit新authority再drain旧host。
+- `runledger/runtime/agents`稳定导出factory、descriptor、recovery snapshot与`ChildGovernedOperationAdmissionPort`;provider、tool、isolated command、resume、cancel共用child-scoped Workspace/capability/resource/manifest/receipt校验,每次操作先经root BudgetGuard。
+- partial/final结果只接受immutable `ArtifactRef`;handoff/merge由父Workspace deterministic apply,冲突保留双方Artifact与可重试状态。late provider usage进入reconcile,超差后停止新工作。
+- `d545918`把lane汇入当前分支,`ac54e38`再把同一Supervisor/graph/authority接入schema v2 Control Plane。Runtime-owned完成不代表真实Gateway/Sandbox/process-tree authority ready;这些冻结/平台缺口继续返回`unsupported`、`quarantined`或`external_gap`,Runtime-M2产品声明保持blocked。
+
+本阶段下列复选框继续表达完整产品语义。由真实Gateway/Sandbox、平台process-tree或冻结专项拥有的条目不会因Runtime-owned W3-M2关闭而机械勾选;当前执行状态以主计划§12.7为准。
+
 计划文件:
 
 - 新增 `src/runtime/agents/{types,graph-store,delegation,supervisor,residency,handoff,merge}.ts`。
