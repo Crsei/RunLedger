@@ -8,6 +8,9 @@
 import { Type, type TSchema } from "typebox";
 import { Check } from "typebox/value";
 import { canonicalDigest } from "./canonical-json.ts";
+import { EventCursorSchema } from "./event-references.ts";
+import type { EventCursor } from "./events.ts";
+import { createEventStreamId } from "./ids.ts";
 import type {
 	ApprovalId,
 	ArtifactId,
@@ -128,6 +131,7 @@ export type ArtifactRedactionClass = (typeof ARTIFACT_REDACTION_CLASSES)[number]
 
 export const CAPABILITY_AUTH_CHANNELS = ["local_process", "local_socket", "signed_remote"] as const;
 export type CapabilityAuthChannel = (typeof CAPABILITY_AUTH_CHANNELS)[number];
+export const CAPABILITY_GATEWAY_SCHEMA_VERSION = 2 as const;
 
 export const RATE_LIMIT_OPERATIONS = ["reserve", "commit", "refund"] as const;
 export type RateLimitOperation = (typeof RATE_LIMIT_OPERATIONS)[number];
@@ -148,6 +152,20 @@ export interface AuthorizationContext {
 	authorityId: AuthorityId;
 	tenantId: TenantId;
 	principalId: PrincipalId;
+}
+
+export interface CapabilityEventCursorScope {
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	sessionId: SessionId;
+}
+
+/**
+ * 受信 composition root 提供当前 session head。undefined 表示 session 尚未初始化；
+ * adapter 抛错表示 authority 当前不可用。
+ */
+export interface CapabilityEventCursorAuthorityPort {
+	current(scope: CapabilityEventCursorScope): Promise<EventCursor | undefined>;
 }
 
 interface CapabilityClaimBase {
@@ -184,17 +202,25 @@ export interface CapabilityRequestRef extends AuthorizationContext {
 	commandScopeDigest: string;
 }
 
-export interface CapabilityRequestAuthentication {
-	channel: CapabilityAuthChannel;
+interface CapabilityRequestAuthenticationBase {
 	channelBindingDigest: string;
 	requestDigest: string;
 	nonce: string;
 	issuedAt: string;
 	expiresAt: string;
 	keyRevision: number;
-	signingKeyId?: ResourceId;
-	signatureDigest?: string;
 }
+
+export type CapabilityRequestAuthentication =
+	| (CapabilityRequestAuthenticationBase & {
+			channel: "local_process" | "local_socket";
+			eventCursor: EventCursor;
+	  })
+	| (CapabilityRequestAuthenticationBase & {
+			channel: "signed_remote";
+			signingKeyId: ResourceId;
+			signatureDigest: string;
+	  });
 
 export interface ApprovalTicket extends AuthorizationContext {
 	approvalId: ApprovalId;
@@ -365,10 +391,12 @@ export const CapabilityRequestAuthenticationSchema = Type.Union([
 	exact({
 		...capabilityRequestAuthenticationBase,
 		channel: Type.Literal("local_process"),
+		eventCursor: EventCursorSchema,
 	}),
 	exact({
 		...capabilityRequestAuthenticationBase,
 		channel: Type.Literal("local_socket"),
+		eventCursor: EventCursorSchema,
 	}),
 	exact({
 		...capabilityRequestAuthenticationBase,
@@ -550,9 +578,24 @@ export function isCapabilityGatewayRequest(value: unknown): value is CapabilityG
 		)
 	) return false;
 	const { authentication: _authentication, ...body } = gatewayRequest;
+	const authentication = gatewayRequest.authentication;
+	if (
+		authentication.channel !== "signed_remote" &&
+		(
+			authentication.eventCursor.stream.scope !== "session" ||
+			authentication.eventCursor.stream.sessionId !== gatewayRequest.request.sessionId ||
+			authentication.eventCursor.stream.streamId !== createEventStreamId(
+				{
+					authorityId: gatewayRequest.request.authorityId,
+					tenantId: gatewayRequest.request.tenantId,
+				},
+				gatewayRequest.request.sessionId,
+			)
+		)
+	) return false;
 	return (
-		isCapabilityRequestAuthentication(gatewayRequest.authentication) &&
-		gatewayRequest.authentication.requestDigest === capabilityGatewayRequestDigest(body)
+		isCapabilityRequestAuthentication(authentication) &&
+		authentication.requestDigest === capabilityGatewayRequestDigest(body)
 	);
 }
 
@@ -781,6 +824,7 @@ export interface SecurityPortCancelResult extends AuthorizationContext {
 }
 
 export interface CapabilityGatewayRequestBody {
+	schemaVersion: typeof CAPABILITY_GATEWAY_SCHEMA_VERSION;
 	request: CapabilityRequestRef;
 	invocation: ToolInvocationRequest;
 	idempotencyKey: CommandId;
@@ -899,6 +943,7 @@ export const SecurityPortCancelResultSchema = Type.Union([
 ]);
 
 export const CapabilityGatewayRequestBodySchema = exact({
+	schemaVersion: Type.Literal(CAPABILITY_GATEWAY_SCHEMA_VERSION),
 	request: CapabilityRequestRefSchema,
 	invocation: ToolInvocationRequestSchema,
 	idempotencyKey: runtimeId("command"),

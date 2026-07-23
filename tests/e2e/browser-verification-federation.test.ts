@@ -10,6 +10,7 @@ import {
 	type SecurityPortCancelResult,
 } from "../../src/runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
+import { createSessionEventStreamRef } from "../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import type {
 	WorkspaceServicePort,
@@ -271,12 +272,21 @@ describe("Browser verification federation E2E", () => {
 		const sandbox = new FederatedSandbox();
 		const backend = new FederatedBrowserBackend();
 		const artifacts = new FederatedArtifacts();
+		const envelope = candidateEnvelope();
 		const runner = new PortBackedVerificationRunner({
 			workspace,
 			capability,
 			sandbox,
 			browserBackend: backend,
 			artifacts,
+			eventCursorAuthority: {
+				current: async () => ({
+					stream: createSessionEventStreamRef(envelope, envelope.sessionId),
+					sequence: 1,
+					eventId: createRuntimeId("event", "e2e-browser-head"),
+					eventHash: digest("e2e-browser-head"),
+				}),
+			},
 			trustedEnvironment: { PATH: "/trusted/browser/bin" },
 			clock: () => new Date("2026-07-22T08:00:02.000Z"),
 		});
@@ -285,7 +295,7 @@ describe("Browser verification federation E2E", () => {
 			manifest,
 			baseline: baselineReceipt(policy(manifest)),
 			candidate: candidate(),
-			candidateEnvelope: candidateEnvelope(),
+			candidateEnvelope: envelope,
 			verificationId: VERIFICATION_ID,
 			requestId: REQUEST_ID,
 		});

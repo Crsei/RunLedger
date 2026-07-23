@@ -6,6 +6,7 @@ import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts
 import {
 	approvalTicketDigest,
 	approvalTicketRequestDigest,
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	capabilityGatewayRequestDigest,
 	type ApprovalCoordinatorPort,
 	type ApprovalCoordinatorRequest,
@@ -262,6 +263,7 @@ class StrictFactory implements ToolExecutionCapabilityRequestFactoryPort {
 	public async create(request: ToolExecutionGatewayRequest, value: WorkspaceExecutionEnvelope): Promise<CapabilityGatewayRequest> {
 		const requestId = createRuntimeId("command", `capability-${request.toolCallId}`);
 		const body = {
+			schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 			request: {
 				authorityId: AUTHORITY, tenantId: TENANT, principalId: PRINCIPAL, requestId,
 				approvalId: createRuntimeId("approval", `capability-${request.toolCallId}`),
@@ -298,6 +300,12 @@ class StrictFactory implements ToolExecutionCapabilityRequestFactoryPort {
 				channel: "local_process", channelBindingDigest: DIGEST,
 				requestDigest: capabilityGatewayRequestDigest(body), nonce: "0123456789abcdef",
 				issuedAt: NOW, expiresAt: "2026-07-22T00:05:00.000Z", keyRevision: 0,
+				eventCursor: {
+					stream: SESSION_STREAM,
+					sequence: 1,
+					eventId: createRuntimeId("event", "governed-e2e-head"),
+					eventHash: DIGEST,
+				},
 			},
 		};
 	}

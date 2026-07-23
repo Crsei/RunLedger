@@ -13,6 +13,7 @@ import {
 	type SecurityPortCancelResult,
 } from "../../../src/runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type {
 	WorkspaceServicePort,
@@ -327,6 +328,17 @@ function harness(withBackend = true) {
 		capability,
 		sandbox,
 		artifacts,
+		eventCursorAuthority: {
+			current: async () => {
+				const envelope = candidateEnvelope();
+				return {
+					stream: createSessionEventStreamRef(envelope, envelope.sessionId),
+					sequence: 12,
+					eventId: createRuntimeId("event", "browser-verification-head"),
+					eventHash: digest("browser-verification-head"),
+				};
+			},
+		},
 		...(withBackend ? { browserBackend: backend } : {}),
 		trustedEnvironment: { PATH: "/trusted/browser/bin" },
 		clock: () => new Date("2026-07-22T08:00:00.000Z"),

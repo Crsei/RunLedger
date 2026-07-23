@@ -5,8 +5,11 @@ import {
 	isCapabilityGatewayRequest,
 	type CapabilityAuthenticationPort,
 	type CapabilityAuthChannel,
+	type CapabilityEventCursorAuthorityPort,
 	type CapabilityGatewayRequest,
 } from "../../runtime/protocol/v3/capability.ts";
+import type { EventCursor } from "../../runtime/protocol/v3/events.ts";
+import { isEventCursor } from "../../runtime/protocol/v3/schemas.ts";
 import { createRuntimeId, type ReceiptId, type ResourceId } from "../../runtime/protocol/v3/ids.ts";
 
 export interface CapabilityPeerBinding {
@@ -41,17 +44,20 @@ export interface SignedCapabilityVerifierPort {
 
 export interface CapabilityAuthenticationAdapterOptions {
 	peerBindings: readonly CapabilityPeerBinding[];
+	eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	signedVerifier?: SignedCapabilityVerifierPort;
 	clock?: () => Date;
 }
 
 export class CapabilityAuthenticationAdapter implements CapabilityAuthenticationPort {
 	readonly #peerBindings: readonly CapabilityPeerBinding[];
+	readonly #eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	readonly #signedVerifier?: SignedCapabilityVerifierPort;
 	readonly #clock: () => Date;
 
 	public constructor(options: CapabilityAuthenticationAdapterOptions) {
 		this.#peerBindings = options.peerBindings;
+		this.#eventCursorAuthority = options.eventCursorAuthority;
 		this.#signedVerifier = options.signedVerifier;
 		this.#clock = options.clock ?? (() => new Date());
 	}
@@ -89,6 +95,29 @@ export class CapabilityAuthenticationAdapter implements CapabilityAuthentication
 				return { requestId, requestDigest, status: "unavailable" };
 			}
 		}
+		let currentCursor: EventCursor | undefined;
+		try {
+			currentCursor = await this.#eventCursorAuthority.current({
+				authorityId: request.request.authorityId,
+				tenantId: request.request.tenantId,
+				sessionId: request.request.sessionId,
+			});
+		} catch {
+			return { requestId, requestDigest, status: "unavailable" };
+		}
+		const requestCursor = request.authentication.eventCursor;
+		if (
+			!currentCursor ||
+			!isEventCursor(currentCursor) ||
+			currentCursor.stream.scope !== requestCursor.stream.scope ||
+			currentCursor.stream.streamId !== requestCursor.stream.streamId ||
+			(currentCursor.stream.scope === "session" &&
+				requestCursor.stream.scope === "session" &&
+				currentCursor.stream.sessionId !== requestCursor.stream.sessionId) ||
+			currentCursor.sequence !== requestCursor.sequence ||
+			currentCursor.eventId !== requestCursor.eventId ||
+			currentCursor.eventHash !== requestCursor.eventHash
+		) return { requestId, requestDigest, status: "rejected" };
 		const binding = this.#peerBindings.find((candidate) =>
 			candidate.authorityId === request.request.authorityId &&
 			candidate.tenantId === request.request.tenantId &&
@@ -105,7 +134,10 @@ export class CapabilityAuthenticationAdapter implements CapabilityAuthentication
 			requestId,
 			requestDigest,
 			status: "authenticated",
-			verifierReceiptId: createRuntimeId("receipt", `capability-peer-${canonicalDigest({ binding, requestDigest }).slice(0, 48)}`),
+			verifierReceiptId: createRuntimeId(
+				"receipt",
+				`capability-peer-${canonicalDigest({ binding, requestDigest, eventCursor: requestCursor }).slice(0, 48)}`,
+			),
 		};
 	}
 }

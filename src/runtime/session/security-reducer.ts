@@ -37,6 +37,11 @@ interface MutableSecurityProjection {
 interface ApprovalTerminalBinding {
 	approvalId: string;
 	requestId: string;
+	sessionId: string;
+	runtimeId: string;
+	runtimeGeneration: number;
+	turnId: string;
+	toolCallId: string;
 	requestDigest: string;
 	ticketDigest: string;
 	decisionRevision: number;
@@ -140,6 +145,15 @@ function approvalBinding(
 	) {
 		return invalidEvent("approval terminal receipt is not bound to the requested ticket", event);
 	}
+	if (
+		payload.sessionId !== state.sessionId ||
+		payload.runtimeId !== current.runtimeId ||
+		payload.runtimeGeneration !== current.runtimeGeneration ||
+		payload.turnId !== current.turnId ||
+		payload.toolCallId !== current.toolCallId
+	) {
+		return invalidEvent("approval terminal receipt is outside the requested execution correlation", event);
+	}
 	return { ok: true, value: { index, current, requestId: requestId.value, receiptId: receiptId.value } };
 }
 
@@ -164,9 +178,16 @@ function reducePermissionRequested(state: MutableSecurityProjection, event: Runt
 	if (requestId && !requestId.ok) return requestId;
 	const existingIndex = findApproval(state, approvalId.value);
 	const existing = state.approvals[existingIndex];
+	if (event.payload.sessionId !== state.sessionId) {
+		return invalidEvent("approval request is outside the projected session", event);
+	}
 	if (existingIndex >= 0 && existing) {
 		const sameRequest =
 			existing.requestId === (requestId?.value ?? null) &&
+			existing.runtimeId === event.payload.runtimeId &&
+			existing.runtimeGeneration === event.payload.runtimeGeneration &&
+			existing.turnId === event.payload.turnId &&
+			existing.toolCallId === event.payload.toolCallId &&
 			existing.requestDigest === event.payload.requestDigest &&
 			existing.policyDigest === event.payload.policyDigest &&
 			existing.workspaceEnvelopeDigest === event.payload.workspaceEnvelopeDigest &&
@@ -177,6 +198,10 @@ function reducePermissionRequested(state: MutableSecurityProjection, event: Runt
 	state.approvals.push({
 		approvalId: approvalId.value,
 		requestId: requestId?.value ?? null,
+		runtimeId: event.payload.runtimeId,
+		runtimeGeneration: event.payload.runtimeGeneration,
+		turnId: event.payload.turnId,
+		toolCallId: event.payload.toolCallId,
 		capability: event.payload.capability ?? null,
 		resourceKind: event.payload.resourceKind ?? null,
 		requestDigest: event.payload.requestDigest,

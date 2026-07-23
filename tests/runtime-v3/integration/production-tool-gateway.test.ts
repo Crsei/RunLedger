@@ -77,6 +77,15 @@ const executorId = createRuntimeId("resource", "production-tool-executor");
 const rateLimitId = createRuntimeId("rateLimit", "production-tool-gateway");
 const toolSchema = Type.Object({ path: Type.String(), content: Type.String() });
 
+function eventHead() {
+	return {
+		stream: createSessionEventStreamRef({ authorityId, tenantId }, sessionId),
+		sequence: 5,
+		eventId: createRuntimeId("event", "production-tool-gateway-head"),
+		eventHash: canonicalDigest("production-tool-gateway-head"),
+	};
+}
+
 class RecordingApprovalEvents implements ApprovalLifecycleEventPort {
 	public readonly events: string[] = [];
 	public readonly requested: Array<{ ticket: ApprovalTicket; evidence: ApprovalRequestEventEvidence }> = [];
@@ -353,6 +362,7 @@ async function createHarness(): Promise<Harness> {
 				issuedAt: NOW.toISOString(),
 				expiresAt: new Date(NOW.getTime() + 3_600_000).toISOString(),
 			},
+			eventCursorAuthority: { current: async () => eventHead() },
 			rateLimiter: new MemoryCapabilityRateLimiter([{
 				rateLimitId,
 				capability: "workspace_write",
@@ -877,6 +887,7 @@ describe("production Tool Gateway composition", () => {
 				channelBindingDigest: canonicalDigest("unavailable-peer"), keyRevision: 1,
 				issuedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
 			},
+			eventCursorAuthority: { current: async () => eventHead() },
 			rateLimiter: new MemoryCapabilityRateLimiter([{ rateLimitId, capability: "workspace_write", maxUnits: 10, maxWindowMs: 60_000 }], () => NOW),
 			rateLimitPolicy: () => ({ rateLimitId, windowMs: 60_000, units: 1 }),
 			prompter: { request: async () => ({ decision: "allow-once", decidedBy: principalId }) },
@@ -955,6 +966,7 @@ describe("production Tool Gateway composition", () => {
 				channelBindingDigest: canonicalDigest("wrong-fence-peer"), keyRevision: 1,
 				issuedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
 			},
+			eventCursorAuthority: { current: async () => eventHead() },
 			rateLimiter: new MemoryCapabilityRateLimiter([{ rateLimitId, capability: "workspace_write", maxUnits: 10, maxWindowMs: 60_000 }], () => NOW),
 			rateLimitPolicy: () => ({ rateLimitId, windowMs: 60_000, units: 1 }),
 			prompter: { request: async () => ({ decision: "deny", decidedBy: principalId }) },

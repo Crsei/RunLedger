@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
 	CapabilityReplayGuard,
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	capabilityGatewayRequestDigest,
 	gatewayRateLimitReceiptMatchesRequest,
 	isCapabilityGatewayRequest,
@@ -12,6 +16,7 @@ import {
 	type GatewayRateLimitRequest,
 } from "../../../src/runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
+import { createSessionEventStreamRef, type EventCursor } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import {
 	declassificationAllowsSourceAtSink,
@@ -21,6 +26,7 @@ import {
 	type DeclassificationReceiptRef,
 	type InputSourceRef,
 } from "../../../src/runtime/protocol/v3/taint.ts";
+import { CapabilityAuthenticationAdapter } from "../../../src/security/integration/capability-authentication.ts";
 
 const AUTHORITY_ID = createRuntimeId("authority", "security-auth");
 const TENANT_ID = createRuntimeId("tenant", "security-auth");
@@ -83,6 +89,7 @@ function gatewayBody(receipts: readonly DeclassificationReceiptRef[] = []): Capa
 		fencingToken: "security-auth-fence",
 	};
 	return {
+		schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 		request: {
 			authorityId: AUTHORITY_ID,
 			tenantId: TENANT_ID,
@@ -135,8 +142,38 @@ function gatewayRequest(receipts: readonly DeclassificationReceiptRef[] = []): C
 			issuedAt: "2026-07-22T00:00:00.000Z",
 			expiresAt: "2026-07-22T00:05:00.000Z",
 			keyRevision: 7,
+			eventCursor: {
+				stream: createSessionEventStreamRef(
+					{ authorityId: body.request.authorityId, tenantId: body.request.tenantId },
+					body.request.sessionId,
+				),
+				sequence: 4,
+				eventId: createRuntimeId("event", "security-auth-head"),
+				eventHash: DIGEST_B,
+			},
 		},
 	};
+}
+
+function requestCursor(request: CapabilityGatewayRequest): EventCursor {
+	if (request.authentication.channel === "signed_remote") throw new Error("expected local request");
+	return request.authentication.eventCursor;
+}
+
+function authenticationAdapter(current: () => Promise<EventCursor | undefined>): CapabilityAuthenticationAdapter {
+	return new CapabilityAuthenticationAdapter({
+		clock: () => NOW,
+		peerBindings: [{
+			authorityId: AUTHORITY_ID,
+			tenantId: TENANT_ID,
+			principalId: PRINCIPAL_ID,
+			channel: "local_socket",
+			channelBindingDigest: DIGEST_A,
+			keyRevision: 7,
+			issuedAt: "2026-07-22T00:00:00.000Z",
+		}],
+		eventCursorAuthority: { current },
+	});
 }
 
 describe("authenticated capability requests and taint propagation", () => {
@@ -178,6 +215,159 @@ describe("authenticated capability requests and taint propagation", () => {
 			...request,
 			inputSources: [{ ...source(), tenantId: createRuntimeId("tenant", "other") }],
 		})).toBe(false);
+	});
+
+	it("requires strict v2 bodies and exact local cursor fields", () => {
+		const request = gatewayRequest([declassification()]);
+		const { schemaVersion: _schemaVersion, ...unversioned } = request;
+		const authentication = request.authentication;
+		if (authentication.channel === "signed_remote") throw new Error("expected local request");
+		const { eventCursor: _eventCursor, ...withoutCursor } = authentication;
+
+		expect(isCapabilityGatewayRequest(unversioned)).toBe(false);
+		expect(isCapabilityGatewayRequest({ ...request, schemaVersion: 1 })).toBe(false);
+		expect(isCapabilityGatewayRequest({ ...request, schemaVersion: 3 })).toBe(false);
+		expect(isCapabilityGatewayRequest({ ...request, futureField: true })).toBe(false);
+		expect(isCapabilityGatewayRequest({ ...request, authentication: withoutCursor })).toBe(false);
+		expect(isCapabilityGatewayRequest({
+			...request,
+			authentication: {
+				...authentication,
+				eventCursor: { ...authentication.eventCursor, futureField: true },
+			},
+		})).toBe(false);
+	});
+
+	it("rejects a local cursor from another session even when its stream ID is canonical", () => {
+		const request = gatewayRequest([declassification()]);
+		const authentication = request.authentication;
+		if (authentication.channel === "signed_remote") throw new Error("expected local request");
+		const otherSessionId = createRuntimeId("session", "security-auth-other");
+
+		expect(isCapabilityGatewayRequest({
+			...request,
+			authentication: {
+				...authentication,
+				eventCursor: {
+					...authentication.eventCursor,
+					stream: createSessionEventStreamRef(
+						{ authorityId: AUTHORITY_ID, tenantId: TENANT_ID },
+						otherSessionId,
+					),
+				},
+			},
+		})).toBe(false);
+	});
+
+	it("accepts only the exact trusted current local writer head", async () => {
+		const request = gatewayRequest([declassification()]);
+		const cursor = requestCursor(request);
+		expect(await authenticationAdapter(async () => cursor).verify(request)).toMatchObject({
+			status: "authenticated",
+		});
+
+		for (const candidate of [
+			{ ...cursor, sequence: cursor.sequence - 1 },
+			{ ...cursor, sequence: cursor.sequence + 1 },
+			{ ...cursor, eventId: createRuntimeId("event", "security-auth-tampered") },
+			{ ...cursor, eventHash: DIGEST_A },
+		]) {
+			const authentication = request.authentication;
+			if (authentication.channel === "signed_remote") throw new Error("expected local request");
+			const changed: CapabilityGatewayRequest = {
+				...request,
+				authentication: { ...authentication, eventCursor: candidate },
+			};
+			expect(await authenticationAdapter(async () => cursor).verify(changed)).toMatchObject({
+				status: "rejected",
+			});
+		}
+
+		expect(await authenticationAdapter(async () => undefined).verify(request)).toMatchObject({
+			status: "rejected",
+		});
+	});
+
+	it("reports cursor authority failures as unavailable", async () => {
+		const request = gatewayRequest([declassification()]);
+		const adapter = authenticationAdapter(() => {
+			throw new Error("writer head unavailable");
+		});
+		expect(await adapter.verify(request)).toMatchObject({ status: "unavailable" });
+	});
+
+	it("keeps signed_remote signature-only and does not consult the local cursor authority", async () => {
+		const local = gatewayRequest([declassification()]);
+		const authentication = local.authentication;
+		if (authentication.channel === "signed_remote") throw new Error("expected local request");
+		const { eventCursor: _eventCursor, channel: _channel, ...authenticationBase } = authentication;
+		const signed: CapabilityGatewayRequest = {
+			...local,
+			authentication: {
+				...authenticationBase,
+				channel: "signed_remote",
+				signingKeyId: createRuntimeId("resource", "security-auth-signing-key"),
+				signatureDigest: DIGEST_B,
+			},
+		};
+
+		expect(isCapabilityGatewayRequest(signed)).toBe(true);
+		expect(isCapabilityGatewayRequest({
+			...signed,
+			authentication: { ...signed.authentication, eventCursor: requestCursor(local) },
+		})).toBe(false);
+		const { signatureDigest: _signatureDigest, ...missingSignature } = signed.authentication;
+		expect(isCapabilityGatewayRequest({ ...signed, authentication: missingSignature })).toBe(false);
+
+		let cursorCalls = 0;
+		let verifierCalls = 0;
+		const receiptId = createRuntimeId("receipt", "security-auth-signed");
+		const adapter = new CapabilityAuthenticationAdapter({
+			clock: () => NOW,
+			peerBindings: [],
+			eventCursorAuthority: {
+				current: async () => {
+					cursorCalls += 1;
+					throw new Error("must not be called");
+				},
+			},
+			signedVerifier: {
+				verify: async (candidate) => {
+					verifierCalls += 1;
+					expect(candidate).toMatchObject({
+						signingKeyId: signed.authentication.channel === "signed_remote"
+							? signed.authentication.signingKeyId
+							: undefined,
+						signatureDigest: DIGEST_B,
+						requestDigest: signed.authentication.requestDigest,
+					});
+					return { status: "authenticated", verifierReceiptId: receiptId };
+				},
+			},
+		});
+		expect(await adapter.verify(signed)).toEqual({
+			requestId: signed.request.requestId,
+			requestDigest: signed.authentication.requestDigest,
+			status: "authenticated",
+			verifierReceiptId: receiptId,
+		});
+		expect(cursorCalls).toBe(0);
+		expect(verifierCalls).toBe(1);
+	});
+
+	it("round-trips the v2 golden request and pins its body and file digests", () => {
+		const path = fileURLToPath(new URL("./fixtures/capability-gateway-v2.json", import.meta.url));
+		const bytes = readFileSync(path);
+		const fixture = JSON.parse(bytes.toString("utf8")) as unknown;
+		const roundTrip = JSON.parse(JSON.stringify(fixture)) as unknown;
+
+		expect(isCapabilityGatewayRequest(roundTrip)).toBe(true);
+		if (!isCapabilityGatewayRequest(roundTrip)) throw new Error("invalid capability gateway v2 fixture");
+		const { authentication, ...body } = roundTrip;
+		expect(authentication.requestDigest).toBe(capabilityGatewayRequestDigest(body));
+		expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+			"ebe846c2e64658fff82a9059c809931ad352f28f026cd6e702b646addc1ab2bc",
+		);
 	});
 });
 

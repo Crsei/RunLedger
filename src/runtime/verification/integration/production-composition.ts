@@ -374,6 +374,17 @@ export async function createProductionVerificationComposition(
 		capability: options.capability,
 		sandbox: options.sandbox,
 		artifacts: new CorrelatedProductionArtifactPort(options.evidence, expectedRunner),
+		eventCursorAuthority: {
+			current: async (scope) => {
+				if (
+					scope.authorityId !== options.authorityId ||
+					scope.tenantId !== options.tenantId ||
+					scope.sessionId !== options.sessionId
+				) return undefined;
+				const head = options.sessionJournal.writer.currentHead();
+				return head ? structuredClone(head) : undefined;
+			},
+		},
 		...(options.browserBackend ? { browserBackend: options.browserBackend } : {}),
 		trustedEnvironment: environment.value,
 		...(options.clock ? { clock: options.clock } : {}),

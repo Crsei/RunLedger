@@ -377,6 +377,7 @@ export class PortBackedToolExecutionGateway implements ToolExecutionGatewayPort 
 			canonicalDigest(capabilityRequest.invocation.rawArguments) !== canonicalDigest(request.arguments) ||
 			capabilityRequest.invocation.requestId !== capabilityRequest.request.requestId ||
 			capabilityRequest.authentication.requestDigest !== capabilityGatewayRequestDigest({
+				schemaVersion: capabilityRequest.schemaVersion,
 				request: capabilityRequest.request,
 				invocation: capabilityRequest.invocation,
 				idempotencyKey: capabilityRequest.idempotencyKey,

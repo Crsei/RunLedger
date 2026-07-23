@@ -2,11 +2,13 @@
 
 import { Check } from "typebox/value";
 import {
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	CapabilityGatewayResultSchema,
 	SandboxExecutorResultSchema,
 	capabilityGatewayRequestDigest,
 	isCapabilityGatewayRequest,
 	type CapabilityClaim,
+	type CapabilityEventCursorAuthorityPort,
 	type CapabilityGatewayPort,
 	type CapabilityGatewayRequest,
 	type CapabilityGatewayRequestBody,
@@ -15,6 +17,7 @@ import {
 	type SandboxExecutorPort,
 } from "../../runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../../runtime/protocol/v3/canonical-json.ts";
+import type { EventCursor } from "../../runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../runtime/protocol/v3/ids.ts";
 import {
 	isWorkspaceServiceResult,
@@ -63,6 +66,7 @@ export interface RestrictedBrowserVerificationProviderOptions {
 	capability: CapabilityGatewayPort;
 	sandbox: SandboxExecutorPort;
 	artifacts: VerificationArtifactPort;
+	eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	backend: BrowserBackendPort;
 	trustedEnvironment?: Readonly<Record<string, string>>;
 	clock?: () => Date;
@@ -287,6 +291,7 @@ export class RestrictedBrowserVerificationProvider implements VerificationRunner
 	readonly #capability: CapabilityGatewayPort;
 	readonly #sandbox: SandboxExecutorPort;
 	readonly #artifacts: VerificationArtifactPort;
+	readonly #eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	readonly #backend: BrowserBackendPort;
 	readonly #trustedEnvironment: Readonly<Record<string, string>>;
 	readonly #clock: () => Date;
@@ -296,6 +301,7 @@ export class RestrictedBrowserVerificationProvider implements VerificationRunner
 		this.#capability = options.capability;
 		this.#sandbox = options.sandbox;
 		this.#artifacts = options.artifacts;
+		this.#eventCursorAuthority = options.eventCursorAuthority;
 		this.#backend = options.backend;
 		this.#trustedEnvironment = options.trustedEnvironment ?? {};
 		this.#clock = options.clock ?? (() => new Date());
@@ -352,6 +358,7 @@ export class RestrictedBrowserVerificationProvider implements VerificationRunner
 		const claims = operationClaims(request, operation);
 		const now = this.#clock();
 		const body: CapabilityGatewayRequestBody = {
+			schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 			request: {
 				authorityId: request.candidate.authorityId,
 				tenantId: request.candidate.tenantId,
@@ -384,6 +391,17 @@ export class RestrictedBrowserVerificationProvider implements VerificationRunner
 			declassificationReceipts: [],
 		};
 		const capabilityRequestDigest = capabilityGatewayRequestDigest(body);
+		let eventCursor: EventCursor | undefined;
+		try {
+			eventCursor = await this.#eventCursorAuthority.current({
+				authorityId: request.candidate.authorityId,
+				tenantId: request.candidate.tenantId,
+				sessionId: request.candidateEnvelope.sessionId,
+			});
+		} catch {
+			return failure("invalid_schema", "browser capability event cursor authority is unavailable", true);
+		}
+		if (!eventCursor) return failure("invalid_schema", "browser capability session head is uninitialized");
 		const gatewayRequest: CapabilityGatewayRequest = {
 			...body,
 			authentication: {
@@ -398,6 +416,7 @@ export class RestrictedBrowserVerificationProvider implements VerificationRunner
 				issuedAt: now.toISOString(),
 				expiresAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
 				keyRevision: 0,
+				eventCursor,
 			},
 		};
 		if (!isCapabilityGatewayRequest(gatewayRequest)) {

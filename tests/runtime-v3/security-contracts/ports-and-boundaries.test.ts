@@ -4,6 +4,7 @@ import { Check } from "typebox/value";
 import { describe, expect, it } from "vitest";
 import {
 	ApprovalCoordinatorResultSchema,
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	CapabilityGatewayResultSchema,
 	SandboxExecutorResultSchema,
 	SecurityPortCancelResultSchema,
@@ -27,6 +28,7 @@ import {
 	type SecurityPortCancelResult,
 } from "../../../src/runtime/protocol/v3/capability.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 
 const DIGEST_A = "a".repeat(64);
@@ -201,8 +203,9 @@ describe("Phase 3 opaque security ports", () => {
 			leaseRevision: 1,
 			fencingToken: "opaque-fence",
 		};
-		const gatewayRequestBody: CapabilityGatewayRequestBody = {
-			request: ticket.request,
+			const gatewayRequestBody: CapabilityGatewayRequestBody = {
+				schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
+				request: ticket.request,
 			invocation: {
 				requestId: REQUEST_ID,
 				toolManifestDigest: DIGEST_A,
@@ -232,9 +235,18 @@ describe("Phase 3 opaque security ports", () => {
 				requestDigest: capabilityGatewayRequestDigest(gatewayRequestBody),
 				nonce: "security-port-nonce-0001",
 				issuedAt: "2026-07-22T00:00:00.000Z",
-				expiresAt: "2026-07-22T00:05:00.000Z",
-				keyRevision: 1,
-			},
+					expiresAt: "2026-07-22T00:05:00.000Z",
+					keyRevision: 1,
+					eventCursor: {
+						stream: createSessionEventStreamRef(
+							{ authorityId: AUTHORITY_ID, tenantId: TENANT_ID },
+							SESSION_ID,
+						),
+						sequence: 3,
+						eventId: createRuntimeId("event", "security-port-head"),
+						eventHash: DIGEST_C,
+					},
+				},
 		};
 		const gatewayResult = await gateway.authorize(gatewayRequest);
 		expect(Check(CapabilityGatewayResultSchema, gatewayResult)).toBe(true);

@@ -16,11 +16,13 @@ import {
 } from "../../../src/runtime/identity/enterprise-types.ts";
 import {
 	CapabilityReplayGuard,
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	capabilityGatewayRequestDigest,
 	validateCapabilityGatewayRequest,
 	type CapabilityGatewayRequest,
 	type CapabilityGatewayRequestBody,
 } from "../../../src/runtime/protocol/v3/capability.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 
 const A = "a".repeat(64);
@@ -102,6 +104,7 @@ function capabilityRequest(): CapabilityGatewayRequest {
 	};
 	const requestId = createRuntimeId("command", "harness-token");
 	const body: CapabilityGatewayRequestBody = {
+		schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 		request: {
 			authorityId,
 			tenantId,
@@ -150,6 +153,15 @@ function capabilityRequest(): CapabilityGatewayRequest {
 			issuedAt: "2026-07-22T00:00:00.000Z",
 			expiresAt: "2026-07-22T00:10:00.000Z",
 			keyRevision: 7,
+			eventCursor: {
+				stream: createSessionEventStreamRef(
+					{ authorityId, tenantId },
+					envelope.sessionId,
+				),
+				sequence: 1,
+				eventId: createRuntimeId("event", "harness-token-head"),
+				eventHash: B,
+			},
 		},
 	};
 }

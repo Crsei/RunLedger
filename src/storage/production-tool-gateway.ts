@@ -17,6 +17,7 @@ import { spawn } from "node:child_process";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import type {
 	ApprovalCoordinatorPort,
+	CapabilityEventCursorAuthorityPort,
 	CapabilityGatewayPort,
 	CapabilityName,
 	CapabilityRateLimitPort,
@@ -285,6 +286,7 @@ export interface ProductionToolGatewayCompositionOptions {
 	manifests: readonly ProductionToolManifest[];
 	classification: ToolInvocationInputClassificationPort;
 	peerBinding: CapabilityPeerBinding;
+	eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	rateLimiter: CapabilityRateLimitPort;
 	rateLimitPolicy(capability: CapabilityName): GatewayRateLimitPolicy;
 	prompter: PermissionPrompter;
@@ -357,6 +359,7 @@ export async function createProductionToolGatewayComposition(
 	});
 	const authentication = new CapabilityAuthenticationAdapter({
 		peerBindings: [options.peerBinding],
+		eventCursorAuthority: options.eventCursorAuthority,
 		clock,
 	});
 	const capabilityGateway = new RuntimeCapabilityGatewayAdapter({
@@ -377,6 +380,7 @@ export async function createProductionToolGatewayComposition(
 		snapshots: options.snapshots,
 		classification: options.classification,
 		peerBinding: options.peerBinding,
+		eventCursorAuthority: options.eventCursorAuthority,
 		clock,
 		...(options.authenticationTtlMs === undefined ? {} : { authenticationTtlMs: options.authenticationTtlMs }),
 	});

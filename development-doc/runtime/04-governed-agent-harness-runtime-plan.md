@@ -2,7 +2,7 @@
 
 > 文档状态:完整计划,当前权威执行入口;实现状态:总体未完成,但 §0.5、Phase 0/2/3/5/6 contract 已实现,Phase 1/4/7–11 为部分实现或仍缺联合生产门禁;Phase 复选框只有附当前目标分支/工作树的逐项证据后才能在对应拆分文档中勾选
 > 基线日期:2026-07-22
-> 当前实现复核:2026-07-23T20:55:13+08:00,`worktree/governed-agent-harness-runtime@81556acb16e2d4ba39e8fffeb0f4c5bdeccf40c7`
+> 当前实现复核:2026-07-24T01:11:34+08:00,`worktree/governed-agent-harness-runtime@a6416e086457db6bb3f438d9a3cab24fd9e953d1` + 当前交付工作树
 > 适用范围:`src/runtime/`、Runtime-owned `src/storage/`、`src/cli/`、`src/tui/`、`src/daemon/` 与对应测试;三个外围专项已按冻结说明转为只读依赖
 > 上游设计输入:[`00-reference.md`](00-reference.md)
 > 外围专项冻结说明:[`06-specialty-implementation-freeze.md`](06-specialty-implementation-freeze.md)
@@ -32,7 +32,7 @@
 
 本表是对当前目标分支代码、生产接线、公开导出和测试的状态汇总,用于纠正旧基线中“只有 scaffold”或“整类能力不存在”的过时描述。阶段任务仍按其完整语义验收:模块存在、fake adapter、局部 E2E 或进程内 seam 不能单独关闭生产联合门禁,因此下表不会机械地把 343 个正式任务全部改成 `[x]`。
 
-当前复核结果:`npm run check` PASS;`npm test` 为 263 files / 1730 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build` 与 `git diff --check` PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。W1-A2/A3 已按实现证据和用户明确指令标记 completed,并由包含本文件的交付提交冻结。Runtime-M0 继续受 W1-B、W1-J 与 W1-G 门禁约束。
+当前复核结果:`npm run check` PASS;`npm test` 为 263 files / 1737 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build` 与 `git diff --check` PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。Phase 3 strict v2 与 authenticated local current-head binding 已闭合;W1-A2/A3 保持 completed。Runtime-M0 继续受 W1-B、W1-J 与 W1-G 门禁约束。
 
 | 范围 | 当前实现状态 | 已有代码/测试证据 | 尚未关闭的边界 |
 |---|---|---|---|
@@ -40,7 +40,7 @@
 | Phase 0 | contract/边界基线已实现 | v3 IDs、catalog、exact payload/schema、hash/canonical JSON、taint、threat model、feature matrix与两条 boundary script均已接入`npm run check` | 历史 I0–I7 没有逐窗口 handoff 记录,不能据此关闭最终串行集成验收 |
 | Phase 1 | 已实现 | single-writer Event Store、accepted/durable barrier、strict replay/hash、queue、snapshot、stop、fork、migration、bounded unattested salvage、writer lease、restore dependency registration、create/fork publication staging、crash terminal 与 backend conformance;Phase 清单已逐项勾选 | salvage 到受授权 CAS Artifact 仍归 W1-B/Phase 4,不属于 Phase 1 完成声明 |
 | Phase 2 | contract 已实现 | Workspace envelope/binding/lease/validation/checkpoint events、projection/reducer与 architecture/contract tests | 真实 Git/worktree/lease/TOCTOU 行为已冻结为外部依赖,未完成项不由 Runtime 接管 |
-| Phase 3 | contract 已实现 | Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer与 security-contract tests | pending Approval 跨重启、actor identity、完整 Gateway/Sandbox/credential 行为均为冻结缺口 |
+| Phase 3 | contract 已实现 | exact v2 Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer;local channel 绑定受信 session current head,remote 保持 signature verifier;approval terminal 复核 runtime generation/turn/toolCall 复合相关性 | pending Approval 跨重启、真实 actor/OS peer identity、完整 Gateway/Sandbox/credential 强制行为仍为冻结外部缺口 |
 | Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
 | Phase 5 | Runtime contract 已实现 | neutral resource types/schema/ports/events/invocation stream与 resource-contract tests | Extension M1/M4/M5 主体和 M2/M3/M6/M7 部分实现已冻结;剩余行为不由 Runtime 接管 |
 | Phase 6 | 公共 contract 已实现 | model/plan/context/compaction/memory types/schema/events/fixtures、ownership与 public-surface tests | router/context/plan/compaction/memory 核心已有窄证据并已冻结;工具/UI/overflow/完整生产生命周期缺口不由 Runtime 接管 |
@@ -1171,7 +1171,7 @@ Phase 0 Protocol
 
 | 里程碑 | 包含阶段 | 当前状态 | 可对外承诺 |
 |---|---|---|---|
-| Runtime-M0:Auditable Single Agent Contracts | 0–4 | 未关闭:Phase 0/2/3 contract 已实现,Phase 1/4 仍需逐项证据与联合边界 | 单 Agent session、workspace/security refs 与证据协议可验证;这是 contract 里程碑,不承诺真实隔离或强制执行 |
+| Runtime-M0:Auditable Single Agent Contracts | 0–4 | 未关闭:Phase 0/2/3 contract 已实现,Phase 1/4 仍需 W1-B、W1-J、W1-G 的逐项证据与联合边界 | 单 Agent session、workspace/security refs 与证据协议可验证;这是 contract 里程碑,不承诺真实隔离或强制执行 |
 | Runtime-M1:Governed Harness | §0.5 + 5–8 + production join gate | 未关闭:contract和多数模块已实现;三个行为专项冻结,Runtime只能继续adapter/orchestrator/verification | `PiAiParityManifest` 可追踪,冻结专项readiness全部通过且Runtime production join、确定性门禁与内置 Browser 独立验证完整 |
 | Runtime-M2:Bounded Collaboration | 9 + WorkspaceSecurity-Phase7/WorkspaceSecurity-M6 联合门禁 | 未关闭:仅 internal/test-injected process-resident seam与scoped E2E | 多 Agent DAG、workspace/capability refs 有界且可恢复;真实隔离由专项联合 E2E 证明,不默认远程 |
 | Runtime-M3:Headless Runtime | 10 + production composition gate | 未关闭:daemon/control-plane主体存在,多项生产feature仍unsupported | CLI/TUI 通过同一协议连接 Runtime 真源,版本化协议可供后续 IDE/CI adapter 消费;本阶段不宣称已交付 IDE/CI client。只有持有效 `ProductionCompositionReceipt` 的 capability 才被 advertise,缺真实 adapter 的 mutation/forge 能力保持 unsupported/deny |
@@ -1480,7 +1480,7 @@ W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production 
 | §0.5 pi-ai parity | implemented | parity manifest、provider/API/Auth本地映射与只读审计器 | `audit:pi-ai` 164/164 source、72 catalog PASS | `004a252`;上游漂移仍需重新审计 |
 | Phase 0 protocol | implemented | `src/runtime/protocol/v3/**`、identity、feature matrix、boundary scripts | Phase 0 schema/canonical/legacy/CLI/public-surface tests;`npm run check` | `65f9054`、`004a252`、`9a3d8c8`;历史I0–I7 handoff不能倒推 |
 | Phase 2 Workspace contract | implemented contract;behavior unavailable | Workspace envelope/ref/receipt、event/reducer/projection | `tests/runtime-v3/workspace-contracts/**` | `65f9054`、`004a252`;真实Git/worktree/TOCTOU属于冻结专项 |
-| Phase 3 Capability contract | implemented contract;behavior unavailable | capability/approval/sandbox/taint/rate-limit schema与ports | `tests/runtime-v3/security-contracts/**` | `65f9054`、`004a252`;真实Gateway/Sandbox/Approval recovery未由contract证明 |
+| Phase 3 Capability contract | contract completed;behavior unavailable | exact v2 capability/approval/sandbox/taint/rate-limit schema与ports;local current-head认证、remote signature variant及terminal composite correlation 已补齐 | `tests/runtime-v3/security-contracts/**` + security/verification/tool gateway/E2E targeted gate 12 files / 101 tests | `65f9054`、`004a252` + 包含本文件的交付提交;真实Gateway/Sandbox/credential与Approval recovery仍为冻结外部缺口 |
 | Phase 5 Resource contract | implemented contract;behavior frozen | neutral identity/provenance/snapshot/invocation/lifecycle schema与ports | `tests/runtime-v3/resource-contracts/**` | `65f9054`、`004a252`;Extension行为只按冻结矩阵消费 |
 | Phase 6 Model/Plan/Context contract | implemented contract;behavior frozen | model routing、Plan、Context、Compaction、Memory public schema/events | contract/behavior/production consumer gate 16 files / 94 tests PASS | `65f9054`、`004a252`;专项用户面/overflow/完整生命周期保持冻结 |
 | Plan/Context/Memory专项 | implemented-frozen + partial/deferred | `06` §2.1/§3.1列出的公开面 | 16 files / 94 tests PASS | `81556ac`;Runtime只能消费,不能补实现 |

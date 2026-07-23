@@ -12,6 +12,7 @@ import {
 	type SecurityPortCancelRequest,
 	type SecurityPortCancelResult,
 } from "../../../src/runtime/protocol/v3/capability.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import type { WorkspaceServicePort, WorkspaceServiceRequest, WorkspaceServiceResult } from "../../../src/runtime/protocol/v3/workspace.ts";
 import type {
@@ -229,6 +230,17 @@ function harness() {
 		capability,
 		sandbox,
 		artifacts,
+		eventCursorAuthority: {
+			current: async () => {
+				const envelope = candidateEnvelope();
+				return {
+					stream: createSessionEventStreamRef(envelope, envelope.sessionId),
+					sequence: 12,
+					eventId: createRuntimeId("event", "verification-runner-head"),
+					eventHash: digest("verification-runner-head"),
+				};
+			},
+		},
 		trustedEnvironment: {
 			PATH: "/trusted/runner/bin",
 			EVIL: "candidate-value",

@@ -1191,6 +1191,17 @@ export async function createProductionInteractiveRuntime(
 			workspaceResolver: resolver,
 			approvalEvents: manager.sessionEvents(),
 			fallbackPrincipalId: SYSTEM_APPROVAL_PRINCIPAL_ID,
+			eventCursorAuthority: {
+				current: async (scope) => {
+					if (
+						scope.authorityId !== identity.authorityId ||
+						scope.tenantId !== identity.tenantId ||
+						scope.sessionId !== manager.sessionId()
+					) return undefined;
+					const head = manager.writer().currentHead();
+					return head ? structuredClone(head) : undefined;
+				},
+			},
 			sandboxBackend: options.toolGateway.sandboxBackend,
 			clock,
 		});

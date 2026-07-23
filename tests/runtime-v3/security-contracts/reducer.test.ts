@@ -28,6 +28,10 @@ const SESSION_STREAM = createSessionEventStreamRef(
 const RUNTIME_ID = createRuntimeId("runtime", "security-replay");
 const APPROVAL_ID = createRuntimeId("approval", "security-replay");
 const REQUEST_ID = createRuntimeId("command", "security-replay");
+const ATTEMPT_ID = createRuntimeId("command", "security-replay-attempt");
+const TURN_ID = createRuntimeId("turn", "security-replay");
+const TOOL_CALL_ID = createRuntimeId("toolCall", "security-replay");
+const APPROVER_ID = createRuntimeId("principal", "security-replay-approver");
 const PROFILE_ID = createRuntimeId("resource", "security-sandbox");
 
 function hashFor(sequence: number): string {
@@ -71,6 +75,11 @@ function requested(sequence = 1): RuntimeEventV3 {
 	return event("permission.requested", sequence, {
 		approvalId: APPROVAL_ID,
 		requestId: REQUEST_ID,
+		sessionId: SESSION_ID,
+		runtimeId: RUNTIME_ID,
+		runtimeGeneration: 1,
+		turnId: TURN_ID,
+		toolCallId: TOOL_CALL_ID,
 		capability: "workspace_write",
 		resourceKind: "filesystem",
 		requestDigest: DIGEST_A,
@@ -80,6 +89,13 @@ function requested(sequence = 1): RuntimeEventV3 {
 		scope: "once",
 		requestedAt: "2026-07-22T00:00:00.000Z",
 		expiresAt: "2026-07-22T00:05:00.000Z",
+		attemptId: ATTEMPT_ID,
+		serverScope: "tool_server",
+		resourceScopeDigest: DIGEST_A,
+		commandScopeDigest: DIGEST_B,
+		evidenceComplete: true,
+		evidenceTruncated: false,
+		originalInputDigest: DIGEST_A,
 		summary: {
 			operation: "write",
 			toolIdentityDigest: DIGEST_A,
@@ -95,11 +111,20 @@ function decided(sequence: number, decision: "allowed" | "denied" | "cancelled" 
 		requestId: REQUEST_ID,
 		requestDigest: DIGEST_A,
 		ticketDigest: DIGEST_D,
+		sessionId: SESSION_ID,
+		runtimeId: RUNTIME_ID,
+		runtimeGeneration: 1,
+		turnId: TURN_ID,
+		toolCallId: TOOL_CALL_ID,
 		decision,
 		decisionRevision: 1,
+		decidedBy: APPROVER_ID,
 		receiptId: createRuntimeId("receipt", `security-${decision}`),
 		receiptDigest: DIGEST_C,
 		decidedAt: "2026-07-22T00:01:00.000Z",
+		evidenceComplete: true,
+		evidenceTruncated: false,
+		originalInputDigest: DIGEST_A,
 		expiresAt: "2026-07-22T00:05:00.000Z",
 	});
 }
@@ -173,13 +198,39 @@ describe("SessionSecurityReducer approval replay", () => {
 		);
 	});
 
+	it("rejects stale terminal responses from another turn or runtime generation", () => {
+		const otherTurn = event("permission.decided", 2, {
+			...decided(2).payload,
+			turnId: createRuntimeId("turn", "security-replay-other"),
+		});
+		expect(resultError(reduceSessionSecurityEvents([created(), requested(), otherTurn]))).toMatchObject({
+			code: "invalid_event",
+			message: "approval terminal receipt is outside the requested execution correlation",
+		});
+
+		const replacementGeneration = event("permission.decided", 2, {
+			...decided(2).payload,
+			runtimeGeneration: 2,
+		});
+		expect(resultError(reduceSessionSecurityEvents([created(), requested(), replacementGeneration]))).toMatchObject({
+			code: "invalid_event",
+			message: "approval terminal receipt is outside the requested execution correlation",
+		});
+	});
+
 	it("applies monotonic expiry and revocation receipts", () => {
 		const expired = event("permission.expired", 2, {
 			approvalId: APPROVAL_ID,
 			requestId: REQUEST_ID,
+			sessionId: SESSION_ID,
+			runtimeId: RUNTIME_ID,
+			runtimeGeneration: 1,
+			turnId: TURN_ID,
+			toolCallId: TOOL_CALL_ID,
 			requestDigest: DIGEST_A,
 			ticketDigest: DIGEST_D,
 			decisionRevision: 1,
+			decidedBy: APPROVER_ID,
 			expiredAt: "2026-07-22T00:05:00.000Z",
 			receiptId: createRuntimeId("receipt", "security-expired"),
 			receiptDigest: DIGEST_C,
@@ -192,9 +243,15 @@ describe("SessionSecurityReducer approval replay", () => {
 		const revoked = event("permission.revoked", 3, {
 			approvalId: APPROVAL_ID,
 			requestId: REQUEST_ID,
+			sessionId: SESSION_ID,
+			runtimeId: RUNTIME_ID,
+			runtimeGeneration: 1,
+			turnId: TURN_ID,
+			toolCallId: TOOL_CALL_ID,
 			requestDigest: DIGEST_A,
 			ticketDigest: DIGEST_D,
 			decisionRevision: 2,
+			decidedBy: APPROVER_ID,
 			revokedAt: "2026-07-22T00:02:00.000Z",
 			receiptId: createRuntimeId("receipt", "security-revoked"),
 			receiptDigest: DIGEST_D,

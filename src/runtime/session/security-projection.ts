@@ -15,9 +15,11 @@ import type {
 	PrincipalId,
 	ReceiptId,
 	ResourceId,
+	RuntimeInstanceId,
 	SessionId,
 	TenantId,
 	ToolCallId,
+	TurnId,
 } from "../protocol/v3/ids.ts";
 
 export type ApprovalProjectionStatus = "pending" | ApprovalReceiptDecision;
@@ -26,6 +28,10 @@ export type SecurityReplayBlocker = "pending_approval" | "sandbox_unavailable";
 export interface ApprovalSecurityProjection {
 	readonly approvalId: ApprovalId;
 	readonly requestId: CommandId | null;
+	readonly runtimeId: RuntimeInstanceId;
+	readonly runtimeGeneration: number;
+	readonly turnId: TurnId;
+	readonly toolCallId: ToolCallId;
 	readonly capability: CapabilityName | null;
 	readonly resourceKind: CapabilityResourceKind | null;
 	readonly requestDigest: string;

@@ -3,7 +3,9 @@
 import { randomBytes } from "node:crypto";
 import { canonicalDigest } from "../../runtime/protocol/v3/canonical-json.ts";
 import {
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	capabilityGatewayRequestDigest,
+	type CapabilityEventCursorAuthorityPort,
 	type CapabilityGatewayRequest,
 	type CapabilityClaim,
 	type CapabilityName,
@@ -156,6 +158,7 @@ export interface ProductionCapabilityRequestFactoryOptions {
 	snapshots: SecuritySnapshotResolverPort;
 	classification: ToolInvocationInputClassificationPort;
 	peerBinding: CapabilityPeerBinding;
+	eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	clock?: () => Date;
 	authenticationTtlMs?: number;
 }
@@ -274,6 +277,7 @@ export class ProductionCapabilityRequestFactory implements ToolExecutionCapabili
 				: { ...base, resourceKind: kind };
 		});
 		const body = {
+			schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 			request: {
 				authorityId: envelope.authorityId,
 				tenantId: envelope.tenantId,
@@ -305,6 +309,12 @@ export class ProductionCapabilityRequestFactory implements ToolExecutionCapabili
 			targetSink: manifest.targetSink,
 			declassificationReceipts: classification.value.declassificationReceipts,
 		};
+		const eventCursor = await this.#options.eventCursorAuthority.current({
+			authorityId: envelope.authorityId,
+			tenantId: envelope.tenantId,
+			sessionId: envelope.sessionId,
+		});
+		if (!eventCursor) throw new Error("capability event cursor authority has no initialized session head");
 		const issuedAt = this.#clock();
 		const bindingExpiry = binding.expiresAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(binding.expiresAt);
 		const expiresAtMs = Math.min(issuedAt.getTime() + this.#authenticationTtlMs, bindingExpiry);
@@ -317,6 +327,7 @@ export class ProductionCapabilityRequestFactory implements ToolExecutionCapabili
 			issuedAt: issuedAt.toISOString(),
 			expiresAt: new Date(expiresAtMs).toISOString(),
 			keyRevision: binding.keyRevision,
+			eventCursor,
 		};
 		return { ...body, authentication };
 	}

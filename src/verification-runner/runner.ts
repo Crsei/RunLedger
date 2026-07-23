@@ -3,11 +3,13 @@
 import { Check } from "typebox/value";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	CapabilityGatewayResultSchema,
 	SandboxExecutorResultSchema,
 	capabilityGatewayRequestDigest,
 	type ApprovalReceiptRef,
 	type CapabilityClaim,
+	type CapabilityEventCursorAuthorityPort,
 	type CapabilityGatewayPort,
 	type CapabilityGatewayRequestBody,
 	type CapabilityRequestRef,
@@ -36,6 +38,7 @@ export interface PortBackedVerificationRunnerOptions {
 	capability: CapabilityGatewayPort;
 	sandbox: SandboxExecutorPort;
 	artifacts: VerificationArtifactPort;
+	eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	browserBackend?: BrowserBackendPort;
 	trustedEnvironment?: Readonly<Record<string, string>>;
 	clock?: () => Date;
@@ -139,6 +142,7 @@ export class PortBackedVerificationRunner implements VerificationRunnerPort {
 	readonly #capability: CapabilityGatewayPort;
 	readonly #sandbox: SandboxExecutorPort;
 	readonly #artifacts: VerificationArtifactPort;
+	readonly #eventCursorAuthority: CapabilityEventCursorAuthorityPort;
 	readonly #trustedEnvironment: Readonly<Record<string, string>>;
 	readonly #clock: () => Date;
 	readonly #browser?: RestrictedBrowserVerificationProvider;
@@ -148,6 +152,7 @@ export class PortBackedVerificationRunner implements VerificationRunnerPort {
 		this.#capability = options.capability;
 		this.#sandbox = options.sandbox;
 		this.#artifacts = options.artifacts;
+		this.#eventCursorAuthority = options.eventCursorAuthority;
 		this.#trustedEnvironment = options.trustedEnvironment ?? {};
 		this.#clock = options.clock ?? (() => new Date());
 		this.#browser = options.browserBackend
@@ -156,6 +161,7 @@ export class PortBackedVerificationRunner implements VerificationRunnerPort {
 					capability: options.capability,
 					sandbox: options.sandbox,
 					artifacts: options.artifacts,
+					eventCursorAuthority: options.eventCursorAuthority,
 					backend: options.browserBackend,
 					trustedEnvironment: options.trustedEnvironment,
 					clock: options.clock,
@@ -224,6 +230,7 @@ export class PortBackedVerificationRunner implements VerificationRunnerPort {
 				candidateCommit: request.candidate.candidateCommit,
 			});
 			capabilityRequestBody = {
+				schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 				request: {
 					authorityId: request.candidate.authorityId,
 					tenantId: request.candidate.tenantId,
@@ -278,6 +285,12 @@ export class PortBackedVerificationRunner implements VerificationRunnerPort {
 				targetSink: "shell",
 				declassificationReceipts: [],
 			};
+			const eventCursor = await this.#eventCursorAuthority.current({
+				authorityId: request.candidate.authorityId,
+				tenantId: request.candidate.tenantId,
+				sessionId: request.candidateEnvelope.sessionId,
+			});
+			if (!eventCursor) throw new Error("verification capability event cursor is unavailable");
 			authorization = await this.#capability.authorize(
 				{
 					...capabilityRequestBody,
@@ -292,6 +305,7 @@ export class PortBackedVerificationRunner implements VerificationRunnerPort {
 						issuedAt: now.toISOString(),
 						expiresAt: new Date(now.getTime() + 5 * 60_000).toISOString(),
 						keyRevision: 0,
+						eventCursor,
 					},
 				},
 				signal,

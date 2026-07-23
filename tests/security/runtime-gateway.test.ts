@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
 import {
+	CAPABILITY_GATEWAY_SCHEMA_VERSION,
 	capabilityGatewayRequestDigest,
 	type CapabilityClaim,
 	type CapabilityGatewayRequest,
 	type CapabilityGatewayRequestBody,
 	type CapabilityName,
 } from "../../src/runtime/protocol/v3/capability.ts";
+import { createSessionEventStreamRef, type EventCursor } from "../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
 import type { InputSourceRef } from "../../src/runtime/protocol/v3/taint.ts";
 import { workspaceExecutionEnvelopeDigest, type WorkspaceExecutionEnvelope } from "../../src/runtime/protocol/v3/workspace.ts";
@@ -47,6 +49,16 @@ function snapshot(): SecuritySnapshot {
 		profile: { name: "workspace-write", approvalPolicy: "on-request", filesystemMode: "workspace-write", network: { mode: "deny", allowedHosts: [] }, sandbox: "workspace-write" },
 		filesystem: { readRoots: ["/repo"], writeRoots: ["/repo"], denyRead: [], denyWrite: [], protectedPaths: ["/repo/.git", "/repo/.runledger"] },
 		rules: [], sources: ["builtin"], workspaceRoot: "/repo", tempRoot: "/tmp/session", policyDigest: "e".repeat(64), createdAt: NOW.toISOString(),
+	};
+}
+
+function eventHead(): EventCursor {
+	const workspace = envelope();
+	return {
+		stream: createSessionEventStreamRef(workspace, workspace.sessionId),
+		sequence: 8,
+		eventId: createRuntimeId("event", "gateway-head"),
+		eventHash: "f".repeat(64),
 	};
 }
 
@@ -95,6 +107,7 @@ function gatewayRequest(input: {
 		};
 	});
 	const body: CapabilityGatewayRequestBody = {
+		schemaVersion: CAPABILITY_GATEWAY_SCHEMA_VERSION,
 		request: {
 			authorityId: workspace.authorityId, tenantId: workspace.tenantId, principalId: workspace.principalId,
 			requestId,
@@ -127,9 +140,10 @@ function gatewayRequest(input: {
 		...body,
 		authentication: {
 			channel: "local_process", channelBindingDigest: AUTH_BINDING,
-			requestDigest: capabilityGatewayRequestDigest(body), nonce: input.nonce,
-			issuedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 60_000).toISOString(), keyRevision: 1,
-		},
+				requestDigest: capabilityGatewayRequestDigest(body), nonce: input.nonce,
+				issuedAt: NOW.toISOString(), expiresAt: new Date(NOW.getTime() + 60_000).toISOString(), keyRevision: 1,
+				eventCursor: eventHead(),
+			},
 	};
 }
 
@@ -150,6 +164,7 @@ function harness(maxUnits = 20): {
 			authorityId: workspace.authorityId, tenantId: workspace.tenantId, principalId: workspace.principalId,
 			channel: "local_process", channelBindingDigest: AUTH_BINDING, keyRevision: 1, issuedAt: NOW.toISOString(),
 		}],
+		eventCursorAuthority: { current: async () => eventHead() },
 	});
 	const limiter = new MemoryCapabilityRateLimiter([
 		...(["repository_read", "browser", "credential"] as const).map((capability) => ({ rateLimitId: rateLimitId(capability), capability, maxUnits, maxWindowMs: 60_000 })),
