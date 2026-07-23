@@ -125,12 +125,12 @@
 - 修改代码后必须运行 `npm run check`(完整输出,不得截断),修复所有 error / warning / info 再提交;
 - 修改模型 catalog(增删 provider)后跑 `npm run generate-models`,把生成结果一并提交;
 - 依赖固定版本(`package.json` 中已用 `^` 但锁定主版本),变更 `package-lock.json` 视为已审阅代码;
-- Git:只暂存本任务明确涉及的路径;禁止宽泛的 `git add -A` / `git add .` / `git commit -a` / `--no-verify`;禁止 `git reset --hard` / `git checkout .` / `git stash`;
+- Git:只暂存本任务明确涉及的显式路径;新增或修改使用 `git add -A -- <paths...>`,删除使用 `git add -u -- <paths...>`;禁止不带路径的 `git add -A` / `git add .` / `git commit -a` / `--no-verify`;禁止 `git reset --hard` / `git checkout .` / `git stash`;
 - 每个 PR/commit 关注一件小事,描述写"为什么",不写"是什么"(差异本身已说明是什么)。
 
 ### Git 提交与推送
 
-提交和推送是独立的状态变更。只有用户明确要求提交时才创建 commit；只有用户明确要求推送时才推送。工作区可能同时存在其他任务的改动，不能把 `git status` 中出现的全部文件视为本任务范围。
+提交本仓库时使用显式路径的手动流程,不要依赖仓库内脚本。提交和推送是独立的状态变更。只有用户明确要求提交时才创建 commit；只有用户明确要求推送时才推送。工作区可能同时存在其他任务的改动,不能把 `git status` 中出现的全部文件视为本任务范围。
 
 提交前先确认当前仓库、分支和改动边界，并审阅本任务实际改动：
 
@@ -144,22 +144,31 @@ git diff -- <explicit-paths...>
 
 代码、测试、生成物或依赖变更在提交前必须完成对应验证。通常依次执行 `npm run check` 与 `npm test`；模型 catalog 变更还必须先执行 `npm run generate-models` 并审阅生成结果。纯文档变更至少要通过 `git diff --check`，不因无关的既有失败伪造通过状态。
 
-暂存必须逐路径进行。新增或修改文件使用 `git add --`，删除文件使用 `git add -u --`；拆分或重命名为“新增目录 + 删除旧文件”时，先暂存新目录，再单独暂存旧文件删除：
+提交身份与 `allthecodes` 仓库一致。RunLedger 的 linked worktree 共享仓库级 Git 配置,设置一次即可应用到所有工作树：
 
 ```bash
-git add -- AGENTS.md src/runtime/new-module.ts tests/new-module.test.ts
+git config user.name "Crsei"
+git config user.email "Crsei@protonmail.com"
+git config --get user.name
+git config --get user.email
+```
+
+暂存必须逐路径进行。新增或修改文件使用 `git add -A --`，删除文件使用 `git add -u --`；拆分或重命名为“新增目录 + 删除旧文件”时，先暂存新目录，再单独暂存旧文件删除：
+
+```bash
+git add -A -- AGENTS.md src/runtime/new-module.ts tests/new-module.test.ts
 git add -u -- src/runtime/old-module.ts
 git diff --cached --name-status
 git diff --cached --check
 git diff --cached
-git commit -m "<one concise purpose-oriented message>"
+git commit -m "<short imperative purpose-oriented summary>"
 git status --short
 git log -1 --oneline
 ```
 
-- 不使用 `git add -A`、`git add .`、`git commit -a`、`--no-verify`，也不借用其他仓库的提交脚本。
-- 新增目录模块时使用 `git add -- <new-directory>`；删除的旧文件单独使用 `git add -u -- <deleted-file>`，避免将共享工作区的无关删除带入提交。
-- 提交前用 `git config --get user.name` 和 `git config --get user.email` 确认身份；身份缺失或不正确时先请求明确授权，不能从其他仓库复制身份配置。
+- 不使用不带显式路径的 `git add -A`、`git add .`、`git commit -a`、`--no-verify`,也不借用其他仓库的提交脚本。
+- 新增目录模块时使用 `git add -A -- <new-directory>`；删除的旧文件单独使用 `git add -u -- <deleted-file>`,避免将共享工作区的无关删除带入提交。
+- 提交前必须用 `git config --get user.name` 和 `git config --get user.email` 确认身份为 `Crsei` / `Crsei@protonmail.com`；不正确时按上述仓库级配置修正。
 - commit 只覆盖一件小事，消息写明目的或原因；未暂存的无关改动必须保留在工作区。
 
 需要推送时，先核对远端和当前分支。本仓库当前预期的 `origin` 是 `https://github.com/Crsei/RunLedger.git`，但每次推送前仍以本地配置为准：
@@ -169,7 +178,7 @@ git remote get-url origin
 git push origin "$(git branch --show-current)"
 ```
 
-如认证不可交互，使用现有的受控凭据或临时 `GIT_ASKPASS` 帮助程序；关闭 shell xtrace、将帮助程序权限设为 `700`、设置 `GIT_TERMINAL_PROMPT=0`，并在命令结束后立即删除它。不得读取、打印、复制或暂存 token、密码或凭据文件。若只需要本地提交，省略推送步骤。
+如认证不可交互,可使用临时 `GIT_ASKPASS` 帮助程序读取 `/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/github_token.txt`；GitHub 用户名使用 `Crsei`。关闭 shell xtrace、将帮助程序权限设为 `700`、设置 `GIT_TERMINAL_PROMPT=0`,并在命令结束后立即删除它。不得读取、打印、复制或暂存 token、密码或凭据文件。若只需要本地提交,省略推送步骤。
 
 ## 4. 目录约定
 
