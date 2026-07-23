@@ -10,4 +10,6 @@ export * from "./episode-manifest.ts";
 export * from "./session-journal.ts";
 export * from "./tool-result-sink.ts";
 export * from "./external-delivery.ts";
+export * from "./salvage-adapter.ts";
+export * from "./queue-recovery.ts";
 export * from "./integration/linux-kernel-keyring.ts";

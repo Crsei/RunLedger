@@ -8,6 +8,7 @@ import { UnavailableArtifactKeyProvider } from "../../../src/runtime/artifacts/k
 import { ArtifactMetadataStore } from "../../../src/runtime/artifacts/metadata-store.ts";
 import { SessionArtifactJournal } from "../../../src/runtime/artifacts/session-journal.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
+import type { ArtifactRef } from "../../../src/runtime/protocol/v3/capability.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { createLocalIdentityContext } from "../../../src/runtime/identity/local-principal.ts";
 import { DEFAULT_RUNTIME_FEATURES, type RuntimeFeatureFlags } from "../../../src/runtime/runtime-features.ts";
@@ -47,6 +48,46 @@ function valueOf<T>(result: SessionResult<T>): T {
 		throw new Error(`${result.error.code}: ${result.error.message}`);
 	}
 	return result.value;
+}
+
+async function writeQueuedArtifact(
+	manager: V3SessionManager,
+	seed: string,
+): Promise<ArtifactRef> {
+	const identity = manager.identity();
+	const written = await manager.artifactRepository().write({
+		authorityId: identity.authorityId,
+		tenantId: identity.tenantId,
+		artifactId: createRuntimeId("artifact", seed),
+		intentId: createRuntimeId("command", `${seed}-intent`),
+		principalId: identity.principalId,
+		source: {
+			sessionId: manager.sessionId(),
+			producerId: identity.principalId,
+		},
+		kind: "tool_output",
+		mediaType: "application/json",
+		content: JSON.stringify({ role: "user", content: [{ type: "text", text: seed }] }),
+		createdAt: "2026-07-23T00:00:00.000Z",
+	});
+	if (!written.ok) throw new Error(written.error.message);
+	if (written.value.state !== "committed" || !written.value.reference) {
+		throw new Error("queue Artifact fixture did not commit");
+	}
+	return written.value.reference;
+}
+
+function artifactBlobPath(stateDirectory: string, artifact: ArtifactRef): string {
+	const digest = artifact.storedDigest;
+	return join(
+		stateDirectory,
+		"artifacts",
+		"blobs",
+		"sha256",
+		digest.slice(0, 2),
+		digest.slice(2, 4),
+		`${digest}.blob`,
+	);
 }
 
 async function writeDependencyBoundSnapshot(
@@ -1261,19 +1302,7 @@ describe("V3SessionManager", () => {
 			sessionDir: join(root, "sessions"),
 			features: FLAGS,
 		});
-		const identity = manager.identity();
-		const artifact = {
-			authorityId: identity.authorityId,
-			tenantId: identity.tenantId,
-			artifactId: createRuntimeId("artifact", "queued-prompt"),
-			storedDigest: "c".repeat(64),
-			kind: "tool_output" as const,
-			originalSize: 128,
-			storedSize: 96,
-			mediaType: "application/json",
-			redaction: "redacted" as const,
-			transformReceipt: createRuntimeId("receipt", "queued-prompt"),
-		};
+		const artifact = await writeQueuedArtifact(manager, "queued-prompt");
 		const sourceCommandId = createRuntimeId("command", "queued-prompt-source");
 		const receipt = await manager.sessionEvents().enqueueArtifactWithReceipt("follow_up", artifact, {
 			sourceCommandId,
@@ -1328,6 +1357,78 @@ describe("V3SessionManager", () => {
 		const terminalReplay = await V3SessionManager.open(filePath, FLAGS);
 		expect((await terminalReplay.sessionEvents().inspectQueue()).items).toEqual([]);
 		await terminalReplay.closeAll();
+	});
+
+	it("pauses recovery when an Artifact-backed queue blob is missing", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const artifact = await writeQueuedArtifact(manager, "queued-prompt-missing");
+		await manager.sessionEvents().enqueueArtifactWithReceipt("follow_up", artifact);
+		const filePath = manager.filePath();
+		const stateDirectory = manager.stateDirectory();
+		const identity = manager.identity();
+		await manager.closeAll();
+		rmSync(artifactBlobPath(stateDirectory, artifact), { force: true });
+
+		const reopened = await V3SessionManager.open(filePath, FLAGS, identity);
+		expect(reopened.recoveryDecision()).toMatchObject({
+			kind: "reconciliation_required",
+			reasons: expect.arrayContaining(["pending_queue_artifact_unavailable"]),
+		});
+		await reopened.closeAll();
+	});
+
+	it("marks recovery corrupted when an Artifact-backed queue blob digest is wrong", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const artifact = await writeQueuedArtifact(manager, "queued-prompt-tampered");
+		await manager.sessionEvents().enqueueArtifactWithReceipt("follow_up", artifact);
+		const filePath = manager.filePath();
+		const stateDirectory = manager.stateDirectory();
+		const identity = manager.identity();
+		await manager.closeAll();
+		writeFileSync(artifactBlobPath(stateDirectory, artifact), "tampered");
+
+		const reopened = await V3SessionManager.open(filePath, FLAGS, identity);
+		expect(reopened.recoveryDecision()).toMatchObject({
+			kind: "corrupted",
+			error: {
+				code: "corrupted_log",
+				details: { reason: "blob_digest_mismatch" },
+			},
+		});
+		await reopened.closeAll();
+	});
+
+	it("does not resume an Artifact-backed queue when startup reconciliation is disabled", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const artifact = await writeQueuedArtifact(manager, "queued-prompt-no-reconcile");
+		await manager.sessionEvents().enqueueArtifactWithReceipt("follow_up", artifact);
+		const filePath = manager.filePath();
+		const identity = manager.identity();
+		await manager.closeAll();
+
+		const reopened = await V3SessionManager.open(filePath, FLAGS, identity, {
+			reconcileArtifacts: false,
+		});
+		expect(reopened.recoveryDecision()).toMatchObject({
+			kind: "reconciliation_required",
+			reasons: expect.arrayContaining(["pending_queue_artifact_unavailable"]),
+		});
+		await reopened.closeAll();
 	});
 
 	it("rejects a digest-only queue event before it can become durable v3 state", async () => {

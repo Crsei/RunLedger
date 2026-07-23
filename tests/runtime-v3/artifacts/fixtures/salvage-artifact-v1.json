@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "authorityId": "authority_salvage-fixture",
+  "tenantId": "tenant_salvage-fixture",
+  "principalId": "principal_salvage-fixture",
+  "sourceSessionId": "session_salvage-fixture",
+  "reportArtifactId": "artifact_salvage-fixture",
+  "artifact": {
+    "authorityId": "authority_salvage-fixture",
+    "tenantId": "tenant_salvage-fixture",
+    "artifactId": "artifact_salvage-fixture",
+    "storedDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "kind": "session_report",
+    "originalSize": 123,
+    "storedSize": 99,
+    "mediaType": "application/json",
+    "redaction": "redacted",
+    "transformReceipt": "receipt_salvage-transform"
+  },
+  "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "reportDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "readOnly": true,
+  "attestation": "unattested",
+  "retentionDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "authorizationReceiptId": "receipt_salvage-authorization",
+  "authorizationReceiptDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "committedAt": "2026-07-24T00:00:00.000Z",
+  "receiptDigest": "a25818819f9241dbc1234d1e079d44412dfbb30616c98a9b5dd00ddfa8d1c5d0"
+}

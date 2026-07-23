@@ -25,7 +25,8 @@ export type RecoveryPauseReason =
 	| "pending_artifact_intent"
 	| "artifact_reconciliation_failed"
 	| "pending_verification"
-	| "pending_queue_unrecoverable";
+	| "pending_queue_unrecoverable"
+	| "pending_queue_artifact_unavailable";
 
 export type RecoveryDecision =
 	| {
@@ -270,7 +271,8 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Re
 			reason === "uncertain_operation" ||
 			reason === "pending_artifact_intent" ||
 			reason === "artifact_reconciliation_failed" ||
-			reason === "pending_queue_unrecoverable"
+			reason === "pending_queue_unrecoverable" ||
+			reason === "pending_queue_artifact_unavailable"
 		);
 		return {
 			kind: reconciliationRequired ? "reconciliation_required" : "pause_for_approval",

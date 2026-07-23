@@ -25,6 +25,7 @@ export interface StartupSessionCandidate {
 export type StartupPauseReason =
 	| "active_turn" | "active_model_request" | "uncertain_operation" | "pending_permission"
 	| "pending_artifact_intent" | "artifact_reconciliation_failed" | "pending_verification" | "pending_queue_unrecoverable"
+	| "pending_queue_artifact_unavailable"
 	| "external_reference_unknown"
 	| "external_reference_unavailable" | "external_receipt_invalid" | "external_receipt_unavailable";
 

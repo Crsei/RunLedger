@@ -93,6 +93,7 @@ import {
 import type { ArtifactMetadata } from "../runtime/artifacts/types.ts";
 import { SessionArtifactJournal } from "../runtime/artifacts/session-journal.ts";
 import { ArtifactToolResultSink } from "../runtime/artifacts/tool-result-sink.ts";
+import { ArtifactQueueRecoveryValidator } from "../runtime/artifacts/queue-recovery.ts";
 import {
 	VerificationSessionRuntime,
 	type VerificationSessionRuntimePhase,
@@ -603,6 +604,70 @@ async function composeRuntime(options: {
 	}
 }
 
+function artifactReconciliationReady(runtime: OpenedV3Runtime): boolean {
+	return (
+		runtime.artifactReconciliation?.ok === true &&
+		runtime.artifactReconciliation.value.failed.length === 0
+	);
+}
+
+async function applyArtifactQueueRecovery(
+	runtime: OpenedV3Runtime,
+	recovery: RecoveryDecision,
+): Promise<RecoveryDecision> {
+	if (recovery.kind === "corrupted" || recovery.kind === "stopped") return recovery;
+	const pending = runtime.sessionEvents.pendingQueueItems();
+	const artifactItems = pending.filter((item) => item.content.storage === "artifact");
+	if (artifactItems.length === 0) return recovery;
+	if (!artifactReconciliationReady(runtime)) {
+		return {
+			kind: "reconciliation_required",
+			projection: recovery.projection,
+			cursor: recovery.cursor,
+			reasons: [...new Set([
+				...(recovery.kind === "resume" ? [] : recovery.reasons),
+				"pending_queue_artifact_unavailable" as const,
+			])],
+			snapshotSource: recovery.snapshotSource,
+		};
+	}
+	const validated = await new ArtifactQueueRecoveryValidator({
+		cas: runtime.artifactCas,
+		metadata: runtime.artifactMetadata,
+	}).validate(artifactItems);
+	if (validated.state === "ready") return recovery;
+	const first = validated.issues[0];
+	if (validated.state === "corrupted") {
+		return {
+			kind: "corrupted",
+			error: {
+				code: "corrupted_log",
+				message: "Artifact-backed queue recovery found corrupted committed evidence",
+				retryable: false,
+				...(first
+					? {
+							details: {
+								sequence: first.sequence,
+								artifactId: first.artifactId,
+								reason: first.reason,
+							},
+						}
+					: {}),
+			},
+		};
+	}
+	return {
+		kind: "reconciliation_required",
+		projection: recovery.projection,
+		cursor: recovery.cursor,
+		reasons: [...new Set([
+			...(recovery.kind === "resume" ? [] : recovery.reasons),
+			"pending_queue_artifact_unavailable" as const,
+		])],
+		snapshotSource: recovery.snapshotSource,
+	};
+}
+
 export class V3SessionManager {
 	private readonly runtime: OpenedV3Runtime;
 	private heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -884,6 +949,7 @@ export class V3SessionManager {
 					snapshotSource: recovery.snapshotSource,
 				};
 			}
+			runtime.recovery = await applyArtifactQueueRecovery(runtime, runtime.recovery);
 			return new V3SessionManager(runtime);
 		} catch (cause) {
 			const cleanupErrors = await cleanupComposedRuntime(
@@ -1127,6 +1193,7 @@ export class V3SessionManager {
 			tenantId: this.runtime.identity.tenantId,
 		});
 		this.runtime.artifactReconciliation = reconciled;
+		if (this.runtime.recovery) await this.refreshRecoveryDecision();
 		return reconciled;
 	}
 
@@ -1190,8 +1257,8 @@ export class V3SessionManager {
 			sessionId: this.runtime.sessionId,
 			snapshotFilePath: join(this.runtime.stateDirectory, "snapshot.json"),
 		});
-		this.runtime.recovery = recovery;
-		return recovery;
+		this.runtime.recovery = await applyArtifactQueueRecovery(this.runtime, recovery);
+		return this.runtime.recovery;
 	}
 
 	public async replayMessages(): Promise<readonly AgentMessage[]> {
