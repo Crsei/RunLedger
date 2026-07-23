@@ -7,3 +7,5 @@ export * from "./handoff.ts";
 export * from "./merge.ts";
 export * from "./supervisor.ts";
 export * from "./child-runtime-authority.ts";
+export * from "./child-runtime-contracts.ts";
+export * from "./headless-child-runtime.ts";

@@ -9,6 +9,12 @@
 
 前置:Phase 7、Phase 8。
 
+2026-07-24 W3-P0合同基线:
+
+- `runledger/runtime/agents` 已稳定导出 headless child factory/host、child runtime descriptor v2、cold recovery decision、replacement receipt与统一 `ChildGovernedOperationAdmissionPort`;旧 `integration/*` 深路径保留兼容但不再是公开合同。
+- child execution v2 状态冻结为 `prepared -> activation_pending -> active -> completion_pending -> completed/stop_uncertain/stopped`,另有 fail-closed `quarantined`;本节点只冻结合同,不声称 cold recovery/replacement 已实现。
+- `runtimeFeatures.multiAgent` 默认关闭,且 `daemon` rollout不依赖它;完整 production advertisement 仍等待W3-M2与W3-J。
+
 计划文件:
 
 - 新增 `src/runtime/agents/{types,graph-store,delegation,supervisor,residency,handoff,merge}.ts`。

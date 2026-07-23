@@ -11,6 +11,12 @@
 
 前置:Phase 1、Phase 7。session inspect/health/shutdown 可先按已完成能力开放;任何 turn/queue/approval mutation、Artifact 内容读取/写入或副作用能力的生产启用除 Phase 8 外,还必须满足该 feature 的 closed required-adapter matrix 并取得全部真实 receipt。未满足时 daemon 不 advertise 对应 feature,调用只能返回 `unsupported_feature`/deny,不得回退本地 `AllowAll` 或生成占位 receipt。
 
+2026-07-24 W3-P0合同基线:
+
+- Control Plane protocol冻结为`1.1`,current schema为v2,server同时协商`[1,2]`;schema v1客户端继续协商minor 0且永远看不到`multi_agent`。
+- schema v2冻结`agent:spawn/cancel/resume/handoff`、`agent:inspect`、`expectedAgentGraphRevision`、session generation及有界effect/summary合同;13类v1 mutation wire shape未修改。
+- production minimum matrix新增`agent_supervisor`、`child_runtime_factory`与可选`peer_identity_attestor`证据;W3-J前`multi_agent`不advertise。
+
 计划文件:
 
 - 新增 `src/runtime/control-plane/{types,errors,handshake,composition-requirements,command-bus,query-service,subscriptions,idempotency,jsonl-transport,sse-transport}.ts`。

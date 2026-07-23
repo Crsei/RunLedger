@@ -15,8 +15,18 @@ import {
 	type CompactionRecoveryAssessment,
 	type ModelSwitchConversionReceipt,
 } from "runledger";
-import { AgentSupervisor } from "runledger/runtime/agents";
-import { ControlPlaneCommandBus } from "runledger/runtime/control-plane";
+import {
+	AgentSupervisor,
+	HeadlessChildRuntimeHost,
+	type ChildGovernedOperationAdmissionPort,
+	type ChildRuntimeRecoveryDecision,
+	type ProductionHeadlessChildRuntimeFactoryPort,
+} from "runledger/runtime/agents";
+import {
+	ControlPlaneCommandBus,
+	validateControlPlaneV2AgentCommand,
+	type AgentSpawnCommandV2,
+} from "runledger/runtime/control-plane";
 import type { RemoteExecutorPort } from "runledger/runtime/executors";
 import { EnterprisePrincipalRefSchema } from "runledger/runtime/identity/enterprise";
 import type { RuntimeDependencyReadinessReceipt } from "runledger/runtime/integration/dependency-readiness";
@@ -52,6 +62,10 @@ export interface PublicConsumerBindings {
 	modelConversion: ModelSwitchConversionReceipt;
 	compactionRecovery: CompactionRecoveryAssessment;
 	readiness: RuntimeDependencyReadinessReceipt;
+	agentCommand: AgentSpawnCommandV2;
+	childFactory: ProductionHeadlessChildRuntimeFactoryPort;
+	childRecovery: ChildRuntimeRecoveryDecision;
+	childAdmission: ChildGovernedOperationAdmissionPort;
 }
 
 // 本文件由 public-surface 测试编译；这些值引用同时证明根命名空间和稳定子路径可消费。
@@ -63,7 +77,9 @@ export const PUBLIC_RUNTIME_VALUES = [
 	VERIFICATION_REPORT_MEDIA_TYPE,
 	verificationReportArtifactIdentity,
 	AgentSupervisor,
+	HeadlessChildRuntimeHost,
 	ControlPlaneCommandBus,
+	validateControlPlaneV2AgentCommand,
 	RuntimeShutdownCoordinator,
 	PortBackedVerificationRunner,
 	EnterprisePrincipalRefSchema,

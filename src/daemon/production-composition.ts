@@ -333,6 +333,9 @@ const ADAPTER_FEATURES: Readonly<Record<ProductionAdapterKind, readonly ControlP
 	telemetry_exporter: [],
 	event_delivery: ["event_subscription", "consumer_checkpoint"],
 	activity: ["activity"],
+	agent_supervisor: ["multi_agent"],
+	child_runtime_factory: ["multi_agent"],
+	peer_identity_attestor: [],
 };
 
 const COMMAND_FEATURES: Readonly<Record<ControlPlaneCommandType, ControlPlaneFeature>> = {

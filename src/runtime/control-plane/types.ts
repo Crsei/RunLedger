@@ -61,8 +61,9 @@ import type { ControlPlaneErrorShape, ControlPlaneResult } from "./errors.ts";
 import { controlPlaneFailure } from "./errors.ts";
 
 export const CONTROL_PLANE_PROTOCOL_MAJOR = 1 as const;
-export const CONTROL_PLANE_PROTOCOL_MINOR = 0 as const;
-export const CONTROL_PLANE_SCHEMA_VERSION = 1 as const;
+export const CONTROL_PLANE_PROTOCOL_MINOR = 1 as const;
+export const CONTROL_PLANE_SCHEMA_VERSION = 2 as const;
+export const CONTROL_PLANE_SUPPORTED_SCHEMA_VERSIONS = [1, 2] as const;
 export const CONTROL_PLANE_RUNTIME_SCHEMA_VERSIONS = [3] as const;
 export const MAX_CONTROL_PLANE_PROMPT_CHARS = 32 * 1024;
 export const MAX_CONTROL_PLANE_ARTIFACT_READ_BYTES = 4 * 1024 * 1024;
@@ -80,6 +81,7 @@ export const CONTROL_PLANE_FEATURES = [
 	"health",
 	"shutdown",
 	"consumer_checkpoint",
+	"multi_agent",
 ] as const;
 
 export type ControlPlaneFeature = (typeof CONTROL_PLANE_FEATURES)[number];

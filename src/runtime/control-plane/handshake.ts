@@ -9,6 +9,7 @@ import {
 	CONTROL_PLANE_PROTOCOL_MINOR,
 	CONTROL_PLANE_RUNTIME_SCHEMA_VERSIONS,
 	CONTROL_PLANE_SCHEMA_VERSION,
+	CONTROL_PLANE_SUPPORTED_SCHEMA_VERSIONS,
 	type ControlPlaneClientHello,
 	type ControlPlaneFeature,
 	type ControlPlaneServerHello,
@@ -50,12 +51,20 @@ export function negotiateControlPlaneHandshake(
 	if (negotiatedMinor < hello.protocol.minMinor) {
 		return controlPlaneFailure("unsupported_protocol", "no overlapping protocol minor version", false);
 	}
-	const serverControlPlaneSchemas = capabilities.controlPlaneSchemaVersions ?? [CONTROL_PLANE_SCHEMA_VERSION];
+	const serverControlPlaneSchemas =
+		capabilities.controlPlaneSchemaVersions ?? CONTROL_PLANE_SUPPORTED_SCHEMA_VERSIONS;
 	const controlPlaneSchemaVersion = [...hello.controlPlaneSchemaVersions]
 		.filter((version) => serverControlPlaneSchemas.includes(version))
 		.sort((left, right) => right - left)[0];
 	if (controlPlaneSchemaVersion === undefined) {
 		return controlPlaneFailure("unsupported_schema", "no compatible Control Plane request schema version", false);
+	}
+	if (controlPlaneSchemaVersion >= CONTROL_PLANE_SCHEMA_VERSION && negotiatedMinor < 1) {
+		return controlPlaneFailure(
+			"unsupported_schema",
+			"Control Plane schema v2 requires protocol minor 1",
+			false,
+		);
 	}
 
 	const serverSchemas = capabilities.runtimeSchemaVersions ?? CONTROL_PLANE_RUNTIME_SCHEMA_VERSIONS;
@@ -66,7 +75,9 @@ export function negotiateControlPlaneHandshake(
 		return controlPlaneFailure("unsupported_schema", "no compatible Runtime event schema version", false);
 	}
 
-	const supportedFeatures = capabilities.features ?? CONTROL_PLANE_FEATURES;
+	const supportedFeatures = (capabilities.features ?? CONTROL_PLANE_FEATURES).filter(
+		(feature) => controlPlaneSchemaVersion >= CONTROL_PLANE_SCHEMA_VERSION || feature !== "multi_agent",
+	);
 	const missing = hello.requiredFeatures.filter((feature) => !supportedFeatures.includes(feature));
 	if (missing.length > 0) {
 		return controlPlaneFailure("unsupported_feature", "required Control Plane feature is unavailable", false, {

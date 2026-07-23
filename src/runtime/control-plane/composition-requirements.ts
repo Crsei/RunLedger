@@ -32,6 +32,9 @@ export const PRODUCTION_ADAPTER_KINDS = [
 	"telemetry_exporter",
 	"event_delivery",
 	"activity",
+	"agent_supervisor",
+	"child_runtime_factory",
+	"peer_identity_attestor",
 ] as const;
 
 export type ProductionAdapterKind = (typeof PRODUCTION_ADAPTER_KINDS)[number];
@@ -140,6 +143,22 @@ const rowsByFeature: Readonly<Record<ControlPlaneFeature, ProductionFeatureRequi
 		"verifier_registry",
 	]),
 	consumer_checkpoint: row("consumer_checkpoint", "event_delivery", ["event_store", "event_delivery"]),
+	multi_agent: row("multi_agent", "agent_supervisor", [
+		"event_store",
+		"session_reader",
+		"session_writer",
+		"workspace",
+		"capability_gateway",
+		"approval",
+		"sandbox",
+		"artifact",
+		"artifact_key_provider",
+		"resource_catalog",
+		"resource_invoker",
+		"verifier_registry",
+		"agent_supervisor",
+		"child_runtime_factory",
+	]),
 };
 
 export const PRODUCTION_FEATURE_REQUIREMENTS_V1: ProductionFeatureRequirementsMatrixV1 = Object.freeze({
@@ -167,6 +186,7 @@ export const PRODUCTION_FEATURE_REQUIREMENTS_V1: ProductionFeatureRequirementsMa
 		"human_gate",
 		"remote_executor",
 		"telemetry_exporter",
+		"peer_identity_attestor",
 	])),
 });
 

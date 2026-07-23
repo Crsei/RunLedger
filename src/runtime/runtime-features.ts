@@ -12,6 +12,7 @@ export const RUNTIME_FEATURE_NAMES = [
 	"planContextMemoryContracts",
 	"orchestrator",
 	"verification",
+	"multiAgent",
 	"daemon",
 ] as const;
 
@@ -30,6 +31,7 @@ export const DEFAULT_RUNTIME_FEATURES: Readonly<RuntimeFeatureFlags> = {
 	planContextMemoryContracts: false,
 	orchestrator: false,
 	verification: false,
+	multiAgent: false,
 	daemon: false,
 };
 
@@ -45,6 +47,16 @@ export const RUNTIME_FEATURE_DEPENDENCIES: Readonly<Record<RuntimeFeatureName, r
 	planContextMemoryContracts: ["artifactCas"],
 	orchestrator: ["artifactCas", "resourceContracts", "planContextMemoryContracts"],
 	verification: ["orchestrator", "sandboxEnforcement"],
+	multiAgent: [
+		"sessionV3",
+		"workspaceContracts",
+		"capabilityGateway",
+		"sandboxEnforcement",
+		"artifactCas",
+		"resourceContracts",
+		"orchestrator",
+		"verification",
+	],
 	daemon: ["sessionV3", "orchestrator", "verification"],
 };
 

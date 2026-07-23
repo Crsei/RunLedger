@@ -8,6 +8,9 @@ import { StrictJsonlFrameParser, parseJsonlDocument } from "../../../src/runtime
 import { LocalPeerIdentityResolver } from "../../../src/runtime/control-plane/local-peer.ts";
 import { SseAdapterContract, validateLocalSseBindTarget } from "../../../src/runtime/control-plane/sse-transport.ts";
 import {
+	CONTROL_PLANE_PROTOCOL_MINOR,
+	CONTROL_PLANE_SCHEMA_VERSION,
+	CONTROL_PLANE_SUPPORTED_SCHEMA_VERSIONS,
 	validateControlPlaneCommand,
 	validateControlPlaneHello,
 	type ControlPlaneClientHello,
@@ -86,6 +89,33 @@ describe("Control Plane exact contracts and handshake", () => {
 			ok: true,
 			value: { protocol: { major: 1, minor: 0 }, controlPlaneSchemaVersion: 1, runtimeSchemaVersion: 3, features: ["session", "health"] },
 		});
+		expect(CONTROL_PLANE_PROTOCOL_MINOR).toBe(1);
+		expect(CONTROL_PLANE_SCHEMA_VERSION).toBe(2);
+		expect(CONTROL_PLANE_SUPPORTED_SCHEMA_VERSIONS).toEqual([1, 2]);
+		expect(negotiateControlPlaneHandshake(hello({
+			protocol: { major: 1, minMinor: 0, maxMinor: 1 },
+			controlPlaneSchemaVersions: [1, 2],
+			requestedFeatures: ["session", "multi_agent"],
+		}), {
+			serverInstanceId: createRuntimeId("runtime", "daemon-v2"),
+			features: ["session", "multi_agent"],
+		})).toMatchObject({
+			ok: true,
+			value: {
+				protocol: { major: 1, minor: 1 },
+				controlPlaneSchemaVersion: 2,
+				features: ["session", "multi_agent"],
+			},
+		});
+		expect(negotiateControlPlaneHandshake(hello({
+			requestedFeatures: ["session", "multi_agent"],
+		}), {
+			serverInstanceId: createRuntimeId("runtime", "daemon-v1"),
+			features: ["session", "multi_agent"],
+		})).toMatchObject({
+			ok: true,
+			value: { controlPlaneSchemaVersion: 1, features: ["session"] },
+		});
 		expect(
 			negotiateControlPlaneHandshake(hello({ protocol: { major: 2, minMinor: 0, maxMinor: 0 } }), {
 				serverInstanceId: createRuntimeId("runtime", "daemon"),
@@ -97,7 +127,7 @@ describe("Control Plane exact contracts and handshake", () => {
 			}),
 		).toMatchObject({ ok: false, error: { code: "unsupported_schema" } });
 		expect(
-			negotiateControlPlaneHandshake(hello({ controlPlaneSchemaVersions: [2] }), {
+			negotiateControlPlaneHandshake(hello({ controlPlaneSchemaVersions: [3] }), {
 				serverInstanceId: createRuntimeId("runtime", "daemon"),
 			}),
 		).toMatchObject({ ok: false, error: { code: "unsupported_schema" } });
