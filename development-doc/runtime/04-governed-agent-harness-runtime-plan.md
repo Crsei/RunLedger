@@ -1,9 +1,11 @@
 # RunLedger 可治理 Agent Harness Runtime 主计划
 
-> 文档状态:完整计划,当前权威执行入口;实现状态:未完成,复选框只有附当前目标分支/工作树证据后才能勾选
+> 文档状态:完整计划,当前权威执行入口;实现状态:总体未完成,但 §0.5、Phase 0/2/3/5/6 contract 已实现,Phase 1/4/7–11 为部分实现或仍缺联合生产门禁;复选框只有附当前目标分支/工作树的逐项证据后才能勾选
 > 基线日期:2026-07-22
-> 适用范围:`src/runtime/`、`src/storage/`、`src/cli/`、后续 `src/daemon/` 与对应测试;Plugin/MCP/Skill/Hooks 以及 Worktree/Sandbox/Permission 交叉领域仅定义 Runtime 中立数据结构与适配端口
+> 当前实现复核:2026-07-23T20:55:13+08:00,`worktree/governed-agent-harness-runtime@81556acb16e2d4ba39e8fffeb0f4c5bdeccf40c7`
+> 适用范围:`src/runtime/`、Runtime-owned `src/storage/`、`src/cli/`、`src/tui/`、`src/daemon/` 与对应测试;三个外围专项已按冻结说明转为只读依赖
 > 上游设计输入:[`00-reference.md`](00-reference.md)
+> 外围专项冻结说明:[`06-specialty-implementation-freeze.md`](06-specialty-implementation-freeze.md)
 > 历史计划:[`01-minimum-runtime-scaffold-plan.md`](01-minimum-runtime-scaffold-plan.md)、[`02-agent-loop-resurrection-plan.md`](02-agent-loop-resurrection-plan.md)、[`03-tool-system-plan.md`](03-tool-system-plan.md)
 > pi-ai 移植基线:[`../providers/01-pi-ai-migration-plan.md`](../providers/01-pi-ai-migration-plan.md)
 > 扩展实现计划:[`../plugin-mcp-skill-hooks/01-implementation-plan.md`](../plugin-mcp-skill-hooks/01-implementation-plan.md)
@@ -24,8 +26,34 @@
 - 在单 Agent 的 Session、Workspace、Capability、Artifact 与 Verification 边界稳定前,不得默认启用多 Agent 或远程执行。
 - 任一安全组件初始化失败时 fail closed,不得静默退化到共享 workspace、无 sandbox、AllowAll 或未验证资源。
 - 本文件的状态真源是当前目标分支上的文件内容与已记录 commit/test evidence。其他 worktree 的未合并实现、口头报告或局部定向测试都不改变这里的复选框;合入当前目标分支并重新验证后才能回写状态。
+- Plan/Context/Compaction/Memory、Plugin/MCP/Skill/Hooks、Worktree/Sandbox/Permission 已按 [`06-specialty-implementation-freeze.md`](06-specialty-implementation-freeze.md) 在 `81556ac` 冻结。后续 Wave 只实现 Runtime 自有路径;冻结能力不足时保留 `unsupported/deny`,不得跨域补实现。
+
+### 0.0 当前实现状态快照
+
+本表是对当前目标分支代码、生产接线、公开导出和测试的状态汇总,用于纠正旧基线中“只有 scaffold”或“整类能力不存在”的过时描述。阶段任务仍按其完整语义验收:模块存在、fake adapter、局部 E2E 或进程内 seam 不能单独关闭生产联合门禁,因此下表不会机械地把 343 个正式任务全部改成 `[x]`。
+
+当前复核结果:`npm run check` PASS;`npm test` 为 261 files / 1701 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build` 与 `git diff --check` PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。
+
+| 范围 | 当前实现状态 | 已有代码/测试证据 | 尚未关闭的边界 |
+|---|---|---|---|
+| §0.5 pi-ai parity | 已实现 | parity manifest、只读审计脚本、delta/parity tests 均在当前分支;固定 snapshot 审计覆盖 164/164 source files 与 72 catalog files | Qwen 等差异按 manifest 明确 defer/adopt/reject,不是隐式 parity;后续 upstream 漂移仍需重算 |
+| Phase 0 | contract/边界基线已实现 | v3 IDs、catalog、exact payload/schema、hash/canonical JSON、taint、threat model、feature matrix与两条 boundary script均已接入`npm run check` | 历史 I0–I7 没有逐窗口 handoff 记录,不能据此关闭最终串行集成验收 |
+| Phase 1 | 部分实现,主体已落地 | single-writer Event Store、accepted/durable barrier、strict replay/hash、queue、snapshot、stop、fork、migration、salvage、writer lease与 session tests | open/restore 的不可序列化依赖注册顺序、create/fork 全故障矩阵、salvage 到受授权 CAS Artifact 的生产适配仍需逐项闭合 |
+| Phase 2 | contract 已实现 | Workspace envelope/binding/lease/validation/checkpoint events、projection/reducer与 architecture/contract tests | 真实 Git/worktree/lease/TOCTOU 行为已冻结为外部依赖,未完成项不由 Runtime 接管 |
+| Phase 3 | contract 已实现 | Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer与 security-contract tests | pending Approval 跨重启、actor identity、完整 Gateway/Sandbox/credential 行为均为冻结缺口 |
+| Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
+| Phase 5 | Runtime contract 已实现 | neutral resource types/schema/ports/events/invocation stream与 resource-contract tests | Extension M1/M4/M5 主体和 M2/M3/M6/M7 部分实现已冻结;剩余行为不由 Runtime 接管 |
+| Phase 6 | 公共 contract 已实现 | model/plan/context/compaction/memory types/schema/events/fixtures、ownership与 public-surface tests | router/context/plan/compaction/memory 核心已有窄证据并已冻结;工具/UI/overflow/完整生产生命周期缺口不由 Runtime 接管 |
+| Phase 7 | 主体实现,发布门禁未关闭 | Orchestrator、Goal/Task canonical truth、queue/save-point、retry/loop breaker、BudgetGuard与 agent-loop 接线 tests | 完整 prompt-to-verification 生命周期、全维预算与 Runtime-M1 production join gate 未完成 |
+| Phase 8 | 部分实现 | Verification core、trusted baseline、dependency/secret scan、review/finding、EpisodeSeal、keyring issuer、runner/browser adapter与 trust tests | Browser 联合 E2E 仍使用受控测试替身;production forge/Draft PR/HumanGate 与完整 prompt 生命周期缺失 |
+| Phase 9 | 部分实现 | durable Agent graph、Supervisor、delegation、Workspace/Budget/authority sidecar、internal process-resident child host与 deterministic/opt-in live happy path | executable child factory 仍为 internal/test-injected seam且未稳定导出;activation/completion process-local,CLI/daemon/Control Plane无 spawn/feature row,真实 Gateway/Sandbox/Verification、cold takeover与`stop_uncertain`未闭合 |
+| Phase 10 | 部分实现 | versioned Control Plane、13 类 mutation restart、daemon/stdio、queue/activity、composition receipt、runtime generation与 recovery tests | OS peer identity和真正 listener、部分 turn/approval/artifact/queue/forge/human-gate production ports、idle replacement与全功能 advertisement仍返回 unsupported |
+| Phase 11 | 部分实现 | Activity/cost/Telemetry Manifest/forensic、identity/executor contracts、startup/shutdown/GC与多轮 durability hardening | managed enforcement、credential/forge/human gate、remote/CI、完整 child cold recovery/process-tree authority与跨域 fault matrix未完成 |
+| Runtime-M0–M4 | 均未正式关闭 | 各阶段已有大量可复用实现和 scoped evidence | M0 尚需 Phase 1/4 逐项验收;M1–M4 各自的 production join、专项联合门禁和最终清单仍未满足 |
 
 ### 0.1 与 Plugin/MCP/Skill/Hooks 计划的强制边界
+
+当前 Runtime-only 实施期间,本节原有的并行开发/交接规则被 [`06-specialty-implementation-freeze.md`](06-specialty-implementation-freeze.md) 收紧为“Extension 全域只读、Runtime 仅消费公开面”。下列 owner 划分继续用于解释架构和未来显式解冻,不授权继续完成 Extension-M6/M7。
 
 本计划只拥有 Runtime 通用协议、数据结构、schema、event payload 和 adapter port。它不实现任何 Plugin/MCP/Skill/Hooks 的发现、解析、信任存储、进程生命周期或用户控制面。具体实现及状态账本统一归属 [`../plugin-mcp-skill-hooks/01-implementation-plan.md`](../plugin-mcp-skill-hooks/01-implementation-plan.md),不得在 `src/runtime/resources/` 下再造第二套实现。
 
@@ -48,6 +76,8 @@
 5. 若契约确需变更,先由 Runtime 线提交 schema 版本升级和 contract tests,再由扩展 adapter 跟进。不得在同一提交同时改两侧实现,也不得复制类型形成漂移的双真源。
 
 ### 0.2 与 Worktree/Sandbox/Permission 计划的强制边界
+
+当前 Runtime-only 实施期间,`src/security/**`、`src/worktree/**`及冻结说明列出的专项 storage/tests 均只读。Runtime 可以消费既有 adapter/receipt并实现 fail-closed integration,不能继续完成 Approval recovery、真实 Sandbox、persistent grant、enterprise credential/remote 等专项任务。下列规则仅作为未来显式解冻时的 ownership 依据。
 
 对 workspace/worktree、permission/approval、sandbox 三组交叉领域,本计划只交付 Runtime 可消费的规范化数据结构:
 
@@ -77,6 +107,8 @@ runtime protocol contracts
 
 ### 0.3 与 Plan/Context/Compaction/Memory 计划的强制边界
 
+当前 Runtime-only 实施期间,model router、Plan、Context、Compaction、Memory 行为与专项 storage/tools/tests 以冻结基线只读。Runtime 只允许修改自己的 request/session/controller/composition adapter;缺 `/compact`、Plan approval、overflow/fork/rewind 或 Memory 用户生命周期时不得在 Runtime 目录重建。下列原始并行规则只供未来显式解冻使用。
+
 本计划 Phase 6 只生成 Model Compatibility、Plan Mode、Context、Compaction 与 Memory 接入 Runtime 所需的中立数据结构、TypeBox schema、v3 event payload、fixture 和 contract tests。router、reducer、service、store、算法、工具、TUI/CLI 与 agent-loop/controller 接线统一归属 [`../plan-compact-memory/01-implementation-plan.md`](../plan-compact-memory/01-implementation-plan.md),Phase 6 的“完成”不能代表专项行为已实现。
 
 | 边界 | Runtime Phase 6 拥有 | Plan/Context/Compaction/Memory 专项拥有 |
@@ -98,6 +130,8 @@ runtime protocol contracts
 兼容性解释以本计划 §6.1 的 session version × feature-state 矩阵为唯一真源。专项中的“v1/v2 只读兼容”只表示 Plan/Context/Compaction/Memory 新语义不得写入 v1/v2,不能覆盖 `off/opt_in` 下基础 v2 session 仍沿当前路径可读写的规则;专项实现若需改变该矩阵,必须先修改本计划、CLI golden fixture 与迁移门禁。
 
 ### 0.4 Enterprise/Remote/Telemetry 的实现所有权
+
+本轮只继续 Runtime-owned Activity/Telemetry/lifecycle、durable ChangeProposal/HumanGate repository、Control Plane 和 remote orchestration adapter。表中位于 Security/Worktree、Extension 或 PCM 专项的 managed policy、credential、真实 remote executor、marketplace trust 和 memory/compaction managed bounds 全部冻结;Runtime 只能保留对应 port 与 unsupported 路径。
 
 Phase 11 同时包含 Runtime 自有行为与跨专项合同,必须按下表交付,不能把“schema 已冻结”误写成“企业安全已实现”。
 
@@ -150,6 +184,8 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 
 ### 0.6 全局串行集成账本
 
+本表保留原始 owner/handoff 设计与历史追溯,但从`06`冻结决定起不再启动 I1–I4、I7 中的专项实现窗口。后续实际调度只按§12的Runtime-owned Wave和共享锁执行;需要专项变更时必须先显式解冻,不能直接恢复本表旧窗口。
+
 §0.1–§0.3 各专项的独占目录可以并行开发,但共享 composition 文件必须严格按下表串行交接。每个窗口开始前在本文件对应阶段记录 `baseline commit + 前置 owner commit + 允许路径 + 负责人`,结束后记录 `handoff commit + 完整验证`;没有 handoff 记录不得打开下一窗口。表中顺序只约束共享文件,不阻止新模块、fake adapter 或 contract consumer tests 并行开发。
 
 | 窗口 | 单一 owner | 允许的共享路径 | 开始条件 | 后继 handoff |
@@ -164,6 +200,8 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 | I7 Enterprise/telemetry composition | Runtime Phase 11 owner;安全专项只交 adapter | daemon composition root 的 telemetry/managed-policy/executor/credential/forge/human-gate adapter 注册与 composition matrix 更新 | I6 + Runtime-M2 handoff + WorkspaceSecurity-Phase8 + Extension-M7 | 交出 Runtime-M4 最终 baseline |
 
 任何窗口需要修改表外共享路径或改变顺序时,先更新本表和受影响专项计划,再创建实现 PR。不得让多个长期分支各自修改 controller/CLI/TUI 后以自动冲突选择合并;最终 composition root owner 始终是 I6/I7 的 Runtime owner。
+
+当前追溯结论:`004a252` 已一次性集成多个原计划要求串行交接的共享面,后续提交又继续在窄边界加固,但本表没有留下 I0–I7 每个窗口的 `baseline/owner/allowed paths/handoff commit` 完整历史。因此当前代码与测试可以证明对应模块或 scoped seam 已实现,不能倒推为 §11 的“全局串行 handoff 记录齐全”已经完成;该最终验收项继续保持未勾选。
 
 ## 1. 审查快照与证据边界
 
@@ -431,32 +469,29 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 
 ### 2.1 可保留的现有基线
 
-- `src/runtime/agent-loop.ts` 已有 outer/inner loop、sequential/parallel tool batch、steer/follow-up、tool hook、truncated tool call fail-closed 和动态 turn update。
-- `src/runtime/agent.ts` 已有单活跃 run、interrupt、queue 和 `waitForIdle`。
-- `src/runtime/ledger/` 已有 v2 append-only JSONL、MemoryLedger、lockfile 和 entry-count high-water mark。
-- `src/storage/session-codec.ts` 对 v2 canonical message 无损恢复,legacy v1 只恢复安全文本。
-- `src/storage/session-manager.ts` 已有 create/open/continue/fork/list 和整场锁。
-- `src/runtime/execution-env.ts`、`tool-context.ts` 已把 fs/shell/cwd 和单次 tool context 抽象出来。
-- `src/runtime/tool-registry.ts` 与 stdlib 工具已形成最小可运行工具面。
-- `src/runtime/interactive-session-controller.ts` 已统一 provider/model/thinking/session replay 和 TUI 装配。
-- `src/runtime/tasks/`、`src/runtime/tools/{multi-edit,web-fetch,skill,notebook-edit,todo-write}.ts`、`src/tui/components/{tool-call,diff-preview,bash-execution}.ts`、`examples/m3-demo.ts` 与 mock-stream phase tests 可作为后续 projection/兼容入口;这些是历史阶段产物,不对应本计划的 Runtime-M0–Runtime-M4 发布里程碑。
-- 当前 HEAD 已有 `src/runtime/protocol/v3/`、identity、resource、model/plan/context contract 和 feature flag 的可编译前置 scaffold,且新能力默认关闭;其中仍有明确 TODO、宽 payload guard 和未接入 `npm run check` 的边界脚本,不能据此把 Phase 0 或后续行为阶段标记完成。
+- v2 `agent-loop`、`Agent`、ledger/session codec、ExecutionEnv、tool registry/stdlib、interactive controller 与 TUI 仍作为 legacy/兼容入口存在,没有被 v3 实现无条件替换。
+- Phase 0–6 已不再只是 scaffold:`src/runtime/protocol/v3/`、`src/runtime/session/`、`src/runtime/artifacts/`、`src/runtime/resources/` 以及 model/plan/context contract 均有 exact schema、reducer/store 或 contract tests;runtime/execution boundary scripts 已由 `npm run check` 实际执行。
+- Workspace/Security 专项已有 production worktree、lease、Approval/Gateway、Artifact checkpoint 与 startup/mutation adapter,但它们的真实隔离、身份、Sandbox 和跨存储恢复仍按专项联合门禁判定。
+- Phase 7–8 已有 Orchestrator/Budget 与 Verification 模块、production adapter和攻击测试;完整 prompt -> approved plan -> build/test/review -> EpisodeSeal 生命周期仍未接入默认 production composition。
+- Phase 9 已有 durable Agent graph、Supervisor、authority sidecar和 internal/test-injected process-resident child execution seam;它不是稳定 public executable-child API,也没有 CLI/daemon/Control Plane feature activation。
+- Phase 10–11 已有 Control Plane、daemon、RuntimeActivity/cost/telemetry、startup/shutdown/GC 和 enterprise/remote contracts;显式 `unsupported_feature`/`evidence_unavailable` 路径继续用于拒绝缺少真实 adapter 的生产能力。
+- `src/runtime/tasks/`、M4 工具、TUI 组件、examples/mock tests 仍是历史兼容产物,不能替代上面任何 v3 production gate。
 
-### 2.2 对照 11 类治理问题的缺口
+### 2.2 对照 11 类治理问题的当前实现与剩余缺口
 
-| 领域 | 当前缺口 | 进入生产自动化前的硬门槛 | 计划落点 |
+| 领域 | 当前已实现 | 进入生产自动化前仍缺的硬门槛 | 计划落点 |
 |---|---|---|---|
-| Workspace identity | ExecutionEnv 只有 cwd/fs/shell;绝对路径、symlink、branch/base/owner 未统一校验 | 每次工具调用必须带并验证 `WorkspaceExecutionEnvelope` | Runtime Phase 2、4 + WorkspaceSecurity-Phase2–WorkspaceSecurity-Phase7 |
-| Session integrity | v2 无 sequence/hash/payload digest,坏行被跳过,无 stop tombstone;queue payload/claim/cancel 与 root goal/agent lineage 不是可恢复真源 | v3 strict event log、durability/uncertain barrier、identity/queue replay、corruption fail-closed | Runtime Phase 0–1 |
-| Capability kernel | 决策只有 allow/deny,生产默认 `AllowAll` | `deny > ask > allow`、approval receipt、所有副作用只能过 Gateway | Runtime Phase 3 + WorkspaceSecurity-Phase1–WorkspaceSecurity-Phase8 |
-| Tool/MCP/Skill/Plugin | 无 manifest trust、签名/digest、变更重批和按需激活 | 可信 Registry、exact identity、capability manifest、sandbox probe | Runtime Phase 5 + Extension-M0–Extension-M7 |
-| Deterministic orchestrator | 模型循环没有完整 Goal/Gate 状态机 | build/test/review/complete 由结构化 gate 决定 | Runtime Phase 7–8 |
-| Model router | controller 可直接换模型,无兼容检查 | Compatibility Manifest;不兼容切换必须 fork | Runtime Phase 6 + Plan/Context/Compaction/Memory Phase 1、7 |
-| Context/Compaction/Memory | 无分层 context、compaction invariant、持久 memory 审批 | 五层 context、taint/trust、摘要前后 invariant | Runtime Phase 6 + Plan/Context/Compaction/Memory Phase 2–10 |
-| Multi-Agent | 无 durable DAG、总预算、workspace/capability 子集 | 有界 DAG、独立 lease/session、partial artifact | Runtime Phase 7、9 + WorkspaceSecurity-Phase7 |
-| Verification | 无独立 pipeline/finding lifecycle/可信基线 | Builder 自述永远不能形成 pass | Runtime Phase 8、10 + WorkspaceSecurity-Phase7 |
-| Artifact/Observability/Cost | 大输出落普通 tmp 文件,无 CAS/retention;OTel 未完整接入 | Artifact digest、默认脱敏、全维度 cost/budget、Episode Manifest | Runtime Phase 4、7、10–11 + WorkspaceSecurity-Phase7 |
-| CI/Enterprise | 无 daemon、managed policy、SIEM、runner egress | control plane、策略优先级、可信 gate、最小权限 runner | Runtime Phase 8、10–11 + WorkspaceSecurity-Phase8 + Extension-M7 |
+| Workspace identity | Workspace contract、production worktree/lease、canonical bind/release、checkpoint/rewind/cleanup与持续 mutation gate | ancestor/path TOCTOU、完整 Sandbox/process tree、活跃期 corruption/kill/restart联合证明 | Runtime Phase 2、4 + WorkspaceSecurity-Phase2–WorkspaceSecurity-Phase7 |
+| Session integrity | v3 strict event log、hash/durable barrier、queue/snapshot/stop/fork/migration/recovery | open依赖注册顺序、create/fork完整故障矩阵、child activation/cold effect reconcile | Runtime Phase 0–1 |
+| Capability kernel | contract、Approval durable CAS/reconcile、Tool Gateway authorize/start/execute窄闭环 | pending prompt恢复、actor/channel identity、独立 denial audit、public revoke、无旁路真实 Sandbox/credential | Runtime Phase 3 + WorkspaceSecurity-Phase1–WorkspaceSecurity-Phase8 |
+| Tool/MCP/Skill/Plugin | neutral resource contract与扩展 discovery/trust/runtime adapter已有实现/测试 | publisher/signature/marketplace与所有生产 execution/journal/联合门禁按扩展专项最终验收 | Runtime Phase 5 + Extension-M0–Extension-M7 |
+| Deterministic orchestrator | Goal/Task canonical truth、queue/save-point、retry/loop breaker与多维 BudgetGuard | 默认 production prompt 生命周期和 Verification/Compaction gate联合闭环 | Runtime Phase 7–8 |
+| Model router | compatibility contract、manifest loader/router/profile与 governed request adapter | 生产切模/fork及 provider drift的完整专项验收 | Runtime Phase 6 + Plan/Context/Compaction/Memory Phase 1、7 |
+| Context/Compaction/Memory | 分层 Context、compaction与 Memory service/store/tool模块及 contract/behavior tests | overflow-safe-point -> durable replacement -> CAS install 的production E2E与完整审批生命周期 | Runtime Phase 6 + Plan/Context/Compaction/Memory Phase 2–10 |
+| Multi-Agent | durable graph/Supervisor、bounded budget/workspace refs、authority sidecar、internal child happy path | stable public/production runtime factory、CLI/daemon feature row、真实 child Gateway/Sandbox/Verification、cold takeover/stop resolution | Runtime Phase 7、9 + WorkspaceSecurity-Phase7 |
+| Verification | independent pipeline、finding/review/secret/dependency gates、EpisodeSeal与受控 browser/runner adapters | 真实 Browser/Sandbox/Workspace联合 E2E、默认 prompt lifecycle、production Draft PR/HumanGate | Runtime Phase 8、10 + WorkspaceSecurity-Phase7 |
+| Artifact/Observability/Cost | Artifact CAS/retention/redaction/checkpoint、Activity/cost/Telemetry Manifest与forensic store | salvage适配、全维late-cost对账、真实 exporter/retention/enterprise联合门禁 | Runtime Phase 4、7、10–11 + WorkspaceSecurity-Phase7 |
+| CI/Enterprise | daemon/control-plane、managed/identity/executor/telemetry contracts与部分攻击测试 | OS peer identity、production managed enforcement、credential/forge/human gate、remote/CI executor与跨域fault matrix | Runtime Phase 8、10–11 + WorkspaceSecurity-Phase8 + Extension-M7 |
 
 ### 2.3 `00-reference.md` 闭环追踪
 
@@ -1524,7 +1559,7 @@ Runtime contract allowlist:
 
 目标:让模型负责提出内容,让 Runtime 决定阶段、门禁、重试、预算和完成。
 
-前置:Phase 1–5 和 Phase 6 公共契约。Orchestrator 纯 reducer/budget 可面向契约与专项行为并行开发;任何 model/context/plan/compaction/memory 生产接线和 Runtime-M1 发布承诺仍必须等待专项计划对应门禁完成。
+前置:Phase 1–5 和 Phase 6 公共契约。当前只继续 Orchestrator reducer/budget 与 Runtime adapter,消费`06`冻结的现有专项公开面;不再并行开发专项行为。冻结readiness不满足时相关feature保持unsupported,Runtime-M1发布承诺继续未关闭。
 
 计划文件:
 
@@ -1597,7 +1632,7 @@ Canonical event/reducer 闭环:
 
 目标:把“确实完成”变成独立、可重复、可审计的系统判断。
 
-前置:Phase 2–5、Phase 7 的 Runtime contracts。独立 verifier 模块和 fake-port tests 可在这些 contract 冻结后开发;进入 I5 并把 Phase 8 标记完成,必须同时等待 Phase 7 reducer/budget/transition implementation tests、I4 model/plan/context behavior baseline、Phase 8 独占模块测试,以及 WorkspaceSecurity-Phase7 的真实 trusted-checkout/ExecutionGateway/Sandbox/Artifact adapter 与联合 E2E receipt,不能用 fake port 解锁生产 verifier。
+前置:Phase 2–5、Phase 7 的 Runtime contracts。独立 verifier 模块和 fake-port tests 可继续开发;production composition只消费冻结专项的现有receipt。缺trusted-checkout/ExecutionGateway/Sandbox/Artifact或PCM readiness时,Runtime实现unsupported路径且Phase 8/Runtime-M1保持未完成,不能用fake port解锁。
 
 计划文件:
 
@@ -2049,9 +2084,11 @@ Canonical event/reducer 闭环:
 - deterministic E2E:`npx vitest run tests/e2e/governed-child-runtime.test.ts --no-file-parallelism` -> 1 file / 1 test，PASS。真实使用V3 parent/child、production Workspace/composition、File authority store、两轮Agent与一次echo，断言tool result先进入child-scoped Artifact sink，test attestor在第二轮放行前显式report Artifact并记一次verification usage，随后验证turn/cursor/terminal、`runtime -> Workspace -> Budget`、released authority、空resident snapshot和parent/child restart replay。Echo Gateway、attestor/Verification是明确测试替身，不是production Gateway/Sandbox/Verification完成证据。
 - live DeepSeek E2E:`RUNLEDGER_LIVE_E2E=1 npx vitest run tests/e2e/live-deepseek-child-runtime.test.ts --no-file-parallelism` -> 1 file / 1 test，PASS；test 5.789s、总11.02s。正常路径为`AuthStorage.create() -> builtinModels -> deepseek/deepseek-v4-pro`，model/request均限制`maxTokens=256`，最多2轮、1次tool，110s abort、115s completion wait、120s test timeout；实际2次provider dispatch、1次governed echo、1个Artifact、1次test attestation，最终completed并完成三阶段cleanup。测试代码未直接读取、复制或透传API key，也未输出回复正文、headers、credential或raw provider cause；默认完整suite中该测试明确skip。
 - full gate:`npm run check`、`npm test`（261 files / 1701 tests passed，另1个live test skipped）、`npm run build`、`npm run test:harness-regression`（11 files / 63 tests）、`git diff --check`全部PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。
+- public/production boundary:`headless-child-runtime.ts`与`child-operation-budget.ts`没有从`src/runtime/agents/index.ts`、`src/runtime/agents/integration/index.ts`或稳定 package export 暴露,当前 E2E 从源码深导入并注入 test-owned runtime factory/Echo Gateway/attestor。高层 production Agent 配置不接受`runtimeFactory`,CLI/controller/daemon没有 spawn surface,Control Plane feature/adapter matrix也没有 multi-agent row；所以这里的“可执行”只表示 internal/test-injected process-resident seam,不是可对外承诺的 production/public child runtime。
 - RED evidence boundary:`754b903`与`bb533d3`分别保留8/8和6/6最终测试，但本次continuation没有可核验的`e741c88`原始RED console transcript；因此本证据不虚构RED数量，只记录最终targeted/full/live结果与baseline中不存在post-graph activation port的客观差异。
 - remaining boundary:activation receipt/completion仍是process-local；child provider/model选择、objective/prompt与pending run不能cold reconstruct；requested capability尚未映射并强制到实际resource manifest/tool registry；child-scoped continuous mutation gate、真实Capability Gateway、Sandbox、Verification与process-tree isolation没有接入；cold partial takeover、`stop_uncertain`、kill-after-effect、idle/replacement、Artifact/handoff/merge、CLI/daemon/factory activation和machine-verifiable feature row仍未完成。Phase 9、Runtime-M2、全维BudgetGuard和production multi-agent advertisement保持未完成。
 - verified_at:`2026-07-23T20:12:26+08:00`。
+- current-head recheck:`81556ac`于`2026-07-23T20:55:13+08:00`复核；`npm run check` PASS，`npm test` 261 files / 1701 tests PASS + 1 live test skip，`npm run build`/`git diff --check` PASS。没有`e741c88`之后的新代码提交可提升上述 production/cold-recovery 状态。
 
 ## 8. 阶段依赖与发布里程碑
 
@@ -2060,28 +2097,28 @@ Phase 0 Protocol
   -> Phase 1 Session Kernel
       -> Phase 2 Workspace Contracts
           -> Phase 3 Security Contracts
-              +-> WorkspaceSecurity-Phase0–4（独占实现）-> I2/WorkspaceSecurity-Phase5 集成 -> WorkspaceSecurity-Phase7 verification adapter
+              +-> WorkspaceSecurity frozen implementation -> Runtime receipt adapter
               +-> Phase 4 Artifact -> Phase 5 Resource Contracts
-              |                   +-> Phase 6 Model/Plan/Context Contracts -> 专项行为
+              |                   +-> Phase 6 Model/Plan/Context Contracts -> frozen PCM implementation
               +-> Phase 7 Orchestrator/Budget implementation（可面向冻结 contract 并行）
 
-[Phase 5/6 + 专项行为 + Extension-M0–Extension-M6 + WorkspaceSecurity-Phase7 + Phase 7 implementation]
-  -> production join gate -> Phase 8 Verification/Runtime-M1
+[Phase 5/6 + frozen specialty readiness + Phase 7 implementation]
+  -> Runtime-owned composition gate -> Phase 8 Verification
        +-> Phase 9 Multi-Agent/Runtime-M2 ------------------+
        +-> Phase 10 Daemon/Clients/Runtime-M3 --------------+-> Phase 11 Enterprise/Remote/Telemetry/Runtime-M4
 
 §0.5 PiAiParityManifest ---------------------> Phase 6 Model/Plan/Context Contracts -> Runtime-M1
 ```
 
-| 里程碑 | 包含阶段 | 可对外承诺 |
-|---|---|---|
-| Runtime-M0:Auditable Single Agent Contracts | 0–4 | 单 Agent session、workspace/security refs 与证据协议可验证;这是 contract 里程碑,不承诺真实隔离或强制执行 |
-| Runtime-M1:Governed Harness | §0.5 + 5–8 + production join gate | `PiAiParityManifest` 可追踪,Extension-M0–Extension-M6、Plan/Context/Compaction/Memory 行为、WorkspaceSecurity-M5/WorkspaceSecurity-Phase7 adapter、确定性门禁与内置 Browser 独立验证完整 |
-| Runtime-M2:Bounded Collaboration | 9 + WorkspaceSecurity-Phase7/WorkspaceSecurity-M6 联合门禁 | 多 Agent DAG、workspace/capability refs 有界且可恢复;真实隔离由专项联合 E2E 证明,不默认远程 |
-| Runtime-M3:Headless Runtime | 10 + production composition gate | CLI/TUI 通过同一协议连接 Runtime 真源,版本化协议可供后续 IDE/CI adapter 消费;本阶段不宣称已交付 IDE/CI client。只有持有效 `ProductionCompositionReceipt` 的 capability 才被 advertise,缺真实 adapter 的 mutation/forge 能力保持 unsupported/deny |
-| Runtime-M4:Enterprise Runtime | 11 + WorkspaceSecurity-Phase8/WorkspaceSecurity-M6 + Extension-M7 联合门禁 | Runtime activity/cost/Telemetry Manifest/lifecycle 与企业/远程契约完整;managed enforcement、credential、Draft PR/human gate、远程/CI 隔离均有真实联合验收 |
+| 里程碑 | 包含阶段 | 当前状态 | 可对外承诺 |
+|---|---|---|---|
+| Runtime-M0:Auditable Single Agent Contracts | 0–4 | 未关闭:Phase 0/2/3 contract 已实现,Phase 1/4 仍需逐项证据与联合边界 | 单 Agent session、workspace/security refs 与证据协议可验证;这是 contract 里程碑,不承诺真实隔离或强制执行 |
+| Runtime-M1:Governed Harness | §0.5 + 5–8 + production join gate | 未关闭:contract和多数模块已实现;三个行为专项冻结,Runtime只能继续adapter/orchestrator/verification | `PiAiParityManifest` 可追踪,冻结专项readiness全部通过且Runtime production join、确定性门禁与内置 Browser 独立验证完整 |
+| Runtime-M2:Bounded Collaboration | 9 + WorkspaceSecurity-Phase7/WorkspaceSecurity-M6 联合门禁 | 未关闭:仅 internal/test-injected process-resident seam与scoped E2E | 多 Agent DAG、workspace/capability refs 有界且可恢复;真实隔离由专项联合 E2E 证明,不默认远程 |
+| Runtime-M3:Headless Runtime | 10 + production composition gate | 未关闭:daemon/control-plane主体存在,多项生产feature仍unsupported | CLI/TUI 通过同一协议连接 Runtime 真源,版本化协议可供后续 IDE/CI adapter 消费;本阶段不宣称已交付 IDE/CI client。只有持有效 `ProductionCompositionReceipt` 的 capability 才被 advertise,缺真实 adapter 的 mutation/forge 能力保持 unsupported/deny |
+| Runtime-M4:Enterprise Runtime | 11 + WorkspaceSecurity-Phase8/WorkspaceSecurity-M6 + Extension-M7 联合门禁 | 未关闭:Runtime contract/telemetry可继续,managed/credential/remote/supply-chain实现已冻结 | Runtime activity/cost/Telemetry Manifest/lifecycle 与企业/远程契约完整;managed enforcement、credential、Draft PR/human gate、远程/CI 隔离均有真实联合验收 |
 
-不得为了展示多 Agent 或 Web UI 跳过 Runtime-M0/Runtime-M1。Phase 2/3 contract 冻结后,Worktree/Sandbox/Permission 专项可与 Runtime 的 Artifact、resource/context contract 等独占模块并行;任何涉及共享接线文件的工作都按 §0.6 I0–I7 串行。Phase 7 reducer/budget 可在依赖 contract 冻结后开发独占模块,但其生产激活与 Runtime-M1 必须同时等待 Plan/Context/Compaction/Memory、Extension 和 WorkspaceSecurity join gate。Phase 9 和 Phase 10 可在 Phase 8 后并行实现独占目录,生产启用仍依赖各自消费的真实专项能力。
+不得为了展示多 Agent 或 Web UI 跳过 Runtime-owned前置Wave。冻结后不再启动Worktree/Sandbox/Permission、Extension或PCM行为lane;Runtime按§12继续自己的Artifact、Orchestrator、Verification、Agent、Control Plane与Telemetry工作。任何依赖冻结缺口的production feature保持unsupported,所以§12 Wave完成不自动提升本表的产品里程碑。
 
 ## 9. 全局验证矩阵
 
@@ -2305,3 +2342,313 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 - [ ] `npm run check`、`npm test`、`npm run build`、`git diff --check` 全绿。
 
 只有以上清单全部完成并附证据,RunLedger 才能把本计划状态改为“完成”。在此之前,对外应准确描述为“最小 Agent Runtime 正在升级为可治理 Harness”,不能把未实现的安全与验证边界写成现有能力。
+
+## 12. 最终严格执行计划
+
+本节是从当前实现状态推进 Runtime 剩余实现的唯一执行顺序。§7 保留完整产品需求,§11 保留最终产品验收语义;实际开发、并行、汇合、验证和状态更新一律按本节执行。`05-remaining-stuff.md` 只作为问题与取证台账,不得再形成第二套优先级。
+
+本节自 2026-07-23 起采用 Runtime-only 范围:[`06-specialty-implementation-freeze.md`](06-specialty-implementation-freeze.md) 列出的三个专项全部只读。Wave 可以在明确 `unsupported/deny/not advertised` 的语义下关闭 Runtime 自有工作,但不能借此关闭依赖冻结缺口的 Runtime-M1–M4 产品声明;§8 与 §11 中相应里程碑继续保持未完成。
+
+计划基线:
+
+- 代码基线:`81556acb16e2d4ba39e8fffeb0f4c5bdeccf40c7`;开始实现前必须把本节所在文档提交记为新的 documentation handoff commit。
+- 外围专项冻结基线:同一 commit;冻结状态、路径和定向测试见 `06-specialty-implementation-freeze.md`。
+- 初始状态:W0–W6 全部 `pending`;同一时刻只能有一个全局 Wave 为 `in_progress`。
+- Runtime-only 执行顺序:`evidence freeze -> Runtime-M0 kernel -> single-agent Runtime integration -> (Agent/Supervisor || Headless) -> Runtime enterprise/telemetry adapters -> hardening -> runtime-scope acceptance`。
+- 允许并行只表示可在不同 worktree/branch 上开发独占路径;共享文件仍必须等待本 Wave 的串行 integration window。
+- 任一 task 的状态只有 `pending | in_progress | completed | blocked`。没有目标分支 commit、定向测试、完整门禁和本节 evidence row 时不得写 `completed`。
+
+### 12.1 不可违反的调度规则
+
+1. 严格按 W0、W1、W2、W3、W4、W5、W6 顺序推进。前一 Wave 的 Runtime-owned join gate 未完成,后一 Wave 不得开始实现、不得提前修改共享 composition、不得预先 advertise feature。
+2. 同一 Wave 内只有标记为同一 `parallel group` 的 lane 可以并行。未标记的 task 必须按 ID 顺序执行。
+3. 每个并行 lane 必须有独立 worktree、单一 owner、显式 allowlist 和独立 commit。两个 lane 不能同时修改同一文件;发现重叠时立即停止较晚 lane,把重叠修改移入 join task。
+4. `src/runtime/protocol/v3/**`、`src/runtime/{agent-loop,agent,interactive-session-controller}.ts`、`src/{index,models,models-store}.ts`、`src/cli/**`、`src/tui/**`、`src/daemon/{composition-root,production-composition}.ts`、`package*.json` 和本文件始终是串行路径;`06` §3 的专项路径在所有 Wave 中禁止写入。
+5. 行为 lane 不能顺手放宽 contract。确需修改 schema/event 时,先暂停所有 consumer lane,完成独立 protocol revision、fixture、version fence和contract tests,再统一 rebase。
+6. 每个 task 先提交 RED/fault fixture,再实现 GREEN,最后执行 lane gate。历史测试结果只能作为背景,不能替代当前目标分支复跑。
+7. fake/test adapter只能关闭 contract或internal seam;production task必须证明真实 composition、required adapter receipt、无旁路和restart replay。
+8. Runtime 自有 effect 发生 uncertain、cleanup失败、store corruption或identity drift时,当前 Wave 立即保持`blocked`,先形成reconcile/forensic evidence。冻结专项返回此类结果时,相关 feature保持unsupported并登记external dependency;只有不依赖它的Runtime task可以继续。
+9. 一个 Wave 的 join commit 完成后,所有仍在运行的旧 lane 停止写入并 rebase 到 join commit;不得把旧 branch 的后续提交自动合并进下一 Wave。
+10. commit与push继续遵守仓库授权边界:计划允许准备 scoped commits,但只有用户明确要求提交/推送时才执行相应状态变更。
+11. 发现需要修改冻结路径才能通过测试时立即停止该 feature 的接线,记录首次失败commit/命令/receipt,不得借“Runtime修复”名义越界;解冻只能按`06` §7执行。
+
+### 12.2 依赖图与并行拓扑
+
+```text
+W0 Evidence and specialty freeze
+  -> W1 Runtime-M0 closure
+      -> W2 single-agent Runtime-owned integration
+          +-> W3-M2 Bounded Collaboration lane --+
+          +-> W3-M3 Headless Runtime lane -------+-> W3-J production composition join
+                                                     -> W4 Runtime enterprise/remote adapters
+                                                         -> W5 cross-domain hardening
+                                                             -> W6 Runtime-scope acceptance/release preparation
+```
+
+W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production composition、feature matrix、CLI/TUI 和 daemon activation。M3 的单 Agent read-only/health 能力可以先验收,任何 multi-agent/spawn advertisement 必须等待 M2 lane 与 W3-J 同时通过。
+
+### 12.3 共享路径锁
+
+| 锁 | 独占路径 | 允许打开的 task | 释放条件 |
+|---|---|---|---|
+| L0 Protocol | `src/runtime/protocol/v3/**`、对应 schema fixtures | 每个 Wave 的首个 protocol revision task | schema/version/fixture/contract tests提交并被所有lane rebase |
+| L1 Dependency | `package.json`、`package-lock.json` | 明确列出dependency review的单独task | license/lockfile/build审阅完成 |
+| L2 Runtime core | `agent-loop.ts`、`agent.ts`、controller、models/model-store、root exports | W1-J、W2-J、W3-J | 对应join gate完整通过 |
+| L3 Client/control | `src/cli/**`、`src/tui/**`、daemon composition | W3-M3串行task与W3-J | production feature matrix和E2E通过 |
+| L4 Production composition | Runtime/storage/daemon中消费security/worktree/extension/verification/agents/control-plane ports的共享join文件;明确排除`06`冻结路径 | 每个Wave唯一`-J` task | composition receipt、startup/restart、no-bypass/unsupported tests通过 |
+| L5 Documentation | 本文件、`05-remaining-stuff.md`、`06-specialty-implementation-freeze.md` | Wave收尾evidence task | commit/test/artifact/evidence全部回写;专项账本只在显式解冻时修改 |
+
+### 12.4 W0:证据冻结与可执行基线
+
+目标:把当前实现、未完成边界、任务 owner 和验证基线冻结成后续所有 worktree 的共同起点。本 Wave 不修改运行行为。
+
+| ID | 状态 | 顺序/依赖 | 工作内容 | 产物与验证 |
+|---|---|---|---|---|
+| W0-01 | pending | first | 提交本节、当前状态复核与`06`冻结说明,记录 documentation handoff commit、branch、dirty paths和当前HEAD | 本文件、05和06交叉链接;`git diff --check` |
+| W0-02 | pending | after W0-01 | 对§0.5、Phase 0/2/3/5/6 contract及三个冻结专项做逐项证据映射,严格区分implemented/partial/deferred | task -> source -> test -> commit矩阵;固定pi snapshot与专项冻结基线 |
+| W0-03 | pending | after W0-02 | 为W1–W6的Runtime lane登记owner、worktree、allowlist、共享锁和expected join commit | execution ledger无空owner/重叠路径;allowlist与06冻结路径无交集 |
+| W0-04 | pending | after W0-03 | 复跑当前基线并保存计数/平台/skip原因 | 完整门禁、pi audit、06 §6三组只读专项门禁、`git diff --check` |
+| W0-G | pending | join | 冻结implementation baseline | 工作区只有已解释diff;所有后续lane从同一commit创建 |
+
+W0-01 中的commit必须取得用户对“提交”的单独明确授权;本轮只交付文档改动,不会自行提交。授权前W0-01与W0-G保持`pending`,后续代码Wave不得启动。
+
+W0 退出门槛:
+
+- 当前 343 个历史任务与本节执行单元存在可追踪映射,没有“实现过但无人负责验收”的孤儿项。
+- I0–I7 的历史缺失不被伪造成已完成;从 W1 开始的新交接必须逐次留证。
+- 三个专项的完成项、部分项与延后项都固定到`06`,Runtime lane allowlist不包含冻结路径。
+- W0-G 未完成前禁止代码实现。
+
+### 12.5 W1:关闭 Runtime-M0
+
+目标:完成可审计单 Agent contract里程碑,先补 Session Kernel与Artifact剩余证据,再关闭Phase 0–4的逐项验收。
+
+parallel group `P1` 只包含 W1-A 与 W1-B;两条lane均从 W0-G 创建,不得修改 L2/L4共享路径。
+
+| ID | 状态 | 顺序/依赖 | 独占路径 | 工作内容 |
+|---|---|---|---|---|
+| W1-A1 | pending | P1, after W0-G | `src/runtime/session/**`、`src/storage/v3-session-manager.ts`、`tests/runtime-v3/session/**` | 把不可序列化dependency registration移到read/reduce/restore前,固定open/restore factory顺序与identity/generation校验 |
+| W1-A2 | pending | after W1-A1 | 同W1-A1 | 完成create/fork staging、partial-create+cleanup structured outcome、publish前后kill/fault矩阵 |
+| W1-A3 | pending | after W1-A2 | 同W1-A1 | 补after-write/before-sync、parent-dir sync、disk-full、cross-stream receipt/fencing与uncertain recovery conformance |
+| W1-B1 | pending | P1, after W0-G | `src/runtime/artifacts/**`、artifact/storage tests | 将`SalvageReport`接入受授权CAS Artifact,绑定source digest、unattested、access与retention |
+| W1-B2 | pending | after W1-B1 | 同W1-B1 + `tests/runtime-v3/artifacts/**` | 完成Runtime CAS/access/GC/legacy import/queue Artifact ref的crash与缺失blob fail-closed矩阵;`tests/worktree/artifact-checkpoint*`只读复跑 |
+| W1-J1 | pending | after W1-A3 + W1-B2 | L0/L2/L4 | 串行接入session/artifact public exports、CLI version fence和migration/fork路径;禁止并行修改 |
+| W1-J2 | pending | after W1-J1 | docs/tests only | 逐项审阅Phase 0–4 checklist;只勾有完整evidence的任务 |
+| W1-G | pending | join | full tree | 执行Runtime-M0 gate并记录candidate baseline |
+
+W1 定向门禁:
+
+```bash
+npx vitest run tests/runtime-v3/schema.test.ts tests/runtime-v3/canonical-json.test.ts tests/runtime-v3/phase-zero-contracts.test.ts
+npx vitest run tests/runtime-v3/session
+npx vitest run tests/runtime-v3/workspace-contracts tests/runtime-v3/security-contracts
+npx vitest run tests/runtime-v3/artifacts tests/worktree/artifact-checkpoint.test.ts
+```
+
+W1 退出门槛:
+
+- Session open/create/fork/migrate/salvage的每个durable边界均有唯一恢复结果。
+- Phase 0/2/3 contract-only证据与Phase 1/4行为证据分开记录。
+- Runtime-M0可以标记完成,但不得宣称真实Workspace/Sandbox隔离或Runtime-M1行为已经完成。
+
+### 12.6 W2:完成单 Agent Runtime-owned integration
+
+目标:只实现 Runtime 对冻结 Model/Plan/Context/Compaction/Memory、Extension、Workspace/Security public ports 的消费、receipt 校验、Verification/Orchestrator 与 production composition。W2 不修改专项内部,也不承诺补齐 Plan UI、overflow、Extension 管理面、Approval recovery或真实 Sandbox。
+
+W2-G 表示 Runtime-owned integration 已完成并能对缺失依赖 fail closed。只有 `06` readiness 全部通过且真实联合 E2E 成立时,§8 的 Runtime-M1 才能另行关闭;否则保持未完成但不阻塞后续不相关的 Runtime lane。
+
+#### W2-D:先冻结依赖输入
+
+| ID | 状态 | 依赖 | 路径 | 工作内容 |
+|---|---|---|---|---|
+| W2-D1 | pending | W1-G | read-only | 运行`06`三组专项门禁,固定public export/schemaVersion/adapter identity/receipt/recovery能力矩阵 |
+| W2-D2 | pending | after W2-D1 | docs/tests only | 把每项依赖标为`ready / unsupported / external-gap`;不得通过修改专项把gap改成ready |
+
+#### W2-R:可并行 Runtime 消费泳道
+
+parallel group `P2` 只包含 W2-R1、W2-R2、W2-R3;均从 W2-D2 开始,只修改 Runtime-owned adapter或consumer tests。
+
+| ID | 状态 | 依赖 | 独占路径 | 工作内容 |
+|---|---|---|---|---|
+| W2-R1 Model/Context | pending | P2, after W2-D2 | Runtime model/context/session integration adapters与consumer tests | 消费冻结router/context/plan/compaction/memory API,校验profile/checkpoint/receipt;缺Plan/overflow/fork能力时返回稳定unsupported |
+| W2-R2 Resources | pending | P2, after W2-D2 | `src/runtime/resources/**`之外的Runtime-side resource consumer adapter与tests | pin snapshot/generation/manifest/capability/tool identity,只调用冻结Extension public surface;不实现loader/manager/client/runner |
+| W2-R3 Governance | pending | P2, after W2-D2 | Runtime-side Workspace/Gateway/Sandbox receipt validator与tests | 对authority/tenant/workspace/generation/start/terminal receipt做exact验证;冻结port缺失或degraded时拒绝激活 |
+
+三个 lane 不得修改 `src/storage/production-interactive-runtime.ts`、agent-loop、controller、CLI/TUI或daemon;这些共享接线只在 W2-J 打开。
+
+#### W2-V:Verification 与 Orchestrator
+
+| ID | 状态 | 依赖 | 独占/共享路径 | 工作内容 |
+|---|---|---|---|---|
+| W2-V1 | pending | W2-R1 + W2-R3 | `src/runtime/verification/**`、`src/verification-runner/**` | 只消费已验证Workspace/Gateway/Sandbox/Artifact receipts;实现独立Browser backend的Runtime侧协议和unsupported路径,fixture attestor不能进入production |
+| W2-V2 | pending | after W2-V1 | verification/admission | 把DependencyAdmission与SecretScan变成required Runtime gate,覆盖candidate-untrusted config/collector/lockfile source |
+| W2-V3 | pending | after W2-V2 | verification/Episode | 完成Finding/reverification、manifest body/commit/seal/completed四边界crash recovery |
+| W2-J1 | pending | W2-R1 + W2-R2 + W2-R3 + W2-V3 | L2/L4 | 单一owner接线agent-loop/controller/session/resource/security/verification;所有专项对象只经public ports进入 |
+| W2-J2 | pending | after W2-J1 | orchestrator + integration tests | 驱动确定性Goal phase和全维Budget;模型/TUI不得直写completed |
+| W2-J3 | pending | after W2-J2 | production composition | 签发Runtime composition receipt和dependency-readiness字段;缺任一真实adapter时相应feature保持unsupported |
+| W2-G | pending | join | full tree | Runtime-owned single-agent integration gate;确认冻结路径无diff |
+
+W2 必需 E2E:
+
+- ready依赖路径:`prompt -> goal -> plan ref -> build/test/review -> EpisodeSeal -> terminal`;如果冻结Plan用户面不ready,输入使用已批准的canonical ref,不得在Runtime伪造approval。
+- Compaction只测试Runtime adapter对既有prepare/commit/install/recovery receipt的处理;不得修改冻结Compaction core。缺overflow入口时明确记录external-gap。
+- candidate篡改test config、dependency source、untracked secret、Browser evidence、review JSON均不能形成pass。
+- Workspace/Gateway/Sandbox/Artifact/verifier或Extension audit任一缺失时,production completion/resource能力不advertise。
+- `git diff --name-only <W2-baseline>..<W2-G>`与`06`冻结路径无交集。
+
+### 12.7 W3:并行完成 Agent/Supervisor 与 Headless Runtime-owned 工作
+
+W3只有两条顶层并行lane:`W3-M2`修改Agent/child独占路径,`W3-M3`修改Control Plane/transport独占路径。两条lane都不得修改L2/L3/L4共享composition;所有production activation集中到W3-J。
+
+#### W3-M2:Bounded Collaboration
+
+| ID | 状态 | 依赖 | 工作内容 |
+|---|---|---|---|
+| W3-M2.1 | pending | W2-G | 将activation request/receipt、immutable model/profile/objective/prompt digest与pending run写入authority/canonical truth |
+| W3-M2.2 | pending | after W3-M2.1 | 关闭resolve-to-CAS freshness窗口、structured partial-create/cleanup、cold writer/stop/final-cursor takeover与operator resolution |
+| W3-M2.3 | pending | after W3-M2.2 | 将headless child runtime/operation budget变成稳定public factory/port,不再由E2E源码深导入 |
+| W3-M2.4 | pending | after W3-M2.3 | 在Agent侧把requestedCapabilities映射到冻结resource/tool public identity,每次model/tool/resume/cancel/isolated command调用同一child-scoped gate;不改Extension/Security |
+| W3-M2.5 | pending | after W3-M2.4 | 消费冻结child Gateway/Sandbox/Workspace receipts和Runtime Verification;现有专项不能证明process-tree authority时保持unsupported/quarantine,不在Agent层补Sandbox |
+| W3-M2.6 | pending | after W3-M2.5 | 完成partial Artifact、handoff/merge conflict、root/per-agent budget、late provider cost reconciliation |
+| W3-M2.7 | pending | after W3-M2.6 | 实现idle unload/reload、same-session standby replacement、fencing promotion、commit-before-old-drain与post-commit terminal |
+| W3-M2.G | pending | lane gate | Agent/Supervisor fault/restart与冻结依赖fail-closed E2E全绿,但尚不advertise |
+
+#### W3-M3:Headless Runtime
+
+| ID | 状态 | 依赖 | 工作内容 |
+|---|---|---|---|
+| W3-M3.1 | pending | W2-G | 完成loopback HTTP/SSE listener、Unix peer credential与Windows pipe ACL/principal mapping |
+| W3-M3.2 | pending | after W3-M3.1 | 完成bounded input、slow consumer、disconnect/resync、durable consumer checkpoint和overload E2E |
+| W3-M3.3 | pending | after W3-M3.2 | 接通durable queue/list/cancel、turn/approval/artifact入口;未接adapter继续unsupported |
+| W3-M3.4 | pending | after W3-M3.3 | 完成runtime generation replacement、idle unload/resume、old-handle fencing与commit前后fault matrix |
+| W3-M3.5 | pending | after W3-M3.4 | 让CLI/TUI成为同一Control Plane projection的轻客户端,移除私有canonical状态 |
+| W3-M3.G | pending | lane gate | 单Agent daemon/control-plane gate全绿;不含multi-agent advertisement |
+
+#### W3-J:唯一生产汇合窗口
+
+| ID | 状态 | 依赖 | 共享路径 | 工作内容 |
+|---|---|---|---|---|
+| W3-J1 | pending | W3-M2.G + W3-M3.G | L0/L3/L4 | 增加machine-verifiable multi-agent/child-runtime feature与required-adapter row;冻结依赖缺口必须显示unsupported |
+| W3-J2 | pending | after W3-J1 | production Agent/CLI/daemon/factory composition | 注入同一public runtime factory和现有public parent/child gate、Workspace/Gateway/Sandbox/Artifact/Verification/Budget ports |
+| W3-J3 | pending | after W3-J2 | CLI/TUI/Control Plane | 暴露有界spawn/inspect/cancel/resume/handoff,所有命令绑定generation/revision/idempotency |
+| W3-J4 | pending | after W3-J3 | E2E | kill-after-effect、cold orphan、terminal-only cleanup、replacement、daemon restart与partial merge联合矩阵 |
+| W3-G | pending | join | full tree | 关闭W3 Runtime-owned范围并记录两个readiness evidence;只有专项依赖也ready时才关闭Runtime-M2/M3产品里程碑 |
+
+### 12.8 W4:完成 Enterprise/Remote/Telemetry 的 Runtime-owned 工作
+
+W4在W3-G后开始。`src/security/**`中的identity/managed-policy/credential/remote实现和`src/extensions/**`中的marketplace/publisher/supply-chain实现全部冻结;本 Wave 不再包含原 W4-A/W4-D。Runtime 只实现通用 contract consumer、durability、Control Plane、Telemetry/lifecycle和明确unsupported的 provider slot。
+
+冻结依赖:
+
+| 依赖 | 当前处理 |
+|---|---|
+| managed identity/policy/RBAC/ABAC/credential | 只消费现有Security public ports;无真实receipt时managed capability不advertise |
+| CI/SSH/relay transport与真实egress enforcement | Runtime只持久化invocation/attestation/result/uncertain状态;不在executors目录实现安全transport |
+| marketplace/publisher/signature/revocation | Extension-M7保持冻结;Runtime只校验已有resource/trust refs |
+| forge credential与organization gate | Runtime可以实现durable ChangeProposal/HumanGate protocol/repository;真实provider保持unsupported |
+
+parallel group `P4` 包含 W4-R、W4-T 和 W4-H;三lane不得修改冻结路径或L3/L4 composition。
+
+| ID | 状态 | 并行/依赖 | 独占路径 | 工作内容 |
+|---|---|---|---|---|
+| W4-R1 Remote state | pending | P4, W3-G | `src/runtime/executors/**`、Agent/Control Plane remote state的Runtime文件 | 固定invocation/attestation/result receipt、terminal idempotency、uncertain effect与restart replay;transport通过冻结port注入 |
+| W4-R2 Handoff | pending | after W4-R1 | Runtime Agent handoff repository/service | 持久化handoff lease/fencing/terminal cache,拒绝跨authority/tenant或缺attestation输入 |
+| W4-T1 Telemetry | pending | P4, W3-G | `src/runtime/telemetry/**` | RuntimeActivity/cost late reconciliation、Telemetry Manifest、spool/sink ack、SIEM与forensic隔离 |
+| W4-T2 Retention/GC | pending | after W4-T1 | `src/runtime/lifecycle/**`、Runtime Artifact retention | fork/handoff/checkpoint/Episode/legal-hold引用图、tenant隔离、dry-run/tombstone/crash replay;Workspace物理清理由冻结port返回receipt |
+| W4-H1 Proposal repository | pending | P4, W3-G | Runtime Verification/Control Plane change-proposal路径 | durable ChangeProposal、expected revision、idempotency、restart replay和human decision receipt |
+| W4-H2 Provider boundary | pending | after W4-H1 | Runtime provider adapter contract/tests | 只允许Draft PR调用已有credential/forge/organization ports;缺任一真实port时merge/deploy不可达且feature unsupported |
+| W4-J1 | pending | W4-R2 + W4-T2 + W4-H2 | L3/L4 | 串行注册Runtime remote/handoff、proposal/human-gate和telemetry adapters;冻结managed/credential/forge/supply-chain缺口写入composition readiness |
+| W4-J2 | pending | after W4-J1 | Runtime enterprise E2E | cross-tenant receipt replay、旧generation、remote uncertain、proposal ack loss、telemetry retry与GC crash;冻结专项只读复跑 |
+| W4-G | pending | join | full tree | Runtime-owned M4范围gate;完整Runtime-M4声明仍取决于冻结专项readiness |
+
+### 12.9 W5:跨域故障矩阵与Harness Regression
+
+W5不再增加新feature,只允许补Runtime证据、故障注入和Runtime-owned修复。冻结专项测试只读执行;发现专项缺陷时登记external dependency并保持对应feature unsupported,不得在W5越界修复。
+
+| ID | 状态 | 并行/依赖 | 工作内容 |
+|---|---|---|---|
+| W5-01 | pending | W4-G | 建立唯一矩阵:`injection point -> expected event/receipt -> recovery -> owner(Runtime或frozen-external) -> exact command -> platform` |
+| W5-A | pending | P5, after W5-01 | Session/Event/Artifact与冻结Compaction adapter消费:kill、disk full、torn write、sync loss、GC crash;不改Compaction core |
+| W5-B | pending | P5, after W5-01 | Runtime对Workspace/Security/Approval receipt的symlink/TOCTOU、expiry/revoke、prompt restart、sandbox unavailable、credential leak fail-closed测试;不改专项 |
+| W5-C | pending | P5, after W5-01 | Agent/Budget:spawn/cancel/stop uncertain、orphan、replacement、partial merge、late cost |
+| W5-D | pending | P5, after W5-01 | Control Plane/Daemon:malformed/overload/slow consumer、signal/EOF/upgrade、command ack loss、restart |
+| W5-E | pending | P5, after W5-01 | Runtime Remote/Telemetry/lifecycle:tenant receipt replay、old generation、remote uncertain、exporter/SIEM/forensic/GC;key/credential专项只读验证 |
+| W5-J1 | pending | all P5 lanes | 汇总所有失败;Runtime P0/P1或不确定effect必须修复并重跑所属Wave gate,冻结专项失败转external-gap并禁止feature声明 |
+| W5-J2 | pending | after W5-J1 | Linux/macOS/Windows差异全部得到pass或明确unsupported/deny;不得用单平台替代 |
+| W5-G | pending | join | 完整Harness Regression和soak gate |
+
+### 12.10 W6:Runtime-only 验收、文档收敛与发布准备
+
+W6全程串行,禁止再并行修改代码。
+
+| ID | 状态 | 顺序 | 工作内容 |
+|---|---|---|---|
+| W6-01 | pending | first | code freeze;核对当前仓库/分支/worktree/remote、tracked diff、generated files与credential filename-only scan |
+| W6-02 | pending | after W6-01 | 按§11逐项分类为`runtime-complete / frozen-external-gap / deferred`;只有runtime-complete可勾选并附commit、命令、receipt和时间 |
+| W6-03 | pending | after W6-02 | 运行所有Runtime阶段定向测试、W5 Harness Regression和冻结专项只读门禁;cross-platform缺口如实记录 |
+| W6-04 | pending | after W6-03 | 运行完整发布门禁与CLI/daemon smoke;模型catalog变化时先generate并审阅 |
+| W6-05 | pending | after W6-04 | 更新04状态为“Runtime-only范围完成,完整产品里程碑仍受冻结依赖约束”,同步05与06;校验无双真源/孤儿任务 |
+| W6-06 | pending | after W6-05 | 形成scoped release candidate diff和commit计划;只有用户授权后commit/push/tag/PR |
+| W6-G | pending | final | Runtime-owned范围验收签字;列出仍未关闭的Runtime-M1–M4专项依赖和unsupported feature |
+
+W6 完整命令基线:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run test:harness-regression
+npm run audit:pi-ai -- --upstream <explicit-pi-path> --commit 3f1762cc7d3af39898aa5d21891335935011287f
+node bin/runledger.js --help
+node bin/runledger-daemon.js --help
+git diff --check
+```
+
+若发布声明包含真实 provider child lifecycle,再显式执行:
+
+```bash
+RUNLEDGER_LIVE_E2E=1 npx vitest run tests/e2e/live-deepseek-child-runtime.test.ts --no-file-parallelism
+```
+
+live test不得读取、打印、复制或提交credential;网络或credential不可用时必须报告未执行,不能用mock替代live声明。
+
+### 12.11 Wave evidence与状态更新格式
+
+每完成一个task,在本节对应row更新状态,并在该Wave后追加:
+
+```text
+- task: WN-ID
+  - status: completed
+  - owner/worktree: <owner + branch + worktree>
+  - baseline: <input commit>
+  - commit: <task commit>
+  - paths: <explicit paths>
+  - targeted: <exact command + platform + file/test count + result>
+  - full gate: <commands + result>
+  - artifacts/receipts: <path/id/digest>
+  - remaining: <none or explicit downstream boundary>
+  - verified_at: <ISO-8601>
+```
+
+Wave join task必须额外记录所有lane commit、rebase顺序、共享文件owner、composition receipt和rollback point。某lane只有局部通过时保持`in_progress`或`blocked`;不得通过缩小task语义把它改写成`completed`。
+
+### 12.12 最终停止条件
+
+只有 W6-G 完成才停止本轮 Runtime-only 实施。此时本文件可以标记“Runtime-owned范围完成”,但只要冻结专项仍有缺口,完整 Governed Harness 与 Runtime-M1–M4 产品里程碑不得标记完成。
+
+以下任一情况都必须继续停留在当前 Wave:
+
+- 任一 Runtime-owned §11 项仍未验收;
+- 任一被advertise的production feature依赖fake/test adapter、冻结缺口或未签发required receipt;
+- 任一 Runtime-owned external effect、cleanup、activation、stop、handoff、remote或GC结果为uncertain且无durable resolution;
+- 任一旧writer/handle/runtime仍可越过generation/fencing;
+- 任一Runtime lane没有合入目标分支或只在其他worktree通过;
+- Runtime完整门禁、W5 Harness Regression或credential/redaction检查未通过;
+- 04、05、06对同一能力给出冲突结论;
+- Runtime diff触及`06`冻结路径但没有显式解冻记录。
+
+以下情况不要求 Runtime 越界继续实现,但必须让相关feature保持unsupported并在W6-G列出:
+
+- 冻结专项自己的验收项未完成或只在fake seam中成立;
+- 冻结专项缺真实平台后端、CLI/TUI、publisher/credential、Approval recovery、Plan/overflow/Memory lifecycle;
+- 完整产品§11、专项联合E2E或跨平台矩阵因冻结边界仍未关闭。
