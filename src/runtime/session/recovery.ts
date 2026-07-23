@@ -6,7 +6,12 @@ import type { AuthorityId, SessionId, TenantId } from "../protocol/v3/ids.ts";
 import type { RuntimeEventStore } from "./event-store.ts";
 import { replayDurableQueue } from "./durable-queue.ts";
 import type { SessionProjection } from "./projections.ts";
-import { loadSessionProjection, type SnapshotReplayResult } from "./snapshot.ts";
+import {
+	loadSessionProjection,
+	replaySessionSnapshot,
+	type SessionSnapshot,
+	type SnapshotReplayResult,
+} from "./snapshot.ts";
 import { readStopTombstone, type StopTombstone } from "./stop-tombstone.ts";
 import type { SessionKernelError } from "./types.ts";
 
@@ -52,6 +57,8 @@ export interface RecoverSessionOptions {
 	tenantId: TenantId;
 	sessionId: SessionId;
 	snapshotFilePath?: string;
+	/** open factory 已验证过的 exact snapshot；提供后禁止从路径二次读取。 */
+	snapshot?: SessionSnapshot;
 }
 
 function cursorOf(projection: SessionProjection, stream: RuntimeEventStreamRef): EventCursor {
@@ -162,7 +169,9 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Re
 	const tombstone = await readStopTombstone(options.sessionDirectory);
 	if (!tombstone.ok) return corrupted(tombstone.error);
 
-	const replay = await loadSessionProjection(options.store, options.snapshotFilePath);
+	const replay = options.snapshot
+		? await replaySessionSnapshot(options.store, options.snapshot)
+		: await loadSessionProjection(options.store, options.snapshotFilePath);
 	if (!replay.ok) return corrupted(replay.error);
 	if (!scopeMatches(options, replay.value)) return corrupted();
 	const cursor = cursorOf(replay.value.projection, options.store.streamRef());

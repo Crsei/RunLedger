@@ -52,6 +52,11 @@ import type {
 	SessionProjection,
 } from "./projections.ts";
 import { reduceSessionEvents } from "./reducer.ts";
+import {
+	createSessionRestoreDependencySnapshot,
+	isSessionRestoreDependencySnapshot,
+	type SessionRestoreDependencySnapshot,
+} from "./restore-dependencies.ts";
 import type { SessionKernelError, SessionResult } from "./types.ts";
 
 export const SESSION_SNAPSHOT_SCHEMA_VERSION = 3 as const;
@@ -118,6 +123,8 @@ export interface SessionSnapshotBody {
 	tasks: readonly SnapshotTaskProjection[];
 	queue: readonly SnapshotQueueItem[];
 	budgets: readonly SnapshotBudgetProjection[];
+	/** v3 旧快照可缺省；新快照始终写入，非空 registry 不得恢复自缺省快照。 */
+	restoreDependencies?: SessionRestoreDependencySnapshot;
 	writtenAt: string;
 }
 
@@ -131,6 +138,8 @@ export interface CreateSessionSnapshotOptions {
 	writtenAt: string;
 	/** 非空时必须先通过显式 authority projection join，snapshot 不能自行信任裸 ref。 */
 	authorityLifecycle?: AuthorityLifecycleProjection;
+	/** undefined 写入当前 empty binding；null 仅供验证历史缺字段的 v3 snapshot。 */
+	restoreDependencies?: SessionRestoreDependencySnapshot | null;
 }
 
 export interface SnapshotReplayResult {
@@ -336,30 +345,32 @@ function isSnapshotBudget(value: unknown): value is SnapshotBudgetProjection {
 }
 
 export function validateSessionSnapshot(value: unknown): value is SessionSnapshot {
+	const legacyKeys = [
+		"schemaVersion",
+		"snapshotId",
+		"authorityId",
+		"tenantId",
+		"principalId",
+		"sessionId",
+		"cursor",
+		"projectionDigest",
+		"lifecycleHeadRef",
+		"activeLeafId",
+		"initialGoalId",
+		"rootAgentId",
+		"forkGoalMode",
+		"parentRootAgentId",
+		"goal",
+		"tasks",
+		"queue",
+		"budgets",
+		"writtenAt",
+		"snapshotDigest",
+	] as const;
 	if (
 		!isRecord(value) ||
-		!hasExactKeys(value, [
-			"schemaVersion",
-			"snapshotId",
-			"authorityId",
-			"tenantId",
-			"principalId",
-			"sessionId",
-			"cursor",
-			"projectionDigest",
-			"lifecycleHeadRef",
-			"activeLeafId",
-			"initialGoalId",
-			"rootAgentId",
-			"forkGoalMode",
-			"parentRootAgentId",
-			"goal",
-			"tasks",
-			"queue",
-			"budgets",
-			"writtenAt",
-			"snapshotDigest",
-		])
+		(!hasExactKeys(value, legacyKeys) &&
+			!hasExactKeys(value, [...legacyKeys, "restoreDependencies"]))
 	) return false;
 	if (
 		value.schemaVersion !== SESSION_SNAPSHOT_SCHEMA_VERSION ||
@@ -392,6 +403,8 @@ export function validateSessionSnapshot(value: unknown): value is SessionSnapsho
 		!Array.isArray(value.budgets) ||
 		value.budgets.length > 1_000 ||
 		!value.budgets.every(isSnapshotBudget) ||
+		(value.restoreDependencies !== undefined &&
+			!isSessionRestoreDependencySnapshot(value.restoreDependencies)) ||
 		!isCanonicalTimestamp(value.writtenAt) ||
 		!isDigest(value.snapshotDigest)
 	) return false;
@@ -528,6 +541,13 @@ function buildSnapshotBody(
 				modelRequestId: item.modelRequestId,
 			})),
 		budgets: budgetProjection(events),
+		...(options.restoreDependencies === null
+			? {}
+			: {
+					restoreDependencies:
+						options.restoreDependencies ??
+						createSessionRestoreDependencySnapshot([]),
+				}),
 		writtenAt: options.writtenAt,
 	};
 }
@@ -742,6 +762,7 @@ export async function replaySessionSnapshot(
 		snapshotId: snapshot.snapshotId,
 		activeLeafId: snapshot.activeLeafId,
 		writtenAt: snapshot.writtenAt,
+		restoreDependencies: snapshot.restoreDependencies ?? null,
 		...(snapshot.lifecycleHeadRef === null || !authorityLifecycle ? {} : { authorityLifecycle }),
 	});
 	if (!proof.ok) return proof;

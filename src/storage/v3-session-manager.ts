@@ -33,7 +33,17 @@ import {
 	failLegacyMigrationTarget,
 	type FailedLegacyMigrationReceipt,
 } from "../runtime/session/legacy-migration.ts";
-import { readAllRuntimeEvents } from "../runtime/session/snapshot.ts";
+import {
+	readAllRuntimeEvents,
+	readSessionSnapshot,
+} from "../runtime/session/snapshot.ts";
+import {
+	registerSessionRestoreDependencies,
+	verifySessionRestoreDependencies,
+	type SessionRestoreDependencyKind,
+	type SessionRestoreDependencyRegistrar,
+	type SessionRestoreDependencyRegistry,
+} from "../runtime/session/restore-dependencies.ts";
 import { recoverSession, type RecoveryDecision } from "../runtime/session/recovery.ts";
 import { reduceSessionEvents } from "../runtime/session/reducer.ts";
 import { writeStopTombstone } from "../runtime/session/stop-tombstone.ts";
@@ -98,6 +108,15 @@ export interface V3SessionOpenOptions {
 	reconcileArtifacts?: boolean;
 	/** production replacement 预先分配的 candidate runtime identity。 */
 	runtimeId?: RuntimeInstanceId;
+	/**
+	 * 必须在任何 durable session read/reduce 前完成。
+	 * 旧的 dependency-free session 可缺省；dependency-bound snapshot 必须显式提供。
+	 */
+	registerDependencies?: SessionRestoreDependencyRegistrar;
+}
+
+export interface V3SessionRestoreOptions extends V3SessionOpenOptions {
+	registerDependencies: SessionRestoreDependencyRegistrar;
 }
 
 export interface V3SessionWriterFenceReceipt {
@@ -148,6 +167,7 @@ interface OpenedV3Runtime {
 	toolResultArtifactSink: ToolResultArtifactSink;
 	artifactReconciliation?: ArtifactResult<ArtifactReconciliationReport>;
 	recovery?: RecoveryDecision;
+	restoreDependencies: SessionRestoreDependencyRegistry;
 }
 
 function resultValue<T>(result: SessionResult<T>, operation: string): T {
@@ -331,6 +351,7 @@ async function composeRuntime(options: {
 	features: Readonly<RuntimeFeatureFlags>;
 	create: boolean;
 	lineage?: { goalId: GoalId; agentId: AgentId };
+	restoreDependencies?: SessionRestoreDependencyRegistry;
 }): Promise<OpenedV3Runtime> {
 	const stateDirectory = stateDirectoryFor(options.filePath);
 	const stream = createSessionEventStreamRef(options.identity, options.sessionId);
@@ -426,6 +447,9 @@ async function composeRuntime(options: {
 				sessionId: options.sessionId,
 				producerId: options.identity.principalId,
 			}),
+			restoreDependencies:
+				options.restoreDependencies ??
+				await registerSessionRestoreDependencies(),
 		};
 	} catch (cause) {
 		const cleanupErrors = await cleanupComposedRuntime(leaseStore, fence, store, writer);
@@ -532,7 +556,42 @@ export class V3SessionManager {
 		identity: RuntimeIdentityContext = createLocalIdentityContext(),
 		options: V3SessionOpenOptions = {},
 	): Promise<V3SessionManager> {
+		return V3SessionManager.openRegistered(filePath, features, identity, options);
+	}
+
+	/**
+	 * dependency-bound session 的显式异步 restore factory。
+	 * registrar 完成且 snapshot identity/generation 匹配前不会打开 Event Store 或返回 manager。
+	 */
+	public static async restore(
+		filePath: string,
+		features: Readonly<RuntimeFeatureFlags>,
+		identity: RuntimeIdentityContext,
+		options: V3SessionRestoreOptions,
+	): Promise<V3SessionManager> {
+		return V3SessionManager.openRegistered(filePath, features, identity, options);
+	}
+
+	private static async openRegistered(
+		filePath: string,
+		features: Readonly<RuntimeFeatureFlags>,
+		identity: RuntimeIdentityContext,
+		options: V3SessionOpenOptions,
+	): Promise<V3SessionManager> {
+		const restoreDependencies = await registerSessionRestoreDependencies(
+			options.registerDependencies,
+		);
 		const absolute = resolve(filePath);
+		const dependencySnapshot = await readSessionSnapshot(
+			join(stateDirectoryFor(absolute), "snapshot.json"),
+		);
+		if (!dependencySnapshot.ok) {
+			throw resultError("v3 session dependency snapshot read failed", dependencySnapshot.error);
+		}
+		verifySessionRestoreDependencies(
+			dependencySnapshot.value?.restoreDependencies,
+			restoreDependencies,
+		);
 		const first = await readFirstEvent(absolute);
 		if (first.authorityId !== identity.authorityId || first.tenantId !== identity.tenantId) {
 			throw new Error("v3 session authority or tenant does not match the current runtime identity");
@@ -544,6 +603,7 @@ export class V3SessionManager {
 			sessionId: first.stream.sessionId,
 			features,
 			create: false,
+			restoreDependencies,
 		});
 		const recovery = await recoverSession({
 			store: runtime.store,
@@ -552,6 +612,9 @@ export class V3SessionManager {
 			tenantId: identity.tenantId,
 			sessionId: first.stream.sessionId,
 			snapshotFilePath: join(runtime.stateDirectory, "snapshot.json"),
+			...(dependencySnapshot.value === undefined
+				? {}
+				: { snapshot: dependencySnapshot.value }),
 		});
 		runtime.recovery = recovery;
 		const migrationInspectOnly =
@@ -580,6 +643,13 @@ export class V3SessionManager {
 			};
 		}
 		return new V3SessionManager(runtime);
+	}
+
+	public restoreDependency(
+		kind: SessionRestoreDependencyKind,
+		identity: string,
+	): unknown {
+		return this.runtime.restoreDependencies.get(kind, identity);
 	}
 
 	public sessionId(): SessionId {

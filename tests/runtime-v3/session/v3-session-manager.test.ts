@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,12 +9,23 @@ import { ArtifactMetadataStore } from "../../../src/runtime/artifacts/metadata-s
 import { SessionArtifactJournal } from "../../../src/runtime/artifacts/session-journal.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
+import { createLocalIdentityContext } from "../../../src/runtime/identity/local-principal.ts";
 import { DEFAULT_RUNTIME_FEATURES, type RuntimeFeatureFlags } from "../../../src/runtime/runtime-features.ts";
 import { AgentLoopSessionEvents } from "../../../src/runtime/session/agent-loop-events.ts";
 import { EventWriter } from "../../../src/runtime/session/event-writer.ts";
 import { JsonlV3EventStore } from "../../../src/runtime/session/jsonl-v3-store.ts";
+import { reduceSessionEvents } from "../../../src/runtime/session/reducer.ts";
+import {
+	createSessionRestoreDependencySnapshot,
+	type SessionRestoreDependencyBinding,
+} from "../../../src/runtime/session/restore-dependencies.ts";
 import { FileWriterLeaseStore } from "../../../src/runtime/session/writer-lease.ts";
-import { readAllRuntimeEvents } from "../../../src/runtime/session/snapshot.ts";
+import {
+	createSessionSnapshot,
+	readAllRuntimeEvents,
+	writeSessionSnapshot,
+} from "../../../src/runtime/session/snapshot.ts";
+import type { SessionResult } from "../../../src/runtime/session/types.ts";
 import { SessionManager } from "../../../src/storage/session-manager.ts";
 import { V3SessionManager } from "../../../src/storage/v3-session-manager.ts";
 
@@ -25,6 +36,29 @@ function temporaryRoot(): string {
 	const root = mkdtempSync(join(tmpdir(), "runledger-v3-manager-"));
 	roots.push(root);
 	return root;
+}
+
+function valueOf<T>(result: SessionResult<T>): T {
+	if (!result.ok) {
+		throw new Error(`${result.error.code}: ${result.error.message}`);
+	}
+	return result.value;
+}
+
+async function writeDependencyBoundSnapshot(
+	manager: V3SessionManager,
+	dependencies: readonly SessionRestoreDependencyBinding[],
+): Promise<void> {
+	valueOf(await manager.flushCurrentHead());
+	const events = valueOf(await readAllRuntimeEvents(manager.eventStore()));
+	const projection = valueOf(reduceSessionEvents(events));
+	const snapshot = valueOf(createSessionSnapshot(events, {
+		snapshotId: createRuntimeId("snapshot", "restore-dependencies"),
+		activeLeafId: projection.activeLeafId,
+		writtenAt: "2026-07-23T00:00:00.000Z",
+		restoreDependencies: createSessionRestoreDependencySnapshot(dependencies),
+	}));
+	valueOf(await writeSessionSnapshot(join(manager.stateDirectory(), "snapshot.json"), snapshot));
 }
 
 afterEach(() => {
@@ -51,6 +85,121 @@ describe("V3SessionManager", () => {
 		expect(manager.filePath()).toBe(filePath);
 		expect(manager.sessionId()).toBe(sessionId);
 		await manager.closeAll();
+	});
+
+	it("registers restore dependencies before any durable session open or mutable handle exists", async () => {
+		const root = temporaryRoot();
+		const eventStoreOpen = vi.spyOn(JsonlV3EventStore, "open");
+		const reconcile = vi.spyOn(ArtifactRepository.prototype, "reconcile");
+		const primary = new Error("injected dependency registration failure");
+
+		await expect(V3SessionManager.restore(
+			join(root, "missing.jsonl"),
+			FLAGS,
+			createLocalIdentityContext(),
+			{ registerDependencies: async () => { throw primary; } },
+		)).rejects.toMatchObject({
+			code: "registration_failed",
+			cause: primary,
+		});
+
+		expect(eventStoreOpen).not.toHaveBeenCalled();
+		expect(reconcile).not.toHaveBeenCalled();
+	});
+
+	it("validates dependency identity and generation before replay, then retains registered handles", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const providerHandle = { provider: "deepseek" };
+		const dependencies: readonly SessionRestoreDependencyBinding[] = [{
+			kind: "provider",
+			identity: "provider:deepseek",
+			generation: 7,
+			handle: providerHandle,
+		}];
+		await writeDependencyBoundSnapshot(manager, dependencies);
+		const filePath = manager.filePath();
+		const snapshotPath = join(manager.stateDirectory(), "snapshot.json");
+		const identity = manager.identity();
+		await manager.closeAll();
+
+		const order: string[] = [];
+		const originalOpen = JsonlV3EventStore.open;
+		vi.spyOn(JsonlV3EventStore, "open").mockImplementation(async (options) => {
+			order.push("event-store-open");
+			// 已验证的 snapshot 必须贯穿 recovery，禁止在此处二次读取被替换的文件。
+			writeFileSync(snapshotPath, "{}\n");
+			return originalOpen(options);
+		});
+		const restored = await V3SessionManager.restore(filePath, FLAGS, identity, {
+			registerDependencies: async () => {
+				order.push("register");
+				return dependencies;
+			},
+		});
+
+		expect(order).toEqual(["register", "event-store-open"]);
+		expect(restored.restoreDependency("provider", "provider:deepseek")).toBe(providerHandle);
+		expect(restored.recoveryDecision()).toMatchObject({
+			kind: "resume",
+			snapshotSource: "snapshot",
+		});
+		await restored.closeAll();
+	});
+
+	it.each([
+		{
+			label: "identity",
+			dependency: {
+				kind: "provider" as const,
+				identity: "provider:other",
+				generation: 7,
+				handle: {},
+			},
+			code: "identity_mismatch",
+		},
+		{
+			label: "generation",
+			dependency: {
+				kind: "provider" as const,
+				identity: "provider:deepseek",
+				generation: 8,
+				handle: {},
+			},
+			code: "generation_mismatch",
+		},
+	])("rejects a restore dependency $label mismatch before Event Store replay or reconciliation", async ({
+		dependency,
+		code,
+	}) => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		await writeDependencyBoundSnapshot(manager, [{
+			kind: "provider",
+			identity: "provider:deepseek",
+			generation: 7,
+			handle: {},
+		}]);
+		const filePath = manager.filePath();
+		const identity = manager.identity();
+		await manager.closeAll();
+		const eventStoreOpen = vi.spyOn(JsonlV3EventStore, "open");
+		const reconcile = vi.spyOn(ArtifactRepository.prototype, "reconcile");
+
+		await expect(V3SessionManager.restore(filePath, FLAGS, identity, {
+			registerDependencies: async () => [dependency],
+		})).rejects.toMatchObject({ code });
+
+		expect(eventStoreOpen).not.toHaveBeenCalled();
+		expect(reconcile).not.toHaveBeenCalled();
 	});
 
 	it("reissues an exact durable receipt for the current delayed-genesis head", async () => {
