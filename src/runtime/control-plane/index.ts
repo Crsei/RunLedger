@@ -21,3 +21,4 @@ export * from "./runtime-generation.ts";
 export * from "./runtime-generation-repository.ts";
 export * from "./command-projection.ts";
 export * from "./multi-agent-contracts.ts";
+export * from "./peer-attestor.ts";

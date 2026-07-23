@@ -9,4 +9,5 @@ export * from "./v3-session-adapters.ts";
 export * from "./main.ts";
 export * from "./stdio-host.ts";
 export * from "./local-v3-daemon.ts";
+export * from "./http-sse-listener.ts";
 export * from "./stdio-cli.ts";
