@@ -14,6 +14,10 @@
 
 新冻结基线:`cb83538 + 当前 Phase 5 GREEN/refreeze commit`;Resource v2 contract已完成,Extension specialty行为状态继续使用`implemented-frozen/partial-frozen/deferred-frozen`。Phase 6未显式解冻前,Plan/Model/Context/Compaction/Memory路径继续只读。
 
+### 1.2 Phase 6 合同窄解冻窗口
+
+自`worktree/governed-agent-harness-runtime@600ca84`起,仅为 Model Routing v2、Compaction recovery assessment和Plan/Context/Memory v1交叉证据临时解冻Phase 6文档登记的精确allowlist。owner为`Codex /root`,当前状态为`RED/unfreeze`。本窗口不新增Plan/Context/Compaction/Memory用户行为、trigger、UI、store、provider或catalog数据；GREEN后必须在本文件登记新refreeze baseline。
+
 从本冻结基线开始,以下三个专项域停止继续实现:
 
 1. Plan / Model / Context / Compaction / Memory;

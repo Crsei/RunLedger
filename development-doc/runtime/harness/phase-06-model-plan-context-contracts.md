@@ -4,6 +4,7 @@
 > 分阶段索引:[`README.md`](README.md)
 > 导航:[Phase 5](phase-05-resource-contracts.md) / [Phase 7](phase-07-orchestrator-budget.md)
 > 状态规则:当前实现状态以主计划 §0.0 为唯一汇总真源;严格开发顺序、并行 lane 与 join gate 以主计划 §12 为准。本文件只承载本 Phase 的完整需求、门槛、故障注入与历史证据。
+> 当前窗口:`RED/unfreeze`,`P6-C1 in_progress`;owner=`Codex /root`;worktree=`worktree/governed-agent-harness-runtime`;起始基线=`600ca84`。
 
 目标:只冻结专项实现与 Runtime 其他模块共享的中立数据结构、schema、event payload 和 fixture,不改变用户行为。
 
@@ -26,6 +27,36 @@ Runtime contract allowlist:
 - 不写 behavior/security/recovery/E2E 测试,不用虚假 implementation 让 fixture 通过。这些任务全部归专项计划。
 
 数据结构任务:
+
+| 闭合任务 | 状态 | 最近更新 |
+|---|---|---|
+| P6-C1 Model Routing v2 contract | in_progress | 2026-07-24T02:38:00+08:00 RED fixture/test 登记 |
+| P6-C2 pi-ai parity/catalog binding | pending | 2026-07-24T02:36:00+08:00 audit 164/164 + 72 PASS |
+| P6-C3 manifest/profile evidence binding | pending | - |
+| P6-C4 七类 compatibility hash fail-closed | pending | - |
+| P6-C5 ModelSwitchConversionReceipt | pending | - |
+| P6-C6 compatible receipt / lossy fork | pending | - |
+| P6-C7 model.routed v1 replay + v2 producer | pending | - |
+| P6-C8 Plan v1 cross-contract evidence | pending | - |
+| P6-C9 Context v1 cross-contract evidence | pending | - |
+| P6-C10 Memory v1 cross-contract evidence | pending | - |
+| P6-C11 Compaction recovery assessment | pending | - |
+| P6-C12 recovery invalid/corrupted matrix | pending | - |
+| P6-C13 taint end-to-end preservation | pending | - |
+| P6-C14 public event/catalog exhaustiveness | pending | - |
+| P6-C15 ownership manifest exhaustiveness | pending | - |
+| P6-C16 frozen PCM 16 files / 94 tests | pending | - |
+| P6-C17 Phase 5/Extension regression | pending | - |
+| P6-C18 full gates/refreeze | pending | - |
+
+### Phase 6 窄解冻登记
+
+- owner:`Codex /root`;branch/worktree:`worktree/governed-agent-harness-runtime`;
+- RED allowlist:`development-doc/runtime/harness/phase-06-model-plan-context-contracts.md`,`development-doc/runtime/06-specialty-implementation-freeze.md`,`tests/runtime-v3/phase-06-v2-red.test.ts`,`tests/runtime-v3/fixtures/model-routing/**`,`tests/runtime-v3/fixtures/compaction/**`,`tests/runtime-v3/fixtures/taint/**`;
+- GREEN allowlist:RED allowlist加`src/runtime/model-routing/**`,`src/runtime/context/compaction/{types,schema,validator,projection}.ts`,`src/runtime/protocol/v3/event-payloads.ts`,`src/runtime/session/{agent-loop-events,reducer}.ts`,`src/runtime/integration/{catalog-model-router,governed-model-request,production-model-runtime}.ts`,`tests/runtime-v3/{contracts,model-routing,context/compaction,plan-context-memory,integration,public-surface}/**`,`development-doc/runtime/{04-governed-agent-harness-runtime-plan,06-specialty-implementation-freeze}.md`;
+- Plan、Context、Memory wire shape继续为v1,只补交叉fixture/consumer evidence。禁止新增Plan UI、Context行为、compaction trigger、Memory lifecycle、provider/catalog数据或用户面。
+- parity manifest必须保持SHA-256=`fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77`;固定审计命令必须保持`164/164 upstream files,72 catalog files PASS`。若发生真实pi drift,P6-C2立即`blocked`并转独立reconciliation。
+- 状态只允许`pending | in_progress | completed | blocked`,且同时最多一个`in_progress`。
 
 - [ ] 定义 model capability/profile manifest、route request/decision/diagnostic、adapter-state compatibility 与必须 fork reason。
 - [ ] model profile 的 provider/api/tool/reasoning/image/context/transport 能力从已验证 `PiAiParityManifest` 和 catalog 生成或核对;未知/缺失能力按 incompatible 处理,不得根据 display name 或 best-effort `transformMessages` 猜测可切换。

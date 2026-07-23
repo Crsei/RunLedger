@@ -1,0 +1,12 @@
+{
+  "contract": "runledger.compaction-recovery/v1",
+  "cases": [
+    { "name": "invalid-window", "expected": "invalid" },
+    { "name": "invalid-chain", "expected": "invalid" },
+    { "name": "world-state-corruption", "expected": "corrupted" },
+    { "name": "patch-without-full", "expected": "corrupted" },
+    { "name": "legacy-missing-replacement", "expected": "invalid" },
+    { "name": "bad-checkpoint", "expected": "corrupted" },
+    { "name": "suffix-jsonl-corruption", "expected": "corrupted" }
+  ]
+}
