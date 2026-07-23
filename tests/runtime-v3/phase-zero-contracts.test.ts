@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createLocalIdentityContext } from "../../src/runtime/identity/local-principal.ts";
 import {
 	COORDINATION_STATE_TRANSITIONS,
 	createIdempotencyKey,
@@ -13,6 +14,7 @@ import {
 	parseScopedRuntimeKey,
 	RUNTIME_ID_KINDS,
 } from "../../src/runtime/protocol/v3/ids.ts";
+import { createWorktreeId, parseWorktreeId } from "../../src/runtime/protocol/v3/workspace.ts";
 import { describeIntegrityClaim, RUNTIME_THREAT_MODELS } from "../../src/runtime/protocol/v3/threat-model.ts";
 import { isAllowedRuntimeStateTransition } from "../../src/runtime/protocol/v3/state-transitions.ts";
 import {
@@ -24,10 +26,24 @@ import {
 
 describe("Runtime v3 identifiers", () => {
 	it("round-trips every registered ID kind", () => {
+		const authorityId = createRuntimeId("authority", "local");
+		const tenantId = createRuntimeId("tenant", "local");
 		for (const kind of RUNTIME_ID_KINDS) {
 			const value = createRuntimeId(kind, "fixture-01");
 			expect(parseRuntimeId(kind, value), kind).toBe(value);
+			const scopedKey = createScopedRuntimeKey({ authorityId, tenantId }, value);
+			expect(parseScopedRuntimeKey(kind, scopedKey), kind).toEqual({
+				scope: { authorityId, tenantId },
+				id: value,
+			});
 		}
+	});
+
+	it("keeps the Workspace helper on the unified Worktree ID contract", () => {
+		const worktreeId = createWorktreeId("fixture-01");
+		expect(RUNTIME_ID_KINDS).toContain("worktree");
+		expect(parseRuntimeId("worktree", worktreeId)).toBe(worktreeId);
+		expect(parseWorktreeId(worktreeId)).toBe(worktreeId);
 	});
 
 	it("rejects invalid seeds instead of lossy sanitization", () => {
@@ -45,6 +61,18 @@ describe("Runtime v3 identifiers", () => {
 		expect(parseScopedRuntimeKey("session", key)).toEqual({ scope: { authorityId, tenantId }, id: sessionId });
 		const other = createScopedRuntimeKey({ authorityId, tenantId: createRuntimeId("tenant", "tenant-b") }, sessionId);
 		expect(other).not.toBe(key);
+	});
+
+	it("keeps the local authority, tenant, and OS principal stable across persisted contexts", () => {
+		const first = createLocalIdentityContext(new Date("2026-07-22T00:00:00.000Z"));
+		const second = createLocalIdentityContext(new Date("2026-07-23T00:00:00.000Z"));
+		expect(second).toMatchObject({
+			authorityId: first.authorityId,
+			tenantId: first.tenantId,
+			principalId: first.principalId,
+			source: "local-os",
+		});
+		expect(JSON.parse(JSON.stringify(first))).toEqual(first);
 	});
 });
 

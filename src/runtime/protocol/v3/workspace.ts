@@ -11,6 +11,7 @@ import { canonicalDigest } from "./canonical-json.ts";
 import { RuntimeContractError } from "./errors.ts";
 import { EventCursorSchema } from "./event-references.ts";
 import type { EventCursor } from "./events.ts";
+import { createRuntimeId, parseRuntimeId } from "./ids.ts";
 import type {
 	AgentId,
 	ArtifactId,
@@ -27,11 +28,12 @@ import type {
 	ToolCallId,
 	TraceId,
 	WorkspaceId,
+	WorktreeId,
 } from "./ids.ts";
+export type { WorktreeId } from "./ids.ts";
 
 const digestPattern = "^[a-f0-9]{64}$";
 const timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3})?Z$";
-const worktreeIdPattern = "^worktree_[A-Za-z0-9][A-Za-z0-9._~-]*$";
 const runtimeId = (kind: string) =>
 	Type.String({ pattern: `^${kind}_[A-Za-z0-9][A-Za-z0-9._~-]*$`, maxLength: 128 });
 const digest = Type.String({ pattern: digestPattern, maxLength: 64 });
@@ -55,21 +57,15 @@ export type WorkspaceValidationOutcome = (typeof WORKSPACE_VALIDATION_OUTCOMES)[
 export const WORKSPACE_CHECKPOINT_COMPLETENESS = ["metadata_only", "complete", "partial"] as const;
 export type WorkspaceCheckpointCompleteness = (typeof WORKSPACE_CHECKPOINT_COMPLETENESS)[number];
 
-/** Worktree ID 在 Workspace adapter 域内稳定，且不把 manager 实现引入 Runtime。 */
-export type WorktreeId = string & { readonly __workspaceWorktreeId: true };
-
-export const WorktreeIdSchema = Type.String({ pattern: worktreeIdPattern, maxLength: 128 });
+/** Worktree ID 使用统一 Runtime ID 规则，且不把 manager 实现引入 Runtime。 */
+export const WorktreeIdSchema = runtimeId("worktree");
 
 export function createWorktreeId(seed: string): WorktreeId {
-	const value = `worktree_${seed}`;
-	if (!Check(WorktreeIdSchema, value)) {
-		throw new RuntimeContractError({ code: "invalid_id", message: "invalid worktree id seed", retryable: false });
-	}
-	return value as WorktreeId;
+	return createRuntimeId("worktree", seed);
 }
 
 export function parseWorktreeId(value: string): WorktreeId | undefined {
-	return Check(WorktreeIdSchema, value) ? (value as WorktreeId) : undefined;
+	return parseRuntimeId("worktree", value);
 }
 
 export interface WorkspaceExecutionEnvelope {

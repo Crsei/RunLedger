@@ -11,6 +11,7 @@ export const RUNTIME_ID_KINDS = [
 	"goal",
 	"workspace",
 	"repository",
+	"worktree",
 	"agent",
 	"turn",
 	"modelRequest",
@@ -59,6 +60,7 @@ export type SessionId = RuntimeId<"session">;
 export type GoalId = RuntimeId<"goal">;
 export type WorkspaceId = RuntimeId<"workspace">;
 export type RepositoryId = RuntimeId<"repository">;
+export type WorktreeId = RuntimeId<"worktree">;
 export type AgentId = RuntimeId<"agent">;
 export type TurnId = RuntimeId<"turn">;
 export type ModelRequestId = RuntimeId<"modelRequest">;
