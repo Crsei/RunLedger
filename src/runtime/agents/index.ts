@@ -6,3 +6,4 @@ export * from "./residency.ts";
 export * from "./handoff.ts";
 export * from "./merge.ts";
 export * from "./supervisor.ts";
+export * from "./child-runtime-authority.ts";
