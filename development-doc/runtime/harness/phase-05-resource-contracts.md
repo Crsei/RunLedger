@@ -4,6 +4,7 @@
 > 分阶段索引:[`README.md`](README.md)
 > 导航:[Phase 4](phase-04-artifact-episode.md) / [Phase 6](phase-06-model-plan-context-contracts.md)
 > 状态规则:当前实现状态以主计划 §0.0 为唯一汇总真源;严格开发顺序、并行 lane 与 join gate 以主计划 §12 为准。本文件只承载本 Phase 的完整需求、门槛、故障注入与历史证据。
+> 当前窗口:`RED/unfreeze`,`P5-C1 in_progress`;owner=`Codex /root`;worktree=`worktree/governed-agent-harness-runtime`;起始基线=`72767ff`。
 
 目标:只定义 Tool/MCP/Skill/Hook/Plugin 接入 Runtime 所需的中立、版本化、可验证数据结构和 adapter port,不在 Runtime 计划中实现任何具体扩展子系统。
 
@@ -26,6 +27,39 @@
 `ResourceKind` 的 closed taxonomy 至少区分 native tool、browser tool、MCP server/tool、Skill metadata/body/assets/script、Hook、Plugin component 与 repository/user/organization instruction;unknown kind 只能 quarantine,不能当作普通 tool 放行。
 
 契约规则:
+
+| 闭合任务 | 状态 | 最近更新 |
+|---|---|---|
+| P5-C1 identity 精确解析 | in_progress | 2026-07-24T02:24:00+08:00 RED fixture/test 登记 |
+| P5-C2 provenance 与 locator containment | pending | - |
+| P5-C3 trust/activation 分离 | pending | - |
+| P5-C4 approval receipt 全绑定 | pending | - |
+| P5-C5 descriptor capability/exposure | pending | - |
+| P5-C6 raw input 与 claims 重派生 | pending | - |
+| P5-C7 handshake/generation/annotation | pending | - |
+| P5-C8 Hook updatedInput 重授权 | pending | - |
+| P5-C9 invocation stream terminal | pending | - |
+| P5-C10 Skill facet 分离 | pending | - |
+| P5-C11 snapshot-bound Skill read/budget | pending | - |
+| P5-C12 Instruction taint/SoD | pending | - |
+| P5-C13 Browser capability 分离 | pending | - |
+| P5-C14 bounded non-executable snapshot | pending | - |
+| P5-C15 lifecycle event | pending | - |
+| P5-C16 Hook transform receipt/order | pending | - |
+| P5-C17 MCP annotation/remembered approval | pending | - |
+| P5-C18 Hook runner bounded execution | pending | - |
+| P5-C19 exact schema/legacy reapproval | pending | - |
+| P5-C20 complete neutral ports | pending | - |
+| P5-C21 generation-bound cache | pending | - |
+
+### Phase 5 窄解冻登记
+
+- owner:`Codex /root`;branch/worktree:`worktree/governed-agent-harness-runtime`;
+- RED allowlist:`development-doc/runtime/harness/phase-05-resource-contracts.md`,`development-doc/runtime/06-specialty-implementation-freeze.md`,`tests/runtime-v3/resource-contracts/**`;
+- GREEN allowlist:RED allowlist加`src/runtime/resources/**`,`src/extensions/{identity,types,snapshot,extension-manager,trust/**,integration/**,hooks/**,mcp/**,plugins/**,skills/**,schemas}.ts`,`tests/extensions/**`,`tests/fixtures/extensions/**`,`src/index.ts`,`package.json`;
+- 共享消费者只允许协议迁移。禁止新增 CLI、TUI、installer、runner、planner、store 或专项行为;若现有行为需要扩大,对应项标记`blocked`并停止。
+- v1 golden fixture必须保持只读且 SHA-256 固定为`45bdfa9e1e6a1874ac9617eeb290e83e6bae965ce5b1607661fdf7918902a654`;v1 approval 只允许显式 legacy parser 导入并返回`reapproval_required`。
+- 状态只允许`pending | in_progress | completed | blocked`,且同时最多一个`in_progress`。每项完成后必须记录定向命令、结果、实现 commit、fixture digest、不可用行为边界和时间。
 
 - [ ] identity 以 `kind + qualified id + version/source + digest` 精确解析;display name 永远不能成为执行路由键。
 - [ ] provenance 可表达 builtin/user/project/plugin/session、canonical locator、publisher/signature 引用和 parent plugin,但不解释具体配置格式。locator 必须 canonicalize 并做 source-root containment;路径 containment 只验证定位,不能单独把 resource 标为 trusted。

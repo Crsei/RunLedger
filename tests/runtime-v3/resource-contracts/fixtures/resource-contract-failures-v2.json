@@ -1,0 +1,27 @@
+{
+  "contract": "runledger.resource-failures/v2",
+  "cases": [
+    {
+      "name": "generic-instruction-kind",
+      "value": "instruction",
+      "expected": "rejected"
+    },
+    {
+      "name": "missing-source-root-receipt",
+      "value": {
+        "schemaVersion": 2,
+        "source": "project",
+        "canonicalLocator": "/repo/AGENTS.md"
+      },
+      "expected": "rejected"
+    },
+    {
+      "name": "legacy-approval",
+      "value": {
+        "schemaVersion": 1,
+        "receiptId": "receipt_legacy"
+      },
+      "expected": "reapproval_required"
+    }
+  ]
+}

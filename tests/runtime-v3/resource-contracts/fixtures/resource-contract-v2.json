@@ -1,0 +1,25 @@
+{
+  "contract": "runledger.resource/v2",
+  "manifest": {
+    "schemaVersion": 2,
+    "rootDigest": "a121dae888c13157f7dcb9d08a6bd298b23161a11f51d40c5e75519742ced6f5",
+    "manifestDigest": "b52b99bf4e20e145c35121735b9b567a9c7d8320c95ff68ac545ddc3a4265177",
+    "configDigest": "8a1caa5f5519ac9b901902255f71e6cae35d7f2d79055b196ff4b02731ea3a4b",
+    "commandDigest": "93434e4d2845978f1b73cadec47c4d7dc71cd3a3a69dc58fd8b4bb88ec5aab0b",
+    "assetsDigest": "3df232c2db3b77bf80b2ae44690473908063138b1fee110f339a3255b1031a0a",
+    "capabilityDigest": "cc8a3ad341f203b99f1c4ee3f9df4efffb9b951fdad1a583b3d6c2602416746c",
+    "combinedDigest": "c7350976e3f9ad098a8e3a8ce5a3fc7491179e4922b7313b7e78ac15a562f66f"
+  },
+  "identity": {
+    "schemaVersion": 2,
+    "authorityId": "authority_resource-v2-fixture",
+    "tenantId": "tenant_resource-v2-fixture",
+    "resourceId": "resource_v2-tool",
+    "kind": "mcp-tool",
+    "qualifiedId": "golden.server/v2-read",
+    "version": "2.0.0",
+    "source": "project",
+    "digest": "c7350976e3f9ad098a8e3a8ce5a3fc7491179e4922b7313b7e78ac15a562f66f"
+  },
+  "expectedIdentityDigest": "c6bccb7ef032f96fff8668a81e6e249e361d32d3583e5c92963b62b750861127"
+}
