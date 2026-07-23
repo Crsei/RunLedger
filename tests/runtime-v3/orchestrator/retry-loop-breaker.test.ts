@@ -53,7 +53,11 @@ describe("retry classification", () => {
 		const uncertain = classifyRetryFailure({ code: "connection_lost", operation: "tool", outcomeKnown: false });
 		expect(decideRetry(uncertain, { ...retryContext, operation: "tool", sideEffect: "write" }).action).toBe("pause_for_reconciliation");
 		const overflow = classifyRetryFailure({ code: "context_length_exceeded", operation: "provider", outcomeKnown: true });
-		expect(decideRetry(overflow, retryContext).action).toBe("compact_then_retry");
+		expect(decideRetry(overflow, retryContext).action).toBe("pause_for_compaction");
+		expect(decideRetry(overflow, {
+			...retryContext,
+			compactionReceiptDigest: "c".repeat(64),
+		}).action).toBe("compact_then_retry");
 		expect(decideRetry(overflow, { ...retryContext, compactionAttempts: 1 }).action).toBe("fail");
 	});
 

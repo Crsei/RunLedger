@@ -48,8 +48,10 @@ import {
 	BudgetGuard,
 	type BudgetLimits,
 } from "../orchestrator/budget-guard.ts";
-import { BudgetGuardAgentOperationAdapter } from "../orchestrator/agent-loop-budget.ts";
+import type { AgentOperationBudgetPort } from "../operation-budget.ts";
 import { CanonicalAgentQueueAdapter } from "../orchestrator/canonical-queue.ts";
+import { DurableControlJournal, type ControlJournalRecord } from "../orchestrator/control-journal.ts";
+import { DurableRetryController } from "../orchestrator/durable-retry-controller.ts";
 import {
 	createDurableGoalStateMachine,
 	type DurableGoalStateMachine,
@@ -65,7 +67,15 @@ import {
 	SessionCanonicalGoalJournal,
 } from "../orchestrator/canonical-journals.ts";
 import { SessionTaskRepository } from "../orchestrator/task-repository.ts";
+import {
+	PromptGoalCoordinator,
+	type ApprovedPlanEvidencePort,
+	type CandidateSnapshotPort,
+	type GoalGatePort,
+} from "../orchestrator/prompt-goal-coordinator.ts";
+import type { TaskDagValidationPorts } from "../orchestrator/task-dag.ts";
 import { TurnOrchestrator } from "../orchestrator/turn-orchestrator.ts";
+import { TurnOrchestratorAgentOperationAdapter } from "../orchestrator/turn-operation-budget.ts";
 import type {
 	CompletionTrustPort,
 	OperationBindings,
@@ -81,6 +91,12 @@ import { FileCompactionProjectionStore } from "../../storage/compaction-projecti
 import { FilePlanModeStateStore } from "../../storage/plan-mode-state-store.ts";
 import { getAgentDir, getProjectDir } from "../../storage/paths.ts";
 import type { PersistedWorkspaceBinding } from "../../worktree/types.ts";
+import {
+	createUnavailableRuntimeReadiness,
+	isRuntimeDependencyReadinessReceipt,
+	runtimeFeatureReadiness,
+	type RuntimeDependencyReadinessReceipt,
+} from "./dependency-readiness.ts";
 
 type DomainRuntimeEvent = PlanRuntimeEvent | MemoryRuntimeEvent | CompactionRuntimeEvent;
 
@@ -170,6 +186,7 @@ export interface ProductionVerificationServices {
 	pipeline: VerificationPipeline;
 	sessionRuntime: VerificationSessionRuntime;
 	completionTrust: CompletionTrustPort;
+	readiness?: RuntimeDependencyReadinessReceipt;
 }
 
 export interface ProductionSessionRuntimeOptions {
@@ -184,6 +201,13 @@ export interface ProductionSessionRuntimeOptions {
 		initialBindings: OperationBindings;
 		/** 必须由 production composition 提供其 replay 状态，不能在这里创建空内存替身。 */
 		loopBreaker: LoopBreaker;
+	};
+	readiness?: RuntimeDependencyReadinessReceipt;
+	lifecycle?: {
+		plans: ApprovedPlanEvidencePort;
+		candidates: CandidateSnapshotPort;
+		gates: GoalGatePort;
+		taskReferences: TaskDagValidationPorts;
 	};
 	memoryRoots?: {
 		userRoot?: string;
@@ -205,10 +229,14 @@ export interface ProductionSessionRuntime {
 	goal: DurableGoalStateMachine;
 	tasks: SessionTaskRepository;
 	budget: BudgetGuard;
-	operationBudget: BudgetGuardAgentOperationAdapter;
+	operationBudget: AgentOperationBudgetPort;
 	savePoints: SavePointCoordinator;
 	queue: CanonicalAgentQueueAdapter;
 	turns: TurnOrchestrator;
+	control: DurableControlJournal;
+	retry: DurableRetryController;
+	lifecycle: PromptGoalCoordinator;
+	readiness: RuntimeDependencyReadinessReceipt;
 	verification: ProductionVerificationServices;
 }
 
@@ -231,6 +259,10 @@ function assertProductionInputs(options: ProductionSessionRuntimeOptions): void 
 		verification.tenantId !== identity.tenantId || verification.sessionId !== options.manager.sessionId() ||
 		!/^[a-f0-9]{64}$/u.test(verification.evidenceDigest) || new Set(verification.evidenceDigest).size < 4) {
 		throw new Error("production verification services are absent or not correlated to the session");
+	}
+	const readiness = options.readiness ?? verification.readiness;
+	if (readiness && !isRuntimeDependencyReadinessReceipt(readiness)) {
+		throw new Error("production dependency readiness receipt is invalid");
 	}
 	const workspace = options.orchestrator.initialBindings.workspace;
 	if (!workspace || workspace.workspaceId !== binding.workspaceId ||
@@ -439,7 +471,6 @@ export async function createProductionSessionRuntime(
 	if (taskProjection.value.goalId !== null && taskProjection.value.goalId !== goalId) {
 		throw new Error("production task projection belongs to another goal");
 	}
-	const operationBudget = new BudgetGuardAgentOperationAdapter(budget, clock);
 	const savePointResult = await openSavePointCoordinator({
 		initialBindings: options.orchestrator.initialBindings,
 		journal: new SessionDurableOrchestratorJournal<SavePointJournalRecord>({ ...journalBase, journalKind: "save_point" }),
@@ -448,10 +479,66 @@ export async function createProductionSessionRuntime(
 	if (!savePointResult.ok) throw new Error(`production save-point recovery failed: ${savePointResult.error.code}`);
 	// queue.* canonical projection 是唯一真源；不再创建 opaque Orchestrator queue journal。
 	const queue = new CanonicalAgentQueueAdapter(options.manager.sessionEvents());
+	const control = new DurableControlJournal({
+		journal: new SessionDurableOrchestratorJournal<ControlJournalRecord>({ ...journalBase, journalKind: "control" }),
+		clock,
+	});
 	const turns = new TurnOrchestrator({
 		budget,
 		savePoints: savePointResult.value,
 		loopBreaker: options.orchestrator.loopBreaker,
+		control,
+	});
+	const operationBudget = new TurnOrchestratorAgentOperationAdapter({
+		turns,
+		savePoints: savePointResult.value,
+		control,
+		phase: () => goalResult.value.snapshot().phase,
+		clock,
+	});
+	const retry = new DurableRetryController({ control });
+	const readiness = options.readiness ?? options.verification.readiness ??
+		createUnavailableRuntimeReadiness(
+			`session-${options.manager.sessionId()}`,
+			clock().toISOString(),
+		);
+	const unavailableDigest = canonicalDigest("production lifecycle dependency is unavailable");
+	const lifecyclePorts = options.lifecycle ?? {
+		plans: {
+			load: async () => ({
+				ok: true as const,
+				value: { status: "unsupported" as const, reasonDigest: unavailableDigest },
+			}),
+		},
+		candidates: {
+			current: async () => ({
+				ok: true as const,
+				value: { status: "external_gap" as const, reasonDigest: unavailableDigest },
+			}),
+		},
+		gates: {
+			evaluate: async () => ({
+				ok: true as const,
+				value: { status: "unsupported" as const, reasonDigest: unavailableDigest },
+			}),
+		},
+		taskReferences: {
+			workspace: {
+				validate: async () => ({ status: "unavailable" as const, reasonDigest: unavailableDigest }),
+			},
+			capability: {
+				validate: async () => ({ status: "unavailable" as const, reasonDigest: unavailableDigest }),
+			},
+		},
+	};
+	const lifecycle = new PromptGoalCoordinator({
+		goal: goalResult.value,
+		tasks,
+		plans: lifecyclePorts.plans,
+		candidates: lifecyclePorts.candidates,
+		gates: lifecyclePorts.gates,
+		taskReferences: lifecyclePorts.taskReferences,
+		completionEnabled: () => runtimeFeatureReadiness(readiness, "completion") === "ready",
 	});
 
 	return {
@@ -471,6 +558,10 @@ export async function createProductionSessionRuntime(
 		savePoints: savePointResult.value,
 		queue,
 		turns,
+		control,
+		retry,
+		lifecycle,
+		readiness,
 		verification: options.verification,
 	};
 }

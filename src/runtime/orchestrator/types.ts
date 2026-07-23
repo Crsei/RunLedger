@@ -243,6 +243,13 @@ export type SavePointJournalRecord =
 			bindings: OperationBindings;
 			bindingsDigest: string;
 			appliedAt: string;
+	  }
+	| {
+			kind: "save_point.mutations_discarded";
+			operationId: CommandId;
+			mutationIds: readonly CommandId[];
+			reconciliationReceiptDigest: string;
+			discardedAt: string;
 	  };
 
 export interface ExpectedTaskArtifact {

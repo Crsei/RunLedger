@@ -65,7 +65,6 @@ const progressRules: readonly GoalTransitionRule[] = [
 	]),
 	runtimeRule("independent_review", "awaiting_verification", [
 		requirement("independent_review", "pass"),
-		requirement("pull_request", "pass"),
 	]),
 	runtimeRule("independent_review", "remediation", [
 		requirement("independent_review", "fail"),
@@ -78,7 +77,6 @@ const progressRules: readonly GoalTransitionRule[] = [
 		requirement("test", "pass"),
 		requirement("security_review", "pass"),
 		requirement("independent_review", "pass"),
-		requirement("pull_request", "pass"),
 		requirement("reverification", "pass"),
 	]),
 	runtimeRule("reverification", "remediation", [

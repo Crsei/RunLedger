@@ -978,7 +978,7 @@ export const MAX_ORCHESTRATOR_JOURNAL_RECORDS_JSON_BYTES = 32 * 1024;
 export const MAX_EPISODE_VERIFICATION_RECEIPTS = 64;
 export const MAX_AGENT_GRAPH_TRANSACTION_RECORDS = 16;
 export const MAX_AGENT_GRAPH_RECORDS_JSON_BYTES = 56 * 1024;
-export const ORCHESTRATOR_JOURNAL_KINDS = ["goal", "save_point", "budget", "queue"] as const;
+export const ORCHESTRATOR_JOURNAL_KINDS = ["goal", "save_point", "budget", "queue", "control"] as const;
 export type OrchestratorJournalKind = (typeof ORCHESTRATOR_JOURNAL_KINDS)[number];
 
 const orchestratorJournalKind = Type.Union([
@@ -986,6 +986,7 @@ const orchestratorJournalKind = Type.Union([
 	Type.Literal("save_point"),
 	Type.Literal("budget"),
 	Type.Literal("queue"),
+	Type.Literal("control"),
 ]);
 
 const legacyModelRoutePayloadBase = {

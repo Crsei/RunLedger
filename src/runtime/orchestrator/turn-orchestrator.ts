@@ -5,6 +5,10 @@ import type { IdempotencyKey } from "../protocol/v3/coordination.ts";
 import type { BudgetReservationId, CommandId } from "../protocol/v3/ids.ts";
 import type { BudgetGuard, BudgetVector } from "./budget-guard.ts";
 import type { LoopBreaker, LoopBreakerState, LoopObservation } from "./loop-breaker.ts";
+import type {
+	ControlJournalRecord,
+	DurableControlJournal,
+} from "./control-journal.ts";
 import type { OperationSettlement, SavePointCoordinator } from "./save-point.ts";
 import type {
 	DurableJournalAppendOutcome,
@@ -83,7 +87,8 @@ export class InMemoryDurableOrchestratorJournal<TRecord>
 	}
 }
 
-const SIDE_EFFECT_PHASES: ReadonlySet<GoalPhase> = new Set([
+const OPERATION_PHASES: ReadonlySet<GoalPhase> = new Set([
+	"planning",
 	"implementation",
 	"build",
 	"test",
@@ -97,10 +102,12 @@ export interface TurnOrchestratorOptions {
 	budget: BudgetGuard;
 	savePoints: SavePointCoordinator;
 	loopBreaker: LoopBreaker;
+	control?: DurableControlJournal;
 }
 
 export interface BeginOperationRequest {
 	phase: GoalPhase;
+	operationKind?: "provider" | "tool" | "verification" | "governed";
 	operationId: CommandId;
 	reservationId: BudgetReservationId;
 	estimatedUpperBound: BudgetVector;
@@ -134,15 +141,20 @@ export class TurnOrchestrator {
 	private readonly budget: BudgetGuard;
 	private readonly savePoints: SavePointCoordinator;
 	private readonly loopBreaker: LoopBreaker;
+	private readonly control: DurableControlJournal | undefined;
 
 	public constructor(options: TurnOrchestratorOptions) {
 		this.budget = options.budget;
 		this.savePoints = options.savePoints;
 		this.loopBreaker = options.loopBreaker;
+		this.control = options.control;
 	}
 
 	public async beginOperation(request: BeginOperationRequest): Promise<OrchestratorResult<ActiveTurnOperation>> {
-		if (!SIDE_EFFECT_PHASES.has(request.phase)) {
+		if (
+			!OPERATION_PHASES.has(request.phase) ||
+			(request.phase === "planning" && request.operationKind !== "provider")
+		) {
 			return {
 				ok: false,
 				error: { code: "invalid_transition", message: `phase ${request.phase} cannot start a side effect`, retryable: false },
@@ -224,11 +236,73 @@ export class TurnOrchestrator {
 			request.settlementIdempotencyKey,
 		);
 		if (!settled.ok) return settled;
+		if (request.outcome === "uncertain") return { ok: true, value: undefined };
 		const applied = await this.savePoints.applyPendingAtSafePoint(request.safePointIdempotencyKey);
 		return applied.ok ? { ok: true, value: undefined } : applied;
 	}
 
+	public async abortOperationBeforeStart(
+		operation: ActiveTurnOperation,
+		reason: "cancelled" | "not_started",
+		budgetIdempotencyKey: IdempotencyKey,
+		settlementIdempotencyKey: IdempotencyKey,
+		safePointIdempotencyKey: IdempotencyKey,
+	): Promise<OrchestratorResult<void>> {
+		const refunded = await this.budget.refund({
+			reservationId: operation.reservationId,
+			idempotencyKey: budgetIdempotencyKey,
+			reason,
+		});
+		if (!refunded.ok) return refunded;
+		const settled = await this.savePoints.settle({
+			operationId: operation.operationId,
+			savePoint: operation.savePoint,
+			outcome: "cancelled",
+			resultDigest: canonicalDigest({ operationId: operation.operationId, reason }),
+		}, settlementIdempotencyKey);
+		if (!settled.ok) return settled;
+		const applied = await this.savePoints.applyPendingAtSafePoint(safePointIdempotencyKey);
+		return applied.ok ? { ok: true, value: undefined } : applied;
+	}
+
+	public recoverActiveOperation(
+		operationId: CommandId,
+		reservationId: BudgetReservationId,
+	): OrchestratorResult<ActiveTurnOperation> {
+		const savePoint = this.savePoints.activeSavePoint();
+		return savePoint?.operationId === operationId
+			? { ok: true, value: { operationId, reservationId, savePoint } }
+			: {
+					ok: false,
+					error: { code: "operation_not_active", message: "operation save-point is not active", retryable: false },
+				};
+	}
+
 	public observeLoop(observation: LoopObservation): OrchestratorResult<LoopBreakerState> {
+		if (this.control) {
+			return {
+				ok: false,
+				error: {
+					code: "invalid_input",
+					message: "production loop observation requires durable Artifact evidence",
+					retryable: false,
+				},
+			};
+		}
 		return this.loopBreaker.observe(observation);
+	}
+
+	public async observeDurableLoop(
+		record: Extract<ControlJournalRecord, { kind: "control.loop_observed" }>,
+		idempotencyKey: IdempotencyKey,
+	): Promise<OrchestratorResult<LoopBreakerState>> {
+		if (!this.control) {
+			return {
+				ok: false,
+				error: { code: "journal_unavailable", message: "durable loop control journal is not configured", retryable: false },
+			};
+		}
+		const committed = await this.control.recordLoopObservation(record, idempotencyKey);
+		return committed.ok ? this.loopBreaker.observe(record.observation) : committed;
 	}
 }

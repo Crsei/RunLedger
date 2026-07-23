@@ -300,3 +300,65 @@ export function browserBackendResultMatchesRequest(
 export interface BrowserBackendPort {
 	execute(request: BrowserBackendRequest, signal?: AbortSignal): Promise<BrowserBackendResult>;
 }
+
+export interface ProductionBrowserBackendDescriptorBody {
+	contractId: "runledger.production-browser-backend";
+	schemaVersion: typeof BROWSER_BACKEND_SCHEMA_VERSION;
+	environment: "production";
+	backendId: string;
+	runtimeId: string;
+	runtimeVersion: string;
+	adapterIdentityDigest: string;
+	generation: number;
+	generationDigest: string;
+}
+
+export interface ProductionBrowserBackendDescriptor
+	extends ProductionBrowserBackendDescriptorBody {
+	descriptorDigest: string;
+}
+
+export type ProductionBrowserBackendPreflight =
+	| {
+			status: "ready";
+			descriptorDigest: string;
+			recoveryEvidenceDigest: string;
+	  }
+	| {
+			status: "unsupported" | "external_gap";
+			reasonDigest: string;
+	  };
+
+export interface ProductionBrowserBackendPort extends BrowserBackendPort {
+	readonly environment: "production";
+	readonly descriptor: ProductionBrowserBackendDescriptor;
+	preflight(): Promise<ProductionBrowserBackendPreflight>;
+}
+
+export function productionBrowserBackendDescriptorDigest(
+	body: ProductionBrowserBackendDescriptorBody,
+): string {
+	return canonicalDigest(body);
+}
+
+export function isProductionBrowserBackendDescriptor(
+	value: ProductionBrowserBackendDescriptor,
+): boolean {
+	const { descriptorDigest, ...body } = value;
+	return (
+		value.contractId === "runledger.production-browser-backend" &&
+		value.schemaVersion === BROWSER_BACKEND_SCHEMA_VERSION &&
+		value.environment === "production" &&
+		value.backendId.length > 0 &&
+		value.backendId.length <= 512 &&
+		value.runtimeId.length > 0 &&
+		value.runtimeId.length <= 512 &&
+		value.runtimeVersion.length > 0 &&
+		value.runtimeVersion.length <= 128 &&
+		/^[a-f0-9]{64}$/u.test(value.adapterIdentityDigest) &&
+		Number.isSafeInteger(value.generation) &&
+		value.generation >= 1 &&
+		/^[a-f0-9]{64}$/u.test(value.generationDigest) &&
+		descriptorDigest === productionBrowserBackendDescriptorDigest(body)
+	);
+}

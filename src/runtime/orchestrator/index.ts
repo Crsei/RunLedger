@@ -12,3 +12,7 @@ export * from "./turn-orchestrator.ts";
 export * from "./session-journal.ts";
 export * from "./canonical-journals.ts";
 export * from "./task-repository.ts";
+export * from "./control-journal.ts";
+export * from "./turn-operation-budget.ts";
+export * from "./prompt-goal-coordinator.ts";
+export * from "./durable-retry-controller.ts";

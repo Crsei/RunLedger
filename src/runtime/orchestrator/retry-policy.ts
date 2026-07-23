@@ -31,6 +31,8 @@ export interface RetryContext {
 	hasStableIdempotencyKey: boolean;
 	compactionAttempts: number;
 	maxCompactionAttempts: number;
+	/** context overflow 只有在 compaction 已 durable commit 后才可继续原 operation。 */
+	compactionReceiptDigest?: string;
 	/** Tool 自动重试必须携带独立、已相关联的 reconcile 资格。 */
 	toolRetryEligibility?: ToolRetryEligibility;
 }
@@ -44,6 +46,7 @@ export interface RetryPolicyOptions {
 export type RetryDecision =
 	| { action: "retry"; delayMs: number; reason: RetryFailureCategory }
 	| { action: "compact_then_retry"; reason: "context_overflow" }
+	| { action: "pause_for_compaction"; reason: "context_overflow" }
 	| { action: "pause_for_reconciliation"; reason: "tool_uncertain_outcome" }
 	| { action: "fail" | "do_not_retry"; reason: RetryFailureCategory };
 
@@ -78,9 +81,12 @@ export function decideRetry(
 		return { action: "pause_for_reconciliation", reason: "tool_uncertain_outcome" };
 	}
 	if (failure.category === "context_overflow") {
-		return context.compactionAttempts < context.maxCompactionAttempts
+		if (context.compactionAttempts >= context.maxCompactionAttempts) {
+			return { action: "fail", reason: "context_overflow" };
+		}
+		return context.compactionReceiptDigest && /^[a-f0-9]{64}$/u.test(context.compactionReceiptDigest)
 			? { action: "compact_then_retry", reason: "context_overflow" }
-			: { action: "fail", reason: "context_overflow" };
+			: { action: "pause_for_compaction", reason: "context_overflow" };
 	}
 	if (failure.category === "validation" || failure.category === "cancelled") {
 		return { action: "do_not_retry", reason: failure.category };

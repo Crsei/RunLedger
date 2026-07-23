@@ -165,6 +165,17 @@ describe("production session runtime composition", () => {
 		const first = await createProductionSessionRuntime(options);
 		expect(first.workspace.bindingDigest).toBe(workspace.bindingDigest);
 		expect(first.queue).toBeInstanceOf(CanonicalAgentQueueAdapter);
+		expect(first.readiness.entries.every((entry) => entry.status === "external_gap")).toBe(true);
+		expect(first.control).toBeDefined();
+		expect(first.turns.observeLoop({
+			observationId: "model-only-observation",
+			phase: "implementation",
+			madeProgress: true,
+			observedAt: "2026-07-24T00:00:00.000Z",
+		}).ok).toBe(false);
+		expect(first.lifecycle.snapshot().goal.phase).toBe("planning");
+		const lifecycle = await first.lifecycle.run();
+		expect(lifecycle.ok && lifecycle.value.reason).toBe("plan_missing");
 		expect(first.goal.snapshot()).toMatchObject({ goalId: manager.sessionEvents().lineage().goalId, phase: "planning", revision: 0 });
 		expect(first.memoryScopes).toEqual([
 			{ scope: "session", sessionId: manager.sessionId() },

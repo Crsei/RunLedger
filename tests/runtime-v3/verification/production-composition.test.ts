@@ -41,6 +41,7 @@ import {
 	type ProductionVerificationArtifactPort,
 	type ProductionVerificationAdmissionInputPort,
 } from "../../../src/runtime/verification/integration/production-composition.ts";
+import { runtimeFeatureReadiness } from "../../../src/runtime/integration/dependency-readiness.ts";
 import {
 	createVerificationReport,
 	createVerifierReceipt,
@@ -58,9 +59,11 @@ import type {
 } from "../../../src/runtime/verification/types.ts";
 import {
 	isBrowserBackendRequest,
-	type BrowserBackendPort,
+	productionBrowserBackendDescriptorDigest,
 	type BrowserBackendRequest,
 	type BrowserBackendResult,
+	type ProductionBrowserBackendDescriptor,
+	type ProductionBrowserBackendPort,
 } from "../../../src/verification-runner/browser/evidence.ts";
 import {
 	MemoryWorktreeRegistryMutationPort,
@@ -324,8 +327,36 @@ class RecordingProductionAdmission implements ProductionVerificationAdmissionInp
 	}
 }
 
-class RecordingProductionBrowserBackend implements BrowserBackendPort {
+class RecordingProductionBrowserBackend implements ProductionBrowserBackendPort {
+	public readonly environment = "production" as const;
+	public readonly descriptor: ProductionBrowserBackendDescriptor;
 	public readonly requests: BrowserBackendRequest[] = [];
+
+	public constructor() {
+		const body = {
+			contractId: "runledger.production-browser-backend" as const,
+			schemaVersion: 1 as const,
+			environment: "production" as const,
+			backendId: "production-browser-backend",
+			runtimeId: "chromium-production-runtime",
+			runtimeVersion: "128.0.0",
+			adapterIdentityDigest: digest("production-browser-backend"),
+			generation: 1,
+			generationDigest: digest("production-browser-generation"),
+		};
+		this.descriptor = {
+			...body,
+			descriptorDigest: productionBrowserBackendDescriptorDigest(body),
+		};
+	}
+
+	public async preflight() {
+		return {
+			status: "ready" as const,
+			descriptorDigest: this.descriptor.descriptorDigest,
+			recoveryEvidenceDigest: digest("production-browser-recovery"),
+		};
+	}
 
 	public async execute(request: BrowserBackendRequest): Promise<BrowserBackendResult> {
 		if (!isBrowserBackendRequest(request)) throw new Error("invalid production Browser backend request");
@@ -452,7 +483,7 @@ interface Fixture {
 	request: VerificationPipelineRequest;
 	options(
 		evidence?: ProductionVerificationArtifactPort,
-		browserBackend?: BrowserBackendPort,
+		browserBackend?: ProductionBrowserBackendPort,
 	): Parameters<typeof createProductionVerificationComposition>[0];
 }
 
@@ -600,7 +631,7 @@ async function fixture(manifest: GateManifest = gateManifest()): Promise<Fixture
 	};
 	const options = (
 		selectedEvidence: ProductionVerificationArtifactPort = evidence,
-		selectedBrowserBackend?: BrowserBackendPort,
+		selectedBrowserBackend?: ProductionBrowserBackendPort,
 	) => ({
 		authorityId: AUTHORITY_ID,
 		tenantId: TENANT_ID,
@@ -659,6 +690,37 @@ async function fixture(manifest: GateManifest = gateManifest()): Promise<Fixture
 }
 
 describe("production Verification composition", () => {
+	it("persists Finding snapshots through production Artifact and session event adapters", async () => {
+		const context = await fixture();
+		const options = context.options();
+		const composed = await createProductionVerificationComposition(options);
+		if (!composed.ok) throw new Error(composed.error.message);
+		const finding = {
+			authorityId: AUTHORITY_ID,
+			tenantId: TENANT_ID,
+			findingId: createRuntimeId("finding", "production"),
+			verificationId: VERIFICATION_ID,
+			gateDigest: digest("production-finding-gate"),
+			baseCommit: BASE_COMMIT,
+			candidateCommit: CANDIDATE_COMMIT,
+			source: "security_review" as const,
+			state: "detected" as const,
+			severity: "high" as const,
+			policyClass: "secret_scan",
+			summaryDigest: digest("production-finding-summary"),
+			evidenceArtifactIds: [createRuntimeId("artifact", "production-finding-evidence")],
+			confirmation: "candidate" as const,
+			revision: 0,
+		};
+		const writerHead = options.sessionJournal.writer.currentHead();
+		if (!writerHead) throw new Error("production Finding fixture has no event head");
+		const recorded = await composed.value.findings.record(finding, writerHead);
+		if (!recorded.ok) throw new Error(`${recorded.error.code}: ${recorded.error.message}`);
+		expect(recorded.ok && recorded.value).toEqual(finding);
+		const loaded = await composed.value.findings.load();
+		expect(loaded.ok && loaded.value).toEqual([finding]);
+	});
+
 	it("uses the readonly baseline and frozen trusted PATH, signs the report, and replays it after reconstruction", async () => {
 		const context = await fixture();
 		const composed = await createProductionVerificationComposition(context.options());
@@ -748,6 +810,9 @@ describe("production Verification composition", () => {
 		const context = await fixture(browserGateManifest());
 		const composed = await createProductionVerificationComposition(context.options());
 		if (!composed.ok) throw new Error(composed.error.message);
+		expect(composed.value.readiness.entries.find((entry) => entry.scope === "browser_backend")?.status)
+			.toBe("external_gap");
+		expect(runtimeFeatureReadiness(composed.value.readiness, "completion")).toBe("external_gap");
 		const result = await composed.value.pipeline.verify(context.request);
 		expect(result).toMatchObject({
 			ok: false,
@@ -766,6 +831,9 @@ describe("production Verification composition", () => {
 			context.options(context.evidence, context.browserBackend),
 		);
 		if (!composed.ok) throw new Error(composed.error.message);
+		expect(composed.value.readiness.entries.find((entry) => entry.scope === "browser_backend")?.status)
+			.toBe("ready");
+		expect(runtimeFeatureReadiness(composed.value.readiness, "completion")).toBe("external_gap");
 		const result = await composed.value.pipeline.verify(context.request);
 		expect(result.ok && result.value.result.outcome).toBe("passed");
 		if (!result.ok) throw new Error(result.error.message);

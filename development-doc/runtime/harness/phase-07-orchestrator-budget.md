@@ -9,6 +9,36 @@
 
 前置:Phase 1–5 和 Phase 6 公共契约。当前只继续 Orchestrator reducer/budget 与 Runtime adapter,消费`06`冻结的现有专项公开面;不再并行开发专项行为。冻结readiness不满足时相关feature保持unsupported,Runtime-M1发布承诺继续未关闭。
 
+## Runtime-owned 状态账本（2026-07-24）
+
+基线:`worktree/governed-agent-harness-runtime@bdd09c9 + 当前未提交工作树`。状态只描述 Runtime-owned Phase 7;不提升三个冻结专项或 Runtime-M1。
+
+| ID | 状态 | 实现与证据 |
+|---|---|---|
+| P7-C1 | completed | `RuntimeDependencyReadinessEntry/Receipt` 固定 contract/schema、adapter identity/generation、recovery evidence 与 `ready/unsupported/external_gap` |
+| P7-C2 | completed | `independent_review -> awaiting_verification` 和 reverification 不再要求 pre-seal `pull_request`;Draft PR 保持 Phase 10 behavior unavailable |
+| P7-C3 | completed | Goal/Task/Queue/Budget 继续分别由 canonical event/reducer 唯一重建 |
+| P7-C4 | completed | `PromptGoalCoordinator` 校验 approved Plan revision、DAG digest、无环依赖、owner、Artifact、Workspace 与 capability refs,再按拓扑序导入 |
+| P7-C5 | completed | additive `control` journal durable 记录 loop observation、retry decision、uncertain gate/reconciliation |
+| P7-C6 | completed | `TurnOrchestratorAgentOperationAdapter` 在 provider/tool 副作用前同时完成 Budget reserve 与 save-point |
+| P7-C7 | completed | listener settlement 与 safe-point 分离;uncertain settlement 不应用 mutation,取得 reconciliation receipt 后只能丢弃 pending mutation |
+| P7-C8 | completed | `DurableRetryController` 记录决定;network/rate-limit 仅在明确未应用时重试,context overflow 缺 compaction receipt 时 pause,unknown outcome gate |
+| P7-C9 | completed | Tool retry 继续要求原 invocation identity、manifest、generation、Workspace/capability 与 reconciliation receipt |
+| P7-C10 | completed | BudgetGuard 覆盖 11 维及 root active-agent reservation |
+| P7-C11 | completed | 保留 `AgentOperationBudgetPort` 合同,production 新 adapter 由 TurnOrchestrator 支撑,没有双重记账 |
+| P7-C12 | completed | provider/tool actual usage、Artifact/byte/retry/verification 维度进入 commit/reconcile;超差 hard-stop |
+| P7-C13 | completed | loop observation 只接受至少一个 immutable Artifact 与 durable tree/result/diff digest;模型文本不能构造记录 |
+| P7-C14 | completed | governed production tool batch 固定 sequential;非 governed parallel 仍须全调用 `isConcurrencySafe` preflight并保持 source-order result |
+| P7-C15 | completed | 新增 `PromptGoalCoordinator.run/resume/snapshot` |
+| P7-C16 | completed | coordinator 只消费 `ApprovedPlanEvidencePort`、`CandidateSnapshotPort`、`GoalGatePort` |
+| P7-C17 | completed | readiness 未允许 completion 时停在 `awaiting_verification`;production issuer registry 拒绝 test-only issuer |
+| P7-C18 | completed | crash/replay、public surface、production session composition 与 coordinator 联合门禁通过 |
+
+验证:
+
+- `npx vitest run tests/runtime-v3/orchestrator tests/runtime-v3/verification tests/runtime-v3/integration/production-session-runtime.test.ts tests/runtime-v3/integration/dependency-readiness.test.ts tests/runtime-v3/public-surface --no-file-parallelism` → 34 files / 170 tests PASS。
+- PCM、Extension、Security/Worktree 冻结门禁分别为 16/95、12/52、21/119 PASS。
+
 计划文件:
 
 - 新增 `src/runtime/orchestrator/{types,goal-state-machine,turn-orchestrator,save-point,task-dag,budget-guard,retry-policy,loop-breaker}.ts`。
@@ -44,23 +74,23 @@ Canonical event/reducer 闭环:
 
 任务:
 
-- [ ] transition table 明确 allowed transition、required evidence、actor 和 terminal semantics。
-- [ ] Plan approval、build、test、security、review、PR/complete 都是系统 gate,模型不能跳过。
-- [ ] 在 pi provider-request snapshot/`prepareNextTurn` 模型上强化 save-point:已发出的 provider request 固定 model/tools/resources/config,只有 durable turn 安全点后才对下一次 provider request 应用变更;若定义跨多个 request 的不可变 operation,必须有独立 operationId、开始/终结事件和清晰的本地 divergence 说明。
-- [ ] subscriber/hook 必须 awaited settlement;loop terminal、subscriber settled、externally idle、next-mutation-allowed 分成独立状态,任一 listener 不能仅凭 phase=idle 提前驱动下一副作用。
-- [ ] durable queue 的 enqueue/claim/consume/cancel 都有 event idempotency;runtime 只按 queueItemId+kind 接受 durable receipt,不按内容 digest 反查。claim 与 `model.requested` 必须在外呼前 durable 绑定同一 modelRequestId,外呼结果不确定时 pause,不得重发旧 prompt。
-- [ ] queue item 的 durable accepted、Agent 已开始执行和 turn terminal 是三个独立状态;turn 收尾与本地 `inFlight` 切换期间到达的 item 必须由 canonical projection 在当前或下一 turn 精确消费,不能因最后一次内存轮询已结束而静默丢失。
-- [ ] retry policy 区分 network、rate limit、context overflow、tool uncertain outcome;副作用不确定默认 pause。
-- [ ] tool retry 还必须同时满足 manifest 的 idempotent/retry-safe 声明、原 request/toolCall/idempotency identity、当前 workspace/capability/resource generation 和 Phase 1 reconcile receipt;任一不匹配只能保持 paused 或要求人工 reconciliation,不能创建新 ID 自动重放。
-- [ ] Task DAG 验证无环、依赖、owner、expected artifact 以及 workspace/capability ref 的存在性和版本;具体 workspace 可用性与 capability 子集判定调用注入端口。
-- [ ] Budget 覆盖 input/output token、USD、wall time、tool calls、retries、network bytes、storage bytes、artifact count、verification 和 active agents。
-- [ ] 每项工作先原子 reserve,执行后 commit 实际用量并 refund 余额;并发 worker 共享 root ledger,不得先执行后抢额度。
-- [ ] 对 provider 延迟上报的 token/USD 定义估算上界、允许误差和 reconciliation event;不能承诺物理上的绝对零超支。
-- [ ] soft threshold 只产生一次 reminder event;hard threshold 原子停止新工作并保留 partial result。
-- [ ] loop breaker 识别重复 tool signature、重复失败、无进展 diff 和 remediation 上限。
-- [ ] 工具批次默认 sequential;只有每个调用的 capability claim、workspace target、credential/network/process side effect 均被证明相互独立时才允许 parallel。parallel 模式必须先完成全批 preflight,并分别记录 completion-order terminal event 与 source-order model result projection,crash/replay 后两种顺序都确定。
-- [ ] Phase 7 的生产 transition 最远只能到 `awaiting_verification`;`completed` 保持禁用,直到 Phase 8 注册受信 verifier issuer/schema。
-- [ ] 状态机单测可使用带 `test-only` issuer 的 Verification fixture,该 issuer 在生产 composition root 必须无法注册。
+- [x] transition table 明确 allowed transition、required evidence、actor 和 terminal semantics。
+- [x] Plan approval、build、test、security、review、EpisodeSeal/complete 都是系统 gate,模型不能跳过;Draft PR 在有效 seal 后才可由 Phase 10 请求。
+- [x] 在 pi provider-request snapshot/`prepareNextTurn` 模型上强化 save-point:已发出的 provider request 固定 model/tools/resources/config,只有 durable turn 安全点后才对下一次 provider request 应用变更;若定义跨多个 request 的不可变 operation,必须有独立 operationId、开始/终结事件和清晰的本地 divergence 说明。
+- [x] subscriber/hook 必须 awaited settlement;loop terminal、subscriber settled、externally idle、next-mutation-allowed 分成独立状态,任一 listener 不能仅凭 phase=idle 提前驱动下一副作用。
+- [x] durable queue 的 enqueue/claim/consume/cancel 都有 event idempotency;runtime 只按 queueItemId+kind 接受 durable receipt,不按内容 digest 反查。claim 与 `model.requested` 必须在外呼前 durable 绑定同一 modelRequestId,外呼结果不确定时 pause,不得重发旧 prompt。
+- [x] queue item 的 durable accepted、Agent 已开始执行和 turn terminal 是三个独立状态;turn 收尾与本地 `inFlight` 切换期间到达的 item 必须由 canonical projection 在当前或下一 turn 精确消费,不能因最后一次内存轮询已结束而静默丢失。
+- [x] retry policy 区分 network、rate limit、context overflow、tool uncertain outcome;副作用不确定默认 pause。
+- [x] tool retry 还必须同时满足 manifest 的 idempotent/retry-safe 声明、原 request/toolCall/idempotency identity、当前 workspace/capability/resource generation 和 Phase 1 reconcile receipt;任一不匹配只能保持 paused 或要求人工 reconciliation,不能创建新 ID 自动重放。
+- [x] Task DAG 验证无环、依赖、owner、expected artifact 以及 workspace/capability ref 的存在性和版本;具体 workspace 可用性与 capability 子集判定调用注入端口。
+- [x] Budget 覆盖 input/output token、USD、wall time、tool calls、retries、network bytes、storage bytes、artifact count、verification 和 active agents。
+- [x] 每项工作先原子 reserve,执行后 commit 实际用量并 refund 余额;并发 worker 共享 root ledger,不得先执行后抢额度。
+- [x] 对 provider 延迟上报的 token/USD 定义估算上界、允许误差和 reconciliation event;不能承诺物理上的绝对零超支。
+- [x] soft threshold 只产生一次 reminder event;hard threshold 原子停止新工作并保留 partial result。
+- [x] loop breaker 识别重复 tool signature、重复失败、无进展 diff 和 remediation 上限。
+- [x] governed production 工具批次固定 sequential;只有非 governed batch 的每个调用都通过 concurrency preflight 才允许 parallel,model result仍按source order投影。
+- [x] readiness 未允许 production completion 时最远只能到 `awaiting_verification`;Phase 8 受信 issuer/schema + EpisodeSeal 同时满足后才可 completed。
+- [x] 状态机单测可使用带 `test-only` issuer 的 Verification fixture,该 issuer 在生产 composition root 必须无法注册。
 
 完成门槛:
 

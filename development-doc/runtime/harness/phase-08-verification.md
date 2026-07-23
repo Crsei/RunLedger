@@ -9,6 +9,38 @@
 
 前置:Phase 2–5、Phase 7 的 Runtime contracts。独立 verifier 模块和 fake-port tests 可继续开发;production composition只消费冻结专项的现有receipt。缺trusted-checkout/ExecutionGateway/Sandbox/Artifact或PCM readiness时,Runtime实现unsupported路径且Phase 8/Runtime-M1保持未完成,不能用fake port解锁。
 
+## Runtime-owned 状态账本（2026-07-24）
+
+基线:`worktree/governed-agent-harness-runtime@bdd09c9 + 当前未提交工作树`。Runtime-owned verification/completion composition已闭合;真实 Browser backend 与冻结专项联合 readiness 仍是 external gap,所以 Phase 8 产品里程碑状态为 `blocked`,Runtime-M1不关闭。
+
+| ID | 状态 | 实现与证据 |
+|---|---|---|
+| P8-C1 | completed | production readiness receipt 对六个 scope 输出 `ready/unsupported/external_gap` |
+| P8-C2 | completed | trusted-base checkout、GateManifest 和 candidate isolation 保持现有 fail-closed 实现 |
+| P8-C3 | completed | DependencyAdmission + SecretScan 为 production required adapter/preflight |
+| P8-C4 | completed | typed argv、trusted PATH/env、Gateway/Workspace/Sandbox/Artifact receipt 共同决定结果;stdout不签发pass |
+| P8-C5 | completed | 新增 production-only Browser descriptor、generation、identity 与 preflight;协议级 `BrowserBackendPort` 保持不变 |
+| P8-C6 | blocked | Browser gate 的固定 profile/origin/network/assertion和四类Artifact合同/受控E2E已通过;仓库没有可登记为 production 的真实 Browser backend |
+| P8-C7 | completed | production issuer只接受OS-keyring composition;unknown/test-only/expired/cross-candidate均拒绝 |
+| P8-C8 | completed | VerificationReport 以 Artifact + started/finished event唯一恢复 |
+| P8-C9 | completed | test generator/reviewer/security reviewer profile、workspace、diff/commit/inspected-files binding保持隔离 |
+| P8-C10 | completed | plain text、Markdown、伪/截断JSON和schema/correlation失败只能inconclusive |
+| P8-C11 | completed | `SessionFindingRepository` 以 `finding.transitioned` + content-addressed immutable Artifact snapshot重建 |
+| P8-C12 | completed | blocking Finding/remediation/reverification仍由现有policy、BudgetGuard/LoopBreaker和Goal gate消费 |
+| P8-C13 | completed | EpisodeManifestBody 继续从pre-seal evidence head构造,无自引用 |
+| P8-C14 | completed | body Artifact、manifest commit、seal record、completed四边界保持幂等恢复 |
+| P8-C15 | completed | completed只接受durable、可解析且trusted issuer签发的EpisodeSeal |
+| P8-C16 | completed | coordinator联合测试覆盖 approved Plan → Task DAG → build/test/security/review → EpisodeSeal → completed |
+| P8-C17 | completed | ChangeProposal/HumanGate只保留合同与unsupported behavior,不参与Goal completion |
+| P8-C18 | completed | composition receipt写入readiness;Browser/external specialty gap使completion不advertise |
+| P8-C19 | completed | candidate gate/PATH/secret/dependency/review/browser/receipt/crash攻击矩阵保持通过 |
+| P8-C20 | completed | Runtime-owned门禁与三组冻结门禁通过且冻结实现路径零diff;完整Phase 8仍受P8-C6阻塞 |
+
+验证:
+
+- Phase 7/8 + production session + readiness + public surface:34 files / 170 tests PASS。
+- PCM、Extension、Security/Worktree:16/95、12/52、21/119 PASS。
+
 计划文件:
 
 - 新增 `src/runtime/verification/{types,baseline,gate-loader,runner,pipeline,evidence,test-generator,review-evidence,findings,reviewer,security,report}.ts`。

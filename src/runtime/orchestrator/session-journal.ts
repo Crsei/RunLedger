@@ -38,6 +38,7 @@ const JOURNAL_RECORD_KINDS: Readonly<Record<OrchestratorJournalKind, ReadonlySet
 		"save_point.mutation_queued",
 		"save_point.settled",
 		"save_point.mutations_applied",
+		"save_point.mutations_discarded",
 	]),
 	budget: new Set([
 		"budget.reserved",
@@ -49,6 +50,12 @@ const JOURNAL_RECORD_KINDS: Readonly<Record<OrchestratorJournalKind, ReadonlySet
 		"budget.hard_stopped",
 	]),
 	queue: new Set(["queue.enqueued", "queue.claimed", "queue.consumed", "queue.reconciled"]),
+	control: new Set([
+		"control.loop_observed",
+		"control.retry_decided",
+		"control.uncertain_operation_gated",
+		"control.uncertain_operation_reconciled",
+	]),
 };
 
 interface CanonicalRecords {

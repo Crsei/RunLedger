@@ -125,7 +125,7 @@ function reduceSavePoints(
 					};
 				}
 				active = undefined;
-			} else {
+			} else if (record.kind === "save_point.mutations_applied") {
 				if (active) {
 					return {
 						ok: false,
@@ -149,6 +149,25 @@ function reduceSavePoints(
 					};
 				}
 				bindings = cloneBindings(record.bindings);
+				pending = [];
+			} else {
+				if (active || pending.length === 0) {
+					return {
+						ok: false,
+						error: { code: "invalid_input", message: "mutation discard is not at an uncertain safe point", retryable: false },
+					};
+				}
+				const expectedIds = pending.map((mutation) => mutation.mutationId);
+				if (
+					expectedIds.length !== record.mutationIds.length ||
+					expectedIds.some((id, index) => record.mutationIds[index] !== id) ||
+					!/^[a-f0-9]{64}$/u.test(record.reconciliationReceiptDigest)
+				) {
+					return {
+						ok: false,
+						error: { code: "invalid_input", message: "discarded mutation reconciliation is invalid", retryable: false },
+					};
+				}
 				pending = [];
 			}
 		}
@@ -416,6 +435,53 @@ export class SavePointCoordinator {
 		});
 	}
 
+	public discardPendingAfterReconciliation(
+		operationId: CommandId,
+		reconciliationReceiptDigest: string,
+		idempotencyKey: IdempotencyKey,
+	): Promise<OrchestratorResult<OperationBindings>> {
+		return this.exclusive(async () => {
+			const refreshed = await this.refresh();
+			if (!refreshed.ok) return refreshed;
+			const previous = this.previous(idempotencyKey);
+			if (previous) {
+				const record = previous.records.find(
+					(entry): entry is Extract<SavePointJournalRecord, { kind: "save_point.mutations_discarded" }> =>
+						entry.kind === "save_point.mutations_discarded",
+				);
+				return record &&
+					record.operationId === operationId &&
+					record.reconciliationReceiptDigest === reconciliationReceiptDigest
+					? { ok: true, value: cloneBindings(this.projection.bindings) }
+					: { ok: false, error: { code: "idempotency_conflict", message: "discard key was reused", retryable: false } };
+			}
+			if (
+				this.projection.active ||
+				this.projection.pending.length === 0 ||
+				!/^[a-f0-9]{64}$/u.test(reconciliationReceiptDigest)
+			) {
+				return {
+					ok: false,
+					error: {
+						code: "operation_not_active",
+						message: "uncertain mutation discard requires pending mutations and a reconciliation receipt",
+						retryable: false,
+					},
+				};
+			}
+			const appended = await this.append(idempotencyKey, [{
+				kind: "save_point.mutations_discarded",
+				operationId,
+				mutationIds: this.projection.pending.map((mutation) => mutation.mutationId),
+				reconciliationReceiptDigest,
+				discardedAt: this.clock().toISOString(),
+			}]);
+			return appended.ok
+				? { ok: true, value: cloneBindings(this.projection.bindings) }
+				: appended;
+		});
+	}
+
 	public activeSavePoint(): OperationSavePoint | undefined {
 		return this.projection.active
 			? { ...this.projection.active, bindings: cloneBindings(this.projection.active.bindings) }
@@ -424,6 +490,10 @@ export class SavePointCoordinator {
 
 	public bindings(): OperationBindings {
 		return cloneBindings(this.projection.bindings);
+	}
+
+	public pendingMutationCount(): number {
+		return this.projection.pending.length;
 	}
 }
 

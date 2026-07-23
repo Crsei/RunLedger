@@ -32,7 +32,7 @@
 
 本表是对当前目标分支代码、生产接线、公开导出和测试的状态汇总,用于纠正旧基线中“只有 scaffold”或“整类能力不存在”的过时描述。阶段任务仍按其完整语义验收:模块存在、fake adapter、局部 E2E 或进程内 seam 不能单独关闭生产联合门禁,因此下表不会机械地把 343 个正式任务全部改成 `[x]`。
 
-当前复核结果:`npm run check` PASS;`npm test` 为 268 files / 1761 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build`、`git diff --check`与pi-ai audit 164/164 source + 72 catalog均PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。Phase 3 strict v2、Phase 5 Resource v2与Phase 6 Model Routing v2/Compaction recovery contract已闭合;W1-A2/A3 保持 completed。Runtime-M0 继续受 W1-B、W1-J 与 W1-G 门禁约束。
+当前复核结果:`npm run check` PASS;`npm test` 为 272 files / 1766 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build`、`git diff --check`与pi-ai audit 164/164 source + 72 catalog均PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。Phase 3 strict v2、Phase 5 Resource v2与Phase 6 Model Routing v2/Compaction recovery contract已闭合;W1-B/J/G 已关闭,Runtime-M0 completed。
 
 | 范围 | 当前实现状态 | 已有代码/测试证据 | 尚未关闭的边界 |
 |---|---|---|---|
@@ -44,12 +44,12 @@
 | Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
 | Phase 5 | v2 contract completed; specialty behavior frozen/unavailable | Resource v2 identity/provenance/approval/Skill facet/Hook transform/MCP annotation、完整 ports、legacy-v1显式只读导入与Extension consumer回归 | Extension M1/M4/M5 主体和 M2/M3/M6/M7 部分实现继续冻结;CLI/TUI/installer/runner/store与剩余行为不由 Runtime 接管 |
 | Phase 6 | v2 contract completed; specialty behavior frozen/unavailable | Model Routing v2 parity/profile binding、conversion receipt、v1 replay/v2 event producer、Compaction recovery assessment;Plan/Context/Memory保持v1;ownership与public-surface tests | router/context/plan/compaction/memory核心继续冻结;工具/UI/overflow/完整生产生命周期缺口不由Runtime接管,Runtime-M1不因此关闭 |
-| Phase 7 | 主体实现,发布门禁未关闭 | Orchestrator、Goal/Task canonical truth、queue/save-point、retry/loop breaker、BudgetGuard与 agent-loop 接线 tests | 完整 prompt-to-verification 生命周期、全维预算与 Runtime-M1 production join gate 未完成 |
-| Phase 8 | 部分实现 | Verification core、trusted baseline、dependency/secret scan、review/finding、EpisodeSeal、keyring issuer、runner/browser adapter与 trust tests | Browser 联合 E2E 仍使用受控测试替身;production forge/Draft PR/HumanGate 与完整 prompt 生命周期缺失 |
+| Phase 7 | Runtime-owned completed | durable control journal、TurnOrchestrator-backed operation budget、approved Plan/Task DAG coordinator、retry/uncertain gate和production composition已闭合 | 冻结专项readiness不因本Phase提升 |
+| Phase 8 | Runtime-owned completed;产品里程碑 blocked | production readiness、Browser descriptor/preflight、durable Finding、EpisodeSeal completion与prompt-to-verification联合路径已闭合 | 真实Browser backend及冻结专项联合readiness为external gap;Draft PR/HumanGate仍归Phase 10/11 |
 | Phase 9 | 部分实现 | durable Agent graph、Supervisor、delegation、Workspace/Budget/authority sidecar、internal process-resident child host与 deterministic/opt-in live happy path | executable child factory 仍为 internal/test-injected seam且未稳定导出;activation/completion process-local,CLI/daemon/Control Plane无 spawn/feature row,真实 Gateway/Sandbox/Verification、cold takeover与`stop_uncertain`未闭合 |
 | Phase 10 | 部分实现 | versioned Control Plane、13 类 mutation restart、daemon/stdio、queue/activity、composition receipt、runtime generation与 recovery tests | OS peer identity和真正 listener、部分 turn/approval/artifact/queue/forge/human-gate production ports、idle replacement与全功能 advertisement仍返回 unsupported |
 | Phase 11 | 部分实现 | Activity/cost/Telemetry Manifest/forensic、identity/executor contracts、startup/shutdown/GC与多轮 durability hardening | managed enforcement、credential/forge/human gate、remote/CI、完整 child cold recovery/process-tree authority与跨域 fault matrix未完成 |
-| Runtime-M0–M4 | 均未正式关闭 | 各阶段已有大量可复用实现和 scoped evidence | M0 尚需 Phase 1/4 逐项验收;M1–M4 各自的 production join、专项联合门禁和最终清单仍未满足 |
+| Runtime-M0–M4 | Runtime-M0 completed;M1–M4未关闭 | W1 Session/Artifact/CLI/public-surface与Runtime-M0门禁已闭合;W2 Runtime-owned integration已闭合 | M1仍受真实Browser及三个冻结专项联合readiness阻塞;M2–M4保持后续Wave |
 
 ### 0.1 与 Plugin/MCP/Skill/Hooks 计划的强制边界
 
@@ -1541,11 +1541,11 @@ parallel group `P1` 只包含 W1-A 与 W1-B;两条lane均从 W0-G 创建,不得�
 | W1-A1 | completed | P1, after W0-G | `src/runtime/session/**`、`src/storage/v3-session-manager.ts`、`tests/runtime-v3/session/**` | `259f2fb`;显式`restore()`先注册不可序列化依赖,再校验snapshot identity/generation,随后才打开Event Store/reduce/reconcile并返回handle |
 | W1-A2 | completed | after W1-A1 | 同W1-A1 | create/fork staging、partial-create+cleanup structured outcome、publish前后fault矩阵与完整门禁均已完成 |
 | W1-A3 | completed | after W1-A2 | 同W1-A1 | after-write/before-sync、parent-dir sync、disk-full、cross-stream receipt/fencing与uncertain recovery conformance均已完成 |
-| W1-B1 | pending | P1, after W0-G | `src/runtime/artifacts/**`、artifact/storage tests | 将`SalvageReport`接入受授权CAS Artifact,绑定source digest、unattested、access与retention |
-| W1-B2 | pending | after W1-B1 | 同W1-B1 + `tests/runtime-v3/artifacts/**` | 完成Runtime CAS/access/GC/legacy import/queue Artifact ref的crash与缺失blob fail-closed矩阵;`tests/worktree/artifact-checkpoint*`只读复跑 |
-| W1-J1 | pending | after W1-A3 + W1-B2 | L0/L2/L4 | 串行接入session/artifact public exports、CLI version fence和migration/fork路径;禁止并行修改 |
-| W1-J2 | pending | after W1-J1 | docs/tests only | 逐项审阅Phase 0–4 checklist;只勾有完整evidence的任务 |
-| W1-G | pending | join | full tree | 执行Runtime-M0 gate并记录candidate baseline |
+| W1-B1 | completed | P1, after W0-G | `src/runtime/artifacts/**`、artifact/storage tests | `72767ff`;salvage report进入受授权CAS,绑定source digest、unattested、access/retention |
+| W1-B2 | completed | after W1-B1 | 同W1-B1 + `tests/runtime-v3/artifacts/**` | queue Artifact recovery、CAS/access/GC/legacy import/crash/missing blob fail-closed矩阵通过 |
+| W1-J1 | completed | after W1-A3 + W1-B2 | L0/L2/L4 | Session/Artifact根导出、CLI version fence、v1/v2只读迁移与v3 migrate/fork/recovery已复核 |
+| W1-J2 | completed | after W1-J1 | docs/tests only | Phase 0–4 contract-only与behavior evidence已逐项复核,未把真实Workspace/Sandbox写成可用 |
+| W1-G | completed | join | full tree | 2026-07-24 Runtime-M0:46 files/306 tests;CLI/storage:13 files/92 tests;public surface PASS |
 
 W1-A2/A3 完成证据:
 
@@ -1579,8 +1579,8 @@ W2-G 表示 Runtime-owned integration 已完成并能对缺失依赖 fail closed
 
 | ID | 状态 | 依赖 | 路径 | 工作内容 |
 |---|---|---|---|---|
-| W2-D1 | pending | W1-G | read-only | 运行`06`三组专项门禁,固定public export/schemaVersion/adapter identity/receipt/recovery能力矩阵 |
-| W2-D2 | pending | after W2-D1 | docs/tests only | 把每项依赖标为`ready / unsupported / external-gap`;不得通过修改专项把gap改成ready |
+| W2-D1 | completed | W1-G | read-only | 三组专项门禁为16/95、12/52、21/119 PASS,public/schema/adapter/recovery输入已冻结 |
+| W2-D2 | completed | after W2-D1 | docs/tests only | readiness receipt逐scope记录`ready/unsupported/external_gap`,未修改专项实现 |
 
 #### W2-R:可并行 Runtime 消费泳道
 
@@ -1588,9 +1588,9 @@ parallel group `P2` 只包含 W2-R1、W2-R2、W2-R3;均从 W2-D2 开始,只修�
 
 | ID | 状态 | 依赖 | 独占路径 | 工作内容 |
 |---|---|---|---|---|
-| W2-R1 Model/Context | pending | P2, after W2-D2 | Runtime model/context/session integration adapters与consumer tests | 消费冻结router/context/plan/compaction/memory API,校验profile/checkpoint/receipt;缺Plan/overflow/fork能力时返回稳定unsupported |
-| W2-R2 Resources | pending | P2, after W2-D2 | `src/runtime/resources/**`之外的Runtime-side resource consumer adapter与tests | pin snapshot/generation/manifest/capability/tool identity,只调用冻结Extension public surface;不实现loader/manager/client/runner |
-| W2-R3 Governance | pending | P2, after W2-D2 | Runtime-side Workspace/Gateway/Sandbox receipt validator与tests | 对authority/tenant/workspace/generation/start/terminal receipt做exact验证;冻结port缺失或degraded时拒绝激活 |
+| W2-R1 Model/Context | completed | P2, after W2-D2 | Runtime model/context/session integration adapters与consumer tests | production session消费冻结public API并对缺Plan/overflow能力返回unsupported/external gap |
+| W2-R2 Resources | completed | P2, after W2-D2 | `src/runtime/resources/**`之外的Runtime-side resource consumer adapter与tests | production binding继续pin snapshot/generation/manifest/capability/tool identity |
+| W2-R3 Governance | completed | P2, after W2-D2 | Runtime-side Workspace/Gateway/Sandbox receipt validator与tests | production composition exact校验identity/generation/receipt;degraded依赖不advertise |
 
 三个 lane 不得修改 `src/storage/production-interactive-runtime.ts`、agent-loop、controller、CLI/TUI或daemon;这些共享接线只在 W2-J 打开。
 
@@ -1598,13 +1598,13 @@ parallel group `P2` 只包含 W2-R1、W2-R2、W2-R3;均从 W2-D2 开始,只修�
 
 | ID | 状态 | 依赖 | 独占/共享路径 | 工作内容 |
 |---|---|---|---|---|
-| W2-V1 | pending | W2-R1 + W2-R3 | `src/runtime/verification/**`、`src/verification-runner/**` | 只消费已验证Workspace/Gateway/Sandbox/Artifact receipts;实现独立Browser backend的Runtime侧协议和unsupported路径,fixture attestor不能进入production |
-| W2-V2 | pending | after W2-V1 | verification/admission | 把DependencyAdmission与SecretScan变成required Runtime gate,覆盖candidate-untrusted config/collector/lockfile source |
-| W2-V3 | pending | after W2-V2 | verification/Episode | 完成Finding/reverification、manifest body/commit/seal/completed四边界crash recovery |
-| W2-J1 | pending | W2-R1 + W2-R2 + W2-R3 + W2-V3 | L2/L4 | 单一owner接线agent-loop/controller/session/resource/security/verification;所有专项对象只经public ports进入 |
-| W2-J2 | pending | after W2-J1 | orchestrator + integration tests | 驱动确定性Goal phase和全维Budget;模型/TUI不得直写completed |
-| W2-J3 | pending | after W2-J2 | production composition | 签发Runtime composition receipt和dependency-readiness字段;缺任一真实adapter时相应feature保持unsupported |
-| W2-G | pending | join | full tree | Runtime-owned single-agent integration gate;确认冻结路径无diff |
+| W2-V1 | completed | W2-R1 + W2-R3 | `src/runtime/verification/**`、`src/verification-runner/**` | production Browser descriptor/generation/preflight与unsupported/external-gap路径完成;fixture不能注册production |
+| W2-V2 | completed | after W2-V1 | verification/admission | DependencyAdmission与SecretScan继续作为production required adapter/preflight |
+| W2-V3 | completed | after W2-V2 | verification/Episode | durable Finding repository与manifest/commit/seal/completed recovery闭合 |
+| W2-J1 | completed | W2-R1 + W2-R2 + W2-R3 + W2-V3 | L2/L4 | production session统一暴露control/retry/coordinator/readiness并只消费public ports |
+| W2-J2 | completed | after W2-J1 | orchestrator + integration tests | coordinator驱动Goal phase;TurnOrchestrator-backed adapter执行全维Budget/save-point |
+| W2-J3 | completed | after W2-J2 | production composition | Runtime readiness receipt已签入composition;缺真实adapter时feature为unsupported/external gap |
+| W2-G | completed | join | full tree | 2026-07-24 Runtime-owned gate 34 files/170 tests + 三组冻结门禁PASS;冻结实现路径零diff |
 
 W2 必需 E2E:
 

@@ -159,7 +159,7 @@ npx vitest run tests/security tests/worktree
 # PASS:21 files / 119 tests
 ```
 
-这些结果证明冻结基线在上述范围内可执行,不证明专项计划整体完成。当前完整仓库基线为`npm run check`、`npm run build`、`git diff --check` PASS;`npm test`为268 files / 1761 tests PASS,另有1个opt-in live test默认跳过;pi-ai audit为164/164 source、72 catalog PASS。
+这些结果证明冻结基线在上述范围内可执行,不证明专项计划整体完成。当前完整仓库基线为`npm run check`、`npm run build`、`git diff --check` PASS;`npm test`为272 files / 1766 tests PASS,另有1个opt-in live test默认跳过;pi-ai audit为164/164 source、72 catalog PASS。
 
 ## 7. 解冻流程
 
@@ -173,3 +173,24 @@ npx vitest run tests/security tests/worktree
 6. 所有 Runtime lane统一 rebase 后才能恢复 join。
 
 没有完成以上流程时,任何专项路径改动都视为越界,不得进入 Runtime implementation commit。
+
+## 8. Phase 7/8 Runtime-owned join 复核（2026-07-24）
+
+本轮只在 Runtime-owned Orchestrator、Verification、integration、additive control-journal schema和对应consumer tests中实现。§3 三个专项实现路径零diff;专项门禁仍为:
+
+- Plan/Context/Memory:16 files / 95 tests PASS;
+- Extension:12 files / 52 tests PASS;
+- Security/Worktree:21 files / 119 tests PASS。
+
+Runtime composition现在生成 `RuntimeDependencyReadinessReceipt`;它不会把本文件中的`partial-frozen/deferred-frozen`改成ready:
+
+| scope | 当前production状态 | completion影响 |
+|---|---|---|
+| Plan/Context/Memory | `external_gap` | 不advertise |
+| Resources/Extensions | `external_gap` | 不advertise |
+| Workspace/Security | `external_gap` | 不advertise |
+| Verification core | `ready`（真实production Artifact/admission/keyring composition时） | 仍受其他required scope约束 |
+| Browser backend | `external_gap`（无真实production backend） | Browser gate与completion不advertise |
+| Episode seal | `ready`（durable resolver + trusted OS-keyring issuer时） | 仍受其他required scope约束 |
+
+因此 W2-G 可按“Runtime-owned integration完成且fail closed”关闭,但Runtime-M1和完整Phase 8产品声明继续被真实Browser与三个冻结专项readiness阻塞。ChangeProposal/HumanGate仍为`behavior unavailable`,不参与Goal completion。

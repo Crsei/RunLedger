@@ -15,6 +15,11 @@ import {
 import type { WorkspaceServicePort } from "../../protocol/v3/workspace.ts";
 import { OsKeyringArtifactKeyProvider } from "../../artifacts/key-provider.ts";
 import type { ProductionVerificationServices } from "../../integration/production-session-runtime.ts";
+import {
+	createRuntimeDependencyReadinessEntry,
+	createRuntimeDependencyReadinessReceipt,
+	type RuntimeDependencyReadinessReceipt,
+} from "../../integration/dependency-readiness.ts";
 import { TrustedBaselineCoordinator } from "../baseline.ts";
 import { isVerificationExecutionEvidence } from "../evidence.ts";
 import { VerificationAdmissionController } from "../admission.ts";
@@ -42,10 +47,16 @@ import type {
 	VerificationRunnerRequest,
 } from "../types.ts";
 import { PortBackedVerificationRunner } from "../../../verification-runner/runner.ts";
-import type { BrowserBackendPort } from "../../../verification-runner/browser/evidence.ts";
+import {
+	isProductionBrowserBackendDescriptor,
+	type BrowserBackendPort,
+	type ProductionBrowserBackendPort,
+} from "../../../verification-runner/browser/evidence.ts";
 import type { WorktreeRegistry } from "../../../worktree/registry.ts";
 import { createOsKeyringVerifierComposition } from "./os-keyring-issuer.ts";
 import { WorktreeTrustedGateSource } from "./worktree-gate-source.ts";
+import { ProductionFindingSnapshotArtifactPort } from "./production-finding-snapshots.ts";
+import { SessionFindingRepository } from "../session-finding-repository.ts";
 
 const FORBIDDEN_ENVIRONMENT_KEYS = new Set([
 	"BASH_ENV",
@@ -242,7 +253,7 @@ export interface ProductionVerificationCompositionOptions {
 	policy: TrustedVerificationPolicyPort;
 	capability: CapabilityGatewayPort;
 	sandbox: SandboxExecutorPort;
-	browserBackend?: BrowserBackendPort;
+	browserBackend?: ProductionBrowserBackendPort;
 	evidence: ProductionVerificationArtifactPort;
 	admission?: ProductionVerificationAdmissionInputPort;
 	episodeSeals: DurableEpisodeSealResolverPort;
@@ -261,6 +272,52 @@ export interface ProductionVerificationComposition extends ProductionVerificatio
 	trustedEnvironmentDigest: string;
 	admissionAdapterIdentityDigest: string;
 	gateSource: WorktreeTrustedGateSource;
+	readiness: RuntimeDependencyReadinessReceipt;
+	findings: SessionFindingRepository;
+}
+
+class CorrelatedProductionBrowserBackend implements BrowserBackendPort {
+	readonly #delegate: ProductionBrowserBackendPort;
+
+	public constructor(delegate: ProductionBrowserBackendPort) {
+		this.#delegate = delegate;
+	}
+
+	public async execute(
+		request: Parameters<BrowserBackendPort["execute"]>[0],
+		signal?: AbortSignal,
+	): ReturnType<BrowserBackendPort["execute"]> {
+		const result = await this.#delegate.execute(request, signal);
+		if (result.backendId === this.#delegate.descriptor.backendId &&
+			result.backendIdentityDigest === this.#delegate.descriptor.adapterIdentityDigest
+		) return result;
+		const body = {
+			schemaVersion: result.schemaVersion,
+			authorityId: result.authorityId,
+			tenantId: result.tenantId,
+			verificationRequestId: result.verificationRequestId,
+			operationId: result.operationId,
+			verificationId: result.verificationId,
+			requestDigest: result.requestDigest,
+			operationDigest: result.operationDigest,
+			bindingDigest: result.bindingDigest,
+			capabilityDecisionDigest: result.capabilityDecisionDigest,
+			sandboxReceiptId: result.sandboxReceiptId,
+			sandboxReceiptDigest: result.sandboxReceiptDigest,
+			backendId: this.#delegate.descriptor.backendId,
+			backendIdentityDigest: this.#delegate.descriptor.adapterIdentityDigest,
+			receiptId: result.receiptId,
+			completedAt: result.completedAt,
+			status: "unsupported" as const,
+			reasonCode: "backend_identity_mismatch",
+			reasonDigest: canonicalDigest({
+				expected: this.#delegate.descriptor.descriptorDigest,
+				actualBackendId: result.backendId,
+				actualIdentityDigest: result.backendIdentityDigest,
+			}),
+		};
+		return { ...body, receiptDigest: canonicalDigest(body) };
+	}
 }
 
 function validScope(options: ProductionVerificationCompositionOptions): boolean {
@@ -330,6 +387,39 @@ export async function createProductionVerificationComposition(
 	const environment = trustedEnvironment(options.trustedEnvironment, path.value);
 	if (!environment.ok) return environment;
 
+	let browserBackend: BrowserBackendPort | undefined;
+	let browserStatus: "ready" | "unsupported" | "external_gap" =
+		options.browserBackend ? "unsupported" : "external_gap";
+	let browserRecoveryEvidenceDigest: string | undefined;
+	let browserReasonDigest = canonicalDigest("production Browser backend is absent");
+	if (options.browserBackend) {
+		if (
+			options.browserBackend.environment !== "production" ||
+			!isProductionBrowserBackendDescriptor(options.browserBackend.descriptor)
+		) {
+			return failure("evidence_unavailable", "production Browser backend descriptor is absent or invalid");
+		}
+		let preflight: Awaited<ReturnType<ProductionBrowserBackendPort["preflight"]>>;
+		try {
+			preflight = await options.browserBackend.preflight();
+		} catch {
+			return failure("evidence_unavailable", "production Browser backend preflight is unavailable", true);
+		}
+		browserStatus = preflight.status;
+		if (preflight.status === "ready") {
+			if (
+				preflight.descriptorDigest !== options.browserBackend.descriptor.descriptorDigest ||
+				!/^[a-f0-9]{64}$/u.test(preflight.recoveryEvidenceDigest)
+			) {
+				return failure("evidence_unavailable", "production Browser backend preflight is not correlated");
+			}
+			browserRecoveryEvidenceDigest = preflight.recoveryEvidenceDigest;
+			browserBackend = new CorrelatedProductionBrowserBackend(options.browserBackend);
+		} else {
+			browserReasonDigest = preflight.reasonDigest;
+		}
+	}
+
 	let eventVerification: Awaited<ReturnType<VerificationSessionRuntimeOptions["store"]["verify"]>>;
 	try {
 		eventVerification = await options.sessionJournal.store.verify(options.sessionJournal.store.streamRef());
@@ -385,7 +475,7 @@ export async function createProductionVerificationComposition(
 				return head ? structuredClone(head) : undefined;
 			},
 		},
-		...(options.browserBackend ? { browserBackend: options.browserBackend } : {}),
+		...(browserBackend ? { browserBackend } : {}),
 		trustedEnvironment: environment.value,
 		...(options.clock ? { clock: options.clock } : {}),
 	});
@@ -400,6 +490,21 @@ export async function createProductionVerificationComposition(
 		tenantId: options.tenantId,
 		sessionId: options.sessionId,
 		principalId: options.principalId,
+	});
+	const findings = new SessionFindingRepository({
+		writer: options.sessionJournal.writer,
+		store: options.sessionJournal.store,
+		principalId: options.principalId,
+		snapshots: new ProductionFindingSnapshotArtifactPort({
+			authorityId: options.authorityId,
+			tenantId: options.tenantId,
+			sessionId: options.sessionId,
+			principalId: options.principalId,
+			artifacts: options.sessionJournal.artifacts,
+			metadata: options.sessionJournal.metadata,
+			cas: options.sessionJournal.cas,
+		}),
+		...(options.clock ? { clock: options.clock } : {}),
 	});
 	const pipeline = new VerificationPipeline({
 		baseline,
@@ -428,6 +533,81 @@ export async function createProductionVerificationComposition(
 		artifactAdapterIdentityDigest: options.evidence.adapterIdentityDigest,
 		admissionAdapterIdentityDigest: admissionSource.adapterIdentityDigest,
 	});
+	const readiness = createRuntimeDependencyReadinessReceipt({
+		compositionId: `verification-${options.sessionId}`,
+		generatedAt: (options.clock ?? (() => new Date()))().toISOString(),
+		entries: [
+			...(["plan_context_memory", "resources_extensions", "workspace_security"] as const).map((scope) =>
+				createRuntimeDependencyReadinessEntry({
+					scope,
+					status: "external_gap",
+					contractId: `runledger.${scope}`,
+					schemaVersion: 1,
+					contractDigest: canonicalDigest({ scope, version: 1 }),
+					recovery: "unavailable",
+					requiredFor: scope === "workspace_security"
+						? ["governed_operations", "verification", "browser_verification", "completion"]
+						: ["governed_operations", "completion"],
+					reasonDigest: canonicalDigest(`${scope} specialty production readiness is external`),
+				})),
+			createRuntimeDependencyReadinessEntry({
+				scope: "verification_core",
+				status: "ready",
+				contractId: "runledger.production-verification-composition",
+				schemaVersion: 1,
+				contractDigest: evidenceDigest,
+				adapterId: options.evidence.adapterId,
+				adapterIdentityDigest: options.evidence.adapterIdentityDigest,
+				adapterGeneration: 1,
+				adapterGenerationDigest: canonicalDigest({
+					artifact: options.evidence.adapterIdentityDigest,
+					admission: admissionSource.adapterIdentityDigest,
+				}),
+				recovery: "recoverable",
+				recoveryEvidenceDigest: canonicalDigest(eventVerification.value),
+				requiredFor: ["verification", "completion"],
+			}),
+			createRuntimeDependencyReadinessEntry({
+				scope: "browser_backend",
+				status: browserStatus,
+				contractId: "runledger.production-browser-backend",
+				schemaVersion: 1,
+				contractDigest: options.browserBackend?.descriptor.descriptorDigest ??
+					canonicalDigest("runledger.production-browser-backend"),
+				...(browserStatus === "ready" && options.browserBackend
+					? {
+							adapterId: options.browserBackend.descriptor.backendId,
+							adapterIdentityDigest: options.browserBackend.descriptor.adapterIdentityDigest,
+							adapterGeneration: options.browserBackend.descriptor.generation,
+							adapterGenerationDigest: options.browserBackend.descriptor.generationDigest,
+							recoveryEvidenceDigest: browserRecoveryEvidenceDigest,
+						}
+					: { reasonDigest: browserReasonDigest }),
+				recovery: browserStatus === "ready" ? "recoverable" : "unavailable",
+				requiredFor: ["browser_verification", "completion"],
+			}),
+			createRuntimeDependencyReadinessEntry({
+				scope: "episode_seal",
+				status: "ready",
+				contractId: "runledger.episode-seal",
+				schemaVersion: 1,
+				contractDigest: canonicalDigest({
+					issuerId: signer.value.descriptor.issuerId,
+					activeKeyId: signer.value.activeKeyId,
+				}),
+				adapterId: signer.value.descriptor.issuerId,
+				adapterIdentityDigest: canonicalDigest(signer.value.descriptor.issuerId),
+				adapterGeneration: 1,
+				adapterGenerationDigest: canonicalDigest(signer.value.keyIds),
+				recovery: "recoverable",
+				recoveryEvidenceDigest: canonicalDigest({
+					activeKeyId: signer.value.activeKeyId,
+					eventHead: options.sessionJournal.writer.currentHead(),
+				}),
+				requiredFor: ["verification", "completion"],
+			}),
+		],
+	});
 	return {
 		ok: true,
 		value: {
@@ -446,6 +626,8 @@ export async function createProductionVerificationComposition(
 			trustedEnvironmentDigest,
 			admissionAdapterIdentityDigest: admissionSource.adapterIdentityDigest,
 			gateSource,
+			readiness,
+			findings,
 		},
 	};
 }
