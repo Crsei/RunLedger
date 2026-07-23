@@ -38,25 +38,49 @@ export interface MultiEditDetails {
   diffBytes: number;
 }
 
+interface MultiEditOperations {
+  readFile: (target: string) => Promise<string>;
+  mkdir: (directory: string) => Promise<void>;
+  writeFile: (target: string, content: string) => Promise<void>;
+}
+
+const defaultMultiEditOperations: MultiEditOperations = {
+  readFile: (target) => fs.readFile(target, "utf8"),
+  mkdir: async (directory) => { await fs.mkdir(directory, { recursive: true }); },
+  writeFile: async (target, content) => { await fs.writeFile(target, content, "utf8"); },
+};
+
 export function createMultiEditTool(cwd: string): AgentTool<typeof multiEditSchema, MultiEditDetails> {
   return {
     name: "MultiEdit",
     label: "MultiEdit",
     description: "单次调用对同一文件做 N 处编辑;任一处 fail 则整体 abort。",
     parameters: multiEditSchema,
+    governedExecution: "tool-context",
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
-    async execute(_tc, params): Promise<{
+    async execute(_tc, params, signal?, _onUpdate?, context?): Promise<{
       content: Array<{ type: "text"; text: string }>;
       details: MultiEditDetails;
       terminate: false;
     }> {
-      const target = resolveToCwd(params.filePath, cwd);
-      const original = await fs.readFile(target, "utf8");
+      const activeCwd = context ? context.cwd : cwd;
+      const activeSignal = context ? context.signal : signal;
+      const operations: MultiEditOperations = context
+        ? {
+            readFile: async (target) => (await context.env.fs.readFile(target)).toString("utf8"),
+            mkdir: (directory) => context.env.fs.mkdir(directory, { recursive: true }),
+            writeFile: (target, content) => context.env.fs.writeFile(target, content),
+          }
+        : defaultMultiEditOperations;
+      const target = resolveToCwd(params.filePath, activeCwd);
+      if (activeSignal?.aborted) throw new Error("Operation aborted");
+      const original = await operations.readFile(target);
       let cursor = original;
       let applied = 0;
       let diffBytes = 0;
       for (const e of params.edits ?? []) {
+        if (activeSignal?.aborted) throw new Error("Operation aborted");
         if (!e || typeof e.oldString !== "string" || typeof e.newString !== "string") {
           throw new Error("MultiEdit: edit 必须含 oldString/newString 字符串");
         }
@@ -82,8 +106,8 @@ export function createMultiEditTool(cwd: string): AgentTool<typeof multiEditSche
         }
       }
       if (cursor !== original) {
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, cursor, "utf8");
+        await operations.mkdir(path.dirname(target));
+        await operations.writeFile(target, cursor);
       }
       return {
         content: [{ type: "text", text: `MultiEdit ok: ${applied} edits applied, ${diffBytes}+${diffBytes >= 0 ? "+" : ""}${diffBytes} bytes` }],

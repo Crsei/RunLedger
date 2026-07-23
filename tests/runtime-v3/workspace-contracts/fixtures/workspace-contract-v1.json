@@ -1,0 +1,76 @@
+{
+  "envelope": {
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "sessionId": "session_fixture",
+    "workspaceId": "workspace_fixture",
+    "repositoryId": "repository_fixture",
+    "worktreePath": "/srv/runledger/worktrees/fixture",
+    "branch": "runledger/fixture",
+    "baseCommit": "0000000000000000000000000000000000000000",
+    "agentId": "agent_fixture",
+    "toolCallId": "toolCall_fixture",
+    "traceId": "trace_fixture",
+    "cwd": "/srv/runledger/worktrees/fixture/packages/runtime",
+    "ownerRuntimeId": "runtime_fixture",
+    "leaseRevision": 7,
+    "fencingToken": "opaque-fixture-fence"
+  },
+  "binding": {
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "workspaceId": "workspace_fixture",
+    "repositoryId": "repository_fixture",
+    "bindingKind": "managed_worktree",
+    "canonicalCwd": "/srv/runledger/worktrees/fixture",
+    "effectiveCwd": "/srv/runledger/worktrees/fixture/packages/runtime",
+    "branch": "runledger/fixture",
+    "baseCommit": "0000000000000000000000000000000000000000",
+    "headCommit": "1111111111111111111111111111111111111111",
+    "worktreeId": "worktree_fixture"
+  },
+  "lease": {
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "leaseId": "lease_fixture",
+    "workspaceId": "workspace_fixture",
+    "ownerRuntimeId": "runtime_fixture",
+    "leaseRevision": 7,
+    "fencingTokenDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "state": "active"
+  },
+  "validation": {
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "receiptId": "receipt_validation-fixture",
+    "workspaceId": "workspace_fixture",
+    "envelopeDigest": "0adf979006afb96b689118f56af4ecca81af2f9cf88669c5be89089e80dfdb1c",
+    "validatorId": "principal_workspace-validator",
+    "validatedAt": "2026-07-22T00:00:01.000Z",
+    "outcome": "valid"
+  },
+  "checkpoint": {
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "checkpointId": "checkpoint_fixture",
+    "workspaceId": "workspace_fixture",
+    "eventCursor": {
+      "stream": {
+        "scope": "session",
+        "streamId": "eventStream_9aecd46119df3d663e3f2673cd2b5b14",
+        "sessionId": "session_fixture"
+      },
+      "sequence": 12,
+      "eventId": "event_fixture-12",
+      "eventHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    "baseCommit": "0000000000000000000000000000000000000000",
+    "headCommit": "1111111111111111111111111111111111111111",
+    "statusDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "snapshotArtifactId": "artifact_workspace-snapshot",
+    "completeness": "complete"
+  }
+}

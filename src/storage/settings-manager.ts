@@ -2,9 +2,8 @@
  * 项目层 Settings 加载/落盘 —— 对照 pi `core/settings-manager.ts` 极简版。
  *
  * 本期范围:
- *   - 仅项目层 `<cwd>/.runledger/settings.json`
- *   - 不做用户层 settings 合并(对照 pi,pi 把 ~/.pi/agent/settings.json 与项目合并;
- *     RunLedger 本期暂只项目级,作 `// TODO(pi): 用户层合并` 留位)
+ *   - 用户层 `~/.runledger/agent/settings.json` 与项目层 `<cwd>/.runledger/settings.json`
+ *   - 项目字段覆盖用户字段；runtimeFeatures 逐字段合并
  *   - 不做 trust-manager(`AGENTS.md §1.3` 显式不实现),
  *     settings.json 与 cwd 起点的 AGENTS.md 全部默认信任
  *   - schema 字段最小集:model / thinkingLevel / theme / sessionDir / enabledModels
@@ -17,7 +16,13 @@ import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
 import type { ModelThinkingLevel } from "../types.ts";
 import type { QueueMode } from "../runtime/types.ts";
-import { getProjectSettingsPath } from "./paths.ts";
+import {
+  RUNTIME_FEATURE_NAMES,
+  isSessionV3FeatureState,
+  type RuntimeFeatureFlags,
+  type SessionV3FeatureState,
+} from "../runtime/runtime-features.ts";
+import { getProjectSettingsPath, getUserSettingsPath } from "./paths.ts";
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
@@ -47,21 +52,21 @@ export interface ProjectSettings {
   enabledModels?: string[];
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
+  /** Runtime rollout 请求值；composition root 仍必须校验依赖与可用性，不能据此绕过安全门。 */
+  runtimeFeatures?: Partial<RuntimeFeatureFlags>;
+  /** Session format rollout 的当前状态；存在时优先于旧 runtimeFeatures.sessionV3 boolean。 */
+  sessionV3FeatureState?: SessionV3FeatureState;
+  /** 曾经启用过的最高状态；CLI 只允许单调提高，用于紧急回滚的只读屏障。 */
+  sessionV3HighestActivatedState?: SessionV3FeatureState;
 }
 
 /** 空白 settings;loadProjectSettings 缺文件时返回此值 */
 export const EMPTY_PROJECT_SETTINGS: ProjectSettings = {};
 
-/**
- * 加载项目层 settings;文件不存在或解析失败时返回空对象。
- *
- * 解析失败不抛错,记到 stderr(`// TODO(pi): lastError 字段返回`),
- * 让运行时流程不因 settings 损坏而阻断。
- */
-export async function loadProjectSettings(
-  cwd: string = process.cwd(),
-): Promise<ProjectSettings> {
-  const path = getProjectSettingsPath(cwd);
+/** 用户层与项目层使用相同的有界 schema；资源声明继续存放于独立扩展配置。 */
+export type UserSettings = ProjectSettings;
+
+async function loadSettingsPath(path: string): Promise<ProjectSettings> {
   let text: string;
   try {
     text = await fs.readFile(path, "utf8");
@@ -84,14 +89,7 @@ export async function loadProjectSettings(
   return sanitizeProjectSettings(parsed as Record<string, unknown>);
 }
 
-/**
- * 同步加载版,用于 CLI 启动早期需要 settings 但还不想 await 的场景。
- * 仅在 `existsSync` 命中时读文件,与 loadProjectSettings 在解析失败行为一致。
- */
-export function loadProjectSettingsSync(
-  cwd: string = process.cwd(),
-): ProjectSettings {
-  const path = getProjectSettingsPath(cwd);
+function loadSettingsPathSync(path: string): ProjectSettings {
   if (!existsSync(path)) return {};
   let text: string;
   try {
@@ -100,7 +98,7 @@ export function loadProjectSettingsSync(
     return {};
   }
   try {
-    const parsed = JSON.parse(text);
+    const parsed: unknown = JSON.parse(text);
     if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {};
     }
@@ -108,6 +106,86 @@ export function loadProjectSettingsSync(
   } catch {
     return {};
   }
+}
+
+async function saveSettingsPath(path: string, settings: ProjectSettings): Promise<void> {
+  await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
+  await fs.writeFile(
+    path,
+    JSON.stringify(settings, null, 2) + "\n",
+    SETTINGS_WRITE_OPTS,
+  );
+}
+
+/**
+ * 加载项目层 settings;文件不存在或解析失败时返回空对象。
+ *
+ * 解析失败不抛错,记到 stderr(`// TODO(pi): lastError 字段返回`),
+ * 让运行时流程不因 settings 损坏而阻断。
+ */
+export async function loadProjectSettings(
+  cwd: string = process.cwd(),
+): Promise<ProjectSettings> {
+  return loadSettingsPath(getProjectSettingsPath(cwd));
+}
+
+/**
+ * 同步加载版,用于 CLI 启动早期需要 settings 但还不想 await 的场景。
+ * 仅在 `existsSync` 命中时读文件,与 loadProjectSettings 在解析失败行为一致。
+ */
+export function loadProjectSettingsSync(
+  cwd: string = process.cwd(),
+): ProjectSettings {
+  return loadSettingsPathSync(getProjectSettingsPath(cwd));
+}
+
+/** 加载用户层 settings；缺失或损坏时与项目层一样 fail-soft 为空对象。 */
+export async function loadUserSettings(): Promise<UserSettings> {
+  return loadSettingsPath(getUserSettingsPath());
+}
+
+/** 用户层 settings 的同步加载版。 */
+export function loadUserSettingsSync(): UserSettings {
+  return loadSettingsPathSync(getUserSettingsPath());
+}
+
+/**
+ * 明确执行 user -> project 合并。primitive/array 由项目层覆盖，
+ * runtimeFeatures 保留用户默认并只覆盖项目显式声明的 feature。
+ */
+export function mergeUserAndProjectSettings(
+  userSettings: UserSettings,
+  projectSettings: ProjectSettings,
+): ProjectSettings {
+  const merged: ProjectSettings = { ...userSettings, ...projectSettings };
+  if (userSettings.runtimeFeatures || projectSettings.runtimeFeatures) {
+    merged.runtimeFeatures = {
+      ...userSettings.runtimeFeatures,
+      ...projectSettings.runtimeFeatures,
+    };
+  }
+  return merged;
+}
+
+/** 一次加载并合并用户默认与项目覆盖。 */
+export async function loadMergedSettings(
+  cwd: string = process.cwd(),
+): Promise<ProjectSettings> {
+  const [userSettings, projectSettings] = await Promise.all([
+    loadUserSettings(),
+    loadProjectSettings(cwd),
+  ]);
+  return mergeUserAndProjectSettings(userSettings, projectSettings);
+}
+
+/** 同步加载并合并用户默认与项目覆盖。 */
+export function loadMergedSettingsSync(
+  cwd: string = process.cwd(),
+): ProjectSettings {
+  return mergeUserAndProjectSettings(
+    loadUserSettingsSync(),
+    loadProjectSettingsSync(cwd),
+  );
 }
 
 /**
@@ -118,13 +196,12 @@ export async function saveProjectSettings(
   cwd: string,
   settings: ProjectSettings,
 ): Promise<void> {
-  const path = getProjectSettingsPath(cwd);
-  await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
-  await fs.writeFile(
-    path,
-    JSON.stringify(settings, null, 2) + "\n",
-    SETTINGS_WRITE_OPTS,
-  );
+  await saveSettingsPath(getProjectSettingsPath(cwd), settings);
+}
+
+/** 写入用户层 settings；文件与父目录权限分别固定为 0600/0700。 */
+export async function saveUserSettings(settings: UserSettings): Promise<void> {
+  await saveSettingsPath(getUserSettingsPath(), settings);
 }
 
 /**
@@ -159,6 +236,20 @@ function sanitizeProjectSettings(raw: Record<string, unknown>): ProjectSettings 
   }
   if (raw.followUpMode === "one-at-a-time" || raw.followUpMode === "all") {
     out.followUpMode = raw.followUpMode;
+  }
+  if (raw.runtimeFeatures !== null && typeof raw.runtimeFeatures === "object" && !Array.isArray(raw.runtimeFeatures)) {
+    const requested = raw.runtimeFeatures as Record<string, unknown>;
+    const runtimeFeatures: Partial<RuntimeFeatureFlags> = {};
+    for (const feature of RUNTIME_FEATURE_NAMES) {
+      if (typeof requested[feature] === "boolean") runtimeFeatures[feature] = requested[feature];
+    }
+    if (Object.keys(runtimeFeatures).length > 0) out.runtimeFeatures = runtimeFeatures;
+  }
+  if (isSessionV3FeatureState(raw.sessionV3FeatureState)) {
+    out.sessionV3FeatureState = raw.sessionV3FeatureState;
+  }
+  if (isSessionV3FeatureState(raw.sessionV3HighestActivatedState)) {
+    out.sessionV3HighestActivatedState = raw.sessionV3HighestActivatedState;
   }
   return out;
 }

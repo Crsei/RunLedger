@@ -1,0 +1,7 @@
+{
+  "contract": "runledger.taint-chain/v1",
+  "sourceDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+  "taintLabels": ["external_untrusted", "model_derived"],
+  "stages": ["context", "compaction", "model_switch", "memory"],
+  "expected": "preserved"
+}

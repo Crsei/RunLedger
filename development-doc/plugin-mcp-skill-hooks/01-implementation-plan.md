@@ -1,6 +1,6 @@
 # RunLedger Plugin / MCP / Skill / Hooks 实施计划
 
-> 文档状态:拟实施（单一权威计划）<br>
+> 文档状态:实施中（Extension domain M0–M5 已形成闭环，M6 共享接线待串行完成）<br>
 > 编写日期:2026-07-21;边界校准:2026-07-22<br>
 > RunLedger 基线:`1658fe26fc675cc18498bb8c6a9f162b7a0b733f` (`feat/agent-loop-resurrect`)<br>
 > Codex 参考基线:`0b175e6439a8608ba7726ee153fd8590619e8f34` (`main`)<br>
@@ -577,103 +577,108 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 每个里程碑单独提交；代码里程碑都必须通过 `npm run check`、`npm test` 和受影响的 build/CLI smoke。不得把后续里程碑的占位 API 混入当前提交。
 
+2026-07-22 实施证据：`src/extensions/**` 已通过 TypeScript、execution/runtime boundary checks；`tests/extensions/**` 当前 10 个文件、41 个测试全绿。production `NodePolicyExtensionStorage`、用户/项目 settings 合并、extension/trust/plugin-data/spill 路径与 `runledger/extensions` 子路径导出已完成；连同 path/settings 测试的定向门禁为 78/78。下列 `[x]` 只表示 Extension domain、adapter 或测试证据已经成立，不代表 M6 的 CLI/TUI/controller/agent-loop/ledger composition root 已接线。全量 `npm test` 的 1038 个测试均通过，但 Vitest 另捕获到共享 `src/storage/worktree-node-adapter.ts` 的一个未处理 `EPIPE`，该问题不属于本计划独占路径，不能据此伪造全量门禁通过。
+
 ### M0 — 契约、fixtures 与安全预算
 
 - [ ] 记录 Runtime Phase 5 resource contract 与 Phase 3 capability/Gateway port 的 commit/schemaVersion/export path,确认本计划不复制 Runtime/security 类型；
 - [ ] 记录 dependency HEAD,以独立串行提交加入 YAML parser、semver、官方 MCP SDK 精确版本并审阅 lockfile；通知 Runtime 线随后基于该提交继续；
-- [ ] 固定本文件中的 v1 manifest、skill frontmatter、hooks、MCP JSON schema；
+- [x] 固定本文件中的 v1 manifest、skill frontmatter、hooks、MCP JSON schema；
 - [ ] 建立 `tests/fixtures/extensions/`，包含 valid、invalid、path-escape、symlink、duplicate、oversize、secret-template 样例；
-- [ ] 定义 `ExtensionDiagnostic`（code、severity、message、source、path、resourceId、cause?）；
-- [ ] 定义所有扫描深度、文件数、单文件字节数、context 字符数、stdout/stderr 字节数常量；
-- [ ] 为 JSON schema/TypeBox schema 加 contract test，非法未知 schemaVersion 必须失败；
-- [ ] 为四个 Runtime resource ports 建 fake adapter 和 mapping golden fixtures,覆盖 exact identity、provenance、trust/activation、receipt、snapshot 与 lifecycle event；
-- [ ] 固定 capability derivation 输入:manifest/config/command/assets digest、canonical args、filesystem/network/process/credential scope；调用方声明仅作请求,不能作为最终 claim；
-- [ ] 记录依赖决策和许可证审阅结果：YAML parser、semver、官方 MCP SDK 均使用精确版本。
+- [x] 定义 `ExtensionDiagnostic`（code、severity、message、source、path、resourceId、cause?）；
+- [x] 定义所有扫描深度、文件数、单文件字节数、context 字符数、stdout/stderr 字节数常量；
+- [x] 为 JSON schema/TypeBox schema 加 contract test，非法未知 schemaVersion 必须失败；
+- [x] 为四个 Runtime resource ports 建 fake adapter 和 mapping golden fixtures,覆盖 exact identity、provenance、trust/activation、receipt、snapshot 与 lifecycle event；
+- [x] 固定 capability derivation 输入:manifest/config/command/assets digest、canonical args、filesystem/network/process/credential scope；调用方声明仅作请求,不能作为最终 claim；
+- [x] 记录依赖决策和许可证审阅结果：YAML parser、semver、官方 MCP SDK 均使用精确版本。
 
 验收：所有 schema 在不启动进程、不访问网络的情况下可解析；同一 fixture 的 diagnostics 顺序稳定；ExtensionSnapshot/TrustRecord/调用 descriptor 可通过冻结的 Runtime resource/capability contract；缺任一 contract commit 时 M0 保持未完成。
 
 ### M1 — Extension 基础层、路径、状态与信任
 
-- [ ] 新增 `src/extensions/{types,diagnostics,config-layers,snapshot}.ts`；
-- [ ] 新增路径 API 和 cwd → project root 祖先链扫描，realpath 去重且有层数上限；
-- [ ] 实现 `extensions-state.json` 的 0600 原子写入，启用状态与 trust 分文件；
-- [ ] 实现 `TrustStore`，以 exact resource identity + canonical path + manifest/config/command/assets digest + capability digest 校验 trusted/stale/untrusted/revoked；
-- [ ] TrustRecord 记录 principal、scope、issuedAt/expiresAt、revocation revision,并可无损投影为 `ResourceApprovalReceipt`；
-- [ ] 实现目录/文件 digest，排序稳定、不跟随逃逸 symlink、不读取超额文件；
-- [ ] 在 Extension catalog/Runtime resource adapter 中生成 tool source/id/runtimeName 与冲突诊断；真实 `ToolRegistry` 接线留到 M6；
-- [ ] 实现 `ExtensionSnapshot` builder 和 last-known-good 原子交换；
-- [ ] 实现 Runtime snapshot/catalog/event adapter,只输出有界 descriptor,不泄漏 handler/client/process 对象；
-- [ ] audit adapter 生成 `extensions.snapshot/v1`/v3 lifecycle 投影，敏感字段红线测试；真实 ledger/event sink 接线留到 M6。
+- [x] 新增 `src/extensions/{types,diagnostics,config-layers,snapshot}.ts`；
+- [x] 新增路径 API 和 cwd → project root 祖先链扫描，realpath 去重且有层数上限；
+- [x] 实现 `extensions-state.json` 的 0600 原子写入，启用状态与 trust 分文件；
+- [x] 实现 `TrustStore`，以 exact resource identity + canonical path + manifest/config/command/assets digest + capability digest 校验 trusted/stale/untrusted/revoked；
+- [x] TrustRecord 记录 principal、scope、issuedAt/expiresAt、revocation revision,并可无损投影为 `ResourceApprovalReceipt`；
+- [x] 实现目录/文件 digest，排序稳定、不跟随逃逸 symlink、不读取超额文件；
+- [x] 在 Extension catalog/Runtime resource adapter 中生成 tool source/id/runtimeName 与冲突诊断；真实 `ToolRegistry` 接线留到 M6；
+- [x] 实现 `ExtensionSnapshot` builder 和 last-known-good 原子交换；
+- [x] 实现 Runtime snapshot/catalog/event adapter,只输出有界 descriptor,不泄漏 handler/client/process 对象；
+- [x] audit adapter 生成 `extensions.snapshot/v1`/v3 lifecycle 投影，敏感字段红线测试；真实 ledger/event sink 接线留到 M6。
 
 验收：扫描不执行任何资源；路径或 symlink 逃逸 fail-closed；配置、命令、asset、capability 任一变化使 trust stale；同名/猜测 identity 不会 fallback；snapshot 构建失败不破坏当前可用快照。
 
 ### M2 — Skill 独立闭环
 
-- [ ] 实现用户/项目 `SKILL.md` 发现、frontmatter 校验、qualified identity 和优先级；
+- [x] 实现用户/项目 `SKILL.md` 发现、frontmatter 校验、qualified identity 和优先级；
 - [ ] 扫描采用并发与深度上限，错误累计到 diagnostics，不因单个坏 skill 中断；
-- [ ] 实现有界 catalog renderer，超预算时稳定截断描述而不是随机丢 skill；
-- [ ] 生成有界 system-prompt catalog fragment；真实 controller 注入留到 M6,同一 session snapshot 内内容稳定；
-- [ ] 在 `src/extensions/skills/skill-tool.ts` 实现 read-only catalog resolver，读取完整正文前复核 digest/trust；现有 Runtime `Skill` 占位桥接留到 M6；
-- [ ] 将 metadata catalog、正文、references/assets 与 scripts 建模为独立 resource/capability；M2 只实现前三者只读路径,不执行 scripts；
-- [ ] 实现 `$name`、`/skill name` 与 `/name` 的统一解析和含糊名错误；
-- [ ] `allowed-tools` 只能做交集收窄，并覆盖“不能提升权限”的测试；
-- [ ] audit adapter 生成 `skill.invocation/v1`/v3 event payload，不把全文复制进 ledger；
-- [ ] snapshot projection 提供 enabled/disabled/error skill 计数；真实 TUI resource bar 接线留到 M6。
+- [x] 实现有界 catalog renderer，超预算时稳定截断描述而不是随机丢 skill；
+- [x] 生成有界 system-prompt catalog fragment；真实 controller 注入留到 M6,同一 session snapshot 内内容稳定；
+- [x] 在 `src/extensions/skills/skill-tool.ts` 实现 read-only catalog resolver，读取完整正文前复核 digest/trust；现有 Runtime `Skill` 占位桥接留到 M6；
+- [x] 将 metadata catalog、正文、references/assets 与 scripts 建模为独立 resource/capability；M2 只实现前三者只读路径,不执行 scripts；
+- [x] 实现 `$name`、`/skill name` 与 `/name` 的统一解析和含糊名错误；
+- [x] `allowed-tools` 只能做交集收窄，并覆盖“不能提升权限”的测试；
+- [x] audit adapter 生成 `skill.invocation/v1`/v3 event payload，不把全文复制进 ledger；
+- [x] snapshot projection 提供 enabled/disabled/error skill 计数；真实 TUI resource bar 接线留到 M6。
 
 验收：未命中的 skill 不注入正文；同名 skill 只能用 qualified identity 精确选择；untrusted/stale skill 不读取正文；系统提示始终受预算约束；正文已读不能产生 process/script grant。
 
 ### M3 — Hooks 独立闭环
 
-- [ ] 实现 hook JSON parser、event 名校验、matcher 编译和稳定排序；
-- [ ] 实现 direct-spawn command runner、stdin JSON、stdout parser、stderr 捕获、timeout 与进程组清理；
-- [ ] command runner 只消费 Runtime Gateway 授予的 process/filesystem/credential executor；Extension 不直接调用全局 spawn 或裸 ExecutionEnv；
-- [ ] 过滤/覆盖保留环境变量，禁止 hook 配置伪造 RunLedger 注入值；
-- [ ] 实现 effective failure mode，项目/plugin 不得下调用户安全策略；
-- [ ] 在 `src/extensions/integration/runtime-hook-adapter.ts` 准备 SessionStart、UserPromptSubmit、SessionEnd adapter；真实 controller 接线留到 M6；
-- [ ] 在 adapter 中准备 PreToolUse、PostToolUse 组合链；真实 agent-loop 接线留到 M6；
-- [ ] 定义 `updatedInput` adapter 结果；更新后必须重跑 TypeBox 校验、canonicalization、capability derivation 与 authorization；共享 Runtime 类型改动留到 M6；
+- [x] 实现 hook JSON parser、event 名校验、matcher 编译和稳定排序；
+- [x] 实现 direct-spawn command runner、stdin JSON、stdout parser、stderr 捕获、timeout 与进程组清理；
+- [x] command runner 只消费 Runtime Gateway 授予的 process/filesystem/credential executor；Extension 不直接调用全局 spawn 或裸 ExecutionEnv；
+- [x] 过滤/覆盖保留环境变量，禁止 hook 配置伪造 RunLedger 注入值；
+- [x] 实现 effective failure mode，项目/plugin 不得下调用户安全策略；
+- [x] 在 `src/extensions/integration/runtime-hook-adapter.ts` 准备 SessionStart、UserPromptSubmit、SessionEnd adapter；真实 controller 接线留到 M6；
+- [x] 在 adapter 中准备 PreToolUse、PostToolUse 组合链；真实 agent-loop 接线留到 M6；
+- [x] 定义 `updatedInput` adapter 结果；更新后必须重跑 TypeBox 校验、canonicalization、capability derivation 与 authorization；共享 Runtime 类型改动留到 M6；
 - [ ] 固定顺序为 `prepare/schema -> PreToolUse -> authorization -> execute -> PostToolUse -> result budget`；
-- [ ] 每个 handler 生成 `hook.run/v1`/v3 event payload 和 deny/failure/timeout presentation model；真实 event sink/TUI 接线留到 M6；
-- [ ] 用 fake scripts 覆盖 allow、deny、update、invalid JSON、nonzero、timeout、abort、oversize。
+- [x] 每个 handler 生成 `hook.run/v1`/v3 event payload 和 deny/failure/timeout presentation model；真实 event sink/TUI 接线留到 M6；
+- [x] 用 fake scripts 覆盖 allow、deny、update、invalid JSON、nonzero、timeout、abort、oversize。
 
 验收：显式 deny 一定阻断且产生 isError tool result；closed hook 故障阻断，open hook 故障继续；PostToolUse 不可篡改真实执行是否发生；Extension 无 Gateway grant 时不 spawn；退出后无 hook 子进程。
 
 ### M4 — MCP 工具闭环
 
-- [ ] 使用 M0 已固定并审阅的官方 MCP SDK,不得在 M4 再改 lockfile；
-- [ ] 实现 v1 config parser、层级合并、plugin-relative cwd 和 env template 解析；
-- [ ] 实现 stdio 与 Streamable HTTP client factory；
-- [ ] 实现 server 状态机、并发启动、required gate、startup/tool/per-tool timeout；
-- [ ] 实现 tool list allow/deny 过滤、raw identity、runtimeName sanitization 与冲突检测；
-- [ ] 实现 `McpToolCatalog`、`McpSearch`、`McpCall` 和显式 pinned direct tool；
-- [ ] 把 MCP annotations 映射到统一 authorization metadata；
-- [ ] 从受信 config、tool schema/annotations 和 canonical call input 推导 network/process/credential/filesystem claim 请求,交 Runtime Gateway 形成最终 decision；
-- [ ] 实现 text/image/resource result normalization 和 budget/spill；
-- [ ] 实现 AbortSignal、transport close、受限退避重启、替代 client identity 防竞态；
-- [ ] 实现 `doctor()` 的结构化结果，不把 connectivity 检查混入普通 list；
-- [ ] `closeAll()` adapter 覆盖 SessionEnd、TUI quit、SIGINT 和异常 finally；真实 composition root 接线留到 M6；
-- [ ] 用仓库内 fake MCP stdio server 与本地 HTTP server 做集成测试，不依赖公网。
+- [x] 使用 M0 已固定并审阅的官方 MCP SDK,不得在 M4 再改 lockfile；
+- [x] 实现 v1 config parser、层级合并、plugin-relative cwd 和 env template 解析；
+- [x] 实现 stdio 与 Streamable HTTP client factory；
+- [x] 实现 server 状态机、并发启动、required gate、startup/tool/per-tool timeout；
+- [x] 实现 tool list allow/deny 过滤、raw identity、runtimeName sanitization 与冲突检测；
+- [x] 实现 `McpToolCatalog`、`McpSearch`、`McpCall` 和显式 pinned direct tool；
+- [x] 把 MCP annotations 映射到统一 authorization metadata；
+- [x] 从受信 config、tool schema/annotations 和 canonical call input 推导 network/process/credential/filesystem claim 请求,交 Runtime Gateway 形成最终 decision；
+- [x] 实现 text/image/resource result normalization 和 budget/spill；
+- [x] 实现 AbortSignal、transport close、受限退避重启、替代 client identity 防竞态；
+- [x] 实现 `doctor()` 的结构化结果，不把 connectivity 检查混入普通 list；
+- [x] `closeAll()` adapter 覆盖 SessionEnd、TUI quit、SIGINT 和异常 finally；真实 composition root 接线留到 M6；
+- [x] 用仓库内 fake MCP stdio server 与本地 HTTP server 做集成测试，不依赖公网。
 
 验收：一个 session 内可通过 fake Runtime Gateway 发现并调用 fake MCP 工具；optional server 失败不阻断 stdlib，required server 失败阻断新 turn；无 grant/receipt stale 时不启动或调用；timeout/abort 后无 orphan；结果与状态完整写审计 adapter。
 
 ### M5 — Plugin 组合闭环
 
-- [ ] 实现 `.runledger-plugin/plugin.json` parser、semver、unknown field 和 schemaVersion 诊断；
-- [ ] 实现用户/项目 plugin discovery、qualified identity、enable state 和 trust gate；
-- [ ] 所有 component path 做 realpath containment；
-- [ ] PluginManager 只输出 Skill/Hook/MCP descriptors，不直接执行；
-- [ ] plugin skill/hook/MCP 使用同一 pluginId、root digest 和 data root；
-- [ ] untrusted plugin 只显示 manifest metadata 与被阻断的组件计数；
-- [ ] Plugin trust 只批准精确 root digest；component descriptor 分别声明 Skill body/assets/script、Hook process 和 MCP process/network/credential claims,不因 parent plugin trusted 自动跳过逐调用授权；
-- [ ] plugin 内容变化后旧 snapshot 可运行到 turn 结束，新 reload 标记 stale 并停止新执行；
-- [ ] 组件局部失败只禁用局部，manifest 身份/路径错误禁用整个 plugin；
-- [ ] 构建 fixture plugin：一个 skill、一个 PreToolUse hook、一个 fake MCP server；
-- [ ] audit adapter 生成 plugin state 与 component provenance payload；真实 event sink 接线留到 M6。
+- [x] 实现 `.runledger-plugin/plugin.json` parser、semver、unknown field 和 schemaVersion 诊断；
+- [x] 实现用户/项目 plugin discovery、qualified identity、enable state 和 trust gate；
+- [x] 所有 component path 做 realpath containment；
+- [x] PluginManager 只输出 Skill/Hook/MCP descriptors，不直接执行；
+- [x] plugin skill/hook/MCP 使用同一 pluginId、root digest 和 data root；
+- [x] untrusted plugin 只显示 manifest metadata 与被阻断的组件计数；
+- [x] Plugin trust 只批准精确 root digest；component descriptor 分别声明 Skill body/assets/script、Hook process 和 MCP process/network/credential claims,不因 parent plugin trusted 自动跳过逐调用授权；
+- [x] plugin 内容变化后旧 snapshot 可运行到 turn 结束，新 reload 标记 stale 并停止新执行；
+- [x] 组件局部失败只禁用局部，manifest 身份/路径错误禁用整个 plugin；
+- [x] 构建 fixture plugin：一个 skill、一个 PreToolUse hook、一个 fake MCP server；
+- [x] audit adapter 生成 plugin state 与 component provenance payload；真实 event sink 接线留到 M6。
 
 验收：fixture plugin 在 untrusted 时零代码执行；grant trust + enable + reload 后三类组件同时可用；disable + reload 后全部撤出且 client 被关闭。
 
 ### M6 — CLI、TUI 与热重载
 
+- [x] 提供 policy-aware production `ExtensionStoragePort` Node adapter，覆盖 root/deny/protected/symlink/有界读取与 0600/0700 原子写；adapter 不自造 authorization receipt；
+- [x] 补齐用户/项目 extension roots、settings/trust/state/plugin-data/session spill 路径，用户 settings 与项目 settings 显式合并，资源声明仍使用独立配置文件；
+- [x] 通过 `runledger/extensions` 导出 Extension 公共 surface、production storage adapter 与 composition 所需 path/settings contracts；
 - [ ] 在开始 M6 前记录 Runtime resource/capability contract commit、安全专项 ExecutionGateway implementation commit、Extension M1–M5 commit 和所有共享文件 HEAD；若 handoff 后已变化先重审再集成；
 - [ ] 由本里程碑单一所有者把 `src/extensions/integration/**` 接入 Runtime shared files,禁止 Runtime 线同时修改这些路径；
 - [ ] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Phase 5 ports,不直接 import Runtime 内部 store/reducer；
@@ -699,18 +704,18 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 ### M7 — 加固与第二阶段能力
 
 - [ ] MCP OAuth credential store、login/logout、auth-required TUI；
-- [ ] MCP resources / resource templates / prompts 的 list/read/get API；
-- [ ] legacy SSE transport（仅在真实兼容需求成立时）；
-- [ ] 配置文件 watcher 与 debounce，仍遵守 idle 原子交换；
-- [ ] hook HTTP handler，增加 SSRF、DNS rebinding、redirect、敏感 payload 审批策略；
+- [x] MCP resources / resource templates / prompts 的 list/read/get API；
+- [x] legacy SSE transport（仅在真实兼容需求成立时）；
+- [x] 配置文件 watcher 与 debounce，仍遵守 idle 原子交换；
+- [x] hook HTTP handler，增加 SSRF、DNS rebinding、redirect、敏感 payload 审批策略；
 - [ ] plugin 版本化 store、install/update/uninstall/rollback 和 marketplace；
-- [ ] 安装只接受 exact package/version/publisher/source locator,禁止模型猜测名称后 fallback 安装；
+- [x] 安装只接受 exact package/version/publisher/source locator,禁止模型猜测名称后 fallback 安装；
 - [ ] 安装包 expected digest/signature、publisher trust root、来源 pin、大小上限、离线缓存与 revocation；“存在签名”不等于 publisher 已受信；
 - [ ] 下载经 HTTPS 和 host policy,先进入 staging,再在临时最小权限沙箱做 bounded probe,成功后原子激活；
 - [ ] 新版本支持冷却期、显式批准、revocation 和回滚到上一已验证版本；digest、publisher、command、asset 或 capability 变化全部使旧 receipt stale；
-- [ ] execute/code-mode 资源默认 hidden,只有显式 profile + Runtime approval 才可激活；
-- [ ] 可选 `.agents` / `.claude` / `.grok` 兼容导入器，默认关闭并显示来源；
-- [ ] 扩展资源 metrics/OTel（不得替代 ledger 审计）。
+- [x] execute/code-mode 资源默认 hidden,只有显式 profile + Runtime approval 才可激活；
+- [x] 可选 `.agents` / `.claude` / `.grok` 兼容导入器，默认关闭并显示来源；
+- [x] 扩展资源 metrics/OTel（不得替代 ledger 审计）。
 
 M7 不阻塞 M0–M6 的本地可运行闭环，且每一项都应独立设计/提交。
 

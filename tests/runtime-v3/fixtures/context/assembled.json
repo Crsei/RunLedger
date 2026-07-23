@@ -1,0 +1,167 @@
+{
+  "request": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "requestId": "contextRequest_fixture",
+    "sessionId": "session_fixture",
+    "modelId": "provider/model-a",
+    "modelProfileId": "resource_profile-a",
+    "requiredCapabilities": [],
+    "budget": {
+      "contextWindowTokens": 32768,
+      "reservedOutputTokens": 4096,
+      "reservedToolSchemaTokens": 1024,
+      "providerSafetyTokens": 512,
+      "maxFragments": 8,
+      "maxTotalChars": 65536
+    },
+    "fragments": [
+      {
+        "schemaVersion": 1,
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "fragmentId": "resource_context-policy",
+        "layer": "organization_policy",
+        "order": 0,
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "trust": "system",
+        "taint": [],
+		"inputSources": [
+		  {
+			"schemaVersion": 1,
+			"authorityId": "authority_fixture",
+			"tenantId": "tenant_fixture",
+			"sourceId": "inputSource_org-policy",
+			"kind": "user",
+			"sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"trust": "trusted",
+			"taintLabels": [],
+			"observedAt": "2026-07-22T00:00:00.000Z"
+		  }
+		],
+		"declassificationReceipts": [],
+        "priority": "required",
+        "maxTokens": 256,
+        "maxChars": 2048,
+        "provenance": {
+          "authorityId": "authority_fixture",
+          "tenantId": "tenant_fixture",
+          "sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "observedAt": "2026-07-22T00:00:00.000Z",
+          "kind": "organization_policy",
+          "policyId": "resource_policy-1"
+        },
+        "storage": "inline",
+        "content": "Signed organization policy"
+      },
+      {
+        "schemaVersion": 1,
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "fragmentId": "resource_context-tool",
+        "layer": "turn_context",
+        "order": 1,
+        "contentDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "trust": "untrusted",
+        "taint": ["tool_output"],
+		"inputSources": [
+		  {
+			"schemaVersion": 1,
+			"authorityId": "authority_fixture",
+			"tenantId": "tenant_fixture",
+			"sourceId": "inputSource_tool-output",
+			"kind": "model",
+			"sourceDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+			"trust": "derived",
+			"taintLabels": ["model_derived"],
+			"observedAt": "2026-07-22T00:00:01.000Z"
+		  }
+		],
+		"declassificationReceipts": [],
+        "priority": "normal",
+        "maxTokens": 512,
+        "maxChars": 4096,
+        "provenance": {
+          "authorityId": "authority_fixture",
+          "tenantId": "tenant_fixture",
+          "sourceDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "observedAt": "2026-07-22T00:00:01.000Z",
+          "kind": "tool",
+          "toolCallId": "toolCall_fixture",
+          "resultDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "storage": "artifact",
+        "artifact": {
+          "authorityId": "authority_fixture",
+          "tenantId": "tenant_fixture",
+          "artifactId": "artifact_tool-output",
+          "storedDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "kind": "tool_output",
+          "originalSize": 10000,
+          "storedSize": 10000,
+          "mediaType": "text/plain",
+          "redaction": "redacted",
+          "transformReceipt": "receipt_transform-tool"
+        },
+        "excerpt": "Bounded tool output excerpt"
+      }
+    ]
+  },
+  "receipt": {
+    "schemaVersion": 1,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "requestId": "contextRequest_fixture",
+    "receiptId": "receipt_context-fixture",
+    "sessionId": "session_fixture",
+    "modelId": "provider/model-a",
+    "modelProfileId": "resource_profile-a",
+    "budget": {
+      "contextWindowTokens": 32768,
+      "reservedOutputTokens": 4096,
+      "reservedToolSchemaTokens": 1024,
+      "providerSafetyTokens": 512,
+      "maxFragments": 8,
+      "maxTotalChars": 65536
+    },
+    "included": [
+      {
+		"authorityId": "authority_fixture",
+		"tenantId": "tenant_fixture",
+        "fragmentId": "resource_context-policy",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "layer": "organization_policy",
+        "estimatedTokens": 12,
+		"includedChars": 26,
+		"inputSources": [
+		  {
+			"schemaVersion": 1,
+			"authorityId": "authority_fixture",
+			"tenantId": "tenant_fixture",
+			"sourceId": "inputSource_org-policy",
+			"kind": "user",
+			"sourceDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"trust": "trusted",
+			"taintLabels": [],
+			"observedAt": "2026-07-22T00:00:00.000Z"
+		  }
+		],
+		"declassificationReceipts": []
+      }
+    ],
+    "omitted": [
+      {
+        "fragmentId": "resource_context-tool",
+        "layer": "turn_context",
+        "reason": "budget_exceeded",
+        "diagnosticDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    ],
+    "estimatedInputTokens": 12,
+    "contextDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+    "assembledAt": "2026-07-22T00:00:02.000Z"
+  }
+}

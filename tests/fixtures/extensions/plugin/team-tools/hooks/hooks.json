@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "id": "fixture-guard",
+        "matcher": "^(Read|Bash)$",
+        "failureMode": "closed",
+        "handlers": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["../bin/fake-hook.mjs"],
+            "timeoutMs": 2000,
+            "env": {}
+          }
+        ]
+      }
+    ]
+  }
+}

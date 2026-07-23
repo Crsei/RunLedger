@@ -19,10 +19,12 @@ import type { Static } from "typebox";
 import { constants } from "node:fs";
 import { access as fsAccess, readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import type { AgentTool, AgentToolResult } from "../types.ts";
+import type { ToolContext } from "../tool-context.ts";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   resolveReadPathAsync,
+  resolveToCwd,
   truncateHead,
   type TruncationResult,
 } from "./tool-support.ts";
@@ -89,13 +91,23 @@ export function createReadTool(
   cwd: string,
   options: ReadToolOptions = {},
 ): AgentTool<typeof readSchema, ReadToolDetails> {
-  const ops = options.operations ?? defaultReadOperations;
+  const legacyOps = options.operations ?? defaultReadOperations;
   const enableCache = options.enableCache ?? true;
   const cacheLimit = options.cacheLimit ?? 64;
-  // 简单 LRU:Map insertion order,LRU 通过 delete+set 实现
-  const cache = new Map<string, CacheEntry>();
+  // legacy 与每个 ExecutionEnv 的缓存隔离，避免相同 path/mtime 跨治理边界复用内容。
+  const legacyCache = new Map<string, CacheEntry>();
+  const contextCaches = new WeakMap<ToolContext["env"], Map<string, CacheEntry>>();
 
-  function cacheGet(p: string): CacheEntry | undefined {
+  function cacheFor(context?: ToolContext): Map<string, CacheEntry> {
+    if (!context) return legacyCache;
+    const existing = contextCaches.get(context.env);
+    if (existing) return existing;
+    const created = new Map<string, CacheEntry>();
+    contextCaches.set(context.env, created);
+    return created;
+  }
+
+  function cacheGet(cache: Map<string, CacheEntry>, p: string): CacheEntry | undefined {
     const e = cache.get(p);
     if (e === undefined) return undefined;
     // re-insert at end (LRU)
@@ -103,7 +115,7 @@ export function createReadTool(
     cache.set(p, e);
     return e;
   }
-  function cacheSet(p: string, e: CacheEntry): void {
+  function cacheSet(cache: Map<string, CacheEntry>, p: string, e: CacheEntry): void {
     if (cache.size >= cacheLimit && !cache.has(p)) {
       // evict oldest
       const firstKey = cache.keys().next().value;
@@ -117,28 +129,43 @@ export function createReadTool(
     label: "read",
     description: `读取文件内容,按行/字节截断。默认上限 ${DEFAULT_MAX_LINES} 行 / ${DEFAULT_MAX_BYTES} 字节。`,
     parameters: readSchema,
+    governedExecution: "tool-context",
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    async execute(_toolCallId, params, _signal?): Promise<AgentToolResult<ReadToolDetails>> {
+    async execute(_toolCallId, params, signal?, _onUpdate?, context?): Promise<AgentToolResult<ReadToolDetails>> {
       const { path: rawPath, offset, limit } = params;
       const addLineNumbers = params.lineNumbers ?? true;
       const noCache = params.noCache === true;
-      const absolutePath = await resolveReadPathAsync(rawPath, cwd);
+      const activeSignal = context ? context.signal : signal;
+      if (activeSignal?.aborted) throw new Error("Operation aborted");
+      const activeCwd = context ? context.cwd : cwd;
+      const ops: ReadOperations = context
+        ? {
+            readFile: (p) => context.env.fs.readFile(p),
+            access: async (p) => { await context.env.fs.stat(p); },
+            stat: async (p) => ({ mtimeMs: (await context.env.fs.stat(p)).mtimeMs }),
+          }
+        : legacyOps;
+      // ToolContext 路径不得调用 raw realpath；路径解析与 I/O 都停留在受限 env 内。
+      const absolutePath = context
+        ? resolveToCwd(rawPath, activeCwd)
+        : await resolveReadPathAsync(rawPath, activeCwd);
       await ops.access(absolutePath);
+      const cache = cacheFor(context);
 
       // mtime 去重缓存
       let text: string;
       let cacheHit = false;
       if (enableCache && !noCache) {
         const stat = await ops.stat(absolutePath);
-        const cached = cacheGet(absolutePath);
+        const cached = cacheGet(cache, absolutePath);
         if (cached && cached.mtimeMs === stat.mtimeMs) {
           text = cached.text;
           cacheHit = true;
         } else {
           const buf = await ops.readFile(absolutePath);
           text = buf.toString("utf8");
-          cacheSet(absolutePath, { mtimeMs: stat.mtimeMs, text });
+          cacheSet(cache, absolutePath, { mtimeMs: stat.mtimeMs, text });
         }
       } else {
         const buf = await ops.readFile(absolutePath);

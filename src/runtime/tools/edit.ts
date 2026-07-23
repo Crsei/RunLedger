@@ -113,16 +113,26 @@ export function createEditTool(
   cwd: string,
   options: EditToolOptions = {},
 ): AgentTool<typeof editSchema, EditToolDetails> {
-  const ops = options.operations ?? defaultEditOperations;
+  const legacyOps = options.operations ?? defaultEditOperations;
   return {
     name: "edit",
     label: "edit",
     description: "在已有文件内做多块 oldText → newText 替换;oldText 必须严格匹配文件原内容子串。",
     parameters: editSchema,
+    governedExecution: "tool-context",
     isDestructive: () => true,
     prepareArguments: prepareEditArgs as unknown as (args: unknown) => EditToolInput,
-    async execute(_toolCallId, params, signal?): Promise<AgentToolResult<EditToolDetails>> {
-      const absolutePath = resolveToCwd(params.path, cwd);
+    async execute(_toolCallId, params, signal?, _onUpdate?, context?): Promise<AgentToolResult<EditToolDetails>> {
+      const activeCwd = context ? context.cwd : cwd;
+      const activeSignal = context ? context.signal : signal;
+      const ops: EditOperations = context
+        ? {
+            readFile: (p) => context.env.fs.readFile(p),
+            writeFile: (p, content) => context.env.fs.writeFile(p, content),
+            access: async (p) => { await context.env.fs.stat(p); },
+          }
+        : legacyOps;
+      const absolutePath = resolveToCwd(params.path, activeCwd);
       await ops.access(absolutePath);
       const buf = await ops.readFile(absolutePath);
       let original = buf.toString("utf8");
@@ -135,7 +145,7 @@ export function createEditTool(
       let current = original;
       let firstChangedLine: number | undefined;
       for (const e of params.edits) {
-        if (signal?.aborted) throw new Error("Operation aborted");
+        if (activeSignal?.aborted) throw new Error("Operation aborted");
         if (e.oldText === "") throw new Error("edit: oldText 不能为空");
         const replaceAll = e.replaceAll === true;
         const findActual = e.findActualString === true;

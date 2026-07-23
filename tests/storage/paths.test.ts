@@ -10,14 +10,24 @@ import {
   getAgentDir,
   getBinDir,
   getDefaultUserSessionDirForCwd,
+  getExtensionSpillDir,
+  getExtensionSpillRoot,
+  getExtensionsStatePath,
   getGlobalAgentsMd,
+  getPluginDataDir,
+  getPluginDataRoot,
   getProjectDir,
+  getProjectExtensionRoot,
   getProjectSessionsDir,
   getProjectSettingsPath,
+  getTrustStorePath,
+  getUserExtensionRoot,
+  getUserSettingsPath,
   getUserSessionsDir,
   normalizePath,
   resolveSessionDir,
 } from "../../src/storage/paths.ts";
+import { canonicalDigest } from "../../src/runtime/protocol/v3/canonical-json.ts";
 
 const ORIG_RUNLEDGER_DIR = process.env.RUNLEDGER_DIR;
 const ORIG_RUNLEDGER_SESSION_DIR = process.env.RUNLEDGER_SESSION_DIR;
@@ -82,6 +92,23 @@ describe("用户层布局", () => {
     process.env.RUNLEDGER_DIR = "/tmp/rl";
     expect(posix(getGlobalAgentsMd())).toBe("/tmp/rl/AGENTS.md");
   });
+
+  it("用户 settings、extension state、trust 与 resource root 使用同一 agentDir", () => {
+    process.env.RUNLEDGER_DIR = "/tmp/rl";
+    expect(posix(getUserSettingsPath())).toBe("/tmp/rl/settings.json");
+    expect(posix(getUserExtensionRoot())).toBe("/tmp/rl");
+    expect(posix(getExtensionsStatePath())).toBe("/tmp/rl/extensions-state.json");
+    expect(posix(getTrustStorePath())).toBe("/tmp/rl/trust.json");
+  });
+
+  it("Plugin data 目录使用 qualified identity 的稳定安全摘要", () => {
+    process.env.RUNLEDGER_DIR = "/tmp/rl";
+    const qualifiedId = "plugin:project:fixture/../../escape";
+    expect(posix(getPluginDataRoot())).toBe("/tmp/rl/plugin-data");
+    expect(posix(getPluginDataDir(qualifiedId))).toBe(
+      `/tmp/rl/plugin-data/${canonicalDigest(qualifiedId).slice(0, 32)}`,
+    );
+  });
 });
 
 /** 跨平台路径归一化:把反斜杠都换成正斜杠后比对,避免 win 与 POSIX 差异。 */
@@ -103,6 +130,21 @@ describe("项目层布局", () => {
   it("getProjectSettingsPath / getProjectSessionsDir 都在 .runledger/ 下", () => {
     expect(posix(getProjectSettingsPath("/x/y"))).toBe("/x/y/.runledger/settings.json");
     expect(posix(getProjectSessionsDir("/x/y"))).toBe("/x/y/.runledger/sessions");
+  });
+
+  it("项目 extension root 就是当前层 .runledger", () => {
+    expect(posix(getProjectExtensionRoot("/x/y"))).toBe("/x/y/.runledger");
+  });
+});
+
+describe("Extension spill 布局", () => {
+  it("每个 session 使用摘要隔离的私有目录", () => {
+    const sessionDir = "/sessions/project";
+    const sessionId = "session:../../escape";
+    expect(posix(getExtensionSpillRoot(sessionDir))).toBe("/sessions/project/extension-spill");
+    expect(posix(getExtensionSpillDir(sessionDir, sessionId))).toBe(
+      `/sessions/project/extension-spill/${canonicalDigest(sessionId).slice(0, 32)}`,
+    );
   });
 });
 

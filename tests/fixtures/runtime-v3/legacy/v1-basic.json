@@ -1,7 +1,0 @@
-{
-  "_purpose": "v1 read-only golden fixture; migration behavior is not implemented in this additive batch",
-  "version": 1,
-  "messages": [
-    { "role": "user", "text": "legacy text" }
-  ]
-}

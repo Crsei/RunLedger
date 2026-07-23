@@ -28,6 +28,7 @@ import type { LedgerSink } from "./ledger/types.ts";
  * 真正实现 Commit 3 会落 `execution-env.ts`,本期 ToolContext 引用其类型。
  */
 import type { ExecutionEnv } from "./execution-env.ts";
+import type { ToolExecutionAuthorizationGrant } from "./types.ts";
 
 /** ToolContext 与单次 toolCall 一一对应。 */
 export interface ToolContext {
@@ -45,6 +46,8 @@ export interface ToolContext {
   sessionId: string;
   /** 当前 toolCall id(便于工具内 ledger 记账关联) */
   toolCallId: string;
+  /** v3 governed path 的 immutable authorization correlation；legacy 调用不提供。 */
+  authorizationGrant?: ToolExecutionAuthorizationGrant;
 }
 
 /**
@@ -60,6 +63,7 @@ export function makeToolContext(args: {
   signal: AbortSignal;
   sessionId: string;
   toolCallId: string;
+  authorizationGrant?: ToolExecutionAuthorizationGrant;
 }): ToolContext {
   return {
     cwd: args.cwd,
@@ -69,5 +73,6 @@ export function makeToolContext(args: {
     signal: args.signal,
     sessionId: args.sessionId,
     toolCallId: args.toolCallId,
+    ...(args.authorizationGrant ? { authorizationGrant: args.authorizationGrant } : {}),
   };
 }

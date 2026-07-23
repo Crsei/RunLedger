@@ -1,0 +1,185 @@
+{
+  "manifest": {
+    "schemaVersion": 2,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "manifestId": "resource_manifest-1",
+    "revision": 1,
+    "generatedAt": "2026-07-22T00:00:00.000Z",
+    "piAiParityManifestDigest": "fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77",
+    "catalogDigest": "14f43c2629e3aa082691c730ab7ae7c1a65ef092ad7135f52601f161fd1cded7",
+    "upstreamCommit": "3f1762cc7d3af39898aa5d21891335935011287f",
+    "runLedgerBaseCommit": "65f905452195e034c99fa5ac560a7e23a822f052",
+    "profiles": [
+      {
+        "schemaVersion": 2,
+        "authorityId": "authority_fixture",
+        "tenantId": "tenant_fixture",
+        "profileId": "resource_profile-a",
+        "modelId": "provider/model-a",
+        "providerId": "provider-a",
+        "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "profileDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "evidence": {
+          "piAiParityManifestDigest": "fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77",
+          "catalogDigest": "14f43c2629e3aa082691c730ab7ae7c1a65ef092ad7135f52601f161fd1cded7",
+          "upstreamCommit": "3f1762cc7d3af39898aa5d21891335935011287f",
+          "runLedgerBaseCommit": "65f905452195e034c99fa5ac560a7e23a822f052",
+          "catalogEntryDigest": "1212121212121212121212121212121212121212121212121212121212121212",
+          "compatibilityEvidenceDigest": "1313131313131313131313131313131313131313131313131313131313131313",
+          "evidenceDigest": "1414141414141414141414141414141414141414141414141414141414141414"
+        },
+		"compatibilityHashes": {
+		  "toolHash": "0101010101010101010101010101010101010101010101010101010101010101",
+		  "reasoningHash": "0202020202020202020202020202020202020202020202020202020202020202",
+		  "adapterStateHash": "0303030303030303030303030303030303030303030303030303030303030303",
+		  "compactionHash": "0404040404040404040404040404040404040404040404040404040404040404",
+		  "contextHash": "0505050505050505050505050505050505050505050505050505050505050505",
+		  "profileHash": "0606060606060606060606060606060606060606060606060606060606060606",
+		  "regressionHash": "0707070707070707070707070707070707070707070707070707070707070707"
+		},
+        "contextWindow": 131072,
+        "maxOutputTokens": 16384,
+        "apiProtocol": "openai-responses-v1",
+        "toolCallReplay": "supported",
+        "reasoningHistory": "portable",
+        "midSessionSwitch": "supported",
+        "imageInput": true,
+        "compactionStrategy": "summary",
+        "verifiedAliases": ["builder", "reviewer"],
+        "capabilityClaims": [
+          {
+            "authorityId": "authority_fixture",
+            "tenantId": "tenant_fixture",
+            "name": "repository_read",
+            "resourceKind": "workspace",
+            "resourceDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "constraintsDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "regressionSuite": {
+          "version": "suite-v1",
+          "suiteDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "passed": true,
+          "completedAt": "2026-07-22T00:00:00.000Z"
+        },
+        "status": "verified",
+        "verifiedByPrincipalId": "principal_verifier"
+      }
+    ],
+    "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "request": {
+    "schemaVersion": 2,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "requestId": "command_route-1",
+    "sessionId": "session_fixture",
+    "operation": "switch",
+    "alias": "builder",
+    "fromModelId": "provider/model-old",
+    "fromProfileId": "resource_profile-old",
+    "targetModelId": "provider/model-a",
+    "targetProfileId": "resource_profile-a",
+    "requiredContextTokens": 64000,
+    "requiredOutputTokens": 8192,
+    "requiresToolReplay": true,
+    "requiresReasoningReplay": true,
+    "requiresImages": false,
+    "checkpointStrategy": "summary",
+    "requiredCapabilities": [],
+	"inputSources": [
+	  {
+		"schemaVersion": 1,
+		"authorityId": "authority_fixture",
+		"tenantId": "tenant_fixture",
+		"sourceId": "inputSource_model-context",
+		"kind": "model",
+		"sourceDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+		"trust": "derived",
+		"taintLabels": ["model_derived"],
+		"observedAt": "2026-07-22T00:00:00.000Z"
+	  }
+	],
+	"declassificationReceipts": [],
+    "expectedRevision": {
+      "stream": {
+        "scope": "session",
+        "streamId": "eventStream_9aecd46119df3d663e3f2673cd2b5b14",
+        "sessionId": "session_fixture"
+      },
+      "sequence": 12,
+      "eventHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  },
+  "decision": {
+    "schemaVersion": 2,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "requestId": "command_route-1",
+    "decisionId": "receipt_route-1",
+    "outcome": "compatible",
+    "targetModelId": "provider/model-a",
+    "profileId": "resource_profile-a",
+    "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "profileDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "adapterState": {
+      "schemaVersion": 2,
+      "authorityId": "authority_fixture",
+      "tenantId": "tenant_fixture",
+      "sourceProfileId": "resource_profile-old",
+      "targetProfileId": "resource_profile-a",
+      "reasoningState": "preserve",
+      "toolReplayState": "preserve",
+      "cacheState": "drop",
+      "stateDescriptorDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+      "compatible": true
+    },
+    "conversionReceipt": {
+      "schemaVersion": 2,
+      "authorityId": "authority_fixture",
+      "tenantId": "tenant_fixture",
+      "principalId": "principal_fixture",
+      "receiptId": "receipt_conversion-1",
+      "requestId": "command_route-1",
+      "sourceProfileId": "resource_profile-old",
+      "sourceProfileDigest": "1515151515151515151515151515151515151515151515151515151515151515",
+      "targetProfileId": "resource_profile-a",
+      "targetProfileDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "dispositions": {
+        "reasoning": "preserved",
+        "image": "not_applicable",
+        "toolCallIds": "converted_lossless",
+        "adapterPrivateState": "preserved",
+        "cache": "converted_lossless",
+        "transport": "preserved",
+        "context": "preserved",
+        "compaction": "preserved"
+      },
+      "inputLineageDigest": "d85055719b1b3b20c2ca26e4769ab29adbe4965e87cda3247d5aa8de1231c00c",
+      "outputLineageDigest": "d85055719b1b3b20c2ca26e4769ab29adbe4965e87cda3247d5aa8de1231c00c",
+      "conversionEvidenceDigest": "1717171717171717171717171717171717171717171717171717171717171717",
+      "receiptDigest": "5c13242932672aa2b5ccbb6f3f128b8532742e46eb880d2b6829507361e0ad08"
+    },
+	"inputSources": [
+	  {
+		"schemaVersion": 1,
+		"authorityId": "authority_fixture",
+		"tenantId": "tenant_fixture",
+		"sourceId": "inputSource_model-context",
+		"kind": "model",
+		"sourceDigest": "7777777777777777777777777777777777777777777777777777777777777777",
+		"trust": "derived",
+		"taintLabels": ["model_derived"],
+		"observedAt": "2026-07-22T00:00:00.000Z"
+	  }
+	],
+	"declassificationReceipts": [],
+    "diagnostics": [],
+    "reason": "verified compatible profile",
+    "decisionDigest": "2222222222222222222222222222222222222222222222222222222222222222"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "contract": "runledger.resource-approval/v1",
+  "schemaVersion": 1,
+  "receiptId": "receipt_legacy-resource-approval",
+  "identityDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "receiptDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "expectedImportState": "reapproval_required"
+}

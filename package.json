@@ -11,7 +11,8 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "runledger": "./bin/runledger.js"
+    "runledger": "./bin/runledger.js",
+    "runledger-daemon": "./bin/runledger-daemon.js"
   },
   "exports": {
     ".": {
@@ -26,6 +27,10 @@
     "./auth/*": {
       "import": "./dist/auth/*.js",
       "types": "./dist/auth/*.d.ts"
+    },
+    "./extensions": {
+      "import": "./dist/extensions/index.js",
+      "types": "./dist/extensions/index.d.ts"
     },
     "./bun-oauth": {
       "import": "./dist/bun-oauth.js",
@@ -42,6 +47,50 @@
     "./utils/*": {
       "import": "./dist/utils/*.js",
       "types": "./dist/utils/*.d.ts"
+    },
+    "./runtime/*": {
+      "import": "./dist/runtime/*.js",
+      "types": "./dist/runtime/*.d.ts"
+    },
+    "./runtime/orchestrator": {
+      "import": "./dist/runtime/orchestrator/index.js",
+      "types": "./dist/runtime/orchestrator/index.d.ts"
+    },
+    "./runtime/verification": {
+      "import": "./dist/runtime/verification/index.js",
+      "types": "./dist/runtime/verification/index.d.ts"
+    },
+    "./runtime/agents": {
+      "import": "./dist/runtime/agents/index.js",
+      "types": "./dist/runtime/agents/index.d.ts"
+    },
+    "./runtime/control-plane": {
+      "import": "./dist/runtime/control-plane/index.js",
+      "types": "./dist/runtime/control-plane/index.d.ts"
+    },
+    "./runtime/telemetry": {
+      "import": "./dist/runtime/telemetry/index.js",
+      "types": "./dist/runtime/telemetry/index.d.ts"
+    },
+    "./runtime/lifecycle": {
+      "import": "./dist/runtime/lifecycle/index.js",
+      "types": "./dist/runtime/lifecycle/index.d.ts"
+    },
+    "./runtime/identity/enterprise": {
+      "import": "./dist/runtime/identity/enterprise.js",
+      "types": "./dist/runtime/identity/enterprise.d.ts"
+    },
+    "./runtime/executors": {
+      "import": "./dist/runtime/executors/index.js",
+      "types": "./dist/runtime/executors/index.d.ts"
+    },
+    "./daemon": {
+      "import": "./dist/daemon/index.js",
+      "types": "./dist/daemon/index.d.ts"
+    },
+    "./verification-runner": {
+      "import": "./dist/verification-runner/index.js",
+      "types": "./dist/verification-runner/index.d.ts"
     }
   },
   "files": [
@@ -50,12 +99,17 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit -p tsconfig.json",
+    "check": "tsc --noEmit -p tsconfig.json && npm run check:runtime-boundaries && npm run check:execution-boundaries",
+    "check:runtime-boundaries": "node --experimental-strip-types scripts/check-runtime-boundaries.ts",
+    "check:execution-boundaries": "node --experimental-strip-types scripts/check-execution-boundaries.ts",
+    "audit:pi-ai": "node --experimental-strip-types scripts/audit-pi-ai-delta.ts",
     "demo": "tsx examples/run.ts",
     "demo:tui": "tsx examples/tui-demo.ts",
     "dev": "tsx watch examples/run.ts",
     "generate-models": "node --experimental-strip-types scripts/generate-models.ts",
     "test": "vitest run",
+    "pretest:harness-regression": "npm run check",
+    "test:harness-regression": "vitest run tests/runtime-v3/harness-regression tests/runtime-v3/integration/production-tool-gateway.test.ts tests/runtime-v3/lifecycle/production-shutdown-host.test.ts tests/e2e/daemon-recovery.test.ts tests/e2e/daemon-stdio.test.ts tests/e2e/multi-agent-isolation.test.ts tests/security/credential-broker-adapter.test.ts tests/security/denial.test.ts",
     "test:watch": "vitest",
     "cli": "tsx src/cli/cli.ts",
     "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts"
@@ -66,6 +120,7 @@
     "@earendil-works/pi-tui": "^0.80.10",
     "@google/genai": "1.52.0",
     "@mistralai/mistralai": "2.2.6",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@opentelemetry/api": "1.9.0",
     "@smithy/node-http-handler": "4.7.3",
     "http-proxy-agent": "7.0.2",
@@ -73,11 +128,14 @@
     "openai": "6.26.0",
     "partial-json": "0.1.7",
     "proper-lockfile": "4.1.2",
-    "typebox": "1.1.38"
+    "semver": "7.7.4",
+    "typebox": "1.1.38",
+    "yaml": "2.8.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/proper-lockfile": "4.1.4",
+    "@types/semver": "7.7.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"

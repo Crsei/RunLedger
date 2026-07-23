@@ -1,0 +1,17 @@
+{
+  "contract": "runledger.model-routing/v2",
+  "piAiParityManifestDigest": "fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77",
+  "catalogDigest": "14f43c2629e3aa082691c730ab7ae7c1a65ef092ad7135f52601f161fd1cded7",
+  "upstreamCommit": "3f1762cc7d3af39898aa5d21891335935011287f",
+  "runLedgerBaseCommit": "65f905452195e034c99fa5ac560a7e23a822f052",
+  "compatibilityHashes": [
+    "toolHash",
+    "reasoningHash",
+    "adapterStateHash",
+    "compactionHash",
+    "contextHash",
+    "profileHash",
+    "regressionHash"
+  ],
+  "missingDisposition": "deny_or_fork"
+}

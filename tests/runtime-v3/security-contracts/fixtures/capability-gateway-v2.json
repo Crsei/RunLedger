@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 2,
+  "request": {
+    "authorityId": "authority_capability-fixture",
+    "tenantId": "tenant_capability-fixture",
+    "principalId": "principal_capability-fixture",
+    "requestId": "command_capability-fixture",
+    "approvalId": "approval_capability-fixture",
+    "sessionId": "session_capability-fixture",
+    "runtimeId": "runtime_capability-fixture",
+    "runtimeGeneration": 3,
+    "turnId": "turn_capability-fixture",
+    "toolCallId": "toolCall_capability-fixture",
+    "capability": "workspace_write",
+    "argumentsDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "workspaceEnvelopeDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "policyDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "serverScope": "tool_server",
+    "resourceScopeDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "commandScopeDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  },
+  "invocation": {
+    "requestId": "command_capability-fixture",
+    "toolManifestDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "rawArguments": {
+      "path": "reports/result.json",
+      "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "envelope": {
+      "authorityId": "authority_capability-fixture",
+      "tenantId": "tenant_capability-fixture",
+      "principalId": "principal_capability-fixture",
+      "sessionId": "session_capability-fixture",
+      "workspaceId": "workspace_capability-fixture",
+      "repositoryId": "repository_capability-fixture",
+      "worktreePath": "/srv/runledger/worktrees/capability-fixture",
+      "branch": "runledger/capability-fixture",
+      "baseCommit": "1111111111111111111111111111111111111111",
+      "agentId": "agent_capability-fixture",
+      "toolCallId": "toolCall_capability-fixture",
+      "traceId": "trace_capability-fixture",
+      "cwd": "/srv/runledger/worktrees/capability-fixture",
+      "ownerRuntimeId": "runtime_capability-fixture",
+      "leaseRevision": 3,
+      "fencingToken": "opaque-capability-fixture-fence"
+    },
+    "requestedClaims": [
+      {
+        "authorityId": "authority_capability-fixture",
+        "tenantId": "tenant_capability-fixture",
+        "name": "workspace_write",
+        "resourceKind": "filesystem",
+        "resourceDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "constraintsDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    ]
+  },
+  "idempotencyKey": "command_capability-fixture",
+  "inputSources": [],
+  "targetSink": "filesystem",
+  "declassificationReceipts": [],
+  "authentication": {
+    "channel": "local_process",
+    "channelBindingDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "requestDigest": "97f405ad4472e65c7a9bad67592ec533a82e7e5143c30a7cd71cea4d9a7355f4",
+    "nonce": "capability.fixture.nonce.0001",
+    "issuedAt": "2026-07-22T00:00:00.000Z",
+    "expiresAt": "2026-07-22T00:05:00.000Z",
+    "keyRevision": 3,
+    "eventCursor": {
+      "stream": {
+        "scope": "session",
+        "streamId": "eventStream_fa64bcbf75af9505afb032c3ac02cd4e",
+        "sessionId": "session_capability-fixture"
+      },
+      "sequence": 17,
+      "eventId": "event_capability-fixture-head",
+      "eventHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  }
+}

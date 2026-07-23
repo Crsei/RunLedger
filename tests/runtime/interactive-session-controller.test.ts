@@ -2,10 +2,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { Type } from "typebox";
 import type { AuthInteraction, ProviderAuth } from "../../src/auth/types.ts";
 import { createModels, createProvider } from "../../src/models.ts";
 import { InteractiveSessionController } from "../../src/runtime/interactive-session-controller.ts";
+import type {
+  InteractiveExtensionLifecyclePort,
+} from "../../src/runtime/interactive-session-controller.ts";
 import { MemoryLedger } from "../../src/runtime/ledger/memory-ledger.ts";
+import type { AgentTool } from "../../src/runtime/types.ts";
 import type { SessionReplay } from "../../src/storage/session-codec.ts";
 import { loadProjectSettings } from "../../src/storage/settings-manager.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model } from "../../src/types.ts";
@@ -185,6 +190,124 @@ describe("InteractiveSessionController", () => {
 
     await controller.logout("p1");
     await expect(controller.prompt("must authenticate again")).rejects.toThrow("not configured");
+    controller.dispose();
+  });
+
+  it("在 prompt 前执行 Extension hook，固定 generation，并只在 idle 安全点刷新工具", async () => {
+    const cwd = await tempDir();
+    const { models, p1 } = fixtureModels();
+    const events: string[] = [];
+    const dynamicTool: AgentTool = {
+      name: "DynamicRead",
+      label: "DynamicRead",
+      description: "dynamic fixture tool",
+      parameters: Type.Object({}, { additionalProperties: false }),
+      execute: async () => ({ content: [{ type: "text", text: "ok" }], isError: false }),
+    };
+    let activeTools: readonly AgentTool[] = [];
+    const extensions: InteractiveExtensionLifecyclePort = {
+      catalog: () => ({
+        snapshotId: "snapshot_fixture",
+        generation: 1,
+        resources: [{
+          identity: { qualifiedId: "skill:project:fixture" },
+          kind: "skill",
+          displayName: "fixture",
+          enabled: true,
+          trust: "trusted",
+          activation: "ready",
+        }],
+      }),
+      userPromptSubmit: async (prompt) => {
+        events.push(`prompt:${prompt}`);
+        return { status: "allowed" };
+      },
+      beginTurn: () => {
+        events.push("begin");
+        return { status: "ready" };
+      },
+      endTurn: async () => {
+        events.push("end");
+        activeTools = [dynamicTool];
+        return { status: "applied" };
+      },
+      reload: async () => ({ status: "applied" }),
+    };
+    const controller = await InteractiveSessionController.create({
+      cwd,
+      systemPrompt: "test",
+      models,
+      settings: {},
+      replay: EMPTY_REPLAY,
+      ledger: new MemoryLedger(),
+      tools: [],
+      extensionLifecycle: extensions,
+      toolProvider: () => activeTools,
+    });
+    await controller.login("p1", "api_key", INTERACTION);
+    await controller.selectModel(p1);
+
+    await controller.prompt("extension turn");
+
+    expect(events).toEqual(["prompt:extension turn", "begin", "end"]);
+    expect(controller.toolCount).toBe(1);
+    expect(controller.getExtensionSnapshot()).toMatchObject({
+      generation: 1,
+      resources: [{ id: "skill:project:fixture", activation: "ready" }],
+    });
+    controller.dispose();
+  });
+
+  it("把 governed prompt 的 Extension preflight 绑定到 exact commandId 和正文", async () => {
+    const cwd = await tempDir();
+    const { models, p1 } = fixtureModels();
+    const extensions: InteractiveExtensionLifecyclePort = {
+      catalog: () => ({ snapshotId: "snapshot_fixture", generation: 1, resources: [] }),
+      userPromptSubmit: async () => ({ status: "allowed" }),
+      beginTurn: () => ({ status: "ready" }),
+      endTurn: async () => undefined,
+      reload: async () => ({ status: "applied" }),
+    };
+    const controller = await InteractiveSessionController.create({
+      cwd,
+      systemPrompt: "test",
+      models,
+      settings: {},
+      replay: EMPTY_REPLAY,
+      ledger: new MemoryLedger(),
+      tools: [],
+      extensionLifecycle: extensions,
+      toolProvider: () => [],
+    });
+    await controller.login("p1", "api_key", INTERACTION);
+    await controller.selectModel(p1);
+    await controller.preflightGovernedPrompt(false, {
+      commandId: "command_extension-preflight",
+      text: "approved prompt",
+    });
+
+    expect(() => controller.acceptDurablyEnqueuedPrompt(
+      "changed prompt",
+      "start",
+      "command_extension-preflight",
+    )).toThrow(/no matching Extension preflight/u);
+    expect(() => controller.acceptDurablyEnqueuedPrompt(
+      "approved prompt",
+      "start",
+      "command_extension-preflight",
+    )).toThrow(/no matching Extension preflight/u);
+    await controller.preflightGovernedPrompt(false, {
+      commandId: "command_extension-preflight-retry",
+      text: "approved prompt",
+    });
+    const accepted = controller.acceptDurablyEnqueuedPrompt(
+      "approved prompt",
+      "start",
+      "command_extension-preflight-retry",
+    );
+    await accepted.started;
+    await accepted.completion;
+    expect(controller.messages.at(-1)).toMatchObject({ role: "assistant" });
     controller.dispose();
   });
 });

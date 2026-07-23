@@ -6,6 +6,7 @@
  */
 
 import type { ArtifactRef, CapabilityDecision } from "../../../../src/runtime/protocol/v3/capability.ts";
+import { createRuntimeId } from "../../../../src/runtime/protocol/v3/ids.ts";
 import type { RuntimeEventV3 } from "../../../../src/runtime/protocol/v3/events.ts";
 import { resourceIdentityKey } from "../../../../src/runtime/resources/schemas.ts";
 import type {
@@ -32,8 +33,8 @@ export class FakeEventSink {
 export class FakeArtifactStore {
 	public async put(kind: ArtifactRef["kind"], digest: string): Promise<ArtifactRef> {
 		return {
-			authorityId: "authority_fixture",
-			tenantId: "tenant_fixture",
+			authorityId: createRuntimeId("authority", "fixture"),
+			tenantId: createRuntimeId("tenant", "fixture"),
 			storedDigest: digest,
 			kind,
 			originalSize: 0,

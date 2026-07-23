@@ -1,7 +1,9 @@
 {
-  "_purpose": "M0 valid manifest fixture; parser and exact identity tests are still pending",
   "schemaVersion": 1,
-  "id": "example.safe",
-  "version": "0.1.0",
-  "components": []
+  "name": "safe-plugin",
+  "version": "1.2.3",
+  "description": "Audited fixture plugin",
+  "skills": ["./skills"],
+  "hooks": ["./hooks/hooks.json"],
+  "mcpServers": "./mcp.json"
 }

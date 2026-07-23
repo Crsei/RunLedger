@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "phase": 11,
+  "faults": [
+    {
+      "id": "P11-A-EVENT-TORN-WRITE",
+      "injectionPoint": "canonical event append torn tail and sync loss",
+      "expectedEventOrReceipt": "corrupted_log or torn_tail without projection advancement",
+      "recovery": "verify canonical chain and fail closed before mutation",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/session/jsonl-integrity.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/session/jsonl-integrity.test.ts"
+    },
+    {
+      "id": "P11-A-ARTIFACT-ACK-LOSS",
+      "injectionPoint": "artifact publish succeeds before canonical acknowledgement",
+      "expectedEventOrReceipt": "artifact receipt read-back or reconciliation_required",
+      "recovery": "reconcile immutable Artifact metadata without publishing twice",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/artifacts/queue-recovery.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/artifacts/queue-recovery.test.ts"
+    },
+    {
+      "id": "P11-A-GC-CRASH",
+      "injectionPoint": "GC mutation commits before response or terminal journal receipt",
+      "expectedEventOrReceipt": "durable mutation intent plus exact receipt read-back",
+      "recovery": "reuse idempotency key and complete journal without a second mutation",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/lifecycle/gc.test.ts tests/runtime-v3/lifecycle/gc-journal.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/lifecycle/gc-journal.test.ts"
+    },
+    {
+      "id": "P11-B-WORKSPACE-TOCTOU",
+      "injectionPoint": "workspace binding changes between authorization and tool start",
+      "expectedEventOrReceipt": "tool start denied with no tool effect",
+      "recovery": "re-run continuous mutation gate using current workspace receipt",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts"
+    },
+    {
+      "id": "P11-B-APPROVAL-REVOKE",
+      "injectionPoint": "approval expires or is revoked before governed start",
+      "expectedEventOrReceipt": "paused admission with current denial receipt",
+      "recovery": "persist reconciliation and require a new decision",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/lifecycle/governed-approval-reconciliation.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/lifecycle/governed-approval-reconciliation.test.ts"
+    },
+    {
+      "id": "P11-B-SANDBOX-UNAVAILABLE",
+      "injectionPoint": "production sandbox adapter is unavailable",
+      "expectedEventOrReceipt": "unsupported or deny with zero execution",
+      "recovery": "specialty adapter must become ready; Runtime has no local fallback",
+      "owner": "external_gap",
+      "exactCommand": "npx vitest run tests/security/runtime-gateway.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/security/runtime-gateway.test.ts"
+    },
+    {
+      "id": "P11-B-CREDENTIAL-LEAK",
+      "injectionPoint": "credential-like file names or secret values enter candidate evidence",
+      "expectedEventOrReceipt": "secret scan blocked or inconclusive receipt",
+      "recovery": "remove leaked material and rerun the required gate",
+      "owner": "external_gap",
+      "exactCommand": "npx vitest run tests/runtime-v3/verification/admission-gates.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/verification/admission-gates.test.ts"
+    },
+    {
+      "id": "P11-C-AGENT-ORPHAN",
+      "injectionPoint": "child runtime becomes nonresident during cleanup",
+      "expectedEventOrReceipt": "cleanup reconciliation marker and no Workspace or Budget over-release",
+      "recovery": "cold authority replay or explicit quarantine",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/agents/child-runtime-authority-reconciler.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/agents/child-runtime-authority-reconciler.test.ts"
+    },
+    {
+      "id": "P11-C-REPLACEMENT-FENCE",
+      "injectionPoint": "old runtime generation submits a post-replacement mutation",
+      "expectedEventOrReceipt": "stale generation rejection",
+      "recovery": "resolve the active authority generation and reacquire current handles",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/control-plane/runtime-generation.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/control-plane/runtime-generation.test.ts"
+    },
+    {
+      "id": "P11-C-LATE-COST",
+      "injectionPoint": "provider cost arrives after the original operation terminal",
+      "expectedEventOrReceipt": "CostTraceV2 reconciliation or finding receipt",
+      "recovery": "bind to the original operation or record an unattributed finding",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/telemetry/cost-v2.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/telemetry/cost-v2.test.ts"
+    },
+    {
+      "id": "P11-D-SLOW-CONSUMER",
+      "injectionPoint": "Control Plane event consumer stops acknowledging",
+      "expectedEventOrReceipt": "bounded overflow signal and durable checkpoint preservation",
+      "recovery": "resume from the last durable consumer checkpoint",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/control-plane/subscriptions.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/control-plane/subscriptions.test.ts"
+    },
+    {
+      "id": "P11-D-SIGNAL-EOF",
+      "injectionPoint": "daemon receives signal or stdin EOF while mutations are active",
+      "expectedEventOrReceipt": "daemon shutdown terminal receipt or recovery_required",
+      "recovery": "drain through the shared shutdown mutation gate",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/e2e/daemon-stdio.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/e2e/daemon-stdio.test.ts"
+    },
+    {
+      "id": "P11-D-COMMAND-ACK-LOSS",
+      "injectionPoint": "canonical command effect commits before client acknowledgement",
+      "expectedEventOrReceipt": "original bounded command effect replay",
+      "recovery": "read authority command journal and never execute twice",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/control-plane/durable-mutation-uncertainty.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/control-plane/durable-mutation-uncertainty.test.ts"
+    },
+    {
+      "id": "P11-D-PHASE11-BINDING",
+      "injectionPoint": "proposal or HumanGate adapter is composed with a different command journal generation or shutdown gate",
+      "expectedEventOrReceipt": "adapter_contract_violation before daemon transport accepts requests",
+      "recovery": "recompose the exact Runtime services with the daemon authority binding",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/control-plane/phase11-production-binding.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/control-plane/phase11-production-binding.test.ts"
+    },
+    {
+      "id": "P11-E-REMOTE-UNKNOWN",
+      "injectionPoint": "remote executor effect starts and its acknowledgement is lost",
+      "expectedEventOrReceipt": "reconciliation_required authority record",
+      "recovery": "operator reconciliation; automatic resubmission is forbidden",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/executors/execution-authority.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/executors/execution-authority.test.ts"
+    },
+    {
+      "id": "P11-E-HANDOFF-FENCE",
+      "injectionPoint": "target accepts handoff before source fence or commit acknowledgement",
+      "expectedEventOrReceipt": "persisted target receipt and target commit before source fence",
+      "recovery": "replay terminal event without transferring twice",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/executors/handoff-coordinator.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/executors/handoff-coordinator.test.ts"
+    },
+    {
+      "id": "P11-E-TELEMETRY-ACK",
+      "injectionPoint": "sink accepts a batch before canonical delivery event acknowledgement",
+      "expectedEventOrReceipt": "terminal sink receipt remains in durable spool",
+      "recovery": "append the delivery event without invoking the sink twice",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/telemetry/durable-delivery.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/telemetry/durable-delivery.test.ts"
+    },
+    {
+      "id": "P11-E-DRAFT-ACK",
+      "injectionPoint": "forge creates a Draft PR before terminal event acknowledgement",
+      "expectedEventOrReceipt": "terminal_pending provider receipt",
+      "recovery": "append the terminal event without creating another Draft PR",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/verification/proposal-effects.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/verification/proposal-effects.test.ts"
+    },
+    {
+      "id": "P11-E-HUMAN-SEPARATION",
+      "injectionPoint": "requester or proposal builder attempts to approve the HumanGate",
+      "expectedEventOrReceipt": "human_gate_required or reconciliation_required without decided event",
+      "recovery": "obtain a server-scoped organization receipt and an independent principal decision",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/verification/proposal-effects.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/verification/proposal-effects.test.ts"
+    },
+    {
+      "id": "P11-E-FORENSIC-ISOLATION",
+      "injectionPoint": "raw forensic content is offered to the default metadata spool",
+      "expectedEventOrReceipt": "forensic_denied or schema rejection",
+      "recovery": "use the isolated encrypted forensic store with independent policy and retention",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/telemetry/forensic-store.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/telemetry/forensic-store.test.ts"
+    },
+    {
+      "id": "P11-E-CROSS-TENANT-REPLAY",
+      "injectionPoint": "remote, telemetry or lifecycle receipt is replayed into another tenant",
+      "expectedEventOrReceipt": "scope_mismatch, not_found or handoff rejection",
+      "recovery": "resolve the authority-owned record in its original tenant only",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/executors/execution-authority.test.ts tests/runtime-v3/telemetry/durable-delivery.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/executors/execution-authority.test.ts"
+    },
+    {
+      "id": "P11-E-REFERENCE-SOURCE-MISSING",
+      "injectionPoint": "session fork handoff checkpoint Episode Artifact legal-hold or writer-lease source is unavailable",
+      "expectedEventOrReceipt": "canonical reference graph completeness unknown",
+      "recovery": "retain every target until all required canonical sources are complete",
+      "owner": "runtime",
+      "exactCommand": "npx vitest run tests/runtime-v3/lifecycle/canonical-reference-aggregator.test.ts --no-file-parallelism",
+      "platforms": ["linux", "darwin", "win32"],
+      "testFile": "tests/runtime-v3/lifecycle/canonical-reference-aggregator.test.ts"
+    }
+  ]
+}

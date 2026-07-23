@@ -11,6 +11,7 @@
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
  *   --session-dir <dir>                进程级 override,优先级最高
+ *   --state-root <dir>                  预先存在的私有 deployment state root
  *   --debug                            打开 RUNLEDGER_DEBUG=1 stderr log
  *   --version / -v                     打 version 退出
  *   --help / -h                        打 usage 退出
@@ -39,10 +40,16 @@ export interface ParsedArgs {
   session?: string;
   sessionId?: string;
   fork?: string;
+  migrate?: string;
+  forkToV3?: string;
+  downgrade?: string;
   provider?: string;
   model?: string;
   thinking?: ModelThinkingLevel;
   sessionDir?: string;
+  stateRoot?: string;
+  /** opt_in rollout 下显式选择新 session 格式。 */
+  sessionVersion?: 2 | 3;
   debug: boolean;
   /** 未知 flag 兜底,key 不带前导 --;有 =value 时 value 为 string,否则为 true */
   unknown: ReadonlyMap<string, string | true>;
@@ -63,10 +70,15 @@ const HELP_TEXT = `Usage: runledger [options]
       --session <path>        直接打开已知 session 文件
       --session-id <id>       按 sessionId 直接打开(本期需配合 --session-dir)
       --fork <path>           从源 session 文件 fork 到本项目
+      --migrate <path>        显式迁移 legacy v1/v2 到新的 v3 session 后退出
+      --fork-to-v3 <path>     从 legacy v1/v2 创建新的 v3 lineage 后退出
+      --downgrade <path>      始终拒绝 v3 → v1/v2 降级
   -m, --model <id>            覆盖 settings.model
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
       --session-dir <dir>     进程级 session 目录覆盖,优先级最高
+      --state-root <dir>      预先存在的私有 deployment state root
+      --session-version <2|3> 显式选择新 session 格式(opt_in 默认仍为 v2)
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
   -h, --help                  本帮助
@@ -90,10 +102,15 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let session: string | undefined;
   let sessionId: string | undefined;
   let fork: string | undefined;
+  let migrate: string | undefined;
+  let forkToV3: string | undefined;
+  let downgrade: string | undefined;
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
   let sessionDir: string | undefined;
+  let stateRoot: string | undefined;
+  let sessionVersion: 2 | 3 | undefined;
   let debug = false;
   const unknown = new Map<string, string | true>();
   const positional: string[] = [];
@@ -174,6 +191,17 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       fork = v;
       continue;
     }
+    if (a === "--migrate" || a === "--fork-to-v3" || a === "--downgrade") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (a === "--migrate") migrate = v;
+      else if (a === "--fork-to-v3") forkToV3 = v;
+      else downgrade = v;
+      continue;
+    }
     if (a === "--thinking") {
       const v = argv[++i];
       if (v === undefined) {
@@ -194,6 +222,28 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         break;
       }
       sessionDir = v;
+      continue;
+    }
+    if (a === "--state-root") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      stateRoot = v;
+      continue;
+    }
+    if (a === "--session-version") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (v !== "2" && v !== "3") {
+        error = `${a} 不合法:${v}(合法值 2/3)`;
+        break;
+      }
+      sessionVersion = v === "2" ? 2 : 3;
       continue;
     }
     // --flag=value 形式
@@ -223,10 +273,15 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       session,
       sessionId,
       fork,
+      migrate,
+      forkToV3,
+      downgrade,
       provider,
       model,
       thinking,
       sessionDir,
+      stateRoot,
+      sessionVersion,
       debug,
       unknown,
       positional,

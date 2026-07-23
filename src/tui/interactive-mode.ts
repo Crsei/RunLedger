@@ -32,11 +32,11 @@ import {
 } from "./index.ts";
 
 import type { Agent } from "../runtime/agent.ts";
-import type { AgentEvent, AgentMessage } from "../runtime/types.ts";
+import type { AgentEvent, AgentMessage, UserAgentMessage } from "../runtime/types.ts";
 import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
 import { getSupportedThinkingLevels } from "../models.ts";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
-import type { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
+import type { InteractiveSessionControllerPort } from "../runtime/interactive-session-controller.ts";
 
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
@@ -65,7 +65,7 @@ import { detectScheme } from "./theme/osc-detector.ts";
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
   /** 新 CLI 使用统一 controller;agent 仅保留 demo 兼容。 */
-  controller?: InteractiveSessionController;
+  controller?: InteractiveSessionControllerPort;
   agent?: Agent;
   /** 终端实现,默认 ProcessTerminal;可传入 mock 终端用于单测。 */
   terminal?: Terminal;
@@ -112,7 +112,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly ui: TUI;
   private readonly terminal: Terminal;
   private readonly agent: Agent | undefined;
-  private readonly controller: InteractiveSessionController | undefined;
+  private readonly controller: InteractiveSessionControllerPort | undefined;
   private theme: Theme;
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
@@ -182,6 +182,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
     // 把已注册工具数填到 loadedResources
     loadedResources.setResource("tools", this.controller?.toolCount ?? this.agent?.state.tools.length ?? 0);
+    this.refreshExtensionResourceCounts(loadedResources);
     const chat = new ChatContainer();
     const status = new StatusComponent({});
     const editorTheme: EditorTheme = makeEditorTheme(this.theme, this.makeSelectListTheme());
@@ -253,17 +254,14 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** 中断当前 turn;M8c:真接 agent.interrupt()。 */
   private handleInterrupt(): void {
     if (this.streaming || this.inFlight()) {
-      const restored = this.controller?.clearAllQueues();
-      const queued = [
-        ...(restored?.steering ?? []),
-        ...(restored?.followUp ?? []),
-      ].map(messageText).filter((text) => text.length > 0);
-      if (queued.length > 0) {
-        const current = this.refs.editor.getText();
-        this.refs.editor.setText([...queued, current].filter((text) => text.trim()).join("\n\n"));
-      }
+      // 先发 abort，阻止 loop 在 cancellation barrier 等待期间继续 drain；随后
+      // 只有 queue.cancelled 全部 durable 后才把正文放回 editor。
       this.controller?.interrupt();
       this.agent?.interrupt();
+      void this.cancelQueues("operator interrupted active turn").then(
+        (queues) => this.restoreCancelledQueues(queues, false),
+        (error: unknown) => this.showNotice(`Queued messages were not cleared: ${String(error)}`, "error"),
+      );
       this.ui.requestRender();
       return;
     }
@@ -348,8 +346,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
       { value: "/logout", label: "/logout", description: "Remove credential" },
       { value: "/model", label: "/model", description: "Switch model" },
       { value: "/thinking", label: "/thinking", description: "Switch thinking level" },
+      { value: "/plugins", label: "/plugins", description: "Inspect exact plugin identities" },
+      { value: "/skills", label: "/skills", description: "Inspect loaded skills" },
+      { value: "/hooks", label: "/hooks", description: "Inspect hook activation" },
+      { value: "/mcp", label: "/mcp", description: "Inspect MCP servers and tools" },
+      { value: "/reload-extensions", label: "/reload-extensions", description: "Reload at an idle safe point" },
       { value: "/quit", label: "/quit", description: "Exit safely" },
-      { value: "/mcp", label: "/mcp", description: "Switch mcp server" },
       { value: "/prompt", label: "/prompt", description: "Pick prompt template" },
     ];
     const modal = new SelectorModal({
@@ -372,6 +374,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
             break;
           case "/login":
             void this.openLoginSelector();
+            break;
+          case "/plugins":
+            this.openExtensionResourceSelector("/plugins", ["plugin"]);
+            break;
+          case "/skills":
+            this.openExtensionResourceSelector("/skills", ["skill"]);
+            break;
+          case "/hooks":
+            this.openExtensionResourceSelector("/hooks", ["hook"]);
+            break;
+          case "/mcp":
+            this.openMcpServerSelector();
+            break;
+          case "/reload-extensions":
+            void this.reloadExtensions();
             break;
           default:
             this.echoPrompt(item.value);
@@ -405,16 +422,67 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 打开 mcp server 选择器(M5 占位,真实 mcp 注册表接入留 M5+ 远期)。
    */
   openMcpServerSelector(): void {
-    const items: SelectItem[] = [];
+    this.openExtensionResourceSelector("/mcp", ["mcp-server", "mcp-tool"]);
+  }
+
+  private openExtensionResourceSelector(title: string, kinds: readonly string[]): void {
+    const snapshot = this.controller?.getExtensionSnapshot?.();
+    if (!snapshot) {
+      this.showNotice("Production Extension runtime is not available for this session.", "error");
+      return;
+    }
+    const resources = snapshot.resources.filter((resource) => kinds.includes(resource.kind));
+    if (resources.length === 0) {
+      this.showNotice(`${title}: no resources in generation ${snapshot.generation}.`);
+      return;
+    }
+    const byId = new Map(resources.map((resource) => [resource.id, resource]));
     const modal = new SelectorModal({
       theme: this.theme,
       selectListTheme: makeSelectListTheme(this.theme),
-      title: "/mcp servers (none loaded)",
-      items,
-      onSelect: () => this.ui.hideOverlay(),
+      title: `${title} — generation ${snapshot.generation}`,
+      items: resources.map((resource) => ({
+        value: resource.id,
+        label: resource.displayName,
+        description: `${resource.kind} · ${resource.trust} · ${resource.activation}${resource.enabled ? "" : " · disabled"}`,
+      })),
+      onSelect: (item) => {
+        this.ui.hideOverlay();
+        const resource = byId.get(item.value);
+        if (resource) {
+          this.showNotice(`${resource.id}\n${resource.trust} / ${resource.activation} / ${resource.enabled ? "enabled" : "disabled"}`);
+        }
+      },
       onCancel: () => this.ui.hideOverlay(),
     });
     this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  private async reloadExtensions(): Promise<void> {
+    if (this.rejectConfigWhileRunning()) return;
+    const reload = this.controller?.reloadExtensions;
+    if (!reload) {
+      this.showNotice("Production Extension runtime is not available for this session.", "error");
+      return;
+    }
+    const result = await reload.call(this.controller);
+    this.refreshExtensionResourceCounts();
+    this.showNotice(
+      result.status === "failed"
+        ? `Extension reload failed: ${result.reason ?? "unknown failure"}`
+        : `Extension reload ${result.status}${result.reason ? `: ${result.reason}` : "."}`,
+      result.status === "failed" ? "error" : "note",
+    );
+  }
+
+  private refreshExtensionResourceCounts(target?: LoadedResourcesComponent): void {
+    const component = target ?? this.refs?.loadedResources;
+    if (!component) return;
+    const resources = this.controller?.getExtensionSnapshot?.()?.resources ?? [];
+    component.setResource("skills", resources.filter((resource) => resource.kind === "skill").length);
+    component.setResource("hooks", resources.filter((resource) => resource.kind === "hook").length);
+    component.setResource("mcp", resources.filter((resource) => resource.kind === "mcp-server").length);
+    if (this.controller) component.setResource("tools", this.controller.toolCount);
   }
 
   /**
@@ -544,8 +612,20 @@ export class InteractiveMode implements FooterSnapshotProvider {
           if (this.rejectConfigWhileRunning()) return;
           this.openThinkingSelector();
           return;
+        case "plugins":
+          this.openExtensionResourceSelector("/plugins", ["plugin"]);
+          return;
+        case "skills":
+          this.openExtensionResourceSelector("/skills", ["skill"]);
+          return;
+        case "hooks":
+          this.openExtensionResourceSelector("/hooks", ["hook"]);
+          return;
         case "mcp":
           this.openMcpServerSelector();
+          return;
+        case "reload-extensions":
+          void this.reloadExtensions();
           return;
         case "prompt":
           this.openPromptSelector();
@@ -596,11 +676,24 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private restoreQueuesToEditor(): void {
-    const queues = this.controller?.clearAllQueues();
-    if (!queues) {
-      this.showNotice("No queued messages to restore.");
-      return;
-    }
+    void this.cancelQueues("operator restored queued messages").then(
+      (queues) => this.restoreCancelledQueues(queues, true),
+      (error: unknown) => this.showNotice(`Queued messages were not cleared: ${String(error)}`, "error"),
+    );
+  }
+
+  private cancelQueues(
+    reason: string,
+  ): Promise<{ steering: UserAgentMessage[]; followUp: UserAgentMessage[] }> {
+    if (this.controller) return this.controller.cancelAllQueues(reason);
+    if (this.agent) return this.agent.cancelAllQueues(reason);
+    return Promise.resolve({ steering: [], followUp: [] });
+  }
+
+  private restoreCancelledQueues(
+    queues: { steering: readonly UserAgentMessage[]; followUp: readonly UserAgentMessage[] },
+    showSuccess: boolean,
+  ): void {
     const queued = [...queues.steering, ...queues.followUp]
       .map(messageText)
       .filter((text) => text.length > 0);
@@ -610,7 +703,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     const current = this.refs.editor.getText();
     this.refs.editor.setText([...queued, current].filter((text) => text.trim()).join("\n\n"));
-    this.showNotice(`Restored ${queued.length} queued message${queued.length === 1 ? "" : "s"}.`);
+    if (showSuccess) {
+      this.showNotice(`Restored ${queued.length} queued message${queued.length === 1 ? "" : "s"}.`);
+    }
   }
 
   private inFlight(): boolean {

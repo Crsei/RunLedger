@@ -12,6 +12,7 @@
  * env `RUNLEDGER_SESSION_DIR` 单独再覆盖,优先级最高(对照 pi `PI_CODING_AGENT_SESSION_DIR`)。
  */
 
+import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { encodeCwd } from "./path-utils.ts";
@@ -22,6 +23,10 @@ const CONFIG_DIR_NAME = ".runledger";
 const PROJECT_DIR_NAME = ".runledger";
 const PROJECT_SESSIONS_SUBDIR = "sessions";
 const PROJECT_SETTINGS_FILE = "settings.json";
+const EXTENSIONS_STATE_FILE = "extensions-state.json";
+const TRUST_STORE_FILE = "trust.json";
+const PLUGIN_DATA_SUBDIR = "plugin-data";
+const EXTENSION_SPILL_SUBDIR = "extension-spill";
 const AGENTS_MD = "AGENTS.md";
 
 /** 展开 `~/...` 至用户 home 目录;其它路径原样返回。简单等价于 pi 的 normalizePath 子集。 */
@@ -48,6 +53,43 @@ export function getBinDir(): string {
 	return join(getAgentDir(), "bin");
 }
 
+/** 用户层 `~/.runledger/agent/settings.json`。 */
+export function getUserSettingsPath(): string {
+	return join(getAgentDir(), PROJECT_SETTINGS_FILE);
+}
+
+/** 用户层扩展资源 root；Skill/Hook/MCP/Plugin 均从该目录的显式子路径发现。 */
+export function getUserExtensionRoot(): string {
+	return getAgentDir();
+}
+
+/** 用户层扩展启停状态；不保存 secret 或 trust receipt。 */
+export function getExtensionsStatePath(): string {
+	return join(getAgentDir(), EXTENSIONS_STATE_FILE);
+}
+
+/** 用户层 exact-identity trust store。 */
+export function getTrustStorePath(): string {
+	return join(getAgentDir(), TRUST_STORE_FILE);
+}
+
+/** 用户层 Plugin 可写数据根；Plugin 安装目录本身保持只读。 */
+export function getPluginDataRoot(): string {
+	return join(getAgentDir(), PLUGIN_DATA_SUBDIR);
+}
+
+/**
+ * 单 Plugin 数据目录。目录名使用 canonical string JSON 的 SHA-256 前 128 bit，
+ * 与 Extension discovery 的 qualified-id 映射一致，且不会把路径分隔符带入文件系统。
+ */
+export function getPluginDataDir(qualifiedPluginId: string): string {
+	const encoded = createHash("sha256")
+		.update(JSON.stringify(qualifiedPluginId), "utf8")
+		.digest("hex")
+		.slice(0, 32);
+	return join(getPluginDataRoot(), encoded);
+}
+
 /**
  * 项目层 `<cwd>/.runledger/`,cwd 默认 process.cwd()。
  * 对照 pi `getProjectDir`,但 RunLedger 本期不分 configDir/customization,
@@ -55,6 +97,11 @@ export function getBinDir(): string {
  */
 export function getProjectDir(cwd: string = process.cwd()): string {
 	return join(cwd, PROJECT_DIR_NAME);
+}
+
+/** 当前项目扩展资源 root；项目资源只读发现，不承载用户 trust/state。 */
+export function getProjectExtensionRoot(cwd: string = process.cwd()): string {
+	return getProjectDir(cwd);
 }
 
 /** `<cwd>/.runledger/settings.json` */
@@ -81,6 +128,20 @@ export function getUserSessionsDir(): string {
  */
 export function getDefaultUserSessionDirForCwd(cwd: string): string {
 	return join(getUserSessionsDir(), encodeCwd(cwd));
+}
+
+/** Session 目录内的 Extension spill 根；原始超额正文不得写入 Plugin 安装目录。 */
+export function getExtensionSpillRoot(sessionDir: string): string {
+	return join(sessionDir, EXTENSION_SPILL_SUBDIR);
+}
+
+/** 单 Session 私有 Extension spill 目录，sessionId 被摘要为安全路径段。 */
+export function getExtensionSpillDir(sessionDir: string, sessionId: string): string {
+	const encodedSessionId = createHash("sha256")
+		.update(JSON.stringify(sessionId), "utf8")
+		.digest("hex")
+		.slice(0, 32);
+	return join(getExtensionSpillRoot(sessionDir), encodedSessionId);
 }
 
 /**

@@ -61,16 +61,21 @@ export function createGrepTool(
   cwd: string,
   options: GrepToolOptions = {},
 ): AgentTool<typeof grepSchema, GrepToolDetails> {
-  const shell = options.shell ?? localExecutionEnv(cwd).shell;
+  const legacyShell = options.shell ?? localExecutionEnv(cwd).shell;
   return {
     name: "grep",
     label: "grep",
     description: `在文件或目录内搜索文本。默认上限 ${DEFAULT_LIMIT} 个匹配。优先 ripgrep,失败回退 grep。`,
     parameters: grepSchema,
+    governedExecution: "tool-context",
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    async execute(_toolCallId, params, signal?): Promise<AgentToolResult<GrepToolDetails>> {
-      const searchPath = resolveToCwd(params.path, cwd);
+    async execute(_toolCallId, params, signal?, _onUpdate?, toolContext?): Promise<AgentToolResult<GrepToolDetails>> {
+      const activeCwd = toolContext ? toolContext.cwd : cwd;
+      const activeSignal = toolContext ? toolContext.signal : signal;
+      const shell = toolContext ? toolContext.env.shell : legacyShell;
+      const shellEnv = toolContext ? toolContext.envVars : undefined;
+      const searchPath = resolveToCwd(params.path, activeCwd);
       const limit = params.limit ?? DEFAULT_LIMIT;
       const ignoreCase = params.ignoreCase === true;
       const literal = params.literal === true;
@@ -83,7 +88,13 @@ export function createGrepTool(
       const glob = params.glob;
 
       // 探测 rg 可用;失败直接走 grep -rn fallback
-      const probe = await shell.exec("rg --version", { cwd, maxOutputChars: 1024, timeoutMs: 5_000, signal });
+      const probe = await shell.exec("rg --version", {
+        cwd: activeCwd,
+        ...(shellEnv ? { env: shellEnv } : {}),
+        maxOutputChars: 1024,
+        timeoutMs: 5_000,
+        signal: activeSignal,
+      });
       const hasRg = probe.exitCode === 0;
 
       let r;
@@ -99,7 +110,13 @@ export function createGrepTool(
           glob,
           limit,
         });
-        r = await shell.exec(rgArgs.cmd, { cwd, maxOutputChars: DEFAULT_MAX_BYTES, signal, timeoutMs: 30_000 });
+        r = await shell.exec(rgArgs.cmd, {
+          cwd: activeCwd,
+          ...(shellEnv ? { env: shellEnv } : {}),
+          maxOutputChars: DEFAULT_MAX_BYTES,
+          signal: activeSignal,
+          timeoutMs: 30_000,
+        });
         // rg exit=1 表示无匹配,不算错误
         isError = r.exitCode !== 0 && r.exitCode !== 1;
       } else {
@@ -113,7 +130,13 @@ export function createGrepTool(
           glob,
           limit,
         });
-        r = await shell.exec(grepCmd.cmd, { cwd, maxOutputChars: DEFAULT_MAX_BYTES, signal, timeoutMs: 30_000 });
+        r = await shell.exec(grepCmd.cmd, {
+          cwd: activeCwd,
+          ...(shellEnv ? { env: shellEnv } : {}),
+          maxOutputChars: DEFAULT_MAX_BYTES,
+          signal: activeSignal,
+          timeoutMs: 30_000,
+        });
         isError = r.exitCode !== 0 && r.exitCode !== 1;
       }
 

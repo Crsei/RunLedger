@@ -1,8 +1,8 @@
 /**
  * 工具执行边界的 Phase 0 静态检查。
  *
- * TODO(security-phase-0): 随 Phase 5 工具迁移逐项删除 legacy allowlist，并把
- * 结果接入 npm check。当前允许名单必须精确到文件，不能豁免整个目录。
+ * 随安全专项 Phase 5 工具迁移逐项删除 legacy allowlist。该检查已接入
+ * `npm run check`，当前允许名单必须精确到文件，不能豁免整个目录。
  */
 
 import { readdirSync, readFileSync } from "node:fs";

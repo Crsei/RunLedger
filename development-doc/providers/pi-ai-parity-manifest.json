@@ -1,0 +1,2383 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "https://github.com/earendil-works/pi.git",
+    "commit": "3f1762cc7d3af39898aa5d21891335935011287f",
+    "sourceRoot": "packages/ai/src",
+    "packagePath": "packages/ai"
+  },
+  "runLedger": {
+    "baseCommit": "65f905452195e034c99fa5ac560a7e23a822f052",
+    "sourceRoot": "src"
+  },
+  "mappings": [
+    {
+      "upstreamPath": "packages/ai/src/api/anthropic-messages.lazy.ts",
+      "localPath": "src/api/anthropic-messages.lazy.ts",
+      "upstreamDigest": "sha256:5d1925e8b2664c91a11ef4c73d8c400b4075597c8c4e8beb085f8e4ba137fc08",
+      "localDigest": "sha256:5d1925e8b2664c91a11ef4c73d8c400b4075597c8c4e8beb085f8e4ba137fc08",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/anthropic-messages.ts",
+      "localPath": "src/api/anthropic-messages.ts",
+      "upstreamDigest": "sha256:8a0cdafd227298f05e6b48c0c3f9781be529a5d91f9d77a5e133fb33d6ded00a",
+      "localDigest": "sha256:8a0cdafd227298f05e6b48c0c3f9781be529a5d91f9d77a5e133fb33d6ded00a",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/azure-openai-responses.lazy.ts",
+      "localPath": "src/api/azure-openai-responses.lazy.ts",
+      "upstreamDigest": "sha256:de36a9a2749ac4cb45a5449356bceadb676d1a16e6d46f4fc5522a3f700aa2fd",
+      "localDigest": "sha256:de36a9a2749ac4cb45a5449356bceadb676d1a16e6d46f4fc5522a3f700aa2fd",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/azure-openai-responses.ts",
+      "localPath": "src/api/azure-openai-responses.ts",
+      "upstreamDigest": "sha256:4d57bebe26bdc609945da5e20fe0ac075e31be2a2dfcfe40b816d8d9959274bb",
+      "localDigest": "sha256:4d57bebe26bdc609945da5e20fe0ac075e31be2a2dfcfe40b816d8d9959274bb",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/bedrock-converse-stream.lazy.ts",
+      "localPath": "src/api/bedrock-converse-stream.lazy.ts",
+      "upstreamDigest": "sha256:3ee8a1b2a2cd58927bee18ab5b4150401da810e9d5f4595822b3b10ded35de86",
+      "localDigest": "sha256:3ee8a1b2a2cd58927bee18ab5b4150401da810e9d5f4595822b3b10ded35de86",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/bedrock-converse-stream.ts",
+      "localPath": "src/api/bedrock-converse-stream.ts",
+      "upstreamDigest": "sha256:b5acfd542648986548f6a7b275753d795b052ec879e0cc40cbd7fc2a14ab11eb",
+      "localDigest": "sha256:b5acfd542648986548f6a7b275753d795b052ec879e0cc40cbd7fc2a14ab11eb",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/cloudflare.ts",
+      "localPath": "src/api/cloudflare.ts",
+      "upstreamDigest": "sha256:6333a0f78e8cd6b75e408fdeb594d5e1e02605206247c5a921c2f56dd99cf96a",
+      "localDigest": "sha256:6333a0f78e8cd6b75e408fdeb594d5e1e02605206247c5a921c2f56dd99cf96a",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/github-copilot-headers.ts",
+      "localPath": "src/api/github-copilot-headers.ts",
+      "upstreamDigest": "sha256:32d154965223d746140957ca6754f69955f1c631ed5e8445dcf2be11bb4b5180",
+      "localDigest": "sha256:32d154965223d746140957ca6754f69955f1c631ed5e8445dcf2be11bb4b5180",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/google-generative-ai.lazy.ts",
+      "localPath": "src/api/google-generative-ai.lazy.ts",
+      "upstreamDigest": "sha256:ba7700f2e44838fb19da46f866f47f35f4e10f5068800be1ea698e9e95e1e1ce",
+      "localDigest": "sha256:ba7700f2e44838fb19da46f866f47f35f4e10f5068800be1ea698e9e95e1e1ce",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/google-generative-ai.ts",
+      "localPath": "src/api/google-generative-ai.ts",
+      "upstreamDigest": "sha256:6a7a12181baa42d6304bc03e71aa36467695776010a739c48c2beaa1f3da7f91",
+      "localDigest": "sha256:6a7a12181baa42d6304bc03e71aa36467695776010a739c48c2beaa1f3da7f91",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/google-shared.ts",
+      "localPath": "src/api/google-shared.ts",
+      "upstreamDigest": "sha256:e13a24638039354780926c136f8bb5573ee5499fb13f6a3aa6d03bd34c98af42",
+      "localDigest": "sha256:e13a24638039354780926c136f8bb5573ee5499fb13f6a3aa6d03bd34c98af42",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/google-vertex.lazy.ts",
+      "localPath": "src/api/google-vertex.lazy.ts",
+      "upstreamDigest": "sha256:891f0e07eaaa1bb1df97f0a2d8f067df6acbab50078242108d93b96a710c4712",
+      "localDigest": "sha256:891f0e07eaaa1bb1df97f0a2d8f067df6acbab50078242108d93b96a710c4712",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/google-vertex.ts",
+      "localPath": "src/api/google-vertex.ts",
+      "upstreamDigest": "sha256:f12718c3d594b14a8e8e23af960c8be48caeacc08a8638a918b53cf3140f74d2",
+      "localDigest": "sha256:f12718c3d594b14a8e8e23af960c8be48caeacc08a8638a918b53cf3140f74d2",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/lazy.ts",
+      "localPath": "src/api/lazy.ts",
+      "upstreamDigest": "sha256:56c8a8958d37af646dba3a87b147bf86f27a9cf8d7c752149c3228b4adbbf66b",
+      "localDigest": "sha256:56c8a8958d37af646dba3a87b147bf86f27a9cf8d7c752149c3228b4adbbf66b",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/mistral-conversations.lazy.ts",
+      "localPath": "src/api/mistral-conversations.lazy.ts",
+      "upstreamDigest": "sha256:74267bc430c0c2562d166e4ae9d05966634e91b226bc564010b2b199db52dd86",
+      "localDigest": "sha256:74267bc430c0c2562d166e4ae9d05966634e91b226bc564010b2b199db52dd86",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/mistral-conversations.ts",
+      "localPath": "src/api/mistral-conversations.ts",
+      "upstreamDigest": "sha256:13d0a8a7aedf8e62efd9761a2aa45824937e107a181266c5bd962b3a2af4145e",
+      "localDigest": "sha256:13d0a8a7aedf8e62efd9761a2aa45824937e107a181266c5bd962b3a2af4145e",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-codex-responses.lazy.ts",
+      "localPath": "src/api/openai-codex-responses.lazy.ts",
+      "upstreamDigest": "sha256:89e1883f937df0992b852970f574b5e1fc2a69fefaacc89628cd1d924a8af63f",
+      "localDigest": "sha256:89e1883f937df0992b852970f574b5e1fc2a69fefaacc89628cd1d924a8af63f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-codex-responses.ts",
+      "localPath": "src/api/openai-codex-responses.ts",
+      "upstreamDigest": "sha256:c9b218f5d98b23bd929369e2859a33c080ccfaaa1b8b3e844ed9a5df8cad3477",
+      "localDigest": "sha256:c9b218f5d98b23bd929369e2859a33c080ccfaaa1b8b3e844ed9a5df8cad3477",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-completions.lazy.ts",
+      "localPath": "src/api/openai-completions.lazy.ts",
+      "upstreamDigest": "sha256:a1defe07f6d7bd37de3933164cc88cfeb2d46cf390d0bbb52c85b280cc58d193",
+      "localDigest": "sha256:a1defe07f6d7bd37de3933164cc88cfeb2d46cf390d0bbb52c85b280cc58d193",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-completions.ts",
+      "localPath": "src/api/openai-completions.ts",
+      "upstreamDigest": "sha256:ccaca84f5f9aa2008da01bde3cccf3b13a96919f85a9f86ca4d44fdf99489a90",
+      "localDigest": "sha256:ccaca84f5f9aa2008da01bde3cccf3b13a96919f85a9f86ca4d44fdf99489a90",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-prompt-cache.ts",
+      "localPath": "src/api/openai-prompt-cache.ts",
+      "upstreamDigest": "sha256:78727b9b42d5c5cdc47d17f44d532cdf951cbee3b158cacfb3e640d8f792e8a4",
+      "localDigest": "sha256:78727b9b42d5c5cdc47d17f44d532cdf951cbee3b158cacfb3e640d8f792e8a4",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-responses-shared.ts",
+      "localPath": "src/api/openai-responses-shared.ts",
+      "upstreamDigest": "sha256:55156a4010a0b08a1b46d7e39a25f061ceca36ab009ec511c4fc55d629c5a2c0",
+      "localDigest": "sha256:55156a4010a0b08a1b46d7e39a25f061ceca36ab009ec511c4fc55d629c5a2c0",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-responses.lazy.ts",
+      "localPath": "src/api/openai-responses.lazy.ts",
+      "upstreamDigest": "sha256:ea6bf6019f6b2f949bce4ad248ec1e0fa25dd058a009cf70fb5eb0e99b4c94db",
+      "localDigest": "sha256:ea6bf6019f6b2f949bce4ad248ec1e0fa25dd058a009cf70fb5eb0e99b4c94db",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openai-responses.ts",
+      "localPath": "src/api/openai-responses.ts",
+      "upstreamDigest": "sha256:c5b50b6828f64fe394f058d6c699f1b1454a9e7a80d99a7ac4e0b5c5c2550b1f",
+      "localDigest": "sha256:c5b50b6828f64fe394f058d6c699f1b1454a9e7a80d99a7ac4e0b5c5c2550b1f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openrouter-images.lazy.ts",
+      "localPath": "src/api/openrouter-images.lazy.ts",
+      "upstreamDigest": "sha256:04c18f8c065779c2f705850e593cee4e0d6207a4121473540a223fc83026a8f4",
+      "localDigest": "sha256:04c18f8c065779c2f705850e593cee4e0d6207a4121473540a223fc83026a8f4",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/openrouter-images.ts",
+      "localPath": "src/api/openrouter-images.ts",
+      "upstreamDigest": "sha256:a2ca2cf0edb423d025b7d97c40db4f9929aa88258ccbfd16d4c783db59917777",
+      "localDigest": "sha256:a2ca2cf0edb423d025b7d97c40db4f9929aa88258ccbfd16d4c783db59917777",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/pi-messages.lazy.ts",
+      "localPath": "src/api/pi-messages.lazy.ts",
+      "upstreamDigest": "sha256:620e55f1a498f70c8578deb6375f9433c6991c98f6c323465b1889c2f07a72d9",
+      "localDigest": "sha256:620e55f1a498f70c8578deb6375f9433c6991c98f6c323465b1889c2f07a72d9",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/pi-messages.ts",
+      "localPath": "src/api/pi-messages.ts",
+      "upstreamDigest": "sha256:75245743f8657c62b7a4727caacb99bc9b3d84a2e8efd6d83e9f0fbaa7f6a0ce",
+      "localDigest": "sha256:75245743f8657c62b7a4727caacb99bc9b3d84a2e8efd6d83e9f0fbaa7f6a0ce",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/simple-options.ts",
+      "localPath": "src/api/simple-options.ts",
+      "upstreamDigest": "sha256:0c46eb77a8524be36cde02567e6bc24f828af0afed61dca15470ba177485073b",
+      "localDigest": "sha256:0c46eb77a8524be36cde02567e6bc24f828af0afed61dca15470ba177485073b",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/api/transform-messages.ts",
+      "localPath": "src/api/transform-messages.ts",
+      "upstreamDigest": "sha256:cf309c00b943bc0a90ccaabb185730a3f27a3c92de6696ada3155b0185904161",
+      "localDigest": "sha256:cf309c00b943bc0a90ccaabb185730a3f27a3c92de6696ada3155b0185904161",
+      "status": "identical",
+      "category": "message-event",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/context.ts",
+      "localPath": "src/auth/context.ts",
+      "upstreamDigest": "sha256:03101bfa711fad214af111e25328b6f607d6b0a7ebfe289af58a89cd55baf639",
+      "localDigest": "sha256:03101bfa711fad214af111e25328b6f607d6b0a7ebfe289af58a89cd55baf639",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/credential-store.ts",
+      "localPath": "src/auth/credential-store.ts",
+      "upstreamDigest": "sha256:57cd7b71f8c74c6712542066c0e827c10735644974231f0fb82788b5c90045f7",
+      "localDigest": "sha256:57cd7b71f8c74c6712542066c0e827c10735644974231f0fb82788b5c90045f7",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/helpers.ts",
+      "localPath": "src/auth/helpers.ts",
+      "upstreamDigest": "sha256:31cb4fda56593a9aef191a8dbfdcd54b736181f75b3306a2b358e155f68dc900",
+      "localDigest": "sha256:31cb4fda56593a9aef191a8dbfdcd54b736181f75b3306a2b358e155f68dc900",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/anthropic.ts",
+      "localPath": "src/auth/oauth/anthropic.ts",
+      "upstreamDigest": "sha256:1f989e989a1d4ebd835aa4b09ab0b08d9a2df73648c3d2cea99c4e075308d2b1",
+      "localDigest": "sha256:1f989e989a1d4ebd835aa4b09ab0b08d9a2df73648c3d2cea99c4e075308d2b1",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/device-code.ts",
+      "localPath": "src/auth/oauth/device-code.ts",
+      "upstreamDigest": "sha256:c7785aa4f75341acfced74305c72a2d0f28d86add7c55c72aea4747ed02070a2",
+      "localDigest": "sha256:c7785aa4f75341acfced74305c72a2d0f28d86add7c55c72aea4747ed02070a2",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/github-copilot.ts",
+      "localPath": "src/auth/oauth/github-copilot.ts",
+      "upstreamDigest": "sha256:d0629dd87f13dd0f61b03b9a652478556156b6d0699ce4a1422a9b4b38c609db",
+      "localDigest": "sha256:d0629dd87f13dd0f61b03b9a652478556156b6d0699ce4a1422a9b4b38c609db",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/load.ts",
+      "localPath": "src/auth/oauth/load.ts",
+      "upstreamDigest": "sha256:21b83538da1c2a52637c6e8cd613aef24c306245931a10c8be7c2bd04bacdd6f",
+      "localDigest": "sha256:21b83538da1c2a52637c6e8cd613aef24c306245931a10c8be7c2bd04bacdd6f",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/oauth-page.ts",
+      "localPath": "src/auth/oauth/oauth-page.ts",
+      "upstreamDigest": "sha256:f58b133d271be4ff47352947fd4e55ab66230dc2647b7cbc7c79a574a93de632",
+      "localDigest": "sha256:f58b133d271be4ff47352947fd4e55ab66230dc2647b7cbc7c79a574a93de632",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/openai-codex.ts",
+      "localPath": "src/auth/oauth/openai-codex.ts",
+      "upstreamDigest": "sha256:e7c496f5894df234e7ade5c0e30c3d5e2eebe2e01654a049e3e70de3e040a741",
+      "localDigest": "sha256:e7c496f5894df234e7ade5c0e30c3d5e2eebe2e01654a049e3e70de3e040a741",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/pkce.ts",
+      "localPath": "src/auth/oauth/pkce.ts",
+      "upstreamDigest": "sha256:33835111577490103dbb7509b7687db1643691d7b425845428f3cbeb873fe9cf",
+      "localDigest": "sha256:33835111577490103dbb7509b7687db1643691d7b425845428f3cbeb873fe9cf",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/radius.ts",
+      "localPath": "src/auth/oauth/radius.ts",
+      "upstreamDigest": "sha256:f9c0a721c59eec03ec6aba7eac7c2e6d2a3d427f3dad22670f49db89d6b9d66b",
+      "localDigest": "sha256:f9c0a721c59eec03ec6aba7eac7c2e6d2a3d427f3dad22670f49db89d6b9d66b",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/oauth/xai.ts",
+      "localPath": "src/auth/oauth/xai.ts",
+      "upstreamDigest": "sha256:9c55ed76e6b5099c09e74156b85a5f6e7ff652b1e591d223e424bbe014095d6f",
+      "localDigest": "sha256:9c55ed76e6b5099c09e74156b85a5f6e7ff652b1e591d223e424bbe014095d6f",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/resolve.ts",
+      "localPath": "src/auth/resolve.ts",
+      "upstreamDigest": "sha256:a0ea352377af7520a5b4c5ee5a63af816972dfd74399135ab5ca3786a200be80",
+      "localDigest": "sha256:a0ea352377af7520a5b4c5ee5a63af816972dfd74399135ab5ca3786a200be80",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/auth/types.ts",
+      "localPath": "src/auth/types.ts",
+      "upstreamDigest": "sha256:31512f892227ac67c65bafbde0e7512862373fee396ac497bb5050989edbffbb",
+      "localDigest": "sha256:31512f892227ac67c65bafbde0e7512862373fee396ac497bb5050989edbffbb",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/bedrock-provider.ts",
+      "localPath": "src/bedrock-provider.ts",
+      "upstreamDigest": "sha256:427a4e76812ea4ac42133e7f41e75df99e0edaff883659c96a0e4ec78f670f9f",
+      "localDigest": "sha256:427a4e76812ea4ac42133e7f41e75df99e0edaff883659c96a0e4ec78f670f9f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/bun-oauth.ts",
+      "localPath": "src/bun-oauth.ts",
+      "upstreamDigest": "sha256:c92d49d4a08316fb684673aae25d35863fa14de189094f8290e6fc7a9afefde4",
+      "localDigest": "sha256:c92d49d4a08316fb684673aae25d35863fa14de189094f8290e6fc7a9afefde4",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/cli.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:fc7787111c100b29b5131fa9b90087c0c3d86c6e9d7e6a7b8dcd5b7fde999676",
+      "localDigest": null,
+      "status": "missing",
+      "category": "coding-agent-only",
+      "decision": "reject",
+      "rationale": "RunLedger intentionally excludes this pi coding-agent compatibility or CLI facade and keeps its own application/runtime surface.",
+      "evidence": [
+        "upstream:packages/ai/src/cli.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/compat.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:c1212487653e4508243ddc2c420334166699470b9908326ff8f74b8aeb4fc8a5",
+      "localDigest": null,
+      "status": "missing",
+      "category": "coding-agent-only",
+      "decision": "reject",
+      "rationale": "RunLedger intentionally excludes this pi coding-agent compatibility or CLI facade and keeps its own application/runtime surface.",
+      "evidence": [
+        "upstream:packages/ai/src/compat.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/compat/extension-oauth-types.ts",
+      "localPath": "src/compat/extension-oauth-types.ts",
+      "upstreamDigest": "sha256:52065af0c8958696c9e37852d5005bf410679f4afba1b92a6e107e9320c44ff3",
+      "localDigest": "sha256:52065af0c8958696c9e37852d5005bf410679f4afba1b92a6e107e9320c44ff3",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/env-api-keys.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:2c88fc505c318f99ad26dd1f5c8d690c99523f1ff5a8543065d285c374067fc5",
+      "localDigest": null,
+      "status": "missing",
+      "category": "coding-agent-only",
+      "decision": "reject",
+      "rationale": "RunLedger intentionally excludes this pi coding-agent compatibility or CLI facade and keeps its own application/runtime surface.",
+      "evidence": [
+        "upstream:packages/ai/src/env-api-keys.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/image-models.generated.ts",
+      "localPath": "src/image-models.generated.ts",
+      "upstreamDigest": "sha256:4085d0ea83c8215b10587e905ba7446081f24ea0aea9965eae60c9b3f9eb8dab",
+      "localDigest": "sha256:255db32f84f1a94f579f061506ced014ccf33d0b719b4a855eace464cb395a00",
+      "status": "modified",
+      "category": "catalog-generator",
+      "decision": "defer",
+      "rationale": "The generated catalog remains on RunLedger's reviewed input snapshot; unrelated live catalog churn is not imported without pinned generator inputs.",
+      "evidence": [
+        "upstream:packages/ai/src/image-models.generated.ts",
+        "local:src/image-models.generated.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/image-models.ts",
+      "localPath": "src/image-models.ts",
+      "upstreamDigest": "sha256:58f11488a6623fe8528153235f9216c249d70e146b0f99f8b22db8d88a49ae74",
+      "localDigest": "sha256:58f11488a6623fe8528153235f9216c249d70e146b0f99f8b22db8d88a49ae74",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/images-api-registry.ts",
+      "localPath": "src/images-api-registry.ts",
+      "upstreamDigest": "sha256:604636b0a4b59d1798d79aad48a1dfdd96ee79e3f16b16cdc54dbd1b81c44ffe",
+      "localDigest": "sha256:604636b0a4b59d1798d79aad48a1dfdd96ee79e3f16b16cdc54dbd1b81c44ffe",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/images-models.ts",
+      "localPath": "src/images-models.ts",
+      "upstreamDigest": "sha256:e57cadc7d9b033c07fd98b4a31f9ecd14ebc8a79c3689eb05b891210173f0d27",
+      "localDigest": "sha256:e57cadc7d9b033c07fd98b4a31f9ecd14ebc8a79c3689eb05b891210173f0d27",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/images.ts",
+      "localPath": "src/images.ts",
+      "upstreamDigest": "sha256:de83a96c1eb420cfb1b6f4e3ce8430f19b2312399d195fb786c76ebae4111dcf",
+      "localDigest": "sha256:de83a96c1eb420cfb1b6f4e3ce8430f19b2312399d195fb786c76ebae4111dcf",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/index.ts",
+      "localPath": "src/index.ts",
+      "upstreamDigest": "sha256:50b8cf3a481383473bf165c59fbef36fde3c346fa6b4398e9f6fb98fa840d24e",
+      "localDigest": "sha256:14e7534830d16283b691bc53f151fefc0454c89905d078eefdf81077f6148809",
+      "status": "modified",
+      "category": "provider-transport",
+      "decision": "localize",
+      "rationale": "RunLedger retains its runtime and governed-runtime exports in addition to the byte-compatible pi-ai core surface.",
+      "evidence": [
+        "upstream:packages/ai/src/index.ts",
+        "local:src/index.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/legacy-api-aliases.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:784ae74c00b3cf2836b6ed930519b5d7d3aa1a7a4e7ace933af3bdad77df67e3",
+      "localDigest": null,
+      "status": "missing",
+      "category": "coding-agent-only",
+      "decision": "reject",
+      "rationale": "RunLedger intentionally excludes this pi coding-agent compatibility or CLI facade and keeps its own application/runtime surface.",
+      "evidence": [
+        "upstream:packages/ai/src/legacy-api-aliases.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/models-store.ts",
+      "localPath": "src/models-store.ts",
+      "upstreamDigest": "sha256:f7ca56eacfe3cb3bc09b50e03db7da4bdde09f10f655a6dcf6fc157644b89406",
+      "localDigest": "sha256:f7ca56eacfe3cb3bc09b50e03db7da4bdde09f10f655a6dcf6fc157644b89406",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/models.generated.ts",
+      "localPath": "src/models.generated.ts",
+      "upstreamDigest": "sha256:5f9968b8f71b7d1e252111b3512124e2f45d6fff44dacfb4b97f7d2b41cede88",
+      "localDigest": "sha256:ca7059ec42b51e1ca9aacc92a2be24e552c5025a849a62f8b7f2327d80dea46b",
+      "status": "modified",
+      "category": "catalog-generator",
+      "decision": "defer",
+      "rationale": "The shared or generated file adopts the safe non-Qwen delta while Qwen registration remains deferred until fixed-snapshot model values are reproducible.",
+      "evidence": [
+        "upstream:packages/ai/src/models.generated.ts",
+        "local:src/models.generated.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/models.ts",
+      "localPath": "src/models.ts",
+      "upstreamDigest": "sha256:b8f0d2b3d6bd70c9ffeab844b8aa901a40506b01e14a8033bcbc78cfdc3cddf3",
+      "localDigest": "sha256:b8f0d2b3d6bd70c9ffeab844b8aa901a40506b01e14a8033bcbc78cfdc3cddf3",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/oauth.ts",
+      "localPath": "src/oauth.ts",
+      "upstreamDigest": "sha256:1250a2a276dc310849e64a0fd306a896d42e47ad0fc8d9394279eaee4e11cdff",
+      "localDigest": "sha256:1250a2a276dc310849e64a0fd306a896d42e47ad0fc8d9394279eaee4e11cdff",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/all.ts",
+      "localPath": "src/providers/all.ts",
+      "upstreamDigest": "sha256:bc1051c4edd063221b743c2a44a3af98fefdf1c13b0bec099ef2f5fd051105cb",
+      "localDigest": "sha256:b020fdfb4dc42259e7e661f2470099744f81d2d6b80474ea1b3910427d8f5d18",
+      "status": "modified",
+      "category": "provider-transport",
+      "decision": "defer",
+      "rationale": "The shared or generated file adopts the safe non-Qwen delta while Qwen registration remains deferred until fixed-snapshot model values are reproducible.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/all.ts",
+        "local:src/providers/all.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/amazon-bedrock.models.ts",
+      "localPath": "src/providers/amazon-bedrock.models.ts",
+      "upstreamDigest": "sha256:4695d0cb62a65ae10874cf24ab9e06dd348987c4e48b892b64c440deefaf54f3",
+      "localDigest": "sha256:4695d0cb62a65ae10874cf24ab9e06dd348987c4e48b892b64c440deefaf54f3",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/amazon-bedrock.ts",
+      "localPath": "src/providers/amazon-bedrock.ts",
+      "upstreamDigest": "sha256:0bdb730452b5ad8d1a763f850f6ad7e2d25d048fe8f469031981a642b58129c7",
+      "localDigest": "sha256:0bdb730452b5ad8d1a763f850f6ad7e2d25d048fe8f469031981a642b58129c7",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/ant-ling.models.ts",
+      "localPath": "src/providers/ant-ling.models.ts",
+      "upstreamDigest": "sha256:fb6c9fdf5a8f7c66c7912b0a91d3cd9bb4f7379b78baef459a4e8a68e9a65e9b",
+      "localDigest": "sha256:fb6c9fdf5a8f7c66c7912b0a91d3cd9bb4f7379b78baef459a4e8a68e9a65e9b",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/ant-ling.ts",
+      "localPath": "src/providers/ant-ling.ts",
+      "upstreamDigest": "sha256:20ba100f8a9150f809fc42bf60f1d23840cc358d636793f1ec9fddf0e9feb2a7",
+      "localDigest": "sha256:20ba100f8a9150f809fc42bf60f1d23840cc358d636793f1ec9fddf0e9feb2a7",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/anthropic.models.ts",
+      "localPath": "src/providers/anthropic.models.ts",
+      "upstreamDigest": "sha256:ecd2b3cecbe1f7d0844512aa6629260e5b4dde2390922e1dd4c339e4f65409f6",
+      "localDigest": "sha256:ecd2b3cecbe1f7d0844512aa6629260e5b4dde2390922e1dd4c339e4f65409f6",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/anthropic.ts",
+      "localPath": "src/providers/anthropic.ts",
+      "upstreamDigest": "sha256:d28c2884868e7e5d93cd264574755ea33e5f2e434f7193e2221efe5dbf45495a",
+      "localDigest": "sha256:d28c2884868e7e5d93cd264574755ea33e5f2e434f7193e2221efe5dbf45495a",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/azure-openai-responses.models.ts",
+      "localPath": "src/providers/azure-openai-responses.models.ts",
+      "upstreamDigest": "sha256:90fc381f8d2ee48b29cd719226c2728bd3cceb648274858ff5a9592864028c04",
+      "localDigest": "sha256:90fc381f8d2ee48b29cd719226c2728bd3cceb648274858ff5a9592864028c04",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/azure-openai-responses.ts",
+      "localPath": "src/providers/azure-openai-responses.ts",
+      "upstreamDigest": "sha256:76e9f5cde761fcd516370d4d99519e4658e0db1029518746d0d0c0550ce54fa5",
+      "localDigest": "sha256:76e9f5cde761fcd516370d4d99519e4658e0db1029518746d0d0c0550ce54fa5",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cerebras.models.ts",
+      "localPath": "src/providers/cerebras.models.ts",
+      "upstreamDigest": "sha256:d97507a8addb4bf40dc8cd9149e9e95406e9745f653efa3576b963cd21c99db8",
+      "localDigest": "sha256:d97507a8addb4bf40dc8cd9149e9e95406e9745f653efa3576b963cd21c99db8",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cerebras.ts",
+      "localPath": "src/providers/cerebras.ts",
+      "upstreamDigest": "sha256:457fc35499abea92be4ad7add4f08502d069293380be61bf05b11ae5352bce4f",
+      "localDigest": "sha256:457fc35499abea92be4ad7add4f08502d069293380be61bf05b11ae5352bce4f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cloudflare-ai-gateway.models.ts",
+      "localPath": "src/providers/cloudflare-ai-gateway.models.ts",
+      "upstreamDigest": "sha256:609f092729d68c10ef99b3af9f4f8d8cf22a81ece345a650dcf5ec9aff5d159f",
+      "localDigest": "sha256:609f092729d68c10ef99b3af9f4f8d8cf22a81ece345a650dcf5ec9aff5d159f",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cloudflare-ai-gateway.ts",
+      "localPath": "src/providers/cloudflare-ai-gateway.ts",
+      "upstreamDigest": "sha256:6629197929c376b75640cf044e9f7c31277f0964a6764b0a002ee90059a7989d",
+      "localDigest": "sha256:6629197929c376b75640cf044e9f7c31277f0964a6764b0a002ee90059a7989d",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cloudflare-auth.ts",
+      "localPath": "src/providers/cloudflare-auth.ts",
+      "upstreamDigest": "sha256:3bb8130e1e9a07d63d78bdb5b12c1e607e29e83c67f36f5218054e6f932918db",
+      "localDigest": "sha256:3bb8130e1e9a07d63d78bdb5b12c1e607e29e83c67f36f5218054e6f932918db",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cloudflare-stream.ts",
+      "localPath": "src/providers/cloudflare-stream.ts",
+      "upstreamDigest": "sha256:866117c0e12f6bba9da36842271d0208b200364dc785dc968fa5d31b6da6594b",
+      "localDigest": "sha256:866117c0e12f6bba9da36842271d0208b200364dc785dc968fa5d31b6da6594b",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cloudflare-workers-ai.models.ts",
+      "localPath": "src/providers/cloudflare-workers-ai.models.ts",
+      "upstreamDigest": "sha256:2402455b10c3960ad0afa0908d493bc2dc843a4ff78ac10502b7f11757e1b406",
+      "localDigest": "sha256:2402455b10c3960ad0afa0908d493bc2dc843a4ff78ac10502b7f11757e1b406",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/cloudflare-workers-ai.ts",
+      "localPath": "src/providers/cloudflare-workers-ai.ts",
+      "upstreamDigest": "sha256:5ab1575a34fd66e35706fcae8a38516d7c2e427521b7f8680e1f756d8420ec9c",
+      "localDigest": "sha256:5ab1575a34fd66e35706fcae8a38516d7c2e427521b7f8680e1f756d8420ec9c",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/data-json.d.ts",
+      "localPath": "src/providers/data-json.d.ts",
+      "upstreamDigest": "sha256:d30c397c753fb4c6a608ab2e2d95e50c763a369b591bcc2bd6e02147016f8aff",
+      "localDigest": "sha256:d30c397c753fb4c6a608ab2e2d95e50c763a369b591bcc2bd6e02147016f8aff",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/deepseek.models.ts",
+      "localPath": "src/providers/deepseek.models.ts",
+      "upstreamDigest": "sha256:f7477db1219465893d7262869e61d97960f29df510d5fb2e411edc9a22825e12",
+      "localDigest": "sha256:f7477db1219465893d7262869e61d97960f29df510d5fb2e411edc9a22825e12",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/deepseek.ts",
+      "localPath": "src/providers/deepseek.ts",
+      "upstreamDigest": "sha256:4d4ac9870d3dcdb13a90627a95598314459f5cc2f8a122f802fab3b0d2840fee",
+      "localDigest": "sha256:4d4ac9870d3dcdb13a90627a95598314459f5cc2f8a122f802fab3b0d2840fee",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/faux.ts",
+      "localPath": "src/providers/faux.ts",
+      "upstreamDigest": "sha256:eea5c33e3a3553adf4d8216e2660dac19a69663d3ac295dd61c4e35a346ed535",
+      "localDigest": "sha256:eea5c33e3a3553adf4d8216e2660dac19a69663d3ac295dd61c4e35a346ed535",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/fireworks.models.ts",
+      "localPath": "src/providers/fireworks.models.ts",
+      "upstreamDigest": "sha256:ea2af63c05129f57295b090e5010244033ec060d4de3f00908c2f7b5cb50262d",
+      "localDigest": "sha256:ea2af63c05129f57295b090e5010244033ec060d4de3f00908c2f7b5cb50262d",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/fireworks.ts",
+      "localPath": "src/providers/fireworks.ts",
+      "upstreamDigest": "sha256:72dbb53e3bb8b0bc6c42dd7937ec11dd0126efe3176f11153b1d599a0c7776af",
+      "localDigest": "sha256:72dbb53e3bb8b0bc6c42dd7937ec11dd0126efe3176f11153b1d599a0c7776af",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/github-copilot.models.ts",
+      "localPath": "src/providers/github-copilot.models.ts",
+      "upstreamDigest": "sha256:52f6c998e7694e7d13004a446d703957babe1fa09c59fde75addfceab4613771",
+      "localDigest": "sha256:52f6c998e7694e7d13004a446d703957babe1fa09c59fde75addfceab4613771",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/github-copilot.ts",
+      "localPath": "src/providers/github-copilot.ts",
+      "upstreamDigest": "sha256:216e06b4d780a70eb0b5641e7a8f3d7cdb7063deb366cd15a950a3c8b1470865",
+      "localDigest": "sha256:216e06b4d780a70eb0b5641e7a8f3d7cdb7063deb366cd15a950a3c8b1470865",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/google-vertex.models.ts",
+      "localPath": "src/providers/google-vertex.models.ts",
+      "upstreamDigest": "sha256:91a99378fe497a5bea97e9e0ce3fa966e85e21f11846f3b9a73009118c3ffb73",
+      "localDigest": "sha256:91a99378fe497a5bea97e9e0ce3fa966e85e21f11846f3b9a73009118c3ffb73",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/google-vertex.ts",
+      "localPath": "src/providers/google-vertex.ts",
+      "upstreamDigest": "sha256:1a976f38fff9d1342f126382db395982a6c7fd6e17ebda19a3e3c05e7348b707",
+      "localDigest": "sha256:1a976f38fff9d1342f126382db395982a6c7fd6e17ebda19a3e3c05e7348b707",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/google.models.ts",
+      "localPath": "src/providers/google.models.ts",
+      "upstreamDigest": "sha256:d1492d35f149e3471b85f601af8af6afbf3b6824f57966f160bf1b050da5c654",
+      "localDigest": "sha256:d1492d35f149e3471b85f601af8af6afbf3b6824f57966f160bf1b050da5c654",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/google.ts",
+      "localPath": "src/providers/google.ts",
+      "upstreamDigest": "sha256:2d807d5f9273ede8c23970fe0414883ab362c677df80e4603d30b621232a2036",
+      "localDigest": "sha256:2d807d5f9273ede8c23970fe0414883ab362c677df80e4603d30b621232a2036",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/groq.models.ts",
+      "localPath": "src/providers/groq.models.ts",
+      "upstreamDigest": "sha256:eedead238cfcb0414042e4c833dcd3b03ed8742a1ad46ad9123a2c53a01d4822",
+      "localDigest": "sha256:eedead238cfcb0414042e4c833dcd3b03ed8742a1ad46ad9123a2c53a01d4822",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/groq.ts",
+      "localPath": "src/providers/groq.ts",
+      "upstreamDigest": "sha256:a8bbced4fbc37370892fec68fb7f03cf634d08d134d9f003fa63edb5a8b60873",
+      "localDigest": "sha256:a8bbced4fbc37370892fec68fb7f03cf634d08d134d9f003fa63edb5a8b60873",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/huggingface.models.ts",
+      "localPath": "src/providers/huggingface.models.ts",
+      "upstreamDigest": "sha256:5b3d19abe3298b79734d4decd91bb3333f0858f0471f76379709067974ae8140",
+      "localDigest": "sha256:5b3d19abe3298b79734d4decd91bb3333f0858f0471f76379709067974ae8140",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/huggingface.ts",
+      "localPath": "src/providers/huggingface.ts",
+      "upstreamDigest": "sha256:51c4af194c9989ab033c5b3303831ec9e2df999f51d9fa40ab6d28f632e8ff43",
+      "localDigest": "sha256:51c4af194c9989ab033c5b3303831ec9e2df999f51d9fa40ab6d28f632e8ff43",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/images/register-builtins.ts",
+      "localPath": "src/providers/images/register-builtins.ts",
+      "upstreamDigest": "sha256:8c8bd4e614b8b733c0a4232f7cc974bf38c5a4bb6b9615c732e3b794ff1d908f",
+      "localDigest": "sha256:8c8bd4e614b8b733c0a4232f7cc974bf38c5a4bb6b9615c732e3b794ff1d908f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/kimi-coding.models.ts",
+      "localPath": "src/providers/kimi-coding.models.ts",
+      "upstreamDigest": "sha256:3074d7081b9ff1be5a5fa087899fccb317cddee2718977b357589b75d2cd7965",
+      "localDigest": "sha256:3074d7081b9ff1be5a5fa087899fccb317cddee2718977b357589b75d2cd7965",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/kimi-coding.ts",
+      "localPath": "src/providers/kimi-coding.ts",
+      "upstreamDigest": "sha256:cace2aafb2dbabb54d3d0c4931e20fe6d06188bc4ccffd48c8cf4ac7b9aea554",
+      "localDigest": "sha256:cace2aafb2dbabb54d3d0c4931e20fe6d06188bc4ccffd48c8cf4ac7b9aea554",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/minimax-cn.models.ts",
+      "localPath": "src/providers/minimax-cn.models.ts",
+      "upstreamDigest": "sha256:187a3db8d50bcbe82210952e6787c64d8f0dd0187073f679825fc6d6bc0d667b",
+      "localDigest": "sha256:187a3db8d50bcbe82210952e6787c64d8f0dd0187073f679825fc6d6bc0d667b",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/minimax-cn.ts",
+      "localPath": "src/providers/minimax-cn.ts",
+      "upstreamDigest": "sha256:ae3170234556ef355f7cffcfc666888992ae50caa8daf07352f22bac69cca0ba",
+      "localDigest": "sha256:ae3170234556ef355f7cffcfc666888992ae50caa8daf07352f22bac69cca0ba",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/minimax.models.ts",
+      "localPath": "src/providers/minimax.models.ts",
+      "upstreamDigest": "sha256:480946289afbf9be357bc5002566de8bbbddd0234f0d978ff2cf945e6ffb3094",
+      "localDigest": "sha256:480946289afbf9be357bc5002566de8bbbddd0234f0d978ff2cf945e6ffb3094",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/minimax.ts",
+      "localPath": "src/providers/minimax.ts",
+      "upstreamDigest": "sha256:d571a6a8b5a47daf40b034a2dae4ac902a252fbd44b073c4caee8eeb1d7035b5",
+      "localDigest": "sha256:d571a6a8b5a47daf40b034a2dae4ac902a252fbd44b073c4caee8eeb1d7035b5",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/mistral.models.ts",
+      "localPath": "src/providers/mistral.models.ts",
+      "upstreamDigest": "sha256:4e6724d28bdb336ea194c2060164ab3b98b6a3c69b3869b2006040739acd2034",
+      "localDigest": "sha256:4e6724d28bdb336ea194c2060164ab3b98b6a3c69b3869b2006040739acd2034",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/mistral.ts",
+      "localPath": "src/providers/mistral.ts",
+      "upstreamDigest": "sha256:dfcd087d7317d6a6cd1acf701547567435f5eaf0c1cc1d8eb89eed7e977c2fb3",
+      "localDigest": "sha256:dfcd087d7317d6a6cd1acf701547567435f5eaf0c1cc1d8eb89eed7e977c2fb3",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/moonshotai-cn.models.ts",
+      "localPath": "src/providers/moonshotai-cn.models.ts",
+      "upstreamDigest": "sha256:1614ba2b2fe54394b673eb0dfc81c2a26f972b7677b5dce3d076b6ed1de650af",
+      "localDigest": "sha256:1614ba2b2fe54394b673eb0dfc81c2a26f972b7677b5dce3d076b6ed1de650af",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/moonshotai-cn.ts",
+      "localPath": "src/providers/moonshotai-cn.ts",
+      "upstreamDigest": "sha256:da8ec0ed30a2cf42972cead61a93b1fcb64380095f9d062ee4ed9e4807ebd5bc",
+      "localDigest": "sha256:da8ec0ed30a2cf42972cead61a93b1fcb64380095f9d062ee4ed9e4807ebd5bc",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/moonshotai.models.ts",
+      "localPath": "src/providers/moonshotai.models.ts",
+      "upstreamDigest": "sha256:5d2208c9e14d1cec0ef22440198a693b4037e2e303d2b3b70fa5654e3a703046",
+      "localDigest": "sha256:5d2208c9e14d1cec0ef22440198a693b4037e2e303d2b3b70fa5654e3a703046",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/moonshotai.ts",
+      "localPath": "src/providers/moonshotai.ts",
+      "upstreamDigest": "sha256:2e269cca0231ebdbd2a58848ab3d19b0a43697e132b48a679e3c1b0cd4897665",
+      "localDigest": "sha256:2e269cca0231ebdbd2a58848ab3d19b0a43697e132b48a679e3c1b0cd4897665",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/nvidia.models.ts",
+      "localPath": "src/providers/nvidia.models.ts",
+      "upstreamDigest": "sha256:f20e547be5d5a6a9a239552f69dbd6a3016fcafe76fac2dc20a112bef439d39d",
+      "localDigest": "sha256:f20e547be5d5a6a9a239552f69dbd6a3016fcafe76fac2dc20a112bef439d39d",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/nvidia.ts",
+      "localPath": "src/providers/nvidia.ts",
+      "upstreamDigest": "sha256:73c981d27b364f83a32983d19f4ded346acf6af7eb4a653334622f891aedf860",
+      "localDigest": "sha256:73c981d27b364f83a32983d19f4ded346acf6af7eb4a653334622f891aedf860",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai-codex.models.ts",
+      "localPath": "src/providers/openai-codex.models.ts",
+      "upstreamDigest": "sha256:5698f50dab4be4f7bb4971e2a8e306416a58c1dbe63b07140afec1a46adbfd8e",
+      "localDigest": "sha256:5698f50dab4be4f7bb4971e2a8e306416a58c1dbe63b07140afec1a46adbfd8e",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai-codex.ts",
+      "localPath": "src/providers/openai-codex.ts",
+      "upstreamDigest": "sha256:cb50e5b9db20f8953034601e1f9e66ad95ff1f925a9608419f4623d6246606b4",
+      "localDigest": "sha256:cb50e5b9db20f8953034601e1f9e66ad95ff1f925a9608419f4623d6246606b4",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai.models.ts",
+      "localPath": "src/providers/openai.models.ts",
+      "upstreamDigest": "sha256:d0c6fe0238f4e8e9fc8535cbfb7df7d0001006cec888d233e68037b607d63c7d",
+      "localDigest": "sha256:d0c6fe0238f4e8e9fc8535cbfb7df7d0001006cec888d233e68037b607d63c7d",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openai.ts",
+      "localPath": "src/providers/openai.ts",
+      "upstreamDigest": "sha256:1904f9511221f47bbe890dc007571add9ac16ab28cd48c4090b58f13950cbfd0",
+      "localDigest": "sha256:1904f9511221f47bbe890dc007571add9ac16ab28cd48c4090b58f13950cbfd0",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/opencode-go.models.ts",
+      "localPath": "src/providers/opencode-go.models.ts",
+      "upstreamDigest": "sha256:f4cb3a8b44b3ff0a7be8d072d91202c9fac3de42daa748b283a0bf586feca767",
+      "localDigest": "sha256:f4cb3a8b44b3ff0a7be8d072d91202c9fac3de42daa748b283a0bf586feca767",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/opencode-go.ts",
+      "localPath": "src/providers/opencode-go.ts",
+      "upstreamDigest": "sha256:a62d20b3d31c554d9f1301815db88466851e6a56c5045e7465aca0eb1db1eb1d",
+      "localDigest": "sha256:a62d20b3d31c554d9f1301815db88466851e6a56c5045e7465aca0eb1db1eb1d",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/opencode.models.ts",
+      "localPath": "src/providers/opencode.models.ts",
+      "upstreamDigest": "sha256:84ef8db885402c886941d5538612958111447773d83c9f864e30bee46e8cb30c",
+      "localDigest": "sha256:53c19cc3ab5227ad49a34bd6ca712d964ba5e69ebe5d237240374a3de619c7dc",
+      "status": "modified",
+      "category": "catalog-generator",
+      "decision": "defer",
+      "rationale": "The generated catalog remains on RunLedger's reviewed input snapshot; unrelated live catalog churn is not imported without pinned generator inputs.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/opencode.models.ts",
+        "local:src/providers/opencode.models.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/opencode.ts",
+      "localPath": "src/providers/opencode.ts",
+      "upstreamDigest": "sha256:5907b03b4f4f24cb8457f2a1fadae2683e2ba5101da84f2b100c32c50b355954",
+      "localDigest": "sha256:5907b03b4f4f24cb8457f2a1fadae2683e2ba5101da84f2b100c32c50b355954",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openrouter-images.ts",
+      "localPath": "src/providers/openrouter-images.ts",
+      "upstreamDigest": "sha256:b3b633923a36ef24299b467b20856f0c51f140417622cd1b9aaf8afbf9a70e08",
+      "localDigest": "sha256:b3b633923a36ef24299b467b20856f0c51f140417622cd1b9aaf8afbf9a70e08",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openrouter.models.ts",
+      "localPath": "src/providers/openrouter.models.ts",
+      "upstreamDigest": "sha256:3981d844fabbf0f90778b80482170f3f78b1493e1942f966e2010ec8cb46f75e",
+      "localDigest": "sha256:c0f155468687347042a87b9d3f1f2dc5d70b85c1ea05deb38fa5f0d62f344681",
+      "status": "modified",
+      "category": "catalog-generator",
+      "decision": "defer",
+      "rationale": "The generated catalog remains on RunLedger's reviewed input snapshot; unrelated live catalog churn is not imported without pinned generator inputs.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/openrouter.models.ts",
+        "local:src/providers/openrouter.models.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/openrouter.ts",
+      "localPath": "src/providers/openrouter.ts",
+      "upstreamDigest": "sha256:678e45717cb0be0bc6f42fc639e8551da0914f18b2e5dcedc3af4d2ee11812b3",
+      "localDigest": "sha256:678e45717cb0be0bc6f42fc639e8551da0914f18b2e5dcedc3af4d2ee11812b3",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/qwen-token-plan-cn.models.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:2e05f0d5e7d104ff425314f004a7c31b57f06814f23b605e27859bc50e65ae7e",
+      "localDigest": null,
+      "status": "missing",
+      "category": "catalog-generator",
+      "decision": "defer",
+      "rationale": "Qwen provider and structural catalog files are deferred because the fixed upstream commit does not track the generated model-value JSON needed for a deterministic runnable catalog.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/qwen-token-plan-cn.models.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/qwen-token-plan-cn.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:1869aabbff4baaa12faef00071aab0a5b1b1d38d43f16ce735137fc0e13fa897",
+      "localDigest": null,
+      "status": "missing",
+      "category": "provider-transport",
+      "decision": "defer",
+      "rationale": "Qwen provider and structural catalog files are deferred because the fixed upstream commit does not track the generated model-value JSON needed for a deterministic runnable catalog.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/qwen-token-plan-cn.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/qwen-token-plan.models.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:d25de5710054b9d1e00bbf7124d87ea16f64393d2c707afc6a06868f1729fa85",
+      "localDigest": null,
+      "status": "missing",
+      "category": "catalog-generator",
+      "decision": "defer",
+      "rationale": "Qwen provider and structural catalog files are deferred because the fixed upstream commit does not track the generated model-value JSON needed for a deterministic runnable catalog.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/qwen-token-plan.models.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/qwen-token-plan.ts",
+      "localPath": null,
+      "upstreamDigest": "sha256:c26b85ab529779c4c2e61f6dd749592b515ec25b121b49dc81989d8a767d51f5",
+      "localDigest": null,
+      "status": "missing",
+      "category": "provider-transport",
+      "decision": "defer",
+      "rationale": "Qwen provider and structural catalog files are deferred because the fixed upstream commit does not track the generated model-value JSON needed for a deterministic runnable catalog.",
+      "evidence": [
+        "upstream:packages/ai/src/providers/qwen-token-plan.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/radius-config.ts",
+      "localPath": "src/providers/radius-config.ts",
+      "upstreamDigest": "sha256:1f82a7db25753be09374792ae0a3cd63417739018fb69b3212ad8b3b9eb11c21",
+      "localDigest": "sha256:1f82a7db25753be09374792ae0a3cd63417739018fb69b3212ad8b3b9eb11c21",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/radius.ts",
+      "localPath": "src/providers/radius.ts",
+      "upstreamDigest": "sha256:67c62a866d0ed2dccdab5bd495cbd646ddbcf1fe3a6f49e6b569478b49a3c5df",
+      "localDigest": "sha256:67c62a866d0ed2dccdab5bd495cbd646ddbcf1fe3a6f49e6b569478b49a3c5df",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/together.models.ts",
+      "localPath": "src/providers/together.models.ts",
+      "upstreamDigest": "sha256:9f29fdd23b5587f20ff2c49aefc4a3e62b07613beed5666191cdc5427e675c91",
+      "localDigest": "sha256:9f29fdd23b5587f20ff2c49aefc4a3e62b07613beed5666191cdc5427e675c91",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/together.ts",
+      "localPath": "src/providers/together.ts",
+      "upstreamDigest": "sha256:cbf232b1bfe5753bba855f0a95e2c4d180db8155121effcbdffc955fe090738c",
+      "localDigest": "sha256:cbf232b1bfe5753bba855f0a95e2c4d180db8155121effcbdffc955fe090738c",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/vercel-ai-gateway.models.ts",
+      "localPath": "src/providers/vercel-ai-gateway.models.ts",
+      "upstreamDigest": "sha256:f58485c8529ba2d438b808282940c3168f28e0602d8e6de573290ef68e385f0e",
+      "localDigest": "sha256:f58485c8529ba2d438b808282940c3168f28e0602d8e6de573290ef68e385f0e",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/vercel-ai-gateway.ts",
+      "localPath": "src/providers/vercel-ai-gateway.ts",
+      "upstreamDigest": "sha256:57b77111d50a2238128f56b7f4cc0680415b58c7d3d2eb51cc9f88e508b40343",
+      "localDigest": "sha256:57b77111d50a2238128f56b7f4cc0680415b58c7d3d2eb51cc9f88e508b40343",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xai.models.ts",
+      "localPath": "src/providers/xai.models.ts",
+      "upstreamDigest": "sha256:61a8578d69d56f2f661d003e3eff9be9f9ace183428fe394c076a0aad89a7ab9",
+      "localDigest": "sha256:61a8578d69d56f2f661d003e3eff9be9f9ace183428fe394c076a0aad89a7ab9",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xai.ts",
+      "localPath": "src/providers/xai.ts",
+      "upstreamDigest": "sha256:f4e3369e26fca433eefbc456a302bb1941f2ee9e21de0cfbc0989c9d7badbe3d",
+      "localDigest": "sha256:f4e3369e26fca433eefbc456a302bb1941f2ee9e21de0cfbc0989c9d7badbe3d",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi-token-plan-ams.models.ts",
+      "localPath": "src/providers/xiaomi-token-plan-ams.models.ts",
+      "upstreamDigest": "sha256:265522d334e0b29abb8e9ca53ee11b3acc7bbd604e36572bbb064caedcfcd310",
+      "localDigest": "sha256:265522d334e0b29abb8e9ca53ee11b3acc7bbd604e36572bbb064caedcfcd310",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi-token-plan-ams.ts",
+      "localPath": "src/providers/xiaomi-token-plan-ams.ts",
+      "upstreamDigest": "sha256:59d03fc70eca720f8ca9a9f676aedaf241524dac26c179a78e2e30aabe116e0f",
+      "localDigest": "sha256:59d03fc70eca720f8ca9a9f676aedaf241524dac26c179a78e2e30aabe116e0f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi-token-plan-cn.models.ts",
+      "localPath": "src/providers/xiaomi-token-plan-cn.models.ts",
+      "upstreamDigest": "sha256:2776648f0452616c96f385120f2e530f2b68392915fbf4f2df968de5797a82f3",
+      "localDigest": "sha256:2776648f0452616c96f385120f2e530f2b68392915fbf4f2df968de5797a82f3",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi-token-plan-cn.ts",
+      "localPath": "src/providers/xiaomi-token-plan-cn.ts",
+      "upstreamDigest": "sha256:255528bca12e929f0f683bcbf5a6b8ef0de779bb484b128bdda23bf2fb80caa8",
+      "localDigest": "sha256:255528bca12e929f0f683bcbf5a6b8ef0de779bb484b128bdda23bf2fb80caa8",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi-token-plan-sgp.models.ts",
+      "localPath": "src/providers/xiaomi-token-plan-sgp.models.ts",
+      "upstreamDigest": "sha256:18406f4c253eb199467b6cdd1d5723e8710b2f87c1296f30f3f3ea074a438078",
+      "localDigest": "sha256:18406f4c253eb199467b6cdd1d5723e8710b2f87c1296f30f3f3ea074a438078",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi-token-plan-sgp.ts",
+      "localPath": "src/providers/xiaomi-token-plan-sgp.ts",
+      "upstreamDigest": "sha256:536da73a1588741c6a70809b5e94ab5a1ba2b8e81f24116e3ed734d6bc60b5e8",
+      "localDigest": "sha256:536da73a1588741c6a70809b5e94ab5a1ba2b8e81f24116e3ed734d6bc60b5e8",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi.models.ts",
+      "localPath": "src/providers/xiaomi.models.ts",
+      "upstreamDigest": "sha256:527b6d38e09881b7fbef33542ddca2ace61af6f61ca2e826c65e37eeabc05284",
+      "localDigest": "sha256:527b6d38e09881b7fbef33542ddca2ace61af6f61ca2e826c65e37eeabc05284",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/xiaomi.ts",
+      "localPath": "src/providers/xiaomi.ts",
+      "upstreamDigest": "sha256:d0d20dbcbcecca8b02948df1506ffa474461565546f7c24dfce44aebebef2344",
+      "localDigest": "sha256:d0d20dbcbcecca8b02948df1506ffa474461565546f7c24dfce44aebebef2344",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/zai-coding-cn.models.ts",
+      "localPath": "src/providers/zai-coding-cn.models.ts",
+      "upstreamDigest": "sha256:832941a4123611fae2074cf0b952c2f4346c43c84b067a32c58072ae5831ac31",
+      "localDigest": "sha256:832941a4123611fae2074cf0b952c2f4346c43c84b067a32c58072ae5831ac31",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/zai-coding-cn.ts",
+      "localPath": "src/providers/zai-coding-cn.ts",
+      "upstreamDigest": "sha256:89ff82b1f7b1a7e3427498598ce03574d76217f1c38b0d1731be82b6d8ff87a7",
+      "localDigest": "sha256:89ff82b1f7b1a7e3427498598ce03574d76217f1c38b0d1731be82b6d8ff87a7",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/zai.models.ts",
+      "localPath": "src/providers/zai.models.ts",
+      "upstreamDigest": "sha256:f3b415a19d3239e6347c49fc1ff5cbc73cba79dfcf99e1cbefd0b050c4e9b58e",
+      "localDigest": "sha256:f3b415a19d3239e6347c49fc1ff5cbc73cba79dfcf99e1cbefd0b050c4e9b58e",
+      "status": "identical",
+      "category": "catalog-generator",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/providers/zai.ts",
+      "localPath": "src/providers/zai.ts",
+      "upstreamDigest": "sha256:489a48539c3abc291315dad6f8b7c5554f5f3f9bf8b2a11a60d4ab2cbd3c2f74",
+      "localDigest": "sha256:489a48539c3abc291315dad6f8b7c5554f5f3f9bf8b2a11a60d4ab2cbd3c2f74",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/session-resources.ts",
+      "localPath": "src/session-resources.ts",
+      "upstreamDigest": "sha256:3e6d76f038d6b7fe515ede0b6650d41a7df16eb4b3a9f1aa91c9de329ff092e2",
+      "localDigest": "sha256:3e6d76f038d6b7fe515ede0b6650d41a7df16eb4b3a9f1aa91c9de329ff092e2",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/types.ts",
+      "localPath": "src/types.ts",
+      "upstreamDigest": "sha256:ce34fc5bfb2ae962a96d56d2ccfae98f81d5b76f45328507393aada4050df5aa",
+      "localDigest": "sha256:d39faee3d1376b883df54a08f49d4c4985b508a5f725f17c09e1544eb231f4f4",
+      "status": "modified",
+      "category": "message-event",
+      "decision": "defer",
+      "rationale": "The shared or generated file adopts the safe non-Qwen delta while Qwen registration remains deferred until fixed-snapshot model values are reproducible.",
+      "evidence": [
+        "upstream:packages/ai/src/types.ts",
+        "local:src/types.ts"
+      ]
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/abort-signals.ts",
+      "localPath": "src/utils/abort-signals.ts",
+      "upstreamDigest": "sha256:320d17e2354c4e66afccf48337d79d1cdb78bc3c42a6f5be993702175711f4ab",
+      "localDigest": "sha256:320d17e2354c4e66afccf48337d79d1cdb78bc3c42a6f5be993702175711f4ab",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/deferred-tools.ts",
+      "localPath": "src/utils/deferred-tools.ts",
+      "upstreamDigest": "sha256:cab1dbf6c0b40a64e2db3079dd3efa23786ad4cdae64abdedc04b1088a301d65",
+      "localDigest": "sha256:cab1dbf6c0b40a64e2db3079dd3efa23786ad4cdae64abdedc04b1088a301d65",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/diagnostics.ts",
+      "localPath": "src/utils/diagnostics.ts",
+      "upstreamDigest": "sha256:d22b4f96a00f032220ff0cc27458c7a525dcec948bdbd2bbb67b4d7598cb395d",
+      "localDigest": "sha256:d22b4f96a00f032220ff0cc27458c7a525dcec948bdbd2bbb67b4d7598cb395d",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/error-body.ts",
+      "localPath": "src/utils/error-body.ts",
+      "upstreamDigest": "sha256:db69ea6e238e2c6755ce3da7b39467da8013d3c22745c910d845805bd841e824",
+      "localDigest": "sha256:db69ea6e238e2c6755ce3da7b39467da8013d3c22745c910d845805bd841e824",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/estimate.ts",
+      "localPath": "src/utils/estimate.ts",
+      "upstreamDigest": "sha256:8334f683185cc11d7e867f30963dfc4b9d89c3db79e852364e89a24cb89b316a",
+      "localDigest": "sha256:8334f683185cc11d7e867f30963dfc4b9d89c3db79e852364e89a24cb89b316a",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/event-stream.ts",
+      "localPath": "src/utils/event-stream.ts",
+      "upstreamDigest": "sha256:55ddd6e6e4299f377fc3f8876ea9d8073f0051d569f1629f8817ec78e28d64e6",
+      "localDigest": "sha256:55ddd6e6e4299f377fc3f8876ea9d8073f0051d569f1629f8817ec78e28d64e6",
+      "status": "identical",
+      "category": "message-event",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/hash.ts",
+      "localPath": "src/utils/hash.ts",
+      "upstreamDigest": "sha256:2cdfce4af41810d1a92c7f0a55c78637a3173041038aafd85b378be345761ed8",
+      "localDigest": "sha256:2cdfce4af41810d1a92c7f0a55c78637a3173041038aafd85b378be345761ed8",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/headers.ts",
+      "localPath": "src/utils/headers.ts",
+      "upstreamDigest": "sha256:db52ff4621bef3e5a6b6ace56fd0ff09063ae840517c16b1690c60f89f85e106",
+      "localDigest": "sha256:db52ff4621bef3e5a6b6ace56fd0ff09063ae840517c16b1690c60f89f85e106",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/json-parse.ts",
+      "localPath": "src/utils/json-parse.ts",
+      "upstreamDigest": "sha256:828440b19a64773f696ced9461166913ddaddd8479697fbde32d3f298872b153",
+      "localDigest": "sha256:828440b19a64773f696ced9461166913ddaddd8479697fbde32d3f298872b153",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/node-http-proxy.ts",
+      "localPath": "src/utils/node-http-proxy.ts",
+      "upstreamDigest": "sha256:22aa2daa87825fb9727811ede80d6bed694c7bde4d59dc5d7582099ef5eec82c",
+      "localDigest": "sha256:22aa2daa87825fb9727811ede80d6bed694c7bde4d59dc5d7582099ef5eec82c",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/overflow.ts",
+      "localPath": "src/utils/overflow.ts",
+      "upstreamDigest": "sha256:e1af348b6cad22e35c9103770ab9f95989368c32a6ce8202541846dbb3c0f0e7",
+      "localDigest": "sha256:e1af348b6cad22e35c9103770ab9f95989368c32a6ce8202541846dbb3c0f0e7",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/provider-env.ts",
+      "localPath": "src/utils/provider-env.ts",
+      "upstreamDigest": "sha256:3829251ae0674cef7ca09800cee9f46d4e305770129b72b822ea2f6f85efe675",
+      "localDigest": "sha256:3829251ae0674cef7ca09800cee9f46d4e305770129b72b822ea2f6f85efe675",
+      "status": "identical",
+      "category": "auth-storage",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/retry.ts",
+      "localPath": "src/utils/retry.ts",
+      "upstreamDigest": "sha256:0cbceb5094a87a32bcc9a4fc4fa9b4d276feb23dcb31df74aee6d57145ed9a06",
+      "localDigest": "sha256:0cbceb5094a87a32bcc9a4fc4fa9b4d276feb23dcb31df74aee6d57145ed9a06",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/sanitize-unicode.ts",
+      "localPath": "src/utils/sanitize-unicode.ts",
+      "upstreamDigest": "sha256:f8ef2c957f9f13a77df45ebf344f1b852dfe8f2e3d164d815127ea7290c12e22",
+      "localDigest": "sha256:f8ef2c957f9f13a77df45ebf344f1b852dfe8f2e3d164d815127ea7290c12e22",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/text.ts",
+      "localPath": "src/utils/text.ts",
+      "upstreamDigest": "sha256:442d027929fa6db4aa19638d64b55838ccada6c07f350610c53a521cd620ddf3",
+      "localDigest": "sha256:442d027929fa6db4aa19638d64b55838ccada6c07f350610c53a521cd620ddf3",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/typebox-helpers.ts",
+      "localPath": "src/utils/typebox-helpers.ts",
+      "upstreamDigest": "sha256:caf756258ce20c793dc8002cb8130a8efce18a7b5262ba0c54832b96f5a76e9f",
+      "localDigest": "sha256:caf756258ce20c793dc8002cb8130a8efce18a7b5262ba0c54832b96f5a76e9f",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/uuid.ts",
+      "localPath": "src/utils/uuid.ts",
+      "upstreamDigest": "sha256:e24350c38e12128f30d121aaad164e42444cb37c01cdde4439eb745e2dc06d37",
+      "localDigest": "sha256:e24350c38e12128f30d121aaad164e42444cb37c01cdde4439eb745e2dc06d37",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    },
+    {
+      "upstreamPath": "packages/ai/src/utils/validation.ts",
+      "localPath": "src/utils/validation.ts",
+      "upstreamDigest": "sha256:6af9f8687ae3598217db6157c1acaa73d53229277c43f789f99e96fb12e42d24",
+      "localDigest": "sha256:6af9f8687ae3598217db6157c1acaa73d53229277c43f789f99e96fb12e42d24",
+      "status": "identical",
+      "category": "provider-transport",
+      "decision": "adopt",
+      "rationale": "The RunLedger file is byte-identical to the fixed upstream snapshot.",
+      "evidence": []
+    }
+  ],
+  "appliedDeltas": [
+    {
+      "id": "tool-result-usage",
+      "summary": "ToolResultMessage now carries optional tool-execution Usage without adding it to main LLM context accounting.",
+      "upstreamPaths": [
+        "packages/ai/src/types.ts"
+      ],
+      "localPaths": [
+        "src/types.ts"
+      ],
+      "regressionTests": [
+        "tests/providers/pi-ai-deltas.test.ts"
+      ]
+    },
+    {
+      "id": "openai-tool-call-identity",
+      "summary": "Responses call_id and item_id are jointly sanitized; long combined identities use an eight-character deterministic hash and stay within 40 characters.",
+      "upstreamPaths": [
+        "packages/ai/src/api/openai-completions.ts"
+      ],
+      "localPaths": [
+        "src/api/openai-completions.ts"
+      ],
+      "regressionTests": [
+        "tests/providers/pi-ai-deltas.test.ts"
+      ]
+    },
+    {
+      "id": "stored-credential-env",
+      "summary": "Generic API-key and Amazon Bedrock stored credentials propagate provider-scoped env alongside resolved auth while keeping source labels secret-free.",
+      "upstreamPaths": [
+        "packages/ai/src/auth/helpers.ts",
+        "packages/ai/src/providers/amazon-bedrock.ts"
+      ],
+      "localPaths": [
+        "src/auth/helpers.ts",
+        "src/providers/amazon-bedrock.ts"
+      ],
+      "regressionTests": [
+        "tests/providers/pi-ai-deltas.test.ts"
+      ]
+    },
+    {
+      "id": "model-catalog-cache",
+      "summary": "ModelsStoreEntry adopts the optional Last-Modified timestamp and preserves it through scoped store round-trips; no conditional-fetch behavior is claimed.",
+      "upstreamPaths": [
+        "packages/ai/src/models-store.ts"
+      ],
+      "localPaths": [
+        "src/models-store.ts"
+      ],
+      "regressionTests": [
+        "tests/providers/pi-ai-deltas.test.ts"
+      ]
+    },
+    {
+      "id": "overflow-detection",
+      "summary": "Context overflow classification recognizes DashScope and Qwen input-range errors while retaining rate-limit exclusions.",
+      "upstreamPaths": [
+        "packages/ai/src/utils/overflow.ts"
+      ],
+      "localPaths": [
+        "src/utils/overflow.ts"
+      ],
+      "regressionTests": [
+        "tests/providers/pi-ai-deltas.test.ts"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "id": "defer-qwen-token-plan-without-fixed-values",
+      "deltaId": "qwen-token-plan",
+      "disposition": "defer",
+      "scope": [
+        "packages/ai/scripts/generate-models.ts",
+        "packages/ai/src/models.generated.ts",
+        "packages/ai/src/providers/all.ts",
+        "packages/ai/src/providers/qwen-token-plan-cn.models.ts",
+        "packages/ai/src/providers/qwen-token-plan-cn.ts",
+        "packages/ai/src/providers/qwen-token-plan.models.ts",
+        "packages/ai/src/providers/qwen-token-plan.ts",
+        "packages/ai/src/types.ts"
+      ],
+      "reason": "The fixed upstream commit tracks provider and structural .models.ts sources but ignores and omits src/providers/data/qwen-token-plan*.json. RunLedger therefore does not invent the 15-model value catalog or register a provider whose generated values cannot be reproduced from the fixed snapshot.",
+      "evidence": [
+        "upstream:packages/ai/scripts/generate-models.ts",
+        "upstream:packages/ai/src/providers/qwen-token-plan.models.ts",
+        "upstream:packages/ai/src/providers/qwen-token-plan-cn.models.ts"
+      ]
+    },
+    {
+      "id": "reject-coding-agent-facades",
+      "disposition": "reject",
+      "scope": [
+        "packages/ai/src/cli.ts",
+        "packages/ai/src/compat.ts",
+        "packages/ai/src/env-api-keys.ts",
+        "packages/ai/src/legacy-api-aliases.ts"
+      ],
+      "reason": "RunLedger is a single-package governed runtime with its own CLI and exports; pi coding-agent convenience facades are outside the provider abstraction boundary.",
+      "evidence": [
+        "upstream:packages/ai/src/cli.ts",
+        "upstream:packages/ai/src/compat.ts",
+        "local:src/index.ts"
+      ]
+    },
+    {
+      "id": "localize-runledger-root-exports",
+      "disposition": "localize",
+      "scope": [
+        "packages/ai/src/index.ts",
+        "src/index.ts"
+      ],
+      "reason": "The pi-ai core exports remain present, while RunLedger intentionally adds runtime, storage, daemon, verification, and governed-control-plane exports.",
+      "evidence": [
+        "upstream:packages/ai/src/index.ts",
+        "local:src/index.ts"
+      ]
+    },
+    {
+      "id": "defer-unpinned-generated-catalog-churn",
+      "disposition": "defer",
+      "scope": [
+        "packages/ai/src/image-models.generated.ts",
+        "packages/ai/src/providers/opencode.models.ts",
+        "packages/ai/src/providers/openrouter.models.ts"
+      ],
+      "reason": "These generated differences come from mutable remote catalog inputs unrelated to the six bounded deltas. They remain at the reviewed RunLedger baseline until generator inputs are pinned and regenerated as a separate catalog change.",
+      "evidence": [
+        "upstream:packages/ai/scripts/generate-models.ts",
+        "local:scripts/generate-models.ts",
+        "local:src/image-models.generated.ts"
+      ]
+    },
+    {
+      "id": "defer-conditional-model-catalog-fetch-semantics",
+      "deltaId": "model-catalog-cache",
+      "disposition": "defer",
+      "scope": [
+        "packages/ai/src/models.ts",
+        "src/models.ts"
+      ],
+      "reason": "The fixed upstream and RunLedger models.ts are byte-identical and do not implement Last-Modified conditional requests. This slice adopts metadata storage only and makes no stale/cache-refresh or conditional-fetch parity claim.",
+      "evidence": [
+        "upstream:packages/ai/src/models.ts",
+        "local:src/models.ts"
+      ]
+    }
+  ],
+  "catalog": {
+    "algorithm": "sha256-path-digest-v1",
+    "files": [
+      {
+        "path": "src/image-models.generated.ts",
+        "digest": "sha256:255db32f84f1a94f579f061506ced014ccf33d0b719b4a855eace464cb395a00"
+      },
+      {
+        "path": "src/models.generated.ts",
+        "digest": "sha256:ca7059ec42b51e1ca9aacc92a2be24e552c5025a849a62f8b7f2327d80dea46b"
+      },
+      {
+        "path": "src/providers/amazon-bedrock.models.ts",
+        "digest": "sha256:4695d0cb62a65ae10874cf24ab9e06dd348987c4e48b892b64c440deefaf54f3"
+      },
+      {
+        "path": "src/providers/ant-ling.models.ts",
+        "digest": "sha256:fb6c9fdf5a8f7c66c7912b0a91d3cd9bb4f7379b78baef459a4e8a68e9a65e9b"
+      },
+      {
+        "path": "src/providers/anthropic.models.ts",
+        "digest": "sha256:ecd2b3cecbe1f7d0844512aa6629260e5b4dde2390922e1dd4c339e4f65409f6"
+      },
+      {
+        "path": "src/providers/azure-openai-responses.models.ts",
+        "digest": "sha256:90fc381f8d2ee48b29cd719226c2728bd3cceb648274858ff5a9592864028c04"
+      },
+      {
+        "path": "src/providers/cerebras.models.ts",
+        "digest": "sha256:d97507a8addb4bf40dc8cd9149e9e95406e9745f653efa3576b963cd21c99db8"
+      },
+      {
+        "path": "src/providers/cloudflare-ai-gateway.models.ts",
+        "digest": "sha256:609f092729d68c10ef99b3af9f4f8d8cf22a81ece345a650dcf5ec9aff5d159f"
+      },
+      {
+        "path": "src/providers/cloudflare-workers-ai.models.ts",
+        "digest": "sha256:2402455b10c3960ad0afa0908d493bc2dc843a4ff78ac10502b7f11757e1b406"
+      },
+      {
+        "path": "src/providers/data/amazon-bedrock.json",
+        "digest": "sha256:5e0cf6a2985c99aa41093c3a68f0585d2b271baa7a229c805bdf2f1288cc530a"
+      },
+      {
+        "path": "src/providers/data/ant-ling.json",
+        "digest": "sha256:cd4dbdca109e1c31dc7b81c8f8c358c65aee98abc9354c6cba1103c6d79228d2"
+      },
+      {
+        "path": "src/providers/data/anthropic.json",
+        "digest": "sha256:bcf2011f93fcd4080b97f119bd3886dc4b1f2f821c07956f785ad87888eda706"
+      },
+      {
+        "path": "src/providers/data/azure-openai-responses.json",
+        "digest": "sha256:fe6e2515f7eabb0d08e25ab7dae31fee015028b022b1c6a619667de9b7f6c564"
+      },
+      {
+        "path": "src/providers/data/cerebras.json",
+        "digest": "sha256:019d186b980c66703e04e30e091d6da64f2016be846a82c71665fdf95c5a706a"
+      },
+      {
+        "path": "src/providers/data/cloudflare-ai-gateway.json",
+        "digest": "sha256:23e573914abfacefecd70024cba38c9651158c36b8d3aa8353e783b3a61ba7e9"
+      },
+      {
+        "path": "src/providers/data/cloudflare-workers-ai.json",
+        "digest": "sha256:7802ee19993c20f534d3bde2458af37162b0627f7600b5832b0be8d7b228f2f9"
+      },
+      {
+        "path": "src/providers/data/deepseek.json",
+        "digest": "sha256:2af04396431781c4b60ff990f9709aac9a73efcd81fd081efeb194de9ee5f71e"
+      },
+      {
+        "path": "src/providers/data/fireworks.json",
+        "digest": "sha256:900efa03234b933c13ac43a3daab99c651229a4e67324f7e80185402b1c7fef8"
+      },
+      {
+        "path": "src/providers/data/github-copilot.json",
+        "digest": "sha256:3617f0be648a7f7eaf80cc0757306de003b60c1b8dd340348ef19f73bd620c44"
+      },
+      {
+        "path": "src/providers/data/google-vertex.json",
+        "digest": "sha256:c8eaf862f1221580dc87bcdb632695398b67c847ca2d3292530c759107b83741"
+      },
+      {
+        "path": "src/providers/data/google.json",
+        "digest": "sha256:836eac7fc9462be8b6ae409823cf94a0938a54f97e1ca42b69b9bcda1b064661"
+      },
+      {
+        "path": "src/providers/data/groq.json",
+        "digest": "sha256:b66f0c739d362389d1ca498a963c64ab71f7721ce235e7ddc4e19ef4a3dc8228"
+      },
+      {
+        "path": "src/providers/data/huggingface.json",
+        "digest": "sha256:69be06fb2f15a57619cbd8235f0d861ac6c4a820d5340214be207e9cbe1f61e2"
+      },
+      {
+        "path": "src/providers/data/kimi-coding.json",
+        "digest": "sha256:8954bba9ebb17dbf08a9f9748fe17812056d5d8b18691735092157f7641cdbd3"
+      },
+      {
+        "path": "src/providers/data/minimax-cn.json",
+        "digest": "sha256:328aa5ee5883ce0d12aa56e5455872eb0f4782a21b16b60822bcd4a3154bf042"
+      },
+      {
+        "path": "src/providers/data/minimax.json",
+        "digest": "sha256:e8c94dc0856b5803815ac38b2b7c65e5bcbbe6db7a4010cefc94b9d36d0bd8d9"
+      },
+      {
+        "path": "src/providers/data/mistral.json",
+        "digest": "sha256:9f4815a902b6aefa68b0568ac6479e38693632a234b98130b40243713bd54696"
+      },
+      {
+        "path": "src/providers/data/moonshotai-cn.json",
+        "digest": "sha256:b151d9148ec0541a75f636d8fe26bcb05642f9cea662968daefa5855c027f0d3"
+      },
+      {
+        "path": "src/providers/data/moonshotai.json",
+        "digest": "sha256:33c4ddb125cfb6225c6a652bb22d1aaa72e2150e151daddb14ccd38f737ed8f8"
+      },
+      {
+        "path": "src/providers/data/nvidia.json",
+        "digest": "sha256:5a2533834e0e3417c32f0105ca36975f67c76c74ae2a366be5b13b957eb48f75"
+      },
+      {
+        "path": "src/providers/data/openai-codex.json",
+        "digest": "sha256:d328ec901afd11df831ddc9d77eb60c125bd39e14eb1714587597d65af8fd0c7"
+      },
+      {
+        "path": "src/providers/data/openai.json",
+        "digest": "sha256:f3958b0a33f3aa1bef7a20742cbfe09575e28255173702663c09155f4eddf362"
+      },
+      {
+        "path": "src/providers/data/opencode-go.json",
+        "digest": "sha256:2cb7aad90282e3024989ff6a1466c34254e3daba80fb7fac968c28eb32d325b8"
+      },
+      {
+        "path": "src/providers/data/opencode.json",
+        "digest": "sha256:8df5b9a18b2d4675e6fea1748ecdc1f908299ae8777fc5a3fb8fc17a31b5e862"
+      },
+      {
+        "path": "src/providers/data/openrouter.json",
+        "digest": "sha256:fe77a4475dfe1c6eef40a869c9e323b851134ba47e046b4753f1894bb98faadb"
+      },
+      {
+        "path": "src/providers/data/together.json",
+        "digest": "sha256:b4c92f69003a0e427037dd257f3e980681236015f72be96e6a35e423fc0bbeb9"
+      },
+      {
+        "path": "src/providers/data/vercel-ai-gateway.json",
+        "digest": "sha256:65f87a2784f2e19aabb7553db5ebccc4377d7ffd08f21e609055b03522b77d39"
+      },
+      {
+        "path": "src/providers/data/xai.json",
+        "digest": "sha256:d8f36e4a877d464a292d9cc914f610837ffad452421325ac55379f1af4686679"
+      },
+      {
+        "path": "src/providers/data/xiaomi-token-plan-ams.json",
+        "digest": "sha256:c6c246e77d6cff1a7f0ae5cdcf6beabd89eb7b5ff0a697c4120d070f120f91be"
+      },
+      {
+        "path": "src/providers/data/xiaomi-token-plan-cn.json",
+        "digest": "sha256:e160f2805c63f7aeb86e53b6ca9c848ce04262757144cf3966f9590e6d89d212"
+      },
+      {
+        "path": "src/providers/data/xiaomi-token-plan-sgp.json",
+        "digest": "sha256:c81874b2aa8b17edc5d8e75a09c735e833d4432f21671e1b716e2ea369218ccc"
+      },
+      {
+        "path": "src/providers/data/xiaomi.json",
+        "digest": "sha256:2e69ba280bb332fdfd9a3be501b9b8fd40562c421a866894640c4d667dbab562"
+      },
+      {
+        "path": "src/providers/data/zai-coding-cn.json",
+        "digest": "sha256:a19a0f5385de068576ee74feec2771a89caed121c9d70329b3712d0404588be0"
+      },
+      {
+        "path": "src/providers/data/zai.json",
+        "digest": "sha256:03b7cd1d97a4af5e9b67264614fce0d439f32d24767cb5894311d4afb29c5d05"
+      },
+      {
+        "path": "src/providers/deepseek.models.ts",
+        "digest": "sha256:f7477db1219465893d7262869e61d97960f29df510d5fb2e411edc9a22825e12"
+      },
+      {
+        "path": "src/providers/fireworks.models.ts",
+        "digest": "sha256:ea2af63c05129f57295b090e5010244033ec060d4de3f00908c2f7b5cb50262d"
+      },
+      {
+        "path": "src/providers/github-copilot.models.ts",
+        "digest": "sha256:52f6c998e7694e7d13004a446d703957babe1fa09c59fde75addfceab4613771"
+      },
+      {
+        "path": "src/providers/google-vertex.models.ts",
+        "digest": "sha256:91a99378fe497a5bea97e9e0ce3fa966e85e21f11846f3b9a73009118c3ffb73"
+      },
+      {
+        "path": "src/providers/google.models.ts",
+        "digest": "sha256:d1492d35f149e3471b85f601af8af6afbf3b6824f57966f160bf1b050da5c654"
+      },
+      {
+        "path": "src/providers/groq.models.ts",
+        "digest": "sha256:eedead238cfcb0414042e4c833dcd3b03ed8742a1ad46ad9123a2c53a01d4822"
+      },
+      {
+        "path": "src/providers/huggingface.models.ts",
+        "digest": "sha256:5b3d19abe3298b79734d4decd91bb3333f0858f0471f76379709067974ae8140"
+      },
+      {
+        "path": "src/providers/kimi-coding.models.ts",
+        "digest": "sha256:3074d7081b9ff1be5a5fa087899fccb317cddee2718977b357589b75d2cd7965"
+      },
+      {
+        "path": "src/providers/minimax-cn.models.ts",
+        "digest": "sha256:187a3db8d50bcbe82210952e6787c64d8f0dd0187073f679825fc6d6bc0d667b"
+      },
+      {
+        "path": "src/providers/minimax.models.ts",
+        "digest": "sha256:480946289afbf9be357bc5002566de8bbbddd0234f0d978ff2cf945e6ffb3094"
+      },
+      {
+        "path": "src/providers/mistral.models.ts",
+        "digest": "sha256:4e6724d28bdb336ea194c2060164ab3b98b6a3c69b3869b2006040739acd2034"
+      },
+      {
+        "path": "src/providers/moonshotai-cn.models.ts",
+        "digest": "sha256:1614ba2b2fe54394b673eb0dfc81c2a26f972b7677b5dce3d076b6ed1de650af"
+      },
+      {
+        "path": "src/providers/moonshotai.models.ts",
+        "digest": "sha256:5d2208c9e14d1cec0ef22440198a693b4037e2e303d2b3b70fa5654e3a703046"
+      },
+      {
+        "path": "src/providers/nvidia.models.ts",
+        "digest": "sha256:f20e547be5d5a6a9a239552f69dbd6a3016fcafe76fac2dc20a112bef439d39d"
+      },
+      {
+        "path": "src/providers/openai-codex.models.ts",
+        "digest": "sha256:5698f50dab4be4f7bb4971e2a8e306416a58c1dbe63b07140afec1a46adbfd8e"
+      },
+      {
+        "path": "src/providers/openai.models.ts",
+        "digest": "sha256:d0c6fe0238f4e8e9fc8535cbfb7df7d0001006cec888d233e68037b607d63c7d"
+      },
+      {
+        "path": "src/providers/opencode-go.models.ts",
+        "digest": "sha256:f4cb3a8b44b3ff0a7be8d072d91202c9fac3de42daa748b283a0bf586feca767"
+      },
+      {
+        "path": "src/providers/opencode.models.ts",
+        "digest": "sha256:53c19cc3ab5227ad49a34bd6ca712d964ba5e69ebe5d237240374a3de619c7dc"
+      },
+      {
+        "path": "src/providers/openrouter.models.ts",
+        "digest": "sha256:c0f155468687347042a87b9d3f1f2dc5d70b85c1ea05deb38fa5f0d62f344681"
+      },
+      {
+        "path": "src/providers/together.models.ts",
+        "digest": "sha256:9f29fdd23b5587f20ff2c49aefc4a3e62b07613beed5666191cdc5427e675c91"
+      },
+      {
+        "path": "src/providers/vercel-ai-gateway.models.ts",
+        "digest": "sha256:f58485c8529ba2d438b808282940c3168f28e0602d8e6de573290ef68e385f0e"
+      },
+      {
+        "path": "src/providers/xai.models.ts",
+        "digest": "sha256:61a8578d69d56f2f661d003e3eff9be9f9ace183428fe394c076a0aad89a7ab9"
+      },
+      {
+        "path": "src/providers/xiaomi-token-plan-ams.models.ts",
+        "digest": "sha256:265522d334e0b29abb8e9ca53ee11b3acc7bbd604e36572bbb064caedcfcd310"
+      },
+      {
+        "path": "src/providers/xiaomi-token-plan-cn.models.ts",
+        "digest": "sha256:2776648f0452616c96f385120f2e530f2b68392915fbf4f2df968de5797a82f3"
+      },
+      {
+        "path": "src/providers/xiaomi-token-plan-sgp.models.ts",
+        "digest": "sha256:18406f4c253eb199467b6cdd1d5723e8710b2f87c1296f30f3f3ea074a438078"
+      },
+      {
+        "path": "src/providers/xiaomi.models.ts",
+        "digest": "sha256:527b6d38e09881b7fbef33542ddca2ace61af6f61ca2e826c65e37eeabc05284"
+      },
+      {
+        "path": "src/providers/zai-coding-cn.models.ts",
+        "digest": "sha256:832941a4123611fae2074cf0b952c2f4346c43c84b067a32c58072ae5831ac31"
+      },
+      {
+        "path": "src/providers/zai.models.ts",
+        "digest": "sha256:f3b415a19d3239e6347c49fc1ff5cbc73cba79dfcf99e1cbefd0b050c4e9b58e"
+      }
+    ],
+    "digest": "sha256:14f43c2629e3aa082691c730ab7ae7c1a65ef092ad7135f52601f161fd1cded7"
+  },
+  "messageEventTransformations": {
+    "summary": "Provider Message and AssistantMessageEvent contracts remain byte-identical except for the adopted ToolResult usage field and the explicitly deferred Qwen provider identifiers. Provider adapters normalize transport-specific identities but do not claim session-level safe model switching.",
+    "behaviors": [
+      {
+        "id": "assistant-event-stream-byte-parity",
+        "summary": "AssistantMessageEventStream and event shapes are byte-identical to the fixed pi-ai snapshot.",
+        "evidence": [
+          "upstream:packages/ai/src/utils/event-stream.ts",
+          "local:src/utils/event-stream.ts",
+          "upstream:packages/ai/src/types.ts",
+          "local:src/types.ts"
+        ]
+      },
+      {
+        "id": "tool-result-usage-outside-main-accounting",
+        "summary": "Optional tool-execution usage survives message serialization but provider context conversion emits only tool content and identity, so it is not folded into main LLM usage.",
+        "evidence": [
+          "upstream:packages/ai/src/types.ts",
+          "local:src/types.ts",
+          "local:tests/providers/pi-ai-deltas.test.ts"
+        ]
+      },
+      {
+        "id": "responses-to-completions-tool-identity",
+        "summary": "Pipe-separated Responses identities preserve call and item uniqueness through the shared transform callback, including deterministic shortening for the Chat Completions limit.",
+        "evidence": [
+          "upstream:packages/ai/src/api/openai-completions.ts",
+          "local:src/api/openai-completions.ts",
+          "local:tests/providers/pi-ai-deltas.test.ts"
+        ]
+      },
+      {
+        "id": "runtime-adapter-boundary",
+        "summary": "RunLedger runtime adapters consume the provider Message/Event surface separately; this manifest does not treat best-effort provider normalization as proof of session-level model-switch compatibility.",
+        "evidence": [
+          "local:src/runtime/types.ts",
+          "local:src/runtime/agent-loop.ts"
+        ]
+      }
+    ]
+  },
+  "verification": {
+    "results": [
+      {
+        "command": "npx vitest run tests/providers/pi-ai-deltas.test.ts tests/providers/pi-ai-parity-audit.test.ts",
+        "status": "passed",
+        "summary": "Focused delta and fail-closed parity-audit tests passed."
+      },
+      {
+        "command": "npm run audit:pi-ai -- --upstream ../pi --commit 3f1762cc7d3af39898aa5d21891335935011287f",
+        "status": "passed",
+        "summary": "The explicit local snapshot audit recomputed all source, catalog, license, and decision evidence."
+      },
+      {
+        "command": "npm run check",
+        "status": "passed",
+        "summary": "TypeScript and both runtime/execution boundary checks passed on the integrated governed-runtime worktree."
+      },
+      {
+        "command": "npm test",
+        "status": "passed",
+        "summary": "The integrated suite passed: 231 files and 1299 tests."
+      },
+      {
+        "command": "npm run build",
+        "status": "passed",
+        "summary": "The NodeNext production build completed successfully on the integrated governed-runtime worktree."
+      },
+      {
+        "command": "git diff --check",
+        "status": "passed",
+        "summary": "The complete worktree diff contains no whitespace errors."
+      }
+    ]
+  },
+  "license": {
+    "upstreamFile": "LICENSE",
+    "upstreamDigest": "sha256:0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+    "upstreamPackageSpdx": "MIT",
+    "runLedgerPackageFile": "package.json",
+    "runLedgerPackageSpdx": "MIT",
+    "conclusion": "The fixed pi-ai snapshot and RunLedger package both declare MIT; the bounded source adaptations are license-compatible and retain upstream provenance in this manifest."
+  }
+}

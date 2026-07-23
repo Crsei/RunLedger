@@ -63,6 +63,8 @@ import type {
   StreamFn,
   ToolResultAgentMessage,
   ToolResultContent,
+  ToolExecutionAuthorizationGrant,
+  ToolExecutionGatewayRequest,
 } from "./types.ts";
 import type { AssistantMessage, ImageContent, Message, StopReason, TextContent, Tool, ToolCall } from "../types.ts";
 import { validateToolArguments } from "../utils/validation.ts";
@@ -72,6 +74,113 @@ import { localExecutionEnv } from "./execution-env.ts";
 import { makeToolContext } from "./tool-context.ts";
 import { DEFAULT_MAX_BYTES } from "./tools/tool-support.ts";
 import { writeFileSync, mkdirSync } from "node:fs";
+import type {
+  DurableModelHandle,
+  DurableToolHandle,
+  DurableTurnHandle,
+} from "./session/agent-loop-events.ts";
+import {
+  zeroAgentOperationBudgetUsage,
+  type AgentOperationBudgetReservation,
+  type AgentOperationBudgetUsage,
+  type AgentOperationOutcome,
+} from "./operation-budget.ts";
+import { canonicalDigest } from "./protocol/v3/canonical-json.ts";
+
+const DEFAULT_PROVIDER_BUDGET_WALL_TIME_MS = 120_000;
+const DEFAULT_TOOL_BUDGET_WALL_TIME_MS = 60_000;
+const DEFAULT_TOOL_EXTERNAL_BYTES = 256 * 1024;
+
+function safeBudgetInteger(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(value));
+}
+
+function serializedModelInput(context: LlmContext): string {
+  return JSON.stringify({
+    systemPrompt: context.systemPrompt ?? "",
+    messages: context.messages,
+    tools: (context.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
+  });
+}
+
+function providerBudgetEstimate(
+  model: AgentLoopConfig["model"],
+  context: LlmContext,
+): AgentOperationBudgetUsage {
+  const inputBytes = Buffer.byteLength(serializedModelInput(context), "utf8");
+  const inputTokens = Math.min(model.contextWindow, safeBudgetInteger(inputBytes / 3 + 8));
+  const outputTokens = safeBudgetInteger(model.maxTokens);
+  const rates = [model.cost, ...(model.cost.tiers ?? [])];
+  const inputRate = Math.max(...rates.map((rate) => rate.input));
+  const outputRate = Math.max(...rates.map((rate) => rate.output));
+  return {
+    ...zeroAgentOperationBudgetUsage(),
+    inputTokens,
+    outputTokens,
+    usdMicros: safeBudgetInteger(inputTokens * inputRate + outputTokens * outputRate),
+    wallTimeMs: DEFAULT_PROVIDER_BUDGET_WALL_TIME_MS,
+  };
+}
+
+function providerBudgetActual(
+  reservation: AgentOperationBudgetReservation,
+  usage: AssistantAgentMessage["usage"],
+  startedAtMs: number,
+): AgentOperationBudgetUsage {
+  if (!usage) return { ...reservation.estimatedUpperBound };
+  return {
+    ...zeroAgentOperationBudgetUsage(),
+    inputTokens: safeBudgetInteger(usage.input),
+    outputTokens: safeBudgetInteger(usage.output),
+    usdMicros: safeBudgetInteger(usage.cost.total * 1_000_000),
+    wallTimeMs: safeBudgetInteger(Date.now() - startedAtMs),
+  };
+}
+
+function toolTimeoutMs(args: unknown): number {
+  if (typeof args !== "object" || args === null || Array.isArray(args)) return DEFAULT_TOOL_BUDGET_WALL_TIME_MS;
+  const timeout = Reflect.get(args, "timeout");
+  return typeof timeout === "number" && Number.isFinite(timeout) && timeout > 0
+    ? safeBudgetInteger(timeout)
+    : DEFAULT_TOOL_BUDGET_WALL_TIME_MS;
+}
+
+function toolBudgetEstimate(
+  args: unknown,
+  capability: ToolExecutionAuthorizationGrant["capability"] | undefined,
+  maxResultSizeChars: number,
+  storesArtifact: boolean,
+): AgentOperationBudgetUsage {
+  const externalBytes = Math.max(DEFAULT_TOOL_EXTERNAL_BYTES, safeBudgetInteger(maxResultSizeChars));
+  const usesNetwork = capability === "network" || capability === "browser" ||
+    capability === "dependency_install" || capability === "deploy";
+  const writesStorage = capability === "workspace_write" || capability === "dependency_install" ||
+    capability === "process" || capability === "deploy" || capability === "cross_workspace";
+  return {
+    ...zeroAgentOperationBudgetUsage(),
+    wallTimeMs: toolTimeoutMs(args),
+    toolCalls: 1,
+    networkBytes: usesNetwork ? externalBytes : 0,
+    storageBytes: writesStorage ? externalBytes : 0,
+    artifactCount: storesArtifact ? 1 : 0,
+  };
+}
+
+function toolBudgetActual(
+  reservation: AgentOperationBudgetReservation,
+  startedAtMs: number,
+): AgentOperationBudgetUsage {
+  return {
+    ...zeroAgentOperationBudgetUsage(),
+    wallTimeMs: safeBudgetInteger(Date.now() - startedAtMs),
+    toolCalls: 1,
+    // Gateway 尚未提供 byte receipts；在可 reconciliation 前保守记入预留上界。
+    networkBytes: reservation.estimatedUpperBound.networkBytes,
+    storageBytes: reservation.estimatedUpperBound.storageBytes,
+    artifactCount: reservation.estimatedUpperBound.artifactCount,
+  };
+}
 
 /**
  * 与 pi 对齐的对外接口。本期只实现 runAgentLoop 与 runAgentLoopContinue,
@@ -123,6 +232,7 @@ export async function runAgentLoop(
     }
     const ts = Date.now();
     await fire({ type: "message_start", timestamp: ts, role: "user", message: p });
+    await config.sessionEvents?.recordMessage(p);
     messages.push(p);
     const ts2 = Date.now();
     await fire(
@@ -148,6 +258,8 @@ export async function runAgentLoop(
   let loopReasoning = config.reasoning;
   let pendingMessages: AgentMessage[] = await config.getSteeringMessages?.() ?? [];
 
+  await config.sessionEvents?.ensureInitialized();
+
   // inner loop
   while (true) {
     if (signal?.aborted) {
@@ -155,6 +267,20 @@ export async function runAgentLoop(
       break;
     }
     turn++;
+    // clear/cancel 可能在 turn tail 已 reserve 消息后赢得竞争。正文必须与
+    // durable reference 一起被剔除，不能出现 event 已 cancelled 但仍发给模型。
+    pendingMessages = [
+      ...(config.sessionEvents?.activeQueueMessages(pendingMessages) ?? pendingMessages),
+    ];
+    // Control Plane 会在启动首轮前先 durable enqueue 初始 prompt。首轮只把
+    // prompts 加入 queue-item 匹配集合，不重复写 conversation message。
+    const durableQueueMessages = turn === 1
+      ? [...prompts, ...pendingMessages]
+      : pendingMessages;
+    // Queue 归属由 Agent 在 enqueue receipt / replay 时绑定到精确对象；这里传递
+    // queueItemId + kind reference，禁止用相同正文 digest 猜测 steer/follow-up。
+    const durableQueueReferences = config.sessionEvents?.queueReferencesFor(durableQueueMessages) ?? [];
+    const durableTurn = await config.sessionEvents?.beginTurn(durableQueueReferences);
     const tStart = Date.now();
     await fire(
       { type: "turn_start", timestamp: tStart, turn },
@@ -173,6 +299,7 @@ export async function runAgentLoop(
         if (pending.role !== "user") continue;
         const pendingStart = Date.now();
         await fire({ type: "message_start", timestamp: pendingStart, role: "user", message: pending });
+        await config.sessionEvents?.recordMessage(pending);
         messages.push(pending);
         const pendingEnd = Date.now();
         await fire(
@@ -198,25 +325,116 @@ export async function runAgentLoop(
     const convertFn = config.convertToLlm ?? defaultConvertToLlm;
     const llmMessages = await convertFn(messages);
 
-    const llmContext: LlmContext = {
+    let llmContext: LlmContext = {
       systemPrompt: context.systemPrompt,
       messages: llmMessages,
       tools: context.tools,
     };
+    let requestModel = loopModel;
+    if (config.prepareModelRequest) {
+      try {
+        const prepared = await config.prepareModelRequest({
+          turn,
+          ...(durableTurn ? { turnId: durableTurn.turnId } : {}),
+          ...(durableTurn?.modelRequestId ? { modelRequestId: durableTurn.modelRequestId } : {}),
+          model: requestModel,
+          context: llmContext,
+          messages,
+        }, signal);
+        requestModel = prepared.model;
+        llmContext = prepared.context;
+      } catch (error) {
+        if (durableTurn) await config.sessionEvents?.failTurn(durableTurn, error);
+        throw error;
+      }
+    }
+    const durableModel = durableTurn
+      ? await config.sessionEvents?.beginModelRequest(
+          durableTurn,
+          `${requestModel.provider}/${requestModel.id}`,
+          {
+            // prepareModelRequest 可能切换 provider/model 并重组系统上下文；
+            // durable model.requested 必须绑定真正送往 provider 的最终请求。
+            systemPrompt: llmContext.systemPrompt ?? "",
+            messages: JSON.stringify(llmContext.messages),
+            tools: (llmContext.tools ?? []).map((tool) => tool.name),
+          },
+        )
+      : undefined;
 
     // 2. 取 streamFn
     const fn = streamFn;
     if (!fn) {
       throw new Error("streamFn is required (avoid passing undefined)");
     }
-    const stream = await Promise.resolve(
-      fn(loopModel, llmContext, {
-        apiKey: config.apiKey,
-        env: config.env,
-        signal,
-        ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
-      }),
-    );
+    const providerEstimate = providerBudgetEstimate(requestModel, llmContext);
+    let providerBudgetReservation: AgentOperationBudgetReservation | undefined;
+    if (config.operationBudget) {
+      try {
+        providerBudgetReservation = await config.operationBudget.reserve({
+          kind: "provider",
+          operationKey: durableModel?.requestId ?? `provider-${sessionId}-${turn}`,
+          estimatedUpperBound: providerEstimate,
+        });
+      } catch (error) {
+        if (durableModel) await config.sessionEvents?.failModelRequest(durableModel, error);
+        if (durableTurn) await config.sessionEvents?.failTurn(durableTurn, error);
+        throw error;
+      }
+    }
+    if (signal?.aborted && providerBudgetReservation && config.operationBudget) {
+      try {
+        await config.operationBudget.refund({ reservation: providerBudgetReservation, reason: "cancelled" });
+      } catch (budgetError) {
+        throw new AggregateError([budgetError], "provider budget refund failed before request start");
+      }
+      const error = new Error("provider request aborted before start");
+      if (durableModel) await config.sessionEvents?.failModelRequest(durableModel, error);
+      if (durableTurn) await config.sessionEvents?.failTurn(durableTurn, error);
+      throw error;
+    }
+    const providerStartedAtMs = Date.now();
+    let providerBudgetSettled = false;
+    const settleProviderBudget = async (
+      outcome: AgentOperationOutcome,
+      usage: AssistantAgentMessage["usage"],
+      result: unknown,
+    ): Promise<void> => {
+      if (!providerBudgetReservation || !config.operationBudget || providerBudgetSettled) return;
+      await config.operationBudget.commit({
+        reservation: providerBudgetReservation,
+        outcome,
+        actual: providerBudgetActual(providerBudgetReservation, usage, providerStartedAtMs),
+        resultDigest: canonicalDigest(
+          typeof result === "string" ? result : JSON.stringify(result ?? null),
+        ),
+      });
+      providerBudgetSettled = true;
+    };
+    let stream: Awaited<ReturnType<StreamFn>>;
+    try {
+      stream = await Promise.resolve(
+        fn(requestModel, llmContext, {
+          apiKey: config.apiKey,
+          env: config.env,
+          signal,
+          ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
+        }),
+      );
+    } catch (error) {
+      try {
+        await settleProviderBudget(
+          "uncertain",
+          undefined,
+          error instanceof Error ? `${error.name}:${error.message}` : String(error),
+        );
+      } catch (budgetError) {
+        throw new AggregateError([error, budgetError], "provider request and budget settlement both failed");
+      }
+      if (durableModel) await config.sessionEvents?.failModelRequest(durableModel, error);
+      if (durableTurn) await config.sessionEvents?.failTurn(durableTurn, error);
+      throw error;
+    }
 
     // 3. 消费 stream,边 emit message_* 事件,边累积 assistant content
     const assistantContent: AssistantAgentMessage["content"] = [];
@@ -225,9 +443,10 @@ export async function runAgentLoop(
     let assistantErrorMessage: string | undefined;
     let providerMessage: AssistantMessage | undefined;
     let messageOpen = false;
-    for await (const ev of stream) {
-      const ts = Date.now();
-      if (ev.type === "start") {
+    try {
+      for await (const ev of stream) {
+        const ts = Date.now();
+        if (ev.type === "start") {
         if (!messageOpen) {
           messageOpen = true;
           await fire({
@@ -279,12 +498,37 @@ export async function runAgentLoop(
         assistantStopReason = ev.message.stopReason;
         assistantUsage = ev.message.usage;
         assistantErrorMessage = ev.message.errorMessage;
-      } else if (ev.type === "error") {
-        providerMessage = ev.error;
-        assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
-        assistantErrorMessage = ev.error.errorMessage;
+        } else if (ev.type === "error") {
+          providerMessage = ev.error;
+          assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
+          assistantErrorMessage = ev.error.errorMessage;
+        }
       }
+    } catch (error) {
+      try {
+        await settleProviderBudget(
+          "uncertain",
+          assistantUsage,
+          error instanceof Error ? `${error.name}:${error.message}` : String(error),
+        );
+      } catch (budgetError) {
+        throw new AggregateError([error, budgetError], "provider stream and budget settlement both failed");
+      }
+      if (durableModel) await config.sessionEvents?.failModelRequest(durableModel, error);
+      if (durableTurn) await config.sessionEvents?.failTurn(durableTurn, error);
+      throw error;
     }
+    const providerOutcome: AgentOperationOutcome =
+      assistantStopReason === "aborted"
+        ? (assistantUsage ? "cancelled" : "uncertain")
+        : assistantStopReason === "error"
+          ? (assistantUsage ? "failed" : "uncertain")
+          : "succeeded";
+    await settleProviderBudget(providerOutcome, assistantUsage, {
+      stopReason: assistantStopReason,
+      usage: assistantUsage,
+      errorMessage: assistantErrorMessage,
+    });
     const assistantMessage: AssistantAgentMessage = {
       role: "assistant",
       content: providerMessage?.content ?? assistantContent,
@@ -296,7 +540,21 @@ export async function runAgentLoop(
       model: providerMessage?.model,
       timestamp: providerMessage?.timestamp,
     };
+    if (durableModel) {
+      if (assistantStopReason === "error" || assistantStopReason === "aborted") {
+        await config.sessionEvents?.failModelRequest(
+          durableModel,
+          assistantErrorMessage ?? assistantStopReason,
+        );
+      } else {
+        await config.sessionEvents?.finishModelRequest(durableModel, assistantMessage, {
+          inputTokens: assistantUsage?.input ?? 0,
+          outputTokens: assistantUsage?.output ?? 0,
+        });
+      }
+    }
     if (messageOpen || providerMessage) {
+      await config.sessionEvents?.recordMessage(assistantMessage);
       const ts = Date.now();
       await fire(
         {
@@ -335,10 +593,16 @@ export async function runAgentLoop(
       let toolResults: ToolResultContent[];
       if (assistantStopReason === "length") {
         // 截断降级路径:不真正执行,每工具合成 isError ToolResultContent
-        toolResults = await failToolCallsFromTruncatedMessage(toolCalls, fire, sessionId);
+        toolResults = await failToolCallsFromTruncatedMessage(
+          toolCalls,
+          fire,
+          sessionId,
+          config,
+          durableTurn,
+        );
       } else {
         // 5. 执行
-        toolResults = await executeToolCalls(
+        const executedBatch = await executeToolCalls(
           toolCalls,
           context.tools ?? [],
           messages,
@@ -348,13 +612,17 @@ export async function runAgentLoop(
           signal ?? new AbortController().signal,
           fire,
           sessionId,
+          durableTurn,
         );
+        toolResults = executedBatch.results;
+        if (executedBatch.stopReason) lastStopReason = executedBatch.stopReason;
       }
       for (const r of toolResults) {
         const msg: ToolResultAgentMessage = {
           role: "toolResult",
           content: [r],
         };
+        await config.sessionEvents?.recordMessage(msg);
         messages.push(msg);
         context.messages = messages.slice();
         if (ledger) {
@@ -375,6 +643,15 @@ export async function runAgentLoop(
       }
     }
 
+    if (durableTurn) {
+      if (lastStopReason === "aborted") {
+        await config.sessionEvents?.interruptTurn(durableTurn, "model or tool execution aborted");
+      } else if (lastStopReason === "error") {
+        await config.sessionEvents?.failTurn(durableTurn, assistantErrorMessage ?? "model request failed");
+      } else {
+        await config.sessionEvents?.finishTurn(durableTurn, messages, lastStopReason);
+      }
+    }
     const tEnd = Date.now();
     await fire(
       { type: "turn_end", timestamp: tEnd, turn, stopReason: lastStopReason },
@@ -405,7 +682,7 @@ export async function runAgentLoop(
       break;
     }
 
-    if (assistantStopReason === "error" || assistantStopReason === "aborted") break;
+    if (lastStopReason === "error" || lastStopReason === "aborted") break;
 
     // steering 优先于 follow-up,且只在当前工具批次完成后注入。
     pendingMessages = await config.getSteeringMessages?.() ?? [];
@@ -513,14 +790,30 @@ async function executeToolCalls(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
-): Promise<ToolResultContent[]> {
-  const mode = resolveExecutionMode(toolCalls, tools, config.toolExecution ?? "sequential");
+  durableTurn: DurableTurnHandle | undefined,
+): Promise<{ results: ToolResultContent[]; stopReason?: StopReason }> {
+  // v3 governed tool calls stay sequential until the Gateway can prove atomic
+  // multi-call authorization and cancellation semantics for the whole batch.
+  const mode = config.sessionEvents
+    ? "sequential"
+    : resolveExecutionMode(toolCalls, tools, config.toolExecution ?? "sequential");
   if (mode === "parallel") {
     // prepare 串行(emit tool_execution_start + 校验 + beforeToolCall),
     // execute 并发,finalize 按 await 实际完成顺序串行
     const prepared: PreparedToolCall[] = [];
     for (const tc of toolCalls) {
-      const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
+      const p = await prepareToolCall(
+        tc,
+        tools,
+        messages,
+        assistantMessage,
+        context,
+        config,
+        signal,
+        fire,
+        sessionId,
+        durableTurn,
+      );
       prepared.push(p);
     }
     const results = await Promise.all(
@@ -532,16 +825,32 @@ async function executeToolCalls(
         await finalizeExecutedToolCall(prepared[i]!, results[i]!, context, config, signal, fire, sessionId),
       );
     }
-    return out;
+    return { results: out };
   }
   // sequential
   const out: ToolResultContent[] = [];
+  let stopReason: StopReason | undefined;
   for (const tc of toolCalls) {
-    const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
+    const p = await prepareToolCall(
+      tc,
+      tools,
+      messages,
+      assistantMessage,
+      context,
+      config,
+      signal,
+      fire,
+      sessionId,
+      durableTurn,
+    );
     const r = await executePreparedToolCall(p, config, signal, fire, sessionId);
     out.push(await finalizeExecutedToolCall(p, r, context, config, signal, fire, sessionId));
+    if (r.gateClosed) {
+      stopReason = r.terminalKind === "interrupted" ? "aborted" : "error";
+      break;
+    }
   }
-  return out;
+  return { results: out, ...(stopReason ? { stopReason } : {}) };
 }
 
 /**
@@ -576,7 +885,47 @@ interface PreparedToolCall {
   tool: AgentTool | undefined;
   args: unknown;
   /** beforeToolCall 已被调用且返回 block:true,直接合成 isError result */
-  blocked?: { reason?: string };
+  blocked?: {
+    reason?: string;
+    terminalKind?: "failed" | "interrupted";
+    outcomeCertain?: boolean;
+    gateClosed?: boolean;
+  };
+  durableTool?: DurableToolHandle;
+  gatewayRequest?: ToolExecutionGatewayRequest;
+  authorizationGrant?: ToolExecutionAuthorizationGrant;
+  budgetReservation?: AgentOperationBudgetReservation;
+  budgetStartedAtMs?: number;
+}
+
+async function reserveToolBudget(
+  config: AgentLoopConfig,
+  toolCall: AgentToolCall,
+  tool: AgentTool,
+  args: unknown,
+  capability: ToolExecutionAuthorizationGrant["capability"] | undefined,
+): Promise<AgentOperationBudgetReservation | undefined> {
+  if (!config.operationBudget) return undefined;
+  return config.operationBudget.reserve({
+    kind: "tool",
+    operationKey: `tool-${toolCall.id}`,
+    estimatedUpperBound: toolBudgetEstimate(
+      args,
+      capability,
+      tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+      config.toolResultArtifactSink !== undefined,
+    ),
+  });
+}
+
+async function refundToolBudget(
+  config: AgentLoopConfig,
+  reservation: AgentOperationBudgetReservation | undefined,
+  reason: "cancelled" | "not_started",
+): Promise<void> {
+  if (reservation && config.operationBudget) {
+    await config.operationBudget.refund({ reservation, reason });
+  }
 }
 
 /**
@@ -593,7 +942,17 @@ async function prepareToolCall(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  durableTurn: DurableTurnHandle | undefined,
 ): Promise<PreparedToolCall> {
+  // `tool.requested.argumentsDigest` 必须绑定 PreToolUse 重写并重新校验后的
+  // canonical 入参；否则 Gateway grant 会与 durable handle 永久失配。
+  let durableTool: DurableToolHandle | undefined;
+  const ensureDurableTool = async (args: unknown): Promise<DurableToolHandle | undefined> => {
+    if (!durableTool && durableTurn) {
+      durableTool = await config.sessionEvents?.requestTool(durableTurn, tc.id, tc.name, args);
+    }
+    return durableTool;
+  };
   const tStart = Date.now();
   await fire(
     {
@@ -614,12 +973,14 @@ async function prepareToolCall(
 
   const tool = tools.find((t) => t.name === tc.name);
   if (!tool) {
-    return { toolCall: tc, tool: undefined, args: tc.arguments };
+    await ensureDurableTool(tc.arguments);
+    return { toolCall: tc, tool: undefined, args: tc.arguments, durableTool };
   }
 
   // signal 已取消时 immediately 终止
   if (signal?.aborted) {
-    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted" } };
+    await ensureDurableTool(tc.arguments);
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted" }, durableTool };
   }
 
   // schema 校验:先把 raw args 走 prepareArguments,再 validate
@@ -635,7 +996,14 @@ async function prepareToolCall(
       arguments: preparedArgs as Record<string, unknown>,
     });
   } catch (e) {
-    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e) } };
+    await ensureDurableTool(tc.arguments);
+    return {
+      toolCall: tc,
+      tool,
+      args: tc.arguments,
+      blocked: { reason: (e as Error).message ?? String(e) },
+      durableTool,
+    };
   }
 
   // beforeToolCall hook
@@ -648,27 +1016,396 @@ async function prepareToolCall(
         context,
         tool,
       }, signal);
-      if (before && (before as BeforeToolCallResult).block) {
+      const result = before as BeforeToolCallResult | undefined;
+      if (result?.block) {
+        await ensureDurableTool(preparedArgs);
         return {
           toolCall: tc,
           tool,
           args: preparedArgs,
-          blocked: { reason: (before as BeforeToolCallResult).reason },
+          blocked: { reason: result.reason },
+          durableTool,
         };
+      }
+      if (result?.updatedInput !== undefined) {
+        try {
+          const updated = tool.prepareArguments
+            ? tool.prepareArguments(result.updatedInput)
+            : result.updatedInput;
+          preparedArgs = validateToolArguments(tool as unknown as Tool, {
+            type: "toolCall",
+            id: tc.id,
+            name: tc.name,
+            arguments: updated as Record<string, unknown>,
+          });
+        } catch (error) {
+          await ensureDurableTool(preparedArgs);
+          return {
+            toolCall: tc,
+            tool,
+            args: preparedArgs,
+            blocked: { reason: `PreToolUse updatedInput failed validation: ${(error as Error).message ?? String(error)}` },
+            durableTool,
+          };
+        }
       }
     } catch (e) {
       // hook 抛错按 block 处理,不污染主循环
       void messages;
+      await ensureDurableTool(preparedArgs);
       return {
         toolCall: tc,
         tool,
         args: preparedArgs,
         blocked: { reason: (e as Error).message ?? String(e) },
+        durableTool,
       };
     }
   }
 
-  return { toolCall: tc, tool, args: preparedArgs };
+  await ensureDurableTool(preparedArgs);
+
+  // 授权必须观察 hook 改写并重新校验后的最终入参。
+  if (config.authorizeToolCall) {
+    try {
+      const authorization = await config.authorizeToolCall({
+        assistantMessage,
+        toolCall: tc,
+        args: preparedArgs,
+        context,
+        tool,
+      }, signal);
+      if (authorization?.block) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          blocked: { reason: authorization.reason },
+          durableTool,
+        };
+      }
+      if (authorization?.updatedInput !== undefined) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          blocked: { reason: "authorization adapters cannot rewrite tool input" },
+          durableTool,
+        };
+      }
+    } catch (error) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        blocked: { reason: (error as Error).message ?? String(error) },
+        durableTool,
+      };
+    }
+  }
+
+  if (durableTool) {
+    if (!config.toolExecutionGateway) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        blocked: {
+          reason: "governed tool execution gateway is not configured",
+          terminalKind: "failed",
+          outcomeCertain: true,
+        },
+        durableTool,
+      };
+    }
+    if (tool.governedExecution !== "tool-context") {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        blocked: {
+          reason: `tool ${tool.name} is not declared as ToolContext-bound and cannot run in a governed session`,
+          terminalKind: "failed",
+          outcomeCertain: true,
+        },
+        durableTool,
+      };
+    }
+    const gatewayRequest: ToolExecutionGatewayRequest = {
+	  turnId: durableTool.turnId,
+      toolCallId: durableTool.toolCallId,
+      providerToolCallId: tc.id,
+      tool,
+      arguments: preparedArgs,
+      cwd: config.cwd ?? process.cwd(),
+      envVars: config.env ?? {},
+    };
+    let authorization: Awaited<ReturnType<NonNullable<AgentLoopConfig["toolExecutionGateway"]>["authorize"]>>;
+    try {
+      authorization = await config.toolExecutionGateway.authorize(gatewayRequest, signal);
+    } catch (error) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: `governed authorization unavailable: ${(error as Error).message ?? String(error)}`,
+          terminalKind: "failed",
+          outcomeCertain: true,
+        },
+        durableTool,
+      };
+    }
+    if (authorization.status !== "authorized") {
+      const interrupted = authorization.status === "aborted";
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: authorization.reason,
+          terminalKind: interrupted ? "interrupted" : "failed",
+          outcomeCertain: true,
+          gateClosed: interrupted,
+        },
+        durableTool,
+      };
+    }
+    let budgetReservation: AgentOperationBudgetReservation | undefined;
+    try {
+      budgetReservation = await reserveToolBudget(
+        config,
+        tc,
+        tool,
+        preparedArgs,
+        authorization.grant.capability,
+      );
+    } catch (error) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: `tool budget reservation failed: ${(error as Error).message ?? String(error)}`,
+          terminalKind: "failed",
+          outcomeCertain: true,
+          gateClosed: true,
+        },
+        durableTool,
+      };
+    }
+    if (signal.aborted) {
+      try {
+        await refundToolBudget(config, budgetReservation, "cancelled");
+      } catch (error) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          gatewayRequest,
+          blocked: {
+            reason: `tool budget refund failed after cancellation: ${(error as Error).message ?? String(error)}`,
+            terminalKind: "interrupted",
+            outcomeCertain: false,
+            gateClosed: true,
+          },
+          durableTool,
+        };
+      }
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: "Operation aborted",
+          terminalKind: "interrupted",
+          outcomeCertain: true,
+          gateClosed: true,
+        },
+        durableTool,
+      };
+    }
+    const sessionEvents = config.sessionEvents;
+    if (!sessionEvents) {
+      try {
+        await refundToolBudget(config, budgetReservation, "not_started");
+      } catch (error) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          gatewayRequest,
+          blocked: {
+            reason: `governed session event bridge disappeared before start and budget refund failed: ${(error as Error).message ?? String(error)}`,
+            terminalKind: "failed",
+            outcomeCertain: false,
+            gateClosed: true,
+          },
+          durableTool,
+        };
+      }
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: "governed session event bridge disappeared before start",
+          terminalKind: "failed",
+          outcomeCertain: true,
+        },
+        durableTool,
+      };
+    }
+    const authorizedTool = durableTool;
+    const started: { handle?: DurableToolHandle } = {};
+    let startResult: Awaited<ReturnType<NonNullable<AgentLoopConfig["toolExecutionGateway"]>["start"]>>;
+    try {
+      startResult = await config.toolExecutionGateway.start(
+        { invocation: gatewayRequest, grant: authorization.grant },
+        async () => {
+          if (started.handle) throw new Error("governed durable start callback was invoked more than once");
+          started.handle = await sessionEvents.authorizeAndStartTool(
+            authorizedTool,
+            authorization.grant,
+            tool,
+          );
+        },
+        signal,
+      );
+    } catch (error) {
+      try {
+        await refundToolBudget(config, budgetReservation, "not_started");
+      } catch (budgetError) {
+        return {
+          toolCall: tc,
+          tool,
+          args: preparedArgs,
+          gatewayRequest,
+          blocked: {
+            reason: `governed start barrier and budget refund both failed: ${(error as Error).message ?? String(error)}; ${(budgetError as Error).message ?? String(budgetError)}`,
+            terminalKind: "failed",
+            outcomeCertain: false,
+            gateClosed: true,
+          },
+          durableTool,
+        };
+      }
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: `governed start barrier unavailable: ${(error as Error).message ?? String(error)}`,
+          terminalKind: "failed",
+          outcomeCertain: true,
+        },
+        durableTool,
+      };
+    }
+    if (startResult.grantDigest !== authorization.grant.grantDigest) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: "governed start barrier returned an uncorrelated grant receipt",
+          terminalKind: "failed",
+          outcomeCertain: false,
+          gateClosed: true,
+        },
+        durableTool,
+      };
+    }
+    if (startResult.status !== "ready") {
+      if (startResult.outcomeCertain) {
+        try {
+          await refundToolBudget(config, budgetReservation, "not_started");
+        } catch (error) {
+          return {
+            toolCall: tc,
+            tool,
+            args: preparedArgs,
+            gatewayRequest,
+            blocked: {
+              reason: `governed start rejected and budget refund failed: ${startResult.reason}; ${(error as Error).message ?? String(error)}`,
+              terminalKind: "failed",
+              outcomeCertain: false,
+              gateClosed: true,
+            },
+            durableTool,
+          };
+        }
+      }
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: startResult.reason,
+          terminalKind: "failed",
+          outcomeCertain: startResult.outcomeCertain,
+          gateClosed: !startResult.outcomeCertain,
+        },
+        durableTool,
+      };
+    }
+    if (!started.handle?.started) {
+      return {
+        toolCall: tc,
+        tool,
+        args: preparedArgs,
+        gatewayRequest,
+        blocked: {
+          reason: "governed start barrier did not durably start the tool",
+          terminalKind: "failed",
+          outcomeCertain: false,
+          gateClosed: true,
+        },
+        durableTool,
+      };
+    }
+    durableTool = started.handle;
+    return {
+      toolCall: tc,
+      tool,
+      args: preparedArgs,
+      durableTool,
+      gatewayRequest,
+      authorizationGrant: authorization.grant,
+      ...(budgetReservation ? { budgetReservation, budgetStartedAtMs: Date.now() } : {}),
+    };
+  }
+  try {
+    const budgetReservation = await reserveToolBudget(config, tc, tool, preparedArgs, undefined);
+    return {
+      toolCall: tc,
+      tool,
+      args: preparedArgs,
+      durableTool,
+      ...(budgetReservation ? { budgetReservation, budgetStartedAtMs: Date.now() } : {}),
+    };
+  } catch (error) {
+    return {
+      toolCall: tc,
+      tool,
+      args: preparedArgs,
+      blocked: {
+        reason: `tool budget reservation failed: ${(error as Error).message ?? String(error)}`,
+        terminalKind: "failed",
+        outcomeCertain: true,
+        gateClosed: true,
+      },
+      durableTool,
+    };
+  }
 }
 
 /**
@@ -688,6 +1425,11 @@ async function executePreparedToolCall(
       content: [{ type: "text", text: p.blocked.reason ?? "blocked by beforeToolCall" }],
       isError: true,
       details: undefined,
+      executionError: p.blocked.reason ?? "blocked by beforeToolCall",
+      outcomeCertain: p.blocked.outcomeCertain ?? true,
+      terminalKind: p.blocked.terminalKind ?? "failed",
+      gateClosed: p.blocked.gateClosed === true,
+      maxResultSizeChars: p.tool?.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
     };
   }
   if (!p.tool) {
@@ -695,6 +1437,8 @@ async function executePreparedToolCall(
       content: [{ type: "text", text: `Tool not found: ${p.toolCall.name}` }],
       isError: true,
       details: undefined,
+      executionError: `Tool not found: ${p.toolCall.name}`,
+      maxResultSizeChars: DEFAULT_MAX_BYTES,
     };
   }
 
@@ -712,6 +1456,90 @@ async function executePreparedToolCall(
       });
   };
 
+  if (p.authorizationGrant && p.gatewayRequest) {
+    const gateway = config.toolExecutionGateway;
+    if (!gateway) {
+      return {
+        content: [{ type: "text", text: "governed execution gateway disappeared after authorization" }],
+        isError: true,
+        details: undefined,
+        executionError: "governed execution gateway disappeared after authorization",
+        outcomeCertain: false,
+        terminalKind: "failed",
+        gateClosed: true,
+        maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+      };
+    }
+    try {
+      const executed = await gateway.execute({
+        invocation: p.gatewayRequest,
+        grant: p.authorizationGrant,
+      }, onUpdate, signal);
+      await updateChain;
+      if (executed.grantDigest !== p.authorizationGrant.grantDigest) {
+        return {
+          content: [{ type: "text", text: "governed executor returned an uncorrelated grant receipt" }],
+          isError: true,
+          details: undefined,
+          executionError: "governed executor returned an uncorrelated grant receipt",
+          outcomeCertain: false,
+          terminalKind: "failed",
+          gateClosed: true,
+          maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+        };
+      }
+      if (executed.status === "completed") {
+        if (p.authorizationGrant.capability === "process" && !executed.sandboxReceipt) {
+          return {
+            content: [{ type: "text", text: "process execution completed without a sandbox receipt" }],
+            isError: true,
+            details: undefined,
+            executionError: "process execution completed without a sandbox receipt",
+            outcomeCertain: false,
+            terminalKind: "failed",
+            gateClosed: true,
+            maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+          };
+        }
+        return {
+          content: executed.result.content,
+          isError: executed.result.isError === true,
+          details: executed.result.details,
+          addedToolNames: executed.result.addedToolNames,
+          terminate: executed.result.terminate,
+          sandboxReceipt: executed.sandboxReceipt,
+          outcomeCertain: true,
+          maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+        };
+      }
+      return {
+        content: [{ type: "text", text: executed.reason }],
+        isError: true,
+        details: undefined,
+        executionError: executed.reason,
+        outcomeCertain: executed.outcomeCertain,
+        terminalKind: executed.status === "aborted" ? "interrupted" : "failed",
+        // 任意 abort 都是本轮的明确终止信号；outcomeCertain 只描述副作用
+        // 是否可判定，不能被解释为“仍可把 ToolResult 交给下一次模型调用”。
+        gateClosed: executed.status === "uncertain" || executed.status === "aborted",
+        maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+      };
+    } catch (error) {
+      await updateChain;
+      return {
+        content: [{ type: "text", text: (error as Error).message ?? String(error) }],
+        isError: true,
+        details: undefined,
+        executionError: error,
+        outcomeCertain: false,
+        terminalKind: signal.aborted ? "interrupted" : "failed",
+        gateClosed: true,
+        maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
+      };
+    }
+  }
+
+  // Legacy-only path: no Session Kernel means direct tool.execute remains compatible.
   // 构造 ToolContext:cwd / env 从 config 取回退到 process.cwd/localExecutionEnv。
   // 对齐 claude-code-bun docs/tools/what-are-tools.mdx §"ToolContext 的语义"。
   const cwd = config.cwd ?? process.cwd();
@@ -735,15 +1563,13 @@ async function executePreparedToolCall(
       toolContext,
     );
     await updateChain;
-    // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
-    const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
-    const content = applyToolResultBudget(result.content, maxChars, p.toolCall.id);
     return {
-      content,
+      content: result.content,
       isError: result.isError === true,
       details: result.details,
       addedToolNames: result.addedToolNames,
       terminate: result.terminate,
+      maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
     };
   } catch (e) {
     await updateChain;
@@ -751,6 +1577,8 @@ async function executePreparedToolCall(
       content: [{ type: "text", text: (e as Error).message ?? String(e) }],
       isError: true,
       details: undefined,
+      executionError: e,
+      maxResultSizeChars: p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES,
     };
   }
 }
@@ -761,6 +1589,12 @@ interface AgentToolExecutedResult {
   details?: unknown;
   addedToolNames?: string[];
   terminate?: boolean;
+  executionError?: unknown;
+  outcomeCertain?: boolean;
+  terminalKind?: "failed" | "interrupted";
+  gateClosed?: boolean;
+  sandboxReceipt?: import("./protocol/v3/capability.ts").SandboxExecutionReceiptRef;
+  maxResultSizeChars: number;
 }
 
 /**
@@ -774,10 +1608,11 @@ interface AgentToolExecutedResult {
  *
  * 不可写的临时目录下退化为「inline 截断 + 提示」,仍不抛错。
  */
-function applyToolResultBudget(
+export function applyToolResultBudget(
   content: (TextContent | ImageContent)[],
   maxChars: number,
   toolCallId: string,
+  overflowMode: "legacy_tmp" | "fail_closed" = "legacy_tmp",
 ): (TextContent | ImageContent)[] {
   const out: (TextContent | ImageContent)[] = [];
   let totalChars = 0;
@@ -799,6 +1634,11 @@ function applyToolResultBudget(
       const remain = Math.max(0, maxChars - totalChars);
       const inlineTail = remain > 0 ? block.text.slice(0, remain) : "";
       const droppedTail = remain > 0 ? block.text.slice(remain) : block.text;
+	  if (overflowMode === "fail_closed") {
+		throw new Error(
+		  "governed tool result exceeds the prompt budget but ArtifactToolResultSink is not configured",
+		);
+	  }
       // 落盘 best-effort,失败退化为 inline 截断
       let path = "";
       try {
@@ -837,6 +1677,36 @@ async function finalizeExecutedToolCall(
   let finalIsError: boolean = r.isError;
   let finalAddedToolNames: string[] | undefined = r.addedToolNames;
   let finalTerminate: boolean | undefined = r.terminate;
+  let artifactRef: ToolResultContent["artifactRef"];
+
+  if (p.budgetReservation) {
+    const operationBudget = config.operationBudget;
+    if (!operationBudget) throw new Error("tool operation budget adapter disappeared after reservation");
+    const outcome: AgentOperationOutcome = r.outcomeCertain === false
+      ? "uncertain"
+      : r.terminalKind === "interrupted"
+        ? "cancelled"
+        : r.executionError !== undefined
+          ? "failed"
+          : "succeeded";
+    try {
+      await operationBudget.commit({
+        reservation: p.budgetReservation,
+        outcome,
+        actual: toolBudgetActual(p.budgetReservation, p.budgetStartedAtMs ?? p.budgetReservation.reservedAtMs),
+        resultDigest: canonicalDigest({
+          toolCallId: p.toolCall.id,
+          outcome,
+          isError: r.isError,
+          outcomeCertain: r.outcomeCertain ?? true,
+          content: r.content,
+        }),
+      });
+    } catch (error) {
+      if (p.durableTool) await config.sessionEvents?.failTool(p.durableTool, error, false);
+      throw error;
+    }
+  }
 
   if (p.tool && config.afterToolCall) {
     try {
@@ -874,6 +1744,35 @@ async function finalizeExecutedToolCall(
     }
   }
 
+  if (config.toolResultArtifactSink) {
+    try {
+      const projected = await config.toolResultArtifactSink.storeToolResult({
+        toolCallId: p.toolCall.id,
+        toolName: p.toolCall.name,
+        content: finalContent,
+        isError: finalIsError,
+        maxPromptChars: r.maxResultSizeChars,
+      });
+      finalContent = projected.content;
+      artifactRef = projected.artifactRef;
+    } catch (error) {
+      if (p.durableTool) await config.sessionEvents?.failTool(p.durableTool, error, false);
+      throw error;
+    }
+  } else {
+	try {
+	  finalContent = applyToolResultBudget(
+		finalContent,
+		r.maxResultSizeChars,
+		p.toolCall.id,
+		config.sessionEvents ? "fail_closed" : "legacy_tmp",
+	  );
+	} catch (error) {
+	  if (p.durableTool) await config.sessionEvents?.failTool(p.durableTool, error, false);
+	  throw error;
+	}
+  }
+
   const result: ToolResultContent = {
     type: "toolResult",
     toolCallId: p.toolCall.id,
@@ -881,9 +1780,38 @@ async function finalizeExecutedToolCall(
     content: finalContent,
     isError: finalIsError,
     details: finalDetails,
+    ...(artifactRef ? { artifactRef } : {}),
   };
   if (finalAddedToolNames !== undefined) result.addedToolNames = finalAddedToolNames;
   if (finalTerminate !== undefined) result.terminate = finalTerminate;
+
+  if (p.durableTool) {
+    if (r.sandboxReceipt && p.authorizationGrant) {
+      await config.sessionEvents?.recordToolSandboxExecution(
+        p.durableTool,
+        p.authorizationGrant,
+        r.sandboxReceipt,
+      );
+    }
+    if (r.executionError !== undefined) {
+      const outcomeCertain = r.outcomeCertain ?? (!p.durableTool.started || p.durableTool.readOnly);
+      if (r.terminalKind === "interrupted" || signal?.aborted) {
+        await config.sessionEvents?.interruptTool(
+          p.durableTool,
+          r.executionError instanceof Error ? r.executionError.message : String(r.executionError),
+          outcomeCertain,
+        );
+      } else {
+        await config.sessionEvents?.failTool(
+          p.durableTool,
+          r.executionError,
+          outcomeCertain,
+        );
+      }
+    } else {
+      await config.sessionEvents?.finishTool(p.durableTool, result);
+    }
+  }
 
   const tEnd = Date.now();
   await fire(
@@ -917,6 +1845,8 @@ async function failToolCallsFromTruncatedMessage(
   toolCalls: AgentToolCall[],
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  config: AgentLoopConfig,
+  durableTurn: DurableTurnHandle | undefined,
 ): Promise<ToolResultContent[]> {
   const results: ToolResultContent[] = [];
   for (const tc of toolCalls) {
@@ -948,6 +1878,17 @@ async function failToolCallsFromTruncatedMessage(
       }],
       isError: true,
     };
+    if (durableTurn) {
+      const durableTool = await config.sessionEvents?.requestTool(
+        durableTurn,
+        tc.id,
+        tc.name,
+        tc.arguments,
+      );
+      if (durableTool) {
+        await config.sessionEvents?.failTool(durableTool, errorText, true);
+      }
+    }
     const ended = Date.now();
     await fire(
       {
@@ -1005,14 +1946,12 @@ function contextAssumedAssistant(context: AgentContext, toolCallId: string): Ass
 
 // ===== 兼容旧调用点(已无反射 trick,ledger 走 AgentLoopConfig.ledger 第一公民) =====
 
-// 占位:runAgentLoopContinue 暂未实现(本期 demo 不使用)
-// `// TODO(pi): resume without new prompt`
 export async function runAgentLoopContinue(
-  _context: AgentContext,
-  _config: AgentLoopConfig,
-  _emit: AgentEventSink,
-  _signal?: AbortSignal,
-  _streamFn?: StreamFn,
+  context: AgentContext,
+  config: AgentLoopConfig,
+  emit: AgentEventSink,
+  signal?: AbortSignal,
+  streamFn?: StreamFn,
 ): Promise<AgentMessage[]> {
-  throw new Error("runAgentLoopContinue not implemented yet"); // TODO(pi)
+  return runAgentLoop([], context, config, emit, signal, streamFn);
 }
