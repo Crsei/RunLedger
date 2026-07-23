@@ -1,7 +1,7 @@
 # Governed Agent Harness Runtime 剩余事项与取证问题
 
 > 文档状态:open issues / handoff ledger,不是第二份实施计划或完成状态真源
-> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00；Approval active dependency 复核:2026-07-23T06:32:57+08:00；child launcher gate 复核:2026-07-23T07:09:46+08:00
+> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00；Approval active dependency 复核:2026-07-23T06:32:57+08:00；child launcher gate 复核:2026-07-23T07:09:46+08:00；active-parent composition 复核:2026-07-23T07:58:47+08:00
 > 目标 worktree:`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-governed-runtime`
 > 分支:`worktree/governed-agent-harness-runtime`
 > 基线 commit:`65f905452195e034c99fa5ac560a7e23a822f052`
@@ -11,6 +11,7 @@
 > continuous Workspace mutation gate commit:`ac524f42ea2033ac3aa1b8fd95aac654e372e68c`
 > Approval active dependency commit:`f3e2ba6da4feb9af40889dab2e58ca7e1d604b01`
 > child-spawn launcher gate commit:`7e6f7714bd145fdbd88beb9df91511e65f1d9e73`
+> active-parent Agent composition commit:`b175b84d92c3647954257379cce792d303a16967`
 > 权威计划:[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)
 
 本文件只记录本轮参考审查、计划审计和实现 worktree 检查中遇到的问题、未完成项与恢复顺序。任何条目都不能因为“已有文件”“定向测试曾通过”或“代码量较大”而视为完成。完成状态必须回写到同步后的 `04`，并附目标分支 commit、定向测试、完整门禁和专项联合证据。
@@ -19,7 +20,7 @@
 
 ### 1.1 权威计划已去分叉
 
-2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
+2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4`、`f3e2ba6`、`7e6f771`、`b175b84` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
 
 - [x] 以 2124 行版本作为唯一 canonical 文件，保留新增证据规则、I0-I7 串行账本、兼容矩阵和 13 类 mutation restart 要求。
 - [x] 没有迁移旧版 147 个无完整证据的勾选；当前 `04` 有 343 个真实未勾选任务，唯一 `[x]` 位于 §9.2 模板示例，不是完成声明。
@@ -162,14 +163,46 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - supervisor 在 launcher 之前已可能 durable 写 `agent.spawn_requested`、分配 Workspace、reserve budget，拒绝后还会记录失败、退款和 release；launcher fault 的“零调用”不能扩大成整个 supervisor spawn 零副作用。
 - durable create 已开始后留下的、可能已关闭或 cleanup uncertain 的 child genesis 尚无自动 orphan reconciliation/terminal cleanup receipt；pre-create claim cleanup failure 也尚无 fault injection。child resume、isolated command、idle unload/reload 与 same-session replacement 仍未纳入同一生命周期。
 
-### 1.9 本轮查找与验证过程中的问题
+### 1.9 Active-parent production Agent composition 验证
+
+`b175b84d92c3647954257379cce792d303a16967` 已作为独立代码/测试提交落入目标分支。本检查点关闭 production interactive runtime 的 active-parent composition seam、root Workspace adoption/revalidation 和 child runtime owner correlation；它不激活 CLI/daemon/factory multi-agent，不建立真实 child Agent loop，也不把 Phase 9/11 或 Runtime-M2 标成完成。
+
+| 命令/阶段 | 结果 | 说明 |
+|---|---|---|
+| composition/agent targeted | PASS | 9 files，55/55 tests；覆盖 root register/revalidate/replay、source+readonly root、child gate/runtime owner、startup/close fault、production isolation 与 interactive composition |
+| code commit | PASS | `b175b84d92c3647954257379cce792d303a16967`；18 条显式源码/测试路径，1062 insertions / 97 deletions |
+| `npm run check` | PASS | TypeScript、runtime boundary、execution boundary 全部通过 |
+| `npm test` | PASS | 251 files，1520/1520 tests passed |
+| `npm run build` | PASS | NodeNext production build 成功 |
+| `npm run test:harness-regression` | PASS | 11 files，63/63 tests；pretest 再次完整执行 `npm run check` |
+| `git diff --check` | PASS | 提交前 staged diff 与提交后工作区均无 whitespace error |
+| pi-ai fixed snapshot audit | PASS | `pi@3f1762c...`，164/164 source files、72 catalog files |
+
+已闭合的 composition 窄边界:
+
+- `createProductionInteractiveRuntime({ agents })` 从 active parent 的同一个 manager、`options.mutationGate`、已验证 root Workspace、Artifact access 与 root BudgetGuard 构造 graph store、launcher 和 supervisor；caller 不能替换这三项内部 owner。
+- root adoption exact join `WorktreeCreateResult` 的 record/binding/runtime binding/lease/fencing-token digest/receipt ID，并再次走 `WorktreeManager.validate()`；source、managed、readonly strategy/status 不再混淆。raw token/path 不进入 Agent graph 或公开 composition snapshot。
+- canonical `agent.root_revalidated` 只允许同 scope、同 lease ID、严格递增 revision 与 exact grant 的 active/readonly root；stale、terminal、scope drift、digest mismatch fail closed，close/reopen 后 projection 可重放。
+- child manager 的 `runtimeId` 与 Workspace `ownerRuntimeId` exact 相同；launcher close 不再在 close 成功前清空 registry，失败 child 可以重试。registration primary failure 与 launcher cleanup failure会同时保留，parent manager 不由低层 composition 关闭。
+- interactive runtime 的返回面只保留 supervisor 与脱敏 child snapshots，不暴露 canonical gate、launcher 或 graph writer；feature evidence 继续不包含 `multi-agent`。
+
+仍未闭合的 production multi-agent 边界:
+
+- child launcher 仍只创建空的 durable `V3SessionManager`，没有 child controller、真实 model/tool governed runtime、Tool Gateway 或完整 Sandbox 执行链。现有 E2E 手工写 child worktree并构造 Artifact，不是 child Agent loop E2E。
+- `AgentSupervisor.finish()` 只写 semantic terminal、结算 budget、释放 Workspace，不关闭/unregister resident child；graph 可以同时出现 `state=completed` 与 `residency=resident`。`cancel()` 仍只返回裸 receipt ID，没有 durable writer/lease/runtime release 与聚合 cleanup receipt。
+- `.launch-claim` 只有 schema/session，不能作为 authority-owned cold recovery claim；进程退出后的 child resume、orphan/quarantine reconciliation、terminal-only cleanup 与 kill/restart recovery 均缺失。
+- CLI option provider、local daemon、factory 与 Control Plane 没有激活该 composition，也没有 machine-verifiable multi-agent feature/required-adapter row；因此 production multi-agent 仍必须保持 unsupported。
+- resume/cancel/isolated command、idle unload/reload、same-session replacement 和 handoff/merge 的整个活跃期仍需连续 parent gate 与故障矩阵。stop/close 不确定时不得提前释放 Workspace或声称 cleanup complete。
+
+### 1.10 本轮查找与验证过程中的问题
 
 - 一次范围过宽的 `/tmp` 只读搜索从旧的、与当前仓库无关的临时日志中把一条 credential 显示到了工具输出。该值没有被复述、使用、写入仓库或提交；当时实现检查点涉及的 20 条代码/测试路径已用只输出文件名的私钥、AWS key、`sk-*` 模式复检，无命中。由于轮换凭据和清理旧临时日志属于额外外部/破坏性状态变更，本轮没有擅自执行；相关 credential 应尽快轮换，并单独清理或收紧旧日志权限。
 - live smoke 首次预检误把实际 `AuthCheck = { type, source? }` 当成含 `configured` 字段，因此在网络请求前主动失败。按真实契约改为检查返回值是否存在后重跑成功；没有为这个 one-off runner 修改仓库代码。
 - 本阶段 live smoke 的第一次 runner 选择了 Node 原生 `--experimental-strip-types`，因该 loader 不解析 `src/runtime/ledger/memory-ledger.ts` 中现有 `.js` 相对导入而在网络请求前以 `ERR_MODULE_NOT_FOUND` 退出；随后改用项目已安装的 `tsx`，同一 auth/provider/Agent/tool 路径成功。失败尝试未读取或输出凭据，也没有修改仓库。
 - 两次成功 live smoke 都使用内联 runner，当前没有可持久复跑的脚本、durable session、governed state-root 或真实 mutation-gate audit；所以证据只记录 provider/Agent/tool/ledger 连通性，不能提升任何 governed startup、Verification 或 Phase 11 复选框。
 - child gate 的第一次审查发现 gate 返回后到 Workspace callback/claim 之间仍有 abort 窗口；第二次审查又发现 `V3SessionManager.create()` in-flight 时 `close()` 已返回但 child 仍可能被注册。两处已用确定性竞态测试关闭，但也证明“abort 后全部零副作用”只能用于 durable create 之前；create 已开始后必须保留 genesis 并进入显式 recovery，自动 reconciliation 仍是未完成项。
-- 搜索全仓 production composition 后确认 `src/**` 没有 `ProductionChildSessionLauncher` 构造点。本阶段没有为凑“接线完成”而虚构 CLI/daemon factory；能力在真实 composition 出现前仍应保持 unsupported。
+- `b175b84` 前搜索全仓曾确认 `src/**` 没有 `ProductionChildSessionLauncher` 构造点；当前该事实已被 production interactive composition seam 取代，但 CLI/daemon/factory 默认入口仍未激活它。没有 machine-verifiable feature row 与完整 child lifecycle 前，能力继续保持 unsupported。
+- composition 审查先后发现五个不能靠“测试已绿”掩盖的问题：完整 composition 暴露 gate/launcher/writer、source/readonly root 被误标 managed active、child runtime ID 未绑定 Workspace owner、同 digest grant 字段漂移被当成幂等，以及 launcher close 在 close 成功前清空 registry。均已用红测修正；但 semantic terminal 与 runtime cleanup terminal 分离、cold claim/reconciler 和真实 child Agent loop仍是未完成设计，不在本提交中虚构完成。
 
 ## 2. 四个参考仓库审查中遇到的边界问题
 
@@ -261,9 +294,9 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ## 4. 当前明确未完成的功能边界
 
-### P0:Production state root、Workspace/Approval 持续门禁与 child launcher seam 已接线，production child composition/replacement/cleanup 仍未闭合
+### P0:Production state root、持续门禁与 interactive child composition seam 已接线，真实 child lifecycle/daemon activation/cleanup 仍未闭合
 
-`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 关闭 Workspace lease 的持续 mutation gate；`f3e2ba6` 再关闭 production Tool Gateway 的 interactive Approval active dependency 与 durable start fence；`7e6f771` 关闭 `ProductionChildSessionLauncher` class seam 的 `child_spawn` gate。但 production `AgentSupervisor`/launcher composition、replacement/idle、pending prompt 重启恢复、extension hook journal 与 durable cleanup 仍不闭合。
+`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 关闭 Workspace lease 的持续 mutation gate；`f3e2ba6` 再关闭 production Tool Gateway 的 interactive Approval active dependency 与 durable start fence；`7e6f771` 关闭 `ProductionChildSessionLauncher` class seam 的 `child_spawn` gate；`b175b84` 接通 active-parent production interactive `AgentSupervisor` composition、root adoption/revalidation 与 child owner correlation。但真实 child controller/model/tool runtime、CLI/daemon/factory activation、replacement/idle、pending prompt 重启恢复、extension hook journal 与 durable cleanup 仍不闭合。
 
 - [x] 既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 统一先经过 `GovernedV3SessionRuntime`；审计未通过时不会进入 controller/model/tool、candidate authority、agent binding 或 child creation。
 - [x] Workspace lease 与 Approval receipt 的 exact digest/revision/expiry/state、partial/unknown completeness、missing/store throw/timeout/abort/畸形 receipt 均 fail closed；非 `allowed` Approval 即使被 adapter 伪报 valid 也只能 paused。
@@ -277,9 +310,12 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - [x] production Tool Gateway 的 interactive Approval active dependency 已闭合到当前窄边界：canonical request/terminal mandatory flush、Memory/File revision CAS、allowed revoke/expire、store/event startup reconcile、authorize cache/current grant 复检、Approval identity fence、三阶段 durable start/attempt claim 和 no-start/late-callback fail-closed 均有联合回归；证据固定到 `f3e2ba6`、16 files / 176 targeted tests 与 §1.7 独立完整门禁。
 - [ ] Approval 全局可操作性仍未闭合：pending prompt/waiter 不能跨重启恢复，system/interactive actor 尚无 authority/deployment 与 channel-bound identity proof，自动 Gateway admission deny 缺独立 canonical 审计事件，extension hook 缺 production start journal，公开 revoke 命令与真实活跃期 corruption/kill/TOCTOU 矩阵仍缺失。不能把 Tool Gateway 窄切片写成 Approval 系统整体完成。
 - [x] `ProductionChildSessionLauncher` 的 `child_spawn` seam 已闭合：parent gate 位于 cache/Workspace validation/claim/V3 create 前，deny/throw/abort 与 cache bypass fault 均 fail closed；durable create in-flight 的 abort/close 不注册 child，并尝试关闭 manager/删除 claim，成功进入 explicit recovery、失败返回 cleanup uncertain。证据固定到 `7e6f771`、3 files / 37 targeted tests 与 §1.8。
-- [ ] 真实 production child composition 仍缺失：必须由 active parent runtime 向 production `AgentSupervisor`/launcher 注入同一个 canonical mutation gate，并以 CLI/daemon/factory 联合 E2E 证明；在此之前不得 advertise production multi-agent。
+- [x] active-parent production interactive composition seam 已闭合：同一 parent manager/gate、root Workspace/Artifact/Budget adapters、private graph store/launcher、source/managed/readonly root revalidation 与 child runtime owner correlation均有 production integration/E2E；证据固定到 `b175b84`、9 files / 55 targeted tests 与 §1.9。该勾选不包含 child Agent loop、CLI/daemon activation或 terminal cleanup。
+- [ ] 真实 production child lifecycle 与入口 activation 仍缺失：launcher 必须创建 child controller/model/tool governed runtime，CLI/daemon/factory 必须消费同一 composition，并以 machine-verifiable feature/required-adapter row 与联合 E2E证明；在此之前不得 advertise production multi-agent。
+- [ ] semantic terminal 与 cleanup terminal 必须拆分：`finish()` 后应 durable 写 cleanup intent，fence/stop child，关闭 writer/释放 lease，签发 runtime-release receipt，再释放 Workspace、结算 budget并提交聚合 `cleanup_completed`；任一 stop/close 不确定时进入 reconciliation，不得先释放 Workspace。
+- [ ] authority-owned cold claim/reconciler 仍缺失：claim 必须 exact 绑定 parent graph、child genesis/session、agent、launch receipt、runtime instance、Workspace/capability refs和 revision；restart 必须区分恢复工作、只做 terminal cleanup、quarantine orphan，不能依赖 launcher 内存 map。
 - [ ] idle unload/reload 与 same-session hot replacement 尚未接入同一 governed gate；replacement 仍缺 standby candidate、fencing promotion、commit-before-old-drain 和 commit 后失败终态的 fault E2E。
-- [ ] injected-auditor tests 已覆盖 timeout/throw/partial/abort，真实 file-store startup E2E 已覆盖 exact/stale/revoked/expired/missing，持续 gate deterministic tests 已覆盖 Workspace/Approval mutation 与 latch；仍缺真实 file-store 活跃期文件损坏、root/store TOCTOU、进程 kill 与 restart reconciliation 的 CLI/daemon 联合矩阵，以及真实 production child composition 的 same-gate/故障断言。
+- [ ] injected-auditor tests 已覆盖 timeout/throw/partial/abort，真实 file-store startup E2E 已覆盖 exact/stale/revoked/expired/missing，持续 gate deterministic tests 已覆盖 Workspace/Approval mutation 与 latch；仍缺真实 file-store 活跃期文件损坏、root/store TOCTOU、进程 kill 与 restart reconciliation 的 CLI/daemon 联合矩阵，以及 child controller/model/tool/cleanup 的 same-gate/故障断言。
 - [x] `src/cli/main.ts`、governed open 与 factory start/resume/fork 不再吞掉已知 close/discard failure；多资源 cleanup 会等待并展开全部错误，durable start/fork ownership transfer 前失败会返回不可重试 uncertain effect 与 session correlation，fork parent close 失败不会遗留 active child runtime。
 - [ ] 全仓 cleanup 尚未闭合：`src/daemon/local-v3-daemon.ts` 在 runtime-generation/shutdown-protocol 早期失败时仍吞 `authorityRuntime.close()` 错误，`src/storage/authority-runtime-manager.ts` open 失败仍吞 event-store close 错误。后续必须保留 primary + cleanup failure，并增加故障注入。
 - [ ] cleanup failure 目前对调用方可见，但尚未形成独立 canonical terminal cleanup event/receipt，也没有覆盖 kill-after-side-effect、process restart 后 orphan writer/lease/child 的自动 reconciliation；因此仍不能宣称所有资源均有 durable terminal cleanup outcome。
@@ -309,7 +345,8 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ### P1:Agent Supervisor、Budget 与远程终态
 
-- [ ] Production `AgentSupervisor` 和 root/per-agent budget 默认值、spawn fail-closed、residency eviction 条件尚未形成完整 production composition。
+- [x] 本地 production interactive `AgentSupervisor` composition seam 已存在，并复用 root BudgetGuard、Workspace/capability/denial/merge adapters 与同一 parent gate；该窄边界证据固定到 `b175b84`。
+- [ ] root/per-agent budget 默认策略、真实 child Agent loop、spawn compensation 聚合 receipt、terminal runtime cleanup、residency eviction/cold reload 条件仍未形成可 advertise 的完整 production lifecycle。
 - [ ] remote executor/agent handoff 的 terminal idempotency、attestation、uncertain side-effect reconciliation 和 restart replay 尚未闭合。
 - [ ] same-session hot replacement 缺 standby candidate、lease/fencing promotion、commit-before-old-drain 和 commit 后失败终态的完整实现/故障注入。
 - [ ] multi-agent partial Artifact、merge conflict、child workspace/capability subset 与 root cost reconciliation 仍需联合 E2E。
@@ -322,13 +359,15 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 
 ## 5. 建议恢复顺序
 
-1. 找到或建立真实 production `AgentSupervisor`/launcher composition，从 active parent runtime 注入同一个 canonical mutation gate，并补 CLI/daemon/factory 联合 E2E。联合测试必须区分 gate 前 supervisor compensation、durable create 前零副作用和 create 后显式 orphan recovery；即使 composition 已建立，也要贯穿后续步骤 2/3，直到 child lifecycle、orphan reconciliation 与 terminal cleanup receipt 门禁闭合前都保持 production multi-agent unsupported。
-2. 接 idle unload/reload 与 same-session replacement；replacement 必须具备 standby candidate、writer fencing promotion、commit-before-old-drain 和 post-commit failure terminal。
-3. 清除 daemon/authority 剩余吞错 close，为 cleanup 增加 canonical terminal receipt、kill/restart orphan reconciliation，并补活跃期 store corruption 与 root/store TOCTOU 联合 E2E。
-4. 补 pending Approval prompt 重建、authority/channel-bound actor、独立 Gateway denial audit、public revoke command 和 extension hook canonical start journal；不得把这些事件伪装成既有 interactive request lifecycle。
-5. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
-6. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、Production AgentSupervisor、remote/handoff/hot replacement。
-7. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。
+1. 在 `b175b84` composition seam 上先建立 child cleanup saga 与 cold claim/reconciler：`semantic terminal -> cleanup intent -> fence/stop child -> writer/lease release -> runtime-release receipt -> Workspace release -> budget settlement -> cleanup-completed`。stop/close uncertain 时进入 durable reconciliation，不能释放后谎报完成。
+2. 为 launcher 创建真实 child controller/model/tool governed runtime，所有 model/tool/resume/cancel/isolated-command 路径继续复用 parent gate 与 child Gateway/Sandbox；补真实 child Agent loop、Artifact/handoff/merge E2E，而不是测试手工写文件。
+3. 激活 CLI/daemon/factory composition，增加 machine-verifiable multi-agent feature/required-adapter row；补进程退出后的 cold resume/orphan quarantine、terminal-only cleanup与 kill/restart联合 E2E。在步骤 1–3 全部闭合前保持 production multi-agent unsupported。
+4. 接 idle unload/reload 与 same-session replacement；replacement 必须具备 standby candidate、writer fencing promotion、commit-before-old-drain 和 post-commit failure terminal。
+5. 清除 daemon/authority 剩余吞错 close，并补活跃期 store corruption 与 root/store TOCTOU 联合 E2E。
+6. 补 pending Approval prompt 重建、authority/channel-bound actor、独立 Gateway denial audit、public revoke command 和 extension hook canonical start journal；不得把这些事件伪装成既有 interactive request lifecycle。
+7. 接通真实 Verification/Compaction prompt 生命周期和 required production composition matrix。
+8. 推进 Draft PR/HumanGate、HTTP/SSE 与 OS peer identity、remote/handoff/hot replacement。
+9. 补齐跨域故障注入矩阵；每个切片先跑定向/fault/security tests，再跑完整五项门禁，只有目标分支证据可回写 `04`。
 
 ## 6. 禁止用来“完成”本计划的捷径
 

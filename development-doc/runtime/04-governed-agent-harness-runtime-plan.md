@@ -1940,6 +1940,20 @@ Canonical event/reducer 闭环:
 - 剩余边界:必须建立真实 production `AgentSupervisor`/launcher composition，并从 active parent runtime 注入同一个 canonical mutation gate；supervisor 在 launcher 前已可能写 `agent.spawn_requested`、分配 Workspace、reserve budget，不能把 launcher 零调用扩大成整个 spawn 零副作用。pre-create claim cleanup failure 尚无 fault injection；child resume/isolated execution、idle/replacement、post-create orphan reconciliation 与 cleanup terminal receipt 仍未闭合，在这些 lifecycle 门禁完成前不得 advertise production multi-agent。
 - verified_at:`2026-07-23T07:09:46+08:00`。
 
+#### 2026-07-23 active-parent production Agent composition 证据（只关闭 interactive composition seam）
+
+- 状态:production interactive runtime 已能从 active parent 的同一 `V3SessionManager`、canonical mutation gate、已绑定 Workspace、Artifact access 与 root BudgetGuard 构造 `AgentSupervisor`/graph store/child launcher；该 seam 仍不进入 feature advertisement，也不关闭 Phase 9、Phase 11 或 Runtime-M2。
+- commit/worktree:`b175b84d92c3647954257379cce792d303a16967`，`worktree/governed-agent-harness-runtime`；18 条显式源码/测试路径，1062 insertions / 97 deletions，提交后实现工作区干净。
+- red tests:composition 文件缺失首先使 production integration 无法收集；首次 restart 因 durable root 已存在返回 `agent_exists`；随后新增的 child runtime owner、source Workspace strategy、opaque grant drift 与 Workspace receipt digest 测试分别暴露 runtime ID 漂移、source 被误标 managed、同 digest 字段漂移被当成幂等，以及 receipt body 未绑定 digest。所有红点均在实现后转绿。
+- targeted:`npx vitest run tests/runtime-v3/agents/supervisor.test.ts tests/runtime-v3/agents/graph-store.test.ts tests/runtime-v3/agents/session-graph-store.test.ts tests/runtime-v3/agents/resume.test.ts tests/runtime-v3/agents/residency-handoff.test.ts tests/runtime-v3/agents/child-session-launcher.test.ts tests/runtime-v3/agents/production-composition.test.ts tests/e2e/multi-agent-isolation.test.ts tests/runtime-v3/integration/production-interactive-runtime.test.ts` -> Linux，9 files / 55 tests，PASS。
+- composition/root truth:`createProductionAgentSupervisorRuntime()` 不允许 caller 替换 graph store、launcher 或 parent gate；root adoption exact join record/binding/runtime binding/lease/fencing-token digest/receipt ID，并经 `WorktreeManager.validate()` 复检当前 registry。`source -> isolated_lease`、`managed_worktree -> managed_worktree`、`readonly_checkout -> readonly_checkout`，readonly root 不再被签成 active managed binding。
+- restart/replay:新增 canonical `agent.root_revalidated` event；只有同 root/session/goal/role、同 Workspace/repository/strategy/lease ID、严格递增 binding+lease revision、exact capability grant 和合法 receipt digest 才能推进。重复 event 幂等，stale、terminal 或 scope drift fail closed；source 与 readonly root 均已完成 close/reopen/replay 测试。
+- child/lifecycle hardening:child `V3SessionManager.runtimeId` 现在 exact 使用已验证 Workspace `ownerRuntimeId`。launcher close 只删除已成功关闭的 resident child，失败 child 留在 registry 供重试；composition startup 同时保留 root registration primary failure 与 launcher cleanup failure。父 manager ownership 始终留给 interactive runtime，关闭顺序为 child composition -> parent Workspace -> parent manager。
+- surface boundary:interactive runtime 只暴露 `AgentSupervisor` 与脱敏 child snapshot；canonical gate、launcher 和 graph writer 不进入返回面。`multi-agent` 仍不在 production feature evidence、Control Plane 或 CLI/daemon advertisement 中。
+- full gate:`npm run check`、`npm test`（251 files / 1520 tests）、`npm run build`、`npm run test:harness-regression`（11 files / 63 tests）、`git diff --check` 全部 PASS；`npm run audit:pi-ai -- --upstream /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/pi --commit 3f1762cc7d3af39898aa5d21891335935011287f` -> 164/164 upstream files、72 catalog files，PASS。
+- 剩余边界:launcher 当前只创建独立 durable child session manager，尚未创建真实 child controller/model/tool governed runtime；现有 multi-agent E2E 仍由测试手工修改 child worktree 并构造 Artifact。`finish()` 的 semantic terminal 不等于 runtime release，graph 仍可能 `completed + resident`；cancel/close 没有 durable runtime-release/cleanup receipt，`.launch-claim` 也不是 authority-owned cold claim。CLI/daemon/factory activation、跨进程 resume/orphan reconciliation、idle/replacement、Approval 全局可操作性和 Verification/Compaction 全生命周期继续未完成，因此不得 advertise production multi-agent。
+- verified_at:`2026-07-23T07:58:47+08:00`。
+
 ## 8. 阶段依赖与发布里程碑
 
 ```text
