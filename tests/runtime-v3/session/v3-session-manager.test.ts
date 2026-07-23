@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -15,6 +15,7 @@ import { AgentLoopSessionEvents } from "../../../src/runtime/session/agent-loop-
 import { EventWriter } from "../../../src/runtime/session/event-writer.ts";
 import { JsonlV3EventStore } from "../../../src/runtime/session/jsonl-v3-store.ts";
 import { reduceSessionEvents } from "../../../src/runtime/session/reducer.ts";
+import { readSessionPublication } from "../../../src/runtime/session/session-publication.ts";
 import {
 	createSessionRestoreDependencySnapshot,
 	type SessionRestoreDependencyBinding,
@@ -27,7 +28,10 @@ import {
 } from "../../../src/runtime/session/snapshot.ts";
 import type { SessionResult } from "../../../src/runtime/session/types.ts";
 import { SessionManager } from "../../../src/storage/session-manager.ts";
-import { V3SessionManager } from "../../../src/storage/v3-session-manager.ts";
+import {
+	V3SessionInitializationError,
+	V3SessionManager,
+} from "../../../src/storage/v3-session-manager.ts";
 
 const FLAGS: RuntimeFeatureFlags = { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true };
 const roots: string[] = [];
@@ -85,6 +89,171 @@ describe("V3SessionManager", () => {
 		expect(manager.filePath()).toBe(filePath);
 		expect(manager.sessionId()).toBe(sessionId);
 		await manager.closeAll();
+	});
+
+	it("keeps a manual create invisible and non-resumable until its exact publication barrier", async () => {
+		const root = temporaryRoot();
+		const sessionDir = join(root, "sessions");
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir,
+			features: FLAGS,
+			writeGenesis: false,
+			publication: { kind: "create", mode: "manual" },
+		});
+		expect(manager.publicationState()).toBe("staging");
+		expect(await SessionManager.list(root, sessionDir)).toEqual([]);
+		await expect(V3SessionManager.open(manager.filePath(), FLAGS, manager.identity())).rejects.toThrow(
+			"staging and is not resumable",
+		);
+
+		await manager.sessionEvents().ensureInitialized();
+		const published = await manager.publishStagedTarget();
+		expect(published).toMatchObject({
+			state: "published",
+			kind: "create",
+			sessionId: manager.sessionId(),
+			writerEpoch: manager.writerFenceReceipt().writerEpoch,
+			genesis: { sequence: 0 },
+			head: { sequence: 0 },
+		});
+		expect(await SessionManager.list(root, sessionDir)).toEqual([
+			expect.objectContaining({ filePath: manager.filePath(), format: "v3" }),
+		]);
+		const filePath = manager.filePath();
+		const identity = manager.identity();
+		await manager.closeAll();
+		const reopened = await V3SessionManager.open(filePath, FLAGS, identity);
+		expect(reopened.publicationState()).toBe("published");
+		await reopened.closeAll();
+	});
+
+	it("reconciles a lost publication acknowledgement only from the durable published record", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+			publication: {
+				kind: "create",
+				mode: "automatic",
+				onWritePhase: (phase) => {
+					if (phase === "after_publish_sync") {
+						throw new Error("injected publication acknowledgement loss");
+					}
+				},
+			},
+		});
+		expect(manager.publicationState()).toBe("published");
+		expect(await readSessionPublication(manager.stateDirectory())).toMatchObject({
+			ok: true,
+			value: { state: "published", sessionId: manager.sessionId() },
+		});
+		await manager.closeAll();
+	});
+
+	it.each([
+		{
+			label: "intent before write",
+			phase: "before_intent_write" as const,
+			stage: "intent",
+		},
+		{
+			label: "intent directory barrier",
+			phase: "after_intent_rename_before_sync" as const,
+			stage: "intent",
+		},
+		{
+			label: "publish commit before rename",
+			phase: "before_publish_write" as const,
+			stage: "publish",
+		},
+		{
+			label: "publish directory barrier",
+			phase: "after_publish_rename_before_sync" as const,
+			stage: "publish",
+		},
+	])("cleans a target that fails at the $label", async ({ phase, stage }) => {
+		const root = temporaryRoot();
+		const sessionDir = join(root, "sessions");
+		const sessionId = createRuntimeId("session", `publication-${stage}`);
+		const filePath = join(sessionDir, `2026-07-23T00-00-00-000Z_${sessionId}.jsonl`);
+		await expect(V3SessionManager.create({
+			cwd: root,
+			sessionDir,
+			sessionId,
+			filePath,
+			features: FLAGS,
+			publication: {
+				kind: "create",
+				mode: "automatic",
+				onWritePhase: (candidate) => {
+					if (candidate === phase) throw new Error(`injected ${phase}`);
+				},
+			},
+		})).rejects.toMatchObject({
+			name: "V3SessionInitializationError",
+			stage,
+			filePath,
+			sessionId,
+			cleanup: { status: "cleaned", errors: [] },
+		});
+		expect(existsSync(filePath)).toBe(false);
+		expect(existsSync(`${filePath}.state`)).toBe(false);
+		expect(await SessionManager.list(root, sessionDir)).toEqual([]);
+	});
+
+	it("removes a failed fork target before it can appear in recent sessions", async () => {
+		const root = temporaryRoot();
+		const sessionDir = join(root, "sessions");
+		const parent = await V3SessionManager.create({
+			cwd: root,
+			sessionDir,
+			features: FLAGS,
+		});
+		await parent.sessionEvents().recordMessage({
+			role: "user",
+			content: [{ type: "text", text: "copy failure" }],
+		});
+		const parentPath = parent.filePath();
+		await parent.closeAll();
+		vi.spyOn(AgentLoopSessionEvents.prototype, "recordMessage").mockRejectedValueOnce(
+			new Error("injected fork import failure"),
+		);
+
+		await expect(forkV3FromCli({
+			sourcePath: parentPath,
+			cwd: root,
+			sessionDir,
+			features: FLAGS,
+		})).rejects.toThrow("cleanup=cleaned");
+
+		const listed = await SessionManager.list(root, sessionDir);
+		expect(listed.map((entry) => entry.filePath)).toEqual([parentPath]);
+		expect(readdirSync(sessionDir).filter((entry) => entry.endsWith(".jsonl"))).toEqual([
+			expect.stringContaining(parent.sessionId()),
+		]);
+	});
+
+	it("fails closed when a published record is corrupted instead of treating it as legacy-unmanaged", async () => {
+		const root = temporaryRoot();
+		const sessionDir = join(root, "sessions");
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir,
+			features: FLAGS,
+		});
+		const filePath = manager.filePath();
+		const stateDirectory = manager.stateDirectory();
+		const identity = manager.identity();
+		await manager.closeAll();
+		writeFileSync(join(stateDirectory, "publication.json"), "{}\n");
+
+		await expect(V3SessionManager.open(filePath, FLAGS, identity)).rejects.toThrow(
+			"publication state read failed",
+		);
+		expect(await SessionManager.list(root, sessionDir)).toEqual([]);
+		expect(existsSync(filePath)).toBe(true);
 	});
 
 	it("registers restore dependencies before any durable session open or mutable handle exists", async () => {
@@ -297,7 +466,15 @@ describe("V3SessionManager", () => {
 			sessionId,
 			filePath,
 			features: FLAGS,
-		})).rejects.toBe(primary);
+		})).rejects.toMatchObject({
+			name: "V3SessionInitializationError",
+			stage: "genesis",
+			filePath,
+			sessionId,
+			effect: "none",
+			cleanup: { status: "cleaned", errors: [] },
+			cause: primary,
+		});
 
 		expect(writerClose).toHaveBeenCalledTimes(1);
 		expect(storeClose).toHaveBeenCalled();
@@ -346,13 +523,23 @@ describe("V3SessionManager", () => {
 			caught = error;
 		}
 
-		expect(caught).toBeInstanceOf(AggregateError);
-		expect((caught as AggregateError).errors).toEqual([
-			primary,
-			writerFailure,
-			expect.objectContaining({ message: expect.stringContaining("injected store close failure") }),
-			expect.objectContaining({ message: expect.stringContaining("injected lease release failure") }),
-		]);
+		expect(caught).toBeInstanceOf(V3SessionInitializationError);
+		expect(caught).toMatchObject({
+				stage: "genesis",
+				cause: primary,
+				cleanup: {
+					status: "incomplete",
+				},
+			});
+		expect((caught as V3SessionInitializationError).cleanup.errors.join("\n")).toContain(
+			"injected writer close failure",
+		);
+		expect((caught as V3SessionInitializationError).cleanup.errors.join("\n")).toContain(
+			"injected store close failure",
+		);
+		expect((caught as V3SessionInitializationError).cleanup.errors.join("\n")).toContain(
+			"injected lease release failure",
+		);
 		expect(release).toHaveBeenCalledTimes(1);
 	});
 
@@ -797,7 +984,7 @@ describe("V3SessionManager", () => {
 		const paused = await V3SessionManager.open(filePath, FLAGS);
 		expect(paused.artifactReconciliation()).toBeUndefined();
 		expect(paused.recoveryDecision()).toMatchObject({
-			kind: "pause_for_approval",
+			kind: "reconciliation_required",
 			reasons: ["uncertain_operation"],
 			projection: { lifecycle: "migration_in_progress", migration: { status: "in_progress" } },
 		});
@@ -811,6 +998,54 @@ describe("V3SessionManager", () => {
 		expect(terminal.recoveryDecision()).toMatchObject({ kind: "stopped", reason: "migration_failed" });
 		expect(terminal.artifactReconciliation()).toBeUndefined();
 		await terminal.closeAll();
+	});
+
+	it("durably interrupts an in-flight tool and turn once, then keeps the mutation gate in reconciliation", async () => {
+		const root = temporaryRoot();
+		const manager = await V3SessionManager.create({
+			cwd: root,
+			sessionDir: join(root, "sessions"),
+			features: FLAGS,
+		});
+		const turn = await manager.sessionEvents().beginTurn();
+		const tool = await manager.sessionEvents().requestTool(
+			turn,
+			"provider-crash",
+			"fixture",
+			{ sideEffect: true },
+		);
+		const filePath = manager.filePath();
+		const identity = manager.identity();
+		await manager.closeAll();
+
+		const recovered = await V3SessionManager.open(filePath, FLAGS, identity);
+		expect(recovered.recoveryDecision()).toMatchObject({
+			kind: "reconciliation_required",
+			reasons: ["uncertain_operation"],
+			projection: {
+				activeTurnId: null,
+				activeModelRequestId: null,
+				hasUncertainOperations: true,
+			},
+		});
+		const recoveredEvents = valueOf(await readAllRuntimeEvents(recovered.eventStore()));
+		expect(recoveredEvents.filter((event) => event.type === "tool.interrupted")).toEqual([
+			expect.objectContaining({
+				payload: {
+					toolCallId: tool.toolCallId,
+					outcomeCertain: false,
+					reason: expect.any(String),
+				},
+			}),
+		]);
+		expect(recoveredEvents.filter((event) => event.type === "turn.interrupted")).toHaveLength(1);
+		await recovered.closeAll();
+
+		const secondRecovery = await V3SessionManager.open(filePath, FLAGS, identity);
+		const replay = valueOf(await readAllRuntimeEvents(secondRecovery.eventStore()));
+		expect(replay.filter((event) => event.type === "tool.interrupted")).toHaveLength(1);
+		expect(replay.filter((event) => event.type === "turn.interrupted")).toHaveLength(1);
+		await secondRecovery.closeAll();
 	});
 
 	it("forks only a stable v3 boundary into a distinct lineage without copying event IDs", async () => {

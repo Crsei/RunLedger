@@ -166,7 +166,11 @@ export class StartupRecoveryCoordinator {
 		if (recovery.kind === "stopped") return { ...recoveryBase, disposition: "stopped", reasons: [], cursor: recovery.cursor, auditReceipts: [] };
 		const base = { ...recoveryBase, checks: [...recoveryBase.checks, "external_receipts"] as const };
 
-		const reasons = new Set<StartupPauseReason>(recovery.kind === "pause_for_approval" ? recovery.reasons : []);
+		const reasons = new Set<StartupPauseReason>(
+			recovery.kind === "pause_for_approval" || recovery.kind === "reconciliation_required"
+				? recovery.reasons
+				: [],
+		);
 		const referenceTimeoutMs = Math.min(
 			this.#externalOperationTimeoutMs,
 			this.#remainingExternalScanMs(externalDeadlineMs),

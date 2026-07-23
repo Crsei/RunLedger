@@ -2,8 +2,10 @@
 
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import { sameRuntimeEventStream, type EventCursor, type RuntimeEventStreamRef, type RuntimeEventV3 } from "../protocol/v3/events.ts";
-import type { AuthorityId, SessionId, TenantId } from "../protocol/v3/ids.ts";
+import { createRuntimeId } from "../protocol/v3/ids.ts";
+import type { AuthorityId, PrincipalId, SessionId, TenantId } from "../protocol/v3/ids.ts";
 import type { RuntimeEventStore } from "./event-store.ts";
+import type { EventWriter } from "./event-writer.ts";
 import { replayDurableQueue } from "./durable-queue.ts";
 import type { SessionProjection } from "./projections.ts";
 import {
@@ -13,7 +15,7 @@ import {
 	type SnapshotReplayResult,
 } from "./snapshot.ts";
 import { readStopTombstone, type StopTombstone } from "./stop-tombstone.ts";
-import type { SessionKernelError } from "./types.ts";
+import type { SessionKernelError, SessionResult } from "./types.ts";
 
 export type RecoveryPauseReason =
 	| "active_turn"
@@ -34,6 +36,13 @@ export type RecoveryDecision =
 	  }
 	| {
 			kind: "pause_for_approval";
+			projection: SessionProjection;
+			cursor: EventCursor;
+			reasons: readonly RecoveryPauseReason[];
+			snapshotSource: "snapshot" | "full";
+	  }
+	| {
+			kind: "reconciliation_required";
 			projection: SessionProjection;
 			cursor: EventCursor;
 			reasons: readonly RecoveryPauseReason[];
@@ -165,6 +174,70 @@ function recoveryPauseReasons(events: readonly RuntimeEventV3[], projection: Ses
 	return [...reasons];
 }
 
+/**
+ * crash 时的 in-flight model/tool/turn 只能收敛为 canonical terminal。
+ * tool outcome 一律 uncertain；本函数不重试副作用，也不清除原 idempotency identity。
+ */
+export async function recordCrashInterruption(options: {
+	writer: EventWriter;
+	projection: SessionProjection;
+	principalId: PrincipalId;
+}): Promise<SessionResult<{ appended: number }>> {
+	let appended = 0;
+	const traceId = createRuntimeId("trace");
+	for (const tool of options.projection.toolCalls) {
+		if (tool.status !== "requested" && tool.status !== "authorized" && tool.status !== "started") continue;
+		const terminal = await options.writer.append({
+			type: "tool.interrupted",
+			principalId: options.principalId,
+			traceId,
+			payload: {
+				toolCallId: tool.toolCallId,
+				reason: "runtime crashed before a durable tool terminal",
+				outcomeCertain: false,
+			},
+		});
+		if (!terminal.ok) return terminal;
+		appended += 1;
+	}
+	for (const request of options.projection.modelRequests) {
+		if (request.status !== "requested") continue;
+		const terminal = await options.writer.append({
+			type: "model.failed",
+			principalId: options.principalId,
+			traceId,
+			payload: {
+				turnId: request.turnId,
+				requestId: request.requestId,
+				error: {
+					code: "runtime_interrupted",
+					messageDigest: canonicalDigest("runtime crashed before a durable model terminal"),
+					retryable: true,
+				},
+			},
+		});
+		if (!terminal.ok) return terminal;
+		appended += 1;
+	}
+	if (options.projection.activeTurnId !== null) {
+		const terminal = await options.writer.append({
+			type: "turn.interrupted",
+			principalId: options.principalId,
+			traceId,
+			payload: {
+				turnId: options.projection.activeTurnId,
+				reason: "runtime crashed before a durable turn terminal",
+			},
+		});
+		if (!terminal.ok) return terminal;
+		appended += 1;
+	}
+	if (appended === 0) return { ok: true, value: { appended } };
+	const flushed = await options.writer.flush();
+	if (!flushed.ok) return flushed;
+	return { ok: true, value: { appended } };
+}
+
 export async function recoverSession(options: RecoverSessionOptions): Promise<RecoveryDecision> {
 	const tombstone = await readStopTombstone(options.sessionDirectory);
 	if (!tombstone.ok) return corrupted(tombstone.error);
@@ -193,8 +266,14 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Re
 
 	const reasons = recoveryPauseReasons(replay.value.events, replay.value.projection);
 	if (reasons.length > 0) {
+		const reconciliationRequired = reasons.some((reason) =>
+			reason === "uncertain_operation" ||
+			reason === "pending_artifact_intent" ||
+			reason === "artifact_reconciliation_failed" ||
+			reason === "pending_queue_unrecoverable"
+		);
 		return {
-			kind: "pause_for_approval",
+			kind: reconciliationRequired ? "reconciliation_required" : "pause_for_approval",
 			projection: replay.value.projection,
 			cursor,
 			reasons,

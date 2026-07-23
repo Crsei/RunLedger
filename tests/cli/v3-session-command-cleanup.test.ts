@@ -128,7 +128,7 @@ describe("CLI v3 session command cleanup", () => {
 		expect(target!.isClosed()).toBe(true);
 	});
 
-	it("retains but closes a durable fork child and closes its parent when replay throws", async () => {
+	it("removes an unpublished fork child and closes its parent when replay throws", async () => {
 		const root = temporaryRoot();
 		const sessionDir = join(root, "sessions");
 		const parentPath = await createClosedParent(root, sessionDir);
@@ -152,15 +152,15 @@ describe("CLI v3 session command cleanup", () => {
 		expect(child).toBeDefined();
 		expect(error.message).toContain("fork replay exploded");
 		expect(error.message).toContain(`child=${child!.filePath()}`);
+		expect(error.message).toContain("cleanup=cleaned");
 		expect(child!.writer().currentHead()).toBeDefined();
 		expect(child!.isClosed()).toBe(true);
-		expect(existsSync(child!.filePath())).toBe(true);
+		expect(existsSync(child!.filePath())).toBe(false);
 		vi.restoreAllMocks();
 		await expectReopenable(parentPath);
-		await expectReopenable(child!.filePath());
 	});
 
-	it("retains but closes a durable fork child and closes its parent when history copy throws", async () => {
+	it("removes an unpublished fork child and closes its parent when history copy throws", async () => {
 		const root = temporaryRoot();
 		const sessionDir = join(root, "sessions");
 		const parentPath = await createClosedParent(root, sessionDir);
@@ -184,12 +184,12 @@ describe("CLI v3 session command cleanup", () => {
 		expect(child).toBeDefined();
 		expect(error.message).toContain("fork copy exploded");
 		expect(error.message).toContain(`child=${child!.filePath()}`);
+		expect(error.message).toContain("cleanup=cleaned");
 		expect(child!.writer().currentHead()).toBeDefined();
 		expect(child!.isClosed()).toBe(true);
-		expect(existsSync(child!.filePath())).toBe(true);
+		expect(existsSync(child!.filePath())).toBe(false);
 		vi.restoreAllMocks();
 		await expectReopenable(parentPath);
-		await expectReopenable(child!.filePath());
 	});
 
 	it("aggregates a fork failure with child cleanup failure and still closes the parent", async () => {
@@ -223,8 +223,8 @@ describe("CLI v3 session command cleanup", () => {
 		expect((error as AggregateError).errors.map(String).join("\n")).toContain("fork replay exploded");
 		expect((error as AggregateError).errors.map(String).join("\n")).toContain("fork child cleanup exploded");
 		expect(child!.isClosed()).toBe(true);
+		expect(existsSync(child!.filePath())).toBe(false);
 		vi.restoreAllMocks();
 		await expectReopenable(parentPath);
-		await expectReopenable(child!.filePath());
 	});
 });

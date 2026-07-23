@@ -4,7 +4,7 @@
 > 分阶段索引:[`README.md`](README.md)
 > 导航:[Phase 0](phase-00-protocol-baseline.md) / [Phase 2](phase-02-workspace-contracts.md)
 > 状态规则:当前实现状态以主计划 §0.0 为唯一汇总真源;严格开发顺序、并行 lane 与 join gate 以主计划 §12 为准。本文件只承载本 Phase 的完整需求、门槛、故障注入与历史证据。
-> 当前执行状态:W0 evidence baseline 已由 `431681f` 冻结,W1-A1 已由 `259f2fb` 完成。下一执行单元为 W1-A2 create/fork staging 与故障矩阵。
+> 当前执行状态:W0 evidence baseline 已由 `431681f` 冻结,W1-A1 已由 `259f2fb` 完成。W1-A2/W1-A3 的实现审计与完整门禁已于 2026-07-23 通过,并依用户本轮指令正式勾选完成;该状态由包含本文件的交付提交冻结。Runtime-M0 仍受 W1-B、W1-J 与 W1-G 独立门禁约束。
 
 目标:用严格、可重放、可验证的事件内核替代“消息即 session”的假设。
 
@@ -31,33 +31,33 @@
 任务:
 
 - [x] 提供显式异步 `open/restore` factory:调用方先注册 model/tool/resource/provider 等不可序列化依赖,再读取并 reduce durable state、校验 snapshot 中的依赖 identity/generation、reconcile 未完成状态,最后才返回可变 session handle;构造器不得隐式执行异步恢复。证据:`259f2fb`;dependency snapshot 只保存 canonical identity/generation,durable snapshot 缺绑定、identity/generation 漂移或 registrar 失败均在 Event Store open 前 fail closed,已验证 snapshot 对象直接贯穿 recovery 以消除二次读取 TOCTOU。
-- [ ] 用单 writer queue 保证 sequence 分配和 append 顺序;append 只返回 assigned/accepted cursor,关键调用必须再取得覆盖该 cursor 的 `DurableEventReceipt`,不能把“写入进程缓冲区”称为 durable。
-- [ ] 明确任何 stream completion、listener settlement、`EventStream.result()`、pending-write Promise、内存 queue/retry/phase 归零都不能签发 `DurableEventReceipt`;receipt 只能来自 Event Store 的已验证 flush/commit barrier。
-- [ ] durable barrier 必须传播 file flush/sync 错误;新建、rename、tombstone/snapshot 切换还要按平台能力同步父目录或明确返回 unsupported/degraded,不能忽略 `sync_all/fsync` 失败后签发 receipt。
-- [ ] 定义 `MutationEffect = none | committed | uncertain`:只有 durable receipt 可证明 committed;after-write/before-sync、sync/receipt 丢失或无法证明未落盘的错误一律为 uncertain。uncertain 必须保留 idempotency claim并立即关闭该 session 的 next-mutation gate,直到同进程 reconcile 或重启 recovery 得出唯一结果。
-- [ ] 对每条事件校验 schema、stream scope/id、该流 sequence、previous hash、payload digest 和 current hash;session stream 额外校验 sessionId,authority stream 只把 subjectSessionId 当目标 ref 并验证其存在性/最终 head binding。
-- [ ] 额外验证 event/turn/model/tool/queue ID 唯一性、parent/leaf 引用存在性和 reducer 图连通性;未知 event/payload 不得 cast 后继续。
-- [ ] `session.created` 固定 `initialGoalId` 与 `rootAgentId`;open/resume/snapshot/fork 从 canonical event 恢复身份,不得在每次进程启动时重新生成 goal/agent lineage。
-- [ ] session genesis/head receipt 使用可插拔 signer/anchor;没有 signer 时显式记录 unattested,不能伪造 attested 状态。
-- [ ] 定义强制 flush 事件:permission decision、tool terminal、checkpoint、stop、verification terminal、session close。
-- [ ] 保证 tool result terminal event flush 后才允许下一 model request。
-- [ ] recovery 对未完成 tool call 默认写 interrupted/uncertain 并关闭 mutation gate;只有 manifest 明确声明 idempotent/retry-safe、稳定 request/toolCall identity 匹配且 side-effect reconcile 证明可重试时,才允许沿原 idempotency claim 自动重试。
-- [ ] 建立 turn/model/tool/queue 的 started/finished/interrupted/failed 成对事件和 crash reducer。
-- [ ] 冻结 `QueueItemV3` exact schema:queueItemId、sourceCommandId、`steer | follow_up` kind、enqueue/target turn revision、next-turn policy、content digest、bounded canonical message、status;Phase 4 前超出 inline 上限的 payload 必须拒绝,不得只持久化 digest 后丢弃正文。Phase 4 冻结 exact `ArtifactRef` 后再以独立 schema version 启用 ref variant。
-- [ ] queue 状态至少覆盖 `enqueued -> claimed -> consumed | cancelled`;claim 必须按 queueItemId+kind 精确绑定 turn/modelRequestId,禁止按相同文本 digest 猜测。replay 恢复所有未终结 item 的正文/ref、kind 与顺序;payload 缺失或 claim 结果不确定时 pause/corrupted,不能投影为空队列继续。
-- [ ] `queue.cancelled` durable 后才可从 projection/Agent queue 移除;批量 clear 也是逐 item/versioned cancellation,不能用返回空数组的 no-op 伪装成功。
-- [ ] 写 durable stop tombstone;startup recovery 先读 tombstone,再判断是否可恢复。
-- [ ] snapshot 只作为加速层;加载时从 snapshot cursor 继续重放并验证尾部链。
-- [ ] logical checkpoint 只绑定 event cursor、reducer digest、active leaf 和 active plan digest;预留可选 composite checkpoint ref。
-- [ ] fork 只允许 stable turn boundary;新链用 `session.forked` 引用父 session/cursor/hash,不复制伪造原 eventId。fork payload 必须显式选择 continue-existing-goal 或 create-child-goal,为新 session 创建 rootAgentId 并记录 parent root agent lineage,不能靠 open 时随机推断。
-- [ ] session create 与 fork 以不可见 staging/intent 开始,只有 genesis、writer epoch、初始 sequence/projection 和 lineage 全部 durable 后才原子 publish 为 resumable;任一初始化或逐 entry/import 失败只能清理或留下 failed/tombstoned 目标,不得留下可被 `continueRecent` 识别为完整 session 的半成品。
-- [ ] logical rewind 创建新 branch/leaf,不删除旧事件,但在 Phase 4 前不得声称已回退文件系统或开放生产 rewind 命令。
-- [ ] 中间坏行、sequence 缺口、hash 断链全部返回 `corrupted`;禁止静默跳过。
-- [ ] Phase 1 forensic salvage 只读生成有硬大小上限的 `SalvageReport` 和可选离线 report file+digest,不依赖尚未实现的 Artifact CAS;显式修复始终写新 session。Phase 4 再把该 report 适配为受授权的 Artifact,原始坏日志不原地修改。
-- [ ] writer lock 以 stream scope/id 为键,增加 writer epoch/fencing token、ownerRuntimeId、heartbeat 与 stale-owner recovery;每次 append/flush 都校验当前 stream/token,session writer 与 authority lifecycle writer 不能共用未分域的锁或 receipt。
-- [ ] CLI 严格执行 §6.1:v1 始终返回 legacy-read-only;v2 在 `off/opt_in` 保持当前 read/write,在 `default/required` 返回只读提示并提供 migrate/fork-to-v3;覆盖 version-fence/downgrade 测试。
-- [ ] legacy migration 使用 `session.migration_started -> session.legacy_message_imported* -> session.migration_committed | session.migration_failed`;started 绑定完整 source digest/size/importer/schema/expected record count,每条 import 绑定 source index+digest 并幂等。committed durable 前新 v3 session 只能 inspect/pause,不得 resume 或对外返回迁移成功。
-- [ ] crash 后只允许用同 source/manifest idempotently 续完 migration,或把不完整目标标 failed/tombstoned 后创建新目标;不得把部分导入历史当完整 session,也不得覆盖源文件。
+- [x] 用单 writer queue 保证 sequence 分配和 append 顺序;append 只返回 assigned/accepted cursor,关键调用必须再取得覆盖该 cursor 的 `DurableEventReceipt`,不能把“写入进程缓冲区”称为 durable。
+- [x] 明确任何 stream completion、listener settlement、`EventStream.result()`、pending-write Promise、内存 queue/retry/phase 归零都不能签发 `DurableEventReceipt`;receipt 只能来自 Event Store 的已验证 flush/commit barrier。
+- [x] durable barrier 必须传播 file flush/sync 错误;新建、rename、tombstone/snapshot 切换还要按平台能力同步父目录或明确返回 unsupported/degraded,不能忽略 `sync_all/fsync` 失败后签发 receipt。
+- [x] 定义 `MutationEffect = none | committed | uncertain`:只有 durable receipt 可证明 committed;after-write/before-sync、sync/receipt 丢失或无法证明未落盘的错误一律为 uncertain。uncertain 必须保留 idempotency claim并立即关闭该 session 的 next-mutation gate,直到同进程 reconcile 或重启 recovery 得出唯一结果。
+- [x] 对每条事件校验 schema、stream scope/id、该流 sequence、previous hash、payload digest 和 current hash;session stream 额外校验 sessionId,authority stream 只把 subjectSessionId 当目标 ref 并验证其存在性/最终 head binding。
+- [x] 额外验证 event/turn/model/tool/queue ID 唯一性、parent/leaf 引用存在性和 reducer 图连通性;未知 event/payload 不得 cast 后继续。
+- [x] `session.created` 固定 `initialGoalId` 与 `rootAgentId`;open/resume/snapshot/fork 从 canonical event 恢复身份,不得在每次进程启动时重新生成 goal/agent lineage。
+- [x] session genesis/head receipt 使用可插拔 signer/anchor;没有 signer 时显式记录 unattested,不能伪造 attested 状态。
+- [x] 定义强制 flush 事件:permission decision、tool terminal、checkpoint、stop、verification terminal、session close。
+- [x] 保证 tool result terminal event flush 后才允许下一 model request。
+- [x] recovery 对未完成 tool call 默认写 interrupted/uncertain 并关闭 mutation gate;只有 manifest 明确声明 idempotent/retry-safe、稳定 request/toolCall identity 匹配且 side-effect reconcile 证明可重试时,才允许沿原 idempotency claim 自动重试。
+- [x] 建立 turn/model/tool/queue 的 started/finished/interrupted/failed 成对事件和 crash reducer。
+- [x] 冻结 `QueueItemV3` exact schema:queueItemId、sourceCommandId、`steer | follow_up` kind、enqueue/target turn revision、next-turn policy、content digest、bounded canonical message、status;Phase 4 前超出 inline 上限的 payload 必须拒绝,不得只持久化 digest 后丢弃正文。Phase 4 冻结 exact `ArtifactRef` 后再以独立 schema version 启用 ref variant。
+- [x] queue 状态至少覆盖 `enqueued -> claimed -> consumed | cancelled`;claim 必须按 queueItemId+kind 精确绑定 turn/modelRequestId,禁止按相同文本 digest 猜测。replay 恢复所有未终结 item 的正文/ref、kind 与顺序;payload 缺失或 claim 结果不确定时 pause/corrupted,不能投影为空队列继续。
+- [x] `queue.cancelled` durable 后才可从 projection/Agent queue 移除;批量 clear 也是逐 item/versioned cancellation,不能用返回空数组的 no-op 伪装成功。
+- [x] 写 durable stop tombstone;startup recovery 先读 tombstone,再判断是否可恢复。
+- [x] snapshot 只作为加速层;加载时从 snapshot cursor 继续重放并验证尾部链。
+- [x] logical checkpoint 只绑定 event cursor、reducer digest、active leaf 和 active plan digest;预留可选 composite checkpoint ref。
+- [x] fork 只允许 stable turn boundary;新链用 `session.forked` 引用父 session/cursor/hash,不复制伪造原 eventId。fork payload 必须显式选择 continue-existing-goal 或 create-child-goal,为新 session 创建 rootAgentId 并记录 parent root agent lineage,不能靠 open 时随机推断。
+- [x] session create 与 fork 以不可见 staging/intent 开始,只有 genesis、writer epoch、初始 sequence/projection 和 lineage 全部 durable 后才原子 publish 为 resumable;任一初始化或逐 entry/import 失败只能清理或留下 failed/tombstoned 目标,不得留下可被 `continueRecent` 识别为完整 session 的半成品。
+- [x] logical rewind 创建新 branch/leaf,不删除旧事件,但在 Phase 4 前不得声称已回退文件系统或开放生产 rewind 命令。
+- [x] 中间坏行、sequence 缺口、hash 断链全部返回 `corrupted`;禁止静默跳过。
+- [x] Phase 1 forensic salvage 只读生成有硬大小上限的 `SalvageReport` 和可选离线 report file+digest,不依赖尚未实现的 Artifact CAS;显式修复始终写新 session。Phase 4 再把该 report 适配为受授权的 Artifact,原始坏日志不原地修改。
+- [x] writer lock 以 stream scope/id 为键,增加 writer epoch/fencing token、ownerRuntimeId、heartbeat 与 stale-owner recovery;每次 append/flush 都校验当前 stream/token,session writer 与 authority lifecycle writer 不能共用未分域的锁或 receipt。
+- [x] CLI 严格执行 §6.1:v1 始终返回 legacy-read-only;v2 在 `off/opt_in` 保持当前 read/write,在 `default/required` 返回只读提示并提供 migrate/fork-to-v3;覆盖 version-fence/downgrade 测试。
+- [x] legacy migration 使用 `session.migration_started -> session.legacy_message_imported* -> session.migration_committed | session.migration_failed`;started 绑定完整 source digest/size/importer/schema/expected record count,每条 import 绑定 source index+digest 并幂等。committed durable 前新 v3 session 只能 inspect/pause,不得 resume 或对外返回迁移成功。
+- [x] crash 后只允许用同 source/manifest idempotently 续完 migration,或把不完整目标标 failed/tombstoned 后创建新目标;不得把部分导入历史当完整 session,也不得覆盖源文件。
 
 迁移/回滚:
 
@@ -93,6 +93,18 @@ W1-A1 验证记录:
 - 定向门禁:`restore-dependencies.test.ts`、`snapshot.test.ts`、`recovery.test.ts`、`v3-session-manager.test.ts`,4 files / 45 tests PASS。
 - 全量门禁:`npm run check` PASS;`npm test` 262 files / 1710 tests PASS,1个`RUNLEDGER_LIVE_E2E` opt-in测试默认SKIP;`npm run build`与`git diff --check` PASS。
 - 故障证据:registrar throw、identity mismatch、generation mismatch 均未打开 Event Store、未执行 Artifact reconcile、未返回可变 manager;Event Store open 时替换磁盘 snapshot 不影响已绑定的 exact recovery proof。
+
+W1-A2/W1-A3 完成证据(2026-07-23):
+
+- create/fork publication:`src/runtime/session/session-publication.ts` 固定 `staging -> published | failed` canonical record,绑定 authority/tenant/session、genesis/head、writer epoch、projection digest 与 record digest;临时文件先 sync、rename 后同步父目录。普通 create 自动 publish,CLI 与 daemon fork 在 history/lineage 全部 durable 后手动 publish。
+- partial target 处理:`V3SessionInitializationError` 返回 stage/effect/cleanup structured outcome;未发布目标失败时先写 failed record,再关闭 writer/store/lease并删除事件日志和状态目录,删除也同步父目录。`SessionManager.list/continueRecent` 对 staging、failed、损坏 publication fail closed,既有 unmanaged 历史 v3 仍保持兼容。
+- publication 故障矩阵:覆盖 intent 写前、intent rename 后/目录 sync 前、publish 写前、publish rename 后/目录 sync 前、publish sync 后 ack 丢失、fork replay/import 失败与 cleanup 失败;只有已完成 sync 且 exact durable record 可重读时才接受 ack-loss reconcile。
+- durability/recovery:`JsonlV3EventStore` 新增 after-write/before-sync 注入点并把该窗口永久锁为 `uncertain`;memory/JSONL 共用 conformance suite,覆盖 accepted cursor 与 durable receipt 分离、subscriber settlement、确定 sequence、fencing、cross-stream cursor rejection、corruption 与 parent/child stream 隔离。
+- crash convergence:`RecoveryDecision` 显式增加 `reconciliation_required`;open 对未终结 tool/model/turn 追加并 flush 一次 canonical interrupted/failed terminal,重复 reopen 不重复追加;CLI、startup、daemon 与 governed runtime 均保持 paused/fail-closed。
+- forensic salvage:source inspection 硬上限 64 MiB、report 硬上限 64 KiB,报告显式 `attestation:"unattested"`;可选离线 report file 使用私有权限、file sync、atomic rename 与 parent-directory sync,原始坏日志始终只读。受授权 CAS Artifact 适配仍归 W1-B/Phase 4,本候选不宣称完成。
+- 定向门禁:`npx vitest run tests/runtime-v3/session` 为 19 files / 168 tests PASS;相邻 CLI/daemon cleanup/recovery 定向回归为 4 files / 27 tests PASS。
+- 完整门禁:`npm run check` PASS;`npm test` 为 263 files / 1730 tests PASS,1 个 `RUNLEDGER_LIVE_E2E` opt-in 测试默认 SKIP;`npm run build`与`git diff --check` PASS。
+- 状态记录:实现位于 `worktree/governed-agent-harness-runtime`;依用户本轮“实现完毕后勾选完成”的明确指令,本 Phase 任务与 W1-A2/W1-A3 已写为 completed,并由包含本文件的交付提交冻结。W1-B Artifact/CAS、W1-J 与 W1-G 不在本次完成范围。
 
 建议 PR:
 

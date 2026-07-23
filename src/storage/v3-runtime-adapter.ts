@@ -348,7 +348,7 @@ export class GovernedV3SessionRuntime {
 			!report.checks.includes("external_receipts") ||
 			!auditReceiptsRemainValid(report, this.#clock()) ||
 			!recovery ||
-			recovery.kind !== "pause_for_approval" ||
+				(recovery.kind !== "pause_for_approval" && recovery.kind !== "reconciliation_required") ||
 			recovery.projection.migration?.status !== "in_progress" ||
 			this.#manager.isClosed() ||
 			!this.#claimAdmission()

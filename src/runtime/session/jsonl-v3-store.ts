@@ -51,6 +51,7 @@ export interface JsonlV3EventStoreOptions {
 export type JsonlV3WritePhase =
 	| "before_create_sync"
 	| "before_event_write"
+	| "after_event_write_before_sync"
 	| "before_event_sync"
 	| "before_flush_sync"
 	| "after_flush_sync_before_receipt";
@@ -555,6 +556,7 @@ export class JsonlV3EventStore implements RuntimeEventStore {
 				wroteAnyBytes = true;
 				offset += write.bytesWritten;
 			}
+			await this.onWritePhase?.("after_event_write_before_sync");
 		} catch (error) {
 			const failed = unexpectedFailure<AcceptedEventCursor>(
 				"event append was not accepted completely",

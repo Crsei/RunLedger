@@ -145,6 +145,7 @@ function recoveryRequired<T>(
 type SessionCleanupOperation =
 	| "session_writer_close"
 	| "fork_parent_close"
+	| "fork_child_abort"
 	| "fork_child_close"
 	| "fork_child_discard";
 
@@ -837,7 +838,12 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 					return controlPlaneFailure("adapter_contract_violation", "fork parent manager correlation is invalid");
 				}
 				const recovered = parent.recoveryDecision();
-				if (!recovered || recovered.kind === "corrupted" || recovered.kind === "pause_for_approval") {
+				if (
+					!recovered ||
+					recovered.kind === "corrupted" ||
+					recovered.kind === "pause_for_approval" ||
+					recovered.kind === "reconciliation_required"
+				) {
 					return recoveryRequired("fork parent is not at a trusted stable boundary");
 				}
 				if (!parentMutationGate) {
@@ -892,10 +898,11 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 					features: this.#features,
 					identity: this.#identity,
 					runtimeId: createRuntimeId("runtime"),
-					sessionId: childSessionId,
-					writeGenesis: false,
-					lineage: { goalId: initialGoalId, agentId: rootAgentId },
-				});
+						sessionId: childSessionId,
+						writeGenesis: false,
+						lineage: { goalId: initialGoalId, agentId: rootAgentId },
+						publication: { kind: "fork", mode: "manual" },
+					});
 				const plan = createStableForkPlan(projection.value, {
 					newSessionId: childSessionId,
 					parentLeafId: projection.value.activeLeafId,
@@ -913,9 +920,10 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 				if (!genesis.ok) return recoveryRequired("fork genesis was not durably committed");
 				childHasDurableGenesis = true;
 				for (const message of snapshotMessages.value) await child.sessionEvents().recordMessage(message);
-				const copiedHistory = await child.writer().flush();
-				if (!copiedHistory.ok) throw new Error("forked session history was not durably copied");
-				if (governedParent) {
+					const copiedHistory = await child.writer().flush();
+					if (!copiedHistory.ok) throw new Error("forked session history was not durably copied");
+					await child.publishStagedTarget();
+					if (governedParent) {
 					governedParentCleanupAttempted = true;
 					await collectSessionCleanupFault(
 						cleanupFaults,
@@ -955,10 +963,28 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 		if (governedParent && !governedParentCleanupAttempted) {
 			await collectSessionCleanupFault(cleanupFaults, "fork_parent_close", () => governedParent!.close());
 		}
-		if (child) {
-			if (childHasDurableGenesis) {
-				await collectSessionCleanupFault(cleanupFaults, "fork_child_close", () => child!.closeAll());
-			} else {
+			if (child) {
+				if (child.publicationState() === "staging") {
+					await collectSessionCleanupFault(
+						cleanupFaults,
+						"fork_child_abort",
+						async () => {
+							const cleanup = await child!.abortUnpublishedTarget("daemon fork construction failed");
+							if (cleanup.status !== "cleaned") {
+								const cleanupError = new Error(
+									`fork child cleanup ${cleanup.status}: ${cleanup.errors.join("; ")}`,
+								);
+								const namedCause = cleanup.errors
+									.join("; ")
+									.match(/(?:^|: )([A-Za-z][A-Za-z0-9]*Error):/);
+								if (namedCause?.[1]) cleanupError.name = namedCause[1];
+								throw cleanupError;
+							}
+						},
+					);
+				} else if (childHasDurableGenesis) {
+					await collectSessionCleanupFault(cleanupFaults, "fork_child_close", () => child!.closeAll());
+				} else {
 				await collectSessionCleanupFault(cleanupFaults, "fork_child_discard", () => child!.discardEmptyTarget());
 			}
 		}
@@ -1099,7 +1125,7 @@ export interface V3SessionControlStateAdapterOptions {
 
 function inspectionLifecycle(decision: RecoveryDecision, projection?: SessionProjection): SessionInspection["lifecycle"] {
 	if (decision.kind === "corrupted") return "corrupted";
-	if (decision.kind === "pause_for_approval") return "paused";
+	if (decision.kind === "pause_for_approval" || decision.kind === "reconciliation_required") return "paused";
 	if (decision.kind === "stopped") return projection?.lifecycle === "closed" ? "closed" : "stopped";
 	if (projection?.lifecycle === "closed") return "closed";
 	if (projection?.lifecycle === "stopped" || projection?.lifecycle === "stop_requested") return "stopped";
@@ -1858,6 +1884,7 @@ function recoveredSideEffects(events: readonly RuntimeEventV3[]): ControlPlaneRe
 function recoveryState(evidence: V3SessionEvidence): DaemonSessionRecoveryState {
 	if (evidence.decision.kind === "corrupted") return "corrupted";
 	if (evidence.decision.kind === "pause_for_approval") return "pause_for_approval";
+	if (evidence.decision.kind === "reconciliation_required") return "reconciliation_required";
 	if (evidence.decision.kind === "stopped") {
 		return evidence.projection?.lifecycle === "closed" ? "closed" : "stopped";
 	}
@@ -1918,9 +1945,11 @@ export class V3DaemonRuntimeRecoveryPortAdapter implements DaemonRuntimeRecovery
 			canonicalDigest(actualSideEffects.value) !== canonicalDigest(descriptor.sideEffects)
 		) return recoveryRequired("recovery descriptor is stale relative to the durable v3 event log");
 		const hasNonTerminalSideEffects = actualSideEffects.value.some((effect) => effect.state !== "terminal");
-		let expectedMode: RestoredDaemonSession["mode"] = "read_only";
-		if (actualState === "resume") expectedMode = hasNonTerminalSideEffects ? "paused" : "active_candidate";
-		else if (actualState === "pause_for_approval") expectedMode = "paused";
+			let expectedMode: RestoredDaemonSession["mode"] = "read_only";
+			if (actualState === "resume") expectedMode = hasNonTerminalSideEffects ? "paused" : "active_candidate";
+			else if (actualState === "pause_for_approval" || actualState === "reconciliation_required") {
+				expectedMode = "paused";
+			}
 		if (mode !== expectedMode) return recoveryRequired("requested recovery mode is unsafe for the durable session state");
 		return {
 			ok: true,

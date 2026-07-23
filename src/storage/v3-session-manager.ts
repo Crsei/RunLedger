@@ -1,6 +1,6 @@
 /** Runtime v3 session composition root：event store、writer lease、recovery 与 model-history replay。 */
 
-import { readFile, rm } from "node:fs/promises";
+import { open, readFile, rm } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
@@ -44,9 +44,23 @@ import {
 	type SessionRestoreDependencyRegistrar,
 	type SessionRestoreDependencyRegistry,
 } from "../runtime/session/restore-dependencies.ts";
-import { recoverSession, type RecoveryDecision } from "../runtime/session/recovery.ts";
+import {
+	recordCrashInterruption,
+	recoverSession,
+	type RecoveryDecision,
+} from "../runtime/session/recovery.ts";
 import { reduceSessionEvents } from "../runtime/session/reducer.ts";
 import { writeStopTombstone } from "../runtime/session/stop-tombstone.ts";
+import {
+	beginSessionPublication,
+	commitSessionPublication,
+	failSessionPublication,
+	readSessionPublication,
+	type SessionPublicationKind,
+	type SessionPublicationRecord,
+	type SessionPublicationState,
+	type SessionPublicationWritePhase,
+} from "../runtime/session/session-publication.ts";
 import {
 	FileWriterLeaseStore,
 	type WriterLeaseRecord,
@@ -101,6 +115,15 @@ export interface V3SessionCreateOptions {
 	writeGenesis?: boolean;
 	/** stable fork 在写 genesis 前先固定 lineage；两项必须成对提供。 */
 	lineage?: { goalId: GoalId; agentId: AgentId };
+	/**
+	 * writeGenesis=true 默认使用 create/automatic。
+	 * migration target 暂不传该项；fork 使用 fork/manual，完成全部导入后显式 publishStagedTarget。
+	 */
+	publication?: {
+		kind: SessionPublicationKind;
+		mode: "automatic" | "manual";
+		onWritePhase?: (phase: SessionPublicationWritePhase) => Promise<void> | void;
+	};
 }
 
 export interface V3SessionOpenOptions {
@@ -168,6 +191,42 @@ interface OpenedV3Runtime {
 	artifactReconciliation?: ArtifactResult<ArtifactReconciliationReport>;
 	recovery?: RecoveryDecision;
 	restoreDependencies: SessionRestoreDependencyRegistry;
+	publication?: {
+		record: SessionPublicationRecord;
+		onWritePhase?: (phase: SessionPublicationWritePhase) => Promise<void> | void;
+	};
+}
+
+export interface V3SessionInitializationCleanupOutcome {
+	status: "cleaned" | "failed_tombstoned" | "incomplete";
+	errors: readonly string[];
+}
+
+export class V3SessionInitializationError extends Error {
+	public readonly stage: "intent" | "compose" | "genesis" | "publish";
+	public readonly filePath: string;
+	public readonly sessionId: SessionId;
+	public readonly effect: "none" | "uncertain";
+	public readonly cleanup: V3SessionInitializationCleanupOutcome;
+
+	public constructor(options: {
+		stage: V3SessionInitializationError["stage"];
+		filePath: string;
+		sessionId: SessionId;
+		effect: V3SessionInitializationError["effect"];
+		cleanup: V3SessionInitializationCleanupOutcome;
+		cause: unknown;
+	}) {
+		super(`v3 session initialization failed during ${options.stage}`, {
+			cause: options.cause,
+		});
+		this.name = "V3SessionInitializationError";
+		this.stage = options.stage;
+		this.filePath = options.filePath;
+		this.sessionId = options.sessionId;
+		this.effect = options.effect;
+		this.cleanup = options.cleanup;
+	}
 }
 
 function resultValue<T>(result: SessionResult<T>, operation: string): T {
@@ -203,15 +262,19 @@ function cleanupError(cause: unknown): Error {
 	return new Error(typeof cause === "string" ? cause : "unknown runtime cleanup failure");
 }
 
+function cleanupMessages(prefix: string, cause: unknown): string[] {
+	if (cause instanceof AggregateError) {
+		return cause.errors.flatMap((error) => cleanupMessages(prefix, error));
+	}
+	const error = cleanupError(cause);
+	return [`${prefix}: ${error.name}: ${error.message}`];
+}
+
 function resultError(
 	operation: string,
 	error: { code: string; message: string },
 ): Error {
 	return new Error(`${operation}: ${error.code}: ${error.message}`);
-}
-
-function aggregateCleanupErrors(cause: unknown): readonly unknown[] {
-	return cause instanceof AggregateError ? cause.errors : [cause];
 }
 
 async function closeWriterAndStore(
@@ -305,6 +368,81 @@ function restoreLineage(
 	return { goalId: projection.genesis.initialGoalId, agentId: projection.genesis.rootAgentId };
 }
 
+async function cleanupInitializationFiles(
+	filePath: string,
+): Promise<V3SessionInitializationCleanupOutcome> {
+	const errors: string[] = [];
+	let eventLogRemoved = false;
+	try {
+		await rm(filePath, { force: true });
+		await syncDirectory(dirname(filePath));
+		eventLogRemoved = true;
+	} catch (cause) {
+		errors.push(`event log removal: ${cleanupError(cause).message}`);
+	}
+	if (eventLogRemoved) {
+		try {
+			await rm(stateDirectoryFor(filePath), { recursive: true, force: true });
+			await syncDirectory(dirname(stateDirectoryFor(filePath)));
+		} catch (cause) {
+			errors.push(`state removal: ${cleanupError(cause).message}`);
+		}
+	}
+	return {
+		status: errors.length === 0 ? "cleaned" : "incomplete",
+		errors,
+	};
+}
+
+async function syncDirectory(path: string): Promise<void> {
+	const handle = await open(path, "r");
+	try {
+		await handle.sync();
+	} finally {
+		await handle.close();
+	}
+}
+
+function verifyPublishedRecord(
+	record: SessionPublicationRecord,
+	filePath: string,
+	events: readonly RuntimeEventV3[],
+): void {
+	const genesis = events[0];
+	const publishedHead = record.head === null ? undefined : events[record.head.sequence];
+	if (
+		record.state !== "published" ||
+		record.fileName !== basename(filePath) ||
+		!genesis ||
+		genesis.sequence !== 0 ||
+		genesis.authorityId !== record.authorityId ||
+		genesis.tenantId !== record.tenantId ||
+		genesis.stream.scope !== "session" ||
+		genesis.stream.sessionId !== record.sessionId ||
+		(record.kind === "create"
+			? genesis.type !== "session.created"
+			: genesis.type !== "session.forked") ||
+		record.genesis?.eventId !== genesis.eventId ||
+		record.genesis.eventHash !== genesis.currentEventHash ||
+		!publishedHead ||
+		record.head?.eventId !== publishedHead.eventId ||
+		record.head.eventHash !== publishedHead.currentEventHash
+	) {
+		throw new Error("v3 published session does not match its durable publication record");
+	}
+	const projection = resultValue(
+		reduceSessionEvents(events.slice(0, record.head.sequence + 1)),
+		"v3 published session projection failed",
+	);
+	if (
+		projection.genesis.initialGoalId !== record.initialGoalId ||
+		projection.genesis.rootAgentId !== record.rootAgentId ||
+		canonicalDigest(projection) !== record.projectionDigest
+	) {
+		throw new Error("v3 published session projection or lineage does not match publication");
+	}
+}
+
 async function readFirstEvent(filePath: string): Promise<RuntimeEventV3 & { stream: SessionEventStreamRef }> {
 	const source = await readFile(filePath, "utf8");
 	const newline = source.indexOf("\n");
@@ -352,6 +490,7 @@ async function composeRuntime(options: {
 	create: boolean;
 	lineage?: { goalId: GoalId; agentId: AgentId };
 	restoreDependencies?: SessionRestoreDependencyRegistry;
+	publication?: OpenedV3Runtime["publication"];
 }): Promise<OpenedV3Runtime> {
 	const stateDirectory = stateDirectoryFor(options.filePath);
 	const stream = createSessionEventStreamRef(options.identity, options.sessionId);
@@ -450,6 +589,7 @@ async function composeRuntime(options: {
 			restoreDependencies:
 				options.restoreDependencies ??
 				await registerSessionRestoreDependencies(),
+			...(options.publication === undefined ? {} : { publication: options.publication }),
 		};
 	} catch (cause) {
 		const cleanupErrors = await cleanupComposedRuntime(leaseStore, fence, store, writer);
@@ -524,29 +664,83 @@ export class V3SessionManager {
 			(!isRuntimeId(options.lineage.goalId, "goal") || !isRuntimeId(options.lineage.agentId, "agent"))
 		) throw new TypeError("v3 session lineage override is invalid");
 		const filePath = createFilePath(sessionDir, sessionId, options.filePath);
-		const runtime = await composeRuntime({
-			filePath,
-			identity,
-			runtimeId,
-			sessionId,
-			features: options.features,
-			create: true,
-			...(options.lineage ? { lineage: options.lineage } : {}),
-		});
-		const manager = new V3SessionManager(runtime);
+		const lineage = options.lineage ?? deterministicLineage(sessionId);
+		const publication = options.publication ??
+			(options.writeGenesis === false
+				? undefined
+				: { kind: "create" as const, mode: "automatic" as const });
+		let publicationRecord: SessionPublicationRecord | undefined;
+		let stage: V3SessionInitializationError["stage"] = "intent";
+		if (publication) {
+			const begun = await beginSessionPublication({
+				stateDirectory: stateDirectoryFor(filePath),
+				filePath,
+				kind: publication.kind,
+				authorityId: identity.authorityId,
+				tenantId: identity.tenantId,
+				sessionId,
+				initialGoalId: lineage.goalId,
+				rootAgentId: lineage.agentId,
+				...(publication.onWritePhase === undefined
+					? {}
+					: { onWritePhase: publication.onWritePhase }),
+			});
+			if (!begun.ok) {
+				const cleanup = await cleanupInitializationFiles(filePath);
+				throw new V3SessionInitializationError({
+					stage,
+					filePath,
+					sessionId,
+					effect: begun.error.effect === "uncertain" ? "uncertain" : "none",
+					cleanup,
+					cause: resultError("v3 session publication intent failed", begun.error),
+				});
+			}
+			publicationRecord = begun.value;
+		}
+		let manager: V3SessionManager | undefined;
 		try {
+			stage = "compose";
+			const runtime = await composeRuntime({
+				filePath,
+				identity,
+				runtimeId,
+				sessionId,
+				features: options.features,
+				create: true,
+				lineage,
+				...(publicationRecord === undefined
+					? {}
+					: {
+							publication: {
+								record: publicationRecord,
+								...(publication?.onWritePhase === undefined
+									? {}
+									: { onWritePhase: publication.onWritePhase }),
+							},
+						}),
+			});
+			manager = new V3SessionManager(runtime);
+			stage = "genesis";
 			if (options.writeGenesis !== false) await runtime.sessionEvents.ensureInitialized();
+			if (publication?.mode === "automatic") {
+				stage = "publish";
+				await manager.publishStagedTarget();
+			}
 			return manager;
 		} catch (cause) {
-			try {
-				await manager.closeAll();
-			} catch (cleanupCause) {
-				throw new AggregateError(
-					[cause, ...aggregateCleanupErrors(cleanupCause)],
-					"v3 session create failed and cleanup was incomplete",
-				);
-			}
-			throw cause;
+			if (!publicationRecord) throw cause;
+			const cleanup = manager
+				? await manager.abortUnpublishedTarget("session initialization failed")
+				: await cleanupInitializationFiles(filePath);
+			throw new V3SessionInitializationError({
+				stage,
+				filePath,
+				sessionId,
+				effect: stage === "publish" ? "uncertain" : "none",
+				cleanup,
+				cause,
+			});
 		}
 	}
 
@@ -582,6 +776,13 @@ export class V3SessionManager {
 			options.registerDependencies,
 		);
 		const absolute = resolve(filePath);
+		const publication = await readSessionPublication(stateDirectoryFor(absolute));
+		if (!publication.ok) {
+			throw resultError("v3 session publication state read failed", publication.error);
+		}
+		if (publication.value !== undefined && publication.value.state !== "published") {
+			throw new Error(`v3 session target is ${publication.value.state} and is not resumable`);
+		}
 		const dependencySnapshot = await readSessionSnapshot(
 			join(stateDirectoryFor(absolute), "snapshot.json"),
 		);
@@ -604,45 +805,101 @@ export class V3SessionManager {
 			features,
 			create: false,
 			restoreDependencies,
-		});
-		const recovery = await recoverSession({
-			store: runtime.store,
-			sessionDirectory: runtime.stateDirectory,
-			authorityId: identity.authorityId,
-			tenantId: identity.tenantId,
-			sessionId: first.stream.sessionId,
-			snapshotFilePath: join(runtime.stateDirectory, "snapshot.json"),
-			...(dependencySnapshot.value === undefined
+			...(publication.value === undefined
 				? {}
-				: { snapshot: dependencySnapshot.value }),
+				: { publication: { record: publication.value } }),
 		});
-		runtime.recovery = recovery;
-		const migrationInspectOnly =
-			(recovery.kind === "pause_for_approval" && recovery.projection.migration?.status === "in_progress") ||
-			(recovery.kind === "stopped" && recovery.reason === "migration_failed");
-		if (recovery.kind !== "corrupted" && !migrationInspectOnly && options.reconcileArtifacts !== false) {
-			runtime.artifactReconciliation = await runtime.artifactRepository.reconcile({
+		try {
+			if (publication.value !== undefined) {
+				const events = resultValue(
+					await readAllRuntimeEvents(runtime.store),
+					"v3 published session verification failed",
+				);
+				verifyPublishedRecord(publication.value, absolute, events);
+			}
+			let recovery = await recoverSession({
+				store: runtime.store,
+				sessionDirectory: runtime.stateDirectory,
 				authorityId: identity.authorityId,
 				tenantId: identity.tenantId,
+				sessionId: first.stream.sessionId,
+				snapshotFilePath: join(runtime.stateDirectory, "snapshot.json"),
+				...(dependencySnapshot.value === undefined
+					? {}
+					: { snapshot: dependencySnapshot.value }),
 			});
+			if (
+				recovery.kind === "reconciliation_required" &&
+				(recovery.projection.activeTurnId !== null ||
+					recovery.projection.activeModelRequestId !== null ||
+					recovery.projection.toolCalls.some((tool) =>
+						tool.status === "requested" ||
+						tool.status === "authorized" ||
+						tool.status === "started"
+					))
+			) {
+				resultValue(
+					await recordCrashInterruption({
+						writer: runtime.writer,
+						projection: recovery.projection,
+						principalId: identity.principalId,
+					}),
+					"v3 session crash interruption reconciliation failed",
+				);
+				recovery = await recoverSession({
+					store: runtime.store,
+					sessionDirectory: runtime.stateDirectory,
+					authorityId: identity.authorityId,
+					tenantId: identity.tenantId,
+					sessionId: first.stream.sessionId,
+					snapshotFilePath: join(runtime.stateDirectory, "snapshot.json"),
+				});
+			}
+			runtime.recovery = recovery;
+			const migrationInspectOnly =
+				((recovery.kind === "pause_for_approval" || recovery.kind === "reconciliation_required") &&
+					recovery.projection.migration?.status === "in_progress") ||
+				(recovery.kind === "stopped" && recovery.reason === "migration_failed");
+			if (recovery.kind !== "corrupted" && !migrationInspectOnly && options.reconcileArtifacts !== false) {
+				runtime.artifactReconciliation = await runtime.artifactRepository.reconcile({
+					authorityId: identity.authorityId,
+					tenantId: identity.tenantId,
+				});
+			}
+			if (
+				runtime.artifactReconciliation !== undefined &&
+				(recovery.kind === "resume" ||
+					recovery.kind === "pause_for_approval" ||
+					recovery.kind === "reconciliation_required") &&
+				(!runtime.artifactReconciliation.ok || runtime.artifactReconciliation.value.failed.length > 0)
+			) {
+				runtime.recovery = {
+					kind: "reconciliation_required",
+					projection: recovery.projection,
+					cursor: recovery.cursor,
+					reasons: [...new Set([
+						...(recovery.kind === "resume" ? [] : recovery.reasons),
+						"artifact_reconciliation_failed" as const,
+					])],
+					snapshotSource: recovery.snapshotSource,
+				};
+			}
+			return new V3SessionManager(runtime);
+		} catch (cause) {
+			const cleanupErrors = await cleanupComposedRuntime(
+				runtime.leaseStore,
+				runtime.fence,
+				runtime.store,
+				runtime.writer,
+			);
+			if (cleanupErrors.length > 0) {
+				throw new AggregateError(
+					[cause, ...cleanupErrors],
+					"v3 session restore failed and cleanup was incomplete",
+				);
+			}
+			throw cause;
 		}
-		if (
-			runtime.artifactReconciliation !== undefined &&
-			(recovery.kind === "resume" || recovery.kind === "pause_for_approval") &&
-			(!runtime.artifactReconciliation.ok || runtime.artifactReconciliation.value.failed.length > 0)
-		) {
-			runtime.recovery = {
-				kind: "pause_for_approval",
-				projection: recovery.projection,
-				cursor: recovery.cursor,
-				reasons: [...new Set([
-					...(recovery.kind === "pause_for_approval" ? recovery.reasons : []),
-					"artifact_reconciliation_failed" as const,
-				])],
-				snapshotSource: recovery.snapshotSource,
-			};
-		}
-		return new V3SessionManager(runtime);
 	}
 
 	public restoreDependency(
@@ -739,6 +996,113 @@ export class V3SessionManager {
 
 	public eventStore(): RuntimeEventStore {
 		return this.runtime.store;
+	}
+
+	public publicationState(): SessionPublicationState | "legacy_unmanaged" {
+		return this.runtime.publication?.record.state ?? "legacy_unmanaged";
+	}
+
+	/**
+	 * create/fork 的唯一 publish barrier：先验证全链与 projection，再重做 exact-head flush，
+	 * 最后原子切换 publication record。ack 丢失时只按 durable record reconcile。
+	 */
+	public async publishStagedTarget(): Promise<SessionPublicationRecord> {
+		const publication = this.runtime.publication;
+		if (!publication) throw new Error("v3 session target has no managed publication intent");
+		if (publication.record.state === "published") return publication.record;
+		const durable = resultValue(
+			await this.flushCurrentHead(),
+			"v3 session publication durable barrier failed",
+		);
+		const events = resultValue(
+			await readAllRuntimeEvents(this.runtime.store),
+			"v3 session publication replay failed",
+		);
+		const projection = resultValue(
+			reduceSessionEvents(events),
+			"v3 session publication projection failed",
+		);
+		const genesis = events[0];
+		if (
+			!genesis ||
+			(publication.record.kind === "create"
+				? genesis.type !== "session.created"
+				: genesis.type !== "session.forked") ||
+			projection.genesis.initialGoalId !== publication.record.initialGoalId ||
+			projection.genesis.rootAgentId !== publication.record.rootAgentId
+		) {
+			throw new Error("v3 session publication genesis or lineage does not match its intent");
+		}
+		const committed = await commitSessionPublication({
+			stateDirectory: this.runtime.stateDirectory,
+			expected: publication.record,
+			genesis: {
+				stream: genesis.stream,
+				sequence: genesis.sequence,
+				eventId: genesis.eventId,
+				eventHash: genesis.currentEventHash,
+			},
+			head: durable.cursor,
+			writerEpoch: durable.writerEpoch,
+			projectionDigest: canonicalDigest(projection),
+			...(publication.onWritePhase === undefined
+				? {}
+				: { onWritePhase: publication.onWritePhase }),
+		});
+		if (committed.ok) {
+			publication.record = committed.value;
+			return committed.value;
+		}
+		throw resultError("v3 session publication failed", committed.error);
+	}
+
+	public async abortUnpublishedTarget(
+		reason: string,
+	): Promise<V3SessionInitializationCleanupOutcome> {
+		const errors: string[] = [];
+		const publication = this.runtime.publication;
+		if (!publication || publication.record.state === "published") {
+			return {
+				status: "incomplete",
+				errors: ["target is unmanaged or already published"],
+			};
+		}
+		const failed = await failSessionPublication(
+			this.runtime.stateDirectory,
+			publication.record,
+			reason,
+			publication.onWritePhase,
+		);
+		if (failed.ok) publication.record = failed.value;
+		else errors.push(`publication failure tombstone: ${failed.error.message}`);
+		try {
+			await this.closeAll();
+		} catch (cause) {
+			errors.push(...cleanupMessages("runtime close", cause));
+		}
+		let eventLogRemoved = false;
+		try {
+			await rm(this.runtime.filePath, { force: true });
+			await syncDirectory(dirname(this.runtime.filePath));
+			eventLogRemoved = true;
+		} catch (cause) {
+			errors.push(`event log removal: ${cleanupError(cause).message}`);
+		}
+		let stateRemoved = false;
+		if (eventLogRemoved) {
+			try {
+				await rm(this.runtime.stateDirectory, { recursive: true, force: true });
+				await syncDirectory(dirname(this.runtime.stateDirectory));
+				stateRemoved = true;
+			} catch (cause) {
+				errors.push(`state removal: ${cleanupError(cause).message}`);
+			}
+		}
+		if (errors.length === 0) return { status: "cleaned", errors };
+		return {
+			status: failed.ok && !stateRemoved ? "failed_tombstoned" : "incomplete",
+			errors,
+		};
 	}
 
 	public sessionEvents(): AgentLoopSessionEvents {

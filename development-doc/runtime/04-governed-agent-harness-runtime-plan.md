@@ -32,13 +32,13 @@
 
 本表是对当前目标分支代码、生产接线、公开导出和测试的状态汇总,用于纠正旧基线中“只有 scaffold”或“整类能力不存在”的过时描述。阶段任务仍按其完整语义验收:模块存在、fake adapter、局部 E2E 或进程内 seam 不能单独关闭生产联合门禁,因此下表不会机械地把 343 个正式任务全部改成 `[x]`。
 
-当前复核结果:`npm run check` PASS;`npm test` 为 261 files / 1701 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build` 与 `git diff --check` PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。
+当前复核结果:`npm run check` PASS;`npm test` 为 263 files / 1730 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build` 与 `git diff --check` PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。W1-A2/A3 已按实现证据和用户明确指令标记 completed,并由包含本文件的交付提交冻结。Runtime-M0 继续受 W1-B、W1-J 与 W1-G 门禁约束。
 
 | 范围 | 当前实现状态 | 已有代码/测试证据 | 尚未关闭的边界 |
 |---|---|---|---|
 | §0.5 pi-ai parity | 已实现 | parity manifest、只读审计脚本、delta/parity tests 均在当前分支;固定 snapshot 审计覆盖 164/164 source files 与 72 catalog files | Qwen 等差异按 manifest 明确 defer/adopt/reject,不是隐式 parity;后续 upstream 漂移仍需重算 |
 | Phase 0 | contract/边界基线已实现 | v3 IDs、catalog、exact payload/schema、hash/canonical JSON、taint、threat model、feature matrix与两条 boundary script均已接入`npm run check` | 历史 I0–I7 没有逐窗口 handoff 记录,不能据此关闭最终串行集成验收 |
-| Phase 1 | 部分实现,主体已落地 | single-writer Event Store、accepted/durable barrier、strict replay/hash、queue、snapshot、stop、fork、migration、salvage、writer lease、显式 restore dependency registration 与 session tests | create/fork 全故障矩阵、salvage 到受授权 CAS Artifact 的生产适配仍需逐项闭合 |
+| Phase 1 | 已实现 | single-writer Event Store、accepted/durable barrier、strict replay/hash、queue、snapshot、stop、fork、migration、bounded unattested salvage、writer lease、restore dependency registration、create/fork publication staging、crash terminal 与 backend conformance;Phase 清单已逐项勾选 | salvage 到受授权 CAS Artifact 仍归 W1-B/Phase 4,不属于 Phase 1 完成声明 |
 | Phase 2 | contract 已实现 | Workspace envelope/binding/lease/validation/checkpoint events、projection/reducer与 architecture/contract tests | 真实 Git/worktree/lease/TOCTOU 行为已冻结为外部依赖,未完成项不由 Runtime 接管 |
 | Phase 3 | contract 已实现 | Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer与 security-contract tests | pending Approval 跨重启、actor identity、完整 Gateway/Sandbox/credential 行为均为冻结缺口 |
 | Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
@@ -1539,13 +1539,20 @@ parallel group `P1` 只包含 W1-A 与 W1-B;两条lane均从 W0-G 创建,不得�
 | ID | 状态 | 顺序/依赖 | 独占路径 | 工作内容 |
 |---|---|---|---|---|
 | W1-A1 | completed | P1, after W0-G | `src/runtime/session/**`、`src/storage/v3-session-manager.ts`、`tests/runtime-v3/session/**` | `259f2fb`;显式`restore()`先注册不可序列化依赖,再校验snapshot identity/generation,随后才打开Event Store/reduce/reconcile并返回handle |
-| W1-A2 | pending | after W1-A1 | 同W1-A1 | 完成create/fork staging、partial-create+cleanup structured outcome、publish前后kill/fault矩阵 |
-| W1-A3 | pending | after W1-A2 | 同W1-A1 | 补after-write/before-sync、parent-dir sync、disk-full、cross-stream receipt/fencing与uncertain recovery conformance |
+| W1-A2 | completed | after W1-A1 | 同W1-A1 | create/fork staging、partial-create+cleanup structured outcome、publish前后fault矩阵与完整门禁均已完成 |
+| W1-A3 | completed | after W1-A2 | 同W1-A1 | after-write/before-sync、parent-dir sync、disk-full、cross-stream receipt/fencing与uncertain recovery conformance均已完成 |
 | W1-B1 | pending | P1, after W0-G | `src/runtime/artifacts/**`、artifact/storage tests | 将`SalvageReport`接入受授权CAS Artifact,绑定source digest、unattested、access与retention |
 | W1-B2 | pending | after W1-B1 | 同W1-B1 + `tests/runtime-v3/artifacts/**` | 完成Runtime CAS/access/GC/legacy import/queue Artifact ref的crash与缺失blob fail-closed矩阵;`tests/worktree/artifact-checkpoint*`只读复跑 |
 | W1-J1 | pending | after W1-A3 + W1-B2 | L0/L2/L4 | 串行接入session/artifact public exports、CLI version fence和migration/fork路径;禁止并行修改 |
 | W1-J2 | pending | after W1-J1 | docs/tests only | 逐项审阅Phase 0–4 checklist;只勾有完整evidence的任务 |
 | W1-G | pending | join | full tree | 执行Runtime-M0 gate并记录candidate baseline |
+
+W1-A2/A3 完成证据:
+
+- `src/runtime/session/session-publication.ts`、`src/storage/v3-session-manager.ts`、CLI/daemon fork 与 session discovery 已接入不可见 staging、exact publication barrier、failed/cleanup structured outcome和 parent-directory sync。
+- JSONL after-write/before-sync uncertainty、canonical crash terminals、`reconciliation_required`、memory/JSONL backend conformance、bounded unattested offline salvage report 已有 Session 与相邻 lifecycle/control-plane 回归。
+- `npm run check` PASS;Session 定向门禁 19 files / 168 tests PASS;CLI/daemon cleanup/recovery 定向回归 4 files / 27 tests PASS;`npm test` 263 files / 1730 tests PASS + 1 opt-in SKIP;`npm run build`与`git diff --check` PASS。
+- 用户明确要求实现完毕后勾选完成,因此 W1-A2/W1-A3 已写为 `completed`,并由包含本文件的交付提交冻结。W1-J、W1-G 与 W1-B Artifact lane 保持未完成。
 
 W1 定向门禁:
 

@@ -238,6 +238,41 @@ describe("JsonlV3EventStore durable JSONL", () => {
 		expect(resultError(await store.close()).code).toBe("durable_write_failed");
 	});
 
+	it("classifies a crash after full write but before sync as uncertain and requires restart reconciliation", async () => {
+		const filePath = await temporaryFile();
+		const store = resultValue(
+			await JsonlV3EventStore.create({
+				...storeOptions(filePath),
+				onWritePhase: (phase) => {
+					if (phase === "after_event_write_before_sync") {
+						throw new Error("injected crash after write");
+					}
+				},
+			}),
+		);
+		const first = createEvent();
+		expect(await store.append(SCOPE.stream, first, null, FENCE)).toMatchObject({
+			ok: false,
+			error: { code: "durable_write_failed", effect: "uncertain" },
+		});
+		expect(resultError(await store.append(SCOPE.stream, first, null, FENCE))).toMatchObject({
+			code: "durable_write_failed",
+			effect: "uncertain",
+		});
+		expect(resultError(await store.close()).effect).toBe("uncertain");
+
+		const reopened = resultValue(await JsonlV3EventStore.open(storeOptions(filePath)));
+		expect(await reopened.verify(SCOPE.stream)).toMatchObject({
+			ok: true,
+			value: {
+				integrity: "valid",
+				eventCount: 1,
+				head: { eventId: first.eventId },
+			},
+		});
+		expect(resultValue(await reopened.close())).toBeUndefined();
+	});
+
 	it("reports an event-sync disk-full boundary as an uncertain durable append", async () => {
 		const filePath = await temporaryFile();
 		const store = resultValue(
@@ -325,6 +360,32 @@ describe("JsonlV3EventStore durable JSONL", () => {
 		expect(resultError(await store.append(SCOPE.stream, second, expectedRevision(first), FENCE)).code).toBe("writer_fenced");
 		expect(await readFile(filePath)).toEqual(durableBytes);
 		resultValue(await store.close());
+	});
+
+	it("rejects cross-stream cursors and fences without issuing a durability receipt", async () => {
+		const filePath = await temporaryFile();
+		const store = resultValue(await JsonlV3EventStore.create(storeOptions(filePath)));
+		const event = createEvent();
+		const cursor = resultValue(await store.append(SCOPE.stream, event, null, FENCE));
+		const otherStream = createSessionEventStreamRef(
+			{ authorityId: AUTHORITY_ID, tenantId: TENANT_ID },
+			createRuntimeId("session", "cross-stream"),
+		);
+		const otherFence: WriterFence = { ...FENCE, stream: otherStream };
+
+		expect(await store.flushThrough(otherStream, { ...cursor, stream: otherStream }, otherFence)).toMatchObject({
+			ok: false,
+			error: { code: "writer_fenced", effect: "none" },
+		});
+		expect(await store.flushThrough(SCOPE.stream, { ...cursor, stream: otherStream }, FENCE)).toMatchObject({
+			ok: false,
+			error: { code: "writer_fenced", effect: "none" },
+		});
+		expect(resultValue(await store.flushThrough(SCOPE.stream, cursor, FENCE))).toMatchObject({
+			streamId: SCOPE.stream.streamId,
+			cursor: { eventId: event.eventId },
+		});
+		expect(resultValue(await store.close())).toBeUndefined();
 	});
 
 	it("paginates replay, publishes only durable live events, and closes subscribers", async () => {

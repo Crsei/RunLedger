@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalJson } from "../../../src/runtime/protocol/v3/canonical-json.ts";
@@ -11,7 +11,9 @@ import { reduceSessionEvents } from "../../../src/runtime/session/reducer.ts";
 import {
 	createForensicSalvageForkPlan,
 	inspectEventLogForSalvage,
+	MAX_FORENSIC_SALVAGE_SOURCE_BYTES,
 	validateForensicSalvageReport,
+	writeForensicSalvageReport,
 } from "../../../src/runtime/session/salvage.ts";
 import { readAllRuntimeEvents } from "../../../src/runtime/session/snapshot.ts";
 import type { SessionResult, WriterFence } from "../../../src/runtime/session/types.ts";
@@ -96,8 +98,17 @@ describe("forensic salvage", () => {
 			verifiedPrefixCount: 1,
 			failure: { code: "torn_tail", line: 1, tornTail: true },
 			readOnly: true,
+			attestation: "unattested",
 		});
 		expect(validateForensicSalvageReport(inspection.report)).toBe(true);
+		const reportPath = join(source.filePath, "..", "reports", "salvage.json");
+		const written = valueOf(await writeForensicSalvageReport(reportPath, inspection.report));
+		expect(written).toMatchObject({
+			filePath: reportPath,
+			reportDigest: inspection.report.reportDigest,
+		});
+		expect((await stat(reportPath)).mode & 0o777).toBe(0o600);
+		expect(JSON.parse((await readFile(reportPath, "utf8")).trim())).toEqual(inspection.report);
 
 		const newSessionId = createRuntimeId("session", "salvaged-child");
 		const sourceProjection = valueOf(reduceSessionEvents(inspection.verifiedPrefix));
@@ -231,6 +242,33 @@ describe("forensic salvage", () => {
 			outcome: "no_repair_needed",
 			verifiedPrefixCount: 1,
 			failure: null,
+		});
+	});
+
+	it("refuses an oversized source before allocating or parsing it", async () => {
+		const source = await fixture("oversized");
+		const handle = await open(source.filePath, "w", 0o600);
+		try {
+			await handle.truncate(MAX_FORENSIC_SALVAGE_SOURCE_BYTES + 1);
+		} finally {
+			await handle.close();
+		}
+		expect(await inspectEventLogForSalvage({
+			filePath: source.filePath,
+			scope: {
+				authorityId: source.authorityId,
+				tenantId: source.tenantId,
+				stream: source.stream,
+			},
+			reportArtifactId: createRuntimeId("artifact", "oversized-report"),
+			generatedAt: "2026-07-22T00:00:01.000Z",
+		})).toMatchObject({
+			ok: false,
+			error: {
+				code: "oversized_event",
+				effect: "none",
+				details: { maximumByteLength: MAX_FORENSIC_SALVAGE_SOURCE_BYTES },
+			},
 		});
 	});
 });

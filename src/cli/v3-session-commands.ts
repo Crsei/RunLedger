@@ -345,6 +345,7 @@ export async function forkV3FromCli(options: {
 			features: options.features,
 			writeGenesis: false,
 			lineage: { goalId: initialGoalId, agentId: rootAgentId },
+			publication: { kind: "fork", mode: "manual" },
 		});
 		const plan = createStableForkPlan(projection.value, {
 			newSessionId: child.sessionId(),
@@ -365,6 +366,7 @@ export async function forkV3FromCli(options: {
 		}
 		const messages = await parent.replayMessages();
 		for (const message of messages) await child.sessionEvents().recordMessage(message);
+		await child.publishStagedTarget();
 		const childHead = child.writer().currentHead();
 		if (!childHead) throw new Error("v3 fork produced no child head");
 		return {
@@ -377,10 +379,16 @@ export async function forkV3FromCli(options: {
 			parentRootAgentId: plan.value.parentRootAgentId,
 		};
 	} catch (cause) {
+		let cleanupSummary = "";
+		if (child?.publicationState() === "staging") {
+			const cleanup = await child.abortUnpublishedTarget("fork construction failed");
+			cleanupSummary = `; cleanup=${cleanup.status}` +
+				(cleanup.errors.length === 0 ? "" : ` (${cleanup.errors.join("; ")})`);
+		}
 		operationError = commandError(
 			"V3 session fork",
 			child ? `child=${child.filePath()}` : `parent=${parent.filePath()}`,
-			cause,
+			new Error(`${errorFrom(cause).message}${cleanupSummary}`, { cause: errorFrom(cause) }),
 		);
 		throw operationError;
 	} finally {

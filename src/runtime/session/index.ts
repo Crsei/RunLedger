@@ -25,3 +25,4 @@ export * from "./writer-lease.ts";
 export * from "./legacy-migration.ts";
 export * from "./agent-loop-events.ts";
 export * from "./conversation-replay.ts";
+export * from "./session-publication.ts";

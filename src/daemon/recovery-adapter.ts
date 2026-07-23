@@ -11,7 +11,13 @@ import type { ControlPlaneResult } from "../runtime/control-plane/errors.ts";
 import { controlPlaneFailure } from "../runtime/control-plane/errors.ts";
 import type { CommandClaimToken, CommandIdempotencyRepository } from "../runtime/control-plane/idempotency.ts";
 
-export type DaemonSessionRecoveryState = "resume" | "pause_for_approval" | "stopped" | "closed" | "corrupted";
+export type DaemonSessionRecoveryState =
+	| "resume"
+	| "pause_for_approval"
+	| "reconciliation_required"
+	| "stopped"
+	| "closed"
+	| "corrupted";
 
 export type RecoveredSideEffectKind =
 	| "artifact"
@@ -90,7 +96,12 @@ export class DaemonRecoveryAdapter {
 				corrupted.push(descriptor.sessionId);
 				continue;
 			}
-			if (descriptor.state === "pause_for_approval" || hasUncertain || hasNonTerminal) {
+			if (
+				descriptor.state === "pause_for_approval" ||
+				descriptor.state === "reconciliation_required" ||
+				hasUncertain ||
+				hasNonTerminal
+			) {
 				const restored = await this.#runtime.restoreProjection(descriptor, "paused");
 				if (!restored.ok) return restored;
 				paused.push(descriptor.sessionId);

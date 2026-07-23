@@ -371,6 +371,9 @@ export async function main(
       if (recovery?.kind === "pause_for_approval") {
         throw new Error(`v3 session requires explicit recovery approval: ${recovery.reasons.join(",")}`);
       }
+      if (recovery?.kind === "reconciliation_required") {
+        throw new Error(`v3 session requires side-effect reconciliation: ${recovery.reasons.join(",")}`);
+      }
       replay = {
         messages: [...await v3Manager.replayMessages()],
         config: { ...await v3Manager.replayRuntimeConfig() },

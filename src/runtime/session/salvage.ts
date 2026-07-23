@@ -1,8 +1,10 @@
 /** 只读 forensic salvage：报告可信前缀，修复计划只能指向新的 session。 */
 
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
+import { createHash, randomUUID } from "node:crypto";
+import { constants } from "node:fs";
+import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { dirname } from "node:path";
+import { canonicalDigest, canonicalJson } from "../protocol/v3/canonical-json.ts";
 import type { EventCursor, RuntimeEventV3 } from "../protocol/v3/events.ts";
 import {
 	isRuntimeId,
@@ -32,6 +34,8 @@ import { SESSION_KERNEL_ERROR_CODES } from "./types.ts";
 import type { RuntimeEventDraft, SessionKernelError, SessionResult } from "./types.ts";
 
 export const FORENSIC_SALVAGE_REPORT_VERSION = 1 as const;
+export const MAX_FORENSIC_SALVAGE_SOURCE_BYTES = 64 * 1024 * 1024;
+export const MAX_FORENSIC_SALVAGE_REPORT_BYTES = 64 * 1024;
 
 export type ForensicSalvageOutcome = "no_repair_needed" | "verified_prefix_available" | "unrecoverable";
 
@@ -56,6 +60,7 @@ export interface ForensicSalvageReportBody {
 	verifiedPrefixCursor: EventCursor | null;
 	failure: ForensicSalvageFailure | null;
 	readOnly: true;
+	attestation: "unattested";
 }
 
 export interface ForensicSalvageReport extends ForensicSalvageReportBody {
@@ -89,6 +94,60 @@ function corrupted<T>(message: string): SessionResult<T> {
 
 function rawDigest(bytes: Uint8Array): string {
 	return createHash("sha256").update(bytes).digest("hex");
+}
+
+async function readBoundedSource(filePath: string): Promise<SessionResult<Buffer>> {
+	let handle;
+	try {
+		handle = await open(filePath, "r");
+		const sourceStat = await handle.stat();
+		if (!sourceStat.isFile()) {
+			return corrupted("forensic source is not a regular file");
+		}
+		if (sourceStat.size > MAX_FORENSIC_SALVAGE_SOURCE_BYTES) {
+			return fail({
+				code: "oversized_event",
+				message: "forensic source exceeds the bounded offline inspection limit",
+				retryable: false,
+				effect: "none",
+				details: {
+					sourceByteLength: sourceStat.size,
+					maximumByteLength: MAX_FORENSIC_SALVAGE_SOURCE_BYTES,
+				},
+			});
+		}
+		const chunks: Buffer[] = [];
+		let byteLength = 0;
+		for (;;) {
+			const remaining = MAX_FORENSIC_SALVAGE_SOURCE_BYTES + 1 - byteLength;
+			const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
+			const read = await handle.read(chunk, 0, chunk.byteLength, byteLength);
+			if (read.bytesRead === 0) break;
+			byteLength += read.bytesRead;
+			if (byteLength > MAX_FORENSIC_SALVAGE_SOURCE_BYTES) {
+				return fail({
+					code: "oversized_event",
+					message: "forensic source grew beyond the bounded offline inspection limit",
+					retryable: false,
+					effect: "none",
+					details: {
+						sourceByteLength: byteLength,
+						maximumByteLength: MAX_FORENSIC_SALVAGE_SOURCE_BYTES,
+					},
+				});
+			}
+			chunks.push(chunk.subarray(0, read.bytesRead));
+		}
+		return { ok: true, value: Buffer.concat(chunks, byteLength) };
+	} catch {
+		return fail({
+			code: "durable_write_failed",
+			message: "forensic source could not be read",
+			retryable: false,
+		});
+	} finally {
+		await handle?.close().catch(() => undefined);
+	}
 }
 
 function prefixCursor(events: readonly RuntimeEventV3[]): EventCursor | null {
@@ -142,6 +201,7 @@ export function validateForensicSalvageReport(value: unknown): value is Forensic
 			"verifiedPrefixCursor",
 			"failure",
 			"readOnly",
+			"attestation",
 			"reportDigest",
 		]) ||
 		report.reportVersion !== FORENSIC_SALVAGE_REPORT_VERSION ||
@@ -156,6 +216,7 @@ export function validateForensicSalvageReport(value: unknown): value is Forensic
 		!Number.isSafeInteger(report.verifiedPrefixCount) ||
 		report.verifiedPrefixCount < 0 ||
 		report.readOnly !== true ||
+		report.attestation !== "unattested" ||
 		!/^[a-f0-9]{64}$/.test(report.reportDigest)
 	) return false;
 	if (
@@ -240,12 +301,9 @@ export async function inspectEventLogForSalvage(options: {
 	) {
 		return invalid("forensic salvage report identity is invalid");
 	}
-	let bytes: Buffer;
-	try {
-		bytes = await readFile(options.filePath);
-	} catch {
-		return fail({ code: "durable_write_failed", message: "forensic source could not be read", retryable: false });
-	}
+	const boundedSource = await readBoundedSource(options.filePath);
+	if (!boundedSource.ok) return boundedSource;
+	const bytes = boundedSource.value;
 	const scan = scanJsonlV3EventLog(bytes, options.scope);
 	const verifiedPrefix = largestReduciblePrefix(scan.events);
 	const semanticError: JsonlV3ScanError | undefined = verifiedPrefix.length < scan.events.length
@@ -279,14 +337,102 @@ export async function inspectEventLogForSalvage(options: {
 		verifiedPrefixCursor: cursor,
 		failure: reportFailure(firstError, scan.tornTail),
 		readOnly: true,
+		attestation: "unattested",
 	};
+	const report: ForensicSalvageReport = {
+		...body,
+		reportDigest: canonicalDigest(body),
+	};
+	if (
+		!validateForensicSalvageReport(report) ||
+		Buffer.byteLength(canonicalJson(report), "utf8") > MAX_FORENSIC_SALVAGE_REPORT_BYTES
+	) return corrupted("generated forensic report is invalid or oversized");
 	return {
 		ok: true,
 		value: {
-			report: { ...body, reportDigest: canonicalDigest(body) },
+			report,
 			verifiedPrefix,
 		},
 	};
+}
+
+export interface WrittenForensicSalvageReport {
+	filePath: string;
+	reportDigest: string;
+	byteLength: number;
+}
+
+/** 可选离线报告文件；不修改 source，也不把报告冒充为已授权 CAS Artifact。 */
+export async function writeForensicSalvageReport(
+	filePath: string,
+	report: ForensicSalvageReport,
+): Promise<SessionResult<WrittenForensicSalvageReport>> {
+	if (!validateForensicSalvageReport(report)) return invalid("forensic salvage report is invalid");
+	const encoded = Buffer.from(`${canonicalJson(report)}\n`, "utf8");
+	if (encoded.byteLength > MAX_FORENSIC_SALVAGE_REPORT_BYTES) {
+		return fail({
+			code: "oversized_event",
+			message: "forensic salvage report exceeds the offline file limit",
+			retryable: false,
+			effect: "none",
+		});
+	}
+	const parent = dirname(filePath);
+	const temporary = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+	let renamed = false;
+	try {
+		let parentExisted = true;
+		try {
+			const parentStat = await stat(parent);
+			if (!parentStat.isDirectory()) return invalid("forensic salvage report parent is not a directory");
+		} catch {
+			parentExisted = false;
+		}
+		await mkdir(parent, { recursive: true, mode: 0o700 });
+		if (!parentExisted) {
+			const ancestor = await open(dirname(parent), "r");
+			try {
+				await ancestor.sync();
+			} finally {
+				await ancestor.close();
+			}
+		}
+		const handle = await open(
+			temporary,
+			constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
+			0o600,
+		);
+		try {
+			await handle.writeFile(encoded);
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await rename(temporary, filePath);
+		renamed = true;
+		const directory = await open(parent, "r");
+		try {
+			await directory.sync();
+		} finally {
+			await directory.close();
+		}
+		return {
+			ok: true,
+			value: {
+				filePath,
+				reportDigest: report.reportDigest,
+				byteLength: encoded.byteLength,
+			},
+		};
+	} catch {
+		await rm(temporary, { force: true }).catch(() => undefined);
+		return fail({
+			code: "durable_write_failed",
+			message: "forensic salvage report file could not be committed",
+			retryable: false,
+			effect: renamed ? "uncertain" : "none",
+		});
+	}
 }
 
 export function createForensicSalvageForkPlan(

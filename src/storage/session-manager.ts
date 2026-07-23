@@ -31,6 +31,7 @@ import { acquireLedgerLock } from "../runtime/ledger/lockfile.ts";
 import { resolveSessionDir } from "./paths.ts";
 import { buildSessionFileName } from "./path-utils.ts";
 import { validateRuntimeEvent } from "../runtime/protocol/v3/schemas.ts";
+import { readSessionPublication } from "../runtime/session/session-publication.ts";
 
 const SESSION_FILE_GLOB = "*.jsonl";
 
@@ -260,10 +261,19 @@ export class SessionManager {
           });
           continue;
         }
-		const genesis = await readV3Genesis(fp);
-		if (!genesis || genesis.stream.scope !== "session") continue;
-		out.push({
-		  id: genesis.stream.sessionId,
+        const genesis = await readV3Genesis(fp);
+        if (!genesis || genesis.stream.scope !== "session") continue;
+        const publication = await readSessionPublication(`${fp}.state`);
+        if (!publication.ok) {
+          process.stderr.write(
+            `[runledger] v3 publication state is invalid at ${fp}: ${publication.error.message}\n` +
+              `  skip;目标不可恢复\n`,
+          );
+          continue;
+        }
+        if (publication.value !== undefined && publication.value.state !== "published") continue;
+        out.push({
+          id: genesis.stream.sessionId,
           filePath: fp,
           createdAt: Date.parse(genesis.timestamp),
           ...(cwd.length > 0 ? { cwd } : {}),
