@@ -3,17 +3,24 @@ import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import {
 	calculateModelManifestDigest,
+	calculateModelProfileEvidenceDigest,
 	calculateModelProfileDigest,
 	loadModelCompatibilityManifest,
 	ModelManifestError,
 } from "../../../src/runtime/model-routing/manifest-loader.ts";
 import { ModelCompatibilityRouter, modelRoutedEventPayload } from "../../../src/runtime/model-routing/router.ts";
 import type { ModelCapabilityProfile, ModelCompatibilityManifest, ModelRouteRequest } from "../../../src/runtime/model-routing/types.ts";
+import {
+	PI_AI_CATALOG_DIGEST,
+	PI_AI_PARITY_MANIFEST_DIGEST,
+	PI_AI_UPSTREAM_COMMIT,
+	RUNLEDGER_PARITY_BASE_COMMIT,
+} from "../../../src/runtime/model-routing/types.ts";
 import { authorityId, expectedRevision, NOW, principalId, sessionId, tenantId, traceId } from "../plan-context-memory/helpers.ts";
 
 function unsignedProfile(overrides: Partial<ModelCapabilityProfile> = {}): ModelCapabilityProfile {
-	const candidate: ModelCapabilityProfile = {
-		schemaVersion: 1,
+	const candidateWithoutEvidence: ModelCapabilityProfile = {
+		schemaVersion: 2,
 		authorityId,
 		tenantId,
 		profileId: createRuntimeId("resource", "builder"),
@@ -21,6 +28,15 @@ function unsignedProfile(overrides: Partial<ModelCapabilityProfile> = {}): Model
 		providerId: "provider-a",
 		manifestDigest: "0".repeat(64),
 		profileDigest: "0".repeat(64),
+		evidence: {
+			piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+			catalogDigest: PI_AI_CATALOG_DIGEST,
+			upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+			runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
+			catalogEntryDigest: canonicalDigest("pending"),
+			compatibilityEvidenceDigest: canonicalDigest("pending"),
+			evidenceDigest: canonicalDigest("pending"),
+		},
 		compatibilityHashes: {
 			toolHash: canonicalDigest("tool-v1"),
 			reasoningHash: canonicalDigest("reasoning-v1"),
@@ -45,17 +61,41 @@ function unsignedProfile(overrides: Partial<ModelCapabilityProfile> = {}): Model
 		verifiedByPrincipalId: principalId,
 		...overrides,
 	};
+	const unsignedEvidence = {
+		piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+		catalogDigest: PI_AI_CATALOG_DIGEST,
+		upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+		runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
+		catalogEntryDigest: canonicalDigest({
+			providerId: candidateWithoutEvidence.providerId,
+			modelId: candidateWithoutEvidence.modelId,
+			apiProtocol: candidateWithoutEvidence.apiProtocol,
+		}),
+		compatibilityEvidenceDigest: canonicalDigest(candidateWithoutEvidence.compatibilityHashes),
+		evidenceDigest: "0".repeat(64),
+	};
+	const candidate = {
+		...candidateWithoutEvidence,
+		evidence: {
+			...unsignedEvidence,
+			evidenceDigest: calculateModelProfileEvidenceDigest(unsignedEvidence),
+		},
+	};
 	return { ...candidate, profileDigest: calculateModelProfileDigest(candidate) };
 }
 
 function signedManifest(profiles: readonly ModelCapabilityProfile[]): ModelCompatibilityManifest {
 	const draft: ModelCompatibilityManifest = {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId,
 		tenantId,
 		manifestId: createRuntimeId("resource", "manifest"),
 		revision: 1,
 		generatedAt: NOW,
+		piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+		catalogDigest: PI_AI_CATALOG_DIGEST,
+		upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+		runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
 		profiles,
 		manifestDigest: "0".repeat(64),
 	};
@@ -65,7 +105,7 @@ function signedManifest(profiles: readonly ModelCapabilityProfile[]): ModelCompa
 
 function routeRequest(overrides: Partial<ModelRouteRequest> = {}): ModelRouteRequest {
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId,
 		tenantId,
 		principalId,
@@ -95,9 +135,22 @@ describe("ModelCompatibilityRouter behavior", () => {
 		const reverse = new ModelCompatibilityRouter(signedManifest([builder, reviewer])).route(routeRequest());
 		expect(forward).toEqual(reverse);
 		expect(forward).toMatchObject({ outcome: "compatible", targetModelId: "builder-model", profileId: builder.profileId });
+		expect(forward).toMatchObject({
+			conversionReceipt: {
+				dispositions: {
+					reasoning: "not_applicable",
+					image: "not_applicable",
+					toolCallIds: "not_applicable",
+				},
+			},
+		});
 		expect(forward.inputSources).toEqual([]);
 		const event = modelRoutedEventPayload(createRuntimeId("turn", "route"), forward);
 		expect(event).toMatchObject({ outcome: "compatible", decisionDigest: forward.decisionDigest });
+		expect(event).toMatchObject({
+			routeContractVersion: 2,
+			conversionReceiptId: forward.outcome === "deny" ? undefined : forward.conversionReceipt.receiptId,
+		});
 	});
 
 	it("fails closed on digest drift, unknown alias, and retired profiles", () => {
@@ -105,6 +158,27 @@ describe("ModelCompatibilityRouter behavior", () => {
 		expect(() => loadModelCompatibilityManifest({ ...manifest, revision: 2 })).toThrowError(
 			expect.objectContaining<ModelManifestError>({ code: "manifest_digest_mismatch" }),
 		);
+		for (const field of [
+			"piAiParityManifestDigest",
+			"catalogDigest",
+			"upstreamCommit",
+			"runLedgerBaseCommit",
+		] as const) {
+			expect(() => loadModelCompatibilityManifest({
+				...manifest,
+				[field]: field.endsWith("Commit") ? "0".repeat(40) : canonicalDigest(`stale-${field}`),
+			})).toThrowError(expect.objectContaining<ModelManifestError>({ code: "parity_binding_mismatch" }));
+		}
+		const profile = manifest.profiles[0];
+		if (profile === undefined) throw new Error("fixture has no profile");
+		const driftedEvidence = {
+			...profile,
+			evidence: { ...profile.evidence, compatibilityEvidenceDigest: canonicalDigest("stale-evidence") },
+		};
+		expect(() => loadModelCompatibilityManifest({
+			...manifest,
+			profiles: [driftedEvidence],
+		})).toThrowError(expect.objectContaining<ModelManifestError>({ code: "profile_evidence_mismatch" }));
 		const router = new ModelCompatibilityRouter(manifest);
 		expect(router.route(routeRequest({ alias: "searcher" }))).toMatchObject({ outcome: "deny" });
 		const retired = unsignedProfile({ status: "retired", verifiedByPrincipalId: undefined });
@@ -120,15 +194,21 @@ describe("ModelCompatibilityRouter behavior", () => {
 		);
 
 		const source = unsignedProfile({ profileId: createRuntimeId("resource", "hash-source"), modelId: "hash-source" });
-		const target = unsignedProfile({
-			profileId: createRuntimeId("resource", "hash-target"),
-			modelId: "hash-target",
-			compatibilityHashes: { ...source.compatibilityHashes, contextHash: canonicalDigest("context-v2") },
-		});
-		expect(new ModelCompatibilityRouter(signedManifest([source, target])).route(routeRequest({
-			fromModelId: source.modelId,
-			targetModelId: target.modelId,
-		}))).toMatchObject({ outcome: "fork", mustForkReason: "compatibility_hash_mismatch" });
+		for (const key of Object.keys(source.compatibilityHashes) as Array<keyof typeof source.compatibilityHashes>) {
+			const target = unsignedProfile({
+				profileId: createRuntimeId("resource", `hash-target-${key}`),
+				modelId: `hash-target-${key}`,
+				compatibilityHashes: { ...source.compatibilityHashes, [key]: canonicalDigest(`${key}-v2`) },
+			});
+			expect(new ModelCompatibilityRouter(signedManifest([source, target])).route(routeRequest({
+				fromModelId: source.modelId,
+				targetModelId: target.modelId,
+			})), key).toMatchObject({
+				outcome: "fork",
+				mustForkReason: "compatibility_hash_mismatch",
+				conversionReceipt: { targetProfileId: target.profileId },
+			});
+		}
 	});
 
 	it("denies insufficient budgets and forces a fork for provider-private reasoning replay", () => {
@@ -140,7 +220,17 @@ describe("ModelCompatibilityRouter behavior", () => {
 			fromModelId: "source-model",
 			targetModelId: "target-model",
 			requiresReasoningReplay: true,
-		}))).toMatchObject({ outcome: "fork", mustForkReason: "reasoning_history_incompatible" });
+		}))).toMatchObject({
+			outcome: "fork",
+			mustForkReason: "reasoning_history_incompatible",
+			conversionReceipt: {
+				dispositions: expect.objectContaining({
+					reasoning: "fork_required",
+					cache: "dropped",
+					transport: "preserved",
+				}),
+			},
+		});
 	});
 
 	it("only selects tool-off, compaction-capable summarizer aliases", () => {

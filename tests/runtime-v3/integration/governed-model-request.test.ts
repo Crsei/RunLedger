@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { Api, Model } from "../../../src/types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { ContextEngine } from "../../../src/runtime/context/context-engine.ts";
 import type { ContextFragment } from "../../../src/runtime/context/types.ts";
 import {
 	calculateModelManifestDigest,
+	calculateModelProfileEvidenceDigest,
 	calculateModelProfileDigest,
 } from "../../../src/runtime/model-routing/manifest-loader.ts";
 import { ModelCompatibilityRouter } from "../../../src/runtime/model-routing/router.ts";
@@ -13,6 +15,12 @@ import type {
 	ModelCapabilityProfile,
 	ModelCompatibilityManifest,
 	ModelRouteDecision,
+} from "../../../src/runtime/model-routing/types.ts";
+import {
+	PI_AI_CATALOG_DIGEST,
+	PI_AI_PARITY_MANIFEST_DIGEST,
+	PI_AI_UPSTREAM_COMMIT,
+	RUNLEDGER_PARITY_BASE_COMMIT,
 } from "../../../src/runtime/model-routing/types.ts";
 import {
 	GovernedModelRequestCoordinator,
@@ -46,8 +54,8 @@ function model(id = "builder"): Model<Api> {
 }
 
 function unsignedProfile(id = "builder", overrides: Partial<ModelCapabilityProfile> = {}): ModelCapabilityProfile {
-	const candidate: ModelCapabilityProfile = {
-		schemaVersion: 1,
+	const candidateWithoutEvidence: ModelCapabilityProfile = {
+		schemaVersion: 2,
 		authorityId,
 		tenantId,
 		profileId: createRuntimeId("resource", `profile-${id}`),
@@ -55,6 +63,15 @@ function unsignedProfile(id = "builder", overrides: Partial<ModelCapabilityProfi
 		providerId: "fixture",
 		manifestDigest: "0".repeat(64),
 		profileDigest: "0".repeat(64),
+		evidence: {
+			piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+			catalogDigest: PI_AI_CATALOG_DIGEST,
+			upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+			runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
+			catalogEntryDigest: canonicalDigest("pending"),
+			compatibilityEvidenceDigest: canonicalDigest("pending"),
+			evidenceDigest: canonicalDigest("pending"),
+		},
 		compatibilityHashes: {
 			toolHash: canonicalDigest("tool-v1"),
 			reasoningHash: canonicalDigest("reasoning-v1"),
@@ -79,17 +96,41 @@ function unsignedProfile(id = "builder", overrides: Partial<ModelCapabilityProfi
 		verifiedByPrincipalId: principalId,
 		...overrides,
 	};
+	const unsignedEvidence = {
+		piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+		catalogDigest: PI_AI_CATALOG_DIGEST,
+		upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+		runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
+		catalogEntryDigest: canonicalDigest({
+			providerId: candidateWithoutEvidence.providerId,
+			modelId: candidateWithoutEvidence.modelId,
+			apiProtocol: candidateWithoutEvidence.apiProtocol,
+		}),
+		compatibilityEvidenceDigest: canonicalDigest(candidateWithoutEvidence.compatibilityHashes),
+		evidenceDigest: "0".repeat(64),
+	};
+	const candidate = {
+		...candidateWithoutEvidence,
+		evidence: {
+			...unsignedEvidence,
+			evidenceDigest: calculateModelProfileEvidenceDigest(unsignedEvidence),
+		},
+	};
 	return { ...candidate, profileDigest: calculateModelProfileDigest(candidate) };
 }
 
 function manifest(profiles: readonly ModelCapabilityProfile[]): ModelCompatibilityManifest {
 	const draft: ModelCompatibilityManifest = {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId,
 		tenantId,
 		manifestId: createRuntimeId("resource", "model-integration-manifest"),
 		revision: 1,
 		generatedAt: NOW,
+		piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+		catalogDigest: PI_AI_CATALOG_DIGEST,
+		upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+		runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
 		profiles,
 		manifestDigest: "0".repeat(64),
 	};
@@ -171,7 +212,11 @@ function coordinator(options: {
 			identity: { authorityId, tenantId, principalId, sessionId },
 			router: new ModelCompatibilityRouter(manifest(options.profiles ?? [unsignedProfile()])),
 			events,
-			expectedRevision: () => ({ sessionId, sequence: 1, eventHash: "a".repeat(64) }),
+			expectedRevision: () => ({
+				stream: createSessionEventStreamRef({ authorityId, tenantId }, sessionId),
+				sequence: 1,
+				eventHash: "a".repeat(64),
+			}),
 			fragmentProviders: options.providers ?? [baseProvider([fragment("plan", "approved plan", 1)])],
 			contextEngine: new ContextEngine({ clock: () => new Date(NOW) }),
 			traceIdFactory: () => createRuntimeId("trace", "model-integration"),

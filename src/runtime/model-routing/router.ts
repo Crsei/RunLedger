@@ -4,6 +4,7 @@ import { createRuntimeId, type TurnId } from "../protocol/v3/ids.ts";
 import { compareAdapterState } from "./adapter-state.ts";
 import { loadModelCompatibilityManifest } from "./manifest-loader.ts";
 import { profileProvidesCapabilities, resolveModelProfiles } from "./profiles.ts";
+import { isModelRouteRequest } from "./schema.ts";
 import type {
 	ModelCapabilityProfile,
 	ModelCompatibilityManifest,
@@ -11,6 +12,9 @@ import type {
 	ModelRouteDiagnostic,
 	ModelRouteDiagnosticCode,
 	ModelRouteRequest,
+	ModelSwitchConversionDisposition,
+	ModelSwitchConversionDispositions,
+	ModelSwitchConversionReceipt,
 } from "./types.ts";
 
 function diagnostic(code: ModelRouteDiagnosticCode, capability?: string): ModelRouteDiagnostic {
@@ -42,7 +46,7 @@ function finalizeDecision(
 
 function base(request: ModelRouteRequest) {
 	return {
-		schemaVersion: 1 as const,
+		schemaVersion: 2 as const,
 		authorityId: request.authorityId,
 		tenantId: request.tenantId,
 		principalId: request.principalId,
@@ -50,6 +54,153 @@ function base(request: ModelRouteRequest) {
 		inputSources: request.inputSources,
 		declassificationReceipts: request.declassificationReceipts,
 	};
+}
+
+function adapterConversionDisposition(
+	dispositions: readonly ModelSwitchConversionDisposition[],
+): ModelSwitchConversionDisposition {
+	if (dispositions.includes("denied")) return "denied";
+	if (dispositions.includes("fork_required")) return "fork_required";
+	if (dispositions.includes("dropped")) return "dropped";
+	if (dispositions.includes("unproven")) return "unproven";
+	return "preserved";
+}
+
+function switchDispositions(
+	request: ModelRouteRequest,
+	source: ModelCapabilityProfile | undefined,
+	target: ModelCapabilityProfile,
+	adapterState: ReturnType<typeof compareAdapterState> | undefined,
+): ModelSwitchConversionDispositions {
+	if (source === undefined) {
+		return {
+			reasoning: "not_applicable",
+			image: "not_applicable",
+			toolCallIds: "not_applicable",
+			adapterPrivateState: "not_applicable",
+			cache: "not_applicable",
+			transport: "not_applicable",
+			context: "not_applicable",
+			compaction: "not_applicable",
+		};
+	}
+	if (source.profileId === target.profileId) {
+		return {
+			reasoning: request.requiresReasoningReplay ? "preserved" : "not_applicable",
+			image: request.requiresImages ? "preserved" : "not_applicable",
+			toolCallIds: request.requiresToolReplay ? "preserved" : "not_applicable",
+			adapterPrivateState: "preserved",
+			cache: "preserved",
+			transport: "preserved",
+			context: "preserved",
+			compaction: "preserved",
+		};
+	}
+	const adapterDispositions = adapterState === undefined
+		? ["unproven" as const]
+		: [adapterState.reasoningState, adapterState.toolReplayState, adapterState.cacheState].map(
+			(value): ModelSwitchConversionDisposition =>
+				value === "preserve"
+					? "preserved"
+					: value === "drop"
+						? "dropped"
+						: value === "deny"
+							? "denied"
+							: value,
+		);
+	return {
+		reasoning: request.requiresReasoningReplay
+			? source.compatibilityHashes.reasoningHash === target.compatibilityHashes.reasoningHash &&
+					source.reasoningHistory === "portable" &&
+					target.reasoningHistory === "portable"
+				? "preserved"
+				: "fork_required"
+			: "not_applicable",
+		image: request.requiresImages
+			? source.imageInput && target.imageInput
+				? "preserved"
+				: "denied"
+			: "not_applicable",
+		toolCallIds: request.requiresToolReplay
+			? source.compatibilityHashes.toolHash === target.compatibilityHashes.toolHash &&
+					source.toolCallReplay !== "unsupported" &&
+					target.toolCallReplay !== "unsupported"
+				? "preserved"
+				: "fork_required"
+			: "not_applicable",
+		adapterPrivateState: adapterConversionDisposition(adapterDispositions),
+		cache: adapterState === undefined
+			? "unproven"
+			: adapterState.cacheState === "preserve"
+				? "preserved"
+				: adapterState.cacheState === "drop"
+					? "dropped"
+					: adapterState.cacheState === "deny"
+						? "denied"
+						: adapterState.cacheState,
+		transport: source.apiProtocol === target.apiProtocol ? "preserved" : "unproven",
+		context: source.compatibilityHashes.contextHash === target.compatibilityHashes.contextHash
+			? "preserved"
+			: "fork_required",
+		compaction: source.compatibilityHashes.compactionHash === target.compatibilityHashes.compactionHash
+			? "preserved"
+			: "fork_required",
+	};
+}
+
+function conversionIsLossless(dispositions: ModelSwitchConversionDispositions): boolean {
+	return Object.values(dispositions).every(
+		(value) =>
+			value === "preserved" ||
+			value === "converted_lossless" ||
+			value === "not_applicable",
+	);
+}
+
+function conversionReceipt(
+	request: ModelRouteRequest,
+	source: ModelCapabilityProfile | undefined,
+	target: ModelCapabilityProfile,
+	adapterState: ReturnType<typeof compareAdapterState> | undefined,
+): ModelSwitchConversionReceipt {
+	const dispositions = switchDispositions(request, source, target, adapterState);
+	const lineageDigest = canonicalDigest({
+		inputSources: request.inputSources,
+		declassificationReceipts: request.declassificationReceipts,
+	});
+	const conversionEvidenceDigest = canonicalDigest({
+		sourceCompatibilityHashes: source?.compatibilityHashes ?? null,
+		targetCompatibilityHashes: target.compatibilityHashes,
+		dispositions,
+	});
+	const identityDigest = canonicalDigest({
+		requestId: request.requestId,
+		sourceProfileId: source?.profileId ?? null,
+		targetProfileId: target.profileId,
+		conversionEvidenceDigest,
+	});
+	const body = {
+		schemaVersion: 2 as const,
+		authorityId: request.authorityId,
+		tenantId: request.tenantId,
+		principalId: request.principalId,
+		receiptId: createRuntimeId("receipt", `model-conversion-${identityDigest.slice(0, 48)}`),
+		requestId: request.requestId,
+		...(source === undefined
+			? {}
+			: {
+					sourceProfileId: source.profileId,
+					sourceProfileDigest: source.profileDigest,
+				}),
+		targetProfileId: target.profileId,
+		targetProfileDigest: target.profileDigest,
+		manifestDigest: target.manifestDigest,
+		dispositions,
+		inputLineageDigest: lineageDigest,
+		outputLineageDigest: lineageDigest,
+		conversionEvidenceDigest,
+	};
+	return { ...body, receiptDigest: canonicalDigest(body) };
 }
 
 function deny(
@@ -133,6 +284,9 @@ export class ModelCompatibilityRouter {
 	}
 
 	public route(request: ModelRouteRequest): ModelRouteDecision {
+		if (!isModelRouteRequest(request)) {
+			throw new TypeError("model route request failed exact v2 schema or stream binding validation");
+		}
 		if (request.authorityId !== this.#manifest.authorityId || request.tenantId !== this.#manifest.tenantId) {
 			return deny(request, "request scope does not match compatibility manifest", [diagnostic("scope_mismatch")]);
 		}
@@ -167,6 +321,8 @@ export class ModelCompatibilityRouter {
 		const hashMismatches = source === undefined || source.profileId === target.profileId
 			? []
 			: compatibilityHashMismatches(source, target);
+		const conversion = conversionReceipt(request, source, target, adapterState);
+		const losslessConversion = conversionIsLossless(conversion.dispositions);
 		const routed = {
 			...base(request),
 			targetModelId: target.modelId,
@@ -174,6 +330,7 @@ export class ModelCompatibilityRouter {
 			manifestDigest: target.manifestDigest,
 			profileDigest: target.profileDigest,
 			...(adapterState === undefined ? {} : { adapterState }),
+			conversionReceipt: conversion,
 		};
 		const privateReplayRequiresFork = source !== undefined && source.profileId !== target.profileId && (
 			(request.requiresReasoningReplay && (
@@ -181,14 +338,19 @@ export class ModelCompatibilityRouter {
 			)) ||
 			(request.requiresToolReplay && source.toolCallReplay !== target.toolCallReplay)
 		);
-		if (adapterState !== undefined && (!adapterState.compatible || privateReplayRequiresFork || hashMismatches.length > 0)) {
+		if (
+			adapterState !== undefined &&
+			(!adapterState.compatible || privateReplayRequiresFork || hashMismatches.length > 0 || !losslessConversion)
+		) {
 			const mustForkReason = adapterState.reasoningState === "deny" || adapterState.toolReplayState === "deny"
 				? "mid_session_switch_unsupported" as const
 				: request.requiresReasoningReplay && source?.reasoningHistory !== "portable"
 					? "reasoning_history_incompatible" as const
 					: hashMismatches.length > 0
 						? "compatibility_hash_mismatch" as const
-						: "tool_replay_incompatible" as const;
+						: !losslessConversion
+							? "conversion_lossy_or_unproven" as const
+							: "tool_replay_incompatible" as const;
 			return finalizeDecision(request, {
 				...routed,
 				outcome: "fork",
@@ -196,6 +358,13 @@ export class ModelCompatibilityRouter {
 				diagnostics: [
 					...(!adapterState.compatible || privateReplayRequiresFork ? [diagnostic("adapter_state_private")] : []),
 					...hashMismatches.map((key) => diagnostic("compatibility_hash_mismatch", key)),
+					...(!losslessConversion
+						? [diagnostic(
+								Object.values(conversion.dispositions).includes("unproven")
+									? "conversion_unproven"
+									: "conversion_lossy",
+							)]
+						: []),
 				],
 				reason: hashMismatches.length > 0
 					? "compatibility hashes differ and require an audited session fork"
@@ -222,6 +391,7 @@ export function modelRoutedEventPayload(
 			decisionId: decision.decisionId,
 			decisionDigest: decision.decisionDigest,
 			outcome: "deny",
+			routeContractVersion: 2,
 			...(decision.profileId === undefined ? {} : { profileId: decision.profileId }),
 			...(decision.manifestDigest === undefined ? {} : { manifestDigest: decision.manifestDigest }),
 			...(decision.profileDigest === undefined ? {} : { profileDigest: decision.profileDigest }),
@@ -233,8 +403,11 @@ export function modelRoutedEventPayload(
 		decisionId: decision.decisionId,
 		decisionDigest: decision.decisionDigest,
 		outcome: decision.outcome,
+		routeContractVersion: 2,
 		profileId: decision.profileId,
 		manifestDigest: decision.manifestDigest,
 		profileDigest: decision.profileDigest,
+		conversionReceiptId: decision.conversionReceipt.receiptId,
+		conversionReceiptDigest: decision.conversionReceipt.receiptDigest,
 	};
 }

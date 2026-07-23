@@ -16,6 +16,8 @@ import {
 	COMPACTION_CONTRACT_VERSION,
 	COMPACTION_INSTALLATION_STATES,
 	COMPACTION_REASONS,
+	COMPACTION_RECOVERY_CODES,
+	COMPACTION_RECOVERY_OUTCOMES,
 	COMPACTION_SUPPRESSION_REASONS,
 	COMPACTION_VALIDATION_CODES,
 	type CompactionAttemptReceipt,
@@ -24,6 +26,10 @@ import {
 	type CompactionCut,
 	type CompactionInvariantSnapshot,
 	type CompactionProjectionInstallationReceipt,
+	type CompactionRecoveryAssessment,
+	type CompactionRecoveryCandidate,
+	type CompactionReplacementHistoryEvidence,
+	type CompactionSuffixRecoveryEvidence,
 	type CompactionSuppressionReceipt,
 	type CompactionValidationDiagnostic,
 	type CompactionValidationResult,
@@ -96,6 +102,42 @@ export const CompactionValidationResultSchema = Type.Unsafe<CompactionValidation
 		diagnostics: Type.Array(CompactionValidationDiagnosticSchema, { minItems: 1, maxItems: MAX_COMPACTION_DIAGNOSTICS }),
 	}),
 ]));
+
+export const CompactionReplacementHistoryEvidenceSchema =
+	Type.Unsafe<CompactionReplacementHistoryEvidence>(exact({
+		format: literals(["full", "patch"] as const),
+		sessionId: id("session"),
+		storedDigest: digest,
+		contentDigest: digest,
+		survivingSuffixFromSequence: count,
+		previousReplacementHistoryDigest: Type.Optional(digest),
+	}));
+
+export const CompactionSuffixRecoveryEvidenceSchema =
+	Type.Unsafe<CompactionSuffixRecoveryEvidence>(exact({
+		integrity: literals(["verified", "jsonl_corrupted"] as const),
+		fromSequence: count,
+	}));
+
+export const CompactionRecoveryCandidateSchema = Type.Unsafe<CompactionRecoveryCandidate>(exact({
+	checkpoint: Type.Unknown(),
+	checkpointIntegrity: literals(["verified", "digest_mismatch"] as const),
+	previousCheckpoint: Type.Optional(Type.Unknown()),
+	replacementHistory: Type.Optional(CompactionReplacementHistoryEvidenceSchema),
+	legacyImport: Type.Boolean(),
+	observedInvariantDigest: digest,
+	suffix: CompactionSuffixRecoveryEvidenceSchema,
+}));
+
+export const CompactionRecoveryAssessmentSchema = Type.Unsafe<CompactionRecoveryAssessment>(exact({
+	outcome: literals(COMPACTION_RECOVERY_OUTCOMES),
+	codes: Type.Array(literals(COMPACTION_RECOVERY_CODES), {
+		maxItems: COMPACTION_RECOVERY_CODES.length,
+		uniqueItems: true,
+	}),
+	checkpointId: Type.Optional(id("checkpoint")),
+	assessmentDigest: digest,
+}));
 
 export const CompactionCheckpointRefSchema = Type.Unsafe<CompactionCheckpointRef>(exact({
 	schemaVersion: Type.Literal(COMPACTION_SCHEMA_VERSION),
@@ -242,6 +284,14 @@ export function isCompactionInvariantSnapshot(value: unknown): value is Compacti
 
 export function isCompactionValidationResult(value: unknown): value is CompactionValidationResult {
 	return Check(CompactionValidationResultSchema, value);
+}
+
+export function isCompactionRecoveryCandidate(value: unknown): value is CompactionRecoveryCandidate {
+	return Check(CompactionRecoveryCandidateSchema, value);
+}
+
+export function isCompactionRecoveryAssessment(value: unknown): value is CompactionRecoveryAssessment {
+	return Check(CompactionRecoveryAssessmentSchema, value);
 }
 
 export function isCompactionCheckpointRef(value: unknown): value is CompactionCheckpointRef {

@@ -32,7 +32,7 @@
 
 本表是对当前目标分支代码、生产接线、公开导出和测试的状态汇总,用于纠正旧基线中“只有 scaffold”或“整类能力不存在”的过时描述。阶段任务仍按其完整语义验收:模块存在、fake adapter、局部 E2E 或进程内 seam 不能单独关闭生产联合门禁,因此下表不会机械地把 343 个正式任务全部改成 `[x]`。
 
-当前复核结果:`npm run check` PASS;`npm test` 为 263 files / 1737 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build` 与 `git diff --check` PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。Phase 3 strict v2 与 authenticated local current-head binding 已闭合;W1-A2/A3 保持 completed。Runtime-M0 继续受 W1-B、W1-J 与 W1-G 门禁约束。
+当前复核结果:`npm run check` PASS;`npm test` 为 268 files / 1761 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build`、`git diff --check`与pi-ai audit 164/164 source + 72 catalog均PASS。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。Phase 3 strict v2、Phase 5 Resource v2与Phase 6 Model Routing v2/Compaction recovery contract已闭合;W1-A2/A3 保持 completed。Runtime-M0 继续受 W1-B、W1-J 与 W1-G 门禁约束。
 
 | 范围 | 当前实现状态 | 已有代码/测试证据 | 尚未关闭的边界 |
 |---|---|---|---|
@@ -43,7 +43,7 @@
 | Phase 3 | contract 已实现 | exact v2 Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer;local channel 绑定受信 session current head,remote 保持 signature verifier;approval terminal 复核 runtime generation/turn/toolCall 复合相关性 | pending Approval 跨重启、真实 actor/OS peer identity、完整 Gateway/Sandbox/credential 强制行为仍为冻结外部缺口 |
 | Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
 | Phase 5 | v2 contract completed; specialty behavior frozen/unavailable | Resource v2 identity/provenance/approval/Skill facet/Hook transform/MCP annotation、完整 ports、legacy-v1显式只读导入与Extension consumer回归 | Extension M1/M4/M5 主体和 M2/M3/M6/M7 部分实现继续冻结;CLI/TUI/installer/runner/store与剩余行为不由 Runtime 接管 |
-| Phase 6 | 公共 contract 已实现 | model/plan/context/compaction/memory types/schema/events/fixtures、ownership与 public-surface tests | router/context/plan/compaction/memory 核心已有窄证据并已冻结;工具/UI/overflow/完整生产生命周期缺口不由 Runtime 接管 |
+| Phase 6 | v2 contract completed; specialty behavior frozen/unavailable | Model Routing v2 parity/profile binding、conversion receipt、v1 replay/v2 event producer、Compaction recovery assessment;Plan/Context/Memory保持v1;ownership与public-surface tests | router/context/plan/compaction/memory核心继续冻结;工具/UI/overflow/完整生产生命周期缺口不由Runtime接管,Runtime-M1不因此关闭 |
 | Phase 7 | 主体实现,发布门禁未关闭 | Orchestrator、Goal/Task canonical truth、queue/save-point、retry/loop breaker、BudgetGuard与 agent-loop 接线 tests | 完整 prompt-to-verification 生命周期、全维预算与 Runtime-M1 production join gate 未完成 |
 | Phase 8 | 部分实现 | Verification core、trusted baseline、dependency/secret scan、review/finding、EpisodeSeal、keyring issuer、runner/browser adapter与 trust tests | Browser 联合 E2E 仍使用受控测试替身;production forge/Draft PR/HumanGate 与完整 prompt 生命周期缺失 |
 | Phase 9 | 部分实现 | durable Agent graph、Supervisor、delegation、Workspace/Budget/authority sidecar、internal process-resident child host与 deterministic/opt-in live happy path | executable child factory 仍为 internal/test-injected seam且未稳定导出;activation/completion process-local,CLI/daemon/Control Plane无 spawn/feature row,真实 Gateway/Sandbox/Verification、cold takeover与`stop_uncertain`未闭合 |
@@ -1482,8 +1482,8 @@ W3-M2 与 W3-M3 可以并行开发,但只有 W3-J 可以修改最终 production 
 | Phase 2 Workspace contract | implemented contract;behavior unavailable | Workspace envelope/ref/receipt、event/reducer/projection | `tests/runtime-v3/workspace-contracts/**` | `65f9054`、`004a252`;真实Git/worktree/TOCTOU属于冻结专项 |
 | Phase 3 Capability contract | contract completed;behavior unavailable | exact v2 capability/approval/sandbox/taint/rate-limit schema与ports;local current-head认证、remote signature variant及terminal composite correlation 已补齐 | `tests/runtime-v3/security-contracts/**` + security/verification/tool gateway/E2E targeted gate 12 files / 101 tests | `65f9054`、`004a252` + 包含本文件的交付提交;真实Gateway/Sandbox/credential与Approval recovery仍为冻结外部缺口 |
 | Phase 5 Resource contract | implemented contract;behavior frozen | neutral identity/provenance/snapshot/invocation/lifecycle schema与ports | `tests/runtime-v3/resource-contracts/**` | `65f9054`、`004a252`;Extension行为只按冻结矩阵消费 |
-| Phase 6 Model/Plan/Context contract | implemented contract;behavior frozen | model routing、Plan、Context、Compaction、Memory public schema/events | contract/behavior/production consumer gate 16 files / 94 tests PASS | `65f9054`、`004a252`;专项用户面/overflow/完整生命周期保持冻结 |
-| Plan/Context/Memory专项 | implemented-frozen + partial/deferred | `06` §2.1/§3.1列出的公开面 | 16 files / 94 tests PASS | `81556ac`;Runtime只能消费,不能补实现 |
+| Phase 6 Model/Plan/Context contract | v2 contract completed;behavior frozen | Model Routing v2、Plan/Context/Memory v1、Compaction recovery public schema/events | contract/behavior/production consumer gate 16 files / 95 tests PASS | `140b775` + 当前refreeze commit;专项用户面/overflow/完整生命周期保持冻结 |
+| Plan/Context/Memory专项 | implemented-frozen + partial/deferred | `06` §2.1/§3.1列出的公开面 | 16 files / 95 tests PASS | 当前Phase 6 refreeze baseline;Runtime只能消费,不能补实现 |
 | Extension专项 | implemented-frozen + partial/deferred | `06` §2.2/§3.2列出的公开面 | 12 files / 52 tests PASS | `81556ac`;缺publisher/marketplace/完整管理面 |
 | Workspace/Security专项 | implemented-frozen + partial/deferred | `06` §2.3/§3.3列出的公开面 | 21 files / 119 tests PASS | `81556ac`;真实process-tree/Sandbox/Approval recovery仍是external gap |
 

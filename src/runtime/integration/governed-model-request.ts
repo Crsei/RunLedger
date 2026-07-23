@@ -210,7 +210,7 @@ function routeRequest(
 		modelId: options.modelId,
 	});
 	return {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: identity.authorityId,
 		tenantId: identity.tenantId,
 		principalId: identity.principalId,

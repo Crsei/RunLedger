@@ -20,7 +20,9 @@
     "tests/runtime-v3/fixtures/plan-mode",
     "tests/runtime-v3/fixtures/context",
     "tests/runtime-v3/fixtures/compaction",
-    "tests/runtime-v3/fixtures/memory"
+    "tests/runtime-v3/fixtures/memory",
+    "tests/runtime-v3/fixtures/taint",
+    "tests/runtime-v3/phase-06-v2-red.test.ts"
   ],
   "specialtyBehaviorPaths": [
     "src/runtime/model-routing/manifest-loader.ts",

@@ -5,6 +5,12 @@ import type { ModelRequestPreparationInput, ModelRequestPreparationResult } from
 import type { WorkspaceBindingRef } from "../protocol/v3/workspace.ts";
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import type { AuthorityId, PrincipalId, SessionId, TenantId } from "../protocol/v3/ids.ts";
+import {
+	PI_AI_CATALOG_DIGEST,
+	PI_AI_PARITY_MANIFEST_DIGEST,
+	PI_AI_UPSTREAM_COMMIT,
+	RUNLEDGER_PARITY_BASE_COMMIT,
+} from "../model-routing/types.ts";
 import type { AgentLoopSessionEvents } from "../session/agent-loop-events.ts";
 import {
 	GovernedModelRequestCoordinator,
@@ -21,9 +27,11 @@ import {
 } from "./production-context-providers.ts";
 
 const BUILTIN_REGRESSION_BASELINE = {
-	contract: "runledger-model-compatibility/v1",
-	upstreamCommit: "3f1762cc7d3af39898aa5d21891335935011287f",
-	runLedgerBaseCommit: "65f905452195e034c99fa5ac560a7e23a822f052",
+	contract: "runledger-model-compatibility/v2",
+	piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+	catalogDigest: PI_AI_CATALOG_DIGEST,
+	upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+	runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
 	gates: [
 		"tests/providers/pi-ai-parity-audit.test.ts",
 		"tests/runtime-v3/model-routing",

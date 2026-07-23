@@ -16,7 +16,9 @@
 
 ### 1.2 Phase 6 合同窄解冻窗口
 
-自`worktree/governed-agent-harness-runtime@600ca84`起,仅为 Model Routing v2、Compaction recovery assessment和Plan/Context/Memory v1交叉证据临时解冻Phase 6文档登记的精确allowlist。owner为`Codex /root`,当前状态为`RED/unfreeze`。本窗口不新增Plan/Context/Compaction/Memory用户行为、trigger、UI、store、provider或catalog数据；GREEN后必须在本文件登记新refreeze baseline。
+自`worktree/governed-agent-harness-runtime@600ca84`起,仅为 Model Routing v2、Compaction recovery assessment和Plan/Context/Memory v1交叉证据临时解冻Phase 6文档登记的精确allowlist。owner为`Codex /root`;RED commit为`140b775`。本窗口已完成GREEN门禁并在当前refreeze commit重新冻结,未新增Plan/Context/Compaction/Memory用户行为、trigger、UI、store、provider或catalog数据。
+
+新冻结基线:`140b775 + 当前 Phase 6 GREEN/refreeze commit`;状态为`Model Routing v2 + Compaction recovery contract completed; Plan/Context/Memory v1 frozen; specialty behavior frozen/unavailable`。Runtime-M1、W1-B、W1-J、W1-G与Runtime-M0继续保持未关闭。
 
 从本冻结基线开始,以下三个专项域停止继续实现:
 
@@ -41,7 +43,7 @@
 
 | 分类 | 冻结内容 | 当前证据与边界 |
 |---|---|---|
-| `implemented-frozen` | Model manifest/router/profile/adapter-state;ContextEngine、token estimator、固定层序与 receipt;Plan reducer、immutable artifact store、state store和 service 核心;Compaction cut/summarizer/validator/reducer/transaction 核心;Memory store/index/search/proposal/approval/extraction/promotion 核心 | `src/runtime/{model-routing,modes/plan,context}/**`及对应 storage 已存在;本轮 16 files / 94 tests PASS |
+| `implemented-frozen` | Model Routing v2 manifest/router/profile/adapter-state/conversion receipt;ContextEngine、token estimator、固定层序与 receipt;Plan reducer、immutable artifact store、state store和 service 核心;Compaction cut/summarizer/validator/recovery assessor/reducer/transaction 核心;Memory store/index/search/proposal/approval/extraction/promotion 核心 | `src/runtime/{model-routing,modes/plan,context}/**`及对应 storage 已存在;本轮 16 files / 95 tests PASS |
 | `partial-frozen` | production model request、Plan/Memory fragment、durable Plan projection、Compaction Artifact/projection recovery 和 production session composition | 已有 Runtime integration tests,但不等于 Plan approval/TUI、overflow safe-point、fork/rewind/model-switch 与完整 prompt lifecycle 已闭合 |
 | `deferred-frozen` | Plan approval 用户面与 fresh-context handoff;`/compact`、auto/overflow compact、跨 checkpoint fork/rewind;独立 feature flags、完整 metrics/CLI/TUI;Memory 完整批准/revoke/外部漂移用户生命周期 | 保持专项计划中的未完成状态;Runtime 不补写第二套 planner、compactor 或 memory service |
 | `runtime-integration-dependency` | catalog model adapter、governed request、production context provider/session runtime、controller/CLI/TUI 和内建 Plan/Memory 工具注册 | 只允许调用冻结的公开 API、校验 receipt并在不可用时 fail closed;不得修改冻结行为来迁就 Runtime |
@@ -148,7 +150,7 @@
 
 ```bash
 npx vitest run tests/runtime-v3/contracts/model-routing.test.ts tests/runtime-v3/contracts/plan-mode.test.ts tests/runtime-v3/contracts/context.test.ts tests/runtime-v3/contracts/compaction.test.ts tests/runtime-v3/contracts/memory.test.ts tests/runtime-v3/model-routing tests/runtime-v3/modes/plan tests/runtime-v3/context tests/runtime-v3/integration/governed-model-request.test.ts tests/runtime-v3/integration/production-session-runtime.test.ts tests/runtime-v3/integration/production-interactive-runtime.test.ts tests/storage/plan-mode-state-store.test.ts tests/storage/compaction-projection-store.test.ts
-# PASS:16 files / 94 tests
+# PASS:16 files / 95 tests
 
 npx vitest run tests/extensions
 # PASS:12 files / 52 tests
@@ -157,7 +159,7 @@ npx vitest run tests/security tests/worktree
 # PASS:21 files / 119 tests
 ```
 
-这些结果证明冻结基线在上述范围内可执行,不证明专项计划整体完成。完整仓库基线仍以 `04` 和 `05` 记录的 `npm run check`、261 files / 1701 tests、`npm run build` 与 harness regression 结果为准。
+这些结果证明冻结基线在上述范围内可执行,不证明专项计划整体完成。当前完整仓库基线为`npm run check`、`npm run build`、`git diff --check` PASS;`npm test`为268 files / 1761 tests PASS,另有1个opt-in live test默认跳过;pi-ai audit为164/164 source、72 catalog PASS。
 
 ## 7. 解冻流程
 

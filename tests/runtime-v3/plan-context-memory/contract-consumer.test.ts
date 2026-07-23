@@ -4,6 +4,7 @@ import {
 	isModelCapabilityProfile,
 	isModelRouteDecision,
 	isModelRouteRequest,
+	modelRouteDecisionPreservesInputSources,
 } from "../../../src/runtime/model-routing/schema.ts";
 import type {
 	ModelCapabilityProfile,
@@ -35,6 +36,7 @@ import type {
 	MemorySearchReceipt,
 } from "../../../src/runtime/context/memory/types.ts";
 import { RUNTIME_EVENT_TYPES } from "../../../src/runtime/protocol/v3/events.ts";
+import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 
 function fixture(path: string): Record<string, unknown> {
 	const value = JSON.parse(readFileSync(new URL(`../fixtures/${path}`, import.meta.url), "utf8")) as unknown;
@@ -94,5 +96,69 @@ describe("Plan/Context/Compaction/Memory contract consumer", () => {
 			...memory,
 			sourceRefs: [{ ...(sources[0] as object), tenantId: "tenant_other" }],
 		})).toBe(false);
+	});
+
+	it("preserves taint evidence through context, compaction, model switch and memory v1", () => {
+		const chain = fixture("taint/model-switch-chain-v1.json");
+		expect(chain.stages).toEqual(["context", "compaction", "model_switch", "memory"]);
+		const taintLabels = chain.taintLabels as readonly ["external_untrusted", "model_derived"];
+		const model = fixture("model-routing/compatible.json");
+		const request = model.request as ModelRouteRequest;
+		const originalSource = request.inputSources[0];
+		if (originalSource === undefined) throw new Error("model fixture has no source lineage");
+		const source = { ...originalSource, trust: "tainted" as const, taintLabels };
+		const routedRequest = { ...request, inputSources: [source] };
+		const decision = model.decision as Exclude<ModelRouteDecision, { outcome: "deny" }>;
+		const lineageDigest = canonicalDigest({ inputSources: [source], declassificationReceipts: [] });
+		const conversionBody = {
+			...decision.conversionReceipt,
+			inputLineageDigest: lineageDigest,
+			outputLineageDigest: lineageDigest,
+		};
+		const { receiptDigest: _receiptDigest, ...unsignedConversion } = conversionBody;
+		const routedDecision: ModelRouteDecision = {
+			...decision,
+			inputSources: [source],
+			conversionReceipt: {
+				...unsignedConversion,
+				receiptDigest: canonicalDigest(unsignedConversion),
+			},
+		};
+		expect(isModelRouteRequest(routedRequest)).toBe(true);
+		expect(isModelRouteDecision(routedDecision)).toBe(true);
+		expect(modelRouteDecisionPreservesInputSources(routedRequest, routedDecision)).toBe(true);
+
+		const contextFixture = fixture("context/assembled.json");
+		const contextRequest = contextFixture.request as ContextAssemblyRequest;
+		const fragment = {
+			...contextRequest.fragments[1],
+			taint: ["external_input", "model_generated"] as const,
+			inputSources: [source],
+		};
+		expect(isContextFragment(fragment)).toBe(true);
+
+		const compactionFixture = fixture("compaction/multi-chain.json");
+		const checkpoint = compactionFixture.current as CompactionCheckpoint;
+		const compacted = {
+			...checkpoint,
+			invariantsBefore: { ...checkpoint.invariantsBefore, inputSources: [source] },
+			invariantsAfter: { ...checkpoint.invariantsAfter, inputSources: [source] },
+		};
+		expect(isCompactionCheckpoint(compacted)).toBe(true);
+
+		const memoryFixture = fixture("memory/lifecycle.json");
+		const memory = memoryFixture.record as MemoryRecord;
+		const memorySource = memory.sourceRefs[0];
+		if (memorySource === undefined) throw new Error("memory fixture has no source lineage");
+		const preservedMemory = {
+			...memory,
+			sourceRefs: [{
+				...memorySource,
+				sourceDigest: source.sourceDigest,
+				trust: "derived" as const,
+				taint: ["external_input", "model_generated"] as const,
+			}],
+		};
+		expect(isMemoryRecord(preservedMemory)).toBe(true);
 	});
 });

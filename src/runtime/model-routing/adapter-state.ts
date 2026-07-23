@@ -34,7 +34,7 @@ export function compareAdapterState(
 	);
 	const cacheState: AdapterStateDisposition = sameProvider ? "preserve" : "drop";
 	const body = {
-		schemaVersion: 1 as const,
+		schemaVersion: 2 as const,
 		authorityId: target.authorityId,
 		tenantId: target.tenantId,
 		sourceProfileId: source.profileId,

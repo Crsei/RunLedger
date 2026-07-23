@@ -93,6 +93,58 @@ export type CompactionValidationResult =
 			diagnostics: readonly CompactionValidationDiagnostic[];
 	  };
 
+export const COMPACTION_RECOVERY_OUTCOMES = [
+	"recoverable",
+	"invalid",
+	"corrupted",
+] as const;
+export type CompactionRecoveryOutcome = (typeof COMPACTION_RECOVERY_OUTCOMES)[number];
+
+export const COMPACTION_RECOVERY_CODES = [
+	"invalid_window",
+	"invalid_chain",
+	"legacy_missing_replacement",
+	"bad_checkpoint",
+	"world_state_corruption",
+	"replacement_missing",
+	"replacement_corrupted",
+	"patch_without_full",
+	"suffix_jsonl_corruption",
+] as const;
+export type CompactionRecoveryCode = (typeof COMPACTION_RECOVERY_CODES)[number];
+
+export interface CompactionReplacementHistoryEvidence {
+	format: "full" | "patch";
+	sessionId: SessionId;
+	storedDigest: string;
+	contentDigest: string;
+	survivingSuffixFromSequence: number;
+	previousReplacementHistoryDigest?: string;
+}
+
+export interface CompactionSuffixRecoveryEvidence {
+	integrity: "verified" | "jsonl_corrupted";
+	fromSequence: number;
+}
+
+/** Recovery assessor 只消费已读取证据，不自行访问 Artifact、JSONL 或 projection store。 */
+export interface CompactionRecoveryCandidate {
+	checkpoint: unknown;
+	checkpointIntegrity: "verified" | "digest_mismatch";
+	previousCheckpoint?: unknown;
+	replacementHistory?: CompactionReplacementHistoryEvidence;
+	legacyImport: boolean;
+	observedInvariantDigest: string;
+	suffix: CompactionSuffixRecoveryEvidence;
+}
+
+export interface CompactionRecoveryAssessment {
+	outcome: CompactionRecoveryOutcome;
+	codes: readonly CompactionRecoveryCode[];
+	checkpointId?: CheckpointId;
+	assessmentDigest: string;
+}
+
 export interface CompactionCheckpointRef {
 	schemaVersion: typeof COMPACTION_CONTRACT_VERSION;
 	authorityId: AuthorityId;

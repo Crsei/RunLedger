@@ -988,7 +988,7 @@ const orchestratorJournalKind = Type.Union([
 	Type.Literal("queue"),
 ]);
 
-const modelRoutePayloadBase = {
+const legacyModelRoutePayloadBase = {
 	turnId: id("turn"),
 	routeRequestId: id("command"),
 	decisionId: id("receipt"),
@@ -996,22 +996,51 @@ const modelRoutePayloadBase = {
 } as const;
 
 const modelRoutedPayload = Type.Union([
+	// v1 replay-only branches. Current producers always emit routeContractVersion=2.
 	exact({
-		...modelRoutePayloadBase,
+		...legacyModelRoutePayloadBase,
 		outcome: Type.Literal("compatible"),
 		profileId: id("resource"),
 		manifestDigest: digest,
 		profileDigest: digest,
 	}),
 	exact({
-		...modelRoutePayloadBase,
+		...legacyModelRoutePayloadBase,
 		outcome: Type.Literal("fork"),
 		profileId: id("resource"),
 		manifestDigest: digest,
 		profileDigest: digest,
 	}),
 	exact({
-		...modelRoutePayloadBase,
+		...legacyModelRoutePayloadBase,
+		outcome: Type.Literal("deny"),
+		profileId: Type.Optional(id("resource")),
+		manifestDigest: Type.Optional(digest),
+		profileDigest: Type.Optional(digest),
+	}),
+	exact({
+		...legacyModelRoutePayloadBase,
+		routeContractVersion: Type.Literal(2),
+		outcome: Type.Literal("compatible"),
+		profileId: id("resource"),
+		manifestDigest: digest,
+		profileDigest: digest,
+		conversionReceiptId: id("receipt"),
+		conversionReceiptDigest: digest,
+	}),
+	exact({
+		...legacyModelRoutePayloadBase,
+		routeContractVersion: Type.Literal(2),
+		outcome: Type.Literal("fork"),
+		profileId: id("resource"),
+		manifestDigest: digest,
+		profileDigest: digest,
+		conversionReceiptId: id("receipt"),
+		conversionReceiptDigest: digest,
+	}),
+	exact({
+		...legacyModelRoutePayloadBase,
+		routeContractVersion: Type.Literal(2),
 		outcome: Type.Literal("deny"),
 		profileId: Type.Optional(id("resource")),
 		manifestDigest: Type.Optional(digest),

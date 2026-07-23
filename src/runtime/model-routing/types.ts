@@ -17,7 +17,17 @@ import type {
 import type { WorkspaceBindingRef } from "../protocol/v3/workspace.ts";
 import type { DeclassificationReceiptRef, InputSourceRef } from "../protocol/v3/taint.ts";
 
-export const MODEL_ROUTING_CONTRACT_VERSION = 1 as const;
+export const MODEL_ROUTING_CONTRACT_VERSION = 2 as const;
+
+/** 当前发布物唯一允许的 pi-ai/catalog 证明基线。 */
+export const PI_AI_PARITY_MANIFEST_DIGEST =
+	"fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77" as const;
+export const PI_AI_CATALOG_DIGEST =
+	"14f43c2629e3aa082691c730ab7ae7c1a65ef092ad7135f52601f161fd1cded7" as const;
+export const PI_AI_UPSTREAM_COMMIT =
+	"3f1762cc7d3af39898aa5d21891335935011287f" as const;
+export const RUNLEDGER_PARITY_BASE_COMMIT =
+	"65f905452195e034c99fa5ac560a7e23a822f052" as const;
 
 export const MODEL_CAPABILITY_ALIASES = [
 	"searcher",
@@ -65,6 +75,16 @@ export interface ModelCompatibilityHashSet {
 	regressionHash: string;
 }
 
+export interface ModelProfileEvidence {
+	piAiParityManifestDigest: string;
+	catalogDigest: string;
+	upstreamCommit: string;
+	runLedgerBaseCommit: string;
+	catalogEntryDigest: string;
+	compatibilityEvidenceDigest: string;
+	evidenceDigest: string;
+}
+
 /** 一个 manifest 内可验证、可独立选择的模型能力 profile。 */
 export interface ModelCapabilityProfile {
 	schemaVersion: typeof MODEL_ROUTING_CONTRACT_VERSION;
@@ -75,6 +95,7 @@ export interface ModelCapabilityProfile {
 	providerId: string;
 	manifestDigest: string;
 	profileDigest: string;
+	evidence: ModelProfileEvidence;
 	compatibilityHashes: ModelCompatibilityHashSet;
 	contextWindow: number;
 	maxOutputTokens: number;
@@ -99,6 +120,10 @@ export interface ModelCompatibilityManifest {
 	manifestId: ResourceId;
 	revision: number;
 	generatedAt: string;
+	piAiParityManifestDigest: string;
+	catalogDigest: string;
+	upstreamCommit: string;
+	runLedgerBaseCommit: string;
 	profiles: readonly ModelCapabilityProfile[];
 	manifestDigest: string;
 }
@@ -119,6 +144,49 @@ export interface ModelAdapterStateCompatibility {
 	compatible: boolean;
 }
 
+export const MODEL_SWITCH_CONVERSION_DISPOSITIONS = [
+	"preserved",
+	"converted_lossless",
+	"not_applicable",
+	"dropped",
+	"fork_required",
+	"denied",
+	"unproven",
+] as const;
+export type ModelSwitchConversionDisposition =
+	(typeof MODEL_SWITCH_CONVERSION_DISPOSITIONS)[number];
+
+export interface ModelSwitchConversionDispositions {
+	reasoning: ModelSwitchConversionDisposition;
+	image: ModelSwitchConversionDisposition;
+	toolCallIds: ModelSwitchConversionDisposition;
+	adapterPrivateState: ModelSwitchConversionDisposition;
+	cache: ModelSwitchConversionDisposition;
+	transport: ModelSwitchConversionDisposition;
+	context: ModelSwitchConversionDisposition;
+	compaction: ModelSwitchConversionDisposition;
+}
+
+/** 只记录转换处置和证明 digest，不携带 reasoning/cache/provider-private 正文。 */
+export interface ModelSwitchConversionReceipt {
+	schemaVersion: typeof MODEL_ROUTING_CONTRACT_VERSION;
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	principalId: PrincipalId;
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	sourceProfileId?: ResourceId;
+	sourceProfileDigest?: string;
+	targetProfileId: ResourceId;
+	targetProfileDigest: string;
+	manifestDigest: string;
+	dispositions: ModelSwitchConversionDispositions;
+	inputLineageDigest: string;
+	outputLineageDigest: string;
+	conversionEvidenceDigest: string;
+	receiptDigest: string;
+}
+
 export const MODEL_ROUTE_OPERATIONS = ["switch", "summarize", "compact"] as const;
 export type ModelRouteOperation = (typeof MODEL_ROUTE_OPERATIONS)[number];
 
@@ -136,6 +204,10 @@ export const MODEL_ROUTE_DIAGNOSTIC_CODES = [
 	"capability_mismatch",
 	"scope_mismatch",
 	"compatibility_hash_mismatch",
+	"parity_binding_mismatch",
+	"profile_evidence_mismatch",
+	"conversion_lossy",
+	"conversion_unproven",
 ] as const;
 export type ModelRouteDiagnosticCode = (typeof MODEL_ROUTE_DIAGNOSTIC_CODES)[number];
 
@@ -198,6 +270,7 @@ export type ModelRouteDecision =
 			profileId: ResourceId;
 			manifestDigest: string;
 			profileDigest: string;
+			conversionReceipt: ModelSwitchConversionReceipt;
 	  })
 	| (ModelRouteDecisionBase & {
 			outcome: "fork";
@@ -205,12 +278,14 @@ export type ModelRouteDecision =
 			profileId: ResourceId;
 			manifestDigest: string;
 			profileDigest: string;
+			conversionReceipt: ModelSwitchConversionReceipt;
 			mustForkReason:
 				| "provider_private_state"
 				| "tool_replay_incompatible"
 				| "reasoning_history_incompatible"
 				| "mid_session_switch_unsupported"
-				| "compatibility_hash_mismatch";
+				| "compatibility_hash_mismatch"
+				| "conversion_lossy_or_unproven";
 	  })
 	| (ModelRouteDecisionBase & {
 			outcome: "deny";

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Api, Model } from "../../../src/types.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
+import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import type { ContextAssemblyReceipt } from "../../../src/runtime/context/types.ts";
 import type { ModelRouteDecision } from "../../../src/runtime/model-routing/types.ts";
 import {
@@ -68,7 +69,11 @@ function coordinator(models: readonly Model<Api>[], extra = new Array<InstanceTy
 			},
 		}),
 		events,
-		expectedRevision: () => ({ sessionId, sequence: 1, eventHash: "a".repeat(64) }),
+		expectedRevision: () => ({
+			stream: createSessionEventStreamRef({ authorityId, tenantId }, sessionId),
+			sequence: 1,
+			eventHash: "a".repeat(64),
+		}),
 		fragmentProviders: [
 			new BasePromptContextProvider(principalId),
 			...extra,
@@ -152,7 +157,7 @@ describe("catalog governed model runtime", () => {
 			},
 		});
 		const request = {
-			schemaVersion: 1 as const,
+			schemaVersion: 2 as const,
 			authorityId,
 			tenantId,
 			principalId,
@@ -169,7 +174,11 @@ describe("catalog governed model runtime", () => {
 			requiredCapabilities: [],
 			inputSources: [],
 			declassificationReceipts: [],
-			expectedRevision: { sessionId, sequence: 0, eventHash: "b".repeat(64) },
+			expectedRevision: {
+				stream: createSessionEventStreamRef({ authorityId, tenantId }, sessionId),
+				sequence: 0,
+				eventHash: "b".repeat(64),
+			},
 		};
 		expect(router.route(request)).toMatchObject({ outcome: "deny" });
 	});

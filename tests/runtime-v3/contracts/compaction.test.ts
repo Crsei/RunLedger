@@ -6,16 +6,22 @@ import {
 	CompactionCheckpointRefSchema,
 	CompactionCheckpointSchema,
 	CompactionProjectionInstallationReceiptSchema,
+	CompactionRecoveryAssessmentSchema,
+	CompactionRecoveryCandidateSchema,
 	isCompactionAttemptReceipt,
 	isCompactionCheckpoint,
 	isCompactionCheckpointRef,
 	isCompactionProjectionInstallationReceipt,
+	isCompactionRecoveryAssessment,
 } from "../../../src/runtime/context/compaction/schema.ts";
 import type {
 	CompactionCheckpoint,
 	CompactionCheckpointRef,
 	CompactionProjectionInstallationReceipt,
+	CompactionRecoveryAssessment,
+	CompactionRecoveryCandidate,
 } from "../../../src/runtime/context/compaction/types.ts";
+import { assessCompactionRecovery } from "../../../src/runtime/context/compaction/validator.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { runtimeEventPayloadSchema } from "../../../src/runtime/protocol/v3/event-payloads.ts";
 import { asRecord, DIGEST, loadContractFixture } from "./helpers.ts";
@@ -30,6 +36,10 @@ describe("Phase 6 compaction contracts", () => {
 		expectTypeOf<Static<typeof CompactionCheckpointSchema>>().toEqualTypeOf<CompactionCheckpoint>();
 		expectTypeOf<Static<typeof CompactionProjectionInstallationReceiptSchema>>()
 			.toEqualTypeOf<CompactionProjectionInstallationReceipt>();
+		expectTypeOf<Static<typeof CompactionRecoveryCandidateSchema>>()
+			.toEqualTypeOf<CompactionRecoveryCandidate>();
+		expectTypeOf<Static<typeof CompactionRecoveryAssessmentSchema>>()
+			.toEqualTypeOf<CompactionRecoveryAssessment>();
 	});
 
 	it("round-trips a validated checkpoint and previous-checkpoint chain", () => {
@@ -120,5 +130,93 @@ describe("Phase 6 compaction contracts", () => {
 			invariantDigest: DIGEST,
 			previousCheckpointId: "checkpoint_previous",
 		})).toBe(true);
+	});
+
+	it("classifies every recovery proof gap as invalid or corrupted without fallback", () => {
+		const checkpoint = fixture().previous as CompactionCheckpointRef;
+		const base: CompactionRecoveryCandidate = {
+			checkpoint,
+			checkpointIntegrity: "verified",
+			replacementHistory: {
+				format: "full",
+				sessionId: checkpoint.sessionId,
+				storedDigest: checkpoint.replacementHistoryArtifact.storedDigest,
+				contentDigest: checkpoint.replacementHistoryDigest,
+				survivingSuffixFromSequence: checkpoint.survivingSuffixFromSequence,
+			},
+			legacyImport: false,
+			observedInvariantDigest: checkpoint.invariantDigest,
+			suffix: { integrity: "verified", fromSequence: checkpoint.survivingSuffixFromSequence },
+		};
+		expect(Check(CompactionRecoveryCandidateSchema, base)).toBe(true);
+		const recovered = assessCompactionRecovery(base);
+		expect(Check(CompactionRecoveryAssessmentSchema, recovered)).toBe(true);
+		expect(isCompactionRecoveryAssessment(recovered)).toBe(true);
+		expect(recovered).toMatchObject({ outcome: "recoverable", codes: [] });
+
+		const cases = [
+			{
+				name: "invalid-window",
+				candidate: {
+					...base,
+					checkpoint: { ...checkpoint, retainedFromSequence: checkpoint.sourceToSequence + 2 },
+				},
+				expected: "invalid",
+				code: "invalid_window",
+			},
+			{
+				name: "invalid-chain",
+				candidate: {
+					...base,
+					checkpoint: { ...checkpoint, previousCheckpointId: "checkpoint_missing" },
+				},
+				expected: "invalid",
+				code: "invalid_chain",
+			},
+			{
+				name: "world-state-corruption",
+				candidate: { ...base, observedInvariantDigest: DIGEST },
+				expected: "corrupted",
+				code: "world_state_corruption",
+			},
+			{
+				name: "patch-without-full",
+				candidate: {
+					...base,
+					replacementHistory: { ...base.replacementHistory, format: "patch" as const },
+				},
+				expected: "corrupted",
+				code: "patch_without_full",
+			},
+			{
+				name: "legacy-missing-replacement",
+				candidate: { ...base, replacementHistory: undefined, legacyImport: true },
+				expected: "invalid",
+				code: "legacy_missing_replacement",
+			},
+			{
+				name: "bad-checkpoint",
+				candidate: { ...base, checkpointIntegrity: "digest_mismatch" as const },
+				expected: "corrupted",
+				code: "bad_checkpoint",
+			},
+			{
+				name: "suffix-jsonl-corruption",
+				candidate: {
+					...base,
+					suffix: { ...base.suffix, integrity: "jsonl_corrupted" as const },
+				},
+				expected: "corrupted",
+				code: "suffix_jsonl_corruption",
+			},
+		] as const;
+		const declared = asRecord(loadContractFixture("compaction/recovery-failures-v1.json")).cases;
+		expect(cases.map(({ name, expected }) => ({ name, expected }))).toEqual(declared);
+		for (const item of cases) {
+			expect(assessCompactionRecovery(item.candidate), item.name).toMatchObject({
+				outcome: item.expected,
+				codes: expect.arrayContaining([item.code]),
+			});
+		}
 	});
 });

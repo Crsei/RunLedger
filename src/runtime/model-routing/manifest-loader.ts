@@ -3,12 +3,21 @@ import { isModelCompatibilityManifest } from "./schema.ts";
 import type {
 	ModelCapabilityProfile,
 	ModelCompatibilityManifest,
+	ModelProfileEvidence,
+} from "./types.ts";
+import {
+	PI_AI_CATALOG_DIGEST,
+	PI_AI_PARITY_MANIFEST_DIGEST,
+	PI_AI_UPSTREAM_COMMIT,
+	RUNLEDGER_PARITY_BASE_COMMIT,
 } from "./types.ts";
 
 export type ModelManifestErrorCode =
 	| "invalid_manifest"
 	| "manifest_digest_mismatch"
 	| "profile_digest_mismatch"
+	| "profile_evidence_mismatch"
+	| "parity_binding_mismatch"
 	| "duplicate_profile"
 	| "ambiguous_model";
 
@@ -35,6 +44,10 @@ function manifestDigestInput(manifest: ModelCompatibilityManifest): Readonly<Rec
 		manifestId: manifest.manifestId,
 		revision: manifest.revision,
 		generatedAt: manifest.generatedAt,
+		piAiParityManifestDigest: manifest.piAiParityManifestDigest,
+		catalogDigest: manifest.catalogDigest,
+		upstreamCommit: manifest.upstreamCommit,
+		runLedgerBaseCommit: manifest.runLedgerBaseCommit,
 		profiles: manifest.profiles
 			.map((profile) => ({
 				...profileDigestInput(profile),
@@ -43,6 +56,17 @@ function manifestDigestInput(manifest: ModelCompatibilityManifest): Readonly<Rec
 			}))
 			.sort((left, right) => String(left.profileId).localeCompare(String(right.profileId))),
 	};
+}
+
+function profileEvidenceDigestInput(
+	evidence: ModelProfileEvidence,
+): Omit<ModelProfileEvidence, "evidenceDigest"> {
+	const { evidenceDigest: _evidenceDigest, ...body } = evidence;
+	return body;
+}
+
+export function calculateModelProfileEvidenceDigest(evidence: ModelProfileEvidence): string {
+	return canonicalDigest(profileEvidenceDigestInput(evidence));
 }
 
 export function calculateModelProfileDigest(profile: ModelCapabilityProfile): string {
@@ -56,6 +80,7 @@ export function calculateModelManifestDigest(manifest: ModelCompatibilityManifes
 function freezeProfile(profile: ModelCapabilityProfile): ModelCapabilityProfile {
 	return Object.freeze({
 		...profile,
+		evidence: Object.freeze({ ...profile.evidence }),
 		compatibilityHashes: Object.freeze({ ...profile.compatibilityHashes }),
 		verifiedAliases: Object.freeze([...profile.verifiedAliases]),
 		capabilityClaims: Object.freeze(profile.capabilityClaims.map((claim) => Object.freeze({ ...claim }))),
@@ -63,10 +88,39 @@ function freezeProfile(profile: ModelCapabilityProfile): ModelCapabilityProfile 
 	});
 }
 
+function hasCurrentParityBinding(manifest: ModelCompatibilityManifest): boolean {
+	return (
+		manifest.piAiParityManifestDigest === PI_AI_PARITY_MANIFEST_DIGEST &&
+		manifest.catalogDigest === PI_AI_CATALOG_DIGEST &&
+		manifest.upstreamCommit === PI_AI_UPSTREAM_COMMIT &&
+		manifest.runLedgerBaseCommit === RUNLEDGER_PARITY_BASE_COMMIT
+	);
+}
+
+function profileMatchesManifestEvidence(
+	manifest: ModelCompatibilityManifest,
+	profile: ModelCapabilityProfile,
+): boolean {
+	return (
+		profile.evidence.piAiParityManifestDigest === manifest.piAiParityManifestDigest &&
+		profile.evidence.catalogDigest === manifest.catalogDigest &&
+		profile.evidence.upstreamCommit === manifest.upstreamCommit &&
+		profile.evidence.runLedgerBaseCommit === manifest.runLedgerBaseCommit &&
+		profile.evidence.compatibilityEvidenceDigest === canonicalDigest(profile.compatibilityHashes) &&
+		profile.evidence.evidenceDigest === calculateModelProfileEvidenceDigest(profile.evidence)
+	);
+}
+
 /** 加载、校验并稳定排序 contract-owned manifest，不创建第二套协议。 */
 export function loadModelCompatibilityManifest(input: unknown): ModelCompatibilityManifest {
 	if (!isModelCompatibilityManifest(input)) {
 		throw new ModelManifestError("invalid_manifest", "model compatibility manifest failed schema or scope validation");
+	}
+	if (!hasCurrentParityBinding(input)) {
+		throw new ModelManifestError(
+			"parity_binding_mismatch",
+			"model compatibility manifest does not bind the current pi-ai parity and catalog baseline",
+		);
 	}
 
 	const profileIds = new Set<string>();
@@ -80,6 +134,12 @@ export function loadModelCompatibilityManifest(input: unknown): ModelCompatibili
 		}
 		profileIds.add(profile.profileId);
 		modelIds.add(profile.modelId);
+		if (!profileMatchesManifestEvidence(input, profile)) {
+			throw new ModelManifestError(
+				"profile_evidence_mismatch",
+				`profile ${profile.profileId} evidence does not match the manifest or compatibility hashes`,
+			);
+		}
 		if (calculateModelProfileDigest(profile) !== profile.profileDigest) {
 			throw new ModelManifestError("profile_digest_mismatch", `profile ${profile.profileId} digest mismatch`);
 		}

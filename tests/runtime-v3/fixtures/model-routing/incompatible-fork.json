@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "authorityId": "authority_fixture",
   "tenantId": "tenant_fixture",
   "principalId": "principal_fixture",
@@ -11,7 +11,7 @@
   "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "profileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
   "adapterState": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "authorityId": "authority_fixture",
     "tenantId": "tenant_fixture",
     "sourceProfileId": "resource_profile-a",
@@ -21,6 +21,33 @@
     "cacheState": "drop",
     "stateDescriptorDigest": "4444444444444444444444444444444444444444444444444444444444444444",
     "compatible": false
+  },
+  "conversionReceipt": {
+    "schemaVersion": 2,
+    "authorityId": "authority_fixture",
+    "tenantId": "tenant_fixture",
+    "principalId": "principal_fixture",
+    "receiptId": "receipt_conversion-2",
+    "requestId": "command_route-2",
+    "sourceProfileId": "resource_profile-a",
+    "sourceProfileDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "targetProfileId": "resource_profile-b",
+    "targetProfileDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dispositions": {
+      "reasoning": "fork_required",
+      "image": "not_applicable",
+      "toolCallIds": "dropped",
+      "adapterPrivateState": "fork_required",
+      "cache": "dropped",
+      "transport": "unproven",
+      "context": "fork_required",
+      "compaction": "fork_required"
+    },
+    "inputLineageDigest": "1616161616161616161616161616161616161616161616161616161616161616",
+    "outputLineageDigest": "1616161616161616161616161616161616161616161616161616161616161616",
+    "conversionEvidenceDigest": "1818181818181818181818181818181818181818181818181818181818181818",
+    "receiptDigest": "2f701b136625f85eb76e8f96aca71813d43a5ccbe89d3e32cbe5f64c6c88682b"
   },
 	"inputSources": [
 	  {

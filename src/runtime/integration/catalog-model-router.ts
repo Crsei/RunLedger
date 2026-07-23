@@ -11,6 +11,7 @@ import {
 } from "../protocol/v3/ids.ts";
 import {
 	calculateModelManifestDigest,
+	calculateModelProfileEvidenceDigest,
 	calculateModelProfileDigest,
 } from "../model-routing/manifest-loader.ts";
 import { ModelCompatibilityRouter } from "../model-routing/router.ts";
@@ -19,6 +20,12 @@ import type {
 	ModelCompatibilityManifest,
 	ModelRouteDecision,
 	ModelRouteRequest,
+} from "../model-routing/types.ts";
+import {
+	PI_AI_CATALOG_DIGEST,
+	PI_AI_PARITY_MANIFEST_DIGEST,
+	PI_AI_UPSTREAM_COMMIT,
+	RUNLEDGER_PARITY_BASE_COMMIT,
 } from "../model-routing/types.ts";
 import type { ModelCompatibilityRoutePort } from "./governed-model-request.ts";
 
@@ -63,8 +70,29 @@ function profileDraft(
 		profileHash: canonicalDigest({ providerId: model.provider, modelId: model.id, apiProtocol: model.api }),
 		regressionHash: canonicalDigest(options.regression),
 	};
+	const unsignedEvidence = {
+		piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+		catalogDigest: PI_AI_CATALOG_DIGEST,
+		upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+		runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
+		catalogEntryDigest: canonicalDigest({
+			provider: model.provider,
+			id: model.id,
+			api: model.api,
+			reasoning: model.reasoning,
+			input: model.input,
+			contextWindow: model.contextWindow,
+			maxTokens: model.maxTokens,
+		}),
+		compatibilityEvidenceDigest: canonicalDigest(compatibilityHashes),
+		evidenceDigest: "0".repeat(64),
+	};
+	const evidence = {
+		...unsignedEvidence,
+		evidenceDigest: calculateModelProfileEvidenceDigest(unsignedEvidence),
+	};
 	const draft: ModelCapabilityProfile = {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: options.authorityId,
 		tenantId: options.tenantId,
 		profileId: stableProfileId(model),
@@ -72,6 +100,7 @@ function profileDraft(
 		providerId: model.provider,
 		manifestDigest: "0".repeat(64),
 		profileDigest: "0".repeat(64),
+		evidence,
 		compatibilityHashes,
 		contextWindow: Math.max(1, Math.trunc(model.contextWindow)),
 		maxOutputTokens: Math.max(1, Math.trunc(model.maxTokens)),
@@ -105,7 +134,7 @@ function boundedManifest(
 ): ModelCompatibilityManifest {
 	const ordered = profiles.slice().sort((left, right) => left.profileId.localeCompare(right.profileId));
 	const draft: ModelCompatibilityManifest = {
-		schemaVersion: 1,
+		schemaVersion: 2,
 		authorityId: options.authorityId,
 		tenantId: options.tenantId,
 		manifestId: createRuntimeId("resource", `catalog-model-manifest-${canonicalDigest({
@@ -115,6 +144,10 @@ function boundedManifest(
 		}).slice(0, 48)}`),
 		revision: 1,
 		generatedAt: options.regression.completedAt,
+		piAiParityManifestDigest: PI_AI_PARITY_MANIFEST_DIGEST,
+		catalogDigest: PI_AI_CATALOG_DIGEST,
+		upstreamCommit: PI_AI_UPSTREAM_COMMIT,
+		runLedgerBaseCommit: RUNLEDGER_PARITY_BASE_COMMIT,
 		profiles: ordered,
 		manifestDigest: "0".repeat(64),
 	};

@@ -4,11 +4,16 @@ import {
 	enterpriseIdentity,
 	governedAgents,
 	lifecycle,
+	MODEL_ROUTING_CONTRACT_VERSION,
+	ModelSwitchConversionReceiptSchema,
 	orchestrator,
 	remoteExecutors,
 	telemetry,
 	verification,
 	verificationRunner,
+	CompactionRecoveryAssessmentSchema,
+	type CompactionRecoveryAssessment,
+	type ModelSwitchConversionReceipt,
 } from "runledger";
 import { AgentSupervisor } from "runledger/runtime/agents";
 import { ControlPlaneCommandBus } from "runledger/runtime/control-plane";
@@ -43,6 +48,8 @@ export interface PublicConsumerBindings {
 	shutdown: lifecycle.RuntimeShutdownReceipt;
 	request: controlPlane.ControlPlaneRequest;
 	verificationRuntime: VerificationSessionRuntimeOptions;
+	modelConversion: ModelSwitchConversionReceipt;
+	compactionRecovery: CompactionRecoveryAssessment;
 }
 
 // 本文件由 public-surface 测试编译；这些值引用同时证明根命名空间和稳定子路径可消费。
@@ -61,6 +68,9 @@ export const PUBLIC_RUNTIME_VALUES = [
 	projectRuntimeActivity,
 	startHeadlessDaemonCore,
 	V3SessionRuntimeFactoryAdapter,
+	MODEL_ROUTING_CONTRACT_VERSION,
+	ModelSwitchConversionReceiptSchema,
+	CompactionRecoveryAssessmentSchema,
 	daemon.startHeadlessDaemonCore,
 	remoteExecutors.FailClosedRemoteExecutorGateway,
 	verificationRunner.handleVerificationRunnerRequest,

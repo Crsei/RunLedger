@@ -22,15 +22,19 @@ import {
 	MODEL_ROUTE_OPERATIONS,
 	MODEL_ROUTING_CONTRACT_VERSION,
 	MODEL_SWITCH_MODES,
+	MODEL_SWITCH_CONVERSION_DISPOSITIONS,
 	MODEL_TOOL_REPLAY_MODES,
 	type ModelAdapterStateCompatibility,
 	type ModelCapabilityProfile,
 	type ModelCompatibilityHashSet,
 	type ModelCompatibilityManifest,
+	type ModelProfileEvidence,
 	type ModelRegressionSuiteRef,
 	type ModelRouteDecision,
 	type ModelRouteDiagnostic,
 	type ModelRouteRequest,
+	type ModelSwitchConversionDispositions,
+	type ModelSwitchConversionReceipt,
 } from "./types.ts";
 
 export const MODEL_ROUTING_SCHEMA_VERSION = MODEL_ROUTING_CONTRACT_VERSION;
@@ -43,6 +47,7 @@ const timestampPattern = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{3}
 const id = (kind: string) =>
 	Type.String({ pattern: `^${kind}_[A-Za-z0-9][A-Za-z0-9._~-]*$`, maxLength: 128 });
 const digest = Type.String({ pattern: digestPattern, minLength: 64, maxLength: 64 });
+const commit = Type.String({ pattern: "^[a-f0-9]{40}$", minLength: 40, maxLength: 40 });
 const timestamp = Type.String({ pattern: timestampPattern, maxLength: 24 });
 const token = Type.String({ minLength: 1, maxLength: 256 });
 const reason = Type.String({ minLength: 1, maxLength: 1_024 });
@@ -71,6 +76,16 @@ export const ModelCompatibilityHashSetSchema = Type.Unsafe<ModelCompatibilityHas
 	regressionHash: digest,
 }));
 
+export const ModelProfileEvidenceSchema = Type.Unsafe<ModelProfileEvidence>(exact({
+	piAiParityManifestDigest: digest,
+	catalogDigest: digest,
+	upstreamCommit: commit,
+	runLedgerBaseCommit: commit,
+	catalogEntryDigest: digest,
+	compatibilityEvidenceDigest: digest,
+	evidenceDigest: digest,
+}));
+
 export const ModelCapabilityProfileSchema = Type.Unsafe<ModelCapabilityProfile>(exact({
 	schemaVersion: Type.Literal(MODEL_ROUTING_SCHEMA_VERSION),
 	authorityId: id("authority"),
@@ -80,6 +95,7 @@ export const ModelCapabilityProfileSchema = Type.Unsafe<ModelCapabilityProfile>(
 	providerId: token,
 	manifestDigest: digest,
 	profileDigest: digest,
+	evidence: ModelProfileEvidenceSchema,
 	compatibilityHashes: ModelCompatibilityHashSetSchema,
 	contextWindow: Type.Integer({ minimum: 1, maximum: 4_194_304 }),
 	maxOutputTokens: Type.Integer({ minimum: 1, maximum: 1_048_576 }),
@@ -106,6 +122,10 @@ export const ModelCompatibilityManifestSchema = Type.Unsafe<ModelCompatibilityMa
 	manifestId: id("resource"),
 	revision,
 	generatedAt: timestamp,
+	piAiParityManifestDigest: digest,
+	catalogDigest: digest,
+	upstreamCommit: commit,
+	runLedgerBaseCommit: commit,
 	profiles: Type.Array(ModelCapabilityProfileSchema, { maxItems: MAX_MODEL_PROFILES }),
 	manifestDigest: digest,
 }));
@@ -122,6 +142,38 @@ export const ModelAdapterStateCompatibilitySchema = Type.Unsafe<ModelAdapterStat
 	cacheState: adapterStateDisposition,
 	stateDescriptorDigest: digest,
 	compatible: Type.Boolean(),
+}));
+
+const conversionDisposition = literals(MODEL_SWITCH_CONVERSION_DISPOSITIONS);
+export const ModelSwitchConversionDispositionsSchema =
+	Type.Unsafe<ModelSwitchConversionDispositions>(exact({
+		reasoning: conversionDisposition,
+		image: conversionDisposition,
+		toolCallIds: conversionDisposition,
+		adapterPrivateState: conversionDisposition,
+		cache: conversionDisposition,
+		transport: conversionDisposition,
+		context: conversionDisposition,
+		compaction: conversionDisposition,
+	}));
+
+export const ModelSwitchConversionReceiptSchema = Type.Unsafe<ModelSwitchConversionReceipt>(exact({
+	schemaVersion: Type.Literal(MODEL_ROUTING_SCHEMA_VERSION),
+	authorityId: id("authority"),
+	tenantId: id("tenant"),
+	principalId: id("principal"),
+	receiptId: id("receipt"),
+	requestId: id("command"),
+	sourceProfileId: Type.Optional(id("resource")),
+	sourceProfileDigest: Type.Optional(digest),
+	targetProfileId: id("resource"),
+	targetProfileDigest: digest,
+	manifestDigest: digest,
+	dispositions: ModelSwitchConversionDispositionsSchema,
+	inputLineageDigest: digest,
+	outputLineageDigest: digest,
+	conversionEvidenceDigest: digest,
+	receiptDigest: digest,
 }));
 
 export const ModelRouteDiagnosticSchema = Type.Unsafe<ModelRouteDiagnostic>(exact({
@@ -178,6 +230,7 @@ const routedDecision = {
 	profileId: id("resource"),
 	manifestDigest: digest,
 	profileDigest: digest,
+	conversionReceipt: ModelSwitchConversionReceiptSchema,
 } as const;
 
 export const ModelRouteDecisionSchema = Type.Unsafe<ModelRouteDecision>(Type.Union([
@@ -191,6 +244,7 @@ export const ModelRouteDecisionSchema = Type.Unsafe<ModelRouteDecision>(Type.Uni
 			"reasoning_history_incompatible",
 			"mid_session_switch_unsupported",
 			"compatibility_hash_mismatch",
+			"conversion_lossy_or_unproven",
 		] as const),
 	}),
 	exact({
@@ -218,6 +272,8 @@ export function isModelRegressionSuiteRef(value: unknown): value is ModelRegress
 export function isModelCapabilityProfile(value: unknown): value is ModelCapabilityProfile {
 	if (!Check(ModelCapabilityProfileSchema, value)) return false;
 	return (
+		Object.values(value.compatibilityHashes).every((hash) => hash !== "0".repeat(64)) &&
+		Object.values(value.evidence).every((proof) => !/^0+$/u.test(proof)) &&
 		value.capabilityClaims.every((claim) => sameScope(value, claim)) &&
 		(value.regressionSuite.evidence === undefined || sameScope(value, value.regressionSuite.evidence)) &&
 		(value.status === "verified" ? value.verifiedByPrincipalId !== undefined && value.regressionSuite.passed : true)
@@ -240,6 +296,38 @@ export function isModelAdapterStateCompatibility(value: unknown): value is Model
 	return value.compatible
 		? dispositions.every((entry) => entry === "preserve" || entry === "drop")
 		: dispositions.some((entry) => entry === "fork_required" || entry === "deny");
+}
+
+function conversionReceiptBody(
+	value: ModelSwitchConversionReceipt,
+): Omit<ModelSwitchConversionReceipt, "receiptDigest"> {
+	const { receiptDigest: _receiptDigest, ...body } = value;
+	return body;
+}
+
+export function isModelSwitchConversionReceipt(
+	value: unknown,
+): value is ModelSwitchConversionReceipt {
+	if (!Check(ModelSwitchConversionReceiptSchema, value)) return false;
+	const sourcePairIsComplete =
+		(value.sourceProfileId === undefined && value.sourceProfileDigest === undefined) ||
+		(value.sourceProfileId !== undefined && value.sourceProfileDigest !== undefined);
+	return (
+		sourcePairIsComplete &&
+		value.inputLineageDigest === value.outputLineageDigest &&
+		value.receiptDigest === canonicalDigest(conversionReceiptBody(value))
+	);
+}
+
+export function modelSwitchConversionIsLossless(
+	receipt: ModelSwitchConversionReceipt,
+): boolean {
+	return Object.values(receipt.dispositions).every(
+		(disposition) =>
+			disposition === "preserved" ||
+			disposition === "converted_lossless" ||
+			disposition === "not_applicable",
+	);
 }
 
 export function isModelRouteDiagnostic(value: unknown): value is ModelRouteDiagnostic {
@@ -271,7 +359,17 @@ export function isModelRouteDecision(value: unknown): value is ModelRouteDecisio
 			(receipt) => sameScope(value, receipt) && isDeclassificationReceiptRef(receipt),
 		) &&
 		(value.adapterState === undefined ||
-			(sameScope(value, value.adapterState) && isModelAdapterStateCompatibility(value.adapterState)))
+			(sameScope(value, value.adapterState) && isModelAdapterStateCompatibility(value.adapterState))) &&
+		(value.outcome === "deny" ||
+			(sameScope(value, value.conversionReceipt) &&
+				isModelSwitchConversionReceipt(value.conversionReceipt) &&
+				value.conversionReceipt.requestId === value.requestId &&
+				value.conversionReceipt.principalId === value.principalId &&
+				value.conversionReceipt.targetProfileId === value.profileId &&
+				value.conversionReceipt.targetProfileDigest === value.profileDigest &&
+				value.conversionReceipt.manifestDigest === value.manifestDigest &&
+				(value.outcome !== "compatible" ||
+					modelSwitchConversionIsLossless(value.conversionReceipt))))
 	);
 }
 
@@ -279,11 +377,22 @@ export function modelRouteDecisionPreservesInputSources(
 	request: ModelRouteRequest,
 	decision: ModelRouteDecision,
 ): boolean {
+	const lineageDigest = canonicalDigest({
+		inputSources: request.inputSources,
+		declassificationReceipts: request.declassificationReceipts,
+	});
 	return (
 		isModelRouteRequest(request) &&
 		isModelRouteDecision(decision) &&
 		request.requestId === decision.requestId &&
+		(request.targetProfileId === undefined || decision.profileId === request.targetProfileId) &&
+		(request.targetModelId === undefined || decision.targetModelId === request.targetModelId) &&
 		canonicalDigest(request.inputSources) === canonicalDigest(decision.inputSources) &&
-		canonicalDigest(request.declassificationReceipts) === canonicalDigest(decision.declassificationReceipts)
+		canonicalDigest(request.declassificationReceipts) === canonicalDigest(decision.declassificationReceipts) &&
+		(decision.outcome === "deny" ||
+			(decision.conversionReceipt.inputLineageDigest === lineageDigest &&
+				decision.conversionReceipt.outputLineageDigest === lineageDigest &&
+				(request.fromProfileId === undefined ||
+					decision.conversionReceipt.sourceProfileId === request.fromProfileId)))
 	);
 }

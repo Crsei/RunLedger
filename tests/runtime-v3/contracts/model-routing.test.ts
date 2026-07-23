@@ -6,6 +6,8 @@ import {
 	isModelCompatibilityManifest,
 	isModelRouteDecision,
 	isModelRouteRequest,
+	isModelSwitchConversionReceipt,
+	modelSwitchConversionIsLossless,
 	modelRouteDecisionPreservesInputSources,
 	MAX_MODEL_PROFILES,
 	ModelCompatibilityManifestSchema,
@@ -54,6 +56,9 @@ describe("Phase 6 model routing contracts", () => {
 		expect(isModelRouteDecision(decision)).toBe(true);
 		if (!isModelRouteRequest(request) || !isModelRouteDecision(decision)) throw new Error("invalid route fixture");
 		expect(modelRouteDecisionPreservesInputSources(request, decision)).toBe(true);
+		if (decision.outcome === "deny") throw new Error("compatible fixture unexpectedly denied");
+		expect(isModelSwitchConversionReceipt(decision.conversionReceipt)).toBe(true);
+		expect(modelSwitchConversionIsLossless(decision.conversionReceipt)).toBe(true);
 		expect(modelRouteDecisionPreservesInputSources(request, { ...decision, inputSources: [] })).toBe(false);
 		expect(isModelRouteDecision(JSON.parse(JSON.stringify(decision)) as unknown)).toBe(true);
 	});
@@ -71,7 +76,7 @@ describe("Phase 6 model routing contracts", () => {
 		const { compatible } = fixtures();
 		const manifest = asRecord(compatible.manifest);
 		const request = asRecord(compatible.request);
-		expect(isModelCompatibilityManifest({ ...manifest, schemaVersion: 2 })).toBe(false);
+		expect(isModelCompatibilityManifest({ ...manifest, schemaVersion: 1 })).toBe(false);
 		expect(isModelCompatibilityManifest({ ...manifest, future: true })).toBe(false);
 		expect(isModelRouteRequest({ ...request, future: true })).toBe(false);
 		const expectedRevision = asRecord(request.expectedRevision);
@@ -91,6 +96,31 @@ describe("Phase 6 model routing contracts", () => {
 			const incomplete = { ...hashes };
 			delete incomplete[required];
 			expect(isModelCapabilityProfile({ ...profile, compatibilityHashes: incomplete }), required).toBe(false);
+			expect(isModelCapabilityProfile({
+				...profile,
+				compatibilityHashes: { ...hashes, [required]: "0".repeat(64) },
+			}), `${required}: unknown`).toBe(false);
+		}
+		const evidence = asRecord(profile.evidence);
+		for (const required of [
+			"piAiParityManifestDigest",
+			"catalogDigest",
+			"upstreamCommit",
+			"runLedgerBaseCommit",
+			"catalogEntryDigest",
+			"compatibilityEvidenceDigest",
+			"evidenceDigest",
+		]) {
+			const incomplete = { ...evidence };
+			delete incomplete[required];
+			expect(isModelCapabilityProfile({ ...profile, evidence: incomplete }), required).toBe(false);
+			expect(isModelCapabilityProfile({
+				...profile,
+				evidence: {
+					...evidence,
+					[required]: "0".repeat(required.endsWith("Commit") ? 40 : 64),
+				},
+			}), `${required}: unknown`).toBe(false);
 		}
 	});
 
@@ -108,11 +138,36 @@ describe("Phase 6 model routing contracts", () => {
 		})).toBe(true);
 		expect(Check(schema, {
 			turnId: "turn_fixture",
+			routeRequestId: "command_route-v2",
+			decisionId: "receipt_route-v2",
+			profileId: "resource_profile",
+			manifestDigest: DIGEST,
+			profileDigest: DIGEST,
+			decisionDigest: DIGEST,
+			outcome: "compatible",
+			routeContractVersion: 2,
+			conversionReceiptId: "receipt_conversion",
+			conversionReceiptDigest: DIGEST,
+		})).toBe(true);
+		expect(Check(schema, {
+			turnId: "turn_fixture",
 			routeRequestId: "command_route-denied",
 			decisionId: "receipt_route-denied",
 			decisionDigest: DIGEST,
 			outcome: "deny",
+			routeContractVersion: 2,
 		})).toBe(true);
+		expect(Check(schema, {
+			turnId: "turn_fixture",
+			routeRequestId: "command_route-v2-missing-receipt",
+			decisionId: "receipt_route-v2-missing-receipt",
+			profileId: "resource_profile",
+			manifestDigest: DIGEST,
+			profileDigest: DIGEST,
+			decisionDigest: DIGEST,
+			outcome: "compatible",
+			routeContractVersion: 2,
+		})).toBe(false);
 		expect(Check(schema, { turnId: "turn_fixture", outcome: "compatible" })).toBe(false);
 	});
 });
