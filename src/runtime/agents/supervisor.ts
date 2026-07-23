@@ -3,6 +3,7 @@
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import { createIdempotencyKey, parseIdempotencyKey } from "../protocol/v3/coordination.ts";
 import { createRuntimeId, isRuntimeId } from "../protocol/v3/ids.ts";
+import { isEventCursor } from "../protocol/v3/schemas.ts";
 import { createBudgetVector } from "../orchestrator/budget-guard.ts";
 import type { BudgetGuard as BudgetGuardType } from "../orchestrator/budget-guard.ts";
 import {
@@ -51,6 +52,7 @@ import type {
 	AgentGraphProjection,
 	AgentGraphFailureRef,
 	AgentGraphSemanticCommand,
+	AgentGraphStoreHead,
 	AgentHandoffRequest,
 	AgentLaunchResult,
 	AgentMergeRequest,
@@ -59,6 +61,10 @@ import type {
 	AgentResult,
 	AgentResumeOutcome,
 	AgentResumeRequest,
+	AgentRuntimeActivationHandle,
+	AgentRuntimeActivationReceiptRef,
+	AgentRuntimeActivationRequest,
+	AgentRuntimeCompletion,
 	AgentRuntimeReleaseReceiptRef,
 	AgentSpawnOutcome,
 	AgentSupervisorOptions,
@@ -406,12 +412,123 @@ interface ActiveCleanupOperation {
 	promise: Promise<AgentResult<AgentGraphProjection>>;
 }
 
+interface ActiveRuntimeCompletionOperation {
+	promise: Promise<AgentResult<AgentGraphProjection>>;
+}
+
+function runtimeCoordinationRequestId(
+	receipt: AgentRuntimeActivationReceiptRef,
+	purpose: string,
+) {
+	return createRuntimeId(
+		"command",
+		`agent-runtime-${purpose}-${canonicalDigest({
+			activationReceiptDigest: receipt.receiptDigest,
+			purpose,
+		}).slice(0, 40)}`,
+	);
+}
+
+function runtimeCoordinationIdempotencyKey(
+	receipt: AgentRuntimeActivationReceiptRef,
+	purpose: string,
+) {
+	return createIdempotencyKey(
+		`agent-runtime-${purpose}-${canonicalDigest({
+			activationReceiptDigest: receipt.receiptDigest,
+			purpose,
+		}).slice(0, 48)}`,
+	);
+}
+
+function runtimeActivationReceiptMatches(
+	receipt: AgentRuntimeActivationReceiptRef,
+	request: AgentRuntimeActivationRequest,
+): boolean {
+	const { receiptDigest, ...body } = receipt;
+	return (
+		isRuntimeId(receipt.receiptId, "receipt") &&
+		receipt.requestId === request.requestId &&
+		receipt.requestDigest === request.requestDigest &&
+		receipt.agentId === request.agentId &&
+		receipt.sessionId === request.sessionId &&
+		receipt.launchReceiptId === request.launchReceipt.receiptId &&
+		receipt.launchRevision === request.launchReceipt.launchRevision &&
+		receipt.residencyReceiptId === request.residencyReceipt.receiptId &&
+		receipt.parentGraphRevision === request.parentGraphRevision &&
+		canonicalDigest(receipt.parentGraphCursor) ===
+			canonicalDigest(request.parentGraphCursor) &&
+		receipt.childNodeDigest === request.childNodeDigest &&
+		Number.isFinite(Date.parse(receipt.activatedAt)) &&
+		DIGEST_PATTERN.test(receiptDigest) &&
+		receiptDigest === canonicalDigest(body)
+	);
+}
+
+function runtimeCompletionIsValid(
+	completion: AgentRuntimeCompletion,
+	node: AgentNode,
+): boolean {
+	const usageFields: readonly (keyof AgentBudgetUsage)[] = [
+		"inputTokens",
+		"outputTokens",
+		"usdMicros",
+		"wallTimeMs",
+		"toolCalls",
+		"networkBytes",
+		"storageBytes",
+		"artifactCount",
+		"verifications",
+	];
+	const outcomeAndReasonAreValid =
+		(completion.outcome === "completed" &&
+			completion.reason === undefined) ||
+		(completion.outcome === "stopped" &&
+			(completion.reason === undefined ||
+				["cancelled", "budget_exhausted", "delegation_revoked"].includes(
+					completion.reason,
+				))) ||
+		(completion.outcome === "failed" &&
+			(completion.reason === undefined ||
+				["timeout", "crash", "workspace_lost"].includes(
+					completion.reason,
+				)));
+	return (
+		outcomeAndReasonAreValid &&
+		Object.keys(completion.usage).length === usageFields.length &&
+		usageFields.every(
+			(field) =>
+				Number.isSafeInteger(completion.usage[field]) &&
+				completion.usage[field] >= 0,
+		) &&
+		completion.usage.artifactCount >= node.artifacts.length &&
+		completion.usage.verifications >=
+			node.artifacts.filter(
+				(report) => report.verification === "verified",
+			).length &&
+		Array.isArray(completion.turnIds) &&
+		new Set(completion.turnIds).size === completion.turnIds.length &&
+		completion.turnIds.every((turnId) => isRuntimeId(turnId, "turn")) &&
+		isEventCursor(completion.finalCursor) &&
+		completion.finalCursor.stream.scope === "session" &&
+		completion.finalCursor.stream.sessionId === node.sessionId
+	);
+}
+
 export class AgentSupervisor {
 	private readonly rootAgentId: AgentSupervisorOptions["rootAgentId"];
 	readonly #ports: AgentSupervisorOptions["ports"];
 	private readonly limitsResult: AgentResult<AgentGraphLimits>;
 	private readonly clock: () => Date;
 	private readonly cleanupOperations = new Map<AgentNode["agentId"], ActiveCleanupOperation>();
+	private readonly runtimeActivationOperations = new Map<
+		AgentNode["agentId"],
+		Promise<AgentResult<AgentRuntimeActivationHandle>>
+	>();
+	private readonly runtimeCompletionOperations = new Map<
+		AgentNode["agentId"],
+		ActiveRuntimeCompletionOperation
+	>();
 
 	public constructor(options: AgentSupervisorOptions) {
 		this.rootAgentId = options.rootAgentId;
@@ -420,15 +537,22 @@ export class AgentSupervisor {
 		this.clock = options.clock ?? (() => new Date());
 	}
 
-	private async load(): Promise<AgentResult<AgentGraphProjection>> {
+	private async loadHead(): Promise<AgentResult<AgentGraphStoreHead>> {
 		if (!this.limitsResult.ok) return this.limitsResult;
 		try {
 			const loaded = await this.#ports.graphStore.load(this.rootAgentId);
 			if (!loaded.ok) return loaded;
-			return { ok: true, value: loaded.value.projection };
+			return loaded;
 		} catch {
 			return fail("store_unavailable", "agent graph store is unavailable", true);
 		}
+	}
+
+	private async load(): Promise<AgentResult<AgentGraphProjection>> {
+		const loaded = await this.loadHead();
+		return loaded.ok
+			? { ok: true, value: loaded.value.projection }
+			: loaded;
 	}
 
 	private async commit(command: AgentGraphSemanticCommand): Promise<AgentResult<AgentGraphProjection>> {
@@ -471,6 +595,53 @@ export class AgentSupervisor {
 
 	public graph(): Promise<AgentResult<AgentGraphProjection>> {
 		return this.load();
+	}
+
+	/**
+	 * 仅供有界 E2E/宿主等待 process-resident child 的协调结果；超时不会取消
+	 * provider，也不会把未知 usage 伪造成终态。
+	 */
+	public waitForRuntimeCompletion(
+		agentId: AgentNode["agentId"],
+		timeoutMs = 120_000,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		if (
+			!Number.isSafeInteger(timeoutMs) ||
+			timeoutMs < 1 ||
+			timeoutMs > 300_000
+		) {
+			return Promise.resolve(
+				fail(
+					"invalid_request",
+					"runtime completion wait timeout is invalid",
+				),
+			);
+		}
+		const active = this.runtimeCompletionOperations.get(agentId);
+		if (!active) {
+			return Promise.resolve(
+				fail(
+					"reference_unavailable",
+					"runtime completion is not active for this Agent",
+					true,
+				),
+			);
+		}
+		return new Promise((resolve) => {
+			const timer = setTimeout(() => {
+				resolve(
+					fail(
+						"reference_unavailable",
+						"runtime completion wait exceeded its bound",
+						true,
+					),
+				);
+			}, timeoutMs);
+			void active.promise.then((result) => {
+				clearTimeout(timer);
+				resolve(result);
+			});
+		});
 	}
 
 	public async registerRoot(request: RegisterRootAgentRequest): Promise<AgentResult<AgentGraphProjection>> {
@@ -672,6 +843,249 @@ export class AgentSupervisor {
 		}));
 	}
 
+	private activateRunningChild(
+		node: AgentNode,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentRuntimeActivationHandle>> {
+		if (!this.#ports.runtimeActivation) {
+			return Promise.resolve(
+				fail(
+					"reference_unavailable",
+					"executable child runtime activation is not configured",
+					true,
+				),
+			);
+		}
+		const active = this.runtimeActivationOperations.get(node.agentId);
+		if (active) return active;
+		const operation = this.activateRunningChildOnce(node, signal);
+		this.runtimeActivationOperations.set(node.agentId, operation);
+		void operation.then(
+			(result) => {
+				if (
+					!result.ok &&
+					this.runtimeActivationOperations.get(node.agentId) ===
+						operation
+				) {
+					this.runtimeActivationOperations.delete(node.agentId);
+				}
+			},
+			() => {
+				if (
+					this.runtimeActivationOperations.get(node.agentId) ===
+					operation
+				) {
+					this.runtimeActivationOperations.delete(node.agentId);
+				}
+			},
+		);
+		return operation;
+	}
+
+	private async activateRunningChildOnce(
+		node: AgentNode,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentRuntimeActivationHandle>> {
+		const activation = this.#ports.runtimeActivation;
+		if (!activation) {
+			return fail(
+				"reference_unavailable",
+				"executable child runtime activation is not configured",
+				true,
+			);
+		}
+		const head = await this.loadHead();
+		if (!head.ok) return head;
+		const current = head.value.projection.nodes.get(node.agentId);
+		if (
+			!current ||
+			current.state !== "running" ||
+			!current.launchReceipt ||
+			!current.residency ||
+			current.launchReceipt.receiptDigest !==
+				node.launchReceipt?.receiptDigest ||
+			current.residency.receiptDigest !== node.residency?.receiptDigest
+		) {
+			return fail(
+				"invalid_graph",
+				"durable running child activation evidence is unavailable",
+			);
+		}
+		if (!head.value.cursor) {
+			return fail(
+				"reference_unavailable",
+				"durable parent graph cursor is unavailable for child activation",
+				true,
+			);
+		}
+		const activationIdentity = {
+			agentId: current.agentId,
+			sessionId: current.sessionId,
+			launchReceiptId: current.launchReceipt.receiptId,
+			launchRevision: current.launchReceipt.launchRevision,
+			parentGraphRevision: head.value.revision,
+			childNodeDigest: canonicalDigest(current),
+		};
+		const requestId = createRuntimeId(
+			"command",
+			`agent-runtime-activate-${canonicalDigest(
+				activationIdentity,
+			).slice(0, 40)}`,
+		);
+		const body = {
+			requestId,
+			agentId: current.agentId,
+			sessionId: current.sessionId,
+			launchReceipt: structuredClone(current.launchReceipt),
+			residencyReceipt: structuredClone(current.residency),
+			parentGraphRevision: head.value.revision,
+			parentGraphCursor: structuredClone(head.value.cursor),
+			childNodeDigest: activationIdentity.childNodeDigest,
+		};
+		const request: AgentRuntimeActivationRequest = {
+			...body,
+			requestDigest: canonicalDigest(body),
+		};
+		let activated: AgentResult<AgentRuntimeActivationHandle>;
+		try {
+			activated = await activation.activate(request, signal);
+		} catch {
+			return fail(
+				"reference_unavailable",
+				"child runtime activation outcome is uncertain",
+				true,
+			);
+		}
+		if (!activated.ok) return activated;
+		if (
+			!runtimeActivationReceiptMatches(
+				activated.value.receipt,
+				request,
+			)
+		) {
+			return fail(
+				"reference_unavailable",
+				"child runtime activation returned uncorrelated evidence",
+				true,
+			);
+		}
+		this.startRuntimeCompletion(current, activated.value);
+		return activated;
+	}
+
+	private startRuntimeCompletion(
+		node: AgentNode,
+		handle: AgentRuntimeActivationHandle,
+	): void {
+		const existing = this.runtimeCompletionOperations.get(node.agentId);
+		if (existing) return;
+		const promise = this.coordinateRuntimeCompletion(node, handle).catch(
+			() =>
+				fail<AgentGraphProjection>(
+					"reference_unavailable",
+					"child runtime completion coordination is unavailable",
+					true,
+				),
+		);
+		this.runtimeCompletionOperations.set(node.agentId, {
+			promise,
+		});
+		void promise.then(() => undefined);
+	}
+
+	private async coordinateRuntimeCompletion(
+		activatedNode: AgentNode,
+		handle: AgentRuntimeActivationHandle,
+	): Promise<AgentResult<AgentGraphProjection>> {
+		let completion: AgentResult<AgentRuntimeCompletion>;
+		try {
+			completion = await handle.completion;
+		} catch {
+			return fail(
+				"reference_unavailable",
+				"exact child runtime completion is unavailable",
+				true,
+			);
+		}
+		if (!completion.ok) return completion;
+		const graph = await this.load();
+		if (!graph.ok) return graph;
+		const current = graph.value.nodes.get(activatedNode.agentId);
+		if (!current) {
+			return fail(
+				"agent_not_found",
+				"completed child runtime is absent from the durable graph",
+			);
+		}
+		if (isAgentTerminal(current)) return graph;
+		if (!runtimeCompletionIsValid(completion.value, current)) {
+			return fail(
+				"reference_unavailable",
+				"child runtime completion evidence is invalid or incomplete",
+				true,
+			);
+		}
+		for (
+			let index = 0;
+			index < completion.value.turnIds.length;
+			index += 1
+		) {
+			const turnId = completion.value.turnIds[index];
+			if (!turnId) {
+				return fail(
+					"reference_unavailable",
+					"child runtime completion contains an unavailable turn",
+					true,
+				);
+			}
+			const purpose = `turn-${index}`;
+			const recorded = await this.recordTurn({
+				requestId: runtimeCoordinationRequestId(
+					handle.receipt,
+					purpose,
+				),
+				idempotencyKey: runtimeCoordinationIdempotencyKey(
+					handle.receipt,
+					purpose,
+				),
+				agentId: current.agentId,
+				turnId,
+			});
+			if (!recorded.ok) return recorded;
+		}
+		const cursorPurpose = "cursor";
+		const advanced = await this.advanceCursor({
+			requestId: runtimeCoordinationRequestId(
+				handle.receipt,
+				cursorPurpose,
+			),
+			idempotencyKey: runtimeCoordinationIdempotencyKey(
+				handle.receipt,
+				cursorPurpose,
+			),
+			agentId: current.agentId,
+			cursor: completion.value.finalCursor,
+		});
+		if (!advanced.ok) return advanced;
+		const terminalPurpose = "terminal";
+		return this.finish({
+			requestId: runtimeCoordinationRequestId(
+				handle.receipt,
+				terminalPurpose,
+			),
+			idempotencyKey: runtimeCoordinationIdempotencyKey(
+				handle.receipt,
+				terminalPurpose,
+			),
+			agentId: current.agentId,
+			outcome: completion.value.outcome,
+			usage: completion.value.usage,
+			...(completion.value.reason
+				? { reason: completion.value.reason }
+				: {}),
+		});
+	}
+
 	private async continueLaunch(
 		node: AgentNode,
 		request: SpawnAgentRequest,
@@ -703,9 +1117,23 @@ export class AgentSupervisor {
 			]);
 			if (!resumed.ok) return resumed;
 			const current = resumed.value.nodes.get(node.agentId);
-			return current
-				? { ok: true, value: { graph: resumed.value, node: current } }
-				: fail("invalid_graph", "launched child vanished from graph");
+			if (!current) {
+				return fail(
+					"invalid_graph",
+					"launched child vanished from graph",
+				);
+			}
+			if (this.#ports.runtimeActivation) {
+				const activated = await this.activateRunningChild(
+					current,
+					signal,
+				);
+				if (!activated.ok) return activated;
+			}
+			return {
+				ok: true,
+				value: { graph: resumed.value, node: current },
+			};
 		}
 		const launchBody = {
 			requestId: request.requestId,
@@ -714,6 +1142,8 @@ export class AgentSupervisor {
 			parentAgentId: node.parentAgentId,
 			role: node.role,
 			objective: request.objective,
+			budget: node.budget,
+			requestedCapabilities: node.requestedCapabilities,
 			delegationReceipt: node.delegationReceipt,
 			workspaceReceipt: node.workspaceReceipt,
 			budgetReservation: node.budgetReservation,
@@ -779,7 +1209,20 @@ export class AgentSupervisor {
 		]);
 		if (!graph.ok) return graph;
 		const updated = graph.value.nodes.get(node.agentId);
-		return updated ? { ok: true, value: { graph: graph.value, node: updated } } : fail("invalid_graph", "launched child vanished from graph");
+		if (!updated) {
+			return fail(
+				"invalid_graph",
+				"launched child vanished from graph",
+			);
+		}
+		if (this.#ports.runtimeActivation) {
+			const activated = await this.activateRunningChild(updated, signal);
+			if (!activated.ok) return activated;
+		}
+		return {
+			ok: true,
+			value: { graph: graph.value, node: updated },
+		};
 	}
 
 	private async rejectPendingLaunch(
@@ -848,6 +1291,16 @@ export class AgentSupervisor {
 				return fail("agent_exists", "childAgentId belongs to another spawn request");
 			}
 			if (existing.state === "pending") return this.continueLaunch(existing, request, signal);
+			if (
+				existing.state === "running" &&
+				this.#ports.runtimeActivation
+			) {
+				const activated = await this.activateRunningChild(
+					existing,
+					signal,
+				);
+				if (!activated.ok) return activated;
+			}
 			return { ok: true, value: { graph: graph.value, node: existing } };
 		}
 		const pending = graph.value.pendingSpawns.get(request.childAgentId);

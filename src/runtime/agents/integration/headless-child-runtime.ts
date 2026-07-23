@@ -2,17 +2,17 @@
 
 import { Agent } from "../../agent.ts";
 import type { UserAgentMessage } from "../../types.ts";
-import type { EventCursor } from "../../protocol/v3/events.ts";
 import { sameRuntimeEventStream } from "../../protocol/v3/events.ts";
 import { parseRuntimeId, type TurnId } from "../../protocol/v3/ids.ts";
 import { readAllRuntimeEvents } from "../../session/snapshot.ts";
 import type { V3SessionManager } from "../../../storage/v3-session-manager.ts";
 import type { ChildOperationBudget } from "./child-operation-budget.ts";
 import type {
-	AgentBudgetUsage,
-	AgentInterruptionCause,
+	AgentLaunchRequest,
 	AgentResult,
+	AgentRuntimeCompletion,
 } from "../types.ts";
+import type { ValidatedAgentWorkspaceContext } from "./worktree-workspace.ts";
 
 export interface HeadlessChildRuntimeFactoryContext {
 	sessionEvents: ReturnType<V3SessionManager["sessionEvents"]>;
@@ -30,12 +30,22 @@ export interface HeadlessChildRuntimeHostOptions {
 	agentFactory(context: HeadlessChildRuntimeFactoryContext): Agent;
 }
 
-export interface HeadlessChildRuntimeCompletion {
-	outcome: "completed" | "failed" | "stopped";
-	reason?: AgentInterruptionCause;
-	usage: AgentBudgetUsage;
-	turnIds: readonly TurnId[];
-	finalCursor: EventCursor;
+export type HeadlessChildRuntimeCompletion = AgentRuntimeCompletion;
+
+export interface HeadlessChildRuntimePrepareInput {
+	manager: V3SessionManager;
+	request: AgentLaunchRequest;
+	workspace: ValidatedAgentWorkspaceContext;
+}
+
+export interface HeadlessChildRuntimeFactoryPort {
+	/**
+	 * 只构造未激活 host；launcher 会在 resident 注册前调用 prepare()。实现不得
+	 * 调用 activate、provider 或 tool。
+	 */
+	prepare(
+		input: HeadlessChildRuntimePrepareInput,
+	): Promise<AgentResult<HeadlessChildRuntimeHost>>;
 }
 
 function unavailable(
@@ -120,10 +130,24 @@ export class HeadlessChildRuntimeHost {
 	 * activation 只负责启动 background run，不能等待 completion。调用方必须在父 graph
 	 * 的 launch_recorded/running durable barrier 之后调用。
 	 */
-	public async activate(): Promise<void> {
+	public async activate(signal?: AbortSignal): Promise<void> {
 		await this.prepare();
 		if (this.#runPromise) return;
-		this.#runPromise = Promise.resolve().then(() => this.#run());
+		const interruptFromSignal = () => this.interrupt();
+		if (signal?.aborted) interruptFromSignal();
+		else {
+			signal?.addEventListener("abort", interruptFromSignal, {
+				once: true,
+			});
+		}
+		this.#runPromise = Promise.resolve()
+			.then(() => this.#run())
+			.finally(() => {
+				signal?.removeEventListener(
+					"abort",
+					interruptFromSignal,
+				);
+			});
 	}
 
 	public completion(): Promise<

@@ -12,6 +12,11 @@ import type {
 	ChildIsolatedCommandRequest,
 	ProductionChildSessionLauncherOptions,
 } from "../../../src/runtime/agents/integration/child-session-launcher.ts";
+import { ChildOperationBudget } from "../../../src/runtime/agents/integration/child-operation-budget.ts";
+import {
+	HeadlessChildRuntimeHost,
+	type HeadlessChildRuntimeFactoryPort,
+} from "../../../src/runtime/agents/integration/headless-child-runtime.ts";
 import type { ValidatedAgentWorkspaceContext } from "../../../src/runtime/agents/integration/worktree-workspace.ts";
 import { capabilitySubsetRequestDigest } from "../../../src/runtime/agents/delegation.ts";
 import type {
@@ -22,6 +27,7 @@ import type {
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
+import { createWorktreeId } from "../../../src/runtime/protocol/v3/workspace.ts";
 import type { RuntimeIdentityContext } from "../../../src/runtime/identity/types.ts";
 import type {
 	SessionMutationAdmissionGatePort,
@@ -33,6 +39,7 @@ import type {
 	AgentLaunchRequest,
 	AgentResult,
 	AgentResumeLaunchRequest,
+	AgentRuntimeActivationRequest,
 	AgentRuntimeReleaseRequest,
 	AgentWorkspaceReceiptRef,
 } from "../../../src/runtime/agents/types.ts";
@@ -256,6 +263,17 @@ async function createLaunchRequest(): Promise<AgentLaunchRequest> {
 		parentAgentId: ROOT_AGENT_ID,
 		role: "build",
 		objective: "exercise the parent child-spawn mutation gate",
+		budget: {
+			maxTurns: 2,
+			maxInputTokens: 2_000,
+			maxOutputTokens: 1_000,
+			maxUsdMicros: 1_000,
+			maxWallTimeMs: 60_000,
+			maxToolCalls: 2,
+			maxNetworkBytes: 0,
+			maxStorageBytes: 1_000_000,
+		},
+		requestedCapabilities: [],
 		delegationReceipt: delegation.value,
 		workspaceReceipt: workspaceReceipt(sessionId),
 		budgetReservation: {
@@ -322,11 +340,108 @@ function runtimeResumeRequest(
 	return { ...body, requestDigest: canonicalDigest(body) };
 }
 
+function runtimeActivationRequest(
+	launch: AgentLaunchRequest,
+	launchReceipt: AgentRuntimeActivationRequest["launchReceipt"],
+	residencyReceipt: AgentRuntimeActivationRequest["residencyReceipt"],
+	seed = "child-gate-activation",
+): AgentRuntimeActivationRequest {
+	const body: Omit<
+		AgentRuntimeActivationRequest,
+		"requestDigest"
+	> = {
+		requestId: createRuntimeId("command", seed),
+		agentId: launch.agentId,
+		sessionId: launch.sessionId,
+		launchReceipt,
+		residencyReceipt,
+		parentGraphRevision: 1,
+		parentGraphCursor: {
+			stream: createSessionEventStreamRef(
+				IDENTITY,
+				PARENT_SESSION_ID,
+			),
+			sequence: 1,
+			eventId: createRuntimeId(
+				"event",
+				`${seed}-parent-graph`,
+			),
+			eventHash: canonicalDigest({
+				seed,
+				parentGraphRevision: 1,
+			}),
+		},
+		childNodeDigest: canonicalDigest({
+			seed,
+			agentId: launch.agentId,
+			sessionId: launch.sessionId,
+		}),
+	};
+	return { ...body, requestDigest: canonicalDigest(body) };
+}
+
+function controlledRuntimeFactory(options: {
+	prepareFailure?: Error;
+	onActivate?: () => void;
+} = {}): {
+	runtimeFactory: HeadlessChildRuntimeFactoryPort;
+	host(): HeadlessChildRuntimeHost;
+} {
+	let host: HeadlessChildRuntimeHost | undefined;
+	const prepare = vi.fn(
+		async (
+			input: Parameters<
+				HeadlessChildRuntimeFactoryPort["prepare"]
+			>[0],
+		): Promise<AgentResult<HeadlessChildRuntimeHost>> => {
+			const prepared = new HeadlessChildRuntimeHost({
+				manager: input.manager,
+				operationBudget: new ChildOperationBudget({
+					budget: input.request.budget,
+					clock: () => new Date(NOW),
+				}),
+				prompt: input.request.objective,
+				agentFactory: () => {
+					throw new Error(
+						"controlled launcher test host must not construct an Agent",
+					);
+				},
+			});
+			vi.spyOn(prepared, "prepare").mockImplementation(
+				async () => {
+					if (options.prepareFailure) {
+						throw options.prepareFailure;
+					}
+				},
+			);
+			vi.spyOn(prepared, "activate").mockImplementation(
+				async () => {
+					options.onActivate?.();
+				},
+			);
+			host = prepared;
+			return { ok: true, value: prepared };
+		},
+	);
+	return {
+		runtimeFactory: { prepare },
+		host: () => {
+			if (!host) {
+				throw new Error(
+					"controlled launcher test host is unavailable",
+				);
+			}
+			return host;
+		},
+	};
+}
+
 async function fixture(
 	mode: GateMode,
 	processIsolation?: ProductionChildSessionLauncherOptions["processIsolation"],
 	authorityStore: ChildRuntimeAuthorityStorePort =
 		new MemoryChildRuntimeAuthorityStore(),
+	runtimeFactory?: HeadlessChildRuntimeFactoryPort,
 ): Promise<{
 	launcher: ProductionChildSessionLauncher;
 	gate: ControlledParentMutationGate;
@@ -350,6 +465,19 @@ async function fixture(
 		agentId: request.agentId,
 		sessionId: request.sessionId,
 		workspaceReceipt: request.workspaceReceipt,
+		runtimeBinding: {
+			authorityId: IDENTITY.authorityId,
+			tenantId: IDENTITY.tenantId,
+			workspaceId: request.workspaceReceipt.workspaceId,
+			repositoryId: request.workspaceReceipt.repositoryId,
+			bindingKind: "managed_worktree",
+			canonicalCwd: root,
+			effectiveCwd: root,
+			branch: "worktree/child-gate",
+			baseCommit: DIGEST,
+			headCommit: DIGEST,
+			worktreeId: createWorktreeId("child-gate"),
+		},
 		envelope: {
 			authorityId: IDENTITY.authorityId,
 			tenantId: IDENTITY.tenantId,
@@ -435,6 +563,7 @@ async function fixture(
 				},
 			},
 		...(processIsolation ? { processIsolation } : {}),
+		...(runtimeFactory ? { runtimeFactory } : {}),
 		clock: () => new Date(NOW),
 	};
 	const launcher = new ProductionChildSessionLauncher(
@@ -2371,6 +2500,224 @@ describe("production child session launcher mutation gate", () => {
 		await expect(launcher.close()).resolves.toBeUndefined();
 		expect(launcher.snapshots()).toEqual([]);
 		expect(attempts).toBe(2);
+	});
+
+	it("quarantines an unregistered child when headless runtime preparation fails", async () => {
+		const controlled = controlledRuntimeFactory({
+			prepareFailure: new Error(
+				"injected headless runtime preparation failure",
+			),
+		});
+		const {
+			launcher,
+			request,
+			controller,
+			authorityStore,
+		} = await fixture(
+			"allow",
+			undefined,
+			undefined,
+			controlled.runtimeFactory,
+		);
+
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "reference_unavailable",
+				retryable: true,
+			},
+		});
+		expect(controlled.runtimeFactory.prepare).toHaveBeenCalledTimes(
+			1,
+		);
+		expect(controlled.host().prepare).toHaveBeenCalledTimes(1);
+		expect(launcher.snapshots()).toEqual([]);
+		expect(await authorityStore.read(request.agentId)).toMatchObject(
+			{
+				state: "quarantined",
+				reason: "headless_runtime_prepare_failed",
+			},
+		);
+	});
+
+	it("keeps launch side-effect free and activates exactly once for exact graph evidence", async () => {
+		const provider = vi.fn();
+		const controlled = controlledRuntimeFactory({
+			onActivate: provider,
+		});
+		const { launcher, request, controller } = await fixture(
+			"allow",
+			undefined,
+			undefined,
+			controlled.runtimeFactory,
+		);
+
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const host = controlled.host();
+		expect(controlled.runtimeFactory.prepare).toHaveBeenCalledTimes(
+			1,
+		);
+		expect(host.prepare).toHaveBeenCalledTimes(1);
+		expect(host.activate).not.toHaveBeenCalled();
+		expect(provider).not.toHaveBeenCalled();
+
+		const activation = runtimeActivationRequest(
+			request,
+			launched.value.launchReceipt,
+			launched.value.residencyReceipt,
+		);
+		const first = await launcher.activate(
+			activation,
+			controller.signal,
+		);
+		if (!first.ok) throw new Error(first.error.message);
+		expect(first.value.receipt).toMatchObject({
+			requestId: activation.requestId,
+			requestDigest: activation.requestDigest,
+			parentGraphRevision: activation.parentGraphRevision,
+			parentGraphCursor: activation.parentGraphCursor,
+			childNodeDigest: activation.childNodeDigest,
+		});
+		expect(host.activate).toHaveBeenCalledTimes(1);
+		expect(provider).toHaveBeenCalledTimes(1);
+
+		const retry = await launcher.activate(
+			activation,
+			controller.signal,
+		);
+		expect(retry).toMatchObject({ ok: true });
+		if (!retry.ok) throw new Error(retry.error.message);
+		expect(retry.value).toBe(first.value);
+
+		const {
+			requestDigest: _requestDigest,
+			...activationBody
+		} = activation;
+		const changedBody = {
+			...activationBody,
+			childNodeDigest: canonicalDigest(
+				"changed durable parent graph evidence",
+			),
+		};
+		const conflicting = {
+			...changedBody,
+			requestDigest: canonicalDigest(changedBody),
+		};
+		expect(
+			await launcher.activate(conflicting, controller.signal),
+		).toMatchObject({
+			ok: false,
+			error: {
+				code: "idempotency_conflict",
+				retryable: false,
+			},
+		});
+		expect(host.activate).toHaveBeenCalledTimes(1);
+		expect(provider).toHaveBeenCalledTimes(1);
+	});
+
+	it("interrupts and drains the headless host before manager stop and close on release", async () => {
+		const controlled = controlledRuntimeFactory();
+		const { launcher, request, controller } = await fixture(
+			"allow",
+			undefined,
+			undefined,
+			controlled.runtimeFactory,
+		);
+		const launched = await launcher.launch(
+			request,
+			controller.signal,
+		);
+		if (!launched.ok || launched.value.status !== "started") {
+			throw new Error("child launch failed");
+		}
+		const order: string[] = [];
+		const host = controlled.host();
+		vi.spyOn(host, "interrupt").mockImplementation(() => {
+			order.push("host.interrupt");
+		});
+		vi.spyOn(host, "drain").mockImplementation(async () => {
+			order.push("host.drain");
+		});
+		const requestStop = V3SessionManager.prototype.requestStop;
+		vi.spyOn(
+			V3SessionManager.prototype,
+			"requestStop",
+		).mockImplementation(async function (reason) {
+			order.push("manager.requestStop");
+			return requestStop.call(this, reason);
+		});
+		const closeAll = V3SessionManager.prototype.closeAll;
+		vi.spyOn(
+			V3SessionManager.prototype,
+			"closeAll",
+		).mockImplementation(async function () {
+			order.push("manager.closeAll");
+			return closeAll.call(this);
+		});
+		const release = runtimeReleaseRequest(
+			request,
+			launched.value.launchReceipt,
+			launched.value.residencyReceipt,
+		);
+
+		expect(
+			await launcher.release(release, controller.signal),
+		).toMatchObject({ ok: true });
+		expect(order).toEqual([
+			"host.interrupt",
+			"host.drain",
+			"manager.requestStop",
+			"manager.closeAll",
+		]);
+	});
+
+	it("interrupts and drains the headless host before manager close during forced shutdown", async () => {
+		const controlled = controlledRuntimeFactory();
+		const { launcher, request, controller } = await fixture(
+			"allow",
+			undefined,
+			undefined,
+			controlled.runtimeFactory,
+		);
+		expect(
+			await launcher.launch(request, controller.signal),
+		).toMatchObject({
+			ok: true,
+			value: { status: "started" },
+		});
+		const order: string[] = [];
+		const host = controlled.host();
+		vi.spyOn(host, "interrupt").mockImplementation(() => {
+			order.push("host.interrupt");
+		});
+		vi.spyOn(host, "drain").mockImplementation(async () => {
+			order.push("host.drain");
+		});
+		const closeAll = V3SessionManager.prototype.closeAll;
+		vi.spyOn(
+			V3SessionManager.prototype,
+			"closeAll",
+		).mockImplementation(async function () {
+			order.push("manager.closeAll");
+			return closeAll.call(this);
+		});
+
+		await expect(launcher.close()).resolves.toBeUndefined();
+		expect(order).toEqual([
+			"host.interrupt",
+			"host.drain",
+			"manager.closeAll",
+		]);
+		expect(launcher.snapshots()).toEqual([]);
 	});
 
 	it("rejects malformed local inputs before consulting the parent gate", async () => {

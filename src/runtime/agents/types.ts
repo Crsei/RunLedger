@@ -326,6 +326,8 @@ export interface AgentLaunchRequest {
 	parentAgentId: AgentId;
 	role: AgentRole;
 	objective: string;
+	budget: AgentBudgetRequest;
+	requestedCapabilities: readonly AgentCapabilityRequestRef[];
 	delegationReceipt: DelegationReceiptRef;
 	workspaceReceipt: AgentWorkspaceReceiptRef;
 	budgetReservation: AgentBudgetReservationRef;
@@ -399,6 +401,56 @@ export interface AgentLauncherPort {
 		signal?: AbortSignal,
 	): Promise<AgentResult<AgentRuntimeReleaseReceiptRef>>;
 	cancel(request: AgentCancelRequest, signal?: AbortSignal): Promise<AgentResult<ReceiptId>>;
+}
+
+/** 父 graph 已 durable running 后，才允许跨越此 activation barrier。 */
+export interface AgentRuntimeActivationRequest {
+	requestId: CommandId;
+	agentId: AgentId;
+	sessionId: SessionId;
+	launchReceipt: AgentLaunchReceiptRef;
+	residencyReceipt: AgentResidencyReceiptRef;
+	parentGraphRevision: number;
+	parentGraphCursor: EventCursor;
+	childNodeDigest: string;
+	requestDigest: string;
+}
+
+export interface AgentRuntimeActivationReceiptRef {
+	receiptId: ReceiptId;
+	requestId: CommandId;
+	requestDigest: string;
+	agentId: AgentId;
+	sessionId: SessionId;
+	launchReceiptId: ReceiptId;
+	launchRevision: number;
+	residencyReceiptId: ReceiptId;
+	parentGraphRevision: number;
+	parentGraphCursor: EventCursor;
+	childNodeDigest: string;
+	activatedAt: string;
+	receiptDigest: string;
+}
+
+export interface AgentRuntimeCompletion {
+	outcome: "completed" | "failed" | "stopped";
+	reason?: AgentInterruptionCause;
+	usage: AgentBudgetUsage;
+	turnIds: readonly TurnId[];
+	finalCursor: EventCursor;
+}
+
+/** completion Promise 只承载进程内协调；receipt 才是 activation 的 canonical evidence。 */
+export interface AgentRuntimeActivationHandle {
+	receipt: AgentRuntimeActivationReceiptRef;
+	completion: Promise<AgentResult<AgentRuntimeCompletion>>;
+}
+
+export interface AgentRuntimeActivationPort {
+	activate(
+		request: AgentRuntimeActivationRequest,
+		signal?: AbortSignal,
+	): Promise<AgentResult<AgentRuntimeActivationHandle>>;
 }
 
 export interface RootAgentBudgetReserveRequest {
@@ -961,6 +1013,8 @@ export interface AgentSupervisorPorts {
 	deniedAgents: AgentDenialEvaluatorPort;
 	budget: RootAgentBudgetPort;
 	launcher: AgentLauncherPort;
+	/** 省略时保持既有 session-only launcher，不 advertise executable child runtime。 */
+	runtimeActivation?: AgentRuntimeActivationPort;
 	merge: DeclarativeMergePort;
 }
 

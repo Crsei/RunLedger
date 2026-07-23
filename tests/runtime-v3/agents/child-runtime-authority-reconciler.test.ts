@@ -43,6 +43,7 @@ import type {
 import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createIdempotencyKey } from "../../../src/runtime/protocol/v3/coordination.ts";
 import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
+import { createWorktreeId } from "../../../src/runtime/protocol/v3/workspace.ts";
 import {
 	createRuntimeId,
 	type AgentId,
@@ -211,6 +212,21 @@ class TestWorkspaceAdapter extends ProductionAgentWorkspaceAdapter {
 			agentId: input.agentId,
 			sessionId: input.sessionId,
 			workspaceReceipt: input.receipt,
+			runtimeBinding: {
+				authorityId: IDENTITY.authorityId,
+				tenantId: IDENTITY.tenantId,
+				workspaceId: input.receipt.workspaceId,
+				repositoryId: input.receipt.repositoryId,
+				bindingKind: "managed_worktree",
+				canonicalCwd: this.#rootPath,
+				effectiveCwd: this.#rootPath,
+				branch: "worktree/authority-reconciler",
+				baseCommit: DIGEST,
+				headCommit: DIGEST,
+				worktreeId: createWorktreeId(
+					"authority-reconciler",
+				),
+			},
 			envelope: {
 				authorityId: IDENTITY.authorityId,
 				tenantId: IDENTITY.tenantId,

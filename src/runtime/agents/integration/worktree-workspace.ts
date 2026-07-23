@@ -19,6 +19,7 @@ import {
 	isWorkspaceLeaseRef,
 	isWorkspaceReleaseReceiptRef,
 	type WorkspaceBindingKind,
+	type WorkspaceBindingRef,
 	type WorkspaceExecutionEnvelope,
 	type WorkspaceReleaseRequest,
 } from "../../protocol/v3/workspace.ts";
@@ -66,6 +67,7 @@ export interface ValidatedAgentWorkspaceContext {
 	agentId: AgentId;
 	sessionId: SessionId;
 	workspaceReceipt: AgentWorkspaceReceiptRef;
+	runtimeBinding: WorkspaceBindingRef;
 	envelope: WorkspaceExecutionEnvelope;
 }
 
@@ -619,6 +621,9 @@ export class ProductionAgentWorkspaceAdapter implements AgentWorkspacePort {
 				agentId: input.agentId,
 				sessionId: input.sessionId,
 				workspaceReceipt: { ...handle.value.receipt },
+				runtimeBinding: structuredClone(
+					handle.value.result.runtimeBinding,
+				),
 				envelope,
 			},
 		};

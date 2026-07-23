@@ -55,7 +55,11 @@ export interface ProductionAgentSupervisorCompositionOptions {
 	root: Omit<RegisterRootAgentRequest, "sessionId">;
 	adapters: Omit<
 		AgentSupervisorPorts,
-		"graphStore" | "launcher" | "workspace" | "capabilitySubset"
+		| "graphStore"
+		| "launcher"
+		| "runtimeActivation"
+		| "workspace"
+		| "capabilitySubset"
 	> & {
 		workspace: ProductionAgentWorkspaceAdapter;
 		capabilitySubset: GatewayBoundCapabilitySubsetEvaluator;
@@ -335,6 +339,13 @@ export function createProductionChildRuntimeParentAuthority(input: {
 					canonicalDigest(request.workspaceReceipt) ||
 				canonicalDigest(child.budgetReservation) !==
 					canonicalDigest(request.budgetReservation) ||
+				(activation.activationType === "launch" &&
+					(canonicalDigest(child.budget) !==
+							canonicalDigest(activation.request.budget) ||
+						canonicalDigest(child.requestedCapabilities) !==
+							canonicalDigest(
+								activation.request.requestedCapabilities,
+							))) ||
 				canonicalDigest(child.inputSources) !==
 					canonicalDigest(request.inputSources) ||
 				canonicalDigest(child.declassificationReceipts) !==
@@ -406,7 +417,14 @@ export async function createProductionAgentSupervisorComposition(
 	await launcher.auditAuthority();
 	const supervisor = new AgentSupervisor({
 		rootAgentId: options.root.agentId,
-		ports: { ...options.adapters, graphStore, launcher },
+		ports: {
+			...options.adapters,
+			graphStore,
+			launcher,
+			...(options.child.runtimeFactory
+				? { runtimeActivation: launcher }
+				: {}),
+		},
 		...(options.limits ? { limits: options.limits } : {}),
 		...(options.clock ? { clock: options.clock } : {}),
 	});
