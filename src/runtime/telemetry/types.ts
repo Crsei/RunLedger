@@ -92,7 +92,12 @@ export interface TelemetryError {
 		| "forensic_not_found"
 		| "forensic_key_unavailable"
 		| "forensic_retention_blocked"
-		| "durable_write_failed";
+		| "durable_write_failed"
+		| "conflict"
+		| "reconciliation_required"
+		| "sink_unavailable"
+		| "spool_full"
+		| "corrupt_record";
 	message: string;
 	retryable: boolean;
 }

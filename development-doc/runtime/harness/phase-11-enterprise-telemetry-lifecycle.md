@@ -9,6 +9,8 @@
 
 前置:Phase 8、Phase 10。Telemetry、identity/executor contract 与核心 lifecycle 可先开发;凡涉及 nested-agent activity、multi-agent isolation 或完整 Harness Regression 的任务还必须等待 Phase 9/Runtime-M2 联合门禁,不能用单 Agent fixture 宣称 Phase 11 整体完成。
 
+当前状态（2026-07-24）:W4 Runtime-owned范围已完成,W5的Linux fault evidence已完成;darwin/win32没有runner结果,因此W5-J2、W5-G与W6-G保持pending。完整Phase 11/Runtime-M4仍受真实managed policy、credential broker、forge/organization gate、remote transport、Sandbox/egress和OS peer attestor等`frozen-external-gap`阻塞。
+
 计划文件:
 
 - 新增 `src/runtime/telemetry/{types,cost,manifest,redaction,otel,sinks,siem}.ts`,消费 Phase 10 的 `src/runtime/activity/` 公共 contract,不再定义第二份 Activity 类型。
@@ -74,6 +76,17 @@ Canonical event/reducer 闭环:
 2. `runtime: define managed identity policy and executor receipts`
 3. `runtime: add attested remote executor ports and session handoff schemas`
 4. `runtime: harden shutdown recovery GC and harness regressions`
+
+#### 2026-07-24 Phase 11 W4 Runtime-owned与W5 Linux证据
+
+- worktree/base:`worktree/governed-agent-harness-runtime@7865763`;commit:`pending user authorization`。没有push、tag、PR或lane worktree;因W4-P0未取得commit授权,公共合同和三条lane在原governed-runtime worktree串行完成。
+- 公共合同:Control Plane保持protocol 1.1、schema v1/v2,Runtime event schema保持v3,没有新增remote execution命令。新增`change_proposal.recorded`;executor与telemetry delivery生产writer使用有runtime generation、authority/manifest/range/sink/terminal receipt绑定的v2 payload,legacy payload只读;proposal/executor/cost/delivery effect事件进入mandatory flush。
+- Remote/handoff:Memory/File execution authority在外部effect前提交完整request和generation,exact duplicate复用原terminal,changed input冲突,unknown outcome只进入`reconciliation_required`且不自动重发。handoff按`intent_recorded -> transfer_pending -> target_committed -> source_fence_pending -> completed`推进,先commit target authority/new generation再fence source;pending restart、旧generation、cross-tenant或未知transfer fail closed。CI/SSH/relay、credential、attestor与egress adapter仍为external gap,不回退本地执行。
+- Telemetry/cost/lifecycle:production path使用tenant/manifest/sink/exporter隔离的durable spool,File实现以0600原子发布、跨进程锁和restart磁盘重建容量;只有完整correlated sink receipt可确认delivery,event ack丢失只补event。`CostTraceV2`绑定root/child、event head、Episode Manifest及reserve/commit/refund/late reconciliation。canonical reference aggregator联合session/fork/handoff/checkpoint/Episode/Artifact/legal-hold/writer-lease source,任一required source缺失即`unknown`;GC journal按`intent -> archive -> tombstone -> purge`和read-back恢复,引用、活动lease/writer、legal hold、未确认handoff或cross-tenant均禁止purge。
+- Proposal/HumanGate:`ChangeProposalRef`已提升为Runtime v3公共合同并从verification兼容重导出;repository以immutable Artifact、proposal digest与`change_proposal.recorded`重建。Draft PR/HumanGate在provider/coordinator调用前持久化完整请求,unknown outcome只写reconciliation,terminal receipt严格关联原proposal/seal/provider/request。Control Plane adapter和production binding要求与daemon共享command journal、runtime generation和shutdown mutation gate。默认daemon没有真实credential/forge/organization adapters时不advertise`change_proposal`/`human_gate`,Runtime不执行merge/deploy。
+- W4验证:Phase 11定向49 files / 290 tests、完整`npm test` 287 files / 1823 tests（另1个opt-in live test默认skip）、`npm run check`、`npm run build`、Harness Regression 12 files / 65 tests、public-surface/ownership 3 files / 7 tests、pi-ai 164/164 source + 72 catalog均PASS。PCM 16/95、Extension 12/52、Security/Worktree 21/119只读门禁PASS;冻结实现路径与`package-lock.json`零diff;parity SHA-256保持`fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77`。
+- W5 Linux:唯一机器可读矩阵为`phase-11-fault-manifest.json`,共22个fault、21条去重`exactCommand`;A–E全部在Linux逐项PASS,Harness Regression校验字段、test映射、命令和platform声明。darwin/win32没有实际runner或明确production preflight receipt,所以不能把单平台结果提升为W5-G/W6-G。
+- W6边界:credential审计仅扫描文件名,未读取内容;CLI和daemon `--help` smoke均PASS;live DeepSeek继续显式opt-in且本轮未运行。候选diff只允许在用户明确授权后分阶段commit,不push。
 
 #### 2026-07-23 governed startup external-receipt 切片证据（不关闭 Phase 11）
 

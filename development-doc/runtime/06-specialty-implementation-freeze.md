@@ -193,4 +193,25 @@ Runtime composition现在生成 `RuntimeDependencyReadinessReceipt`;它不会把
 | Browser backend | `external_gap`（无真实production backend） | Browser gate与completion不advertise |
 | Episode seal | `ready`（durable resolver + trusted OS-keyring issuer时） | 仍受其他required scope约束 |
 
-因此 W2-G 可按“Runtime-owned integration完成且fail closed”关闭,但Runtime-M1和完整Phase 8产品声明继续被真实Browser与三个冻结专项readiness阻塞。ChangeProposal/HumanGate仍为`behavior unavailable`,不参与Goal completion。
+因此 W2-G 可按“Runtime-owned integration完成且fail closed”关闭,但Runtime-M1和完整Phase 8产品声明继续被真实Browser与三个冻结专项readiness阻塞。该段记录的是W2检查点；后续Phase 11候选diff已增加Runtime-owned ChangeProposal/HumanGate durability与adapter seam,但在真实credential/forge/organization adapters缺失时production feature仍为`behavior unavailable`且不advertise。
+
+## 9. Phase 11 Runtime-owned W4与W5 Linux复核（2026-07-24）
+
+Phase 11候选diff基于`worktree/governed-agent-harness-runtime@7865763`,commit为`pending user authorization`。本轮没有解冻或修改§3列出的专项行为路径,也没有修改`package-lock.json`:
+
+- Plan/Context/Memory:16 files / 95 tests PASS;
+- Extension:12 files / 52 tests PASS;
+- Security/Worktree:21 files / 119 tests PASS;
+- `git diff -- src/security src/extensions package-lock.json`为空；PCM冻结行为allowlist也为零diff。
+
+Runtime新增的remote authority/handoff、telemetry spool/CostTraceV2、reference graph/GC journal和ChangeProposal/HumanGate repository只消费专项公开port与receipt。composition保持以下边界:
+
+| scope | Runtime-owned状态 | 冻结依赖状态 |
+|---|---|---|
+| Remote executor/handoff | durable request/effect/terminal/reconciliation和target/source fencing completed | CI/SSH/relay transport、credential、attestor、Sandbox/egress为`external_gap`;不advertise、不本地fallback |
+| Telemetry/export | durable spool、sink receipt correlation、event-ack repair和health failure completed | managed policy、真实sink identity/organization deployment由外部adapter提供 |
+| ChangeProposal/Draft PR | repository/projection、Draft-only effect journal与Control Plane adapter completed | credential broker和forge provider为`external_gap`;缺失时不advertise |
+| HumanGate | durable request/decision/reconciliation与separation validation completed | organization/managed-policy coordinator为`external_gap`;Runtime不执行merge/deploy |
+| GC external cleanup | canonical reference graph与Runtime GC journal completed | Workspace/Approval/process cleanup只接受专项真实receipt,不由Runtime伪造 |
+
+唯一fault manifest包含22条记录；Linux按21条去重`exactCommand`逐项PASS,Harness Regression为12 files / 65 tests。由于darwin/win32没有runner或production preflight结果,W5-J2、W5-G、W6-G保持pending。上述Runtime完成状态不提升任何`partial-frozen/deferred-frozen`专项,也不关闭完整Runtime-M4产品声明。

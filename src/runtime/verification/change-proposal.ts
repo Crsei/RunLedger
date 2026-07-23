@@ -7,6 +7,17 @@ import { ArtifactRefSchema } from "../protocol/v3/capability.ts";
 import { isRuntimeId } from "../protocol/v3/ids.ts";
 import {
 	CHANGE_PROPOSAL_SCHEMA_VERSION,
+	ChangeProposalBodySchema,
+	ChangeProposalRefSchema,
+	EpisodeSealCompletionRefSchema,
+} from "../protocol/v3/change-proposal.ts";
+export {
+	CHANGE_PROPOSAL_SCHEMA_VERSION,
+	ChangeProposalBodySchema,
+	ChangeProposalRefSchema,
+	EpisodeSealCompletionRefSchema,
+} from "../protocol/v3/change-proposal.ts";
+import {
 	DRAFT_PR_RECEIPT_SCHEMA_VERSION,
 	HUMAN_GATE_SCHEMA_VERSION,
 	type ChangeProposalBody,
@@ -31,35 +42,6 @@ const runtimeId = (kind: string) =>
 const token = Type.String({ minLength: 1, maxLength: 512 });
 const exact = <T extends Record<string, TSchema>>(properties: T) =>
 	Type.Object(properties, { additionalProperties: false });
-
-export const EpisodeSealCompletionRefSchema = exact({
-	authorityId: runtimeId("authority"),
-	tenantId: runtimeId("tenant"),
-	sealId: runtimeId("episodeSeal"),
-	sealDigest: digest,
-	sealRecordDigest: digest,
-	manifestBodyDigest: digest,
-});
-
-const ChangeProposalBodySchema = exact({
-	schemaVersion: Type.Literal(CHANGE_PROPOSAL_SCHEMA_VERSION),
-	authorityId: runtimeId("authority"),
-	tenantId: runtimeId("tenant"),
-	proposalId: runtimeId("changeProposal"),
-	sessionId: runtimeId("session"),
-	createdBy: runtimeId("principal"),
-	repositoryId: runtimeId("repository"),
-	workspaceId: runtimeId("workspace"),
-	baseCommit: token,
-	candidateCommit: token,
-	candidateBindingDigest: digest,
-	proposalArtifact: ArtifactRefSchema,
-	verificationReceiptDigests: Type.Array(digest, { minItems: 1, maxItems: 64, uniqueItems: true }),
-	episodeSeal: EpisodeSealCompletionRefSchema,
-	createdAt: timestamp,
-});
-
-export const ChangeProposalRefSchema = exact({ ...ChangeProposalBodySchema.properties, proposalDigest: digest });
 
 export const DraftPrProviderReceiptSchema = exact({
 	schemaVersion: Type.Literal(DRAFT_PR_RECEIPT_SCHEMA_VERSION),

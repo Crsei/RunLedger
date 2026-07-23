@@ -96,6 +96,11 @@ export interface RuntimeGcMutationPort {
 		request: RuntimeGcMutationRequest,
 		signal?: AbortSignal,
 	): Promise<LifecycleResult<RuntimeGcTransitionReceipt>>;
+	/** effect ack 丢失时按完整 request/idempotencyKey read-back，不允许重新执行。 */
+	readGcMutation?(
+		request: RuntimeGcMutationRequest,
+		signal?: AbortSignal,
+	): Promise<LifecycleResult<RuntimeGcTransitionReceipt | undefined>>;
 }
 
 export interface RuntimeGcCommandClaim {
@@ -123,6 +128,12 @@ export interface RuntimeGcJournalPort {
 		receipt: RuntimeGcReceipt,
 		signal?: AbortSignal,
 	): Promise<LifecycleResult<RuntimeGcReceipt>>;
+	/** 每个外部 mutation 前必须先 durable 记录完整 intent。 */
+	recordMutationIntent?(
+		claim: RuntimeGcCommandClaim,
+		mutation: RuntimeGcMutationRequest,
+		signal?: AbortSignal,
+	): Promise<LifecycleResult<RuntimeGcMutationRequest>>;
 }
 
 export type RuntimeGcReceiptReason =
@@ -235,6 +246,10 @@ export const RuntimeGcMutationRequestSchema = exact({
 	idempotencyKey: digest,
 	requestedAt: timestamp,
 });
+
+export function isRuntimeGcMutationRequest(value: unknown): value is RuntimeGcMutationRequest {
+	return Check(RuntimeGcMutationRequestSchema, value);
+}
 
 export const RuntimeGcTransitionReceiptSchema = exact({
 	...RuntimeGcMutationRequestSchema.properties,
@@ -679,12 +694,35 @@ export class RuntimeGcCoordinator {
 				continue;
 			}
 			const mutation = mutationRequest(request, target.selector, requestDigest);
+			const journal = this.#journal;
+			if (journal?.recordMutationIntent) {
+				let intent: LifecycleResult<RuntimeGcMutationRequest>;
+				try {
+					intent = await journal.recordMutationIntent(claim, mutation, signal);
+				} catch {
+					return failure("external_unavailable", "GC mutation intent journal failed", true);
+				}
+				if (!intent.ok || canonicalDigest(intent.value) !== canonicalDigest(mutation)) {
+					return failure("integrity_failed", "GC mutation intent journal returned mismatched evidence");
+				}
+			}
 			let applied: LifecycleResult<RuntimeGcTransitionReceipt>;
 			try {
 				applied = await this.#mutations.applyGcMutation?.(mutation, signal) ??
 					failure("external_unavailable", "idempotent GC mutation port is unavailable", true);
 			} catch {
-				return failure("mutation_uncertain", "GC mutation outcome is uncertain; replay the same requestId", true);
+				applied = failure("mutation_uncertain", "GC mutation outcome is uncertain", true);
+			}
+			if ((!applied.ok || !transitionMatchesRequest(applied.value, mutation)) && this.#mutations.readGcMutation) {
+				let recovered: LifecycleResult<RuntimeGcTransitionReceipt | undefined>;
+				try {
+					recovered = await this.#mutations.readGcMutation(mutation, signal);
+				} catch {
+					recovered = failure("mutation_uncertain", "GC mutation receipt read-back failed", true);
+				}
+				if (recovered.ok && recovered.value && transitionMatchesRequest(recovered.value, mutation)) {
+					applied = { ok: true, value: recovered.value };
+				}
 			}
 			if (!applied.ok || !transitionMatchesRequest(applied.value, mutation)) {
 				return failure("mutation_uncertain", "GC mutation receipt is unavailable or mismatched; replay the same requestId", true);

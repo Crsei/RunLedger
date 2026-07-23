@@ -26,6 +26,10 @@ import {
 	draftPrProviderReceiptDigest,
 	humanGateDecisionDigest,
 } from "../../../src/runtime/verification/change-proposal.ts";
+import {
+	RuntimeChangeProposalControlPlaneAdapter,
+	RuntimeHumanGateControlPlaneAdapter,
+} from "../../../src/runtime/verification/proposal-control-plane.ts";
 import type {
 	ChangeProposalRef,
 	DraftPrProviderReceipt,
@@ -384,5 +388,81 @@ describe("ChangeProposal and HumanGate Control Plane", () => {
 			ok: false,
 			error: { code: "unsupported_feature" },
 		});
+	});
+
+	it("binds Control Plane proposal and HumanGate requests to the durable Phase 11 services", async () => {
+		const draft = draftCommand();
+		const receipt = draftReceipt(draft);
+		const inspect = vi.fn(async () => ({ ok: true as const, value: draft.payload.proposal }));
+		const requestDraft = vi.fn(async () => ({ ok: true as const, value: receipt }));
+		const proposals = new RuntimeChangeProposalControlPlaneAdapter({
+			repository: { inspect },
+			drafts: { request: requestDraft },
+		});
+
+		expect(await proposals.inspect(proposalQuery(), CONTEXT)).toEqual({
+			ok: true,
+			value: { type: "changeProposal:inspect", proposal: draft.payload.proposal },
+		});
+		expect(await proposals.requestDraftPr(draft, CONTEXT)).toEqual({
+			ok: true,
+			value: { type: "changeProposal:requestDraftPr", receipt },
+		});
+		expect(inspect).toHaveBeenCalledWith(PROPOSAL_ID);
+		expect(requestDraft).toHaveBeenCalledWith({
+			authorityId: AUTHORITY_ID,
+			tenantId: TENANT_ID,
+			requestId: draft.commandId,
+			idempotencyKey: draft.commandId,
+			requestedBy: REQUESTER_ID,
+			providerId: draft.payload.providerId,
+			authorizationReceiptId: draft.payload.authorizationReceiptId,
+			authorizationReceiptDigest: draft.payload.authorizationReceiptDigest,
+			proposal: draft.payload.proposal,
+		});
+
+		const human = humanCommand();
+		const decision = humanDecision(human.payload.request);
+		const resolve = vi.fn(async () => ({ ok: true as const, value: decision }));
+		const humanGates = new RuntimeHumanGateControlPlaneAdapter({ resolve });
+		expect(await humanGates.resolve(human, CONTEXT)).toEqual({
+			ok: true,
+			value: { type: "humanGate:resolve", decision },
+		});
+		expect(resolve).toHaveBeenCalledWith(human.payload.request);
+	});
+
+	it("fails closed on mismatched Phase 11 adapter scope and preserves uncertain effects", async () => {
+		const draft = draftCommand();
+		const request = vi.fn(async () => ({
+			ok: false as const,
+			error: {
+				code: "reconciliation_required" as const,
+				message: "provider outcome is unknown",
+				retryable: false,
+			},
+		}));
+		const proposals = new RuntimeChangeProposalControlPlaneAdapter({
+			repository: {
+				inspect: async () => ({ ok: true, value: draft.payload.proposal }),
+			},
+			drafts: { request },
+		});
+		expect(await proposals.requestDraftPr(draft, CONTEXT)).toMatchObject({
+			ok: false,
+			error: { code: "recovery_required" },
+			effect: "uncertain",
+		});
+
+		const wrongPeer = {
+			...CONTEXT,
+			peer: { ...CONTEXT.peer, principalId: REVIEWER_ID },
+		};
+		expect(await proposals.requestDraftPr(draft, wrongPeer)).toMatchObject({
+			ok: false,
+			error: { code: "unauthorized_peer" },
+			effect: "none",
+		});
+		expect(request).toHaveBeenCalledTimes(1);
 	});
 });

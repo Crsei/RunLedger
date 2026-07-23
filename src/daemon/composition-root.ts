@@ -302,9 +302,61 @@ interface HeadlessDaemonCompositionPorts {
 
 export interface HeadlessDaemonCompositionOptions extends HeadlessDaemonCompositionPorts {
 	multiAgent?: SupervisorMultiAgentControlPlaneAdapter;
+	phase11Effects?: Phase11ProductionEffectBinding;
 	compositionReceipt: ProductionCompositionReceipt;
 	/** Production replacement 必须先提交 canonical generation/fencing transition。 */
 	runtimeGenerationTransition: RuntimeGenerationTransitionPort;
+}
+
+export interface Phase11ProductionEffectBinding {
+	matchesProductionBinding(options: {
+		idempotency: CommandIdempotencyRepository;
+		mutationGate: ShutdownCoordinator;
+		runtimeGeneration: (command: ControlPlaneCommand) => number;
+		expectedRuntimeGeneration: number;
+		changeProposals: ChangeProposalControlPlanePort;
+		humanGates?: HumanGateControlPlanePort;
+	}): boolean;
+}
+
+export function validatePhase11ProductionEffectBinding(options: {
+	features: readonly ControlPlaneFeature[];
+	idempotency?: CommandIdempotencyRepository;
+	mutationGate?: ShutdownCoordinator;
+	runtimeGeneration?: (command: ControlPlaneCommand) => number;
+	expectedRuntimeGeneration: number;
+	changeProposals?: ChangeProposalControlPlanePort;
+	humanGates?: HumanGateControlPlanePort;
+	binding?: Phase11ProductionEffectBinding;
+}): ControlPlaneResult<void> {
+	const proposalAdvertised = options.features.includes("change_proposal");
+	const humanGateAdvertised = options.features.includes("human_gate");
+	if (!proposalAdvertised && !humanGateAdvertised) return { ok: true, value: undefined };
+	if (!options.changeProposals || (humanGateAdvertised && !options.humanGates)) {
+		return controlPlaneFailure(
+			"adapter_contract_violation",
+			"production ChangeProposal/HumanGate advertisement requires the matching Runtime service",
+		);
+	}
+	if (!options.idempotency || !options.mutationGate || !options.runtimeGeneration || !options.binding) {
+		return controlPlaneFailure(
+			"adapter_contract_violation",
+			"production Phase 11 effects require the daemon command journal, generation, and shutdown gate",
+		);
+	}
+	return options.binding.matchesProductionBinding({
+		idempotency: options.idempotency,
+		mutationGate: options.mutationGate,
+		runtimeGeneration: options.runtimeGeneration,
+		expectedRuntimeGeneration: options.expectedRuntimeGeneration,
+		changeProposals: options.changeProposals,
+		...(options.humanGates ? { humanGates: options.humanGates } : {}),
+	})
+		? { ok: true, value: undefined }
+		: controlPlaneFailure(
+			"adapter_contract_violation",
+			"production Phase 11 effects do not share the daemon authority binding",
+		);
 }
 
 /** 仅供 isolated unit/transport fixture；production 入口不接受 caller-supplied features。 */
@@ -446,6 +498,17 @@ export function createHeadlessDaemonComposition(options: HeadlessDaemonCompositi
 			retryable: false,
 		});
 	}
+	const phase11 = validatePhase11ProductionEffectBinding({
+		features: validated.value.features,
+		idempotency: options.idempotency,
+		mutationGate: options.shutdown,
+		runtimeGeneration: options.runtimeGeneration,
+		expectedRuntimeGeneration: validated.value.receipt.runtimeGeneration,
+		changeProposals: options.changeProposals,
+		humanGates: options.humanGates,
+		binding: options.phase11Effects,
+	});
+	if (!phase11.ok) throw new ControlPlaneError(phase11.error);
 	return createComposition(options, {
 		environment: "production",
 		features: validated.value.features,

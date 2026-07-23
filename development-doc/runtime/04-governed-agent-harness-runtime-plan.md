@@ -1,8 +1,8 @@
 # RunLedger 可治理 Agent Harness Runtime 主计划
 
-> 文档状态:完整计划,当前权威执行入口;实现状态:总体未完成,但 §0.5、Phase 0/2/3与Phase 5 Resource v2 contract已实现,Phase 1/4/6–11 为部分实现或仍缺联合生产门禁;Phase 复选框只有附当前目标分支/工作树的逐项证据后才能在对应拆分文档中勾选
+> 文档状态:完整计划,当前权威执行入口;实现状态:总体未完成,但 §0.5、Phase 0/2/3与Phase 5 Resource v2 contract已实现,Phase 11 W4 Runtime-owned已完成、W5仅有Linux证据,其余Phase仍有部分实现或联合生产门禁缺口;Phase复选框只有附当前目标分支/工作树的逐项证据后才能在对应拆分文档中勾选
 > 基线日期:2026-07-22
-> 当前实现复核:2026-07-24,`worktree/governed-agent-harness-runtime@ac54e38`
+> 当前实现复核:2026-07-24,`worktree/governed-agent-harness-runtime@7865763` + 未提交Phase 11候选diff（commit pending user authorization）
 > 适用范围:`src/runtime/`、Runtime-owned `src/storage/`、`src/cli/`、`src/tui/`、`src/daemon/` 与对应测试;三个外围专项已按冻结说明转为只读依赖
 > 上游设计输入:[`00-reference.md`](00-reference.md)
 > 外围专项冻结说明:[`06-specialty-implementation-freeze.md`](06-specialty-implementation-freeze.md)
@@ -32,7 +32,7 @@
 
 本表是对当前目标分支代码、生产接线、公开导出和测试的状态汇总,用于纠正旧基线中“只有 scaffold”或“整类能力不存在”的过时描述。阶段任务仍按其完整语义验收:模块存在、fake adapter、局部 E2E 或进程内 seam 不能单独关闭生产联合门禁,因此下表不会机械地把 343 个正式任务全部改成 `[x]`。
 
-当前复核结果:`npm run check` PASS;`npm test` 为 277 files / 1790 tests PASS,另有 1 个 opt-in live test 默认跳过;`npm run build`、`npm run test:harness-regression`(11 files / 63 tests)、public-surface/ownership(3 files / 7 tests)、`git diff --check`与pi-ai audit 164/164 source + 72 catalog均PASS。三个冻结门禁分别为PCM 16/95、Extension 12/52、Security/Worktree 21/119 PASS,parity manifest SHA-256保持`fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77`。`live-deepseek-child-runtime.test.ts` 本轮未联网重跑,其 live PASS 只引用 `e741c88` 留存证据。W3 Runtime-owned范围已关闭,但Runtime-M2/M3产品声明仍受真实Gateway/Sandbox、OS peer attestor及其他冻结专项阻塞。
+当前Phase 11候选diff复核结果:`npm run check`、`npm run build`均PASS;`npm test`为287 files / 1823 tests PASS,另有1个opt-in live test默认跳过;Phase 11定向为49 files / 290 tests PASS;`npm run test:harness-regression`为12 files / 65 tests PASS;public-surface/ownership为3 files / 7 tests PASS;pi-ai audit为164/164 source + 72 catalog PASS。三个冻结门禁分别为PCM 16/95、Extension 12/52、Security/Worktree 21/119 PASS,parity manifest SHA-256保持`fcb4713c661a7de0732d9f1379bbbc0525250ebcdd7027186d076cddcd938d77`。机器可读fault manifest的22条Linux记录以21条去重`exactCommand`逐项PASS;darwin/win32无runner结果,所以W5-J2、W5-G、W6-G保持pending。`live-deepseek-child-runtime.test.ts`本轮未联网重跑,且不替代fault/restart/security门禁。
 
 | 范围 | 当前实现状态 | 已有代码/测试证据 | 尚未关闭的边界 |
 |---|---|---|---|
@@ -48,8 +48,8 @@
 | Phase 8 | Runtime-owned completed;产品里程碑 blocked | production readiness、Browser descriptor/preflight、durable Finding、EpisodeSeal completion与prompt-to-verification联合路径已闭合 | 真实Browser backend及冻结专项联合readiness为external gap;Draft PR/HumanGate仍归Phase 10/11 |
 | Phase 9 | Runtime-owned completed;产品里程碑 blocked | authority v2、durable activation/completion/reconciliation、cold recovery与`stop_uncertain`、稳定public child factory/admission、root budget reconcile、Artifact handoff/merge、idle/replacement/fencing及fault tests已由`203fde6`并入当前分支 | 真实Gateway/Sandbox/process-tree authority与平台 enforcement仍为external gap;缺receipt时继续unsupported/quarantine |
 | Phase 10 | Runtime-owned completed;产品里程碑 blocked | protocol 1.1/schema v1+v2、HTTP/SSE listener lifecycle、attestor port、bounded transport/subscription、durable generation replacement、轻客户端及Control Plane recovery已由`0c6d1a1`并入当前分支 | Unix peer credential/Windows pipe ACL production adapter及未接入的turn/approval/artifact provider仍为external gap或`unsupported_feature` |
-| Phase 11 | 部分实现 | Activity/cost/Telemetry Manifest/forensic、identity/executor contracts、startup/shutdown/GC与多轮 durability hardening | managed enforcement、credential/forge/human gate、remote/CI、真实process-tree authority与跨域 fault matrix未完成 |
-| Runtime-M0–M4 | Runtime-M0 completed;W3 Runtime-owned completed;M1–M4产品声明未关闭 | W1 Session/Artifact/CLI/public-surface、W2 integration及W3 bounded collaboration/headless join均已闭合 | M1受真实Browser及冻结专项阻塞;M2/M3受真实Gateway/Sandbox、平台peer attestor与专项readiness阻塞;M4仍属后续Wave |
+| Phase 11 | W4 Runtime-owned completed;W5 Linux evidence completed;cross-platform/W6 blocked | Remote authority/handoff、durable telemetry spool与CostTraceV2、canonical reference graph/GC journal、ChangeProposal/Draft PR/HumanGate durable effect、唯一production binding及22项fault manifest已闭合 | 真实managed policy、credential/forge/organization gate、remote transport、Sandbox/egress、OS peer attestor为`frozen-external-gap`;darwin/win32矩阵无结果 |
+| Runtime-M0–M4 | Runtime-M0 completed;W3/W4 Runtime-owned completed;M1–M4产品声明未关闭 | W1 Session/Artifact/CLI/public-surface、W2 integration、W3 bounded collaboration/headless join及W4 enterprise/telemetry Runtime seam已闭合 | M1受真实Browser及冻结专项阻塞;M2/M3受真实Gateway/Sandbox、平台peer attestor与专项readiness阻塞;完整M4受真实enterprise adapters及跨平台W5/W6阻塞 |
 
 ### 0.1 与 Plugin/MCP/Skill/Hooks 计划的强制边界
 
@@ -1671,15 +1671,17 @@ parallel group `P4` 包含 W4-R、W4-T 和 W4-H;三lane不得修改冻结路径�
 
 | ID | 状态 | 并行/依赖 | 独占路径 | 工作内容 |
 |---|---|---|---|---|
-| W4-R1 Remote state | pending | P4, W3-G | `src/runtime/executors/**`、Agent/Control Plane remote state的Runtime文件 | 固定invocation/attestation/result receipt、terminal idempotency、uncertain effect与restart replay;transport通过冻结port注入 |
-| W4-R2 Handoff | pending | after W4-R1 | Runtime Agent handoff repository/service | 持久化handoff lease/fencing/terminal cache,拒绝跨authority/tenant或缺attestation输入 |
-| W4-T1 Telemetry | pending | P4, W3-G | `src/runtime/telemetry/**` | RuntimeActivity/cost late reconciliation、Telemetry Manifest、spool/sink ack、SIEM与forensic隔离 |
-| W4-T2 Retention/GC | pending | after W4-T1 | `src/runtime/lifecycle/**`、Runtime Artifact retention | fork/handoff/checkpoint/Episode/legal-hold引用图、tenant隔离、dry-run/tombstone/crash replay;Workspace物理清理由冻结port返回receipt |
-| W4-H1 Proposal repository | pending | P4, W3-G | Runtime Verification/Control Plane change-proposal路径 | durable ChangeProposal、expected revision、idempotency、restart replay和human decision receipt |
-| W4-H2 Provider boundary | pending | after W4-H1 | Runtime provider adapter contract/tests | 只允许Draft PR调用已有credential/forge/organization ports;缺任一真实port时merge/deploy不可达且feature unsupported |
-| W4-J1 | pending | W4-R2 + W4-T2 + W4-H2 | L3/L4 | 串行注册Runtime remote/handoff、proposal/human-gate和telemetry adapters;冻结managed/credential/forge/supply-chain缺口写入composition readiness |
-| W4-J2 | pending | after W4-J1 | Runtime enterprise E2E | cross-tenant receipt replay、旧generation、remote uncertain、proposal ack loss、telemetry retry与GC crash;冻结专项只读复跑 |
-| W4-G | pending | join | full tree | Runtime-owned M4范围gate;完整Runtime-M4声明仍取决于冻结专项readiness |
+| W4-R1 Remote state | Runtime-owned completed | P4, W3-G | `src/runtime/executors/**`、Agent/Control Plane remote state的Runtime文件 | Memory/File authority、完整prepared/effect/terminal/reconciliation状态、v2 requested/terminal evidence、restart replay与changed-input conflict已闭合;真实transport继续unsupported |
+| W4-R2 Handoff | Runtime-owned completed | after W4-R1 | Runtime Agent handoff repository/service | durable intent/transfer/target-commit/source-fence状态机、File authority和旧generation/cross-tenant/未知结果fence已闭合;target commit先于source fence |
+| W4-T1 Telemetry | Runtime-owned completed | P4, W3-G | `src/runtime/telemetry/**` | tenant/manifest/sink/exporter隔离的Memory/File spool、容量重建、terminal sink receipt、event-ack repair与CostTraceV2 late reconciliation已闭合 |
+| W4-T2 Retention/GC | Runtime-owned completed | after W4-T1 | `src/runtime/lifecycle/**`、Runtime Artifact retention | canonical reference aggregator对任一缺失source输出`unknown`,GC journal按intent-before-mutation、receipt read-back和tenant/legal-hold/reference fence恢复 |
+| W4-H1 Proposal repository | Runtime-owned completed | P4, W3-G | Runtime Verification/Control Plane change-proposal路径 | Runtime v3 `ChangeProposalRef`、`change_proposal.recorded`、repository/projection expected revision/idempotency/restart replay及HumanGate durable state已闭合 |
+| W4-H2 Provider boundary | Runtime-owned completed;external dependency | after W4-H1 | Runtime provider adapter contract/tests | Draft PR/HumanGate在effect前持久化请求并只消费correlated terminal receipt;unknown outcome进入reconciliation;缺真实forge/organization/credential port时不advertise |
+| W4-J1 | Runtime-owned completed | W4-R2 + W4-T2 + W4-H2 | L3/L4 | Proposal/HumanGate production binding必须与daemon共享command journal、runtime generation和shutdown gate;remote/telemetry只进入evidence且不新增Control Plane feature |
+| W4-J2 | Runtime-owned completed | after W4-J1 | Runtime enterprise E2E | cross-tenant/旧generation/remote uncertain/handoff fence/proposal ack loss/HumanGate separation/telemetry retry/reference unknown/GC crash均有回归;冻结专项门禁只读PASS |
+| W4-G | Runtime-owned completed | join | full tree | W4 Runtime durability、composition seam与fail-closed范围关闭;完整Runtime-M4仍受真实enterprise adapters与W5/W6约束 |
+
+W4证据基于`worktree/governed-agent-harness-runtime@7865763`上的未提交候选diff,commit为`pending user authorization`。本轮没有创建W4 lane worktree,因为W4-P0没有取得commit授权;所有lane在原governed-runtime worktree串行完成,未push/tag/PR。代码没有修改`src/security/**`、`src/extensions/**`、PCM冻结行为或`package-lock.json`。
 
 ### 12.9 W5:跨域故障矩阵与Harness Regression
 
@@ -1687,15 +1689,15 @@ W5不再增加新feature,只允许补Runtime证据、故障注入和Runtime-owne
 
 | ID | 状态 | 并行/依赖 | 工作内容 |
 |---|---|---|---|
-| W5-01 | pending | W4-G | 建立唯一矩阵:`injection point -> expected event/receipt -> recovery -> owner(Runtime或frozen-external) -> exact command -> platform` |
-| W5-A | pending | P5, after W5-01 | Session/Event/Artifact与冻结Compaction adapter消费:kill、disk full、torn write、sync loss、GC crash;不改Compaction core |
-| W5-B | pending | P5, after W5-01 | Runtime对Workspace/Security/Approval receipt的symlink/TOCTOU、expiry/revoke、prompt restart、sandbox unavailable、credential leak fail-closed测试;不改专项 |
-| W5-C | pending | P5, after W5-01 | Agent/Budget:spawn/cancel/stop uncertain、orphan、replacement、partial merge、late cost |
-| W5-D | pending | P5, after W5-01 | Control Plane/Daemon:malformed/overload/slow consumer、signal/EOF/upgrade、command ack loss、restart |
-| W5-E | pending | P5, after W5-01 | Runtime Remote/Telemetry/lifecycle:tenant receipt replay、old generation、remote uncertain、exporter/SIEM/forensic/GC;key/credential专项只读验证 |
-| W5-J1 | pending | all P5 lanes | 汇总所有失败;Runtime P0/P1或不确定effect必须修复并重跑所属Wave gate,冻结专项失败转external-gap并禁止feature声明 |
+| W5-01 | Linux completed | W4-G | 唯一矩阵为`harness/phase-11-fault-manifest.json`,固定`id/injectionPoint/expectedEventOrReceipt/recovery/owner/exactCommand/platforms/testFile`,Harness Regression审计映射与命令 |
+| W5-A | Linux completed | P5, after W5-01 | Linux exact commands覆盖canonical torn write、Artifact ack loss与GC crash/read-back;冻结Compaction core零diff |
+| W5-B | Linux completed | P5, after W5-01 | Linux exact commands覆盖Workspace TOCTOU、Approval revoke、Sandbox unavailable和credential leak fail-closed;Security/Worktree仅只读测试 |
+| W5-C | Linux completed | P5, after W5-01 | Linux exact commands覆盖child orphan、replacement generation fence与CostTraceV2 late cost |
+| W5-D | Linux completed | P5, after W5-01 | Linux exact commands覆盖slow consumer、signal/EOF、command ack loss与Phase 11 production binding |
+| W5-E | Linux completed | P5, after W5-01 | Linux exact commands覆盖remote unknown、handoff fence、telemetry/Draft ack loss、HumanGate separation、forensic隔离、cross-tenant和reference-source missing |
+| W5-J1 | Linux completed | all P5 lanes | 22条fault记录的21条去重`exactCommand`逐项PASS;Runtime uncertain effect均进入durable terminal repair或typed reconciliation,冻结缺口保持external-gap |
 | W5-J2 | pending | after W5-J1 | Linux/macOS/Windows差异全部得到pass或明确unsupported/deny;不得用单平台替代 |
-| W5-G | pending | join | 完整Harness Regression和soak gate |
+| W5-G | pending | join | Linux Harness Regression 12 files / 65 tests PASS,但darwin/win32没有实际runner或production preflight结果,不得关闭跨平台gate |
 
 ### 12.10 W6:Runtime-only 验收、文档收敛与发布准备
 
@@ -1703,12 +1705,12 @@ W6全程串行,禁止再并行修改代码。
 
 | ID | 状态 | 顺序 | 工作内容 |
 |---|---|---|---|
-| W6-01 | pending | first | code freeze;核对当前仓库/分支/worktree/remote、tracked diff、generated files与credential filename-only scan |
-| W6-02 | pending | after W6-01 | 按§11逐项分类为`runtime-complete / frozen-external-gap / deferred`;只有runtime-complete可勾选并附commit、命令、receipt和时间 |
-| W6-03 | pending | after W6-02 | 运行所有Runtime阶段定向测试、W5 Harness Regression和冻结专项只读门禁;cross-platform缺口如实记录 |
-| W6-04 | pending | after W6-03 | 运行完整发布门禁与CLI/daemon smoke;模型catalog变化时先generate并审阅 |
-| W6-05 | pending | after W6-04 | 更新04状态为“Runtime-only范围完成,完整产品里程碑仍受冻结依赖约束”,同步05与06;校验无双真源/孤儿任务 |
-| W6-06 | pending | after W6-05 | 形成scoped release candidate diff和commit计划;只有用户授权后commit/push/tag/PR |
+| W6-01 | Linux completed | first | `worktree/governed-agent-harness-runtime@7865763`、origin、tracked/untracked边界、credential filename-only scan、parity digest、冻结目录和lockfile已核对 |
+| W6-02 | completed | after W6-01 | W4分类为`runtime-complete`;managed policy、credential/forge/organization、remote transport、Sandbox/egress、OS peer attestor分类为`frozen-external-gap` |
+| W6-03 | Linux completed;cross-platform blocked | after W6-02 | Phase 11定向、Linux fault manifest、Harness Regression及PCM/Extension/Security-Worktree冻结门禁均PASS;darwin/win32缺结果 |
+| W6-04 | Linux completed | after W6-03 | 完整check/test/build、pi-ai audit、public-surface/ownership及CLI/daemon help smoke PASS;catalog/lockfile无变化 |
+| W6-05 | completed | after W6-04 | 04、Phase 11、05与06已同步为“W4 Runtime-only完成,W5 Linux完成,完整产品与跨平台验收仍blocked” |
+| W6-06 | prepared;commit pending authorization | after W6-05 | scoped release candidate diff保留在当前worktree;只有用户授权后按P0/lane/join/W5/W6边界commit,不push/tag/PR |
 | W6-G | pending | final | Runtime-owned范围验收签字;列出仍未关闭的Runtime-M1–M4专项依赖和unsupported feature |
 
 W6 完整命令基线:

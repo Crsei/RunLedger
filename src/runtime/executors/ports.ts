@@ -29,9 +29,21 @@ import type {
 } from "./types.ts";
 
 export interface ExecutorPortError {
-	code: "invalid_invocation" | "unavailable" | "remote_rejected" | "invalid_receipt" | "attestation_rejected" | "handoff_rejected";
+	code:
+		| "invalid_invocation"
+		| "unavailable"
+		| "remote_rejected"
+		| "invalid_receipt"
+		| "attestation_rejected"
+		| "handoff_rejected"
+		| "conflict"
+		| "durable_write_failed"
+		| "reconciliation_required"
+		| "external_gap";
 	retryable: boolean;
 	reasonDigest: string;
+	/** 缺失必须按 false 处理；只有外部 port 明确证明零副作用时才能重试。 */
+	outcomeCertain?: boolean;
 }
 
 export type ExecutorPortResult<T> = { ok: true; value: T } | { ok: false; error: ExecutorPortError };
@@ -58,8 +70,21 @@ export interface AcceptedRemoteExecution {
 	attestationVerification: RemoteAttestationVerificationReceipt;
 }
 
-function failure(code: ExecutorPortError["code"], reason: string, retryable = false): ExecutorPortResult<never> {
-	return { ok: false, error: { code, retryable, reasonDigest: /^[a-f0-9]{64}$/.test(reason) ? reason : canonicalDigest(reason) } };
+function failure(
+	code: ExecutorPortError["code"],
+	reason: string,
+	retryable = false,
+	outcomeCertain = true,
+): ExecutorPortResult<never> {
+	return {
+		ok: false,
+		error: {
+			code,
+			retryable,
+			reasonDigest: /^[a-f0-9]{64}$/.test(reason) ? reason : canonicalDigest(reason),
+			outcomeCertain,
+		},
+	};
 }
 
 export class FailClosedRemoteExecutorGateway {
@@ -115,24 +140,24 @@ export class FailClosedRemoteExecutorGateway {
 		try {
 			executed = await port.execute(invocation, signal);
 		} catch (error) {
-			return failure("unavailable", error instanceof Error ? error.name : "UnknownError", true);
+			return failure("unavailable", error instanceof Error ? error.name : "UnknownError", false, false);
 		}
 		if (!executed.ok) return executed;
 		if (!isRemoteExecutorResultReceipt(executed.value) || !remoteExecutorResultMatchesInvocation(executed.value, invocation)) {
-			return failure("invalid_receipt", "remote executor returned an uncorrelated receipt");
+			return failure("invalid_receipt", "remote executor returned an uncorrelated receipt", false, false);
 		}
 		let verified: ExecutorPortResult<RemoteAttestationVerificationReceipt>;
 		try {
 			verified = await this.#attestation.verify(executed.value.attestation, invocation, signal);
 		} catch (error) {
-			return failure("attestation_rejected", error instanceof Error ? error.name : "UnknownError", true);
+			return failure("attestation_rejected", error instanceof Error ? error.name : "UnknownError", false, false);
 		}
 		if (!verified.ok) return failure("attestation_rejected", verified.error.reasonDigest, verified.error.retryable);
 		if (
 			!isRemoteAttestationVerificationReceipt(verified.value) ||
 			!attestationVerificationMatches(verified.value, executed.value) ||
 			verified.value.status !== "verified"
-		) return failure("attestation_rejected", "remote attestation was not externally verified");
+		) return failure("attestation_rejected", "remote attestation was not externally verified", false, false);
 		return { ok: true, value: { result: executed.value, attestationVerification: verified.value } };
 	}
 }
@@ -151,6 +176,6 @@ export async function transferSessionHandoff(
 		}
 		return transferred;
 	} catch (error) {
-		return failure("handoff_rejected", error instanceof Error ? error.name : "UnknownError", true);
+		return failure("handoff_rejected", error instanceof Error ? error.name : "UnknownError", false, false);
 	}
 }

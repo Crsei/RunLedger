@@ -146,6 +146,12 @@ class Mutations implements RuntimeGcMutationPort {
 		}
 		return success(receipt);
 	}
+
+	public async readGcMutation(
+		request: RuntimeGcMutationRequest,
+	): Promise<LifecycleResult<RuntimeGcTransitionReceipt | undefined>> {
+		return success(this.#receipts.get(request.idempotencyKey));
+	}
 }
 
 class Journal implements RuntimeGcJournalPort {
@@ -329,12 +335,11 @@ describe("tenant-scoped reference-aware Runtime GC", () => {
 		const journal = new Journal();
 		const gc = new RuntimeGcCoordinator(mutations, new Graphs(snapshot), journal, () => new Date(NOW));
 		const command = request(snapshot, { targets: [{ kind: "session_ref", sessionId: candidate.sessionId }] });
-		expect(await gc.collect(command)).toMatchObject({ ok: false, error: { code: "mutation_uncertain" } });
 		const replayed = await gc.collect(command);
 		expect(replayed).toMatchObject({ ok: true, value: { entries: [{ action: "tombstoned" }] } });
 		const cached = await gc.collect(command);
 		expect(cached).toEqual(replayed);
-		expect(mutations.calls).toHaveLength(2);
+		expect(mutations.calls).toHaveLength(1);
 		expect(mutations.commits).toBe(1);
 		expect(journal.completeCalls).toBe(1);
 	});

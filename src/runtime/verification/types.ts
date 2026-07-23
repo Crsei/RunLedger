@@ -5,11 +5,8 @@ import type {
 	AgentId,
 	ArtifactId,
 	AuthorityId,
-	ChangeProposalId,
 	CommandId,
-	EpisodeSealId,
 	FindingId,
-	HumanGateId,
 	PrincipalId,
 	ReceiptId,
 	RepositoryId,
@@ -22,12 +19,22 @@ import type {
 import type { WorkspaceExecutionEnvelope } from "../protocol/v3/workspace.ts";
 import type { ArtifactLineageStatus } from "../artifacts/types.ts";
 import type { TaintLabel } from "../protocol/v3/taint.ts";
+import type {
+	ChangeProposalBody,
+	ChangeProposalRef,
+	EpisodeSealCompletionRef,
+} from "../protocol/v3/change-proposal.ts";
+export {
+	CHANGE_PROPOSAL_SCHEMA_VERSION,
+	type ChangeProposalBody,
+	type ChangeProposalRef,
+	type EpisodeSealCompletionRef,
+} from "../protocol/v3/change-proposal.ts";
 
 export const VERIFICATION_SCHEMA_VERSION = 1 as const;
 export const GATE_MANIFEST_SCHEMA_VERSION = 1 as const;
 export const TRUSTED_BASELINE_SCHEMA_VERSION = 1 as const;
 export const VERIFIER_RECEIPT_SCHEMA_VERSION = 1 as const;
-export const CHANGE_PROPOSAL_SCHEMA_VERSION = 1 as const;
 export const DRAFT_PR_RECEIPT_SCHEMA_VERSION = 1 as const;
 export const HUMAN_GATE_SCHEMA_VERSION = 1 as const;
 export const REVIEW_EVIDENCE_SCHEMA_VERSION = 1 as const;
@@ -744,33 +751,6 @@ export interface VerificationReport {
 	reportDigest: string;
 }
 
-export interface EpisodeSealCompletionRef extends VerificationScope {
-	sealId: EpisodeSealId;
-	sealDigest: string;
-	sealRecordDigest: string;
-	manifestBodyDigest: string;
-}
-
-export interface ChangeProposalBody extends VerificationScope {
-	schemaVersion: typeof CHANGE_PROPOSAL_SCHEMA_VERSION;
-	proposalId: ChangeProposalId;
-	sessionId: SessionId;
-	createdBy: PrincipalId;
-	repositoryId: RepositoryId;
-	workspaceId: WorkspaceId;
-	baseCommit: string;
-	candidateCommit: string;
-	candidateBindingDigest: string;
-	proposalArtifact: ArtifactRef;
-	verificationReceiptDigests: readonly string[];
-	episodeSeal: EpisodeSealCompletionRef;
-	createdAt: string;
-}
-
-export interface ChangeProposalRef extends ChangeProposalBody {
-	proposalDigest: string;
-}
-
 export interface DraftPrRequest extends VerificationScope {
 	requestId: CommandId;
 	idempotencyKey: CommandId;
@@ -786,9 +766,9 @@ export interface DraftPrProviderReceipt extends VerificationScope {
 	receiptId: ReceiptId;
 	requestId: CommandId;
 	providerId: string;
-	proposalId: ChangeProposalId;
+	proposalId: ChangeProposalRef["proposalId"];
 	proposalDigest: string;
-	sealId: EpisodeSealId;
+	sealId: EpisodeSealCompletionRef["sealId"];
 	sealDigest: string;
 	repositoryId: RepositoryId;
 	candidateCommit: string;
@@ -806,7 +786,7 @@ export interface ChangeProposalProviderPort {
 
 export interface HumanGateRequest extends VerificationScope {
 	schemaVersion: typeof HUMAN_GATE_SCHEMA_VERSION;
-	humanGateId: HumanGateId;
+	humanGateId: import("../protocol/v3/ids.ts").HumanGateId;
 	requestId: CommandId;
 	requestedBy: PrincipalId;
 	action: "merge" | "deploy";
@@ -817,9 +797,9 @@ export interface HumanGateRequest extends VerificationScope {
 
 export interface HumanGateDecision extends VerificationScope {
 	schemaVersion: typeof HUMAN_GATE_SCHEMA_VERSION;
-	humanGateId: HumanGateId;
+	humanGateId: import("../protocol/v3/ids.ts").HumanGateId;
 	requestId: CommandId;
-	proposalId: ChangeProposalId;
+	proposalId: ChangeProposalRef["proposalId"];
 	proposalDigest: string;
 	action: HumanGateRequest["action"];
 	decision: "approved" | "denied";
@@ -978,6 +958,9 @@ export const VERIFICATION_ERROR_CODES = [
 	"human_gate_required",
 	"admission_blocked",
 	"admission_unavailable",
+	"conflict",
+	"reconciliation_required",
+	"durable_write_failed",
 ] as const;
 
 export type VerificationErrorCode = (typeof VERIFICATION_ERROR_CODES)[number];

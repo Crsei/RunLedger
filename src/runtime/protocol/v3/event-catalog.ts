@@ -92,6 +92,7 @@ export const RUNTIME_EVENT_TYPES = [
 	"verification.finished",
 	"episode.manifest_committed",
 	"episode.seal_recorded",
+	"change_proposal.recorded",
 	"draft_pr.requested",
 	"draft_pr.created",
 	"draft_pr.failed",

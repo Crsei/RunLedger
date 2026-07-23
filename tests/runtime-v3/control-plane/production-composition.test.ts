@@ -146,6 +146,24 @@ describe("production composition receipt", () => {
 		expect(validated.value.features).not.toContain("human_gate");
 	});
 
+	it("records remote executor and telemetry exporter readiness without inventing Control Plane features", () => {
+		const created = receipt([
+			adapter("daemon_core", ["health"]),
+			adapter("remote_executor", []),
+			adapter("telemetry_exporter", []),
+		]);
+		if (!created.ok) throw new Error(created.error.message);
+		expect(created.value.adapters.map((evidence) => evidence.kind)).toEqual([
+			"daemon_core",
+			"remote_executor",
+			"telemetry_exporter",
+		]);
+		expect(validate(created.value)).toMatchObject({
+			ok: true,
+			value: { features: ["health"], commandTypes: [], queryTypes: ["health"] },
+		});
+	});
+
 	it("advertises ChangeProposal and HumanGate only with enterprise owners and every minimum supporter", () => {
 		const enterprise = [
 			adapter("event_store", ["change_proposal", "human_gate"]),
