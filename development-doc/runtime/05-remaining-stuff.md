@@ -1,7 +1,7 @@
 # Governed Agent Harness Runtime 剩余事项与取证问题
 
 > 文档状态:open issues / handoff ledger,不是第二份实施计划或完成状态真源
-> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00；Approval active dependency 复核:2026-07-23T06:32:57+08:00；child launcher gate 复核:2026-07-23T07:09:46+08:00；active-parent composition 复核:2026-07-23T07:58:47+08:00；child terminal cleanup 复核:2026-07-23T10:23:15+08:00
+> 取证时间:2026-07-22；收敛复核:2026-07-23T01:01:02+08:00；governed startup 复核:2026-07-23T02:12:47+08:00；durability hardening 复核:2026-07-23T03:27:40+08:00；continuous mutation 复核:2026-07-23T04:31:28+08:00；Approval active dependency 复核:2026-07-23T06:32:57+08:00；child launcher gate 复核:2026-07-23T07:09:46+08:00；active-parent composition 复核:2026-07-23T07:58:47+08:00；child terminal cleanup 复核:2026-07-23T10:23:15+08:00；cancel evidence 复核:2026-07-23T11:18:41+08:00
 > 目标 worktree:`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-governed-runtime`
 > 分支:`worktree/governed-agent-harness-runtime`
 > 基线 commit:`65f905452195e034c99fa5ac560a7e23a822f052`
@@ -13,6 +13,7 @@
 > child-spawn launcher gate commit:`7e6f7714bd145fdbd88beb9df91511e65f1d9e73`
 > active-parent Agent composition commit:`b175b84d92c3647954257379cce792d303a16967`
 > child terminal cleanup saga commit:`33b58ed434333e0d00b0132f8265da14f03719c4`
+> cancel reason evidence commit:`c0ade82bdce42427303dc38d9c11f384710cd39e`
 > 权威计划:[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)
 
 本文件只记录本轮参考审查、计划审计和实现 worktree 检查中遇到的问题、未完成项与恢复顺序。任何条目都不能因为“已有文件”“定向测试曾通过”或“代码量较大”而视为完成。完成状态必须回写到同步后的 `04`，并附目标分支 commit、定向测试、完整门禁和专项联合证据。
@@ -21,7 +22,7 @@
 
 ### 1.1 权威计划已去分叉
 
-2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4`、`f3e2ba6`、`7e6f771`、`b175b84`、`33b58ed` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
+2026-07-22 发现的 1605 行旧版与 2124 行新版分叉已经收敛。在 `60373d6` 文档基线，目标 worktree 与主 checkout 的 `04` 均为 2124 行，SHA-256 都是 `192ba4b187e1321511db297deeaf9bad10bb7077489c6471e39d0fcd8b2b5ccd`，内容逐字相同。此后目标分支按 `830a723`、`2ca6f30`、`ac524f4`、`f3e2ba6`、`7e6f771`、`b175b84`、`33b58ed`、`c0ade82` 的真实实现追加 scoped evidence，主 checkout 仍停留在 2124 行基线且保持干净；这是未合并分支上的可追踪证据增量，不是重新出现两份互相竞争的计划。
 
 - [x] 以 2124 行版本作为唯一 canonical 文件，保留新增证据规则、I0-I7 串行账本、兼容矩阵和 13 类 mutation restart 要求。
 - [x] 没有迁移旧版 147 个无完整证据的勾选；当前 `04` 有 343 个真实未勾选任务，唯一 `[x]` 位于 §9.2 模板示例，不是完成声明。
@@ -228,14 +229,43 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - `.launch-claim` 仍只有 `{ schemaVersion, sessionId }`，未绑定 authority/tenant/principal、parent graph、agent、launch request/receipt、runtime instance、Workspace/capability refs、revision/owner/expiry。没有 startup claim scan、takeover、orphan quarantine、terminal-only release reconciler，它不是 authority-owned cold claim。
 - `launch_rejected` 且无 launch/residency 的 child被 `reconcilePendingCleanups()` 显式跳过，继续使用旧 `settleNotStarted()` + `releaseWorkspace()` compensation；Budget/Workspace结果没有统一 cleanup aggregate，Workspace返回失败会被忽略，也没有可重放的 not-started terminal receipt。
 - composition close对 running child只会 fail closed；目前没有由 operator/shutdown coordinator提供 exact usage并创建 semantic terminal的协议。因此“不会裸关 active child”已闭合，“可治理 graceful shutdown active child”仍未完成。
-- `AgentSupervisor.cancel(request, reasonDigest, usage)` 只验证 `reasonDigest` 格式，随后把 durable reason固定为 `cancelled`；该 digest没有进入 semantic terminal、cleanup request或 runtime-release identity。不同有效 digest可产生同一 durable语义，必须绑定 bounded reason/evidence ref或移除误导参数。
 - launcher在 `requestStop()` 前先把 attempt置为进程内 `stop_uncertain`；stop抛错或 final cursor不可得后，同一进程的 exact retry会持续返回 uncertain。没有 durable stop probe、cursor read-back、operator resolution或安全清除协议；进程退出又会同时丢失 latch与 resident registry。
 - `WorktreeManager.release()` 的真实 `{ receiptId, record }` 未进入 `AgentWorkspaceReceiptRef`；adapter当前主要把旧 Workspace ref改成 `status=released`，保留旧 receipt identity/time。`agent.workspace_released` 因而尚未绑定真实 Worktree release receipt、released lease/retained record和 release time，需要独立 typed release evidence。
 - V3 TTL takeover只解决 writer fencing availability，不是 child cleanup reconciler。原 manager的 rejected close promise不重试，新 owner也不会自动关联 parent cleanup aggregate、child stop cursor、runtime-release/Workspace-release stage。
 - launcher仍只创建空的 child `V3SessionManager`，没有 child controller、model/tool loop、Tool Gateway、完整 Sandbox与真实 usage collector；现有 E2E手工修改 child worktree并构造 Artifact。CLI/daemon/factory与 feature requirements matrix没有激活 multi-agent，production必须继续 `unsupported`。
 - POSIX `detached` process group不能阻止 descendant通过 `setsid`/double-fork脱离 PGID；完整进程树约束需要真实 Sandbox、cgroup/PID namespace，Windows则需要 Job Object。当前 group-kill 对全部错误都回退 direct child PID，尚未区分 `ESRCH` 与权限/其他非 `ESRCH` failure；后一类应保持 uncertain/quarantine，现状不能作为完整 tree-isolation authority evidence。
 
-### 1.11 本轮查找与验证过程中的问题
+### 1.11 Cancel reason evidence 持久绑定验证
+
+`c0ade82bdce42427303dc38d9c11f384710cd39e` 已作为独立代码/测试提交落入目标分支。本检查点只关闭 parent `AgentSupervisor.cancel()` 丢弃 caller reason evidence 的窄缺口：digest进入 semantic terminal canonical identity并由JSONL restart恢复，cleanup通过同一个`terminalDigest`关联；它不把所有cancelled terminal改成必填evidence，也不关闭cold cleanup或真实child runtime。
+
+| 命令/阶段 | 结果 | 说明 |
+|---|---|---|
+| cancel evidence RED | RED | 先加入`cleanup-saga.test.ts`与`session-graph-store.test.ts`，旧实现21 tests中3 failed：terminal缺evidence、changed digest被当成相同请求、restart丢evidence |
+| cancel evidence targeted | PASS | `npx vitest run tests/runtime-v3/agents/cleanup-saga.test.ts tests/runtime-v3/agents/graph-store.test.ts tests/runtime-v3/agents/session-graph-store.test.ts tests/runtime-v3/schema.test.ts tests/runtime-v3/agents/supervisor.test.ts`；5 files，60/60 tests |
+| code commit | PASS | `c0ade82bdce42427303dc38d9c11f384710cd39e`；8条显式源码/测试路径，251 insertions / 13 deletions |
+| `npm run check` | PASS | TypeScript、runtime boundary、execution boundary全部通过 |
+| `npm test` first run | RED | 新增session replay test与既有`multi-agent-isolation` test分别命中默认5秒timeout；不是全绿证据 |
+| timeout recheck / `npm test` | PASS | 只为新增session test设置15秒显式timeout；相关2-file定向复核通过，完整复跑254 files，1574/1574 tests passed |
+| `npm run build` | PASS | NodeNext production build成功 |
+| `npm run test:harness-regression` | PASS | 11 files，63/63 tests；pretest再次执行完整`npm run check` |
+| pi-ai fixed snapshot audit | PASS | 首次漏必填参数exit 2；随后固定`pi@3f1762c...`重跑，164/164 source files、72 catalog files |
+| credential filename-only scan | PASS | 无匹配；首次复杂regex因shell quoting失败，随后使用简化、只输出文件名的安全模式，未读取或输出credential正文 |
+
+已闭合的窄边界:
+
+- `AgentSupervisor.cancel()` 要求合法`reasonEvidenceDigest`，并将其写入terminal request body、`requestDigest`、`terminalDigest`和exact `agent.stopped.terminal`；cleanup aggregate通过exact `terminalDigest`间接绑定同一evidence。
+- 相同command/idempotency key/evidence retry保持幂等；changed evidence返回`idempotency_conflict`，不会覆盖durable terminal或重跑runtime/Workspace/Budget release。
+- v3 exact schema、graph reducer与`SessionAgentGraphStore` close/reopen保留同一evidence和cleanup terminal correlation，不再依赖进程内参数。
+
+仍未闭合的边界:
+
+- shared `AgentTerminalRequest`与event schema为读取既有事件继续允许optional evidence；直接`finish({ outcome: "stopped", reason: "cancelled" })`、terminal `interrupt("cancelled")`与legacy terminal不由本切片强制提供独立reason evidence。因此本检查点不能写成“全部cancelled terminal已绑定理由”。
+- digest只是opaque bounded ref，不证明raw reason、caller/actor authority、issuer/signature、证据存储或外部可解析性。
+- `launch_rejected` aggregate、`stop_uncertain` durable resolution、authority-owned cold claim/read-back、真实Workspace release evidence、child controller/model/tool loop与production multi-agent activation继续未完成。
+- 本检查点没有运行或虚构governed DeepSeek child E2E；§1.10已有smoke只证明单Agent`AuthStorage -> builtinModels -> Agent -> echo -> MemoryLedger`连通性。
+
+### 1.12 本轮查找与验证过程中的问题
 
 - 本阶段第一次 targeted 收集在 `tests/e2e/daemon-recovery.test.ts` 失败：fixture 手工追加新版 `agent.finished` 时仍沿用旧 payload，缺 `AgentSemanticTerminalRecord`。fixture 改为用 canonical constructor生成 terminal后通过；这说明 schema升级后的历史/daemon fixture必须显式迁移，不能靠 optional/default吞掉 terminal correlation。
 - 本阶段 DeepSeek smoke 首次用 `tsx -e` 顶层 `await`，因 eval走 CJS输出模式在网络请求前失败；改为 async IIFE后，同一 auth/model/Agent/echo/ledger链路成功。失败与成功尝试都没有读取或输出 credential正文，也没有修改仓库。
@@ -249,6 +279,9 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - child gate 的第一次审查发现 gate 返回后到 Workspace callback/claim 之间仍有 abort 窗口；第二次审查又发现 `V3SessionManager.create()` in-flight 时 `close()` 已返回但 child 仍可能被注册。两处已用确定性竞态测试关闭，但也证明“abort 后全部零副作用”只能用于 durable create 之前；create 已开始后必须保留 genesis 并进入显式 recovery，自动 reconciliation 仍是未完成项。
 - `b175b84` 前搜索全仓曾确认 `src/**` 没有 `ProductionChildSessionLauncher` 构造点；当前该事实已被 production interactive composition seam 取代，但 CLI/daemon/factory 默认入口仍未激活它。没有 machine-verifiable feature row 与完整 child lifecycle 前，能力继续保持 unsupported。
 - composition 审查先后发现五个不能靠“测试已绿”掩盖的问题：完整 composition 暴露 gate/launcher/writer、source/readonly root 被误标 managed active、child runtime ID 未绑定 Workspace owner、同 digest grant 字段漂移被当成幂等，以及 launcher close 在 close 成功前清空 registry。均已用红测修正；后续 `33b58ed` 又关闭进程驻留 semantic terminal/cleanup 分离与 active-child裸 close，但 cold claim/reconciler、真实 child Agent loop及跨进程外部effect证明仍未完成，不在本提交中虚构完成。
+- cancel evidence首轮完整`npm test`不是PASS：新增session replay test和既有multi-agent E2E在并发全量运行时分别命中5秒timeout。新增session test加15秒显式预算后，先跑相关2-file定向再跑完整suite均通过；没有借timeout失败删除restart断言，也没有把一次失败隐藏在最终计数之外。
+- cancel evidence的pi-ai audit第一次漏必填`--upstream`/`--commit`并exit 2；credential scan第一次复杂regex又因shell quoting失败。两者都未被记为成功证据；前者按固定upstream/commit重跑，后者改用简化filename-only安全模式且无匹配。
+- 文档最终行号检索第一次把含backtick的pattern放进双引号，shell尝试执行其中的`AgentSupervisor.cancel()`并返回command not found；该命令没有写文件或读取credential。随后改用无命令替换风险的单引号pattern完成定位，`git diff --check`保持通过。
 
 ## 2. 四个参考仓库审查中遇到的边界问题
 
@@ -342,7 +375,7 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 
 ### P0:Production state root、持续门禁、interactive child composition 与进程驻留 cleanup seam 已接线，真实 child loop/cold reconciliation/daemon activation 仍未闭合
 
-`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 关闭 Workspace lease 的持续 mutation gate；`f3e2ba6` 再关闭 production Tool Gateway 的 interactive Approval active dependency 与 durable start fence；`7e6f771` 关闭 `ProductionChildSessionLauncher` class seam 的 `child_spawn` gate；`b175b84` 接通 active-parent production interactive `AgentSupervisor` composition、root adoption/revalidation 与 child owner correlation；`33b58ed` 接通同一进程内 semantic terminal到runtime/Workspace/Budget aggregate cleanup，并加固active-child close、writer lease和isolated-command/release race。但真实 child controller/model/tool runtime、CLI/daemon/factory activation、cold external-effect reconciliation、replacement/idle、pending prompt重启恢复与extension hook journal仍不闭合。
+`830a723` 已关闭此前“既有 V3 CLI/daemon 直接 open 后只看本地 recoveryDecision”的已知旁路；`2ca6f30` 继续关闭 production state-root 组合、durable-store 联合 E2E、Approval terminal projection 和 governed open/CLI/factory cleanup failure 丢失；`ac524f4` 关闭 Workspace lease 的持续 mutation gate；`f3e2ba6` 再关闭 production Tool Gateway 的 interactive Approval active dependency 与 durable start fence；`7e6f771` 关闭 `ProductionChildSessionLauncher` class seam 的 `child_spawn` gate；`b175b84` 接通 active-parent production interactive `AgentSupervisor` composition、root adoption/revalidation 与 child owner correlation；`33b58ed` 接通同一进程内 semantic terminal到runtime/Workspace/Budget aggregate cleanup，并加固active-child close、writer lease和isolated-command/release race；`c0ade82` 只把parent `AgentSupervisor.cancel()`的reason evidence绑定到durable terminal identity与restart replay。但真实 child controller/model/tool runtime、CLI/daemon/factory activation、cold external-effect reconciliation、replacement/idle、pending prompt重启恢复与extension hook journal仍不闭合。
 
 - [x] 既有 V3 CLI open/fork、factory resume/fork、daemon cold recovery 与 partial migration resume 统一先经过 `GovernedV3SessionRuntime`；审计未通过时不会进入 controller/model/tool、candidate authority、agent binding 或 child creation。
 - [x] Workspace lease 与 Approval receipt 的 exact digest/revision/expiry/state、partial/unknown completeness、missing/store throw/timeout/abort/畸形 receipt 均 fail closed；非 `allowed` Approval 即使被 adapter 伪报 valid 也只能 paused。
@@ -360,7 +393,9 @@ npx vitest run tests/runtime-v3/lifecycle/continuous-mutation-gate.test.ts tests
 - [ ] 真实 production child lifecycle 与入口 activation 仍缺失：launcher 必须创建 child controller/model/tool governed runtime，CLI/daemon/factory 必须消费同一 composition，并以 machine-verifiable feature/required-adapter row 与联合 E2E证明；在此之前不得 advertise production multi-agent。
 - [x] process-resident semantic/cleanup terminal seam已闭合：`finish()`/terminal interrupt/cancel durable写semantic terminal与cleanup intent，按runtime release -> Workspace release -> budget settlement提交typed receipt和aggregate `cleanup_completed`；前一阶段不确定时后续adapter零调用。exact schema/replay、missing usage、append fault、active-child close、V3 TTL takeover与process drain证据固定到`33b58ed`、19 files / 139 targeted tests及§1.10。该勾选不包含process crash后的external-effect证明。
 - [ ] authority-owned cold claim/reconciler仍缺失：claim必须exact绑定parent graph、child genesis/session、agent、launch receipt、runtime instance、Workspace/capability refs和revision；restart必须区分恢复工作、只做terminal cleanup、quarantine orphan。runtime/Workspace release cache只在进程内，external success后、parent event前crash不能exact read-back。
-- [ ] `launch_rejected` 的not-started Budget/Workspace compensation尚未进入统一cleanup aggregate；cancel `reasonDigest`尚未绑定semantic/cleanup identity；`stop_uncertain`没有durable probe/operator resolution。三者均不能借用process-resident happy path标成完成。
+- [ ] `launch_rejected` 的not-started Budget/Workspace compensation尚未进入统一cleanup aggregate，不能借用process-resident happy path标成完成。
+- [x] parent `AgentSupervisor.cancel()` 的`reasonEvidenceDigest`已进入semantic terminal request/terminal digest、exact event与restart replay，cleanup通过terminal digest关联；same evidence幂等、changed evidence冲突。证据固定到`c0ade82`、5 files / 60 targeted tests与§1.11。该勾选不包含direct finish、terminal interrupt、legacy optional terminal或reason evidence authority/provenance。
+- [ ] `stop_uncertain`没有durable probe、cursor read-back或operator resolution，不能借用进程内latch或cleanup happy path标成完成。
 - [ ] Agent Workspace release尚未携带`WorktreeManager.release()`的真实receipt/retained record/release time；V3 TTL takeover只提供writer fencing availability，不会自动完成parent cleanup projection或child/Workspace reconciliation。
 - [ ] isolated process seam仍不是完整Sandbox：POSIX process group可被`setsid`/double-fork逃逸，非`ESRCH` group-kill failure当前仍回退direct PID；完整生产边界需Sandbox/cgroup/PID namespace，Windows需Job Object。在此之前不能用本阶段E2E宣称process-tree isolation authority。
 - [ ] idle unload/reload 与 same-session hot replacement 尚未接入同一 governed gate；replacement 仍缺 standby candidate、fencing promotion、commit-before-old-drain 和 commit 后失败终态的 fault E2E。
@@ -409,7 +444,7 @@ feature-state/session-version/CLI action、legacy migration terminal、以及 Se
 
 ## 5. 建议恢复顺序
 
-1. 在 `33b58ed` 已有process-resident saga上补authority-owned cold claim/reconciler、runtime/Workspace release read-back、`stop_uncertain` resolution、`launch_rejected` aggregate与kill-after-effect/restart fault E2E；同时把cancel reason evidence绑定terminal identity。不得把进程内map replay或V3 TTL takeover冒充cold exactly-once。
+1. 在 `33b58ed` 已有process-resident saga与`c0ade82` cancel identity绑定上，继续补authority-owned cold claim/reconciler、runtime/Workspace release read-back、`stop_uncertain` resolution、`launch_rejected` aggregate与kill-after-effect/restart fault E2E。不得把进程内map replay或V3 TTL takeover冒充cold exactly-once。
 2. 为 launcher 创建真实 child controller/model/tool governed runtime，所有 model/tool/resume/cancel/isolated-command 路径继续复用 parent gate 与 child Gateway/Sandbox；补真实 child Agent loop、Artifact/handoff/merge E2E，而不是测试手工写文件。process tree必须由Sandbox/cgroup/PID namespace或Windows Job Object形成authority evidence，并把非`ESRCH` group-kill failure保持uncertain/quarantine。
 3. 激活 CLI/daemon/factory composition，增加 machine-verifiable multi-agent feature/required-adapter row；补进程退出后的 cold resume/orphan quarantine、terminal-only cleanup与 kill/restart联合 E2E。在步骤 1–3 全部闭合前保持 production multi-agent unsupported。
 4. 接 idle unload/reload 与 same-session replacement；replacement 必须具备 standby candidate、writer fencing promotion、commit-before-old-drain 和 post-commit failure terminal。
