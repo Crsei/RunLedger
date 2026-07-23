@@ -194,7 +194,10 @@ describe("production composition receipt", () => {
 		});
 		expect(validate({
 			...created.value,
-			signature: { ...created.value.signature, value: created.value.signature.value.replace(/^./u, "A") },
+			signature: {
+				...created.value.signature,
+				value: created.value.signature.value.replace(/^./u, (value) => value === "A" ? "B" : "A"),
+			},
 		})).toMatchObject({ ok: false, error: { code: "adapter_contract_violation" } });
 		expect(validate(created.value, scope)).toMatchObject({ ok: true });
 		expect(validateProductionCompositionReceipt(created.value, scope, {
