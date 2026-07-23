@@ -4,7 +4,7 @@
 > 分阶段索引:[`README.md`](README.md)
 > 导航:[Phase 0](phase-00-protocol-baseline.md) / [Phase 2](phase-02-workspace-contracts.md)
 > 状态规则:当前实现状态以主计划 §0.0 为唯一汇总真源;严格开发顺序、并行 lane 与 join gate 以主计划 §12 为准。本文件只承载本 Phase 的完整需求、门槛、故障注入与历史证据。
-> 当前执行状态:W0 evidence baseline 已由 `431681f` 冻结,W0-G 已关闭。W1-A1 现已打开,先用 RED 测试约束 restore dependency registration 必须发生在 Event Store replay/reduction 之前。
+> 当前执行状态:W0 evidence baseline 已由 `431681f` 冻结,W1-A1 已由 `259f2fb` 完成。下一执行单元为 W1-A2 create/fork staging 与故障矩阵。
 
 目标:用严格、可重放、可验证的事件内核替代“消息即 session”的假设。
 
@@ -30,7 +30,7 @@
 
 任务:
 
-- [ ] 提供显式异步 `open/restore` factory:调用方先注册 model/tool/resource/provider 等不可序列化依赖,再读取并 reduce durable state、校验 snapshot 中的依赖 identity/generation、reconcile 未完成状态,最后才返回可变 session handle;构造器不得隐式执行异步恢复。
+- [x] 提供显式异步 `open/restore` factory:调用方先注册 model/tool/resource/provider 等不可序列化依赖,再读取并 reduce durable state、校验 snapshot 中的依赖 identity/generation、reconcile 未完成状态,最后才返回可变 session handle;构造器不得隐式执行异步恢复。证据:`259f2fb`;dependency snapshot 只保存 canonical identity/generation,durable snapshot 缺绑定、identity/generation 漂移或 registrar 失败均在 Event Store open 前 fail closed,已验证 snapshot 对象直接贯穿 recovery 以消除二次读取 TOCTOU。
 - [ ] 用单 writer queue 保证 sequence 分配和 append 顺序;append 只返回 assigned/accepted cursor,关键调用必须再取得覆盖该 cursor 的 `DurableEventReceipt`,不能把“写入进程缓冲区”称为 durable。
 - [ ] 明确任何 stream completion、listener settlement、`EventStream.result()`、pending-write Promise、内存 queue/retry/phase 归零都不能签发 `DurableEventReceipt`;receipt 只能来自 Event Store 的已验证 flush/commit barrier。
 - [ ] durable barrier 必须传播 file flush/sync 错误;新建、rename、tombstone/snapshot 切换还要按平台能力同步父目录或明确返回 unsupported/degraded,不能忽略 `sync_all/fsync` 失败后签发 receipt。
@@ -87,6 +87,12 @@
 - open/resume 前后 initialGoalId/rootAgentId 与所有既有 turn/tool lineage 保持连续。
 - legacy migration 只有一个 durable terminal outcome;partial import 重启不被误判为可 resume,同 source 重试不产生重复 canonical message。
 - stable logical fork、projection rewind 与 crash recovery E2E 全绿;物理 workspace rewind 的门槛归 Phase 4。
+
+W1-A1 验证记录:
+
+- 定向门禁:`restore-dependencies.test.ts`、`snapshot.test.ts`、`recovery.test.ts`、`v3-session-manager.test.ts`,4 files / 45 tests PASS。
+- 全量门禁:`npm run check` PASS;`npm test` 262 files / 1710 tests PASS,1个`RUNLEDGER_LIVE_E2E` opt-in测试默认SKIP;`npm run build`与`git diff --check` PASS。
+- 故障证据:registrar throw、identity mismatch、generation mismatch 均未打开 Event Store、未执行 Artifact reconcile、未返回可变 manager;Event Store open 时替换磁盘 snapshot 不影响已绑定的 exact recovery proof。
 
 建议 PR:
 

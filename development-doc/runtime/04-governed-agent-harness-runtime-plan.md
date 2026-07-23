@@ -38,7 +38,7 @@
 |---|---|---|---|
 | §0.5 pi-ai parity | 已实现 | parity manifest、只读审计脚本、delta/parity tests 均在当前分支;固定 snapshot 审计覆盖 164/164 source files 与 72 catalog files | Qwen 等差异按 manifest 明确 defer/adopt/reject,不是隐式 parity;后续 upstream 漂移仍需重算 |
 | Phase 0 | contract/边界基线已实现 | v3 IDs、catalog、exact payload/schema、hash/canonical JSON、taint、threat model、feature matrix与两条 boundary script均已接入`npm run check` | 历史 I0–I7 没有逐窗口 handoff 记录,不能据此关闭最终串行集成验收 |
-| Phase 1 | 部分实现,主体已落地 | single-writer Event Store、accepted/durable barrier、strict replay/hash、queue、snapshot、stop、fork、migration、salvage、writer lease与 session tests | open/restore 的不可序列化依赖注册顺序、create/fork 全故障矩阵、salvage 到受授权 CAS Artifact 的生产适配仍需逐项闭合 |
+| Phase 1 | 部分实现,主体已落地 | single-writer Event Store、accepted/durable barrier、strict replay/hash、queue、snapshot、stop、fork、migration、salvage、writer lease、显式 restore dependency registration 与 session tests | create/fork 全故障矩阵、salvage 到受授权 CAS Artifact 的生产适配仍需逐项闭合 |
 | Phase 2 | contract 已实现 | Workspace envelope/binding/lease/validation/checkpoint events、projection/reducer与 architecture/contract tests | 真实 Git/worktree/lease/TOCTOU 行为已冻结为外部依赖,未完成项不由 Runtime 接管 |
 | Phase 3 | contract 已实现 | Capability/Approval/Sandbox/taint/rate-limit 数据合同、ports、projection/reducer与 security-contract tests | pending Approval 跨重启、actor identity、完整 Gateway/Sandbox/credential 行为均为冻结缺口 |
 | Phase 4 | 大部分实现 | Artifact CAS/metadata/redaction/keyring/forensic/retention/access、Episode/external delivery、Artifact-backed queue与 physical checkpoint tests | salvage-to-CAS adapter、完整生产访问/GC/联合恢复门禁仍未关闭 |
@@ -1538,7 +1538,7 @@ parallel group `P1` 只包含 W1-A 与 W1-B;两条lane均从 W0-G 创建,不得�
 
 | ID | 状态 | 顺序/依赖 | 独占路径 | 工作内容 |
 |---|---|---|---|---|
-| W1-A1 | pending | P1, after W0-G | `src/runtime/session/**`、`src/storage/v3-session-manager.ts`、`tests/runtime-v3/session/**` | 把不可序列化dependency registration移到read/reduce/restore前,固定open/restore factory顺序与identity/generation校验 |
+| W1-A1 | completed | P1, after W0-G | `src/runtime/session/**`、`src/storage/v3-session-manager.ts`、`tests/runtime-v3/session/**` | `259f2fb`;显式`restore()`先注册不可序列化依赖,再校验snapshot identity/generation,随后才打开Event Store/reduce/reconcile并返回handle |
 | W1-A2 | pending | after W1-A1 | 同W1-A1 | 完成create/fork staging、partial-create+cleanup structured outcome、publish前后kill/fault矩阵 |
 | W1-A3 | pending | after W1-A2 | 同W1-A1 | 补after-write/before-sync、parent-dir sync、disk-full、cross-stream receipt/fencing与uncertain recovery conformance |
 | W1-B1 | pending | P1, after W0-G | `src/runtime/artifacts/**`、artifact/storage tests | 将`SalvageReport`接入受授权CAS Artifact,绑定source digest、unattested、access与retention |
