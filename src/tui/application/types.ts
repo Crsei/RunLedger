@@ -1,6 +1,7 @@
 import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
 import type { SessionPickerState } from "../sessions/picker-reducer.ts";
 import type { SessionListResult } from "../sessions/types.ts";
+import type { SessionDetailResult } from "../sessions/types.ts";
 
 export type Loadable<T> =
   | { state: "idle" }
@@ -87,6 +88,14 @@ export type TuiEffect =
       generation: number;
       listRequestId: string;
       query: string;
+    }
+  | {
+      type: "session.enrich";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      enrichRequestId: string;
+      sessionId: string;
     };
 
 export type TuiAction =
@@ -140,6 +149,15 @@ export type TuiResult =
       generation: number;
       listRequestId: string;
       result: SessionListResult;
+    }
+  | {
+      type: "session.enrich.completed";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      enrichRequestId: string;
+      sessionId: string;
+      result: SessionDetailResult;
     };
 
 export interface TuiReduceOutput {

@@ -142,13 +142,7 @@ export function reduceTui(
       if (!sessions.some((session) => session.id === input.sessionId)) {
         return { state, effects: [] };
       }
-      return {
-        state: {
-          ...state,
-          sessionPicker: { ...state.sessionPicker, selectedSessionId: input.sessionId },
-        },
-        effects: [],
-      };
+      return beginSessionEnrich(state, input.sessionId);
     }
     case "session.picker.close": {
       if (state.overlay.state !== "session-picker") return { state, effects: [] };
@@ -198,14 +192,43 @@ export function reduceTui(
           ? state.sessionPicker.selectedSessionId
           : input.result.value.sessions[0]!.id
         : undefined;
-      return {
-        state: {
+      const listedState: TuiState = {
           ...state,
           queryGuard: { state: "idle" },
           sessionPicker: {
             ...state.sessionPicker,
             list,
             selectedSessionId,
+          },
+      };
+      return selectedSessionId
+        ? beginSessionEnrich(listedState, selectedSessionId)
+        : { state: listedState, effects: [] };
+    }
+    case "session.enrich.completed": {
+      if (
+        state.overlay.state !== "session-picker" ||
+        state.sessionPicker.generation !== input.generation ||
+        state.sessionPicker.selectedSessionId !== input.sessionId ||
+        state.sessionPicker.enrichRequestId !== input.enrichRequestId ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
+      return {
+        state: {
+          ...state,
+          queryGuard: { state: "idle" },
+          sessionPicker: {
+            ...state.sessionPicker,
+            detail: input.result.ok
+              ? { state: "ready", value: input.result.value }
+              : {
+                  state: "error",
+                  sessionId: input.sessionId,
+                  message: input.result.error.message,
+                  retryable: input.result.error.retryable,
+                },
           },
         },
         effects: [],
@@ -320,9 +343,52 @@ function beginSessionList(
 
 function ownedSessionEffectId(state: TuiState): string | undefined {
   if (state.queryGuard.state === "idle") return undefined;
-  return state.queryGuard.effectId === state.sessionPicker.listRequestId
+  return state.queryGuard.effectId === state.sessionPicker.listRequestId ||
+      state.queryGuard.effectId === state.sessionPicker.enrichRequestId ||
+      state.queryGuard.effectId === state.sessionPicker.previewRequestId
     ? state.queryGuard.effectId
     : undefined;
+}
+
+function beginSessionEnrich(
+  state: TuiState,
+  sessionId: string,
+): TuiReduceOutput {
+  const generation = state.sessionPicker.generation + 1;
+  const enrichRequestId = `session-enrich:${sessionId}:${generation}`;
+  const previousEffectId = ownedSessionEffectId(state);
+  if (state.queryGuard.state !== "idle" && !previousEffectId) {
+    return { state, effects: [] };
+  }
+  const effect: TuiEffect = {
+    type: "session.enrich",
+    effectId: enrichRequestId,
+    correlationId: enrichRequestId,
+    generation,
+    enrichRequestId,
+    sessionId,
+  };
+  return {
+    state: {
+      ...state,
+      queryGuard: {
+        state: "dispatching",
+        effectId: effect.effectId,
+        correlationId: effect.correlationId,
+      },
+      sessionPicker: {
+        ...state.sessionPicker,
+        generation,
+        selectedSessionId: sessionId,
+        enrichRequestId,
+        previewRequestId: undefined,
+        detail: { state: "loading", requestId: enrichRequestId, sessionId },
+        preview: { state: "idle" },
+      },
+    },
+    effects: [effect],
+    ...(previousEffectId ? { abortEffectIds: [previousEffectId] } : {}),
+  };
 }
 
 function updateCommandExecution(

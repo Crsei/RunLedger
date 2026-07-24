@@ -2,8 +2,17 @@ import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { LedgerHeader } from "../../runtime/ledger/types.ts";
+import type { ModelThinkingLevel } from "../../types.ts";
+import { canonicalDigest } from "../../runtime/protocol/v3/canonical-json.ts";
 import { MAX_RUNTIME_EVENT_BYTES, validateRuntimeEvent } from "../../runtime/protocol/v3/schemas.ts";
-import { readSessionPublication } from "../../runtime/session/session-publication.ts";
+import type { RuntimeEventV3 } from "../../runtime/protocol/v3/events.ts";
+import { replayRuntimeConfigurationEvents } from "../../runtime/session/conversation-replay.ts";
+import { scanJsonlV3EventLog } from "../../runtime/session/jsonl-v3-store.ts";
+import { reduceSessionEvents } from "../../runtime/session/reducer.ts";
+import {
+  readSessionPublication,
+  type SessionPublicationRecord,
+} from "../../runtime/session/session-publication.ts";
 import type { SessionCatalogPort } from "./catalog.ts";
 import type {
   SessionCatalogCurrentRef,
@@ -17,6 +26,8 @@ import type {
 
 const MAX_LEGACY_HEADER_BYTES = 64 * 1024;
 const FIRST_LINE_READ_BYTES = MAX_RUNTIME_EVENT_BYTES + 2;
+const MAX_ENRICH_BYTES = 64 * 1024 * 1024;
+const MAX_ENRICH_RECORDS = 1_000_000;
 
 export interface LocalSessionCatalogAdapterOptions {
   cwd: string;
@@ -89,8 +100,40 @@ export class LocalSessionCatalogAdapter implements SessionCatalogPort {
     enrichRequestId: string;
     signal: AbortSignal;
   }): Promise<SessionDetailResult> {
-    void input;
-    return failure("not_found", "session detail is not available in this slice", false);
+    void input.enrichRequestId;
+    if (input.signal.aborted) return failure("aborted", "session detail was cancelled", false);
+    const located = await this.locate(input.sessionId, input.signal);
+    if (!located) return failure("not_found", `session not found: ${input.sessionId}`, false);
+    try {
+      const before = await lstat(located.filePath);
+      if (!before.isFile() || before.isSymbolicLink()) {
+        return failure("corrupt", "session detail target is not a regular file", false);
+      }
+      if (before.size > MAX_ENRICH_BYTES) {
+        return failure("oversize", "session detail exceeds the 64 MiB scan limit", false);
+      }
+      const handle = await open(located.filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      let bytes: Buffer;
+      try {
+        bytes = await handle.readFile();
+      } finally {
+        await handle.close();
+      }
+      if (input.signal.aborted) return failure("aborted", "session detail was cancelled", false);
+      const after = await lstat(located.filePath);
+      if (
+        bytes.byteLength > MAX_ENRICH_BYTES ||
+        !sameFileSnapshot(before, after) ||
+        bytes.byteLength !== after.size
+      ) {
+        return failure("changed", "session changed while detail metadata was scanned", true);
+      }
+      return located.summary.format === "v3"
+        ? this.enrichV3(located.filePath, located.summary, bytes)
+        : this.enrichLegacy(located.filePath, located.summary, bytes);
+    } catch (error) {
+      return failure("corrupt", nodeErrorMessage(error), false);
+    }
   }
 
   async loadFullPreview(input: {
@@ -193,6 +236,166 @@ export class LocalSessionCatalogAdapter implements SessionCatalogPort {
     return this.currentSession?.id === sessionId &&
       this.currentSession.filePath === resolve(filePath);
   }
+
+  private async locate(
+    sessionId: string,
+    signal: AbortSignal,
+  ): Promise<{ filePath: string; summary: SessionSummary } | undefined> {
+    let names: string[];
+    try {
+      names = await readdir(this.sessionDir);
+    } catch {
+      return undefined;
+    }
+    for (const name of names.filter((value) => value.endsWith(".jsonl")).sort()) {
+      if (signal.aborted) return undefined;
+      const filePath = join(this.sessionDir, name);
+      const inspected = await this.inspectLite(filePath, signal);
+      if (inspected.ok && inspected.value.id === sessionId) {
+        return { filePath, summary: inspected.value };
+      }
+    }
+    return undefined;
+  }
+
+  private enrichLegacy(
+    filePath: string,
+    summary: SessionSummary,
+    bytes: Uint8Array,
+  ): SessionDetailResult {
+    const decoded = decodeStrictJsonLines(bytes);
+    if (!decoded.ok) return failure("corrupt", decoded.message, false);
+    if (decoded.records.length > MAX_ENRICH_RECORDS) {
+      return failure("oversize", "session detail exceeds the record-count limit", false);
+    }
+    if (!isLedgerHeader(decoded.records[0])) {
+      return failure("corrupt", "legacy session header is invalid", false);
+    }
+    let messageCount = 0;
+    let turnCount = 0;
+    let toolCount = 0;
+    let provider: string | undefined;
+    let model: string | undefined;
+    let thinkingLevel: ModelThinkingLevel | undefined;
+    for (const record of decoded.records.slice(1)) {
+      if (!isRecord(record) || record.sessionId !== summary.id || typeof record.type !== "string") {
+        return failure("corrupt", "legacy session contains an invalid entry", false);
+      }
+      if (record.type === "message") messageCount++;
+      else if (record.type === "turn") turnCount++;
+      else if (record.type === "tool_call") toolCount++;
+      if (
+        record.type === "custom" &&
+        isRecord(record.payload) &&
+        record.payload.kind === "runtime.config"
+      ) {
+        if (typeof record.payload.provider === "string") provider = record.payload.provider;
+        if (typeof record.payload.model === "string") model = record.payload.model;
+        if (isThinkingLevel(record.payload.thinkingLevel)) {
+          thinkingLevel = record.payload.thinkingLevel;
+        }
+      }
+    }
+    const header = decoded.records[0];
+    const parentSessionId = typeof header.metadata?.parentSessionId === "string"
+      ? header.metadata.parentSessionId
+      : undefined;
+    return {
+      ok: true,
+      value: {
+        summary,
+        filePath,
+        messageCount,
+        turnCount,
+        toolCount,
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+        ...(parentSessionId ? { parentSessionId } : {}),
+      },
+    };
+  }
+
+  private async enrichV3(
+    filePath: string,
+    summary: SessionSummary,
+    bytes: Uint8Array,
+  ): Promise<SessionDetailResult> {
+    const firstNewline = bytes.indexOf(0x0a);
+    if (firstNewline < 0) return failure("corrupt", "v3 session has no complete genesis", false);
+    const firstParsed = parseJson(new TextDecoder().decode(bytes.subarray(0, firstNewline)));
+    if (!firstParsed.ok) return failure("corrupt", "v3 genesis is malformed", false);
+    const genesis = validateRuntimeEvent(firstParsed.value);
+    if (!genesis.ok || genesis.value.stream.scope !== "session") {
+      return failure("corrupt", "v3 genesis is invalid", false);
+    }
+    const scan = scanJsonlV3EventLog(bytes, {
+      authorityId: genesis.value.authorityId,
+      tenantId: genesis.value.tenantId,
+      stream: genesis.value.stream,
+    });
+    if (scan.firstError || scan.tornTail) {
+      return failure("corrupt", scan.firstError?.message ?? "v3 session has a torn tail", false);
+    }
+    if (scan.events.length > MAX_ENRICH_RECORDS) {
+      return failure("oversize", "session detail exceeds the event-count limit", false);
+    }
+    const projection = reduceSessionEvents(scan.events);
+    if (!projection.ok) return failure("corrupt", projection.error.message, false);
+    const publication = await readPublishedV3Binding(filePath);
+    if (!publication.ok) return publication;
+    const published = publication.value;
+    const publishedHead = published.head
+      ? scan.events[published.head.sequence]
+      : undefined;
+    if (
+      !published.head ||
+      !publishedHead ||
+      published.head.eventId !== publishedHead.eventId ||
+      published.head.eventHash !== publishedHead.currentEventHash
+    ) {
+      return failure("changed", "v3 publication head does not match the verified log", true);
+    }
+    const publishedProjection = reduceSessionEvents(
+      scan.events.slice(0, published.head.sequence + 1),
+    );
+    if (
+      !publishedProjection.ok ||
+      published.projectionDigest !== canonicalDigest(publishedProjection.value)
+    ) {
+      return failure("corrupt", "v3 publication projection digest is invalid", false);
+    }
+    const configuration = replayRuntimeConfigurationEvents(scan.events);
+    if (!configuration.ok) return failure("corrupt", configuration.error.message, false);
+    const v3Summary: SessionSummary = {
+      ...summary,
+      lifecycle: mapLifecycle(projection.value.lifecycle),
+    };
+    const parentSessionId = projection.value.genesis.kind === "forked"
+      ? projection.value.genesis.parentSessionId
+      : undefined;
+    const lastModel = projection.value.modelRequests.at(-1)?.modelId;
+    return {
+      ok: true,
+      value: {
+        summary: v3Summary,
+        filePath,
+        messageCount: countV3Messages(scan.events),
+        turnCount: projection.value.turns.length,
+        toolCount: projection.value.toolCalls.length,
+        ...(configuration.value.provider ? { provider: configuration.value.provider } : {}),
+        ...(configuration.value.model ?? lastModel
+          ? { model: configuration.value.model ?? lastModel }
+          : {}),
+        ...(configuration.value.thinkingLevel
+          ? { thinkingLevel: configuration.value.thinkingLevel }
+          : {}),
+        headSequence: projection.value.headSequence,
+        headEventHash: projection.value.headEventHash,
+        ...(parentSessionId ? { parentSessionId } : {}),
+      },
+    };
+  }
 }
 
 async function readFirstLine(
@@ -291,4 +494,81 @@ function isNodeError(error: unknown, code: string): boolean {
 
 function nodeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function decodeStrictJsonLines(
+  bytes: Uint8Array,
+): { ok: true; records: unknown[] } | { ok: false; message: string } {
+  if (bytes.byteLength === 0 || bytes[bytes.byteLength - 1] !== 0x0a) {
+    return { ok: false, message: "session JSONL has a torn tail" };
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return { ok: false, message: "session JSONL is not valid UTF-8" };
+  }
+  if (text.includes("\r")) return { ok: false, message: "session JSONL uses invalid CR framing" };
+  const lines = text.slice(0, -1).split("\n");
+  if (lines.some((line) => line.length === 0)) {
+    return { ok: false, message: "session JSONL contains an empty record" };
+  }
+  if (lines.length > MAX_ENRICH_RECORDS) {
+    return { ok: false, message: "session JSONL exceeds the record-count limit" };
+  }
+  const records: unknown[] = [];
+  for (const line of lines) {
+    try {
+      records.push(JSON.parse(line) as unknown);
+    } catch {
+      return { ok: false, message: "session JSONL contains malformed JSON" };
+    }
+  }
+  return { ok: true, records };
+}
+
+async function readPublishedV3Binding(
+  filePath: string,
+): Promise<
+  | { ok: true; value: SessionPublicationRecord }
+  | { ok: false; error: SessionCatalogError }
+> {
+  const publication = await readSessionPublication(`${filePath}.state`);
+  if (!publication.ok) return failure("corrupt", publication.error.message, false);
+  if (!publication.value || publication.value.state !== "published") {
+    return failure("corrupt", "v3 session is not durably published", false);
+  }
+  return { ok: true, value: publication.value };
+}
+
+function isThinkingLevel(value: unknown): value is ModelThinkingLevel {
+  return value === "off" ||
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max";
+}
+
+function mapLifecycle(
+  lifecycle: string,
+): SessionSummary["lifecycle"] {
+  if (lifecycle === "active") return "active";
+  if (lifecycle === "stopped") return "stopped";
+  if (lifecycle === "closed") return "closed";
+  if (lifecycle === "corrupted" || lifecycle === "migration_failed") {
+    return "recovery-required";
+  }
+  return "unknown";
+}
+
+function countV3Messages(events: readonly RuntimeEventV3[]): number {
+  return events.filter((event) =>
+    event.type === "conversation.message_recorded" ||
+    (
+      event.type === "session.legacy_message_imported" &&
+      event.payload.disposition === "recovered"
+    )
+  ).length;
 }

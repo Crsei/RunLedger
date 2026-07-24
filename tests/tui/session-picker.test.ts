@@ -72,11 +72,16 @@ describe("session picker reducer correlation", () => {
         value: { sessions: [SESSIONS[1]!], diagnostics: [] },
       },
     });
-    expect(ready.state.queryGuard.state).toBe("idle");
+    expect(ready.state.queryGuard.state).toBe("dispatching");
     expect(ready.state.sessionPicker).toMatchObject({
       query: "beta",
       selectedSessionId: "session-b",
       list: { state: "ready" },
+      detail: { state: "loading", sessionId: "session-b" },
+    });
+    expect(ready.effects[0]).toMatchObject({
+      type: "session.enrich",
+      sessionId: "session-b",
     });
   });
 
@@ -93,6 +98,69 @@ describe("session picker reducer correlation", () => {
     expect(closed.state.sessionPicker.generation).toBeGreaterThan(
       opened.state.sessionPicker.generation,
     );
+  });
+
+  it("does not let A detail cross a rapid A to B selection", () => {
+    const initial = {
+      ...createInitialTuiState(BOOTSTRAP),
+      overlay: { state: "session-picker" as const, sourceInvocationId: "command:1" },
+      sessionPicker: {
+        ...createSessionPickerState(),
+        generation: 3,
+        selectedSessionId: "session-a",
+        list: { state: "ready" as const, value: { sessions: SESSIONS, diagnostics: [] } },
+      },
+    };
+    const selectingA = reduceTui(initial, {
+      type: "session.picker.select",
+      sessionId: "session-a",
+    });
+    const aEffect = selectingA.effects[0]!;
+    if (aEffect.type !== "session.enrich") throw new Error("expected enrich A");
+    const selectingB = reduceTui(selectingA.state, {
+      type: "session.picker.select",
+      sessionId: "session-b",
+    });
+    expect(selectingB.abortEffectIds).toEqual([aEffect.effectId]);
+    const bEffect = selectingB.effects[0]!;
+    if (bEffect.type !== "session.enrich") throw new Error("expected enrich B");
+    const staleA = reduceTui(selectingB.state, {
+      type: "session.enrich.completed",
+      effectId: aEffect.effectId,
+      correlationId: aEffect.correlationId,
+      generation: aEffect.generation,
+      enrichRequestId: aEffect.enrichRequestId,
+      sessionId: "session-a",
+      result: {
+        ok: true,
+        value: {
+          summary: SESSIONS[0]!,
+          filePath: "/session-a.jsonl",
+          messageCount: 9,
+        },
+      },
+    });
+    expect(staleA.state).toBe(selectingB.state);
+    const readyB = reduceTui(selectingB.state, {
+      type: "session.enrich.completed",
+      effectId: bEffect.effectId,
+      correlationId: bEffect.correlationId,
+      generation: bEffect.generation,
+      enrichRequestId: bEffect.enrichRequestId,
+      sessionId: "session-b",
+      result: {
+        ok: true,
+        value: {
+          summary: SESSIONS[1]!,
+          filePath: "/session-b.jsonl",
+          messageCount: 2,
+        },
+      },
+    });
+    expect(readyB.state.sessionPicker.detail).toMatchObject({
+      state: "ready",
+      value: { summary: { id: "session-b" }, messageCount: 2 },
+    });
   });
 });
 
@@ -132,5 +200,34 @@ describe("SessionPickerComponent", () => {
       expect(component.render(width).every((line) => line.length <= width)).toBe(true);
     }
     expect(component.render(80).join("\n")).toContain("1 unavailable session file");
+  });
+
+  it("renders independent detail loading, error, and ready states", () => {
+    const component = new SessionPickerComponent({
+      ...createSessionPickerState(),
+      selectedSessionId: "session-b",
+      list: { state: "ready", value: { sessions: SESSIONS, diagnostics: [] } },
+      detail: {
+        state: "ready",
+        value: {
+          summary: SESSIONS[1]!,
+          filePath: "/session-b.jsonl",
+          messageCount: 3,
+          turnCount: 2,
+          toolCount: 1,
+          headSequence: 8,
+          headEventHash: "abcd",
+        },
+      },
+    }, {
+      onSearch: () => {},
+      onSelect: () => {},
+      onInspect: () => {},
+      onCancel: () => {},
+    });
+    const rendered = component.render(80).join("\n");
+    expect(rendered).toContain("Session detail");
+    expect(rendered).toContain("messages=3 turns=2 tools=1");
+    expect(rendered).toContain("cwd: unknown");
   });
 });

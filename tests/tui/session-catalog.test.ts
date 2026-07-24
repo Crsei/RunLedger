@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LedgerHeader } from "../../src/runtime/ledger/types.ts";
+import type { LedgerEntry } from "../../src/runtime/ledger/types.ts";
 import { DEFAULT_RUNTIME_FEATURES } from "../../src/runtime/runtime-features.ts";
 import { V3SessionManager } from "../../src/storage/v3-session-manager.ts";
 import { LocalSessionCatalogAdapter } from "../../src/tui/sessions/local-catalog-adapter.ts";
@@ -38,6 +39,22 @@ function writeLegacy(
   };
   writeFileSync(filePath, `${JSON.stringify(header)}\n${tail}`, "utf8");
   return filePath;
+}
+
+function legacyEntry(
+  sessionId: string,
+  index: number,
+  type: LedgerEntry["type"],
+  payload: Record<string, unknown> = {},
+): LedgerEntry {
+  return {
+    id: `entry-${sessionId}-${index}`,
+    sessionId,
+    parentId: `parent-${index}`,
+    timestamp: 1_700_000_000_100 + index,
+    type,
+    payload,
+  };
 }
 
 afterEach(() => {
@@ -149,5 +166,82 @@ describe("LocalSessionCatalogAdapter.listLite", () => {
     ]);
     await published.closeAll();
     await staging.closeAll();
+  });
+});
+
+describe("LocalSessionCatalogAdapter.enrich", () => {
+  it.each([1, 2] as const)("scans legacy v%s metadata without projecting transcript", async (version) => {
+    const root = temporaryRoot();
+    const id = `legacy-detail-v${version}`;
+    const entries = [
+      legacyEntry(id, 1, "message", { role: "user", content: "hello" }),
+      legacyEntry(id, 2, "turn"),
+      legacyEntry(id, 3, "tool_call"),
+      legacyEntry(id, 4, "custom", {
+        kind: "runtime.config",
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
+        thinkingLevel: "high",
+      }),
+    ];
+    writeLegacy(
+      root,
+      version,
+      id,
+      { cwd: root, parentSessionId: "parent-session" },
+      `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+    const adapter = new LocalSessionCatalogAdapter({ cwd: root, sessionDir: root });
+    const detail = await adapter.enrich({
+      sessionId: id,
+      enrichRequestId: "enrich:1",
+      signal: new AbortController().signal,
+    });
+    if (!detail.ok) throw new Error(detail.error.message);
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        summary: { id, format: `v${version}` },
+        messageCount: 1,
+        turnCount: 1,
+        toolCount: 1,
+        provider: "deepseek",
+        model: "deepseek-v4-pro",
+        thinkingLevel: "high",
+        parentSessionId: "parent-session",
+      },
+    });
+  });
+
+  it("fully validates a published v3 chain and returns canonical head metadata", async () => {
+    const root = temporaryRoot();
+    const manager = await V3SessionManager.create({
+      cwd: root,
+      sessionDir: root,
+      features: { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true },
+    });
+    const adapter = new LocalSessionCatalogAdapter({ cwd: root, sessionDir: root });
+    const detail = await adapter.enrich({
+      sessionId: manager.sessionId(),
+      enrichRequestId: "enrich:v3",
+      signal: new AbortController().signal,
+    });
+    if (!detail.ok) throw new Error(detail.error.message);
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        summary: {
+          id: manager.sessionId(),
+          format: "v3",
+          lifecycle: "active",
+        },
+        messageCount: 0,
+        turnCount: 0,
+        toolCount: 0,
+        headSequence: 0,
+      },
+    });
+    expect(detail.value.headEventHash).toMatch(/^[a-f0-9]{64}$/u);
+    await manager.closeAll();
   });
 });

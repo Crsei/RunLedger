@@ -3,6 +3,7 @@ import { matchesKey } from "../index.ts";
 import type { SessionPickerState } from "../sessions/picker-reducer.ts";
 import type { SessionSummary } from "../sessions/types.ts";
 import { fitLinesToWidth } from "./render-width.ts";
+import { SessionDetailComponent } from "./session-detail.ts";
 
 export interface SessionPickerCallbacks {
   onSearch(query: string): void;
@@ -78,7 +79,8 @@ export class SessionPickerComponent implements Component {
       appendDiagnostics(lines, this.state.list.value.diagnostics.length);
       lines.push(`  (${selectedIndex + 1}/${sessions.length})  Enter inspect · Esc close`);
     }
-    return fitLinesToWidth(lines, width);
+    const detail = new SessionDetailComponent(this.state.detail).render(width);
+    return [...fitLinesToWidth(lines, width), ...detail];
   }
 }
 
