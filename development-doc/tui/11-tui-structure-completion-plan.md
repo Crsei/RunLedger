@@ -4,7 +4,7 @@
 >
 > 基线日期:2026-07-24。
 >
-> RunLedger 基线:`feat/agent-loop-resurrect@678b046b3cd11632c5e5bfc7ef5dd210e8f23ec3`。
+> RunLedger 规划快照:`feat/agent-loop-resurrect@2859346e9ead6b9d3d79c5f96835525a56988d2c`。
 >
 > 参考快照:
 >
@@ -27,7 +27,8 @@
 4. 让 live event、startup replay、session preview 共用同一 transcript projection;
 5. 把 loading、empty、error、disabled、stale-cache、discarded-stale-result、
    recovery-required 等状态/规则作为正式合同,不用空字符串或通用 `[note]` 假装成功;
-6. 严格按本文 P0-P12 顺序实施。前一阶段未达到退出门禁时,后一阶段不得开始合并。
+6. 使用"P 架构门禁 + V 可见切片"双轨实施:P0-P3 先建立公共骨架,command 与只读
+   session 轨随后按依赖交替推进;每个生产实现切片都必须能从正常 `runledger` 看到对应效果。
 
 ## 2. 当前事实与结构缺口
 
@@ -48,8 +49,8 @@
 
 | 缺口 | 当前证据 | 影响 |
 |---|---|---|
-| `InteractiveMode` 同时承担装配、输入、command、provider/auth、session replay、event reducer 和渲染 mutation | `src/tui/interactive-mode.ts` 共 1219 行 | 新展示面继续堆入会扩大状态分叉与测试耦合 |
-| command catalog 有静态数组,执行又有第二份 switch | `interactive-mode.ts:341-356` 与 `594-647` | 排序、描述、可用性和真实执行会漂移 |
+| `InteractiveMode` 同时承担装配、输入、command、provider/auth、session replay、event reducer 和渲染 mutation | `src/tui/interactive-mode.ts` 共 1336 行 | 新展示面继续堆入会扩大状态分叉与测试耦合 |
+| command catalog 有静态数组,执行又有第二份 switch | `interactive-mode.ts:344-360` 与 `705-764` | 排序、描述、可用性和真实执行会漂移 |
 | command 没有 typed invocation/result/lifecycle | 结果主要经 `showNotice()` 进入 `CustomMessageComponent` | 无法稳定表达 pending/running/succeeded/failed/cancelled/aborted 或审计 receipt |
 | command completion 与执行边界未固定 | selector 选中后由分支直接开 overlay 或再次注入文本 | 难以保证 completion accept 不越权执行 |
 | session 只有启动前 picker | `src/tui/session-selector.ts:25-60` | 主 TUI 没有统一 session 浏览、详情和动作入口 |
@@ -567,16 +568,28 @@ SessionIntent::Fork
 - fork 不创建第二套 UI attach/replay 逻辑,也不得在成功后再次发送 `session:resume`;
 - legacy fork 只显示明确的 `fork-to-v3 required` 能力状态,不能调用旧 `forkFrom` 假装 v3 lineage。
 
-## 7. 全局严格实施顺序
+## 7. P 架构门禁与 V 可见切片
 
-依赖链固定为:
+P0-P12 保留为架构、authority 与故障安全门禁,但不再等同于 commit 单位。依赖图固定为:
 
 ```text
-P0 -> P1 -> P2 -> P3 -> P4 -> P5 -> P6 -> P7 -> P8 -> P9 -> P10 -> P11 -> P12
+P0 -> P1 -> P2 -> P3
+                    ├──> P4 -> P5 ──┐
+                    └──> P6 -> P7 ──┴──> P8 -> P9 -> P10 -> P11 -> P12
 ```
 
-允许在后续阶段准备草稿,但不得越过前一阶段退出门禁合并代码。每阶段先编写能暴露缺口的
-RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得把失败测试提交到分支。
+- P0-P3 是所有后续切片的共同前置;
+- P4-P5 建立 command 单一真源、执行漏斗和展示框架;
+- P6-P7 建立只读 session catalog、picker、detail 与 preview;它们可在 P4-P5
+  框架建立后与单命令迁移交替推进;
+- P8 resume 必须同时等待 P5 command framework 与 P7 session read-only track 通过;
+- P10 fork 仍必须等待 P8 全部门禁和 P9 real PTY resume;
+- P11/P12 仍在 command/session 主骨架与 fork authority 稳定后开始。
+
+真正的实现、验收、提交和回退单位是下文的 V0-V30。V0 与 P12 是验证门禁,可以没有新增
+生产画面;V1-V30 每个切片必须从正常 `runledger` 看到真实增量。每个 V 切片先编写能暴露
+缺口的 RED test 并记录预期失败,随后完成实现与 GREEN;不得提交失败测试。P4/P5 或 P6/P7
+可在一个 V 切片内按既定子顺序连续关门,但不得倒置其内部合同。
 
 ### P0 基线冻结与合同测试
 
@@ -609,7 +622,9 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 - `src/tui/application/reducer.ts`
 - `src/tui/application/effects.ts`
 - `src/tui/application/effect-runner.ts`
+- `scripts/check-tui-boundaries.ts`
 - `tests/tui/application-reducer.test.ts`
+- `tests/tui/module-boundaries.test.ts`
 
 任务:
 
@@ -619,7 +634,10 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 4. reducer 只返回 state/effect,不得调用 terminal、fs、controller;
 5. 实现唯一 `EffectRunner`,只执行 effect 并返回 correlated `TuiResult`;
 6. 对 duplicate、late、success/error/cancelled/aborted/stale result 与 QueryGuard
-   `finally` release 写纯单测。
+   `finally` release 写纯单测;
+7. 增加 TUI dependency-boundary checker 并接入 `npm run check`:components 只能依赖
+   presentation types/theme/pi-tui,reducer/projector 禁止 fs/network/terminal/controller,
+   coordinator 只经 port 做 IO,adapter 不反向依赖 component,runtime/storage 不依赖 TUI。
 
 退出门禁:
 
@@ -627,6 +645,7 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 - effect completion 必须有 request/correlation ID;
 - runner 不能直接 mutation state/component,重试和 transition 下一阶段只能由 reducer 发 effect;
 - 同一 call stack 双 submit 只能有一个获得 `dispatching` reservation;
+- `npm run check` 会执行 TUI dependency-boundary checker,禁止边界有独立合同测试;
 - component 与 storage/runtime 类型尚未耦合。
 
 ### P2 统一 Timeline 与 tool reducer
@@ -709,6 +728,7 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 - `src/tui/commands/parser.ts`
 - `src/tui/commands/builtins.ts`
 - `src/tui/commands/executor.ts`
+- `src/tui/commands/compatibility-port.ts`
 
 任务:
 
@@ -721,7 +741,12 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 6. reserve 后在当前 `AppState` 上重新验证 catalog generation 与 availability;
 7. IO 只由 P1 `EffectRunner` 经 port 执行,异步结果回流 `TuiResult`;
 8. idle/running/side/unsupported 状态由 availability resolver 统一决定;
-9. registry generation 更新先于 completion snapshot。
+9. registry generation 更新先于 completion snapshot;
+10. 为尚未完成独立 V 切片迁移的现有 command 建立受限 compatibility bridge:
+    metadata、availability 与 invocation 仍只来自 canonical registry,handler 只产生带
+    correlation ID 的 compatibility effect,具体旧行为由注入的 port 执行;
+11. compatibility bridge 不得接入任何新 session mutation,不得在 `InteractiveMode`
+    保留第二份 command 数组或 submit switch,并须在 V30 前清零。
 
 退出门禁:
 
@@ -730,6 +755,8 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 - unknown/invalid args/disabled reason 有单测;
 - palette 旧 generation 或打开后 availability 变化时执行 fail closed;
 - handler 直接访问 controller/storage/terminal 在类型和合同测试上不可行;
+- compatibility command 也必须经 registry -> pure decision -> EffectRunner -> correlated
+  result,不得成为第二执行漏斗;
 - running+queue/reject 不调用 handler/effect;immediate 只能产生 effect-free ephemeral decision;
 - immediate stale/hidden/disabled 时不调用 handler;
 - synchronous decision 与 async terminal result 都能正确释放自己的 guard 状态;
@@ -748,15 +775,20 @@ RED test 并记录预期失败,随后在同一阶段完成实现与 GREEN;不得
 5. async effect 通过 correlation ID 更新原 row;
 6. secret args redaction、窄终端 wrapping、focus restore;
 7. 按 `historyPolicy` 验证 ephemeral/session/audit replay 行为;
-8. LoadedResources 的 slash count 从 registry 得到。
+8. LoadedResources 的 slash count 从 registry 得到;
+9. generic command row 能承接 compatibility result;每个后续单命令 V 切片必须把该命令
+   从 compatibility bridge 迁到最终 port/decision/projector,并补齐自己的 lifecycle 证明。
 
 退出门禁:
 
 - command catalog、palette、parser、executor 数量一致;
 - disabled command 可见时必须显示原因且不可执行;
-- async result 不生成孤立通用 `[note]`;
+- 已迁移 command 的 async result 不生成孤立通用 `[note]`;compatibility command 的既有
+  notice 只能作为有界过渡,不得脱离 correlated command row;
 - `session/audit` command echo/result 可按策略 replay,ephemeral UI command 不污染 transcript;
 - 持有 reservation 的 success/error/cancelled/aborted 都释放 QueryGuard 并按门禁 drain queue;
+- registry/palette/parser/executor 包含同一完整 command 集合,未迁移项只能以显式
+  compatibility execution strategy 存在;
 - 60/80/143 列 snapshot 通过。
 
 ### P6 Session catalog 与 normalized read-model
@@ -961,6 +993,75 @@ runledger --help
 real PTY: runledger -> /commands -> /sessions -> resume/fork smoke
 ```
 
+### V0-V30 可见切片
+
+V 切片固定为实际实现与提交顺序:
+
+| V | 依赖/关闭门禁 | 正常 TUI 可见结果 |
+|---|---|---|
+| V0 | P0 | 刷新当前 HEAD baseline、fixture 与 RED 名称;不修改生产行为,是可见规则的唯一前置例外 |
+| V1 | 关闭 P1 | 建立 canonical action/result/effect/reducer/runner;`ContextHeader` 显示真实 workspace、session identity 与 lifecycle snapshot |
+| V2 | 关闭 P2 | live 与 startup replay 经同一 Timeline/tool reducer 展示,等价事件产生相同行序列 |
+| V3 | 关闭 P3 | root shell、overlay 与输入所有权落地;`ActiveState` 显示 running、queue、freeze/recovery 状态 |
+| V4 | 关闭 P4 与 P5 framework | `/help` 与 `/commands` 使用单一 registry/palette/executor;现有未迁移命令进入受限 compatibility bridge |
+| V5 | 打开 P6/P7 read-only track | `/sessions` 显示 `listLite` loading/ready/empty/error、基础行、filter 与 selection,不执行 mutation |
+| V6 | P5 command slice | `/clear` 完成最终 decision、history policy 与 correlated lifecycle 展示 |
+| V7 | P6/P7 | `/sessions` 选中项经独立 lane `enrich`,显示 detail loading/error/metadata |
+| V8 | P5 + P6 | `/session` 显示当前 session 的 canonical detail,不从 footer/component 猜测 |
+| V9 | P7 | `/sessions` 选中项经第三条 lane `loadFullPreview`,复用主 Timeline |
+| V10 | P5 command slice | `/provider` 完成最终 availability、selector/effect/result 与 timeline 展示 |
+| V11 | 关闭 P6/P7 | session row/detail 显示 v1/v2/v3、lifecycle、compatibility、lineage、locked/corrupt/staging 状态 |
+| V12 | P5 command slice | `/login` 完成 provider/auth flow、取消/失败/redaction 与 timeline 展示 |
+| V13 | 打开 P8 | session action/transition row 显示真实 capability、inspect、confirm、frozen 与 recovery-required;尚不 dispatch resume |
+| V14 | P5 command slice | `/logout` 完成 capability、credential removal result 与 timeline 展示 |
+| V15 | 关闭 P8/P9 | `/resume` 完成 governed replacement、单次 bootstrap replay、draft freeze/restore 与 real PTY |
+| V16 | P5 command slice | `/model` 完成 selector、availability、selection result 与 footer/header 同步 |
+| V17 | P8/P9 | `/new` 通过受治理 session control intent 创建并 attach 新 session |
+| V18 | P5 command slice | `/thinking` 完成 selector、availability、selection result 与 footer 同步 |
+| V19 | 关闭 P10 | `/fork` 在 V15 PTY 通过后完成 durable child、authority replacement、lineage receipt 与单次 bootstrap replay |
+| V20 | P11 command/resource slice | `/plugins` 使用 extension generation,显示 ready/blocked/error/disabled 与 typed result |
+| V21 | P11 command/resource slice | `/skills` 使用同一 generation/read-model,显示 activation 与 diagnostic |
+| V22 | P11 command/resource slice | `/hooks` 显示 source、enabled、trust、activation 与 diagnostic |
+| V23 | P11 command/resource slice | `/mcp` 显示 server/tool/login 状态与 governed action result |
+| V24 | P11 command/resource slice | `/reload-extensions` 显示 idle gate、generation replacement、失败或 stale receipt |
+| V25 | P11 | queue read-model、隔离 item kind 与 cancel receipt 进入 `ActiveState`/Timeline |
+| V26 | P11 | approval request/decision/recovery-required 使用 typed row,不再走通用 notice |
+| V27 | P11 | task/goal lifecycle 使用 canonical projection,含 loading/empty/error |
+| V28 | 关闭 P11 | extension counts、activity、context、Footer、Header 与 LoadedResources 去重并只读同步 snapshot |
+| V29 | P5 command slice | `/prompt` 从 compatibility bridge 迁出,保持现有 prompt selector 能力与 typed result |
+| V30 | P5 command slice | `/quit` 从 compatibility bridge 迁出,统一 shutdown;bridge 数量必须归零 |
+
+`/help` 与 `/commands` 是唯一允许合并的 alias/同入口切片。其余 command 每个 V 切片只完成
+一个 canonical command;session detail/preview/transition 等组件切片与 command 切片按上表交替。
+V13 只开放真实 capability 与 transition projection,不是可点击的假 resume;V15 前任何
+resume mutation 都必须 fail closed。新 `/sessions`、`/session`、`/resume`、`/new`、`/fork`
+从创建起直接使用最终 port/decision,不得经过 compatibility bridge。
+
+### 每个 V 切片的退出合同
+
+V1-V30 必须同时满足:
+
+1. 正常入口:运行构建后的 `runledger`,不使用 demo/debug/showcase 专用产品入口;自动 PTY
+   可把 `RUNLEDGER_DIR`/session dir 指向临时 fixture,但启动的仍是标准 bin;
+2. 真实纵向闭环:本切片同时包含所需 port、纯 reducer/decision、effect/result、projection
+   与 component 接线,不存在只画 UI 或 component 直接 IO;
+3. 可见结果:在文档记录精确按键/命令、前置 fixture、预期 loading/ready/error/disabled/
+   recovery 画面;条件性不可用能力显示真实 disabled reason;
+4. Agent 证明:目标 unit/contract test、TUI boundary check、`npm run check`、`npm test`、
+   `npm run build` 与标准 bin PTY 通过,审查输出包含精确 `file:line` blocker;
+5. 人工证明:人工打开正常 TUI,核对信息真源、操作顺序、focus、隐私以及适用的
+   60/80/143 列布局;
+6. 提交边界:一个 V 切片一个 commit,只暂存该切片显式路径;失败测试、未完成 bridge
+   迁移或缺失人工/Agent 证据时不得进入下一个 V 切片。
+
+每次实施在本文维护以下证据表;`状态` 只允许
+`not-started/in-progress/agent-verified/human-verified/closed`:
+
+| V | P 门禁 | 正常 TUI 入口与预期效果 | Agent 证据 | 人工证据 | 状态 |
+|---|---|---|---|---|---|
+| V0 | P0 | 待实施时填写 | 待填写 | 不适用 | not-started |
+| V1-V30 | 见上表 | 各切片实施时逐行展开,不得整段批量标记 | 待填写 | 待填写 | not-started |
+
 ## 8. 预期目录边界
 
 文件名可在实现时微调,但职责不可重新合并进 `InteractiveMode`:
@@ -981,7 +1082,8 @@ src/tui/
 │   ├── registry.ts
 │   ├── parser.ts
 │   ├── builtins.ts
-│   └── executor.ts
+│   ├── executor.ts
+│   └── compatibility-port.ts
 ├── sessions/
 │   ├── types.ts
 │   ├── catalog.ts
@@ -996,12 +1098,18 @@ src/tui/
 │   ├── projector.ts
 │   └── tool-reducer.ts
 └── components/
+    ├── context-header.ts
     ├── timeline.ts
+    ├── active-state.ts
     ├── command-palette.ts
     ├── command-message.ts
     ├── session-picker.ts
-    └── session-detail.ts
+    ├── session-detail.ts
+    └── session-transition.ts
 ```
+
+`scripts/check-tui-boundaries.ts` 与 `tests/tui/module-boundaries.test.ts` 固化上述依赖方向,
+并由 `npm run check` 执行。
 
 依赖方向固定:
 
@@ -1042,7 +1150,11 @@ adapters -> runtime/storage/control-plane
 19. 不得在 core replay 完成前做次级 metadata 补水、发送 initial prompt 或允许 fork;
 20. 不得在 mutation failure 后显示普通 success notice;
 21. 不得在 TUI 第一轮完善中加入 delete、remote session、foreign session、动画、voice、
-    media、billing、dashboard 或 subagent-fork 语义。
+    media、billing、dashboard 或 subagent-fork 语义;
+22. 不得把 demo/debug/showcase 画面当作 V 切片的正常 TUI 可见证明;
+23. 不得只接 component 再把 port/reducer/effect 留到后续 V 切片;
+24. 不得让新 session command 或 mutation 进入 compatibility bridge;
+25. 不得在 V30 后保留 compatibility command、第二份 command switch 或旧 notice 漏斗。
 
 ## 10. 验收矩阵
 
@@ -1060,20 +1172,24 @@ adapters -> runtime/storage/control-plane
 | Resource | subscription、writer lease、target staging、terminal shutdown 无泄漏 |
 | Rendering | 60/80/143 列,CJK/ANSI/long cwd/long ID/large output |
 | Terminal | overlay focus、Esc/Ctrl+C/Ctrl+D、resize、IME draft 不丢 |
+| Layer boundary | dependency checker 禁止 component→IO、reducer→副作用、adapter→component 与 runtime/storage→TUI |
+| Visible slice | V1-V30 均有标准 `runledger` 操作路径、预期 frame、Agent 证明与人工证明 |
+| Migration | 每个 command 独立 V 切片;compatibility bridge 只减不增并在 V30 归零 |
 | Documentation | `00-overview.md` 与 `development-doc/00-index.md` 指向本文 |
 
 ## 11. 提交、回退与工作区边界
 
-- P0-P12 每阶段独立 commit,commit 只覆盖该阶段声明的显式路径;
-- 每阶段先在工作区运行 RED test 并记录预期失败,再实现到 GREEN 后提交;所有 commit 时
+- P0-P12 是门禁而不是 commit 单位;V0-V30 每个切片独立 commit,commit 只覆盖该切片声明的
+  显式路径;
+- 每个 V 切片先在工作区运行 RED test 并记录预期失败,再实现到 GREEN 后提交;所有 commit 时
   `npm run check` 与 `npm test` 必须通过,不得提交失败测试;
-- command 与 session 不放进同一个首次实现 commit;
+- 除表中明确的纵向交替点外,一个 V 切片不得同时迁移两个 command;`/help` 与 `/commands`
+  是唯一同入口例外;
 - 不使用 `git add .`、无路径 `git add -A`、`git commit -a` 或 `--no-verify`;
-- 回退单位是完整阶段;P4 command registry、P6 session catalog、P8 session transition 均保留
-  feature seam,回退时恢复旧入口但不删除 durable session 数据;
+- 回退单位是完整 V 切片;P4 command registry、P6 session catalog、P8 session transition
+  均保留 feature seam,回退时恢复旧入口但不删除 durable session 数据;
 - P8/P10 任何 uncertain outcome 一律进入 recovery-required,不得自动重试 mutation;
-- 当前主工作区已有其它任务的未提交文档和 `docs/agent-runtime.md`,实施本计划时继续视为
-  范围外改动。
+- 当前主工作区未跟踪的 `CLAUDE.md` 属于范围外文件,实施本计划时不得修改、暂存或删除。
 
 ## 12. 完成定义
 
@@ -1091,5 +1207,8 @@ adapters -> runtime/storage/control-plane
   `applySessionBootstrap()`,不二次 resume;
 - live、replay、preview 共用 Timeline;
 - legacy/v3、loading/error/stale-cache/recovery-required 能真实显示,stale response 能确定丢弃;
+- V1-V30 都有正常 `runledger` 可见增量、Agent 证明、人工证明与独立 commit;
+- 每个 command 已按独立 V 切片完成,compatibility bridge、旧 command switch 与未关联
+  notice 漏斗全部归零;
 - 完整验证链与 PTY 证据通过;
 - `00`-`09` 历史规格已与当前事实边界对齐。

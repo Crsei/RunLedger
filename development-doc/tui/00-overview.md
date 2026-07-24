@@ -1,7 +1,8 @@
 # RunLedger TUI 复刻计划 · 00 总览
 
 > 当前实施入口:截至 2026-07-24,M0-M7 复刻已经完成;下一轮 command/session 与
-> 整体应用结构完善以 `11-tui-structure-completion-plan.md` 为权威计划。
+> 整体应用结构完善以 `11-tui-structure-completion-plan.md` 为权威计划。该计划使用
+> P 架构/安全门禁与 V0-V30 正常 TUI 可见切片双轨推进,实际实现、验收和提交以 V 切片为单位。
 
 > 本目录是 RunLedger 复刻 pi TUI 的开发计划。pi 的 TUI 由两部分组成:
 >
@@ -106,7 +107,7 @@ development-doc/tui/            本计划所在目录
 | `08-cross-project-lessons.md` | 从 `claude-code-bun` REPL 提取的、与 TUI 框架无关的设计原则集结,作参照用 |
 | `09-remote-control-roadmap.md` | 进程级 singleton handle + 远程控制桥的远期设计,本期 M0–M7 不实现 |
 | `10-documentation-update-plan.md` | `08` / `09` 两份文档的历史更新计划与验收边界 |
-| `11-tui-structure-completion-plan.md` | 当前权威实施计划:command/session、统一 Timeline、应用协调层与严格前后置门禁 |
+| `11-tui-structure-completion-plan.md` | 当前权威实施计划:command/session、统一 Timeline、P 门禁 + V0-V30 正常 TUI 可见切片 |
 
 阅读顺序:`00 → 11`(当前实施主路径)→ `01/02/03`(历史架构与组件细节)→
 `04/05/06`(渲染与定制)→ `07/10`(历史计划)→ `08/09`(跨项目参照与远期设计)。

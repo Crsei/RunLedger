@@ -22,7 +22,7 @@
 | Runtime | [`runtime/03-tool-system-plan.md`](runtime/03-tool-system-plan.md) | ToolRegistry、ExecutionEnv、stdlib 工具、stream 桥接 | `AGENTS.md` §1.2、§5 |
 | Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md) | API、OAuth、provider、model catalog、凭据存储 | `AGENTS.md` §1.1 |
 | Storage / CLI | [`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | `.runledger/`、settings、session、CLI、TUI 装配 | [`project-cli-layout.md`](project-cli-layout.md) |
-| TUI | [`tui/11-tui-structure-completion-plan.md`](tui/11-tui-structure-completion-plan.md) | 当前权威计划:command/session、统一 Timeline、应用协调层与严格实施顺序 | [`tui/00-overview.md`](tui/00-overview.md)、`AGENTS.md` §1.2.x、§5 |
+| TUI | [`tui/11-tui-structure-completion-plan.md`](tui/11-tui-structure-completion-plan.md) | 当前权威计划:command/session、统一 Timeline、P 架构门禁 + V0-V30 正常 TUI 可见切片 | [`tui/00-overview.md`](tui/00-overview.md)、`AGENTS.md` §1.2.x、§5 |
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`11` 专题导航 | `AGENTS.md` §1.2.x、§5 |
 | TUI | [`tui/10-documentation-update-plan.md`](tui/10-documentation-update-plan.md) | 跨项目 lessons 与远程控制路线文档更新记录 | [`tui/08-cross-project-lessons.md`](tui/08-cross-project-lessons.md)、[`tui/09-remote-control-roadmap.md`](tui/09-remote-control-roadmap.md) |
 | Extension | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md) | Plugin、Skill、Hooks、MCP、OAuth、控制面与签名 marketplace 的 M0–M7 权威状态账本 | 计划 §0.3、§8.1 与 `AGENTS.md` §1.2.y |
