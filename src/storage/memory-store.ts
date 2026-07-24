@@ -237,16 +237,46 @@ export class MemoryStore {
 		if (stored.proposal.status !== "pending" || receipt.approvalId !== stored.proposal.approvalId || receipt.decision !== "allowed") {
 			throw new MemoryStoreError("approval_required", "memory publication requires the matching allowed approval receipt");
 		}
-		if (stored.proposal.diff.kind !== "create") {
-			throw new MemoryStoreError("invalid_record", "non-create memory proposal cannot use the publication path");
+		if (
+			stored.proposal.diff.kind !== "create" &&
+			stored.proposal.diff.kind !== "update"
+		) {
+			throw new MemoryStoreError("invalid_record", "memory publication only accepts create or update proposals");
 		}
 		if (stored.proposal.expiresAt !== undefined && Date.parse(stored.proposal.expiresAt) <= Date.parse(now)) {
 			throw new MemoryStoreError("approval_required", "expired memory proposal cannot be published");
 		}
+		if (stored.proposal.diff.kind === "update") {
+			const before = stored.proposal.diff.before;
+			if (before === undefined) {
+				throw new MemoryStoreError(
+					"invalid_record",
+					"update proposal is missing its canonical before reference",
+				);
+			}
+			const record = await this.readRecord(before.scope, before.memoryId);
+			if (
+				record.status !== "approved" ||
+				record.revision !== before.revision ||
+				record.contentDigest !== before.contentDigest ||
+				!sameScope(record.scope, stored.draft.scope)
+			) {
+				throw new MemoryStoreError(
+					"revision_conflict",
+					"canonical memory changed after update was proposed",
+				);
+			}
+		}
+		const baseRevision = stored.proposal.diff.kind === "update"
+			? stored.proposal.diff.before?.revision
+			: stored.draft.revision;
+		if (baseRevision === undefined) {
+			throw new MemoryStoreError("invalid_record", "memory proposal has no base revision");
+		}
 		const published: MemoryRecord = {
 			...stored.draft,
 			status: "approved",
-			revision: stored.draft.revision + 1,
+			revision: baseRevision + 1,
 			approvalReceipt: receipt,
 			updatedAt: now,
 		};

@@ -679,6 +679,12 @@ const commandAgentEffectBase = {
 	durableCursor: eventCursor,
 	receiptDigest: digest,
 } as const;
+const commandSpecialtyEffectBase = {
+	sessionId: id("session"),
+	domainRevision: revision,
+	durableCursor: eventCursor,
+	receiptDigest: digest,
+} as const;
 /**
  * command terminal 必须自包含完整结果，不能只保留 digest 再依赖进程内 cache。
  * 事件层仍受 64 KiB payload 总上限约束，内部集合另设显式上限。
@@ -737,6 +743,65 @@ const commandEffect = Type.Union([
 	exact({ type: Type.Literal("agent:cancel"), ...commandAgentEffectBase }),
 	exact({ type: Type.Literal("agent:resume"), ...commandAgentEffectBase }),
 	exact({ type: Type.Literal("agent:handoff"), ...commandAgentEffectBase }),
+	exact({
+		type: Type.Literal("plan:enter"),
+		...commandSpecialtyEffectBase,
+		stateKind: Type.Union([
+			Type.Literal("inactive"),
+			Type.Literal("pending_activation"),
+			Type.Literal("active"),
+			Type.Literal("awaiting_approval"),
+			Type.Literal("exit_pending"),
+		]),
+		modeRevision: revision,
+	}),
+	exact({
+		type: Type.Literal("plan:resolve"),
+		...commandSpecialtyEffectBase,
+		stateKind: Type.Union([
+			Type.Literal("inactive"),
+			Type.Literal("pending_activation"),
+			Type.Literal("active"),
+			Type.Literal("awaiting_approval"),
+			Type.Literal("exit_pending"),
+		]),
+		modeRevision: revision,
+	}),
+	exact({
+		type: Type.Literal("context:compact"),
+		...commandSpecialtyEffectBase,
+		attemptStatus: Type.Union([
+			Type.Literal("started"),
+			Type.Literal("completed"),
+			Type.Literal("failed"),
+			Type.Literal("suppressed"),
+		]),
+		checkpointId: Type.Union([id("checkpoint"), Type.Null()]),
+	}),
+	exact({
+		type: Type.Literal("memory:propose"),
+		...commandSpecialtyEffectBase,
+		proposalId: id("memoryProposal"),
+		proposalStatus: Type.Union([
+			Type.Literal("pending"),
+			Type.Literal("approved"),
+			Type.Literal("rejected"),
+			Type.Literal("expired"),
+			Type.Literal("revoked"),
+		]),
+	}),
+	exact({
+		type: Type.Literal("memory:resolve"),
+		...commandSpecialtyEffectBase,
+		proposalId: id("memoryProposal"),
+		proposalStatus: Type.Union([
+			Type.Literal("pending"),
+			Type.Literal("approved"),
+			Type.Literal("rejected"),
+			Type.Literal("expired"),
+			Type.Literal("revoked"),
+		]),
+	}),
 ]);
 const commandErrorDetailValue = Type.Union([
 	Type.String({ maxLength: 512 }),

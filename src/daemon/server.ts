@@ -43,6 +43,13 @@ import {
 	validateControlPlaneV2AgentCommand,
 	type MultiAgentControlPlanePort,
 } from "../runtime/control-plane/multi-agent-contracts.ts";
+import {
+	isControlPlaneV2PlanContextMemoryCommandType,
+	isControlPlaneV2PlanContextMemoryQueryType,
+	validateControlPlaneV2PlanContextMemoryCommand,
+	validateControlPlaneV2PlanContextMemoryQuery,
+	type PlanContextMemoryControlPlanePort,
+} from "../runtime/control-plane/plan-context-memory-contracts.ts";
 
 export interface HeadlessDaemonServerAccess {
 	environment: "production" | "test";
@@ -65,6 +72,7 @@ export interface HeadlessDaemonServerOptions {
 	maxSubscriptionsPerConnection?: number;
 	access: HeadlessDaemonServerAccess;
 	multiAgent?: MultiAgentControlPlanePort;
+	planContextMemory?: PlanContextMemoryControlPlanePort;
 }
 
 interface DaemonSubscription {
@@ -101,6 +109,7 @@ export class HeadlessDaemonServer {
 	readonly #queryTypes: ReadonlySet<ControlPlaneQueryType>;
 	readonly #eventSubscription: boolean;
 	readonly #multiAgent: MultiAgentControlPlanePort | undefined;
+	readonly #planContextMemory: PlanContextMemoryControlPlanePort | undefined;
 	readonly #connections = new Map<string, DaemonConnection>();
 
 	public constructor(options: HeadlessDaemonServerOptions) {
@@ -123,6 +132,7 @@ export class HeadlessDaemonServer {
 		this.#queryTypes = new Set(options.access.queryTypes);
 		this.#eventSubscription = options.access.eventSubscription;
 		this.#multiAgent = options.multiAgent;
+		this.#planContextMemory = options.planContextMemory;
 		this.#handshakeCapabilities = {
 			serverInstanceId: options.serverInstanceId,
 			features: [...options.access.features],
@@ -144,6 +154,85 @@ export class HeadlessDaemonServer {
 				message: "Control Plane connection is not registered",
 				retryable: false,
 			});
+		}
+		if (
+			typeof frame === "object" &&
+			frame !== null &&
+			"type" in frame &&
+			(
+				isControlPlaneV2PlanContextMemoryCommandType(frame.type) ||
+				isControlPlaneV2PlanContextMemoryQueryType(frame.type)
+			)
+		) {
+			if (!connection.context) {
+				return errorResponse(requestIdOf(frame), {
+					code: "handshake_required",
+					message: "Control Plane handshake must complete before requests",
+					retryable: false,
+				});
+			}
+			if (connection.context.handshake.controlPlaneSchemaVersion < 2) {
+				return errorResponse(requestIdOf(frame), {
+					code: "unsupported_schema",
+					message: "Plan/Context/Memory requests require Control Plane schema v2",
+					retryable: false,
+				});
+			}
+			if (!connection.context.handshake.features.includes("plan_context_memory")) {
+				return errorResponse(requestIdOf(frame), {
+					code: "unsupported_feature",
+					message: "feature plan_context_memory was not negotiated",
+					retryable: false,
+				});
+			}
+			if (!this.#planContextMemory) {
+				return errorResponse(requestIdOf(frame), {
+					code: "unsupported_feature",
+					message: "Plan/Context/Memory Control Plane adapter is unavailable",
+					retryable: false,
+				});
+			}
+			if (isControlPlaneV2PlanContextMemoryCommandType(frame.type)) {
+				const validatedSpecialty = validateControlPlaneV2PlanContextMemoryCommand(frame);
+				if (!validatedSpecialty.ok) {
+					return errorResponse(requestIdOf(frame), validatedSpecialty.error);
+				}
+				if (
+					validatedSpecialty.value.authorityId !== this.#authorityId ||
+					validatedSpecialty.value.tenantId !== this.#tenantId ||
+					validatedSpecialty.value.principalId !== connection.context.peer.principalId
+				) {
+					return errorResponse(validatedSpecialty.value.commandId, {
+						code: "unauthorized_peer",
+						message: "specialty command scope does not match authenticated peer",
+						retryable: false,
+					});
+				}
+				const result = await this.#planContextMemory.execute(
+					validatedSpecialty.value,
+					connection.context,
+				);
+				return result.ok
+					? result.value
+					: errorResponse(validatedSpecialty.value.commandId, result.error);
+			}
+			const validatedQuery = validateControlPlaneV2PlanContextMemoryQuery(frame);
+			if (!validatedQuery.ok) return errorResponse(requestIdOf(frame), validatedQuery.error);
+			if (
+				validatedQuery.value.authorityId !== this.#authorityId ||
+				validatedQuery.value.tenantId !== this.#tenantId ||
+				validatedQuery.value.principalId !== connection.context.peer.principalId
+			) {
+				return errorResponse(validatedQuery.value.queryId, {
+					code: "unauthorized_peer",
+					message: "specialty query scope does not match authenticated peer",
+					retryable: false,
+				});
+			}
+			const result = await this.#planContextMemory.query(validatedQuery.value, connection.context);
+			return result.ok
+				? result.value
+				: errorResponse(validatedQuery.value.queryId, result.error);
 		}
 		if (
 			typeof frame === "object" &&

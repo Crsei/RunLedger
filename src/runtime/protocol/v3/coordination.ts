@@ -70,13 +70,28 @@ export const AGENT_CONTROL_PLANE_COMMAND_TYPES = [
 
 export type AgentControlPlaneCommandType =
 	(typeof AGENT_CONTROL_PLANE_COMMAND_TYPES)[number];
+
+/** canonical command journal 对 schema v2 Plan/Context/Memory mutation 的 additive 扩展。 */
+export const PLAN_CONTEXT_MEMORY_CONTROL_PLANE_COMMAND_TYPES = [
+	"plan:enter",
+	"plan:resolve",
+	"context:compact",
+	"memory:propose",
+	"memory:resolve",
+] as const;
+
+export type PlanContextMemoryControlPlaneCommandType =
+	(typeof PLAN_CONTEXT_MEMORY_CONTROL_PLANE_COMMAND_TYPES)[number];
+
 export type CanonicalCommandType =
 	| ControlPlaneCommandType
-	| AgentControlPlaneCommandType;
+	| AgentControlPlaneCommandType
+	| PlanContextMemoryControlPlaneCommandType;
 
 export const CANONICAL_COMMAND_TYPES = [
 	...CONTROL_PLANE_COMMAND_TYPES,
 	...AGENT_CONTROL_PLANE_COMMAND_TYPES,
+	...PLAN_CONTEXT_MEMORY_CONTROL_PLANE_COMMAND_TYPES,
 ] as const satisfies readonly CanonicalCommandType[];
 
 const CANONICAL_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(CANONICAL_COMMAND_TYPES);

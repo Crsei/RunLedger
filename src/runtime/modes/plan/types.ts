@@ -1,13 +1,14 @@
 /** Plan Mode 的版本化公共状态合同；状态迁移、store、policy 与工具不在本模块。 */
 
 import type { ApprovalReceiptRef, ArtifactRef } from "../../protocol/v3/capability.ts";
-import type { ExpectedRevision } from "../../protocol/v3/events.ts";
+import type { EventCursor, ExpectedRevision } from "../../protocol/v3/events.ts";
 import type {
 	ApprovalId,
 	AuthorityId,
 	CommandId,
 	PlanId,
 	PrincipalId,
+	ReceiptId,
 	SessionId,
 	TenantId,
 	WorkspaceId,
@@ -61,6 +62,43 @@ export interface ApprovedPlanRef {
 	contentDigest: string;
 	artifact: ArtifactRef;
 	approvalReceipt: ApprovalReceiptRef;
+}
+
+interface PlanImplementationHandoffBase {
+	schemaVersion: typeof PLAN_MODE_CONTRACT_VERSION;
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	receiptId: ReceiptId;
+	sourceSessionId: SessionId;
+	approvedPlan: ApprovedPlanRef;
+	implementationPromptDigest: string;
+	policySnapshotDigest: string;
+	contextSeedDigest: string;
+	createdAt: string;
+	receiptDigest: string;
+}
+
+export type PlanImplementationHandoffReceipt =
+	| (PlanImplementationHandoffBase & {
+			action: "same_session";
+			targetSessionId: SessionId;
+	  })
+	| (PlanImplementationHandoffBase & {
+			action: "fresh_context";
+			targetSessionId: null;
+	  });
+
+/** fresh-context fork 只允许批准计划和显式 invariant artifacts，不能携带 raw message tail。 */
+export interface ApprovedPlanForkSeed {
+	schemaVersion: typeof PLAN_MODE_CONTRACT_VERSION;
+	authorityId: AuthorityId;
+	tenantId: TenantId;
+	parentSessionId: SessionId;
+	parentCursor: EventCursor;
+	approvedPlan: ApprovedPlanRef;
+	invariantArtifacts: readonly ArtifactRef[];
+	policySnapshotDigest: string;
+	seedDigest: string;
 }
 
 interface PlanModeStateBase {

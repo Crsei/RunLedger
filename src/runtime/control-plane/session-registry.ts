@@ -14,6 +14,8 @@ import {
 import type { ControlPlaneResult } from "./errors.ts";
 import { controlPlaneFailure } from "./errors.ts";
 import type { ControlPlaneSessionHandle, SessionBootstrap } from "./types.ts";
+import { isApprovedPlanForkSeed } from "../modes/plan/schema.ts";
+import type { ApprovedPlanForkSeed } from "../modes/plan/types.ts";
 
 type FailedControlPlaneResult = Extract<ControlPlaneResult<never>, { ok: false }>;
 
@@ -113,6 +115,10 @@ export interface SessionRuntimeFactoryPort {
 		parentCursor: EventCursor,
 		goalMode: "continue_existing_goal" | "create_child_goal",
 	): Promise<ControlPlaneResult<ManagedSessionRuntime>>;
+}
+
+export interface ApprovedPlanSessionRuntimeFactoryPort extends SessionRuntimeFactoryPort {
+	forkApprovedPlan(seed: ApprovedPlanForkSeed): Promise<ControlPlaneResult<ManagedSessionRuntime>>;
 }
 
 interface ActiveRuntime {
@@ -360,6 +366,20 @@ export class SessionRuntimeRegistry {
 		goalMode: "continue_existing_goal" | "create_child_goal",
 	): Promise<ControlPlaneResult<SessionBootstrap>> {
 		return this.#replace("forked", () => this.#factory.fork(parentSessionId, parentCursor, goalMode));
+	}
+
+	public forkApprovedPlan(seed: ApprovedPlanForkSeed): Promise<ControlPlaneResult<SessionBootstrap>> {
+		if (!isApprovedPlanForkSeed(seed)) {
+			return Promise.resolve(controlPlaneFailure("invalid_request", "approved-plan fork seed is invalid"));
+		}
+		if (!("forkApprovedPlan" in this.#factory) || typeof this.#factory.forkApprovedPlan !== "function") {
+			return Promise.resolve(controlPlaneFailure(
+				"unsupported_feature",
+				"session runtime factory does not support approved-plan forks",
+			));
+		}
+		const factory = this.#factory as ApprovedPlanSessionRuntimeFactoryPort;
+		return this.#replace("forked", () => factory.forkApprovedPlan(seed));
 	}
 
 	#replace(

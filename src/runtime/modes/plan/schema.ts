@@ -3,13 +3,16 @@
 import { Type, type TSchema } from "typebox";
 import { Check } from "typebox/value";
 import { ArtifactRefSchema, ApprovalReceiptRefSchema, isApprovalReceiptRef } from "../../protocol/v3/capability.ts";
+import { canonicalDigest } from "../../protocol/v3/canonical-json.ts";
 import { createSessionEventStreamRef, sameRuntimeEventStream } from "../../protocol/v3/events.ts";
-import { ExpectedRevisionSchema } from "../../protocol/v3/event-references.ts";
+import { EventCursorSchema, ExpectedRevisionSchema } from "../../protocol/v3/event-references.ts";
 import {
 	PLAN_MODE_CONTRACT_VERSION,
+	type ApprovedPlanForkSeed,
 	type ApprovedPlanRef,
 	type PlanApprovalRef,
 	type PlanArtifactRef,
+	type PlanImplementationHandoffReceipt,
 	type PlanModeCommand,
 	type PlanModeState,
 } from "./types.ts";
@@ -73,6 +76,52 @@ export const ApprovedPlanRefSchema = Type.Unsafe<ApprovedPlanRef>(exact({
 	contentDigest: digest,
 	artifact: ArtifactRefSchema,
 	approvalReceipt: ApprovalReceiptRefSchema,
+}));
+
+export const PlanImplementationHandoffReceiptSchema =
+	Type.Unsafe<PlanImplementationHandoffReceipt>(Type.Union([
+		exact({
+			schemaVersion: Type.Literal(PLAN_MODE_SCHEMA_VERSION),
+			authorityId: id("authority"),
+			tenantId: id("tenant"),
+			receiptId: id("receipt"),
+			sourceSessionId: id("session"),
+			approvedPlan: ApprovedPlanRefSchema,
+			implementationPromptDigest: digest,
+			policySnapshotDigest: digest,
+			contextSeedDigest: digest,
+			action: Type.Literal("same_session"),
+			targetSessionId: id("session"),
+			createdAt: timestamp,
+			receiptDigest: digest,
+		}),
+		exact({
+			schemaVersion: Type.Literal(PLAN_MODE_SCHEMA_VERSION),
+			authorityId: id("authority"),
+			tenantId: id("tenant"),
+			receiptId: id("receipt"),
+			sourceSessionId: id("session"),
+			approvedPlan: ApprovedPlanRefSchema,
+			implementationPromptDigest: digest,
+			policySnapshotDigest: digest,
+			contextSeedDigest: digest,
+			action: Type.Literal("fresh_context"),
+			targetSessionId: Type.Null(),
+			createdAt: timestamp,
+			receiptDigest: digest,
+		}),
+	]));
+
+export const ApprovedPlanForkSeedSchema = Type.Unsafe<ApprovedPlanForkSeed>(exact({
+	schemaVersion: Type.Literal(PLAN_MODE_SCHEMA_VERSION),
+	authorityId: id("authority"),
+	tenantId: id("tenant"),
+	parentSessionId: id("session"),
+	parentCursor: EventCursorSchema,
+	approvedPlan: ApprovedPlanRefSchema,
+	invariantArtifacts: Type.Array(ArtifactRefSchema, { maxItems: 16 }),
+	policySnapshotDigest: digest,
+	seedDigest: digest,
 }));
 
 const stateBase = {
@@ -200,6 +249,34 @@ export function isApprovedPlanRef(value: unknown): value is ApprovedPlanRef {
 		value.artifact.storedDigest === value.contentDigest &&
 		value.approvalReceipt.decision === "allowed" &&
 		(value.artifact.workspaceId === undefined || value.artifact.workspaceId === value.workspaceId)
+	);
+}
+
+export function isPlanImplementationHandoffReceipt(
+	value: unknown,
+): value is PlanImplementationHandoffReceipt {
+	if (!Check(PlanImplementationHandoffReceiptSchema, value)) return false;
+	const receipt = value as PlanImplementationHandoffReceipt;
+	const { receiptDigest, ...body } = receipt;
+	return (
+		isApprovedPlanRef(receipt.approvedPlan) &&
+		sameScope(receipt, receipt.approvedPlan) &&
+		(receipt.action === "fresh_context" || receipt.targetSessionId === receipt.sourceSessionId) &&
+		receiptDigest === canonicalDigest(body)
+	);
+}
+
+export function isApprovedPlanForkSeed(value: unknown): value is ApprovedPlanForkSeed {
+	if (!Check(ApprovedPlanForkSeedSchema, value)) return false;
+	const seed = value as ApprovedPlanForkSeed;
+	const { seedDigest, ...body } = seed;
+	return (
+		isApprovedPlanRef(seed.approvedPlan) &&
+		sameScope(seed, seed.approvedPlan) &&
+		seed.parentCursor.stream.scope === "session" &&
+		seed.parentCursor.stream.sessionId === seed.parentSessionId &&
+		seed.invariantArtifacts.every((artifact) => sameScope(seed, artifact)) &&
+		seedDigest === canonicalDigest(body)
 	);
 }
 

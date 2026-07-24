@@ -22,9 +22,17 @@ import type {
 	TurnStartCommand,
 } from "../../../src/runtime/control-plane/types.ts";
 import type {
+	ApprovedPlanSessionRuntimeFactoryPort,
 	ManagedSessionRuntime,
 	SessionRuntimeFactoryPort,
 } from "../../../src/runtime/control-plane/session-registry.ts";
+import {
+	createApprovedPlanForkSeed,
+} from "../../../src/runtime/modes/plan/implementation-handoff.ts";
+import type {
+	ApprovedPlanForkSeed,
+	ApprovedPlanRef,
+} from "../../../src/runtime/modes/plan/types.ts";
 import {
 	DaemonAgentSessionRuntimeFactoryDecorator,
 	DaemonOwnedAgentRuntime,
@@ -54,6 +62,7 @@ import type {
 	ToolExecutionGatewayRequest,
 	ToolResultArtifactSink,
 } from "../../../src/runtime/types.ts";
+import type { ApprovalReceiptRef } from "../../../src/runtime/protocol/v3/capability.ts";
 import type { DurableQueueReceipt } from "../../../src/runtime/session/agent-loop-events.ts";
 import { readAllRuntimeEvents } from "../../../src/runtime/session/snapshot.ts";
 import {
@@ -741,6 +750,96 @@ class SingleRuntimeFactory implements SessionRuntimeFactoryPort {
 	}
 }
 
+class SpecializedRuntimeFactory implements ApprovedPlanSessionRuntimeFactoryPort {
+	public genericForkCount = 0;
+	public readonly approvedSeeds: ApprovedPlanForkSeed[] = [];
+	readonly #runtime: ManagedSessionRuntime;
+
+	public constructor(runtime: ManagedSessionRuntime) {
+		this.#runtime = runtime;
+	}
+
+	public start() {
+		return Promise.resolve({ ok: true as const, value: this.#runtime });
+	}
+
+	public resume(_sessionId: SessionId) {
+		return this.start();
+	}
+
+	public fork(
+		_parentSessionId: SessionId,
+		_parentCursor: EventCursor,
+		_goalMode: "continue_existing_goal" | "create_child_goal",
+	) {
+		this.genericForkCount += 1;
+		return this.start();
+	}
+
+	public forkApprovedPlan(seed: ApprovedPlanForkSeed) {
+		this.approvedSeeds.push(structuredClone(seed));
+		return this.start();
+	}
+}
+
+function approvedPlanSeed(manager: V3SessionManager): ApprovedPlanForkSeed {
+	const identity = manager.identity();
+	const contentDigest = canonicalDigest("daemon decorator approved plan");
+	const workspaceId = createRuntimeId("workspace", "daemon-decorator-plan");
+	const artifact = {
+		authorityId: identity.authorityId,
+		tenantId: identity.tenantId,
+		artifactId: createRuntimeId("artifact", "daemon-decorator-plan"),
+		storedDigest: contentDigest,
+		kind: "change_proposal" as const,
+		originalSize: 30,
+		storedSize: 30,
+		mediaType: "text/markdown",
+		redaction: "metadata_only" as const,
+		transformReceipt: createRuntimeId("receipt", "daemon-decorator-transform"),
+		workspaceId,
+	};
+	const approvalBody: Omit<ApprovalReceiptRef, "receiptDigest"> = {
+		authorityId: identity.authorityId,
+		tenantId: identity.tenantId,
+		principalId: identity.principalId,
+		receiptId: createRuntimeId("receipt", "daemon-decorator-approval"),
+		approvalId: createRuntimeId("approval", "daemon-decorator-plan"),
+		requestId: createRuntimeId("command", "daemon-decorator-plan"),
+		requestDigest: canonicalDigest("daemon decorator request"),
+		ticketDigest: canonicalDigest("daemon decorator ticket"),
+		decision: "allowed",
+		decisionRevision: 1,
+		decidedBy: identity.principalId,
+		decidedAt: "2026-07-24T00:00:00.000Z",
+		evidenceComplete: true,
+		evidenceTruncated: false,
+		originalInputDigest: canonicalDigest("daemon decorator input"),
+	};
+	const approvedPlan: ApprovedPlanRef = {
+		schemaVersion: 1,
+		authorityId: identity.authorityId,
+		tenantId: identity.tenantId,
+		planId: createRuntimeId("plan", "daemon-decorator-plan"),
+		workspaceId,
+		revision: 1,
+		contentDigest,
+		artifact,
+		approvalReceipt: {
+			...approvalBody,
+			receiptDigest: canonicalDigest(approvalBody),
+		},
+	};
+	const parentCursor = manager.writer().currentHead();
+	if (!parentCursor) throw new Error("daemon decorator fixture has no cursor");
+	return createApprovedPlanForkSeed({
+		parentCursor,
+		approvedPlan,
+		invariantArtifacts: [],
+		policySnapshotDigest: canonicalDigest("daemon decorator policy"),
+	});
+}
+
 async function submitStart(
 	runtime: DaemonOwnedAgentRuntime,
 	command: TurnStartCommand,
@@ -862,6 +961,26 @@ describe("daemon-owned Agent runtime", () => {
 			expect(execute).toBeLessThan(commit);
 		}
 		expect(executionEvents.filter((event) => event === "prepare:model")).toHaveLength(2);
+	});
+
+	it("forwards approved-plan fork through the specialized delegate without invoking generic fork", async () => {
+		const { manager } = await managerFixture();
+		const bindingFactory = new RecordingBindingFactory();
+		const agents = new DaemonOwnedAgentRuntime({ sessions: bindingFactory });
+		const delegate = new SpecializedRuntimeFactory(new ManagedFixture(manager));
+		const decorated = new DaemonAgentSessionRuntimeFactoryDecorator(delegate, agents);
+		const seed = approvedPlanSeed(manager);
+
+		const forked = await decorated.forkApprovedPlan(seed);
+		expect(forked.ok).toBe(true);
+		expect(delegate.genericForkCount).toBe(0);
+		expect(delegate.approvedSeeds).toEqual([seed]);
+		expect(bindingFactory.bindings).toHaveLength(1);
+		if (!forked.ok) throw new Error(forked.error.message);
+		await expect(forked.value.teardown("shutdown")).resolves.toEqual({
+			ok: true,
+			value: undefined,
+		});
 	});
 
 	it("keeps the writer owned and skips managed teardown when bounded drain times out", async () => {

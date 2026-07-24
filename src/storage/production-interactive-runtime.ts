@@ -25,6 +25,7 @@ import {
 	createRuntimeId,
 	type CommandId,
 	type RepositoryId,
+	type ResourceId,
 	type WorkspaceId,
 } from "../runtime/protocol/v3/ids.ts";
 import {
@@ -61,6 +62,10 @@ import {
 	type ProductionModelRuntime,
 } from "../runtime/integration/production-model-runtime.ts";
 import {
+	CompactionSummaryContextProvider,
+	SessionCompactionModelHistoryProjection,
+} from "../runtime/integration/compaction-model-history.ts";
+import {
 	createProductionSessionRuntime,
 	type ProductionSessionRuntime,
 	type ProductionVerificationServices,
@@ -77,6 +82,7 @@ import {
 import { VerificationPipeline } from "../runtime/verification/pipeline.ts";
 import { VerificationSessionRuntime } from "../runtime/verification/session-runtime.ts";
 import type { V3SessionManager } from "./v3-session-manager.ts";
+import type { ArtifactAccessService } from "../runtime/artifacts/access.ts";
 import {
 	createProductionWorkspaceComposition,
 	type ProductionWorkspaceCompositionOptions,
@@ -149,7 +155,16 @@ export interface ProductionInteractiveInitialBindingsInput {
 export interface ProductionInteractiveSessionOptions {
 	/** 必须是调用方已经组合并 probe 的 production services；本模块不会创建替身。 */
 	verification: ProductionVerificationServices;
-	compaction: { sampler: CompactionSummarySampler };
+	compaction: {
+		sampler: CompactionSummarySampler;
+		summarizerProfileId: ResourceId;
+		summarizerProfileDigest: string;
+		retainedTurns: number;
+		maxInputChars: number;
+		maxSummaryTokens: number;
+		targetInputBudget: number;
+		timeoutMs: number;
+	};
 	orchestrator: {
 		budgetLimits: BudgetLimits;
 		loopBreaker: LoopBreaker;
@@ -219,6 +234,8 @@ export interface ProductionInteractiveRuntime {
 	readonly toolRegistry: ToolRegistry;
 	readonly sessionRuntime: ProductionSessionRuntime;
 	readonly modelRuntime: ProductionModelRuntime;
+	/** Plan/Context/Memory Control Plane 只读出该受限 artifact read port。 */
+	readonly artifactAccess: ArtifactAccessService;
 	readonly agents?: ProductionAgentSupervisorRuntimeHandle;
 	readonly featureEvidence: ValidatedProductionComposition;
 	readonly paths: ProductionInteractiveRuntimePaths;
@@ -1294,6 +1311,7 @@ export async function createProductionInteractiveRuntime(
 			new WorkspaceContextProvider(workspaceResult.runtimeBinding),
 			new MemoryContextProvider({ service: sessionRuntime.memory, scopes: sessionRuntime.memoryScopes }),
 			planContextProvider(sessionRuntime),
+			new CompactionSummaryContextProvider(sessionRuntime.compactionProjection),
 			...(extensionAdapter?.fragmentProviders ?? []),
 		];
 		const modelRuntime = createProductionModelRuntime({
@@ -1307,6 +1325,10 @@ export async function createProductionInteractiveRuntime(
 			},
 			workspace: workspaceResult.runtimeBinding,
 			fragmentProviders,
+			historyProjection: new SessionCompactionModelHistoryProjection({
+				events: manager.eventStore(),
+				projection: sessionRuntime.compactionProjection,
+			}),
 		});
 		const featureEvidence = await deriveFeatureEvidence({
 			manager,
@@ -1352,6 +1374,7 @@ export async function createProductionInteractiveRuntime(
 			toolRegistry: registry,
 			sessionRuntime,
 			modelRuntime,
+			artifactAccess: options.workspace.artifactAccess,
 			...(agentComposition ? {
 				agents: {
 					supervisor: agentComposition.supervisor,

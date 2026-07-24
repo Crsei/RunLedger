@@ -569,7 +569,16 @@ async function fixture(): Promise<Fixture> {
 			},
 			session: {
 				verification: verification(activeManager),
-				compaction: { sampler: { sample: async () => "bounded production summary" } },
+				compaction: {
+					sampler: { sample: async () => "bounded production summary" },
+					summarizerProfileId: createRuntimeId("resource", "production-summarizer"),
+					summarizerProfileDigest: canonicalDigest("production-summarizer"),
+					retainedTurns: 1,
+					maxInputChars: 128 * 1024,
+					maxSummaryTokens: 2_048,
+					targetInputBudget: 8_192,
+					timeoutMs: 30_000,
+				},
 				orchestrator: {
 					budgetLimits: limits(),
 					loopBreaker: new LoopBreaker({

@@ -63,6 +63,10 @@ import type {
 	ControlPlaneV2AgentCommandResponse,
 	ControlPlaneV2AgentQueryResponse,
 } from "./multi-agent-contracts.ts";
+import type {
+	ControlPlaneV2PlanContextMemoryCommandResponse,
+	ControlPlaneV2PlanContextMemoryQueryResponse,
+} from "./plan-context-memory-contracts.ts";
 
 export const CONTROL_PLANE_PROTOCOL_MAJOR = 1 as const;
 export const CONTROL_PLANE_PROTOCOL_MINOR = 1 as const;
@@ -86,6 +90,7 @@ export const CONTROL_PLANE_FEATURES = [
 	"shutdown",
 	"consumer_checkpoint",
 	"multi_agent",
+	"plan_context_memory",
 ] as const;
 
 export type ControlPlaneFeature = (typeof CONTROL_PLANE_FEATURES)[number];
@@ -485,6 +490,8 @@ export type ControlPlaneResponse =
 	| ControlPlaneSubscriptionResponse
 	| ControlPlaneV2AgentCommandResponse
 	| ControlPlaneV2AgentQueryResponse
+	| ControlPlaneV2PlanContextMemoryCommandResponse
+	| ControlPlaneV2PlanContextMemoryQueryResponse
 	| ControlPlaneErrorResponse;
 
 export interface LocalPeerIdentity {

@@ -8,6 +8,11 @@ import type { StartupExternalReceiptAuditPort } from "../runtime/lifecycle/recov
 import { createRuntimeId, type RuntimeInstanceId, type SessionId } from "../runtime/protocol/v3/ids.ts";
 import { controlPlaneFailure, type ControlPlaneResult } from "../runtime/control-plane/errors.ts";
 import { AuthorityCommandIdempotencyRepository } from "../runtime/control-plane/authority-command-idempotency.ts";
+import {
+	JournaledPlanContextMemoryControlPlaneAdapter,
+	type PlanContextMemoryMutationExecutorPort,
+	type PlanContextMemoryQueryExecutorPort,
+} from "../runtime/control-plane/plan-context-memory-control-plane.ts";
 import type { SessionHandleValidationPort } from "../runtime/control-plane/query-service.ts";
 import type { SessionRuntimeRegistry } from "../runtime/control-plane/session-registry.ts";
 import { ShutdownCoordinator } from "../runtime/control-plane/shutdown.ts";
@@ -94,6 +99,8 @@ export interface LocalV3DaemonProductionPorts {
 	mutationExecutor?: MutationExecutorPort;
 	prompts?: PromptEnqueuePort;
 	approvals?: ApprovalResolutionCoordinatorPort;
+	planContextMemoryMutations?: PlanContextMemoryMutationExecutorPort;
+	planContextMemoryQueries?: PlanContextMemoryQueryExecutorPort;
 	artifactAuthorization?: V3ArtifactAuthorizationPort;
 	eventDelivery?: LocalV3DaemonEventDeliveryOptions;
 	adapterEvidence?: readonly ProductionAdapterEvidence[];
@@ -320,6 +327,31 @@ function validateProductionPortBindings(
 	if (writer?.features.includes("turn") && !hasPromptRuntime) {
 		return controlPlaneFailure("adapter_contract_violation", "session_writer advertises turn without a bound prompt runtime");
 	}
+	const hasSpecialtyRuntime = Boolean(
+		production?.planContextMemoryMutations ||
+		production?.planContextMemoryQueries,
+	);
+	if (
+		Boolean(production?.planContextMemoryMutations) !==
+			Boolean(production?.planContextMemoryQueries)
+	) {
+		return controlPlaneFailure(
+			"adapter_contract_violation",
+			"Plan/Context/Memory runtime requires both mutation and query executors",
+		);
+	}
+	if (hasSpecialtyRuntime && !writer?.features.includes("plan_context_memory")) {
+		return controlPlaneFailure(
+			"adapter_contract_violation",
+			"Plan/Context/Memory runtime lacks session_writer production evidence",
+		);
+	}
+	if (writer?.features.includes("plan_context_memory") && !hasSpecialtyRuntime) {
+		return controlPlaneFailure(
+			"adapter_contract_violation",
+			"session_writer advertises Plan/Context/Memory without bound production executors",
+		);
+	}
 
 	const approval = byKind.get("approval");
 	if (production?.approvals && !approval?.features.includes("approval")) {
@@ -483,6 +515,19 @@ export async function startLocalV3Daemon(
 		const states = new V3SessionControlStateAdapter({ sessions: sessionFactory, evidence });
 		const queues = new V3QueueControlAdapter(sessionFactory);
 		const handles = new LateBoundSessionHandles();
+		const planContextMemory = (
+			options.production?.planContextMemoryMutations &&
+			options.production.planContextMemoryQueries
+		)
+			? new JournaledPlanContextMemoryControlPlaneAdapter({
+					handles,
+					mutationGate: shutdown,
+					mutations: options.production.planContextMemoryMutations,
+					queries: options.production.planContextMemoryQueries,
+					idempotency,
+					runtimeGeneration: () => runtimeGeneration.value.currentGeneration(),
+				})
+			: undefined;
 		const operationalQueries = new LocalOperationalQueryExecutor(shutdown, clock);
 		const artifacts: V3ArtifactQueryPort = options.production?.artifactAuthorization
 			? new V3ArtifactStoreQueryAdapter(options.production.artifactAuthorization)
@@ -654,6 +699,7 @@ export async function startLocalV3Daemon(
 			runtimeGeneration: () => runtimeGeneration.value.currentGeneration(),
 			shutdown,
 			shutdownProtocol: shutdownProtocol.value,
+			...(planContextMemory ? { planContextMemory } : {}),
 			compositionReceipt: receipt.value,
 			clock,
 		});

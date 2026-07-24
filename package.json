@@ -80,6 +80,10 @@
       "import": "./dist/runtime/identity/enterprise.js",
       "types": "./dist/runtime/identity/enterprise.d.ts"
     },
+    "./runtime/integration/dependency-readiness": {
+      "import": "./dist/runtime/integration/dependency-readiness.js",
+      "types": "./dist/runtime/integration/dependency-readiness.d.ts"
+    },
     "./runtime/executors": {
       "import": "./dist/runtime/executors/index.js",
       "types": "./dist/runtime/executors/index.d.ts"

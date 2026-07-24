@@ -175,6 +175,11 @@ function inferAppliedCursor(result: CanonicalCommandEffect): EventCursor | null 
 		case "agent:cancel":
 		case "agent:resume":
 		case "agent:handoff":
+		case "plan:enter":
+		case "plan:resolve":
+		case "context:compact":
+		case "memory:propose":
+		case "memory:resolve":
 			return result.durableCursor;
 		case "queue:cancel":
 			return result.receipts.at(-1)?.durableCursor ?? null;

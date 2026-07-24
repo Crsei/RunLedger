@@ -20,9 +20,11 @@ import type {
 	TurnSteerCommand,
 } from "../control-plane/types.ts";
 import type {
+	ApprovedPlanSessionRuntimeFactoryPort,
 	ManagedSessionRuntime,
 	SessionRuntimeFactoryPort,
 } from "../control-plane/session-registry.ts";
+import type { ApprovedPlanForkSeed } from "../modes/plan/types.ts";
 import {
 	DurableQueueBindingError,
 	DurableQueueEnqueueRevisionConflictError,
@@ -35,6 +37,15 @@ import type {
 	DaemonAgentSessionBindingFactoryPort,
 	DaemonAgentSessionBindingPort,
 } from "./daemon-agent-session.ts";
+import {
+	ProductionPlanContextMemoryControlPlaneExecutor,
+	type ActivePlanContextMemorySessionResolverPort,
+	type ProductionPlanContextMemorySessionPort,
+} from "./production-plan-context-memory-control-plane.ts";
+import type {
+	PlanContextMemoryMutationExecutorPort,
+	PlanContextMemoryQueryExecutorPort,
+} from "../control-plane/plan-context-memory-control-plane.ts";
 
 type PromptCommand = TurnStartCommand | TurnSteerCommand | TurnFollowUpCommand;
 
@@ -151,7 +162,8 @@ function boundedWait(
  * 同一个实例同时是 daemon 的 PromptEnqueuePort、turn interrupt executor 和
  * session lifecycle owner。所有 mutation 在 per-session 串行锁内执行。
  */
-export class DaemonOwnedAgentRuntime implements PromptEnqueuePort, MutationExecutorPort {
+export class DaemonOwnedAgentRuntime
+	implements PromptEnqueuePort, MutationExecutorPort, ActivePlanContextMemorySessionResolverPort {
 	readonly #factory: DaemonAgentSessionBindingFactoryPort;
 	readonly #drainTimeoutMs: number;
 	readonly #sessions = new Map<SessionId, BoundAgentSession>();
@@ -195,6 +207,47 @@ export class DaemonOwnedAgentRuntime implements PromptEnqueuePort, MutationExecu
 			);
 		}
 		return { ok: true, value: state.binding };
+	}
+
+	public withSession<T>(
+		sessionId: SessionId,
+		operation: (
+			session: ProductionPlanContextMemorySessionPort,
+		) => Promise<ControlPlaneResult<T>>,
+	): Promise<ControlPlaneResult<T>> {
+		return this.#withSessionLock(sessionId, async () => {
+			const ready = this.#readySession(sessionId);
+			if (!ready.ok) return ready;
+			if (!ready.value.planContextMemory) {
+				return controlPlaneFailure(
+					"adapter_unavailable",
+					"active daemon session has no production Plan/Context/Memory runtime",
+					true,
+				);
+			}
+			let specialty: ProductionPlanContextMemorySessionPort;
+			try {
+				specialty = ready.value.planContextMemory();
+			} catch (error) {
+				return controlPlaneFailure(
+					"adapter_unavailable",
+					"active daemon specialty runtime lookup failed",
+					true,
+					{ errorName: error instanceof Error ? error.name : "UnknownError" },
+				);
+			}
+			if (
+				specialty.manager !== ready.value.manager ||
+				specialty.manager.sessionId() !== sessionId ||
+				specialty.workspace.sessionId !== sessionId
+			) {
+				return controlPlaneFailure(
+					"adapter_contract_violation",
+					"daemon specialty runtime is cross-session or detached from the active writer",
+				);
+			}
+			return operation(specialty);
+		});
 	}
 
 	/** Decorated SessionRuntimeFactory 在返回 bootstrap 前调用，保证 daemon 是唯一 owner。 */
@@ -505,7 +558,7 @@ class DaemonAgentManagedSessionRuntime implements ManagedSessionRuntime {
 }
 
 /** 把 Agent composition 加入 SessionRuntimeRegistry 的 candidate/teardown 临界区。 */
-export class DaemonAgentSessionRuntimeFactoryDecorator implements SessionRuntimeFactoryPort {
+export class DaemonAgentSessionRuntimeFactoryDecorator implements ApprovedPlanSessionRuntimeFactoryPort {
 	readonly #delegate: SessionRuntimeFactoryPort;
 	readonly #agents: DaemonOwnedAgentRuntime;
 
@@ -553,6 +606,21 @@ export class DaemonAgentSessionRuntimeFactoryDecorator implements SessionRuntime
 	): Promise<ControlPlaneResult<ManagedSessionRuntime>> {
 		return this.#activate(await this.#delegate.fork(parentSessionId, parentCursor, goalMode));
 	}
+
+	public async forkApprovedPlan(
+		seed: ApprovedPlanForkSeed,
+	): Promise<ControlPlaneResult<ManagedSessionRuntime>> {
+		if (
+			!("forkApprovedPlan" in this.#delegate) ||
+			typeof this.#delegate.forkApprovedPlan !== "function"
+		) {
+			return controlPlaneFailure(
+				"adapter_contract_violation",
+				"daemon Agent session factory requires a specialized approved-plan fork",
+			);
+		}
+		return this.#activate(await this.#delegate.forkApprovedPlan(seed));
+	}
 }
 
 export interface DaemonOwnedAgentRuntimePorts {
@@ -560,6 +628,8 @@ export interface DaemonOwnedAgentRuntimePorts {
 	readonly sessionFactory: SessionRuntimeFactoryPort;
 	readonly prompts: PromptEnqueuePort;
 	readonly mutationExecutor: MutationExecutorPort;
+	readonly planContextMemoryMutations: PlanContextMemoryMutationExecutorPort;
+	readonly planContextMemoryQueries: PlanContextMemoryQueryExecutorPort;
 }
 
 /** local-v3-daemon composition 可直接消费此 factory/ports，不再由 CLI 构造 controller。 */
@@ -568,10 +638,13 @@ export function createDaemonOwnedAgentRuntimePorts(
 	sessionFactory: SessionRuntimeFactoryPort,
 ): DaemonOwnedAgentRuntimePorts {
 	const runtime = new DaemonOwnedAgentRuntime(options);
+	const specialty = new ProductionPlanContextMemoryControlPlaneExecutor(runtime);
 	return {
 		runtime,
 		sessionFactory: new DaemonAgentSessionRuntimeFactoryDecorator(sessionFactory, runtime),
 		prompts: runtime,
 		mutationExecutor: runtime,
+		planContextMemoryMutations: specialty,
+		planContextMemoryQueries: specialty,
 	};
 }

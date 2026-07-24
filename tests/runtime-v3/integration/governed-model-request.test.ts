@@ -27,6 +27,7 @@ import {
 	GovernedModelRequestError,
 	type GovernedContextFragmentProvider,
 	type GovernedModelRequestEventPort,
+	type ModelHistoryProjectionPort,
 } from "../../../src/runtime/integration/governed-model-request.ts";
 import type { ContextAssemblyReceipt } from "../../../src/runtime/context/types.ts";
 import type { ModelRequestPreparationInput } from "../../../src/runtime/types.ts";
@@ -203,6 +204,7 @@ function coordinator(options: {
 	profiles?: readonly ModelCapabilityProfile[];
 	providers?: readonly GovernedContextFragmentProvider[];
 	events?: RecordingEvents;
+	historyProjection?: ModelHistoryProjectionPort;
 	onForkRequired?: (decision: Extract<ModelRouteDecision, { outcome: "fork" }>) => Promise<void> | void;
 } = {}): { coordinator: GovernedModelRequestCoordinator; events: RecordingEvents } {
 	const events = options.events ?? new RecordingEvents();
@@ -218,6 +220,7 @@ function coordinator(options: {
 				eventHash: "a".repeat(64),
 			}),
 			fragmentProviders: options.providers ?? [baseProvider([fragment("plan", "approved plan", 1)])],
+			...(options.historyProjection ? { historyProjection: options.historyProjection } : {}),
 			contextEngine: new ContextEngine({ clock: () => new Date(NOW) }),
 			traceIdFactory: () => createRuntimeId("trace", "model-integration"),
 			resolveModel: (id) => id === "fixture/builder" ? model() : id === "fixture/reviewer" ? model("reviewer") : undefined,
@@ -281,5 +284,35 @@ describe("GovernedModelRequestCoordinator", () => {
 		const runtime = coordinator({ events });
 		await expect(runtime.coordinator.prepare(input())).rejects.toThrow("event store unavailable");
 		expect(events.records).toHaveLength(0);
+	});
+
+	it("uses the installed model-history projection for routing, fragments, and provider messages", async () => {
+		const llmMessages = [{
+			role: "user" as const,
+			content: "checkpoint tail",
+			timestamp: 1,
+		}];
+		const projection = {
+			agentMessages: [],
+			llmMessages,
+		};
+		const seen: string[] = [];
+		const runtime = coordinator({
+			historyProjection: {
+				project: () => ({
+					...projection,
+					projectionDigest: canonicalDigest(projection),
+				}),
+			},
+			providers: [{
+				load: (request) => {
+					seen.push(String(request.input.context.messages[0]?.role));
+					return baseProvider().load(request);
+				},
+			}],
+		});
+		const prepared = await runtime.coordinator.prepare(input());
+		expect(prepared.context.messages).toEqual(llmMessages);
+		expect(seen).toEqual(["user"]);
 	});
 });

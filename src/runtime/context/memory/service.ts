@@ -108,6 +108,7 @@ export class MemoryService {
 		sourceRefs: readonly MemorySourceRef[];
 		traceId: TraceId;
 		expiresAt?: string;
+		diffArtifact?: { artifact: ArtifactRef; digest: string };
 	}): Promise<{ proposal: MemoryProposal; draft: MemoryRecord }> {
 		const now = this.#clock().toISOString();
 		const memoryId = createRuntimeId("memory");
@@ -133,7 +134,8 @@ export class MemoryService {
 		if (!isMemoryRecord(draft)) throw new Error("memory draft failed public contract validation");
 		const after = memoryRef(draft);
 		const diffBody = { kind: "create", after, fields: ["title", "content", "scope", "sources", "expiresAt"] } as const;
-		const storedDiff = diffArtifact(this.#store, input.scope, diffBody);
+		const storedDiff = input.diffArtifact ??
+			diffArtifact(this.#store, input.scope, diffBody);
 		const diff: MemoryDiff = {
 			kind: "create",
 			after,
@@ -177,12 +179,134 @@ export class MemoryService {
 		return published;
 	}
 
+	public async proposeUpdate(
+		record: MemoryRecord,
+		update: {
+			title: string;
+			content: string;
+			sourceRefs: readonly MemorySourceRef[];
+			expiresAt?: string;
+		},
+		traceId: TraceId,
+		externalDiff?: { artifact: ArtifactRef; digest: string },
+	): Promise<{ proposal: MemoryProposal; draft: MemoryRecord }> {
+		if (record.status !== "approved") {
+			throw new Error("only approved memory can be proposed for update");
+		}
+		const now = this.#clock().toISOString();
+		const content = update.content.slice(0, 65_536);
+		const before = memoryRef(record);
+		const draft: MemoryRecord = {
+			...record,
+			status: "proposed",
+			title: update.title.trim().slice(0, 256),
+			content,
+			contentDigest: canonicalDigest(content),
+			sourceRefs: update.sourceRefs,
+			updatedAt: now,
+			supersedes: before,
+			...(update.expiresAt === undefined
+				? {}
+				: { expiresAt: update.expiresAt }),
+		};
+		if (update.expiresAt === undefined) delete draft.expiresAt;
+		delete draft.approvalReceipt;
+		if (!isMemoryRecord(draft)) {
+			throw new Error("memory update draft failed public contract validation");
+		}
+		const after = memoryRef(draft);
+		const changedFields = [
+			"title",
+			"content",
+			"sources",
+			...(record.expiresAt === update.expiresAt ? [] : ["expiresAt"]),
+		] as const;
+		const diffBody = {
+			kind: "update",
+			before,
+			after,
+			fields: changedFields,
+		} as const;
+		const storedDiff = externalDiff ??
+			diffArtifact(this.#store, record.scope, diffBody);
+		const diff: MemoryDiff = {
+			kind: "update",
+			before,
+			after,
+			changes: [
+				{
+					field: "title",
+					beforeDigest: canonicalDigest(record.title),
+					afterDigest: canonicalDigest(draft.title),
+				},
+				{
+					field: "content",
+					beforeDigest: record.contentDigest,
+					afterDigest: draft.contentDigest,
+				},
+				{
+					field: "sources",
+					beforeDigest: canonicalDigest(record.sourceRefs),
+					afterDigest: canonicalDigest(draft.sourceRefs),
+				},
+				...(record.expiresAt === update.expiresAt
+					? []
+					: [{
+							field: "expiresAt" as const,
+							...(record.expiresAt === undefined
+								? {}
+								: { beforeDigest: canonicalDigest(record.expiresAt) }),
+							...(update.expiresAt === undefined
+								? {}
+								: { afterDigest: canonicalDigest(update.expiresAt) }),
+						}]),
+			],
+			diffArtifact: storedDiff.artifact,
+			diffDigest: storedDiff.digest,
+		};
+		const proposal: MemoryProposal = {
+			schemaVersion: 1,
+			authorityId: this.#identity.authorityId,
+			tenantId: this.#identity.tenantId,
+			proposalId: createRuntimeId("memoryProposal"),
+			memory: after,
+			diff,
+			status: "pending",
+			approvalId: createRuntimeId("approval"),
+			proposedByPrincipalId: this.#identity.principalId,
+			createdAt: now,
+		};
+		if (!isMemoryProposal(proposal)) {
+			throw new Error("memory update proposal failed public contract validation");
+		}
+		await this.#store.saveProposal(proposal, draft);
+		await this.#events.append({
+			type: "memory.proposed",
+			principalId: this.#identity.principalId,
+			traceId,
+			payload: {
+				memoryId: record.memoryId,
+				proposalId: proposal.proposalId,
+				scope: record.scope.scope,
+				contentDigest: draft.contentDigest,
+				diffArtifactId: diff.diffArtifact.artifactId,
+				diffDigest: diff.diffDigest,
+				approvalId: proposal.approvalId,
+			},
+		});
+		return { proposal, draft };
+	}
+
 	public async reject(proposal: MemoryProposal, receipt: ApprovalReceiptRef, traceId: TraceId): Promise<void> {
 		await this.#store.reject(proposal.memory.scope, proposal.proposalId, receipt);
 		await this.#events.append({ type: "memory.rejected", principalId: this.#identity.principalId, traceId, payload: { memoryId: proposal.memory.memoryId, proposalId: proposal.proposalId, approvalId: proposal.approvalId, reasonDigest: canonicalDigest({ decision: receipt.decision }) } });
 	}
 
-	public async proposeRevocation(record: MemoryRecord, traceId: TraceId): Promise<{ proposal: MemoryProposal; draft: MemoryRecord }> {
+	public async proposeRevocation(
+		record: MemoryRecord,
+		traceId: TraceId,
+		externalDiff?: { artifact: ArtifactRef; digest: string },
+	): Promise<{ proposal: MemoryProposal; draft: MemoryRecord }> {
 		if (record.status !== "approved") throw new Error("only approved memory can be proposed for revocation");
 		const now = this.#clock().toISOString();
 		const draft: MemoryRecord = {
@@ -195,7 +319,8 @@ export class MemoryService {
 		if (!isMemoryRecord(draft)) throw new Error("memory revocation draft failed public contract validation");
 		const before = memoryRef(record);
 		const diffBody = { kind: "delete", before, fields: ["status"] } as const;
-		const storedDiff = diffArtifact(this.#store, record.scope, diffBody);
+		const storedDiff = externalDiff ??
+			diffArtifact(this.#store, record.scope, diffBody);
 		const diff: MemoryDiff = {
 			kind: "delete",
 			before,

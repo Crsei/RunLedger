@@ -159,6 +159,19 @@ const rowsByFeature: Readonly<Record<ControlPlaneFeature, ProductionFeatureRequi
 		"agent_supervisor",
 		"child_runtime_factory",
 	]),
+	plan_context_memory: row("plan_context_memory", "session_writer", [
+		"event_store",
+		"model_provider",
+		"session_reader",
+		"session_writer",
+		"workspace",
+		"capability_gateway",
+		"approval",
+		"artifact",
+		"artifact_key_provider",
+		"resource_catalog",
+		"resource_invoker",
+	]),
 };
 
 export const PRODUCTION_FEATURE_REQUIREMENTS_V1: ProductionFeatureRequirementsMatrixV1 = Object.freeze({

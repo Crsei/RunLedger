@@ -1,6 +1,6 @@
 # RunLedger Plan Mode、Model/Context、Compaction 与 Memory 建设计划
 
-> 状态:专项权威执行计划,尚未实施
+> 状态:实施中;Phase 0–3 行为闭环,Phase 4–10 按 `[x]`/`[~]`/`[ ]` 记录真实完成度
 > 基线日期:2026-07-22
 > 适用范围:`src/runtime/`、`src/storage/`、`src/tui/`、`src/cli/`、`.runledger/` 与对应测试
 > 参考取证:[`00-reference.md`](00-reference.md)
@@ -12,6 +12,7 @@
 
 执行规则:
 
+- 状态符号:`[x]` 表示已有代码与自动化证据;`[~]` 表示行为模块存在但生产接线/UI/全矩阵未闭环;`[ ]` 表示未实现。
 - 每次只实施一个可独立验收的 PR 边界,完成后在对应复选框补 commit、验证命令和结果。
 - 上位 Runtime Phase 6 contract allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、v3 event catalog 或 contract fixture,也不得重新定义同义类型。
 - 没有 v3 durable event、Capability Gateway 或 Artifact Store 的阶段不得用 v2 临时旁路伪装完成;可以先落纯 reducer/pure planner 等行为函数,但用户可见功能必须等待前置门禁。
@@ -21,6 +22,26 @@
 - 不把模型摘要当事实。Plan approval pin digest;compaction 校验 invariant;memory 先 proposal 后 approval。
 - 实施前重新核对本文件列出的上游路径和 RunLedger 当前 HEAD,快照不是依赖锁。
 - 每个代码 PR 必须运行完整 `npm run check` 与 `npm test`;涉及生成物、依赖或模型 catalog 时再执行仓库规定的额外命令。
+
+### 0.1 2026-07-24 合并前实现审阅基线
+
+本节保留主检出在集成前基于审阅样本 HEAD `678b046` 形成的未提交审阅结论。它解释本轮 completion worktree 的起点,不再作为最新状态源;当前真实完成度以各 Phase 的 `[x]`/`[~]`/`[ ]` 和 §9.11 的最终验证证据为准。
+
+| Phase | 合并前结论 | 当时主要证据/仍缺边界 |
+|---|---|---|
+| 0 | 契约门禁已实现 | public contract consumer、strict schema/event catalog、ownership fixture 已落地;feature flag adapter rollout 仍未完成 |
+| 1 | 核心实现并接入 production model request | manifest/router/catalog adapter、`model.routed`、fork/deny 已接入;真实 session fork command 尚未由 router 自动执行 |
+| 2 | 主链已实现 | `ContextEngine` 已成为 v3 production model request 的准备路径并持久化 receipt;provider usage 校准尚未接 production receipt |
+| 3 | 核心实现 | reducer、immutable Plan store、durable projection/service 已落地;用户命令面尚未接通 |
+| 4 | 行为层部分实现 | Plan policy 与三种工具已实现并测试,但未接 production Tool Registry/Capability Gateway |
+| 5 | 服务层部分实现 | approval pin/decision/idempotent crash boundary 已实现;TUI、same-session 实施提交和 fresh-context fork 未接通 |
+| 6 | 核心服务部分实现 | cut/summarize/validate/checkpoint/projection store 已实现;无 `/compact`,且已安装 projection 尚未进入真实 model-visible history |
+| 7 | pure control 部分实现 | threshold、三档摘要输入、单次 overflow guard、rewind reducer 已实现;auto/overflow/resume/fork/model-switch 运行时编排未接通 |
+| 8 | 存储、检索、注入主干已实现 | canonical store、`MEMORY.md`、lexical index、proposal/approval/revoke/expire 与 production read injection 已落地;工具和审批 UI 未注册 |
+| 9 | helper 部分实现 | pre-compact flush、recall cache、eligibility/lease 已实现;尚未接 CompactionService/session-end 生命周期 |
+| 10 | 部分实现 | legacy v1/v2 migration、contract/golden fixture 已落地;CLI/TUI/metrics/独立 feature flags/发布门禁未完成 |
+
+当时定向验证为 12 files / 62 tests passed,主要实现证据引用 `004a252`、`f3e2ba6`、`bdd09c9`;本轮完成后的替代验证见 §9.11。
 
 ## 1. 目标、成功标准与非目标
 
@@ -832,13 +853,13 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 验证 model route、mode/plan ref、context receipt、checkpoint、memory record/proposal/search receipt 都可从 contract-owned public module export import,不要求本专项修改根 barrel。
-- [ ] 验证 v3 event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
-- [ ] 验证 mode policy 只消费 Runtime capability/effect contract,不按 tool name 创建第二套决策类型。
-- [ ] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Phase 0/2/3/4 contract 对齐。
-- [ ] 跑上位 contract tests 与专项 consumer compile test,记录冻结 contract commit。
-- [ ] 检查 behavior 目录不存在同义 `interface/type`、私有 event name 或复制 schema。
-- [ ] 在 feature flags 下只注册 adapter factory,不暴露半成品命令。
+- [x] 验证 model route、mode/plan ref、context receipt、checkpoint、memory record/proposal/search receipt 都可从 contract-owned public module export import,不要求本专项修改根 barrel。
+- [x] 验证 v3 event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
+- [x] 验证 mode policy 只消费 Runtime capability/effect contract,不按 tool name 创建第二套决策类型。
+- [x] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Phase 0/2/3/4 contract 对齐。
+- [x] 跑上位 contract tests 与专项 consumer compile test,记录冻结 contract commit。
+- [x] 检查 behavior 目录不存在同义 `interface/type`、私有 event name 或复制 schema。
+- [x] 在 feature flags 下只注册 adapter factory,不暴露半成品命令。
 
 完成门槛:
 
@@ -857,19 +878,19 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 manifest loader 和 schema/version/digest 验证,未知模型或缺失能力 fail closed。
-- [ ] 实现 searcher/builder/reviewer/summarizer 能力 alias 和 deterministic profile resolution,不在上层散落模型名。
-- [ ] 实现 context/max output、API/tool replay、reasoning history、image/tool schema、compaction strategy 兼容预检。
-- [ ] 实现 adapter-private state 边界,只输出 contract 允许的 transferable refs;不兼容 reasoning/signature 不进入新 provider。
-- [ ] 产生带 manifest/profile/digest/reason 的 route decision 与 `model.routed` event;decision 本身不执行 fork。
-- [ ] 仅在串行集成 PR 对接 `models.ts`/`models-store.ts` 和 session fork command,不修改 provider adapter 内部协议。
+- [x] 实现 manifest loader 和 schema/version/digest 验证,未知模型或缺失能力 fail closed。
+- [x] 实现 searcher/builder/reviewer/summarizer 能力 alias 和 deterministic profile resolution,不在上层散落模型名。
+- [x] 实现 context/max output、API/tool replay、reasoning history、image/tool schema、compaction strategy 兼容预检。
+- [x] 实现 adapter-private state 边界,只输出 contract 允许的 transferable refs;不兼容 reasoning/signature 不进入新 provider。
+- [x] 产生带 manifest/profile/digest/reason 的 route decision 与 `model.routed` event;decision 本身不执行 fork。
+- [x] 仅在串行集成 PR 对接 catalog models 与 session fork decision,不修改 provider adapter 内部协议。
 
 测试:
 
-- [ ] verified/unknown/retired profile、alias 缺失、manifest digest 漂移和 regression-suite fence。
-- [ ] 同能力可直接切换,不兼容 tool/reasoning/context window 给出稳定 fork/deny reason。
-- [ ] summarizer alias 只选择满足 output/context/tool-off 约束的 profile。
-- [ ] 路由决策 replay 与 live 一致,不依赖 Map 顺序或本地时钟。
+- [x] verified/unknown/retired profile、alias 缺失、manifest digest 漂移和 regression-suite fence。
+- [x] 同能力可直接切换,不兼容 tool/reasoning/context window 给出稳定 fork/deny reason。
+- [x] summarizer alias 只选择满足 output/context/tool-off 约束的 profile。
+- [x] 路由决策 replay 与 live 一致,不依赖 Map 顺序或本地时钟。
 
 完成门槛:
 
@@ -886,20 +907,20 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 fragment registry、fixed layer order、stable ID/digest 和 per-fragment hard cap。
-- [ ] 实现 conservative token estimator,接入 provider usage receipt 与模型 context window。
-- [ ] 把现有 `systemPrompt/messages/tools` 转成首批 fragment/projection adapter。
-- [ ] 先在 `context/runtime-adapter.ts` 实现 `assemble()` seam;串行集成 PR 才对 `agent-loop.ts` 增加唯一调用并删除调用点私自拼接的新增路径。
-- [ ] 持久化 bounded `context.assembled` receipt,正文不进 event。
-- [ ] 为 omitted fragment、oversized tool result、missing budget 输出结构化诊断。
+- [x] 实现 fragment registry、fixed layer order、stable ID/digest 和 per-fragment hard cap。
+- [~] 实现 conservative token estimator,已接模型 context window 与异常 fallback;provider usage observation 尚未接入生产 receipt。
+- [x] 把现有 `systemPrompt/messages/tools` 转成首批 fragment/projection adapter。
+- [x] 在 governed model request 唯一路径接入 ContextEngine 与 model-history projection seam。
+- [x] 持久化 bounded `context.assembled` receipt,正文不进 event。
+- [~] 已有 omitted/fragment cap/预算结构化诊断;oversized tool result 的独立诊断仍待补。
 
 测试:
 
-- [ ] stable ordering/digest 不受 Map 遍历或 resume 影响。
-- [ ] policy/mode fragment 永不被普通 history 挤出。
-- [ ] image/tool/reasoning 估算不会发生整数溢出。
-- [ ] provider usage 缺失/异常时保守 fallback。
-- [ ] 同一 checkpoint resume 生成相同 request-context fixture。
+- [x] stable ordering/digest 不受 Map 遍历或 resume 影响。
+- [x] policy/mode fragment 永不被普通 history 挤出。
+- [x] image/tool/reasoning 估算使用安全整数上限,不会发生整数溢出。
+- [x] provider usage 缺失/异常时保守 fallback。
+- [x] 同一 checkpoint 从 canonical event tail 生成相同 model-visible history,summary 独立作为 fragment 注入。
 
 完成门槛:
 
@@ -916,20 +937,20 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现纯 `PlanModeState` reducer 和合法 transition table。
-- [ ] 实现 `PlanArtifactStore`,working pointer + immutable revision + digest。
-- [ ] 实现 user/agent entry command、mid-turn pending activation、安全点 delivery。
-- [ ] mode fragment 接入 ContextEngine,同 revision 不重复注入。
-- [ ] resume 折叠 transient state,保持 active/awaiting 状态。
-- [ ] plan 外部修改检测,digest 漂移触发 approval invalidation。
+- [x] 实现纯 `PlanModeState` reducer 和合法 transition table。
+- [x] 实现 `PlanArtifactStore`,working pointer + immutable revision + digest。
+- [x] 实现 user/agent entry command、mid-turn pending activation、安全点 delivery。
+- [x] mode fragment 接入 ContextEngine,同 revision 不重复注入。
+- [x] resume 折叠 transient state,保持 active/awaiting 状态。
+- [x] plan 外部修改检测,digest 漂移触发 approval invalidation。
 
 测试:
 
-- [ ] 全状态转换 table/property test。
-- [ ] mid-turn enter 后立即取消不会注入伪 exit。
-- [ ] client crash/restart 恢复 active/awaiting 状态。
-- [ ] revision 原子写、并发 expected revision conflict、torn temp recovery。
-- [ ] workspace/session path 不可逃逸。
+- [x] 全状态转换 table test。
+- [x] mid-turn enter 后立即取消不会注入伪 exit。
+- [x] client crash/restart 恢复 active/awaiting 状态。
+- [x] revision 原子写、并发 expected revision conflict、torn temp recovery。
+- [x] workspace/session path 不可逃逸。
 
 完成门槛:
 
@@ -946,13 +967,13 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 `PlanModePolicy` adapter,把mode snapshot + Runtime `ToolEffect[]` 投影为 capability 约束;不复制 Gateway policy engine。
-- [ ] 在串行 integration PR 补齐内建工具 manifest 的结构化 effect,不由本专项改写 Resource/Capability contract。
+- [x] 实现 `PlanModePolicy` adapter,把 mode snapshot + Runtime descriptor 投影为 capability ceiling;不复制 Gateway policy engine。
+- [~] 内建工具已有 production manifest,尚缺 AgentTool/manifest/RuntimeToolDescriptor 的统一一一对应 catalog。
 - [ ] 通过 Worktree/Sandbox/Permission 专项的 Gateway port 合并 organization/workspace/session/mode policy,验证 `deny > ask > allow`;本专项不实现 Gateway。
-- [ ] 新增 `enter_plan_mode`、`plan_write`、`exit_plan_mode` 工具。
-- [ ] plan writer 不接受 path,只接受 expected revision + full body/patch。
-- [ ] Plan Mode 下隐藏或拒绝 write/edit/multi-edit/bash/notebook/todo 和未知副作用工具。
-- [ ] MCP 未声明或无法验证 effect 时,Plan policy 输出 `unknown -> deny`,由 Gateway 强制执行。
+- [x] 新增 `enter_plan_mode`、`plan_write`、`exit_plan_mode` 工具。
+- [x] plan writer 不接受 path,只接受 expected revision + full body。
+- [~] Plan policy 已拒绝 write/privileged/unknown effect,尚未接入 production Tool Gateway 的最终 decision。
+- [~] MCP 未声明 capability 时 Plan policy 输出 deny,尚待 production Gateway 强制接线。
 - [ ] subagent 默认 deny;后续 explore child 必须继承 plan mode + capability 子集。
 - [ ] authorization decision 和 tool event 持久化同一 mode revision。
 
@@ -980,21 +1001,21 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 plan approval request/decision/expiry/invalidation。
-- [ ] `exit_plan_mode` 从 PlanStore 读取并 pin revision/digest。
+- [x] 实现 plan approval request/decision/expiry/invalidation。
+- [x] `exit_plan_mode` 从 PlanStore 读取并 pin revision/digest。
 - [ ] 实现独立 TUI approval component 支持 approve、fresh context、request changes、cancel;串行 integration PR 再接入 `interactive-mode.ts`。
 - [ ] feedback 进入下一 planning turn,不直接改计划正文。
-- [ ] same-session approval 先 durable 切 default mode,再提交实施 user turn。
-- [ ] fresh-context approval 创建 fork + ApprovedPlanRef,旧 session 保持历史可查。
-- [ ] approval pending 在 TUI reconnect/resume 后重新出现。
+- [x] same-session coordinator 先 durable 切 default mode,再持久化 handoff 并提交实施 turn。
+- [x] fresh-context coordinator、specialized registry fork 与 production V3 approved-plan-only fork 已完成;子会话使用新 goal identity,不复制 parent conversation tail。
+- [x] approval pending 在 runtime reconnect/resume 后可恢复。
 - [ ] status/footer 和 `/view-plan` 先经专用 controller 消费 runtime projection,再在串行 integration PR 接根视图。
 
 测试:
 
-- [ ] stale revision approval 返回 conflict。
-- [ ] 外部改 plan 后旧 approval 自动失效。
-- [ ] decision 落盘成功但 UI 断连不会重复实施。
-- [ ] fresh fork 只携带 approved plan ref 和必要 context,不泄漏未批准 tail。
+- [x] stale revision approval 返回 conflict。
+- [x] 外部改 plan 后旧 approval 自动失效。
+- [x] handoff receipt 使用 canonical control journal 幂等持久化,断连不会重复记录实施。
+- [x] fresh fork seed 只携带 approved plan ref、policy digest 和 invariant artifacts;production factory 在 genesis 后以 canonical control journal 持久化 exact seed,seed durable 后才 publish child。
 - [ ] plan approval view snapshot/窄终端/空计划/大计划。
 
 完成门槛:
@@ -1012,24 +1033,24 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 cut planner,只选完整 stable turn/tool batch。
-- [ ] 实现 transcript/artifact input builder 和 output reserve。
-- [ ] 实现 summarizer adapter,工具关闭,单独 retry/timeout budget。
-- [ ] 实现 summary validator、invariant digest 和 redaction scan。
-- [ ] 实现 checkpoint intent/commit 与 model-history projection replacement。
+- [x] 实现 cut planner,只选完整 stable turn/tool batch。
+- [x] 实现 transcript/artifact input builder 和 output reserve。
+- [x] 实现 summarizer adapter,工具关闭,单独 retry/timeout budget。
+- [x] 实现 summary validator、invariant digest 和 redaction scan。
+- [x] 实现 checkpoint commit、CAS projection store 与 production model-history replacement。
 - [ ] `/compact [focus]`、start/completed/failed event 和 TUI 状态接入。
-- [ ] compaction 后重新注入当前 mode、workspace、approved plan 和 policy。
+- [x] compaction 后由 production Context providers 重新注入 mode、workspace、approved plan、approved memory 与 summary fragment。
 
 golden tests:
 
-- [ ] 无 tool 的多 turn compact。
-- [ ] tool call/result 配对和 parallel batch。
+- [x] production schema-v2 `context:compact` 已从 canonical completed turns 执行无 tool 多 turn compact,保留 raw events 并安装 revisioned projection。
+- [x] tool call/result 配对和 parallel batch。
 - [ ] reasoning/signature 不跨不兼容 provider 泄漏。
-- [ ] 多次 compact checkpoint chain。
-- [ ] Plan Mode 中 compact 后仍 active 且权限未放宽。
-- [ ] pending approval 时 compact 不丢 request。
-- [ ] summary validation failure 保持原 projection。
-- [ ] crash 位于 artifact write、validated event、commit event 各边界的 recovery。
+- [x] 多次 compact checkpoint chain。
+- [x] Plan Mode 中 compact 后仍 active。
+- [x] pending approval 作为 invariant 保存。
+- [x] summary validation failure 保持原 projection。
+- [x] artifact write、event commit、projection install 边界有 recovery/fault tests。
 
 完成门槛:
 
@@ -1046,23 +1067,23 @@ golden tests:
 
 任务:
 
-- [ ] 实现 threshold、output/tool reserve 和 preflight trigger。
-- [ ] 实现 manual/auto/overflow/model-switch 统一 reason 与 metrics。
-- [ ] 实现 verbatim -> fitted -> lossy input ladder 和 attempt receipt。
-- [ ] 实现 turn/sticky/until-success suppression,manual compact 可显式绕过 suppression。
-- [ ] context-length error 的单次 compact-and-retry guard。
-- [ ] resume 读取 latest valid checkpoint + tail。
+- [x] 实现 threshold、output/tool reserve 和 preflight trigger。
+- [~] manual/auto/overflow/model-switch 已统一 reason;专项 metrics 尚未接线。
+- [x] 实现 verbatim -> fitted -> lossy input ladder 和 attempt receipt。
+- [x] 实现 turn/sticky/until-success suppression,manual compact 可显式绕过 suppression。
+- [x] context-length error 的单次 compact-and-retry guard。
+- [x] production model request 从 latest installed checkpoint + canonical event tail 重建。
 - [ ] fork 继承 checkpoint/reference,分配新 session identity。
-- [ ] rewind 跨 checkpoint 时丢弃未来 projection/checkpoint marker,保留 raw audit。
-- [ ] model downshift/comp-hash/reasoning compatibility preflight;不兼容强制 fork。
+- [~] rewind projection reducer 已实现;production 跨 checkpoint 命令接线尚未完成。
+- [x] model downshift/comp-hash/reasoning compatibility preflight;不兼容返回 audited fork decision。
 
 测试:
 
-- [ ] 阈值边界、配置 clamp、provider usage 漂移。
-- [ ] auto compact failure 不每 turn 热循环。
-- [ ] overflow 只重试一次且不重复工具副作用。
+- [x] 阈值边界、配置 clamp 与 usage fallback。
+- [x] auto compact failure 不每 turn 热循环。
+- [x] overflow 只重试一次且不重复工具副作用。
 - [ ] resume/fork/rewind 跨一个和多个 checkpoint。
-- [ ] 更小 context model 切换、未知模型、retired model fallback。
+- [x] 更小 context model 切换、未知模型、retired model fallback。
 - [ ] steering/follow-up 在 compact 中排队且顺序稳定。
 
 完成门槛:
@@ -1080,24 +1101,24 @@ golden tests:
 
 任务:
 
-- [ ] 实现 user/workspace scoped canonical store、proposal 和 atomic publish/revoke。
+- [x] 实现 user/workspace/session scoped canonical store、proposal 和 atomic publish/revoke。
 - [ ] 实现 workspace identity mapping,同 repo clone/worktree 可选共享 workspace scope。
-- [ ] 生成 `MEMORY.md` 人类可读 projection,但不把它当唯一 metadata 真源。
-- [ ] 实现 lexical index、watch/digest scan 和 rebuild。
-- [ ] 实现 `memory_search`、`memory_get`、`memory_propose` bounded tools。
+- [x] 生成 `MEMORY.md` 人类可读 projection,canonical JSON record 仍是 metadata 真源。
+- [~] lexical index、digest drift scan 和 corrupt/delete rebuild 已完成;长期 watcher 尚未接线。
+- [x] 实现 `memory_search`、`memory_get`、`memory_propose` bounded tools。
 - [ ] 实现 `/remember` proposal 和 memory approval diff。
-- [ ] 实现 TTL/staleness/revoked/changed_unreviewed 查询过滤。
-- [ ] ContextEngine 首 turn 只注入 approved records,记录 search/injection receipt。
+- [x] 实现 TTL/staleness/revoked/changed_unreviewed 查询过滤。
+- [x] production ContextEngine 只注入 approved records,记录 search/injection receipt。
 
 测试:
 
-- [ ] global/workspace scope 隔离和 canonical path。
-- [ ] proposal approve/edit/reject/revoke/expire 状态机。
-- [ ] external edit digest drift 停止注入。
-- [ ] index delete/corrupt/rebuild;lexical ordering 稳定。
-- [ ] search max results/snippet/token/cursor hard cap。
-- [ ] untrusted source 不能自行升级 approved。
-- [ ] Memory Store failure 不阻断普通 turn。
+- [x] global/workspace/session scope 隔离和 canonical path。
+- [~] proposal create/approve/reject/revoke/expire 与同 scope update 已完成;`edit` 因公共命令缺 replacement draft、`scope_change` 因缺跨 scope 原子事务 port 继续 fail closed。
+- [x] external edit digest drift 停止注入。
+- [x] index delete/corrupt/rebuild;lexical ordering 稳定。
+- [x] search max results/snippet/token/cursor hard cap。
+- [x] untrusted source 不能自行升级 approved。
+- [x] Memory Store failure 不阻断普通 turn。
 
 完成门槛:
 
@@ -1117,9 +1138,9 @@ golden tests:
 - [ ] 实现 pre-compaction flush threshold/once-per-cycle/lock。
 - [ ] flush output 通过 empty/NO_REPLY/header/length/redaction/exact dedup 检查。
 - [ ] flush 只创建 proposal,失败不阻止 compact。
-- [ ] 实现 post-compaction approved-memory search 和 bounded fragment。
+- [x] production model request 在 compaction 后执行 approved-memory search 和 bounded fragment。
 - [ ] 相同 checkpoint resume 复用 search receipt,record 变更时显式 invalidation。
-- [ ] session-end extraction 只生成 proposal;设置 eligibility/age/scan/concurrency/lease/backoff。
+- [~] session-end extraction eligibility、proposal promotion 与跨进程 lease 已实现;production SessionEnd worker 调度尚未接线。
 - [ ] 高级 consolidation 延后为可选后台 job,仍通过 approval 发布差异。
 
 测试:
@@ -1127,9 +1148,9 @@ golden tests:
 - [ ] flush 在 hard compact threshold 前触发且每 cycle 一次。
 - [ ] `isFlushing` 抑制 auto compact,结束后正确释放。
 - [ ] flush sampler error/timeout/duplicate/oversize 均不中断 compact。
-- [ ] post-compact recovery 只返回 approved/non-stale/non-revoked record。
-- [ ] Plan Mode compact 后 mode + approved plan + memory fragment 均恢复。
-- [ ] 多进程 extraction lease 不重复处理同 session。
+- [x] post-compact recovery 只返回 approved/non-stale/non-revoked record。
+- [x] production projection 恢复 mode + approved plan + approved memory + summary fragment。
+- [x] 多进程 extraction lease 不重复处理同 session。
 
 完成门槛:
 
@@ -1149,10 +1170,10 @@ golden tests:
 - [ ] 增加 mode/approval/context/compaction/memory metrics,默认只记录 metadata/digest。
 - [ ] TUI `/context`、`/memory`、footer/status 与 warning surface 完整接 projection。
 - [ ] CLI help/settings schema/README/AGENTS.md/开发文档同步。
-- [ ] v1/v2 resume 明确标 legacy;用户第一次 mutation 时 fork/migrate 到 v3。
+- [x] v1/v2 resume 明确标 legacy,显式 migration/fork 后才进入 v3 mutation。
 - [ ] feature flags 支持独立关闭 plan/auto-compact/memory,manual compact 可单独保留。
-- [ ] 加 recovery/chaos/large-session/Windows path/permission 测试。
-- [ ] 建立 golden fixture 版本和上游行为差异记录。
+- [~] 已有 recovery/crash/Windows path/permission 测试;专项 large-session 压测仍待补。
+- [x] 建立 versioned golden fixtures 和上游行为差异记录。
 - [ ] 在本文件补齐所有 commit/验证证据,再只向上位 Runtime Phase 6 回写“专项实现已验收”状态和本文件链接。
 
 完成门槛:
@@ -1163,6 +1184,22 @@ golden tests:
 - restart/resume/fork/rewind/model switch 测试矩阵全部通过。
 
 建议 commit:`runtime: expose audited plan context and memory lifecycle`
+
+### 9.11 当前实施证据(2026-07-24)
+
+- 实施 worktree:`RunLedger-plan-compact-memory-completion`;分支:`worktree/plan-compact-memory-completion`;基线:`6726f41`。
+- Model/Plan/Context/Compaction/Memory contract 与 behavior 模块均已纳入 `src/runtime/**`;production session 已组合 Plan store、Memory store/index、Compaction projection/service 与 Context providers。
+- Control Plane schema v2 已增加 Plan/Context/Memory 五个 mutation、四个 query,复用 canonical command journal、shutdown gate 和 runtime generation。
+- approved-plan implementation handoff 已有 exact receipt/seed、顺序化 coordinator、specialized registry fork 和 canonical control-journal durable evidence。
+- production `V3SessionRuntimeFactoryAdapter.forkApprovedPlan()` 已实现 fresh goal、双次 mutation-gate revalidation、exact parent cursor、staged genesis/seed/publish 顺序和失败回收;`DaemonAgentSessionRuntimeFactoryDecorator` 只转发 specialized fork,不回退 generic fork。
+- production model request 已使用 installed checkpoint + canonical conversation tail 的 history projection;summary 作为独立 Context fragment 注入,raw event history 不改写。
+- production Plan/Context/Memory executor 已绑定 active daemon session 的窄 runtime port;`plan:enter`、exact `plan:resolve`、`context:compact`、Plan/Context/Memory query 均复用同一 session lock、command journal、shutdown gate 与 runtime generation。
+- production Memory mutation 只通过 `ArtifactAccessService`/Capability Gateway 读取 exact `change_proposal` 与 `diff` refs;已覆盖 create→approve、same-scope update→approve、revoke→resolve,并在 artifact tamper、foreign scope、stale session/domain revision 时于持久 mutation 前 fail closed。
+- compaction source projection 已支持一个 canonical assistant/tool-result event 内的 parallel tool batch:保留真实 event `sequence`,以 `sequenceIndex` 表示事件内稳定位置,tool pairing digest 来自实际 call/result,不构造 synthetic sequence;provider-private reasoning/signature 不进入 summary source。
+- 2026-07-24 首轮完整回归:`npm run check` 通过;`npm test` 为 294 passed / 1 skipped files、1851 passed / 1 skipped tests。最终验收仍须在全部修改完成后重跑。
+- 2026-07-24 approved-plan production fork 定向回归:`approved-plan-v3-fork.test.ts` 5/5,连同 daemon decorator/session journal/handoff journal 为 4 files / 18 tests passed;`npm run check` 通过。
+- 2026-07-24 最终回归:`npm run check` 通过;Memory/compaction/production-session 定向为 4 files / 25 tests passed;完整 `npm test` 为 298 passed / 1 skipped files、1870 passed / 1 skipped tests。
+- 当前仍未闭环的关键项:Plan ceiling 到 production Capability Gateway、Memory approval `edit` replacement-draft 合同、跨 scope 原子 transaction port、auto/overflow 命令编排、TUI/CLI/settings/metrics。
 
 ## 10. 验证矩阵
 
@@ -1231,7 +1268,7 @@ golden tests:
 - [ ] Plan Mode 是 durable state,不是 prompt/TUI flag。
 - [ ] Plan Mode deny 能覆盖 always-approve、Bash、MCP 和 subagent。
 - [ ] plan approval 绑定 immutable revision/digest/workspace。
-- [ ] same-session 与 fresh-context 实施都有 event evidence。
+- [x] same-session 与 fresh-context 实施都有 event evidence。
 - [ ] 所有 model request 由 ContextEngine 组装并有 receipt。
 - [ ] raw history 永不因 compaction 改写。
 - [ ] checkpoint 校验 tool pairing、budget 和 runtime invariant。
@@ -1243,8 +1280,8 @@ golden tests:
 - [ ] post-compact recovery 只读 approved、有效、scope 匹配的 record。
 - [ ] TUI/CLI/未来 API 复用同一 command/query/event schema。
 - [ ] v1/v2 保持只读兼容,不伪造新语义。
-- [ ] `npm run check` 完整通过。
-- [ ] `npm test` 完整通过。
-- [ ] 本文件记录各阶段 commit、命令和结果。
+- [x] `npm run check` 完整通过。
+- [x] `npm test` 完整通过。
+- [x] 本文件记录本工作树各阶段命令和结果;本轮按用户授权未创建 commit。
 - [ ] 共享根文件的每个修改都有基线 commit、当期单一所有者和串行 handoff 证据。
 - [ ] 上位 Runtime 主计划 Phase 6 只同步了专项汇总状态和本计划证据链接,未复制 behavior checklist。

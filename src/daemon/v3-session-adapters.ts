@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
+import { createIdempotencyKey } from "../runtime/protocol/v3/coordination.ts";
 import { projectRuntimeActivityEvents } from "../runtime/activity/projection.ts";
 import {
 	sameRuntimeEventStream,
@@ -62,10 +63,18 @@ import type {
 } from "../runtime/control-plane/types.ts";
 import type { SessionHandleValidationPort } from "../runtime/control-plane/query-service.ts";
 import type {
+	ApprovedPlanSessionRuntimeFactoryPort,
 	CandidateAuthorityBinding,
 	ManagedSessionRuntime,
 	SessionRuntimeFactoryPort,
 } from "../runtime/control-plane/session-registry.ts";
+import { isApprovedPlanForkSeed } from "../runtime/modes/plan/schema.ts";
+import type { ApprovedPlanForkSeed } from "../runtime/modes/plan/types.ts";
+import {
+	DurableControlJournal,
+	type ControlJournalRecord,
+} from "../runtime/orchestrator/control-journal.ts";
+import { SessionDurableOrchestratorJournal } from "../runtime/orchestrator/session-journal.ts";
 import type {
 	EventSourceRecord,
 	EventSubscriptionSourcePort,
@@ -631,7 +640,7 @@ export interface V3SessionRuntimeFactoryAdapterOptions {
 }
 
 /** create/open/fork 始终持有 V3SessionManager 的 writer lease，teardown 后才释放。 */
-export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort {
+export class V3SessionRuntimeFactoryAdapter implements ApprovedPlanSessionRuntimeFactoryPort {
 	readonly #cwd: string;
 	readonly #sessionDir: string;
 	readonly #features: Readonly<RuntimeFeatureFlags>;
@@ -986,6 +995,276 @@ export class V3SessionRuntimeFactoryAdapter implements SessionRuntimeFactoryPort
 					await collectSessionCleanupFault(cleanupFaults, "fork_child_close", () => child!.closeAll());
 				} else {
 				await collectSessionCleanupFault(cleanupFaults, "fork_child_discard", () => child!.discardEmptyTarget());
+			}
+		}
+		return mergeSessionCleanupFaults(correlatedOutcome, cleanupFaults);
+	}
+
+	public async forkApprovedPlan(
+		seed: ApprovedPlanForkSeed,
+	): Promise<ControlPlaneResult<ManagedSessionRuntime>> {
+		if (!isApprovedPlanForkSeed(seed)) {
+			return controlPlaneFailure("invalid_request", "approved-plan fork seed is invalid");
+		}
+		if (
+			seed.authorityId !== this.#identity.authorityId ||
+			seed.tenantId !== this.#identity.tenantId
+		) {
+			return controlPlaneFailure("unauthorized_peer", "approved-plan fork seed authority scope is invalid");
+		}
+		const location = await this.#locator.locate(seed.parentSessionId);
+		if (!location.ok) return location;
+		let parent: V3SessionManager | undefined;
+		let parentMutationGate: SessionMutationAdmissionGatePort | undefined;
+		let governedParent: GovernedV3SessionRuntime | undefined;
+		let child: V3SessionManager | undefined;
+		let childSessionId: SessionId | undefined;
+		let childHasDurableGenesis = false;
+		let governedParentCleanupAttempted = false;
+		const cleanupFaults: SessionCleanupFault[] = [];
+		const execute = async (): Promise<ControlPlaneResult<ManagedSessionRuntime>> => {
+			try {
+				const activeParent = this.activeRuntime(seed.parentSessionId);
+				if (activeParent) {
+					parent = activeParent.manager();
+					parentMutationGate = activeParent.mutationGate();
+				} else {
+					governedParent = await GovernedV3SessionRuntime.open({
+						filePath: location.value.filePath,
+						features: this.#features,
+						identity: this.#identity,
+						runtimeId: createRuntimeId("runtime"),
+						externalReceiptAuditor: this.#externalReceiptAuditor,
+						externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+					});
+					const admitted = await governedParent.runIfResumable(async (manager) => manager);
+					if (!admitted.ok) {
+						const startup = governedParent.startupReport().sessions[0];
+						return recoveryRequired("approved-plan fork parent did not pass governed startup audit", {
+							startupDisposition: startup?.disposition ?? "missing",
+							startupReasons: startup?.reasons.join(",") || "none",
+						});
+					}
+					parent = admitted.value;
+					parentMutationGate = governedParent.mutationGate();
+				}
+				if (
+					parent.sessionId() !== seed.parentSessionId ||
+					!sameIdentity(parent, this.#identity)
+				) {
+					return controlPlaneFailure(
+						"adapter_contract_violation",
+						"approved-plan fork parent manager correlation is invalid",
+					);
+				}
+				const recovered = parent.recoveryDecision();
+				if (
+					!recovered ||
+					recovered.kind === "corrupted" ||
+					recovered.kind === "pause_for_approval" ||
+					recovered.kind === "reconciliation_required"
+				) {
+					return recoveryRequired("approved-plan fork parent is not at a trusted stable boundary");
+				}
+				if (!parentMutationGate) {
+					return recoveryRequired("approved-plan fork parent mutation gate is unavailable");
+				}
+				const admissionHead = parent.writer().currentHead();
+				if (!admissionHead || !sameCursor(admissionHead, seed.parentCursor)) {
+					return controlPlaneFailure(
+						"cursor_mismatch",
+						"approved-plan fork parent cursor is not the current stable head",
+					);
+				}
+				const forkCorrelationId = createRuntimeId(
+					"command",
+					`approved-plan-fork-${seed.seedDigest.slice(0, 48)}`,
+				);
+				const revalidated = await parentMutationGate.revalidate({
+					kind: "session_fork",
+					correlationId: forkCorrelationId,
+					expectedHead: seed.parentCursor,
+				});
+				if (!revalidated.ok) {
+					return recoveryRequired(
+						"approved-plan fork parent did not pass continuous receipt revalidation",
+						{ errorCode: revalidated.error.code },
+					);
+				}
+				const events = await readAllRuntimeEvents(parent.eventStore());
+				if (!events.ok) return recoveryRequired("approved-plan fork parent replay failed");
+				const projection = reduceSessionEvents(events.value);
+				if (!projection.ok) return recoveryRequired("approved-plan fork parent projection failed");
+				const actualCursor: EventCursor = {
+					stream: parent.eventStore().streamRef(),
+					sequence: projection.value.headSequence,
+					eventId: projection.value.headEventId,
+					eventHash: projection.value.headEventHash,
+				};
+				if (!sameCursor(actualCursor, seed.parentCursor)) {
+					return controlPlaneFailure(
+						"cursor_mismatch",
+						"approved-plan fork parent cursor is not the current stable head",
+					);
+				}
+				const preCreateHead = parent.writer().currentHead();
+				if (!preCreateHead || !sameCursor(preCreateHead, seed.parentCursor)) {
+					return controlPlaneFailure(
+						"cursor_mismatch",
+						"approved-plan fork parent advanced before child creation",
+					);
+				}
+				childSessionId = createRuntimeId("session");
+				const initialGoalId = createRuntimeId("goal");
+				const rootAgentId = createRuntimeId("agent");
+				child = await V3SessionManager.create({
+					cwd: this.#cwd,
+					sessionDir: this.#sessionDir,
+					features: this.#features,
+					identity: this.#identity,
+					runtimeId: createRuntimeId("runtime"),
+					sessionId: childSessionId,
+					writeGenesis: false,
+					lineage: { goalId: initialGoalId, agentId: rootAgentId },
+					publication: { kind: "fork", mode: "manual" },
+				});
+				const plan = createStableForkPlan(projection.value, {
+					newSessionId: childSessionId,
+					parentLeafId: projection.value.activeLeafId,
+					goalMode: "create_child_goal",
+					initialGoalId,
+					rootAgentId,
+					idempotencyKey: forkCorrelationId,
+					principalId: this.#identity.principalId,
+					traceId: createRuntimeId("trace"),
+				});
+				if (!plan.ok || !sameCursor(plan.value.parentCursor, seed.parentCursor)) {
+					return controlPlaneFailure(
+						"cursor_mismatch",
+						"approved-plan fork genesis did not preserve the requested parent cursor",
+					);
+				}
+				const genesis = await child.writer().append(plan.value.genesisDraft);
+				if (!genesis.ok) {
+					return recoveryRequired("approved-plan fork genesis was not durably committed");
+				}
+				childHasDurableGenesis = true;
+				const durableGenesis = await child.writer().flush();
+				if (!durableGenesis.ok) {
+					return recoveryRequired("approved-plan fork genesis durable barrier failed");
+				}
+				const control = new DurableControlJournal({
+					journal: new SessionDurableOrchestratorJournal<ControlJournalRecord>({
+						journalKind: "control",
+						writer: child.writer(),
+						store: child.eventStore(),
+						principalId: this.#identity.principalId,
+					}),
+				});
+				const seedEvidence = await control.recordApprovedPlanForkSeed(
+					seed,
+					createIdempotencyKey(`approved-plan-fork-seed-${seed.seedDigest.slice(0, 48)}`),
+				);
+				if (!seedEvidence.ok) {
+					return recoveryRequired("approved-plan fork seed was not durably committed", {
+						errorCode: seedEvidence.error.code,
+						errorMessage: seedEvidence.error.message,
+					});
+				}
+				const exactSeed = seedEvidence.value.approvedPlanForkSeeds.find(
+					(record) => record.seed.seedDigest === seed.seedDigest,
+				);
+				if (!exactSeed || canonicalDigest(exactSeed.seed) !== canonicalDigest(seed)) {
+					return recoveryRequired("approved-plan fork durable seed evidence is not exact");
+				}
+				const publicationHead = parent.writer().currentHead();
+				if (!publicationHead || !sameCursor(publicationHead, seed.parentCursor)) {
+					return controlPlaneFailure(
+						"cursor_mismatch",
+						"approved-plan fork parent advanced before child publication",
+					);
+				}
+				const publishAdmission = await parentMutationGate.revalidate({
+					kind: "session_fork",
+					correlationId: forkCorrelationId,
+					expectedHead: seed.parentCursor,
+				});
+				if (!publishAdmission.ok) {
+					return recoveryRequired(
+						"approved-plan fork publication did not pass continuous receipt revalidation",
+						{ errorCode: publishAdmission.error.code },
+					);
+				}
+				await child.publishStagedTarget();
+				if (governedParent) {
+					governedParentCleanupAttempted = true;
+					await collectSessionCleanupFault(
+						cleanupFaults,
+						"fork_parent_close",
+						() => governedParent!.close(),
+					);
+					if (cleanupFaults.length > 0) {
+						return recoveryRequired(
+							"approved-plan fork parent cleanup failed before child ownership transfer",
+							{ childSessionId },
+							"uncertain",
+						);
+					}
+				}
+				const managed = await this.#manage(
+					child,
+					createV3SessionMutationAdmissionGate(child, this.#externalReceiptAuditor, {
+						externalReceiptAuditTimeoutMs: this.#externalReceiptAuditTimeoutMs,
+					}),
+				);
+				if (!managed.ok) return managed;
+				child = undefined;
+				return managed;
+			} catch (error) {
+				return adapterUnavailable(
+					"v3 approved-plan session fork",
+					error,
+					childHasDurableGenesis || error instanceof AggregateError ? "uncertain" : "none",
+					"session_writer_close",
+				);
+			}
+		};
+		const outcome = await execute();
+		const correlatedOutcome = childHasDurableGenesis && childSessionId
+			? preserveSessionSideEffect(outcome, { childSessionId })
+			: outcome;
+		if (governedParent && !governedParentCleanupAttempted) {
+			await collectSessionCleanupFault(cleanupFaults, "fork_parent_close", () => governedParent!.close());
+		}
+		if (child) {
+			if (child.publicationState() === "staging") {
+				await collectSessionCleanupFault(
+					cleanupFaults,
+					"fork_child_abort",
+					async () => {
+						const cleanup = await child!.abortUnpublishedTarget(
+							"approved-plan fork construction failed",
+						);
+						if (cleanup.status !== "cleaned") {
+							const cleanupError = new Error(
+								`fork child cleanup ${cleanup.status}: ${cleanup.errors.join("; ")}`,
+							);
+							const namedCause = cleanup.errors
+								.join("; ")
+								.match(/(?:^|: )([A-Za-z][A-Za-z0-9]*Error):/);
+							if (namedCause?.[1]) cleanupError.name = namedCause[1];
+							throw cleanupError;
+						}
+					},
+				);
+			} else if (childHasDurableGenesis) {
+				await collectSessionCleanupFault(cleanupFaults, "fork_child_close", () => child!.closeAll());
+			} else {
+				await collectSessionCleanupFault(
+					cleanupFaults,
+					"fork_child_discard",
+					() => child!.discardEmptyTarget(),
+				);
 			}
 		}
 		return mergeSessionCleanupFaults(correlatedOutcome, cleanupFaults);

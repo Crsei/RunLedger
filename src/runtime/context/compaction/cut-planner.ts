@@ -7,6 +7,8 @@ export type CompactionEntryKind = "user" | "assistant" | "tool_call" | "tool_res
 
 export interface CompactionSourceEntry {
 	sequence: number;
+	/** 同一 canonical event 投影出多个 parallel tool entries 时的稳定位置。 */
+	sequenceIndex?: number;
 	turnId: string;
 	kind: CompactionEntryKind;
 	content: string;
@@ -27,7 +29,7 @@ function suppressed(reason: CompactionSuppressionReason, entries: readonly Compa
 	return { ok: false, reason, attemptDigest: canonicalDigest({ reason, sequences: entries.map((entry) => entry.sequence) }) };
 }
 
-function pairing(entries: readonly CompactionSourceEntry[]): {
+export function compactionToolPairing(entries: readonly CompactionSourceEntry[]): {
 	digest: string;
 	pairs: ReadonlyMap<string, { call?: number; result?: number }>;
 } {
@@ -50,9 +52,26 @@ export function planCompactionCut(
 	retainedTurns: number,
 ): CompactionCutPlan {
 	if (!Number.isSafeInteger(retainedTurns) || retainedTurns < 0) return suppressed("schema_invalid", input);
-	const entries = input.slice().sort((left, right) => left.sequence - right.sequence || left.kind.localeCompare(right.kind));
+	const entries = input.slice().sort(
+		(left, right) =>
+			left.sequence - right.sequence ||
+			(left.sequenceIndex ?? 0) - (right.sequenceIndex ?? 0) ||
+			left.kind.localeCompare(right.kind),
+	);
 	if (entries.length === 0) return suppressed("insufficient_history", entries);
-	if (entries.some((entry, index) => !Number.isSafeInteger(entry.sequence) || entry.sequence < 0 || (index > 0 && entry.sequence === entries[index - 1]?.sequence))) {
+	if (entries.some((entry, index) => {
+		const position = entry.sequenceIndex ?? 0;
+		const previous = entries[index - 1];
+		return (
+			!Number.isSafeInteger(entry.sequence) ||
+			entry.sequence < 0 ||
+			!Number.isSafeInteger(position) ||
+			position < 0 ||
+			(previous !== undefined &&
+				entry.sequence === previous.sequence &&
+				position === (previous.sequenceIndex ?? 0))
+		);
+	})) {
 		return suppressed("schema_invalid", entries);
 	}
 	if (entries.some((entry) => !entry.stable)) return suppressed("active_tool_batch", entries);
@@ -60,7 +79,7 @@ export function planCompactionCut(
 	if (completedTurns.length <= retainedTurns) return suppressed("insufficient_history", entries);
 	const retainedTurnIds = new Set(completedTurns.slice(-retainedTurns));
 	let cutTo = Math.max(...entries.filter((entry) => !retainedTurnIds.has(entry.turnId)).map((entry) => entry.sequence));
-	const pairState = pairing(entries);
+	const pairState = compactionToolPairing(entries);
 	for (const pair of pairState.pairs.values()) {
 		if (pair.call === undefined || pair.result === undefined) return suppressed("active_tool_batch", entries);
 		if (pair.call <= cutTo && pair.result > cutTo) cutTo = pair.call - 1;

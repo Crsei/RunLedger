@@ -63,6 +63,11 @@ import {
 import { HeadlessDaemonServer, type HeadlessDaemonServerAccess } from "./server.ts";
 import type { MultiAgentControlPlanePort } from "../runtime/control-plane/multi-agent-contracts.ts";
 import type { SupervisorMultiAgentControlPlaneAdapter } from "../runtime/control-plane/supervisor-control-plane.ts";
+import type { PlanContextMemoryControlPlanePort } from "../runtime/control-plane/plan-context-memory-contracts.ts";
+import type {
+	JournaledPlanContextMemoryControlPlaneAdapter,
+	PlanContextMemoryMutationGatePort,
+} from "../runtime/control-plane/plan-context-memory-control-plane.ts";
 
 export interface SessionControlState {
 	sessionId: SessionId;
@@ -292,6 +297,7 @@ interface HeadlessDaemonCompositionPorts {
 	eventSource: EventSubscriptionSourcePort;
 	subscriptionLifecycle?: SessionSubscriptionLifecyclePort;
 	multiAgent?: MultiAgentControlPlanePort;
+	planContextMemory?: PlanContextMemoryControlPlanePort;
 	idempotency?: CommandIdempotencyRepository;
 	/** production authority projection 提供；fixture 缺省时沿用 command bus 的兼容推导。 */
 	runtimeGeneration?: (command: ControlPlaneCommand) => number;
@@ -302,6 +308,7 @@ interface HeadlessDaemonCompositionPorts {
 
 export interface HeadlessDaemonCompositionOptions extends HeadlessDaemonCompositionPorts {
 	multiAgent?: SupervisorMultiAgentControlPlaneAdapter;
+	planContextMemory?: JournaledPlanContextMemoryControlPlaneAdapter;
 	phase11Effects?: Phase11ProductionEffectBinding;
 	compositionReceipt: ProductionCompositionReceipt;
 	/** Production replacement 必须先提交 canonical generation/fencing transition。 */
@@ -317,6 +324,40 @@ export interface Phase11ProductionEffectBinding {
 		changeProposals: ChangeProposalControlPlanePort;
 		humanGates?: HumanGateControlPlanePort;
 	}): boolean;
+}
+
+export function validatePlanContextMemoryProductionBinding(options: {
+	features: readonly ControlPlaneFeature[];
+	idempotency?: CommandIdempotencyRepository;
+	mutationGate?: PlanContextMemoryMutationGatePort;
+	runtimeGeneration?: (command: ControlPlaneCommand) => number;
+	expectedRuntimeGeneration: number;
+	adapter?: JournaledPlanContextMemoryControlPlaneAdapter;
+}): ControlPlaneResult<void> {
+	if (!options.features.includes("plan_context_memory")) {
+		return { ok: true, value: undefined };
+	}
+	if (
+		!options.idempotency ||
+		!options.mutationGate ||
+		!options.runtimeGeneration ||
+		!options.adapter
+	) {
+		return controlPlaneFailure(
+			"adapter_contract_violation",
+			"production Plan/Context/Memory requires the daemon command journal, generation, and shutdown gate",
+		);
+	}
+	return options.adapter.matchesProductionBinding({
+		idempotency: options.idempotency,
+		mutationGate: options.mutationGate,
+		runtimeGeneration: options.expectedRuntimeGeneration,
+	})
+		? { ok: true, value: undefined }
+		: controlPlaneFailure(
+			"adapter_contract_violation",
+			"production Plan/Context/Memory does not share the daemon authority binding",
+		);
 }
 
 export function validatePhase11ProductionEffectBinding(options: {
@@ -448,6 +489,7 @@ function createComposition(
 		queries,
 		subscriptions,
 		...(options.multiAgent ? { multiAgent: options.multiAgent } : {}),
+		...(options.planContextMemory ? { planContextMemory: options.planContextMemory } : {}),
 		...(options.subscriptionLifecycle ? { subscriptionLifecycle: options.subscriptionLifecycle } : {}),
 		access,
 	});
@@ -479,6 +521,22 @@ export function createHeadlessDaemonComposition(options: HeadlessDaemonCompositi
 			retryable: false,
 		});
 	}
+	if (validated.value.features.includes("plan_context_memory") && !options.planContextMemory) {
+		throw new ControlPlaneError({
+			code: "adapter_contract_violation",
+			message: "production plan_context_memory advertisement requires the journaled specialty adapter",
+			retryable: false,
+		});
+	}
+	const specialty = validatePlanContextMemoryProductionBinding({
+		features: validated.value.features,
+		idempotency: options.idempotency,
+		mutationGate: options.shutdown,
+		runtimeGeneration: options.runtimeGeneration,
+		expectedRuntimeGeneration: validated.value.receipt.runtimeGeneration,
+		adapter: options.planContextMemory,
+	});
+	if (!specialty.ok) throw new ControlPlaneError(specialty.error);
 	if (
 		validated.value.features.includes("multi_agent") &&
 		(

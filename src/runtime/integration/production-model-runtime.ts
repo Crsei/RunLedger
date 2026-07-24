@@ -15,6 +15,7 @@ import type { AgentLoopSessionEvents } from "../session/agent-loop-events.ts";
 import {
 	GovernedModelRequestCoordinator,
 	type GovernedContextFragmentProvider,
+	type ModelHistoryProjectionPort,
 } from "./governed-model-request.ts";
 import {
 	CatalogModelCompatibilityRouter,
@@ -59,6 +60,7 @@ export interface ProductionModelRuntimeOptions {
 	};
 	workspace?: WorkspaceBindingRef;
 	fragmentProviders?: readonly GovernedContextFragmentProvider[];
+	historyProjection?: ModelHistoryProjectionPort;
 	regression?: CatalogModelRegressionEvidence;
 }
 
@@ -94,6 +96,7 @@ export function createProductionModelRuntime(options: ProductionModelRuntimeOpti
 		events: options.sessionEvents,
 		expectedRevision: () => options.sessionEvents.currentExpectedRevision(),
 		fragmentProviders: providers,
+		...(options.historyProjection ? { historyProjection: options.historyProjection } : {}),
 		resolveModel: (key) => resolveCatalogModel(options.models, key),
 		modelId: catalogModelId,
 		...(options.workspace ? { workspace: options.workspace } : {}),

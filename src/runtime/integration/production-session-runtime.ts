@@ -9,13 +9,14 @@
 import { join } from "node:path";
 import type { ArtifactRepository } from "../artifacts/cas-store.ts";
 import type { ArtifactRef } from "../protocol/v3/capability.ts";
-import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
+import { canonicalDigest, canonicalJson } from "../protocol/v3/canonical-json.ts";
 import { createIdempotencyKey } from "../protocol/v3/coordination.ts";
 import type { RuntimeEventType } from "../protocol/v3/event-catalog.ts";
 import { sameRuntimeEventStream, type ExpectedRevision, type RuntimeEventV3 } from "../protocol/v3/events.ts";
 import {
 	createRuntimeId,
 	type PrincipalId,
+	type ResourceId,
 	type SessionId,
 	type WorkspaceId,
 } from "../protocol/v3/ids.ts";
@@ -30,6 +31,12 @@ import {
 	type PlanRuntimeEventSink,
 } from "../modes/plan/service.ts";
 import type { PlanModeState } from "../modes/plan/types.ts";
+import type {
+	PlanImplementationHandoffStorePort,
+} from "../modes/plan/implementation-handoff.ts";
+import type { PlanImplementationHandoffReceipt } from "../modes/plan/types.ts";
+import type { ControlPlaneResult } from "../control-plane/errors.ts";
+import { controlPlaneFailure } from "../control-plane/errors.ts";
 import {
 	MemoryService,
 	type MemoryEventSink,
@@ -161,7 +168,9 @@ class ArtifactCompactionPort implements CompactionArtifactPort {
 			},
 			kind: input.kind,
 			mediaType: input.mediaType,
-			content: input.body,
+			// Compaction contract 的 body digest 使用 canonicalDigest(string)；
+			// CAS 因此持久化同一个 canonical scalar envelope，避免 ref/digest 双真源。
+			content: canonicalJson(input.body),
 			redaction: "default",
 			lineage: {
 				origin: "model_derived",
@@ -195,6 +204,13 @@ export interface ProductionSessionRuntimeOptions {
 	verification: ProductionVerificationServices;
 	compaction: {
 		sampler: CompactionSummarySampler;
+		summarizerProfileId: ResourceId;
+		summarizerProfileDigest: string;
+		retainedTurns: number;
+		maxInputChars: number;
+		maxSummaryTokens: number;
+		targetInputBudget: number;
+		timeoutMs: number;
 	};
 	orchestrator: {
 		budgetLimits: BudgetLimits;
@@ -226,6 +242,7 @@ export interface ProductionSessionRuntime {
 	memoryScopes: readonly MemoryScopeRef[];
 	compactionProjection: FileCompactionProjectionStore;
 	compaction: CompactionService;
+	compactionPolicy: Omit<ProductionSessionRuntimeOptions["compaction"], "sampler">;
 	goal: DurableGoalStateMachine;
 	tasks: SessionTaskRepository;
 	budget: BudgetGuard;
@@ -234,10 +251,78 @@ export interface ProductionSessionRuntime {
 	queue: CanonicalAgentQueueAdapter;
 	turns: TurnOrchestrator;
 	control: DurableControlJournal;
+	planHandoffs: PlanImplementationHandoffStorePort;
 	retry: DurableRetryController;
 	lifecycle: PromptGoalCoordinator;
 	readiness: RuntimeDependencyReadinessReceipt;
 	verification: ProductionVerificationServices;
+}
+
+class DurablePlanImplementationHandoffStore implements PlanImplementationHandoffStorePort {
+	readonly #control: DurableControlJournal;
+	readonly #scope: {
+		authorityId: ReturnType<V3SessionManager["identity"]>["authorityId"];
+		tenantId: ReturnType<V3SessionManager["identity"]>["tenantId"];
+		sessionId: SessionId;
+	};
+
+	public constructor(
+		control: DurableControlJournal,
+		scope: {
+			authorityId: ReturnType<V3SessionManager["identity"]>["authorityId"];
+			tenantId: ReturnType<V3SessionManager["identity"]>["tenantId"];
+			sessionId: SessionId;
+		},
+	) {
+		this.#control = control;
+		this.#scope = scope;
+	}
+
+	public async persist(
+		receipt: PlanImplementationHandoffReceipt,
+	): Promise<ControlPlaneResult<void>> {
+		if (
+			receipt.authorityId !== this.#scope.authorityId ||
+			receipt.tenantId !== this.#scope.tenantId ||
+			receipt.sourceSessionId !== this.#scope.sessionId
+		) {
+			return controlPlaneFailure(
+				"invalid_request",
+				"plan implementation handoff is outside the active production session scope",
+			);
+		}
+		const key = createIdempotencyKey(
+			`plan-handoff-${canonicalDigest({
+				receiptId: receipt.receiptId,
+				receiptDigest: receipt.receiptDigest,
+			}).slice(0, 48)}`,
+		);
+		const recorded = await this.#control.recordPlanImplementationHandoff(receipt, key);
+		if (!recorded.ok) {
+			return controlPlaneFailure(
+				recorded.error.code === "idempotency_conflict"
+					? "idempotency_conflict"
+					: "recovery_required",
+				"plan implementation handoff was not durably recorded",
+				recorded.error.retryable,
+				{ journalErrorCode: recorded.error.code },
+				recorded.error.code === "idempotency_conflict" ? "none" : "uncertain",
+			);
+		}
+		const exact = recorded.value.planImplementationHandoffs.find(
+			(candidate) => candidate.receipt.receiptId === receipt.receiptId,
+		);
+		if (!exact || exact.receipt.receiptDigest !== receipt.receiptDigest) {
+			return controlPlaneFailure(
+				"recovery_required",
+				"plan implementation handoff durable replay did not return the exact receipt",
+				false,
+				undefined,
+				"uncertain",
+			);
+		}
+		return { ok: true, value: undefined };
+	}
 }
 
 function persistedBindingDigest(binding: PersistedWorkspaceBinding): string {
@@ -268,6 +353,22 @@ function assertProductionInputs(options: ProductionSessionRuntimeOptions): void 
 	if (!workspace || workspace.workspaceId !== binding.workspaceId ||
 		workspace.bindingRevision !== binding.leaseRevision || workspace.bindingDigest !== binding.bindingDigest) {
 		throw new Error("orchestrator save-point bindings do not pin the active workspace binding");
+	}
+	const compact = options.compaction;
+	if (
+		!Number.isSafeInteger(compact.retainedTurns) ||
+		compact.retainedTurns < 1 ||
+		!Number.isSafeInteger(compact.maxInputChars) ||
+		compact.maxInputChars < 1 ||
+		!Number.isSafeInteger(compact.maxSummaryTokens) ||
+		compact.maxSummaryTokens < 1 ||
+		!Number.isSafeInteger(compact.targetInputBudget) ||
+		compact.targetInputBudget < compact.maxSummaryTokens ||
+		!Number.isSafeInteger(compact.timeoutMs) ||
+		compact.timeoutMs < 1 ||
+		!/^[a-f0-9]{64}$/u.test(compact.summarizerProfileDigest)
+	) {
+		throw new Error("production compaction policy is invalid");
 	}
 }
 
@@ -483,6 +584,11 @@ export async function createProductionSessionRuntime(
 		journal: new SessionDurableOrchestratorJournal<ControlJournalRecord>({ ...journalBase, journalKind: "control" }),
 		clock,
 	});
+	const planHandoffs = new DurablePlanImplementationHandoffStore(control, {
+		authorityId: identity.authorityId,
+		tenantId: identity.tenantId,
+		sessionId: options.manager.sessionId(),
+	});
 	const turns = new TurnOrchestrator({
 		budget,
 		savePoints: savePointResult.value,
@@ -551,6 +657,15 @@ export async function createProductionSessionRuntime(
 		memoryScopes,
 		compactionProjection,
 		compaction,
+		compactionPolicy: {
+			summarizerProfileId: options.compaction.summarizerProfileId,
+			summarizerProfileDigest: options.compaction.summarizerProfileDigest,
+			retainedTurns: options.compaction.retainedTurns,
+			maxInputChars: options.compaction.maxInputChars,
+			maxSummaryTokens: options.compaction.maxSummaryTokens,
+			targetInputBudget: options.compaction.targetInputBudget,
+			timeoutMs: options.compaction.timeoutMs,
+		},
 		goal: goalResult.value,
 		tasks,
 		budget,
@@ -559,6 +674,7 @@ export async function createProductionSessionRuntime(
 		queue,
 		turns,
 		control,
+		planHandoffs,
 		retry,
 		lifecycle,
 		readiness,

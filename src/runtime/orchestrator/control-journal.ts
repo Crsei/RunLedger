@@ -3,6 +3,14 @@
 import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
 import type { IdempotencyKey } from "../protocol/v3/coordination.ts";
 import { createRuntimeId, type ArtifactId, type CommandId } from "../protocol/v3/ids.ts";
+import {
+	isApprovedPlanForkSeed,
+	isPlanImplementationHandoffReceipt,
+} from "../modes/plan/schema.ts";
+import type {
+	ApprovedPlanForkSeed,
+	PlanImplementationHandoffReceipt,
+} from "../modes/plan/types.ts";
 import type { LoopObservation } from "./loop-breaker.ts";
 import type { RetryDecision, RetryFailure, RetryContext } from "./retry-policy.ts";
 import type {
@@ -51,6 +59,16 @@ export type ControlJournalRecord =
 			operationIdentityDigest: string;
 			reconciliationReceiptDigest: string;
 			reconciledAt: string;
+	  }
+	| {
+			kind: "control.plan_implementation_handoff";
+			receipt: PlanImplementationHandoffReceipt;
+			recordedAt: string;
+	  }
+	| {
+			kind: "control.approved_plan_fork_seed";
+			seed: ApprovedPlanForkSeed;
+			recordedAt: string;
 	  };
 
 export interface ControlJournalSnapshot {
@@ -60,6 +78,14 @@ export interface ControlJournalSnapshot {
 	uncertainOperations: readonly Extract<
 		ControlJournalRecord,
 		{ kind: "control.uncertain_operation_gated" }
+	>[];
+	planImplementationHandoffs: readonly Extract<
+		ControlJournalRecord,
+		{ kind: "control.plan_implementation_handoff" }
+	>[];
+	approvedPlanForkSeeds: readonly Extract<
+		ControlJournalRecord,
+		{ kind: "control.approved_plan_fork_seed" }
 	>[];
 }
 
@@ -87,6 +113,14 @@ function reduceControlRecords(
 		CommandId,
 		Extract<ControlJournalRecord, { kind: "control.uncertain_operation_gated" }>
 	>();
+	const handoffs: Extract<
+		ControlJournalRecord,
+		{ kind: "control.plan_implementation_handoff" }
+	>[] = [];
+	const forkSeeds: Extract<
+		ControlJournalRecord,
+		{ kind: "control.approved_plan_fork_seed" }
+	>[] = [];
 	for (const transaction of transactions) {
 		for (const record of transaction.records) {
 			if (record.kind === "control.loop_observed") {
@@ -127,7 +161,7 @@ function reduceControlRecords(
 					};
 				}
 				uncertain.set(record.operationId, cloneRecord(record));
-			} else {
+			} else if (record.kind === "control.uncertain_operation_reconciled") {
 				const active = uncertain.get(record.operationId);
 				if (
 					!active ||
@@ -140,6 +174,38 @@ function reduceControlRecords(
 					};
 				}
 				uncertain.delete(record.operationId);
+			} else if (record.kind === "control.plan_implementation_handoff") {
+				if (
+					!isPlanImplementationHandoffReceipt(record.receipt) ||
+					record.recordedAt !== record.receipt.createdAt ||
+					handoffs.some((candidate) => candidate.receipt.receiptId === record.receipt.receiptId)
+				) {
+					return {
+						ok: false,
+						error: {
+							code: "invalid_input",
+							message: "plan implementation handoff evidence is invalid",
+							retryable: false,
+						},
+					};
+				}
+				handoffs.push(cloneRecord(record));
+			} else {
+				if (
+					!isApprovedPlanForkSeed(record.seed) ||
+					!Number.isFinite(Date.parse(record.recordedAt)) ||
+					forkSeeds.some((candidate) => candidate.seed.seedDigest === record.seed.seedDigest)
+				) {
+					return {
+						ok: false,
+						error: {
+							code: "invalid_input",
+							message: "approved-plan fork seed evidence is invalid",
+							retryable: false,
+						},
+					};
+				}
+				forkSeeds.push(cloneRecord(record));
 			}
 		}
 	}
@@ -150,6 +216,8 @@ function reduceControlRecords(
 			observations,
 			retryDecisions,
 			uncertainOperations: [...uncertain.values()].map(cloneRecord),
+			planImplementationHandoffs: handoffs,
+			approvedPlanForkSeeds: forkSeeds,
 		},
 	};
 }
@@ -270,6 +338,34 @@ export class DurableControlJournal {
 			...body,
 			decisionDigest: canonicalDigest(body),
 			decidedAt: this.#clock().toISOString(),
+		}, idempotencyKey);
+	}
+
+	public recordPlanImplementationHandoff(
+		receipt: PlanImplementationHandoffReceipt,
+		idempotencyKey: IdempotencyKey,
+	): Promise<OrchestratorResult<ControlJournalSnapshot>> {
+		return this.#append({
+			kind: "control.plan_implementation_handoff",
+			receipt: structuredClone(receipt),
+			recordedAt: receipt.createdAt,
+		}, idempotencyKey);
+	}
+
+	public recordApprovedPlanForkSeed(
+		seed: ApprovedPlanForkSeed,
+		idempotencyKey: IdempotencyKey,
+	): Promise<OrchestratorResult<ControlJournalSnapshot>> {
+		if (!isApprovedPlanForkSeed(seed)) {
+			return Promise.resolve({
+				ok: false,
+				error: { code: "invalid_input", message: "approved-plan fork seed is invalid", retryable: false },
+			});
+		}
+		return this.#append({
+			kind: "control.approved_plan_fork_seed",
+			seed: structuredClone(seed),
+			recordedAt: this.#clock().toISOString(),
 		}, idempotencyKey);
 	}
 

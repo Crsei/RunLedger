@@ -14,6 +14,7 @@
       "runledger/runtime/control-plane": ["src/runtime/control-plane/index.ts"],
       "runledger/runtime/executors": ["src/runtime/executors/index.ts"],
       "runledger/runtime/identity/enterprise": ["src/runtime/identity/enterprise.ts"],
+      "runledger/runtime/integration/dependency-readiness": ["src/runtime/integration/dependency-readiness.ts"],
       "runledger/runtime/lifecycle": ["src/runtime/lifecycle/index.ts"],
       "runledger/runtime/orchestrator": ["src/runtime/orchestrator/index.ts"],
       "runledger/runtime/telemetry": ["src/runtime/telemetry/index.ts"],

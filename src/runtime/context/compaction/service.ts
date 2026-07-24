@@ -135,6 +135,9 @@ function checkpointRef(checkpoint: CompactionCheckpoint): CompactionCheckpointRe
 function canonicalReplacementEntry(entry: CompactionSourceEntry): Readonly<Record<string, unknown>> {
 	return {
 		sequence: entry.sequence,
+		...(entry.sequenceIndex === undefined
+			? {}
+			: { sequenceIndex: entry.sequenceIndex }),
 		turnId: entry.turnId,
 		kind: entry.kind,
 		content: entry.content,

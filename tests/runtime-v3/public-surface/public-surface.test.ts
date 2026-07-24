@@ -14,6 +14,7 @@ const PUBLIC_SUBPATHS = {
 	"./runtime/telemetry": "./dist/runtime/telemetry/index",
 	"./runtime/lifecycle": "./dist/runtime/lifecycle/index",
 	"./runtime/identity/enterprise": "./dist/runtime/identity/enterprise",
+	"./runtime/integration/dependency-readiness": "./dist/runtime/integration/dependency-readiness",
 	"./runtime/executors": "./dist/runtime/executors/index",
 	"./daemon": "./dist/daemon/index",
 	"./verification-runner": "./dist/verification-runner/index",

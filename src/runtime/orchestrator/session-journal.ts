@@ -55,6 +55,8 @@ const JOURNAL_RECORD_KINDS: Readonly<Record<OrchestratorJournalKind, ReadonlySet
 		"control.retry_decided",
 		"control.uncertain_operation_gated",
 		"control.uncertain_operation_reconciled",
+		"control.plan_implementation_handoff",
+		"control.approved_plan_fork_seed",
 	]),
 };
 

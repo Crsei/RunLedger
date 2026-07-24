@@ -221,6 +221,69 @@ describe("Memory canonical lifecycle", () => {
 		expect(current.events.at(-1)?.type).toBe("memory.expired");
 	});
 
+	it("publishes same-scope updates only against the exact approved revision", async () => {
+		const current = await harness();
+		const record = await publish(current.service, workspaceScope, "update");
+		const proposed = await current.service.proposeUpdate(
+			record,
+			{
+				title: "Updated rule",
+				content: "alpha updated\nreviewed content",
+				sourceRefs: [trustedSource("updated")],
+				expiresAt: "2027-07-24T00:00:00.000Z",
+			},
+			traceId,
+		);
+		expect(await current.store.readRecord(workspaceScope, record.memoryId))
+			.toEqual(record);
+		const published = await current.service.approve(
+			proposed.proposal,
+			approvalReceipt(proposed.proposal.approvalId),
+			traceId,
+		);
+		expect(published).toMatchObject({
+			memoryId: record.memoryId,
+			status: "approved",
+			revision: record.revision + 1,
+			title: "Updated rule",
+			content: "alpha updated\nreviewed content",
+			supersedes: {
+				memoryId: record.memoryId,
+				revision: record.revision,
+				contentDigest: record.contentDigest,
+			},
+		});
+
+		const stale = await current.service.proposeUpdate(
+			published,
+			{
+				title: "Stale update",
+				content: "must not publish",
+				sourceRefs: [trustedSource("stale")],
+			},
+			traceId,
+		);
+		const competing = await current.service.proposeUpdate(
+			published,
+			{
+				title: "Winning update",
+				content: "canonical winner",
+				sourceRefs: [trustedSource("winner")],
+			},
+			traceId,
+		);
+		await current.service.approve(
+			competing.proposal,
+			approvalReceipt(competing.proposal.approvalId),
+			traceId,
+		);
+		await expect(current.service.approve(
+			stale.proposal,
+			approvalReceipt(stale.proposal.approvalId),
+			traceId,
+		)).rejects.toMatchObject({ code: "revision_conflict" });
+	});
+
 	it("persists changed_unreviewed diagnostics and excludes externally edited records", async () => {
 		const current = await harness();
 		const record = await publish(current.service, workspaceScope, "drift");

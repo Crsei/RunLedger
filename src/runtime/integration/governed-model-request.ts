@@ -42,7 +42,7 @@ import type {
 	ModelRequestPreparationInput,
 	ModelRequestPreparationResult,
 } from "../types.ts";
-import type { Api, Model } from "../../types.ts";
+import type { Api, Message, Model } from "../../types.ts";
 
 export interface GovernedModelIdentity {
 	authorityId: AuthorityId;
@@ -82,6 +82,20 @@ export interface GovernedContextFragmentProvider {
 	): GovernedContextFragmentResult | Promise<GovernedContextFragmentResult>;
 }
 
+export interface ModelHistoryProjection {
+	agentMessages: readonly AgentMessage[];
+	llmMessages: readonly Message[];
+	projectionDigest: string;
+}
+
+/** raw canonical history -> 当前 model-visible history 的唯一 seam。 */
+export interface ModelHistoryProjectionPort {
+	project(
+		input: ModelRequestPreparationInput,
+		signal?: AbortSignal,
+	): ModelHistoryProjection | Promise<ModelHistoryProjection>;
+}
+
 export interface ModelRouteLineage {
 	inputSources: readonly InputSourceRef[];
 	declassificationReceipts: readonly DeclassificationReceiptRef[];
@@ -93,6 +107,7 @@ export interface GovernedModelRequestCoordinatorOptions {
 	events: GovernedModelRequestEventPort;
 	expectedRevision: () => ExpectedRevision;
 	fragmentProviders: readonly GovernedContextFragmentProvider[];
+	historyProjection?: ModelHistoryProjectionPort;
 	resolveModel?: (modelId: string) => Model<Api> | undefined;
 	modelId?: (model: Model<Api>) => string;
 	alias?: ModelCapabilityAlias | ((input: ModelRequestPreparationInput) => ModelCapabilityAlias);
@@ -113,7 +128,8 @@ export class GovernedModelRequestError extends Error {
 		| "model_unresolved"
 		| "system_prompt_unclassified"
 		| "duplicate_fragment"
-		| "invalid_scope";
+		| "invalid_scope"
+		| "history_projection_invalid";
 
 	public constructor(code: GovernedModelRequestError["code"], message: string) {
 		super(message);
@@ -244,6 +260,7 @@ export class GovernedModelRequestCoordinator {
 	readonly #events: GovernedModelRequestEventPort;
 	readonly #expectedRevision: () => ExpectedRevision;
 	readonly #fragmentProviders: readonly GovernedContextFragmentProvider[];
+	readonly #historyProjection: ModelHistoryProjectionPort;
 	readonly #resolveModel?: GovernedModelRequestCoordinatorOptions["resolveModel"];
 	readonly #modelId: NonNullable<GovernedModelRequestCoordinatorOptions["modelId"]>;
 	readonly #alias: NonNullable<GovernedModelRequestCoordinatorOptions["alias"]>;
@@ -262,6 +279,16 @@ export class GovernedModelRequestCoordinator {
 		this.#events = options.events;
 		this.#expectedRevision = options.expectedRevision;
 		this.#fragmentProviders = options.fragmentProviders;
+		this.#historyProjection = options.historyProjection ?? {
+			project: (input) => ({
+				agentMessages: input.messages,
+				llmMessages: input.context.messages,
+				projectionDigest: canonicalDigest({
+					agentMessages: input.messages,
+					llmMessages: input.context.messages,
+				}),
+			}),
+		};
 		this.#resolveModel = options.resolveModel;
 		this.#modelId = options.modelId ?? modelKey;
 		this.#alias = options.alias ?? "builder";
@@ -281,14 +308,33 @@ export class GovernedModelRequestCoordinator {
 		if (!input.turnId) {
 			throw new GovernedModelRequestError("missing_turn_identity", "governed model preparation requires a durable turn id");
 		}
-		const alias = typeof this.#alias === "function" ? this.#alias(input) : this.#alias;
+		const projected = await this.#historyProjection.project(input, signal);
+		if (
+			projected.projectionDigest !== canonicalDigest({
+				agentMessages: projected.agentMessages,
+				llmMessages: projected.llmMessages,
+			})
+		) {
+			throw new GovernedModelRequestError(
+				"history_projection_invalid",
+				"model history projection digest does not match its visible messages",
+			);
+		}
+		const effectiveInput: ModelRequestPreparationInput = {
+			...input,
+			context: { ...input.context, messages: [...projected.llmMessages] },
+			messages: [...projected.agentMessages],
+		};
+		const alias = typeof this.#alias === "function" ? this.#alias(effectiveInput) : this.#alias;
 		const capabilities = typeof this.#requiredCapabilities === "function"
-			? this.#requiredCapabilities(input)
+			? this.#requiredCapabilities(effectiveInput)
 			: this.#requiredCapabilities;
-		const lineage = typeof this.#routeLineage === "function" ? this.#routeLineage(input) : this.#routeLineage;
+		const lineage = typeof this.#routeLineage === "function"
+			? this.#routeLineage(effectiveInput)
+			: this.#routeLineage;
 		assertScope(this.#identity, capabilities, lineage, this.#workspace);
-		const request = routeRequest(this.#identity, input, {
-			modelId: this.#modelId(input.model),
+		const request = routeRequest(this.#identity, effectiveInput, {
+			modelId: this.#modelId(effectiveInput.model),
 			alias,
 			...(this.#currentProfileId ? { currentProfileId: this.#currentProfileId } : {}),
 			requiredCapabilities: capabilities,
@@ -306,9 +352,9 @@ export class GovernedModelRequestCoordinator {
 			throw new GovernedModelRequestError("fork_required", decision.reason);
 		}
 
-		const currentKey = this.#modelId(input.model);
+		const currentKey = this.#modelId(effectiveInput.model);
 		const selectedModel = decision.targetModelId === currentKey
-			? input.model
+			? effectiveInput.model
 			: this.#resolveModel?.(decision.targetModelId);
 		if (!selectedModel || this.#modelId(selectedModel) !== decision.targetModelId) {
 			throw new GovernedModelRequestError("model_unresolved", "routed model cannot be resolved to an exact provider model");
@@ -319,14 +365,14 @@ export class GovernedModelRequestCoordinator {
 		);
 		const traceId = this.#traceIdFactory();
 		const loaded = await Promise.all(this.#fragmentProviders.map((provider) =>
-			provider.load({ input, contextRequestId, sessionId: this.#identity.sessionId, route: decision, traceId }, signal),
+			provider.load({ input: effectiveInput, contextRequestId, sessionId: this.#identity.sessionId, route: decision, traceId }, signal),
 		));
 		const fragments = loaded.flatMap((result) => result.fragments);
 		const fragmentIds = new Set(fragments.map((fragment) => fragment.fragmentId));
 		if (fragmentIds.size !== fragments.length) {
 			throw new GovernedModelRequestError("duplicate_fragment", "context fragment ids must be unique across providers");
 		}
-		const systemPrompt = input.context.systemPrompt ?? "";
+		const systemPrompt = effectiveInput.context.systemPrompt ?? "";
 		if (systemPrompt.length > 0) {
 			const digest = canonicalDigest(systemPrompt);
 			const consumers = loaded.filter((result) => result.consumedSystemPromptDigest === digest).length;
@@ -348,7 +394,7 @@ export class GovernedModelRequestCoordinator {
 			modelProfileId: decision.profileId,
 			...(this.#workspace ? { workspace: this.#workspace } : {}),
 			requiredCapabilities: capabilities,
-			budget: this.#contextBudget(selectedModel, input),
+			budget: this.#contextBudget(selectedModel, effectiveInput),
 			fragments,
 		});
 		await this.#events.recordContextAssembly(assembled.receipt);
@@ -357,8 +403,8 @@ export class GovernedModelRequestCoordinator {
 			model: selectedModel,
 			context: {
 				...(contextSystemPrompt(assembled) ? { systemPrompt: contextSystemPrompt(assembled) } : {}),
-				messages: input.context.messages,
-				tools: input.context.tools,
+				messages: effectiveInput.context.messages,
+				tools: effectiveInput.context.tools,
 			},
 		};
 	}

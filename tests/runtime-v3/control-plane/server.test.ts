@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createIdempotencyKey } from "../../../src/runtime/protocol/v3/coordination.ts";
+import { canonicalDigest } from "../../../src/runtime/protocol/v3/canonical-json.ts";
 import { createSessionEventStreamRef } from "../../../src/runtime/protocol/v3/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
 import { createTestHeadlessDaemonComposition } from "../../../src/daemon/composition-root.ts";
@@ -12,6 +13,11 @@ import type {
 	AgentInspectQueryV2,
 	MultiAgentControlPlanePort,
 } from "../../../src/runtime/control-plane/multi-agent-contracts.ts";
+import type {
+	PlanContextMemoryControlPlanePort,
+	PlanEnterCommandV2,
+	PlanInspectQueryV2,
+} from "../../../src/runtime/control-plane/plan-context-memory-contracts.ts";
 
 const AUTHORITY_ID = createRuntimeId("authority", "server");
 const TENANT_ID = createRuntimeId("tenant", "server");
@@ -28,6 +34,7 @@ const SESSION_HEAD = {
 function composition(
 	features: readonly ControlPlaneFeature[] = ["session", "health"],
 	multiAgent?: MultiAgentControlPlanePort,
+	planContextMemory?: PlanContextMemoryControlPlanePort,
 ) {
 	return createTestHeadlessDaemonComposition({
 		testOnly: true,
@@ -78,6 +85,7 @@ function composition(
 			},
 		},
 		...(multiAgent ? { multiAgent } : {}),
+		...(planContextMemory ? { planContextMemory } : {}),
 		features,
 	});
 }
@@ -369,5 +377,116 @@ describe("headless daemon server", () => {
 			error: { code: "unauthorized_peer" },
 		});
 		expect(calls).toEqual(["agent:inspect", "agent:cancel"]);
+	});
+
+	it("dispatches schema v2 Plan/Context/Memory frames only after feature negotiation", async () => {
+		const calls: string[] = [];
+		const handle = {
+			handleId: "handle_0123456789abcdef",
+			sessionId: SESSION_ID,
+			generation: 1,
+		};
+		const command: PlanEnterCommandV2 = {
+			kind: "command",
+			type: "plan:enter",
+			commandId: createRuntimeId("command", "server-plan-enter"),
+			idempotencyKey: createIdempotencyKey("server-plan-enter-key"),
+			authorityId: AUTHORITY_ID,
+			tenantId: TENANT_ID,
+			principalId: PRINCIPAL_ID,
+			expectedSessionRevision: {
+				stream: SESSION_HEAD.stream,
+				sequence: SESSION_HEAD.sequence,
+				eventHash: SESSION_HEAD.eventHash,
+			},
+			expectedDomainRevision: 0,
+			sessionHandle: handle,
+			payload: { sessionId: SESSION_ID, requestedBy: "user" },
+		};
+		const query: PlanInspectQueryV2 = {
+			kind: "query",
+			type: "plan:inspect",
+			queryId: "server-plan-inspect",
+			authorityId: AUTHORITY_ID,
+			tenantId: TENANT_ID,
+			principalId: PRINCIPAL_ID,
+			payload: { sessionId: SESSION_ID, sessionHandle: handle },
+		};
+		const port: PlanContextMemoryControlPlanePort = {
+			execute: async (input) => {
+				calls.push(input.type);
+				const body = {
+					type: "plan:enter" as const,
+					sessionId: SESSION_ID,
+					domainRevision: 1,
+					durableCursor: SESSION_HEAD,
+					stateKind: "pending_activation" as const,
+					modeRevision: 1,
+				};
+				return {
+					ok: true,
+					value: {
+						kind: "command_result",
+						commandId: input.commandId,
+						type: input.type,
+						status: "executed",
+						result: { ...body, receiptDigest: canonicalDigest(body) },
+					},
+				};
+			},
+			query: async (input) => {
+				calls.push(input.type);
+				return {
+					ok: true,
+					value: {
+						kind: "query_result",
+						queryId: input.queryId,
+						type: input.type,
+						result: {
+							type: "plan:inspect",
+							sessionId: SESSION_ID,
+							state: {
+								schemaVersion: 1,
+								authorityId: AUTHORITY_ID,
+								tenantId: TENANT_ID,
+								sessionId: SESSION_ID,
+								modeRevision: 0,
+								updatedByPrincipalId: PRINCIPAL_ID,
+								updatedAt: "2026-07-24T00:00:00.000Z",
+								kind: "inactive",
+								mode: "default",
+							},
+							projectionDigest: DIGEST,
+						},
+					},
+				};
+			},
+		};
+		const daemon = composition(["session", "plan_context_memory"], undefined, port);
+		const dispatcher = daemon.server.createDispatcher("connection-specialty-v2", {
+			transport: "jsonl",
+			peerCredentialsVerified: true,
+		});
+		await handshake(dispatcher, { schema: 2, features: ["session", "plan_context_memory"] });
+		await expect(dispatcher.dispatch(query)).resolves.toMatchObject({
+			kind: "query_result",
+			type: "plan:inspect",
+		});
+		await expect(dispatcher.dispatch(command)).resolves.toMatchObject({
+			kind: "command_result",
+			type: "plan:enter",
+		});
+
+		const withoutFeature = composition(["session", "plan_context_memory"], undefined, port)
+			.server.createDispatcher("connection-specialty-no-feature", {
+				transport: "jsonl",
+				peerCredentialsVerified: true,
+			});
+		await handshake(withoutFeature, { schema: 2, features: ["session"] });
+		await expect(withoutFeature.dispatch(query)).resolves.toMatchObject({
+			kind: "error",
+			error: { code: "unsupported_feature" },
+		});
+		expect(calls).toEqual(["plan:inspect", "plan:enter"]);
 	});
 });

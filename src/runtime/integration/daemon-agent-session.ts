@@ -13,10 +13,12 @@ import {
 import type { DurableQueueReceipt } from "../session/agent-loop-events.ts";
 import type { SessionId } from "../protocol/v3/ids.ts";
 import type { SessionMutationAdmissionGatePort } from "../lifecycle/mutation-gate.ts";
+import type { ProductionPlanContextMemorySessionPort } from "./production-plan-context-memory-control-plane.ts";
 
 export interface DaemonAgentSessionBindingPort {
 	readonly sessionId: SessionId;
 	readonly manager: V3SessionManager;
+	planContextMemory?(): ProductionPlanContextMemorySessionPort;
 	preflightPrompt(commandId: string, text: string, expectsActiveTurn: boolean): Promise<void>;
 	acceptPrompt(
 		commandId: string,
@@ -110,6 +112,26 @@ class ProductionDaemonAgentSession implements DaemonAgentSessionBindingPort {
 		expectsActiveTurn: boolean,
 	): Promise<void> {
 		return this.#controller.preflightGovernedPrompt(expectsActiveTurn, { commandId, text });
+	}
+
+	public planContextMemory(): ProductionPlanContextMemorySessionPort {
+		return {
+			manager: this.manager,
+			workspace: this.#runtime.workspace,
+			runtimeWorkspace: this.#runtime.runtimeWorkspace,
+			plan: this.#runtime.sessionRuntime.plan,
+			memoryStore: this.#runtime.sessionRuntime.memoryStore,
+			memory: this.#runtime.sessionRuntime.memory,
+			memoryScopes: this.#runtime.sessionRuntime.memoryScopes,
+			compactionProjection: this.#runtime.sessionRuntime.compactionProjection,
+			compaction: this.#runtime.sessionRuntime.compaction,
+			compactionPolicy: this.#runtime.sessionRuntime.compactionPolicy,
+			goal: this.#runtime.sessionRuntime.goal,
+			tasks: this.#runtime.sessionRuntime.tasks,
+			verification: this.#runtime.sessionRuntime.verification,
+			artifacts: this.#runtime.artifactAccess,
+			waitForIdle: () => this.#controller.waitForIdle(),
+		};
 	}
 
 	public acceptPrompt(
