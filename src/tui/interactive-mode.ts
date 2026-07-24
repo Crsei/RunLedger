@@ -86,6 +86,7 @@ import {
   projectReplay,
 } from "./timeline/projector.ts";
 import {
+  clearTimelineViewport,
   createTimelineState,
   reduceTimeline,
 } from "./timeline/tool-reducer.ts";
@@ -158,6 +159,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private sessionPickerComponent: SessionPickerComponent | undefined;
   private timelineState: TimelineState = createTimelineState();
   private timelineCursor: TimelineProjectionCursor = createTimelineProjectionCursor();
+  private appliedViewportClearRevision = 0;
   private nextInvocation = 0;
   private drainScheduled = false;
   private unsubscribe?: () => void;
@@ -821,6 +823,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private syncApplicationState(state: TuiState): void {
+    if (state.viewportClearRevision !== this.appliedViewportClearRevision) {
+      this.appliedViewportClearRevision = state.viewportClearRevision;
+      this.timelineState = clearTimelineViewport(this.timelineState);
+      this.refs?.chat.setState(this.timelineState);
+    }
     const commands: CommandTimelineView[] = state.commandOrder.flatMap((id) => {
       const record = state.commandsById[id];
       if (!record) return [];
@@ -926,11 +933,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private compatibilityHandlers(): Readonly<Record<string, CompatibilityCommandHandler>> {
     const succeeded = (summary: string): TuiTerminalState => ({ state: "succeeded", summary });
     const handlers: Record<string, CompatibilityCommandHandler> = {
-      clear: () => {
-        this.timelineState = createTimelineState();
-        this.refs.chat.clear();
-        return succeeded("viewport cleared");
-      },
       provider: async () => {
         await this.openProviderSelector();
         return succeeded("provider selector opened");

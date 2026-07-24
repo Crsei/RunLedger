@@ -9,6 +9,15 @@ export function createTimelineState(): TimelineState {
   return { committedRows: [], activeRowsByCorrelationId: {}, activeOrder: [] };
 }
 
+/** 只清 viewport 已提交行；运行中的 message/tool correlation 继续接收终态。 */
+export function clearTimelineViewport(state: TimelineState): TimelineState {
+  return {
+    committedRows: [],
+    activeRowsByCorrelationId: state.activeRowsByCorrelationId,
+    activeOrder: state.activeOrder,
+  };
+}
+
 export function reduceTimeline(state: TimelineState, event: TimelineEvent): TimelineState {
   switch (event.type) {
     case "message.start":

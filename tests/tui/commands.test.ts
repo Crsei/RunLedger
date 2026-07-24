@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createInitialTuiState } from "../../src/tui/application/reducer.ts";
-import { builtinCommandDefinitions } from "../../src/tui/commands/builtins.ts";
+import {
+  builtinCommandDefinitions,
+  COMPATIBILITY_COMMAND_NAMES,
+} from "../../src/tui/commands/builtins.ts";
 import { executeCommand } from "../../src/tui/commands/executor.ts";
 import { parseCommand } from "../../src/tui/commands/parser.ts";
 import { CommandRegistry } from "../../src/tui/commands/registry.ts";
@@ -47,6 +50,18 @@ describe("command registry/parser/executor", () => {
       sessionCatalog: { available: true },
     }))).toEqual({ state: "available" });
     expect(snapshot.definitions).toHaveLength(15);
+  });
+
+  it("keeps /clear native, ephemeral, immediate, and outside compatibility", () => {
+    const snapshot = new CommandRegistry(builtinCommandDefinitions()).snapshot;
+    const clear = snapshot.byName.clear!;
+    expect(clear).toMatchObject({
+      executionStrategy: "native",
+      historyPolicy: "ephemeral",
+      activeQueryPolicy: "immediate",
+    });
+    expect(COMPATIBILITY_COMMAND_NAMES).not.toContain("clear");
+    expect(COMPATIBILITY_COMMAND_NAMES).toHaveLength(12);
   });
 
   it("rejects duplicate canonical names and aliases", () => {
@@ -109,7 +124,7 @@ describe("command registry/parser/executor", () => {
     });
   });
 
-  it("queues or rejects active-query commands without invoking handlers", () => {
+  it("executes immediate UI commands or rejects query-producing commands while active", () => {
     const snapshot = new CommandRegistry(builtinCommandDefinitions()).snapshot;
     const active = {
       ...createInitialTuiState(BOOTSTRAP),
@@ -119,12 +134,12 @@ describe("command registry/parser/executor", () => {
         effectId: "prompt:1:effect:0",
       },
     };
-    const queued = parseCommand("/clear", snapshot, "command:1");
+    const immediate = parseCommand("/clear", snapshot, "command:1");
     const rejected = parseCommand("/model", snapshot, "command:2");
-    if (!queued.ok || !rejected.ok) throw new Error("fixture parse failed");
-    expect(executeCommand(active, snapshot, queued.intent).actions.map((item) => item.type)).toEqual([
-      "command.pending",
-      "queue.add",
+    if (!immediate.ok || !rejected.ok) throw new Error("fixture parse failed");
+    expect(executeCommand(active, snapshot, immediate.intent).actions.map((item) => item.type)).toEqual([
+      "timeline.viewport.clear",
+      "command.terminal",
     ]);
     expect(executeCommand(active, snapshot, rejected.intent).actions[0]).toMatchObject({
       type: "command.terminal",

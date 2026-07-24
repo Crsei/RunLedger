@@ -27,6 +27,7 @@ export function createInitialTuiState(
     queue: [],
     overlay: { state: "closed" },
     sessionPicker: createSessionPickerState(),
+    viewportClearRevision: 0,
     steeringCount: 0,
     followUpCount: 0,
     transitionFrozen: false,
@@ -206,6 +207,26 @@ export function reduceTui(
             list,
             selectedSessionId,
           },
+        },
+        effects: [],
+      };
+    }
+    case "timeline.viewport.clear": {
+      const retainedIds = state.commandOrder.filter((id) => {
+        const execution = state.commandsById[id]?.execution;
+        return execution?.state === "pending" || execution?.state === "running";
+      });
+      const retainedCommands: Record<string, TuiCommandRecord> = {};
+      for (const id of retainedIds) {
+        const command = state.commandsById[id];
+        if (command) retainedCommands[id] = command;
+      }
+      return {
+        state: {
+          ...state,
+          commandsById: retainedCommands,
+          commandOrder: retainedIds,
+          viewportClearRevision: state.viewportClearRevision + 1,
         },
         effects: [],
       };

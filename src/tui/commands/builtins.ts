@@ -2,7 +2,6 @@ import type { TuiEffect } from "../application/types.ts";
 import type { CommandDefinition, CommandIntent } from "./types.ts";
 
 const COMPATIBILITY_COMMANDS = [
-  ["clear", "Clear viewport", "view", "queue", 0, 0],
   ["provider", "Configure provider", "configuration", "reject", 0, 0],
   ["login", "Authenticate provider", "configuration", "reject", 0, 1],
   ["logout", "Remove credential", "configuration", "reject", 0, 1],
@@ -67,6 +66,24 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       },
       summary: "read-only session browser opened",
     }),
+  }, {
+    canonicalName: "clear",
+    aliases: [],
+    description: "Clear only committed viewport rows",
+    category: "view",
+    presentationOrder: 2,
+    arguments: { min: 0, max: 0 },
+    draftConsumption: "consume",
+    historyPolicy: "ephemeral",
+    activeQueryPolicy: "immediate",
+    executionStrategy: "native",
+    availability: () => ({ state: "available" }),
+    redact: (args) => args,
+    handler: () => ({
+      state: "action",
+      action: { type: "timeline.viewport.clear" },
+      summary: "viewport cleared",
+    }),
   }];
   for (let index = 0; index < COMPATIBILITY_COMMANDS.length; index++) {
     const [name, description, category, policy, min, max] = COMPATIBILITY_COMMANDS[index]!;
@@ -75,7 +92,7 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       aliases: [],
       description,
       category,
-      presentationOrder: index + 2,
+      presentationOrder: index + 3,
       arguments: {
         min,
         max,

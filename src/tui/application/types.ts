@@ -57,6 +57,7 @@ export interface TuiState {
   queue: readonly TuiQueueItem[];
   overlay: TuiOverlayState;
   sessionPicker: SessionPickerState;
+  viewportClearRevision: number;
   activeTurn?: number;
   steeringCount: number;
   followUpCount: number;
@@ -113,6 +114,7 @@ export type TuiAction =
   | { type: "session.picker.select"; sessionId: string }
   | { type: "session.picker.inspect"; sessionId: string }
   | { type: "session.picker.close" }
+  | { type: "timeline.viewport.clear" }
   | { type: "turn.set"; turn?: number }
   | { type: "queue.counts"; steering: number; followUp: number }
   | { type: "transition.freeze"; frozen: boolean }
