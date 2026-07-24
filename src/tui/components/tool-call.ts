@@ -13,7 +13,7 @@
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
-import type { AgentToolResult } from "../../runtime/types.ts";
+import type { ToolResultView } from "../presentation/types.ts";
 import { fitToWidth } from "./render-width.ts";
 
 export type ToolCallStatus = "pending" | "running" | "ok" | "error";
@@ -39,7 +39,7 @@ export class ToolCallComponent implements Component {
   private readonly toolName: string;
   private readonly args: unknown;
   private status: ToolCallStatus;
-  private partialResult: AgentToolResult | undefined;
+  private partialResult: ToolResultView | undefined;
   private errorMessage: string | undefined;
 
   constructor(props: ToolCallComponentProps) {
@@ -58,7 +58,7 @@ export class ToolCallComponent implements Component {
     this.status = status;
   }
 
-  setPartialResult(partial: AgentToolResult): void {
+  setPartialResult(partial: ToolResultView): void {
     this.partialResult = partial;
   }
 
@@ -67,7 +67,7 @@ export class ToolCallComponent implements Component {
     this.status = "error";
   }
 
-  finalize(result: AgentToolResult, isError: boolean): void {
+  finalize(result: ToolResultView, isError: boolean): void {
     this.partialResult = result;
     this.status = isError ? "error" : "ok";
     if (isError) {
@@ -75,7 +75,7 @@ export class ToolCallComponent implements Component {
     }
   }
 
-  private extractError(result: AgentToolResult): string {
+  private extractError(result: ToolResultView): string {
     const text = result.content
       .filter((c): c is { type: "text"; text: string } => c.type === "text")
       .map((c) => c.text)

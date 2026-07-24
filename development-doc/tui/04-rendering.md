@@ -1,5 +1,8 @@
 # 04 · 渲染与终端协议细节
 
+> 历史规格说明:本文记录已完成 M0-M7 阶段的渲染设计输入,不再是当前实施权威。
+> 当前结构、门禁与实施状态以 `11-tui-structure-completion-plan.md`、代码和测试为准。
+
 > 本文档描述 RunLedger TUI 复用 pi-tui 时的渲染层细节、Overlay 用法、滚动策略、ANSI 同步、节流参数,以及 RunLedger 必须保留 / 必须明确放弃的 pi 行为。
 
 ---

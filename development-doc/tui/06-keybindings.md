@@ -1,5 +1,8 @@
 # 06 · 键位绑定
 
+> 历史规格说明:本文记录已完成 M0-M7 阶段的键位设计输入,不再是当前实施权威。
+> 当前结构、门禁与实施状态以 `11-tui-structure-completion-plan.md`、代码和测试为准。
+
 > 本文档定义 RunLedger TUI 的应用级键位(`AppKeybinding`)枚举、默认映射、热替换规则,以及与 pi-tui `KeybindingsManager` 的接入点。
 
 ---

@@ -1,5 +1,8 @@
 # 02 · 组件规格(唯一准确表达)
 
+> 历史规格说明:本文记录已完成 M0-M7 阶段的组件设计输入,不再是当前实施权威。
+> 当前结构、门禁与实施状态以 `11-tui-structure-completion-plan.md`、代码和测试为准。
+
 > 本文档对每个 TUI 组件给出**唯一准确表达**:
 >
 > - **角色定位**:一句话说明它解决什么 UI 问题
@@ -856,4 +859,3 @@ $ npm run build  ⏳
 - `setStatus / setPartialResult / setError / finalize(result, isError)` 同 SetF/exist API;
 - 折叠态单行:`icon [toolName <firstLineOfResult>]`,其中 result summary 仅在 ok/error 态显示,running/pending 态隐藏;
 - error 态追加 `| ERR: <message>` 至同一行末尾(非折叠时不打断布局)。
-

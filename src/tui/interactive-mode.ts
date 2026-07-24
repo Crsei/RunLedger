@@ -33,7 +33,7 @@ import {
 
 import type { Agent } from "../runtime/agent.ts";
 import type { AgentEvent, AgentMessage, UserAgentMessage } from "../runtime/types.ts";
-import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
+import type { ModelThinkingLevel } from "../types.ts";
 import { getSupportedThinkingLevels } from "../models.ts";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
 import type {
@@ -42,29 +42,54 @@ import type {
   InteractiveSessionControllerPort,
 } from "../runtime/interactive-session-controller.ts";
 
-import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
+import type { FooterSnapshotProvider, TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
 import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
 import { CustomEditor, type CustomEditorProps } from "./components/custom-editor.ts";
 import { Footer } from "./components/footer.ts";
 import { KeybindingHints } from "./components/keybinding-hints.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
-import { ChatContainer } from "./components/chat-container.ts";
-import { UserMessageComponent } from "./components/user-message.ts";
-import { AssistantMessageComponent, extractToolCalls } from "./components/assistant-message.ts";
-import { ToolCallComponent } from "./components/tool-call.ts";
-import { ToolResultComponent } from "./components/tool-result.ts";
-import { CustomMessageComponent } from "./components/custom-message.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
-import { BashExecutionComponent } from "./components/bash-execution.ts";
-import { DiffPreviewComponent } from "./components/diff-preview.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
 import type { SelectItem } from "./index.ts";
-import type { AgentToolResult } from "../runtime/types.ts";
 import { createAppKeyListener } from "./keybindings/app-keys.ts";
 import { detectScheme } from "./theme/osc-detector.ts";
+import type {
+  TuiBootstrapSnapshot,
+  CommandSuggestionView,
+  CommandTimelineView,
+} from "./presentation/types.ts";
+import { ContextHeader } from "./components/context-header.ts";
+import { ActiveState } from "./components/active-state.ts";
+import { TimelineComponent } from "./components/timeline.ts";
+import { CommandPalette } from "./components/command-palette.ts";
+import { createInitialTuiState } from "./application/reducer.ts";
+import { EffectRunner } from "./application/effect-runner.ts";
+import { InteractiveShell } from "./application/interactive-shell.ts";
+import { OverlayController } from "./application/overlay-controller.ts";
+import type { TuiState, TuiTerminalState } from "./application/types.ts";
+import { adaptRuntimeEvent } from "./application/event-adapter.ts";
+import { CommandRegistry } from "./commands/registry.ts";
+import { builtinCommandDefinitions, COMPATIBILITY_COMMAND_NAMES } from "./commands/builtins.ts";
+import { parseCommand } from "./commands/parser.ts";
+import { executeCommand } from "./commands/executor.ts";
+import { createCommandAutocompleteProvider } from "./commands/autocomplete-provider.ts";
+import {
+  MappedCompatibilityCommandPort,
+  type CompatibilityCommandHandler,
+} from "./commands/compatibility-port.ts";
+import {
+  createTimelineProjectionCursor,
+  projectLive,
+  projectReplay,
+} from "./timeline/projector.ts";
+import {
+  createTimelineState,
+  reduceTimeline,
+} from "./timeline/tool-reducer.ts";
+import type { TimelineProjectionCursor, TimelineState } from "./timeline/types.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -83,6 +108,8 @@ export interface InteractiveModeOptions {
   initialThinkingLevel?: ModelThinkingLevel;
   /** M8e:thinking level change 回调,由 caller 决定如何传给 agent streamFn。 */
   onThinkingChange?: (level: ModelThinkingLevel) => void;
+  /** CLI composition 提供的真实 workspace/session 快照。 */
+  bootstrap?: TuiBootstrapSnapshot;
 }
 
 /** M8d:/model 切换条目;由 caller(demo)注入候选。 */
@@ -99,10 +126,10 @@ export interface ModelSwitchEntry {
 
 /** 组件树引用,挂在 InteractiveMode 实例上以便 handleEvent 路由 mutation。 */
 interface ContainerRefs {
-  header: Container;
+  header: ContextHeader;
   loadedResources: LoadedResourcesComponent;
-  chat: ChatContainer;
-  status: StatusComponent;
+  chat: TimelineComponent;
+  status: ActiveState;
   editor: CustomEditor;
   footer: Footer;
   hints: KeybindingHints;
@@ -120,17 +147,19 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private theme: Theme;
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
+  private readonly bootstrap: TuiBootstrapSnapshot;
+  private readonly registry: CommandRegistry;
+  private readonly shell: InteractiveShell;
+  private readonly overlays: OverlayController;
+  private timelineState: TimelineState = createTimelineState();
+  private timelineCursor: TimelineProjectionCursor = createTimelineProjectionCursor();
+  private nextInvocation = 0;
+  private drainScheduled = false;
   private unsubscribe?: () => void;
 
   // FooterSnapshotProvider 状态(只有 handleEvent 路径写)
   private streaming = false;
   private stopReason: string | undefined = undefined;
-
-  // M3 toolExecution 映射:toolCallId -> ToolCallComponent;tool_execution_end 后移除。
-  private readonly toolCallComponents: Map<
-    string,
-    ToolCallComponent | BashExecutionComponent | DiffPreviewComponent
-  > = new Map();
 
   // 失败护栏状态(M1 不主动触发)
   private consecutiveInitFailures = 0;
@@ -155,6 +184,14 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.modelRegistry = opts.modelRegistry ?? [];
     this.thinkingLevel = opts.controller?.currentSelection.thinkingLevel ?? opts.initialThinkingLevel ?? "off";
     this.onThinkingChange = opts.onThinkingChange;
+    this.bootstrap = opts.bootstrap ?? {
+      workspace: process.cwd(),
+      session: {
+        id: opts.controller?.sessionId ?? opts.agent?.sessionId ?? "<no-session>",
+        format: opts.agent && !opts.controller ? "demo" : "unknown",
+        lifecycle: "active",
+      },
+    };
     let resolveExit: (() => void) | undefined;
     this.exitPromise = new Promise<void>((resolve) => {
       resolveExit = resolve;
@@ -163,6 +200,27 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
     // TUI 使用 showHardwareCursor=false,Editor 自身以 CURSOR_MARKER 通知光标位置
     this.ui = new TUI(this.terminal, false);
+    this.overlays = new OverlayController(this.ui);
+    this.registry = new CommandRegistry(builtinCommandDefinitions());
+    const compatibility = new MappedCompatibilityCommandPort(this.compatibilityHandlers());
+    const runner = new EffectRunner({
+      prompt: {
+        run: async (text, behavior, signal) => {
+          if (signal.aborted) throw signal.reason;
+          if (this.controller) {
+            await this.controller.prompt(text, behavior);
+          } else {
+            await this.agent!.prompt(text);
+          }
+        },
+      },
+      compatibility,
+    });
+    this.shell = new InteractiveShell({
+      initialState: createInitialTuiState(this.bootstrap),
+      runner,
+      onState: (state) => this.syncApplicationState(state),
+    });
 
     // KeybindingsManager:本期安装默认 TUI_KEYBINDINGS,后续 M6 在此挂 user bindings
     this.kb = new KeybindingsManager(TUI_KEYBINDINGS);
@@ -178,17 +236,28 @@ export class InteractiveMode implements FooterSnapshotProvider {
     void INIT_FAILURE_BACKOFF_MS;
   }
 
-  /** 装配组件树并返回引用;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
+  /** 装配当前 canonical TUI 组件树并返回引用。 */
   private assembleTree(): ContainerRefs {
-    const header = new Container();
-    const loadedResources = new LoadedResourcesComponent({
-      activeLedgerSessionId: this.getSessionId(),
+    const header = new ContextHeader({
+      workspace: this.bootstrap.workspace,
+      sessionId: this.bootstrap.session.id,
+      sessionTitle: this.bootstrap.session.title,
+      format: this.bootstrap.session.format,
+      lifecycle: this.bootstrap.session.lifecycle,
     });
+    const loadedResources = new LoadedResourcesComponent({});
     // 把已注册工具数填到 loadedResources
     loadedResources.setResource("tools", this.controller?.toolCount ?? this.agent?.state.tools.length ?? 0);
     this.refreshExtensionResourceCounts(loadedResources);
-    const chat = new ChatContainer();
-    const status = new StatusComponent({});
+    loadedResources.setResource("slash", this.registry.snapshot.definitions.length);
+    const chat = new TimelineComponent(this.timelineState);
+    const status = new ActiveState({
+      query: "idle",
+      steeringCount: 0,
+      followUpCount: 0,
+      frozen: false,
+      recoveryRequired: this.bootstrap.session.lifecycle === "recovery-required",
+    });
     const editorTheme: EditorTheme = makeEditorTheme(this.theme, this.makeSelectListTheme());
     const editorProps: CustomEditorProps = {
       theme: this.theme,
@@ -198,6 +267,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       onDequeue: () => this.restoreQueuesToEditor(),
     };
     const editor = new CustomEditor(this.ui, editorTheme, editorProps);
+    editor.setAutocompleteMaxVisible(12);
+    editor.setAutocompleteProvider(createCommandAutocompleteProvider(() => this.commandSuggestions()));
     const footer = new Footer({ theme: this.theme, provider: this });
     const hints = new KeybindingHints({ theme: this.theme, hints: [] });
 
@@ -232,11 +303,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.addInputListener(
       createAppKeyListener({
         onInterrupt: () => {
-          if (this.ui.hasOverlay()) return false;
+          if (this.overlays.isOpen) return false;
           this.handleInterrupt();
           return true;
         },
-        onExit: () => this.ui.hasOverlay() ? false : this.handleCtrlD(),
+        onExit: () => this.overlays.isOpen ? false : this.handleCtrlD(),
         onRefresh: () => this.ui.invalidate(),
       }),
     );
@@ -331,7 +402,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 公共 prompt 注入入口;demo 与未来 ReplHandle.sendText 走同一通道。
    *
    * 实现:把 Editor onSubmit 流转过来即可——等价于"程序模拟一键回车提交"。
-   * 不调 agent.prompt 直绕,保证 handleSubmit 中 _前_ push UserMessageComponent 一致路径。
+   * 不调 agent.prompt 直绕,保证所有输入经过同一个 action/effect 通道。
    */
   echoPrompt(text: string): void {
     this.handleSubmit(text);
@@ -342,65 +413,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 选中 / xxx 后,把 / xxx 当 user prompt 注入(目前 mock 占位)。
    */
   openSlashCommands(): void {
-    const items: SelectItem[] = [
-      { value: "/help", label: "/help", description: "Show help" },
-      { value: "/clear", label: "/clear", description: "Clear chat" },
-      { value: "/provider", label: "/provider", description: "Configure provider" },
-      { value: "/login", label: "/login", description: "Authenticate provider" },
-      { value: "/logout", label: "/logout", description: "Remove credential" },
-      { value: "/model", label: "/model", description: "Switch model" },
-      { value: "/thinking", label: "/thinking", description: "Switch thinking level" },
-      { value: "/plugins", label: "/plugins", description: "Inspect exact plugin identities" },
-      { value: "/skills", label: "/skills", description: "Inspect loaded skills" },
-      { value: "/hooks", label: "/hooks", description: "Inspect hook activation" },
-      { value: "/mcp", label: "/mcp", description: "Inspect MCP servers and tools" },
-      { value: "/reload-extensions", label: "/reload-extensions", description: "Reload at an idle safe point" },
-      { value: "/quit", label: "/quit", description: "Exit safely" },
-      { value: "/prompt", label: "/prompt", description: "Pick prompt template" },
-    ];
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: "/commands",
-      items,
-      onSelect: (item) => {
-        this.ui.hideOverlay();
-        // 二级 selector 派发
-        switch (item.value) {
-          case "/model":
-            this.openModelSelector();
-            break;
-          case "/thinking":
-            this.openThinkingSelector();
-            break;
-          case "/provider":
-            void this.openProviderSelector();
-            break;
-          case "/login":
-            void this.openLoginSelector();
-            break;
-          case "/plugins":
-            this.openExtensionResourceSelector("/plugins", ["plugin"]);
-            break;
-          case "/skills":
-            this.openExtensionResourceSelector("/skills", ["skill"]);
-            break;
-          case "/hooks":
-            this.openExtensionResourceSelector("/hooks", ["hook"]);
-            break;
-          case "/mcp":
-            this.openMcpServerSelector();
-            break;
-          case "/reload-extensions":
-            void this.reloadExtensions();
-            break;
-          default:
-            this.echoPrompt(item.value);
-        }
-      },
-      onCancel: () => this.ui.hideOverlay(),
-    });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.showCommandPalette();
   }
 
   /**
@@ -417,9 +430,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
       title: "/prompt templates",
       items,
       onSelect: (item) => this.echoPrompt(item.label),
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   /**
@@ -451,13 +464,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
         description: `${resource.kind} · ${resource.source} · ${resource.trust} · ${resource.activation}${resource.componentCount ? ` · ${resource.componentCount} components` : ""}${resource.diagnostic ? ` · ${resource.diagnostic}` : ""}${resource.enabled ? "" : " · disabled"}`,
       })),
       onSelect: (item) => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         const resource = byId.get(item.value);
         if (resource) this.openExtensionResourceActions(resource);
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   private openExtensionResourceActions(resource: InteractiveExtensionResourceView): void {
@@ -488,7 +501,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       title: resource.id,
       items,
       onSelect: (item) => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         if (item.value === "details") {
           this.showNotice(
             `${resource.id}\nsource=${resource.source}\ntrust=${resource.trust} activation=${resource.activation} enabled=${resource.enabled}\ndigest=${resource.digest}\ncapabilities=${resource.capabilities.length > 0 ? resource.capabilities.join(", ") : "none declared"}\ncomponents=${resource.componentCount}${resource.diagnostic ? `\ndiagnostic=${resource.diagnostic}` : ""}`,
@@ -500,9 +513,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
           item.value as InteractiveExtensionMutationAction,
         );
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   private confirmExtensionMutation(
@@ -524,16 +537,16 @@ export class InteractiveMode implements FooterSnapshotProvider {
       ].join("\n"),
       placeholder: resource.digest,
       onSubmit: (value) => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         if (value.trim() !== resource.digest) {
           this.showNotice("Digest confirmation did not match; no Extension state changed.", "error");
           return;
         }
         void this.applyExtensionMutation(resource, action);
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   private async applyExtensionMutation(
@@ -626,11 +639,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
         if (entry) {
           this.agent?.setModel(entry.model);
         }
-        this.ui.hideOverlay();
+        this.overlays.close();
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   /**
@@ -659,11 +672,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
       items,
       onSelect: (item) => {
         void this.setThinkingLevel(item.value as ModelThinkingLevel);
-        this.ui.hideOverlay();
+        this.overlays.close();
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   /**
@@ -704,81 +717,238 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** Editor.onSubmit 回调;把文本作为 user prompt 投递给 Agent,同时落 UI。 */
   private handleSubmit(text: string): void {
     if (text.length === 0) return;
-    if (text.startsWith("/")) {
-      const [rawCommand, ...argParts] = text.slice(1).trim().split(/\s+/);
-      const cmd = rawCommand ?? "";
-      const arg = argParts.join(" ");
-      switch (cmd) {
-        case "provider":
-          if (this.rejectConfigWhileRunning()) return;
-          void this.openProviderSelector();
-          return;
-        case "login":
-          if (this.rejectConfigWhileRunning()) return;
-          void this.openLoginSelector(arg || undefined);
-          return;
-        case "logout":
-          if (this.rejectConfigWhileRunning()) return;
-          void this.handleLogout(arg || undefined);
-          return;
-        case "model":
-          if (this.rejectConfigWhileRunning()) return;
-          this.openModelSelector();
-          return;
-        case "thinking":
-          if (this.rejectConfigWhileRunning()) return;
-          this.openThinkingSelector();
-          return;
-        case "plugins":
-          this.openExtensionResourceSelector("/plugins", ["plugin"]);
-          return;
-        case "skills":
-          this.openExtensionResourceSelector("/skills", ["skill"]);
-          return;
-        case "hooks":
-          this.openExtensionResourceSelector("/hooks", ["hook"]);
-          return;
-        case "mcp":
-          this.openMcpServerSelector();
-          return;
-        case "reload-extensions":
-          void this.reloadExtensions();
-          return;
-        case "prompt":
-          this.openPromptSelector();
-          return;
-        case "commands":
-        case "help":
-          this.openSlashCommands();
-          return;
-        case "clear":
-          this.refs.chat.clear();
-          this.ui.requestRender();
-          return;
-        case "quit":
-          void this.requestQuit();
-          return;
-        default:
-          this.showNotice(`Unknown command: /${cmd}`, "error");
-          return;
-      }
+    if (text.includes("\0")) {
+      this.showNotice("Input contains a NUL byte and was rejected.", "error");
+      return;
     }
+    this.refs.editor.setText("");
+    if (text.startsWith("!")) {
+      this.showNotice("Direct bash input is disabled because no governed bash port is configured.", "error");
+      return;
+    }
+    if (text.startsWith("/")) {
+      this.submitCommand(text);
+      return;
+    }
+    if (this.shell.state.queryGuard.state !== "idle") {
+      this.shell.dispatch({
+        type: "queue.add",
+        item: { id: `queue:prompt:${this.nextInvocation++}`, kind: "prompt", text },
+      });
+      return;
+    }
+    this.dispatchPrompt(text);
+  }
 
+  private dispatchPrompt(text: string): void {
+    const correlationId = `prompt:${this.nextInvocation++}`;
     this.streaming = true;
     this.stopReason = undefined;
+    this.shell.dispatch({
+      type: "effect.dispatch",
+      effect: {
+        type: "prompt",
+        effectId: `${correlationId}:effect:0`,
+        correlationId,
+        text,
+      },
+    });
+  }
+
+  private submitCommand(text: string): void {
+    const invocationId = `command:${this.nextInvocation++}`;
+    const snapshot = this.registry.snapshot;
+    const parsed = parseCommand(text, snapshot, invocationId);
+    if (!parsed.ok) {
+      const rawName = text.slice(1).trim().split(/[ \t\r\n]+/u)[0] || "unknown";
+      this.shell.dispatch({
+        type: "command.terminal",
+        command: {
+          invocationId,
+          canonicalName: parsed.canonicalName ?? rawName,
+          normalizedArgs: [],
+        },
+        terminal: { state: "failed", message: parsed.message, retryable: false },
+      });
+      return;
+    }
+    const output = executeCommand(this.shell.state, snapshot, parsed.intent);
+    for (const action of output.actions) this.shell.dispatch(action);
+  }
+
+  private showCommandPalette(): void {
+    const suggestions = this.commandSuggestions();
+    const modal = new CommandPalette({
+      suggestions,
+      onSelect: (command) => {
+        this.overlays.close();
+        this.shell.dispatch({ type: "overlay.set", overlay: { state: "closed" } });
+        this.handleSubmit(command);
+      },
+      onCancel: () => {
+        this.overlays.close();
+        this.shell.dispatch({ type: "overlay.set", overlay: { state: "closed" } });
+      },
+    });
+    this.overlays.show(modal);
+  }
+
+  private commandSuggestions(): readonly CommandSuggestionView[] {
+    const state = this.shell.state;
+    return this.registry.snapshot.definitions.flatMap((definition) => {
+      const availability = definition.availability(state);
+      if (availability.state === "hidden") return [];
+      return [{
+        canonicalName: definition.canonicalName,
+        label: `/${definition.canonicalName}`,
+        description: definition.description,
+        ...(availability.state === "disabled" ? { disabledReason: availability.reason } : {}),
+      }];
+    });
+  }
+
+  private syncApplicationState(state: TuiState): void {
+    const commands: CommandTimelineView[] = state.commandOrder.flatMap((id) => {
+      const record = state.commandsById[id];
+      if (!record) return [];
+      const execution = record.execution;
+      const summary = execution.state === "failed"
+        ? execution.message
+        : execution.state === "cancelled"
+          ? execution.reason
+          : execution.state === "aborted"
+            ? execution.reason
+            : execution.state === "running"
+              ? undefined
+              : execution.summary;
+      return [{
+        invocationId: record.invocationId,
+        canonicalName: record.canonicalName,
+        args: record.normalizedArgs,
+        state: execution.state,
+        ...(summary ? { summary } : {}),
+      }];
+    });
+    this.refs?.chat.setCommands(commands);
+    this.refs?.status.setView({
+      query: state.queryGuard.state,
+      activeTurn: state.activeTurn,
+      steeringCount: state.steeringCount,
+      followUpCount: state.followUpCount,
+      frozen: state.transitionFrozen,
+      recoveryRequired: state.recoveryRequired,
+    });
+    if (state.overlay.state === "command-palette" && !this.overlays.isOpen && this.refs) {
+      this.showCommandPalette();
+    }
     this.ui.requestRender();
-    const prompt = this.controller
-      ? this.controller.prompt(text, this.inFlight() ? "steer" : undefined)
-      : this.agent!.prompt(text).then(() => undefined);
-    void prompt.then(
-      () => {
-        // 最终状态由 agent_end 路径写入。
+    this.scheduleQueueDrain(state);
+  }
+
+  private scheduleQueueDrain(state: TuiState): void {
+    if (
+      this.drainScheduled ||
+      state.queryGuard.state !== "idle" ||
+      state.overlay.state !== "closed" ||
+      this.overlays.isOpen ||
+      state.transitionFrozen ||
+      state.recoveryRequired ||
+      state.queue.length === 0
+    ) return;
+    this.drainScheduled = true;
+    queueMicrotask(() => {
+      this.drainScheduled = false;
+      const current = this.shell.state;
+      const item = current.queue[0];
+      if (
+        !item ||
+        current.queryGuard.state !== "idle" ||
+        current.overlay.state !== "closed" ||
+        this.overlays.isOpen ||
+        current.transitionFrozen ||
+        current.recoveryRequired
+      ) return;
+      this.shell.dispatch({ type: "queue.shift", itemId: item.id });
+      if (item.commandInvocationId) {
+        const previous = current.commandsById[item.commandInvocationId];
+        if (previous) {
+          this.shell.dispatch({
+            type: "command.terminal",
+            command: {
+              invocationId: previous.invocationId,
+              canonicalName: previous.canonicalName,
+              normalizedArgs: previous.normalizedArgs,
+            },
+            terminal: { state: "succeeded", summary: "dequeued as a new execution attempt" },
+          });
+        }
+      }
+      if (item.kind === "slash") this.submitCommand(item.text);
+      else if (item.kind === "prompt") this.dispatchPrompt(item.text);
+    });
+  }
+
+  private compatibilityHandlers(): Readonly<Record<string, CompatibilityCommandHandler>> {
+    const succeeded = (summary: string): TuiTerminalState => ({ state: "succeeded", summary });
+    const handlers: Record<string, CompatibilityCommandHandler> = {
+      clear: () => {
+        this.timelineState = createTimelineState();
+        this.refs.chat.clear();
+        return succeeded("viewport cleared");
       },
-      (err: unknown) => {
-        this.streaming = false;
-        this.showNotice(String(err), "error");
+      provider: async () => {
+        await this.openProviderSelector();
+        return succeeded("provider selector opened");
       },
-    );
+      login: async (args) => {
+        await this.openLoginSelector(args[0]);
+        return succeeded("login flow opened");
+      },
+      logout: async (args) => {
+        await this.handleLogout(args[0]);
+        return succeeded("logout completed");
+      },
+      model: () => {
+        this.openModelSelector();
+        return succeeded("model selector opened");
+      },
+      thinking: () => {
+        this.openThinkingSelector();
+        return succeeded("thinking selector opened");
+      },
+      plugins: () => {
+        this.openExtensionResourceSelector("/plugins", ["plugin"]);
+        return succeeded("plugin view opened");
+      },
+      skills: () => {
+        this.openExtensionResourceSelector("/skills", ["skill"]);
+        return succeeded("skill view opened");
+      },
+      hooks: () => {
+        this.openExtensionResourceSelector("/hooks", ["hook"]);
+        return succeeded("hook view opened");
+      },
+      mcp: () => {
+        this.openMcpServerSelector();
+        return succeeded("MCP view opened");
+      },
+      "reload-extensions": async () => {
+        await this.reloadExtensions();
+        return succeeded("Extension reload completed");
+      },
+      prompt: () => {
+        this.openPromptSelector();
+        return succeeded("prompt selector opened");
+      },
+      quit: async () => {
+        await this.requestQuit();
+        return succeeded("shutdown requested");
+      },
+    };
+    for (const name of COMPATIBILITY_COMMAND_NAMES) {
+      if (!handlers[name]) throw new Error(`missing compatibility handler: ${name}`);
+    }
+    return handlers;
   }
 
   private handleFollowUpSubmit(text: string): void {
@@ -836,12 +1006,14 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private showNotice(text: string, kind: "note" | "error" = "note"): void {
-    this.refs.chat.push(new CustomMessageComponent({
-      theme: this.theme,
-      kind,
-      text,
+    this.timelineState = reduceTimeline(this.timelineState, {
+      type: "notice",
+      id: `notice:${this.nextInvocation++}`,
       timestamp: Date.now(),
-    }));
+      level: kind,
+      text,
+    });
+    this.refs.chat.setState(this.timelineState);
     this.ui.requestRender();
   }
 
@@ -868,7 +1040,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       })),
       maxVisible: 12,
       onSelect: (item) => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         const model = byKey.get(item.value);
         if (!model) return;
         void controller.selectModel(model).then(() => {
@@ -876,9 +1048,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.showNotice(`Model: ${model.provider}/${model.id}`);
         }, (error: unknown) => this.showNotice(String(error), "error"));
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   private async openProviderSelector(): Promise<void> {
@@ -902,7 +1074,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       })),
       maxVisible: 12,
       onSelect: (item) => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         const status = byId.get(item.value);
         if (!status) return;
         if (status.configured) {
@@ -916,9 +1088,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
           );
         }
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   private async openLoginSelector(providerId?: string): Promise<void> {
@@ -947,13 +1119,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
       })),
       maxVisible: 12,
       onSelect: (item) => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         const status = statuses.find((entry) => entry.id === item.value);
         if (status) void this.startLogin(status.id, status.interactiveAuthTypes);
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.overlays.close(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.overlays.show(modal);
   }
 
   private async startLogin(providerId: string, types: AuthType[]): Promise<void> {
@@ -989,15 +1161,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
         title: "Authentication method",
         items: types.map((type) => ({ value: type, label: type === "api_key" ? "API key" : "OAuth" })),
         onSelect: (item) => {
-          this.ui.hideOverlay();
+          this.overlays.close();
           resolve(item.value as AuthType);
         },
         onCancel: () => {
-          this.ui.hideOverlay();
+          this.overlays.close();
           resolve(undefined);
         },
       });
-      this.ui.showOverlay(modal, { anchor: "bottom-left" });
+      this.overlays.show(modal);
     });
   }
 
@@ -1005,7 +1177,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (prompt.type === "select") {
       return new Promise((resolve, reject) => {
         const cancel = () => {
-          this.ui.hideOverlay();
+          this.overlays.close();
           reject(new Error("Authentication cancelled"));
         };
         const modal = new SelectorModal({
@@ -1018,7 +1190,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
             description: option.description,
           })),
           onSelect: (item) => {
-            this.ui.hideOverlay();
+            this.overlays.close();
             resolve(item.value);
           },
           onCancel: () => {
@@ -1027,12 +1199,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
           },
         });
         prompt.signal?.addEventListener("abort", cancel, { once: true });
-        this.ui.showOverlay(modal, { anchor: "bottom-left" });
+        this.overlays.show(modal);
       });
     }
     return new Promise((resolve, reject) => {
       const cancel = () => {
-        this.ui.hideOverlay();
+        this.overlays.close();
         reject(new Error("Authentication cancelled"));
       };
       const modal = new AuthInputModal({
@@ -1041,7 +1213,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         placeholder: prompt.placeholder,
         secret: prompt.type === "secret",
         onSubmit: (value) => {
-          this.ui.hideOverlay();
+          this.overlays.close();
           resolve(value);
         },
         onCancel: () => {
@@ -1050,7 +1222,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         },
       });
       prompt.signal?.addEventListener("abort", cancel, { once: true });
-      this.ui.showOverlay(modal, { anchor: "bottom-left" });
+      this.overlays.show(modal);
     });
   }
 
@@ -1082,7 +1254,16 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private replayInitialHistory(): void {
     if (!this.controller) return;
     for (const warning of this.controller.warnings) this.showNotice(warning, "note");
-    for (const message of this.controller.messages) this.renderHistoricalMessage(message);
+    for (const event of projectReplay(this.controller.messages)) {
+      this.timelineState = reduceTimeline(this.timelineState, event);
+    }
+    this.timelineCursor = {
+      ...this.timelineCursor,
+      nextMessageIndex: this.controller.messages.filter((message) =>
+        message.role === "user" || message.role === "assistant"
+      ).length,
+    };
+    this.refs.chat.setState(this.timelineState);
     if (this.controller.warnings.length > 0) {
       for (const entry of this.controller.auditEntries) {
         const name = typeof entry.payload.toolName === "string" ? entry.payload.toolName : "tool";
@@ -1092,51 +1273,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
   }
 
-  private renderHistoricalMessage(message: AgentMessage): void {
-    if (message.role === "user") {
-      this.refs.chat.push(new UserMessageComponent({
-        theme: this.theme,
-        text: messageText(message),
-        timestamp: Date.now(),
-      }));
-      return;
-    }
-    if (message.role === "assistant") {
-      const component = new AssistantMessageComponent({
-        theme: this.theme,
-        partial: message as AssistantMessage,
-      });
-      component.finalize();
-      this.refs.chat.push(component);
-      for (const toolCall of message.content.filter((content) => content.type === "toolCall")) {
-        const call = new ToolCallComponent({
-          theme: this.theme,
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          initialStatus: "ok",
-        });
-        this.refs.chat.push(call);
-      }
-      return;
-    }
-    for (const result of message.content) {
-      this.refs.chat.push(new ToolResultComponent({
-        theme: this.theme,
-        toolCallId: result.toolCallId,
-        toolName: result.toolName,
-        result: { content: result.content, details: result.details, isError: result.isError },
-        isError: result.isError === true,
-        timestamp: Date.now(),
-      }));
-    }
-  }
-
   /** Agent.subscribe 回调,适配为 TuiEvent 后分发。 */
   private handleAgentEvent(ev: AgentEvent): void {
     let adapted: TuiEvent;
     try {
-      adapted = adaptAgentEvent(ev);
+      adapted = adaptRuntimeEvent(ev);
     } catch (e) {
       process.stderr.write(`[interactive-mode] adaptAgentEvent failed: ${String(e)}\n`);
       return;
@@ -1144,11 +1285,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.handleEvent(adapted);
   }
 
-  /**
-   * 主控 switch;M2 阶段:message_* 路由把 AssistantMessageComponent 挂上 chat 并流式更新;
-   * user 消息块在 handleSubmit 阶段已 push,事件流不再处理 user 分支;
-   * 其余 case 留 noop 占位,M3 起逐 case 落实(对照 03-event-binding §1 表)。
-   */
+  /** 把 Runtime 事件归约到 canonical application state 与共享 Timeline。 */
   private handleEvent(ev: TuiEvent): void {
     try {
       switch (ev.type) {
@@ -1158,154 +1295,37 @@ export class InteractiveMode implements FooterSnapshotProvider {
           break;
         case "agent_end":
           this.streaming = false;
-          // agent_end 不带 stopReason,保留最近一次 turn_end / message_end 的 stopReason
+          this.timelineState = reduceTimeline(this.timelineState, {
+            type: "cleanup",
+            timestamp: ev.timestamp + 30_000,
+          });
           break;
         case "turn_start":
-          this.refs.status.setTurn(ev.turn);
+          this.shell.dispatch({ type: "turn.set", turn: ev.turn });
           break;
         case "turn_end":
-          this.refs.status.setTurn(ev.turn);
-          if (ev.stopReason) this.refs.status.setStopReason(ev.stopReason);
-          break;
-        case "message_start":
-          if (ev.role === "user" && ev.message?.role === "user") {
-            this.refs.chat.push(new UserMessageComponent({
-              theme: this.theme,
-              text: messageText(ev.message),
-              timestamp: ev.timestamp,
-            }));
-          } else if (ev.role === "assistant") {
-            // push 一个新的 AssistantMessageComponent,流式阶段 partial 为空(等 message_update)
-            const comp = new AssistantMessageComponent({ theme: this.theme });
-            this.refs.chat.push(comp);
-          }
+          this.shell.dispatch({ type: "turn.set", turn: ev.turn });
+          if (ev.stopReason) this.stopReason = ev.stopReason;
           break;
         case "message_end":
           this.stopReason = ev.stopReason ?? this.stopReason;
-          this.refs.status.setStopReason(this.stopReason);
-          if (ev.role === "assistant") {
-            // finalize:从 chat 末位调 finalize,通知 Markdown layout flush
-            const last = this.refs.chat.last();
-            if (last instanceof AssistantMessageComponent) {
-              if (ev.message?.role === "assistant") {
-                last.setPartial(ev.message as AssistantMessage);
-              }
-              last.finalize();
-            } else if (ev.message?.role === "assistant") {
-              const component = new AssistantMessageComponent({
-                theme: this.theme,
-                partial: ev.message as AssistantMessage,
-              });
-              component.finalize();
-              this.refs.chat.push(component);
-            }
-          }
           break;
-        case "message_update": {
-          const e = ev.assistantMessageEvent;
-          if (e.type === "done" || e.type === "error") {
-            // done/error 即 stream fan-in 终点;final 已在 message_end 路径处理
-            break;
-          }
-          const partial = (e as { partial?: AssistantMessage }).partial;
-          if (partial === undefined) break;
-          if (partial.role !== "assistant") break;
-          // 找 chat 末位的 AssistantMessageComponent;若没有则补 push 一份
-          let last = this.refs.chat.last();
-          if (!(last instanceof AssistantMessageComponent)) {
-            const comp = new AssistantMessageComponent({ theme: this.theme, partial });
-            this.refs.chat.push(comp);
-            last = comp;
-          } else {
-            last.setPartial(partial);
-          }
-          // M3 临时:从 partial 抽 toolCalls 占位记录(本期不在 UI 中渲染);后续 M3 路由
-          void extractToolCalls(partial);
-          break;
-        }
-        case "tool_execution_start": {
-          const args = isRecord(ev.args) ? ev.args : {};
-          const comp = ev.toolName === "bash"
-            ? new BashExecutionComponent({
-                command: typeof args.command === "string" ? args.command : "<command>",
-                runInBackground: args.run_in_background === true,
-                initialStatus: "running",
-              })
-            : isDiffTool(ev.toolName)
-              ? new DiffPreviewComponent({
-                  verb: ev.toolName === "write" ? "write" : "edit",
-                  path: typeof args.path === "string"
-                    ? args.path
-                    : typeof args.filePath === "string"
-                      ? args.filePath
-                      : "<path>",
-                  initialStatus: "running",
-                })
-              : new ToolCallComponent({
-                  theme: this.theme,
-                  toolCallId: ev.toolCallId,
-                  toolName: ev.toolName,
-                  args: ev.args,
-                  initialStatus: "running",
-                });
-          this.toolCallComponents.set(ev.toolCallId, comp);
-          this.refs.chat.push(comp);
-          break;
-        }
-        case "tool_execution_update": {
-          const comp = this.toolCallComponents.get(ev.toolCallId);
-          if (comp) {
-            const partial = ev.partialResult as AgentToolResult;
-            if (comp instanceof BashExecutionComponent) {
-              const details = isRecord(partial.details) ? partial.details : {};
-              if (typeof details.stdoutChunk === "string") comp.appendOutput(details.stdoutChunk, "stdout");
-              if (typeof details.stderrChunk === "string") comp.appendOutput(details.stderrChunk, "stderr");
-            } else if (comp instanceof ToolCallComponent) {
-              comp.setPartialResult(partial);
-            }
-          }
-          break;
-        }
-        case "tool_execution_end": {
-          const comp = this.toolCallComponents.get(ev.toolCallId);
-          if (comp) {
-            const finalResult: AgentToolResult = {
-              content: ev.result.content,
-              details: ev.result.details,
-              isError: ev.isError,
-            };
-            if (comp instanceof BashExecutionComponent) {
-              const details = isRecord(finalResult.details) ? finalResult.details : {};
-              comp.finalize(
-                typeof details.exitCode === "number" ? details.exitCode : ev.isError ? 1 : 0,
-                typeof details.durationMs === "number" ? details.durationMs : 0,
-                ev.isError,
-                ev.isError ? toolResultText(finalResult) : undefined,
-              );
-            } else if (comp instanceof DiffPreviewComponent) {
-              if (ev.isError) comp.setError(toolResultText(finalResult));
-              else comp.setStatus("ok");
-            } else {
-              comp.finalize(finalResult, ev.isError);
-            }
-            // ToolResultComponent 也追加一份(显式 done 行)
-            const resultComp = new ToolResultComponent({
-              theme: this.theme,
-              toolCallId: ev.toolCallId,
-              toolName: ev.toolName,
-              result: finalResult,
-              isError: ev.isError,
-              timestamp: ev.timestamp,
-            });
-            this.refs.chat.push(resultComp);
-            this.toolCallComponents.delete(ev.toolCallId);
-          }
-          break;
-        }
         case "queue_update":
-          this.refs.status.setQueueCounts(ev.steering.length, ev.followUp.length);
+          this.shell.dispatch({
+            type: "queue.counts",
+            steering: ev.steering.length,
+            followUp: ev.followUp.length,
+          });
+          break;
+        default:
           break;
       }
+      const projected = projectLive(this.timelineCursor, ev);
+      this.timelineCursor = projected.cursor;
+      for (const event of projected.events) {
+        this.timelineState = reduceTimeline(this.timelineState, event);
+      }
+      this.refs.chat.setState(this.timelineState);
     } catch (e) {
       // 异常不外抛(对照 02 §1 不可变契约);记 stderr
       process.stderr.write(`[interactive-mode] handleEvent ${ev.type} failed: ${String(e)}\n`);
@@ -1318,19 +1338,4 @@ export class InteractiveMode implements FooterSnapshotProvider {
 function messageText(message: AgentMessage): string {
   if (message.role !== "user") return "";
   return message.content.map((content) => content.text).join("");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isDiffTool(name: string): boolean {
-  return name === "write" || name === "edit" || name === "MultiEdit";
-}
-
-function toolResultText(result: AgentToolResult): string {
-  return result.content
-    .filter((content): content is { type: "text"; text: string } => content.type === "text")
-    .map((content) => content.text)
-    .join("");
 }

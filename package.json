@@ -103,9 +103,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit -p tsconfig.json && npm run check:runtime-boundaries && npm run check:execution-boundaries",
+    "check": "tsc --noEmit -p tsconfig.json && npm run check:runtime-boundaries && npm run check:execution-boundaries && npm run check:tui-boundaries",
     "check:runtime-boundaries": "node --experimental-strip-types scripts/check-runtime-boundaries.ts",
     "check:execution-boundaries": "node --experimental-strip-types scripts/check-execution-boundaries.ts",
+    "check:tui-boundaries": "node --experimental-strip-types scripts/check-tui-boundaries.ts",
     "audit:pi-ai": "node --experimental-strip-types scripts/audit-pi-ai-delta.ts",
     "demo": "tsx examples/run.ts",
     "demo:tui": "tsx examples/tui-demo.ts",

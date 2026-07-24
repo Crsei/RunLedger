@@ -4,7 +4,11 @@
 >
 > 基线日期:2026-07-24。
 >
-> RunLedger 规划快照:`feat/agent-loop-resurrect@2859346e9ead6b9d3d79c5f96835525a56988d2c`。
+> RunLedger 实施基线:`feat/agent-loop-resurrect@cd24ebb1aa400120457e019e172c2c796bb7e8d4`。
+>
+> 当前实施状态:V0-V4 已完成 Agent 验证,V5-V30 未开始。按本轮约定,V4 后统一进行
+> 人工验收,因此 V0-V4 最高只标记为 `agent-verified`;按后续提交指令,V0-V4 工作树
+> 成果合并为一次本地提交。
 >
 > 参考快照:
 >
@@ -1059,8 +1063,22 @@ V1-V30 必须同时满足:
 
 | V | P 门禁 | 正常 TUI 入口与预期效果 | Agent 证据 | 人工证据 | 状态 |
 |---|---|---|---|---|---|
-| V0 | P0 | 待实施时填写 | 待填写 | 不适用 | not-started |
-| V1-V30 | 见上表 | 各切片实施时逐行展开,不得整段批量标记 | 待填写 | 待填写 | not-started |
+| V0 | P0 | 在 `cd24ebb` 冻结当前命令、replay/live、宽度和边界基线 | `structure-slices.test.ts`;TUI dependency checker 接入 `npm run check` | 不适用 | agent-verified |
+| V1 | P1 | 标准 `runledger` 顶部显示真实 workspace、session id、format/lifecycle;状态经 reducer/runner 更新 | `application-reducer.test.ts` 8 项;同步 reserve、四类终态 release、重复/迟到结果与 correlated `EffectRunner` | V4 后统一验收待完成 | agent-verified |
+| V2 | P2 | startup replay 与 live event 进入同一 Timeline,tool call 按 correlation id 归并 | `timeline-reducer.test.ts` 7 项;乱序/重复/并行、300000-byte/200-line bound、orphan cleanup、60/80/143 列 | V4 后统一验收待完成 | agent-verified |
+| V3 | P3 | root shell、overlay、editor 与 app key 所有权固定;`ActiveState` 显示 query/queue/freeze/recovery | `interactive-controls.test.ts` 8 项;`structure-slices.test.ts` 4 项;标准 bin PTY 显示 `query:idle` | V4 后统一验收待完成 | agent-verified |
+| V4 | P4/P5 framework | 输入 `/` 后由 Editor 在输入框下方显示 inline completion,字符与 Backspace 持续编辑同一 draft;Enter 只接受 `/commands` 到 draft,第二次 Enter 才打开 registry 驱动 palette;Esc 关闭,空 draft Ctrl+D 退出 | `commands.test.ts` 6 项;`interactive-controls.test.ts` 9 项;14 个 canonical command、唯一 `/help` alias、generation/availability/queue/reject;标准 PATH `runledger` 在 60/80/143 列均 exit 0,另以 80 列 PTY 验证 `/c -> Backspace -> / -> Backspace -> empty`、inline completion 位于 editor 与 footer 之间、双 Enter 执行;显示 `tools:10`、`slash:14`、`✓ /commands — command palette opened` | V4 统一人工验收待完成 | agent-verified |
+| V5-V30 | 见上表 | 尚未实施;不得提前加入 `/sessions`、`/session`、`/resume`、`/new`、`/fork` | 无 | 无 | not-started |
+
+2026-07-25 Agent 验证快照:
+
+- 定向 V1-V4 回归:6 个测试文件、43 项测试通过;
+- `tests/tui`:105 项测试通过;
+- `npm run check`:TypeScript、Runtime/Execution/TUI 三类 dependency boundary 全部通过;
+- `npm test`:302 个测试文件通过、1897 项测试通过、1 项既有 skip;
+- `npm run build`、`runledger --version`、`runledger --help`、`git diff --check` 通过;
+- 标准命令来源为 `/home/nzq/.npm-global/bin/runledger`,解析到当前仓库
+  `bin/runledger.js`;PTY 使用临时 `RUNLEDGER_DIR`/`RUNLEDGER_SESSION_DIR`,未读取或复制凭据。
 
 ## 8. 预期目录边界
 

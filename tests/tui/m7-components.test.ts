@@ -117,7 +117,7 @@ describe("M7 TUI: Footer", () => {
     const line = c.render(80)[0] ?? "";
     expect(line).toContain("idle");
     expect(line).toContain("mock-1");
-    expect(line).toContain("sess-123");
+    expect(line).not.toContain("sess-123");
   });
 
   it("provider 抛错 → fallback footer line", () => {

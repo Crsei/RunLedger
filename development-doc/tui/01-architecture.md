@@ -1,5 +1,8 @@
 # 01 · 整体架构与事件流
 
+> 历史规格说明:本文记录已完成 M0-M7 阶段的设计输入,不再是当前实施权威。
+> 当前结构、门禁与实施状态以 `11-tui-structure-completion-plan.md`、代码和测试为准。
+
 > 本文档给出 RunLedger TUI 层的运行架构,以及 `Agent → AgentEvent → TuiEvent → 组件 mutation → 差分渲染` 的完整传递链。读完应可以默画出整棵组件树与所有事件分支的去向。
 
 ---

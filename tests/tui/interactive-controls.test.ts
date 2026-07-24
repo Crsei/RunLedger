@@ -14,6 +14,7 @@ import { selectSessionInTui } from "../../src/tui/session-selector.ts";
 import { makeEditorTheme, makeSelectListTheme } from "../../src/tui/theme/factories.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
+import { createCommandAutocompleteProvider } from "../../src/tui/commands/autocomplete-provider.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -172,6 +173,51 @@ describe("TUI input components", () => {
     expect(editor.getText()).toBe("");
     expect(restored).toBe(1);
   });
+
+  it("slash completion 在输入框下方渲染且 Backspace 持续编辑 draft", async () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const submitted: string[] = [];
+    const editor = new CustomEditor(
+      tui,
+      makeEditorTheme(theme, makeSelectListTheme(theme)),
+      {
+        theme,
+        selectListTheme: makeSelectListTheme(theme),
+        onSubmit: (text) => submitted.push(text),
+      },
+    );
+    editor.setAutocompleteProvider(createCommandAutocompleteProvider(() => [{
+      canonicalName: "commands",
+      label: "/commands",
+      description: "Browse commands",
+    }]));
+
+    editor.handleInput("/");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    for (const width of [60, 80, 143]) {
+      const rendered = editor.render(width);
+      const suggestionIndex = rendered.findIndex((line) => line.includes("/commands"));
+      const bottomBorderIndex = rendered.findLastIndex((line) => /^─+$/u.test(line));
+      expect(suggestionIndex).toBeGreaterThan(bottomBorderIndex);
+    }
+
+    editor.handleInput("c");
+    editor.handleInput("\x7f");
+    expect(editor.getText()).toBe("/");
+    editor.handleInput("\x7f");
+    expect(editor.getText()).toBe("");
+
+    editor.handleInput("/");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    editor.handleInput("\r");
+    expect(editor.getText()).toBe("/commands");
+    expect(submitted).toEqual([]);
+    editor.handleInput("\r");
+    expect(submitted).toEqual(["/commands"]);
+  });
 });
 
 describe("startup session selector", () => {
@@ -215,6 +261,33 @@ describe("startup session selector", () => {
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {
+  it("slash completion accept only updates the draft;second Enter executes and clears it", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const running = mode.run();
+    let settled = false;
+    void running.then(() => {
+      settled = true;
+    });
+
+    terminal.send("/");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.send("\r");
+    terminal.send("\x04");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    terminal.send("\r");
+    terminal.send("\x1b");
+    terminal.send("\x04");
+    await running;
+    expect(terminal.stopCount).toBe(1);
+  });
+
   it("requires the exact resource digest before a governed Extension mutation", async () => {
     const terminal = new FakeTerminal();
     const digest = "c".repeat(64);

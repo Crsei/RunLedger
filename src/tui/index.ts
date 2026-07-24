@@ -33,6 +33,11 @@ export {
 } from "@earendil-works/pi-tui";
 
 // 文本与可视组件
+export {
+	type AutocompleteItem,
+	type AutocompleteProvider,
+	type AutocompleteSuggestions,
+} from "@earendil-works/pi-tui";
 export { Box } from "@earendil-works/pi-tui";
 export { Editor, type EditorOptions, type EditorTheme } from "@earendil-works/pi-tui";
 export { Input } from "@earendil-works/pi-tui";

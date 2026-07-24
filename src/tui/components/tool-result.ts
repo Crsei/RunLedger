@@ -13,18 +13,18 @@
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import { fitToWidth } from "./render-width.ts";
-import type { AgentToolResult } from "../../runtime/types.ts";
+import type { ToolResultView } from "../presentation/types.ts";
 
 export interface ToolResultComponentProps {
   theme: Theme;
   toolCallId: string;
   toolName: string;
-  result: AgentToolResult;
+  result: ToolResultView;
   isError: boolean;
   timestamp: number;
 }
 
-function extract(result: AgentToolResult): string {
+function extract(result: ToolResultView): string {
   return result.content
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)

@@ -499,7 +499,18 @@ export async function main(
         featureEvidence: productionRuntime.featureEvidence,
       });
     }
-    const interactive = new InteractiveMode({ controller });
+    const legacyVersion = legacyManager?.ledger().header()?.version;
+    const interactive = new InteractiveMode({
+      controller,
+      bootstrap: {
+        workspace: productionRuntime?.cwd ?? cwd,
+        session: {
+          id: controller.sessionId,
+          format: v3Manager ? "v3" : legacyVersion === 1 ? "v1" : legacyVersion === 2 ? "v2" : "unknown",
+          lifecycle: "active",
+        },
+      },
+    });
     const lifecycleScope = v3Manager
       ? {
           authorityId: v3Manager.identity().authorityId,

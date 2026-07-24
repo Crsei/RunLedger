@@ -1,5 +1,8 @@
 # 05 · 主题系统
 
+> 历史规格说明:本文记录已完成 M0-M7 阶段的主题设计输入,不再是当前实施权威。
+> 当前结构、门禁与实施状态以 `11-tui-structure-completion-plan.md`、代码和测试为准。
+
 > 本文档定义 RunLedger TUI 的 20 色槽主题 schema、dark/light 占位值、`theme.fg/bg` API,以及 OSC 11 跟随切换的接入路径。
 
 ---
