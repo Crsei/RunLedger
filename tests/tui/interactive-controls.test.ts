@@ -7,6 +7,7 @@ import type { SessionInfo } from "../../src/storage/session-manager.ts";
 import { AuthInputModal } from "../../src/tui/components/auth-input-modal.ts";
 import { CustomEditor } from "../../src/tui/components/custom-editor.ts";
 import { SearchableSelectorModal } from "../../src/tui/components/searchable-selector-modal.ts";
+import { SessionPickerComponent } from "../../src/tui/components/session-picker.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { InteractiveSessionControllerPort } from "../../src/runtime/interactive-session-controller.ts";
 import { Container, TUI, type Terminal } from "../../src/tui/index.ts";
@@ -229,7 +230,7 @@ describe("startup session selector", () => {
       modifiedMs: 2,
       cwd: "/tmp/project",
     }];
-    let modal: SearchableSelectorModal | undefined;
+    let modal: SessionPickerComponent | undefined;
     let starts = 0;
     let stops = 0;
     const selection = selectSessionInTui(sessions, {
@@ -238,8 +239,8 @@ describe("startup session selector", () => {
         clear: () => {},
         hideOverlay: () => {},
         requestRender: () => {},
-        showOverlay: (component: SearchableSelectorModal) => {
-          modal = component;
+        showOverlay: (component) => {
+          modal = component as SessionPickerComponent;
         },
         start: () => starts++,
         stop: () => stops++,

@@ -61,6 +61,31 @@ export class EffectRunner {
           result,
         };
       }
+      if (effect.type === "session.preview") {
+        const result = this.ports.sessionCatalog
+          ? await this.ports.sessionCatalog.loadFullPreview({
+              sessionId: effect.sessionId,
+              previewRequestId: effect.previewRequestId,
+              signal,
+            })
+          : {
+              ok: false as const,
+              error: {
+                code: "directory_unavailable" as const,
+                message: "session catalog is unavailable",
+                retryable: false,
+              },
+            };
+        return {
+          type: "session.preview.completed",
+          effectId: effect.effectId,
+          correlationId: effect.correlationId,
+          generation: effect.generation,
+          previewRequestId: effect.previewRequestId,
+          sessionId: effect.sessionId,
+          result,
+        };
+      }
       let terminal: TuiTerminalState;
       if (effect.type === "prompt") {
         await this.ports.prompt.run(effect.text, effect.behavior, signal);

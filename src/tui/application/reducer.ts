@@ -239,13 +239,42 @@ export function reduceTui(
         state.queryGuard.effectId !== input.effectId ||
         state.queryGuard.correlationId !== input.correlationId
       ) return { state, effects: [] };
+      const enrichedState: TuiState = {
+          ...state,
+          queryGuard: { state: "idle" },
+          sessionPicker: {
+            ...state.sessionPicker,
+            detail: input.result.ok
+              ? { state: "ready", value: input.result.value }
+              : {
+                  state: "error",
+                  sessionId: input.sessionId,
+                  message: input.result.error.message,
+                  retryable: input.result.error.retryable,
+                },
+          },
+      };
+      return input.result.ok
+        ? beginSessionPreview(enrichedState, input.sessionId)
+        : { state: enrichedState, effects: [] };
+    }
+    case "session.preview.completed": {
+      if (
+        state.overlay.state !== "session-picker" ||
+        state.sessionPicker.generation !== input.generation ||
+        state.sessionPicker.selectedSessionId !== input.sessionId ||
+        state.sessionPicker.previewRequestId !== input.previewRequestId ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
       return {
         state: {
           ...state,
           queryGuard: { state: "idle" },
           sessionPicker: {
             ...state.sessionPicker,
-            detail: input.result.ok
+            preview: input.result.ok
               ? { state: "ready", value: input.result.value }
               : {
                   state: "error",
@@ -478,6 +507,44 @@ function beginSessionEnrich(
         previewRequestId: undefined,
         detail: { state: "loading", requestId: enrichRequestId, sessionId },
         preview: { state: "idle" },
+      },
+    },
+    effects: [effect],
+    ...(previousEffectId ? { abortEffectIds: [previousEffectId] } : {}),
+  };
+}
+
+function beginSessionPreview(
+  state: TuiState,
+  sessionId: string,
+): TuiReduceOutput {
+  const generation = state.sessionPicker.generation + 1;
+  const previewRequestId = `session-preview:${sessionId}:${generation}`;
+  const previousEffectId = ownedSessionEffectId(state);
+  if (state.queryGuard.state !== "idle" && !previousEffectId) {
+    return { state, effects: [] };
+  }
+  const effect: TuiEffect = {
+    type: "session.preview",
+    effectId: previewRequestId,
+    correlationId: previewRequestId,
+    generation,
+    previewRequestId,
+    sessionId,
+  };
+  return {
+    state: {
+      ...state,
+      queryGuard: {
+        state: "dispatching",
+        effectId: effect.effectId,
+        correlationId: effect.correlationId,
+      },
+      sessionPicker: {
+        ...state.sessionPicker,
+        generation,
+        previewRequestId,
+        preview: { state: "loading", requestId: previewRequestId, sessionId },
       },
     },
     effects: [effect],

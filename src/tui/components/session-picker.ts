@@ -4,6 +4,7 @@ import type { SessionPickerState } from "../sessions/picker-reducer.ts";
 import type { SessionSummary } from "../sessions/types.ts";
 import { fitLinesToWidth } from "./render-width.ts";
 import { SessionDetailComponent } from "./session-detail.ts";
+import { SessionPreviewComponent } from "./session-preview.ts";
 
 export interface SessionPickerCallbacks {
   onSearch(query: string): void;
@@ -80,7 +81,8 @@ export class SessionPickerComponent implements Component {
       lines.push(`  (${selectedIndex + 1}/${sessions.length})  Enter inspect · Esc close`);
     }
     const detail = new SessionDetailComponent(this.state.detail).render(width);
-    return [...fitLinesToWidth(lines, width), ...detail];
+    const preview = new SessionPreviewComponent(this.state.preview).render(width);
+    return [...fitLinesToWidth(lines, width), ...detail, ...preview];
   }
 }
 

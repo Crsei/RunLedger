@@ -283,3 +283,104 @@ describe("LocalSessionCatalogAdapter.enrich", () => {
     await manager.closeAll();
   });
 });
+
+describe("LocalSessionCatalogAdapter.loadFullPreview", () => {
+  it("recovers v1 safe text and v2 canonical messages without unsafe legacy tool data", async () => {
+    const root = temporaryRoot();
+    const v1 = "preview-v1";
+    const v1Rows = [
+      legacyEntry(v1, 1, "message", { role: "user", content: "legacy user" }),
+      legacyEntry(v1, 2, "message", { role: "assistant", content: "legacy assistant" }),
+      legacyEntry(v1, 3, "tool_result", { content: "unsafe orphan" }),
+    ];
+    writeLegacy(root, 1, v1, {}, `${v1Rows.map(JSON.stringify).join("\n")}\n`);
+    const v2 = "preview-v2";
+    const v2Rows = [
+      legacyEntry(v2, 1, "message", {
+        schema: "agent-message/v1",
+        message: { role: "user", content: [{ type: "text", text: "canonical user" }] },
+      }),
+    ];
+    writeLegacy(root, 2, v2, {}, `${v2Rows.map(JSON.stringify).join("\n")}\n`);
+    const adapter = new LocalSessionCatalogAdapter({ cwd: root, sessionDir: root });
+    const v1Preview = await adapter.loadFullPreview({
+      sessionId: v1,
+      previewRequestId: "preview:1",
+      signal: new AbortController().signal,
+    });
+    const v2Preview = await adapter.loadFullPreview({
+      sessionId: v2,
+      previewRequestId: "preview:2",
+      signal: new AbortController().signal,
+    });
+    expect(v1Preview).toMatchObject({
+      ok: true,
+      value: {
+        messages: [
+          { role: "user", content: [{ text: "legacy user" }] },
+          { role: "assistant", content: [{ text: "legacy assistant" }] },
+        ],
+      },
+    });
+    expect(v2Preview).toMatchObject({
+      ok: true,
+      value: { messages: [{ role: "user", content: [{ text: "canonical user" }] }] },
+    });
+  });
+
+  it("replays verified v3 conversation events", async () => {
+    const root = temporaryRoot();
+    const manager = await V3SessionManager.create({
+      cwd: root,
+      sessionDir: root,
+      features: { ...DEFAULT_RUNTIME_FEATURES, sessionV3: true },
+    });
+    await manager.sessionEvents().recordMessage({
+      role: "user",
+      content: [{ type: "text", text: "v3 preview" }],
+    });
+    const adapter = new LocalSessionCatalogAdapter({ cwd: root, sessionDir: root });
+    const preview = await adapter.loadFullPreview({
+      sessionId: manager.sessionId(),
+      previewRequestId: "preview:v3",
+      signal: new AbortController().signal,
+    });
+    expect(preview).toMatchObject({
+      ok: true,
+      value: {
+        messages: [{ role: "user", content: [{ text: "v3 preview" }] }],
+        truncated: false,
+      },
+    });
+    await manager.closeAll();
+  });
+
+  it("returns only the latest 100 messages within 300,000 UTF-8 bytes", async () => {
+    const root = temporaryRoot();
+    const id = "bounded-preview";
+    const rows: LedgerEntry[] = [];
+    for (let index = 0; index < 105; index++) {
+      rows.push(legacyEntry(id, index, "message", {
+        schema: "agent-message/v1",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: `${index}:${"x".repeat(2_500)}` }],
+        },
+      }));
+    }
+    writeLegacy(root, 2, id, {}, `${rows.map(JSON.stringify).join("\n")}\n`);
+    const adapter = new LocalSessionCatalogAdapter({ cwd: root, sessionDir: root });
+    const preview = await adapter.loadFullPreview({
+      sessionId: id,
+      previewRequestId: "preview:bounded",
+      signal: new AbortController().signal,
+    });
+    if (!preview.ok) throw new Error(preview.error.message);
+    expect(preview.value.messages).toHaveLength(100);
+    expect(preview.value.truncated).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(preview.value.messages), "utf8")).toBeLessThanOrEqual(
+      300_000,
+    );
+    expect(JSON.stringify(preview.value.messages[0])).toContain("5:");
+  });
+});

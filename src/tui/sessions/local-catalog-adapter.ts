@@ -2,13 +2,16 @@ import { constants } from "node:fs";
 import { lstat, open, readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import type { LedgerHeader } from "../../runtime/ledger/types.ts";
+import type { LedgerEntry } from "../../runtime/ledger/types.ts";
 import type { ModelThinkingLevel } from "../../types.ts";
 import { canonicalDigest } from "../../runtime/protocol/v3/canonical-json.ts";
 import { MAX_RUNTIME_EVENT_BYTES, validateRuntimeEvent } from "../../runtime/protocol/v3/schemas.ts";
 import type { RuntimeEventV3 } from "../../runtime/protocol/v3/events.ts";
 import { replayRuntimeConfigurationEvents } from "../../runtime/session/conversation-replay.ts";
+import { replayConversationEvents } from "../../runtime/session/conversation-replay.ts";
 import { scanJsonlV3EventLog } from "../../runtime/session/jsonl-v3-store.ts";
 import { reduceSessionEvents } from "../../runtime/session/reducer.ts";
+import type { SessionProjection } from "../../runtime/session/projections.ts";
 import {
   readSessionPublication,
   type SessionPublicationRecord,
@@ -16,6 +19,7 @@ import {
 import type { SessionCatalogPort } from "./catalog.ts";
 import type {
   SessionCatalogCurrentRef,
+  SessionCatalogResult,
   SessionCatalogError,
   SessionDetailResult,
   SessionDiagnostic,
@@ -23,11 +27,16 @@ import type {
   SessionPreviewResult,
   SessionSummary,
 } from "./types.ts";
+import { decodeCanonicalAgentMessage } from "../../storage/session-codec.ts";
+import type { AgentMessage, AssistantAgentMessage } from "../../runtime/types.ts";
+import { projectSessionPreview } from "./projector.ts";
 
 const MAX_LEGACY_HEADER_BYTES = 64 * 1024;
 const FIRST_LINE_READ_BYTES = MAX_RUNTIME_EVENT_BYTES + 2;
 const MAX_ENRICH_BYTES = 64 * 1024 * 1024;
 const MAX_ENRICH_RECORDS = 1_000_000;
+const MAX_PREVIEW_MESSAGES = 100;
+const MAX_PREVIEW_BYTES = 300_000;
 
 export interface LocalSessionCatalogAdapterOptions {
   cwd: string;
@@ -141,8 +150,68 @@ export class LocalSessionCatalogAdapter implements SessionCatalogPort {
     previewRequestId: string;
     signal: AbortSignal;
   }): Promise<SessionPreviewResult> {
-    void input;
-    return failure("not_found", "session preview is not available in this slice", false);
+    void input.previewRequestId;
+    if (input.signal.aborted) return failure("aborted", "session preview was cancelled", false);
+    const located = await this.locate(input.sessionId, input.signal);
+    if (!located) return failure("not_found", `session not found: ${input.sessionId}`, false);
+    try {
+      const before = await lstat(located.filePath);
+      if (!before.isFile() || before.isSymbolicLink()) {
+        return failure("corrupt", "session preview target is not a regular file", false);
+      }
+      if (before.size > MAX_ENRICH_BYTES) {
+        return failure("oversize", "session preview exceeds the 64 MiB scan limit", false);
+      }
+      const handle = await open(located.filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      let bytes: Buffer;
+      try {
+        bytes = await handle.readFile();
+      } finally {
+        await handle.close();
+      }
+      if (input.signal.aborted) return failure("aborted", "session preview was cancelled", false);
+      const after = await lstat(located.filePath);
+      if (
+        bytes.byteLength > MAX_ENRICH_BYTES ||
+        bytes.byteLength !== after.size ||
+        !sameFileSnapshot(before, after)
+      ) {
+        return failure("changed", "session changed while its preview was validated", true);
+      }
+      let messages: readonly AgentMessage[];
+      if (located.summary.format === "v3") {
+        const verified = await validateV3Bytes(located.filePath, bytes);
+        if (!verified.ok) return verified;
+        const replay = replayConversationEvents(verified.value.events);
+        if (!replay.ok) return failure("corrupt", replay.error.message, false);
+        messages = replay.value;
+      } else {
+        const decoded = decodeStrictJsonLines(bytes);
+        if (!decoded.ok) return failure("corrupt", decoded.message, false);
+        if (!isLedgerHeader(decoded.records[0])) {
+          return failure("corrupt", "legacy session header is invalid", false);
+        }
+        const legacy = decodeLegacyMessages(
+          decoded.records[0],
+          decoded.records.slice(1),
+        );
+        if (!legacy.ok) return legacy;
+        messages = legacy.value;
+      }
+      const bounded = boundPreviewMessages(messages);
+      return {
+        ok: true,
+        value: {
+          sessionId: input.sessionId,
+          messages: bounded.messages,
+          timeline: projectSessionPreview(bounded.messages),
+          truncated: bounded.truncated,
+          sourceBytes: bytes.byteLength,
+        },
+      };
+    } catch (error) {
+      return failure("corrupt", nodeErrorMessage(error), false);
+    }
   }
 
   private async inspectLite(
@@ -328,68 +397,27 @@ export class LocalSessionCatalogAdapter implements SessionCatalogPort {
     summary: SessionSummary,
     bytes: Uint8Array,
   ): Promise<SessionDetailResult> {
-    const firstNewline = bytes.indexOf(0x0a);
-    if (firstNewline < 0) return failure("corrupt", "v3 session has no complete genesis", false);
-    const firstParsed = parseJson(new TextDecoder().decode(bytes.subarray(0, firstNewline)));
-    if (!firstParsed.ok) return failure("corrupt", "v3 genesis is malformed", false);
-    const genesis = validateRuntimeEvent(firstParsed.value);
-    if (!genesis.ok || genesis.value.stream.scope !== "session") {
-      return failure("corrupt", "v3 genesis is invalid", false);
-    }
-    const scan = scanJsonlV3EventLog(bytes, {
-      authorityId: genesis.value.authorityId,
-      tenantId: genesis.value.tenantId,
-      stream: genesis.value.stream,
-    });
-    if (scan.firstError || scan.tornTail) {
-      return failure("corrupt", scan.firstError?.message ?? "v3 session has a torn tail", false);
-    }
-    if (scan.events.length > MAX_ENRICH_RECORDS) {
-      return failure("oversize", "session detail exceeds the event-count limit", false);
-    }
-    const projection = reduceSessionEvents(scan.events);
-    if (!projection.ok) return failure("corrupt", projection.error.message, false);
-    const publication = await readPublishedV3Binding(filePath);
-    if (!publication.ok) return publication;
-    const published = publication.value;
-    const publishedHead = published.head
-      ? scan.events[published.head.sequence]
-      : undefined;
-    if (
-      !published.head ||
-      !publishedHead ||
-      published.head.eventId !== publishedHead.eventId ||
-      published.head.eventHash !== publishedHead.currentEventHash
-    ) {
-      return failure("changed", "v3 publication head does not match the verified log", true);
-    }
-    const publishedProjection = reduceSessionEvents(
-      scan.events.slice(0, published.head.sequence + 1),
-    );
-    if (
-      !publishedProjection.ok ||
-      published.projectionDigest !== canonicalDigest(publishedProjection.value)
-    ) {
-      return failure("corrupt", "v3 publication projection digest is invalid", false);
-    }
-    const configuration = replayRuntimeConfigurationEvents(scan.events);
+    const verified = await validateV3Bytes(filePath, bytes);
+    if (!verified.ok) return verified;
+    const { events, projection } = verified.value;
+    const configuration = replayRuntimeConfigurationEvents(events);
     if (!configuration.ok) return failure("corrupt", configuration.error.message, false);
     const v3Summary: SessionSummary = {
       ...summary,
-      lifecycle: mapLifecycle(projection.value.lifecycle),
+      lifecycle: mapLifecycle(projection.lifecycle),
     };
-    const parentSessionId = projection.value.genesis.kind === "forked"
-      ? projection.value.genesis.parentSessionId
+    const parentSessionId = projection.genesis.kind === "forked"
+      ? projection.genesis.parentSessionId
       : undefined;
-    const lastModel = projection.value.modelRequests.at(-1)?.modelId;
+    const lastModel = projection.modelRequests.at(-1)?.modelId;
     return {
       ok: true,
       value: {
         summary: v3Summary,
         filePath,
-        messageCount: countV3Messages(scan.events),
-        turnCount: projection.value.turns.length,
-        toolCount: projection.value.toolCalls.length,
+        messageCount: countV3Messages(events),
+        turnCount: projection.turns.length,
+        toolCount: projection.toolCalls.length,
         ...(configuration.value.provider ? { provider: configuration.value.provider } : {}),
         ...(configuration.value.model ?? lastModel
           ? { model: configuration.value.model ?? lastModel }
@@ -397,8 +425,8 @@ export class LocalSessionCatalogAdapter implements SessionCatalogPort {
         ...(configuration.value.thinkingLevel
           ? { thinkingLevel: configuration.value.thinkingLevel }
           : {}),
-        headSequence: projection.value.headSequence,
-        headEventHash: projection.value.headEventHash,
+        headSequence: projection.headSequence,
+        headEventHash: projection.headEventHash,
         ...(parentSessionId ? { parentSessionId } : {}),
       },
     };
@@ -578,4 +606,160 @@ function countV3Messages(events: readonly RuntimeEventV3[]): number {
       event.payload.disposition === "recovered"
     )
   ).length;
+}
+
+async function validateV3Bytes(
+  filePath: string,
+  bytes: Uint8Array,
+): Promise<SessionCatalogResult<{
+  events: readonly RuntimeEventV3[];
+  projection: SessionProjection;
+}>> {
+  const firstNewline = bytes.indexOf(0x0a);
+  if (firstNewline < 0) return failure("corrupt", "v3 session has no complete genesis", false);
+  const firstParsed = parseJson(new TextDecoder().decode(bytes.subarray(0, firstNewline)));
+  if (!firstParsed.ok) return failure("corrupt", "v3 genesis is malformed", false);
+  const genesis = validateRuntimeEvent(firstParsed.value);
+  if (!genesis.ok || genesis.value.stream.scope !== "session") {
+    return failure("corrupt", "v3 genesis is invalid", false);
+  }
+  const scan = scanJsonlV3EventLog(bytes, {
+    authorityId: genesis.value.authorityId,
+    tenantId: genesis.value.tenantId,
+    stream: genesis.value.stream,
+  });
+  if (scan.firstError || scan.tornTail) {
+    return failure("corrupt", scan.firstError?.message ?? "v3 session has a torn tail", false);
+  }
+  if (scan.events.length > MAX_ENRICH_RECORDS) {
+    return failure("oversize", "session exceeds the event-count limit", false);
+  }
+  const projection = reduceSessionEvents(scan.events);
+  if (!projection.ok) return failure("corrupt", projection.error.message, false);
+  const publication = await readPublishedV3Binding(filePath);
+  if (!publication.ok) return publication;
+  const published = publication.value;
+  const publishedHead = published.head
+    ? scan.events[published.head.sequence]
+    : undefined;
+  if (
+    !published.head ||
+    !publishedHead ||
+    published.head.eventId !== publishedHead.eventId ||
+    published.head.eventHash !== publishedHead.currentEventHash
+  ) {
+    return failure("changed", "v3 publication head does not match the verified log", true);
+  }
+  const publishedProjection = reduceSessionEvents(
+    scan.events.slice(0, published.head.sequence + 1),
+  );
+  if (
+    !publishedProjection.ok ||
+    published.projectionDigest !== canonicalDigest(publishedProjection.value)
+  ) {
+    return failure("corrupt", "v3 publication projection digest is invalid", false);
+  }
+  return {
+    ok: true,
+    value: { events: scan.events, projection: projection.value },
+  };
+}
+
+function decodeLegacyMessages(
+  header: LedgerHeader,
+  records: readonly unknown[],
+): SessionCatalogResult<readonly AgentMessage[]> {
+  const messages: AgentMessage[] = [];
+  for (const value of records) {
+    if (!isLedgerEntry(value) || value.sessionId !== header.sessionId) {
+      return failure("corrupt", "legacy preview contains an invalid entry", false);
+    }
+    if (value.type !== "message") continue;
+    const canonical = value.payload.schema === "agent-message/v1"
+      ? decodeCanonicalAgentMessage(value.payload.message)
+      : undefined;
+    if (canonical) {
+      messages.push(canonical);
+      continue;
+    }
+    if (header.version !== 1) continue;
+    const role = value.payload.role;
+    const content = value.payload.content;
+    if (role === "user" && typeof content === "string") {
+      messages.push({ role: "user", content: [{ type: "text", text: content }] });
+    } else if (role === "assistant" && typeof content === "string") {
+      const message: AssistantAgentMessage = {
+        role: "assistant",
+        content: content.length > 0 ? [{ type: "text", text: content }] : [],
+        stopReason: isLegacyStopReason(value.payload.stopReason)
+          ? value.payload.stopReason
+          : "stop",
+      };
+      if (typeof value.payload.errorMessage === "string") {
+        message.errorMessage = value.payload.errorMessage;
+      }
+      messages.push(message);
+    }
+  }
+  return { ok: true, value: sanitizePreviewConversation(messages) };
+}
+
+function isLedgerEntry(value: unknown): value is LedgerEntry {
+  return isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.sessionId === "string" &&
+    typeof value.parentId === "string" &&
+    typeof value.timestamp === "number" &&
+    typeof value.type === "string" &&
+    isRecord(value.payload);
+}
+
+function isLegacyStopReason(value: unknown): value is AssistantAgentMessage["stopReason"] {
+  return value === "stop" ||
+    value === "length" ||
+    value === "toolUse" ||
+    value === "error" ||
+    value === "aborted";
+}
+
+function sanitizePreviewConversation(messages: readonly AgentMessage[]): AgentMessage[] {
+  const knownToolCalls = new Set<string>();
+  const output: AgentMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      for (const content of message.content) {
+        if (content.type === "toolCall") knownToolCalls.add(content.id);
+      }
+      output.push(message);
+    } else if (message.role === "toolResult") {
+      const content = message.content.filter((result) =>
+        knownToolCalls.has(result.toolCallId)
+      );
+      if (content.length > 0) output.push({ ...message, content });
+    } else {
+      output.push(message);
+    }
+  }
+  return output;
+}
+
+function boundPreviewMessages(messages: readonly AgentMessage[]): {
+  messages: readonly AgentMessage[];
+  truncated: boolean;
+} {
+  const selected: AgentMessage[] = [];
+  // JSON array framing is part of the returned UTF-8 budget.
+  let bytes = 2;
+  for (let index = messages.length - 1; index >= 0 && selected.length < MAX_PREVIEW_MESSAGES; index--) {
+    const message = messages[index]!;
+    const messageBytes = Buffer.byteLength(JSON.stringify(message), "utf8");
+    const separatorBytes = selected.length > 0 ? 1 : 0;
+    if (bytes + separatorBytes + messageBytes > MAX_PREVIEW_BYTES) break;
+    selected.unshift(message);
+    bytes += separatorBytes + messageBytes;
+  }
+  return {
+    messages: selected,
+    truncated: selected.length !== messages.length,
+  };
 }
