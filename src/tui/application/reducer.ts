@@ -4,6 +4,7 @@ import type {
   TuiReduceOutput,
   TuiResult,
   TuiState,
+  TuiTerminalState,
 } from "./types.ts";
 import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
 import { createSessionPickerState } from "../sessions/picker-reducer.ts";
@@ -27,6 +28,10 @@ export function createInitialTuiState(
     queue: [],
     overlay: { state: "closed" },
     sessionPicker: createSessionPickerState(),
+    currentSessionDetail: {
+      generation: 0,
+      detail: { state: "idle" },
+    },
     viewportClearRevision: 0,
     steeringCount: 0,
     followUpCount: 0,
@@ -75,6 +80,25 @@ export function reduceTui(
           correlationId: input.effect.correlationId,
           effectId: input.effect.effectId,
         },
+        ...(input.effect.type === "session.current.enrich"
+          ? {
+              overlay: {
+                state: "current-session-detail" as const,
+                sourceInvocationId: input.effect.correlationId,
+              },
+              currentSessionDetail: {
+                generation: input.effect.generation,
+                invocationId: input.effect.correlationId,
+                requestId: input.effect.enrichRequestId,
+                sessionId: input.effect.sessionId,
+                detail: {
+                  state: "loading" as const,
+                  requestId: input.effect.enrichRequestId,
+                  sessionId: input.effect.sessionId,
+                },
+              },
+            }
+          : {}),
       };
       return {
         state: input.command
@@ -232,6 +256,76 @@ export function reduceTui(
           },
         },
         effects: [],
+      };
+    }
+    case "session.current.enrich.completed": {
+      if (
+        state.overlay.state !== "current-session-detail" ||
+        state.currentSessionDetail.generation !== input.generation ||
+        state.currentSessionDetail.invocationId !== input.correlationId ||
+        state.currentSessionDetail.requestId !== input.enrichRequestId ||
+        state.currentSessionDetail.sessionId !== input.sessionId ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
+      const terminal: TuiTerminalState = input.result.ok
+        ? { state: "succeeded", summary: "current session details loaded" }
+        : {
+            state: "failed",
+            message: input.result.error.message,
+            retryable: input.result.error.retryable,
+          };
+      return {
+        state: {
+          ...state,
+          queryGuard: { state: "idle" },
+          commandsById: updateCommandExecution(
+            state.commandsById,
+            input.correlationId,
+            terminal,
+          ),
+          currentSessionDetail: {
+            ...state.currentSessionDetail,
+            detail: input.result.ok
+              ? { state: "ready", value: input.result.value }
+              : {
+                  state: "error",
+                  sessionId: input.sessionId,
+                  message: input.result.error.message,
+                  retryable: input.result.error.retryable,
+                },
+          },
+        },
+        effects: [],
+      };
+    }
+    case "session.current.close": {
+      if (state.overlay.state !== "current-session-detail") return { state, effects: [] };
+      const owns = state.queryGuard.state !== "idle" &&
+        state.queryGuard.effectId === state.currentSessionDetail.requestId &&
+        state.queryGuard.correlationId === state.currentSessionDetail.invocationId;
+      const invocationId = state.currentSessionDetail.invocationId;
+      return {
+        state: {
+          ...state,
+          overlay: { state: "closed" },
+          queryGuard: owns ? { state: "idle" } : state.queryGuard,
+          commandsById: owns && invocationId
+            ? updateCommandExecution(state.commandsById, invocationId, {
+                state: "cancelled",
+                reason: "current session detail closed",
+              })
+            : state.commandsById,
+          currentSessionDetail: {
+            generation: state.currentSessionDetail.generation + 1,
+            detail: { state: "idle" },
+          },
+        },
+        effects: [],
+        ...(owns && state.currentSessionDetail.requestId
+          ? { abortEffectIds: [state.currentSessionDetail.requestId] }
+          : {}),
       };
     }
     case "timeline.viewport.clear": {

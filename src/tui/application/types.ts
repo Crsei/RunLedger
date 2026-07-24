@@ -1,5 +1,8 @@
 import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
-import type { SessionPickerState } from "../sessions/picker-reducer.ts";
+import type {
+  SessionDetailState,
+  SessionPickerState,
+} from "../sessions/picker-reducer.ts";
 import type { SessionListResult } from "../sessions/types.ts";
 import type { SessionDetailResult } from "../sessions/types.ts";
 
@@ -43,7 +46,16 @@ export interface TuiQueueItem {
 export type TuiOverlayState =
   | { state: "closed" }
   | { state: "command-palette"; sourceInvocationId: string }
-  | { state: "session-picker"; sourceInvocationId: string };
+  | { state: "session-picker"; sourceInvocationId: string }
+  | { state: "current-session-detail"; sourceInvocationId: string };
+
+export interface CurrentSessionDetailState {
+  generation: number;
+  invocationId?: string;
+  requestId?: string;
+  sessionId?: string;
+  detail: SessionDetailState;
+}
 
 export interface TuiCapabilitySnapshot {
   sessionCatalog: { available: boolean; reason?: string };
@@ -58,6 +70,7 @@ export interface TuiState {
   queue: readonly TuiQueueItem[];
   overlay: TuiOverlayState;
   sessionPicker: SessionPickerState;
+  currentSessionDetail: CurrentSessionDetailState;
   viewportClearRevision: number;
   activeTurn?: number;
   steeringCount: number;
@@ -96,6 +109,14 @@ export type TuiEffect =
       generation: number;
       enrichRequestId: string;
       sessionId: string;
+    }
+  | {
+      type: "session.current.enrich";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      enrichRequestId: string;
+      sessionId: string;
     };
 
 export type TuiAction =
@@ -124,6 +145,7 @@ export type TuiAction =
   | { type: "session.picker.inspect"; sessionId: string }
   | { type: "session.picker.close" }
   | { type: "timeline.viewport.clear" }
+  | { type: "session.current.close" }
   | { type: "turn.set"; turn?: number }
   | { type: "queue.counts"; steering: number; followUp: number }
   | { type: "transition.freeze"; frozen: boolean }
@@ -152,6 +174,15 @@ export type TuiResult =
     }
   | {
       type: "session.enrich.completed";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      enrichRequestId: string;
+      sessionId: string;
+      result: SessionDetailResult;
+    }
+  | {
+      type: "session.current.enrich.completed";
       effectId: string;
       correlationId: string;
       generation: number;

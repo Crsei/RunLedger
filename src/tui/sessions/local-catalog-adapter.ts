@@ -241,6 +241,13 @@ export class LocalSessionCatalogAdapter implements SessionCatalogPort {
     sessionId: string,
     signal: AbortSignal,
   ): Promise<{ filePath: string; summary: SessionSummary } | undefined> {
+    if (this.currentSession?.id === sessionId) {
+      const inspected = await this.inspectLite(this.currentSession.filePath, signal);
+      if (inspected.ok && inspected.value.id === sessionId) {
+        return { filePath: this.currentSession.filePath, summary: inspected.value };
+      }
+      return undefined;
+    }
     let names: string[];
     try {
       names = await readdir(this.sessionDir);

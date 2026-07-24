@@ -34,7 +34,7 @@ export class EffectRunner {
           result,
         };
       }
-      if (effect.type === "session.enrich") {
+      if (effect.type === "session.enrich" || effect.type === "session.current.enrich") {
         const result = this.ports.sessionCatalog
           ? await this.ports.sessionCatalog.enrich({
               sessionId: effect.sessionId,
@@ -50,7 +50,9 @@ export class EffectRunner {
               },
             };
         return {
-          type: "session.enrich.completed",
+          type: effect.type === "session.enrich"
+            ? "session.enrich.completed"
+            : "session.current.enrich.completed",
           effectId: effect.effectId,
           correlationId: effect.correlationId,
           generation: effect.generation,

@@ -170,6 +170,44 @@ describe("LocalSessionCatalogAdapter.listLite", () => {
 });
 
 describe("LocalSessionCatalogAdapter.enrich", () => {
+  it("uses the injected exact current-session path when duplicate IDs exist", async () => {
+    const root = temporaryRoot();
+    const duplicate = writeLegacy(
+      root,
+      2,
+      "duplicate",
+      { cwd: "/wrong", title: "Wrong duplicate" },
+    );
+    const exact = join(root, "exact-current.jsonl");
+    const header: LedgerHeader = {
+      type: "ledger",
+      version: 2,
+      id: "header-exact",
+      createdAt: 10,
+      sessionId: "duplicate",
+      metadata: { cwd: "/exact", title: "Exact current" },
+    };
+    writeFileSync(exact, `${JSON.stringify(header)}\n`, "utf8");
+    expect(duplicate).not.toBe(exact);
+    const adapter = new LocalSessionCatalogAdapter({
+      cwd: root,
+      sessionDir: root,
+      currentSession: { id: "duplicate", filePath: exact },
+    });
+    const detail = await adapter.enrich({
+      sessionId: "duplicate",
+      enrichRequestId: "current:1",
+      signal: new AbortController().signal,
+    });
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        filePath: exact,
+        summary: { title: "Exact current", cwd: "/exact", isCurrent: true },
+      },
+    });
+  });
+
   it.each([1, 2] as const)("scans legacy v%s metadata without projecting transcript", async (version) => {
     const root = temporaryRoot();
     const id = `legacy-detail-v${version}`;

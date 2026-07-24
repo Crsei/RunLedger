@@ -93,6 +93,7 @@ import {
 import type { TimelineProjectionCursor, TimelineState } from "./timeline/types.ts";
 import type { SessionCatalogPort } from "./sessions/catalog.ts";
 import { SessionPickerComponent } from "./components/session-picker.ts";
+import { CurrentSessionDetailComponent } from "./components/current-session-detail.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -157,6 +158,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly shell: InteractiveShell;
   private readonly overlays: OverlayController;
   private sessionPickerComponent: SessionPickerComponent | undefined;
+  private currentSessionDetailComponent: CurrentSessionDetailComponent | undefined;
   private timelineState: TimelineState = createTimelineState();
   private timelineCursor: TimelineProjectionCursor = createTimelineProjectionCursor();
   private appliedViewportClearRevision = 0;
@@ -868,6 +870,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.overlays.close();
       this.sessionPickerComponent = undefined;
     }
+    if (state.overlay.state === "current-session-detail") {
+      if (!this.currentSessionDetailComponent) this.showCurrentSessionDetail();
+      this.currentSessionDetailComponent?.setState(state.currentSessionDetail);
+    } else if (this.currentSessionDetailComponent) {
+      this.overlays.close();
+      this.currentSessionDetailComponent = undefined;
+    }
     this.ui.requestRender();
     this.scheduleQueueDrain(state);
   }
@@ -884,6 +893,19 @@ export class InteractiveMode implements FooterSnapshotProvider {
       },
     });
     this.sessionPickerComponent = component;
+    this.overlays.show(component);
+  }
+
+  private showCurrentSessionDetail(): void {
+    const component = new CurrentSessionDetailComponent(
+      this.shell.state.currentSessionDetail,
+      () => {
+        this.overlays.close();
+        this.currentSessionDetailComponent = undefined;
+        this.shell.dispatch({ type: "session.current.close" });
+      },
+    );
+    this.currentSessionDetailComponent = component;
     this.overlays.show(component);
   }
 

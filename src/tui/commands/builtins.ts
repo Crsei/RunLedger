@@ -67,11 +67,44 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       summary: "read-only session browser opened",
     }),
   }, {
+    canonicalName: "session",
+    aliases: [],
+    description: "Show canonical metadata for the current session",
+    category: "session",
+    presentationOrder: 2,
+    arguments: { min: 0, max: 0 },
+    draftConsumption: "consume",
+    historyPolicy: "ephemeral",
+    activeQueryPolicy: "reject",
+    executionStrategy: "native",
+    availability: (state) => state.capabilities.sessionCatalog.available
+      ? { state: "available" }
+      : {
+          state: "disabled",
+          reason: state.capabilities.sessionCatalog.reason ?? "Session catalog is unavailable.",
+        },
+    redact: (args) => args,
+    handler: (context, intent) => {
+      const generation = context.state.currentSessionDetail.generation + 1;
+      const enrichRequestId = `${intent.commandInvocationId}:current-session:${generation}`;
+      return {
+        state: "effect",
+        effect: {
+          type: "session.current.enrich",
+          effectId: enrichRequestId,
+          correlationId: intent.commandInvocationId,
+          generation,
+          enrichRequestId,
+          sessionId: context.state.bootstrap.session.id,
+        },
+      };
+    },
+  }, {
     canonicalName: "clear",
     aliases: [],
     description: "Clear only committed viewport rows",
     category: "view",
-    presentationOrder: 2,
+    presentationOrder: 3,
     arguments: { min: 0, max: 0 },
     draftConsumption: "consume",
     historyPolicy: "ephemeral",
@@ -92,7 +125,7 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       aliases: [],
       description,
       category,
-      presentationOrder: index + 3,
+      presentationOrder: index + 4,
       arguments: {
         min,
         max,

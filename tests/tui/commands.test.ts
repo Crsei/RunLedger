@@ -20,6 +20,7 @@ describe("command registry/parser/executor", () => {
     expect(registry.snapshot.definitions.map((item) => item.canonicalName)).toEqual([
       "commands",
       "sessions",
+      "session",
       "clear",
       "provider",
       "login",
@@ -49,7 +50,30 @@ describe("command registry/parser/executor", () => {
     expect(definition.availability(createInitialTuiState(BOOTSTRAP, {
       sessionCatalog: { available: true },
     }))).toEqual({ state: "available" });
-    expect(snapshot.definitions).toHaveLength(15);
+    expect(snapshot.definitions).toHaveLength(16);
+  });
+
+  it("derives native /session identity from bootstrap and gates it on catalog capability", () => {
+    const snapshot = new CommandRegistry(builtinCommandDefinitions()).snapshot;
+    const state = createInitialTuiState(BOOTSTRAP, {
+      sessionCatalog: { available: true },
+    });
+    const parsed = parseCommand("/session", snapshot, "command:session");
+    if (!parsed.ok) throw new Error("fixture parse failed");
+    const output = executeCommand(state, snapshot, parsed.intent);
+    expect(output.actions).toMatchObject([{
+      type: "effect.dispatch",
+      effect: {
+        type: "session.current.enrich",
+        sessionId: BOOTSTRAP.session.id,
+        correlationId: "command:session",
+      },
+    }]);
+    expect(snapshot.byName.session).toMatchObject({
+      executionStrategy: "native",
+      historyPolicy: "ephemeral",
+      activeQueryPolicy: "reject",
+    });
   });
 
   it("keeps /clear native, ephemeral, immediate, and outside compatibility", () => {

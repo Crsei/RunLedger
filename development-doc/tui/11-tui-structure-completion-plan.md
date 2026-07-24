@@ -6,7 +6,7 @@
 >
 > RunLedger 实施基线:`feat/agent-loop-resurrect@cd24ebb1aa400120457e019e172c2c796bb7e8d4`。
 >
-> 当前实施状态:V0-V7 已完成 Agent 验证,V8-V30 未开始。按本轮约定,V4 后统一进行
+> 当前实施状态:V0-V8 已完成 Agent 验证,V9-V30 未开始。按本轮约定,V4 后统一进行
 > 人工验收,因此 V0-V4 最高只标记为 `agent-verified`;按后续提交指令,V0-V4 工作树
 > 成果合并为一次本地提交。
 >
@@ -1071,7 +1071,8 @@ V1-V30 必须同时满足:
 | V5 | P6/P7 read-only track | 标准 `runledger` 输入 `/sessions` 后同步显示 loading overlay；只读列出 modified-desc 的 v1/v2/v3 summary，支持 ID/显式 title filter、Up/Down、Enter inspect intent 与 Esc；不打开 manager、不取得 writer authority | `session-catalog.test.ts` 3 项、`session-picker.test.ts` 3 项、`commands.test.ts` 7 项、`application-reducer.test.ts` 8 项；覆盖 bounded first-record、missing dir、published/staging/corrupt/symlink/oversize、list lane cancel-and-replace/stale 丢弃及 60/80/143 列；`npm run check`、304 个测试文件/1904 项测试、`npm run build` 通过；标准 PATH `/home/nzq/.npm-global/bin/runledger` PTY 使用 200KB transcript fixture，显示 `slash:15`、loading、两行 summary、`v5` filter 后单行且 Esc/Ctrl+D exit 0 | 人工验收待完成 | agent-verified |
 | V6 | P5 command slice | 标准 `runledger` 执行 `/clear` 只清除已提交 viewport 与已终态 command rows，再显示 `✓ /clear — viewport cleared`；active message/tool、active command、QueryGuard、queue、bootstrap/controller history 与 durable session 均保留 | `clear-command.test.ts` 2 项、`commands.test.ts` 8 项、`application-reducer.test.ts` 8 项、`timeline-reducer.test.ts` 7 项；覆盖 active query immediate、active tool late terminal convergence、compatibility 数 12；`npm run check`、305 个测试文件/1907 项测试、`npm run build` 通过；标准 PATH PTY 先显示 unknown-command row，再执行 `/clear`，最终显示唯一新 clear terminal row并 exit 0 | 人工验收待完成 | agent-verified |
 | V7 | P6/P7 enrich lane | `/sessions` 初始 selection 与 Up/Down 变化都启动独立 `session.enrich`；detail 显示 verified cwd/unknown、时间、format/lifecycle/compatibility、message/turn/tool counts、runtime、head 与 parent；失败只留在 detail 区 | `session-catalog.test.ts` 6 项、`session-picker.test.ts` 5 项、`application-reducer.test.ts` 8 项；覆盖 v1/v2/v3、64 MiB/1,000,000 record guard、v3 chain/publication-prefix digest、A→B cancel-and-replace 与三元 correlation stale 丢弃；`npm run check`、305 个测试文件/1912 项测试、`npm run build` 通过；标准 PATH PTY 在 current→Beta→Alpha 快速 selection 中依次显示 loading，最终 exact ID/count/runtime 且 exit 0 | 人工验收待完成 | agent-verified |
-| V8-V30 | 见上表 | 尚未实施；`/session`、`/resume`、`/new`、`/fork` 仍不得提前加入 | 无 | 无 | not-started |
+| V8 | P5/P6 current detail | native `/session` 从 bootstrap current identity 和 CLI exact current-session ref 打开 canonical detail；loading/success/error/cancel 更新同一 command invocation，Esc 只关闭 overlay且不执行 session mutation | `current-session-detail.test.ts` 3 项、`commands.test.ts` 9 项、`session-catalog.test.ts` 7 项、`application-reducer.test.ts` 8 项；覆盖 duplicate ID exact-path binding、bootstrap identity、same-row terminal 与 cancel owner；`npm run check`、306 个测试文件/1917 项测试、`npm run build` 通过；标准 PATH PTY 显示 `slash:16`、current canonical metadata、exact ID/cwd/counts、`✓ /session — current session details loaded` 并 exit 0 | 人工验收待完成 | agent-verified |
+| V9-V30 | 见上表 | 尚未实施；`/resume`、`/new`、`/fork` 仍不得提前加入 | 无 | 无 | not-started |
 
 2026-07-25 Agent 验证快照:
 
@@ -1091,6 +1092,8 @@ V1-V30 必须同时满足:
 - V7 增量:selection 使用独立 enrich request lane；adapter 全链验证 selected session 但不调用
   transcript projector，搜索、关闭或新 selection 会先取消旧 owner；标准 PATH PTY 快速切换
   后只显示最终 session 的 exact detail。
+- V8 增量:canonical command 数 16；`/session` effect 只消费 bootstrap identity，adapter 对
+  current ID 优先绑定 CLI 注入的 exact path；Footer/provider 文本不参与 detail 构造。
 
 ## 8. 预期目录边界
 
