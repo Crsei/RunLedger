@@ -28,6 +28,9 @@ export class InteractiveShell {
     const reduced = reduceTui(this.stateValue, input);
     this.stateValue = reduced.state;
     this.onState(this.stateValue);
+    for (const effectId of reduced.abortEffectIds ?? []) {
+      this.controllers.get(effectId)?.abort("replaced by newer TUI effect");
+    }
     for (const effect of reduced.effects) {
       const controller = new AbortController();
       this.controllers.set(effect.effectId, controller);

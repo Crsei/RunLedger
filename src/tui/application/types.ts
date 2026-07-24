@@ -1,4 +1,6 @@
 import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
+import type { SessionPickerState } from "../sessions/picker-reducer.ts";
+import type { SessionListResult } from "../sessions/types.ts";
 
 export type Loadable<T> =
   | { state: "idle" }
@@ -39,15 +41,22 @@ export interface TuiQueueItem {
 
 export type TuiOverlayState =
   | { state: "closed" }
-  | { state: "command-palette"; sourceInvocationId: string };
+  | { state: "command-palette"; sourceInvocationId: string }
+  | { state: "session-picker"; sourceInvocationId: string };
+
+export interface TuiCapabilitySnapshot {
+  sessionCatalog: { available: boolean; reason?: string };
+}
 
 export interface TuiState {
   bootstrap: TuiBootstrapSnapshot;
+  capabilities: TuiCapabilitySnapshot;
   queryGuard: QueryGuard;
   commandsById: Readonly<Record<string, TuiCommandRecord>>;
   commandOrder: readonly string[];
   queue: readonly TuiQueueItem[];
   overlay: TuiOverlayState;
+  sessionPicker: SessionPickerState;
   activeTurn?: number;
   steeringCount: number;
   followUpCount: number;
@@ -69,6 +78,14 @@ export type TuiEffect =
       correlationId: string;
       canonicalName: string;
       normalizedArgs: readonly string[];
+    }
+  | {
+      type: "session.list";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      listRequestId: string;
+      query: string;
     };
 
 export type TuiAction =
@@ -91,6 +108,11 @@ export type TuiAction =
   | { type: "queue.add"; item: TuiQueueItem }
   | { type: "queue.shift"; itemId: string }
   | { type: "overlay.set"; overlay: TuiOverlayState }
+  | { type: "session.picker.open"; sourceInvocationId: string }
+  | { type: "session.picker.search"; query: string }
+  | { type: "session.picker.select"; sessionId: string }
+  | { type: "session.picker.inspect"; sessionId: string }
+  | { type: "session.picker.close" }
   | { type: "turn.set"; turn?: number }
   | { type: "queue.counts"; steering: number; followUp: number }
   | { type: "transition.freeze"; frozen: boolean }
@@ -108,9 +130,18 @@ export type TuiResult =
       effectId: string;
       correlationId: string;
       reason: string;
+    }
+  | {
+      type: "session.list.completed";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      listRequestId: string;
+      result: SessionListResult;
     };
 
 export interface TuiReduceOutput {
   state: TuiState;
   effects: readonly TuiEffect[];
+  abortEffectIds?: readonly string[];
 }

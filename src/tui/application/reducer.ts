@@ -6,15 +6,27 @@ import type {
   TuiState,
 } from "./types.ts";
 import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
+import { createSessionPickerState } from "../sessions/picker-reducer.ts";
+import type { TuiCapabilitySnapshot, TuiEffect } from "./types.ts";
 
-export function createInitialTuiState(bootstrap: TuiBootstrapSnapshot): TuiState {
+export function createInitialTuiState(
+  bootstrap: TuiBootstrapSnapshot,
+  capabilities: TuiCapabilitySnapshot = {
+    sessionCatalog: {
+      available: false,
+      reason: "Session catalog is unavailable in this TUI.",
+    },
+  },
+): TuiState {
   return {
     bootstrap,
+    capabilities,
     queryGuard: { state: "idle" },
     commandsById: {},
     commandOrder: [],
     queue: [],
     overlay: { state: "closed" },
+    sessionPicker: createSessionPickerState(),
     steeringCount: 0,
     followUpCount: 0,
     transitionFrozen: false,
@@ -112,6 +124,92 @@ export function reduceTui(
       };
     case "effect.stale":
       return { state, effects: [] };
+    case "session.picker.open":
+      return beginSessionList(state, "", input.sourceInvocationId, {
+        state: "session-picker",
+        sourceInvocationId: input.sourceInvocationId,
+      });
+    case "session.picker.search":
+      if (state.overlay.state !== "session-picker") return { state, effects: [] };
+      return beginSessionList(state, input.query, state.overlay.sourceInvocationId, state.overlay);
+    case "session.picker.select":
+    case "session.picker.inspect": {
+      if (state.overlay.state !== "session-picker") return { state, effects: [] };
+      const sessions = state.sessionPicker.list.state === "ready"
+        ? state.sessionPicker.list.value.sessions
+        : [];
+      if (!sessions.some((session) => session.id === input.sessionId)) {
+        return { state, effects: [] };
+      }
+      return {
+        state: {
+          ...state,
+          sessionPicker: { ...state.sessionPicker, selectedSessionId: input.sessionId },
+        },
+        effects: [],
+      };
+    }
+    case "session.picker.close": {
+      if (state.overlay.state !== "session-picker") return { state, effects: [] };
+      const ownedEffectId = ownedSessionEffectId(state);
+      return {
+        state: {
+          ...state,
+          overlay: { state: "closed" },
+          queryGuard: ownedEffectId ? { state: "idle" } : state.queryGuard,
+          sessionPicker: {
+            ...state.sessionPicker,
+            generation: state.sessionPicker.generation + 1,
+            listRequestId: undefined,
+            enrichRequestId: undefined,
+            previewRequestId: undefined,
+            list: { state: "idle" },
+            detail: { state: "idle" },
+            preview: { state: "idle" },
+          },
+        },
+        effects: [],
+        ...(ownedEffectId ? { abortEffectIds: [ownedEffectId] } : {}),
+      };
+    }
+    case "session.list.completed": {
+      if (
+        state.overlay.state !== "session-picker" ||
+        state.sessionPicker.generation !== input.generation ||
+        state.sessionPicker.listRequestId !== input.listRequestId ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
+      const list = input.result.ok
+        ? input.result.value.sessions.length === 0
+          ? { state: "empty" as const, diagnostics: input.result.value.diagnostics }
+          : { state: "ready" as const, value: input.result.value }
+        : {
+            state: "error" as const,
+            message: input.result.error.message,
+            retryable: input.result.error.retryable,
+          };
+      const selectedSessionId = input.result.ok && input.result.value.sessions.length > 0
+        ? input.result.value.sessions.some((session) =>
+            session.id === state.sessionPicker.selectedSessionId
+          )
+          ? state.sessionPicker.selectedSessionId
+          : input.result.value.sessions[0]!.id
+        : undefined;
+      return {
+        state: {
+          ...state,
+          queryGuard: { state: "idle" },
+          sessionPicker: {
+            ...state.sessionPicker,
+            list,
+            selectedSessionId,
+          },
+        },
+        effects: [],
+      };
+    }
     case "command.terminal":
       return {
         state: putCommand(state, { ...input.command, execution: input.terminal }),
@@ -150,6 +248,60 @@ export function reduceTui(
     case "recovery.set":
       return { state: { ...state, recoveryRequired: input.required }, effects: [] };
   }
+}
+
+function beginSessionList(
+  state: TuiState,
+  query: string,
+  sourceInvocationId: string,
+  overlay: TuiState["overlay"],
+): TuiReduceOutput {
+  const generation = state.sessionPicker.generation + 1;
+  const listRequestId = `${sourceInvocationId}:session-list:${generation}`;
+  const previousEffectId = ownedSessionEffectId(state);
+  if (state.queryGuard.state !== "idle" && !previousEffectId) {
+    return { state, effects: [] };
+  }
+  const effect: TuiEffect = {
+    type: "session.list",
+    effectId: listRequestId,
+    correlationId: listRequestId,
+    generation,
+    listRequestId,
+    query,
+  };
+  return {
+    state: {
+      ...state,
+      overlay,
+      queryGuard: {
+        state: "dispatching",
+        effectId: effect.effectId,
+        correlationId: effect.correlationId,
+      },
+      sessionPicker: {
+        ...state.sessionPicker,
+        generation,
+        query,
+        selectedSessionId: undefined,
+        listRequestId,
+        enrichRequestId: undefined,
+        previewRequestId: undefined,
+        list: { state: "loading", requestId: listRequestId },
+        detail: { state: "idle" },
+        preview: { state: "idle" },
+      },
+    },
+    effects: [effect],
+    ...(previousEffectId ? { abortEffectIds: [previousEffectId] } : {}),
+  };
+}
+
+function ownedSessionEffectId(state: TuiState): string | undefined {
+  if (state.queryGuard.state === "idle") return undefined;
+  return state.queryGuard.effectId === state.sessionPicker.listRequestId
+    ? state.queryGuard.effectId
+    : undefined;
 }
 
 function updateCommandExecution(

@@ -10,6 +10,30 @@ export class EffectRunner {
 
   async execute(effect: TuiEffect, signal: AbortSignal): Promise<TuiResult> {
     try {
+      if (effect.type === "session.list") {
+        const result = this.ports.sessionCatalog
+          ? await this.ports.sessionCatalog.listLite({
+              query: effect.query,
+              listRequestId: effect.listRequestId,
+              signal,
+            })
+          : {
+              ok: false as const,
+              error: {
+                code: "directory_unavailable" as const,
+                message: "session catalog is unavailable",
+                retryable: false,
+              },
+            };
+        return {
+          type: "session.list.completed",
+          effectId: effect.effectId,
+          correlationId: effect.correlationId,
+          generation: effect.generation,
+          listRequestId: effect.listRequestId,
+          result,
+        };
+      }
       let terminal: TuiTerminalState;
       if (effect.type === "prompt") {
         await this.ports.prompt.run(effect.text, effect.behavior, signal);

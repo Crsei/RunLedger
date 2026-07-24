@@ -6,7 +6,7 @@
 >
 > RunLedger 实施基线:`feat/agent-loop-resurrect@cd24ebb1aa400120457e019e172c2c796bb7e8d4`。
 >
-> 当前实施状态:V0-V4 已完成 Agent 验证,V5-V30 未开始。按本轮约定,V4 后统一进行
+> 当前实施状态:V0-V5 已完成 Agent 验证,V6-V30 未开始。按本轮约定,V4 后统一进行
 > 人工验收,因此 V0-V4 最高只标记为 `agent-verified`;按后续提交指令,V0-V4 工作树
 > 成果合并为一次本地提交。
 >
@@ -1068,7 +1068,8 @@ V1-V30 必须同时满足:
 | V2 | P2 | startup replay 与 live event 进入同一 Timeline,tool call 按 correlation id 归并 | `timeline-reducer.test.ts` 7 项;乱序/重复/并行、300000-byte/200-line bound、orphan cleanup、60/80/143 列 | V4 后统一验收待完成 | agent-verified |
 | V3 | P3 | root shell、overlay、editor 与 app key 所有权固定;`ActiveState` 显示 query/queue/freeze/recovery | `interactive-controls.test.ts` 8 项;`structure-slices.test.ts` 4 项;标准 bin PTY 显示 `query:idle` | V4 后统一验收待完成 | agent-verified |
 | V4 | P4/P5 framework | 输入 `/` 后由 Editor 在输入框下方显示 inline completion,字符与 Backspace 持续编辑同一 draft;Enter 只接受 `/commands` 到 draft,第二次 Enter 才打开 registry 驱动 palette;Esc 关闭,空 draft Ctrl+D 退出 | `commands.test.ts` 6 项;`interactive-controls.test.ts` 9 项;14 个 canonical command、唯一 `/help` alias、generation/availability/queue/reject;标准 PATH `runledger` 在 60/80/143 列均 exit 0,另以 80 列 PTY 验证 `/c -> Backspace -> / -> Backspace -> empty`、inline completion 位于 editor 与 footer 之间、双 Enter 执行;显示 `tools:10`、`slash:14`、`✓ /commands — command palette opened` | V4 统一人工验收待完成 | agent-verified |
-| V5-V30 | 见上表 | 尚未实施;不得提前加入 `/sessions`、`/session`、`/resume`、`/new`、`/fork` | 无 | 无 | not-started |
+| V5 | P6/P7 read-only track | 标准 `runledger` 输入 `/sessions` 后同步显示 loading overlay；只读列出 modified-desc 的 v1/v2/v3 summary，支持 ID/显式 title filter、Up/Down、Enter inspect intent 与 Esc；不打开 manager、不取得 writer authority | `session-catalog.test.ts` 3 项、`session-picker.test.ts` 3 项、`commands.test.ts` 7 项、`application-reducer.test.ts` 8 项；覆盖 bounded first-record、missing dir、published/staging/corrupt/symlink/oversize、list lane cancel-and-replace/stale 丢弃及 60/80/143 列；`npm run check`、304 个测试文件/1904 项测试、`npm run build` 通过；标准 PATH `/home/nzq/.npm-global/bin/runledger` PTY 使用 200KB transcript fixture，显示 `slash:15`、loading、两行 summary、`v5` filter 后单行且 Esc/Ctrl+D exit 0 | 人工验收待完成 | agent-verified |
+| V6-V30 | 见上表 | 尚未实施；`/session`、`/resume`、`/new`、`/fork` 仍不得提前加入 | 无 | 无 | not-started |
 
 2026-07-25 Agent 验证快照:
 
@@ -1079,6 +1080,9 @@ V1-V30 必须同时满足:
 - `npm run build`、`runledger --version`、`runledger --help`、`git diff --check` 通过;
 - 标准命令来源为 `/home/nzq/.npm-global/bin/runledger`,解析到当前仓库
   `bin/runledger.js`;PTY 使用临时 `RUNLEDGER_DIR`/`RUNLEDGER_SESSION_DIR`,未读取或复制凭据。
+- V5 增量:canonical command 数 15、compatibility command 数 13；`listLite` 只读取有界首记录
+  与 publication metadata，单文件异常进入 typed diagnostic；标准 PATH PTY 的 `/sessions`
+  loading/ready/filter/Esc 链路 exit 0，未执行 session mutation。
 
 ## 8. 预期目录边界
 

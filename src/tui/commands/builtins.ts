@@ -41,6 +41,32 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       },
       summary: "command palette opened",
     }),
+  }, {
+    canonicalName: "sessions",
+    aliases: [],
+    description: "Browse sessions without opening writer authority",
+    category: "session",
+    presentationOrder: 1,
+    arguments: { min: 0, max: 0 },
+    draftConsumption: "consume",
+    historyPolicy: "ephemeral",
+    activeQueryPolicy: "reject",
+    executionStrategy: "native",
+    availability: (state) => state.capabilities.sessionCatalog.available
+      ? { state: "available" }
+      : {
+          state: "disabled",
+          reason: state.capabilities.sessionCatalog.reason ?? "Session catalog is unavailable.",
+        },
+    redact: (args) => args,
+    handler: (_context, intent) => ({
+      state: "action",
+      action: {
+        type: "session.picker.open",
+        sourceInvocationId: intent.commandInvocationId,
+      },
+      summary: "read-only session browser opened",
+    }),
   }];
   for (let index = 0; index < COMPATIBILITY_COMMANDS.length; index++) {
     const [name, description, category, policy, min, max] = COMPATIBILITY_COMMANDS[index]!;
@@ -49,7 +75,7 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       aliases: [],
       description,
       category,
-      presentationOrder: index + 1,
+      presentationOrder: index + 2,
       arguments: {
         min,
         max,

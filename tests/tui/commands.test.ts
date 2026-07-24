@@ -16,6 +16,7 @@ describe("command registry/parser/executor", () => {
     const registry = new CommandRegistry(builtinCommandDefinitions());
     expect(registry.snapshot.definitions.map((item) => item.canonicalName)).toEqual([
       "commands",
+      "sessions",
       "clear",
       "provider",
       "login",
@@ -31,6 +32,21 @@ describe("command registry/parser/executor", () => {
       "quit",
     ]);
     expect(registry.snapshot.byName.help).toBe(registry.snapshot.byName.commands);
+  });
+
+  it("registers /sessions as native and gates it on the read-only catalog capability", () => {
+    const snapshot = new CommandRegistry(builtinCommandDefinitions()).snapshot;
+    const definition = snapshot.byName.sessions!;
+    expect(definition.executionStrategy).toBe("native");
+    expect(definition.historyPolicy).toBe("ephemeral");
+    expect(definition.activeQueryPolicy).toBe("reject");
+    expect(definition.availability(createInitialTuiState(BOOTSTRAP))).toMatchObject({
+      state: "disabled",
+    });
+    expect(definition.availability(createInitialTuiState(BOOTSTRAP, {
+      sessionCatalog: { available: true },
+    }))).toEqual({ state: "available" });
+    expect(snapshot.definitions).toHaveLength(15);
   });
 
   it("rejects duplicate canonical names and aliases", () => {

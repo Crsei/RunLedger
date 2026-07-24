@@ -1,4 +1,5 @@
 import type { TuiTerminalState } from "./types.ts";
+import type { SessionCatalogPort } from "../sessions/catalog.ts";
 
 export interface PromptEffectPort {
   run(
@@ -19,4 +20,5 @@ export interface CompatibilityEffectPort {
 export interface TuiEffectPorts {
   prompt: PromptEffectPort;
   compatibility: CompatibilityEffectPort;
+  sessionCatalog?: SessionCatalogPort;
 }

@@ -90,6 +90,8 @@ import {
   reduceTimeline,
 } from "./timeline/tool-reducer.ts";
 import type { TimelineProjectionCursor, TimelineState } from "./timeline/types.ts";
+import type { SessionCatalogPort } from "./sessions/catalog.ts";
+import { SessionPickerComponent } from "./components/session-picker.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -110,6 +112,8 @@ export interface InteractiveModeOptions {
   onThinkingChange?: (level: ModelThinkingLevel) => void;
   /** CLI composition 提供的真实 workspace/session 快照。 */
   bootstrap?: TuiBootstrapSnapshot;
+  /** CLI 注入的只读 session catalog；demo 缺失时 /sessions 显示 disabled reason。 */
+  sessionCatalog?: SessionCatalogPort;
 }
 
 /** M8d:/model 切换条目;由 caller(demo)注入候选。 */
@@ -151,6 +155,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly registry: CommandRegistry;
   private readonly shell: InteractiveShell;
   private readonly overlays: OverlayController;
+  private sessionPickerComponent: SessionPickerComponent | undefined;
   private timelineState: TimelineState = createTimelineState();
   private timelineCursor: TimelineProjectionCursor = createTimelineProjectionCursor();
   private nextInvocation = 0;
@@ -215,9 +220,17 @@ export class InteractiveMode implements FooterSnapshotProvider {
         },
       },
       compatibility,
+      sessionCatalog: opts.sessionCatalog,
     });
     this.shell = new InteractiveShell({
-      initialState: createInitialTuiState(this.bootstrap),
+      initialState: createInitialTuiState(this.bootstrap, {
+        sessionCatalog: opts.sessionCatalog
+          ? { available: true }
+          : {
+              available: false,
+              reason: "Session browsing is unavailable because no read-only catalog was configured.",
+            },
+      }),
       runner,
       onState: (state) => this.syncApplicationState(state),
     });
@@ -841,8 +854,30 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (state.overlay.state === "command-palette" && !this.overlays.isOpen && this.refs) {
       this.showCommandPalette();
     }
+    if (state.overlay.state === "session-picker") {
+      if (!this.sessionPickerComponent) this.showSessionPicker();
+      this.sessionPickerComponent?.setState(state.sessionPicker);
+    } else if (this.sessionPickerComponent) {
+      this.overlays.close();
+      this.sessionPickerComponent = undefined;
+    }
     this.ui.requestRender();
     this.scheduleQueueDrain(state);
+  }
+
+  private showSessionPicker(): void {
+    const component = new SessionPickerComponent(this.shell.state.sessionPicker, {
+      onSearch: (query) => this.shell.dispatch({ type: "session.picker.search", query }),
+      onSelect: (sessionId) => this.shell.dispatch({ type: "session.picker.select", sessionId }),
+      onInspect: (sessionId) => this.shell.dispatch({ type: "session.picker.inspect", sessionId }),
+      onCancel: () => {
+        this.overlays.close();
+        this.sessionPickerComponent = undefined;
+        this.shell.dispatch({ type: "session.picker.close" });
+      },
+    });
+    this.sessionPickerComponent = component;
+    this.overlays.show(component);
   }
 
   private scheduleQueueDrain(state: TuiState): void {

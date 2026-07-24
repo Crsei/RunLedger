@@ -21,6 +21,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { selectSessionInTui } from "../tui/session-selector.ts";
+import { LocalSessionCatalogAdapter } from "../tui/sessions/local-catalog-adapter.ts";
 import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
 import { resolveSessionDir, getGlobalAgentsMd } from "../storage/paths.ts";
 import { SessionManager } from "../storage/session-manager.ts";
@@ -500,8 +501,21 @@ export async function main(
       });
     }
     const legacyVersion = legacyManager?.ledger().header()?.version;
+    const currentSessionPath = legacyManager?.filePath() ?? v3Manager?.filePath();
     const interactive = new InteractiveMode({
       controller,
+      sessionCatalog: new LocalSessionCatalogAdapter({
+        cwd,
+        sessionDir,
+        ...(currentSessionPath
+          ? {
+              currentSession: {
+                id: controller.sessionId,
+                filePath: currentSessionPath,
+              },
+            }
+          : {}),
+      }),
       bootstrap: {
         workspace: productionRuntime?.cwd ?? cwd,
         session: {
