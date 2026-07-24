@@ -23,6 +23,7 @@
 | Storage / CLI | [`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | `.runledger/`、settings、session、CLI、TUI 装配 | [`project-cli-layout.md`](project-cli-layout.md) |
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`09` 专题导航 | `AGENTS.md` §1.2.x、§5 |
 | TUI | [`tui/10-documentation-update-plan.md`](tui/10-documentation-update-plan.md) | 跨项目 lessons 与远程控制路线文档更新记录 | [`tui/08-cross-project-lessons.md`](tui/08-cross-project-lessons.md)、[`tui/09-remote-control-roadmap.md`](tui/09-remote-control-roadmap.md) |
+| Extension | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md) | Plugin、Skill、Hooks、MCP、OAuth、控制面与签名 marketplace 的 M0–M7 权威状态账本 | 计划 §0.3、§8.1 与 `AGENTS.md` §1.2.y |
 
 ## 原始计划迁移映射
 
@@ -43,6 +44,10 @@ development-doc/
 ├── project-cli-layout.md
 ├── providers/
 │   └── 01-pi-ai-migration-plan.md
+├── plugin-mcp-skill-hooks/
+│   ├── 00-reference.md
+│   ├── 01-implementation-plan.md
+│   └── dependency-review.md
 ├── runtime/
 │   ├── 00-reference.md
 │   ├── 01-minimum-runtime-scaffold-plan.md

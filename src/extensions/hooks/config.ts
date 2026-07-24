@@ -18,7 +18,7 @@ import type { TrustStore } from "../trust/trust-store.ts";
 import type { ExtensionRuntimeScope, ExtensionSourceRoot, ExtensionStateDocument } from "../types.ts";
 import type { ExtensionStoragePort } from "../storage-port.ts";
 import { HOOK_EVENTS } from "./types.ts";
-import type { CommandHookHandler, HookDescriptor, HookEvent, HookFailureMode } from "./types.ts";
+import type { CommandHookHandler, HookDescriptor, HookEvent, HookFailureMode, HookHandler, HttpHookHandlerConfig } from "./types.ts";
 
 interface RawCommandHandler {
 	type: "command";
@@ -28,15 +28,22 @@ interface RawCommandHandler {
 	env?: Record<string, string>;
 }
 
+interface RawHttpHandler {
+	type: "http";
+	url: string;
+}
+
+type RawHookHandler = RawCommandHandler | RawHttpHandler;
+
 interface RawHookDeclaration {
 	id?: string;
 	matcher?: string;
 	failureMode?: HookFailureMode;
-	handlers: RawCommandHandler[];
+	handlers: RawHookHandler[];
 }
 
 interface RawHooksConfig {
-	schemaVersion: 1;
+	schemaVersion: 1 | 2;
 	hooks: Partial<Record<HookEvent, RawHookDeclaration[]>>;
 }
 
@@ -61,8 +68,25 @@ export function effectiveHookFailureMode(event: HookEvent, source: ExtensionSour
 	return requested ?? defaultMode;
 }
 
-async function normalizeHandler(storage: ExtensionStoragePort, handler: RawCommandHandler, configPath: string, pluginRoot?: string): Promise<{ handler?: CommandHookHandler; diagnostics: ExtensionDiagnostic[] }> {
+async function normalizeHandler(storage: ExtensionStoragePort, handler: RawHookHandler, configPath: string, pluginRoot?: string): Promise<{ handler?: HookHandler; diagnostics: ExtensionDiagnostic[] }> {
 	const diagnostics: ExtensionDiagnostic[] = [];
+	if (handler.type === "http") {
+		let url: URL;
+		try {
+			url = new URL(handler.url);
+		} catch {
+			return { diagnostics: [extensionDiagnostic("hook.http_url_invalid", "error", "HTTP hook URL is invalid", "hook", configPath)] };
+		}
+		if (url.protocol !== "https:" || url.username || url.password) {
+			return { diagnostics: [extensionDiagnostic("hook.http_url_insecure", "error", "HTTP hook URL must use HTTPS without userinfo", "hook", configPath)] };
+		}
+		const normalized: HttpHookHandlerConfig = {
+			type: "http",
+			url: url.href,
+			urlDigest: canonicalDigest(url.href),
+		};
+		return { handler: normalized, diagnostics };
+	}
 	let command = handler.command;
 	let commandDigest: string;
 	if (command.startsWith("./")) {
@@ -100,6 +124,17 @@ function processCapability(scope: ExtensionRuntimeScope, qualifiedId: string, co
 	};
 }
 
+function networkCapability(scope: ExtensionRuntimeScope, qualifiedId: string, urlDigest: string): ResourceCapabilityDeclaration {
+	return {
+		authorityId: scope.authorityId,
+		tenantId: scope.tenantId,
+		capabilityId: createRuntimeId("resource", canonicalDigest({ qualifiedId, urlDigest }).slice(0, 32)),
+		claim: { authorityId: scope.authorityId, tenantId: scope.tenantId, name: "network", resourceKind: "network", resourceDigest: urlDigest, constraintsDigest: urlDigest },
+		boundary: { kind: "network", access: "connect", hostScopeDigest: urlDigest },
+		required: true,
+	};
+}
+
 export async function loadHookConfig(options: {
 	configPath: string;
 	root: ExtensionSourceRoot;
@@ -122,7 +157,7 @@ export async function loadHookConfig(options: {
 	} catch {
 		return { hooks: [], diagnostics: [extensionDiagnostic("hook.config_json", "error", "hook config is invalid JSON", "hook", options.configPath)] };
 	}
-	if (!schemaAccepts(HooksConfigSchema, raw)) return { hooks: [], diagnostics: [extensionDiagnostic("hook.config_schema", "error", "hook config does not match schema v1", "hook", options.configPath)] };
+	if (!schemaAccepts(HooksConfigSchema, raw)) return { hooks: [], diagnostics: [extensionDiagnostic("hook.config_schema", "error", "hook config does not match schema v1/v2", "hook", options.configPath)] };
 	const config = raw as RawHooksConfig;
 	const diagnostics: ExtensionDiagnostic[] = [];
 	const hooks: HookDescriptor[] = [];
@@ -138,7 +173,7 @@ export async function loadHookConfig(options: {
 					continue;
 				}
 			}
-			const normalizedHandlers: CommandHookHandler[] = [];
+			const normalizedHandlers: HookHandler[] = [];
 			for (const handler of declaration.handlers) {
 				const normalized = await normalizeHandler(options.storage, handler, options.configPath, options.pluginRoot);
 				diagnostics.push(...normalized.diagnostics);
@@ -147,13 +182,21 @@ export async function loadHookConfig(options: {
 			if (normalizedHandlers.length !== declaration.handlers.length) continue;
 			const name = declaration.id ?? `${event.toLocaleLowerCase()}-${index}`;
 			const qualifiedId = qualifiedResourceId({ kind: "hook", sourceKey: options.root.sourceKey, name: `${event.toLocaleLowerCase()}-${name}`, ...(options.root.pluginId ? { pluginId: options.root.pluginId } : {}) });
-			const commandDigest = canonicalDigest(normalizedHandlers.map((handler) => ({ command: handler.command, commandDigest: handler.commandDigest, args: handler.args, envKeys: Object.keys(handler.env).sort() })));
-			const binding = buildResourceManifestDigest({ rootDigest: configDigest, configDigest, commandDigest, capabilityDigest: canonicalDigest({ capability: "process", commandDigest }) });
+			const commandDigest = canonicalDigest(normalizedHandlers.map((handler) =>
+				handler.type === "command"
+					? { type: handler.type, command: handler.command, commandDigest: handler.commandDigest, args: handler.args, envKeys: Object.keys(handler.env).sort() }
+					: { type: handler.type, url: handler.url, urlDigest: handler.urlDigest }
+			));
+			const binding = buildResourceManifestDigest({ rootDigest: configDigest, configDigest, commandDigest, capabilityDigest: canonicalDigest({ capabilities: normalizedHandlers.map((handler) => handler.type), commandDigest }) });
 			const identity = createExtensionResourceIdentity({ scope: options.scope, kind: "hook", qualifiedId, version: "1", source: options.root.pluginId ? "plugin" : options.root.source, digest: binding.combinedDigest });
 			const trust = await options.trustStore.evaluate({ identity, canonicalPath: resolve(options.configPath), binding, principalId: options.scope.principalId });
 			const enabled = options.state?.resources[qualifiedId]?.enabled ?? true;
 			const activation = !enabled ? "disabled" : trust.state === "trusted" ? "ready" : "blocked";
-			const capabilities = normalizedHandlers.map((handler) => processCapability(options.scope, qualifiedId, handler.commandDigest));
+			const capabilities = normalizedHandlers.map((handler) =>
+				handler.type === "command"
+					? processCapability(options.scope, qualifiedId, handler.commandDigest)
+					: networkCapability(options.scope, qualifiedId, handler.urlDigest)
+			);
 			hooks.push({
 				descriptor: {
 					schemaVersion: 1,

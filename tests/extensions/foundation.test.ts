@@ -115,6 +115,23 @@ describe("Extension foundation contracts", () => {
 		expect(cycle).toMatchObject({ ok: false, code: "cycle" });
 	});
 
+	it("fails directory discovery at the configured depth boundary", async () => {
+		const root = await temporary("extension-depth-bound");
+		const levelOne = join(root, "one");
+		const levelTwo = join(levelOne, "two");
+		await mkdir(levelTwo, { recursive: true });
+		await writeFile(join(levelTwo, "deep.txt"), "deep");
+		const result = await digestDirectory(storage, root, {
+			...DEFAULT_EXTENSION_LIMITS,
+			maxDiscoveryDepth: 1,
+		});
+		expect(result).toMatchObject({
+			ok: false,
+			code: "oversize",
+			message: "directory depth exceeds bound",
+		});
+	});
+
 	it("binds trust to exact identity, canonical root, content, principal, expiry and revocation", async () => {
 		const root = await temporary("extension-trust");
 		const trustPath = join(root, "trust.json");

@@ -28,10 +28,13 @@ export async function discoverPlugins(options: {
 	const plugins: PluginDescriptor[] = [];
 	const diagnostics: ExtensionDiagnostic[] = [];
 	for (const root of options.roots) {
-		const pluginsRoot = join(root.rootPath, "plugins");
-		const listed = await options.storage.readDirectory(pluginsRoot);
-		if (!listed.ok) continue;
-		for (const entry of [...listed.value].sort((left, right) => left.name.localeCompare(right.name))) {
+		const pluginsRoot = root.layout === "plugin-root" ? root.rootPath : join(root.rootPath, "plugins");
+		const candidates = root.layout === "plugin-root"
+			? [{ name: ".", kind: "directory" as const }]
+			: await options.storage.readDirectory(pluginsRoot).then((listed) =>
+				listed.ok ? [...listed.value].sort((left, right) => left.name.localeCompare(right.name)) : []
+			);
+		for (const entry of candidates) {
 			if (entry.kind !== "directory") continue;
 			const contained = await resolveContainedPath(options.storage, pluginsRoot, entry.name);
 			if (!contained.ok) {

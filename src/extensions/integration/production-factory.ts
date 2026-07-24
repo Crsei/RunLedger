@@ -35,6 +35,7 @@ import {
 } from "../../storage/paths.ts";
 import { ExtensionManager, type ExtensionManagerSnapshot } from "../extension-manager.ts";
 import type { HookCommandExecution, HookCommandExecutorPort, HookCommandRequest } from "../hooks/types.ts";
+import type { HookHttpHandlerPort } from "../hooks/types.ts";
 import type {
 	McpAuxiliaryAuthorizationPort,
 	McpOperationAuthorizationPort,
@@ -43,6 +44,11 @@ import type {
 } from "../mcp/connection-manager.ts";
 import type { McpClientFactoryPort, McpServerState } from "../mcp/types.ts";
 import { discoverExtensionRoots } from "../paths.ts";
+import { compatibilitySkillRoots, type CompatibilitySource } from "../compatibility-importer.ts";
+import {
+	ExtensionControlPlane,
+	type ExtensionOAuthControlPort,
+} from "../control-plane/control-plane.ts";
 import { SkillToolResolver } from "../skills/skill-tool.ts";
 import { skillCatalogPromptFragment } from "../skills/renderer.ts";
 import { ExtensionStateStore } from "../state-store.ts";
@@ -55,6 +61,7 @@ import {
 	type ProductionExtensionManagerPort,
 	type ProductionExtensionManagerSnapshot,
 	type ProductionExtensionReloadResult,
+	type ProductionExtensionWatcherPort,
 	type V3ExtensionCanonicalAuditPort,
 } from "./production-runtime.ts";
 
@@ -115,7 +122,14 @@ export interface ProductionExtensionFactoryOptions {
 	environment?: Readonly<Record<string, string | undefined>>;
 	secureMcp?: ProductionSecureMcpPorts;
 	hookToolStartJournal?: HookToolStartJournalPort;
+	/** 必须由 policy-aware DNS/network/approval ports 组成；缺失时 HTTP Hook fail closed。 */
+	httpHookHandler?: HookHttpHandlerPort;
 	modelContextChars?: number;
+	compatibilitySkillSources?: readonly CompatibilitySource[];
+	watcher?: ProductionExtensionWatcherPort;
+	watchPaths?: readonly string[];
+	/** OAuth mutation 仍须由 deployment 注入；缺失时 TUI login/logout fail closed。 */
+	oauth?: ExtensionOAuthControlPort;
 	resolvePaths?: (input: { cwd: string; sessionId: string }) => ProductionExtensionPersistencePaths;
 	now?: () => Date;
 }
@@ -130,6 +144,7 @@ export interface ProductionExtensionFactoryCreateInput {
 /** 与 ProductionInteractiveExtensionFactoryPort 结构兼容，且不反向 import storage/CLI composition。 */
 export interface ProductionExtensionFactoryResult {
 	runtime: ProductionExtensionRuntime;
+	controlPlane: ExtensionControlPlane;
 	beforeToolCall(ctx: AgentToolHookContext, signal?: AbortSignal): Promise<BeforeToolCallResult | void>;
 	afterToolCall(ctx: AgentToolHookContext & { result: import("../../runtime/types.ts").ToolResultContent; isError: boolean }, signal?: AbortSignal): Promise<AfterToolCallResult | void>;
 	fragmentProviders: readonly GovernedContextFragmentProvider[];
@@ -731,13 +746,19 @@ export class ProductionExtensionFactory {
 		if (this.#options.secureMcp !== undefined && !secureMcpPortsAreComplete(this.#options.secureMcp)) throw new Error("secure MCP production ports are incomplete");
 		const storage = new NodePolicyExtensionStorage({ cwd: input.cwd, securitySnapshot: this.#options.securitySnapshot });
 		const paths = (this.#options.resolvePaths ?? ((value) => defaultPaths(value.cwd, value.sessionId)))(input);
-		const roots = await discoverExtensionRoots({
+		const standardRoots = await discoverExtensionRoots({
 			storage,
 			cwd: input.cwd,
 			...(this.#options.userRoot === null ? {} : { userRoot: this.#options.userRoot ?? getUserExtensionRoot() }),
 			...(this.#options.builtinRoots ? { builtinRoots: this.#options.builtinRoots } : {}),
 			...(this.#options.sessionRoots ? { sessionRoots: this.#options.sessionRoots } : {}),
 		});
+		const compatibility = await compatibilitySkillRoots({
+			projectRoot: input.cwd,
+			storage,
+			enabledSources: this.#options.compatibilitySkillSources,
+		});
+		const roots = [...standardRoots, ...compatibility.roots];
 		const trustStore = new TrustStore(paths.trustFile, storage);
 		const stateStore = new ExtensionStateStore(paths.stateFile, storage);
 		const spill = new DurableExtensionSpill(paths.spillRoot, storage);
@@ -758,6 +779,7 @@ export class ProductionExtensionFactory {
 			stateStore,
 			pluginDataRoot: paths.pluginDataRoot,
 			hookExecutor,
+			...(this.#options.httpHookHandler ? { hookHttpHandler: this.#options.httpHookHandler } : {}),
 			mcpEvents: audit,
 			spill,
 			...(this.#options.environment ? { environment: this.#options.environment } : {}),
@@ -787,10 +809,22 @@ export class ProductionExtensionFactory {
 				storage,
 				currentTools: () => input.registry.toContext().map((tool) => tool.name),
 			}),
+			...(this.#options.watcher ? {
+				watcher: this.#options.watcher,
+				watchPaths: this.#options.watchPaths ?? roots.map((root) => root.rootPath),
+			} : {}),
 			...(this.#options.now ? { now: this.#options.now } : {}),
+		});
+		const controlPlane = new ExtensionControlPlane({
+			manager: extensionManager,
+			state: stateStore,
+			trust: trustStore,
+			scope: this.#options.scope,
+			...(this.#options.oauth ? { oauth: this.#options.oauth } : {}),
 		});
 		return {
 			runtime,
+			controlPlane,
 			beforeToolCall: async (context, signal) => {
 				if (!context.tool || context.tool.name !== context.toolCall.name) return { block: true, reason: "extension hook cannot authorize an unknown or mismatched tool" };
 				const result = await runtime.preToolUseHook({ toolName: context.tool.name, toolInput: context.args }, signal);

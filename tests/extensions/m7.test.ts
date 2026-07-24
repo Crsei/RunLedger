@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Meter } from "@opentelemetry/api";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,10 +16,18 @@ import type {
 	PluginVersionStorePort,
 } from "../../src/extensions/marketplace/types.ts";
 import { McpOAuthCredentialStore } from "../../src/extensions/mcp/oauth.ts";
+import {
+	ManualMcpOAuthCodeChannel,
+	McpOAuthLifecycle,
+	NodeLoopbackMcpOAuthCodeChannel,
+	raceMcpOAuthCode,
+} from "../../src/extensions/mcp/oauth.ts";
 import { ExtensionMetrics } from "../../src/extensions/metrics/extension-metrics.ts";
 import { ExtensionConfigWatcher } from "../../src/extensions/watcher/config-watcher.ts";
 import type { HookEnvelope } from "../../src/extensions/hooks/types.ts";
 import { makeExtensionTempDir, NodeTestExtensionStorage, removeExtensionTempDir } from "./helpers.ts";
+import { AuthStorage } from "../../src/storage/auth-storage.ts";
+import { AuthStorageMcpOAuthSecretStore } from "../../src/storage/mcp-oauth-secret-store.ts";
 
 const storage = new NodeTestExtensionStorage();
 const temporaryDirectories: string[] = [];
@@ -35,7 +43,16 @@ async function temporary(label: string): Promise<string> {
 }
 
 function marketplaceFixture() {
-	const locator: MarketplaceLocator = { packageName: "team-tools", version: "1.2.3", publisherId: "publisher-1", sourceUrl: "https://market.example/team-tools-1.2.3.tgz", expectedDigest: "a".repeat(64), expectedSignature: "signature-fixture-value" };
+	const locator: MarketplaceLocator = {
+		schemaVersion: 1,
+		packageName: "team-tools",
+		version: "1.2.3",
+		publisherId: "publisher-1",
+		sourceUrl: "https://market.example/team-tools-1.2.3.tgz",
+		format: "tgz",
+		expectedDigest: "a".repeat(64),
+		signature: { algorithm: "Ed25519", value: "signature-fixture-value" },
+	};
 	const download: MarketplaceDownloadReceipt = { stagedRoot: "/staging/team-tools", bytes: 1_024, digest: locator.expectedDigest, sourceUrl: locator.sourceUrl, downloadReceiptId: "download-1" };
 	const verification: MarketplaceVerificationReceipt = { signatureValid: true, publisherTrusted: true, publisherRevision: 4, verificationReceiptId: "verification-1" };
 	const probe: MarketplaceProbeReceipt = { ok: true, manifestDigest: "manifest", capabilityDigest: "capability", containsExecutableResources: false, probeReceiptId: "probe-1" };
@@ -85,6 +102,12 @@ describe("M7 hardened extension capabilities", () => {
 	it("stores only opaque OAuth handles in 0600 metadata and revokes them on logout", async () => {
 		const root = await temporary("mcp-oauth");
 		const metadataPath = join(root, "oauth.json");
+		await writeFile(metadataPath, JSON.stringify({
+			future: { keep: true },
+			schemaVersion: 1,
+			revision: 0,
+			servers: {},
+		}));
 		const revoked: string[] = [];
 		const store = new McpOAuthCredentialStore(metadataPath, storage, {
 			store: async ({ audience, credentialMaterial }) => {
@@ -107,9 +130,101 @@ describe("M7 hardened extension capabilities", () => {
 		const metadata = await readFile(metadataPath, "utf8");
 		expect(metadata).toContain("credential-handle");
 		expect(metadata).not.toContain("raw-access-token");
+		expect(metadata).toContain('"future"');
 		expect((await stat(metadataPath)).mode & 0o777).toBe(0o600);
 		expect(await store.logout("mcp-server:project:fixture")).toBe(true);
 		expect(revoked).toEqual(["credential-handle"]);
+
+		const unsafePath = join(root, "unsafe-oauth.json");
+		await writeFile(unsafePath, JSON.stringify({
+			schemaVersion: 1,
+			revision: 1,
+			servers: {
+				"mcp-server:project:unsafe": {
+					handleId: "credential-handle",
+					audienceDigest: "a".repeat(64),
+					issuedAt: "2026-07-24T00:00:00.000Z",
+					access_token: "must-not-survive",
+				},
+			},
+		}));
+		const unsafe = new McpOAuthCredentialStore(unsafePath, storage, {
+			store: async () => {
+				throw new Error("not used");
+			},
+			revoke: async () => false,
+		});
+		expect(await unsafe.load()).toEqual({ schemaVersion: 1, revision: 0, servers: {} });
+	});
+
+	it("races loopback callback against manual code, validates state, and releases the random loopback port", async () => {
+		const loopback = await NodeLoopbackMcpOAuthCodeChannel.listen({ timeoutMs: 5_000 });
+		let manualAborted = false;
+		const manual = new ManualMcpOAuthCodeChannel(async (_url, signal) =>
+			new Promise<string>((_resolve, reject) => {
+				signal?.addEventListener("abort", () => {
+					manualAborted = true;
+					reject(new Error("manual cancelled"));
+				}, { once: true });
+			})
+		);
+		const receiving = raceMcpOAuthCode({
+			authorizationUrl: "https://auth.example/authorize",
+			expectedState: "state-loopback",
+			loopback,
+			manual,
+		});
+		const response = await fetch(`${loopback.redirectUri}?code=loopback-code&state=state-loopback`);
+		expect(response.status).toBe(200);
+		expect(await receiving).toBe("loopback-code");
+		expect(manualAborted).toBe(true);
+		await expect(fetch(`${loopback.redirectUri}?code=again&state=state-loopback`)).rejects.toThrow();
+	});
+
+	it("stores SDK token material only in an mcp identity-hash AuthStorage item and reloads after lifecycle changes", async () => {
+		const auth = AuthStorage.inMemory();
+		const secrets = new AuthStorageMcpOAuthSecretStore(auth);
+		const handle = await secrets.store({
+			serverId: "mcp-server:project:secure",
+			audience: "https://mcp.example",
+			credentialMaterial: JSON.stringify({
+				access_token: "access-secret",
+				refresh_token: "refresh-secret",
+				expires_in: 3600,
+			}),
+		});
+		expect(handle.handleId).toMatch(/^mcp:[a-f0-9]{64}$/u);
+		expect(await auth.list()).toEqual([{ providerId: handle.handleId, type: "oauth" }]);
+		expect(await secrets.revoke(handle.handleId)).toBe(true);
+		expect(await auth.list()).toEqual([]);
+
+		const root = await temporary("mcp-oauth-lifecycle");
+		const order: string[] = [];
+		const metadata = new McpOAuthCredentialStore(join(root, "oauth.json"), storage, {
+			store: async ({ audience }) => ({
+				handleId: "mcp:lifecycle",
+				audienceDigest: canonicalDigest(audience),
+				issuedAt: "2026-07-24T00:00:00.000Z",
+			}),
+			revoke: async () => { order.push("revoke"); return true; },
+		});
+		const lifecycle = new McpOAuthLifecycle(metadata, {
+			closeServer: async () => { order.push("close"); return true; },
+			requestReload: () => { order.push("reload"); },
+		});
+		await lifecycle.login({
+			serverId: "mcp-server:project:secure",
+			provider: {
+				begin: async () => ({ authorizationUrl: "https://auth.example", state: "state", verifierHandle: "verifier" }),
+				complete: async () => ({ audience: "https://mcp.example", credentialMaterial: "token" }),
+			},
+			authorizationServer: "https://auth.example",
+			redirectUri: "http://127.0.0.1/callback",
+			receiveCode: async () => "code",
+		});
+		expect(order).toEqual(["reload"]);
+		expect(await lifecycle.logout("mcp-server:project:secure")).toBe(true);
+		expect(order).toEqual(["reload", "revoke", "close", "reload"]);
 	});
 
 	it("enforces HTTPS, public DNS, exact approval, same-origin redirect and connected-address pinning for HTTP hooks", async () => {

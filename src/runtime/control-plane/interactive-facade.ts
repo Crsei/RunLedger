@@ -46,6 +46,22 @@ export class GovernedInteractiveSessionFacade implements InteractiveSessionContr
 	public get warnings(): readonly string[] { return this.#view.warnings; }
 	public get auditEntries(): readonly LedgerEntry[] { return this.#view.auditEntries; }
 	public get toolCount(): number { return this.#view.toolCount; }
+	public getExtensionSnapshot() { return this.#view.getExtensionSnapshot?.(); }
+	public reloadExtensions() {
+		return this.#view.reloadExtensions?.() ?? Promise.resolve({
+			status: "failed" as const,
+			reason: "production Extension runtime is not configured",
+		});
+	}
+	public mutateExtension(
+		input: Parameters<NonNullable<InteractiveSessionControllerPort["mutateExtension"]>>[0],
+	) {
+		return this.#view.mutateExtension?.(input) ?? Promise.resolve({
+			ok: false,
+			status: "failed" as const,
+			message: "governed Extension mutation ports are not configured",
+		});
+	}
 
 	public subscribe(listener: AgentEventSink): () => void { return this.#view.subscribe(listener); }
 	public getProviderStatuses(): Promise<ProviderStatus[]> { return this.#view.getProviderStatuses(); }

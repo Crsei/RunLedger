@@ -8,6 +8,7 @@ export * from "./config-layers.ts";
 export * from "./snapshot.ts";
 export * from "./state-store.ts";
 export * from "./extension-manager.ts";
+export * from "./discovery-worker.ts";
 export * from "./compatibility-importer.ts";
 export * from "./trust/types.ts";
 export * from "./trust/digest.ts";
@@ -42,10 +43,13 @@ export * from "./plugins/plugin-manager.ts";
 export * from "./plugins/audit.ts";
 export * from "./marketplace/types.ts";
 export * from "./marketplace/installer.ts";
+export * from "./marketplace/node-marketplace.ts";
+export * from "./marketplace/control-service.ts";
 export * from "./watcher/config-watcher.ts";
 export * from "./metrics/extension-metrics.ts";
 export * from "./control-plane/commands.ts";
 export * from "./control-plane/control-plane.ts";
+export * from "./control-plane/cli-control-plane.ts";
 export * from "./control-plane/view-model.ts";
 export * from "./integration/runtime-resource-adapter.ts";
 export * from "./integration/runtime-hook-adapter.ts";
@@ -54,6 +58,7 @@ export * from "./integration/composition-contributions.ts";
 export * from "./integration/production-runtime.ts";
 export * from "./integration/production-factory.ts";
 export { NodePolicyExtensionStorage } from "../storage/extension-node-storage.ts";
+export { AuthStorageMcpOAuthSecretStore } from "../storage/mcp-oauth-secret-store.ts";
 export type { NodePolicyExtensionStorageOptions } from "../storage/extension-node-storage.ts";
 export {
 	getExtensionSpillDir,
@@ -61,6 +66,13 @@ export {
 	getExtensionsStatePath,
 	getPluginDataDir,
 	getPluginDataRoot,
+	getPluginCacheRoot,
+	getPluginStagingRoot,
+	getPluginStoreRoot,
+	getInstalledPluginIndexPath,
+	getMarketplaceRoot,
+	getMcpOAuthMetadataPath,
+	getPublisherTrustPath,
 	getProjectExtensionRoot,
 	getProjectSettingsPath,
 	getTrustStorePath,
@@ -79,4 +91,9 @@ export {
 	saveProjectSettings,
 	saveUserSettings,
 } from "../storage/settings-manager.ts";
-export type { ProjectSettings, UserSettings } from "../storage/settings-manager.ts";
+export type {
+	CompatibilitySkillSource,
+	ExtensionSettings,
+	ProjectSettings,
+	UserSettings,
+} from "../storage/settings-manager.ts";

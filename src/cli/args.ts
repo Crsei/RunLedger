@@ -64,6 +64,7 @@ export interface ParseResult {
 }
 
 const HELP_TEXT = `Usage: runledger [options]
+       runledger <extension-command> [--json]
 
   -c, --continue              继续最近会话(默认 .runledger/sessions/)
   -r, --resume                在 TUI 中选择当前项目的历史会话
@@ -82,6 +83,21 @@ const HELP_TEXT = `Usage: runledger [options]
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
   -h, --help                  本帮助
+
+Extension 控制面:
+  inspect [--json]
+  trust list|grant|revoke [<qualified-id>] [--json]
+  plugin list|show|validate|enable|disable|trust|untrust [<qualified-id>] [--json]
+  plugin install|update --locator <file>
+  plugin uninstall <package> --version <exact>
+  plugin rollback <package> --from <exact>
+  skill list|show|validate [<qualified-id>] [--json]
+  hook list|validate|enable|disable [<qualified-id>] [--json]
+  mcp list|doctor|enable|disable|login|logout [<qualified-id>] [--json]
+
+默认 CLI 的 inspect/list/show/validate 是无副作用 discovery；特权操作缺少
+Runtime Gateway、approval、durable audit 或写端口时会 fail closed。
+非交互特权操作还必须提供 --yes --digest <sha256>。
 
 环境变量:
   <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login

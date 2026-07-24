@@ -13,7 +13,7 @@
 import type { Component } from "../index.ts";
 import { fitToWidth } from "./render-width.ts";
 
-export type LoadedResourceKind = "ledger" | "mcp" | "skills" | "hooks" | "slash" | "tools";
+export type LoadedResourceKind = "ledger" | "extensions" | "mcp" | "skills" | "hooks" | "slash" | "tools";
 
 export interface LoadedResourceEntry {
   kind: LoadedResourceKind;
@@ -57,10 +57,10 @@ export class LoadedResourcesComponent implements Component {
     if (this.activeLedgerSessionId && this.activeLedgerSessionId.length > 0) {
       parts.push(`ledger:${this.activeLedgerSessionId.slice(0, 8)}`);
     }
-    for (const kind of ["tools", "mcp", "skills", "hooks", "slash"] as LoadedResourceKind[]) {
+    for (const kind of ["tools", "extensions", "mcp", "skills", "hooks", "slash"] as LoadedResourceKind[]) {
       const entry = this.resources.get(kind);
       if (entry) {
-        parts.push(`${kind}:${entry.count}`);
+        parts.push(entry.label ? `${kind}:${entry.label}` : `${kind}:${entry.count}`);
       }
     }
     if (parts.length === 0) {

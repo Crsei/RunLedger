@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { canonicalDigest, canonicalJson } from "../runtime/protocol/v3/canonical-json.ts";
 import { createExtensionResourceIdentity, mcpRuntimeName, qualifiedResourceId } from "./identity.ts";
 import { discoverHooks } from "./hooks/discovery.ts";
-import type { HookCommandExecutorPort, HookDescriptor } from "./hooks/types.ts";
+import type { HookCommandExecutorPort, HookDescriptor, HookHttpHandlerPort } from "./hooks/types.ts";
 import { HookRunner } from "./hooks/runner.ts";
 import { HookDispatcher } from "./hooks/dispatcher.ts";
 import type { McpClientFactoryPort, McpServerDescriptor, McpToolDefinition } from "./mcp/types.ts";
@@ -27,6 +27,7 @@ import type { ExtensionDiagnostic } from "./diagnostics.ts";
 import { extensionDiagnostic } from "./diagnostics.ts";
 import { buildResourceManifestDigest } from "./trust/digest.ts";
 import type { ExtensionResourceDescriptor, ExtensionRuntimeScope, ExtensionSourceRoot, ExtensionSpillPort } from "./types.ts";
+import { runBoundedDiscovery } from "./discovery-worker.ts";
 
 export interface ExtensionManagerSnapshot {
 	snapshot: ExtensionSnapshot;
@@ -37,6 +38,19 @@ export interface ExtensionManagerSnapshot {
 	skillCatalog: SkillCatalog;
 	hookDispatcher: HookDispatcher;
 	mcp: McpConnectionManager;
+}
+
+/**
+ * discovery-only 结果不持有 runner、client、transport、process 或 executable
+ * handler。调用方可安全用于 inspect/list/validate。
+ */
+export interface ExtensionDiscoverySnapshot {
+	schemaVersion: 1;
+	snapshot: ExtensionSnapshot;
+	plugins: readonly PluginDescriptor[];
+	skills: readonly SkillDescriptor[];
+	hooks: readonly HookDescriptor[];
+	mcpServers: readonly McpServerDescriptor[];
 }
 
 export type ExtensionReloadResult =
@@ -93,6 +107,7 @@ export class ExtensionManager {
 	readonly #pluginDataRoot: string;
 	readonly #environment: Readonly<Record<string, string | undefined>>;
 	readonly #hookExecutor?: HookCommandExecutorPort;
+	readonly #hookHttpHandler?: HookHttpHandlerPort;
 	readonly #mcpFactory?: McpClientFactoryPort;
 	readonly #mcpAuthorization?: McpOperationAuthorizationPort;
 	readonly #mcpAuxiliaryAuthorization?: McpAuxiliaryAuthorizationPort;
@@ -111,7 +126,8 @@ export class ExtensionManager {
 		stateStore: ExtensionStateStore;
 		pluginDataRoot: string;
 		environment?: Readonly<Record<string, string | undefined>>;
-		hookExecutor?: HookCommandExecutorPort;
+			hookExecutor?: HookCommandExecutorPort;
+			hookHttpHandler?: HookHttpHandlerPort;
 		mcpFactory?: McpClientFactoryPort;
 		mcpAuthorization?: McpOperationAuthorizationPort;
 		mcpAuxiliaryAuthorization?: McpAuxiliaryAuthorizationPort;
@@ -127,6 +143,7 @@ export class ExtensionManager {
 		this.#pluginDataRoot = options.pluginDataRoot;
 		this.#environment = options.environment ?? {};
 		this.#hookExecutor = options.hookExecutor;
+		this.#hookHttpHandler = options.hookHttpHandler;
 		this.#mcpFactory = options.mcpFactory;
 		this.#mcpAuthorization = options.mcpAuthorization;
 		this.#mcpAuxiliaryAuthorization = options.mcpAuxiliaryAuthorization;
@@ -136,6 +153,225 @@ export class ExtensionManager {
 	}
 
 	public current(): ExtensionManagerSnapshot | undefined { return this.#current; }
+
+	async #discover(generation: number): Promise<{
+		plugins: readonly PluginDescriptor[];
+		skills: readonly SkillDescriptor[];
+		hooks: readonly HookDescriptor[];
+		mcpServers: readonly McpServerDescriptor[];
+		diagnostics: readonly ExtensionDiagnostic[];
+	}> {
+		const state = await this.#stateStore.load();
+		// 即使没有资源，也要验证 trust 文档，确保 inspect 能暴露损坏控制状态。
+		await this.#trustStore.load();
+		type RootResult =
+			| { kind: "skill"; value: Awaited<ReturnType<typeof discoverSkills>> }
+			| { kind: "hook"; value: Awaited<ReturnType<typeof discoverHooks>> }
+			| { kind: "mcp"; value: Awaited<ReturnType<typeof loadMcpConfig>> }
+			| { kind: "plugin"; value: Awaited<ReturnType<typeof discoverPlugins>> };
+		const tasks = this.#roots.flatMap((root) => root.layout === "plugin-root" ? [
+			{
+				rootPriority: root.priority,
+				canonicalPath: root.rootPath,
+				entryName: "plugin",
+				run: async (): Promise<RootResult> => ({
+					kind: "plugin",
+					value: await discoverPlugins({
+						roots: [root],
+						scope: this.#scope,
+						trustStore: this.#trustStore,
+						storage: this.#storage,
+						state,
+						pluginDataRoot: this.#pluginDataRoot,
+					}),
+				}),
+			},
+		] : [
+			{
+				rootPriority: root.priority,
+				canonicalPath: root.rootPath,
+				entryName: "skill",
+				run: async (): Promise<RootResult> => ({
+					kind: "skill",
+					value: await discoverSkills({
+						roots: [root],
+						scope: this.#scope,
+						trustStore: this.#trustStore,
+						storage: this.#storage,
+						state,
+					}),
+				}),
+			},
+			{
+				rootPriority: root.priority,
+				canonicalPath: root.rootPath,
+				entryName: "hook",
+				run: async (): Promise<RootResult> => ({
+					kind: "hook",
+					value: await discoverHooks({
+						roots: [root],
+						scope: this.#scope,
+						trustStore: this.#trustStore,
+						storage: this.#storage,
+						state,
+					}),
+				}),
+			},
+			{
+				rootPriority: root.priority,
+				canonicalPath: root.rootPath,
+				entryName: "mcp",
+				run: async (): Promise<RootResult> => ({
+					kind: "mcp",
+					value: await loadMcpConfig({
+						configPath: join(root.rootPath, "mcp.json"),
+						root,
+						scope: this.#scope,
+						trustStore: this.#trustStore,
+						storage: this.#storage,
+						optional: true,
+						environment: this.#environment,
+						state,
+					}),
+				}),
+			},
+			{
+				rootPriority: root.priority,
+				canonicalPath: root.rootPath,
+				entryName: "plugin",
+				run: async (): Promise<RootResult> => ({
+					kind: "plugin",
+					value: await discoverPlugins({
+						roots: [root],
+						scope: this.#scope,
+						trustStore: this.#trustStore,
+						storage: this.#storage,
+						state,
+						pluginDataRoot: this.#pluginDataRoot,
+					}),
+				}),
+			},
+		]);
+		const rootResults = await runBoundedDiscovery(tasks);
+		const skillResults = rootResults.filter(
+			(result): result is Extract<RootResult, { kind: "skill" }> => result.kind === "skill",
+		);
+		const hookResults = rootResults.filter(
+			(result): result is Extract<RootResult, { kind: "hook" }> => result.kind === "hook",
+		);
+		const mcpResults = rootResults.filter(
+			(result): result is Extract<RootResult, { kind: "mcp" }> => result.kind === "mcp",
+		);
+		const pluginResults = rootResults.filter(
+			(result): result is Extract<RootResult, { kind: "plugin" }> => result.kind === "plugin",
+		);
+		const plugins = pluginResults
+			.flatMap((result) => result.value.plugins)
+			.sort((left, right) =>
+				left.descriptor.identity.qualifiedId.localeCompare(right.descriptor.identity.qualifiedId)
+			);
+		const pluginManager = new PluginManager({
+			scope: this.#scope,
+			trustStore: this.#trustStore,
+			storage: this.#storage,
+			state,
+			environment: this.#environment,
+		});
+		const contributions = await runBoundedDiscovery(
+			plugins.map((plugin) => ({
+				rootPriority: 0,
+				canonicalPath: plugin.rootPath,
+				entryName: plugin.descriptor.identity.qualifiedId,
+				run: () => pluginManager.contributions(plugin),
+			})),
+		);
+		const skills = [
+			...skillResults.flatMap((result) => result.value.skills),
+			...contributions.flatMap((value) => value.skills),
+		].sort((left, right) =>
+			left.descriptor.identity.qualifiedId.localeCompare(right.descriptor.identity.qualifiedId)
+		);
+		const hooks = [
+			...hookResults.flatMap((result) => result.value.hooks),
+			...contributions.flatMap((value) => value.hooks),
+		].sort((left, right) =>
+			left.descriptor.identity.qualifiedId.localeCompare(right.descriptor.identity.qualifiedId)
+		);
+		const mcpMerged = mergeMcpServers([
+			...mcpResults.map((result) => result.value),
+			{
+				servers: contributions.flatMap((value) => value.mcpServers),
+				diagnostics: contributions.flatMap((value) => value.diagnostics),
+			},
+		]);
+		const diagnostics = [
+			...skillResults.flatMap((result) => result.value.diagnostics),
+			...hookResults.flatMap((result) => result.value.diagnostics),
+			...mcpResults.flatMap((result) => result.value.diagnostics),
+			...pluginResults.flatMap((result) => result.value.diagnostics),
+			...contributions.flatMap((value) => value.diagnostics),
+			...(this.#stateStore.loadError()
+				? [extensionDiagnostic(
+					"extensions.state_invalid",
+					"error",
+					this.#stateStore.loadError()!,
+					"extensions",
+				)]
+				: []),
+			...(this.#trustStore.loadError()
+				? [extensionDiagnostic(
+					"extensions.trust_invalid",
+					"error",
+					this.#trustStore.loadError()!,
+					"extensions",
+				)]
+				: []),
+		];
+		void generation;
+		return { plugins, skills, hooks, mcpServers: mcpMerged.servers, diagnostics };
+	}
+
+	public async inspect(): Promise<ExtensionDiscoverySnapshot> {
+		const generation = (this.#current?.snapshot.generation ?? 0) + 1;
+		const discovered = await this.#discover(generation);
+		const inspectionServers = discovered.mcpServers.map((server) => {
+			if (!server.descriptor.enabled || server.descriptor.trust !== "trusted") return server;
+			const diagnostic = extensionDiagnostic(
+				"mcp.activation_not_attempted",
+				"info",
+				"MCP activation is intentionally skipped during discovery-only inspection",
+				"mcp",
+				server.configPath,
+			);
+			return {
+				...server,
+				descriptor: {
+					...server.descriptor,
+					activation: "blocked" as const,
+					diagnostics: [...server.descriptor.diagnostics, diagnostic],
+				},
+			};
+		});
+		const snapshot = buildExtensionSnapshot({
+			generation,
+			createdAt: new Date().toISOString(),
+			descriptors: [
+				...discovered.plugins.map((plugin) => plugin.descriptor),
+				...discovered.skills.map((skill) => skill.descriptor),
+				...discovered.hooks.map((hook) => hook.descriptor),
+				...inspectionServers.map((server) => server.descriptor),
+			],
+			diagnostics: discovered.diagnostics,
+		});
+		return Object.freeze({
+			schemaVersion: 1 as const,
+			snapshot,
+			plugins: Object.freeze([...discovered.plugins]),
+			skills: Object.freeze([...discovered.skills]),
+			hooks: Object.freeze([...discovered.hooks]),
+			mcpServers: Object.freeze(inspectionServers),
+		});
+	}
 
 	public beginTurn(): ExtensionManagerSnapshot {
 		this.#snapshots.beginTurn();
@@ -164,17 +400,8 @@ export class ExtensionManager {
 		}
 		const generation = (this.#current?.snapshot.generation ?? 0) + 1;
 		try {
-			const state = await this.#stateStore.load();
-			const standaloneSkills = await discoverSkills({ roots: this.#roots, scope: this.#scope, trustStore: this.#trustStore, storage: this.#storage, state });
-			const standaloneHooks = await discoverHooks({ roots: this.#roots, scope: this.#scope, trustStore: this.#trustStore, storage: this.#storage, state });
-			const standaloneMcpLayers = await Promise.all(this.#roots.map((root) => loadMcpConfig({ configPath: join(root.rootPath, "mcp.json"), root, scope: this.#scope, trustStore: this.#trustStore, storage: this.#storage, optional: true, environment: this.#environment, state })));
-			const pluginDiscovery = await discoverPlugins({ roots: this.#roots, scope: this.#scope, trustStore: this.#trustStore, storage: this.#storage, state, pluginDataRoot: this.#pluginDataRoot });
-			const pluginManager = new PluginManager({ scope: this.#scope, trustStore: this.#trustStore, storage: this.#storage, state, environment: this.#environment });
-			const contributions = await Promise.all(pluginDiscovery.plugins.map((plugin) => pluginManager.contributions(plugin)));
-			const skills = [...standaloneSkills.skills, ...contributions.flatMap((value) => value.skills)];
-			const hooks = [...standaloneHooks.hooks, ...contributions.flatMap((value) => value.hooks)];
-			const mcpMerged = mergeMcpServers([...standaloneMcpLayers, { servers: contributions.flatMap((value) => value.mcpServers), diagnostics: contributions.flatMap((value) => value.diagnostics) }]);
-			const mcp = new McpConnectionManager({ servers: mcpMerged.servers, ...(this.#mcpFactory ? { factory: this.#mcpFactory } : {}), ...(this.#mcpAuthorization ? { authorization: this.#mcpAuthorization } : {}), ...(this.#mcpAuxiliaryAuthorization ? { auxiliaryAuthorization: this.#mcpAuxiliaryAuthorization } : {}), ...(this.#mcpEvents ? { events: this.#mcpEvents } : {}), ...(this.#mcpScheduler ? { scheduler: this.#mcpScheduler } : {}), ...(this.#spill ? { spill: this.#spill } : {}) });
+			const discovered = await this.#discover(generation);
+			const mcp = new McpConnectionManager({ servers: discovered.mcpServers, ...(this.#mcpFactory ? { factory: this.#mcpFactory } : {}), ...(this.#mcpAuthorization ? { authorization: this.#mcpAuthorization } : {}), ...(this.#mcpAuxiliaryAuthorization ? { auxiliaryAuthorization: this.#mcpAuxiliaryAuthorization } : {}), ...(this.#mcpEvents ? { events: this.#mcpEvents } : {}), ...(this.#mcpScheduler ? { scheduler: this.#mcpScheduler } : {}), ...(this.#spill ? { spill: this.#spill } : {}) });
 			await mcp.startAll(signal);
 			const required = mcp.requiredGate();
 			if (!required.ok) {
@@ -182,7 +409,7 @@ export class ExtensionManager {
 				return { status: "failed", reason: required.message, ...(this.#current ? { retained: this.#current } : {}) };
 			}
 			const statusByServer = new Map(mcp.status().map((status) => [status.serverId, status]));
-			const activatedServers = mcpMerged.servers.map((server) => {
+			const activatedServers = discovered.mcpServers.map((server) => {
 				const status = statusByServer.get(server.descriptor.identity.qualifiedId);
 				if (!status) return server;
 				const activation = activationForMcpState(status.state);
@@ -193,21 +420,17 @@ export class ExtensionManager {
 			});
 			const toolDescriptors = mcpToolDescriptors(activatedServers, mcp.catalog().list(), this.#scope);
 			const diagnostics: ExtensionDiagnostic[] = [
-				...standaloneSkills.diagnostics,
-				...standaloneHooks.diagnostics,
-				...standaloneMcpLayers.flatMap((value) => value.diagnostics),
-				...pluginDiscovery.diagnostics,
-				...contributions.flatMap((value) => value.diagnostics),
+				...discovered.diagnostics,
 				...mcp.catalog().diagnostics(),
 			];
-			if (!this.#mcpEvents && mcpMerged.servers.some((server) => server.descriptor.enabled && server.descriptor.trust === "trusted")) diagnostics.push(extensionDiagnostic("mcp.audit_unavailable", "error", "MCP activation is fail-closed because durable audit is unavailable", "mcp"));
-			const snapshot = buildExtensionSnapshot({ generation, createdAt: new Date().toISOString(), descriptors: [...pluginDiscovery.plugins.map((plugin) => plugin.descriptor), ...skills.map((skill) => skill.descriptor), ...hooks.map((hook) => hook.descriptor), ...activatedServers.map((server) => server.descriptor), ...toolDescriptors], diagnostics });
+			if (!this.#mcpEvents && discovered.mcpServers.some((server) => server.descriptor.enabled && server.descriptor.trust === "trusted")) diagnostics.push(extensionDiagnostic("mcp.audit_unavailable", "error", "MCP activation is fail-closed because durable audit is unavailable", "mcp"));
+			const snapshot = buildExtensionSnapshot({ generation, createdAt: new Date().toISOString(), descriptors: [...discovered.plugins.map((plugin) => plugin.descriptor), ...discovered.skills.map((skill) => skill.descriptor), ...discovered.hooks.map((hook) => hook.descriptor), ...activatedServers.map((server) => server.descriptor), ...toolDescriptors], diagnostics });
 			const swapped = this.#snapshots.swap(snapshot);
 			if (!swapped.ok) {
 				await mcp.closeAll();
 				return { status: "failed", reason: swapped.error, ...(this.#current ? { retained: this.#current } : {}) };
 			}
-			const next: ExtensionManagerSnapshot = { snapshot, plugins: pluginDiscovery.plugins, skills, hooks, mcpServers: activatedServers, skillCatalog: new SkillCatalog(skills), hookDispatcher: new HookDispatcher(hooks, new HookRunner({ ...(this.#hookExecutor ? { executor: this.#hookExecutor } : {}), ...(this.#spill ? { spill: this.#spill } : {}) })), mcp };
+			const next: ExtensionManagerSnapshot = { snapshot, plugins: discovered.plugins, skills: discovered.skills, hooks: discovered.hooks, mcpServers: activatedServers, skillCatalog: new SkillCatalog(discovered.skills), hookDispatcher: new HookDispatcher(discovered.hooks, new HookRunner({ ...(this.#hookExecutor ? { executor: this.#hookExecutor } : {}), ...(this.#hookHttpHandler ? { http: this.#hookHttpHandler } : {}), ...(this.#spill ? { spill: this.#spill } : {}) })), mcp };
 			const previous = this.#current;
 			this.#current = next;
 			this.#reloadPending = false;

@@ -304,4 +304,46 @@ describe("user and merged settings", () => {
       runtimeFeatures: { sessionV3: true, artifactCas: true },
     });
   });
+
+  it("lets project Extension settings only narrow user permissions", () => {
+    expect(mergeUserAndProjectSettings(
+      {
+        extensions: {
+          watch: true,
+          compatibilitySkillSources: ["agents", "claude"],
+          activationProfile: "execute-enabled",
+        },
+      },
+      {
+        extensions: {
+          watch: false,
+          compatibilitySkillSources: ["claude", "grok"],
+          activationProfile: "metadata-only",
+        },
+      },
+    )).toEqual({
+      extensions: {
+        watch: false,
+        compatibilitySkillSources: ["claude"],
+        activationProfile: "metadata-only",
+      },
+    });
+
+    expect(mergeUserAndProjectSettings(
+      {},
+      {
+        extensions: {
+          watch: true,
+          compatibilitySkillSources: ["agents"],
+          activationProfile: "execute-enabled",
+        },
+      },
+    )).toEqual({
+      extensions: {
+        watch: false,
+        compatibilitySkillSources: [],
+        activationProfile: "metadata-only",
+      },
+    });
+  });
 });

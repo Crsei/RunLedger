@@ -36,7 +36,11 @@ import type { AgentEvent, AgentMessage, UserAgentMessage } from "../runtime/type
 import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
 import { getSupportedThinkingLevels } from "../models.ts";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
-import type { InteractiveSessionControllerPort } from "../runtime/interactive-session-controller.ts";
+import type {
+  InteractiveExtensionMutationAction,
+  InteractiveExtensionResourceView,
+  InteractiveSessionControllerPort,
+} from "../runtime/interactive-session-controller.ts";
 
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
@@ -444,18 +448,120 @@ export class InteractiveMode implements FooterSnapshotProvider {
       items: resources.map((resource) => ({
         value: resource.id,
         label: resource.displayName,
-        description: `${resource.kind} · ${resource.trust} · ${resource.activation}${resource.enabled ? "" : " · disabled"}`,
+        description: `${resource.kind} · ${resource.source} · ${resource.trust} · ${resource.activation}${resource.componentCount ? ` · ${resource.componentCount} components` : ""}${resource.diagnostic ? ` · ${resource.diagnostic}` : ""}${resource.enabled ? "" : " · disabled"}`,
       })),
       onSelect: (item) => {
         this.ui.hideOverlay();
         const resource = byId.get(item.value);
-        if (resource) {
-          this.showNotice(`${resource.id}\n${resource.trust} / ${resource.activation} / ${resource.enabled ? "enabled" : "disabled"}`);
-        }
+        if (resource) this.openExtensionResourceActions(resource);
       },
       onCancel: () => this.ui.hideOverlay(),
     });
     this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  private openExtensionResourceActions(resource: InteractiveExtensionResourceView): void {
+    const items: SelectItem[] = [{
+      value: "details",
+      label: "details",
+      description: "Show exact identity, digest, capabilities, and current state",
+    }];
+    if (resource.trust === "trusted") {
+      items.push({ value: "untrust", label: "revoke trust", description: "Revoke the exact digest-bound trust receipt" });
+    } else {
+      items.push({ value: "trust", label: "grant trust", description: "Grant trust to this exact identity and digest" });
+    }
+    if (resource.kind === "plugin" || resource.kind === "hook" || resource.kind === "mcp-server") {
+      items.push(resource.enabled
+        ? { value: "disable", label: "disable", description: "Disable this exact resource" }
+        : { value: "enable", label: "enable", description: "Enable this exact resource" });
+    }
+    if (resource.kind === "mcp-server") {
+      items.push(
+        { value: "login", label: "login", description: "Start governed MCP OAuth login" },
+        { value: "logout", label: "logout", description: "Revoke the MCP credential and close its client" },
+      );
+    }
+    const modal = new SelectorModal({
+      theme: this.theme,
+      selectListTheme: makeSelectListTheme(this.theme),
+      title: resource.id,
+      items,
+      onSelect: (item) => {
+        this.ui.hideOverlay();
+        if (item.value === "details") {
+          this.showNotice(
+            `${resource.id}\nsource=${resource.source}\ntrust=${resource.trust} activation=${resource.activation} enabled=${resource.enabled}\ndigest=${resource.digest}\ncapabilities=${resource.capabilities.length > 0 ? resource.capabilities.join(", ") : "none declared"}\ncomponents=${resource.componentCount}${resource.diagnostic ? `\ndiagnostic=${resource.diagnostic}` : ""}`,
+          );
+          return;
+        }
+        this.confirmExtensionMutation(
+          resource,
+          item.value as InteractiveExtensionMutationAction,
+        );
+      },
+      onCancel: () => this.ui.hideOverlay(),
+    });
+    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  private confirmExtensionMutation(
+    resource: InteractiveExtensionResourceView,
+    action: InteractiveExtensionMutationAction,
+  ): void {
+    if (this.rejectConfigWhileRunning()) return;
+    if (!this.controller?.mutateExtension) {
+      this.showNotice("Governed Extension mutation ports are not available.", "error");
+      return;
+    }
+    const modal = new AuthInputModal({
+      title: `Confirm ${action}`,
+      message: [
+        `identity=${resource.id}`,
+        `digest=${resource.digest}`,
+        `capabilities=${resource.capabilities.length > 0 ? resource.capabilities.join(", ") : "none declared"}`,
+        "Type the exact digest to continue.",
+      ].join("\n"),
+      placeholder: resource.digest,
+      onSubmit: (value) => {
+        this.ui.hideOverlay();
+        if (value.trim() !== resource.digest) {
+          this.showNotice("Digest confirmation did not match; no Extension state changed.", "error");
+          return;
+        }
+        void this.applyExtensionMutation(resource, action);
+      },
+      onCancel: () => this.ui.hideOverlay(),
+    });
+    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  private async applyExtensionMutation(
+    resource: InteractiveExtensionResourceView,
+    action: InteractiveExtensionMutationAction,
+  ): Promise<void> {
+    const result = await this.controller?.mutateExtension?.({
+      action,
+      kind: resource.kind,
+      resourceId: resource.id,
+      digest: resource.digest,
+    });
+    if (!result) {
+      this.showNotice("Governed Extension mutation ports are not available.", "error");
+      return;
+    }
+    if (!result.ok) {
+      this.showNotice(result.message, "error");
+      return;
+    }
+    const reload = await this.controller?.reloadExtensions?.();
+    this.refreshExtensionResourceCounts();
+    this.showNotice(
+      reload
+        ? `${result.message}; reload ${reload.status}${reload.reason ? `: ${reload.reason}` : ""}`
+        : result.message,
+      reload?.status === "failed" ? "error" : "note",
+    );
   }
 
   private async reloadExtensions(): Promise<void> {
@@ -478,10 +584,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private refreshExtensionResourceCounts(target?: LoadedResourcesComponent): void {
     const component = target ?? this.refs?.loadedResources;
     if (!component) return;
-    const resources = this.controller?.getExtensionSnapshot?.()?.resources ?? [];
+    const snapshot = this.controller?.getExtensionSnapshot?.();
+    const resources = snapshot?.resources ?? [];
     component.setResource("skills", resources.filter((resource) => resource.kind === "skill").length);
     component.setResource("hooks", resources.filter((resource) => resource.kind === "hook").length);
     component.setResource("mcp", resources.filter((resource) => resource.kind === "mcp-server").length);
+    if (snapshot) {
+      const { ready, blocked, error, disabled } = snapshot.counts;
+      component.setResource(
+        "extensions",
+        ready + blocked + error + disabled,
+        `ready=${ready}/blocked=${blocked}/error=${error}/disabled=${disabled}`,
+      );
+    } else {
+      component.setResource("extensions", 0);
+    }
     if (this.controller) component.setResource("tools", this.controller.toolCount);
   }
 

@@ -25,6 +25,11 @@ export const LEGACY_RUNTIME_TOOL_ALLOWLIST: Readonly<Record<string, readonly str
 		"web-fetch.ts",
 		"write.ts",
 	],
+	"src/extensions": [
+		// Marketplace 的唯一 Node archive/store adapter；核心 discovery/runtime
+		// 仍只消费 ports，禁止扩大到整个 marketplace 或 extensions 目录。
+		"marketplace/node-marketplace.ts",
+	],
 };
 
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [

@@ -283,6 +283,14 @@ export class McpConnectionManager {
 		this.#rebuildCatalog();
 	}
 
+	public async closeServer(serverId: string): Promise<boolean> {
+		const record = this.#records.get(serverId);
+		if (!record) return false;
+		await this.#stop(record);
+		this.#rebuildCatalog();
+		return true;
+	}
+
 	async #withReadyClient<T>(serverId: string, operationName: McpAuxiliaryAuthorizationReceipt["operation"], request: unknown, operation: (client: McpClientPort) => Promise<T>, signal?: AbortSignal): Promise<McpManagerResult<T>> {
 		const record = this.#records.get(serverId);
 		if (!record) return { ok: false, code: "not_found", message: "MCP server not found" };

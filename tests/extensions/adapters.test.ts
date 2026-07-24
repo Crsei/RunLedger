@@ -94,7 +94,29 @@ describe("Extension control plane and Runtime adapters", () => {
 			if (!skill) throw new Error("standalone skill missing");
 			expect(skill.descriptor.activation).toBe("blocked");
 			const control = new ExtensionControlPlane({ manager, state, trust, scope: TEST_SCOPE });
-			const granted = await control.execute({ kind: "trust-grant", resourceId: skill.descriptor.identity.qualifiedId, json: true });
+			const confirmation = await control.execute({
+				kind: "trust-grant",
+				resourceId: skill.descriptor.identity.qualifiedId,
+				json: true,
+			});
+			expect(confirmation).toMatchObject({
+				ok: false,
+				exitCode: 5,
+				data: {
+					confirmation: {
+						identity: skill.descriptor.identity.qualifiedId,
+						digest: skill.descriptor.manifest.combinedDigest,
+						capabilities: [],
+					},
+				},
+			});
+			const granted = await control.execute({
+				kind: "trust-grant",
+				resourceId: skill.descriptor.identity.qualifiedId,
+				json: true,
+				yes: true,
+				digest: skill.descriptor.manifest.combinedDigest,
+			});
 			expect(granted).toMatchObject({ schemaVersion: 1, ok: true, exitCode: 0, data: { reload: "pending" } });
 			expect((await trust.load()).records[0]?.canonicalPath).toBe(skillRoot);
 			expect((await manager.reload()).status).toBe("applied");

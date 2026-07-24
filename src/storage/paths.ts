@@ -27,6 +27,13 @@ const EXTENSIONS_STATE_FILE = "extensions-state.json";
 const TRUST_STORE_FILE = "trust.json";
 const PLUGIN_DATA_SUBDIR = "plugin-data";
 const EXTENSION_SPILL_SUBDIR = "extension-spill";
+const MARKETPLACE_SUBDIR = "marketplace";
+const PLUGIN_STORE_SUBDIR = "store";
+const PLUGIN_STAGING_SUBDIR = "staging";
+const PLUGIN_CACHE_SUBDIR = "cache";
+const PUBLISHER_TRUST_FILE = "publisher-trust.json";
+const ACTIVE_PLUGIN_INDEX_FILE = "active-plugins.json";
+const MCP_OAUTH_METADATA_FILE = "mcp-oauth.json";
 const AGENTS_MD = "AGENTS.md";
 
 /** 展开 `~/...` 至用户 home 目录;其它路径原样返回。简单等价于 pi 的 normalizePath 子集。 */
@@ -76,6 +83,34 @@ export function getTrustStorePath(): string {
 /** 用户层 Plugin 可写数据根；Plugin 安装目录本身保持只读。 */
 export function getPluginDataRoot(): string {
 	return join(getAgentDir(), PLUGIN_DATA_SUBDIR);
+}
+
+export function getMarketplaceRoot(): string {
+	return join(getAgentDir(), MARKETPLACE_SUBDIR);
+}
+
+export function getPluginStoreRoot(): string {
+	return join(getMarketplaceRoot(), PLUGIN_STORE_SUBDIR);
+}
+
+export function getPluginStagingRoot(): string {
+	return join(getMarketplaceRoot(), PLUGIN_STAGING_SUBDIR);
+}
+
+export function getPluginCacheRoot(): string {
+	return join(getMarketplaceRoot(), PLUGIN_CACHE_SUBDIR);
+}
+
+export function getPublisherTrustPath(): string {
+	return join(getMarketplaceRoot(), PUBLISHER_TRUST_FILE);
+}
+
+export function getInstalledPluginIndexPath(): string {
+	return join(getMarketplaceRoot(), ACTIVE_PLUGIN_INDEX_FILE);
+}
+
+export function getMcpOAuthMetadataPath(): string {
+	return join(getAgentDir(), MCP_OAUTH_METADATA_FILE);
 }
 
 /**

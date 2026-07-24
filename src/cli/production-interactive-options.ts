@@ -148,6 +148,7 @@ export interface ProductionInteractiveControllerBindings {
 	readonly toolResultArtifactSink: ToolResultArtifactSink;
 	readonly operationBudget: NonNullable<AgentLoopConfig["operationBudget"]>;
 	readonly extensionLifecycle?: NonNullable<InteractiveSessionControllerOptions["extensionLifecycle"]>;
+	readonly extensionControl?: NonNullable<InteractiveSessionControllerOptions["extensionControl"]>;
 	readonly toolProvider?: NonNullable<InteractiveSessionControllerOptions["toolProvider"]>;
 }
 
@@ -169,6 +170,45 @@ export function productionInteractiveControllerBindings(
 		...(runtime.extensionRuntime ? {
 			extensionLifecycle: runtime.extensionRuntime,
 			toolProvider: () => runtime.toolRegistry.toContext(),
+		} : {}),
+		...(runtime.extensionControlPlane ? {
+			extensionControl: {
+				mutate: async (input) => {
+					const kind = input.action === "trust"
+						? "trust-grant"
+						: input.action === "untrust"
+							? "trust-revoke"
+							: input.action === "login"
+								? "mcp-login"
+								: input.action === "logout"
+									? "mcp-logout"
+									: `${input.kind === "mcp-server" ? "mcp" : input.kind}-${input.action}`;
+					const response = await runtime.extensionControlPlane!.execute({
+						kind: kind as
+							| "trust-grant"
+							| "trust-revoke"
+							| "plugin-enable"
+							| "plugin-disable"
+							| "hook-enable"
+							| "hook-disable"
+							| "mcp-enable"
+							| "mcp-disable"
+							| "mcp-login"
+							| "mcp-logout",
+						resourceId: input.resourceId,
+						json: true,
+						yes: true,
+						digest: input.digest,
+					});
+					return {
+						ok: response.ok,
+						status: response.ok ? "pending" as const : "failed" as const,
+						message: response.ok
+							? "Extension mutation accepted; reload pending"
+							: response.error?.message ?? "Extension mutation failed",
+					};
+				},
+			},
 		} : {}),
 	};
 }

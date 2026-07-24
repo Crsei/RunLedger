@@ -14,6 +14,7 @@ import {
 	ProductionExtensionRuntime,
 	type ProductionExtensionCatalog,
 } from "../extensions/integration/production-runtime.ts";
+import type { ExtensionControlPlane } from "../extensions/control-plane/control-plane.ts";
 import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
 import {
 	MutationGatedToolExecutionGateway,
@@ -164,6 +165,7 @@ export interface ProductionInteractiveSessionOptions {
 
 export interface ProductionInteractiveExtensionAdapter {
 	runtime: ProductionExtensionRuntime;
+	controlPlane: ExtensionControlPlane;
 	/** Adapter 必须负责把 hook input 与 AgentLoop 的 durable tool identity 正确关联。 */
 	beforeToolCall: NonNullable<AgentLoopConfig["beforeToolCall"]>;
 	afterToolCall: NonNullable<AgentLoopConfig["afterToolCall"]>;
@@ -221,6 +223,7 @@ export interface ProductionInteractiveRuntime {
 	readonly featureEvidence: ValidatedProductionComposition;
 	readonly paths: ProductionInteractiveRuntimePaths;
 	readonly extensionRuntime?: ProductionExtensionRuntime;
+	readonly extensionControlPlane?: ExtensionControlPlane;
 	readonly extensionCatalog?: ProductionExtensionCatalog;
 	close(): Promise<void>;
 }
@@ -1336,6 +1339,7 @@ export async function createProductionInteractiveRuntime(
 				beforeToolCall: extensionAdapter.beforeToolCall,
 				afterToolCall: extensionAdapter.afterToolCall,
 				extensionRuntime: extensionAdapter.runtime,
+				extensionControlPlane: extensionAdapter.controlPlane,
 				extensionCatalog,
 			} : {}),
 			prepareModelRequest: mutationGatedModelPreparation(options.mutationGate, modelRuntime.prepare),

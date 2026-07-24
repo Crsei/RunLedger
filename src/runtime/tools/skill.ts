@@ -35,6 +35,7 @@ export interface SkillToolOptions {
   handlers?: Record<string, SkillHandler>;
 }
 
+/** @deprecated 仅供旧嵌入式调用方显式构造；生产 registry 使用 Extension Skill。 */
 export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeof skillSchema, SkillDetails> {
   return {
     name: "Skill",

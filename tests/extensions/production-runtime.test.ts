@@ -294,6 +294,36 @@ function simpleTool(): AgentTool {
 }
 
 describe("ProductionExtensionRuntime", () => {
+	it("keeps Runtime v2 discovery-only and performs no tool registration or Extension audit writes", async () => {
+		const registry = new ToolRegistry();
+		let writes = 0;
+		const runtime = new ProductionExtensionRuntime({
+			manager: new FakeExtensionManager(managerSnapshot({
+				generation: 1,
+				skills: [skillDescriptor()],
+				mcp: new FakeMcpRuntime([PINNED_TOOL]),
+			})),
+			registry,
+			gateway: new RecordingGateway(),
+			audit: {
+				mode: "v2",
+				appendCustom: async () => {
+					writes += 1;
+					return true;
+				},
+			},
+			sessionId: SESSION_ID,
+			cwd: "/workspace",
+		});
+		expect(await runtime.start()).toMatchObject({
+			status: "failed",
+			reason: expect.stringContaining("discovery/list only"),
+		});
+		expect(registry.list("extensions")).toEqual([]);
+		expect(writes).toBe(0);
+		await runtime.close();
+	});
+
 	it("keeps a turn on one generation, atomically swaps registry tools at idle, and rejects stale handles", async () => {
 		const skill = skillDescriptor();
 		const firstMcp = new FakeMcpRuntime([PINNED_TOOL]);

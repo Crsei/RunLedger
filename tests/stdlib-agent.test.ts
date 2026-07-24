@@ -13,22 +13,22 @@ import {
 import { MemoryLedger } from "../src/runtime/ledger/memory-ledger.ts";
 
 describe("createStdlibAgent", () => {
-  it("默认构造:注入 13 个 stdlib 工具集 + mock model", () => {
+  it("默认构造:注入 12 个 stdlib 工具集,旧 Skill 不进入生产 registry", () => {
     const a = createStdlibAgent({ systemPrompt: "test", cwd: process.cwd() });
     const s = a.state;
-    expect(s.tools.length).toBe(13);
+    expect(s.tools.length).toBe(12);
     expect(s.tools.find((t) => t.name === "echo")).toBeDefined();
     expect(s.tools.find((t) => t.name === "read")).toBeDefined();
     expect(s.tools.find((t) => t.name === "glob")).toBeDefined();
     expect(s.tools.find((t) => t.name === "MultiEdit")).toBeDefined();
     expect(s.tools.find((t) => t.name === "WebFetch")).toBeDefined();
-    expect(s.tools.find((t) => t.name === "Skill")).toBeDefined();
+    expect(s.tools.find((t) => t.name === "Skill")).toBeUndefined();
     expect(s.tools.find((t) => t.name === "NotebookEdit")).toBeDefined();
   });
 
   it("stdlibToolSchemas / stdlibRegistry: 数量一致", () => {
-    expect(stdlibToolSchemas().length).toBe(13);
-    expect(stdlibRegistry().size).toBe(13);
+    expect(stdlibToolSchemas().length).toBe(12);
+    expect(stdlibRegistry().size).toBe(12);
     expect(stdlibRegistry().has("read")).toBe(true);
     expect(stdlibRegistry().has("glob")).toBe(true);
     expect(stdlibRegistry().has("MultiEdit")).toBe(true);
@@ -61,4 +61,3 @@ describe("createStdlibAgent", () => {
     expect(ledger.entries().length).toBeGreaterThan(0);
   });
 });
-

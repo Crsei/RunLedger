@@ -18,7 +18,9 @@ function validLocator(locator: MarketplaceLocator): boolean {
 	if (!/^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/u.test(locator.packageName)) return false;
 	if (!semver.valid(locator.version, { loose: false })) return false;
 	if (!/^[A-Za-z0-9._~-]{1,128}$/u.test(locator.publisherId)) return false;
-	if (!/^[a-f0-9]{64}$/u.test(locator.expectedDigest) || locator.expectedSignature.length < 16) return false;
+		if (locator.schemaVersion !== 1 || locator.format !== "tgz") return false;
+		if (!/^[a-f0-9]{64}$/u.test(locator.expectedDigest)) return false;
+		if (locator.signature.algorithm !== "Ed25519" || locator.signature.value.length < 16) return false;
 	try {
 		return new URL(locator.sourceUrl).protocol === "https:";
 	} catch {
@@ -51,20 +53,29 @@ export class MarketplaceInstaller {
 		} catch {
 			return { ok: false, code: "download_failed", message: "marketplace download failed" };
 		}
-		if (download.sourceUrl !== locator.sourceUrl || download.digest !== locator.expectedDigest || download.bytes > DEFAULT_EXTENSION_LIMITS.maxDirectoryBytes) return { ok: false, code: "digest_mismatch", message: "marketplace package digest/source/size mismatch" };
-		const verification = await this.#signatures.verify(locator, download, signal);
-		if (!verification.signatureValid || !verification.publisherTrusted) return { ok: false, code: "publisher_untrusted", message: "package signature or publisher trust root is invalid" };
-		const probe = await this.#probe.probe(download.stagedRoot, { maxFiles: DEFAULT_EXTENSION_LIMITS.maxFiles, maxBytes: DEFAULT_EXTENSION_LIMITS.maxDirectoryBytes, sandboxProfile: "strict" }, signal);
-		if (!probe.ok) return { ok: false, code: "probe_failed", message: "staged plugin failed bounded sandbox probe" };
-		const approval = await this.#approvals.authorize({ locator, probe, operation }, signal);
-		if (!approval || approval.packageName !== locator.packageName || approval.version !== locator.version || approval.digest !== locator.expectedDigest || approval.capabilityDigest !== probe.capabilityDigest || new Date(approval.expiresAt).getTime() <= Date.now()) return { ok: false, code: "approval_required", message: "exact marketplace approval is missing or stale" };
-		if (probe.containsExecutableResources && approval.profile !== "execute-enabled") return { ok: false, code: "approval_required", message: "execute/code resources require explicit execute-enabled profile" };
-		if (operation === "update" && Date.now() - new Date(approval.approvedAt).getTime() < this.#cooldownMs) return { ok: false, code: "cooldown", message: "plugin update cooling period has not elapsed" };
 		try {
-			await this.#store.stageVerified({ locator, download, verification, probe }, signal);
-			return { ok: true, value: await this.#store.activate(locator.packageName, locator.version, locator.expectedDigest, signal) };
-		} catch {
-			return { ok: false, code: "store_failed", message: "verified plugin could not be atomically activated" };
+			if (download.sourceUrl !== locator.sourceUrl || download.digest !== locator.expectedDigest || download.bytes > DEFAULT_EXTENSION_LIMITS.maxDirectoryBytes) return { ok: false, code: "digest_mismatch", message: "marketplace package digest/source/size mismatch" };
+			const verification = await this.#signatures.verify(locator, download, signal);
+			if (!verification.signatureValid || !verification.publisherTrusted) return { ok: false, code: "publisher_untrusted", message: "package signature or publisher trust root is invalid" };
+			const probe = await this.#probe.probe(download.stagedRoot, { maxFiles: DEFAULT_EXTENSION_LIMITS.maxFiles, maxBytes: DEFAULT_EXTENSION_LIMITS.maxDirectoryBytes, sandboxProfile: "strict" }, signal);
+			if (!probe.ok) return { ok: false, code: "probe_failed", message: "staged plugin failed bounded sandbox probe" };
+			if ((probe.packageName && probe.packageName !== locator.packageName) || (probe.version && probe.version !== locator.version)) return { ok: false, code: "probe_failed", message: "staged plugin manifest identity does not match the exact locator" };
+			const approval = await this.#approvals.authorize({ locator, probe, operation }, signal);
+			if (!approval || approval.packageName !== locator.packageName || approval.version !== locator.version || approval.digest !== locator.expectedDigest || approval.capabilityDigest !== probe.capabilityDigest || new Date(approval.expiresAt).getTime() <= Date.now()) return { ok: false, code: "approval_required", message: "exact marketplace approval is missing or stale" };
+			if (probe.containsExecutableResources && approval.profile !== "execute-enabled") return { ok: false, code: "approval_required", message: "execute/code resources require explicit execute-enabled profile" };
+			if (operation === "update" && Date.now() - new Date(approval.approvedAt).getTime() < this.#cooldownMs) return { ok: false, code: "cooldown", message: "plugin update cooling period has not elapsed" };
+			try {
+				await this.#store.stageVerified({ locator, download, verification, probe }, signal);
+				const currentVerification = await this.#signatures.verify(locator, download, signal);
+				if (!currentVerification.signatureValid || !currentVerification.publisherTrusted || currentVerification.publisherRevision !== verification.publisherRevision) {
+					return { ok: false, code: "publisher_untrusted", message: "publisher trust changed before plugin activation" };
+				}
+				return { ok: true, value: await this.#store.activate(locator.packageName, locator.version, locator.expectedDigest, signal) };
+			} catch {
+				return { ok: false, code: "store_failed", message: "verified plugin could not be atomically activated" };
+			}
+		} finally {
+			await this.#download.cleanupStaging?.(download.stagedRoot).catch(() => undefined);
 		}
 	}
 

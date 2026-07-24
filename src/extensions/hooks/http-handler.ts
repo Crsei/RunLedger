@@ -3,7 +3,7 @@
 import { isIP } from "node:net";
 import { canonicalDigest, canonicalJson } from "../../runtime/protocol/v3/canonical-json.ts";
 import { DEFAULT_EXTENSION_LIMITS } from "../diagnostics.ts";
-import type { HookEnvelope, HookOutput } from "./types.ts";
+import type { HookEnvelope, HookHttpHandlerPort, HttpHookResult } from "./types.ts";
 
 export interface HookDnsResolverPort {
 	resolve(hostname: string, signal?: AbortSignal): Promise<readonly string[]>;
@@ -43,11 +43,7 @@ function sensitive(envelope: HookEnvelope): boolean {
 	return /(token|password|secret|authorization|cookie|credential)/iu.test(canonicalJson(envelope.payload));
 }
 
-export type HttpHookResult =
-	| { ok: true; output: HookOutput; status: number; responseDigest: string }
-	| { ok: false; reason: string };
-
-export class HttpHookHandler {
+export class HttpHookHandler implements HookHttpHandlerPort {
 	readonly #dns: HookDnsResolverPort;
 	readonly #authorization: HookHttpAuthorizationPort;
 	readonly #client: HookHttpClientPort;

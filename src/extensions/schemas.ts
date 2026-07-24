@@ -50,23 +50,44 @@ export const CommandHookHandlerSchema = exact({
 	env: Type.Optional(boundedStringRecord),
 });
 
-export const HookDeclarationSchema = exact({
+export const HttpHookHandlerSchema = exact({
+	type: Type.Literal("http"),
+	url: Type.String({ minLength: 1, maxLength: 4_096 }),
+});
+
+export const HookDeclarationV1Schema = exact({
 	id: Type.Optional(Type.String({ pattern: namePattern, minLength: 1, maxLength: 64 })),
 	matcher: Type.Optional(Type.String({ maxLength: 1_024 })),
 	failureMode: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("closed")])),
 	handlers: Type.Array(CommandHookHandlerSchema, { minItems: 1, maxItems: 64 }),
 });
 
-export const HooksConfigSchema = exact({
-	schemaVersion: Type.Literal(1),
-	hooks: exact({
-		SessionStart: Type.Optional(Type.Array(HookDeclarationSchema, { maxItems: 256 })),
-		UserPromptSubmit: Type.Optional(Type.Array(HookDeclarationSchema, { maxItems: 256 })),
-		PreToolUse: Type.Optional(Type.Array(HookDeclarationSchema, { maxItems: 256 })),
-		PostToolUse: Type.Optional(Type.Array(HookDeclarationSchema, { maxItems: 256 })),
-		SessionEnd: Type.Optional(Type.Array(HookDeclarationSchema, { maxItems: 256 })),
-	}),
+export const HookDeclarationV2Schema = exact({
+	id: Type.Optional(Type.String({ pattern: namePattern, minLength: 1, maxLength: 64 })),
+	matcher: Type.Optional(Type.String({ maxLength: 1_024 })),
+	failureMode: Type.Optional(Type.Union([Type.Literal("open"), Type.Literal("closed")])),
+	handlers: Type.Array(Type.Union([CommandHookHandlerSchema, HttpHookHandlerSchema]), { minItems: 1, maxItems: 64 }),
 });
+
+const hookEvents = (declaration: TSchema) => exact({
+	SessionStart: Type.Optional(Type.Array(declaration, { maxItems: 256 })),
+	UserPromptSubmit: Type.Optional(Type.Array(declaration, { maxItems: 256 })),
+	PreToolUse: Type.Optional(Type.Array(declaration, { maxItems: 256 })),
+	PostToolUse: Type.Optional(Type.Array(declaration, { maxItems: 256 })),
+	SessionEnd: Type.Optional(Type.Array(declaration, { maxItems: 256 })),
+});
+
+export const HooksConfigV1Schema = exact({
+	schemaVersion: Type.Literal(1),
+	hooks: hookEvents(HookDeclarationV1Schema),
+});
+
+export const HooksConfigV2Schema = exact({
+	schemaVersion: Type.Literal(2),
+	hooks: hookEvents(HookDeclarationV2Schema),
+});
+
+export const HooksConfigSchema = Type.Union([HooksConfigV1Schema, HooksConfigV2Schema]);
 
 const McpCommonSchema = {
 	enabled: Type.Optional(Type.Boolean()),
@@ -97,6 +118,22 @@ export const McpHttpServerSchema = exact({
 	...McpCommonSchema,
 });
 
+export const McpOAuthSchema = exact({
+	authorizationServer: Type.String({ minLength: 1, maxLength: 4_096 }),
+	scopes: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 256 }), { maxItems: 128, uniqueItems: true })),
+	clientId: Type.Optional(Type.String({ minLength: 1, maxLength: 1_024 })),
+	clientName: Type.Optional(Type.String({ minLength: 1, maxLength: 256 })),
+});
+
+export const McpHttpServerV2Schema = exact({
+	transport: Type.Literal("streamable-http"),
+	url: Type.String({ minLength: 1, maxLength: 4_096 }),
+	headers: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 256 }), Type.String({ maxLength: 8_192 }), { maxProperties: 128 })),
+	bearerTokenEnvVar: Type.Optional(Type.String({ pattern: environmentNamePattern, maxLength: 128 })),
+	oauth: Type.Optional(McpOAuthSchema),
+	...McpCommonSchema,
+});
+
 export const McpLegacySseServerSchema = exact({
 	transport: Type.Literal("sse"),
 	url: Type.String({ minLength: 1, maxLength: 4_096 }),
@@ -106,10 +143,16 @@ export const McpLegacySseServerSchema = exact({
 });
 
 export const McpServerSchema = Type.Union([McpStdioServerSchema, McpHttpServerSchema, McpLegacySseServerSchema]);
-export const McpConfigSchema = exact({
+export const McpServerV2Schema = Type.Union([McpStdioServerSchema, McpHttpServerV2Schema, McpLegacySseServerSchema]);
+export const McpConfigV1Schema = exact({
 	schemaVersion: Type.Literal(1),
 	mcpServers: Type.Record(Type.String({ pattern: namePattern, minLength: 1, maxLength: 64 }), McpServerSchema, { maxProperties: 256 }),
 });
+export const McpConfigV2Schema = exact({
+	schemaVersion: Type.Literal(2),
+	mcpServers: Type.Record(Type.String({ pattern: namePattern, minLength: 1, maxLength: 64 }), McpServerV2Schema, { maxProperties: 256 }),
+});
+export const McpConfigSchema = Type.Union([McpConfigV1Schema, McpConfigV2Schema]);
 
 export function schemaAccepts(schema: TSchema, value: unknown): boolean {
 	return Check(schema, value);

@@ -96,6 +96,22 @@
 `npm link` 后 PATH 上的 `runledger` 命令可直接打开 tui:
 `runledger --help` / `runledger --version` / `runledger`(无凭据进入 provider onboarding)、`runledger -c`(continueRecent)、`runledger --resume`(TUI 选择历史会话)、`runledger --session <path>`、`runledger --fork <path>`。
 
+#### 1.2.y Extension Runtime M0–M7(2026-07-24)
+
+`src/extensions/` 已形成 Plugin / Skill / Hooks / MCP 的声明式扩展闭环：
+
+- `ExtensionManager.inspect()` 只做有界 discovery，使用共享 worker pool 和稳定 diagnostics；不启动 MCP、不执行 Hook、不读取 Skill 正文，也不改变 active generation。`reload()` 保持 idle pin/swap、last-known-good 和 stale receipt 语义。
+- 完整 Extension 激活只支持 governed Runtime v3，唯一 durable truth 是 canonical v3 event sink；v2 只允许 inspect/list，不注册 Extension 工具、不执行 Skill/Hook/MCP，也不 dual-write。
+- 生产 `Skill` 工具由当前 Extension snapshot 动态注册。`src/runtime/tools/skill.ts` 的 handler-map 构造器只保留 deprecated 兼容入口，不进入 stdlib/生产 registry；stdlib 默认工具数为 12。
+- Hook 生命周期接通 SessionStart、UserPromptSubmit、PreToolUse、PostToolUse、SessionEnd，顺序为 prepare/schema → PreToolUse → updatedInput 重校验/canonicalize → Gateway authorization → durable start → execute → PostToolUse → result budget。Hooks config v2 支持经 policy-aware DNS/network/approval ports 的 HTTP handler。
+- MCP config v2 保留 v1 兼容，OAuth authorization server/scopes/client identity 纳入 digest；官方 SDK OAuth 使用随机 `127.0.0.1` callback 与手动码竞速。token 只存受锁 `AuthStorage` 的 `mcp:<identity-hash>` 项，`mcp-oauth.json` 只保存 opaque handle/audience digest/expiry。
+- Marketplace 只接受 exact Locator JSON、HTTPS `tgz`、SHA-256 与 Ed25519。内容寻址 store、0600 active index/publisher trust、bounded probe、offline digest/signature/revocation 复核、cooldown、rollback 和 staging 清理均已实现；拒绝绝对路径、`..`、link/device 与压缩炸弹。
+- CLI 在旧 flags parser 前识别 `inspect`、`trust`、`plugin`、`skill`、`hook`、`mcp` 子命令。默认 CLI 只有只读 discovery ports；特权端口缺失时 exit 4 fail closed。非 TTY mutation 要求 `--yes --digest`，TTY/TUI 都显示 exact identity、digest、capability 并要求逐字 digest 确认。
+- TUI `/plugins`、`/skills`、`/hooks`、`/mcp` 显示 source/enabled/trust/activation/component/diagnostic 与 ready/blocked/error/disabled 计数；governed 端口可执行 trust/revoke、enable/disable、MCP login/logout 和 idle reload。
+- `ProjectSettings.extensions` 的 `watch`、`compatibilitySkillSources`、`activationProfile` 采用“用户层给最大权限，项目层只能收窄”的合并规则；兼容 Skill roots 默认关闭。OTel metrics 只做观测，不替代 durable audit。
+
+权威实施与验证账本为 `development-doc/plugin-mcp-skill-hooks/01-implementation-plan.md`。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;
@@ -103,9 +119,11 @@
 - Session 树分叉(JSONL ledger 是扁平的);
 - `AgentHarness` 高级状态机;
 - Compaction / branch summarization;
-- Skills (`SKILL.md` 加载) / Prompt templates;
+- Prompt templates；Skill 已由 Extension snapshot 渐进披露；
 - `streamProxy` (browser → backend);
-- OpenTelemetry / metrics / RBAC / 多租户;
+- RBAC / 多租户；Extension 已提供可选 OTel metrics；
+- 任意进程内 JS/TS Plugin entrypoint、无 exact Locator 的 marketplace 搜索/安装、默认兼容目录扫描；
+- MCP elicitation / sampling / roots 协商，以及 prompt/agent/async Hooks；
 - pi `compat.ts` / `legacy-api-aliases.ts` / `env-api-keys.ts` / `cli.ts` 这些 coding-agent 产物层。
 
 ## 2. 代码风格
@@ -198,6 +216,7 @@ src/                pi-ai 移植层 + RunLedger 运行时实现
   storage/          auth-storage / runtime-credentials / paths / resolve-config-value
   utils/            uuid / overflow / diagnostics / retry / validation / event-stream / shell(git-bash 探测)/ ... 21+1 个文件
   compat/           extension-oauth-types.ts(OAuth 类型桥)
+  extensions/       Plugin/Skill/Hooks/MCP discovery、trust、runtime、control-plane、OAuth、marketplace、watcher、metrics
   runtime/          agent-loop / agent / ledger / tools (echo+stdlib 8 个) / tool-registry / execution-env / providers/mock-stream / stdlib-stream,本期已复活并纳入 typecheck + npm test
   index.legacy.ts   旧 barrel 备份(不再被引用,等待后续清理)
 scripts/
@@ -224,7 +243,7 @@ tmp/               运行时产物(JSONL ledger 等),已 gitignore
   - **M4 5 个新占位工具**(`src/runtime/tools/`):
     - `multi-edit.ts` 一次调用 N 处编辑同文件;先在内存里依次应用 edits,任一 oldString 不存在 → 整体 abort(不写文件);`replaceAll=true` 全替换;
     - `web-fetch.ts` 原生 fetch + 最 trivial HTML→平文;HTTP(n=localhost/.local 不升级)自动升级 HTTPS,跨 host redirect throw,响应超 maxBytes(默认 2MB)截断;
-    - `skill.ts` 占位:在 `handlers[name]` 中查找 handler;不存在返回友好提示,命中则把 string/JSON 结果透传;
+    - `skill.ts` 仅保留 deprecated handler-map 兼容构造器；生产 Skill 由 Extension snapshot 动态注册,不进入 stdlib registry;
     - `notebook-edit.ts` 占位:V2 future,任何调用都返回 not-implemented 提示;
     - `todo-write.ts` 整盘覆写当前任务表,内部调用 V2 Task 系列实现 `n written + n updated + n deleted` 语义;
   - **M5 TUI 三态组件升级**:

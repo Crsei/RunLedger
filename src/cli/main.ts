@@ -13,11 +13,12 @@
  *   8. 实例化 Agent + InteractiveMode + run
  *   9. finally closeAll ledger
  *
- * 本期不实现 trust-manager / extensions / skills / themes 加载。
+ * Extension 子命令在 session/TUI 装配前走 discovery-only 控制面。
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { selectSessionInTui } from "../tui/session-selector.ts";
 import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
@@ -77,6 +78,17 @@ import {
   type SessionMutationAdmissionGatePort,
 } from "../runtime/lifecycle/mutation-gate.ts";
 import { closeCliRuntimeResources } from "./runtime-resource-cleanup.ts";
+import {
+  parseExtensionCommand,
+  type ExtensionCommand,
+} from "../extensions/control-plane/commands.ts";
+import {
+  ExtensionControlPlane,
+  renderExtensionControlPlane,
+  type ExtensionConfirmationDetails,
+  type ExtensionControlPlaneResponse,
+} from "../extensions/control-plane/control-plane.ts";
+import { createCliExtensionControlPlane } from "../extensions/control-plane/cli-control-plane.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -92,12 +104,35 @@ export interface CliMainDependencies {
   /** Production workspace/tool-gateway 共用的 durable state root。 */
   startupExternalReceiptStateRoot?: string;
   startupExternalReceiptAuditTimeoutMs?: number;
+  /** 部署或测试可注入含 privileged ports 的控制面；默认仅 discovery。 */
+  extensionControlPlane?: ExtensionControlPlane;
+  /** 测试或嵌入式终端可替换交互确认；返回值必须逐字匹配当前 digest。 */
+  extensionConfirmation?: ExtensionConfirmationPort;
+}
+
+export interface ExtensionConfirmationPort {
+  available(): boolean;
+  confirm(details: ExtensionConfirmationDetails): Promise<string | undefined>;
 }
 
 export async function main(
   argv: readonly string[],
   dependencies: CliMainDependencies = {},
 ): Promise<void> {
+  const extensionCommand = parseExtensionCommand(argv);
+  if (!extensionCommand.ok && "message" in extensionCommand) {
+    process.stderr.write(`[runledger] ${extensionCommand.message}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  if (extensionCommand.ok) {
+    await runExtensionCommand(
+      extensionCommand.command,
+      dependencies.extensionControlPlane,
+      dependencies.extensionConfirmation,
+    );
+    return;
+  }
   const { args, error } = parseArgs(argv);
   if (error) {
     process.stderr.write(`[runledger] ${error}\n\n${USAGE}`);
@@ -528,6 +563,94 @@ export async function main(
   }
   if (hasPrimaryFailure) throw primaryFailure;
   if (hasCleanupFailure) throw cleanupFailure;
+}
+
+async function runExtensionCommand(
+  command: ExtensionCommand,
+  injected?: ExtensionControlPlane,
+  injectedConfirmation?: ExtensionConfirmationPort,
+): Promise<void> {
+  const controlPlane = injected ?? await createCliExtensionControlPlane(process.cwd());
+  let response = await controlPlane.execute(command);
+  const confirmation = injectedConfirmation ?? processExtensionConfirmation();
+  const details = confirmationDetails(response);
+  if (
+    response.error?.code === "confirmation_required" &&
+    details &&
+    confirmation.available()
+  ) {
+    const typedDigest = await confirmation.confirm(details);
+    if (typedDigest === details.digest) {
+      response = await controlPlane.execute({
+        ...command,
+        yes: true,
+        digest: details.digest,
+      });
+    } else if (typedDigest !== undefined) {
+      response = {
+        schemaVersion: 1,
+        ok: false,
+        exitCode: 5,
+        error: {
+          code: "confirmation_rejected",
+          message: "typed digest did not match; operation was not performed",
+        },
+      };
+    }
+  }
+  const rendered = `${renderExtensionControlPlane(response, command.json)}\n`;
+  if (command.json || response.ok) process.stdout.write(rendered);
+  else process.stderr.write(rendered);
+  if (response.exitCode !== 0) process.exitCode = response.exitCode;
+}
+
+function confirmationDetails(
+  response: ExtensionControlPlaneResponse,
+): ExtensionConfirmationDetails | undefined {
+  if (typeof response.data !== "object" || response.data === null) return undefined;
+  if (!("confirmation" in response.data)) return undefined;
+  const value = response.data.confirmation;
+  if (typeof value !== "object" || value === null) return undefined;
+  if (
+    !("operation" in value) ||
+    !("identity" in value) ||
+    !("digest" in value) ||
+    !("capabilities" in value) ||
+    typeof value.operation !== "string" ||
+    typeof value.identity !== "string" ||
+    typeof value.digest !== "string" ||
+    !Array.isArray(value.capabilities) ||
+    !value.capabilities.every((item) => typeof item === "string")
+  ) return undefined;
+  return {
+    operation: value.operation,
+    identity: value.identity,
+    digest: value.digest,
+    capabilities: value.capabilities,
+  };
+}
+
+function processExtensionConfirmation(): ExtensionConfirmationPort {
+  return {
+    available: () => Boolean(process.stdin.isTTY && process.stderr.isTTY),
+    confirm: async (details) => {
+      process.stderr.write(
+        [
+          `[runledger] privileged Extension operation: ${details.operation}`,
+          `identity: ${details.identity}`,
+          `digest: ${details.digest}`,
+          `capabilities: ${details.capabilities.length > 0 ? details.capabilities.join(", ") : "none declared"}`,
+        ].join("\n") + "\n",
+      );
+      const prompt = createInterface({ input: process.stdin, output: process.stderr });
+      try {
+        const answer = await prompt.question("Type the exact digest to confirm (blank cancels): ");
+        return answer.trim() || undefined;
+      } finally {
+        prompt.close();
+      }
+    },
+  };
 }
 
 /**

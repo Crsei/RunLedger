@@ -45,6 +45,12 @@ interface RawMcpHttp extends RawMcpCommon {
 	headers?: Record<string, string>;
 	bearerTokenEnvVar?: string;
 	legacyTransportExplicitlyEnabled?: true;
+	oauth?: {
+		authorizationServer: string;
+		scopes?: string[];
+		clientId?: string;
+		clientName?: string;
+	};
 }
 
 type RawMcpServer = RawMcpStdio | RawMcpHttp;
@@ -153,10 +159,36 @@ async function normalizeServer(options: {
 		else headers.Authorization = `Bearer ${token}`;
 	}
 	if (diagnostics.some((item) => item.severity === "error")) return { diagnostics, capabilities };
+	let oauth: McpHttpConfig["oauth"];
+	if (options.raw.oauth) {
+		let authorizationServer: URL;
+		try {
+			authorizationServer = new URL(options.raw.oauth.authorizationServer);
+		} catch {
+			return { diagnostics: [extensionDiagnostic("mcp.oauth_server_invalid", "error", "MCP OAuth authorization server is invalid", "mcp", options.configPath)], capabilities };
+		}
+		if (authorizationServer.protocol !== "https:") {
+			return { diagnostics: [extensionDiagnostic("mcp.oauth_server_insecure", "error", "MCP OAuth authorization server must use HTTPS", "mcp", options.configPath)], capabilities };
+		}
+		const scopes = [...(options.raw.oauth.scopes ?? [])].sort();
+		oauth = {
+			authorizationServer: authorizationServer.href,
+			scopes,
+			...(options.raw.oauth.clientId ? { clientId: options.raw.oauth.clientId } : {}),
+			...(options.raw.oauth.clientName ? { clientName: options.raw.oauth.clientName } : {}),
+			audienceDigest: canonicalDigest({
+				server: url.origin,
+				authorizationServer: authorizationServer.href,
+				scopes,
+				clientId: options.raw.oauth.clientId ?? null,
+				clientName: options.raw.oauth.clientName ?? null,
+			}),
+		};
+	}
 	const hostDigest = sha256(url.origin);
 	capabilities.push({ kind: "network", digest: hostDigest });
-	if (Object.keys(headers).length > 0) capabilities.push({ kind: "credential", digest: canonicalDigest(Object.keys(headers).map((key) => key.toLocaleLowerCase()).sort()) });
-	const config: McpHttpConfig = { transport: options.raw.transport, url: url.href, headers, legacyTransportExplicitlyEnabled: options.raw.transport === "sse" && options.raw.legacyTransportExplicitlyEnabled === true, ...common(options.raw) };
+	if (Object.keys(headers).length > 0 || oauth) capabilities.push({ kind: "credential", digest: canonicalDigest({ headerNames: Object.keys(headers).map((key) => key.toLocaleLowerCase()).sort(), oauth: oauth?.audienceDigest ?? null }) });
+	const config: McpHttpConfig = { transport: options.raw.transport, url: url.href, headers, legacyTransportExplicitlyEnabled: options.raw.transport === "sse" && options.raw.legacyTransportExplicitlyEnabled === true, ...(oauth ? { oauth } : {}), ...common(options.raw) };
 	return { config, identityDigest: canonicalDigest({ ...config, headers: Object.keys(headers).sort() }), diagnostics, capabilities };
 }
 
@@ -182,8 +214,8 @@ export async function loadMcpConfig(options: {
 	} catch {
 		return { servers: [], diagnostics: [extensionDiagnostic("mcp.config_json", "error", "MCP config is invalid JSON", "mcp", options.configPath)] };
 	}
-	if (!schemaAccepts(McpConfigSchema, value)) return { servers: [], diagnostics: [extensionDiagnostic("mcp.config_schema", "error", "MCP config does not match schema v1", "mcp", options.configPath)] };
-	const rawServers = (value as { schemaVersion: 1; mcpServers: Record<string, RawMcpServer> }).mcpServers;
+	if (!schemaAccepts(McpConfigSchema, value)) return { servers: [], diagnostics: [extensionDiagnostic("mcp.config_schema", "error", "MCP config does not match schema v1/v2", "mcp", options.configPath)] };
+	const rawServers = (value as { schemaVersion: 1 | 2; mcpServers: Record<string, RawMcpServer> }).mcpServers;
 	const configDigest = sha256(read.value);
 	const diagnostics: ExtensionDiagnostic[] = [];
 	const servers: McpServerDescriptor[] = [];

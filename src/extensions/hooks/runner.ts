@@ -3,7 +3,7 @@
 import { canonicalDigest, canonicalJson } from "../../runtime/protocol/v3/canonical-json.ts";
 import { DEFAULT_EXTENSION_LIMITS } from "../diagnostics.ts";
 import type { ExtensionSpillPort } from "../types.ts";
-import type { CommandHookHandler, HookCommandExecutorPort, HookDescriptor, HookEnvelope, HookOutput, HookRunOutcome } from "./types.ts";
+import type { HookCommandExecutorPort, HookDescriptor, HookEnvelope, HookHandler, HookHttpHandlerPort, HookOutput, HookRunOutcome } from "./types.ts";
 
 function preview(value: string, maxBytes: number): string {
 	const bytes = Buffer.from(value);
@@ -32,14 +32,16 @@ function parseOutput(stdout: string): HookOutput | undefined {
 
 export class HookRunner {
 	readonly #executor?: HookCommandExecutorPort;
+	readonly #http?: HookHttpHandlerPort;
 	readonly #spill?: ExtensionSpillPort;
 
-	public constructor(options: { executor?: HookCommandExecutorPort; spill?: ExtensionSpillPort }) {
+	public constructor(options: { executor?: HookCommandExecutorPort; http?: HookHttpHandlerPort; spill?: ExtensionSpillPort }) {
 		this.#executor = options.executor;
+		this.#http = options.http;
 		this.#spill = options.spill;
 	}
 
-	public async run(descriptor: HookDescriptor, handler: CommandHookHandler, envelope: HookEnvelope, signal?: AbortSignal): Promise<HookRunOutcome> {
+	public async run(descriptor: HookDescriptor, handler: HookHandler, envelope: HookEnvelope, signal?: AbortSignal): Promise<HookRunOutcome> {
 		const hookId = descriptor.descriptor.identity.qualifiedId;
 		const rawInput = canonicalJson(envelope);
 		const inputBytes = Buffer.from(rawInput);
@@ -49,6 +51,39 @@ export class HookRunner {
 			if (!this.#spill) return this.#failure(descriptor, "failed", "hook input exceeds bound and spill is unavailable", rawInput);
 			inputSpill = await this.#spill.write("hook-input", inputBytes);
 			stdin = canonicalJson({ ...envelope, payload: { preview: preview(canonicalJson(envelope.payload), 8_192), digest: canonicalDigest(envelope.payload), truncated: true, spill: inputSpill } });
+		}
+		if (handler.type === "http") {
+			if (!this.#http) return this.#failure(descriptor, "failed", "Runtime Gateway HTTP Hook handler is unavailable", stdin);
+			const startedAt = Date.now();
+			const effectiveEnvelope = JSON.parse(stdin) as HookEnvelope;
+			const result = await this.#http.invoke(handler.url, effectiveEnvelope, signal);
+			const durationMs = Math.max(0, Date.now() - startedAt);
+			if (!result.ok) {
+				return {
+					...this.#failure(descriptor, "failed", result.reason, stdin),
+					durationMs,
+					...(inputSpill ? { inputSpill } : {}),
+				};
+			}
+			const output = result.output;
+			return {
+				hookId,
+				event: descriptor.event,
+				status: output.decision === "deny" ? "denied" : "allowed",
+				decision: output.decision,
+				failureMode: descriptor.failureMode,
+				reason: output.reason ?? (output.decision === "deny" ? "HTTP hook denied operation" : "HTTP hook allowed operation"),
+				durationMs,
+				exitCode: result.status,
+				stdoutDigest: result.responseDigest,
+				stderrDigest: canonicalDigest(""),
+				stdoutPreview: "",
+				stderrPreview: "",
+				inputDigest: canonicalDigest(effectiveEnvelope),
+				...(inputSpill ? { inputSpill } : {}),
+				...(output.updatedInput !== undefined ? { updatedInput: output.updatedInput } : {}),
+				...(output.additionalContext ? { additionalContext: output.additionalContext } : {}),
+			};
 		}
 		if (!this.#executor) return this.#failure(descriptor, "failed", "Runtime Gateway executor is unavailable", stdin);
 		const environment: Record<string, string> = {

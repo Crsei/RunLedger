@@ -136,6 +136,8 @@ export interface ProductionExtensionCatalog {
 	skills: readonly SkillDescriptor[];
 	mcpTools: readonly McpToolDefinition[];
 	pinnedTools: readonly McpToolDefinition[];
+	diagnostics: ExtensionSnapshot["diagnostics"];
+	counts: ExtensionSnapshot["counts"];
 }
 
 export type ProductionExtensionStartResult =
@@ -291,6 +293,13 @@ export class ProductionExtensionRuntime {
 	public async start(signal?: AbortSignal): Promise<ProductionExtensionStartResult> {
 		if (this.#state === "ready" && this.#active) return { status: "ready", snapshotId: this.#active.view.snapshot.snapshotId, generation: this.#active.view.snapshot.generation };
 		if (this.#state !== "new") return { status: "failed", reason: "extension runtime cannot be restarted after shutdown" };
+		if (this.#options.audit.mode !== "v3") {
+			this.#state = "failed";
+			return {
+				status: "failed",
+				reason: "Extension activation requires governed Runtime v3; v2 supports discovery/list only",
+			};
+		}
 		let current = this.#options.manager.current();
 		if (!current) {
 			let loaded: ProductionExtensionReloadResult;
@@ -329,6 +338,8 @@ export class ProductionExtensionRuntime {
 			skills: current.skillCatalog.list(),
 			mcpTools: current.mcp.catalog().list(),
 			pinnedTools: current.mcp.catalog().pinned(),
+			diagnostics: structuredClone(current.snapshot.diagnostics),
+			counts: structuredClone(current.snapshot.counts),
 		};
 	}
 
@@ -702,9 +713,8 @@ export class ProductionExtensionRuntime {
 
 	async #writeAudit(audit: ExtensionLifecycleAudit): Promise<boolean> {
 		try {
-			const durable = this.#options.audit.mode === "v2"
-				? await this.#options.audit.appendCustom(audit)
-				: await this.#options.audit.appendCanonical(audit);
+			if (this.#options.audit.mode !== "v3") return false;
+			const durable = await this.#options.audit.appendCanonical(audit);
 			if (!durable) this.#auditHealthy = false;
 			return durable;
 		} catch {

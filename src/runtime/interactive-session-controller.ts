@@ -61,6 +61,8 @@ export interface InteractiveSessionControllerOptions {
   operationBudget?: AgentLoopConfig["operationBudget"];
   /** Extension snapshot 生命周期；reload 只在 active run 结束后的安全点生效。 */
   extensionLifecycle?: InteractiveExtensionLifecyclePort;
+  /** 高风险 mutation 只能由 governed production composition 注入。 */
+  extensionControl?: InteractiveExtensionControlPort;
   /** ToolRegistry 的当前只读投影；Extension generation 交换后用它刷新 Agent。 */
   toolProvider?: () => readonly AgentTool[];
 }
@@ -69,15 +71,27 @@ export interface InteractiveExtensionCatalogResource {
   identity: { qualifiedId: string };
   kind: string;
   displayName: string;
+  provenance?: { source: string };
   enabled: boolean;
   trust: string;
   activation: string;
+  pluginId?: string;
+  diagnostics?: readonly { message: string }[];
+  manifest?: { combinedDigest: string };
+  capabilities?: readonly { claim: unknown; required: boolean }[];
 }
 
 export interface InteractiveExtensionCatalog {
   snapshotId: string;
   generation: number;
   resources: readonly InteractiveExtensionCatalogResource[];
+  diagnostics?: readonly { message: string }[];
+  counts?: {
+    ready: number;
+    blocked: number;
+    disabled: number;
+    error: number;
+  };
 }
 
 export interface InteractiveExtensionLifecyclePort {
@@ -104,12 +118,47 @@ export interface InteractiveExtensionResourceView {
   enabled: boolean;
   trust: string;
   activation: string;
+  source: string;
+  componentCount: number;
+  diagnostic?: string;
+  digest: string;
+  capabilities: readonly string[];
 }
 
 export interface InteractiveExtensionSnapshotView {
   snapshotId: string;
   generation: number;
   resources: readonly InteractiveExtensionResourceView[];
+  diagnostics: readonly string[];
+  counts: {
+    ready: number;
+    blocked: number;
+    disabled: number;
+    error: number;
+  };
+}
+
+export type InteractiveExtensionMutationAction =
+  | "trust"
+  | "untrust"
+  | "enable"
+  | "disable"
+  | "login"
+  | "logout";
+
+export interface InteractiveExtensionMutationInput {
+  action: InteractiveExtensionMutationAction;
+  kind: string;
+  resourceId: string;
+  digest: string;
+}
+
+export interface InteractiveExtensionControlPort {
+  mutate(input: InteractiveExtensionMutationInput): Promise<{
+    ok: boolean;
+    status: "pending" | "applied" | "failed";
+    message: string;
+  }>;
 }
 
 export interface ProviderStatus {
@@ -146,6 +195,11 @@ export interface InteractiveSessionControllerPort {
   readonly toolCount: number;
   getExtensionSnapshot?(): InteractiveExtensionSnapshotView | undefined;
   reloadExtensions?(): Promise<{ status: "applied" | "pending" | "failed"; reason?: string }>;
+  mutateExtension?(input: InteractiveExtensionMutationInput): Promise<{
+    ok: boolean;
+    status: "pending" | "applied" | "failed";
+    message: string;
+  }>;
   subscribe(listener: AgentEventSink): () => void;
   getProviderStatuses(): Promise<ProviderStatus[]>;
   getProvider(id: string): Provider | undefined;
@@ -184,6 +238,7 @@ export class InteractiveSessionController implements InteractiveSessionControlle
   private readonly toolExecutionGateway: AgentLoopConfig["toolExecutionGateway"] | undefined;
   private readonly operationBudget: AgentLoopConfig["operationBudget"] | undefined;
   private readonly extensionLifecycle: InteractiveExtensionLifecyclePort | undefined;
+  private readonly extensionControl: InteractiveExtensionControlPort | undefined;
   private readonly toolProvider: (() => readonly AgentTool[]) | undefined;
   private readonly governedPromptPreflights = new Map<string, string>();
   private readonly listeners = new Set<AgentEventSink>();
@@ -213,6 +268,7 @@ export class InteractiveSessionController implements InteractiveSessionControlle
     this.toolExecutionGateway = opts.toolExecutionGateway;
     this.operationBudget = opts.operationBudget;
     this.extensionLifecycle = opts.extensionLifecycle;
+    this.extensionControl = opts.extensionControl;
     this.toolProvider = opts.toolProvider;
     this.selection = selection;
     this.ensureAgent();
@@ -277,7 +333,25 @@ export class InteractiveSessionController implements InteractiveSessionControlle
         enabled: resource.enabled,
         trust: resource.trust,
         activation: resource.activation,
+        source: resource.provenance?.source ?? "unknown",
+        componentCount: resource.kind === "plugin"
+          ? catalog.resources.filter((candidate) => candidate.pluginId === resource.identity.qualifiedId).length
+          : 0,
+        ...(resource.diagnostics?.[0]?.message
+          ? { diagnostic: resource.diagnostics[0].message }
+          : {}),
+        digest: resource.manifest?.combinedDigest ?? resource.identity.qualifiedId,
+        capabilities: (resource.capabilities ?? []).map((capability) =>
+          `${capability.required ? "required" : "optional"}:${JSON.stringify(capability.claim)}`
+        ),
       })),
+      diagnostics: (catalog.diagnostics ?? []).map((diagnostic) => diagnostic.message),
+      counts: catalog.counts ?? {
+        ready: catalog.resources.filter((resource) => resource.activation === "ready").length,
+        blocked: catalog.resources.filter((resource) => resource.activation === "blocked").length,
+        disabled: catalog.resources.filter((resource) => resource.activation === "disabled").length,
+        error: catalog.resources.filter((resource) => resource.activation === "failed").length,
+      },
     };
   }
 
@@ -289,6 +363,28 @@ export class InteractiveSessionController implements InteractiveSessionControlle
     const result = await this.extensionLifecycle.reload();
     if (result.status === "applied") this.refreshTools();
     return result;
+  }
+
+  async mutateExtension(input: InteractiveExtensionMutationInput): Promise<{
+    ok: boolean;
+    status: "pending" | "applied" | "failed";
+    message: string;
+  }> {
+    if (!this.extensionControl) {
+      return {
+        ok: false,
+        status: "failed",
+        message: "governed Extension mutation ports are not configured",
+      };
+    }
+    if (this.inFlight) {
+      return {
+        ok: false,
+        status: "failed",
+        message: "Extension mutation is unavailable while a turn is active",
+      };
+    }
+    return this.extensionControl.mutate(input);
   }
 
   getSteeringMessages(): readonly UserAgentMessage[] {

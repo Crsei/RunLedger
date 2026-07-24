@@ -1,10 +1,15 @@
 export interface MarketplaceLocator {
+	schemaVersion: 1;
 	packageName: string;
 	version: string;
 	publisherId: string;
 	sourceUrl: string;
+	format: "tgz";
 	expectedDigest: string;
-	expectedSignature: string;
+	signature: {
+		algorithm: "Ed25519";
+		value: string;
+	};
 }
 
 export interface MarketplaceDownloadReceipt {
@@ -27,6 +32,10 @@ export interface MarketplaceProbeReceipt {
 	manifestDigest: string;
 	capabilityDigest: string;
 	containsExecutableResources: boolean;
+	packageName?: string;
+	version?: string;
+	fileCount?: number;
+	totalBytes?: number;
 	probeReceiptId: string;
 }
 
@@ -40,6 +49,35 @@ export interface MarketplaceActivationReceipt {
 
 export interface MarketplaceDownloadPort {
 	downloadToStaging(locator: MarketplaceLocator, options: { maxBytes: number; requireHttps: true }, signal?: AbortSignal): Promise<MarketplaceDownloadReceipt>;
+	cleanupStaging?(stagedRoot: string): Promise<void>;
+}
+
+export interface MarketplaceNetworkReceipt {
+	body: Uint8Array;
+	finalUrl: string;
+	redirectChain: readonly string[];
+	networkReceiptId: string;
+}
+
+export interface MarketplaceNetworkPort {
+	download(input: {
+		url: string;
+		maxBytes: number;
+		allowedHost: string;
+		maxRedirects: number;
+	}, signal?: AbortSignal): Promise<MarketplaceNetworkReceipt>;
+}
+
+export interface PublisherTrustEntry {
+	publisherId: string;
+	publicKeyPem: string;
+	revision: number;
+	trustedAt: string;
+	revokedAt?: string;
+}
+
+export interface PublisherTrustPort {
+	resolve(publisherId: string): Promise<PublisherTrustEntry | undefined>;
 }
 
 export interface MarketplaceSignaturePort {

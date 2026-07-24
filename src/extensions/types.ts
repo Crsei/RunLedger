@@ -79,6 +79,7 @@ export interface ExtensionSourceRoot {
 	rootPath: string;
 	priority: number;
 	pluginId?: string;
+	layout?: "extension-root" | "plugin-root";
 }
 
 export interface ExtensionStateEntry {

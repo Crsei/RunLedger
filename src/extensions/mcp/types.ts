@@ -33,6 +33,15 @@ export interface McpHttpConfig extends McpServerConfigCommon {
 	url: string;
 	headers: Readonly<Record<string, string>>;
 	legacyTransportExplicitlyEnabled: boolean;
+	oauth?: McpOAuthConfig;
+}
+
+export interface McpOAuthConfig {
+	authorizationServer: string;
+	scopes: readonly string[];
+	clientId?: string;
+	clientName?: string;
+	audienceDigest: string;
 }
 
 export type McpServerConfig = McpStdioConfig | McpHttpConfig;

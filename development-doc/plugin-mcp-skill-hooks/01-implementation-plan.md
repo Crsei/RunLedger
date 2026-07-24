@@ -1,8 +1,8 @@
 # RunLedger Plugin / MCP / Skill / Hooks 实施计划
 
-> 文档状态:实施中（Extension domain M0–M5 已形成闭环，M6 共享接线待串行完成）<br>
-> 编写日期:2026-07-21;边界校准:2026-07-22<br>
-> RunLedger 基线:`1658fe26fc675cc18498bb8c6a9f162b7a0b733f` (`feat/agent-loop-resurrect`)<br>
+> 文档状态:M0–M7 实现闭环，最终门禁见 §8.1<br>
+> 编写日期:2026-07-21;边界校准:2026-07-24<br>
+> RunLedger 实施基线:`678b046b3cd11632c5e5bfc7ef5dd210e8f23ec3` (`worktree/extension-m0-m7-closure`)<br>
 > Codex 参考基线:`0b175e6439a8608ba7726ee153fd8590619e8f34` (`main`)<br>
 > grok-build 参考基线:`c68e39f60462f28d9be5e683d9cbe2c57b1a5027` (`main`)
 
@@ -59,6 +59,21 @@ Extension 侧映射固定为:
 3. `package.json`、`package-lock.json` 属于 M0 串行依赖面:Runtime 线先交出当前 dependency HEAD,Extension 线用一个独立提交加入 YAML/semver/MCP SDK 精确版本,随后双方都以该提交为基线。`src/storage/{paths,settings-manager}.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` 属于 M6 串行集成面。
 4. Runtime 契约不足时,Extension 线提交需求和 failing contract fixture,由 Runtime 线版本化升级契约;Extension 不直接改 `src/runtime/resources/**`。
 5. Runtime 或其他专项后续要修改已集成的共享文件时,必须以 M6 集成 commit 为新基线。各线不得在长期分支分别重写同一 composition root。
+
+### 0.3 本轮契约与依赖封板
+
+本轮从干净基线 `678b046` 新建隔离工作树，不复用停留在 `65f9054` 且含旧实现的 `worktree/plugin-mcp-skill-hooks`。未经单独授权不创建 commit，因此下表记录的是实施所消费的当前提交，不伪造新的 handoff commit。
+
+| 边界 | 当前提交 / schema | 权威路径 |
+|---|---|---|
+| Resource Contract | `600ca84d7d32fcbf1f1a8ffea4d9bd5bc1da8680`; `RESOURCE_CONTRACT_SCHEMA_VERSION = 2` | `src/runtime/resources/{types,schemas,ports,events}.ts` |
+| Capability Gateway | `5cfaaa3b1b7ec55e12a956ad3aa3f51797b56489`; `CAPABILITY_GATEWAY_SCHEMA_VERSION = 2` | `src/runtime/protocol/v3/capability.ts` |
+| Tool Execution Gateway | `5cfaaa3b1b7ec55e12a956ad3aa3f51797b56489`; `ToolExecutionGatewayPort` | `src/runtime/types.ts`、`src/security/integration/tool-execution-gateway.ts` |
+| Extension domain | `600ca84d7d32fcbf1f1a8ffea4d9bd5bc1da8680` + 本工作树差异 | `src/extensions/**` |
+| shared composition | `5cfaaa3b1b7ec55e12a956ad3aa3f51797b56489` + 本工作树差异 | `agent-loop`、controller、production runtime、CLI、TUI |
+| dependency baseline | `004a2521934be745e8887f40f2b2631c392829dd`; lockfile v3 | `package.json`、`package-lock.json`、`dependency-review.md` |
+
+当前精确版本为 `@modelcontextprotocol/sdk 1.29.0`、`@opentelemetry/api 1.9.0`、`semver 7.7.4`、`yaml 2.8.3`。许可证、registry integrity、SDK 间接依赖风险和 8 个既有 audit advisory 的处置边界记录在 [`dependency-review.md`](dependency-review.md)；本轮未用不兼容升级掩盖这些 advisory。
 
 ## 1. 目标
 
@@ -347,7 +362,7 @@ metadata:
 - 读取完整 skill 时校验 snapshot digest，防止发现与执行之间被替换；
 - `scripts/`、`references/`、`assets/` 只是可寻址资源，不在加载时自动执行或批量注入。
 
-### 5.5 Hooks v1
+### 5.5 Hooks v1/v2
 
 ```json
 {
@@ -405,9 +420,10 @@ MVP 事件：
 - runner 注入 `RUNLEDGER_HOOK_EVENT`、`RUNLEDGER_HOOK_ID`、`RUNLEDGER_SESSION_ID`、`RUNLEDGER_WORKSPACE_ROOT`；
 - plugin hook 额外注入 `RUNLEDGER_PLUGIN_ROOT` 和 `RUNLEDGER_PLUGIN_DATA`，保留键不可被配置覆盖；
 - 非 0、timeout、spawn error、非法 JSON 都形成 `HookRunOutcome`，再按 effective failure mode 决定是否阻断；
-- v1 不支持 HTTP、prompt、agent、async hook；它们在 command runner 稳定后单独评审。
+- v1 只支持 command handler；v2 使用判别式 handler union 增加 HTTP handler。HTTP 调用必须经 policy-aware DNS/network/approval ports，并固定 HTTPS、同源 redirect、connected-address pin 与敏感 payload approval。
+- prompt、agent 与 async hook 仍不在当前合同内。
 
-### 5.6 MCP v1
+### 5.6 MCP v1/v2
 
 项目/用户 `.runledger/mcp.json` 和 plugin `.mcp.json` 使用同一 schema：
 
@@ -464,7 +480,8 @@ disabled -> blocked-untrusted -> starting -> ready
 规则：
 
 - 使用官方 TypeScript MCP SDK，实施时固定精确版本并审阅 `package-lock.json`；
-- stdio 与 Streamable HTTP 为 MVP transport；legacy SSE 和 OAuth 另设里程碑；
+- stdio 与 Streamable HTTP 为默认 transport；legacy SSE 只有显式兼容开关才可启用；
+- v2 HTTP server 可声明 OAuth authorization server、scopes、client identity；这些字段和 audience digest 都进入 manifest/trust binding；
 - server 启动可并发但必须有并发上限，状态事件按 server 独立写 ledger；
 - `required=true` 的 server 启动失败时禁止开始新 turn；optional server 失败只降级并显示 diagnostic；
 - 每次 tool call 同时受 server timeout、per-tool timeout、session AbortSignal 约束；
@@ -473,6 +490,25 @@ disabled -> blocked-untrusted -> starting -> ready
 - 默认只给模型暴露 `McpSearch` 与 `McpCall` 两个有界 meta-tools；用户显式 pin 的少量工具才作为直接 `AgentTool` 暴露；
 - catalog search 返回 raw name、qualified name、description、input schema 摘要和来源，不能直接执行；
 - `McpCall` 必须再次按稳定 server/tool identity 路由并经过 `ToolAuthorizationPolicy`；
+
+### 5.7 Marketplace Locator v1
+
+安装不接受名称猜测或 registry fallback，只接受本地 Locator JSON：
+
+```json
+{
+  "schemaVersion": 1,
+  "packageName": "team-tools",
+  "version": "1.2.3",
+  "publisherId": "publisher-1",
+  "sourceUrl": "https://packages.example/team-tools-1.2.3.tgz",
+  "format": "tgz",
+  "expectedDigest": "<sha256>",
+  "signature": { "algorithm": "Ed25519", "value": "<base64>" }
+}
+```
+
+`version` 必须是 exact SemVer；下载固定 HTTPS host 与 redirect 数量/字节预算；Ed25519 签名覆盖 SHA-256 digest。解包拒绝绝对路径、`..`、symlink/hardlink、设备文件和压缩炸弹。metadata-only probe 成功且 exact approval/cooldown 成立后才原子更新 0600 active index；离线激活仍复核 cache digest、签名和当前 publisher revision/revocation。
 - text/image/resource content 正确保留类型；未知 content 变成有界 JSON 文本，不使用 `any`；
 - 单次结果复用 agent-loop 的 budget/spill 机制，并额外记录原始字节数、截断状态和内容 hash；
 - client transport closed 时先移除旧 client identity，再决定受限重启；旧 client 的迟到事件不得关闭替代 client；
@@ -577,14 +613,14 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 每个里程碑单独提交；代码里程碑都必须通过 `npm run check`、`npm test` 和受影响的 build/CLI smoke。不得把后续里程碑的占位 API 混入当前提交。
 
-2026-07-22 实施证据：`src/extensions/**` 已通过 TypeScript、execution/runtime boundary checks；`tests/extensions/**` 当前 10 个文件、41 个测试全绿。production `NodePolicyExtensionStorage`、用户/项目 settings 合并、extension/trust/plugin-data/spill 路径与 `runledger/extensions` 子路径导出已完成；连同 path/settings 测试的定向门禁为 78/78。下列 `[x]` 只表示 Extension domain、adapter 或测试证据已经成立，不代表 M6 的 CLI/TUI/controller/agent-loop/ledger composition root 已接线。全量 `npm test` 的 1038 个测试均通过，但 Vitest 另捕获到共享 `src/storage/worktree-node-adapter.ts` 的一个未处理 `EPIPE`，该问题不属于本计划独占路径，不能据此伪造全量门禁通过。
+2026-07-24 闭环实现：discovery-only inspect、共享有界 worker pool、governed v3 唯一审计真源、v2 discovery-only、动态 Skill、五阶段 Hook、MCP v2/OAuth、HTTP Hook、CLI/TUI 控制面、compatibility roots、watcher、OTel metrics 和签名 marketplace 均已接线。默认 CLI 只有 root-contained read ports；缺 Gateway/approval/audit/write/network/OAuth ports 的特权命令稳定 fail closed。最终命令、测试数量和 CLI smoke 结果只在 §8.1 记录，避免把中途批次伪装成封板证据。
 
 ### M0 — 契约、fixtures 与安全预算
 
-- [ ] 记录 Runtime Phase 5 resource contract 与 Phase 3 capability/Gateway port 的 commit/schemaVersion/export path,确认本计划不复制 Runtime/security 类型；
-- [ ] 记录 dependency HEAD,以独立串行提交加入 YAML parser、semver、官方 MCP SDK 精确版本并审阅 lockfile；通知 Runtime 线随后基于该提交继续；
+- [x] 记录 Runtime Phase 5 resource contract 与 Phase 3 capability/Gateway port 的 commit/schemaVersion/export path,确认本计划不复制 Runtime/security 类型；
+- [x] 记录 dependency HEAD,以独立串行提交加入 YAML parser、semver、官方 MCP SDK 精确版本并审阅 lockfile；通知 Runtime 线随后基于该提交继续；
 - [x] 固定本文件中的 v1 manifest、skill frontmatter、hooks、MCP JSON schema；
-- [ ] 建立 `tests/fixtures/extensions/`，包含 valid、invalid、path-escape、symlink、duplicate、oversize、secret-template 样例；
+- [x] 建立 `tests/fixtures/extensions/`，包含 valid、invalid、path-escape、symlink、duplicate、oversize、secret-template 样例；
 - [x] 定义 `ExtensionDiagnostic`（code、severity、message、source、path、resourceId、cause?）；
 - [x] 定义所有扫描深度、文件数、单文件字节数、context 字符数、stdout/stderr 字节数常量；
 - [x] 为 JSON schema/TypeBox schema 加 contract test，非法未知 schemaVersion 必须失败；
@@ -612,7 +648,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 ### M2 — Skill 独立闭环
 
 - [x] 实现用户/项目 `SKILL.md` 发现、frontmatter 校验、qualified identity 和优先级；
-- [ ] 扫描采用并发与深度上限，错误累计到 diagnostics，不因单个坏 skill 中断；
+- [x] 扫描采用并发与深度上限，错误累计到 diagnostics，不因单个坏 skill 中断；
 - [x] 实现有界 catalog renderer，超预算时稳定截断描述而不是随机丢 skill；
 - [x] 生成有界 system-prompt catalog fragment；真实 controller 注入留到 M6,同一 session snapshot 内内容稳定；
 - [x] 在 `src/extensions/skills/skill-tool.ts` 实现 read-only catalog resolver，读取完整正文前复核 digest/trust；现有 Runtime `Skill` 占位桥接留到 M6；
@@ -634,7 +670,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [x] 在 `src/extensions/integration/runtime-hook-adapter.ts` 准备 SessionStart、UserPromptSubmit、SessionEnd adapter；真实 controller 接线留到 M6；
 - [x] 在 adapter 中准备 PreToolUse、PostToolUse 组合链；真实 agent-loop 接线留到 M6；
 - [x] 定义 `updatedInput` adapter 结果；更新后必须重跑 TypeBox 校验、canonicalization、capability derivation 与 authorization；共享 Runtime 类型改动留到 M6；
-- [ ] 固定顺序为 `prepare/schema -> PreToolUse -> authorization -> execute -> PostToolUse -> result budget`；
+- [x] 固定顺序为 `prepare/schema -> PreToolUse -> updatedInput 重校验/canonicalize -> authorization -> durable start -> execute -> PostToolUse -> result budget`；
 - [x] 每个 handler 生成 `hook.run/v1`/v3 event payload 和 deny/failure/timeout presentation model；真实 event sink/TUI 接线留到 M6；
 - [x] 用 fake scripts 覆盖 allow、deny、update、invalid JSON、nonzero、timeout、abort、oversize。
 
@@ -679,45 +715,60 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [x] 提供 policy-aware production `ExtensionStoragePort` Node adapter，覆盖 root/deny/protected/symlink/有界读取与 0600/0700 原子写；adapter 不自造 authorization receipt；
 - [x] 补齐用户/项目 extension roots、settings/trust/state/plugin-data/session spill 路径，用户 settings 与项目 settings 显式合并，资源声明仍使用独立配置文件；
 - [x] 通过 `runledger/extensions` 导出 Extension 公共 surface、production storage adapter 与 composition 所需 path/settings contracts；
-- [ ] 在开始 M6 前记录 Runtime resource/capability contract commit、安全专项 ExecutionGateway implementation commit、Extension M1–M5 commit 和所有共享文件 HEAD；若 handoff 后已变化先重审再集成；
-- [ ] 由本里程碑单一所有者把 `src/extensions/integration/**` 接入 Runtime shared files,禁止 Runtime 线同时修改这些路径；
-- [ ] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Phase 5 ports,不直接 import Runtime 内部 store/reducer；
-- [ ] 把 catalog fragment 与 extension Skill tool 接入 controller/现有 `src/runtime/tools/skill.ts`,把 snapshot tools 通过 public ToolRegistry API 注册；
-- [ ] 把 SessionStart/UserPromptSubmit/SessionEnd 与 PreToolUse/PostToolUse adapters 接入 controller/agent-loop,落地 `updatedInput` 重校验和重新授权；
-- [ ] 把 v2 custom/v3 typed audit adapter 接入对应 ledger/event sink,确保 v3 不发生 extension 自建 dual-write；
-- [ ] 把 CLI parser 升级为兼容现有 flags 的判别式 subcommand parser；
-- [ ] 实现 `runledger inspect [--json]`，输出 snapshot、来源、状态、diagnostics；
-- [ ] 实现 `trust list|grant|revoke <resource-id>`，所有授权均显示将执行的资源身份和 digest；
-- [ ] 实现 `plugin list|show|validate|enable|disable|trust|untrust`；
-- [ ] 实现 `skill list|show|validate`；
-- [ ] 实现 `hook list|validate|enable|disable`；
-- [ ] 实现 `mcp list|doctor|enable|disable`；
-- [ ] TUI 增 `/plugins`、`/skills`、`/hooks`，把现有 `/mcp` 从空 selector 接到真实状态；
-- [ ] 统一 modal 显示 source、enabled、trust、ready/error、component count 和最近 diagnostic；
-- [ ] reload 运行中只排队，idle 后原子生效；TUI 明示 pending/success/failure；
-- [ ] Runtime Gateway/approval/event sink 不可用时,inspect/list 可只读降级,trust/activate/spawn/invoke 必须 fail closed；
-- [ ] CLI JSON 输出加 schemaVersion，stderr 与 stdout 分离；
-- [ ] CLI 操作都逐项写状态文件，不覆写用户未知字段或 secret。
+- [x] 在开始 M6 前记录 Runtime resource/capability contract commit、安全专项 ExecutionGateway implementation commit、Extension M1–M5 commit 和所有共享文件 HEAD；若 handoff 后已变化先重审再集成；
+- [x] 由本里程碑单一所有者把 `src/extensions/integration/**` 接入 Runtime shared files,禁止 Runtime 线同时修改这些路径；
+- [x] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Phase 5 ports,不直接 import Runtime 内部 store/reducer；
+- [x] 把 catalog fragment 与 extension Skill tool 接入 controller/现有 `src/runtime/tools/skill.ts`,把 snapshot tools 通过 public ToolRegistry API 注册；
+- [x] 把 SessionStart/UserPromptSubmit/SessionEnd 与 PreToolUse/PostToolUse adapters 接入 controller/agent-loop,落地 `updatedInput` 重校验和重新授权；
+- [x] 把 v2 custom/v3 typed audit adapter 接入对应 ledger/event sink,确保 v3 不发生 extension 自建 dual-write；
+- [x] 把 CLI parser 升级为兼容现有 flags 的判别式 subcommand parser；
+- [x] 实现 `runledger inspect [--json]`，输出 snapshot、来源、状态、diagnostics；
+- [x] 实现 `trust list|grant|revoke <resource-id>`，所有授权均显示将执行的资源身份、digest 与 capability 摘要；
+- [x] 实现 `plugin list|show|validate|enable|disable|trust|untrust`；
+- [x] 实现 `skill list|show|validate`；
+- [x] 实现 `hook list|validate|enable|disable`；
+- [x] 实现 `mcp list|doctor|enable|disable|login|logout`；
+- [x] TUI 增 `/plugins`、`/skills`、`/hooks`，把现有 `/mcp` 从空 selector 接到真实状态与受治理操作；
+- [x] 统一 modal 显示 source、enabled、trust、ready/error、component count、digest、capability 和最近 diagnostic；
+- [x] reload 运行中只排队，idle 后原子生效；TUI 明示 pending/success/failure；
+- [x] Runtime Gateway/approval/event sink 不可用时,inspect/list 可只读降级,trust/activate/spawn/invoke 必须 fail closed；
+- [x] CLI JSON 输出加 schemaVersion，stderr 与 stdout 分离；
+- [x] CLI 操作按字段写状态文件并保留未知字段；OAuth metadata 严格拒绝 token 字段。
 
 验收：无 TTY 时四类资源可用 JSON 检查；TUI 能查看、启停、信任和重载；运行中重载不改变当前 turn 的工具集合；集成 diff 只触及本节声明的共享路径且基于已记录 handoff commit。
 
 ### M7 — 加固与第二阶段能力
 
-- [ ] MCP OAuth credential store、login/logout、auth-required TUI；
+- [x] MCP OAuth credential store、login/logout、auth-required TUI；
 - [x] MCP resources / resource templates / prompts 的 list/read/get API；
 - [x] legacy SSE transport（仅在真实兼容需求成立时）；
 - [x] 配置文件 watcher 与 debounce，仍遵守 idle 原子交换；
 - [x] hook HTTP handler，增加 SSRF、DNS rebinding、redirect、敏感 payload 审批策略；
-- [ ] plugin 版本化 store、install/update/uninstall/rollback 和 marketplace；
+- [x] plugin 版本化 store、install/update/uninstall/rollback 和 marketplace；
 - [x] 安装只接受 exact package/version/publisher/source locator,禁止模型猜测名称后 fallback 安装；
-- [ ] 安装包 expected digest/signature、publisher trust root、来源 pin、大小上限、离线缓存与 revocation；“存在签名”不等于 publisher 已受信；
-- [ ] 下载经 HTTPS 和 host policy,先进入 staging,再在临时最小权限沙箱做 bounded probe,成功后原子激活；
-- [ ] 新版本支持冷却期、显式批准、revocation 和回滚到上一已验证版本；digest、publisher、command、asset 或 capability 变化全部使旧 receipt stale；
+- [x] 安装包 expected digest/signature、publisher trust root、来源 pin、大小上限、离线缓存与 revocation；“存在签名”不等于 publisher 已受信；
+- [x] 下载经 HTTPS 和 host policy,先进入 staging,再在临时最小权限沙箱做 bounded probe,成功后原子激活并清理 staging；
+- [x] 新版本支持冷却期、显式批准、revocation 和回滚到上一已验证版本；digest、publisher、command、asset 或 capability 变化全部使旧 receipt stale；
 - [x] execute/code-mode 资源默认 hidden,只有显式 profile + Runtime approval 才可激活；
 - [x] 可选 `.agents` / `.claude` / `.grok` 兼容导入器，默认关闭并显示来源；
 - [x] 扩展资源 metrics/OTel（不得替代 ledger 审计）。
 
 M7 不阻塞 M0–M6 的本地可运行闭环，且每一项都应独立设计/提交。
+
+### 8.1 最终验证证据
+
+2026-07-24 在独立工作树 `worktree/extension-m0-m7-closure`、基线 `678b046` 上完成以下封板验证：
+
+- `npm run check`：通过，包含 typecheck、runtime boundary 和 execution boundary；
+- Extension/CLI/TUI 定向测试：7 个测试文件、37 个测试通过；
+- `npm test`：291 个测试文件、1842 个测试通过，1 个需真实 DeepSeek 凭据的 live test 跳过；
+- `npm run build`：通过；
+- public surface 定向测试：2 个测试通过；
+- `node bin/runledger.js inspect --json`：退出码 0，stdout 返回固定 `schemaVersion: 1`；
+- `node bin/runledger.js mcp doctor --json`：在未注入 privileged ports 时按设计 fail closed，退出码 4，stdout 返回固定 `schemaVersion: 1`。
+- 真实 `dist` CLI 代表性 human/JSON smoke：inspect、trust/plugin/skill/hook/MCP list、plugin/skill show、plugin/skill/hook validate、MCP doctor 与 plugin enable 均符合稳定退出码；成功为 0、exact identity 未命中为 3、缺 privileged ports 为 4，JSON 响应均为 `schemaVersion: 1`。
+
+上述 inspect 路径只使用 root-contained read ports；零副作用测试断言 MCP factory、spawn、network 和 hook executor 均未被调用。CLI 特权路径缺少 Gateway、approval、audit、write、network 或 OAuth port 时不会降级执行。构建完成后 public surface 在独立运行与全量测试中均通过，不依赖未生成的 `dist/`。
 
 ## 9. 测试矩阵
 
@@ -802,9 +853,9 @@ MCP/hook/plugin 里程碑还必须运行对应 fake-server E2E，并在测试 te
 
 每个 commit 只暂存表中明确路径。共享工作区的既有 `development-doc/tui/03-event-binding.md`、`development-doc/runtime/00-reference.md` 等改动不属于本任务，不得带入提交。
 
-## 12. MVP 完成定义
+## 12. M0–M7 完成定义
 
-M0–M6 全部完成且满足以下 E2E，才可把本计划标为完成：
+M0–M7 全部完成且满足以下 E2E，才可把本计划标为完成：
 
 1. 在临时项目创建一个带 Skill、PreToolUse hook 和 stdio MCP server 的 plugin；
 2. 首次启动时 plugin 被发现但处于 untrusted，确认没有 hook/MCP 子进程启动，skill 正文也未注入；repo 内 `.runledger/mcp.json` 同样不得自动受信；
@@ -827,11 +878,11 @@ MVP 明确不做：
 
 - 任意 JavaScript/TypeScript 进程内 plugin entrypoint；
 - plugin 自定义 Node dependency 注入或自动执行 `npm install`；
-- marketplace、Git clone/update、签名分发和自动升级；
+- Git clone、名称搜索、registry fallback 或无 exact Locator 的自动升级；
 - plugin agents、LSP、apps、browser extension；
-- HTTP hooks、prompt hooks、agent hooks、async hooks；
-- MCP OAuth、legacy SSE、elicitation、sampling、roots 协商；
-- 自动扫描其他产品的配置目录；
+- prompt hooks、agent hooks、async hooks；
+- MCP elicitation、sampling 与 roots 协商；
+- 默认扫描其他产品的配置目录；兼容 roots 必须由用户层先允许，项目层只能收窄；
 - 无界全量 MCP tool schema 注入；
 - 以 hook/plugin trust 替代逐工具授权；
 - 把 secret、完整 hook/MCP 大输出或 skill 正文复制进 ledger；

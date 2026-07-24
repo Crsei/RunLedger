@@ -13,13 +13,21 @@ export interface CommandHookHandler {
 	commandDigest: string;
 }
 
+export interface HttpHookHandlerConfig {
+	type: "http";
+	url: string;
+	urlDigest: string;
+}
+
+export type HookHandler = CommandHookHandler | HttpHookHandlerConfig;
+
 export interface HookDescriptor {
 	descriptor: ExtensionResourceDescriptor;
 	event: HookEvent;
 	matcher?: string;
 	matcherRegex?: RegExp;
 	failureMode: HookFailureMode;
-	handlers: readonly CommandHookHandler[];
+	handlers: readonly HookHandler[];
 	configPath: string;
 	configDirectory: string;
 	priority: number;
@@ -69,6 +77,14 @@ export interface HookOutput {
 	reason?: string;
 	updatedInput?: unknown;
 	additionalContext?: string;
+}
+
+export type HttpHookResult =
+	| { ok: true; output: HookOutput; status: number; responseDigest: string }
+	| { ok: false; reason: string };
+
+export interface HookHttpHandlerPort {
+	invoke(url: string, envelope: HookEnvelope, signal?: AbortSignal): Promise<HttpHookResult>;
 }
 
 export interface HookRunOutcome {

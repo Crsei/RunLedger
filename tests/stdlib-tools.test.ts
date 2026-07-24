@@ -190,9 +190,9 @@ describe("stdlib tools (cross-platform)", () => {
     await expect(tool.execute("tc1", { path: "no-such-dir" })).rejects.toThrow();
   });
 
-  it("createStdlibTools: 注册 13 个工具(8 个内置 + 4 占位 + echo)", () => {
+  it("createStdlibTools: 不注册旧 handler-map Skill,由 governed Extension 动态提供", () => {
     const r = createStdlibTools(dir);
-    expect(r.size).toBe(13);
+    expect(r.size).toBe(12);
     expect(r.has("read")).toBe(true);
     expect(r.has("write")).toBe(true);
     expect(r.has("edit")).toBe(true);
@@ -203,7 +203,7 @@ describe("stdlib tools (cross-platform)", () => {
     expect(r.has("glob")).toBe(true);
     expect(r.has("ls")).toBe(true);
     expect(r.has("WebFetch")).toBe(true);
-    expect(r.has("Skill")).toBe(true);
+    expect(r.has("Skill")).toBe(false);
     expect(r.has("NotebookEdit")).toBe(true);
     expect(r.has("echo")).toBe(true);
     expect(r.has("nonexistent")).toBe(false);
@@ -212,12 +212,12 @@ describe("stdlib tools (cross-platform)", () => {
   it("stdlibTools helper: 返回 AgentTool[]", () => {
     const tools = stdlibTools(dir);
     expect(Array.isArray(tools)).toBe(true);
-    expect(tools.length).toBe(13);
+    expect(tools.length).toBe(12);
     expect(tools.find((t) => t.name === "read")?.parameters).toBeDefined();
     expect(tools.find((t) => t.name === "glob")?.parameters).toBeDefined();
     expect(tools.find((t) => t.name === "MultiEdit")?.parameters).toBeDefined();
     expect(tools.find((t) => t.name === "WebFetch")?.parameters).toBeDefined();
-    expect(tools.find((t) => t.name === "Skill")?.parameters).toBeDefined();
+    expect(tools.find((t) => t.name === "Skill")).toBeUndefined();
     expect(tools.find((t) => t.name === "NotebookEdit")?.parameters).toBeDefined();
   });
 });

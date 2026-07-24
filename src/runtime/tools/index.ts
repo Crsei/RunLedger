@@ -32,7 +32,6 @@ import { createGlobTool } from "./glob.ts";
 import { createLsTool } from "./ls.ts";
 import { createTodoWriteTool } from "./todo-write.ts";
 import { createWebFetchTool } from "./web-fetch.ts";
-import { createSkillTool } from "./skill.ts";
 import { createNotebookEditTool } from "./notebook-edit.ts";
 
 /**
@@ -59,7 +58,8 @@ export function createStdlibTools(cwd: string = process.cwd()): ToolRegistry {
   r.register(createGlobTool(cwd), { namespace: "stdlib" });
   registerGoverned(createLsTool(cwd));
   r.register(createWebFetchTool(), { namespace: "stdlib" });
-  r.register(createSkillTool(), { namespace: "stdlib" });
+  // Skill 仅由 governed Extension snapshot 动态注册；旧 handler-map 兼容构造器
+  // 仍可显式 import，但不得进入生产 stdlib registry。
   r.register(createNotebookEditTool(), { namespace: "stdlib" });
   r.register(echoTool, { namespace: "stdlib" });
   return r;
@@ -67,8 +67,7 @@ export function createStdlibTools(cwd: string = process.cwd()): ToolRegistry {
 
 /**
  * 创建带 ledger 注入的扩展工具集(stdlib + V2 Task 系列 + TodoWrite)。
- * 与 pi "全 18 工具集"对齐:9 stdlib + 3 Task + 1 TodoWrite + MultiEdit +
- * WebFetch + Skill + NotebookEdit。
+ * legacy 扩展集保留 TodoWrite；Skill 由 governed Extension snapshot 注册。
  */
 export function createExtendedTools(cwd: string = process.cwd(), taskOptions: { ledger?: import("../ledger/types.ts").LedgerSink } = {}): ToolRegistry {
   const r = createStdlibTools(cwd);
@@ -81,5 +80,6 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
   return createStdlibTools(cwd).toContext();
 }
 
-export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createFindTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoWriteTool };
+export { createSkillTool } from "./skill.ts";
+export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createFindTool, createGlobTool, createLsTool, createWebFetchTool, createNotebookEditTool, createTodoWriteTool };
 export { echoTool };

@@ -56,6 +56,7 @@ export function trustRecordToApprovalReceipt(record: TrustRecord): ResourceAppro
 export class TrustStore {
 	readonly #path: string;
 	readonly #storage: ExtensionStoragePort;
+	#loadError?: string;
 
 	public constructor(path: string, storage: ExtensionStoragePort) {
 		this.#path = path;
@@ -65,11 +66,25 @@ export class TrustStore {
 	public async load(): Promise<TrustDocument> {
 		try {
 			const read = await this.#storage.readFile(this.#path, 1024 * 1024);
-			if (!read.ok) return emptyDocument();
-			return parseDocument(JSON.parse(Buffer.from(read.value).toString("utf8"))) ?? emptyDocument();
+			if (!read.ok) {
+				this.#loadError = read.code === "missing" ? undefined : read.message;
+				return emptyDocument();
+			}
+			const parsed = parseDocument(JSON.parse(Buffer.from(read.value).toString("utf8")));
+			if (!parsed) {
+				this.#loadError = "trust.json failed schema or receipt integrity validation";
+				return emptyDocument();
+			}
+			this.#loadError = undefined;
+			return parsed;
 		} catch {
+			this.#loadError = "trust.json is invalid JSON";
 			return emptyDocument();
 		}
+	}
+
+	public loadError(): string | undefined {
+		return this.#loadError;
 	}
 
 	async #save(document: TrustDocument): Promise<void> {

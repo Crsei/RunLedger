@@ -8,6 +8,7 @@ import { AuthInputModal } from "../../src/tui/components/auth-input-modal.ts";
 import { CustomEditor } from "../../src/tui/components/custom-editor.ts";
 import { SearchableSelectorModal } from "../../src/tui/components/searchable-selector-modal.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
+import type { InteractiveSessionControllerPort } from "../../src/runtime/interactive-session-controller.ts";
 import { Container, TUI, type Terminal } from "../../src/tui/index.ts";
 import { selectSessionInTui } from "../../src/tui/session-selector.ts";
 import { makeEditorTheme, makeSelectListTheme } from "../../src/tui/theme/factories.ts";
@@ -214,6 +215,75 @@ describe("startup session selector", () => {
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {
+  it("requires the exact resource digest before a governed Extension mutation", async () => {
+    const terminal = new FakeTerminal();
+    const digest = "c".repeat(64);
+    const mutations: unknown[] = [];
+    let reloads = 0;
+    const controller = {
+      sessionId: "session-extension-controls",
+      inFlight: false,
+      currentSelection: {
+        provider: "mock",
+        model: mockModel,
+        thinkingLevel: "off",
+      },
+      messages: [],
+      warnings: [],
+      auditEntries: [],
+      toolCount: 1,
+      getExtensionSnapshot: () => ({
+        snapshotId: "snapshot-extension-controls",
+        generation: 1,
+        resources: [{
+          id: "plugin:project:team-tools",
+          kind: "plugin",
+          displayName: "Team Tools",
+          enabled: false,
+          trust: "untrusted",
+          activation: "blocked",
+          source: "project",
+          componentCount: 2,
+          digest,
+          capabilities: ["required:filesystem-read"],
+        }],
+        diagnostics: [],
+        counts: { ready: 0, blocked: 1, disabled: 0, error: 0 },
+      }),
+      mutateExtension: async (input: unknown) => {
+        mutations.push(input);
+        return { ok: true, status: "pending" as const, message: "accepted" };
+      },
+      reloadExtensions: async () => {
+        reloads += 1;
+        return { status: "applied" as const };
+      },
+      subscribe: () => () => {},
+      dispose: () => {},
+    } as unknown as InteractiveSessionControllerPort;
+    const mode = new InteractiveMode({ controller, terminal });
+    const running = mode.run();
+
+    mode.echoPrompt("/plugins");
+    terminal.send("\r");
+    terminal.send("\x1b[B");
+    terminal.send("\r");
+    terminal.send(digest);
+    terminal.send("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(mutations).toEqual([{
+      action: "trust",
+      kind: "plugin",
+      resourceId: "plugin:project:team-tools",
+      digest,
+    }]);
+    expect(reloads).toBe(1);
+
+    terminal.send("\x04");
+    await running;
+  });
+
   it("overlay 打开时 Ctrl+C 交给 modal 取消，不触发主对话中断或退出", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({

@@ -29,6 +29,7 @@ export class ExtensionStateStore {
 	readonly #path: string;
 	readonly #storage: ExtensionStoragePort;
 	#unknown: Readonly<Record<string, unknown>> = {};
+	#loadError?: string;
 
 	public constructor(path: string, storage: ExtensionStoragePort) {
 		this.#path = path;
@@ -38,14 +39,26 @@ export class ExtensionStateStore {
 	public async load(): Promise<ExtensionStateDocument> {
 		try {
 			const read = await this.#storage.readFile(this.#path, 1024 * 1024);
-			if (!read.ok) return emptyState();
+			if (!read.ok) {
+				this.#loadError = read.code === "missing" ? undefined : read.message;
+				return emptyState();
+			}
 			const parsed = parseState(JSON.parse(Buffer.from(read.value).toString("utf8")));
-			if (!parsed) return emptyState();
+			if (!parsed) {
+				this.#loadError = "extensions-state.json failed schema validation";
+				return emptyState();
+			}
 			this.#unknown = parsed.unknown;
+			this.#loadError = undefined;
 			return parsed.document;
 		} catch {
+			this.#loadError = "extensions-state.json is invalid JSON";
 			return emptyState();
 		}
+	}
+
+	public loadError(): string | undefined {
+		return this.#loadError;
 	}
 
 	public async setEnabled(resourceId: string, enabled: boolean, at = new Date()): Promise<ExtensionStateDocument> {

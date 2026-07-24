@@ -58,6 +58,16 @@ export interface ProjectSettings {
   sessionV3FeatureState?: SessionV3FeatureState;
   /** 曾经启用过的最高状态；CLI 只允许单调提高，用于紧急回滚的只读屏障。 */
   sessionV3HighestActivatedState?: SessionV3FeatureState;
+  /** Extension 的用户上限与项目收窄项；资源声明仍位于独立配置文件。 */
+  extensions?: ExtensionSettings;
+}
+
+export type CompatibilitySkillSource = "agents" | "claude" | "grok";
+
+export interface ExtensionSettings {
+  watch?: boolean;
+  compatibilitySkillSources?: CompatibilitySkillSource[];
+  activationProfile?: "metadata-only" | "execute-enabled";
 }
 
 /** 空白 settings;loadProjectSettings 缺文件时返回此值 */
@@ -164,6 +174,26 @@ export function mergeUserAndProjectSettings(
       ...projectSettings.runtimeFeatures,
     };
   }
+  if (userSettings.extensions || projectSettings.extensions) {
+    const user = userSettings.extensions ?? {};
+    const project = projectSettings.extensions ?? {};
+    const userSources = new Set(user.compatibilitySkillSources ?? []);
+    const projectSources = project.compatibilitySkillSources;
+    const compatibilitySkillSources = projectSources
+      ? projectSources.filter((source) => userSources.has(source))
+      : [...userSources];
+    const userProfile = user.activationProfile ?? "metadata-only";
+    const projectProfile = project.activationProfile ?? userProfile;
+    const activationProfile =
+      userProfile === "execute-enabled" && projectProfile === "execute-enabled"
+        ? "execute-enabled"
+        : "metadata-only";
+    merged.extensions = {
+      watch: (user.watch ?? false) && (project.watch ?? true),
+      compatibilitySkillSources,
+      activationProfile,
+    };
+  }
   return merged;
 }
 
@@ -250,6 +280,22 @@ function sanitizeProjectSettings(raw: Record<string, unknown>): ProjectSettings 
   }
   if (isSessionV3FeatureState(raw.sessionV3HighestActivatedState)) {
     out.sessionV3HighestActivatedState = raw.sessionV3HighestActivatedState;
+  }
+  if (raw.extensions !== null && typeof raw.extensions === "object" && !Array.isArray(raw.extensions)) {
+    const requested = raw.extensions as Record<string, unknown>;
+    const extensions: ExtensionSettings = {};
+    if (typeof requested.watch === "boolean") extensions.watch = requested.watch;
+    if (requested.activationProfile === "metadata-only" || requested.activationProfile === "execute-enabled") {
+      extensions.activationProfile = requested.activationProfile;
+    }
+    if (Array.isArray(requested.compatibilitySkillSources)) {
+      const sources = requested.compatibilitySkillSources.filter(
+        (source): source is CompatibilitySkillSource =>
+          source === "agents" || source === "claude" || source === "grok",
+      );
+      extensions.compatibilitySkillSources = [...new Set(sources)].sort();
+    }
+    if (Object.keys(extensions).length > 0) out.extensions = extensions;
   }
   return out;
 }
