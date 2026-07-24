@@ -1,5 +1,6 @@
 import type { TuiEffect, TuiResult, TuiTerminalState } from "./types.ts";
 import type { TuiEffectPorts } from "./effects.ts";
+import type { ProviderWorkflowResult } from "../providers/types.ts";
 
 export class EffectRunner {
   private readonly ports: TuiEffectPorts;
@@ -10,6 +11,59 @@ export class EffectRunner {
 
   async execute(effect: TuiEffect, signal: AbortSignal): Promise<TuiResult> {
     try {
+      if (effect.type === "provider.status") {
+        const result = await providerResult(signal, async () => {
+          const port = this.ports.providerWorkflow;
+          if (!port) throw new Error("provider workflow is unavailable");
+          const statuses = await port.getProviderStatuses();
+          return {
+            statuses,
+            currentSelection: port.currentSelection,
+          };
+        });
+        return {
+          type: "provider.status.completed",
+          effectId: effect.effectId,
+          correlationId: effect.correlationId,
+          generation: effect.generation,
+          statusRequestId: effect.statusRequestId,
+          result,
+        };
+      }
+      if (effect.type === "provider.models") {
+        const result = await providerResult(signal, async () => {
+          const port = this.ports.providerWorkflow;
+          if (!port) throw new Error("provider workflow is unavailable");
+          return { models: await port.getAvailableModels(effect.providerId) };
+        });
+        return {
+          type: "provider.models.completed",
+          effectId: effect.effectId,
+          correlationId: effect.correlationId,
+          generation: effect.generation,
+          modelsRequestId: effect.modelsRequestId,
+          providerId: effect.providerId,
+          result,
+        };
+      }
+      if (effect.type === "provider.select-model") {
+        const result = await providerResult(signal, async () => {
+          const port = this.ports.providerWorkflow;
+          if (!port) throw new Error("provider workflow is unavailable");
+          await port.selectModel(effect.model);
+          return { selection: port.currentSelection };
+        });
+        return {
+          type: "provider.select-model.completed",
+          effectId: effect.effectId,
+          correlationId: effect.correlationId,
+          generation: effect.generation,
+          selectionRequestId: effect.selectionRequestId,
+          providerId: effect.providerId,
+          modelKey: effect.modelKey,
+          result,
+        };
+      }
       if (effect.type === "session.list") {
         const result = this.ports.sessionCatalog
           ? await this.ports.sessionCatalog.listLite({
@@ -114,5 +168,35 @@ export class EffectRunner {
         terminal,
       };
     }
+  }
+}
+
+async function providerResult<T>(
+  signal: AbortSignal,
+  run: () => Promise<T>,
+): Promise<ProviderWorkflowResult<T>> {
+  if (signal.aborted) {
+    return {
+      ok: false,
+      error: { message: String(signal.reason ?? "provider workflow aborted"), retryable: false },
+    };
+  }
+  try {
+    const value = await run();
+    if (signal.aborted) {
+      return {
+        ok: false,
+        error: { message: String(signal.reason ?? "provider workflow aborted"), retryable: false },
+      };
+    }
+    return { ok: true, value };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        message: error instanceof Error ? error.message : String(error),
+        retryable: false,
+      },
+    };
   }
 }

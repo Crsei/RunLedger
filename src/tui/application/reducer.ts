@@ -9,19 +9,28 @@ import type {
 import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
 import { createSessionPickerState } from "../sessions/picker-reducer.ts";
 import type { TuiCapabilitySnapshot, TuiEffect } from "./types.ts";
+import {
+  providerModelKey,
+  type ProviderWorkflowState,
+} from "../providers/types.ts";
+import type { Api, Model } from "../../types.ts";
 
 export function createInitialTuiState(
   bootstrap: TuiBootstrapSnapshot,
-  capabilities: TuiCapabilitySnapshot = {
-    sessionCatalog: {
-      available: false,
-      reason: "Session catalog is unavailable in this TUI.",
-    },
-  },
+  capabilities: Partial<TuiCapabilitySnapshot> = {},
 ): TuiState {
   return {
     bootstrap,
-    capabilities,
+    capabilities: {
+      sessionCatalog: capabilities.sessionCatalog ?? {
+        available: false,
+        reason: "Session catalog is unavailable in this TUI.",
+      },
+      providerWorkflow: capabilities.providerWorkflow ?? {
+        available: false,
+        reason: "Provider configuration is unavailable in this TUI.",
+      },
+    },
     queryGuard: { state: "idle" },
     commandsById: {},
     commandOrder: [],
@@ -32,6 +41,7 @@ export function createInitialTuiState(
       generation: 0,
       detail: { state: "idle" },
     },
+    providerWorkflow: { state: "idle", generation: 0 },
     viewportClearRevision: 0,
     steeringCount: 0,
     followUpCount: 0,
@@ -96,6 +106,20 @@ export function reduceTui(
                   requestId: input.effect.enrichRequestId,
                   sessionId: input.effect.sessionId,
                 },
+              },
+            }
+          : {}),
+        ...(input.effect.type === "provider.status"
+          ? {
+              overlay: {
+                state: "provider-workflow" as const,
+                sourceInvocationId: input.effect.correlationId,
+              },
+              providerWorkflow: {
+                state: "loading-providers" as const,
+                generation: input.effect.generation,
+                invocationId: input.effect.correlationId,
+                statusRequestId: input.effect.statusRequestId,
               },
             }
           : {}),
@@ -357,6 +381,323 @@ export function reduceTui(
           : {}),
       };
     }
+    case "provider.status.completed": {
+      const workflow = state.providerWorkflow;
+      if (
+        state.overlay.state !== "provider-workflow" ||
+        workflow.state !== "loading-providers" ||
+        workflow.generation !== input.generation ||
+        workflow.invocationId !== input.correlationId ||
+        workflow.statusRequestId !== input.statusRequestId ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
+      if (!input.result.ok || input.result.value.statuses.length === 0) {
+        const message = input.result.ok
+          ? "No providers are available."
+          : input.result.error.message;
+        const retryable = input.result.ok ? false : input.result.error.retryable;
+        return providerFailure(state, workflow.invocationId, workflow.generation, message, retryable);
+      }
+      const statusValue = input.result.value;
+      const statuses = statusValue.statuses;
+      const selectedProviderId = statuses.some((status) =>
+          status.id === statusValue.currentSelection.provider
+        )
+        ? statusValue.currentSelection.provider
+        : statuses[0]!.id;
+      return {
+        state: {
+          ...state,
+          queryGuard: { state: "idle" },
+          commandsById: updateCommandExecution(
+            state.commandsById,
+            workflow.invocationId,
+            { state: "pending", summary: "awaiting provider selection" },
+          ),
+          providerWorkflow: {
+            state: "choosing-provider",
+            generation: workflow.generation,
+            invocationId: workflow.invocationId,
+            statuses,
+            query: "",
+            selectedProviderId,
+            currentSelection: statusValue.currentSelection,
+          },
+        },
+        effects: [],
+      };
+    }
+    case "provider.search": {
+      const workflow = state.providerWorkflow;
+      if (workflow.state === "choosing-provider") {
+        const statuses = filterProviderStatuses(workflow.statuses, input.query);
+        return {
+          state: {
+            ...state,
+            providerWorkflow: {
+              ...workflow,
+              query: input.query,
+              selectedProviderId: statuses[0]?.id,
+            },
+          },
+          effects: [],
+        };
+      }
+      if (workflow.state === "choosing-model") {
+        const models = filterProviderModels(workflow.models, input.query);
+        return {
+          state: {
+            ...state,
+            providerWorkflow: {
+              ...workflow,
+              query: input.query,
+              selectedModelKey: models[0] ? providerModelKey(models[0]) : undefined,
+            },
+          },
+          effects: [],
+        };
+      }
+      return { state, effects: [] };
+    }
+    case "provider.highlight": {
+      const workflow = state.providerWorkflow;
+      if (
+        workflow.state !== "choosing-provider" ||
+        workflow.generation !== input.generation ||
+        !filterProviderStatuses(workflow.statuses, workflow.query).some((status) =>
+          status.id === input.providerId
+        )
+      ) return { state, effects: [] };
+      return {
+        state: {
+          ...state,
+          providerWorkflow: { ...workflow, selectedProviderId: input.providerId },
+        },
+        effects: [],
+      };
+    }
+    case "provider.model.highlight": {
+      const workflow = state.providerWorkflow;
+      if (
+        workflow.state !== "choosing-model" ||
+        workflow.generation !== input.generation ||
+        workflow.providerId !== input.providerId ||
+        !filterProviderModels(workflow.models, workflow.query).some((model) =>
+          providerModelKey(model) === input.modelKey
+        )
+      ) return { state, effects: [] };
+      return {
+        state: {
+          ...state,
+          providerWorkflow: { ...workflow, selectedModelKey: input.modelKey },
+        },
+        effects: [],
+      };
+    }
+    case "provider.select": {
+      const workflow = state.providerWorkflow;
+      if (
+        workflow.state !== "choosing-provider" ||
+        workflow.generation !== input.generation
+      ) return { state, effects: [] };
+      const status = filterProviderStatuses(workflow.statuses, workflow.query)
+        .find((entry) => entry.id === input.providerId);
+      if (!status) return { state, effects: [] };
+      if (status.configured) return beginProviderModels(state, workflow, status.id);
+      if (status.interactiveAuthTypes.length > 0) {
+        const handoffId = `provider-login:${workflow.generation}:${status.id}`;
+        return {
+          state: {
+            ...state,
+            overlay: { state: "closed" },
+            commandsById: updateCommandExecution(
+              state.commandsById,
+              workflow.invocationId,
+              {
+                state: "succeeded",
+                summary: `authentication required; handed off to /login ${status.id}`,
+              },
+            ),
+            providerWorkflow: { state: "idle", generation: workflow.generation + 1 },
+            providerLoginHandoff: { id: handoffId, providerId: status.id },
+          },
+          effects: [],
+        };
+      }
+      return providerFailure(
+        state,
+        workflow.invocationId,
+        workflow.generation,
+        `${status.name} requires an environment/profile credential; configure it and reopen /provider.`,
+        false,
+      );
+    }
+    case "provider.models.completed": {
+      const workflow = state.providerWorkflow;
+      if (
+        state.overlay.state !== "provider-workflow" ||
+        workflow.state !== "loading-models" ||
+        workflow.generation !== input.generation ||
+        workflow.invocationId !== input.correlationId ||
+        workflow.modelsRequestId !== input.modelsRequestId ||
+        workflow.providerId !== input.providerId ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
+      const models = input.result.ok
+        ? input.result.value.models.filter((model) => model.provider === workflow.providerId)
+        : [];
+      if (!input.result.ok || models.length === 0) {
+        return providerFailure(
+          state,
+          workflow.invocationId,
+          workflow.generation,
+          input.result.ok
+            ? `No available models were returned for ${workflow.providerId}.`
+            : input.result.error.message,
+          input.result.ok ? false : input.result.error.retryable,
+        );
+      }
+      return {
+        state: {
+          ...state,
+          queryGuard: { state: "idle" },
+          commandsById: updateCommandExecution(
+            state.commandsById,
+            workflow.invocationId,
+            { state: "pending", summary: "awaiting model selection" },
+          ),
+          providerWorkflow: {
+            state: "choosing-model",
+            generation: workflow.generation,
+            invocationId: workflow.invocationId,
+            providerId: workflow.providerId,
+            models,
+            query: "",
+            selectedModelKey: providerModelKey(models[0]!),
+          },
+        },
+        effects: [],
+      };
+    }
+    case "provider.model.select": {
+      const workflow = state.providerWorkflow;
+      if (
+        workflow.state !== "choosing-model" ||
+        workflow.generation !== input.generation ||
+        workflow.providerId !== input.providerId
+      ) return { state, effects: [] };
+      const model = filterProviderModels(workflow.models, workflow.query)
+        .find((entry) => providerModelKey(entry) === input.modelKey);
+      if (!model) return { state, effects: [] };
+      return beginProviderSelection(state, workflow, model);
+    }
+    case "provider.select-model.completed": {
+      const workflow = state.providerWorkflow;
+      if (
+        state.overlay.state !== "provider-workflow" ||
+        workflow.state !== "applying-selection" ||
+        workflow.generation !== input.generation ||
+        workflow.invocationId !== input.correlationId ||
+        workflow.selectionRequestId !== input.selectionRequestId ||
+        workflow.providerId !== input.providerId ||
+        workflow.modelKey !== input.modelKey ||
+        state.queryGuard.state === "idle" ||
+        state.queryGuard.effectId !== input.effectId ||
+        state.queryGuard.correlationId !== input.correlationId
+      ) return { state, effects: [] };
+      if (!input.result.ok) {
+        return providerFailure(
+          state,
+          workflow.invocationId,
+          workflow.generation,
+          input.result.error.message,
+          input.result.error.retryable,
+        );
+      }
+      const selection = input.result.value.selection;
+      if (
+        selection.provider !== workflow.providerId ||
+        !selection.model ||
+        providerModelKey(selection.model) !== workflow.modelKey
+      ) {
+        return providerFailure(
+          state,
+          workflow.invocationId,
+          workflow.generation,
+          "provider selection result was not correlated with the requested model",
+          false,
+        );
+      }
+      return {
+        state: {
+          ...state,
+          overlay: { state: "closed" },
+          queryGuard: { state: "idle" },
+          commandsById: updateCommandExecution(
+            state.commandsById,
+            workflow.invocationId,
+            { state: "succeeded", summary: `selected ${workflow.modelKey}` },
+          ),
+          providerWorkflow: { state: "idle", generation: workflow.generation + 1 },
+          providerSelection: {
+            generation: workflow.generation,
+            providerId: selection.provider,
+            modelId: selection.model.id,
+            thinkingLevel: selection.thinkingLevel,
+          },
+        },
+        effects: [],
+      };
+    }
+    case "provider.workflow.cancel": {
+      const workflow = state.providerWorkflow;
+      if (workflow.state === "idle" || workflow.state === "applying-selection") {
+        return { state, effects: [] };
+      }
+      if (workflow.state === "failed" || workflow.state === "cancelled") {
+        return {
+          state: {
+            ...state,
+            overlay: { state: "closed" },
+            providerWorkflow: { state: "idle", generation: workflow.generation + 1 },
+          },
+          effects: [],
+        };
+      }
+      const ownedEffectId = providerOwnedEffectId(state, workflow.invocationId);
+      return {
+        state: {
+          ...state,
+          overlay: { state: "closed" },
+          queryGuard: ownedEffectId ? { state: "idle" } : state.queryGuard,
+          commandsById: updateCommandExecution(
+            state.commandsById,
+            workflow.invocationId,
+            { state: "cancelled", reason: "provider selection cancelled" },
+          ),
+          providerWorkflow: {
+            state: "cancelled",
+            generation: workflow.generation + 1,
+            invocationId: workflow.invocationId,
+            reason: "provider selection cancelled",
+          },
+        },
+        effects: [],
+        ...(ownedEffectId ? { abortEffectIds: [ownedEffectId] } : {}),
+      };
+    }
+    case "provider.login.handoff.consume":
+      if (state.providerLoginHandoff?.id !== input.handoffId) {
+        return { state, effects: [] };
+      }
+      return {
+        state: { ...state, providerLoginHandoff: undefined },
+        effects: [],
+      };
     case "timeline.viewport.clear": {
       const retainedIds = state.commandOrder.filter((id) => {
         const execution = state.commandsById[id]?.execution;
@@ -550,6 +891,144 @@ function beginSessionPreview(
     effects: [effect],
     ...(previousEffectId ? { abortEffectIds: [previousEffectId] } : {}),
   };
+}
+
+function beginProviderModels(
+  state: TuiState,
+  workflow: Extract<ProviderWorkflowState, { state: "choosing-provider" }>,
+  providerId: string,
+): TuiReduceOutput {
+  if (state.queryGuard.state !== "idle") return { state, effects: [] };
+  const generation = workflow.generation + 1;
+  const modelsRequestId = `${workflow.invocationId}:provider-models:${providerId}:${generation}`;
+  const effect: TuiEffect = {
+    type: "provider.models",
+    effectId: modelsRequestId,
+    correlationId: workflow.invocationId,
+    generation,
+    modelsRequestId,
+    providerId,
+  };
+  return {
+    state: {
+      ...state,
+      queryGuard: {
+        state: "dispatching",
+        effectId: effect.effectId,
+        correlationId: effect.correlationId,
+      },
+      providerWorkflow: {
+        state: "loading-models",
+        generation,
+        invocationId: workflow.invocationId,
+        providerId,
+        modelsRequestId,
+      },
+    },
+    effects: [effect],
+  };
+}
+
+function beginProviderSelection(
+  state: TuiState,
+  workflow: Extract<ProviderWorkflowState, { state: "choosing-model" }>,
+  model: Model<Api>,
+): TuiReduceOutput {
+  if (state.queryGuard.state !== "idle") return { state, effects: [] };
+  const generation = workflow.generation + 1;
+  const modelKey = providerModelKey(model);
+  const selectionRequestId =
+    `${workflow.invocationId}:provider-selection:${modelKey}:${generation}`;
+  const effect: TuiEffect = {
+    type: "provider.select-model",
+    effectId: selectionRequestId,
+    correlationId: workflow.invocationId,
+    generation,
+    selectionRequestId,
+    providerId: workflow.providerId,
+    modelKey,
+    model,
+  };
+  return {
+    state: {
+      ...state,
+      queryGuard: {
+        state: "dispatching",
+        effectId: effect.effectId,
+        correlationId: effect.correlationId,
+      },
+      providerWorkflow: {
+        state: "applying-selection",
+        generation,
+        invocationId: workflow.invocationId,
+        providerId: workflow.providerId,
+        modelKey,
+        selectionRequestId,
+      },
+    },
+    effects: [effect],
+  };
+}
+
+function providerFailure(
+  state: TuiState,
+  invocationId: string,
+  generation: number,
+  message: string,
+  retryable: boolean,
+): TuiReduceOutput {
+  return {
+    state: {
+      ...state,
+      queryGuard: { state: "idle" },
+      commandsById: updateCommandExecution(
+        state.commandsById,
+        invocationId,
+        { state: "failed", message, retryable },
+      ),
+      providerWorkflow: {
+        state: "failed",
+        generation,
+        invocationId,
+        message,
+        retryable,
+      },
+    },
+    effects: [],
+  };
+}
+
+function providerOwnedEffectId(state: TuiState, invocationId: string): string | undefined {
+  return state.queryGuard.state !== "idle" &&
+      state.queryGuard.correlationId === invocationId &&
+      (
+        state.providerWorkflow.state === "loading-providers" ||
+        state.providerWorkflow.state === "loading-models"
+      )
+    ? state.queryGuard.effectId
+    : undefined;
+}
+
+function filterProviderStatuses(
+  statuses: Extract<ProviderWorkflowState, { state: "choosing-provider" }>["statuses"],
+  query: string,
+) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return statuses;
+  return statuses.filter((status) =>
+    `${status.id} ${status.name} ${status.source ?? ""}`.toLocaleLowerCase().includes(normalized)
+  );
+}
+
+function filterProviderModels(
+  models: Extract<ProviderWorkflowState, { state: "choosing-model" }>["models"],
+  query: string,
+) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (!normalized) return models;
+  return models.filter((model) =>
+    `${model.provider} ${model.id} ${model.name ?? ""}`.toLocaleLowerCase().includes(normalized)
+  );
 }
 
 function updateCommandExecution(

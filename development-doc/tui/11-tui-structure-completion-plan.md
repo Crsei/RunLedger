@@ -6,7 +6,7 @@
 >
 > RunLedger 实施基线:`feat/agent-loop-resurrect@cd24ebb1aa400120457e019e172c2c796bb7e8d4`。
 >
-> 当前实施状态:V0-V9 已完成 Agent 验证,V10-V30 未开始。按本轮约定,V4 后统一进行
+> 当前实施状态:V0-V10 已完成 Agent 验证,V11-V30 未开始。按本轮约定,V4 后统一进行
 > 人工验收,因此 V0-V4 最高只标记为 `agent-verified`;按后续提交指令,V0-V4 工作树
 > 成果合并为一次本地提交。
 >
@@ -1073,7 +1073,8 @@ V1-V30 必须同时满足:
 | V7 | P6/P7 enrich lane | `/sessions` 初始 selection 与 Up/Down 变化都启动独立 `session.enrich`；detail 显示 verified cwd/unknown、时间、format/lifecycle/compatibility、message/turn/tool counts、runtime、head 与 parent；失败只留在 detail 区 | `session-catalog.test.ts` 6 项、`session-picker.test.ts` 5 项、`application-reducer.test.ts` 8 项；覆盖 v1/v2/v3、64 MiB/1,000,000 record guard、v3 chain/publication-prefix digest、A→B cancel-and-replace 与三元 correlation stale 丢弃；`npm run check`、305 个测试文件/1912 项测试、`npm run build` 通过；标准 PATH PTY 在 current→Beta→Alpha 快速 selection 中依次显示 loading，最终 exact ID/count/runtime 且 exit 0 | 人工验收待完成 | agent-verified |
 | V8 | P5/P6 current detail | native `/session` 从 bootstrap current identity 和 CLI exact current-session ref 打开 canonical detail；loading/success/error/cancel 更新同一 command invocation，Esc 只关闭 overlay且不执行 session mutation | `current-session-detail.test.ts` 3 项、`commands.test.ts` 9 项、`session-catalog.test.ts` 7 项、`application-reducer.test.ts` 8 项；覆盖 duplicate ID exact-path binding、bootstrap identity、same-row terminal 与 cancel owner；`npm run check`、306 个测试文件/1917 项测试、`npm run build` 通过；标准 PATH PTY 显示 `slash:16`、current canonical metadata、exact ID/cwd/counts、`✓ /session — current session details loaded` 并 exit 0 | 人工验收待完成 | agent-verified |
 | V9 | P6/P7 preview lane | enrich 成功后才启动独立 `session.preview`；v1 safe-text、v2 canonical 与 v3 conversation replay 经完整验证和 64 MiB scan guard 后，最多显示最近 100 条/300,000 UTF-8 bytes；preview 复用主 `projectReplay`、Timeline reducer/component，startup `--resume` 也复用同一 summary picker，但不在 picker 内打开 session | `session-preview.test.ts` 2 项、`session-catalog.test.ts` 10 项、`application-reducer.test.ts` 8 项、`interactive-controls.test.ts` 9 项；覆盖独立 request tuple、selection/search/close cancellation、v1/v2/v3 恢复、双上限和主 Timeline 隔离；`npm run check`、307 个测试文件/1922 项测试、`npm run build` 通过；标准 PATH PTY 选中 canonical v2 fixture 后显示 `Transcript preview`、user/assistant 共享布局和 `✓ [echo] preview tool output`，Esc 后 `/quit` exit 0 | 人工验收待完成 | agent-verified |
-| V10-V30 | 见上表 | 尚未实施；`/resume`、`/new`、`/fork` 仍不得提前加入 | 无 | 无 | not-started |
+| V10 | P5 typed provider workflow | native `/provider` 依次显示 loading providers、choosing provider、loading/choosing model 与 applying selection；configured provider 经 typed `selectModel` 更新原 invocation 和 Footer，interactive-auth 通过 canonical `/login <id>` 新 invocation handoff，ambient-only/取消/加载和持久化失败都关联原行 | `provider-workflow.test.ts` 8 项、`commands.test.ts` 10 项、`interactive-controls.test.ts` 11 项；覆盖 generation/request/provider/model correlation、configured、interactive auth、ambient-only、filter、60/80/143 列、cancel-and-abort、status/model/select failure、stale result、Footer refresh 和 canonical login funnel；compatibility command 数 11；`npm run check`、20 个 TUI 测试文件/141 项、308 个全量测试文件/1933 项测试、`npm run build` 通过；标准 PATH PTY 显示 36 个 provider，`cloudflare` filter 得 2 行，Esc 显示 `⊘ /provider — provider selection cancelled`，`/quit` exit 0 | 人工验收待完成 | agent-verified |
+| V11-V30 | 见上表 | 尚未实施；`/resume`、`/new`、`/fork` 仍不得提前加入 | 无 | 无 | not-started |
 
 2026-07-25 Agent 验证快照:
 
@@ -1100,6 +1101,12 @@ V1-V30 必须同时满足:
   bound，并复用主 Timeline projector/reducer/component。startup `--resume` selector 只复用
   summary picker 和 typed selection，仍由既有 CLI 在 selector 返回后打开 session；标准 PATH
   PTY 显示 canonical user/assistant/tool terminal preview 后 exit 0。
+- V10 增量:`/provider` 已从 compatibility bridge 移除，canonical command 数仍为 16，
+  compatibility command 数降为 11；provider status、model discovery 和 selection persistence
+  均经 typed effect/result 回流 reducer。selector 的 query/highlight 是纯状态，selection 校验
+  generation 与 exact provider/model；interactive auth 先关闭原 overlay，再通过 registry/parser/
+  executor 创建新的 `/login <id>` invocation。标准 PATH PTY 只执行 status/filter/cancel，使用
+  临时 `RUNLEDGER_DIR`/`RUNLEDGER_SESSION_DIR`，未发起 login 或网络认证。
 
 ## 8. 预期目录边界
 

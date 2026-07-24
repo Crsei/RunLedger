@@ -85,7 +85,34 @@ describe("command registry/parser/executor", () => {
       activeQueryPolicy: "immediate",
     });
     expect(COMPATIBILITY_COMMAND_NAMES).not.toContain("clear");
-    expect(COMPATIBILITY_COMMAND_NAMES).toHaveLength(12);
+    expect(COMPATIBILITY_COMMAND_NAMES).toHaveLength(11);
+  });
+
+  it("keeps /provider native, ephemeral, reject-on-active, and capability-gated", () => {
+    const snapshot = new CommandRegistry(builtinCommandDefinitions()).snapshot;
+    const provider = snapshot.byName.provider!;
+    expect(provider).toMatchObject({
+      executionStrategy: "native",
+      historyPolicy: "ephemeral",
+      activeQueryPolicy: "reject",
+    });
+    expect(COMPATIBILITY_COMMAND_NAMES).not.toContain("provider");
+    expect(provider.availability(createInitialTuiState(BOOTSTRAP))).toMatchObject({
+      state: "disabled",
+    });
+    const state = createInitialTuiState(BOOTSTRAP, {
+      providerWorkflow: { available: true },
+    });
+    expect(provider.availability(state)).toEqual({ state: "available" });
+    const parsed = parseCommand("/provider", snapshot, "command:provider");
+    if (!parsed.ok) throw new Error("provider fixture parse failed");
+    expect(executeCommand(state, snapshot, parsed.intent).actions).toMatchObject([{
+      type: "effect.dispatch",
+      effect: {
+        type: "provider.status",
+        correlationId: "command:provider",
+      },
+    }]);
   });
 
   it("rejects duplicate canonical names and aliases", () => {

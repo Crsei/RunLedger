@@ -221,6 +221,118 @@ describe("TUI input components", () => {
   });
 });
 
+describe("native provider command handoff", () => {
+  it("applies a configured model through the typed effect and refreshes the Footer", async () => {
+    const terminal = new FakeTerminal();
+    const selectedModel = { ...mockModel, id: "selected-model", name: "Selected Model" };
+    let selection = {
+      provider: mockModel.provider,
+      model: mockModel,
+      thinkingLevel: "off" as const,
+    };
+    const selections: string[] = [];
+    const controller = {
+      sessionId: "session-provider-selection",
+      inFlight: false,
+      get currentSelection() {
+        return selection;
+      },
+      messages: [],
+      warnings: [],
+      auditEntries: [],
+      toolCount: 1,
+      subscribe: () => () => {},
+      getProviderStatuses: async () => [{
+        id: mockModel.provider,
+        name: "Mock",
+        configured: true,
+        source: "auth.json",
+        authTypes: ["api_key"],
+        interactiveAuthTypes: ["api_key"],
+      }],
+      getAvailableModels: async () => [selectedModel],
+      login: async () => {
+        throw new Error("not used");
+      },
+      selectModel: async (model: typeof selectedModel) => {
+        selections.push(`${model.provider}/${model.id}`);
+        selection = { provider: model.provider, model, thinkingLevel: "off" };
+      },
+      dispose: () => {},
+    } as unknown as InteractiveSessionControllerPort;
+    const mode = new InteractiveMode({ controller, terminal });
+    const running = mode.run();
+
+    mode.echoPrompt("/provider");
+    terminal.send("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.send("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.send("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setTimeout(resolve, 25));
+
+    expect(selections).toEqual([`${selectedModel.provider}/${selectedModel.id}`]);
+    const rendered = terminal.writes.join("");
+    expect(rendered).toContain(`selected ${selectedModel.provider}/${selectedModel.id}`);
+    expect(rendered).toContain(`${selectedModel.provider}/${selectedModel.id} · think:off`);
+
+    terminal.send("\x04");
+    await running;
+  });
+
+  it("creates interactive authentication through the canonical /login command funnel", async () => {
+    const terminal = new FakeTerminal();
+    const loginCalls: string[] = [];
+    const controller = {
+      sessionId: "session-provider-handoff",
+      inFlight: false,
+      currentSelection: {
+        provider: "mock",
+        model: mockModel,
+        thinkingLevel: "off",
+      },
+      messages: [],
+      warnings: [],
+      auditEntries: [],
+      toolCount: 1,
+      subscribe: () => () => {},
+      getProviderStatuses: async () => [{
+        id: "oauth",
+        name: "OAuth Provider",
+        configured: false,
+        authTypes: ["oauth"],
+        interactiveAuthTypes: ["oauth"],
+      }],
+      getAvailableModels: async () => [],
+      login: async (providerId: string) => {
+        loginCalls.push(providerId);
+        throw new Error("simulated login stop");
+      },
+      selectModel: async () => {},
+      dispose: () => {},
+    } as unknown as InteractiveSessionControllerPort;
+    const mode = new InteractiveMode({ controller, terminal });
+    const running = mode.run();
+
+    mode.echoPrompt("/provider");
+    terminal.send("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    terminal.send("\r");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    const rendered = terminal.writes.join("");
+    expect(loginCalls).toEqual(["oauth"]);
+    expect(rendered).toContain("authentication required; handed off to /login oauth");
+    expect(rendered).toContain("/login oauth");
+
+    terminal.send("\x04");
+    await running;
+  });
+});
+
 describe("startup session selector", () => {
   it("start 后保持 pending，选择或取消时才 stop 并 resolve", async () => {
     const sessions: SessionInfo[] = [{

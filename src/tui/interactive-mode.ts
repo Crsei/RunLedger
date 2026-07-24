@@ -94,6 +94,7 @@ import type { TimelineProjectionCursor, TimelineState } from "./timeline/types.t
 import type { SessionCatalogPort } from "./sessions/catalog.ts";
 import { SessionPickerComponent } from "./components/session-picker.ts";
 import { CurrentSessionDetailComponent } from "./components/current-session-detail.ts";
+import { ProviderPickerComponent } from "./components/provider-picker.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -159,6 +160,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly overlays: OverlayController;
   private sessionPickerComponent: SessionPickerComponent | undefined;
   private currentSessionDetailComponent: CurrentSessionDetailComponent | undefined;
+  private providerPickerComponent: ProviderPickerComponent | undefined;
+  private scheduledProviderHandoffId: string | undefined;
+  private appliedProviderSelectionGeneration = -1;
   private timelineState: TimelineState = createTimelineState();
   private timelineCursor: TimelineProjectionCursor = createTimelineProjectionCursor();
   private appliedViewportClearRevision = 0;
@@ -225,6 +229,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       },
       compatibility,
       sessionCatalog: opts.sessionCatalog,
+      providerWorkflow: this.controller,
     });
     this.shell = new InteractiveShell({
       initialState: createInitialTuiState(this.bootstrap, {
@@ -233,6 +238,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
           : {
               available: false,
               reason: "Session browsing is unavailable because no read-only catalog was configured.",
+            },
+        providerWorkflow: this.controller
+          ? { available: true }
+          : {
+              available: false,
+              reason: "Provider configuration is unavailable in demo mode.",
             },
       }),
       runner,
@@ -877,6 +888,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.overlays.close();
       this.currentSessionDetailComponent = undefined;
     }
+    if (state.overlay.state === "provider-workflow") {
+      if (!this.providerPickerComponent) this.showProviderPicker();
+      this.providerPickerComponent?.setState(state.providerWorkflow);
+    } else if (this.providerPickerComponent) {
+      this.overlays.close();
+      this.providerPickerComponent = undefined;
+    }
+    if (
+      state.providerSelection &&
+      state.providerSelection.generation !== this.appliedProviderSelectionGeneration
+    ) {
+      this.appliedProviderSelectionGeneration = state.providerSelection.generation;
+      this.thinkingLevel = state.providerSelection.thinkingLevel;
+    }
+    this.scheduleProviderLoginHandoff(state);
     this.ui.requestRender();
     this.scheduleQueueDrain(state);
   }
@@ -907,6 +933,52 @@ export class InteractiveMode implements FooterSnapshotProvider {
     );
     this.currentSessionDetailComponent = component;
     this.overlays.show(component);
+  }
+
+  private showProviderPicker(): void {
+    const component = new ProviderPickerComponent(this.shell.state.providerWorkflow, {
+      onSearch: (query) => this.shell.dispatch({ type: "provider.search", query }),
+      onHighlightProvider: (providerId, generation) =>
+        this.shell.dispatch({ type: "provider.highlight", providerId, generation }),
+      onHighlightModel: (providerId, modelKey, generation) =>
+        this.shell.dispatch({
+          type: "provider.model.highlight",
+          providerId,
+          modelKey,
+          generation,
+        }),
+      onSelectProvider: (providerId, generation) =>
+        this.shell.dispatch({ type: "provider.select", providerId, generation }),
+      onSelectModel: (providerId, modelKey, generation) =>
+        this.shell.dispatch({
+          type: "provider.model.select",
+          providerId,
+          modelKey,
+          generation,
+        }),
+      onCancel: () => this.shell.dispatch({ type: "provider.workflow.cancel" }),
+    });
+    this.providerPickerComponent = component;
+    this.overlays.show(component);
+  }
+
+  private scheduleProviderLoginHandoff(state: TuiState): void {
+    const handoff = state.providerLoginHandoff;
+    if (!handoff || this.scheduledProviderHandoffId === handoff.id) return;
+    this.scheduledProviderHandoffId = handoff.id;
+    queueMicrotask(() => {
+      const current = this.shell.state.providerLoginHandoff;
+      if (!current || current.id !== handoff.id) {
+        this.scheduledProviderHandoffId = undefined;
+        return;
+      }
+      this.shell.dispatch({
+        type: "provider.login.handoff.consume",
+        handoffId: handoff.id,
+      });
+      this.scheduledProviderHandoffId = undefined;
+      this.submitCommand(`/login ${handoff.providerId}`);
+    });
   }
 
   private scheduleQueueDrain(state: TuiState): void {
@@ -955,10 +1027,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private compatibilityHandlers(): Readonly<Record<string, CompatibilityCommandHandler>> {
     const succeeded = (summary: string): TuiTerminalState => ({ state: "succeeded", summary });
     const handlers: Record<string, CompatibilityCommandHandler> = {
-      provider: async () => {
-        await this.openProviderSelector();
-        return succeeded("provider selector opened");
-      },
       login: async (args) => {
         await this.openLoginSelector(args[0]);
         return succeeded("login flow opened");
@@ -1106,46 +1174,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.thinkingLevel = controller.currentSelection.thinkingLevel;
           this.showNotice(`Model: ${model.provider}/${model.id}`);
         }, (error: unknown) => this.showNotice(String(error), "error"));
-      },
-      onCancel: () => this.overlays.close(),
-    });
-    this.overlays.show(modal);
-  }
-
-  private async openProviderSelector(): Promise<void> {
-    const controller = this.controller;
-    if (!controller) {
-      this.showNotice("Provider configuration is unavailable in demo mode.", "error");
-      return;
-    }
-    const statuses = await controller.getProviderStatuses();
-    const byId = new Map(statuses.map((status) => [status.id, status]));
-    const modal = new SearchableSelectorModal({
-      title: "/provider — all built-ins",
-      items: statuses.map((status) => ({
-        value: status.id,
-        label: status.name,
-        description: status.configured
-          ? `configured${status.source ? ` · ${status.source}` : ""}`
-          : status.interactiveAuthTypes.length > 0
-            ? `login: ${status.interactiveAuthTypes.join("/")}`
-            : "ambient credential required",
-      })),
-      maxVisible: 12,
-      onSelect: (item) => {
-        this.overlays.close();
-        const status = byId.get(item.value);
-        if (!status) return;
-        if (status.configured) {
-          void this.openControllerModelSelector(status.id);
-        } else if (status.interactiveAuthTypes.length > 0) {
-          void this.startLogin(status.id, status.interactiveAuthTypes);
-        } else {
-          this.showNotice(
-            `${status.name} uses ambient credentials. Configure its environment/profile, then reopen /provider.`,
-            "error",
-          );
-        }
       },
       onCancel: () => this.overlays.close(),
     });

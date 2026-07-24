@@ -6,6 +6,15 @@ import type {
 import type { SessionListResult } from "../sessions/types.ts";
 import type { SessionDetailResult } from "../sessions/types.ts";
 import type { SessionPreviewResult } from "../sessions/types.ts";
+import type { Api, Model } from "../../types.ts";
+import type {
+  ProviderLoginHandoff,
+  ProviderModelsResult,
+  ProviderSelectionResult,
+  ProviderSelectionSnapshot,
+  ProviderStatusResult,
+  ProviderWorkflowState,
+} from "../providers/types.ts";
 
 export type Loadable<T> =
   | { state: "idle" }
@@ -48,7 +57,8 @@ export type TuiOverlayState =
   | { state: "closed" }
   | { state: "command-palette"; sourceInvocationId: string }
   | { state: "session-picker"; sourceInvocationId: string }
-  | { state: "current-session-detail"; sourceInvocationId: string };
+  | { state: "current-session-detail"; sourceInvocationId: string }
+  | { state: "provider-workflow"; sourceInvocationId: string };
 
 export interface CurrentSessionDetailState {
   generation: number;
@@ -60,6 +70,7 @@ export interface CurrentSessionDetailState {
 
 export interface TuiCapabilitySnapshot {
   sessionCatalog: { available: boolean; reason?: string };
+  providerWorkflow: { available: boolean; reason?: string };
 }
 
 export interface TuiState {
@@ -72,6 +83,9 @@ export interface TuiState {
   overlay: TuiOverlayState;
   sessionPicker: SessionPickerState;
   currentSessionDetail: CurrentSessionDetailState;
+  providerWorkflow: ProviderWorkflowState;
+  providerSelection?: ProviderSelectionSnapshot;
+  providerLoginHandoff?: ProviderLoginHandoff;
   viewportClearRevision: number;
   activeTurn?: number;
   steeringCount: number;
@@ -126,6 +140,31 @@ export type TuiEffect =
       generation: number;
       previewRequestId: string;
       sessionId: string;
+    }
+  | {
+      type: "provider.status";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      statusRequestId: string;
+    }
+  | {
+      type: "provider.models";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      modelsRequestId: string;
+      providerId: string;
+    }
+  | {
+      type: "provider.select-model";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      selectionRequestId: string;
+      providerId: string;
+      modelKey: string;
+      model: Model<Api>;
     };
 
 export type TuiAction =
@@ -155,6 +194,23 @@ export type TuiAction =
   | { type: "session.picker.close" }
   | { type: "timeline.viewport.clear" }
   | { type: "session.current.close" }
+  | { type: "provider.search"; query: string }
+  | { type: "provider.highlight"; generation: number; providerId: string }
+  | {
+      type: "provider.model.highlight";
+      generation: number;
+      providerId: string;
+      modelKey: string;
+    }
+  | { type: "provider.select"; generation: number; providerId: string }
+  | {
+      type: "provider.model.select";
+      generation: number;
+      providerId: string;
+      modelKey: string;
+    }
+  | { type: "provider.workflow.cancel" }
+  | { type: "provider.login.handoff.consume"; handoffId: string }
   | { type: "turn.set"; turn?: number }
   | { type: "queue.counts"; steering: number; followUp: number }
   | { type: "transition.freeze"; frozen: boolean }
@@ -207,6 +263,33 @@ export type TuiResult =
       previewRequestId: string;
       sessionId: string;
       result: SessionPreviewResult;
+    }
+  | {
+      type: "provider.status.completed";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      statusRequestId: string;
+      result: ProviderStatusResult;
+    }
+  | {
+      type: "provider.models.completed";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      modelsRequestId: string;
+      providerId: string;
+      result: ProviderModelsResult;
+    }
+  | {
+      type: "provider.select-model.completed";
+      effectId: string;
+      correlationId: string;
+      generation: number;
+      selectionRequestId: string;
+      providerId: string;
+      modelKey: string;
+      result: ProviderSelectionResult;
     };
 
 export interface TuiReduceOutput {

@@ -2,7 +2,6 @@ import type { TuiEffect } from "../application/types.ts";
 import type { CommandDefinition, CommandIntent } from "./types.ts";
 
 const COMPATIBILITY_COMMANDS = [
-  ["provider", "Configure provider", "configuration", "reject", 0, 0],
   ["login", "Authenticate provider", "configuration", "reject", 0, 1],
   ["logout", "Remove credential", "configuration", "reject", 0, 1],
   ["model", "Switch model", "configuration", "reject", 0, 0],
@@ -100,6 +99,39 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       };
     },
   }, {
+    canonicalName: "provider",
+    aliases: [],
+    description: "Configure provider",
+    category: "configuration",
+    presentationOrder: 4,
+    arguments: { min: 0, max: 0 },
+    draftConsumption: "consume",
+    historyPolicy: "ephemeral",
+    activeQueryPolicy: "reject",
+    executionStrategy: "native",
+    availability: (state) => state.capabilities.providerWorkflow.available
+      ? { state: "available" }
+      : {
+          state: "disabled",
+          reason: state.capabilities.providerWorkflow.reason ??
+            "Provider configuration is unavailable.",
+        },
+    redact: (args) => args,
+    handler: (context, intent) => {
+      const generation = context.state.providerWorkflow.generation + 1;
+      const statusRequestId = `${intent.commandInvocationId}:provider-status:${generation}`;
+      return {
+        state: "effect",
+        effect: {
+          type: "provider.status",
+          effectId: statusRequestId,
+          correlationId: intent.commandInvocationId,
+          generation,
+          statusRequestId,
+        },
+      };
+    },
+  }, {
     canonicalName: "clear",
     aliases: [],
     description: "Clear only committed viewport rows",
@@ -125,7 +157,7 @@ export function builtinCommandDefinitions(): readonly CommandDefinition[] {
       aliases: [],
       description,
       category,
-      presentationOrder: index + 4,
+      presentationOrder: index + 5,
       arguments: {
         min,
         max,
