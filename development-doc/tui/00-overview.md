@@ -1,5 +1,8 @@
 # RunLedger TUI 复刻计划 · 00 总览
 
+> 当前实施入口:截至 2026-07-24,M0-M7 复刻已经完成;下一轮 command/session 与
+> 整体应用结构完善以 `11-tui-structure-completion-plan.md` 为权威计划。
+
 > 本目录是 RunLedger 复刻 pi TUI 的开发计划。pi 的 TUI 由两部分组成:
 >
 > 1. `@earendil-works/pi-tui`(`pi/packages/tui/`)—— 通用 TUI 框架,差分渲染 + Kitty 键盘协议 + Overlay 系统,依赖极轻(仅 `marked` / `get-east-asian-width` / `chalk`);
@@ -103,8 +106,10 @@ development-doc/tui/            本计划所在目录
 | `08-cross-project-lessons.md` | 从 `claude-code-bun` REPL 提取的、与 TUI 框架无关的设计原则集结,作参照用 |
 | `09-remote-control-roadmap.md` | 进程级 singleton handle + 远程控制桥的远期设计,本期 M0–M7 不实现 |
 | `10-documentation-update-plan.md` | `08` / `09` 两份文档的历史更新计划与验收边界 |
+| `11-tui-structure-completion-plan.md` | 当前权威实施计划:command/session、统一 Timeline、应用协调层与严格前后置门禁 |
 
-阅读顺序:`00 → 01 → 02 → 03`(主路径)→ `04/05/06`(渲染与定制)→ `07`(落地节奏)→ `08/09`(跨项目参照与远期设计,参考性阅读)。`10` 是历史更新计划,仅在追溯设计来源或验收边界时阅读。
+阅读顺序:`00 → 11`(当前实施主路径)→ `01/02/03`(历史架构与组件细节)→
+`04/05/06`(渲染与定制)→ `07/10`(历史计划)→ `08/09`(跨项目参照与远期设计)。
 
 ---
 
@@ -145,7 +150,7 @@ development-doc/tui/            本计划所在目录
 | 设计维度 | `claude-code-bun` 实现 | RunLedger 适配形态 | 是否采纳 |
 |----------|-----------------------|---------------------|----------|
 | 入口厚度 | `replLauncher.tsx` 28 行 + 动态 import 懒加载 | `src/cli/main.ts` 极薄入口,theme/selectors 由 InteractiveMode init 阶段按需 import | 采纳,见 `01-architecture.md` §8 |
-| 状态架构 | Zustand-style `useAppState` 外置 store | `Agent` 是唯一状态源,所有 InteractiveMode 字段读快照 | 采纳,见 `01-architecture.md` §6.1 |
+| 状态架构 | 自定义 external store + `useSyncExternalStore`/`useAppState` facade | `Agent` 是唯一状态源,所有 InteractiveMode 字段读快照 | 采纳,见 `01-architecture.md` §6.1 |
 | 特性裁剪 | `featureAdapters.ts` 编译期 no-op 替换 | `src/tui/feature-adapters.ts` 接入点为本期预留 | 接入点预留,见 `02-component-spec.md` §0 |
 | 拆分有据 | `initReplBridge`/`replBridge` 因 bundle 膨胀拆,file header 注明拆分理由 | 未来 `interactive-mode.ts` 超 800 行按事件适配/status/overlay 拆,头注释说明 | 原则采纳,见 `02-component-spec.md` §1.1 |
 | 双屏互斥 | `'prompt'\\|'transcript'` 早 return 分支隔离 | Overlay 选择器打开时由 pi-tui `showOverlay` 隔离;主对话屏 vs selector 互斥 | 原则已天然覆盖,见 `04-rendering.md` §3 |

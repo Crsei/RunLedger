@@ -2,15 +2,24 @@
 
 > 文档属性：本主题唯一权威计划与执行状态账本。
 >
-> 状态：draft。
+> 状态：in progress（M0、M1 核心、M3 核心与 M4 backend 已实现；M2 生产工具迁移、M5 CLI/TUI 产品面仍未闭环）。
 >
 > 建立日期：2026-07-21。
+>
+> 最近实施审阅：2026-07-24，基于当前分支 `feat/agent-loop-resurrect` 的 `678b046`、当前源码、测试与本机 bwrap probe。
 >
 > 目标目录沿用需求中的 worktree-sandbox-permisson 拼写；代码、类型和正文统一使用 permission。
 >
 > 本文只规划 RunLedger 的实现，不在本次文档任务中修改运行时代码。
 >
 > Runtime 公共契约来源：[`../runtime/00-reference.md`](../runtime/00-reference.md) 与 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)。
+
+### 实施审阅标记说明
+
+- `[x]`：当前分支已有源码与测试证据，原条目的完整语义已实现。
+- `[ ]`：未实现或只实现了原条目的一部分；部分实现会在条目后明确写出剩余缺口。
+- 本次审阅只标记当前分支可验证的状态，不把独立 worktree 中未合入的历史尝试、类型占位或 fake-only contract 测试当作产品完成。
+- 主要实现落在 `65f9054`（Phase 0 contracts）、`004a252`（security/worktree/production composition）、`f3e2ba6`（approval durability）、`10f2908`（workspace cleanup/recovery）与 `5cfaaa3`（capability event-head binding）。
 
 ## 0. 参考基线与结论边界
 
@@ -1055,49 +1064,49 @@ node bin/runledger.js --help
 
 ### M0：Runtime 契约可消费
 
-- [ ] Runtime Phase 2/3 workspace/security schema、events、projections 与 ports 已冻结。
-- [ ] 本计划 adapters 通过同一 contract fixtures，没有重复 envelope/decision/receipt/event 类型。
-- [ ] 文件所有权检查证明独占实现阶段未修改串行集成面。
+- [x] Runtime Phase 2/3 workspace/security schema、events、projections 与 ports 已冻结。
+- [x] 本计划 adapters 通过同一 contract fixtures，没有重复 envelope/decision/receipt/event 类型。
+- [ ] 文件所有权检查证明独占实现阶段未修改串行集成面。（未满足：`004a252` 同一提交同时改动 security/worktree 与 runtime/session/storage/CLI 等共享集成面，无法形成计划要求的独占阶段证据。）
 
 ### M1：可审计 permission
 
-- [ ] 生产默认不再 AllowAll。
-- [ ] deny/ask/allow 确定性解析。
-- [ ] allow-once TUI/headless deny。
-- [ ] `permission.requested/decided/expired/revoked` 按 Runtime schema 入 Event Store。
+- [x] 生产默认不再 AllowAll。
+- [x] deny/ask/allow 确定性解析。
+- [ ] allow-once TUI/headless deny。（部分实现：`ApprovalCoordinator`、allow-once 与 headless fail-closed 已实现；缺少 TUI permission overlay/交互组件。）
+- [x] `permission.requested/decided/expired/revoked` 按 Runtime schema 入 Event Store。
 
 ### M2：唯一执行面
 
-- [ ] 所有内置工具经 ExecutionGateway。
-- [ ] path canonicalization 与 metadata protection。
-- [ ] background/fetch/temp spill 无旁路。
+- [ ] 所有内置工具经 ExecutionGateway。（部分实现：生产 composition 已接入 ToolExecutionGateway；`scripts/check-execution-boundaries.ts` 仍为 9 个 `src/runtime/tools/*` 文件保留 raw I/O legacy allowlist。）
+- [x] path canonicalization 与 metadata protection。
+- [ ] background/fetch/temp spill 无旁路。（未满足：`bash.ts` 仍直接 spawn，`web-fetch.ts` 仍直接 fetch，多个 stdlib 工具仍直接 import `node:fs`。）
 
 ### M3：session worktree
 
-- [ ] clean Git worktree create/list/show/remove dry-run。
-- [ ] registry + lock + replay。
-- [ ] PersistedWorkspaceBinding 可投影 WorkspaceBindingRef/Envelope 并支持 resume。
-- [ ] source repo 默认不被 agent 修改。
+- [ ] clean Git worktree create/list/show/remove dry-run。（部分实现：create/list/remove dry-run 与 apply preview 已实现；尚无计划定义的 CLI `worktree show` 产品入口。）
+- [x] registry + lock + replay。
+- [x] PersistedWorkspaceBinding 可投影 WorkspaceBindingRef/Envelope 并支持 resume。
+- [ ] source repo 默认不被 agent 修改。（部分实现：managed worktree 路径可隔离 source；生产 binding 仍允许 `kind: "source"`，CLI 尚未提供默认 worktree 选择与可见策略。）
 
 ### M4：真实 sandbox
 
-- [ ] Linux bwrap enforced。
-- [ ] macOS Seatbelt capability 明确。
-- [ ] Windows external/unavailable 诚实报告。
-- [ ] restrictive backend 缺失 fail closed。
+- [x] Linux bwrap enforced。
+- [x] macOS Seatbelt capability 明确。
+- [x] Windows external/unavailable 诚实报告。
+- [x] restrictive backend 缺失 fail closed。
 
 ### M5：产品闭环
 
-- [ ] CLI flags/help。
-- [ ] TUI prompt/status/snapshot。
-- [ ] security/worktree/session 全链路 E2E。
-- [ ] Runtime live/replay projection 与真实 adapter receipts 一致。
-- [ ] 文档、AGENTS.md、README 与实际状态同步。
+- [ ] CLI flags/help。（未实现：`src/cli/args.ts` 与 help 尚无 permission/sandbox/network/worktree flags 或 worktree 子命令。）
+- [ ] TUI prompt/status/snapshot。（未实现：尚无 `permission-prompt.ts`、`security-status.ts` 或对应 snapshot 覆盖。）
+- [ ] security/worktree/session 全链路 E2E。（部分实现：已有 production composition、真实 Git worktree、governed tool execution 与 resume 测试；仍缺计划指定的真实 CLI/TUI + real sandbox 联合 E2E。）
+- [x] Runtime live/replay projection 与真实 adapter receipts 一致。
+- [ ] 文档、AGENTS.md、README 与实际状态同步。（部分实现：Runtime 文档已覆盖治理边界；AGENTS.md、README 与 CLI help 尚未同步本计划产品状态。）
 
 ### M6：下游与企业扩展
 
-- [ ] Artifact/Verification/Multi-Agent/Control Plane 只通过本计划实现的 ports 使用 workspace/security 能力。
-- [ ] managed policy、tenant/RBAC、credential 与 remote/CI executor 只有在 Phase 8 联合 E2E 后才标记可用。
+- [ ] Artifact/Verification/Multi-Agent/Control Plane 只通过本计划实现的 ports 使用 workspace/security 能力。（部分实现：四类 consumer 与 adapter 已存在；部分 Runtime integration 仍直接 import `src/security/**`、`src/worktree/**` 内部实现，尚未达到 only-through-ports。）
+- [ ] managed policy、tenant/RBAC、credential 与 remote/CI executor 只有在 Phase 8 联合 E2E 后才标记可用。（部分实现：已有 enterprise adapter 与 attack-matrix 测试；没有真实 managed/KMS/remote/CI 联合环境验收，因此仍不得标记产品可用。）
 
 ## 10. 完成标准
 
@@ -1106,17 +1115,17 @@ node bin/runledger.js --help
 - [ ] M0–M6 均有对应 commit、测试和联合门禁证据；只完成本地 M1–M5 时只能标记 local baseline complete。
 - [ ] Worktree、permission、approval、sandbox 在类型、配置、UI 和文档中没有混用。
 - [ ] 模型可调用的生产工具不存在 raw fs/spawn/fetch 旁路。
-- [ ] 默认配置在交互编码中是 workspace-write + on-request + network deny。
-- [ ] approvalPolicy=never 不会扩大权限。
-- [ ] restrictive sandbox unavailable 时不静默降级。
-- [ ] session 的 sourceRepo/effectiveCwd/worktreeId/baseCommit 可审计并可恢复。
-- [ ] worktree 删除只作用于验证过的 managed target，dirty/active 默认拒绝。
-- [ ] workspace/permission/sandbox 事件符合 Runtime v3 schema，并可从 Event Store 顺序重放为一致 projection。
+- [ ] 默认配置在交互编码中是 workspace-write + on-request + network deny。（配置 resolver 的内建默认值已实现；CLI 默认产品组合仍依赖外部 production adapter provider，尚未闭环。）
+- [x] approvalPolicy=never 不会扩大权限。
+- [x] restrictive sandbox unavailable 时不静默降级。
+- [x] session 的 sourceRepo/effectiveCwd/worktreeId/baseCommit 可审计并可恢复。
+- [x] worktree 删除只作用于验证过的 managed target，dirty/active 默认拒绝。
+- [x] workspace/permission/sandbox 事件符合 Runtime v3 schema，并可从 Event Store 顺序重放为一致 projection。
 - [ ] Runtime contract 与本计划实现之间只有单向 import 和 port adapter，没有重复公共类型或反向依赖。
 - [ ] 共享 runtime/session/storage/CLI/TUI 文件只在记录过的串行集成窗口修改。
-- [ ] 安全配置解析失败不会回退到空配置或 AllowAll。
+- [x] 安全配置解析失败不会回退到空配置或 AllowAll。
 - [ ] Linux 强隔离 E2E 通过；其他平台只声明真实验证过的能力。
-- [ ] npm run check、npm test、npm run build、git diff --check 全绿。
+- [x] npm run check、npm test、npm run build、git diff --check 全绿。（2026-07-24 审阅：287 test files / 1823 tests passed，另 1 个需真实凭据的 live test skipped。）
 - [ ] README、AGENTS.md、CLI help 与实现一致。
 
 ## 11. 明确不接受的捷径
