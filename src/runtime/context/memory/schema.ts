@@ -7,8 +7,6 @@
 
 import type { MemoryRecord, MemorySearchReceipt } from "./types.ts";
 
-export const MEMORY_SCHEMA_VERSION = 1 as const;
-
 export function isMemoryRecord(value: unknown): value is MemoryRecord {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return false;

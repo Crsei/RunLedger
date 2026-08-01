@@ -1,6 +1,5 @@
 {
   "_purpose": "M0 duplicate identity fixture; stable duplicate diagnostics are pending",
-  "schemaVersion": 1,
   "entries": [
     { "id": "example.duplicate", "version": "1.0.0", "digest": "same" },
     { "id": "example.duplicate", "version": "1.0.0", "digest": "same" }

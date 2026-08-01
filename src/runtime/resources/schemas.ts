@@ -5,7 +5,7 @@
  * fail-closed 校验，并加入 exact identity、receipt expiry 和 digest 绑定测试。
  */
 
-import { canonicalDigest } from "../protocol/v3/canonical-json.ts";
+import { canonicalDigest } from "../protocol/canonical-json.ts";
 import type { ResourceIdentity, RuntimeToolInvocation } from "./types.ts";
 
 export function resourceIdentityKey(identity: ResourceIdentity): string {

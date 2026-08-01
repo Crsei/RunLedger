@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createLocalIdentityContext } from "../../src/runtime/identity/local-principal.ts";
-import { isWorkspaceExecutionEnvelope } from "../../src/runtime/protocol/v3/workspace.ts";
-import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
+import { isWorkspaceExecutionEnvelope } from "../../src/runtime/protocol/workspace.ts";
+import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 
 describe("current Runtime/security boundary contract", () => {
 	it("accepts a typed workspace envelope without owning policy evaluation", () => {

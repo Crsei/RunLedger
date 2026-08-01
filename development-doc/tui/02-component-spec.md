@@ -797,7 +797,7 @@ InteractiveMode
   └── KeybindingsManager (pi-tui via @earendil-works/pi-tui)
 ```
 
-## §10 M5 三态组件扩展(V2)
+## §10 M5 三态组件扩展
 
 M5 实现把 `ToolCallComponent` / `DiffPreviewComponent` / `BashExecutionComponent` 统一成同一份四态图标 + 行协议:
 - 状态枚举:`pending` (⏳) / `running` (…) / `ok` (✓) / `error` (✗);图标遵循 05 §2 色盲安全,**不**依赖颜色。
@@ -856,4 +856,3 @@ $ npm run build  ⏳
 - `setStatus / setPartialResult / setError / finalize(result, isError)` 同 SetF/exist API;
 - 折叠态单行:`icon [toolName <firstLineOfResult>]`,其中 result summary 仅在 ok/error 态显示,running/pending 态隐藏;
 - error 态追加 `| ERR: <message>` 至同一行末尾(非折叠时不打断布局)。
-

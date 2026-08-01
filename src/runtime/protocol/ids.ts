@@ -1,5 +1,5 @@
 /**
- * Runtime v3 的稳定 ID 基础类型。
+ * Runtime 的稳定 ID 基础类型。
  *
  * TODO(runtime-phase-0): 完成 authority/tenant/principal 与所有业务 ID 的
  * 持久化格式、迁移规则和跨进程签名约束。本文件只提供可编译的前置合同，

@@ -62,7 +62,7 @@ export function createStdlibTools(cwd: string = process.cwd()): ToolRegistry {
 }
 
 /**
- * 创建带 ledger 注入的扩展工具集(stdlib + V2 Task 系列 + TodoWrite)。
+ * 创建带 ledger 注入的扩展工具集(stdlib + Task 系列 + TodoWrite)。
  * 与 pi "全 18 工具集"对齐:9 stdlib + 3 Task + 1 TodoWrite + MultiEdit +
  * WebFetch + Skill + NotebookEdit。
  */

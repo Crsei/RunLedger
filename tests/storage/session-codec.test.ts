@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentMessage } from "../../src/runtime/types.ts";
 import { isLedgerLocked } from "../../src/runtime/ledger/lockfile.ts";
-import type { LedgerEntry, LedgerHeader } from "../../src/runtime/ledger/types.ts";
+import {
+  UnsupportedSessionFormatError,
+  type LedgerEntry,
+  type LedgerHeader,
+} from "../../src/runtime/ledger/types.ts";
 import { newId } from "../../src/runtime/ledger/types.ts";
 import { appendRuntimeConfig, replaySession } from "../../src/storage/session-codec.ts";
 import { SessionManager } from "../../src/storage/session-manager.ts";
@@ -29,14 +33,13 @@ function messageEntry(header: LedgerHeader, message: AgentMessage): LedgerEntry 
     timestamp: Date.now(),
     type: "message",
     payload: {
-      schema: "agent-message/v1",
       role: message.role,
       message,
     },
   };
 }
 
-describe("session codec v2", () => {
+describe("session codec", () => {
   it("跨 reopen 无损恢复 thinking signature、tool arguments/result 与 runtime config", async () => {
     const cwd = await tempDir();
     const manager = await SessionManager.create({ cwd, sessionDir: cwd });
@@ -87,64 +90,20 @@ describe("session codec v2", () => {
     const replay = await replaySession(reopened.ledger());
 
     expect(reopened.sessionId()).toBe(sessionId);
-    expect(reopened.ledger().header().version).toBe(2);
     expect(replay.messages).toEqual(messages);
     expect(replay.config).toEqual({ provider: "fixture", model: "fixture-1", thinkingLevel: "high" });
     expect(replay.warnings).toEqual([]);
     await reopened.closeAll();
   });
 
-  it("legacy v1 只恢复安全文本并给出 warning，不伪造 tool args/signature", async () => {
+  it("拒绝不支持的 session 格式且不修改源文件", async () => {
     const cwd = await tempDir();
-    const filePath = join(cwd, "legacy.jsonl");
-    const header: LedgerHeader = {
-      type: "ledger",
-      version: 1,
-      id: "legacy-header",
-      createdAt: 1,
-      sessionId: "legacy-session",
-      metadata: { cwd },
-    };
-    const entries: LedgerEntry[] = [
-      {
-        id: "u1",
-        sessionId: header.sessionId,
-        parentId: header.id,
-        timestamp: 2,
-        type: "message",
-        payload: { role: "user", content: "hello" },
-      },
-      {
-        id: "a1",
-        sessionId: header.sessionId,
-        parentId: "u1",
-        timestamp: 3,
-        type: "message",
-        payload: { role: "assistant", content: "safe answer", stopReason: "toolUse" },
-      },
-      {
-        id: "t1",
-        sessionId: header.sessionId,
-        parentId: "a1",
-        timestamp: 4,
-        type: "tool_result",
-        payload: { toolCallId: "unknown", toolName: "bash", content: "legacy audit" },
-      },
-    ];
-    await writeFile(filePath, [header, ...entries].map((row) => JSON.stringify(row)).join("\n") + "\n");
+    const filePath = join(cwd, "unsupported.jsonl");
+    const original = JSON.stringify({ type: "unsupported-ledger", payload: "unchanged" }) + "\n";
+    await writeFile(filePath, original);
 
-    const manager = await SessionManager.open(filePath);
-    const replay = await replaySession(manager.ledger());
-
-    expect(replay.warnings).toHaveLength(1);
-    expect(replay.warnings[0]).toContain("Legacy session v1");
-    expect(replay.messages).toEqual([
-      { role: "user", content: [{ type: "text", text: "hello" }] },
-      { role: "assistant", content: [{ type: "text", text: "safe answer" }], stopReason: "toolUse" },
-    ]);
-    expect(JSON.stringify(replay.messages)).not.toContain("unknown");
-    expect(replay.auditEntries).toEqual([entries[2]]);
-    await manager.closeAll();
+    await expect(SessionManager.open(filePath)).rejects.toBeInstanceOf(UnsupportedSessionFormatError);
+    await expect(readFile(filePath, "utf8")).resolves.toBe(original);
   });
 });
 

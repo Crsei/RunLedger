@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
-import { RUNTIME_EVENT_TYPES } from "../../../src/runtime/protocol/v3/events.ts";
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import { RUNTIME_EVENT_TYPES } from "../../../src/runtime/protocol/events.ts";
 import { isModelRouteDecision } from "../../../src/runtime/model-routing/schema.ts";
 import type { ModelRouteDecision } from "../../../src/runtime/model-routing/types.ts";
 import { isPlanModeState } from "../../../src/runtime/modes/plan/schema.ts";

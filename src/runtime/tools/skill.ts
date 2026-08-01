@@ -1,9 +1,9 @@
 /**
- * Skill 工具占位 —— V2 的"调一个 handler/skill"。
+ * Skill 工具占位 —— 当前的"调一个 handler/skill"。
  *
  * 与 claude-code-bun docs/tools/skill-tool.mdx 区别:
  *   - claude 的 Skill 是文件级 plugin/manifest 体系(目录 skill.md + scripts)
- *   - 本期 V2 先做"占位工具":通过 handler registry 转发到调用方注入的回调。
+ *   - 当前先做"占位工具":通过 handler registry 转发到调用方注入的回调。
  *
  * 占位语义:
  *   - execute 仅查找 options.handlers[name];若不存在,return text "skill not registered"。
@@ -40,7 +40,7 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
     name: "Skill",
     label: "Skill",
     description:
-      "调用一个已注册 skill handler。本期 V2 占位:不支持 manifest 加载,仅转发到注入的 handlers。",
+      "调用一个已注册 skill handler。当前占位实现不支持 manifest 加载,仅转发到注入的 handlers。",
     parameters: skillSchema,
     isReadOnly: () => false,
     isConcurrencySafe: () => false,

@@ -26,12 +26,38 @@ export type LedgerEntryType =
  */
 export interface LedgerHeader {
   type: "ledger";
-  version: 1 | 2;
   id: string;
   createdAt: number;
   sessionId: string;
   /** 可选 metadata,例如 cwd / model / system prompt hash(`// TODO(pi): 完整 metadata`) */
   metadata?: Record<string, unknown>;
+}
+
+export class UnsupportedSessionFormatError extends Error {
+  readonly code = "unsupported_session_format" as const;
+  readonly filePath: string;
+
+  constructor(filePath: string) {
+    super(`unsupported session format: ${filePath}`);
+    this.name = "UnsupportedSessionFormatError";
+    this.filePath = filePath;
+  }
+}
+
+export function isCurrentLedgerHeader(value: unknown): value is LedgerHeader {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const allowedFields = new Set(["type", "id", "createdAt", "sessionId", "metadata"]);
+  return (
+    Object.keys(candidate).every((key) => allowedFields.has(key)) &&
+    candidate.type === "ledger" &&
+    typeof candidate.id === "string" &&
+    typeof candidate.createdAt === "number" &&
+    Number.isFinite(candidate.createdAt) &&
+    typeof candidate.sessionId === "string" &&
+    (candidate.metadata === undefined ||
+      (typeof candidate.metadata === "object" && candidate.metadata !== null && !Array.isArray(candidate.metadata)))
+  );
 }
 
 /**
@@ -47,12 +73,42 @@ export interface LedgerEntry {
   payload: Record<string, unknown>;
 }
 
+const LEDGER_ENTRY_TYPES: readonly LedgerEntryType[] = [
+  "session",
+  "message",
+  "tool_call",
+  "tool_result",
+  "turn",
+  "agent_event",
+  "custom",
+];
+
+export function isCurrentLedgerEntry(value: unknown): value is LedgerEntry {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  const allowedFields = new Set(["id", "sessionId", "parentId", "timestamp", "type", "payload"]);
+  return (
+    Object.keys(candidate).length === allowedFields.size &&
+    Object.keys(candidate).every((key) => allowedFields.has(key)) &&
+    typeof candidate.id === "string" &&
+    typeof candidate.sessionId === "string" &&
+    typeof candidate.parentId === "string" &&
+    typeof candidate.timestamp === "number" &&
+    Number.isFinite(candidate.timestamp) &&
+    typeof candidate.type === "string" &&
+    (LEDGER_ENTRY_TYPES as readonly string[]).includes(candidate.type) &&
+    typeof candidate.payload === "object" &&
+    candidate.payload !== null &&
+    !Array.isArray(candidate.payload)
+  );
+}
+
 /**
  * LedgerSink 抽象。事件 sink 接口。
  * 实现方负责把 header 与 entries 持久化(或仅留在内存)。
  *
- * 约定:实现方不得在 append 中抛错(参考 pi 的 Result 风格)。
- * 失败以 `lastError` 暴露,本期不强制 try/catch,直接吞错写日志。
+ * 约定:entry 写入失败以 `lastError` 暴露；持久化格式无法通过 current
+ * contract 时必须拒绝并抛出 UnsupportedSessionFormatError。
  */
 export interface LedgerSink {
   readonly sessionId: string;
@@ -72,10 +128,10 @@ export interface LedgerSink {
   readonly lastError?: unknown;
   /**
    * 单调递增的 turn / entry 序号(本期实现是 entry-based high-water mark)。
-   * V2 默认实现:返回该 ledger 已 append 的 entry 数,即"下次 append 时此值会 +1"。
+   * 默认实现:返回该 ledger 已 append 的 entry 数,即"下次 append 时此值会 +1"。
    * 实现可重写以持久化进 header.metadata.highWaterMark,跨重启继承。
    *
-   * 这是 M3 的 V2 high-water mark 跟踪;task / turn 系列工具与 lockfile
+   * 这是 task / turn 系列工具与 lockfile 的 high-water mark 跟踪;
    * 都依赖此值判断"已处理过的 entry 最大序号"。
    */
   highWaterMark?(): number;

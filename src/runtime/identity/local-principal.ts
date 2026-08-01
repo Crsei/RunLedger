@@ -7,7 +7,7 @@
 
 import { createHash } from "node:crypto";
 import { hostname } from "node:os";
-import { createRuntimeId, type AuthorityId, type PrincipalId, type TenantId } from "../protocol/v3/ids.ts";
+import { createRuntimeId, type AuthorityId, type PrincipalId, type TenantId } from "../protocol/ids.ts";
 import type { RuntimeIdentityContext } from "./types.ts";
 
 function localPrincipalSeed(): string {

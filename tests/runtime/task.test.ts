@@ -1,5 +1,5 @@
 /**
- * V2 Task 系列单测 —— Task/TaskUpdate/TaskList 工具 + ledger 持久化重放。
+ * Task 系列单测 —— Task/TaskUpdate/TaskList 工具 + ledger 持久化重放。
  *
  * 覆盖:
  *   1. createTaskTool 写 ledger custom entry,返回带 taskId 的 text。
@@ -20,7 +20,7 @@ import {
 } from "../../src/runtime/tasks/task-tools.ts";
 import type { LedgerEntry } from "../../src/runtime/ledger/types.ts";
 
-describe("V2 Task tools", () => {
+describe("Task tools", () => {
   it("Task create 写 ledger custom entry,返回 taskId", async () => {
     const ledger = new MemoryLedger();
     const tool = createTaskTool({ ledger });

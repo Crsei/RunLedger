@@ -1,8 +1,8 @@
 /**
- * Runtime v3 事件目录与 envelope 骨架。
+ * 当前 Runtime 事件目录与 envelope。
  *
  * TODO(runtime-phase-0): 把每个事件映射到独立的 payload schema，增加状态转换
- * 校验、hash-chain 计算和 unknown-event/version fence。当前 payload 仍是有界
+ * 校验、hash-chain 计算和 unknown-event fence。当前 payload 仍是有界
  * Record，不能被当作最终的生产 event store 合同。
  */
 
@@ -14,8 +14,6 @@ import type {
 	TenantId,
 	TraceId,
 } from "./ids.ts";
-
-export const RUNTIME_SCHEMA_VERSION = 3 as const;
 
 export const RUNTIME_EVENT_TYPES = [
 	"session.started",
@@ -80,11 +78,10 @@ export const RUNTIME_EVENT_TYPES = [
 
 export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
 
-export interface RuntimeEventEnvelopeV3<
+export interface RuntimeEventEnvelope<
 	TType extends RuntimeEventType = RuntimeEventType,
 	TPayload extends Record<string, unknown> = Record<string, unknown>,
 > {
-	schemaVersion: typeof RUNTIME_SCHEMA_VERSION;
 	authorityId: AuthorityId;
 	tenantId: TenantId;
 	principalId: PrincipalId;
@@ -100,7 +97,7 @@ export interface RuntimeEventEnvelopeV3<
 	payload: TPayload;
 }
 
-export type RuntimeEventV3 = RuntimeEventEnvelopeV3;
+export type RuntimeEvent = RuntimeEventEnvelope;
 
 export function isKnownRuntimeEventType(value: unknown): value is RuntimeEventType {
 	return typeof value === "string" && (RUNTIME_EVENT_TYPES as readonly string[]).includes(value);

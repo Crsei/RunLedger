@@ -5,8 +5,8 @@
  * 转换。这里仅保存 descriptor/ref，不保存 loader、client、handler 或进程句柄。
  */
 
-import type { CapabilityClaim, CapabilityDecision } from "../protocol/v3/capability.ts";
-import type { ResourceId, SnapshotId } from "../protocol/v3/ids.ts";
+import type { CapabilityClaim, CapabilityDecision } from "../protocol/capability.ts";
+import type { ResourceId, SnapshotId } from "../protocol/ids.ts";
 
 export type ResourceKind = "plugin" | "skill" | "hook" | "mcp-server" | "mcp-tool";
 export type ResourceSource = "builtin" | "user" | "project" | "plugin" | "session";
@@ -104,7 +104,6 @@ export interface RuntimeResourceSnapshot {
 }
 
 export interface ResourceLifecycleEvent {
-	schemaVersion: 1;
 	identity: ResourceIdentity;
 	state: "discovered" | "approved" | "revoked" | "activated" | "deactivated" | "failed";
 	snapshotId: SnapshotId;

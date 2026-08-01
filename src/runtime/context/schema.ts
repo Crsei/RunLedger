@@ -7,8 +7,6 @@
 
 import type { ContextAssemblyReceipt } from "./types.ts";
 
-export const CONTEXT_SCHEMA_VERSION = 1 as const;
-
 export function isContextAssemblyReceipt(value: unknown): value is ContextAssemblyReceipt {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return false;

@@ -133,7 +133,6 @@ export async function runAgentLoop(
         timestamp: ts2,
         type: "message",
         payload: {
-          schema: "agent-message/v1",
           role: "user",
           content: p.content.map((c) => c.text).join(""),
           message: p,
@@ -183,7 +182,6 @@ export async function runAgentLoop(
             timestamp: pendingEnd,
             type: "message",
             payload: {
-              schema: "agent-message/v1",
               role: "user",
               content: pending.content.map((c) => c.text).join(""),
               message: pending,
@@ -312,7 +310,6 @@ export async function runAgentLoop(
           timestamp: ts,
           type: "message",
           payload: {
-            schema: "agent-message/v1",
             role: "assistant",
             stopReason: assistantStopReason,
             content: serializeAssistant(assistantMessage.content),
@@ -366,7 +363,6 @@ export async function runAgentLoop(
             timestamp: ts,
             type: "message",
             payload: {
-              schema: "agent-message/v1",
               role: "toolResult",
               message: msg,
             },

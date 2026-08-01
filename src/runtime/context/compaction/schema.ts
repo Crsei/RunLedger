@@ -7,8 +7,6 @@
 
 import type { CompactionCheckpoint } from "./types.ts";
 
-export const COMPACTION_SCHEMA_VERSION = 1 as const;
-
 export function isCompactionCheckpoint(value: unknown): value is CompactionCheckpoint {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return false;

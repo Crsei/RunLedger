@@ -1,13 +1,13 @@
 /**
- * V2 Task 系列 + MultiEdit + WebFetch + lockfile + high-water 演示。
+ * Task 系列 + MultiEdit + WebFetch + lockfile + high-water 演示。
  *
  * 用法:
  *   npx tsx examples/m3-demo.ts
  *
  * 行为(全程无网络,无 LLM):
  *   1. 开 JsonlLedger 到 tmp 目录(含 lockfile)
- *   2. createTaskTool / createTaskUpdateTool / createTaskListTool 演示 V2 任务 timeline
- *   3. createTodoWriteTool 作 V2 整盘覆盖演示
+ *   2. createTaskTool / createTaskUpdateTool / createTaskListTool 演示任务 timeline
+ *   3. createTodoWriteTool 作整盘覆盖演示
  *   4. highWaterMark 跟踪
  *   5. MultiEdit 多处编辑同一文件演示
  *   6. acquireLedgerLock 互斥验证
@@ -48,11 +48,11 @@ async function main() {
     await release();
     console.log("  isLocked after release =", await isLedgerLocked(fp));
 
-    console.log("\n=== phase 2: V2 Task 系列 timeline ===");
+    console.log("\n=== phase 2: Task 系列 timeline ===");
     const task = createTaskTool({ ledger });
     const up = createTaskUpdateTool({ ledger });
     const list = createTaskListTool({ ledger });
-    const a = (await task.execute("demo", { content: "实现 V2 Task 类型", priority: "high" })).details?.taskId;
+    const a = (await task.execute("demo", { content: "实现 Task 类型", priority: "high" })).details?.taskId;
     const b = (await task.execute("demo", { content: "lockfile 机制", priority: "high" })).details?.taskId;
     const c = (await task.execute("demo", { content: "high-water mark 演示", priority: "medium" })).details?.taskId;
     await up.execute("demo", { taskId: a as string, status: "in_progress" });
@@ -61,13 +61,13 @@ async function main() {
     console.log("  现存任务清单:");
     (await list.execute("demo", {})).content.forEach((c) => console.log("   ", (c as { text: string }).text));
 
-    console.log("\n  其中曾任 in_progress 的 task A 在 B 转为 in_progress 时已自动落 pending(V2 排他机制)");
+    console.log("\n  其中曾任 in_progress 的 task A 在 B 转为 in_progress 时已自动落 pending(排他机制)");
 
-    console.log("\n=== phase 3: TodoWrite 整盘覆盖 (V2 收口) ===");
+    console.log("\n=== phase 3: TodoWrite 整盘覆盖 ===");
     const todo = createTodoWriteTool({ ledger });
     const r = await todo.execute("demo", {
       todos: [
-        { content: "实现 V2 Task 类型", status: "completed" },
+        { content: "实现 Task 类型", status: "completed" },
         { content: "lockfile 机制", status: "completed" },
         { content: "high-water mark 演示", status: "in_progress" },
         { content: "M6 文档同步", status: "pending" },
@@ -94,7 +94,7 @@ async function main() {
     console.log("  MultiEdit 详情:", (er.content[0] as { text: string }).text);
     console.log("  最终文件内容:", await readFile(fp2, "utf8"));
 
-    console.log("\nAll V2 demos passed ✓");
+    console.log("\nAll current-format demos passed ✓");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

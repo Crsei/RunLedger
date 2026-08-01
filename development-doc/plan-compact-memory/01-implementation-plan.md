@@ -8,14 +8,14 @@
 
 ## 0. 文档定位与执行规则
 
-本文件是 Model Compatibility 行为、Plan Mode、ContextEngine、Compaction 和 Memory 的唯一详细执行账本。上位 Runtime 主计划 Phase 6 独占公共数据结构、TypeBox schema、v3 event payload、fixtures 和 contract tests;本文件只消费这些契约,负责具体 router/reducer/service/store/算法、文件边界、PR 顺序、行为测试和逐项完成证据。不得再创建同主题 sibling plan 分散状态。
+本文件是 Model Compatibility 行为、Plan Mode、ContextEngine、Compaction 和 Memory 的唯一详细执行账本。上位 Runtime 主计划 Phase 6 独占公共数据结构、TypeBox schema、current event payload、fixtures 和 contract tests;本文件只消费这些契约,负责具体 router/reducer/service/store/算法、文件边界、PR 顺序、行为测试和逐项完成证据。不得再创建同主题 sibling plan 分散状态。
 
 执行规则:
 
 - 每次只实施一个可独立验收的 PR 边界,完成后在对应复选框补 commit、验证命令和结果。
-- 上位 Runtime Phase 6 contract allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、v3 event catalog 或 contract fixture,也不得重新定义同义类型。
-- 没有 v3 durable event、Capability Gateway 或 Artifact Store 的阶段不得用 v2 临时旁路伪装完成;可以先落纯 reducer/pure planner 等行为函数,但用户可见功能必须等待前置门禁。
-- v1/v2 session 只读兼容。Plan Mode、compaction checkpoint、memory approval 和 context receipt 只写入 v3。
+- 上位 Runtime Phase 6 contract allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、current event catalog 或 contract fixture,也不得重新定义同义类型。
+- 没有 current durable event、Capability Gateway 或 Artifact Store 的阶段不得用 current 临时旁路伪装完成;可以先落纯 reducer/pure planner 等行为函数,但用户可见功能必须等待前置门禁。
+- Session 只接受当前 exact format。Plan Mode、compaction checkpoint、memory approval 和 context receipt 只写入当前唯一真源。
 - 不覆盖 raw ledger/history。Compaction 只改变 model-visible projection。
 - 不把 prompt 约束当权限。所有副作用由 capability/effect gate 判定。
 - 不把模型摘要当事实。Plan approval pin digest;compaction 校验 invariant;memory 先 proposal 后 approval。
@@ -58,7 +58,7 @@
 - 不让 compaction summary 形成 verification pass、goal complete 或用户批准。
 - 不让模型自动发布、覆盖或删除长期 memory。
 - 不在 Plan Mode 开放任意 shell,即便命令表面看似只读。
-- 不从 v1/v2 历史伪造 tool args、reasoning signature、memory provenance 或 compaction checkpoint。
+- 不从无法通过当前 exact contract 校验的历史数据伪造 tool args、reasoning signature、memory provenance 或 compaction checkpoint。
 
 ## 2. 前置依赖与落地顺序
 
@@ -66,7 +66,7 @@
 
 | 前置能力 | 来源 | 本专项依赖点 |
 |---|---|---|
-| v3 strict Event Store、writer、reducer、snapshot、recovery | Runtime Phase 1 | mode/checkpoint/approval/receipt 的唯一事实源 |
+| current strict Event Store、writer、reducer、snapshot、recovery | Runtime Phase 1 | mode/checkpoint/approval/receipt 的唯一事实源 |
 | Workspace identity 与 execution envelope | Runtime Phase 2 contract + Worktree/Sandbox/Permission 专项 | plan path、memory scope、artifact 引用不能跨 workspace |
 | Capability Gateway 与 `deny > ask > allow` | Runtime Phase 3 contract + Worktree/Sandbox/Permission 专项 | Plan Mode 只读硬门禁 |
 | Artifact CAS/metadata/retention/redaction | Runtime Phase 4 | plan revision、compaction input/output/diagnostic |
@@ -83,8 +83,8 @@
 | `src/runtime/modes/plan/{types,schema}.ts` | Runtime Phase 6 | 只读 import,只实现 reducer/service/policy/tools |
 | `src/runtime/context/{types,schema}.ts` | Runtime Phase 6 | 只读 import,只实现 engine/estimator/invariants/projection |
 | `src/runtime/context/{compaction,memory}/{types,schema}.ts` | Runtime Phase 6 | 只读 import,只实现 planner/service/store/search/approval |
-| `src/runtime/protocol/v3/{events,schemas}.ts` 对应 payload/catalog | Runtime Phase 6 | 只发射已注册 event,不新建临时 event |
-| `tests/runtime-v3/contracts/**`、`tests/runtime-v3/fixtures/{model-routing,plan-mode,context,compaction,memory}/**` | Runtime Phase 6 | 只消费;behavior fixture 放专项目录 |
+| `src/runtime/protocol/{events,schemas}.ts` 对应 payload/catalog | Runtime Phase 6 | 只发射已注册 event,不新建临时 event |
+| `tests/runtime-contracts/contracts/**`、`tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/**` | Runtime Phase 6 | 只消费;behavior fixture 放专项目录 |
 | router/reducer/service/store/index/tools/专用 TUI 组件 | 本专项 | Runtime Phase 6 不得回写实现 |
 | `agent-loop.ts`、`interactive-session-controller.ts`、`models*.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` | 串行集成 PR 的当期单一所有者 | 先交付 adapter,再于 Runtime/Extension/Security contract handoff 后集成 |
 
@@ -97,10 +97,10 @@
 
 ### 2.2 Contract 变更与交接流程
 
-1. 行为实现发现契约不足时,本专项先记录缺失场景、安全边界和所需兼容性,停止对该契约的本地扩展。
-2. 在上位 Runtime Phase 6 中先升级 type/schema/event version 和 golden fixture,由独立 contract PR 完成 `npm run check`、`npm test` 与 contract tests。
+1. 行为实现发现契约不足时,本专项先记录缺失场景、安全边界和所需契约变化,停止对该契约的本地扩展。
+2. 在上位 Runtime Phase 6 中先更新 type/schema/event contract 和 golden fixture,由独立 contract PR 完成 `npm run check`、`npm test` 与 contract tests。
 3. 本专项基于新 contract commit 更新 adapter/behavior tests,不与 contract 变更混成同一提交。
-4. 不兼容变更必须保留 old-schema read/version fence 或显式 migration;不得用 cast、可选字段泛滥或运行时猜测隐藏漂移。
+4. 不兼容变更必须先更新当前 exact contract、所有 fixture 和消费者;不得保留 old-schema reader、迁移器、双写或运行时猜测来隐藏漂移。
 
 ## 3. 不可变约束
 
@@ -178,7 +178,7 @@ ContextEngine <---- CompactionService <---- Capability Gateway
              v           v
        MemoryStore   SearchIndex
 
-All state transitions ---> v3 Event Store ---> reducers/projections/TUI
+All state transitions ---> current Event Store ---> reducers/projections/TUI
 Large bodies -----------> Artifact Store/CAS
 ```
 
@@ -253,7 +253,7 @@ src/tui/components/
   memory-approval.ts
   memory-browser.ts
   context-status.ts
-tests/runtime-v3/
+tests/runtime-contracts/
   plan-context-memory/
     contract-consumer.test.ts  # 只验证 public contract 可消费
   model-routing/
@@ -275,7 +275,7 @@ tests/tui/
 - `src/runtime/agent-loop.ts` 已超过 1000 行,专项先在 `context/runtime-adapter.ts` 实现 seam;串行集成 PR 只增加调用,新逻辑必须放进上述模块。
 - `src/tui/interactive-mode.ts` 已超过 1100 行,slash handler 和 approval view 先拆到独立 controller/component;只在串行集成 PR 连接,不继续堆状态机。
 - `src/runtime/interactive-session-controller.ts` 只在串行集成 PR 暴露 command/query facade,不内嵌 router、compaction 或 memory 算法。
-- `src/storage/session-codec.ts` 只保留 v1/v2 compatibility;v3 projection 走独立 reducer。
+- `src/storage/session-codec.ts` 只解析当前 exact session format;current projection 走独立 reducer。
 
 ### 5.2 运行时数据布局
 
@@ -283,7 +283,7 @@ tests/tui/
 <cwd>/.runledger/
   settings.json
   sessions/
-    *.jsonl                         # legacy v1/v2 或 v3 event log
+    *.jsonl                         # current event log
   artifacts/
     <session-id>/
       plans/
@@ -510,7 +510,6 @@ export interface ContextAssemblyReceipt {
 export type CompactionReason = "manual" | "auto" | "overflow" | "model_switch";
 
 export interface CompactionCheckpoint {
-  schemaVersion: 1;
   compactionId: string;
   sessionId: string;
   reason: CompactionReason;
@@ -573,7 +572,6 @@ export interface MemorySourceRef {
 }
 
 export interface MemoryRecord {
-  schemaVersion: 1;
   memoryId: string;
   scope: MemoryScope;
   workspaceId?: string;
@@ -610,7 +608,7 @@ export interface MemorySearchReceipt {
 - index 损坏时从 canonical record 重建;重建失败返回无结果 + diagnostic,不能返回陈旧未知数据。
 - vector/hybrid 作为后续 adapter,不改变 `MemorySearchReceipt` 外部契约。
 
-### 6.7 v3 事件扩展
+### 6.7 current 事件扩展
 
 建议事件类型:
 
@@ -822,18 +820,18 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 - `src/runtime/model-routing/{types,schema}.ts`、`src/runtime/modes/plan/{types,schema}.ts`。
 - `src/runtime/context/{types,schema}.ts`、`src/runtime/context/{compaction,memory}/{types,schema}.ts`。
-- `src/runtime/protocol/v3/{events,schemas}.ts` 中的对应 catalog/payload。
-- `tests/runtime-v3/contracts/**` 和 `tests/runtime-v3/fixtures/{model-routing,plan-mode,context,compaction,memory}/**`。
+- `src/runtime/protocol/{events,schemas}.ts` 中的对应 catalog/payload。
+- `tests/runtime-contracts/contracts/**` 和 `tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/**`。
 
 本专项计划文件:
 
-- 新增 `tests/runtime-v3/plan-context-memory/contract-consumer.test.ts`。
-- 新增后续 behavior 需要的 fake Event/Artifact/Capability/Resource ports,放在 `tests/runtime-v3/plan-context-memory/fakes/`,不修改 contract fixtures。
+- 新增 `tests/runtime-contracts/plan-context-memory/contract-consumer.test.ts`。
+- 新增后续 behavior 需要的 fake Event/Artifact/Capability/Resource ports,放在 `tests/runtime-contracts/plan-context-memory/fakes/`,不修改 contract fixtures。
 
 任务:
 
 - [ ] 验证 model route、mode/plan ref、context receipt、checkpoint、memory record/proposal/search receipt 都可从 contract-owned public module export import,不要求本专项修改根 barrel。
-- [ ] 验证 v3 event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
+- [ ] 验证 current event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
 - [ ] 验证 mode policy 只消费 Runtime capability/effect contract,不按 tool name 创建第二套决策类型。
 - [ ] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Phase 0/2/3/4 contract 对齐。
 - [ ] 跑上位 contract tests 与专项 consumer compile test,记录冻结 contract commit。
@@ -1149,7 +1147,7 @@ golden tests:
 - [ ] 增加 mode/approval/context/compaction/memory metrics,默认只记录 metadata/digest。
 - [ ] TUI `/context`、`/memory`、footer/status 与 warning surface 完整接 projection。
 - [ ] CLI help/settings schema/README/AGENTS.md/开发文档同步。
-- [ ] v1/v2 resume 明确标 legacy;用户第一次 mutation 时 fork/migrate 到 v3。
+- [ ] resume/open/fork 只接受当前 exact format;无法验证时原文件不变并返回 typed diagnostic。
 - [ ] feature flags 支持独立关闭 plan/auto-compact/memory,manual compact 可单独保留。
 - [ ] 加 recovery/chaos/large-session/Windows path/permission 测试。
 - [ ] 建立 golden fixture 版本和上游行为差异记录。
@@ -1168,7 +1166,7 @@ golden tests:
 
 | 维度 | 必测场景 |
 |---|---|
-| Contract ownership | public export 消费、allowlist 无 diff、无重复类型/私有 event、schema version handoff |
+| Contract ownership | public export 消费、allowlist 无 diff、无重复类型/私有 event、contract handoff |
 | Model routing | verified/unknown/retired profile、alias、summarizer、reasoning/tool/context compatibility、fork/deny receipt |
 | Mode | user/agent entry、decline、mid-turn enter/exit、resume、compaction 后恢复 |
 | Authorization | built-in/MCP/hook/subagent/bash/symlink/unknown effect/always-approve |
@@ -1183,15 +1181,14 @@ golden tests:
 
 每个集成测试应断言完整对象或完整 event sequence,不要只断言单个字段。UI 变化使用稳定 snapshot/文本 fixture,同时验证输入路由,不能只看渲染。
 
-## 11. 迁移与兼容策略
+## 11. 当前格式与发布策略
 
-### 11.1 Legacy session
+### 11.1 Session
 
-- v1/v2 继续由 `session-codec.ts` 安全文本/canonical message replay。
-- legacy session 没有 durable mode 时恢复为 `inactive`,不得从文本猜测 Plan Mode。
-- legacy session 没有 checkpoint 时使用完整 replay;首次 compact/plan approval/memory mutation 前创建 v3 fork。
-- fork metadata 记录 source path/session ID/high-water mark 和迁移 warning。
-- 不把 legacy summary 文本转换成 approved memory;只能成为带 `import/untrusted` 来源的 proposal。
+- `session-codec.ts` 只恢复通过当前 exact schema 的 canonical message、runtime config 和 audit entry。
+- header、entry、payload 或事件无法验证时立即拒绝，保留源文件，不跳过坏行、不从文本猜测状态、不生成降级 replay。
+- `fork` 只接受当前格式的源 session，并创建新的当前格式 session；它不是格式转换入口。
+- 新的 Plan、compaction、approval 和 memory 语义只写入当前唯一 event/ledger 真源。
 
 ### 11.2 配置
 
@@ -1201,9 +1198,9 @@ golden tests:
 
 ### 11.3 Rollback
 
-- 关闭 feature flag 后保留 v3 events/artifacts,projection 忽略新 command,不删除数据。
+- 关闭 feature flag 后保留当前 events/artifacts,projection 忽略新 command,不删除数据。
 - memory rollback 只停止注入/写入,index 可删除;canonical record 保留。
-- auto compact rollback 后仍允许读取已有 valid checkpoint;不得强制展开并重写 raw history。
+- auto compact rollback 后仍允许读取通过当前 exact schema 的 checkpoint;不得强制展开并重写 raw history。
 - plan UI rollback 时 awaiting approval 保持 pending,CLI/API 可显式 cancel,不能自动批准。
 
 ## 12. 风险与缓解
@@ -1226,7 +1223,7 @@ golden tests:
 ## 13. 总验收清单
 
 - [ ] Runtime Phase 6 contract allowlist 在本专项 behavior commits 中无 diff。
-- [ ] 本专项没有重复 public type/schema 或私有 v3 event payload。
+- [ ] 本专项没有重复 public type/schema 或私有 current event payload。
 - [ ] Model Router 是 model/summarizer 选择的唯一入口,未知/不兼容能力进入 fork/deny。
 - [ ] Plan Mode 是 durable state,不是 prompt/TUI flag。
 - [ ] Plan Mode deny 能覆盖 always-approve、Bash、MCP 和 subagent。
@@ -1242,7 +1239,7 @@ golden tests:
 - [ ] pre-compact flush 只产 proposal,失败不阻止 compact。
 - [ ] post-compact recovery 只读 approved、有效、scope 匹配的 record。
 - [ ] TUI/CLI/未来 API 复用同一 command/query/event schema。
-- [ ] v1/v2 保持只读兼容,不伪造新语义。
+- [ ] 所有 session 与 runtime 数据只遵循当前 exact format,不提供旧格式兼容、迁移、双写或隐式转换。
 - [ ] `npm run check` 完整通过。
 - [ ] `npm test` 完整通过。
 - [ ] 本文件记录各阶段 commit、命令和结果。

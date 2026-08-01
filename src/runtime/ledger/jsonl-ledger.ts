@@ -23,7 +23,12 @@ import type {
   LedgerHeader,
   LedgerSink,
 } from "./types.js";
-import { newId } from "./types.js";
+import {
+  isCurrentLedgerEntry,
+  isCurrentLedgerHeader,
+  newId,
+  UnsupportedSessionFormatError,
+} from "./types.js";
 
 export interface JsonlLedgerOptions {
   /** JSONL 文件路径 */
@@ -49,11 +54,12 @@ export class JsonlLedger implements LedgerSink {
   constructor(opts: JsonlLedgerOptions) {
     this.filePath = opts.filePath;
     this._truncate = opts.truncate ?? false;
-    const existing = !this._truncate ? readExistingHeader(opts.filePath) : undefined;
-    this.sessionId = existing?.sessionId ?? opts.sessionId ?? newId();
-    this._header = existing ?? {
+    const existing = this._truncate ? undefined : readExistingHeader(opts.filePath);
+    this.sessionId = !this._truncate && existing?.sessionId
+      ? existing.sessionId
+      : opts.sessionId ?? newId();
+    this._header = !this._truncate && existing ? existing : {
       type: "ledger",
-      version: 2,
       id: newId(),
       createdAt: Date.now(),
       sessionId: this.sessionId,
@@ -71,14 +77,7 @@ export class JsonlLedger implements LedgerSink {
     return this._header;
   }
 
-  /**
-   * V2 high-water mark:返回已 append (含从存量文件加载)的 entry 数。
-   *
-   * 注意:跨重启继承时,我们应在初始化时把已加载 entry 数写进 header.metadata.highWaterMark;
-   * 但本期保持简单 —— 直接从内存 entries.length 计算,即"已加载并付过 id 的 entry 数"。
-   * 后续重启再次配置 ledger 后,highWaterMark 会等于加载到的 entry 数(已稳定);
-   * 进程再 append 时 highWaterMark 增长。
-   */
+  /** 返回已 append（含从存量文件加载）的 entry 数。 */
   highWaterMark(): number {
     return this._entries.length;
   }
@@ -152,23 +151,28 @@ export class JsonlLedger implements LedgerSink {
         const content = await fs.readFile(this.filePath, "utf8");
         const lines = content.split(/\r?\n/).filter((l) => l.length > 0);
         if (lines.length > 0) {
-          const first = JSON.parse(lines[0]!) as LedgerHeader;
+          const first = JSON.parse(lines[0]!) as unknown;
+          if (!isCurrentLedgerHeader(first)) {
+            throw new UnsupportedSessionFormatError(this.filePath);
+          }
           if (first.sessionId !== this.sessionId) {
             throw new Error(
               `ledger sessionId mismatch: header=${first.sessionId} runtime=${this.sessionId}`,
             );
           }
           // 把已有 entries 加载到内存(for get / findByType)
+          const loadedEntries: LedgerEntry[] = [];
+          this._entries.length = 0;
           for (let i = 1; i < lines.length; i++) {
-            try {
-              const e = JSON.parse(lines[i]!) as LedgerEntry;
-              this._entries.push(e);
-            } catch {
-              // 跳过损坏行(`// TODO(pi): 校验 checksum`)
+            const parsed = JSON.parse(lines[i]!) as unknown;
+            if (!isCurrentLedgerEntry(parsed)) {
+              throw new UnsupportedSessionFormatError(this.filePath);
             }
+            loadedEntries.push(parsed);
           }
-          if (this._entries.length > 0) {
-            this._lastParentId = this._entries[this._entries.length - 1]!.id;
+          this._entries.push(...loadedEntries);
+          if (loadedEntries.length > 0) {
+            this._lastParentId = loadedEntries[loadedEntries.length - 1]!.id;
           } else {
             this._lastParentId = this._header.id;
           }
@@ -182,6 +186,8 @@ export class JsonlLedger implements LedgerSink {
       }
     } catch (e) {
       this._lastError = e;
+      this._initialized = false;
+      throw e;
     }
   }
 }
@@ -191,12 +197,14 @@ function readExistingHeader(filePath: string): LedgerHeader | undefined {
   try {
     const content = readFileSync(filePath, "utf8");
     const firstLine = content.split(/\r?\n/, 1)[0]?.trim();
-    if (!firstLine) return undefined;
-    const parsed = JSON.parse(firstLine) as LedgerHeader;
-    return parsed.type === "ledger" && (parsed.version === 1 || parsed.version === 2)
-      ? parsed
-      : undefined;
-  } catch {
-    return undefined;
+    if (!firstLine) throw new UnsupportedSessionFormatError(filePath);
+    const parsed = JSON.parse(firstLine) as unknown;
+    if (!isCurrentLedgerHeader(parsed)) {
+      throw new UnsupportedSessionFormatError(filePath);
+    }
+    return parsed;
+  } catch (error) {
+    if (error instanceof UnsupportedSessionFormatError) throw error;
+    throw new UnsupportedSessionFormatError(filePath);
   }
 }

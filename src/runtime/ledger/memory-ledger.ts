@@ -19,7 +19,6 @@ export class MemoryLedger implements LedgerSink {
     const now = Date.now();
     this._header = {
       type: "ledger",
-      version: 2,
       id: newId(),
       createdAt: now,
       sessionId: this.sessionId,
@@ -37,10 +36,7 @@ export class MemoryLedger implements LedgerSink {
     return this._header;
   }
 
-  /**
-   * V2 high-water mark:返回已 append 的 entry 数。
-   * 写过的 entry 不会再被修改(append-only),所以此值单调递增。
-   */
+  /** 返回已 append 的 entry 数。写过的 entry 不会再被修改。 */
   highWaterMark(): number {
     return this._entries.length;
   }

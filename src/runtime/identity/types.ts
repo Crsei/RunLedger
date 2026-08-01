@@ -5,7 +5,7 @@
  * OS-derived principal 的隐私边界；本地实现只用于 contract fixtures 和开发基线。
  */
 
-import type { AuthorityId, PrincipalId, TenantId } from "../protocol/v3/ids.ts";
+import type { AuthorityId, PrincipalId, TenantId } from "../protocol/ids.ts";
 
 export type IdentitySource = "local-os" | "managed" | "remote";
 

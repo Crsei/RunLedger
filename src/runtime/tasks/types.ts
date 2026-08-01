@@ -1,8 +1,8 @@
 /**
- * V2 Task 系列 —— Task / TaskUpdate / TaskList 共享类型。
+ * Task 系列 —— Task / TaskUpdate / TaskList 共享类型。
  *
  * 对齐 claude-code-bun docs/tools/task-tool.mdx / task-update-tool.mdx /
- * task-list-tool.mdx 的 V2 体系(text-content 任务清单,不再依赖 system reminder)。
+ * task-list-tool.mdx 的体系(text-content 任务清单,不再依赖 system reminder)。
  *
  * 与 pi 的区别:不做持久化跨 session 的 SQLite 表,而是把 task / task_update
  * 作为 `custom` 类型 LedgerEntry 写进 JsonlLedger,通过 `findByType("custom")`
@@ -12,7 +12,7 @@
  *   - 状态机:pending ⇄ in_progress → completed;deleted 软删除。
  *   - 同一 taskId 的多次 task_update 形成一个 timeline;TaskList 输出当前快照
  *     (即最后一次 update 的状态;若仅 task 创建无 update,则原 task 状态有效)。
- *   - status "in_progress" 在 V2 中是 soft exclusive —— 若一个任务置为 in_progress,
+ *   - status "in_progress" 是 soft exclusive —— 若一个任务置为 in_progress,
  *     其它置为 in_progress 的任务会被自动改为 pending(对齐 claude-code-bun
  *     "task tool: only one in_progress at a time")。
  */
@@ -25,7 +25,7 @@ export type TaskPriority = "high" | "medium" | "low";
 /**
  * 任务状态机。
  * - pending: 已创建未开始
- * - in_progress: 进行中(V2 中限制单一进行中)
+ * - in_progress: 进行中(限制单一进行中)
  * - completed: 完成
  * - deleted: 软删除(可读但默认不列入)
  */

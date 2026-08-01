@@ -162,7 +162,6 @@ describe("SessionManager.continueRecent", () => {
       // 把一个 fake header 写进同 dir,但 metadata.cwd 标记为 otherCwd
       const fakeHeader: LedgerHeader = {
         type: "ledger",
-        version: 1,
         id: "fake-id",
         createdAt: Date.now() + 9999,
         sessionId: "fake-session",
@@ -260,7 +259,6 @@ describe("SessionManager.list", () => {
       // 旁路 create 不传 cwd 让别 dir;直接手写 fake header
       const fake: LedgerHeader = {
         type: "ledger",
-        version: 1,
         id: "x",
         createdAt: Date.now(),
         sessionId: "x-sess",

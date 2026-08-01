@@ -14,7 +14,7 @@
 
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
-| Runtime | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威计划:Session v3、Workspace、Capability、Artifact、Orchestrator、Verification、Multi-Agent、Daemon | 计划内阶段验收证据 + `AGENTS.md` |
+| Runtime | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威计划:Session、Workspace、Capability、Artifact、Orchestrator、Verification、Multi-Agent、Daemon | 计划内阶段验收证据 + `AGENTS.md` |
 | Runtime | [`runtime/00-reference.md`](runtime/00-reference.md) | 可治理 Agent Harness Runtime 的设计输入与问题域 | `runtime/04-governed-agent-harness-runtime-plan.md` |
 | Runtime | [`runtime/01-minimum-runtime-scaffold-plan.md`](runtime/01-minimum-runtime-scaffold-plan.md) | 最小 Agent Runtime、事件流、ledger、mock stream、echo tool | `AGENTS.md` §1.2 |
 | Runtime | [`runtime/02-agent-loop-resurrection-plan.md`](runtime/02-agent-loop-resurrection-plan.md) | agent-loop、Agent、ledger、真实 LLM 完整循环 | `AGENTS.md` §1.2、§5 |

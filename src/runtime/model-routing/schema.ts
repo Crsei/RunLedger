@@ -7,8 +7,6 @@
 
 import type { ModelRouteDecision } from "./types.ts";
 
-export const MODEL_ROUTING_SCHEMA_VERSION = 1 as const;
-
 export function isModelRouteDecision(value: unknown): value is ModelRouteDecision {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return false;

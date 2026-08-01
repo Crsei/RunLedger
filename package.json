@@ -50,7 +50,10 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "check": "tsc --noEmit -p tsconfig.json",
+    "check:current-format": "tsx scripts/check-current-format.ts",
+    "check:runtime-boundaries": "tsx scripts/check-runtime-boundaries.ts",
+    "check:execution-boundaries": "tsx scripts/check-execution-boundaries.ts",
+    "check": "npm run check:current-format && npm run check:runtime-boundaries && npm run check:execution-boundaries && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "tsx examples/tui-demo.ts",
     "dev": "tsx watch examples/run.ts",

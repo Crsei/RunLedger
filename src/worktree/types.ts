@@ -5,8 +5,8 @@
  * create/remove fencing 和 resume 校验。本文件只描述状态，不执行 Git 或删除路径。
  */
 
-import type { RepositoryId, WorkspaceId } from "../runtime/protocol/v3/ids.ts";
-import type { WorkspaceBindingRef, WorkspaceLeaseRef } from "../runtime/protocol/v3/workspace.ts";
+import type { RepositoryId, WorkspaceId } from "../runtime/protocol/ids.ts";
+import type { WorkspaceBindingRef, WorkspaceLeaseRef } from "../runtime/protocol/workspace.ts";
 
 export type WorktreeState = "preparing" | "active" | "dirty" | "released" | "stale" | "failed";
 

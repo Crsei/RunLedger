@@ -262,7 +262,7 @@ export interface Scheduler {
 
 TUI 与 CLI 只验证 adapter 行为,不在 UI 测试中重复证明 Agent core。真实 provider 调用属于 opt-in smoke test,不得进入默认 `npm test`;默认套件必须在无 API key、无外网的环境中稳定运行。
 
-后续 Session v3、Workspace、Gateway、Artifact、Orchestrator 和 Verifier 落地时,继续复用本节的 fixture、故障注入和多观察面规则,但具体安全不变量仍由权威 runtime 计划定义。
+后续 Session、Workspace、Gateway、Artifact、Orchestrator 和 Verifier 落地时,继续复用本节的 fixture、故障注入和多观察面规则,但具体安全不变量仍由权威 runtime 计划定义。
 
 ### 8.2 核心不变量
 
@@ -440,7 +440,7 @@ enter turn -> emit start -> emit text/thinking/toolcall
 | event ↔ ledger 完整映射 | 补强 | 使用 8.4 映射逐项核对次数、payload 和 sessionId | `agent-ledger-audit.test.ts` |
 | high-water 单调与重启继承 | 现有 | Memory/JSONL 均覆盖;新增 Agent turn 后的增量断言 | `ledger-highwater.test.ts` |
 | append 失败 | 补强 | JsonlLedger 保留内存 entry 并设置 `lastError`;runtime 不伪造持久化成功 | `agent-ledger-faults.test.ts` |
-| corrupt tail / unknown entry | 新增 | 当前 v2 安全跳过策略做 characterization;v3 必须转入严格 integrity 测试 | `agent-ledger-faults.test.ts` |
+| corrupt tail / unknown entry | 新增 | 当前格式对损坏或未知输入立即拒绝;用严格 integrity 测试固定 fail-closed 行为 | `agent-ledger-faults.test.ts` |
 | sessionId mismatch | 新增 | initialize 记录 lastError,不把别的 session entries 当作本 session | `agent-ledger-faults.test.ts` |
 | lock retry 时间边界 | 新增 | JS retry scheduler 用 fake time;proper-lockfile 行为保留真实 fs 测试 | `lockfile.test.ts` |
 | task create/update/list | 现有 | 保留 projection 与 in_progress 排他测试 | `task.test.ts` |
@@ -477,7 +477,7 @@ enter turn -> emit start -> emit text/thinking/toolcall
 | invalid prompt / missing stream | `agent_start` 可能已发出后抛错,未必有 `agent_end` | 初始化错误是否属于已开始 run,terminal audit 如何闭合 |
 | non-throw ledger | `LedgerSink` 约定 append 不抛,第三方实现仍可能违约 | runtime fail closed、吞错诊断还是直接 reject |
 | slow subscriber | `Agent.dispatch()` 当前 await 全部 listener | subscriber backpressure 是契约还是未来要隔离/限时 |
-| durable updates | `tool_execution_update` 与 `queue_update` 当前不进 ledger | v2 保持易失还是为 v3 建 canonical event |
+| durable updates | `tool_execution_update` 与 `queue_update` 当前不进 ledger | 保持易失还是纳入 canonical event |
 
 契约决策完成后,必须同时更新类型注释、生产实现、对应测试和权威 runtime 计划中的能力边界。不要只改测试期望来绕过不一致。
 
@@ -549,7 +549,7 @@ Agent Runtime 的错误路径使用可控故障点,不依赖随机 sleep:
 - 建 event ↔ ledger assertion helper;
 - 覆盖 JSONL lastError、high-water、重启和损坏输入;
 - 补 controller queue、event forwarding、dispose 和 hot update;
-- 建 live/replay 等价测试,为 Session v3 迁移预留 oracle。
+- 建 live/replay 等价测试,为 Session resume/fork 建立 oracle。
 
 退出条件:同一场景的 live state、events、ledger 和 replay projection 一致;失败时不会伪造“已持久化”。
 

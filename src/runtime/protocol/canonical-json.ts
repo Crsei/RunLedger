@@ -1,5 +1,5 @@
 /**
- * Runtime v3 唯一的 canonical JSON 编码入口。
+ * Runtime 唯一的 canonical JSON 编码入口。
  *
  * TODO(runtime-phase-0): 与跨语言实现共同冻结数字、Unicode、换行和大整数
  * 规则，并补齐官方 hash vectors。这里先对 JSON 可表达值做严格、稳定编码，

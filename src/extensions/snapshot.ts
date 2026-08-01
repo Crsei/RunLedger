@@ -5,7 +5,7 @@
  * bounded descriptor 和 Runtime ResourceSnapshot adapter；不得把可执行对象放进快照。
  */
 
-import { canonicalDigest } from "../runtime/protocol/v3/canonical-json.ts";
+import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
 import type { ExtensionDiagnostic } from "./diagnostics.ts";
 import { sortExtensionDiagnostics } from "./diagnostics.ts";
 import type { ExtensionComponentCounts, ExtensionResourceDescriptor } from "./types.ts";

@@ -10,7 +10,6 @@
     "dist",
     "tests",
     "examples",
-    "scripts",
-    "src/index.legacy.ts"
+    "scripts"
   ]
 }

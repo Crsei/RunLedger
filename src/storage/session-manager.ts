@@ -25,7 +25,13 @@ import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import * as path from "node:path";
-import { newId, type LedgerEntry, type LedgerHeader } from "../runtime/ledger/types.ts";
+import {
+  isCurrentLedgerEntry,
+  isCurrentLedgerHeader,
+  newId,
+  UnsupportedSessionFormatError,
+  type LedgerHeader,
+} from "../runtime/ledger/types.ts";
 import { JsonlLedger } from "../runtime/ledger/jsonl-ledger.ts";
 import { acquireLedgerLock } from "../runtime/ledger/lockfile.ts";
 import { resolveSessionDir } from "./paths.ts";
@@ -191,9 +197,12 @@ export class SessionManager {
     // 新 fork 拥有独立 sessionId,历史 entry 改写到新会话并保留父会话元数据。
     const lines = content.split(/\r?\n/).filter((l) => l.length > 0);
     if (lines.length === 0) {
-      await fs.writeFile(targetPath, "", "utf8");
+      throw new UnsupportedSessionFormatError(sourcePath);
     } else {
-      const first = JSON.parse(lines[0]!) as LedgerHeader;
+      const first = JSON.parse(lines[0]!) as unknown;
+      if (!isCurrentLedgerHeader(first)) {
+        throw new UnsupportedSessionFormatError(sourcePath);
+      }
       const newSessionId = newId();
       const newHeaderId = newId();
       const mergedMeta: Record<string, unknown> = {
@@ -204,7 +213,6 @@ export class SessionManager {
       };
       const newHeader: LedgerHeader = {
         ...first,
-        version: 2,
         id: newHeaderId,
         sessionId: newSessionId,
         createdAt: Date.now(),
@@ -212,17 +220,16 @@ export class SessionManager {
       };
       lines[0] = JSON.stringify(newHeader);
       for (let i = 1; i < lines.length; i++) {
-        try {
-          const entry = JSON.parse(lines[i]!) as LedgerEntry;
-          lines[i] = JSON.stringify({
-            ...entry,
-            sessionId: newSessionId,
-            parentId: entry.parentId === first.id ? newHeaderId : entry.parentId,
-          });
-        } catch {
-          // 损坏行不复制,避免把不可解析内容带入新会话。
-          lines[i] = "";
+        const parsed = JSON.parse(lines[i]!) as unknown;
+        if (!isCurrentLedgerEntry(parsed)) {
+          throw new UnsupportedSessionFormatError(sourcePath);
         }
+        const entry = parsed;
+        lines[i] = JSON.stringify({
+          ...entry,
+          sessionId: newSessionId,
+          parentId: entry.parentId === first.id ? newHeaderId : entry.parentId,
+        });
       }
       await fs.writeFile(targetPath, lines.join("\n") + "\n", "utf8");
     }
@@ -230,7 +237,7 @@ export class SessionManager {
   }
 
   /**
-   * 列出某会话目录中所有 *.jsonl header,跳过损坏文件(只记 stderr)。
+ * 列出某会话目录中所有 *.jsonl header,跳过无法识别的文件(只记 stderr)。
    * 同 cwd 过滤:仅当 cwd 非空且 header.metadata.cwd 与之相等时保留。
    */
   static async list(cwd: string, sessionDir?: string): Promise<SessionInfo[]> {
@@ -277,7 +284,7 @@ export class SessionManager {
 }
 
 /**
- * 读取 JSONL 文件首行 header,损坏/缺失文件返回 undefined。
+ * 读取 current JSONL 文件首行 header,损坏或不支持的格式返回 undefined。
  */
 async function readHeader(filePath: string): Promise<LedgerHeader | undefined> {
   let content: string;
@@ -290,9 +297,8 @@ async function readHeader(filePath: string): Promise<LedgerHeader | undefined> {
   const firstLine = (newlineIdx === -1 ? content : content.slice(0, newlineIdx)).trim();
   if (firstLine.length === 0) return undefined;
   try {
-    const parsed = JSON.parse(firstLine) as LedgerHeader;
-    if (parsed.type !== "ledger") return undefined;
-    return parsed;
+    const parsed = JSON.parse(firstLine) as unknown;
+    return isCurrentLedgerHeader(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }

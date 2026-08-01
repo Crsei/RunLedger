@@ -25,7 +25,7 @@
 - `agent-loop.ts` —— `runAgentLoop` 双层循环(outer turn / inner assistant stream),支持 reasoning、toolCalls、steering/follow-up 队列与完整 assistant/tool 事件;
 - `agent.ts` —— `Agent` 有状态包装类,`subscribe / on / prompt / steer / followUp / interrupt / waitForIdle`,严格限制同一时刻只有一个活跃 run;
 - `types.ts` —— 复用 pi-ai `Message` / `Tool` / `ToolCall` / `StopReason` / `Model` / `StreamOptions` / `AssistantAgentMessage` 等,补 `LlmContext` / `AgentContext` / `AgentEvent` / `AgentEventSink` / `AgentLoopConfig` / `AgentTool` / `AgentToolCall` / `UserAgentMessage` / `ToolResultAgentMessage` / `StreamFn` 等运行循环层接口;
-- `ledger/{types,memory-ledger,jsonl-ledger}.ts` —— v2 内存与 JSONL 审计账本(append-only,失败不抛错,以 `lastError` 字段保留报告路径),v1 文件只读兼容;
+- `ledger/{types,memory-ledger,jsonl-ledger}.ts` —— 当前内存与 JSONL 审计账本(append-only,失败不抛错,以 `lastError` 字段保留报告路径);不读取旧格式;
 - `tools/echo.ts` —— 最简 `AgentTool`(回显 text),用于验证 tool 调用链路;
 - `tools/{tool-support,read,write,edit,bash,grep,find,ls,index}.ts` —— stdlib 工具集(8 个 AgentTool),fork pi `core/tools/*` 的简化版,共享 `truncateHead` / `resolveToCwd` / `pathExists` 路径截断原语;`createStdlibTools(cwd)` 一站式返回 `ToolRegistry`,namespace="stdlib";
 - `tool-registry.ts` —— 多命名空间工具注册表,`register` / `unregister` / `has` / `get` / `toContext`,`toContext()` 输出 `AgentTool[]` 直接喂给 `AgentContext.tools`,
@@ -44,7 +44,7 @@
 - `stdlib-agent.test.ts` —— createStdlibAgent 默认构造、跑 turn、ledger 注入、stdlibStreamFn 别名(5 测试)
 
 总计 35 测试全绿,`npm run check` 与 `npm test` 应同时通过再行 commit。`examples/run.ts` 已接入真实 deepseek-v4-pro(走现有 pi-ai `openai-completions` adapter)演示 deepseek 完成 turn1 toolUse → turn2 stop 全链路。
-`src/_legacy/` 目录已清空,从 tsconfig exclude 中移除;早期的 `index.legacy.ts` 仍存在但不再被引用,作为防御性占位等待后续清理。
+`src/_legacy/` 目录已清空,从 tsconfig exclude 中移除;旧 barrel 已删除,公共出口只保留当前实现。
 
 #### 1.2.x 项目层 .runledger/ 与 CLI 入口(M8 §0–§3,2026-04-28)
 
@@ -69,7 +69,7 @@
 - `path-utils.ts` —— 纯函数 `encodeCwd / safeIso / buildSessionFileName`(便于单测,不引 fs);
 - `settings-manager.ts` —— `ProjectSettings` schema + 异步 `loadProjectSettings` / `loadProjectSettingsSync` / `saveProjectSettings`(0o600 文件 + 0o700 父目录),未知字段丢弃、解析失败回退空不抛错(只写 stderr);
 - `session-manager.ts` —— `SessionManager` 在 `JsonlLedger` 上的薄包装,接口 `create / open / continueRecent / forkFrom / list / listAll / acquireLock`。`open` 显式初始化但不追加 placeholder;fork 生成新 sessionId 并保留 parentSession/parentSessionId;CLI 持有整场独占锁直到退出。
-- `session-codec.ts` —— v2 canonical `AgentMessage` 与 runtime config 无损恢复;legacy v1 仅恢复安全文本并给出 warning,不伪造 tool args/thinking signature。
+- `session-codec.ts` —— 当前 canonical `AgentMessage` 与 runtime config 无损恢复;不猜测、不转换旧 session 内容。
 
 `tests/storage/` 当前形态:
 
@@ -81,7 +81,7 @@
 `src/cli/` 当前形态:
 
 - `args.ts` —— 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / --provider <id> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`,未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
-- `main.ts` —— 装配 36 个 builtin provider + `AuthStorage` + v2 session replay + `InteractiveSessionController`;生产 CLI 不回退 mock,无认证时进入 TUI onboarding;`InteractiveMode.run()` 持续到退出后才在 finally 释放整场 ledger lock;
+- `main.ts` —— 装配 36 个 builtin provider + `AuthStorage` + 当前 session replay + `InteractiveSessionController`;生产 CLI 不回退 mock,无认证时进入 TUI onboarding;`InteractiveMode.run()` 持续到退出后才在 finally 释放整场 ledger lock;
 - `cli.ts` —— bin 入口,仅 `main(process.argv.slice(2)).catch(exit 1)`;业务全留 main.ts 以便单测 spawnSync 跑。
 
 `bin/runledger.js` —— npm bin shim,直接 import 编译后的 `dist/cli/cli.js`;运行时不依赖 tsx 或 src,重新链接前先跑 `npm run build`。
@@ -190,7 +190,6 @@ src/                pi-ai 移植层 + RunLedger 运行时实现
   utils/            uuid / overflow / diagnostics / retry / validation / event-stream / shell(git-bash 探测)/ ... 21+1 个文件
   compat/           extension-oauth-types.ts(OAuth 类型桥)
   runtime/          agent-loop / agent / ledger / tools (echo+stdlib 8 个) / tool-registry / execution-env / providers/mock-stream / stdlib-stream,本期已复活并纳入 typecheck + npm test
-  index.legacy.ts   旧 barrel 备份(不再被引用,等待后续清理)
 scripts/
   generate-models.ts  2420 行硬编码模型数据,跑生成 src/providers/data/*.json 与 src/models.generated.ts
 examples/run.ts     命令行 demo —— catalog 摘要 + mock loop + 真实 deepseek-v4-pro 跑 agent-loop
@@ -207,23 +206,23 @@ tmp/               运行时产物(JSONL ledger 等),已 gitignore
   - **stdlib 工具集复活**:fork pi `core/tools/{read,write,edit,bash,grep,find,ls}.ts`,简化路径:不引 pi 的 ToolContext 闭包、render-prompt hooks、`wrapToolDefinition` 双层 ToolDefinition 包装,直接 cwd 闭包 + 可选 `operations` 注入 IO/shell;`grep`/`find` 在 rg/fd 不可用时自动回退到 grep/find,probe 后再 spawn 他命令;
   - **ExecutionEnv 复活**:`FileSystem` + `Shell` 抽象加入(`runtime/execution-env.ts`),`utils/shell.ts` 探测 win 下 git-bash;`storage/resolve-config-value.ts` 仍**不**引 `$(cmd)`,防止无量引入命令注入面;
   - **stdlibStreamFn 桥接**:提供 `createStdlibAgent(opts)` 一站式将 stdlib 工具集 + mock/真实 streamFn + Agent 类组合,便于示例与 review;`stdlibStreamFn` 本身就是 `mockStreamFn` 别名(非新协议);
-  - **M3 V2 Task 系列 + lockfile + high-water mark**(`src/runtime/tasks/`、`src/runtime/ledger/lockfile.ts`):
-    - `tasks/{types,task-tools}.ts` 定义 `TaskSnapshot` / `TaskStatus` / `TaskPriority` 与 `Task`/`TaskUpdate`/`TaskList` 三个 V2 工具;任务作为 ledger `custom` entry 持久化(`kind: "task"` / `"task_update"`);
-    - `replayTaskSnapshots(entries)` 单调重放产生最新快照;V2 排他机制保证同一时刻只有一个 in_progress 任务(新 in_progress 自动把旧 in_progress 落 pending);
+  - **M3 Task 系列 + lockfile + high-water mark**(`src/runtime/tasks/`、`src/runtime/ledger/lockfile.ts`):
+    - `tasks/{types,task-tools}.ts` 定义 `TaskSnapshot` / `TaskStatus` / `TaskPriority` 与 `Task`/`TaskUpdate`/`TaskList` 三个工具;任务作为 ledger `custom` entry 持久化(`kind: "task"` / `"task_update"`);
+    - `replayTaskSnapshots(entries)` 单调重放产生最新快照;排他机制保证同一时刻只有一个 in_progress 任务(新 in_progress 自动把旧 in_progress 落 pending);
     - `lockfile.ts` 基于 `proper-lockfile` 提供 `acquireLedgerLock(ledger, opts)`:50×100ms 内 acquire 失败 throw `LedgerLockError`;`forceUnlock(fp)` 紧急干预;
-    - `LedgerSink.highWaterMark?()` V2 新增,默认实现 = 已 append 的 entry 数(跨重启在 JsonlLedger 加载时继承);
+    - `LedgerSink.highWaterMark?()` 默认实现 = 已 append 的 entry 数(跨重启在 JsonlLedger 加载时继承);
   - **M4 5 个新占位工具**(`src/runtime/tools/`):
     - `multi-edit.ts` 一次调用 N 处编辑同文件;先在内存里依次应用 edits,任一 oldString 不存在 → 整体 abort(不写文件);`replaceAll=true` 全替换;
     - `web-fetch.ts` 原生 fetch + 最 trivial HTML→平文;HTTP(n=localhost/.local 不升级)自动升级 HTTPS,跨 host redirect throw,响应超 maxBytes(默认 2MB)截断;
     - `skill.ts` 占位:在 `handlers[name]` 中查找 handler;不存在返回友好提示,命中则把 string/JSON 结果透传;
-    - `notebook-edit.ts` 占位:V2 future,任何调用都返回 not-implemented 提示;
-    - `todo-write.ts` 整盘覆写当前任务表,内部调用 V2 Task 系列实现 `n written + n updated + n deleted` 语义;
+    - `notebook-edit.ts` 占位:后续能力,任何调用都返回 not-implemented 提示;
+    - `todo-write.ts` 整盘覆写当前任务表,内部调用 Task 系列实现 `n written + n updated + n deleted` 语义;
   - **M5 TUI 三态组件升级**:
     - `ToolCallComponent` 已支持四态(pending ⏳ / running … / ok ✓ / error ✗)+ setError/finalize;
-    - `DiffPreviewComponent` M5 升级加 status 字段,表头 icon 与 V2 ToolCall 对齐;展开态追加 `  - before / + after / ! ERR:` 行;
+    - `DiffPreviewComponent` M5 升级加 status 字段,表头 icon 与 ToolCall 对齐;展开态追加 `  - before / + after / ! ERR:` 行;
     - 新增 `BashExecutionComponent` 实时执行块:status / appendStdout/appendStderr / runInBackground "(bg)" 标记 / finalize exitCode+duration;tail 默认 200 行(可配置),`maxTailLines / 2` 上限防长跑日志炸内存;
   - **M6 examples + mock-stream phase**:
-    - `examples/m3-demo.ts` V2 Task + lockfile + high-water + MultiEdit 6 阶段演示,跑 `npx tsx examples/m3-demo.ts` 全绿;
+    - `examples/m3-demo.ts` Task + lockfile + high-water + MultiEdit 6 阶段演示,跑 `npx tsx examples/m3-demo.ts` 全绿;
     - `mockStreamFn` 新增 phase 0(首轮)/phase 1(已有 ≤3 个 toolResult)/phase 2(≥4 个 toolResult final summary);`detectMockPhase(ctx)` 纯函数 + `options.onPhase(phase)` 钩子;新 `MAX_TOOL_TURNS_PER_SESSION = 4`;
   - 仍未实现:transformContext / AgentHarness / compaction(详见 §1.3);
 - `storage/getAgentDir` 默认 `~/.runledger/agent`,可用环境变量 `RUNLEDGER_DIR` 覆盖(pi 中是 `PI_CODING_AGENT_DIR`);

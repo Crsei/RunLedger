@@ -3,11 +3,11 @@
  *
  * TODO(security-phase-1): 实现 config loader、deny > ask > allow、shell analyzer、
  * approval coordinator 和 receipt 持久化。本文件不得重新定义 Runtime envelope、
- * capability decision 或 v3 event union。
+ * capability decision 或 Runtime event union。
  */
 
-import type { CapabilityDecision, CapabilityName } from "../runtime/protocol/v3/capability.ts";
-import type { WorkspaceExecutionEnvelope } from "../runtime/protocol/v3/workspace.ts";
+import type { CapabilityDecision, CapabilityName } from "../runtime/protocol/capability.ts";
+import type { WorkspaceExecutionEnvelope } from "../runtime/protocol/workspace.ts";
 
 export type AccessRequest =
 	| { kind: "filesystem"; operation: "read" | "write" | "delete"; path: string }

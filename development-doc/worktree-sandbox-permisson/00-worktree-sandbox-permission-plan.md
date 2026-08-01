@@ -27,8 +27,8 @@
 RunLedger Runtime 新增文档的使用方式固定如下：
 
 - `runtime/00-reference.md` 是治理目标、术语和上游证据输入，不直接分配实现文件。
-- `runtime/04-governed-agent-harness-runtime-plan.md` 独占 Runtime v3 公共 ID、envelope/ref/receipt、event payload schema、projection 与 adapter port。
-- 本计划消费上述契约并独占具体行为；发现契约缺口时先回到 Runtime 计划提交版本化 schema/fixture，再继续实现，不在 `src/security/**` 或 `src/worktree/**` 复制公共类型。
+- `runtime/04-governed-agent-harness-runtime-plan.md` 独占 Runtime 公共 ID、envelope/ref/receipt、event payload schema、projection 与 adapter port。
+- 本计划消费上述契约并独占具体行为；发现契约缺口时先回到 Runtime 计划提交 exact schema/fixture，再继续实现，不在 `src/security/**` 或 `src/worktree/**` 复制公共类型。
 
 ### 0.1 从 Codex 提取的结构
 
@@ -56,7 +56,7 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 本计划是 Worktree/Sandbox/Permission 行为的唯一实现账本。Runtime 主计划定义“传什么、记什么、如何 replay”，本计划定义“如何判断、如何执行、何时发事件、如何证明强制生效”。
 
 ```text
-src/runtime/protocol/v3 contracts
+src/runtime/protocol contracts
               ↓
 src/security + src/worktree implementations
               ↓
@@ -74,7 +74,7 @@ serialized adapters into runtime/session/CLI/TUI
 | `ApprovalTicket`、`ApprovalReceiptRef` | ApprovalCoordinator/Store 实现 prompt、CAS、expiry、revoke、crash reconciliation |
 | `CredentialGrantRef` | Credential Broker 解析真实 store、注入最小短期 secret，并只把脱敏 grant/receipt ref 返回 Runtime |
 | `SandboxProfileRef`、`SandboxExecutionReceiptRef` | Sandbox resolver/backend probe、prepare、spawn、denial detection 生成真实 enforcement receipt |
-| workspace/permission/sandbox v3 events | Runtime 拥有 event name/payload schema；本计划拥有 emission timing、intent/commit 顺序和 receipt 真实性 |
+| workspace/permission/sandbox current events | Runtime 拥有 event name/payload schema；本计划拥有 emission timing、intent/commit 顺序和 receipt 真实性 |
 | Workspace/Gateway/Approval/Sandbox ports | 本计划提供 adapter 实现；Runtime consumers 只能通过 port 使用，不 import 本计划内部 store/backend |
 
 Runtime contract 完成不代表隔离已生效；本计划实现完成但尚未接入 Runtime 也不代表生产路径无旁路。只有独占实现、串行接线和联合 E2E 三者均通过后，才能对外声明 workspace isolation、permission approval 或 sandbox enforcement。
@@ -87,7 +87,7 @@ Runtime contract 完成不代表隔离已生效；本计划实现完成但尚未
 - ToolContext 已携带 ExecutionEnv、sessionId、toolCallId 与 ledger。
 - AgentTool 已有 isReadOnly、isDestructive、isConcurrencySafe 元数据。
 - InteractiveSessionController 已支持注入 ToolAuthorizationPolicy。
-- JsonlLedger、SessionManager、proper-lockfile 与 v2 replay 已提供审计和恢复底座。
+- JsonlLedger、SessionManager、proper-lockfile 与 current replay 已提供审计和恢复底座。
 - stdlib 工具、TUI tool state、CLI/session 入口已经可运行。
 
 ### 1.2 必须修复的结构性缺口
@@ -96,7 +96,7 @@ Runtime contract 完成不代表隔离已生效；本计划实现完成但尚未
 |---|---|---|
 | InteractiveSessionController 默认 AllowAllToolAuthorizationPolicy | 生产 CLI 中所有工具自动执行 | PermissionEngine + ApprovalCoordinator；安全 profile 成为默认 |
 | ToolAuthorizationDecision 只有 allow/deny | 无 ask、来源、规则、scope、批准内容和审计证据 | 新增 policy decision 与 final authorization result |
-| tool_call 在 schema/permission 之前记账，deny 只变成普通 isError | 无法重建“谁基于什么策略批准/拒绝” | 接入 Runtime v3 `permission.requested/decided` payload 与 attemptId |
+| tool_call 在 schema/permission 之前记账，deny 只变成普通 isError | 无法重建“谁基于什么策略批准/拒绝” | 接入 Runtime `permission.requested/decided` payload 与 attemptId |
 | read/write/edit 等工具直接使用 node:fs；WebFetch 直接 fetch | executionEnv/sandbox 可被内置工具绕过 | 全部内置工具改经 ToolContext/ExecutionGateway |
 | bash background 直接 spawn；tool output 直接写 tmp | 绕过 sandbox、生命周期与路径策略 | ManagedProcess + policy-aware temp storage |
 | resolveToCwd 接受任意绝对路径，write/edit 不验证 workspace 边界 | 可直接写工作区外；symlink 可逃逸 | CanonicalPathResolver + FileAccessGuard |
@@ -104,7 +104,7 @@ Runtime contract 完成不代表隔离已生效；本计划实现完成但尚未
 | WebFetch 没有 host permission/network policy | 网络访问不可审批、不可限制 | NetworkAccessRequest + NetworkClient |
 | ProjectSettings 解析失败回退空对象 | 对安全配置而言会 fail open | 独立 SecurityConfigLoader，解析失败阻止安全模式启动 |
 | 没有 worktree manager/registry/session binding | cwd、repo、session、sandbox root 无稳定身份 | WorktreeManager + WorktreeRegistry + PersistedWorkspaceBinding，并投影 Runtime refs |
-| ledger 没有 sandbox/worktree 事件 | 无法审计隔离边界是否实际生效 | 发射 Runtime v3 workspace/sandbox events、policy digest 与 enforcement receipts |
+| ledger 没有 sandbox/worktree 事件 | 无法审计隔离边界是否实际生效 | 发射 Runtime workspace/sandbox events、policy digest 与 enforcement receipts |
 
 结论：不能先加几个 CLI flag 就宣称支持 sandbox。第一优先级是关闭所有绕过统一执行面的路径。
 
@@ -204,7 +204,7 @@ src/
     session-binding.ts          # source cwd subdir offset、resume 校验、effective cwd
 
   runtime/
-    protocol/v3/**               # Runtime 计划独占；本计划只 import，不修改
+    protocol/**               # Runtime 计划独占；本计划只 import，不修改
     execution-env.ts            # 扩展 network/process/capability；本地 raw 实现降为内部
     tool-authorization.ts       # 适配 PermissionEngine/ApprovalCoordinator
     tool-context.ts             # 加 workspace、resolved profile、attemptId
@@ -258,11 +258,11 @@ tests/
 
 | 文件/目录 | 所有者 | 并行规则 |
 |---|---|---|
-| `src/runtime/protocol/v3/**`、`tests/runtime-v3/{workspace-contracts,security-contracts}/**` | Runtime 计划 | 本计划只消费已冻结 public exports；不得直接修改 |
+| `src/runtime/protocol/**`、`tests/runtime-contracts/{workspace-contracts,security-contracts}/**` | Runtime 计划 | 本计划只消费已冻结 public exports；不得直接修改 |
 | `src/security/**`、`tests/security/**` | 本计划 | 可与 Runtime 其他独占目录并行 |
 | `src/worktree/**`、`tests/worktree/**` | 本计划 | 可与 Runtime 其他独占目录并行 |
 | `src/runtime/agent-loop.ts`、`execution-env.ts`、`tool-context.ts`、`tool-authorization.ts`、`interactive-session-controller.ts` | 串行集成面 | 仅 Phase 5 集成窗口修改；窗口内其他专项不得并发编辑 |
-| `src/runtime/ledger/types.ts`、`src/storage/{paths,session-codec,session-manager}.ts` | 串行集成面 | Runtime v3 contract 与独占实现完成后逐文件接线 |
+| `src/runtime/ledger/types.ts`、`src/storage/{paths,session-codec,session-manager}.ts` | 串行集成面 | Runtime contract 与独占实现完成后逐文件接线 |
 | `src/runtime/tools/**` | 串行集成面 | ExecutionGateway adapter 稳定后一次迁移；不得由 Runtime Phase 2/3 并行修改 |
 | `src/cli/**`、`src/tui/**`、`src/index.ts`、`package*.json` | 串行产品集成面 | 与 Plugin/Context 等专项集成窗口排队，不并发修改 |
 | `tests/integration/**`、`tests/e2e/**` | 联合验证 | 只在双方独占测试通过后补充，按单一集成提交修改 |
@@ -271,7 +271,7 @@ tests/
 
 ## 4. 核心契约
 
-以下为实现侧计划接口，不要求逐字照抄；实现时必须保留等价的行为边界，并遵守 erasableSyntaxOnly。跨模块可见的 ID、`WorkspaceExecutionEnvelope`、capability decision、approval/sandbox receipt 和 v3 event payload 必须直接 import `src/runtime/protocol/v3/**`,不得在本节重新导出同名类型。下列 snippet 只描述 `src/security/**`、`src/worktree/**` 的内部请求、配置和状态。
+以下为实现侧计划接口，不要求逐字照抄；实现时必须保留等价的行为边界，并遵守 erasableSyntaxOnly。跨模块可见的 ID、`WorkspaceExecutionEnvelope`、capability decision、approval/sandbox receipt 和 current event payload 必须直接 import `src/runtime/protocol/**`,不得在本节重新导出同名类型。下列 snippet 只描述 `src/security/**`、`src/worktree/**` 的内部请求、配置和状态。
 
 ### 4.1 权限请求
 
@@ -599,7 +599,7 @@ resume 必须校验：
 
 缺失 worktree 时不得静默把 cwd 切回 source repo。应返回“重新创建 / 以 source 只读恢复 / 取消”选择，其中重新创建必须基于记录的 baseCommit，并保留新的 worktree event。
 
-不得扩展一套下划线命名的 `LedgerEntryKind`。集成层直接发射 Runtime v3 已冻结的事件：
+不得扩展一套下划线命名的 `LedgerEntryKind`。集成层直接发射 Runtime 已冻结的事件：
 
 ~~~text
 workspace.bound
@@ -687,7 +687,7 @@ runledger worktree gc --dry-run
 1. **契约冻结**：Runtime 计划先完成 Phase 0–3；其中 Phase 1 先结束对 session/storage/CLI 共享基线的修改，Phase 2/3 冻结 workspace/security schema、events、projections、ports 与 fixtures。
 2. **独占目录并行**：本计划在 `src/security/**`、`src/worktree/**` 完成行为实现；Runtime 可同时推进 Artifact、resource/context contract、Orchestrator 等不触碰共享文件的阶段。
 3. **串行集成**：双方独占测试通过后，预约单一集成窗口，由本计划 Phase 5 逐文件修改 runtime/session/storage/CLI/TUI；Plugin、Context 等其他专项不得同时修改这些文件。
-4. **联合门禁**：最后运行 bypass、real Git、real process/sandbox、resume 与 v3 replay E2E。Runtime contract 测试或本计划内部单测均不能单独替代该门禁。
+4. **联合门禁**：最后运行 bypass、real Git、real process/sandbox、resume 与 current replay E2E。Runtime contract 测试或本计划内部单测均不能单独替代该门禁。
 
 若 Runtime contract 尚未冻结，本计划只能编写不依赖未决字段的内部纯实现与测试，不能在实现目录临时创造公共 envelope/receipt/event 类型。
 
@@ -879,7 +879,7 @@ runledger worktree gc --dry-run
 - TUI snapshot 覆盖窄宽度与长命令。
 - ask 在非交互路径确定性 deny，不阻塞 stdin。
 - resume 后工具 cwd 是 effectiveCwd，不是 sourceCwd。
-- v3 events 可重放出每次批准、sandbox backend 与 worktree identity；Runtime projection digest 与 live state 一致。
+- current events 可重放出每次批准、sandbox backend 与 worktree identity；Runtime projection digest 与 live state 一致。
 - src/runtime/tools 静态扫描无 raw fs/spawn/fetch，Phase 0 legacy allowlist 清空。
 
 建议 commit：feat(cli): expose and persist the effective security boundary
@@ -911,7 +911,7 @@ runledger worktree gc --dry-run
 
 建议拆为至少三个独立 commit/PR，不合并成一个大变更。
 
-### Phase 7：Runtime v3 下游端口与联合语义
+### Phase 7：Runtime 下游端口与联合语义
 
 目标：为 Artifact、Verification、Multi-Agent 和 Control Plane 提供真实 Workspace/Security port 实现，不让这些 Runtime 模块重新实现 worktree、permission 或 sandbox。
 
@@ -1017,7 +1017,7 @@ runledger worktree gc --dry-run
 6. source repo 保持不变；
 7. workspace 外写被 permission 或 sandbox 拒绝；
 8. shell network 被拒绝；
-9. Runtime v3 event replay 得到 binding、decision、backend、receipt 与 result projection；
+9. Runtime event replay 得到 binding、decision、backend、receipt 与 result projection；
 10. resume 后继续在同一 worktree；
 11. dirty worktree remove 默认拒绝；
 12. preview/handoff 后显式清理。
@@ -1111,7 +1111,7 @@ node bin/runledger.js --help
 - [ ] restrictive sandbox unavailable 时不静默降级。
 - [ ] session 的 sourceRepo/effectiveCwd/worktreeId/baseCommit 可审计并可恢复。
 - [ ] worktree 删除只作用于验证过的 managed target，dirty/active 默认拒绝。
-- [ ] workspace/permission/sandbox 事件符合 Runtime v3 schema，并可从 Event Store 顺序重放为一致 projection。
+- [ ] workspace/permission/sandbox 事件符合 Runtime schema，并可从 Event Store 顺序重放为一致 projection。
 - [ ] Runtime contract 与本计划实现之间只有单向 import 和 port adapter，没有重复公共类型或反向依赖。
 - [ ] 共享 runtime/session/storage/CLI/TUI 文件只在记录过的串行集成窗口修改。
 - [ ] 安全配置解析失败不会回退到空配置或 AllowAll。
@@ -1137,7 +1137,7 @@ node bin/runledger.js --help
 
 后续用户明确要求“开始实现”时，从 Phase 0 开始，不直接跳到 CLI/TUI 或平台 backend。第一批改动应限制为：
 
-1. 确认 Runtime Phase 2/3 contract commit、schema version 与 fixtures；
+1. 确认 Runtime Phase 2/3 contract commit、exact schema 与 fixtures；
 2. 仅在 `src/security/**` 与 `src/worktree/**` 定义实现内部类型和 adapter conformance tests；
 3. 当前边界与 fail-closed 回归测试；
 4. 精确 legacy bypass allowlist；

@@ -1,5 +1,5 @@
 /**
- * V2 Task 系列工具 —— Task / TaskUpdate / TaskList。
+ * Task 系列工具 —— Task / TaskUpdate / TaskList。
  *
  * 与 stdlib tools 区别:Task 系列必须依赖 LedgerSink 注入(不像 read/write
  * 那样自带 cwd 闭包),因为它们的核心用处是"持久化 + timeline 重放"。
@@ -108,7 +108,7 @@ export function createTaskTool(options: TaskToolOptions = {}): AgentTool<typeof 
     name: "Task",
     label: "Task",
     description:
-      "V2 Task: 把一句任务写入 ledger(task custom entry)。返回 taskId 供后续 TaskUpdate。",
+      "Task: 把一句任务写入 ledger(task custom entry)。返回 taskId 供后续 TaskUpdate。",
     parameters: taskSchema,
     isDestructive: () => false,
     isConcurrencySafe: () => false, // 写 ledger
@@ -159,7 +159,7 @@ export function createTaskUpdateTool(options: TaskToolOptions = {}): AgentTool<t
     name: "TaskUpdate",
     label: "TaskUpdate",
     description:
-      "V2 TaskUpdate: 改 task 的 status / content / priority。in_progress 排他:其它 in_progress 自动落 pending。",
+      "TaskUpdate: 改 task 的 status / content / priority。in_progress 排他:其它 in_progress 自动落 pending。",
     parameters: taskUpdateSchema,
     isDestructive: () => false,
     isConcurrencySafe: () => false,
@@ -174,7 +174,7 @@ export function createTaskUpdateTool(options: TaskToolOptions = {}): AgentTool<t
       }
 
       // in_progress 排他机制:若设置 in_progress,自动把其它 in_progress置 pending
-      // 仍以追加 ledger entry 形式(不修改任何已有 entry),但 V2 在重放时按规则"等价"。
+      // 仍以追加 ledger entry 形式(不修改任何已有 entry),重放时按规则落实排他。
       // 实现:在 update entry 里仅记录此 update 的目标状态;排他在 TaskList 重放时落实。
       const payload: TaskUpdatePayload = {
         kind: "task_update",
@@ -222,7 +222,7 @@ export function createTaskListTool(options: TaskToolOptions = {}): AgentTool<typ
     name: "TaskList",
     label: "TaskList",
     description:
-      "V2 TaskList: 按 status / priority 过滤输出当前任务快照。in_progress 排他(同时只一)。",
+      "TaskList: 按 status / priority 过滤输出当前任务快照。in_progress 排他(同时只一)。",
     parameters: taskListSchema,
     isReadOnly: () => true,
     isConcurrencySafe: () => true,

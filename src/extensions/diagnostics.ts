@@ -2,10 +2,10 @@
  * Extension 扫描诊断与资源预算。
  *
  * TODO(extension-M0/M1): 将错误码与 Runtime resource contract 对齐，补充未知
- * schemaVersion、secret template、symlink escape 和 diagnostic redaction 测试。
+ * 未知字段、secret template、symlink escape 和 diagnostic redaction 测试。
  */
 
-import type { ResourceId } from "../runtime/protocol/v3/ids.ts";
+import type { ResourceId } from "../runtime/protocol/ids.ts";
 
 export type ExtensionDiagnosticSeverity = "info" | "warning" | "error";
 

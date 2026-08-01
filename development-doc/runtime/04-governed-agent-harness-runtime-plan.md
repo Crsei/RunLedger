@@ -19,7 +19,7 @@
 - 每次只推进一个阶段内可独立验收的 PR 边界,不得用一次重写跨越多个安全边界。
 - 每个 PR 必须在本文件对应复选框后补充 commit、测试命令和结果;没有证据不得标记完成。
 - Provider/API/Auth 已大体完成 pi-ai 移植,后续只做差异同步与 Model Compatibility 扩展,不重新移植整套 provider。
-- v1 始终只读;v2 在 `sessionV3=off/opt_in` 保持当前 read/write,推进到 `default/required` 后转只读并显式 migrate/fork-to-v3。所有新治理语义只进入 v3,不得在旧记录上伪造哈希、工具参数、reasoning 或验证结果。
+- Session 与 Runtime 只接受当前 exact format；未知或旧格式直接拒绝，不提供 migrate、fork-to-current、兼容 reader 或双写路径。所有治理语义都写入当前唯一真源。
 - Event Store 是 session/goal/orchestration 状态的唯一事实源。TUI、CLI、daemon、model history、activity、cost 和 verification status 都是 projection;外部权威存储的边界见 §3.1。
 - 在单 Agent 的 Session、Workspace、Capability、Artifact 与 Verification 边界稳定前,不得默认启用多 Agent 或远程执行。
 - 任一安全组件初始化失败时 fail closed,不得静默退化到共享 workspace、无 sandbox、AllowAll 或未验证资源。
@@ -36,12 +36,12 @@
 | 数据契约 | `ResourceIdentity`、provenance、digest、trust/activation state、approval receipt、tool descriptor/invocation/result、snapshot、lifecycle event、capability claim | Plugin manifest、Skill frontmatter、Hook/MCP 配置和领域状态的具体 schema |
 | 端口 | exact resolve、snapshot provider、invocation、event sink、capability gateway 的中立接口 | `ExtensionManager` 及实现这些端口的 adapter |
 | 安全执行 | 定义 raw invocation、canonical input、required claim 与 Gateway receipt 的组合契约；Gateway 行为实现归 §0.2 专项计划 | Hook/MCP 子进程、Skill 正文/资产/脚本、Plugin component 的发现和执行编排,全部消费受限 executor |
-| 持久化 | v3 event envelope 与 receipt 引用结构 | extension enable/trust/config 状态文件及内容 fingerprint |
+| 持久化 | current event envelope 与 receipt 引用结构 | extension enable/trust/config 状态文件及内容 fingerprint |
 | 用户面 | Runtime 通用 approval/session/control-plane 协议 | plugin/mcp/skill/hooks 的 CLI/TUI/doctor/reload 操作 |
 
 并行实施规则:
 
-1. Runtime 线只新增 `src/runtime/resources/{types,schemas,ports,events}.ts` 与 `tests/runtime-v3/resource-contracts/`,不得新增 manager、loader、installer、client、runner、catalog 或 trust store。
+1. Runtime 线只新增 `src/runtime/resources/{types,schemas,ports,events}.ts` 与 `tests/runtime-contracts/resource-contracts/`,不得新增 manager、loader、installer、client、runner、catalog 或 trust store。
 2. 扩展线只修改 `src/extensions/**`、`tests/extensions/**` 和 `tests/fixtures/extensions/**`,通过 Runtime port 编译,不得反向修改 Runtime 契约来迁就实现。
 3. `src/runtime/{agent-loop,types,tool-registry,tool-authorization,interactive-session-controller}.ts` 是跨专项串行集成面。扩展线先在 `src/extensions/integration/**` 产出 adapter,只有取得记录过的集成窗口后才由单一所有者修改；不得与 Runtime contract、Worktree/Sandbox/Permission 或其他专项并发修改。
 4. `package.json` 和 `package-lock.json` 属于扩展计划 Extension-M0 的串行 dependency handoff:Runtime 线先交出 dependency HEAD,扩展线以一个独立提交加入精确依赖,随后双方以该提交为基线。`src/storage/{paths,settings-manager}.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` 属于 Extension-M6 串行集成面;Runtime 后续阶段基于 handoff commit 继续,不得并发改同一文件。
@@ -53,7 +53,7 @@
 
 - Runtime ID、`WorkspaceExecutionEnvelope`、workspace/lease/checkpoint 引用与投影结构;
 - capability/permission/approval/sandbox 决策、ticket、receipt 引用类型;
-- v3 event name、payload schema、reducer 输入/输出和 control-plane command/query schema;
+- current event name、payload schema、reducer 输入/输出和 control-plane command/query schema;
 - Orchestrator、Artifact、Verification、Multi-Agent 中对 workspace/capability/approval/sandbox 的 ID 或 receipt 引用。
 
 [`../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md) 是上述领域唯一行为实现和集成状态账本,独占负责 repository/worktree 生命周期与 lease、path/shell/network 分析、PermissionEngine、ApprovalCoordinator、Credential Broker、ExecutionGateway、filesystem/process/network broker、平台 sandbox 以及生产 CLI/TUI/session 接线与事件发射时机。
@@ -70,32 +70,32 @@ runtime protocol contracts
 
 平行实施规则:
 
-1. Runtime 线独占 `src/runtime/protocol/v3/**` 与对应 contract tests,不得 import `src/security/**` 或 `src/worktree/**`,不新建 `src/runtime/workspace/**` 或 `src/runtime/capability/**` 行为实现。
+1. Runtime 线独占 `src/runtime/protocol/**` 与对应 contract tests,不得 import `src/security/**` 或 `src/worktree/**`,不新建 `src/runtime/workspace/**` 或 `src/runtime/capability/**` 行为实现。
 2. 安全实现线独占 `src/security/**`、`src/worktree/**`、`tests/security/**` 和 `tests/worktree/**`,实现并验证 Runtime contract,不重新定义 envelope、decision、receipt 或 event 联合。
 3. `src/runtime/{agent-loop,execution-env,tool-context,tool-authorization,interactive-session-controller}.ts`、`src/runtime/ledger/types.ts`、`src/storage/{paths,session-codec}.ts`、`src/cli/**` 和 `src/tui/**` 是串行集成面。Runtime contract 与安全实现各自完成后,由专项计划的集成阶段修改;不得与其他专项集成提交并发。
-4. Runtime 事件契约拥有 event name/payload schema;专项实现拥有发射时机、enforcement receipt 的产生和外部存储。契约变更先提交 schema/version 与 fixture,再更新 adapter。
+4. Runtime 事件契约拥有 event name/payload schema;专项实现拥有发射时机、enforcement receipt 的产生和外部存储。契约变更先提交 exact contract 与 fixture,再更新 adapter。
 
 ### 0.3 与 Plan/Context/Compaction/Memory 计划的强制边界
 
-本计划 Phase 6 只生成 Model Compatibility、Plan Mode、Context、Compaction 与 Memory 接入 Runtime 所需的中立数据结构、TypeBox schema、v3 event payload、fixture 和 contract tests。router、reducer、service、store、算法、工具、TUI/CLI 与 agent-loop/controller 接线统一归属 [`../plan-compact-memory/01-implementation-plan.md`](../plan-compact-memory/01-implementation-plan.md),Phase 6 的“完成”不能代表专项行为已实现。
+本计划 Phase 6 只生成 Model Compatibility、Plan Mode、Context、Compaction 与 Memory 接入 Runtime 所需的中立数据结构、TypeBox schema、current event payload、fixture 和 contract tests。router、reducer、service、store、算法、工具、TUI/CLI 与 agent-loop/controller 接线统一归属 [`../plan-compact-memory/01-implementation-plan.md`](../plan-compact-memory/01-implementation-plan.md),Phase 6 的“完成”不能代表专项行为已实现。
 
 | 边界 | Runtime Phase 6 拥有 | Plan/Context/Compaction/Memory 专项拥有 |
 |---|---|---|
 | 公共类型 | model profile/route decision、mode/plan ref、context receipt、checkpoint、memory record/proposal/search receipt | 不复制类型,只通过 public export 消费 |
-| schema/event | TypeBox schema、v3 payload/catalog、版本栅栏、bounded metadata | event 生成时机、状态迁移、intent/commit/recovery |
+| schema/event | TypeBox schema、current payload/catalog、版本栅栏、bounded metadata | event 生成时机、状态迁移、intent/commit/recovery |
 | 行为 | 无 | manifest loader/router、ContextEngine、PlanModeService、CompactionService、MemoryService |
 | 存储/用户面 | 只引用 Artifact/Approval/Workspace 契约 | plan/memory store、index、tools、TUI/CLI、controller/agent-loop 接线 |
-| 测试 | schema round-trip、golden fixture、unknown-version/invalid-bound contract | reducer/service/store/security/recovery/integration/E2E |
+| 测试 | schema round-trip、golden fixture、unknown-event/invalid-bound contract | reducer/service/store/security/recovery/integration/E2E |
 
 并行实施规则:
 
-1. Runtime 线独占 `src/runtime/{model-routing,modes/plan,context}/**/{types,schema}.ts`、`src/runtime/protocol/v3/{events,schemas}.ts` 中对应 payload/catalog 和 `tests/runtime-v3/contracts/**`;具体 allowlist 见 Phase 6。
+1. Runtime 线独占 `src/runtime/{model-routing,modes/plan,context}/**/{types,schema}.ts`、`src/runtime/protocol/{events,schemas}.ts` 中对应 payload/catalog 和 `tests/runtime-contracts/contracts/**`;具体 allowlist 见 Phase 6。
 2. 专项线独占上述目录中除 contract allowlist 外的行为文件,以及专用 storage/tool/TUI 组件和行为测试。不得在专项 PR 顺手修改 contract 文件。
 3. `src/runtime/{agent-loop,interactive-session-controller}.ts`、`src/models.ts`、`src/models-store.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` 是串行集成面。专项先在新模块和 adapter 中完成行为,只在对应 Runtime 前置 contract 冻结后安排单一所有者的集成 PR。
-4. 契约变更时,先在本计划 Phase 6 登记 schema/version/fixture 变更并提交 contract PR,再由专项 PR 适配。不允许在专项内创建同义型别或临时 payload 绕开该流程。
+4. 契约变更时,先在本计划 Phase 6 登记 exact contract/fixture 变更并提交 contract PR,再由专项 PR 适配。不允许在专项内创建同义型别或临时 payload 绕开该流程。
 5. Phase 6 状态分为“contract 已冻结”与“专项实现已验收”两个独立记录;后者只能引用专项计划的 commit 和验证证据,不把其任务复制回本文件。
 
-兼容性解释以本计划 §6.1 的 session version × feature-state 矩阵为唯一真源。专项中的“v1/v2 只读兼容”只表示 Plan/Context/Compaction/Memory 新语义不得写入 v1/v2,不能覆盖 `off/opt_in` 下基础 v2 session 仍沿当前路径可读写的规则;专项实现若需改变该矩阵,必须先修改本计划、CLI golden fixture 与迁移门禁。
+格式边界以本计划 §6 的当前格式策略为唯一真源。专项只能消费当前 public contract；输入不满足 exact contract 时必须拒绝，不通过猜测、文本降级或隐式转换继续。
 
 ### 0.4 Enterprise/Remote/Telemetry 的实现所有权
 
@@ -174,7 +174,7 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 | RunLedger | `feat/agent-loop-resurrect@65f905452195e034c99fa5ac560a7e23a822f052` | 主工作区已有文档修改/未跟踪文件;审阅未把这些文件视为已完成实现 | `package.json`:MIT | 当前代码、Phase 0 前置 scaffold 与缺口基线 |
 | `runtime/00-reference.md` | `sha256:2de7660e6726729deacbb320b670863eb5518760b4ab2294d3e7cb5655894428`(838 行) | 本地未跟踪设计输入 | 仓库内设计输入,不单独授权源码复制 | 11 类问题、总体架构、执行闭环、硬约束与推荐落地顺序 |
 | codex | `main@0b175e6439a8608ba7726ee153fd8590619e8f34` | 仅用户未跟踪 `codex-rs/WEBSOCKET_PROXY_ISSUES.md` | 根 `LICENSE`:Apache-2.0 | 权限、sandbox、control plane、延迟工具、MCP/Skill/Plugin、多 Agent、分页历史与 fork lineage |
-| pi | `main@3f1762cc7d3af39898aa5d21891335935011287f` | 干净 | 根 `LICENSE`:MIT | AgentHarness、Session v3、Compaction、生命周期、本地 RPC |
+| pi | `main@3f1762cc7d3af39898aa5d21891335935011287f` | 干净 | 根 `LICENSE`:MIT | AgentHarness、Session、Compaction、生命周期、本地 RPC |
 | grok-build | `main@c68e39f60462f28d9be5e683d9cbe2c57b1a5027` | 干净 | 根 `LICENSE`:Apache-2.0 | actor、workspace/checkpoint、permission、shell policy、有界 subagent |
 | claude-code-bun | `main@73338f21dc166ac13303d24f3fe671a52bac745d` | 干净;仓库自述为 reverse-engineered/decompiled,且部分模块为 stub 或默认关闭 | 当前 checkout 无根 `LICENSE`;README 仅链接远端许可证 | worktree、session restore、memory、成本、telemetry、graceful shutdown 的行为样本 |
 
@@ -190,12 +190,12 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 - `codex-rs/execpolicy/src/{decision,policy}.rs`、`codex-rs/core/src/exec_policy.rs`:`allow/prompt/forbidden` 合并和命令审批。
 - `codex-rs/rollout/src/recorder.rs`、`codex-rs/thread-store/src/{store,live_thread}.rs`、`codex-rs/core/src/thread_manager.rs`:session writer、fork、flush/shutdown API 与有序关闭;不提供 fsync durability 证明。
 - `codex-rs/thread-store/src/local/{thread_history,thread_history_materialization,rollout_lineage}.rs`、`codex-rs/rollout/src/rollout_reference_index.rs`:分页/物化历史、投影 checkpoint、fork lineage 与引用感知删除。
-- `codex-rs/app-server-protocol/src/protocol/v2/`、`codex-rs/app-server/src/request_processors/`:headless thread/turn/item API、correlation 与分页/订阅;`expected_turn_id` 当前只约束 steer,不是通用 revision CAS。
+- `codex-rs/app-server-protocol/src/protocol/current/`、`codex-rs/app-server/src/request_processors/`:headless thread/turn/item API、correlation 与分页/订阅;`expected_turn_id` 当前只约束 steer,不是通用 revision CAS。
 - `codex-rs/app-server/src/connection_rpc_gate.rs`、`message_processor.rs`:close gate、drain background task 与 shutdown ordering。
 - `codex-rs/codex-mcp/src/`、`codex-rs/core-skills/src/`、`codex-rs/core-plugins/src/`:资源发现、延迟暴露、安装 staging 与配置优先级。
 - `codex-rs/core/src/hook_runtime.rs`、`codex-rs/models-manager/src/{manager,model_info,cache}.rs`、`codex-rs/core/src/context_manager/{history,updates,normalize}.rs`:typed hook lifecycle、模型 metadata/cache 与 history normalization。
 - `codex-rs/core/src/session/turn.rs::comp_hash_changed`、`codex-rs/core/src/session/mod.rs::replace_compacted_history`、`codex-rs/core/src/compact_remote.rs`、`codex-rs/core/src/session/rollout_reconstruction.rs`、`codex-rs/core/tests/suite/compact_resume_fork.rs`:compatibility hash、replacement-history 安装、只重放后缀的 compaction resume/fork,以及降级恢复边界。
-- `codex-rs/core/src/agent/`、`codex-rs/agent-graph-store/src/`:V1 depth bound、V2 total concurrency/residency bound、durable parent/child edge 与 residency;V2 不受 `agent_max_depth` 约束。
+- `codex-rs/core/src/agent/`、`codex-rs/agent-graph-store/src/`:depth bound、total concurrency/residency bound、durable parent/child edge 与 residency；总并发约束独立于递归深度。
 - `codex-rs/app-server-transport/src/transport/`、`codex-rs/app-server-transport/src/transport/auth.rs`、`codex-rs/app-server/src/request_processors/thread_lifecycle.rs`:bounded input queue/overload、UDS/WS 启动与 transport-level bearer auth 约束、idle thread unload/reload 时序;现有 token claim 不包含 principal/tenant。
 - `codex-rs/core/src/rollout_budget.rs`、`codex-rs/core/src/agent/{registry,control}.rs`、`codex-rs/agent-graph-store/src/`:root-tree token budget、分层 Agent registry/limiter/residency 与 durable parent/child edge。
 - `codex-rs/core/src/tasks/review.rs::{start_review_conversation,parse_review_output_event}`、`codex-rs/core/src/guardian/{review,approval_request}.rs`:模型 review、Guardian fail-closed 与截断 approval evidence 的边界。
@@ -214,22 +214,22 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 - control plane 的 session/turn/item 分层、请求 correlation 和分页/订阅模型;RunLedger 把 expected revision/idempotency 扩展到所有 mutation。
 - sandbox 的 managed/disabled/external policy 与 effective enforcement 分离,additional permission 先 normalize/intersect/merge;RunLedger 只采用数据分层与单调收窄,不沿用不可用时的降级。
 - app-server transport 的 bounded input queue、typed overload、UDS stale-path/startup-lock/mode、非 loopback WebSocket/Origin 拒绝和 transport-level bearer auth;RunLedger 另补 durable cursor、consumer checkpoint,并把 authenticated principal/tenant 绑定到每个 mutation、session 与 evidence。
-- V1 Agent depth 与 V2 总并发/驻留限制只作为预算输入;RunLedger 的 depth、children、total-agent 与 root budget 必须同时硬限制,不能把 V2 的 concurrency bound 误写成递归有界。
+- Agent depth 与总并发/驻留限制只作为预算输入;RunLedger 的 depth、children、total-agent 与 root budget 必须同时硬限制,不能把 concurrency bound 误写成递归有界。
 - Guardian 在 timeout、会话失败或解析失败时阻止执行的方向可作为自动预审参考;任何模型 review/Guardian 输出都只形成 candidate evidence,仍需独立 verifier 或人工 gate。
 - managed config 借鉴 source attribution 和逐字段单调收窄;每次层合并、违规值归一化或 required-default fallback 都必须形成 durable normalization receipt,无法证明 effective value 时 fail closed。
 
 拒绝照搬:
 
-- Codex 的历史投影仍会跳过 rejected rollout line;append 只会在末字节不是 LF 时补换行,不会验证、截断或修复 malformed tail/record。其日志也没有 RunLedger 所需的完整 sequence/hash chain/payload digest,不能作为 v3 真源。
+- Codex 的历史投影仍会跳过 rejected rollout line;append 只会在末字节不是 LF 时补换行,不会验证、截断或修复 malformed tail/record。其日志也没有 RunLedger 所需的完整 sequence/hash chain/payload digest,不能作为 current 真源。
 - Codex release build 对 duplicate tool name 记录并跳过,不保证启动失败;RunLedger 不能沿用该降级。
 - Codex append/flush/shutdown 的成功语义不能证明 fsync durability;RunLedger 的 tool terminal/permission/stop barrier 必须自行定义并故障注入。
 - Codex 可在活跃 turn 物化 synthetic `TurnAborted` 后 fork;RunLedger 首版只允许已经持久且可验证的 stable turn boundary。
-- V2 residency 会卸载 idle resident,而 interrupted Agent 可被视为不可重载并在 eviction 后永久丢失;RunLedger eviction 必须有 durable paused/partial terminal 或可验证 rehydrate 路径,不得把 resident 消失当作完成。
+- residency 会卸载 idle resident,而 interrupted Agent 可被视为不可重载并在 eviction 后永久丢失;RunLedger eviction 必须有 durable paused/partial terminal 或可验证 rehydrate 路径,不得把 resident 消失当作完成。
 - `SessionMeta` 的 cwd/GitInfo 只是观测,不是每次工具执行的 workspace lease 证明。
 - rollback 只回退模型历史,没有与文件状态、artifact 和 event position 原子绑定。
 - `comp_hash_changed` 在任一 compatibility hash 缺失时不会判定变化;RunLedger 必须把缺失的兼容证明视为 incompatible,拒绝原 session 切模或要求显式 fork,不能把“未检测到变化”当作兼容。
 - `replace_compacted_history` 先切换内存历史,再分别持久化 Compacted、WorldState 与 TurnContext,不是原子 checkpoint;RunLedger 不得在 durable commit 前改变 live projection。
-- rollout reconstruction 对非法 window UUID、损坏 world-state、patch-without-full 与 legacy missing replacement 会 warning 后降级;RunLedger v3 必须停止恢复并进入 corrupted/forensic salvage,不得猜测补全。
+- rollout reconstruction 对非法 window UUID、损坏 world-state、patch-without-full 与 legacy missing replacement 会 warning 后降级;RunLedger current 必须停止恢复并进入 corrupted/forensic salvage,不得猜测补全。
 - Codex Plugin manifest 已有 `developer_name` 和声明型 capabilities,但 Tool/Plugin/MCP 尚缺统一绑定的已验证 publisher identity、content/config digest、signature、可执行 capability grant 与 trust receipt;现有 metadata 不能直接作为 RunLedger 授权。
 - MCP fingerprint/cache identity 不等于 publisher signature 或 trust receipt;Hook 可执行命令、改写输入和注入 context,必须另过 Gateway/sandbox/taint 边界。
 - MCP server/tool 自报的 `read_only_hint`、其他 annotation 或 remembered approval 都不是当前授权事实;remembered decision 必须重新绑定当前 policy/Hook、server config、tool identity、publisher、digest 与 adapter generation。缺少显式安全 client factory/authorization adapter 时,生产启动必须失败。
@@ -250,7 +250,7 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 - `packages/agent/src/harness/{agent-harness,types}.ts`:operation phase、save point、资源快照、listener settlement 与 `prepareNextTurn` 重建。
 - `packages/agent/src/{agent-loop,agent,types}.ts`:tool batch、hook、queue、transform context 和 stop/next-turn 语义,以及默认 parallel、sequential-tool 整批降为串行、并行批次的 preflight/execute/terminal/result ordering。
 - `packages/agent/src/harness/env/nodejs.ts`:Node ExecutionEnv 的绝对路径解析与文件/shell 操作,用于界定不能照搬的 workspace 边界。
-- `packages/agent/src/harness/session/{session,jsonl-storage}.ts`:v3 header、leaf/tree path 与 LF JSONL;未知 entry type/payload 仍存在 cast,不能称为完整 exact schema。
+- `packages/agent/src/harness/session/{session,jsonl-storage}.ts`:current header、leaf/tree path 与 LF JSONL;未知 entry type/payload 仍存在 cast,不能称为完整 exact schema。
 - `packages/storage/sqlite-node/src/sqlite/repo.ts::{configureSqliteDatabase,SqliteSessionRepo.fork}`、`migrations/001_initial.sql`、`storage/index.ts::{SqliteSessionStorage.create,appendEntry,decodeEntryRows,getEntry,findEntries}`:SQLite backend 使用 `WAL`、`synchronous=FULL`、事务内 sequence/entry/active leaf/branch/materialized projection 更新和 append cache rollback,同时暴露 create/fork 原子性与坏 row 边界。
 - `packages/agent/test/harness/sqlite-migrations.test.ts`:覆盖 migration、active leaf、branch/materialized state、分页、append rollback 与 summary projection,是 storage contract/fault fixture 的直接参考。
 - `packages/agent/src/harness/compaction/`:cut point、split turn、retained tail、旧摘要链和 branch summary。
@@ -288,7 +288,7 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 - harness append 被 await 不等于落盘 durability,不能直接作为 tool terminal/stop barrier。
 - `EventStream.result()`、`pendingSessionWrites`、queue、retry attempt/backoff 与 operation phase 都是进程内 settlement/control state,不是可跨崩溃证明的 durable truth。
 - harness fork 的 path-to-root/compaction 选择可作树上下文参考,但没有 stable-turn gate、atomic lineage receipt、hash identity 或 workspace 一致性。
-- SQLite append 的单事务更新值得采用,但 `SqliteSessionStorage.create()` 的 session/sequence/materialized 初始化未包在同一事务,repo fork 又逐 entry 独立提交;中途失败可能留下半初始化或部分 fork。普通读取还会跳过 malformed row,且 schema 没有 parent FK、hash chain、writer lease/fencing、idempotency key、effect intent/commit 与 durable receipt,因此不能直接作为 v3 canonical backend。
+- SQLite append 的单事务更新值得采用,但 `SqliteSessionStorage.create()` 的 session/sequence/materialized 初始化未包在同一事务,repo fork 又逐 entry 独立提交;中途失败可能留下半初始化或部分 fork。普通读取还会跳过 malformed row,且 schema 没有 parent FK、hash chain、writer lease/fencing、idempotency key、effect intent/commit 与 durable receipt,因此不能直接作为 current canonical backend。
 - Extension 使用 `jiti` 在主进程直接加载并可 exec,不满足 sandbox、digest 与 capability 要求。
 - Hook 修改 tool input 后,pi 明确不会替调用方重新完成最终 schema/path/security validation;RunLedger 必须对更新后的输入重新执行 exact schema、canonicalization、capability/workspace/resource claim 派生和 Gateway/sandbox 授权,不能复用改写前 receipt。
 - pi 明确不内建 MCP、sub-agent、permission popup、Plan Mode、Todo 或 background Bash;它只能为 extension seam 提供参考,不能作为这些能力的 parity 或验收真源。
@@ -341,7 +341,7 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 - web-fetch Artifact 的 allocation lock、总量预算、temp+file sync+noreplace 写入形状;RunLedger 另加 CAS digest、provenance、parent-directory sync 与 visible commit event。
 - ChatState 独占 actor 与 dangling-tool repair 可作为 reducer 输入参考;RunLedger 保持单一 canonical event log,不复制 chat/update/sidecar 多轨真源。
 - subagent depth 上限、cancel/max-turn 时尽量返回最后 assistant 文本;未知 Goal 状态降为 paused,orphan subagent 则标 cancelled。
-- authenticated WebSocket、多客户端 request 路由、pidfile single-instance/takeover 与 shutdown drain 可作为 Phase 10 的服务生命周期和竞态测试参考;session 进程内存活只表示连接重建,不能替代 v3 Event Store 的跨进程 restore。
+- authenticated WebSocket、多客户端 request 路由、pidfile single-instance/takeover 与 shutdown drain 可作为 Phase 10 的服务生命周期和竞态测试参考;session 进程内存活只表示连接重建,不能替代 current Event Store 的跨进程 restore。
 
 拒绝照搬:
 
@@ -412,12 +412,12 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 
 | 参考来源与机制 | 计划落点 | 采用边界 |
 |---|---|---|
-| codex rollout/thread-store、fork lineage、projection checkpoint | Phase 1、Phase 10、Phase 11 GC | 采用单 writer、可重建 projection、分页/cursor 与引用感知清理;canonical v3 仍必须严格校验而非跳过坏行 |
+| codex rollout/thread-store、fork lineage、projection checkpoint | Phase 1、Phase 10、Phase 11 GC | 采用单 writer、可重建 projection、分页/cursor 与引用感知清理;canonical current 仍必须严格校验而非跳过坏行 |
 | codex compatibility/compaction reconstruction、Guardian/model review、managed config/raw trace | Phase 1、Phase 3、Phase 6、Phase 8、Phase 11 + Plan/Context/Compaction/Memory 专项 | 缺 hash、非法 window/world-state、截断 evidence 与解析失败全部 fail closed;replacement durable 后才切 projection;策略 fallback 有 normalization receipt;raw trace 独立于默认 telemetry |
 | codex permission/sandbox/tool routing | Phase 2–3 公共契约 + Worktree/Sandbox/Permission 专项 | Runtime 只拥有 envelope/receipt/port;策略合并、审批、broker 和 sandbox 强制由专项实现 |
 | codex MCP/Skill/Plugin 与 tool exposure | Phase 5 公共契约 + Plugin/MCP/Skill/Hooks 专项 | 采用 provenance、immutable snapshot、延迟暴露;不把现有 manifest 当作完整供应链信任证明 |
 | codex agent graph 与 app-server control plane | Phase 9–10 | 采用 durable parent/child、局部 active-turn precondition、分页/订阅;增加通用 expected revision、有界预算、idempotency、auth 和 workspace identity |
-| pi AgentHarness/session v3/SQLite/save-point/lifecycle | Phase 1、Phase 7、Phase 10–11 | 采用 immutable current provider request、save-point 后重建 next request、append-only leaf marker、SQLite 事务/rollback fixture 与 settlement;canonical 仍用 strict JSONL,SQLite 先作可重建 projection,replacement 必须 prepare-before-teardown + durable fencing switch,不把进程内状态或数据库事务冒充完整 durable recovery |
+| pi AgentHarness/session/SQLite/save-point/lifecycle | Phase 1、Phase 7、Phase 10–11 | 采用 immutable current provider request、save-point 后重建 next request、append-only leaf marker、SQLite 事务/rollback fixture 与 settlement;canonical 仍用 strict JSONL,SQLite 先作可重建 projection,replacement 必须 prepare-before-teardown + durable fencing switch,不把进程内状态或数据库事务冒充完整 durable recovery |
 | pi compaction/context/model switch/RPC | §0.5 parity gate + Phase 6 公共契约 + Plan/Context/Compaction/Memory 专项 + Phase 10 | 采用 cut point、summary chain、单次 overflow retry、adapter-level message normalization 和 correlated RPC;另补 session-level compatibility、handshake、replay 与安全边界 |
 | grok-build actor/checkpoint/worktree/permission | Phase 1–4 + Worktree/Sandbox/Permission 专项 | 采用串行 command/event dispatch、crash-atomic replacement 思路、checkpoint mirror/cache rehydrate 结构、受限 mode filtering/child-mode 偏序和 shell 分析;文件层另建 strict EventWriter+durability 与显式 live restore,补逐 capability parent-grant receipt,拒绝 force GC、partial rewind、共享 workspace/无 sandbox 降级 |
 | grok-build task/subagent | Phase 7、Phase 9、Phase 11 cost | 采用深度上限、root token budget/high-water 与 cancel/max-turn last-text fallback;升级为结构化 partial Artifact、全维 reserve/commit/refund、durable DAG、独立 lease/session、权限单调收窄与 telemetry 对账 |
@@ -433,21 +433,21 @@ RunLedger 已完成 pi-ai 大体移植,但“曾经全量移植”不能自动�
 
 - `src/runtime/agent-loop.ts` 已有 outer/inner loop、sequential/parallel tool batch、steer/follow-up、tool hook、truncated tool call fail-closed 和动态 turn update。
 - `src/runtime/agent.ts` 已有单活跃 run、interrupt、queue 和 `waitForIdle`。
-- `src/runtime/ledger/` 已有 v2 append-only JSONL、MemoryLedger、lockfile 和 entry-count high-water mark。
-- `src/storage/session-codec.ts` 对 v2 canonical message 无损恢复,legacy v1 只恢复安全文本。
+- `src/runtime/ledger/` 已有 current append-only JSONL、MemoryLedger、lockfile 和 entry-count high-water mark。
+- `src/storage/session-codec.ts` 对 current canonical message 无损恢复,legacy retired 只恢复安全文本。
 - `src/storage/session-manager.ts` 已有 create/open/continue/fork/list 和整场锁。
 - `src/runtime/execution-env.ts`、`tool-context.ts` 已把 fs/shell/cwd 和单次 tool context 抽象出来。
 - `src/runtime/tool-registry.ts` 与 stdlib 工具已形成最小可运行工具面。
 - `src/runtime/interactive-session-controller.ts` 已统一 provider/model/thinking/session replay 和 TUI 装配。
 - `src/runtime/tasks/`、`src/runtime/tools/{multi-edit,web-fetch,skill,notebook-edit,todo-write}.ts`、`src/tui/components/{tool-call,diff-preview,bash-execution}.ts`、`examples/m3-demo.ts` 与 mock-stream phase tests 可作为后续 projection/兼容入口;这些是历史阶段产物,不对应本计划的 Runtime-M0–Runtime-M4 发布里程碑。
-- 当前 HEAD 已有 `src/runtime/protocol/v3/`、identity、resource、model/plan/context contract 和 feature flag 的可编译前置 scaffold,且新能力默认关闭;其中仍有明确 TODO、宽 payload guard 和未接入 `npm run check` 的边界脚本,不能据此把 Phase 0 或后续行为阶段标记完成。
+- 当前 HEAD 已有 `src/runtime/protocol/`、identity、resource、model/plan/context contract 和 feature flag 的可编译前置 scaffold,且新能力默认关闭;其中仍有明确 TODO、宽 payload guard 和未接入 `npm run check` 的边界脚本,不能据此把 Phase 0 或后续行为阶段标记完成。
 
 ### 2.2 对照 11 类治理问题的缺口
 
 | 领域 | 当前缺口 | 进入生产自动化前的硬门槛 | 计划落点 |
 |---|---|---|---|
 | Workspace identity | ExecutionEnv 只有 cwd/fs/shell;绝对路径、symlink、branch/base/owner 未统一校验 | 每次工具调用必须带并验证 `WorkspaceExecutionEnvelope` | Runtime Phase 2、4 + WorkspaceSecurity-Phase2–WorkspaceSecurity-Phase7 |
-| Session integrity | v2 无 sequence/hash/payload digest,坏行被跳过,无 stop tombstone;queue payload/claim/cancel 与 root goal/agent lineage 不是可恢复真源 | v3 strict event log、durability/uncertain barrier、identity/queue replay、corruption fail-closed | Runtime Phase 0–1 |
+| Session integrity | current 无 sequence/hash/payload digest,坏行被跳过,无 stop tombstone;queue payload/claim/cancel 与 root goal/agent lineage 不是可恢复真源 | current strict event log、durability/uncertain barrier、identity/queue replay、corruption fail-closed | Runtime Phase 0–1 |
 | Capability kernel | 决策只有 allow/deny,生产默认 `AllowAll` | `deny > ask > allow`、approval receipt、所有副作用只能过 Gateway | Runtime Phase 3 + WorkspaceSecurity-Phase1–WorkspaceSecurity-Phase8 |
 | Tool/MCP/Skill/Plugin | 无 manifest trust、签名/digest、变更重批和按需激活 | 可信 Registry、exact identity、capability manifest、sandbox probe | Runtime Phase 5 + Extension-M0–Extension-M7 |
 | Deterministic orchestrator | 模型循环没有完整 Goal/Gate 状态机 | build/test/review/complete 由结构化 gate 决定 | Runtime Phase 7–8 |
@@ -516,7 +516,7 @@ intent event
 
 若 durable object 成功而 committed event 失败,对象保持不可见/pending,由 recovery 按 intent id 补记或回收;若 event 已提交而对象不可验证,session 进入 corrupted/paused,不得继续。Secret 永远不能由 event replay 重建。
 
-Runtime-M0 的本地 canonical backend 固定为 strict hash-chained JSONL,避免在迁移期形成 JSONL/SQLite 双真源;`RuntimeEventStore` contract 保持 backend-neutral。SQLite 可先用于可丢弃、可从 canonical events 重建的分页/物化 projection。若以后把 SQLite 提升为 canonical backend,必须另行迁移并通过同一 Event Store conformance/fault suite,至少包含 `WAL`、`synchronous=FULL`、事务内 session/sequence/entry/active-leaf/projection 初始化与更新、原子 fork、writer fencing 和 durable receipt;数据库文件或事务成功本身不等于这些语义已经成立。
+Runtime-M0 的本地 canonical backend 固定为 strict hash-chained JSONL,避免形成 JSONL/SQLite 双真源;`RuntimeEventStore` contract 保持 backend-neutral。SQLite 可先用于可丢弃、可从 canonical events 重建的分页/物化 projection。若以后把 SQLite 提升为 canonical backend,必须另行设计并通过同一 Event Store conformance/fault suite,至少包含 `WAL`、`synchronous=FULL`、事务内 session/sequence/entry/active-leaf/projection 初始化与更新、原子 fork、writer fencing 和 durable receipt;数据库文件或事务成功本身不等于这些语义已经成立。
 
 ### 3.2 Runtime 硬约束
 
@@ -561,20 +561,16 @@ Runtime-M0 的本地 canonical backend 固定为 strict hash-chained JSONL,避�
 - 无可用 signer 时仍可运行本地链校验,但 Episode Manifest 必须标为 `unattested`,不能对外宣称企业级不可抵赖。
 - signer rotation、receipt、外部 SIEM anchor 和验证结果本身都以 Artifact/Event 引用,不得覆盖历史 head。
 
-## 4. v3 核心协议草案
+## 4. current 核心协议草案
 
 实现时使用 TypeBox schema + 静态 TypeScript 类型,禁止 `enum`、参数属性、`any` 和动态 import。
 
-下面代码块是用于评审边界的字段轮廓,不是可直接复制的最终规范源。最终规范必须位于 `src/runtime/protocol/v3/{ids,event-catalog,event-payloads,events,schemas}.ts`:所有主键/ref 使用对应 branded ID,并按 authority/tenant scope 组合;每个 event type 对应独立 exact TypeBox payload schema。后续 contract phase 新增事件时,必须在同一 PR 同步更新 catalog、payload union、状态转换、size bound、golden fixture 和 version fence,不得把这里的裸 `string` 或 `Record<string, unknown>` 变成生产协议。
+下面代码块是用于评审边界的字段轮廓,不是可直接复制的最终规范源。最终规范必须位于 `src/runtime/protocol/{ids,event-catalog,event-payloads,events,schemas}.ts`:所有主键/ref 使用对应 branded ID,并按 authority/tenant scope 组合;每个 event type 对应独立 exact TypeBox payload schema。后续 contract phase 新增事件时,必须在同一 PR 同步更新 catalog、payload union、状态转换、size bound 和 golden fixture,不得把这里的裸 `string` 或 `Record<string, unknown>` 变成生产协议。
 
 ```ts
 export type RuntimeEventType =
   | "session.created"
   | "session.forked"
-  | "session.migration_started"
-  | "session.legacy_message_imported"
-  | "session.migration_committed"
-  | "session.migration_failed"
   | "session.stop_requested"
   | "session.stopped"
   | "session.closed"
@@ -778,7 +774,7 @@ export interface DeclassificationReceiptRef {
   expiresAt?: string;
 }
 
-export interface QueueItemV3 {
+export interface QueueItem {
   queueItemId: string;
   sourceCommandId: string;
   kind: "steer" | "follow_up";
@@ -792,11 +788,10 @@ export interface QueueItemV3 {
   status: "enqueued" | "claimed" | "consumed" | "cancelled";
 }
 
-export interface RuntimeEventEnvelopeV3<
+export interface RuntimeEventEnvelope<
   TType extends RuntimeEventType,
   TPayload extends Record<string, unknown>,
 > {
-  schemaVersion: 3;
   authorityId: string;
   tenantId: string;
   principalId: string;
@@ -997,13 +992,13 @@ export interface ArtifactRef {
 }
 ```
 
-上述接口只是公共 envelope/ref,不是 WorktreeManager、PermissionEngine、ApprovalStore、ExecutionGateway 或 SandboxBackend 接口。它们只描述 Runtime 可验证、持久和投影的数据;值如何产生、是否可信以及何时发射事件,归 Worktree/Sandbox/Permission 专项实现负责。实际 `RuntimeEventV3` 必须是按 `type` 区分的穷尽联合,每一种 payload 都有独立 TypeBox schema;不得把宽松的 `Record<string, unknown>` 直接暴露为 canonical event。哈希输入使用仓库内唯一 canonical JSON 实现,固定 UTF-8、字段排序、换行与数字规则。`currentEventHash` 覆盖 schema version、identity、sequence、type、previous hash 与 payload digest,不得对原始 `JSON.stringify` 输出直接碰运气。
+上述接口只是公共 envelope/ref,不是 WorktreeManager、PermissionEngine、ApprovalStore、ExecutionGateway 或 SandboxBackend 接口。它们只描述 Runtime 可验证、持久和投影的数据;值如何产生、是否可信以及何时发射事件,归 Worktree/Sandbox/Permission 专项实现负责。实际 `RuntimeEvent` 必须是按 `type` 区分的穷尽联合,每一种 payload 都有独立 TypeBox schema;不得把宽松的 `Record<string, unknown>` 直接暴露为 canonical event。哈希输入使用仓库内唯一 canonical JSON 实现,固定 UTF-8、字段排序、换行与数字规则。`currentEventHash` 覆盖 identity、sequence、type、previous hash 与 payload digest,不得对原始 `JSON.stringify` 输出直接碰运气。
 
 ## 5. 目标目录与数据布局
 
 ```text
 src/runtime/
-  protocol/v3/          branded ids、catalog/payload、schema、hash、transition、threat/coordination contracts
+  protocol/          branded ids、catalog/payload、schema、hash、transition、threat/coordination contracts
     taint.ts            input source、taint propagation 与 declassification receipt
     workspace.ts        envelope、binding/lease/checkpoint/validation refs
     capability.ts       capability/permission/approval/sandbox refs
@@ -1025,14 +1020,14 @@ src/runtime/
 src/verification-runner/ 独立 command/browser verifier 进程与 evidence capture
 src/integrations/forge/  仅创建 Draft PR 的受限 provider adapter
 src/daemon/             headless composition root
-tests/runtime-v3/       contract、failure injection、recovery、security
+tests/runtime-contracts/       contract、failure injection、recovery、security
 tests/e2e/              daemon、workspace、verification、multi-agent
 ```
 
 ```text
 .runledger/
-  sessions/                         v1/v2 legacy;可写性严格按 §6.1 状态矩阵
-  runtime/v3/
+  sessions/<sessionId>/             当前格式 JSONL；不接受其他格式
+  runtime/current/
     authorities/<authorityId>/tenants/<tenantId>/
       lifecycle-events.jsonl        canonical handoff/retention/deletion tombstone stream
     sessions/<sessionId>/
@@ -1046,41 +1041,21 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 本布局只列 Runtime 自身的 canonical event/snapshot/artifact 数据。workspace lease/registry、approval store、security snapshot 和 sandbox backend state 的物理路径由专项计划定义;Runtime event 只保存 ID、digest、revision、receipt 和投影必需字段。Runtime 拥有的所有目录默认 `0700`,敏感元数据文件默认 `0600`。Blob 与 metadata 分离;同 digest blob 可去重,但访问授权按 session/workspace 引用判断。
 
-## 6. 兼容、迁移与回滚总策略
+## 6. 当前格式与回滚策略
 
-### 6.1 Session 版本
+### 6.1 Session 与 Runtime 数据
 
-- v1:仅安全文本投影,保持现有 warning,永不补造工具参数或签名。
-- v2:保持 canonical AgentMessage/runtime config 恢复;`off/opt_in` 维持当前 read/write,`default/required` 后只读且不再 append。
-- v3:所有新治理事件、snapshot、checkpoint、artifact 和 verification 的唯一写格式。
+- Session、Runtime event、resource、context、compaction、memory 和 extension 合同各自只有一个当前结构；写入和读取都必须通过该结构的 exact guard。
+- 未知字段、缺失必需字段、损坏 JSON、未知 event type 或不完整 entry 一律拒绝；不得跳过、猜测、文本降级或自动修补后继续。
+- 当前格式不包含代际号、数字 schema 字段或 session feature flag。能力开关只能表达功能是否已实现，不能改变持久化格式。
+- CLI 的 `--continue`、`--resume`、`--session` 与 `--fork` 只接受当前格式；不提供 migrate、旧格式导出兼容或隐式转换入口。
 
-`sessionV3` 不是一个含糊的布尔回退开关,实现前必须冻结以下状态矩阵并由 CLI golden tests 覆盖:
+### 6.2 回滚与发布
 
-| feature state | 新 session | v1 action | 既有 v2 action | v3 action |
-|---|---|---|---|---|
-| `off` | v2 | inspect/export | 按当前兼容路径 read/write | inspect/export only,不允许旧 runtime append |
-| `opt_in` | 默认 v2,显式选择 v3 | inspect/export/migrate | read/write 或显式 migrate/fork-to-v3 | read/write |
-| `default` | v3 | inspect/export/migrate | inspect/export/migrate/fork-to-v3,禁止 append | read/write |
-| `required` | v3 | inspect/export/migrate | inspect/export/migrate/fork-to-v3,禁止 append | read/write |
-
-一旦目标分支把状态推进到 `default/required`,普通回滚不得把已有 v2/v3 session 重新开放给旧写路径;紧急降级只允许 inspect/export。feature 状态、session header 版本和 CLI action 三者必须共同决定行为,不能由“文件能解析”推导可写。
-
-### 6.2 迁移
-
-- 新增显式 `runledger session migrate <source> --to v3`,始终写入新 session 目录,绝不原地修改源文件。
-- v3 成为默认后,`--continue/--resume/--session/--fork` 选中 v1/v2 时只能 inspect/export;继续新 turn 必须显式 migrate 或 `--fork-to-v3`,不能静默续写或隐式转换。
-- migration 首事件记录完整 source bytes digest、size、header digest、importer/schema 版本、可恢复字段和丢失字段。
-- v1/v2 历史只形成 `session.legacy_message_imported` 一类受限事件;不能声称旧事件已通过 v3 hash-chain 审计。
-- migration 以 durable `session.migration_committed | session.migration_failed` 收尾;committed 前目标 session 永远 pause/inspect-only,中断续跑以 source digest+record index 幂等。
-- malformed 中间行一律停止迁移。仅最后一条 torn write 可通过显式 forensic 命令生成报告;修复也必须写新 fork。
-
-### 6.3 Rollout 与回滚
-
-- Runtime 内功能门按 `sessionV3 -> workspaceContracts -> securityContracts -> artifactCas -> orchestrator -> verification -> daemon` 单向推进。`workspaceGuard`、`capabilityGateway`、`sandboxEnforcement` 属于专项实现门,未通过其验收时 Runtime contract 完成也不得启用副作用。
-- 可以先 shadow 计算策略或 projection,但 shadow 结果不得授予新权限。
-- 不采用 v2/v3 dual-write 作为长期方案,避免产生两个“真源”。
-- 回滚代码版本时,v3 session 只能只读导出;旧 runtime 不得继续写 v3。
-- 每个阶段必须提供开关撤回消费者或 adapter,但不能绕过已经启用的安全检查继续副作用执行。
+- 代码回滚必须同时使用仍能校验当前格式的实现；无法校验时启动失败，不降级到另一套 reader/writer。
+- Runtime Event Store、Session ledger 和 projection 只保留一个写入真源；不双写、不并行维护另一套格式、不以 shadow projection 授予新权限。
+- Workspace、security、artifact、orchestrator、verification 和 daemon 的能力门仍可独立 fail closed，但不得引入格式代际开关。
+- 新增字段或改变既有字段时，先更新当前 exact contract、fixture、静态边界检查和所有消费者，再合入实现；不得保留双格式窗口。
 
 ### 6.4 明确后置与非目标
 
@@ -1095,60 +1070,60 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 ## 7. 分阶段实施计划
 
-统一协议变更 allowlist:Phase 1–11 只要新增或修改 canonical v3 event,同一 PR 必须同步修改 `src/runtime/protocol/v3/{event-catalog,event-payloads,events,schemas,state-transitions}.ts`、对应领域 schema/type、golden fixture、size bound 与 version fence。该 allowlist 是各阶段“计划文件”的窄例外,不授权顺手修改 ID、canonical JSON/hash 或其他阶段行为;若这些基础规则也需变更,先提交独立 Phase 0 protocol revision。任何阶段只改 `events.ts`/`schemas.ts` 或只新增领域私有 event 都不能完成。
+统一协议变更 allowlist:Phase 1–11 只要新增或修改 canonical current event,同一 PR 必须同步修改 `src/runtime/protocol/{event-catalog,event-payloads,events,schemas,state-transitions}.ts`、对应领域 schema/type、golden fixture 和 size bound。该 allowlist 是各阶段“计划文件”的窄例外,不授权顺手修改 ID、canonical JSON/hash 或其他阶段行为;若这些基础规则也需变更,先提交独立 Phase 0 protocol revision。任何阶段只改 `events.ts`/`schemas.ts` 或只新增领域私有 event 都不能完成。
 
 ### Phase 0:协议冻结、边界检查与测试骨架
 
-目标:在修改行为前固定 v3 identity、schema、错误模型、模块依赖和兼容矩阵。
+目标:在修改行为前固定 current identity、schema、错误模型和模块依赖。
 
 前置:无。
 
 计划文件:
 
-- 收敛现有 scaffold 并补全 `src/runtime/protocol/v3/{ids,event-catalog,event-payloads,events,schemas,errors,canonical-json,event-hash,state-transitions,coordination,taint,threat-model}.ts`。
+- 收敛现有 scaffold 并补全 `src/runtime/protocol/{ids,event-catalog,event-payloads,events,schemas,errors,canonical-json,event-hash,state-transitions,coordination,taint,threat-model}.ts`。
 - 补全 `src/runtime/identity/{types,local-principal}.ts`,提供可持久化的本地 authority/tenant/principal 基线。
 - 补全 `src/runtime/runtime-features.ts`、`scripts/{check-runtime-boundaries,check-execution-boundaries}.ts`,并把两项边界检查接入 `npm run check`。
 - 修改 `src/runtime/types.ts`、`src/storage/settings-manager.ts`、`src/index.ts`,仅暴露稳定入口。
-- 补全 `tests/runtime-v3/{schema,canonical-json,module-boundaries,legacy-fixtures,phase-zero-contracts,reference-snapshots}.test.ts`、固定 canonical vectors 和真实 v1/v2 JSONL fixtures。
+- 补全 `tests/runtime-contracts/{schema,canonical-json,module-boundaries,fixtures,phase-zero-contracts,reference-snapshots}.test.ts`、固定 canonical vectors 和当前 JSONL fixtures。
 
 任务:
 
 - [ ] 定义所有公开实体的 branded ID、创建/解析与 scoped-key 规则,至少覆盖 Runtime/EventStream/Session/Goal/Turn/ModelRequest/QueueItem/Workspace/Repository/Worktree/Lease/Agent/ToolCall/Trace/Artifact/Approval/Event/Resource/Snapshot/Leaf/Plan/ContextRequest/MemoryProposal/InputSource/Declassification/Command/CompositionReceipt/RateLimit/EpisodeSeal/ChangeProposal/HumanGate。
 - [ ] 从 Phase 0 起把 authorityId/tenantId/principalId 纳入所有主键、签名和授权上下文;实现固定 local authority/tenant 与 OS-derived principal。
 - [ ] 定义 `InputSourceRef`、有界 `TaintLabel`、传播规则与 `DeclassificationReceiptRef`:Issue/PR/comment/webhook/web/MCP/repo instruction/candidate config 默认 tainted,去污必须绑定独立 policy/human decision、允许 sink、expiry 与 revision。
-- [ ] 定义 RuntimeEventV3、typed error code、EventCursor、expected revision。
-- [ ] `RuntimeEventV3` 显式区分 `session` 与 `authority_tenant` stream scope,各自有独立 sequence/hash chain/cursor 和允许 event-type closed set;`EventCursor`、`DurableEventReceipt`、writer lease/epoch/fencing 全部绑定 branded streamId+scope。`subjectSessionId` 只允许作为 authority lifecycle payload/ref,不得替代 stream identity,也不得用全局 cursor 猜跨流顺序。
-- [ ] 建立 Phase 0 基础事件的完整 catalog、逐事件 exact payload schema、允许状态转换和 unknown-event version fence,同时固定 event type -> allowed stream scope 映射;`session.handoff_*` 与 `session.deletion_*` 只允许 authority/tenant lifecycle stream。后续阶段增加领域事件时必须同 PR 扩展 catalog/schema/transition/fixture,正文使用的事件不得游离在 catalog 外。
+- [ ] 定义 RuntimeEvent、typed error code、EventCursor、expected revision。
+- [ ] `RuntimeEvent` 显式区分 `session` 与 `authority_tenant` stream scope,各自有独立 sequence/hash chain/cursor 和允许 event-type closed set;`EventCursor`、`DurableEventReceipt`、writer lease/epoch/fencing 全部绑定 branded streamId+scope。`subjectSessionId` 只允许作为 authority lifecycle payload/ref,不得替代 stream identity,也不得用全局 cursor 猜跨流顺序。
+- [ ] 建立 Phase 0 基础事件的完整 catalog、逐事件 exact payload schema、允许状态转换和 unknown-event field fence,同时固定 event type -> allowed stream scope 映射;`session.handoff_*` 与 `session.deletion_*` 只允许 authority/tenant lifecycle stream。后续阶段增加领域事件时必须同 PR 扩展 catalog/schema/transition/fixture,正文使用的事件不得游离在 catalog 外。
 - [ ] 写明本地/受管/远程三种 threat model,区分 chain integrity 与 signed attestation。
 - [ ] 定义跨 Event Store/Lease/Artifact/Approval/Trust Store 的 intent-commit-reconcile 协议和 idempotency key。
-- [ ] 为 schema 增加 unknown-field、unknown-version、oversized-payload fail-closed 测试。
+- [ ] 为 schema 增加 unknown-field、missing-field、oversized-payload fail-closed 测试。
 - [ ] 固定 canonical JSON 与 hash test vectors,包含 Unicode、key order、整数边界和换行。
 - [ ] 建立模块依赖规则:protocol 不依赖 storage/UI/provider;gateway 不依赖 TUI;projection 不反向写 canonical store。
-- [ ] 建立并测试 §6.1 的 feature-state × v1/v2/v3 × CLI action 矩阵和默认值,所有不允许组合返回稳定 typed diagnostic。
+- [ ] 建立并测试当前格式 × CLI action 的 exact acceptance 表；不支持的输入返回稳定 typed diagnostic。
 - [ ] 把四个参考仓库 snapshot 记录为计划证据,不引入源码复制。
-- [ ] 对当前 HEAD 已存在的 v3/resource/model-plan-context/feature-flag scaffold 做追溯审计:记录引入 commit、实际路径、TODO/宽 guard、测试覆盖、未接入 `npm run check` 的脚本和相对本计划的缺口;这是 Phase 0 输入,不得倒推为历史 gate 已通过。
+- [ ] 对当前 HEAD 已存在的 current/resource/model-plan-context/feature-flag scaffold 做追溯审计:记录引入 commit、实际路径、TODO/宽 guard、测试覆盖、未接入 `npm run check` 的脚本和相对本计划的缺口;这是 Phase 0 输入,不得倒推为历史 gate 已通过。
 - [ ] 在任何后续实现 PR 前,让 `runtime/00-reference.md`、本主计划、三份交叉专项 owner 计划与 `development-doc/00-index.md` 作为同一可追踪文档基线存在于目标分支;未跟踪文件或其他 worktree 中的副本不能作为已冻结 contract/owner 证据。
 
-迁移/回滚:本阶段不写 v3 数据;`sessionV3=off` 只按 §6.1 保留当前 v2 行为,不能据此续写已经产生的 v3 session,也不改变 v1 只读边界。
+格式策略:本阶段只写当前数据；格式校验失败立即拒绝并保持源文件不变，不提供迁移或兼容写路径。
 
 验证:
 
 - `npm run check`
-- `npm test -- tests/runtime-v3/schema.test.ts tests/runtime-v3/canonical-json.test.ts tests/runtime-v3/module-boundaries.test.ts`
+- `npm test -- tests/runtime-contracts/schema.test.ts tests/runtime-contracts/canonical-json.test.ts tests/runtime-contracts/module-boundaries.test.ts`
 - `git diff --check`
 
 完成门槛:
 
 - schema 与 hash vectors 在 Linux/Windows 路径样本上稳定。
-- 未知版本或破坏性字段不会被宽松 cast。
-- 现有 v1/v2 fixture 读取结果不变。
+- 未知事件、未知字段或破坏性字段不会被宽松 cast。
+- 当前 fixture 均通过 exact guard；不支持的输入稳定拒绝。
 
 建议 PR:
 
-1. `runtime: freeze governed v3 protocol contracts`
+1. `runtime: freeze governed current protocol contracts`
 2. `runtime: add architecture and compatibility contract tests`
 
-### Phase 1:Session Kernel v3、哈希链与可恢复状态
+### Phase 1:Session Kernel current、哈希链与可恢复状态
 
 目标:用严格、可重放、可验证的事件内核替代“消息即 session”的假设。
 
@@ -1158,11 +1133,11 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 计划文件:
 
-- 新增 `src/runtime/session/{types,event-store,memory-event-store,jsonl-v3-store,event-writer,writer-lease,chain-verification,attestation,stop-tombstone,reducer,projections,snapshot,checkpoint,recovery,salvage}.ts`。
+- 新增 `src/runtime/session/{types,event-store,memory-event-store,jsonl-current-store,event-writer,writer-lease,chain-verification,attestation,stop-tombstone,reducer,projections,snapshot,checkpoint,recovery,salvage}.ts`。
 - 修改 `src/runtime/ledger/{types,jsonl-ledger,memory-ledger,lockfile}.ts`,保留 legacy adapter。
 - 修改 `src/storage/{session-manager,session-codec,path-utils}.ts` 和 `src/cli/{args,main}.ts`。
 - 修改 `src/runtime/{agent-loop,agent}.ts`,在 turn/model/tool/queue 边界写 durable event。
-- 新增 `tests/runtime-v3/session/` 下 integrity、replay、crash、fork、rewind、stop 测试。
+- 新增 `tests/runtime-contracts/session/` 下 integrity、replay、crash、fork、rewind、stop 测试。
 - 新增可复用的 Event Store conformance/fault fixture,让 memory、JSONL 以及未来 SQLite/remote backend 接受相同的 stream scope/id、sequence、durability、fencing、fork、cross-stream replay rejection 和 corruption 断言。
 
 核心接口:
@@ -1187,7 +1162,7 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - [ ] 保证 tool result terminal event flush 后才允许下一 model request。
 - [ ] recovery 对未完成 tool call 默认写 interrupted/uncertain 并关闭 mutation gate;只有 manifest 明确声明 idempotent/retry-safe、稳定 request/toolCall identity 匹配且 side-effect reconcile 证明可重试时,才允许沿原 idempotency claim 自动重试。
 - [ ] 建立 turn/model/tool/queue 的 started/finished/interrupted/failed 成对事件和 crash reducer。
-- [ ] 冻结 `QueueItemV3` exact schema:queueItemId、sourceCommandId、`steer | follow_up` kind、enqueue/target turn revision、next-turn policy、content digest、bounded canonical message、status;Phase 4 前超出 inline 上限的 payload 必须拒绝,不得只持久化 digest 后丢弃正文。Phase 4 冻结 exact `ArtifactRef` 后再以独立 schema version 启用 ref variant。
+- [ ] 冻结 `QueueItem` exact schema:queueItemId、sourceCommandId、`steer | follow_up` kind、enqueue/target turn revision、next-turn policy、content digest、bounded canonical message、status;Phase 4 前超出 inline 上限的 payload 必须拒绝,不得只持久化 digest 后丢弃正文。Phase 4 冻结 exact `ArtifactRef` 后再增加受限 ref variant。
 - [ ] queue 状态至少覆盖 `enqueued -> claimed -> consumed | cancelled`;claim 必须按 queueItemId+kind 精确绑定 turn/modelRequestId,禁止按相同文本 digest 猜测。replay 恢复所有未终结 item 的正文/ref、kind 与顺序;payload 缺失或 claim 结果不确定时 pause/corrupted,不能投影为空队列继续。
 - [ ] `queue.cancelled` durable 后才可从 projection/Agent queue 移除;批量 clear 也是逐 item/versioned cancellation,不能用返回空数组的 no-op 伪装成功。
 - [ ] 写 durable stop tombstone;startup recovery 先读 tombstone,再判断是否可恢复。
@@ -1199,27 +1174,19 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - [ ] 中间坏行、sequence 缺口、hash 断链全部返回 `corrupted`;禁止静默跳过。
 - [ ] Phase 1 forensic salvage 只读生成有硬大小上限的 `SalvageReport` 和可选离线 report file+digest,不依赖尚未实现的 Artifact CAS;显式修复始终写新 session。Phase 4 再把该 report 适配为受授权的 Artifact,原始坏日志不原地修改。
 - [ ] writer lock 以 stream scope/id 为键,增加 writer epoch/fencing token、ownerRuntimeId、heartbeat 与 stale-owner recovery;每次 append/flush 都校验当前 stream/token,session writer 与 authority lifecycle writer 不能共用未分域的锁或 receipt。
-- [ ] CLI 严格执行 §6.1:v1 始终返回 legacy-read-only;v2 在 `off/opt_in` 保持当前 read/write,在 `default/required` 返回只读提示并提供 migrate/fork-to-v3;覆盖 version-fence/downgrade 测试。
-- [ ] legacy migration 使用 `session.migration_started -> session.legacy_message_imported* -> session.migration_committed | session.migration_failed`;started 绑定完整 source digest/size/importer/schema/expected record count,每条 import 绑定 source index+digest 并幂等。committed durable 前新 v3 session 只能 inspect/pause,不得 resume 或对外返回迁移成功。
-- [ ] crash 后只允许用同 source/manifest idempotently 续完 migration,或把不完整目标标 failed/tombstoned 后创建新目标;不得把部分导入历史当完整 session,也不得覆盖源文件。
-
-迁移/回滚:
-
-- 新 session 与既有 v2 的可写性严格按 §6.1:在 `opt_in` 可显式创建 v3 且 v2 仍走当前写路径;进入 `default/required` 后既有 v2 才由 legacy adapter 只读并要求 migrate/fork-to-v3。
-- 迁移命令最后实现,先用 golden fixture 验证转换器;CLI 仅在 `session.migration_committed` durable 后返回新 session handle/path。
-- v3 写入后若回滚代码,只允许 export,不得回到 v2 append。
+- [ ] CLI 对 `--continue/--resume/--session/--fork` 统一执行当前 exact format 校验；不支持的输入返回稳定拒绝诊断，源文件保持不变。
+- [ ] recovery 对 malformed header、未知字段、坏 JSONL 行、sequence 缺口和 hash 断链统一 fail closed；不得提供转换器、旧格式 adapter 或兼容写路径。
 
 故障注入:
 
 - 在 header、event body、after-write/before-sync、durable receipt 返回、snapshot rename、checkpoint bind、stop tombstone 每个边界 kill 进程。
 - 在 session/genesis/sequence/initial projection 初始化的每个边界以及 fork staging、lineage bind、逐 entry/import、publish 前后 kill 进程;半初始化 create/fork 永远不能被恢复为 completed/resumable。未来 SQLite backend 还必须在 sessions/sequence/materialized 三表初始化和 fork 中途注入 rollback 故障。
 - 注入 torn tail、middle-line corruption、duplicate sequence、reordered event、wrong stream scope/id、wrong sessionId、跨 stream cursor/receipt replay、disk full 和 permission denied。
-- Phase 1 先覆盖 checkpoint envelope/digest 与 checkpoint 前后普通坏 JSONL 行,全部停止恢复并进入 corrupted 或只读 forensic salvage。invalid window UUID/chain、损坏 world-state、patch-without-full、legacy missing replacement history 等领域 fixture 等 Phase 6 contract 与专项 behavior 就绪后执行,但必须复用同一 fail-closed recovery outcome,不能 warning 后继续。
+- Phase 1 先覆盖 checkpoint envelope/digest 与 checkpoint 前后普通坏 JSONL 行,全部停止恢复并进入 corrupted 或只读 forensic salvage。invalid window UUID/chain、损坏 world-state、patch-with-full 缺失等领域 fixture 等 Phase 6 contract 与专项 behavior 就绪后执行,但必须复用同一 fail-closed recovery outcome,不能 warning 后继续。
 - 分别并发启动两个同 session stream writer 和两个同 authority lifecycle stream writer,覆盖 stale epoch/fencing token、duplicate idempotency claim 与 takeover race;旧 writer 即使持有可写 fd/DB connection 也不能 append,一个 stream 的 receipt/token 不能用于另一个 stream。
 - 覆盖 crash-after-intent-before-effect 与 crash-after-effect-before-committed-event:前者只有 reconcile 证明 `none` 后才可执行,后者保持 `uncertain` 直到按原 idempotency identity 证明 committed/compensated,禁止直接 retry。
 - 重复 resume 不得重复 prompt、permission decision 或已开始的副作用工具;不确定副作用必须 pause。
 - 在 `queue.enqueued/claimed/consumed/cancelled` 的每个边界 kill 进程;重启后 pending 顺序、kind、payload、goalId/rootAgentId 与 live projection 必须一致,相同文本的 steer/follow-up 不得错绑。
-- 在 migration started、每条 legacy import、commit/failed receipt 前后 kill 进程;重复命令不重复消息,partial target 永远 pause/inspect-only。
 - 构造 Git rewind 成功但 filesystem restore 失败、以及相反顺序的 partial receipt;Phase 1 不激活物理 rewind,Phase 4 联合恢复也必须保持原 leaf/workspace 可追溯。
 
 完成门槛:
@@ -1229,15 +1196,14 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - replay、snapshot replay 和 live projection 对同一日志产生相同 digest。
 - durable queue 未消费时不得恢复成空队列;uncertain mutation 未 reconcile 前,同进程与重启后的所有新 mutation 都被拒绝。
 - open/resume 前后 initialGoalId/rootAgentId 与所有既有 turn/tool lineage 保持连续。
-- legacy migration 只有一个 durable terminal outcome;partial import 重启不被误判为可 resume,同 source 重试不产生重复 canonical message。
+- malformed input 只有一个 durable rejection outcome；重启后不被误判为可 resume，也不会生成部分转换结果。
 - stable logical fork、projection rewind 与 crash recovery E2E 全绿;物理 workspace rewind 的门槛归 Phase 4。
 
 建议 PR:
 
-1. `runtime: add strict hash-chained v3 event store`
+1. `runtime: add strict hash-chained current event store`
 2. `runtime: project session state and durable queues from events`
 3. `runtime: add logical checkpoints fork projections and crash recovery`
-4. `runtime: add explicit legacy-to-v3 migration tooling`
 
 ### Phase 2:Workspace Envelope、Receipt 与投影数据结构
 
@@ -1247,9 +1213,9 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 计划文件:
 
-- 补全现有 `src/runtime/protocol/v3/workspace.ts`,新增 `workspace-events.ts`,并按统一协议变更 allowlist 扩展 `event-catalog.ts`、`event-payloads.ts`、`events.ts`、`schemas.ts`、`state-transitions.ts` 与 fixture。
+- 补全现有 `src/runtime/protocol/workspace.ts`,新增 `workspace-events.ts`,并按统一协议变更 allowlist 扩展 `event-catalog.ts`、`event-payloads.ts`、`events.ts`、`schemas.ts`、`state-transitions.ts` 与 fixture。
 - 在 `src/runtime/session/` 中只增加 workspace event reducer/projection 数据,不引入 manager 或 filesystem/Git 依赖。
-- 新增 `tests/runtime-v3/workspace-contracts/`。
+- 新增 `tests/runtime-contracts/workspace-contracts/`。
 - 不修改 `execution-env.ts`、`tool-context.ts`、stdlib tools、storage、CLI 或 TUI。
 
 最小数据结构:
@@ -1265,19 +1231,19 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - [ ] envelope 必须携带 session/agent/toolCall/trace、workspace/repository、cwd、lease revision 和 fencing token;序列化 schema 不接收缺失字段。
 - [ ] validation receipt 区分 `valid/invalid/unavailable`,并绑定 envelope digest、validator identity 和时间;它不自行声称阻止了 TOCTOU。
 - [ ] checkpoint descriptor 只表达 event cursor、base/head、status digest、snapshot Artifact ref 和 completeness,不实现 Git 采集、物化、rewind 或 cleanup。
-- [ ] reducer 对 stale/revoked lease、无效 validation、binding 替换和 unknown event version 产生确定投影,不调用外部实现。
+- [ ] reducer 对 stale/revoked lease、无效 validation、binding 替换和 unknown event type 产生确定投影,不调用外部实现。
 - [ ] 定义 `WorkspaceServicePort` 的 request/result 数据契约时只暴露 opaque adapter port,不在 Runtime 提供 manager、lease store、path guard 或 broker 实现。
 
 完成门槛:
 
-- schema/type round-trip、golden fixture、unknown-version、missing-field、digest-binding 和 reducer replay 测试全绿。
+- schema/type round-trip、golden fixture、unknown-event/field、missing-field、digest-binding 和 reducer replay 测试全绿。
 - 架构测试证明 workspace contract 不 import Git、filesystem、`src/security/**` 或 `src/worktree/**`。
 - fake adapter 能产生数据并驱动投影,但本阶段不宣称 path isolation、lease enforcement、worktree lifecycle 或安全 cleanup 已实现。
 
 建议 PR:
 
 1. `runtime: define workspace envelope and receipt contracts`
-2. `runtime: project workspace references from v3 events`
+2. `runtime: project workspace references from current events`
 
 ### Phase 3:Capability、Approval 与 Sandbox 契约数据结构
 
@@ -1287,9 +1253,9 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 计划文件:
 
-- 补全现有 `src/runtime/protocol/v3/capability.ts`,新增 `security-events.ts`,并按统一协议变更 allowlist 扩展 `event-catalog.ts`、`event-payloads.ts`、`events.ts`、`schemas.ts`、`state-transitions.ts` 与 fixture。
+- 补全现有 `src/runtime/protocol/capability.ts`,新增 `security-events.ts`,并按统一协议变更 allowlist 扩展 `event-catalog.ts`、`event-payloads.ts`、`events.ts`、`schemas.ts`、`state-transitions.ts` 与 fixture。
 - 在 `src/runtime/session/` 中只增加 approval/sandbox projection 数据。
-- 新增 `tests/runtime-v3/security-contracts/`。
+- 新增 `tests/runtime-contracts/security-contracts/`。
 - 不新增 policy engine、approval store/coordinator、shell classifier、credential broker、gateway 或 sandbox backend,不修改 Tool/CLI/TUI 行为。
 
 最小数据结构:
@@ -1317,14 +1283,14 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 完成门槛:
 
-- schema/type round-trip、decision lifecycle、nonce/signature/channel binding、anti-replay、rate-limit receipt、expiry/revoke、truncated-evidence、redaction、unknown-version 和 replay projection 测试全绿。
+- schema/type round-trip、decision lifecycle、nonce/signature/channel binding、anti-replay、rate-limit receipt、expiry/revoke、truncated-evidence、redaction、unknown-event/field 和 replay projection 测试全绿。
 - 架构测试证明 contract 不 import TUI、storage、process/fs/network 或任何具体 security backend。
 - fake ports 可验证 Runtime 消费路径;本阶段完成不等于 least-privilege 默认、approval 可交互恢复、Gateway 无旁路、sandbox enforcement 或 credential isolation 已交付。
 
 建议 PR:
 
 1. `runtime: define capability approval and sandbox contracts`
-2. `runtime: project security receipts from v3 events`
+2. `runtime: project security receipts from current events`
 
 ### Phase 4:Artifact CAS、脱敏、Retention 与 Episode 骨架
 
@@ -1336,7 +1302,7 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 - 新增 `src/runtime/artifacts/{types,cas-store,metadata-store,access,key-provider,redaction,retention,episode-manifest}.ts`。
 - 对 `src/runtime/tools/tool-support.ts`、stdlib tools 与 `src/storage/paths.ts` 的接线只由 §0.6 I2/WorkspaceSecurity-Phase5 owner 完成;Artifact 模块开发期间不并发修改这些共享文件。
-- 新增 `tests/runtime-v3/artifacts/`。
+- 新增 `tests/runtime-contracts/artifacts/`。
 
 任务:
 
@@ -1351,11 +1317,11 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - [ ] forensic raw 只能在显式授权后加密存储,单独 retention 和 access log。
 - [ ] key provider 不可用时禁用 keyed source receipt 和 encrypted forensic raw,仍可保存已脱敏 stored blob,并在 metadata/manifest 明确降级状态。
 - [ ] 将 Phase 1 的 bounded `SalvageReport`/offline digest 适配成只读、受授权、带 source digest 与 unattested 标记的 Artifact;CAS 不可用时 Phase 1 仍可完成报告,但最终 governed salvage 验收必须等待该适配。
-- [ ] 在 `ArtifactRef` exact schema 冻结后版本化启用 `QueueItemV3` 的 Artifact-backed payload variant;旧 Phase 1 inline fixture 保持可读,缺失 blob/ref 的 queue item 只能 pause/corrupted。
+- [ ] 在 `ArtifactRef` exact schema 冻结后启用 `QueueItem` 的 Artifact-backed payload variant;缺失 blob/ref 的 queue item 只能 pause/corrupted。
 - [ ] retention 支持 TTL、pin、reference count、legal hold placeholder 和 dry-run GC。
 - [ ] 读取 Artifact 时把 session/workspace/capability refs 交给注入的 `CapabilityGatewayPort` 重新检查,Runtime Artifact 模块不实现权限规则。
 - [ ] 初版 Episode Manifest 聚合 identity、event head、workspace/base、artifact refs、permission refs、cost/verification 占位。
-- [ ] 兼容旧 `tmp/tool-output-*`:只读 import 时标为 legacy/unverified,不假装已有 digest 证据。
+- [ ] 对缺少当前 ArtifactRef/digest 的 `tmp/tool-output-*` 只生成不可验证诊断，不导入当前事件或 Artifact 真源。
 - [ ] 把 Phase 1 logical checkpoint、Phase 2 WorkspaceCheckpointDescriptor、diff/untracked Artifact 合成 CompositeCheckpoint。
 - [ ] 定义版本化 WorkspaceSnapshotManifest 数据结构:HEAD/base、raw index/各 conflict stage、staged/unstaged 状态、tracked/untracked Artifact refs、file mode、symlink target、submodule/LFS/exclusion/size-limit 状态;具体 Git 采集与恢复由专项实现。
 - [ ] checkpoint schema 对 ignored exclusion、dirty submodule、缺失 LFS object、超限或不可表示状态表达 `partial`;是否允许物理 rewind 由注入的 Workspace 服务判定。
@@ -1387,14 +1353,14 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 
 ### Phase 5:动态资源 Runtime 协议与数据结构
 
-目标:只定义 Tool/MCP/Skill/Hook/Plugin 接入 Runtime 所需的中立、版本化、可验证数据结构和 adapter port,不在 Runtime 计划中实现任何具体扩展子系统。
+目标:只定义 Tool/MCP/Skill/Hook/Plugin 接入 Runtime 所需的中立、精确、可验证数据结构和 adapter port,不在 Runtime 计划中实现任何具体扩展子系统。
 
 前置:Phase 0,以及 Phase 3 的 `CapabilityClaim` 与 Phase 4 的 `ArtifactRef` contract 已冻结;不等待 Phase 3/4 行为实现完成。resource identity/provenance 的草案可在 Phase 0 后并行准备,但包含 invocation/result/receipt 的 Phase 5 整体不能在上述引用 schema 冻结前完成。具体实现由 [`../plugin-mcp-skill-hooks/01-implementation-plan.md`](../plugin-mcp-skill-hooks/01-implementation-plan.md) Extension-M0–Extension-M6 完成。
 
 计划文件:
 
-- 补全现有 `src/runtime/resources/{types,schemas,ports,events}.ts`,删除 TODO 级宽松合同并与 v3 exact payload 对齐。
-- 补全 `tests/runtime-v3/resource-contracts/`。
+- 补全现有 `src/runtime/resources/{types,schemas,ports,events}.ts`,删除 TODO 级宽松合同并与 current exact payload 对齐。
+- 补全 `tests/runtime-contracts/resource-contracts/`。
 - 不修改 `src/runtime/tool-registry.ts`、`src/runtime/tools/skill.ts`、`src/runtime/agent-loop.ts`、controller、CLI 或 TUI。
 
 最小中立类型:
@@ -1427,7 +1393,7 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - [ ] snapshot/invocation 都绑定 adapter generation;reload/replacement 后旧 context 与旧 invocation 必须 fail closed。Hook adapter contract 还要能表达 same-role replacement、tool-result source-order patch、tool-call block short-circuit、system-prompt chain 与 input handled/transform 的确定顺序;具体 reducer 和错误策略由扩展专项实现与验收。
 - [ ] MCP annotation（含 `read_only_hint`）只作为不可信 metadata,不能生成 capability decision;remembered approval 每次都重新核对当前 policy/Hook、server config、tool/publisher/digest/generation。生产 composition 必须能证明使用显式安全 client factory 与 authorization adapter,缺失时 fail closed。
 - [ ] Hook runner 本身通过 Resource port + Gateway/Sandbox 执行;Hook input/output、stderr 与 diagnostic 都有硬字节上限和写前脱敏,持久 event 默认只保留分类、digest 与 bounded diagnostic ref。具体 runner 行为与联合 E2E 归扩展专项。
-- [ ] schemas 拒绝未知 major version、缺失 digest、含糊 identity、过期 receipt 和无法穷尽的状态值。
+- [ ] schemas 拒绝未知字段、缺失 digest、含糊 identity、过期 receipt 和无法穷尽的状态值。
 - [ ] port 支持 exact resolve、bounded metadata search、snapshot acquire/release、invoke/cancel 和 event emission;不规定文件扫描、MCP transport、hook runner 或 plugin 安装方式。
 - [ ] snapshot/generation/cache ticket 绑定 adapter generation 与 resource digest;cache hit 只代表内容身份匹配,不替代 publisher trust、approval 或 capability decision。
 
@@ -1440,22 +1406,22 @@ tests/e2e/              daemon、workspace、verification、multi-agent
 - extension trust root/key lifecycle/trust store/fingerprint persistence、probe sandbox。
 - extension-specific CLI/TUI/modal/doctor/reload 和 `src/extensions/**`。
 
-迁移/交接:
+交接规则:
 
-- 先冻结 schema version、导出路径和 contract fixtures;扩展线只通过 public port 消费,不 import Runtime 内部 reducer/store。
+- 先冻结 exact schema、导出路径和 contract fixtures;扩展线只通过 public port 消费,不 import Runtime 内部 reducer/store。
 - 扩展 adapter 将具体 `ExtensionSnapshot` 投影为 `RuntimeResourceSnapshot`,将具体 trust record 投影为 `ResourceApprovalReceipt`,不把 Runtime 类型反向持久化成另一份 extension 真源。
 - 任何资源配置变化、批准撤销或 adapter generation 变化,由扩展实现生成新 snapshot/lifecycle event;Runtime 只验证结构、receipt 绑定与 Gateway decision。
 
 完成门槛:
 
-- 所有 TypeBox schema 与静态类型一致,round-trip/golden/unknown-version/invalid-receipt contract tests 全绿。
+- 所有 TypeBox schema 与静态类型一致,round-trip/golden/unknown-field/invalid-receipt contract tests 全绿。
 - fake adapter 可在不读取文件、不启动进程、不访问网络的情况下完成 exact resolve、snapshot 和 invocation contract 测试。
 - 架构测试证明本阶段未新增 `src/extensions/**`,且 Runtime resources 模块不依赖 MCP SDK、YAML/semver parser 或具体 Plugin/Skill/Hook 实现。
 - 具体资源的发现、信任、执行和 UI 验收只在扩展计划中判定,不得用本阶段完成状态代替。
 
 建议 PR:
 
-1. `runtime: define versioned neutral resource contracts`
+1. `runtime: define exact neutral resource contracts`
 2. `runtime: add resource adapter ports and contract fixtures`
 
 ### Phase 6:Model、Plan、Context、Compaction 与 Memory 公共契约
@@ -1471,8 +1437,8 @@ Runtime contract allowlist:
 - 补全现有 `src/runtime/context/{types,schema}.ts`。
 - 补全现有 `src/runtime/context/compaction/{types,schema}.ts`。
 - 补全现有 `src/runtime/context/memory/{types,schema}.ts`。
-- 按统一协议变更 allowlist 扩展 `src/runtime/protocol/v3/{event-catalog,event-payloads,events,schemas,state-transitions}.ts`,只注册本阶段的 payload/catalog/transition/version fence。
-- 新增 `tests/runtime-v3/contracts/{model-routing,plan-mode,context,compaction,memory}.test.ts` 与 `tests/runtime-v3/fixtures/{model-routing,plan-mode,context,compaction,memory}/`。
+- 按统一协议变更 allowlist 扩展 `src/runtime/protocol/{event-catalog,event-payloads,events,schemas,state-transitions}.ts`,只注册本阶段的 payload/catalog/transition 和 size bound。
+- 新增 `tests/runtime-contracts/contracts/{model-routing,plan-mode,context,compaction,memory}.test.ts` 与 `tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/`。
 
 本阶段禁止修改:
 
@@ -1484,33 +1450,33 @@ Runtime contract allowlist:
 
 - [ ] 定义 model capability/profile manifest、route request/decision/diagnostic、adapter-state compatibility 与必须 fork reason。
 - [ ] model profile 的 provider/api/tool/reasoning/image/context/transport 能力从已验证 `PiAiParityManifest` 和 catalog 生成或核对;未知/缺失能力按 incompatible 处理,不得根据 display name 或 best-effort `transformMessages` 猜测可切换。
-- [ ] 定义 `SessionMode`、`PlanModeState`、`ApprovedPlanRef`、mode/plan command、expected revision 与 approval/artifact reference;只表达状态,不实现迁移。
+- [ ] 定义 `SessionMode`、`PlanModeState`、`ApprovedPlanRef`、mode/plan command、expected revision 与 approval/artifact reference;只表达状态,不实现行为 reducer。
 - [ ] 定义 `ContextLayer`、`ContextFragment`、trust/taint/provenance、assembly request/receipt、omission diagnostic 和 bounded budget 字段。
 - [ ] Context assembly、compaction summary/checkpoint、model switch、Memory proposal/injection 全程保留 InputSourceRef/TaintLabel 与允许 sink;任何合并/摘要都只能取 taint 上界,去污只接受 Phase 0 的独立 DeclassificationReceipt。
 - [ ] 定义 compaction reason、cut/checkpoint/invariant snapshot/ref、validation result、suppression/attempt receipt 和 previous-checkpoint link。
 - [ ] compaction checkpoint 携带完整 replacement-history ArtifactRef/digest、被替换范围、previous link 与 surviving suffix cursor;恢复只允许验证 checkpoint 后正向 replay suffix,不能从 UI delta、bounded summary 或最后可解析行猜测 canonical history。
 - [ ] 定义 memory scope/status/source/ref、record/proposal/diff/search request/result/receipt、TTL/revocation/approval reference。
 - [ ] 复用 Phase 3 capability/effect 和 approval ticket、Phase 4 `ArtifactRef`、Phase 2 workspace identity;不在本阶段重新声明同义类型。
-- [ ] 扩展穷尽 v3 event union,覆盖 model route、mode/plan lifecycle、context receipt、compaction lifecycle 和 memory proposal/approval/publication/search/injection;大正文只保存 Artifact/Memory ref 和 bounded metadata。
+- [ ] 扩展穷尽 current event union,覆盖 model route、mode/plan lifecycle、context receipt、compaction lifecycle 和 memory proposal/approval/publication/search/injection;大正文只保存 Artifact/Memory ref 和 bounded metadata。
 - [ ] 为每个类型提供 TypeBox schema、public export 和稳定 discriminant;禁止 `any`、`enum`、宽松 `Record<string, unknown>` canonical payload 和无上界 array/string。
-- [ ] fixture 覆盖 compatible/incompatible model switch、approval resume、multi-compaction chain、taint 跨摘要/切模型不丢失、memory revoke/expire、unknown major version、oversized payload 和 invalid reference。
+- [ ] fixture 覆盖 compatible/incompatible model switch、approval resume、multi-compaction chain、taint 跨摘要/切模型不丢失、memory revoke/expire、unknown event/field、oversized payload 和 invalid reference。
 - [ ] compatibility fixture 对 tool/reasoning/adapter-state/compaction/context/profile/regression 的每一个 hash 分别构造 missing/unknown;任一缺证明均判 incompatible,只能拒绝或显式 fork,不得等同于“hash 未变化”。
 - [ ] compaction contract 区分 prepared replacement、durably committed checkpoint 与 live projection installed,并携带 expected projection revision/installation receipt;专项行为必须先 durable commit replacement Artifact、invariant snapshot 和 previous link,再以 CAS 安装 projection。
-- [ ] compaction/recovery fixture 覆盖 invalid window UUID/chain、损坏 world-state、patch-without-full、legacy missing replacement、坏 checkpoint 与 checkpoint 外坏 JSONL;每种输入都应有确定 invalid/corrupted 结果,不得通过 optional/default 字段降级为可恢复。
+- [ ] compaction/recovery fixture 覆盖 invalid window UUID/chain、损坏 world-state、patch-without-full、missing replacement、坏 checkpoint 与 checkpoint 外坏 JSONL;每种输入都应有确定 invalid/corrupted 结果,不得通过 optional/default 字段降级为可恢复。
 - [ ] compatible-switch fixture 明确验证允许的 reasoning/image/tool-call ID 降级及转换 receipt;incompatible-switch fixture 覆盖 tool schema、private adapter state、compaction format、transport/context profile 不兼容并要求 fork/拒绝。两者都不得以 `transformMessages` 未抛错作为判定依据。
-- [ ] contract test 校验 schema/static type 一致、JSON round-trip、unknown-field/version fail closed、budget bound、ID/ref 关系和 v3 event catalog 穷尽性。
+- [ ] contract test 校验 schema/static type 一致、JSON round-trip、unknown-field/event fail closed、budget bound、ID/ref 关系和 current event catalog 穷尽性。
 - [ ] 生成 contract ownership manifest,精确列出 Runtime allowlist、专项 behavior path 和 shared integration path;架构测试拒绝专项模块重复定义公共类型。
 
 交接规则:
 
 - 专项 Phase 0 通过 public exports 和 golden fixtures 验证契约,不在其 PR 内修改 allowlist。
-- 若行为实现发现字段/状态不足,先在本阶段登记变更理由、schema version、兼容性和 fixture,由独立 contract PR 冻结后再适配 behavior。
+- 若行为实现发现字段/状态不足,先在本阶段登记变更理由、exact contract 和 fixture,由独立 contract PR 冻结后再适配 behavior。
 - Runtime Phase 6 只回写 contract commit/验证证据;专项最终完成时只在此添加指向专项账本的汇总链接,不把 behavior checklist 搬回本阶段。
 
 完成门槛:
 
 - contract allowlist 中的静态类型、TypeBox schema、event payload、public export 和 fixture 一一对应。
-- 全部 contract tests 通过,破坏性 schema 漂移、未知版本、越界 payload 和非法 ref 都 fail closed。
+- 全部 contract tests 通过,破坏性 schema 漂移、未知事件/字段、越界 payload 和非法 ref 都 fail closed。
 - ownership manifest/架构测试证明 Runtime 与专项没有重叠写入路径,本阶段 diff 不含任何 behavior 或用户面实现。
 - 已在本阶段分别记录“contract 已冻结”与“专项实现状态”;不得因 contract 通过就声称模型切换、Plan Mode、compaction 或 memory 可用。
 
@@ -1529,9 +1495,9 @@ Runtime contract allowlist:
 计划文件:
 
 - 新增 `src/runtime/orchestrator/{types,goal-state-machine,turn-orchestrator,save-point,task-dag,budget-guard,retry-policy,loop-breaker}.ts`。
-- 修改 `src/runtime/tasks/` 作为 DAG projection/兼容 adapter。
+- 修改 `src/runtime/tasks/` 作为 DAG projection adapter。
 - 修改 `src/runtime/agent.ts`;对 `interactive-session-controller.ts` 的接线排入已预约的 Runtime 串行集成窗口,不得与安全、扩展或 Context 专项集成并发。
-- 新增 `tests/runtime-v3/orchestrator/`。
+- 新增 `tests/runtime-contracts/orchestrator/`。
 
 核心状态:
 
@@ -1605,7 +1571,7 @@ Canonical event/reducer 闭环:
 - 新增 `src/verification-runner/` 独立进程入口,以及 `src/verification-runner/browser/{provider,profile,evidence}.ts` 这一仅供 verification gate 使用的内置受限 Browser provider;它不是通用浏览工具或第二套 capability runtime。
 - 新增 `src/runtime/change-proposals/{types,ports}.ts`;本阶段只冻结 proposal/human-gate contract,生产 service/provider/coordinator 归 Phase 10。
 - 修改 `src/runtime/artifacts/episode-manifest.ts` 和 Orchestrator gate。
-- 新增 `tests/runtime-v3/verification/`、`tests/e2e/verification-trust.test.ts`。
+- 新增 `tests/runtime-contracts/verification/`、`tests/e2e/verification-trust.test.ts`。
 
 任务:
 
@@ -1671,7 +1637,7 @@ Canonical event/reducer 闭环:
 
 - 新增 `src/runtime/agents/{types,graph-store,delegation,supervisor,residency,handoff,merge}.ts`。
 - 扩展 `src/runtime/orchestrator/task-dag.ts`、`budget-guard.ts`。
-- 新增 `tests/runtime-v3/agents/` 和 `tests/e2e/multi-agent-isolation.test.ts`。
+- 新增 `tests/runtime-contracts/agents/` 和 `tests/e2e/multi-agent-isolation.test.ts`。
 
 Canonical event/reducer 闭环:
 
@@ -1724,7 +1690,7 @@ Canonical event/reducer 闭环:
 - 新增 `src/runtime/change-proposals/{service,human-gate-coordinator}.ts` 与 `src/integrations/forge/{types,github-provider}.ts`;provider 只能创建 Draft PR,凭据只经 Credential Broker/Gateway port 获取。
 - 新增 `src/daemon/{main,server,composition-root}.ts` 和 bin 入口。
 - 在独占 control-plane/daemon 模块完成后,按 §0.6 I6 窗口修改 `src/cli/main.ts`、`src/runtime/interactive-session-controller.ts` 和 TUI 装配为 client/facade;不得与 WorkspaceSecurity-Phase5、Extension-M6 或 Plan/Context 集成窗口并发。
-- 新增 `tests/runtime-v3/control-plane/`、`tests/e2e/daemon-recovery.test.ts`。
+- 新增 `tests/runtime-contracts/control-plane/`、`tests/e2e/daemon-recovery.test.ts`。
 
 最小 API:
 
@@ -1737,7 +1703,7 @@ Canonical event/reducer 闭环:
 - events:subscribe/fromCursor
 - activity:get、health、shutdown
 
-Legacy migrate/export、forensic salvage/repair 首版是 daemon 停止后的独占离线管理命令:必须取得目标 session 的 writer/admin lease,写审计报告或新 session,且不得原地修补 canonical log。daemon 活跃时这些 CLI 明确拒绝而不是并发旁路“唯一状态所有者”。若后续需要在线管理,必须先增加版本化 admin handshake/API、独立高权限 capability、expected revision、idempotency、审计 Artifact 与 crash recovery,不能复用普通 session mutation command。
+Forensic inspect/report 是 daemon 停止后的独占离线管理命令:必须取得目标 session 的 writer/admin lease,只写审计报告或不可验证诊断,不得导入、转换或原地修补 canonical log。daemon 活跃时这些 CLI 明确拒绝而不是并发旁路“唯一状态所有者”。若后续需要在线管理,必须先增加独立 admin handshake/API、高权限 capability、expected revision、idempotency、审计 Artifact 与 crash recovery,不能复用普通 session mutation command。
 
 Canonical event/reducer 闭环:
 
@@ -1747,7 +1713,7 @@ Canonical event/reducer 闭环:
 
 任务:
 
-- [ ] handshake 协商 protocol/schema/features,不兼容版本返回 typed error。
+- [ ] handshake 校验 current protocol/schema/features,不满足 exact contract 时返回 typed error。
 - [ ] daemon handshake 和任一 tool/resource adapter handshake 都绑定 authenticated session、runtime/adapter generation 与 sequence domain;peer 自报 feature/capability/scope 只影响 discovery proposal,production feature advertisement 与授权仍只来自 `ProductionCompositionReceipt` 和 Gateway receipt。
 - [ ] mutation command 带 commandId、request digest、idempotency key 和领域 precondition;重复 commandId 携带不同 payload 必须拒绝。
 - [ ] 为 `session:start/resume/fork/stop`、`turn:start/steer/followUp/interrupt`、`queue:cancel`、`approval:resolve`、`changeProposal:requestDraftPr`、`humanGate:resolve` 与 `shutdown` 共 13 类 mutation 建立 closed command -> effect/error mapping。进程重启后只读取 canonical claim+terminal events即可逐字段恢复原成功 effect 或 typed rejection;进程缓存、injected resolver 和外部 waiter 只能加速,不得成为恢复真源。terminal 缺失、digest/cursor/ref 不匹配或 effect 超界只能进入 reconciliation/corrupted,不能返回空对象或重新执行命令。
@@ -1766,10 +1732,10 @@ Canonical event/reducer 闭环:
 - [ ] HTTP/SSE adapter 复用同一 command/query schema;首版只绑定 loopback/local socket。
 - [ ] local socket/pipe 权限和 peer identity;远程 auth/tenant 在 Phase 11 前默认关闭。
 - [ ] bounded transport input queue 返回 typed overload,不会以断开或静默丢帧伪装 accepted;UDS stale path/startup lock/file mode 只用于本地启动安全,仍必须取得 OS peer credential/channel binding 并映射 principal,不能只信 socket 路径所有权。
-- [ ] 在 `composition-requirements.ts` 冻结 versioned `PRODUCTION_FEATURE_REQUIREMENTS_V1` 和 canonical digest,作为协议最低矩阵;至少覆盖 Event Store、model provider、Workspace、Gateway、Approval、Sandbox、Artifact/key provider、resource catalog/invoker、verifier registry,Phase 11 预留 managed policy、credential、forge/human gate、remote executor 与 telemetry exporter。managed policy 只能删除 feature、增加 required adapter/约束或缩短 expiry,不得放宽协议最低矩阵。
-- [ ] composition root 生成可校验 `ProductionCompositionReceipt`,绑定 authority/tenant、runtime generation、feature matrix version、protocol-minimum digest、effective requirements digest、managed policy ref、每个 adapter identity/generation/config digest/health/trust receipt 与 signer/attestation;任一 adapter generation/health/trust、协议矩阵或 effective digest 变化即失效。feature advertisement 只能由同时满足 protocol minimum 与更严格 effective row 的 receipt 计算,测试 fixture issuer/policy 不得进入生产 registry。
+- [ ] 在 `composition-requirements.ts` 冻结 `PRODUCTION_FEATURE_REQUIREMENTS` 和 canonical digest,作为协议最低矩阵;至少覆盖 Event Store、model provider、Workspace、Gateway、Approval、Sandbox、Artifact/key provider、resource catalog/invoker、verifier registry,Phase 11 预留 managed policy、credential、forge/human gate、remote executor 与 telemetry exporter。managed policy 只能删除 feature、增加 required adapter/约束或缩短 expiry,不得放宽协议最低矩阵。
+- [ ] composition root 生成可校验 `ProductionCompositionReceipt`,绑定 authority/tenant、runtime generation、protocol-minimum digest、effective requirements digest、managed policy ref、每个 adapter identity/generation/config digest/health/trust receipt 与 signer/attestation;任一 adapter generation/health/trust、协议矩阵或 effective digest 变化即失效。feature advertisement 只能由同时满足 protocol minimum 与更严格 effective row 的 receipt 计算,测试 fixture issuer/policy 不得进入生产 registry。
 - [ ] composition schema 拒绝 unknown/duplicate feature 或 adapter、同一 feature 多个 requirements row、enabled feature 缺 row/缺 required receipt、receipt adapter 不在当前 generation;requirements 和 adapter kind 按 canonical order 参与 composition digest。
-- [ ] downgrade fixtures 覆盖旧/未知 matrix version、伪造 protocol-minimum digest、issuer 删除 minimum adapter、managed policy 放宽 requirements、stale policy ref 与只更新自报 featureRequirements;全部拒绝 startup/advertisement。
+- [ ] downgrade fixtures 覆盖未知/不完整 matrix、伪造 protocol-minimum digest、issuer 删除 minimum adapter、managed policy 放宽 requirements、stale policy ref 与只更新自报 featureRequirements;全部拒绝 startup/advertisement。
 - [ ] session replacement 先在关闭 mutation 的候选 generation 中 prepare/validate:注册不可序列化依赖、验证 composition receipt、replay/reconcile durable state 并完成 health probe;在候选未 ready 前,旧 runtime 仍是唯一 authority 且保持可用,不得先 teardown。
 - [ ] 候选 ready 后写 durable replacement transition,在同一 lifecycle critical section 原子切换 generation/fencing authority,再 bounded drain/teardown old runtime;commit 后旧 handle 永久失效。factory/open/prepare 在 commit 前失败时保留旧 runtime并记录失败诊断,commit 后才失败则旧 runtime 不得复活,新 generation 必须形成明确 paused/stopped terminal 与 recovery path。
 - [ ] idle unload 只针对无 subscriber 且 inactive 的 session,先关闭 mutation gate、取消/持久化 pending request 并 bounded shutdown;subscribe/resume 与 unload 在同一 lifecycle lock 串行,恢复后按 durable cursor 重建 pending 状态。增加 subscribe/resume-vs-unload、pending approval cancel、flush/fencing 与 daemon restart 竞态测试。
@@ -1777,7 +1743,7 @@ Canonical event/reducer 闭环:
 - [ ] replacement fault test 覆盖 dependency registration、replay、reconcile、health probe、durable transition、authority swap 与 old-runtime drain 的每个边界;断言 commit 前失败旧 session 仍可用,commit 后失败只有新 generation 的 durable paused/stopped terminal,不存在双 writer、双 authority 或“假装回滚”。
 - [ ] shutdown 先关闭 RPC gate拒绝新 mutation,再 bounded drain writer/handler/tool/child,超时项保留 recovery state。
 - [ ] TUI 只保留 editor/render/临时动画;queue/retry/compaction/tool/session 状态来自 projection。
-- [ ] daemon crash/restart 从 v3 events 恢复,不会重放已完成副作用。
+- [ ] daemon crash/restart 从 current events 恢复,不会重放已完成副作用。
 
 完成门槛:
 
@@ -1811,7 +1777,7 @@ Canonical event/reducer 闭环:
 - 扩展 `src/runtime/identity/`,只新增 authentication/authorization/tenant/key receipt 的 types、schemas 与 provider ports。
 - 新增 `src/runtime/executors/{types,ports,receipts}.ts`;CI/SSH/relay 的安全执行实现后置到专项实现,Runtime 不实现第二套 sandbox、credential 或 policy。
 - managed policy 只以 versioned snapshot/digest/ref 进入 Runtime protocol;不在 `settings-manager.ts` 实现安全策略层。
-- 新增 `tests/runtime-v3/{telemetry,lifecycle,managed-policy}/` 和 harness regression suite。
+- 新增 `tests/runtime-contracts/{telemetry,lifecycle,managed-policy}/` 和 harness regression suite。
 
 Canonical event/reducer 闭环:
 
@@ -1828,7 +1794,7 @@ Canonical event/reducer 闭环:
 - [ ] OTel 默认关闭或仅 metadata;content export 同时要求 organization policy 和当前 composition manifest 双重 opt-in,prompt/tool output/model private reasoning 默认一律 redacted。
 - [ ] forensic content tracing 使用独立高敏 store/namespace/key/ACL,不得写入默认 OTel/SIEM spool;必须显式、限时、加密、tenant-isolated、可审计,具有单独 retention/legal-hold/crypto-erase 流程,并受 organization policy 禁止。
 - [ ] exporter 失败不阻塞 canonical event append,但产生 bounded health event/metric。
-- [ ] 默认 metadata-only OTel/SIEM/trace 是可丢弃、可由 canonical metadata events 重建的 projection。高敏 forensic raw 不一定能从脱敏 canonical log 重建,但必须可按 retention 删除、绝不成为恢复/完成所需真源,也不能反向补写 v3 审计链。
+- [ ] 默认 metadata-only OTel/SIEM/trace 是可丢弃、可由 canonical metadata events 重建的 projection。高敏 forensic raw 不一定能从脱敏 canonical log 重建,但必须可按 retention 删除、绝不成为恢复/完成所需真源,也不能反向补写 current 审计链。
 - [ ] 生成并在 startup/managed-policy 变更时验证 `TelemetryManifest`:列出 event/activity/cost 字段、sink、采样、redaction policy digest、retention、forensic 开关、tenant scope 与 exporter identity;未知字段、未声明 sink 或 manifest drift 使 exporter fail closed,不影响 canonical append。
 - [ ] Runtime schema 表达 managed policy source、优先级、snapshot digest 和 effective-policy receipt;优先级合并与执行由专项实现。
 - [ ] managed policy contract 逐字段记录 MDM/cloud/system/user/project source attribution、winner/loser、deny union、normalization reason、required-default fallback 和 effective digest;每次 fallback 都必须有 durable normalization receipt,无法验证来源/优先级/结果时 production feature fail closed。
@@ -1931,18 +1897,18 @@ git diff --check
 | Phase | 定向命令 | 额外联合门禁 |
 |---|---|---|
 | U0 / §0.5 | `npx tsx scripts/audit-pi-ai-delta.ts --upstream <explicit-pi-path> --commit 3f1762cc7d3af39898aa5d21891335935011287f` + 受影响 provider tests | catalog 变化必须 `npm run generate-models`;manifest adopt/reject/localize、license、RunLedger-side digest 与生成 diff 审阅 |
-| 0 | `npm test -- tests/runtime-v3/schema.test.ts tests/runtime-v3/canonical-json.test.ts tests/runtime-v3/module-boundaries.test.ts tests/runtime-v3/phase-zero-contracts.test.ts tests/runtime-v3/reference-snapshots.test.ts` | v1/v2 真实 JSONL fixture;feature-state/session-version/CLI matrix;taint/declassification exact schema;两个 boundary script 必须由 `npm run check` 实际执行 |
-| 1 | `npm test -- tests/runtime-v3/session` | kill/disk-full/torn-write/after-write-before-sync 子进程测试;session/authority stream fencing 与 cross-stream receipt rejection;queue/identity reopen;legacy CLI migrate/fork/version fence |
-| 2 | `npm test -- tests/runtime-v3/workspace-contracts` | fake Workspace port + architecture import deny;不以此宣称真实隔离 |
-| 3 | `npm test -- tests/runtime-v3/security-contracts` | fake Gateway/Approval/Sandbox ports + signed/channel request、anti-replay、rate-limit、taint sink、redaction/replay;不以此宣称生产强制 |
-| 4 | `npm test -- tests/runtime-v3/artifacts` | Phase 4 只跑 fake Workspace/Gateway port、CAS crash/redaction/access contract;真实 checkpoint/rewind/cleanup/access 联合 E2E 在 I2/WorkspaceSecurity-Phase5 后作为 Runtime-M1 join gate,不反向阻塞 Phase 4 contract/Runtime-M0 |
-| 5 | `npm test -- tests/runtime-v3/resource-contracts` | native/browser/instruction taxonomy + Extension-M0 contract consumer;生产能力等 Extension-M0–Extension-M6/Extension-M7 对应门禁 |
-| 6 | `npm test -- tests/runtime-v3/contracts` | taint 跨 context/summary/model-switch fixture + Plan/Context/Compaction/Memory Phase 0 contract consumer;行为等该专项 Phase 1–10 |
-| 7 | `npm test -- tests/runtime-v3/orchestrator` | crash/replay/budget concurrency;Phase 8 前 production `completed` 必须不可达 |
-| 8 | `npm test -- tests/runtime-v3/verification tests/e2e/verification-trust.test.ts` | trusted-base/browser/manifest-seal + WorkspaceSecurity-Phase7 联合 E2E;dependency cooling、Secret Scan、candidate gate tamper;ChangeProposal/human-gate 只跑 fake contract 并记录 behavior unavailable |
-| 9 | `npm test -- tests/runtime-v3/agents tests/e2e/multi-agent-isolation.test.ts` | Worktree/Sandbox/Permission capability 子集、独立 lease/workspace 和侧信道联合 E2E |
-| 10 | `npm test -- tests/runtime-v3/control-plane tests/e2e/daemon-recovery.test.ts` | I6 串行集成;13 类 mutation 的 applied effect/rejected error restart table、atomic revision、queue cancel、uncertain gate、activity replay、ChangeProposal/human-gate durable service、composition minimum/effective matrix downgrade、断线/backpressure/restart/peer identity;缺企业 adapter 时 forge unsupported |
-| 11 | `npm test -- tests/runtime-v3/telemetry tests/runtime-v3/lifecycle tests/runtime-v3/managed-policy` | reference-aware GC + WorkspaceSecurity-Phase8、Extension-M7、跨 tenant/credential/forge/remote/CI/harness regression 联合 E2E |
+| 0 | `npm test -- tests/runtime-contracts/schema.test.ts tests/runtime-contracts/canonical-json.test.ts tests/runtime-contracts/module-boundaries.test.ts tests/runtime-contracts/phase-zero-contracts.test.ts tests/runtime-contracts/reference-snapshots.test.ts` | current JSONL fixture;feature-state/current-format/CLI matrix;taint/declassification exact schema;两个 boundary script 必须由 `npm run check` 实际执行 |
+| 1 | `npm test -- tests/runtime-contracts/session` | kill/disk-full/torn-write/after-write-before-sync 子进程测试;session/authority stream fencing 与 cross-stream receipt rejection;queue/identity reopen;CLI exact-format rejection/fork |
+| 2 | `npm test -- tests/runtime-contracts/workspace-contracts` | fake Workspace port + architecture import deny;不以此宣称真实隔离 |
+| 3 | `npm test -- tests/runtime-contracts/security-contracts` | fake Gateway/Approval/Sandbox ports + signed/channel request、anti-replay、rate-limit、taint sink、redaction/replay;不以此宣称生产强制 |
+| 4 | `npm test -- tests/runtime-contracts/artifacts` | Phase 4 只跑 fake Workspace/Gateway port、CAS crash/redaction/access contract;真实 checkpoint/rewind/cleanup/access 联合 E2E 在 I2/WorkspaceSecurity-Phase5 后作为 Runtime-M1 join gate,不反向阻塞 Phase 4 contract/Runtime-M0 |
+| 5 | `npm test -- tests/runtime-contracts/resource-contracts` | native/browser/instruction taxonomy + Extension-M0 contract consumer;生产能力等 Extension-M0–Extension-M6/Extension-M7 对应门禁 |
+| 6 | `npm test -- tests/runtime-contracts/contracts` | taint 跨 context/summary/model-switch fixture + Plan/Context/Compaction/Memory Phase 0 contract consumer;行为等该专项 Phase 1–10 |
+| 7 | `npm test -- tests/runtime-contracts/orchestrator` | crash/replay/budget concurrency;Phase 8 前 production `completed` 必须不可达 |
+| 8 | `npm test -- tests/runtime-contracts/verification tests/e2e/verification-trust.test.ts` | trusted-base/browser/manifest-seal + WorkspaceSecurity-Phase7 联合 E2E;dependency cooling、Secret Scan、candidate gate tamper;ChangeProposal/human-gate 只跑 fake contract 并记录 behavior unavailable |
+| 9 | `npm test -- tests/runtime-contracts/agents tests/e2e/multi-agent-isolation.test.ts` | Worktree/Sandbox/Permission capability 子集、独立 lease/workspace 和侧信道联合 E2E |
+| 10 | `npm test -- tests/runtime-contracts/control-plane tests/e2e/daemon-recovery.test.ts` | I6 串行集成;13 类 mutation 的 applied effect/rejected error restart table、atomic revision、queue cancel、uncertain gate、activity replay、ChangeProposal/human-gate durable service、composition minimum/effective matrix downgrade、断线/backpressure/restart/peer identity;缺企业 adapter 时 forge unsupported |
+| 11 | `npm test -- tests/runtime-contracts/telemetry tests/runtime-contracts/lifecycle tests/runtime-contracts/managed-policy` | reference-aware GC + WorkspaceSecurity-Phase8、Extension-M7、跨 tenant/credential/forge/remote/CI/harness regression 联合 E2E |
 
 ### 9.2 状态证据模板
 
@@ -1964,7 +1930,7 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 
 | 风险 | 处置 |
 |---|---|
-| 一次性替换 v2 导致现有 CLI/TUI 失效 | legacy adapter + 新 session opt-in + golden fixture,不做原地迁移 |
+| 当前格式契约变化导致现有 CLI/TUI 失效 | 先更新 exact contract、fixture 和所有消费者；无法验证的 session 直接拒绝，不提供 adapter、opt-in 或原地转换 |
 | JSONL fsync 性能不足 | 先确保安全 barrier,再用 batching/snapshot 优化;不得以吞吐取消 terminal flush |
 | hash chain 被有权限进程整体重算 | 区分 local integrity/attestation,用受保护 signer 或外部 SIEM 周期锚定 head |
 | Event/Lease/Artifact/Approval 跨存储半提交 | intent -> idempotent durable mutation -> commit event,启动时 reconcile orphan |
@@ -1982,16 +1948,16 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 
 ### Session Integrity
 
-- [ ] 每个 v3 session 或 authority/tenant lifecycle stream 都有独立连续 sequence、payload digest 和完整 hash chain,跨 scope 只通过显式 head/ref 关联。
+- [ ] 每个 current session 或 authority/tenant lifecycle stream 都有独立连续 sequence、payload digest 和完整 hash chain,跨 scope 只通过显式 head/ref 关联。
 - [ ] integrity 与 attestation 分开报告;给定可信 anchor 可定位链内修改,无 anchor 不宣称不可抵赖。
 - [ ] 中间损坏、未知 schema、hash 断链均停止 resume。
 - [ ] stop tombstone 后任何启动路径都不自动复活。
 - [ ] snapshot/checkpoint/fork/rewind 与 canonical events 可交叉验证。
-- [ ] invalid compaction window/UUID、损坏 world-state、patch-without-full、legacy missing replacement 与 checkpoint 外坏行均停止恢复;prepared/durable/installed 三态和四个 crash point 不产生半安装 history。
+- [ ] invalid compaction window/UUID、损坏 world-state、patch-without-full、missing replacement 与 checkpoint 外坏行均停止恢复;prepared/durable/installed 三态和四个 crash point 不产生半安装 history。
 - [ ] tool terminal event durable 后才进入下一模型调用。
 - [ ] append accepted 与 durable receipt 明确分离;after-write/before-sync 被归类 uncertain 并关闭 mutation gate,不会因重试重复事件或副作用。
 - [ ] session.created 的 initialGoalId/rootAgentId 在 reopen/resume/fork 规则下稳定,queue 的 payload/kind/order/claim/cancel 可完整重放。
-- [ ] feature-state × v1/v2/v3 × CLI action 矩阵有 golden tests;legacy migration 只有一个 durable terminal outcome,partial import 可幂等续跑或显式失败,永远不会被误判为可 resume。
+- [ ] feature-state × current-format × CLI action 矩阵有 golden tests;不支持的 session 输入只有一个 durable rejection outcome,永远不会被误判为可 resume。
 - [ ] forensic salvage 始终只读并生成含 source digest、坏 cursor/line、可恢复边界和 unattested 状态的 Artifact 报告;修复写入新 session,不会原地截断或把 salvage 结果当作可信完整历史。
 - [ ] task/agent/command/runtime-replacement/handoff/deletion 的每个 durable 状态均有 exact canonical event、expected revision、terminal outcome 与 reducer fixture;不存在 sidecar/cache/process state 才能恢复的隐藏真源。
 - [ ] session handoff/deletion 只以 authority/tenant lifecycle stream 为真源,SessionProjection 的 lifecycle head ref 可验证;删除后仍保留绑定 final head/reference graph/legal-hold 的 tombstone,GC crash/replay 不会把已删 session 误判为从未存在或重新复活。
@@ -2093,7 +2059,7 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 - [ ] command claim/revision compare/event append 在单 writer 临界区完成;turn/queue 使用各自 revision,stale command 不会自动改绑。
 - [ ] Queue list/cancel 是 durable API;Ctrl-C/dequeue、turn 尾与 restart 竞态不丢输入、不重复消费、不把失败伪装为空队列。
 - [ ] daemon feature advertisement 来自可校验 ProductionCompositionReceipt 的 closed feature -> required adapters matrix;Event Store/model/Workspace/Gateway/Approval/Sandbox/Artifact+key/resource/verifier 以及对应 feature 所需 policy/credential/forge/human-gate/executor/exporter 任一缺失时,该 feature 明确 unsupported/deny且不生成假 receipt。
-- [ ] composition receipt 绑定仓内冻结的 protocol-minimum matrix version/digest 与 effective policy ref/digest;effective requirements 只能相等或更窄,旧版本、伪 digest、删 minimum adapter 或 policy downgrade fixture 均拒绝。
+- [ ] composition receipt 绑定仓内冻结的 protocol-minimum matrix digest 与 effective policy ref/digest;effective requirements 只能相等或更窄,未知矩阵、伪 digest、删 minimum adapter 或 policy downgrade fixture 均拒绝。
 - [ ] slow consumer/backpressure/typed overload/disconnect/resync、idle unload/resume、daemon crash/restart 和 session replacement 不丢事件、不重复副作用,旧 handle 失效。
 - [ ] 本阶段交付的 TUI/CLI 只消费同一 projection/API,TUI 不再私有持有 queue/retry/compaction/tool/session 真源;后续 IDE/CI adapter 必须消费同一版本化协议,但不以本计划宣称其 client 已交付。
 - [ ] shutdown 先关 mutation gate,再 bounded drain writer/tool/child/exporter;startup 先校验 integrity/tombstone/外部 receipt,未知状态只进入 paused。
@@ -2118,7 +2084,7 @@ Contract-only 阶段必须在证据中写 `behavior unavailable`。联合门禁�
 - [ ] daemon 断线/restart/replay 不丢失、不重复副作用。
 - [ ] 默认 OTel/SIEM 样本无 prompt、tool output、secret 和完整 env。
 - [ ] dependency poisoning、secret in untracked/generated/artifact、server-scope replay、forge credential/revoke 和 human-gate separation-of-duty 回归集全绿。
-- [ ] authority/tenant/principal 从 v3 genesis 起贯穿 Event、Lease、Artifact、Approval 和 Trust key。
+- [ ] authority/tenant/principal 从 current genesis 起贯穿 Event、Lease、Artifact、Approval 和 Trust key。
 - [ ] `npm run check`、`npm test`、`npm run build`、`git diff --check` 全绿。
 
 只有以上清单全部完成并附证据,RunLedger 才能把本计划状态改为“完成”。在此之前,对外应准确描述为“最小 Agent Runtime 正在升级为可治理 Harness”,不能把未实现的安全与验证边界写成现有能力。

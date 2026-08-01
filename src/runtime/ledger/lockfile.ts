@@ -8,7 +8,7 @@
  *   - 使用 `proper-lockfile` 的 lock/unlock;其内部信号是 lock file `${target}.lock`
  *     + O_EXCL 创建;支持 stale 检测。
  *   - 我们在 lock 内 `JsonlLedger.append(...)` 流程外层包装,确保每次 append 持锁。
- *   - 高负载场景下替代 O_APPEND + setuid-style 真原子;本期 V2 先有 lock 再说。
+ *   - 高负载场景下替代 O_APPEND + setuid-style 真原子。
  *
  * 失败语义:
  *   - lock() 在 50ms * 100 次 retry 后仍失败 → throw ELOCKED

@@ -42,13 +42,13 @@ Extension 侧映射固定为:
 | `TrustRecord` | `ResourceApprovalReceipt` | 绑定 principal、scope、expiry、revocation revision、capability digest |
 | `ExtensionSnapshot` | `RuntimeResourceSnapshot` | 仅描述符与 diagnostics,不得包含进程/client/函数 |
 | MCP tool/Hook/Skill script 调用 | descriptor + raw invocation | 最终 claims 由 Runtime contract + 安全专项实现基于 canonical input 推导,Extension 不能少报或自批 |
-| extension 领域审计 | `ResourceLifecycleEvent`/v3 event payload | 不自造第二条 hash chain,不在 replay 时重放副作用 |
+| extension 领域审计 | `ResourceLifecycleEvent`/current event payload | 不自造第二条 hash chain,不在 replay 时重放副作用 |
 
 ### 0.2 平行开发不冲突规则
 
 | 并行泳道 | 独占路径 | 禁止事项 | 交付门 |
 |---|---|---|---|
-| Runtime contract | `src/runtime/resources/**`、`tests/runtime-v3/resource-contracts/**` | 不写 `src/extensions/**`,不实现具体资源 | contract version、exports、fixtures 冻结 |
+| Runtime contract | `src/runtime/resources/**`、`tests/runtime-contracts/resource-contracts/**` | 不写 `src/extensions/**`,不实现具体资源 | contract version、exports、fixtures 冻结 |
 | Extension domain | `src/extensions/**`、`tests/extensions/**`、`tests/fixtures/extensions/**` | 不修改 Runtime 内部类型/loop/registry | M1–M5 通过 adapter contract tests |
 | 串行 integration | 下表列出的 storage/runtime/CLI/TUI/shared package 文件 | 不与 Runtime 线并发修改 | Runtime handoff commit 已记录,逐路径集成并全量验证 |
 
@@ -118,7 +118,7 @@ Extension 侧映射固定为:
 
 | 主题 | Codex 当前实现 | grok-build 当前实现 | RunLedger 采用 |
 |---|---|---|---|
-| Plugin manifest | `.codex-plugin/plugin.json`，manifest 声明 skills/hooks/MCP/apps，路径必须留在插件根内 | 根 `plugin.json`，兼容 `.grok-plugin/` / `.claude-plugin/`，无 manifest 时支持约定目录 | v1 只认 `.runledger-plugin/plugin.json`；要求 `schemaVersion`；不做无 manifest 猜测 |
+| Plugin manifest | `.codex-plugin/plugin.json`，manifest 声明 skills/hooks/MCP/apps，路径必须留在插件根内 | 根 `plugin.json`，兼容 `.grok-plugin/` / `.claude-plugin/`，无 manifest 时支持约定目录 | 只认 `.runledger-plugin/plugin.json`；按当前 exact schema 解析；不做无 manifest 猜测 |
 | Plugin 边界 | plugin 是资源包，资源由 skill/hook/MCP 子系统消费 | skills 可见与代码执行信任分离，hooks/MCP/LSP 受 trust gate | plugin 只打包声明式资源，不允许进程内 JS/TS 插件入口 |
 | Plugin 安装 | marketplace、版本化 store、启用状态和策略独立 | 用户/项目/CLI 多 scope，install/update/uninstall 与 trust 分离 | MVP 先做本地发现/启停/信任；版本化安装和 marketplace 后置 |
 | Skill 发现 | 分层 root、插件 namespace、扫描深度/条目/并发上限、错误与结果分离 | cwd 到 repo root、多供应商兼容、同名 qualified name、动态重载 | 用户 + 项目祖先链 + plugin；保留 qualified identity；扫描与上下文都设硬上限 |
@@ -286,13 +286,12 @@ trust 粒度固定为资源级：Plugin 使用 plugin root digest；独立 Skill
 
 同一层内：直接声明资源优先于 plugin contribution；plugin 间不互相覆盖。冲突资源全部保留 qualified identity，但不创建含糊的 unqualified alias。
 
-### 5.3 Plugin manifest v1
+### 5.3 Plugin manifest
 
 唯一入口:`<plugin-root>/.runledger-plugin/plugin.json`。
 
 ```json
 {
-  "schemaVersion": 1,
   "name": "team-tools",
   "version": "1.0.0",
   "description": "Audited team workflows",
@@ -306,16 +305,16 @@ trust 粒度固定为资源级：Plugin 使用 plugin root digest；独立 Skill
 
 约束：
 
-- `schemaVersion`、`name`、`version`、`description` 必填；
+- `name`、`version`、`description` 必填；
 - `name` 为 1–64 个小写字母、数字、连字符，不允许首尾连字符；
 - `version` 必须为严格 semver；
 - 所有路径必须以 `./` 开头，并在 realpath 后仍位于 plugin root；
-- v1 不接受 inline hooks 或 inline MCP，确保每个执行配置有独立文件、hash 和诊断位置；
-- 未知字段产生 warning；未知 `schemaVersion` 产生 error 并禁用整个 plugin；
+- 不接受 inline hooks 或 inline MCP，确保每个执行配置有独立文件、hash 和诊断位置；
+- 未知字段、缺失必需字段或结构不符合当前 schema 时产生 error 并禁用整个 plugin；
 - 单个组件失败只禁用该组件；manifest 身份或路径逃逸失败禁用整个 plugin；
 - plugin root 只读，运行数据写入 `plugin-data/<plugin-id>/`。
 
-### 5.4 Skill v1
+### 5.4 Skill
 
 ```markdown
 ---
@@ -347,11 +346,10 @@ metadata:
 - 读取完整 skill 时校验 snapshot digest，防止发现与执行之间被替换；
 - `scripts/`、`references/`、`assets/` 只是可寻址资源，不在加载时自动执行或批量注入。
 
-### 5.5 Hooks v1
+### 5.5 Hooks
 
 ```json
 {
-  "schemaVersion": 1,
   "hooks": {
     "PreToolUse": [
       {
@@ -383,7 +381,7 @@ MVP 事件：
 | `PostToolUse` | 工具执行完成、结果写回模型前 | 否；可追加 `additionalContext` | open |
 | `SessionEnd` | agent idle、MCP shutdown 前 | 否 | open |
 
-统一 stdin envelope 包含 `schemaVersion`、event、eventId、timestamp、sessionId、cwd、snapshotId、source，以及事件专属 payload。tool input/result 超限时只传预览、hash、truncated 标记和 session spill 路径。
+统一 stdin envelope 包含 event、eventId、timestamp、sessionId、cwd、snapshotId、source，以及事件专属 payload。tool input/result 超限时只传预览、hash、truncated 标记和 session spill 路径。
 
 阻断型 stdout：
 
@@ -405,15 +403,14 @@ MVP 事件：
 - runner 注入 `RUNLEDGER_HOOK_EVENT`、`RUNLEDGER_HOOK_ID`、`RUNLEDGER_SESSION_ID`、`RUNLEDGER_WORKSPACE_ROOT`；
 - plugin hook 额外注入 `RUNLEDGER_PLUGIN_ROOT` 和 `RUNLEDGER_PLUGIN_DATA`，保留键不可被配置覆盖；
 - 非 0、timeout、spawn error、非法 JSON 都形成 `HookRunOutcome`，再按 effective failure mode 决定是否阻断；
-- v1 不支持 HTTP、prompt、agent、async hook；它们在 command runner 稳定后单独评审。
+- MVP 不支持 HTTP、prompt、agent、async hook；它们在 command runner 稳定后单独评审。
 
-### 5.6 MCP v1
+### 5.6 MCP
 
 项目/用户 `.runledger/mcp.json` 和 plugin `.mcp.json` 使用同一 schema：
 
 ```json
 {
-  "schemaVersion": 1,
   "mcpServers": {
     "filesystem": {
       "transport": "stdio",
@@ -464,7 +461,7 @@ disabled -> blocked-untrusted -> starting -> ready
 规则：
 
 - 使用官方 TypeScript MCP SDK，实施时固定精确版本并审阅 `package-lock.json`；
-- stdio 与 Streamable HTTP 为 MVP transport；legacy SSE 和 OAuth 另设里程碑；
+- stdio 与 Streamable HTTP 为 MVP transport；SSE 和 OAuth 另设里程碑；
 - server 启动可并发但必须有并发上限，状态事件按 server 独立写 ledger；
 - `required=true` 的 server 启动失败时禁止开始新 turn；optional server 失败只降级并显示 diagnostic；
 - 每次 tool call 同时受 server timeout、per-tool timeout、session AbortSignal 约束；
@@ -551,27 +548,27 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 ## 7. 审计模型
 
-在当前 v2 ledger 兼容期,扩展事件继续使用 `LedgerEntry.type = "custom"`,但 payload 必须包含稳定 schema。Runtime v3 可写路径启用后,同一语义必须经 `runtime-audit-adapter.ts` 投影为 Runtime `ResourceLifecycleEvent` 或对应的 typed v3 event payload；不得 dual-write 两套互不校验的真源。
+扩展事件使用 `LedgerEntry.type = "custom"` 时,payload 必须符合当前 exact schema。Runtime 可写路径启用后,同一语义必须经 `runtime-audit-adapter.ts` 投影为 Runtime `ResourceLifecycleEvent` 或对应的 typed event payload；durable truth 只允许由 Runtime event sink 持有,不得 dual-write 两套互不校验的真源。
 
 | `payload.kind` | 写入时机 | 必需字段 |
 |---|---|---|
-| `extensions.snapshot/v1` | 启动和成功 reload | snapshotId、digest、各类资源数量、diagnostic 摘要 |
-| `plugin.state/v1` | enable/disable/trust/stale | pluginId、source、oldState、newState、digest |
-| `skill.invocation/v1` | 完整正文被读取 | skillId、source、digest、trigger、argument 摘要 |
-| `hook.run/v1` | 每个 handler 结束 | hookId、eventId、decision、failureMode、durationMs、exit/timeout、输入输出 hash |
-| `mcp.server/v1` | server 状态变化 | serverId、transport、oldState、newState、reason、durationMs |
-| `mcp.tool/v1` | MCP 调用结束 | serverId、toolName、runtimeName、toolCallId、durationMs、resultSize、isError |
+| `extensions.snapshot` | 启动和成功 reload | snapshotId、digest、各类资源数量、diagnostic 摘要 |
+| `plugin.state` | enable/disable/trust/stale | pluginId、source、oldState、newState、digest |
+| `skill.invocation` | 完整正文被读取 | skillId、source、digest、trigger、argument 摘要 |
+| `hook.run` | 每个 handler 结束 | hookId、eventId、decision、failureMode、durationMs、exit/timeout、输入输出 hash |
+| `mcp.server` | server 状态变化 | serverId、transport、oldState、newState、reason、durationMs |
+| `mcp.tool` | MCP 调用结束 | serverId、toolName、runtimeName、toolCallId、durationMs、resultSize、isError |
 
 审计规则：
 
 - 不写 auth header、token、完整进程 env 或 OAuth credential；
 - 原始 tool/hook payload 超限后写 session 私有 spill，ledger 只保存相对路径、hash、size、truncated；
 - 每个 hook/MCP 调用都关联 sessionId、snapshotId、toolCallId/eventId；
-- v2 custom ledger append 失败沿用现有“不抛错”兼容语义,但 UI/CLI 必须显示 `ledger.lastError`,且有效策略要求 durable audit 时阻断后续副作用；v3 event sink append/flush 失败则 session paused/failed；
+- custom ledger append 失败沿用现有“不抛错”语义,但 UI/CLI 必须显示 `ledger.lastError`,且有效策略要求 durable audit 时阻断后续副作用；current event sink append/flush 失败则 session paused/failed；
 - replay 只恢复消息和 runtime config；扩展审计用于展示，不重新触发 hook、skill 或 MCP；
 - 后续若引入 hash chain，应升级 ledger schema，不在 extension payload 内自造第二条链。
-- v3 event 必须携带 resource identity/digest、snapshot generation、receipt ref、session/workspace/toolCall/event correlation；领域 payload 不重复 authority/sequence/hash 逻辑。
-- v2 custom fallback 只用于 v2 session；v3 session 的 durable truth 只能通过 Runtime event sink 写入。event sink 不可用或 receipt 校验失败时,新的 extension 副作用 fail closed,只读 inspect 可继续并显示 audit degraded。
+- current event 必须携带 resource identity/digest、snapshot generation、receipt ref、session/workspace/toolCall/event correlation；领域 payload 不重复 authority/sequence/hash 逻辑。
+- 不提供 custom audit fallback；session 的 durable truth 只能通过 Runtime event sink 写入。event sink 不可用或 receipt 校验失败时,新的 extension 副作用 fail closed,只读 inspect 可继续并显示 audit degraded。
 
 ## 8. 分阶段实施
 
@@ -579,13 +576,13 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 ### M0 — 契约、fixtures 与安全预算
 
-- [ ] 记录 Runtime Phase 5 resource contract 与 Phase 3 capability/Gateway port 的 commit/schemaVersion/export path,确认本计划不复制 Runtime/security 类型；
+- [ ] 记录 Runtime Phase 5 resource contract 与 Phase 3 capability/Gateway port 的 commit、export path,确认本计划不复制 Runtime/security 类型；
 - [ ] 记录 dependency HEAD,以独立串行提交加入 YAML parser、semver、官方 MCP SDK 精确版本并审阅 lockfile；通知 Runtime 线随后基于该提交继续；
-- [ ] 固定本文件中的 v1 manifest、skill frontmatter、hooks、MCP JSON schema；
+- [ ] 固定本文件中的 current manifest、skill frontmatter、hooks、MCP JSON schema；
 - [ ] 建立 `tests/fixtures/extensions/`，包含 valid、invalid、path-escape、symlink、duplicate、oversize、secret-template 样例；
 - [ ] 定义 `ExtensionDiagnostic`（code、severity、message、source、path、resourceId、cause?）；
 - [ ] 定义所有扫描深度、文件数、单文件字节数、context 字符数、stdout/stderr 字节数常量；
-- [ ] 为 JSON schema/TypeBox schema 加 contract test，非法未知 schemaVersion 必须失败；
+- [ ] 为 JSON schema/TypeBox schema 加 contract test，非法未知字段和缺失必需字段必须失败；
 - [ ] 为四个 Runtime resource ports 建 fake adapter 和 mapping golden fixtures,覆盖 exact identity、provenance、trust/activation、receipt、snapshot 与 lifecycle event；
 - [ ] 固定 capability derivation 输入:manifest/config/command/assets digest、canonical args、filesystem/network/process/credential scope；调用方声明仅作请求,不能作为最终 claim；
 - [ ] 记录依赖决策和许可证审阅结果：YAML parser、semver、官方 MCP SDK 均使用精确版本。
@@ -603,7 +600,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] 在 Extension catalog/Runtime resource adapter 中生成 tool source/id/runtimeName 与冲突诊断；真实 `ToolRegistry` 接线留到 M6；
 - [ ] 实现 `ExtensionSnapshot` builder 和 last-known-good 原子交换；
 - [ ] 实现 Runtime snapshot/catalog/event adapter,只输出有界 descriptor,不泄漏 handler/client/process 对象；
-- [ ] audit adapter 生成 `extensions.snapshot/v1`/v3 lifecycle 投影，敏感字段红线测试；真实 ledger/event sink 接线留到 M6。
+- [ ] audit adapter 生成 `extensions.snapshot` lifecycle 投影，敏感字段红线测试；真实 ledger/event sink 接线留到 M6。
 
 验收：扫描不执行任何资源；路径或 symlink 逃逸 fail-closed；配置、命令、asset、capability 任一变化使 trust stale；同名/猜测 identity 不会 fallback；snapshot 构建失败不破坏当前可用快照。
 
@@ -617,7 +614,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] 将 metadata catalog、正文、references/assets 与 scripts 建模为独立 resource/capability；M2 只实现前三者只读路径,不执行 scripts；
 - [ ] 实现 `$name`、`/skill name` 与 `/name` 的统一解析和含糊名错误；
 - [ ] `allowed-tools` 只能做交集收窄，并覆盖“不能提升权限”的测试；
-- [ ] audit adapter 生成 `skill.invocation/v1`/v3 event payload，不把全文复制进 ledger；
+- [ ] audit adapter 生成 `skill.invocation` event payload，不把全文复制进 ledger；
 - [ ] snapshot projection 提供 enabled/disabled/error skill 计数；真实 TUI resource bar 接线留到 M6。
 
 验收：未命中的 skill 不注入正文；同名 skill 只能用 qualified identity 精确选择；untrusted/stale skill 不读取正文；系统提示始终受预算约束；正文已读不能产生 process/script grant。
@@ -633,7 +630,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] 在 adapter 中准备 PreToolUse、PostToolUse 组合链；真实 agent-loop 接线留到 M6；
 - [ ] 定义 `updatedInput` adapter 结果；更新后必须重跑 TypeBox 校验、canonicalization、capability derivation 与 authorization；共享 Runtime 类型改动留到 M6；
 - [ ] 固定顺序为 `prepare/schema -> PreToolUse -> authorization -> execute -> PostToolUse -> result budget`；
-- [ ] 每个 handler 生成 `hook.run/v1`/v3 event payload 和 deny/failure/timeout presentation model；真实 event sink/TUI 接线留到 M6；
+- [ ] 每个 handler 生成 `hook.run` event payload 和 deny/failure/timeout presentation model；真实 event sink/TUI 接线留到 M6；
 - [ ] 用 fake scripts 覆盖 allow、deny、update、invalid JSON、nonzero、timeout、abort、oversize。
 
 验收：显式 deny 一定阻断且产生 isError tool result；closed hook 故障阻断，open hook 故障继续；PostToolUse 不可篡改真实执行是否发生；Extension 无 Gateway grant 时不 spawn；退出后无 hook 子进程。
@@ -641,7 +638,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 ### M4 — MCP 工具闭环
 
 - [ ] 使用 M0 已固定并审阅的官方 MCP SDK,不得在 M4 再改 lockfile；
-- [ ] 实现 v1 config parser、层级合并、plugin-relative cwd 和 env template 解析；
+- [ ] 实现 current config parser、层级合并、plugin-relative cwd 和 env template 解析；
 - [ ] 实现 stdio 与 Streamable HTTP client factory；
 - [ ] 实现 server 状态机、并发启动、required gate、startup/tool/per-tool timeout；
 - [ ] 实现 tool list allow/deny 过滤、raw identity、runtimeName sanitization 与冲突检测；
@@ -658,7 +655,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 ### M5 — Plugin 组合闭环
 
-- [ ] 实现 `.runledger-plugin/plugin.json` parser、semver、unknown field 和 schemaVersion 诊断；
+- [ ] 实现 `.runledger-plugin/plugin.json` parser、semver、unknown field 和 exact schema 诊断；
 - [ ] 实现用户/项目 plugin discovery、qualified identity、enable state 和 trust gate；
 - [ ] 所有 component path 做 realpath containment；
 - [ ] PluginManager 只输出 Skill/Hook/MCP descriptors，不直接执行；
@@ -679,7 +676,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Phase 5 ports,不直接 import Runtime 内部 store/reducer；
 - [ ] 把 catalog fragment 与 extension Skill tool 接入 controller/现有 `src/runtime/tools/skill.ts`,把 snapshot tools 通过 public ToolRegistry API 注册；
 - [ ] 把 SessionStart/UserPromptSubmit/SessionEnd 与 PreToolUse/PostToolUse adapters 接入 controller/agent-loop,落地 `updatedInput` 重校验和重新授权；
-- [ ] 把 v2 custom/v3 typed audit adapter 接入对应 ledger/event sink,确保 v3 不发生 extension 自建 dual-write；
+- [ ] 把 typed audit adapter 接入 Runtime event sink,确保 extension 不自建 durable truth 或 dual-write；
 - [ ] 把 CLI parser 升级为兼容现有 flags 的判别式 subcommand parser；
 - [ ] 实现 `runledger inspect [--json]`，输出 snapshot、来源、状态、diagnostics；
 - [ ] 实现 `trust list|grant|revoke <resource-id>`，所有授权均显示将执行的资源身份和 digest；
@@ -691,7 +688,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] 统一 modal 显示 source、enabled、trust、ready/error、component count 和最近 diagnostic；
 - [ ] reload 运行中只排队，idle 后原子生效；TUI 明示 pending/success/failure；
 - [ ] Runtime Gateway/approval/event sink 不可用时,inspect/list 可只读降级,trust/activate/spawn/invoke 必须 fail closed；
-- [ ] CLI JSON 输出加 schemaVersion，stderr 与 stdout 分离；
+- [ ] CLI JSON 输出使用 current contract fields，stderr 与 stdout 分离；
 - [ ] CLI 操作都逐项写状态文件，不覆写用户未知字段或 secret。
 
 验收：无 TTY 时四类资源可用 JSON 检查；TUI 能查看、启停、信任和重载；运行中重载不改变当前 turn 的工具集合；集成 diff 只触及本节声明的共享路径且基于已记录 handoff commit。
@@ -724,7 +721,7 @@ M7 不阻塞 M0–M6 的本地可运行闭环，且每一项都应独立设计/�
 - digest 稳定性、内容变化、oversize、读取失败；
 - trust grant/revoke/stale、0600 文件、损坏文件 fail-closed；
 - Runtime receipt 映射、expiry/revocation revision、config/command/assets/capability digest 任一变化后的失配；
-- Runtime resource ports 的 exact resolve、未知 schemaVersion、含糊 display name 和调用方少报 capability；
+- Runtime resource ports 的 exact resolve、未知字段、含糊 display name 和调用方少报 capability；
 - tool runtime name sanitization 和冲突；
 - secret redaction 与 ledger payload size。
 
@@ -770,15 +767,15 @@ MCP/hook/plugin 里程碑还必须运行对应 fake-server E2E，并在测试 te
 | Plugin 内单个 hook/MCP/skill 文件失败 | 只禁用对应 component，plugin 显示 degraded |
 | Untrusted/stale 执行资源 | 列出但不执行，不静默自动信任 |
 | Runtime contract major version 不兼容 | 禁止激活/调用，inspect 显示 typed diagnostic，不复制或猜测兼容类型 |
-| Gateway、approval store 或 v3 event sink 不可用 | inspect/list 可继续；新的 spawn/network/script/tool 副作用 fail closed |
+| Gateway、approval store 或 current event sink 不可用 | inspect/list 可继续；新的 spawn/network/script/tool 副作用 fail closed |
 | Optional MCP 启动失败 | session 继续，server failed，工具不暴露 |
 | Required MCP 启动失败 | 阻断新 turn，允许用户修复/禁用/重试或退出 |
 | MCP tool timeout/transport error | 返回 isError tool result，记录状态；满足重启策略时后台恢复 |
 | PreToolUse/UserPrompt hook closed failure | 阻断对应操作，reason 明确指向 hook failure |
 | open hook failure | 操作继续，但 TUI/ledger 必须可见失败 |
 | reload 新快照失败 | 保留 last-known-good，不产生半激活资源 |
-| v2 custom ledger append 失败 | 当前操作结果保持真实并显式暴露 audit degraded；若策略要求 durable audit,阻断后续副作用 |
-| v3 event sink append/flush 失败 | session paused/failed,不得继续新的 extension 副作用 |
+| current custom ledger append 失败 | 当前操作结果保持真实并显式暴露 audit degraded；若策略要求 durable audit,阻断后续副作用 |
+| current event sink append/flush 失败 | session paused/failed,不得继续新的 extension 副作用 |
 | shutdown 超时 | 强制结束受管进程，记录未优雅关闭；不得无限等待 |
 
 ## 11. 提交拆分建议
@@ -810,7 +807,7 @@ M0–M6 全部完成且满足以下 E2E，才可把本计划标为完成：
 7. 运行中修改 plugin 只产生 pending/stale，当前 turn 不换工具；idle reload 后原子切换；
 8. disable plugin 后 skill/hook/MCP 全部撤出，client 与子进程关闭；
 9. `runledger inspect --json` 与 TUI 显示同一 snapshot/diagnostics；
-10. ledger/v3 event store 中存在 snapshot、skill invocation、hook run、MCP server/tool 和 plugin state 记录，且无 secret、不存在第二条 extension hash chain；
+10. ledger/current event store 中存在 snapshot、skill invocation、hook run、MCP server/tool 和 plugin state 记录，且无 secret、不存在第二条 extension hash chain；
 11. `npm run check`、`npm test`、`npm run build`、CLI smoke 全部通过；
 12. 修改 plugin config/command/asset/capability 后旧 receipt 立即 stale,新调用在重新审批前被拒绝；
 13. 读取 `SKILL.md` 后脚本仍不可执行,直到获得独立 script/process approval；

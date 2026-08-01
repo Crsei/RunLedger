@@ -54,7 +54,7 @@ function isMockModel(m: Model<Api>): boolean {
 }
 
 /**
- * Mock stream 阶段 —— V2 引入,便于 M6 examples 与单测 mock 调用按轮次切换行为。
+ * Mock stream 阶段 —— 按轮次切换行为,便于 examples 与单测使用。
  *
  * - phase 0首轮:仅 user 消息 → emit 文本 + echo toolCall,stopReason=toolUse
  * - phase 1:toolResult 已存在但 ≤ MAX_TOOL_TURNS_PER_SESSION → 继续 emit toolCall
@@ -119,7 +119,7 @@ async function runMockTurn(
     return;
   }
 
-  // V2 phase:0/1 都是"调一个 echo toolCall",2 是"总结并 stop"
+  // phase:0/1 都是"调一个 echo toolCall",2 是"总结并 stop"
   const shouldRefuseTool = phase === 2;
   const hasToolResult = phase >= 1;
   const partialBase = buildPartialAssistant([]);

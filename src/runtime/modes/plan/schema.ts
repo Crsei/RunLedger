@@ -7,8 +7,6 @@
 
 import type { PlanModeState } from "./types.ts";
 
-export const PLAN_MODE_SCHEMA_VERSION = 1 as const;
-
 export function isPlanModeState(value: unknown): value is PlanModeState {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return false;

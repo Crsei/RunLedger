@@ -1,10 +1,10 @@
 /**
- * TodoWrite 工具 —— V2 任务系列的"行内 todo"别名。
+ * TodoWrite 工具 —— Task 系列的"行内 todo"别名。
  *
- * 与 V2 Task 系列的关系:
- *   - 任务清单是 V2 体系下"持久化 + 单一 in_progress + 排序"的语义模型。
+ * 与 Task 系列的关系:
+ *   - 任务清单是"持久化 + 单一 in_progress + 排序"的语义模型。
  *   - 但 LLM 调用习惯:Agent 系上下文经常播报"用 TodoWrite 工具更新计划"。
- *   - 我们把 TodoWrite 实现为对 V2 Task 系列的薄包装,语义:
+ *   - 我们把 TodoWrite 实现为对 Task 系列的薄包装,语义:
  *       todos: array of { content, status, priority }  →
  *         1) 列出当前所有任务(TaskList)
  *         2) 把缺失的任务 create(Task),相同内容的 status 不一致则 update
@@ -12,7 +12,7 @@
  *
  * 与 claude-code-bun docs/tools/todo-write-tool.mdx 区别:它把自己描述为
  * "system-reminder-derived" 工具的 free-form todos list;我们这里直接做更结构化的
- * V2 Task 系列收口,即便用户调 TodoWrite 也是真落 ledger。
+ * Task 系列收口,即便用户调 TodoWrite 也是真落 ledger。
  */
 
 import { Type } from "typebox";
@@ -40,7 +40,7 @@ export type TodoWriteInput = Static<typeof todoWriteSchema>;
 export interface TodoWriteToolOptions extends TaskToolOptions {}
 
 /**
- * TodoWrite 工厂。注入的 ledger / sessionId 沿用 V2 Task 系列。
+ * TodoWrite 工厂。注入的 ledger / sessionId 沿用 Task 系列。
  */
 export function createTodoWriteTool(options: TodoWriteToolOptions = {}): AgentTool<typeof todoWriteSchema> {
   const taskTool = createTaskTool(options);
@@ -50,7 +50,7 @@ export function createTodoWriteTool(options: TodoWriteToolOptions = {}): AgentTo
     name: "TodoWrite",
     label: "TodoWrite",
     description:
-      "整盘覆写当前任务表(plan tracking)。语义复用 V2 Task 系列;会调用 Task create/update 同步 ledger。",
+      "整盘覆写当前任务表(plan tracking)。语义复用 Task 系列;会调用 Task create/update 同步 ledger。",
     parameters: todoWriteSchema,
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
@@ -108,7 +108,7 @@ export function createTodoWriteTool(options: TodoWriteToolOptions = {}): AgentTo
 
 /**
  * 朴素解析 TaskList 输出 `- [taskId] (priority, status) content` 行。
- * 仅 V2 TaskList 输出格式;若格式变,这里同步跟随。
+ * 仅 TaskList 输出格式;若格式变,这里同步跟随。
  */
 function parseSnapshots(text: string): TaskSnapshot[] {
   const lines = text.split("\n").filter((l) => l.trim().startsWith("- ["));

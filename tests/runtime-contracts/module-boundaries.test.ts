@@ -1,0 +1,28 @@
+import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { scanRuntimeBoundaries } from "../../scripts/check-runtime-boundaries.ts";
+
+describe("Runtime contract module boundary", () => {
+	it("does not import storage, UI, provider, or raw I/O modules", () => {
+		const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
+		expect(scanRuntimeBoundaries(repoRoot)).toEqual([]);
+	});
+
+	it("scans the current protocol directory", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "runledger-boundary-") );
+		try {
+			const protocolDir = join(repoRoot, "src/runtime/protocol");
+			await mkdir(protocolDir, { recursive: true });
+			await writeFile(join(protocolDir, "bad.ts"), 'import fs from "node:fs";\n', "utf8");
+
+			expect(scanRuntimeBoundaries(repoRoot)).toEqual([
+				{ file: "src/runtime/protocol/bad.ts", reason: "contract module cannot own raw I/O" },
+			]);
+		} finally {
+			await rm(repoRoot, { recursive: true, force: true });
+		}
+	});
+});

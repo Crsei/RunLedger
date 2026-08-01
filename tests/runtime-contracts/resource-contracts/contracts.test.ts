@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRuntimeId } from "../../../src/runtime/protocol/v3/ids.ts";
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { resourceIdentityDigest, resourceIdentityKey, isRuntimeToolInvocation } from "../../../src/runtime/resources/schemas.ts";
 import { createResourceLifecycleEvent } from "../../../src/runtime/resources/events.ts";
 import type { RuntimeToolDescriptor } from "../../../src/runtime/resources/types.ts";
@@ -54,7 +54,7 @@ describe("Runtime resource contract scaffold", () => {
 			"discovered",
 			createRuntimeId("snapshot", "fixture"),
 		);
-		expect(event.schemaVersion).toBe(1);
+		expect(event).not.toHaveProperty(["schema", "Version"].join(""));
 		expect(event.state).toBe("discovered");
 		expect(event).not.toHaveProperty("currentEventHash");
 	});

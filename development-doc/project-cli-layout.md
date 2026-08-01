@@ -71,7 +71,7 @@
 
 ### 子任务
 1. `src/cli/args.ts` 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`;未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
-2. `src/cli/main.ts` 装配全部 builtin providers + AuthStorage + v2 session replay + InteractiveSessionController;生产路径不回退 mock,无凭据时进入 onboarding;
+2. `src/cli/main.ts` 装配全部 builtin providers + AuthStorage + current session replay + InteractiveSessionController;生产路径不回退 mock,无凭据时进入 onboarding;
 3. `src/cli/cli.ts` bin 入口,仅 `main(process.argv.slice(2)).catch(exit 1)`;业务全留 main.ts 以便单测;
 4. `bin/runledger.js` npm bin shim,直接 import 编译后的 `dist/cli/cli.js`,运行时不依赖 tsx 或 src;
 5. `package.json` 加 `bin.runledger` 字段、`scripts.cli / cli:debug`;

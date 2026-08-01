@@ -1,9 +1,9 @@
 /**
- * NotebookEdit 占位工具 —— V2 future。
+ * NotebookEdit 占位工具 —— 后续能力。
  *
  * 与 claude-code-bun docs/tools/notebook-edit-tool.mdx 区别:
  *   - claude NotebookEdit 是 Jupyter notebook 单元格(cell)级 JSON patch 工具
- *   - 本期 V2 暂不做 nbformat 渲染与执行;仅占位返回 "not implementedyet"
+ *   - 当前暂不做 nbformat 渲染与执行;仅占位返回 "not implementedyet"
  *
  * 设计:
  *   - schema 接收 notebook_path + cell_id + cell_type + new_source
@@ -37,7 +37,7 @@ export function createNotebookEditTool(): AgentTool<typeof notebookEditSchema, N
   return {
     name: "NotebookEdit",
     label: "NotebookEdit",
-    description: "(占位)本期 V2 不实现 Jupyter notebook 编辑;调用将得到 not-implemented 提示。",
+    description: "(占位)当前不实现 Jupyter notebook 编辑;调用将得到 not-implemented 提示。",
     parameters: notebookEditSchema,
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
@@ -50,7 +50,7 @@ export function createNotebookEditTool(): AgentTool<typeof notebookEditSchema, N
         content: [
           {
             type: "text",
-            text: "(NotebookEdit 占位)本期 V2 不实现 Jupyter notebook 编辑。",
+            text: "(NotebookEdit 占位)当前不实现 Jupyter notebook 编辑。",
           },
         ],
         details: { notImplemented: true },

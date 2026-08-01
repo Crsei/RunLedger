@@ -17,7 +17,7 @@
 3. 哪些机制适合 RunLedger,哪些缺口不能照搬。
 4. RunLedger 当前代码已经提供哪些接入点。
 
-文档职责与代码所有权不由本取证文件定义:公共数据结构、schema、v3 event payload 和 contract fixture 归上位 Runtime Phase 6;具体 Model Router、Plan Mode、ContextEngine、Compaction、Memory 行为和集成归下游专项计划。实施时以两份计划的 allowlist 与串行 handoff 规则为准。
+文档职责与代码所有权不由本取证文件定义:公共数据结构、schema、current event payload 和 contract fixture 归上位 Runtime Phase 6;具体 Model Router、Plan Mode、ContextEngine、Compaction、Memory 行为和集成归下游专项计划。实施时以两份计划的 allowlist 与串行 handoff 规则为准。
 
 Model Compatibility Router 的取证不在本文件重复,直接消费 [`../runtime/00-reference.md`](../runtime/00-reference.md) 中“Model Router 不能只比较价格与 Benchmark”及其 Compatibility Manifest/能力别名/不兼容 fork 结论。
 
@@ -66,7 +66,7 @@ Model Compatibility Router 的取证不在本文件重复,直接消费 [`../runt
 - `codex-rs/core/src/context_manager/{mod,history}.rs`
 - `codex-rs/protocol/src/compacted_item.rs`
 - `codex-rs/core/tests/suite/{compact,compact_resume_fork,compact_remote}.rs`
-- `codex-rs/app-server/tests/suite/v2/compaction.rs`
+- `codex-rs/app-server/tests/suite/current/compaction.rs`
 
 可复用机制:
 
@@ -82,7 +82,7 @@ Model Compatibility Router 的取证不在本文件重复,直接消费 [`../runt
 
 - 摘要由模型生成,本身不可信;必须校验关键状态 invariant,不能只检查摘要非空。
 - RunLedger 必须保留 compaction 前后的来源范围、摘要 digest、model identity、token receipt 和批准/触发原因。
-- 不能把压缩后的 history 覆盖写回 v1/v2 ledger;旧格式只读兼容,新语义进入 v3 event/projection。
+- 不能把压缩后的 history 覆盖写回 canonical ledger;压缩结果只能进入当前 event/projection,无法验证的数据必须拒绝。
 
 ### 1.3 Memory
 
@@ -200,8 +200,8 @@ RunLedger 首版取舍:
 - `src/runtime/agent.ts` 已持有 session state、单活跃 run、interrupt、steering/follow-up queue 和 `waitForIdle`。
 - `src/runtime/interactive-session-controller.ts` 已统一 model/thinking/settings/session replay/TUI 装配,适合成为 mode、compact 和 memory command 的 facade。
 - `src/runtime/tool-authorization.ts` 与 `beforeToolCall` 已有工具授权入口,但当前 allow/deny 粒度还不足以证明 Plan Mode 只读。
-- `src/runtime/ledger/` 已有 append-only v2、lock 和 high-water mark;可作为 legacy source,不能直接承载新 v3 完整性声明。
-- `src/storage/session-codec.ts` 已无损恢复 canonical AgentMessage,并清理孤立 tool result。
+- `src/runtime/ledger/` 已有 append-only current、lock 和 high-water mark;可作为现有实现基线,不能直接承载尚未实现的完整性声明。
+- `src/storage/session-codec.ts` 已无损恢复 current canonical AgentMessage。
 - `src/storage/session-manager.ts` 已有 create/open/continue/fork/list 与整场独占 lock。
 - `src/tui/interactive-mode.ts` 已有 slash command、status/footer、model/thinking selector 和 AgentEvent adapter,但业务状态仍由 TUI 局部持有。
 

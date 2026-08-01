@@ -5,8 +5,8 @@
  * idempotency fixture；这些 fake 永远不能成为生产 singleton 或真实执行器。
  */
 
-import type { ArtifactRef, CapabilityDecision } from "../../../../src/runtime/protocol/v3/capability.ts";
-import type { RuntimeEventV3 } from "../../../../src/runtime/protocol/v3/events.ts";
+import type { ArtifactRef, CapabilityDecision } from "../../../../src/runtime/protocol/capability.ts";
+import type { RuntimeEvent } from "../../../../src/runtime/protocol/events.ts";
 import { resourceIdentityKey } from "../../../../src/runtime/resources/schemas.ts";
 import type {
 	RuntimeResourceCatalogPort,
@@ -22,9 +22,9 @@ import type {
 } from "../../../../src/runtime/resources/types.ts";
 
 export class FakeEventSink {
-	public readonly events: RuntimeEventV3[] = [];
+	public readonly events: RuntimeEvent[] = [];
 
-	public async append(event: RuntimeEventV3): Promise<void> {
+	public async append(event: RuntimeEvent): Promise<void> {
 		this.events.push(event);
 	}
 }

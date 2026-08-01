@@ -3,7 +3,7 @@ import { buildExtensionSnapshot } from "../../src/extensions/snapshot.ts";
 import { mergeExtensionConfigLayers } from "../../src/extensions/config-layers.ts";
 import { DEFAULT_EXTENSION_SCAN_LIMITS, extensionDiagnostic } from "../../src/extensions/diagnostics.ts";
 import type { ExtensionResourceDescriptor } from "../../src/extensions/types.ts";
-import { createRuntimeId } from "../../src/runtime/protocol/v3/ids.ts";
+import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 
 function descriptor(): ExtensionResourceDescriptor {
 	return {

@@ -14,7 +14,7 @@ export interface RuntimeBoundaryViolation {
 }
 
 const CONTRACT_DIRECTORIES = [
-	"src/runtime/protocol/v3",
+	"src/runtime/protocol",
 	"src/runtime/identity",
 	"src/runtime/resources",
 	"src/runtime/model-routing",
