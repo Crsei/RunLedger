@@ -23,8 +23,29 @@ export class CanonicalJsonError extends Error {
 	}
 }
 
+function assertWellFormedUnicode(value: string, path: string): void {
+	for (let index = 0; index < value.length; index += 1) {
+		const code = value.charCodeAt(index);
+		if (code >= 0xd800 && code <= 0xdbff) {
+			const next = value.charCodeAt(index + 1);
+			if (!Number.isInteger(next) || next < 0xdc00 || next > 0xdfff) {
+				throw new CanonicalJsonError(`invalid Unicode at ${path}`);
+			}
+			index += 1;
+			continue;
+		}
+		if (code >= 0xdc00 && code <= 0xdfff) {
+			throw new CanonicalJsonError(`invalid Unicode at ${path}`);
+		}
+	}
+}
+
 function normalize(value: unknown, path: string, seen: Set<object>): CanonicalJsonValue {
-	if (value === null || typeof value === "string" || typeof value === "boolean") {
+	if (typeof value === "string") {
+		assertWellFormedUnicode(value, path);
+		return value;
+	}
+	if (value === null || typeof value === "boolean") {
 		return value;
 	}
 	if (typeof value === "number") {
@@ -46,12 +67,41 @@ function normalize(value: unknown, path: string, seen: Set<object>): CanonicalJs
 	seen.add(value);
 	try {
 		if (Array.isArray(value)) {
+			if (Object.getOwnPropertySymbols(value).length > 0) {
+				throw new CanonicalJsonError(`symbol key at ${path}`);
+			}
+			for (let index = 0; index < value.length; index += 1) {
+				if (!Object.hasOwn(value, index)) {
+					throw new CanonicalJsonError(`sparse array at ${path}[${index}]`);
+				}
+			}
+			const extraProperty = Object.getOwnPropertyNames(value).find((key) => {
+				if (key === "length") return false;
+				const index = Number(key);
+				return !Number.isSafeInteger(index) || index < 0 || index >= value.length || String(index) !== key;
+			});
+			if (extraProperty) {
+				throw new CanonicalJsonError(`non-JSON array property at ${path}.${extraProperty}`);
+			}
 			return value.map((item, index) => normalize(item, `${path}[${index}]`, seen));
+		}
+
+		const prototype = Object.getPrototypeOf(value);
+		if (prototype !== Object.prototype && prototype !== null) {
+			throw new CanonicalJsonError(`non-plain object at ${path}`);
+		}
+		if (Object.getOwnPropertySymbols(value).length > 0) {
+			throw new CanonicalJsonError(`symbol key at ${path}`);
 		}
 
 		const objectValue: Record<string, CanonicalJsonValue> = {};
 		const recordValue = value as Record<string, unknown>;
 		for (const key of Object.keys(value).sort()) {
+			assertWellFormedUnicode(key, `${path}.[key]`);
+			const descriptor = Object.getOwnPropertyDescriptor(value, key);
+			if (!descriptor || !("value" in descriptor)) {
+				throw new CanonicalJsonError(`accessor property at ${path}.${key}`);
+			}
 			objectValue[key] = normalize(recordValue[key], `${path}.${key}`, seen);
 		}
 		return objectValue;

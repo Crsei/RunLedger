@@ -25,4 +25,34 @@ describe("Runtime contract module boundary", () => {
 			await rm(repoRoot, { recursive: true, force: true });
 		}
 	});
+
+	it("scans the contract inventory directory", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "runledger-boundary-") );
+		try {
+			const contractsDir = join(repoRoot, "src/runtime/contracts");
+			await mkdir(contractsDir, { recursive: true });
+			await writeFile(join(contractsDir, "bad.ts"), 'import fs from "node:fs";\n', "utf8");
+
+			expect(scanRuntimeBoundaries(repoRoot)).toEqual([
+				{ file: "src/runtime/contracts/bad.ts", reason: "contract module cannot own raw I/O" },
+			]);
+		} finally {
+			await rm(repoRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects host-environment reads from contract modules", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "runledger-boundary-") );
+		try {
+			const identityDir = join(repoRoot, "src/runtime/identity");
+			await mkdir(identityDir, { recursive: true });
+			await writeFile(join(identityDir, "host.ts"), 'import { hostname } from "node:os";\n', "utf8");
+
+			expect(scanRuntimeBoundaries(repoRoot)).toEqual([
+				{ file: "src/runtime/identity/host.ts", reason: "contract module cannot read the host environment" },
+			]);
+		} finally {
+			await rm(repoRoot, { recursive: true, force: true });
+		}
+	});
 });

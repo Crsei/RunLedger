@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createLocalIdentityContext } from "../../src/runtime/identity/local-principal.ts";
+import { createLocalIdentityContext } from "../../src/runtime/local-identity.ts";
 import { isWorkspaceExecutionEnvelope } from "../../src/runtime/protocol/workspace.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 

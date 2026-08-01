@@ -5,14 +5,32 @@
  * OS-derived principal 的隐私边界；本地实现只用于 contract fixtures 和开发基线。
  */
 
+import type { RuntimeContentRef } from "../protocol/foundation.ts";
 import type { AuthorityId, PrincipalId, TenantId } from "../protocol/ids.ts";
 
-export type IdentitySource = "local-os" | "managed" | "remote";
-
-export interface RuntimeIdentityContext {
-	authorityId: AuthorityId;
-	tenantId: TenantId;
-	principalId: PrincipalId;
-	source: IdentitySource;
-	issuedAt: string;
+interface IdentityContextBase {
+	readonly authorityId: AuthorityId;
+	readonly tenantId: TenantId;
+	readonly principalId: PrincipalId;
+	readonly issuedAt: string;
 }
+
+export interface LocalIdentityContext extends IdentityContextBase {
+	readonly principalKind: "local";
+	readonly authenticationRef?: RuntimeContentRef;
+	readonly attestationRef?: RuntimeContentRef;
+}
+
+export interface ServiceIdentityContext extends IdentityContextBase {
+	readonly principalKind: "service";
+	readonly authenticationRef: RuntimeContentRef;
+	readonly attestationRef?: RuntimeContentRef;
+}
+
+export interface RemoteIdentityContext extends IdentityContextBase {
+	readonly principalKind: "remote";
+	readonly authenticationRef: RuntimeContentRef;
+	readonly attestationRef: RuntimeContentRef;
+}
+
+export type IdentityContext = LocalIdentityContext | ServiceIdentityContext | RemoteIdentityContext;

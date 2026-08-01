@@ -1,12 +1,31 @@
-/**
- * 当前 Runtime 的轻量 schema guard。
- *
- * TODO(runtime-phase-0): 用冻结后的 TypeBox schema 替换本文件的最小运行时
- * 检查，并为 unknown fields、payload 大小和每个事件类型增加 golden fixtures。
- */
+/** Runtime exact event schemas、bounds 与纯 contract validation。 */
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { canonicalDigest, canonicalJson } from "./canonical-json.ts";
 import { RuntimeContractError } from "./errors.ts";
-import { isKnownRuntimeEventType, type RuntimeEvent } from "./events.ts";
+import {
+	RUNTIME_EVENT_TYPES,
+	isKnownRuntimeEventType,
+	type AppendEventOutcome,
+	type DurableEventReceipt,
+	type RuntimeEvent,
+	type RuntimeEventRangeRef,
+	type RuntimeEventSubjectKind,
+	type RuntimeEventType,
+} from "./events.ts";
+import {
+	CanonicalUtcTimestampSchema,
+	RuntimeContentRefSchema,
+	RuntimeDigestSchema,
+	RuntimeErrorShapeSchema,
+	RuntimeIdSchema,
+	RuntimeStreamHeadSchema,
+	isCanonicalUtcTimestamp,
+} from "./foundation-schemas.ts";
+import { createRuntimeId, isRuntimeId, type RuntimeId } from "./ids.ts";
+
+export const MAX_RUNTIME_EVENT_PAYLOAD_BYTES = 64 * 1024;
 
 export interface SchemaValidationSuccess<T> {
 	ok: true;
@@ -15,74 +34,369 @@ export interface SchemaValidationSuccess<T> {
 
 export interface SchemaValidationFailure {
 	ok: false;
-	code: "invalid_schema" | "unknown_event_type";
+	code: "invalid_schema" | "unknown_event_type" | "oversized_payload" | "invalid_digest";
 	message: string;
 }
 
 export type SchemaValidationResult<T> = SchemaValidationSuccess<T> | SchemaValidationFailure;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+const RuntimeEventTypeSchema = Type.Unsafe<RuntimeEventType>({
+	type: "string",
+	enum: [...RUNTIME_EVENT_TYPES],
+});
+
+const RuntimeEventSubjectKindSchema = Type.Unsafe<RuntimeEventSubjectKind>({
+	type: "string",
+	enum: [
+		"authority",
+		"session",
+		"goal",
+		"task",
+		"turn",
+		"toolCall",
+		"queueItem",
+		"agent",
+		"workspace",
+		"approval",
+		"principal",
+		"snapshot",
+		"artifact",
+		"finding",
+		"proposal",
+		"resource",
+		"command",
+	],
+});
+
+const RuntimeEventSubjectSchema = Type.Object(
+	{
+		kind: RuntimeEventSubjectKindSchema,
+		id: RuntimeIdSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const RuntimeEventTransitionSchema = Type.Object(
+	{
+		revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		previousStatus: Type.Union([Type.String({ minLength: 1, maxLength: 64 }), Type.Null()]),
+		nextStatus: Type.String({ minLength: 1, maxLength: 64 }),
+	},
+	{ additionalProperties: false },
+);
+
+const RuntimeEventBindingSchema = Type.Object(
+	{
+		role: Type.String({ minLength: 1, maxLength: 64 }),
+		subjectId: RuntimeIdSchema,
+	},
+	{ additionalProperties: false },
+);
+
+function createRuntimeEventPayloadSchema() {
+	return Type.Object(
+		{
+			subject: RuntimeEventSubjectSchema,
+			correlationId: RuntimeIdSchema,
+			effect: Type.Union([Type.Literal("none"), Type.Literal("committed"), Type.Literal("uncertain")]),
+			idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+			expectedRevision: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+			transition: Type.Optional(RuntimeEventTransitionSchema),
+			reasonCode: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+			bindings: Type.Optional(Type.Array(RuntimeEventBindingSchema, { maxItems: 32 })),
+			refs: Type.Optional(Type.Array(RuntimeContentRefSchema, { maxItems: 16 })),
+			metadataDigest: Type.Optional(RuntimeDigestSchema),
+		},
+		{ additionalProperties: false },
+	);
+}
+
+export const RuntimeEventPayloadSchema = createRuntimeEventPayloadSchema();
+
+export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = Object.freeze(
+	Object.fromEntries(RUNTIME_EVENT_TYPES.map((type) => [type, createRuntimeEventPayloadSchema()])),
+) as Readonly<Record<RuntimeEventType, typeof RuntimeEventPayloadSchema>>;
+
+const SessionRuntimeStreamRefSchema = Type.Object(
+	{
+		scope: Type.Literal("session"),
+		streamId: RuntimeIdSchema,
+		sessionId: RuntimeIdSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const AuthorityTenantRuntimeStreamRefSchema = Type.Object(
+	{
+		scope: Type.Literal("authority_tenant"),
+		streamId: RuntimeIdSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const RuntimeStreamRefSchema = Type.Union([SessionRuntimeStreamRefSchema, AuthorityTenantRuntimeStreamRefSchema]);
+
+export const RuntimeEventEnvelopeSchema = Type.Object(
+	{
+		authorityId: RuntimeIdSchema,
+		tenantId: RuntimeIdSchema,
+		principalId: RuntimeIdSchema,
+		eventId: RuntimeIdSchema,
+		stream: RuntimeStreamRefSchema,
+		sequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		timestamp: CanonicalUtcTimestampSchema,
+		type: RuntimeEventTypeSchema,
+		previousEventHash: Type.Union([RuntimeDigestSchema, Type.Null()]),
+		payloadDigest: RuntimeDigestSchema,
+		currentEventHash: RuntimeDigestSchema,
+		traceId: RuntimeIdSchema,
+		payload: RuntimeEventPayloadSchema,
+	},
+	{ additionalProperties: false },
+);
+
+export const DurableEventReceiptSchema = Type.Object(
+	{
+		receiptId: RuntimeIdSchema,
+		stream: RuntimeStreamRefSchema,
+		cursor: Type.String({ minLength: 1, maxLength: 256 }),
+		sequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		eventHash: RuntimeDigestSchema,
+		writerEpoch: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		durableAt: CanonicalUtcTimestampSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const AcceptedAppendEventOutcomeSchema = Type.Object(
+	{
+		outcome: Type.Literal("accepted"),
+		eventId: RuntimeIdSchema,
+		stream: RuntimeStreamRefSchema,
+		sequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		acceptedAt: CanonicalUtcTimestampSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const DurableAppendEventOutcomeSchema = Type.Object(
+	{
+		outcome: Type.Literal("durable"),
+		receipt: DurableEventReceiptSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const RejectedAppendEventOutcomeSchema = Type.Object(
+	{
+		outcome: Type.Literal("rejected"),
+		error: RuntimeErrorShapeSchema,
+	},
+	{ additionalProperties: false },
+);
+
+const UncertainAppendEventOutcomeSchema = Type.Object(
+	{
+		outcome: Type.Literal("uncertain"),
+		eventId: RuntimeIdSchema,
+		stream: RuntimeStreamRefSchema,
+		error: RuntimeErrorShapeSchema,
+	},
+	{ additionalProperties: false },
+);
+
+export const AppendEventOutcomeSchema = Type.Union([
+	AcceptedAppendEventOutcomeSchema,
+	DurableAppendEventOutcomeSchema,
+	RejectedAppendEventOutcomeSchema,
+	UncertainAppendEventOutcomeSchema,
+]);
+
+export const RuntimeEventRangeRefSchema = Type.Object(
+	{
+		stream: RuntimeStreamRefSchema,
+		startSequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		endSequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		head: RuntimeStreamHeadSchema,
+		rangeDigest: RuntimeDigestSchema,
+		complete: Type.Boolean(),
+	},
+	{ additionalProperties: false },
+);
+
+type RuntimeStreamCandidate =
+	| { scope: "session"; streamId: RuntimeId; sessionId: RuntimeId }
+	| { scope: "authority_tenant"; streamId: RuntimeId };
+
+function isValidRuntimeStreamRef(stream: RuntimeStreamCandidate): boolean {
+	if (stream.scope === "session") {
+		return (
+			isRuntimeId(stream.streamId, "session") &&
+			isRuntimeId(stream.sessionId, "session") &&
+			stream.streamId === stream.sessionId
+		);
+	}
+	return isRuntimeId(stream.streamId);
+}
+
+export function isDurableEventReceipt(value: unknown): value is DurableEventReceipt {
+	if (!Value.Check(DurableEventReceiptSchema, value)) return false;
+	return isRuntimeId(value.receiptId, "receipt") && isValidRuntimeStreamRef(value.stream) && isCanonicalUtcTimestamp(value.durableAt);
+}
+
+export function isAppendEventOutcome(value: unknown): value is AppendEventOutcome {
+	if (!Value.Check(AppendEventOutcomeSchema, value)) return false;
+	switch (value.outcome) {
+		case "accepted":
+			return isRuntimeId(value.eventId, "event") && isValidRuntimeStreamRef(value.stream) && isCanonicalUtcTimestamp(value.acceptedAt);
+		case "durable":
+			return isDurableEventReceipt(value.receipt);
+		case "rejected":
+			return true;
+		case "uncertain":
+			return isRuntimeId(value.eventId, "event") && isValidRuntimeStreamRef(value.stream);
+	}
+}
+
+export function isRuntimeEventRangeRef(value: unknown): value is RuntimeEventRangeRef {
+	if (!Value.Check(RuntimeEventRangeRefSchema, value)) return false;
+	return (
+		isValidRuntimeStreamRef(value.stream) &&
+		value.startSequence <= value.endSequence &&
+		value.endSequence <= value.head.sequence &&
+		value.stream.streamId === value.head.streamId
+	);
+}
+
+function expectedSubjectKind(type: RuntimeEventType): RuntimeEventSubjectKind {
+	const family = type.slice(0, type.indexOf("."));
+	switch (family) {
+		case "session": return "session";
+		case "input": return "session";
+		case "goal": return "goal";
+		case "task": return "task";
+		case "turn": return "turn";
+		case "model": return "turn";
+		case "tool": return "toolCall";
+		case "queue": return "queueItem";
+		case "agent": return "agent";
+		case "workspace": return "workspace";
+		case "permission": return "approval";
+		case "capability": return "principal";
+		case "sandbox": return "toolCall";
+		case "lease": return "workspace";
+		case "checkpoint": return "snapshot";
+		case "artifact": return "artifact";
+		case "episode": return "session";
+		case "verification": return "session";
+		case "finding": return "finding";
+		case "change_proposal": return "proposal";
+		case "draft_pr": return "proposal";
+		case "human_gate": return "approval";
+		case "resource": return "resource";
+		case "context": return "session";
+		case "plan": return "goal";
+		case "compaction": return "snapshot";
+		case "memory": return "session";
+		case "command": return "command";
+		case "runtime": return "authority";
+		case "policy": return "authority";
+		case "cost": return "session";
+		case "telemetry": return "authority";
+	}
+	throw new Error(`unreachable event family: ${family}`);
+}
+
+function eventHashInput(event: RuntimeEvent): Record<string, unknown> {
+	return {
+		authorityId: event.authorityId,
+		tenantId: event.tenantId,
+		principalId: event.principalId,
+		eventId: event.eventId,
+		stream: event.stream,
+		sequence: event.sequence,
+		timestamp: event.timestamp,
+		type: event.type,
+		previousEventHash: event.previousEventHash,
+		payloadDigest: event.payloadDigest,
+		traceId: event.traceId,
+	};
+}
+
+function digestsEqual(left: { algorithm: string; digest: string }, right: { algorithm: string; digest: string }): boolean {
+	return left.algorithm === right.algorithm && left.digest === right.digest;
 }
 
 export function validateRuntimeEvent(value: unknown): SchemaValidationResult<RuntimeEvent> {
-	if (!isRecord(value)) {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) {
 		return { ok: false, code: "invalid_schema", message: "event must be an object" };
 	}
-	if (!isKnownRuntimeEventType(value.type)) {
+	const candidate = value as Record<string, unknown>;
+	if (!isKnownRuntimeEventType(candidate.type)) {
 		return { ok: false, code: "unknown_event_type", message: "event type is not in the current catalog" };
 	}
-	const allowedFields = new Set([
-		"authorityId",
-		"tenantId",
-		"principalId",
-		"eventId",
-		"sessionId",
-		"sequence",
-		"timestamp",
-		"type",
-		"previousEventHash",
-		"payloadDigest",
-		"currentEventHash",
-		"traceId",
-		"payload",
-	]);
-	if (Object.keys(value).some((key) => !allowedFields.has(key))) {
-		return { ok: false, code: "invalid_schema", message: "event contains an unsupported field" };
+	if (!Value.Check(RuntimeEventEnvelopeSchema, value)) {
+		return { ok: false, code: "invalid_schema", message: "event does not match the exact envelope and payload schema" };
 	}
-	const stringFields = [
-		"authorityId",
-		"tenantId",
-		"principalId",
-		"eventId",
-		"sessionId",
-		"timestamp",
-		"payloadDigest",
-		"currentEventHash",
-		"traceId",
-	];
-	if (stringFields.some((field) => typeof value[field] !== "string")) {
-		return { ok: false, code: "invalid_schema", message: "event identity fields must be strings" };
+	const event = value as RuntimeEvent;
+	if (!Value.Check(RUNTIME_EVENT_PAYLOAD_SCHEMAS[event.type], event.payload)) {
+		return { ok: false, code: "invalid_schema", message: "event payload does not match its registered schema" };
 	}
-	if (value.previousEventHash !== null && typeof value.previousEventHash !== "string") {
-		return { ok: false, code: "invalid_schema", message: "previousEventHash must be string or null" };
+	if (
+		!isRuntimeId(event.authorityId, "authority") ||
+		!isRuntimeId(event.tenantId, "tenant") ||
+		!isRuntimeId(event.principalId, "principal") ||
+		!isRuntimeId(event.eventId, "event") ||
+		!isRuntimeId(event.traceId, "trace") ||
+		!isCanonicalUtcTimestamp(event.timestamp)
+	) {
+		return { ok: false, code: "invalid_schema", message: "event identity or timestamp is invalid" };
 	}
-	if (typeof value.sequence !== "number" || !Number.isSafeInteger(value.sequence) || value.sequence < 0) {
-		return { ok: false, code: "invalid_schema", message: "sequence must be a non-negative safe integer" };
+	if (!isValidRuntimeStreamRef(event.stream)) {
+		return { ok: false, code: "invalid_schema", message: "session stream identity is invalid" };
 	}
-	if (!isRecord(value.payload)) {
-		return { ok: false, code: "invalid_schema", message: "payload must be an object" };
+	const subjectKind = expectedSubjectKind(event.type);
+	if (
+		event.payload.subject.kind !== subjectKind ||
+		!isRuntimeId(event.payload.subject.id, subjectKind) ||
+		!isRuntimeId(event.payload.correlationId, "trace") ||
+		event.payload.correlationId !== event.traceId
+	) {
+		return { ok: false, code: "invalid_schema", message: "event subject or correlation does not match its type" };
 	}
-	return { ok: true, value: value as unknown as RuntimeEvent };
+	let payloadJson: string;
+	try {
+		payloadJson = canonicalJson(event.payload);
+	} catch {
+		return { ok: false, code: "invalid_schema", message: "event payload is not canonical JSON" };
+	}
+	if (new TextEncoder().encode(payloadJson).byteLength > MAX_RUNTIME_EVENT_PAYLOAD_BYTES) {
+		return { ok: false, code: "oversized_payload", message: "event payload exceeds the byte limit" };
+	}
+	const expectedPayloadDigest = { algorithm: "sha256", digest: canonicalDigest(event.payload) };
+	if (!digestsEqual(event.payloadDigest, expectedPayloadDigest)) {
+		return { ok: false, code: "invalid_digest", message: "event payload digest does not match its payload" };
+	}
+	const expectedEventHash = { algorithm: "sha256", digest: canonicalDigest(eventHashInput(event)) };
+	if (!digestsEqual(event.currentEventHash, expectedEventHash)) {
+		return { ok: false, code: "invalid_digest", message: "event hash does not match the canonical hash input" };
+	}
+	return { ok: true, value: event };
 }
 
 export function assertRuntimeEvent(value: unknown): RuntimeEvent {
 	const result = validateRuntimeEvent(value);
 	if (!result.ok) {
 		throw new RuntimeContractError({
-				code: result.code === "unknown_event_type" ? "unknown_event_type" : "invariant_violation",
+			code:
+				result.code === "unknown_event_type"
+					? "unknown_event_type"
+					: result.code === "oversized_payload"
+						? "oversized_payload"
+						: "invariant_violation",
 			message: result.message,
 			retryable: false,
+			correlationId: createRuntimeId("trace", "contract-validation"),
 		});
 	}
 	return result.value;

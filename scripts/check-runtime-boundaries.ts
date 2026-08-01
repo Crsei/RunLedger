@@ -7,23 +7,16 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { CONTRACT_DIRECTORY_ALLOWLIST } from "../src/runtime/contracts/inventory.ts";
 
 export interface RuntimeBoundaryViolation {
 	file: string;
 	reason: string;
 }
 
-const CONTRACT_DIRECTORIES = [
-	"src/runtime/protocol",
-	"src/runtime/identity",
-	"src/runtime/resources",
-	"src/runtime/model-routing",
-	"src/runtime/modes",
-	"src/runtime/context",
-] as const;
-
 const FORBIDDEN_IMPORT_PATTERNS: readonly [RegExp, string][] = [
 	[/node:(?:fs|child_process|net|http|https)/, "contract module cannot own raw I/O"],
+	[/node:os/, "contract module cannot read the host environment"],
 	[/from [\"'][^\"']*(?:storage|tui|providers?)[^\"']*[\"']/, "contract module cannot depend on storage/UI/provider"],
 	[/\bfetch\s*\(/, "contract module cannot perform network I/O"],
 ];
@@ -42,7 +35,7 @@ function listTypeScriptFiles(directory: string): string[] {
 
 export function scanRuntimeBoundaries(repoRoot: string): RuntimeBoundaryViolation[] {
 	const violations: RuntimeBoundaryViolation[] = [];
-	for (const directory of CONTRACT_DIRECTORIES) {
+	for (const directory of CONTRACT_DIRECTORY_ALLOWLIST) {
 		for (const file of listTypeScriptFiles(join(repoRoot, directory))) {
 			const source = readFileSync(file, "utf8");
 			for (const [pattern, reason] of FORBIDDEN_IMPORT_PATTERNS) {
