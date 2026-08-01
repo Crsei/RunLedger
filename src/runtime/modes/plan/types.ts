@@ -1,32 +1,37 @@
-/**
- * Plan Mode 的公共状态合同。
- *
- * TODO(runtime-phase-6): 冻结 durable revision、approval ref 和安全点事件；
- * reducer/service/policy/tool 行为归 plan-context-memory 专项，不在此实现。
- */
+/** Plan Mode 的被动公共状态合同。 */
+
+import type { RuntimeContentRef, RuntimeDigest, RuntimeStreamHead } from "../../protocol/foundation.ts";
+import type { ApprovalId, GoalId, SessionId, WorkspaceId } from "../../protocol/ids.ts";
 
 export type PlanModeStatus = "inactive" | "pending" | "active" | "awaiting_approval" | "exit_pending";
 
 export interface PlanArtifactRef {
-	planId: string;
-	workspaceId: string;
-	revision: number;
-	digest: string;
-	artifactRef: string;
+	readonly goalId: GoalId;
+	readonly workspaceId: WorkspaceId;
+	readonly revision: number;
+	readonly digest: RuntimeDigest;
+	readonly artifactRef: RuntimeContentRef;
 }
 
 export interface PlanApprovalRef {
-	approvalId: string;
-	planId: string;
-	revision: number;
-	digest: string;
-	status: "pending" | "approved" | "rejected" | "expired" | "invalidated";
+	readonly approvalId: ApprovalId;
+	readonly goalId: GoalId;
+	readonly revision: number;
+	readonly digest: RuntimeDigest;
+	readonly status: "pending" | "approved" | "rejected" | "expired" | "invalidated";
+	readonly receiptRef?: RuntimeContentRef;
 }
 
 export interface PlanModeState {
-	status: PlanModeStatus;
-	revision: number;
-	plan?: PlanArtifactRef;
-	approval?: PlanApprovalRef;
-	updatedAt: string;
+	readonly status: PlanModeStatus;
+	readonly sessionId: SessionId;
+	readonly goalId: GoalId;
+	readonly revision: number;
+	readonly plan?: PlanArtifactRef;
+	readonly approval?: PlanApprovalRef;
+	readonly policyCeilingDigest: RuntimeDigest;
+	readonly sourceHead: RuntimeStreamHead;
+	readonly projectionDigest: RuntimeDigest;
+	readonly completeness: "complete" | "partial";
+	readonly updatedAt: string;
 }

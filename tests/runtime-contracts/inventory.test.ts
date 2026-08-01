@@ -3,6 +3,7 @@ import {
 	CONTRACT_DIRECTORY_ALLOWLIST,
 	CONTRACT_HANDOFFS,
 	CONTRACT_INVENTORY,
+	PASSIVE_PERSISTENCE_POLICIES,
 	PERSISTENCE_CLASSES,
 } from "../../src/runtime/contracts/inventory.ts";
 
@@ -20,6 +21,7 @@ describe("Runtime public contract inventory", () => {
 			"context",
 			"compaction",
 			"memory",
+			"artifact-evidence",
 			"user-home-layout",
 			"control-telemetry",
 		]);
@@ -80,5 +82,44 @@ describe("Runtime public contract inventory", () => {
 		expect(identity?.gaps).not.toContain("local-principal.ts is an executable local identity helper");
 		expect(userHome?.modules).toContain("src/runtime/contracts/storage-layout.ts");
 		expect(userHome?.gaps).toEqual([]);
+		for (const id of [
+			"workspace-security",
+			"resources",
+			"model-routing",
+			"plan-mode",
+			"context",
+			"compaction",
+			"memory",
+			"artifact-evidence",
+			"control-telemetry",
+		]) {
+			expect(CONTRACT_INVENTORY.find((entry) => entry.id === id)?.gaps).toEqual([]);
+		}
+	});
+
+	it("classifies every passive structure with retention, redaction, and forbidden-field policy", () => {
+		expect(PASSIVE_PERSISTENCE_POLICIES.length).toBeGreaterThanOrEqual(45);
+		expect(new Set(PASSIVE_PERSISTENCE_POLICIES.map((policy) => policy.contract)).size).toBe(
+			PASSIVE_PERSISTENCE_POLICIES.length,
+		);
+		for (const policy of PASSIVE_PERSISTENCE_POLICIES) {
+			expect(PERSISTENCE_CLASSES).toContain(policy.classification);
+			expect(policy.retention.length).toBeGreaterThan(0);
+			expect(policy.redaction.length).toBeGreaterThan(0);
+			expect(policy.forbiddenFields.length).toBeGreaterThan(0);
+		}
+		expect(PASSIVE_PERSISTENCE_POLICIES).toContainEqual(expect.objectContaining({
+			contract: "CredentialGrantRef",
+			classification: "external_authority_ref",
+			forbiddenFields: expect.arrayContaining(["credential", "token", "secret"]),
+		}));
+		expect(PASSIVE_PERSISTENCE_POLICIES).toContainEqual(expect.objectContaining({
+			contract: "RuntimeResourceSnapshot",
+			classification: "reconstructible_passive",
+		}));
+		expect(PASSIVE_PERSISTENCE_POLICIES).toContainEqual(expect.objectContaining({
+			contract: "RuntimeToolInvocation",
+			classification: "ephemeral",
+		}));
 	});
 });

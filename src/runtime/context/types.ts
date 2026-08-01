@@ -1,38 +1,53 @@
-/**
- * 分层 ContextEngine 的公共类型合同。
- *
- * TODO(runtime-phase-6): 冻结 fragment schema、预算/omission receipt 和 stable
- * ordering。组装算法、token estimator 与 agent-loop seam 不在此文件实现。
- */
+/** 分层 ContextEngine 的被动公共合同。 */
+
+import type { RuntimeContentRef, RuntimeDigest, RuntimeStreamHead } from "../protocol/foundation.ts";
+import type { CommandId, TraceId } from "../protocol/ids.ts";
 
 export type ContextLayer = "identity" | "policy" | "mode" | "resources" | "history" | "memory" | "task";
 
 export interface ContextFragment {
-	fragmentId: string;
-	layer: ContextLayer;
-	order: number;
-	content: string;
-	contentDigest: string;
-	maxChars: number;
-	trusted: boolean;
-	priority: "required" | "normal" | "optional";
+	readonly fragmentId: string;
+	readonly layer: ContextLayer;
+	readonly order: number;
+	readonly contentRef: RuntimeContentRef;
+	readonly contentDigest: RuntimeDigest;
+	readonly estimatedTokens: number;
+	readonly trust: "trusted" | "untrusted" | "mixed";
+	readonly taint: "none" | "user_input" | "tool_output" | "external";
+	readonly priority: "required" | "normal" | "optional";
 }
 
 export interface ContextAssemblyRequest {
-	modelId: string;
-	contextWindow: number;
-	outputReserve: number;
-	toolReserve: number;
-	fragments: readonly ContextFragment[];
+	readonly requestId: CommandId;
+	readonly modelProfileId: string;
+	readonly contextWindow: number;
+	readonly outputReserve: number;
+	readonly toolReserve: number;
+	readonly fragments: readonly ContextFragment[];
+	readonly traceId: TraceId;
+}
+
+export interface ContextOmission {
+	readonly fragmentId: string;
+	readonly reasonCode: string;
+}
+
+export interface ContextDiagnostic {
+	readonly code: string;
+	readonly severity: "info" | "warning" | "error";
+	readonly message: string;
 }
 
 export interface ContextAssemblyReceipt {
-	requestId: string;
-	modelId: string;
-	fragmentIds: readonly string[];
-	omittedFragmentIds: readonly string[];
-	estimatedInputTokens: number;
-	reservedOutputTokens: number;
-	contextDigest: string;
-	diagnostics: readonly string[];
+	readonly requestId: CommandId;
+	readonly modelProfileId: string;
+	readonly fragmentIds: readonly string[];
+	readonly omittedFragments: readonly ContextOmission[];
+	readonly estimatedInputTokens: number;
+	readonly reservedOutputTokens: number;
+	readonly contextDigest: RuntimeDigest;
+	readonly diagnostics: readonly ContextDiagnostic[];
+	readonly sourceHead: RuntimeStreamHead;
+	readonly projectionDigest: RuntimeDigest;
+	readonly assembledAt: string;
 }

@@ -1,44 +1,60 @@
-/**
- * Model Compatibility Router 的公共类型占位。
- *
- * TODO(runtime-phase-6): 由 Runtime contract 冻结 manifest/profile 字段、fork
- * ref 和 provider-private state 边界；本文件不读取模型 catalog，也不执行 fork。
- */
+/** Model Compatibility Router 的被动公共合同。 */
+
+import type { RuntimeContentRef, RuntimeDigest } from "../protocol/foundation.ts";
+import type { CommandId, SessionId, TraceId } from "../protocol/ids.ts";
 
 export type ModelRouteOperation = "switch" | "summarize" | "compact";
 export type ModelRouteOutcome = "compatible" | "fork" | "deny";
 
 export interface ModelCapabilityProfile {
-	profileId: string;
-	modelId: string;
-	manifestVersion: string;
-	manifestDigest: string;
-	contextWindow: number;
-	maxOutputTokens: number;
-	reasoningProtocol: "none" | "native" | "signature";
-	toolProtocol: "none" | "json" | "provider-native";
-	imageInput: boolean;
-	compaction: "none" | "summary" | "full-replace";
-	status: "verified" | "unknown" | "retired";
+	readonly profileId: string;
+	readonly providerId: string;
+	readonly modelId: string;
+	readonly manifestVersion: string;
+	readonly manifestDigest: RuntimeDigest;
+	readonly contextWindow: number;
+	readonly maxOutputTokens: number;
+	readonly reasoningProtocol: "none" | "native" | "signature";
+	readonly toolProtocol: "none" | "json" | "provider-native";
+	readonly imageInput: boolean;
+	readonly compaction: "none" | "summary" | "full-replace";
+	readonly status: "verified" | "unknown" | "retired";
+	readonly conversionRef?: RuntimeContentRef;
+	readonly adapterStateRef?: RuntimeContentRef;
 }
 
 export interface ModelRouteRequest {
-	operation: ModelRouteOperation;
-	fromModelId?: string;
-	targetModelId: string;
-	requiredContextTokens: number;
-	requiredOutputTokens: number;
-	requiresTools: boolean;
-	requiresReasoningReplay: boolean;
-	requiresImages: boolean;
+	readonly requestId: CommandId;
+	readonly operation: ModelRouteOperation;
+	readonly sourceProfileId?: string;
+	readonly targetProfileId: string;
+	readonly contextDigest: RuntimeDigest;
+	readonly planDigest: RuntimeDigest;
+	readonly resourceDigest: RuntimeDigest;
+	readonly requiredContextTokens: number;
+	readonly requiredOutputTokens: number;
+	readonly requiresTools: boolean;
+	readonly requiresReasoningReplay: boolean;
+	readonly requiresImages: boolean;
+	readonly traceId: TraceId;
 }
 
 export interface ModelRouteDecision {
-	outcome: ModelRouteOutcome;
-	targetModelId: string;
-	profileId?: string;
-	manifestDigest?: string;
-	reason: string;
-	decisionDigest: string;
-	forkSession?: boolean;
+	readonly requestId: CommandId;
+	readonly outcome: ModelRouteOutcome;
+	readonly targetProviderId: string;
+	readonly targetModelId: string;
+	readonly targetProfileId: string;
+	readonly manifestDigest: RuntimeDigest;
+	readonly reasonCode: string;
+	readonly diagnostics: readonly ModelRouteDiagnostic[];
+	readonly decisionDigest: RuntimeDigest;
+	readonly conversionRef?: RuntimeContentRef;
+	readonly forkSessionId?: SessionId;
+}
+
+export interface ModelRouteDiagnostic {
+	readonly code: string;
+	readonly severity: "info" | "warning" | "error";
+	readonly message: string;
 }

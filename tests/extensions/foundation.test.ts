@@ -5,6 +5,11 @@ import { DEFAULT_EXTENSION_SCAN_LIMITS, extensionDiagnostic } from "../../src/ex
 import type { ExtensionResourceDescriptor } from "../../src/extensions/types.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 
+const digest = {
+	algorithm: "sha256",
+	digest: "6".repeat(64),
+} as const;
+
 function descriptor(): ExtensionResourceDescriptor {
 	return {
 		identity: {
@@ -20,9 +25,9 @@ function descriptor(): ExtensionResourceDescriptor {
 			qualifiedId: "project:fixture",
 			version: "1.0.0",
 			source: "project",
-			digest: "extension-digest",
+			digest,
 		},
-		provenance: { source: "project", canonicalLocator: "/repo/.runledger/skills/fixture" },
+		provenance: { source: "project", sourceLocatorDigest: digest },
 		enabled: true,
 		trusted: true,
 		ready: true,

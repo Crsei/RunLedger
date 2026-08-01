@@ -1,47 +1,53 @@
-/**
- * Memory record/proposal/search 的公共合同。
- *
- * TODO(runtime-phase-6): 冻结 provenance、approval、TTL/staleness、citation 和
- * scope 隔离字段；MemoryStore/Search/flush 行为归专项实现，默认不自动发布。
- */
+/** Memory record/proposal/search 的被动公共合同。 */
+
+import type { RuntimeContentRef, RuntimeDigest, RuntimeStreamHead } from "../../protocol/foundation.ts";
+import type { MemoryId, ProposalId, ReceiptId, SessionId, WorkspaceId } from "../../protocol/ids.ts";
 
 export type MemoryScope = "user" | "workspace" | "session";
 export type MemoryTrust = "untrusted" | "proposed" | "approved" | "revoked" | "changed_unreviewed";
 
 export interface MemoryProvenance {
-	sourceKind: "user" | "agent" | "tool" | "import" | "compaction";
-	sourceRef: string;
-	sourceDigest: string;
-	createdAt: string;
+	readonly sourceKind: "user" | "agent" | "tool" | "import" | "compaction";
+	readonly sourceRef: RuntimeContentRef;
+	readonly sourceDigest: RuntimeDigest;
+	readonly createdAt: string;
 }
 
 export interface MemoryRecord {
-	memoryId: string;
-	scope: MemoryScope;
-	workspaceId?: string;
-	title: string;
-	body: string;
-	digest: string;
-	trust: MemoryTrust;
-	provenance: MemoryProvenance;
-	approvedAt?: string;
-	expiresAt?: string;
-	revocationRevision: number;
+	readonly memoryId: MemoryId;
+	readonly scope: MemoryScope;
+	readonly workspaceId?: WorkspaceId;
+	readonly sessionId?: SessionId;
+	readonly title: string;
+	readonly contentDigest: RuntimeDigest;
+	readonly contentRef: RuntimeContentRef;
+	readonly revision: number;
+	readonly trust: MemoryTrust;
+	readonly provenance: MemoryProvenance;
+	readonly approvedAt?: string;
+	readonly expiresAt?: string;
+	readonly revocationRevision: number;
 }
 
 export interface MemoryProposal {
-	proposalId: string;
-	scope: MemoryScope;
-	record: MemoryRecord;
-	status: "pending" | "approved" | "rejected" | "expired";
-	createdAt: string;
+	readonly proposalId: ProposalId;
+	readonly memoryId: MemoryId;
+	readonly scope: MemoryScope;
+	readonly recordDigest: RuntimeDigest;
+	readonly status: "pending" | "approved" | "rejected" | "expired";
+	readonly approvalRef?: RuntimeContentRef;
+	readonly createdAt: string;
 }
 
 export interface MemorySearchReceipt {
-	queryDigest: string;
-	scope: MemoryScope;
-	mode: "lexical" | "vector" | "none";
-	resultIds: readonly string[];
-	indexDigest: string;
-	createdAt: string;
+	readonly receiptId: ReceiptId;
+	readonly queryDigest: RuntimeDigest;
+	readonly scope: MemoryScope;
+	readonly workspaceId?: WorkspaceId;
+	readonly sessionId?: SessionId;
+	readonly mode: "lexical" | "vector" | "none";
+	readonly resultIds: readonly MemoryId[];
+	readonly indexDigest: RuntimeDigest;
+	readonly sourceHead: RuntimeStreamHead;
+	readonly createdAt: string;
 }

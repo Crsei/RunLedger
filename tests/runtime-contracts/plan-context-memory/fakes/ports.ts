@@ -7,6 +7,8 @@
 
 import type { ArtifactRef, CapabilityDecision } from "../../../../src/runtime/protocol/capability.ts";
 import type { RuntimeEvent } from "../../../../src/runtime/protocol/events.ts";
+import type { RuntimeDigest } from "../../../../src/runtime/protocol/foundation.ts";
+import { createRuntimeId } from "../../../../src/runtime/protocol/ids.ts";
 import { resourceIdentityKey } from "../../../../src/runtime/resources/schemas.ts";
 import type {
 	RuntimeResourceCatalogPort,
@@ -30,17 +32,18 @@ export class FakeEventSink {
 }
 
 export class FakeArtifactStore {
-	public async put(kind: ArtifactRef["kind"], digest: string): Promise<ArtifactRef> {
+	public async put(kind: ArtifactRef["kind"], digest: RuntimeDigest): Promise<ArtifactRef> {
 		return {
-			authorityId: "authority_fixture",
-			tenantId: "tenant_fixture",
+			artifactId: createRuntimeId("artifact", "fixture"),
+			authorityId: createRuntimeId("authority", "fixture"),
+			tenantId: createRuntimeId("tenant", "fixture"),
 			storedDigest: digest,
 			kind,
 			originalSize: 0,
 			storedSize: 0,
 			mediaType: "text/plain",
 			redaction: "metadata_only",
-			transformReceipt: "transform_fixture",
+			transformReceiptRef: { subjectKind: "receipt", digest },
 		};
 	}
 }
@@ -86,10 +89,10 @@ export class FakeResourceAdapter
 			requestId: invocation.requestId,
 			tool: invocation.tool,
 			content: [{ type: "text", text: "fake resource result" }],
-			isError: invocation.decision !== "allow",
+			outcome: "ok",
 			originalBytes: 20,
 			truncated: false,
-			contentDigest: "fake-result-digest",
+			contentDigest: invocation.inputDigest,
 		};
 	}
 

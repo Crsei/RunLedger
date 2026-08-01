@@ -1,23 +1,23 @@
-/**
- * Compaction checkpoint 的公共合同。
- *
- * TODO(runtime-phase-6): 冻结 safe cut、retained tail、summary artifact、invariant
- * digest 与 intent/commit recovery 字段；CompactionService 不在此实现。
- */
+/** Compaction checkpoint 的被动公共合同。 */
+
+import type { RuntimeEventRangeRef } from "../../protocol/events.ts";
+import type { RuntimeContentRef, RuntimeDigest } from "../../protocol/foundation.ts";
+import type { SessionId, SnapshotId } from "../../protocol/ids.ts";
 
 export type CompactionReason = "manual" | "auto" | "overflow" | "model_switch";
 export type CompactionStatus = "planned" | "started" | "completed" | "failed";
 
 export interface CompactionCheckpoint {
-	compactionId: string;
-	sessionId: string;
-	reason: CompactionReason;
-	status: CompactionStatus;
-	cutSequence: number;
-	retainedTailStart: number;
-	inputArtifactRef?: string;
-	summaryArtifactRef?: string;
-	invariantDigest: string;
-	projectionDigest: string;
-	createdAt: string;
+	readonly compactionId: SnapshotId;
+	readonly sessionId: SessionId;
+	readonly reason: CompactionReason;
+	readonly status: CompactionStatus;
+	readonly sourceRange: RuntimeEventRangeRef;
+	readonly replacementArtifactRef?: RuntimeContentRef;
+	readonly invariantDigest: RuntimeDigest;
+	readonly attempt: number;
+	readonly terminalReceiptRef?: RuntimeContentRef;
+	readonly projectionDigest: RuntimeDigest;
+	readonly completeness: "complete" | "partial";
+	readonly createdAt: string;
 }

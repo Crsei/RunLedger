@@ -4,6 +4,11 @@ import { resourceIdentityDigest, resourceIdentityKey, isRuntimeToolInvocation } 
 import { createResourceLifecycleEvent } from "../../../src/runtime/resources/events.ts";
 import type { RuntimeToolDescriptor } from "../../../src/runtime/resources/types.ts";
 
+const digest = {
+	algorithm: "sha256",
+	digest: "5".repeat(64),
+} as const;
+
 function descriptor(): RuntimeToolDescriptor {
 	return {
 		identity: {
@@ -12,15 +17,15 @@ function descriptor(): RuntimeToolDescriptor {
 			qualifiedId: "fixture.server/read",
 			version: "1.0.0",
 			source: "project",
-			digest: "tool-manifest-digest",
+			digest,
 		},
 		provenance: {
 			source: "project",
-			canonicalLocator: "/repo/.runledger/mcp.json",
+			sourceLocatorDigest: digest,
 		},
 		runtimeName: "mcp_fixture_server_read",
 		description: "A bounded contract fixture",
-		parametersSchema: { type: "object", properties: {} },
+		parametersSchemaRef: { subjectKind: "content", digest },
 		claims: [],
 		exposure: "deferred",
 		isReadOnly: true,
@@ -28,6 +33,7 @@ function descriptor(): RuntimeToolDescriptor {
 		isConcurrencySafe: true,
 		trust: "trusted",
 		activation: "ready",
+		descriptorDigest: digest,
 	};
 }
 
@@ -38,14 +44,14 @@ describe("Runtime resource contract scaffold", () => {
 		expect(identityKey).toContain("mcp-tool:fixture.server/read@1.0.0");
 		expect(resourceIdentityDigest(tool.identity)).toHaveLength(64);
 		expect(isRuntimeToolInvocation({
-		requestId: "request-fixture",
-		tool: tool.identity,
-		input: { path: "README.md" },
-		requestedClaims: [],
-		decision: "allow",
-		snapshotId: createRuntimeId("snapshot", "fixture"),
-		correlationId: "correlation-fixture",
-	})).toBe(true);
+			requestId: createRuntimeId("command", "fixture"),
+			tool: tool.identity,
+			inputDigest: digest,
+			requestedClaims: [],
+			decisionReceiptRef: { subjectKind: "receipt", digest },
+			snapshotId: createRuntimeId("snapshot", "fixture"),
+			correlationId: createRuntimeId("trace", "fixture"),
+		})).toBe(true);
 	});
 
 	it("creates a bounded lifecycle event without a second hash chain", () => {
