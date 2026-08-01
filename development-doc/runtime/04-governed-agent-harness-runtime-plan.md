@@ -1,7 +1,7 @@
 # RunLedger Runtime 通用协议、被动状态与用户级保存契约计划
 
-> 文档状态:当前 Runtime contract 权威入口;不承担 Runtime 行为实现状态
-> 基线复核:2026-08-01
+> 文档状态:Runtime 通用 contract milestone 已验证;当前唯一权威入口;不承担 Runtime 行为实现状态
+> 基线复核:2026-08-02
 > 适用范围:`src/runtime/` 中的公共 protocol、types、schema、event payload、adapter port、用户级保存位置,以及对应 contract tests
 > 设计输入:[`00-reference.md`](00-reference.md)
 > 历史实现计划:[`01-minimum-runtime-scaffold-plan.md`](01-minimum-runtime-scaffold-plan.md)、[`02-agent-loop-resurrection-plan.md`](02-agent-loop-resurrection-plan.md)、[`03-tool-system-plan.md`](03-tool-system-plan.md)
@@ -61,9 +61,34 @@ Runtime contract 独占以下公共面:
 - contract 变更和行为适配分开提交:先冻结公共结构、schema、fixture,再由行为 owner 更新 consumer。
 - 本计划不得因某个 consumer 实现方便而复制同义类型、放宽 unknown fields 或引入领域私有 event。
 
-## 1. 当前 baseline 与缺口
+### 0.4 Contract milestone 证据
 
-以下是当前工作区可见的 contract surface。状态只说明“存在/缺口”,不推导完成度。
+2026-08-02 在分支 `rollback/pre-governed-agent-harness-runtime` 完成 C0–C5。以下 commit 共同组成 contract milestone,每个 commit 只证明其列出的合同范围:
+
+| 范围 | Commit | 证据边界 |
+|---|---|---|
+| baseline/单一 current format/文档所有权 | `6a5dc7e`、`f3a9a06`、`dd598ae` | 移除代际/legacy current format,建立边界脚本与本文件唯一权威职责 |
+| C0–C2 foundation、identity、inventory、event/durability | `89648fb`、`c9fe7e5` | exact foundation、canonical digest、event-specific payload/transition matrix、durable receipt、unknown/tamper fence |
+| C3 workspace/security、passive state、用户级 layout 与保存分类 | `de1013b`、`9aef809` | auditable workspace refs、bounded passive DTO/schema、59 项 retention/redaction/forbidden-field policy |
+| C4 adapter ports | `54bd16e` | 18 个中立 port、43 个 action、统一 request/result/progress/error/cancel/adapter identity contract |
+| C5 public surface、consumer 与迁移 handoff | `cbd0e8c` | package subpath/public barrel、三类 consumer compile fixtures、独立 compile gate、Storage/CLI handoff 与索引路由 |
+
+当前里程碑验证:
+
+- `npm run check:current-format`:通过;
+- `npm run check:runtime-boundaries`:通过;
+- `npm test -- tests/runtime-contracts`:20 files / 72 tests 通过;
+- `npm run check`:通过,并实际执行 `check:contract-consumers` 与 execution boundary;
+- `npm test`:59 files / 353 tests 通过;
+- `npm run build`:通过;
+- `development-doc/` 本地 Markdown link check:59 links 通过;
+- 下游旧 Runtime phase 引用扫描、`git diff --check`:通过。
+
+`cbd0e8c` 没有迁移、复制或删除用户数据,也没有实现真实 adapter、Storage/CLI migration、安全强制、backend 或行为 composition。相关行为仍只由 §7 的专项 owner 跟踪。
+
+## 1. 实施前 baseline 与关闭结果
+
+以下表格保留 2026-08-01 实施前的 baseline 取证,用于解释 C0–C5 为什么存在;它不是当前缺口或第二份状态真源。当前 contract 关闭状态只看 §0.4、§6 与 §9,行为缺口只看 §7 的 owner。
 
 | 范围 | 当前 baseline | contract 缺口 |
 |---|---|---|
@@ -452,59 +477,59 @@ daemon、transport、subscription worker、composition root、policy resolver、
 
 ### C0:Inventory 与所有权冻结
 
-- [ ] 生成 public contract inventory,逐项列出 type、schema、event、port、fixture、owner 和保存分类。
-- [ ] 标记现有宽泛 record、重复 type、私有 event 和越界 import,不在 inventory 阶段修改行为。
-- [ ] 固定 contract directory allowlist 与禁止依赖,让 `npm run check` 实际执行边界检查。
-- [ ] 为每个行为专项记录只读 contract handoff 路径;没有 owner 的行为明确保持 unavailable。
+- [x] 生成 public contract inventory,逐项列出 type、schema、event、port、fixture、owner 和保存分类。
+- [x] 标记现有宽泛 record、重复 type、私有 event 和越界 import,不在 inventory 阶段修改行为。
+- [x] 固定 contract directory allowlist 与禁止依赖,让 `npm run check` 实际执行边界检查。
+- [x] 为每个行为专项记录只读 contract handoff 路径;没有 owner 的行为明确保持 unavailable。
 
 完成证据:inventory review、boundary test、current-format check、consumer 路由链接。
 
 ### C1:基础类型与 exact schema
 
-- [ ] 冻结 Runtime ID、identity context、digest/ref、revision/head 和 structured error 的唯一 public 定义。
-- [ ] 为每个 public persisted/wire DTO 建立 exact schema、runtime guard、bounds 和 fixtures。
-- [ ] 冻结 canonical JSON/digest golden fixtures,覆盖跨平台、Unicode、数字和非法值。
-- [ ] 清除 contract 目录内 raw I/O、storage/UI/provider 反向依赖和同义类型。
+- [x] 冻结 Runtime ID、identity context、digest/ref、revision/head 和 structured error 的唯一 public 定义。
+- [x] 为每个 public persisted/wire DTO 建立 exact schema、runtime guard、bounds 和 fixtures。
+- [x] 冻结 canonical JSON/digest golden fixtures,覆盖跨平台、Unicode、数字和非法值。
+- [x] 清除 contract 目录内 raw I/O、storage/UI/provider 反向依赖和同义类型。
 
 完成证据:foundation contract tests、public consumer compile test、module-boundary test。
 
 ### C2:Event catalog 与 payload closure
 
-- [ ] 将 `RuntimeEvent` 收敛为按 type 区分的穷尽 payload union,移除 canonical ingress 的宽泛 payload。
-- [ ] 为 §3 每个 exact event 建立 payload schema、bounds、secret policy、canonical digest fixture 和 unknown-event fence。
-- [ ] 冻结 stream ref、event envelope、event range/head、durable receipt 与 append outcome DTO。
-- [ ] 建立 event name 唯一性、payload/type 对应、oversize、tamper 和 terminal-correlation contract tests。
+- [x] 将 `RuntimeEvent` 收敛为按 type 区分的穷尽 payload union,移除 canonical ingress 的宽泛 payload。
+- [x] 为 §3 每个 exact event 建立 payload schema、bounds、secret policy、canonical digest fixture 和 unknown-event fence。
+- [x] 冻结 stream ref、event envelope、event range/head、durable receipt 与 append outcome DTO。
+- [x] 建立 event name 唯一性、payload/type 对应、oversize、tamper 和 terminal-correlation contract tests。
 
 完成证据:event catalog/payload fixtures、schema round-trip、hash/tamper tests。
 
 ### C3:被动状态、用户级布局与保存分类
 
-- [ ] 冻结 §3 的 ref、receipt、descriptor、manifest、snapshot 和 projection 结构。
-- [ ] 冻结 `RUNLEDGER_DIR`/默认 `~/.runledger` 的唯一 root 解析、规范化、失败语义与固定子目录拓扑,并建立跨平台 path fixture。
-- [ ] 冻结 `<workspace-key>`、UTC session 分片、archive 与 content-addressed artifact 的 path-safe 规则;证明 cwd/metadata/外部输入不能形成第二个 root 或路径逃逸。
-- [ ] 冻结 location-bearing passive DTO 的最小字段:只保存 object kind、branded ID、digest、shard 或根内相对 locator,拒绝绝对 home/cwd、`..` 与平台句柄进入 durable schema。
-- [ ] 每个结构登记 canonical/external-ref/reconstructible/ephemeral/forbidden 分类和 retention/redaction 规则。
-- [ ] 大正文统一改为 bounded inline 或 Artifact/Content ref;secret-bearing fixture 必须拒绝。
-- [ ] snapshot/projection 统一携带 source head/range、digest、completeness,且不能表达独立授权。
+- [x] 冻结 §3 的 ref、receipt、descriptor、manifest、snapshot 和 projection 结构。
+- [x] 冻结 `RUNLEDGER_DIR`/默认 `~/.runledger` 的唯一 root 解析、规范化、失败语义与固定子目录拓扑,并建立跨平台 path fixture。
+- [x] 冻结 `<workspace-key>`、UTC session 分片、archive 与 content-addressed artifact 的 path-safe 规则;证明 cwd/metadata/外部输入不能形成第二个 root 或路径逃逸。
+- [x] 冻结 location-bearing passive DTO 的最小字段:只保存 object kind、branded ID、digest、shard 或根内相对 locator,拒绝绝对 home/cwd、`..` 与平台句柄进入 durable schema。
+- [x] 每个结构登记 canonical/external-ref/reconstructible/ephemeral/forbidden 分类和 retention/redaction 规则。
+- [x] 大正文统一改为 bounded inline 或 Artifact/Content ref;secret-bearing fixture 必须拒绝。
+- [x] snapshot/projection 统一携带 source head/range、digest、completeness,且不能表达独立授权。
 
 完成证据:root/layout golden fixtures、path containment/permission tests、保存分类矩阵、redaction/oversize fixtures、projection source-head tests。
 
 ### C4:Adapter port closure
 
-- [ ] 冻结 §4 port 的 exact request/result/error DTO、correlation、idempotency、cancel 和 receipt 语义。
-- [ ] 为每个 port 提供最小 fake consumer/conformance test,不实现真实 I/O。
-- [ ] 阻止 port 暴露 manager/backend 私有类型、可执行闭包、credential material 或无界 result。
-- [ ] 生成 production composition 所需的 adapter identity/generation/config/trust/health 被动合同。
+- [x] 冻结 §4 port 的 exact request/result/error DTO、correlation、idempotency、cancel 和 receipt 语义。
+- [x] 为每个 port 提供最小 fake consumer/conformance test,不实现真实 I/O。
+- [x] 阻止 port 暴露 manager/backend 私有类型、可执行闭包、credential material 或无界 result。
+- [x] 生成 production composition 所需的 adapter identity/generation/config/trust/health 被动合同。
 
 完成证据:fake-port conformance、ownership/import tests、unsupported/denied/uncertain fixtures。
 
 ### C5:Public surface、consumer handoff 与文档闭合
 
-- [ ] 只导出审核过的 contract types/schemas/ports,不从根 barrel 导出 adapter implementation。
-- [ ] Plugin、Security/Worktree、Plan/Context/Memory consumer 只通过 public exports 编译,没有复制 payload 或 ref。
-- [ ] 更新开发索引和下游计划中的旧阶段引用,统一指向本文件稳定契约域锚点。
-- [ ] 为 Storage/CLI 建立独立迁移 handoff,覆盖停止项目级写入、移除任意 sessionDir authority、显式旧数据 import 与 rollback;本 contract 提交不搬移或删除用户数据。
-- [ ] 记录 contract commit、定向测试、`npm run check`、`npm test` 和 `npm run build` 证据后再逐项勾选。
+- [x] 只导出审核过的 contract types/schemas/ports,不从根 barrel 导出 adapter implementation。
+- [x] Plugin、Security/Worktree、Plan/Context/Memory consumer 只通过 public exports 编译,没有复制 payload 或 ref。
+- [x] 更新开发索引和下游计划中的旧阶段引用,统一指向本文件稳定契约域锚点。
+- [x] 为 Storage/CLI 建立独立迁移 handoff,覆盖停止项目级写入、移除任意 sessionDir authority、显式旧数据 import 与 rollback;本 contract 提交不搬移或删除用户数据。
+- [x] 记录 contract commit、定向测试、`npm run check`、`npm test` 和 `npm run build` 证据后再逐项勾选。
 
 完成证据:public-surface test、consumer compile tests、Markdown link check、完整 gates。
 
@@ -563,19 +588,19 @@ contract-only 提交至少运行定向 contract tests、`npm run check` 和 `git
 
 ## 9. 最终验收
 
-- [ ] `04` 是 Runtime 通用 contract 唯一权威入口,没有第二份 phase/status 真源。
-- [ ] 文档只拥有 protocol、数据结构、exact schema、event payload、adapter port、被动保存信息和用户级保存位置 contract。
-- [ ] manager/service/reducer/backend/daemon/UI/真实 adapter 均路由到明确 owner或标记为无执行授权。
-- [ ] 所有 persisted/wire 类型都有单一 public type、exact schema、bounds、fixture 和 consumer。
-- [ ] `RuntimeEvent` 是穷尽 payload union,不存在 canonical 宽泛 payload 或领域私有 event。
-- [ ] canonical、external ref、reconstructible、ephemeral、forbidden 五类信息没有混淆。
-- [ ] event/receipt/projection 不保存 secret 或无界正文,大内容只通过受控 ref 关联。
-- [ ] port request/result/error、correlation、idempotency、cancel、generation 和 receipt 语义完整。
-- [ ] 所有 RunLedger 自有本地数据只有一个已解析 root:`RUNLEDGER_DIR` 或默认 `~/.runledger`;workspace/cwd 不形成第二个保存根。
-- [ ] 固定目录树、UTC session/archive 分片、workspace key、artifact CAS、权限和 path-containment 规则均有 golden/negative fixture。
-- [ ] conforming implementation 不向 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir 新写数据;外部路径至多作为只读 import source。
-- [ ] 本计划未实现兼容 reader、迁移器或双写;旧数据迁移由独立计划显式授权,未发生隐式搬移或删除。
-- [ ] 下游计划全部指向稳定契约域锚点,不再引用本文件旧阶段编号或把它当行为状态账本。
-- [ ] 定向 contract tests、完整 gates、Markdown links 与 `git diff --check` 全绿并附证据。
+- [x] `04` 是 Runtime 通用 contract 唯一权威入口,没有第二份 phase/status 真源。
+- [x] 文档只拥有 protocol、数据结构、exact schema、event payload、adapter port、被动保存信息和用户级保存位置 contract。
+- [x] manager/service/reducer/backend/daemon/UI/真实 adapter 均路由到明确 owner或标记为无执行授权。
+- [x] 所有 persisted/wire 类型都有单一 public type、exact schema、bounds、fixture 和 consumer。
+- [x] `RuntimeEvent` 是穷尽 payload union,不存在 canonical 宽泛 payload 或领域私有 event。
+- [x] canonical、external ref、reconstructible、ephemeral、forbidden 五类信息没有混淆。
+- [x] event/receipt/projection 不保存 secret 或无界正文,大内容只通过受控 ref 关联。
+- [x] port request/result/error、correlation、idempotency、cancel、generation 和 receipt 语义完整。
+- [x] 所有 RunLedger 自有本地数据只有一个已解析 root:`RUNLEDGER_DIR` 或默认 `~/.runledger`;workspace/cwd 不形成第二个保存根。
+- [x] 固定目录树、UTC session/archive 分片、workspace key、artifact CAS、权限和 path-containment 规则均有 golden/negative fixture。
+- [x] conforming implementation 不向 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir 新写数据;外部路径至多作为只读 import source。
+- [x] 本计划未实现兼容 reader、迁移器或双写;旧数据迁移由独立计划显式授权,未发生隐式搬移或删除。
+- [x] 下游计划全部指向稳定契约域锚点,不再引用本文件旧阶段编号或把它当行为状态账本。
+- [x] 定向 contract tests、完整 gates、Markdown links 与 `git diff --check` 全绿并附证据。
 
 只有以上 contract 验收完成后,才能对外描述为“Runtime 通用契约与用户级保存位置已冻结”。这不等于目录迁移、任何行为实现、生产 adapter、安全强制、持久化 backend 或客户端已经交付。
