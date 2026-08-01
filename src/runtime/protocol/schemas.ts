@@ -5,6 +5,13 @@ import { Value } from "typebox/value";
 import { canonicalDigest, canonicalJson } from "./canonical-json.ts";
 import { RuntimeContractError } from "./errors.ts";
 import {
+	EVENT_BINDING_REQUIRED_TYPES,
+	EVENT_IDEMPOTENCY_ACTIONS,
+	EVENT_METADATA_REQUIRED_ACTIONS,
+	EVENT_REASON_REQUIRED_ACTIONS,
+	EVENT_REF_REQUIRED_ACTIONS,
+	EVENT_REF_REQUIRED_TYPES,
+	EVENT_TRANSITION_ACTIONS,
 	RUNTIME_EVENT_TYPES,
 	isKnownRuntimeEventType,
 	type AppendEventOutcome,
@@ -93,19 +100,72 @@ const RuntimeEventBindingSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
-function createRuntimeEventPayloadSchema() {
+export type RuntimeEventPayloadRequirement =
+	| "transition"
+	| "bindings"
+	| "refs"
+	| "expectedRevision"
+	| "idempotencyKey"
+	| "reasonCode"
+	| "metadataDigest";
+
+const TRANSITION_ACTIONS = new Set<string>(EVENT_TRANSITION_ACTIONS);
+const BINDING_TYPES = new Set<RuntimeEventType>(EVENT_BINDING_REQUIRED_TYPES);
+const REF_ACTIONS = new Set<string>(EVENT_REF_REQUIRED_ACTIONS);
+const REF_TYPES = new Set<RuntimeEventType>(EVENT_REF_REQUIRED_TYPES);
+const IDEMPOTENCY_ACTIONS = new Set<string>(EVENT_IDEMPOTENCY_ACTIONS);
+const REASON_ACTIONS = new Set<string>(EVENT_REASON_REQUIRED_ACTIONS);
+const METADATA_ACTIONS = new Set<string>(EVENT_METADATA_REQUIRED_ACTIONS);
+
+function eventAction(type: RuntimeEventType): string {
+	return type.slice(type.indexOf(".") + 1);
+}
+
+function payloadRequirements(type: RuntimeEventType): readonly RuntimeEventPayloadRequirement[] {
+	const action = eventAction(type);
+	const requirements: RuntimeEventPayloadRequirement[] = [];
+	if (TRANSITION_ACTIONS.has(action)) requirements.push("transition");
+	if (BINDING_TYPES.has(type)) requirements.push("bindings");
+	if (REF_ACTIONS.has(action) || REF_TYPES.has(type)) requirements.push("refs");
+	if (TRANSITION_ACTIONS.has(action) && !IDEMPOTENCY_ACTIONS.has(action)) requirements.push("expectedRevision");
+	if (IDEMPOTENCY_ACTIONS.has(action)) requirements.push("idempotencyKey");
+	if (REASON_ACTIONS.has(action)) requirements.push("reasonCode");
+	if (METADATA_ACTIONS.has(action)) requirements.push("metadataDigest");
+	return requirements;
+}
+
+export const RUNTIME_EVENT_PAYLOAD_REQUIREMENTS = Object.freeze(
+	Object.fromEntries(RUNTIME_EVENT_TYPES.map((type) => [type, Object.freeze(payloadRequirements(type))])),
+) as Readonly<Record<RuntimeEventType, readonly RuntimeEventPayloadRequirement[]>>;
+
+function createRuntimeEventPayloadSchema(type?: RuntimeEventType) {
+	const requirements = new Set(type === undefined ? [] : RUNTIME_EVENT_PAYLOAD_REQUIREMENTS[type]);
 	return Type.Object(
 		{
 			subject: RuntimeEventSubjectSchema,
 			correlationId: RuntimeIdSchema,
 			effect: Type.Union([Type.Literal("none"), Type.Literal("committed"), Type.Literal("uncertain")]),
-			idempotencyKey: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-			expectedRevision: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
-			transition: Type.Optional(RuntimeEventTransitionSchema),
-			reasonCode: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
-			bindings: Type.Optional(Type.Array(RuntimeEventBindingSchema, { maxItems: 32 })),
-			refs: Type.Optional(Type.Array(RuntimeContentRefSchema, { maxItems: 16 })),
-			metadataDigest: Type.Optional(RuntimeDigestSchema),
+			idempotencyKey: requirements.has("idempotencyKey")
+				? Type.String({ minLength: 1, maxLength: 128 })
+				: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+			expectedRevision: requirements.has("expectedRevision")
+				? Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })
+				: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+			transition: requirements.has("transition")
+				? RuntimeEventTransitionSchema
+				: Type.Optional(RuntimeEventTransitionSchema),
+			reasonCode: requirements.has("reasonCode")
+				? Type.String({ minLength: 1, maxLength: 128 })
+				: Type.Optional(Type.String({ minLength: 1, maxLength: 128 })),
+			bindings: requirements.has("bindings")
+				? Type.Array(RuntimeEventBindingSchema, { minItems: 1, maxItems: 32 })
+				: Type.Optional(Type.Array(RuntimeEventBindingSchema, { maxItems: 32 })),
+			refs: requirements.has("refs")
+				? Type.Array(RuntimeContentRefSchema, { minItems: 1, maxItems: 16 })
+				: Type.Optional(Type.Array(RuntimeContentRefSchema, { maxItems: 16 })),
+			metadataDigest: requirements.has("metadataDigest")
+				? RuntimeDigestSchema
+				: Type.Optional(RuntimeDigestSchema),
 		},
 		{ additionalProperties: false },
 	);
@@ -114,7 +174,7 @@ function createRuntimeEventPayloadSchema() {
 export const RuntimeEventPayloadSchema = createRuntimeEventPayloadSchema();
 
 export const RUNTIME_EVENT_PAYLOAD_SCHEMAS = Object.freeze(
-	Object.fromEntries(RUNTIME_EVENT_TYPES.map((type) => [type, createRuntimeEventPayloadSchema()])),
+	Object.fromEntries(RUNTIME_EVENT_TYPES.map((type) => [type, createRuntimeEventPayloadSchema(type)])),
 ) as Readonly<Record<RuntimeEventType, typeof RuntimeEventPayloadSchema>>;
 
 const SessionRuntimeStreamRefSchema = Type.Object(
@@ -338,7 +398,7 @@ export function validateRuntimeEvent(value: unknown): SchemaValidationResult<Run
 	if (!Value.Check(RuntimeEventEnvelopeSchema, value)) {
 		return { ok: false, code: "invalid_schema", message: "event does not match the exact envelope and payload schema" };
 	}
-	const event = value as RuntimeEvent;
+	const event = value as unknown as RuntimeEvent;
 	if (!Value.Check(RUNTIME_EVENT_PAYLOAD_SCHEMAS[event.type], event.payload)) {
 		return { ok: false, code: "invalid_schema", message: "event payload does not match its registered schema" };
 	}

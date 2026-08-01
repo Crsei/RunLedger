@@ -131,6 +131,205 @@ export const RUNTIME_EVENT_TYPES = [
 
 export type RuntimeEventType = (typeof RUNTIME_EVENT_TYPES)[number];
 
+export const EVENT_TRANSITION_ACTIONS = [
+	"created",
+	"forked",
+	"stop_requested",
+	"stopped",
+	"closed",
+	"corrupted",
+	"handoff_requested",
+	"handoff_committed",
+	"handoff_failed",
+	"deletion_planned",
+	"deletion_tombstoned",
+	"deletion_committed",
+	"deletion_failed",
+	"declassification_decided",
+	"transitioned",
+	"definition_revised",
+	"output_bound",
+	"started",
+	"finished",
+	"interrupted",
+	"failed",
+	"routed",
+	"requested",
+	"authorized",
+	"enqueued",
+	"claimed",
+	"consumed",
+	"cancelled",
+	"spawn_requested",
+	"spawned",
+	"paused",
+	"partial_committed",
+	"merge_requested",
+	"merge_committed",
+	"merge_failed",
+	"bound",
+	"released",
+	"decided",
+	"expired",
+	"revoked",
+	"resolved",
+	"acquired",
+	"taken_over",
+	"rewound",
+	"approved",
+	"activated",
+	"deactivated",
+	"enter_requested",
+	"entered",
+	"approval_requested",
+	"exit_requested",
+	"exited",
+	"completed",
+	"proposed",
+	"applied",
+	"rejected",
+	"reconciliation_required",
+	"replacement_prepared",
+	"generation_activated",
+	"replacement_failed",
+	"reconciled",
+] as const;
+
+export const EVENT_BINDING_REQUIRED_TYPES = [
+	"session.created",
+	"session.forked",
+	"session.handoff_requested",
+	"session.handoff_committed",
+	"session.deletion_planned",
+	"task.created",
+	"task.definition_revised",
+	"task.output_bound",
+	"tool.requested",
+	"tool.authorized",
+	"queue.enqueued",
+	"queue.claimed",
+	"agent.spawn_requested",
+	"agent.spawned",
+	"agent.handoff_requested",
+	"agent.handoff_committed",
+	"agent.merge_requested",
+	"agent.merge_committed",
+	"workspace.bound",
+	"permission.requested",
+	"lease.taken_over",
+	"draft_pr.requested",
+	"draft_pr.created",
+	"human_gate.requested",
+	"human_gate.decided",
+	"resource.approved",
+	"resource.snapshot_acquired",
+	"command.claimed",
+] as const satisfies readonly RuntimeEventType[];
+
+export const EVENT_REF_REQUIRED_ACTIONS = [
+	"repair_reported",
+	"source_recorded",
+	"declassification_decided",
+	"validation_recorded",
+	"rate_limit_recorded",
+	"execution_recorded",
+	"intent_recorded",
+	"manifest_committed",
+	"seal_recorded",
+	"search_recorded",
+	"effective_recorded",
+	"normalization_recorded",
+	"recorded",
+	"delivery_recorded",
+	"requested",
+	"started",
+	"finished",
+	"failed",
+	"committed",
+	"authorized",
+	"decided",
+	"expired",
+	"revoked",
+	"resolved",
+	"acquired",
+	"taken_over",
+	"released",
+	"approved",
+	"activated",
+	"deactivated",
+	"snapshot_acquired",
+	"assembled",
+	"entered",
+	"exited",
+	"completed",
+	"partial_committed",
+	"output_bound",
+	"routed",
+	"applied",
+	"rejected",
+	"reconciled",
+	"corrupted",
+	"stopped",
+	"closed",
+	"rewound",
+	"bound",
+	"spawned",
+] as const;
+
+export const EVENT_REF_REQUIRED_TYPES = [
+	"task.created",
+	"artifact.created",
+	"change_proposal.created",
+	"draft_pr.created",
+] as const satisfies readonly RuntimeEventType[];
+
+export const EVENT_IDEMPOTENCY_ACTIONS = [
+	"created",
+	"requested",
+	"started",
+	"acquired",
+	"claimed",
+	"enqueued",
+	"proposed",
+	"intent_recorded",
+] as const;
+
+export const EVENT_REASON_REQUIRED_ACTIONS = [
+	"failed",
+	"interrupted",
+	"cancelled",
+	"corrupted",
+	"stop_requested",
+	"stopped",
+	"closed",
+	"released",
+	"rewound",
+	"rejected",
+	"revoked",
+	"expired",
+	"reconciliation_required",
+	"replacement_failed",
+] as const;
+
+export const EVENT_METADATA_REQUIRED_ACTIONS = [
+	"repair_reported",
+	"source_recorded",
+	"validation_recorded",
+	"rate_limit_recorded",
+	"execution_recorded",
+	"intent_recorded",
+	"manifest_committed",
+	"seal_recorded",
+	"search_recorded",
+	"effective_recorded",
+	"normalization_recorded",
+	"recorded",
+	"delivery_recorded",
+	"definition_revised",
+	"routed",
+	"assembled",
+] as const;
+
 export type RuntimeEventSubjectKind =
 	| "authority"
 	| "session"
@@ -179,8 +378,41 @@ export interface RuntimeEventPayload {
 	readonly metadataDigest?: RuntimeDigest;
 }
 
+type RuntimeEventAction<TType extends RuntimeEventType> = TType extends `${string}.${infer TAction}` ? TAction : never;
+type RequiredPayloadField<TKey extends keyof RuntimeEventPayload> = Required<Pick<RuntimeEventPayload, TKey>>;
+type EmptyPayloadRequirement = Record<never, never>;
+type ActionRequires<TType extends RuntimeEventType, TActions extends string> =
+	RuntimeEventAction<TType> extends TActions ? true : false;
+
+export type RuntimeEventPayloadFor<TType extends RuntimeEventType> = RuntimeEventPayload &
+	(ActionRequires<TType, (typeof EVENT_TRANSITION_ACTIONS)[number]> extends true
+		? RequiredPayloadField<"transition">
+		: EmptyPayloadRequirement) &
+	(TType extends (typeof EVENT_BINDING_REQUIRED_TYPES)[number]
+		? RequiredPayloadField<"bindings">
+		: EmptyPayloadRequirement) &
+	(ActionRequires<TType, (typeof EVENT_REF_REQUIRED_ACTIONS)[number]> extends true
+		? RequiredPayloadField<"refs">
+		: TType extends (typeof EVENT_REF_REQUIRED_TYPES)[number]
+			? RequiredPayloadField<"refs">
+			: EmptyPayloadRequirement) &
+	(ActionRequires<TType, (typeof EVENT_TRANSITION_ACTIONS)[number]> extends true
+		? ActionRequires<TType, (typeof EVENT_IDEMPOTENCY_ACTIONS)[number]> extends true
+			? EmptyPayloadRequirement
+			: RequiredPayloadField<"expectedRevision">
+		: EmptyPayloadRequirement) &
+	(ActionRequires<TType, (typeof EVENT_IDEMPOTENCY_ACTIONS)[number]> extends true
+		? RequiredPayloadField<"idempotencyKey">
+		: EmptyPayloadRequirement) &
+	(ActionRequires<TType, (typeof EVENT_REASON_REQUIRED_ACTIONS)[number]> extends true
+		? RequiredPayloadField<"reasonCode">
+		: EmptyPayloadRequirement) &
+	(ActionRequires<TType, (typeof EVENT_METADATA_REQUIRED_ACTIONS)[number]> extends true
+		? RequiredPayloadField<"metadataDigest">
+		: EmptyPayloadRequirement);
+
 export type RuntimeEventPayloadByType = {
-	readonly [TType in RuntimeEventType]: RuntimeEventPayload;
+	readonly [TType in RuntimeEventType]: RuntimeEventPayloadFor<TType>;
 };
 
 export interface SessionRuntimeStreamRef {

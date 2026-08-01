@@ -13,6 +13,16 @@ function exactSessionEvent(): RuntimeEvent {
 		subject: { kind: "session" as const, id: createRuntimeId("session", "fixture") },
 		correlationId: createRuntimeId("trace", "fixture"),
 		effect: "committed" as const,
+		idempotencyKey: "session-create-fixture",
+		transition: {
+			revision: 0,
+			previousStatus: null,
+			nextStatus: "created",
+		},
+		bindings: [
+			{ role: "root_goal", subjectId: createRuntimeId("goal", "fixture") },
+			{ role: "root_agent", subjectId: createRuntimeId("agent", "fixture") },
+		],
 	};
 	const payloadDigest = { algorithm: "sha256" as const, digest: canonicalDigest(payload) as Sha256Digest };
 	const hashInput = {

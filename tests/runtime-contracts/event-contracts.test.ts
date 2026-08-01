@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { canonicalDigest } from "../../src/runtime/protocol/canonical-json.ts";
 import { RUNTIME_EVENT_TYPES } from "../../src/runtime/protocol/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
-import { RUNTIME_EVENT_PAYLOAD_SCHEMAS, validateRuntimeEvent } from "../../src/runtime/protocol/schemas.ts";
+import {
+	RUNTIME_EVENT_PAYLOAD_REQUIREMENTS,
+	RUNTIME_EVENT_PAYLOAD_SCHEMAS,
+	validateRuntimeEvent,
+} from "../../src/runtime/protocol/schemas.ts";
 
 function sha256(value: unknown) {
 	return { algorithm: "sha256", digest: canonicalDigest(value) } as const;
@@ -16,6 +20,7 @@ function sessionCreatedEvent() {
 		},
 		correlationId: createRuntimeId("trace", "fixture"),
 		effect: "committed",
+		idempotencyKey: "session-create-fixture",
 		transition: {
 			revision: 0,
 			previousStatus: null,
@@ -76,6 +81,20 @@ describe("Runtime exact event contract", () => {
 		expect(RUNTIME_EVENT_TYPES).not.toContain("resource.snapshot");
 		expect(Object.keys(RUNTIME_EVENT_PAYLOAD_SCHEMAS)).toEqual([...RUNTIME_EVENT_TYPES]);
 		expect(new Set(Object.values(RUNTIME_EVENT_PAYLOAD_SCHEMAS)).size).toBe(RUNTIME_EVENT_TYPES.length);
+		expect(Object.keys(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS)).toEqual([...RUNTIME_EVENT_TYPES]);
+		for (const type of RUNTIME_EVENT_TYPES) {
+			expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS[type].length, type).toBeGreaterThan(0);
+		}
+		expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS["session.created"]).toEqual([
+			"transition",
+			"bindings",
+			"idempotencyKey",
+		]);
+		expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS["permission.decided"]).toEqual([
+			"transition",
+			"refs",
+			"expectedRevision",
+		]);
 	});
 
 	it("accepts a type-bound exact payload and rejects unknown fields", () => {
@@ -84,6 +103,15 @@ describe("Runtime exact event contract", () => {
 		expect(validateRuntimeEvent({ ...event, sessionId: event.stream.sessionId })).toMatchObject({ ok: false });
 		expect(validateRuntimeEvent({ ...event, payload: { ...event.payload, rawPrompt: "secret" } })).toMatchObject({
 			ok: false,
+		});
+		const { transition: _transition, ...missingTransition } = event.payload;
+		expect(validateRuntimeEvent({ ...event, payload: missingTransition })).toMatchObject({
+			ok: false,
+			code: "invalid_schema",
+		});
+		expect(validateRuntimeEvent({ ...event, type: "session.repair_reported" })).toMatchObject({
+			ok: false,
+			code: "invalid_schema",
 		});
 	});
 
