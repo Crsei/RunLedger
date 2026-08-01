@@ -5,6 +5,8 @@
 > - `abc0224` §1 SettingsManager
 > - `f260f2f` §2 SessionManager
 > - `290246c` §3 CLI 入口
+>
+> 当前迁移边界:本文记录的是仍在运行的项目级旧布局。用户级单一 home、legacy import 与 CLI authority 移除尚未实现,后续只由 [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md) 跟踪。
 
 子任务之间的依赖关系:`§0 → §1 → §2 → §3`(§3 调用前述三个模块的 API)。§6 文档同步作为收尾,不阻塞 §3。
 

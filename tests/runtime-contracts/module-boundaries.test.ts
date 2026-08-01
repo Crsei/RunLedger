@@ -55,4 +55,22 @@ describe("Runtime contract module boundary", () => {
 			await rm(repoRoot, { recursive: true, force: true });
 		}
 	});
+
+	it("allows the audited storage-layout contract but still rejects storage behavior imports", async () => {
+		const repoRoot = await mkdtemp(join(tmpdir(), "runledger-boundary-") );
+		try {
+			const contractsDir = join(repoRoot, "src/runtime/contracts");
+			await mkdir(contractsDir, { recursive: true });
+			await writeFile(join(contractsDir, "public.ts"), 'export * from "./storage-layout.ts";\n', "utf8");
+			await writeFile(join(contractsDir, "storage-layout.ts"), "export const layout = true;\n", "utf8");
+			expect(scanRuntimeBoundaries(repoRoot)).toEqual([]);
+
+			await writeFile(join(contractsDir, "bad.ts"), 'import { SessionManager } from "../../storage/session-manager.ts";\n', "utf8");
+			expect(scanRuntimeBoundaries(repoRoot)).toEqual([
+				{ file: "src/runtime/contracts/bad.ts", reason: "contract module cannot depend on storage/UI/provider" },
+			]);
+		} finally {
+			await rm(repoRoot, { recursive: true, force: true });
+		}
+	});
 });

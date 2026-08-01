@@ -5,7 +5,7 @@
 > 适用范围:`src/runtime/` 中的公共 protocol、types、schema、event payload、adapter port、用户级保存位置,以及对应 contract tests
 > 设计输入:[`00-reference.md`](00-reference.md)
 > 历史实现计划:[`01-minimum-runtime-scaffold-plan.md`](01-minimum-runtime-scaffold-plan.md)、[`02-agent-loop-resurrection-plan.md`](02-agent-loop-resurrection-plan.md)、[`03-tool-system-plan.md`](03-tool-system-plan.md)
-> 行为专项:[Plugin/MCP/Skill/Hooks](../plugin-mcp-skill-hooks/01-implementation-plan.md)、[Plan/Context/Compaction/Memory](../plan-compact-memory/01-implementation-plan.md)、[Worktree/Sandbox/Permission](../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)
+> 行为专项:[Plugin/MCP/Skill/Hooks](../plugin-mcp-skill-hooks/01-implementation-plan.md)、[Plan/Context/Compaction/Memory](../plan-compact-memory/01-implementation-plan.md)、[Worktree/Sandbox/Permission](../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[Storage/CLI 用户级迁移](../storage-cli/02-user-home-migration-handoff.md)
 
 ## 0. 文档职责
 
@@ -519,7 +519,7 @@ daemon、transport、subscription worker、composition root、policy resolver、
 | Model Router、Plan、Context、Compaction、Memory | [`plan-compact-memory/01-implementation-plan.md`](../plan-compact-memory/01-implementation-plan.md) | public DTO/schema/event payload |
 | Provider/API/Auth/catalog 行为 | [`providers/01-pi-ai-migration-plan.md`](../providers/01-pi-ai-migration-plan.md) 与当前代码/tests | model stream/compatibility bridge contract |
 | 现行 agent-loop、Agent、ledger、stdlib tools | `01`–`03` 历史计划、`AGENTS.md` 与当前代码/tests | 不由本计划改写其行为状态 |
-| 用户级 home 创建、旧目录 import、CLI 参数弃用 | 后续 Storage/CLI 迁移计划;现行行为见 [`storage-cli/01-project-layout-cli-plan.md`](../storage-cli/01-project-layout-cli-plan.md) | root/layout/permission/path-containment contract |
+| 用户级 home 创建、旧目录 import、CLI 参数弃用 | [`storage-cli/02-user-home-migration-handoff.md`](../storage-cli/02-user-home-migration-handoff.md);现行旧行为见 [`storage-cli/01-project-layout-cli-plan.md`](../storage-cli/01-project-layout-cli-plan.md) | root/layout/permission/path-containment contract |
 | Event Store writer/replay/reducer/recovery | 当前无本计划授权;实现前必须建立独立行为计划 | event/receipt/query ports |
 | Artifact CAS/redaction/retention/GC | 当前无本计划授权;实现前必须建立独立行为计划 | artifact/ref/intent/receipt ports |
 | Orchestrator/Verification/Multi-Agent | 当前无本计划授权;实现前必须建立独立行为计划 | goal/task/agent/evidence 被动合同 |

@@ -17,7 +17,7 @@ export interface RuntimeBoundaryViolation {
 const FORBIDDEN_IMPORT_PATTERNS: readonly [RegExp, string][] = [
 	[/node:(?:fs|child_process|net|http|https)/, "contract module cannot own raw I/O"],
 	[/node:os/, "contract module cannot read the host environment"],
-	[/from [\"'][^\"']*(?:storage|tui|providers?)[^\"']*[\"']/, "contract module cannot depend on storage/UI/provider"],
+	[/from [\"'][^\"']*(?:(?:storage|tui|providers?)\/|(?:storage|tui|providers?)\.ts)[^\"']*[\"']/, "contract module cannot depend on storage/UI/provider"],
 	[/\bfetch\s*\(/, "contract module cannot perform network I/O"],
 ];
 

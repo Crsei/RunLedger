@@ -25,6 +25,7 @@ describe("Runtime public contract inventory", () => {
 			"adapter-ports",
 			"user-home-layout",
 			"control-telemetry",
+			"public-surface",
 		]);
 
 		for (const entry of CONTRACT_INVENTORY) {
@@ -100,6 +101,29 @@ describe("Runtime public contract inventory", () => {
 		const adapterPorts = CONTRACT_INVENTORY.find((entry) => entry.id === "adapter-ports");
 		expect(adapterPorts?.ports).toHaveLength(18);
 		expect(adapterPorts?.fixtures).toContain("tests/runtime-contracts/adapter-port-contracts.test.ts");
+		expect(CONTRACT_INVENTORY.find((entry) => entry.id === "resources")?.fixtures).toContain(
+			"tests/runtime-contracts/consumers/plugin-resource.consumer.ts",
+		);
+		expect(CONTRACT_INVENTORY.find((entry) => entry.id === "workspace-security")?.fixtures).toContain(
+			"tests/runtime-contracts/consumers/security-worktree.consumer.ts",
+		);
+		for (const id of ["model-routing", "plan-mode", "context", "compaction", "memory"]) {
+			expect(CONTRACT_INVENTORY.find((entry) => entry.id === id)?.fixtures).toContain(
+				"tests/runtime-contracts/consumers/plan-context-memory.consumer.ts",
+			);
+		}
+		for (const entry of CONTRACT_INVENTORY) {
+			expect(entry.gaps, entry.id).toEqual([]);
+		}
+	});
+
+	it("routes user-home migration behavior to the dedicated handoff", () => {
+		expect(CONTRACT_HANDOFFS).toContainEqual({
+			behavior: "User home creation, legacy import, and CLI option deprecation",
+			owner: "development-doc/storage-cli/02-user-home-migration-handoff.md",
+			contracts: ["user-home-layout"],
+			availability: "external_plan",
+		});
 	});
 
 	it("classifies every passive structure with retention, redaction, and forbidden-field policy", () => {
