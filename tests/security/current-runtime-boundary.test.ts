@@ -17,16 +17,21 @@ describe("current Runtime/security boundary contract", () => {
 			branch: "runledger/test",
 			baseCommit: "0".repeat(40),
 			agentId: createRuntimeId("agent", "security-test"),
-			toolCallId: "tool-call-security-test",
+			toolCallId: createRuntimeId("toolCall", "security-test"),
 			traceId: createRuntimeId("trace", "security-test"),
 			cwd: "/tmp/runledger-worktree",
-			ownerRuntimeId: "runtime-security-test",
+			ownerRuntimeId: createRuntimeId("runtime", "security-test"),
 			leaseRevision: 1,
-			fencingToken: "fence-security-test",
+			fencingTokenDigest: {
+				algorithm: "sha256",
+				digest: "a".repeat(64),
+			},
 		};
 
 		expect(isWorkspaceExecutionEnvelope(envelope)).toBe(true);
 		expect(isWorkspaceExecutionEnvelope({ ...envelope, leaseRevision: -1.5 })).toBe(false);
 		expect(isWorkspaceExecutionEnvelope({ ...envelope, cwd: 42 })).toBe(false);
+		expect(isWorkspaceExecutionEnvelope({ ...envelope, fencingToken: "raw-secret" })).toBe(false);
+		expect(isWorkspaceExecutionEnvelope({ ...envelope, extra: true })).toBe(false);
 	});
 });

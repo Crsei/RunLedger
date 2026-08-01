@@ -29,6 +29,7 @@ export const RUNTIME_ID_KINDS = [
 	"snapshot",
 	"command",
 	"receipt",
+	"runtime",
 	"finding",
 	"proposal",
 ] as const;
@@ -59,6 +60,7 @@ export type ResourceId = RuntimeId<"resource">;
 export type SnapshotId = RuntimeId<"snapshot">;
 export type CommandId = RuntimeId<"command">;
 export type ReceiptId = RuntimeId<"receipt">;
+export type RuntimeInstanceId = RuntimeId<"runtime">;
 export type FindingId = RuntimeId<"finding">;
 export type ProposalId = RuntimeId<"proposal">;
 
