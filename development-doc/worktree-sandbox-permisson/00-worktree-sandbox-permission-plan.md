@@ -30,6 +30,8 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 - `runtime/04-governed-agent-harness-runtime-plan.md` 独占 Runtime 公共 ID、envelope/ref/receipt、event payload schema、projection 与 adapter port。
 - 本计划消费上述契约并独占具体行为；发现契约缺口时先回到 Runtime 计划提交 exact schema/fixture，再继续实现，不在 `src/security/**` 或 `src/worktree/**` 复制公共类型。
 
+下文“Runtime Workspace/Security 契约域”指 [`04` 的 workspace、capability、approval 与 sandbox contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security),“Runtime Control/Telemetry 契约域”指 [`04` 的 control plane、policy、telemetry 与 remote metadata contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-control-telemetry)。
+
 ### 0.1 从 Codex 提取的结构
 
 1. Approval policy、filesystem/network permission profile 与 sandbox backend 是不同概念，不能由一个 allowAll 布尔值代替。
@@ -51,9 +53,9 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 7. 内建“安全命令”必须有词边界，rg --pre、tee、危险命令和 wrapper 都需要单独处理。
 8. Sandbox profile 负责 workspace/read-only/strict/off 等能力组合；deny path 的解析、平台别名、失败关闭和 child network 是独立实现点。
 
-### 0.3 与 Runtime 主计划的实现边界
+### 0.3 与 Runtime contract 计划的实现边界
 
-本计划是 Worktree/Sandbox/Permission 行为的唯一实现账本。Runtime 主计划定义“传什么、记什么、如何 replay”，本计划定义“如何判断、如何执行、何时发事件、如何证明强制生效”。
+本计划是 Worktree/Sandbox/Permission 行为的唯一实现账本。Runtime contract 计划定义“传什么、记什么、如何校验”,本计划定义“如何判断、如何执行、何时发事件、如何 replay 以及如何证明强制生效”。
 
 ```text
 src/runtime/protocol contracts
@@ -258,12 +260,12 @@ tests/
 
 | 文件/目录 | 所有者 | 并行规则 |
 |---|---|---|
-| `src/runtime/protocol/**`、`tests/runtime-contracts/{workspace-contracts,security-contracts}/**` | Runtime 计划 | 本计划只消费已冻结 public exports；不得直接修改 |
+| `src/runtime/protocol/**`、`tests/runtime-contracts/{workspace-contracts,security-contracts}/**` | Runtime contract 计划 | 本计划只消费已冻结 public exports；不得直接修改 |
 | `src/security/**`、`tests/security/**` | 本计划 | 可与 Runtime 其他独占目录并行 |
 | `src/worktree/**`、`tests/worktree/**` | 本计划 | 可与 Runtime 其他独占目录并行 |
 | `src/runtime/agent-loop.ts`、`execution-env.ts`、`tool-context.ts`、`tool-authorization.ts`、`interactive-session-controller.ts` | 串行集成面 | 仅 Phase 5 集成窗口修改；窗口内其他专项不得并发编辑 |
 | `src/runtime/ledger/types.ts`、`src/storage/{paths,session-codec,session-manager}.ts` | 串行集成面 | Runtime contract 与独占实现完成后逐文件接线 |
-| `src/runtime/tools/**` | 串行集成面 | ExecutionGateway adapter 稳定后一次迁移；不得由 Runtime Phase 2/3 并行修改 |
+| `src/runtime/tools/**` | 串行集成面 | ExecutionGateway adapter 稳定后一次迁移；Runtime Workspace/Security 契约域不得并行修改行为文件 |
 | `src/cli/**`、`src/tui/**`、`src/index.ts`、`package*.json` | 串行产品集成面 | 与 Plugin/Context 等专项集成窗口排队，不并发修改 |
 | `tests/integration/**`、`tests/e2e/**` | 联合验证 | 只在双方独占测试通过后补充，按单一集成提交修改 |
 
@@ -684,8 +686,8 @@ runledger worktree gc --dry-run
 
 ### 并行交付顺序
 
-1. **契约冻结**：Runtime 计划先完成 Phase 0–3；其中 Phase 1 先结束对 session/storage/CLI 共享基线的修改，Phase 2/3 冻结 workspace/security schema、events、projections、ports 与 fixtures。
-2. **独占目录并行**：本计划在 `src/security/**`、`src/worktree/**` 完成行为实现；Runtime 可同时推进 Artifact、resource/context contract、Orchestrator 等不触碰共享文件的阶段。
+1. **契约冻结**：Runtime contract 计划先完成 Foundation、Event、Workspace/Security 与 Adapter Port work packages,冻结 workspace/security schema、events、projections、ports 与 fixtures;contract 工作不得修改 session/storage/CLI 行为基线。
+2. **独占目录并行**：本计划在 `src/security/**`、`src/worktree/**` 完成行为实现；其他 owner 可同时推进不触碰共享文件的 contract 或行为工作。
 3. **串行集成**：双方独占测试通过后，预约单一集成窗口，由本计划 Phase 5 逐文件修改 runtime/session/storage/CLI/TUI；Plugin、Context 等其他专项不得同时修改这些文件。
 4. **联合门禁**：最后运行 bypass、real Git、real process/sandbox、resume 与 current replay E2E。Runtime contract 测试或本计划内部单测均不能单独替代该门禁。
 
@@ -939,7 +941,7 @@ runledger worktree gc --dry-run
 
 ### Phase 8：企业策略、Credential 与远程/CI 安全实现
 
-目标：承接 Runtime Phase 11 只定义的数据契约，为 managed policy、identity/tenant、credential 和远程执行提供具体安全实现。
+目标：承接 Runtime Control/Telemetry 契约域只定义的数据契约，为 managed policy、identity/tenant、credential 和远程执行提供具体安全实现。
 
 前置条件：Phase 0–7 完成；Runtime enterprise/remote schemas 与 ports 已冻结；独立安全 review 通过。
 
@@ -1055,7 +1057,7 @@ node bin/runledger.js --help
 
 ### M0：Runtime 契约可消费
 
-- [ ] Runtime Phase 2/3 workspace/security schema、events、projections 与 ports 已冻结。
+- [ ] Runtime Workspace/Security 契约域的 schema、events、projections 与 ports 已冻结。
 - [ ] 本计划 adapters 通过同一 contract fixtures，没有重复 envelope/decision/receipt/event 类型。
 - [ ] 文件所有权检查证明独占实现阶段未修改串行集成面。
 
@@ -1137,7 +1139,7 @@ node bin/runledger.js --help
 
 后续用户明确要求“开始实现”时，从 Phase 0 开始，不直接跳到 CLI/TUI 或平台 backend。第一批改动应限制为：
 
-1. 确认 Runtime Phase 2/3 contract commit、exact schema 与 fixtures；
+1. 确认 Runtime Workspace/Security 契约域的 contract commit、exact schema 与 fixtures；
 2. 仅在 `src/security/**` 与 `src/worktree/**` 定义实现内部类型和 adapter conformance tests；
 3. 当前边界与 fail-closed 回归测试；
 4. 精确 legacy bypass allowlist；

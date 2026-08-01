@@ -5,7 +5,7 @@
 ## 文档使用约定
 
 - `*-plan.md` 是历史实施计划,用于说明当时的目标、决策、依赖、实施顺序与验收边界,不作为当前完成状态的唯一事实源。
-- Runtime 例外:`runtime/04-governed-agent-harness-runtime-plan.md` 是当前权威执行入口;`runtime/00-reference.md` 只作为设计输入,`01`–`03` 保留为历史计划。
+- Runtime contract 例外:`runtime/04-governed-agent-harness-runtime-plan.md` 是通用协议、数据结构、schema、event payload、adapter port、被动保存信息与用户级 `~/.runledger` 保存位置的当前权威入口;它不承担 Runtime 行为实现或旧数据迁移状态。`runtime/00-reference.md` 只作为设计输入,`01`–`03` 保留为历史计划。
 - 当前代码能力、测试数量和显式非目标以仓库根目录 `AGENTS.md` 为准。
 - 已有专题文档继续作为模块的现状说明或详细设计;计划与现状不混写。
 - 后续新增计划应直接放入对应模块目录,使用语义化文件名,不再使用 session ID 作为文档名。
@@ -14,7 +14,7 @@
 
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
-| Runtime | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威计划:Session、Workspace、Capability、Artifact、Orchestrator、Verification、Multi-Agent、Daemon | 计划内阶段验收证据 + `AGENTS.md` |
+| Runtime Contract | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威 contract:公共类型/schema、event payload、adapter port、ref/receipt/snapshot/projection、逻辑保存分类与 `RUNLEDGER_DIR`/默认 `~/.runledger` 单一用户级布局 | contract work package 证据;行为和迁移状态查对应专项、当前代码/tests 与 `AGENTS.md` |
 | Runtime | [`runtime/00-reference.md`](runtime/00-reference.md) | 可治理 Agent Harness Runtime 的设计输入与问题域 | `runtime/04-governed-agent-harness-runtime-plan.md` |
 | Runtime | [`runtime/01-minimum-runtime-scaffold-plan.md`](runtime/01-minimum-runtime-scaffold-plan.md) | 最小 Agent Runtime、事件流、ledger、mock stream、echo tool | `AGENTS.md` §1.2 |
 | Runtime | [`runtime/02-agent-loop-resurrection-plan.md`](runtime/02-agent-loop-resurrection-plan.md) | agent-loop、Agent、ledger、真实 LLM 完整循环 | `AGENTS.md` §1.2、§5 |

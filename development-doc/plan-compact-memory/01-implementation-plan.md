@@ -8,12 +8,21 @@
 
 ## 0. 文档定位与执行规则
 
-本文件是 Model Compatibility 行为、Plan Mode、ContextEngine、Compaction 和 Memory 的唯一详细执行账本。上位 Runtime 主计划 Phase 6 独占公共数据结构、TypeBox schema、current event payload、fixtures 和 contract tests;本文件只消费这些契约,负责具体 router/reducer/service/store/算法、文件边界、PR 顺序、行为测试和逐项完成证据。不得再创建同主题 sibling plan 分散状态。
+本文件是 Model Compatibility 行为、Plan Mode、ContextEngine、Compaction 和 Memory 的唯一详细执行账本。上位 Runtime contract 计划独占公共数据结构、TypeBox schema、current event payload、fixtures 和 contract tests;本文件只消费这些契约,负责具体 router/reducer/service/store/算法、文件边界、PR 顺序、行为测试和逐项完成证据。不得再创建同主题 sibling plan 分散状态。
+
+下文不再使用上位 Runtime 的旧阶段编号,统一采用以下稳定契约域名称:
+
+- “Runtime Foundation 契约域”指 [`04` 的 current format 与协议基础](../runtime/04-governed-agent-harness-runtime-plan.md#contract-foundation);
+- “Runtime Event 契约域”指 [`04` 的 event 与 durable record](../runtime/04-governed-agent-harness-runtime-plan.md#contract-events);
+- “Runtime Workspace/Security 契约域”指 [`04` 的 workspace、capability、approval 与 sandbox contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security);
+- “Runtime Artifact/Evidence 契约域”指 [`04` 的 artifact、checkpoint、episode 与 verification contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-artifact-evidence);
+- “Runtime Resource 契约域”指 [`04` 的动态资源 contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-resources);
+- “Runtime Model/Context 契约域”指 [`04` 的 Model、Plan、Context、Compaction 与 Memory contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-model-context)。
 
 执行规则:
 
 - 每次只实施一个可独立验收的 PR 边界,完成后在对应复选框补 commit、验证命令和结果。
-- 上位 Runtime Phase 6 contract allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、current event catalog 或 contract fixture,也不得重新定义同义类型。
+- 上位 Runtime Model/Context 契约域的 allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、current event catalog 或 contract fixture,也不得重新定义同义类型。
 - 没有 current durable event、Capability Gateway 或 Artifact Store 的阶段不得用 current 临时旁路伪装完成;可以先落纯 reducer/pure planner 等行为函数,但用户可见功能必须等待前置门禁。
 - Session 只接受当前 exact format。Plan Mode、compaction checkpoint、memory approval 和 context receipt 只写入当前唯一真源。
 - 不覆盖 raw ledger/history。Compaction 只改变 model-visible projection。
@@ -62,16 +71,16 @@
 
 ## 2. 前置依赖与落地顺序
 
-本专项承接上位 Runtime 主计划 Phase 6 冻结的公共契约,并在独占文件中实现行为。硬依赖如下:
+本专项承接上位 Runtime Model/Context 契约域冻结的公共契约,并在独占文件中实现行为。硬依赖如下:
 
 | 前置能力 | 来源 | 本专项依赖点 |
 |---|---|---|
-| current strict Event Store、writer、reducer、snapshot、recovery | Runtime Phase 1 | mode/checkpoint/approval/receipt 的唯一事实源 |
-| Workspace identity 与 execution envelope | Runtime Phase 2 contract + Worktree/Sandbox/Permission 专项 | plan path、memory scope、artifact 引用不能跨 workspace |
-| Capability Gateway 与 `deny > ask > allow` | Runtime Phase 3 contract + Worktree/Sandbox/Permission 专项 | Plan Mode 只读硬门禁 |
-| Artifact CAS/metadata/retention/redaction | Runtime Phase 4 | plan revision、compaction input/output/diagnostic |
-| Resource snapshot/effect contract | Runtime Phase 5 contract + Plugin/MCP/Skill/Hooks 专项 M2–M5 | memory/plan tool 可见性和 MCP 副作用分类 |
-| Model/Plan/Context/Compaction/Memory 公共契约 | Runtime Phase 6 | 本专项全部 public type/schema/event/fixture 的唯一来源 |
+| current strict Event Store、writer、reducer、snapshot、recovery | Runtime Event 契约域 + 独立行为计划与验证证据 | mode/checkpoint/approval/receipt 的唯一事实源 |
+| Workspace identity 与 execution envelope | Runtime Workspace/Security 契约域 + Worktree/Sandbox/Permission 专项 | plan path、memory scope、artifact 引用不能跨 workspace |
+| Capability Gateway 与 `deny > ask > allow` | Runtime Workspace/Security 契约域 + Worktree/Sandbox/Permission 专项 | Plan Mode 只读硬门禁 |
+| Artifact CAS/metadata/retention/redaction | Runtime Artifact/Evidence 契约域 + 独立行为计划与验证证据 | plan revision、compaction input/output/diagnostic |
+| Resource snapshot/effect contract | Runtime Resource 契约域 + Plugin/MCP/Skill/Hooks 专项 M2–M5 | memory/plan tool 可见性和 MCP 副作用分类 |
+| Model/Plan/Context/Compaction/Memory 公共契约 | Runtime Model/Context 契约域 | 本专项全部 public type/schema/event/fixture 的唯一来源 |
 
 允许提前落地的内容只有消费已冻结契约的纯 reducer、pure planner、adapter 和行为 fixture。用户可见 `/plan`、`/compact`、memory write 必须等待对应门禁真实可用。
 
@@ -79,26 +88,26 @@
 
 | 路径/产物 | 唯一写入者 | 本专项规则 |
 |---|---|---|
-| `src/runtime/model-routing/{types,schema}.ts` | Runtime Phase 6 | 只读 import,不复制 manifest/decision 类型 |
-| `src/runtime/modes/plan/{types,schema}.ts` | Runtime Phase 6 | 只读 import,只实现 reducer/service/policy/tools |
-| `src/runtime/context/{types,schema}.ts` | Runtime Phase 6 | 只读 import,只实现 engine/estimator/invariants/projection |
-| `src/runtime/context/{compaction,memory}/{types,schema}.ts` | Runtime Phase 6 | 只读 import,只实现 planner/service/store/search/approval |
-| `src/runtime/protocol/{events,schemas}.ts` 对应 payload/catalog | Runtime Phase 6 | 只发射已注册 event,不新建临时 event |
-| `tests/runtime-contracts/contracts/**`、`tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/**` | Runtime Phase 6 | 只消费;behavior fixture 放专项目录 |
-| router/reducer/service/store/index/tools/专用 TUI 组件 | 本专项 | Runtime Phase 6 不得回写实现 |
+| `src/runtime/model-routing/{types,schema}.ts` | Runtime Model/Context 契约域 | 只读 import,不复制 manifest/decision 类型 |
+| `src/runtime/modes/plan/{types,schema}.ts` | Runtime Model/Context 契约域 | 只读 import,只实现 reducer/service/policy/tools |
+| `src/runtime/context/{types,schema}.ts` | Runtime Model/Context 契约域 | 只读 import,只实现 engine/estimator/invariants/projection |
+| `src/runtime/context/{compaction,memory}/{types,schema}.ts` | Runtime Model/Context 契约域 | 只读 import,只实现 planner/service/store/search/approval |
+| `src/runtime/protocol/{events,schemas}.ts` 对应 payload/catalog | Runtime Model/Context 契约域 | 只发射已注册 event,不新建临时 event |
+| `tests/runtime-contracts/contracts/**`、`tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/**` | Runtime Model/Context 契约域 | 只消费;behavior fixture 放专项目录 |
+| router/reducer/service/store/index/tools/专用 TUI 组件 | 本专项 | Runtime Model/Context 契约域不得回写实现 |
 | `agent-loop.ts`、`interactive-session-controller.ts`、`models*.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` | 串行集成 PR 的当期单一所有者 | 先交付 adapter,再于 Runtime/Extension/Security contract handoff 后集成 |
 
 并行窗口内的稳定分工:
 
-1. Runtime 可继续实现 Phase 7+ 的独占模块,本专项在 behavior path 实现 Model Router、Plan、Context、Compaction 和 Memory;两边都不直接修改对方的独占路径。
+1. 其他 Runtime 行为 owner 可继续修改自己的独占模块,本专项在 behavior path 实现 Model Router、Plan、Context、Compaction 和 Memory;双方都不直接修改对方的独占路径。
 2. 需要连接 Event Store、Gateway、Artifact、Extension snapshot 或 Orchestrator 时,本专项先增加内部 adapter 并用 fake port 验证;共享根文件留到阶段的串行 integration commit。
 3. 串行集成前必须记录基线 commit、当期所有者和显式路径;handoff 期间其他计划不改同一文件。
-4. 上位 Phase 6 完成只表示 contract 已冻结。本专项 Phase 10 完成后只向上位回写汇总状态和证据链接,不把实现 checklist 搬回 Runtime 计划。
+4. 上位 Runtime Model/Context 契约域完成只表示 contract 已冻结。本专项 Phase 10 完成后不向上位 contract 计划回写行为状态或复制实现 checklist;行为完成证据只保留在本文件。
 
 ### 2.2 Contract 变更与交接流程
 
 1. 行为实现发现契约不足时,本专项先记录缺失场景、安全边界和所需契约变化,停止对该契约的本地扩展。
-2. 在上位 Runtime Phase 6 中先更新 type/schema/event contract 和 golden fixture,由独立 contract PR 完成 `npm run check`、`npm test` 与 contract tests。
+2. 在上位 Runtime Model/Context 契约域中先更新 type/schema/event contract 和 golden fixture,由独立 contract PR 完成 `npm run check`、`npm test` 与 contract tests。
 3. 本专项基于新 contract commit 更新 adapter/behavior tests,不与 contract 变更混成同一提交。
 4. 不兼容变更必须先更新当前 exact contract、所有 fixture 和消费者;不得保留 old-schema reader、迁移器、双写或运行时猜测来隐藏漂移。
 
@@ -199,40 +208,40 @@ Large bodies -----------> Artifact Store/CAS
 ```text
 src/runtime/
   model-routing/
-    types.ts                   # Runtime Phase 6 contract,本专项只读
-    schema.ts                  # Runtime Phase 6 contract,本专项只读
+    types.ts                   # Runtime Model/Context 契约域,本专项只读
+    schema.ts                  # Runtime Model/Context 契约域,本专项只读
     manifest-loader.ts         # 加载/验证 compatibility manifest
     profiles.ts                # searcher/builder/reviewer/summarizer alias
     router.ts                  # 路由、兼容预检与 fork decision
     adapter-state.ts           # provider-private state 边界
   modes/
     plan/
-      types.ts                 # Runtime Phase 6 contract,本专项只读
-      schema.ts                # Runtime Phase 6 contract,本专项只读
+      types.ts                 # Runtime Model/Context 契约域,本专项只读
+      schema.ts                # Runtime Model/Context 契约域,本专项只读
       reducer.ts               # 纯事件归约
       service.ts               # 安全点转换、审批、resume
       policy.ts                # mode -> tool effect policy
       tools.ts                 # enter/exit/update plan runtime tools
       approval-coordinator.ts  # 复用 Runtime Approval contract
   context/
-    types.ts                   # Runtime Phase 6 contract,本专项只读
-    schema.ts                  # Runtime Phase 6 contract,本专项只读
+    types.ts                   # Runtime Model/Context 契约域,本专项只读
+    schema.ts                  # Runtime Model/Context 契约域,本专项只读
     context-engine.ts          # 分层组装、stable ordering、预算
     token-estimator.ts         # provider receipt + conservative estimate
     invariants.ts              # compaction 前后关键状态 digest
     projection.ts              # raw history -> model-visible history
     runtime-adapter.ts         # 共享根文件集成前的单向 seam
     compaction/
-      types.ts                 # Runtime Phase 6 contract,本专项只读
-      schema.ts                # Runtime Phase 6 contract,本专项只读
+      types.ts                 # Runtime Model/Context 契约域,本专项只读
+      schema.ts                # Runtime Model/Context 契约域,本专项只读
       cut-planner.ts
       summarizer.ts
       validator.ts
       service.ts
       reducer.ts
     memory/
-      types.ts                 # Runtime Phase 6 contract,本专项只读
-      schema.ts                # Runtime Phase 6 contract,本专项只读
+      types.ts                 # Runtime Model/Context 契约域,本专项只读
+      schema.ts                # Runtime Model/Context 契约域,本专项只读
       service.ts
       approval-coordinator.ts
       search.ts
@@ -324,7 +333,7 @@ tests/tui/
 
 ## 6. 本专项消费的核心契约草案
 
-本节用于解释 behavior 对公共契约的预期,不授权本专项创建或修改这些类型。实际实施时以 Runtime Phase 6 已冻结的 public exports、TypeBox schema、event catalog 和 fixtures 为唯一真源;若与本节不一致,按 §2.2 先修订 Runtime contract,不在 behavior 中临时扩展。
+本节用于解释 behavior 对公共契约的预期,不授权本专项创建或修改这些类型。实际实施时以 Runtime Model/Context 契约域已冻结的 public exports、TypeBox schema、event catalog 和 fixtures 为唯一真源;若与本节不一致,按 §2.2 先修订 Runtime contract,不在 behavior 中临时扩展。
 
 契约实现使用可擦除 TypeScript 语法、显式 `import type` 和 TypeBox schema;不使用 `enum`、参数属性、`any` 或动态 import。
 
@@ -365,7 +374,7 @@ export type ModelRouteDecision =
   | { kind: "deny"; reason: string; missingCapabilities: string[] };
 ```
 
-Router 只产生 decision。`fork` 分支由 Session Kernel 执行,model adapter 只保存 provider-private state;profile/manifest/schema 的真正字段以 Runtime Phase 6 contract 为准。
+Router 只产生 decision。`fork` 分支由 Session Kernel 执行,model adapter 只保存 provider-private state;profile/manifest/schema 的真正字段以 Runtime Model/Context 契约域为准。
 
 ### 6.2 Plan Mode
 
@@ -425,7 +434,7 @@ restart 规则:
 
 ### 6.3 Tool effect 与 Plan policy
 
-`ToolEffect` 和 `CapabilityDecision` 直接复用 Runtime Phase 3 公共契约,本专项不重新声明 effect union。Plan policy 只输出 mode-specific ceiling,最终决策由 Worktree/Sandbox/Permission 专项的 Gateway 与其他 policy source 合并。
+`ToolEffect` 和 `CapabilityDecision` 直接复用 Runtime Workspace/Security 契约域公共契约,本专项不重新声明 effect union。Plan policy 只输出 mode-specific ceiling,最终决策由 Worktree/Sandbox/Permission 专项的 Gateway 与其他 policy source 合并。
 
 ```ts
 export interface PlanModeCapabilityConstraint {
@@ -814,7 +823,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 0:消费 Runtime 公共契约、fixture 与依赖门禁
 
-目标:确认上位 Runtime Phase 6 contract 足以支撑行为实现,不重新定义协议,不改变用户行为。
+目标:确认上位 Runtime Model/Context 契约域足以支撑行为实现,不重新定义协议,不改变用户行为。
 
 只读输入:
 
@@ -833,7 +842,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [ ] 验证 model route、mode/plan ref、context receipt、checkpoint、memory record/proposal/search receipt 都可从 contract-owned public module export import,不要求本专项修改根 barrel。
 - [ ] 验证 current event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
 - [ ] 验证 mode policy 只消费 Runtime capability/effect contract,不按 tool name 创建第二套决策类型。
-- [ ] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Phase 0/2/3/4 contract 对齐。
+- [ ] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Foundation 契约域、Runtime Workspace/Security 契约域和 Runtime Artifact/Evidence 契约域对齐。
 - [ ] 跑上位 contract tests 与专项 consumer compile test,记录冻结 contract commit。
 - [ ] 检查 behavior 目录不存在同义 `interface/type`、私有 event name 或复制 schema。
 - [ ] 在 feature flags 下只注册 adapter factory,不暴露半成品命令。
@@ -849,7 +858,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 1:Model Compatibility Router 行为实现
 
-前置:Phase 0;Runtime Phase 6 model-routing contract 已冻结。
+前置:Phase 0;Runtime Model/Context 契约域中的 model-routing contract 已冻结。
 
 目标:从已验证 manifest 稳定选择能力 profile,在模型切换前给出可审计的 compatible/fork/deny 决策。
 
@@ -878,7 +887,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 2:ContextEngine 与 token accounting
 
-前置:Phase 0–1;Runtime Phase 1 Event Store 可用。
+前置:Phase 0–1;Runtime Event 契约域已冻结,且独立行为证据证明 Event Store 可用。
 
 目标:所有模型请求先经过统一、可审计的 context assembly。
 
@@ -908,7 +917,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 3:Plan Mode reducer、store 与 durable lifecycle
 
-前置:Phase 2;Runtime Phase 4 Artifact Store。
+前置:Phase 2;Runtime Artifact/Evidence 契约域已冻结,且独立行为证据证明 Artifact Store 可用。
 
 目标:模式和计划 revision 可持久恢复,尚不开放实施审批 UI。
 
@@ -938,7 +947,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 4:Plan Mode Capability Gateway 与专用工具
 
-前置:Runtime Phase 2/3/5 contract 与对应专项行为门禁;Phase 3。
+前置:Runtime Workspace/Security 契约域、Runtime Resource 契约域与对应专项行为门禁;Phase 3。
 
 目标:形成没有 shell/subagent/MCP 绕路的只读硬边界。
 
@@ -1004,7 +1013,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 ### Phase 6:Manual single-pass Compaction
 
-前置:Phase 1–2;Runtime Phase 4。
+前置:Phase 1–2;Runtime Artifact/Evidence 契约域已冻结,且 Artifact 行为门禁可用。
 
 目标:先把最小 compaction 做正确,不启用 auto。
 
@@ -1072,7 +1081,7 @@ golden tests:
 
 ### Phase 8:Memory Store、Search 与批准发布
 
-前置:Phase 2;Runtime Phase 3/4 contract 与对应安全/Artifact 行为门禁;统一 Approval Service。
+前置:Phase 2;Runtime Workspace/Security 契约域、Runtime Artifact/Evidence 契约域与对应安全/Artifact 行为门禁;统一 Approval Service。
 
 目标:构建默认关闭、可人工批准的长期 memory MVP。
 
@@ -1151,7 +1160,7 @@ golden tests:
 - [ ] feature flags 支持独立关闭 plan/auto-compact/memory,manual compact 可单独保留。
 - [ ] 加 recovery/chaos/large-session/Windows path/permission 测试。
 - [ ] 建立 golden fixture 版本和上游行为差异记录。
-- [ ] 在本文件补齐所有 commit/验证证据,再只向上位 Runtime Phase 6 回写“专项实现已验收”状态和本文件链接。
+- [ ] 在本文件补齐所有 commit/验证证据;不向上位 Runtime contract 计划回写行为状态或复制实现 checklist。
 
 完成门槛:
 
@@ -1222,7 +1231,7 @@ golden tests:
 
 ## 13. 总验收清单
 
-- [ ] Runtime Phase 6 contract allowlist 在本专项 behavior commits 中无 diff。
+- [ ] Runtime Model/Context 契约域 allowlist 在本专项 behavior commits 中无 diff。
 - [ ] 本专项没有重复 public type/schema 或私有 current event payload。
 - [ ] Model Router 是 model/summarizer 选择的唯一入口,未知/不兼容能力进入 fork/deny。
 - [ ] Plan Mode 是 durable state,不是 prompt/TUI flag。
@@ -1244,4 +1253,4 @@ golden tests:
 - [ ] `npm test` 完整通过。
 - [ ] 本文件记录各阶段 commit、命令和结果。
 - [ ] 共享根文件的每个修改都有基线 commit、当期单一所有者和串行 handoff 证据。
-- [ ] 上位 Runtime 主计划 Phase 6 只同步了专项汇总状态和本计划证据链接,未复制 behavior checklist。
+- [ ] 上位 Runtime contract 计划没有同步本专项行为状态或复制 behavior checklist;所有实现证据仍只保留在本文件。

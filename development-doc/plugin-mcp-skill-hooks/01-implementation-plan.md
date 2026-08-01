@@ -18,17 +18,17 @@
 
 本文件是后续 Plugin / MCP / Skill / Hooks 工作的执行状态账本。实施时只在本文件的复选框上更新状态；专题设计可以作为附录增加，但不得另建平行的总计划。
 
-### 0.1 与 Runtime 主计划的依赖和所有权
+### 0.1 与 Runtime contract 计划的依赖和所有权
 
 两份计划采用“Runtime 产出中立契约，Extension 实现具体能力”的单向依赖。Runtime 只定义 `src/runtime/resources/{types,schemas,ports,events}.ts`；本计划负责发现、配置、信任、进程、生命周期、审计投影和用户控制面，不在 `src/runtime/resources/` 中实现任何 extension manager/loader/client/runner。
 
 Capability/approval/sandbox 的行为实现来自 [`../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](../worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)。本计划只生成资源 descriptor 与 raw invocation、消费 `ExecutionGateway`/受限 executor,不实现第二套 PermissionEngine、ApprovalCoordinator、Credential Broker 或平台 sandbox。
 
-Runtime Phase 3/5 必须先冻结以下 public contract,本计划 M0 才能标记完成:
+下文“Runtime Capability 契约域”和“Runtime Resource 契约域”分别指 [`04` 的 Workspace/Security contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security) 与 [Resource contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-resources)。两者必须先冻结以下 public contract,本计划 M0 才能标记完成:
 
 - `ResourceKind`、`ResourceIdentity`、`ResourceProvenance`、`ResourceManifestDigest`。
 - `ResourceTrustState`、`ResourceActivationState`、`ResourceApprovalReceipt`。
-- Phase 3 的 `CapabilityClaim` 与 Phase 5 的 `RuntimeToolDescriptor`、`RuntimeToolInvocation`、`RuntimeToolResult`。
+- Runtime Capability 契约域的 `CapabilityClaim` 与 Runtime Resource 契约域的 `RuntimeToolDescriptor`、`RuntimeToolInvocation`、`RuntimeToolResult`。
 - `RuntimeResourceSnapshot`、`ResourceLifecycleEvent` 及 TypeBox schemas。
 - `RuntimeResourceCatalogPort`、`RuntimeResourceInvocationPort`、`RuntimeResourceEventSink`、`RuntimeResourceSnapshotProvider`。
 
@@ -576,7 +576,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 ### M0 — 契约、fixtures 与安全预算
 
-- [ ] 记录 Runtime Phase 5 resource contract 与 Phase 3 capability/Gateway port 的 commit、export path,确认本计划不复制 Runtime/security 类型；
+- [ ] 记录 Runtime Resource 契约域与 Runtime Capability 契约域/Gateway port 的 commit、export path,确认本计划不复制 Runtime/security 类型；
 - [ ] 记录 dependency HEAD,以独立串行提交加入 YAML parser、semver、官方 MCP SDK 精确版本并审阅 lockfile；通知 Runtime 线随后基于该提交继续；
 - [ ] 固定本文件中的 current manifest、skill frontmatter、hooks、MCP JSON schema；
 - [ ] 建立 `tests/fixtures/extensions/`，包含 valid、invalid、path-escape、symlink、duplicate、oversize、secret-template 样例；
@@ -673,7 +673,7 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 - [ ] 在开始 M6 前记录 Runtime resource/capability contract commit、安全专项 ExecutionGateway implementation commit、Extension M1–M5 commit 和所有共享文件 HEAD；若 handoff 后已变化先重审再集成；
 - [ ] 由本里程碑单一所有者把 `src/extensions/integration/**` 接入 Runtime shared files,禁止 Runtime 线同时修改这些路径；
-- [ ] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Phase 5 ports,不直接 import Runtime 内部 store/reducer；
+- [ ] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Resource 契约域 ports,不直接 import Runtime 内部 store/reducer；
 - [ ] 把 catalog fragment 与 extension Skill tool 接入 controller/现有 `src/runtime/tools/skill.ts`,把 snapshot tools 通过 public ToolRegistry API 注册；
 - [ ] 把 SessionStart/UserPromptSubmit/SessionEnd 与 PreToolUse/PostToolUse adapters 接入 controller/agent-loop,落地 `updatedInput` 重校验和重新授权；
 - [ ] 把 typed audit adapter 接入 Runtime event sink,确保 extension 不自建 durable truth 或 dual-write；
@@ -834,7 +834,7 @@ MVP 明确不做：
 ### RunLedger Runtime 上游契约
 
 - `development-doc/runtime/00-reference.md`
-- `development-doc/runtime/04-governed-agent-harness-runtime-plan.md` §0.1、Phase 3、Phase 5、Phase 10
+- `development-doc/runtime/04-governed-agent-harness-runtime-plan.md` 的 [Workspace/Security contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security)、[Resource contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-resources) 与 [Control/Telemetry contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-control-telemetry)
 - 计划生成的 `src/runtime/resources/{types,schemas,ports,events}.ts`
 
 ### Codex

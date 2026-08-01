@@ -248,7 +248,7 @@ export interface Scheduler {
 
 ## 8. Agent Runtime 测试指导方案
 
-本节把前面的确定性异步测试方法落实到 RunLedger Agent Runtime。它是测试设计与评审指南,不是第二份实施状态账本。当前与后续 governed runtime 的完成状态仍以 `development-doc/runtime/04-governed-agent-harness-runtime-plan.md` 为准;本节只规定“实现某项运行时能力时,测试应如何构建、观察和验收”。
+本节把前面的确定性异步测试方法落实到 RunLedger Agent Runtime。它是测试设计与评审指南,不是第二份实施状态账本。[Runtime contract 计划](../runtime/04-governed-agent-harness-runtime-plan.md)只规定公共协议与被动状态;具体行为完成状态以对应专项计划、当前代码/tests 和验证证据为准。本节只规定“实现某项运行时能力时,测试应如何构建、观察和验收”。
 
 ### 8.1 测试范围
 

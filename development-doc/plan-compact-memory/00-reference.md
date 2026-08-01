@@ -17,7 +17,7 @@
 3. 哪些机制适合 RunLedger,哪些缺口不能照搬。
 4. RunLedger 当前代码已经提供哪些接入点。
 
-文档职责与代码所有权不由本取证文件定义:公共数据结构、schema、current event payload 和 contract fixture 归上位 Runtime Phase 6;具体 Model Router、Plan Mode、ContextEngine、Compaction、Memory 行为和集成归下游专项计划。实施时以两份计划的 allowlist 与串行 handoff 规则为准。
+文档职责与代码所有权不由本取证文件定义:公共数据结构、schema、current event payload 和 contract fixture 归上位 Runtime [Model/Plan/Context/Compaction/Memory 契约域](../runtime/04-governed-agent-harness-runtime-plan.md#contract-model-context);具体 Model Router、Plan Mode、ContextEngine、Compaction、Memory 行为和集成归下游专项计划。实施时以两份计划的 allowlist 与串行 handoff 规则为准。
 
 Model Compatibility Router 的取证不在本文件重复,直接消费 [`../runtime/00-reference.md`](../runtime/00-reference.md) 中“Model Router 不能只比较价格与 Benchmark”及其 Compatibility Manifest/能力别名/不兼容 fork 结论。
 
