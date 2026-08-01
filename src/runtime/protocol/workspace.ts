@@ -8,6 +8,7 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
+import { AdapterIdentityRefSchema, type AdapterIdentityRef } from "./adapter.ts";
 import {
 	CanonicalUtcTimestampSchema,
 	RuntimeContentRefSchema,
@@ -70,17 +71,11 @@ export interface WorkspaceLeaseRef {
 	expiresAt?: string;
 }
 
-export interface WorkspaceValidatorRef {
-	adapterId: string;
-	generation: number;
-	configDigest: RuntimeDigest;
-}
-
 export interface WorkspaceValidationReceiptRef {
 	receiptId: ReceiptId;
 	workspaceId: WorkspaceId;
 	envelopeDigest: RuntimeDigest;
-	validator: WorkspaceValidatorRef;
+	validator: AdapterIdentityRef;
 	validatedAt: string;
 	outcome: "valid" | "invalid" | "unavailable";
 	sourceHead: RuntimeStreamHead;
@@ -133,21 +128,12 @@ export const WorkspaceLeaseRefSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
-const WorkspaceValidatorRefSchema = Type.Object(
-	{
-		adapterId: Type.String({ minLength: 1, maxLength: 128 }),
-		generation: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-		configDigest: RuntimeDigestSchema,
-	},
-	{ additionalProperties: false },
-);
-
 export const WorkspaceValidationReceiptRefSchema = Type.Object(
 	{
 		receiptId: RuntimeIdSchema,
 		workspaceId: RuntimeIdSchema,
 		envelopeDigest: RuntimeDigestSchema,
-		validator: WorkspaceValidatorRefSchema,
+		validator: AdapterIdentityRefSchema,
 		validatedAt: CanonicalUtcTimestampSchema,
 		outcome: Type.Union([Type.Literal("valid"), Type.Literal("invalid"), Type.Literal("unavailable")]),
 		sourceHead: RuntimeStreamHeadSchema,

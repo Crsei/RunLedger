@@ -17,6 +17,11 @@ export const RUNTIME_ERROR_CODES = [
 	"invariant_violation",
 	"boundary_violation",
 	"contract_unavailable",
+	"adapter_unsupported",
+	"capability_denied",
+	"adapter_unavailable",
+	"operation_cancelled",
+	"uncertain_outcome",
 ] as const;
 
 export type RuntimeErrorCode = (typeof RUNTIME_ERROR_CODES)[number];

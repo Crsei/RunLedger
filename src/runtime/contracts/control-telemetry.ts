@@ -1,10 +1,10 @@
 /** Control plane、composition、policy、cost、telemetry 与 remote 的被动合同。 */
 
 import type { RuntimeContentRef, RuntimeDigest, RuntimeStreamHead } from "../protocol/foundation.ts";
+import type { AdapterIdentityRef } from "../protocol/adapter.ts";
 import type {
 	AgentId,
 	AuthorityId,
-	PrincipalId,
 	ReceiptId,
 	RuntimeId,
 	RuntimeInstanceId,
@@ -13,14 +13,6 @@ import type {
 	ToolCallId,
 	TurnId,
 } from "../protocol/ids.ts";
-
-export interface AdapterIdentityRef {
-	readonly adapterId: string;
-	readonly generation: number;
-	readonly configDigest: RuntimeDigest;
-	readonly trustRef?: RuntimeContentRef;
-	readonly healthRef?: RuntimeContentRef;
-}
 
 export interface RuntimeActivity {
 	readonly sessionId: SessionId;

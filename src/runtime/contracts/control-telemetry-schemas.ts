@@ -11,6 +11,7 @@ import {
 	isCanonicalUtcTimestamp,
 } from "../protocol/foundation-schemas.ts";
 import { isRuntimeId } from "../protocol/ids.ts";
+import { AdapterIdentityRefSchema } from "../protocol/adapter.ts";
 import type {
 	CostRecord,
 	LifecycleRef,
@@ -20,17 +21,6 @@ import type {
 	RuntimeActivity,
 	TelemetryManifest,
 } from "./control-telemetry.ts";
-
-export const AdapterIdentityRefSchema = Type.Object(
-	{
-		adapterId: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$", minLength: 1, maxLength: 128 }),
-		generation: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-		configDigest: RuntimeDigestSchema,
-		trustRef: Type.Optional(RuntimeContentRefSchema),
-		healthRef: Type.Optional(RuntimeContentRefSchema),
-	},
-	{ additionalProperties: false },
-);
 
 export const RuntimeActivitySchema = Type.Object(
 	{

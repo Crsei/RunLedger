@@ -22,6 +22,7 @@ describe("Runtime public contract inventory", () => {
 			"compaction",
 			"memory",
 			"artifact-evidence",
+			"adapter-ports",
 			"user-home-layout",
 			"control-telemetry",
 		]);
@@ -92,9 +93,13 @@ describe("Runtime public contract inventory", () => {
 			"memory",
 			"artifact-evidence",
 			"control-telemetry",
+			"adapter-ports",
 		]) {
 			expect(CONTRACT_INVENTORY.find((entry) => entry.id === id)?.gaps).toEqual([]);
 		}
+		const adapterPorts = CONTRACT_INVENTORY.find((entry) => entry.id === "adapter-ports");
+		expect(adapterPorts?.ports).toHaveLength(18);
+		expect(adapterPorts?.fixtures).toContain("tests/runtime-contracts/adapter-port-contracts.test.ts");
 	});
 
 	it("classifies every passive structure with retention, redaction, and forbidden-field policy", () => {

@@ -14,7 +14,7 @@ import {
 import { isRuntimeId } from "../protocol/ids.ts";
 import { RuntimeEventRangeRefSchema, isRuntimeEventRangeRef } from "../protocol/schemas.ts";
 import { WorkspaceCheckpointDescriptorSchema, isWorkspaceCheckpointDescriptor } from "../protocol/workspace.ts";
-import { AdapterIdentityRefSchema } from "./control-telemetry-schemas.ts";
+import { AdapterIdentityRefSchema } from "../protocol/adapter.ts";
 import type {
 	ArtifactCommitReceipt,
 	ArtifactIntent,

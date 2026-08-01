@@ -14,7 +14,7 @@ import type {
 	TraceId,
 } from "../protocol/ids.ts";
 import type { WorkspaceCheckpointDescriptor } from "../protocol/workspace.ts";
-import type { AdapterIdentityRef } from "./control-telemetry.ts";
+import type { AdapterIdentityRef } from "../protocol/adapter.ts";
 
 export type ArtifactKind = ArtifactRef["kind"];
 

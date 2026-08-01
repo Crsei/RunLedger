@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { IdentityContextSchema, isIdentityContext } from "../identity/schemas.ts";
 import type { IdentityContext } from "../identity/types.ts";
+import { AdapterIdentityRefSchema, type AdapterIdentityRef } from "./adapter.ts";
 import {
 	CanonicalUtcTimestampSchema,
 	RuntimeContentRefSchema,
@@ -73,12 +74,6 @@ export interface CapabilityRequest {
 	readonly signatureProofRef: RuntimeContentRef;
 }
 
-export interface SecurityAdapterRef {
-	readonly adapterId: string;
-	readonly generation: number;
-	readonly configDigest: RuntimeDigest;
-}
-
 export interface CapabilityDecisionReceipt {
 	readonly receiptId: ReceiptId;
 	readonly requestId: CommandId;
@@ -86,7 +81,7 @@ export interface CapabilityDecisionReceipt {
 	readonly decisionRevision: number;
 	readonly matchedRulesDigest: RuntimeDigest;
 	readonly policyDigest: RuntimeDigest;
-	readonly gateway: SecurityAdapterRef;
+	readonly gateway: AdapterIdentityRef;
 	readonly approverPrincipalId?: PrincipalId;
 	readonly decidedAt: string;
 	readonly expiresAt?: string;
@@ -153,7 +148,7 @@ export interface SandboxProfileRef {
 export interface SandboxExecutionReceiptRef {
 	readonly receiptId: ReceiptId;
 	readonly profileId: string;
-	readonly backend: SecurityAdapterRef;
+	readonly backend: AdapterIdentityRef;
 	readonly enforcement: "enforced" | "degraded" | "unavailable" | "off";
 	readonly invocationDigest: RuntimeDigest;
 	readonly platformAttestationRef: RuntimeContentRef;
@@ -216,15 +211,6 @@ const CapabilityRequestSubjectSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
-const SecurityAdapterRefSchema = Type.Object(
-	{
-		adapterId: Type.String({ minLength: 1, maxLength: 128 }),
-		generation: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-		configDigest: RuntimeDigestSchema,
-	},
-	{ additionalProperties: false },
-);
-
 export const CapabilityRequestSchema = Type.Object(
 	{
 		requestId: RuntimeIdSchema,
@@ -256,7 +242,7 @@ export const CapabilityDecisionReceiptSchema = Type.Object(
 		decisionRevision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		matchedRulesDigest: RuntimeDigestSchema,
 		policyDigest: RuntimeDigestSchema,
-		gateway: SecurityAdapterRefSchema,
+		gateway: AdapterIdentityRefSchema,
 		approverPrincipalId: Type.Optional(RuntimeIdSchema),
 		decidedAt: CanonicalUtcTimestampSchema,
 		expiresAt: Type.Optional(CanonicalUtcTimestampSchema),
@@ -365,7 +351,7 @@ export const SandboxExecutionReceiptRefSchema = Type.Object(
 	{
 		receiptId: RuntimeIdSchema,
 		profileId: SandboxProfileIdSchema,
-		backend: SecurityAdapterRefSchema,
+		backend: AdapterIdentityRefSchema,
 		enforcement: Type.Union([
 			Type.Literal("enforced"),
 			Type.Literal("degraded"),

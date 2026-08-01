@@ -9,19 +9,6 @@ import type { ArtifactRef, CapabilityDecision } from "../../../../src/runtime/pr
 import type { RuntimeEvent } from "../../../../src/runtime/protocol/events.ts";
 import type { RuntimeDigest } from "../../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../../src/runtime/protocol/ids.ts";
-import { resourceIdentityKey } from "../../../../src/runtime/resources/schemas.ts";
-import type {
-	RuntimeResourceCatalogPort,
-	RuntimeResourceEventSink,
-	RuntimeResourceInvocationPort,
-	RuntimeResourceSnapshotProvider,
-} from "../../../../src/runtime/resources/ports.ts";
-import type {
-	RuntimeResourceSnapshot,
-	RuntimeToolDescriptor,
-	RuntimeToolInvocation,
-	RuntimeToolResult,
-} from "../../../../src/runtime/resources/types.ts";
 
 export class FakeEventSink {
 	public readonly events: RuntimeEvent[] = [];
@@ -52,59 +39,4 @@ export class FakeCapabilityGateway {
 	public decide(): CapabilityDecision {
 		return "deny";
 	}
-}
-
-export class FakeResourceAdapter
-	implements
-		RuntimeResourceCatalogPort,
-		RuntimeResourceInvocationPort,
-		RuntimeResourceEventSink,
-		RuntimeResourceSnapshotProvider
-{
-	public readonly events: Array<Parameters<RuntimeResourceEventSink["append"]>[0]> = [];
-
-	public constructor(
-		private readonly descriptors: readonly RuntimeToolDescriptor[],
-		private readonly snapshot: RuntimeResourceSnapshot,
-	) {}
-
-	public async resolveExact(
-		identity: RuntimeToolDescriptor["identity"],
-	): Promise<RuntimeToolDescriptor | undefined> {
-		const key = resourceIdentityKey(identity);
-		return this.descriptors.find((descriptor) => resourceIdentityKey(descriptor.identity) === key);
-	}
-
-	public async search(query: string, limit: number): Promise<readonly RuntimeToolDescriptor[]> {
-		const normalized = query.toLocaleLowerCase();
-		return this.descriptors
-			.filter((descriptor) =>
-				`${descriptor.runtimeName} ${descriptor.description}`.toLocaleLowerCase().includes(normalized),
-			)
-			.slice(0, Math.max(0, limit));
-	}
-
-	public async invoke(invocation: RuntimeToolInvocation): Promise<RuntimeToolResult> {
-		return {
-			requestId: invocation.requestId,
-			tool: invocation.tool,
-			content: [{ type: "text", text: "fake resource result" }],
-			outcome: "ok",
-			originalBytes: 20,
-			truncated: false,
-			contentDigest: invocation.inputDigest,
-		};
-	}
-
-	public async cancel(_requestId: string, _reason: string): Promise<void> {}
-
-	public async append(event: Parameters<RuntimeResourceEventSink["append"]>[0]): Promise<void> {
-		this.events.push(event);
-	}
-
-	public async acquire(): Promise<RuntimeResourceSnapshot> {
-		return this.snapshot;
-	}
-
-	public async release(_snapshotId: string): Promise<void> {}
 }
