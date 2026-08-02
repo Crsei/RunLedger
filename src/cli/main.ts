@@ -29,6 +29,8 @@ import type { RunledgerLayout } from "../runtime/contracts/public.ts";
 import { builtinModels } from "../providers/all.ts";
 import { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
 import { parseArgs, USAGE } from "./args.ts";
+import { validateLegacyCliEnvironment } from "./authority.ts";
+import { runMigrateCommand } from "./migrate.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -37,17 +39,11 @@ const DEFAULT_SYSTEM_PROMPT =
   "Use Read/Write/Edit/Bash/grep/find/ls tools to inspect and modify files. " +
   "Keep replies concise and ask before destructive operations.";
 
-export function validateLegacyCliEnvironment(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-): string | undefined {
-
-	if (env.RUNLEDGER_SESSION_DIR !== undefined && env.RUNLEDGER_SESSION_DIR.length > 0) {
-		return "unsupported_environment_override: RUNLEDGER_SESSION_DIR 已拒绝;请使用预创建的 RUNLEDGER_DIR";
-	}
-	return undefined;
-}
-
 export async function main(argv: readonly string[]): Promise<void> {
+  if (argv[0] === "migrate") {
+    await runMigrateCommand(argv.slice(1));
+    return;
+  }
   const { args, error } = parseArgs(argv);
   if (error) {
     process.stderr.write(`[runledger] ${error}\n\n${USAGE}`);

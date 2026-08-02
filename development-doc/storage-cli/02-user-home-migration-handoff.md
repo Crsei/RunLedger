@@ -12,7 +12,7 @@
 | S1 Settings/Auth 路径迁移 | 已完成（本阶段） | S0 通过 | 停止 project settings 与 agent-dir 新写入 |
 | S2 Session canonical writer | 已完成（本阶段） | S1 通过；layout 注入可用 | session 只写 user home 的 UTC shard |
 | S3 CLI authority removal | 已完成（本阶段） | S2 通过 | 拒绝 `sessionDir`、环境变量和 CLI 任意目录 authority |
-| S4 破坏性迁移与旧源删除 | 未开始 | S3 通过；canonical writer 稳定 | 显式迁移、冲突、TOCTOU 与 source deletion receipt |
+| S4 破坏性迁移与旧源删除 | 已完成（本阶段） | S3 通过；canonical writer 稳定 | 显式迁移、冲突、TOCTOU 与 source deletion receipt |
 | S5 文档与旧写路径收口 | 未开始 | S0–S4 全部通过 | 静态边界、删除清单、文档与最终验收 |
 
 执行必须严格按 `S0 → S1 → S2 → S3 → S4 → S5` 串行推进。各阶段不得并行修改 `src/storage/paths.ts`、`settings-manager.ts`、`session-manager.ts`、`src/cli/main.ts` 或共享测试；每阶段完成后先保留独立 commit，再进入下一阶段。当前唯一前置合同证据为 Runtime [C0–C5 milestone](../runtime/04-governed-agent-harness-runtime-plan.md#contract-acceptance)，不把它误作 Storage/CLI 行为已完成。
@@ -26,6 +26,8 @@ S1 证据（实现提交目标：`storage: stop project settings and agent-dir w
 S2 证据（实现提交目标：`storage: keep canonical sessions inside user home`）：`SessionManager` 现在只接受注入的 `RunledgerLayout`，create/open/continue/list/fork 均固定到 `sessions/YYYY/MM/DD/<session-id>.jsonl`，拒绝根外路径、symlink session root 与无效 session ID；新文件硬化为 `0600`，fork 使用同根临时文件原子 rename，parent metadata 只保存 root-relative locator。CLI composition root 已改为传递 layout，不再把任意 `sessionDir` 传入 SessionManager。更新 session manager、session codec 与 current-format tests，并新增 `tests/storage/canonical-session-manager.test.ts`；完整 `npm run check`、`npm test`（62 files / 366 tests）和 `npm run build` 通过。S2 未迁移、复制或删除旧数据；`--session-dir`/`RUNLEDGER_SESSION_DIR` 的 fail-closed 行为仍由 S3 负责。
 
 S3 证据（实现提交目标：`cli: reject legacy session directory authority`）：`parseArgs` 对 `--session-dir`（含 `--session-dir=`）返回 `unsupported_cli_authority` 并由 CLI 以退出码 2 终止；`main` 对非空 `RUNLEDGER_SESSION_DIR` 返回 `unsupported_environment_override`，不解析、不创建或回退到该目录。`paths.ts` 删除 `resolveSessionDir` 与环境覆盖读取，历史 project/agent helper 仅保留 source locator 语义；settings 的 `sessionDir` 已在 S1 保存边界拒绝，SessionManager 无任意目录参数。新增 CLI 负向 spawn 测试并更新 legacy paths 测试；完整 `npm run check`、`npm test`（62 files / 357 tests）和 `npm run build` 通过。S3 仍未执行任何迁移、复制或删除。
+
+S4 证据（实现提交目标：`storage: destructively migrate legacy data into user home`）：新增 `src/storage/migration.ts` 与 `runledger migrate --source <path> --confirm-delete`。preflight 只接受 current JSONL/settings/auth/AGENTS 对象，固定 source deletion manifest（source digest、target locator/digest、delete action）到根内 batch；目标冲突、unknown format、根外/symlink、未确认和 TOCTOU 均 fail closed。publish 使用根内 staged copy 与 digest verify，之后逐项删除 manifest source 并写 `source_deleted` receipt；删除或 receipt 失败不恢复已完成事实、不继续删除其余 source。成功迁移仅删除 manifest 中的文件，目录内无关插件文件保留；未实现 dry-run/read-only/fallback。`tests/storage/migration.test.ts` 9 tests 与 `tests/cli/migrate.test.ts` 2 tests 覆盖成功、dedupe、冲突、确认、损坏格式、目录 source、TOCTOU 和不可逆 receipt 失败；完整 `npm run check`、`npm test`（64 files / 368 tests）和 `npm run build` 通过。S4 未执行任何真实用户目录迁移；测试全部使用临时目录。
 
 ## 1. 目标与边界
 
