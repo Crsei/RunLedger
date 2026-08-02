@@ -5,10 +5,10 @@
 
 import type { Credential, CredentialInfo, CredentialStore } from "../auth/types.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import lockfile from "proper-lockfile";
-import { getAgentDir, normalizePath } from "./paths.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
+import type { RunledgerLayout } from "../runtime/contracts/public.ts";
 
 type AuthStorageData = Record<string, Credential>;
 
@@ -27,8 +27,8 @@ export interface AuthStorageBackend {
 export class FileAuthStorageBackend implements AuthStorageBackend {
 	private authPath: string;
 
-	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
-		this.authPath = normalizePath(authPath);
+	constructor(layout: RunledgerLayout) {
+		this.authPath = layout.auth;
 	}
 
 	private ensureParentDir(): void {
@@ -176,8 +176,8 @@ export class AuthStorage implements CredentialStore {
 		this.reload();
 	}
 
-	static create(authPath?: string): AuthStorage {
-		return new AuthStorage(new FileAuthStorageBackend(authPath ?? join(getAgentDir(), "auth.json")));
+	static create(layout: RunledgerLayout): AuthStorage {
+		return new AuthStorage(new FileAuthStorageBackend(layout));
 	}
 
 	static fromStorage(storage: AuthStorageBackend): AuthStorage {
@@ -259,10 +259,10 @@ export class AuthStorage implements CredentialStore {
  */
 export function readStoredCredential(
 	providerId: string,
-	authPath: string = join(getAgentDir(), "auth.json"),
+	layout: RunledgerLayout,
 ): Credential | undefined {
 	try {
-		const data = JSON.parse(readFileSync(normalizePath(authPath), "utf-8")) as AuthStorageData;
+		const data = JSON.parse(readFileSync(layout.auth, "utf-8")) as AuthStorageData;
 		return data[providerId];
 	} catch {
 		return undefined;

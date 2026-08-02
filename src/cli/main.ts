@@ -21,10 +21,12 @@ import { join } from "node:path";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { selectSessionInTui } from "../tui/session-selector.ts";
 import { loadProjectSettings } from "../storage/settings-manager.ts";
-import { resolveSessionDir, getGlobalAgentsMd } from "../storage/paths.ts";
+import { resolveSessionDir } from "../storage/paths.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { replaySession } from "../storage/session-codec.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
+import { resolveRunledgerHome } from "../storage/runledger-home.ts";
+import type { RunledgerLayout } from "../runtime/contracts/public.ts";
 import { builtinModels } from "../providers/all.ts";
 import { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
 import { parseArgs, USAGE } from "./args.ts";
@@ -55,10 +57,11 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   const cwd = process.cwd();
-  const settings = await loadProjectSettings(cwd);
+  const { layout } = await resolveRunledgerHome();
+  const settings = await loadProjectSettings({ layout });
 
   const sessionDir =
-    args.sessionDir ?? resolveSessionDir(cwd, settings.sessionDir);
+    args.sessionDir ?? resolveSessionDir(cwd);
 
   let mgr: SessionManager;
   if (args.session) {
@@ -94,12 +97,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   let removeStdinEnd: (() => void) | undefined;
   try {
     await mgr.acquireLock();
-    const models = builtinModels({ credentials: AuthStorage.create() });
+    const models = builtinModels({ credentials: AuthStorage.create(layout) });
     await models.refresh({ allowNetwork: false });
     const replay = await replaySession(mgr.ledger());
     const controller = await InteractiveSessionController.create({
       cwd,
-      systemPrompt: buildSystemPrompt(cwd),
+      layout,
+      systemPrompt: buildSystemPrompt(cwd, layout),
       models,
       settings,
       replay,
@@ -142,7 +146,7 @@ export async function main(argv: readonly string[]): Promise<void> {
  * 本期不向上扫祖先链(pi 也是按 ancestor chain,本期仅在 cwd 与 global 两点
  * 读 AGENTS.md;TODO(pi):祖先链扫描加 M8 后续 PR)。
  */
-function buildSystemPrompt(cwd: string): string {
+function buildSystemPrompt(cwd: string, layout: RunledgerLayout): string {
   const parts: string[] = [DEFAULT_SYSTEM_PROMPT];
   const localAg = getProjectAgentsMd(cwd);
   if (localAg && existsSync(localAg)) {
@@ -152,7 +156,7 @@ function buildSystemPrompt(cwd: string): string {
       // 读失败静默
     }
   }
-  const globalAg = getGlobalAgentsMd();
+  const globalAg = layout.agents;
   if (globalAg && existsSync(globalAg)) {
     try {
       parts.push(readFileSync(globalAg, "utf8"));

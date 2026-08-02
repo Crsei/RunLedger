@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AuthInteraction, ProviderAuth } from "../../src/auth/types.ts";
 import { createModels, createProvider } from "../../src/models.ts";
 import { InteractiveSessionController } from "../../src/runtime/interactive-session-controller.ts";
+import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
 import { MemoryLedger } from "../../src/runtime/ledger/memory-ledger.ts";
 import type { SessionReplay } from "../../src/storage/session-codec.ts";
 import { loadProjectSettings } from "../../src/storage/settings-manager.ts";
@@ -125,6 +126,7 @@ describe("InteractiveSessionController", () => {
     const { models, p2 } = fixtureModels();
     const controller = await InteractiveSessionController.create({
       cwd,
+      layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
       systemPrompt: "test",
       models,
       settings: { provider: "p1", model: "m1", thinkingLevel: "low" },
@@ -147,6 +149,7 @@ describe("InteractiveSessionController", () => {
     const ledger = new MemoryLedger();
     const controller = await InteractiveSessionController.create({
       cwd,
+      layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
       systemPrompt: "test",
       models,
       settings: {},
@@ -173,7 +176,7 @@ describe("InteractiveSessionController", () => {
       content: [{ type: "text", text: "reply:hello controller" }],
     });
 
-    expect(await loadProjectSettings(cwd)).toMatchObject({
+    expect(await loadProjectSettings({ layout: buildRunledgerLayout(join(cwd, "home"), "posix") })).toMatchObject({
       provider: "p1",
       model: "m1",
       thinkingLevel: "high",

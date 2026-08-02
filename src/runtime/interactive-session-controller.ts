@@ -3,6 +3,7 @@ import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
 import type { Api, Context, Model, ModelThinkingLevel } from "../types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
 import { saveProjectSettings } from "../storage/settings-manager.ts";
+import type { RunledgerLayout } from "./contracts/public.ts";
 import type { SessionReplay, SessionRuntimeConfig } from "../storage/session-codec.ts";
 import { appendRuntimeConfig } from "../storage/session-codec.ts";
 import { Agent } from "./agent.ts";
@@ -30,6 +31,7 @@ export interface RuntimeSelectionOverrides {
 
 export interface InteractiveSessionControllerOptions {
   cwd: string;
+  layout: RunledgerLayout;
   systemPrompt: string;
   models: Models;
   settings: ProjectSettings;
@@ -61,6 +63,7 @@ export interface RuntimeSelection {
  */
 export class InteractiveSessionController {
   private readonly cwd: string;
+  private readonly layout: RunledgerLayout;
   private readonly systemPrompt: string;
   private readonly models: Models;
   private settings: ProjectSettings;
@@ -78,6 +81,7 @@ export class InteractiveSessionController {
     selection: RuntimeSelection,
   ) {
     this.cwd = opts.cwd;
+    this.layout = opts.layout;
     this.systemPrompt = opts.systemPrompt;
     this.models = opts.models;
     this.settings = { ...opts.settings };
@@ -283,7 +287,7 @@ export class InteractiveSessionController {
       model: config.model,
       thinkingLevel: config.thinkingLevel,
     };
-    await saveProjectSettings(this.cwd, this.settings);
+    await saveProjectSettings({ layout: this.layout }, this.settings);
     await appendRuntimeConfig(this.ledger, config, source);
   }
 }
