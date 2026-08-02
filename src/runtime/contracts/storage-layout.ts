@@ -9,6 +9,8 @@ import type { RuntimeDigest } from "../protocol/foundation.ts";
 import {
 	isRuntimeId,
 	type AuthorityId,
+	type AttemptId,
+	type ExecutionId,
 	type RepositoryId,
 	type RuntimeId,
 	type SessionId,
@@ -168,6 +170,34 @@ export function workspaceStorageKey(workspace: WorkspaceStorageIdentity): string
 		workspaceId: workspace.workspaceId,
 		repositoryId: workspace.repositoryId,
 	})}`;
+}
+
+const WORKSPACE_STORAGE_KEY_PATTERN = /^ws-[a-f0-9]{64}$/u;
+
+function assertWorkspaceStorageKey(value: string): void {
+	if (!WORKSPACE_STORAGE_KEY_PATTERN.test(value)) throw new Error("invalid workspace storage key");
+}
+
+export function hostEndpointRelativeLocator(storageKey: string): string {
+	assertWorkspaceStorageKey(storageKey);
+	return `ipc/hosts/${storageKey}/endpoint.json`;
+}
+
+export function hostStateRelativeLocator(storageKey: string): string {
+	assertWorkspaceStorageKey(storageKey);
+	return `state/hosts/${storageKey}`;
+}
+
+export function processStateRelativeLocator(
+	storageKey: string,
+	executionId: ExecutionId,
+	attemptId: AttemptId,
+): string {
+	assertWorkspaceStorageKey(storageKey);
+	if (!isRuntimeId(executionId, "execution") || !isRuntimeId(attemptId, "attempt")) {
+		throw new Error("process locator requires execution and attempt IDs");
+	}
+	return `state/processes/${storageKey}/${executionId}/${attemptId}.json`;
 }
 
 export function sessionRelativeLocator(sessionId: SessionId, createdAt: string, archived: boolean): string {

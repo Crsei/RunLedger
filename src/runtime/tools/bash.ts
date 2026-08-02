@@ -11,12 +11,8 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { spawn } from "node:child_process";
-import { mkdirSync, openSync, writeFileSync, closeSync, existsSync } from "node:fs";
-import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
 import { localExecutionEnv, type Shell, type ShellResult } from "../execution-env.ts";
-import { findGitBash } from "../../utils/shell.ts";
 import { DEFAULT_MAX_BYTES } from "./tool-support.ts";
 
 export const bashSchema = Type.Object({
@@ -29,7 +25,7 @@ export const bashSchema = Type.Object({
   ),
   run_in_background: Type.Optional(
     Type.Boolean({
-      description: "true → 后台 detached 模式 spawn 命令,立即返回 bashId 与 log 路径。后续 turn 可 grep / read <logPath> 取输出。缺省 false。",
+      description: "true → 请求受治理的后台执行。当前 Host process manager 尚未接线时 fail closed。缺省 false。",
     }),
   ),
   output_format: Type.Optional(
@@ -45,10 +41,9 @@ export interface BashToolDetails {
   stdoutTruncated?: number;
   stderrTruncated?: number;
   exitCode?: number;
-  /** 后台模式启动结果:bashId 与日志路径 */
-  background?: {
-    bashId: string;
-    logPath: string;
+  unsupported?: {
+    code: "managed_process_unavailable";
+    operation: "run_in_background";
   };
   /** 实际使用的 output_format */
   outputFormat?: "text" | "stream-json";
@@ -91,7 +86,7 @@ export function createBashTool(
   return {
     name: "bash",
     label: "bash",
-    description: "在 shell 中执行一条命令,流式回传 stdout/stderr。非零退出码视为错误。",
+     description: "在受治理 shell 中执行一条命令,流式回传 stdout/stderr。非零退出码视为错误。",
     parameters: bashSchema,
     isDestructive: () => true,
     async execute(_toolCallId, params, signal, onUpdate): Promise<AgentToolResult<BashToolDetails>> {
@@ -109,31 +104,21 @@ export function createBashTool(
 
       // === 后台模式 ===
       if (runInBackground) {
-        const bg = spawnBackground(cmd, { cwd, stdin });
-        if (bg === null) {
-          return {
-            content: [
-              {
-                type: "text",
-                text: `bash: run_in_background 需要 localExecutionEnv().shell 派生的 ops;注入的 BashOperations 不支持后台 spawn。请去掉 run_in_background 或换用本地 shell。`,
-              },
-            ],
-            details: { exitCode: 127 },
-            isError: true,
-            terminate: false,
-          };
-        }
         return {
           content: [
             {
               type: "text",
-              text: `Started in background (bashId: ${bg.bashId}). stdout/stderr appending to: ${bg.logPath}\nUse \`bash\` tail/cat 或 \`read\` ${bg.logPath} 取后续输出。`,
+              text: "bash: run_in_background 当前不可用；Runtime Host process manager 尚未接线。未创建子进程。",
             },
           ],
           details: {
-            background: bg,
+            unsupported: {
+              code: "managed_process_unavailable",
+              operation: "run_in_background",
+            },
             outputFormat,
           },
+          isError: true,
           terminate: false,
         };
       }
@@ -221,89 +206,7 @@ function renderStreamJson(r: ShellResult): string {
   return lines.join("\n");
 }
 
-/**
- * 后台 spawn:返回 { bashId, logPath } 或 null(无法执行)。
- *
- * 实现:在平台 shell 选好后,用 detached child + stdio redirect 到 logPath 文件
- * (append-only),子进程与父进程解绑(unref),让父进程立即返回。
- *
- * 与 ops 注入路径互斥:仅当 options.operations 没注入时(即 BashOperations 派生
- * 自 localExecutionEnv)才能可靠执行;否则退化为 null 让调用方降级。
- *
- * 为简化,本期不提供 kill / wait api;只起进程并把 log 路径告诉 LLM,后续 turn
- * 自行 read/grep 该文件取输出。对齐 docs/tools/bash-tool.mdx §"Run in background"。
- */
-function spawnBackground(
-  cmd: string,
-  args: { cwd: string; stdin?: string },
-): { bashId: string; logPath: string } | null {
-  let shellCmd: string;
-  let shellArgs: string[];
-  if (process.platform === "win32") {
-    try {
-      shellCmd = findGitBash();
-    } catch {
-      return null;
-    }
-    shellArgs = ["-c", cmd];
-  } else {
-    shellCmd = "bash";
-    shellArgs = ["-c", cmd];
-  }
-  // mkdir tmp/
-  try {
-    mkdirSync(path.join(args.cwd, "tmp"), { recursive: true });
-  } catch {
-    return null;
-  }
-  const bashId = `bgd-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-  const logPath = path.join(args.cwd, "tmp", `bash-${bashId}.log`);
-  // 先写头行(stdout/stderr 接续 append)
-  try {
-    writeFileSync(
-      logPath,
-      `# bashId=${bashId} cwd=${args.cwd} started=${new Date().toISOString()}\n`,
-    );
-  } catch {
-    return null;
-  }
-  // 打开 log file 以 append 模式给子进程写
-  let fd: number;
-  try {
-    fd = openSync(logPath, "a");
-  } catch {
-    return null;
-  }
-  // 把 stdio 重定向到 log 文件
-  let child;
-  try {
-    child = spawn(shellCmd, shellArgs, {
-      cwd: args.cwd,
-      env: { ...process.env },
-      stdio: ["pipe", fd, fd],
-      detached: true,
-      windowsHide: true,
-    });
-  } catch {
-    closeSync(fd);
-    return null;
-  }
-  if (args.stdin !== undefined && child.stdin) {
-    child.stdin.end(args.stdin);
-  } else {
-    child.stdin?.end();
-  }
-  try {
-    child.unref();
-  } catch {
-    // ignore
-  }
-  closeSync(fd);
-  if (!existsSync(logPath)) return null;
-  return { bashId, logPath };
-}
-
-/** 从本地 ExecutionEnv 派生 BashOperations(走 git-bash + child_process)。 */
+/** 从本地 ExecutionEnv 派生 BashOperations；后台入口不会绕过 Host process manager。 */
 function bashOpsFromLocalEnv(): BashOperations {
   const env = localExecutionEnv();
   const shell: Shell = env.shell;

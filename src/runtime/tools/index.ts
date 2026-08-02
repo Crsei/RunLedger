@@ -9,7 +9,7 @@
  *   - read  : 读文件,行/字节截断 + cat -n 行号 + mtime 去重缓存
  *   - write : 写文件,递归建目录
  *   - edit  : 多块 oldText → newText + replaceAll + findActualString
- *   - bash  : shell 执行,stdout/stderr 截断 + run_in_background + stdin + output_format
+ *   - bash  : 受治理 shell 执行,stdout/stderr 截断 + stdin + output_format；后台请求在 Host manager 接线前 fail closed
  *   - grep  : ripgrep / grep 查找 + afterContext + beforeContext + multiline + outputFormat
  *   - find  : fd / find glob
  *   - glob  : 第一方手写 ** 递归(无外部依赖)

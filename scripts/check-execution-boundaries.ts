@@ -10,12 +10,11 @@ import { join, relative, resolve } from "node:path";
 
 export interface ExecutionBoundaryViolation {
 	file: string;
-	kind: "raw-fs" | "raw-process" | "raw-network";
+	kind: "raw-fs" | "raw-process" | "raw-network" | "raw-background";
 }
 
 export const LEGACY_RUNTIME_TOOL_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
 	"src/runtime/tools": [
-		"bash.ts",
 		"edit.ts",
 		"glob.ts",
 		"ls.ts",
@@ -27,10 +26,31 @@ export const LEGACY_RUNTIME_TOOL_ALLOWLIST: Readonly<Record<string, readonly str
 	],
 };
 
+/**
+ * R0 之后只有这里列出的 backend 文件可以直接持有 child_process/PTY 句柄。
+ * 当前没有生产 backend，因此保持为空；新增条目必须是精确文件路径。
+ */
+export const MANAGED_PROCESS_BACKEND_ALLOWLIST: readonly string[] = [];
+
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
 	[/from [\"']node:fs(?:\/promises)?[\"']/, "raw-fs"],
 	[/from [\"']node:child_process[\"']/, "raw-process"],
 	[/\bfetch\s*\(/, "raw-network"],
+];
+
+const MANAGED_PROCESS_ROOTS = [
+	"src/runtime/tools",
+	"src/runtime/process",
+	"src/storage/process",
+	"src/tui",
+	"src/cli",
+] as const;
+
+const RAW_BACKGROUND_PATTERNS: readonly RegExp[] = [
+	/\bspawnBackground\b/u,
+	/\bdetached\s*:\s*true\b/u,
+	/\blogPath\b/u,
+	/(?:^|[\\/])tmp[\\/]bash-/u,
 ];
 
 function listTypeScriptFiles(directory: string): string[] {
@@ -56,6 +76,18 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 				const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 				const allowed = (LEGACY_RUNTIME_TOOL_ALLOWLIST[root] ?? []).includes(relativeFile.slice(`${root}/`.length));
 				if (!allowed) violations.push({ file: relativeFile, kind });
+			}
+		}
+	}
+	for (const root of MANAGED_PROCESS_ROOTS) {
+		for (const file of listTypeScriptFiles(join(repoRoot, root))) {
+			const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
+			const source = readFileSync(file, "utf8");
+			if (BOUNDARY_PATTERNS[1][0].test(source) && !MANAGED_PROCESS_BACKEND_ALLOWLIST.includes(relativeFile)) {
+				violations.push({ file: relativeFile, kind: "raw-process" });
+			}
+			if (RAW_BACKGROUND_PATTERNS.some((pattern) => pattern.test(source))) {
+				violations.push({ file: relativeFile, kind: "raw-background" });
 			}
 		}
 	}

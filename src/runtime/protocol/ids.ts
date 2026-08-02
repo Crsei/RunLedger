@@ -12,6 +12,7 @@ export const RUNTIME_ID_KINDS = [
 	"authority",
 	"tenant",
 	"principal",
+	"connection",
 	"session",
 	"goal",
 	"task",
@@ -28,6 +29,9 @@ export const RUNTIME_ID_KINDS = [
 	"resource",
 	"snapshot",
 	"command",
+	"execution",
+	"attempt",
+	"driver",
 	"receipt",
 	"runtime",
 	"memory",
@@ -44,6 +48,7 @@ export type RuntimeId<K extends RuntimeIdKind = RuntimeIdKind> = string & {
 export type AuthorityId = RuntimeId<"authority">;
 export type TenantId = RuntimeId<"tenant">;
 export type PrincipalId = RuntimeId<"principal">;
+export type ConnectionId = RuntimeId<"connection">;
 export type SessionId = RuntimeId<"session">;
 export type GoalId = RuntimeId<"goal">;
 export type TaskId = RuntimeId<"task">;
@@ -60,6 +65,9 @@ export type EventId = RuntimeId<"event">;
 export type ResourceId = RuntimeId<"resource">;
 export type SnapshotId = RuntimeId<"snapshot">;
 export type CommandId = RuntimeId<"command">;
+export type ExecutionId = RuntimeId<"execution">;
+export type AttemptId = RuntimeId<"attempt">;
+export type DriverId = RuntimeId<"driver">;
 export type ReceiptId = RuntimeId<"receipt">;
 export type RuntimeInstanceId = RuntimeId<"runtime">;
 export type MemoryId = RuntimeId<"memory">;

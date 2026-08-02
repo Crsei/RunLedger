@@ -4,8 +4,11 @@ import {
 	RUNLEDGER_FILE_MODE,
 	artifactRelativeLocator,
 	buildRunledgerLayout,
+	hostEndpointRelativeLocator,
+	hostStateRelativeLocator,
 	isContainedRuntimePath,
 	isRuntimeLocator,
+	processStateRelativeLocator,
 	resolveRunledgerHomeContract,
 	sessionRelativeLocator,
 	traceEventRelativeLocator,
@@ -99,5 +102,18 @@ describe("RunLedger single-home storage contract", () => {
 		expect(isRuntimeLocator({ ...locator, relativeLocator: "../secret" })).toBe(false);
 		expect(isRuntimeLocator({ ...locator, relativeLocator: "/tmp/secret" })).toBe(false);
 		expect(isRuntimeLocator({ ...locator, runledgerHome: "/home/alice/.runledger" })).toBe(false);
+	});
+
+	it("derives host and process state only from safe workspace and branded IDs", () => {
+		const workspaceKey = "ws-" + "a".repeat(64);
+		const executionId = createRuntimeId("execution", "layout");
+		const attemptId = createRuntimeId("attempt", "layout");
+		expect(hostEndpointRelativeLocator(workspaceKey)).toBe(`ipc/hosts/${workspaceKey}/endpoint.json`);
+		expect(hostStateRelativeLocator(workspaceKey)).toBe(`state/hosts/${workspaceKey}`);
+		expect(processStateRelativeLocator(workspaceKey, executionId, attemptId)).toBe(
+			`state/processes/${workspaceKey}/${executionId}/${attemptId}.json`,
+		);
+		expect(() => hostEndpointRelativeLocator("../escape")).toThrow();
+		expect(() => processStateRelativeLocator(workspaceKey, createRuntimeId("session", "wrong"), attemptId)).toThrow();
 	});
 });
