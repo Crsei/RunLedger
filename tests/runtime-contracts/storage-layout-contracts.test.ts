@@ -8,6 +8,7 @@ import {
 	isRuntimeLocator,
 	resolveRunledgerHomeContract,
 	sessionRelativeLocator,
+	traceEventRelativeLocator,
 	workspaceStorageKey,
 } from "../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
@@ -51,6 +52,7 @@ describe("RunLedger single-home storage contract", () => {
 		expect(layout.auth).toBe("/home/alice/.runledger/auth.json");
 		expect(layout.sessions).toBe("/home/alice/.runledger/sessions");
 		expect(layout.archivedSessions).toBe("/home/alice/.runledger/archived_sessions");
+		expect(layout.events).toBe("/home/alice/.runledger/events");
 		expect(layout.artifacts).toBe("/home/alice/.runledger/artifacts");
 		expect(layout.ipc).toBe("/home/alice/.runledger/ipc");
 		expect(layout.tmp).toBe("/home/alice/.runledger/tmp");
@@ -75,6 +77,9 @@ describe("RunLedger single-home storage contract", () => {
 			"archived_sessions/2026/08/01/session_fixture.jsonl",
 		);
 		expect(artifactRelativeLocator("d".repeat(64))).toBe(`artifacts/sha256/dd/${"d".repeat(64)}`);
+		expect(traceEventRelativeLocator(createRuntimeId("trace", "fixture"), "2026-08-01T12:34:56.000Z")).toBe(
+			"events/2026/08/01/trace_fixture.jsonl",
+		);
 	});
 
 	it("rejects escapes and absolute paths in durable locators", () => {

@@ -13,6 +13,7 @@ import {
 	type RuntimeId,
 	type SessionId,
 	type TenantId,
+	type TraceId,
 	type WorkspaceId,
 } from "../protocol/ids.ts";
 
@@ -60,6 +61,7 @@ export interface RunledgerLayout {
 	readonly agents: string;
 	readonly sessions: string;
 	readonly archivedSessions: string;
+	readonly events: string;
 	readonly sessionIndex: string;
 	readonly projects: string;
 	readonly artifacts: string;
@@ -83,6 +85,7 @@ export interface WorkspaceStorageIdentity {
 export type RuntimeLocatorObjectKind =
 	| "session"
 	| "archived_session"
+	| "trace"
 	| "artifact"
 	| "snapshot"
 	| "projection"
@@ -143,6 +146,7 @@ export function buildRunledgerLayout(home: string, flavor: RuntimePathFlavor): R
 		agents: paths.join(normalizedHome, "AGENTS.md"),
 		sessions: paths.join(normalizedHome, "sessions"),
 		archivedSessions: paths.join(normalizedHome, "archived_sessions"),
+		events: paths.join(normalizedHome, "events"),
 		sessionIndex: paths.join(normalizedHome, "session_index.jsonl"),
 		projects: paths.join(normalizedHome, "projects"),
 		artifacts: paths.join(normalizedHome, "artifacts"),
@@ -179,6 +183,14 @@ export function artifactRelativeLocator(digest: string): string {
 	return `artifacts/sha256/${digest.slice(0, 2)}/${digest}`;
 }
 
+export function traceEventRelativeLocator(traceId: TraceId, createdAt: string): string {
+	if (!isRuntimeId(traceId, "trace") || !isCanonicalUtcTimestamp(createdAt)) {
+		throw new Error("trace event locator requires a valid trace ID and canonical UTC timestamp");
+	}
+	const shard = `${createdAt.slice(0, 4)}/${createdAt.slice(5, 7)}/${createdAt.slice(8, 10)}`;
+	return `events/${shard}/${traceId}.jsonl`;
+}
+
 export function isContainedRuntimePath(home: string, target: string, flavor: RuntimePathFlavor): boolean {
 	const paths = pathApi(flavor);
 	if (!paths.isAbsolute(home) || !paths.isAbsolute(target)) return false;
@@ -190,7 +202,7 @@ export function isContainedRuntimePath(home: string, target: string, flavor: Run
 
 const RuntimeLocatorObjectKindSchema = Type.Unsafe<RuntimeLocatorObjectKind>({
 	type: "string",
-	enum: ["session", "archived_session", "artifact", "snapshot", "projection", "project", "receipt"],
+	enum: ["session", "archived_session", "trace", "artifact", "snapshot", "projection", "project", "receipt"],
 });
 
 export const RuntimeLocatorSchema = Type.Object(

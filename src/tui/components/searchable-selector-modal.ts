@@ -1,6 +1,7 @@
 import type { Component, SelectItem } from "../index.ts";
 import { matchesKey } from "../index.ts";
 import { fitLinesToWidth } from "./render-width.ts";
+import type { PresentationBlock } from "../presentation.ts";
 
 export interface SearchableSelectorModalProps {
   title: string;
@@ -74,6 +75,16 @@ export class SearchableSelectorModal implements Component {
     if (items.length === 0) lines.push("  No matching items");
     else lines.push(`  (${this.selectedIndex + 1}/${items.length})`);
     return fitLinesToWidth(lines, width);
+  }
+
+  present(): PresentationBlock[] {
+    return [{
+      kind: "select",
+      title: this.props.title,
+      query: this.query,
+      options: this.filtered(),
+      selectedIndex: this.selectedIndex,
+    }];
   }
 
   private filtered(): SelectItem[] {

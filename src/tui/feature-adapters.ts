@@ -12,7 +12,7 @@
  *
  * 本文件本期不主动被任何主代码 import(M0–M7 尚未开始);M8 任务到来时,启用以下顺序:
  *   1. 由 InteractiveMode 顶层 import 取 adapter;
- *   2. 切换形态由 env flag(本期)或编译期 `feature()`(若 pi-tui 提供)决定;
+ *   2. 切换形态由 env flag 或未来的编译期 feature gate 决定;
  *   3. 主组件树引用 adapter,不直接 import 真实特性模块。
  *
  * 本期形式:占位 type + no-op 实现,等待落地。

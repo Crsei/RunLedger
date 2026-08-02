@@ -90,6 +90,8 @@ development-doc/tui/            本计划所在目录
 
 ## 4. 文档导航
 
+> 本文的 pi-tui 内容保留为历史设计输入。当前 renderer 迁移与状态只以 `17-opentui-refactor-plan.md` 为权威；迁移后的流式渲染、长会话性能与交互体验只以 `18-opentui-streaming-performance-ux-plan.md` 为权威。
+
 | 文档 | 内容 |
 |------|------|
 | `00-overview.md` | 本文:目标、目录、阶段、阅读顺序 |
@@ -103,8 +105,11 @@ development-doc/tui/            本计划所在目录
 | `08-cross-project-lessons.md` | 从 `claude-code-bun` REPL 提取的、与 TUI 框架无关的设计原则集结,作参照用 |
 | `09-remote-control-roadmap.md` | 进程级 singleton handle + 远程控制桥的远期设计,本期 M0–M7 不实现 |
 | `10-documentation-update-plan.md` | `08` / `09` 两份文档的历史更新计划与验收边界 |
+| `reference/00-opentui-component-index.md` | OpenTUI 官方 18 个组件的中文能力索引、API 形态与 RunLedger 适用场景 |
+| `17-opentui-refactor-plan.md` | pi-tui → OpenTUI imperative core 实现、PTY/native frame 与全仓门禁证据 |
+| `18-opentui-streaming-performance-ux-plan.md` | OpenTUI 迁移后的增量 timeline、delta 合并、长会话窗口化、背压与响应式交互体验补充计划 |
 
-阅读顺序:`00 → 01 → 02 → 03`(主路径)→ `04/05/06`(渲染与定制)→ `07`(落地节奏)→ `08/09`(跨项目参照与远期设计,参考性阅读)。`10` 是历史更新计划,仅在追溯设计来源或验收边界时阅读。
+阅读顺序:`00 → 01 → 02 → 03`(原 pi-tui 设计主路径)→ `04/05/06`(原渲染与定制)→ `07`(历史落地节奏)→ `08/09`(跨项目参照与远期设计)。`10` 是历史更新计划。OpenTUI 重构先以 `17-opentui-refactor-plan.md` 为当前执行入口，并从 `reference/00-opentui-component-index.md` 查组件能力；Plan 17 P8 获得证据后，再按 `18-opentui-streaming-performance-ux-plan.md` 执行性能与体验阶段。计划和参考文档都不能冒充已实现状态。
 
 ---
 

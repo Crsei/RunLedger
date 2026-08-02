@@ -1,5 +1,5 @@
 /**
- * 主题工厂:把 Theme 色槽转为 pi-tui 各组件所需的 ANSI 主题函数。
+ * 主题工厂：把 Theme 色槽转为 pure component 所需的 ANSI presentation 函数。
  *
  * 对照 development-doc/tui/05-theme.md §3。
  *

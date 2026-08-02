@@ -17,6 +17,7 @@
  */
 
 import type { Component } from "../index.ts";
+import type { PresentationBlock } from "../presentation.ts";
 import { fitToWidth } from "./render-width.ts";
 
 export class ChatContainer implements Component {
@@ -57,5 +58,21 @@ export class ChatContainer implements Component {
       }
     }
     return lines;
+  }
+
+  present(width: number): PresentationBlock[] {
+    const blocks: PresentationBlock[] = [];
+    for (const component of this.children) {
+      try {
+        blocks.push(...(component.present?.(width) ?? [{
+          kind: "text",
+          content: component.render(width).map((line) => fitToWidth(line, width)).join("\n"),
+        }]));
+      } catch (error) {
+        process.stderr.write(`[chat-container] child projection failed: ${String(error)}\n`);
+        blocks.push({ kind: "text", content: fitToWidth("[chat:child-render-error]", width) });
+      }
+    }
+    return blocks;
   }
 }

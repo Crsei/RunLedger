@@ -1,4 +1,4 @@
-import { sliceByColumn, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { sliceByColumn, truncateToWidth, visibleWidth } from "../primitives.ts";
 
 /** 把任意 ANSI/CJK 文本限制在终端列宽内。 */
 export function fitToWidth(line: string, width: number): string {

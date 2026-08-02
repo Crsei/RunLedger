@@ -31,6 +31,7 @@ import { InteractiveSessionController } from "../runtime/interactive-session-con
 import { parseArgs, USAGE } from "./args.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
+import { composeCliTraceRecorderFactory } from "./trace-config.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -70,6 +71,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const cwd = process.cwd();
   const { layout } = await resolveRunledgerHome();
   const settings = await loadProjectSettings({ layout });
+  const traceRecorderFactory = composeCliTraceRecorderFactory(layout, settings);
 
   let mgr: SessionManager;
   if (args.session) {
@@ -121,6 +123,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         model: args.model,
         thinkingLevel: args.thinking,
       },
+      traceRecorderFactory,
     });
     const interactive = new InteractiveMode({ controller });
     const onSigint = (): void => {

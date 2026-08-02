@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import type { ModelThinkingLevel } from "../types.ts";
 import type { QueueMode } from "../runtime/types.ts";
 import type { RunledgerLayout } from "../runtime/contracts/public.ts";
+import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
@@ -40,7 +41,25 @@ export interface ProjectSettings {
 	enabledModels?: string[];
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
+	/** 用户级本地 trace 记录策略；workspace settings 不拥有该 authority。 */
+	recording?: RecordingSettings;
 }
+
+export type RecordingMode = "off" | "events" | "events_and_artifacts";
+
+export type RecordingFailurePolicy = "best_effort" | "fail_closed";
+
+export interface RecordingSettings {
+	readonly mode: RecordingMode;
+	readonly failurePolicy: RecordingFailurePolicy;
+}
+
+export type EffectiveRecordingConfig = Readonly<RecordingSettings>;
+
+export const DEFAULT_RECORDING_CONFIG: EffectiveRecordingConfig = Object.freeze({
+	mode: "off",
+	failurePolicy: "best_effort",
+});
 
 /** 用于边界检查的输入类型；sessionDir 只能被识别为拒绝字段，不能被持久化。 */
 export type ProjectSettingsInput = ProjectSettings & { readonly sessionDir?: unknown };
@@ -88,7 +107,7 @@ export async function loadProjectSettings(
 	} catch {
 		return {};
 	}
-	return parseSettings(text, path);
+	return parseSettings(text, path, options.workspaceKey === undefined);
 }
 
 /** 同步加载 canonical settings。 */
@@ -103,7 +122,7 @@ export function loadProjectSettingsSync(
 	} catch {
 		return {};
 	}
-	return parseSettings(text, path);
+	return parseSettings(text, path, options.workspaceKey === undefined);
 }
 
 /** 写入 canonical settings；sessionDir 在触及目标前被结构化拒绝。 */
@@ -112,16 +131,16 @@ export async function saveProjectSettings(
 	settings: ProjectSettingsInput,
 ): Promise<void> {
 	const path = getSettingsPath(options);
-	assertSupportedSettings(path, settings);
+	assertSupportedSettings(options, path, settings);
 	await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
 	await fs.writeFile(
 		path,
-		JSON.stringify(sanitizeProjectSettings(settings as Record<string, unknown>), null, 2) + "\n",
+		JSON.stringify(sanitizeProjectSettings(settings as Record<string, unknown>, options.workspaceKey === undefined), null, 2) + "\n",
 		SETTINGS_WRITE_OPTS,
 	);
 }
 
-function parseSettings(text: string, path: string): ProjectSettings {
+function parseSettings(text: string, path: string, allowRecording: boolean): ProjectSettings {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
@@ -133,17 +152,39 @@ function parseSettings(text: string, path: string): ProjectSettings {
 		return {};
 	}
 	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-	return sanitizeProjectSettings(parsed as Record<string, unknown>);
+	const raw = parsed as Record<string, unknown>;
+	if (
+		allowRecording &&
+		Object.prototype.hasOwnProperty.call(raw, "recording") &&
+		sanitizeRecordingSettings(raw.recording) === undefined
+	) {
+		process.stderr.write(`[runledger] invalid_recording_settings at ${path}; recording disabled\n`);
+	}
+	return sanitizeProjectSettings(raw, allowRecording);
 }
 
-function assertSupportedSettings(path: string, settings: ProjectSettingsInput): void {
+function assertSupportedSettings(
+	options: SettingsStoreOptions,
+	path: string,
+	settings: ProjectSettingsInput,
+): void {
 	if (Object.prototype.hasOwnProperty.call(settings, "sessionDir")) {
 		throw new SettingsStorageError("unsupported_setting", path, "sessionDir");
+	}
+	if (options.workspaceKey !== undefined && Object.prototype.hasOwnProperty.call(settings, "recording")) {
+		throw new SettingsStorageError("unsupported_setting", path, "recording");
+	}
+	if (
+		options.workspaceKey === undefined &&
+		Object.prototype.hasOwnProperty.call(settings, "recording") &&
+		sanitizeRecordingSettings(settings.recording) === undefined
+	) {
+		throw new SettingsStorageError("unsupported_setting", path, "recording");
 	}
 }
 
 /** 把裸 JSON 对象清洗成 canonical ProjectSettings，丢弃 legacy/未知字段。 */
-function sanitizeProjectSettings(raw: Record<string, unknown>): ProjectSettings {
+function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = true): ProjectSettings {
 	const out: ProjectSettings = {};
 	if (typeof raw.provider === "string" && raw.provider.length > 0) out.provider = raw.provider;
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
@@ -161,7 +202,35 @@ function sanitizeProjectSettings(raw: Record<string, unknown>): ProjectSettings 
 	if (raw.followUpMode === "one-at-a-time" || raw.followUpMode === "all") {
 		out.followUpMode = raw.followUpMode;
 	}
+	if (allowRecording) {
+		const recording = sanitizeRecordingSettings(raw.recording);
+		if (recording) out.recording = recording;
+	}
 	return out;
+}
+
+/** 将缺失或非法配置解析为安全且不可变的启动快照。 */
+export function resolveRecordingConfig(settings: { readonly recording?: unknown }): EffectiveRecordingConfig {
+	return Object.freeze(sanitizeRecordingSettings(settings.recording) ?? { ...DEFAULT_RECORDING_CONFIG });
+}
+
+export function recordingConfigDigest(config: EffectiveRecordingConfig): string {
+	return canonicalDigest({ mode: config.mode, failurePolicy: config.failurePolicy });
+}
+
+function sanitizeRecordingSettings(value: unknown): RecordingSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	if (!isRecordingMode(raw.mode) || !isRecordingFailurePolicy(raw.failurePolicy)) return undefined;
+	return { mode: raw.mode, failurePolicy: raw.failurePolicy };
+}
+
+function isRecordingMode(value: unknown): value is RecordingMode {
+	return value === "off" || value === "events" || value === "events_and_artifacts";
+}
+
+function isRecordingFailurePolicy(value: unknown): value is RecordingFailurePolicy {
+	return value === "best_effort" || value === "fail_closed";
 }
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([

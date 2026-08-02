@@ -1,6 +1,5 @@
 /**
- * RunLedger app.* 键位扩展:在 pi-tui 默认 KeybindingsManager 之外,
- * 通过 TUI.addInputListener 拦截若干全局键位,映射到 app 动作。
+ * RunLedger app.* 键位扩展：通过 TUI.addInputListener 拦截全局键位并映射到 app 动作。
  *
  * 对照 development-doc/tui/06-keybindings.md §3。
  *
@@ -11,8 +10,7 @@
  *   - 不命中返回 undefined,继续走默认链路。
  *
  * Tricky:
- *   - pi-tui Editor 的 handleInput 在 TUI.start() 后已成为 listener chain 的一员,
- *     外部 addInputListener 监听顺序决定于注册顺序;
+ *   - OpenTUI KeyEvent 先进入全局 listener chain，再交给当前 overlay/editor；
  *   - 我们的 listener 必须在 InteractiveMode.run() 之前注册,以保证先于 Editor 拦截;
  *   - Esc 单按下在 Editor 中通常 abort autocomplete,我们不应抢;只在非 focus 编辑器状态下拦;
  *     M6 阶段简化:不抢 Esc,只抢 Ctrl+C / Ctrl+D / Ctrl+L。
@@ -21,8 +19,7 @@
 import { matchesKey } from "../index.ts";
 
 /**
- * 本地 InputListener 描述(pi-tui 顶层未 re-export,我们在本地复述确保签名兼容)。
- * 与 pi-tui dist/tui.d.ts InputListenerResult 同形:
+ * 本地 InputListener 保持窄接口，避免 renderer 类型扩散到业务键位层：
  *   (data: string) => {consume?: boolean; data?: string} | undefined
  */
 export type InputListener = (data: string) =>

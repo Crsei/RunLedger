@@ -89,6 +89,10 @@ export async function runAgentLoop(
   const sessionStart = Date.now();
   const sessionId = ledger?.sessionId ?? newId();
 
+  if (config.traceRecorder) {
+    await config.traceRecorder.startRun({ agentId: sessionId });
+  }
+
   // emit + ledger 联合写入辅助
   const fire = async (
     ev: AgentEvent,
@@ -101,6 +105,9 @@ export async function runAgentLoop(
         sessionId,
       };
       await ledger.append(entry);
+    }
+    if (config.traceRecorder) {
+      await config.traceRecorder.recordAgentEvent(ev);
     }
   };
 
@@ -202,6 +209,10 @@ export async function runAgentLoop(
       tools: context.tools,
     };
 
+    const traceModel = config.traceRecorder
+      ? await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext })
+      : undefined;
+
     // 2. 取 streamFn
     const fn = streamFn;
     if (!fn) {
@@ -294,6 +305,9 @@ export async function runAgentLoop(
       model: providerMessage?.model,
       timestamp: providerMessage?.timestamp,
     };
+    if (traceModel && config.traceRecorder) {
+      await config.traceRecorder.finishModel(traceModel, providerMessage);
+    }
     if (messageOpen || providerMessage) {
       const ts = Date.now();
       await fire(

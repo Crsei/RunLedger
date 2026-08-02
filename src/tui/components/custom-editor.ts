@@ -1,10 +1,10 @@
 /**
- * CustomEditor —— RunLedger TUI 的输入框,扩展 pi-tui Editor 装配 app.* 全局动作。
+ * CustomEditor —— RunLedger TUI 的输入模型，扩展自有 Editor primitive 装配 app.* 全局动作。
  *
  * 对照 development-doc/tui/02-component-spec.md §10。
  *
  * 设计:
- *   - extends pi-tui Editor,保留所有原生编辑能力;
+ *   - extends RunLedger Editor primitive，OpenTUI Textarea 由 renderer adapter 投影;
  *   - 本 M1 阶段只装配构造参数(传入 tui / theme.createEditorTheme() / paddingX=0);
  *   - 提交路径:挂在 onSubmit 回调,由 InteractiveMode 装配时接通 agent.prompt;
  *   - 键位扩展(Ctrl+C / Ctrl+D / Esc+Q / Ctrl+L)在 M6 接入,
@@ -37,7 +37,7 @@ export interface CustomEditorProps {
   paddingX?: number;
 }
 
-/** 包装 pi-tui EditorTheme,从 Theme 取 border / selectList 主题。 */
+/** 从 Theme 生成 RunLedger editor presentation 主题。 */
 export function makeEditorTheme(theme: Theme, selectList: SelectListTheme): EditorTheme {
   return {
     borderColor: (str: string) => str,

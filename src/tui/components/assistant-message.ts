@@ -7,7 +7,7 @@
  *   - 持有累积文本(textOnly string);
  *   - 接 setPartial 接口由 InteractiveMode 在 message_update 路径调用;
  *   - finalize 在 message_end 路径调用,清理 streaming hint / 状态;
- *   - 渲染委托给 pi-tui Markdown(MarkdownTheme 由 theme factory 提供);
+ *   - Markdown 保持 pure presentation，最终由 OpenTUI adapter 投影;
  *   - render(width) 失败兜底:Markdown 抛错时回退纯文本输出,记 stderr,不外抛(对照 02 §1)。
  */
 
@@ -16,6 +16,7 @@ import type { AssistantMessage, TextContent, ThinkingContent, ToolCall } from ".
 import type { Theme } from "../theme/theme.ts";
 import { makeMarkdownTheme } from "../theme/factories.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
+import type { PresentationBlock } from "../presentation.ts";
 
 export interface AssistantMessageComponentProps {
   theme: Theme;
@@ -52,6 +53,7 @@ export class AssistantMessageComponent implements Component {
   private readonly markdown: Markdown;
   private readonly theme: Theme;
   private thinkingExpanded = false;
+  private streaming = true;
 
   constructor(props: AssistantMessageComponentProps) {
     this.theme = props.theme;
@@ -71,7 +73,7 @@ export class AssistantMessageComponent implements Component {
 
   /** 流式结束;通知 Markdown 重新计算布局(M2 阶段 noop,Markdown 无独立处理)。 */
   finalize(): void {
-    // M2 noop
+    this.streaming = false;
   }
 
   toggleThinking(): void {
@@ -107,5 +109,17 @@ export class AssistantMessageComponent implements Component {
       const text = extractText(this.partial);
       return text.length === 0 ? [] : fitLinesToWidth(text.split("\n"), width);
     }
+  }
+
+  present(width: number): PresentationBlock[] {
+    if (!this.partial) return [];
+    const rendered = this.render(width);
+    const markdownText = extractText(this.partial);
+    const markdownLineCount = this.markdown.render(width).length;
+    const thinkingLines = markdownLineCount > 0 ? rendered.slice(0, -markdownLineCount) : rendered;
+    const blocks: PresentationBlock[] = [];
+    if (thinkingLines.length > 0) blocks.push({ kind: "text", content: thinkingLines.join("\n") });
+    if (markdownText.length > 0) blocks.push({ kind: "markdown", content: markdownText, streaming: this.streaming });
+    return blocks;
   }
 }

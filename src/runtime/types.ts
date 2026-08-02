@@ -38,6 +38,7 @@ import type {
 import type { Static, TSchema } from "typebox";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
+import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
 
 // ===== 工具 =====
 
@@ -358,6 +359,8 @@ export interface AgentLoopConfig {
   ) => Promise<AfterToolCallResult | void> | AfterToolCallResult | void;
   /** 可选:LedgerSink,直接挂入类型契约;agent-loop 把事件与 entry 联合写入。 */
   ledger?: LedgerSink;
+  /** 可选:Runtime Trace recorder;不启用时 agent loop 保持既有 ledger-only 行为。 */
+  traceRecorder?: RuntimeTraceRecorder;
 }
 
 /** beforeToolCall / afterToolCall 共享的上下文,对齐 pi Before/AfterToolCallContext。 */

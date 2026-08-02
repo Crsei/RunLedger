@@ -1,6 +1,7 @@
 import type { Component } from "../index.ts";
 import { matchesKey } from "../index.ts";
 import { fitLinesToWidth } from "./render-width.ts";
+import type { PresentationBlock } from "../presentation.ts";
 
 export interface AuthInputModalProps {
   title: string;
@@ -55,5 +56,15 @@ export class AuthInputModal implements Component {
       `> ${shown || placeholder}`,
       "Enter confirm · Esc cancel",
     ], width);
+  }
+
+  present(): PresentationBlock[] {
+    return [{
+      kind: "input",
+      title: this.props.title,
+      message: this.props.message,
+      value: this.props.secret ? "•".repeat(Array.from(this.value).length) : this.value,
+      placeholder: this.props.placeholder,
+    }];
   }
 }

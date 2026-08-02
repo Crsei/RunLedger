@@ -46,6 +46,14 @@
 总计 35 测试全绿,`npm run check` 与 `npm test` 应同时通过再行 commit。`examples/run.ts` 已接入真实 deepseek-v4-pro(走现有 pi-ai `openai-completions` adapter)演示 deepseek 完成 turn1 toolUse → turn2 stop 全链路。
 `src/_legacy/` 目录已清空,从 tsconfig exclude 中移除;旧 barrel 已删除,公共出口只保留当前实现。
 
+#### 1.2.y Runtime Trace 本地 Store 与配置（2026-08-02）
+
+- `src/runtime/trace/` 已实现 append-only hash-chain Event Store、SHA-256 CAS Artifact Store、Trace Tree projection、mode-aware `RuntimeTraceRecorder` 与 per-prompt `TraceRecorderFactory`；
+- 用户级 `<runledgerHome>/settings.json#recording` 支持 `mode=off|events|events_and_artifacts` 与 `failurePolicy=best_effort|fail_closed`，默认 `off + best_effort`；workspace settings、项目 `.runledger/`、CLI flag 和额外环境变量不拥有 recording authority；
+- Event Store 写入 `events/YYYY/MM/DD/<traceId>.jsonl`；Artifact 与 metadata 分别写入 `artifacts/sha256/...` 和 `artifact-metadata/sha256/...`；
+- 标准 CLI 已接入本地 recorder factory；canonical user settings 显式选择 `events_and_artifacts` 时保存安全清洗后的正文，`events` 只记录 digest/size/media type；Permission/Approval/Sandbox 的正文授权策略与 receipt 等具体能力落实后再由安全专项接线，当前不作为本地记录前置条件；
+- Opik SDK、网络 exporter 与 durable outbox 尚未实现，计划见 `development-doc/runtime/trace/phase-04-opik-exporter-tree.md`。
+
 #### 1.2.x Storage/CLI canonical user home 与 CLI 入口（S0–S5，2026-08-02）
 
 当前 Storage/CLI authority 已迁移到单一用户级 `RunledgerLayout`：`RUNLEDGER_DIR`（必须是既有绝对目录）或默认 `<用户主目录>/.runledger`，由 composition root 只解析一次。canonical settings/auth/AGENTS 位于 `layout.settings`、`layout.auth`、`layout.agents`；workspace settings 位于受校验的 `layout.projects/<workspace-key>/settings.json`；session 只写 `layout.sessions/YYYY/MM/DD/<session-id>.jsonl`，文件默认 `0600`、目录默认 `0700`。
@@ -81,7 +89,7 @@
 
 - `path-utils.test.ts` —— encodeCwd / safeIso / buildSessionFileName 跨平台(10 测试)
 - `paths.test.ts` —— 历史 source locator helper(7 测试)
-- `settings-manager.test.ts` —— canonical load/sync/save + legacy 字段拒绝 + 0o600 mode(9 测试)
+- `settings-manager.test.ts` —— canonical load/sync/save + recording authority/default/digest + legacy 字段拒绝 + 0o600 mode(15 测试)
 - `session-manager.test.ts` —— create/open/continueRecent/forkFrom/list 跨场景(13 测试)
 
 `src/cli/` 当前形态:
@@ -96,8 +104,9 @@
 
 - `args.test.ts` —— parseArgs 全旗 + error 通道 + 未知兜底(23 测试)
 - `main.test.ts` / `migrate.test.ts` —— 早期退出、legacy authority 负向路径与 destructive migrate 通过 spawnSync 真跑 cli.ts；真 TUI 路径因 stdin 阻塞留 manual smoke test。
+- `trace-config.test.ts` —— CLI 默认关闭本地记录，并在用户显式配置后启用工具正文 Artifact 模式。
 
-当前 `npm test` 为 64 files / 368 tests 全绿。`npm run check` 与 `npm test` 应同时通过再行 commit。
+当前 `npm test` 为 Vitest 73 files / 401 tests，加 Bun OpenTUI 2 files / 3 tests / 36 assertions 全绿。`npm run check`、`npm test` 与 `npm run build` 应同时通过再行 commit。
 
 `npm link` 后 PATH 上的 `runledger` 命令可直接打开 TUI；旧根外 session path 不再直接 open/fork，迁移必须显式使用：
 `runledger --help` / `runledger --version` / `runledger` / `runledger -c` / `runledger --resume` / `runledger migrate --source <path> --confirm-delete`。

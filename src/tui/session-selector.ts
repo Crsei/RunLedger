@@ -8,7 +8,7 @@ interface SessionSelectorUi {
   hideOverlay(): void;
   requestRender(force?: boolean): void;
   showOverlay(component: SearchableSelectorModal, options: { anchor: "bottom-left" }): void;
-  start(): void;
+  start(): void | Promise<void>;
   stop(): void;
 }
 
@@ -56,6 +56,6 @@ export async function selectSessionInTui(
       onCancel: () => void finish(undefined),
     });
     ui.showOverlay(modal, { anchor: "bottom-left" });
-    ui.start();
+    void Promise.resolve(ui.start()).catch(() => finish(undefined));
   });
 }

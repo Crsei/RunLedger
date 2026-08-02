@@ -7,12 +7,12 @@
  *   - env 覆盖 RUNLEDGER_THEME_<KEY> 在 M6 接入,本期占位函数 noop;
  *   - 中文注释与色槽保持简洁技术化,不堆形容词。
  *
- * 本期只落 dark 一份占位;light 与 OSC 11 自动切换在 M6 接入。
+ * dark/light 由 OpenTUI theme_mode 事件切换，不再保留第二套终端探测 authority。
  */
 
 /** ANSI 16 色基础槽 + accent 字符变体,共 20 项(对照 05-theme.md §3 表)。 */
 export interface Theme {
-  /** 8 个基础前景槽(对照 pi-tui SelectTheme/EditorTheme 等的命名风格) */
+  /** 8 个基础前景槽。 */
   primary: string;
   secondary: string;
   accent: string;
@@ -40,7 +40,7 @@ export interface Theme {
 /** 本期支持的预设名;light 与 auto 在 M6 接入。 */
 export type ThemeName = "dark" | "light";
 
-/** dark 主题硬编码占位;色值保持与 pi-tui 默认 dark 一致以便首屏不刺眼。 */
+/** dark 主题默认色值。 */
 const DARK_THEME: Theme = {
   primary: "#e6e6e6",
   secondary: "#a0a0a0",

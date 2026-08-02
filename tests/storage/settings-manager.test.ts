@@ -3,11 +3,14 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	loadProjectSettings,
 	loadProjectSettingsSync,
+	recordingConfigDigest,
+	resolveRecordingConfig,
 	saveProjectSettings,
+	SettingsStorageError,
 } from "../../src/storage/settings-manager.ts";
 import { buildRunledgerLayout, type RunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
 
@@ -59,6 +62,64 @@ describe("loadProjectSettings", () => {
 			theme: "dark",
 			enabledModels: ["claude-sonnet-4-5", "claude-haiku-4-5"],
 		});
+	});
+
+	it("加载用户级 recording 配置", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(
+			layout.settings,
+			JSON.stringify({
+				recording: {
+					mode: "events",
+					failurePolicy: "fail_closed",
+					unknownField: true,
+				},
+			}),
+			"utf8",
+		);
+
+		expect(await loadProjectSettings({ layout })).toEqual({
+			recording: { mode: "events", failurePolicy: "fail_closed" },
+		});
+	});
+
+	it("recording 缺失或非法时解析为安全默认值", async () => {
+		expect(resolveRecordingConfig({})).toEqual({
+			mode: "off",
+			failurePolicy: "best_effort",
+		});
+		expect(resolveRecordingConfig({
+			recording: { mode: "invalid", failurePolicy: "invalid" },
+		} as never)).toEqual({
+			mode: "off",
+			failurePolicy: "best_effort",
+		});
+	});
+
+	it("加载非法 recording 时输出有界诊断且不回显原值", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({
+			recording: { mode: "secret-invalid-mode", failurePolicy: "best_effort" },
+		}), "utf8");
+		const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+		expect(await loadProjectSettings({ layout })).toEqual({});
+		const diagnostic = write.mock.calls.map((call) => String(call[0])).join("");
+		expect(diagnostic).toContain("invalid_recording_settings");
+		expect(diagnostic).not.toContain("secret-invalid-mode");
+		write.mockRestore();
+	});
+
+	it("为有效 recording 快照生成稳定 digest", () => {
+		const config = resolveRecordingConfig({
+			recording: { mode: "events", failurePolicy: "best_effort" },
+		});
+		expect(recordingConfigDigest(config)).toMatch(/^[a-f0-9]{64}$/u);
+		expect(recordingConfigDigest(config)).toBe(recordingConfigDigest({ ...config }));
+		expect(recordingConfigDigest(config)).not.toBe(recordingConfigDigest({
+			mode: "off",
+			failurePolicy: "best_effort",
+		}));
 	});
 
 	it("损坏 JSON 回退空 settings,不抛错", async () => {
@@ -134,5 +195,27 @@ describe("saveProjectSettings", () => {
 		await saveProjectSettings({ layout, workspaceKey: "ws-fixture" }, { theme: "dark" });
 		expect(existsSync(join(layout.projects, "ws-fixture", "settings.json"))).toBe(true);
 		expect(existsSync(join(cwd, ".runledger"))).toBe(false);
+	});
+
+	it("拒绝在 workspace settings 保存 recording authority", async () => {
+		await expect(saveProjectSettings(
+			{ layout, workspaceKey: "ws-fixture" },
+			{ recording: { mode: "events", failurePolicy: "best_effort" } },
+		)).rejects.toMatchObject<Partial<SettingsStorageError>>({
+			code: "unsupported_setting",
+			field: "recording",
+		});
+		expect(existsSync(join(layout.projects, "ws-fixture", "settings.json"))).toBe(false);
+	});
+
+	it("拒绝保存非法用户级 recording 值", async () => {
+		await expect(saveProjectSettings(
+			{ layout },
+			{ recording: { mode: "invalid", failurePolicy: "best_effort" } } as never,
+		)).rejects.toMatchObject<Partial<SettingsStorageError>>({
+			code: "unsupported_setting",
+			field: "recording",
+		});
+		expect(existsSync(layout.settings)).toBe(false);
 	});
 });

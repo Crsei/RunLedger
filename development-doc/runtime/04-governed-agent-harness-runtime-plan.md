@@ -411,6 +411,8 @@ daemon、transport、subscription worker、composition root、policy resolver、
 │   └── YYYY/MM/DD/*.jsonl
 ├── archived_sessions/
 │   └── YYYY/MM/DD/*.jsonl
+├── events/
+│   └── YYYY/MM/DD/*.jsonl
 ├── session_index.jsonl
 ├── projects/
 │   └── <workspace-key>/settings.json
@@ -431,6 +433,7 @@ daemon、transport、subscription worker、composition root、policy resolver、
 - `settings.json`、`auth.json` 和 `AGENTS.md` 是用户级入口;workspace 特定设置只放在 `projects/<workspace-key>/settings.json`。
 - `<workspace-key>` 必须由 canonical `WorkspaceRef` 的非敏感、path-safe digest key 派生;精确算法与 golden fixture 在 C3 冻结。原始 cwd 只写入受约束 metadata,不得直接编码成另一个目录根或依赖目录名恢复 workspace identity。
 - active session 按创建时间的 UTC `YYYY/MM/DD` 分片。日期分片只用于查找和文件数量控制;session identity 来自 canonical `sessionId`,移动到 `archived_sessions/` 不得改变 identity 或内容语义。
+- trace Event Store 按创建时间使用同一 UTC 分片规则；每个 `traceId` 对应独立 append-only JSONL hash chain，不能写入 `projections/` 或项目目录。
 - `archived_sessions/` 保存耐久归档,不是 deletion tombstone;删除、retention decision 和 external acknowledgement 仍按 §5.6 的独立 contract 表达。
 - `session_index.jsonl`、`snapshots/`、`projections/` 和 `cache/` 可以从 canonical durable records 重建,不得成为唯一历史、权限真源或完成证明。
 - `artifacts/sha256/<prefix>/<digest>` 是内容寻址路径;metadata、授权、redaction、retention 和 external receipt 分离保存在受 schema 约束的记录中,不能从文件存在推导授权或完成。
@@ -545,10 +548,11 @@ daemon、transport、subscription worker、composition root、policy resolver、
 | Provider/API/Auth/catalog 行为 | [`providers/01-pi-ai-migration-plan.md`](../providers/01-pi-ai-migration-plan.md) 与当前代码/tests | model stream/compatibility bridge contract |
 | 现行 agent-loop、Agent、ledger、stdlib tools | `01`–`03` 历史计划、`AGENTS.md` 与当前代码/tests | 不由本计划改写其行为状态 |
 | 用户级 home 创建、旧目录 destructive migration、CLI 参数弃用 | [`storage-cli/02-user-home-migration-handoff.md`](../storage-cli/02-user-home-migration-handoff.md);现行旧行为见 [`storage-cli/01-project-layout-cli-plan.md`](../storage-cli/01-project-layout-cli-plan.md) | root/layout/permission/path-containment contract |
+| Local Runtime Host、多客户端 Control Plane、managed background terminal | [`05-multi-client-background-terminal-refactor-plan.md`](05-multi-client-background-terminal-refactor-plan.md) | command/query/ref/event/receipt 与保存位置 contract |
 | Event Store writer/replay/reducer/recovery | 当前无本计划授权;实现前必须建立独立行为计划 | event/receipt/query ports |
 | Artifact CAS/redaction/retention/GC | 当前无本计划授权;实现前必须建立独立行为计划 | artifact/ref/intent/receipt ports |
 | Orchestrator/Verification/Multi-Agent | 当前无本计划授权;实现前必须建立独立行为计划 | goal/task/agent/evidence 被动合同 |
-| Daemon/Control Plane/Forge/Human Gate | 当前无本计划授权;实现前必须建立独立行为计划 | command/query/composition/proposal ports |
+| 其他 Daemon/Control Plane/Forge/Human Gate | 除 `05` 明确拥有的本地 Host/process surface 外当前无本计划授权;实现前必须建立独立行为计划 | command/query/composition/proposal ports |
 | Telemetry exporter/remote executor/lifecycle service | 当前无本计划授权;安全执行部分仍受专项约束 | manifest/delivery/attestation/lifecycle refs |
 | TUI/CLI/IDE/CI client | 各产品专项或未来独立计划 | 只消费相同 public contract |
 

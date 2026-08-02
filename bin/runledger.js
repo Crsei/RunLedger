@@ -1,9 +1,10 @@
-#!/usr/bin/env node
-/**
- * `runledger` CLI shim —— 加载 TypeScript 编译后的 dist/cli/cli.js。
- *
- * npm link / npm install -g 只注册这个稳定入口;运行时不依赖 tsx 或 src/。
- * 发布或重新链接前必须先执行 npm run build。
- */
+#!/bin/sh
+set -eu
 
-import "../dist/cli/cli.js";
+if ! command -v bun >/dev/null 2>&1; then
+  echo "[runledger] Bun >= 1.3.0 is required for the OpenTUI renderer. Install Bun and retry." >&2
+  exit 127
+fi
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec bun "$script_dir/../dist/cli/cli.js" "$@"

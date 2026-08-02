@@ -1,5 +1,5 @@
 /**
- * SelectorModal —— 通用 list 选择模态,把 pi-tui SelectList 包成可挂载的 Overlay 组件。
+ * SelectorModal —— 通用 list 选择模态，把 RunLedger SelectList snapshot 投影为 OpenTUI overlay。
  *
  * 对照 development-doc/tui/02-component-spec.md §8 与 04-rendering.md §5 overlay。
  *
@@ -16,6 +16,7 @@
 import { Box, SelectList, type SelectItem, type Component, type SelectListTheme, type SelectListLayoutOptions } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
+import type { PresentationBlock } from "../presentation.ts";
 
 export interface SelectorModalProps {
   /** 主题:本期占位用,M6 阶段补 ANSI 色接入;ImagePasteOverlay 等不传。 */
@@ -62,5 +63,14 @@ export class SelectorModal implements Component {
 
   render(width: number): string[] {
     return [fitToWidth(this.title, width), ...fitLinesToWidth(this.box.render(width), width)];
+  }
+
+  present(): PresentationBlock[] {
+    return [{
+      kind: "select",
+      title: this.title,
+      options: this.list.getVisibleItems(),
+      selectedIndex: this.list.getSelectedIndex(),
+    }];
   }
 }

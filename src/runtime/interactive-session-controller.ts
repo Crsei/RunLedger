@@ -22,6 +22,7 @@ import {
   AllowAllToolAuthorizationPolicy,
   authorizationBeforeToolCall,
 } from "./tool-authorization.ts";
+import type { TraceRecorderFactory } from "./trace/composition.ts";
 
 export interface RuntimeSelectionOverrides {
   provider?: string;
@@ -40,6 +41,7 @@ export interface InteractiveSessionControllerOptions {
   overrides?: RuntimeSelectionOverrides;
   tools?: AgentTool[];
   authorizationPolicy?: ToolAuthorizationPolicy;
+  traceRecorderFactory?: TraceRecorderFactory;
 }
 
 export interface ProviderStatus {
@@ -71,6 +73,7 @@ export class InteractiveSessionController {
   private readonly ledger: LedgerSink;
   private readonly tools: AgentTool[];
   private readonly policy: ToolAuthorizationPolicy;
+  private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -89,6 +92,7 @@ export class InteractiveSessionController {
     this.ledger = opts.ledger;
     this.tools = opts.tools ?? productionTools(opts.cwd);
     this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
+    this.traceRecorderFactory = opts.traceRecorderFactory;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -257,6 +261,7 @@ export class InteractiveSessionController {
       toolExecution: "sequential",
       steeringMode: this.settings.steeringMode ?? "one-at-a-time",
       followUpMode: this.settings.followUpMode ?? "one-at-a-time",
+      traceRecorderFactory: this.traceRecorderFactory,
     });
     this.unsubscribeAgent = this.agent.subscribe((event) => this.dispatch(event));
   }

@@ -1,5 +1,5 @@
 /**
- * InteractiveMode —— TUI 主控,组装 pi-tui 组件树并接通 Agent 事件流。
+ * InteractiveMode —— TUI 主控，组装 pure presentation tree 并接通 Agent 事件流。
  *
  * 对照 development-doc/tui/02-component-spec.md §1 与 07-roadmap.md M1。
  *
@@ -11,7 +11,7 @@
  *      更新 stopReason 之外其余 case 留 noop 占位(M2 起逐 case 落实);
  *   4. run() / quit() 对接 TUI.start / stop,并注册到 ReplHandle 单例(M8 远期任务接入);
  *   5. 失败护栏常量 MAX_CONSECUTIVE_INIT_FAILURES / INIT_FAILURE_BACKOFF_MS 在 spec 已定义,
- *      M1 不实际触发(无 init 重试路径),M6 起 OSC 11 探测时启用。
+ *      M1 不实际触发(无 init 重试路径)。
  *
  * 本 M1 阶段:
  *   - main 入口由 examples/tui-demo.ts 实例化 InteractiveMode 并 run;
@@ -60,7 +60,6 @@ import { SelectorModal } from "./components/selector-modal.ts";
 import type { SelectItem } from "./index.ts";
 import type { AgentToolResult } from "../runtime/types.ts";
 import { createAppKeyListener } from "./keybindings/app-keys.ts";
-import { detectScheme } from "./theme/osc-detector.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -69,7 +68,7 @@ export interface InteractiveModeOptions {
   agent?: Agent;
   /** 终端实现,默认 ProcessTerminal;可传入 mock 终端用于单测。 */
   terminal?: Terminal;
-  /** 主题名,默认 dark;M6 接入 env / OSC 11 自动切换。 */
+  /** 主题名，默认 dark；运行时由 OpenTUI theme_mode 更新。 */
   themeName?: "dark" | "light";
   /** 调试模式:onError 时把堆栈写到 stderr。 */
   debug?: boolean;
@@ -117,6 +116,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
   private unsubscribe?: () => void;
+  private unsubscribeThemeMode?: () => void;
 
   // FooterSnapshotProvider 状态(只有 handleEvent 路径写)
   private streaming = false;
@@ -235,15 +235,14 @@ export class InteractiveMode implements FooterSnapshotProvider {
         onRefresh: () => this.ui.invalidate(),
       }),
     );
-    //OSC 11 自动探测 dark/light(M6):异步探测,响应到达后切换 theme-factory 生效下次 invalidate
-    void detectScheme(this.terminal).then((scheme) => {
-      this.maybeSwitchTheme(scheme);
-    });
+    this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
     try {
-      this.ui.start();
+      await this.ui.start();
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
+      this.unsubscribeThemeMode?.();
+      this.unsubscribeThemeMode = undefined;
       this.resolveExit();
       throw error;
     }
@@ -290,16 +289,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return false;
   }
 
-  /** OSC 11 探测返回 scheme 后切换 theme;M6 真实装 env 覆盖已不依赖 scheme 路径。 */
+  /** OpenTUI theme_mode 变更后刷新共享 ThemeRef。 */
   private maybeSwitchTheme(scheme: "dark" | "light"): void {
-    if (scheme === "dark") {
-      // 默认已 dark,无需切换
-      return;
-    }
-    // light:重新 build theme 与 factories;但编辑器主题已被 Editor 实例消费,
-    // 替换需要 Editor 暴露 setTheme;本期 M6 暂只刷新 footer / loadedResources 主题;
-    // 下次 polish 会做完整 swap。
-    this.theme.primary = "#1a1a1a";
+    Object.assign(this.theme, applyEnvOverrides(loadTheme(scheme)));
     this.ui.invalidate();
   }
 
@@ -320,6 +312,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribe();
       this.unsubscribe = undefined;
     }
+    this.unsubscribeThemeMode?.();
+    this.unsubscribeThemeMode = undefined;
     this.controller?.dispose();
     this.ui.stop();
     this.resolveExit();

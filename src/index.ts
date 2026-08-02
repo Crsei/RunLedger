@@ -81,4 +81,5 @@ export * from "./runtime/ledger/lockfile.ts";
 export * from "./runtime/tools/index.ts";
 export * from "./runtime/providers/mock-stream.ts";
 export * from "./runtime/stdlib-stream.ts";
+export * from "./runtime/trace/index.ts";
 export * from "./storage/session-codec.ts";

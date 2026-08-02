@@ -8,8 +8,7 @@
  *   - 单 SelectItem 列表:["Confirm: Send"， "Cancel"];
  *   - onSelect 回接 InteractiveMode 把 image 注入对 agent 的 attachToLastUser prompt;
  *
- * 本 M5 阶段 ImagePasteOverlay 不接入真实 paste 流;pi-tui Editor 自带 paste 处理逻辑,
- * 我们后续 polish 阶段再切到这里。
+ * OpenTUI paste 先进入 RunLedger editor model；识别为 image path 时再弹本组件。
  */
 
 import { SelectorModal } from "./selector-modal.ts";

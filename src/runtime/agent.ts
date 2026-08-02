@@ -26,6 +26,7 @@ import type {
 } from "./types.ts";
 import type { Message, ModelThinkingLevel } from "../types.ts";
 import { clampThinkingLevel } from "../models.ts";
+import type { TraceRecorderFactory } from "./trace/composition.ts";
 
 export interface AgentOptions {
   initialState: {
@@ -51,6 +52,8 @@ export interface AgentOptions {
   signal?: AbortSignal;
   steeringMode?: QueueMode;
   followUpMode?: QueueMode;
+  /** 每个 prompt/run 创建独立 recorder；不得跨 run 复用有状态 recorder。 */
+  traceRecorderFactory?: TraceRecorderFactory;
 }
 
 class PendingMessageQueue {
@@ -97,6 +100,7 @@ export class Agent {
   private readonly _loopConfig: Partial<AgentLoopConfig>;
   private readonly _toolExecution: "sequential" | "parallel";
   private readonly _signal?: AbortSignal;
+  private readonly _traceRecorderFactory: TraceRecorderFactory | undefined;
   private readonly steeringQueue: PendingMessageQueue;
   private readonly followUpQueue: PendingMessageQueue;
   /** M8c:中断当前 turn 用的内部 controller;每次 prompt() 重建 */
@@ -122,6 +126,7 @@ export class Agent {
     this._loopConfig = opts.loopConfig ?? {};
     this._toolExecution = opts.toolExecution ?? "sequential";
     this._signal = opts.signal;
+    this._traceRecorderFactory = opts.traceRecorderFactory;
     this.steeringQueue = new PendingMessageQueue(opts.steeringMode ?? "one-at-a-time");
     this.followUpQueue = new PendingMessageQueue(opts.followUpMode ?? "one-at-a-time");
     this.subscribers = new Set();
@@ -258,6 +263,9 @@ export class Agent {
       messages: this._state.messages.slice(),
       tools: this._state.tools,
     };
+    const traceRecorder = this._traceRecorderFactory
+      ? await this._traceRecorderFactory.create({ sessionId: this._ledger?.sessionId ?? "<no-ledger>" })
+      : this._loopConfig.traceRecorder;
     const config: AgentLoopConfig = {
       ...this._loopConfig,
       model: this._state.model,
@@ -267,6 +275,7 @@ export class Agent {
       toolExecution: this._toolExecution,
       // ledger 已是 AgentLoopConfig 第一公民,直接挂入类型契约
       ledger: this._ledger,
+      traceRecorder,
       getSteeringMessages: async () => {
         const drained = this.steeringQueue.drain();
         await this.emitQueueUpdate();
