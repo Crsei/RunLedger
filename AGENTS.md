@@ -46,7 +46,13 @@
 总计 35 测试全绿,`npm run check` 与 `npm test` 应同时通过再行 commit。`examples/run.ts` 已接入真实 deepseek-v4-pro(走现有 pi-ai `openai-completions` adapter)演示 deepseek 完成 turn1 toolUse → turn2 stop 全链路。
 `src/_legacy/` 目录已清空,从 tsconfig exclude 中移除;旧 barrel 已删除,公共出口只保留当前实现。
 
-#### 1.2.x 项目层 .runledger/ 与 CLI 入口(M8 §0–§3,2026-04-28)
+#### 1.2.x Storage/CLI canonical user home 与 CLI 入口（S0–S5，2026-08-02）
+
+当前 Storage/CLI authority 已迁移到单一用户级 `RunledgerLayout`：`RUNLEDGER_DIR`（必须是既有绝对目录）或默认 `<用户主目录>/.runledger`，由 composition root 只解析一次。canonical settings/auth/AGENTS 位于 `layout.settings`、`layout.auth`、`layout.agents`；workspace settings 位于受校验的 `layout.projects/<workspace-key>/settings.json`；session 只写 `layout.sessions/YYYY/MM/DD/<session-id>.jsonl`，文件默认 `0600`、目录默认 `0700`。
+
+`settings.sessionDir` 不会被保存，`RUNLEDGER_SESSION_DIR` 与 `--session-dir` fail closed；旧 `<cwd>/.runledger/`、`~/.runledger/agent/` 和根外 session 只可作为显式 `runledger migrate --source <path> --confirm-delete` 的 source。迁移先固定 digest source deletion manifest，目标 verify 后逐项删除；不提供只读 import、dry-run、fallback 或物理 rollback。S0–S5 证据、静态边界检查与最终门禁以 `development-doc/storage-cli/02-user-home-migration-handoff.md` 为准；本仓库未对真实用户目录执行迁移。
+
+以下 M8 项目层布局说明保留为历史输入，不代表当前写入 authority：
 
 新增 `src/storage/paths.ts` 项目层与 `src/storage/{settings-manager,session-manager,path-utils}.ts`,以及 `src/cli/{args,main,cli}.ts` 与 `bin/runledger.js`,让"终端运行 `runledger` 命令打开 tui"成立。布局对照 pi `~/.pi/agent/` 但默认在项目内,便于本项目带走完整 .runledger/ 子树:
 
@@ -65,22 +71,22 @@
 
 `src/storage/` 当前形态:
 
-- `paths.ts` —— `getProjectDir / getProjectSessionsDir / getProjectSettingsPath / getProjectAgentsMd / getGlobalAgentsMd`(都受 cwd 与 env `RUNLEDGER_DIR` / `RUNLEDGER_SESSION_DIR` 影响),`resolveSessionDir(cwd, settingsSessionDir?)` 抽出 settings.sessionDir 与 env 的优先级关系;
+- `paths.ts` —— 历史 project/agent source locator helper；canonical 代码不再调用 `resolveSessionDir` 或读取 `RUNLEDGER_SESSION_DIR`;
 - `path-utils.ts` —— 纯函数 `encodeCwd / safeIso / buildSessionFileName`(便于单测,不引 fs);
-- `settings-manager.ts` —— `ProjectSettings` schema + 异步 `loadProjectSettings` / `loadProjectSettingsSync` / `saveProjectSettings`(0o600 文件 + 0o700 父目录),未知字段丢弃、解析失败回退空不抛错(只写 stderr);
-- `session-manager.ts` —— `SessionManager` 在 `JsonlLedger` 上的薄包装,接口 `create / open / continueRecent / forkFrom / list / listAll / acquireLock`。`open` 显式初始化但不追加 placeholder;fork 生成新 sessionId 并保留 parentSession/parentSessionId;CLI 持有整场独占锁直到退出。
+- `settings-manager.ts` —— 注入 `RunledgerLayout` 的 user/workspace settings；`sessionDir` 输入结构化返回 `unsupported_setting`;
+- `session-manager.ts` —— 只接受注入 layout，create/open/continueRecent/forkFrom/list/listAll/acquireLock 均验证 canonical containment；fork 的 parent locator 为 root-relative；CLI 持有整场独占锁直到退出。
 - `session-codec.ts` —— 当前 canonical `AgentMessage` 与 runtime config 无损恢复;不猜测、不转换旧 session 内容。
 
 `tests/storage/` 当前形态:
 
 - `path-utils.test.ts` —— encodeCwd / safeIso / buildSessionFileName 跨平台(10 测试)
-- `paths.test.ts` —— getProjectDir / resolveSessionDir 优先级(16 测试)
-- `settings-manager.test.ts` —— load/sync/save + 损坏 JSON 回退 + 0o600 mode(9 测试)
+- `paths.test.ts` —— 历史 source locator helper(7 测试)
+- `settings-manager.test.ts` —— canonical load/sync/save + legacy 字段拒绝 + 0o600 mode(9 测试)
 - `session-manager.test.ts` —— create/open/continueRecent/forkFrom/list 跨场景(13 测试)
 
 `src/cli/` 当前形态:
 
-- `args.ts` —— 手写 argv parser,支持 `-c/--continue / -r/--resume / --session <path> / --session-id <id> / --fork <path> / --provider <id> / -m/--model <id> / --thinking <level> / --session-dir <dir> / --debug / -v/--version / -h/--help`,未知 flag 兜到 `unknown: Map<name, string|true>` 不抛错;
+- `args.ts` —— 手写 argv parser；`--session-dir` 明确返回 `unsupported_cli_authority`，不进入 args/unknown authority；`migrate` 子命令由 `src/cli/migrate.ts` 处理;
 - `main.ts` —— 装配 36 个 builtin provider + `AuthStorage` + 当前 session replay + `InteractiveSessionController`;生产 CLI 不回退 mock,无认证时进入 TUI onboarding;`InteractiveMode.run()` 持续到退出后才在 finally 释放整场 ledger lock;
 - `cli.ts` —— bin 入口,仅 `main(process.argv.slice(2)).catch(exit 1)`;业务全留 main.ts 以便单测 spawnSync 跑。
 
@@ -89,12 +95,12 @@
 `tests/cli/` 当前形态:
 
 - `args.test.ts` —— parseArgs 全旗 + error 通道 + 未知兜底(23 测试)
-- `main.test.ts` —— `--help / -h / --version / -v / --thinking bogus / --session 缺值` 通过 spawnSync `node --import tsx` 真跑 cli.ts 路径(7 测试)。真 TUI 路径因 stdin 阻塞留 manual smoke test。
+- `main.test.ts` / `migrate.test.ts` —— 早期退出、legacy authority 负向路径与 destructive migrate 通过 spawnSync 真跑 cli.ts；真 TUI 路径因 stdin 阻塞留 manual smoke test。
 
-总计 264 测试全绿。`npm run check` 与 `npm test` 应同时通过再行 commit。
+当前 `npm test` 为 64 files / 368 tests 全绿。`npm run check` 与 `npm test` 应同时通过再行 commit。
 
-`npm link` 后 PATH 上的 `runledger` 命令可直接打开 tui:
-`runledger --help` / `runledger --version` / `runledger`(无凭据进入 provider onboarding)、`runledger -c`(continueRecent)、`runledger --resume`(TUI 选择历史会话)、`runledger --session <path>`、`runledger --fork <path>`。
+`npm link` 后 PATH 上的 `runledger` 命令可直接打开 TUI；旧根外 session path 不再直接 open/fork，迁移必须显式使用：
+`runledger --help` / `runledger --version` / `runledger` / `runledger -c` / `runledger --resume` / `runledger migrate --source <path> --confirm-delete`。
 
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 

@@ -2,7 +2,7 @@
  * 用户级 Settings 加载/落盘。
  *
  * 所有持久化路径都来自 composition root 注入的 RunledgerLayout。cwd、旧项目
- * `.runledger/` 与任意 sessionDir 不再参与 canonical settings authority。
+ * settings 与任意 sessionDir 不再参与 canonical settings authority。
  */
 
 import { existsSync, readFileSync } from "node:fs";

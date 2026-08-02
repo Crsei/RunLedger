@@ -149,7 +149,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 }
 
 /**
- * 构造系统提示:DEFAULT + cwd 下 AGENTS.md(若存在) + 全局 ~/.runledger/agent/AGENTS.md(若存在)。
+ * 构造系统提示:DEFAULT + cwd 下 AGENTS.md(若存在) + canonical home 的 AGENTS.md(若存在)。
  *
  * 本期不向上扫祖先链(pi 也是按 ancestor chain,本期仅在 cwd 与 global 两点
  * 读 AGENTS.md;TODO(pi):祖先链扫描加 M8 后续 PR)。
@@ -177,7 +177,7 @@ function buildSystemPrompt(cwd: string, layout: RunledgerLayout): string {
 
 /**
  * 本仓库存在 `<cwd>/AGENTS.md`(本期属项目说明,被纳入 systemPrompt 推动 agent),
- * 与 `.runledger/` 子树区别:这是 codex 仓库惯例的 AGENTS.md。
+ * 与 RunLedger canonical home 的 AGENTS.md 分开读取；这是 codex 仓库惯例的 AGENTS.md。
  */
 function getProjectAgentsMd(cwd: string = process.cwd()): string {
   return join(cwd, "AGENTS.md");

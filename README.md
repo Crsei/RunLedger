@@ -22,7 +22,7 @@ npm run check          # TypeScript 完整 typecheck(本期已通过)
 npm run demo           # catalog 摘要 + mock loop demo + 真实 deepseek-v4-pro demo(需 asset/api-key.json)
 npm run generate-models  # 重新生成 src/providers/data/*.json 与 src/models.generated.ts
 npm run build          # 编译到 dist/
-npm test               # vitest,264 测试全绿
+npm test               # vitest,当前测试全绿
 npm link               # 注册 dist CLI 到 PATH(可 `npm unlink -g runledger` 撤销)
 runledger --version    # 打印版本
 runledger --help       # 看 CLI 旗标
@@ -30,11 +30,12 @@ ANTHROPIC_API_KEY=sk-ant-... runledger --provider anthropic --model claude-haiku
 runledger                              # 无凭据进入 /provider、/login onboarding
 runledger -c                          # continueRecent 续最近会话
 runledger --resume                    # TUI 选择历史会话
-runledger --session <path>.jsonl      # 直接打开已知 session 文件
-runledger --fork <path>.jsonl         # fork 某 session 到本项目 .runledger/sessions/
+runledger --session <path>.jsonl      # 直接打开 canonical home 内的 session 文件
+runledger --fork <path>.jsonl         # fork canonical home 内的 session
+runledger migrate --source <path> --confirm-delete  # 显式破坏性迁移旧 source
 ```
 
-项目层布局(`.runledger/`)在 AGENTS.md §1.2.x 详述;`settings.json` 写 `model/thinkingLevel/theme/sessionDir/enabledModels` 五字段。
+Storage/CLI 当前只写单一用户级 home：`RUNLEDGER_DIR`（必须是预创建的绝对目录）或默认 `~/.runledger`；session 位于 `sessions/YYYY/MM/DD/`，workspace settings 位于 `projects/<workspace-key>/settings.json`。旧项目级 `.runledger/`、`~/.runledger/agent/` 与任意 `sessionDir` 只可作为显式迁移 source；不提供只读 import、dry-run、fallback 或物理 rollback。详见 [`development-doc/storage-cli/02-user-home-migration-handoff.md`](./development-doc/storage-cli/02-user-home-migration-handoff.md)。
 
 ## 架构(本期)
 
@@ -99,7 +100,7 @@ RunLedger/
 
 - **`Models`** 是 pi 的核心工厂(`src/models.ts:createModels()`),绑定 `credentialStore` + `modelsStore` + `provider factories`,提供 `getProvider` / `getAuth` / `stream` / `streamSimple` 接口。
 - **`Provider<TApi>`** 是 provider 的统一抽象;生产 TUI 当前注册 36 个 builtin provider,其中 35 份 catalog 由 `*.models.ts` + `data/*.json` 自动生成。
-- **`auth-storage.ts`** 用 `proper-lockfile` 加锁写 `~/.runledger/agent/auth.json`,mode 0600。
+- **`auth-storage.ts`** 用 `proper-lockfile` 加锁写 canonical home 的 `auth.json`,mode 0600。
 - **`runtime-credentials.ts`** overlay 模式,允许在不修改 auth.json 的情况下注入运行时 API key。
 - **`oauth/*`** 8 个 provider 的 OAuth 流(anthropic / openai-codex / github-copilot / xai / radius / 通用 device-code / 通用 pkce / oauth-page)。
 
@@ -126,7 +127,7 @@ npm run generate-models
 - [x] `examples/run.ts` 真实 LLM 串通:用 `asset/api-key.json` 中 deepseek-v4-pro 走现有 pi-ai `openai-completions` adapter 完成 turn-1 toolUse → turn-2 stop 全链路
 - [x] `npm run check` 通过
 - [x] agent-runtime 底座(M8 §A-§G):ToolRegistry/ToolContext + ExecutionEnv(FileSystem/Shell) + git-bash 探测 + stdlib 工具集(read/write/edit/bash/grep/find/ls)+ createAnthropicAgent + stdlibStreamFn 桥接
-- [x] **项目层 `.runledger/` 布局 + SessionManager / SettingsManager / CLI 入口**(M8 §0–§3, 2026-04-28):`src/storage/{paths,path-utils,settings-manager,session-manager}.ts` + `src/cli/{args,main,cli}.ts` + `bin/runledger.js`;`npm run build && npm link` 后终端 `runledger` 命令从 `dist/cli/cli.js` 起 TUI
+- [x] **Storage/CLI 单一用户级 home 迁移**(S0–S5, 2026-08-02):canonical settings/auth/session writer、`sessionDir`/旧环境与 CLI authority fail closed，以及显式 source deletion manifest 迁移；未对真实用户目录执行迁移
 - [x] **M2 stdlib 工具集升级**(glob + read cat -n 缓存 + edit replaceAll/findActualString + bash run_in_background + grep -A/-B/-U/-output_format):192 tests pass
 - [x] **M3 Task 系统 + lockfile + high-water mark**(2026-04-28):`src/runtime/tasks/{types,task-tools}.ts` `Task/TaskUpdate/TaskList` 三工具 + `src/runtime/ledger/lockfile.ts` `acquireLedgerLock`/`LedgerLockError` + `LedgerSink.highWaterMark()`;208 tests pass;`examples/m3-demo.ts` 可跑 `npx tsx examples/m3-demo.ts`
 - [x] **M4 5 新占位工具**(2026-04-28):`MultiEdit` / `WebFetch` / `Skill` / `NotebookEdit` / `TodoWrite`;219 tests pass;`createStdlibTools()` 注册数 8 → 13

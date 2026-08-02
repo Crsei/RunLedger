@@ -56,11 +56,11 @@ export interface ParseResult {
 
 const HELP_TEXT = `Usage: runledger [options]
 
-  -c, --continue              继续最近会话(默认 .runledger/sessions/)
+  -c, --continue              继续 canonical 用户 home 中的最近会话
   -r, --resume                在 TUI 中选择当前项目的历史会话
       --session <path>        直接打开已知 session 文件
-      --session-id <id>       按 sessionId 直接打开(本期需配合 --session-dir)
-      --fork <path>           从源 session 文件 fork 到本项目
+      --session-id <id>       按 sessionId 直接打开 canonical 会话
+      --fork <path>           从 canonical session 文件 fork 到当前 workspace
   -m, --model <id>            覆盖 settings.model
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
@@ -71,7 +71,7 @@ const HELP_TEXT = `Usage: runledger [options]
 
 环境变量:
   <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login
-  RUNLEDGER_DIR                用户层 ~/.runledger/agent 覆盖
+  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖
   RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root
 
 布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。

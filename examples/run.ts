@@ -7,7 +7,7 @@
  *   1. 加载自动生成的模型 catalog (`src/models.generated.ts`)；
  *   2. 打印 provider 总数 与 model 总数；
  *   3. 抽样打印 anthropic / openai 两个 provider 下前 3 个模型 ID + context window + 价格；
- *   4. 演示用 storage 层的 `paths.getAgentDir()` 解析 `~/.runledger/agent` 目录（不写盘）。
+ *   4. 演示 canonical home resolver；历史 paths helper 仅用于迁移 source 定位（不写盘）。
  *   5. 演示 mock LLM 端到端跑通 Agent 循环（含 echo 工具调用）;
  *   6. 若检测到 `asset/api-key.json` 与 deepseek provider 可用,演示真实调用
  *      deepseek-v4-pro(走现有 deepseek provider 的 openai-completions 协议)

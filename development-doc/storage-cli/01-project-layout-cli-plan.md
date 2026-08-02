@@ -1,8 +1,9 @@
 # 实现计划:补建 pi 用户层/项目层(项目层为重)+ `runledger` CLI 起动 TUI
 
+> **SUPERSEDED（2026-08-02）**：这是迁移前的历史实施计划，不是当前 Storage/CLI 状态或写入 authority。当前实现与验收证据见 [`02-user-home-migration-handoff.md`](02-user-home-migration-handoff.md)；当前用户级保存位置合同见 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md#contract-persistence)。
 > 文档属性:历史实施计划。原始来源:`.zcode/plans/plan-sess_43a5be3a-b430-4147-a81c-490636aafd5b.md`。
 > 本文覆盖项目层路径、settings、session manager、CLI 与 TUI 装配;已落地事实与后续项汇总见 `../project-cli-layout.md`。
-> 后续迁移:本计划中的项目级写入与任意 `sessionDir` authority 已被 Runtime 单一用户级 home contract 取代;实施 owner 与 destructive deletion 边界见 [`02-user-home-migration-handoff.md`](02-user-home-migration-handoff.md)。迁移完成前本文仍只描述现行旧行为。
+> 后续迁移:本计划中的项目级写入与任意 `sessionDir` authority 已被 Runtime 单一用户级 home contract 取代;实施 owner 与 destructive deletion 边界见 [`02-user-home-migration-handoff.md`](02-user-home-migration-handoff.md)。本文中的路径、参数和测试清单均是迁移前的历史输入。
 
 ## 范围与确认的设计决策
 

@@ -1,4 +1,6 @@
-# 项目层 .runledger/ 布局与 CLI 入口(2026-04-28)
+# 历史：项目层 .runledger/ 布局与 CLI 入口(2026-04-28)
+
+> **SUPERSEDED（2026-08-02）**：本文只保留 M8 项目级布局的历史输入，不描述当前写入 authority。当前 Storage/CLI 实现、S0–S5 证据与破坏性迁移边界见 [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md)；用户级保存位置合同见 [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md#contract-persistence)。
 
 > 本文档记录 M8 §0–§3 工作:本项目层 `.runledger/` 子树路径解析、SessionManager / SettingsManager、CLI 入口与 `bin/runledger.js`。对应 commit:
 > - `46b50aa` §0 路径层
@@ -6,7 +8,7 @@
 > - `f260f2f` §2 SessionManager
 > - `290246c` §3 CLI 入口
 >
-> 当前迁移边界:本文记录的是仍在运行的项目级旧布局。用户级单一 home、legacy import 与 CLI authority 移除尚未实现,后续只由 [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md) 跟踪。
+> 历史边界:本文记录的是迁移前的项目级布局与 CLI 设计；项目级写入、legacy import 和任意 `sessionDir` authority 已被后续 S0–S5 实现取代。
 
 子任务之间的依赖关系:`§0 → §1 → §2 → §3`(§3 调用前述三个模块的 API)。§6 文档同步作为收尾,不阻塞 §3。
 

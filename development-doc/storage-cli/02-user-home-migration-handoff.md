@@ -1,19 +1,19 @@
 # Storage/CLI 用户级单一 home 迁移 handoff
 
-> 状态:待实施;本文件授权后续 Storage/CLI 破坏性迁移,当前提交不创建、复制、移动或删除任何用户数据
+> 状态:已完成（S0–S5，2026-08-02）;实现了 canonical user home、旧 authority 拒绝与显式破坏性迁移。验证只使用临时测试目录，本仓库未对真实用户数据执行迁移、复制或删除
 > 上位契约:[Runtime 保存位置合同](../runtime/04-governed-agent-harness-runtime-plan.md#contract-persistence)
-> 现行实现记录:[`01-project-layout-cli-plan.md`](01-project-layout-cli-plan.md) 与 [`../project-cli-layout.md`](../project-cli-layout.md)
+> 历史输入:[`01-project-layout-cli-plan.md`](01-project-layout-cli-plan.md) 与 [`../project-cli-layout.md`](../project-cli-layout.md)（均已 superseded）
 
 ## 0. 当前状态与执行顺序
 
 | 阶段 | 状态 | 前置条件 | 独立提交目的 |
 |---|---|---|---|
 | S0 composition seam / RED baseline | 已完成 (`9bee364`) | Runtime C0–C5 contract 已冻结；当前项目级写入行为已取证 | 只建立单一 home resolver 接缝与失败测试 |
-| S1 Settings/Auth 路径迁移 | 已完成（本阶段） | S0 通过 | 停止 project settings 与 agent-dir 新写入 |
-| S2 Session canonical writer | 已完成（本阶段） | S1 通过；layout 注入可用 | session 只写 user home 的 UTC shard |
-| S3 CLI authority removal | 已完成（本阶段） | S2 通过 | 拒绝 `sessionDir`、环境变量和 CLI 任意目录 authority |
-| S4 破坏性迁移与旧源删除 | 已完成（本阶段） | S3 通过；canonical writer 稳定 | 显式迁移、冲突、TOCTOU 与 source deletion receipt |
-| S5 文档与旧写路径收口 | 未开始 | S0–S4 全部通过 | 静态边界、删除清单、文档与最终验收 |
+| S1 Settings/Auth 路径迁移 | 已完成 (`ea71e2e`) | S0 通过 | 停止 project settings 与 agent-dir 新写入 |
+| S2 Session canonical writer | 已完成 (`67a01b9`) | S1 通过；layout 注入可用 | session 只写 user home 的 UTC shard |
+| S3 CLI authority removal | 已完成 (`ba4f1d1`) | S2 通过 | 拒绝 `sessionDir`、环境变量和 CLI 任意目录 authority |
+| S4 破坏性迁移与旧源删除 | 已完成 (`49b4795`) | S3 通过；canonical writer 稳定 | 显式迁移、冲突、TOCTOU 与 source deletion receipt |
+| S5 文档与旧写路径收口 | 已完成（本提交） | S0–S4 全部通过 | 静态边界、删除清单、文档与最终验收 |
 
 执行必须严格按 `S0 → S1 → S2 → S3 → S4 → S5` 串行推进。各阶段不得并行修改 `src/storage/paths.ts`、`settings-manager.ts`、`session-manager.ts`、`src/cli/main.ts` 或共享测试；每阶段完成后先保留独立 commit，再进入下一阶段。当前唯一前置合同证据为 Runtime [C0–C5 milestone](../runtime/04-governed-agent-harness-runtime-plan.md#contract-acceptance)，不把它误作 Storage/CLI 行为已完成。
 
@@ -31,21 +31,24 @@ S4 证据（实现提交目标：`storage: destructively migrate legacy data int
 
 ## 1. 目标与边界
 
-本 handoff 负责把现行项目级/任意目录写入行为迁移到唯一用户级 `runledgerHome`。目标行为必须只消费上位 Runtime 已冻结的 `resolveRunledgerHomeContract`、`buildRunledgerLayout`、workspace key、session/artifact locator、权限和 path-containment 规则,不得在 Storage/CLI 内复制第二套合同。
+本 handoff 负责把现行项目级/任意目录写入行为迁移到唯一用户级 `runledgerHome`。目标行为必须只消费上位 Runtime 已冻结的 `resolveRunledgerHomeContract`、`buildRunledgerLayout`、workspace key、session/artifact locator、权限和 path-containment 规则,不得在 Storage/CLI 内复制第二套合同。S0–S5 已完成；以下历史差距表只用于说明迁移输入，不是当前状态。
 
-本计划完成前,以下能力均不得宣称已交付:
+当前交付边界:
 
-- `RUNLEDGER_DIR` 或默认 `~/.runledger` 的单次解析与固定拓扑创建;
-- 停止向 `<cwd>/.runledger/` 与 `~/.runledger/agent/` 新写数据;
-- `settings.sessionDir`、`RUNLEDGER_SESSION_DIR`、`--session-dir` 的 authority 移除;
-- 旧 session/settings/auth 的显式破坏性迁移与源删除;
-- source deletion manifest、冲突停止、TOCTOU 检查和不可逆失败语义。
+- `RUNLEDGER_DIR` 或默认 `~/.runledger` 的单次解析与固定拓扑创建已由 S0–S2 实现并验证;
+- 新运行不向 `<cwd>/.runledger/` 与 `~/.runledger/agent/` 写入;
+- `settings.sessionDir`、`RUNLEDGER_SESSION_DIR`、`--session-dir` 的 authority 已移除并 fail closed;
+- 旧 session/settings/auth/AGENTS 仅能通过显式 `migrate --source ... --confirm-delete` 进入 destructive publish→delete;
+- source deletion manifest、冲突停止、TOCTOU、target digest verification 与不可逆失败语义已由 S4 测试覆盖;
+- 测试未对真实用户目录执行迁移；真实删除仍需用户显式运行命令并由 manifest 限定范围。
 
 本文件不授权 Event Store、Artifact Store、retention/GC、后台迁移、隐式扫描或双写。旧目录删除只允许由本 handoff 的显式迁移命令、逐项删除清单和用户确认触发；不提供只读 import、自动 fallback 或隐式删除路径。
 
-## 2. 当前实现差距
+## 2. 迁移前 baseline（历史）
 
-当前代码仍以项目级布局为主,这是迁移输入,不是目标合同:
+### 2.1 S0 前取证（仅迁移输入）
+
+以下表格记录 S0 前取证；当前代码不再按这些旧路径写入:
 
 | 当前面 | 现行行为 | 目标差距 |
 |---|---|---|
@@ -56,7 +59,7 @@ S4 证据（实现提交目标：`storage: destructively migrate legacy data int
 | `src/cli/main.ts` | `--session-dir > RUNLEDGER_SESSION_DIR > settings.sessionDir > project default` | composition root 只注入一次已验证 layout |
 | `src/storage/auth-storage.ts` | 默认 `~/.runledger/agent/auth.json` | 默认 `<runledgerHome>/auth.json` |
 
-现有测试对这些旧行为的断言是迁移时必须显式替换的 compatibility baseline,不能在新实现完成前直接删除以制造假绿。
+这些旧行为的测试断言已经由 S1–S4 的负向/迁移测试替换；保留本表只为解释 source locator 与 superseded 文档的来源。
 
 ## 3. 不变量
 
@@ -181,13 +184,13 @@ CLI 形态固定为独立命令 `runledger migrate --source <path> --confirm-del
 - 删除只针对 batch-owned 且已完成 canonical 校验的 source；删除失败必须停止且不能 fallback。
 - 提交目标:`storage: destructively migrate legacy data into user home`。
 
-### S5:文档与旧写路径收口
+### S5:文档与旧写路径收口（已完成）
 
-- 静态检查确认生产代码不再写 `<cwd>/.runledger/`、`~/.runledger/agent/` 或读取 `RUNLEDGER_SESSION_DIR`。
+- 静态检查确认生产代码不再向 `<cwd>/.runledger/`、`~/.runledger/agent/` 写入或把它们当作 authority；`RUNLEDGER_SESSION_DIR` 仅保留 fail-closed 检查，不参与路径解析。
 - 更新 `AGENTS.md`、CLI 文档与现状页;旧计划保留为历史记录并加醒目 superseded 路由。
 - 更新 destructive migration、删除清单和不可逆失败说明；旧计划标记为 superseded。
 - 不执行删除清单之外的用户数据删除。
-- 提交目标:`docs: close destructive single-home migration evidence`。
+- 提交目标:`docs: close destructive single-home migration evidence`（本提交）。
 
 每阶段必须独立 commit;只暂存该阶段明确路径。迁移实现改动代码后至少运行 `npm run check`、`npm test`、`npm run build` 和 `git diff --check`。
 
@@ -206,12 +209,18 @@ CLI 形态固定为独立命令 `runledger migrate --source <path> --confirm-del
 
 ## 9. 完成条件
 
-- [ ] `RUNLEDGER_DIR`/默认 `~/.runledger` 是唯一写入根,且只解析一次。
-- [ ] 新运行不向 `<cwd>/.runledger/` 或 `~/.runledger/agent/` 创建/修改文件。
-- [ ] `sessionDir` setting、env 和 CLI flag 均不能形成写入 authority。
-- [ ] 根外 session 只能作为显式 destructive migration source,不能原地 append/lock/archive。
-- [ ] preflight、conflict、TOCTOU、target verification、source deletion 与不可逆失败 tests 全绿。
-- [ ] 对应旧 source 已按 deletion manifest 删除，manifest 外旧数据未被扫描、移动、复制或删除。
-- [ ] `npm run check`、`npm test`、`npm run build`、静态边界和文档链接检查附 commit 证据。
+- [x] `RUNLEDGER_DIR`/默认 `~/.runledger` 是唯一写入根,且只解析一次。
+- [x] 新运行不向 `<cwd>/.runledger/` 或 `~/.runledger/agent/` 创建/修改文件。
+- [x] `sessionDir` setting、env 和 CLI flag 均不能形成写入 authority。
+- [x] 根外 session 只能作为显式 destructive migration source,不能原地 append/lock/archive。
+- [x] preflight、conflict、TOCTOU、target verification、source deletion 与不可逆失败 tests 全绿。
+- [x] 测试迁移只删除 deletion manifest 中、已完成 canonical 校验的 source；manifest 外旧数据保持不变；未执行真实用户目录迁移。
+- [x] `npm run check`、`npm test`、`npm run build`、静态边界和文档链接检查附本阶段 commit 证据。
 
-这些项目全部完成前,本 handoff 状态保持“待实施”。上位 Runtime contract 的完成只表示位置/DTO 规则已冻结,不能代替本迁移行为验收。
+## 10. S5 最终证据
+
+- 阶段 commits：`9bee364`、`ea71e2e`、`67a01b9`、`ba4f1d1`、`49b4795`，以及本提交 `docs: close destructive single-home migration evidence`。
+- 生产写入边界：`src/storage/settings-manager.ts`、`auth-storage.ts`、`session-manager.ts`、`migration.ts` 与 `src/cli/main.ts` 只消费注入的 `RunledgerLayout`；`src/storage/paths.ts` 的旧 `.runledger/` 与 `~/.runledger/agent/` helper 仅作为显式 migration source locator，生产代码没有调用它们作为 writer。
+- authority 负向边界：`settings.sessionDir`、`RUNLEDGER_SESSION_DIR` 与 `--session-dir` 均有 fail-closed 测试；`--dry-run`、`--read-only`、`--fallback` 没有成功路径。
+- destructive migration：S4 测试只使用临时 source/home，覆盖 publish、dedupe、conflict、unknown/corrupt source、TOCTOU、source deletion 与 receipt failure；未触碰真实用户数据。
+- 自动门禁：`npm run check`（含 `check:storage-boundaries`）、`npm test`（64 files / 368 tests）、`npm run build` 与 `git diff --check` 通过；文档链接检查通过。
