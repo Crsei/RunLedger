@@ -8,7 +8,7 @@
 
 | 阶段 | 状态 | 前置条件 | 独立提交目的 |
 |---|---|---|---|
-| S0 composition seam / RED baseline | 未开始 | Runtime C0–C5 contract 已冻结；当前项目级写入行为已取证 | 只建立单一 home resolver 接缝与失败测试 |
+| S0 composition seam / RED baseline | 已完成 (`9bee364`) | Runtime C0–C5 contract 已冻结；当前项目级写入行为已取证 | 只建立单一 home resolver 接缝与失败测试 |
 | S1 Settings/Auth 路径迁移 | 未开始 | S0 通过 | 停止 project settings 与 agent-dir 新写入 |
 | S2 Session canonical writer | 未开始 | S1 通过；layout 注入可用 | session 只写 user home 的 UTC shard |
 | S3 CLI authority removal | 未开始 | S2 通过 | 拒绝 `sessionDir`、环境变量和 CLI 任意目录 authority |
@@ -18,6 +18,8 @@
 执行必须严格按 `S0 → S1 → S2 → S3 → S4 → S5` 串行推进。各阶段不得并行修改 `src/storage/paths.ts`、`settings-manager.ts`、`session-manager.ts`、`src/cli/main.ts` 或共享测试；每阶段完成后先保留独立 commit，再进入下一阶段。当前唯一前置合同证据为 Runtime [C0–C5 milestone](../runtime/04-governed-agent-harness-runtime-plan.md#contract-acceptance)，不把它误作 Storage/CLI 行为已完成。
 
 阶段状态只能在对应 RED→GREEN 测试、完整门禁和阶段 commit 都存在后更新。任何阶段失败都保持前一阶段可运行；不得通过双写、自动迁移、提前删除旧目录或放宽 path-containment 来取得绿灯。旧源只能在 S4 对应 canonical 数据完成 digest 校验并写入删除清单后删除。
+
+S0 证据：`9bee364 storage: resolve one governed user home`；`tests/storage/runledger-home.test.ts` 5 tests；`npm run check`、`npm test`（60 files / 358 tests）和 `npm run build` 通过。S0 不创建 home、不写旧目录、不迁移或删除数据。
 
 ## 1. 目标与边界
 
