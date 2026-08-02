@@ -1,8 +1,8 @@
 # Multi-client Runtime Host 与 Background Terminal 重构计划
 
-> 状态：planned，仅完成旧实现审计与当前分支重构设计，不代表生产功能已实现。
+> 状态：planned，已完成旧实现与 opencode 外部实现审计及当前分支重构设计，不代表生产功能已实现。
 >
-> 当前目标分支：`rollback/pre-governed-agent-harness-runtime`，基线 `51642f8`。
+> 当前目标分支：`rollback/pre-governed-agent-harness-runtime`；初始设计基线 `51642f8`，本次强化审计工作树 HEAD `d3fa819`。
 >
 > 旧实现参考：`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-agent-loop-resurrect`，审计快照 `98e1449`；multi-client 主集成点 `0a09255`，background-terminal 主集成点 `b19ff61`，最终 Linux fault/PTY 验证点 `6597032`。
 >
@@ -107,6 +107,16 @@ current single-process CLI
 | BackgroundJob | start/extend/list/get/wait/promote/cancel 与 running-ID 进程内去重 | scoped async job API 与 stale settlement token 思路 | 源码明确 non-durable/process-local；不能充当 process lifecycle truth 或 restart recovery |
 | Tool output | 超过 2,000 行或 50 KiB 写 XDG data 文件，7 天清理 | model-facing head/tail preview 与 retention scan | 非 CAS、无 digest/seal/pin/recovery，并把绝对 `outputPath` 写入模型可见 marker |
 | TUI | 当前 OpenTUI 没有 governed process/terminal overlay | 无 | 不能用 HTTP PTY API 存在替代 R9 用户可见验收 |
+
+证据入口：
+
+- client/server：`packages/opencode/src/cli/cmd/{tui,serve,attach}.ts`；
+- session coordinator：`packages/core/src/session/{execution/local,run-coordinator}.ts` 与根 `AGENTS.md` 的代际化 Session Core 约束；
+- Event：`packages/core/src/event{,/sql}.ts`、`packages/opencode/src/server/routes/instance/httpapi/handlers/event.ts`；
+- PTY/ticket：`packages/core/src/pty.ts`、`packages/core/src/pty/{ticket,protocol,pty.node,pty.bun}.ts`、HttpApi `handlers/pty.ts`；
+- Bash/process：`packages/core/src/tool/bash.ts`、`packages/core/src/{process,cross-spawn-spawner}.ts`；
+- BackgroundJob/output：`packages/core/src/{background-job,tool-output-store,global}.ts`；
+- focused tests：`packages/core/test/{pty,tool-bash.test.ts,tool-output-store.test.ts,background-job.test.ts,session-run-coordinator.test.ts}` 与 `packages/opencode/test/server/` 下的 PTY/Event HttpApi tests。
 
 由该审计新增的硬规则：
 
@@ -542,9 +552,11 @@ scripts/verify-managed-process-pty.ts
 - POSIX process group/supervisor 与 Linux PTY；
 - timeout/abort/stop 杀完整 descendant tree，并取得 zero-member receipt；
 - Host SIGKILL 后 supervisor containment，恢复只根据 receipt；
-- Windows 只有 Job Object/ConPTY 等价 adapter 后才标记 supported。
+- Windows 只有 Job Object/ConPTY 等价 adapter 后才标记 supported；
+- Bash、CLI shell、pipe、PTY、foreground/background 和 recovery mutation 全部通过同一 security-owned facade，backend package 不导出给 tool/TUI/CLI；
+- Permission 在最终 spawn/mutation leaf 重新 assert，Approval/Sandbox receipt 与 command/workspace/attempt digest 绑定。
 
-验收：拒绝路径 `spawnCount=0`；真实 child/grandchild 全部回收；生产 factory 缺任一依赖时构造失败。
+验收：每一种入口的拒绝路径均为 `spawnCount=0`；真实 child/grandchild 全部回收并有 zero-member receipt；生产 factory 缺任一依赖时构造失败；不存在直接 PTY create 绕过 barrier 的 HTTP/CLI/TUI seam。
 
 ### R7：Durable output、Artifact 与恢复
 
@@ -553,9 +565,11 @@ scripts/verify-managed-process-pty.ts
 - hard limit 触发安全 stop；
 - terminal 后按授权 materialize 到现有 Artifact CAS；
 - Trace tool node 只关联 execution/attempt/Artifact ref，不复制 process truth；
-- 实现 retention plan/commit、pin 与 recovery marker。
+- 实现 retention plan/commit、pin 与 recovery marker；
+- 分离 bounded preview、private durable output 与 immutable Artifact CAS；任何面向模型/TUI 的 marker 只含 safe ref/digest，不含绝对路径；
+- replay cursor 定义覆盖 UTF-8 边界、earliest retained cursor、checkpoint head 与 seal digest。
 
-验收：disconnect/reconnect 从 cursor 继续；Artifact digest/metadata 可验证；recording off 不破坏 process recovery。
+验收：disconnect/reconnect 从 cursor 继续；旧 cursor 被 retention 截断时 typed resync 而不是空输出；ENOSPC/EIO 不伪造 terminal/Artifact；Artifact digest/metadata 可验证；recording off 不破坏 process recovery。
 
 ### R8：Bash、process tools 与 Control Plane
 
@@ -563,9 +577,11 @@ scripts/verify-managed-process-pty.ts
 - `bash` foreground/background 全部使用 Host process facade；
 - 实现 `process_output`、`write_stdin`、`process_stop`；
 - command/query/subscription 接入 driver fence、idempotency 与 bounded output page；
-- client disconnect 仅 detach attachment，process 继续。
+- client disconnect 仅 detach attachment，process 继续；
+- PTY attachment 使用 R2 同一 inactive-register/replay/cursor/activate 协议；pre-activation pending 和 wire outbox overflow 返回 typed resync；
+- foreground timeout/abort 与 explicit stop 都走 manager，禁止保留 ExecutionEnv/raw spawn/独立 PTY fallback。
 
-验收：工具返回 safe handle/summary，不含 PID/path；旧 raw spawn 和 logPath 文案彻底消失。
+验收：工具返回 safe handle/summary，不含 PID/path/raw command/env；旧 raw spawn、logPath、独立 PTY create 和 process-local background 文案彻底消失；observer 的 write/resize/stop 在 backend 前拒绝。
 
 ### R9：OpenTUI process/terminal 阅读与控制
 
@@ -576,15 +592,18 @@ scripts/verify-managed-process-pty.ts
 - observer 显示只读状态，driver 才显示 input/resize/stop action；
 - output lazy page，不把完整日志常驻 view model；
 - detach 只关闭 attachment，不发送 stop；
-- 40x12、60x16、80x24、143x40 frame/input/focus 测试。
+- 40x12、60x16、80x24、143x40 frame/input/focus 测试；
+- UI 只消费 Host facade 的 safe DTO/page/event，不因 backend 有 HTTP/WebSocket PTY API 就直接连接 raw PTY endpoint。
 
-验收：真实 OpenTUI mockInput/frame、UTF-8、resize、driver transfer、关闭恢复 editor 全部通过。
+验收：真实 OpenTUI mockInput/frame、UTF-8、resize、driver transfer、关闭恢复 editor 全部通过；observer/driver action 可见性正确；关闭 overlay 和退出 client 后 process 仍可由第二客户端从 cursor 继续查看。
 
 ### R10：Recovery、shutdown 与完整验收
 
 - Host graceful shutdown：close admission -> drain turn/process -> seal/materialize -> terminal/settle -> flush writer -> release；
 - Host crash、endpoint stale、driver disconnect、ack loss、slow subscriber、output failure、process tree uncertain fault matrix；
 - 标准 PATH 双 client、same-session driver、Host restart、real PTY/tmux；
+- 在 replay snapshot、cursor emit、live activate、spawn receipt、output checkpoint、seal response 六个边界注入 crash/response loss；
+- 验证最后一个 client 退出不等于 Host shutdown，Host shutdown 不等于无 receipt 的 process kill；两条 lifecycle 分别验收；
 - Linux 自动矩阵通过后做独立只读审计；
 - macOS/Windows 只按真实 capability 结论，不沿用 Linux 声明；
 - 用户真实终端明确验收后才能标记 human-verified。
@@ -632,10 +651,12 @@ npm run verify:managed-process-pty
 
 - 并发 startup、stale endpoint、active writer unreachable、peer forgery；
 - same-session observer/driver、driver transfer、ack loss、cursor replay、slow subscriber；
+- replay snapshot/cursor emit/live activate 三边界并发、pre-activation pending overflow、outbox overflow、old cursor resync；
+- ticket theft/replay/cross-scope、Basic-Auth-only、payload principal forgery、attestor preflight failure；
 - quick foreground、foreground yield、explicit background；
-- stdin/EOF、PTY UTF-8/resize/detach、tree stop；
+- Bash/CLI/direct PTY/recovery mutation 的 leaf deny，stdin/EOF、PTY UTF-8/resize/detach、tree stop；
 - output bounds/ENOSPC/EIO、Artifact tamper/materialization failure；
-- Host SIGKILL、reconnect recovery、graceful shutdown deadline；
+- intent/claim/spawn/started response loss、Host SIGKILL、reconnect recovery、graceful shutdown deadline；
 - no raw path/PID/credential/private reasoning leakage；
 - recording off/events/events_and_artifacts 三种 Trace 模式下 process truth 一致。
 
@@ -660,12 +681,16 @@ npm run verify:managed-process-pty
 - [ ] 标准 CLI 只有 authenticated connect-or-spawn Host 路径；
 - [ ] Host 是唯一 session writer/Agent/process owner；
 - [ ] 多 client replay/live、cursor/dedupe/resync 有 bounded tests；
+- [ ] replay、pre-activation pending、wire outbox、reverse waiter、output ring/page/input 与 process capacity 均有固定上限和 overflow 语义；
 - [ ] observer/driver 与 generation/revision fencing 覆盖所有 interactive mutation；
 - [ ] production peer attestation 来自具体 channel；
+- [ ] ticket 只在 attested channel 上签发并绑定 principal/generation/purpose，不能单独建立身份；
 - [ ] process intent-before-spawn、idempotency、terminal immutability 和 recovery 完整；
 - [ ] Permission/Approval/Sandbox/Gateway/containment 任一缺失时 production spawn fail closed；
+- [ ] Bash、CLI shell、pipe、PTY 与 recovery mutation 均经过同一 security-owned leaf barrier；
 - [ ] foreground/background/pipe/PTY 统一由 manager 与 Host Control Plane 管理；
 - [ ] output/cursor/quota/checkpoint/seal/Artifact/retention 全部有界且可恢复；
+- [ ] preview/private output/Artifact 三层分离，public schema/model/TUI 无 PID/raw command/cwd/env/absolute path；
 - [ ] recording mode 不影响 canonical process truth；
 - [ ] TUI 不访问 Event/Artifact/spool/backend 文件，不暴露 PID/path/secret；
 - [ ] production/test composition 完全分离，无 feature flag/fallback/legacy authority；
