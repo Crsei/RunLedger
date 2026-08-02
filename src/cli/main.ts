@@ -5,11 +5,11 @@
  * 行为按 §3 计划文档:
  *   1. parseArgs → handle -h/-v
  *   2. compute cwd / 设置 RUNLEDGER_DEBUG
- *   3. loadProjectSettings(cwd)
- *   4. 决定 sessionDir:--session-dir > settings.sessionDir > 默认(.runledger/sessions/)
+ *   3. resolve one RunledgerLayout and load canonical settings
+ *   4. SessionManager 只使用 layout.sessions canonical locator
  *   5. 选择 session 操作:create / continueRecent / open(--session) / forkFrom
  *   6. 装配全部 builtin providers + AuthStorage;无认证时进入 TUI onboarding
- *   7. 构造 systemPrompt(合并 cwd/AGENTS.md 与全局 ~/.runledger/agent/AGENTS.md)
+ *   7. 构造 systemPrompt(合并 cwd/AGENTS.md 与 layout.agents)
  *   8. 实例化 Agent + InteractiveMode + run
  *   9. finally closeAll ledger
  *
@@ -21,7 +21,6 @@ import { join } from "node:path";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { selectSessionInTui } from "../tui/session-selector.ts";
 import { loadProjectSettings } from "../storage/settings-manager.ts";
-import { resolveSessionDir } from "../storage/paths.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { replaySession } from "../storage/session-codec.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
@@ -60,21 +59,18 @@ export async function main(argv: readonly string[]): Promise<void> {
   const { layout } = await resolveRunledgerHome();
   const settings = await loadProjectSettings({ layout });
 
-  const sessionDir =
-    args.sessionDir ?? resolveSessionDir(cwd);
-
   let mgr: SessionManager;
   if (args.session) {
-    mgr = await SessionManager.open(args.session);
+    mgr = await SessionManager.open(layout, args.session);
   } else if (args.sessionId) {
-    const match = (await SessionManager.list(cwd, sessionDir))
+    const match = (await SessionManager.list(layout, cwd))
       .find((session) => session.id === args.sessionId);
     if (!match) throw new Error(`session id not found: ${args.sessionId}`);
-    mgr = await SessionManager.open(match.filePath);
+    mgr = await SessionManager.open(layout, match.filePath);
   } else if (args.fork) {
-    mgr = await SessionManager.forkFrom(args.fork, cwd, sessionDir);
+    mgr = await SessionManager.forkFrom(layout, args.fork, cwd);
   } else if (args.resume) {
-    const sessions = await SessionManager.list(cwd, sessionDir);
+    const sessions = await SessionManager.list(layout, cwd);
     if (sessions.length === 0) {
       process.stderr.write("[runledger] no sessions available to resume\n");
       return;
@@ -83,13 +79,13 @@ export async function main(argv: readonly string[]): Promise<void> {
       ? await selectSessionInTui(sessions)
       : sessions[0];
     if (!selected) return;
-    mgr = await SessionManager.open(selected.filePath);
+    mgr = await SessionManager.open(layout, selected.filePath);
   } else if (args.continueRecent) {
-    mgr = await SessionManager.continueRecent(cwd, sessionDir);
+    mgr = await SessionManager.continueRecent(layout, cwd);
   } else {
     mgr = await SessionManager.create({
+      layout,
       cwd,
-      sessionDir,
       metadata: { cwd },
     });
   }

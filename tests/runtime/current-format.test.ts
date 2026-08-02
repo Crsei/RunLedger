@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
 	type LedgerHeader,
 } from "../../src/runtime/ledger/types.ts";
 import { SessionManager } from "../../src/storage/session-manager.ts";
+import { buildRunledgerLayout } from "../../src/runtime/contracts/public.ts";
 
 function currentHeader(sessionId = "session_fixture"): LedgerHeader {
 	return {
@@ -69,12 +70,14 @@ describe("current session format", () => {
 
 	it("rejects a malformed source during fork instead of dropping its entry", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "runledger-current-fork-"));
-		const source = join(dir, "source.jsonl");
+		const layout = buildRunledgerLayout(join(dir, "home"), "posix");
+		const source = join(layout.sessions, "2026", "08", "02", "source.jsonl");
+		await mkdir(join(layout.sessions, "2026", "08", "02"), { recursive: true });
 		const original = `${JSON.stringify(currentHeader())}\n{"id":"broken"\n`;
 		await writeFile(source, original, "utf8");
 
 		try {
-			await expect(SessionManager.forkFrom(source, "/target", dir)).rejects.toThrow(SyntaxError);
+			await expect(SessionManager.forkFrom(layout, source, "/target")).rejects.toThrow(SyntaxError);
 			await expect(readFile(source, "utf8")).resolves.toBe(original);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
@@ -83,18 +86,18 @@ describe("current session format", () => {
 
 	it("rejects an empty source during fork without creating a target", async () => {
 		const sourceDir = await mkdtemp(join(tmpdir(), "runledger-current-empty-source-"));
-		const targetDir = await mkdtemp(join(tmpdir(), "runledger-current-empty-target-"));
-		const sourcePath = join(sourceDir, "empty.jsonl");
+		const layout = buildRunledgerLayout(join(sourceDir, "home"), "posix");
+		const sourcePath = join(layout.sessions, "2026", "08", "02", "empty.jsonl");
+		await mkdir(join(layout.sessions, "2026", "08", "02"), { recursive: true });
 		await writeFile(sourcePath, "", "utf8");
 
 		try {
-			await expect(SessionManager.forkFrom(sourcePath, "/target", targetDir)).rejects.toBeInstanceOf(
+			await expect(SessionManager.forkFrom(layout, sourcePath, "/target")).rejects.toBeInstanceOf(
 				UnsupportedSessionFormatError,
 			);
-			expect(await readdir(targetDir)).toEqual([]);
+			expect(await readdir(join(layout.sessions, "2026", "08", "02"))).toContain("empty.jsonl");
 		} finally {
 			await rm(sourceDir, { recursive: true, force: true });
-			await rm(targetDir, { recursive: true, force: true });
 		}
 	});
 

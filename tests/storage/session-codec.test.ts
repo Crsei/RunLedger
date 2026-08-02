@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentMessage } from "../../src/runtime/types.ts";
+import { buildRunledgerLayout } from "../../src/runtime/contracts/public.ts";
 import { isLedgerLocked } from "../../src/runtime/ledger/lockfile.ts";
 import {
   UnsupportedSessionFormatError,
@@ -42,7 +43,8 @@ function messageEntry(header: LedgerHeader, message: AgentMessage): LedgerEntry 
 describe("session codec", () => {
   it("跨 reopen 无损恢复 thinking signature、tool arguments/result 与 runtime config", async () => {
     const cwd = await tempDir();
-    const manager = await SessionManager.create({ cwd, sessionDir: cwd });
+    const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
+    const manager = await SessionManager.create({ cwd, layout });
     const header = manager.ledger().header();
     const messages: AgentMessage[] = [
       { role: "user", content: [{ type: "text", text: "inspect" }] },
@@ -86,7 +88,7 @@ describe("session codec", () => {
     const filePath = manager.filePath();
     await manager.closeAll();
 
-    const reopened = await SessionManager.open(filePath);
+    const reopened = await SessionManager.open(layout, filePath);
     const replay = await replaySession(reopened.ledger());
 
     expect(reopened.sessionId()).toBe(sessionId);
@@ -98,11 +100,13 @@ describe("session codec", () => {
 
   it("拒绝不支持的 session 格式且不修改源文件", async () => {
     const cwd = await tempDir();
-    const filePath = join(cwd, "unsupported.jsonl");
+    const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
+    const filePath = join(layout.sessions, "2026", "08", "02", "unsupported.jsonl");
+    await mkdir(join(layout.sessions, "2026", "08", "02"), { recursive: true });
     const original = JSON.stringify({ type: "unsupported-ledger", payload: "unchanged" }) + "\n";
     await writeFile(filePath, original);
 
-    await expect(SessionManager.open(filePath)).rejects.toBeInstanceOf(UnsupportedSessionFormatError);
+    await expect(SessionManager.open(layout, filePath)).rejects.toBeInstanceOf(UnsupportedSessionFormatError);
     await expect(readFile(filePath, "utf8")).resolves.toBe(original);
   });
 });
@@ -110,7 +114,8 @@ describe("session codec", () => {
 describe("session identity, fork and whole-session lock", () => {
   it("fork 生成新 sessionId、改写 entries 并保留父会话身份", async () => {
     const cwd = await tempDir();
-    const source = await SessionManager.create({ cwd, sessionDir: cwd });
+    const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
+    const source = await SessionManager.create({ cwd, layout });
     await source.ledger().append({
       id: "source-entry",
       sessionId: source.sessionId(),
@@ -123,7 +128,7 @@ describe("session identity, fork and whole-session lock", () => {
     const sourcePath = source.filePath();
     await source.closeAll();
 
-    const fork = await SessionManager.forkFrom(sourcePath, cwd, cwd);
+    const fork = await SessionManager.forkFrom(layout, sourcePath, cwd);
     const text = await readFile(fork.filePath(), "utf8");
     const rows = text.trim().split(/\r?\n/).map((line) => JSON.parse(line) as LedgerHeader | LedgerEntry);
     const forkHeader = rows[0] as LedgerHeader;
@@ -131,7 +136,7 @@ describe("session identity, fork and whole-session lock", () => {
 
     expect(fork.sessionId()).not.toBe(sourceId);
     expect(forkHeader.metadata).toMatchObject({
-      parentSession: sourcePath,
+      parentSession: relative(layout.home, sourcePath).replaceAll("\\", "/"),
       parentSessionId: sourceId,
       cwd,
     });
@@ -142,7 +147,8 @@ describe("session identity, fork and whole-session lock", () => {
 
   it("acquireLock 持有到 closeAll，且重复调用幂等", async () => {
     const cwd = await tempDir();
-    const manager = await SessionManager.create({ cwd, sessionDir: cwd });
+    const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
+    const manager = await SessionManager.create({ cwd, layout });
 
     await manager.acquireLock();
     await manager.acquireLock();

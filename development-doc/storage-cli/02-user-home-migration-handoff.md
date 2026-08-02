@@ -10,7 +10,7 @@
 |---|---|---|---|
 | S0 composition seam / RED baseline | 已完成 (`9bee364`) | Runtime C0–C5 contract 已冻结；当前项目级写入行为已取证 | 只建立单一 home resolver 接缝与失败测试 |
 | S1 Settings/Auth 路径迁移 | 已完成（本阶段） | S0 通过 | 停止 project settings 与 agent-dir 新写入 |
-| S2 Session canonical writer | 未开始 | S1 通过；layout 注入可用 | session 只写 user home 的 UTC shard |
+| S2 Session canonical writer | 已完成（本阶段） | S1 通过；layout 注入可用 | session 只写 user home 的 UTC shard |
 | S3 CLI authority removal | 未开始 | S2 通过 | 拒绝 `sessionDir`、环境变量和 CLI 任意目录 authority |
 | S4 破坏性迁移与旧源删除 | 未开始 | S3 通过；canonical writer 稳定 | 显式迁移、冲突、TOCTOU 与 source deletion receipt |
 | S5 文档与旧写路径收口 | 未开始 | S0–S4 全部通过 | 静态边界、删除清单、文档与最终验收 |
@@ -22,6 +22,8 @@
 S0 证据：`9bee364 storage: resolve one governed user home`；`tests/storage/runledger-home.test.ts` 5 tests；`npm run check`、`npm test`（60 files / 358 tests）和 `npm run build` 通过。S0 不创建 home、不写旧目录、不迁移或删除数据。
 
 S1 证据（实现提交目标：`storage: stop project settings and agent-dir writes`）：`src/storage/settings-manager.ts` 只接受注入的 `RunledgerLayout`，canonical settings 位于 `layout.settings` 或受校验的 `projects/<workspace-key>/settings.json`；`sessionDir` 保存输入返回 `unsupported_setting` 且不触碰目标文件。`src/storage/auth-storage.ts` 与 CLI composition root 改为注入 `layout.auth`，全局 `AGENTS.md` 也从 `layout.agents` 读取；controller 的选择持久化不再调用 cwd 路径 helper。新增/更新 `tests/storage/user-home-settings-auth.test.ts`、`tests/storage/settings-manager.test.ts` 与 `tests/runtime/interactive-session-controller.test.ts`，聚焦共 15 tests 通过；完整 `npm run check`、`npm test`（61 files / 362 tests）和 `npm run build` 通过。S1 未迁移、复制或删除旧数据；session canonical writer 与 CLI authority removal 仍由 S2/S3 负责。
+
+S2 证据（实现提交目标：`storage: keep canonical sessions inside user home`）：`SessionManager` 现在只接受注入的 `RunledgerLayout`，create/open/continue/list/fork 均固定到 `sessions/YYYY/MM/DD/<session-id>.jsonl`，拒绝根外路径、symlink session root 与无效 session ID；新文件硬化为 `0600`，fork 使用同根临时文件原子 rename，parent metadata 只保存 root-relative locator。CLI composition root 已改为传递 layout，不再把任意 `sessionDir` 传入 SessionManager。更新 session manager、session codec 与 current-format tests，并新增 `tests/storage/canonical-session-manager.test.ts`；完整 `npm run check`、`npm test`（62 files / 366 tests）和 `npm run build` 通过。S2 未迁移、复制或删除旧数据；`--session-dir`/`RUNLEDGER_SESSION_DIR` 的 fail-closed 行为仍由 S3 负责。
 
 ## 1. 目标与边界
 

@@ -1,346 +1,395 @@
 /**
- * SessionManager —— 在 JsonlLedger 上加 cwd-aware 文件布局与多入口工厂。
+ * SessionManager —— canonical user-home session writer。
  *
- * 对照参考 pi 的 `core/session-manager.ts`(以及 harness 侧 jsonl-storage.ts),
- * 但本 RunLedger 保留扁平 LedgerHeader/LedgerEntry 协议(不分叉、不摘要,
- * 见 AGENTS.md §1.3),SessionManager 只是 JsonlLedger 的薄包装。
- *
- * 本期接口:
- *   - SessionManager.create({cwd, sessionDir?, sessionId?, metadata?, truncate?}) — 新建
- *   - SessionManager.continueRecent(cwd, sessionDir?) — 找最近会话续
- *   - SessionManager.open(path) — 直接打开已知文件
- *   - SessionManager.forkFrom(sourcePath, targetCwd, sessionDir?) — 复制全文件成新文件
- *   - SessionManager.list(cwd, sessionDir?) — 列当前会话目录里所有 *.jsonl
- *   - SessionManager.listAll(sessionDir?) — 不限 cwd 列出全部(本期 = list,无 cwd 过滤版)
- *
- * 文件布局:
- *   <sessionDir>/<ISO-ts-with-:/. -> -替换>_<8-or-32-char-id>.jsonl
- *   第 1 行:LedgerHeader (sessionId + createdAt + 可选 metadata.cwd)
- *   2..N 行:LedgerEntry
- *
- * 持久层完全沿用 JsonlLedger —— SessionManager 不破坏 LedgerSink 协议。
+ * Session 文件只能位于 `RunledgerLayout.sessions/YYYY/MM/DD/`。cwd 只作为
+ * metadata identity；它、环境变量和任意外部路径都不能再改变写入根。
  */
 
-import { promises as fs } from "node:fs";
 import { existsSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import {
-  isCurrentLedgerEntry,
-  isCurrentLedgerHeader,
-  newId,
-  UnsupportedSessionFormatError,
-  type LedgerHeader,
+	isContainedRuntimePath,
+	isRuntimeId,
+	sessionRelativeLocator,
+	type RunledgerLayout,
+	type RuntimePathFlavor,
+} from "../runtime/contracts/public.ts";
+import { createRuntimeId } from "../runtime/protocol/ids.ts";
+import type { SessionId } from "../runtime/protocol/ids.ts";
+import {
+	isCurrentLedgerEntry,
+	isCurrentLedgerHeader,
+	newId,
+	UnsupportedSessionFormatError,
+	type LedgerHeader,
 } from "../runtime/ledger/types.ts";
 import { JsonlLedger } from "../runtime/ledger/jsonl-ledger.ts";
 import { acquireLedgerLock } from "../runtime/ledger/lockfile.ts";
-import { resolveSessionDir } from "./paths.ts";
-import { buildSessionFileName } from "./path-utils.ts";
-
-const SESSION_FILE_GLOB = "*.jsonl";
 
 export interface SessionManagerOptions {
-  cwd: string;
-  /** 已解析的绝对路径,优先级高于 settings.sessionDir(env 与 settings 在 caller 解析) */
-  sessionDir?: string;
-  /** 指定 sessionId(否则 JsonlLedger 自生成) */
-  sessionId?: string;
-  /** header.metadata,create 时写入 metadata.cwd 便于 list 过滤 */
-  metadata?: Record<string, unknown>;
-  /** 已存在文件是否清空重建;默认 false */
-  truncate?: boolean;
+	readonly layout: RunledgerLayout;
+	readonly cwd: string;
+	/** 指定 canonical sessionId；未指定时由 Runtime ID 工厂生成。 */
+	readonly sessionId?: string;
+	/** header.metadata；cwd 始终由 composition root 写入，不能被覆盖。 */
+	readonly metadata?: Record<string, unknown>;
 }
 
 export interface SessionInfo {
-  /** header.sessionId */
-  id: string;
-  /** 文件绝对路径 */
-  filePath: string;
-  /** header.createdAt ms */
-  createdAt: number;
-  /** header.metadata.cwd(可空) */
-  cwd?: string;
-  /** 文件 mtime ms */
-  modifiedMs: number;
+	readonly id: string;
+	readonly filePath: string;
+	readonly createdAt: number;
+	readonly cwd?: string;
+	readonly modifiedMs: number;
 }
 
-/**
- * SessionManager 实例本质是 JsonlLedger + cwd / sessionDir 的薄壳;
- * 通过 ledger() 暴露底层 sink 给 Agent 例化使用。
- */
+export type SessionStorageErrorCode =
+	| "session_path_outside_home"
+	| "session_path_symlink"
+	| "invalid_session_id"
+	| "session_conflict";
+
+export class SessionStorageError extends Error {
+	readonly code: SessionStorageErrorCode;
+	readonly filePath: string;
+
+	constructor(code: SessionStorageErrorCode, filePath: string) {
+		super(`${code}: ${filePath}`);
+		this.name = "SessionStorageError";
+		this.code = code;
+		this.filePath = filePath;
+	}
+}
+
 export class SessionManager {
-  private readonly _ledger: JsonlLedger;
-  private readonly _cwd: string;
-  private readonly _sessionDir: string;
-  private readonly _filePath: string;
-  private _releaseLock: (() => Promise<void>) | undefined;
+	private readonly _ledger: JsonlLedger;
+	private readonly _layout: RunledgerLayout;
+	private readonly _cwd: string;
+	private readonly _filePath: string;
+	private _releaseLock: (() => Promise<void>) | undefined;
 
-  constructor(
-    ledger: JsonlLedger,
-    cwd: string,
-    sessionDir: string,
-    filePath: string,
-  ) {
-    this._ledger = ledger;
-    this._cwd = cwd;
-    this._sessionDir = sessionDir;
-    this._filePath = filePath;
-  }
+	constructor(
+		ledger: JsonlLedger,
+		layout: RunledgerLayout,
+		cwd: string,
+		filePath: string,
+	) {
+		this._ledger = ledger;
+		this._layout = layout;
+		this._cwd = cwd;
+		this._filePath = filePath;
+	}
 
-  /** 返回已 ensureInitialized 的 JsonlLedger(可作 Agent ledger 注入) */
-  ledger(): JsonlLedger {
-    return this._ledger;
-  }
+	ledger(): JsonlLedger {
+		return this._ledger;
+	}
 
-  sessionId(): string {
-    return this._ledger.sessionId;
-  }
+	sessionId(): string {
+		return this._ledger.sessionId;
+	}
 
-  filePath(): string {
-    return this._filePath;
-  }
+	filePath(): string {
+		return this._filePath;
+	}
 
-  sessionDir(): string {
-    return this._sessionDir;
-  }
+	/** 兼容查询接口；返回固定 canonical sessions 根，不接受写入参数。 */
+	sessionDir(): string {
+		return this._layout.sessions;
+	}
 
-  cwd(): string {
-    return this._cwd;
-  }
+	cwd(): string {
+		return this._cwd;
+	}
 
-  /** 释放底层 ledger 资源(JsonlLedger.close noop,留作未来 write buffer 用) */
-  async closeAll(): Promise<void> {
-    await this._ledger.close();
-    const release = this._releaseLock;
-    this._releaseLock = undefined;
-    if (release) await release();
-  }
+	async closeAll(): Promise<void> {
+		await this._ledger.close();
+		const release = this._releaseLock;
+		this._releaseLock = undefined;
+		if (release) await release();
+	}
 
-  /** 活跃写会话持整场独占锁;重复调用幂等。 */
-  async acquireLock(): Promise<void> {
-    if (this._releaseLock) return;
-    await this._ledger.initialize();
-    this._releaseLock = await acquireLedgerLock(this._ledger);
-  }
+	/** 活跃写会话持整场独占锁；重复调用幂等。 */
+	async acquireLock(): Promise<void> {
+		if (this._releaseLock) return;
+		await assertCanonicalFile(this._layout, this._filePath);
+		await this._ledger.initialize();
+		this._releaseLock = await acquireLedgerLock(this._ledger);
+	}
 
-  /**
-   * 新建 session;若同路径已存在且 truncate=false,则继承已有 header 与 entries。
-   */
-  static async create(opts: SessionManagerOptions): Promise<SessionManager> {
-    const sessionDir = opts.sessionDir ?? resolveSessionDir(opts.cwd);
-    const filePath = path.join(sessionDir, buildSessionFileName());
-    const metadata = { cwd: opts.cwd, ...(opts.metadata ?? {}) };
-    const ledger = new JsonlLedger({
-      filePath,
-      sessionId: opts.sessionId,
-      metadata,
-      truncate: opts.truncate ?? false,
-    });
-    await ledger.initialize();
-    return new SessionManager(ledger, opts.cwd, sessionDir, filePath);
-  }
+	static async create(options: SessionManagerOptions): Promise<SessionManager> {
+		const sessionId = allocateSessionId(options.sessionId);
+		const createdAt = new Date().toISOString();
+		const filePath = canonicalSessionPath(options.layout, sessionId, createdAt);
+		await ensureCanonicalParent(options.layout, filePath);
+		if (existsSync(filePath)) throw new SessionStorageError("session_conflict", filePath);
 
-  /**
-   * 直接打开已有文件;若不存在则抛 ENOENT(让 caller 处理)。
-   * JsonlLedger 在 ensureInitialized 里读取现有 header + entries。
-   */
-  static async open(filePath: string): Promise<SessionManager> {
-    if (!existsSync(filePath)) {
-      throw new Error(`session file not found: ${filePath}`);
-    }
-    const absolute = path.resolve(filePath);
-    const sessionDir = path.dirname(absolute);
-    const ledger = new JsonlLedger({ filePath: absolute });
-    await ledger.initialize();
-    const cd = await readHeader(absolute);
-    const headerCwd = cd?.metadata?.cwd;
-    return new SessionManager(
-      ledger,
-      typeof headerCwd === "string" ? headerCwd : "",
-      sessionDir,
-      absolute,
-    );
-  }
+		const ledger = new JsonlLedger({
+			filePath,
+			sessionId,
+			metadata: { ...(options.metadata ?? {}), cwd: options.cwd },
+		});
+		await ledger.initialize();
+		await hardenCanonicalFile(options.layout, filePath);
+		return new SessionManager(ledger, options.layout, options.cwd, filePath);
+	}
 
-  /**
-   * 找会话目录里 mtime 最大的文件,返回 SessionManager(继承已有 entries)。
-   * 若目录或文件都不存在,退化为 SessionManager.create(新会话)。
-   */
-  static async continueRecent(
-    cwd: string,
-    sessionDir?: string,
-  ): Promise<SessionManager> {
-    const dir = sessionDir ?? resolveSessionDir(cwd);
-    const recent = await findMostRecentSession(dir, cwd);
-    if (!recent) {
-      return SessionManager.create({ cwd, sessionDir: dir });
-    }
-    return SessionManager.open(recent);
-  }
+	/** 只允许打开已存在的 canonical session；根外文件必须走显式迁移。 */
+	static async open(layout: RunledgerLayout, filePath: string): Promise<SessionManager> {
+		const absolute = canonicalAbsolutePath(filePath);
+		await assertCanonicalFile(layout, absolute);
+		const ledger = new JsonlLedger({ filePath: absolute });
+		await ledger.initialize();
+		await hardenCanonicalFile(layout, absolute);
+		const header = ledger.header();
+		const headerCwd = header.metadata?.cwd;
+		return new SessionManager(
+			ledger,
+			layout,
+			typeof headerCwd === "string" ? headerCwd : "",
+			absolute,
+		);
+	}
 
-  /**
-   * 复制源文件全部行(rows)到新文件,在 metadata 标 parentSession=源路径。
-   * RunLedger 本期为最小可运行,不做 entries 改写(不重写 parentId 链)。
-   */
-  static async forkFrom(
-    sourcePath: string,
-    targetCwd: string,
-    sessionDir?: string,
-  ): Promise<SessionManager> {
-    if (!existsSync(sourcePath)) {
-      throw new Error(`fork source not found: ${sourcePath}`);
-    }
-    const dir = sessionDir ?? resolveSessionDir(targetCwd);
-    const targetPath = path.join(dir, buildSessionFileName());
-    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-    const content = await fs.readFile(sourcePath, "utf8");
-    // 新 fork 拥有独立 sessionId,历史 entry 改写到新会话并保留父会话元数据。
-    const lines = content.split(/\r?\n/).filter((l) => l.length > 0);
-    if (lines.length === 0) {
-      throw new UnsupportedSessionFormatError(sourcePath);
-    } else {
-      const first = JSON.parse(lines[0]!) as unknown;
-      if (!isCurrentLedgerHeader(first)) {
-        throw new UnsupportedSessionFormatError(sourcePath);
-      }
-      const newSessionId = newId();
-      const newHeaderId = newId();
-      const mergedMeta: Record<string, unknown> = {
-        ...(first.metadata ?? {}),
-        cwd: targetCwd,
-        parentSession: path.resolve(sourcePath),
-        parentSessionId: first.sessionId,
-      };
-      const newHeader: LedgerHeader = {
-        ...first,
-        id: newHeaderId,
-        sessionId: newSessionId,
-        createdAt: Date.now(),
-        metadata: mergedMeta,
-      };
-      lines[0] = JSON.stringify(newHeader);
-      for (let i = 1; i < lines.length; i++) {
-        const parsed = JSON.parse(lines[i]!) as unknown;
-        if (!isCurrentLedgerEntry(parsed)) {
-          throw new UnsupportedSessionFormatError(sourcePath);
-        }
-        const entry = parsed;
-        lines[i] = JSON.stringify({
-          ...entry,
-          sessionId: newSessionId,
-          parentId: entry.parentId === first.id ? newHeaderId : entry.parentId,
-        });
-      }
-      await fs.writeFile(targetPath, lines.join("\n") + "\n", "utf8");
-    }
-    return SessionManager.open(targetPath);
-  }
+	static async continueRecent(
+		layout: RunledgerLayout,
+		cwd: string,
+	): Promise<SessionManager> {
+		const recent = await findMostRecentSession(layout, cwd);
+		if (!recent) return SessionManager.create({ layout, cwd });
+		return SessionManager.open(layout, recent);
+	}
 
-  /**
- * 列出某会话目录中所有 *.jsonl header,跳过无法识别的文件(只记 stderr)。
-   * 同 cwd 过滤:仅当 cwd 非空且 header.metadata.cwd 与之相等时保留。
-   */
-  static async list(cwd: string, sessionDir?: string): Promise<SessionInfo[]> {
-    const dir = sessionDir ?? resolveSessionDir(cwd);
-    if (!existsSync(dir)) return [];
-    const files = (await readdir(dir, { withFileTypes: false }))
-      .filter((f) => f.endsWith(".jsonl"))
-      .map((f) => path.join(dir, f));
-    const out: SessionInfo[] = [];
-    for (const fp of files) {
-      try {
-        const header = await readHeader(fp);
-        if (!header) continue;
-        if (cwd.length > 0 && header.metadata?.cwd !== cwd) continue;
-        const st = await stat(fp);
-        out.push({
-          id: header.sessionId,
-          filePath: fp,
-          createdAt: header.createdAt,
-          cwd: typeof header.metadata?.cwd === "string" ? header.metadata.cwd : undefined,
-          modifiedMs: st.mtimeMs,
-        });
-      } catch (e) {
-        process.stderr.write(
-          `[runledger] session header parse failed at ${fp}: ${String(e)}\n` +
-            `  skip;继续扫余下文件\n`,
-        );
-      }
-    }
-    out.sort((a, b) => b.modifiedMs - a.modifiedMs);
-    return out;
-  }
+	/**
+	 * 在 canonical root 内 fork；parentSession 只保存 root-relative locator，
+	 * 不把用户输入的绝对路径写入 durable record。
+	 */
+	static async forkFrom(
+		layout: RunledgerLayout,
+		sourcePath: string,
+		targetCwd: string,
+	): Promise<SessionManager> {
+		const sourceAbsolute = canonicalAbsolutePath(sourcePath);
+		await assertCanonicalFile(layout, sourceAbsolute);
+		const content = await fs.readFile(sourceAbsolute, "utf8");
+		const lines = content.split(/\r?\n/).filter((line) => line.length > 0);
+		if (lines.length === 0) throw new UnsupportedSessionFormatError(sourceAbsolute);
 
-  /**
-   * listAll:本期与 list 等价(没有跨 cwd 列举的场景,所有 sessionDir 都绑定一个 cwd)。
-   * 保留接口位与 pi 同名 API 对齐以便未来扩展。
-   */
-  static async listAll(sessionDir?: string): Promise<SessionInfo[]> {
-    if (!sessionDir) {
-      throw new Error("listAll 需要显式 sessionDir(本期不支持无 cwd 全扫)");
-    }
-    return SessionManager.list("", sessionDir);
-  }
+		const first = JSON.parse(lines[0]!) as unknown;
+		if (!isCurrentLedgerHeader(first)) throw new UnsupportedSessionFormatError(sourceAbsolute);
+		const newSessionId = allocateSessionId();
+		const createdAt = new Date().toISOString();
+		const targetPath = canonicalSessionPath(layout, newSessionId, createdAt);
+		const parentLocator = path.relative(layout.home, sourceAbsolute).split(path.sep).join("/");
+		const newHeader: LedgerHeader = {
+			...first,
+			id: newId(),
+			sessionId: newSessionId,
+			createdAt: Date.now(),
+			metadata: {
+				...(first.metadata ?? {}),
+				cwd: targetCwd,
+				parentSession: parentLocator,
+				parentSessionId: first.sessionId,
+			},
+		};
+		lines[0] = JSON.stringify(newHeader);
+		for (let index = 1; index < lines.length; index += 1) {
+			const parsed = JSON.parse(lines[index]!) as unknown;
+			if (!isCurrentLedgerEntry(parsed)) throw new UnsupportedSessionFormatError(sourceAbsolute);
+			lines[index] = JSON.stringify({
+				...parsed,
+				sessionId: newSessionId,
+				parentId: parsed.parentId === first.id ? newHeader.id : parsed.parentId,
+			});
+		}
+
+		await writeAtomicCanonicalFile(layout, targetPath, lines.join("\n") + "\n");
+		return SessionManager.open(layout, targetPath);
+	}
+
+	static async list(layout: RunledgerLayout, cwd: string): Promise<SessionInfo[]> {
+		if (!existsSync(layout.sessions)) return [];
+		await assertCanonicalDirectory(layout, layout.sessions);
+		const files = await collectCanonicalSessionFiles(layout.sessions);
+		const out: SessionInfo[] = [];
+		for (const filePath of files) {
+			try {
+				const header = await readHeader(filePath);
+				if (!header) continue;
+				if (cwd.length > 0 && header.metadata?.cwd !== cwd) continue;
+				const info = await fs.stat(filePath);
+				out.push({
+					id: header.sessionId,
+					filePath,
+					createdAt: header.createdAt,
+					cwd: typeof header.metadata?.cwd === "string" ? header.metadata.cwd : undefined,
+					modifiedMs: info.mtimeMs,
+				});
+			} catch (error) {
+				process.stderr.write(
+					`[runledger] session header parse failed at ${filePath}: ${String(error)}\n` +
+						"  skip;继续扫余下文件\n",
+				);
+			}
+		}
+		out.sort((left, right) => right.modifiedMs - left.modifiedMs);
+		return out;
+	}
+
+	static async listAll(layout: RunledgerLayout): Promise<SessionInfo[]> {
+		return SessionManager.list(layout, "");
+	}
 }
 
-/**
- * 读取 current JSONL 文件首行 header,损坏或不支持的格式返回 undefined。
- */
+function allocateSessionId(value?: string): string {
+	const sessionId = value ?? createRuntimeId("session");
+	if (!isRuntimeId(sessionId, "session")) {
+		throw new SessionStorageError("invalid_session_id", sessionId);
+	}
+	return sessionId;
+}
+
+function canonicalSessionPath(layout: RunledgerLayout, sessionId: string, createdAt: string): string {
+	const relativeLocator = sessionRelativeLocator(sessionId as SessionId, createdAt, false);
+	const filePath = path.resolve(layout.home, relativeLocator);
+	assertContainedLexically(layout, filePath);
+	return filePath;
+}
+
+function canonicalAbsolutePath(filePath: string): string {
+	if (!path.isAbsolute(filePath)) throw new SessionStorageError("session_path_outside_home", filePath);
+	return path.resolve(filePath);
+}
+
+async function ensureCanonicalParent(layout: RunledgerLayout, filePath: string): Promise<void> {
+	await fs.mkdir(layout.home, { recursive: true, mode: 0o700 });
+	await assertCanonicalDirectory(layout, layout.home);
+	await assertNoSymlinkComponents(layout, path.dirname(filePath));
+	await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+	await assertCanonicalDirectory(layout, path.dirname(filePath));
+}
+
+async function assertCanonicalFile(layout: RunledgerLayout, filePath: string): Promise<void> {
+	assertContainedLexically(layout, filePath);
+	let info;
+	try {
+		info = await fs.lstat(filePath);
+	} catch {
+		throw new Error(`session file not found: ${filePath}`);
+	}
+	if (info.isSymbolicLink()) throw new SessionStorageError("session_path_symlink", filePath);
+	const root = await fs.realpath(layout.home);
+	const actual = await fs.realpath(filePath);
+	if (!isContainedRuntimePath(root, actual, runtimePathFlavor())) {
+		throw new SessionStorageError("session_path_outside_home", filePath);
+	}
+}
+
+async function hardenCanonicalFile(layout: RunledgerLayout, filePath: string): Promise<void> {
+	await assertCanonicalFile(layout, filePath);
+	await fs.chmod(filePath, 0o600);
+}
+
+async function assertCanonicalDirectory(layout: RunledgerLayout, directory: string): Promise<void> {
+	assertContainedLexically(layout, directory);
+	let info;
+	try {
+		info = await fs.lstat(directory);
+	} catch {
+		throw new SessionStorageError("session_path_outside_home", directory);
+	}
+	if (info.isSymbolicLink()) throw new SessionStorageError("session_path_symlink", directory);
+	const root = await fs.realpath(layout.home);
+	const actual = await fs.realpath(directory);
+	if (!isContainedRuntimePath(root, actual, runtimePathFlavor())) {
+		throw new SessionStorageError("session_path_outside_home", directory);
+	}
+}
+
+async function assertNoSymlinkComponents(layout: RunledgerLayout, target: string): Promise<void> {
+	assertContainedLexically(layout, target);
+	const relativeTarget = path.relative(layout.home, target);
+	let current = layout.home;
+	for (const segment of relativeTarget.split(path.sep).filter((value) => value.length > 0)) {
+		current = path.join(current, segment);
+		try {
+			const info = await fs.lstat(current);
+			if (info.isSymbolicLink()) throw new SessionStorageError("session_path_symlink", current);
+		} catch (error) {
+			if (error instanceof SessionStorageError) throw error;
+			break;
+		}
+	}
+}
+
+function assertContainedLexically(layout: RunledgerLayout, target: string): void {
+	if (!isContainedRuntimePath(layout.home, target, runtimePathFlavor())) {
+		throw new SessionStorageError("session_path_outside_home", target);
+	}
+}
+
+function runtimePathFlavor(): RuntimePathFlavor {
+	return process.platform === "win32" ? "win32" : "posix";
+}
+
+async function writeAtomicCanonicalFile(
+	layout: RunledgerLayout,
+	targetPath: string,
+	content: string,
+): Promise<void> {
+	await ensureCanonicalParent(layout, targetPath);
+	if (existsSync(targetPath)) throw new SessionStorageError("session_conflict", targetPath);
+	const temporaryPath = path.join(path.dirname(targetPath), `.${path.basename(targetPath)}.tmp-${newId()}`);
+	assertContainedLexically(layout, temporaryPath);
+	await fs.writeFile(temporaryPath, content, { encoding: "utf8", mode: 0o600 });
+	try {
+		await hardenCanonicalFile(layout, temporaryPath);
+		await fs.rename(temporaryPath, targetPath);
+		await hardenCanonicalFile(layout, targetPath);
+	} catch (error) {
+		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+		throw error;
+	}
+}
+
+async function collectCanonicalSessionFiles(root: string): Promise<string[]> {
+	const out: string[] = [];
+	async function visit(directory: string): Promise<void> {
+		const entries = await fs.readdir(directory, { withFileTypes: true });
+		for (const entry of entries) {
+			if (entry.isSymbolicLink()) continue;
+			const entryPath = path.join(directory, entry.name);
+			if (entry.isDirectory()) {
+				await visit(entryPath);
+				continue;
+			}
+			if (entry.isFile() && entry.name.endsWith(".jsonl")) out.push(entryPath);
+		}
+	}
+	await visit(root);
+	return out;
+}
+
+async function findMostRecentSession(layout: RunledgerLayout, cwd: string): Promise<string | undefined> {
+	const sessions = await SessionManager.list(layout, cwd);
+	return sessions[0]?.filePath;
+}
+
 async function readHeader(filePath: string): Promise<LedgerHeader | undefined> {
-  let content: string;
-  try {
-    content = await fs.readFile(filePath, "utf8");
-  } catch {
-    return undefined;
-  }
-  const newlineIdx = content.indexOf("\n");
-  const firstLine = (newlineIdx === -1 ? content : content.slice(0, newlineIdx)).trim();
-  if (firstLine.length === 0) return undefined;
-  try {
-    const parsed = JSON.parse(firstLine) as unknown;
-    return isCurrentLedgerHeader(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * 扫目录找 mtime 最大的会话文件;按 header.metadata.cwd 过滤。
- * 无可匹配则返回 undefined。
- */
-async function findMostRecentSession(
-  dir: string,
-  cwd: string,
-): Promise<string | undefined> {
-  if (!existsSync(dir)) return undefined;
-  let files: string[];
-  try {
-    files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl"));
-  } catch {
-    return undefined;
-  }
-  let bestPath: string | undefined;
-  let bestMtime = -1;
-  for (const f of files) {
-    const fp = path.join(dir, f);
-    let header: LedgerHeader | undefined;
-    try {
-      header = await readHeader(fp);
-    } catch {
-      continue;
-    }
-    if (!header) continue;
-    if (cwd.length > 0 && header.metadata?.cwd !== cwd) continue;
-    let mtime: number;
-    try {
-      mtime = (await stat(fp)).mtimeMs;
-    } catch {
-      continue;
-    }
-    if (mtime > bestMtime) {
-      bestMtime = mtime;
-      bestPath = fp;
-    }
-  }
-  return bestPath;
+	let content: string;
+	try {
+		content = await fs.readFile(filePath, "utf8");
+	} catch {
+		return undefined;
+	}
+	const newlineIndex = content.indexOf("\n");
+	const firstLine = (newlineIndex === -1 ? content : content.slice(0, newlineIndex)).trim();
+	if (firstLine.length === 0) return undefined;
+	try {
+		const parsed = JSON.parse(firstLine) as unknown;
+		return isCurrentLedgerHeader(parsed) ? parsed : undefined;
+	} catch {
+		return undefined;
+	}
 }
