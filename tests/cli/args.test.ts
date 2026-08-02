@@ -79,8 +79,11 @@ describe("parseArgs model/thinking/session-dir", () => {
     expect(parseArgs(["--thinking"]).error).toContain("--thinking");
   });
 
-  it("--session-dir <dir> 给字符串", () => {
-    expect(parseArgs(["--session-dir", "/tmp/s"]).args.sessionDir).toBe("/tmp/s");
+  it("--session-dir 明确 error，不进入 unknown 或 args authority", () => {
+    const r = parseArgs(["--session-dir", "/tmp/s"]);
+    expect(r.error).toContain("--session-dir");
+    expect(r.error).toContain("RUNLEDGER_DIR");
+    expect(Object.hasOwn(r.args, "sessionDir")).toBe(false);
   });
 });
 

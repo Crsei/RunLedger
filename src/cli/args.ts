@@ -10,7 +10,6 @@
  *                                       (本期只支持精确 path)
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
- *   --session-dir <dir>                进程级 override,优先级最高
  *   --debug                            打开 RUNLEDGER_DEBUG=1 stderr log
  *   --version / -v                     打 version 退出
  *   --help / -h                        打 usage 退出
@@ -42,7 +41,6 @@ export interface ParsedArgs {
   provider?: string;
   model?: string;
   thinking?: ModelThinkingLevel;
-  sessionDir?: string;
   debug: boolean;
   /** 未知 flag 兜底,key 不带前导 --;有 =value 时 value 为 string,否则为 true */
   unknown: ReadonlyMap<string, string | true>;
@@ -66,7 +64,7 @@ const HELP_TEXT = `Usage: runledger [options]
   -m, --model <id>            覆盖 settings.model
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
-      --session-dir <dir>     进程级 session 目录覆盖,优先级最高
+      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
   -h, --help                  本帮助
@@ -74,9 +72,9 @@ const HELP_TEXT = `Usage: runledger [options]
 环境变量:
   <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login
   RUNLEDGER_DIR                用户层 ~/.runledger/agent 覆盖
-  RUNLEDGER_SESSION_DIR        进程级 session 目录覆盖(等价 --session-dir)
+  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root
 
-布局参见 AGENTS.md §1.2 项目层 .runledger/。
+布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。
 `;
 
 export const USAGE = HELP_TEXT;
@@ -93,7 +91,6 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
-  let sessionDir: string | undefined;
   let debug = false;
   const unknown = new Map<string, string | true>();
   const positional: string[] = [];
@@ -187,14 +184,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       thinking = v as ModelThinkingLevel;
       continue;
     }
-    if (a === "--session-dir") {
-      const v = argv[++i];
-      if (v === undefined) {
-        error = `${a} 缺少值`;
-        break;
-      }
-      sessionDir = v;
-      continue;
+    if (a === "--session-dir" || a.startsWith("--session-dir=")) {
+      if (a === "--session-dir" && argv[i + 1] !== undefined) i += 1;
+      error = "unsupported_cli_authority: --session-dir 已拒绝;请使用预创建的 RUNLEDGER_DIR";
+      break;
     }
     // --flag=value 形式
     if (a.startsWith("--") && a.includes("=")) {
@@ -226,7 +219,6 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       provider,
       model,
       thinking,
-      sessionDir,
       debug,
       unknown,
       positional,

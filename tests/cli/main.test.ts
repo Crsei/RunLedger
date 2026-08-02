@@ -15,10 +15,11 @@ import { resolve } from "node:path";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 
-function runCli(args: string[]): { stdout: string; stderr: string; status: number | null } {
+function runCli(args: string[], env?: Record<string, string>): { stdout: string; stderr: string; status: number | null } {
   const r = spawnSync(process.execPath, ["--import", "tsx", CLI_PATH, ...args], {
     encoding: "utf8",
     timeout: 30_000,
+    env: { ...process.env, ...env },
   });
   return { stdout: r.stdout ?? "", stderr: r.stderr ?? "", status: r.status };
 }
@@ -60,6 +61,20 @@ describe("CLI main() --help / --version", () => {
     const r = runCli(["--session"]);
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("--session");
+  });
+
+  it("--session-dir 写明确弃用错误 + exit 2", () => {
+    const r = runCli(["--session-dir", "/tmp/legacy"]);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("--session-dir");
+    expect(r.stderr).toContain("RUNLEDGER_DIR");
+  });
+
+  it("RUNLEDGER_SESSION_DIR 非空时 fail closed + exit 2", () => {
+    const r = runCli(["--continue"], { RUNLEDGER_SESSION_DIR: "/tmp/legacy" });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("RUNLEDGER_SESSION_DIR");
+    expect(r.stderr).toContain("unsupported_environment_override");
   });
 });
 

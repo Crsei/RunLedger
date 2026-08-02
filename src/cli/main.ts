@@ -37,6 +37,16 @@ const DEFAULT_SYSTEM_PROMPT =
   "Use Read/Write/Edit/Bash/grep/find/ls tools to inspect and modify files. " +
   "Keep replies concise and ask before destructive operations.";
 
+export function validateLegacyCliEnvironment(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
+
+	if (env.RUNLEDGER_SESSION_DIR !== undefined && env.RUNLEDGER_SESSION_DIR.length > 0) {
+		return "unsupported_environment_override: RUNLEDGER_SESSION_DIR 已拒绝;请使用预创建的 RUNLEDGER_DIR";
+	}
+	return undefined;
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
   const { args, error } = parseArgs(argv);
   if (error) {
@@ -53,6 +63,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (args.debug) {
     process.env.RUNLEDGER_DEBUG = "1";
+  }
+
+  const unsupportedEnvironment = validateLegacyCliEnvironment();
+  if (unsupportedEnvironment) {
+    process.stderr.write(`[runledger] ${unsupportedEnvironment}\n`);
+    process.exit(2);
   }
 
   const cwd = process.cwd();
