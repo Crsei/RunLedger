@@ -442,9 +442,9 @@ daemon、transport、subscription worker、composition root、policy resolver、
 
 - conforming implementation 不得再向 `<cwd>/.runledger/` 或 `~/.runledger/agent/` 创建新文件;这两个位置只属于待迁移的历史实现。
 - `settings.sessionDir`、`RUNLEDGER_SESSION_DIR` 和 `--session-dir` 不再是持久化位置 authority。后续实现必须移除或对新写入拒绝这些任意目录 override;具体 CLI/storage 兼容与弃用步骤由独立迁移计划承担。
-- `--session <path>`、`--fork <path>` 或未来 import 可以把根目录外文件当作只读输入,但不能原地追加、锁定、归档或把该外部路径登记为 canonical storage;导入结果必须写回 `<runledgerHome>`。
+- `--session <path>`、`--fork <path>` 或未来 migration 可以把根目录外文件作为显式迁移 source,但不能原地追加、锁定、归档或把该外部路径登记为 canonical storage;迁移结果必须写回 `<runledgerHome>`，source 删除只能由独立 Storage/CLI handoff 在目标校验后授权。
 - 任何用户输入、workspace path、session metadata、adapter 返回值或 symlink traversal 都不得令 RunLedger 自有写入逃逸 `runledgerHome`。最终目标路径必须在打开或 rename 前验证仍位于规范化根目录内。
-- 本 contract 不自动扫描、搬移、复制或删除已有项目级/agent 子目录数据,也不授权双写。旧数据盘点、冲突处理、显式 import、回滚和删除必须另立迁移计划并由用户触发。
+- 本 contract 不自动扫描、搬移、复制或删除已有项目级/agent 子目录数据,也不授权双写。旧数据盘点、冲突处理、显式 destructive migration、source deletion 和不可逆失败语义必须由独立迁移计划定义并由用户触发。
 
 ### 5.4 逻辑保存分类
 
@@ -528,7 +528,7 @@ daemon、transport、subscription worker、composition root、policy resolver、
 - [x] 只导出审核过的 contract types/schemas/ports,不从根 barrel 导出 adapter implementation。
 - [x] Plugin、Security/Worktree、Plan/Context/Memory consumer 只通过 public exports 编译,没有复制 payload 或 ref。
 - [x] 更新开发索引和下游计划中的旧阶段引用,统一指向本文件稳定契约域锚点。
-- [x] 为 Storage/CLI 建立独立迁移 handoff,覆盖停止项目级写入、移除任意 sessionDir authority、显式旧数据 import 与 rollback;本 contract 提交不搬移或删除用户数据。
+- [x] 为 Storage/CLI 建立独立迁移 handoff,覆盖停止项目级写入、移除任意 sessionDir authority、显式 destructive migration、source deletion 与不可逆失败;本 contract 提交不搬移或删除用户数据。
 - [x] 记录 contract commit、定向测试、`npm run check`、`npm test` 和 `npm run build` 证据后再逐项勾选。
 
 完成证据:public-surface test、consumer compile tests、Markdown link check、完整 gates。
@@ -544,7 +544,7 @@ daemon、transport、subscription worker、composition root、policy resolver、
 | Model Router、Plan、Context、Compaction、Memory | [`plan-compact-memory/01-implementation-plan.md`](../plan-compact-memory/01-implementation-plan.md) | public DTO/schema/event payload |
 | Provider/API/Auth/catalog 行为 | [`providers/01-pi-ai-migration-plan.md`](../providers/01-pi-ai-migration-plan.md) 与当前代码/tests | model stream/compatibility bridge contract |
 | 现行 agent-loop、Agent、ledger、stdlib tools | `01`–`03` 历史计划、`AGENTS.md` 与当前代码/tests | 不由本计划改写其行为状态 |
-| 用户级 home 创建、旧目录 import、CLI 参数弃用 | [`storage-cli/02-user-home-migration-handoff.md`](../storage-cli/02-user-home-migration-handoff.md);现行旧行为见 [`storage-cli/01-project-layout-cli-plan.md`](../storage-cli/01-project-layout-cli-plan.md) | root/layout/permission/path-containment contract |
+| 用户级 home 创建、旧目录 destructive migration、CLI 参数弃用 | [`storage-cli/02-user-home-migration-handoff.md`](../storage-cli/02-user-home-migration-handoff.md);现行旧行为见 [`storage-cli/01-project-layout-cli-plan.md`](../storage-cli/01-project-layout-cli-plan.md) | root/layout/permission/path-containment contract |
 | Event Store writer/replay/reducer/recovery | 当前无本计划授权;实现前必须建立独立行为计划 | event/receipt/query ports |
 | Artifact CAS/redaction/retention/GC | 当前无本计划授权;实现前必须建立独立行为计划 | artifact/ref/intent/receipt ports |
 | Orchestrator/Verification/Multi-Agent | 当前无本计划授权;实现前必须建立独立行为计划 | goal/task/agent/evidence 被动合同 |
@@ -598,7 +598,7 @@ contract-only 提交至少运行定向 contract tests、`npm run check` 和 `git
 - [x] port request/result/error、correlation、idempotency、cancel、generation 和 receipt 语义完整。
 - [x] 所有 RunLedger 自有本地数据只有一个已解析 root:`RUNLEDGER_DIR` 或默认 `~/.runledger`;workspace/cwd 不形成第二个保存根。
 - [x] 固定目录树、UTC session/archive 分片、workspace key、artifact CAS、权限和 path-containment 规则均有 golden/negative fixture。
-- [x] conforming implementation 不向 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir 新写数据;外部路径至多作为只读 import source。
+- [x] conforming implementation 不向 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir 新写数据;外部路径只能作为显式 destructive migration source，且 source deletion 必须由独立 handoff 的目标校验与 manifest 授权。
 - [x] 本计划未实现兼容 reader、迁移器或双写;旧数据迁移由独立计划显式授权,未发生隐式搬移或删除。
 - [x] 下游计划全部指向稳定契约域锚点,不再引用本文件旧阶段编号或把它当行为状态账本。
 - [x] 定向 contract tests、完整 gates、Markdown links 与 `git diff --check` 全绿并附证据。

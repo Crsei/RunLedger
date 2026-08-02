@@ -2,7 +2,7 @@
 
 > 文档属性:历史实施计划。原始来源:`.zcode/plans/plan-sess_43a5be3a-b430-4147-a81c-490636aafd5b.md`。
 > 本文覆盖项目层路径、settings、session manager、CLI 与 TUI 装配;已落地事实与后续项汇总见 `../project-cli-layout.md`。
-> 后续迁移:本计划中的项目级写入与任意 `sessionDir` authority 已被 Runtime 单一用户级 home contract 取代;实施 owner 与 rollback 边界见 [`02-user-home-migration-handoff.md`](02-user-home-migration-handoff.md)。迁移完成前本文仍只描述现行旧行为。
+> 后续迁移:本计划中的项目级写入与任意 `sessionDir` authority 已被 Runtime 单一用户级 home contract 取代;实施 owner 与 destructive deletion 边界见 [`02-user-home-migration-handoff.md`](02-user-home-migration-handoff.md)。迁移完成前本文仍只描述现行旧行为。
 
 ## 范围与确认的设计决策
 
