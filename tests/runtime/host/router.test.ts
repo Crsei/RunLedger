@@ -60,6 +60,36 @@ describe("R2 in-memory Host routing", () => {
 		expect(mutationCalls).toBe(1);
 	});
 
+	it("does not let an observer transfer the active driver lease", () => {
+		const router = new InMemoryHostRouter();
+		const clientA = router.connect({ principalId: principalA, connectionId: connectionA });
+		const clientB = router.connect({ principalId: principalB, connectionId: connectionB });
+		router.ensureResidentSession(sessionId, () => ({ ownerMarker: "driver-transfer" }));
+		const claimed = router.claimDriver(sessionId, clientA);
+		expect(claimed).toMatchObject({ ok: true, driverRevision: 1 });
+
+		const observerTransfer = router.claimDriver(sessionId, clientB, "transfer");
+		expect(observerTransfer).toEqual({ ok: false, code: "observer_mutation_forbidden" });
+		expect(router.mutate(sessionId, clientA, {
+			commandId: createRuntimeId("command", "driver-still-active"),
+			requestDigest: digest("d"),
+			apply: () => "still-driver",
+		})).toMatchObject({ ok: true, value: "still-driver" });
+
+		const transferred = router.claimDriver(sessionId, clientA, "transfer", clientB);
+		expect(transferred).toMatchObject({ ok: true, driverRevision: 2 });
+		expect(router.mutate(sessionId, clientA, {
+			commandId: createRuntimeId("command", "old-driver-fenced"),
+			requestDigest: digest("e"),
+			apply: () => "forbidden",
+		})).toMatchObject({ ok: false, code: "observer_mutation_forbidden" });
+		expect(router.mutate(sessionId, clientB, {
+			commandId: createRuntimeId("command", "new-driver-active"),
+			requestDigest: digest("f"),
+			apply: () => "new-driver",
+		})).toMatchObject({ ok: true, value: "new-driver" });
+	});
+
 	it("delivers replay and live events exactly once across activation boundaries", () => {
 		const router = new InMemoryHostRouter({ maxOutbox: 8 });
 		const client = router.connect({ principalId: principalA, connectionId: connectionA });
@@ -122,5 +152,18 @@ describe("R2 in-memory Host routing", () => {
 		for (let index = 0; index < 3; index += 1) router.publish(sessionId, { index });
 		const subscription = router.subscribe({ ...client, sessionId, cursor: 0 });
 		expect(subscription).toEqual({ ok: false, code: "resync_required", safeCursor: 1 });
+	});
+
+	it("caps subscriptions for one principal and session", () => {
+		const router = new InMemoryHostRouter();
+		const client = router.connect({ principalId: principalA, connectionId: connectionA });
+		router.ensureResidentSession(sessionId, () => ({ ownerMarker: "subscription-capacity" }));
+		for (let index = 0; index < 8; index += 1) {
+			expect(router.subscribe({ ...client, sessionId, cursor: 0 }).ok).toBe(true);
+		}
+		expect(router.subscribe({ ...client, sessionId, cursor: 0 })).toEqual({
+			ok: false,
+			code: "subscription_capacity_exceeded",
+		});
 	});
 });

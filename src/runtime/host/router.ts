@@ -38,7 +38,11 @@ export interface SubscribeRequest extends HostClientConnection {
 
 export type SubscribeResult =
 	| { readonly ok: true; readonly subscriptionId: string; readonly cursor: number }
-	| { readonly ok: false; readonly code: "session_not_found" | "resync_required"; readonly safeCursor?: number };
+	| {
+			readonly ok: false;
+			readonly code: "session_not_found" | "resync_required" | "subscription_capacity_exceeded";
+			readonly safeCursor?: number;
+	  };
 
 export type RouterDriverResult =
 	| { readonly ok: true; readonly hostGeneration: number; readonly sessionGeneration: number; readonly driverRevision: number }
@@ -123,11 +127,13 @@ export class InMemoryHostRouter<T extends object = Record<string, unknown>> {
 		sessionId: SessionId,
 		connection: HostClientConnection & { readonly driverRevision?: number },
 		mode: "claim" | "transfer" = "claim",
+		nextDriver?: HostClientConnection,
 	): RouterDriverResult {
 		const session = this.sessions.get(sessionId);
 		if (!session) return { ok: false, code: "session_not_found" };
 		const result = claimDriver(session.driver, {
 			mode,
+			...(nextDriver === undefined ? {} : { nextDriver }),
 			principalId: connection.principalId,
 			connectionId: connection.connectionId,
 			expectedHostGeneration: session.driver.hostGeneration,
@@ -205,6 +211,12 @@ export class InMemoryHostRouter<T extends object = Record<string, unknown>> {
 	public subscribe(request: SubscribeRequest): SubscribeResult {
 		const session = this.sessions.get(request.sessionId);
 		if (!session) return { ok: false, code: "session_not_found" };
+		const principalSessionSubscriptions = [...this.subscriptions.values()].filter(
+			(subscription) => subscription.principalId === request.principalId && subscription.sessionId === request.sessionId,
+		).length;
+		if (principalSessionSubscriptions >= RUNTIME_HOST_BOUNDS.maxSubscriptionsPerPrincipalSession) {
+			return { ok: false, code: "subscription_capacity_exceeded" };
+		}
 		const earliest = session.history[0]?.sequence ?? 1;
 		if (request.cursor < earliest - 1) return { ok: false, code: "resync_required", safeCursor: earliest - 1 };
 		const subscription: SubscriptionState = {

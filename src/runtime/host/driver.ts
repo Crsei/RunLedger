@@ -55,17 +55,30 @@ function checkFence(state: DriverState, input: DriverFenceInput): DriverResult |
 
 export function claimDriver(
 	state: DriverState,
-	input: DriverFenceInput & { readonly mode: "claim" | "transfer" },
+	input: DriverFenceInput & {
+		readonly mode: "claim" | "transfer";
+		readonly nextDriver?: DriverRef;
+	},
 ): DriverResult {
 	const fenceError = checkFence(state, input);
 	if (fenceError) return fenceError;
 	if (input.mode === "claim" && state.driver) return { ok: false, code: "driver_already_claimed" };
 	if (input.mode === "transfer" && !state.driver) return { ok: false, code: "driver_not_claimed" };
+	if (
+		input.mode === "transfer" &&
+		state.driver &&
+		(state.driver.principalId !== input.principalId || state.driver.connectionId !== input.connectionId)
+	) {
+		return { ok: false, code: "observer_mutation_forbidden" };
+	}
+	const nextDriver = input.mode === "transfer" && input.nextDriver
+		? input.nextDriver
+		: { principalId: input.principalId, connectionId: input.connectionId };
 	return {
 		ok: true,
 		state: {
 			...state,
-			driver: { principalId: input.principalId, connectionId: input.connectionId },
+			driver: nextDriver,
 			driverRevision: state.driverRevision + 1,
 		},
 	};

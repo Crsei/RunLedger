@@ -124,5 +124,16 @@ function settleWaiter(
 }
 
 function key(handle: ExecutionHandleRef): string {
-	return `${handle.executionId}:${handle.attemptId}`;
+	return JSON.stringify([
+		handle.authorityId,
+		handle.tenantId,
+		handle.workspaceId,
+		handle.sessionId,
+		handle.hostGeneration,
+		handle.sessionGeneration,
+		handle.executionId,
+		handle.attemptId,
+		handle.requestDigest.algorithm,
+		handle.requestDigest.digest,
+	]);
 }

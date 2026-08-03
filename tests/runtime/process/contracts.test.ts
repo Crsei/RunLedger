@@ -15,7 +15,12 @@ import {
 	transitionProcess,
 	type ProcessProjection,
 } from "../../../src/runtime/process/state-machine.ts";
-import { createProcessEvent, ProcessEventSchema } from "../../../src/runtime/process/events.ts";
+import {
+	createProcessEvent,
+	processEventDigest,
+	ProcessEventSchema,
+	type ProcessEvent,
+} from "../../../src/runtime/process/events.ts";
 import { PROCESS_OUTPUT_BOUNDS, clipUtf8Output, isOutputCursorValid } from "../../../src/runtime/process/output.ts";
 
 const digest = (seed: string): RuntimeDigest => ({
@@ -29,6 +34,13 @@ const ref = (subjectKind: RuntimeContentRef["subjectKind"], seed: string): Runti
 	mediaType: "application/json",
 	size: 10,
 });
+
+const requestedFields = {
+	commandId: createRuntimeId("command", "projection-request"),
+	managedRequestDigest: digest("e"),
+	backend: "pipe" as const,
+	executionMode: "foreground" as const,
+};
 
 function handle(): ExecutionHandleRef {
 	return {
@@ -98,6 +110,7 @@ describe("R1 deterministic process state and event projection", () => {
 			type: "process.execution_started",
 			nextState: "running",
 			expectedRevision: 1,
+			spawnReceiptDigest: digest("s"),
 		});
 		expect(running).toMatchObject({ ok: true, state: { state: "running", revision: 2 } });
 		if (!running.ok) return;
@@ -105,9 +118,16 @@ describe("R1 deterministic process state and event projection", () => {
 			type: "process.execution_terminal",
 			nextState: "completed",
 			expectedRevision: 2,
+			terminal: { state: "completed", evidenceRef: ref("receipt", "t") },
 		});
 		expect(terminal).toMatchObject({ ok: true, state: { state: "completed", revision: 3 } });
 		if (!terminal.ok) return;
+		expect(transitionProcess(terminal.state, {
+			type: "process.execution_terminal",
+			nextState: "completed",
+			expectedRevision: 3,
+			terminal: { state: "completed", evidenceRef: ref("receipt", "t") },
+		})).toMatchObject({ ok: false, code: "terminal_state_immutable" });
 		expect(transitionProcess(terminal.state, {
 			type: "process.execution_started",
 			nextState: "running",
@@ -120,9 +140,19 @@ describe("R1 deterministic process state and event projection", () => {
 		})).toMatchObject({ ok: false, code: "illegal_process_transition" });
 	});
 
+	it("rejects event types that do not match their state transition", () => {
+		const initial = createInitialProcessProjection(handle());
+		expect(transitionProcess(initial, {
+			type: "process.output_checkpointed",
+			nextState: "starting",
+			expectedRevision: 0,
+		})).toMatchObject({ ok: false, code: "illegal_process_transition" });
+	});
+
 	it("rebuilds the same projection from valid events and rejects digest tampering", () => {
 		const processHandle = handle();
 		const requested = createProcessEvent({
+			...requestedFields,
 			handle: processHandle,
 			sequence: 0,
 			revision: 0,
@@ -150,6 +180,129 @@ describe("R1 deterministic process state and event projection", () => {
 
 		const tampered = { ...starting, nextState: "running" as const };
 		expect(projectProcessEvents([requested, tampered])).toMatchObject({ ok: false, code: "event_digest_mismatch" });
+	});
+
+	it("rejects replay when an event lies about its previous state", () => {
+		const processHandle = handle();
+		const requested = createProcessEvent({
+			...requestedFields,
+			handle: processHandle,
+			sequence: 0,
+			revision: 0,
+			type: "process.execution_requested",
+			previousState: null,
+			nextState: "queued",
+			previousEventHash: null,
+		});
+		const starting = createProcessEvent({
+			handle: processHandle,
+			sequence: 1,
+			revision: 1,
+			type: "process.execution_starting",
+			previousState: "running",
+			nextState: "starting",
+			previousEventHash: requested.eventHash,
+		});
+		expect(projectProcessEvents([requested, starting])).toMatchObject({
+			ok: false,
+			code: "event_previous_state_mismatch",
+		});
+	});
+
+	it("rejects event-specific payload fields on the wrong event type", () => {
+		const processHandle = handle();
+		const requested = createProcessEvent({
+			...requestedFields,
+			handle: processHandle,
+			sequence: 0,
+			revision: 0,
+			type: "process.execution_requested",
+			previousState: null,
+			nextState: "queued",
+			previousEventHash: null,
+		});
+		const starting = createProcessEvent({
+			handle: processHandle,
+			sequence: 1,
+			revision: 1,
+			type: "process.execution_starting",
+			previousState: "queued",
+			nextState: "starting",
+			previousEventHash: requested.eventHash,
+		});
+		const startedWithCheckpointPayload = createProcessEvent({
+			handle: processHandle,
+			sequence: 2,
+			revision: 2,
+			type: "process.execution_started",
+			previousState: "starting",
+			nextState: "running",
+			previousEventHash: starting.eventHash,
+			spawnReceiptDigest: digest("f"),
+			outputCursor: 4,
+			outputSize: 4,
+		});
+		expect(projectProcessEvents([requested, starting, startedWithCheckpointPayload])).toMatchObject({
+			ok: false,
+			code: "event_payload_invalid",
+		});
+	});
+
+	it("rejects a valid-hash terminal event whose evidence is missing", () => {
+		const processHandle = handle();
+		const requested = createProcessEvent({
+			...requestedFields,
+			handle: processHandle,
+			sequence: 0,
+			revision: 0,
+			type: "process.execution_requested",
+			previousState: null,
+			nextState: "queued",
+			previousEventHash: null,
+		});
+		const starting = createProcessEvent({
+			handle: processHandle,
+			sequence: 1,
+			revision: 1,
+			type: "process.execution_starting",
+			previousState: "queued",
+			nextState: "starting",
+			previousEventHash: requested.eventHash,
+		});
+		const started = createProcessEvent({
+			handle: processHandle,
+			sequence: 2,
+			revision: 2,
+			type: "process.execution_started",
+			previousState: "starting",
+			nextState: "running",
+			previousEventHash: starting.eventHash,
+			spawnReceiptDigest: digest("f"),
+		});
+		const validTerminal = createProcessEvent({
+			handle: processHandle,
+			sequence: 3,
+			revision: 3,
+			type: "process.execution_terminal",
+			previousState: "running",
+			nextState: "completed",
+			previousEventHash: started.eventHash,
+			terminal: { state: "completed", evidenceRef: ref("receipt", "a") },
+		});
+		const { eventHash: _eventHash, ...validBody } = validTerminal;
+		void _eventHash;
+		const malformedBody = {
+			...validBody,
+			terminal: { state: "completed" },
+		} as unknown as Omit<ProcessEvent, "eventHash">;
+		const malformed = {
+			...malformedBody,
+			eventHash: processEventDigest(malformedBody),
+		};
+		expect(projectProcessEvents([requested, starting, started, malformed])).toMatchObject({
+			ok: false,
+			code: "event_payload_invalid",
+		});
 	});
 });
 

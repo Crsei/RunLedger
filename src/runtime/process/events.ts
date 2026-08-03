@@ -2,8 +2,8 @@
 
 import { Type } from "typebox";
 import { Value } from "typebox/value";
-import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
-import { RuntimeDigestSchema } from "../protocol/foundation-schemas.ts";
+import { runtimeDigest, type RuntimeContentRef, type RuntimeDigest } from "../protocol/foundation.ts";
+import { RuntimeContentRefSchema, RuntimeDigestSchema } from "../protocol/foundation-schemas.ts";
 import type {
 	AttemptId,
 	AuthorityId,
@@ -14,7 +14,14 @@ import type {
 	TenantId,
 	WorkspaceId,
 } from "../protocol/ids.ts";
-import { PROCESS_STATES, type ExecutionHandleRef, type ProcessState, type ProcessTerminalState } from "./types.ts";
+import {
+	PROCESS_STATES,
+	type ExecutionHandleRef,
+	type ProcessBackendKind,
+	type ProcessExecutionMode,
+	type ProcessState,
+	type ProcessTerminalState,
+} from "./types.ts";
 
 export const PROCESS_EVENT_TYPES = [
 	"process.execution_requested",
@@ -46,6 +53,7 @@ const TerminalPayloadSchema = Type.Object(
 		state: TerminalStateSchema,
 		exitCode: Type.Optional(Type.Integer({ minimum: -255, maximum: 255 })),
 		signal: Type.Optional(Type.String({ minLength: 1, maxLength: 32 })),
+		evidenceRef: RuntimeContentRefSchema,
 	},
 	{ additionalProperties: false },
 );
@@ -65,15 +73,21 @@ export interface ProcessEvent {
 	readonly revision: number;
 	readonly type: ProcessEventType;
 	readonly requestDigest: RuntimeDigest;
+	readonly managedRequestDigest?: RuntimeDigest;
+	readonly backend?: ProcessBackendKind;
+	readonly executionMode?: ProcessExecutionMode;
 	readonly previousState: ProcessState | null;
 	readonly nextState: ProcessState;
 	readonly previousEventHash: RuntimeDigest | null;
 	readonly outputCursor?: number;
 	readonly outputSize?: number;
+	readonly spawnReceiptDigest?: RuntimeDigest;
+	readonly spawnEvidenceRef?: RuntimeContentRef;
 	readonly terminal?: {
 		readonly state: ProcessTerminalState;
 		readonly exitCode?: number;
 		readonly signal?: string;
+		readonly evidenceRef: RuntimeContentRef;
 	};
 	readonly eventHash: RuntimeDigest;
 }
@@ -94,11 +108,16 @@ export const ProcessEventSchema = Type.Object(
 		revision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		type: ProcessEventTypeSchema,
 		requestDigest: RuntimeDigestSchema,
+		managedRequestDigest: Type.Optional(RuntimeDigestSchema),
+		backend: Type.Optional(Type.Union([Type.Literal("pipe"), Type.Literal("pty")])),
+		executionMode: Type.Optional(Type.Union([Type.Literal("foreground"), Type.Literal("background")])),
 		previousState: Type.Union([ProcessStateSchema, Type.Null()]),
 		nextState: ProcessStateSchema,
 		previousEventHash: Type.Union([RuntimeDigestSchema, Type.Null()]),
 		outputCursor: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
 		outputSize: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+		spawnReceiptDigest: Type.Optional(RuntimeDigestSchema),
+		spawnEvidenceRef: Type.Optional(RuntimeContentRefSchema),
 		terminal: Type.Optional(TerminalPayloadSchema),
 		eventHash: RuntimeDigestSchema,
 	},
@@ -119,8 +138,13 @@ export interface CreateProcessEventInput {
 	readonly previousEventHash: RuntimeDigest | null;
 	readonly eventId?: EventId;
 	readonly commandId?: CommandId;
+	readonly managedRequestDigest?: RuntimeDigest;
+	readonly backend?: ProcessBackendKind;
+	readonly executionMode?: ProcessExecutionMode;
 	readonly outputCursor?: number;
 	readonly outputSize?: number;
+	readonly spawnReceiptDigest?: RuntimeDigest;
+	readonly spawnEvidenceRef?: RuntimeContentRef;
 	readonly terminal?: ProcessEvent["terminal"];
 }
 
@@ -145,11 +169,16 @@ export function createProcessEvent(input: CreateProcessEventInput): ProcessEvent
 		revision: input.revision,
 		type: input.type,
 		requestDigest: input.handle.requestDigest,
+		...(input.managedRequestDigest === undefined ? {} : { managedRequestDigest: input.managedRequestDigest }),
+		...(input.backend === undefined ? {} : { backend: input.backend }),
+		...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
 		previousState: input.previousState,
 		nextState: input.nextState,
 		previousEventHash: input.previousEventHash,
 		...(input.outputCursor === undefined ? {} : { outputCursor: input.outputCursor }),
 		...(input.outputSize === undefined ? {} : { outputSize: input.outputSize }),
+		...(input.spawnReceiptDigest === undefined ? {} : { spawnReceiptDigest: input.spawnReceiptDigest }),
+		...(input.spawnEvidenceRef === undefined ? {} : { spawnEvidenceRef: input.spawnEvidenceRef }),
 		...(input.terminal === undefined ? {} : { terminal: input.terminal }),
 	};
 	return { ...body, eventHash: processEventDigest(body) };

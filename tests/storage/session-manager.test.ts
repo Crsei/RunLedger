@@ -2,7 +2,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildRunledgerLayout, type RunledgerLayout } from "../../src/runtime/contracts/public.ts";
 import type { LedgerHeader } from "../../src/runtime/ledger/types.ts";
@@ -182,7 +182,7 @@ describe("SessionManager.list", () => {
 	it("list 跳过损坏文件", async () => {
 		const manager = await SessionManager.create({ layout, cwd, sessionId: "session_valid" });
 		await manager.closeAll();
-		writeFileSync(join(layout.sessions, "2026", "08", "02", "broken.jsonl"), "garbage-not-json", "utf8");
+		writeFileSync(join(dirname(manager.filePath()), "broken.jsonl"), "garbage-not-json", "utf8");
 		const list = await SessionManager.list(layout, cwd);
 		expect(list.length).toBe(1);
 		expect(list[0]!.filePath).toBe(manager.filePath());

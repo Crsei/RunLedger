@@ -35,11 +35,39 @@ function request(seed: string, executionMode: ManagedProcessRequest["executionMo
 
 class FakeJournal implements ProcessJournal {
 	public readonly events: ProcessEvent[] = [];
+	public failNextType: ProcessEvent["type"] | undefined;
 	private readonly claims = new Set<string>();
 	private readonly receipts = new Map<string, BackendSpawnReceipt>();
+	private readonly reservations = new Map<string, ExecutionHandleRef>();
+	private blockRequestedAppend = false;
+	private requestedAppendBlocked: (() => void) | undefined;
+	private releaseRequestedAppend: (() => void) | undefined;
 
 	public async append(event: ProcessEvent): Promise<void> {
+		if (event.type === this.failNextType) {
+			this.failNextType = undefined;
+			throw new Error("injected journal failure");
+		}
+		if (event.type === "process.execution_requested" && this.blockRequestedAppend) {
+			this.blockRequestedAppend = false;
+			const gate = new Promise<void>((resolve) => {
+				this.releaseRequestedAppend = resolve;
+			});
+			this.requestedAppendBlocked?.();
+			await gate;
+		}
 		this.events.push(event);
+	}
+
+	public blockNextRequested(): Promise<void> {
+		this.blockRequestedAppend = true;
+		return new Promise((resolve) => {
+			this.requestedAppendBlocked = resolve;
+		});
+	}
+
+	public releaseBlockedRequested(): void {
+		this.releaseRequestedAppend?.();
 	}
 
 	public findIntent(commandId: ManagedProcessRequest["correlationId"]): ProcessEvent | undefined {
@@ -65,6 +93,47 @@ class FakeJournal implements ProcessJournal {
 	public recordSpawnReceipt(handle: ExecutionHandleRef, receipt: BackendSpawnReceipt): void {
 		this.receipts.set(handle.executionId, receipt);
 	}
+
+	public deleteSpawnReceipt(handle: ExecutionHandleRef): void {
+		this.receipts.delete(handle.executionId);
+	}
+
+	public reserveProcessCapacity(
+		handle: ExecutionHandleRef,
+		limits: { readonly maxPerSession: number; readonly maxPerHost: number },
+	): "reserved" | "already_reserved" | "session_capacity_exceeded" | "host_capacity_exceeded" {
+		const reservationKey = processKey(handle);
+		if (this.reservations.has(reservationKey)) return "already_reserved";
+		const sessionCount = [...this.reservations.values()].filter((reserved) => (
+			reserved.authorityId === handle.authorityId &&
+			reserved.tenantId === handle.tenantId &&
+			reserved.workspaceId === handle.workspaceId &&
+			reserved.sessionId === handle.sessionId &&
+			reserved.hostGeneration === handle.hostGeneration &&
+			reserved.sessionGeneration === handle.sessionGeneration
+		)).length;
+		if (sessionCount >= limits.maxPerSession) return "session_capacity_exceeded";
+		if (this.reservations.size >= limits.maxPerHost) return "host_capacity_exceeded";
+		this.reservations.set(reservationKey, handle);
+		return "reserved";
+	}
+
+	public releaseProcessCapacity(handle: ExecutionHandleRef): void {
+		this.reservations.delete(processKey(handle));
+	}
+}
+
+function processKey(handle: ExecutionHandleRef): string {
+	return JSON.stringify([
+		handle.authorityId,
+		handle.tenantId,
+		handle.workspaceId,
+		handle.sessionId,
+		handle.hostGeneration,
+		handle.sessionGeneration,
+		handle.executionId,
+		handle.attemptId,
+	]);
 }
 
 class FakeBackend implements BackendSpawnPort {
@@ -119,6 +188,31 @@ describe("R5 managed process manager", () => {
 		expect(backend.spawnCount).toBe(1);
 	});
 
+	it("binds a retry to the complete request even when caller digest is unchanged", async () => {
+		const journal = new FakeJournal();
+		journal.failNextType = "process.execution_starting";
+		const backend = new FakeBackend(journal);
+		const manager = new ProcessManager(journal, backend);
+		const original = request("manager");
+		expect(await manager.create(original)).toEqual({ ok: false, code: "journal_unavailable" });
+		const changed = { ...original, backend: "pty" as const };
+		expect(await manager.create(changed)).toEqual({ ok: false, code: "command_id_conflict" });
+		expect(backend.spawnCount).toBe(0);
+	});
+
+	it("does not let a concurrent duplicate intent pass an existing capacity reservation", async () => {
+		const journal = new FakeJournal();
+		const backend = new FakeBackend(journal);
+		const manager = new ProcessManager(journal, backend);
+		const blocked = journal.blockNextRequested();
+		const first = manager.create(request("concurrent-intent"));
+		await blocked;
+		expect(await manager.create(request("concurrent-intent"))).toEqual({ ok: false, code: "uncertain_outcome" });
+		journal.releaseBlockedRequested();
+		expect((await first).ok).toBe(true);
+		expect(backend.spawnCount).toBe(1);
+	});
+
 	it("uses the same safe handle shape for foreground and background execution", async () => {
 		const foregroundJournal = new FakeJournal();
 		const foregroundManager = new ProcessManager(foregroundJournal, new FakeBackend(foregroundJournal));
@@ -128,6 +222,65 @@ describe("R5 managed process manager", () => {
 		if (!foreground.ok || !background.ok) throw new Error("create failed");
 		expect(Object.keys(foreground.handle).sort()).toEqual(Object.keys(background.handle).sort());
 		expect(background.summary.state).toBe("backgrounded");
+	});
+
+	it("persists PTY backend capabilities for later queries", async () => {
+		const journal = new FakeJournal();
+		const manager = new ProcessManager(journal, new FakeBackend(journal));
+		const created = await manager.create({ ...request("pty-query"), backend: "pty" });
+		if (!created.ok) throw new Error("create failed");
+		expect(manager.query(created.handle)).toMatchObject({
+			ok: true,
+			summary: { capabilities: { canResize: true } },
+		});
+	});
+
+	it("binds a started event to the durable backend spawn receipt", async () => {
+		const journal = new FakeJournal();
+		const manager = new ProcessManager(journal, new FakeBackend(journal));
+		expect((await manager.create(request("receipt-binding"))).ok).toBe(true);
+		const started = journal.events.find((event) => event.type === "process.execution_started");
+		expect(started).toMatchObject({ spawnReceiptDigest: digest("e") });
+		const created = await manager.create(request("receipt-binding"));
+		if (!created.ok) throw new Error("create failed");
+		journal.deleteSpawnReceipt(created.handle);
+		expect(manager.query(created.handle)).toEqual({ ok: false, code: "journal_invalid" });
+	});
+
+	it("enforces the frozen per-session process capacity before spawning", async () => {
+		const journal = new FakeJournal();
+		const backend = new FakeBackend(journal);
+		const manager = new ProcessManager(journal, backend);
+		const base = request("capacity");
+		for (let index = 0; index < 32; index += 1) {
+			const current = {
+				...base,
+				correlationId: createRuntimeId("command", `capacity-${index}`),
+				requestDigest: digest("abcdef0123456789"[index % 16] ?? "a"),
+			};
+			expect((await manager.create(current)).ok).toBe(true);
+		}
+		const overflow = {
+			...base,
+			correlationId: createRuntimeId("command", "capacity-overflow"),
+			requestDigest: digest("z"),
+		};
+		expect(await manager.create(overflow)).toEqual({ ok: false, code: "session_process_capacity_exceeded" });
+		expect(backend.spawnCount).toBe(32);
+	});
+
+	it("enforces the frozen per-host process capacity across sessions", async () => {
+		const journal = new FakeJournal();
+		const backend = new FakeBackend(journal);
+		const manager = new ProcessManager(journal, backend);
+		for (let index = 0; index < 128; index += 1) {
+			expect((await manager.create(request(`host-capacity-${index}`))).ok).toBe(true);
+		}
+		expect(await manager.create(request("host-capacity-overflow"))).toEqual({
+			ok: false,
+			code: "host_process_capacity_exceeded",
+		});
+		expect(backend.spawnCount).toBe(128);
 	});
 
 	it("does not spawn twice after a started response is lost and rebuilds from journal", async () => {
@@ -161,6 +314,10 @@ describe("R5 managed process manager", () => {
 			nextState: "completed",
 			previousEventHash: previous.eventHash,
 			commandId: createRuntimeId("command", "terminal"),
+			terminal: {
+				state: "completed",
+				evidenceRef: { subjectKind: "receipt", digest: digest("f"), mediaType: "application/json", size: 0 },
+			},
 		}));
 		const projection = projectProcessEvents(journal.events);
 		expect(projection).toMatchObject({ ok: true, state: { state: "completed" } });

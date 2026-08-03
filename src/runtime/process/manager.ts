@@ -7,6 +7,7 @@
 
 import { canonicalDigest } from "../protocol/canonical-json.ts";
 import type { RuntimeContentRef, RuntimeDigest } from "../protocol/foundation.ts";
+import { RUNTIME_HOST_BOUNDS } from "../host/types.ts";
 import type { CommandId } from "../protocol/ids.ts";
 import { createRuntimeId } from "../protocol/ids.ts";
 import { createProcessEvent, type ProcessEvent } from "./events.ts";
@@ -19,7 +20,6 @@ import type {
 	ManagedProcessMutationReceipt,
 	ManagedProcessRequest,
 	ManagedProcessSummary,
-	ProcessBackendKind,
 	ProcessState,
 } from "./types.ts";
 
@@ -50,6 +50,11 @@ export interface ProcessJournal {
 	hasSpawnClaim(handle: ExecutionHandleRef): boolean;
 	spawnReceipt(handle: ExecutionHandleRef): BackendSpawnReceipt | undefined;
 	recordSpawnReceipt(handle: ExecutionHandleRef, receipt: BackendSpawnReceipt): void;
+	reserveProcessCapacity(
+		handle: ExecutionHandleRef,
+		limits: { readonly maxPerSession: number; readonly maxPerHost: number },
+	): "reserved" | "already_reserved" | "session_capacity_exceeded" | "host_capacity_exceeded";
+	releaseProcessCapacity(handle: ExecutionHandleRef): void;
 }
 
 export type ProcessManagerErrorCode =
@@ -58,6 +63,8 @@ export type ProcessManagerErrorCode =
 	| "journal_invalid"
 	| "journal_unavailable"
 	| "backend_spawn_failed"
+	| "session_process_capacity_exceeded"
+	| "host_process_capacity_exceeded"
 	| "uncertain_outcome"
 	| "terminal_state_immutable"
 	| "backend_mutation_unavailable";
@@ -104,6 +111,18 @@ export class ProcessManager {
 			handle = handleFromEvent(intent);
 		} else {
 			handle = createHandle(request);
+			let reservation: ReturnType<ProcessJournal["reserveProcessCapacity"]>;
+			try {
+				reservation = this.journal.reserveProcessCapacity(handle, {
+					maxPerSession: RUNTIME_HOST_BOUNDS.maxProcessesPerSession,
+					maxPerHost: RUNTIME_HOST_BOUNDS.maxProcessesPerHost,
+				});
+			} catch {
+				return { ok: false, code: "journal_unavailable" };
+			}
+			if (reservation === "session_capacity_exceeded") return { ok: false, code: "session_process_capacity_exceeded" };
+			if (reservation === "host_capacity_exceeded") return { ok: false, code: "host_process_capacity_exceeded" };
+			if (reservation === "already_reserved") return { ok: false, code: "uncertain_outcome" };
 			const requested = createProcessEvent({
 				handle,
 				sequence: 0,
@@ -113,10 +132,14 @@ export class ProcessManager {
 				nextState: "queued",
 				previousEventHash: null,
 				commandId: request.correlationId,
+				managedRequestDigest: completeRequestDigest(request),
+				backend: request.backend,
+				executionMode: request.executionMode,
 			});
 			try {
 				await this.journal.append(requested);
 			} catch {
+				this.journal.releaseProcessCapacity(handle);
 				return { ok: false, code: "journal_unavailable" };
 			}
 		}
@@ -124,7 +147,7 @@ export class ProcessManager {
 		let projectionResult = this.project(handle);
 		if (!projectionResult.ok) return { ok: false, code: projectionResult.code };
 		if (isSettled(projectionResult.state.state) || isStarted(projectionResult.state.state)) {
-			return this.success(projectionResult.state, request.backend);
+			return this.success(projectionResult.state);
 		}
 
 		if (projectionResult.state.state === "queued") {
@@ -172,23 +195,23 @@ export class ProcessManager {
 		const afterReceipt = this.project(current.handle);
 		if (!afterReceipt.ok) return { ok: false, code: afterReceipt.code };
 		if (isSettled(afterReceipt.state.state) || isStarted(afterReceipt.state.state)) {
-			return this.success(afterReceipt.state, request.backend);
+			return this.success(afterReceipt.state);
 		}
 		const finalType = request.executionMode === "background"
 			? "process.execution_backgrounded"
 			: "process.execution_started";
 		const finalState = request.executionMode === "background" ? "backgrounded" : "running";
-		const started = await this.appendTransition(afterReceipt.state, finalType, finalState, request.correlationId);
+		const started = await this.appendTransition(afterReceipt.state, finalType, finalState, request.correlationId, receipt);
 		if (!started.ok) {
 			return started.code === "journal_unavailable" ? { ok: false, code: "uncertain_outcome" } : started;
 		}
-		return this.success(started.state, request.backend);
+		return this.success(started.state);
 	}
 
-	public query(handle: ExecutionHandleRef, backend: ProcessBackendKind = "pipe"): ProcessQueryResult {
+	public query(handle: ExecutionHandleRef): ProcessQueryResult {
 		const projected = this.project(handle);
 		if (!projected.ok) return projected;
-		return this.success(projected.state, backend);
+		return this.success(projected.state);
 	}
 
 	public mutate(handle: ExecutionHandleRef, operation: ManagedProcessMutationReceipt["operation"]): ProcessMutationResult {
@@ -203,7 +226,22 @@ export class ProcessManager {
 		const events = [...this.journal.eventsFor(handle)].sort((left, right) => left.sequence - right.sequence);
 		if (events.length === 0) return { ok: false, code: "process_not_found" };
 		const projected = projectProcessEvents(events);
-		return projected.ok ? projected : { ok: false, code: "journal_invalid" };
+		if (!projected.ok) return { ok: false, code: "journal_invalid" };
+		if (projected.state.spawnReceiptDigest) {
+			let receipt: BackendSpawnReceipt | undefined;
+			try {
+				receipt = this.journal.spawnReceipt(handle);
+			} catch {
+				return { ok: false, code: "journal_invalid" };
+			}
+			if (!receipt || receipt.receiptDigest.digest !== projected.state.spawnReceiptDigest.digest) {
+				return { ok: false, code: "journal_invalid" };
+			}
+			if (canonicalDigest(receipt.evidenceRef ?? null) !== canonicalDigest(projected.state.spawnEvidenceRef ?? null)) {
+				return { ok: false, code: "journal_invalid" };
+			}
+		}
+		return projected;
 	}
 
 	private async appendTransition(
@@ -211,6 +249,7 @@ export class ProcessManager {
 		type: ProcessEvent["type"],
 		nextState: ProcessState,
 		commandId: CommandId,
+		spawnReceipt?: BackendSpawnReceipt,
 	): Promise<
 		| { readonly ok: true; readonly state: ProcessProjection }
 		| { readonly ok: false; readonly code: Extract<ProcessManagerErrorCode, "journal_unavailable" | "journal_invalid"> }
@@ -224,6 +263,10 @@ export class ProcessManager {
 			nextState,
 			previousEventHash: projection.lastEventHash,
 			commandId,
+			...(spawnReceipt === undefined ? {} : {
+				spawnReceiptDigest: spawnReceipt.receiptDigest,
+				...(spawnReceipt.evidenceRef === undefined ? {} : { spawnEvidenceRef: spawnReceipt.evidenceRef }),
+			}),
 		});
 		try {
 			await this.journal.append(event);
@@ -236,12 +279,11 @@ export class ProcessManager {
 
 	private success(
 		projection: ProcessProjection,
-		backend: ProcessBackendKind,
 	): Extract<ProcessCreateResult, { readonly ok: true }> {
 		return {
 			ok: true,
 			handle: projection.handle,
-			summary: summaryFromProjection(projection, backend),
+			summary: summaryFromProjection(projection),
 		};
 	}
 }
@@ -280,6 +322,7 @@ function handleFromEvent(event: ProcessEvent): ExecutionHandleRef {
 function sameRequestScope(intent: ProcessEvent, request: ManagedProcessRequest): boolean {
 	return (
 		intent.requestDigest.digest === request.requestDigest.digest &&
+		intent.managedRequestDigest?.digest === completeRequestDigest(request).digest &&
 		intent.authorityId === request.authorityId &&
 		intent.tenantId === request.tenantId &&
 		intent.workspaceId === request.workspaceId &&
@@ -287,6 +330,13 @@ function sameRequestScope(intent: ProcessEvent, request: ManagedProcessRequest):
 		intent.hostGeneration === request.hostGeneration &&
 		intent.sessionGeneration === request.sessionGeneration
 	);
+}
+
+function completeRequestDigest(request: ManagedProcessRequest): RuntimeDigest {
+	return {
+		algorithm: "sha256",
+		digest: canonicalDigest(request) as RuntimeDigest["digest"],
+	};
 }
 
 function spawnClaimDigest(handle: ExecutionHandleRef, request: ManagedProcessRequest): RuntimeDigest {
@@ -311,13 +361,8 @@ function isStarted(state: ProcessState): boolean {
 	return state === "running" || state === "backgrounded";
 }
 
-function summaryFromProjection(projection: ProcessProjection, backend: ProcessBackendKind): ManagedProcessSummary {
-	const terminal = projection.terminal
-		? {
-				...projection.terminal,
-				evidenceRef: contentRef("receipt", projection.lastEventHash),
-			}
-		: undefined;
+function summaryFromProjection(projection: ProcessProjection): ManagedProcessSummary {
+	const terminal = projection.terminal;
 	const settled = isSettled(projection.state);
 	return {
 		handle: projection.handle,
@@ -327,22 +372,10 @@ function summaryFromProjection(projection: ProcessProjection, backend: ProcessBa
 		capabilities: {
 			canWrite: !settled,
 			canEof: !settled,
-			canResize: !settled && backend === "pty",
+			canResize: !settled && projection.backend === "pty",
 			canStop: !settled,
 			canReadOutput: true,
 		},
 		...(terminal === undefined ? {} : { terminal }),
-	};
-}
-
-function contentRef(subjectKind: RuntimeContentRef["subjectKind"], digest: RuntimeDigest | null): RuntimeContentRef {
-	return {
-		subjectKind,
-		digest: digest ?? {
-			algorithm: "sha256",
-			digest: canonicalDigest({ subjectKind, empty: true }) as RuntimeDigest["digest"],
-		},
-		mediaType: "application/json",
-		size: 0,
 	};
 }

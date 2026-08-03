@@ -124,8 +124,9 @@ describe("R1 explicit driver fencing", () => {
 		if (!first.ok) throw new Error("first claim failed");
 		const transferred = claimDriver(first.state, {
 			mode: "transfer",
-			principalId: principalB,
-			connectionId: connectionB,
+			principalId: principalA,
+			connectionId: connectionA,
+			nextDriver: { principalId: principalB, connectionId: connectionB },
 			expectedHostGeneration: 4,
 			expectedSessionGeneration: 2,
 			expectedDriverRevision: 1,

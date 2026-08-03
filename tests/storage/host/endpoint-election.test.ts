@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
@@ -53,6 +53,31 @@ describe("R3 local Host endpoint and startup election", () => {
 			writer: "absent",
 			compatibility: "unknown",
 		})).toEqual({ decision: "spawn_after_stale_cleanup" });
+	});
+
+	it("rejects a symlinked endpoint ancestor instead of escaping canonical home", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-endpoint-symlink-"));
+		try {
+			const home = join(root, "home");
+			const outside = join(root, "outside");
+			await mkdir(home, { recursive: true });
+			await mkdir(outside, { recursive: true });
+			await symlink(outside, join(home, "ipc"), "dir");
+			const layout = buildRunledgerLayout(home, "posix");
+			const store = new EndpointStore(layout, "ws-" + "b".repeat(64));
+			const record: HostEndpointRecord = {
+				protocolVersion: 1,
+				workspaceStorageKey: "ws-" + "b".repeat(64),
+				hostRuntimeId: createRuntimeId("runtime", "endpoint-symlink"),
+				hostGeneration: 1,
+				state: "ready",
+				compatibilityDigest: digest("b"),
+			};
+			await expect(store.publish(record)).rejects.toThrow(/symlink|containment/iu);
+			await expect(lstat(join(outside, "host", "ws-" + "b".repeat(64), "endpoint.json"))).rejects.toMatchObject({ code: "ENOENT" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 
 	it("serializes launcher election and leaves the writer fence to a later Host phase", async () => {

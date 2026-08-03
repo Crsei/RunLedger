@@ -1,8 +1,8 @@
 /** Canonical user-home Host endpoint metadata store. */
 
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, mkdir, open, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { RunledgerLayout } from "../../runtime/contracts/storage-layout.ts";
@@ -76,7 +76,7 @@ export class EndpointStore {
 		if (!Value.Check(HostEndpointRecordSchema, record)) throw new Error("invalid Host endpoint record");
 		if (record.workspaceStorageKey !== this.workspaceStorageKey) throw new Error("endpoint scope mismatch");
 		const parent = dirname(this.endpointFile);
-		await mkdir(parent, { recursive: true, mode: 0o700 });
+		await ensureContainedDirectoryChain(this.layout.home, parent);
 		try {
 			const existing = await lstat(this.endpointFile);
 			if (existing.isSymbolicLink()) throw new Error("endpoint symlink is not allowed");
@@ -88,7 +88,7 @@ export class EndpointStore {
 			}
 		}
 		const staging = join(this.layout.tmp, `host-endpoint-${randomUUID()}.tmp`);
-		await mkdir(this.layout.tmp, { recursive: true, mode: 0o700 });
+		await ensureContainedDirectoryChain(this.layout.home, this.layout.tmp);
 		try {
 			const encoded = JSON.stringify(record);
 			if (Buffer.byteLength(encoded, "utf8") > RUNTIME_HOST_BOUNDS.maxFrameBytes) {
@@ -101,6 +101,9 @@ export class EndpointStore {
 			} finally {
 				await handle.close();
 			}
+			// 缩短祖先目录被替换后的竞态窗口；Node 没有跨平台 openat/renameat。
+			await ensureContainedDirectoryChain(this.layout.home, parent);
+			await ensureContainedDirectoryChain(this.layout.home, this.layout.tmp);
 			await rename(staging, this.endpointFile);
 		} finally {
 			await unlink(staging).catch(() => undefined);
@@ -138,4 +141,41 @@ export class EndpointStore {
 
 function isNotFound(error: unknown): boolean {
 	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+async function ensureContainedDirectoryChain(home: string, target: string): Promise<void> {
+	const resolvedHome = resolve(home);
+	const resolvedTarget = resolve(target);
+	const targetRelative = relative(resolvedHome, resolvedTarget);
+	if (targetRelative === ".." || targetRelative.startsWith(`..${sep}`) || isAbsolute(targetRelative)) {
+		throw new Error("endpoint directory containment violation");
+	}
+	await mkdir(resolvedHome, { recursive: true, mode: 0o700 });
+	await assertSafeDirectory(resolvedHome, resolvedHome);
+	let current = resolvedHome;
+	for (const segment of targetRelative.split(sep).filter((value) => value.length > 0)) {
+		current = join(current, segment);
+		try {
+			await mkdir(current, { mode: 0o700 });
+		} catch (error) {
+			if (!isAlreadyExists(error)) throw error;
+		}
+		await assertSafeDirectory(resolvedHome, current);
+	}
+}
+
+async function assertSafeDirectory(home: string, candidate: string): Promise<void> {
+	const info = await lstat(candidate);
+	if (info.isSymbolicLink()) throw new Error("endpoint ancestor symlink is not allowed");
+	if (!info.isDirectory()) throw new Error("endpoint ancestor must be a directory");
+	const canonicalHome = await realpath(home);
+	const canonicalCandidate = await realpath(candidate);
+	const candidateRelative = relative(canonicalHome, canonicalCandidate);
+	if (candidateRelative === ".." || candidateRelative.startsWith(`..${sep}`) || isAbsolute(candidateRelative)) {
+		throw new Error("endpoint directory containment violation");
+	}
+}
+
+function isAlreadyExists(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
 }

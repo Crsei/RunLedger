@@ -91,4 +91,20 @@ describe("R5 wait coordinator", () => {
 		});
 		expect(repeatedCancel.error).toBeUndefined();
 	});
+
+	it("does not cross-resolve identical execution IDs from another scope", () => {
+		const otherHandle: ExecutionHandleRef = {
+			...handle,
+			sessionId: createRuntimeId("session", "wait-other-scope"),
+		};
+		const otherRunning: ManagedProcessSummary = { ...running, handle: otherHandle };
+		const registered = applyWaitCoordinator(createWaitCoordinatorState(), {
+			type: "register",
+			waiterId: "wait-other-scope",
+			summary: otherRunning,
+		});
+		const settled = applyWaitCoordinator(registered.state, { type: "terminal", summary: terminal });
+		expect(settled.resolutions).toEqual([]);
+		expect(settled.state.waiters).toMatchObject([{ waiterId: "wait-other-scope", status: "waiting" }]);
+	});
 });
