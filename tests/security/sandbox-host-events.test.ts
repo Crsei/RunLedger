@@ -72,4 +72,34 @@ describe.runIf(process.platform === "linux")("Host security event evidence", () 
 		expect(events.find((event) => event.type === "sandbox.resolved")?.payload.refs?.length).toBeGreaterThan(0);
 		expect(events.find((event) => event.type === "sandbox.execution_recorded")?.payload.effect).toBe("committed");
 	});
+
+	it("records an approval request and durable decision through the same Host event writer", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-permission-host-events-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const hostScope = scope();
+		const principal = createRuntimeId("principal", "permission-host-events");
+		const sessionId = createRuntimeId("session", "permission-host-events");
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: hostScope,
+			cwd: root,
+			sessionId,
+			principalId: principal,
+			permissionPrompter: {
+				request: async () => ({ decision: "allow-once", decidedBy: principal }),
+			},
+		});
+
+		await security.createExecutionEnv({ sessionId, principalId: principal, toolCallId: createRuntimeId("toolCall", "permission-host-events"), cwd: root }).fs.writeFile(join(root, "approved.txt"), "approved");
+		const eventPath = join(layout.state, "hosts", hostScope.workspaceStorageKey, "runtime-events", `${sessionId}.jsonl`);
+		const events = (await readFile(eventPath, "utf8"))
+			.split(/\r?\n/u)
+			.filter((line) => line.length > 0)
+			.map((line) => JSON.parse(line) as { type: string; payload: { effect: string; refs?: readonly unknown[] } });
+
+		expect(events.map((event) => event.type)).toEqual(["permission.requested", "permission.decided"]);
+		expect(events[1]?.payload).toMatchObject({ effect: "committed" });
+		expect(events[1]?.payload.refs?.length).toBeGreaterThan(0);
+	});
 });

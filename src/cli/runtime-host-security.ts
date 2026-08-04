@@ -385,8 +385,8 @@ function createHostConstraintProviders(bindings: ReadonlyMap<string, ProcessBind
 			decide: async (input) => {
 				if (input.modes.sandbox === "none") return createExecutionConstraintReceipt({ dimension: "sandbox", mode: input.modes.sandbox, decision: "not_required", enforcement: "off", providerId: "builtin-none.sandbox", providerRevision: 1, policyDigest: input.policyDigest, invocationDigest: input.requestDigest });
 				const binding = bindings.get(input.requestDigest.digest);
-				if (binding?.sandboxPlan && binding.sandboxPlan.enforcement === "enforced") return createExecutionConstraintReceipt({ dimension: "sandbox", mode: input.modes.sandbox, decision: "allow", enforcement: "enforced", providerId: `runledger.security.sandbox.${binding.sandboxPlan.backendId}`, providerRevision: 1, policyDigest: input.policyDigest, invocationDigest: input.requestDigest });
-				return createExecutionConstraintReceipt({ dimension: "sandbox", mode: input.modes.sandbox, decision: "allow", enforcement: "enforced", providerId: "runledger.security.policy-sandbox", providerRevision: 1, policyDigest: input.policyDigest, invocationDigest: input.requestDigest });
+				if (binding?.sandboxPlan?.enforcement !== "enforced") return undefined;
+				return createExecutionConstraintReceipt({ dimension: "sandbox", mode: input.modes.sandbox, decision: "allow", enforcement: "enforced", providerId: `runledger.security.sandbox.${binding.sandboxPlan.backendId}`, providerRevision: 1, policyDigest: input.policyDigest, invocationDigest: input.requestDigest });
 			},
 		},
 		gateway: {
@@ -436,6 +436,7 @@ async function prepareProcessSecurity(input: {
 		if (!plan.ok) return securityFailure(plan.error.code === "sandbox_unavailable" ? "policy_denied" : "invalid_request", plan.error.message);
 		sandboxPlan = plan.value;
 	}
+	input.bindings.set(executionRequestDigest.digest, { authorizationRequest, ...(sandboxPlan === undefined ? {} : { sandboxPlan }) });
 	const constraintInput: ExecutionConstraintInput = {
 		authorityId: input.options.scope.authorityId,
 		tenantId: input.options.scope.tenantId,
@@ -472,7 +473,6 @@ async function prepareProcessSecurity(input: {
 			return securityFailure("invalid_request", "sandbox resolution audit is unavailable");
 		}
 	}
-	input.bindings.set(executionRequestDigest.digest, { authorizationRequest, ...(sandboxPlan === undefined ? {} : { sandboxPlan }) });
 	return {
 		ok: true,
 		value: {
@@ -566,7 +566,10 @@ function createGovernedExecutionEnv(input: {
 			modes: {
 				permission: "policy",
 				approval: input.composition.snapshot.profile.approvalPolicy === "never" ? "none" : "required",
-				sandbox: input.composition.snapshot.profile.sandbox === "off" ? "none" : "profile",
+				// Filesystem/network operations are already mediated by the Host
+				// Gateway; OS sandbox enforcement is reserved for the process final
+				// leaf, where a concrete launch plan is available.
+				sandbox: "none",
 				gateway: "mediated",
 				containment: "none",
 			},

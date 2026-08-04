@@ -179,7 +179,8 @@ export class ExecutionGateway {
 		if (runtimeDigest(input.authorization.requests).digest !== runtimeDigest(input.request.requests).digest) return invalid("authorization request set is stale");
 		if (!approvalReceiptIsBound(input.request, input.authorization)) return invalid("approval receipt digest or binding is invalid");
 		if (input.request.snapshot.profile.sandbox === "off" && input.constraintInput.modes.sandbox !== "none") return invalid("constraint sandbox mode is weaker than the current off policy");
-		if (input.request.snapshot.profile.sandbox !== "off" && input.constraintInput.modes.sandbox === "none") return invalid("restrictive sandbox decision is missing");
+		const requiresProcessSandbox = input.request.requests.some((request) => request.kind === "shell") || input.request.toolName === "bash";
+		if (requiresProcessSandbox && input.request.snapshot.profile.sandbox !== "off" && input.constraintInput.modes.sandbox === "none") return invalid("restrictive sandbox decision is missing");
 		return {
 			ok: true,
 			value: {

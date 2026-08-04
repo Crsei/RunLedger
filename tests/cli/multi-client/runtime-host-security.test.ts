@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
@@ -81,6 +81,20 @@ function availableSandboxBackend(): SandboxBackend {
 			return { ok: true, value: { ...planBody, planDigest: digestOf(planBody) } };
 		},
 			validateFinalLeaf: async (plan, requestDigest) => createDecisionReceipt(plan, "allow", typeof requestDigest === "string" ? runtimeDigest(requestDigest) : requestDigest),
+	};
+}
+
+function degradedSandboxBackend(): SandboxBackend {
+	const backend = availableSandboxBackend();
+	return {
+		...backend,
+		prepare: async (request) => {
+			const prepared = await backend.prepare(request);
+			if (!prepared.ok) return prepared;
+			const { planDigest: _planDigest, ...body } = prepared.value;
+			const degradedBody = { ...body, enforcement: "degraded" as const };
+			return { ok: true, value: { ...degradedBody, planDigest: digestOf(degradedBody) } };
+		},
 	};
 }
 
@@ -192,6 +206,8 @@ describe("production Host Security/ExecutionGateway composition", () => {
 		expect(security.snapshot.policyDigest).toMatchObject({ algorithm: "sha256" });
 
 		const env = security.createExecutionEnv({ toolCallId: createRuntimeId("toolCall", "host-security-write") });
+		await writeFile(join(root, "inside.txt"), "governed read");
+		await expect(env.fs.readFile(join(root, "inside.txt"))).resolves.toEqual(Buffer.from("governed read"));
 		await expect(env.fs.writeFile(join(root, "..", "outside.txt"), "must not write")).rejects.toThrow(/allowed roots|protected|path_escape/iu);
 	});
 
@@ -212,6 +228,20 @@ describe("production Host Security/ExecutionGateway composition", () => {
 		const env = security.createExecutionEnv({ toolCallId: createRuntimeId("toolCall", "host-security-network-call") });
 		await expect(env.network?.request({ url: "https://example.com", method: "GET", headers: {}, maxBytes: 1_024 })).rejects.toThrow(/network/iu);
 		expect(brokerCalls).toBe(0);
+	});
+
+	it("fails closed when a restrictive sandbox backend reports degraded enforcement", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-degraded-sandbox-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: degradedSandboxBackend(),
+		});
+
+		await expect(security.prepareProcess(processRequest(root, createRuntimeId("session", "host-security-degraded-sandbox")))).resolves.toMatchObject({ ok: false });
 	});
 
 	it("prepares a request-bound constraint snapshot and requires the final leaf for process execution", async () => {
