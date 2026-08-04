@@ -32,6 +32,13 @@ export interface HostWorkspaceBindingResumeRequest {
 	readonly cwd: string;
 }
 
+/** Host-owned audit sink for workspace lifecycle facts. */
+export interface WorkspaceBindingAuditPort {
+	bound(binding: PersistedWorkspaceBinding): Promise<void>;
+	validationRecorded(binding: PersistedWorkspaceBinding): Promise<void>;
+	released(binding: PersistedWorkspaceBinding, reason: string): Promise<void>;
+}
+
 export type WorkspaceBindingServiceErrorCode = WorktreeErrorCode | WorkspaceBindingErrorCode | "worktree_drift";
 
 export interface WorkspaceBindingServiceError {
@@ -51,6 +58,7 @@ export interface HostWorkspaceBindingServiceOptions {
 	readonly registry: WorktreeRegistry;
 	readonly git: GitOperations | GitCommandPort;
 	readonly ownerRuntimeId: RuntimeInstanceId;
+	readonly audit?: WorkspaceBindingAuditPort;
 	readonly clock?: () => Date;
 	readonly leaseTtlMs?: number;
 }
@@ -94,6 +102,7 @@ export class HostWorkspaceBindingService {
 	readonly #leases: WorktreeLeaseManager;
 	readonly #ownerRuntimeId: RuntimeInstanceId;
 	readonly #clock: () => Date;
+	readonly #audit: WorkspaceBindingAuditPort | undefined;
 
 	public constructor(options: HostWorkspaceBindingServiceOptions) {
 		this.#store = new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: options.workspaceStorageKey });
@@ -103,6 +112,7 @@ export class HostWorkspaceBindingService {
 		this.#leases = new WorktreeLeaseManager(options.registry, { clock: options.clock, defaultTtlMs: options.leaseTtlMs });
 		this.#ownerRuntimeId = options.ownerRuntimeId;
 		this.#clock = options.clock ?? (() => new Date());
+		this.#audit = options.audit;
 	}
 
 	public async read(): Promise<WorkspaceBindingServiceResult<PersistedWorkspaceBinding | undefined>> {
@@ -138,7 +148,13 @@ export class HostWorkspaceBindingService {
 		if (!binding.ok) return failure(binding.error.code, binding.error.message, binding.error.retryable);
 		try {
 			const committed = await this.#store.commit(binding.value);
-			return committed.ok ? committed : failure(committed.error.code, committed.error.message, committed.error.retryable);
+			if (!committed.ok) return failure(committed.error.code, committed.error.message, committed.error.retryable);
+			try {
+				await this.#audit?.bound(committed.value);
+			} catch (error) {
+				return failure("binding_invalid", error instanceof Error ? error.message : "workspace binding audit is unavailable", true);
+			}
+			return committed;
 		} catch (error) {
 			return failure("binding_invalid", error instanceof Error ? error.message : "workspace binding cannot be committed", true);
 		}
@@ -181,6 +197,11 @@ export class HostWorkspaceBindingService {
 			headCommit: observed.value.headCommit,
 		});
 		if (!validation.ok) return failure(validation.error.code, validation.error.message, validation.error.retryable);
+		try {
+			await this.#audit?.validationRecorded(validation.value);
+		} catch (error) {
+			return failure("binding_invalid", error instanceof Error ? error.message : "workspace validation audit is unavailable", true);
+		}
 		return { ok: true, value: validation.value };
 	}
 

@@ -38,6 +38,11 @@ export interface RuntimeEventAppendResult {
 	readonly receipt: DurableEventReceipt;
 }
 
+/** Canonical Runtime writer port owned by the resident Host composition. */
+export interface RuntimeEventWriter {
+	append(input: RuntimeEventAppendInput): Promise<RuntimeEventAppendResult>;
+}
+
 export interface JsonlRuntimeEventStoreOptions {
 	readonly layout: RunledgerLayout;
 	readonly workspaceStorageKey: string;

@@ -11,14 +11,12 @@ import {
 	type TenantId,
 	type TraceId,
 } from "../../runtime/contracts/public.ts";
-import type { RuntimeEventAppendInput, RuntimeEventAppendResult } from "../../storage/host/runtime-event-store.ts";
+import type { RuntimeEventAppendInput, RuntimeEventAppendResult, RuntimeEventWriter } from "../../storage/host/runtime-event-store.ts";
 import type { ApprovalAuditPort } from "../permission/approval-coordinator.ts";
 import type { AuthorizationRequest } from "../types.ts";
 import type { SandboxDecisionReceipt, SandboxLaunchPlan } from "../sandbox/types.ts";
 
-export interface RuntimeSecurityEventWriter {
-	append(input: RuntimeEventAppendInput): Promise<RuntimeEventAppendResult>;
-}
+export type RuntimeSecurityEventWriter = RuntimeEventWriter;
 
 export interface HostSecurityAuditAdapterOptions {
 	readonly authorityId: AuthorityId;

@@ -12,7 +12,7 @@ import {
 } from "../../../src/runtime/contracts/public.ts";
 import { createLocalRuntimeHostScope, createProductionGitCommandPort } from "../../../src/cli/runtime-host-production.ts";
 import { restoreResidentWorkspaceBinding } from "../../../src/cli/runtime-host.ts";
-import { HostWorkspaceBindingService } from "../../../src/worktree/host-binding.ts";
+import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../../../src/worktree/host-binding.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../../../src/worktree/registry.ts";
 
 const runFile = promisify(execFile);
@@ -60,6 +60,14 @@ describe("resident Host worktree cold replay", () => {
 
 			const scope = createLocalRuntimeHostScope({ layout, cwd: created.value.effectiveCwd, settings: {}, workspaceBinding: created.value });
 			expect(await restoreResidentWorkspaceBinding({ layout, scope, cwd: created.value.effectiveCwd })).toEqual(created.value);
+			const auditEvents: string[] = [];
+			const workspaceAudit: WorkspaceBindingAuditPort = {
+				bound: async () => { auditEvents.push("bound"); },
+				validationRecorded: async () => { auditEvents.push("validation"); },
+				released: async () => { auditEvents.push("released"); },
+			};
+			await restoreResidentWorkspaceBinding({ layout, scope, cwd: created.value.effectiveCwd, workspaceAudit });
+			expect(auditEvents).toEqual(["validation"]);
 
 			await git(created.value.worktreePath, ["config", "user.name", "RunLedger Test"]);
 			await git(created.value.worktreePath, ["config", "user.email", "runledger@example.invalid"]);

@@ -8,8 +8,11 @@ import { buildRunledgerLayout, createRuntimeId } from "../../src/runtime/contrac
 import { GitOperations } from "../../src/worktree/git-operations.ts";
 import { MemoryWorktreeRegistryStore, WorktreeRegistry } from "../../src/worktree/registry.ts";
 import { JsonWorkspaceBindingStore } from "../../src/worktree/persisted-binding.ts";
+import { JsonlRuntimeEventStore } from "../../src/storage/host/runtime-event-store.ts";
+import { RuntimeWorkspaceAuditAdapter } from "../../src/worktree/integration/runtime-workspace-events.ts";
 import {
 	HostWorkspaceBindingService,
+	type WorkspaceBindingAuditPort,
 	type WorkspaceBindingServiceResult,
 } from "../../src/worktree/host-binding.ts";
 import type { GitCommandPort, GitCommandRequest, GitCommandResult } from "../../src/worktree/ports.ts";
@@ -32,7 +35,7 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
 	await runFile("git", args as string[], { cwd });
 }
 
-async function fixture(): Promise<{ root: string; source: string; managed: string; service: HostWorkspaceBindingService }> {
+async function fixture(): Promise<{ root: string; source: string; managed: string; layout: ReturnType<typeof buildRunledgerLayout>; workspaceStorageKey: string; service: HostWorkspaceBindingService; auditEvents: string[] }> {
 	const root = await mkdtemp(join(tmpdir(), "runledger-host-binding-"));
 	const source = join(root, "source");
 	const managed = join(root, "managed");
@@ -46,17 +49,25 @@ async function fixture(): Promise<{ root: string; source: string; managed: strin
 	await git(source, ["add", "README.md"]);
 	await git(source, ["commit", "--quiet", "-m", "initial"]);
 	const layout = buildRunledgerLayout(home, "posix");
+	const workspaceStorageKey = `ws-${"e".repeat(64)}`;
 	const registry = new WorktreeRegistry(new MemoryWorktreeRegistryStore());
 	const gitOperations = new GitOperations(new RealGitCommandPort(), { managedRoot: managed });
+	const auditEvents: string[] = [];
+	const audit: WorkspaceBindingAuditPort = {
+		bound: async () => { auditEvents.push("workspace.bound"); },
+		validationRecorded: async () => { auditEvents.push("workspace.validation_recorded"); },
+		released: async () => { auditEvents.push("workspace.released"); },
+	};
 	const service = new HostWorkspaceBindingService({
 		layout,
-		workspaceStorageKey: `ws-${"e".repeat(64)}`,
+		workspaceStorageKey,
 		managedRoot: managed,
 		registry,
 		git: gitOperations,
 		ownerRuntimeId: createRuntimeId("runtime", "host-binding-test"),
+		audit,
 	});
-	return { root, source, managed, service };
+	return { root, source, managed, layout, workspaceStorageKey, service, auditEvents };
 }
 
 describe("Host workspace binding composition", () => {
@@ -76,6 +87,7 @@ describe("Host workspace binding composition", () => {
 			expect(created.value.headCommit).toMatch(/^[a-f0-9]{40}$/u);
 			expect(await value.service.read()).toMatchObject({ ok: true, value: created.value });
 			expect(await value.service.resume({ cwd: created.value.effectiveCwd })).toMatchObject({ ok: true, value: created.value });
+			expect(value.auditEvents).toEqual(["workspace.bound", "workspace.validation_recorded"]);
 		} finally {
 			await rm(value.root, { recursive: true, force: true });
 		}
@@ -97,6 +109,36 @@ describe("Host workspace binding composition", () => {
 			const drift = await value.service.resume({ cwd: join(created.value.worktreePath, "missing") });
 			expect(drift.ok).toBe(false);
 			expect((drift as WorkspaceBindingServiceResult<never> & { ok: false }).error.code).toBe("binding_drift");
+		} finally {
+			await rm(value.root, { recursive: true, force: true });
+		}
+	});
+
+	it("writes workspace lifecycle events through the canonical Runtime event store", async () => {
+		const value = await fixture();
+		try {
+			const created = await value.service.create({
+				sessionId: createRuntimeId("session", "host-binding-audit-session"),
+				workspaceId: createRuntimeId("workspace", "host-binding-audit-workspace"),
+				sourceCwd: value.source,
+				label: "audit",
+			});
+			expect(created.ok, JSON.stringify(created)).toBe(true);
+			if (!created.ok) return;
+			const sessionId = createRuntimeId("session", "host-binding-audit-events");
+			const writer = new JsonlRuntimeEventStore({ layout: value.layout, workspaceStorageKey: value.workspaceStorageKey });
+			const audit = new RuntimeWorkspaceAuditAdapter({
+				authorityId: createRuntimeId("authority", "host-binding-audit"),
+				tenantId: createRuntimeId("tenant", "host-binding-audit"),
+				sessionId,
+				principalId: createRuntimeId("principal", "host-binding-audit"),
+				writer,
+			});
+			await audit.bound(created.value);
+			await audit.validationRecorded(created.value);
+			const events = await writer.read(sessionId);
+			expect(events.map((event) => event.type)).toEqual(["workspace.bound", "workspace.validation_recorded"]);
+			expect(events.every((event) => event.payload.subject.kind === "workspace")).toBe(true);
 		} finally {
 			await rm(value.root, { recursive: true, force: true });
 		}

@@ -11,6 +11,7 @@ import { EndpointStore } from "../storage/host/endpoint-store.ts";
 import { acquireHostWriterLease } from "../storage/host/writer-lease.ts";
 import { HostRecoveryMarkerStore } from "../storage/host/recovery-marker.ts";
 import { buildRunledgerLayout } from "../runtime/contracts/storage-layout.ts";
+import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import { HostCompatibilityEnvelopeSchema, type HostCompatibilityEnvelope } from "../runtime/host/contracts.ts";
 import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts";
 import { HostReversePermissionPrompter, ResidentRuntimeHost } from "./runtime-host-service.ts";
@@ -24,7 +25,8 @@ import { JsonlHostEventStore } from "../storage/host/event-store.ts";
 import { JsonlRuntimeEventStore } from "../storage/host/runtime-event-store.ts";
 import { JsonHostCommandStore } from "../storage/host/command-store.ts";
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
-import { HostWorkspaceBindingService } from "../worktree/host-binding.ts";
+import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../worktree/host-binding.ts";
+import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-workspace-events.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 
@@ -47,8 +49,15 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
 	const workspaceBindingStore = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
-	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd });
 	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
+	const workspaceAudit = new RuntimeWorkspaceAuditAdapter({
+		authorityId: scope.authorityId,
+		tenantId: scope.tenantId,
+		sessionId: createRuntimeId("session", `workspace-${scope.workspaceStorageKey.slice(3)}`),
+		principalId: createRuntimeId("principal", `host-workspace-${scope.workspaceStorageKey.slice(3)}`),
+		writer: runtimeEventWriter,
+	});
+	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd, workspaceAudit });
 	let residentHost: ResidentRuntimeHost | undefined;
 	const security = await createProductionHostSecurity({
 		layout,
@@ -141,6 +150,7 @@ export interface RestoreResidentWorkspaceBindingOptions {
 	readonly layout: ReturnType<typeof buildRunledgerLayout>;
 	readonly scope: Pick<HostCompatibilityEnvelope, "workspaceId" | "repositoryId" | "workspaceStorageKey">;
 	readonly cwd: string;
+	readonly workspaceAudit?: WorkspaceBindingAuditPort;
 }
 
 /**
@@ -171,6 +181,7 @@ export async function restoreResidentWorkspaceBinding(
 		registry,
 		git: createProductionGitCommandPort(),
 		ownerRuntimeId: stored.lease.ownerRuntimeId,
+		...(options.workspaceAudit === undefined ? {} : { audit: options.workspaceAudit }),
 	});
 	const resumed = await service.resume({ cwd: options.cwd });
 	if (!resumed.ok) throw new Error(`workspace binding ${resumed.error.code}: ${resumed.error.message}`);
