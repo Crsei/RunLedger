@@ -8,6 +8,7 @@ import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../src/runtime/host/types.ts";
 import { createProductionHostSecurity } from "../../src/cli/runtime-host-security.ts";
 import { ProductionManagedProcessPort } from "../../src/cli/runtime-host-process.ts";
+import { JsonlRuntimeEventStore } from "../../src/storage/host/runtime-event-store.ts";
 
 const roots: string[] = [];
 
@@ -36,6 +37,10 @@ function scope(): RuntimeHostScope {
 	};
 }
 
+function runtimeEventWriter(layout: ReturnType<typeof buildRunledgerLayout>, hostScope: RuntimeHostScope): JsonlRuntimeEventStore {
+	return new JsonlRuntimeEventStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey });
+}
+
 describe.runIf(process.platform === "linux")("Host security event evidence", () => {
 	it("records sandbox resolution and final-leaf execution before returning a process result", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-sandbox-host-events-"));
@@ -44,7 +49,7 @@ describe.runIf(process.platform === "linux")("Host security event evidence", () 
 		const hostScope = scope();
 		const principal = createRuntimeId("principal", "sandbox-host-events");
 		const sessionId = createRuntimeId("session", "sandbox-host-events");
-		const security = await createProductionHostSecurity({ layout, scope: hostScope, cwd: root, principalId: principal });
+		const security = await createProductionHostSecurity({ layout, scope: hostScope, cwd: root, principalId: principal, runtimeEventWriter: runtimeEventWriter(layout, hostScope) });
 		const port = new ProductionManagedProcessPort({ layout, scope: hostScope, hostGeneration: 1, security });
 
 		const created = await port.create({
@@ -86,6 +91,7 @@ describe.runIf(process.platform === "linux")("Host security event evidence", () 
 			cwd: root,
 			sessionId,
 			principalId: principal,
+			runtimeEventWriter: runtimeEventWriter(layout, hostScope),
 			permissionPrompter: {
 				request: async () => ({ decision: "allow-once", decidedBy: principal }),
 			},

@@ -8,6 +8,7 @@ import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../src/runtime/host/types.ts";
 import { createProductionHostSecurity } from "../../src/cli/runtime-host-security.ts";
 import { ProductionManagedProcessPort } from "../../src/cli/runtime-host-process.ts";
+import { JsonlRuntimeEventStore } from "../../src/storage/host/runtime-event-store.ts";
 
 function scope(): RuntimeHostScope {
 	const digest = (seed: string) => runtimeDigest(seed);
@@ -42,6 +43,7 @@ describe.runIf(process.platform === "linux")("Linux bwrap enforced process", () 
 				scope: hostScope,
 				cwd: root,
 				principalId: principal,
+				runtimeEventWriter: new JsonlRuntimeEventStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey }),
 				permissionPrompter: { request: async () => ({ decision: "allow-once", decidedBy: principal }) },
 			});
 			const port = new ProductionManagedProcessPort({ layout, scope: hostScope, hostGeneration: 1, security });

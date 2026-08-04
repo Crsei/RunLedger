@@ -7,10 +7,12 @@ import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../../src/runtime/host/types.ts";
 import {
-	createProductionHostSecurity,
+	createProductionHostSecurity as composeProductionHostSecurity,
+	type HostSecurityCompositionOptions,
 	type HostProcessSecurityRequest,
 } from "../../../src/cli/runtime-host-security.ts";
 import { ProductionManagedProcessPort } from "../../../src/cli/runtime-host-process.ts";
+import { JsonlRuntimeEventStore } from "../../../src/storage/host/runtime-event-store.ts";
 import type {
 	SandboxBackend,
 	SandboxCapability,
@@ -113,6 +115,14 @@ function processRequest(root: string, sessionId: string): HostProcessSecurityReq
 	};
 }
 
+function createProductionHostSecurity(options: HostSecurityCompositionOptions): ReturnType<typeof composeProductionHostSecurity> {
+	if (Object.prototype.hasOwnProperty.call(options, "runtimeEventWriter")) return composeProductionHostSecurity(options);
+	return composeProductionHostSecurity({
+		...options,
+		runtimeEventWriter: new JsonlRuntimeEventStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey }),
+	});
+}
+
 function spawnableSandboxBackend(): SandboxBackend {
 	const capabilityBody = {
 		backendId: "test-spawnable-sandbox",
@@ -189,6 +199,20 @@ function workspaceBinding(root: string): PersistedWorkspaceBinding {
 }
 
 describe("production Host Security/ExecutionGateway composition", () => {
+	it("requires the canonical Runtime event writer from Host composition", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-writer-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+
+		await expect(createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: availableSandboxBackend(),
+			runtimeEventWriter: undefined,
+		})).rejects.toThrow(/Runtime event writer|event writer/iu);
+	});
+
 	it("uses the canonical default snapshot and denies workspace-external writes before raw IO", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-"));
 		roots.push(root);

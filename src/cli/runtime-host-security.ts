@@ -66,9 +66,8 @@ import {
 	type HostProcessFinalLeafDecisionPort,
 	type HostProcessFinalLeafRequest,
 } from "../security/integration/runtime-gateway-adapter.ts";
-import { HostSecurityAuditAdapter } from "../security/integration/runtime-security-events.ts";
+import { HostSecurityAuditAdapter, type RuntimeSecurityEventWriter } from "../security/integration/runtime-security-events.ts";
 import { JsonApprovalStateStore } from "../storage/host/approval-store.ts";
-import { JsonlRuntimeEventStore } from "../storage/host/runtime-event-store.ts";
 
 export interface HostSecurityConfigSource extends SecurityConfigSourcePort {
 	readonly source: SecurityConfigSourcePort["source"];
@@ -87,6 +86,8 @@ export interface HostSecurityCompositionOptions {
 	readonly approval?: Omit<ApprovalCoordinatorOptions, "prompter">;
 	readonly filesystemBroker?: FileSystemBrokerPort;
 	readonly networkBroker?: NetworkBrokerPort;
+	/** Host composition owns the single canonical Runtime event writer. */
+	readonly runtimeEventWriter?: RuntimeSecurityEventWriter;
 	readonly securitySources?: readonly HostSecurityConfigSource[];
 	readonly now?: () => Date;
 }
@@ -175,8 +176,8 @@ export async function createProductionHostSecurity(
 	const filesystemBroker = options.filesystemBroker ?? createLocalFileSystemBroker();
 	const networkBroker = options.networkBroker ?? createLocalNetworkBroker();
 	const permissionEngine = new PermissionEngine();
-	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey });
-	const audit = new HostSecurityAuditAdapter({ authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, writer: runtimeEventWriter });
+	if (options.runtimeEventWriter === undefined) throw new Error("canonical Runtime event writer is required from Host composition");
+	const audit = new HostSecurityAuditAdapter({ authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, writer: options.runtimeEventWriter });
 	const approvalCoordinator = new ApprovalCoordinator({
 		...(options.approval ?? {}),
 		prompter: options.permissionPrompter ?? new HeadlessDenyPrompter(),

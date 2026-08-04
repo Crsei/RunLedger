@@ -21,6 +21,7 @@ import { productionHostSocketPath } from "./runtime-host-production.ts";
 import { createLinuxSocketPeerAttestor, defaultLinuxPeerCredentialHelperPath } from "./linux-peer-attestor.ts";
 import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
 import { JsonlHostEventStore } from "../storage/host/event-store.ts";
+import { JsonlRuntimeEventStore } from "../storage/host/runtime-event-store.ts";
 import { JsonHostCommandStore } from "../storage/host/command-store.ts";
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
 import { HostWorkspaceBindingService } from "../worktree/host-binding.ts";
@@ -47,12 +48,14 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	await models.refresh({ allowNetwork: false });
 	const workspaceBindingStore = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd });
+	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 	let residentHost: ResidentRuntimeHost | undefined;
 	const security = await createProductionHostSecurity({
 		layout,
 		scope,
 		cwd,
 		...(workspaceBinding === undefined ? {} : { workspaceBinding }),
+		runtimeEventWriter,
 		permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
 	});
 	let lifecycle: RuntimeHostLifecycle | undefined;
