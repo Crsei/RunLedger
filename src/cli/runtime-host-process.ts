@@ -13,7 +13,7 @@ import {
 	createProductionExecutionDecisionProviders,
 	type ExecutionConstraintInput,
 } from "../runtime/process/execution-decision.ts";
-import { ProcessManager, AuditedProcessManager, type BackendSpawnInput, type BackendSpawnPort, type BackendSpawnReceipt } from "../runtime/process/manager.ts";
+import { ProcessManager, AuditedProcessManager, type BackendLaunchPlan, type BackendSpawnInput, type BackendSpawnPort, type BackendSpawnReceipt } from "../runtime/process/manager.ts";
 import { FileArtifactStore } from "../runtime/trace/artifact-store.ts";
 import { ManagedProcessOutputMaterializer } from "../runtime/process/output-artifact.ts";
 import type { ProcessOutputArtifactStore, ProcessOutputMaterializationRecord } from "../runtime/process/output-artifact.ts";
@@ -41,6 +41,8 @@ import type { ProcessToolClient } from "../runtime/tools/process-tool-support.ts
 import type { ManagedBackgroundBashOperations } from "../runtime/tools/bash.ts";
 import type { ControlPlaneActor, ControlPlaneOutputResult, ControlPlaneWaitResult, ControlPlaneMutationResult } from "../storage/process/control-plane.ts";
 import type { RecordingFailurePolicy } from "../storage/settings-manager.ts";
+import type { ProductionHostSecurity, HostProcessSecurityRequest } from "./runtime-host-security.ts";
+import type { SandboxLaunchPlan } from "../security/sandbox/types.ts";
 
 export interface ProductionManagedProcessOptions {
 	readonly layout: RunledgerLayout;
@@ -50,6 +52,8 @@ export interface ProductionManagedProcessOptions {
 	readonly recordingFailurePolicy?: RecordingFailurePolicy;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly artifactStore?: ProcessOutputArtifactStore;
+	/** Resident Host's sole Security/ExecutionGateway owner. */
+	readonly security?: ProductionHostSecurity;
 }
 
 interface CommandDescriptor {
@@ -59,7 +63,7 @@ interface CommandDescriptor {
 
 type ProductionProcessCreateResult = ControlPlaneCreateResult | {
 	readonly ok: false;
-	readonly code: "cwd_invalid";
+	readonly code: "cwd_invalid" | "execution_constraint_denied" | "execution_constraint_unavailable" | "execution_constraint_invalid";
 };
 
 interface BackendWithControl extends BackendSpawnPort {
@@ -191,6 +195,24 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 			stdin: stdinDigest === undefined ? null : { digest: stdinDigest, size: Buffer.byteLength(input.stdin ?? "", "utf8") },
 		});
 		const correlationId = createRuntimeId("command", commandId.length <= 128 ? commandId : runtimeDigest(commandId).digest.slice(0, 64));
+		const securityRequest: HostProcessSecurityRequest = {
+			sessionId: input.sessionId,
+			principalId: input.principalId,
+			commandId: correlationId,
+			command: input.command,
+			cwd: input.cwd,
+			timeoutMs: input.timeoutMs,
+			backend: input.backend,
+			executionMode: input.executionMode,
+			containment,
+			requestDigest: commandDigest,
+			...(input.stdin === undefined ? {} : { stdin: input.stdin }),
+		};
+		const prepared = this.options.security === undefined
+			? undefined
+			: await this.options.security.prepareProcess(securityRequest);
+		if (prepared && !prepared.ok) return mapSecurityCreateFailure(prepared.error.code);
+		const managedRequestDigest = prepared?.value.constraintInput.requestDigest ?? commandDigest;
 		this.commands.set(correlationId, { command: input.command, cwd: input.cwd });
 		const request: ManagedProcessRequest = {
 			authorityId: this.options.scope.authorityId,
@@ -199,7 +221,7 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 			sessionId: input.sessionId as ManagedProcessRequest["sessionId"],
 			hostGeneration: this.options.hostGeneration,
 			sessionGeneration: input.sessionGeneration,
-			requestDigest: commandDigest,
+			requestDigest: managedRequestDigest,
 			commandRef: { subjectKind: "content", digest: runtimeDigest(input.command), mediaType: "text/plain", size: Buffer.byteLength(input.command, "utf8") },
 			cwdRef: { subjectKind: "content", digest: runtimeDigest(input.cwd), mediaType: "text/plain", size: Buffer.byteLength(input.cwd, "utf8") },
 			backend: input.backend,
@@ -207,7 +229,7 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 			timeoutMs: input.timeoutMs,
 			correlationId,
 		};
-		const decisionInput: ExecutionConstraintInput = {
+		const decisionInput: ExecutionConstraintInput = prepared?.value.constraintInput ?? {
 			authorityId: request.authorityId,
 			tenantId: request.tenantId,
 			workspaceId: request.workspaceId,
@@ -219,7 +241,17 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 			policyDigest: runtimeDigest({ source: "runledger-production", mode: this.options.recordingMode ?? "off" }),
 			modes: { permission: "none", approval: "none", sandbox: "none", gateway: "none", containment },
 		};
-		const result = await this.plane.create(request, decisionInput);
+		const spawnOptions = prepared?.value === undefined || this.options.security === undefined
+			? undefined
+			: {
+				constraintSnapshot: prepared.value.constraintSnapshot,
+				launchPlan: prepared.value.sandboxPlan === undefined ? undefined : toBackendLaunchPlan(prepared.value.sandboxPlan),
+				beforeSpawn: async () => {
+					const finalLeaf = await this.options.security!.validateProcessFinalLeaf(prepared.value);
+					if (!finalLeaf.ok) throw new Error(`${finalLeaf.error.code}: ${finalLeaf.error.message}`);
+				},
+			};
+		const result = await this.plane.create(request, decisionInput, spawnOptions);
 		if (!result.ok) return result;
 		if (input.stdin !== undefined) {
 			if (input.stdin.length > 0) {
@@ -680,6 +712,23 @@ function safeSummary(summary: ManagedProcessSummary): Record<string, unknown> {
 
 function sameOutputCursor(left: OutputCursor, right: OutputCursor): boolean {
 	return left.sequence === right.sequence && left.byteOffset === right.byteOffset;
+}
+
+function mapSecurityCreateFailure(code: string): ProductionProcessCreateResult {
+	if (code === "policy_denied" || code === "approval_cancelled" || code === "approval_expired" || code === "approval_stale" || code === "path_escape" || code === "protected_path" || code === "network_denied") {
+		return { ok: false, code: "execution_constraint_denied" };
+	}
+	if (code === "invalid_request" || code === "invalid_config") return { ok: false, code: "execution_constraint_invalid" };
+	return { ok: false, code: "execution_constraint_unavailable" };
+}
+
+function toBackendLaunchPlan(plan: SandboxLaunchPlan): BackendLaunchPlan {
+	return {
+		program: plan.program,
+		arguments: plan.arguments,
+		cwd: plan.cwd,
+		environment: plan.environment,
+	};
 }
 
 function isOutputRetentionPlan(value: unknown): value is OutputRetentionPlan {

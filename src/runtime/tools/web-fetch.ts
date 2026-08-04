@@ -19,6 +19,7 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
+import { localExecutionEnv, type Network } from "../execution-env.ts";
 import type { AgentTool } from "../types.ts";
 
 export const webFetchSchema = Type.Object({
@@ -40,6 +41,10 @@ export interface WebFetchDetails {
 
 const DEFAULT_MAX = 2_000_000;
 
+export interface WebFetchToolOptions {
+  readonly network?: Network;
+}
+
 /** 极简 HTML → 平文:去 tag,decode 几个 entity,其余原样。 */
 function htmlToText(html: string): string {
   // 折叠非 <script>/<style> 节省 tokens
@@ -51,7 +56,8 @@ function htmlToText(html: string): string {
   return s.trim();
 }
 
-export function createWebFetchTool(): AgentTool<typeof webFetchSchema, WebFetchDetails> {
+export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool<typeof webFetchSchema, WebFetchDetails> {
+	const network = options.network ?? localExecutionEnv().network!;
   return {
     name: "WebFetch",
     label: "WebFetch",
@@ -60,7 +66,7 @@ export function createWebFetchTool(): AgentTool<typeof webFetchSchema, WebFetchD
     parameters: webFetchSchema,
     isReadOnly: () => true,
     isConcurrencySafe: () => true,
-    async execute(_toolCallId, params): Promise<{
+	async execute(_toolCallId, params, signal): Promise<{
       content: Array<{ type: "text"; text: string }>;
       details: WebFetchDetails;
       terminate: false;
@@ -78,14 +84,15 @@ export function createWebFetchTool(): AgentTool<typeof webFetchSchema, WebFetchD
         url = new URL(input.replace(/^http:/i, "https:"));
       }
       const maxBytes = params.maxBytes ?? DEFAULT_MAX;
-      const bodyPromise = fetch(url.toString(), {
-        redirect: "manual",
-        headers: { "user-agent": "RunLedger/0.0.1 (+webfetch)" },
-      });
-      const r = await bodyPromise;
-      if (r.status >= 300 && r.status < 400) {
+	  const r = await network.request({
+	    url: url.toString(),
+	    method: "GET",
+	    headers: { "user-agent": "RunLedger/0.0.1 (+webfetch)" },
+	    maxBytes,
+	  }, signal);
+	  if (r.status >= 300 && r.status < 400) {
         // redirect:跨 host 报错
-        const loc = r.headers.get("location");
+	    const loc = r.headers["location"] ?? r.headers["Location"];
         if (loc) {
           try {
             const locUrl = new URL(loc, url.toString());
@@ -98,9 +105,8 @@ export function createWebFetchTool(): AgentTool<typeof webFetchSchema, WebFetchD
           }
         }
       }
-      const contentType = r.headers.get("content-type") ?? "";
-      const buf = await r.arrayBuffer();
-      const fetched = Buffer.from(buf);
+	  const contentType = r.headers["content-type"] ?? r.headers["Content-Type"] ?? "";
+	  const fetched = r.body;
       const truncated = fetched.length > maxBytes;
       const slice = truncated ? fetched.subarray(0, maxBytes) : fetched;
       let text = slice.toString("utf8");

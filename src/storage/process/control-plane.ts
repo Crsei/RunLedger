@@ -13,6 +13,7 @@ import type { RuntimeHostLifecycleProcess } from "../../runtime/host/lifecycle.t
 import {
 	AuditedProcessManager,
 	ProcessManager,
+	type BackendSpawnOptions,
 	type BackendSpawnPort,
 	type ProcessCreateResult,
 } from "../../runtime/process/manager.ts";
@@ -188,8 +189,9 @@ export class ManagedProcessControlPlane {
 	public async create(
 		request: Parameters<AuditedProcessManager["create"]>[0],
 		decisionInput: ExecutionConstraintInput,
+		spawnOptions?: BackendSpawnOptions,
 	): Promise<ControlPlaneCreateResult> {
-		const created = await this.auditedManager.create(request, decisionInput);
+		const created = await this.auditedManager.create(request, decisionInput, spawnOptions);
 		if (!created.ok) return created;
 		const control = this.backend.control(created.handle);
 		// A restarted Host may safely replay a durable terminal projection and its

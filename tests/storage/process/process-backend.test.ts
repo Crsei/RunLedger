@@ -85,6 +85,44 @@ class SealFailureOutputStore extends FileProcessOutputStore {
 }
 
 describe("R6 governed pipe process backend", () => {
+	it("runs the final-leaf gate before resolving or spawning a command", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-process-final-leaf-"));
+		try {
+			const value = { ...request(), correlationId: createRuntimeId("command", "final-leaf") };
+			const layout = buildRunledgerLayout(join(root, "home"), "posix");
+			let resolveCalls = 0;
+			const backend = new PipeProcessBackend({
+				resolveCommand: () => {
+					resolveCalls += 1;
+					return { executable: process.execPath, args: ["-e", "process.stdout.write('must-not-run')"], cwd: root };
+				},
+				createOutputStore: (input) => new FileProcessOutputStore({
+					layout,
+					workspaceStorageKey: "ws-" + "f".repeat(64),
+					executionId: input.handle.executionId,
+					attemptId: input.handle.attemptId,
+				}),
+			});
+			const decision = await evaluateExecutionConstraints(decisionInput(value), createBuiltinNoneExecutionDecisionProviders());
+			if (!decision.ok) throw new Error("decision failed");
+			const handle = executionHandle(value, decision.snapshot);
+
+			await expect(backend.spawn({
+				handle,
+				request: value,
+				spawnClaimDigest: digest("final-leaf-claim"),
+				constraintSnapshot: decision.snapshot,
+				constraintInput: decisionInput(value),
+				launchPlan: { program: process.execPath, arguments: ["-e", "process.stdout.write('must-not-run')"], cwd: root, environment: {} },
+				beforeSpawn: async () => { throw new Error("final leaf denied"); },
+			})).rejects.toThrow("final leaf denied");
+			expect(resolveCalls).toBe(0);
+			expect(backend.handles()).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("spawns once behind the audited barrier, streams output privately, and waits without exposing a PID", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-process-backend-"));
 		try {

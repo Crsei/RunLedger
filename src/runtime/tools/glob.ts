@@ -19,9 +19,9 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { readdir, stat } from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
+import { localExecutionEnv } from "../execution-env.ts";
 import { resolveToCwd, truncateHead, DEFAULT_MAX_BYTES, type TruncationResult } from "./tool-support.ts";
 
 export const globSchema = Type.Object({
@@ -48,14 +48,10 @@ export interface GlobOperations {
 }
 
 const defaultOps: GlobOperations = {
-  readdir: (p) => readdir(p),
+  readdir: (p) => localExecutionEnv().fs.readdir(p),
   stat: async (p) => {
-    const s = await stat(p);
-    return {
-      isDirectory: s.isDirectory(),
-      mtimeMs: s.mtimeMs,
-      isSymbolicLink: s.isSymbolicLink(),
-    };
+    const s = await localExecutionEnv().fs.stat(p);
+    return { isDirectory: s.isDirectory, mtimeMs: s.mtimeMs, isSymbolicLink: s.isSymbolicLink === true };
   },
 };
 

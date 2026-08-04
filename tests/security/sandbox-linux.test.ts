@@ -121,6 +121,16 @@ describe("LinuxBwrapBackend", () => {
 		expect(first.value.planDigest.algorithm).toBe("sha256");
 	});
 
+	it("does not synthesize missing protected mount sources into a launch plan", async () => {
+		const backend = new LinuxBwrapBackend(probe("/opt/bwrap"));
+		const result = await backend.prepare(request({ protectedPaths: [] }));
+
+		expect(result).toMatchObject({ ok: true });
+		if (!result.ok) return;
+		expect(result.value.arguments).not.toContain("/repo/.git");
+		expect(result.value.arguments).not.toContain("/repo/.runledger");
+	});
+
 	it("rejects an outside cwd or writable root before producing a launch plan", async () => {
 		const backend = new LinuxBwrapBackend(probe("/opt/bwrap"));
 

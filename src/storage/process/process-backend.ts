@@ -17,7 +17,7 @@ import {
 	type ExecutionConstraintInput,
 	type ExecutionConstraintSnapshot,
 } from "../../runtime/process/execution-decision.ts";
-import type { BackendSpawnInput, BackendSpawnPort, BackendSpawnReceipt } from "../../runtime/process/manager.ts";
+import type { BackendLaunchPlan, BackendSpawnInput, BackendSpawnPort, BackendSpawnReceipt } from "../../runtime/process/manager.ts";
 import { RUNTIME_HOST_BOUNDS } from "../../runtime/host/types.ts";
 import { clipUtf8Output, PROCESS_OUTPUT_BOUNDS } from "../../runtime/process/output.ts";
 import {
@@ -46,6 +46,8 @@ export interface PipeSpawnInput {
 	readonly spawnClaimDigest: RuntimeDigest;
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
 	readonly constraintInput?: ExecutionConstraintInput;
+	readonly launchPlan?: BackendLaunchPlan;
+	readonly beforeSpawn?: () => Promise<void>;
 }
 
 export type PipeProcessOutcome = "completed" | "failed" | "timed_out" | "killed" | "uncertain";
@@ -114,7 +116,10 @@ export class PipeProcessBackend {
 		const containment = input.constraintSnapshot.modes.containment;
 		if (containment === "supervisor" && process.platform === "win32") throw new Error("supervisor containment is unsupported on Windows");
 		if (containment === "process_group" && process.platform === "win32") throw new Error("process-group containment is unsupported on Windows");
-		const descriptor = await this.resolveCommand(input.request);
+		if (input.beforeSpawn) await input.beforeSpawn();
+		const descriptor = input.launchPlan === undefined
+			? await this.resolveCommand(input.request)
+			: launchPlanDescriptor(input.launchPlan);
 		if (descriptor.executable.length === 0 || !isAbsolute(descriptor.cwd)) throw new Error("pipe command descriptor is invalid");
 		const output = this.createOutputStore(input);
 		const child = containment === "supervisor"
@@ -382,6 +387,15 @@ export class PipeProcessBackend {
 			},
 		};
 	}
+}
+
+function launchPlanDescriptor(plan: BackendLaunchPlan): PipeCommandDescriptor {
+	return {
+		executable: plan.program,
+		args: [...plan.arguments],
+		cwd: plan.cwd,
+		env: { ...plan.environment },
+	};
 }
 
 function sendProcessGroupSignal(pid: number, signal: NodeJS.Signals): boolean {

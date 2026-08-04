@@ -11,9 +11,9 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
+import { localExecutionEnv } from "../execution-env.ts";
 import { resolveToCwd } from "./tool-support.ts";
 
 export const writeSchema = Type.Object({
@@ -32,10 +32,8 @@ export interface WriteOperations {
 }
 
 const defaultWriteOperations: WriteOperations = {
-  writeFile: (p, content) => fsWriteFile(p, content, "utf-8"),
-  mkdir: async (dir) => {
-    await fsMkdir(dir, { recursive: true });
-  },
+  writeFile: (p, content) => localExecutionEnv().fs.writeFile(p, content),
+  mkdir: async (dir) => { await localExecutionEnv().fs.mkdir(dir, { recursive: true }); },
 };
 
 export interface WriteToolOptions {

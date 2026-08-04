@@ -16,6 +16,11 @@ import {
 } from "../src/cli/runtime-host-production.ts";
 import { buildLinuxPeerCredentialHelper } from "./build-linux-peer-credential-helper.ts";
 
+// The governed Linux sandbox exposes /usr but not the caller's private Node
+// install under /home. Keep the acceptance command inside the declared runtime
+// read roots so this runner exercises the real restrictive Host path.
+const SANDBOX_NODE = "/usr/bin/node";
+
 export interface ManagedProcessPtyRunnerResult {
 	readonly passed: boolean;
 	readonly outcome: "pass" | "fail" | "unsupported";
@@ -251,7 +256,7 @@ async function waitForEndpointGone(store: EndpointStore): Promise<void> {
 
 function buildPtyCommand(): string {
 	const javascript = "process.stdin.setEncoding('utf8');process.stdin.once('data',(input)=>{process.stdout.write('pty✅:'+input.trim()+'\\n');process.exit(0)});setTimeout(()=>process.exit(2),5000)";
-	return `${shellQuote(process.execPath)} -e ${shellQuote(javascript)}`;
+	return `${shellQuote(SANDBOX_NODE)} -e ${shellQuote(javascript)}`;
 }
 
 function shellQuote(value: string): string {

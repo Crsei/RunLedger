@@ -16,13 +16,12 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { constants } from "node:fs";
-import { access as fsAccess, readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import type { AgentTool, AgentToolResult } from "../types.ts";
+import { localExecutionEnv } from "../execution-env.ts";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
-  resolveReadPathAsync,
+  resolveToCwd,
   truncateHead,
   type TruncationResult,
 } from "./tool-support.ts";
@@ -56,12 +55,9 @@ export interface ReadOperations {
 }
 
 const defaultReadOperations: ReadOperations = {
-  readFile: (p) => fsReadFile(p),
-  access: (p) => fsAccess(p, constants.R_OK),
-  stat: async (p) => {
-    const s = await fsStat(p);
-    return { mtimeMs: s.mtimeMs };
-  },
+  readFile: (p) => localExecutionEnv().fs.readFile(p),
+  access: async (p) => { await localExecutionEnv().fs.stat(p); },
+  stat: async (p) => ({ mtimeMs: (await localExecutionEnv().fs.stat(p)).mtimeMs }),
 };
 
 export interface ReadToolOptions {
@@ -123,7 +119,9 @@ export function createReadTool(
       const { path: rawPath, offset, limit } = params;
       const addLineNumbers = params.lineNumbers ?? true;
       const noCache = params.noCache === true;
-      const absolutePath = await resolveReadPathAsync(rawPath, cwd);
+      // Path resolution is lexical here; a governed operations port performs
+      // canonicalization and policy checks before touching the filesystem.
+      const absolutePath = resolveToCwd(rawPath, cwd);
       await ops.access(absolutePath);
 
       // mtime 去重缓存

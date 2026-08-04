@@ -39,12 +39,29 @@ export interface BackendSpawnReceipt {
 	readonly evidenceRef?: RuntimeContentRef;
 }
 
+/** Immutable launch command delivered by a validated Host final-leaf plan. */
+export interface BackendLaunchPlan {
+	readonly program: string;
+	readonly arguments: readonly string[];
+	readonly cwd: string;
+	readonly environment: Readonly<Record<string, string>>;
+}
+
+/** Final-leaf callback runs after durable claim and immediately before raw spawn. */
+export interface BackendSpawnOptions {
+	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
+	readonly launchPlan?: BackendLaunchPlan;
+	readonly beforeSpawn?: () => Promise<void>;
+}
+
 export interface BackendSpawnInput {
 	readonly handle: ExecutionHandleRef;
 	readonly request: ManagedProcessRequest;
 	readonly spawnClaimDigest: RuntimeDigest;
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
 	readonly constraintInput?: ExecutionConstraintInput;
+	readonly launchPlan?: BackendLaunchPlan;
+	readonly beforeSpawn?: () => Promise<void>;
 }
 
 export interface BackendSpawnPort {
@@ -137,6 +154,7 @@ export class ProcessManager {
 		request: ManagedProcessRequest,
 		constraintSnapshot?: ExecutionConstraintSnapshot,
 		constraintInput?: ExecutionConstraintInput,
+		spawnOptions?: BackendSpawnOptions,
 	): Promise<ProcessCreateResult> {
 		const intent = this.journal.findIntent(request.correlationId);
 		let handle: ExecutionHandleRef;
@@ -231,6 +249,8 @@ export class ProcessManager {
 					spawnClaimDigest: spawnClaimDigest(current.handle, request, constraintSnapshot, constraintInput),
 					...(constraintSnapshot === undefined ? {} : { constraintSnapshot }),
 					...(constraintInput === undefined ? {} : { constraintInput }),
+					...(spawnOptions?.launchPlan === undefined ? {} : { launchPlan: spawnOptions.launchPlan }),
+					...(spawnOptions?.beforeSpawn === undefined ? {} : { beforeSpawn: spawnOptions.beforeSpawn }),
 				});
 			} catch {
 				// claim 已 durable，但 spawn response 的真实结果未知；重试仍使用同一 handle
@@ -491,6 +511,7 @@ export class AuditedProcessManager {
 	public async create(
 		request: ManagedProcessRequest,
 		decisionInput: ExecutionConstraintInput,
+		spawnOptions?: BackendSpawnOptions,
 	): Promise<AuditedProcessCreateResult> {
 		const handle = createHandle(request);
 		const normalized: ExecutionConstraintInput = {
@@ -503,12 +524,18 @@ export class AuditedProcessManager {
 			commandId: request.correlationId,
 			requestDigest: request.requestDigest,
 		};
+		if (spawnOptions?.constraintSnapshot !== undefined) {
+			if (!validateExecutionConstraintSnapshot(normalized, spawnOptions.constraintSnapshot)) {
+				return { ok: false, code: "execution_constraint_invalid" };
+			}
+			return this.manager.create(request, spawnOptions.constraintSnapshot, normalized, spawnOptions);
+		}
 		const durableSnapshot = this.manager.constraintSnapshot(request.correlationId);
 		if (durableSnapshot !== undefined) {
 			if (!validateExecutionConstraintSnapshot(normalized, durableSnapshot)) {
 				return { ok: false, code: "execution_constraint_invalid" };
 			}
-			return this.manager.create(request, durableSnapshot, normalized);
+			return this.manager.create(request, durableSnapshot, normalized, spawnOptions);
 		}
 		const decision = await evaluateExecutionConstraints(normalized, this.providers);
 		if (!decision.ok) {
@@ -516,7 +543,7 @@ export class AuditedProcessManager {
 			if (decision.code === "constraint_provider_unavailable") return { ok: false, code: "execution_constraint_unavailable" };
 			return { ok: false, code: "execution_constraint_invalid" };
 		}
-		return this.manager.create(request, decision.snapshot, normalized);
+		return this.manager.create(request, decision.snapshot, normalized, spawnOptions);
 	}
 }
 

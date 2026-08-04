@@ -6,12 +6,11 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { readdir as fsReaddir, stat as fsStat } from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
+import { localExecutionEnv } from "../execution-env.ts";
 import {
   DEFAULT_MAX_BYTES,
-  pathExists,
   resolveToCwd,
   truncateHead,
   type TruncationResult,
@@ -36,9 +35,14 @@ export interface LsOperations {
 }
 
 const defaultLsOperations: LsOperations = {
-  exists: pathExists,
-  stat: fsStat,
-  readdir: fsReaddir,
+  exists: async (p) => {
+    try { await localExecutionEnv().fs.stat(p); return true; } catch { return false; }
+  },
+  stat: async (p) => {
+    const value = await localExecutionEnv().fs.stat(p);
+    return { isDirectory: () => value.isDirectory };
+  },
+  readdir: (p) => localExecutionEnv().fs.readdir(p),
 };
 
 export interface LsToolOptions {

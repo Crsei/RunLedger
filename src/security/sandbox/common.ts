@@ -1,6 +1,6 @@
 /** Sandbox plan 的 digest、路径边界与 final-leaf 验证共用原语。 */
 
-import { isAbsolute, join, normalize, resolve } from "node:path";
+import { isAbsolute, normalize, resolve } from "node:path";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import type {
@@ -98,11 +98,12 @@ export function normalizePrepareRequest(request: SandboxPrepareRequest): Sandbox
 		return failure("invalid_request", "a restrictive request cannot resolve to builtin-none/off");
 	}
 	const resolved = request.resolved ?? request.requested;
+	// protectedPaths 由 Security snapshot/Host composition 提供。不要在这里
+	// 合成可能不存在的 mount source；Linux bwrap 的 --ro-bind 对缺失 source
+	// 会在 final leaf 之后直接失败。denyWrite 仍然视为同等 protected path。
 	const protectedPaths = [...new Set([
 		...providedProtected.value,
 		...denyWrite.value,
-		join(workspaceRoot, ".git"),
-		join(workspaceRoot, ".runledger"),
 	])].sort();
 	const environment = Object.fromEntries(Object.entries(request.environment).sort(([left], [right]) => left.localeCompare(right)));
 	return {

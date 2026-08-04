@@ -15,7 +15,7 @@ import {
 	type ExecutionConstraintInput,
 	type ExecutionConstraintSnapshot,
 } from "../../runtime/process/execution-decision.ts";
-import type { BackendSpawnInput, BackendSpawnPort, BackendSpawnReceipt } from "../../runtime/process/manager.ts";
+import type { BackendLaunchPlan, BackendSpawnInput, BackendSpawnPort, BackendSpawnReceipt } from "../../runtime/process/manager.ts";
 import { RUNTIME_HOST_BOUNDS } from "../../runtime/host/types.ts";
 import { clipUtf8Output, PROCESS_OUTPUT_BOUNDS } from "../../runtime/process/output.ts";
 import type { FileProcessOutputStore, ProcessOutputStoreErrorCode } from "./output-store.ts";
@@ -126,6 +126,8 @@ export class PtyProcessBackend {
 		readonly spawnClaimDigest: RuntimeDigest;
 		readonly constraintSnapshot?: ExecutionConstraintSnapshot;
 		readonly constraintInput?: ExecutionConstraintInput;
+		readonly launchPlan?: BackendLaunchPlan;
+		readonly beforeSpawn?: () => Promise<void>;
 	}): Promise<PtySpawnResult> {
 		const existing = this.processes.get(input.handle.executionId);
 		const existingReceipt = this.receipts.get(input.handle.executionId);
@@ -138,7 +140,10 @@ export class PtyProcessBackend {
 		if (input.constraintSnapshot.containment.mode !== "none") {
 			throw new Error("PTY strong containment is unsupported by the configured adapter");
 		}
-		const command = await this.resolveCommand(input.request);
+		if (input.beforeSpawn) await input.beforeSpawn();
+		const command = input.launchPlan === undefined
+			? await this.resolveCommand(input.request)
+			: launchPlanDescriptor(input.launchPlan);
 		if (command.executable.length === 0 || !isAbsolute(command.cwd)) throw new Error("PTY command descriptor is invalid");
 		const output = this.createOutputStore({ handle: input.handle, request: input.request, constraintSnapshot: input.constraintSnapshot });
 		const process = await this.adapter.spawn({ command, handle: input.handle, request: input.request, constraintSnapshot: input.constraintSnapshot });
@@ -332,6 +337,15 @@ export class PtyProcessBackend {
 			},
 		};
 	}
+}
+
+function launchPlanDescriptor(plan: BackendLaunchPlan): PtyCommandDescriptor {
+	return {
+		executable: plan.program,
+		args: [...plan.arguments],
+		cwd: plan.cwd,
+		env: { ...plan.environment },
+	};
 }
 
 function validateSpawnBinding(input: {

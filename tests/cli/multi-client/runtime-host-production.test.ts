@@ -5,6 +5,7 @@ import {
 	productionHostSocketPath,
 	productionHostSpawnSpec,
 } from "../../../src/cli/runtime-host-production.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 
 describe("R3/R4 production Host composition", () => {
 	it("derives one stable workspace scope and canonical socket path", () => {
@@ -23,6 +24,19 @@ describe("R3/R4 production Host composition", () => {
 		const first = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
 		const second = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: { model: "changed" } });
 		expect(second.compatibilityDigest.digest).not.toBe(first.compatibilityDigest.digest);
+	});
+
+	it("advertises the mediated Security/ExecutionGateway instead of builtin-none", () => {
+		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
+		const scope = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
+
+		expect(scope.securityAdapterDigest).not.toEqual(runtimeDigest({
+			permission: "none",
+			approval: "none",
+			sandbox: "none",
+			gateway: "none",
+			containment: "none",
+		}));
 	});
 
 	it("spawns a detached resident Host with the complete scope bound in its environment", () => {

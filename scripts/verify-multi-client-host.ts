@@ -25,6 +25,11 @@ import {
 } from "../src/cli/runtime-host-production.ts";
 import { buildLinuxPeerCredentialHelper } from "./build-linux-peer-credential-helper.ts";
 
+// The governed Linux sandbox exposes /usr but not the caller's private Node
+// install under /home. Keep the acceptance command inside the declared runtime
+// read roots so this runner exercises the real restrictive Host path.
+const SANDBOX_NODE = "/usr/bin/node";
+
 export interface AcceptanceRunnerResult {
 	readonly passed: boolean;
 	readonly outcome: "pass" | "fail" | "unsupported";
@@ -225,7 +230,7 @@ async function verifyHostCrashRecovery(input: {
 		const javascript = `require('node:fs').appendFileSync(${JSON.stringify(markerPath)},'spawn\\n');process.stdout.write('crash-started\\n');setTimeout(()=>process.exit(0),20000)`;
 		const created = await command(driver, "crash-process-create", "process.create", {
 			sessionId,
-			command: `${shellQuote(process.execPath)} -e ${shellQuote(javascript)}`,
+			command: `${shellQuote(SANDBOX_NODE)} -e ${shellQuote(javascript)}`,
 			cwd: input.root,
 			backend: "pipe",
 			executionMode: "background",

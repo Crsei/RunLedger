@@ -12,9 +12,9 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { AgentTool } from "../types.ts";
+import { localExecutionEnv, type FileSystem } from "../execution-env.ts";
 import { resolveToCwd } from "./tool-support.ts";
 
 export const multiEditSchema = Type.Object({
@@ -38,7 +38,12 @@ export interface MultiEditDetails {
   diffBytes: number;
 }
 
-export function createMultiEditTool(cwd: string): AgentTool<typeof multiEditSchema, MultiEditDetails> {
+export interface MultiEditToolOptions {
+  readonly fileSystem?: FileSystem;
+}
+
+export function createMultiEditTool(cwd: string, options: MultiEditToolOptions = {}): AgentTool<typeof multiEditSchema, MultiEditDetails> {
+	const fileSystem = options.fileSystem ?? localExecutionEnv(cwd).fs;
   return {
     name: "MultiEdit",
     label: "MultiEdit",
@@ -52,7 +57,7 @@ export function createMultiEditTool(cwd: string): AgentTool<typeof multiEditSche
       terminate: false;
     }> {
       const target = resolveToCwd(params.filePath, cwd);
-      const original = await fs.readFile(target, "utf8");
+      const original = (await fileSystem.readFile(target)).toString("utf8");
       let cursor = original;
       let applied = 0;
       let diffBytes = 0;
@@ -82,8 +87,8 @@ export function createMultiEditTool(cwd: string): AgentTool<typeof multiEditSche
         }
       }
       if (cursor !== original) {
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, cursor, "utf8");
+        await fileSystem.mkdir(path.dirname(target), { recursive: true });
+        await fileSystem.writeFile(target, cursor);
       }
       return {
         content: [{ type: "text", text: `MultiEdit ok: ${applied} edits applied, ${diffBytes}+${diffBytes >= 0 ? "+" : ""}${diffBytes} bytes` }],

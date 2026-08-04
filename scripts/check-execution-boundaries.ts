@@ -14,16 +14,7 @@ export interface ExecutionBoundaryViolation {
 }
 
 export const LEGACY_RUNTIME_TOOL_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
-	"src/runtime/tools": [
-		"edit.ts",
-		"glob.ts",
-		"ls.ts",
-		"multi-edit.ts",
-		"read.ts",
-		"tool-support.ts",
-		"web-fetch.ts",
-		"write.ts",
-	],
+	"src/runtime/tools": [],
 };
 
 /**

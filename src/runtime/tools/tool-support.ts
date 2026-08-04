@@ -6,13 +6,11 @@
  *   - DEFAULT_MAX_LINES / DEFAULT_MAX_BYTES 常量
  *   - TruncationResult / TruncationOptions 类型
  *   - truncateHead: 行/字节上限的头部截断
- *   - resolveToCwd / resolveReadPathAsync / pathExists 路径工具
+ *   - resolveToCwd 路径工具
  *
  * pi 同款语义,不引 TUI / highlight / process image 等扩展点。
  */
 
-import { access, constants } from "node:fs";
-import { access as fsAccess, realpath as fsRealpath } from "node:fs/promises";
 import * as path from "node:path";
 
 export const DEFAULT_MAX_LINES = 2000;
@@ -121,30 +119,3 @@ export function resolveToCwd(rawPath: string | undefined, cwd: string): string {
   if (path.isAbsolute(rawPath)) return path.normalize(rawPath);
   return path.normalize(path.resolve(cwd, rawPath));
 }
-
-/**
- * 异步解析读路径:resolve 后用 realpath 跟随 symlink。
- * 与 pi `resolveReadPathAsync` 对齐(简化,不处理 cwd 切换)。
- */
-export async function resolveReadPathAsync(rawPath: string, cwd: string): Promise<string> {
-  const resolved = resolveToCwd(rawPath, cwd);
-  // realpath 跟随软链;失败保留原路径(stat 由调用方校验)
-  try {
-    return await fsRealpath(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
-/** 路径存在性同步检查;走 node:fs access(length cost 低,不引 fsOpt) */
-export async function pathExists(p: string): Promise<boolean> {
-  try {
-    await fsAccess(p, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 防御性引用,避免 verbatimModuleSyntax 报 unused(local 一致不直接消费)。 */
-void access;

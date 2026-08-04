@@ -38,6 +38,7 @@ import {
 	type HostTransportAttestor,
 } from "./runtime-host-transport.ts";
 import { defaultLinuxPeerCredentialHelperPath, LinuxSocketPeerAttestor } from "./linux-peer-attestor.ts";
+import { productionSecurityAdapterDigest } from "./runtime-host-security.ts";
 
 export interface LocalRuntimeHostScopeOptions {
 	readonly layout: RunledgerLayout;
@@ -65,7 +66,7 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 		settingsDigest: runtimeDigest(options.settings),
 		modelCatalogDigest: runtimeDigest({ catalog: "builtin" }),
 		tracePolicyDigest,
-		securityAdapterDigest: runtimeDigest({ permission: "none", approval: "none", sandbox: "none", gateway: "none", containment: "none" }),
+		securityAdapterDigest: productionSecurityAdapterDigest(),
 		extensionProfileDigest: runtimeDigest({ extensions: "none" }),
 		sessionStorageContractVersion: HOST_SESSION_STORAGE_CONTRACT_VERSION,
 		peerAttestor: {

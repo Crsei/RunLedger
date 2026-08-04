@@ -14,10 +14,9 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { constants } from "node:fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
+import { localExecutionEnv } from "../execution-env.ts";
 import { resolveToCwd } from "./tool-support.ts";
 
 const editItemSchema = Type.Object({
@@ -55,9 +54,9 @@ export interface EditOperations {
 }
 
 const defaultEditOperations: EditOperations = {
-  readFile: (p) => fsReadFile(p),
-  writeFile: (p, content) => fsWriteFile(p, content, "utf-8"),
-  access: (p) => fsAccess(p, constants.R_OK | constants.W_OK),
+  readFile: (p) => localExecutionEnv().fs.readFile(p),
+  writeFile: (p, content) => localExecutionEnv().fs.writeFile(p, content),
+  access: async (p) => { await localExecutionEnv().fs.stat(p); },
 };
 
 export interface EditToolOptions {

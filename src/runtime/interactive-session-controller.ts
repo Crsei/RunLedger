@@ -24,6 +24,7 @@ import {
   authorizationBeforeToolCall,
 } from "./tool-authorization.ts";
 import type { TraceRecorderFactory } from "./trace/composition.ts";
+import type { ExecutionEnv } from "./execution-env.ts";
 
 export interface RuntimeSelectionOverrides {
   provider?: string;
@@ -43,6 +44,7 @@ export interface InteractiveSessionControllerOptions {
   tools?: AgentTool[];
   authorizationPolicy?: ToolAuthorizationPolicy;
   traceRecorderFactory?: TraceRecorderFactory;
+  executionEnv?: ExecutionEnv;
 }
 
 export interface ProviderStatus {
@@ -102,6 +104,7 @@ export class InteractiveSessionController {
   private readonly tools: AgentTool[];
   private readonly policy: ToolAuthorizationPolicy;
   private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
+  private readonly executionEnv: ExecutionEnv | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -118,9 +121,10 @@ export class InteractiveSessionController {
     this.settings = { ...opts.settings };
     this.replay = opts.replay;
     this.ledgerSink = opts.ledger;
-    this.tools = opts.tools ?? productionTools(opts.cwd);
+    this.tools = opts.tools ?? productionTools(opts.cwd, opts.executionEnv);
     this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
     this.traceRecorderFactory = opts.traceRecorderFactory;
+    this.executionEnv = opts.executionEnv;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -289,7 +293,7 @@ export class InteractiveSessionController {
       },
       streamFn,
       ledger: this.ledgerSink,
-      loopConfig: { cwd: this.cwd, beforeToolCall },
+      loopConfig: { cwd: this.cwd, beforeToolCall, executionEnv: this.executionEnv },
       toolExecution: "sequential",
       steeringMode: this.settings.steeringMode ?? "one-at-a-time",
       followUpMode: this.settings.followUpMode ?? "one-at-a-time",
@@ -388,7 +392,7 @@ function interactiveProviderAuthTypes(provider: Provider): AuthType[] {
   return types;
 }
 
-function productionTools(cwd: string): AgentTool[] {
+function productionTools(cwd: string, executionEnv?: ExecutionEnv): AgentTool[] {
   const excluded = new Set(["Skill", "NotebookEdit", "echo"]);
-  return createStdlibTools(cwd).toContext().filter((tool) => !excluded.has(tool.name));
+  return createStdlibTools(cwd, executionEnv === undefined ? {} : { executionEnv }).toContext().filter((tool) => !excluded.has(tool.name));
 }

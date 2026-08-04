@@ -89,14 +89,10 @@ function snapshotDigest(snapshot: SecuritySnapshot): RuntimeDigest {
 function sameWorkspace(left: WorkspaceExecutionEnvelope, right: WorkspaceExecutionEnvelope): boolean {
 	return left.authorityId === right.authorityId &&
 		left.tenantId === right.tenantId &&
-		left.principalId === right.principalId &&
-		left.sessionId === right.sessionId &&
 		left.workspaceId === right.workspaceId &&
 		left.repositoryId === right.repositoryId &&
 		left.worktreePath === right.worktreePath &&
 		left.agentId === right.agentId &&
-		left.toolCallId === right.toolCallId &&
-		left.traceId === right.traceId &&
 		left.ownerRuntimeId === right.ownerRuntimeId &&
 		left.leaseRevision === right.leaseRevision &&
 		sameDigest(left.fencingTokenDigest, right.fencingTokenDigest);

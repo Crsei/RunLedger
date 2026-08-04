@@ -20,17 +20,18 @@
  */
 
 import type { AgentTool } from "../types.ts";
+import type { ExecutionEnv, Shell } from "../execution-env.ts";
 import { createToolRegistry, type ToolRegistry } from "../tool-registry.ts";
 import { echoTool } from "./echo.ts";
-import { createReadTool } from "./read.ts";
-import { createWriteTool } from "./write.ts";
-import { createEditTool } from "./edit.ts";
+import { createReadTool, type ReadToolOptions } from "./read.ts";
+import { createWriteTool, type WriteToolOptions } from "./write.ts";
+import { createEditTool, type EditToolOptions } from "./edit.ts";
 import { createMultiEditTool } from "./multi-edit.ts";
 import { createBashTool, type ManagedBackgroundBashOperations } from "./bash.ts";
 import { createGrepTool } from "./grep.ts";
 import { createFindTool } from "./find.ts";
-import { createGlobTool } from "./glob.ts";
-import { createLsTool } from "./ls.ts";
+import { createGlobTool, type GlobToolOptions } from "./glob.ts";
+import { createLsTool, type LsToolOptions } from "./ls.ts";
 import { createTodoWriteTool } from "./todo-write.ts";
 import { createWebFetchTool } from "./web-fetch.ts";
 import { createSkillTool } from "./skill.ts";
@@ -44,6 +45,8 @@ import type { ProcessToolClient } from "./process-tool-support.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
+	/** Production Host composition supplies this; omitted only for low-level/tests. */
+	readonly executionEnv?: ExecutionEnv;
 }
 
 /**
@@ -55,16 +58,23 @@ export interface StdlibToolsOptions {
  */
 export function createStdlibTools(cwd: string = process.cwd(), options: StdlibToolsOptions = {}): ToolRegistry {
   const r = createToolRegistry([], { namespace: "stdlib" });
-  r.register(createReadTool(cwd), { namespace: "stdlib" });
-  r.register(createWriteTool(cwd), { namespace: "stdlib" });
-  r.register(createEditTool(cwd), { namespace: "stdlib" });
-  r.register(createMultiEditTool(cwd), { namespace: "stdlib" });
-	r.register(createBashTool(cwd, options.managedProcess === undefined ? {} : { managedProcess: options.managedProcess }), { namespace: "stdlib" });
-  r.register(createGrepTool(cwd), { namespace: "stdlib" });
-  r.register(createFindTool(cwd), { namespace: "stdlib" });
-  r.register(createGlobTool(cwd), { namespace: "stdlib" });
-  r.register(createLsTool(cwd), { namespace: "stdlib" });
-  r.register(createWebFetchTool(), { namespace: "stdlib" });
+  const env = options.executionEnv;
+  const helperShell = options.managedProcess?.exec === undefined
+    ? env?.shell
+    : managedProcessShell(options.managedProcess.exec, cwd);
+  r.register(createReadTool(cwd, env === undefined ? {} : { operations: readOperations(env) }), { namespace: "stdlib" });
+  r.register(createWriteTool(cwd, env === undefined ? {} : { operations: writeOperations(env) }), { namespace: "stdlib" });
+  r.register(createEditTool(cwd, env === undefined ? {} : { operations: editOperations(env) }), { namespace: "stdlib" });
+  r.register(createMultiEditTool(cwd, env === undefined ? {} : { fileSystem: env.fs }), { namespace: "stdlib" });
+	r.register(createBashTool(cwd, {
+		...(env === undefined ? {} : { operations: { exec: (command, commandOptions) => env.shell.exec(command, commandOptions) } }),
+		...(options.managedProcess === undefined ? {} : { managedProcess: options.managedProcess }),
+	}), { namespace: "stdlib" });
+  r.register(createGrepTool(cwd, helperShell === undefined ? {} : { shell: helperShell }), { namespace: "stdlib" });
+  r.register(createFindTool(cwd, helperShell === undefined ? {} : { shell: helperShell }), { namespace: "stdlib" });
+  r.register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }), { namespace: "stdlib" });
+  r.register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }), { namespace: "stdlib" });
+  r.register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }), { namespace: "stdlib" });
   r.register(createSkillTool(), { namespace: "stdlib" });
 	r.register(createNotebookEditTool(), { namespace: "stdlib" });
 	r.register(echoTool, { namespace: "stdlib" });
@@ -79,6 +89,75 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
 		}
 	}
 	return r;
+}
+
+function readOperations(env: ExecutionEnv): NonNullable<ReadToolOptions["operations"]> {
+	return {
+		readFile: (path) => env.fs.readFile(path),
+		access: async (path) => { await env.fs.stat(path); },
+		stat: async (path) => ({ mtimeMs: (await env.fs.stat(path)).mtimeMs }),
+	};
+}
+
+function writeOperations(env: ExecutionEnv): NonNullable<WriteToolOptions["operations"]> {
+	return {
+		writeFile: (path, content) => env.fs.writeFile(path, content),
+		mkdir: async (path) => { await env.fs.mkdir(path, { recursive: true }); },
+	};
+}
+
+function editOperations(env: ExecutionEnv): NonNullable<EditToolOptions["operations"]> {
+	return {
+		readFile: (path) => env.fs.readFile(path),
+		writeFile: (path, content) => env.fs.writeFile(path, content),
+		access: async (path) => { await env.fs.stat(path); },
+	};
+}
+
+function globOperations(env: ExecutionEnv): NonNullable<GlobToolOptions["operations"]> {
+	return {
+		readdir: (path) => env.fs.readdir(path),
+		stat: async (path) => {
+			const value = await env.fs.stat(path);
+			return { isDirectory: value.isDirectory, mtimeMs: value.mtimeMs, isSymbolicLink: value.isSymbolicLink === true };
+		},
+	};
+}
+
+function lsOperations(env: ExecutionEnv): NonNullable<LsToolOptions["operations"]> {
+	return {
+		exists: async (path) => {
+			try { await env.fs.stat(path); return true; } catch { return false; }
+		},
+		stat: async (path) => {
+			const value = await env.fs.stat(path);
+			return { isDirectory: () => value.isDirectory };
+		},
+		readdir: (path) => env.fs.readdir(path),
+	};
+}
+
+function unavailableNetwork(): NonNullable<ExecutionEnv["network"]> {
+	return { request: async () => { throw new Error("Host network port is unavailable"); } };
+}
+
+function managedProcessShell(
+	exec: NonNullable<StdlibToolsOptions["managedProcess"]>["exec"],
+	cwd: string,
+): Shell {
+	if (exec === undefined) throw new Error("managed process foreground facade is unavailable");
+	return {
+		exec: (command, options) => exec({
+			command,
+			cwd: options?.cwd ?? cwd,
+			timeoutMs: options?.timeoutMs ?? 60_000,
+			...(options?.maxOutputChars === undefined ? {} : { maxOutputChars: options.maxOutputChars }),
+			...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
+			...(options?.signal === undefined ? {} : { signal: options.signal }),
+			...(options?.onStdout === undefined ? {} : { onStdout: options.onStdout }),
+			...(options?.onStderr === undefined ? {} : { onStderr: options.onStderr }),
+		}),
+	};
 }
 
 function isCompleteProcessToolClient(

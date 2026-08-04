@@ -10,6 +10,7 @@ import { InteractiveSessionController } from "../runtime/interactive-session-con
 import { createStdlibTools } from "../runtime/tools/index.ts";
 import type { HostSessionOpenRequest, HostSessionRuntime } from "./runtime-host-service.ts";
 import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
+import type { ProductionHostSecurity } from "./runtime-host-security.ts";
 
 export interface ProductionHostSessionFactoryOptions {
 	readonly layout: RunledgerLayout;
@@ -19,6 +20,7 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly settings: ProjectSettings;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly processPort?: ProductionManagedProcessPort;
+	readonly security?: ProductionHostSecurity;
 }
 
 export function createProductionHostSessionFactory(options: ProductionHostSessionFactoryOptions): (input: HostSessionOpenRequest) => Promise<HostSessionRuntime> {
@@ -29,7 +31,15 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 			await manager.acquireLock();
 			const replay = await replaySession(manager.ledger());
 			const managedProcess = options.processPort?.toolClient(manager.sessionId(), 1, "host-agent");
-			const tools = createStdlibTools(cwd, managedProcess === undefined ? {} : { managedProcess });
+			const executionEnv = options.security?.createExecutionEnv({
+				sessionId: manager.sessionId(),
+				principalId: "principal_host-agent",
+				cwd,
+			});
+			const tools = createStdlibTools(cwd, {
+				...(managedProcess === undefined ? {} : { managedProcess }),
+				...(executionEnv === undefined ? {} : { executionEnv }),
+			});
 			const controller = await InteractiveSessionController.create({
 				cwd,
 				layout: options.layout,
@@ -45,6 +55,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 					thinkingLevel: input.thinkingLevel,
 				},
 				traceRecorderFactory: options.traceRecorderFactory,
+				executionEnv,
 			});
 			const removeCompletion = options.processPort?.attachCompletionAgent(
 				manager.sessionId(),

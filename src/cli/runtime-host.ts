@@ -16,6 +16,7 @@ import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts
 import { ResidentRuntimeHost } from "./runtime-host-service.ts";
 import { createProductionHostSessionFactory } from "./runtime-host-session.ts";
 import { ProductionManagedProcessPort } from "./runtime-host-process.ts";
+import { createProductionHostSecurity } from "./runtime-host-security.ts";
 import { productionHostSocketPath } from "./runtime-host-production.ts";
 import { createLinuxSocketPeerAttestor, defaultLinuxPeerCredentialHelperPath } from "./linux-peer-attestor.ts";
 import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
@@ -40,6 +41,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
+	const security = await createProductionHostSecurity({ layout, scope, cwd });
 	let lifecycle: RuntimeHostLifecycle | undefined;
 	let closing = false;
 	let shutdownHost: () => Promise<void> = async () => {};
@@ -47,9 +49,10 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		layout,
 		scope,
 		hostGeneration,
-			recordingMode: recording.mode,
-			recordingFailurePolicy: recording.failurePolicy,
-			traceRecorderFactory,
+		recordingMode: recording.mode,
+		recordingFailurePolicy: recording.failurePolicy,
+		traceRecorderFactory,
+		security,
 	});
 	const host = new ResidentRuntimeHost({
 		socketPath: productionHostSocketPath(layout, scope.workspaceStorageKey),
@@ -72,6 +75,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			settings,
 			traceRecorderFactory,
 			processPort,
+			security,
 		}),
 		onShutdown: async () => {
 			await shutdownHost();

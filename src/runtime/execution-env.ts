@@ -21,6 +21,7 @@ export interface FileStats {
   mtimeMs: number;
   isFile: boolean;
   isDirectory: boolean;
+  isSymbolicLink?: boolean;
 }
 
 /** FileSystem 操作面 —— 工具用到的 API 子集。 */
@@ -31,6 +32,27 @@ export interface FileSystem {
   readdir(p: string): Promise<string[]>;
   mkdir(p: string, opts?: { recursive?: boolean }): Promise<void>;
   rm(p: string, opts?: { recursive?: boolean; force?: boolean }): Promise<void>;
+}
+
+/** Host-gated network request; the implementation owns transport and redirects. */
+export interface NetworkRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string | Buffer;
+  maxBytes: number;
+}
+
+/** Bounded network response returned by the Host policy broker. */
+export interface NetworkResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: Buffer;
+  finalUrl: string;
+}
+
+export interface Network {
+  request(request: NetworkRequest, signal?: AbortSignal): Promise<NetworkResponse>;
 }
 
 /** Shell 执行结果。 */
@@ -67,6 +89,8 @@ export interface ExecutionEnv {
   fs: FileSystem;
   shell: Shell;
   cwd: string;
+  /** Absent in low-level/test environments; production WebFetch receives this port. */
+  network?: Network;
 }
 
 /**
@@ -78,6 +102,28 @@ export function localExecutionEnv(initialCwd: string = process.cwd()): Execution
     fs: localFs(),
     shell: localShell(),
     cwd: initialCwd,
+    network: localNetwork(),
+  };
+}
+
+function localNetwork(): Network {
+  return {
+    async request(request) {
+      const response = await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body === undefined ? undefined : typeof request.body === "string" ? request.body : Uint8Array.from(request.body),
+        redirect: "manual",
+      });
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => { headers[key] = value; });
+      return {
+        status: response.status,
+        headers,
+        body: Buffer.from(await response.arrayBuffer()),
+        finalUrl: request.url,
+      };
+    },
   };
 }
 
