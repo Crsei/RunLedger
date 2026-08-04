@@ -19,6 +19,8 @@ import { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import { productionHostSocketPath } from "./runtime-host-production.ts";
 import { createLinuxSocketPeerAttestor, defaultLinuxPeerCredentialHelperPath } from "./linux-peer-attestor.ts";
 import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
+import { JsonlHostEventStore } from "../storage/host/event-store.ts";
+import { JsonHostCommandStore } from "../storage/host/command-store.ts";
 
 export async function runResidentRuntimeHost(): Promise<void> {
 	if (process.platform !== "linux") throw new Error("resident production Host currently requires Linux local peer attestation");
@@ -54,6 +56,8 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		scope,
 		hostGeneration,
 		processPort,
+		eventStore: new JsonlHostEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
+		commandStore: new JsonHostCommandStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
 		attestor: createLinuxSocketPeerAttestor({
 			helperPath: process.env.RUNLEDGER_HOST_PEER_CREDENTIAL_HELPER ?? defaultLinuxPeerCredentialHelperPath(),
 			scopeDigest: scope.compatibilityDigest,

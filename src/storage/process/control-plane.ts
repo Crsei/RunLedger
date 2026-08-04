@@ -243,7 +243,11 @@ export class ManagedProcessControlPlane {
 				const stopped = control.stop("SIGTERM");
 				if (!stopped.ok) throw new Error("process stop failed");
 				waited = await control.wait(timeoutMs);
-				if (waited.terminal === undefined) throw new Error("process drain deadline exceeded");
+				if (waited.terminal !== undefined) return;
+				const killed = control.stop("SIGKILL");
+				if (!killed.ok) throw new Error("process kill escalation failed");
+				waited = await control.wait(timeoutMs);
+				if (waited.terminal === undefined) throw new Error("process drain deadline exceeded after SIGKILL");
 			},
 			checkpoint: async () => {
 				const control = requireControl();

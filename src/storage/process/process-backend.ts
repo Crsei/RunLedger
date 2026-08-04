@@ -45,6 +45,7 @@ export interface PipeSpawnInput {
 	readonly request: ManagedProcessRequest;
 	readonly spawnClaimDigest: RuntimeDigest;
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
+	readonly constraintInput?: ExecutionConstraintInput;
 }
 
 export type PipeProcessOutcome = "completed" | "failed" | "timed_out" | "killed" | "uncertain";
@@ -88,7 +89,7 @@ interface PrivatePipeProcess {
 	readonly startedAt: number;
 	readonly containment: "none" | "process_group" | "supervisor";
 	readonly terminal: Promise<PipeProcessTerminal>;
-	readonly stopState: { value?: PipeMutationResult };
+	readonly stop: (signal: NodeJS.Signals) => PipeMutationResult;
 }
 
 export class PipeProcessBackend {
@@ -106,8 +107,8 @@ export class PipeProcessBackend {
 		const existing = this.processes.get(input.handle.executionId);
 		const existingReceipt = this.receipts.get(input.handle.executionId);
 		if (existing && existingReceipt) return { receipt: existingReceipt, process: this.createControl(existing) };
-		if (!input.constraintSnapshot) throw new Error("execution constraint snapshot is required before spawn");
-		if (!validateExecutionConstraintSnapshot(toDecisionInput(input), input.constraintSnapshot)) {
+		if (!input.constraintSnapshot || !input.constraintInput) throw new Error("execution constraint snapshot and independent input are required before spawn");
+		if (!validateSpawnBinding(input) || !validateExecutionConstraintSnapshot(input.constraintInput, input.constraintSnapshot)) {
 			throw new Error("execution constraint snapshot is invalid");
 		}
 		const containment = input.constraintSnapshot.modes.containment;
@@ -175,7 +176,8 @@ export class PipeProcessBackend {
 		let stopRequested = false;
 		let durationLimitExceeded = false;
 		let durationTimer: NodeJS.Timeout | undefined;
-		const stopState: { value?: PipeMutationResult } = {};
+		const stopResults = new Map<NodeJS.Signals, PipeMutationResult>();
+		let strongestStop: NodeJS.Signals | undefined;
 		let supervisorSettlement: "zero_members" | "unknown" | undefined;
 		let supervisorExitCode: number | null | undefined;
 		let supervisorExitSignal: string | null | undefined;
@@ -193,21 +195,39 @@ export class PipeProcessBackend {
 			});
 		}
 		const maxOutputBytes = input.request.limits?.maxOutputBytes ?? PROCESS_OUTPUT_BOUNDS.maxDurableOutputBytes;
-		const stopRoot = (): void => {
-			if (stopRequested || stopState.value !== undefined) return;
-			stopRequested = true;
+		const stopProcess = (signal: NodeJS.Signals): PipeMutationResult => {
+			const repeated = stopResults.get(signal);
+			if (repeated !== undefined) return repeated;
+			if (strongestStop === "SIGKILL") return stopResults.get("SIGKILL")!;
+			let result: PipeMutationResult;
+			if (child.exitCode !== null || child.signalCode !== null) {
+				result = { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: input.handle, signal, alreadyTerminated: true }) };
+				stopResults.set(signal, result);
+				return result;
+			}
 			try {
-				if (containment === "supervisor") sendSupervisorStop(child, "SIGTERM");
-				else if (containment === "process_group" && child.pid !== undefined && process.platform !== "win32") process.kill(-child.pid, "SIGTERM");
-				else child.kill("SIGTERM");
-				stopState.value = { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: input.handle, signal: "SIGTERM" }) };
+				const sent = containment === "supervisor"
+					? sendSupervisorStop(child, signal)
+					: containment === "process_group" && child.pid !== undefined && process.platform !== "win32"
+						? sendProcessGroupSignal(child.pid, signal)
+						: child.kill(signal);
+				result = sent
+					? { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: input.handle, signal }) }
+					: { ok: false, code: "backend_unavailable" };
 			} catch {
 				// close/error settlement will classify the result as uncertain if the stop is not observable.
-				stopState.value = { ok: false, code: "backend_unavailable" };
+				result = { ok: false, code: "backend_unavailable" };
 			}
+			stopResults.set(signal, result);
+			if (result.ok) strongestStop = signal === "SIGKILL" ? "SIGKILL" : strongestStop ?? signal;
+			return result;
 		};
-		const appendOutput = (chunk: Buffer): void => {
-			const text = chunk.toString("utf8");
+		const stopRoot = (): void => {
+			if (stopRequested) return;
+			stopRequested = true;
+			stopProcess("SIGTERM");
+		};
+		const appendText = (text: string): void => {
 			const clipped = clipUtf8Output(text, Math.max(0, maxOutputBytes - outputBytes));
 			outputBytes += clipped.byteLength;
 			if (clipped.truncated || clipped.byteLength < Buffer.byteLength(text, "utf8")) outputBudgetExceeded = true;
@@ -221,8 +241,10 @@ export class PipeProcessBackend {
 				if (outputBudgetExceeded) stopRoot();
 			});
 		};
-		child.stdout.on("data", appendOutput);
-		child.stderr.on("data", appendOutput);
+		const stdoutDecoder = new TextDecoder("utf-8");
+		const stderrDecoder = new TextDecoder("utf-8");
+		child.stdout.on("data", (chunk: Buffer) => appendText(stdoutDecoder.decode(chunk, { stream: true })));
+		child.stderr.on("data", (chunk: Buffer) => appendText(stderrDecoder.decode(chunk, { stream: true })));
 		// A fast child may close stdin between the capability check and a write.
 		// Keep the stream error observable by the operation callback without
 		// allowing a late EPIPE event to escape as an uncaught process error.
@@ -237,6 +259,8 @@ export class PipeProcessBackend {
 			if (settled) return;
 			settled = true;
 			if (durationTimer) clearTimeout(durationTimer);
+			appendText(stdoutDecoder.decode());
+			appendText(stderrDecoder.decode());
 			void outputTail.then(async () => {
 				if (supervisorSettlementReady !== undefined && supervisorSettlement === undefined) {
 					await Promise.race([
@@ -278,7 +302,7 @@ export class PipeProcessBackend {
 		}
 		child.once("error", () => settle(null, null));
 		child.once("close", (code, signal) => settle(code, signal));
-		return { child, output, request: input.request, handle: input.handle, startedAt, containment, terminal, stopState };
+		return { child, output, request: input.request, handle: input.handle, startedAt, containment, terminal, stop: stopProcess };
 	}
 
 	private createControl(privateProcess: PrivatePipeProcess): PipeProcessControl {
@@ -354,32 +378,15 @@ export class PipeProcessBackend {
 				});
 			},
 			stop: (signal = "SIGTERM"): PipeMutationResult => {
-				if (privateProcess.stopState.value !== undefined) return privateProcess.stopState.value;
-				if (privateProcess.child.killed) {
-					privateProcess.stopState.value = { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: privateProcess.handle, signal, alreadyRequested: true }) };
-					return privateProcess.stopState.value;
-				}
-				if (privateProcess.containment === "supervisor") {
-					if (!sendSupervisorStop(privateProcess.child, signal)) {
-						privateProcess.stopState.value = { ok: false, code: "backend_unavailable" };
-						return privateProcess.stopState.value;
-					}
-				} else if (privateProcess.containment === "process_group" && privateProcess.child.pid !== undefined && process.platform !== "win32") {
-					try {
-						process.kill(-privateProcess.child.pid, signal);
-					} catch {
-						privateProcess.stopState.value = { ok: false, code: "backend_unavailable" };
-						return privateProcess.stopState.value;
-					}
-				} else if (!privateProcess.child.kill(signal)) {
-					privateProcess.stopState.value = { ok: false, code: "backend_unavailable" };
-					return privateProcess.stopState.value;
-				}
-				privateProcess.stopState.value = { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: privateProcess.handle, signal }) };
-				return privateProcess.stopState.value;
+				return privateProcess.stop(signal);
 			},
 		};
 	}
+}
+
+function sendProcessGroupSignal(pid: number, signal: NodeJS.Signals): boolean {
+	process.kill(-pid, signal);
+	return true;
 }
 
 function containmentSettlement(
@@ -449,19 +456,17 @@ function isSupervisorExit(value: unknown): value is {
 		"containment" in value && (value.containment === "zero_members" || value.containment === "unknown");
 }
 
-function toDecisionInput(input: PipeSpawnInput): ExecutionConstraintInput {
-	const snapshot = input.constraintSnapshot;
-	if (!snapshot) throw new Error("execution constraint snapshot is required before spawn");
-	return {
-		authorityId: snapshot.authorityId,
-		tenantId: snapshot.tenantId,
-		workspaceId: snapshot.workspaceId,
-		principalId: snapshot.principalId,
-		executionId: input.handle.executionId,
-		attemptId: input.handle.attemptId,
-		commandId: snapshot.commandId,
-		requestDigest: input.request.requestDigest,
-		policyDigest: snapshot.policyDigest,
-		modes: snapshot.modes,
-	};
+function validateSpawnBinding(input: PipeSpawnInput): boolean {
+	const context = input.constraintInput;
+	if (!context) return false;
+	return context.authorityId === input.request.authorityId && context.authorityId === input.handle.authorityId &&
+		context.tenantId === input.request.tenantId && context.tenantId === input.handle.tenantId &&
+		context.workspaceId === input.request.workspaceId && context.workspaceId === input.handle.workspaceId &&
+		input.request.sessionId === input.handle.sessionId &&
+		input.request.hostGeneration === input.handle.hostGeneration &&
+		input.request.sessionGeneration === input.handle.sessionGeneration &&
+		context.executionId === input.handle.executionId && context.attemptId === input.handle.attemptId &&
+		context.commandId === input.request.correlationId &&
+		context.requestDigest.digest === input.request.requestDigest.digest &&
+		context.requestDigest.digest === input.handle.requestDigest.digest;
 }

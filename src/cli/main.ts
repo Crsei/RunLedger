@@ -65,6 +65,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const transport: HostRequestTransport = {
     request: host.request,
     onEvent: host.onEvent,
+    notify: host.notify,
   };
   const open = await requestHostCommand(transport, "session.open", {
     mode: sessionOpenMode(args),
@@ -85,20 +86,30 @@ export async function main(argv: readonly string[]): Promise<void> {
     await host.close().catch(() => undefined);
     throw new Error("Host session id is missing");
   }
-  const snapshot = parseRemoteSnapshot(open.body.snapshot, sessionId);
-  const controller = new RemoteInteractiveSessionController(transport, snapshot);
+	  const snapshot = parseRemoteSnapshot(open.body.snapshot, sessionId);
+	  const controller = new RemoteInteractiveSessionController(transport, {
+	    ...snapshot,
+	    hostGeneration: integerValue(open.body.hostGeneration) ?? host.endpoint.hostGeneration,
+	    sessionGeneration: integerValue(open.body.sessionGeneration) ?? 1,
+	    driverRevision: integerValue(open.body.driverRevision) ?? 0,
+	    eventCursor: integerValue(open.body.eventCursor) ?? 0,
+	  });
   let removeSigint: (() => void) | undefined;
   let removeStdinEnd: (() => void) | undefined;
   try {
-    await requestHostCommand(transport, "session.subscribe", { sessionId });
-    const driverRevision = integerValue(open.body.driverRevision) ?? 0;
-    const claim = await requestHostCommand(transport, "session.claim_driver", {
-      sessionId,
-      expectedDriverRevision: driverRevision,
-    });
-    let isDriver = claim.body.ok === true;
-    const processOverlay = createProcessOverlayController(
-      createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver }),
+	    await controller.resumeEvents();
+	    const claim = await requestHostCommand(transport, "session.claim_driver", {
+	      sessionId,
+	      ...controller.driverFence(),
+	    });
+	    let isDriver = claim.body.ok === true;
+	    controller.updateDriverFence({
+	      hostGeneration: integerValue(claim.body.hostGeneration),
+	      sessionGeneration: integerValue(claim.body.sessionGeneration),
+	      driverRevision: integerValue(claim.body.driverRevision),
+	    });
+	    const processOverlay = createProcessOverlayController(
+	      createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver, driverFence: () => controller.driverFence() }),
       { driver: isDriver },
     );
     const interactive = new InteractiveMode({ controller, processOverlayController: processOverlay });
@@ -149,7 +160,10 @@ async function requestHostCommand(
   });
 }
 
-function parseRemoteSnapshot(value: unknown, fallbackSessionId: string | undefined): RemoteSessionSnapshot {
+function parseRemoteSnapshot(
+  value: unknown,
+  fallbackSessionId: string | undefined,
+): Omit<RemoteSessionSnapshot, "hostGeneration" | "sessionGeneration" | "driverRevision" | "eventCursor"> {
   if (!isRecord(value)) throw new Error("Host session snapshot is invalid");
   const sessionId = stringValue(value.sessionId) ?? fallbackSessionId;
   if (!sessionId) throw new Error("Host session id is missing");

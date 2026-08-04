@@ -17,9 +17,12 @@ import type {
 	ProviderStatus,
 	RuntimeSelection,
 } from "../../../src/runtime/interactive-session-controller.ts";
-import type { HostConnectionPrincipal } from "../../../src/runtime/host/types.ts";
+import type { HostConnectionPrincipal, HostFrameEnvelope } from "../../../src/runtime/host/types.ts";
 import { JsonLineHostClient } from "../../../src/cli/runtime-host-transport.ts";
 import { ResidentRuntimeHost, type HostProcessPort, type HostSessionRuntime } from "../../../src/cli/runtime-host-service.ts";
+import { JsonlHostEventStore } from "../../../src/storage/host/event-store.ts";
+import { JsonHostCommandStore } from "../../../src/storage/host/command-store.ts";
+import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 
 const digest = (seed: string): RuntimeDigest => runtimeDigest(seed);
 
@@ -91,6 +94,90 @@ function fakeSession(sessionId = createRuntimeId("session", "service")): HostSes
 }
 
 describe("production Resident Runtime Host service", () => {
+	it("forces resync when a subscriber does not acknowledge the bounded cursor window", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-ack-window-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const runtime = fakeSession(createRuntimeId("session", "ack-window"));
+		const host = new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			attestor: { attest: async () => ({
+				principalId: createRuntimeId("principal", "ack-window"),
+				connectionId: createRuntimeId("connection", "ack-window"),
+				attestationDigest: digest("ack-window"),
+			}) },
+			createSession: async () => runtime,
+		});
+		try {
+			await host.start();
+			const client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "ack-init", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const opened = await client.request({ frameId: "ack-open", kind: "command_request", protocolVersion: 1, body: { operation: "session.open", commandId: "ack-open-command", mode: "create" } });
+			const resync: HostFrameEnvelope[] = [];
+			client.onEvent((frame) => { if (frame.kind === "resync_required") resync.push(frame); });
+			await client.request({ frameId: "ack-subscribe", kind: "command_request", protocolVersion: 1, body: { operation: "session.subscribe", commandId: "ack-subscribe-command", sessionId: opened.body.sessionId, cursor: 0 } });
+			for (let index = 0; index <= 256; index += 1) await runtime.controller.prompt(`event-${index}`);
+			for (let attempt = 0; attempt < 100 && resync.length === 0; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+			expect(resync).toHaveLength(1);
+			expect(resync[0]?.body).toMatchObject({ sessionId: opened.body.sessionId, safeCursor: 257 });
+			client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("does not re-execute a durable command after Host restart", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-command-restart-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const layout = buildRunledgerLayout(root, "posix");
+		const principal: HostConnectionPrincipal = {
+			principalId: createRuntimeId("principal", "durable-command"),
+			connectionId: createRuntimeId("connection", "durable-command"),
+			attestationDigest: digest("durable-command-channel"),
+		};
+		let executions = 0;
+		const createHost = (): ResidentRuntimeHost => new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			attestor: { attest: async () => principal },
+			commandStore: new JsonHostCommandStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey }),
+			createSession: async () => {
+				executions += 1;
+				return fakeSession(createRuntimeId("session", `durable-${executions}`));
+			},
+		});
+		const request = {
+			frameId: "durable-open-first",
+			kind: "command_request" as const,
+			protocolVersion: HOST_PROTOCOL_VERSION,
+			body: { operation: "session.open", commandId: "durable-open-command", mode: "create" },
+		};
+		try {
+			const firstHost = createHost();
+			await firstHost.start();
+			const firstClient = await JsonLineHostClient.connect(socketPath);
+			await firstClient.request({ frameId: "durable-init-first", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const first = await firstClient.request(request);
+			firstClient.close();
+			await firstHost.close();
+
+			const secondHost = createHost();
+			await secondHost.start();
+			const secondClient = await JsonLineHostClient.connect(socketPath);
+			await secondClient.request({ frameId: "durable-init-second", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const replay = await secondClient.request({ ...request, frameId: "durable-open-retry" });
+			expect(replay.body).toEqual({ ...first.body, requestFrameId: "durable-open-retry" });
+			expect(executions).toBe(1);
+			secondClient.close();
+			await secondHost.close();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("shares one session controller, fences observer mutation, and deduplicates command retries", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-service-"));
 		const socketPath = join(root, "host.sock");
@@ -161,33 +248,82 @@ describe("production Resident Runtime Host service", () => {
 				protocolVersion: HOST_PROTOCOL_VERSION,
 				body: { operation: "session.subscribe", commandId: "subscribe-second-command", sessionId },
 			});
+			const missingClaimFence = await first.request({
+				frameId: "claim-without-fence",
+				kind: "command_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: { operation: "session.claim_driver", commandId: "claim-without-fence-command", sessionId },
+			});
+			expect(missingClaimFence.body).toMatchObject({ ok: false, code: "driver_fence_required" });
 			const claimed = await first.request({
 				frameId: "claim",
 				kind: "command_request",
 				protocolVersion: HOST_PROTOCOL_VERSION,
-				body: { operation: "session.claim_driver", commandId: "claim-command", sessionId },
+				body: { operation: "session.claim_driver", commandId: "claim-command", sessionId, expectedHostGeneration: opened.body.hostGeneration, expectedSessionGeneration: opened.body.sessionGeneration, expectedDriverRevision: opened.body.driverRevision },
 			});
 			expect(claimed.body.ok).toBe(true);
-			const prompt = {
-				frameId: "prompt",
-				kind: "command_request" as const,
-				protocolVersion: HOST_PROTOCOL_VERSION,
-				body: { operation: "session.prompt", commandId: "prompt-command", sessionId, text: "hello" },
-			};
-			const promptResult = await first.request(prompt);
-			const duplicateResult = await first.request({ ...prompt, frameId: "prompt-retry" });
+				const missingFence = await first.request({
+					frameId: "prompt",
+					kind: "command_request" as const,
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: { operation: "session.prompt", commandId: "prompt-command", sessionId, text: "hello" },
+				});
+				expect(missingFence.body).toMatchObject({ ok: false, code: "driver_fence_required" });
+				const prompt = {
+					frameId: "prompt-fenced",
+					kind: "command_request" as const,
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: {
+						operation: "session.prompt",
+						commandId: "prompt-fenced-command",
+						sessionId,
+						text: "hello",
+						expectedHostGeneration: 1,
+						expectedSessionGeneration: 1,
+						expectedDriverRevision: claimed.body.driverRevision,
+					},
+				};
+				const promptResult = await first.request(prompt);
+				const duplicateResult = await first.request({ ...prompt, frameId: "prompt-retry" });
 			expect({ ...promptResult.body, requestFrameId: undefined }).toEqual({ ...duplicateResult.body, requestFrameId: undefined });
-			await expect(second.request({
+				await expect(second.request({
 				frameId: "observer-prompt",
 				kind: "command_request",
 				protocolVersion: HOST_PROTOCOL_VERSION,
-				body: { operation: "session.prompt", commandId: "observer-command", sessionId, text: "forbidden" },
+					body: {
+						operation: "session.prompt",
+						commandId: "observer-command",
+						sessionId,
+						text: "forbidden",
+						expectedHostGeneration: 1,
+						expectedSessionGeneration: 1,
+						expectedDriverRevision: claimed.body.driverRevision,
+					},
 			})).resolves.toMatchObject({ body: { ok: false, code: "observer_mutation_forbidden" } });
 			await new Promise((resolve) => setTimeout(resolve, 10));
-			expect(firstEvents).toContain("agent_end");
-			expect(secondEvents).toContain("agent_end");
-			expect(sessions.get(String(sessionId))?.promptCount).toBe(1);
-			await first.close();
+				expect(firstEvents).toContain("agent_end");
+				expect(secondEvents).toContain("agent_end");
+				expect(sessions.get(String(sessionId))?.promptCount).toBe(1);
+				const replayClient = await JsonLineHostClient.connect(socketPath);
+				await initialize(replayClient, "init-replay");
+				await replayClient.request({
+					frameId: "open-replay",
+					kind: "command_request",
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: { operation: "session.open", commandId: "open-replay-command", mode: "open", sessionId },
+				});
+				const replay = await replayClient.request({
+					frameId: "subscribe-replay",
+					kind: "command_request",
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: { operation: "session.subscribe", commandId: "subscribe-replay-command", sessionId, cursor: 0 },
+				});
+				expect(replay.body).toMatchObject({ ok: true, cursor: 1 });
+				expect(replay.body.events).toEqual([
+					expect.objectContaining({ sequence: 1, eventType: "agent_end" }),
+				]);
+				await replayClient.close();
+				await first.close();
 			await second.close();
 		} finally {
 			await host.close();
@@ -251,7 +387,57 @@ describe("production Resident Runtime Host service", () => {
 		}
 	});
 
-	it("keeps the Host resident after client detach and only accepts explicit shutdown", async () => {
+	it("replays subscription events from durable storage after a Host restart", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-event-restart-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const eventStore = new JsonlHostEventStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey });
+		const sessionId = createRuntimeId("session", "event-restart");
+		const principal = {
+			principalId: createRuntimeId("principal", "event-restart"),
+			connectionId: createRuntimeId("connection", "event-restart"),
+			attestationDigest: digest("event-restart-channel"),
+		};
+		const createHost = (): ResidentRuntimeHost => new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			eventStore,
+			attestor: { attest: async () => principal },
+			createSession: async () => fakeSession(sessionId),
+		});
+		let host = createHost();
+		try {
+			await host.start();
+			let client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "restart-init-1", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const opened = await client.request({ frameId: "restart-open-1", kind: "command_request", protocolVersion: 1, body: { operation: "session.open", commandId: "restart-open-command-1", mode: "create" } });
+			const claimed = await client.request({ frameId: "restart-claim-1", kind: "command_request", protocolVersion: 1, body: { operation: "session.claim_driver", commandId: "restart-claim-command-1", sessionId, expectedHostGeneration: opened.body.hostGeneration, expectedSessionGeneration: opened.body.sessionGeneration, expectedDriverRevision: opened.body.driverRevision } });
+			await client.request({
+				frameId: "restart-prompt-1",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: { operation: "session.prompt", commandId: "restart-prompt-command-1", sessionId, text: "persist", expectedHostGeneration: 1, expectedSessionGeneration: 1, expectedDriverRevision: claimed.body.driverRevision },
+			});
+			await client.close();
+			await host.close();
+
+			host = createHost();
+			await host.start();
+			client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "restart-init-2", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			await client.request({ frameId: "restart-open-2", kind: "command_request", protocolVersion: 1, body: { operation: "session.open", commandId: "restart-open-command-2", mode: "open", sessionId } });
+			const replay = await client.request({ frameId: "restart-subscribe-2", kind: "command_request", protocolVersion: 1, body: { operation: "session.subscribe", commandId: "restart-subscribe-command-2", sessionId, cursor: 0 } });
+			expect(replay.body).toMatchObject({ ok: true, cursor: 1 });
+			expect(replay.body.events).toEqual([expect.objectContaining({ sequence: 1, eventType: "agent_end" })]);
+			await client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the Host resident after client detach and accepts shutdown only from a fenced driver", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-residency-"));
 		const socketPath = join(root, "host.sock");
 		const hostScope = createHostCompatibilityEnvelope(scope());
@@ -282,27 +468,58 @@ describe("production Resident Runtime Host service", () => {
 				protocolVersion: HOST_PROTOCOL_VERSION,
 				body: { compatibility: hostScope },
 			});
-			await first.close();
-			await new Promise((resolve) => setTimeout(resolve, 10));
-			expect(shutdownRequests).toBe(0);
-
-			const second = await JsonLineHostClient.connect(socketPath);
+				const second = await JsonLineHostClient.connect(socketPath);
 			await second.request({
 				frameId: "residency-init-second",
 				kind: "initialize_request",
 				protocolVersion: HOST_PROTOCOL_VERSION,
 				body: { compatibility: hostScope },
 			});
-			await expect(second.request({
-				frameId: "residency-shutdown",
+				const opened = await first.request({
+					frameId: "residency-open",
+					kind: "command_request",
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: { operation: "session.open", commandId: "residency-open-command", mode: "create" },
+				});
+				const sessionId = String(opened.body.sessionId);
+				const claimed = await first.request({
+					frameId: "residency-claim",
+					kind: "command_request",
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: { operation: "session.claim_driver", commandId: "residency-claim-command", sessionId, expectedHostGeneration: opened.body.hostGeneration, expectedSessionGeneration: opened.body.sessionGeneration, expectedDriverRevision: opened.body.driverRevision },
+				});
+				await expect(second.request({
+					frameId: "residency-shutdown",
 				kind: "command_request",
 				protocolVersion: HOST_PROTOCOL_VERSION,
-				body: { operation: "host.shutdown", commandId: "residency-shutdown-command" },
-			})).resolves.toMatchObject({ body: { ok: true, accepted: true } });
+					body: {
+						operation: "host.shutdown",
+						commandId: "residency-shutdown-command",
+						sessionId,
+						expectedHostGeneration: 1,
+						expectedSessionGeneration: 1,
+						expectedDriverRevision: claimed.body.driverRevision,
+					},
+				})).resolves.toMatchObject({ body: { ok: false, code: "observer_mutation_forbidden" } });
+				expect(shutdownRequests).toBe(0);
+				await expect(first.request({
+					frameId: "residency-driver-shutdown",
+					kind: "command_request",
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: {
+						operation: "host.shutdown",
+						commandId: "residency-driver-shutdown-command",
+						sessionId,
+						expectedHostGeneration: 1,
+						expectedSessionGeneration: 1,
+						expectedDriverRevision: claimed.body.driverRevision,
+					},
+				})).resolves.toMatchObject({ body: { ok: true, accepted: true } });
 			for (let attempt = 0; attempt < 20 && shutdownRequests === 0; attempt += 1) {
 				await new Promise((resolve) => setTimeout(resolve, 5));
 			}
-			expect(shutdownRequests).toBe(1);
+				expect(shutdownRequests).toBe(1);
+				await first.close();
 			await second.close();
 		} finally {
 			await host.close();
@@ -430,6 +647,9 @@ describe("production Resident Runtime Host service", () => {
 					operation: "session.claim_driver",
 					commandId: "output-bound-claim-driver-command",
 					sessionId: opened.body.sessionId,
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: opened.body.driverRevision,
 				},
 			});
 			expect(claimed.body.ok).toBe(true);

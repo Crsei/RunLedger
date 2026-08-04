@@ -51,6 +51,59 @@ function decisionInput(value: ManagedProcessRequest): ExecutionConstraintInput {
 }
 
 describe("R8 managed process control plane", () => {
+	it("escalates lifecycle drain from SIGTERM to SIGKILL before declaring failure", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-control-plane-escalation-"));
+		try {
+			const layout = buildRunledgerLayout(join(root, "home"), "posix");
+			const options = { layout, workspaceStorageKey: "ws-" + "g".repeat(64) };
+			const journal = new JsonlProcessJournal(options);
+			const output = new FileProcessOutputStore({
+				layout,
+				workspaceStorageKey: options.workspaceStorageKey,
+				executionId: createRuntimeId("execution", "lifecycle-escalation"),
+				attemptId: createRuntimeId("attempt", "lifecycle-escalation_1"),
+			});
+			let waits = 0;
+			const signals: NodeJS.Signals[] = [];
+			const backend = {
+				spawn: async (): Promise<BackendSpawnReceipt> => ({ receiptDigest: digest("escalation-receipt") }),
+				control: () => ({
+					output,
+					wait: async () => {
+						waits += 1;
+						return waits < 3
+							? { outcome: "timed_out" as const }
+							: { outcome: "killed" as const, terminal: { outcome: "killed" as const, signal: "SIGKILL", durationMs: 1, containment: "not_requested" as const } };
+					},
+					write: async () => ({ ok: true as const, receiptDigest: digest("write") }),
+					eof: async () => ({ ok: true as const, receiptDigest: digest("eof") }),
+					stop: (signal: NodeJS.Signals = "SIGTERM") => {
+						signals.push(signal);
+						return { ok: true as const, receiptDigest: digest(signal) };
+					},
+				}),
+			} satisfies BackendSpawnPort & { control: (handle: unknown) => unknown };
+			const manager = new ProcessManager(journal, backend);
+			const plane = new ManagedProcessControlPlane({
+				manager,
+				auditedManager: new AuditedProcessManager(manager),
+				backend,
+				completionQueue: new JsonlProcessCompletionQueue(options),
+				policyDigest: digest("escalation-policy"),
+				budgetDigest: digest("escalation-budget"),
+			});
+			const value = { ...request(), correlationId: createRuntimeId("command", "lifecycle-escalation") };
+			const created = await plane.create(value, decisionInput(value));
+			expect(created.ok).toBe(true);
+			if (!created.ok) return;
+			await plane.createLifecycleProcess(created.handle, 10).drain();
+			expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+			expect(waits).toBe(3);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("reads immediately, bounds wait, fences observer mutations, and enqueues one terminal follow-up", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-control-plane-"));
 		try {

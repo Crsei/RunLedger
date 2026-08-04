@@ -97,6 +97,7 @@ export type RuntimeHostRecoveryResult =
 export interface RuntimeHostLifecycleOptions {
 	readonly hostGeneration: number;
 	readonly artifactMode: "off" | "events" | "events_and_artifacts";
+	readonly shutdownDeadlineMs?: number;
 	readonly ports: RuntimeHostLifecyclePorts;
 }
 
@@ -138,6 +139,7 @@ export class RuntimeHostLifecycle {
 	private readonly hostGeneration: number;
 	private readonly artifactMode: RuntimeHostLifecycleOptions["artifactMode"];
 	private readonly ports: RuntimeHostLifecyclePorts;
+	private readonly shutdownDeadlineMs: number;
 	private currentState: RuntimeHostLifecycleState = "ready";
 	private shutdownPromise: Promise<RuntimeHostShutdownResult> | undefined;
 
@@ -148,6 +150,10 @@ export class RuntimeHostLifecycle {
 		this.hostGeneration = options.hostGeneration;
 		this.artifactMode = options.artifactMode;
 		this.ports = options.ports;
+		this.shutdownDeadlineMs = options.shutdownDeadlineMs ?? 60_000;
+		if (!Number.isSafeInteger(this.shutdownDeadlineMs) || this.shutdownDeadlineMs < 1 || this.shutdownDeadlineMs > 300_000) {
+			throw new Error("shutdownDeadlineMs is outside the bounded range");
+		}
 	}
 
 	public state(): RuntimeHostLifecycleState {
@@ -187,40 +193,42 @@ export class RuntimeHostLifecycle {
 	}
 
 	private async performShutdown(): Promise<RuntimeHostShutdownResult> {
+		const deadline = Date.now() + this.shutdownDeadlineMs;
 		this.currentState = "draining";
 		const failures: RuntimeHostLifecycleFailure[] = [];
 		let processes: readonly RuntimeHostLifecycleProcess[] = [];
-		await this.writeMarker("shutdown_started", [], failures);
+		await this.writeMarker("shutdown_started", [], failures, [], deadline);
 
-		await this.runHostPhase("admission_closed", "host", failures, () => this.ports.closeAdmission());
-		await this.runHostPhase("turns_drained", "host", failures, () => this.ports.drainTurns());
+		await this.runHostPhase("admission_closed", "host", failures, () => this.ports.closeAdmission(), deadline);
+		await this.runHostPhase("turns_drained", "host", failures, () => this.ports.drainTurns(), deadline);
 
-		try {
-			processes = await this.ports.listProcesses();
-		} catch {
+		const listed = await runBeforeDeadline(deadline, () => this.ports.listProcesses());
+		if (listed.ok) {
+			processes = listed.value;
+		} else {
 			failures.push({ target: "host", phase: "processes_drained" });
 		}
 
 		for (const process of processes) {
-			await this.runProcessPhase(process, "drain", "processes_drained", failures);
-			await this.runProcessPhase(process, "checkpoint", "outputs_sealed", failures);
-			await this.runProcessPhase(process, "seal", "outputs_sealed", failures);
-			await this.runProcessPhase(process, "settle", "processes_drained", failures);
+			await this.runProcessPhase(process, "drain", "processes_drained", failures, deadline);
+			await this.runProcessPhase(process, "checkpoint", "outputs_sealed", failures, deadline);
+			await this.runProcessPhase(process, "seal", "outputs_sealed", failures, deadline);
+			await this.runProcessPhase(process, "settle", "processes_drained", failures, deadline);
 			if (this.artifactMode === "events_and_artifacts" && process.materializeArtifacts) {
-				await this.runProcessPhase(process, "materializeArtifacts", "artifacts_materialized", failures);
+				await this.runProcessPhase(process, "materializeArtifacts", "artifacts_materialized", failures, deadline);
 			}
 		}
-		const processEvidence = await this.collectProcessEvidence(processes, failures);
+		const processEvidence = await this.collectProcessEvidence(processes, failures, deadline);
 
-		await this.runHostPhase("writer_flushed", "writer", failures, () => this.ports.flushWriter());
-		await this.runHostPhase("resources_released", "resources", failures, () => this.ports.release());
+		await this.runHostPhase("writer_flushed", "writer", failures, () => this.ports.flushWriter(), deadline);
+		await this.runHostPhase("resources_released", "resources", failures, () => this.ports.release(), deadline);
 		this.currentState = "closed";
 
 		if (failures.length > 0) {
-			const marker = await this.writeMarker("shutdown_incomplete", processes.map((process) => process.id), failures, processEvidence);
+			const marker = await this.writeMarker("shutdown_incomplete", processes.map((process) => process.id), failures, processEvidence, deadline);
 			return { ok: false, code: "shutdown_incomplete", state: "closed", phase: "shutdown_incomplete", marker, failures: marker.failures };
 		}
-		const marker = await this.writeMarker("shutdown_completed", processes.map((process) => process.id), failures, processEvidence);
+		const marker = await this.writeMarker("shutdown_completed", processes.map((process) => process.id), failures, processEvidence, deadline);
 		if (failures.length > 0) {
 			return { ok: false, code: "shutdown_incomplete", state: "closed", phase: "shutdown_incomplete", marker, failures: marker.failures };
 		}
@@ -232,12 +240,12 @@ export class RuntimeHostLifecycle {
 		method: "drain" | "checkpoint" | "seal" | "settle" | "materializeArtifacts",
 		phase: RuntimeHostLifecyclePhase,
 		failures: RuntimeHostLifecycleFailure[],
+		deadline: number,
 	): Promise<void> {
 		const operation = process[method];
 		if (typeof operation !== "function") return;
-		try {
-			await operation.call(process);
-		} catch {
+		const result = await runBeforeDeadline(deadline, () => operation.call(process));
+		if (!result.ok) {
 			failures.push({ target: "process", phase, processId: process.id });
 		}
 	}
@@ -247,10 +255,10 @@ export class RuntimeHostLifecycle {
 		target: RuntimeHostLifecycleFailure["target"],
 		failures: RuntimeHostLifecycleFailure[],
 		operation: () => Promise<void>,
+		deadline: number,
 	): Promise<void> {
-		try {
-			await operation();
-		} catch {
+		const result = await runBeforeDeadline(deadline, operation);
+		if (!result.ok) {
 			failures.push({ target, phase });
 		}
 	}
@@ -258,13 +266,15 @@ export class RuntimeHostLifecycle {
 	private async collectProcessEvidence(
 		processes: readonly RuntimeHostLifecycleProcess[],
 		failures: RuntimeHostLifecycleFailure[],
+		deadline: number,
 	): Promise<readonly RuntimeHostProcessEvidence[]> {
 		const evidence: RuntimeHostProcessEvidence[] = [];
 		for (const process of processes) {
 			if (process.evidence === undefined) continue;
-			try {
-				evidence.push(await process.evidence());
-			} catch {
+			const result = await runBeforeDeadline(deadline, () => process.evidence!());
+			if (result.ok) {
+				evidence.push(result.value);
+			} else {
 				failures.push({ target: "process", phase: "outputs_sealed", processId: process.id });
 			}
 		}
@@ -276,6 +286,7 @@ export class RuntimeHostLifecycle {
 		processIds: readonly string[],
 		failures: RuntimeHostLifecycleFailure[],
 		processEvidence: readonly RuntimeHostProcessEvidence[] = [],
+		deadline?: number,
 	): Promise<RuntimeHostRecoveryMarker> {
 		const body = {
 			hostGeneration: this.hostGeneration,
@@ -286,11 +297,43 @@ export class RuntimeHostLifecycle {
 			failures: failures.slice(),
 		};
 		const marker: RuntimeHostRecoveryMarker = { ...body, markerDigest: runtimeDigest(body) };
-		try {
-			await this.ports.writeRecoveryMarker(marker);
-		} catch {
+		const result = deadline === undefined
+			? await runOperation(() => this.ports.writeRecoveryMarker(marker))
+			: await runBeforeDeadline(deadline, () => this.ports.writeRecoveryMarker(marker));
+		if (!result.ok) {
 			if (phase !== "shutdown_incomplete") failures.push({ target: "host", phase });
 		}
 		return marker;
 	}
+}
+
+type BoundedOperationResult<T> = { readonly ok: true; readonly value: T } | { readonly ok: false };
+
+async function runOperation<T>(operation: () => Promise<T>): Promise<BoundedOperationResult<T>> {
+	try {
+		return { ok: true, value: await operation() };
+	} catch {
+		return { ok: false };
+	}
+}
+
+async function runBeforeDeadline<T>(deadline: number, operation: () => Promise<T>): Promise<BoundedOperationResult<T>> {
+	const remaining = deadline - Date.now();
+	if (remaining <= 0) return { ok: false };
+	const task = Promise.resolve().then(operation);
+	// Promise.race 返回后仍吸收迟到 rejection，避免 shutdown timeout 制造 unhandled rejection。
+	void task.catch(() => undefined);
+	let timer: NodeJS.Timeout | undefined;
+	const timeout = new Promise<BoundedOperationResult<T>>((resolve) => {
+		timer = setTimeout(() => resolve({ ok: false }), remaining);
+	});
+	const result = await Promise.race([
+		task.then(
+			(value): BoundedOperationResult<T> => ({ ok: true, value }),
+			(): BoundedOperationResult<T> => ({ ok: false }),
+		),
+		timeout,
+	]);
+	if (timer) clearTimeout(timer);
+	return result;
 }

@@ -72,7 +72,8 @@
     "cli": "tsx src/cli/cli.ts",
     "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts",
     "verify:multi-client-host": "tsx scripts/verify-multi-client-host.ts",
-    "verify:managed-process-pty": "tsx scripts/verify-managed-process-pty.ts"
+    "verify:managed-process-pty": "tsx scripts/verify-managed-process-pty.ts",
+    "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",

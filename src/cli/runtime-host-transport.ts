@@ -130,6 +130,13 @@ export class JsonLineHostServer {
 	private receive(connection: ServerConnection, chunk: Buffer): void {
 		if (connection.socket.destroyed) return;
 		connection.buffer = Buffer.concat([connection.buffer, chunk]);
+		// Before channel attestation only one initialize frame is admissible. Do
+		// not let newline-delimited small frames bypass the byte bound while an
+		// asynchronous peer credential helper is still running.
+		if (!connection.principal && connection.buffer.length > this.options.maxFrameBytes) {
+			connection.socket.destroy();
+			return;
+		}
 		if (connection.buffer.indexOf(0x0a) < 0 && connection.buffer.length > this.options.maxFrameBytes) {
 			connection.socket.destroy();
 			return;
@@ -337,6 +344,21 @@ export class JsonLineHostClient {
 					reject(error);
 				}
 			});
+		});
+	}
+
+	/** Fire-and-forget bounded control frame, used for subscription cursor ACKs. */
+	public notify(frame: HostFrameEnvelope): void {
+		if (this.closed || !Value.Check(HostFrameEnvelopeSchema, frame)) return;
+		let encoded: Buffer;
+		try {
+			encoded = Buffer.from(`${JSON.stringify(frame)}\n`, "utf8");
+		} catch {
+			return;
+		}
+		if (encoded.length > this.maxFrameBytes) return;
+		this.socket.write(encoded, (error?: Error | null) => {
+			if (error) this.socket.destroy(error);
 		});
 	}
 

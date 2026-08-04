@@ -32,6 +32,8 @@ import type { HostEndpointRecord } from "../storage/host/endpoint-store.ts";
 import type { ExecutionHandleRef } from "../runtime/process/types.ts";
 import type { OutputCursor } from "../runtime/process/output.ts";
 import type { ControlPlaneActor } from "../storage/process/control-plane.ts";
+import type { HostEventStore, StoredHostEvent } from "../storage/host/event-store.ts";
+import { BoundedHostCommandStore, type HostCommandStore } from "../storage/host/command-store.ts";
 
 export type HostSessionOpenMode = "create" | "open" | "continue_recent" | "resume" | "fork";
 
@@ -88,6 +90,8 @@ export interface ResidentRuntimeHostOptions {
 	readonly hostGeneration?: number;
 	readonly createSession: (input: HostSessionOpenRequest) => Promise<HostSessionRuntime>;
 	readonly processPort?: HostProcessPort;
+	readonly eventStore?: HostEventStore;
+	readonly commandStore?: HostCommandStore;
 	/** Explicit management shutdown; client detach never invokes this callback. */
 	readonly onShutdown?: () => Promise<void>;
 	readonly onEndpoint?: (endpoint: HostEndpointRecord) => Promise<void>;
@@ -99,12 +103,22 @@ interface SessionState {
 	readonly cwd?: string;
 	driver: DriverState;
 	sequence: number;
+	history: HostSubscriptionEvent[];
+	eventTail: Promise<void>;
 	eventUnsubscribe: () => void;
 }
 
-interface CommandResult {
-	readonly requestDigest: string;
-	readonly response: HostFrameEnvelope;
+interface HostSubscriptionEvent {
+	readonly sessionId: string;
+	readonly eventId: string;
+	readonly sequence: number;
+	readonly eventType: string;
+	readonly event: AgentEvent;
+}
+
+interface HostSubscriptionState {
+	ackCursor: number;
+	sentCursor: number;
 }
 
 export interface HostSessionSnapshot {
@@ -122,8 +136,8 @@ export class ResidentRuntimeHost {
 	private readonly runtimeId: RuntimeInstanceId;
 	private readonly generation: number;
 	private readonly sessions = new Map<string, SessionState>();
-	private readonly subscriptions = new Map<string, Set<string>>();
-	private readonly commandResults = new Map<string, CommandResult>();
+	private readonly subscriptions = new Map<string, Map<string, HostSubscriptionState>>();
+	private readonly commandStore: HostCommandStore;
 	private endpoint: HostEndpointRecord | undefined;
 	private started = false;
 	private admissionOpen = true;
@@ -134,6 +148,7 @@ export class ResidentRuntimeHost {
 		this.options = options;
 		this.runtimeId = options.hostRuntimeId ?? createRuntimeId("runtime", `host-${process.pid}-${Date.now()}`);
 		this.generation = options.hostGeneration ?? 1;
+		this.commandStore = options.commandStore ?? new BoundedHostCommandStore();
 		if (!Number.isSafeInteger(this.generation) || this.generation < 0) throw new Error("hostGeneration must be a non-negative safe integer");
 		this.server = new JsonLineHostServer({
 			socketPath: options.socketPath,
@@ -218,19 +233,26 @@ export class ResidentRuntimeHost {
 	}
 
 	private async handleFrame(context: HostTransportFrameContext): Promise<readonly HostFrameEnvelope[]> {
+		if (context.frame.kind === "ack_cursor") {
+			this.ackCursor(context.principal, context.frame);
+			return [];
+		}
 		if (context.frame.kind !== "command_request") {
 			return [this.response(context.frame, { ok: false, code: "unsupported_frame" })];
 		}
 		const commandId = stringValue(context.frame.body.commandId) ?? context.frame.frameId;
-		const commandKey = `${context.principal.principalId}:${commandId}`;
 		const requestDigest = runtimeDigest(context.frame.body).digest;
-		const prior = this.commandResults.get(commandKey);
-		if (prior) {
-			if (prior.requestDigest !== requestDigest) return [this.response(context.frame, { ok: false, code: "command_id_conflict" })];
-			return [this.rebindResponse(prior.response, context.frame)];
-		}
+		const reservation = await this.commandStore.begin(context.principal.principalId, commandId, requestDigest);
+		if (reservation.status === "conflict") return [this.response(context.frame, { ok: false, code: "command_id_conflict" })];
+		if (reservation.status === "uncertain") return [this.response(context.frame, { ok: false, code: "uncertain_outcome" })];
+		if (reservation.status === "capacity") return [this.response(context.frame, { ok: false, code: "command_journal_capacity" })];
+		if (reservation.status === "replay") return [this.rebindResponse(reservation.response, context.frame)];
 		const response = await this.executeCommand(context.principal, context.frame);
-		this.commandResults.set(commandKey, { requestDigest, response });
+		try {
+			await this.commandStore.complete(context.principal.principalId, commandId, requestDigest, response);
+		} catch {
+			return [this.response(context.frame, { ok: false, code: "uncertain_outcome" })];
+		}
 		return [response];
 	}
 
@@ -254,7 +276,7 @@ export class ResidentRuntimeHost {
 				case "session.select_model": return this.selectModel(principal, frame);
 				case "session.set_thinking": return this.setThinking(principal, frame);
 			case "session.logout": return this.logout(principal, frame);
-			case "host.shutdown": return this.requestShutdown(frame);
+				case "host.shutdown": return this.requestShutdown(principal, frame);
 			case "process.list": return this.processList(frame);
 				case "process.output": return this.processOutput(frame);
 				case "process.wait": return this.processWait(frame);
@@ -285,8 +307,11 @@ export class ResidentRuntimeHost {
 				return this.response(frame, {
 					ok: true,
 					sessionId: requestedSessionId,
-					snapshot: snapshotOf(existing.runtime.controller),
-					driverRevision: existing.driver.driverRevision,
+						snapshot: snapshotOf(existing.runtime.controller),
+						hostGeneration: existing.driver.hostGeneration,
+						sessionGeneration: existing.driver.sessionGeneration,
+						eventCursor: existing.sequence,
+						driverRevision: existing.driver.driverRevision,
 				});
 			}
 		}
@@ -299,7 +324,10 @@ export class ResidentRuntimeHost {
 				return this.response(frame, {
 					ok: true,
 					sessionId: resident.runtime.controller.sessionId,
-					snapshot: snapshotOf(resident.runtime.controller),
+						snapshot: snapshotOf(resident.runtime.controller),
+						hostGeneration: resident.driver.hostGeneration,
+						sessionGeneration: resident.driver.sessionGeneration,
+						eventCursor: resident.sequence,
 					driverRevision: resident.driver.driverRevision,
 				});
 			}
@@ -320,18 +348,21 @@ export class ResidentRuntimeHost {
 		if (existing) {
 			runtime.controller.dispose();
 			await runtime.close();
-			return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(existing.runtime.controller), driverRevision: existing.driver.driverRevision });
+				return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(existing.runtime.controller), hostGeneration: existing.driver.hostGeneration, sessionGeneration: existing.driver.sessionGeneration, eventCursor: existing.sequence, driverRevision: existing.driver.driverRevision });
 		}
-		const state: SessionState = {
+			const sequence = this.options.eventStore === undefined ? 0 : await this.options.eventStore.head(sessionId);
+			const state: SessionState = {
 			runtime,
 			...(stringValue(frame.body.cwd) === undefined ? {} : { cwd: stringValue(frame.body.cwd) }),
 			driver: createDriverState({ hostGeneration: this.generation, sessionGeneration: 1 }),
-			sequence: 0,
-			eventUnsubscribe: () => {},
+				sequence,
+				history: [],
+				eventTail: Promise.resolve(),
+				eventUnsubscribe: () => {},
 		};
 		state.eventUnsubscribe = runtime.controller.subscribe((event) => this.publishAgentEvent(sessionId, event));
 		this.sessions.set(sessionId, state);
-		return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(runtime.controller), driverRevision: state.driver.driverRevision });
+		return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(runtime.controller), hostGeneration: state.driver.hostGeneration, sessionGeneration: state.driver.sessionGeneration, eventCursor: state.sequence, driverRevision: state.driver.driverRevision });
 	}
 
 	private sessionState(frame: HostFrameEnvelope): SessionState | undefined {
@@ -341,38 +372,58 @@ export class ResidentRuntimeHost {
 
 	private sessionSnapshot(frame: HostFrameEnvelope): HostFrameEnvelope {
 		const state = this.sessionState(frame);
-		return state ? this.response(frame, { ok: true, sessionId: state.runtime.controller.sessionId, snapshot: snapshotOf(state.runtime.controller), driverRevision: state.driver.driverRevision }) : this.response(frame, { ok: false, code: "session_not_found" });
+		return state ? this.response(frame, { ok: true, sessionId: state.runtime.controller.sessionId, snapshot: snapshotOf(state.runtime.controller), hostGeneration: state.driver.hostGeneration, sessionGeneration: state.driver.sessionGeneration, eventCursor: state.sequence, driverRevision: state.driver.driverRevision }) : this.response(frame, { ok: false, code: "session_not_found" });
 	}
 
-	private subscribe(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): HostFrameEnvelope {
+	private async subscribe(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const set = this.subscriptions.get(principal.connectionId) ?? new Set<string>();
-		set.add(state.runtime.controller.sessionId);
-		this.subscriptions.set(principal.connectionId, set);
-		return this.response(frame, { ok: true, sessionId: state.runtime.controller.sessionId, driverRevision: state.driver.driverRevision });
+		return this.serialSession(state, async () => {
+			const requestedCursor = frame.body.cursor === undefined ? state.sequence : integerValue(frame.body.cursor);
+			if (requestedCursor === undefined || requestedCursor < 0 || requestedCursor > state.sequence) {
+				return this.response(frame, { ok: false, code: "subscription_cursor_invalid" });
+			}
+			let events: readonly HostSubscriptionEvent[];
+			if (this.options.eventStore !== undefined) {
+				const replay = await this.options.eventStore.readAfter(state.runtime.controller.sessionId, requestedCursor);
+				if (!replay.ok) return this.response(frame, { ok: false, code: replay.code, safeCursor: replay.safeCursor });
+				state.sequence = replay.head;
+				events = replay.events;
+			} else {
+				const earliest = state.history[0]?.sequence ?? state.sequence + 1;
+				if (requestedCursor < earliest - 1) return this.response(frame, { ok: false, code: "resync_required", safeCursor: state.sequence });
+				events = state.history.filter((event) => event.sequence > requestedCursor);
+				if (events.length > RUNTIME_HOST_BOUNDS.maxConnectionOutbox || Buffer.byteLength(JSON.stringify(events), "utf8") > Math.floor(RUNTIME_HOST_BOUNDS.maxFrameBytes / 2)) {
+					return this.response(frame, { ok: false, code: "resync_required", safeCursor: state.sequence });
+				}
+			}
+			const set = this.subscriptions.get(principal.connectionId) ?? new Map<string, HostSubscriptionState>();
+			if (!set.has(state.runtime.controller.sessionId) && set.size >= RUNTIME_HOST_BOUNDS.maxSubscriptionsPerPrincipalSession) {
+				return this.response(frame, { ok: false, code: "subscription_capacity_exceeded" });
+			}
+			set.set(state.runtime.controller.sessionId, { ackCursor: requestedCursor, sentCursor: state.sequence });
+			this.subscriptions.set(principal.connectionId, set);
+			return this.response(frame, { ok: true, sessionId: state.runtime.controller.sessionId, cursor: state.sequence, events, driverRevision: state.driver.driverRevision });
+		});
 	}
 
 	private claimSessionDriver(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): HostFrameEnvelope {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const result = claimDriver(state.driver, {
-			mode: "claim",
-			principalId: principal.principalId,
-			connectionId: principal.connectionId,
-			expectedHostGeneration: state.driver.hostGeneration,
-			expectedSessionGeneration: state.driver.sessionGeneration,
-			expectedDriverRevision: integerValue(frame.body.expectedDriverRevision) ?? state.driver.driverRevision,
-		});
+		const fence = this.driverFence(principal, frame, state);
+		if (!fence) return this.response(frame, { ok: false, code: "driver_fence_required" });
+		const result = claimDriver(state.driver, { mode: "claim", ...fence });
 		if (!result.ok) return this.response(frame, { ok: false, code: result.code });
 		state.driver = result.state;
-		return this.response(frame, { ok: true, driverRevision: state.driver.driverRevision });
+		return this.response(frame, { ok: true, hostGeneration: state.driver.hostGeneration, sessionGeneration: state.driver.sessionGeneration, driverRevision: state.driver.driverRevision });
 	}
 
 	private releaseSessionDriver(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): HostFrameEnvelope {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const result = releaseDriver(state.driver, this.driverFence(principal, frame, state));
+		const fence = this.driverFence(principal, frame, state);
+		if (!fence) return this.response(frame, { ok: false, code: "driver_fence_required" });
+		const result = releaseDriver(state.driver, fence);
 		if (!result.ok) return this.response(frame, { ok: false, code: result.code });
 		state.driver = result.state;
 		return this.response(frame, { ok: true, driverRevision: state.driver.driverRevision });
@@ -385,7 +436,7 @@ export class ResidentRuntimeHost {
 	): Promise<HostFrameEnvelope> {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const authorization = authorizeDriverMutation(state.driver, this.driverFence(principal, frame, state));
+		const authorization = this.authorizeMutation(principal, frame, state);
 		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		const controller = state.runtime.controller;
 		if (operation === "prompt" || operation === "steer" || operation === "follow_up") {
@@ -415,7 +466,7 @@ export class ResidentRuntimeHost {
 	private async selectModel(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const authorization = authorizeDriverMutation(state.driver, this.driverFence(principal, frame, state));
+		const authorization = this.authorizeMutation(principal, frame, state);
 		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		const provider = stringValue(frame.body.provider);
 		const modelId = stringValue(frame.body.model);
@@ -429,7 +480,7 @@ export class ResidentRuntimeHost {
 	private async setThinking(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const authorization = authorizeDriverMutation(state.driver, this.driverFence(principal, frame, state));
+		const authorization = this.authorizeMutation(principal, frame, state);
 		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		const level = stringValue(frame.body.level);
 		if (!isThinkingLevel(level)) return this.response(frame, { ok: false, code: "thinking_level_invalid" });
@@ -440,7 +491,7 @@ export class ResidentRuntimeHost {
 	private async logout(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
 		const state = this.sessionState(frame);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
-		const authorization = authorizeDriverMutation(state.driver, this.driverFence(principal, frame, state));
+		const authorization = this.authorizeMutation(principal, frame, state);
 		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		const providerId = stringValue(frame.body.providerId);
 		if (!providerId) return this.response(frame, { ok: false, code: "provider_required" });
@@ -448,8 +499,12 @@ export class ResidentRuntimeHost {
 		return this.response(frame, { ok: true });
 	}
 
-	private requestShutdown(frame: HostFrameEnvelope): HostFrameEnvelope {
+	private requestShutdown(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): HostFrameEnvelope {
 		if (this.options.onShutdown === undefined) return this.response(frame, { ok: false, code: "host_shutdown_unavailable" });
+		const state = this.sessionState(frame);
+		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
+		const authorization = this.authorizeMutation(principal, frame, state);
+		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		if (this.shutdownRequested) return this.response(frame, { ok: true, accepted: true });
 		this.shutdownRequested = true;
 		// Let the command response enter the transport outbox before lifecycle
@@ -502,7 +557,7 @@ export class ResidentRuntimeHost {
 		const state = this.sessions.get(sessionId);
 		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
 		if (operation === "create" && !this.admissionOpen) return this.response(frame, { ok: false, code: "host_admission_closed" });
-		const authorization = authorizeDriverMutation(state.driver, this.driverFence(principal, frame, state));
+		const authorization = this.authorizeMutation(principal, frame, state);
 		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		let result: Record<string, unknown>;
 		if (operation === "create") {
@@ -550,7 +605,7 @@ export class ResidentRuntimeHost {
 		if (operation !== "plan") {
 			const state = this.sessions.get(sessionId);
 			if (!state || principal === undefined) return this.response(frame, { ok: false, code: "session_not_found" });
-			const authorization = authorizeDriverMutation(state.driver, this.driverFence(principal, frame, state));
+			const authorization = this.authorizeMutation(principal, frame, state);
 			if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
 		}
 		if (operation === "plan") {
@@ -573,37 +628,83 @@ export class ResidentRuntimeHost {
 		return this.response(frame, await port.unpinOutput(sessionId, executionId, pinId));
 	}
 
-	private driverFence(principal: HostConnectionPrincipal, frame: HostFrameEnvelope, state: SessionState) {
+	private authorizeMutation(principal: HostConnectionPrincipal, frame: HostFrameEnvelope, state: SessionState) {
+		const fence = this.driverFence(principal, frame, state);
+		return fence === undefined
+			? { ok: false as const, code: "driver_fence_required" as const }
+			: authorizeDriverMutation(state.driver, fence);
+	}
+
+	private driverFence(principal: HostConnectionPrincipal, frame: HostFrameEnvelope, _state: SessionState) {
+		const expectedHostGeneration = integerValue(frame.body.expectedHostGeneration);
+		const expectedSessionGeneration = integerValue(frame.body.expectedSessionGeneration);
+		const expectedDriverRevision = integerValue(frame.body.expectedDriverRevision);
+		if (expectedHostGeneration === undefined || expectedSessionGeneration === undefined || expectedDriverRevision === undefined) return undefined;
 		return {
 			principalId: principal.principalId,
 			connectionId: principal.connectionId,
-			expectedHostGeneration: integerValue(frame.body.expectedHostGeneration) ?? state.driver.hostGeneration,
-			expectedSessionGeneration: integerValue(frame.body.expectedSessionGeneration) ?? state.driver.sessionGeneration,
-			expectedDriverRevision: integerValue(frame.body.expectedDriverRevision) ?? state.driver.driverRevision,
+			expectedHostGeneration,
+			expectedSessionGeneration,
+			expectedDriverRevision,
 		};
 	}
 
-	private publishAgentEvent(sessionId: string, event: AgentEvent): void {
+	private publishAgentEvent(sessionId: string, event: AgentEvent): Promise<void> {
 		const state = this.sessions.get(sessionId);
-		if (!state) return;
-		state.sequence += 1;
-		const eventId = createRuntimeId("event", `${sessionId}-${state.sequence}`);
-		const body = {
-			sessionId,
-			eventId,
-			sequence: state.sequence,
-			eventType: event.type,
-			event,
-		};
-		for (const [connectionId, subscriptions] of this.subscriptions) {
-			if (!subscriptions.has(sessionId)) continue;
-			this.server.sendToConnection(connectionId, {
-				frameId: eventId,
-				kind: "subscription_event",
+		if (!state) return Promise.resolve();
+		return this.serialSession(state, async () => {
+			let body: HostSubscriptionEvent | StoredHostEvent;
+			if (this.options.eventStore !== undefined) {
+				body = await this.options.eventStore.append(sessionId, event);
+				state.sequence = body.sequence;
+			} else {
+				state.sequence += 1;
+				body = { sessionId, eventId: createRuntimeId("event", `${sessionId}-${state.sequence}`), sequence: state.sequence, eventType: event.type, event };
+				state.history.push(body);
+				while (state.history.length > RUNTIME_HOST_BOUNDS.maxSubscriptionReplay) state.history.shift();
+			}
+			for (const [connectionId, subscriptions] of this.subscriptions) {
+				const subscription = subscriptions.get(sessionId);
+				if (!subscription) continue;
+				if (body.sequence - subscription.ackCursor > RUNTIME_HOST_BOUNDS.maxAckWindow) {
+					this.server.sendToConnection(connectionId, {
+						frameId: `resync_${sessionId}_${body.sequence}`,
+						kind: "resync_required",
+						protocolVersion: 1,
+						body: { sessionId, safeCursor: body.sequence },
+					});
+					subscriptions.delete(sessionId);
+					continue;
+				}
+				if (this.server.sendToConnection(connectionId, { frameId: body.eventId, kind: "subscription_event", protocolVersion: 1, body: { ...body } })) {
+					subscription.sentCursor = body.sequence;
+				}
+			}
+		});
+	}
+
+	private ackCursor(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): void {
+		const sessionId = stringValue(frame.body.sessionId);
+		const cursor = integerValue(frame.body.cursor);
+		if (!sessionId || cursor === undefined || cursor < 0) return;
+		const subscription = this.subscriptions.get(principal.connectionId)?.get(sessionId);
+		if (!subscription) return;
+		if (cursor < subscription.ackCursor || cursor > subscription.sentCursor) {
+			this.server.sendToConnection(principal.connectionId, {
+				frameId: `resync_${sessionId}_${subscription.sentCursor}`,
+				kind: "resync_required",
 				protocolVersion: 1,
-				body,
+				body: { sessionId, safeCursor: subscription.sentCursor },
 			});
+			return;
 		}
+		subscription.ackCursor = cursor;
+	}
+
+	private serialSession<T>(state: SessionState, operation: () => Promise<T>): Promise<T> {
+		const result = state.eventTail.then(operation);
+		state.eventTail = result.then(() => undefined, () => undefined);
+		return result;
 	}
 
 	private async handleConnectionClosed(connectionId: string): Promise<void> {

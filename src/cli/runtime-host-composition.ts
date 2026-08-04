@@ -9,6 +9,7 @@ export interface HostConnectionAttempt {
 	readonly close?: () => Promise<void>;
 	readonly request?: (frame: HostFrameEnvelope) => Promise<HostFrameEnvelope>;
 	readonly onEvent?: (listener: (frame: HostFrameEnvelope) => void) => () => void;
+	readonly notify?: (frame: HostFrameEnvelope) => void;
 }
 
 export type HostConnectionResult =

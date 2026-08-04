@@ -20,6 +20,7 @@ import {
 } from "../runtime/host/contracts.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
+import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
 import { EndpointStore, type HostEndpointRecord } from "../storage/host/endpoint-store.ts";
 import { hostStartupElectionRelativeLocator } from "../runtime/contracts/storage-layout.ts";
@@ -135,6 +136,7 @@ export interface ProductionRuntimeHostConnection {
 	readonly startedHost: boolean;
 	readonly request: (frame: import("../runtime/host/types.ts").HostFrameEnvelope) => Promise<import("../runtime/host/types.ts").HostFrameEnvelope>;
 	readonly onEvent: (listener: (frame: import("../runtime/host/types.ts").HostFrameEnvelope) => void) => () => void;
+	readonly notify: (frame: import("../runtime/host/types.ts").HostFrameEnvelope) => void;
 	close(): Promise<void>;
 }
 
@@ -202,6 +204,7 @@ export async function connectProductionRuntimeHost(
 		startedHost: result.startedHost,
 		request: result.connection.request,
 		onEvent: result.connection.onEvent,
+		notify: (frame) => result.connection.notify?.(frame),
 		close: result.close,
 	};
 }
@@ -233,8 +236,9 @@ async function connectProductionEndpoint(
 				kind: "jsonl",
 				id: endpoint.hostRuntimeId,
 				close: () => client!.close(),
-				request: (frame) => client!.request(frame),
-				onEvent: (listener) => client!.onEvent(listener),
+					request: (frame) => client!.request(frame),
+					onEvent: (listener) => client!.onEvent(listener),
+					notify: (frame: HostFrameEnvelope) => client!.notify(frame),
 			},
 		};
 	} catch {

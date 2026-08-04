@@ -10,6 +10,7 @@ import type { OutputCursor } from "../runtime/process/output.ts";
 
 export interface ProcessOverlayClientOptions {
 	readonly isDriver: () => boolean;
+	readonly driverFence?: () => { readonly expectedHostGeneration: number; readonly expectedSessionGeneration: number; readonly expectedDriverRevision: number };
 }
 
 export function createProductionProcessOverlayClient(
@@ -24,7 +25,7 @@ export function createProductionProcessOverlayClient(
 			frameId,
 			kind: "command_request",
 			protocolVersion: 1,
-			body: { operation, commandId: frameId, sessionId, ...body },
+				body: { operation, commandId: frameId, sessionId, ...(options.driverFence?.() ?? {}), ...body },
 		});
 	};
 

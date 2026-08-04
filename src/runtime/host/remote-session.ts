@@ -10,6 +10,7 @@ import type {
 } from "../types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { HostFrameEnvelope } from "./types.ts";
+import { RUNTIME_HOST_BOUNDS } from "./types.ts";
 import type {
 	InteractiveSessionControllerPort,
 	ProviderStatus,
@@ -19,6 +20,7 @@ import type {
 export interface HostRequestTransport {
 	request(frame: HostFrameEnvelope): Promise<HostFrameEnvelope>;
 	onEvent(listener: (frame: HostFrameEnvelope) => void): () => void;
+	notify?(frame: HostFrameEnvelope): void | Promise<void>;
 }
 
 export interface RemoteSessionSnapshot {
@@ -28,12 +30,18 @@ export interface RemoteSessionSnapshot {
 	readonly warnings: readonly string[];
 	readonly auditEntries: readonly LedgerEntry[];
 	readonly toolCount: number;
+	readonly hostGeneration: number;
+	readonly sessionGeneration: number;
+	readonly driverRevision: number;
+	readonly eventCursor?: number;
 }
 
 export class RemoteInteractiveSessionController implements InteractiveSessionControllerPort {
 	private readonly transport: HostRequestTransport;
 	private readonly listeners = new Set<AgentEventSink>();
 	private readonly seenEventIds = new Set<string>();
+	private readonly seenEventOrder: string[] = [];
+	private readonly pendingEvents = new Map<number, HostFrameEnvelope>();
 	private readonly removeTransportListener: () => void;
 	private readonly session: string;
 	private readonly messageState: AgentMessage[];
@@ -43,6 +51,10 @@ export class RemoteInteractiveSessionController implements InteractiveSessionCon
 	private selectionValue: RuntimeSelection;
 	private inFlightValue = false;
 	private sequence = 0;
+	private hostGeneration: number;
+	private sessionGeneration: number;
+	private driverRevision: number;
+	private eventCursor: number;
 	private disposed = false;
 	private idleWaiters: Array<() => void> = [];
 
@@ -54,7 +66,43 @@ export class RemoteInteractiveSessionController implements InteractiveSessionCon
 		this.warningState = [...snapshot.warnings];
 		this.auditState = [...snapshot.auditEntries];
 		this.toolCountValue = snapshot.toolCount;
+		this.hostGeneration = snapshot.hostGeneration;
+		this.sessionGeneration = snapshot.sessionGeneration;
+		this.driverRevision = snapshot.driverRevision;
+		this.eventCursor = snapshot.eventCursor ?? 0;
 		this.removeTransportListener = transport.onEvent((frame) => this.receive(frame));
+	}
+
+	public driverFence(): { readonly expectedHostGeneration: number; readonly expectedSessionGeneration: number; readonly expectedDriverRevision: number } {
+		return {
+			expectedHostGeneration: this.hostGeneration,
+			expectedSessionGeneration: this.sessionGeneration,
+			expectedDriverRevision: this.driverRevision,
+		};
+	}
+
+	public updateDriverFence(value: { readonly hostGeneration?: number; readonly sessionGeneration?: number; readonly driverRevision?: number }): void {
+		if (value.hostGeneration !== undefined) this.hostGeneration = value.hostGeneration;
+		if (value.sessionGeneration !== undefined) this.sessionGeneration = value.sessionGeneration;
+		if (value.driverRevision !== undefined) this.driverRevision = value.driverRevision;
+	}
+
+	public async resumeEvents(): Promise<"subscribed" | "resync_required"> {
+		const response = await this.command("session.subscribe", { cursor: this.eventCursor }, true);
+		if (response.body.ok === false) {
+			if (response.body.code === "resync_required" && typeof response.body.safeCursor === "number") {
+				this.eventCursor = response.body.safeCursor;
+				this.pendingEvents.clear();
+				return "resync_required";
+			}
+			throw new Error(typeof response.body.code === "string" ? response.body.code : "Host subscription rejected");
+		}
+		if (Array.isArray(response.body.events)) {
+			for (const body of response.body.events) {
+				if (isRecord(body)) this.acceptEventBody(body);
+			}
+		}
+		return "subscribed";
 	}
 
 	public subscribe(listener: AgentEventSink): () => void {
@@ -134,33 +182,86 @@ export class RemoteInteractiveSessionController implements InteractiveSessionCon
 		for (const resolve of this.idleWaiters.splice(0)) resolve();
 	}
 
-	private async command(operation: string, body: Record<string, unknown>): Promise<HostFrameEnvelope> {
+	private async command(operation: string, body: Record<string, unknown>, allowFailure = false): Promise<HostFrameEnvelope> {
 		if (this.disposed) throw new Error("remote session controller is disposed");
 		const frameId = `remote_${++this.sequence}_${Date.now()}`;
 		const response = await this.transport.request({
 			frameId,
 			kind: "command_request",
 			protocolVersion: 1,
-			body: { operation, commandId: frameId, sessionId: this.session, ...body },
+			body: { operation, commandId: frameId, sessionId: this.session, ...this.driverFence(), ...body },
 		});
-		if (response.body.ok === false) {
+		this.updateDriverFence({
+			hostGeneration: integer(response.body.hostGeneration),
+			sessionGeneration: integer(response.body.sessionGeneration),
+			driverRevision: integer(response.body.driverRevision),
+		});
+		if (!allowFailure && response.body.ok === false) {
 			throw new Error(typeof response.body.code === "string" ? response.body.code : "Host request rejected");
 		}
 		return response;
 	}
 
 	private receive(frame: HostFrameEnvelope): void {
-		if (this.disposed || frame.kind !== "subscription_event") return;
-		if (frame.body.sessionId !== this.session || typeof frame.body.eventId !== "string") return;
-		if (this.seenEventIds.has(frame.body.eventId)) return;
-		this.seenEventIds.add(frame.body.eventId);
-		const event = frame.body.event;
+		if (this.disposed) return;
+		if (frame.kind === "resync_required") {
+			const safeCursor = integer(frame.body.safeCursor);
+			if (safeCursor !== undefined) {
+				this.eventCursor = safeCursor;
+				this.pendingEvents.clear();
+			}
+			return;
+		}
+		if (frame.kind !== "subscription_event" || frame.body.sessionId !== this.session) return;
+		this.acceptEventBody(frame.body, frame);
+	}
+
+	private acceptEventBody(body: Record<string, unknown>, sourceFrame?: HostFrameEnvelope): void {
+		const eventId = typeof body.eventId === "string" ? body.eventId : undefined;
+		const eventSequence = integer(body.sequence);
+		if (eventId === undefined || eventSequence === undefined || eventSequence < 1 || eventSequence <= this.eventCursor || this.seenEventIds.has(eventId)) return;
+		if (eventSequence > this.eventCursor + 1) {
+			if (this.pendingEvents.size >= RUNTIME_HOST_BOUNDS.maxAckWindow) {
+				this.pendingEvents.clear();
+				return;
+			}
+			this.pendingEvents.set(eventSequence, sourceFrame ?? { frameId: eventId, kind: "subscription_event", protocolVersion: 1, body });
+			return;
+		}
+		const event = body.event;
 		if (!isAgentEvent(event)) return;
+		this.rememberEvent(eventId);
+		this.eventCursor = eventSequence;
 		this.inFlightValue = event.type !== "agent_end";
 		if (event.type === "agent_end") {
 			for (const resolve of this.idleWaiters.splice(0)) resolve();
 		}
 		for (const listener of this.listeners) void listener(event);
+		this.ackCursor();
+		while (true) {
+			const next = this.pendingEvents.get(this.eventCursor + 1);
+			if (!next) break;
+			this.pendingEvents.delete(this.eventCursor + 1);
+			this.acceptEventBody(next.body, next);
+		}
+	}
+
+	private rememberEvent(eventId: string): void {
+		this.seenEventIds.add(eventId);
+		this.seenEventOrder.push(eventId);
+		while (this.seenEventOrder.length > RUNTIME_HOST_BOUNDS.maxAckWindow) {
+			const oldest = this.seenEventOrder.shift();
+			if (oldest !== undefined) this.seenEventIds.delete(oldest);
+		}
+	}
+
+	private ackCursor(): void {
+		void this.transport.notify?.({
+			frameId: `ack_${this.session}_${this.eventCursor}`,
+			kind: "ack_cursor",
+			protocolVersion: 1,
+			body: { sessionId: this.session, cursor: this.eventCursor },
+		});
 	}
 
 	private updateSelection(value: unknown): RuntimeSelection {
@@ -179,4 +280,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isAgentEvent(value: unknown): value is AgentEvent {
 	return isRecord(value) && typeof value.type === "string" && typeof value.timestamp === "number";
+}
+
+function integer(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }

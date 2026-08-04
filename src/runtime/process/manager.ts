@@ -44,6 +44,7 @@ export interface BackendSpawnInput {
 	readonly request: ManagedProcessRequest;
 	readonly spawnClaimDigest: RuntimeDigest;
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
+	readonly constraintInput?: ExecutionConstraintInput;
 }
 
 export interface BackendSpawnPort {
@@ -135,6 +136,7 @@ export class ProcessManager {
 	public async create(
 		request: ManagedProcessRequest,
 		constraintSnapshot?: ExecutionConstraintSnapshot,
+		constraintInput?: ExecutionConstraintInput,
 	): Promise<ProcessCreateResult> {
 		const intent = this.journal.findIntent(request.correlationId);
 		let handle: ExecutionHandleRef;
@@ -226,8 +228,9 @@ export class ProcessManager {
 				receipt = await this.backend.spawn({
 					handle: current.handle,
 					request,
-					spawnClaimDigest: spawnClaimDigest(current.handle, request, constraintSnapshot),
+					spawnClaimDigest: spawnClaimDigest(current.handle, request, constraintSnapshot, constraintInput),
 					...(constraintSnapshot === undefined ? {} : { constraintSnapshot }),
+					...(constraintInput === undefined ? {} : { constraintInput }),
 				});
 			} catch {
 				// claim 已 durable，但 spawn response 的真实结果未知；重试仍使用同一 handle
@@ -505,7 +508,7 @@ export class AuditedProcessManager {
 			if (!validateExecutionConstraintSnapshot(normalized, durableSnapshot)) {
 				return { ok: false, code: "execution_constraint_invalid" };
 			}
-			return this.manager.create(request, durableSnapshot);
+			return this.manager.create(request, durableSnapshot, normalized);
 		}
 		const decision = await evaluateExecutionConstraints(normalized, this.providers);
 		if (!decision.ok) {
@@ -513,7 +516,7 @@ export class AuditedProcessManager {
 			if (decision.code === "constraint_provider_unavailable") return { ok: false, code: "execution_constraint_unavailable" };
 			return { ok: false, code: "execution_constraint_invalid" };
 		}
-		return this.manager.create(request, decision.snapshot);
+		return this.manager.create(request, decision.snapshot, normalized);
 	}
 }
 
@@ -590,6 +593,7 @@ function spawnClaimDigest(
 	handle: ExecutionHandleRef,
 	request: ManagedProcessRequest,
 	constraintSnapshot?: ExecutionConstraintSnapshot,
+	constraintInput?: ExecutionConstraintInput,
 ): RuntimeDigest {
 	return {
 		algorithm: "sha256",
@@ -601,6 +605,7 @@ function spawnClaimDigest(
 			backend: request.backend,
 			executionMode: request.executionMode,
 			...(constraintSnapshot === undefined ? {} : { constraintSnapshotDigest: constraintSnapshot.snapshotDigest }),
+			...(constraintInput === undefined ? {} : { constraintInputDigest: runtimeDigest(constraintInput) }),
 		}) as RuntimeDigest["digest"],
 	};
 }

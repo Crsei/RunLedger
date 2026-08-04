@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { runManagedProcessPtyVerification } from "../../../scripts/verify-managed-process-pty.ts";
+import { runMultiClientHostVerification } from "../../../scripts/verify-multi-client-host.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -13,28 +14,43 @@ describe("R10 executable acceptance runners", () => {
 		});
 		const result = JSON.parse(stdout.trim().split(/\r?\n/u).at(-1) ?? "") as {
 			readonly passed: boolean;
+			readonly outcome: string;
 			readonly checks: readonly string[];
 		};
 		expect(result.passed).toBe(true);
+		expect(result.outcome).toBe("pass");
 		expect(result.checks).toEqual(expect.arrayContaining([
 			"two_clients_one_host",
 			"same_session_owner",
 			"driver_fence",
+			"stale_fence_rejected",
+			"explicit_driver_transfer",
 			"command_idempotency",
-			"standard_path_connect_or_spawn",
+			"production_api_connect_or_spawn",
+			"host_sigkill_no_duplicate_spawn",
+			"lost_or_uncertain_projection",
 		]));
-	});
+	}, 30_000);
 
-	it("verifies governed PTY output, resize, stop fence, recovery, and Queue dedupe", async () => {
+	it("verifies governed PTY output, resize, stop fence, reconnect cursor, and terminal wait idempotency", async () => {
 		const result = await runManagedProcessPtyVerification();
 		expect(result.passed).toBe(true);
+		expect(result.outcome).toBe("pass");
 		expect(result.checks).toEqual(expect.arrayContaining([
 			"production_host_facade",
 			"client_detach",
 			"pty_utf8",
+			"pty_stdin",
 			"driver_fence",
-			"queue_dedupe",
-			"output_recovery",
+			"terminal_wait_idempotency",
+			"client_reconnect_output_cursor",
 		]));
+	});
+
+	it("reports macOS and Windows as unsupported instead of a failed production capability", async () => {
+		const host = await runMultiClientHostVerification({ platform: "darwin" });
+		const pty = await runManagedProcessPtyVerification({ platform: "win32" });
+		expect(host).toMatchObject({ passed: false, outcome: "unsupported", checks: [] });
+		expect(pty).toMatchObject({ passed: false, outcome: "unsupported", checks: [] });
 	});
 });

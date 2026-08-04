@@ -104,7 +104,7 @@ interface PrivatePtyProcess {
 	readonly handle: ExecutionHandleRef;
 	readonly startedAt: number;
 	readonly terminal: Promise<PtyProcessTerminal>;
-	readonly stopState: { value?: PtyMutationResult };
+	readonly stop: (signal: NodeJS.Signals) => PtyMutationResult;
 }
 
 export class PtyProcessBackend {
@@ -125,13 +125,14 @@ export class PtyProcessBackend {
 		readonly request: ManagedProcessRequest;
 		readonly spawnClaimDigest: RuntimeDigest;
 		readonly constraintSnapshot?: ExecutionConstraintSnapshot;
+		readonly constraintInput?: ExecutionConstraintInput;
 	}): Promise<PtySpawnResult> {
 		const existing = this.processes.get(input.handle.executionId);
 		const existingReceipt = this.receipts.get(input.handle.executionId);
 		if (existing && existingReceipt) return { receipt: existingReceipt, process: this.createControl(existing) };
 		if (input.request.backend !== "pty") throw new Error("PTY backend received a non-PTY request");
-		if (!input.constraintSnapshot) throw new Error("execution constraint snapshot is required before PTY spawn");
-		if (!validateExecutionConstraintSnapshot(toDecisionInput(input), input.constraintSnapshot)) {
+		if (!input.constraintSnapshot || !input.constraintInput) throw new Error("execution constraint snapshot and independent input are required before PTY spawn");
+		if (!validateSpawnBinding(input) || !validateExecutionConstraintSnapshot(input.constraintInput, input.constraintSnapshot)) {
 			throw new Error("execution constraint snapshot is invalid");
 		}
 		if (input.constraintSnapshot.containment.mode !== "none") {
@@ -194,17 +195,27 @@ export class PtyProcessBackend {
 		let stopRequested = false;
 		let durationLimitExceeded = false;
 		let durationTimer: NodeJS.Timeout | undefined;
-		const stopState: { value?: PtyMutationResult } = {};
+		const stopResults = new Map<NodeJS.Signals, PtyMutationResult>();
+		let strongestStop: NodeJS.Signals | undefined;
 		const maxOutputBytes = input.request.limits?.maxOutputBytes ?? PROCESS_OUTPUT_BOUNDS.maxDurableOutputBytes;
+		const stopProcess = (signal: NodeJS.Signals): PtyMutationResult => {
+			const repeated = stopResults.get(signal);
+			if (repeated !== undefined) return repeated;
+			if (strongestStop === "SIGKILL") return stopResults.get("SIGKILL")!;
+			const result: PtyMutationResult = process.stop(signal)
+				? { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: input.handle, signal }) }
+				: { ok: false, code: "backend_unavailable" };
+			stopResults.set(signal, result);
+			if (result.ok) strongestStop = signal === "SIGKILL" ? "SIGKILL" : strongestStop ?? signal;
+			return result;
+		};
 		const stopRoot = (): void => {
-			if (stopRequested || stopState.value !== undefined) return;
+			if (stopRequested) return;
 			stopRequested = true;
-			if (!process.stop("SIGTERM")) {
+			const result = stopProcess("SIGTERM");
+			if (!result.ok) {
 				outputFailed = true;
-				stopState.value = { ok: false, code: "backend_unavailable" };
-				return;
 			}
-			stopState.value = { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: input.handle, signal: "SIGTERM" }) };
 		};
 		const decoder = new TextDecoder("utf-8");
 		const appendOutput = (chunk: Uint8Array): void => {
@@ -260,7 +271,7 @@ export class PtyProcessBackend {
 				stopRoot();
 			}, input.request.timeoutMs);
 		}
-		return { process, output, request: input.request, handle: input.handle, startedAt, terminal, stopState };
+		return { process, output, request: input.request, handle: input.handle, startedAt, terminal, stop: stopProcess };
 	}
 
 	private createControl(privateProcess: PrivatePtyProcess): PtyProcessControl {
@@ -317,32 +328,28 @@ export class PtyProcessBackend {
 				}
 			},
 			stop: (signal = "SIGTERM"): PtyMutationResult => {
-				if (privateProcess.stopState.value !== undefined) return privateProcess.stopState.value;
-				if (!privateProcess.process.stop(signal)) return { ok: false, code: "backend_unavailable" };
-				privateProcess.stopState.value = { ok: true, receiptDigest: runtimeDigest({ operation: "stop", handle: privateProcess.handle, signal }) };
-				return privateProcess.stopState.value;
+				return privateProcess.stop(signal);
 			},
 		};
 	}
 }
 
-function toDecisionInput(input: {
+function validateSpawnBinding(input: {
 	readonly handle: ExecutionHandleRef;
 	readonly request: ManagedProcessRequest;
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
-}): ExecutionConstraintInput {
-	const snapshot = input.constraintSnapshot;
-	if (!snapshot) throw new Error("execution constraint snapshot is required before PTY spawn");
-	return {
-		authorityId: snapshot.authorityId,
-		tenantId: snapshot.tenantId,
-		workspaceId: snapshot.workspaceId,
-		principalId: snapshot.principalId,
-		executionId: input.handle.executionId,
-		attemptId: input.handle.attemptId,
-		commandId: snapshot.commandId,
-		requestDigest: input.request.requestDigest,
-		policyDigest: snapshot.policyDigest,
-		modes: snapshot.modes,
-	};
+	readonly constraintInput?: ExecutionConstraintInput;
+}): boolean {
+	const context = input.constraintInput;
+	if (!context) return false;
+	return context.authorityId === input.request.authorityId && context.authorityId === input.handle.authorityId &&
+		context.tenantId === input.request.tenantId && context.tenantId === input.handle.tenantId &&
+		context.workspaceId === input.request.workspaceId && context.workspaceId === input.handle.workspaceId &&
+		input.request.sessionId === input.handle.sessionId &&
+		input.request.hostGeneration === input.handle.hostGeneration &&
+		input.request.sessionGeneration === input.handle.sessionGeneration &&
+		context.executionId === input.handle.executionId && context.attemptId === input.handle.attemptId &&
+		context.commandId === input.request.correlationId &&
+		context.requestDigest.digest === input.request.requestDigest.digest &&
+		context.requestDigest.digest === input.handle.requestDigest.digest;
 }

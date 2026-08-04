@@ -9,6 +9,7 @@ import {
 	createBuiltinNoneExecutionDecisionProviders,
 	evaluateExecutionConstraints,
 	type ExecutionConstraintInput,
+	type ExecutionConstraintSnapshot,
 } from "../../../src/runtime/process/execution-decision.ts";
 import type { ManagedProcessRequest } from "../../../src/runtime/process/types.ts";
 import {
@@ -53,11 +54,32 @@ function decisionInput(value: ManagedProcessRequest): ExecutionConstraintInput {
 	};
 }
 
+function executionHandle(value: ManagedProcessRequest, snapshot: ExecutionConstraintSnapshot) {
+	return {
+		authorityId: value.authorityId,
+		tenantId: value.tenantId,
+		workspaceId: value.workspaceId,
+		sessionId: value.sessionId,
+		hostGeneration: value.hostGeneration,
+		sessionGeneration: value.sessionGeneration,
+		executionId: snapshot.executionId,
+		attemptId: snapshot.attemptId,
+		revision: 0,
+		requestDigest: value.requestDigest,
+	};
+}
+
 class FakePtyProcess implements PtyAdapterProcess {
 	private readonly listeners = new Set<(chunk: Uint8Array) => void>();
 	private finished = false;
 	private resolveWait: ((value: { readonly exitCode: number | null; readonly signal: string | null }) => void) | undefined;
 	public stopCount = 0;
+	public readonly stopSignals: NodeJS.Signals[] = [];
+	private readonly ignoreTerm: boolean;
+
+	public constructor(ignoreTerm = false) {
+		this.ignoreTerm = ignoreTerm;
+	}
 
 	public onOutput(listener: (chunk: Uint8Array) => void): () => void {
 		this.listeners.add(listener);
@@ -75,9 +97,10 @@ class FakePtyProcess implements PtyAdapterProcess {
 		if (columns !== 80 || rows !== 24) throw new Error("unexpected resize");
 	}
 
-	public stop(_signal: NodeJS.Signals): boolean {
+	public stop(signal: NodeJS.Signals): boolean {
 		this.stopCount += 1;
-		this.finish(null, "SIGTERM");
+		this.stopSignals.push(signal);
+		if (signal === "SIGKILL" || !this.ignoreTerm) this.finish(null, signal);
 		return true;
 	}
 
@@ -96,10 +119,15 @@ class FakePtyProcess implements PtyAdapterProcess {
 class FakePtyAdapter implements PtyAdapter {
 	public spawnCount = 0;
 	public lastProcess: FakePtyProcess | undefined;
+	private readonly ignoreTerm: boolean;
+
+	public constructor(ignoreTerm = false) {
+		this.ignoreTerm = ignoreTerm;
+	}
 
 	public async spawn(_input: { readonly command: PtyCommandDescriptor }): Promise<PtyAdapterProcess> {
 		this.spawnCount += 1;
-		this.lastProcess = new FakePtyProcess();
+		this.lastProcess = new FakePtyProcess(this.ignoreTerm);
 		return this.lastProcess;
 	}
 }
@@ -136,7 +164,7 @@ describe("R6 governed PTY backend", () => {
 				revision: 0,
 				requestDigest: value.requestDigest,
 			};
-			const first = await backend.spawn({ handle, request: value, spawnClaimDigest: digest("claim"), constraintSnapshot: decision.snapshot });
+			const first = await backend.spawn({ handle, request: value, spawnClaimDigest: digest("claim"), constraintSnapshot: decision.snapshot, constraintInput: decisionInput(value) });
 			expect(backend.control(handle)).toBeDefined();
 			expect(backend.asManagerBackend().control(handle)).toBeDefined();
 			await expect(first.process.resize(80, 24)).resolves.toMatchObject({ ok: true });
@@ -170,8 +198,8 @@ describe("R6 governed PTY backend", () => {
 			});
 			const decision = await evaluateExecutionConstraints(decisionInput(value), createBuiltinNoneExecutionDecisionProviders());
 			if (!decision.ok) throw new Error("decision failed");
-			const handle = { ...decision.snapshot, revision: 0, requestDigest: value.requestDigest };
-			const spawned = await backend.spawn({ handle, request: value, spawnClaimDigest: digest("pty-limit-claim"), constraintSnapshot: decision.snapshot });
+			const handle = executionHandle(value, decision.snapshot);
+			const spawned = await backend.spawn({ handle, request: value, spawnClaimDigest: digest("pty-limit-claim"), constraintSnapshot: decision.snapshot, constraintInput: decisionInput(value) });
 			const terminal = await spawned.process.wait(2_000);
 			expect(terminal.outcome).toBe("killed");
 			const output = await spawned.process.output.read({ sequence: 0, byteOffset: 0 }, 128);
@@ -186,7 +214,7 @@ describe("R6 governed PTY backend", () => {
 		try {
 			const value = { ...request(), correlationId: createRuntimeId("command", "pty-stop-idempotency") };
 			const layout = buildRunledgerLayout(join(root, "home"), "posix");
-			const adapter = new FakePtyAdapter();
+			const adapter = new FakePtyAdapter(true);
 			const backend = new PtyProcessBackend({
 				adapter,
 				resolveCommand: () => ({ executable: "fake", args: [], cwd: root }),
@@ -199,17 +227,19 @@ describe("R6 governed PTY backend", () => {
 			});
 			const decision = await evaluateExecutionConstraints(decisionInput(value), createBuiltinNoneExecutionDecisionProviders());
 			if (!decision.ok) throw new Error("decision failed");
-			const handle = { ...decision.snapshot, revision: 0, requestDigest: value.requestDigest };
-			const spawned = await backend.spawn({ handle, request: value, spawnClaimDigest: digest("pty-stop-claim"), constraintSnapshot: decision.snapshot });
+			const handle = executionHandle(value, decision.snapshot);
+			const spawned = await backend.spawn({ handle, request: value, spawnClaimDigest: digest("pty-stop-claim"), constraintSnapshot: decision.snapshot, constraintInput: decisionInput(value) });
 
 			const first = spawned.process.stop();
 			const second = spawned.process.stop();
+			const escalated = spawned.process.stop("SIGKILL");
 			const terminal = await spawned.process.wait(2_000);
-			const afterTerminal = spawned.process.stop();
+			const afterTerminal = spawned.process.stop("SIGKILL");
 
 			expect(first).toEqual(second);
-			expect(afterTerminal).toEqual(first);
-			expect(adapter.lastProcess?.stopCount).toBe(1);
+			expect(afterTerminal).toEqual(escalated);
+			expect(adapter.lastProcess?.stopCount).toBe(2);
+			expect(adapter.lastProcess?.stopSignals).toEqual(["SIGTERM", "SIGKILL"]);
 			expect(terminal.outcome).toBe("killed");
 		} finally {
 			await rm(root, { recursive: true, force: true });

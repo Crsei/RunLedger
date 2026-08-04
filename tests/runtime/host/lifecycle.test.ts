@@ -3,6 +3,33 @@ import { RuntimeHostLifecycle } from "../../../src/runtime/host/lifecycle.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 
 describe("R10 Runtime Host lifecycle", () => {
+	it("returns shutdown_incomplete within one global deadline when a phase never settles", async () => {
+		const calls: string[] = [];
+		const lifecycle = new RuntimeHostLifecycle({
+			hostGeneration: 10,
+			artifactMode: "off",
+			shutdownDeadlineMs: 40,
+			ports: {
+				closeAdmission: async () => { calls.push("admission.close"); },
+				drainTurns: () => new Promise<void>(() => {}),
+				listProcesses: async () => [],
+				flushWriter: async () => { calls.push("writer.flush"); },
+				release: async () => { calls.push("resources.release"); },
+				writeRecoveryMarker: async (marker) => { calls.push(`marker:${marker.phase}`); },
+			},
+		});
+		const startedAt = Date.now();
+		const result = await lifecycle.shutdown();
+		expect(Date.now() - startedAt).toBeLessThan(300);
+		expect(result).toMatchObject({
+			ok: false,
+			code: "shutdown_incomplete",
+			state: "closed",
+		});
+		expect(result.failures).toContainEqual(expect.objectContaining({ target: "host", phase: "turns_drained" }));
+		expect(calls).toContain("admission.close");
+	});
+
 	it("records restart recovery without reattaching by PID", async () => {
 		const markers: string[] = [];
 		const lifecycle = new RuntimeHostLifecycle({

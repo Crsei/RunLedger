@@ -156,6 +156,7 @@ class FakeBackend implements BackendSpawnPort {
 	public spawnCount = 0;
 	public loseNextResponse = false;
 	public lastConstraintSnapshot: ExecutionConstraintSnapshot | undefined;
+	public lastConstraintInput: ExecutionConstraintInput | undefined;
 	private readonly journal: FakeJournal;
 	private readonly receipts = new Map<string, BackendSpawnReceipt>();
 
@@ -165,6 +166,7 @@ class FakeBackend implements BackendSpawnPort {
 
 	public async spawn(input: Parameters<BackendSpawnPort["spawn"]>[0]): Promise<BackendSpawnReceipt> {
 		this.lastConstraintSnapshot = input.constraintSnapshot;
+		this.lastConstraintInput = input.constraintInput;
 		const prior = this.receipts.get(input.handle.executionId);
 		if (prior) return prior;
 		if (!this.journal.findIntent(input.request.correlationId)) throw new Error("intent was not durable before spawn");
@@ -374,6 +376,10 @@ describe("R5 managed process manager", () => {
 		expect(created.ok).toBe(true);
 		expect(backend.spawnCount).toBe(1);
 		expect(backend.lastConstraintSnapshot?.containment.settlement).toBe("not_requested");
+		expect(backend.lastConstraintInput).toMatchObject({
+			principalId: executionDecisionInput(request("audited")).principalId,
+			commandId: request("audited").correlationId,
+		});
 		expect(journal.events[0]).toMatchObject({
 			type: "process.execution_requested",
 			constraintSnapshotDigest: backend.lastConstraintSnapshot?.snapshotDigest,

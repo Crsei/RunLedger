@@ -151,6 +151,40 @@ describe("R3 bounded authenticated local Host transport", () => {
 		}
 	});
 
+	it("closes a connection whose pre-attestation bytes exceed one frame", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-pre-attest-bound-"));
+		const socketPath = join(root, "host.sock");
+		let releaseAttestation: (() => void) | undefined;
+		try {
+			const server = new JsonLineHostServer({
+				socketPath,
+				scope: createHostCompatibilityEnvelope(scope()),
+				attestor: {
+					attest: async () => {
+						await new Promise<void>((resolve) => { releaseAttestation = resolve; });
+						return principal;
+					},
+				},
+				maxFrameBytes: 64,
+				handleFrame: async () => [],
+			});
+			await server.listen();
+			const socket = net.createConnection(socketPath);
+			await new Promise<void>((resolve, reject) => socket.once("connect", resolve).once("error", reject));
+			const closed = new Promise<boolean>((resolve) => {
+				socket.once("close", () => resolve(true));
+				setTimeout(() => resolve(false), 50);
+			});
+			socket.write("{}\n".repeat(32));
+			expect(await closed).toBe(true);
+			releaseAttestation?.();
+			await server.close();
+		} finally {
+			releaseAttestation?.();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("delivers unsolicited bounded subscription events without confusing request replies", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-events-"));
 		const socketPath = join(root, "host.sock");
@@ -194,6 +228,33 @@ describe("R3 bounded authenticated local Host transport", () => {
 			await new Promise((resolve) => setTimeout(resolve, 5));
 			expect(events).toEqual(["agent_start"]);
 			removeListener();
+			await client.close();
+			await server.close();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("sends acknowledgement frames without allocating a pending request", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-ack-"));
+		const socketPath = join(root, "host.sock");
+		try {
+			let acknowledgedCursor: number | undefined;
+			const server = new JsonLineHostServer({
+				socketPath,
+				scope: createHostCompatibilityEnvelope(scope()),
+				attestor,
+				handleFrame: async ({ frame }) => {
+					if (frame.kind === "ack_cursor") acknowledgedCursor = Number(frame.body.cursor);
+					return [];
+				},
+			});
+			await server.listen();
+			const client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "initialize-ack", kind: "initialize_request", protocolVersion: 1, body: { compatibility: createHostCompatibilityEnvelope(scope()) } });
+			client.notify({ frameId: "ack-1", kind: "ack_cursor", protocolVersion: 1, body: { sessionId: "session_ack", cursor: 7 } });
+			for (let attempt = 0; attempt < 20 && acknowledgedCursor === undefined; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+			expect(acknowledgedCursor).toBe(7);
 			await client.close();
 			await server.close();
 		} finally {

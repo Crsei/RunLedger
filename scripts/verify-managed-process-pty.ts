@@ -18,12 +18,19 @@ import { buildLinuxPeerCredentialHelper } from "./build-linux-peer-credential-he
 
 export interface ManagedProcessPtyRunnerResult {
 	readonly passed: boolean;
+	readonly outcome: "pass" | "fail" | "unsupported";
 	readonly checks: readonly string[];
 	readonly failures?: readonly string[];
 }
 
-export async function runManagedProcessPtyVerification(): Promise<ManagedProcessPtyRunnerResult> {
-	if (process.platform === "win32") return { passed: false, checks: [], failures: ["POSIX node-pty runner requires POSIX"] };
+export interface ManagedProcessPtyRunnerOptions {
+	readonly platform?: NodeJS.Platform;
+}
+
+export async function runManagedProcessPtyVerification(options: ManagedProcessPtyRunnerOptions = {}): Promise<ManagedProcessPtyRunnerResult> {
+	if ((options.platform ?? process.platform) !== "linux") {
+		return { passed: false, outcome: "unsupported", checks: [], failures: ["production managed PTY runner requires Linux"] };
+	}
 	const root = await mkdtemp(join(tmpdir(), "runledger-r10-pty-"));
 	const layout = buildRunledgerLayout(join(root, "home"), "posix");
 	const scope = createLocalRuntimeHostScope({ layout, cwd: root, settings: {} });
@@ -34,6 +41,9 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 	let observer: ProductionRuntimeHostConnection | undefined;
 	let reconnected: ProductionRuntimeHostConnection | undefined;
 	let shutdownRequested = false;
+	let sessionIdValue: string | undefined;
+	let driverFence: DriverFence | undefined;
+	let shutdownConnection: ProductionRuntimeHostConnection | undefined;
 	try {
 		await buildLinuxPeerCredentialHelper(helperPath);
 		driver = await connectProductionRuntimeHost({
@@ -54,15 +64,21 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 		const opened = await command(driver, "pty-session-open", "session.open", { mode: "create", cwd: root });
 		const sessionId = stringValue(opened.body.sessionId);
 		if (opened.body.ok !== true || sessionId === undefined) {
-			return { passed: false, checks, failures: ["production PTY session open failed"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY session open failed"] };
 		}
+		sessionIdValue = sessionId;
+		driverFence = fenceFrom(opened);
+		if (driverFence === undefined) return { passed: false, outcome: "fail", checks, failures: ["production PTY session open omitted the driver fence"] };
 		const firstSubscription = await command(driver, "pty-subscribe-driver", "session.subscribe", { sessionId });
 		const secondSubscription = await command(observer, "pty-subscribe-observer", "session.subscribe", { sessionId });
 		if (firstSubscription.body.ok !== true || secondSubscription.body.ok !== true) {
-			return { passed: false, checks, failures: ["production PTY subscription failed"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY subscription failed"] };
 		}
-		const claimed = await command(driver, "pty-claim-driver", "session.claim_driver", { sessionId });
-		if (claimed.body.ok !== true) return { passed: false, checks, failures: ["production PTY driver claim failed"] };
+		const claimed = await command(driver, "pty-claim-driver", "session.claim_driver", { sessionId, ...driverFence });
+		if (claimed.body.ok !== true) return { passed: false, outcome: "fail", checks, failures: ["production PTY driver claim failed"] };
+		driverFence = fenceFrom(claimed);
+		if (driverFence === undefined) return { passed: false, outcome: "fail", checks, failures: ["production PTY claim omitted the updated fence"] };
+		shutdownConnection = driver;
 
 		const created = await command(driver, "pty-process-create", "process.create", {
 			sessionId,
@@ -72,6 +88,7 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 			executionMode: "background",
 			timeoutMs: 5_000,
 			containment: "none",
+			...driverFence,
 		});
 		const handle = isRecord(created.body.handle) ? created.body.handle : undefined;
 		const executionId = handle === undefined ? undefined : stringValue(handle.executionId);
@@ -80,13 +97,13 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 			executionId === undefined ||
 		/(?:pid|outputPath|command|cwd)/iu.test(JSON.stringify(created.body))
 		) {
-			return { passed: false, checks, failures: ["production PTY facade did not return a safe handle"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY facade did not return a safe handle"] };
 		}
 		checks.push("production_host_facade");
 
-		const observerStop = await command(observer, "pty-observer-stop", "process.stop", { sessionId, executionId, signal: "SIGTERM" });
+		const observerStop = await command(observer, "pty-observer-stop", "process.stop", { sessionId, executionId, signal: "SIGTERM", ...driverFence });
 		if (observerStop.body.ok !== false || observerStop.body.code !== "observer_mutation_forbidden") {
-			return { passed: false, checks, failures: ["PTY observer mutation was not fenced"] };
+			return { passed: false, outcome: "fail", checks, failures: ["PTY observer mutation was not fenced"] };
 		}
 		checks.push("driver_fence");
 
@@ -95,12 +112,22 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 			executionId,
 			columns: 100,
 			rows: 30,
+			...driverFence,
 		});
-		if (resized.body.ok !== true) return { passed: false, checks, failures: ["production PTY resize failed"] };
+		if (resized.body.ok !== true) return { passed: false, outcome: "fail", checks, failures: ["production PTY resize failed"] };
 		checks.push("pty_resize");
+		const written = await command(driver, "pty-write", "process.write", {
+			sessionId,
+			executionId,
+			input: "human-input\n",
+			...driverFence,
+		});
+		if (written.body.ok !== true) return { passed: false, outcome: "fail", checks, failures: ["production PTY stdin failed"] };
+		checks.push("pty_stdin");
 
 		await driver.close();
 		driver = undefined;
+		shutdownConnection = undefined;
 		checks.push("client_detach");
 
 		const terminal = await command(observer, "pty-process-wait", "process.wait", { sessionId, executionId, timeoutMs: 5_000 });
@@ -114,17 +141,17 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 			terminal.body.ok !== true ||
 			terminal.body.outcome !== "terminal" ||
 			output.body.ok !== true ||
-			output.body.page !== "pty✅\r\n" && output.body.page !== "pty✅\n"
+			!stringValue(output.body.page)?.includes("pty✅:human-input")
 		) {
-			return { passed: false, checks, failures: ["production PTY terminal/output recovery failed"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY terminal/output recovery failed"] };
 		}
 		checks.push("pty_utf8");
 
 		const duplicate = await command(observer, "pty-process-wait-duplicate", "process.wait", { sessionId, executionId, timeoutMs: 5_000 });
 		if (duplicate.body.ok !== true || duplicate.body.outcome !== "terminal") {
-			return { passed: false, checks, failures: ["production PTY Queue delivery was not idempotent"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY Queue delivery was not idempotent"] };
 		}
-		checks.push("queue_dedupe");
+		checks.push("terminal_wait_idempotency");
 
 		await observer.close();
 		observer = undefined;
@@ -147,26 +174,32 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 			recovered.body.ok !== true ||
 			!stringValue(recovered.body.page)?.includes("pty✅")
 		) {
-			return { passed: false, checks, failures: ["production PTY reconnect cursor recovery failed"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY reconnect cursor recovery failed"] };
 		}
-		checks.push("output_recovery");
+		checks.push("client_reconnect_output_cursor");
 
-		const shutdown = await command(reconnected, "pty-host-shutdown", "host.shutdown", {});
+		driverFence = fenceFrom(reopened);
+		if (driverFence === undefined) return { passed: false, outcome: "fail", checks, failures: ["reopened PTY session omitted the current fence"] };
+		const reclaimed = await command(reconnected, "pty-reclaim-driver", "session.claim_driver", { sessionId, ...driverFence });
+		if (reclaimed.body.ok !== true) return { passed: false, outcome: "fail", checks, failures: ["reconnected PTY client could not claim the detached driver"] };
+		driverFence = fenceFrom(reclaimed);
+		if (driverFence === undefined) return { passed: false, outcome: "fail", checks, failures: ["reconnected PTY claim omitted the updated fence"] };
+		shutdownConnection = reconnected;
+		const shutdown = await command(reconnected, "pty-host-shutdown", "host.shutdown", { sessionId, ...driverFence });
 		if (shutdown.body.ok !== true || shutdown.body.accepted !== true) {
-			return { passed: false, checks, failures: ["production PTY Host shutdown was not accepted"] };
+			return { passed: false, outcome: "fail", checks, failures: ["production PTY Host shutdown was not accepted"] };
 		}
 		shutdownRequested = true;
-		checks.push("explicit_host_shutdown");
+		checks.push("driver_only_explicit_host_shutdown");
 		await reconnected.close();
 		reconnected = undefined;
 		await waitForEndpointGone(endpointStore);
-		return { passed: true, checks };
+		return { passed: true, outcome: "pass", checks };
 	} catch (error) {
-		return { passed: false, checks, failures: [error instanceof Error ? error.message : String(error)] };
+		return { passed: false, outcome: "fail", checks, failures: [error instanceof Error ? error.message : String(error)] };
 	} finally {
-		if (!shutdownRequested) {
-			const remaining = reconnected ?? observer ?? driver;
-			if (remaining !== undefined) await command(remaining, "pty-host-shutdown-fallback", "host.shutdown", {}).catch(() => undefined);
+		if (!shutdownRequested && shutdownConnection !== undefined && sessionIdValue !== undefined && driverFence !== undefined) {
+			await command(shutdownConnection, "pty-host-shutdown-fallback", "host.shutdown", { sessionId: sessionIdValue, ...driverFence }).catch(() => undefined);
 		}
 		await Promise.all([
 			driver?.close().catch(() => undefined),
@@ -176,6 +209,21 @@ export async function runManagedProcessPtyVerification(): Promise<ManagedProcess
 		await waitForEndpointGone(endpointStore).catch(() => undefined);
 		await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 	}
+}
+
+interface DriverFence {
+	readonly expectedHostGeneration: number;
+	readonly expectedSessionGeneration: number;
+	readonly expectedDriverRevision: number;
+}
+
+function fenceFrom(frame: HostFrameEnvelope): DriverFence | undefined {
+	const expectedHostGeneration = integerValue(frame.body.hostGeneration);
+	const expectedSessionGeneration = integerValue(frame.body.sessionGeneration);
+	const expectedDriverRevision = integerValue(frame.body.driverRevision);
+	return expectedHostGeneration === undefined || expectedSessionGeneration === undefined || expectedDriverRevision === undefined
+		? undefined
+		: { expectedHostGeneration, expectedSessionGeneration, expectedDriverRevision };
 }
 
 async function command(
@@ -202,7 +250,7 @@ async function waitForEndpointGone(store: EndpointStore): Promise<void> {
 }
 
 function buildPtyCommand(): string {
-	const javascript = "setTimeout(() => process.stdout.write('pty✅\\n'), 1000)";
+	const javascript = "process.stdin.setEncoding('utf8');process.stdin.once('data',(input)=>{process.stdout.write('pty✅:'+input.trim()+'\\n');process.exit(0)});setTimeout(()=>process.exit(2),5000)";
 	return `${shellQuote(process.execPath)} -e ${shellQuote(javascript)}`;
 }
 
@@ -216,6 +264,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function integerValue(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
 if (process.argv[1]?.endsWith("verify-managed-process-pty.ts")) {
