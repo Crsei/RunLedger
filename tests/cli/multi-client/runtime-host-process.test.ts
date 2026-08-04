@@ -33,7 +33,32 @@ function scope(): RuntimeHostScope {
 	};
 }
 
+function testPort(options: ConstructorParameters<typeof ProductionManagedProcessPort>[0]): ProductionManagedProcessPort {
+	return new ProductionManagedProcessPort({ ...options, allowTestOnlyUnrestrictedExecution: true });
+}
+
 describe("production Host managed process port", () => {
+	it("fails closed when production composition has no Security/ExecutionGateway", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-no-security-"));
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		try {
+			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			await expect(port.create({
+				sessionId: createRuntimeId("session", "no-security"),
+				sessionGeneration: 1,
+				commandId: "no-security-command",
+				command: "printf must-not-spawn",
+				cwd: root,
+				timeoutMs: 1_000,
+				backend: "pipe",
+				executionMode: "foreground",
+				principalId: "principal_no-security",
+			})).resolves.toMatchObject({ ok: false, code: "execution_constraint_unavailable" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("routes process materialization through the configured Trace mode", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-trace-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
@@ -45,7 +70,7 @@ describe("production Host managed process port", () => {
 					config: { mode, failurePolicy: "fail_closed" },
 					now: () => new Date("2026-08-04T10:20:30.000Z"),
 				});
-				const port = new ProductionManagedProcessPort({
+				const port = testPort({
 					layout,
 					scope: scope(),
 					hostGeneration: index + 1,
@@ -95,7 +120,7 @@ describe("production Host managed process port", () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const sessionId = createRuntimeId("session", "process");
 		try {
-			const first = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const first = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const created = await first.create({
 				sessionId,
 				sessionGeneration: 1,
@@ -117,7 +142,7 @@ describe("production Host managed process port", () => {
 				output = await first.output(sessionId, executionId, { sequence: 0, byteOffset: 0 }, 1024);
 			}
 			expect(output.page).toContain("managed✅");
-			const second = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const second = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const recovered = await second.output(sessionId, executionId, { sequence: 0, byteOffset: 0 }, 1024);
 			expect(recovered.page).toContain("managed✅");
 		} finally {
@@ -143,7 +168,7 @@ describe("production Host managed process port", () => {
 			stdin: input,
 		};
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const first = await port.create(createInput);
 			expect(first.ok).toBe(true);
 			if (!first.ok) return;
@@ -160,7 +185,7 @@ describe("production Host managed process port", () => {
 			}
 			expect(output.page).toBe(input);
 
-			const recoveredPort = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const recoveredPort = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const recoveredRetry = await recoveredPort.create(createInput);
 			expect(recoveredRetry).toMatchObject({
 				ok: true,
@@ -176,7 +201,7 @@ describe("production Host managed process port", () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const sessionId = createRuntimeId("session", "process-containment");
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const supervised = await port.create({
 				sessionId,
 				sessionGeneration: 1,
@@ -217,7 +242,7 @@ describe("production Host managed process port", () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const sessionId = createRuntimeId("session", "process-retention-facade");
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const created = await port.create({
 				sessionId,
 				sessionGeneration: 1,
@@ -267,7 +292,7 @@ describe("production Host managed process port", () => {
 			put: async () => { throw new Error("artifact store unavailable"); },
 		};
 		try {
-			const first = new ProductionManagedProcessPort({
+			const first = testPort({
 				layout,
 				scope: scope(),
 				hostGeneration: 1,
@@ -289,7 +314,7 @@ describe("production Host managed process port", () => {
 			expect(created.ok).toBe(true);
 			if (!created.ok) return;
 			await new Promise((resolve) => setTimeout(resolve, 20));
-			const recovered = new ProductionManagedProcessPort({
+			const recovered = testPort({
 				layout,
 				scope: scope(),
 				hostGeneration: 1,
@@ -308,7 +333,7 @@ describe("production Host managed process port", () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-foreground-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const client: ManagedForegroundBashOperations = port.toolClient("session_foreground", 1, "principal_foreground");
 			const result = await client.exec({
 				command: "printf 'foreground✅\\n'",
@@ -329,7 +354,7 @@ describe("production Host managed process port", () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const sessionId = createRuntimeId("session", "process-foreground-timeout");
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const result = await port.toolClient(sessionId, 1, "principal_foreground_timeout").exec({
 				command: "node -e \"setTimeout(() => {}, 10000)\"",
 				cwd: root,
@@ -348,7 +373,7 @@ describe("production Host managed process port", () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const sessionId = createRuntimeId("session", "process-foreground-abort");
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const controller = new AbortController();
 			setTimeout(() => controller.abort(), 60);
 			const result = await port.toolClient(sessionId, 1, "principal_foreground_abort").exec({
@@ -369,7 +394,7 @@ describe("production Host managed process port", () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-foreground-pages-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const result = await port.toolClient("session_foreground_pages", 1, "principal_foreground_pages").exec({
 				command: "node -e \"process.stdout.write('x'.repeat(100000))\"",
 				cwd: root,
@@ -395,7 +420,7 @@ describe("production Host managed process port", () => {
 			now: () => new Date("2026-08-04T10:20:30.000Z"),
 		});
 		try {
-			const first = new ProductionManagedProcessPort({
+			const first = testPort({
 				layout,
 				scope: scope(),
 				hostGeneration: 1,
@@ -422,7 +447,7 @@ describe("production Host managed process port", () => {
 			}
 			expect(output.page).toContain("recoverable trace");
 
-			const recoveredHost = new ProductionManagedProcessPort({
+			const recoveredHost = testPort({
 				layout,
 				scope: scope(),
 				hostGeneration: 1,
@@ -451,7 +476,7 @@ describe("production Host managed process port", () => {
 		const ledger = new MemoryLedger({ sessionId });
 		let prompts = 0;
 		try {
-			const port = new ProductionManagedProcessPort({ layout, scope: scope(), hostGeneration: 1 });
+			const port = testPort({ layout, scope: scope(), hostGeneration: 1 });
 			const remove = port.attachCompletionAgent(sessionId, {
 				inFlight: false,
 				getSteeringMessages: () => [],

@@ -148,6 +148,7 @@ export interface ConnectProductionRuntimeHostOptions {
 	readonly entryPath?: string;
 	readonly wait?: { readonly timeoutMs?: number; readonly intervalMs?: number };
 	readonly peerCredentialHelperPath?: string;
+	readonly reverseRequestHandler?: (frame: HostFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 /** 标准 CLI 唯一使用的 authenticated connect-or-spawn composition。 */
@@ -178,7 +179,7 @@ export async function connectProductionRuntimeHost(
 			acquire: () => acquireStartupElection(join(options.layout.home, hostStartupElectionRelativeLocator(scope.workspaceStorageKey))),
 		},
 		connector: {
-			connect: (endpoint: HostEndpointRecord) => connectProductionEndpoint(socketPath, scope, endpoint),
+			connect: (endpoint: HostEndpointRecord) => connectProductionEndpoint(socketPath, scope, endpoint, options.reverseRequestHandler),
 		},
 		spawner: {
 			spawn: (input: { readonly hostGeneration: number }) => spawnProductionHost({
@@ -214,10 +215,11 @@ async function connectProductionEndpoint(
 	socketPath: string,
 	scope: HostCompatibilityEnvelope,
 	endpoint: HostEndpointRecord,
+	reverseRequestHandler?: ConnectProductionRuntimeHostOptions["reverseRequestHandler"],
 ): Promise<HostConnectionResult> {
 	let client: JsonLineHostClient | undefined;
 	try {
-		client = await JsonLineHostClient.connect(socketPath);
+		client = await JsonLineHostClient.connect(socketPath, { reverseRequestHandler });
 		const initialized = await client.request({
 			frameId: `initialize_${endpoint.hostGeneration}_${Date.now()}`,
 			kind: "initialize_request",
@@ -275,7 +277,7 @@ async function spawnProductionHost(options: ConnectProductionRuntimeHostOptions 
 	while (Date.now() < deadline) {
 		const endpoint = await options.endpointStore.read().catch(() => undefined);
 		if (endpoint?.hostGeneration === options.hostGeneration && endpoint.state === "ready") {
-			const connected = await connectProductionEndpoint(options.socketPath, options.scope, endpoint);
+			const connected = await connectProductionEndpoint(options.socketPath, options.scope, endpoint, options.reverseRequestHandler);
 			if (connected.ok) {
 				return {
 					ok: true,

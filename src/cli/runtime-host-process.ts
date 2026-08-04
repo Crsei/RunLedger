@@ -54,6 +54,8 @@ export interface ProductionManagedProcessOptions {
 	readonly artifactStore?: ProcessOutputArtifactStore;
 	/** Resident Host's sole Security/ExecutionGateway owner. */
 	readonly security?: ProductionHostSecurity;
+	/** Only low-level unit tests may opt into the unrestricted backend seam. */
+	readonly allowTestOnlyUnrestrictedExecution?: boolean;
 }
 
 interface CommandDescriptor {
@@ -179,6 +181,9 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 	}
 
 	public async create(input: HostProcessCreateInput & { readonly commandId?: string }): Promise<ProductionProcessCreateResult> {
+		if (this.options.security === undefined && this.options.allowTestOnlyUnrestrictedExecution !== true) {
+			return { ok: false, code: "execution_constraint_unavailable" };
+		}
 		if (!isAbsolute(input.cwd)) return { ok: false, code: "cwd_invalid" };
 		const commandId = input.commandId ?? createRuntimeId("command");
 		const stdinDigest = input.stdin === undefined ? undefined : runtimeDigest(input.stdin);

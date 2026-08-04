@@ -1,9 +1,4 @@
-/**
- * 工具执行边界的 Phase 0 静态检查。
- *
- * TODO(security-phase-0): 随 Phase 5 工具迁移逐项删除 legacy allowlist，并把
- * 结果接入 npm check。当前允许名单必须精确到文件，不能豁免整个目录。
- */
+/** 工具与扩展执行边界的静态检查；所有豁免都必须是精确的 canonical adapter 文件。 */
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -13,9 +8,14 @@ export interface ExecutionBoundaryViolation {
 	kind: "raw-fs" | "raw-process" | "raw-network" | "raw-background";
 }
 
-export const LEGACY_RUNTIME_TOOL_ALLOWLIST: Readonly<Record<string, readonly string[]>> = {
-	"src/runtime/tools": [],
-};
+/**
+ * 这些文件是 canonical state adapter，直接使用 fs 只为实现 durable store；
+ * 它们不向工具、扩展或进程执行面暴露 raw I/O。没有 runtime tool legacy 豁免。
+ */
+export const CANONICAL_STORAGE_ADAPTER_ALLOWLIST: readonly string[] = [
+	"src/worktree/persisted-binding.ts",
+	"src/worktree/registry.ts",
+];
 
 /**
  * R0 之后只有这里列出的 backend 文件可以直接持有 child_process/PTY 句柄。
@@ -38,7 +38,7 @@ export const RUNTIME_HOST_LAUNCHER_ALLOWLIST: readonly string[] = [
 ];
 
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
-	[/from [\"']node:fs(?:\/promises)?[\"']/, "raw-fs"],
+	[/from [\"'](?:node:)?fs(?:\/promises)?[\"']/, "raw-fs"],
 	[/from [\"']node:child_process[\"']/, "raw-process"],
 	[/\bfetch\s*\(/, "raw-network"],
 ];
@@ -79,8 +79,7 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 			for (const [pattern, kind] of BOUNDARY_PATTERNS) {
 				if (!pattern.test(source)) continue;
 				const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
-				const allowed = (LEGACY_RUNTIME_TOOL_ALLOWLIST[root] ?? []).includes(relativeFile.slice(`${root}/`.length));
-				if (!allowed) violations.push({ file: relativeFile, kind });
+				if (!CANONICAL_STORAGE_ADAPTER_ALLOWLIST.includes(relativeFile)) violations.push({ file: relativeFile, kind });
 			}
 		}
 	}

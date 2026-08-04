@@ -30,6 +30,11 @@ export interface ApprovalStateStorePort {
 	commit(receipt: ApprovalReceiptRef, expectedRevision: number): Promise<SecurityResult<ApprovalReceiptRef>>;
 }
 
+export interface ApprovalAuditPort {
+	requested(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket }): Promise<void>;
+	decided(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket; readonly receipt: ApprovalReceiptRef }): Promise<void>;
+}
+
 export class MemoryApprovalStateStore implements ApprovalStateStorePort {
 	readonly #receipts = new Map<ApprovalId, ApprovalReceiptRef>();
 
@@ -59,6 +64,8 @@ export class MemoryApprovalStateStore implements ApprovalStateStorePort {
 export interface ApprovalCoordinatorOptions {
 	readonly prompter: PermissionPrompter;
 	readonly store?: ApprovalStateStorePort;
+	/** Host-owned canonical event sink; omitted only for isolated unit tests. */
+	readonly audit?: ApprovalAuditPort;
 	readonly clock?: () => Date;
 	readonly timeoutMs?: number;
 }
@@ -187,6 +194,7 @@ export class HeadlessDenyPrompter implements PermissionPrompter {
 export class ApprovalCoordinator {
 	readonly #prompter: PermissionPrompter;
 	readonly #store: ApprovalStateStorePort;
+	readonly #audit?: ApprovalAuditPort;
 	readonly #clock: () => Date;
 	readonly #timeoutMs: number;
 	readonly #pending = new Map<string, Promise<SecurityResult<AuthorizationResult>>>();
@@ -194,6 +202,7 @@ export class ApprovalCoordinator {
 	public constructor(options: ApprovalCoordinatorOptions) {
 		this.#prompter = options.prompter;
 		this.#store = options.store ?? new MemoryApprovalStateStore();
+		this.#audit = options.audit;
 		this.#clock = options.clock ?? (() => new Date());
 		this.#timeoutMs = Math.max(1, options.timeoutMs ?? 30_000);
 	}
@@ -265,6 +274,11 @@ export class ApprovalCoordinator {
 			createdAt: ticket.createdAt,
 			expiresAt: ticket.expiresAt ?? ticket.createdAt,
 		};
+		try {
+			await this.#audit?.requested({ request, ticket });
+		} catch {
+			return failure("approval request audit is unavailable", "approval_stale");
+		}
 		const raced = await this.#racePrompt(prompt, signal);
 		const response: PermissionPromptResponse = raced.kind === "response"
 			? raced.response
@@ -274,15 +288,20 @@ export class ApprovalCoordinator {
 			try {
 				current = await revalidate();
 			} catch {
-				return this.#commitDenied(ticket, response, "abort", "approval revalidation failed");
+					return this.#commitDenied(request, ticket, response, "abort", "approval revalidation failed");
 			}
 			if (current.argumentsDigest.digest !== request.argumentsDigest.digest || current.cwd !== request.cwd || current.policyDigest.digest !== request.snapshot.policyDigest.digest) {
-				return this.#commitDenied(ticket, response, "abort", "approval binding changed before execution");
+					return this.#commitDenied(request, ticket, response, "abort", "approval binding changed before execution");
 			}
 		}
 		const receipt = createApprovalReceipt(ticket, response, raced.kind === "response" ? "response" : raced.kind, this.#clock().toISOString());
 		const committed = await this.#store.commit(receipt, 0);
 		if (!committed.ok) return committed;
+		try {
+			await this.#audit?.decided({ request, ticket, receipt: committed.value });
+		} catch {
+			return failure("approval decision audit is uncertain", "approval_stale");
+		}
 		const outcome = committed.value.decision === "allowed" ? "allow" : "deny";
 		return {
 			ok: true,
@@ -298,6 +317,7 @@ export class ApprovalCoordinator {
 	}
 
 	async #commitDenied(
+		request: AuthorizationRequest,
 		ticket: ApprovalTicket,
 		response: PermissionPromptResponse,
 		reason: "abort" | "timeout" | "channel",
@@ -306,13 +326,18 @@ export class ApprovalCoordinator {
 		const receipt = createApprovalReceipt(ticket, response, reason, this.#clock().toISOString());
 		const committed = await this.#store.commit(receipt, 0);
 		if (!committed.ok) return committed;
+		try {
+			await this.#audit?.decided({ request, ticket, receipt: committed.value });
+		} catch {
+			return failure("approval decision audit is uncertain", "approval_stale");
+		}
 		return {
 			ok: true,
 			value: {
 				outcome: "deny",
 				decisionSource: "approval",
-				requests: [],
-				policyDigest: ticket.requestDigest,
+				requests: request.requests,
+				policyDigest: request.snapshot.policyDigest,
 				approval: committed.value,
 				reason: message,
 			},

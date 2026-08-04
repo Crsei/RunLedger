@@ -23,6 +23,12 @@ import { createStdlibTools, stdlibTools } from "../src/runtime/tools/index.ts";
 describe("stdlib tools (cross-platform)", () => {
   let dir: string;
 
+  it("production composition rejects a missing governed ExecutionEnv", () => {
+    expect(() => createStdlibTools("/workspace", { requireExecutionEnv: true })).toThrow(
+      "governed ExecutionEnv is required",
+    );
+  });
+
   beforeEach(async () => {
     dir = await mkdtemp(path.join(tmpdir(), "runledger-stdlib-"));
   });

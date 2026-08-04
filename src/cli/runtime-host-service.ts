@@ -34,6 +34,8 @@ import type { OutputCursor } from "../runtime/process/output.ts";
 import type { ControlPlaneActor } from "../storage/process/control-plane.ts";
 import type { HostEventStore, StoredHostEvent } from "../storage/host/event-store.ts";
 import { BoundedHostCommandStore, type HostCommandStore } from "../storage/host/command-store.ts";
+import { SYSTEM_APPROVAL_PRINCIPAL_ID } from "../security/permission/approval-coordinator.ts";
+import type { PermissionPrompt, PermissionPromptResponse, PermissionPrompter } from "../security/types.ts";
 
 export type HostSessionOpenMode = "create" | "open" | "continue_recent" | "resume" | "fork";
 
@@ -50,6 +52,74 @@ export interface HostSessionOpenRequest {
 export interface HostSessionRuntime {
 	readonly controller: InteractiveSessionControllerPort;
 	close(): Promise<void>;
+}
+
+export interface HostDriverResponse {
+	readonly body: Record<string, unknown>;
+	readonly principalId: string;
+}
+
+export interface HostDriverResponseOptions {
+	readonly timeoutMs?: number;
+	readonly signal?: AbortSignal;
+}
+
+export interface HostDriverResponseRequester {
+	requestDriverResponse(
+		sessionId: string,
+		body: Record<string, unknown>,
+		options?: HostDriverResponseOptions,
+	): Promise<HostDriverResponse>;
+}
+
+/** PermissionPrompter adapter whose authority remains in the resident Host. */
+export class HostReversePermissionPrompter implements PermissionPrompter {
+	private readonly host: () => HostDriverResponseRequester | undefined;
+
+	public constructor(host: () => HostDriverResponseRequester | undefined) {
+		this.host = host;
+	}
+
+	public async request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<PermissionPromptResponse> {
+		const host = this.host();
+		if (!host) return { decision: "deny", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID, reason: "approval Host is unavailable" };
+		let response: HostDriverResponse;
+		try {
+			response = await host.requestDriverResponse(prompt.sessionId, {
+				requestType: "permission",
+				requestId: prompt.requestId,
+				toolCallId: prompt.toolCallId,
+				toolName: prompt.toolName,
+				summary: prompt.summary,
+				requests: prompt.requests,
+				argumentsDigest: prompt.argumentsDigest,
+				cwd: prompt.cwd,
+				policyDigest: prompt.policyDigest,
+				expiresAt: prompt.expiresAt,
+			}, { signal });
+		} catch (error) {
+			return {
+				decision: "cancel",
+				decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID,
+			};
+		}
+		if (response.body.ok !== true) {
+			return {
+				decision: "deny",
+				decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID,
+				reason: stringValue(response.body.code) ?? "approval was not accepted",
+			};
+		}
+		const decision = response.body.decision;
+		if (decision === "allow-once" || decision === "deny" || decision === "cancel") {
+			return {
+				decision,
+				decidedBy: response.principalId as PermissionPromptResponse["decidedBy"],
+				...(typeof response.body.reason === "string" ? { reason: response.body.reason } : {}),
+			};
+		}
+		return { decision: "deny", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID, reason: "approval decision is invalid" };
+	}
 }
 
 export interface HostProcessCreateInput {
@@ -121,6 +191,20 @@ interface HostSubscriptionState {
 	sentCursor: number;
 }
 
+interface PendingHostDriverResponse {
+	readonly requestId: string;
+	readonly sessionId: string;
+	readonly body: Record<string, unknown>;
+	readonly deadline: number;
+	readonly timeoutId: ReturnType<typeof setTimeout>;
+	readonly resolve: (response: HostDriverResponse) => void;
+	readonly reject: (error: Error) => void;
+	readonly removeAbortListener?: () => void;
+	connectionId?: string;
+	deliveryFrameId?: string;
+	deliveryCount: number;
+}
+
 export interface HostSessionSnapshot {
 	readonly sessionId: string;
 	readonly selection: RuntimeSelection;
@@ -137,7 +221,9 @@ export class ResidentRuntimeHost {
 	private readonly generation: number;
 	private readonly sessions = new Map<string, SessionState>();
 	private readonly subscriptions = new Map<string, Map<string, HostSubscriptionState>>();
+	private readonly reverseRequests = new Map<string, PendingHostDriverResponse>();
 	private readonly commandStore: HostCommandStore;
+	private reverseRequestSequence = 0;
 	private endpoint: HostEndpointRecord | undefined;
 	private started = false;
 	private admissionOpen = true;
@@ -182,6 +268,59 @@ export class ResidentRuntimeHost {
 		return this.endpoint;
 	}
 
+	/**
+	 * Sends a reverse request to the active driver without making the logical
+	 * waiter depend on one client socket. A disconnected driver leaves the
+	 * request pending until a replacement explicitly claims the session.
+	 */
+	public requestDriverResponse(
+		sessionId: string,
+		body: Record<string, unknown>,
+		options: HostDriverResponseOptions = {},
+	): Promise<HostDriverResponse> {
+		if (!this.sessions.has(sessionId)) return Promise.reject(new Error("session_not_found"));
+		const timeoutMs = options.timeoutMs ?? RUNTIME_HOST_BOUNDS.maxWaitMs;
+		if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > RUNTIME_HOST_BOUNDS.maxWaitMs) {
+			return Promise.reject(new Error("invalid reverse request timeout"));
+		}
+		const requestId = `reverse_${Date.now().toString(36)}_${++this.reverseRequestSequence}`;
+		const deadline = Date.now() + timeoutMs;
+		return new Promise<HostDriverResponse>((resolve, reject) => {
+			let pending: PendingHostDriverResponse;
+			const timeoutId = setTimeout(() => {
+				if (this.reverseRequests.get(requestId) !== pending) return;
+				this.reverseRequests.delete(requestId);
+				pending.removeAbortListener?.();
+				reject(new Error("Host reverse request timed out"));
+			}, timeoutMs);
+			const abortListener = (): void => {
+				if (this.reverseRequests.get(requestId) !== pending) return;
+				clearTimeout(timeoutId);
+				this.reverseRequests.delete(requestId);
+				pending.removeAbortListener?.();
+				reject(new Error("Host reverse request aborted"));
+			};
+			pending = {
+				requestId,
+				sessionId,
+				body: { ...body },
+				deadline,
+				timeoutId,
+				resolve,
+				reject,
+				...(options.signal === undefined ? {} : { removeAbortListener: () => options.signal?.removeEventListener("abort", abortListener) }),
+				deliveryCount: 0,
+			};
+			this.reverseRequests.set(requestId, pending);
+			if (options.signal?.aborted) {
+				abortListener();
+				return;
+			}
+			options.signal?.addEventListener("abort", abortListener, { once: true });
+			void this.dispatchDriverResponse(pending);
+		});
+	}
+
 	/** R10: block new session/process admission while the resident Host drains. */
 	public async closeAdmission(): Promise<void> {
 		this.admissionOpen = false;
@@ -213,6 +352,7 @@ export class ResidentRuntimeHost {
 
 	private async closeOnce(): Promise<void> {
 		this.admissionOpen = false;
+		this.rejectReverseRequests(new Error("Host is closing"));
 		if (this.endpoint) {
 			this.endpoint = { ...this.endpoint, state: "draining" };
 			try {
@@ -415,6 +555,7 @@ export class ResidentRuntimeHost {
 		const result = claimDriver(state.driver, { mode: "claim", ...fence });
 		if (!result.ok) return this.response(frame, { ok: false, code: result.code });
 		state.driver = result.state;
+		void this.dispatchPendingDriverResponses(state.runtime.controller.sessionId);
 		return this.response(frame, { ok: true, hostGeneration: state.driver.hostGeneration, sessionGeneration: state.driver.sessionGeneration, driverRevision: state.driver.driverRevision });
 	}
 
@@ -713,11 +854,67 @@ export class ResidentRuntimeHost {
 			if (state.driver.driver?.connectionId !== connectionId) continue;
 			state.driver = {
 				...state.driver,
-				driver: undefined,
-				driverRevision: state.driver.driverRevision + 1,
+				 driver: undefined,
+				 driverRevision: state.driver.driverRevision + 1,
 			};
 		}
+		for (const pending of this.reverseRequests.values()) {
+			if (pending.connectionId === connectionId) {
+				pending.connectionId = undefined;
+				pending.deliveryFrameId = undefined;
+			}
+		}
 		await this.options.onConnectionClosed?.(connectionId);
+	}
+
+	private async dispatchPendingDriverResponses(sessionId: string): Promise<void> {
+		for (const pending of this.reverseRequests.values()) {
+			if (pending.sessionId === sessionId) await this.dispatchDriverResponse(pending);
+		}
+	}
+
+	private async dispatchDriverResponse(pending: PendingHostDriverResponse): Promise<void> {
+		if (this.reverseRequests.get(pending.requestId) !== pending) return;
+		const state = this.sessions.get(pending.sessionId);
+		const driver = state?.driver.driver;
+		if (!state || !driver || pending.connectionId !== undefined) return;
+		const remaining = pending.deadline - Date.now();
+		if (remaining <= 0) return;
+		pending.deliveryCount += 1;
+		const deliveryFrameId = `${pending.requestId}_d${pending.deliveryCount}`;
+		pending.connectionId = driver.connectionId;
+		pending.deliveryFrameId = deliveryFrameId;
+		try {
+			const response = await this.server.requestToConnection(driver.connectionId, {
+				frameId: deliveryFrameId,
+				kind: "reverse_request",
+				protocolVersion: 1,
+				body: { ...pending.body, requestId: pending.requestId },
+			}, Math.min(remaining, RUNTIME_HOST_BOUNDS.maxWaitMs));
+			if (this.reverseRequests.get(pending.requestId) !== pending || pending.deliveryFrameId !== deliveryFrameId) return;
+			const currentDriver = this.sessions.get(pending.sessionId)?.driver.driver;
+			if (!currentDriver || currentDriver.connectionId !== driver.connectionId) return;
+			clearTimeout(pending.timeoutId);
+			pending.removeAbortListener?.();
+			this.reverseRequests.delete(pending.requestId);
+			const { requestFrameId: _requestFrameId, ...body } = response.body;
+			pending.resolve({ body, principalId: driver.principalId });
+		} catch {
+			if (this.reverseRequests.get(pending.requestId) !== pending) return;
+			if (pending.connectionId === driver.connectionId) {
+				pending.connectionId = undefined;
+				pending.deliveryFrameId = undefined;
+			}
+		}
+	}
+
+	private rejectReverseRequests(error: Error): void {
+		for (const pending of this.reverseRequests.values()) {
+			clearTimeout(pending.timeoutId);
+			pending.removeAbortListener?.();
+			pending.reject(error);
+		}
+		this.reverseRequests.clear();
 	}
 
 	private response(frame: HostFrameEnvelope, body: Record<string, unknown>): HostFrameEnvelope {

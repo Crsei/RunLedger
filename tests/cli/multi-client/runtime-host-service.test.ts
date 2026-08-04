@@ -19,7 +19,8 @@ import type {
 } from "../../../src/runtime/interactive-session-controller.ts";
 import type { HostConnectionPrincipal, HostFrameEnvelope } from "../../../src/runtime/host/types.ts";
 import { JsonLineHostClient } from "../../../src/cli/runtime-host-transport.ts";
-import { ResidentRuntimeHost, type HostProcessPort, type HostSessionRuntime } from "../../../src/cli/runtime-host-service.ts";
+import { HostReversePermissionPrompter, ResidentRuntimeHost, type HostProcessPort, type HostSessionRuntime } from "../../../src/cli/runtime-host-service.ts";
+import type { PermissionPrompt } from "../../../src/security/types.ts";
 import { JsonlHostEventStore } from "../../../src/storage/host/event-store.ts";
 import { JsonHostCommandStore } from "../../../src/storage/host/command-store.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
@@ -94,6 +95,139 @@ function fakeSession(sessionId = createRuntimeId("session", "service")): HostSes
 }
 
 describe("production Resident Runtime Host service", () => {
+	it("maps a reverse approval response to the attested driver principal", async () => {
+		let requestBody: Record<string, unknown> | undefined;
+		const prompter = new HostReversePermissionPrompter(() => ({
+			requestDriverResponse: async (_sessionId, body) => {
+				requestBody = body;
+				return {
+					body: { ok: true, decision: "allow-once", decidedBy: "forged-client-principal" },
+					principalId: createRuntimeId("principal", "attested-driver"),
+				};
+			},
+		}));
+		const prompt: PermissionPrompt = {
+			requestId: createRuntimeId("command", "reverse-prompt"),
+			sessionId: createRuntimeId("session", "reverse-prompt"),
+			toolCallId: createRuntimeId("toolCall", "reverse-prompt"),
+			toolName: "bash",
+			summary: "write file",
+			requests: [{ kind: "filesystem", operation: "write", path: "/workspace/file" }],
+			argumentsDigest: digest("reverse-arguments"),
+			cwd: "/workspace",
+			policyDigest: digest("reverse-policy"),
+			createdAt: "2026-08-05T00:00:00.000Z",
+			expiresAt: "2026-08-05T00:01:00.000Z",
+		};
+
+		await expect(prompter.request(prompt)).resolves.toEqual({
+			decision: "allow-once",
+			decidedBy: createRuntimeId("principal", "attested-driver"),
+		});
+		expect(requestBody).toMatchObject({ requestType: "permission", requestId: prompt.requestId, toolName: "bash", summary: "write file" });
+	});
+
+	it("delivers approval reverse requests only to the driver and resumes the same waiter after driver reconnect", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-reverse-approval-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		let principalCounter = 0;
+		const host = new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			attestor: {
+				attest: async (): Promise<HostConnectionPrincipal> => {
+					principalCounter += 1;
+					return {
+						principalId: createRuntimeId("principal", `reverse-${principalCounter}`),
+						connectionId: createRuntimeId("connection", `reverse-${principalCounter}`),
+						attestationDigest: digest(`reverse-channel-${principalCounter}`),
+					};
+				},
+			},
+			createSession: async () => fakeSession(createRuntimeId("session", "reverse-approval")),
+		});
+		try {
+			await host.start();
+			const driver = await JsonLineHostClient.connect(socketPath, {
+				reverseRequestHandler: async () => new Promise<Record<string, unknown>>(() => undefined),
+			});
+			const observer = await JsonLineHostClient.connect(socketPath);
+			const initialize = async (client: JsonLineHostClient, frameId: string): Promise<void> => {
+				await client.request({
+					frameId,
+					kind: "initialize_request",
+					protocolVersion: HOST_PROTOCOL_VERSION,
+					body: { compatibility: hostScope },
+				});
+			};
+			await initialize(driver, "reverse-init-driver");
+			await initialize(observer, "reverse-init-observer");
+			const opened = await driver.request({
+				frameId: "reverse-open",
+				kind: "command_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: { operation: "session.open", commandId: "reverse-open-command", mode: "create" },
+			});
+			const sessionId = String(opened.body.sessionId);
+		const claimed = await driver.request({
+				frameId: "reverse-claim",
+				kind: "command_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: {
+					operation: "session.claim_driver",
+					commandId: "reverse-claim-command",
+					sessionId,
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: opened.body.driverRevision,
+				},
+			});
+
+			const pending = host.requestDriverResponse(sessionId, { requestType: "permission", summary: "write file" }, { timeoutMs: 2_000 });
+			await driver.close();
+			const replacement = await JsonLineHostClient.connect(socketPath, {
+				reverseRequestHandler: async (frame) => ({
+					ok: true,
+					requestType: frame.body.requestType,
+					decision: "allow-once",
+				}),
+			});
+			await initialize(replacement, "reverse-init-replacement");
+			const reopened = await replacement.request({
+				frameId: "reverse-open-replacement",
+				kind: "command_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: { operation: "session.open", commandId: "reverse-open-replacement-command", mode: "open", sessionId },
+			});
+			const replacementClaim = await replacement.request({
+				frameId: "reverse-claim-replacement",
+				kind: "command_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: {
+					operation: "session.claim_driver",
+					commandId: "reverse-claim-replacement-command",
+					sessionId,
+					expectedHostGeneration: reopened.body.hostGeneration,
+					expectedSessionGeneration: reopened.body.sessionGeneration,
+					expectedDriverRevision: reopened.body.driverRevision,
+				},
+			});
+
+			expect(claimed.body.ok).toBe(true);
+			expect(replacementClaim.body.ok).toBe(true);
+			await expect(pending).resolves.toMatchObject({
+				body: { ok: true, requestType: "permission", decision: "allow-once" },
+				principalId: createRuntimeId("principal", "reverse-3"),
+			});
+			await observer.close();
+			await replacement.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("forces resync when a subscriber does not acknowledge the bounded cursor window", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-ack-window-"));
 		const socketPath = join(root, "host.sock");

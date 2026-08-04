@@ -61,7 +61,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   const cwd = process.cwd();
   const { layout } = await resolveRunledgerHome();
   const settings = await loadProjectSettings({ layout });
-  const host = await connectProductionRuntimeHost({ layout, cwd, settings });
+  let interactive: InteractiveMode | undefined;
+  const host = await connectProductionRuntimeHost({
+    layout,
+    cwd,
+    settings,
+    reverseRequestHandler: (frame, signal) => interactive?.handleReverseRequest(frame, signal) ?? { ok: false, code: "approval_ui_unavailable" },
+  });
   const transport: HostRequestTransport = {
     request: host.request,
     onEvent: host.onEvent,
@@ -112,18 +118,19 @@ export async function main(argv: readonly string[]): Promise<void> {
 	      createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver, driverFence: () => controller.driverFence() }),
       { driver: isDriver },
     );
-    const interactive = new InteractiveMode({ controller, processOverlayController: processOverlay });
+    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay });
+    interactive = activeInteractive;
     const onSigint = (): void => {
       if (controller.inFlight) controller.interrupt();
-      else interactive.quit();
+      else activeInteractive.quit();
     };
     process.on("SIGINT", onSigint);
     removeSigint = () => process.off("SIGINT", onSigint);
-    const onStdinEnd = (): void => interactive.quit();
+    const onStdinEnd = (): void => activeInteractive.quit();
     process.stdin.once("end", onStdinEnd);
     removeStdinEnd = () => process.stdin.off("end", onStdinEnd);
     if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
-    await interactive.run();
+    await activeInteractive.run();
     isDriver = false;
   } finally {
     removeSigint?.();

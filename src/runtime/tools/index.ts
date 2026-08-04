@@ -47,6 +47,8 @@ export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
 	/** Production Host composition supplies this; omitted only for low-level/tests. */
 	readonly executionEnv?: ExecutionEnv;
+	/** Production callers must opt into the governed Host-provided execution env. */
+	readonly requireExecutionEnv?: boolean;
 }
 
 /**
@@ -59,6 +61,9 @@ export interface StdlibToolsOptions {
 export function createStdlibTools(cwd: string = process.cwd(), options: StdlibToolsOptions = {}): ToolRegistry {
   const r = createToolRegistry([], { namespace: "stdlib" });
   const env = options.executionEnv;
+	if (options.requireExecutionEnv === true && env === undefined) {
+		throw new Error("governed ExecutionEnv is required for production stdlib tools");
+	}
   const helperShell = options.managedProcess?.exec === undefined
     ? env?.shell
     : managedProcessShell(options.managedProcess.exec, cwd);

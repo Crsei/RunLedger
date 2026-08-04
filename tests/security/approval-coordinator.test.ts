@@ -6,6 +6,7 @@ import {
 } from "../../src/runtime/contracts/public.ts";
 import {
 	ApprovalCoordinator,
+	type ApprovalAuditPort,
 	HeadlessDenyPrompter,
 	SYSTEM_APPROVAL_PRINCIPAL_ID,
 } from "../../src/security/permission/approval-coordinator.ts";
@@ -110,6 +111,24 @@ describe("ApprovalCoordinator", () => {
 		expect(first).toMatchObject({ ok: true, value: { outcome: "allow", approval: { decision: "allowed", principalId: "principal_approver" } } });
 		if (!first.ok || !first.value.approval) return;
 		expect(isApprovalReceiptRef(first.value.approval)).toBe(true);
+	});
+
+	it("requires the Host audit port for requested and decided lifecycle records", async () => {
+		const events: string[] = [];
+		const audit: ApprovalAuditPort = {
+			requested: async () => { events.push("requested"); },
+			decided: async () => { events.push("decided"); },
+		};
+		const value = request();
+		const coordinator = new ApprovalCoordinator({
+			prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }) },
+			audit,
+			clock: () => NOW,
+		});
+		const result = await coordinator.authorize(value, evaluation(value), () => validRevalidation(value));
+
+		expect(result).toMatchObject({ ok: true, value: { outcome: "allow" } });
+		expect(events).toEqual(["requested", "decided"]);
 	});
 
 	it("fails closed for deny and cancel responses", async () => {

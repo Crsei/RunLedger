@@ -62,6 +62,9 @@ import {
 	type HostProcessFinalLeafDecisionPort,
 	type HostProcessFinalLeafRequest,
 } from "../security/integration/runtime-gateway-adapter.ts";
+import { HostSecurityAuditAdapter } from "../security/integration/runtime-security-events.ts";
+import { JsonApprovalStateStore } from "../storage/host/approval-store.ts";
+import { JsonlRuntimeEventStore } from "../storage/host/runtime-event-store.ts";
 
 export interface HostSecurityConfigSource extends SecurityConfigSourcePort {
 	readonly source: SecurityConfigSourcePort["source"];
@@ -160,9 +163,12 @@ export async function createProductionHostSecurity(
 	const filesystemBroker = options.filesystemBroker ?? createLocalFileSystemBroker();
 	const networkBroker = options.networkBroker ?? createLocalNetworkBroker();
 	const permissionEngine = new PermissionEngine();
+	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey });
 	const approvalCoordinator = new ApprovalCoordinator({
 		...(options.approval ?? {}),
 		prompter: options.permissionPrompter ?? new HeadlessDenyPrompter(),
+		store: new JsonApprovalStateStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey }),
+		audit: new HostSecurityAuditAdapter({ authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, writer: runtimeEventWriter }),
 	});
 	const bindings = new Map<string, ProcessBinding>();
 	const baseProviders = createHostConstraintProviders(bindings);

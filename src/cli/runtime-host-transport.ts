@@ -39,6 +39,7 @@ export interface JsonLineHostServerOptions {
 export interface JsonLineHostClientOptions {
 	readonly maxFrameBytes?: number;
 	readonly maxPendingRequests?: number;
+	readonly reverseRequestHandler?: (frame: HostFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 interface ServerConnection {
@@ -50,11 +51,18 @@ interface ServerConnection {
 	processing: Promise<void>;
 	outbox: Buffer[];
 	writing: boolean;
+	reverseRequests: Map<string, PendingReverseRequest>;
 }
 
 interface PendingRequest {
 	readonly resolve: (frame: HostFrameEnvelope) => void;
 	readonly reject: (error: Error) => void;
+}
+
+interface PendingReverseRequest {
+	readonly resolve: (frame: HostFrameEnvelope) => void;
+	readonly reject: (error: Error) => void;
+	readonly timeoutId: ReturnType<typeof setTimeout>;
 }
 
 export class JsonLineHostServer {
@@ -108,12 +116,14 @@ export class JsonLineHostServer {
 			processing: Promise.resolve(),
 			outbox: [],
 			writing: false,
+			reverseRequests: new Map(),
 		};
 		this.connections.add(connection);
 		socket.on("data", (chunk: Buffer) => this.receive(connection, chunk));
 		socket.on("drain", () => this.flush(connection));
 		socket.once("close", () => {
 			this.connections.delete(connection);
+			this.failReverseRequests(connection, new Error("Host connection closed"));
 			const connectionId = connection.principal?.connectionId;
 			if (connectionId) void this.options.onConnectionClosed?.(connectionId);
 		});
@@ -211,8 +221,57 @@ export class JsonLineHostServer {
 			this.enqueue(connection, this.response(frame, "initialize_response", { accepted: false, code: "already_initialized" }));
 			return;
 		}
+		if (frame.kind === "reverse_response") {
+			const requestFrameId = stringValue(frame.body.requestFrameId);
+			if (requestFrameId === undefined) {
+				connection.socket.destroy();
+				return;
+			}
+			const pending = connection.reverseRequests.get(requestFrameId);
+			if (!pending) {
+				connection.socket.destroy();
+				return;
+			}
+			connection.reverseRequests.delete(requestFrameId);
+			clearTimeout(pending.timeoutId);
+			pending.resolve(frame);
+			return;
+		}
 		const responses = await this.options.handleFrame({ principal: connection.principal, frame });
 		for (const response of responses) this.enqueue(connection, response);
+	}
+
+	/** Sends one bounded reverse request to one attested, initialized connection. */
+	public requestToConnection(
+		connectionId: string,
+		frame: HostFrameEnvelope,
+		timeoutMs: number = RUNTIME_HOST_BOUNDS.maxWaitMs,
+	): Promise<HostFrameEnvelope> {
+		if (frame.kind !== "reverse_request" || !Value.Check(HostFrameEnvelopeSchema, frame)) {
+			return Promise.reject(new Error("invalid reverse request"));
+		}
+		if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > RUNTIME_HOST_BOUNDS.maxWaitMs) {
+			return Promise.reject(new Error("invalid reverse request timeout"));
+		}
+		const connection = [...this.connections].find((candidate) => candidate.principal?.connectionId === connectionId);
+		if (!connection || !connection.initialized || connection.socket.destroyed) {
+			return Promise.reject(new Error("Host reverse request connection unavailable"));
+		}
+		if (connection.reverseRequests.size >= RUNTIME_HOST_BOUNDS.maxReverseRequestWaiters) {
+			return Promise.reject(new Error("Host reverse request capacity exceeded"));
+		}
+		return new Promise<HostFrameEnvelope>((resolve, reject) => {
+			const timeoutId = setTimeout(() => {
+				connection.reverseRequests.delete(frame.frameId);
+				reject(new Error("Host reverse request timed out"));
+			}, timeoutMs);
+			connection.reverseRequests.set(frame.frameId, { resolve, reject, timeoutId });
+			if (!this.enqueue(connection, frame)) {
+				clearTimeout(timeoutId);
+				connection.reverseRequests.delete(frame.frameId);
+				reject(new Error("Host reverse request could not be delivered"));
+			}
+		});
 	}
 
 	private response(
@@ -262,6 +321,14 @@ export class JsonLineHostServer {
 			connection.writing = false;
 		}
 	}
+
+	private failReverseRequests(connection: ServerConnection, error: Error): void {
+		for (const pending of connection.reverseRequests.values()) {
+			clearTimeout(pending.timeoutId);
+			pending.reject(error);
+		}
+		connection.reverseRequests.clear();
+	}
 }
 
 async function ensureSocketParent(socketPath: string): Promise<void> {
@@ -305,6 +372,8 @@ export class JsonLineHostClient {
 	private readonly socket: net.Socket;
 	private readonly maxFrameBytes: number;
 	private readonly maxPendingRequests: number;
+	private readonly reverseRequestHandler: JsonLineHostClientOptions["reverseRequestHandler"];
+	private readonly reverseControllers = new Set<AbortController>();
 	private readonly pending = new Map<string, PendingRequest>();
 	private readonly eventListeners = new Set<(frame: HostFrameEnvelope) => void>();
 	private buffer = Buffer.alloc(0);
@@ -314,6 +383,7 @@ export class JsonLineHostClient {
 		this.socket = socket;
 		this.maxFrameBytes = options.maxFrameBytes ?? RUNTIME_HOST_BOUNDS.maxFrameBytes;
 		this.maxPendingRequests = options.maxPendingRequests ?? RUNTIME_HOST_BOUNDS.maxReverseRequestWaiters;
+		this.reverseRequestHandler = options.reverseRequestHandler;
 		socket.on("data", (chunk: Buffer) => this.receive(chunk));
 		socket.once("close", () => this.failPending(new Error("Host connection closed")));
 		socket.once("error", (error) => this.failPending(error));
@@ -403,6 +473,10 @@ export class JsonLineHostClient {
 				return;
 			}
 			const frame = value as HostFrameEnvelope;
+			if (frame.kind === "reverse_request") {
+				void this.handleReverseRequest(frame);
+				continue;
+			}
 			const requestFrameId = frame.body.requestFrameId;
 			if (typeof requestFrameId !== "string") {
 				for (const listener of this.eventListeners) {
@@ -422,9 +496,44 @@ export class JsonLineHostClient {
 	}
 
 	private failPending(error: Error): void {
-		if (this.closed && this.pending.size === 0) return;
+		if (this.closed && this.pending.size === 0 && this.reverseControllers.size === 0) return;
 		this.closed = true;
 		for (const pending of this.pending.values()) pending.reject(error);
 		this.pending.clear();
+		for (const controller of this.reverseControllers) controller.abort(error);
+		this.reverseControllers.clear();
 	}
+
+	private async handleReverseRequest(frame: HostFrameEnvelope): Promise<void> {
+		if (this.closed) return;
+		if (this.reverseControllers.size >= RUNTIME_HOST_BOUNDS.maxReverseRequestWaiters) {
+			this.notify(this.reverseResponse(frame, { ok: false, code: "reverse_request_capacity_exceeded" }));
+			return;
+		}
+		const controller = new AbortController();
+		this.reverseControllers.add(controller);
+		try {
+			const result = this.reverseRequestHandler === undefined
+				? { ok: false, code: "reverse_request_unhandled" }
+				: await this.reverseRequestHandler(frame, controller.signal);
+			this.notify(this.reverseResponse(frame, result ?? { ok: false, code: "reverse_request_unhandled" }));
+		} catch {
+			this.notify(this.reverseResponse(frame, { ok: false, code: "reverse_request_failed" }));
+		} finally {
+			this.reverseControllers.delete(controller);
+		}
+	}
+
+	private reverseResponse(request: HostFrameEnvelope, body: Record<string, unknown>): HostFrameEnvelope {
+		return {
+			frameId: `reverse_response_${request.frameId}`,
+			kind: "reverse_response",
+			protocolVersion: request.protocolVersion,
+			body: { ...body, requestFrameId: request.frameId },
+		};
+	}
+}
+
+function stringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.length > 0 ? value : undefined;
 }

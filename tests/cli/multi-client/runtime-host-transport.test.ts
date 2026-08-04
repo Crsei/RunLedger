@@ -57,6 +57,53 @@ async function waitForClose(socket: net.Socket): Promise<void> {
 }
 
 describe("R3 bounded authenticated local Host transport", () => {
+	it("routes a Host reverse request to the client handler and resolves the targeted waiter", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-reverse-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		try {
+			const server = new JsonLineHostServer({
+				socketPath,
+				scope: hostScope,
+				attestor,
+				handleFrame: async () => [],
+			});
+			await server.listen();
+			const client = await JsonLineHostClient.connect(socketPath, {
+				reverseRequestHandler: async (frame) => ({
+					ok: true,
+					requestType: frame.body.requestType,
+					decision: "allow-once",
+				}),
+			});
+			await client.request({
+				frameId: "reverse-init",
+				kind: "initialize_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: { compatibility: hostScope },
+			});
+
+			const response = await server.requestToConnection(principal.connectionId, {
+				frameId: "reverse-permission-1",
+				kind: "reverse_request",
+				protocolVersion: HOST_PROTOCOL_VERSION,
+				body: { requestType: "permission", prompt: "write file" },
+			});
+
+			expect(response.kind).toBe("reverse_response");
+			expect(response.body).toMatchObject({
+				requestFrameId: "reverse-permission-1",
+				ok: true,
+				requestType: "permission",
+				decision: "allow-once",
+			});
+			await client.close();
+			await server.close();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("attests before routing, handshakes the complete compatibility envelope, and serves commands", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-"));
 		const socketPath = join(root, "host.sock");

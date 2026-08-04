@@ -1,5 +1,6 @@
 /** Host-side SessionManager/Agent composition. */
 
+import { resolve } from "node:path";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { replaySession } from "../storage/session-codec.ts";
@@ -11,6 +12,12 @@ import { createStdlibTools } from "../runtime/tools/index.ts";
 import type { HostSessionOpenRequest, HostSessionRuntime } from "./runtime-host-service.ts";
 import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import type { ProductionHostSecurity } from "./runtime-host-security.ts";
+import {
+	validateWorkspaceBindingObservation,
+	type PersistedWorkspaceBinding,
+	type WorkspaceBindingResult,
+	JsonWorkspaceBindingStore,
+} from "../worktree/persisted-binding.ts";
 
 export interface ProductionHostSessionFactoryOptions {
 	readonly layout: RunledgerLayout;
@@ -21,11 +28,37 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly processPort?: ProductionManagedProcessPort;
 	readonly security?: ProductionHostSecurity;
+	/** Optional canonical binding; when present every cold/open session must match it. */
+	readonly workspaceBindingStore?: JsonWorkspaceBindingStore;
+}
+
+export function validateHostWorkspaceBinding(input: {
+	readonly binding: PersistedWorkspaceBinding;
+	readonly cwd: string;
+}): WorkspaceBindingResult<PersistedWorkspaceBinding> {
+	const cwd = resolve(input.cwd);
+	return validateWorkspaceBindingObservation(input.binding, {
+		workspaceId: input.binding.binding.workspaceId,
+		repositoryId: input.binding.binding.repositoryId,
+		worktreeId: input.binding.worktreeId,
+		sourceSubdir: input.binding.sourceSubdir,
+		worktreePath: input.binding.worktreePath,
+		effectiveCwd: cwd,
+		baseCommit: input.binding.baseCommit,
+		...(input.binding.headCommit === undefined ? {} : { headCommit: input.binding.headCommit }),
+	});
 }
 
 export function createProductionHostSessionFactory(options: ProductionHostSessionFactoryOptions): (input: HostSessionOpenRequest) => Promise<HostSessionRuntime> {
 	return async (input) => {
 		const cwd = input.cwd ?? options.defaultCwd;
+		if (options.workspaceBindingStore !== undefined) {
+			const binding = await options.workspaceBindingStore.read();
+			if (binding !== undefined) {
+				const validation = validateHostWorkspaceBinding({ binding, cwd });
+				if (!validation.ok) throw new Error(`${validation.error.code}: ${validation.error.message}`);
+			}
+		}
 		const manager = await selectSessionManager(options.layout, cwd, input);
 		try {
 			await manager.acquireLock();
@@ -37,6 +70,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				cwd,
 			});
 			const tools = createStdlibTools(cwd, {
+				requireExecutionEnv: true,
 				...(managedProcess === undefined ? {} : { managedProcess }),
 				...(executionEnv === undefined ? {} : { executionEnv }),
 			});

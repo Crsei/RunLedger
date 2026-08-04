@@ -13,7 +13,7 @@ import { HostRecoveryMarkerStore } from "../storage/host/recovery-marker.ts";
 import { buildRunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import { HostCompatibilityEnvelopeSchema, type HostCompatibilityEnvelope } from "../runtime/host/contracts.ts";
 import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts";
-import { ResidentRuntimeHost } from "./runtime-host-service.ts";
+import { HostReversePermissionPrompter, ResidentRuntimeHost } from "./runtime-host-service.ts";
 import { createProductionHostSessionFactory } from "./runtime-host-session.ts";
 import { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import { createProductionHostSecurity } from "./runtime-host-security.ts";
@@ -22,6 +22,7 @@ import { createLinuxSocketPeerAttestor, defaultLinuxPeerCredentialHelperPath } f
 import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
 import { JsonlHostEventStore } from "../storage/host/event-store.ts";
 import { JsonHostCommandStore } from "../storage/host/command-store.ts";
+import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
 
 export async function runResidentRuntimeHost(): Promise<void> {
 	if (process.platform !== "linux") throw new Error("resident production Host currently requires Linux local peer attestation");
@@ -41,7 +42,13 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
-	const security = await createProductionHostSecurity({ layout, scope, cwd });
+	let residentHost: ResidentRuntimeHost | undefined;
+	const security = await createProductionHostSecurity({
+		layout,
+		scope,
+		cwd,
+		permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
+	});
 	let lifecycle: RuntimeHostLifecycle | undefined;
 	let closing = false;
 	let shutdownHost: () => Promise<void> = async () => {};
@@ -76,12 +83,14 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			traceRecorderFactory,
 			processPort,
 			security,
+			workspaceBindingStore: new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
 		}),
 		onShutdown: async () => {
 			await shutdownHost();
 			setImmediate(() => process.exit(process.exitCode ?? 0));
 		},
 	});
+	residentHost = host;
 	lifecycle = new RuntimeHostLifecycle({
 		hostGeneration,
 		artifactMode: recording.mode,
