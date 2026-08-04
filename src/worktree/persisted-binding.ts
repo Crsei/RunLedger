@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { open, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { open, mkdir, readFile, rename, unlink, writeFile, lstat, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
 	RUNLEDGER_DIRECTORY_MODE,
@@ -77,6 +77,11 @@ type WorktreeLeaseRecordLike = WorkspaceLeaseRef;
 export interface JsonWorkspaceBindingStoreOptions {
 	readonly layout: RunledgerLayout;
 	readonly workspaceStorageKey: string;
+}
+
+export interface DiscoveredWorkspaceBinding {
+	readonly workspaceStorageKey: string;
+	readonly binding: PersistedWorkspaceBinding;
 }
 
 function failure<T>(code: WorkspaceBindingErrorCode, message: string, retryable = false): WorkspaceBindingResult<T> {
@@ -254,6 +259,54 @@ export class JsonWorkspaceBindingStore {
 		const binding = await this.read();
 		return binding === undefined ? failure("binding_not_found", "workspace binding is not persisted") : validateWorkspaceBindingObservation(binding, observation);
 	}
+}
+
+/**
+ * Finds the current exact binding for a worktree cwd without inventing a
+ * second index. Host storage keys are derived from the binding identity, but
+ * the identity is not knowable until the private binding is read. Discovery
+ * therefore scans only canonical host directories and rejects ambiguity or
+ * malformed current-format records instead of guessing.
+ */
+export async function discoverPersistedWorkspaceBinding(options: {
+	readonly layout: RunledgerLayout;
+	readonly cwd: string;
+}): Promise<DiscoveredWorkspaceBinding | undefined> {
+	const home = resolve(options.layout.home);
+	const hostsRoot = resolve(options.layout.state, "hosts");
+	if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, hostsRoot, process.platform === "win32" ? "win32" : "posix")) {
+		throw new Error("workspace binding discovery must remain below canonical runledgerHome");
+	}
+	let entries: readonly import("node:fs").Dirent[];
+	try {
+		entries = await readdir(hostsRoot, { withFileTypes: true });
+	} catch (error) {
+		if (isNotFound(error)) return undefined;
+		throw error;
+	}
+	const cwd = resolve(options.cwd);
+	const matches: DiscoveredWorkspaceBinding[] = [];
+	for (const entry of entries) {
+		if (!/^ws-[a-f0-9]{64}$/u.test(entry.name)) continue;
+		const directory = resolve(hostsRoot, entry.name);
+		const directoryInfo = await lstat(directory);
+		if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error("workspace binding host directory is not canonical");
+		const filePath = join(directory, "workspace-binding.json");
+		let fileInfo;
+		try {
+			fileInfo = await lstat(filePath);
+		} catch (error) {
+			if (isNotFound(error)) continue;
+			throw error;
+		}
+		if (!fileInfo.isFile() || fileInfo.isSymbolicLink()) throw new Error("workspace binding file is not canonical");
+		const binding = await new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: entry.name }).read();
+		if (binding === undefined) continue;
+		if (resolve(binding.effectiveCwd) !== cwd) continue;
+		matches.push({ workspaceStorageKey: entry.name, binding });
+	}
+	if (matches.length > 1) throw new Error("workspace binding discovery is ambiguous");
+	return matches[0];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

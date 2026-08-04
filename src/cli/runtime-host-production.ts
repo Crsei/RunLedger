@@ -1,6 +1,6 @@
 /** Shared production Runtime Host scope and canonical IPC path composition. */
 
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -39,20 +39,31 @@ import {
 } from "./runtime-host-transport.ts";
 import { defaultLinuxPeerCredentialHelperPath, LinuxSocketPeerAttestor } from "./linux-peer-attestor.ts";
 import { productionSecurityAdapterDigest } from "./runtime-host-security.ts";
+import { discoverPersistedWorkspaceBinding, type PersistedWorkspaceBinding } from "../worktree/persisted-binding.ts";
+import type { GitCommandPort, GitCommandRequest, GitCommandResult } from "../worktree/ports.ts";
+
+const MAX_PRODUCTION_GIT_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 export interface LocalRuntimeHostScopeOptions {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
+	/** Cold-replayed private binding identity, when the cwd is a managed worktree. */
+	readonly workspaceBinding?: PersistedWorkspaceBinding;
+	/** Discovery key is checked against the identity-derived key before use. */
+	readonly workspaceStorageKey?: string;
 }
 
 export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOptions): HostCompatibilityEnvelope {
 	const identityDigest = runtimeDigest({ home: options.layout.home, cwd: options.cwd });
 	const authorityId = createRuntimeId("authority", runtimeDigest({ home: options.layout.home }).digest.slice(0, 32));
 	const tenantId = createRuntimeId("tenant", "local");
-	const workspaceId = createRuntimeId("workspace", identityDigest.digest.slice(0, 32));
-	const repositoryId = createRuntimeId("repository", runtimeDigest({ cwd: options.cwd }).digest.slice(0, 32));
+	const workspaceId = options.workspaceBinding?.binding.workspaceId ?? createRuntimeId("workspace", identityDigest.digest.slice(0, 32));
+	const repositoryId = options.workspaceBinding?.binding.repositoryId ?? createRuntimeId("repository", runtimeDigest({ cwd: options.cwd }).digest.slice(0, 32));
 	const workspaceKey = createWorkspaceStorageKey({ authorityId, tenantId, workspaceId, repositoryId });
+	if (options.workspaceStorageKey !== undefined && options.workspaceStorageKey !== workspaceKey) {
+		throw new Error("persisted workspace storage key does not match binding identity");
+	}
 	const tracePolicyDigest = runtimeDigest({ recording: options.settings.recording ?? { mode: "off", failurePolicy: "best_effort" } });
 	const scope: RuntimeHostScope = {
 		authorityId,
@@ -76,6 +87,93 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 		},
 	};
 	return createHostCompatibilityEnvelope(scope);
+}
+
+/** Trusted Worktree control-plane broker; arguments are never passed through a shell. */
+export function createProductionGitCommandPort(): GitCommandPort {
+	return {
+		run: (request, signal) => runProductionGitCommand(request, signal),
+	};
+}
+
+function runProductionGitCommand(request: GitCommandRequest, signal?: AbortSignal): Promise<GitCommandResult> {
+	if (!isValidGitRequest(request)) {
+		return Promise.resolve({ stdout: "", stderr: "invalid Git command request", exitCode: 2, signaled: false });
+	}
+	return new Promise<GitCommandResult>((resolveResult) => {
+		const child = spawn("git", [...request.arguments], {
+			cwd: request.cwd,
+			stdio: ["pipe", "pipe", "pipe"],
+			windowsHide: true,
+		});
+		const stdout: Buffer[] = [];
+		const stderr: Buffer[] = [];
+		let settled = false;
+		let timedOut = false;
+		let overflowed = false;
+		const finish = (result: GitCommandResult): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", abort);
+			resolveResult(result);
+		};
+		const abort = (): void => {
+			try { child.kill("SIGTERM"); } catch { /* 子进程可能已结束。 */ }
+		};
+		const timer = setTimeout(() => {
+			timedOut = true;
+			try { child.kill("SIGKILL"); } catch { /* 子进程可能已结束。 */ }
+		}, request.timeoutMs);
+		const append = (target: Buffer[], chunk: Buffer): void => {
+			const current = target.reduce((sum, value) => sum + value.byteLength, 0);
+			if (current + chunk.byteLength > MAX_PRODUCTION_GIT_OUTPUT_BYTES) {
+				overflowed = true;
+				try { child.kill("SIGKILL"); } catch { /* 子进程可能已结束。 */ }
+				return;
+			}
+			target.push(Buffer.from(chunk));
+		};
+		child.stdout.on("data", (chunk: Buffer) => append(stdout, chunk));
+		child.stderr.on("data", (chunk: Buffer) => append(stderr, chunk));
+		child.stdin.on("error", () => { /* Git 可能在读取 stdin 前完成。 */ });
+		child.once("error", (error) => finish({ stdout: "", stderr: error.message, exitCode: 127, signaled: false }));
+		child.once("close", (code, closeSignal) => finish({
+			stdout: Buffer.concat(stdout).toString("utf8"),
+			stderr: Buffer.concat(stderr).toString("utf8"),
+			exitCode: timedOut || overflowed ? 124 : code ?? 1,
+			signaled: timedOut || overflowed || closeSignal !== null || signal?.aborted === true,
+		}));
+		signal?.addEventListener("abort", abort, { once: true });
+		if (signal?.aborted === true) abort();
+		child.stdin.end();
+	});
+}
+
+function isValidGitRequest(request: GitCommandRequest): boolean {
+	return isAbsolute(request.cwd) && request.arguments.length > 0 && request.arguments.length <= 64 &&
+		request.arguments.every((argument) => typeof argument === "string" && argument.length <= 1024 && !argument.includes("\0")) &&
+		Number.isSafeInteger(request.timeoutMs) && request.timeoutMs > 0 && request.timeoutMs <= 120_000;
+}
+
+export interface ResolvedLocalRuntimeHostScope {
+	readonly scope: HostCompatibilityEnvelope;
+	readonly binding?: PersistedWorkspaceBinding;
+}
+
+/** Resolves the Host scope from canonical binding state before endpoint election. */
+export async function resolveLocalRuntimeHostScope(
+	options: LocalRuntimeHostScopeOptions,
+): Promise<ResolvedLocalRuntimeHostScope> {
+	const discovered = await discoverPersistedWorkspaceBinding({ layout: options.layout, cwd: options.cwd });
+	const scope = createLocalRuntimeHostScope({
+		...options,
+		...(discovered === undefined ? {} : { workspaceBinding: discovered.binding, workspaceStorageKey: discovered.workspaceStorageKey }),
+	});
+	return {
+		scope,
+		...(discovered === undefined ? {} : { binding: discovered.binding }),
+	};
 }
 
 export function productionHostSocketPath(layout: RunledgerLayout, workspaceStorageKey: string): string {
@@ -156,7 +254,7 @@ export async function connectProductionRuntimeHost(
 	options: ConnectProductionRuntimeHostOptions,
 ): Promise<ProductionRuntimeHostConnection> {
 	if (process.platform !== "linux") throw new Error("production local Host transport is unavailable on this platform");
-	const scope = createLocalRuntimeHostScope({ layout: options.layout, cwd: options.cwd, settings: options.settings });
+	const { scope } = await resolveLocalRuntimeHostScope({ layout: options.layout, cwd: options.cwd, settings: options.settings });
 	const endpointStore = new EndpointStore(options.layout, scope.workspaceStorageKey);
 	const socketPath = productionHostSocketPath(options.layout, scope.workspaceStorageKey);
 	const helperPath = options.peerCredentialHelperPath ?? defaultLinuxPeerCredentialHelperPath();

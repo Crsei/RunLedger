@@ -23,7 +23,9 @@ import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
 import { JsonlHostEventStore } from "../storage/host/event-store.ts";
 import { JsonHostCommandStore } from "../storage/host/command-store.ts";
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
-import { restoreHostWorkspaceBinding } from "./runtime-host-binding.ts";
+import { HostWorkspaceBindingService } from "../worktree/host-binding.ts";
+import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
+import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 
 export async function runResidentRuntimeHost(): Promise<void> {
 	if (process.platform !== "linux") throw new Error("resident production Host currently requires Linux local peer attestation");
@@ -44,7 +46,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
 	const workspaceBindingStore = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
-	const workspaceBinding = await restoreHostWorkspaceBinding({ store: workspaceBindingStore, scope, cwd });
+	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd });
 	let residentHost: ResidentRuntimeHost | undefined;
 	const security = await createProductionHostSecurity({
 		layout,
@@ -130,6 +132,46 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		await lease.release().catch(() => undefined);
 		throw error;
 	}
+}
+
+export interface RestoreResidentWorkspaceBindingOptions {
+	readonly layout: ReturnType<typeof buildRunledgerLayout>;
+	readonly scope: Pick<HostCompatibilityEnvelope, "workspaceId" | "repositoryId" | "workspaceStorageKey">;
+	readonly cwd: string;
+}
+
+/**
+ * Replays the persisted worktree binding through the Host-owned services.
+ *
+ * The binding file is only an identity hint: resume() replays the registry,
+ * lease, Git worktree registration, HEAD and effective cwd before any
+ * Security, Session, or Process object is composed.  A missing binding is
+ * the explicit source-repository case; present state that cannot be
+ * revalidated fails closed.
+ */
+export async function restoreResidentWorkspaceBinding(
+	options: RestoreResidentWorkspaceBindingOptions,
+): Promise<Awaited<ReturnType<HostWorkspaceBindingService["resume"]>> extends infer Result
+	? Result extends { readonly ok: true; readonly value: infer Binding } ? Binding | undefined : never
+	: never> {
+	const store = new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey });
+	const stored = await store.read();
+	if (stored === undefined) return undefined;
+	if (stored.binding.workspaceId !== options.scope.workspaceId || stored.binding.repositoryId !== options.scope.repositoryId) {
+		throw new Error("workspace binding identity mismatch with Host scope");
+	}
+	const registry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(options.layout));
+	const service = new HostWorkspaceBindingService({
+		layout: options.layout,
+		workspaceStorageKey: options.scope.workspaceStorageKey,
+		managedRoot: join(options.layout.tmp, "worktrees"),
+		registry,
+		git: createProductionGitCommandPort(),
+		ownerRuntimeId: stored.lease.ownerRuntimeId,
+	});
+	const resumed = await service.resume({ cwd: options.cwd });
+	if (!resumed.ok) throw new Error(`workspace binding ${resumed.error.code}: ${resumed.error.message}`);
+	return resumed.value;
 }
 
 function parseScope(raw: string): HostCompatibilityEnvelope {

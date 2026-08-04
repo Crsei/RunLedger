@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import {
 	createLocalRuntimeHostScope,
+	createProductionGitCommandPort,
+	resolveLocalRuntimeHostScope,
 	productionHostSocketPath,
 	productionHostSpawnSpec,
 } from "../../../src/cli/runtime-host-production.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
 
 describe("R3/R4 production Host composition", () => {
 	it("derives one stable workspace scope and canonical socket path", () => {
@@ -73,5 +80,68 @@ describe("R3/R4 production Host composition", () => {
 		const socketPath = productionHostSocketPath(layout, scope.workspaceStorageKey);
 
 		expect(Buffer.byteLength(socketPath, "utf8")).toBeLessThanOrEqual(100);
+	});
+
+	it("discovers a persisted binding and derives the Host scope from its identity", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-scope-binding-"));
+		try {
+			const layout = buildRunledgerLayout(join(root, "home"), "posix");
+			const sourceRepositoryPath = join(root, "source");
+			const worktreePath = join(root, "worktree");
+			const effectiveCwd = join(worktreePath, "packages", "app");
+			const workspaceId = createRuntimeId("workspace", "scope-discovery-workspace");
+			const worktreeId = createRuntimeId("workspace", "scope-discovery-worktree");
+			const baseCommit = "a".repeat(40);
+			const repositoryId = createRuntimeId("repository", runtimeDigest(sourceRepositoryPath).digest.slice(0, 48));
+			const body = {
+				version: 1 as const,
+				binding: {
+					workspaceId,
+					repositoryId,
+					bindingKind: "managed_worktree" as const,
+					effectiveCwdDigest: runtimeDigest(effectiveCwd),
+					baseCommit,
+					worktreeRef: { subjectKind: "receipt" as const, digest: runtimeDigest({ worktreeId, worktreePath, baseCommit }) },
+				},
+				worktreeId,
+				sourceRepositoryPath,
+				sourceSubdir: ".",
+				worktreePath,
+				effectiveCwd,
+				baseCommit,
+				headCommit: baseCommit,
+				lease: {
+					workspaceId,
+					ownerRuntimeId: createRuntimeId("runtime", "scope-discovery-owner"),
+					leaseRevision: 4,
+					fencingTokenDigest: runtimeDigest("scope-discovery-fence"),
+					state: "active" as const,
+					expiresAt: "2099-01-01T00:00:00.000Z",
+				},
+			};
+			const binding: PersistedWorkspaceBinding = { ...body, bindingDigest: runtimeDigest(body) };
+			const identityScope = createLocalRuntimeHostScope({ layout, cwd: effectiveCwd, settings: {}, workspaceBinding: binding });
+			const store = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: identityScope.workspaceStorageKey });
+			expect(await store.commit(binding)).toMatchObject({ ok: true });
+
+			const resolved = await resolveLocalRuntimeHostScope({ layout, cwd: effectiveCwd, settings: {} });
+			expect(resolved.binding).toEqual(binding);
+			expect(resolved.scope.workspaceId).toBe(workspaceId);
+			expect(resolved.scope.repositoryId).toBe(repositoryId);
+			expect(resolved.scope.workspaceStorageKey).toBe(identityScope.workspaceStorageKey);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses an argv-only Git broker for production workspace identity probes", async () => {
+		const result = await createProductionGitCommandPort().run({
+			cwd: process.cwd(),
+			arguments: ["rev-parse", "--show-toplevel"],
+			timeoutMs: 5_000,
+		});
+		expect(result.exitCode).toBe(0);
+		expect(result.signaled).toBe(false);
+		expect(result.stdout.trim()).toContain("RunLedger");
 	});
 });
