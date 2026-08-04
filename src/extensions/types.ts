@@ -1,14 +1,23 @@
-/**
- * Extension domain 的 M0/M1 数据层。
- *
- * TODO(extension-M1): 增加 manifest/frontmatter 解析、exact identity、资源扫描
- * 和 trust receipt 投影。此文件不加载文件、不启动进程，也不连接 MCP SDK。
- */
+/** Extension domain 的被动 descriptor 与扫描输入合同。 */
 
-import type { ResourceIdentity, ResourceProvenance } from "../runtime/resources/types.ts";
+import type {
+	ResourceActivationState,
+	ResourceApprovalReceipt,
+	ResourceIdentity,
+	ResourceProvenance,
+	ResourceTrustState,
+} from "../runtime/resources/types.ts";
+import type { AuthorityId, PrincipalId, TenantId } from "../runtime/protocol/ids.ts";
+import type { ExtensionDiagnostic } from "./diagnostics.ts";
 
-export type ExtensionKind = "plugin" | "skill" | "hook" | "mcp";
+export type ExtensionKind = "plugin" | "skill" | "hook" | "mcp" | "mcp-server" | "mcp-tool";
 export type ExtensionSource = "builtin" | "user" | "project" | "plugin" | "session";
+
+export interface ExtensionRuntimeScope {
+	readonly authorityId: AuthorityId;
+	readonly tenantId: TenantId;
+	readonly principalId: PrincipalId;
+}
 
 export interface ExtensionIdentity {
 	kind: ExtensionKind;
@@ -19,20 +28,54 @@ export interface ExtensionIdentity {
 }
 
 export interface ExtensionResourceDescriptor {
-	identity: ExtensionIdentity;
-	resource: ResourceIdentity;
-	provenance: ResourceProvenance;
-	enabled: boolean;
-	trusted: boolean;
-	ready: boolean;
+	readonly kind?: ExtensionKind;
+	readonly identity: ExtensionIdentity;
+	readonly resource: ResourceIdentity;
+	readonly provenance: ResourceProvenance;
+	readonly displayName?: string;
+	readonly description?: string;
+	readonly sourcePath?: string;
+	readonly pluginId?: string;
+	readonly runtimeName?: string;
+	readonly priority?: number;
+	readonly enabled: boolean;
+	readonly trusted: boolean;
+	readonly ready: boolean;
+	readonly trust?: ResourceTrustState;
+	readonly activation?: ResourceActivationState;
+	readonly approvalReceiptId?: ResourceApprovalReceipt["receiptId"];
+	readonly diagnostics?: readonly ExtensionDiagnostic[];
+	readonly capabilities?: readonly string[];
 }
 
 export interface ExtensionComponentCounts {
-	plugins: number;
-	skills: number;
-	hooks: number;
-	mcpServers: number;
-	ready: number;
-	blocked: number;
-	error: number;
+	readonly plugins: number;
+	readonly skills: number;
+	readonly hooks: number;
+	readonly mcpServers: number;
+	readonly mcpTools: number;
+	readonly ready: number;
+	readonly blocked: number;
+	readonly disabled: number;
+	readonly error: number;
+}
+
+export interface ExtensionSourceRoot {
+	readonly source: ExtensionSource;
+	readonly sourceKey: string;
+	readonly rootPath: string;
+	readonly priority: number;
+	readonly pluginId?: string;
+	readonly skillsPath?: string;
+	readonly layout?: "extension-root" | "plugin-root";
+}
+
+export interface ExtensionStateEntry {
+	readonly enabled: boolean;
+	readonly updatedAt: string;
+}
+
+export interface ExtensionStateDocument {
+	readonly revision: number;
+	readonly resources: Readonly<Record<string, ExtensionStateEntry>>;
 }
