@@ -14,6 +14,7 @@ import {
 import type { RuntimeEventAppendInput, RuntimeEventAppendResult } from "../../storage/host/runtime-event-store.ts";
 import type { ApprovalAuditPort } from "../permission/approval-coordinator.ts";
 import type { AuthorizationRequest } from "../types.ts";
+import type { SandboxDecisionReceipt, SandboxLaunchPlan } from "../sandbox/types.ts";
 
 export interface RuntimeSecurityEventWriter {
 	append(input: RuntimeEventAppendInput): Promise<RuntimeEventAppendResult>;
@@ -98,6 +99,66 @@ export class HostSecurityAuditAdapter implements ApprovalAuditPort {
 			refs: [ref(input.receipt.receiptDigest, "application/vnd.runledger.approval-receipt+json")],
 		};
 		await this.#append({ request: input.request, principalId: input.receipt.principalId, traceId, type: "permission.revoked", payload });
+	}
+
+	/** 记录已解析的 sandbox launch plan；正文、命令和路径只留在 private process state。 */
+	public async sandboxResolved(input: { readonly request: AuthorizationRequest; readonly plan: SandboxLaunchPlan }): Promise<void> {
+		const { request, plan } = input;
+		const traceId = createRuntimeId("trace", runtimeDigest({ requestId: request.requestId, planDigest: plan.planDigest, suffix: "sandbox-resolved" }).digest.slice(0, 48));
+		const payload: RuntimeEventPayloadFor<"sandbox.resolved"> = {
+			subject: { kind: "toolCall", id: request.toolCallId },
+			correlationId: traceId,
+			effect: plan.enforcement === "enforced" ? "committed" : "none",
+			idempotencyKey: `sandbox:resolved:${plan.planDigest.digest}`,
+			transition: { revision: 0, previousStatus: null, nextStatus: plan.effective },
+			expectedRevision: 0,
+			refs: [ref(plan.planDigest, "application/vnd.runledger.sandbox-plan+json")],
+			metadataDigest: runtimeDigest({
+				backendId: plan.backendId,
+				requested: plan.requested,
+				resolved: plan.resolved,
+				effective: plan.effective,
+				enforcement: plan.enforcement,
+				policyDigest: plan.policyDigest,
+				requestDigest: plan.requestDigest,
+			}),
+		};
+		await this.#append({ request, principalId: request.workspace.principalId, traceId, type: "sandbox.resolved", payload });
+	}
+
+	/** 记录 final-leaf decision；只保存 digest/ref，不能以 event 代替 backend enforcement。 */
+	public async sandboxExecutionRecorded(input: {
+		readonly request: AuthorizationRequest;
+		readonly plan: SandboxLaunchPlan;
+		readonly receipt?: SandboxDecisionReceipt;
+		readonly outcome: "allow" | "deny";
+		readonly reason?: string;
+	}): Promise<void> {
+		const { request, plan, receipt } = input;
+		const decisionDigest = runtimeDigest({
+			planDigest: plan.planDigest,
+			receiptDigest: receipt?.receiptDigest ?? null,
+			outcome: input.outcome,
+			reason: input.reason ?? null,
+		});
+		const traceId = createRuntimeId("trace", runtimeDigest({ requestId: request.requestId, decisionDigest, suffix: "sandbox-execution" }).digest.slice(0, 48));
+		const payload: RuntimeEventPayloadFor<"sandbox.execution_recorded"> = {
+			subject: { kind: "toolCall", id: request.toolCallId },
+			correlationId: traceId,
+			effect: input.outcome === "allow" ? "committed" : "none",
+			idempotencyKey: `sandbox:execution:${decisionDigest.digest}`,
+			refs: [
+				ref(plan.planDigest, "application/vnd.runledger.sandbox-plan+json"),
+				...(receipt === undefined ? [] : [ref(receipt.receiptDigest, "application/vnd.runledger.sandbox-receipt+json")]),
+			],
+			metadataDigest: runtimeDigest({
+				backendId: plan.backendId,
+				decision: input.outcome,
+				receiptDigest: receipt?.receiptDigest ?? null,
+				reason: input.reason ?? null,
+			}),
+		};
+		await this.#append({ request, principalId: request.workspace.principalId, traceId, type: "sandbox.execution_recorded", payload });
 	}
 
 	async #append(input: {

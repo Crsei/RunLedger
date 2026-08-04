@@ -140,6 +140,7 @@ export interface ProductionHostSecurity {
 
 interface ProcessBinding {
 	readonly sandboxPlan?: SandboxLaunchPlan;
+	readonly authorizationRequest: AuthorizationRequest;
 }
 
 const SECURITY_ADAPTER_COMPOSITION = {
@@ -175,11 +176,12 @@ export async function createProductionHostSecurity(
 	const networkBroker = options.networkBroker ?? createLocalNetworkBroker();
 	const permissionEngine = new PermissionEngine();
 	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey });
+	const audit = new HostSecurityAuditAdapter({ authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, writer: runtimeEventWriter });
 	const approvalCoordinator = new ApprovalCoordinator({
 		...(options.approval ?? {}),
 		prompter: options.permissionPrompter ?? new HeadlessDenyPrompter(),
 		store: new JsonApprovalStateStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey }),
-		audit: new HostSecurityAuditAdapter({ authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, writer: runtimeEventWriter }),
+		audit,
 	});
 	const bindings = new Map<string, ProcessBinding>();
 	const baseProviders = createHostConstraintProviders(bindings);
@@ -226,6 +228,7 @@ export async function createProductionHostSecurity(
 			bindings,
 			sandboxBackend,
 			baseWorkspace,
+			audit,
 		}),
 		validateProcessFinalLeaf: async (input) => {
 			const plan = input.sandboxPlan ?? bindings.get(input.requestDigest.digest)?.sandboxPlan;
@@ -236,7 +239,23 @@ export async function createProductionHostSecurity(
 				policyDigest: snapshot.policyDigest,
 				...(plan === undefined ? {} : { sandboxPlan: plan }),
 			};
-			return finalLeaf.decide(request);
+			const result = await finalLeaf.decide(request);
+			if (plan !== undefined) {
+				const authorizationRequest = bindings.get(input.requestDigest.digest)?.authorizationRequest;
+				if (authorizationRequest === undefined) return securityFailure("invalid_request", "sandbox authorization binding is missing");
+				try {
+					await audit.sandboxExecutionRecorded({
+						request: authorizationRequest,
+						plan,
+						...(result.ok && result.value.sandboxReceipt === undefined ? {} : { receipt: result.ok ? result.value.sandboxReceipt : undefined }),
+						outcome: result.ok ? "allow" : "deny",
+						...(result.ok ? {} : { reason: result.error.message }),
+					});
+				} catch {
+					return securityFailure("invalid_request", "sandbox execution audit is unavailable");
+				}
+			}
+			return result;
 		},
 		processSandboxPlan: (requestDigest) => bindings.get(requestDigest.digest)?.sandboxPlan,
 	};
@@ -386,6 +405,7 @@ async function prepareProcessSecurity(input: {
 	readonly bindings: Map<string, ProcessBinding>;
 	readonly sandboxBackend: SandboxBackend;
 	readonly baseWorkspace: (sessionId: string, principalId: string, toolCallId: string, cwd: string) => ReturnType<typeof createWorkspaceEnvelope>;
+	readonly audit: HostSecurityAuditAdapter;
 }): Promise<SecurityResult<PreparedHostProcessSecurity>> {
 	const request = input.input;
 	if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0 || !isAbsolutePath(request.cwd)) return securityFailure("invalid_request", "process security request is malformed");
@@ -415,7 +435,6 @@ async function prepareProcessSecurity(input: {
 		const plan = await prepareSandboxPlan(input.sandboxBackend, input.snapshot, workspace, request, executionRequestDigest);
 		if (!plan.ok) return securityFailure(plan.error.code === "sandbox_unavailable" ? "policy_denied" : "invalid_request", plan.error.message);
 		sandboxPlan = plan.value;
-		input.bindings.set(executionRequestDigest.digest, { sandboxPlan });
 	}
 	const constraintInput: ExecutionConstraintInput = {
 		authorityId: input.options.scope.authorityId,
@@ -445,7 +464,15 @@ async function prepareProcessSecurity(input: {
 		input.bindings.delete(executionRequestDigest.digest);
 		return authorized;
 	}
-	input.bindings.set(executionRequestDigest.digest, { ...(sandboxPlan === undefined ? {} : { sandboxPlan }) });
+	if (sandboxPlan !== undefined) {
+		try {
+			await input.audit.sandboxResolved({ request: authorizationRequest, plan: sandboxPlan });
+		} catch {
+			input.bindings.delete(executionRequestDigest.digest);
+			return securityFailure("invalid_request", "sandbox resolution audit is unavailable");
+		}
+	}
+	input.bindings.set(executionRequestDigest.digest, { authorizationRequest, ...(sandboxPlan === undefined ? {} : { sandboxPlan }) });
 	return {
 		ok: true,
 		value: {
