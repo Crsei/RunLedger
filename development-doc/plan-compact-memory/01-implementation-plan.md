@@ -1,14 +1,30 @@
 # RunLedger Plan Mode、Model/Context、Compaction 与 Memory 建设计划
 
-> 状态:专项权威执行计划,尚未实施
-> 基线日期:2026-07-22
-> 适用范围:`src/runtime/`、`src/storage/`、`src/tui/`、`src/cli/`、`.runledger/` 与对应测试
+> 状态:专项权威执行计划;Context/Compaction/Memory/Plan 已有独占行为切片,Model Router、Host/生产 durable 接线仍未完成
+> 基线日期:2026-07-22;Runtime Host 适配校准:2026-08-04
+> 适用范围:`src/runtime/`、`src/storage/`、`src/tui/`、`src/cli/`、canonical `runledgerHome` 与对应测试
 > 参考取证:[`00-reference.md`](00-reference.md)
 > 上位计划:[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)
+> 生产 Host/Control Plane 计划:[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)
 
 ## 0. 文档定位与执行规则
 
 本文件是 Model Compatibility 行为、Plan Mode、ContextEngine、Compaction 和 Memory 的唯一详细执行账本。上位 Runtime contract 计划独占公共数据结构、TypeBox schema、current event payload、fixtures 和 contract tests;本文件只消费这些契约,负责具体 router/reducer/service/store/算法、文件边界、PR 顺序、行为测试和逐项完成证据。不得再创建同主题 sibling plan 分散状态。
+
+生产接线还必须服从 Runtime Host 计划:标准 CLI/TUI 是轻客户端,同一 Host scope 只有 Host 持有 resident session、`Agent`、canonical writer、Queue 与 mutation authority。本专项的 mode/model/compact/memory command、query、subscription、approval 和 reload 都通过 Host Control Plane;client 不直接调用 `InteractiveSessionController`、不持有 store/service,也不创建第二 writer。Host transport、driver/observer、generation/revision fencing、durable command intent/receipt 与 subscription cursor 由 `runtime/05` 拥有,本文件只定义这些机制如何消费本领域 service。
+
+### 0.1 2026-08-04 当前实现切片证据
+
+以下是当前分支已提交独占切片的局部行为证据，不代表本专项或对应产品阶段完成。复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现。
+
+- `src/runtime/context/{context-engine,token-estimator,runtime-adapter,projection,invariants}.ts` 与 `cut-planner.ts` 已提供稳定 fragment 排序、预算/硬上限、digest 校验、tool batch 安全 cut 和结构化 omission/invariant 行为；Context 行为定向回归为 10 files / 39 tests（含 Plan Mode reducer/store）。
+- `src/runtime/context/compaction/checkpoint-store.ts` 已提供内存 checkpoint port：`planned -> started -> completed/failed`、attempt 单调、幂等 replay、schema/invariant/session/source-range 校验、`get/list/latest`；`compaction-checkpoint-store.test.ts` 为 7 tests。
+- `src/runtime/context/memory/{store,persistence}.ts` 已提供 proposal/approval/reject/revoke、scope 隔离、bounded lexical search、TTL/digest drift 过滤、注入式 exact snapshot persistence；approved proposal snapshot 现在额外绑定 record 的初始 digest，memory 定向测试为 2 files / 6 tests。
+- `src/runtime/modes/plan/{reducer,artifact-store}.ts` 已提供 Plan Mode 合法 transition、immutable revision、working pointer、approval pin、外部 digest drift invalidation 与 exact snapshot restore；`reducer-store.test.ts` 为 6 tests。Approval receipt digest 计算不包含后置生成的 `receiptId`。
+- 阶段提交证据：`68dab74`（`feat(plan-context): add bounded plan and memory behavior`），只包含上述 `src/runtime/context/**`、`src/runtime/modes/plan/**` 与对应测试路径；提交前 `git diff --cached --check` 通过。
+- 本地验证证据：`npm run check`、`npm test`（Vitest 144 files / 746 tests，Bun TUI 5 files / 44 assertions）、`npm run build`、`git diff --check` 均通过；该提交已落在当前分支，尚未 push。
+
+仍未实现或未接线：Model Compatibility Router、Plan Mode Host durable command/Capability Gateway/approval UI、真实 summarizer 与 compaction intent/commit、auto overflow/resume/fork/rewind/model switch、canonical memory records/`MEMORY.md`/可重建 index、Host durable command/receipt/event sink 与 CLI/TUI。故不得把当前切片标为 Phase 0–10 或专项完成。
 
 下文不再使用上位 Runtime 的旧阶段编号,统一采用以下稳定契约域名称:
 
@@ -24,6 +40,7 @@
 - 每次只实施一个可独立验收的 PR 边界,完成后在对应复选框补 commit、验证命令和结果。
 - 上位 Runtime Model/Context 契约域的 allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、current event catalog 或 contract fixture,也不得重新定义同义类型。
 - 没有 current durable event、Capability Gateway 或 Artifact Store 的阶段不得用 current 临时旁路伪装完成;可以先落纯 reducer/pure planner 等行为函数,但用户可见功能必须等待前置门禁。
+- 没有 authenticated Runtime Host、driver fence 和 durable command receipt 的阶段不得把 client-local slash handler、TUI boolean 或直接 controller 调用作为生产闭环。
 - Session 只接受当前 exact format。Plan Mode、compaction checkpoint、memory approval 和 context receipt 只写入当前唯一真源。
 - 不覆盖 raw ledger/history。Compaction 只改变 model-visible projection。
 - 不把 prompt 约束当权限。所有副作用由 capability/effect gate 判定。
@@ -57,7 +74,7 @@
 - auto compact 有阈值、预留和单次 overflow recovery;失败不会无限重试。
 - `/memory` 可浏览 approved/proposed/revoked record;`/remember` 先预览再批准。
 - memory search 返回 record ID、scope、source、line/snippet、score/search mode 和 staleness。
-- 每次 mode transition、compaction、memory proposal/approval/injection 都能从 ledger 找到 receipt。
+- 每次 mode transition、compaction、memory proposal/approval/injection 都能从 canonical session/runtime records 找到 receipt。
 
 ### 1.3 首版非目标
 
@@ -81,6 +98,7 @@
 | Artifact CAS/metadata/retention/redaction | Runtime Artifact/Evidence 契约域 + 独立行为计划与验证证据 | plan revision、compaction input/output/diagnostic |
 | Resource snapshot/effect contract | Runtime Resource 契约域 + Plugin/MCP/Skill/Hooks 专项 M2–M5 | memory/plan tool 可见性和 MCP 副作用分类 |
 | Model/Plan/Context/Compaction/Memory 公共契约 | Runtime Model/Context 契约域 | 本专项全部 public type/schema/event/fixture 的唯一来源 |
+| Runtime Host/Control Plane、driver fence、durable command/subscription | `runtime/05` R0–R10 的已提交 baseline 与当前 hardening | 所有生产 command/query、approval、model switch、compact/memory mutation 和多客户端恢复 |
 
 允许提前落地的内容只有消费已冻结契约的纯 reducer、pure planner、adapter 和行为 fixture。用户可见 `/plan`、`/compact`、memory write 必须等待对应门禁真实可用。
 
@@ -95,12 +113,12 @@
 | `src/runtime/protocol/{events,schemas}.ts` 对应 payload/catalog | Runtime Model/Context 契约域 | 只发射已注册 event,不新建临时 event |
 | `tests/runtime-contracts/contracts/**`、`tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/**` | Runtime Model/Context 契约域 | 只消费;behavior fixture 放专项目录 |
 | router/reducer/service/store/index/tools/专用 TUI 组件 | 本专项 | Runtime Model/Context 契约域不得回写实现 |
-| `agent-loop.ts`、`interactive-session-controller.ts`、`models*.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` | 串行集成 PR 的当期单一所有者 | 先交付 adapter,再于 Runtime/Extension/Security contract handoff 后集成 |
+| `agent-loop.ts`、Host resident-session/composition、`models*.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` | 串行集成 PR 的当期单一所有者 | 先交付 adapter,再通过 Host command/query/subscription 集成;禁止恢复 client-local controller authority |
 
 并行窗口内的稳定分工:
 
 1. 其他 Runtime 行为 owner 可继续修改自己的独占模块,本专项在 behavior path 实现 Model Router、Plan、Context、Compaction 和 Memory;双方都不直接修改对方的独占路径。
-2. 需要连接 Event Store、Gateway、Artifact、Extension snapshot 或 Orchestrator 时,本专项先增加内部 adapter 并用 fake port 验证;共享根文件留到阶段的串行 integration commit。
+2. 需要连接 Event Store、Gateway、Artifact、Extension snapshot、Orchestrator 或 Host 时,本专项先增加内部 adapter 并用 fake port 验证;共享根文件留到阶段的串行 integration commit。
 3. 串行集成前必须记录基线 commit、当期所有者和显式路径;handoff 期间其他计划不改同一文件。
 4. 上位 Runtime Model/Context 契约域完成只表示 contract 已冻结。本专项 Phase 10 完成后不向上位 contract 计划回写行为状态或复制实现 checklist;行为完成证据只保留在本文件。
 
@@ -164,10 +182,13 @@
 ## 4. 目标架构
 
 ```text
-TUI / CLI / future API
+TUI / CLI / future API clients
         |
         v
-InteractiveSessionController / Runtime Commands
+authenticated Runtime Host command/query/subscription
+        |
+        v
+ResidentSession / InteractiveSessionController / Runtime Commands
         |
         +---------- ModelCompatibilityRouter ----------> Provider
         |
@@ -199,7 +220,9 @@ Large bodies -----------> Artifact Store/CAS
 - `ContextEngine` 只生成 model request context 和 receipt,不修改 canonical history。
 - `CompactionService` 生成并提交新 context projection checkpoint,不删除 raw events。
 - `MemoryService` 管 proposal/approval/search/injection,不决定 session mode。
-- `InteractiveSessionController` 是 facade,不成为这些状态的事实源。
+- Host-owned `InteractiveSessionController` 是 resident facade,不成为这些状态的事实源;client 只能消费远端 facade。
+- Host command 在执行副作用前写 durable intent,结果写 durable receipt;同 command ID/同 digest 重放原 receipt,异体 conflict,只有 intent 无 receipt 时返回 `uncertain_outcome` 且不重执行。
+- mode/model/plan/compaction/memory mutation 只允许当前 driver 携完整 Host/session generation 与 driver revision 发起;observer 只可 query/subscribe。
 
 ## 5. 目标代码与数据目录
 
@@ -289,38 +312,25 @@ tests/tui/
 ### 5.2 运行时数据布局
 
 ```text
-<cwd>/.runledger/
-  settings.json
-  sessions/
-    *.jsonl                         # current event log
-  artifacts/
-    <session-id>/
-      plans/
-        <plan-id>/
-          working.md                # 当前可编辑投影,非审批真值
-          revisions/
-            000001.md               # immutable revision body
-            000001.json             # digest/source/author metadata
-      compactions/
-        <compaction-id>/
-          input.json                # bounded/redacted input manifest
-          summary.md
-          diagnostic.json
-  memory/
-    MEMORY.md                       # approved workspace memory 的可读投影
-    records/
-      <memory-id>.json              # canonical approved/revoked metadata + content
-    proposals/
-      <proposal-id>.json
-    index/
-      lexical.jsonl                 # 可删除重建,不是事实源
-
-~/.runledger/agent/
-  memory/
-    MEMORY.md                       # approved user-global 可读投影
-    records/
-    proposals/
-    index/
+<runledgerHome>/
+  settings.json                     # 用户级设置 authority
+  projects/<workspace-key>/
+    settings.json                   # workspace 设置 authority
+  sessions/YYYY/MM/DD/*.jsonl       # canonical session/runtime event truth
+  events/YYYY/MM/DD/*.jsonl         # Runtime Trace observability,非 mutation truth
+  artifacts/sha256/...              # plan/summary/diagnostic 大正文 CAS
+  artifact-metadata/sha256/...
+  snapshots/plan-context-memory/... # 可重建 checkpoint/snapshot
+  projections/
+    plans/...                       # working.md/approval view 等可重建投影
+    memory/...                      # MEMORY.md/浏览视图,非事实源
+  state/plan-context-memory/
+    plans/...                       # immutable revision metadata + ArtifactRef
+    memory/
+      user/...                      # canonical user-scope record/proposal metadata
+      workspaces/<workspace-key>/...# canonical workspace-scope metadata
+  cache/memory-index/...            # 可删除重建 lexical index
+  tmp/...                           # 根内同文件系统临时写入
 ```
 
 安全要求:
@@ -328,8 +338,11 @@ tests/tui/
 - 目录默认 `0o700`,敏感 metadata/record 默认 `0o600`。
 - 文件更新使用同目录 temp + fsync + rename;跨 event/artifact 使用 intent -> object -> committed event。
 - plan/memory path 必须由 `workspaceId/sessionId/recordId` 解析,不接受模型输入绝对路径。
-- `MEMORY.md` 是 approved record 的可重建人类可读投影;canonical truth 是 record + event receipt。
+- `runledgerHome` 只由 composition root 解析一次:`RUNLEDGER_DIR` 必须是既有绝对目录,否则使用默认用户级 `~/.runledger`;`RUNLEDGER_SESSION_DIR`、`--session-dir` 与 `settings.sessionDir` 一律 fail closed。
+- 本专项不得向 `<cwd>/.runledger/`、`~/.runledger/agent/` 或其他根外目录写入;workspace path 只参与 identity/metadata,不形成 storage authority。
+- `MEMORY.md` 是 approved record 的可重建人类可读投影;canonical truth 是 typed record/event receipt 与绑定的 ArtifactRef。
 - index 可随时删除重建;index digest/mode 只作为 search receipt,不参与 record authority。
+- public event、Artifact metadata、TUI/模型结果不得包含绝对 home/cwd、CAS 物理路径或 private locator。
 
 ## 6. 本专项消费的核心契约草案
 
@@ -752,7 +765,7 @@ post-compaction recovery:
 
 ### 8.1 Settings 草案
 
-`ProjectSettings` 增加嵌套字段,用 TypeBox schema 严格清洗;未知字段继续丢弃并诊断。敏感的 managed policy 不放项目 settings。
+设置写入沿用 canonical `RunledgerLayout`:用户默认值位于 `<runledgerHome>/settings.json`,workspace override 位于 `<runledgerHome>/projects/<workspace-key>/settings.json`。两者用 TypeBox schema 严格清洗;未知字段诊断且不得形成隐式 authority。repo 内 `.runledger/`、任意 project-local settings、额外环境变量和 session path 不拥有本专项配置 authority;敏感 managed policy 也不放 workspace settings。
 
 ```ts
 export interface PlanModeSettings {
@@ -784,8 +797,8 @@ export interface MemorySettings {
 
 - `thresholdPercent` 必须给 output/tool/safety reserve 留空间,建议默认 80,允许范围 50–90。
 - memory 默认关闭直到 approval UI 和 provenance 完成;启用也不意味着允许自动发布。
-- CLI override 只影响当前 session,持久设置必须经过 settings command/文件变更。
-- `RUNLEDGER_DIR`/`RUNLEDGER_SESSION_DIR` 继续影响根路径,但 memory scope 必须用 canonical workspace identity 防止路径别名。
+- CLI override 只作为 versioned per-request command 影响当前 session,必须由 Host 校验 expected session revision 并写 command receipt;持久设置必须经过 Host settings command 写入 canonical user/workspace settings。
+- `RUNLEDGER_DIR` 只在 composition root 启动时解析一次;`RUNLEDGER_SESSION_DIR`、`--session-dir` 和 `settings.sessionDir` 均不受支持。memory scope 必须使用 canonical workspace identity,不能从物理路径或目录名恢复 authority。
 
 ### 8.2 CLI/command surface
 
@@ -800,7 +813,7 @@ export interface MemorySettings {
 - `/remember <text>`:创建 user-authored proposal 并打开审批。
 - `/forget <query>`:选择 record 后创建 revoke proposal,不直接删除。
 
-未来 daemon/API command 与 TUI 使用相同 payload,不得为 TUI 另建私有状态转换。
+Host/未来 API command 与 TUI 使用相同 payload,不得为 TUI 另建私有状态转换。所有 mutation 带 command ID、request digest、Host/session generation、driver revision 与 expected domain revision;query/subscription 使用 bounded cursor,`resync_required` 后从 durable projection 重新读取。
 
 ### 8.3 TUI 投影
 
@@ -843,15 +856,16 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [ ] 验证 current event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
 - [ ] 验证 mode policy 只消费 Runtime capability/effect contract,不按 tool name 创建第二套决策类型。
 - [ ] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Foundation 契约域、Runtime Workspace/Security 契约域和 Runtime Artifact/Evidence 契约域对齐。
+- [ ] 固定 `runtime/05` Host handoff:本专项 command/query/subscription 名称、driver-only mutation、Host/session generation、driver/domain revision、durable intent/receipt、cursor/resync 与 compatibility digest 输入。
 - [ ] 跑上位 contract tests 与专项 consumer compile test,记录冻结 contract commit。
 - [ ] 检查 behavior 目录不存在同义 `interface/type`、私有 event name 或复制 schema。
-- [ ] 在 feature flags 下只注册 adapter factory,不暴露半成品命令。
+- [ ] capability 未完成时只注册 internal adapter factory并由 Host 返回 typed unsupported,不暴露半成品命令或 client/direct 双生产路径。
 
 完成门槛:
 
 - consumer test 仅通过 public exports 编译,对 contract allowlist 的 diff 为空。
 - fixture 可表达 incompatible route、approval resume、multi-compaction chain 和 memory revoke/expire。
-- Event Store/Artifact/Capability/Resource 依赖通过 typed port/fake 注入,没有隐式全局单例。
+- Event Store/Artifact/Capability/Resource/Host 依赖通过 typed port/fake 注入,没有隐式全局单例或 client-local writer。
 - 若契约不足,已按 §2.2 停在 Runtime contract PR,未在本专项引入临时兼容层。
 
 建议 commit:`test: verify plan context contract consumption`
@@ -893,20 +907,20 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 fragment registry、fixed layer order、stable ID/digest 和 per-fragment hard cap。
-- [ ] 实现 conservative token estimator,接入 provider usage receipt 与模型 context window。
-- [ ] 把现有 `systemPrompt/messages/tools` 转成首批 fragment/projection adapter。
-- [ ] 先在 `context/runtime-adapter.ts` 实现 `assemble()` seam;串行集成 PR 才对 `agent-loop.ts` 增加唯一调用并删除调用点私自拼接的新增路径。
+- [x] 实现 fragment registry、fixed layer order、stable ID/digest 和 per-fragment hard cap。
+- [x] 实现 conservative token estimator,接入 provider usage receipt 与模型 context window。
+- [~] 把现有 `systemPrompt/messages/tools` 转成首批 fragment/projection adapter；当前仅完成注入式 runtime adapter。
+- [~] 先在 `context/runtime-adapter.ts` 实现 `assemble()` seam;串行集成 PR 只把它接入 Host-owned resident Agent 的唯一 model-request 路径,并删除调用点私自拼接的新增路径。
 - [ ] 持久化 bounded `context.assembled` receipt,正文不进 event。
-- [ ] 为 omitted fragment、oversized tool result、missing budget 输出结构化诊断。
+- [x] 为 omitted fragment、oversized tool result、missing budget 输出结构化诊断。
 
 测试:
 
-- [ ] stable ordering/digest 不受 Map 遍历或 resume 影响。
-- [ ] policy/mode fragment 永不被普通 history 挤出。
-- [ ] image/tool/reasoning 估算不会发生整数溢出。
-- [ ] provider usage 缺失/异常时保守 fallback。
-- [ ] 同一 checkpoint resume 生成相同 request-context fixture。
+- [x] stable ordering/digest 不受 Map 遍历或 resume 影响。
+- [x] policy/mode fragment 永不被普通 history 挤出。
+- [x] image/tool/reasoning 估算不会发生整数溢出。
+- [x] provider usage 缺失/异常时保守 fallback。
+- [~] 同一 checkpoint resume 生成相同 request-context fixture；当前有稳定 projection/checkpoint 行为，尚未接入 Host resume。
 
 完成门槛:
 
@@ -923,19 +937,20 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现纯 `PlanModeState` reducer 和合法 transition table。
-- [ ] 实现 `PlanArtifactStore`,working pointer + immutable revision + digest。
+- [x] 实现纯 `PlanModeState` reducer 和合法 transition table。
+- [x] 实现 `PlanArtifactStore`,working pointer + immutable revision + digest。
 - [ ] 实现 user/agent entry command、mid-turn pending activation、安全点 delivery。
+- [ ] mode/plan mutation 由 Host durable command 调用 service;observer、stale generation/revision 和异体 command replay 在进入 reducer/store 前拒绝。
 - [ ] mode fragment 接入 ContextEngine,同 revision 不重复注入。
 - [ ] resume 折叠 transient state,保持 active/awaiting 状态。
-- [ ] plan 外部修改检测,digest 漂移触发 approval invalidation。
+- [x] plan 外部修改检测,digest 漂移触发 approval invalidation。
 
 测试:
 
-- [ ] 全状态转换 table/property test。
+- [~] 全状态转换 table/property test；当前已有 reducer transition、非法状态、stale revision 与 drift focused tests，尚未覆盖完整 property matrix。
 - [ ] mid-turn enter 后立即取消不会注入伪 exit。
 - [ ] client crash/restart 恢复 active/awaiting 状态。
-- [ ] revision 原子写、并发 expected revision conflict、torn temp recovery。
+- [~] revision expected conflict 与 exact snapshot restore 已覆盖；canonical atomic file write/torn temp recovery 尚未接线。
 - [ ] workspace/session path 不可逃逸。
 
 完成门槛:
@@ -1001,6 +1016,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [ ] stale revision approval 返回 conflict。
 - [ ] 外部改 plan 后旧 approval 自动失效。
 - [ ] decision 落盘成功但 UI 断连不会重复实施。
+- [ ] approval 作为 Host-owned reverse request 只允许 active driver resolve;driver disconnect 后 waiter 保留,新 driver 显式 claim 后继续,observer response 拒绝。
 - [ ] fresh fork 只携带 approved plan ref 和必要 context,不泄漏未批准 tail。
 - [ ] plan approval view snapshot/窄终端/空计划/大计划。
 
@@ -1019,23 +1035,23 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 
 任务:
 
-- [ ] 实现 cut planner,只选完整 stable turn/tool batch。
+- [x] 实现 cut planner,只选完整 stable turn/tool batch。
 - [ ] 实现 transcript/artifact input builder 和 output reserve。
 - [ ] 实现 summarizer adapter,工具关闭,单独 retry/timeout budget。
-- [ ] 实现 summary validator、invariant digest 和 redaction scan。
-- [ ] 实现 checkpoint intent/commit 与 model-history projection replacement。
-- [ ] `/compact [focus]`、start/completed/failed event 和 TUI 状态接入。
+- [~] 实现 summary validator、invariant digest 和 redaction scan；当前完成 invariant/checkpoint schema 校验，尚无真实 summarizer/redaction pipeline。
+- [~] 实现 checkpoint intent/commit 与 model-history projection replacement；当前仅有注入式内存 checkpoint lifecycle，未接 canonical event/Host commit。
+- [ ] `/compact [focus]` 通过 Host command 进入 resident session;start/completed/failed event 和 bounded query/subscription 状态接入,client detach 不取消已接受操作。
 - [ ] compaction 后重新注入当前 mode、workspace、approved plan 和 policy。
 
 golden tests:
 
 - [ ] 无 tool 的多 turn compact。
-- [ ] tool call/result 配对和 parallel batch。
+- [x] tool call/result 配对和 parallel batch。
 - [ ] reasoning/signature 不跨不兼容 provider 泄漏。
 - [ ] 多次 compact checkpoint chain。
 - [ ] Plan Mode 中 compact 后仍 active 且权限未放宽。
 - [ ] pending approval 时 compact 不丢 request。
-- [ ] summary validation failure 保持原 projection。
+- [~] summary validation failure 保持原 projection；checkpoint store 已拒绝 invalid schema/invariant，尚无 live projection replacement。
 - [ ] crash 位于 artifact write、validated event、commit event 各边界的 recovery。
 
 完成门槛:
@@ -1087,24 +1103,25 @@ golden tests:
 
 任务:
 
-- [ ] 实现 user/workspace scoped canonical store、proposal 和 atomic publish/revoke。
+- [~] 实现 user/workspace scoped proposal、approval/reject/revoke 与内存状态机；canonical store、atomic publish/revoke 尚未接线。
 - [ ] 实现 workspace identity mapping,同 repo clone/worktree 可选共享 workspace scope。
 - [ ] 生成 `MEMORY.md` 人类可读 projection,但不把它当唯一 metadata 真源。
-- [ ] 实现 lexical index、watch/digest scan 和 rebuild。
+- [~] 实现 bounded deterministic lexical search；独立可重建 index、watch/digest scan 尚未实现。
 - [ ] 实现 `memory_search`、`memory_get`、`memory_propose` bounded tools。
 - [ ] 实现 `/remember` proposal 和 memory approval diff。
-- [ ] 实现 TTL/staleness/revoked/changed_unreviewed 查询过滤。
+- [ ] memory publish/revoke 走 Host durable command 与 driver/approval fence;同 command response-loss 重放 receipt,不得重复发布或撤销。
+- [x] 实现 TTL/staleness/revoked/changed_unreviewed 查询过滤。
 - [ ] ContextEngine 首 turn 只注入 approved records,记录 search/injection receipt。
 
 测试:
 
-- [ ] global/workspace scope 隔离和 canonical path。
-- [ ] proposal approve/edit/reject/revoke/expire 状态机。
-- [ ] external edit digest drift 停止注入。
+- [x] global/workspace scope 隔离和 scope binding。
+- [~] proposal approve/edit/reject/revoke/expire 状态机；当前覆盖 approve/reject/revoke 与 expiry 过滤，edit/持久 expire command 尚未实现。
+- [x] external edit digest drift 停止注入。
 - [ ] index delete/corrupt/rebuild;lexical ordering 稳定。
 - [ ] search max results/snippet/token/cursor hard cap。
 - [ ] untrusted source 不能自行升级 approved。
-- [ ] Memory Store failure 不阻断普通 turn。
+- [~] Memory Store failure 不阻断普通 turn；repository 以 typed persistence failure 返回，Host 注入降级尚未接线。
 
 完成门槛:
 
@@ -1157,7 +1174,7 @@ golden tests:
 - [ ] TUI `/context`、`/memory`、footer/status 与 warning surface 完整接 projection。
 - [ ] CLI help/settings schema/README/AGENTS.md/开发文档同步。
 - [ ] resume/open/fork 只接受当前 exact format;无法验证时原文件不变并返回 typed diagnostic。
-- [ ] feature flags 支持独立关闭 plan/auto-compact/memory,manual compact 可单独保留。
+- [ ] canonical user/workspace settings 支持独立关闭 plan/auto-compact/memory,manual compact 可单独保留;设置由 Host 解析并进入 compatibility/config digest,不得形成 client 与 Host 两条生产路径。
 - [ ] 加 recovery/chaos/large-session/Windows path/permission 测试。
 - [ ] 建立 golden fixture 版本和上游行为差异记录。
 - [ ] 在本文件补齐所有 commit/验证证据;不向上位 Runtime contract 计划回写行为状态或复制实现 checklist。
@@ -1165,7 +1182,7 @@ golden tests:
 完成门槛:
 
 - `npm run check` 与 `npm test` 全绿。
-- 所有 failure mode 有用户可见错误、ledger diagnostic 和安全 fallback。
+- 所有 failure mode 有用户可见错误、typed Runtime diagnostic 和安全 fallback。
 - 默认配置不自动发布 memory,不开放 Plan Mode 副作用逃逸。
 - restart/resume/fork/rewind/model switch 测试矩阵全部通过。
 
@@ -1197,7 +1214,7 @@ golden tests:
 - `session-codec.ts` 只恢复通过当前 exact schema 的 canonical message、runtime config 和 audit entry。
 - header、entry、payload 或事件无法验证时立即拒绝，保留源文件，不跳过坏行、不从文本猜测状态、不生成降级 replay。
 - `fork` 只接受当前格式的源 session，并创建新的当前格式 session；它不是格式转换入口。
-- 新的 Plan、compaction、approval 和 memory 语义只写入当前唯一 event/ledger 真源。
+- 新的 Plan、compaction、approval 和 memory 语义只写入当前唯一 canonical session/runtime event 真源。
 
 ### 11.2 配置
 
@@ -1226,6 +1243,9 @@ golden tests:
 | 外部 memory 编辑 | 未审内容被注入 | digest scan -> changed_unreviewed |
 | index 漂移 | 错误/陈旧检索 | rebuildable projection + index digest receipt |
 | TUI 成为事实源 | reconnect/resume 丢状态 | reducer projection,UI 只存临时交互 |
+| client 直接调用 controller/store | 多 client 分叉状态、绕过 writer/driver fence | 所有生产 mutation/query/subscription 经 authenticated Host,client 只持 remote facade |
+| command response-loss | 重复 compact、重复 memory publish 或重复 mode transition | durable intent/receipt + command/request digest + uncertain 不重执行 |
+| storage root 漂移 | 项目目录和旧 agent home 形成双真源 | 单一 `runledgerHome` + canonical layout;旧路径与 sessionDir authority fail closed |
 | Runtime contract 与 behavior 漂移 | 双真源、并行合并冲突 | contract allowlist 只读 + 独立 contract PR + consumer test |
 | 多个主计划冲突 | 状态与顺序漂移 | 本文件唯一专项账本,上位计划只汇总,共享文件串行 handoff |
 
@@ -1248,6 +1268,9 @@ golden tests:
 - [ ] pre-compact flush 只产 proposal,失败不阻止 compact。
 - [ ] post-compact recovery 只读 approved、有效、scope 匹配的 record。
 - [ ] TUI/CLI/未来 API 复用同一 command/query/event schema。
+- [ ] 标准 CLI/TUI 只通过 authenticated Runtime Host 访问本专项;Host 是 resident service/store/event writer owner,observer 无 mutation authority。
+- [ ] 所有领域 mutation 绑定 Host/session generation、driver revision、expected domain revision 与 durable command receipt;response-loss 不重复副作用。
+- [ ] 所有本地数据只写 canonical `runledgerHome` 子树,不写 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir。
 - [ ] 所有 session 与 runtime 数据只遵循当前 exact format,不提供旧格式兼容、迁移、双写或隐式转换。
 - [ ] `npm run check` 完整通过。
 - [ ] `npm test` 完整通过。

@@ -2,19 +2,35 @@
 
 > 文档属性：本主题唯一权威计划与执行状态账本。
 >
-> 状态：draft。
+> 状态：独占行为切片已实现；ExecutionGateway 到 Host/生产工具的接线与真实 enforced E2E 仍未完成，领域状态仍只按本文件证据更新。
 >
-> 建立日期：2026-07-21。
+> 建立日期：2026-07-21；Runtime Host 适配校准：2026-08-04。
 >
 > 目标目录沿用需求中的 worktree-sandbox-permisson 拼写；代码、类型和正文统一使用 permission。
 >
-> 本文只规划 RunLedger 的实现，不在本次文档任务中修改运行时代码。
+>
+> 本文同时记录当前独占行为实现证据；Host/CLI/TUI/ExecutionGateway 生产接线仍按后续阶段执行，不因本地 adapter 测试而提前宣称生产隔离。
 >
 > Runtime 公共契约来源：[`../runtime/00-reference.md`](../runtime/00-reference.md) 与 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)。
+>
+> 生产 Host/managed process 行为来源：[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)。
 
 ## 0. 参考基线与结论边界
 
 本计划基于以下本地 checkout 的当前源码，而不是仅参考产品文档：
+
+### 0.0.1 2026-08-04 当前实现切片证据
+
+以下为当前分支已提交独占目录切片的局部证据；复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现；不把 deterministic launch plan 当作真实 OS enforcement：
+
+- Permission/Approval/config/path 线已有 `src/security/{config,permission,integration,policy-filesystem}.ts` 与对应测试，覆盖 exact config、`deny > ask > allow`、approval、shell analyzer、canonical path boundary 和 runtime authorization adapter。
+- 新增 `src/security/execution-gateway.ts`、`policy-network.ts` 与 `integration/runtime-gateway-adapter.ts`：在授权、approval receipt、workspace/policy/constraint digest 和 sandbox final-leaf 条件全部通过后才暴露受限 fs/network port；缺失或过期决策 fail closed，仍不拥有 process 生命周期。
+- Worktree 线已有 `src/worktree/{git-operations,paths,manager,registry,lease,ports}.ts`：受控 Git args、managed-root containment、append-only replay、JSONL canonical store、proper-lockfile、lease revision/fencing、create/list/remove 约束；security/worktree 定向为 18 files / 88 tests。
+- Sandbox 线新增 `src/security/sandbox/`：Linux bwrap、macOS Seatbelt、Windows/unknown unavailable factory、policy resolver、denial classifier、capability probe、deterministic launch plan 与 final-leaf request/plan digest receipt；对应 sandbox 测试为 4 files / 10 tests。该线不 spawn、不保存 PID/PTY/output/recovery，也未声称生产 enforcement。
+- 阶段提交证据：`dde60ac`（`feat(workspace-security): bind execution to verified constraints`），只包含 `src/security/**`、`src/worktree/**` 与对应测试路径；提交前 `git diff --cached --check` 通过。
+- 本地验证证据：`npm run check`、`npm test`（Vitest 144 files / 746 tests，Bun TUI 5 files / 44 assertions）、`npm run build`、`git diff --check` 均通过；该提交已落在当前分支，尚未 push。
+
+仍未实现或未接线：ExecutionGateway 到生产工具的唯一执行面接线、所有 builtin tools 迁移、Host final-leaf/process facade 的真实调用、真实 Linux/macOS enforced E2E、CLI/TUI/approval reverse request、resume/worktree Runtime adapter、durable security/workspace events、persistent grants/GC/apply 与企业/远程能力。故不得把当前切片标为 M0–M6 或专项完成。
 
 | 项目 | 基线 | 本计划主要读取的实现 |
 |---|---|---|
@@ -28,6 +44,7 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 
 - `runtime/00-reference.md` 是治理目标、术语和上游证据输入，不直接分配实现文件。
 - `runtime/04-governed-agent-harness-runtime-plan.md` 独占 Runtime 公共 ID、envelope/ref/receipt、event payload schema、projection 与 adapter port。
+- `runtime/05-multi-client-background-terminal-refactor-plan.md` 独占 production Host、client/driver/observer、durable command/subscription、managed process、pipe/PTY、private output 与 shutdown/recovery 行为。
 - 本计划消费上述契约并独占具体行为；发现契约缺口时先回到 Runtime 计划提交 exact schema/fixture，再继续实现，不在 `src/security/**` 或 `src/worktree/**` 复制公共类型。
 
 下文“Runtime Workspace/Security 契约域”指 [`04` 的 workspace、capability、approval 与 sandbox contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security),“Runtime Control/Telemetry 契约域”指 [`04` 的 control plane、policy、telemetry 与 remote metadata contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-control-telemetry)。
@@ -57,12 +74,16 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 
 本计划是 Worktree/Sandbox/Permission 行为的唯一实现账本。Runtime contract 计划定义“传什么、记什么、如何校验”,本计划定义“如何判断、如何执行、何时发事件、如何 replay 以及如何证明强制生效”。
 
+生产组合中,本计划拥有 Permission/Approval/Workspace/Sandbox/Gateway 的决策、策略、受限 filesystem/network adapter 与 enforcement receipt；`runtime/05` 的 Host/process domain 拥有 session writer、driver fencing、process intent/spawn claim、pipe/PTY backend、output/recovery 和 lifecycle。二者在最终执行叶通过不可变 execution-constraint snapshot/receipt 交接,不得各自实现第二个 process manager、PTY backend、output store 或 client-local controller。
+
 ```text
 src/runtime/protocol contracts
               ↓
 src/security + src/worktree implementations
+              ↓ decision/receipt/workspace adapters
+Runtime Host resident composition + managed process final leaf
               ↓
-serialized adapters into runtime/session/CLI/TUI
+authenticated CLI/TUI remote facade
 ```
 
 权威映射：
@@ -75,15 +96,16 @@ serialized adapters into runtime/session/CLI/TUI
 | `CapabilityRequestRef`、`CapabilityDecision` | Access resolver 与 PermissionEngine 推导请求并执行 `deny > ask > allow` |
 | `ApprovalTicket`、`ApprovalReceiptRef` | ApprovalCoordinator/Store 实现 prompt、CAS、expiry、revoke、crash reconciliation |
 | `CredentialGrantRef` | Credential Broker 解析真实 store、注入最小短期 secret，并只把脱敏 grant/receipt ref 返回 Runtime |
-| `SandboxProfileRef`、`SandboxExecutionReceiptRef` | Sandbox resolver/backend probe、prepare、spawn、denial detection 生成真实 enforcement receipt |
+| `SandboxProfileRef`、`SandboxExecutionReceiptRef` | Sandbox resolver/backend probe、launch-plan prepare、final-leaf validation、denial detection 生成真实 enforcement receipt；实际 process lifecycle 归 Host |
 | workspace/permission/sandbox current events | Runtime 拥有 event name/payload schema；本计划拥有 emission timing、intent/commit 顺序和 receipt 真实性 |
 | Workspace/Gateway/Approval/Sandbox ports | 本计划提供 adapter 实现；Runtime consumers 只能通过 port 使用，不 import 本计划内部 store/backend |
+| Runtime Host command/process constraint handoff | 本计划提供真实限制性 decision/receipt 与 executor adapter；Host 绑定 execution/attempt 并在 final leaf 重校验,本计划不 spawn/reattach/管理 PTY |
 
 Runtime contract 完成不代表隔离已生效；本计划实现完成但尚未接入 Runtime 也不代表生产路径无旁路。只有独占实现、串行接线和联合 E2E 三者均通过后，才能对外声明 workspace isolation、permission approval 或 sandbox enforcement。
 
-## 1. RunLedger 当前差距
+## 1. RunLedger 基线与当前差距
 
-### 1.1 已有可复用基础
+### 1.1 2026-07-21 原始可复用基础
 
 - AgentLoopConfig 已有 cwd、executionEnv、beforeToolCall、afterToolCall 和 ledger。
 - ToolContext 已携带 ExecutionEnv、sessionId、toolCallId 与 ledger。
@@ -92,23 +114,31 @@ Runtime contract 完成不代表隔离已生效；本计划实现完成但尚未
 - JsonlLedger、SessionManager、proper-lockfile 与 current replay 已提供审计和恢复底座。
 - stdlib 工具、TUI tool state、CLI/session 入口已经可运行。
 
-### 1.2 必须修复的结构性缺口
+### 1.2 仍需由本专项关闭的结构性缺口
 
 | 当前状态 | 风险 | 计划落点 |
 |---|---|---|
-| InteractiveSessionController 默认 AllowAllToolAuthorizationPolicy | 生产 CLI 中所有工具自动执行 | PermissionEngine + ApprovalCoordinator；安全 profile 成为默认 |
+| Runtime Host baseline 已有 builtin-none execution constraint provider,限制性 Permission/Approval/Sandbox/Gateway 尚未由本专项接入 | explicit none 可审计运行,但选择强约束时只能 unsupported | PermissionEngine + ApprovalCoordinator + Sandbox/Gateway adapter；由 Host composition 选择 profile |
 | ToolAuthorizationDecision 只有 allow/deny | 无 ask、来源、规则、scope、批准内容和审计证据 | 新增 policy decision 与 final authorization result |
 | tool_call 在 schema/permission 之前记账，deny 只变成普通 isError | 无法重建“谁基于什么策略批准/拒绝” | 接入 Runtime `permission.requested/decided` payload 与 attemptId |
 | read/write/edit 等工具直接使用 node:fs；WebFetch 直接 fetch | executionEnv/sandbox 可被内置工具绕过 | 全部内置工具改经 ToolContext/ExecutionGateway |
-| bash background 直接 spawn；tool output 直接写 tmp | 绕过 sandbox、生命周期与路径策略 | ManagedProcess + policy-aware temp storage |
+| `runtime/05` 已删除 raw background 并建立 Host-owned managed process/private output baseline | 本专项若再建 `ManagedProcessRegistry` 或 raw spawn 会形成第二执行面 | 只提供 execution constraint decision/receipt 与受限 executor,交 Host process final leaf |
 | resolveToCwd 接受任意绝对路径，write/edit 不验证 workspace 边界 | 可直接写工作区外；symlink 可逃逸 | CanonicalPathResolver + FileAccessGuard |
-| localShell 直接 bash -c，restrictive profile 无 OS enforcement | 软件 allowlist 无法约束任意子进程 | SandboxBackend 包装 spawn，缺 backend 时 fail closed |
+| Host pipe/PTY baseline 支持 builtin-none,restrictive profile 尚无真实 OS enforcement adapter | 软件 allowlist 无法约束任意子进程 | SandboxBackend 生成真实 launch plan/receipt 交 Host final leaf,缺 backend 时 fail closed |
 | WebFetch 没有 host permission/network policy | 网络访问不可审批、不可限制 | NetworkAccessRequest + NetworkClient |
-| ProjectSettings 解析失败回退空对象 | 对安全配置而言会 fail open | 独立 SecurityConfigLoader，解析失败阻止安全模式启动 |
+| canonical user/workspace settings 已固定到 `runledgerHome` | repo `.runledger/security.json`、旧 agent home 或 client override 若成为 authority 会恢复双根/fail-open | 独立 SecurityConfigLoader 从注入 layout 解析；非法/冲突配置阻止所选安全模式启动 |
 | 没有 worktree manager/registry/session binding | cwd、repo、session、sandbox root 无稳定身份 | WorktreeManager + WorktreeRegistry + PersistedWorkspaceBinding，并投影 Runtime refs |
 | ledger 没有 sandbox/worktree 事件 | 无法审计隔离边界是否实际生效 | 发射 Runtime workspace/sandbox events、policy digest 与 enforcement receipts |
 
-结论：不能先加几个 CLI flag 就宣称支持 sandbox。第一优先级是关闭所有绕过统一执行面的路径。
+结论：不能先加几个 CLI flag 就宣称支持 sandbox。第一优先级是提供真实限制性决策/enforcement adapter,接入现有 Host final-leaf barrier,并关闭 filesystem/network/worktree 旁路；不得回退到旧 client/controller 或再造 process backend。
+
+### 1.3 2026-08-04 Runtime Host handoff
+
+- `runtime/05` 的已提交 baseline 已使 Host 成为唯一 session/Agent/process writer,CLI/TUI 是 remote client；本专项 Phase 5 必须接 Host resident composition,不能按旧计划让 CLI 先创建 controller。
+- Host process facade 已拥有 durable intent/spawn claim、pipe/PTY、bounded private output、recovery、completion Queue 与 shutdown lifecycle。本专项只提供真实 restrictive Permission/Approval/Sandbox/Gateway/containment decision/receipt 和 executor adapter。
+- 五个 execution-constraint 维度允许显式 builtin `none`;这只表示“本维度明确未请求强约束”,不是 sandbox enforced。用户选择 restrictive profile 而 adapter unavailable 时必须在 spawn 前返回 typed unsupported/denied。
+- 所有 approval/worktree/security mutation 通过 Host durable command,绑定 principal、Host/session generation、driver revision、expected domain revision 与 request digest；observer 只读,client disconnect 不释放 Host waiter或 writer。
+- canonical state、registry、grants、settings 与 staging 只能写入单一 `runledgerHome`;workspace path 是 identity/enforcement root,不是 RunLedger storage root。
 
 ## 2. 总体设计
 
@@ -135,7 +165,7 @@ approvalPolicy = never 的含义固定为“不弹窗，原本需要 ask 的请�
 
 ~~~mermaid
 flowchart TD
-    M[Model toolCall] --> V[Schema validate and normalize]
+    C[Authenticated driver command or resident Agent toolCall] --> V[Schema validate and normalize]
     V --> A[ToolAccessResolver]
     A --> P[PermissionEngine]
     P -->|deny| D[Structured denial]
@@ -144,14 +174,15 @@ flowchart TD
     Q -->|allow once| G[ExecutionGateway]
     P -->|allow| G
     G --> F[PolicyFileSystem]
-    G --> S[SandboxedShell]
     G --> N[PolicyNetworkClient]
-    S --> B[Platform SandboxBackend]
+    G --> X[Execution constraint snapshot and receipts]
+    X --> H[Runtime Host managed process facade]
+    H --> B[Platform SandboxBackend at final leaf]
     F --> R[Tool result]
     B --> R
     N --> R
     D --> R
-    R --> L[Append-only ledger]
+    R --> L[Host-owned canonical event writer]
 ~~~
 
 ### 2.3 默认 profiles
@@ -192,7 +223,7 @@ src/
       macos-seatbelt.ts         # macOS sandbox-exec/Seatbelt backend
       windows-external.ts       # 第一版仅 external/unavailable，禁止伪装 enforced
       denial.ts                 # 结构化识别 sandbox denial
-    execution-gateway.ts        # 唯一生产执行入口，组合 permission + sandbox + audit
+    execution-gateway.ts        # 唯一安全决策/受限 IO 入口；process 生命周期交 Host facade
     policy-filesystem.ts        # read/write/stat/readdir/mkdir/rm 路径 gate
     policy-network.ts           # fetch/host/network gate
     redaction.ts                # audit secret/env/credential 脱敏
@@ -207,16 +238,21 @@ src/
 
   runtime/
     protocol/**               # Runtime 计划独占；本计划只 import，不修改
-    execution-env.ts            # 扩展 network/process/capability；本地 raw 实现降为内部
+    host/**                      # runtime/05 独占；本计划只提供 composition adapter
+    process/**                   # runtime/05 独占 process state/backend/output/recovery
+    execution-env.ts            # legacy/foreground seam；不得扩成第二 ManagedProcessRegistry
     tool-authorization.ts       # 适配 PermissionEngine/ApprovalCoordinator
     tool-context.ts             # 加 workspace、resolved profile、attemptId
     agent-loop.ts               # 记录 request/decision/sandbox/result 顺序
     interactive-session-controller.ts
     tools/*.ts                  # 全部改经 context.env / ExecutionGateway
-    ledger/types.ts             # permission/sandbox/worktree entry
+    security-event-adapter.ts   # 发射 Runtime-owned exact event,不扩展 legacy ledger kind
 
   storage/
-    paths.ts                    # security config、worktree registry 路径
+    runledger-home.ts           # composition root 注入 canonical layout,本计划不重复解析
+    paths.ts                    # 历史 locator；不作为新 security/worktree storage authority
+    security/                   # layout-relative config/grant locator 与 store
+    worktree/                   # layout-relative registry locator 与 store
     security-config.ts          # 严格安全配置加载入口
     session-codec.ts            # PersistedWorkspaceBinding/SecuritySnapshot 恢复并投影 Runtime refs
 
@@ -263,8 +299,9 @@ tests/
 | `src/runtime/protocol/**`、`tests/runtime-contracts/{workspace-contracts,security-contracts}/**` | Runtime contract 计划 | 本计划只消费已冻结 public exports；不得直接修改 |
 | `src/security/**`、`tests/security/**` | 本计划 | 可与 Runtime 其他独占目录并行 |
 | `src/worktree/**`、`tests/worktree/**` | 本计划 | 可与 Runtime 其他独占目录并行 |
-| `src/runtime/agent-loop.ts`、`execution-env.ts`、`tool-context.ts`、`tool-authorization.ts`、`interactive-session-controller.ts` | 串行集成面 | 仅 Phase 5 集成窗口修改；窗口内其他专项不得并发编辑 |
-| `src/runtime/ledger/types.ts`、`src/storage/{paths,session-codec,session-manager}.ts` | 串行集成面 | Runtime contract 与独占实现完成后逐文件接线 |
+| `src/runtime/agent-loop.ts`、Host resident composition/Control Plane、`execution-env.ts`、`tool-context.ts`、`tool-authorization.ts`、`interactive-session-controller.ts` | 串行集成面 | 仅 Phase 5 集成窗口修改；窗口内 Runtime Host/其他专项不得并发编辑 |
+| `src/runtime/{host,process}/**`、`src/storage/{host,process}/**` | `runtime/05` | 本计划不复制 manager/backend/output/recovery；仅经既有 port/composition handoff |
+| Runtime event-sink/Host composition、`src/storage/{runledger-home,session-codec,session-manager}.ts` | 串行集成面 | Runtime contract、Host handoff 与独占实现完成后逐文件接线；不扩展 legacy ledger kind |
 | `src/runtime/tools/**` | 串行集成面 | ExecutionGateway adapter 稳定后一次迁移；Runtime Workspace/Security 契约域不得并行修改行为文件 |
 | `src/cli/**`、`src/tui/**`、`src/index.ts`、`package*.json` | 串行产品集成面 | 与 Plugin/Context 等专项集成窗口排队，不并发修改 |
 | `tests/integration/**`、`tests/e2e/**` | 联合验证 | 只在双方独占测试通过后补充，按单一集成提交修改 |
@@ -302,7 +339,7 @@ export interface AuthorizationResult {
 }
 ~~~
 
-ToolAuthorizationPolicy.authorize 最终仍只把 allow/deny 交给 agent-loop，但它内部必须完成：
+Runtime authorization adapter 最终把 exact decision/receipt 交给 Host-owned resident agent/process final leaf,但它内部必须完成：
 
 1. 由 tool 的 normalized args 解析 AccessRequest；
 2. 对所有请求执行 rule evaluation；
@@ -316,14 +353,17 @@ ToolAuthorizationPolicy.authorize 最终仍只把 allow/deny 交给 agent-loop�
 
 ### 4.2 规则与配置
 
-建议使用单独的 JSON 安全配置，而不是继续扩张容错型 settings.json：
+安全配置必须位于 canonical `runledgerHome` authority,不能继续使用旧 agent home 或 repo `.runledger` 作为 RunLedger 自有状态：
 
 ~~~text
-用户默认：~/.runledger/agent/security.json
-项目共享：<repo>/.runledger/security.json
+用户默认：<runledgerHome>/settings.json#security
+workspace：<runledgerHome>/projects/<workspace-key>/settings.json#security
 企业托管：Linux/macOS /etc/runledger/security.json
-CLI 覆写：只允许选择 profile/收紧策略；是否允许放宽受 managed constraints 控制
+repo policy：可选只读、默认不可信的收紧 proposal,不能授予或覆盖 canonical/managed deny
+CLI 覆写：Host request 只允许选择 profile/收紧策略；是否允许放宽受 managed constraints 控制
 ~~~
+
+`SecurityConfigLoader` 对上述 canonical settings 中的 `security` section 做独立 exact/fail-closed 校验,不能沿用“未知安全字段丢弃后继续”的容错路径。grant、approval 和 policy snapshot state 可写 `<runledgerHome>/state/security/**`,但不能另建配置 authority。`runledgerHome` 只由 composition root 解析一次并注入 loader；`RUNLEDGER_SESSION_DIR`、`--session-dir`、`settings.sessionDir`、`<cwd>/.runledger/` 与 `~/.runledger/agent/` 不拥有 security authority。CLI/Host-fixed 配置冲突必须在 handshake/command 前 typed reject,不得让不同 client 形成不同 effective policy。
 
 建议 schema：
 
@@ -362,7 +402,7 @@ CLI 覆写：只允许选择 profile/收紧策略；是否允许放宽受 manage
 
 CanonicalPathResolver 的固定步骤：
 
-1. 以 PersistedWorkspaceBinding.effectiveCwd 解析相对路径，并与 Runtime WorkspaceExecutionEnvelope 交叉校验；
+1. 以 Host 从 PersistedWorkspaceBinding hydrated 的 private effective cwd 解析相对路径，并与 Runtime WorkspaceExecutionEnvelope 交叉校验；
 2. path.normalize 得到 lexical path；
 3. 对已存在路径 realpath；
 4. 对待创建路径 realpath 最近存在父目录，再拼回剩余 segments；
@@ -424,29 +464,27 @@ export interface PermissionPrompter {
 
 持久 grant 在后续阶段引入，必须绑定 project identity、canonical prefix/host/path、profile 和 policy digest。
 
-### 4.6 ExecutionEnv 与唯一执行入口
+### 4.6 ExecutionGateway 与 Runtime Host 唯一执行链
 
-ExecutionEnv 需要扩展为：
+本专项不再把 `ExecutionEnv` 扩成第二个 process registry。受限 filesystem/network 与 execution-constraint handoff 分开：
 
 ~~~ts
-export interface ExecutionEnv {
-  cwd: string;
-  fs: FileSystem;
-  shell: Shell;
-  network: NetworkClient;
-  processes: ManagedProcessRegistry;
-  sandbox: SandboxRuntimeStatus;
+export interface RestrictedExecutionAdapters {
+  fs: PolicyFileSystem;
+  network: PolicyNetworkClient;
+  processDecision: ExecutionConstraintDecisionProvider;
+  sandboxDecision: SandboxDecisionProvider;
 }
 ~~~
 
 实施约束：
 
-- read/write/edit/multi-edit/ls/grep/find 全部优先消费 ToolContext.env.fs/shell。
-- WebFetch 使用 env.network.fetch，不调用 global fetch。
-- bash foreground/background 都使用 env.shell/ManagedProcessRegistry。
-- applyToolResultBudget 通过 env.fs + policy-aware temp dir 落盘。
-- 工具 factory 中的 operations 只保留测试注入用途；生产构造必须来自 ExecutionGateway。
-- localExecutionEnv 改为低层 raw adapter，不再由工具自行创建。
+- read/write/edit/multi-edit/ls/grep/find 全部消费 Host composition 注入的 `PolicyFileSystem`；必要 shell helper 也必须走 Host process facade。
+- WebFetch 使用 `PolicyNetworkClient`,不调用 global fetch。
+- bash foreground/background、hook/MCP stdio、CLI shell 与 PTY 全部使用 `runtime/05` Host process facade；本专项只提供绑定 execution/attempt 的 decision/receipt 和 sandbox launch adapter。
+- tool result 大正文进入 Host private output 或策略授权的 Artifact CAS；不得自行把物理路径返回模型/TUI。
+- 工具 factory 中的 operations 只保留测试注入用途；生产构造必须来自 Host + ExecutionGateway composition。
+- `localExecutionEnv` 只保留为低层或 test adapter,不得由生产工具自行创建,也不得成为 Host unavailable 时的 fallback。
 - 新增边界检查脚本，禁止 src/runtime/tools 下出现 node:fs、node:child_process 和裸 fetch，白名单必须逐文件列出。
 
 ### 4.7 Sandbox
@@ -457,9 +495,11 @@ Runtime 公共层的 `SandboxProfileRef` 与 `SandboxExecutionReceiptRef` 直接
 export interface SandboxBackend {
   probe(): Promise<SandboxBackendCapability>;
   prepare(request: SandboxPrepareRequest): Promise<SandboxLaunchPlan>;
-  spawn(plan: SandboxLaunchPlan, command: ShellCommand): Promise<SandboxedProcess>;
+  validateFinalLeaf(plan: SandboxLaunchPlan, requestDigest: string): Promise<SandboxDecisionReceipt>;
 }
 ~~~
+
+`SandboxBackend` 不直接拥有 durable process identity、PID、PTY、output 或 recovery。它生成并验证受约束 launch plan/receipt,由 Host-owned process backend 在 intent/spawn claim 后执行；final leaf 必须重新绑定 execution/attempt/request digest。只有 platform adapter 内部且由 Host 调用的最小 spawn seam 可以接触 wrapper/native handle。
 
 平台路线：
 
@@ -482,8 +522,8 @@ read-only/workspace-write/strict 请求在 backend unavailable 时：
 
 1. PolicyFileSystem 的软件拒绝仍然生效，但它不能把该 profile 标记为可用或 enforced；
 2. 任意 shell、后台进程和可能衍生子进程的工具拒绝执行；
-3. 默认 CLI 因启用了 shell 工具而拒绝进入 session，TUI/诊断面显示 unavailable；
-4. 只有用户显式切换 off/external 才能继续，不接受静默 fallback。
+3. Host 可继续提供不需要该强约束的只读 query,但所有请求 restrictive sandbox 的 process 在 spawn 前 typed unsupported；TUI/诊断面显示 unavailable；
+4. 只有用户通过受策略约束的 Host command 显式切换 builtin `none`/external 才能继续,并记录新 policy revision/receipt；不接受静默 fallback。
 
 Network 第一纵切只支持 deny/allow：
 
@@ -497,15 +537,15 @@ Network 第一纵切只支持 deny/allow：
 默认路径：
 
 ~~~text
-~/.runledger/agent/
-  worktrees/
+<runledgerHome>/state/worktrees/
+  managed/
     <repo-slug>-<canonical-root-hash>/
       <worktree-id-or-label>/
-  worktrees.jsonl
-  worktrees.jsonl.lock
+  registry.jsonl
+  registry.jsonl.lock
 ~~~
 
-RUNLEDGER_DIR 继续影响用户状态根。repo slug 由最后两级有意义路径 + canonical repo root 的短 SHA-256 组成，避免同名仓库碰撞。
+`RUNLEDGER_DIR`/默认 `~/.runledger` 只在 composition root 解析一次；WorktreeManager 只接收注入的 `RunledgerLayout`。repo slug 由非敏感 display hint + canonical repo identity digest 组成，避免同名仓库碰撞；public event/receipt 不保存绝对 source/worktree/home path。
 
 第一版 WorktreeRecord：
 
@@ -522,10 +562,10 @@ export type WorktreeState =
 export interface WorktreeRecord {
   id: string;
   sessionId: string;
-  sourceRepo: string;
-  sourceCwd: string;
-  path: string;
-  effectiveCwd: string;
+  sourceRepositoryRef: RepositoryRef;
+  sourceSubdir: string;
+  worktreeLocator: string;
+  effectiveSubdir: string;
   baseRef: string;
   baseCommit: string;
   branch?: string;
@@ -545,13 +585,15 @@ export interface WorktreeRecord {
 4. prepare 验证 source repo、base ref、dest 所属 managed base 和 collision。
 5. 以 sessionId/id 持锁 claim；重复 create 返回 creating/exists，不重复创建。
 6. 创建失败或取消时清理部分目录与 Git registration，并追加 failed event。
-7. sourceCwd 位于 repo 子目录时保存 subdir offset，effectiveCwd = worktree root + offset。
+7. source 位于 repo 子目录时保存 root-relative subdir offset；private effective cwd = worktree root + validated offset。
 8. list/show 以 git worktree list --porcelain 与 registry 双源校验；registry 不是单独真相。
 9. remove 默认 dry-run/拒绝 dirty worktree；force 必须 exact approval。
 10. remove 前验证 canonical target 位于 managed worktree base、record owner 一致、不是 source repo/root/home。
 11. 不允许对任意用户传入路径调用递归删除。
 12. apply 第一版只生成 status/diff/commit/冲突预览，不自动改 source；实际 apply/merge 作为独立审批操作。
 13. GC 只处理 registry 标记 removed/failed 或超过 TTL 且 clean、非 active 的 managed worktree。
+
+绝对 source/worktree path 只存在于 Host/WorktreeManager 的进程内解析状态或受保护 private locator store；canonical event、receipt、Artifact metadata、模型和普通 TUI 只使用 `RepositoryRef`、`WorkspaceRef`、root-relative locator 与 digest。
 
 不在第一版实现：
 
@@ -571,9 +613,9 @@ export interface WorktreeRecord {
 ~~~ts
 export interface PersistedWorkspaceBinding {
   kind: "source" | "worktree";
-  sourceRepo: string;
-  sourceCwd: string;
-  effectiveCwd: string;
+  sourceRepositoryRef: RepositoryRef;
+  sourceSubdir: string;
+  effectiveSubdir: string;
   worktreeId?: string;
   baseCommit: string;
 }
@@ -581,14 +623,13 @@ export interface PersistedWorkspaceBinding {
 
 Session 启动顺序固定为：
 
-1. 解析 CLI + security config；
-2. 解析 source repo/cwd；
-3. 创建或恢复 PersistedWorkspaceBinding，并投影 Runtime WorkspaceBindingRef；
-4. 以 effectiveCwd 物化 sandbox workspace roots；
-5. 生成 SecuritySnapshot/policyDigest；
-6. 构建 ExecutionGateway；
-7. 构建工具和 Agent；
-8. 进入 TUI。
+1. composition root 解析一次 `RunledgerLayout`,完成 Host scope/compatibility/peer preflight；
+2. client 通过 authenticated Host command 请求 create/resume/attach,不得直接获取 session lock；
+3. Host 解析 canonical user/workspace security config 与 source repo/workspace identity；
+4. Host 创建或恢复 PersistedWorkspaceBinding，并投影 Runtime WorkspaceBindingRef；
+5. 以 private effective cwd 物化 sandbox workspace roots,生成 SecuritySnapshot/policyDigest；
+6. Host 构建 ExecutionGateway、restrictive decision adapters、工具与 resident Agent；
+7. client 取得 remote facade、driver/observer role 与 subscription cursor后进入 TUI。
 
 resume 必须校验：
 
@@ -599,7 +640,7 @@ resume 必须校验：
 - 当前 managed policy 是否比 snapshot 更严格；
 - backend capability 是否发生变化。
 
-缺失 worktree 时不得静默把 cwd 切回 source repo。应返回“重新创建 / 以 source 只读恢复 / 取消”选择，其中重新创建必须基于记录的 baseCommit，并保留新的 worktree event。
+缺失 worktree 时不得静默把 cwd 切回 source repo。Host 应发 durable reverse request,由 active driver 选择“重新创建 / 以 source 只读恢复 / 取消”；observer 不能 resolve。重新创建必须基于记录的 baseCommit,使用 idempotent Host command 并保留新的 worktree event/receipt。
 
 不得扩展一套下划线命名的 `LedgerEntryKind`。集成层直接发射 Runtime 已冻结的事件：
 
@@ -624,6 +665,8 @@ tool.started
 tool.finished / tool.failed / tool.interrupted
 ~~~
 
+Host/process final leaf 还会保存 `process.execution_requested/started/terminal|lost|uncertain`。Security event 证明 policy/approval/sandbox decision,process event 证明 intent/spawn/output/terminal；两者以 execution/attempt 和 constraint snapshot digest 关联,不得互相冒充或双写同一事实。
+
 审计 payload 只保存必要字段：
 
 - command/URL/path 按安全审计策略保存并限制长度；
@@ -636,7 +679,7 @@ tool.finished / tool.failed / tool.interrupted
 
 ### 5.1 CLI
 
-在现有 argv parser 上分阶段加入：
+在 current argv parser 上分阶段加入 typed Host request：
 
 ~~~text
 --permission-profile <read-only|workspace-write|danger-full-access|custom>
@@ -661,9 +704,9 @@ runledger worktree gc --dry-run
 
 规则：
 
-- CLI 可以显式收紧策略。
+- CLI 可以在 handshake/command 中显式收紧策略,但 client 不自行解析 effective policy或创建 controller。
 - CLI 放宽是否有效受 managed constraints 限制。
-- --sandbox workspace-write 但 backend unavailable 时启动失败并给出可操作诊断。
+- `--sandbox workspace-write` 但 backend unavailable 时,Host 对相关 session/process 返回 typed unsupported 并给出可操作诊断,不得启动 client-local fallback。
 - --approval-policy never 不开启 full access。
 - --worktree 与 --no-worktree 互斥。
 - help 输出清楚区分 worktree、permission、approval、sandbox。
@@ -673,12 +716,14 @@ runledger worktree gc --dry-run
 新增最小交互面：
 
 - 底部状态：workspace/source、worktree label、permission profile、sandbox backend/enforcement、network。
-- Permission overlay 展示 tool、canonical cwd、paths/host/command、原因与 policy source。
+- Permission overlay 展示 tool、workspace-relative cwd、脱敏 paths/host/command 摘要、原因与 policy source。
 - 选项仅 Allow once、Deny、Cancel turn。
 - tool component 在 pending 与 running 之间增加 awaiting approval 状态。
 - permission overlay 出现时不丢 steering/follow-up，不允许相同 toolCall 重复 prompt。
 - session interrupt 关闭 prompt 并产生 cancelled decision。
 - 宽度与 snapshot 测试覆盖窄终端。
+- overlay 来自 Host reverse request；只有 active driver 可提交 decision,observer 只读。driver detach 不丢 waiter,新 driver 携 expected revision claim 后继续。
+- TUI 不读取 security/worktree registry、Event Store、process output 或 sandbox backend 文件；只使用 bounded Host query/subscription DTO,绝对路径按 public redaction policy 隐藏。
 
 ## 6. 分阶段实施
 
@@ -688,8 +733,9 @@ runledger worktree gc --dry-run
 
 1. **契约冻结**：Runtime contract 计划先完成 Foundation、Event、Workspace/Security 与 Adapter Port work packages,冻结 workspace/security schema、events、projections、ports 与 fixtures;contract 工作不得修改 session/storage/CLI 行为基线。
 2. **独占目录并行**：本计划在 `src/security/**`、`src/worktree/**` 完成行为实现；其他 owner 可同时推进不触碰共享文件的 contract 或行为工作。
-3. **串行集成**：双方独占测试通过后，预约单一集成窗口，由本计划 Phase 5 逐文件修改 runtime/session/storage/CLI/TUI；Plugin、Context 等其他专项不得同时修改这些文件。
-4. **联合门禁**：最后运行 bypass、real Git、real process/sandbox、resume 与 current replay E2E。Runtime contract 测试或本计划内部单测均不能单独替代该门禁。
+3. **Host handoff**：以 `runtime/05` 已提交 baseline 和当时最新 hardening commit 为基线,冻结 constraint snapshot/final-leaf、durable command、driver/reverse-request 与 subscription 交接；本计划不得修改 Host/process 内部状态机来迁就 adapter。
+4. **串行集成**：双方独占测试通过后，预约单一集成窗口，由本计划 Phase 5 逐文件修改 Host resident composition/runtime/session/storage/CLI/TUI；Plugin、Context 等其他专项不得同时修改这些文件。
+5. **联合门禁**：最后运行 bypass、real Git、real Host process/sandbox、双 client driver/observer、resume/restart 与 current replay E2E。Runtime contract、Host runner 或本计划内部单测均不能单独替代该门禁。
 
 若 Runtime contract 尚未冻结，本计划只能编写不依赖未决字段的内部纯实现与测试，不能在实现目录临时创造公共 envelope/receipt/event 类型。
 
@@ -707,7 +753,7 @@ runledger worktree gc --dry-run
 
 步骤：
 
-1. 记录 AllowAll 默认、deny 转 isError、ledger 顺序的现状测试。
+1. 记录 builtin-none baseline、restrictive profile unavailable、deny 转 isError、Host/process 与 security event 关联顺序的现状测试。
 2. 增加“工具不得直接 raw fs/spawn/fetch”的静态扫描，但先用显式 legacy allowlist 标记现有债务。
 3. 对 Runtime workspace/security schema 建 adapter conformance tests；固定实现内部术语，不重复导出公共 type-only API。
 4. 在文档与 test name 中区分 requested/enforced。
@@ -723,7 +769,7 @@ runledger worktree gc --dry-run
 
 ### Phase 1：PermissionEngine 与 ApprovalCoordinator
 
-目标：实现可替代生产 AllowAll 的确定性规则与审批协调器，同时不引入 OS sandbox；实际切换 production composition root 延后到 Phase 5。
+目标：实现可替代 production builtin-none policy 的确定性规则与审批协调器，同时不引入 OS sandbox；实际切换 Host composition 延后到 Phase 5。
 
 涉及：
 
@@ -742,7 +788,7 @@ runledger worktree gc --dry-run
 4. 实现 PermissionPrompter 接口与 headless deny prompter。
 5. runtime authorization adapter 在 ask 时等待 coordinator，返回符合 Runtime port 的 final decision/receipt；本阶段不改 agent-loop。
 6. 先为 stdlib 内建工具建立 centralized access resolver。
-7. 解析默认 workspace-write + on-request；生产 composition root 切换和测试 AllowAll 边界延后到 Phase 5。
+7. 解析默认 workspace-write + on-request；Host composition 切换和 builtin-none 仅显式选择的边界测试延后到 Phase 5。
 
 验收：
 
@@ -756,7 +802,7 @@ runledger worktree gc --dry-run
 
 ### Phase 2：构建 ExecutionGateway 唯一执行面
 
-目标：完成可供所有内置工具消费的唯一执行面及 broker；生产工具无旁路的结论延后到 Phase 5 接线后验收。
+目标：完成可供所有内置工具消费的唯一安全决策/受限 filesystem/network 面及 broker；process 生命周期继续由 Host facade 独占。生产工具无旁路的结论延后到 Phase 5 接线后验收。
 
 涉及：
 
@@ -773,15 +819,15 @@ runledger worktree gc --dry-run
 2. 引入 CanonicalPathResolver 与受保护元数据规则。
 3. 用 fake consumers 证明 Runtime Gateway port 只能返回受限 executor；生产工具切换延后到 Phase 5。
 4. 实现 PolicyNetworkClient 与 WebFetch adapter，不在本阶段修改 WebFetch。
-5. 实现 SandboxedShell/ManagedProcessRegistry，不在本阶段修改 bash。
-6. tool output spill 使用 session-scoped policy temp dir。
+5. 实现 Host process decision/sandbox adapter,用 fake final-leaf consumer 验证 execution/attempt/request digest 绑定；不实现 `ManagedProcessRegistry`、PTY 或 output store。
+6. tool output 大正文只返回 private-output/Artifact policy intent,不自行创建根外 spill。
 7. 保留 Phase 0 legacy allowlist，直到 Phase 5 完成每个生产工具迁移后逐项清空。
 
 验收：
 
 - ../、绝对路径、symlink 三类 workspace escape 被拒绝。
 - .git/.runledger 默认不可由 agent 写。
-- fake Runtime ports 能证明 gateway 对 fs/network/process 无旁路。
+- fake Runtime ports 能证明 gateway 对 fs/network 无旁路,并证明 process 缺 decision/receipt 或 stale digest 时 Host final leaf `spawnCount=0`。
 - security/worktree 独占目录静态扫描无未经声明的 raw fs/spawn/fetch。
 - 此阶段不声称现有生产工具已完成迁移；该验收只在 Phase 5 判定。
 
@@ -804,7 +850,7 @@ runledger worktree gc --dry-run
 3. 实现 append-only WorktreeRegistry + proper-lockfile + replay。
 4. create 采用 prepare/claim/create/finalize，失败清理半成品。
 5. 实现 list/show/touch/remove dry-run。
-6. 保存 sourceCwd subdir offset 与 PersistedWorkspaceBinding，并投影 Runtime WorkspaceBindingRef/WorkspaceExecutionEnvelope。
+6. 保存 source subdir offset 与 root-relative PersistedWorkspaceBinding，并投影 Runtime WorkspaceBindingRef/WorkspaceExecutionEnvelope；绝对 locator 留在 private store。
 7. adapter 生成符合 Runtime schema 的 workspace/lease event payload；真正 append 接线延后到 Phase 5。
 
 验收：
@@ -832,7 +878,7 @@ runledger worktree gc --dry-run
 
 步骤：
 
-1. 定义 probe/prepare/spawn/status 接口。
+1. 定义 probe/prepare/final-leaf-validation/status 接口,实际 spawn 继续走 Host process backend。
 2. 实现 Linux bwrap backend 与 deny network。
 3. 实现 macOS Seatbelt backend。
 4. Windows 第一版只返回 external/unavailable。
@@ -840,6 +886,7 @@ runledger worktree gc --dry-run
 6. 将 .git/.runledger/credential/registry 作为 deny/protected paths。
 7. 识别 sandbox denial，并生成符合 Runtime SandboxExecutionReceiptRef/event payload schema 的结构化结果。
 8. backend unavailable 时 restrictive shell fail closed。
+9. 只向 Host process facade交付 launch plan/decision receipt；不得直接 spawn、返回 PID/handle 或保存 output/recovery。
 
 验收：
 
@@ -850,39 +897,41 @@ runledger worktree gc --dry-run
 
 建议 commit：feat(sandbox): enforce resolved workspace boundaries for child processes
 
-### Phase 5：CLI/TUI、session resume 与审计闭环
+### Phase 5：Runtime Host、CLI/TUI、resume 与审计闭环
 
-目标：在唯一串行集成窗口把已验收的 security/worktree adapters 接入生产 Runtime，使用户可选择/看见/批准，并能无损恢复隔离状态。
+目标：在唯一串行集成窗口把已验收的 security/worktree adapters 接入 production Runtime Host resident composition,使 remote client 可选择/看见/批准，并能无损恢复隔离状态。
 
 涉及：
 
 - src/cli/args.ts、main.ts、worktree-command.ts
 - src/tui/permission-prompt.ts、security-status.ts 及相关 component
-- src/runtime/interactive-session-controller.ts、agent-loop.ts
+- Host resident-session/composition/Control Plane、src/runtime/interactive-session-controller.ts、agent-loop.ts
 - src/storage/session-codec.ts
-- src/runtime/ledger/types.ts
+- Runtime event-sink/Host command-store composition
 - tests/cli、tests/tui、tests/integration
 
 步骤：
 
-1. 先记录集成窗口，确认 Runtime/Plugin/Context 等其他计划没有并发修改共享文件；逐文件审阅基线。
-2. CLI 先解析 security/worktree，再创建 controller；生产默认从 AllowAll 切到安全 profile。
-3. TUI 实现 allow-once/deny/cancel，并只提交 Runtime approval command/result schema。
-4. execution-env/tool-context/stdlib tools 一次迁移到 ExecutionGateway；迁移一项清理一项 legacy allowlist。
-5. agent-loop 按 Runtime schema 追加 workspace/permission/sandbox 事件、attemptId 与 receipt refs，不扩展第二套 LedgerEntryKind。
-6. session replay 恢复 PersistedWorkspaceBinding/SecuritySnapshot，并投影 Runtime refs。
+1. 先记录集成窗口，确认 Runtime Host/Plugin/Context 等其他计划没有并发修改共享文件；逐文件审阅基线和 Host handoff commit。
+2. Host composition 从 canonical user/workspace settings 解析 security/worktree,选择 restrictive adapter；CLI 只提交 typed request并连接 remote facade,不得创建 controller。
+3. TUI 实现 Host reverse-request 的 allow-once/deny/cancel；只有 active driver 可提交带 generation/revision 的 Runtime approval command/result。
+4. tool-context/stdlib tools 一次迁移到 ExecutionGateway + Host process facade；迁移一项清理一项 legacy allowlist,不改 Host backend内部状态机。
+5. Host-owned event sink 按 Runtime schema 追加 workspace/permission/sandbox 事件、attemptId 与 receipt refs；agent-loop 只调用 adapter,不扩展第二套 LedgerEntryKind。
+6. Host cold replay 恢复 PersistedWorkspaceBinding/SecuritySnapshot，并投影 Runtime refs；client reconnect 只恢复 cursor/view state。
 7. resume 验证 worktree/backend/policy 漂移，不能静默切 source。
 8. footer/status 显示 degraded/unavailable；worktree 管理命令先实现 list/show/remove dry-run。
-9. 每个共享文件单独 diff/test；不得把 Plugin/Context 等其他专项改动混入同一提交。
+9. 每个共享文件单独 diff/test；不得把 Runtime Host 未提交 hardening或 Plugin/Context 等其他专项改动混入同一提交。
+10. security/worktree command 使用 durable intent/receipt；同 command/body 跨重启重放 receipt,异体 conflict,只有 intent 无 receipt 时 `uncertain_outcome` 且不重复 create/remove/approve。
 
 验收：
 
-- 真实 CLI smoke：安全默认启动、approval、deny、interrupt、resume。
+- 真实 CLI smoke：两个 client 复用一个 Host,安全 profile、approval、deny、interrupt、resume；observer mutation `spawnCount=0`。
 - TUI snapshot 覆盖窄宽度与长命令。
 - ask 在非交互路径确定性 deny，不阻塞 stdin。
-- resume 后工具 cwd 是 effectiveCwd，不是 sourceCwd。
+- resume 后工具 private cwd 来自 validated effective workspace binding,不是 client cwd 或 source fallback。
 - current events 可重放出每次批准、sandbox backend 与 worktree identity；Runtime projection digest 与 live state 一致。
 - src/runtime/tools 静态扫描无 raw fs/spawn/fetch，Phase 0 legacy allowlist 清空。
+- Host process/backend/output/recovery 仍只有 `runtime/05` 一套 owner,security/worktree 没有第二 registry/PTY/output store。
 
 建议 commit：feat(cli): expose and persist the effective security boundary
 
@@ -930,13 +979,13 @@ runledger worktree gc --dry-run
 3. Artifact 只提交 WorkspaceCheckpointDescriptor/Artifact refs；实际 Git 采集、恢复与清理由 Workspace adapter 完成。
 4. Verification 只提交 typed invocation 与 trusted-base request；adapter 创建只读/隔离 checkout 并经 Gateway 执行。
 5. Multi-Agent 只提交 workspace strategy、parent grant ref 与 child requested refs；adapter 判定 capability 子集、分配 lease 并返回 receipt。
-6. `approval:resolve` Control Plane command 只转发到 ApprovalCoordinator；policy evaluation、decision CAS 与 expiry/revoke 保持本计划单一实现。
+6. Host `approval:resolve` command 只转发到 ApprovalCoordinator；Host 验证 active driver/generation/revision并 durable 记录 command intent/receipt,policy evaluation、decision CAS 与 expiry/revoke 保持本计划单一实现。
 
 验收：
 
 - Runtime fake-port contract fixtures 与真实 adapter 对同一输入产生 schema-compatible 结果。
 - Artifact/Verification/Multi-Agent/Control Plane 不 import security/worktree 内部 store 或 backend。
-- adapter 重放不会重复 worktree、approval、spawn、rewind 或 cleanup 副作用。
+- adapter/Host command 重放不会重复 worktree、approval、spawn、rewind 或 cleanup 副作用；只有 intent 无 receipt 时返回 uncertain 且不重执行。
 - 每项真实行为都能回溯到 Runtime event cursor、Workspace Envelope 与 enforcement receipt。
 
 ### Phase 8：企业策略、Credential 与远程/CI 安全实现
@@ -951,7 +1000,7 @@ runledger worktree gc --dry-run
 2. 实现 service/user/local-peer/remote-workload identity provider、tenant namespace 与 RBAC/ABAC；高风险 approval 支持 separation of duty。
 3. Credential Broker 对接 KMS/keyring bootstrap、rotation、revocation、backup、crypto erase；只向 executor 注入最小短期 grant。
 4. CI/SSH/relay executor 验证 Workspace Envelope、lease、attestation、gate 与 egress policy；任何验证失败不得回退本地共享执行。
-5. startup/GC 处理外部 lease、approval、orphan process 与 remote handoff，并向 Runtime 返回 correlation/terminal receipts。
+5. startup/GC 处理外部 lease、approval 与 remote handoff，并向 Runtime 返回 correlation/terminal receipts；orphan process/recovery 仍由 `runtime/05` Host process lifecycle处理,本计划只参与 constraint/grant reconciliation。
 
 验收：
 
@@ -992,6 +1041,7 @@ runledger worktree gc --dry-run
 - workspace write / outside write / deny read。
 - child process 继承边界。
 - background process 继承边界并可回收。
+- Host final leaf 对 stale/missing decision receipt、observer mutation 和 restrictive backend unavailable 均为 `spawnCount=0`。
 - network deny。
 - structured denial detection。
 - external/off 状态不伪装 enforced。
@@ -1023,6 +1073,8 @@ runledger worktree gc --dry-run
 10. resume 后继续在同一 worktree；
 11. dirty worktree remove 默认拒绝；
 12. preview/handoff 后显式清理。
+13. 第二 client 以 observer 连接同一 Host,不能 approve/worktree/process mutation；driver detach/reclaim 后 pending approval仍可恢复。
+14. Host 在 worktree create/approval intent 后崩溃时,重启只 replay receipt 或返回 uncertain,不重复 Git mutation/授权。
 
 ## 8. 验证门禁
 
@@ -1041,7 +1093,7 @@ git diff --check
 npx vitest run tests/security
 npx vitest run tests/worktree
 npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
-node bin/runledger.js --help
+./bin/runledger.js --help
 ~~~
 
 平台 sandbox 测试要求：
@@ -1057,43 +1109,45 @@ node bin/runledger.js --help
 
 ### M0：Runtime 契约可消费
 
-- [ ] Runtime Workspace/Security 契约域的 schema、events、projections 与 ports 已冻结。
-- [ ] 本计划 adapters 通过同一 contract fixtures，没有重复 envelope/decision/receipt/event 类型。
-- [ ] 文件所有权检查证明独占实现阶段未修改串行集成面。
+- [~] Runtime Workspace/Security 契约域的 schema、events、projections 与 ports 已冻结；当前 adapter 可消费既有 public contract，但 handoff 证据仍待串行集成。
+- [x] 本计划 adapters 通过同一 contract imports/fixtures，没有重复 envelope/decision/receipt/event 类型。
+- [x] 文件所有权检查证明独占实现阶段未修改串行集成面。
 
 ### M1：可审计 permission
 
-- [ ] 生产默认不再 AllowAll。
-- [ ] deny/ask/allow 确定性解析。
-- [ ] allow-once TUI/headless deny。
-- [ ] `permission.requested/decided/expired/revoked` 按 Runtime schema 入 Event Store。
+- [ ] production 默认选择真实 restrictive profile；builtin-none 只能显式选择并如实记录 not enforced。
+- [x] deny/ask/allow 确定性解析。
+- [x] allow-once/headless decision 与 cancellation/timeout 语义已由 coordinator 覆盖；TUI reverse request 尚未接线。
+- [ ] `permission.requested/decided/expired/revoked` 按 Runtime schema进入 Host-owned canonical event writer。
 
 ### M2：唯一执行面
 
 - [ ] 所有内置工具经 ExecutionGateway。
-- [ ] path canonicalization 与 metadata protection。
-- [ ] background/fetch/temp spill 无旁路。
+- [x] path canonicalization 与 metadata protection。
+- [~] fetch 经 PolicyNetworkClient、final-leaf decision/receipt 已实现；background process、private output/Artifact 仍由 Host 串行接线负责。
+- [x] security/worktree 不存在第二 ManagedProcessRegistry、PTY/backend output/recovery store。
 
 ### M3：session worktree
 
-- [ ] clean Git worktree create/list/show/remove dry-run。
-- [ ] registry + lock + replay。
-- [ ] PersistedWorkspaceBinding 可投影 WorkspaceBindingRef/Envelope 并支持 resume。
-- [ ] source repo 默认不被 agent 修改。
+- [x] clean Git worktree create/list/show/remove dry-run 的受控 manager 行为。
+- [x] registry + lock + replay。
+- [~] PersistedWorkspaceBinding 的独立 Runtime adapter 与 resume 尚未完成；当前已覆盖 root-relative worktree record/lease。
+- [x] source repo 默认不被 agent 修改的 Git args/managed-root 边界。
 
 ### M4：真实 sandbox
 
-- [ ] Linux bwrap enforced。
-- [ ] macOS Seatbelt capability 明确。
-- [ ] Windows external/unavailable 诚实报告。
-- [ ] restrictive backend 缺失 fail closed。
+- [~] Linux bwrap launch plan/final-leaf validation 已实现；真实 enforced process E2E 尚未通过。
+- [x] macOS Seatbelt capability 明确。
+- [x] Windows external/unavailable 诚实报告。
+- [x] restrictive backend 缺失 fail closed。
 
 ### M5：产品闭环
 
-- [ ] CLI flags/help。
-- [ ] TUI prompt/status/snapshot。
+- [ ] Host Control Plane + CLI flags/help,client 无 direct controller fallback。
+- [ ] TUI remote prompt/status/snapshot,driver/observer/reconnect fencing 完整。
 - [ ] security/worktree/session 全链路 E2E。
 - [ ] Runtime live/replay projection 与真实 adapter receipts 一致。
+- [ ] durable Host command intent/receipt、response-loss、uncertain 与 subscription resync 有联合证据。
 - [ ] 文档、AGENTS.md、README 与实际状态同步。
 
 ### M6：下游与企业扩展
@@ -1108,22 +1162,25 @@ node bin/runledger.js --help
 - [ ] M0–M6 均有对应 commit、测试和联合门禁证据；只完成本地 M1–M5 时只能标记 local baseline complete。
 - [ ] Worktree、permission、approval、sandbox 在类型、配置、UI 和文档中没有混用。
 - [ ] 模型可调用的生产工具不存在 raw fs/spawn/fetch 旁路。
+- [ ] process/PTY/output/recovery 生命周期只由 Runtime Host 拥有,本计划只提供真实 restrictive decision/receipt 与受限 adapters。
 - [ ] 默认配置在交互编码中是 workspace-write + on-request + network deny。
 - [ ] approvalPolicy=never 不会扩大权限。
 - [ ] restrictive sandbox unavailable 时不静默降级。
-- [ ] session 的 sourceRepo/effectiveCwd/worktreeId/baseCommit 可审计并可恢复。
+- [ ] session 的 RepositoryRef/sourceSubdir/WorkspaceRef/worktreeId/baseCommit 可审计并可恢复；绝对 locator 只在 private store/进程内。
 - [ ] worktree 删除只作用于验证过的 managed target，dirty/active 默认拒绝。
-- [ ] workspace/permission/sandbox 事件符合 Runtime schema，并可从 Event Store 顺序重放为一致 projection。
+- [ ] workspace/permission/sandbox 事件符合 Runtime schema，并可从 Host-owned canonical records 顺序重放为一致 projection。
+- [ ] 标准 CLI/TUI 只通过 authenticated Host；observer 不能 mutation,所有 mutation 绑定 Host/session generation、driver revision、expected domain revision 与 durable command receipt。
+- [ ] security/worktree/settings/registry/grants/staging 只写 canonical `runledgerHome`,不写 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir。
 - [ ] Runtime contract 与本计划实现之间只有单向 import 和 port adapter，没有重复公共类型或反向依赖。
 - [ ] 共享 runtime/session/storage/CLI/TUI 文件只在记录过的串行集成窗口修改。
-- [ ] 安全配置解析失败不会回退到空配置或 AllowAll。
+- [ ] 安全配置解析失败不会回退到空配置、builtin-none 或 client-local policy。
 - [ ] Linux 强隔离 E2E 通过；其他平台只声明真实验证过的能力。
 - [ ] npm run check、npm test、npm run build、git diff --check 全绿。
 - [ ] README、AGENTS.md、CLI help 与实现一致。
 
 ## 11. 明确不接受的捷径
 
-- 只在 TUI 弹一个确认框，但工具仍能绕过 ExecutionEnv。
+- 只在 TUI 弹一个确认框，但工具仍能绕过 ExecutionGateway/Host final leaf。
 - 用 isDestructive 单布尔值代替 capability resolution。
 - 把 worktree 当 sandbox，或把 sandbox 当用户授权。
 - 在 bwrap/sandbox-exec 不可用时自动改用 raw bash。
@@ -1132,17 +1189,20 @@ node bin/runledger.js --help
 - 把 approvalPolicy=never 解释为 allow all。
 - 安全 JSON 损坏时沿用 settings-manager 的“回退空对象继续”逻辑。
 - 把 .git、.runledger、credential/registry 暴露为普通 workspace write。
+- 让 CLI/TUI client 自己创建 controller、持 session lock、解析不同 security config 或管理 process。
+- 在 security/worktree 内复制 Runtime Host process manager、PTY、private output、recovery 或 shutdown lifecycle。
+- 把 repo `.runledger`、旧 `~/.runledger/agent`、`RUNLEDGER_SESSION_DIR` 或 `--session-dir` 恢复为安全状态写入 authority。
 - 对任意用户路径执行 rm -rf 或 git worktree remove --force。
 - 第一版就引入 fast-worktree/pool/auto classifier，掩盖基本安全闭环未完成。
 
 ## 12. 执行起点
 
-后续用户明确要求“开始实现”时，从 Phase 0 开始，不直接跳到 CLI/TUI 或平台 backend。第一批改动应限制为：
+后续用户明确要求“开始实现”时，先复核 Phase 0 已有 contract/boundary evidence 与 `runtime/05` 最新 Host handoff,不直接跳到 CLI/TUI 或平台 backend。若 Phase 0 证据仍适用于当前 HEAD,从首个未完成行为阶段继续；不得重建已经冻结的公共 contract。
 
 1. 确认 Runtime Workspace/Security 契约域的 contract commit、exact schema 与 fixtures；
 2. 仅在 `src/security/**` 与 `src/worktree/**` 定义实现内部类型和 adapter conformance tests；
 3. 当前边界与 fail-closed 回归测试；
-4. 精确 legacy bypass allowlist；
+4. 精确 legacy bypass allowlist以及“禁止第二 process owner/client direct controller”的 Host 边界检查；
 5. npm run check 静态边界与“禁止重复 Runtime 公共类型”门禁。
 
-Phase 0 验收后，再进入 PermissionEngine。Phase 1–4 只推进独占目录；完成后才预约 Phase 5 串行集成窗口。这样每一阶段都有可执行门禁，也能在不破坏现有测试与 CLI、不给并行计划制造文件冲突的前提下逐步替换 AllowAll。
+Phase 0 复核通过后,进入首个未完成的 Permission/Sandbox/Workspace 行为阶段。Phase 1–4 只推进独占目录；完成后才预约 Phase 5 Host 串行集成窗口。这样每一阶段都有可执行门禁,也能在不破坏现有 Host/CLI、不给并行计划制造文件冲突的前提下把 builtin-none profile替换为可选择且真实生效的 restrictive adapters。
