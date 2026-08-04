@@ -1,58 +1,63 @@
-/**
- * Worktree 专项 Phase 0 的内部类型。
- *
- * TODO(worktree-phase-3): 实现 managed root、GitOperations、registry lock/replay、
- * create/remove fencing 和 resume 校验。本文件只描述状态，不执行 Git 或删除路径。
- */
+/** Worktree 专项内部结果合同；公共 Workspace ref 由 Runtime contracts 提供。 */
 
-import type { RepositoryId, WorkspaceId } from "../runtime/protocol/ids.ts";
-import type { WorkspaceBindingRef, WorkspaceLeaseRef } from "../runtime/protocol/workspace.ts";
+import type { RuntimeDigest, RuntimeInstanceId, RepositoryId, SessionId, WorkspaceId } from "../runtime/contracts/public.ts";
 
-export type WorktreeState = "preparing" | "active" | "dirty" | "released" | "stale" | "failed";
+export type WorktreeErrorCode =
+	| "invalid_request"
+	| "outside_managed_root"
+	| "git_failed"
+	| "registry_failed"
+	| "not_found"
+	| "invalid_state"
+	| "dirty_worktree"
+	| "approval_required"
+	| "lease_conflict"
+	| "lease_stale"
+	| "reconcile_stale";
 
-export interface PersistedWorkspaceBinding {
-	workspaceId: WorkspaceId;
-	repositoryId: RepositoryId;
-	sourceRepo: string;
-	sourceCwd: string;
-	effectiveCwd: string;
-	baseCommit: string;
-	branch: string;
-	worktreePath: string;
-	leaseRevision: number;
-	ownerRuntimeId: string;
+export interface WorktreeError {
+	readonly code: WorktreeErrorCode;
+	readonly message: string;
+	readonly retryable: boolean;
 }
 
+export type WorktreeResult<T> =
+	| { readonly ok: true; readonly value: T }
+	| { readonly ok: false; readonly error: WorktreeError };
+
+export type WorktreeState = "creating" | "ready" | "active" | "retained" | "removing" | "removed" | "failed";
+
+export interface WorktreeRepositoryRef {
+	readonly repositoryId: RepositoryId;
+	readonly rootDigest: RuntimeDigest;
+	readonly displayName: string;
+}
+
+/** registry 内的 source/worktree locator 是 private state，不投影到公共 Runtime event。 */
 export interface WorktreeRecord {
-	workspaceId: WorkspaceId;
-	repositoryId: RepositoryId;
-	sessionId: string;
-	sourceRepo: string;
-	worktreePath: string;
-	label: string;
-	baseCommit: string;
-	state: WorktreeState;
-	createdAt: string;
-	lastAccessedAt: string;
-	lease?: WorkspaceLeaseRef;
+	readonly id: string;
+	readonly sessionId: SessionId;
+	readonly workspaceId: WorkspaceId;
+	readonly sourceRepositoryRef: WorktreeRepositoryRef;
+	readonly sourceRepositoryPath: string;
+	readonly sourceSubdir: string;
+	readonly worktreeLocator: string;
+	readonly effectiveSubdir: string;
+	readonly baseRef: string;
+	readonly baseCommit: string;
+	readonly branch?: string;
+	readonly label: string;
+	readonly state: WorktreeState;
+	readonly createdAt: number;
+	readonly lastAccessedAt: number;
+	readonly error?: string;
 }
 
-export interface WorktreeCreateRequest {
-	sessionId: string;
-	sourceRepo: string;
-	sourceCwd: string;
-	label: string;
-	baseRef?: string;
-}
-
-export interface WorktreeCreateResult {
-	record: WorktreeRecord;
-	binding: PersistedWorkspaceBinding;
-	runtimeBinding: WorkspaceBindingRef;
-}
-
-export interface WorktreeRemoveRequest {
-	workspaceId: WorkspaceId;
-	dryRun: boolean;
-	expectedState: Extract<WorktreeState, "active" | "dirty" | "released" | "stale">;
+export interface WorktreeLeaseRecord {
+	readonly workspaceId: WorkspaceId;
+	readonly ownerRuntimeId: RuntimeInstanceId;
+	readonly leaseRevision: number;
+	readonly fencingTokenDigest: RuntimeDigest;
+	readonly state: "requested" | "active" | "released" | "stale" | "revoked";
+	readonly expiresAt?: string;
 }
