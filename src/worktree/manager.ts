@@ -89,7 +89,9 @@ export class WorktreeManager {
 		const baseRef = request.baseRef ?? (repository.value.branch === "HEAD" ? "HEAD" : repository.value.branch);
 		const baseCommit = await this.#git.resolveCommit(repository.value.root, baseRef, request.signal);
 		if (!baseCommit.ok) return baseCommit;
-		const repositoryId = createRuntimeId("repository", runtimeDigest({ root: repository.value.root }).digest.slice(0, 48));
+		// Workspace binding validation derives the repository identity from the
+		// canonical source root. Keep the manager and cold-replay formula equal.
+		const repositoryId = createRuntimeId("repository", runtimeDigest(repository.value.root).digest.slice(0, 48));
 		const target = buildManagedWorktreePath(this.#managedRoot, repositoryId, request.workspaceId, label.value);
 		if (!target.ok) return target;
 		if (pathWithin(repository.value.root, target.value) || pathWithin(target.value, repository.value.root)) return failure("outside_managed_root", "managed worktree target overlaps source repository");
