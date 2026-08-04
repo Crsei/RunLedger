@@ -34,6 +34,7 @@ import type { OutputCursor } from "../runtime/process/output.ts";
 import type { ControlPlaneActor } from "../storage/process/control-plane.ts";
 import type { HostEventStore, StoredHostEvent } from "../storage/host/event-store.ts";
 import { BoundedHostCommandStore, type HostCommandStore } from "../storage/host/command-store.ts";
+import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
 import { SYSTEM_APPROVAL_PRINCIPAL_ID } from "../security/permission/approval-coordinator.ts";
 import type { PermissionPrompt, PermissionPromptResponse, PermissionPrompter } from "../security/types.ts";
 
@@ -52,6 +53,38 @@ export interface HostSessionOpenRequest {
 export interface HostSessionRuntime {
 	readonly controller: InteractiveSessionControllerPort;
 	close(): Promise<void>;
+}
+
+/**
+ * Host domain port.  Domain implementations own their reducer/service, while
+ * the resident Host owns admission, driver fencing, command idempotency and
+ * the canonical event writer around them.
+ */
+export interface HostRuntimeDomainContext {
+	readonly principal: HostConnectionPrincipal;
+	readonly frame: HostFrameEnvelope;
+	readonly operation: string;
+	readonly mutation: boolean;
+	readonly sessionId: string;
+	readonly controller: InteractiveSessionControllerPort;
+	readonly hostGeneration: number;
+	readonly sessionGeneration: number;
+	readonly driverRevision: number;
+	readonly domainRevision: number;
+}
+
+export interface HostRuntimeDomainResult {
+	readonly ok: boolean;
+	readonly body?: Record<string, unknown>;
+	readonly mutated?: boolean;
+	readonly events?: readonly RuntimeEventAppendInput[];
+}
+
+export interface HostRuntimeDomainPort {
+	readonly name: string;
+	readonly queryOperations?: ReadonlySet<string>;
+	readonly mutationOperations?: ReadonlySet<string>;
+	execute(context: HostRuntimeDomainContext): Promise<HostRuntimeDomainResult>;
 }
 
 export interface HostDriverResponse {
@@ -160,6 +193,9 @@ export interface ResidentRuntimeHostOptions {
 	readonly hostGeneration?: number;
 	readonly createSession: (input: HostSessionOpenRequest) => Promise<HostSessionRuntime>;
 	readonly processPort?: HostProcessPort;
+	readonly domainPorts?: readonly HostRuntimeDomainPort[];
+	/** The only Runtime event writer used by Host domain adapters. */
+	readonly runtimeEventWriter?: RuntimeEventWriter;
 	readonly eventStore?: HostEventStore;
 	readonly commandStore?: HostCommandStore;
 	/** Explicit management shutdown; client detach never invokes this callback. */
@@ -176,6 +212,7 @@ interface SessionState {
 	history: HostSubscriptionEvent[];
 	eventTail: Promise<void>;
 	eventUnsubscribe: () => void;
+	readonly domainRevisions: Map<string, number>;
 }
 
 interface HostSubscriptionEvent {
@@ -377,6 +414,9 @@ export class ResidentRuntimeHost {
 			this.ackCursor(context.principal, context.frame);
 			return [];
 		}
+		if (context.frame.kind === "query_request") {
+			return [await this.executeDomainQuery(context.principal, context.frame)];
+		}
 		if (context.frame.kind !== "command_request") {
 			return [this.response(context.frame, { ok: false, code: "unsupported_frame" })];
 		}
@@ -429,7 +469,7 @@ export class ResidentRuntimeHost {
 				case "process.retention_commit": return this.processRetention(principal, frame, "commit");
 				case "process.retention_pin": return this.processRetention(principal, frame, "pin");
 				case "process.retention_unpin": return this.processRetention(principal, frame, "unpin");
-				default: return this.response(frame, { ok: false, code: "unsupported_operation" });
+				default: return this.executeDomainCommand(principal, frame);
 			}
 		} catch (error) {
 			return this.response(frame, { ok: false, code: errorCode(error) });
@@ -488,17 +528,18 @@ export class ResidentRuntimeHost {
 		if (existing) {
 			runtime.controller.dispose();
 			await runtime.close();
-				return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(existing.runtime.controller), hostGeneration: existing.driver.hostGeneration, sessionGeneration: existing.driver.sessionGeneration, eventCursor: existing.sequence, driverRevision: existing.driver.driverRevision });
+			return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(existing.runtime.controller), hostGeneration: existing.driver.hostGeneration, sessionGeneration: existing.driver.sessionGeneration, eventCursor: existing.sequence, driverRevision: existing.driver.driverRevision });
 		}
-			const sequence = this.options.eventStore === undefined ? 0 : await this.options.eventStore.head(sessionId);
-			const state: SessionState = {
+		const sequence = this.options.eventStore === undefined ? 0 : await this.options.eventStore.head(sessionId);
+		const state: SessionState = {
 			runtime,
 			...(stringValue(frame.body.cwd) === undefined ? {} : { cwd: stringValue(frame.body.cwd) }),
 			driver: createDriverState({ hostGeneration: this.generation, sessionGeneration: 1 }),
-				sequence,
-				history: [],
-				eventTail: Promise.resolve(),
-				eventUnsubscribe: () => {},
+			sequence,
+			history: [],
+			eventTail: Promise.resolve(),
+			eventUnsubscribe: () => {},
+			domainRevisions: new Map(),
 		};
 		state.eventUnsubscribe = runtime.controller.subscribe((event) => this.publishAgentEvent(sessionId, event));
 		this.sessions.set(sessionId, state);
@@ -767,6 +808,73 @@ export class ResidentRuntimeHost {
 		const pinId = stringValue(frame.body.pinId);
 		if (!pinId || !port.unpinOutput) return this.response(frame, { ok: false, code: !pinId ? "process_retention_request_invalid" : "process_retention_unavailable" });
 		return this.response(frame, await port.unpinOutput(sessionId, executionId, pinId));
+	}
+
+	private async executeDomainQuery(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
+		const response = await this.executeDomainCommand(principal, frame, false);
+		return { ...response, kind: "query_result", body: { ...response.body, requestFrameId: frame.frameId } };
+	}
+
+	private async executeDomainCommand(
+		principal: HostConnectionPrincipal,
+		frame: HostFrameEnvelope,
+		allowMutation = true,
+	): Promise<HostFrameEnvelope> {
+		const operation = stringValue(frame.body.operation);
+		if (operation === undefined) return this.response(frame, { ok: false, code: "operation_required" });
+		const matches = (this.options.domainPorts ?? []).filter((port) =>
+			port.queryOperations?.has(operation) === true || port.mutationOperations?.has(operation) === true,
+		);
+		if (matches.length === 0) return this.response(frame, { ok: false, code: "unsupported_operation" });
+		if (matches.length > 1) return this.response(frame, { ok: false, code: "domain_operation_conflict" });
+		const port = matches[0]!;
+		const mutation = port.mutationOperations?.has(operation) === true;
+		if (port.queryOperations?.has(operation) === true && mutation) return this.response(frame, { ok: false, code: "domain_operation_conflict" });
+		if (mutation && !allowMutation) return this.response(frame, { ok: false, code: "query_mutation_forbidden" });
+		const state = this.sessionState(frame);
+		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
+		const authorization = mutation ? this.authorizeMutation(principal, frame, state) : { ok: true as const };
+		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
+		const key = `${port.name}:${state.runtime.controller.sessionId}`;
+		const domainRevision = state.domainRevisions.get(key) ?? 0;
+		if (mutation) {
+			const expectedDomainRevision = integerValue(frame.body.expectedDomainRevision);
+			if (expectedDomainRevision === undefined) return this.response(frame, { ok: false, code: "domain_revision_required", domainRevision });
+			if (expectedDomainRevision !== domainRevision) return this.response(frame, { ok: false, code: "stale_domain_revision", domainRevision });
+		}
+		const result = await port.execute({
+			principal,
+			frame,
+			operation,
+			mutation,
+			sessionId: state.runtime.controller.sessionId,
+			controller: state.runtime.controller,
+			hostGeneration: state.driver.hostGeneration,
+			sessionGeneration: state.driver.sessionGeneration,
+			driverRevision: state.driver.driverRevision,
+			domainRevision,
+		});
+		if (!result.ok) return this.response(frame, { ok: false, ...(result.body ?? { code: "domain_command_rejected" }) });
+		const receipts = await this.appendDomainEvents(result.events ?? []);
+		const changed = result.mutated ?? mutation;
+		const nextDomainRevision = changed ? domainRevision + 1 : domainRevision;
+		if (changed) state.domainRevisions.set(key, nextDomainRevision);
+		return this.response(frame, {
+			ok: true,
+			...(result.body ?? {}),
+			domainRevision: nextDomainRevision,
+			...(receipts.length === 0 ? {} : { eventReceipts: receipts }),
+			driverRevision: state.driver.driverRevision,
+		});
+	}
+
+	private async appendDomainEvents(events: readonly RuntimeEventAppendInput[]): Promise<readonly string[]> {
+		if (events.length === 0) return [];
+		const writer = this.options.runtimeEventWriter;
+		if (writer === undefined) throw new Error("canonical Runtime event writer is required for domain events");
+		const receipts: string[] = [];
+		for (const event of events) receipts.push((await writer.append(event)).receipt.receiptId);
+		return receipts;
 	}
 
 	private authorizeMutation(principal: HostConnectionPrincipal, frame: HostFrameEnvelope, state: SessionState) {
