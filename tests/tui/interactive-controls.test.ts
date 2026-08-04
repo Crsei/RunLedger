@@ -13,6 +13,9 @@ import { selectSessionInTui } from "../../src/tui/session-selector.ts";
 import { makeEditorTheme, makeSelectListTheme } from "../../src/tui/theme/factories.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
+import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+import { createProcessOverlayController } from "../../src/tui/process/controller-adapter.ts";
+import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -258,7 +261,7 @@ describe("InteractiveMode lifecycle and global controls", () => {
     expect(terminal.stopCount).toBe(1);
   });
 
-  it("流式 Ctrl+C 中断当前 provider，但不退出 TUI", async () => {
+	it("流式 Ctrl+C 中断当前 provider，但不退出 TUI", async () => {
     const terminal = new FakeTerminal();
     const controlled = interruptibleStream();
     const agent = new Agent({
@@ -277,6 +280,47 @@ describe("InteractiveMode lifecycle and global controls", () => {
 
     terminal.send("\x04");
     await running;
-    expect(terminal.stopCount).toBe(1);
-  });
+		expect(terminal.stopCount).toBe(1);
+	});
+
+	it("routes /processes and /terminal through the safe Host facade and restores editor focus", async () => {
+		const terminal = new FakeTerminal();
+		const executionId = createRuntimeId("execution", "interactive-process");
+		const process: ProcessOverlayItem = {
+			executionId,
+			attemptId: createRuntimeId("attempt", "interactive-process_1"),
+			state: "running",
+			outputCursor: { sequence: 0, byteOffset: 0 },
+			outputSize: 0,
+			canWrite: true,
+			canResize: true,
+			canStop: true,
+		};
+		const processOverlay = createProcessOverlayController({
+			listProcesses: async () => [process],
+			processOutput: async (_id, cursor) => ({ ok: true as const, text: "terminal output", startCursor: cursor, endCursor: { sequence: 1, byteOffset: 15 }, nextCursor: { sequence: 1, byteOffset: 15 }, truncated: false, head: { sequence: 1, byteOffset: 15 } }),
+		}, { driver: true });
+		const agent = new Agent({
+			initialState: { systemPrompt: "test", model: mockModel },
+			streamFn: immediateStopStream(),
+		});
+		const mode = new InteractiveMode({ agent, terminal, processOverlayController: processOverlay });
+		const running = mode.run();
+
+		mode.echoPrompt("/processes");
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(processOverlay.snapshot().open).toBe(true);
+		expect(processOverlay.snapshot().mode).toBe("list");
+
+		mode.echoPrompt(`/terminal ${executionId}`);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(processOverlay.snapshot().mode).toBe("terminal");
+		expect(processOverlay.snapshot().output).toContain("terminal output");
+
+		terminal.send("\x1b");
+		expect(processOverlay.snapshot().open).toBe(false);
+		expect(processOverlay.snapshot().editorFocusRestored).toBe(true);
+		terminal.send("\x04");
+		await running;
+	});
 });

@@ -26,7 +26,7 @@ import { createReadTool } from "./read.ts";
 import { createWriteTool } from "./write.ts";
 import { createEditTool } from "./edit.ts";
 import { createMultiEditTool } from "./multi-edit.ts";
-import { createBashTool } from "./bash.ts";
+import { createBashTool, type ManagedBackgroundBashOperations } from "./bash.ts";
 import { createGrepTool } from "./grep.ts";
 import { createFindTool } from "./find.ts";
 import { createGlobTool } from "./glob.ts";
@@ -35,6 +35,16 @@ import { createTodoWriteTool } from "./todo-write.ts";
 import { createWebFetchTool } from "./web-fetch.ts";
 import { createSkillTool } from "./skill.ts";
 import { createNotebookEditTool } from "./notebook-edit.ts";
+import { createProcessOutputTool } from "./process-output.ts";
+import { createProcessWaitTool } from "./process-wait.ts";
+import { createWriteStdinTool } from "./write-stdin.ts";
+import { createProcessStopTool } from "./process-stop.ts";
+import { createProcessResizeTool } from "./process-resize.ts";
+import type { ProcessToolClient } from "./process-tool-support.ts";
+
+export interface StdlibToolsOptions {
+	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
+}
 
 /**
  * 一站式构造标准库工具集。返回 ToolRegistry,namespace="stdlib"。
@@ -43,22 +53,42 @@ import { createNotebookEditTool } from "./notebook-edit.ts";
  * 若工具需要 ToolContext(fs / shell 注入 ledger 等),在调用 AgentLoop 前
  * 自行 prepareContext 时把 ExecutionEnv 通过 ops 注入。
  */
-export function createStdlibTools(cwd: string = process.cwd()): ToolRegistry {
+export function createStdlibTools(cwd: string = process.cwd(), options: StdlibToolsOptions = {}): ToolRegistry {
   const r = createToolRegistry([], { namespace: "stdlib" });
   r.register(createReadTool(cwd), { namespace: "stdlib" });
   r.register(createWriteTool(cwd), { namespace: "stdlib" });
   r.register(createEditTool(cwd), { namespace: "stdlib" });
   r.register(createMultiEditTool(cwd), { namespace: "stdlib" });
-  r.register(createBashTool(cwd), { namespace: "stdlib" });
+	r.register(createBashTool(cwd, options.managedProcess === undefined ? {} : { managedProcess: options.managedProcess }), { namespace: "stdlib" });
   r.register(createGrepTool(cwd), { namespace: "stdlib" });
   r.register(createFindTool(cwd), { namespace: "stdlib" });
   r.register(createGlobTool(cwd), { namespace: "stdlib" });
   r.register(createLsTool(cwd), { namespace: "stdlib" });
   r.register(createWebFetchTool(), { namespace: "stdlib" });
   r.register(createSkillTool(), { namespace: "stdlib" });
-  r.register(createNotebookEditTool(), { namespace: "stdlib" });
-  r.register(echoTool, { namespace: "stdlib" });
-  return r;
+	r.register(createNotebookEditTool(), { namespace: "stdlib" });
+	r.register(echoTool, { namespace: "stdlib" });
+	if (options.managedProcess) {
+		const processClient = options.managedProcess;
+		if (isCompleteProcessToolClient(processClient)) {
+			r.register(createProcessOutputTool(processClient), { namespace: "stdlib" });
+			r.register(createProcessWaitTool(processClient), { namespace: "stdlib" });
+			r.register(createWriteStdinTool(processClient, { actor: "driver" }), { namespace: "stdlib" });
+			r.register(createProcessStopTool(processClient, { actor: "driver" }), { namespace: "stdlib" });
+			r.register(createProcessResizeTool(processClient, { actor: "driver" }), { namespace: "stdlib" });
+		}
+	}
+	return r;
+}
+
+function isCompleteProcessToolClient(
+	client: ManagedBackgroundBashOperations & Partial<ProcessToolClient>,
+): client is ManagedBackgroundBashOperations & ProcessToolClient {
+	return typeof client.processOutput === "function" &&
+		typeof client.processWait === "function" &&
+		typeof client.write === "function" &&
+		typeof client.stop === "function" &&
+		typeof client.resize === "function";
 }
 
 /**
@@ -78,4 +108,5 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
 }
 
 export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createFindTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoWriteTool };
+export { createProcessOutputTool, createProcessWaitTool, createWriteStdinTool, createProcessStopTool, createProcessResizeTool };
 export { echoTool };

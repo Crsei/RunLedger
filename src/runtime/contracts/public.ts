@@ -40,3 +40,4 @@ export type { HostCompositionDescriptor, ProductionHostCompositionDescriptor, Te
 export * from "../process/types.ts";
 export * from "../process/schemas.ts";
 export * from "../process/output.ts";
+export * from "../process/execution-decision.ts";

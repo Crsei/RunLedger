@@ -69,6 +69,15 @@ export type {
   OpenTuiScreenSnapshot,
 } from "./opentui/runtime.ts";
 export { createOpenTuiRuntime } from "./opentui/runtime.ts";
+export type { ProcessOverlayItem, ProcessOverlayState, ProcessOverlayAction } from "./process/types.ts";
+export { createInitialProcessOverlayState, processOverlayReducer } from "./process/reducer.ts";
+export { renderProcessOverlay } from "./process/presentation.ts";
+export type { ProcessOverlayHostClient, ProcessOverlayController } from "./process/controller-adapter.ts";
+export { createProcessOverlayController } from "./process/controller-adapter.ts";
+export type { ProcessOverlayMutationResult } from "./process/controller-adapter.ts";
+export { ProcessOverlayComponent } from "./process/overlay-component.ts";
+export type { ManagedProcessOverlayFrame, ManagedProcessOverlayOptions, ManagedProcessOverlayRuntime } from "./opentui/process-overlay.ts";
+export { createManagedProcessOverlayFromRenderer } from "./opentui/process-overlay.ts";
 
 // M2 业务组件
 export { LoadedResourcesComponent, type LoadedResourceKind, type LoadedResourceEntry, type LoadedResourcesComponentProps } from "./components/loaded-resources.ts";

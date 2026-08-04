@@ -199,6 +199,61 @@ export class RuntimeTraceRecorder {
 		}
 	}
 
+	/** 记录 Host-owned process output 的可观测投影，不复制 process truth。 */
+	public async recordManagedProcessOutput(input: {
+		readonly executionId: string;
+		readonly attemptId: string;
+		readonly mode: Exclude<RecordingMode, "off">;
+		readonly sourceDigest: { readonly algorithm: "sha256"; readonly digest: string };
+		readonly recordDigest: { readonly algorithm: "sha256"; readonly digest: string };
+		readonly outputContent: TraceContentDescriptor;
+	}): Promise<void> {
+		const identityDigest = createHash("sha256")
+			.update(canonicalJson({
+				traceId: this.traceId,
+				executionId: input.executionId,
+				attemptId: input.attemptId,
+				recordDigest: input.recordDigest,
+			}))
+			.digest("hex");
+		const eventId = `event:process-output-${identityDigest}`;
+		let existing: readonly { readonly eventId: string }[];
+		try {
+			existing = await this.#eventStore.events();
+		} catch (error) {
+			this.#handleFailure("event_store_write_failed", error);
+			return;
+		}
+		if (existing.some((event) => event.eventId === eventId)) return;
+
+		if (!this.#started) await this.startRun();
+		const outputContent = this.#mode === "events"
+			? {
+				storage: "digest_only" as const,
+				digest: input.sourceDigest.digest,
+				mediaType: input.outputContent.mediaType,
+				size: input.outputContent.size,
+			}
+			: input.outputContent;
+		await this.#append({
+			nodeId: `process-output:${this.traceId}:${identityDigest}`,
+			parentNodeId: this.#agentNodeId ?? this.traceId,
+			kind: "tool_attempt",
+			name: "process.output",
+			phase: "finished",
+			timestamp: this.#timestamp(),
+			outputContent,
+			metadata: {
+				event: "process.output_materialized",
+				executionId: input.executionId,
+				attemptId: input.attemptId,
+				mode: this.#mode,
+				sourceDigest: input.sourceDigest.digest,
+				recordDigest: input.recordDigest.digest,
+			},
+		}, eventId);
+	}
+
 	/** 在 provider 调用前记录完整的安全清洗 context 和 model span。 */
 	public async startModel(input: {
 		readonly turn: number;
@@ -430,11 +485,11 @@ export class RuntimeTraceRecorder {
 		}
 	}
 
-	async #append(input: Omit<TraceEventInput, "eventId" | "traceId">): Promise<void> {
+	async #append(input: Omit<TraceEventInput, "eventId" | "traceId">, eventId = `event:${randomUUID()}`): Promise<void> {
 		if (this.#eventStoreDisabled) return;
 		try {
 			await this.#eventStore.append({
-				eventId: `event:${randomUUID()}`,
+				eventId,
 				traceId: this.traceId,
 				...input,
 			});

@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { lstat } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import {
 	recordingConfigDigest,
 	type EffectiveRecordingConfig,
@@ -20,6 +20,8 @@ import {
 
 export interface TraceRecorderFactoryInput {
 	readonly sessionId: string;
+	/** Optional stable identity for Host-owned work that may be materialized after restart. */
+	readonly traceId?: TraceId;
 }
 
 export interface TraceRecorderFactory {
@@ -53,12 +55,15 @@ export function createLocalTraceRecorderFactory(
 	const onDiagnostic = options.onDiagnostic ?? defaultDiagnosticSink;
 
 	return {
-		create: async (_input) => {
+		create: async (input) => {
 			if (options.config.mode === "off") return undefined;
+			const traceId = input.traceId ?? createTraceId();
+			await assertNoSymlinkComponents(options.layout.home, options.layout.events);
 			const createdAt = now().toISOString();
-			const traceId = createTraceId();
 			const relativeLocator = traceEventRelativeLocator(traceId, createdAt);
-			const filePath = path.resolve(options.layout.home, relativeLocator);
+			const filePath = input.traceId === undefined
+				? path.resolve(options.layout.home, relativeLocator)
+				: await findExistingTraceEventFile(options.layout.events, traceId) ?? path.resolve(options.layout.home, relativeLocator);
 			const flavor: RuntimePathFlavor = process.platform === "win32" ? "win32" : "posix";
 			if (!isContainedRuntimePath(options.layout.home, filePath, flavor)) {
 				throw new Error("trace event path escapes RunLedger home");
@@ -91,6 +96,49 @@ export function createLocalTraceRecorderFactory(
 			});
 		},
 	};
+}
+
+async function findExistingTraceEventFile(eventsRoot: string, traceId: TraceId): Promise<string | undefined> {
+	let years;
+	try {
+		years = await readdir(eventsRoot, { withFileTypes: true });
+	} catch (error) {
+		if (isNotFound(error)) return undefined;
+		throw error;
+	}
+	for (const year of years) {
+		if (!year.isDirectory() || !/^\d{4}$/u.test(year.name)) continue;
+		let months;
+		try {
+			months = await readdir(path.join(eventsRoot, year.name), { withFileTypes: true });
+		} catch (error) {
+			if (isNotFound(error)) continue;
+			throw error;
+		}
+		for (const month of months) {
+			if (!month.isDirectory() || !/^\d{2}$/u.test(month.name)) continue;
+			let days;
+			try {
+				days = await readdir(path.join(eventsRoot, year.name, month.name), { withFileTypes: true });
+			} catch (error) {
+				if (isNotFound(error)) continue;
+				throw error;
+			}
+			for (const day of days) {
+				if (!day.isDirectory() || !/^\d{2}$/u.test(day.name)) continue;
+				const candidate = path.join(eventsRoot, year.name, month.name, day.name, `${traceId}.jsonl`);
+				try {
+					const stat = await lstat(candidate);
+					if (stat.isSymbolicLink()) throw new TraceStorageSecurityError();
+					if (stat.isFile()) return candidate;
+				} catch (error) {
+					if (error instanceof TraceStorageSecurityError) throw error;
+					if (!isNotFound(error)) throw error;
+				}
+			}
+		}
+	}
+	return undefined;
 }
 
 async function assertNoSymlinkComponents(home: string, target: string): Promise<void> {

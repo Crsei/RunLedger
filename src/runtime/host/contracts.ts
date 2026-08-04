@@ -15,6 +15,7 @@ import {
 } from "./types.ts";
 
 export { HOST_PROTOCOL_VERSION, HOST_SESSION_STORAGE_CONTRACT_VERSION, RUNTIME_HOST_BOUNDS } from "./types.ts";
+export type { HostCompatibilityEnvelope, RuntimeHostScope } from "./types.ts";
 
 const WorkspaceStorageKeySchema = Type.String({ pattern: "^ws-[a-f0-9]{64}$", minLength: 67, maxLength: 67 });
 const scopedIdSchema = (kind: string) => Type.String({ pattern: `^${kind}_[A-Za-z0-9._~-]{1,128}$`, maxLength: kind.length + 1 + 128 });

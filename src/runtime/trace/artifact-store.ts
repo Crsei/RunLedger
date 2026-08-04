@@ -40,6 +40,13 @@ export class FileArtifactStore {
 		const bytes = new Uint8Array(input.bytes);
 		const digest = createHash("sha256").update(bytes).digest("hex");
 		const artifactId = `artifact_${digest}`;
+		const ref: TraceArtifactRef = {
+			storage: "artifact",
+			artifactId,
+			digest,
+			mediaType: input.mediaType,
+			size: bytes.byteLength,
+		};
 		const dataDirectory = path.join(this.dataRoot, "sha256", digest.slice(0, 2));
 		const metadataDirectory = path.join(this.metadataRoot, "sha256", digest.slice(0, 2));
 		const dataPath = path.join(dataDirectory, digest);
@@ -54,6 +61,7 @@ export class FileArtifactStore {
 			if (!isNotFound(error)) throw error;
 			present = false;
 		}
+		if (present) await this.read(ref);
 		if (!present) {
 			const temporaryPath = path.join(dataDirectory, `.tmp-${randomUUID()}`);
 			try {
@@ -64,17 +72,14 @@ export class FileArtifactStore {
 			}
 		}
 
-		const ref: TraceArtifactRef = {
-			storage: "artifact",
-			artifactId,
-			digest,
-			mediaType: input.mediaType,
-			size: bytes.byteLength,
-		};
+		let metadataPresent = true;
 		try {
 			await stat(metadataPath);
 		} catch (error) {
 			if (!isNotFound(error)) throw error;
+			metadataPresent = false;
+		}
+		if (!metadataPresent) {
 			const metadata: ArtifactMetadata = {
 				...ref,
 				storedDigest: digest,
@@ -83,6 +88,8 @@ export class FileArtifactStore {
 				createdAt: new Date().toISOString(),
 			};
 			await writeFile(metadataPath, JSON.stringify(metadata), { encoding: "utf8", mode: 0o600 });
+		} else {
+			await this.metadata(ref);
 		}
 		return ref;
 	}

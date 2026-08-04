@@ -17,6 +17,7 @@ import type {
   UserAgentMessage,
 } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
+import type { LedgerEntry } from "./ledger/types.ts";
 import { createStdlibTools } from "./tools/index.ts";
 import {
   AllowAllToolAuthorizationPolicy,
@@ -53,6 +54,33 @@ export interface ProviderStatus {
   interactiveAuthTypes: AuthType[];
 }
 
+/** Client-side contract shared by the Host-owned and local test controllers. */
+export interface InteractiveSessionControllerPort {
+  subscribe(listener: AgentEventSink): () => void;
+  readonly sessionId: string;
+  readonly inFlight: boolean;
+  readonly currentSelection: RuntimeSelection;
+  readonly messages: readonly AgentMessage[];
+  readonly warnings: readonly string[];
+  readonly auditEntries: readonly LedgerEntry[];
+  readonly ledger?: LedgerSink;
+  readonly toolCount: number;
+  getSteeringMessages(): readonly UserAgentMessage[];
+  getFollowUpMessages(): readonly UserAgentMessage[];
+  getProviderStatuses(): Promise<ProviderStatus[]>;
+  getProvider(id: string): Provider | undefined;
+  getAvailableModels(provider?: string): Promise<readonly Model<Api>[]>;
+  login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential>;
+  logout(providerId: string): Promise<void>;
+  selectModel(model: Model<Api>): Promise<void>;
+  setThinkingLevel(level: ModelThinkingLevel): Promise<ModelThinkingLevel>;
+  prompt(text: string, behavior?: "steer" | "followUp"): Promise<void>;
+  interrupt(): void;
+  clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] };
+  waitForIdle(): Promise<void>;
+  dispose(): void;
+}
+
 export interface RuntimeSelection {
   provider?: string;
   model?: Model<Api>;
@@ -70,7 +98,7 @@ export class InteractiveSessionController {
   private readonly models: Models;
   private settings: ProjectSettings;
   private readonly replay: SessionReplay;
-  private readonly ledger: LedgerSink;
+  private readonly ledgerSink: LedgerSink;
   private readonly tools: AgentTool[];
   private readonly policy: ToolAuthorizationPolicy;
   private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
@@ -89,7 +117,7 @@ export class InteractiveSessionController {
     this.models = opts.models;
     this.settings = { ...opts.settings };
     this.replay = opts.replay;
-    this.ledger = opts.ledger;
+    this.ledgerSink = opts.ledger;
     this.tools = opts.tools ?? productionTools(opts.cwd);
     this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
     this.traceRecorderFactory = opts.traceRecorderFactory;
@@ -116,7 +144,7 @@ export class InteractiveSessionController {
   }
 
   get sessionId(): string {
-    return this.ledger.sessionId;
+    return this.ledgerSink.sessionId;
   }
 
   get inFlight(): boolean {
@@ -137,6 +165,10 @@ export class InteractiveSessionController {
 
   get auditEntries() {
     return this.replay.auditEntries;
+  }
+
+  get ledger(): LedgerSink {
+    return this.ledgerSink;
   }
 
   get toolCount(): number {
@@ -256,7 +288,7 @@ export class InteractiveSessionController {
         thinkingLevel: this.selection.thinkingLevel,
       },
       streamFn,
-      ledger: this.ledger,
+      ledger: this.ledgerSink,
       loopConfig: { cwd: this.cwd, beforeToolCall },
       toolExecution: "sequential",
       steeringMode: this.settings.steeringMode ?? "one-at-a-time",
@@ -293,7 +325,7 @@ export class InteractiveSessionController {
       thinkingLevel: config.thinkingLevel,
     };
     await saveProjectSettings({ layout: this.layout }, this.settings);
-    await appendRuntimeConfig(this.ledger, config, source);
+    await appendRuntimeConfig(this.ledgerSink, config, source);
   }
 }
 

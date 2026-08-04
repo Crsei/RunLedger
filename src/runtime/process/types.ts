@@ -1,6 +1,7 @@
 /** Managed process 的 current-format 公共 DTO。private backend 字段不在这里出现。 */
 
 import type { RuntimeContentRef, RuntimeDigest } from "../protocol/foundation.ts";
+import type { OutputCursor } from "./output.ts";
 import type {
 	AuthorityId,
 	AttemptId,
@@ -88,7 +89,7 @@ export interface ManagedProcessTerminal {
 export interface ManagedProcessSummary {
 	readonly handle: ExecutionHandleRef;
 	readonly state: ProcessState;
-	readonly outputCursor: number;
+	readonly outputCursor: OutputCursor;
 	readonly outputSize: number;
 	readonly capabilities: ManagedProcessCapabilities;
 	readonly terminal?: ManagedProcessTerminal;
@@ -96,10 +97,10 @@ export interface ManagedProcessSummary {
 
 export interface ManagedProcessOutputPage {
 	readonly handle: ExecutionHandleRef;
-	readonly startCursor: number;
-	readonly endCursor: number;
+	readonly startCursor: OutputCursor;
+	readonly endCursor: OutputCursor;
 	readonly text: string;
-	readonly nextCursor: number;
+	readonly nextCursor: OutputCursor;
 	readonly truncated: boolean;
 	readonly contentRef?: RuntimeContentRef;
 }
@@ -116,7 +117,7 @@ export interface ManagedProcessWaitResult {
 	readonly outcome: "terminal" | "running" | "timed_out" | "cancelled" | "uncertain";
 	readonly summary: ManagedProcessSummary;
 	readonly preview?: string;
-	readonly nextCursor: number;
+	readonly nextCursor: OutputCursor;
 	readonly terminalEvidenceRef?: RuntimeContentRef;
 }
 
@@ -127,7 +128,7 @@ export interface ProcessCompletionEnvelope {
 	readonly terminalSequence: number;
 	readonly summary: ManagedProcessSummary;
 	readonly preview?: string;
-	readonly nextCursor: number;
+	readonly nextCursor: OutputCursor;
 	readonly policyDigest: RuntimeDigest;
 	readonly budgetDigest: RuntimeDigest;
 }

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../../../src/types.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { runAgentLoop } from "../../../src/runtime/agent-loop.ts";
 import { mockModel, mockStreamFn } from "../../../src/runtime/providers/mock-stream.ts";
 import type { AgentContext } from "../../../src/runtime/types.ts";
@@ -168,6 +169,43 @@ describe("RuntimeTraceRecorder", () => {
 		});
 		expect(existsSync(join(root, "artifacts"))).toBe(false);
 		expect(existsSync(join(root, "artifact-metadata"))).toBe(false);
+	});
+
+	it("records managed-process output as one idempotent safe tool attempt", async () => {
+		const { eventStore, recorder } = await createRecorder(undefined, "events");
+		const sourceDigest = runtimeDigest("managed-process-output");
+		const recordDigest = runtimeDigest({ mode: "events", sourceDigest });
+		const input = {
+			executionId: "execution_trace_process",
+			attemptId: "attempt_trace_process_1",
+			mode: "events" as const,
+			sourceDigest,
+			recordDigest,
+			outputContent: {
+				storage: "digest_only" as const,
+				digest: sourceDigest.digest,
+				mediaType: "text/plain; charset=utf-8",
+				size: 12,
+			},
+		};
+
+		await recorder.recordManagedProcessOutput(input);
+		await recorder.recordManagedProcessOutput(input);
+
+		const events = await eventStore.events();
+		const materialized = events.filter((event) => event.metadata?.event === "process.output_materialized");
+		expect(materialized).toHaveLength(1);
+		expect(materialized[0]).toMatchObject({
+			kind: "tool_attempt",
+			outputContent: { storage: "digest_only", digest: sourceDigest.digest },
+			metadata: {
+				executionId: input.executionId,
+				attemptId: input.attemptId,
+				mode: "events",
+				recordDigest: recordDigest.digest,
+			},
+		});
+		expect(JSON.stringify(materialized[0])).not.toMatch(/(?:pid|command|cwd|env|locator)/iu);
 	});
 
 	it("best_effort degrades after an Event Store failure", async () => {

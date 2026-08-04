@@ -53,6 +53,23 @@ describe("FileArtifactStore", () => {
 		await expect(store.read(ref)).rejects.toBeInstanceOf(ArtifactIntegrityError);
 	});
 
+	it("fails closed when put encounters an existing tampered CAS object", async () => {
+		const store = await createStore();
+		const bytes = new TextEncoder().encode("immutable content");
+		const ref = await store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy_trace_v1",
+		});
+		await writeFile(join(store.dataRoot, "sha256", ref.digest.slice(0, 2), ref.digest), "tampered", "utf8");
+
+		await expect(store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy_trace_v1",
+		})).rejects.toBeInstanceOf(ArtifactIntegrityError);
+	});
+
 	it("rejects an artifact ref that could escape the CAS root", async () => {
 		const store = await createStore();
 		const ref = await store.put({

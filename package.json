@@ -54,7 +54,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build:linux-peer-credential-helper": "tsx scripts/build-linux-peer-credential-helper.ts",
+    "build": "npm run build:linux-peer-credential-helper && tsc -p tsconfig.json",
     "check:current-format": "tsx scripts/check-current-format.ts",
     "check:storage-boundaries": "tsx scripts/check-storage-boundaries.ts",
     "check:runtime-boundaries": "tsx scripts/check-runtime-boundaries.ts",
@@ -69,7 +70,9 @@
     "test:tui-native": "bun test tests/tui/*.bun.test.ts",
     "test:watch": "vitest",
     "cli": "tsx src/cli/cli.ts",
-    "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts"
+    "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts",
+    "verify:multi-client-host": "tsx scripts/verify-multi-client-host.ts",
+    "verify:managed-process-pty": "tsx scripts/verify-managed-process-pty.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",
@@ -81,6 +84,7 @@
     "@smithy/node-http-handler": "4.7.3",
     "http-proxy-agent": "7.0.2",
     "https-proxy-agent": "7.0.6",
+    "node-pty": "1.1.0",
     "openai": "6.26.0",
     "partial-json": "0.1.7",
     "proper-lockfile": "4.1.2",

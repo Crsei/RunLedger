@@ -13,6 +13,8 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "../types.ts";
 import { localExecutionEnv, type Shell, type ShellResult } from "../execution-env.ts";
+import type { ExecutionHandleRef } from "../process/types.ts";
+import type { OutputCursor } from "../process/output.ts";
 import { DEFAULT_MAX_BYTES } from "./tool-support.ts";
 
 export const bashSchema = Type.Object({
@@ -25,7 +27,7 @@ export const bashSchema = Type.Object({
   ),
   run_in_background: Type.Optional(
     Type.Boolean({
-      description: "true → 请求受治理的后台执行。当前 Host process manager 尚未接线时 fail closed。缺省 false。",
+      description: "true → 请求受治理的后台执行。未提供 Host process facade 时 fail closed。缺省 false。",
     }),
   ),
   output_format: Type.Optional(
@@ -43,13 +45,46 @@ export interface BashToolDetails {
   exitCode?: number;
   unsupported?: {
     code: "managed_process_unavailable";
-    operation: "run_in_background";
+    operation: "run_in_background" | "foreground";
   };
   /** 实际使用的 output_format */
   outputFormat?: "text" | "stream-json";
   stdoutChunk?: string;
   stderrChunk?: string;
   durationMs?: number;
+  background?: {
+    handle: ExecutionHandleRef;
+		summary: { state: string; outputCursor?: OutputCursor; outputSize?: number };
+  };
+}
+
+export interface ManagedForegroundBashInput {
+	readonly command: string;
+	readonly cwd: string;
+	readonly timeoutMs: number;
+	readonly stdin?: string;
+	readonly signal?: AbortSignal;
+	readonly maxOutputChars?: number;
+	readonly onStdout?: (chunk: string) => void;
+	readonly onStderr?: (chunk: string) => void;
+}
+
+export interface ManagedForegroundBashOperations {
+	exec: (input: ManagedForegroundBashInput) => Promise<ShellResult>;
+}
+
+export interface ManagedBackgroundBashOperations {
+  start: (input: {
+    command: string;
+    cwd: string;
+    timeoutMs: number;
+    stdin?: string;
+    signal?: AbortSignal;
+  }) => Promise<
+	    | { readonly ok: true; readonly handle: ExecutionHandleRef; readonly summary: { readonly state: string; readonly outputCursor?: OutputCursor; readonly outputSize?: number } }
+    | { readonly ok: false; readonly code: string }
+  >;
+	exec?: ManagedForegroundBashOperations["exec"];
 }
 
 export interface BashOperations {
@@ -72,6 +107,8 @@ export interface BashToolOptions {
   defaultTimeoutMs?: number;
   /** 默认 stdout/stderr 单边截断上限 */
   defaultMaxOutputChars?: number;
+  /** Host-owned background launcher; absent means fail closed without spawning. */
+  managedProcess?: ManagedBackgroundBashOperations;
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -104,11 +141,42 @@ export function createBashTool(
 
       // === 后台模式 ===
       if (runInBackground) {
+        if (options.managedProcess) {
+          try {
+            const started = await options.managedProcess.start({
+              command: cmd,
+              cwd,
+              timeoutMs,
+              ...(stdin === undefined ? {} : { stdin }),
+              ...(signal === undefined ? {} : { signal }),
+            });
+            if (started.ok) {
+              return {
+                content: [{ type: "text", text: `background process started: ${started.handle.executionId}` }],
+                details: { background: { handle: started.handle, summary: started.summary }, outputFormat },
+                terminate: false,
+              };
+            }
+            return {
+              content: [{ type: "text", text: `background process rejected: ${started.code}` }],
+              details: { outputFormat },
+              isError: true,
+              terminate: false,
+            };
+          } catch {
+            return {
+              content: [{ type: "text", text: "background process request failed" }],
+              details: { outputFormat },
+              isError: true,
+              terminate: false,
+            };
+          }
+        }
         return {
           content: [
             {
               type: "text",
-              text: "bash: run_in_background 当前不可用；Runtime Host process manager 尚未接线。未创建子进程。",
+              text: "bash: run_in_background 当前不可用；未提供 Host process facade。未创建子进程。",
             },
           ],
           details: {
@@ -126,26 +194,40 @@ export function createBashTool(
       // === 前台模式 ===
       let r: ShellResult;
       const startedAt = Date.now();
+      if (options.managedProcess && options.managedProcess.exec === undefined) {
+        return {
+          content: [{ type: "text", text: "bash: foreground process facade unavailable; no child process was created." }],
+          details: {
+            unsupported: { code: "managed_process_unavailable", operation: "foreground" },
+            outputFormat,
+          },
+          isError: true,
+          terminate: false,
+        };
+      }
       try {
-        r = await ops.exec(cmd, {
+        const executionOptions = {
           cwd,
           timeoutMs,
           maxOutputChars: defaultMaxOutput,
           signal,
           stdin,
-          onStdout: (chunk) => {
+          onStdout: (chunk: string) => {
             onUpdate?.({
               content: [{ type: "text", text: chunk }],
               details: { stdoutChunk: chunk, outputFormat },
             });
           },
-          onStderr: (chunk) => {
+          onStderr: (chunk: string) => {
             onUpdate?.({
               content: [{ type: "text", text: chunk }],
               details: { stderrChunk: chunk, outputFormat },
             });
           },
-        });
+        };
+        r = options.managedProcess?.exec
+          ? await options.managedProcess.exec({ command: cmd, ...executionOptions })
+          : await ops.exec(cmd, executionOptions);
       } catch (e) {
         return {
           content: [{ type: "text", text: `bash 执行失败: ${(e as Error).message ?? String(e)}` }],

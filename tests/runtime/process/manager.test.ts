@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import type { RuntimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import {
+	AuditedProcessManager,
 	ProcessManager,
 	type BackendSpawnPort,
 	type BackendSpawnReceipt,
 	type ProcessJournal,
 } from "../../../src/runtime/process/manager.ts";
+import {
+	createBuiltinNoneExecutionDecisionProviders,
+	createExecutionConstraintReceipt,
+	type ExecutionConstraintInput,
+	type ExecutionConstraintSnapshot,
+} from "../../../src/runtime/process/execution-decision.ts";
 import { createProcessEvent, type ProcessEvent } from "../../../src/runtime/process/events.ts";
 import type { ExecutionHandleRef, ManagedProcessRequest } from "../../../src/runtime/process/types.ts";
 import { projectProcessEvents } from "../../../src/runtime/process/state-machine.ts";
@@ -38,6 +45,7 @@ class FakeJournal implements ProcessJournal {
 	public failNextType: ProcessEvent["type"] | undefined;
 	private readonly claims = new Set<string>();
 	private readonly receipts = new Map<string, BackendSpawnReceipt>();
+	private readonly constraintSnapshots = new Map<string, ExecutionConstraintSnapshot>();
 	private readonly reservations = new Map<string, ExecutionHandleRef>();
 	private blockRequestedAppend = false;
 	private requestedAppendBlocked: (() => void) | undefined;
@@ -121,6 +129,14 @@ class FakeJournal implements ProcessJournal {
 	public releaseProcessCapacity(handle: ExecutionHandleRef): void {
 		this.reservations.delete(processKey(handle));
 	}
+
+	public recordConstraintSnapshot(commandId: ManagedProcessRequest["correlationId"], snapshot: ExecutionConstraintSnapshot): void {
+		this.constraintSnapshots.set(commandId, snapshot);
+	}
+
+	public constraintSnapshot(commandId: ManagedProcessRequest["correlationId"]): ExecutionConstraintSnapshot | undefined {
+		return this.constraintSnapshots.get(commandId);
+	}
 }
 
 function processKey(handle: ExecutionHandleRef): string {
@@ -139,6 +155,7 @@ function processKey(handle: ExecutionHandleRef): string {
 class FakeBackend implements BackendSpawnPort {
 	public spawnCount = 0;
 	public loseNextResponse = false;
+	public lastConstraintSnapshot: ExecutionConstraintSnapshot | undefined;
 	private readonly journal: FakeJournal;
 	private readonly receipts = new Map<string, BackendSpawnReceipt>();
 
@@ -147,6 +164,7 @@ class FakeBackend implements BackendSpawnPort {
 	}
 
 	public async spawn(input: Parameters<BackendSpawnPort["spawn"]>[0]): Promise<BackendSpawnReceipt> {
+		this.lastConstraintSnapshot = input.constraintSnapshot;
 		const prior = this.receipts.get(input.handle.executionId);
 		if (prior) return prior;
 		if (!this.journal.findIntent(input.request.correlationId)) throw new Error("intent was not durable before spawn");
@@ -159,6 +177,27 @@ class FakeBackend implements BackendSpawnPort {
 		}
 		return receipt;
 	}
+}
+
+function executionDecisionInput(value: ManagedProcessRequest): ExecutionConstraintInput {
+	return {
+		authorityId: value.authorityId,
+		tenantId: value.tenantId,
+		workspaceId: value.workspaceId,
+		principalId: createRuntimeId("principal", "manager-audited"),
+		executionId: createRuntimeId("execution", "placeholder"),
+		attemptId: createRuntimeId("attempt", "placeholder"),
+		commandId: value.correlationId,
+		requestDigest: value.requestDigest,
+		policyDigest: digest("policy"),
+		modes: {
+			permission: "none",
+			approval: "none",
+			sandbox: "none",
+			gateway: "none",
+			containment: "none",
+		},
+	};
 }
 
 describe("R5 managed process manager", () => {
@@ -322,5 +361,74 @@ describe("R5 managed process manager", () => {
 		const projection = projectProcessEvents(journal.events);
 		expect(projection).toMatchObject({ ok: true, state: { state: "completed" } });
 		expect(manager.mutate(created.handle, "write")).toEqual({ ok: false, code: "terminal_state_immutable" });
+	});
+
+	it("requires the audited decision barrier before the backend and binds its snapshot digest to intent", async () => {
+		const journal = new FakeJournal();
+		const backend = new FakeBackend(journal);
+		const manager = new AuditedProcessManager(
+			new ProcessManager(journal, backend),
+			createBuiltinNoneExecutionDecisionProviders(),
+		);
+		const created = await manager.create(request("audited"), executionDecisionInput(request("audited")));
+		expect(created.ok).toBe(true);
+		expect(backend.spawnCount).toBe(1);
+		expect(backend.lastConstraintSnapshot?.containment.settlement).toBe("not_requested");
+		expect(journal.events[0]).toMatchObject({
+			type: "process.execution_requested",
+			constraintSnapshotDigest: backend.lastConstraintSnapshot?.snapshotDigest,
+		});
+	});
+
+	it("does not call the backend when an audited dimension is denied", async () => {
+		const journal = new FakeJournal();
+		const backend = new FakeBackend(journal);
+		const manager = new AuditedProcessManager(new ProcessManager(journal, backend), {
+			...createBuiltinNoneExecutionDecisionProviders(),
+			permission: {
+				decide: async (input) => createExecutionConstraintReceipt({
+					dimension: "permission" as const,
+					mode: input.modes.permission,
+					decision: "deny" as const,
+					providerId: "test.permission",
+					providerRevision: 1,
+					policyDigest: input.policyDigest,
+					invocationDigest: input.requestDigest,
+				}),
+			},
+		});
+		const created = await manager.create(request("audited-denied"), executionDecisionInput(request("audited-denied")));
+		expect(created).toMatchObject({ ok: false, code: "execution_constraint_denied" });
+		expect(backend.spawnCount).toBe(0);
+	});
+
+	it("reuses the durable constraint snapshot after a spawn response loss", async () => {
+		const journal = new FakeJournal();
+		const backend = new FakeBackend(journal);
+		backend.loseNextResponse = true;
+		let permissionCalls = 0;
+		const builtin = createBuiltinNoneExecutionDecisionProviders();
+		const providers = {
+			...builtin,
+			permission: {
+				decide: async (input: ExecutionConstraintInput) => createExecutionConstraintReceipt({
+					dimension: "permission",
+					mode: input.modes.permission,
+					decision: "allow",
+					providerId: "rotating.permission",
+					providerRevision: ++permissionCalls,
+					policyDigest: input.policyDigest,
+					invocationDigest: input.requestDigest,
+				}),
+			},
+		};
+		const manager = new AuditedProcessManager(new ProcessManager(journal, backend), providers);
+		const value = request("audited-recovery");
+		const first = await manager.create(value, executionDecisionInput(value));
+		expect(first).toEqual({ ok: false, code: "uncertain_outcome" });
+		const second = await manager.create(value, executionDecisionInput(value));
+		expect(second.ok).toBe(true);
+		expect(permissionCalls).toBe(1);
+		expect(backend.spawnCount).toBe(1);
 	});
 });

@@ -1,44 +1,34 @@
 /**
- * RunLedger CLI 主入口 —— 装配 SessionManager / SettingsManager / Agent /
- * InteractiveMode 后启动 TUI。
+ * RunLedger CLI 主入口 —— 解析参数、连接 resident Runtime Host、装配 remote
+ * session facade / OpenTUI 后启动 TUI。
  *
  * 行为按 §3 计划文档:
  *   1. parseArgs → handle -h/-v
  *   2. compute cwd / 设置 RUNLEDGER_DEBUG
  *   3. resolve one RunledgerLayout and load canonical settings
- *   4. SessionManager 只使用 layout.sessions canonical locator
- *   5. 选择 session 操作:create / continueRecent / open(--session) / forkFrom
- *   6. 装配全部 builtin providers + AuthStorage;无认证时进入 TUI onboarding
- *   7. 构造 systemPrompt(合并 cwd/AGENTS.md 与 layout.agents)
- *   8. 实例化 Agent + InteractiveMode + run
- *   9. finally closeAll ledger
+ *   4. authenticated connect-or-spawn 到 workspace Runtime Host
+ *   5. 通过 Host request 选择 session:create / continue / open / resume / fork
+ *   6. 构造 remote controller、订阅事件并尝试 claim driver
+ *   7. 通过同一 Host facade 装配 managed-process overlay
+ *   8. InteractiveMode.run；退出时只 detach 当前 client
  *
  * 本期不实现 trust-manager / extensions / skills / themes 加载。
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync } from "node:fs";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
-import { selectSessionInTui } from "../tui/session-selector.ts";
 import { loadProjectSettings } from "../storage/settings-manager.ts";
-import { SessionManager } from "../storage/session-manager.ts";
-import { replaySession } from "../storage/session-codec.ts";
-import { AuthStorage } from "../storage/auth-storage.ts";
 import { resolveRunledgerHome } from "../storage/runledger-home.ts";
-import type { RunledgerLayout } from "../runtime/contracts/public.ts";
-import { builtinModels } from "../providers/all.ts";
-import { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
+import { RemoteInteractiveSessionController, type HostRequestTransport, type RemoteSessionSnapshot } from "../runtime/host/remote-session.ts";
+import type { HostFrameEnvelope } from "../runtime/host/types.ts";
+import { createProcessOverlayController } from "../tui/process/controller-adapter.ts";
 import { parseArgs, USAGE } from "./args.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
-import { composeCliTraceRecorderFactory } from "./trace-config.ts";
+import { connectProductionRuntimeHost } from "./runtime-host-production.ts";
+import { createProductionProcessOverlayClient } from "./runtime-host-client.ts";
 
 const VERSION = readVersionFromPackage();
-
-const DEFAULT_SYSTEM_PROMPT =
-  "You are RunLedger's interactive coding agent inside a TUI. " +
-  "Use Read/Write/Edit/Bash/grep/find/ls tools to inspect and modify files. " +
-  "Keep replies concise and ask before destructive operations.";
 
 export async function main(argv: readonly string[]): Promise<void> {
   if (argv[0] === "migrate") {
@@ -71,61 +61,47 @@ export async function main(argv: readonly string[]): Promise<void> {
   const cwd = process.cwd();
   const { layout } = await resolveRunledgerHome();
   const settings = await loadProjectSettings({ layout });
-  const traceRecorderFactory = composeCliTraceRecorderFactory(layout, settings);
-
-  let mgr: SessionManager;
-  if (args.session) {
-    mgr = await SessionManager.open(layout, args.session);
-  } else if (args.sessionId) {
-    const match = (await SessionManager.list(layout, cwd))
-      .find((session) => session.id === args.sessionId);
-    if (!match) throw new Error(`session id not found: ${args.sessionId}`);
-    mgr = await SessionManager.open(layout, match.filePath);
-  } else if (args.fork) {
-    mgr = await SessionManager.forkFrom(layout, args.fork, cwd);
-  } else if (args.resume) {
-    const sessions = await SessionManager.list(layout, cwd);
-    if (sessions.length === 0) {
-      process.stderr.write("[runledger] no sessions available to resume\n");
-      return;
-    }
-    const selected = process.stdin.isTTY
-      ? await selectSessionInTui(sessions)
-      : sessions[0];
-    if (!selected) return;
-    mgr = await SessionManager.open(layout, selected.filePath);
-  } else if (args.continueRecent) {
-    mgr = await SessionManager.continueRecent(layout, cwd);
-  } else {
-    mgr = await SessionManager.create({
-      layout,
-      cwd,
-      metadata: { cwd },
-    });
+  const host = await connectProductionRuntimeHost({ layout, cwd, settings });
+  const transport: HostRequestTransport = {
+    request: host.request,
+    onEvent: host.onEvent,
+  };
+  const open = await requestHostCommand(transport, "session.open", {
+    mode: sessionOpenMode(args),
+    ...(args.session === undefined ? {} : { sessionPath: args.session }),
+    ...(args.sessionId === undefined ? {} : { sessionId: args.sessionId }),
+    ...(args.fork === undefined ? {} : { sessionPath: args.fork }),
+    cwd,
+    ...(args.provider === undefined ? {} : { provider: args.provider }),
+    ...(args.model === undefined ? {} : { model: args.model }),
+    ...(args.thinking === undefined ? {} : { thinkingLevel: args.thinking }),
+  });
+  if (open.body.ok === false) {
+    await host.close().catch(() => undefined);
+    throw new Error(responseCode(open));
   }
+  const sessionId = stringValue(open.body.sessionId);
+  if (!sessionId) {
+    await host.close().catch(() => undefined);
+    throw new Error("Host session id is missing");
+  }
+  const snapshot = parseRemoteSnapshot(open.body.snapshot, sessionId);
+  const controller = new RemoteInteractiveSessionController(transport, snapshot);
   let removeSigint: (() => void) | undefined;
   let removeStdinEnd: (() => void) | undefined;
   try {
-    await mgr.acquireLock();
-    const models = builtinModels({ credentials: AuthStorage.create(layout) });
-    await models.refresh({ allowNetwork: false });
-    const replay = await replaySession(mgr.ledger());
-    const controller = await InteractiveSessionController.create({
-      cwd,
-      layout,
-      systemPrompt: buildSystemPrompt(cwd, layout),
-      models,
-      settings,
-      replay,
-      ledger: mgr.ledger(),
-      overrides: {
-        provider: args.provider,
-        model: args.model,
-        thinkingLevel: args.thinking,
-      },
-      traceRecorderFactory,
+    await requestHostCommand(transport, "session.subscribe", { sessionId });
+    const driverRevision = integerValue(open.body.driverRevision) ?? 0;
+    const claim = await requestHostCommand(transport, "session.claim_driver", {
+      sessionId,
+      expectedDriverRevision: driverRevision,
     });
-    const interactive = new InteractiveMode({ controller });
+    let isDriver = claim.body.ok === true;
+    const processOverlay = createProcessOverlayController(
+      createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver }),
+      { driver: isDriver },
+    );
+    const interactive = new InteractiveMode({ controller, processOverlayController: processOverlay });
     const onSigint = (): void => {
       if (controller.inFlight) controller.interrupt();
       else interactive.quit();
@@ -137,53 +113,73 @@ export async function main(argv: readonly string[]): Promise<void> {
     removeStdinEnd = () => process.stdin.off("end", onStdinEnd);
     if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
     await interactive.run();
+    isDriver = false;
   } finally {
     removeSigint?.();
     removeStdinEnd?.();
-    await mgr.closeAll().catch(() => {
-      // close 失败不阻断退出
+    controller.dispose();
+    await host.close().catch(() => {
+      // client detach 失败不阻断退出；resident Host 不由 client 关闭。
     });
     if (process.env.RUNLEDGER_DEBUG === "1") {
-      process.stderr.write(
-        `[runledger] exit. session=${mgr.filePath()}\n`,
-      );
+      process.stderr.write(`[runledger] exit. session=${sessionId}\n`);
     }
   }
 }
 
-/**
- * 构造系统提示:DEFAULT + cwd 下 AGENTS.md(若存在) + canonical home 的 AGENTS.md(若存在)。
- *
- * 本期不向上扫祖先链(pi 也是按 ancestor chain,本期仅在 cwd 与 global 两点
- * 读 AGENTS.md;TODO(pi):祖先链扫描加 M8 后续 PR)。
- */
-function buildSystemPrompt(cwd: string, layout: RunledgerLayout): string {
-  const parts: string[] = [DEFAULT_SYSTEM_PROMPT];
-  const localAg = getProjectAgentsMd(cwd);
-  if (localAg && existsSync(localAg)) {
-    try {
-      parts.push(readFileSync(localAg, "utf8"));
-    } catch {
-      // 读失败静默
-    }
-  }
-  const globalAg = layout.agents;
-  if (globalAg && existsSync(globalAg)) {
-    try {
-      parts.push(readFileSync(globalAg, "utf8"));
-    } catch {
-      // 读失败静默
-    }
-  }
-  return parts.join("\n\n---\n\n");
+function sessionOpenMode(args: ReturnType<typeof parseArgs>["args"]): "create" | "open" | "continue_recent" | "resume" | "fork" {
+  if (args.session !== undefined || args.sessionId !== undefined) return "open";
+  if (args.fork !== undefined) return "fork";
+  if (args.resume) return "resume";
+  if (args.continueRecent) return "continue_recent";
+  return "create";
 }
 
-/**
- * 本仓库存在 `<cwd>/AGENTS.md`(本期属项目说明,被纳入 systemPrompt 推动 agent),
- * 与 RunLedger canonical home 的 AGENTS.md 分开读取；这是 codex 仓库惯例的 AGENTS.md。
- */
-function getProjectAgentsMd(cwd: string = process.cwd()): string {
-  return join(cwd, "AGENTS.md");
+async function requestHostCommand(
+  transport: HostRequestTransport,
+  operation: string,
+  body: Record<string, unknown>,
+): Promise<HostFrameEnvelope> {
+  const frameId = `client_command_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  return transport.request({
+    frameId,
+    kind: "command_request",
+    protocolVersion: 1,
+    body: { operation, commandId: frameId, ...body },
+  });
+}
+
+function parseRemoteSnapshot(value: unknown, fallbackSessionId: string | undefined): RemoteSessionSnapshot {
+  if (!isRecord(value)) throw new Error("Host session snapshot is invalid");
+  const sessionId = stringValue(value.sessionId) ?? fallbackSessionId;
+  if (!sessionId) throw new Error("Host session id is missing");
+  const selection = isRecord(value.selection) && typeof value.selection.thinkingLevel === "string"
+    ? value.selection as unknown as RemoteSessionSnapshot["selection"]
+    : { thinkingLevel: "off" as const };
+  return {
+    sessionId,
+    selection,
+    messages: Array.isArray(value.messages) ? value.messages as RemoteSessionSnapshot["messages"] : [],
+    warnings: Array.isArray(value.warnings) ? value.warnings.filter((item): item is string => typeof item === "string") : [],
+    auditEntries: Array.isArray(value.auditEntries) ? value.auditEntries as RemoteSessionSnapshot["auditEntries"] : [],
+    toolCount: integerValue(value.toolCount) ?? 0,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function integerValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : undefined;
+}
+
+function responseCode(response: HostFrameEnvelope): string {
+  return typeof response.body.code === "string" ? response.body.code : "host_request_rejected";
 }
 
 /** 版本号从 package.json 读取;失败兜底 0.0.0-unknown */

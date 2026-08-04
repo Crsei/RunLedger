@@ -28,9 +28,23 @@ export const LEGACY_RUNTIME_TOOL_ALLOWLIST: Readonly<Record<string, readonly str
 
 /**
  * R0 之后只有这里列出的 backend 文件可以直接持有 child_process/PTY 句柄。
- * 当前没有生产 backend，因此保持为空；新增条目必须是精确文件路径。
+ * native PTY adapter 也必须保持在精确文件路径内；新增条目不能豁免整个目录。
  */
-export const MANAGED_PROCESS_BACKEND_ALLOWLIST: readonly string[] = [];
+export const MANAGED_PROCESS_BACKEND_ALLOWLIST: readonly string[] = [
+	// The Linux peer adapter invokes the compiled SO_PEERCRED helper. It is a
+	// production capability adapter, not a tool/TUI process escape hatch.
+	"src/cli/linux-peer-attestor.ts",
+	"src/cli/runtime-host-production.ts",
+	"src/storage/process/node-pty-adapter.ts",
+	"src/storage/process/process-backend.ts",
+	"src/storage/process/supervisor-runner.ts",
+];
+
+/** Exact files allowed to create detached Host/supervisor process boundaries. */
+export const RUNTIME_HOST_LAUNCHER_ALLOWLIST: readonly string[] = [
+	"src/cli/runtime-host-production.ts",
+	"src/storage/process/supervisor-runner.ts",
+];
 
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
 	[/from [\"']node:fs(?:\/promises)?[\"']/, "raw-fs"],
@@ -86,7 +100,9 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 			if (BOUNDARY_PATTERNS[1][0].test(source) && !MANAGED_PROCESS_BACKEND_ALLOWLIST.includes(relativeFile)) {
 				violations.push({ file: relativeFile, kind: "raw-process" });
 			}
-			if (RAW_BACKGROUND_PATTERNS.some((pattern) => pattern.test(source))) {
+			if (RAW_BACKGROUND_PATTERNS.some((pattern) => pattern.test(source)) &&
+				!RUNTIME_HOST_LAUNCHER_ALLOWLIST.includes(relativeFile) &&
+				!MANAGED_PROCESS_BACKEND_ALLOWLIST.includes(relativeFile)) {
 				violations.push({ file: relativeFile, kind: "raw-background" });
 			}
 		}

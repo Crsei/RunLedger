@@ -183,6 +183,16 @@ export function hostEndpointRelativeLocator(storageKey: string): string {
 	return `ipc/hosts/${storageKey}/endpoint.json`;
 }
 
+export function hostSocketRelativeLocator(storageKey: string): string {
+	assertWorkspaceStorageKey(storageKey);
+	return `ipc/hosts/${storageKey}/host.sock`;
+}
+
+export function hostStartupElectionRelativeLocator(storageKey: string): string {
+	assertWorkspaceStorageKey(storageKey);
+	return `ipc/hosts/${storageKey}/startup-election`;
+}
+
 export function hostStateRelativeLocator(storageKey: string): string {
 	assertWorkspaceStorageKey(storageKey);
 	return `state/hosts/${storageKey}`;

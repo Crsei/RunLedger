@@ -9,16 +9,18 @@ import type {
 	ProcessState,
 	ProcessTerminalState,
 } from "./types.ts";
+import type { OutputCursor } from "./output.ts";
 
 export interface ProcessProjection {
 	readonly handle: ExecutionHandleRef;
 	readonly state: ProcessState;
 	readonly revision: number;
-	readonly outputCursor: number;
+	readonly outputCursor: OutputCursor;
 	readonly outputSize: number;
 	readonly managedRequestDigest: RuntimeDigest;
 	readonly backend: ProcessBackendKind;
 	readonly executionMode: ProcessExecutionMode;
+	readonly constraintSnapshotDigest?: RuntimeDigest;
 	readonly spawnReceiptDigest?: RuntimeDigest;
 	readonly spawnEvidenceRef?: RuntimeContentRef;
 	readonly terminal?: {
@@ -44,10 +46,11 @@ export interface ProcessTransitionInput {
 	readonly type: ProcessEvent["type"];
 	readonly nextState: ProcessState;
 	readonly expectedRevision: number;
-	readonly outputCursor?: number;
+	readonly outputCursor?: OutputCursor;
 	readonly outputSize?: number;
 	readonly spawnReceiptDigest?: RuntimeDigest;
 	readonly spawnEvidenceRef?: RuntimeContentRef;
+	readonly constraintSnapshotDigest?: RuntimeDigest;
 	readonly terminal?: ProcessProjection["terminal"];
 }
 
@@ -78,7 +81,7 @@ export function createInitialProcessProjection(handle: ExecutionHandleRef): Proc
 		handle,
 		state: "queued",
 		revision: 0,
-		outputCursor: 0,
+		outputCursor: zeroCursor(),
 		outputSize: 0,
 		managedRequestDigest: handle.requestDigest,
 		backend: "pipe",
@@ -97,6 +100,9 @@ export function transitionProcess(state: ProcessProjection, input: ProcessTransi
 		return { ok: false, code: "illegal_process_transition" };
 	}
 	if (!isEventTransitionValid(state.state, input)) return { ok: false, code: "illegal_process_transition" };
+	if (input.outputCursor !== undefined && compareCursor(input.outputCursor, state.outputCursor) < 0) {
+		return { ok: false, code: "illegal_process_transition" };
+	}
 	return {
 		ok: true,
 		state: {
@@ -108,6 +114,7 @@ export function transitionProcess(state: ProcessProjection, input: ProcessTransi
 			outputSize: input.outputSize ?? state.outputSize,
 			spawnReceiptDigest: input.spawnReceiptDigest ?? state.spawnReceiptDigest,
 			spawnEvidenceRef: input.spawnEvidenceRef ?? state.spawnEvidenceRef,
+			constraintSnapshotDigest: input.constraintSnapshotDigest ?? state.constraintSnapshotDigest,
 			terminal: input.terminal ?? state.terminal,
 		},
 	};
@@ -171,11 +178,12 @@ export function projectProcessEvents(events: readonly ProcessEvent[]): ProcessPr
 		},
 		state: "queued",
 		revision: 0,
-		outputCursor: first.outputCursor ?? 0,
+		outputCursor: first.outputCursor ?? zeroCursor(),
 		outputSize: first.outputSize ?? 0,
 		managedRequestDigest: first.managedRequestDigest,
 		backend: first.backend,
 		executionMode: first.executionMode,
+		...(first.constraintSnapshotDigest === undefined ? {} : { constraintSnapshotDigest: first.constraintSnapshotDigest }),
 		lastSequence: first.sequence,
 		lastEventHash: first.eventHash,
 	};
@@ -204,6 +212,10 @@ export function projectProcessEvents(events: readonly ProcessEvent[]): ProcessPr
 		if (event.previousEventHash?.digest !== state.lastEventHash?.digest) {
 			return { ok: false, code: "event_previous_hash_mismatch" };
 		}
+		if (
+			state.constraintSnapshotDigest !== undefined &&
+			(event.constraintSnapshotDigest === undefined || event.constraintSnapshotDigest.digest !== state.constraintSnapshotDigest.digest)
+		) return { ok: false, code: "event_payload_invalid" };
 		const next = transitionProcess(state, {
 			type: event.type,
 			nextState: event.nextState,
@@ -212,6 +224,7 @@ export function projectProcessEvents(events: readonly ProcessEvent[]): ProcessPr
 			outputSize: event.outputSize,
 			spawnReceiptDigest: event.spawnReceiptDigest,
 			spawnEvidenceRef: event.spawnEvidenceRef,
+			constraintSnapshotDigest: event.constraintSnapshotDigest,
 			terminal: event.terminal,
 		});
 		if (!next.ok) return next;
@@ -219,6 +232,15 @@ export function projectProcessEvents(events: readonly ProcessEvent[]): ProcessPr
 		state = { ...next.state, lastSequence: event.sequence, lastEventHash: storedEventHash };
 	}
 	return { ok: true, state };
+}
+
+function zeroCursor(): OutputCursor {
+	return { sequence: 0, byteOffset: 0 };
+}
+
+function compareCursor(left: OutputCursor, right: OutputCursor): number {
+	if (left.byteOffset !== right.byteOffset) return left.byteOffset < right.byteOffset ? -1 : 1;
+	return left.sequence === right.sequence ? 0 : left.sequence < right.sequence ? -1 : 1;
 }
 
 function isEventTransitionValid(state: ProcessState, input: ProcessTransitionInput): boolean {

@@ -22,6 +22,7 @@ import {
 	type ProcessState,
 	type ProcessTerminalState,
 } from "./types.ts";
+import type { OutputCursor } from "./output.ts";
 
 export const PROCESS_EVENT_TYPES = [
 	"process.execution_requested",
@@ -57,6 +58,13 @@ const TerminalPayloadSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const OutputCursorSchema = Type.Object(
+	{
+		sequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		byteOffset: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+	},
+	{ additionalProperties: false },
+);
 
 export interface ProcessEvent {
 	readonly eventId: EventId;
@@ -76,10 +84,11 @@ export interface ProcessEvent {
 	readonly managedRequestDigest?: RuntimeDigest;
 	readonly backend?: ProcessBackendKind;
 	readonly executionMode?: ProcessExecutionMode;
+	readonly constraintSnapshotDigest?: RuntimeDigest;
 	readonly previousState: ProcessState | null;
 	readonly nextState: ProcessState;
 	readonly previousEventHash: RuntimeDigest | null;
-	readonly outputCursor?: number;
+	readonly outputCursor?: OutputCursor;
 	readonly outputSize?: number;
 	readonly spawnReceiptDigest?: RuntimeDigest;
 	readonly spawnEvidenceRef?: RuntimeContentRef;
@@ -111,10 +120,11 @@ export const ProcessEventSchema = Type.Object(
 		managedRequestDigest: Type.Optional(RuntimeDigestSchema),
 		backend: Type.Optional(Type.Union([Type.Literal("pipe"), Type.Literal("pty")])),
 		executionMode: Type.Optional(Type.Union([Type.Literal("foreground"), Type.Literal("background")])),
+		constraintSnapshotDigest: Type.Optional(RuntimeDigestSchema),
 		previousState: Type.Union([ProcessStateSchema, Type.Null()]),
 		nextState: ProcessStateSchema,
 		previousEventHash: Type.Union([RuntimeDigestSchema, Type.Null()]),
-		outputCursor: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
+		outputCursor: Type.Optional(OutputCursorSchema),
 		outputSize: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
 		spawnReceiptDigest: Type.Optional(RuntimeDigestSchema),
 		spawnEvidenceRef: Type.Optional(RuntimeContentRefSchema),
@@ -141,7 +151,8 @@ export interface CreateProcessEventInput {
 	readonly managedRequestDigest?: RuntimeDigest;
 	readonly backend?: ProcessBackendKind;
 	readonly executionMode?: ProcessExecutionMode;
-	readonly outputCursor?: number;
+	readonly constraintSnapshotDigest?: RuntimeDigest;
+	readonly outputCursor?: OutputCursor;
 	readonly outputSize?: number;
 	readonly spawnReceiptDigest?: RuntimeDigest;
 	readonly spawnEvidenceRef?: RuntimeContentRef;
@@ -172,6 +183,7 @@ export function createProcessEvent(input: CreateProcessEventInput): ProcessEvent
 		...(input.managedRequestDigest === undefined ? {} : { managedRequestDigest: input.managedRequestDigest }),
 		...(input.backend === undefined ? {} : { backend: input.backend }),
 		...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
+		...(input.constraintSnapshotDigest === undefined ? {} : { constraintSnapshotDigest: input.constraintSnapshotDigest }),
 		previousState: input.previousState,
 		nextState: input.nextState,
 		previousEventHash: input.previousEventHash,

@@ -29,7 +29,7 @@ const handle: ExecutionHandleRef = {
 const running: ManagedProcessSummary = {
 	handle,
 	state: "running",
-	outputCursor: 0,
+	outputCursor: { sequence: 0, byteOffset: 0 },
 	outputSize: 0,
 	capabilities: { canWrite: true, canEof: true, canResize: false, canStop: true, canReadOutput: true },
 };

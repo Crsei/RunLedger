@@ -81,6 +81,13 @@ const CapabilitiesSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const OutputCursorSchema = Type.Object(
+	{
+		sequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		byteOffset: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+	},
+	{ additionalProperties: false },
+);
 
 const TerminalSchema = Type.Object(
 	{
@@ -104,7 +111,7 @@ export const ManagedProcessSummarySchema = Type.Object(
 	{
 		handle: ExecutionHandleRefSchema,
 		state: ProcessStateSchema,
-		outputCursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		outputCursor: OutputCursorSchema,
 		outputSize: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		capabilities: CapabilitiesSchema,
 		terminal: Type.Optional(TerminalSchema),
@@ -115,10 +122,10 @@ export const ManagedProcessSummarySchema = Type.Object(
 export const ManagedProcessOutputPageSchema = Type.Object(
 	{
 		handle: ExecutionHandleRefSchema,
-		startCursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
-		endCursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		startCursor: OutputCursorSchema,
+		endCursor: OutputCursorSchema,
 		text: Type.String({ maxLength: RUNTIME_HOST_BOUNDS.maxOutputPageBytes }),
-		nextCursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		nextCursor: OutputCursorSchema,
 		truncated: Type.Boolean(),
 		contentRef: Type.Optional(RuntimeContentRefSchema),
 	},
@@ -147,7 +154,7 @@ export const ManagedProcessWaitResultSchema = Type.Object(
 		]),
 		summary: ManagedProcessSummarySchema,
 		preview: Type.Optional(Type.String({ maxLength: RUNTIME_HOST_BOUNDS.maxOutputPageBytes })),
-		nextCursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		nextCursor: OutputCursorSchema,
 		terminalEvidenceRef: Type.Optional(RuntimeContentRefSchema),
 	},
 	{ additionalProperties: false },
@@ -161,7 +168,7 @@ export const ProcessCompletionEnvelopeSchema = Type.Object(
 		terminalSequence: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		summary: ManagedProcessSummarySchema,
 		preview: Type.Optional(Type.String({ maxLength: RUNTIME_HOST_BOUNDS.maxOutputPageBytes })),
-		nextCursor: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		nextCursor: OutputCursorSchema,
 		policyDigest: RuntimeDigestSchema,
 		budgetDigest: RuntimeDigestSchema,
 	},

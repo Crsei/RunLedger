@@ -36,7 +36,7 @@ import type { AgentEvent, AgentMessage } from "../runtime/types.ts";
 import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
 import { getSupportedThinkingLevels } from "../models.ts";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
-import type { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
+import type { InteractiveSessionControllerPort } from "../runtime/interactive-session-controller.ts";
 
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
@@ -60,11 +60,14 @@ import { SelectorModal } from "./components/selector-modal.ts";
 import type { SelectItem } from "./index.ts";
 import type { AgentToolResult } from "../runtime/types.ts";
 import { createAppKeyListener } from "./keybindings/app-keys.ts";
+import type { ExecutionId } from "../runtime/protocol/ids.ts";
+import type { ProcessOverlayController } from "./process/controller-adapter.ts";
+import { ProcessOverlayComponent } from "./process/overlay-component.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
   /** 新 CLI 使用统一 controller;agent 仅保留 demo 兼容。 */
-  controller?: InteractiveSessionController;
+  controller?: InteractiveSessionControllerPort;
   agent?: Agent;
   /** 终端实现,默认 ProcessTerminal;可传入 mock 终端用于单测。 */
   terminal?: Terminal;
@@ -78,6 +81,8 @@ export interface InteractiveModeOptions {
   initialThinkingLevel?: ModelThinkingLevel;
   /** M8e:thinking level change 回调,由 caller 决定如何传给 agent streamFn。 */
   onThinkingChange?: (level: ModelThinkingLevel) => void;
+  /** R9:由 Host facade 提供的 safe process list/output/mutation adapter。 */
+  processOverlayController?: ProcessOverlayController;
 }
 
 /** M8d:/model 切换条目;由 caller(demo)注入候选。 */
@@ -111,7 +116,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly ui: TUI;
   private readonly terminal: Terminal;
   private readonly agent: Agent | undefined;
-  private readonly controller: InteractiveSessionController | undefined;
+  private readonly controller: InteractiveSessionControllerPort | undefined;
+  private readonly processOverlayController: ProcessOverlayController | undefined;
   private theme: Theme;
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
@@ -139,6 +145,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private quitting = false;
   private readonly exitPromise: Promise<void>;
   private readonly resolveExit: () => void;
+  private processOverlayComponent: ProcessOverlayComponent | undefined;
 
   constructor(opts: InteractiveModeOptions) {
     if (!opts.controller && !opts.agent) {
@@ -146,6 +153,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.controller = opts.controller;
     this.agent = opts.agent;
+    this.processOverlayController = opts.processOverlayController;
     this.terminal = opts.terminal ?? new ProcessTerminal();
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
     this.modelRegistry = opts.modelRegistry ?? [];
@@ -166,6 +174,20 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
     // 装配组件树
     this.refs = this.assembleTree();
+    if (this.processOverlayController) {
+      this.processOverlayComponent = new ProcessOverlayComponent({
+        controller: this.processOverlayController,
+        onClose: () => {
+          this.ui.hideOverlay();
+          this.ui.setFocus(this.refs.editor);
+          this.ui.requestRender();
+        },
+        onChange: () => this.ui.requestRender(),
+        onNotice: (message) => this.showNotice(message, "error"),
+        getHeight: () => Math.max(4, this.terminal.rows - 4),
+        getTerminalSize: () => ({ columns: this.terminal.columns, rows: this.terminal.rows }),
+      });
+    }
     this.replayInitialHistory();
 
     // 注册到 RunLedger 进程级单例 handle(M8 远期接通);M1 阶段 setReplHandle 仍 noop
@@ -342,6 +364,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       { value: "/logout", label: "/logout", description: "Remove credential" },
       { value: "/model", label: "/model", description: "Switch model" },
       { value: "/thinking", label: "/thinking", description: "Switch thinking level" },
+      { value: "/processes", label: "/processes", description: "List managed processes" },
+      { value: "/terminal", label: "/terminal <executionId>", description: "Open managed terminal" },
       { value: "/quit", label: "/quit", description: "Exit safely" },
       { value: "/mcp", label: "/mcp", description: "Switch mcp server" },
       { value: "/prompt", label: "/prompt", description: "Pick prompt template" },
@@ -366,6 +390,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
             break;
           case "/login":
             void this.openLoginSelector();
+            break;
+          case "/processes":
+            this.openProcessList();
+            break;
+          case "/terminal":
+            this.showNotice("Use /terminal <executionId> to open a managed terminal.");
             break;
           default:
             this.echoPrompt(item.value);
@@ -409,6 +439,33 @@ export class InteractiveMode implements FooterSnapshotProvider {
       onCancel: () => this.ui.hideOverlay(),
     });
     this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  /** R9:打开 Host-owned managed process list；没有 facade 时保持显式不可用。 */
+  openProcessList(): void {
+    const overlay = this.processOverlayComponent;
+    if (!overlay) {
+      this.showNotice("Managed process view is unavailable in this session.", "error");
+      return;
+    }
+    this.ui.showOverlay(overlay, { anchor: "center" });
+    void overlay.openList();
+  }
+
+  /** R9:按 safe execution id 打开 terminal overlay，不连接 raw PTY endpoint。 */
+  openProcessTerminal(executionId: string): void {
+    const overlay = this.processOverlayComponent;
+    if (!overlay || !isSafeExecutionId(executionId)) {
+      this.showNotice("A valid managed execution id is required.", "error");
+      return;
+    }
+    this.ui.showOverlay(overlay, { anchor: "center" });
+    void overlay.openTerminal(executionId as ExecutionId);
+  }
+
+  /** 仅暴露给测试/上层 command router 的状态查询，不暴露 backend。 */
+  isProcessOverlayOpen(): boolean {
+    return this.processOverlayController?.snapshot().open ?? false;
   }
 
   /**
@@ -537,6 +594,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
         case "thinking":
           if (this.rejectConfigWhileRunning()) return;
           this.openThinkingSelector();
+          return;
+        case "processes":
+          this.openProcessList();
+          return;
+        case "terminal":
+          this.openProcessTerminal(arg);
           return;
         case "mcp":
           this.openMcpServerSelector();
@@ -1095,6 +1158,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     // 任何事件后都请求一次合帧
     this.ui.requestRender();
   }
+}
+
+function isSafeExecutionId(value: string): boolean {
+  return /^execution_[A-Za-z0-9._~-]{1,128}$/u.test(value);
 }
 
 function messageText(message: AgentMessage): string {

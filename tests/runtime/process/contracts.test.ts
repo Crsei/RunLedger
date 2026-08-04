@@ -248,6 +248,55 @@ describe("R1 deterministic process state and event projection", () => {
 		});
 	});
 
+	it("replays a structured UTF-8 output cursor through the durable process event", () => {
+		const processHandle = handle();
+		const requested = createProcessEvent({
+			...requestedFields,
+			handle: processHandle,
+			sequence: 0,
+			revision: 0,
+			type: "process.execution_requested",
+			previousState: null,
+			nextState: "queued",
+			previousEventHash: null,
+		});
+		const starting = createProcessEvent({
+			handle: processHandle,
+			sequence: 1,
+			revision: 1,
+			type: "process.execution_starting",
+			previousState: "queued",
+			nextState: "starting",
+			previousEventHash: requested.eventHash,
+		});
+		const started = createProcessEvent({
+			handle: processHandle,
+			sequence: 2,
+			revision: 2,
+			type: "process.execution_started",
+			previousState: "starting",
+			nextState: "running",
+			previousEventHash: starting.eventHash,
+			spawnReceiptDigest: digest("f"),
+		});
+		const checkpoint = createProcessEvent({
+			handle: processHandle,
+			sequence: 3,
+			revision: 3,
+			type: "process.output_checkpointed",
+			previousState: "running",
+			nextState: "running",
+			previousEventHash: started.eventHash,
+			outputCursor: { sequence: 7, byteOffset: 4 },
+			outputSize: 4,
+		});
+
+		expect(projectProcessEvents([requested, starting, started, checkpoint])).toMatchObject({
+			ok: true,
+			state: { outputCursor: { sequence: 7, byteOffset: 4 }, outputSize: 4 },
+		});
+	});
+
 	it("rejects a valid-hash terminal event whose evidence is missing", () => {
 		const processHandle = handle();
 		const requested = createProcessEvent({
