@@ -17,6 +17,7 @@ import type {
 	SandboxPrepareRequest,
 } from "../../../src/security/sandbox/types.ts";
 import { createDecisionReceipt, createResolutionState, digestOf } from "../../../src/security/sandbox/common.ts";
+import type { PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
 
 const roots: string[] = [];
 
@@ -30,7 +31,7 @@ function scope(): RuntimeHostScope {
 		tenantId: createRuntimeId("tenant", "host-security"),
 		workspaceId: createRuntimeId("workspace", "host-security"),
 		repositoryId: createRuntimeId("repository", "host-security"),
-		workspaceStorageKey: `ws-${"s".repeat(64)}`,
+		workspaceStorageKey: `ws-${"c".repeat(64)}`,
 		protocolVersion: 1,
 		hostBuildDigest: runtimeDigest("host"),
 		compositionDigest: runtimeDigest("composition"),
@@ -137,6 +138,42 @@ function spawnableSandboxBackend(): SandboxBackend {
 	};
 }
 
+function workspaceBinding(root: string): PersistedWorkspaceBinding {
+	const worktreePath = join(root, "managed-worktree");
+	const effectiveCwd = join(worktreePath, "packages", "app");
+	const sourceRepositoryPath = join(root, "source");
+	const worktreeId = createRuntimeId("workspace", "bound-worktree");
+	const worktreeRef = { subjectKind: "receipt" as const, digest: runtimeDigest({ worktreeId, worktreePath, baseCommit: "a".repeat(40) }) };
+	const lease = {
+		workspaceId: scope().workspaceId,
+		ownerRuntimeId: createRuntimeId("runtime", "bound-host"),
+		leaseRevision: 7,
+		fencingTokenDigest: runtimeDigest("bound-fence"),
+		state: "active" as const,
+		expiresAt: "2099-01-01T00:00:00.000Z",
+	};
+	const base = {
+		version: 1 as const,
+		binding: {
+			workspaceId: scope().workspaceId,
+			repositoryId: createRuntimeId("repository", runtimeDigest(sourceRepositoryPath).digest.slice(0, 48)),
+			bindingKind: "managed_worktree" as const,
+			effectiveCwdDigest: runtimeDigest(effectiveCwd),
+			baseCommit: "a".repeat(40),
+			worktreeRef,
+		},
+		worktreeId,
+		sourceRepositoryPath,
+		sourceSubdir: ".",
+		worktreePath,
+		effectiveCwd,
+		baseCommit: "a".repeat(40),
+		headCommit: "a".repeat(40),
+		lease,
+	};
+	return { ...base, bindingDigest: runtimeDigest(base) };
+}
+
 describe("production Host Security/ExecutionGateway composition", () => {
 	it("uses the canonical default snapshot and denies workspace-external writes before raw IO", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-"));
@@ -237,5 +274,27 @@ describe("production Host Security/ExecutionGateway composition", () => {
 		const output = await port.output("session_host-security-managed-process", created.handle.executionId, { sequence: 0, byteOffset: 0 }, 1_024);
 		expect(output.page).toContain("spawned-through-final-leaf");
 		expect(output.page).not.toContain("raw-command-must-not-be-used");
+	});
+
+	it("projects the persisted worktree binding into the Host execution envelope", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-binding-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const binding = workspaceBinding(root);
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: binding.effectiveCwd,
+			workspaceBinding: binding,
+			sandboxBackend: availableSandboxBackend(),
+		});
+		const prepared = await security.prepareProcess({
+			...processRequest(binding.effectiveCwd, createRuntimeId("session", "host-security-binding")),
+			cwd: binding.effectiveCwd,
+		});
+		expect(prepared.ok).toBe(true);
+		if (!prepared.ok) return;
+		expect(prepared.value.sandboxPlan?.workspaceRoot).toBe(binding.worktreePath);
+		expect(prepared.value.constraintInput.workspaceId).toBe(binding.binding.workspaceId);
 	});
 });

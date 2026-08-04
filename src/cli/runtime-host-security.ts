@@ -25,6 +25,10 @@ import {
 } from "../runtime/process/execution-decision.ts";
 import type { RuntimeDigest } from "../runtime/protocol/foundation.ts";
 import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
+import {
+	validatePersistedWorkspaceBinding,
+	type PersistedWorkspaceBinding,
+} from "../worktree/persisted-binding.ts";
 import type { SecurityConfigSourcePort } from "../security/config/loader.ts";
 import { loadSecurityConfigLayers } from "../security/config/loader.ts";
 import { resolveSecuritySnapshot } from "../security/config/resolver.ts";
@@ -74,6 +78,8 @@ export interface HostSecurityCompositionOptions {
 	readonly layout: RunledgerLayout;
 	readonly scope: RuntimeHostScope;
 	readonly cwd: string;
+	/** Cold-replayed canonical binding; absent only for an explicit source workspace. */
+	readonly workspaceBinding?: PersistedWorkspaceBinding;
 	readonly sessionId?: string;
 	readonly principalId?: string;
 	readonly sandboxBackend?: SandboxBackend;
@@ -156,6 +162,11 @@ export async function createProductionHostSecurity(
 ): Promise<ProductionHostSecurity> {
 	const baseSessionId = options.sessionId ?? createRuntimeId("session", `host-${options.scope.workspaceStorageKey.slice(3, 67)}`);
 	const basePrincipalId = options.principalId ?? "principal_host-agent";
+	if (options.workspaceBinding !== undefined) {
+		const binding = validatePersistedWorkspaceBinding(options.workspaceBinding);
+		if (!binding.ok) throw new Error(`${binding.error.code}: ${binding.error.message}`);
+		if (binding.value.binding.workspaceId !== options.scope.workspaceId) throw new Error("workspace binding does not match Host workspace identity");
+	}
 	const snapshot = await loadSnapshot(options);
 	const sandboxBackend = options.sandboxBackend ?? createSandboxBackend(process.platform === "darwin" ? "macos" : process.platform === "win32" ? "windows" : process.platform === "linux" ? "linux" : "unknown", {
 		probe: { which: findExecutable },
@@ -176,8 +187,8 @@ export async function createProductionHostSecurity(
 		sandboxBackend,
 		currentPolicyDigest: () => snapshot.policyDigest,
 	});
-	const workspaceRoot = resolve(options.cwd);
-	const baseWorkspace = (sessionId: string, principalId: string, toolCallId: string, cwd: string) => createWorkspaceEnvelope(options.scope, sessionId, principalId, toolCallId, cwd, workspaceRoot);
+	const workspaceRoot = resolve(options.workspaceBinding?.worktreePath ?? options.cwd);
+	const baseWorkspace = (sessionId: string, principalId: string, toolCallId: string, cwd: string) => createWorkspaceEnvelope(options.scope, sessionId, principalId, toolCallId, cwd, workspaceRoot, options.workspaceBinding);
 	const gateway = new ExecutionGateway({
 		snapshot,
 		workspace: baseWorkspace(baseSessionId, basePrincipalId, "toolCall_host-security", options.cwd),
@@ -238,7 +249,7 @@ async function loadSnapshot(options: HostSecurityCompositionOptions): Promise<Se
 	if (!loaded.ok) throw new Error(loaded.error.message);
 	const resolved = resolveSecuritySnapshot({
 		layers: loaded.value,
-		workspaceRoot: resolve(options.cwd),
+		workspaceRoot: resolve(options.workspaceBinding?.worktreePath ?? options.cwd),
 		tempRoot: resolve(options.layout.tmp, options.scope.workspaceStorageKey),
 		createdAt: (options.now ?? (() => new Date()))().toISOString(),
 	});
@@ -620,6 +631,7 @@ function createWorkspaceEnvelope(
 	toolCallId: string,
 	cwd: string,
 	workspaceRoot = cwd,
+	binding?: PersistedWorkspaceBinding,
 ) {
 	const normalizedSession = runtimeId("session", sessionId);
 	const normalizedPrincipal = runtimeId("principal", principalId);
@@ -629,18 +641,18 @@ function createWorkspaceEnvelope(
 		tenantId: scope.tenantId,
 		principalId: normalizedPrincipal,
 		sessionId: normalizedSession,
-		workspaceId: scope.workspaceId,
-		repositoryId: scope.repositoryId,
-		worktreePath: resolve(workspaceRoot),
-		branch: "runledger/host",
-		baseCommit: "0".repeat(40),
+		workspaceId: binding?.binding.workspaceId ?? scope.workspaceId,
+		repositoryId: binding?.binding.repositoryId ?? scope.repositoryId,
+		worktreePath: resolve(binding?.worktreePath ?? workspaceRoot),
+		branch: binding === undefined ? "runledger/host" : `runledger/worktree/${binding.worktreeId.slice(0, 96)}`,
+		baseCommit: binding?.baseCommit ?? "0".repeat(40),
 		agentId: createRuntimeId("agent", "runledger-host-agent"),
 		toolCallId: normalizedToolCall,
 		traceId: createRuntimeId("trace", canonicalDigest({ sessionId, principalId, toolCallId, cwd })),
 		cwd: resolve(cwd),
-		ownerRuntimeId: createRuntimeId("runtime", scope.workspaceStorageKey.slice(3, 67)),
-		leaseRevision: 1,
-		fencingTokenDigest: runtimeDigest({ workspaceStorageKey: scope.workspaceStorageKey }),
+		ownerRuntimeId: binding?.lease.ownerRuntimeId ?? createRuntimeId("runtime", scope.workspaceStorageKey.slice(3, 67)),
+		leaseRevision: binding?.lease.leaseRevision ?? 1,
+		fencingTokenDigest: binding?.lease.fencingTokenDigest ?? runtimeDigest({ workspaceStorageKey: scope.workspaceStorageKey }),
 	};
 }
 
