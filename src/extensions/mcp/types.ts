@@ -58,6 +58,16 @@ export interface McpServerConfig {
 	readonly enabledTools?: readonly string[];
 	readonly disabledTools?: readonly string[];
 	readonly maxResultBytes?: number;
+	/** Current-format stdio launch descriptor; secrets are never logged. */
+	readonly stdio?: {
+		readonly command: string;
+		readonly args?: readonly string[];
+		readonly cwd?: string;
+		readonly env?: Readonly<Record<string, string>>;
+	};
+	/** Current-format Streamable HTTP endpoint. */
+	readonly url?: string;
+	readonly headers?: Readonly<Record<string, string>>;
 }
 
 export interface McpToolDescriptor extends McpToolDefinition {
