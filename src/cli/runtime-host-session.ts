@@ -28,6 +28,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly processPort?: ProductionManagedProcessPort;
 	readonly security?: ProductionHostSecurity;
+	/** Binding restored once by the resident Host composition root. */
+	readonly workspaceBinding?: PersistedWorkspaceBinding;
 	/** Optional canonical binding; when present every cold/open session must match it. */
 	readonly workspaceBindingStore?: JsonWorkspaceBindingStore;
 }
@@ -52,8 +54,8 @@ export function validateHostWorkspaceBinding(input: {
 export function createProductionHostSessionFactory(options: ProductionHostSessionFactoryOptions): (input: HostSessionOpenRequest) => Promise<HostSessionRuntime> {
 	return async (input) => {
 		const cwd = input.cwd ?? options.defaultCwd;
-		if (options.workspaceBindingStore !== undefined) {
-			const binding = await options.workspaceBindingStore.read();
+		if (options.workspaceBinding !== undefined || options.workspaceBindingStore !== undefined) {
+			const binding = options.workspaceBinding ?? await options.workspaceBindingStore?.read();
 			if (binding !== undefined) {
 				const validation = validateHostWorkspaceBinding({ binding, cwd });
 				if (!validation.ok) throw new Error(`${validation.error.code}: ${validation.error.message}`);

@@ -23,6 +23,7 @@ import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
 import { JsonlHostEventStore } from "../storage/host/event-store.ts";
 import { JsonHostCommandStore } from "../storage/host/command-store.ts";
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
+import { restoreHostWorkspaceBinding } from "./runtime-host-binding.ts";
 
 export async function runResidentRuntimeHost(): Promise<void> {
 	if (process.platform !== "linux") throw new Error("resident production Host currently requires Linux local peer attestation");
@@ -42,11 +43,14 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
+	const workspaceBindingStore = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
+	const workspaceBinding = await restoreHostWorkspaceBinding({ store: workspaceBindingStore, scope, cwd });
 	let residentHost: ResidentRuntimeHost | undefined;
 	const security = await createProductionHostSecurity({
 		layout,
 		scope,
 		cwd,
+		...(workspaceBinding === undefined ? {} : { workspaceBinding }),
 		permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
 	});
 	let lifecycle: RuntimeHostLifecycle | undefined;
@@ -83,7 +87,8 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			traceRecorderFactory,
 			processPort,
 			security,
-			workspaceBindingStore: new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
+			workspaceBinding,
+			workspaceBindingStore,
 		}),
 		onShutdown: async () => {
 			await shutdownHost();
