@@ -35,7 +35,7 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
 	await runFile("git", args as string[], { cwd });
 }
 
-async function fixture(): Promise<{ root: string; source: string; managed: string; layout: ReturnType<typeof buildRunledgerLayout>; workspaceStorageKey: string; service: HostWorkspaceBindingService; auditEvents: string[] }> {
+async function fixture(): Promise<{ root: string; source: string; managed: string; layout: ReturnType<typeof buildRunledgerLayout>; workspaceStorageKey: string; service: HostWorkspaceBindingService; registry: WorktreeRegistry; auditEvents: string[] }> {
 	const root = await mkdtemp(join(tmpdir(), "runledger-host-binding-"));
 	const source = join(root, "source");
 	const managed = join(root, "managed");
@@ -67,7 +67,7 @@ async function fixture(): Promise<{ root: string; source: string; managed: strin
 		ownerRuntimeId: createRuntimeId("runtime", "host-binding-test"),
 		audit,
 	});
-	return { root, source, managed, layout, workspaceStorageKey, service, auditEvents };
+	return { root, source, managed, layout, workspaceStorageKey, service, registry, auditEvents };
 }
 
 describe("Host workspace binding composition", () => {
@@ -161,6 +161,30 @@ describe("Host workspace binding composition", () => {
 			await git(created.value.worktreePath, ["add", "head-drift.txt"]);
 			await git(created.value.worktreePath, ["commit", "--quiet", "-m", "head drift"]);
 			expect(await value.service.resume({ cwd: created.value.effectiveCwd })).toMatchObject({ ok: false, error: { code: "binding_drift" } });
+		} finally {
+			await rm(value.root, { recursive: true, force: true });
+		}
+	});
+
+	it("releases the Host-owned lease and binding exactly once with a canonical audit", async () => {
+		const value = await fixture();
+		try {
+			const created = await value.service.create({
+				sessionId: createRuntimeId("session", "host-binding-release-session"),
+				workspaceId: createRuntimeId("workspace", "host-binding-release-workspace"),
+				sourceCwd: value.source,
+				label: "release",
+			});
+			expect(created.ok, JSON.stringify(created)).toBe(true);
+			if (!created.ok) return;
+
+			expect(await value.service.release("host_shutdown")).toMatchObject({ ok: true, value: created.value });
+			expect(await value.service.read()).toEqual({ ok: true, value: undefined });
+			expect(await value.service.release("host_shutdown")).toEqual({ ok: true, value: undefined });
+			expect(value.auditEvents).toEqual(["workspace.bound", "workspace.released"]);
+			expect(await value.service.resume({ cwd: created.value.effectiveCwd })).toMatchObject({ ok: false, error: { code: "binding_not_found" } });
+			const lease = await value.registry.lease(created.value.binding.workspaceId);
+			expect(lease).toMatchObject({ ok: true, value: { state: "released" } });
 		} finally {
 			await rm(value.root, { recursive: true, force: true });
 		}

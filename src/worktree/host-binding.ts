@@ -22,7 +22,7 @@ import {
 } from "./persisted-binding.ts";
 import { WorktreeManager, type WorktreeCreateRequest } from "./manager.ts";
 import { WorktreeRegistry } from "./registry.ts";
-import type { WorktreeErrorCode, WorktreeResult } from "./types.ts";
+import type { WorktreeErrorCode, WorktreeLeaseRecord, WorktreeResult } from "./types.ts";
 
 export interface HostWorkspaceBindingCreateRequest extends Omit<WorktreeCreateRequest, "signal"> {
 	readonly effectiveCwd?: string;
@@ -120,6 +120,51 @@ export class HostWorkspaceBindingService {
 			return { ok: true, value: await this.#store.read() };
 		} catch (error) {
 			return failure("binding_invalid", error instanceof Error ? error.message : "workspace binding cannot be read", true);
+		}
+	}
+
+	public async lease(): Promise<WorktreeResult<WorktreeLeaseRecord | undefined>> {
+		try {
+			const stored = await this.#store.read();
+			return stored === undefined ? { ok: true, value: undefined } : this.#registry.lease(stored.binding.workspaceId);
+		} catch {
+			return { ok: false, error: { code: "registry_failed", message: "workspace lease is unavailable", retryable: true } };
+		}
+	}
+
+	/**
+	 * Releases the Host-owned workspace lease and removes the binding CAS record.
+	 * A missing binding is an idempotent no-op; a stale lease never gets
+	 * overwritten.  The audit is emitted only for the binding being released and
+	 * is itself idempotent at the canonical Runtime writer.
+	 */
+	public async release(reason: string): Promise<WorkspaceBindingServiceResult<PersistedWorkspaceBinding | undefined>> {
+		if (reason.length === 0 || reason.length > 128 || /[\0\r\n]/u.test(reason)) return failure("binding_invalid", "workspace release reason is invalid");
+		let stored: PersistedWorkspaceBinding | undefined;
+		try {
+			stored = await this.#store.read();
+		} catch (error) {
+			return failure("binding_invalid", error instanceof Error ? error.message : "workspace binding cannot be read", true);
+		}
+		if (stored === undefined) return { ok: true, value: undefined };
+		const checked = validatePersistedBinding(stored);
+		if (!checked.ok) return checked;
+		const released = await this.#leases.release(stored.lease);
+		if (!released.ok) return mapWorktree(released);
+		try {
+			await this.#audit?.released(stored, reason);
+		} catch (error) {
+			// The lease has already been fenced.  Remove the active-looking binding
+			// so a later Host cannot mistake it for a resumable lease.
+			await this.#store.remove(stored.bindingDigest).catch(() => undefined);
+			return failure("binding_invalid", error instanceof Error ? error.message : "workspace release audit is unavailable", true);
+		}
+		try {
+			const removed = await this.#store.remove(stored.bindingDigest);
+			if (!removed.ok) return failure(removed.error.code, removed.error.message, removed.error.retryable);
+			return { ok: true, value: stored };
+		} catch (error) {
+			return failure("binding_invalid", error instanceof Error ? error.message : "workspace binding cannot be removed", true);
 		}
 	}
 

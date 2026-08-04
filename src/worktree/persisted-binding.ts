@@ -255,6 +255,15 @@ export class JsonWorkspaceBindingStore {
 		return { ok: true, value: checked.value };
 	}
 
+	/** Removes one current-format binding only when its digest still matches. */
+	public async remove(expectedBindingDigest: RuntimeDigest): Promise<WorkspaceBindingResult<PersistedWorkspaceBinding | undefined>> {
+		const current = await this.read();
+		if (current === undefined) return { ok: true, value: undefined };
+		if (!sameDigest(current.bindingDigest, expectedBindingDigest)) return failure("binding_stale", "workspace binding compare-and-set revision is stale");
+		await unlink(this.#filePath);
+		return { ok: true, value: current };
+	}
+
 	public async validate(observation: WorkspaceBindingObservation): Promise<WorkspaceBindingResult<PersistedWorkspaceBinding>> {
 		const binding = await this.read();
 		return binding === undefined ? failure("binding_not_found", "workspace binding is not persisted") : validateWorkspaceBindingObservation(binding, observation);

@@ -58,6 +58,15 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		writer: runtimeEventWriter,
 	});
 	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd, workspaceAudit });
+	const workspaceBindingService = workspaceBinding === undefined ? undefined : new HostWorkspaceBindingService({
+		layout,
+		workspaceStorageKey: scope.workspaceStorageKey,
+		managedRoot: join(layout.tmp, "worktrees"),
+		registry: new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout)),
+		git: createProductionGitCommandPort(),
+		ownerRuntimeId: workspaceBinding.lease.ownerRuntimeId,
+		audit: workspaceAudit,
+	});
 	let residentHost: ResidentRuntimeHost | undefined;
 	const security = await createProductionHostSecurity({
 		layout,
@@ -119,7 +128,13 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			drainTurns: () => host.drainTurns(),
 			listProcesses: async () => processPort.lifecycleProcesses(),
 			flushWriter: () => host.flushWriters(),
-			release: () => host.close(),
+			release: async () => {
+				await host.close();
+				if (workspaceBindingService !== undefined) {
+					const released = await workspaceBindingService.release("host_shutdown");
+					if (!released.ok) throw new Error(`workspace release ${released.error.code}: ${released.error.message}`);
+				}
+			},
 			writeRecoveryMarker: (marker) => markerStore.append(marker),
 		},
 	});
