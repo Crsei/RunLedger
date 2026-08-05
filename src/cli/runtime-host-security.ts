@@ -349,7 +349,8 @@ async function authorizeHostResource(input: {
 }
 
 async function loadSnapshot(options: HostSecurityCompositionOptions): Promise<SecuritySnapshot> {
-	const sources = options.securitySources ?? createDefaultSecuritySources(options.layout, options.scope.workspaceStorageKey);
+	const cliLayers = options.securitySources ?? [];
+	const sources = [...cliLayers, ...createDefaultSecuritySources(options.layout, options.scope.workspaceStorageKey)];
 	const loaded = await loadSecurityConfigLayers(sources);
 	if (!loaded.ok) throw new Error(loaded.error.message);
 	const resolved = resolveSecuritySnapshot({

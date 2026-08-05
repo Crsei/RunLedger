@@ -12,6 +12,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 // 用 child_process spawn 真跑 src/cli/cli.ts,避免污染当前 vitest 进程。
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
+import { cliSecurityOverride } from "../../src/cli/main.ts";
+import { parseArgs } from "../../src/cli/args.ts";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 
@@ -84,6 +86,47 @@ describe("CLI buildSystemPrompt 局部 helper 间接验证", () => {
   // 本期 TUI 通路因 stdio 隔离不便单测,留 §6 的 manual smoke test。
   it("placeholder:test file requires at least one it", () => {
     expect(true).toBe(true);
+  });
+});
+
+describe("cliSecurityOverride flags → cli 层 document", () => {
+  it("无 security flags 时返回 undefined", () => {
+    expect(cliSecurityOverride(parseArgs(["--continue"]).args)).toBeUndefined();
+  });
+
+  it("permission-profile 单独映射", () => {
+    const doc = cliSecurityOverride(parseArgs(["--permission-profile", "read-only"]).args);
+    expect(doc).toEqual({ profile: "read-only" });
+  });
+
+  it("approval-policy 单独映射", () => {
+    const doc = cliSecurityOverride(parseArgs(["--approval-policy", "never"]).args);
+    expect(doc).toEqual({ approvalPolicy: "never" });
+  });
+
+  it("sandbox 单独映射", () => {
+    const doc = cliSecurityOverride(parseArgs(["--sandbox", "strict"]).args);
+    expect(doc).toEqual({ sandbox: "strict" });
+  });
+
+  it("network 映射为 deny/allow + 空 allowlist", () => {
+    const doc = cliSecurityOverride(parseArgs(["--network", "deny"]).args);
+    expect(doc).toEqual({ network: { mode: "deny", allowedHosts: [] } });
+  });
+
+  it("组合 flags 合并进同一 document", () => {
+    const doc = cliSecurityOverride(parseArgs([
+      "--permission-profile", "workspace-write",
+      "--approval-policy", "on-request",
+      "--sandbox", "workspace-write",
+      "--network", "deny",
+    ]).args);
+    expect(doc).toEqual({
+      profile: "workspace-write",
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      network: { mode: "deny", allowedHosts: [] },
+    });
   });
 });
 

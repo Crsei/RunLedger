@@ -24,6 +24,7 @@ import { RemoteInteractiveSessionController, type HostRequestTransport, type Rem
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import { createProcessOverlayController } from "../tui/process/controller-adapter.ts";
 import { parseArgs, USAGE } from "./args.ts";
+import type { SecurityConfigDocument } from "../security/types.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
 import { connectProductionRuntimeHost } from "./runtime-host-production.ts";
@@ -75,11 +76,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   const cwd = process.cwd();
   const { layout } = await resolveRunledgerHome();
   const settings = await loadProjectSettings({ layout });
+  const securityOverride = cliSecurityOverride(args);
   let interactive: InteractiveMode | undefined;
   const host = await connectProductionRuntimeHost({
     layout,
     cwd,
     settings,
+    ...(securityOverride === undefined ? {} : { securityOverride }),
     reverseRequestHandler: (frame, signal) => interactive?.handleReverseRequest(frame, signal) ?? { ok: false, code: "approval_ui_unavailable" },
   });
   const transport: HostRequestTransport = {
@@ -106,6 +109,9 @@ export async function main(argv: readonly string[]): Promise<void> {
     await host.close().catch(() => undefined);
     throw new Error("Host session id is missing");
   }
+	if (args.worktree !== undefined) {
+		await ensureHostWorktree(transport, sessionId, open.body, cwd, args);
+	}
 	if (parsedControl?.ok === true) {
 		await runControlCommand(transport, sessionId, open.body, parsedControl.command);
 		await host.close().catch(() => undefined);
@@ -162,6 +168,55 @@ export async function main(argv: readonly string[]): Promise<void> {
       process.stderr.write(`[runledger] exit. session=${sessionId}\n`);
     }
   }
+}
+
+/** CLI security flags → 最高优先级 `cli` 层 document；无 flags 时 undefined。 */
+export function cliSecurityOverride(args: ReturnType<typeof parseArgs>["args"]): SecurityConfigDocument | undefined {
+  if (args.permissionProfile === undefined && args.approvalPolicy === undefined &&
+      args.sandbox === undefined && args.network === undefined) return undefined;
+  return {
+    ...(args.permissionProfile === undefined ? {} : { profile: args.permissionProfile }),
+    ...(args.approvalPolicy === undefined ? {} : { approvalPolicy: args.approvalPolicy }),
+    ...(args.sandbox === undefined ? {} : { sandbox: args.sandbox }),
+    ...(args.network === undefined ? {} : { network: { mode: args.network, allowedHosts: [] } }),
+  };
+}
+
+/**
+ * `--worktree [label]` 经 Host 控制面创建/复用 session worktree；client 不
+ * 直接运行 Git 或写 registry。创建失败即报错退出（显式请求不能静默降级）。
+ */
+async function ensureHostWorktree(
+	transport: HostRequestTransport,
+	sessionId: string,
+	openedBody: Record<string, unknown>,
+	cwd: string,
+	args: ReturnType<typeof parseArgs>["args"],
+): Promise<void> {
+	const inspected = await requestHostCommand(transport, "worktree.inspect", { sessionId });
+	if (inspected.body.ok !== true) throw new Error(responseCode(inspected));
+	const domainRevision = integerValue(inspected.body.domainRevision) ?? 0;
+	const claimed = await requestHostCommand(transport, "session.claim_driver", {
+		sessionId,
+		expectedHostGeneration: integerValue(openedBody.hostGeneration) ?? 1,
+		expectedSessionGeneration: integerValue(openedBody.sessionGeneration) ?? 1,
+		expectedDriverRevision: integerValue(openedBody.driverRevision) ?? 0,
+	});
+	if (claimed.body.ok !== true) throw new Error(responseCode(claimed));
+	const label = args.worktree === "" ? "default" : args.worktree;
+	const created = await requestHostCommand(transport, "worktree.create", {
+		sessionId,
+		expectedHostGeneration: integerValue(claimed.body.hostGeneration),
+		expectedSessionGeneration: integerValue(claimed.body.sessionGeneration),
+		expectedDriverRevision: integerValue(claimed.body.driverRevision),
+		expectedDomainRevision: domainRevision,
+		sourceCwd: cwd,
+		label,
+		...(args.worktreeRef === undefined ? {} : { baseRef: args.worktreeRef }),
+		...(args.worktreeBranch === undefined ? {} : { branch: args.worktreeBranch }),
+	});
+	if (created.body.ok !== true) throw new Error(responseCode(created));
+	process.stderr.write(`[runledger] worktree bound: ${label}\n`);
 }
 
 function sessionOpenMode(args: ReturnType<typeof parseArgs>["args"]): "create" | "open" | "continue_recent" | "resume" | "fork" {

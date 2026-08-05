@@ -10,6 +10,14 @@
  *                                       (本期只支持精确 path)
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
+ *   --permission-profile <name>        显式选择 restrictive security profile
+ *   --approval-policy <on-request|never>
+ *   --sandbox <off|read-only|workspace-write|strict|external>
+ *   --network <deny|allow>
+ *   --worktree [label]                 在 Host 创建/复用 session worktree
+ *   --worktree-ref <ref>               worktree 创建基线 ref
+ *   --worktree-branch <name>           worktree 创建分支
+ *   --no-worktree                      显式不使用 worktree(与 --worktree 互斥)
  *   --debug                            打开 RUNLEDGER_DEBUG=1 stderr log
  *   --version / -v                     打 version 退出
  *   --help / -h                        打 usage 退出
@@ -19,6 +27,8 @@
  */
 
 import type { ModelThinkingLevel } from "../types.ts";
+import type { PermissionProfileName } from "../security/types.ts";
+import type { SandboxProfileName } from "../runtime/contracts/public.ts";
 import { controlCommandHelp } from "./control-commands.ts";
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
@@ -29,6 +39,21 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
   "high",
   "xhigh",
   "max",
+]);
+
+const PERMISSION_PROFILE_VALUES: ReadonlySet<string> = new Set<PermissionProfileName>([
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+  "custom",
+]);
+
+const SANDBOX_VALUES: ReadonlySet<string> = new Set<SandboxProfileName>([
+  "off",
+  "read-only",
+  "workspace-write",
+  "strict",
+  "external",
 ]);
 
 export interface ParsedArgs {
@@ -42,6 +67,18 @@ export interface ParsedArgs {
   provider?: string;
   model?: string;
   thinking?: ModelThinkingLevel;
+  /** 显式 restrictive security profile;仅通过 Host 生效。 */
+  permissionProfile?: PermissionProfileName;
+  approvalPolicy?: "on-request" | "never";
+  sandbox?: SandboxProfileName;
+  /** --network deny|allow;allow 只在无 managed forceNetworkDeny 时有效。 */
+  network?: "deny" | "allow";
+  /** --worktree 显式请求 worktree(label 可选)。 */
+  worktree?: string;
+  worktreeRef?: string;
+  worktreeBranch?: string;
+  /** --no-worktree 与 --worktree 互斥。 */
+  noWorktree: boolean;
   debug: boolean;
   /** 未知 flag 兜底,key 不带前导 --;有 =value 时 value 为 string,否则为 true */
   unknown: ReadonlyMap<string, string | true>;
@@ -65,6 +102,15 @@ const HELP_TEXT = `Usage: runledger [options]
   -m, --model <id>            覆盖 settings.model
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
+      --permission-profile <name>
+                              read-only|workspace-write|danger-full-access|custom
+      --approval-policy <p>   on-request|never
+      --sandbox <profile>     off|read-only|workspace-write|strict|external
+      --network <mode>        deny|allow
+      --worktree [label]      在 Host 创建/复用 session worktree
+      --worktree-ref <ref>    worktree 基线 ref
+      --worktree-branch <n>   worktree 分支名
+      --no-worktree           显式不使用 worktree(与 --worktree 互斥)
       --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
@@ -92,6 +138,14 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
+  let permissionProfile: PermissionProfileName | undefined;
+  let approvalPolicy: "on-request" | "never" | undefined;
+  let sandbox: SandboxProfileName | undefined;
+  let network: "deny" | "allow" | undefined;
+  let worktree: string | undefined;
+  let worktreeRef: string | undefined;
+  let worktreeBranch: string | undefined;
+  let noWorktree = false;
   let debug = false;
   const unknown = new Map<string, string | true>();
   const positional: string[] = [];
@@ -185,6 +239,90 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       thinking = v as ModelThinkingLevel;
       continue;
     }
+    if (a === "--permission-profile") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (!PERMISSION_PROFILE_VALUES.has(v)) {
+        error = `--permission-profile 不合法:${v}(合法值 read-only/workspace-write/danger-full-access/custom)`;
+        break;
+      }
+      permissionProfile = v as PermissionProfileName;
+      continue;
+    }
+    if (a === "--approval-policy") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (v !== "on-request" && v !== "never") {
+        error = `--approval-policy 不合法:${v}(合法值 on-request/never)`;
+        break;
+      }
+      approvalPolicy = v;
+      continue;
+    }
+    if (a === "--sandbox") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (!SANDBOX_VALUES.has(v)) {
+        error = `--sandbox 不合法:${v}(合法值 off/read-only/workspace-write/strict/external)`;
+        break;
+      }
+      sandbox = v as SandboxProfileName;
+      continue;
+    }
+    if (a === "--network") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (v !== "deny" && v !== "allow") {
+        error = `--network 不合法:${v}(合法值 deny/allow)`;
+        break;
+      }
+      network = v;
+      continue;
+    }
+    if (a === "--worktree") {
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        worktree = next;
+        i += 1;
+      } else {
+        worktree = "";
+      }
+      continue;
+    }
+    if (a === "--worktree-ref") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      worktreeRef = v;
+      continue;
+    }
+    if (a === "--worktree-branch") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      worktreeBranch = v;
+      continue;
+    }
+    if (a === "--no-worktree") {
+      noWorktree = true;
+      continue;
+    }
     if (a === "--session-dir" || a.startsWith("--session-dir=")) {
       if (a === "--session-dir" && argv[i + 1] !== undefined) i += 1;
       error = "unsupported_cli_authority: --session-dir 已拒绝;请使用预创建的 RUNLEDGER_DIR";
@@ -208,6 +346,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     positional.push(a);
   }
 
+  if (worktree !== undefined && noWorktree) {
+    error = "--worktree 与 --no-worktree 互斥";
+  }
+
   return {
     args: {
       help,
@@ -220,6 +362,14 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       provider,
       model,
       thinking,
+      permissionProfile,
+      approvalPolicy,
+      sandbox,
+      network,
+      worktree,
+      worktreeRef,
+      worktreeBranch,
+      noWorktree,
       debug,
       unknown,
       positional,

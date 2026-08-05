@@ -137,3 +137,59 @@ describe("parseArgs 多 flag 组合", () => {
     expect(r.args.positional).toEqual(["pos"]);
   });
 });
+
+describe("parseArgs security / worktree flags", () => {
+  it("--permission-profile 接受合法值并拒绝非法值", () => {
+    expect(parseArgs(["--permission-profile", "workspace-write"]).args.permissionProfile).toBe("workspace-write");
+    expect(parseArgs(["--permission-profile", "read-only"]).args.permissionProfile).toBe("read-only");
+    const bad = parseArgs(["--permission-profile", "everything"]);
+    expect(bad.error).toContain("--permission-profile");
+    expect(bad.args.permissionProfile).toBeUndefined();
+  });
+
+  it("--approval-policy on-request|never", () => {
+    expect(parseArgs(["--approval-policy", "on-request"]).args.approvalPolicy).toBe("on-request");
+    expect(parseArgs(["--approval-policy", "never"]).args.approvalPolicy).toBe("never");
+    expect(parseArgs(["--approval-policy", "allow-all"]).error).toContain("--approval-policy");
+  });
+
+  it("--sandbox 接受枚举并拒绝未知", () => {
+    expect(parseArgs(["--sandbox", "strict"]).args.sandbox).toBe("strict");
+    expect(parseArgs(["--sandbox", "off"]).args.sandbox).toBe("off");
+    expect(parseArgs(["--sandbox", "jail"]).error).toContain("--sandbox");
+  });
+
+  it("--network deny|allow", () => {
+    expect(parseArgs(["--network", "deny"]).args.network).toBe("deny");
+    expect(parseArgs(["--network", "allow"]).args.network).toBe("allow");
+    expect(parseArgs(["--network", "proxy"]).error).toContain("--network");
+  });
+
+  it("--worktree 无 label 时为空字符串,有 label 时取 label", () => {
+    expect(parseArgs(["--worktree"]).args.worktree).toBe("");
+    expect(parseArgs(["--worktree", "task-1"]).args.worktree).toBe("task-1");
+    expect(parseArgs(["--worktree", "--model", "X"]).args.worktree).toBe("");
+    expect(parseArgs(["--worktree", "task-1", "--model", "X"]).args.model).toBe("X");
+  });
+
+  it("--worktree-ref / --worktree-branch 透传", () => {
+    const r = parseArgs(["--worktree", "task", "--worktree-ref", "main", "--worktree-branch", "feature/x"]);
+    expect(r.args.worktreeRef).toBe("main");
+    expect(r.args.worktreeBranch).toBe("feature/x");
+  });
+
+  it("--no-worktree 与 --worktree 互斥", () => {
+    expect(parseArgs(["--no-worktree"]).args.noWorktree).toBe(true);
+    const conflict = parseArgs(["--worktree", "t", "--no-worktree"]);
+    expect(conflict.error).toContain("互斥");
+  });
+
+  it("security flags 组合解析", () => {
+    const r = parseArgs(["--permission-profile", "read-only", "--approval-policy", "on-request", "--sandbox", "read-only", "--network", "deny"]);
+    expect(r.args.permissionProfile).toBe("read-only");
+    expect(r.args.approvalPolicy).toBe("on-request");
+    expect(r.args.sandbox).toBe("read-only");
+    expect(r.args.network).toBe("deny");
+    expect(r.error).toBeUndefined();
+  });
+});

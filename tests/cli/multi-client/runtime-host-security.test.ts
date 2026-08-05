@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
@@ -393,5 +393,64 @@ describe("production Host Security/ExecutionGateway composition", () => {
 		if (!prepared.ok) return;
 		expect(prepared.value.sandboxPlan?.workspaceRoot).toBe(binding.worktreePath);
 		expect(prepared.value.constraintInput.workspaceId).toBe(binding.binding.workspaceId);
+	});
+
+	it("applies a CLI security override as the highest-priority layer", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-cli-override-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		// 用户层提供 canonical settings(默认 workspace-write);CLI 层应覆盖为 read-only。
+		await mkdir(join(root, "home"), { recursive: true });
+		await writeFile(layout.settings, JSON.stringify({ security: { profile: "workspace-write" } }), "utf8");
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: availableSandboxBackend(),
+			securitySources: [{
+				source: "cli",
+				read: async () => ({
+					status: "available",
+					text: JSON.stringify({ profile: "read-only", network: { mode: "deny", allowedHosts: [] } }),
+				}),
+			}],
+		});
+
+		expect(security.snapshot.profile.name).toBe("read-only");
+		expect(security.snapshot.sources).toContain("cli");
+		// cli 层与默认 canonical sources 合并,而不是替换。
+		expect(security.snapshot.sources).toContain("user");
+	});
+
+	it("keeps the canonical default profile when no CLI override is supplied", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-no-override-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: availableSandboxBackend(),
+		});
+
+		expect(security.snapshot.profile.name).toBe("workspace-write");
+		expect(security.snapshot.sources).not.toContain("cli");
+	});
+
+	it("fails closed when the CLI override does not match the exact security schema", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-bad-override-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+
+		await expect(createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: availableSandboxBackend(),
+			securitySources: [{
+				source: "cli",
+				read: async () => ({ status: "available", text: JSON.stringify({ profile: "allow-everything" }) }),
+			}],
+		})).rejects.toThrow(/exact schema|invalid_config/iu);
 	});
 });

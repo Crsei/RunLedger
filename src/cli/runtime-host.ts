@@ -38,6 +38,7 @@ import { createHostModelContextDomainPort, type HostModelContextDomainOptions } 
 import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
 import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
 import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./runtime-host-mcp.ts";
+import type { HostSecurityConfigSource } from "./runtime-host-security.ts";
 import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../extensions/mcp/sdk-factory.ts";
 import { McpConnectionManager } from "../extensions/mcp/connection-manager.ts";
 import { loadCanonicalMcpConfigs } from "../extensions/mcp/config.ts";
@@ -131,6 +132,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		...(workspaceBinding === undefined ? {} : { workspaceBinding }),
 		runtimeEventWriter,
 		permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
+		securitySources: hostSecuritySources(),
 	});
 	const artifactStore = recording.mode === "events_and_artifacts"
 		? new FileArtifactStore({ dataRoot: layout.artifacts, metadataRoot: layout.artifactMetadata })
@@ -470,6 +472,21 @@ function parseGeneration(raw: string | undefined): number {
 	const value = raw === undefined ? 1 : Number(raw);
 	if (!Number.isSafeInteger(value) || value < 0) throw new Error("resident Host generation is invalid");
 	return value;
+}
+
+/**
+ * Host 侧 security sources：默认 canonical sources 最前面插入 CLI 显式
+ * override 层（`RUNLEDGER_HOST_SECURITY_OVERRIDE` env，仅由 client spawn 写入）。
+ * `cli` 层是最高优先级用户选择；managed constraints 仍由 resolver 强制，
+ * CLI 不能放宽 managed deny。
+ */
+function hostSecuritySources(): readonly HostSecurityConfigSource[] {
+	const raw = process.env.RUNLEDGER_HOST_SECURITY_OVERRIDE;
+	if (raw === undefined || raw.length === 0) return [];
+	return [{
+		source: "cli",
+		read: async () => ({ status: "available", text: raw }),
+	}];
 }
 
 function buildSystemPrompt(cwd: string, globalAgents: string): string {

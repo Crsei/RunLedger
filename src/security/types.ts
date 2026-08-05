@@ -20,6 +20,7 @@ export const SECURITY_POLICY_SOURCES = [
 	"project",
 	"user",
 	"session",
+	"cli",
 	"builtin",
 	"fallback",
 ] as const;

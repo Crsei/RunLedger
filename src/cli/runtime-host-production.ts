@@ -22,6 +22,7 @@ import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
+import type { SecurityConfigDocument } from "../security/types.ts";
 import { EndpointStore, type HostEndpointRecord } from "../storage/host/endpoint-store.ts";
 import { hostStartupElectionRelativeLocator } from "../runtime/contracts/storage-layout.ts";
 import { acquireStartupElection } from "../storage/host/startup-election.ts";
@@ -206,6 +207,8 @@ export interface ProductionHostSpawnSpecOptions {
 	readonly hostGeneration?: number;
 	readonly cwd?: string;
 	readonly peerCredentialHelperPath?: string;
+	/** CLI 显式 security override 文档，序列化进 Host spawn env。 */
+	readonly securityOverride?: SecurityConfigDocument;
 }
 
 export function productionHostSpawnSpec(options: ProductionHostSpawnSpecOptions): ProductionHostSpawnSpec {
@@ -224,6 +227,7 @@ export function productionHostSpawnSpec(options: ProductionHostSpawnSpecOptions)
 			RUNLEDGER_HOST_GENERATION: String(options.hostGeneration ?? 1),
 			...(options.peerCredentialHelperPath === undefined ? {} : { RUNLEDGER_HOST_PEER_CREDENTIAL_HELPER: options.peerCredentialHelperPath }),
 			...(options.cwd === undefined ? {} : { RUNLEDGER_HOST_CWD: options.cwd }),
+			...(options.securityOverride === undefined ? {} : { RUNLEDGER_HOST_SECURITY_OVERRIDE: JSON.stringify(options.securityOverride) }),
 		},
 		detached: true,
 		stdio: ["ignore", "ignore", "ignore"],
@@ -243,6 +247,8 @@ export interface ConnectProductionRuntimeHostOptions {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
+	/** CLI 显式 security override，作为最高优先级 `cli` 层注入 Host。 */
+	readonly securityOverride?: SecurityConfigDocument;
 	readonly entryPath?: string;
 	readonly wait?: { readonly timeoutMs?: number; readonly intervalMs?: number };
 	readonly peerCredentialHelperPath?: string;
@@ -362,6 +368,7 @@ async function spawnProductionHost(options: ConnectProductionRuntimeHostOptions 
 		hostGeneration: options.hostGeneration,
 		cwd: options.cwd,
 		peerCredentialHelperPath: options.peerCredentialHelperPath,
+		...(options.securityOverride === undefined ? {} : { securityOverride: options.securityOverride }),
 	});
 	const child = spawn(spec.command, [...spec.args], {
 		env: spec.env,
