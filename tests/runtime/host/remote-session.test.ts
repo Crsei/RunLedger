@@ -75,4 +75,25 @@ describe("R4 Host-owned remote session facade", () => {
 		expect(transport.notifications.at(-1)).toMatchObject({ kind: "ack_cursor", body: { sessionId: "session_remote", cursor: 3 } });
 		controller.dispose();
 	});
+
+	it("uses the Host query/command domain port without creating a client-side manager", async () => {
+		const transport = new FakeTransport();
+		const controller = new RemoteInteractiveSessionController(transport, {
+			sessionId: "session_remote",
+			selection: { thinkingLevel: "off" },
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			toolCount: 0,
+			hostGeneration: 2,
+			sessionGeneration: 4,
+			driverRevision: 8,
+			eventCursor: 0,
+		});
+		await expect(controller.queryHostDomain("mcp.list")).resolves.toMatchObject({ ok: true, driverRevision: 3 });
+		await expect(controller.commandHostDomain("plugin.reload", { expectedDomainRevision: 0 })).resolves.toMatchObject({ ok: true, driverRevision: 3 });
+		expect(transport.requests[0]).toMatchObject({ kind: "query_request", body: { operation: "mcp.list", sessionId: "session_remote" } });
+		expect(transport.requests[1]).toMatchObject({ kind: "command_request", body: { operation: "plugin.reload", sessionId: "session_remote", expectedHostGeneration: 2, expectedSessionGeneration: 4, expectedDriverRevision: 8 } });
+		controller.dispose();
+	});
 });

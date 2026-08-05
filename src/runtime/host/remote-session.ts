@@ -23,6 +23,12 @@ export interface HostRequestTransport {
 	notify?(frame: HostFrameEnvelope): void | Promise<void>;
 }
 
+/** Client-only view of Host domain ports; it owns no reducer, store, or writer. */
+export interface HostDomainClient {
+	queryHostDomain(operation: string, body?: Record<string, unknown>): Promise<Record<string, unknown>>;
+	commandHostDomain(operation: string, body?: Record<string, unknown>): Promise<Record<string, unknown>>;
+}
+
 export interface RemoteSessionSnapshot {
 	readonly sessionId: string;
 	readonly selection: RuntimeSelection;
@@ -36,7 +42,7 @@ export interface RemoteSessionSnapshot {
 	readonly eventCursor?: number;
 }
 
-export class RemoteInteractiveSessionController implements InteractiveSessionControllerPort {
+export class RemoteInteractiveSessionController implements InteractiveSessionControllerPort, HostDomainClient {
 	private readonly transport: HostRequestTransport;
 	private readonly listeners = new Set<AgentEventSink>();
 	private readonly seenEventIds = new Set<string>();
@@ -132,6 +138,24 @@ export class RemoteInteractiveSessionController implements InteractiveSessionCon
 	public async getAvailableModels(provider?: string): Promise<readonly Model<Api>[]> {
 		const response = await this.command("session.models", provider === undefined ? {} : { provider });
 		return isArray(response.body.models) ? response.body.models as Model<Api>[] : [];
+	}
+
+	public async queryHostDomain(operation: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+		if (this.disposed) throw new Error("remote session controller is disposed");
+		const frameId = `remote_query_${++this.sequence}_${Date.now()}`;
+		const response = await this.transport.request({
+			frameId,
+			kind: "query_request",
+			protocolVersion: 1,
+			body: { operation, sessionId: this.session, ...body },
+		});
+		if (response.body.ok !== true) throw new Error(typeof response.body.code === "string" ? response.body.code : "Host domain query rejected");
+		return response.body;
+	}
+
+	public async commandHostDomain(operation: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+		const response = await this.command(operation, body);
+		return response.body;
 	}
 
 	public async login(_providerId: string, _type: AuthType, _interaction: AuthInteraction): Promise<Credential> {
