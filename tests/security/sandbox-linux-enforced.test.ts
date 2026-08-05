@@ -31,8 +31,9 @@ function scope(): RuntimeHostScope {
 	};
 }
 
-describe.runIf(process.platform === "linux")("Linux bwrap enforced process", () => {
+describe("Linux bwrap enforced process", () => {
 	it("prevents a Host-managed command from reading an unbound host path", async () => {
+		if (process.platform !== "linux") return;
 		const root = await mkdtemp(join(tmpdir(), "runledger-bwrap-enforced-"));
 		try {
 			const layout = buildRunledgerLayout(join(root, "home"), "posix");
