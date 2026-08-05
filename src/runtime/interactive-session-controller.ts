@@ -111,6 +111,12 @@ export interface InteractiveSessionControllerPort {
   clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] };
   waitForIdle(): Promise<void>;
   dispose(): void;
+  /**
+   * Host domain 只读查询通道（仅 authenticated Host client 提供；本地
+   * controller 为 undefined）。CLI/TUI 通过它读 plugins/skills/hooks/mcp
+   * 真实 snapshot，不在 client 侧装配 manager。
+   */
+  readonly queryHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 export interface RuntimeSelection {

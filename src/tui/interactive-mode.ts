@@ -425,7 +425,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       { value: "/processes", label: "/processes", description: "List managed processes" },
       { value: "/terminal", label: "/terminal <executionId>", description: "Open managed terminal" },
       { value: "/quit", label: "/quit", description: "Exit safely" },
-      { value: "/mcp", label: "/mcp", description: "Switch mcp server" },
+      { value: "/mcp", label: "/mcp", description: "List connected MCP servers" },
+      { value: "/plugins", label: "/plugins", description: "List discovered plugins" },
+      { value: "/skills", label: "/skills", description: "List discovered skills" },
+      { value: "/hooks", label: "/hooks", description: "List configured hooks" },
       { value: "/prompt", label: "/prompt", description: "Pick prompt template" },
     ];
     const modal = new SelectorModal({
@@ -451,6 +454,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
             break;
           case "/processes":
             this.openProcessList();
+            break;
+          case "/mcp":
+            void this.openMcpServerSelector();
+            break;
+          case "/plugins":
+            void this.openExtensionSelector("plugin.list", "plugins", "/plugins");
+            break;
+          case "/skills":
+            void this.openExtensionSelector("skill.list", "skills", "/skills");
+            break;
+          case "/hooks":
+            void this.openExtensionSelector("hook.list", "hooks", "/hooks");
             break;
           case "/terminal":
             this.showNotice("Use /terminal <executionId> to open a managed terminal.");
@@ -484,14 +499,75 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /**
-   * 打开 mcp server 选择器(M5 占位,真实 mcp 注册表接入留 M5+ 远期)。
+   * 打开 mcp server 选择器;经 Host domain 查询真实 catalog,不再展示空列表。
+   * 选择项只展示状态,不提供 client-local 启停(启停走 /mcp 之外的 Host mutation 命令)。
    */
-  openMcpServerSelector(): void {
-    const items: SelectItem[] = [];
+  async openMcpServerSelector(): Promise<void> {
+    const controller = this.controller;
+    if (!controller?.queryHostDomain) {
+      this.showNotice("Host domain query is unavailable in this session.", "error");
+      return;
+    }
+    const result = await controller.queryHostDomain("mcp.list", {}).catch((error: unknown) => {
+      this.showNotice(`MCP query failed: ${String(error)}`, "error");
+      return undefined;
+    });
+    if (result === undefined) return;
+    const servers = Array.isArray(result.servers) ? result.servers : [];
+    if (servers.length === 0) {
+      this.showNotice("No MCP servers are configured or connected.", "note");
+      return;
+    }
+    const items: SelectItem[] = servers.map((server: Record<string, unknown>) => ({
+      value: String(server.serverId ?? ""),
+      label: String(server.serverId ?? "unknown"),
+      description: `${String(server.transport ?? "unknown")} · ${String(server.state ?? "unknown")} · ${String(server.tools ?? []).length} tools`,
+    }));
     const modal = new SelectorModal({
       theme: this.theme,
       selectListTheme: makeSelectListTheme(this.theme),
-      title: "/mcp servers (none loaded)",
+      title: `/mcp servers (${servers.length})`,
+      items,
+      onSelect: () => this.ui.hideOverlay(),
+      onCancel: () => this.ui.hideOverlay(),
+    });
+    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  /**
+   * 打开 plugins/skills/hooks 资源选择器;经 Host domain 查询真实 snapshot。
+   * 只读展示 enabled/trusted/ready 状态;mutation 必须走 Host 控制命令。
+   */
+  async openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", kindLabel: string, commandName: string): Promise<void> {
+    const controller = this.controller;
+    if (!controller?.queryHostDomain) {
+      this.showNotice("Host domain query is unavailable in this session.", "error");
+      return;
+    }
+    const result = await controller.queryHostDomain(operation, {}).catch((error: unknown) => {
+      this.showNotice(`${commandName} query failed: ${String(error)}`, "error");
+      return undefined;
+    });
+    if (result === undefined) return;
+    const descriptors = Array.isArray(result.descriptors) ? result.descriptors : [];
+    if (descriptors.length === 0) {
+      this.showNotice(`No ${kindLabel} are discovered in the current snapshot.`, "note");
+      return;
+    }
+    const items: SelectItem[] = descriptors.map((descriptor: Record<string, unknown>) => {
+      const identity = (descriptor.identity ?? {}) as Record<string, unknown>;
+      const name = String(identity.qualifiedId ?? descriptor.displayName ?? "unknown");
+      const state = `${descriptor.enabled === true ? "enabled" : "disabled"} · ${descriptor.trusted === true ? "trusted" : "untrusted"} · ${descriptor.ready === true ? "ready" : descriptor.activation ?? "blocked"}`;
+      return {
+        value: name,
+        label: name,
+        description: state,
+      };
+    });
+    const modal = new SelectorModal({
+      theme: this.theme,
+      selectListTheme: makeSelectListTheme(this.theme),
+      title: `${commandName} (${descriptors.length})`,
       items,
       onSelect: () => this.ui.hideOverlay(),
       onCancel: () => this.ui.hideOverlay(),
@@ -660,7 +736,16 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.openProcessTerminal(arg);
           return;
         case "mcp":
-          this.openMcpServerSelector();
+          void this.openMcpServerSelector();
+          return;
+        case "plugins":
+          void this.openExtensionSelector("plugin.list", "plugins", "/plugins");
+          return;
+        case "skills":
+          void this.openExtensionSelector("skill.list", "skills", "/skills");
+          return;
+        case "hooks":
+          void this.openExtensionSelector("hook.list", "hooks", "/hooks");
           return;
         case "prompt":
           this.openPromptSelector();
