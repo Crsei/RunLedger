@@ -78,7 +78,7 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 		modelCatalogDigest: runtimeDigest({ catalog: "builtin" }),
 		tracePolicyDigest,
 		securityAdapterDigest: productionSecurityAdapterDigest(),
-		extensionProfileDigest: runtimeDigest({ extensions: "none" }),
+		extensionProfileDigest: runtimeDigest({ extensionHost: "resident", snapshotContract: 1, stateRoot: "canonical-runledger-home" }),
 		sessionStorageContractVersion: HOST_SESSION_STORAGE_CONTRACT_VERSION,
 		peerAttestor: {
 			kind: process.platform === "linux" ? "linux-so-peercred" : "windows-named-pipe",

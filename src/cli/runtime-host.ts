@@ -29,6 +29,14 @@ import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../
 import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-workspace-events.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
+import { createHostDomainPorts } from "./runtime-host-domains.ts";
+import { NodeExtensionStorage } from "../storage/extensions/extension-storage.ts";
+import { ExtensionStateStore } from "../extensions/state-store.ts";
+import { TrustStore } from "../extensions/trust/trust-store.ts";
+import { PluginManager } from "../extensions/plugins/manager.ts";
+import { ExtensionHostManager } from "../extensions/host-manager.ts";
+import { sourceKey } from "../extensions/paths.ts";
+import type { ExtensionSource, ExtensionSourceRoot } from "../extensions/types.ts";
 
 export async function runResidentRuntimeHost(): Promise<void> {
 	if (process.platform !== "linux") throw new Error("resident production Host currently requires Linux local peer attestation");
@@ -58,13 +66,31 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		writer: runtimeEventWriter,
 	});
 	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd, workspaceAudit });
-	const workspaceBindingService = workspaceBinding === undefined ? undefined : new HostWorkspaceBindingService({
+	const hostRuntimeId = createRuntimeId("runtime", `host-${hostGeneration}-${scope.workspaceStorageKey.slice(3, 19)}`);
+	const extensionStorage = new NodeExtensionStorage({ runledgerHome: layout.home });
+	const extensionStateRoot = join(layout.state, "extensions");
+	const extensionRoots = await discoverCanonicalPluginRoots(extensionStorage, [
+		{ source: "user", root: join(extensionStateRoot, "user", "plugins"), priority: 100 },
+		{ source: "project", root: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "plugins"), priority: 200 },
+	]);
+	const extensionManager = new ExtensionHostManager({
+		pluginManager: new PluginManager({
+			storage: extensionStorage,
+			trustStore: new TrustStore(join(extensionStateRoot, "trust.json"), extensionStorage),
+			stateStore: new ExtensionStateStore(join(extensionStateRoot, "extensions-state.json"), extensionStorage),
+			scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: createRuntimeId("principal", `host-extension-${scope.workspaceStorageKey.slice(3, 19)}`) },
+			roots: extensionRoots,
+		}),
+	});
+	const extensionLoad = await extensionManager.load();
+	if (extensionLoad.status === "failed") throw new Error(extensionLoad.error ?? "extension snapshot could not be loaded");
+	const workspaceBindingService = new HostWorkspaceBindingService({
 		layout,
 		workspaceStorageKey: scope.workspaceStorageKey,
 		managedRoot: join(layout.tmp, "worktrees"),
 		registry: new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout)),
 		git: createProductionGitCommandPort(),
-		ownerRuntimeId: workspaceBinding.lease.ownerRuntimeId,
+		ownerRuntimeId: workspaceBinding?.lease.ownerRuntimeId ?? hostRuntimeId,
 		audit: workspaceAudit,
 	});
 	let residentHost: ResidentRuntimeHost | undefined;
@@ -91,8 +117,15 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const host = new ResidentRuntimeHost({
 		socketPath: productionHostSocketPath(layout, scope.workspaceStorageKey),
 		scope,
+		hostRuntimeId,
 		hostGeneration,
 		processPort,
+		domainPorts: createHostDomainPorts({
+			security: { snapshot: security.snapshot },
+			workspace: { workspaceId: scope.workspaceId, defaultCwd: cwd, service: workspaceBindingService },
+			extensions: { manager: extensionManager, authorityId: scope.authorityId, tenantId: scope.tenantId },
+		}),
+		runtimeEventWriter,
 		eventStore: new JsonlHostEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
 		commandStore: new JsonHostCommandStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
 		attestor: createLinuxSocketPeerAttestor({
@@ -130,10 +163,8 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			flushWriter: () => host.flushWriters(),
 			release: async () => {
 				await host.close();
-				if (workspaceBindingService !== undefined) {
-					const released = await workspaceBindingService.release("host_shutdown");
-					if (!released.ok) throw new Error(`workspace release ${released.error.code}: ${released.error.message}`);
-				}
+				const released = await workspaceBindingService.release("host_shutdown");
+				if (!released.ok) throw new Error(`workspace release ${released.error.code}: ${released.error.message}`);
 			},
 			writeRecoveryMarker: (marker) => markerStore.append(marker),
 		},
@@ -159,6 +190,33 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		await lease.release().catch(() => undefined);
 		throw error;
 	}
+}
+
+async function discoverCanonicalPluginRoots(
+	storage: NodeExtensionStorage,
+	inputs: readonly { readonly source: ExtensionSource; readonly root: string; readonly priority: number }[],
+): Promise<readonly ExtensionSourceRoot[]> {
+	const roots: ExtensionSourceRoot[] = [];
+	for (const input of inputs) {
+		const rootResult = await storage.realpath(input.root);
+		if (!rootResult.ok) continue;
+		const rootInfo = await storage.stat(rootResult.value);
+		if (!rootInfo.ok || rootInfo.value.kind !== "directory") continue;
+		const addIfPlugin = async (candidate: string): Promise<void> => {
+			const manifest = await storage.stat(join(candidate, ".runledger-plugin", "plugin.json"));
+			if (!manifest.ok || manifest.value.kind !== "file") return;
+			const canonical = await storage.realpath(candidate);
+			if (!canonical.ok) return;
+			roots.push({ source: input.source, sourceKey: sourceKey(input.source, canonical.value), rootPath: canonical.value, priority: input.priority, layout: "plugin-root" });
+		};
+		await addIfPlugin(rootResult.value);
+		const entries = await storage.readDirectory(rootResult.value);
+		if (!entries.ok) continue;
+		for (const entry of entries.value.filter((value) => value.kind === "directory").sort((left, right) => left.name.localeCompare(right.name))) {
+			await addIfPlugin(join(rootResult.value, entry.name));
+		}
+	}
+	return roots;
 }
 
 export interface RestoreResidentWorkspaceBindingOptions {

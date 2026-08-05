@@ -27,7 +27,7 @@ const CANONICAL_WRITER_FILES = new Set([
 ]);
 
 const LEGACY_PATH_LITERAL = /(?:~\/\.runledger\/agent|\.runledger\/)/u;
-const LEGACY_PATH_IMPORT = /from\s+["'][^"']*\/paths\.ts["']/u;
+const LEGACY_PATH_IMPORT = /from\s+["'][^"']*\/storage\/paths\.ts["']/u;
 const LEGACY_ENV_READ = /\benv\.RUNLEDGER_SESSION_DIR\b/u;
 const WRITE_CALL = /\b(?:writeFile|appendFile|mkdir|rename|unlink|rm|createWriteStream)\b/u;
 
