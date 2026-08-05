@@ -117,6 +117,12 @@ export interface InteractiveSessionControllerPort {
    * 真实 snapshot，不在 client 侧装配 manager。
    */
   readonly queryHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /**
+   * Host domain mutation 通道（仅 authenticated Host client 提供；本地
+   * controller 为 undefined）。plan/compact/memory/remember 等命令经
+   * 此执行，Host 持有 durable intent/receipt 与 driver fence。
+   */
+  readonly commandHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
 }
 
 export interface RuntimeSelection {

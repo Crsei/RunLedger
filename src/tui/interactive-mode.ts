@@ -429,6 +429,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       { value: "/plugins", label: "/plugins", description: "List discovered plugins" },
       { value: "/skills", label: "/skills", description: "List discovered skills" },
       { value: "/hooks", label: "/hooks", description: "List configured hooks" },
+      { value: "/plan", label: "/plan", description: "Inspect Plan Mode state" },
+      { value: "/compact", label: "/compact", description: "List compaction checkpoints" },
+      { value: "/memory", label: "/memory", description: "Inspect memory store" },
+      { value: "/remember", label: "/remember <text>", description: "Propose a memory record" },
       { value: "/prompt", label: "/prompt", description: "Pick prompt template" },
     ];
     const modal = new SelectorModal({
@@ -466,6 +470,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
             break;
           case "/hooks":
             void this.openExtensionSelector("hook.list", "hooks", "/hooks");
+            break;
+          case "/plan":
+            void this.runDomainCommand("plan.inspect", {}, "/plan", true);
+            break;
+          case "/compact":
+            void this.runDomainCommand("compaction.list", {}, "/compact", true);
+            break;
+          case "/memory":
+            void this.runDomainCommand("memory.inspect", {}, "/memory", true);
+            break;
+          case "/remember":
+            void this.runDomainCommand("memory.propose", { scope: "workspace", title: "remember", content: "remember" }, "/remember", false);
             break;
           case "/terminal":
             this.showNotice("Use /terminal <executionId> to open a managed terminal.");
@@ -573,6 +589,38 @@ export class InteractiveMode implements FooterSnapshotProvider {
       onCancel: () => this.ui.hideOverlay(),
     });
     this.ui.showOverlay(modal, { anchor: "bottom-left" });
+  }
+
+  /**
+   * 执行 Host-owned plan/compact/memory/remember domain 命令并把结果
+   * 投影成 notice。mutation 命令经 commandHostDomain（Host 持有 durable
+   * intent/receipt 与 driver fence）；只读查询走 queryHostDomain。
+   * 本地 controller 无 Host 通道时给出 typed notice，不装配 client 侧
+   * manager。
+   */
+  async runDomainCommand(
+    operation: string,
+    body: Record<string, unknown>,
+    commandName: string,
+    readOnly: boolean,
+  ): Promise<void> {
+    const controller = this.controller;
+    const channel = readOnly ? controller?.queryHostDomain : controller?.commandHostDomain;
+    if (controller === undefined || channel === undefined) {
+      this.showNotice(`${commandName} requires an authenticated Host connection.`, "error");
+      return;
+    }
+    if (this.inFlight()) {
+      this.showNotice(`${commandName} is available when the current turn is idle.`, "note");
+      return;
+    }
+    const result = await channel.call(controller, operation, body).catch((error: unknown) => {
+      this.showNotice(`${commandName} failed: ${String(error)}`, "error");
+      return undefined;
+    });
+    if (result === undefined) return;
+    const text = compactDomainResult(operation, result);
+    this.showNotice(`${commandName}: ${text}`, "note");
   }
 
   /** R9:打开 Host-owned managed process list；没有 facade 时保持显式不可用。 */
@@ -746,6 +794,22 @@ export class InteractiveMode implements FooterSnapshotProvider {
           return;
         case "hooks":
           void this.openExtensionSelector("hook.list", "hooks", "/hooks");
+          return;
+        case "plan":
+          void this.runDomainCommand("plan.inspect", {}, "/plan", true);
+          return;
+        case "compact":
+          void this.runDomainCommand("compaction.list", {}, "/compact", true);
+          return;
+        case "memory":
+          void this.runDomainCommand("memory.inspect", {}, "/memory", true);
+          return;
+        case "remember":
+          if (arg.length === 0) {
+            this.showNotice("/remember <text> 需要提供要记住的内容。", "error");
+            return;
+          }
+          void this.runDomainCommand("memory.propose", { scope: "workspace", title: arg.slice(0, 256), content: arg, sourceKind: "user" }, "/remember", false);
           return;
         case "prompt":
           this.openPromptSelector();
@@ -1404,4 +1468,37 @@ function toolResultText(result: AgentToolResult): string {
     .filter((content): content is { type: "text"; text: string } => content.type === "text")
     .map((content) => content.text)
     .join("");
+}
+
+/** 把 domain 命令结果压缩为单行 notice 文本（只读展示，不解析执行）。 */
+function compactDomainResult(operation: string, body: Record<string, unknown>): string {
+  if (body.ok === false) {
+    return typeof body.code === "string" ? `rejected: ${body.code}` : "rejected";
+  }
+  const short = (value: unknown, max = 240): string => {
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  };
+  switch (operation) {
+    case "plan.inspect": {
+      const state = isRecord(body.state) ? body.state : undefined;
+      if (state === undefined) return "no plan state";
+      return `status=${String(state.status ?? "?")} revision=${String(state.revision ?? "?")}${state.approval === undefined ? "" : ` approval=${String((state.approval as { status?: string }).status ?? "?")}`}`;
+    }
+    case "compaction.list": {
+      const checkpoints = Array.isArray(body.checkpoints) ? body.checkpoints : [];
+      return `checkpoints=${checkpoints.length}${checkpoints.length === 0 ? "" : ` latest=${String((checkpoints.at(-1) as { status?: string } | undefined)?.status ?? "?")}`}`;
+    }
+    case "memory.inspect": {
+      const memory = isRecord(body.memory) ? body.memory : undefined;
+      if (memory === undefined) return "no memory state";
+      return `records=${String(memory.recordCount ?? "?")} proposals=${String(memory.proposalCount ?? "?")} generation=${String(memory.generation ?? "?")}`;
+    }
+    case "memory.propose": {
+      const proposal = isRecord(body.proposal) ? body.proposal : undefined;
+      return proposal === undefined ? "proposal created" : `proposal ${String(proposal.proposalId ?? "?")} pending approval`;
+    }
+    default:
+      return short(body);
+  }
 }

@@ -59,6 +59,7 @@ function immediateStopStream(): StreamFn {
 
 interface StubController {
   readonly queryHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  readonly commandHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
   readonly sessionId: string;
   readonly inFlight: boolean;
   readonly messages: unknown[];
@@ -72,6 +73,7 @@ interface StubController {
 function stubController(query: Record<string, Record<string, unknown>>): StubController {
   return {
     queryHostDomain: vi.fn(async (operation: string) => query[operation] ?? { ok: true }),
+    commandHostDomain: vi.fn(async (operation: string) => query[operation] ?? { ok: true }),
     sessionId: "session-tui-extension-selector",
     inFlight: false,
     messages: [],
@@ -143,5 +145,69 @@ describe("TUI extension selectors query the Host snapshot", () => {
     // 本地 controller 无 queryHostDomain → typed notice，不抛错。
     await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
     expect(tui.hasOverlay()).toBe(false);
+  });
+});
+
+describe("TUI plan/compact/memory domain commands", () => {
+  it("runs /plan /compact /memory queries through the Host domain channel", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal } as never);
+    const controller = stubController({
+      "plan.inspect": { state: { status: "active", revision: 3, approval: { status: "approved" } } },
+      "compaction.list": { checkpoints: [{ status: "completed" }] },
+      "memory.inspect": { memory: { generation: 2, recordCount: 1, proposalCount: 1 } },
+    });
+    (mode as unknown as { controller: StubController }).controller = controller;
+    const run = mode as unknown as {
+      runDomainCommand(operation: string, body: Record<string, unknown>, commandName: string, readOnly: boolean): Promise<void>;
+    };
+
+    await run.runDomainCommand("plan.inspect", {}, "/plan", true);
+    await run.runDomainCommand("compaction.list", {}, "/compact", true);
+    await run.runDomainCommand("memory.inspect", {}, "/memory", true);
+
+    const query = controller.queryHostDomain as ReturnType<typeof vi.fn>;
+    expect(query).toHaveBeenCalledWith("plan.inspect", {});
+    expect(query).toHaveBeenCalledWith("compaction.list", {});
+    expect(query).toHaveBeenCalledWith("memory.inspect", {});
+  });
+
+  it("routes /remember proposal mutations through commandHostDomain", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal } as never);
+    const controller = stubController({
+      "memory.propose": { proposal: { proposalId: "proposal_abc" } },
+    });
+    (mode as unknown as { controller: StubController }).controller = controller;
+    const run = mode as unknown as {
+      runDomainCommand(operation: string, body: Record<string, unknown>, commandName: string, readOnly: boolean): Promise<void>;
+    };
+
+    await run.runDomainCommand("memory.propose", { scope: "workspace", title: "keep", content: "remember this", sourceKind: "user" }, "/remember", false);
+
+    const command = controller.commandHostDomain as ReturnType<typeof vi.fn>;
+    expect(command).toHaveBeenCalledWith("memory.propose", expect.objectContaining({ content: "remember this", sourceKind: "user" }));
+  });
+
+  it("rejects plan/compact/memory commands without a Host connection", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal } as never);
+    const run = mode as unknown as {
+      runDomainCommand(operation: string, body: Record<string, unknown>, commandName: string, readOnly: boolean): Promise<void>;
+    };
+    // 本地 controller（无 Host 通道）→ typed notice，不抛错。
+    await expect(run.runDomainCommand("plan.inspect", {}, "/plan", true)).resolves.toBeUndefined();
   });
 });
