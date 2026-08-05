@@ -138,6 +138,11 @@ export interface HostModelContextDomainPort extends HostRuntimeDomainPort {
 	 * 组装进唯一 model-request 投影。query 为空时只注入 Plan Mode 碎片。
 	 */
 	contextSources(sessionId: string, query?: string): Promise<readonly RuntimeContextSource[]>;
+	/** Host 内部（agent 工具）domain 通道：直接执行，不走客户端 frame。 */
+	readonly internal: {
+		query(sessionId: string, operation: string, body?: Record<string, unknown>): Promise<{ readonly ok: boolean; readonly body?: Record<string, unknown>; readonly code?: string }>;
+		command(sessionId: string, operation: string, body?: Record<string, unknown>): Promise<{ readonly ok: boolean; readonly body?: Record<string, unknown>; readonly code?: string }>;
+	};
 }
 
 interface DomainResultWithEvents extends HostRuntimeDomainResult {
@@ -207,6 +212,36 @@ function transition(revision: number, previousStatus: string | null, nextStatus:
 
 function stateKey(sessionId: SessionId): string {
 	return sessionId;
+}
+
+/** 内部 agent 工具调用的最小 domain context（Host-owned principal，无 client frame）。 */
+function internalContext(sessionId: SessionId, operation: string, mutation: boolean, body: Record<string, unknown>): HostRuntimeDomainContext {
+	const principalId = createRuntimeId("principal", `host-agent-${operation}`);
+	return {
+		principal: {
+			principalId,			connectionId: createRuntimeId("connection", `host-internal-${operation}`),
+			attestationDigest: runtimeDigest({ internal: true, operation }),
+		},
+		frame: {
+			frameId: `host-internal-${operation}-${Date.now()}`,
+			kind: "command_request",
+			protocolVersion: 1,
+			body: { operation, sessionId, ...body },
+		},
+		operation,
+		mutation,
+		sessionId,
+		controller: {} as HostRuntimeDomainContext["controller"],
+		hostGeneration: 1,
+		sessionGeneration: 1,
+		driverRevision: 0,
+		domainRevision: 0,
+	};
+}
+
+function internalCode(result: HostRuntimeDomainResult): string {
+	const code = result.body?.code;
+	return typeof code === "string" && code.length > 0 ? code : "domain_command_rejected";
 }
 
 /** Plan Mode 状态的受控文本投影，作为 mode layer fragment 注入模型上下文。 */
@@ -280,6 +315,26 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 		planState: (sessionId) => {
 			const parsed = parseRuntimeId("session", sessionId);
 			return parsed === undefined ? undefined : sessions.get(stateKey(parsed))?.plan;
+		},
+		internal: {
+			query: async (sessionId, operation, body = {}) => {
+				const parsed = parseRuntimeId("session", sessionId);
+				if (parsed === undefined) return { ok: false as const, code: "session_required" };
+				const state = await ensureSession(parsed);
+				if (operation.startsWith("memory.")) await ensureMemory();
+				const result = await executeOperation(options, clock, memory, state, internalContext(parsed, operation, false, body));
+				if (!result.ok) return { ok: false as const, code: internalCode(result) };
+				return { ok: true as const, body: result.body };
+			},
+			command: async (sessionId, operation, body = {}) => {
+				const parsed = parseRuntimeId("session", sessionId);
+				if (parsed === undefined) return { ok: false as const, code: "session_required" };
+				const state = await ensureSession(parsed);
+				if (operation.startsWith("memory.")) await ensureMemory();
+				const result = await executeOperation(options, clock, memory, state, internalContext(parsed, operation, true, body));
+				if (!result.ok) return { ok: false as const, code: internalCode(result) };
+				return { ok: true as const, body: result.body };
+			},
 		},
 		contextSources: async (sessionId, query) => {
 			const parsed = parseRuntimeId("session", sessionId);
@@ -1038,4 +1093,26 @@ async function atomicWrite(path: string, content: string): Promise<void> {
 	} finally {
 		await unlink(temporary).catch(() => undefined);
 	}
+}
+
+/** Host 内部 agent 工具使用的 domain client：绑定 sessionId，不走客户端 frame。 */
+export function createHostInternalDomainClient(
+	domain: Pick<HostModelContextDomainPort, "internal">,
+): import("../runtime/tools/plan-memory-tools.ts").HostDomainToolClient {
+	return {
+		query: async (operation, body = {}) => {
+			const sessionId = stringValue(body.sessionId);
+			if (sessionId === undefined) return { ok: false as const, code: "session_required" };
+			const { sessionId: _sessionId, ...rest } = body;
+			const result = await domain.internal.query(sessionId, operation, rest);
+			return result.ok ? { ok: true as const, body: result.body } : { ok: false as const, code: result.code ?? "domain_command_rejected" };
+		},
+		command: async (operation, body = {}) => {
+			const sessionId = stringValue(body.sessionId);
+			if (sessionId === undefined) return { ok: false as const, code: "session_required" };
+			const { sessionId: _sessionId, ...rest } = body;
+			const result = await domain.internal.command(sessionId, operation, rest);
+			return result.ok ? { ok: true as const, body: result.body } : { ok: false as const, code: result.code ?? "domain_command_rejected" };
+		},
+	};
 }

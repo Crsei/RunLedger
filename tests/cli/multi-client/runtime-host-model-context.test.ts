@@ -64,19 +64,34 @@ describe("Host model/context domain", () => {
 			expect(value<{ state: { status: string; plan: { revision: number } } }>(activated).state).toMatchObject({ status: "active", plan: { revision: 0 } });
 			const written = await domain.execute(context("plan.write", { expectedRevision: 2, expectedPlanRevision: 0, content: "# Plan revision one" }, 2));
 			expect(value<{ state: { revision: number; plan: { revision: number } } }>(written).state).toMatchObject({ revision: 3, plan: { revision: 1 } });
-			const planState = value<{ state: { revision: number; plan: { revision: number; digest: { digest: string } } } }>(written).state;
-			const requested = await domain.execute(context("plan.request_approval", {
+
+			// internal 通道：agent 的 plan_write 工具在 active Plan Mode 下经
+			// domain.internal 执行，带 Host-owned principal 与 durable receipt。
+			const internalWrite = await domain.internal.command(createRuntimeId("session", "model-context-test"), "plan.write", {
 				expectedRevision: 3,
 				expectedPlanRevision: 1,
-				expectedPlanDigest: planState.plan.digest,
-			}, 3));
+				content: "# internal plan revision",
+			});
+			expect(internalWrite.ok).toBe(true);
+			if (internalWrite.ok) {
+				const state = (internalWrite.body?.state ?? {}) as { revision?: number; plan?: { revision?: number } };
+				expect(state.revision).toBeGreaterThan(3);
+				expect(state.plan?.revision).toBeGreaterThan(1);
+			}
+
+			const requested = await domain.execute(context("plan.request_approval", {
+				expectedRevision: 4,
+				expectedPlanRevision: 2,
+				expectedPlanDigest: runtimeDigest("# internal plan revision"),
+			}, 4));
 			const awaiting = value<{ state: { revision: number; approval: { approvalId: string } } }>(requested).state;
 			expect(awaiting.approval.approvalId).toMatch(/^approval_/u);
+
 			const resolved = await domain.execute(context("plan.resolve_approval", {
-				expectedRevision: 4,
+				expectedRevision: 5,
 				decision: "approved",
 				approvalId: awaiting.approval.approvalId,
-			}, 4));
+			}, 5));
 			expect(value<{ state: { status: string; approval: { status: string } } }>(resolved).state).toMatchObject({ status: "exit_pending", approval: { status: "approved" } });
 			expect((resolved.events ?? []).map((event) => event.type)).toEqual(["plan.approved"]);
 
@@ -90,7 +105,7 @@ describe("Host model/context domain", () => {
 				clock: () => new Date(timestamp),
 			});
 			const inspected = await replayed.execute(context("plan.inspect", {}, 0, false));
-			expect(value<{ state: { status: string; revision: number } }>(inspected).state).toMatchObject({ status: "exit_pending", revision: 5 });
+			expect(value<{ state: { status: string; revision: number } }>(inspected).state).toMatchObject({ status: "exit_pending", revision: 6 });
 			expect((entered.events ?? []).map((event) => event.type)).toEqual(["plan.enter_requested"]);
 			expect((activated.events ?? []).map((event) => event.type)).toEqual(["plan.entered"]);
 			expect((written.events ?? []).map((event) => event.type)).toEqual(["artifact.created"]);
@@ -194,6 +209,12 @@ describe("Host model/context domain", () => {
 			expect(projection.digest.digest).toMatch(/^[a-f0-9]{64}$/u);
 
 			const sessionId = createRuntimeId("session", "model-context-test");
+			// internal 通道：agent 工具经 domain.internal 执行 memory.search。
+			const internalSearch = await domain.internal.query(sessionId, "memory.search", { scope: "workspace", query: "release" });
+			expect(internalSearch.ok).toBe(true);
+			if (internalSearch.ok) {
+				expect(Array.isArray(internalSearch.body?.results)).toBe(true);
+			}
 			const sourceRange = {
 				stream: { scope: "session" as const, streamId: sessionId, sessionId },
 				startSequence: 1,

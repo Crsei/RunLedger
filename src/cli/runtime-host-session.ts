@@ -9,6 +9,7 @@ import type { Models } from "../models.ts";
 import type { TraceRecorderFactory } from "../runtime/trace/composition.ts";
 import { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
 import { createStdlibTools } from "../runtime/tools/index.ts";
+import { createPlanMemoryTools } from "../runtime/tools/plan-memory-tools.ts";
 import type { HostSessionOpenRequest, HostSessionRuntime } from "./runtime-host-service.ts";
 import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import type { ProductionHostSecurity } from "./runtime-host-security.ts";
@@ -57,6 +58,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly skillLoader?: import("../runtime/tools/skill.ts").SkillLoader;
 	/** Host-owned 领域上下文碎片（Plan Mode / approved memory），叠加进唯一 model-request 投影。 */
 	readonly contextSourceProvider?: (sessionId: string) => Promise<readonly RuntimeContextSource[]>;
+	/** Host 内部 domain client（plan.write / memory.* agent 工具使用）。 */
+	readonly domainClient?: import("../runtime/tools/plan-memory-tools.ts").HostDomainToolClient;
 	/** Canonical event sink callback for a reload applied at Agent idle. */
 	readonly onExtensionIdleReload?: (sessionId: string, result: ExtensionReloadResult) => Promise<void>;
 	/** Binding restored once by the resident Host composition root. */
@@ -177,6 +180,18 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				...(executionEnv === undefined ? {} : { executionEnv }),
 				...(options.skillLoader === undefined ? {} : { skillLoader: options.skillLoader }),
 			});
+			if (options.domainClient !== undefined) {
+				// 绑定 session 的 domain client：agent 工具的 plan.write / memory.*
+				// 都经 Host domain 执行，带 Host-owned principal 与 durable receipt。
+				const sessionId = manager.sessionId();
+				const bound: import("../runtime/tools/plan-memory-tools.ts").HostDomainToolClient = {
+					query: (operation, body = {}) => options.domainClient!.query(operation, { sessionId, ...body }),
+					command: (operation, body = {}) => options.domainClient!.command(operation, { sessionId, ...body }),
+				};
+				for (const tool of createPlanMemoryTools(bound)) {
+					tools.register(tool, { namespace: "stdlib" });
+				}
+			}
 			const authorizationPolicy = options.planStateProvider === undefined
 				? options.security?.toolAuthorizationPolicy
 				: new HostGovernedToolAuthorizationPolicy({

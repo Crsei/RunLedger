@@ -34,7 +34,7 @@ import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-wo
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-host-domains.ts";
-import { createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
+import { createHostInternalDomainClient, createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
 import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
 import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
 import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./runtime-host-mcp.ts";
@@ -205,6 +205,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			runtimeEventWriter,
 			workspaceBinding,
 			workspaceBindingStore,
+			domainClient: createHostInternalDomainClient(modelContextDomain),
 			mcpConfigs: mcpConfig.configs,
 			createMcpRuntime: async ({ sessionId, cwd: sessionCwd, toolRegistry }) => {
 				const parsedSessionId = parseRuntimeId("session", sessionId);
