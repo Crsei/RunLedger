@@ -34,6 +34,7 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 			taint: "none",
 			priority: "required",
 		},
+		...(input.sources ?? []),
 		...input.context.messages.map((message, index) => ({
 			fragmentId: `agent-history-${index}`,
 			key: `agent-history-${index}`,

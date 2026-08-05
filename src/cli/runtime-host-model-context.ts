@@ -131,6 +131,11 @@ interface HostModelContextSnapshot {
 /** Internal Host composition seam for synchronous tool-admission reads. */
 export interface HostModelContextDomainPort extends HostRuntimeDomainPort {
 	planState(sessionId: string): PlanModeState | undefined;
+	/**
+	 * 生成领域上下文碎片（Plan Mode 状态 + approved memory 片段），由 Host
+	 * 组装进唯一 model-request 投影。query 为空时只注入 Plan Mode 碎片。
+	 */
+	contextSources(sessionId: string, query?: string): Promise<readonly RuntimeContextSource[]>;
 }
 
 interface DomainResultWithEvents extends HostRuntimeDomainResult {
@@ -202,6 +207,26 @@ function stateKey(sessionId: SessionId): string {
 	return sessionId;
 }
 
+/** Plan Mode 状态的受控文本投影，作为 mode layer fragment 注入模型上下文。 */
+function renderPlanModeFragment(state: PlanModeState): string {
+	const lines = [
+		`plan mode: ${state.status}`,
+		`revision: ${state.revision}`,
+		`goal: ${state.goalId}`,
+		`completeness: ${state.completeness}`,
+		`projection digest: ${state.projectionDigest.digest}`,
+	];
+	if (state.plan !== undefined) {
+		lines.push(`plan artifact revision: ${state.plan.revision}`);
+		lines.push(`plan artifact digest: ${state.plan.digest.digest}`);
+	}
+	if (state.approval !== undefined) {
+		lines.push(`approval: ${state.approval.status}`);
+		lines.push(`approval id: ${state.approval.approvalId}`);
+	}
+	return lines.join("\n");
+}
+
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
 	const actual = Object.keys(value).sort();
 	const keys = [...expected].sort();
@@ -253,6 +278,52 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 		planState: (sessionId) => {
 			const parsed = parseRuntimeId("session", sessionId);
 			return parsed === undefined ? undefined : sessions.get(stateKey(parsed))?.plan;
+		},
+		contextSources: async (sessionId, query) => {
+			const parsed = parseRuntimeId("session", sessionId);
+			if (parsed === undefined) return [];
+			const state = await ensureSession(parsed);
+			const sources: RuntimeContextSource[] = [];
+			if (state.plan.status !== "inactive") {
+				const planText = renderPlanModeFragment(state.plan);
+				sources.push({
+					fragmentId: `plan-mode-${state.plan.revision}`,
+					key: "plan-mode",
+					layer: "mode",
+					content: planText,
+					trust: "trusted",
+					taint: "none",
+					priority: "required",
+					estimatedTokens: 96 + Math.ceil(planText.length / 4),
+				});
+			}
+			const trimmed = query?.trim();
+			if (trimmed !== undefined && trimmed.length > 0) {
+				await ensureMemory();
+				const searchResult = memory.search({
+					scope: "workspace",
+					workspaceId: options.workspaceId,
+					query: trimmed,
+					maxResults: 8,
+					maxSnippetChars: 512,
+					maxTotalTokens: 1_024,
+				});
+				if (searchResult.ok) {
+					for (const row of searchResult.value.results) {
+						sources.push({
+							fragmentId: `memory-${row.memoryId.slice(-24)}`,
+							key: `memory-${row.memoryId}`,
+							layer: "memory",
+							content: `[workspace ${row.memoryId}] ${row.title}\n${row.snippet}`,
+							trust: "trusted",
+							taint: "external",
+							priority: "optional",
+							estimatedTokens: 32 + Math.ceil(row.snippet.length / 4),
+						});
+					}
+				}
+			}
+			return sources;
 		},
 	};
 

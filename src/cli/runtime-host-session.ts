@@ -27,6 +27,7 @@ import { createExtensionInvocationEvent } from "../extensions/integration/runtim
 import { parseRuntimeId } from "../runtime/protocol/ids.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../security/integration/runtime-tool-authorization.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
+import type { RuntimeContextSource } from "../runtime/context/runtime-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import { HostHookRuntime } from "../extensions/hooks/runtime.ts";
 import { RuntimeHookAdapter } from "../extensions/integration/runtime-hook-adapter.ts";
@@ -54,6 +55,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly extensionManager?: ExtensionTurnLifecycleManager;
 	/** 渐进披露 Skill loader（trust + digest 复核），注入 stdlib Skill 工具。 */
 	readonly skillLoader?: import("../runtime/tools/skill.ts").SkillLoader;
+	/** Host-owned 领域上下文碎片（Plan Mode / approved memory），叠加进唯一 model-request 投影。 */
+	readonly contextSourceProvider?: (sessionId: string) => Promise<readonly RuntimeContextSource[]>;
 	/** Canonical event sink callback for a reload applied at Agent idle. */
 	readonly onExtensionIdleReload?: (sessionId: string, result: ExtensionReloadResult) => Promise<void>;
 	/** Binding restored once by the resident Host composition root. */
@@ -226,7 +229,12 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				toolResultOverflowStore: options.toolResultOverflowStore,
 				authorizationPolicy,
                 ...(options.createModelRequestRouter === undefined ? {} : { modelRequestRouter: options.createModelRequestRouter(manager.sessionId()) }),
-                modelContextAssembler: assembleAgentModelContext,
+                modelContextAssembler: options.contextSourceProvider === undefined
+                  ? assembleAgentModelContext
+                  : async (input) => assembleAgentModelContext({
+                      ...input,
+                      sources: await options.contextSourceProvider!(manager.sessionId()),
+                    }),
                 ...(options.contextAssemblySink === undefined ? {} : { contextAssemblySink: options.contextAssemblySink }),
 				...(extensionHookRuntime === undefined ? {} : {
 					extensionHookRuntime,

@@ -51,4 +51,70 @@ describe("Host model request context adapter", () => {
 		expect(first.receipt.contextDigest).toEqual(second.receipt.contextDigest);
 		expect(first.receipt.projectionDigest).toEqual(second.receipt.projectionDigest);
 	});
+
+	it("overlays Host domain sources (Plan Mode / approved memory) into the same projection", async () => {
+		const context: LlmContext = {
+			systemPrompt: "system",
+			messages: await defaultConvertToLlm([user("hello")]),
+			tools: [],
+		};
+		const assembled = assembleAgentModelContext({
+			model: mockModel,
+			context,
+			turn: 1,
+			sessionId: "session-adapter-test",
+			sources: [
+				{
+					fragmentId: "plan-mode-3",
+					key: "plan-mode",
+					layer: "mode",
+					content: "plan mode: active\nrevision: 3",
+					trust: "trusted",
+					priority: "required",
+				},
+				{
+					fragmentId: "memory-abc",
+					key: "memory-abc",
+					layer: "memory",
+					content: "[workspace memory-abc] release process",
+					trust: "trusted",
+					taint: "external",
+					priority: "optional",
+				},
+			],
+		});
+
+		expect(assembled.receipt.fragmentIds).toContain("plan-mode-3");
+		expect(assembled.receipt.fragmentIds).toContain("memory-abc");
+		expect(assembled.context.systemPrompt).toBe("system");
+		expect(assembled.context.messages).toEqual(context.messages);
+		expect(assembled.receipt.diagnostics).toEqual([]);
+	});
+
+	it("keeps the assembled projection deterministic when domain sources repeat", async () => {
+		const context: LlmContext = {
+			systemPrompt: "system",
+			messages: await defaultConvertToLlm([user("hello")]),
+			tools: [],
+		};
+		const base = {
+			model: mockModel,
+			context,
+			turn: 2,
+			sessionId: "session-adapter-test",
+			sources: [
+				{
+					fragmentId: "plan-mode-4",
+					key: "plan-mode",
+					layer: "mode" as const,
+					content: "plan mode: active",
+					trust: "trusted" as const,
+					priority: "required" as const,
+				},
+			],
+		};
+		const first = assembleAgentModelContext(base);
+		const second = assembleAgentModelContext(base);
+		expect(first.receipt.projectionDigest).toEqual(second.receipt.projectionDigest);
+	});
 });

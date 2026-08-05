@@ -282,6 +282,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				});
 			},
 			planStateProvider: (sessionId) => modelContextDomain.planState(sessionId),
+			contextSourceProvider: (sessionId) => modelContextDomain.contextSources(sessionId),
 		}),
 		onShutdown: async () => {
 			await shutdownHost();

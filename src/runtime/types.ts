@@ -42,6 +42,7 @@ import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
 import type { RuntimeContentRef, RuntimeDigest } from "./protocol/foundation.ts";
 import type { CapabilityClaim } from "./protocol/capability.ts";
 import type { ContextAssemblyReceipt } from "./context/types.ts";
+import type { RuntimeContextSource } from "./context/runtime-adapter.ts";
 
 // ===== 工具 =====
 
@@ -299,6 +300,8 @@ export interface ModelContextAssemblyInput {
 	readonly context: LlmContext;
 	readonly sessionId: string;
 	readonly turn: number;
+	/** Host 注入的领域碎片源（Plan Mode / approved memory），叠加进同一投影。 */
+	readonly sources?: readonly RuntimeContextSource[];
 }
 
 export interface ModelContextAssemblyResult {

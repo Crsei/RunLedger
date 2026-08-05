@@ -100,6 +100,58 @@ describe("Host model/context domain", () => {
 		}
 	});
 
+	it("projects active Plan Mode and approved Memory into Host context sources", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-sources-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const workspaceId = createRuntimeId("workspace", "model-context-test");
+		const domain = createHostModelContextDomainPort({
+			layout,
+			workspaceStorageKey: `ws-${"a".repeat(64)}`,
+			authorityId: createRuntimeId("authority", "model-context-test"),
+			tenantId: createRuntimeId("tenant", "model-context-test"),
+			workspaceId,
+			policyCeilingDigest: runtimeDigest("plan-policy-ceiling"),
+			clock: () => new Date(timestamp),
+		});
+		const sessionId = createRuntimeId("session", "model-context-test");
+		try {
+			// 无 Plan Mode、无 memory 时只返回空 sources。
+			expect(await domain.contextSources(sessionId)).toEqual([]);
+
+			// 进入 Plan Mode 后产生 mode layer fragment。
+			const entered = await domain.execute(context("plan.enter", { requestedBy: "user", expectedRevision: 0 }, 0));
+			expect(value<{ state: { status: string } }>(entered).state.status).toBe("pending");
+			const activated = await domain.execute(context("plan.activate", { expectedRevision: 1, content: "# Plan initial" }, 1));
+			expect(value<{ state: { status: string } }>(activated).state.status).toBe("active");
+			const planSources = await domain.contextSources(sessionId);
+			expect(planSources.some((source) => source.layer === "mode" && source.key === "plan-mode")).toBe(true);
+			expect(planSources.find((source) => source.layer === "mode")?.content).toContain("plan mode: active");
+
+			// 批准一条 memory 后，带 query 调用可检索到 memory layer fragment。
+			const proposed = await domain.execute(context("memory.propose", {
+				scope: "workspace",
+				title: "release process",
+				content: "the release checklist requires sign-off",
+				sourceKind: "user",
+				sourceRef: { subjectKind: "content", digest: runtimeDigest("release"), mediaType: "text/plain", size: 7 },
+				sourceDigest: runtimeDigest("release"),
+			}, 2));
+			const proposal = value<{ proposal: { proposalId: string } }>(proposed).proposal;
+			const approval = await domain.execute(context("memory.approve", {
+				proposalId: proposal.proposalId,
+				approvalRef: { subjectKind: "receipt", digest: runtimeDigest("approval"), mediaType: "application/json", size: 0 },
+			}, 3));
+			expect(approval.ok).toBe(true);
+			const memorySources = await domain.contextSources(sessionId, "release checklist");
+			expect(memorySources.some((source) => source.layer === "memory")).toBe(true);
+			expect(memorySources.find((source) => source.layer === "memory")?.content).toContain("release checklist");
+			// 无命中 query 不产生 memory fragment。
+			expect((await domain.contextSources(sessionId, "zzz-no-match-zzz")).some((source) => source.layer === "memory")).toBe(false);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("publishes approved Memory and completed manual compaction through the same domain", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-memory-"));
 		const layout = buildRunledgerLayout(root, "posix");
