@@ -1,0 +1,4 @@
+worktree "/tmp/managed root/repo/task with space"
+HEAD 4c8df777fd1c801bb3e21dc40ecded2aa117e197
+detached
+locked
