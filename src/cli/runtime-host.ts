@@ -35,6 +35,7 @@ import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-host-domains.ts";
 import { createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
 import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
+import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
 import type { ContextAssemblySink } from "../runtime/types.ts";
 import type { RuntimeEventPayloadFor } from "../runtime/protocol/events.ts";
 import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
@@ -190,6 +191,18 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				principalId: modelPrincipalId,
 				writer: runtimeEventWriter,
 			}),
+			createModelRequestRouter: (sessionId) => {
+				const parsedSessionId = parseRuntimeId("session", sessionId);
+				if (parsedSessionId === undefined) throw new Error("Host session identity is invalid for model routing");
+				return createHostModelRequestRouter({
+					authorityId: scope.authorityId,
+					tenantId: scope.tenantId,
+					principalId: modelPrincipalId,
+					sessionId: parsedSessionId,
+					writer: runtimeEventWriter,
+					...(modelCompatibility.ok ? { router: modelCompatibility.router } : { unavailableCode: modelCompatibility.error.code }),
+				});
+			},
 		}),
 		onShutdown: async () => {
 			await shutdownHost();

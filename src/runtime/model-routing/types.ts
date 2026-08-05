@@ -3,7 +3,7 @@
 import type { RuntimeContentRef, RuntimeDigest } from "../protocol/foundation.ts";
 import type { CommandId, SessionId, TraceId } from "../protocol/ids.ts";
 
-export type ModelRouteOperation = "switch" | "summarize" | "compact";
+export type ModelRouteOperation = "request" | "switch" | "summarize" | "compact";
 export type ModelRouteOutcome = "compatible" | "fork" | "deny";
 
 export interface ModelCapabilityProfile {

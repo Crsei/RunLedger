@@ -31,7 +31,7 @@ export const ModelCapabilityProfileSchema = Type.Object(
 export const ModelRouteRequestSchema = Type.Object(
 	{
 		requestId: RuntimeIdSchema,
-		operation: Type.Union([Type.Literal("switch"), Type.Literal("summarize"), Type.Literal("compact")]),
+		operation: Type.Union([Type.Literal("request"), Type.Literal("switch"), Type.Literal("summarize"), Type.Literal("compact")]),
 		sourceProfileId: Type.Optional(IdentifierSchema),
 		targetProfileId: IdentifierSchema,
 		contextDigest: RuntimeDigestSchema,

@@ -15,6 +15,7 @@ import type { ProductionHostSecurity } from "./runtime-host-security.ts";
 import type { ExtensionReloadResult } from "../extensions/host-manager.ts";
 import type { ToolResultOverflowStore } from "../runtime/types.ts";
 import type { ContextAssemblySink } from "../runtime/types.ts";
+import type { ModelRequestRouter } from "../runtime/interactive-session-controller.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import {
@@ -43,7 +44,9 @@ export interface ProductionHostSessionFactoryOptions {
 	/** Optional canonical binding; when present every cold/open session must match it. */
   readonly workspaceBindingStore?: JsonWorkspaceBindingStore;
   /** Canonical Host event sink for model context receipts. */
-  readonly contextAssemblySink?: ContextAssemblySink;
+	readonly contextAssemblySink?: ContextAssemblySink;
+	/** Host-owned route gate created after the canonical session identity is known. */
+	readonly createModelRequestRouter?: (sessionId: string) => ModelRequestRouter;
 }
 
 export function validateHostWorkspaceBinding(input: {
@@ -106,6 +109,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				executionEnv,
                 toolResultOverflowStore: options.toolResultOverflowStore,
                 authorizationPolicy: options.security?.toolAuthorizationPolicy,
+                ...(options.createModelRequestRouter === undefined ? {} : { modelRequestRouter: options.createModelRequestRouter(manager.sessionId()) }),
                 modelContextAssembler: assembleAgentModelContext,
                 ...(options.contextAssemblySink === undefined ? {} : { contextAssemblySink: options.contextAssemblySink }),
               });
