@@ -40,6 +40,7 @@ import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
 import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
 import type { RuntimeContentRef, RuntimeDigest } from "./protocol/foundation.ts";
+import type { ContextAssemblyReceipt } from "./context/types.ts";
 
 // ===== 工具 =====
 
@@ -288,6 +289,29 @@ export interface LlmContext {
   tools: AgentTool[] | undefined;
 }
 
+export interface ModelContextAssemblyInput {
+	readonly model: Model<Api>;
+	readonly context: LlmContext;
+	readonly sessionId: string;
+	readonly turn: number;
+}
+
+export interface ModelContextAssemblyResult {
+	readonly context: LlmContext;
+	readonly receipt: ContextAssemblyReceipt;
+}
+
+export type ModelContextAssembler = (
+	input: ModelContextAssemblyInput,
+) => ModelContextAssemblyResult | Promise<ModelContextAssemblyResult>;
+
+export type ContextAssemblySink = (input: {
+	readonly sessionId: string;
+	readonly turn: number;
+	readonly model: Model<Api>;
+	readonly receipt: ContextAssemblyReceipt;
+}) => void | Promise<void>;
+
 // ===== StreamFn =====
 
 /**
@@ -367,6 +391,10 @@ export interface AgentLoopConfig {
    * or writes a local temporary file.
    */
   toolResultOverflowStore?: ToolResultOverflowStore;
+  /** Production Host seam for the single bounded model-request projection. */
+  modelContextAssembler?: ModelContextAssembler;
+  /** Canonical Host sink for the bounded `context.assembled` receipt. */
+  contextAssemblySink?: ContextAssemblySink;
 }
 
 export interface ToolResultOverflowStore {

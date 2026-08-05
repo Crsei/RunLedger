@@ -17,6 +17,7 @@ import type {
   ToolResultOverflowStore,
   UserAgentMessage,
 } from "./types.ts";
+import type { ContextAssemblySink, ModelContextAssembler } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { LedgerEntry } from "./ledger/types.ts";
 import { createStdlibTools } from "./tools/index.ts";
@@ -47,6 +48,10 @@ export interface InteractiveSessionControllerOptions {
   traceRecorderFactory?: TraceRecorderFactory;
   executionEnv?: ExecutionEnv;
   toolResultOverflowStore?: ToolResultOverflowStore;
+  /** Host-owned bounded model request assembly; local tests may omit it. */
+  modelContextAssembler?: ModelContextAssembler;
+  /** Host-owned canonical receipt sink; local tests may omit it. */
+  contextAssemblySink?: ContextAssemblySink;
 }
 
 export interface ProviderStatus {
@@ -108,6 +113,8 @@ export class InteractiveSessionController {
   private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
   private readonly executionEnv: ExecutionEnv | undefined;
   private readonly toolResultOverflowStore: ToolResultOverflowStore | undefined;
+  private readonly modelContextAssembler: ModelContextAssembler | undefined;
+  private readonly contextAssemblySink: ContextAssemblySink | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -129,6 +136,8 @@ export class InteractiveSessionController {
     this.traceRecorderFactory = opts.traceRecorderFactory;
     this.executionEnv = opts.executionEnv;
     this.toolResultOverflowStore = opts.toolResultOverflowStore;
+    this.modelContextAssembler = opts.modelContextAssembler;
+    this.contextAssemblySink = opts.contextAssemblySink;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -302,6 +311,8 @@ export class InteractiveSessionController {
         beforeToolCall,
         executionEnv: this.executionEnv,
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
+        ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
+        ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),
       },
       toolExecution: "sequential",
       steeringMode: this.settings.steeringMode ?? "one-at-a-time",

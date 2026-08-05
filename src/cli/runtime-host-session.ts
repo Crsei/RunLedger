@@ -14,6 +14,8 @@ import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import type { ProductionHostSecurity } from "./runtime-host-security.ts";
 import type { ExtensionReloadResult } from "../extensions/host-manager.ts";
 import type { ToolResultOverflowStore } from "../runtime/types.ts";
+import type { ContextAssemblySink } from "../runtime/types.ts";
+import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import {
 	validateWorkspaceBindingObservation,
@@ -39,7 +41,9 @@ export interface ProductionHostSessionFactoryOptions {
 	/** Binding restored once by the resident Host composition root. */
 	readonly workspaceBinding?: PersistedWorkspaceBinding;
 	/** Optional canonical binding; when present every cold/open session must match it. */
-	readonly workspaceBindingStore?: JsonWorkspaceBindingStore;
+  readonly workspaceBindingStore?: JsonWorkspaceBindingStore;
+  /** Canonical Host event sink for model context receipts. */
+  readonly contextAssemblySink?: ContextAssemblySink;
 }
 
 export function validateHostWorkspaceBinding(input: {
@@ -100,9 +104,11 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				},
 				traceRecorderFactory: options.traceRecorderFactory,
 				executionEnv,
-				toolResultOverflowStore: options.toolResultOverflowStore,
-				authorizationPolicy: options.security?.toolAuthorizationPolicy,
-			});
+                toolResultOverflowStore: options.toolResultOverflowStore,
+                authorizationPolicy: options.security?.toolAuthorizationPolicy,
+                modelContextAssembler: assembleAgentModelContext,
+                ...(options.contextAssemblySink === undefined ? {} : { contextAssemblySink: options.contextAssemblySink }),
+              });
 			const extensionLifecycle = options.extensionManager === undefined ? undefined : new ExtensionTurnLifecycle({
 				manager: options.extensionManager,
 				onIdleReload: (result) => options.onExtensionIdleReload?.(manager.sessionId(), result),

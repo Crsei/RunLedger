@@ -10,7 +10,10 @@ import {
 	productionHostSocketPath,
 	productionHostSpawnSpec,
 } from "../../../src/cli/runtime-host-production.ts";
-import { createProductionModelContextDomainPort } from "../../../src/cli/runtime-host.ts";
+import { createContextAssemblySink, createProductionModelContextDomainPort } from "../../../src/cli/runtime-host.ts";
+import { assembleAgentModelContext } from "../../../src/runtime/context/model-request-adapter.ts";
+import type { RuntimeEventAppendInput } from "../../../src/storage/host/runtime-event-store.ts";
+import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
@@ -153,5 +156,30 @@ describe("R3/R4 production Host composition", () => {
 		expect(domain.name).toBe("model-context");
 		expect(domain.mutationOperations?.has("plan.enter")).toBe(true);
 		expect(domain.queryOperations?.has("memory.search")).toBe(true);
+	});
+
+	it("writes the assembled model projection through the canonical Host event writer", async () => {
+		const sessionId = createRuntimeId("session", "host-context-event");
+		const assembled = assembleAgentModelContext({
+			model: mockModel,
+			context: { systemPrompt: "policy", messages: [], tools: [] },
+			turn: 1,
+			sessionId,
+		});
+		let written: RuntimeEventAppendInput | undefined;
+		const sink = createContextAssemblySink({
+			authorityId: createRuntimeId("authority", "host-context-event"),
+			tenantId: createRuntimeId("tenant", "host-context-event"),
+			principalId: createRuntimeId("principal", "host-context-event"),
+			writer: { append: async (input) => { written = input; return {} as never; } },
+		});
+
+		await sink({ sessionId, turn: 1, model: mockModel, receipt: assembled.receipt });
+		expect(written).toMatchObject({ type: "context.assembled", sessionId, payload: {
+			subject: { kind: "session", id: sessionId },
+			effect: "committed",
+			refs: [{ mediaType: "application/vnd.runledger.context-assembly+json" }],
+		}});
+		expect(written?.payload.metadataDigest).toBeDefined();
 	});
 });

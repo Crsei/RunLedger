@@ -11,7 +11,7 @@ import { EndpointStore } from "../storage/host/endpoint-store.ts";
 import { acquireHostWriterLease } from "../storage/host/writer-lease.ts";
 import { HostRecoveryMarkerStore } from "../storage/host/recovery-marker.ts";
 import { buildRunledgerLayout } from "../runtime/contracts/storage-layout.ts";
-import { createRuntimeId } from "../runtime/protocol/ids.ts";
+import { createRuntimeId, parseRuntimeId } from "../runtime/protocol/ids.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { HostCompatibilityEnvelopeSchema, type HostCompatibilityEnvelope } from "../runtime/host/contracts.ts";
 import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts";
@@ -35,6 +35,9 @@ import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-host-domains.ts";
 import { createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
 import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
+import type { ContextAssemblySink } from "../runtime/types.ts";
+import type { RuntimeEventPayloadFor } from "../runtime/protocol/events.ts";
+import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
 import { NodeExtensionStorage } from "../storage/extensions/extension-storage.ts";
 import { ExtensionStateStore } from "../extensions/state-store.ts";
 import { TrustStore } from "../extensions/trust/trust-store.ts";
@@ -62,6 +65,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
 	const modelCompatibility = await loadCanonicalModelCompatibilityRouter(layout);
+	const modelPrincipalId = createRuntimeId("principal", `host-model-${scope.workspaceStorageKey.slice(3, 67)}`);
 	const workspaceBindingStore = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 	const workspaceAudit = new RuntimeWorkspaceAuditAdapter({
@@ -180,6 +184,12 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				if (event === undefined) throw new Error("extension reload event identity is invalid");
 				await runtimeEventWriter.append(event);
 			},
+			contextAssemblySink: createContextAssemblySink({
+				authorityId: scope.authorityId,
+				tenantId: scope.tenantId,
+				principalId: modelPrincipalId,
+				writer: runtimeEventWriter,
+			}),
 		}),
 		onShutdown: async () => {
 			await shutdownHost();
@@ -327,6 +337,52 @@ function parseScope(raw: string): HostCompatibilityEnvelope {
 	}
 	if (!Value.Check(HostCompatibilityEnvelopeSchema, value)) throw new Error("resident Host scope is invalid");
 	return value as HostCompatibilityEnvelope;
+}
+
+export function createContextAssemblySink(input: {
+	readonly authorityId: RuntimeEventAppendInput["authorityId"];
+	readonly tenantId: RuntimeEventAppendInput["tenantId"];
+	readonly principalId: RuntimeEventAppendInput["principalId"];
+	readonly writer: RuntimeEventWriter;
+}): ContextAssemblySink {
+	return async (assembly) => {
+		const sessionId = parseRuntimeId("session", assembly.sessionId);
+		if (!sessionId) throw new Error("context assembly session identity is invalid");
+		const receiptDigest = runtimeDigest(assembly.receipt);
+		const traceId = createRuntimeId("trace", runtimeDigest({
+			sessionId,
+			requestId: assembly.receipt.requestId,
+			turn: assembly.turn,
+			contextDigest: assembly.receipt.contextDigest,
+		}).digest.slice(0, 48));
+		const payload: RuntimeEventPayloadFor<"context.assembled"> = {
+			subject: { kind: "session", id: sessionId },
+			correlationId: traceId,
+			effect: "committed",
+			idempotencyKey: `context:assembled:${assembly.receipt.requestId}`,
+			transition: {
+				revision: assembly.turn,
+				previousStatus: assembly.turn === 1 ? null : `turn-${assembly.turn - 1}`,
+				nextStatus: `turn-${assembly.turn}`,
+			},
+			expectedRevision: Math.max(0, assembly.turn - 1),
+			refs: [{ subjectKind: "receipt", digest: receiptDigest, mediaType: "application/vnd.runledger.context-assembly+json", size: 0 }],
+			metadataDigest: runtimeDigest({
+				model: { provider: assembly.model.provider, id: assembly.model.id, api: assembly.model.api },
+				receiptDigest,
+				turn: assembly.turn,
+			}),
+		};
+		await input.writer.append({
+			authorityId: input.authorityId,
+			tenantId: input.tenantId,
+			principalId: input.principalId,
+			sessionId,
+			traceId,
+			type: "context.assembled",
+			payload,
+		});
+	};
 }
 
 function parseGeneration(raw: string | undefined): number {

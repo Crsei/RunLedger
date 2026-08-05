@@ -204,11 +204,22 @@ export async function runAgentLoop(
     const convertFn = config.convertToLlm ?? defaultConvertToLlm;
     const llmMessages = await convertFn(messages);
 
-    const llmContext: LlmContext = {
+    let llmContext: LlmContext = {
       systemPrompt: context.systemPrompt,
       messages: llmMessages,
       tools: context.tools,
     };
+
+    if (config.modelContextAssembler !== undefined) {
+		const assembled = await config.modelContextAssembler({
+			model: loopModel,
+			context: llmContext,
+			sessionId,
+			turn,
+		});
+		llmContext = assembled.context;
+		await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
+	}
 
     const traceModel = config.traceRecorder
       ? await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext })
