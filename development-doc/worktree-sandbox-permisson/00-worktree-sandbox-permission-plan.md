@@ -2,7 +2,7 @@
 
 > 文档属性：本主题唯一权威入口；Permission/Worktree 历史状态保留在本文，多平台适配状态由新计划负责。
 >
-> 状态：Permission/Worktree 与 Linux 本地安全基线保留；OS sandbox 跨平台扩展自 2026-08-06 起冻结并封存，不再是当前执行阶段。多平台 workspace/path 适配计划 P0–P4 已完成（P0 文档冻结；P1 Linux 真实证据采集；P2 路径/locator ADR 冻结；P3 纯适配器；P4 Linux 原生 adapter 真实 E2E，macOS/Windows 保持 typed unsupported），P5 尚未授权。
+> 状态：Permission/Worktree 与 Linux 本地安全基线保留；OS sandbox 跨平台扩展自 2026-08-06 起冻结并封存。多平台 workspace/path 适配计划 P0–P6 已完成，P7 评估完成（解封条件未满足，OS sandbox 保持封存，见 [`04-os-sandbox-reassessment-adr.md`](04-os-sandbox-reassessment-adr.md)）。
 >
 > 建立日期：2026-07-21；Runtime Host 适配校准：2026-08-04；适配路线重置：2026-08-06。
 >

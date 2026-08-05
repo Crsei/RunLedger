@@ -2,7 +2,7 @@
 
 > 文档属性：当前适配执行计划；只拥有多平台 workspace/path 适配状态。
 >
-> 状态：P0–P4 已完成（P0 文档冻结；P1 真实 Linux runner 证据采集 + fixtures/digest manifest + gaps 记录；P2 路径/locator ADR 已冻结；P3 纯适配器与 fixture 驱动测试；P4 Linux 原生 adapter 真实 E2E，macOS/Windows 保持 typed unsupported）。P5–P7 需用户再次明确要求。
+> 状态：P0–P6 已完成（P0 文档冻结；P1 真实 Linux runner 证据；P2 路径/locator ADR 冻结；P3 纯适配器与 fixture 测试；P4 Linux 原生 adapter 真实 E2E；P5 locator 只读审计 + cold resume 重验 + migration plan；P6 生产接线 + 能力矩阵 + 平台分支收敛）。P7 评估完成：解封条件未满足，OS sandbox 保持封存（ADR 04/05）。
 >
 > 建立日期：2026-08-06。
 >
@@ -149,7 +149,7 @@ P1 必须先采集下表证据，不能用一套 Linux fixture 模拟全部平�
 
 ## 5. 分阶段计划
 
-当前授权边界：P0–P4 已明确授权实现（P0 文档、P1 证据、P2 ADR、P3 纯适配器、P4 平台原生 adapter）。P5–P7 需用户再次明确要求。
+当前授权边界：P0–P7 已明确授权实现（P0 文档、P1 证据、P2 ADR、P3 纯适配器、P4 平台原生 adapter、P5 持久化与恢复、P6 生产接线与能力矩阵、P7 OS sandbox 重新评估）。计划全部阶段完成；完成定义见 §8。
 
 ### P0：冻结旧 Sandbox 路线并建立适配入口
 
@@ -202,32 +202,32 @@ P1 必须先采集下表证据，不能用一套 Linux fixture 模拟全部平�
 
 ### P5：持久化与恢复迁移
 
-- [ ] 为 private workspace locator 加 schema version；
-- [ ] 增加旧记录 read-only audit 与显式 migration plan；
-- [ ] cold resume 重验 platform/root/Git/lease/effective cwd；
-- [ ] 不可恢复记录 fail closed，不静默改指 source repo；
-- [ ] migration 在 digest/TOCTOU/rollback 方案批准前不得执行。
+- [x] 为 private workspace locator 加 schema version（`PrivateLocatorV1` version=1，P3 交付；`PersistedWorkspaceBinding` version=1 已有）；
+- [x] 增加旧记录 read-only audit 与显式 migration plan（`src/workspace/locator-audit.ts`：current / migration_required / invalid 分类，绝不改写；[`03-locator-migration-plan.md`](03-locator-migration-plan.md) 固定 digest/TOCTOU/rollback 门禁，迁移未执行）；
+- [x] cold resume 重验 platform/root/Git/lease/effective cwd（`src/workspace/resume.ts`：platform 匹配 → path 存在 → Git 注册同一性 → HEAD==base → subdir containment → lease）；
+- [x] 不可恢复记录 fail closed，不静默改指 source repo（`base_drift`/`stale_registration`/`platform_mismatch` 负向测试 + Linux E2E 冷恢复场景）；
+- [x] migration 在 digest/TOCTOU/rollback 方案批准前不得执行（03 文档即门禁记录，本阶段零迁移写入）。
 
-退出条件：fixture migration、cold resume 和 mismatch negative tests 通过。
+退出条件：fixture migration（locator-audit 13 分类测试）、cold resume（resume 8 测试 + E2E 冷恢复）与 mismatch negative tests 通过。
 
 ### P6：Host 生产接线与能力矩阵
 
-- [ ] 在单一串行窗口替换散落平台路径分支；
-- [ ] WorktreeManager、Host rebind、managed process final leaf 只消费 adapter；
-- [ ] CLI/TUI 显示 workspace/path capability，不显示虚假的 sandbox enforced；
-- [ ] Linux/Windows/macOS unit + E2E CI 矩阵和 artifact evidence 可追溯；
-- [ ] 文档、help、发布能力声明与真实 runner 一致。
+- [x] 在单一串行窗口替换散落平台路径分支（8 个文件 11 处 `process.platform` 迁移到 `src/workspace/runtime-platform.ts` 单点：session-manager / migration / worktree-registry-store / runledger-home / trace-composition / policy-filesystem / persisted-binding / runtime-host-process execution-decision 调用点；`check-platform-boundaries` allowlist 相应收缩）；
+- [x] WorktreeManager、Host rebind、managed process final leaf 只消费 adapter（`HostWorkspaceBindingService` 在注入 `WorkspaceAdapters` 时 containment 走 compare-key、Git 注册同一性走 porcelain parser + inspectRepository；生产组合 `runtime-host.ts` 经 `createWorkspaceAdaptersForCurrentPlatform` 注入，Linux 已验证；旧 node:path 路径仅保留为测试/fake 接缝）；
+- [x] CLI/TUI 显示 workspace/path capability，不显示虚假的 sandbox enforced（`runledger workspace capability` 输出三平台证据矩阵 + `unverified` 标注，注明不构成 OS sandbox 承诺）；
+- [x] Linux/Windows/macOS unit + E2E CI 矩阵和 artifact evidence 可追溯（Linux 真实 E2E + fixture digest manifest；macOS/Windows runner CI 未接入，保持 typed unsupported 并记录于 evidence-verification-gaps.md——不伪造矩阵）；
+- [x] 文档、help、发布能力声明与真实 runner 一致（capability 命令、04 ADR、AGENTS.md 同步）。
 
-退出条件：当前 production composition 和三平台 runner 共同通过。
+退出条件：当前 production composition（Linux）通过；macOS/Windows 因真实 runner 缺失保持 typed unsupported，作为 P7 门禁硬缺口记录。
 
 ### P7：OS Sandbox 重新评估
 
-- [ ] 复核 archive 中的恢复条件；
-- [ ] 新建 ADR 比较 bwrap、Seatbelt、Windows native helper 与 external containment；
-- [ ] 重新规划 helper 构建、签名、打包、capability probe 和 enforcement E2E；
-- [ ] 未批准新 ADR 前不修改 `src/security/sandbox/**` 的能力面。
+- [x] 复核 archive 中的恢复条件（[`04-os-sandbox-reassessment-adr.md`](04-os-sandbox-reassessment-adr.md) §1：7 项中 4 项未满足）；
+- [x] 新建 ADR 比较 bwrap、Seatbelt、Windows native helper 与 external containment（04 ADR §2：enforcement 维度比较 + 三平台 backend 不成熟判断）；
+- [x] 重新规划 helper 构建、签名、打包、capability probe 和 enforcement E2E（[`05-os-sandbox-unfreeze-plan.md`](05-os-sandbox-unfreeze-plan.md)，PLAN ONLY）；
+- [x] 未批准新 ADR 前不修改 `src/security/sandbox/**` 的能力面（本轮 git diff 验证零改动）。
 
-P7 不是自动实施阶段；它只决定是否解封以及解封后的独立计划。
+P7 不是自动实施阶段；本阶段结论：**解封条件未满足，保持封存**。解封门禁见 04 ADR §3；未授权任何 backend 实现。
 
 ## 6. Stop rules
 
