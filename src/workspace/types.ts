@@ -30,7 +30,8 @@ export type WorkspacePathErrorCode =
 	| "unverified_platform"
 	| "stale_registration"
 	| "git_failed"
-	| "invalid_state";
+	| "invalid_state"
+	| "base_drift";
 
 export interface WorkspacePathError {
 	readonly code: WorkspacePathErrorCode;

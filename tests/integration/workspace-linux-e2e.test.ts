@@ -14,8 +14,9 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { GitCommandPort } from "../../src/worktree/ports.ts";
-import { createWorkspaceAdapters, createWorkspaceAdaptersForCurrentPlatform } from "../../src/workspace/factory.ts";
+import { createWorkspaceAdapters } from "../../src/workspace/factory.ts";
 import { encodePrivateLocator } from "../../src/workspace/path-adapter.ts";
+import { resumeWorktreeLocator } from "../../src/workspace/resume.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -164,8 +165,33 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		expect(existsSync(dirty)).toBe(false);
 	});
 
-	it("factory maps the current Linux runner to verified adapters", () => {
-		const availability = createWorkspaceAdaptersForCurrentPlatform({ git: gitPort(), managedRoot: managed });
+	it("cold resume re-verifies a recorded locator and fails closed when the worktree is gone", async () => {
+		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(availability.ok).toBe(true);
+		if (!availability.ok) return;
+		const adapters = availability.value;
+		const baseCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+		const target = join(managed, "repo-slug", "cold-resume-task");
+		expect(await adapters.git.createDetached(repo, target, baseCommit)).toEqual({ ok: true, value: target });
+
+		// 记录 locator（模拟 private store 写入），随后“重启”只凭 locator 恢复。
+		const candidate = await adapters.path.candidateIdentity(target);
+		expect(candidate.ok).toBe(true);
+		if (!candidate.ok) return;
+		const locator = encodePrivateLocator(candidate.value, "linux");
+
+		const resumed = await resumeWorktreeLocator(adapters, {
+			record: locator,
+			repo,
+			expectedBaseCommit: baseCommit,
+			effectiveSubdir: ".",
+			checkLease: async () => undefined,
+		});
+		expect(resumed).toMatchObject({ ok: true, effectiveCwd: target, headCommit: baseCommit });
+
+		// worktree 消失后恢复必须 fail closed，绝不回退 source repo。
+		expect(await adapters.git.remove(repo, target, false)).toEqual({ ok: true, value: target });
+		const gone = await resumeWorktreeLocator(adapters, { record: locator, repo, expectedBaseCommit: baseCommit, effectiveSubdir: "." });
+		expect(gone).toMatchObject({ ok: false, error: { code: "invalid_path" } });
 	});
 });

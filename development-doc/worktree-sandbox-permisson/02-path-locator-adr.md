@@ -117,10 +117,14 @@ Redaction：
 | `stale_registration` | Git registration 与 registry 不一致，不盲目删除 |
 | `git_failed` | Git 命令失败或 broker 不可用（retryable 标记信号中断） |
 | `invalid_state` | 注册条目状态不满足操作前置（如 git-locked worktree 不可 remove） |
+| `base_drift` | cold resume 时 worktree HEAD 与记录 base 不一致，拒绝改指 source |
 
 > ADR revision 1（2026-08-06，P4 实现时补充）：新增 `git_failed` 与
 > `invalid_state` 两个 code，覆盖 Git 命令失败与注册状态冲突；不改变既有
 > 决策语义。
+>
+> ADR revision 2（2026-08-06，P5 实现时补充）：新增 `base_drift`，覆盖
+> cold resume 的 HEAD/base 漂移；不改变既有决策语义。
 
 ## 3. P1 证据对决策的输入（Linux，2026-08-06）
 
