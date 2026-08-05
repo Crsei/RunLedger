@@ -5,11 +5,13 @@ import { join } from "node:path";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
-import type { RuntimeEventAppendInput } from "../../../src/storage/host/runtime-event-store.ts";
+import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../../../src/storage/host/runtime-event-store.ts";
 import { JsonlRuntimeEventStore } from "../../../src/storage/host/runtime-event-store.ts";
+import type { HostDomainRevisionStore } from "../../../src/storage/host/domain-revision-store.ts";
 import { JsonHostDomainRevisionStore } from "../../../src/storage/host/domain-revision-store.ts";
 import type { RuntimeEventPayloadFor } from "../../../src/runtime/contracts/public.ts";
 import { createHostCompatibilityEnvelope, HOST_PROTOCOL_VERSION, type RuntimeHostScope } from "../../../src/runtime/host/contracts.ts";
+import { parseRuntimeId } from "../../../src/runtime/contracts/public.ts";
 import type { HostConnectionPrincipal, HostFrameEnvelope } from "../../../src/runtime/host/types.ts";
 import { JsonLineHostClient } from "../../../src/cli/runtime-host-transport.ts";
 import {
@@ -237,6 +239,149 @@ describe("resident Host domain ports", () => {
 			expect(applied.body).toMatchObject({ ok: true, value: "applied", domainRevision: 1 });
 			expect(applied.body.eventReceipts).toHaveLength(1);
 			expect(await eventStore.read(eventSessionId)).toHaveLength(1);
+			await client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a durable uncertain outcome when the canonical event writer fails and does not re-execute a retry", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-domain-writer-failure-"));
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		let calls = 0;
+		let state = 0;
+		const writer: RuntimeEventWriter = {
+			append: async () => { throw new Error("writer unavailable"); },
+		};
+		const domain: HostRuntimeDomainPort = {
+			name: "writer-failure-domain",
+			mutationOperations: new Set(["writer.failure"]),
+			execute: async (context) => {
+				calls += 1;
+				state += 1;
+				const sessionId = parseRuntimeId("session", context.sessionId);
+				if (sessionId === undefined) throw new Error("session id missing");
+				const traceId = createRuntimeId("trace", `writer-failure-${calls}`);
+				const approvalId = createRuntimeId("approval", `writer-failure-${calls}`);
+				const payload: RuntimeEventPayloadFor<"permission.requested"> = {
+					subject: { kind: "approval", id: approvalId },
+					correlationId: traceId,
+					effect: "none",
+					idempotencyKey: `writer-failure-${calls}`,
+					transition: { revision: 0, previousStatus: null, nextStatus: "pending" },
+					bindings: [{ role: "session", subjectId: sessionId }],
+					refs: [{ subjectKind: "receipt", digest: runtimeDigest("writer-failure"), mediaType: "application/json", size: 0 }],
+				};
+				return {
+					ok: true,
+					body: { state },
+					mutated: true,
+					events: [{
+						authorityId: hostScope.authorityId,
+						tenantId: hostScope.tenantId,
+						principalId: context.principal.principalId,
+						sessionId,
+						traceId,
+						type: "permission.requested",
+						payload,
+					}],
+				};
+			},
+		};
+		const host = new ResidentRuntimeHost({
+			socketPath: join(root, "host.sock"),
+			scope: hostScope,
+			domainPorts: [domain],
+			runtimeEventWriter: writer,
+			attestor: { attest: async () => ({ principalId: createRuntimeId("principal", "writer-failure"), connectionId: createRuntimeId("connection", "writer-failure"), attestationDigest: runtimeDigest("writer-failure") }) },
+			createSession: async () => session(),
+		});
+		try {
+			await host.start();
+			const client = await JsonLineHostClient.connect(join(root, "host.sock"));
+			await client.request({ frameId: "writer-failure-init", kind: "initialize_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { compatibility: hostScope } });
+			const opened = await request(client, "writer-failure-open", { operation: "session.open", mode: "create" });
+			const sessionId = opened.body.sessionId;
+			const claimed = await request(client, "writer-failure-claim", {
+				operation: "session.claim_driver",
+				sessionId,
+				expectedHostGeneration: opened.body.hostGeneration,
+				expectedSessionGeneration: opened.body.sessionGeneration,
+				expectedDriverRevision: opened.body.driverRevision,
+			});
+			const fence = {
+				sessionId,
+				expectedHostGeneration: claimed.body.hostGeneration,
+				expectedSessionGeneration: claimed.body.sessionGeneration,
+				expectedDriverRevision: claimed.body.driverRevision,
+				expectedDomainRevision: 0,
+			};
+			const first = await request(client, "writer-failure-command", { operation: "writer.failure", ...fence });
+			expect(first.body).toMatchObject({ ok: false, code: "uncertain_outcome" });
+			const retry = await request(client, "writer-failure-command", { operation: "writer.failure", ...fence });
+			expect(retry.body).toMatchObject({ ok: false, code: "uncertain_outcome" });
+			expect(calls).toBe(1);
+			expect(state).toBe(1);
+			await client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns a durable uncertain outcome when domain revision persistence fails and does not re-execute a retry", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-domain-revision-failure-"));
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		let calls = 0;
+		let state = 0;
+		const revisions: HostDomainRevisionStore = {
+			load: async () => new Map(),
+			save: async () => { throw new Error("revision store unavailable"); },
+		};
+		const domain: HostRuntimeDomainPort = {
+			name: "revision-failure-domain",
+			mutationOperations: new Set(["revision.failure"]),
+			execute: async () => {
+				calls += 1;
+				state += 1;
+				return { ok: true, body: { state }, mutated: true };
+			},
+		};
+		const host = new ResidentRuntimeHost({
+			socketPath: join(root, "host.sock"),
+			scope: hostScope,
+			domainPorts: [domain],
+			domainRevisionStore: revisions,
+			attestor: { attest: async () => ({ principalId: createRuntimeId("principal", "revision-failure"), connectionId: createRuntimeId("connection", "revision-failure"), attestationDigest: runtimeDigest("revision-failure") }) },
+			createSession: async () => session(),
+		});
+		try {
+			await host.start();
+			const client = await JsonLineHostClient.connect(join(root, "host.sock"));
+			await client.request({ frameId: "revision-failure-init", kind: "initialize_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { compatibility: hostScope } });
+			const opened = await request(client, "revision-failure-open", { operation: "session.open", mode: "create" });
+			const sessionId = opened.body.sessionId;
+			const claimed = await request(client, "revision-failure-claim", {
+				operation: "session.claim_driver",
+				sessionId,
+				expectedHostGeneration: opened.body.hostGeneration,
+				expectedSessionGeneration: opened.body.sessionGeneration,
+				expectedDriverRevision: opened.body.driverRevision,
+			});
+			const fence = {
+				sessionId,
+				expectedHostGeneration: claimed.body.hostGeneration,
+				expectedSessionGeneration: claimed.body.sessionGeneration,
+				expectedDriverRevision: claimed.body.driverRevision,
+				expectedDomainRevision: 0,
+			};
+			const first = await request(client, "revision-failure-command", { operation: "revision.failure", ...fence });
+			expect(first.body).toMatchObject({ ok: false, code: "uncertain_outcome" });
+			const retry = await request(client, "revision-failure-command", { operation: "revision.failure", ...fence });
+			expect(retry.body).toMatchObject({ ok: false, code: "uncertain_outcome" });
+			expect(calls).toBe(1);
+			expect(state).toBe(1);
 			await client.close();
 		} finally {
 			await host.close();

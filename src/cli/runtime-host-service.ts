@@ -854,32 +854,43 @@ export class ResidentRuntimeHost {
 			if (expectedDomainRevision === undefined) return this.response(frame, { ok: false, code: "domain_revision_required", domainRevision });
 			if (expectedDomainRevision !== domainRevision) return this.response(frame, { ok: false, code: "stale_domain_revision", domainRevision });
 		}
-		const result = await port.execute({
-			principal,
-			frame,
-			operation,
-			mutation,
-			sessionId: state.runtime.controller.sessionId,
-			controller: state.runtime.controller,
-			hostGeneration: state.driver.hostGeneration,
-			sessionGeneration: state.driver.sessionGeneration,
-			driverRevision: state.driver.driverRevision,
-			domainRevision,
-			...(state.mcp === undefined ? {} : { mcp: state.mcp }),
-		});
+		let result: HostRuntimeDomainResult;
+		try {
+			result = await port.execute({
+				principal,
+				frame,
+				operation,
+				mutation,
+				sessionId: state.runtime.controller.sessionId,
+				controller: state.runtime.controller,
+				hostGeneration: state.driver.hostGeneration,
+				sessionGeneration: state.driver.sessionGeneration,
+				driverRevision: state.driver.driverRevision,
+				domainRevision,
+				...(state.mcp === undefined ? {} : { mcp: state.mcp }),
+			});
+		} catch {
+			return this.response(frame, { ok: false, code: "uncertain_outcome" });
+		}
 		if (!result.ok) return this.response(frame, { ok: false, ...(result.body ?? { code: "domain_command_rejected" }) });
-		const receipts = await this.appendDomainEvents(result.events ?? []);
-		const changed = result.mutated ?? mutation;
-		const nextDomainRevision = changed ? domainRevision + 1 : domainRevision;
-		if (changed) {
-			const nextRevisions = new Map(state.domainRevisions);
-			nextRevisions.set(key, nextDomainRevision);
-			try {
+		let receipts: readonly string[];
+		let nextDomainRevision: number;
+		try {
+			receipts = await this.appendDomainEvents(result.events ?? []);
+			const changed = result.mutated ?? mutation;
+			nextDomainRevision = changed ? domainRevision + 1 : domainRevision;
+			if (changed) {
+				const nextRevisions = new Map(state.domainRevisions);
+				nextRevisions.set(key, nextDomainRevision);
 				await this.options.domainRevisionStore?.save(state.runtime.controller.sessionId, nextRevisions);
-			} catch {
-				return this.response(frame, { ok: false, code: "domain_revision_persistence_failed" });
+				state.domainRevisions.set(key, nextDomainRevision);
 			}
-			state.domainRevisions.set(key, nextDomainRevision);
+		} catch {
+			// The domain adapter may already have changed durable or external state,
+			// and an event/revision write may have committed only a prefix.  The
+			// command receipt therefore becomes the single retry fence: callers must
+			// reconcile the uncertain outcome instead of executing the command again.
+			return this.response(frame, { ok: false, code: "uncertain_outcome" });
 		}
 		return this.response(frame, {
 			ok: true,
