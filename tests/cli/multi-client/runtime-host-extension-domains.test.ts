@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
+import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
+import { JsonlRuntimeEventStore } from "../../../src/storage/host/runtime-event-store.ts";
 import type { ExtensionPublicSnapshot, ExtensionReloadResult } from "../../../src/extensions/host-manager.ts";
 import type { SecuritySnapshot } from "../../../src/security/types.ts";
 import type { HostRuntimeDomainContext } from "../../../src/cli/runtime-host-service.ts";
@@ -81,6 +86,19 @@ describe("Host extension domain adapter", () => {
 		expect(calls).toEqual(["reload"]);
 		expect(reloaded.events).toHaveLength(1);
 		expect(reloaded.events?.[0]?.type).toBe("resource.snapshot_acquired");
+		const root = await mkdtemp(join(tmpdir(), "runledger-extension-domain-event-"));
+		try {
+			const event = reloaded.events?.[0];
+			expect(event).toBeDefined();
+			if (event === undefined) return;
+			const writer = new JsonlRuntimeEventStore({
+				layout: buildRunledgerLayout(join(root, "home"), "posix"),
+				workspaceStorageKey: "ws-" + "e".repeat(64),
+			});
+			await expect(writer.append(event)).resolves.toBeDefined();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 		expect(JSON.stringify(reloaded)).not.toContain("/private");
 	});
 });

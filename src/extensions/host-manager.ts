@@ -72,7 +72,7 @@ export class ExtensionHostManager {
 
 	public publicSnapshot(): ExtensionPublicSnapshot | undefined {
 		const snapshot = this.current();
-		return snapshot === undefined ? undefined : projectSnapshot(snapshot);
+		return snapshot === undefined ? undefined : projectExtensionSnapshot(snapshot);
 	}
 
 	public beginTurn(): ExtensionSnapshot {
@@ -160,7 +160,7 @@ export class ExtensionHostManager {
 	}
 }
 
-function projectSnapshot(snapshot: ExtensionSnapshot): ExtensionPublicSnapshot {
+export function projectExtensionSnapshot(snapshot: ExtensionSnapshot): ExtensionPublicSnapshot {
 	return {
 		snapshotId: snapshot.snapshotId,
 		generation: snapshot.generation,

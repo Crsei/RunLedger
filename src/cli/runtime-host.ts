@@ -29,12 +29,12 @@ import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../
 import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-workspace-events.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
-import { createHostDomainPorts } from "./runtime-host-domains.ts";
+import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-host-domains.ts";
 import { NodeExtensionStorage } from "../storage/extensions/extension-storage.ts";
 import { ExtensionStateStore } from "../extensions/state-store.ts";
 import { TrustStore } from "../extensions/trust/trust-store.ts";
 import { PluginManager } from "../extensions/plugins/manager.ts";
-import { ExtensionHostManager } from "../extensions/host-manager.ts";
+import { ExtensionHostManager, projectExtensionSnapshot } from "../extensions/host-manager.ts";
 import { sourceKey } from "../extensions/paths.ts";
 import type { ExtensionSource, ExtensionSourceRoot } from "../extensions/types.ts";
 
@@ -69,6 +69,8 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const hostRuntimeId = createRuntimeId("runtime", `host-${hostGeneration}-${scope.workspaceStorageKey.slice(3, 19)}`);
 	const extensionStorage = new NodeExtensionStorage({ runledgerHome: layout.home });
 	const extensionStateRoot = join(layout.state, "extensions");
+	const extensionPrincipalId = createRuntimeId("principal", `host-extension-${scope.workspaceStorageKey.slice(3, 19)}`);
+	const extensionEventSessionId = createRuntimeId("session", `extensions-${scope.workspaceStorageKey.slice(3, 67)}`);
 	const extensionRoots = await discoverCanonicalPluginRoots(extensionStorage, [
 		{ source: "user", root: join(extensionStateRoot, "user", "plugins"), priority: 100 },
 		{ source: "project", root: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "plugins"), priority: 200 },
@@ -78,12 +80,17 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			storage: extensionStorage,
 			trustStore: new TrustStore(join(extensionStateRoot, "trust.json"), extensionStorage),
 			stateStore: new ExtensionStateStore(join(extensionStateRoot, "extensions-state.json"), extensionStorage),
-			scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: createRuntimeId("principal", `host-extension-${scope.workspaceStorageKey.slice(3, 19)}`) },
+			scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId },
 			roots: extensionRoots,
 		}),
 	});
 	const extensionLoad = await extensionManager.load();
 	if (extensionLoad.status === "failed") throw new Error(extensionLoad.error ?? "extension snapshot could not be loaded");
+	if (extensionLoad.snapshot !== undefined) {
+		const event = createExtensionSnapshotEvent({ authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId, sessionId: extensionEventSessionId, snapshot: projectExtensionSnapshot(extensionLoad.snapshot) });
+		if (event === undefined) throw new Error("initial extension snapshot event identity is invalid");
+		await runtimeEventWriter.append(event);
+	}
 	const workspaceBindingService = new HostWorkspaceBindingService({
 		layout,
 		workspaceStorageKey: scope.workspaceStorageKey,
@@ -145,6 +152,13 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			security,
 			workspaceBinding,
 			workspaceBindingStore,
+			extensionManager,
+			onExtensionIdleReload: async (sessionId, result) => {
+				if (result.snapshot === undefined) return;
+				const event = createExtensionSnapshotEvent({ authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId, sessionId, snapshot: projectExtensionSnapshot(result.snapshot) });
+				if (event === undefined) throw new Error("extension reload event identity is invalid");
+				await runtimeEventWriter.append(event);
+			},
 		}),
 		onShutdown: async () => {
 			await shutdownHost();

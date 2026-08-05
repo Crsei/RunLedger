@@ -143,6 +143,38 @@ export interface ExtensionDomainOptions {
 	readonly tenantId: RuntimeEventAppendInput["tenantId"];
 }
 
+/** Builds the single Runtime event shape used for Host extension snapshots. */
+export function createExtensionSnapshotEvent(input: {
+	readonly authorityId: RuntimeEventAppendInput["authorityId"];
+	readonly tenantId: RuntimeEventAppendInput["tenantId"];
+	readonly principalId: RuntimeEventAppendInput["principalId"];
+	readonly sessionId: string;
+	readonly snapshot: ExtensionPublicSnapshot;
+}): RuntimeEventAppendInput | undefined {
+	const sessionId = parseRuntimeId("session", input.sessionId);
+	const snapshotId = parseRuntimeId("snapshot", input.snapshot.snapshotId);
+	if (!sessionId || !snapshotId) return undefined;
+	const resourceId = createRuntimeId("resource", `extension-snapshot-${input.snapshot.generation}-${input.snapshot.digest.slice(0, 24)}`);
+	const payload: RuntimeEventPayloadFor<"resource.snapshot_acquired"> = {
+		subject: { kind: "resource", id: resourceId },
+		correlationId: createRuntimeId("trace", `extensions-${input.snapshot.generation}-${input.snapshot.digest.slice(0, 24)}`),
+		effect: "committed",
+		idempotencyKey: `extensions:snapshot:${input.snapshot.digest}`,
+		transition: { revision: input.snapshot.generation, previousStatus: null, nextStatus: "active" },
+		bindings: [{ role: "session", subjectId: sessionId }],
+		refs: [{ subjectKind: "snapshot", digest: runtimeDigest(input.snapshot), mediaType: "application/json", size: 0 }],
+	};
+	return {
+		authorityId: input.authorityId,
+		tenantId: input.tenantId,
+		principalId: input.principalId,
+		sessionId,
+		traceId: payload.correlationId,
+		type: "resource.snapshot_acquired",
+		payload,
+	};
+}
+
 const EXTENSION_QUERY_OPERATIONS = new Set(["extension.inspect", "plugin.list", "skill.list", "hook.list", "mcp.list"]);
 const EXTENSION_MUTATION_OPERATIONS = new Set(["extension.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust"]);
 
@@ -190,25 +222,11 @@ async function executeExtensionDomain(options: ExtensionDomainOptions, context: 
 }
 
 function snapshotEvent(options: ExtensionDomainOptions, context: HostRuntimeDomainContext, snapshot: ExtensionPublicSnapshot): RuntimeEventAppendInput | undefined {
-	const sessionId = parseRuntimeId("session", context.sessionId);
-	const snapshotId = parseRuntimeId("snapshot", snapshot.snapshotId);
-	if (!sessionId || !snapshotId) return undefined;
-	const payload: RuntimeEventPayloadFor<"resource.snapshot_acquired"> = {
-		subject: { kind: "snapshot", id: snapshotId },
-		correlationId: createRuntimeId("trace", `extensions-${snapshot.generation}-${snapshot.digest.slice(0, 24)}`),
-		effect: "committed",
-		idempotencyKey: `extensions:snapshot:${snapshot.digest}`,
-		transition: { revision: snapshot.generation, previousStatus: null, nextStatus: "active" },
-		bindings: [{ role: "session", subjectId: sessionId }],
-		refs: [{ subjectKind: "snapshot", digest: runtimeDigest(snapshot), mediaType: "application/json", size: 0 }],
-	};
-	return {
+	return createExtensionSnapshotEvent({
 		authorityId: options.authorityId,
 		tenantId: options.tenantId,
 		principalId: context.principal.principalId,
-		sessionId,
-		traceId: payload.correlationId,
-		type: "resource.snapshot_acquired",
-		payload,
-	};
+		sessionId: context.sessionId,
+		snapshot,
+	});
 }

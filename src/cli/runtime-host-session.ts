@@ -12,6 +12,8 @@ import { createStdlibTools } from "../runtime/tools/index.ts";
 import type { HostSessionOpenRequest, HostSessionRuntime } from "./runtime-host-service.ts";
 import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import type { ProductionHostSecurity } from "./runtime-host-security.ts";
+import type { ExtensionReloadResult } from "../extensions/host-manager.ts";
+import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import {
 	validateWorkspaceBindingObservation,
 	type PersistedWorkspaceBinding,
@@ -28,6 +30,10 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly processPort?: ProductionManagedProcessPort;
 	readonly security?: ProductionHostSecurity;
+	/** Resident Host-owned extension snapshot fence for this session. */
+	readonly extensionManager?: ExtensionTurnLifecycleManager;
+	/** Canonical event sink callback for a reload applied at Agent idle. */
+	readonly onExtensionIdleReload?: (sessionId: string, result: ExtensionReloadResult) => Promise<void>;
 	/** Binding restored once by the resident Host composition root. */
 	readonly workspaceBinding?: PersistedWorkspaceBinding;
 	/** Optional canonical binding; when present every cold/open session must match it. */
@@ -93,6 +99,11 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				traceRecorderFactory: options.traceRecorderFactory,
 				executionEnv,
 			});
+			const extensionLifecycle = options.extensionManager === undefined ? undefined : new ExtensionTurnLifecycle({
+				manager: options.extensionManager,
+				onIdleReload: (result) => options.onExtensionIdleReload?.(manager.sessionId(), result),
+			});
+			const removeExtensionLifecycle = extensionLifecycle === undefined ? undefined : controller.subscribe((event) => extensionLifecycle.handle(event));
 			const removeCompletion = options.processPort?.attachCompletionAgent(
 				manager.sessionId(),
 				controller,
@@ -103,6 +114,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 			return {
 				controller,
 				close: async () => {
+					removeExtensionLifecycle?.();
 					removeCompletion?.();
 					await manager.closeAll();
 				},
