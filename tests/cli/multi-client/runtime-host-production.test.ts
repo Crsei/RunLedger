@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
@@ -35,6 +35,27 @@ describe("R3/R4 production Host composition", () => {
 		const first = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
 		const second = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: { model: "changed" } });
 		expect(second.compatibilityDigest.digest).not.toBe(first.compatibilityDigest.digest);
+	});
+
+	it("fences an existing Host when the explicit CLI security override changes", () => {
+		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
+		const defaultScope = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
+		const readOnlyScope = createLocalRuntimeHostScope({
+			layout,
+			cwd: "/workspace/project",
+			settings: {},
+			securityOverride: { profile: "read-only" },
+		});
+
+		expect(readOnlyScope.compatibilityDigest.digest).not.toBe(defaultScope.compatibilityDigest.digest);
+	});
+
+	it("propagates the rebuilt session generation into the production MCP process facade", async () => {
+		const source = await readFile(new URL("../../../src/cli/runtime-host.ts", import.meta.url), "utf8");
+
+		expect(source).toContain("createMcpRuntime: async ({ sessionId, sessionGeneration,");
+		expect(source).toContain("processPort.toolClient(sessionId, sessionGeneration, mcpPrincipalId)");
+		expect(source).not.toContain("processPort.toolClient(sessionId, 1, mcpPrincipalId)");
 	});
 
 	it("advertises the mediated Security/ExecutionGateway instead of builtin-none", () => {
@@ -133,6 +154,15 @@ describe("R3/R4 production Host composition", () => {
 			expect(resolved.scope.workspaceId).toBe(workspaceId);
 			expect(resolved.scope.repositoryId).toBe(repositoryId);
 			expect(resolved.scope.workspaceStorageKey).toBe(identityScope.workspaceStorageKey);
+
+			const disabled = await resolveLocalRuntimeHostScope({
+				layout,
+				cwd: effectiveCwd,
+				settings: {},
+				workspaceBindingMode: "disabled",
+			});
+			expect(disabled.binding).toBeUndefined();
+			expect(disabled.scope.workspaceId).not.toBe(workspaceId);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

@@ -50,6 +50,8 @@ export interface ExecutionGatewayContext {
 	readonly filesystem: PolicyFileSystem;
 	readonly network: PolicyNetworkClient;
 	readonly finalLeaf: HostProcessFinalLeafDecisionPort;
+	/** Idempotent durable completion fence for an approval-backed effect. */
+	readonly complete: () => Promise<SecurityResult<void>>;
 }
 
 export interface ExecutionGatewayOptions {
@@ -181,6 +183,7 @@ export class ExecutionGateway {
 		if (input.request.snapshot.profile.sandbox === "off" && input.constraintInput.modes.sandbox !== "none") return invalid("constraint sandbox mode is weaker than the current off policy");
 		const requiresProcessSandbox = input.request.requests.some((request) => request.kind === "shell") || input.request.toolName === "bash";
 		if (requiresProcessSandbox && input.request.snapshot.profile.sandbox !== "off" && input.constraintInput.modes.sandbox === "none") return invalid("restrictive sandbox decision is missing");
+		const complete = this.#completion(input.request, input.authorization);
 		return {
 			ok: true,
 			value: {
@@ -192,7 +195,27 @@ export class ExecutionGateway {
 				filesystem: this.#filesystem,
 				network: this.#network,
 				finalLeaf: this.#options.finalLeaf,
+				complete,
 			},
+		};
+	}
+
+	#completion(
+		request: AuthorizationRequest,
+		authorization: AuthorizationResult,
+	): () => Promise<SecurityResult<void>> {
+		const receipt = authorization.approval;
+		let settled: Promise<SecurityResult<void>> | undefined;
+		return () => {
+			if (settled !== undefined) return settled;
+			if (authorization.decisionSource !== "approval" || receipt === undefined || receipt.scope !== "once") {
+				settled = Promise.resolve({ ok: true, value: undefined });
+				return settled;
+			}
+			settled = this.#options.approvalCoordinator.consumeAllowOnce(request, receipt).then((result) => result.ok
+				? { ok: true, value: undefined }
+				: result);
+			return settled;
 		};
 	}
 

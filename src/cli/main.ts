@@ -83,6 +83,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     cwd,
     settings,
     ...(securityOverride === undefined ? {} : { securityOverride }),
+		...(args.noWorktree ? { workspaceBindingMode: "disabled" as const } : {}),
     reverseRequestHandler: (frame, signal) => interactive?.handleReverseRequest(frame, signal) ?? { ok: false, code: "approval_ui_unavailable" },
   });
   const transport: HostRequestTransport = {
@@ -109,21 +110,22 @@ export async function main(argv: readonly string[]): Promise<void> {
     await host.close().catch(() => undefined);
     throw new Error("Host session id is missing");
   }
+	let openedBody = open.body;
 	if (args.worktree !== undefined) {
-		await ensureHostWorktree(transport, sessionId, open.body, cwd, args);
+		openedBody = await bindHostWorktreeSession(transport, sessionId, openedBody, cwd, args);
 	}
 	if (parsedControl?.ok === true) {
-		await runControlCommand(transport, sessionId, open.body, parsedControl.command);
+		await runControlCommand(transport, sessionId, openedBody, parsedControl.command);
 		await host.close().catch(() => undefined);
 		return;
 	}
-	  const snapshot = parseRemoteSnapshot(open.body.snapshot, sessionId);
+	  const snapshot = parseRemoteSnapshot(openedBody.snapshot, sessionId);
 	  const controller = new RemoteInteractiveSessionController(transport, {
 	    ...snapshot,
-	    hostGeneration: integerValue(open.body.hostGeneration) ?? host.endpoint.hostGeneration,
-	    sessionGeneration: integerValue(open.body.sessionGeneration) ?? 1,
-	    driverRevision: integerValue(open.body.driverRevision) ?? 0,
-	    eventCursor: integerValue(open.body.eventCursor) ?? 0,
+	    hostGeneration: integerValue(openedBody.hostGeneration) ?? host.endpoint.hostGeneration,
+	    sessionGeneration: integerValue(openedBody.sessionGeneration) ?? 1,
+	    driverRevision: integerValue(openedBody.driverRevision) ?? 0,
+	    eventCursor: integerValue(openedBody.eventCursor) ?? 0,
 	  });
   let removeSigint: (() => void) | undefined;
   let removeStdinEnd: (() => void) | undefined;
@@ -186,13 +188,13 @@ export function cliSecurityOverride(args: ReturnType<typeof parseArgs>["args"]):
  * `--worktree [label]` 经 Host 控制面创建/复用 session worktree；client 不
  * 直接运行 Git 或写 registry。创建失败即报错退出（显式请求不能静默降级）。
  */
-async function ensureHostWorktree(
+export async function bindHostWorktreeSession(
 	transport: HostRequestTransport,
 	sessionId: string,
 	openedBody: Record<string, unknown>,
 	cwd: string,
 	args: ReturnType<typeof parseArgs>["args"],
-): Promise<void> {
+): Promise<Record<string, unknown>> {
 	const inspected = await requestHostCommand(transport, "worktree.inspect", { sessionId });
 	if (inspected.body.ok !== true) throw new Error(responseCode(inspected));
 	const domainRevision = integerValue(inspected.body.domainRevision) ?? 0;
@@ -216,7 +218,15 @@ async function ensureHostWorktree(
 		...(args.worktreeBranch === undefined ? {} : { branch: args.worktreeBranch }),
 	});
 	if (created.body.ok !== true) throw new Error(responseCode(created));
+	const rebound = await requestHostCommand(transport, "session.rebind_workspace", {
+		sessionId,
+		expectedHostGeneration: integerValue(claimed.body.hostGeneration),
+		expectedSessionGeneration: integerValue(claimed.body.sessionGeneration),
+		expectedDriverRevision: integerValue(claimed.body.driverRevision),
+	});
+	if (rebound.body.ok !== true) throw new Error(responseCode(rebound));
 	process.stderr.write(`[runledger] worktree bound: ${label}\n`);
+	return rebound.body;
 }
 
 function sessionOpenMode(args: ReturnType<typeof parseArgs>["args"]): "create" | "open" | "continue_recent" | "resume" | "fork" {

@@ -1,6 +1,6 @@
 # RunLedger Plugin / MCP / Skill / Hooks 实施计划
 
-> 文档状态: M1/M2 基础与 Skill、M3 Hook、M4 MCP 的独占行为/Runtime adapter 切片已实现（单一权威计划；Plugin/MCP transport/Host/CLI/TUI 生产接线仍未完成）<br>
+> 文档状态: M1–M5 的多项行为实现与 resident Host 的 Skill/Hook/MCP/Plugin 接线已落地；各里程碑仍以本文逐项复选框为准，M6 的完整 CLI mutation surface、TUI 写操作和最终联合验收仍是部分完成（单一权威计划）<br>
 > 编写日期:2026-07-21;Runtime Host 适配校准:2026-08-04<br>
 > RunLedger 基线:`1658fe26fc675cc18498bb8c6a9f162b7a0b733f` (`feat/agent-loop-resurrect`)<br>
 > Codex 参考基线:`0b175e6439a8608ba7726ee153fd8590619e8f34` (`main`)<br>
@@ -10,9 +10,9 @@
 
 本计划的目标目录已经存在 `00-reference.md`，但在本次审阅时该文件为 **0 字节空文件**。该文件仍保留不动。[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md) 是公共 contract 与 canonical `runledgerHome` 的权威入口；[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md) 拥有生产 Host、多客户端 Control Plane、driver fencing、managed process 与 durable command/subscription 行为。本文件继续结合 Codex、grok-build、RunLedger 当前实现和根目录 `AGENTS.md` 形成扩展侧唯一实施账本。
 
-### 0.0.1 2026-08-04 当前实现切片证据
+### 0.0.1 2026-08-04 历史实现切片证据
 
-以下为当前分支已提交独占目录切片的局部证据；复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现；不把 adapter/fake port 测试误报为 Host 生产闭环：
+以下记录 2026-08-04 当时的独占目录切片；它不是 2026-08-06 当前状态。复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现；不把 adapter/fake port 测试误报为 Host 生产闭环：
 
 - M1 foundation 已有 `src/extensions/{identity,paths,config-layers,state-store,storage-port,snapshot,diagnostics}.ts` 与 trust 目录，覆盖 canonical locator、bounded digest、0600 state/trust、trust stale/revocation 和 last-known-good snapshot；既有 Extension foundation/skills focused tests 通过。
 - M2 Skill 已有 bounded discovery、frontmatter、qualified identity、catalog/renderer、digest/trust 复核和按需正文 resolver；正文读取不授予脚本执行权限。
@@ -24,6 +24,14 @@
 - 本地验证证据：`npm run check`、`npm test`（Vitest 144 files / 746 tests，Bun TUI 5 files / 44 assertions）、`npm run build`、`git diff --check` 均通过；该提交已落在当前分支，尚未 push。
 
 仍未实现或未接线：Host-managed hook runner/真实进程、MCP official SDK transport/client/doctor/restart、Plugin manifest/manager/组合闭环、canonical event sink、Host Control Plane、CLI/TUI inspect/reload/trust/enable 以及 plugin fixture E2E。故不得把当前局部行为标为 M0–M6 完成。
+
+### 0.0.2 2026-08-06 当前状态校正
+
+- Runtime Resource contract 初始冻结来自 `65f9054`，统一 adapter port 收口来自 `54bd16e`；当前 public export 为 `src/runtime/contracts/ports.ts`、`src/runtime/resources/ports.ts` 与 `src/runtime/contracts/public.ts`。
+- Resource port 只有 `resource_catalog`、`resource_snapshot`、`resource_invocation` 三个；`tests/runtime-contracts/adapter-port-contracts.test.ts` 明确拒绝旧 `RuntimeResourceSnapshotProvider` 与 `RuntimeResourceEventSink`。
+- Host baseline/hardening handoff 为 `1352bfc`；后续 `6fc2c9a`、`a7ace24`、`402ab9b`、`8930db5`、`c86d078`、`2c55881`、`5760cde`、`e12eb3e` 已分别接入受管 MCP/Hook、resident snapshot、Host Gateway、canonical event writer 与真实 Skill catalog。
+- 官方 MCP SDK 已由 `3172336` 固定为 `@modelcontextprotocol/sdk@1.30.0`；`PluginManager`、`ExtensionHostManager`、`McpConnectionManager`、Host extension/MCP domain ports 与 `/mcp`、`/plugins`、`/skills`、`/hooks` 只读 TUI selector 均已存在。
+- 仍不得宣称 M6 全部完成：完整 CLI inspect/trust/plugin/skill/hook/mcp 子命令矩阵、TUI trust/enable/reload 写操作与最终 fixture 联合验收尚未由本计划逐项关闭。
 
 若后续向 `00-reference.md` 补入内容，实施前必须先做一次差异审阅：
 
@@ -47,7 +55,7 @@ Capability/approval/sandbox 的行为实现来自 [`../worktree-sandbox-permisso
 - `ResourceTrustState`、`ResourceActivationState`、`ResourceApprovalReceipt`。
 - Runtime Capability 契约域的 `CapabilityClaim` 与 Runtime Resource 契约域的 `RuntimeToolDescriptor`、`RuntimeToolInvocation`、`RuntimeToolResult`。
 - `RuntimeResourceSnapshot`、`ResourceLifecycleEvent` 及 TypeBox schemas。
-- `RuntimeResourceCatalogPort`、`RuntimeResourceInvocationPort`、`RuntimeResourceEventSink`、`RuntimeResourceSnapshotProvider`。
+- `RuntimeResourceCatalogPort`、`RuntimeResourceSnapshotPort`、`RuntimeResourceInvocationPort`；对应 port name 严格为 `resource_catalog`、`resource_snapshot`、`resource_invocation`。
 
 Extension 侧映射固定为:
 
@@ -597,17 +605,17 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 ### M0 — 契约、fixtures 与安全预算
 
-- [ ] 记录 Runtime Resource 契约域与 Runtime Capability 契约域/Gateway port 的 commit、export path,确认本计划不复制 Runtime/security 类型；
-- [ ] 记录 `runtime/05` Host baseline/hardening handoff,冻结 extension command/query/subscription、driver-only mutation、generation/revision fence、durable intent/receipt、cursor/resync 与 Host compatibility digest 输入；
-- [ ] 记录 dependency HEAD,以独立串行提交加入 YAML parser、semver、官方 MCP SDK 精确版本并审阅 lockfile；通知 Runtime 线随后基于该提交继续；
-- [ ] 固定本文件中的 current manifest、skill frontmatter、hooks、MCP JSON schema；
-- [ ] 建立 `tests/fixtures/extensions/`，包含 valid、invalid、path-escape、symlink、duplicate、oversize、secret-template 样例；
-- [ ] 定义 `ExtensionDiagnostic`（code、severity、message、source、path、resourceId、cause?）；
-- [ ] 定义所有扫描深度、文件数、单文件字节数、context 字符数、stdout/stderr 字节数常量；
-- [ ] 为 JSON schema/TypeBox schema 加 contract test，非法未知字段和缺失必需字段必须失败；
-- [ ] 为四个 Runtime resource ports 建 fake adapter 和 mapping golden fixtures,覆盖 exact identity、provenance、trust/activation、receipt、snapshot 与 lifecycle event；
-- [ ] 固定 capability derivation 输入:manifest/config/command/assets digest、canonical args、filesystem/network/process/credential scope；调用方声明仅作请求,不能作为最终 claim；
-- [ ] 记录依赖决策和许可证审阅结果：YAML parser、semver、官方 MCP SDK 均使用精确版本。
+- [x] 记录 Runtime Resource/Capability 契约与 Gateway port：初始 contract `65f9054`、统一 adapter port `54bd16e`；public export 为 `src/runtime/contracts/{ports,public}.ts` 与 `src/runtime/resources/ports.ts`，Extension 只做单向 import；
+- [x] 记录 `runtime/05` Host baseline/hardening handoff `1352bfc`；后续 resident extension 串行接线以 `402ab9b`/`8930db5` 为 snapshot/idle fence 证据，并保留 driver、generation/revision、durable intent/receipt、cursor/resync 与 compatibility digest 边界；
+- [~] 记录 dependency HEAD：官方 MCP SDK `@modelcontextprotocol/sdk@1.30.0` 已锁精确版本并审阅 lockfile；YAML parser 与 semver 依赖**未**加入——SKILL.md frontmatter 用有界自写 parser（frontmatter.ts：禁止 tab、限制缩进、duplicate key 拒绝）替代，计划 §13 的“成熟解析库”约束留待后续依赖审阅窗口决策；
+- [x] 固定本文件中的 current manifest、skill frontmatter、hooks、MCP JSON schema；
+- [x] 建立 `tests/fixtures/extensions/`：当前四个文件为 `valid-manifest.json`、`path-escape.json`、`duplicate-identity.json`、`oversize-secret-template.json`；invalid manifest 与 symlink escape 由 `tests/extensions/{plugins,m1-foundation}.test.ts` 动态构造，不虚报不存在的 fixture 文件；
+- [x] 定义 `ExtensionDiagnostic`（code、severity、message、source、path、resourceId、cause?）；
+- [x] 定义所有扫描深度、文件数、单文件字节数、context 字符数、stdout/stderr 字节数常量；
+- [x] 为 JSON schema/TypeBox schema 加 contract test，非法未知字段和缺失必需字段必须失败；
+- [x] 为三个 Runtime resource ports（catalog/snapshot/invocation）建立 fake adapter 与 mapping tests，覆盖 exact identity、provenance、trust/activation、receipt、snapshot 与 lifecycle event；
+- [x] 固定 capability derivation 输入:manifest/config/command/assets digest、canonical args、filesystem/network/process/credential scope；调用方声明仅作请求,不能作为最终 claim；
+- [~] 记录依赖决策和许可证审阅结果：官方 MCP SDK 精确版本已锁；YAML parser、semver 依赖未加入（自写有界 parser 替代，见 M0 依赖 HEAD 条目）。
 
 验收：所有 schema 在不启动进程、不访问网络的情况下可解析；同一 fixture 的 diagnostics 顺序稳定；ExtensionSnapshot/TrustRecord/调用 descriptor 可通过冻结的 Runtime resource/capability contract；缺任一 contract commit 时 M0 保持未完成。
 

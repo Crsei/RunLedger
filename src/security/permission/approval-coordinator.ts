@@ -33,6 +33,7 @@ export interface ApprovalStateStorePort {
 export interface ApprovalAuditPort {
 	requested(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket }): Promise<void>;
 	decided(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket; readonly receipt: ApprovalReceiptRef }): Promise<void>;
+	revoked(input: { readonly request: AuthorizationRequest; readonly receipt: ApprovalReceiptRef }): Promise<void>;
 }
 
 export class MemoryApprovalStateStore implements ApprovalStateStorePort {
@@ -224,6 +225,35 @@ export class ApprovalCoordinator {
 			if (this.#pending.get(key) === pending) this.#pending.delete(key);
 		});
 		return pending;
+	}
+
+	/** Consumes an exact allow-once receipt after the authorized effect settles. */
+	public async consumeAllowOnce(
+		request: AuthorizationRequest,
+		receipt: ApprovalReceiptRef,
+	): Promise<SecurityResult<ApprovalReceiptRef>> {
+		let current: ApprovalReceiptRef | undefined;
+		try {
+			current = await this.#store.read(receipt.approvalId);
+		} catch {
+			return failure("approval receipt is unavailable during revocation", "approval_stale");
+		}
+		if (current === undefined || current.receiptDigest.digest !== receipt.receiptDigest.digest || current.requestDigest.digest !== requestDigest(request).digest) {
+			return failure("approval receipt changed before revocation", "approval_stale");
+		}
+		if (current.decision === "revoked") return { ok: true, value: current };
+		if (current.scope !== "once" || current.decision !== "allowed") {
+			return failure("only an allowed once receipt can be revoked", "approval_stale");
+		}
+		const revoked = createApprovalSupersessionReceipt(current, "revoked", this.#clock().toISOString(), current.principalId);
+		const committed = await this.#store.commit(revoked, current.decisionRevision);
+		if (!committed.ok) return committed;
+		try {
+			await this.#audit?.revoked({ request, receipt: committed.value });
+		} catch {
+			return failure("approval revocation audit is uncertain", "approval_stale");
+		}
+		return committed;
 	}
 
 	async #racePrompt(prompt: PermissionPrompt, signal?: AbortSignal): Promise<PromptRace> {

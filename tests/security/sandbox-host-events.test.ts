@@ -104,8 +104,13 @@ describe.runIf(process.platform === "linux")("Host security event evidence", () 
 			.filter((line) => line.length > 0)
 			.map((line) => JSON.parse(line) as { type: string; payload: { effect: string; refs?: readonly unknown[] } });
 
-		expect(events.map((event) => event.type)).toEqual(["permission.requested", "permission.decided"]);
+		expect(events.map((event) => event.type)).toEqual(["permission.requested", "permission.decided", "permission.revoked"]);
 		expect(events[1]?.payload).toMatchObject({ effect: "committed" });
 		expect(events[1]?.payload.refs?.length).toBeGreaterThan(0);
+		expect(events[2]?.payload).toMatchObject({
+			effect: "none",
+			transition: { revision: 2, previousStatus: "allowed", nextStatus: "revoked" },
+			expectedRevision: 1,
+		});
 	});
 });

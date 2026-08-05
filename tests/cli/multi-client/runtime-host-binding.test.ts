@@ -8,6 +8,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../../src/runtime/host/types.ts";
 import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
 import { restoreHostWorkspaceBinding } from "../../../src/cli/runtime-host-binding.ts";
+import * as hostSession from "../../../src/cli/runtime-host-session.ts";
 
 const roots: string[] = [];
 
@@ -71,6 +72,24 @@ function binding(root: string, hostScope: RuntimeHostScope): PersistedWorkspaceB
 }
 
 describe("resident Host workspace binding cold replay", () => {
+	it("forces a rebound session to the canonical effective cwd instead of the source cwd", () => {
+		const root = join(tmpdir(), "runledger-host-binding-session-workspace");
+		const persisted = binding(root, scope());
+		const candidate = hostSession as typeof hostSession & {
+			resolveProductionSessionWorkspace?: (input: {
+				readonly requestedCwd?: string;
+				readonly defaultCwd: string;
+				readonly binding?: PersistedWorkspaceBinding;
+			}) => { readonly cwd: string; readonly binding?: PersistedWorkspaceBinding };
+		};
+		expect(candidate.resolveProductionSessionWorkspace).toBeTypeOf("function");
+		expect(candidate.resolveProductionSessionWorkspace!({
+			requestedCwd: persisted.sourceRepositoryPath,
+			defaultCwd: persisted.sourceRepositoryPath,
+			binding: persisted,
+		})).toEqual({ cwd: persisted.effectiveCwd, binding: persisted });
+	});
+
 	it("restores one canonical binding and rejects identity or cwd drift before composition", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-binding-compose-"));
 		roots.push(root);

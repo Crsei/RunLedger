@@ -175,6 +175,12 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		hostRuntimeId,
 		hostGeneration,
 		processPort,
+		resolveWorkspaceCwd: async () => {
+			const current = await workspaceBindingService.read();
+			if (!current.ok) throw new Error(`${current.error.code}: ${current.error.message}`);
+			if (current.value === undefined) throw new Error("workspace binding is unavailable");
+			return current.value.effectiveCwd;
+		},
 		domainPorts: createHostDomainPorts({
 			security: { snapshot: security.snapshot },
 			workspace: { workspaceId: scope.workspaceId, defaultCwd: cwd, service: workspaceBindingService },
@@ -202,18 +208,28 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			toolResultOverflowStore,
 			processPort,
 			security,
+			createSecurity: (input) => createProductionHostSecurity({
+				layout,
+				scope,
+				cwd: input.cwd,
+				sessionId: input.sessionId,
+				...(input.workspaceBinding === undefined ? {} : { workspaceBinding: input.workspaceBinding }),
+				runtimeEventWriter,
+				permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
+				securitySources: hostSecuritySources(),
+			}),
 			runtimeEventWriter,
 			workspaceBinding,
 			workspaceBindingStore,
 			domainClient: createHostInternalDomainClient(modelContextDomain),
 			mcpConfigs: mcpConfig.configs,
-			createMcpRuntime: async ({ sessionId, cwd: sessionCwd, toolRegistry }) => {
+			createMcpRuntime: async ({ sessionId, sessionGeneration, cwd: sessionCwd, toolRegistry, security: sessionSecurity }) => {
 				const parsedSessionId = parseRuntimeId("session", sessionId);
 				if (parsedSessionId === undefined) throw new Error("Host session identity is invalid for MCP composition");
 				const mcpPrincipalId = createRuntimeId("principal", `host-mcp-${runtimeDigest({ sessionId, workspace: scope.workspaceStorageKey }).digest.slice(0, 48)}`);
-				const executionEnv = security.createExecutionEnv({ sessionId, principalId: mcpPrincipalId, cwd: sessionCwd });
+				const executionEnv = sessionSecurity.createExecutionEnv({ sessionId, principalId: mcpPrincipalId, cwd: sessionCwd });
 				if (executionEnv.network === undefined) throw new Error("Host network Gateway is unavailable for MCP");
-				const managedProcess = processPort.toolClient(sessionId, 1, mcpPrincipalId);
+				const managedProcess = processPort.toolClient(sessionId, sessionGeneration, mcpPrincipalId);
 				const adapter = {
 					adapterId: "runledger.host.mcp",
 					generation: 1,
@@ -234,7 +250,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 							sessionId,
 							principalId: mcpPrincipalId,
 							cwd: sessionCwd,
-							authorize: (request) => security.authorizeResource(request),
+							authorize: (request) => sessionSecurity.authorizeResource(request),
 						}),
 					},
 					toolRegistry,

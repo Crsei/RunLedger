@@ -317,9 +317,8 @@ export const CONTRACT_INVENTORY = [
 		events: ["ResourceLifecycleEvent"],
 		ports: [
 			"RuntimeResourceCatalogPort",
+			"RuntimeResourceSnapshotPort",
 			"RuntimeResourceInvocationPort",
-			"RuntimeResourceEventSink",
-			"RuntimeResourceSnapshotProvider",
 		],
 		fixtures: [
 			"tests/runtime-contracts/resource-contracts/contracts.test.ts",

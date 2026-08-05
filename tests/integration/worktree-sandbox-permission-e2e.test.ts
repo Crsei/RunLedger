@@ -34,6 +34,7 @@ import { createProductionGitCommandPort } from "../../src/cli/runtime-host-produ
 import { createProductionHostSecurity, type HostSecurityCompositionOptions } from "../../src/cli/runtime-host-security.ts";
 import { JsonlRuntimeEventStore } from "../../src/storage/host/runtime-event-store.ts";
 import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../../src/worktree/host-binding.ts";
+import { WorktreeManager } from "../../src/worktree/manager.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../../src/worktree/registry.ts";
 import type { SandboxBackend, SandboxCapability, SandboxPrepareRequest } from "../../src/security/sandbox/types.ts";
 import { createDecisionReceipt, createResolutionState, digestOf } from "../../src/security/sandbox/common.ts";
@@ -249,19 +250,42 @@ describe("worktree → sandbox → permission 全链路 E2E", () => {
 			// 11. dirty worktree remove 默认拒绝
 			await writeFile(join(worktreePath, "uncommitted.txt"), "dirty\n");
 			const registry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout));
+			const manager = new WorktreeManager({
+				registry,
+				git: createProductionGitCommandPort(),
+				managedRoot: join(layout.tmp, "worktrees"),
+			});
 			const listing = await registry.list();
 			expect(listing.ok).toBe(true);
 			if (!listing.ok) return;
 			const record = listing.value.find((item) => item.label === "e2e");
 			expect(record).toBeDefined();
 			if (record === undefined) return;
-			const removed = await registry.state(record.id, "removed", Date.now());
-			expect(removed.ok).toBe(true);
+			const dirtyRemoval = await manager.remove(record.id);
+			expect(dirtyRemoval).toMatchObject({ ok: false, error: { code: "dirty_worktree" } });
+			const unapprovedForce = await manager.remove(record.id, { force: true });
+			expect(unapprovedForce).toMatchObject({ ok: false, error: { code: "approval_required" } });
 
-			// 12. preview/handoff 后显式清理（release binding + 删除 registry 记录）
+			// 12. preview/handoff 后先释放 binding，再以 exact force approval 真删 Git worktree。
 			const released = await bindingService.release("e2e cleanup");
 			expect(released.ok).toBe(true);
 			expect(auditEvents).toContain("released");
+			const removed = await manager.remove(record.id, {
+				force: true,
+				approval: { requestId: createRuntimeId("command", "wsp-e2e-force-remove") },
+			});
+			expect(removed).toMatchObject({ ok: true, value: { dirty: true, record: { state: "removed" } } });
+			await expect(access(worktreePath)).rejects.toThrow();
+			const afterRemoval = await manager.list();
+			expect(afterRemoval.ok).toBe(true);
+			if (!afterRemoval.ok) return;
+			expect(afterRemoval.value.find((item) => item.record.id === record.id)).toMatchObject({
+				record: { state: "removed" },
+				gitPresent: false,
+				stale: true,
+			});
+			const gitWorktrees = await runFile("git", ["worktree", "list", "--porcelain"], { cwd: source });
+			expect(gitWorktrees.stdout).not.toContain(worktreePath);
 		} finally {
 			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
 		}

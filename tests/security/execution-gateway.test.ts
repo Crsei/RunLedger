@@ -27,7 +27,7 @@ import {
 	type HostProcessFinalLeafRequest,
 } from "../../src/security/integration/runtime-gateway-adapter.ts";
 import type { FileSystemBrokerPort } from "../../src/security/policy-filesystem.ts";
-import { ApprovalCoordinator } from "../../src/security/permission/approval-coordinator.ts";
+import { ApprovalCoordinator, MemoryApprovalStateStore } from "../../src/security/permission/approval-coordinator.ts";
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
 import { LinuxBwrapBackend } from "../../src/security/sandbox/linux-bwrap.ts";
 import type { SandboxBackend, SandboxCapability, SandboxDecisionReceipt, SandboxLaunchPlan, SandboxPrepareRequest } from "../../src/security/sandbox/types.ts";
@@ -239,6 +239,51 @@ describe("ExecutionGateway", () => {
 
 		expect(result).toMatchObject({ ok: true, value: { authorization: { outcome: "allow", decisionSource: "approval" } } });
 		expect(prompts).toBe(1);
+	});
+
+	it("durably completes an allow-once authorization exactly once", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-completion-"));
+		roots.push(root);
+		const currentSnapshot = snapshot(root);
+		const base = authorizationRequest(root, currentSnapshot);
+		const request: AuthorizationRequest = {
+			...base,
+			toolName: "write",
+			argumentsDigest: runtimeDigest({ path: "created.txt" }),
+			requests: [{ kind: "filesystem", operation: "write", path: "created.txt" }],
+		};
+		const requestDigest = gatewayRequestDigest(request);
+		const binding = await constraint(request, currentSnapshot, requestDigest);
+		const store = new MemoryApprovalStateStore();
+		const events: string[] = [];
+		const gateway = new ExecutionGateway({
+			snapshot: currentSnapshot,
+			workspace: request.workspace,
+			filesystemBroker: broker,
+			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
+			permissionEngine: new PermissionEngine(),
+			approvalCoordinator: new ApprovalCoordinator({
+				prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }) },
+				store,
+				audit: {
+					requested: async () => { events.push("requested"); },
+					decided: async () => { events.push("decided"); },
+					revoked: async () => { events.push("revoked"); },
+				},
+			}),
+			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
+		});
+
+		const opened = await gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot });
+		expect(opened.ok).toBe(true);
+		if (!opened.ok || opened.value.authorization.approval === undefined) return;
+		const first = await opened.value.complete();
+		const second = await opened.value.complete();
+
+		expect(first).toMatchObject({ ok: true });
+		expect(second).toEqual(first);
+		expect(await store.read(opened.value.authorization.approval.approvalId)).toMatchObject({ decision: "revoked", decisionRevision: 2 });
+		expect(events).toEqual(["requested", "decided", "revoked"]);
 	});
 
 	it("rejects stale authorization or constraint digests before exposing fs or network ports", async () => {

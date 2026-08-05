@@ -2,14 +2,14 @@
 
 > 文档属性：本主题唯一权威计划与执行状态账本。
 >
-> 状态：独占行为切片已实现；ExecutionGateway 到 Host/生产工具的接线与真实 enforced E2E 仍未完成，领域状态仍只按本文件证据更新。
+> 状态：本地 M1–M5 production baseline 已接线并有自动化证据；M6 企业/远程扩展、跨平台承诺与最终文档同步仍未完成。
 >
 > 建立日期：2026-07-21；Runtime Host 适配校准：2026-08-04。
 >
 > 目标目录沿用需求中的 worktree-sandbox-permisson 拼写；代码、类型和正文统一使用 permission。
 >
 >
-> 本文同时记录当前独占行为实现证据；Host/CLI/TUI/ExecutionGateway 生产接线仍按后续阶段执行，不因本地 adapter 测试而提前宣称生产隔离。
+> 本文同时保留 2026-08-04 历史切片和 2026-08-06 当前校正；只有 production Host 接线、真实 backend/E2E 与最终门禁共同通过的条目才标记完成。
 >
 > Runtime 公共契约来源：[`../runtime/00-reference.md`](../runtime/00-reference.md) 与 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)。
 >
@@ -19,9 +19,9 @@
 
 本计划基于以下本地 checkout 的当前源码，而不是仅参考产品文档：
 
-### 0.0.1 2026-08-04 当前实现切片证据
+### 0.0.1 2026-08-04 历史实现切片证据
 
-以下为当前分支已提交独占目录切片的局部证据；复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现；不把 deterministic launch plan 当作真实 OS enforcement：
+以下记录 2026-08-04 当时的独占目录切片，不代表 2026-08-06 当前状态；复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现；不把 deterministic launch plan 当作真实 OS enforcement：
 
 - Permission/Approval/config/path 线已有 `src/security/{config,permission,integration,policy-filesystem}.ts` 与对应测试，覆盖 exact config、`deny > ask > allow`、approval、shell analyzer、canonical path boundary 和 runtime authorization adapter。
 - 新增 `src/security/execution-gateway.ts`、`policy-network.ts` 与 `integration/runtime-gateway-adapter.ts`：在授权、approval receipt、workspace/policy/constraint digest 和 sandbox final-leaf 条件全部通过后才暴露受限 fs/network port；缺失或过期决策 fail closed，仍不拥有 process 生命周期。
@@ -31,6 +31,14 @@
 - 本地验证证据：`npm run check`、`npm test`（Vitest 144 files / 746 tests，Bun TUI 5 files / 44 assertions）、`npm run build`、`git diff --check` 均通过；该提交已落在当前分支，尚未 push。
 
 仍未实现或未接线：ExecutionGateway 到生产工具的唯一执行面接线、所有 builtin tools 迁移、Host final-leaf/process facade 的真实调用、真实 Linux/macOS enforced E2E、CLI/TUI/approval reverse request、resume/worktree Runtime adapter、durable security/workspace events、persistent grants/GC/apply 与企业/远程能力。故不得把当前切片标为 M0–M6 或专项完成。
+
+### 0.0.2 2026-08-06 当前状态校正
+
+- CLI security override 已进入 resident Host compatibility digest；同一 scope 使用不同显式 override 会返回配置冲突，不会静默复用旧 Host policy（`runtime-host-production.test.ts`）。
+- Host 创建 managed worktree 后执行 `session.rebind_workspace`，以 Host-private effective cwd 重建同一 session、关闭旧 runtime 并推进 `sessionGeneration`；新 generation 同时传入 managed-process/MCP facade，client 使用新的 snapshot/fence（`runtime-host-service.test.ts`、`main.test.ts`）。
+- `--no-worktree` 通过 `workspaceBindingMode="disabled"` 禁止 persisted binding discovery，而不是只隐藏 CLI 创建动作（`runtime-host-binding.test.ts`）。
+- `allow-once` 在受控 filesystem/network effect 或 process final-leaf 完成后，以 CAS 写入 revision 2 `revoked` receipt 并追加 `permission.revoked`；撤销或审计不确定时 fail closed（`approval-coordinator.test.ts`、`execution-gateway.test.ts`、`runtime-host-security.test.ts`）。MCP/Hook 的 pre-invocation resource gate 不伪装成 effect completion。
+- 全链路 E2E 不再直接伪造 registry `removed` 状态：先验证 dirty deny 和无 approval force deny，随后先 release binding，再由 `WorktreeManager.remove()` 真实执行 `git worktree remove --force`，并检查 registry、磁盘路径与 Git registration（`worktree-sandbox-permission-e2e.test.ts`）。
 
 | 项目 | 基线 | 本计划主要读取的实现 |
 |---|---|---|
@@ -1109,46 +1117,47 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 
 ### M0：Runtime 契约可消费
 
-- [~] Runtime Workspace/Security 契约域的 schema、events、projections 与 ports 已冻结；当前 adapter 可消费既有 public contract，但 handoff 证据仍待串行集成。
+- [x] Runtime Workspace/Security 契约域的 schema、events、projections 与 ports 已冻结；Host baseline/hardening `1352bfc` 与 Security/Worktree production handoff `b1950bd`/`86d865a` 已记录并完成串行接线。
 - [x] 本计划 adapters 通过同一 contract imports/fixtures，没有重复 envelope/decision/receipt/event 类型。
 - [x] 文件所有权检查证明独占实现阶段未修改串行集成面。
 
 ### M1：可审计 permission
 
-- [ ] production 默认选择真实 restrictive profile；builtin-none 只能显式选择并如实记录 not enforced。
+- [x] production 默认选择真实 restrictive profile（workspace-write + on-request + network deny，resolver.ts 默认）；builtin-none 只能显式选择并如实记录 not enforced。
 - [x] deny/ask/allow 确定性解析。
-- [x] allow-once/headless decision 与 cancellation/timeout 语义已由 coordinator 覆盖；TUI reverse request 尚未接线。
-- [ ] `permission.requested/decided/expired/revoked` 按 Runtime schema进入 Host-owned canonical event writer。
+- [x] allow-once/headless decision 与 cancellation/timeout 语义已由 coordinator 覆盖；TUI reverse request 已接线（tests/tui/approval-reverse.test.ts）；durable receipt replay 覆盖 response-loss（approval-coordinator.test.ts）。
+- [x] `permission.requested/decided/expired/revoked` 按 Runtime schema进入 Host-owned canonical event writer；`allow-once` 在 governed effect completion 后 durable CAS 撤销，不只声明 event schema（approval-coordinator/execution-gateway/runtime-host-security tests）。
 
 ### M2：唯一执行面
 
-- [ ] 所有内置工具经 ExecutionGateway。
+- [x] 所有内置工具经 ExecutionGateway（tools/local-defaults.ts 唯一本地默认构造点；execution-boundaries 检查器把其他工具文件的 localExecutionEnv 调用标为旁路）。
 - [x] path canonicalization 与 metadata protection。
-- [~] fetch 经 PolicyNetworkClient、final-leaf decision/receipt 已实现；background process、private output/Artifact 仍由 Host 串行接线负责。
+- [x] fetch 经 PolicyNetworkClient、final-leaf decision/receipt 已实现；background process/private output/Artifact 由 Host 拥有（Runtime 05 串行接线完成）。
 - [x] security/worktree 不存在第二 ManagedProcessRegistry、PTY/backend output/recovery store。
 
 ### M3：session worktree
 
 - [x] clean Git worktree create/list/show/remove dry-run 的受控 manager 行为。
 - [x] registry + lock + replay。
-- [~] PersistedWorkspaceBinding 的独立 Runtime adapter 与 resume 尚未完成；当前已覆盖 root-relative worktree record/lease。
+- [x] PersistedWorkspaceBinding 的独立 Runtime adapter 与 resume 已完成（runtime-host-worktree-replay.test.ts + worktree-sandbox-permission-e2e 冷恢复验证）；root-relative worktree record/lease。
 - [x] source repo 默认不被 agent 修改的 Git args/managed-root 边界。
 
 ### M4：真实 sandbox
 
-- [~] Linux bwrap launch plan/final-leaf validation 已实现；真实 enforced process E2E 尚未通过。
-- [x] macOS Seatbelt capability 明确。
+- [x] Linux bwrap launch plan/final-leaf validation 已实现；真实 enforced process E2E 通过（tests/security/sandbox-linux-enforced.test.ts 3 tests，bwrap 真实拒绝未绑定 host path / 临时写留在 sandbox / 网络 deny 删除默认路由）。
+- [x] macOS Seatbelt capability 明确（unavailable/未验证诚实报告）。
 - [x] Windows external/unavailable 诚实报告。
 - [x] restrictive backend 缺失 fail closed。
 
 ### M5：产品闭环
 
-- [ ] Host Control Plane + CLI flags/help,client 无 direct controller fallback。
-- [ ] TUI remote prompt/status/snapshot,driver/observer/reconnect fencing 完整。
-- [ ] security/worktree/session 全链路 E2E。
-- [ ] Runtime live/replay projection 与真实 adapter receipts 一致。
-- [ ] durable Host command intent/receipt、response-loss、uncertain 与 subscription resync 有联合证据。
-- [ ] 文档、AGENTS.md、README 与实际状态同步。
+- [x] Host Control Plane + CLI flags/help,client 无 direct controller fallback；security override 进入 Host compatibility digest，冲突 fail closed；`--no-worktree` 明确禁用 persisted binding discovery。
+- [x] TUI remote prompt/status/snapshot,driver/observer/reconnect fencing 完整（approval-reverse、observer_mutation_forbidden、disconnect/reconnect 测试）。
+- [x] managed worktree 创建后通过 `session.rebind_workspace` 重建 Host session 并推进 generation；client 不继续使用 source cwd 的旧 runtime。
+- [x] security/worktree/session 全链路 E2E（真实 Git + approval/revocation + sandbox receipts + event replay + resume；dirty deny 后 release binding，并由 WorktreeManager 真正删除 Git worktree）。
+- [x] Runtime live/replay projection 与真实 adapter receipts 一致（canonical event store hash-chain replay 验证）。
+- [x] durable Host command intent/receipt、response-loss、uncertain 与 subscription resync 有联合证据（approval receipt replay + multi-client 测试）。
+- [ ] 文档、AGENTS.md、README 与实际状态同步（本计划剩余项；待本 slice 更新后复检）。
 
 ### M6：下游与企业扩展
 
@@ -1160,23 +1169,23 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 只有同时满足以下条件，才能把本计划标记 completed：
 
 - [ ] M0–M6 均有对应 commit、测试和联合门禁证据；只完成本地 M1–M5 时只能标记 local baseline complete。
-- [ ] Worktree、permission、approval、sandbox 在类型、配置、UI 和文档中没有混用。
-- [ ] 模型可调用的生产工具不存在 raw fs/spawn/fetch 旁路。
-- [ ] process/PTY/output/recovery 生命周期只由 Runtime Host 拥有,本计划只提供真实 restrictive decision/receipt 与受限 adapters。
-- [ ] 默认配置在交互编码中是 workspace-write + on-request + network deny。
-- [ ] approvalPolicy=never 不会扩大权限。
-- [ ] restrictive sandbox unavailable 时不静默降级。
-- [ ] session 的 RepositoryRef/sourceSubdir/WorkspaceRef/worktreeId/baseCommit 可审计并可恢复；绝对 locator 只在 private store/进程内。
-- [ ] worktree 删除只作用于验证过的 managed target，dirty/active 默认拒绝。
-- [ ] workspace/permission/sandbox 事件符合 Runtime schema，并可从 Host-owned canonical records 顺序重放为一致 projection。
-- [ ] 标准 CLI/TUI 只通过 authenticated Host；observer 不能 mutation,所有 mutation 绑定 Host/session generation、driver revision、expected domain revision 与 durable command receipt。
-- [ ] security/worktree/settings/registry/grants/staging 只写 canonical `runledgerHome`,不写 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir。
-- [ ] Runtime contract 与本计划实现之间只有单向 import 和 port adapter，没有重复公共类型或反向依赖。
-- [ ] 共享 runtime/session/storage/CLI/TUI 文件只在记录过的串行集成窗口修改。
-- [ ] 安全配置解析失败不会回退到空配置、builtin-none 或 client-local policy。
-- [ ] Linux 强隔离 E2E 通过；其他平台只声明真实验证过的能力。
-- [ ] npm run check、npm test、npm run build、git diff --check 全绿。
-- [ ] README、AGENTS.md、CLI help 与实现一致。
+- [x] Worktree、permission、approval、sandbox 在类型、配置、UI 和文档中没有混用。
+- [x] 模型可调用的生产工具不存在 raw fs/spawn/fetch 旁路（execution-boundaries 检查器强制）。
+- [x] process/PTY/output/recovery 生命周期只由 Runtime Host 拥有,本计划只提供真实 restrictive decision/receipt 与受限 adapters。
+- [x] 默认配置在交互编码中是 workspace-write + on-request + network deny。
+- [x] approvalPolicy=never 不会扩大权限（headless-workspace 仍 workspace-write + network deny）。
+- [x] restrictive sandbox unavailable 时不静默降级（fail closed）。
+- [x] session 的 RepositoryRef/sourceSubdir/WorkspaceRef/worktreeId/baseCommit 可审计并可恢复；绝对 locator 只在 private store/进程内。
+- [x] worktree 删除只作用于验证过的 managed target；dirty 默认拒绝，force 需要 exact approval，active binding 在物理删除前先 release。
+- [x] workspace/permission/sandbox 事件符合 Runtime schema，并可从 Host-owned canonical records 顺序重放为一致 projection（hash-chain replay 验证）。
+- [x] 标准 CLI/TUI 只通过 authenticated Host；observer 不能 mutation,所有 mutation 绑定 Host/session generation、driver revision、expected domain revision 与 durable command receipt。
+- [x] security/worktree/settings/registry/grants/staging 只写 canonical `runledgerHome`,不写 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir。
+- [x] Runtime contract 与本计划实现之间只有单向 import 和 port adapter，没有重复公共类型或反向依赖。
+- [x] 共享 runtime/session/storage/CLI/TUI 文件只在记录过的串行集成窗口修改。
+- [x] 安全配置解析失败不会回退到空配置、builtin-none 或 client-local policy。
+- [x] Linux 强隔离 E2E 通过（bwrap enforced 3 tests）；其他平台只声明真实验证过的能力。
+- [x] npm run check、npm test、npm run build、git diff --check 全绿。
+- [ ] README、AGENTS.md、CLI help 与实现一致（文档同步剩余项）。
 
 ## 11. 明确不接受的捷径
 

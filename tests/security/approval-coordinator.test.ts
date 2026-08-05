@@ -91,6 +91,34 @@ function validRevalidation(value: AuthorizationRequest) {
 }
 
 describe("ApprovalCoordinator", () => {
+	it("durably revokes an allow-once receipt after the authorized effect completes", async () => {
+		const events: string[] = [];
+		const value = request();
+		const store = new MemoryApprovalStateStore();
+		const coordinator = new ApprovalCoordinator({
+			prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") }) },
+			store,
+			audit: {
+				requested: async () => { events.push("requested"); },
+				decided: async () => { events.push("decided"); },
+				revoked: async () => { events.push("revoked"); },
+			},
+			clock: () => NOW,
+		});
+		const authorized = await coordinator.authorize(value, evaluation(value), () => validRevalidation(value));
+		expect(authorized).toMatchObject({ ok: true, value: { approval: { decision: "allowed", decisionRevision: 1 } } });
+		if (!authorized.ok || authorized.value.approval === undefined) return;
+		const candidate = coordinator as ApprovalCoordinator & {
+			consumeAllowOnce?: (request: AuthorizationRequest, receipt: typeof authorized.value.approval) => Promise<unknown>;
+		};
+		expect(candidate.consumeAllowOnce).toBeTypeOf("function");
+		const consumed = await candidate.consumeAllowOnce!(value, authorized.value.approval);
+
+		expect(consumed).toMatchObject({ ok: true, value: { decision: "revoked", decisionRevision: 2 } });
+		expect(await store.read(authorized.value.approval.approvalId)).toMatchObject({ decision: "revoked", decisionRevision: 2 });
+		expect(events).toEqual(["requested", "decided", "revoked"]);
+	});
+
 	it("coalesces duplicate prompts and returns a Runtime approval receipt", async () => {
 		let calls = 0;
 		const value = request();
@@ -119,6 +147,7 @@ describe("ApprovalCoordinator", () => {
 		const audit: ApprovalAuditPort = {
 			requested: async () => { events.push("requested"); },
 			decided: async () => { events.push("decided"); },
+			revoked: async () => { events.push("revoked"); },
 		};
 		const value = request();
 		const coordinator = new ApprovalCoordinator({

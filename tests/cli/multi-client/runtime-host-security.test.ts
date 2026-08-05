@@ -252,6 +252,31 @@ describe("production Host Security/ExecutionGateway composition", () => {
 		await expect(env.fs.writeFile(join(root, "..", "outside.txt"), "must not write")).rejects.toThrow(/allowed roots|protected|path_escape/iu);
 	});
 
+	it("revokes an allow-once receipt after a governed filesystem effect settles", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-revocation-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const events: string[] = [];
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: availableSandboxBackend(),
+			permissionPrompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "host-security-revocation") }) },
+			runtimeEventWriter: {
+				append: async (input) => {
+					events.push(input.type);
+					return {} as never;
+				},
+			},
+		});
+		const env = security.createExecutionEnv({ toolCallId: createRuntimeId("toolCall", "host-security-revocation") });
+
+		await env.fs.writeFile(join(root, "created.txt"), "governed");
+
+		expect(events).toEqual(["permission.requested", "permission.decided", "permission.revoked"]);
+	});
+
 	it("does not expose a raw network fallback when the canonical policy denies network", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-network-"));
 		roots.push(root);

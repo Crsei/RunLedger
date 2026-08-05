@@ -44,6 +44,8 @@ export type HostSessionOpenMode = "create" | "open" | "continue_recent" | "resum
 
 export interface HostSessionOpenRequest {
 	readonly mode: HostSessionOpenMode;
+	/** Host-internal generation for a rebuilt resident session; never accepted from client frames. */
+	readonly sessionGeneration?: number;
 	readonly sessionId?: string;
 	readonly sessionPath?: string;
 	readonly cwd?: string;
@@ -197,6 +199,8 @@ export interface ResidentRuntimeHostOptions {
 	readonly hostRuntimeId?: RuntimeInstanceId;
 	readonly hostGeneration?: number;
 	readonly createSession: (input: HostSessionOpenRequest) => Promise<HostSessionRuntime>;
+	/** Host-private resolver used after a workspace binding mutation. */
+	readonly resolveWorkspaceCwd?: (sessionId: string) => Promise<string>;
 	readonly processPort?: HostProcessPort;
 	readonly domainPorts?: readonly HostRuntimeDomainPort[];
 	/** The only Runtime event writer used by Host domain adapters. */
@@ -212,9 +216,9 @@ export interface ResidentRuntimeHostOptions {
 }
 
 interface SessionState {
-	readonly runtime: HostSessionRuntime;
-	readonly mcp?: HostMcpRuntime;
-	readonly cwd?: string;
+	runtime: HostSessionRuntime;
+	mcp?: HostMcpRuntime;
+	cwd?: string;
 	driver: DriverState;
 	sequence: number;
 	history: HostSubscriptionEvent[];
@@ -449,7 +453,8 @@ export class ResidentRuntimeHost {
 		if (!operation) return this.response(frame, { ok: false, code: "operation_required" });
 		try {
 			switch (operation) {
-				case "session.open": return this.openSession(frame);
+			case "session.open": return this.openSession(frame);
+				case "session.rebind_workspace": return this.rebindSessionWorkspace(principal, frame);
 				case "session.snapshot": return this.sessionSnapshot(frame);
 				case "session.subscribe": return this.subscribe(principal, frame);
 				case "session.claim_driver": return this.claimSessionDriver(principal, frame);
@@ -561,6 +566,56 @@ export class ResidentRuntimeHost {
 	private sessionState(frame: HostFrameEnvelope): SessionState | undefined {
 		const sessionId = stringValue(frame.body.sessionId);
 		return sessionId === undefined ? undefined : this.sessions.get(sessionId);
+	}
+
+	private async rebindSessionWorkspace(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
+		const state = this.sessionState(frame);
+		if (!state) return this.response(frame, { ok: false, code: "session_not_found" });
+		const authorization = this.authorizeMutation(principal, frame, state);
+		if (!authorization.ok) return this.response(frame, { ok: false, code: authorization.code });
+		const resolveWorkspaceCwd = this.options.resolveWorkspaceCwd;
+		if (resolveWorkspaceCwd === undefined) return this.response(frame, { ok: false, code: "workspace_rebind_unavailable" });
+		return this.serialSession(state, async () => {
+			await state.runtime.controller.waitForIdle();
+			const sessionId = state.runtime.controller.sessionId;
+			const cwd = await resolveWorkspaceCwd(sessionId);
+			const sessionGeneration = state.driver.sessionGeneration + 1;
+			if (cwd.length === 0) return this.response(frame, { ok: false, code: "workspace_binding_unavailable" });
+			state.eventUnsubscribe();
+			state.runtime.controller.dispose();
+			await state.runtime.close();
+			let runtime: HostSessionRuntime;
+			try {
+				runtime = await this.options.createSession({ mode: "open", sessionId, cwd, sessionGeneration });
+			} catch (error) {
+				this.sessions.delete(sessionId);
+				throw error;
+			}
+			if (runtime.controller.sessionId !== sessionId) {
+				runtime.controller.dispose();
+				await runtime.close().catch(() => undefined);
+				this.sessions.delete(sessionId);
+				throw new Error("workspace rebind changed the session identity");
+			}
+			state.runtime = runtime;
+			state.mcp = runtime.mcp;
+			state.cwd = cwd;
+			state.driver = createDriverState({
+				hostGeneration: this.generation,
+				sessionGeneration,
+			});
+			state.eventUnsubscribe = runtime.controller.subscribe((event) => this.publishAgentEvent(sessionId, event));
+			return this.response(frame, {
+				ok: true,
+				sessionId,
+				snapshot: snapshotOf(runtime.controller),
+				hostGeneration: state.driver.hostGeneration,
+				sessionGeneration: state.driver.sessionGeneration,
+				driverRevision: state.driver.driverRevision,
+				eventCursor: state.sequence,
+				cwdDigest: runtimeDigest(cwd),
+			});
+		});
 	}
 
 	private sessionSnapshot(frame: HostFrameEnvelope): HostFrameEnvelope {

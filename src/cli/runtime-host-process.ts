@@ -91,6 +91,7 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 	private readonly completionQueue: JsonlProcessCompletionQueue;
 	private readonly completionAgents = new Map<string, CompletionAgentRegistration>();
 	private readonly processTraceRecorders = new Map<string, Promise<RuntimeTraceRecorder | undefined>>();
+	private readonly sessionSecurity = new Map<string, ProductionHostSecurity>();
 
 	public constructor(options: ProductionManagedProcessOptions) {
 		this.options = options;
@@ -170,6 +171,14 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 		return registration.remove;
 	}
 
+	/** Session rebind 后只允许该 session 使用新建的 workspace-bound Security。 */
+	public registerSessionSecurity(sessionId: string, security: ProductionHostSecurity): () => void {
+		this.sessionSecurity.set(sessionId, security);
+		return () => {
+			if (this.sessionSecurity.get(sessionId) === security) this.sessionSecurity.delete(sessionId);
+		};
+	}
+
 	public async reconcileCompletions(sessionId: string): Promise<void> {
 		const registration = this.completionAgents.get(sessionId);
 		if (!registration) return;
@@ -181,7 +190,8 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 	}
 
 	public async create(input: HostProcessCreateInput & { readonly commandId?: string }): Promise<ProductionProcessCreateResult> {
-		if (this.options.security === undefined && this.options.allowTestOnlyUnrestrictedExecution !== true) {
+		const security = this.sessionSecurity.get(input.sessionId) ?? this.options.security;
+		if (security === undefined && this.options.allowTestOnlyUnrestrictedExecution !== true) {
 			return { ok: false, code: "execution_constraint_unavailable" };
 		}
 		if (!isAbsolute(input.cwd)) return { ok: false, code: "cwd_invalid" };
@@ -213,9 +223,9 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 			requestDigest: commandDigest,
 			...(input.stdin === undefined ? {} : { stdin: input.stdin }),
 		};
-		const prepared = this.options.security === undefined
+		const prepared = security === undefined
 			? undefined
-			: await this.options.security.prepareProcess(securityRequest);
+			: await security.prepareProcess(securityRequest);
 		if (prepared && !prepared.ok) return mapSecurityCreateFailure(prepared.error.code);
 		const managedRequestDigest = prepared?.value.constraintInput.requestDigest ?? commandDigest;
 		this.commands.set(correlationId, { command: input.command, cwd: input.cwd });
@@ -246,13 +256,13 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 			policyDigest: runtimeDigest({ source: "runledger-production", mode: this.options.recordingMode ?? "off" }),
 			modes: { permission: "none", approval: "none", sandbox: "none", gateway: "none", containment },
 		};
-		const spawnOptions = prepared?.value === undefined || this.options.security === undefined
+		const spawnOptions = prepared?.value === undefined || security === undefined
 			? undefined
 			: {
 				constraintSnapshot: prepared.value.constraintSnapshot,
 				launchPlan: prepared.value.sandboxPlan === undefined ? undefined : toBackendLaunchPlan(prepared.value.sandboxPlan),
 				beforeSpawn: async () => {
-					const finalLeaf = await this.options.security!.validateProcessFinalLeaf(prepared.value);
+					const finalLeaf = await security.validateProcessFinalLeaf(prepared.value);
 					if (!finalLeaf.ok) throw new Error(`${finalLeaf.error.code}: ${finalLeaf.error.message}`);
 				},
 			};

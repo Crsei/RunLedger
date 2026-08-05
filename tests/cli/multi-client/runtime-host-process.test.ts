@@ -11,6 +11,8 @@ import { MemoryLedger } from "../../../src/runtime/ledger/memory-ledger.ts";
 import { createLocalTraceRecorderFactory } from "../../../src/runtime/trace/composition.ts";
 import type { ProcessOutputArtifactStore } from "../../../src/runtime/process/output-artifact.ts";
 import type { ManagedForegroundBashOperations } from "../../../src/runtime/tools/bash.ts";
+import { createProductionHostSecurity } from "../../../src/cli/runtime-host-security.ts";
+import { JsonlRuntimeEventStore } from "../../../src/storage/host/runtime-event-store.ts";
 
 function scope(): RuntimeHostScope {
 	const digest = (seed: string) => runtimeDigest(seed);
@@ -38,6 +40,53 @@ function testPort(options: ConstructorParameters<typeof ProductionManagedProcess
 }
 
 describe("production Host managed process port", () => {
+	it("uses the security composition registered for the rebound session", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-session-security-"));
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const hostScope = { ...scope(), workspaceStorageKey: "ws-" + "a".repeat(64) };
+		const sessionId = createRuntimeId("session", "session-security");
+		try {
+			const security = await createProductionHostSecurity({
+				layout,
+				scope: hostScope,
+				cwd: root,
+				runtimeEventWriter: new JsonlRuntimeEventStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey }),
+			});
+			const port = new ProductionManagedProcessPort({ layout, scope: hostScope, hostGeneration: 1 });
+			const candidate = port as ProductionManagedProcessPort & {
+				registerSessionSecurity?: (sessionId: string, security: typeof security) => () => void;
+			};
+			expect(candidate.registerSessionSecurity).toBeTypeOf("function");
+			const remove = candidate.registerSessionSecurity!(sessionId, security);
+			const created = await port.create({
+				sessionId,
+				sessionGeneration: 2,
+				commandId: "session-security-command",
+				command: "printf governed",
+				cwd: root,
+				timeoutMs: 5_000,
+				backend: "pipe",
+				executionMode: "foreground",
+				principalId: "principal_session-security",
+			});
+			expect(created.ok).toBe(true);
+			remove();
+			await expect(port.create({
+				sessionId,
+				sessionGeneration: 2,
+				commandId: "session-security-after-close",
+				command: "printf must-not-run",
+				cwd: root,
+				timeoutMs: 5_000,
+				backend: "pipe",
+				executionMode: "foreground",
+				principalId: "principal_session-security",
+			})).resolves.toMatchObject({ ok: false, code: "execution_constraint_unavailable" });
+		} finally {
+			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+		}
+	});
+
 	it("fails closed when production composition has no Security/ExecutionGateway", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-no-security-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");

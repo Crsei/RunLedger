@@ -52,6 +52,12 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly processPort?: ProductionManagedProcessPort;
 	readonly toolResultOverflowStore?: ToolResultOverflowStore;
 	readonly security?: ProductionHostSecurity;
+	/** Rebuilds Security against the session's current canonical workspace binding. */
+	readonly createSecurity?: (input: {
+		readonly sessionId: string;
+		readonly cwd: string;
+		readonly workspaceBinding?: PersistedWorkspaceBinding;
+	}) => Promise<ProductionHostSecurity>;
 	/** Resident Host-owned extension snapshot fence for this session. */
 	readonly extensionManager?: ExtensionTurnLifecycleManager;
 	/** 渐进披露 Skill loader（trust + digest 复核），注入 stdlib Skill 工具。 */
@@ -78,6 +84,7 @@ export interface ProductionHostSessionFactoryOptions {
 		readonly sessionGeneration: number;
 		readonly cwd: string;
 		readonly toolRegistry: ToolRegistry;
+		readonly security: ProductionHostSecurity;
 	}) => Promise<HostMcpRuntime>;
 	/** Canonical config is loaded by the resident Host, never by the client. */
 	readonly mcpConfigs?: readonly McpServerConfig[];
@@ -153,23 +160,45 @@ export function validateHostWorkspaceBinding(input: {
 	});
 }
 
+export function resolveProductionSessionWorkspace(input: {
+	readonly requestedCwd?: string;
+	readonly defaultCwd: string;
+	readonly binding?: PersistedWorkspaceBinding;
+}): { readonly cwd: string; readonly binding?: PersistedWorkspaceBinding } {
+	if (input.binding === undefined) return { cwd: resolve(input.requestedCwd ?? input.defaultCwd) };
+	const cwd = resolve(input.binding.effectiveCwd);
+	const validation = validateHostWorkspaceBinding({ binding: input.binding, cwd });
+	if (!validation.ok) throw new Error(`${validation.error.code}: ${validation.error.message}`);
+	return { cwd, binding: validation.value };
+}
+
 export function createProductionHostSessionFactory(options: ProductionHostSessionFactoryOptions): (input: HostSessionOpenRequest) => Promise<HostSessionRuntime> {
 	return async (input) => {
-		const cwd = input.cwd ?? options.defaultCwd;
-		if (options.workspaceBinding !== undefined || options.workspaceBindingStore !== undefined) {
-			const binding = options.workspaceBinding ?? await options.workspaceBindingStore?.read();
-			if (binding !== undefined) {
-				const validation = validateHostWorkspaceBinding({ binding, cwd });
-				if (!validation.ok) throw new Error(`${validation.error.code}: ${validation.error.message}`);
-			}
-		}
+		const sessionGeneration = input.sessionGeneration ?? 1;
+		if (!Number.isSafeInteger(sessionGeneration) || sessionGeneration < 1) throw new Error("Host session generation is invalid");
+		const storedBinding = options.workspaceBinding ?? await options.workspaceBindingStore?.read();
+		const workspace = resolveProductionSessionWorkspace({
+			...(input.cwd === undefined ? {} : { requestedCwd: input.cwd }),
+			defaultCwd: options.defaultCwd,
+			...(storedBinding === undefined ? {} : { binding: storedBinding }),
+		});
+		const cwd = workspace.cwd;
 		const manager = await selectSessionManager(options.layout, cwd, input);
 		let mcp: HostMcpRuntime | undefined;
+		let removeSessionSecurity: (() => void) | undefined;
 		try {
 			await manager.acquireLock();
 			const replay = await replaySession(manager.ledger());
-			const managedProcess = options.processPort?.toolClient(manager.sessionId(), 1, "host-agent");
-			const executionEnv = options.security?.createExecutionEnv({
+			const security = options.createSecurity === undefined
+				? options.security
+				: await options.createSecurity({
+					sessionId: manager.sessionId(),
+					cwd,
+					...(workspace.binding === undefined ? {} : { workspaceBinding: workspace.binding }),
+				});
+			if (security !== undefined) removeSessionSecurity = options.processPort?.registerSessionSecurity(manager.sessionId(), security);
+			const managedProcess = options.processPort?.toolClient(manager.sessionId(), sessionGeneration, "host-agent");
+			const executionEnv = security?.createExecutionEnv({
 				sessionId: manager.sessionId(),
 				principalId: "principal_host-agent",
 				cwd,
@@ -193,20 +222,21 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				}
 			}
 			const authorizationPolicy = options.planStateProvider === undefined
-				? options.security?.toolAuthorizationPolicy
+				? security?.toolAuthorizationPolicy
 				: new HostGovernedToolAuthorizationPolicy({
-					basePolicy: options.security?.toolAuthorizationPolicy,
+					basePolicy: security?.toolAuthorizationPolicy,
 					planState: () => options.planStateProvider?.(manager.sessionId()),
 				});
 			if (options.createMcpRuntime !== undefined) {
-				mcp = await options.createMcpRuntime({ sessionId: manager.sessionId(), sessionGeneration: 1, cwd, toolRegistry: tools });
+				if (security === undefined) throw new Error("Host MCP requires session Security");
+				mcp = await options.createMcpRuntime({ sessionId: manager.sessionId(), sessionGeneration, cwd, toolRegistry: tools, security });
 				const started = await mcp.start(options.mcpConfigs ?? []);
 				if (!started.ok) throw new Error(`required MCP server failed: ${started.requiredFailures.map((failure) => failure.serverId).join(",")}`);
 			}
 			let extensionLifecycle: ExtensionTurnLifecycle | undefined;
 			let extensionHookRuntime: HostHookRuntime | undefined;
 			if (options.extensionManager !== undefined) {
-				if (managedProcess === undefined || options.security === undefined || options.extensionIdentity === undefined || options.extensionAdapter === undefined) {
+				if (managedProcess === undefined || security === undefined || options.extensionIdentity === undefined || options.extensionAdapter === undefined) {
 					throw new Error("Host extension hooks require the resident managed process, Security Gateway, identity, and adapter");
 				}
 				extensionHookRuntime = createProductionHostHookRuntime({
@@ -214,7 +244,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 					cwd,
 					managedProcess,
 					extensionManager: options.extensionManager,
-					security: options.security,
+					security,
 					identity: options.extensionIdentity,
 					adapter: options.extensionAdapter,
 				});
@@ -273,11 +303,13 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 					removeExtensionLifecycle?.();
 					removeCompletion?.();
 					await mcp?.close().catch(() => undefined);
+					removeSessionSecurity?.();
 					await manager.closeAll();
 				},
 			};
 		} catch (error) {
 			await mcp?.close().catch(() => undefined);
+			removeSessionSecurity?.();
 			await manager.closeAll().catch(() => undefined);
 			throw error;
 		}

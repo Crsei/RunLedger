@@ -95,6 +95,78 @@ function fakeSession(sessionId = createRuntimeId("session", "service")): HostSes
 }
 
 describe("production Resident Runtime Host service", () => {
+	it("rebuilds the same session at the Host-owned worktree cwd and advances the session fence", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-worktree-rebind-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const sessionId = createRuntimeId("session", "worktree-rebind");
+		const opens: Array<{ readonly mode: string; readonly sessionId?: string; readonly cwd?: string; readonly sessionGeneration?: number }> = [];
+		let closed = 0;
+		const host = new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			attestor: { attest: async () => ({
+				principalId: createRuntimeId("principal", "worktree-rebind"),
+				connectionId: createRuntimeId("connection", "worktree-rebind"),
+				attestationDigest: digest("worktree-rebind"),
+			}) },
+			resolveWorkspaceCwd: async () => "/managed/worktree",
+			createSession: async (input) => {
+				opens.push(input);
+				const runtime = fakeSession(sessionId);
+				return { ...runtime, close: async () => { closed += 1; } };
+			},
+		});
+		try {
+			await host.start();
+			const client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "rebind-init", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const opened = await client.request({
+				frameId: "rebind-open",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: { operation: "session.open", commandId: "rebind-open-command", mode: "create", cwd: "/source" },
+			});
+			const claimed = await client.request({
+				frameId: "rebind-claim",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: {
+					operation: "session.claim_driver",
+					commandId: "rebind-claim-command",
+					sessionId,
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: opened.body.driverRevision,
+				},
+			});
+			const rebound = await client.request({
+				frameId: "rebind-worktree",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: {
+					operation: "session.rebind_workspace",
+					commandId: "rebind-worktree-command",
+					sessionId,
+					expectedHostGeneration: 1,
+					expectedSessionGeneration: 1,
+					expectedDriverRevision: claimed.body.driverRevision,
+				},
+			});
+
+			expect(rebound.body).toMatchObject({ ok: true, sessionId, sessionGeneration: 2, cwdDigest: runtimeDigest("/managed/worktree") });
+			expect(opens).toEqual([
+				expect.objectContaining({ mode: "create", cwd: "/source" }),
+				expect.objectContaining({ mode: "open", sessionId, cwd: "/managed/worktree", sessionGeneration: 2 }),
+			]);
+			expect(closed).toBe(1);
+			await client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("maps a reverse approval response to the attested driver principal", async () => {
 		let requestBody: Record<string, unknown> | undefined;
 		const prompter = new HostReversePermissionPrompter(() => ({

@@ -49,6 +49,10 @@ export interface LocalRuntimeHostScopeOptions {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
+	/** 显式 CLI security 层属于 resident Host 固定组合，必须参与兼容性 fence。 */
+	readonly securityOverride?: SecurityConfigDocument;
+	/** `--no-worktree` disables canonical binding discovery for this Host scope. */
+	readonly workspaceBindingMode?: "auto" | "disabled";
 	/** Cold-replayed private binding identity, when the cwd is a managed worktree. */
 	readonly workspaceBinding?: PersistedWorkspaceBinding;
 	/** Discovery key is checked against the identity-derived key before use. */
@@ -74,7 +78,11 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 		workspaceStorageKey: workspaceKey,
 		protocolVersion: HOST_PROTOCOL_VERSION,
 		hostBuildDigest: runtimeDigest({ product: "runledger", hostProtocol: HOST_PROTOCOL_VERSION }),
-		compositionDigest: runtimeDigest({ kind: "production", processBackend: "governed" }),
+		compositionDigest: runtimeDigest({
+			kind: "production",
+			processBackend: "governed",
+			securityOverride: options.securityOverride ?? null,
+		}),
 		settingsDigest: runtimeDigest(options.settings),
 		modelCatalogDigest: runtimeDigest({ catalog: "builtin" }),
 		tracePolicyDigest,
@@ -166,7 +174,9 @@ export interface ResolvedLocalRuntimeHostScope {
 export async function resolveLocalRuntimeHostScope(
 	options: LocalRuntimeHostScopeOptions,
 ): Promise<ResolvedLocalRuntimeHostScope> {
-	const discovered = await discoverPersistedWorkspaceBinding({ layout: options.layout, cwd: options.cwd });
+	const discovered = options.workspaceBindingMode === "disabled"
+		? undefined
+		: await discoverPersistedWorkspaceBinding({ layout: options.layout, cwd: options.cwd });
 	const scope = createLocalRuntimeHostScope({
 		...options,
 		...(discovered === undefined ? {} : { workspaceBinding: discovered.binding, workspaceStorageKey: discovered.workspaceStorageKey }),
@@ -249,6 +259,7 @@ export interface ConnectProductionRuntimeHostOptions {
 	readonly settings: ProjectSettings;
 	/** CLI 显式 security override，作为最高优先级 `cli` 层注入 Host。 */
 	readonly securityOverride?: SecurityConfigDocument;
+	readonly workspaceBindingMode?: "auto" | "disabled";
 	readonly entryPath?: string;
 	readonly wait?: { readonly timeoutMs?: number; readonly intervalMs?: number };
 	readonly peerCredentialHelperPath?: string;
@@ -260,7 +271,13 @@ export async function connectProductionRuntimeHost(
 	options: ConnectProductionRuntimeHostOptions,
 ): Promise<ProductionRuntimeHostConnection> {
 	if (process.platform !== "linux") throw new Error("production local Host transport is unavailable on this platform");
-	const { scope } = await resolveLocalRuntimeHostScope({ layout: options.layout, cwd: options.cwd, settings: options.settings });
+	const { scope } = await resolveLocalRuntimeHostScope({
+		layout: options.layout,
+		cwd: options.cwd,
+		settings: options.settings,
+		...(options.securityOverride === undefined ? {} : { securityOverride: options.securityOverride }),
+		...(options.workspaceBindingMode === undefined ? {} : { workspaceBindingMode: options.workspaceBindingMode }),
+	});
 	const endpointStore = new EndpointStore(options.layout, scope.workspaceStorageKey);
 	const socketPath = productionHostSocketPath(options.layout, scope.workspaceStorageKey);
 	const helperPath = options.peerCredentialHelperPath ?? defaultLinuxPeerCredentialHelperPath();

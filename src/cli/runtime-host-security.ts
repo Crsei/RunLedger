@@ -122,6 +122,7 @@ export interface PreparedHostProcessSecurity {
 	readonly authorization: ExecutionGatewayContext["authorization"];
 	readonly authorizationDigest: RuntimeDigest;
 	readonly requestDigest: RuntimeDigest;
+	readonly completeAuthorization: ExecutionGatewayContext["complete"];
 }
 
 export interface HostProcessFinalLeafInput extends PreparedHostProcessSecurity {
@@ -264,6 +265,7 @@ export async function createProductionHostSecurity(
 				...(plan === undefined ? {} : { sandboxPlan: plan }),
 			};
 			const result = await finalLeaf.decide(request);
+			let auditedResult = result;
 			if (plan !== undefined) {
 				const authorizationRequest = bindings.get(input.requestDigest.digest)?.authorizationRequest;
 				if (authorizationRequest === undefined) return securityFailure("invalid_request", "sandbox authorization binding is missing");
@@ -276,10 +278,11 @@ export async function createProductionHostSecurity(
 						...(result.ok ? {} : { reason: result.error.message }),
 					});
 				} catch {
-					return securityFailure("invalid_request", "sandbox execution audit is unavailable");
+					auditedResult = securityFailure("invalid_request", "sandbox execution audit is unavailable");
 				}
 			}
-			return result;
+			const completed = await input.completeAuthorization();
+			return completed.ok ? auditedResult : completed;
 		},
 		authorizeResource: (input) => authorizeHostResource({
 			input,
@@ -569,6 +572,7 @@ async function prepareProcessSecurity(input: {
 			authorization: authorized.value.authorization,
 			authorizationDigest: authorized.value.authorizationDigest,
 			requestDigest: executionRequestDigest,
+			completeAuthorization: authorized.value.complete,
 		},
 	};
 }
@@ -682,22 +686,30 @@ function createGovernedFileSystem(input: {
 }): FileSystem {
 	const read = async (path: string) => {
 		const context = await input.authorize("read", [{ kind: "filesystem", operation: "read", path }], { path });
-		const result = await context.fs.readFile(path);
-		return unwrapSecurityResult(result);
+		return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.fs.readFile(path)));
 	};
 	return {
 		readFile: read,
-		writeFile: async (path, data) => unwrapSecurityResult(await (await input.authorize("write", [{ kind: "filesystem", operation: "write", path }], { path, data: digestOf(data) })).fs.writeFile(path, data)),
+		writeFile: async (path, data) => {
+			const context = await input.authorize("write", [{ kind: "filesystem", operation: "write", path }], { path, data: digestOf(data) });
+			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.fs.writeFile(path, data)));
+		},
 		stat: async (path) => {
 			const context = await input.authorize("stat", [{ kind: "filesystem", operation: "read", path }], { path });
-			return toFileStats(unwrapSecurityResult(await context.fs.stat(path)));
+			return settleGatewayEffect(context, async () => toFileStats(unwrapSecurityResult(await context.fs.stat(path))));
 		},
 		readdir: async (path) => {
 			const context = await input.authorize("readdir", [{ kind: "filesystem", operation: "read", path }], { path });
-			return [...unwrapSecurityResult(await context.fs.readdir(path))];
+			return settleGatewayEffect(context, async () => [...unwrapSecurityResult(await context.fs.readdir(path))]);
 		},
-		mkdir: async (path, options) => unwrapSecurityResult(await (await input.authorize("mkdir", [{ kind: "filesystem", operation: "write", path }], { path, options })).fs.mkdir(path, options)),
-		rm: async (path, options) => unwrapSecurityResult(await (await input.authorize("rm", [{ kind: "filesystem", operation: "delete", path }], { path, options })).fs.rm(path, options)),
+		mkdir: async (path, options) => {
+			const context = await input.authorize("mkdir", [{ kind: "filesystem", operation: "write", path }], { path, options });
+			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.fs.mkdir(path, options)));
+		},
+		rm: async (path, options) => {
+			const context = await input.authorize("rm", [{ kind: "filesystem", operation: "delete", path }], { path, options });
+			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.fs.rm(path, options)));
+		},
 	};
 }
 
@@ -708,15 +720,26 @@ function createGovernedNetwork(input: {
 		request: async (request: NetworkRequest, signal?: AbortSignal): Promise<NetworkResponse> => {
 			const url = new URL(request.url);
 			const context = await input.authorize("WebFetch", [{ kind: "network", operation: "fetch", host: url.hostname, ...(url.port ? { port: Number(url.port) } : {}) }], request, undefined, signal);
-			return unwrapSecurityResult(await context.network.request({
+			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.network.request({
 				url: request.url,
 				method: request.method,
 				headers: request.headers,
 				...(request.body === undefined ? {} : { body: request.body }),
 				maxBytes: request.maxBytes,
-			}, signal));
+			}, signal)));
 		},
 	};
+}
+
+async function settleGatewayEffect<T>(context: ExecutionGatewayContext, effect: () => Promise<T>): Promise<T> {
+	try {
+		const value = await effect();
+		unwrapSecurityResult(await context.complete());
+		return value;
+	} catch (error) {
+		unwrapSecurityResult(await context.complete());
+		throw error;
+	}
 }
 
 function unavailableShell(): Shell {

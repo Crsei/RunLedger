@@ -63,6 +63,15 @@ describe("Runtime public contract inventory", () => {
 		]);
 	});
 
+	it("lists only the three current Runtime resource ports", () => {
+		const resources = CONTRACT_INVENTORY.find((entry) => entry.id === "resources");
+		expect(resources?.ports).toEqual([
+			"RuntimeResourceCatalogPort",
+			"RuntimeResourceSnapshotPort",
+			"RuntimeResourceInvocationPort",
+		]);
+	});
+
 	it("routes every behavior owner without silently enabling an unowned implementation", () => {
 		expect(CONTRACT_HANDOFFS.length).toBeGreaterThanOrEqual(10);
 		for (const handoff of CONTRACT_HANDOFFS) {
