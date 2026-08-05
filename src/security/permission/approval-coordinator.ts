@@ -261,6 +261,8 @@ export class ApprovalCoordinator {
 		signal?: AbortSignal,
 	): Promise<SecurityResult<AuthorizationResult>> {
 		const ticket = createTicket(request, this.#clock(), this.#timeoutMs);
+		const replayed = await this.#replayDurableDecision(request, evaluation, ticket);
+		if (replayed !== undefined) return replayed;
 		const prompt: PermissionPrompt = {
 			requestId: request.requestId,
 			sessionId: request.sessionId,
@@ -312,6 +314,55 @@ export class ApprovalCoordinator {
 				policyDigest: request.snapshot.policyDigest,
 				approval: committed.value,
 				reason: outcome === "allow" ? evaluation.reason : `approval ${committed.value.decision}`,
+			},
+		};
+	}
+
+	/**
+	 * A response may be lost after the receipt commit but before the caller
+	 * receives it.  The receipt is the retry fence: replay the exact decision
+	 * instead of prompting or executing a second authorization attempt.
+	 */
+	async #replayDurableDecision(
+		request: AuthorizationRequest,
+		evaluation: SecurityAccessEvaluation,
+		ticket: ApprovalTicket,
+	): Promise<SecurityResult<AuthorizationResult> | undefined> {
+		let existing: ApprovalReceiptRef | undefined;
+		try {
+			existing = await this.#store.read(ticket.approvalId);
+		} catch {
+			return failure("approval receipt is unavailable during recovery", "approval_stale");
+		}
+		if (existing === undefined) return undefined;
+		if (
+			existing.requestDigest.digest !== ticket.requestDigest.digest ||
+			existing.scope !== ticket.scope
+		) return failure("durable approval receipt is bound to a different request", "approval_stale");
+
+		const now = this.#clock().getTime();
+		if (existing.decision === "allowed" && existing.expiresAt !== undefined && Date.parse(existing.expiresAt) <= now) {
+			const expired = createApprovalSupersessionReceipt(existing, "expired", this.#clock().toISOString());
+			const committed = await this.#store.commit(expired, existing.decisionRevision);
+			if (!committed.ok) return committed;
+			try {
+				await this.#audit?.decided({ request, ticket, receipt: committed.value });
+			} catch {
+				return failure("approval expiry audit is uncertain", "approval_stale");
+			}
+			existing = committed.value;
+		}
+
+		const outcome = existing.decision === "allowed" ? "allow" : "deny";
+		return {
+			ok: true,
+			value: {
+				outcome,
+				decisionSource: "approval",
+				requests: request.requests,
+				policyDigest: request.snapshot.policyDigest,
+				approval: existing,
+				reason: outcome === "allow" ? evaluation.reason : `approval ${existing.decision}`,
 			},
 		};
 	}

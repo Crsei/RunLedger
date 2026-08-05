@@ -8,6 +8,7 @@ import {
 	ApprovalCoordinator,
 	type ApprovalAuditPort,
 	HeadlessDenyPrompter,
+	MemoryApprovalStateStore,
 	SYSTEM_APPROVAL_PRINCIPAL_ID,
 } from "../../src/security/permission/approval-coordinator.ts";
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
@@ -195,5 +196,28 @@ describe("ApprovalCoordinator", () => {
 		const coordinator = new ApprovalCoordinator({ prompter: new HeadlessDenyPrompter(), clock: () => NOW });
 		const result = await coordinator.authorize(value, evaluation(value), () => validRevalidation(value));
 		expect(result).toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "denied", principalId: SYSTEM_APPROVAL_PRINCIPAL_ID } } });
+	});
+
+	it("replays a durable allow receipt after the original command response is lost", async () => {
+		const value = request();
+		const store = new MemoryApprovalStateStore();
+		let prompts = 0;
+		const prompter: PermissionPrompter = {
+			request: async () => {
+				prompts += 1;
+				return { decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") };
+			},
+		};
+		const first = new ApprovalCoordinator({ prompter, store, clock: () => NOW });
+		const firstResult = await first.authorize(value, evaluation(value), () => validRevalidation(value));
+		const recovered = new ApprovalCoordinator({
+			prompter: { request: async () => { throw new Error("recovery must not prompt again"); } },
+			store,
+			clock: () => NOW,
+		});
+		const recoveredResult = await recovered.authorize(value, evaluation(value), () => validRevalidation(value));
+
+		expect(prompts).toBe(1);
+		expect(recoveredResult).toEqual(firstResult);
 	});
 });
