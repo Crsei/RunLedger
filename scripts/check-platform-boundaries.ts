@@ -18,7 +18,13 @@ export interface PlatformBoundaryViolation {
 	detail: string;
 }
 
-/** 已有平台的既存分支点：逐文件精确豁免，不豁免目录。 */
+/**
+ * 既有平台的既存分支点：逐文件精确豁免，不豁免目录。
+ * P6 迁移后以下文件不再直接读取运行时平台（消费 workspace/runtime-platform.ts）：
+ * session-manager / migration / worktree-registry-store / runledger-home /
+ * trace-composition / policy-filesystem / persisted-binding（runtime-host-process
+ * 仅 execution-decision 调用点迁移，PTY/containment 分支仍是它自己的 backend 能力）。
+ */
 const LEGACY_PLATFORM_BRANCH_ALLOWLIST: readonly string[] = [
 	"src/cli/linux-peer-attestor.ts",
 	"src/cli/runtime-host-production.ts",
@@ -30,23 +36,17 @@ const LEGACY_PLATFORM_BRANCH_ALLOWLIST: readonly string[] = [
 	"src/runtime/host/peer-attestation.ts",
 	"src/runtime/local-identity.ts",
 	"src/runtime/process/execution-decision.ts",
-	"src/runtime/trace/composition.ts",
-	"src/security/policy-filesystem.ts",
 	"src/security/sandbox/factory.ts",
-	"src/storage/migration.ts",
 	"src/storage/process/node-pty-adapter.ts",
 	"src/storage/process/process-backend.ts",
 	"src/storage/process/supervisor-runner.ts",
-	"src/storage/runledger-home.ts",
-	"src/storage/session-manager.ts",
-	"src/storage/worktree-registry-store.ts",
 	"src/utils/shell.ts",
-	"src/worktree/persisted-binding.ts",
 ];
 
-/** 新增平台分支的唯一合法位置：平台检测/装配 factory。 */
+/** 新增平台分支的合法位置：平台检测/装配 factory 与运行时平台单点。 */
 const WORKSPACE_FACTORY_ALLOWLIST: readonly string[] = [
 	"src/workspace/factory.ts",
+	"src/workspace/runtime-platform.ts",
 ];
 
 /** P3 纯适配器层：不允许出现 fs/child_process/os 副作用 import。 */

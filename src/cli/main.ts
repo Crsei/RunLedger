@@ -27,6 +27,7 @@ import { parseArgs, USAGE } from "./args.ts";
 import type { SecurityConfigDocument } from "../security/types.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
+import { runWorkspaceCommand } from "./workspace-command.ts";
 import { connectProductionRuntimeHost } from "./runtime-host-production.ts";
 import { createProductionProcessOverlayClient } from "./runtime-host-client.ts";
 import {
@@ -42,6 +43,10 @@ const VERSION = readVersionFromPackage();
 export async function main(argv: readonly string[]): Promise<void> {
   if (argv[0] === "migrate") {
     await runMigrateCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "workspace") {
+    await runWorkspaceCommand(argv.slice(1));
     return;
   }
   const { args, error } = parseArgs(argv);

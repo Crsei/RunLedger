@@ -10,6 +10,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { RunledgerLayout, RuntimeInstanceId, SessionId, WorkspaceId, WorkspaceLeaseRef } from "../runtime/contracts/public.ts";
 import { isWorkspaceLeaseRef } from "../runtime/contracts/public.ts";
+import type { WorkspaceAdapters } from "../workspace/native/types.ts";
 import { GitOperations, type GitCommandPort } from "./git-operations.ts";
 import { WorktreeLeaseManager } from "./lease.ts";
 import {
@@ -61,6 +62,12 @@ export interface HostWorkspaceBindingServiceOptions {
 	readonly audit?: WorkspaceBindingAuditPort;
 	readonly clock?: () => Date;
 	readonly leaseTtlMs?: number;
+	/**
+	 * P6：平台 workspace adapters（factory 装配）。提供时 containment 与
+	 * Git 注册同一性检查全部经 adapter（compare-key/porcelain）；缺省时
+	 * 保留 node:path 与 GitOperations 语义（测试/fake 接缝，生产组合必传）。
+	 */
+	readonly workspace?: WorkspaceAdapters;
 }
 
 function failure<T>(code: WorkspaceBindingServiceErrorCode, message: string, retryable = false): WorkspaceBindingServiceResult<T> {
@@ -103,6 +110,7 @@ export class HostWorkspaceBindingService {
 	readonly #ownerRuntimeId: RuntimeInstanceId;
 	readonly #clock: () => Date;
 	readonly #audit: WorkspaceBindingAuditPort | undefined;
+	readonly #workspace: WorkspaceAdapters | undefined;
 
 	public constructor(options: HostWorkspaceBindingServiceOptions) {
 		this.#store = new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: options.workspaceStorageKey });
@@ -113,6 +121,25 @@ export class HostWorkspaceBindingService {
 		this.#ownerRuntimeId = options.ownerRuntimeId;
 		this.#clock = options.clock ?? (() => new Date());
 		this.#audit = options.audit;
+		this.#workspace = options.workspace;
+	}
+
+	/** P6：containment 经 workspace path adapter（compare-key 语义）；缺省用 node:path 接缝。 */
+	#within(root: string, target: string): WorkspaceBindingServiceResult<boolean> {
+		if (this.#workspace === undefined) return { ok: true, value: within(root, target) };
+		const parent = this.#workspace.path.parse(root);
+		if (!parent.ok) return failure("binding_invalid", parent.error.message);
+		const child = this.#workspace.path.parse(target);
+		if (!child.ok) return failure("binding_invalid", child.error.message);
+		const checked = this.#workspace.path.isWithin(parent.value, child.value);
+		if (!checked.ok) return failure("binding_invalid", checked.error.message);
+		return { ok: true, value: checked.value === "inside" };
+	}
+
+	async #withinOrFail(root: string, target: string): Promise<WorkspaceBindingServiceResult<void>> {
+		const contained = this.#within(root, target);
+		if (!contained.ok) return contained;
+		return contained.value ? { ok: true, value: undefined } : failure("binding_invalid", "effective cwd escapes the managed worktree");
 	}
 
 	public async read(): Promise<WorkspaceBindingServiceResult<PersistedWorkspaceBinding | undefined>> {
@@ -188,7 +215,8 @@ export class HostWorkspaceBindingService {
 		const observed = await this.#observeGit(record.sourceRepositoryPath, record.worktreeLocator);
 		if (!observed.ok) return observed;
 		const effectiveCwd = request.effectiveCwd ?? resolve(record.worktreeLocator, record.effectiveSubdir === "." ? "" : record.effectiveSubdir);
-		if (!within(record.worktreeLocator, effectiveCwd)) return failure("binding_invalid", "effective cwd escapes the managed worktree");
+		const contained = await this.#withinOrFail(record.worktreeLocator, effectiveCwd);
+		if (!contained.ok) return contained;
 		const binding = createPersistedWorkspaceBinding({ record, lease: mappedLease.value, effectiveCwd, headCommit: observed.value.headCommit });
 		if (!binding.ok) return failure(binding.error.code, binding.error.message, binding.error.retryable);
 		try {
@@ -216,7 +244,8 @@ export class HostWorkspaceBindingService {
 		const baseValidation = validatePersistedBinding(stored);
 		if (!baseValidation.ok) return baseValidation;
 		const cwd = resolve(request.cwd);
-		if (!within(stored.worktreePath, cwd)) return failure("binding_drift", "resume cwd is outside the persisted worktree");
+		const contained = await this.#withinOrFail(stored.worktreePath, cwd);
+		if (!contained.ok) return failure("binding_drift", contained.error.message, contained.error.retryable);
 
 		const record = await this.#registry.get(stored.worktreeId);
 		if (!record.ok) return failure(record.error.code, record.error.message, record.error.retryable);
@@ -251,6 +280,17 @@ export class HostWorkspaceBindingService {
 	}
 
 	async #observeGit(sourceRepositoryPath: string, worktreePath: string): Promise<WorkspaceBindingServiceResult<{ readonly headCommit: string }>> {
+		if (this.#workspace !== undefined) {
+			// P6：注册同一性经 workspace git adapter（porcelain 解析 + compare-key）。
+			const registered = await this.#workspace.git.registeredTarget(sourceRepositoryPath, worktreePath);
+			if (!registered.ok) return failure("binding_drift", registered.error.message, registered.error.retryable);
+			const head = registered.value.registered.head;
+			if (head === undefined) return failure("binding_drift", "worktree is no longer registered with Git");
+			const info = await this.#workspace.git.inspectRepository(worktreePath);
+			if (!info.ok) return failure("binding_drift", info.error.message, info.error.retryable);
+			if (info.value.headCommit !== head) return failure("binding_drift", "worktree head changed during observation");
+			return { ok: true, value: { headCommit: head } };
+		}
 		const listed = await this.#git.listWorktrees(sourceRepositoryPath);
 		if (!listed.ok) return failure("worktree_drift", listed.error.message, listed.error.retryable);
 		const registration = listed.value.find((entry) => resolve(entry.path) === resolve(worktreePath));

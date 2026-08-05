@@ -1,6 +1,7 @@
 /** Storage/CLI composition seam for the single governed RunLedger home. */
 
 import { realpath, stat } from "node:fs/promises";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
 import { homedir } from "node:os";
 import {
 	buildRunledgerLayout,
@@ -40,7 +41,7 @@ export async function resolveRunledgerHome(
 	options: RunledgerHomeResolverOptions = {},
 ): Promise<ResolvedRunledgerHome> {
 	const env = options.env ?? process.env;
-	const pathFlavor = options.pathFlavor ?? (process.platform === "win32" ? "win32" : "posix");
+	const pathFlavor = options.pathFlavor ?? runtimePlatformPathFlavor();
 	const rawOverride = env[RUNLEDGER_DIR_ENV];
 	const override = rawOverride === undefined
 		? undefined

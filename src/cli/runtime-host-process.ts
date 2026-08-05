@@ -1,6 +1,7 @@
 /** Production Host-owned managed process composition. */
 
 import { isAbsolute } from "node:path";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
 import { defaultShell } from "../utils/shell.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../runtime/host/types.ts";
@@ -118,7 +119,7 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 		this.manager = new ProcessManager(this.journal, this.backend);
 		this.auditedManager = new AuditedProcessManager(
 			this.manager,
-			createProductionExecutionDecisionProviders(process.platform === "win32" ? "win32" : "posix"),
+			createProductionExecutionDecisionProviders(runtimePlatformPathFlavor()),
 		);
 		const queue = new JsonlProcessCompletionQueue({
 			layout: options.layout,

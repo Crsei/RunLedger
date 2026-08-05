@@ -30,6 +30,7 @@ import { JsonHostCommandStore } from "../storage/host/command-store.ts";
 import { JsonHostDomainRevisionStore } from "../storage/host/domain-revision-store.ts";
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
 import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../worktree/host-binding.ts";
+import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
 import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-workspace-events.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
@@ -118,6 +119,11 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		if (event === undefined) throw new Error("initial extension snapshot event identity is invalid");
 		await runtimeEventWriter.append(event);
 	}
+	const workspaceAdapters = createWorkspaceAdaptersForCurrentPlatform({
+		git: createProductionGitCommandPort(),
+		managedRoot: join(layout.tmp, "worktrees"),
+	});
+	if (!workspaceAdapters.ok) throw new Error(`workspace adapters unavailable for current platform: ${workspaceAdapters.error.message}`);
 	const workspaceBindingService = new HostWorkspaceBindingService({
 		layout,
 		workspaceStorageKey: scope.workspaceStorageKey,
@@ -126,6 +132,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		git: createProductionGitCommandPort(),
 		ownerRuntimeId: workspaceBinding?.lease.ownerRuntimeId ?? hostRuntimeId,
 		audit: workspaceAudit,
+		workspace: workspaceAdapters.value,
 	});
 	let residentHost: ResidentRuntimeHost | undefined;
 	const security = await createProductionHostSecurity({
@@ -432,6 +439,11 @@ export async function restoreResidentWorkspaceBinding(
 		throw new Error("workspace binding identity mismatch with Host scope");
 	}
 	const registry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(options.layout));
+	const workspaceAdapters = createWorkspaceAdaptersForCurrentPlatform({
+		git: createProductionGitCommandPort(),
+		managedRoot: join(options.layout.tmp, "worktrees"),
+	});
+	if (!workspaceAdapters.ok) throw new Error(`workspace adapters unavailable for current platform: ${workspaceAdapters.error.message}`);
 	const service = new HostWorkspaceBindingService({
 		layout: options.layout,
 		workspaceStorageKey: options.scope.workspaceStorageKey,
@@ -439,6 +451,7 @@ export async function restoreResidentWorkspaceBinding(
 		registry,
 		git: createProductionGitCommandPort(),
 		ownerRuntimeId: stored.lease.ownerRuntimeId,
+		workspace: workspaceAdapters.value,
 		...(options.workspaceAudit === undefined ? {} : { audit: options.workspaceAudit }),
 	});
 	const resumed = await service.resume({ cwd: options.cwd });

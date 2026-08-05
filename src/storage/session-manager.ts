@@ -6,6 +6,7 @@
  */
 
 import { existsSync } from "node:fs";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import {
@@ -281,7 +282,7 @@ async function assertCanonicalFile(layout: RunledgerLayout, filePath: string): P
 	if (info.isSymbolicLink()) throw new SessionStorageError("session_path_symlink", filePath);
 	const root = await fs.realpath(layout.home);
 	const actual = await fs.realpath(filePath);
-	if (!isContainedRuntimePath(root, actual, runtimePathFlavor())) {
+	if (!isContainedRuntimePath(root, actual, runtimePlatformPathFlavor())) {
 		throw new SessionStorageError("session_path_outside_home", filePath);
 	}
 }
@@ -302,7 +303,7 @@ async function assertCanonicalDirectory(layout: RunledgerLayout, directory: stri
 	if (info.isSymbolicLink()) throw new SessionStorageError("session_path_symlink", directory);
 	const root = await fs.realpath(layout.home);
 	const actual = await fs.realpath(directory);
-	if (!isContainedRuntimePath(root, actual, runtimePathFlavor())) {
+	if (!isContainedRuntimePath(root, actual, runtimePlatformPathFlavor())) {
 		throw new SessionStorageError("session_path_outside_home", directory);
 	}
 }
@@ -324,14 +325,11 @@ async function assertNoSymlinkComponents(layout: RunledgerLayout, target: string
 }
 
 function assertContainedLexically(layout: RunledgerLayout, target: string): void {
-	if (!isContainedRuntimePath(layout.home, target, runtimePathFlavor())) {
+	if (!isContainedRuntimePath(layout.home, target, runtimePlatformPathFlavor())) {
 		throw new SessionStorageError("session_path_outside_home", target);
 	}
 }
 
-function runtimePathFlavor(): RuntimePathFlavor {
-	return process.platform === "win32" ? "win32" : "posix";
-}
 
 async function writeAtomicCanonicalFile(
 	layout: RunledgerLayout,

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../../workspace/runtime-platform.ts";
 import { lstat, readdir } from "node:fs/promises";
 import {
 	recordingConfigDigest,
@@ -64,7 +65,7 @@ export function createLocalTraceRecorderFactory(
 			const filePath = input.traceId === undefined
 				? path.resolve(options.layout.home, relativeLocator)
 				: await findExistingTraceEventFile(options.layout.events, traceId) ?? path.resolve(options.layout.home, relativeLocator);
-			const flavor: RuntimePathFlavor = process.platform === "win32" ? "win32" : "posix";
+			const flavor: RuntimePathFlavor = runtimePlatformPathFlavor();
 			if (!isContainedRuntimePath(options.layout.home, filePath, flavor)) {
 				throw new Error("trace event path escapes RunLedger home");
 			}

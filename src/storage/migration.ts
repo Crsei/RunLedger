@@ -6,6 +6,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
 import { existsSync } from "node:fs";
 import type { Dirent } from "node:fs";
 import { promises as fs } from "node:fs";
@@ -245,7 +246,7 @@ async function resolveSource(sourcePath: string, layout: RunledgerLayout): Promi
 	}
 	const canonical = await fs.realpath(absolute);
 	const home = existsSync(layout.home) ? await fs.realpath(layout.home) : path.resolve(layout.home);
-	if (isContainedRuntimePath(home, canonical, runtimePathFlavor())) {
+	if (isContainedRuntimePath(home, canonical, runtimePlatformPathFlavor())) {
 		throw new MigrationError("source_inside_home", "migration source must be outside canonical runledger home", canonical);
 	}
 	return canonical;
@@ -458,7 +459,7 @@ async function assertCanonicalFile(layout: RunledgerLayout, filePath: string): P
 	if (info.isSymbolicLink() || !info.isFile()) throw new MigrationError("rejected", `target is not a regular canonical file: ${filePath}`, filePath);
 	const root = await fs.realpath(layout.home);
 	const actual = await fs.realpath(filePath);
-	if (!isContainedRuntimePath(root, actual, runtimePathFlavor())) {
+	if (!isContainedRuntimePath(root, actual, runtimePlatformPathFlavor())) {
 		throw new MigrationError("rejected", `target escaped canonical home: ${filePath}`, filePath);
 	}
 }
@@ -469,7 +470,7 @@ async function assertCanonicalDirectory(layout: RunledgerLayout, directory: stri
 	if (info.isSymbolicLink() || !info.isDirectory()) throw new MigrationError("rejected", `target parent is not canonical: ${directory}`, directory);
 	const root = await fs.realpath(layout.home);
 	const actual = await fs.realpath(directory);
-	if (!isContainedRuntimePath(root, actual, runtimePathFlavor())) {
+	if (!isContainedRuntimePath(root, actual, runtimePlatformPathFlavor())) {
 		throw new MigrationError("rejected", `target parent escaped canonical home: ${directory}`, directory);
 	}
 }
@@ -520,14 +521,11 @@ async function removeStagingFiles(batchDir: string): Promise<void> {
 }
 
 function assertContainedLexically(layout: RunledgerLayout, target: string): void {
-	if (!isContainedRuntimePath(layout.home, target, runtimePathFlavor())) {
+	if (!isContainedRuntimePath(layout.home, target, runtimePlatformPathFlavor())) {
 		throw new MigrationError("rejected", `path escaped canonical home: ${target}`, target);
 	}
 }
 
-function runtimePathFlavor(): RuntimePathFlavor {
-	return process.platform === "win32" ? "win32" : "posix";
-}
 
 function randomToken(): string {
 	return Math.random().toString(36).slice(2, 10).padEnd(8, "0");

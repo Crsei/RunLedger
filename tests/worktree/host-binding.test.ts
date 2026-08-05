@@ -10,6 +10,7 @@ import { MemoryWorktreeRegistryStore, WorktreeRegistry } from "../../src/worktre
 import { JsonWorkspaceBindingStore } from "../../src/worktree/persisted-binding.ts";
 import { JsonlRuntimeEventStore } from "../../src/storage/host/runtime-event-store.ts";
 import { RuntimeWorkspaceAuditAdapter } from "../../src/worktree/integration/runtime-workspace-events.ts";
+import { createNativeWorkspaceAdapters } from "../../src/workspace/native/adapters.ts";
 import {
 	HostWorkspaceBindingService,
 	type WorkspaceBindingAuditPort,
@@ -71,6 +72,37 @@ async function fixture(): Promise<{ root: string; source: string; managed: strin
 }
 
 describe("Host workspace binding composition", () => {
+	it("consumes workspace adapters for containment and porcelain identity (P6 adapter-driven mode)", async () => {
+		const value = await fixture();
+		try {
+			const adapters = createNativeWorkspaceAdapters("linux", { git: new RealGitCommandPort(), managedRoot: value.managed });
+			const adapterService = new HostWorkspaceBindingService({
+				layout: value.layout,
+				workspaceStorageKey: value.workspaceStorageKey,
+				managedRoot: value.managed,
+				registry: value.registry,
+				git: new RealGitCommandPort(),
+				ownerRuntimeId: createRuntimeId("runtime", "host-binding-adapter-test"),
+				workspace: adapters,
+			});
+			const created = await adapterService.create({
+				sessionId: createRuntimeId("session", "host-binding-adapter-session"),
+				workspaceId: createRuntimeId("workspace", "host-binding-adapter-workspace"),
+				sourceCwd: value.source,
+				label: "adapter",
+			});
+			expect(created.ok, JSON.stringify(created)).toBe(true);
+			if (!created.ok) return;
+			expect(await adapterService.resume({ cwd: created.value.effectiveCwd })).toMatchObject({ ok: true, value: created.value });
+			// adapter 模式的 containment 逃逸同样 fail closed。
+			const escaped = await adapterService.resume({ cwd: join(created.value.worktreePath, "..", "escape") });
+			expect(escaped.ok).toBe(false);
+			expect((escaped as WorkspaceBindingServiceResult<never> & { ok: false }).error.code).toBe("binding_drift");
+		} finally {
+			await rm(value.root, { recursive: true, force: true });
+		}
+	});
+
 	it("creates a real Git worktree, leases it, persists the binding, and resumes only from its observed head", async () => {
 		const value = await fixture();
 		try {

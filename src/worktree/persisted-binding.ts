@@ -6,6 +6,7 @@
  */
 
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
 import {
 	isContainedRuntimePath,
 	isRuntimeDigest,
@@ -225,7 +226,7 @@ export class JsonWorkspaceBindingStore {
 		if (!/^ws-[a-f0-9]{64}$/u.test(options.workspaceStorageKey)) throw new Error("workspace binding storage key is invalid");
 		const home = resolve(options.layout.home);
 		const filePath = resolve(join(options.layout.state, "hosts", options.workspaceStorageKey, "workspace-binding.json"));
-		if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, filePath, process.platform === "win32" ? "win32" : "posix")) throw new Error("workspace binding store must remain below canonical runledgerHome");
+		if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, filePath, runtimePlatformPathFlavor())) throw new Error("workspace binding store must remain below canonical runledgerHome");
 		this.#filePath = filePath;
 		this.#storage = options.storage ?? NodeWorkspaceBindingStorage.fromLayout(options.layout);
 	}
@@ -286,7 +287,7 @@ export async function discoverPersistedWorkspaceBinding(options: {
 }): Promise<DiscoveredWorkspaceBinding | undefined> {
 	const home = resolve(options.layout.home);
 	const hostsRoot = resolve(options.layout.state, "hosts");
-	if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, hostsRoot, process.platform === "win32" ? "win32" : "posix")) {
+	if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, hostsRoot, runtimePlatformPathFlavor())) {
 		throw new Error("workspace binding discovery must remain below canonical runledgerHome");
 	}
 	const storage = options.storage ?? NodeWorkspaceBindingStorage.fromLayout(options.layout);

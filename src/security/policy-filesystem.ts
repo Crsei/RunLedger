@@ -1,6 +1,7 @@
 /** Canonical path resolver 与 policy-aware filesystem；所有低层 IO 由 broker 注入。 */
 
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import type { FilesystemAccessOperation, SecurityResult, SecuritySnapshot } from "./types.ts";
 
 export interface BrokerFileStats {
@@ -49,7 +50,7 @@ function wildcardPathMatch(pattern: string, target: string): boolean {
 		.replaceAll("*", `[^${sep === "\\" ? "\\\\" : sep}]*`)
 		.replaceAll("\u0000", ".*");
 	try {
-		return new RegExp(`^${escaped}${sep === "\\" ? "\\\\" : sep === "/" ? "/" : ""}?$`, process.platform === "win32" ? "iu" : "u").test(normalizedTarget);
+		return new RegExp(`^${escaped}${sep === "\\" ? "\\\\" : sep === "/" ? "/" : ""}?$`, runtimeWorkspacePlatform() === "windows" ? "iu" : "u").test(normalizedTarget);
 	} catch {
 		return false;
 	}
