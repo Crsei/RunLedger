@@ -39,6 +39,7 @@ import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-mani
 import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
 import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./runtime-host-mcp.ts";
 import { createHostSkillLoader } from "./runtime-host-skills.ts";
+import { createProductionSummarizer } from "./runtime-host-summarizer.ts";
 import type { HostSecurityConfigSource } from "./runtime-host-security.ts";
 import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../extensions/mcp/sdk-factory.ts";
 import { McpConnectionManager } from "../extensions/mcp/connection-manager.ts";
@@ -160,6 +161,13 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		scope,
 		policyCeilingDigest: security.snapshot.policyDigest,
 		...(modelCompatibility.ok ? { modelRouter: modelCompatibility.router } : { modelRouterUnavailable: modelCompatibility.error.code }),
+		...(modelCompatibility.ok ? {
+			summarizer: async (input) => {
+				const result = await createProductionSummarizer({ models, router: modelCompatibility.router })(input);
+				if (!result.ok) throw new Error(result.code);
+				return result.summary;
+			},
+		} : {}),
 	});
 	const host = new ResidentRuntimeHost({
 		socketPath: productionHostSocketPath(layout, scope.workspaceStorageKey),
