@@ -47,7 +47,7 @@ import { KeybindingHints } from "./components/keybinding-hints.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
-import { AssistantMessageComponent, extractToolCalls } from "./components/assistant-message.ts";
+import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { ToolCallComponent } from "./components/tool-call.ts";
 import { ToolResultComponent } from "./components/tool-result.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
@@ -61,8 +61,12 @@ import type { SelectItem } from "./index.ts";
 import type { AgentToolResult } from "../runtime/types.ts";
 import { createAppKeyListener } from "./keybindings/app-keys.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
+import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { ProcessOverlayController } from "./process/controller-adapter.ts";
 import { ProcessOverlayComponent } from "./process/overlay-component.ts";
+import { DeltaCoalescer, type AppendTextDelta } from "./opentui/delta-coalescer.ts";
+import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
+import { approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -83,6 +87,8 @@ export interface InteractiveModeOptions {
   onThinkingChange?: (level: ModelThinkingLevel) => void;
   /** R9:由 Host facade 提供的 safe process list/output/mutation adapter。 */
   processOverlayController?: ProcessOverlayController;
+  /** 可选的分层渲染 telemetry sink；不参与 UI 调度决策。 */
+  performanceObserver?: TuiPerformanceObserver;
 }
 
 /** M8d:/model 切换条目;由 caller(demo)注入候选。 */
@@ -118,15 +124,25 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly agent: Agent | undefined;
   private readonly controller: InteractiveSessionControllerPort | undefined;
   private readonly processOverlayController: ProcessOverlayController | undefined;
+  private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private theme: Theme;
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
   private unsubscribe?: () => void;
   private unsubscribeThemeMode?: () => void;
+  private unsubscribeRenderPreparation?: () => void;
 
   // FooterSnapshotProvider 状态(只有 handleEvent 路径写)
   private streaming = false;
   private stopReason: string | undefined = undefined;
+  private streamingGeneration = 0;
+  private readonly streamingDeltas = new DeltaCoalescer({
+    softByteLimit: 256 * 1024,
+    hardByteLimit: 1024 * 1024,
+    softEventLimit: 512,
+    hardEventLimit: 4096,
+  });
+  private readonly pendingAssistantPartials = new Map<string, AssistantMessage>();
 
   // M3 toolExecution 映射:toolCallId -> ToolCallComponent;tool_execution_end 后移除。
   private readonly toolCallComponents: Map<
@@ -154,6 +170,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.controller = opts.controller;
     this.agent = opts.agent;
     this.processOverlayController = opts.processOverlayController;
+    this.performanceObserver = opts.performanceObserver;
     this.terminal = opts.terminal ?? new ProcessTerminal();
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
     this.modelRegistry = opts.modelRegistry ?? [];
@@ -166,7 +183,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.resolveExit = () => resolveExit?.();
 
     // TUI 使用 showHardwareCursor=false,Editor 自身以 CURSOR_MARKER 通知光标位置
-    this.ui = new TUI(this.terminal, false);
+    this.ui = new TUI(this.terminal, false, { performanceObserver: opts.performanceObserver });
+    this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => this.flushStreamingDeltas());
 
     // KeybindingsManager:本期安装默认 TUI_KEYBINDINGS,后续 M6 在此挂 user bindings
     this.kb = new KeybindingsManager(TUI_KEYBINDINGS);
@@ -325,6 +343,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private async requestQuit(): Promise<void> {
     if (this.quitting) return;
     this.quitting = true;
+    this.flushStreamingDeltas();
     if (this.inFlight()) {
       this.controller?.interrupt();
       this.agent?.interrupt();
@@ -336,6 +355,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.unsubscribeThemeMode?.();
     this.unsubscribeThemeMode = undefined;
+    this.unsubscribeRenderPreparation?.();
+    this.unsubscribeRenderPreparation = undefined;
     this.controller?.dispose();
     this.ui.stop();
     this.resolveExit();
@@ -349,6 +370,43 @@ export class InteractiveMode implements FooterSnapshotProvider {
    */
   echoPrompt(text: string): void {
     this.handleSubmit(text);
+  }
+
+  /** Handles Host-owned reverse approval requests in the authenticated driver TUI. */
+  handleReverseRequest(frame: HostFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const view = parseApprovalReverseRequest(frame.body);
+    if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+    return new Promise<Record<string, unknown>>((resolve) => {
+      let settled = false;
+      const finish = (body: Record<string, unknown>): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        this.ui.hideOverlay();
+        resolve(body);
+      };
+      const onAbort = (): void => finish({ ok: false, code: "approval_aborted" });
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      const choose = (decision: ApprovalDecision): void => finish(approvalDecisionBody(decision));
+      const modal = new SelectorModal({
+        theme: this.theme,
+        selectListTheme: makeSelectListTheme(this.theme),
+        title: `Approval required · ${view.toolName}: ${view.summary}`,
+        items: [
+          { value: "allow-once", label: "Allow once", description: view.cwd === undefined ? "Permit this request once" : `Permit once in ${view.cwd}` },
+          { value: "deny", label: "Deny", description: "Reject without executing" },
+          { value: "cancel", label: "Cancel", description: "Cancel this approval request" },
+        ],
+        onSelect: (item) => choose(item.value as ApprovalDecision),
+        onCancel: () => choose("cancel"),
+      });
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.ui.showOverlay(modal, { anchor: "center" });
+      this.ui.requestRender();
+    });
   }
 
   /**
@@ -998,10 +1056,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
     try {
       switch (ev.type) {
         case "agent_start":
+          this.flushStreamingDeltas();
+          this.streamingGeneration += 1;
           this.streaming = true;
           this.stopReason = undefined;
           break;
         case "agent_end":
+          this.flushStreamingDeltas();
           this.streaming = false;
           // agent_end 不带 stopReason,保留最近一次 turn_end / message_end 的 stopReason
           break;
@@ -1013,6 +1074,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
           if (ev.stopReason) this.refs.status.setStopReason(ev.stopReason);
           break;
         case "message_start":
+          this.flushStreamingDeltas();
           if (ev.role === "user" && ev.message?.role === "user") {
             this.refs.chat.push(new UserMessageComponent({
               theme: this.theme,
@@ -1030,10 +1092,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.refs.status.setStopReason(this.stopReason);
           if (ev.role === "assistant") {
             // finalize:从 chat 末位调 finalize,通知 Markdown layout flush
+            this.flushStreamingDeltas();
             const last = this.refs.chat.last();
             if (last instanceof AssistantMessageComponent) {
               if (ev.message?.role === "assistant") {
-                last.setPartial(ev.message as AssistantMessage);
+                if (last.hasContent()) last.setPartialMetadata(ev.message as AssistantMessage);
+                else last.setPartial(ev.message as AssistantMessage);
               }
               last.finalize();
             } else if (ev.message?.role === "assistant") {
@@ -1049,23 +1113,50 @@ export class InteractiveMode implements FooterSnapshotProvider {
         case "message_update": {
           const e = ev.assistantMessageEvent;
           if (e.type === "done" || e.type === "error") {
-            // done/error 即 stream fan-in 终点;final 已在 message_end 路径处理
+            // done/error 即 stream fan-in 终点;先把已接受正文送入最终 frame。
+            this.flushStreamingDeltas();
             break;
           }
-          const partial = (e as { partial?: AssistantMessage }).partial;
-          if (partial === undefined) break;
-          if (partial.role !== "assistant") break;
+          const partial = "partial" in e ? e.partial : undefined;
+          if (partial !== undefined && partial.role !== "assistant") break;
           // 找 chat 末位的 AssistantMessageComponent;若没有则补 push 一份
           let last = this.refs.chat.last();
           if (!(last instanceof AssistantMessageComponent)) {
-            const comp = new AssistantMessageComponent({ theme: this.theme, partial });
+            const comp = new AssistantMessageComponent({ theme: this.theme });
             this.refs.chat.push(comp);
             last = comp;
-          } else {
-            last.setPartial(partial);
           }
-          // M3 临时:从 partial 抽 toolCalls 占位记录(本期不在 UI 中渲染);后续 M3 路由
-          void extractToolCalls(partial);
+          if (!(last instanceof AssistantMessageComponent)) break;
+          switch (e.type) {
+            case "text_delta":
+              this.queueAssistantDelta({
+                kind: "append-text",
+                entryId: "assistant",
+                partId: `text:${e.contentIndex}`,
+                channel: "text",
+                generation: this.streamingGeneration,
+                text: e.delta,
+                receivedAt: Date.now(),
+              }, partial);
+              break;
+            case "thinking_delta":
+              this.queueAssistantDelta({
+                kind: "append-text",
+                entryId: "assistant",
+                partId: `thinking:${e.contentIndex}`,
+                channel: "thinking",
+                generation: this.streamingGeneration,
+                text: e.delta,
+                receivedAt: Date.now(),
+              }, partial);
+              break;
+            case "start":
+              if (partial) last.setPartial(partial);
+              break;
+            default:
+              if (partial) last.setPartialMetadata(partial);
+              break;
+          }
           break;
         }
         case "tool_execution_start": {
@@ -1155,8 +1246,54 @@ export class InteractiveMode implements FooterSnapshotProvider {
       // 异常不外抛(对照 02 §1 不可变契约);记 stderr
       process.stderr.write(`[interactive-mode] handleEvent ${ev.type} failed: ${String(e)}\n`);
     }
-    // 任何事件后都请求一次合帧
-    this.ui.requestRender();
+    // 任何事件后都请求一次合帧；stream backlog 超过预算时由 scheduler 提前让出一帧。
+    const pressure = this.streamingDeltas.pressure;
+    this.ui.requestRender(false, {
+      queuedEvents: pressure.queuedEvents,
+      queuedBytes: pressure.queuedBytes,
+      oldestAgeMs: pressure.oldestAgeMs,
+    });
+  }
+
+  private queueAssistantDelta(delta: AppendTextDelta, partial: AssistantMessage | undefined): void {
+    const before = this.streamingDeltas.stats;
+    this.performanceObserver?.recordQueued({
+      events: 1,
+      bytes: new TextEncoder().encode(delta.text).byteLength,
+    });
+    this.streamingDeltas.push(delta);
+    const after = this.streamingDeltas.stats;
+    this.performanceObserver?.recordCoalesced({
+      textEvents: after.mergedTextEvents - before.mergedTextEvents,
+      supersededStatusEvents: after.supersededStatusEvents - before.supersededStatusEvents,
+    });
+    this.recordStreamingQueueDepth();
+    if (partial) this.pendingAssistantPartials.set(`${delta.entryId}:${delta.partId}`, partial);
+    if (!this.ui.isStarted) this.flushStreamingDeltas();
+  }
+
+  private flushStreamingDeltas(): void {
+    for (const delta of this.streamingDeltas.drain()) {
+      if (delta.kind !== "append-text") continue;
+      const component = this.refs.chat.last();
+      if (!(component instanceof AssistantMessageComponent)) continue;
+      const key = `${delta.entryId}:${delta.partId}`;
+      const partial = this.pendingAssistantPartials.get(key);
+      if (delta.channel === "thinking") component.appendThinkingDelta(delta.text, partial);
+      else component.appendTextDelta(delta.text, partial);
+      this.pendingAssistantPartials.delete(key);
+    }
+    this.recordStreamingQueueDepth();
+  }
+
+  private recordStreamingQueueDepth(): void {
+    const pressure = this.streamingDeltas.pressure;
+    this.performanceObserver?.recordQueueDepth({
+      events: pressure.queuedEvents,
+      bytes: pressure.queuedBytes,
+      oldestAgeMs: pressure.oldestAgeMs,
+      pressureLevel: pressure.level,
+    });
   }
 }
 

@@ -1,0 +1,17 @@
+{
+  "command": "node --input-type=module <controlled node-pty smoke>",
+  "scope": "mock demo startup, OpenTUI frame presence, Ctrl+D exit and PTY cleanup; not full human selection/theme acceptance",
+  "environment": {
+    "node": "v22.23.1",
+    "platform": "linux",
+    "arch": "x64",
+    "terminal": "xterm-256color",
+    "rows": 24
+  },
+  "cases": [
+    { "columns": 60, "exitCode": 0, "sawRunLedger": true, "sawMockWarning": true },
+    { "columns": 80, "exitCode": 0, "sawRunLedger": true, "sawMockWarning": true },
+    { "columns": 143, "exitCode": 0, "sawRunLedger": true, "sawMockWarning": true }
+  ],
+  "status": "agent-verified smoke; selection/copy/theme/focus and detailed PTY budget remain open"
+}

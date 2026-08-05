@@ -64,6 +64,7 @@
     "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
+    "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
     "dev": "tsx watch examples/run.ts",
     "generate-models": "node --experimental-strip-types scripts/generate-models.ts",
     "test": "vitest run && npm run test:tui-native",

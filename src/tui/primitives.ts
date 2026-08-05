@@ -1,11 +1,14 @@
 import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 import { createOpenTuiComponentRuntime, type OpenTuiComponentRuntime } from "./opentui/component-runtime.ts";
+import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
+import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock } from "./presentation.ts";
 
 export interface Component {
   render(width: number): string[];
   present?(width: number): PresentationBlock[];
+  getPresentationVersion?(): number;
   handleInput?(data: string): void;
   invalidate(): void;
   wantsKeyRelease?: boolean;
@@ -219,6 +222,10 @@ export class Markdown implements Component {
 
 export type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 export type InputListener = (data: string) => InputListenerResult;
+export type RenderPreparationListener = () => void;
+export interface TUIOptions {
+  readonly performanceObserver?: TuiPerformanceObserver;
+}
 export interface Terminal {
   start(onInput: (data: string) => void, onResize: () => void): void;
   stop(): void;
@@ -253,16 +260,27 @@ export class TUI extends Container {
   readonly terminal: Terminal;
   private focusedComponent: Component | null = null;
   private readonly inputListeners: InputListener[] = [];
+  private readonly renderPreparationListeners: RenderPreparationListener[] = [];
   private readonly themeModeListeners: Array<(mode: "dark" | "light") => void> = [];
+  private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private overlay: Component | undefined;
   private overlayHidden = false;
   private runtime: OpenTuiComponentRuntime | undefined;
+  private frameScheduler: FrameScheduler | undefined;
   private started = false;
-  constructor(terminal: Terminal, _showHardwareCursor = false) {
+  constructor(terminal: Terminal, _showHardwareCursor = false, options: TUIOptions = {}) {
     super();
     this.terminal = terminal;
+    this.performanceObserver = options.performanceObserver;
   }
   addInputListener(listener: InputListener): () => void { this.inputListeners.push(listener); return () => { const i = this.inputListeners.indexOf(listener); if (i >= 0) this.inputListeners.splice(i, 1); }; }
+  addBeforeRenderListener(listener: RenderPreparationListener): () => void {
+    this.renderPreparationListeners.push(listener);
+    return () => {
+      const index = this.renderPreparationListeners.indexOf(listener);
+      if (index >= 0) this.renderPreparationListeners.splice(index, 1);
+    };
+  }
   addThemeModeListener(listener: (mode: "dark" | "light") => void): () => void {
     this.themeModeListeners.push(listener);
     return () => {
@@ -276,6 +294,7 @@ export class TUI extends Container {
     if (isFocusable(component)) component.focused = true;
   }
   hasOverlay(): boolean { return this.overlay !== undefined && !this.overlayHidden; }
+  get isStarted(): boolean { return this.started; }
   showOverlay(component: Component, _options: OverlayOptions = {}): OverlayHandle {
     this.overlay = component;
     this.overlayHidden = false;
@@ -293,41 +312,62 @@ export class TUI extends Container {
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
+    this.frameScheduler = new FrameScheduler({
+      frameWindowMs: 16,
+      backlogLimits: {
+        maxQueuedEvents: 512,
+        maxQueuedBytes: 256 * 1024,
+        maxOldestAgeMs: 100,
+      },
+      onFrame: () => {
+        if (this.started) this.renderFrame();
+      },
+    });
     if (this.terminal instanceof ProcessTerminal) {
       this.runtime = await createOpenTuiComponentRuntime({
         onInput: (data) => this.handleInput(data),
-        onResize: () => this.requestRender(true),
+        onResize: () => this.requestRender(),
         onThemeMode: (mode) => {
           for (const listener of this.themeModeListeners) listener(mode);
         },
+        performanceObserver: this.performanceObserver,
       });
       this.renderFrame();
       return;
     }
-    this.terminal.start((data) => this.handleInput(data), () => this.requestRender(true));
+    this.terminal.start((data) => this.handleInput(data), () => this.requestRender());
     this.renderFrame();
   }
   stop(): void {
     if (!this.started) return;
     this.started = false;
+    this.frameScheduler?.destroy();
+    this.frameScheduler = undefined;
     this.runtime?.destroy();
     this.runtime = undefined;
     this.terminal.stop();
   }
-  requestRender(_force = false): void { if (this.started) this.renderFrame(); }
+  requestRender(force = false, backlog?: FrameBacklogSnapshot): void {
+    if (!this.started || !this.frameScheduler) return;
+    if (force) {
+      this.frameScheduler.markDirty();
+      this.frameScheduler.flush("force");
+    } else this.frameScheduler.markDirty(backlog);
+  }
   invalidate(): void { super.invalidate(); this.requestRender(true); }
   private handleInput(input: string): void {
     let data = input;
     for (const listener of this.inputListeners) {
       const result = listener(data);
       if (result?.data !== undefined) data = result.data;
-      if (result?.consume) { this.requestRender(); return; }
+      if (result?.consume) { this.requestRender(true); return; }
     }
     const target = this.hasOverlay() ? this.overlay : this.focusedComponent;
     target?.handleInput?.(data);
-    this.requestRender();
+    this.requestRender(true);
   }
   private renderFrame(): void {
+    for (const listener of this.renderPreparationListeners) listener();
     const width = Math.max(1, this.terminal.columns);
     const focusIndex = this.focusedComponent ? this.children.indexOf(this.focusedComponent) : -1;
     const bodyComponents = focusIndex >= 0 ? this.children.slice(0, focusIndex) : this.children;

@@ -1,6 +1,6 @@
 # 18 · OpenTUI 流式渲染、长会话性能与交互体验补充计划
 
-> 状态：待执行（Plan 17 P8 已通过，可从 S0 严格执行）
+> 状态：执行中（2026-08-05；S0–S4 已有局部 agent-verified 实现，S5–S8 仍开放）
 >
 > 依赖：[`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md)
 >
@@ -14,7 +14,8 @@
 
 执行边界：
 
-- Plan 17 P8 已在 2026-08-02 获得 agent-verified 证据，S0–S8 已解除前置门禁，但仍全部是未实现计划项；
+- Plan 17 P8 已在 2026-08-02 获得 agent-verified 证据；本轮已落地 S0 的 coalescer fixture/分层观测 seam、S1 的 keyed renderable、S2 的 delta 合并与帧调度，以及 S3/S4 的局部增量 Markdown、viewport/sticky 行为；这些不代表 S0–S4 整阶段闭合；
+- S5 仍是开放计划项；S6–S8 已增加 resize/多宽度/降级 fixture 与 native 证据，但真实 PTY、Yoga/layout 独立成本、内存硬上限和 before/after 全链路预算证据仍缺；
 - 后续必须按 S0 → S8 顺序执行，不得因前置门禁已解除而跳过 profiling、fixture 或性能预算校准；
 - 若 Plan 17 的 renderer 基线发生回归，先恢复其门禁证据，再继续本计划，禁止两份计划并行争夺 renderer 结构 authority；
 - 继续使用 OpenTUI imperative core，不切换 React/Solid，不隐式更改 `alternate-screen`；
@@ -163,51 +164,51 @@ interface ProjectionResult {
 
 ## 6. 严格执行阶段
 
-各阶段遵循 RED → 最小 GREEN → focused regression → 同域回归。一个阶段没有证据时不得标记完成。
+各阶段遵循 RED → 最小 GREEN → focused regression → 同域回归。复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示局部实现但仍缺生产接线、压力或验收证据，`[ ]` 表示尚未实现。一个阶段没有证据时不得标记完成。
 
 ### S0 · 基线、fixture 与预算校准
 
-- [ ] 固定 benchmark 环境：CPU、终端尺寸、Bun/Node/OpenTUI 版本、screen mode 和 theme。
-- [ ] 建立 deterministic event fixtures：1 字符碎片、自然 token、8 KiB burst、开放 code fence、表格、tool result、abort/error。
-- [ ] 为当前“完整 frame projection”加测量 seam，记录 projection 次数、累计字符处理量、单次耗时和 native frame stats。
-- [ ] 建立 100 / 1,000 / 10,000 entries 与 64 KiB / 1 MiB 单消息基线。
-- [ ] 分别测“仅 reducer”“projection + layout”“native frame”，禁止只用端到端总时长掩盖瓶颈。
-- [ ] 校准第 5 节预算；保留 before artifact，不把优化后数据回填成基线。
+- [~] 固定 benchmark 环境：脚本记录 Node/平台/架构，Bun/OpenTUI、CPU、screen mode、theme 和真实终端尺寸仍待固定。
+- [~] 建立 deterministic event fixtures：已有 10,000 × 1-char、8 KiB chunk、1 MiB single chunk、开放 code fence、表格与 abort/error；tool result fixture 仍待补齐。
+- [x] 为当前“完整 frame projection”加测量 seam，记录 projection 次数、累计字符处理量、单次耗时和 native frame stats。
+- [~] 建立 100 / 1,000 / 10,000 entries 与 64 KiB / 1 MiB 单消息基线：当前已有 10,000 native keyed history 与 1 MiB coalescer 数据，其余规模/层级仍待补齐。
+- [~] 分别测“仅 reducer”“projection + layout”“native frame”：当前已有 coalescer 与 projection/native 分层计数，Yoga/layout 独立耗时与 PTY 仍待测。
+- [ ] 校准第 5 节预算；当前 [`18-streaming-baseline-2026-08-05.json`](18-streaming-baseline-2026-08-05.json) 是 coalescer/pure-policy 初始 artifact，不是完整 before/after 预算证明。
 
 验收：生成可复现的基线报告和 fixture；明确主要成本在事件、解析、布局还是 terminal paint。
 
 ### S1 · 持久 keyed render tree
 
-- [ ] RED：更新活动 assistant part 时，历史 entry renderable identity、editor identity、overlay identity 和 scroll position 保持不变。
-- [ ] 引入稳定 `TimelineEntryId` / `TimelinePartId`，replay、live event、toolcall 使用同一 identity 规则。
-- [ ] 建立 registry，由 adapter 创建/更新/删除单个 entry/part renderable。
-- [ ] screen、timeline、editor、footer 保持持久；禁止常规 update 调用 `destroyRecursively()` 重建整屏。
-- [ ] overlay 仅在 id/type 变化或关闭时创建/销毁；内容变化只 mutation 子节点。
-- [ ] 把全量 snapshot mount 限定为 cold start、session replace 或测试 fixture，普通 delta 不走该路径。
+- [x] RED：更新活动 assistant part 时，历史 entry renderable identity、editor identity、overlay identity 和 scroll position 保持不变。
+- [x] 引入稳定 `TimelineEntryId` / `TimelinePartId`；`TimelineStore` 已提供 generation fence，Chat/OpenTUI adapter 已使用稳定 block key；replay/live/toolcall 的统一 identity 规则仍待收敛。
+- [~] 建立 registry，由 adapter 创建/更新/删除单个 entry/part renderable：当前 component runtime 的 keyed maps 已实现，独立 `timeline-projection`/renderable registry 尚未拆出。
+- [x] screen、timeline、editor、footer 保持持久；常规 update 不再销毁整屏，已有 Bun native identity tests。
+- [x] overlay 仅在 id/type 变化或关闭时创建/销毁；内容变化只 mutation 子节点。
+- [~] 把全量 snapshot mount 限定为 cold start、session replace 或测试 fixture：当前 mount/update 复用已接通，session replace 的 production path 仍待核验。
 
 验收：单 entry delta 的 application dirty set 只含目标 entry；历史树、editor draft/selection/focus 与 overlay 不被重建。
 
 ### S2 · 有界 delta coalescer 与帧调度
 
-- [ ] RED：10,000 个 1-char delta 不触发 10,000 次 projection/paint，最终文本逐字节等于输入。
-- [ ] transport callback 只入队/更新轻量 reducer，不同步执行全历史 render。
-- [ ] 合并相邻且同 entry/part/generation 的 text、thinking、tool delta；保持严格顺序。
-- [ ] 对 resize、spinner、progress 等 supersedable 事件执行 latest-wins，并计数。
-- [ ] 前台窗口从一帧（16–33 ms）起步；结合 queued event count、queued chars 和 oldest age 提前/延后 flush。
-- [ ] 单轮 drain 设置事件数/字符数/CPU time budget；每轮显式给 input、scroll、interrupt 与 approval 让路。
-- [ ] complete/error/abort/session switch 强制 final flush；destroy 前不遗失已接受的语义 delta。
-- [ ] `renderer.requestRender()` 只由 scheduler/projection owner 调用，避免 reducer、组件和事件 handler 多头调度。
+- [x] RED：10,000 个 1-char delta 不触发 10,000 次 projection/paint，最终文本逐字节等于输入；已有 pure test、benchmark 和 shared frame test。
+- [x] transport callback 只入队/更新轻量 reducer，不同步执行全历史 render；`InteractiveMode` 的 text/thinking delta 已接入 coalescer。
+- [x] 合并相邻且同 entry/part/generation 的 text/thinking delta；保持严格顺序。
+- [x] 对状态类事件提供 generation-aware latest-wins 与 superseded 计数；resize/spinner/progress 的 production producer 接线仍待补齐。
+- [~] 前台窗口从一帧（16–33 ms）起步；scheduler 已按 queued event/bytes/oldest age 提前 flush，终端速度自适应仍待测。
+- [~] 单轮 drain 有事件数上限且 input/interrupt 使用 force path；字符数/CPU time budget 与 approval fairness 仍待补齐。
+- [x] complete/error/abort/session switch 的 terminal path 会先 drain；destroy/quit 前也会清空已接受的 delta。
+- [~] `renderer.requestRender()` 已集中到 TUI scheduler，但 `InteractiveMode` 仍在每类事件结束处请求 dirty，完整 projection owner 边界仍待进一步收敛。
 
 验收：burst 下正文无丢失、输入不饥饿、frame 数量受控，且低速输出没有人为 300 ms 级延迟。
 
 ### S3 · 原生增量 Markdown、代码与 diff
 
-- [ ] RED：活动 tail 增长时稳定历史 part 不重新解析、不重建；terminal event 后完成态内容一致。
-- [ ] 每个活动 assistant Markdown part 使用一个持久 `MarkdownRenderable`，流开始 `streaming=true`，结束/error/abort 后 final flush 再设 `false`。
-- [ ] 直接追加本事件 delta，不再从累计 `partial` 提取全文覆盖活动 part。
-- [ ] 稳定历史 part 与活动 tail 分离；活动尾部更新不得让整个 transcript 重新 join/ANSI 转换。
-- [ ] 不把 OpenTUI 实验性 `_stableBlockCount` 暴露为 RunLedger 类型、领域事件或长期兼容契约。
-- [ ] 对开放/超大 code fence 设置字符、行数与高亮耗时预算；超限时使用可选择的 plain text/延迟高亮，结束后可在空闲预算内升级。
+- [~] RED：活动 tail 更新已保持 keyed history identity，terminal 内容一致；OpenTUI Markdown 内部解析成本与稳定 block 计数尚未形成独立证据。
+- [x] 每个活动 assistant Markdown part 使用一个持久 `MarkdownRenderable`，流开始 `streaming=true`，结束/error/abort 后 final flush 再设 `false`。
+- [x] 直接追加本事件 delta；`AssistantMessageComponent` 不再从累计 `partial` 重建已投影正文。
+- [~] 稳定历史 part 与活动 tail 已按 presentation block key 分离，ChatContainer 仍需遍历历史 child，完整 parse/wrap/layout 增量化仍待完成。
+- [x] 不把 OpenTUI 实验性 `_stableBlockCount` 暴露为 RunLedger 类型、领域事件或长期兼容契约。
+- [x] 对开放/超大 code fence 设置字符与行数预算；超限时使用可选择的、正文无损的 plain text projection，结束后恢复 Markdown；高亮耗时预算仍待真实 OpenTUI profiling。
 - [ ] 若异步高亮存在，使用 generation fence、1 active + 1 latest queued 上限和可取消结果提交。
 - [ ] 仅真实 unified diff 进入 `DiffRenderable`；before/after 摘要继续使用诚实 Text projection。
 
@@ -215,14 +216,14 @@ interface ProjectionResult {
 
 ### S4 · 长会话窗口化、分页与缓存回收
 
-- [ ] RED：10,000 entries 时可见 frame 只访问 viewport + overscan 范围，滚动位置和选区稳定。
-- [ ] transcript 改为每 entry/part 独立 child，使 OpenTUI viewport culling 在实际粒度生效。
-- [ ] sticky-follow 只在用户处于底部时启用；用户向上阅读后，新 delta 不抢回视口，并显示可操作的“新内容”提示。
-- [ ] 建立 `(entryId, width, contentGeneration, themeGeneration)` 高度/换行缓存；resize 只失效受 width 影响的缓存。
-- [ ] 先基准验证 Yoga + viewport culling；若 10,000 entries 仍超预算，再实现真正窗口化：高度前缀/索引、可见区定位、overscan、top/bottom spacer。
+- [~] RED：已有 10,000 keyed native history 与滚动位置测试；尚未证明 frame 只访问 viewport + overscan。
+- [x] transcript 已改为每 entry/part 独立 child，OpenTUI `viewportCulling=true` 在实际树上生效。
+- [x] OpenTUI `stickyScroll` 已验证用户上滚后新 append 不抢回 `scrollTop`；已接入持久的“new content”提示，PageDown 回到底部后清除。
+- [~] 已有 bounded `RenderCache`（entry/width/contentGeneration/themeGeneration key）和 `HeightIndex` pure layer；OpenTUI 高度/换行缓存尚未接入。
+- [~] 已完成 10,000 entries native smoke 基线；Yoga/layout 独立成本仍待测，再决定是否启用真正窗口化。
 - [ ] 窗口化必须保持稳定 row key、scroll anchor、selection/copy 和活动 streaming row pinning。
-- [ ] 将“渲染窗口化”“历史数据分页/裁剪”“派生缓存回收”设计和指标分开。
-- [ ] 回收远离 viewport 的 Markdown render output、wrap、highlight 等昂贵缓存；原始审计文本的留存由 Session/ledger authority 决定，UI 不擅自删除。
+- [~] 已将“渲染窗口化”和派生缓存回收拆为独立 pure modules；历史数据分页/裁剪尚未实现。
+- [~] `ChatContainer` 的 presentation cache 有条目/字节 LRU 上限；Markdown wrap/highlight 的屏外回收尚未接入。
 
 验收：历史增长不导致每帧线性遍历/布局；用户读历史时不自动跳底；滚回已回收区域可按需重建且内容一致。
 
@@ -240,36 +241,36 @@ interface ProjectionResult {
 
 ### S6 · 响应式布局与前端效果
 
-- [ ] RED：60 / 80 / 143 列和 resize storm 下，重要信息不重叠、不越界，editor/overlay focus 与 scroll anchor 保持。
+- [~] RED：Bun native 已覆盖 60 / 80 / 143 列、resize 后 editor identity/draft 与 resize storm 合帧；overlay focus、selection/scroll anchor 的真实 PTY 证据仍缺。
 - [ ] 60 列采用 compact chrome：折叠次要 hints/metadata；80 列标准布局；143 列允许并列展示额外审计摘要，但不改变 authority。
 - [ ] header/footer/status 的频繁状态变化只更新对应小节点，不触发 transcript layout。
-- [ ] resize 事件合并为 latest-wins；最后一次 resize 后统一重算 width-keyed layout。
-- [ ] 用户阅读历史时禁用自动跟随；回到底部或显式触发后恢复 sticky-follow。
-- [ ] selection/copy、paste、CJK/emoji 宽度、reduced motion、theme 更新和 overlay focus 纳入真实 frame/input 测试。
+- [x] resize 事件进入共享 16 ms scheduler，storm 期间 latest-wins；最后一帧再按当前宽度投影。
+- [x] 用户阅读历史时禁用自动跟随；回到底部或显式触发后恢复 sticky-follow。
+- [~] Bun native 已覆盖 selection/copy、paste、CJK/emoji 宽度、theme 更新与 overlay focus；reduced motion 和完整 PTY input 仍待补齐。
 - [ ] spinner/活动提示遵守 frame budget；pressure 模式下降频或静态化，不用动画抢占正文与输入。
 
 验收：三档宽度和交互状态有 PTY 证据；“更好看”落实为信息层级、稳定性、可读性和输入响应，而不是增加重型装饰。
 
 ### S7 · 背压、降级与内存预算
 
-- [ ] RED：慢 renderer + 快 producer 下 queue/cache 不无限增长，正文最终完整，控制输入仍可响应。
+- [~] RED：coalescer pressure telemetry、lossless 正文合并、bounded presentation cache 与 native input fairness 已有 focused 证据；慢 renderer 的全链路 hard-memory 上限仍未证明。
 - [ ] 同时限制 queued events、queued bytes、oldest age、async jobs 和昂贵 cache bytes；阈值必须可观测。
 - [ ] 达到 soft limit 时扩大 lossless 合并窗口、降低 spinner/status 频率、暂停非关键高亮并进入 catch-up 模式。
-- [ ] 达到 hard limit 前对开放大块切换 raw/plain text projection；不得静默删除 assistant/tool 语义正文。
-- [ ] supersedable 事件的淘汰规则显式化；lossless 事件若上游不可暂停，必须压缩为 chunk buffer，并发出 pressure telemetry。
-- [ ] 大单行、大表格、超深列表、超长 code fence 设置解析/布局保护阈值和用户可见降级标记。
+- [x] 达到 streaming 字符/行/fence limit 时对开放大块切换 raw/plain text projection；正文不静默删除，并展示降级标记，终态可恢复 Markdown。
+- [~] supersedable 事件的淘汰规则与 pressure telemetry 已有 pure coalescer；lossless 上游不可暂停时的硬字节上限/主动暂停仍待接入真实 producer。
+- [x] 大单行、大表格与超长 code fence 已共享解析保护阈值和用户可见降级标记；超深列表与布局耗时仍待 profiling。
 - [ ] session switch/abort/destroy 取消旧 generation 工作并释放 buffer/cache；验证无 renderer/timer/listener 泄漏。
 
 验收：压力测试达到稳定上界，降级可恢复且不改变审计正文；所有 dropped 项都属于明确定义的可替代状态。
 
 ### S8 · 证据门禁与回写
 
-- [ ] Node 纯测试覆盖 coalescer、reducer、generation fence、identity、预算和降级策略。
-- [ ] Bun native tests 使用 `@opentui/core/testing` 的真实 renderer、`ManualClock`、`TestRecorder`、`captureCharFrame()` / `captureSpans()` 与 native stats。
-- [ ] 覆盖 burst delta、1 MiB message、开放 fence、大表格、10,000 entries、streaming 中向上滚动、resize storm、overlay + stream、abort/error final flush。
-- [ ] PTY 验证 60 / 80 / 143 列、selection/copy、paste、theme、focus、Ctrl+C/Ctrl+D 和 cleanup。
-- [ ] 运行 `npm run check`、`npm test`、`npm run build`、`npm run demo:tui`。
-- [ ] 将 before/after 数据、测试命令、环境、失败项和降级行为回写本文；human verification 与 agent verification 分列。
+- [~] Node 纯测试已覆盖 coalescer、generation fence、identity、backlog/缓存预算；降级策略和完整 reducer/projection 矩阵仍待补齐。
+- [~] Bun native tests 已使用 `@opentui/core/testing` 的真实 renderer、`captureCharFrame()` / `captureSpans()` 与 native stats；`ManualClock`/`TestRecorder` 和更细的 native timing 仍待补齐。
+- [~] 已覆盖 burst delta、1 MiB coalescer、10,000 entries、streaming 中向上滚动与 new-content 提示、60/80/143 宽度、resize storm、overlay + stream、abort/error final flush、开放 fence/大表格/超长单行的局部路径；PTY 场景仍待补齐。
+- [~] 受控 POSIX PTY smoke 已验证 mock demo 在 60 / 80 / 143 列启动、出现 RunLedger frame、Ctrl+D 正常退出和 cleanup；selection/copy、paste、theme、focus、Ctrl+C 与详细预算仍待补齐，证据见 [`18-pty-smoke-2026-08-05.json`](18-pty-smoke-2026-08-05.json)。
+- [x] 当前工作树 `npm run check`、`npm run build`、TUI focused tests、benchmark 与全量 `npm test` 均通过；这仍不替代完整 PTY 交互和 before/after budget 证据。
+- [x] 已将当前 before/coalescer artifact、测试命令、环境和失败边界回写本文；完整 before/after 与 human verification 仍待补齐。
 
 验收：性能结论有可复现实验，不以“看起来流畅”或 mock render 调用次数替代 native frame/PTY 证据。
 
@@ -314,6 +315,28 @@ src/tui/opentui/
 ```
 
 `InteractiveMode` 只负责订阅、把 typed event 交给 reducer、接收 typed intent 并调用既有 controller；它不拼接整段 transcript、不拥有 scheduler timer、不直接做 Markdown/highlight。
+
+### 8.1 当前执行证据（2026-08-05）
+
+本轮已落地到工作树的实现切片与 agent verification：
+
+- `src/tui/opentui/timeline-store.ts`：entry/part 稳定 ID、generation fence、terminal flush 结果；
+- `src/tui/opentui/delta-coalescer.ts`：正文 lossless 相邻合并、generation-aware status latest-wins、queued bytes/events/pressure telemetry；
+- `src/tui/opentui/frame-scheduler.ts`：16 ms application frame window、force/input/terminal flush、backlog age/size 提前 flush、destroy 清理；
+- `src/tui/opentui/render-cache.ts` 与 `viewport-window.ts`：有界派生缓存和纯高度/overscan/anchor 索引；
+- `src/tui/opentui/performance-observer.ts`、component runtime 与 `InteractiveMode`：区分 queue/coalescing、projection 和 native frame 计数；
+- keyed OpenTUI screen/timeline/overlay、direct ScrollBox children、assistant delta append、ChatContainer bounded presentation cache；
+- `scripts/benchmark-tui-streaming.ts`、[`18-streaming-baseline-2026-08-05.json`](18-streaming-baseline-2026-08-05.json) 与 [`18-pty-smoke-2026-08-05.json`](18-pty-smoke-2026-08-05.json)：Node/Linux coalescer + pure Markdown fixture 与受控 PTY smoke artifact；不替代 native/layout/完整 PTY budget。
+
+已通过的 focused gate：
+
+- `npx vitest run tests/tui`：16 files / 113 tests passed；
+- `npm run test:tui-native`：14 tests / 88 assertions passed，包含 10,000 keyed history、上滚 sticky-scroll、new-content 提示、PageUp/PageDown、60/80/143 宽度与 resize 后 identity；
+- `npm run check`、`npm run build`、`git diff --check`：通过；
+- `npm run benchmark:tui-streaming`：10,000 × 1-char 合并为 1 个 projection item，正文字节无损。
+- 受控 `node-pty` mock demo smoke：60 / 80 / 143 列均出现 RunLedger frame，发送 Ctrl+D 后 exit code 0。
+
+全量 `npm test` 当前结果为 147 files / 779 tests 与 native 14 tests / 88 assertions 全绿；它证明没有当前工作树回归，但仍不等于 Plan 18 的完整 PTY selection/theme/focus 或性能预算闭合。
 
 ## 9. 风险与回退策略
 

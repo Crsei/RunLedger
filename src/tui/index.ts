@@ -47,12 +47,14 @@ export {
   type OverlayOptions,
   type OverlayUnfocusOptions,
   type RgbColor,
+  type RenderPreparationListener,
   type SelectItem,
   type SelectListLayoutOptions,
   type SelectListTheme,
   type SelectListTruncatePrimaryContext,
   type SizeValue,
   type Terminal,
+  type TUIOptions,
 } from "./primitives.ts";
 
 // 本期内部 stub 接入点(本期 no-op)
@@ -67,8 +69,71 @@ export type {
   OpenTuiRuntime,
   OpenTuiRuntimeOptions,
   OpenTuiScreenSnapshot,
+  OpenTuiTranscriptLine,
 } from "./opentui/runtime.ts";
 export { createOpenTuiRuntime } from "./opentui/runtime.ts";
+export {
+  TimelineStore,
+  type TimelineEntryId,
+  type TimelineEntryRole,
+  type TimelineEntrySnapshot,
+  type TimelinePartId,
+  type TimelinePartKind,
+  type TimelinePartSnapshot,
+  type TimelinePatch,
+  type TimelinePatchKind,
+  type TimelineProjectionResult,
+} from "./opentui/timeline-store.ts";
+export {
+  DeltaCoalescer,
+  type AppendTextDelta,
+  type CoalescedDelta,
+  type DeltaCoalescerOptions,
+  type DeltaCoalescerStats,
+  type DeltaPressureLevel,
+  type DeltaPressureSnapshot,
+  type ReplaceStatusDelta,
+  type StreamingDelta,
+  type TerminalDelta,
+} from "./opentui/delta-coalescer.ts";
+export {
+  FrameScheduler,
+  type FrameBacklogLimits,
+  type FrameBacklogSnapshot,
+  type FrameClock,
+  type FrameReason,
+  type FrameSchedulerOptions,
+} from "./opentui/frame-scheduler.ts";
+export {
+  RenderCache,
+  type RenderCacheKey,
+  type RenderCacheOptions,
+  type RenderCacheSnapshot,
+} from "./opentui/render-cache.ts";
+export {
+  HeightIndex,
+  type ScrollAnchor,
+  type ViewportWindowRequest,
+  type ViewportWindowResult,
+} from "./opentui/viewport-window.ts";
+export {
+  TuiPerformanceObserver,
+  type CoalescedObservation,
+  type NativeFrameObservation,
+  type ProjectionObservation,
+  type QueueDepthObservation,
+  type QueuePressureLevel,
+  type QueuedDeltaObservation,
+  type TuiPerformanceSnapshot,
+} from "./opentui/performance-observer.ts";
+export {
+  decideMarkdownProjection,
+  markdownFallbackNotice,
+  type MarkdownProjectionDecision,
+  type MarkdownProjectionMode,
+  type MarkdownProjectionReason,
+  type MarkdownStreamingBudget,
+} from "./opentui/markdown-budget.ts";
 export type { ProcessOverlayItem, ProcessOverlayState, ProcessOverlayAction } from "./process/types.ts";
 export { createInitialProcessOverlayState, processOverlayReducer } from "./process/reducer.ts";
 export { renderProcessOverlay } from "./process/presentation.ts";

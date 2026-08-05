@@ -1,7 +1,8 @@
 export type PresentationBlock =
-  | { kind: "text"; content: string }
-  | { kind: "markdown"; content: string; streaming: boolean }
+  | { id?: string; kind: "text"; content: string }
+  | { id?: string; kind: "markdown"; content: string; streaming: boolean }
   | {
+    id?: string;
     kind: "select";
     title: string;
     query?: string;
@@ -9,6 +10,7 @@ export type PresentationBlock =
     selectedIndex: number;
   }
   | {
+    id?: string;
     kind: "input";
     title: string;
     message: string;

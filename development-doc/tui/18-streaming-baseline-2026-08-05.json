@@ -1,0 +1,84 @@
+{
+  "command": "npm run benchmark:tui-streaming",
+  "scope": "coalescer push/drain plus pure Markdown streaming policy; excludes Markdown rendering, Yoga/layout, native frame and PTY",
+  "environment": {
+    "node": "v22.23.1",
+    "platform": "linux",
+    "arch": "x64",
+    "terminalColumns": null,
+    "terminalRows": null
+  },
+  "cases": [
+    {
+      "name": "10000 x 1-char",
+      "inputEvents": 10000,
+      "inputBytes": 10000,
+      "pushMs": 19.824,
+      "drainMs": 0.627,
+      "projectedItems": 1,
+      "mergedTextEvents": 9999,
+      "queuedBytesAfterDrain": 0
+    },
+    {
+      "name": "8 KiB natural chunks",
+      "inputEvents": 32,
+      "inputBytes": 8192,
+      "pushMs": 0.156,
+      "drainMs": 0.016,
+      "projectedItems": 1,
+      "mergedTextEvents": 31,
+      "queuedBytesAfterDrain": 0
+    },
+    {
+      "name": "1 MiB single chunk",
+      "inputEvents": 1,
+      "inputBytes": 1048576,
+      "pushMs": 1.652,
+      "drainMs": 0.979,
+      "projectedItems": 1,
+      "mergedTextEvents": 0,
+      "queuedBytesAfterDrain": 0
+    }
+  ],
+  "markdownFixtures": [
+    {
+      "name": "open code fence",
+      "inputBytes": 16390,
+      "lines": 2,
+      "mode": "plain-text",
+      "reason": "open-fence-limit",
+      "openFence": true
+    },
+    {
+      "name": "large table",
+      "inputBytes": 87921,
+      "lines": 4098,
+      "mode": "plain-text",
+      "reason": "streaming-character-limit",
+      "openFence": false
+    },
+    {
+      "name": "long single line",
+      "inputBytes": 131072,
+      "lines": 1,
+      "mode": "plain-text",
+      "reason": "streaming-character-limit",
+      "openFence": false
+    }
+  ],
+  "terminalFixtures": [
+    {
+      "name": "abort",
+      "drainedItems": 2,
+      "semanticText": "abort body",
+      "terminalKind": "abort"
+    },
+    {
+      "name": "error",
+      "drainedItems": 2,
+      "semanticText": "error body",
+      "terminalKind": "error"
+    }
+  ],
+  "status": "agent-verified coalescer and pure Markdown/terminal fixtures; native/layout/PTY budget remains open"
+}

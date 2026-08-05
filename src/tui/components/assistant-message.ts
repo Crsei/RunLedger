@@ -17,11 +17,19 @@ import type { Theme } from "../theme/theme.ts";
 import { makeMarkdownTheme } from "../theme/factories.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 import type { PresentationBlock } from "../presentation.ts";
+import {
+  decideMarkdownProjection,
+  markdownFallbackNotice,
+  type MarkdownStreamingBudget,
+  type MarkdownProjectionDecision,
+} from "../opentui/markdown-budget.ts";
 
 export interface AssistantMessageComponentProps {
   theme: Theme;
   /** 初始 partial;若 undefined 表示尚未流式开始,render 返回空。 */
   partial?: AssistantMessage;
+  /** 流式 Markdown 的可调预算；生产默认值保持在 pure policy 内。 */
+  markdownBudget?: MarkdownStreamingBudget;
 }
 
 /** 从 partial.message.content 抽出 text 段累积为单字符串。 */
@@ -50,41 +58,86 @@ export function extractToolCalls(partial: AssistantMessage | undefined): ToolCal
 
 export class AssistantMessageComponent implements Component {
   private partial: AssistantMessage | undefined;
+  private textContent: string;
+  private thinkingContent: string;
   private readonly markdown: Markdown;
   private readonly theme: Theme;
+  private readonly markdownBudget: MarkdownStreamingBudget | undefined;
   private thinkingExpanded = false;
   private streaming = true;
+  private presentationVersion = 0;
 
   constructor(props: AssistantMessageComponentProps) {
     this.theme = props.theme;
     this.partial = props.partial;
+    this.markdownBudget = props.markdownBudget;
+    this.textContent = extractText(props.partial);
+    this.thinkingContent = extractThinking(props.partial);
     this.markdown = new Markdown("", 0, 0, makeMarkdownTheme(this.theme));
+    this.markdown.setText(this.textContent);
   }
 
   invalidate(): void {
+    this.presentationVersion += 1;
     this.markdown.invalidate();
+  }
+
+  getPresentationVersion(): number {
+    return this.presentationVersion;
   }
 
   /** 更新 partial;由 InteractiveMode 在 message_update / message_start 路径调用。 */
   setPartial(partial: AssistantMessage | undefined): void {
+    this.presentationVersion += 1;
     this.partial = partial;
-    this.markdown.setText(extractText(partial));
+    this.textContent = extractText(partial);
+    this.thinkingContent = extractThinking(partial);
+    this.markdown.setText(this.textContent);
+  }
+
+  /** 更新 provider 元数据而不重建已经投影的正文。 */
+  setPartialMetadata(partial: AssistantMessage): void {
+    this.partial = partial;
+  }
+
+  /** 直接追加 transport delta；不从累计 partial 重新拼接全文。 */
+  appendTextDelta(delta: string, partial?: AssistantMessage): void {
+    if (partial) this.partial = partial;
+    if (delta.length === 0) return;
+    this.presentationVersion += 1;
+    this.textContent += delta;
+    this.markdown.setText(this.textContent);
+  }
+
+  /** thinking 正文按顺序保留；是否进入 transcript 由 presentation 决定。 */
+  appendThinkingDelta(delta: string, partial?: AssistantMessage): void {
+    if (partial) this.partial = partial;
+    if (delta.length === 0) return;
+    this.presentationVersion += 1;
+    this.thinkingContent += delta;
+  }
+
+  hasContent(): boolean {
+    return this.textContent.length > 0 || this.thinkingContent.length > 0;
   }
 
   /** 流式结束;通知 Markdown 重新计算布局(M2 阶段 noop,Markdown 无独立处理)。 */
   finalize(): void {
+    if (!this.streaming) return;
+    this.presentationVersion += 1;
     this.streaming = false;
   }
 
   toggleThinking(): void {
+    this.presentationVersion += 1;
     this.thinkingExpanded = !this.thinkingExpanded;
   }
 
   render(width: number): string[] {
-    if (!this.partial) return [];
+    if (!this.partial && this.textContent.length === 0 && this.thinkingContent.length === 0) return [];
     try {
       const lines: string[] = [];
-      const thinking = extractThinking(this.partial);
+      const thinking = this.thinkingContent;
       if (thinking.length > 0) {
         if (this.thinkingExpanded) {
           lines.push("[thinking]");
@@ -101,25 +154,47 @@ export class AssistantMessageComponent implements Component {
           lines.push(fitToWidth(`[thinking] ${first}${thinking.includes("\n") ? " …" : ""}`, width));
         }
       }
-      lines.push(...this.markdown.render(width));
+      lines.push(...this.renderMarkdown(width, this.markdownDecision()));
       return fitLinesToWidth(lines, width);
     } catch (e) {
       process.stderr.write(`[assistant-message] markdown render failed: ${String(e)}\n`);
       // 兜底:返回纯文本,不抛
-      const text = extractText(this.partial);
+      const text = this.textContent;
       return text.length === 0 ? [] : fitLinesToWidth(text.split("\n"), width);
     }
   }
 
   present(width: number): PresentationBlock[] {
-    if (!this.partial) return [];
+    if (!this.partial && !this.hasContent()) return [];
+    const decision = this.markdownDecision();
     const rendered = this.render(width);
-    const markdownText = extractText(this.partial);
-    const markdownLineCount = this.markdown.render(width).length;
+    const markdownText = this.textContent;
+    const markdownLineCount = markdownText.length > 0 ? this.renderMarkdown(width, decision).length : 0;
     const thinkingLines = markdownLineCount > 0 ? rendered.slice(0, -markdownLineCount) : rendered;
     const blocks: PresentationBlock[] = [];
-    if (thinkingLines.length > 0) blocks.push({ kind: "text", content: thinkingLines.join("\n") });
-    if (markdownText.length > 0) blocks.push({ kind: "markdown", content: markdownText, streaming: this.streaming });
+    if (thinkingLines.length > 0) blocks.push({ id: "thinking", kind: "text", content: thinkingLines.join("\n") });
+    if (markdownText.length > 0) {
+      if (decision.mode === "plain-text" && decision.reason) {
+        blocks.push({
+          id: "markdown",
+          kind: "text",
+          content: `${markdownFallbackNotice(decision.reason)}\n${markdownText}`,
+        });
+      } else {
+        blocks.push({ id: "markdown", kind: "markdown", content: markdownText, streaming: this.streaming });
+      }
+    }
     return blocks;
+  }
+
+  private markdownDecision(): MarkdownProjectionDecision {
+    return decideMarkdownProjection(this.textContent, this.streaming, this.markdownBudget);
+  }
+
+  private renderMarkdown(width: number, decision: MarkdownProjectionDecision): string[] {
+    if (decision.mode === "plain-text" && decision.reason) {
+      return [markdownFallbackNotice(decision.reason), ...this.textContent.split("\n")];
+    }
+    return this.markdown.render(width);
   }
 }

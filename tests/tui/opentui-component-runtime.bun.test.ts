@@ -1,10 +1,267 @@
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
+import stringWidth from "string-width";
+import stripAnsi from "strip-ansi";
 import {
   createOpenTuiComponentRuntimeFromRenderer,
 } from "../../src/tui/opentui/component-runtime.ts";
+import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 
 describe("OpenTUI component projection", () => {
+  test("updates keyed streaming blocks without rebuilding history, editor, or overlay", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [
+          { id: "history-1", kind: "text", content: "history" },
+          { id: "active-1", kind: "markdown", content: "first", streaming: true },
+        ],
+        editorText: "draft",
+        footer: ["status"],
+        overlay: [{ id: "overlay-1", kind: "text", content: "overlay" }],
+      });
+      await setup.renderOnce();
+
+      const historyBefore = setup.renderer.root.findDescendantById("runledger-block-history-1");
+      const activeBefore = setup.renderer.root.findDescendantById("runledger-block-active-1");
+      const editorBefore = setup.renderer.root.findDescendantById("runledger-editor");
+      const overlayBefore = setup.renderer.root.findDescendantById("runledger-overlay");
+      expect(historyBefore).toBeDefined();
+      expect(activeBefore).toBeDefined();
+      expect(editorBefore).toBeDefined();
+      expect(overlayBefore).toBeDefined();
+
+      runtime.update({
+        body: [
+          { id: "history-1", kind: "text", content: "history" },
+          { id: "active-1", kind: "markdown", content: "first second", streaming: true },
+        ],
+        editorText: "draft changed",
+        footer: ["status"],
+        overlay: [{ id: "overlay-1", kind: "text", content: "overlay changed" }],
+      });
+      await setup.renderOnce();
+
+      expect(setup.renderer.root.findDescendantById("runledger-block-history-1")?.num)
+        .toBe(historyBefore?.num);
+      expect(setup.renderer.root.findDescendantById("runledger-block-active-1")?.num)
+        .toBe(activeBefore?.num);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.num)
+        .toBe(editorBefore?.num);
+      expect(setup.renderer.root.findDescendantById("runledger-overlay")?.num)
+        .toBe(overlayBefore?.num);
+      expect(setup.captureCharFrame()).toContain("first second");
+      expect(setup.captureCharFrame()).toContain("overlay changed");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("records projection work separately from native frame rendering", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const observer = new TuiPerformanceObserver();
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+      performanceObserver: observer,
+    });
+    try {
+      runtime.update({
+        body: [{ id: "assistant-1", kind: "markdown", content: "hello", streaming: true }],
+        editorText: "",
+        footer: ["status"],
+      });
+      await setup.renderOnce();
+      const snapshot = observer.snapshot();
+      expect(snapshot.projectionCount).toBe(1);
+      expect(snapshot.projectionChars).toBeGreaterThanOrEqual("hello".length + "status".length);
+      expect(snapshot.nativeFrameCount).toBeGreaterThanOrEqual(1);
+      expect(snapshot.nativeCellsUpdated).toBeGreaterThan(0);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("mounts transcript blocks as direct ScrollBox children for viewport culling", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 100 }, (_, index) => ({
+          id: `entry-${index}`,
+          kind: "text" as const,
+          content: `entry ${index}`,
+        })),
+        editorText: "",
+        footer: [],
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript?.getChildren().length).toBe(100);
+      expect(transcript?.viewportCulling).toBe(true);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("preserves a reader's scroll position while streaming appends new entries", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      const rows = (count: number) => Array.from({ length: count }, (_, index) => ({
+        id: `entry-${index}`,
+        kind: "text" as const,
+        content: `entry ${index}`,
+      }));
+      runtime.update({ body: rows(40), editorText: "", footer: [] });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      transcript.scrollTop = 0;
+      runtime.update({
+        body: [...rows(40), { id: "entry-40", kind: "text", content: "new output" }],
+        editorText: "",
+        footer: [],
+      });
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBe(0);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("routes PageUp/PageDown to the transcript scroll box without editing the draft", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 40 }, (_, index) => ({
+          id: `entry-${index}`,
+          kind: "text" as const,
+          content: `entry ${index}`,
+        })),
+        editorText: "draft",
+        footer: [],
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      const bottom = transcript.scrollTop;
+      setup.mockInput.pressKey("\x1b[5~");
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeLessThan(bottom);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("shows a new-content indicator while reading history and clears it at the bottom", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      const rows = (count: number) => Array.from({ length: count }, (_, index) => ({
+        id: `entry-${index}`,
+        kind: "text" as const,
+        content: `entry ${index}`,
+      }));
+      runtime.update({ body: rows(40), editorText: "draft", footer: [] });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      transcript.scrollTop = 0;
+      runtime.update({ body: rows(41), editorText: "draft", footer: [] });
+      await setup.renderOnce();
+
+      expect(setup.renderer.root.findDescendantById("runledger-new-content")).toBeDefined();
+      expect(setup.captureCharFrame()).toContain("new content");
+
+      for (let index = 0; index < 8; index += 1) {
+        setup.mockInput.pressKey("\x1b[6~");
+        await setup.renderOnce();
+      }
+      expect(setup.captureCharFrame()).not.toContain("new content");
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("keeps 10,000 keyed history entries available to viewport culling", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 20 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 10_000 }, (_, index) => ({
+          id: `history-${index}`,
+          kind: "text" as const,
+          content: `history ${index}`,
+        })),
+        editorText: "",
+        footer: [],
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript?.getChildren().length).toBe(10_000);
+      expect(transcript?.viewportCulling).toBe(true);
+      expect(setup.captureCharFrame()).toContain("history 9999");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("keeps key content within compact, standard, and wide terminal widths", async () => {
+    for (const width of [60, 80, 143]) {
+      const setup = await createTestRenderer({ width, height: 16 });
+      const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+        onInput: () => {},
+        onResize: () => {},
+      });
+      try {
+        runtime.update({
+          body: [
+            { id: "history", kind: "text", content: "审计 history 🧭 ".repeat(8) },
+            { id: "active", kind: "markdown", content: "# streaming\n\n正文内容 ".repeat(4), streaming: true },
+          ],
+          editorText: "draft",
+          footer: ["idle · deepseek-v4-pro"],
+        });
+        await setup.renderOnce();
+        const editorBefore = setup.renderer.root.findDescendantById("runledger-editor");
+        setup.resize(width, 18);
+        await setup.renderOnce();
+        const lines = setup.captureCharFrame().split("\n");
+        expect(lines.every((line) => stringWidth(stripAnsi(line)) <= width)).toBe(true);
+        expect(setup.renderer.root.findDescendantById("runledger-editor")?.num).toBe(editorBefore?.num);
+        expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+      } finally {
+        runtime.destroy();
+      }
+    }
+  });
+
   test("绘制 timeline/editor/footer/overlay，并由 owner 销毁 renderer", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const inputs: string[] = [];

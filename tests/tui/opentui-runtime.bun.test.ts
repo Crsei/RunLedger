@@ -23,6 +23,49 @@ type RuntimeFactory = (options: {
 }) => RuntimeUnderTest;
 
 describe("OpenTUI runtime", () => {
+  test("mount updates persistent screen nodes instead of rebuilding the whole tree", async () => {
+    const tuiModule: object = await import("../../src/tui/index.ts");
+    const candidate = Reflect.get(tuiModule, "createOpenTuiRuntime");
+    expect(typeof candidate).toBe("function");
+    if (typeof candidate !== "function") return;
+
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    try {
+      const runtime = (candidate as RuntimeFactory)({ renderer: setup.renderer });
+      runtime.mount({
+        header: "RunLedger",
+        resources: "tools: 8",
+        transcript: ["assistant: first"],
+        status: "streaming",
+        footer: "model",
+        hints: "Ctrl+D exit",
+      });
+      await setup.renderOnce();
+      const screenBefore = setup.renderer.root.findDescendantById("runledger-screen");
+      const transcriptBefore = setup.renderer.root.findDescendantById("runledger-transcript");
+      const editorBefore = setup.renderer.root.findDescendantById("runledger-editor");
+
+      runtime.mount({
+        header: "RunLedger",
+        resources: "tools: 8",
+        transcript: ["assistant: first", "assistant: second"],
+        status: "idle",
+        footer: "model",
+        hints: "Ctrl+D exit",
+      });
+      await setup.renderOnce();
+
+      expect(setup.renderer.root.findDescendantById("runledger-screen")?.num).toBe(screenBefore?.num);
+      expect(setup.renderer.root.findDescendantById("runledger-transcript")?.num).toBe(transcriptBefore?.num);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.num).toBe(editorBefore?.num);
+      expect(setup.renderer.root.findDescendantById("runledger-transcript")?.getChildren().length).toBe(2);
+      expect(setup.captureCharFrame()).toContain("assistant: second");
+      runtime.destroy();
+    } finally {
+      if (!setup.renderer.isDestroyed) setup.renderer.destroy();
+    }
+  });
+
   test("绘制最小 RunLedger screen，并由 runtime owner 销毁 renderer", async () => {
     const tuiModule: object = await import("../../src/tui/index.ts");
     const candidate = Reflect.get(tuiModule, "createOpenTuiRuntime");

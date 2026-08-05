@@ -18,36 +18,44 @@
 
 import type { Component } from "../index.ts";
 import type { PresentationBlock } from "../presentation.ts";
+import { RenderCache } from "../opentui/render-cache.ts";
 import { fitToWidth } from "./render-width.ts";
 
 export class ChatContainer implements Component {
-  private readonly children: Component[] = [];
+  private readonly children: Array<{ key: string; component: Component }> = [];
+  private readonly presentationCache = new RenderCache<PresentationBlock[]>({
+    maxEntries: 1024,
+    maxBytes: 4 * 1024 * 1024,
+  });
+  private nextKey = 0;
 
   invalidate(): void {
-    for (const c of this.children) {
-      c.invalidate();
+    this.presentationCache.clear();
+    for (const { component } of this.children) {
+      component.invalidate();
     }
   }
 
-  push(component: Component): void {
-    this.children.push(component);
+  push(component: Component, key?: string): void {
+    this.children.push({ key: key ?? `chat-${this.nextKey++}`, component });
   }
 
   /** M8d/clear 命令:清空 chat viewport。 */
   clear(): void {
     this.children.length = 0;
+    this.presentationCache.clear();
   }
 
   /** 取最末追加的组件,便于 InteractiveMode 调其 setPartial。 */
   last(): Component | undefined {
-    return this.children[this.children.length - 1];
+    return this.children[this.children.length - 1]?.component;
   }
 
   render(width: number): string[] {
     const lines: string[] = [];
-    for (const c of this.children) {
+    for (const { component } of this.children) {
       try {
-        const sub = c.render(width);
+        const sub = component.render(width);
         for (const line of sub) {
           lines.push(fitToWidth(line, width));
         }
@@ -62,17 +70,37 @@ export class ChatContainer implements Component {
 
   present(width: number): PresentationBlock[] {
     const blocks: PresentationBlock[] = [];
-    for (const component of this.children) {
+    for (const { key, component } of this.children) {
       try {
-        blocks.push(...(component.present?.(width) ?? [{
-          kind: "text",
-          content: component.render(width).map((line) => fitToWidth(line, width)).join("\n"),
-        }]));
+        const version = component.getPresentationVersion?.();
+        const cacheKey = version === undefined
+          ? undefined
+          : { entryId: key, width, contentGeneration: version, themeGeneration: 0 };
+        const cached = cacheKey ? this.presentationCache.get(cacheKey) : undefined;
+        const projected = cached
+          ? cached
+          : component.present?.(width) ?? [{
+            kind: "text" as const,
+            content: component.render(width).map((line) => fitToWidth(line, width)).join("\n"),
+          }];
+        if (cacheKey && !cached) this.presentationCache.set(cacheKey, projected, presentationBytes(projected));
+        blocks.push(...projected.map((block, index) => ({
+          ...block,
+          id: `${key}/${block.id ?? `part-${index}`}`,
+        })));
       } catch (error) {
         process.stderr.write(`[chat-container] child projection failed: ${String(error)}\n`);
-        blocks.push({ kind: "text", content: fitToWidth("[chat:child-render-error]", width) });
+        blocks.push({
+          id: `${key}/error`,
+          kind: "text",
+          content: fitToWidth("[chat:child-render-error]", width),
+        });
       }
     }
     return blocks;
   }
+}
+
+function presentationBytes(blocks: readonly PresentationBlock[]): number {
+  return blocks.reduce((total, block) => total + JSON.stringify(block).length, 0);
 }

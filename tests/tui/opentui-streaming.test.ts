@@ -1,0 +1,754 @@
+import { describe, expect, test, vi } from "vitest";
+import {
+  TimelineStore,
+  type TimelinePatch,
+} from "../../src/tui/opentui/timeline-store.ts";
+import {
+  DeltaCoalescer,
+  type StreamingDelta,
+} from "../../src/tui/opentui/delta-coalescer.ts";
+import {
+  FrameScheduler,
+  type FrameClock,
+} from "../../src/tui/opentui/frame-scheduler.ts";
+import { RenderCache } from "../../src/tui/opentui/render-cache.ts";
+import { HeightIndex } from "../../src/tui/opentui/viewport-window.ts";
+import { decideMarkdownProjection } from "../../src/tui/opentui/markdown-budget.ts";
+import { TUI, type Terminal } from "../../src/tui/primitives.ts";
+import { ChatContainer } from "../../src/tui/components/chat-container.ts";
+import { AssistantMessageComponent } from "../../src/tui/components/assistant-message.ts";
+import { loadTheme } from "../../src/tui/theme/theme.ts";
+import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
+import { Agent } from "../../src/runtime/agent.ts";
+import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
+import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
+import type { AssistantMessage } from "../../src/types.ts";
+import type { TuiEvent } from "../../src/tui/types.ts";
+
+class TestTerminal implements Terminal {
+  readonly columns = 80;
+  readonly rows = 24;
+  readonly kittyProtocolActive = false;
+  readonly writes: string[] = [];
+  private resizeHandler: (() => void) | undefined;
+
+  start(_onInput: (data: string) => void, onResize: () => void): void { this.resizeHandler = onResize; }
+  stop(): void {}
+  async drainInput(): Promise<void> {}
+  write(data: string): void { this.writes.push(data); }
+  moveBy(): void {}
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(): void {}
+  setProgress(): void {}
+  emitResize(): void { this.resizeHandler?.(); }
+}
+
+class TestClock implements FrameClock {
+  private currentTime = 0;
+  private nextId = 1;
+  private readonly timers = new Map<number, { at: number; callback: () => void }>();
+
+  now(): number {
+    return this.currentTime;
+  }
+
+  setTimeout(callback: () => void, delayMs: number): number {
+    const id = this.nextId++;
+    this.timers.set(id, { at: this.currentTime + delayMs, callback });
+    return id;
+  }
+
+  clearTimeout(handle: number): void {
+    this.timers.delete(handle);
+  }
+
+  advance(delayMs: number): void {
+    this.currentTime += delayMs;
+    const ready = [...this.timers.entries()]
+      .filter(([, timer]) => timer.at <= this.currentTime)
+      .sort(([, left], [, right]) => left.at - right.at);
+    for (const [id, timer] of ready) {
+      this.timers.delete(id);
+      timer.callback();
+    }
+  }
+}
+
+function assistantPartial(text: string): AssistantMessage {
+  return {
+    role: "assistant",
+    content: [{ type: "text", text }],
+    api: mockModel.api,
+    provider: mockModel.provider,
+    model: mockModel.id,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+    stopReason: "stop",
+    timestamp: 0,
+  };
+}
+
+function insertAssistant(generation: number): TimelinePatch {
+  return {
+    kind: "insert",
+    entryId: "entry:assistant-1",
+    partId: "part:markdown-1",
+    role: "assistant",
+    partKind: "markdown",
+    text: "",
+    generation,
+  };
+}
+
+describe("Plan 18 streaming state", () => {
+  test("falls back to lossless plain text for an over-budget open code fence and upgrades after completion", () => {
+    const assistant = new AssistantMessageComponent({
+      theme: loadTheme("dark"),
+      markdownBudget: {
+        maxStreamingCharacters: 1_000,
+        maxStreamingLines: 100,
+        maxOpenFenceCharacters: 8,
+      },
+    });
+    assistant.appendTextDelta("```ts\n123456789");
+
+    const decision = decideMarkdownProjection("```ts\n123456789", true, {
+      maxStreamingCharacters: 1_000,
+      maxStreamingLines: 100,
+      maxOpenFenceCharacters: 8,
+    });
+    expect(decision).toMatchObject({ mode: "plain-text", reason: "open-fence-limit", openFence: true });
+    const degraded = assistant.present(80);
+    expect(degraded).toContainEqual(expect.objectContaining({
+      kind: "text",
+      content: expect.stringContaining("123456789"),
+    }));
+    expect(degraded.find((block) => block.id === "markdown")).toMatchObject({
+      kind: "text",
+      content: expect.stringContaining("plain text fallback"),
+    });
+
+    assistant.finalize();
+    expect(assistant.present(80)).toContainEqual(expect.objectContaining({
+      id: "markdown",
+      kind: "markdown",
+      content: "```ts\n123456789",
+      streaming: false,
+    }));
+  });
+
+  test("protects large tables and single lines with separate streaming budgets", () => {
+    expect(decideMarkdownProjection("x".repeat(11), true, {
+      maxStreamingCharacters: 10,
+      maxStreamingLines: 100,
+      maxOpenFenceCharacters: 100,
+    })).toMatchObject({ mode: "plain-text", reason: "streaming-character-limit" });
+    expect(decideMarkdownProjection("| a | b |\n| - | - |\n| 1 | 2 |\n| 3 | 4 |", true, {
+      maxStreamingCharacters: 1_000,
+      maxStreamingLines: 3,
+      maxOpenFenceCharacters: 100,
+    })).toMatchObject({ mode: "plain-text", reason: "streaming-line-limit", lines: 4 });
+  });
+
+  test("does not scan fence state after the character budget already selects plain text", () => {
+    const decision = decideMarkdownProjection(`\`\`\`ts\n${"x".repeat(100)}`, true, {
+      maxStreamingCharacters: 10,
+      maxStreamingLines: 100,
+      maxOpenFenceCharacters: 100,
+    });
+    expect(decision).toMatchObject({
+      mode: "plain-text",
+      reason: "streaming-character-limit",
+      openFence: false,
+    });
+  });
+
+  test("keeps keyed entry and part identity while appending and fences stale generations", () => {
+    const store = new TimelineStore();
+    const generation = store.beginGeneration();
+
+    expect(store.apply(insertAssistant(generation)).changedEntryIds).toEqual(["entry:assistant-1"]);
+    store.apply({
+      kind: "append-text",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      text: "hello",
+      generation,
+    });
+    store.apply({
+      kind: "append-text",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      text: " world",
+      generation,
+    });
+
+    const beforeComplete = store.getEntry("entry:assistant-1");
+    expect(beforeComplete?.parts).toHaveLength(1);
+    expect(beforeComplete?.parts[0]).toMatchObject({
+      id: "part:markdown-1",
+      content: "hello world",
+      streaming: true,
+    });
+
+    const stale = store.apply({
+      kind: "append-text",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      text: " stale",
+      generation: generation - 1,
+    });
+    expect(stale.staleGeneration).toBe(true);
+    expect(store.getEntry("entry:assistant-1")?.parts[0]?.content).toBe("hello world");
+
+    const completed = store.apply({
+      kind: "complete",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      generation,
+    });
+    expect(completed.forceFlush).toBe(true);
+    expect(store.getEntry("entry:assistant-1")?.parts[0]).toMatchObject({
+      id: "part:markdown-1",
+      content: "hello world",
+      streaming: false,
+    });
+  });
+
+  test("coalesces only adjacent lossless text and keeps latest supersedable status", () => {
+    const coalescer = new DeltaCoalescer();
+    const text = (value: string): StreamingDelta => ({
+      kind: "append-text",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      generation: 1,
+      text: value,
+    });
+
+    for (const character of "hello world") coalescer.push(text(character));
+    coalescer.push({
+      kind: "replace-status",
+      key: "assistant:status",
+      entryId: "entry:assistant-1",
+      generation: 1,
+      status: "thinking",
+    });
+    coalescer.push({
+      kind: "replace-status",
+      key: "assistant:status",
+      entryId: "entry:assistant-1",
+      generation: 1,
+      status: "writing",
+    });
+    coalescer.push(text("!"));
+
+    const drained = coalescer.drain();
+    expect(drained).toHaveLength(3);
+    expect(drained[0]).toMatchObject({ kind: "append-text", text: "hello world" });
+    expect(drained[1]).toMatchObject({ kind: "replace-status", status: "writing" });
+    expect(drained[2]).toMatchObject({ kind: "append-text", text: "!" });
+    expect(coalescer.stats.mergedTextEvents).toBe(10);
+    expect(coalescer.stats.supersededStatusEvents).toBe(1);
+    expect(coalescer.queuedBytes).toBe(0);
+  });
+
+  test("10,000 one-character deltas stay lossless with one pending projection item", () => {
+    const coalescer = new DeltaCoalescer();
+    for (let index = 0; index < 10_000; index += 1) {
+      coalescer.push({
+        kind: "append-text",
+        entryId: "entry:assistant-1",
+        partId: "part:markdown-1",
+        generation: 1,
+        text: String.fromCharCode(65 + (index % 26)),
+      });
+    }
+
+    const drained = coalescer.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]?.kind === "append-text" ? drained[0].text.length : 0).toBe(10_000);
+    expect(coalescer.stats.mergedTextEvents).toBe(9_999);
+  });
+
+  test("does not let a new generation supersede a pending status from an older generation", () => {
+    const coalescer = new DeltaCoalescer();
+    coalescer.push({
+      kind: "replace-status",
+      key: "assistant:status",
+      entryId: "entry:assistant-1",
+      generation: 1,
+      status: "old",
+    });
+    coalescer.push({
+      kind: "replace-status",
+      key: "assistant:status",
+      entryId: "entry:assistant-1",
+      generation: 2,
+      status: "new",
+    });
+
+    expect(coalescer.drain()).toEqual([
+      expect.objectContaining({ generation: 1, status: "old" }),
+      expect.objectContaining({ generation: 2, status: "new" }),
+    ]);
+  });
+
+  test("reports pressure without dropping accepted semantic text", () => {
+    const pressureLevels: string[] = [];
+    const coalescer = new DeltaCoalescer({
+      softByteLimit: 4,
+      hardByteLimit: 8,
+      now: () => 100,
+      onPressure: (snapshot) => pressureLevels.push(snapshot.level),
+    });
+
+    coalescer.push({
+      kind: "append-text",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      generation: 1,
+      text: "12345",
+      receivedAt: 90,
+    });
+    coalescer.push({
+      kind: "append-text",
+      entryId: "entry:assistant-1",
+      partId: "part:markdown-1",
+      generation: 1,
+      text: "67890",
+      receivedAt: 95,
+    });
+
+    expect(coalescer.pressure.level).toBe("hard");
+    expect(coalescer.pressure.queuedBytes).toBe(10);
+    expect(coalescer.pressure.oldestAgeMs).toBe(10);
+    expect(pressureLevels).toEqual(["soft", "hard"]);
+    expect(coalescer.drain()[0]).toMatchObject({ kind: "append-text", text: "1234567890" });
+  });
+
+  test("schedules one frame window for a burst and force-flushes terminal work", () => {
+    const clock = new TestClock();
+    const reasons: string[] = [];
+    const scheduler = new FrameScheduler({
+      clock,
+      frameWindowMs: 20,
+      onFrame: (reason) => reasons.push(reason),
+    });
+
+    for (let i = 0; i < 10_000; i++) scheduler.markDirty();
+    expect(reasons).toEqual([]);
+    clock.advance(19);
+    expect(reasons).toEqual([]);
+    clock.advance(1);
+    expect(reasons).toEqual(["window"]);
+
+    scheduler.markDirty();
+    scheduler.flush("terminal");
+    expect(reasons).toEqual(["window", "terminal"]);
+    clock.advance(100);
+    expect(reasons).toEqual(["window", "terminal"]);
+    scheduler.destroy();
+  });
+
+  test("flushes early when backlog age or size crosses the fairness budget", () => {
+    const clock = new TestClock();
+    const reasons: string[] = [];
+    const scheduler = new FrameScheduler({
+      clock,
+      frameWindowMs: 20,
+      backlogLimits: { maxQueuedEvents: 32, maxQueuedBytes: 1024, maxOldestAgeMs: 50 },
+      onFrame: (reason) => reasons.push(reason),
+    });
+
+    scheduler.markDirty({ queuedEvents: 40, queuedBytes: 0, oldestAgeMs: 0 });
+    expect(reasons).toEqual(["force"]);
+    scheduler.markDirty({ queuedEvents: 1, queuedBytes: 1, oldestAgeMs: 60 });
+    expect(reasons).toEqual(["force", "force"]);
+    scheduler.destroy();
+  });
+
+  test("TUI ordinary render requests share one application frame window", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminal = new TestTerminal();
+      const tui = new TUI(terminal);
+      let renders = 0;
+      tui.addChild({
+        render: () => {
+          renders += 1;
+          return [`frame ${renders}`];
+        },
+        invalidate: () => {},
+      });
+
+      await tui.start();
+      expect(renders).toBe(1);
+      for (let i = 0; i < 100; i++) tui.requestRender();
+      expect(renders).toBe(1);
+      vi.advanceTimersByTime(16);
+      expect(renders).toBe(2);
+      tui.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("TUI runs render-preparation hooks once per application frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminal = new TestTerminal();
+      const tui = new TUI(terminal);
+      let preparations = 0;
+      tui.addBeforeRenderListener(() => { preparations += 1; });
+      await tui.start();
+      expect(preparations).toBe(1);
+      for (let i = 0; i < 100; i++) tui.requestRender();
+      vi.advanceTimersByTime(16);
+      expect(preparations).toBe(2);
+      tui.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("coalesces a resize storm into one scheduled application frame", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminal = new TestTerminal();
+      const tui = new TUI(terminal);
+      let renders = 0;
+      tui.addChild({
+        render: () => {
+          renders += 1;
+          return [`frame ${renders}`];
+        },
+        invalidate: () => {},
+      });
+
+      await tui.start();
+      expect(renders).toBe(1);
+      for (let index = 0; index < 20; index += 1) terminal.emitResize();
+      expect(renders).toBe(1);
+      vi.advanceTimersByTime(16);
+      expect(renders).toBe(2);
+      tui.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("ChatContainer assigns a stable entry key to a persistent component", () => {
+    let content = "first";
+    const chat = new ChatContainer();
+    chat.push({
+      present: () => [{ kind: "markdown", content, streaming: true }],
+      render: () => [content],
+      invalidate: () => {},
+    });
+
+    const first = chat.present(80)[0];
+    content = "second";
+    const second = chat.present(80)[0];
+    expect(first?.id).toMatch(/^chat-/u);
+    expect(second?.id).toBe(first?.id);
+  });
+
+  test("assistant presentation accepts lossless text deltas without a cumulative partial", () => {
+    const assistant = new AssistantMessageComponent({ theme: loadTheme("dark") });
+    assistant.appendTextDelta("hello");
+    assistant.appendTextDelta(" world");
+
+    expect(assistant.present(80)).toContainEqual(expect.objectContaining({
+      kind: "markdown",
+      content: "hello world",
+      streaming: true,
+    }));
+  });
+
+  test("assistant part keys stay stable when a thinking block appears", () => {
+    const assistant = new AssistantMessageComponent({ theme: loadTheme("dark") });
+    const chat = new ChatContainer();
+    chat.push(assistant);
+    assistant.appendTextDelta("body");
+    const firstMarkdown = chat.present(80).find((block) => block.kind === "markdown");
+    assistant.appendThinkingDelta("reason");
+    const secondMarkdown = chat.present(80).find((block) => block.kind === "markdown");
+
+    expect(firstMarkdown?.id).toBeDefined();
+    expect(secondMarkdown?.id).toBe(firstMarkdown?.id);
+  });
+
+  test("ChatContainer reuses unchanged assistant projection and invalidates only after a delta", () => {
+    const assistant = new AssistantMessageComponent({ theme: loadTheme("dark") });
+    const chat = new ChatContainer();
+    chat.push(assistant);
+    assistant.appendTextDelta("stable");
+    const present = vi.spyOn(assistant, "present");
+
+    chat.present(80);
+    chat.present(80);
+    expect(present).toHaveBeenCalledTimes(1);
+    assistant.appendTextDelta(" tail");
+    chat.present(80);
+    expect(present).toHaveBeenCalledTimes(2);
+  });
+
+  test("InteractiveMode forwards text_delta as the semantic append", () => {
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: () => {
+        throw new Error("stream not called");
+      },
+    });
+    const mode = new InteractiveMode({ agent, terminal: new TestTerminal() });
+    const handleEvent = Reflect.get(mode, "handleEvent");
+    expect(typeof handleEvent).toBe("function");
+    if (typeof handleEvent !== "function") return;
+    const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+    dispatch({ type: "message_start", timestamp: 0, role: "assistant" });
+    dispatch({
+      type: "message_update",
+      timestamp: 1,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "a",
+        partial: assistantPartial("a"),
+      },
+    });
+    dispatch({
+      type: "message_update",
+      timestamp: 2,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "b",
+        // 这个 partial 故意只代表旧快照；正文语义来自 delta。
+        partial: assistantPartial("a"),
+      },
+    });
+
+    const refs = Reflect.get(mode, "refs") as { chat: ChatContainer };
+    expect(refs.chat.present(80)).toContainEqual(expect.objectContaining({
+      kind: "markdown",
+      content: "ab",
+    }));
+  });
+
+  test("InteractiveMode queues streaming deltas until the shared frame preparation phase", async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = new Agent({
+        initialState: { systemPrompt: "test", model: mockModel },
+        streamFn: () => {
+          throw new Error("stream not called");
+        },
+      });
+      const mode = new InteractiveMode({ agent, terminal: new TestTerminal() });
+      const runPromise = mode.run();
+      await Promise.resolve();
+      const handleEvent = Reflect.get(mode, "handleEvent");
+      expect(typeof handleEvent).toBe("function");
+      if (typeof handleEvent !== "function") return;
+      const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+      dispatch({ type: "message_start", timestamp: 0, role: "assistant" });
+      dispatch({
+        type: "message_update",
+        timestamp: 1,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "a",
+          partial: assistantPartial("a"),
+        },
+      });
+      dispatch({
+        type: "message_update",
+        timestamp: 2,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "b",
+          partial: assistantPartial("a"),
+        },
+      });
+
+      const refs = Reflect.get(mode, "refs") as { chat: ChatContainer };
+      expect(refs.chat.present(80)).not.toContainEqual(expect.objectContaining({ content: "ab" }));
+      vi.advanceTimersByTime(16);
+      expect(refs.chat.present(80)).toContainEqual(expect.objectContaining({ content: "ab" }));
+      mode.quit();
+      await runPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("terminal assistant event drains pending text before finalizing without duplicating the partial", async () => {
+    vi.useFakeTimers();
+    try {
+      const agent = new Agent({
+        initialState: { systemPrompt: "test", model: mockModel },
+        streamFn: () => {
+          throw new Error("stream not called");
+        },
+      });
+      const mode = new InteractiveMode({ agent, terminal: new TestTerminal() });
+      const runPromise = mode.run();
+      await Promise.resolve();
+      const handleEvent = Reflect.get(mode, "handleEvent");
+      if (typeof handleEvent !== "function") return;
+      const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+      dispatch({ type: "message_start", timestamp: 0, role: "assistant" });
+      dispatch({
+        type: "message_update",
+        timestamp: 1,
+        assistantMessageEvent: {
+          type: "text_delta",
+          contentIndex: 0,
+          delta: "ab",
+          partial: assistantPartial("a"),
+        },
+      });
+      dispatch({
+        type: "message_end",
+        timestamp: 2,
+        role: "assistant",
+        stopReason: "stop",
+        message: assistantPartial("ab"),
+      });
+
+      const refs = Reflect.get(mode, "refs") as { chat: ChatContainer };
+      expect(refs.chat.present(80)).toContainEqual(expect.objectContaining({
+        kind: "markdown",
+        content: "ab",
+        streaming: false,
+      }));
+      vi.advanceTimersByTime(32);
+      expect(refs.chat.present(80)).toContainEqual(expect.objectContaining({ content: "ab" }));
+      mode.quit();
+      await runPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("InteractiveMode reports accepted and coalesced streaming queue work", async () => {
+    vi.useFakeTimers();
+    try {
+      const observer = new TuiPerformanceObserver();
+      const agent = new Agent({
+        initialState: { systemPrompt: "test", model: mockModel },
+        streamFn: () => {
+          throw new Error("stream not called");
+        },
+      });
+      const mode = new InteractiveMode({ agent, terminal: new TestTerminal(), performanceObserver: observer });
+      const runPromise = mode.run();
+      await Promise.resolve();
+      const handleEvent = Reflect.get(mode, "handleEvent");
+      if (typeof handleEvent !== "function") return;
+      const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+      dispatch({ type: "message_start", timestamp: 0, role: "assistant" });
+      for (const delta of ["a", "b"]) {
+        dispatch({
+          type: "message_update",
+          timestamp: 1,
+          assistantMessageEvent: {
+            type: "text_delta",
+            contentIndex: 0,
+            delta,
+            partial: assistantPartial(delta),
+          },
+        });
+      }
+      expect(observer.snapshot()).toMatchObject({ queuedEvents: 2, coalescedTextEvents: 1 });
+      mode.quit();
+      await runPromise;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("performance observer separates queue, projection, and native frame counters", () => {
+    const observer = new TuiPerformanceObserver();
+    observer.recordQueued({ events: 4, bytes: 12 });
+    observer.recordQueueDepth({ events: 2, bytes: 8, oldestAgeMs: 7, pressureLevel: "soft" });
+    observer.recordQueueDepth({ events: 0, bytes: 0, oldestAgeMs: 0, pressureLevel: "normal" });
+    observer.recordCoalesced({ textEvents: 3, supersededStatusEvents: 1 });
+    observer.recordProjection({ durationMs: 4.5, processedChars: 12, dirtyEntries: 1 });
+    observer.recordProjection({ durationMs: 9.5, processedChars: 3, dirtyEntries: 2 });
+    observer.recordNativeFrame({ durationMs: 2.25, cellsUpdated: 18 });
+    observer.recordGenerationDiscard();
+
+    expect(observer.snapshot()).toEqual({
+      queuedEvents: 4,
+      queuedBytes: 12,
+      currentQueuedEvents: 0,
+      currentQueuedBytes: 0,
+      oldestQueueAgeMs: 0,
+      peakQueuedEvents: 2,
+      peakQueuedBytes: 8,
+      pressureLevel: "normal",
+      pressureEvents: 2,
+      coalescedTextEvents: 3,
+      supersededStatusEvents: 1,
+      projectionCount: 2,
+      projectionChars: 15,
+      projectionTimeMs: 14,
+      dirtyEntryCount: 3,
+      nativeFrameCount: 1,
+      nativeFrameTimeMs: 2.25,
+      nativeCellsUpdated: 18,
+      generationDiscardCount: 1,
+    });
+  });
+
+  test("render cache keys width/theme/generation and evicts derived output by budget", () => {
+    const cache = new RenderCache<string>({ maxEntries: 2, maxBytes: 6 });
+    const baseKey = {
+      entryId: "entry-1",
+      width: 80,
+      contentGeneration: 1,
+      themeGeneration: 1,
+    };
+
+    cache.set(baseKey, "abc", 3);
+    expect(cache.get(baseKey)).toBe("abc");
+    expect(cache.get({ ...baseKey, width: 100 })).toBeUndefined();
+    cache.set({ ...baseKey, entryId: "entry-2" }, "def", 3);
+    cache.set({ ...baseKey, entryId: "entry-3" }, "ghi", 3);
+
+    expect(cache.get(baseKey)).toBeUndefined();
+    expect(cache.snapshot()).toMatchObject({ entries: 2, bytes: 6, evictions: 1, misses: 2 });
+    cache.invalidateGenerationBelow(2);
+    expect(cache.snapshot().entries).toBe(0);
+  });
+
+  test("height index returns visible overscan window and preserves scroll anchors", () => {
+    const index = new HeightIndex([2, 3, 4, 5, 6]);
+    expect(index.totalHeight).toBe(20);
+    expect(index.findIndexAtOffset(0)).toBe(0);
+    expect(index.findIndexAtOffset(5)).toBe(2);
+    expect(index.getWindow({ scrollTop: 5, viewportHeight: 5, overscan: 2 })).toMatchObject({
+      start: 2,
+      end: 4,
+      overscanStart: 1,
+      overscanEnd: 4,
+    });
+
+    const anchor = index.captureAnchor(3, 1);
+    index.update(1, 8);
+    expect(index.restoreAnchor(anchor)).toBe(15);
+  });
+});
