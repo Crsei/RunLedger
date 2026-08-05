@@ -188,6 +188,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			toolResultOverflowStore,
 			processPort,
 			security,
+			runtimeEventWriter,
 			workspaceBinding,
 			workspaceBindingStore,
 			mcpConfigs: mcpConfig.configs,

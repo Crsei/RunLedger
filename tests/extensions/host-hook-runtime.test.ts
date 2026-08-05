@@ -10,6 +10,7 @@ import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { ExecutionHandleRef } from "../../src/runtime/process/types.ts";
 import type { ManagedHookProcess } from "../../src/extensions/hooks/host-runner.ts";
 import type { ControlPlaneOutputResult, ControlPlaneWaitResult } from "../../src/storage/process/control-plane.ts";
+import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../../src/storage/host/runtime-event-store.ts";
 
 function hook() {
 	const parsed = parseHookDocument({
@@ -22,6 +23,50 @@ function hook() {
 }
 
 describe("HostHookRuntime", () => {
+	it("writes every adapter audit through the injected Host event sink", async () => {
+		const definition = hook();
+		const audits: Array<{ readonly auditDigest: ReturnType<typeof runtimeDigest> }> = [];
+		const adapter: HookLifecycleAdapterPort = {
+			invoke: async (request) => {
+				const value = {
+					invocation: request.invocation,
+					decision: "allow" as const,
+					blocked: false,
+					finalInput: request.event.input,
+					requiresRevalidation: false,
+					requiresAuthorization: false,
+					additionalContext: [],
+					handlers: [],
+					runtimeResult: {} as never,
+				};
+				return { ok: true, value, audit: { kind: "hook.run" } as never, auditDigest: runtimeDigest("hook-audit") } satisfies ExtensionAdapterResult<typeof value>;
+			},
+		};
+		const runtime = new HostHookRuntime({
+			hooks: () => [definition],
+			adapter,
+			audit: async ({ auditDigest }) => { audits.push({ auditDigest }); },
+			identity: {
+				authorityId: createRuntimeId("authority", "hook-audit"),
+				tenantId: createRuntimeId("tenant", "hook-audit"),
+				principalId: createRuntimeId("principal", "hook-audit"),
+				principalKind: "local",
+				issuedAt: "2026-08-05T00:00:00.000Z",
+			},
+			source: "host",
+		});
+
+		await runtime.run({
+			event: "PreToolUse",
+			sessionId: createRuntimeId("session", "hook-audit"),
+			snapshotId: createRuntimeId("snapshot", "hook-audit"),
+			input: { command: "printf ok" },
+		});
+
+		expect(audits).toHaveLength(1);
+		expect(audits[0]?.auditDigest.digest).toBe(runtimeDigest("hook-audit").digest);
+	});
+
 	it("binds a lifecycle invocation to the published hook snapshot and adapter identity", async () => {
 		const definition = hook();
 		let captured: HookLifecycleInvocationRequest | undefined;
@@ -87,6 +132,13 @@ describe("HostHookRuntime", () => {
 		};
 		let authorized = 0;
 		let started = 0;
+		const appended: RuntimeEventAppendInput[] = [];
+		const runtimeEventWriter: RuntimeEventWriter = {
+			append: async (input) => {
+				appended.push(input);
+				return { event: null as never, receipt: null as never };
+			},
+		};
 		const managedProcess: ManagedHookProcess = {
 			start: async () => { started += 1; return { ok: true, handle, summary: { state: "running" } }; },
 			processOutput: async (_handle, cursor): Promise<ControlPlaneOutputResult> => {
@@ -120,11 +172,14 @@ describe("HostHookRuntime", () => {
 				issuedAt: "2026-08-05T00:00:00.000Z",
 			},
 			adapter: { adapterId: "runledger.test.hooks", generation: 1, configDigest: runtimeDigest("hooks") },
+			runtimeEventWriter,
 		});
 
 		const result = await runtime.run({ event: "PreToolUse", sessionId, snapshotId, input: { value: "ok" } });
 		expect(result.decision).toBe("allow");
 		expect(started).toBe(1);
 		expect(authorized).toBe(1);
+		expect(appended).toHaveLength(1);
+		expect(appended[0]?.type).toBe("tool.finished");
 	});
 });

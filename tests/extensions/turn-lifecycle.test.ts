@@ -15,6 +15,26 @@ function snapshot(generation: number): ExtensionPublicSnapshot {
 }
 
 describe("Host extension turn lifecycle", () => {
+	it("rejects a denied SessionStart before the Agent can enter a turn", async () => {
+		let beginCount = 0;
+		let endCount = 0;
+		const manager = {
+			beginTurn: () => { beginCount += 1; return snapshot(1); },
+			endTurn: async (): Promise<ExtensionReloadResult | undefined> => { endCount += 1; return undefined; },
+		};
+		const lifecycle = new ExtensionTurnLifecycle({
+			manager,
+			sessionId: "session_hook-admission",
+			hookRuntime: {
+				run: async () => ({ decision: "deny", blocked: true, finalInput: {}, additionalContext: [], requiresRevalidation: false, requiresAuthorization: true }),
+			},
+		});
+
+		await expect(lifecycle.admitTurn()).rejects.toThrow("SessionStart hook denied");
+		expect(beginCount).toBe(1);
+		expect(endCount).toBe(1);
+	});
+
 	it("runs Host-owned SessionStart and SessionEnd hooks around the resident turn", async () => {
 		const calls: string[] = [];
 		const manager = {

@@ -11,6 +11,7 @@ import type { IdentityContext } from "../../runtime/identity/types.ts";
 import type { ResourceIdentity, RuntimeToolInvocation } from "../../runtime/resources/types.ts";
 import type { HookDefinition } from "./types.ts";
 import type { HookLifecycleAdapterPort } from "../integration/runtime-hook-adapter.ts";
+import type { ExtensionInvocationAudit } from "../integration/runtime-audit-adapter.ts";
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../turn-lifecycle.ts";
 
 const DEFAULT_HOOK_DEADLINE_MS = 120_000;
@@ -20,6 +21,8 @@ export interface HostHookRuntimeOptions {
 	readonly adapter: HookLifecycleAdapterPort;
 	readonly identity: IdentityContext;
 	readonly source: string;
+	/** The resident Host's only durable audit sink. */
+	readonly audit?: (input: { readonly audit: ExtensionInvocationAudit; readonly auditDigest: ReturnType<typeof runtimeDigest> }) => Promise<void> | void;
 	readonly now?: () => Date;
 	readonly deadlineMs?: number;
 }
@@ -29,6 +32,7 @@ export class HostHookRuntime implements ExtensionHookRuntime {
 	readonly #adapter: HookLifecycleAdapterPort;
 	readonly #identity: IdentityContext;
 	readonly #source: string;
+	readonly #audit: HostHookRuntimeOptions["audit"];
 	readonly #now: () => Date;
 	readonly #deadlineMs: number;
 
@@ -38,6 +42,7 @@ export class HostHookRuntime implements ExtensionHookRuntime {
 		this.#adapter = options.adapter;
 		this.#identity = options.identity;
 		this.#source = options.source;
+		this.#audit = options.audit;
 		this.#now = options.now ?? (() => new Date());
 		this.#deadlineMs = options.deadlineMs ?? DEFAULT_HOOK_DEADLINE_MS;
 	}
@@ -85,6 +90,11 @@ export class HostHookRuntime implements ExtensionHookRuntime {
 			hooks,
 			...(input.signal === undefined ? {} : { signal: input.signal }),
 		});
+		try {
+			await this.#audit?.({ audit: result.audit, auditDigest: result.auditDigest });
+		} catch {
+			return denied(input.input);
+		}
 		if (!result.ok) return denied(input.input);
 		return {
 			decision: result.value.decision,

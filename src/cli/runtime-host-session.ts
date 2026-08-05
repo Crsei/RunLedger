@@ -22,6 +22,9 @@ import type { McpServerConfig } from "../extensions/mcp/connection-manager.ts";
 import type { PlanModeState } from "../runtime/modes/plan/types.ts";
 import type { AdapterIdentityRef } from "../runtime/protocol/adapter.ts";
 import type { IdentityContext } from "../runtime/identity/types.ts";
+import type { RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
+import { createExtensionInvocationEvent } from "../extensions/integration/runtime-events.ts";
+import { parseRuntimeId } from "../runtime/protocol/ids.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../security/integration/runtime-tool-authorization.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
@@ -74,6 +77,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly extensionIdentity?: IdentityContext;
 	/** Host-owned adapter identity for hook invocations. */
 	readonly extensionAdapter?: AdapterIdentityRef;
+	/** The resident Host's sole canonical Runtime event writer. */
+	readonly runtimeEventWriter?: RuntimeEventWriter;
 }
 
 export interface ProductionHostHookRuntimeOptions {
@@ -84,6 +89,7 @@ export interface ProductionHostHookRuntimeOptions {
 	readonly security: Pick<ProductionHostSecurity, "authorizeResource">;
 	readonly identity: IdentityContext;
 	readonly adapter: AdapterIdentityRef;
+	readonly runtimeEventWriter?: RuntimeEventWriter;
 }
 
 /** Compose hooks only from resident Host ports; no client-local effect owner is created. */
@@ -107,6 +113,18 @@ export function createProductionHostHookRuntime(options: ProductionHostHookRunti
 		adapter,
 		identity: options.identity,
 		source: "host",
+		audit: options.runtimeEventWriter === undefined ? undefined : async ({ audit, auditDigest }) => {
+			const sessionId = parseRuntimeId("session", options.sessionId);
+			if (sessionId === undefined) throw new Error("hook audit session identity is invalid");
+			await options.runtimeEventWriter!.append(createExtensionInvocationEvent({
+				authorityId: options.identity.authorityId,
+				tenantId: options.identity.tenantId,
+				principalId: options.identity.principalId,
+				sessionId,
+				audit,
+				auditDigest,
+			}));
+		},
 	});
 }
 
@@ -210,6 +228,8 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				...(extensionHookRuntime === undefined ? {} : {
 					extensionHookRuntime,
 					extensionHookSnapshotId: () => extensionLifecycle?.snapshotId(),
+					extensionTurnAdmission: extensionLifecycle === undefined ? undefined : () => extensionLifecycle.admitTurn(),
+					extensionTurnAbort: extensionLifecycle === undefined ? undefined : () => extensionLifecycle.cancelTurn(),
 				}),
               });
 			const removeExtensionLifecycle = extensionLifecycle === undefined ? undefined : controller.subscribe((event) => extensionLifecycle.handle(event));

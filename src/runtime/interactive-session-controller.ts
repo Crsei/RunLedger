@@ -71,6 +71,10 @@ export interface InteractiveSessionControllerOptions {
   extensionHookRuntime?: ExtensionHookRuntime;
   /** Current published extension snapshot identity used to bind hook invocations. */
   extensionHookSnapshotId?: () => string | undefined;
+  /** Host admission barrier; called before Agent.prompt enters the turn. */
+  extensionTurnAdmission?: () => Promise<void>;
+  /** Releases a turn admitted by the Host when Agent startup fails. */
+  extensionTurnAbort?: () => Promise<void>;
 }
 
 export interface ProviderStatus {
@@ -137,6 +141,8 @@ export class InteractiveSessionController {
   private readonly modelRequestRouter: ModelRequestRouter | undefined;
   private readonly extensionHookRuntime: ExtensionHookRuntime | undefined;
   private readonly extensionHookSnapshotId: (() => string | undefined) | undefined;
+  private readonly extensionTurnAdmission: (() => Promise<void>) | undefined;
+  private readonly extensionTurnAbort: (() => Promise<void>) | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -163,6 +169,8 @@ export class InteractiveSessionController {
     this.modelRequestRouter = opts.modelRequestRouter;
     this.extensionHookRuntime = opts.extensionHookRuntime;
     this.extensionHookSnapshotId = opts.extensionHookSnapshotId;
+    this.extensionTurnAdmission = opts.extensionTurnAdmission;
+    this.extensionTurnAbort = opts.extensionTurnAbort;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -295,7 +303,13 @@ export class InteractiveSessionController {
     if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
     const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
     if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
-    await agent.prompt(promptText(submitted?.finalInput, text));
+    await this.extensionTurnAdmission?.();
+    try {
+      await agent.prompt(promptText(submitted?.finalInput, text));
+    } catch (error) {
+      await this.extensionTurnAbort?.().catch(() => undefined);
+      throw error;
+    }
   }
 
   interrupt(): void {

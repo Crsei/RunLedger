@@ -62,29 +62,56 @@ export class ExtensionTurnLifecycle {
 		return this.#snapshotId;
 	}
 
-	public async handle(event: AgentEvent): Promise<void> {
-		if (event.type === "agent_start") {
-			if (!this.#active) {
-				const snapshot = this.#manager.beginTurn();
-				this.#snapshotId = snapshot.snapshotId;
-				this.#active = true;
-				await this.#runHook("SessionStart", { sessionId: this.#sessionId, snapshotId: this.#snapshotId });
-			}
-			return;
-		}
-		if (event.type !== "agent_end" || !this.#active) return;
-		this.#active = false;
+	/**
+	 * Starts a resident turn before Agent.prompt. SessionStart is an admission
+	 * barrier, not an observer callback: a denied lifecycle hook must prevent the
+	 * Agent from entering the model/tool loop.
+	 */
+	public async admitTurn(): Promise<void> {
+		if (this.#active) return;
+		const snapshot = this.#manager.beginTurn();
+		this.#snapshotId = snapshot.snapshotId;
+		this.#active = true;
 		try {
-			await this.#runHook("SessionEnd", { sessionId: this.#sessionId, snapshotId: this.#snapshotId });
-		} finally {
-			this.#snapshotId = undefined;
+			const result = await this.#runHook("SessionStart", { sessionId: this.#sessionId, snapshotId: this.#snapshotId });
+			if (result?.blocked || result?.decision === "deny" || result?.decision === "aborted") {
+				await this.cancelTurn();
+				throw new Error("SessionStart hook denied turn admission");
+			}
+		} catch (error) {
+			if (this.#active) await this.cancelTurn();
+			throw error;
 		}
+	}
+
+	/** Releases a pre-admitted turn when prompt validation or Agent startup fails. */
+	public async cancelTurn(): Promise<void> {
+		if (!this.#active) return;
+		this.#active = false;
+		this.#snapshotId = undefined;
 		const result = await this.#manager.endTurn();
 		if (result !== undefined) await this.#onIdleReload?.(result);
 	}
 
-	async #runHook(event: HookEventName, input: unknown): Promise<void> {
-		if (this.#hookRuntime === undefined || this.#sessionId === undefined || this.#snapshotId === undefined) return;
-		await this.#hookRuntime.run({ event, sessionId: this.#sessionId, snapshotId: this.#snapshotId, input });
+	public async handle(event: AgentEvent): Promise<void> {
+		if (event.type === "agent_start") {
+			await this.admitTurn();
+			return;
+		}
+		if (event.type !== "agent_end" || !this.#active) return;
+		const snapshotId = this.#snapshotId;
+		try {
+			await this.#runHook("SessionEnd", { sessionId: this.#sessionId, snapshotId });
+		} finally {
+			this.#active = false;
+			this.#snapshotId = undefined;
+			const result = await this.#manager.endTurn();
+			if (result !== undefined) await this.#onIdleReload?.(result);
+		}
+	}
+
+	async #runHook(event: HookEventName, input: unknown): Promise<ExtensionHookRuntimeResult | undefined> {
+		if (this.#hookRuntime === undefined || this.#sessionId === undefined || this.#snapshotId === undefined) return undefined;
+		return this.#hookRuntime.run({ event, sessionId: this.#sessionId, snapshotId: this.#snapshotId, input });
 	}
 }
