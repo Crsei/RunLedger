@@ -553,5 +553,8 @@ function deniedModelStream(model: Model<Api>, decision: ModelRouteDecision) {
 
 function productionTools(cwd: string, executionEnv?: ExecutionEnv): AgentTool[] {
   const excluded = new Set(["Skill", "NotebookEdit", "echo"]);
-  return createStdlibTools(cwd, executionEnv === undefined ? {} : { executionEnv }).toContext().filter((tool) => !excluded.has(tool.name));
+  return createStdlibTools(cwd, {
+    requireExecutionEnv: true,
+    ...(executionEnv === undefined ? {} : { executionEnv }),
+  }).toContext().filter((tool) => !excluded.has(tool.name));
 }

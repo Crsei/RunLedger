@@ -122,6 +122,20 @@ const INTERACTION: AuthInteraction = {
 };
 
 describe("InteractiveSessionController", () => {
+	it("refuses to construct production stdlib tools without a Host ExecutionEnv", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		await expect(InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: "p1", model: "m1" },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+		})).rejects.toThrow("governed ExecutionEnv is required for production stdlib tools");
+	});
+
 	it("applies a Host UserPromptSubmit hook before sending the model request", async () => {
 		const cwd = await tempDir();
 		const { models, p1 } = fixtureModels();
