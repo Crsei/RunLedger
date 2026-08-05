@@ -111,6 +111,8 @@ export interface PluginDiscoveryResult {
 	readonly descriptors: readonly ExtensionResourceDescriptor[];
 	/** Parsed hooks retained only for trusted and enabled plugin resources. */
 	readonly hooks: readonly HookDefinition[];
+	/** Full skill descriptors retained for the progressive-disclosure Skill tool. */
+	readonly skills: readonly SkillDescriptor[];
 	readonly diagnostics: readonly ExtensionDiagnostic[];
 }
 
@@ -189,6 +191,7 @@ export class PluginManager {
 		const plugins: PluginRecord[] = [];
 		const descriptors: ExtensionResourceDescriptor[] = [];
 		const hooks: HookDefinition[] = [];
+		const skills: SkillDescriptor[] = [];
 		const diagnostics: ExtensionDiagnostic[] = [];
 		const state = await this.#options.stateStore.load();
 		for (const root of [...this.#options.roots].sort((left, right) => left.priority - right.priority || left.rootPath.localeCompare(right.rootPath))) {
@@ -260,6 +263,7 @@ export class PluginManager {
 				}
 				const discovered = await discoverSkills({ roots: [{ ...root, rootPath: rootResult.value, skillsPath: path.path, pluginId: qualifiedId, layout: "plugin-root" }], scope: this.#options.scope, trustStore: this.#options.trustStore, state, storage: this.#options.storage });
 				diagnostics.push(...discovered.diagnostics);
+				skills.push(...discovered.skills);
 				for (const skill of discovered.skills) descriptors.push(skill.descriptor);
 			}
 			for (const declaration of parsed.manifest.hooks ?? []) {
@@ -326,6 +330,7 @@ export class PluginManager {
 			plugins: resolvedPlugins,
 			descriptors: resolvedDescriptors,
 			hooks: [...hooks].sort((left, right) => left.event.localeCompare(right.event) || left.sourcePath.localeCompare(right.sourcePath) || left.declarationIndex - right.declarationIndex || left.id.localeCompare(right.id)),
+			skills: [...skills].sort((left, right) => left.descriptor.identity.qualifiedId.localeCompare(right.descriptor.identity.qualifiedId)),
 			diagnostics: sortExtensionDiagnostics(diagnostics),
 		};
 		this.#last = result;
@@ -334,6 +339,10 @@ export class PluginManager {
 
 	public hooks(): readonly HookDefinition[] {
 		return this.#last?.hooks ?? [];
+	}
+
+	public skills(): readonly SkillDescriptor[] {
+		return this.#last?.skills ?? [];
 	}
 
 	public async setEnabled(pluginId: string, enabled: boolean): Promise<PluginDiscoveryResult> {

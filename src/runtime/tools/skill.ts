@@ -1,14 +1,13 @@
 /**
- * Skill 工具占位 —— 当前的"调一个 handler/skill"。
+ * Skill 工具 —— 渐进披露：模型只看到 catalog 元数据，显式调用时按需加载正文。
  *
- * 与 claude-code-bun docs/tools/skill-tool.mdx 区别:
- *   - claude 的 Skill 是文件级 plugin/manifest 体系(目录 skill.md + scripts)
- *   - 当前先做"占位工具":通过 handler registry 转发到调用方注入的回调。
+ * 与 claude-code-bun docs/tools/skill-tool.mdx 对齐:
+ *   - 模型通过 `Skill` 工具按 qualifiedId 读取 SKILL.md 正文
+ *   - 正文读取不授予脚本执行权限;assets/script 仍需独立 approval
+ *   - loader 由 Host 注入(SkillToolResolver 包装 trust + digest 复核),
+ *     本工具不直接访问 fs/trust store
  *
- * 占位语义:
- *   - execute 仅查找 options.handlers[name];若不存在,return text "skill not registered"。
- *   - 输入 args 与 schema 都透传给 handler。
- *   - 本期不实现 plugin manifest / 加载 / 资源生命周期。
+ * 低层占位语义(无 loader 时):透传注入的 handlers,供测试与桥接前使用。
  */
 
 import { Type } from "typebox";
@@ -16,7 +15,7 @@ import type { Static } from "typebox";
 import type { AgentTool } from "../types.ts";
 
 export const skillSchema = Type.Object({
-  name: Type.String({ description: "skill 名;对应 createSkillTool({ handlers }) 中的 key" }),
+  name: Type.String({ description: "skill qualifiedId;对应 catalog 中 frontmatter.name 或 identity.qualifiedId" }),
   args: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 
@@ -24,14 +23,28 @@ export type SkillInput = Static<typeof skillSchema>;
 
 export interface SkillDetails {
   matched: boolean;
-  handlerReturned?: unknown;
+  /** 加载失败时的 typed code（not_found/ambiguous/invalid/blocked/stale）。 */
+  code?: string;
+  message?: string;
+  /** loader 返回的正文长度（字符）。 */
+  bodyLength?: number;
+  /** 加载正文后收窄的 allowedTools；未命中时 undefined。 */
+  allowedTools?: readonly string[];
 }
 
 export type SkillHandler = (
   args: Static<typeof skillSchema>["args"],
 ) => Promise<unknown> | unknown;
 
+export type SkillLoadResult =
+  | { readonly ok: true; readonly body: string; readonly allowedTools?: readonly string[] }
+  | { readonly ok: false; readonly code: "not_found" | "ambiguous" | "invalid" | "blocked" | "stale"; readonly message: string };
+
+export type SkillLoader = (name: string, args?: Static<typeof skillSchema>["args"]) => Promise<SkillLoadResult>;
+
 export interface SkillToolOptions {
+  /** 真实 catalog loader（Host 注入）；缺省时回退到 handlers 占位语义。 */
+  loader?: SkillLoader;
   handlers?: Record<string, SkillHandler>;
 }
 
@@ -40,9 +53,9 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
     name: "Skill",
     label: "Skill",
     description:
-      "调用一个已注册 skill handler。当前占位实现不支持 manifest 加载,仅转发到注入的 handlers。",
+      "读取一个已发现 skill 的 SKILL.md 正文。未调用时只有 catalog 元数据进入上下文。",
     parameters: skillSchema,
-    isReadOnly: () => false,
+    isReadOnly: () => true,
     isConcurrencySafe: () => false,
     async execute(_tc, params): Promise<{
       content: Array<{ type: "text"; text: string }>;
@@ -50,11 +63,26 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
       terminate: false;
     }> {
       const name = params.name;
+      if (options.loader !== undefined) {
+        const loaded = await options.loader(name, params.args);
+        if (!loaded.ok) {
+          return {
+            content: [{ type: "text", text: `Skill unavailable: ${loaded.message}` }],
+            details: { matched: false, code: loaded.code, message: loaded.message },
+            terminate: false,
+          };
+        }
+        return {
+          content: [{ type: "text", text: loaded.body }],
+          details: { matched: true, bodyLength: loaded.body.length, ...(loaded.allowedTools === undefined ? {} : { allowedTools: loaded.allowedTools }) },
+          terminate: false,
+        };
+      }
       const handler = options.handlers?.[name];
       if (!handler) {
         return {
           content: [{ type: "text", text: `Skill not registered: ${name}` }],
-          details: { matched: false },
+          details: { matched: false, message: "skill not registered" },
           terminate: false,
         };
       }
@@ -63,7 +91,7 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
         content: [
           { type: "text", text: typeof out === "string" ? out : JSON.stringify(out ?? "(no result)") },
         ],
-        details: { matched: true, handlerReturned: out },
+        details: { matched: true, bodyLength: typeof out === "string" ? out.length : 0 },
         terminate: false,
       };
     },

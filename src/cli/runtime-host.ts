@@ -38,6 +38,7 @@ import { createHostModelContextDomainPort, type HostModelContextDomainOptions } 
 import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
 import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
 import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./runtime-host-mcp.ts";
+import { createHostSkillLoader } from "./runtime-host-skills.ts";
 import type { HostSecurityConfigSource } from "./runtime-host-security.ts";
 import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../extensions/mcp/sdk-factory.ts";
 import { McpConnectionManager } from "../extensions/mcp/connection-manager.ts";
@@ -99,10 +100,11 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		{ source: "user", root: join(extensionStateRoot, "user", "plugins"), priority: 100 },
 		{ source: "project", root: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "plugins"), priority: 200 },
 	]);
+	const extensionTrustStore = new TrustStore(join(extensionStateRoot, "trust.json"), extensionStorage);
 	const extensionManager = new ExtensionHostManager({
 		pluginManager: new PluginManager({
 			storage: extensionStorage,
-			trustStore: new TrustStore(join(extensionStateRoot, "trust.json"), extensionStorage),
+			trustStore: extensionTrustStore,
 			stateStore: new ExtensionStateStore(join(extensionStateRoot, "extensions-state.json"), extensionStorage),
 			scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId },
 			roots: extensionRoots,
@@ -236,6 +238,13 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				});
 			},
 			extensionManager,
+			skillLoader: createHostSkillLoader({
+				skills: () => extensionManager.currentSkills(),
+				trustStore: extensionTrustStore,
+				principalId: extensionPrincipalId,
+				storage: extensionStorage,
+				currentTools: () => ["read", "write", "edit", "MultiEdit", "bash", "grep", "find", "glob", "ls", "WebFetch", "Task", "TaskList", "TaskUpdate", "TodoWrite"],
+			}),
 			extensionIdentity: {
 				authorityId: scope.authorityId,
 				tenantId: scope.tenantId,

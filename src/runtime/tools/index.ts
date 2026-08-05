@@ -50,6 +50,8 @@ export interface StdlibToolsOptions {
 	readonly executionEnv?: ExecutionEnv;
 	/** Production callers must opt into the governed Host-provided execution env. */
 	readonly requireExecutionEnv?: boolean;
+	/** Host-injected progressive-disclosure Skill loader（trust + digest 复核）。 */
+	readonly skillLoader?: import("./skill.ts").SkillLoader;
 }
 
 /**
@@ -82,7 +84,7 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
   register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }));
   register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }));
   register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
-  register(createSkillTool());
+  register(createSkillTool(options.skillLoader === undefined ? {} : { loader: options.skillLoader }));
 	register(createNotebookEditTool());
 	register(echoTool);
 	if (options.managedProcess) {

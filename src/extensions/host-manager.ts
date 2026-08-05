@@ -6,6 +6,7 @@ import type { ExtensionDiagnostic } from "./diagnostics.ts";
 import type { ExtensionResourceDescriptor } from "./types.ts";
 import type { PluginDiscoveryResult, PluginManager } from "./plugins/manager.ts";
 import type { HookDefinition } from "./hooks/types.ts";
+import type { SkillDescriptor } from "./skills/types.ts";
 
 export type ExtensionReloadStatus = "ready" | "pending" | "failed";
 
@@ -74,6 +75,11 @@ export class ExtensionHostManager {
 	/** Returns hook definitions belonging to the currently published snapshot. */
 	public currentHooks(): readonly HookDefinition[] {
 		return this.current() === undefined ? [] : this.#pluginManager.hooks();
+	}
+
+	/** Returns full skill descriptors from the current discovery (trusted/enabled only). */
+	public currentSkills(): readonly SkillDescriptor[] {
+		return this.current() === undefined ? [] : this.#pluginManager.skills();
 	}
 
 	public publicSnapshot(): ExtensionPublicSnapshot | undefined {

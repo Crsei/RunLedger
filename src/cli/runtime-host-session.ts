@@ -52,6 +52,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly security?: ProductionHostSecurity;
 	/** Resident Host-owned extension snapshot fence for this session. */
 	readonly extensionManager?: ExtensionTurnLifecycleManager;
+	/** 渐进披露 Skill loader（trust + digest 复核），注入 stdlib Skill 工具。 */
+	readonly skillLoader?: import("../runtime/tools/skill.ts").SkillLoader;
 	/** Canonical event sink callback for a reload applied at Agent idle. */
 	readonly onExtensionIdleReload?: (sessionId: string, result: ExtensionReloadResult) => Promise<void>;
 	/** Binding restored once by the resident Host composition root. */
@@ -170,6 +172,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				requireExecutionEnv: true,
 				...(managedProcess === undefined ? {} : { managedProcess }),
 				...(executionEnv === undefined ? {} : { executionEnv }),
+				...(options.skillLoader === undefined ? {} : { skillLoader: options.skillLoader }),
 			});
 			const authorizationPolicy = options.planStateProvider === undefined
 				? options.security?.toolAuthorizationPolicy
