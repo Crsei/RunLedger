@@ -74,6 +74,7 @@ export const HOST_MODEL_CONTEXT_QUERY_OPERATIONS = new Set([
 	"compaction.list",
 	"memory.search",
 	"memory.get",
+	"memory.inspect",
 	"model.routes",
 ]);
 
@@ -323,6 +324,7 @@ async function executeOperation(
 			case "compact.run": return compactRun(options, clock, state, context);
 			case "memory.search": return memorySearch(options, memory, state, context);
 			case "memory.get": return memoryGet(memory, context);
+			case "memory.inspect": return memoryInspect(memory);
 			case "memory.propose": return memoryPropose(options, clock, memory, state, context);
 			case "memory.approve": return memoryApprove(options, clock, memory, state, context);
 			case "memory.reject": return memoryReject(options, clock, memory, state, context);
@@ -710,6 +712,20 @@ function memoryGet(memory: MemoryStore, context: HostRuntimeDomainContext): Host
 	if (!memoryId || !isRuntimeId(memoryId, "memory")) return failure("memory_id_required");
 	const result = memory.get(memoryId as never);
 	return result.ok ? { ok: true, body: { record: result.value } } : failure(result.error.code, result.error.message);
+}
+
+function memoryInspect(memory: MemoryStore): HostRuntimeDomainResult {
+		const snapshot = memory.snapshot();
+		return {
+			ok: true,
+			body: {
+				memory: {
+					generation: snapshot.generation,
+					recordCount: snapshot.records.length,
+					proposalCount: snapshot.proposals.length,
+				},
+			},
+		};
 }
 
 async function memoryPropose(options: HostModelContextDomainOptions, _clock: () => Date, memory: MemoryStore, state: SessionDomainState, context: HostRuntimeDomainContext): Promise<DomainResultWithEvents> {

@@ -12,7 +12,8 @@
  *   7. 通过同一 Host facade 装配 managed-process overlay
  *   8. InteractiveMode.run；退出时只 detach 当前 client
  *
- * 本期不实现 trust-manager / extensions / skills / themes 加载。
+ * Extension/Plan/Context/Memory 控制命令也只经 Host domain port；客户端不
+ * 装配 manager、approval waiter 或第二 writer。
  */
 
 import { readFileSync } from "node:fs";
@@ -27,6 +28,13 @@ import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
 import { connectProductionRuntimeHost } from "./runtime-host-production.ts";
 import { createProductionProcessOverlayClient } from "./runtime-host-client.ts";
+import {
+	controlCommandBody,
+	controlCommandHelp,
+	controlCommandQueryOperation,
+	parseControlCommand,
+	type ControlCommand,
+} from "./control-commands.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -50,6 +58,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (args.debug) {
     process.env.RUNLEDGER_DEBUG = "1";
+  }
+
+  const parsedControl = parseControlCommand(args.positional);
+  if (parsedControl && !parsedControl.ok) {
+    process.stderr.write(`[runledger] ${parsedControl.error}\n\n${controlCommandHelp()}\n`);
+    process.exit(2);
   }
 
   const unsupportedEnvironment = validateLegacyCliEnvironment();
@@ -92,6 +106,11 @@ export async function main(argv: readonly string[]): Promise<void> {
     await host.close().catch(() => undefined);
     throw new Error("Host session id is missing");
   }
+	if (parsedControl?.ok === true) {
+		await runControlCommand(transport, sessionId, open.body, parsedControl.command);
+		await host.close().catch(() => undefined);
+		return;
+	}
 	  const snapshot = parseRemoteSnapshot(open.body.snapshot, sessionId);
 	  const controller = new RemoteInteractiveSessionController(transport, {
 	    ...snapshot,
@@ -165,6 +184,48 @@ async function requestHostCommand(
     protocolVersion: 1,
     body: { operation, commandId: frameId, ...body },
   });
+}
+
+async function runControlCommand(
+	transport: HostRequestTransport,
+	sessionId: string,
+	openedBody: Record<string, unknown>,
+	command: ControlCommand,
+): Promise<void> {
+	let inspectedBody: Record<string, unknown> = {};
+	let domainRevision = 0;
+	const queryOperation = controlCommandQueryOperation(command);
+	if (queryOperation !== undefined) {
+		const inspected = await requestHostCommand(transport, queryOperation, { sessionId });
+		if (inspected.body.ok !== true) throw new Error(responseCode(inspected));
+		inspectedBody = inspected.body;
+		domainRevision = integerValue(inspected.body.domainRevision) ?? 0;
+	}
+	let fence = {
+		expectedHostGeneration: integerValue(openedBody.hostGeneration) ?? 1,
+		expectedSessionGeneration: integerValue(openedBody.sessionGeneration) ?? 1,
+		expectedDriverRevision: integerValue(openedBody.driverRevision) ?? 0,
+	};
+	if (command.mutation) {
+		const claimed = await requestHostCommand(transport, "session.claim_driver", { sessionId, ...fence });
+		if (claimed.body.ok !== true) throw new Error(responseCode(claimed));
+		fence = {
+			expectedHostGeneration: integerValue(claimed.body.hostGeneration) ?? fence.expectedHostGeneration,
+			expectedSessionGeneration: integerValue(claimed.body.sessionGeneration) ?? fence.expectedSessionGeneration,
+			expectedDriverRevision: integerValue(claimed.body.driverRevision) ?? fence.expectedDriverRevision,
+		};
+	}
+	const request = {
+		operation: command.group === "remember" ? "memory.propose" : command.group === "plan" && command.action === "approve" ? "plan.resolve_approval" : `${command.group}.${command.action}`,
+		body: controlCommandBody(command, domainRevision, inspectedBody),
+	};
+	const response = await requestHostCommand(transport, request.operation, {
+		sessionId,
+		...(command.mutation ? fence : {}),
+		...request.body,
+	});
+	process.stdout.write(`${JSON.stringify({ operation: request.operation, ...response.body })}\n`);
+	if (response.body.ok === false) throw new Error(responseCode(response));
 }
 
 function parseRemoteSnapshot(

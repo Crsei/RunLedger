@@ -87,6 +87,7 @@ async function executeWorkspace(options: WorkspaceDomainOptions, context: HostRu
 		return resumed.ok ? { ok: true, body: { binding: publicBinding(resumed.value) }, mutated: false } : rejected(resumed.error.code);
 	}
 	if (context.operation === "worktree.release") {
+		if (context.frame.body.confirm !== true) return rejected("confirmation_required");
 		const released = await service.release(stringValue(context.frame.body.reason) ?? "host_command");
 		return released.ok ? { ok: true, body: { binding: released.value === undefined ? null : publicBinding(released.value) } } : rejected(released.error.code);
 	}

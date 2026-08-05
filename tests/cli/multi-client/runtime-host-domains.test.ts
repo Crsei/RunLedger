@@ -4,6 +4,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { SecuritySnapshot } from "../../../src/security/types.ts";
 import type { HostRuntimeDomainContext, HostRuntimeDomainPort } from "../../../src/cli/runtime-host-service.ts";
 import { createHostDomainPorts, createSecurityDomainPort, createWorkspaceDomainPort } from "../../../src/cli/runtime-host-domains.ts";
+import type { HostWorkspaceBindingService } from "../../../src/worktree/host-binding.ts";
 
 function context(operation: string, mutation = false): HostRuntimeDomainContext {
 	const sessionId = createRuntimeId("session", "domain-adapter");
@@ -90,6 +91,27 @@ describe("Host security/workspace domain adapters", () => {
 	it("fails closed when workspace control is not composed", async () => {
 		const result = await createWorkspaceDomainPort({ workspaceId: createRuntimeId("workspace", "domain-adapter"), defaultCwd: "/private/workspace" }).execute(context("worktree.resume", true));
 		expect(result).toMatchObject({ ok: false, body: { code: "workspace_binding_unavailable" } });
+	});
+
+	it("requires an explicit confirmation before releasing the Host-owned binding", async () => {
+		let releases = 0;
+		const service = {
+			release: async () => {
+				releases += 1;
+				return { ok: true as const, value: undefined };
+			},
+		} as unknown as HostWorkspaceBindingService;
+		const base = context("worktree.release", true);
+		const result = await createWorkspaceDomainPort({
+			workspaceId: createRuntimeId("workspace", "domain-adapter"),
+			defaultCwd: "/private/workspace",
+			service,
+		}).execute({
+			...base,
+			frame: { ...base.frame, body: { ...base.frame.body, confirm: false } },
+		});
+		expect(result).toMatchObject({ ok: false, body: { code: "confirmation_required" } });
+		expect(releases).toBe(0);
 	});
 
 	it("composes the model/context domain behind the same Host port list", () => {

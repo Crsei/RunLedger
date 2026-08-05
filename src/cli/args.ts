@@ -19,6 +19,7 @@
  */
 
 import type { ModelThinkingLevel } from "../types.ts";
+import { controlCommandHelp } from "./control-commands.ts";
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
   "off",
@@ -77,7 +78,7 @@ const HELP_TEXT = `Usage: runledger [options]
 布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。
 `;
 
-export const USAGE = HELP_TEXT;
+export const USAGE = `${HELP_TEXT}\n${controlCommandHelp()}\n`;
 
 /** 解析 argv,返回 ParsedArgs 与可选 error 字符串。 */
 export function parseArgs(argv: readonly string[]): ParseResult {

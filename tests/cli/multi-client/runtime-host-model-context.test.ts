@@ -128,6 +128,8 @@ describe("Host model/context domain", () => {
 				approvalRef: { subjectKind: "receipt", digest: runtimeDigest("memory-approval") },
 			}, 1));
 			expect(value<{ record: { trust: string } }>(approved).record.trust).toBe("approved");
+			const memoryState = await domain.execute(context("memory.inspect", {}, 2, false));
+			expect(value<{ memory: { generation: number; recordCount: number; proposalCount: number } }>(memoryState).memory).toEqual({ generation: 2, recordCount: 1, proposalCount: 1 });
 			const searched = await domain.execute(context("memory.search", { scope: "workspace", query: "release" }, 2, false));
 			expect(value<{ results: readonly { title: string }[] }>(searched).results).toMatchObject([{ title: "release rule" }]);
 
