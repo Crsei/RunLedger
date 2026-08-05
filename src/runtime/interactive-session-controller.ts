@@ -14,6 +14,7 @@ import type {
   QueueMode,
   StreamFn,
   ToolAuthorizationPolicy,
+  ToolResultOverflowStore,
   UserAgentMessage,
 } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
@@ -45,6 +46,7 @@ export interface InteractiveSessionControllerOptions {
   authorizationPolicy?: ToolAuthorizationPolicy;
   traceRecorderFactory?: TraceRecorderFactory;
   executionEnv?: ExecutionEnv;
+  toolResultOverflowStore?: ToolResultOverflowStore;
 }
 
 export interface ProviderStatus {
@@ -105,6 +107,7 @@ export class InteractiveSessionController {
   private readonly policy: ToolAuthorizationPolicy;
   private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
   private readonly executionEnv: ExecutionEnv | undefined;
+  private readonly toolResultOverflowStore: ToolResultOverflowStore | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -125,6 +128,7 @@ export class InteractiveSessionController {
     this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
     this.traceRecorderFactory = opts.traceRecorderFactory;
     this.executionEnv = opts.executionEnv;
+    this.toolResultOverflowStore = opts.toolResultOverflowStore;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -293,7 +297,12 @@ export class InteractiveSessionController {
       },
       streamFn,
       ledger: this.ledgerSink,
-      loopConfig: { cwd: this.cwd, beforeToolCall, executionEnv: this.executionEnv },
+      loopConfig: {
+        cwd: this.cwd,
+        beforeToolCall,
+        executionEnv: this.executionEnv,
+        ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
+      },
       toolExecution: "sequential",
       steeringMode: this.settings.steeringMode ?? "one-at-a-time",
       followUpMode: this.settings.followUpMode ?? "one-at-a-time",

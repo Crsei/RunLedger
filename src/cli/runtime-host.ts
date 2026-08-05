@@ -15,6 +15,8 @@ import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { HostCompatibilityEnvelopeSchema, type HostCompatibilityEnvelope } from "../runtime/host/contracts.ts";
 import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts";
+import { FileArtifactStore } from "../runtime/trace/artifact-store.ts";
+import { createArtifactToolResultOverflowStore } from "../runtime/trace/tool-result-overflow.ts";
 import { HostReversePermissionPrompter, ResidentRuntimeHost } from "./runtime-host-service.ts";
 import { createProductionHostSessionFactory } from "./runtime-host-session.ts";
 import { ProductionManagedProcessPort } from "./runtime-host-process.ts";
@@ -111,6 +113,12 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		runtimeEventWriter,
 		permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
 	});
+	const artifactStore = recording.mode === "events_and_artifacts"
+		? new FileArtifactStore({ dataRoot: layout.artifacts, metadataRoot: layout.artifactMetadata })
+		: undefined;
+	const toolResultOverflowStore = artifactStore === undefined
+		? undefined
+		: createArtifactToolResultOverflowStore(artifactStore);
 	let lifecycle: RuntimeHostLifecycle | undefined;
 	let closing = false;
 	let shutdownHost: () => Promise<void> = async () => {};
@@ -121,6 +129,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		recordingMode: recording.mode,
 		recordingFailurePolicy: recording.failurePolicy,
 		traceRecorderFactory,
+		...(artifactStore === undefined ? {} : { artifactStore }),
 		security,
 	});
 	const modelContextDomain = createProductionModelContextDomainPort({
@@ -156,6 +165,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			models,
 			settings,
 			traceRecorderFactory,
+			toolResultOverflowStore,
 			processPort,
 			security,
 			workspaceBinding,

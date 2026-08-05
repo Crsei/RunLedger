@@ -13,6 +13,7 @@ import type { HostSessionOpenRequest, HostSessionRuntime } from "./runtime-host-
 import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import type { ProductionHostSecurity } from "./runtime-host-security.ts";
 import type { ExtensionReloadResult } from "../extensions/host-manager.ts";
+import type { ToolResultOverflowStore } from "../runtime/types.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import {
 	validateWorkspaceBindingObservation,
@@ -29,6 +30,7 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly settings: ProjectSettings;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly processPort?: ProductionManagedProcessPort;
+	readonly toolResultOverflowStore?: ToolResultOverflowStore;
 	readonly security?: ProductionHostSecurity;
 	/** Resident Host-owned extension snapshot fence for this session. */
 	readonly extensionManager?: ExtensionTurnLifecycleManager;
@@ -98,6 +100,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				},
 				traceRecorderFactory: options.traceRecorderFactory,
 				executionEnv,
+				toolResultOverflowStore: options.toolResultOverflowStore,
 				authorizationPolicy: options.security?.toolAuthorizationPolicy,
 			});
 			const extensionLifecycle = options.extensionManager === undefined ? undefined : new ExtensionTurnLifecycle({

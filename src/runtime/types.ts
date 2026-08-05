@@ -39,6 +39,7 @@ import type { Static, TSchema } from "typebox";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
 import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
+import type { RuntimeContentRef, RuntimeDigest } from "./protocol/foundation.ts";
 
 // ===== 工具 =====
 
@@ -115,8 +116,7 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
    */
   isDestructive?: () => boolean;
   /**
-   * 工具结果最大字符预算;超额部分由 agent-loop 落 `tmp/tool-output-<id>.txt`
-   * 并在 content 末尾附路径提示(对齐 what-are-tools.mdx §"大结果落盘")。
+   * 工具结果最大字符预算;超额部分由 Host 注入的 overflow store 托管。
    * 缺省 = DEFAULT_MAX_BYTES。
    */
   maxResultSizeChars?: number;
@@ -361,6 +361,21 @@ export interface AgentLoopConfig {
   ledger?: LedgerSink;
   /** 可选:Runtime Trace recorder;不启用时 agent loop 保持既有 ledger-only 行为。 */
   traceRecorder?: RuntimeTraceRecorder;
+  /**
+   * Host-owned overflow sink. Tool results exceeding their inline budget may
+   * be persisted only through this port; the agent loop never chooses a path
+   * or writes a local temporary file.
+   */
+  toolResultOverflowStore?: ToolResultOverflowStore;
+}
+
+export interface ToolResultOverflowStore {
+	put(input: {
+		readonly toolCallId: string;
+		readonly bytes: Uint8Array;
+		readonly mediaType: string;
+		readonly sourceDigest: RuntimeDigest;
+	}): Promise<{ readonly ref: RuntimeContentRef }>;
 }
 
 /** beforeToolCall / afterToolCall 共享的上下文,对齐 pi Before/AfterToolCallContext。 */

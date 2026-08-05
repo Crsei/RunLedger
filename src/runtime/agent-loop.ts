@@ -63,6 +63,7 @@ import type {
   StreamFn,
   ToolResultAgentMessage,
   ToolResultContent,
+  ToolResultOverflowStore,
 } from "./types.ts";
 import type { AssistantMessage, ImageContent, Message, StopReason, TextContent, Tool, ToolCall } from "../types.ts";
 import { validateToolArguments } from "../utils/validation.ts";
@@ -71,7 +72,7 @@ import type { LedgerSink, LedgerEntry } from "./ledger/types.ts";
 import { localExecutionEnv } from "./execution-env.ts";
 import { makeToolContext } from "./tool-context.ts";
 import { DEFAULT_MAX_BYTES } from "./tools/tool-support.ts";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { runtimeDigest } from "./protocol/foundation.ts";
 
 /**
  * 与 pi 对齐的对外接口。本期只实现 runAgentLoop 与 runAgentLoopContinue,
@@ -747,7 +748,7 @@ async function executePreparedToolCall(
     await updateChain;
     // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
     const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
-    const content = applyToolResultBudget(result.content, maxChars, p.toolCall.id);
+    const content = await applyToolResultBudget(result.content, maxChars, p.toolCall.id, config.toolResultOverflowStore);
     return {
       content,
       isError: result.isError === true,
@@ -774,21 +775,20 @@ interface AgentToolExecutedResult {
 }
 
 /**
- * 工具结果字符预算:超出 maxChars 的 text content 落盘到
- * `tmp/tool-output-<toolCallId>.txt`,在 content 中以一个简短的
- * "exceeds maximum size ..." 提示 + 文件路径替换。
+ * 工具结果字符预算:超出 maxChars 的 text content 通过 Host 注入的
+ * overflow store 保存,在 content 中只回灌 bounded artifact ref 摘要。
  *
- * 对齐 claude-code-bun docs/tools/what-are-tools.mdx §"大结果落盘":
- * 不抛错 / 不截断 inline,而是把超量结果导到磁盘并把路径回灌给 LLM,
- * 让后续 turn 自行决定是否 grep / read 重新读那段。
+ * 没有 Host overflow store 时只做 inline 截断。agent-loop 不直接持有
+ * filesystem、ArtifactStore 路径或 process-local 临时目录。
  *
- * 不可写的临时目录下退化为「inline 截断 + 提示」,仍不抛错。
+ * Host store 不可用时退化为「inline 截断 + 提示」,仍不抛错。
  */
-function applyToolResultBudget(
+async function applyToolResultBudget(
   content: (TextContent | ImageContent)[],
   maxChars: number,
   toolCallId: string,
-): (TextContent | ImageContent)[] {
+  overflowStore?: ToolResultOverflowStore,
+): Promise<(TextContent | ImageContent)[]> {
   const out: (TextContent | ImageContent)[] = [];
   let totalChars = 0;
   let overflowStarted = false;
@@ -809,19 +809,22 @@ function applyToolResultBudget(
       const remain = Math.max(0, maxChars - totalChars);
       const inlineTail = remain > 0 ? block.text.slice(0, remain) : "";
       const droppedTail = remain > 0 ? block.text.slice(remain) : block.text;
-      // 落盘 best-effort,失败退化为 inline 截断
-      let path = "";
-      try {
-        const dir = "tmp";
-        path = `${dir}/tool-output-${toolCallId}.txt`;
-        mkdirSync(dir, { recursive: true });
-        writeFileSync(path, droppedTail, "utf-8");
-      } catch {
-        path = "";
+      let hint = `\n\nOutput exceeds ${maxChars} chars; remaining content truncated by the Host boundary.`;
+      if (overflowStore !== undefined && droppedTail.length > 0) {
+        try {
+          const sourceDigest = runtimeDigest(droppedTail);
+          const stored = await overflowStore.put({
+            toolCallId,
+            bytes: new TextEncoder().encode(droppedTail),
+            mediaType: "text/plain; charset=utf-8",
+            sourceDigest,
+          });
+          hint = `\n\nOutput exceeds ${maxChars} chars; remaining content is available through governed artifact ${stored.ref.digest.digest} (${stored.ref.size ?? droppedTail.length} bytes).`;
+        } catch {
+          // Best effort only: the inline result remains usable and no local
+          // path is exposed when the Host store is unavailable.
+        }
       }
-      const hint = path
-        ? `\n\nOutput exceeds ${maxChars} chars; remaining content written to: ${path}`
-        : `\n\nOutput exceeds ${maxChars} chars; remaining content truncated (tmp dir unavailable).`;
       out.push({ type: "text", text: `${inlineTail}${hint}` });
       totalChars = maxChars;
     }
