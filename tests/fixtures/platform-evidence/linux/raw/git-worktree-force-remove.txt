@@ -1,0 +1,3 @@
+fatal: '/tmp/runledger-platform-evidence-11904/managed/repo-slug/task-dirty' contains modified or untracked files, use --force to delete it
+
+--- force ---

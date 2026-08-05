@@ -22,7 +22,7 @@
 | Runtime Host / Terminal | [`runtime/05-multi-client-background-terminal-refactor-plan.md`](runtime/05-multi-client-background-terminal-refactor-plan.md) | 单 Host 多客户端、driver fencing、受治理后台进程、PTY、恢复与 OpenTUI 阅读控制 | 旧实现 `08`/`10` 审计、当前代码/tests 与 Runtime Contract |
 | Plan / Context / Compaction / Memory | [`plan-compact-memory/01-implementation-plan.md`](plan-compact-memory/01-implementation-plan.md) | Model Router、Plan Mode、ContextEngine、Compaction、Memory 行为；生产接线消费 Runtime Contract 与 Host command/query/subscription | 本专项阶段证据、当前代码/tests、`runtime/04` 与 `runtime/05` |
 | Plugin / MCP / Skill / Hooks | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md) | 扩展 discovery/trust/snapshot、Skill、Hook、MCP、Plugin；Host-owned lifecycle 与 managed process 接线 | 本专项里程碑证据、当前代码/tests、`runtime/04` 与 `runtime/05` |
-| Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway、Sandbox 的 restrictive adapters；Host final-leaf handoff | 本专项阶段证据、当前代码/tests、`runtime/04` 与 `runtime/05` |
+| Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结，当前先解决多平台 path/Git/Shell/process/cleanup 适配 | `00` 总入口、`01` 当前适配状态、当前代码/tests、`runtime/04` 与 `runtime/05` |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
 | Session Audit Note | [`note/README.md`](note/README.md) | 当前打开 session 的 `/audit` 只读调用树、计量与 Artifact 阅读模式 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
 | Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md) | API、OAuth、provider、model catalog、凭据存储 | `AGENTS.md` §1.1 |
@@ -39,10 +39,10 @@
 
 - Plan/Context/Compaction/Memory：Context assembly、cut/checkpoint lifecycle、Memory proposal/approval/search/persistence 及 Plan Mode reducer/artifact store；定向 10 files / 39 tests；提交 `68dab74`。
 - Plugin/MCP/Skill/Hooks：extension foundation、Skill/Hook/MCP bounded behavior 与 Runtime resource/audit adapters；定向 6 files / 34 tests；提交 `b2bf04e`。
-- Worktree/Sandbox/Permission：permission/config/worktree/sandbox 行为、ExecutionGateway、PolicyNetworkClient 和 final-leaf receipt adapter；定向 18 files / 88 tests；提交 `dde60ac`。
+- Worktree/Sandbox/Permission：2026-08-04 切片曾交付 permission/config/worktree/sandbox 行为、ExecutionGateway、PolicyNetworkClient 和 final-leaf receipt adapter，定向 18 files / 88 tests，提交 `dde60ac`。自 2026-08-06 起 OS sandbox 跨平台扩展冻结；既有 Linux 证据只保留为回归，多平台 workspace/path 适配 P0 文档冻结已完成，P1 尚未授权。
 - 全仓门禁：Vitest 144 files / 746 tests、Bun 5 files / 44 assertions、`npm run check`、`npm run build`、`git diff --check` 均通过。
 
-下一阶段必须从各专项计划的 `[~]`/`[ ]` 项继续：Host-owned durable event/command/receipt、builtin tools 迁移、真实 process/sandbox E2E、PluginManager/官方 MCP transport、CLI/TUI remote facade，以及 Plan/Compaction/Memory 的生产接线。三个计划仍是唯一状态入口，不能以本节的 focused tests 宣称专项完成。
+下一阶段必须从各专项当前入口继续。Worktree/Sandbox/Permission 不得再从旧 Sandbox Phase 4 继续，而应按 `01-multiplatform-workspace-path-adaptation-plan.md` 从真实平台证据开始；OS sandbox 只有在 P0–P6 和新的解封 ADR 后才能重新规划。不能以本节的历史 focused tests 宣称当前专项或多平台能力完成。
 
 ## 原始计划迁移映射
 
@@ -80,6 +80,11 @@ development-doc/
 │       ├── phase-02-runtime-recorder.md
 │       ├── phase-03-local-store-configuration.md
 │       └── phase-04-opik-exporter-tree.md
+├── worktree-sandbox-permisson/
+│   ├── 00-worktree-sandbox-permission-plan.md
+│   ├── 01-multiplatform-workspace-path-adaptation-plan.md
+│   └── archive/
+│       └── 00-os-sandbox-cross-platform-expansion-archived.md
 ├── storage-cli/
 │   ├── 01-project-layout-cli-plan.md
 │   └── 02-user-home-migration-handoff.md

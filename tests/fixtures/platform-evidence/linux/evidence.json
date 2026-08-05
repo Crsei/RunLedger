@@ -1,0 +1,162 @@
+{
+  "runner": {
+    "platform": "linux",
+    "arch": "x64",
+    "node": "v22.23.1",
+    "git": "git version 2.50.1",
+    "bash": "GNU bash, version 4.4.20(1)-release (x86_64-pc-linux-gnu)",
+    "sh": "sh",
+    "zsh": "zsh",
+    "uname": "Linux algernon 5.4.0-150-generic #167~18.04.1-Ubuntu SMP Wed May 24 00:51:42 UTC 2023 x86_64 x86_64 x86_64 GNU/Linux",
+    "filesystemType": "ext2/ext3 /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "cwdDev": 2049,
+    "cwdIno": 265365891
+  },
+  "path": {
+    "platform": "linux",
+    "cases": {
+      "/abs/path": {
+        "isAbsolute_posix": true,
+        "isAbsolute_win32": true,
+        "normalized_posix": "/abs/path",
+        "normalized_win32": "\\abs\\path"
+      },
+      "C:\\abs\\path": {
+        "isAbsolute_posix": false,
+        "isAbsolute_win32": true,
+        "normalized_posix": "C:\\abs\\path",
+        "normalized_win32": "C:\\abs\\path"
+      },
+      "\\\\server\\share\\x": {
+        "isAbsolute_posix": false,
+        "isAbsolute_win32": true,
+        "normalized_posix": "\\\\server\\share\\x",
+        "normalized_win32": "\\\\server\\share\\x"
+      },
+      "\\\\?\\C:\\device": {
+        "isAbsolute_posix": false,
+        "isAbsolute_win32": true,
+        "normalized_posix": "\\\\?\\C:\\device",
+        "normalized_win32": "\\\\?\\C:\\device"
+      },
+      "relative/path": {
+        "isAbsolute_posix": false,
+        "isAbsolute_win32": false,
+        "normalized_posix": "relative/path",
+        "normalized_win32": "relative\\path"
+      },
+      "/": {
+        "isAbsolute_posix": true,
+        "isAbsolute_win32": true,
+        "normalized_posix": "/",
+        "normalized_win32": "\\"
+      }
+    },
+    "caseSensitiveProbe": {
+      "created": "/tmp/runledger-platform-evidence-11904/case-sensitivity/MixedCase",
+      "lowerVariantExists": false
+    },
+    "symlink": {
+      "createExitCode": 0,
+      "realpath": "/tmp/runledger-platform-evidence-11904/symlink/target/file.txt",
+      "lstat": "isSymbolicLink=true"
+    },
+    "candidateProbe": {
+      "candidate": "/tmp/runledger-platform-evidence-11904/not-existing/deeper/candidate.txt",
+      "output": "nearestExisting=/tmp/runledger-platform-evidence-11904\nremainingSegments=[\"not-existing\",\"deeper\",\"candidate.txt\"]\ncanonicalCandidate=/tmp/runledger-platform-evidence-11904/not-existing/deeper/candidate.txt"
+    }
+  },
+  "git": {
+    "head": "dd11c93827d005f25fce995bed4b6212d4ba38c3",
+    "worktreeCreate": {
+      "exitCode": 0,
+      "stderr": "Preparing worktree (detached HEAD dd11c93)\n"
+    },
+    "worktreeListPorcelain": "worktree /tmp/runledger-platform-evidence-11904/repo\nHEAD dd11c93827d005f25fce995bed4b6212d4ba38c3\nbranch refs/heads/master\n\nworktree /tmp/runledger-platform-evidence-11904/managed/repo-slug/task\nHEAD dd11c93827d005f25fce995bed4b6212d4ba38c3\ndetached\n\n",
+    "subdirToplevel": "/tmp/runledger-platform-evidence-11904/repo",
+    "subdirPrefix": "packages/app/",
+    "busyRemove": {
+      "exitCode": 0,
+      "stderr": ""
+    },
+    "lockedRemove": {
+      "exitCode": 128,
+      "stderr": "fatal: cannot remove a locked working tree;\nuse 'remove -f -f' to override or unlock first\n"
+    },
+    "lockedListPorcelain": "worktree /tmp/runledger-platform-evidence-11904/repo\nHEAD dd11c93827d005f25fce995bed4b6212d4ba38c3\nbranch refs/heads/master\n\nworktree /tmp/runledger-platform-evidence-11904/managed/repo-slug/task-locked\nHEAD dd11c93827d005f25fce995bed4b6212d4ba38c3\ndetached\nlocked\n\n",
+    "cleanRemove": {
+      "exitCode": 0,
+      "stderr": ""
+    },
+    "dirtyRemove": {
+      "exitCode": 128,
+      "stderr": "fatal: '/tmp/runledger-platform-evidence-11904/managed/repo-slug/task-dirty' contains modified or untracked files, use --force to delete it\n"
+    },
+    "forceRemove": {
+      "exitCode": 0,
+      "stderr": ""
+    },
+    "bareWorktreeListPorcelain": "worktree /tmp/runledger-platform-evidence-11904/bare.git\nbare\n\n"
+  },
+  "shell": {
+    "bash": {
+      "path": "/bin/bash",
+      "launch_c_probe": {
+        "ok": true,
+        "stdout": "/bin/bash",
+        "stderr": ""
+      },
+      "env_inheritance_probe": {
+        "ok": true,
+        "stdout": "inherited",
+        "stderr": ""
+      }
+    },
+    "sh": {
+      "path": "/bin/sh",
+      "launch_c_probe": {
+        "ok": true,
+        "stdout": "/bin/sh",
+        "stderr": ""
+      },
+      "env_inheritance_probe": {
+        "ok": true,
+        "stdout": "inherited",
+        "stderr": ""
+      }
+    },
+    "zsh": {
+      "path": "/usr/bin/zsh",
+      "launch_c_probe": {
+        "ok": true,
+        "stdout": "/usr/bin/zsh",
+        "stderr": ""
+      },
+      "env_inheritance_probe": {
+        "ok": true,
+        "stdout": "inherited",
+        "stderr": ""
+      }
+    }
+  },
+  "process": {
+    "treeKill": {
+      "ok": true,
+      "stdout": "spawner=13454 group=13454 child=13458\nchild_alive=no\ngroup_alive=no",
+      "stderr": "probe: line 9: 13454 Terminated              setsid bash -c 'sleep 30 & echo $! > \"$1\"; echo $$ > \"$2\"; wait' inner \"$1/child.pid\" \"$1/pgid.txt\"\n"
+    }
+  },
+  "cleanup": {
+    "occupiedFile": {
+      "ok": true,
+      "stdout": "flock=acquired\nrmdir_while_locked=ok",
+      "stderr": ""
+    }
+  },
+  "locator": {
+    "coldResume": {
+      "stdout": "platformMatch=true\npathExists=true\nrestore=true"
+    }
+  }
+}

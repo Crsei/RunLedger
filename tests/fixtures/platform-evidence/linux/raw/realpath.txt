@@ -1,0 +1,1 @@
+/tmp/runledger-platform-evidence-11904/symlink/target/file.txt

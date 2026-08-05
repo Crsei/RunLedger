@@ -1,0 +1,3 @@
+nearestExisting=/tmp/runledger-platform-evidence-11904
+remainingSegments=["not-existing","deeper","candidate.txt"]
+canonicalCandidate=/tmp/runledger-platform-evidence-11904/not-existing/deeper/candidate.txt

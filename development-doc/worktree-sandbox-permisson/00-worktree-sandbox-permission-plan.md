@@ -1,10 +1,10 @@
 # RunLedger Worktree、Sandbox 与 Permission 架构实施计划
 
-> 文档属性：本主题唯一权威计划与执行状态账本。
+> 文档属性：本主题唯一权威入口；Permission/Worktree 历史状态保留在本文，多平台适配状态由新计划负责。
 >
-> 状态：本地 M1–M5 production baseline 已接线并有自动化证据；M6 企业/远程扩展、跨平台承诺与最终文档同步仍未完成。
+> 状态：Permission/Worktree 与 Linux 本地安全基线保留；OS sandbox 跨平台扩展自 2026-08-06 起冻结并封存，不再是当前执行阶段。多平台 workspace/path 适配计划 P0–P4 已完成（P0 文档冻结；P1 Linux 真实证据采集；P2 路径/locator ADR 冻结；P3 纯适配器；P4 Linux 原生 adapter 真实 E2E，macOS/Windows 保持 typed unsupported），P5 尚未授权。
 >
-> 建立日期：2026-07-21；Runtime Host 适配校准：2026-08-04。
+> 建立日期：2026-07-21；Runtime Host 适配校准：2026-08-04；适配路线重置：2026-08-06。
 >
 > 目标目录沿用需求中的 worktree-sandbox-permisson 拼写；代码、类型和正文统一使用 permission。
 >
@@ -14,10 +14,27 @@
 > Runtime 公共契约来源：[`../runtime/00-reference.md`](../runtime/00-reference.md) 与 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)。
 >
 > 生产 Host/managed process 行为来源：[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)。
+>
+> 当前多平台适配计划：[`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md)。
+>
+> 已封存 OS sandbox 扩展：[`archive/00-os-sandbox-cross-platform-expansion-archived.md`](archive/00-os-sandbox-cross-platform-expansion-archived.md)。
 
 ## 0. 参考基线与结论边界
 
 本计划基于以下本地 checkout 的当前源码，而不是仅参考产品文档：
+
+### 0.0 2026-08-06 冻结决定
+
+多平台路径语义尚未形成 Linux、Windows、macOS 真实 runner 的统一证据。为避免把路径、Shell、Git 和 cleanup 的平台差异误写进安全边界，当前作出以下决定：
+
+1. 不继续实现或扩展 Linux/macOS/Windows OS sandbox backend；
+2. 现有 `src/security/sandbox/**`、ExecutionGateway、Host final-leaf 与 fail-closed 测试不回滚、不删除；
+3. 已有 Linux bwrap enforced 结果只作为本地历史/回归证据，不代表多平台或发布级承诺；
+4. macOS Seatbelt、Windows native enforcement、helper 打包/签名与跨平台 capability 工作移入 archive；
+5. 当前执行入口切换到多平台 workspace/path 适配计划，先解决 native path、持久 locator、Git worktree、Shell、process tree 与 cleanup；
+6. 适配失败不得回退 raw shell、source checkout、builtin `none` 或 client-local execution。
+
+“冻结”仅暂停能力扩展，不削弱已经存在的安全拒绝。除明确安全漏洞或恢复既有 fail-closed 语义外，后续实现不得修改 sandbox capability 面。
 
 ### 0.0.1 2026-08-04 历史实现切片证据
 
@@ -78,7 +95,21 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 7. 内建“安全命令”必须有词边界，rg --pre、tee、危险命令和 wrapper 都需要单独处理。
 8. Sandbox profile 负责 workspace/read-only/strict/off 等能力组合；deny path 的解析、平台别名、失败关闭和 child network 是独立实现点。
 
-### 0.3 与 Runtime contract 计划的实现边界
+### 0.3 从 OpenCode 提取的 workspace 适配边界
+
+OpenCode 当前源码明确说明 Agent 本身没有 OS sandbox。其产品界面中的 sandbox 是 Git worktree workspace：以 `git worktree add --no-checkout` 创建代码副本，为每个目录加载独立 instance/cwd，并在 Windows 集中处理路径比较、持久路径、Shell、删除重试和进程树终止。
+
+RunLedger 只提取以下做法：
+
+1. worktree 是 workspace identity/cwd 隔离，不是安全 containment；
+2. Git 命令使用 program + args + explicit cwd，不经 Shell 字符串；
+3. native path、持久 locator、compare key 与公开 label 分离；
+4. Windows 路径大小写、UNC/junction、Git Bash/PowerShell/cmd、文件占用和 cleanup 由平台 adapter 集中拥有；
+5. permission/approval 与 OS sandbox 保持独立，不能用提示框或 worktree 代替 enforcement。
+
+OpenCode 的实现是路径适配参考，不是 RunLedger 放弃现有 fail-closed Security/Gateway 的依据。
+
+### 0.4 与 Runtime contract 计划的实现边界
 
 本计划是 Worktree/Sandbox/Permission 行为的唯一实现账本。Runtime contract 计划定义“传什么、记什么、如何校验”,本计划定义“如何判断、如何执行、何时发事件、如何 replay 以及如何证明强制生效”。
 
@@ -497,48 +528,19 @@ export interface RestrictedExecutionAdapters {
 
 ### 4.7 Sandbox
 
-Runtime 公共层的 `SandboxProfileRef` 与 `SandboxExecutionReceiptRef` 直接 import；实现层只额外定义 backend 行为：
+本节自 2026-08-06 起冻结。原 Linux bwrap、macOS Seatbelt、Windows native helper/Restricted Token 与跨平台 capability 扩展路线已移入 [`archive/00-os-sandbox-cross-platform-expansion-archived.md`](archive/00-os-sandbox-cross-platform-expansion-archived.md)，不得从本节继续实现。
 
-~~~ts
-export interface SandboxBackend {
-  probe(): Promise<SandboxBackendCapability>;
-  prepare(request: SandboxPrepareRequest): Promise<SandboxLaunchPlan>;
-  validateFinalLeaf(plan: SandboxLaunchPlan, requestDigest: string): Promise<SandboxDecisionReceipt>;
-}
-~~~
+冻结期间只保留以下不变量：
 
-`SandboxBackend` 不直接拥有 durable process identity、PID、PTY、output 或 recovery。它生成并验证受约束 launch plan/receipt,由 Host-owned process backend 在 intent/spawn claim 后执行；final leaf 必须重新绑定 execution/attempt/request digest。只有 platform adapter 内部且由 Host 调用的最小 spawn seam 可以接触 wrapper/native handle。
+- Runtime 公共层继续拥有 `SandboxProfileRef` 与 `SandboxExecutionReceiptRef`；不得在适配计划中复制类型；
+- 现有 backend/receipt/final-leaf 代码保持 fail closed，restrictive backend unavailable 时不得 spawn；
+- `SandboxBackend` 不拥有 durable process identity、PID、PTY、output 或 recovery；
+- requested profile、resolved policy、backend capability、effective enforcement 与 degraded reason 继续分开记录；
+- PolicyFileSystem/Permission 不能把软件拒绝标记为 OS sandbox enforced；
+- external containment 必须有外部 attestation，不能因运行在 Docker/VM 的假设自动标记有效；
+- 已有 Linux enforced 测试作为回归保留，macOS/Windows 没有真实 runner enforcement 就保持 unavailable/unverified。
 
-平台路线：
-
-| 平台 | 第一版 backend | 边界 |
-|---|---|---|
-| Linux | bwrap feature probe；根只读绑定、显式 writable roots、deny read bind-over、可选 unshare network | bwrap 不存在时 restrictive shell unavailable，不能退回 raw bash |
-| macOS | sandbox-exec/Seatbelt profile 生成与 feature probe | sandbox-exec 不可用时 fail closed；记录 deprecated/availability 状态 |
-| Windows | external 或 unavailable | 第一版不宣称 native enforced；后续单独 native helper/Restricted Token 计划 |
-| 已在外部容器 | external | 调用者声明外部边界；RunLedger 仍做软件 permission/path gate |
-
-必须区分：
-
-- requested profile；
-- resolved policy；
-- backend capability；
-- effective enforcement；
-- degraded reason。
-
-read-only/workspace-write/strict 请求在 backend unavailable 时：
-
-1. PolicyFileSystem 的软件拒绝仍然生效，但它不能把该 profile 标记为可用或 enforced；
-2. 任意 shell、后台进程和可能衍生子进程的工具拒绝执行；
-3. Host 可继续提供不需要该强约束的只读 query,但所有请求 restrictive sandbox 的 process 在 spawn 前 typed unsupported；TUI/诊断面显示 unavailable；
-4. 只有用户通过受策略约束的 Host command 显式切换 builtin `none`/external 才能继续,并记录新 policy revision/receipt；不接受静默 fallback。
-
-Network 第一纵切只支持 deny/allow：
-
-- deny 由 bwrap network namespace 或 Seatbelt network rule实施；
-- WebFetch 同时经 host policy；
-- shell 内按域 allowlist 需要受控 proxy，列为后续阶段；
-- 未有 proxy 前，custom allowedHosts 不能被标记为 shell 层 enforced。
+当前新增行为只允许进入 [`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md)。只有该计划 P0–P6 完成并通过解封 ADR 后，才允许重新设计平台 sandbox。
 
 ### 4.8 Worktree
 
@@ -743,7 +745,7 @@ runledger worktree gc --dry-run
 2. **独占目录并行**：本计划在 `src/security/**`、`src/worktree/**` 完成行为实现；其他 owner 可同时推进不触碰共享文件的 contract 或行为工作。
 3. **Host handoff**：以 `runtime/05` 已提交 baseline 和当时最新 hardening commit 为基线,冻结 constraint snapshot/final-leaf、durable command、driver/reverse-request 与 subscription 交接；本计划不得修改 Host/process 内部状态机来迁就 adapter。
 4. **串行集成**：双方独占测试通过后，预约单一集成窗口，由本计划 Phase 5 逐文件修改 Host resident composition/runtime/session/storage/CLI/TUI；Plugin、Context 等其他专项不得同时修改这些文件。
-5. **联合门禁**：最后运行 bypass、real Git、real Host process/sandbox、双 client driver/observer、resume/restart 与 current replay E2E。Runtime contract、Host runner 或本计划内部单测均不能单独替代该门禁。
+5. **适配先行**：新的跨平台工作先执行 `01-multiplatform-workspace-path-adaptation-plan.md`，以 real Git/path/Shell/process、双 client、resume/restart 与 current replay 建立平台证据；现有 sandbox 测试只做回归，不扩展 backend。
 
 若 Runtime contract 尚未冻结，本计划只能编写不依赖未决字段的内部纯实现与测试，不能在实现目录临时创造公共 envelope/receipt/event 类型。
 
@@ -873,37 +875,19 @@ runledger worktree gc --dry-run
 
 建议 commit：feat(worktree): bind sessions to auditable clean git worktrees
 
-### Phase 4：平台 SandboxBackend
+### Phase 4：平台 SandboxBackend（已封存）
 
-目标：为 shell/child process 提供真实平台边界，并诚实报告能力。
+状态：`FROZEN / NOT EXECUTABLE`。
 
-涉及：
+原目标、涉及文件、平台路线和恢复条件统一保存在 [`archive/00-os-sandbox-cross-platform-expansion-archived.md`](archive/00-os-sandbox-cross-platform-expansion-archived.md)。封存后：
 
-- src/security/sandbox/*
-- src/security/execution-gateway.ts
-- src/security/integration/runtime-sandbox-adapter.ts
-- tests/security/sandbox-linux.test.ts、sandbox-macos.test.ts、denial.test.ts
+1. 不新增 Linux/macOS/Windows backend 能力；
+2. 不把现有 Linux 本地证据推广为多平台完成；
+3. 不删除现有 enforcement/fail-closed 回归；
+4. 不以 backend unavailable 为理由回退 raw shell；
+5. 只有多平台适配计划 P0–P6 与新的解封 ADR 完成后，才能建立新的 Sandbox Phase，不能恢复本阶段的旧 checklist。
 
-步骤：
-
-1. 定义 probe/prepare/final-leaf-validation/status 接口,实际 spawn 继续走 Host process backend。
-2. 实现 Linux bwrap backend 与 deny network。
-3. 实现 macOS Seatbelt backend。
-4. Windows 第一版只返回 external/unavailable。
-5. 从 Runtime WorkspaceExecutionEnvelope 消费 effective workspace root，并物化为 sandbox write root。
-6. 将 .git/.runledger/credential/registry 作为 deny/protected paths。
-7. 识别 sandbox denial，并生成符合 Runtime SandboxExecutionReceiptRef/event payload schema 的结构化结果。
-8. backend unavailable 时 restrictive shell fail closed。
-9. 只向 Host process facade交付 launch plan/decision receipt；不得直接 spawn、返回 PID/handle 或保存 output/recovery。
-
-验收：
-
-- Linux/macOS 平台测试分别证明 workspace 内允许、外部写拒绝、deny-read 拒绝、network deny。
-- backend 缺失测试证明没有 raw shell fallback。
-- requested、resolved、effective、enforcement 四层状态可审计。
-- sandbox failure 不被误报为普通工具 bug。
-
-建议 commit：feat(sandbox): enforce resolved workspace boundaries for child processes
+当前替代阶段：[`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md) P0–P6。
 
 ### Phase 5：Runtime Host、CLI/TUI、resume 与审计闭环
 
@@ -1042,17 +1026,17 @@ runledger worktree gc --dry-run
 - read/write/delete 不同 access。
 - temp spill 只能进入 session temp root。
 
-### 7.3 Sandbox
+### 7.3 Sandbox 冻结回归
 
 - probe success/failure。
 - restrictive backend unavailable 不 fallback。
-- workspace write / outside write / deny read。
-- child process 继承边界。
-- background process 继承边界并可回收。
+- 已有 Linux workspace write / outside write / deny read 回归不得退化。
+- 已有 child/background process 边界与回收回归不得退化。
 - Host final leaf 对 stale/missing decision receipt、observer mutation 和 restrictive backend unavailable 均为 `spawnCount=0`。
-- network deny。
+- 已有 Linux network deny 回归不得退化。
 - structured denial detection。
 - external/off 状态不伪装 enforced。
+- 不新增 macOS/Windows enforcement 测试来推进能力；跨平台 path/worktree/process 证据由新适配计划负责。
 
 ### 7.4 Worktree
 
@@ -1104,12 +1088,13 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 ./bin/runledger.js --help
 ~~~
 
-平台 sandbox 测试要求：
+封存期间 sandbox 测试要求：
 
-- 先 probe 并打印 backend capability。
-- 环境确实不支持时允许明确 skip，但测试报告必须写 unavailable 原因。
-- 不能把 backend 缺失当通过。
-- CI 至少有 Linux enforced job；macOS/Windows 分别验证其承诺的 capability。
+- 保留当前 Linux enforced 与 unavailable/fail-closed regression；
+- backend 缺失不得被记作 enforced 通过；
+- macOS/Windows 继续诚实记录 unavailable/unverified；
+- 不通过本计划新增跨平台 sandbox CI 或 capability 承诺；
+- path/worktree/Shell/process 的真实 runner 门禁只在新适配计划 P1–P6 中推进。
 
 任何阶段修改后仍遵循仓库规则：npm run check 与 npm test 同时通过才可提交；只暂存本阶段明确文件。
 
@@ -1142,12 +1127,13 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 - [x] PersistedWorkspaceBinding 的独立 Runtime adapter 与 resume 已完成（runtime-host-worktree-replay.test.ts + worktree-sandbox-permission-e2e 冷恢复验证）；root-relative worktree record/lease。
 - [x] source repo 默认不被 agent 修改的 Git args/managed-root 边界。
 
-### M4：真实 sandbox
+### M4：OS sandbox 跨平台扩展（已封存）
 
-- [x] Linux bwrap launch plan/final-leaf validation 已实现；真实 enforced process E2E 通过（tests/security/sandbox-linux-enforced.test.ts 3 tests，bwrap 真实拒绝未绑定 host path / 临时写留在 sandbox / 网络 deny 删除默认路由）。
-- [x] macOS Seatbelt capability 明确（unavailable/未验证诚实报告）。
-- [x] Windows external/unavailable 诚实报告。
-- [x] restrictive backend 缺失 fail closed。
+- [~] Linux bwrap launch plan/final-leaf validation 与本地 enforced process E2E 已存在；只保留为历史/回归证据，不标记多平台或发布级完成。
+- [ ] macOS Seatbelt 没有真实 enforcement runner 证据；保持 unavailable/unverified，不继续实现。
+- [ ] Windows 没有 native enforcement；保持 external/unavailable，不继续实现。
+- [x] restrictive backend 缺失继续 fail closed，封存不允许 raw fallback。
+- [ ] 解封前置条件改由 `01-multiplatform-workspace-path-adaptation-plan.md` P0–P6 管理。
 
 ### M5：产品闭环
 
@@ -1166,9 +1152,10 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 
 ## 10. 完成标准
 
-只有同时满足以下条件，才能把本计划标记 completed：
+本文保留历史里程碑，但当前不再以“完成跨平台 OS sandbox”为目标。只有同时满足以下条件，才能把本主题标记 completed：
 
-- [ ] M0–M6 均有对应 commit、测试和联合门禁证据；只完成本地 M1–M5 时只能标记 local baseline complete。
+- [ ] M0–M3、M5–M6 均有对应 commit、测试和联合门禁证据；M4 保持 archived，直到另行批准解封 ADR。
+- [ ] 多平台 workspace/path 适配计划 P0–P6 完成；这不自动完成或解封 M4。
 - [x] Worktree、permission、approval、sandbox 在类型、配置、UI 和文档中没有混用。
 - [x] 模型可调用的生产工具不存在 raw fs/spawn/fetch 旁路（execution-boundaries 检查器强制）。
 - [x] process/PTY/output/recovery 生命周期只由 Runtime Host 拥有,本计划只提供真实 restrictive decision/receipt 与受限 adapters。
@@ -1183,7 +1170,7 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 - [x] Runtime contract 与本计划实现之间只有单向 import 和 port adapter，没有重复公共类型或反向依赖。
 - [x] 共享 runtime/session/storage/CLI/TUI 文件只在记录过的串行集成窗口修改。
 - [x] 安全配置解析失败不会回退到空配置、builtin-none 或 client-local policy。
-- [x] Linux 强隔离 E2E 通过（bwrap enforced 3 tests）；其他平台只声明真实验证过的能力。
+- [~] Linux 强隔离 E2E 的既有结果仅作冻结回归；其他平台不声明 enforcement，当前不形成跨平台完成结论。
 - [x] npm run check、npm test、npm run build、git diff --check 全绿。
 - [ ] README、AGENTS.md、CLI help 与实现一致（文档同步剩余项）。
 
@@ -1206,12 +1193,14 @@ npx vitest run tests/integration/worktree-sandbox-permission-e2e.test.ts
 
 ## 12. 执行起点
 
-后续用户明确要求“开始实现”时，先复核 Phase 0 已有 contract/boundary evidence 与 `runtime/05` 最新 Host handoff,不直接跳到 CLI/TUI 或平台 backend。若 Phase 0 证据仍适用于当前 HEAD,从首个未完成行为阶段继续；不得重建已经冻结的公共 contract。
+[`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md) P0 文档冻结已完成。本轮未修改 `src/**`、`tests/**`、依赖、配置或 CI；P1 尚未授权。
 
-1. 确认 Runtime Workspace/Security 契约域的 contract commit、exact schema 与 fixtures；
-2. 仅在 `src/security/**` 与 `src/worktree/**` 定义实现内部类型和 adapter conformance tests；
-3. 当前边界与 fail-closed 回归测试；
-4. 精确 legacy bypass allowlist以及“禁止第二 process owner/client direct controller”的 Host 边界检查；
-5. npm run check 静态边界与“禁止重复 Runtime 公共类型”门禁。
+后续用户再次明确要求实现时，也必须从新计划 P1 的只读真实平台证据采集开始，不能直接进入 adapter、Host wiring 或 sandbox backend：
 
-Phase 0 复核通过后,进入首个未完成的 Permission/Sandbox/Workspace 行为阶段。Phase 1–4 只推进独占目录；完成后才预约 Phase 5 Host 串行集成窗口。这样每一阶段都有可执行门禁,也能在不破坏现有 Host/CLI、不给并行计划制造文件冲突的前提下把 builtin-none profile替换为可选择且真实生效的 restrictive adapters。
+1. 固定 Linux、macOS、Windows runner 与 Node/Git/Shell/filesystem 版本；
+2. 采集 native/candidate path、Git porcelain、Shell、process tree 和 cleanup 证据；
+3. 形成 path/locator ADR 后才允许写纯适配器；
+4. 三平台真实 worktree E2E 通过后才允许进入 Host 串行接线；
+5. P0–P6 完成后只允许提出 sandbox 解封 ADR，不自动恢复旧 Phase 4。
+
+任何适配失败都必须 typed unsupported/fail closed；不得切回 source checkout、raw shell、builtin `none` 或 client-local controller。

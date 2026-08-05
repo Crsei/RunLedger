@@ -1,0 +1,38 @@
+{
+  "/abs/path": {
+    "isAbsolute_posix": true,
+    "isAbsolute_win32": true,
+    "normalized_posix": "/abs/path",
+    "normalized_win32": "\\abs\\path"
+  },
+  "C:\\abs\\path": {
+    "isAbsolute_posix": false,
+    "isAbsolute_win32": true,
+    "normalized_posix": "C:\\abs\\path",
+    "normalized_win32": "C:\\abs\\path"
+  },
+  "\\\\server\\share\\x": {
+    "isAbsolute_posix": false,
+    "isAbsolute_win32": true,
+    "normalized_posix": "\\\\server\\share\\x",
+    "normalized_win32": "\\\\server\\share\\x"
+  },
+  "\\\\?\\C:\\device": {
+    "isAbsolute_posix": false,
+    "isAbsolute_win32": true,
+    "normalized_posix": "\\\\?\\C:\\device",
+    "normalized_win32": "\\\\?\\C:\\device"
+  },
+  "relative/path": {
+    "isAbsolute_posix": false,
+    "isAbsolute_win32": false,
+    "normalized_posix": "relative/path",
+    "normalized_win32": "relative\\path"
+  },
+  "/": {
+    "isAbsolute_posix": true,
+    "isAbsolute_win32": true,
+    "normalized_posix": "/",
+    "normalized_win32": "\\"
+  }
+}

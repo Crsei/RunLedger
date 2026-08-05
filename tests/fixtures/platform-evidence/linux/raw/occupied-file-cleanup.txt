@@ -1,0 +1,2 @@
+flock=acquired
+rmdir_while_locked=ok

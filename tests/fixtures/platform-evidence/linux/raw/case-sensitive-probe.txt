@@ -1,0 +1,3 @@
+created: /tmp/runledger-platform-evidence-11904/case-sensitivity/MixedCase
+lstat(mixedcase) exists on current fs: false
+fs is case-sensitive if mixedcase is absent

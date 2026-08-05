@@ -1,0 +1,3 @@
+# P1 平台证据 raw fixtures 是真实 runner 的逐字节原始输出（porcelain 记录以空行结束）。
+# 保留尾随空行以维持 manifest SHA-256 不变性；禁止修改内容。
+tests/fixtures/platform-evidence/**/raw/*.txt -whitespace

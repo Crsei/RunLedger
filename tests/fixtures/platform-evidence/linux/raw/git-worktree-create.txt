@@ -1,0 +1,2 @@
+HEAD is now at dd11c93 add subdir
+Preparing worktree (detached HEAD dd11c93)

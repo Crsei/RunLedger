@@ -1,0 +1,8 @@
+worktree /tmp/runledger-platform-evidence-11904/repo
+HEAD dd11c93827d005f25fce995bed4b6212d4ba38c3
+branch refs/heads/master
+
+worktree /tmp/runledger-platform-evidence-11904/managed/repo-slug/task
+HEAD dd11c93827d005f25fce995bed4b6212d4ba38c3
+detached
+
