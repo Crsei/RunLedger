@@ -27,6 +27,7 @@ import { RuntimeHostLifecycle } from "../runtime/host/lifecycle.ts";
 import { JsonlHostEventStore } from "../storage/host/event-store.ts";
 import { JsonlRuntimeEventStore } from "../storage/host/runtime-event-store.ts";
 import { JsonHostCommandStore } from "../storage/host/command-store.ts";
+import { JsonHostDomainRevisionStore } from "../storage/host/domain-revision-store.ts";
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
 import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../worktree/host-binding.ts";
 import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-workspace-events.ts";
@@ -172,6 +173,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		runtimeEventWriter,
 		eventStore: new JsonlHostEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
 		commandStore: new JsonHostCommandStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
+		domainRevisionStore: new JsonHostDomainRevisionStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
 		attestor: createLinuxSocketPeerAttestor({
 			helperPath: process.env.RUNLEDGER_HOST_PEER_CREDENTIAL_HELPER ?? defaultLinuxPeerCredentialHelperPath(),
 			scopeDigest: scope.compatibilityDigest,

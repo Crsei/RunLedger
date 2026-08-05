@@ -7,6 +7,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import type { RuntimeEventAppendInput } from "../../../src/storage/host/runtime-event-store.ts";
 import { JsonlRuntimeEventStore } from "../../../src/storage/host/runtime-event-store.ts";
+import { JsonHostDomainRevisionStore } from "../../../src/storage/host/domain-revision-store.ts";
 import type { RuntimeEventPayloadFor } from "../../../src/runtime/contracts/public.ts";
 import { createHostCompatibilityEnvelope, HOST_PROTOCOL_VERSION, type RuntimeHostScope } from "../../../src/runtime/host/contracts.ts";
 import type { HostConnectionPrincipal, HostFrameEnvelope } from "../../../src/runtime/host/types.ts";
@@ -239,6 +240,78 @@ describe("resident Host domain ports", () => {
 			await client.close();
 		} finally {
 			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("restores the Host domain revision before accepting a post-restart mutation", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-domain-revision-replay-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const layout = buildRunledgerLayout(root, "posix");
+		const revisionStore = new JsonHostDomainRevisionStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey });
+		const domain: HostRuntimeDomainPort = {
+			name: "replay-domain",
+			queryOperations: new Set(["replay.inspect"]),
+			mutationOperations: new Set(["replay.apply"]),
+			execute: async (context) => ({ ok: true, body: { revisionSeen: context.domainRevision }, mutated: context.mutation }),
+		};
+		const principal = {
+			principalId: createRuntimeId("principal", "domain-replay"),
+			connectionId: createRuntimeId("connection", "domain-replay"),
+			attestationDigest: runtimeDigest("domain-replay-attestation"),
+		};
+		const createHost = (): ResidentRuntimeHost => new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			domainPorts: [domain],
+			domainRevisionStore: revisionStore,
+			attestor: { attest: async () => principal },
+			createSession: async () => session(),
+		});
+		const apply = (client: JsonLineHostClient, frameId: string, sessionId: string, revision: number) => request(client, frameId, {
+			operation: "replay.apply",
+			sessionId,
+			expectedHostGeneration: 1,
+			expectedSessionGeneration: 1,
+			expectedDriverRevision: 1,
+			expectedDomainRevision: revision,
+		});
+		try {
+			const firstHost = createHost();
+			await firstHost.start();
+			const firstClient = await JsonLineHostClient.connect(socketPath);
+			await firstClient.request({ frameId: "replay-init-1", kind: "initialize_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { compatibility: hostScope } });
+			const opened = await request(firstClient, "replay-open-1", { operation: "session.open", mode: "create" });
+			const sessionId = String(opened.body.sessionId);
+			await request(firstClient, "replay-claim-1", {
+				operation: "session.claim_driver",
+				sessionId,
+				expectedHostGeneration: opened.body.hostGeneration,
+				expectedSessionGeneration: opened.body.sessionGeneration,
+				expectedDriverRevision: opened.body.driverRevision,
+			});
+			expect((await apply(firstClient, "replay-apply-1", sessionId, 0)).body).toMatchObject({ ok: true, domainRevision: 1 });
+			await firstClient.close();
+			await firstHost.close();
+
+			const secondHost = createHost();
+			await secondHost.start();
+			const secondClient = await JsonLineHostClient.connect(socketPath);
+			await secondClient.request({ frameId: "replay-init-2", kind: "initialize_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { compatibility: hostScope } });
+			const reopened = await request(secondClient, "replay-open-2", { operation: "session.open", mode: "open", sessionId });
+			await request(secondClient, "replay-claim-2", {
+				operation: "session.claim_driver",
+				sessionId,
+				expectedHostGeneration: reopened.body.hostGeneration,
+				expectedSessionGeneration: reopened.body.sessionGeneration,
+				expectedDriverRevision: reopened.body.driverRevision,
+			});
+			expect((await apply(secondClient, "replay-stale", sessionId, 0)).body).toMatchObject({ ok: false, code: "stale_domain_revision", domainRevision: 1 });
+			expect((await apply(secondClient, "replay-apply-2", sessionId, 1)).body).toMatchObject({ ok: true, revisionSeen: 1, domainRevision: 2 });
+			await secondClient.close();
+			await secondHost.close();
+		} finally {
 			await rm(root, { recursive: true, force: true });
 		}
 	});

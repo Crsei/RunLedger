@@ -34,6 +34,7 @@ import type { OutputCursor } from "../runtime/process/output.ts";
 import type { ControlPlaneActor } from "../storage/process/control-plane.ts";
 import type { HostEventStore, StoredHostEvent } from "../storage/host/event-store.ts";
 import { BoundedHostCommandStore, type HostCommandStore } from "../storage/host/command-store.ts";
+import type { HostDomainRevisionStore } from "../storage/host/domain-revision-store.ts";
 import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
 import { SYSTEM_APPROVAL_PRINCIPAL_ID } from "../security/permission/approval-coordinator.ts";
 import type { PermissionPrompt, PermissionPromptResponse, PermissionPrompter } from "../security/types.ts";
@@ -202,6 +203,8 @@ export interface ResidentRuntimeHostOptions {
 	readonly runtimeEventWriter?: RuntimeEventWriter;
 	readonly eventStore?: HostEventStore;
 	readonly commandStore?: HostCommandStore;
+	/** Durable per-session domain revisions used after Host cold restart. */
+	readonly domainRevisionStore?: HostDomainRevisionStore;
 	/** Explicit management shutdown; client detach never invokes this callback. */
 	readonly onShutdown?: () => Promise<void>;
 	readonly onEndpoint?: (endpoint: HostEndpointRecord) => Promise<void>;
@@ -536,6 +539,9 @@ export class ResidentRuntimeHost {
 			return this.response(frame, { ok: true, sessionId, snapshot: snapshotOf(existing.runtime.controller), hostGeneration: existing.driver.hostGeneration, sessionGeneration: existing.driver.sessionGeneration, eventCursor: existing.sequence, driverRevision: existing.driver.driverRevision });
 		}
 		const sequence = this.options.eventStore === undefined ? 0 : await this.options.eventStore.head(sessionId);
+		const domainRevisions = this.options.domainRevisionStore === undefined
+			? new Map<string, number>()
+			: new Map(await this.options.domainRevisionStore.load(sessionId));
 		const state: SessionState = {
 			runtime,
 			...(runtime.mcp === undefined ? {} : { mcp: runtime.mcp }),
@@ -545,7 +551,7 @@ export class ResidentRuntimeHost {
 			history: [],
 			eventTail: Promise.resolve(),
 			eventUnsubscribe: () => {},
-			domainRevisions: new Map(),
+			domainRevisions,
 		};
 		state.eventUnsubscribe = runtime.controller.subscribe((event) => this.publishAgentEvent(sessionId, event));
 		this.sessions.set(sessionId, state);
@@ -865,7 +871,16 @@ export class ResidentRuntimeHost {
 		const receipts = await this.appendDomainEvents(result.events ?? []);
 		const changed = result.mutated ?? mutation;
 		const nextDomainRevision = changed ? domainRevision + 1 : domainRevision;
-		if (changed) state.domainRevisions.set(key, nextDomainRevision);
+		if (changed) {
+			const nextRevisions = new Map(state.domainRevisions);
+			nextRevisions.set(key, nextDomainRevision);
+			try {
+				await this.options.domainRevisionStore?.save(state.runtime.controller.sessionId, nextRevisions);
+			} catch {
+				return this.response(frame, { ok: false, code: "domain_revision_persistence_failed" });
+			}
+			state.domainRevisions.set(key, nextDomainRevision);
+		}
 		return this.response(frame, {
 			ok: true,
 			...(result.body ?? {}),
