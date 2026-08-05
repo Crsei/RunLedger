@@ -20,6 +20,7 @@ import type {
 } from "../../../src/security/sandbox/types.ts";
 import { createDecisionReceipt, createResolutionState, digestOf } from "../../../src/security/sandbox/common.ts";
 import type { PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
+import type { ToolAuthorizationPolicy } from "../../../src/runtime/types.ts";
 
 const roots: string[] = [];
 
@@ -199,6 +200,22 @@ function workspaceBinding(root: string): PersistedWorkspaceBinding {
 }
 
 describe("production Host Security/ExecutionGateway composition", () => {
+	it("exposes a Host-owned tool admission policy instead of the local AllowAll fallback", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-tool-policy-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sandboxBackend: availableSandboxBackend(),
+		});
+
+		expect(security).toHaveProperty("toolAuthorizationPolicy");
+		const policy = (security as unknown as { readonly toolAuthorizationPolicy: ToolAuthorizationPolicy }).toolAuthorizationPolicy;
+		expect(policy).toBeDefined();
+	});
+
 	it("requires the canonical Runtime event writer from Host composition", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-writer-"));
 		roots.push(root);

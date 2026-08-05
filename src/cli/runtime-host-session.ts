@@ -98,6 +98,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				},
 				traceRecorderFactory: options.traceRecorderFactory,
 				executionEnv,
+				authorizationPolicy: options.security?.toolAuthorizationPolicy,
 			});
 			const extensionLifecycle = options.extensionManager === undefined ? undefined : new ExtensionTurnLifecycle({
 				manager: options.extensionManager,

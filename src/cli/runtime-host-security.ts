@@ -68,6 +68,7 @@ import {
 } from "../security/integration/runtime-gateway-adapter.ts";
 import { HostSecurityAuditAdapter, type RuntimeSecurityEventWriter } from "../security/integration/runtime-security-events.ts";
 import { JsonApprovalStateStore } from "../storage/host/approval-store.ts";
+import { HostGovernedToolAuthorizationPolicy } from "../security/integration/runtime-tool-authorization.ts";
 
 export interface HostSecurityConfigSource extends SecurityConfigSourcePort {
 	readonly source: SecurityConfigSourcePort["source"];
@@ -130,6 +131,8 @@ export interface HostProcessFinalLeafInput extends PreparedHostProcessSecurity {
 export interface ProductionHostSecurity {
 	readonly snapshot: SecuritySnapshot;
 	readonly gateway: ExecutionGateway;
+	/** Host admission gate; exact effects remain owned by the gateway/final leaf. */
+	readonly toolAuthorizationPolicy: HostGovernedToolAuthorizationPolicy;
 	readonly finalLeaf: HostProcessFinalLeafDecisionPort;
 	readonly constraintProviders: ExecutionConstraintProviders;
 	readonly sandboxBackend: SandboxBackend;
@@ -205,6 +208,7 @@ export async function createProductionHostSecurity(
 	const composition: ProductionHostSecurity = {
 		snapshot,
 		gateway,
+		toolAuthorizationPolicy: new HostGovernedToolAuthorizationPolicy(),
 		finalLeaf,
 		constraintProviders: baseProviders,
 		sandboxBackend,
