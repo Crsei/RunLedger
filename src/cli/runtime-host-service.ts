@@ -37,6 +37,7 @@ import { BoundedHostCommandStore, type HostCommandStore } from "../storage/host/
 import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
 import { SYSTEM_APPROVAL_PRINCIPAL_ID } from "../security/permission/approval-coordinator.ts";
 import type { PermissionPrompt, PermissionPromptResponse, PermissionPrompter } from "../security/types.ts";
+import type { HostMcpRuntime } from "./runtime-host-mcp.ts";
 
 export type HostSessionOpenMode = "create" | "open" | "continue_recent" | "resume" | "fork";
 
@@ -52,6 +53,8 @@ export interface HostSessionOpenRequest {
 
 export interface HostSessionRuntime {
 	readonly controller: InteractiveSessionControllerPort;
+	/** Optional Host-owned extension runtime; never constructed by a client. */
+	readonly mcp?: HostMcpRuntime;
 	close(): Promise<void>;
 }
 
@@ -71,6 +74,7 @@ export interface HostRuntimeDomainContext {
 	readonly sessionGeneration: number;
 	readonly driverRevision: number;
 	readonly domainRevision: number;
+	readonly mcp?: HostMcpRuntime;
 }
 
 export interface HostRuntimeDomainResult {
@@ -206,6 +210,7 @@ export interface ResidentRuntimeHostOptions {
 
 interface SessionState {
 	readonly runtime: HostSessionRuntime;
+	readonly mcp?: HostMcpRuntime;
 	readonly cwd?: string;
 	driver: DriverState;
 	sequence: number;
@@ -533,6 +538,7 @@ export class ResidentRuntimeHost {
 		const sequence = this.options.eventStore === undefined ? 0 : await this.options.eventStore.head(sessionId);
 		const state: SessionState = {
 			runtime,
+			...(runtime.mcp === undefined ? {} : { mcp: runtime.mcp }),
 			...(stringValue(frame.body.cwd) === undefined ? {} : { cwd: stringValue(frame.body.cwd) }),
 			driver: createDriverState({ hostGeneration: this.generation, sessionGeneration: 1 }),
 			sequence,
@@ -853,6 +859,7 @@ export class ResidentRuntimeHost {
 			sessionGeneration: state.driver.sessionGeneration,
 			driverRevision: state.driver.driverRevision,
 			domainRevision,
+			...(state.mcp === undefined ? {} : { mcp: state.mcp }),
 		});
 		if (!result.ok) return this.response(frame, { ok: false, ...(result.body ?? { code: "domain_command_rejected" }) });
 		const receipts = await this.appendDomainEvents(result.events ?? []);

@@ -271,6 +271,32 @@ describe("production Host Security/ExecutionGateway composition", () => {
 		expect(brokerCalls).toBe(0);
 	});
 
+	it("authorizes extension resources through the Host Gateway before invocation", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-resource-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const security = await createProductionHostSecurity({
+			layout,
+			scope: scope(),
+			cwd: root,
+			sessionId: createRuntimeId("session", "host-security-resource"),
+			sandboxBackend: availableSandboxBackend(),
+			permissionPrompter: { request: async (prompt) => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", `approver-${prompt.requestId}`) }) },
+		});
+
+		const result = await security.authorizeResource({
+			sessionId: createRuntimeId("session", "host-security-resource"),
+			principalId: createRuntimeId("principal", "host-security-resource"),
+			requestId: createRuntimeId("command", "host-security-resource-call"),
+			traceId: createRuntimeId("trace", "host-security-resource-call"),
+			toolName: "mcp",
+			cwd: root,
+			argumentsDigest: runtimeDigest({ value: "fixture" }),
+		});
+
+		expect(result).toMatchObject({ ok: true, value: { authorization: { outcome: "allow" } } });
+	});
+
 	it("fails closed when a restrictive sandbox backend reports degraded enforcement", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-degraded-sandbox-"));
 		roots.push(root);

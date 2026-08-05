@@ -1,6 +1,6 @@
 /** Host-owned Security/Worktree query and command adapters. */
 
-import type { WorkspaceId, SessionId } from "../runtime/contracts/public.ts";
+import type { AuthorityId, TenantId, WorkspaceId, SessionId } from "../runtime/contracts/public.ts";
 import { parseRuntimeId, runtimeDigest } from "../runtime/contracts/public.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import type { RuntimeEventPayloadFor } from "../runtime/protocol/events.ts";
@@ -10,6 +10,7 @@ import type { SecuritySnapshot } from "../security/types.ts";
 import type { HostRuntimeDomainContext, HostRuntimeDomainPort, HostRuntimeDomainResult } from "./runtime-host-service.ts";
 import type { HostWorkspaceBindingService } from "../worktree/host-binding.ts";
 import type { PersistedWorkspaceBinding } from "../worktree/persisted-binding.ts";
+import type { HostMcpRuntime } from "./runtime-host-mcp.ts";
 
 export interface SecurityDomainSource {
 	readonly snapshot: SecuritySnapshot;
@@ -21,11 +22,14 @@ export interface HostDomainPortCompositionOptions {
 	readonly extensions?: ExtensionDomainOptions;
 	/** Host-owned Plan/Context/Compaction/Memory adapter. */
 	readonly modelContext?: HostRuntimeDomainPort;
+	/** Host-owned MCP lifecycle domain; omitted by tests that do not compose MCP. */
+	readonly mcp?: { readonly authorityId: AuthorityId; readonly tenantId: TenantId };
 }
 
 /** Builds the complete Security/Worktree Host domain surface in one place. */
 export function createHostDomainPorts(options: HostDomainPortCompositionOptions): readonly HostRuntimeDomainPort[] {
 	const ports: HostRuntimeDomainPort[] = [createSecurityDomainPort(options.security), createWorkspaceDomainPort(options.workspace)];
+	if (options.mcp !== undefined) ports.push(createMcpDomainPort(options.mcp));
 	if (options.extensions !== undefined) ports.push(createExtensionDomainPort(options.extensions));
 	if (options.modelContext !== undefined) ports.push(options.modelContext);
 	return ports;
@@ -179,8 +183,70 @@ export function createExtensionSnapshotEvent(input: {
 	};
 }
 
-const EXTENSION_QUERY_OPERATIONS = new Set(["extension.inspect", "plugin.list", "skill.list", "hook.list", "mcp.list"]);
+const EXTENSION_QUERY_OPERATIONS = new Set(["extension.inspect", "plugin.list", "skill.list", "hook.list"]);
 const EXTENSION_MUTATION_OPERATIONS = new Set(["extension.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust"]);
+
+const MCP_QUERY_OPERATIONS = new Set(["mcp.list", "mcp.inspect", "mcp.doctor"]);
+const MCP_MUTATION_OPERATIONS = new Set(["mcp.restart"]);
+
+/** MCP lifecycle is a Host session domain, not a client-side selector. */
+export function createMcpDomainPort(options: { readonly authorityId: AuthorityId; readonly tenantId: TenantId }): HostRuntimeDomainPort {
+	return {
+		name: "mcp",
+		queryOperations: MCP_QUERY_OPERATIONS,
+		mutationOperations: MCP_MUTATION_OPERATIONS,
+		execute: (context) => executeMcpDomain(options, context),
+	};
+}
+
+async function executeMcpDomain(options: { readonly authorityId: AuthorityId; readonly tenantId: TenantId }, context: HostRuntimeDomainContext): Promise<HostRuntimeDomainResult> {
+	const mcp = context.mcp;
+	if (mcp === undefined) return rejected("mcp_runtime_unavailable");
+	if (context.operation === "mcp.list") {
+		return { ok: true, body: { servers: mcp.catalog(), toolCount: mcp.toolRegistry().list("mcp").length } };
+	}
+	if (context.operation === "mcp.doctor") {
+		const serverId = stringValue(context.frame.body.serverId);
+		return { ok: true, body: { diagnostics: mcp.doctor(serverId) } };
+	}
+	if (context.operation === "mcp.inspect") {
+		const serverId = stringValue(context.frame.body.serverId);
+		if (serverId === undefined) return { ok: true, body: { servers: mcp.catalog() } };
+		const snapshot = mcp.catalog().find((candidate) => candidate.serverId === serverId);
+		return snapshot === undefined ? rejected("mcp_server_not_found") : { ok: true, body: { server: snapshot } };
+	}
+	if (context.operation !== "mcp.restart") return rejected("unsupported_operation");
+	const serverId = stringValue(context.frame.body.serverId);
+	if (serverId === undefined) return rejected("mcp_server_required");
+	const restarted = await mcp.restart(serverId);
+	if (!restarted.ok) return { ok: false, body: { code: `mcp_${restarted.error.code}`, message: restarted.error.message } };
+	const snapshot = restarted.value;
+	const resourceId = createRuntimeId("resource", runtimeDigest({ serverId, kind: "mcp-server" }).digest.slice(0, 48));
+	const traceId = createRuntimeId("trace", runtimeDigest({ sessionId: context.sessionId, serverId, generation: snapshot.generation }).digest.slice(0, 48));
+	const payload: RuntimeEventPayloadFor<"resource.activated"> = {
+		subject: { kind: "resource", id: resourceId },
+		correlationId: traceId,
+		effect: "committed",
+		expectedRevision: context.domainRevision,
+		transition: { revision: snapshot.generation, previousStatus: "stopped", nextStatus: snapshot.state },
+		refs: [{ subjectKind: "content", digest: runtimeDigest(snapshot), mediaType: "application/json", size: 0 }],
+		metadataDigest: runtimeDigest({ serverId, transport: snapshot.transport, generation: snapshot.generation }),
+	};
+	return {
+		ok: true,
+		body: { server: snapshot },
+		mutated: true,
+		events: [{
+			authorityId: options.authorityId,
+			tenantId: options.tenantId,
+			principalId: context.principal.principalId,
+			sessionId: parseRuntimeId("session", context.sessionId)!,
+			traceId,
+			type: "resource.activated",
+			payload,
+		}],
+	};
+}
 
 export function createExtensionDomainPort(options: ExtensionDomainOptions): HostRuntimeDomainPort {
 	return {

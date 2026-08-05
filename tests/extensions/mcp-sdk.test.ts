@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createMcpGatewayFetch, createSdkMcpClientFactory } from "../../src/extensions/mcp/sdk-factory.ts";
+import { createMcpExecutionEnvFetch, createMcpGatewayFetch, createSdkMcpClientFactory } from "../../src/extensions/mcp/sdk-factory.ts";
 import { McpConnectionManager } from "../../src/extensions/mcp/connection-manager.ts";
 import { PolicyNetworkClient } from "../../src/security/policy-network.ts";
 import { ProductionManagedProcessPort } from "../../src/cli/runtime-host-process.ts";
@@ -37,6 +37,21 @@ function processScope(): RuntimeHostScope {
 }
 
 describe("official MCP SDK transport factory", () => {
+	it("adapts the Host ExecutionEnv network port without a raw fetch fallback", async () => {
+		let calls = 0;
+		const fetcher = createMcpExecutionEnvFetch({
+			request: async (request) => {
+				calls += 1;
+				return { status: 200, headers: { "content-type": "application/json" }, body: Buffer.from("{}"), finalUrl: request.url };
+			},
+		});
+		const response = await fetcher("http://127.0.0.1/mcp", { method: "GET" });
+
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe("{}");
+		expect(calls).toBe(1);
+	});
+
 	it("connects to a real stdio MCP server, lists and calls a tool, then closes its child", async () => {
 		const script = [
 			"const {Server}=require('@modelcontextprotocol/sdk/server/index.js');",

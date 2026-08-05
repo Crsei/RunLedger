@@ -128,6 +128,24 @@ export interface HostProcessFinalLeafInput extends PreparedHostProcessSecurity {
 	readonly constraintSnapshot: ExecutionConstraintSnapshot;
 }
 
+/** Host Gateway request used by extension resources such as MCP. */
+export interface HostResourceAuthorizationRequest {
+	readonly sessionId: string;
+	readonly principalId: string;
+	readonly requestId: string;
+	readonly traceId: string;
+	readonly toolName: string;
+	readonly cwd: string;
+	readonly argumentsDigest: RuntimeDigest;
+	readonly requests?: readonly AccessRequest[];
+	readonly signal?: AbortSignal;
+}
+
+export interface HostResourceAuthorization {
+	readonly authorization: ExecutionGatewayContext["authorization"];
+	readonly authorizationDigest: RuntimeDigest;
+}
+
 export interface ProductionHostSecurity {
 	readonly snapshot: SecuritySnapshot;
 	readonly gateway: ExecutionGateway;
@@ -139,6 +157,7 @@ export interface ProductionHostSecurity {
 	createExecutionEnv(options?: HostExecutionEnvOptions): ExecutionEnv;
 	prepareProcess(input: HostProcessSecurityRequest): Promise<SecurityResult<PreparedHostProcessSecurity>>;
 	validateProcessFinalLeaf(input: HostProcessFinalLeafInput): Promise<SecurityResult<HostProcessFinalLeafDecision>>;
+	authorizeResource(input: HostResourceAuthorizationRequest): Promise<SecurityResult<HostResourceAuthorization>>;
 	processSandboxPlan(requestDigest: RuntimeDigest): SandboxLaunchPlan | undefined;
 }
 
@@ -262,9 +281,71 @@ export async function createProductionHostSecurity(
 			}
 			return result;
 		},
+		authorizeResource: (input) => authorizeHostResource({
+			input,
+			options,
+			snapshot,
+			gateway,
+			providers: baseProviders,
+			baseWorkspace,
+		}),
 		processSandboxPlan: (requestDigest) => bindings.get(requestDigest.digest)?.sandboxPlan,
 	};
 	return composition;
+}
+
+async function authorizeHostResource(input: {
+	readonly input: HostResourceAuthorizationRequest;
+	readonly options: HostSecurityCompositionOptions;
+	readonly snapshot: SecuritySnapshot;
+	readonly gateway: ExecutionGateway;
+	readonly providers: ExecutionConstraintProviders;
+	readonly baseWorkspace: (sessionId: string, principalId: string, toolCallId: string, cwd: string) => ReturnType<typeof createWorkspaceEnvelope>;
+}): Promise<SecurityResult<HostResourceAuthorization>> {
+	const request = input.input;
+	if (!request.toolName || !isAbsolutePath(request.cwd)) return securityFailure("invalid_request", "resource authorization request is malformed");
+	const sessionId = runtimeId("session", request.sessionId);
+	const principalId = runtimeId("principal", request.principalId);
+	const requestId = runtimeId("command", request.requestId);
+	const toolCallId = runtimeId("toolCall", canonicalDigest({ requestId, traceId: request.traceId, toolName: request.toolName }).slice(0, 64));
+	const workspace = input.baseWorkspace(sessionId, principalId, toolCallId, request.cwd);
+	const authorizationRequest: AuthorizationRequest = {
+		requestId,
+		sessionId,
+		turnId: runtimeId("turn", canonicalDigest({ requestId, traceId: request.traceId }).slice(0, 64)),
+		toolCallId,
+		toolName: request.toolName,
+		argumentsDigest: request.argumentsDigest,
+		cwd: request.cwd,
+		requests: request.requests ?? [{ kind: "tool", toolName: request.toolName }],
+		workspace,
+		snapshot: input.snapshot,
+	};
+	const requestDigest = gatewayRequestDigest(authorizationRequest);
+	const constraintInput: ExecutionConstraintInput = {
+		authorityId: workspace.authorityId,
+		tenantId: workspace.tenantId,
+		workspaceId: workspace.workspaceId,
+		principalId: workspace.principalId,
+		executionId: runtimeId("execution", requestDigest.digest.slice(0, 64)),
+		attemptId: runtimeId("attempt", `${requestDigest.digest.slice(0, 48)}_1`),
+		commandId: requestId,
+		requestDigest,
+		policyDigest: input.snapshot.policyDigest,
+		modes: {
+			permission: "policy",
+			approval: input.snapshot.profile.approvalPolicy === "never" ? "none" : "required",
+			sandbox: "none",
+			gateway: "mediated",
+			containment: "none",
+		},
+	};
+	const constraints = await evaluateExecutionConstraints(constraintInput, input.providers);
+	if (!constraints.ok) return securityFailure(constraints.code === "constraint_denied" ? "policy_denied" : "invalid_request", `resource constraint ${constraints.code} at ${constraints.dimension}`);
+	const opened = await input.gateway.authorize({ request: authorizationRequest, requestDigest, constraintInput, constraintSnapshot: constraints.snapshot }, request.signal);
+	return opened.ok
+		? { ok: true, value: { authorization: opened.value.authorization, authorizationDigest: opened.value.authorizationDigest } }
+		: opened;
 }
 
 async function loadSnapshot(options: HostSecurityCompositionOptions): Promise<SecuritySnapshot> {

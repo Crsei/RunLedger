@@ -15,6 +15,7 @@ import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { isAbsolute } from "node:path";
 import type { PolicyNetworkClient } from "../../security/policy-network.ts";
+import type { Network } from "../../runtime/execution-env.ts";
 import type { ExecutionHandleRef } from "../../runtime/process/types.ts";
 import type { OutputCursor } from "../../runtime/process/output.ts";
 import type { ProcessToolClient } from "../../runtime/tools/process-tool-support.ts";
@@ -56,6 +57,25 @@ export function createMcpGatewayFetch(network: PolicyNetworkClient, maxBytes = 2
 		}, init.signal ?? undefined);
 		if (!result.ok) throw new Error(result.error.message);
 		return new Response(new Uint8Array(result.value.body), { status: result.value.status, headers: result.value.headers });
+	};
+}
+
+/** Adapts the Host-owned governed ExecutionEnv network port to the SDK. */
+export function createMcpExecutionEnvFetch(network: Network, maxBytes = 2 * 1024 * 1024): FetchLike {
+	return async (input, init = {}) => {
+		const url = typeof input === "string" ? input : input.toString();
+		const headers = Object.fromEntries(new Headers(init.headers).entries());
+		let body: string | Buffer | undefined;
+		if (typeof init.body === "string") body = init.body;
+		else if (init.body !== undefined) body = Buffer.from(await new Response(init.body).arrayBuffer());
+		const result = await network.request({
+			url,
+			method: init.method ?? "GET",
+			headers,
+			...(body === undefined ? {} : { body }),
+			maxBytes,
+		}, init.signal ?? undefined);
+		return new Response(new Uint8Array(result.body), { status: result.status, headers: result.headers });
 	};
 }
 

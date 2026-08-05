@@ -16,6 +16,9 @@ import type { ExtensionReloadResult } from "../extensions/host-manager.ts";
 import type { ToolResultOverflowStore } from "../runtime/types.ts";
 import type { ContextAssemblySink } from "../runtime/types.ts";
 import type { ModelRequestRouter } from "../runtime/interactive-session-controller.ts";
+import type { ToolRegistry } from "../runtime/tool-registry.ts";
+import type { HostMcpRuntime } from "./runtime-host-mcp.ts";
+import type { McpServerConfig } from "../extensions/mcp/connection-manager.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import {
@@ -47,6 +50,15 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly contextAssemblySink?: ContextAssemblySink;
 	/** Host-owned route gate created after the canonical session identity is known. */
 	readonly createModelRequestRouter?: (sessionId: string) => ModelRequestRouter;
+	/** Host composition creates the MCP adapter against this session's process facade. */
+	readonly createMcpRuntime?: (input: {
+		readonly sessionId: string;
+		readonly sessionGeneration: number;
+		readonly cwd: string;
+		readonly toolRegistry: ToolRegistry;
+	}) => Promise<HostMcpRuntime>;
+	/** Canonical config is loaded by the resident Host, never by the client. */
+	readonly mcpConfigs?: readonly McpServerConfig[];
 }
 
 export function validateHostWorkspaceBinding(input: {
@@ -77,6 +89,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 			}
 		}
 		const manager = await selectSessionManager(options.layout, cwd, input);
+		let mcp: HostMcpRuntime | undefined;
 		try {
 			await manager.acquireLock();
 			const replay = await replaySession(manager.ledger());
@@ -91,6 +104,11 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				...(managedProcess === undefined ? {} : { managedProcess }),
 				...(executionEnv === undefined ? {} : { executionEnv }),
 			});
+			if (options.createMcpRuntime !== undefined) {
+				mcp = await options.createMcpRuntime({ sessionId: manager.sessionId(), sessionGeneration: 1, cwd, toolRegistry: tools });
+				const started = await mcp.start(options.mcpConfigs ?? []);
+				if (!started.ok) throw new Error(`required MCP server failed: ${started.requiredFailures.map((failure) => failure.serverId).join(",")}`);
+			}
 			const controller = await InteractiveSessionController.create({
 				cwd,
 				layout: options.layout,
@@ -127,13 +145,16 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 			);
 			return {
 				controller,
+				...(mcp === undefined ? {} : { mcp }),
 				close: async () => {
 					removeExtensionLifecycle?.();
 					removeCompletion?.();
+					await mcp?.close().catch(() => undefined);
 					await manager.closeAll();
 				},
 			};
 		} catch (error) {
+			await mcp?.close().catch(() => undefined);
 			await manager.closeAll().catch(() => undefined);
 			throw error;
 		}

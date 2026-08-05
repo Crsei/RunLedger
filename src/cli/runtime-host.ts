@@ -36,6 +36,10 @@ import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-h
 import { createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
 import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
 import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
+import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./runtime-host-mcp.ts";
+import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../extensions/mcp/sdk-factory.ts";
+import { McpConnectionManager } from "../extensions/mcp/connection-manager.ts";
+import { loadCanonicalMcpConfigs } from "../extensions/mcp/config.ts";
 import type { ContextAssemblySink } from "../runtime/types.ts";
 import type { RuntimeEventPayloadFor } from "../runtime/protocol/events.ts";
 import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
@@ -56,6 +60,14 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	if (!home || !rawScope || !cwd) throw new Error("resident Host environment is incomplete");
 	const scope = parseScope(rawScope);
 	const layout = buildRunledgerLayout(home, "posix");
+	const extensionStorage = new NodeExtensionStorage({ runledgerHome: layout.home });
+	const mcpConfig = await loadCanonicalMcpConfigs({
+		layout,
+		workspaceStorageKey: scope.workspaceStorageKey,
+		storage: extensionStorage,
+		environment: process.env,
+	});
+	if (mcpConfig.diagnostics.some((item) => item.severity === "error")) throw new Error("canonical MCP configuration is invalid");
 	const endpointStore = new EndpointStore(layout, scope.workspaceStorageKey);
 	const lease = await acquireHostWriterLease(layout, scope.workspaceStorageKey);
 	if (!lease.ok) throw new Error(lease.code);
@@ -78,7 +90,6 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	});
 	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd, workspaceAudit });
 	const hostRuntimeId = createRuntimeId("runtime", `host-${hostGeneration}-${scope.workspaceStorageKey.slice(3, 19)}`);
-	const extensionStorage = new NodeExtensionStorage({ runledgerHome: layout.home });
 	const extensionStateRoot = join(layout.state, "extensions");
 	const extensionPrincipalId = createRuntimeId("principal", `host-extension-${scope.workspaceStorageKey.slice(3, 19)}`);
 	const extensionEventSessionId = createRuntimeId("session", `extensions-${scope.workspaceStorageKey.slice(3, 67)}`);
@@ -154,6 +165,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		domainPorts: createHostDomainPorts({
 			security: { snapshot: security.snapshot },
 			workspace: { workspaceId: scope.workspaceId, defaultCwd: cwd, service: workspaceBindingService },
+			mcp: { authorityId: scope.authorityId, tenantId: scope.tenantId },
 			extensions: { manager: extensionManager, authorityId: scope.authorityId, tenantId: scope.tenantId },
 			modelContext: modelContextDomain,
 		}),
@@ -178,6 +190,46 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			security,
 			workspaceBinding,
 			workspaceBindingStore,
+			mcpConfigs: mcpConfig.configs,
+			createMcpRuntime: async ({ sessionId, cwd: sessionCwd, toolRegistry }) => {
+				const parsedSessionId = parseRuntimeId("session", sessionId);
+				if (parsedSessionId === undefined) throw new Error("Host session identity is invalid for MCP composition");
+				const mcpPrincipalId = createRuntimeId("principal", `host-mcp-${runtimeDigest({ sessionId, workspace: scope.workspaceStorageKey }).digest.slice(0, 48)}`);
+				const executionEnv = security.createExecutionEnv({ sessionId, principalId: mcpPrincipalId, cwd: sessionCwd });
+				if (executionEnv.network === undefined) throw new Error("Host network Gateway is unavailable for MCP");
+				const managedProcess = processPort.toolClient(sessionId, 1, mcpPrincipalId);
+				const adapter = {
+					adapterId: "runledger.host.mcp",
+					generation: 1,
+					configDigest: mcpConfig.digest,
+				};
+				const manager = new McpConnectionManager({
+					factory: createSdkMcpClientFactory({
+						managedProcess,
+						managedProcessCwd: sessionCwd,
+						httpFetch: createMcpExecutionEnvFetch(executionEnv.network),
+					}),
+				});
+				return createHostMcpRuntime({
+					manager,
+					resources: {
+						invocation: createHostMcpResourceInvocationPort({
+							adapter,
+							sessionId,
+							principalId: mcpPrincipalId,
+							cwd: sessionCwd,
+							authorize: (request) => security.authorizeResource(request),
+						}),
+					},
+					toolRegistry,
+					adapter,
+					authorityId: scope.authorityId,
+					tenantId: scope.tenantId,
+					principalId: mcpPrincipalId,
+					sessionId: parsedSessionId,
+					snapshotId: createRuntimeId("snapshot", `mcp-${scope.workspaceStorageKey.slice(3, 19)}-${mcpConfig.digest.digest.slice(0, 32)}`),
+				});
+			},
 			extensionManager,
 			onExtensionIdleReload: async (sessionId, result) => {
 				if (result.snapshot === undefined) return;
