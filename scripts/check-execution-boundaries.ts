@@ -12,10 +12,7 @@ export interface ExecutionBoundaryViolation {
  * 这些文件是 canonical state adapter，直接使用 fs 只为实现 durable store；
  * 它们不向工具、扩展或进程执行面暴露 raw I/O。没有 runtime tool legacy 豁免。
  */
-export const CANONICAL_STORAGE_ADAPTER_ALLOWLIST: readonly string[] = [
-	"src/worktree/persisted-binding.ts",
-	"src/worktree/registry.ts",
-];
+export const CANONICAL_STORAGE_ADAPTER_ALLOWLIST: readonly string[] = [];
 
 /**
  * R0 之后只有这里列出的 backend 文件可以直接持有 child_process/PTY 句柄。

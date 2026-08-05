@@ -5,12 +5,8 @@
  * 暴露 digest 和 identity。读取只接受当前 version=1，不猜测旧形状。
  */
 
-import { randomUUID } from "node:crypto";
-import { open, mkdir, readFile, rename, unlink, writeFile, lstat, readdir } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-	RUNLEDGER_DIRECTORY_MODE,
-	RUNLEDGER_FILE_MODE,
 	isContainedRuntimePath,
 	isRuntimeDigest,
 	isRuntimeId,
@@ -27,6 +23,7 @@ import {
 	type WorkspaceLeaseRef,
 } from "../runtime/contracts/public.ts";
 import type { WorktreeRecord } from "./types.ts";
+import { NodeWorkspaceBindingStorage } from "../storage/worktree-binding-storage.ts";
 
 export interface PersistedWorkspaceBinding {
 	readonly version: 1;
@@ -77,6 +74,23 @@ type WorktreeLeaseRecordLike = WorkspaceLeaseRef;
 export interface JsonWorkspaceBindingStoreOptions {
 	readonly layout: RunledgerLayout;
 	readonly workspaceStorageKey: string;
+	readonly storage?: WorkspaceBindingStoragePort;
+}
+
+export interface WorkspaceBindingStorageEntry {
+	readonly name: string;
+	readonly isDirectory: boolean;
+	readonly isSymbolicLink: boolean;
+	readonly isFile?: boolean;
+}
+
+/** Canonical-home storage port; Node filesystem details live in src/storage. */
+export interface WorkspaceBindingStoragePort {
+	read(path: string): Promise<string | undefined>;
+	writeAtomic(path: string, content: string, modes: { readonly fileMode: number; readonly directoryMode: number }): Promise<void>;
+	remove(path: string): Promise<void>;
+	list(path: string): Promise<readonly WorkspaceBindingStorageEntry[] | undefined>;
+	inspect(path: string): Promise<WorkspaceBindingStorageEntry | undefined>;
 }
 
 export interface DiscoveredWorkspaceBinding {
@@ -205,6 +219,7 @@ export function validateWorkspaceBindingObservation(
 
 export class JsonWorkspaceBindingStore {
 	readonly #filePath: string;
+	readonly #storage: WorkspaceBindingStoragePort;
 
 	public constructor(options: JsonWorkspaceBindingStoreOptions) {
 		if (!/^ws-[a-f0-9]{64}$/u.test(options.workspaceStorageKey)) throw new Error("workspace binding storage key is invalid");
@@ -212,6 +227,7 @@ export class JsonWorkspaceBindingStore {
 		const filePath = resolve(join(options.layout.state, "hosts", options.workspaceStorageKey, "workspace-binding.json"));
 		if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, filePath, process.platform === "win32" ? "win32" : "posix")) throw new Error("workspace binding store must remain below canonical runledgerHome");
 		this.#filePath = filePath;
+		this.#storage = options.storage ?? NodeWorkspaceBindingStorage.fromLayout(options.layout);
 	}
 
 	public get filePath(): string {
@@ -219,13 +235,8 @@ export class JsonWorkspaceBindingStore {
 	}
 
 	public async read(): Promise<PersistedWorkspaceBinding | undefined> {
-		let content: string;
-		try {
-			content = await readFile(this.#filePath, "utf8");
-		} catch (error) {
-			if (isNotFound(error)) return undefined;
-			throw error;
-		}
+		const content = await this.#storage.read(this.#filePath);
+		if (content === undefined) return undefined;
 		let value: unknown;
 		try {
 			value = JSON.parse(content) as unknown;
@@ -242,16 +253,7 @@ export class JsonWorkspaceBindingStore {
 		if (!checked.ok) return checked;
 		const current = await this.read();
 		if (expectedBindingDigest === undefined ? current !== undefined : current === undefined || !sameDigest(current.bindingDigest, expectedBindingDigest)) return failure("binding_stale", "workspace binding compare-and-set revision is stale");
-		await mkdir(resolve(this.#filePath, ".."), { recursive: true, mode: RUNLEDGER_DIRECTORY_MODE });
-		const temporary = `${this.#filePath}.${randomUUID()}.tmp`;
-		try {
-			await writeFile(temporary, `${canonicalJson(binding)}\n`, { encoding: "utf8", mode: RUNLEDGER_FILE_MODE });
-			const handle = await open(temporary, "r");
-			try { await handle.sync(); } finally { await handle.close(); }
-			await rename(temporary, this.#filePath);
-		} finally {
-			await unlink(temporary).catch(() => undefined);
-		}
+		await this.#storage.writeAtomic(this.#filePath, `${canonicalJson(binding)}\n`, { fileMode: 0o600, directoryMode: 0o700 });
 		return { ok: true, value: checked.value };
 	}
 
@@ -260,7 +262,7 @@ export class JsonWorkspaceBindingStore {
 		const current = await this.read();
 		if (current === undefined) return { ok: true, value: undefined };
 		if (!sameDigest(current.bindingDigest, expectedBindingDigest)) return failure("binding_stale", "workspace binding compare-and-set revision is stale");
-		await unlink(this.#filePath);
+		await this.#storage.remove(this.#filePath);
 		return { ok: true, value: current };
 	}
 
@@ -280,36 +282,27 @@ export class JsonWorkspaceBindingStore {
 export async function discoverPersistedWorkspaceBinding(options: {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
+	readonly storage?: WorkspaceBindingStoragePort;
 }): Promise<DiscoveredWorkspaceBinding | undefined> {
 	const home = resolve(options.layout.home);
 	const hostsRoot = resolve(options.layout.state, "hosts");
 	if (!canonicalAbsolutePath(home) || !isContainedRuntimePath(home, hostsRoot, process.platform === "win32" ? "win32" : "posix")) {
 		throw new Error("workspace binding discovery must remain below canonical runledgerHome");
 	}
-	let entries: readonly import("node:fs").Dirent[];
-	try {
-		entries = await readdir(hostsRoot, { withFileTypes: true });
-	} catch (error) {
-		if (isNotFound(error)) return undefined;
-		throw error;
-	}
+	const storage = options.storage ?? NodeWorkspaceBindingStorage.fromLayout(options.layout);
+	const entries = await storage.list(hostsRoot);
+	if (entries === undefined) return undefined;
 	const cwd = resolve(options.cwd);
 	const matches: DiscoveredWorkspaceBinding[] = [];
 	for (const entry of entries) {
 		if (!/^ws-[a-f0-9]{64}$/u.test(entry.name)) continue;
 		const directory = resolve(hostsRoot, entry.name);
-		const directoryInfo = await lstat(directory);
-		if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error("workspace binding host directory is not canonical");
+		if (!entry.isDirectory || entry.isSymbolicLink) throw new Error("workspace binding host directory is not canonical");
 		const filePath = join(directory, "workspace-binding.json");
-		let fileInfo;
-		try {
-			fileInfo = await lstat(filePath);
-		} catch (error) {
-			if (isNotFound(error)) continue;
-			throw error;
-		}
-		if (!fileInfo.isFile() || fileInfo.isSymbolicLink()) throw new Error("workspace binding file is not canonical");
-		const binding = await new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: entry.name }).read();
+		const fileInfo = await storage.inspect(filePath);
+		if (fileInfo === undefined) continue;
+		if (fileInfo.isFile !== true || fileInfo.isSymbolicLink) throw new Error("workspace binding file is not canonical");
+		const binding = await new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: entry.name, storage }).read();
 		if (binding === undefined) continue;
 		if (resolve(binding.effectiveCwd) !== cwd) continue;
 		matches.push({ workspaceStorageKey: entry.name, binding });
@@ -320,8 +313,4 @@ export async function discoverPersistedWorkspaceBinding(options: {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNotFound(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
