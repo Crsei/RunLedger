@@ -8,7 +8,7 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
-import { localExecutionEnv } from "../execution-env.ts";
+import { localLsOperations } from "./local-defaults.ts";
 import {
   DEFAULT_MAX_BYTES,
   resolveToCwd,
@@ -34,17 +34,7 @@ export interface LsOperations {
   readdir: (p: string) => Promise<string[]>;
 }
 
-const defaultLsOperations: LsOperations = {
-  exists: async (p) => {
-    try { await localExecutionEnv().fs.stat(p); return true; } catch { return false; }
-  },
-  stat: async (p) => {
-    const value = await localExecutionEnv().fs.stat(p);
-    return { isDirectory: () => value.isDirectory };
-  },
-  readdir: (p) => localExecutionEnv().fs.readdir(p),
-};
-
+/** ls 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface LsToolOptions {
   operations?: LsOperations;
 }
@@ -55,7 +45,7 @@ export function createLsTool(
   cwd: string,
   options: LsToolOptions = {},
 ): AgentTool<typeof lsSchema, LsToolDetails> {
-  const ops = options.operations ?? defaultLsOperations;
+  const ops = options.operations ?? localLsOperations();
   return {
     name: "ls",
     label: "ls",

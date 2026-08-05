@@ -13,7 +13,7 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
-import { localExecutionEnv } from "../execution-env.ts";
+import { localWriteOperations } from "./local-defaults.ts";
 import { resolveToCwd } from "./tool-support.ts";
 
 export const writeSchema = Type.Object({
@@ -31,11 +31,7 @@ export interface WriteOperations {
   mkdir: (dir: string) => Promise<void>;
 }
 
-const defaultWriteOperations: WriteOperations = {
-  writeFile: (p, content) => localExecutionEnv().fs.writeFile(p, content),
-  mkdir: async (dir) => { await localExecutionEnv().fs.mkdir(dir, { recursive: true }); },
-};
-
+/** write 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface WriteToolOptions {
   operations?: WriteOperations;
 }
@@ -44,7 +40,7 @@ export function createWriteTool(
   cwd: string,
   options: WriteToolOptions = {},
 ): AgentTool<typeof writeSchema, WriteToolDetails> {
-  const ops = options.operations ?? defaultWriteOperations;
+  const ops = options.operations ?? localWriteOperations();
   return {
     name: "write",
     label: "write",

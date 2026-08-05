@@ -14,7 +14,8 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import * as path from "node:path";
 import type { AgentTool } from "../types.ts";
-import { localExecutionEnv, type FileSystem } from "../execution-env.ts";
+import { localMultiEditFileSystem } from "./local-defaults.ts";
+import type { FileSystem } from "../execution-env.ts";
 import { resolveToCwd } from "./tool-support.ts";
 
 export const multiEditSchema = Type.Object({
@@ -43,7 +44,7 @@ export interface MultiEditToolOptions {
 }
 
 export function createMultiEditTool(cwd: string, options: MultiEditToolOptions = {}): AgentTool<typeof multiEditSchema, MultiEditDetails> {
-	const fileSystem = options.fileSystem ?? localExecutionEnv(cwd).fs;
+	const fileSystem = options.fileSystem ?? localMultiEditFileSystem(cwd);
   return {
     name: "MultiEdit",
     label: "MultiEdit",

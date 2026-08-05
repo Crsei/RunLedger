@@ -12,7 +12,8 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { localExecutionEnv, type Shell } from "../execution-env.ts";
+import { localFindShell } from "./local-defaults.ts";
+import type { Shell } from "../execution-env.ts";
 import type { AgentTool, AgentToolResult } from "../types.ts";
 import {
   resolveToCwd,
@@ -44,7 +45,7 @@ export function createFindTool(
   cwd: string,
   options: FindToolOptions = {},
 ): AgentTool<typeof findSchema, FindToolDetails> {
-  const shell = options.shell ?? localExecutionEnv(cwd).shell;
+  const shell = options.shell ?? localFindShell(cwd);
   return {
     name: "find",
     label: "find",

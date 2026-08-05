@@ -21,7 +21,7 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
-import { localExecutionEnv } from "../execution-env.ts";
+import { localGlobOperations } from "./local-defaults.ts";
 import { resolveToCwd, truncateHead, DEFAULT_MAX_BYTES, type TruncationResult } from "./tool-support.ts";
 
 export const globSchema = Type.Object({
@@ -47,14 +47,7 @@ export interface GlobOperations {
   stat: (p: string) => Promise<{ isDirectory: boolean; mtimeMs: number; isSymbolicLink: boolean }>;
 }
 
-const defaultOps: GlobOperations = {
-  readdir: (p) => localExecutionEnv().fs.readdir(p),
-  stat: async (p) => {
-    const s = await localExecutionEnv().fs.stat(p);
-    return { isDirectory: s.isDirectory, mtimeMs: s.mtimeMs, isSymbolicLink: s.isSymbolicLink === true };
-  },
-};
-
+/** glob 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface GlobToolOptions {
   operations?: GlobOperations;
 }
@@ -111,7 +104,7 @@ export function createGlobTool(
   cwd: string,
   options: GlobToolOptions = {},
 ): AgentTool<typeof globSchema, GlobToolDetails> {
-  const ops = options.operations ?? defaultOps;
+  const ops = options.operations ?? localGlobOperations();
   return {
     name: "glob",
     label: "glob",

@@ -19,7 +19,8 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { localExecutionEnv, type Network } from "../execution-env.ts";
+import { localNetwork } from "./local-defaults.ts";
+import type { Network } from "../execution-env.ts";
 import type { AgentTool } from "../types.ts";
 
 export const webFetchSchema = Type.Object({
@@ -57,7 +58,7 @@ function htmlToText(html: string): string {
 }
 
 export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool<typeof webFetchSchema, WebFetchDetails> {
-	const network = options.network ?? localExecutionEnv().network!;
+	const network = options.network ?? localNetwork();
   return {
     name: "WebFetch",
     label: "WebFetch",

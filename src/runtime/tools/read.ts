@@ -17,7 +17,7 @@
 import { Type } from "typebox";
 import type { Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "../types.ts";
-import { localExecutionEnv } from "../execution-env.ts";
+import { localReadOperations } from "./local-defaults.ts";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
@@ -54,12 +54,7 @@ export interface ReadOperations {
   stat: (absolutePath: string) => Promise<{ mtimeMs: number }>;
 }
 
-const defaultReadOperations: ReadOperations = {
-  readFile: (p) => localExecutionEnv().fs.readFile(p),
-  access: async (p) => { await localExecutionEnv().fs.stat(p); },
-  stat: async (p) => ({ mtimeMs: (await localExecutionEnv().fs.stat(p)).mtimeMs }),
-};
-
+/** read 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface ReadToolOptions {
   operations?: ReadOperations;
   /** 是否启用 mtime 去重缓存;缺省 true。 */
@@ -85,7 +80,7 @@ export function createReadTool(
   cwd: string,
   options: ReadToolOptions = {},
 ): AgentTool<typeof readSchema, ReadToolDetails> {
-  const ops = options.operations ?? defaultReadOperations;
+  const ops = options.operations ?? localReadOperations();
   const enableCache = options.enableCache ?? true;
   const cacheLimit = options.cacheLimit ?? 64;
   // 简单 LRU:Map insertion order,LRU 通过 delete+set 实现

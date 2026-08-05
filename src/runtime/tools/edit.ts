@@ -16,7 +16,7 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "../types.ts";
-import { localExecutionEnv } from "../execution-env.ts";
+import { localEditOperations } from "./local-defaults.ts";
 import { resolveToCwd } from "./tool-support.ts";
 
 const editItemSchema = Type.Object({
@@ -53,12 +53,7 @@ export interface EditOperations {
   access: (absolutePath: string) => Promise<void>;
 }
 
-const defaultEditOperations: EditOperations = {
-  readFile: (p) => localExecutionEnv().fs.readFile(p),
-  writeFile: (p, content) => localExecutionEnv().fs.writeFile(p, content),
-  access: async (p) => { await localExecutionEnv().fs.stat(p); },
-};
-
+/** edit 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface EditToolOptions {
   operations?: EditOperations;
 }
@@ -112,7 +107,7 @@ export function createEditTool(
   cwd: string,
   options: EditToolOptions = {},
 ): AgentTool<typeof editSchema, EditToolDetails> {
-  const ops = options.operations ?? defaultEditOperations;
+  const ops = options.operations ?? localEditOperations();
   return {
     name: "edit",
     label: "edit",

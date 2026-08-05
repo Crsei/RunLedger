@@ -34,11 +34,24 @@ export const RUNTIME_HOST_LAUNCHER_ALLOWLIST: readonly string[] = [
 	"src/storage/process/supervisor-runner.ts",
 ];
 
+/**
+ * 工具默认本地 IO 的唯一构造点。`src/runtime/tools` 中只有该文件可以调用
+ * `localExecutionEnv`（低层库默认，供测试与直接库使用）；生产工具集必须经
+ * `createStdlibTools(requireExecutionEnv: true)` 注入 governed ExecutionEnv。
+ * 其他工具文件出现 `localExecutionEnv(` 调用即视为 raw-I/O 旁路。
+ */
+export const TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST: readonly string[] = [
+	"src/runtime/tools/local-defaults.ts",
+];
+
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
 	[/from [\"'](?:node:)?fs(?:\/promises)?[\"']/, "raw-fs"],
 	[/from [\"']node:child_process[\"']/, "raw-process"],
 	[/\bfetch\s*\(/, "raw-network"],
 ];
+
+/** 非 import 行上的 `localExecutionEnv(` 调用（工具文件里默认 ops 的唯一合法来源被 allowlist 豁免）。 */
+const LOCAL_ENV_CALL_PATTERN = /(?:^|[^.\w])localExecutionEnv\s*\(/u;
 
 const MANAGED_PROCESS_ROOTS = [
 	"src/runtime/tools",
@@ -73,10 +86,19 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 	for (const root of roots) {
 		for (const file of listTypeScriptFiles(join(repoRoot, root))) {
 			const source = readFileSync(file, "utf8");
+			const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 			for (const [pattern, kind] of BOUNDARY_PATTERNS) {
 				if (!pattern.test(source)) continue;
-				const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 				if (!CANONICAL_STORAGE_ADAPTER_ALLOWLIST.includes(relativeFile)) violations.push({ file: relativeFile, kind });
+			}
+			if (root === "src/runtime/tools" && !TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST.includes(relativeFile)) {
+				const localEnvCalls = source
+					.split("\n")
+					.filter((line) => {
+						const trimmed = line.trim();
+						return !trimmed.startsWith("import") && !trimmed.startsWith("*") && !trimmed.startsWith("//") && LOCAL_ENV_CALL_PATTERN.test(line);
+					});
+				if (localEnvCalls.length > 0) violations.push({ file: relativeFile, kind: "raw-fs" });
 			}
 		}
 	}

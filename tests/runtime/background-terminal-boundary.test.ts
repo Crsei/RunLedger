@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createBashTool } from "../../src/runtime/tools/bash.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
-import { scanExecutionBoundaries } from "../../scripts/check-execution-boundaries.ts";
+import { scanExecutionBoundaries, TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST } from "../../scripts/check-execution-boundaries.ts";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -107,5 +107,16 @@ describe("R0 governed background terminal closure", () => {
 	it("does not allow bash to bypass the execution boundary checker", () => {
 		const violations = scanExecutionBoundaries(repoRoot);
 		expect(violations).toEqual([]);
+	});
+
+	it("flags raw local ExecutionEnv calls in tool files outside local-defaults", () => {
+		const violations = scanExecutionBoundaries(repoRoot);
+		const toolFiles = violations
+			.filter((violation) => violation.file.startsWith("src/runtime/tools/"))
+			.map((violation) => violation.file);
+		// 只有 local-defaults.ts 是默认本地 IO 的合法构造点;任何工具 execute
+		// 路径重新引入 localExecutionEnv 都会在此被标记为 raw-fs 旁路。
+		expect(toolFiles).toEqual([]);
+		expect(TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST).toContain("src/runtime/tools/local-defaults.ts");
 	});
 });

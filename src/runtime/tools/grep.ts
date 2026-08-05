@@ -14,7 +14,8 @@
 
 import { Type } from "typebox";
 import type { Static } from "typebox";
-import { localExecutionEnv, type Shell } from "../execution-env.ts";
+import { localGrepShell } from "./local-defaults.ts";
+import type { Shell } from "../execution-env.ts";
 import type { AgentTool, AgentToolResult } from "../types.ts";
 import { resolveToCwd, truncateHead, DEFAULT_MAX_BYTES, type TruncationResult } from "./tool-support.ts";
 
@@ -61,7 +62,7 @@ export function createGrepTool(
   cwd: string,
   options: GrepToolOptions = {},
 ): AgentTool<typeof grepSchema, GrepToolDetails> {
-  const shell = options.shell ?? localExecutionEnv(cwd).shell;
+  const shell = options.shell ?? localGrepShell(cwd);
   return {
     name: "grep",
     label: "grep",

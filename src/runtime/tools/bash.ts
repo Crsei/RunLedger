@@ -2,7 +2,7 @@
  * bash 工具 —— 在 git-bash / sh 下执行一条命令,流式回传 stdout/stderr。
  *
  * 对齐 pi `core/tools/bash.ts`,但用 RunLedger 的 ExecutionEnv.shell 抽象层:
- *   - 默认 ops 走 localExecutionEnv().shell.exec(...)
+ *   - 默认 ops 走 local-defaults.ts(localExecutionEnv().shell.exec)
  *   - ops 可注入,便于切到沙箱 / 远端 / fake 测试
  *
  * 截断:stdout / stderr 单独截断到 maxOutputChars;二者合并作为 LLM 或的回灌。
@@ -12,7 +12,8 @@
 import { Type } from "typebox";
 import type { Static } from "typebox";
 import type { AgentTool, AgentToolResult } from "../types.ts";
-import { localExecutionEnv, type Shell, type ShellResult } from "../execution-env.ts";
+import { localBashOperations } from "./local-defaults.ts";
+import { type Shell, type ShellResult } from "../execution-env.ts";
 import type { ExecutionHandleRef } from "../process/types.ts";
 import type { OutputCursor } from "../process/output.ts";
 import { DEFAULT_MAX_BYTES } from "./tool-support.ts";
@@ -117,7 +118,7 @@ export function createBashTool(
   cwd: string,
   options: BashToolOptions = {},
 ): AgentTool<typeof bashSchema, BashToolDetails> {
-  const ops: BashOperations = options.operations ?? bashOpsFromLocalEnv();
+  const ops: BashOperations = options.operations ?? localBashOperations();
   const defaultTimeout = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const defaultMaxOutput = options.defaultMaxOutputChars ?? DEFAULT_MAX_BYTES;
   return {
@@ -286,15 +287,4 @@ function renderStreamJson(r: ShellResult): string {
   }
   lines.push(JSON.stringify({ type: "exit", code: r.exitCode }));
   return lines.join("\n");
-}
-
-/** 从本地 ExecutionEnv 派生 BashOperations；后台入口不会绕过 Host process manager。 */
-function bashOpsFromLocalEnv(): BashOperations {
-  const env = localExecutionEnv();
-  const shell: Shell = env.shell;
-  return {
-    async exec(cmd, opts) {
-      return shell.exec(cmd, opts);
-    },
-  };
 }
