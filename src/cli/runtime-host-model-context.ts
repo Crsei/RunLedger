@@ -49,6 +49,7 @@ import {
 } from "../runtime/context/compaction/checkpoint-store.ts";
 import { isMemoryStoreSnapshot, MemoryStoreSnapshotCodec, type MemoryStoreSnapshot } from "../runtime/context/memory/persistence.ts";
 import { MemoryStore, type MemoryProposalInput, type MemorySearchOptions } from "../runtime/context/memory/store.ts";
+import { renderMemoryProjection } from "../runtime/context/memory/projection.ts";
 import type { MemoryScope, MemorySearchReceipt } from "../runtime/context/memory/types.ts";
 import {
 	isPlanArtifactStoreSnapshot,
@@ -75,6 +76,7 @@ export const HOST_MODEL_CONTEXT_QUERY_OPERATIONS = new Set([
 	"memory.search",
 	"memory.get",
 	"memory.inspect",
+	"memory.projection",
 	"model.routes",
 ]);
 
@@ -410,6 +412,7 @@ async function executeOperation(
 			case "memory.search": return memorySearch(options, memory, state, context);
 			case "memory.get": return memoryGet(memory, context);
 			case "memory.inspect": return memoryInspect(memory);
+			case "memory.projection": return memoryProjection(memory);
 			case "memory.propose": return memoryPropose(options, clock, memory, state, context);
 			case "memory.approve": return memoryApprove(options, clock, memory, state, context);
 			case "memory.reject": return memoryReject(options, clock, memory, state, context);
@@ -818,6 +821,20 @@ function memoryInspect(memory: MemoryStore): HostRuntimeDomainResult {
 				},
 			},
 		};
+}
+
+/** MEMORY.md 只读投影：approved 且未过期/未撤销 record 的可重建文本。 */
+function memoryProjection(memory: MemoryStore): HostRuntimeDomainResult {
+	const snapshot = memory.snapshot();
+	const projection = renderMemoryProjection({ records: snapshot.records });
+	return {
+		ok: true,
+		body: {
+			text: projection.text,
+			digest: projection.digest,
+			recordCount: projection.recordCount,
+		},
+	};
 }
 
 async function memoryPropose(options: HostModelContextDomainOptions, _clock: () => Date, memory: MemoryStore, state: SessionDomainState, context: HostRuntimeDomainContext): Promise<DomainResultWithEvents> {

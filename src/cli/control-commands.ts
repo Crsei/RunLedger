@@ -85,7 +85,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	plan: new Set(["inspect", "enter", "activate", "write", "approve", "cancel"]),
 	compact: new Set(["run", "list"]),
 	context: new Set(["inspect", "assemble"]),
-	memory: new Set(["search", "get", "approve", "reject", "revoke"]),
+	memory: new Set(["search", "get", "projection", "approve", "reject", "revoke"]),
 	remember: new Set(["propose"]),
 };
 
@@ -155,6 +155,8 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			break;
 		case "memory.search":
 			body.query = command.args.join(" ");
+			break;
+		case "memory.projection":
 			break;
 		case "memory.get":
 			body.memoryId = command.args[0];

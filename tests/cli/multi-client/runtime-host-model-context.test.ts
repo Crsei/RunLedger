@@ -185,6 +185,14 @@ describe("Host model/context domain", () => {
 			const searched = await domain.execute(context("memory.search", { scope: "workspace", query: "release" }, 2, false));
 			expect(value<{ results: readonly { title: string }[] }>(searched).results).toMatchObject([{ title: "release rule" }]);
 
+			// MEMORY.md projection 只含 approved record 且可重建。
+			const projected = await domain.execute(context("memory.projection", {}, 2, false));
+			const projection = value<{ text: string; digest: { digest: string }; recordCount: number }>(projected);
+			expect(projection.recordCount).toBe(1);
+			expect(projection.text).toContain("## release rule");
+			expect(projection.text).not.toContain("proposed");
+			expect(projection.digest.digest).toMatch(/^[a-f0-9]{64}$/u);
+
 			const sessionId = createRuntimeId("session", "model-context-test");
 			const sourceRange = {
 				stream: { scope: "session" as const, streamId: sessionId, sessionId },
