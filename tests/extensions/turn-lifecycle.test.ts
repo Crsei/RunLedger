@@ -15,6 +15,28 @@ function snapshot(generation: number): ExtensionPublicSnapshot {
 }
 
 describe("Host extension turn lifecycle", () => {
+	it("runs Host-owned SessionStart and SessionEnd hooks around the resident turn", async () => {
+		const calls: string[] = [];
+		const manager = {
+			beginTurn: () => snapshot(1),
+			endTurn: async (): Promise<ExtensionReloadResult | undefined> => undefined,
+		};
+		const lifecycle = new ExtensionTurnLifecycle({
+			manager,
+			sessionId: "session_hook-lifecycle",
+			hookRuntime: {
+				run: async (input) => {
+					calls.push(input.event);
+					return { decision: "allow", blocked: false, finalInput: input.input, additionalContext: [], requiresRevalidation: false, requiresAuthorization: false };
+				},
+			},
+		});
+
+		await lifecycle.handle({ type: "agent_start", timestamp: 1 });
+		await lifecycle.handle({ type: "agent_end", timestamp: 2 });
+		expect(calls).toEqual(["SessionStart", "SessionEnd"]);
+	});
+
 	it("holds the current snapshot through a turn and applies pending reload at agent idle", async () => {
 		const calls: string[] = [];
 		const next = snapshot(2);

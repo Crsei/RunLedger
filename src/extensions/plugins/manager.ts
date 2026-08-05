@@ -22,6 +22,7 @@ import { ExtensionStateStore } from "../state-store.ts";
 import { discoverSkills } from "../skills/discovery.ts";
 import type { SkillDescriptor } from "../skills/types.ts";
 import { parseHookDocument } from "../hooks/parser.ts";
+import type { HookDefinition } from "../hooks/types.ts";
 
 const PLUGIN_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/u;
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
@@ -108,6 +109,8 @@ export interface PluginRecord {
 export interface PluginDiscoveryResult {
 	readonly plugins: readonly PluginRecord[];
 	readonly descriptors: readonly ExtensionResourceDescriptor[];
+	/** Parsed hooks retained only for trusted and enabled plugin resources. */
+	readonly hooks: readonly HookDefinition[];
 	readonly diagnostics: readonly ExtensionDiagnostic[];
 }
 
@@ -185,6 +188,7 @@ export class PluginManager {
 	public async discover(): Promise<PluginDiscoveryResult> {
 		const plugins: PluginRecord[] = [];
 		const descriptors: ExtensionResourceDescriptor[] = [];
+		const hooks: HookDefinition[] = [];
 		const diagnostics: ExtensionDiagnostic[] = [];
 		const state = await this.#options.stateStore.load();
 		for (const root of [...this.#options.roots].sort((left, right) => left.priority - right.priority || left.rootPath.localeCompare(right.rootPath))) {
@@ -269,6 +273,7 @@ export class PluginManager {
 				if (parsedHook !== undefined && parsedHook.ok) {
 					const hookResult = parseHookDocument(parsedHook.value, { sourceLayer: "plugin", sourcePath: path.path });
 					diagnostics.push(...hookResult.diagnostics);
+					if (hookResult.ok) hooks.push(...hookResult.hooks);
 					for (const hook of hookResult.hooks) descriptors.push(componentDescriptor({ plugin, kind: "hook", name: hook.id, path: path.path, digest: hookResult.digest?.digest ?? binding.combinedDigest, enabled: true, trusted: true, ready: hookResult.ok }));
 				} else if (trustedAndEnabled) {
 					diagnostics.push(extensionDiagnostic("plugin.hook_invalid", "error", parsedHook?.message ?? "hook configuration is unavailable", "plugin", path.path));
@@ -317,9 +322,18 @@ export class PluginManager {
 			if (!pluginId || !duplicateIds.has(pluginId)) return descriptor;
 			return { ...descriptor, ready: false, activation: "failed" as const, diagnostics: [ ...(descriptor.diagnostics ?? []), duplicateDiagnostic(pluginId) ] };
 		});
-		const result = { plugins: resolvedPlugins, descriptors: resolvedDescriptors, diagnostics: sortExtensionDiagnostics(diagnostics) };
+		const result = {
+			plugins: resolvedPlugins,
+			descriptors: resolvedDescriptors,
+			hooks: [...hooks].sort((left, right) => left.event.localeCompare(right.event) || left.sourcePath.localeCompare(right.sourcePath) || left.declarationIndex - right.declarationIndex || left.id.localeCompare(right.id)),
+			diagnostics: sortExtensionDiagnostics(diagnostics),
+		};
 		this.#last = result;
 		return result;
+	}
+
+	public hooks(): readonly HookDefinition[] {
+		return this.#last?.hooks ?? [];
 	}
 
 	public async setEnabled(pluginId: string, enabled: boolean): Promise<PluginDiscoveryResult> {

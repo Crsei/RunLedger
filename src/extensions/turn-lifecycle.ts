@@ -3,15 +3,39 @@
 import type { AgentEvent } from "../runtime/types.ts";
 import type { ExtensionReloadResult } from "./host-manager.ts";
 import type { ExtensionSnapshot } from "./snapshot.ts";
+import type { HookEventName } from "./hooks/types.ts";
+
+export interface ExtensionHookRuntimeResult {
+	readonly decision: "allow" | "deny" | "aborted";
+	readonly blocked: boolean;
+	readonly finalInput: unknown;
+	readonly requiresRevalidation: boolean;
+	readonly requiresAuthorization: boolean;
+	readonly additionalContext: readonly string[];
+}
+
+export interface ExtensionHookRuntime {
+	run(input: {
+		readonly event: HookEventName;
+		readonly sessionId: string;
+		readonly snapshotId: string;
+		readonly input: unknown;
+		readonly matcherValue?: string;
+		readonly signal?: AbortSignal;
+	}): Promise<ExtensionHookRuntimeResult>;
+}
 
 export interface ExtensionTurnLifecycleManager {
 	beginTurn(): ExtensionSnapshot;
 	endTurn(): Promise<ExtensionReloadResult | undefined>;
+	currentHooks?(): readonly import("./hooks/types.ts").HookDefinition[];
 }
 
 export interface ExtensionTurnLifecycleOptions {
 	readonly manager: ExtensionTurnLifecycleManager;
 	readonly onIdleReload?: (result: ExtensionReloadResult) => Promise<void> | void;
+	readonly hookRuntime?: ExtensionHookRuntime;
+	readonly sessionId?: string;
 }
 
 /**
@@ -22,24 +46,45 @@ export interface ExtensionTurnLifecycleOptions {
 export class ExtensionTurnLifecycle {
 	readonly #manager: ExtensionTurnLifecycleManager;
 	readonly #onIdleReload: ExtensionTurnLifecycleOptions["onIdleReload"];
+	readonly #hookRuntime: ExtensionHookRuntime | undefined;
+	readonly #sessionId: string | undefined;
 	#active = false;
+	#snapshotId: string | undefined;
 
 	public constructor(options: ExtensionTurnLifecycleOptions) {
 		this.#manager = options.manager;
 		this.#onIdleReload = options.onIdleReload;
+		this.#hookRuntime = options.hookRuntime;
+		this.#sessionId = options.sessionId;
+	}
+
+	public snapshotId(): string | undefined {
+		return this.#snapshotId;
 	}
 
 	public async handle(event: AgentEvent): Promise<void> {
 		if (event.type === "agent_start") {
 			if (!this.#active) {
-				this.#manager.beginTurn();
+				const snapshot = this.#manager.beginTurn();
+				this.#snapshotId = snapshot.snapshotId;
 				this.#active = true;
+				await this.#runHook("SessionStart", { sessionId: this.#sessionId, snapshotId: this.#snapshotId });
 			}
 			return;
 		}
 		if (event.type !== "agent_end" || !this.#active) return;
 		this.#active = false;
+		try {
+			await this.#runHook("SessionEnd", { sessionId: this.#sessionId, snapshotId: this.#snapshotId });
+		} finally {
+			this.#snapshotId = undefined;
+		}
 		const result = await this.#manager.endTurn();
 		if (result !== undefined) await this.#onIdleReload?.(result);
+	}
+
+	async #runHook(event: HookEventName, input: unknown): Promise<void> {
+		if (this.#hookRuntime === undefined || this.#sessionId === undefined || this.#snapshotId === undefined) return;
+		await this.#hookRuntime.run({ event, sessionId: this.#sessionId, snapshotId: this.#snapshotId, input });
 	}
 }

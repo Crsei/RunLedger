@@ -5,6 +5,7 @@ import { buildExtensionSnapshot, ExtensionSnapshotStore, type ExtensionSnapshot 
 import type { ExtensionDiagnostic } from "./diagnostics.ts";
 import type { ExtensionResourceDescriptor } from "./types.ts";
 import type { PluginDiscoveryResult, PluginManager } from "./plugins/manager.ts";
+import type { HookDefinition } from "./hooks/types.ts";
 
 export type ExtensionReloadStatus = "ready" | "pending" | "failed";
 
@@ -68,6 +69,11 @@ export class ExtensionHostManager {
 
 	public current(): ExtensionSnapshot | undefined {
 		return this.#snapshots.current();
+	}
+
+	/** Returns hook definitions belonging to the currently published snapshot. */
+	public currentHooks(): readonly HookDefinition[] {
+		return this.current() === undefined ? [] : this.#pluginManager.hooks();
 	}
 
 	public publicSnapshot(): ExtensionPublicSnapshot | undefined {

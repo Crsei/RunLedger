@@ -33,8 +33,14 @@ class NodeExtensionStorage implements ExtensionStoragePort {
 			return { ok: true, value };
 		} catch { return { ok: false, code: "missing", message: "missing" }; }
 	}
-	async writeFileAtomic(): Promise<ExtensionStorageResult<void>> {
-		return { ok: false, code: "io", message: "unused" };
+	async writeFileAtomic(path: string, data: Uint8Array): Promise<ExtensionStorageResult<void>> {
+		try {
+			await mkdir(resolve(path, ".."), { recursive: true });
+			await writeFile(path, data);
+			return { ok: true, value: undefined };
+		} catch {
+			return { ok: false, code: "io", message: "write failed" };
+		}
 	}
 }
 
@@ -89,6 +95,28 @@ describe("Plugin manifest and manager", () => {
 			expect(result.descriptors.some((descriptor) => descriptor.kind === "mcp-server")).toBe(true);
 		} finally {
 			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("retains trusted enabled hook definitions for the resident Host snapshot", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-plugin-hooks-"));
+		const stateRoot = await mkdtemp(join(tmpdir(), "runledger-plugin-hooks-state-"));
+		try {
+			await mkdir(join(root, ".runledger-plugin"));
+			await mkdir(join(root, "hooks"));
+			await writeFile(join(root, ".runledger-plugin", "plugin.json"), JSON.stringify({ name: "hook-plugin", version: "1.0.0", description: "Hook fixture", hooks: ["./hooks/hooks.json"] }));
+			await writeFile(join(root, "hooks", "hooks.json"), JSON.stringify({ hooks: { SessionStart: [{ id: "start", handlers: [{ type: "command", command: "./start.sh", args: [], timeoutMs: 1000, env: {} }] }] } }));
+			const storage = new NodeExtensionStorage();
+			const manager = new PluginManager({ storage, trustStore: new TrustStore(join(stateRoot, "trust.json"), storage), stateStore: new ExtensionStateStore(join(stateRoot, "state.json"), storage), scope: scope(), roots: [{ source: "project", sourceKey: "project:hook", rootPath: resolve(root), priority: 200 }] });
+			const initial = await manager.discover();
+			const pluginId = initial.plugins[0]!.descriptor.identity.qualifiedId;
+			await manager.trust(pluginId);
+			const result = await manager.setEnabled(pluginId, true);
+			expect(result.hooks).toHaveLength(1);
+			expect(result.hooks[0]).toMatchObject({ id: "start", event: "SessionStart" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+			await rm(stateRoot, { recursive: true, force: true });
 		}
 	});
 

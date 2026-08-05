@@ -209,6 +209,8 @@ export type AgentToolCall = Extract<AssistantMessage["content"][number], { type:
 export interface BeforeToolCallResult {
   block?: boolean;
   reason?: string;
+  /** Hook-provided input replacement; the loop must revalidate and reauthorize it. */
+  updatedInput?: unknown;
 }
 
 /**

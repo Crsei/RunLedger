@@ -19,7 +19,37 @@ import {
 import type { AgentEvent } from "../src/index.ts";
 
 describe("runAgentLoop with mockStreamFn + echoTool", () => {
-  it("runs the full start→message→tool→end loop and persists ledger", async () => {
+	it("revalidates and reauthorizes hook-updated tool input before execution", async () => {
+		const ledger = new MemoryLedger();
+		const seen: unknown[] = [];
+		let updated = false;
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "",
+				model: mockModel,
+				tools: [echoTool],
+			},
+			streamFn: mockStreamFn,
+			ledger,
+			loopConfig: {
+				beforeToolCall: async ({ args }) => {
+					seen.push(args);
+					if (!updated) {
+						updated = true;
+						return { updatedInput: { text: "rewritten" } };
+					}
+					return undefined;
+				},
+			},
+		});
+
+		const final = await agent.prompt("original");
+		const result = final.find((message) => message.role === "toolResult");
+		expect(seen.slice(0, 2)).toEqual([{ text: "original" }, { text: "rewritten" }]);
+		expect(result).toMatchObject({ role: "toolResult", content: [{ type: "toolResult", content: [{ type: "text", text: "rewritten" }] }] });
+	});
+
+	it("runs the full start→message→tool→end loop and persists ledger", async () => {
     const ledger = new MemoryLedger({ metadata: { test: 1 } });
     const agent = new Agent({
       initialState: {

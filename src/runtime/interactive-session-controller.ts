@@ -11,6 +11,9 @@ import type {
   AgentEventSink,
   AgentMessage,
   AgentTool,
+  AgentToolHookContext,
+  AgentLoopConfig,
+  AfterToolCallResult,
   QueueMode,
   StreamFn,
   ToolAuthorizationPolicy,
@@ -18,6 +21,7 @@ import type {
   UserAgentMessage,
   LlmContext,
 } from "./types.ts";
+import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
 import type { ContextAssemblySink, ModelContextAssembler } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { LedgerEntry } from "./ledger/types.ts";
@@ -63,6 +67,10 @@ export interface InteractiveSessionControllerOptions {
   contextAssemblySink?: ContextAssemblySink;
   /** Host-owned compatibility gate; provider dispatch is forbidden when it denies. */
   modelRequestRouter?: ModelRequestRouter;
+  /** Optional Host extension lifecycle facade; omitted in low-level controller tests. */
+  extensionHookRuntime?: ExtensionHookRuntime;
+  /** Current published extension snapshot identity used to bind hook invocations. */
+  extensionHookSnapshotId?: () => string | undefined;
 }
 
 export interface ProviderStatus {
@@ -127,6 +135,8 @@ export class InteractiveSessionController {
   private readonly modelContextAssembler: ModelContextAssembler | undefined;
   private readonly contextAssemblySink: ContextAssemblySink | undefined;
   private readonly modelRequestRouter: ModelRequestRouter | undefined;
+  private readonly extensionHookRuntime: ExtensionHookRuntime | undefined;
+  private readonly extensionHookSnapshotId: (() => string | undefined) | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -151,6 +161,8 @@ export class InteractiveSessionController {
     this.modelContextAssembler = opts.modelContextAssembler;
     this.contextAssemblySink = opts.contextAssemblySink;
     this.modelRequestRouter = opts.modelRequestRouter;
+    this.extensionHookRuntime = opts.extensionHookRuntime;
+    this.extensionHookSnapshotId = opts.extensionHookSnapshotId;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -281,7 +293,9 @@ export class InteractiveSessionController {
     }
     const auth = await this.models.getAuth(model);
     if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
-    await agent.prompt(text);
+    const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
+    if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
+    await agent.prompt(promptText(submitted?.finalInput, text));
   }
 
   interrupt(): void {
@@ -314,7 +328,20 @@ export class InteractiveSessionController {
       }
       return this.models.streamSimple(requestModel, context as Context, options);
     };
-    const beforeToolCall = authorizationBeforeToolCall(this.policy);
+    const authorization = authorizationBeforeToolCall(this.policy);
+    const beforeToolCall = async (request: Parameters<NonNullable<AgentLoopConfig["beforeToolCall"]>>[0], signal?: AbortSignal) => {
+      const hook = await this.runExtensionHook("PreToolUse", request.args, request.toolCall.name, signal);
+      if (hook?.blocked || hook?.decision === "deny" || hook?.decision === "aborted") return { block: true, reason: "PreToolUse hook denied the tool call" };
+      const args = hook?.requiresRevalidation ? hook.finalInput : request.args;
+      const decision = await authorization({ ...request, args }, signal);
+      if (decision?.block) return decision;
+      return hook?.requiresRevalidation ? { updatedInput: args } : undefined;
+    };
+    const afterToolCall = async (request: AgentToolHookContext & { result: import("./types.ts").ToolResultContent; isError: boolean }, signal?: AbortSignal): Promise<AfterToolCallResult | undefined> => {
+      const hook = await this.runExtensionHook("PostToolUse", { args: request.args, result: request.result, isError: request.isError }, request.toolCall.name, signal);
+      if (hook?.blocked || hook?.decision === "deny" || hook?.decision === "aborted") return { isError: true, content: [{ type: "text", text: "PostToolUse hook denied the tool result" }] };
+      return undefined;
+    };
     this.agent = new Agent({
       initialState: {
         systemPrompt: this.systemPrompt,
@@ -328,6 +355,7 @@ export class InteractiveSessionController {
       loopConfig: {
         cwd: this.cwd,
         beforeToolCall,
+        afterToolCall,
         executionEnv: this.executionEnv,
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
         ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
@@ -339,6 +367,18 @@ export class InteractiveSessionController {
       traceRecorderFactory: this.traceRecorderFactory,
     });
     this.unsubscribeAgent = this.agent.subscribe((event) => this.dispatch(event));
+  }
+
+  private async runExtensionHook(
+    event: import("../extensions/hooks/types.ts").HookEventName,
+    input: unknown,
+    matcherValue?: string,
+    signal?: AbortSignal,
+  ): Promise<ExtensionHookRuntimeResult | undefined> {
+    if (this.extensionHookRuntime === undefined) return undefined;
+    const snapshotId = this.extensionHookSnapshotId?.();
+    if (snapshotId === undefined) return { decision: "deny", blocked: true, finalInput: input, requiresRevalidation: false, requiresAuthorization: true, additionalContext: [] };
+    return this.extensionHookRuntime.run({ event, sessionId: this.sessionId, snapshotId, input, ...(matcherValue === undefined ? {} : { matcherValue }), ...(signal === undefined ? {} : { signal }) });
   }
 
   private async dispatch(event: Parameters<AgentEventSink>[0]): Promise<void> {
@@ -370,6 +410,12 @@ export class InteractiveSessionController {
     await saveProjectSettings({ layout: this.layout }, this.settings);
     await appendRuntimeConfig(this.ledgerSink, config, source);
   }
+}
+
+function promptText(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && value !== null && !Array.isArray(value) && typeof (value as Record<string, unknown>).text === "string") return (value as Record<string, unknown>).text as string;
+  return fallback;
 }
 
 async function resolveInitialSelection(

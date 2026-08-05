@@ -11,6 +11,7 @@ import type { SessionReplay } from "../../src/storage/session-codec.ts";
 import { loadProjectSettings } from "../../src/storage/settings-manager.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model } from "../../src/types.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
+import type { ExtensionHookRuntime } from "../../src/extensions/turn-lifecycle.ts";
 
 const cleanup: string[] = [];
 
@@ -121,7 +122,39 @@ const INTERACTION: AuthInteraction = {
 };
 
 describe("InteractiveSessionController", () => {
-  it("选择优先级为 CLI override > session > settings，并解析 provider/model 形式", async () => {
+	it("applies a Host UserPromptSubmit hook before sending the model request", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const hookRuntime: ExtensionHookRuntime = {
+			run: async (input) => ({
+				decision: "allow",
+				blocked: false,
+				finalInput: input.event === "UserPromptSubmit" ? { text: "rewritten by hook" } : input.input,
+				requiresRevalidation: input.event === "UserPromptSubmit",
+				requiresAuthorization: false,
+				additionalContext: [],
+			}),
+		};
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			extensionHookRuntime: hookRuntime,
+			extensionHookSnapshotId: () => "snapshot_hook-controller",
+		});
+		await controller.login("p1", "api_key", INTERACTION);
+		await controller.selectModel(p1);
+		await controller.prompt("original prompt");
+		expect(controller.messages.at(-1)).toMatchObject({ content: [{ type: "text", text: "reply:rewritten by hook" }] });
+		controller.dispose();
+	});
+
+	it("选择优先级为 CLI override > session > settings，并解析 provider/model 形式", async () => {
     const cwd = await tempDir();
     const { models, p2 } = fixtureModels();
     const controller = await InteractiveSessionController.create({

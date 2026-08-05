@@ -43,12 +43,26 @@ const HOST_GOVERNED_TOOL_NAMES = new Set([
 
 export class HostGovernedToolAuthorizationPolicy implements ToolAuthorizationPolicy {
 	readonly #planState: (() => PlanModeState | undefined) | undefined;
+	readonly #basePolicy: ToolAuthorizationPolicy | undefined;
 
-	public constructor(options: { readonly planState?: () => PlanModeState | undefined } = {}) {
+	public constructor(options: {
+		readonly basePolicy?: ToolAuthorizationPolicy;
+		readonly planState?: () => PlanModeState | undefined;
+	} = {}) {
+		this.#basePolicy = options.basePolicy;
 		this.#planState = options.planState;
 	}
 
-	public authorize(request: ToolAuthorizationRequest, _signal?: AbortSignal): ToolAuthorizationDecision {
+	public authorize(request: ToolAuthorizationRequest, signal?: AbortSignal): ToolAuthorizationDecision | Promise<ToolAuthorizationDecision> {
+		const baseDecision = this.#basePolicy?.authorize(request, signal);
+		if (baseDecision !== undefined && isPromise(baseDecision)) {
+			return baseDecision.then((decision) => this.applyHostCeiling(request, decision));
+		}
+		return this.applyHostCeiling(request, baseDecision);
+	}
+
+	private applyHostCeiling(request: ToolAuthorizationRequest, baseDecision: ToolAuthorizationDecision | undefined): ToolAuthorizationDecision {
+		if (baseDecision?.decision === "deny") return baseDecision;
 		if (request.tool === undefined) return { decision: "deny", reason: "tool is not present in the Host registry" };
 		if (!HOST_GOVERNED_TOOL_NAMES.has(request.tool.name)) {
 			return { decision: "deny", reason: `tool ${request.tool.name} is not admitted by the Host composition` };
@@ -59,4 +73,8 @@ export class HostGovernedToolAuthorizationPolicy implements ToolAuthorizationPol
 		}
 		return { decision: "allow" };
 	}
+}
+
+function isPromise(value: ToolAuthorizationDecision | Promise<ToolAuthorizationDecision>): value is Promise<ToolAuthorizationDecision> {
+	return typeof (value as { then?: unknown }).then === "function";
 }

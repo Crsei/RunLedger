@@ -20,9 +20,16 @@ import type { ToolRegistry } from "../runtime/tool-registry.ts";
 import type { HostMcpRuntime } from "./runtime-host-mcp.ts";
 import type { McpServerConfig } from "../extensions/mcp/connection-manager.ts";
 import type { PlanModeState } from "../runtime/modes/plan/types.ts";
+import type { AdapterIdentityRef } from "../runtime/protocol/adapter.ts";
+import type { IdentityContext } from "../runtime/identity/types.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../security/integration/runtime-tool-authorization.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
+import { HostHookRuntime } from "../extensions/hooks/runtime.ts";
+import { RuntimeHookAdapter } from "../extensions/integration/runtime-hook-adapter.ts";
+import { runHookPipeline } from "../extensions/hooks/pipeline.ts";
+import { createHostManagedHookRunner, type ManagedHookProcess } from "../extensions/hooks/host-runner.ts";
+import { createHostHookResourceInvocationPort } from "./runtime-host-hooks.ts";
 import {
 	validateWorkspaceBindingObservation,
 	type PersistedWorkspaceBinding,
@@ -63,6 +70,44 @@ export interface ProductionHostSessionFactoryOptions {
 	}) => Promise<HostMcpRuntime>;
 	/** Canonical config is loaded by the resident Host, never by the client. */
 	readonly mcpConfigs?: readonly McpServerConfig[];
+	/** Host-issued extension identity used for resource authorization. */
+	readonly extensionIdentity?: IdentityContext;
+	/** Host-owned adapter identity for hook invocations. */
+	readonly extensionAdapter?: AdapterIdentityRef;
+}
+
+export interface ProductionHostHookRuntimeOptions {
+	readonly sessionId: string;
+	readonly cwd: string;
+	readonly managedProcess: ManagedHookProcess;
+	readonly extensionManager: ExtensionTurnLifecycleManager;
+	readonly security: Pick<ProductionHostSecurity, "authorizeResource">;
+	readonly identity: IdentityContext;
+	readonly adapter: AdapterIdentityRef;
+}
+
+/** Compose hooks only from resident Host ports; no client-local effect owner is created. */
+export function createProductionHostHookRuntime(options: ProductionHostHookRuntimeOptions): HostHookRuntime {
+	const adapter = new RuntimeHookAdapter({
+		pipeline: runHookPipeline,
+		runner: createHostManagedHookRunner({ managedProcess: options.managedProcess, defaultCwd: options.cwd }),
+		resources: {
+			invocation: createHostHookResourceInvocationPort({
+				adapter: options.adapter,
+				sessionId: options.sessionId,
+				principalId: options.identity.principalId,
+				cwd: options.cwd,
+				authorize: options.security.authorizeResource,
+			}),
+		},
+		adapter: options.adapter,
+	});
+	return new HostHookRuntime({
+		hooks: () => options.extensionManager.currentHooks?.() ?? [],
+		adapter,
+		identity: options.identity,
+		source: "host",
+	});
 }
 
 export function validateHostWorkspaceBinding(input: {
@@ -110,11 +155,36 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 			});
 			const authorizationPolicy = options.planStateProvider === undefined
 				? options.security?.toolAuthorizationPolicy
-				: new HostGovernedToolAuthorizationPolicy({ planState: () => options.planStateProvider?.(manager.sessionId()) });
+				: new HostGovernedToolAuthorizationPolicy({
+					basePolicy: options.security?.toolAuthorizationPolicy,
+					planState: () => options.planStateProvider?.(manager.sessionId()),
+				});
 			if (options.createMcpRuntime !== undefined) {
 				mcp = await options.createMcpRuntime({ sessionId: manager.sessionId(), sessionGeneration: 1, cwd, toolRegistry: tools });
 				const started = await mcp.start(options.mcpConfigs ?? []);
 				if (!started.ok) throw new Error(`required MCP server failed: ${started.requiredFailures.map((failure) => failure.serverId).join(",")}`);
+			}
+			let extensionLifecycle: ExtensionTurnLifecycle | undefined;
+			let extensionHookRuntime: HostHookRuntime | undefined;
+			if (options.extensionManager !== undefined) {
+				if (managedProcess === undefined || options.security === undefined || options.extensionIdentity === undefined || options.extensionAdapter === undefined) {
+					throw new Error("Host extension hooks require the resident managed process, Security Gateway, identity, and adapter");
+				}
+				extensionHookRuntime = createProductionHostHookRuntime({
+					sessionId: manager.sessionId(),
+					cwd,
+					managedProcess,
+					extensionManager: options.extensionManager,
+					security: options.security,
+					identity: options.extensionIdentity,
+					adapter: options.extensionAdapter,
+				});
+				extensionLifecycle = new ExtensionTurnLifecycle({
+					manager: options.extensionManager,
+					sessionId: manager.sessionId(),
+					hookRuntime: extensionHookRuntime,
+					onIdleReload: (result) => options.onExtensionIdleReload?.(manager.sessionId(), result),
+				});
 			}
 			const controller = await InteractiveSessionController.create({
 				cwd,
@@ -137,11 +207,11 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
                 ...(options.createModelRequestRouter === undefined ? {} : { modelRequestRouter: options.createModelRequestRouter(manager.sessionId()) }),
                 modelContextAssembler: assembleAgentModelContext,
                 ...(options.contextAssemblySink === undefined ? {} : { contextAssemblySink: options.contextAssemblySink }),
+				...(extensionHookRuntime === undefined ? {} : {
+					extensionHookRuntime,
+					extensionHookSnapshotId: () => extensionLifecycle?.snapshotId(),
+				}),
               });
-			const extensionLifecycle = options.extensionManager === undefined ? undefined : new ExtensionTurnLifecycle({
-				manager: options.extensionManager,
-				onIdleReload: (result) => options.onExtensionIdleReload?.(manager.sessionId(), result),
-			});
 			const removeExtensionLifecycle = extensionLifecycle === undefined ? undefined : controller.subscribe((event) => extensionLifecycle.handle(event));
 			const removeCompletion = options.processPort?.attachCompletionAgent(
 				manager.sessionId(),

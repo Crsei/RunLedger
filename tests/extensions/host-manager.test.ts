@@ -36,6 +36,7 @@ describe("resident ExtensionHostManager", () => {
 			const first = await manager.load();
 			expect(first.status).toBe("ready");
 			if (first.status !== "ready") return;
+			expect(manager.currentHooks()).toEqual([]);
 			expect(first.snapshot.generation).toBe(1);
 			expect(first.snapshot.counts.plugins).toBe(1);
 			const firstDigest = first.snapshot.digest;

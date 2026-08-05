@@ -645,17 +645,9 @@ async function prepareToolCall(
   }
 
   // schema 校验:先把 raw args 走 prepareArguments,再 validate
-  let preparedArgs: unknown = tc.arguments;
+  let preparedArgs: unknown;
   try {
-    if (tool.prepareArguments) {
-      preparedArgs = tool.prepareArguments(tc.arguments);
-    }
-    preparedArgs = validateToolArguments(tool as unknown as Tool, {
-      type: "toolCall",
-      id: tc.id,
-      name: tc.name,
-      arguments: preparedArgs as Record<string, unknown>,
-    });
+    preparedArgs = prepareToolArguments(tool, tc, tc.arguments);
   } catch (e) {
     return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e) } };
   }
@@ -678,6 +670,41 @@ async function prepareToolCall(
           blocked: { reason: (before as BeforeToolCallResult).reason },
         };
       }
+			if (before !== undefined && Object.hasOwn(before, "updatedInput")) {
+				try {
+					preparedArgs = prepareToolArguments(tool, tc, (before as BeforeToolCallResult).updatedInput);
+				} catch (e) {
+					return {
+						toolCall: tc,
+						tool,
+						args: preparedArgs,
+						blocked: { reason: `updated tool input failed schema validation: ${(e as Error).message ?? String(e)}` },
+					};
+				}
+				const reauthorized = await config.beforeToolCall({
+					assistantMessage,
+					toolCall: tc,
+					args: preparedArgs,
+					context,
+					tool,
+				}, signal);
+				if (reauthorized && reauthorized.block) {
+					return {
+						toolCall: tc,
+						tool,
+						args: preparedArgs,
+						blocked: { reason: reauthorized.reason },
+					};
+				}
+				if (reauthorized !== undefined && Object.hasOwn(reauthorized, "updatedInput")) {
+					return {
+						toolCall: tc,
+						tool,
+						args: preparedArgs,
+						blocked: { reason: "tool input changed again during reauthorization" },
+					};
+				}
+			}
     } catch (e) {
       // hook 抛错按 block 处理,不污染主循环
       void messages;
@@ -691,6 +718,17 @@ async function prepareToolCall(
   }
 
   return { toolCall: tc, tool, args: preparedArgs };
+}
+
+function prepareToolArguments(tool: AgentTool, toolCall: AgentToolCall, input: unknown): unknown {
+	let prepared = input;
+	if (tool.prepareArguments) prepared = tool.prepareArguments(input);
+	return validateToolArguments(tool as unknown as Tool, {
+		type: "toolCall",
+		id: toolCall.id,
+		name: toolCall.name,
+		arguments: prepared as Record<string, unknown>,
+	});
 }
 
 /**

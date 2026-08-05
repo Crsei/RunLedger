@@ -43,6 +43,22 @@ function request(tool: typeof echoTool): ToolAuthorizationRequest {
 }
 
 describe("Host tool admission in Plan Mode", () => {
+	it("preserves a restrictive Security decision when Plan Mode is inactive", () => {
+		const basePolicy = {
+			authorize: () => ({ decision: "deny" as const, reason: "security policy denied" }),
+		};
+		const policy = new HostGovernedToolAuthorizationPolicy({ basePolicy, planState: () => undefined });
+		expect(policy.authorize(request(echoTool))).toEqual({ decision: "deny", reason: "security policy denied" });
+	});
+
+	it("does not let Plan Mode replace a restrictive Security decision", () => {
+		const basePolicy = {
+			authorize: () => ({ decision: "deny" as const, reason: "security policy denied" }),
+		};
+		const policy = new HostGovernedToolAuthorizationPolicy({ basePolicy, planState: () => activeState });
+		expect(policy.authorize(request(echoTool))).toEqual({ decision: "deny", reason: "security policy denied" });
+	});
+
 	it("denies a write-capability tool before execute even when it is in the Host registry", () => {
 		const tool = { ...echoTool, name: "write", capabilityClaims: [claim("workspace_write", "filesystem")] };
 		const policy = new HostGovernedToolAuthorizationPolicy({ planState: () => activeState });

@@ -231,6 +231,18 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				});
 			},
 			extensionManager,
+			extensionIdentity: {
+				authorityId: scope.authorityId,
+				tenantId: scope.tenantId,
+				principalId: extensionPrincipalId,
+				principalKind: "local",
+				issuedAt: new Date().toISOString(),
+			},
+			extensionAdapter: {
+				adapterId: "runledger.host.extension-hooks",
+				generation: hostGeneration,
+				configDigest: runtimeDigest({ extensionProfileDigest: scope.extensionProfileDigest, securityPolicyDigest: security.snapshot.policyDigest }),
+			},
 			onExtensionIdleReload: async (sessionId, result) => {
 				if (result.snapshot === undefined) return;
 				const event = createExtensionSnapshotEvent({ authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId, sessionId, snapshot: projectExtensionSnapshot(result.snapshot) });
