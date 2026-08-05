@@ -16,6 +16,7 @@ import {
 	type HostRuntimeDomainPort,
 	type HostSessionRuntime,
 } from "../../../src/cli/runtime-host-service.ts";
+import { createHostModelContextDomainPort } from "../../../src/cli/runtime-host-model-context.ts";
 import type { InteractiveSessionControllerPort } from "../../../src/runtime/interactive-session-controller.ts";
 
 function scope(): RuntimeHostScope {
@@ -235,6 +236,88 @@ describe("resident Host domain ports", () => {
 			expect(applied.body).toMatchObject({ ok: true, value: "applied", domainRevision: 1 });
 			expect(applied.body.eventReceipts).toHaveLength(1);
 			expect(await eventStore.read(eventSessionId)).toHaveLength(1);
+			await client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runs Plan Mode through the resident Host command journal and canonical event writer", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-plan-command-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const eventStore = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: hostScope.workspaceStorageKey });
+		const domain = createHostModelContextDomainPort({
+			layout,
+			workspaceStorageKey: hostScope.workspaceStorageKey,
+			authorityId: hostScope.authorityId,
+			tenantId: hostScope.tenantId,
+			workspaceId: hostScope.workspaceId,
+			policyCeilingDigest: runtimeDigest("plan-policy"),
+			clock: () => new Date("2026-08-05T00:00:00.000Z"),
+		});
+		let principalNumber = 0;
+		const host = new ResidentRuntimeHost({
+			socketPath: join(root, "host.sock"),
+			scope: hostScope,
+			domainPorts: [domain],
+			runtimeEventWriter: eventStore,
+			attestor: {
+				attest: async (): Promise<HostConnectionPrincipal> => {
+					principalNumber += 1;
+					return {
+						principalId: createRuntimeId("principal", `plan-command-${principalNumber}`),
+						connectionId: createRuntimeId("connection", `plan-command-${principalNumber}`),
+						attestationDigest: runtimeDigest(`plan-attestation-${principalNumber}`),
+					};
+				},
+			},
+			createSession: async () => session(),
+		});
+		try {
+			await host.start();
+			const client = await JsonLineHostClient.connect(join(root, "host.sock"));
+			await client.request({ frameId: "plan-init", kind: "initialize_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { compatibility: hostScope } });
+			const opened = await request(client, "plan-open", { operation: "session.open", mode: "create" });
+			const sessionId = opened.body.sessionId as string;
+			const claimed = await request(client, "plan-claim", {
+				operation: "session.claim_driver",
+				sessionId,
+				expectedHostGeneration: opened.body.hostGeneration,
+				expectedSessionGeneration: opened.body.sessionGeneration,
+				expectedDriverRevision: opened.body.driverRevision,
+			});
+			const fence = {
+				expectedHostGeneration: claimed.body.hostGeneration,
+				expectedSessionGeneration: claimed.body.sessionGeneration,
+				expectedDriverRevision: claimed.body.driverRevision,
+			};
+			const entered = await request(client, "plan-enter", {
+				operation: "plan.enter",
+				sessionId,
+				expectedRevision: 0,
+				requestedBy: "user",
+				expectedDomainRevision: 0,
+				...fence,
+			});
+			expect(entered.body).toMatchObject({ ok: true, state: { status: "pending", revision: 1 }, domainRevision: 1 });
+			expect(entered.body.eventReceipts).toHaveLength(1);
+			expect(await eventStore.read(sessionId as ReturnType<typeof createRuntimeId<"session">>)).toHaveLength(1);
+
+			const replay = await request(client, "plan-enter", {
+				operation: "plan.enter",
+				sessionId,
+				expectedRevision: 0,
+				requestedBy: "user",
+				expectedDomainRevision: 0,
+				...fence,
+			});
+			expect(replay.body).toMatchObject({ ok: true, state: { status: "pending", revision: 1 }, domainRevision: 1 });
+			expect(await eventStore.read(sessionId as ReturnType<typeof createRuntimeId<"session">>)).toHaveLength(1);
+
+			const inspected = await client.request({ frameId: "plan-inspect", kind: "query_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { operation: "plan.inspect", sessionId } });
+			expect(inspected.body).toMatchObject({ ok: true, state: { status: "pending", revision: 1 } });
 			await client.close();
 		} finally {
 			await host.close();

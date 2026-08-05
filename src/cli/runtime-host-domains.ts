@@ -19,12 +19,15 @@ export interface HostDomainPortCompositionOptions {
 	readonly security: SecurityDomainSource;
 	readonly workspace: WorkspaceDomainOptions;
 	readonly extensions?: ExtensionDomainOptions;
+	/** Host-owned Plan/Context/Compaction/Memory adapter. */
+	readonly modelContext?: HostRuntimeDomainPort;
 }
 
 /** Builds the complete Security/Worktree Host domain surface in one place. */
 export function createHostDomainPorts(options: HostDomainPortCompositionOptions): readonly HostRuntimeDomainPort[] {
 	const ports: HostRuntimeDomainPort[] = [createSecurityDomainPort(options.security), createWorkspaceDomainPort(options.workspace)];
 	if (options.extensions !== undefined) ports.push(createExtensionDomainPort(options.extensions));
+	if (options.modelContext !== undefined) ports.push(options.modelContext);
 	return ports;
 }
 

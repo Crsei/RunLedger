@@ -12,6 +12,7 @@ import { acquireHostWriterLease } from "../storage/host/writer-lease.ts";
 import { HostRecoveryMarkerStore } from "../storage/host/recovery-marker.ts";
 import { buildRunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
+import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { HostCompatibilityEnvelopeSchema, type HostCompatibilityEnvelope } from "../runtime/host/contracts.ts";
 import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts";
 import { HostReversePermissionPrompter, ResidentRuntimeHost } from "./runtime-host-service.ts";
@@ -30,6 +31,7 @@ import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-wo
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-host-domains.ts";
+import { createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
 import { NodeExtensionStorage } from "../storage/extensions/extension-storage.ts";
 import { ExtensionStateStore } from "../extensions/state-store.ts";
 import { TrustStore } from "../extensions/trust/trust-store.ts";
@@ -121,6 +123,11 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		traceRecorderFactory,
 		security,
 	});
+	const modelContextDomain = createProductionModelContextDomainPort({
+		layout,
+		scope,
+		policyCeilingDigest: security.snapshot.policyDigest,
+	});
 	const host = new ResidentRuntimeHost({
 		socketPath: productionHostSocketPath(layout, scope.workspaceStorageKey),
 		scope,
@@ -131,6 +138,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			security: { snapshot: security.snapshot },
 			workspace: { workspaceId: scope.workspaceId, defaultCwd: cwd, service: workspaceBindingService },
 			extensions: { manager: extensionManager, authorityId: scope.authorityId, tenantId: scope.tenantId },
+			modelContext: modelContextDomain,
 		}),
 		runtimeEventWriter,
 		eventStore: new JsonlHostEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey }),
@@ -204,6 +212,24 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		await lease.release().catch(() => undefined);
 		throw error;
 	}
+}
+
+/** Production composition helper used by the resident Host and its tests. */
+export function createProductionModelContextDomainPort(options: {
+	readonly layout: ReturnType<typeof buildRunledgerLayout>;
+	readonly scope: HostCompatibilityEnvelope;
+	readonly policyCeilingDigest?: HostModelContextDomainOptions["policyCeilingDigest"];
+	readonly summarizer?: HostModelContextDomainOptions["summarizer"];
+}) {
+	return createHostModelContextDomainPort({
+		layout: options.layout,
+		workspaceStorageKey: options.scope.workspaceStorageKey,
+		authorityId: options.scope.authorityId,
+		tenantId: options.scope.tenantId,
+		workspaceId: options.scope.workspaceId,
+		policyCeilingDigest: options.policyCeilingDigest ?? runtimeDigest({ securityAdapterDigest: options.scope.securityAdapterDigest }),
+		...(options.summarizer === undefined ? {} : { summarizer: options.summarizer }),
+	});
 }
 
 async function discoverCanonicalPluginRoots(

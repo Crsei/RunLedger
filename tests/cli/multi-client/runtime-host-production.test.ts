@@ -10,6 +10,7 @@ import {
 	productionHostSocketPath,
 	productionHostSpawnSpec,
 } from "../../../src/cli/runtime-host-production.ts";
+import { createProductionModelContextDomainPort } from "../../../src/cli/runtime-host.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
@@ -143,5 +144,14 @@ describe("R3/R4 production Host composition", () => {
 		expect(result.exitCode).toBe(0);
 		expect(result.signaled).toBe(false);
 		expect(result.stdout.trim()).toContain("RunLedger");
+	});
+
+	it("composes Plan/Context/Compaction/Memory as a resident Host domain", () => {
+		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
+		const scope = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
+		const domain = createProductionModelContextDomainPort({ layout, scope });
+		expect(domain.name).toBe("model-context");
+		expect(domain.mutationOperations?.has("plan.enter")).toBe(true);
+		expect(domain.queryOperations?.has("memory.search")).toBe(true);
 	});
 });

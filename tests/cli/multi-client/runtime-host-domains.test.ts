@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { SecuritySnapshot } from "../../../src/security/types.ts";
-import type { HostRuntimeDomainContext } from "../../../src/cli/runtime-host-service.ts";
+import type { HostRuntimeDomainContext, HostRuntimeDomainPort } from "../../../src/cli/runtime-host-service.ts";
 import { createHostDomainPorts, createSecurityDomainPort, createWorkspaceDomainPort } from "../../../src/cli/runtime-host-domains.ts";
 
 function context(operation: string, mutation = false): HostRuntimeDomainContext {
@@ -90,5 +90,19 @@ describe("Host security/workspace domain adapters", () => {
 	it("fails closed when workspace control is not composed", async () => {
 		const result = await createWorkspaceDomainPort({ workspaceId: createRuntimeId("workspace", "domain-adapter"), defaultCwd: "/private/workspace" }).execute(context("worktree.resume", true));
 		expect(result).toMatchObject({ ok: false, body: { code: "workspace_binding_unavailable" } });
+	});
+
+	it("composes the model/context domain behind the same Host port list", () => {
+		const modelContext: HostRuntimeDomainPort = {
+			name: "model-context",
+			queryOperations: new Set(["plan.inspect"]),
+			execute: async () => ({ ok: true, body: { state: "fixture" } }),
+		};
+		const ports = createHostDomainPorts({
+			security: { snapshot: securitySnapshot() },
+			workspace: { workspaceId: createRuntimeId("workspace", "domain-adapter"), defaultCwd: "/private/workspace" },
+			modelContext,
+		});
+		expect(ports.map((port) => port.name)).toEqual(["security", "workspace", "model-context"]);
 	});
 });
