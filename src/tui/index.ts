@@ -134,6 +134,41 @@ export {
   type MarkdownProjectionReason,
   type MarkdownStreamingBudget,
 } from "./opentui/markdown-budget.ts";
+
+// Framework-neutral passive data contracts. These exports intentionally carry no runtime values.
+export type * from "./application/types.ts";
+export type * from "./presentation/types.ts";
+export type * from "./presentation/tools/types.ts";
+export type * from "./timeline/types.ts";
+export type * from "./commands/types.ts";
+export type * from "./sessions/types.ts";
+export type * from "./providers/types.ts";
+export type * from "./auth/types.ts";
+export type * from "./models/types.ts";
+export type * from "./thinking/types.ts";
+export type * from "./prompts/types.ts";
+export type * from "./keymap/types.ts";
+export type * from "./queue/types.ts";
+export type * from "./approval/types.ts";
+export type * from "./task-goal/types.ts";
+export type * from "./goal-plan/types.ts";
+export type * from "./agents/types.ts";
+export type * from "./extensions/types.ts";
+export type * from "./runtime-snapshot/types.ts";
+export type * from "./security-mode/types.ts";
+export type * from "./shutdown/types.ts";
+export type * from "./workspace/types.ts";
+export type * from "./update/types.ts";
+export type {
+  ProcessPassiveSnapshot,
+  ProcessPassiveOutputPage,
+  ProcessPassiveResult,
+  ProcessPassiveOutputResult,
+  ProcessPassiveMutationResult,
+  ProcessPassiveWorkflowState,
+  ProcessPassivePort,
+} from "./process/types.ts";
+
 export type { ProcessOverlayItem, ProcessOverlayState, ProcessOverlayAction } from "./process/types.ts";
 export { createInitialProcessOverlayState, processOverlayReducer } from "./process/reducer.ts";
 export { renderProcessOverlay } from "./process/presentation.ts";

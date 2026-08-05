@@ -2,7 +2,9 @@
 
 > 状态：执行中（2026-08-05；S0–S4 已有局部 agent-verified 实现，S5–S8 仍开放）
 >
-> 依赖：[`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md)
+> 依赖 renderer 迁移：[`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md)
+>
+> 被动数据合同配套：[`17-passive-data-contract-placeholder-plan.md`](17-passive-data-contract-placeholder-plan.md)。该配套计划只提供 framework-neutral 类型占位，不改变本文的性能/体验执行范围。
 >
 > OpenTUI 基线：`@opentui/core@0.4.5`
 >
@@ -10,14 +12,14 @@
 
 ## 1. 权威边界与执行结论
 
-[`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md) 仍是 pi-tui → OpenTUI imperative core 迁移、renderer 替换、Bun 启动器和迁移状态的唯一权威清单。本文不复制、不改写 Plan 17 的 P0–P8 checkbox，只负责迁移后的流式性能、长会话渲染和交互体验。
+[`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md) 仍是 pi-tui → OpenTUI imperative core 迁移、renderer 替换、Bun 启动器和迁移状态的唯一权威清单。本文不复制、不改写 renderer Plan 17 的 P0–P8 checkbox，也不把被动数据合同配套计划扩展成 renderer 行为；本文只负责迁移后的流式性能、长会话渲染和交互体验。
 
 执行边界：
 
-- Plan 17 P8 已在 2026-08-02 获得 agent-verified 证据；本轮已落地 S0 的 coalescer fixture/分层观测 seam、S1 的 keyed renderable、S2 的 delta 合并与帧调度，以及 S3/S4 的局部增量 Markdown、viewport/sticky 行为；这些不代表 S0–S4 整阶段闭合；
+- renderer Plan 17 P8 已在 2026-08-02 获得 agent-verified 证据；本轮已落地 S0 的 coalescer fixture/分层观测 seam、S1 的 keyed renderable、S2 的 delta 合并与帧调度，以及 S3/S4 的局部增量 Markdown、viewport/sticky 行为；这些不代表 S0–S4 整阶段闭合；
 - S5 仍是开放计划项；S6–S8 已增加 resize/多宽度/降级 fixture 与 native 证据，但真实 PTY、Yoga/layout 独立成本、内存硬上限和 before/after 全链路预算证据仍缺；
 - 后续必须按 S0 → S8 顺序执行，不得因前置门禁已解除而跳过 profiling、fixture 或性能预算校准；
-- 若 Plan 17 的 renderer 基线发生回归，先恢复其门禁证据，再继续本计划，禁止两份计划并行争夺 renderer 结构 authority；
+- 若 `17-opentui-refactor-plan.md` 的 renderer 基线发生回归，先恢复其门禁证据，再继续本计划，禁止本计划或被动数据合同配套计划争夺 renderer 结构 authority；
 - 继续使用 OpenTUI imperative core，不切换 React/Solid，不隐式更改 `alternate-screen`；
 - UI 仍只消费 controller/runtime 事件，不接管 Session、Auth、Tool、ledger 或 lifecycle authority。
 
@@ -50,7 +52,7 @@ OpenTUI frame scheduler + terminal cell diff
 - `InteractiveMode.handleEvent()` 已能收到 `text_delta`、`thinking_delta`、`toolcall_delta`，但当前仍从累计 `partial` 提取完整内容，并在事件末尾调用 `requestRender()`；
 - OpenTUI 自身会做帧调度与终端 diff，但它不能消除 RunLedger 在进入 renderer 之前已经发生的全历史拼接、Markdown 解析、Yoga 布局或 renderable 重建。
 
-因此，Plan 17 中的 `streaming=true`、sticky scroll 和 viewport culling 是迁移目标，不代表本文的增量树、背压、窗口化和性能预算已经完成。
+因此，renderer Plan 17 中的 `streaming=true`、sticky scroll 和 viewport culling 是迁移目标，不代表本文的增量树、背压、窗口化和性能预算已经完成。
 
 ## 3. 对照实现提炼：补充原有观点
 
@@ -235,7 +237,7 @@ interface ProjectionResult {
 - [ ] 审批、复制、折叠、重试、打开详情不依赖可见行号或 renderable object identity。
 - [ ] toolcall receiving 默认展示状态、工具名与累计安全字节数，不逐 token 展示潜在敏感参数正文。
 - [ ] thinking streaming 优先更新紧凑 activity/header；是否在稳定边界进入 transcript 由明确产品策略和脱敏边界决定。
-- [ ] overlay、editor、timeline 各自拥有清晰 focus owner；全局 Ctrl+C/Ctrl+D authority 继续遵守 Plan 17。
+- [ ] overlay、editor、timeline 各自拥有清晰 focus owner；全局 Ctrl+C/Ctrl+D authority 继续遵守 renderer Plan 17。
 
 验收：窗口化、缓存回收或 resize 不破坏交互目标；安全摘要与原始参数/结果边界有测试。
 
@@ -342,14 +344,14 @@ src/tui/opentui/
 
 - OpenTUI 0.4.5 的 `MarkdownRenderable.streaming` 和 `CodeRenderable.streaming` 可以使用；实验性 `internalBlockMode` / `_stableBlockCount` 只允许封装在可替换 adapter 内评估，不进入 RunLedger 稳定契约。
 - `ScrollBoxRenderable.viewportCulling` 先实测再决定是否自建窗口化；若已满足预算，不为了形式完整引入额外高度索引复杂度。
-- `createScrollbackSurface()` 只适配 `split-footer`，不能在本文中借性能优化之名把 Plan 17 的 `alternate-screen` 隐式切换掉。
+- `createScrollbackSurface()` 只适配 `split-footer`，不能在本文中借性能优化之名把 renderer Plan 17 的 `alternate-screen` 隐式切换掉。
 - plain text 降级必须保留可选择、可复制的完整审计正文，并有明确 UI 标记；不能显示“已高亮/已渲染”但实际丢内容。
 - 任何优化若改变 controller、event schema、ledger retention 或 Auth/Tool 脱敏 authority，立即停止并拆成独立计划。
 - 回退以阶段/adapter 为单位；不得恢复“每 token 销毁整屏”作为无提示 fallback。
 
 ## 10. 非目标
 
-- 不在本文完成 pi-tui → OpenTUI 迁移；该工作只属于 Plan 17。
+- 不在本文完成 pi-tui → OpenTUI 迁移；该工作只属于 `17-opentui-refactor-plan.md`。
 - 不引入 React、Solid、Web DOM、Shiki 或 grok-build/Codex/OpenCode 代码依赖。
 - 不修改 LLM/provider 的语义事件协议，除非独立 contract 计划明确授权。
 - 不用 UI 裁剪替代 ledger/session 数据保留策略。
@@ -367,4 +369,4 @@ src/tui/opentui/
 5. queue、异步任务和派生 cache 都有显式字节/数量预算、telemetry 和压力测试；
 6. 60 / 80 / 143 列、resize、selection/copy、theme、overlay/focus、abort/error 有真实 Bun frame 与 PTY 证据；
 7. 第 5 节预算由当前环境的 before/after artifact 证明，未达项如实保留，human/agent verification 不混写；
-8. Plan 17 继续保持迁移 authority，本文没有把参考项目做法或计划 checkbox 冒充 RunLedger 已实现能力。
+8. `17-opentui-refactor-plan.md` 继续保持 renderer 迁移 authority；本文没有把参考项目做法或计划 checkbox 冒充 RunLedger 已实现能力。
