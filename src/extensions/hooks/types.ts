@@ -73,6 +73,8 @@ export interface HookCommandRunnerRequest {
 	readonly stdin: string;
 	readonly signal: AbortSignal;
 	readonly timeoutMs: number;
+	/** Canonical directory of the hook document; relative commands resolve here. */
+	readonly cwd?: string;
 }
 
 export interface HookCommandRunnerResult {

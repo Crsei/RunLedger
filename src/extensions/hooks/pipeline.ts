@@ -2,6 +2,7 @@
 
 import { canonicalJson } from "../../runtime/protocol/canonical-json.ts";
 import { runtimeDigest } from "../../runtime/protocol/foundation.ts";
+import { dirname } from "node:path";
 import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, redactDiagnosticText, sortExtensionDiagnostics } from "../diagnostics.ts";
 import { compileHookMatcher, defaultHookFailureMode, orderHookHandlers } from "./matcher.ts";
 import type {
@@ -352,6 +353,7 @@ export async function runHookPipeline(options: HookPipelineOptions): Promise<Hoo
 			}),
 			stdin,
 			timeoutMs: ref.handler.timeoutMs,
+			cwd: dirname(ref.hook.sourcePath),
 		};
 		const raced = await invokeRunner(options, request);
 		const durationMs = Date.now() - startedAt;
