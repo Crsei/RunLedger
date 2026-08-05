@@ -34,6 +34,7 @@ import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/regist
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
 import { createExtensionSnapshotEvent, createHostDomainPorts } from "./runtime-host-domains.ts";
 import { createHostModelContextDomainPort, type HostModelContextDomainOptions } from "./runtime-host-model-context.ts";
+import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-manifest.ts";
 import { NodeExtensionStorage } from "../storage/extensions/extension-storage.ts";
 import { ExtensionStateStore } from "../extensions/state-store.ts";
 import { TrustStore } from "../extensions/trust/trust-store.ts";
@@ -60,6 +61,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
 	await models.refresh({ allowNetwork: false });
+	const modelCompatibility = await loadCanonicalModelCompatibilityRouter(layout);
 	const workspaceBindingStore = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 	const runtimeEventWriter = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 	const workspaceAudit = new RuntimeWorkspaceAuditAdapter({
@@ -136,6 +138,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		layout,
 		scope,
 		policyCeilingDigest: security.snapshot.policyDigest,
+		...(modelCompatibility.ok ? { modelRouter: modelCompatibility.router } : { modelRouterUnavailable: modelCompatibility.error.code }),
 	});
 	const host = new ResidentRuntimeHost({
 		socketPath: productionHostSocketPath(layout, scope.workspaceStorageKey),
@@ -229,6 +232,8 @@ export function createProductionModelContextDomainPort(options: {
 	readonly layout: ReturnType<typeof buildRunledgerLayout>;
 	readonly scope: HostCompatibilityEnvelope;
 	readonly policyCeilingDigest?: HostModelContextDomainOptions["policyCeilingDigest"];
+	readonly modelRouter?: HostModelContextDomainOptions["modelRouter"];
+	readonly modelRouterUnavailable?: HostModelContextDomainOptions["modelRouterUnavailable"];
 	readonly summarizer?: HostModelContextDomainOptions["summarizer"];
 }) {
 	return createHostModelContextDomainPort({
@@ -238,6 +243,8 @@ export function createProductionModelContextDomainPort(options: {
 		tenantId: options.scope.tenantId,
 		workspaceId: options.scope.workspaceId,
 		policyCeilingDigest: options.policyCeilingDigest ?? runtimeDigest({ securityAdapterDigest: options.scope.securityAdapterDigest }),
+		...(options.modelRouter === undefined ? {} : { modelRouter: options.modelRouter }),
+		...(options.modelRouterUnavailable === undefined ? {} : { modelRouterUnavailable: options.modelRouterUnavailable }),
 		...(options.summarizer === undefined ? {} : { summarizer: options.summarizer }),
 	});
 }

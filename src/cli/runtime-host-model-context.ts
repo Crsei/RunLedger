@@ -104,6 +104,8 @@ export interface HostModelContextDomainOptions {
 	readonly policyCeilingDigest: RuntimeDigest;
 	readonly clock?: () => Date;
 	readonly modelRouter?: ModelCompatibilityRouter;
+	/** Typed reason exposed by read-only queries when the canonical manifest is unavailable. */
+	readonly modelRouterUnavailable?: string;
 	readonly summarizer?: (input: { readonly transcript: string; readonly focus?: string }) => Promise<string>;
 }
 
@@ -329,7 +331,14 @@ async function executeOperation(
 			case "memory.approve": return memoryApprove(options, clock, memory, state, context);
 			case "memory.reject": return memoryReject(options, clock, memory, state, context);
 			case "memory.revoke": return memoryRevoke(options, clock, memory, state, context);
-			case "model.routes": return { ok: true, body: { decisions: state.routes } };
+			case "model.routes": return {
+				ok: true,
+				body: {
+					available: options.modelRouter !== undefined,
+					...(options.modelRouter === undefined ? { unavailableCode: options.modelRouterUnavailable ?? "model_router_unavailable" } : {}),
+					decisions: state.routes,
+				},
+			};
 			case "model.route": return modelRoute(options, clock, state, context);
 			default: return failure("unsupported_operation");
 		}
@@ -834,7 +843,7 @@ async function memoryRevoke(options: HostModelContextDomainOptions, _clock: () =
 }
 
 async function modelRoute(options: HostModelContextDomainOptions, _clock: () => Date, state: SessionDomainState, context: HostRuntimeDomainContext): Promise<HostRuntimeDomainResult> {
-	if (options.modelRouter === undefined) return failure("model_router_unavailable");
+	if (options.modelRouter === undefined) return failure(options.modelRouterUnavailable ?? "model_router_unavailable");
 	const request = context.frame.body.request;
 	if (!isModelRouteRequest(request)) return failure("model_route_request_invalid");
 	const decision = options.modelRouter.route(request);
