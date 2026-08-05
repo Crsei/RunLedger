@@ -109,4 +109,20 @@ describe("persisted workspace binding", () => {
 			await rm(home, { recursive: true, force: true });
 		}
 	});
+
+	it("embeds a versioned worktree locator and classifies legacy records as migration_required", () => {
+		const worktree = record(join("/", "home", "source"));
+		const binding = createPersistedWorkspaceBinding({ record: worktree, lease: lease(worktree.workspaceId), effectiveCwd: worktree.worktreeLocator });
+		expect(binding.ok).toBe(true);
+		if (!binding.ok) return;
+		expect(binding.value.worktreeLocator).toEqual({ version: 1, platform: "linux", kind: "posix", path: binding.value.worktreePath });
+		// 结构合法的 version 1 记录仍可读。
+		expect(validatePersistedWorkspaceBinding(binding.value)).toEqual({ ok: true, value: binding.value });
+		// legacy：无 worktreeLocator 字段 → typed migration_required（不猜测转换）。
+		const { worktreeLocator: _legacyLocator, ...legacy } = binding.value;
+		const checked = validatePersistedWorkspaceBinding({ ...legacy, bindingDigest: runtimeDigest({ ...legacy, binding: legacy.binding }) });
+		expect(checked).toMatchObject({ ok: false, error: { code: "binding_migration_required" } });
+		// locator 与 worktreePath 不一致 → invalid。
+		expect(validatePersistedWorkspaceBinding({ ...binding.value, worktreeLocator: { version: 1, platform: "linux", kind: "posix", path: "/other/path" } })).toMatchObject({ ok: false, error: { code: "binding_invalid" } });
+	});
 });

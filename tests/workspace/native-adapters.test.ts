@@ -63,6 +63,27 @@ describe("native path adapter (Linux, fake syscall)", () => {
 		expect(candidate).toEqual({ ok: true, value: { root: { kind: "posix", display: "/", key: "/" }, displayPath: "/managed/repo/task/new/untracked.txt", compareKey: "/managed/repo/task/new/untracked.txt", absolute: true } });
 	});
 
+	it("keeps lexical segments when a symlink ancestor changes path depth", async () => {
+		// link → /real/deeper/root：解析后 anchor 深度 ≠ 原 lexical 深度，
+		// candidate 必须保留 "new" 段，不能按 anchor 的 segment 数切分。
+		const adapters = createNativeWorkspaceAdapters("linux", {
+			git: broker().port,
+			fs: syscall({ "/managed/link": "/real/deeper/root", "/real/deeper/root": "/real/deeper/root", "/real": "/real" }),
+			managedRoot: "/real",
+		});
+		const candidate = await adapters.path.candidateIdentity("/managed/link/new/file");
+		expect(candidate).toEqual({ ok: true, value: { root: { kind: "posix", display: "/", key: "/" }, displayPath: "/real/deeper/root/new/file", compareKey: "/real/deeper/root/new/file", absolute: true } });
+	});
+
+	it("fails closed when a symlink ancestor escapes the managed root", async () => {
+		const adapters = createNativeWorkspaceAdapters("linux", {
+			git: broker().port,
+			fs: syscall({ "/managed/link": "/real/deeper/root", "/managed": "/managed" }),
+			managedRoot: "/managed",
+		});
+		expect(await adapters.path.candidateIdentity("/managed/link/new/file")).toMatchObject({ ok: false, error: { code: "cross_root_containment" } });
+	});
+
 	it("reports missing existing paths and missing ancestors as invalid_path", async () => {
 		const adapters = linuxAdapters({ "/managed": "/managed" });
 		expect(await adapters.path.realIdentity("/managed/missing")).toMatchObject({ ok: false, error: { code: "invalid_path" } });

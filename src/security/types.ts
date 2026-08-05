@@ -145,6 +145,15 @@ export interface PermissionPrompter {
 	request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<PermissionPromptResponse>;
 }
 
+/**
+ * Host-private 执行上下文：公共 envelope 只投影 digest（ADR 02 D1/D5），
+ * native absolute path 只存在于本类型，禁止写入公共 event/receipt/DTO。
+ */
+export interface HostWorkspaceExecutionContext extends WorkspaceExecutionEnvelope {
+	readonly worktreePath: string;
+	readonly cwd: string;
+}
+
 export interface AuthorizationRequest {
 	readonly requestId: CommandId;
 	readonly sessionId: SessionId;
@@ -154,7 +163,7 @@ export interface AuthorizationRequest {
 	readonly argumentsDigest: RuntimeDigest;
 	readonly cwd: string;
 	readonly requests: readonly AccessRequest[];
-	readonly workspace: WorkspaceExecutionEnvelope;
+	readonly workspace: HostWorkspaceExecutionContext;
 	readonly snapshot: SecuritySnapshot;
 }
 

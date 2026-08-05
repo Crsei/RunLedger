@@ -165,6 +165,24 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		expect(existsSync(dirty)).toBe(false);
 	});
 
+	it("matches git-registered non-ASCII worktree paths through octal-escaped porcelain", async () => {
+		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
+		expect(availability.ok).toBe(true);
+		if (!availability.ok) return;
+		const adapters = availability.value;
+		const baseCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+		const target = join(managed, "repo-slug", "任务-测试");
+		const created = await adapters.git.createDetached(repo, target, baseCommit);
+		expect(created).toEqual({ ok: true, value: target });
+		// porcelain 中非 ASCII 以 \NNN 八进制转义出现；registeredTarget 必须能匹配。
+		const registered = await adapters.git.registeredTarget(repo, target);
+		expect(registered.ok, JSON.stringify(registered)).toBe(true);
+		if (!registered.ok) return;
+		expect(registered.value.match).toBe(true);
+		expect(registered.value.identity.displayPath).toBe(target);
+		expect(await adapters.git.remove(repo, target, false)).toEqual({ ok: true, value: target });
+	});
+
 	it("cold resume re-verifies a recorded locator and fails closed when the worktree is gone", async () => {
 		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(availability.ok).toBe(true);

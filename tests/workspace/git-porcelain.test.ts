@@ -63,6 +63,11 @@ describe("parseWorktreePorcelain: synthetic cross-platform fixtures", () => {
 		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-bare.txt"), "utf8"));
 		expect(entries[0]).toMatchObject({ path: "C:\\repos\\bare.git", bare: true });
 	});
+
+	it("decodes git's octal UTF-8 escapes for non-ASCII paths", () => {
+		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-octal-utf8.txt"), "utf8"));
+		expect(entries[0]).toMatchObject({ path: "/tmp/runledger-试验/task 测试", detached: true });
+	});
 });
 
 describe("unquoteCStyle", () => {
@@ -75,5 +80,11 @@ describe("unquoteCStyle", () => {
 		expect(unquoteCStyle("\"a\\tb\"")).toBe("a\tb");
 		expect(unquoteCStyle("\"a\\\"b\"")).toBe("a\"b");
 		expect(unquoteCStyle("\"a\\\\b\"")).toBe("a\\b");
+	});
+
+	it("decodes git octal UTF-8 escapes byte-wise", () => {
+		expect(unquoteCStyle("\"/tmp/runledger-\\350\\257\\225\\351\\252\\214\"")).toBe("/tmp/runledger-试验");
+		expect(unquoteCStyle("\"\\346\\265\\213\\350\\257\\225\"")).toBe("测试");
+		expect(unquoteCStyle("\"a\\0b\"")).toBe("a\u0000b");
 	});
 });

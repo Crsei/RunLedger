@@ -115,7 +115,8 @@
 
 - `src/workspace/` —— 平台适配层：`types.ts`(root/volume/share identity、versioned locator、错误 taxonomy)、`path-adapter.ts`(纯 parse/compare/containment/locator)、`git-porcelain.ts`(纯 `git worktree list --porcelain` parser)、`process-capability.ts`(Shell/termination/cleanup 描述，verified/unverified 证据标记)、`locator-audit.ts`(只读旧记录分类，绝不改写)、`resume.ts`(cold resume 重验 platform/root/Git/lease/effective cwd，fail closed 不回退 source)、`capability.ts`(证据矩阵，不宣称 sandbox)、`runtime-platform.ts` + `factory.ts`(运行时平台单点分支)、`native/{linux,macos,windows,adapters,types}.ts`(P4 原生 adapter；macOS/Windows 无真实 runner 证据，factory 保持 typed `unverified_platform`)；
 - 平台分支静态边界：`scripts/check-platform-boundaries.ts` 接入 `npm run check`；业务模块禁止新增 `process.platform`，新代码唯一分支点为 `src/workspace/{factory,runtime-platform}.ts`，既有 8 个文件的散落分支已在 P6 收敛到 `runtime-platform.ts`；
-- `HostWorkspaceBindingService` 注入 `WorkspaceAdapters` 后 containment 与 Git 注册同一性全部经 adapter（compare-key + porcelain）；生产组合 `runtime-host.ts` 经 `createWorkspaceAdaptersForCurrentPlatform` 注入（Linux verified）；
+- `WorktreeManager` 与 `HostWorkspaceBindingService` 注入 `WorkspaceAdapters` 后 containment 与 Git 生命周期（create/remove/list/status/resolveCommit）全部经 adapter（compare-key + porcelain），Host rebind/resume 消费 `resumeWorktreeLocator`；生产组合 `runtime-host.ts` 经 `createWorkspaceAdaptersForCurrentPlatform` 注入（Linux verified，旧 GitOperations/node:path 仅测试接缝）；
+- 公共 DTO 脱敏（ADR 02 D1/D5）：`WorkspaceExecutionEnvelope` 只投影 `worktreePathDigest`/`cwdDigest`，native path 只存在于 Host-private `HostWorkspaceExecutionContext`；`PersistedWorkspaceBinding` 嵌入 versioned `worktreeLocator`，legacy 记录 typed `binding_migration_required`；
 - 真实 runner 证据：`tests/fixtures/platform-evidence/linux/`（digest manifest 不可变）；macOS/Windows 缺口见 `development-doc/worktree-sandbox-permisson/evidence-verification-gaps.md`；OS sandbox 保持封存（04/05 ADR，P7 结论：解封条件未满足）。
 
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)

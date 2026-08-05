@@ -10,6 +10,7 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { RunledgerLayout, RuntimeInstanceId, SessionId, WorkspaceId, WorkspaceLeaseRef } from "../runtime/contracts/public.ts";
 import { isWorkspaceLeaseRef } from "../runtime/contracts/public.ts";
+import { resumeWorktreeLocator } from "../workspace/resume.ts";
 import type { WorkspaceAdapters } from "../workspace/native/types.ts";
 import { GitOperations, type GitCommandPort } from "./git-operations.ts";
 import { WorktreeLeaseManager } from "./lease.ts";
@@ -116,7 +117,7 @@ export class HostWorkspaceBindingService {
 		this.#store = new JsonWorkspaceBindingStore({ layout: options.layout, workspaceStorageKey: options.workspaceStorageKey });
 		this.#registry = options.registry;
 		this.#git = options.git instanceof GitOperations ? options.git : new GitOperations(options.git, { managedRoot: options.managedRoot });
-		this.#manager = new WorktreeManager({ registry: options.registry, git: this.#git, managedRoot: options.managedRoot, clock: options.clock });
+		this.#manager = new WorktreeManager({ registry: options.registry, git: this.#git, managedRoot: options.managedRoot, clock: options.clock, ...(options.workspace === undefined ? {} : { workspace: options.workspace }) });
 		this.#leases = new WorktreeLeaseManager(options.registry, { clock: options.clock, defaultTtlMs: options.leaseTtlMs });
 		this.#ownerRuntimeId = options.ownerRuntimeId;
 		this.#clock = options.clock ?? (() => new Date());
@@ -244,6 +245,56 @@ export class HostWorkspaceBindingService {
 		const baseValidation = validatePersistedBinding(stored);
 		if (!baseValidation.ok) return baseValidation;
 		const cwd = resolve(request.cwd);
+
+		if (this.#workspace !== undefined) {
+			// P5 生产 cold replay：locator version/platform/Git/lease/effective cwd
+			// 全部经 workspace adapter 重验（resumeWorktreeLocator），fail closed。
+			const resumed = await resumeWorktreeLocator(
+				{
+					path: this.#workspace.path,
+					git: this.#workspace.git,
+					checkLease: async () => {
+						const record = await this.#registry.get(stored!.worktreeId);
+						if (!record.ok) return `persisted worktree record is unavailable: ${record.error.message}`;
+						if (record.value.worktreeLocator !== stored!.worktreePath || record.value.state === "removed" || record.value.state === "failed") {
+							return "persisted worktree record no longer matches the binding";
+						}
+						const lease = await this.#registry.lease(stored!.binding.workspaceId);
+						if (!lease.ok) return lease.error.message;
+						const now = this.#clock().getTime();
+						if (!lease.value || !isWorkspaceLeaseRef(lease.value) || !sameLease(lease.value, stored!.lease) || !isActiveLease(lease.value, now)) {
+							return "persisted workspace lease is stale or fenced";
+						}
+						return undefined;
+					},
+				},
+				{
+					record: stored.worktreeLocator,
+					repo: stored.sourceRepositoryPath,
+					expectedBaseCommit: stored.baseCommit,
+					effectiveSubdir: stored.sourceSubdir === "." ? "." : stored.sourceSubdir,
+				},
+			);
+			if (!resumed.ok) return failure("binding_drift", resumed.error.message, resumed.error.retryable);
+			const validation = validateWorkspaceBindingObservation(stored, {
+				workspaceId: stored.binding.workspaceId,
+				repositoryId: stored.binding.repositoryId,
+				worktreeId: stored.worktreeId,
+				sourceSubdir: stored.sourceSubdir,
+				worktreePath: stored.worktreePath,
+				effectiveCwd: cwd,
+				baseCommit: stored.baseCommit,
+				headCommit: resumed.headCommit,
+			});
+			if (!validation.ok) return failure(validation.error.code, validation.error.message, validation.error.retryable);
+			try {
+				await this.#audit?.validationRecorded(validation.value);
+			} catch (error) {
+				return failure("binding_invalid", error instanceof Error ? error.message : "workspace validation audit is unavailable", true);
+			}
+			return { ok: true, value: validation.value };
+		}
+
 		const contained = await this.#withinOrFail(stored.worktreePath, cwd);
 		if (!contained.ok) return failure("binding_drift", contained.error.message, contained.error.retryable);
 

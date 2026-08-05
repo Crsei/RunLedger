@@ -43,10 +43,11 @@ export class Footer implements Component {
       const modelId = this.props.provider.getModelId();
       const providerId = this.props.provider.getProviderId?.();
       const thinking = this.props.provider.getThinkingLevel?.();
+      const workspaceCapability = this.props.provider.getWorkspaceCapability?.();
       const status = streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
       left = status;
       middle = sessionId.length > 0 ? sessionId : "<no-session>";
-      right = `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}`;
+      right = `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}${workspaceCapability ? ` · ${workspaceCapability}` : ""}`;
     } catch {
       // 失败护栏:provider 抛错时给出可观测的占位,不影响整屏渲染
       left = "[footer:err]";

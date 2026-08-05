@@ -132,6 +132,7 @@ describe("R3/R4 production Host composition", () => {
 				sourceRepositoryPath,
 				sourceSubdir: ".",
 				worktreePath,
+				worktreeLocator: { version: 1 as const, platform: "linux" as const, kind: "posix" as const, path: worktreePath },
 				effectiveCwd,
 				baseCommit,
 				headCommit: baseCommit,

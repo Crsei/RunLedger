@@ -22,38 +22,51 @@ export interface PorcelainWorktreeEntry {
 	readonly bare: boolean;
 }
 
-/** 解析 C-style quoted 字符串（git 对含特殊字符的路径使用该格式）。 */
+/**
+ * 解析 C-style quoted 字符串（git 对含特殊字符的路径使用该格式）。
+ * 支持常见 escape 与 git 默认的八进制 UTF-8 转义（`\NNN`，如中文路径
+ * `"\346\265\213\350\257\225"` = "测试"）。
+ */
 export function unquoteCStyle(value: string): string {
 	if (!value.startsWith("\"") || !value.endsWith("\"")) return value;
-	let out = "";
+	const bytes: number[] = [];
 	let i = 1;
 	while (i < value.length - 1) {
-		const ch = value[i];
-		if (ch === "\\" && i + 1 < value.length - 1) {
+		const ch = value.charCodeAt(i);
+		if (ch === 0x5c /* \ */ && i + 1 < value.length - 1) {
 			const next = value[i + 1];
-			if (next === "n") out += "\n";
-			else if (next === "t") out += "\t";
-			else if (next === "\\") out += "\\";
-			else if (next === "\"") out += "\"";
-			else if (next === "a") out += "\u0007";
-			else if (next === "b") out += "\b";
-			else if (next === "f") out += "\f";
-			else if (next === "r") out += "\r";
-			else if (next === "v") out += "\u000b";
-			else if (next === "x" && i + 3 < value.length - 1) {
+			if (next === "n") { bytes.push(0x0a); i += 2; continue; }
+			if (next === "t") { bytes.push(0x09); i += 2; continue; }
+			if (next === "\\") { bytes.push(0x5c); i += 2; continue; }
+			if (next === "\"") { bytes.push(0x22); i += 2; continue; }
+			if (next === "a") { bytes.push(0x07); i += 2; continue; }
+			if (next === "b") { bytes.push(0x08); i += 2; continue; }
+			if (next === "f") { bytes.push(0x0c); i += 2; continue; }
+			if (next === "r") { bytes.push(0x0d); i += 2; continue; }
+			if (next === "v") { bytes.push(0x0b); i += 2; continue; }
+			if (next === "x" && i + 3 < value.length - 1) {
 				const hex = value.slice(i + 2, i + 4);
 				if (/^[0-9a-fA-F]{2}$/u.test(hex)) {
-					out += String.fromCharCode(Number.parseInt(hex, 16));
-					i += 2;
-				} else out += next;
-			} else out += next;
-			i += 2;
+					bytes.push(Number.parseInt(hex, 16));
+					i += 4;
+					continue;
+				}
+			}
+			// git 对非 ASCII UTF-8 字节使用八进制转义：1–3 位八进制数字。
+			const octalMatch = /^[0-7]{1,3}/u.exec(value.slice(i + 1));
+			if (octalMatch !== null) {
+				bytes.push(Number.parseInt(octalMatch[0], 8));
+				i += 1 + octalMatch[0].length;
+				continue;
+			}
+			bytes.push(ch);
+			i += 1;
 			continue;
 		}
-		out += ch;
+		bytes.push(ch);
 		i++;
 	}
-	return out;
+	return Buffer.from(bytes).toString("utf8");
 }
 
 export function parseWorktreePorcelain(text: string): readonly PorcelainWorktreeEntry[] {

@@ -23,6 +23,9 @@ import {
 	type WorkspaceId,
 	type WorkspaceLeaseRef,
 } from "../runtime/contracts/public.ts";
+import { encodePrivateLocator, parsePath, validateLocatorForPlatform } from "../workspace/path-adapter.ts";
+import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
+import type { PrivateLocatorV1, WorkspacePlatform } from "../workspace/types.ts";
 import type { WorktreeRecord } from "./types.ts";
 import { NodeWorkspaceBindingStorage } from "../storage/worktree-binding-storage.ts";
 
@@ -33,6 +36,8 @@ export interface PersistedWorkspaceBinding {
 	readonly sourceRepositoryPath: string;
 	readonly sourceSubdir: string;
 	readonly worktreePath: string;
+	/** P5：versioned private locator（ADR D4）；cold replay 只凭它恢复身份，不直接信任字符串。 */
+	readonly worktreeLocator: PrivateLocatorV1;
 	readonly effectiveCwd: string;
 	readonly baseCommit: string;
 	readonly headCommit?: string;
@@ -51,7 +56,12 @@ export interface WorkspaceBindingObservation {
 	readonly headCommit?: string;
 }
 
-export type WorkspaceBindingErrorCode = "binding_invalid" | "binding_not_found" | "binding_stale" | "binding_drift";
+export type WorkspaceBindingErrorCode =
+	| "binding_invalid"
+	| "binding_not_found"
+	| "binding_stale"
+	| "binding_drift"
+	| "binding_migration_required";
 
 export interface WorkspaceBindingError {
 	readonly code: WorkspaceBindingErrorCode;
@@ -68,6 +78,8 @@ export interface CreatePersistedWorkspaceBindingInput {
 	readonly lease: WorktreeLeaseRecordLike;
 	readonly effectiveCwd?: string;
 	readonly headCommit?: string;
+	/** 生成 worktreeLocator 的平台；缺省取当前运行时平台。 */
+	readonly platform?: WorkspacePlatform;
 }
 
 type WorktreeLeaseRecordLike = WorkspaceLeaseRef;
@@ -144,6 +156,10 @@ export function createPersistedWorkspaceBinding(
 	if (!canonicalAbsolutePath(record.sourceRepositoryPath) || !canonicalAbsolutePath(record.worktreeLocator)) return failure("binding_invalid", "workspace binding paths are not canonical absolute paths");
 	if (!relativeSubdir(record.sourceSubdir) || !relativeSubdir(record.effectiveSubdir)) return failure("binding_invalid", "workspace binding subdir escapes its repository");
 	if (!validCommit(record.baseCommit)) return failure("binding_invalid", "workspace binding base commit is invalid");
+	const platform = input.platform ?? runtimeWorkspacePlatform();
+	const worktreePathIdentity = parsePath(record.worktreeLocator, platform);
+	if (!worktreePathIdentity.ok) return failure("binding_invalid", worktreePathIdentity.error.message);
+	const worktreeLocator = encodePrivateLocator(worktreePathIdentity.value, platform);
 	const effectiveCwd = resolve(input.effectiveCwd ?? join(record.worktreeLocator, record.effectiveSubdir === "." ? "" : record.effectiveSubdir));
 	if (input.effectiveCwd !== undefined && !canonicalAbsolutePath(input.effectiveCwd)) return failure("binding_invalid", "workspace binding effective cwd must be a canonical absolute path");
 	if (!effectivePathWithin(record.worktreeLocator, effectiveCwd)) return failure("binding_invalid", "workspace binding effective cwd escapes the worktree");
@@ -164,6 +180,7 @@ export function createPersistedWorkspaceBinding(
 		sourceRepositoryPath: record.sourceRepositoryPath,
 		sourceSubdir: record.sourceSubdir,
 		worktreePath: record.worktreeLocator,
+		worktreeLocator,
 		effectiveCwd,
 		baseCommit: record.baseCommit,
 		...(headCommit === undefined ? {} : { headCommit }),
@@ -178,9 +195,14 @@ export function validatePersistedWorkspaceBinding(value: unknown): WorkspaceBind
 		!isRecord(value.lease) || !isWorkspaceLeaseRef(value.lease) || typeof value.worktreeId !== "string" || value.worktreeId.length === 0 ||
 		typeof value.sourceRepositoryPath !== "string" || typeof value.sourceSubdir !== "string" || typeof value.worktreePath !== "string" ||
 		typeof value.effectiveCwd !== "string" || typeof value.baseCommit !== "string" || !isRuntimeDigest(value.bindingDigest)) {
-		return failure("binding_invalid", "workspace binding does not match the current exact format");
+		return failure("binding_migration_required", "workspace binding is a legacy record without the current locator shape; read-only audit required before use");
 	}
+	if (!isRecord(value.worktreeLocator)) return failure("binding_migration_required", "workspace binding is a legacy record without a versioned worktree locator");
 	const candidate = value as unknown as PersistedWorkspaceBinding;
+	const locatorChecked = validateLocatorForPlatform(candidate.worktreeLocator, runtimeWorkspacePlatform());
+	if (!locatorChecked.ok) return failure("binding_migration_required", `workspace binding locator ${locatorChecked.error.code}: ${locatorChecked.error.message}`);
+	const locatorPath = parsePath(candidate.worktreeLocator.path, candidate.worktreeLocator.platform);
+	if (!locatorPath.ok || locatorPath.value.displayPath !== candidate.worktreePath) return failure("binding_invalid", "workspace binding locator path does not match its worktree path");
 	const expectedRepositoryId = createRuntimeId("repository", runtimeDigest(candidate.sourceRepositoryPath).digest.slice(0, 48));
 	if (!isRuntimeId(candidate.worktreeId, "workspace") || !canonicalAbsolutePath(candidate.sourceRepositoryPath) || !canonicalAbsolutePath(candidate.worktreePath) ||
 		!canonicalAbsolutePath(candidate.effectiveCwd) || !relativeSubdir(candidate.sourceSubdir) || !validCommit(candidate.baseCommit) ||

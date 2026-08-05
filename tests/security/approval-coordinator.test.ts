@@ -54,12 +54,14 @@ function request(): AuthorizationRequest {
 		workspaceId: createRuntimeId("workspace", "approval-test"),
 		repositoryId: createRuntimeId("repository", "approval-test"),
 		worktreePath: "/repo",
+			worktreePathDigest: runtimeDigest("/repo"),
 		branch: "runledger/test",
 		baseCommit: "a".repeat(40),
 		agentId: createRuntimeId("agent", "approval-test"),
 		toolCallId: createRuntimeId("toolCall", "approval-test"),
 		traceId: createRuntimeId("trace", "approval-test"),
 		cwd: "/repo",
+			cwdDigest: runtimeDigest("/repo"),
 		ownerRuntimeId: createRuntimeId("runtime", "approval-test"),
 		leaseRevision: 1,
 		fencingTokenDigest: runtimeDigest("approval-fence"),
@@ -71,7 +73,8 @@ function request(): AuthorizationRequest {
 		toolCallId: workspace.toolCallId,
 		toolName: "write",
 		argumentsDigest: runtimeDigest({ path: "file.ts", contentDigest: "x" }),
-		cwd: workspace.cwd,
+		cwd: "/repo",
+			cwdDigest: runtimeDigest("/repo"),
 		requests: [{ kind: "filesystem", operation: "write", path: "file.ts" }],
 		workspace,
 		snapshot: snapshot(),
@@ -85,7 +88,8 @@ function evaluation(value: AuthorizationRequest) {
 function validRevalidation(value: AuthorizationRequest) {
 	return {
 		argumentsDigest: value.argumentsDigest,
-		cwd: value.cwd,
+		cwd: "/repo",
+			cwdDigest: runtimeDigest("/repo"),
 		policyDigest: value.snapshot.policyDigest,
 	};
 }
@@ -214,7 +218,8 @@ describe("ApprovalCoordinator", () => {
 		});
 		const result = await coordinator.authorize(value, evaluation(value), () => ({
 			argumentsDigest: runtimeDigest({ changed: true }),
-			cwd: value.cwd,
+			cwd: "/repo",
+				cwdDigest: runtimeDigest("/repo"),
 			policyDigest: value.snapshot.policyDigest,
 		}));
 		expect(result).toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "cancelled" } } });

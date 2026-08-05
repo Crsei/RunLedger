@@ -56,6 +56,7 @@ function binding(root: string, hostScope: RuntimeHostScope): PersistedWorkspaceB
 		sourceRepositoryPath,
 		sourceSubdir: ".",
 		worktreePath,
+		worktreeLocator: { version: 1 as const, platform: "linux" as const, kind: "posix" as const, path: worktreePath },
 		effectiveCwd,
 		baseCommit,
 		headCommit: baseCommit,

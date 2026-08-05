@@ -1,6 +1,7 @@
 /** Sandbox 平台适配器的内部合同；本切片只准备 launch plan，不执行进程。 */
 
-import type { SandboxProfileName, WorkspaceExecutionEnvelope } from "../../runtime/contracts/public.ts";
+import type { SandboxProfileName } from "../../runtime/contracts/public.ts";
+import type { HostWorkspaceExecutionContext } from "../types.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 
 export type SandboxPlatform = "linux" | "macos" | "windows" | "unknown";
@@ -51,7 +52,7 @@ export interface SandboxPrepareRequest {
 	readonly resolved?: SandboxProfileName;
 	readonly policyDigest: SandboxDigestInput;
 	readonly requestDigest?: SandboxDigestInput;
-	readonly workspace: WorkspaceExecutionEnvelope;
+	readonly workspace: HostWorkspaceExecutionContext;
 	readonly readRoots: readonly string[];
 	readonly writeRoots: readonly string[];
 	readonly denyRead: readonly string[];

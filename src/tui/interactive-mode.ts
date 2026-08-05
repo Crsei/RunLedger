@@ -87,6 +87,8 @@ export interface InteractiveModeOptions {
   onThinkingChange?: (level: ModelThinkingLevel) => void;
   /** R9:由 Host facade 提供的 safe process list/output/mutation adapter。 */
   processOverlayController?: ProcessOverlayController;
+  /** P6:workspace/path 能力标签（真实 runner 证据矩阵），Footer 右侧显示；缺省不显示。 */
+  workspaceCapability?: string;
   /** 可选的分层渲染 telemetry sink；不参与 UI 调度决策。 */
   performanceObserver?: TuiPerformanceObserver;
 }
@@ -157,6 +159,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private modelRegistry: ModelSwitchEntry[];
   private thinkingLevel: ModelThinkingLevel;
   private readonly onThinkingChange?: (level: ModelThinkingLevel) => void;
+  private readonly workspaceCapability?: string;
   private lastIdleCtrlC = 0;
   private quitting = false;
   private readonly exitPromise: Promise<void>;
@@ -176,6 +179,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.modelRegistry = opts.modelRegistry ?? [];
     this.thinkingLevel = opts.controller?.currentSelection.thinkingLevel ?? opts.initialThinkingLevel ?? "off";
     this.onThinkingChange = opts.onThinkingChange;
+    this.workspaceCapability = opts.workspaceCapability;
     let resolveExit: (() => void) | undefined;
     this.exitPromise = new Promise<void>((resolve) => {
       resolveExit = resolve;
@@ -747,6 +751,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
   getSessionId(): string {
     return this.controller?.sessionId ?? this.agent?.sessionId ?? "<no-ledger>";
+  }
+
+  /** FooterSnapshotProvider：workspace/path 能力标签（P6，不宣称 sandbox）。 */
+  getWorkspaceCapability(): string | undefined {
+    return this.workspaceCapability;
   }
 
   /** Editor.onSubmit 回调;把文本作为 user prompt 投递给 Agent,同时落 UI。 */

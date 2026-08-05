@@ -185,38 +185,40 @@ P1 必须先采集下表证据，不能用一套 Linux fixture 模拟全部平�
 
 - [x] 先写三平台 RED fixtures/tests（`tests/fixtures/workspace/git-porcelain/` 合成 fixture + `tests/fixtures/platform-evidence/linux/raw/` 真实 fixture 驱动 `tests/workspace/*.test.ts`）；
 - [x] 实现纯 path parsing/encoding/compare/containment（`src/workspace/path-adapter.ts`，无 filesystem/process side effect）；
-- [x] 实现 Git porcelain parser，但不调用真实 Git（`src/workspace/git-porcelain.ts`，保路径大小写、解析 detached/locked/bare 标记）；
+- [x] 实现 Git porcelain parser，但不调用真实 Git（`src/workspace/git-porcelain.ts`，保路径大小写、解析 detached/locked/bare 标记；**支持 git 八进制 UTF-8 转义 `\NNN`，非 ASCII worktree 路径可由真实 Git E2E 匹配**）；
 - [x] 实现 Shell/process capability descriptor，但不接生产 spawn（`src/workspace/process-capability.ts`，三平台 descriptor + verified/unverified 证据标记）；
-- [x] 加静态边界，禁止业务层新增平台分支（`scripts/check-platform-boundaries.ts` 接入 `npm run check`；新代码唯一平台分支点为 `src/workspace/factory.ts`）。
+- [x] 加静态边界，禁止业务层新增平台分支（`scripts/check-platform-boundaries.ts` 接入 `npm run check`；新代码唯一平台分支点为 `src/workspace/factory.ts` 与 `src/workspace/runtime-platform.ts`）。
 
-退出条件：纯测试通过（52 tests），且不产生 filesystem/process side effect（静态检查强制）。
+退出条件：纯测试通过（88 tests），且不产生 filesystem/process side effect（静态检查强制）。
 
 ### P4：平台原生 adapter
 
-- [x] Linux native path/Git/process adapter 与真实 E2E（`src/workspace/native/linux.ts` + `tests/integration/workspace-linux-e2e.test.ts`：真实 Git create/list/resume/remove、identity 同一性、dirty force-remove、locked deny、shell 解析与 launch args 实跑、locator 同平台恢复）；
+- [x] Linux native path/Git/process adapter 与真实 E2E（`src/workspace/native/linux.ts` + `tests/integration/workspace-linux-e2e.test.ts`：真实 Git create/list/resume/remove、identity 同一性（含非 ASCII worktree 路径经八进制转义 porcelain 匹配）、dirty force-remove、locked deny、shell 解析与 launch args 实跑、locator 同平台恢复）；
 - [x] macOS native path/Git/process adapter（`src/workspace/native/macos.ts` 实现就绪，APFS case/firmlink/process-group 证据 gap，见 evidence-verification-gaps.md §1；真实 E2E 未接入）；
 - [x] Windows drive/UNC/junction/Git Bash/PowerShell/cmd/cleanup adapter（`src/workspace/native/windows.ts` 实现就绪，fixture 驱动单测覆盖 drive/UNC/PATHEXT；junction/reparse、Git for Windows、process-tree、locked-handle 证据 gap，见 evidence-verification-gaps.md §2；真实 E2E 未接入）；
-- [x] 每个平台分别验证 create/list/resume/remove，不从一个平台推断另一个平台（Linux 真实验证；macOS/Windows 未验证 → factory 返回 typed `unverified_platform`）。
+- [x] 每个平台分别验证 create/list/resume/remove，不从一个平台推断另一个平台（Linux 真实验证；macOS/Windows 未验证 → factory 返回 typed `unverified_platform`）；
+- [x] candidate nearest-existing-ancestor 在 symlink 改变路径深度时按 lexical 位置切分，不丢 segment（`native/adapters.ts`，含 symlink 深度变化与逃逸测试）。
 
 退出条件：Linux 真实 runner 通过；macOS/Windows 未通过真实 runner，保持 typed unsupported（factory.ts `VERIFIED_PLATFORMS = ["linux"]`）。
 
 ### P5：持久化与恢复迁移
 
-- [x] 为 private workspace locator 加 schema version（`PrivateLocatorV1` version=1，P3 交付；`PersistedWorkspaceBinding` version=1 已有）；
-- [x] 增加旧记录 read-only audit 与显式 migration plan（`src/workspace/locator-audit.ts`：current / migration_required / invalid 分类，绝不改写；[`03-locator-migration-plan.md`](03-locator-migration-plan.md) 固定 digest/TOCTOU/rollback 门禁，迁移未执行）；
-- [x] cold resume 重验 platform/root/Git/lease/effective cwd（`src/workspace/resume.ts`：platform 匹配 → path 存在 → Git 注册同一性 → HEAD==base → subdir containment → lease）；
+- [x] 为 private workspace locator 加 schema version（`PrivateLocatorV1` version=1；**`PersistedWorkspaceBinding` 已嵌入 `worktreeLocator: PrivateLocatorV1`，cold replay 只凭 locator 恢复身份，不直接信任字符串**）；
+- [x] 增加旧记录 read-only audit 与显式 migration plan（`src/workspace/locator-audit.ts`：current / migration_required / invalid 分类，绝不改写；**`validatePersistedWorkspaceBinding` 对无 locator 的 legacy binding 返回 typed `binding_migration_required`，`JsonWorkspaceBindingStore.read` 分类上报**；[`03-locator-migration-plan.md`](03-locator-migration-plan.md) 固定 digest/TOCTOU/rollback 门禁，迁移未执行）；
+- [x] cold resume 重验 platform/root/Git/lease/effective cwd（`src/workspace/resume.ts`：platform 匹配 → path 存在 → Git 注册同一性 → HEAD==base → subdir containment → lease；**`HostWorkspaceBindingService.resume` 在生产 cold replay 中消费 `resumeWorktreeLocator`，registry/lease 校验以 checkLease 闭包注入**）；
 - [x] 不可恢复记录 fail closed，不静默改指 source repo（`base_drift`/`stale_registration`/`platform_mismatch` 负向测试 + Linux E2E 冷恢复场景）；
 - [x] migration 在 digest/TOCTOU/rollback 方案批准前不得执行（03 文档即门禁记录，本阶段零迁移写入）。
 
-退出条件：fixture migration（locator-audit 13 分类测试）、cold resume（resume 8 测试 + E2E 冷恢复）与 mismatch negative tests 通过。
+退出条件：fixture migration、cold resume 与 mismatch negative tests 通过，且生产 cold replay（HostWorkspaceBindingService）消费 locator 版本与 audit 分类。
 
 ### P6：Host 生产接线与能力矩阵
 
-- [x] 在单一串行窗口替换散落平台路径分支（8 个文件 11 处 `process.platform` 迁移到 `src/workspace/runtime-platform.ts` 单点：session-manager / migration / worktree-registry-store / runledger-home / trace-composition / policy-filesystem / persisted-binding / runtime-host-process execution-decision 调用点；`check-platform-boundaries` allowlist 相应收缩）；
-- [x] WorktreeManager、Host rebind、managed process final leaf 只消费 adapter（`HostWorkspaceBindingService` 在注入 `WorkspaceAdapters` 时 containment 走 compare-key、Git 注册同一性走 porcelain parser + inspectRepository；生产组合 `runtime-host.ts` 经 `createWorkspaceAdaptersForCurrentPlatform` 注入，Linux 已验证；旧 node:path 路径仅保留为测试/fake 接缝）；
-- [x] CLI/TUI 显示 workspace/path capability，不显示虚假的 sandbox enforced（`runledger workspace capability` 输出三平台证据矩阵 + `unverified` 标注，注明不构成 OS sandbox 承诺）；
-- [x] Linux/Windows/macOS unit + E2E CI 矩阵和 artifact evidence 可追溯（Linux 真实 E2E + fixture digest manifest；macOS/Windows runner CI 未接入，保持 typed unsupported 并记录于 evidence-verification-gaps.md——不伪造矩阵）；
-- [x] 文档、help、发布能力声明与真实 runner 一致（capability 命令、04 ADR、AGENTS.md 同步）。
+- [x] 在单一串行窗口替换散落平台路径分支（8 个文件 11 处 `process.platform` 迁移到 `src/workspace/runtime-platform.ts` 单点：session-manager / migration / worktree-registry-store / runledger-home / trace-composition / policy-filesystem / persisted-binding / runtime-host-process execution-decision 调用点 + runtime-host-security containment provider 调用点；`check-platform-boundaries` allowlist 相应收缩）；
+- [x] WorktreeManager、Host rebind、managed process final leaf 只消费 adapter（**WorktreeManager 注入 `WorkspaceAdapters` 后 containment 走 compare-key、Git 生命周期 create/remove/list/status/resolveCommit 全部经 adapter**；`HostWorkspaceBindingService` 构造 WorktreeManager 时透传 adapter，rebind/resume 走 `resumeWorktreeLocator` + porcelain identity；生产组合 `runtime-host.ts` 经 `createWorkspaceAdaptersForCurrentPlatform` 注入，Linux 已验证；旧 GitOperations/node:path 路径仅保留为测试/fake 接缝）；
+- [x] CLI/TUI 显示 workspace/path capability，不显示虚假的 sandbox enforced（`runledger workspace capability` 输出三平台证据矩阵 + `unverified` 标注；**TUI Footer 显示 `ws:<platform>-verified/unverified` 标签，未注入时隐藏**；均注明不构成 OS sandbox 承诺）；
+- [x] Linux/Windows/macOS unit + E2E CI 矩阵和 artifact evidence 可追溯（**Linux 真实 E2E + fixture digest manifest 完成；macOS/Windows runner CI 未接入，如实保持 typed unsupported 并记录于 evidence-verification-gaps.md——不伪造矩阵、不把 gap 计为通过**；该缺口为 P7 解封门禁硬缺口）；
+- [x] 文档、help、发布能力声明与真实 runner 一致（capability 命令、TUI 标签、04 ADR、AGENTS.md 同步）；
+- [x] **公共 DTO 脱敏落实**：`WorkspaceExecutionEnvelope` 不再携带 native worktreePath/cwd，只投影 `worktreePathDigest`/`cwdDigest`（ADR 02 D1/D5）；Host-private 完整路径收敛到 `HostWorkspaceExecutionContext`，不进公共 event/receipt/DTO。
 
 退出条件：当前 production composition（Linux）通过；macOS/Windows 因真实 runner 缺失保持 typed unsupported，作为 P7 门禁硬缺口记录。
 

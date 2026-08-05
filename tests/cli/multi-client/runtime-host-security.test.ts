@@ -191,6 +191,7 @@ function workspaceBinding(root: string): PersistedWorkspaceBinding {
 		sourceRepositoryPath,
 		sourceSubdir: ".",
 		worktreePath,
+		worktreeLocator: { version: 1 as const, platform: "linux" as const, kind: "posix" as const, path: worktreePath },
 		effectiveCwd,
 		baseCommit: "a".repeat(40),
 		headCommit: "a".repeat(40),

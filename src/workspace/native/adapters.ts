@@ -14,7 +14,7 @@ import { processCapabilityFor } from "../process-capability.ts";
 import { validateBranchName } from "../../worktree/paths.ts";
 import type { PathIdentity, PrivateLocatorV1, WorkspacePathErrorCode, WorkspacePathResult, WorkspacePlatform } from "../types.ts";
 import type { GitCommandPort } from "../../worktree/ports.ts";
-import type { GitRepositoryInfo, GitWorktreeAdapter, NativeAdapterDeps, PathSyscallPort, RegisteredWorktreeMatch, ResolvedShell, WorkspaceAdapters, WorkspacePathAdapter, WorkspaceProcessAdapter } from "./types.ts";
+import type { GitRepositoryInfo, GitWorktreeAdapter, GitWorktreeStatus, NativeAdapterDeps, PathSyscallPort, RegisteredWorktreeMatch, ResolvedShell, WorkspaceAdapters, WorkspacePathAdapter, WorkspaceProcessAdapter } from "./types.ts";
 import type { PorcelainWorktreeEntry } from "../git-porcelain.ts";
 
 function failure<T>(code: WorkspacePathErrorCode, message: string, retryable = false): WorkspacePathResult<T> {
@@ -84,10 +84,12 @@ class NativePathAdapter implements WorkspacePathAdapter {
 		if (!parsed.ok) return parsed;
 		const ancestors = ancestorCandidates(parsed.value, this.platform);
 		let anchor: string | undefined;
-		for (const candidate of ancestors) {
-			const resolved = await this.#syscall.realpath(candidate);
+		let anchorIndex = 0;
+		for (let i = 0; i < ancestors.length; i++) {
+			const resolved = await this.#syscall.realpath(ancestors[i]);
 			if (resolved !== undefined) {
 				anchor = resolved;
+				anchorIndex = i;
 				break;
 			}
 		}
@@ -95,8 +97,10 @@ class NativePathAdapter implements WorkspacePathAdapter {
 		const allSegments = parsed.value.displayPath.split(this.platform === "windows" ? "\\" : "/").filter((s) => s.length > 0);
 		const rootSegmentCount = parsed.value.root.kind === "posix" ? 0 : parsed.value.root.kind === "drive" ? 1 : 2;
 		const relative = allSegments.slice(rootSegmentCount);
-		const anchorSegmentCount = anchor.split(this.platform === "windows" ? "\\" : "/").filter((s) => s.length > 0).length - rootSegmentCount;
-		const missing = relative.slice(anchorSegmentCount);
+		// missing = 原 lexical 路径中 ancestors[anchorIndex] 之后的 segments。
+		// 不能用解析后 anchor 的 segment 数切分：symlink 可能改变路径深度
+		// （如 /managed/link → /real/deeper/root），必须按 lexical 位置切。
+		const missing = relative.slice(relative.length - 1 - anchorIndex);
 		const composed = missing.length === 0
 			? anchor
 			: this.platform === "windows"
@@ -213,6 +217,24 @@ class NativeGitWorktreeAdapter implements GitWorktreeAdapter {
 				branch: branch.ok ? branch.value.stdout.trim() : "HEAD",
 			},
 		};
+	}
+
+	public async inspectWorktree(path: string, signal?: AbortSignal): Promise<WorkspacePathResult<GitWorktreeStatus>> {
+		const target = this.#target(path);
+		if (!target.ok) return target;
+		const status = await this.#run(target.value, ["status", "--porcelain", "--untracked-files=all"], signal);
+		if (!status.ok) return status;
+		const head = await this.#run(target.value, ["rev-parse", "--verify", "HEAD^{commit}"], signal);
+		if (!head.ok) return head;
+		return { ok: true, value: { dirty: status.value.stdout.trimEnd().length > 0, status: status.value.stdout, headCommit: head.value.stdout.trim() } };
+	}
+
+	public async resolveCommit(repo: string, ref: string, signal?: AbortSignal): Promise<WorkspacePathResult<string>> {
+		if (ref.length === 0 || ref.length > 256 || ref.startsWith("-") || ref.includes("\0") || /[\s~^:?*[\\]/u.test(ref)) {
+			return failure("invalid_path", "Git base ref is unsafe");
+		}
+		const resolved = await this.#run(repo, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], signal);
+		return resolved.ok ? { ok: true, value: resolved.value.stdout.trim() } : resolved;
 	}
 
 	public async registeredTarget(repo: string, requested: string, signal?: AbortSignal): Promise<WorkspacePathResult<RegisteredWorktreeMatch>> {

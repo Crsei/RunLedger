@@ -40,13 +40,18 @@ export interface WorkspaceExecutionEnvelope {
 	sessionId: SessionId;
 	workspaceId: WorkspaceId;
 	repositoryId: RepositoryId;
-	worktreePath: string;
+	/**
+	 * ADR 02 D1/D5：公共 DTO 不携带 native absolute path；worktree/cwd 只以
+	 * digest 投影。Host-private 的完整路径上下文见 security 层
+	 * HostWorkspaceExecutionContext，禁止回流到公共 event/receipt/DTO。
+	 */
+	worktreePathDigest: RuntimeDigest;
 	branch: string;
 	baseCommit: string;
 	agentId: AgentId;
 	toolCallId: ToolCallId;
 	traceId: TraceId;
-	cwd: string;
+	cwdDigest: RuntimeDigest;
 	ownerRuntimeId: RuntimeInstanceId;
 	leaseRevision: number;
 	fencingTokenDigest: RuntimeDigest;
@@ -190,13 +195,13 @@ export const WorkspaceExecutionEnvelopeSchema = Type.Object(
 		sessionId: RuntimeIdSchema,
 		workspaceId: RuntimeIdSchema,
 		repositoryId: RuntimeIdSchema,
-		worktreePath: Type.String({ minLength: 1, maxLength: 4096 }),
+		worktreePathDigest: RuntimeDigestSchema,
 		branch: Type.String({ minLength: 1, maxLength: 256 }),
 		baseCommit: Type.String({ pattern: "^(?:[a-f0-9]{40}|[a-f0-9]{64})$", minLength: 40, maxLength: 64 }),
 		agentId: RuntimeIdSchema,
 		toolCallId: RuntimeIdSchema,
 		traceId: RuntimeIdSchema,
-		cwd: Type.String({ minLength: 1, maxLength: 4096 }),
+		cwdDigest: RuntimeDigestSchema,
 		ownerRuntimeId: RuntimeIdSchema,
 		leaseRevision: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		fencingTokenDigest: RuntimeDigestSchema,

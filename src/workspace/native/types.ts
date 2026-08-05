@@ -37,6 +37,12 @@ export interface RegisteredWorktreeMatch {
 	readonly match: boolean;
 }
 
+export interface GitWorktreeStatus {
+	readonly dirty: boolean;
+	readonly status: string;
+	readonly headCommit: string;
+}
+
 export interface GitWorktreeAdapter {
 	readonly platform: WorkspacePlatform;
 	list(repo: string, signal?: AbortSignal): Promise<WorkspacePathResult<readonly PorcelainWorktreeEntry[]>>;
@@ -44,6 +50,10 @@ export interface GitWorktreeAdapter {
 	createBranch(repo: string, target: string, branch: string, baseCommit: string, signal?: AbortSignal): Promise<WorkspacePathResult<string>>;
 	remove(repo: string, target: string, force: boolean, signal?: AbortSignal): Promise<WorkspacePathResult<string>>;
 	inspectRepository(cwd: string, signal?: AbortSignal): Promise<WorkspacePathResult<GitRepositoryInfo>>;
+	/** 解析 ref 到 canonical commit（rev-parse --verify --end-of-options）。 */
+	resolveCommit(repo: string, ref: string, signal?: AbortSignal): Promise<WorkspacePathResult<string>>;
+	/** worktree 脏状态与 HEAD（status --porcelain + rev-parse HEAD）。 */
+	inspectWorktree(path: string, signal?: AbortSignal): Promise<WorkspacePathResult<GitWorktreeStatus>>;
 	/**
 	 * 把 requested target 与 `git worktree list --porcelain` 的注册 target 做
 	 * 同一性比较；无注册条目时 match=false（remove/resume 前必须验证）。

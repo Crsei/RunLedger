@@ -17,6 +17,8 @@
  */
 
 import { readFileSync } from "node:fs";
+import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
+import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { loadProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRunledgerHome } from "../storage/runledger-home.ts";
@@ -39,6 +41,13 @@ import {
 } from "./control-commands.ts";
 
 const VERSION = readVersionFromPackage();
+
+/** P6：Footer 展示的 workspace/path 能力标签（真实 runner 证据，不宣称 sandbox）。 */
+function workspaceCapabilityLabel(): string {
+	const platform = runtimeWorkspacePlatform();
+	const row = capabilityRowFor(platform);
+	return `ws:${platform}-${row.adapterAvailable ? "verified" : "unverified"}`;
+}
 
 export async function main(argv: readonly string[]): Promise<void> {
   if (argv[0] === "migrate") {
@@ -150,7 +159,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	      createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver, driverFence: () => controller.driverFence() }),
       { driver: isDriver },
     );
-    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay });
+    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay, workspaceCapability: workspaceCapabilityLabel() });
     interactive = activeInteractive;
     const onSigint = (): void => {
       if (controller.inFlight) controller.interrupt();

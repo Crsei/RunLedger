@@ -154,4 +154,9 @@ export interface FooterSnapshotProvider {
   getThinkingLevel?(): import("../types.ts").ModelThinkingLevel;
   /** 当前 session id(显示在 footer 中间)。 */
   getSessionId(): string;
+  /**
+   * P6：workspace/path 能力标签（如 "ws:linux-verified"）；来自真实 runner
+   * 证据矩阵，不宣称 OS sandbox。未注入时不显示该段。
+   */
+  getWorkspaceCapability?(): string | undefined;
 }

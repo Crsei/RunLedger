@@ -24,8 +24,10 @@ function fixture(): { request: AuthorizationRequest; capability: CapabilityReque
 	const argumentsDigest = runtimeDigest({ path: "file.ts" });
 	const workspace = {
 		authorityId, tenantId, principalId, sessionId, workspaceId, repositoryId,
-		worktreePath: "/repo", branch: "main", baseCommit: "a".repeat(40),
+		worktreePath: "/repo",
+		worktreePathDigest: runtimeDigest("/repo"), branch: "main", baseCommit: "a".repeat(40),
 		agentId: createRuntimeId("agent", "adapter-test"), toolCallId, traceId, cwd: "/repo",
+		cwdDigest: runtimeDigest("/repo"),
 		ownerRuntimeId: createRuntimeId("runtime", "adapter-test"), leaseRevision: 1,
 		fencingTokenDigest: runtimeDigest("fence"),
 	};

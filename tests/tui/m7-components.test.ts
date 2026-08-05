@@ -143,4 +143,20 @@ describe("M7 TUI: DiffPreview 边界 (long header truncate in expanded folding)"
     expect(line.length).toBeLessThanOrEqual(15);
     expect(line.endsWith("…")).toBe(true);
   });
+
+  it("provider.snapshot: workspace capability label renders only when provided (P6)", () => {
+    const base = {
+      isStreaming: () => false,
+      getStopReason: () => undefined,
+      getSessionId: () => "sess-1",
+      getModelId: () => "mock-1",
+    };
+    const without = new Footer({ theme: loadTheme("dark"), provider: base });
+    const plain = without.render(80)[0] ?? "";
+    expect(plain).not.toContain("ws:");
+    const withLabel = new Footer({ theme: loadTheme("dark"), provider: { ...base, getWorkspaceCapability: () => "ws:linux-verified" } });
+    const labeled = withLabel.render(80)[0] ?? "";
+    expect(labeled).toContain("ws:linux-verified");
+    expect(labeled).not.toContain("sandbox");
+  });
 });

@@ -7,6 +7,8 @@
  */
 
 import { existsSync } from "node:fs";
+import type { HostWorkspaceExecutionContext } from "../security/types.ts";
+import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
 import type { Stats } from "node:fs";
 import * as fs from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -453,7 +455,7 @@ function createLocalNetworkBroker(): NetworkBrokerPort {
 }
 
 function createHostConstraintProviders(bindings: ReadonlyMap<string, ProcessBinding>): ExecutionConstraintProviders {
-	const containment = createProductionExecutionDecisionProviders(process.platform === "win32" ? "win32" : "posix").containment;
+	const containment = createProductionExecutionDecisionProviders(runtimePlatformPathFlavor()).containment;
 	return {
 		permission: {
 			decide: async (input) => input.modes.permission === "policy"
@@ -776,6 +778,8 @@ function createWorkspaceEnvelope(
 	const normalizedSession = runtimeId("session", sessionId);
 	const normalizedPrincipal = runtimeId("principal", principalId);
 	const normalizedToolCall = runtimeId("toolCall", toolCallId);
+	const worktreePath = resolve(binding?.worktreePath ?? workspaceRoot);
+	const canonicalCwd = resolve(cwd);
 	return {
 		authorityId: scope.authorityId,
 		tenantId: scope.tenantId,
@@ -783,16 +787,19 @@ function createWorkspaceEnvelope(
 		sessionId: normalizedSession,
 		workspaceId: binding?.binding.workspaceId ?? scope.workspaceId,
 		repositoryId: binding?.binding.repositoryId ?? scope.repositoryId,
-		worktreePath: resolve(binding?.worktreePath ?? workspaceRoot),
+		// ADR 02 D1/D5：公共 envelope 只投影 digest；native path 留在 Host-private context。
+		worktreePathDigest: runtimeDigest(worktreePath),
 		branch: binding === undefined ? "runledger/host" : `runledger/worktree/${binding.worktreeId.slice(0, 96)}`,
 		baseCommit: binding?.baseCommit ?? "0".repeat(40),
 		agentId: createRuntimeId("agent", "runledger-host-agent"),
 		toolCallId: normalizedToolCall,
 		traceId: createRuntimeId("trace", canonicalDigest({ sessionId, principalId, toolCallId, cwd })),
-		cwd: resolve(cwd),
+		cwdDigest: runtimeDigest(canonicalCwd),
 		ownerRuntimeId: binding?.lease.ownerRuntimeId ?? createRuntimeId("runtime", scope.workspaceStorageKey.slice(3, 67)),
 		leaseRevision: binding?.lease.leaseRevision ?? 1,
 		fencingTokenDigest: binding?.lease.fencingTokenDigest ?? runtimeDigest({ workspaceStorageKey: scope.workspaceStorageKey }),
+		worktreePath,
+		cwd: canonicalCwd,
 	};
 }
 

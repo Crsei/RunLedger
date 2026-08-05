@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createLocalIdentityContext } from "../../src/runtime/local-identity.ts";
 import { isWorkspaceExecutionEnvelope } from "../../src/runtime/protocol/workspace.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 
 describe("current Runtime/security boundary contract", () => {
 	it("accepts a typed workspace envelope without owning policy evaluation", () => {
@@ -13,13 +14,14 @@ describe("current Runtime/security boundary contract", () => {
 			sessionId: createRuntimeId("session", "security-test"),
 			workspaceId: createRuntimeId("workspace", "security-test"),
 			repositoryId: createRuntimeId("repository", "security-test"),
-			worktreePath: "/tmp/runledger-worktree",
+			// ADR 02 D1/D5：公共 envelope 只投影 digest，不携带 native path。
+			worktreePathDigest: runtimeDigest("/tmp/runledger-worktree"),
 			branch: "runledger/test",
 			baseCommit: "0".repeat(40),
 			agentId: createRuntimeId("agent", "security-test"),
 			toolCallId: createRuntimeId("toolCall", "security-test"),
 			traceId: createRuntimeId("trace", "security-test"),
-			cwd: "/tmp/runledger-worktree",
+			cwdDigest: runtimeDigest("/tmp/runledger-worktree"),
 			ownerRuntimeId: createRuntimeId("runtime", "security-test"),
 			leaseRevision: 1,
 			fencingTokenDigest: {
@@ -30,7 +32,7 @@ describe("current Runtime/security boundary contract", () => {
 
 		expect(isWorkspaceExecutionEnvelope(envelope)).toBe(true);
 		expect(isWorkspaceExecutionEnvelope({ ...envelope, leaseRevision: -1.5 })).toBe(false);
-		expect(isWorkspaceExecutionEnvelope({ ...envelope, cwd: 42 })).toBe(false);
+		expect(isWorkspaceExecutionEnvelope({ ...envelope, cwdDigest: 42 })).toBe(false);
 		expect(isWorkspaceExecutionEnvelope({ ...envelope, fencingToken: "raw-secret" })).toBe(false);
 		expect(isWorkspaceExecutionEnvelope({ ...envelope, extra: true })).toBe(false);
 	});

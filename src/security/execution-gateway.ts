@@ -7,8 +7,8 @@ import {
 	type ExecutionConstraintInput,
 	type ExecutionConstraintSnapshot,
 	type RuntimeDigest,
-	type WorkspaceExecutionEnvelope,
 } from "../runtime/contracts/public.ts";
+import type { HostWorkspaceExecutionContext } from "./types.ts";
 import {
 	pathWithin,
 	PolicyFileSystem,
@@ -56,7 +56,7 @@ export interface ExecutionGatewayContext {
 
 export interface ExecutionGatewayOptions {
 	readonly snapshot: SecuritySnapshot;
-	readonly workspace: WorkspaceExecutionEnvelope;
+	readonly workspace: HostWorkspaceExecutionContext;
 	readonly filesystemBroker: FileSystemBrokerPort;
 	readonly networkBroker: NetworkBrokerPort;
 	readonly permissionEngine: PermissionEngine;
@@ -88,12 +88,12 @@ function snapshotDigest(snapshot: SecuritySnapshot): RuntimeDigest {
 	return runtimeDigest(body);
 }
 
-function sameWorkspace(left: WorkspaceExecutionEnvelope, right: WorkspaceExecutionEnvelope): boolean {
+function sameWorkspace(left: HostWorkspaceExecutionContext, right: HostWorkspaceExecutionContext): boolean {
 	return left.authorityId === right.authorityId &&
 		left.tenantId === right.tenantId &&
 		left.workspaceId === right.workspaceId &&
 		left.repositoryId === right.repositoryId &&
-		left.worktreePath === right.worktreePath &&
+		sameDigest(left.worktreePathDigest, right.worktreePathDigest) &&
 		left.agentId === right.agentId &&
 		left.ownerRuntimeId === right.ownerRuntimeId &&
 		left.leaseRevision === right.leaseRevision &&
