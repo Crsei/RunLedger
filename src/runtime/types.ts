@@ -40,6 +40,7 @@ import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
 import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
 import type { RuntimeContentRef, RuntimeDigest } from "./protocol/foundation.ts";
+import type { CapabilityClaim } from "./protocol/capability.ts";
 import type { ContextAssemblyReceipt } from "./context/types.ts";
 
 // ===== 工具 =====
@@ -121,6 +122,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = unk
    * 缺省 = DEFAULT_MAX_BYTES。
    */
   maxResultSizeChars?: number;
+  /** Host-readable Runtime effect claims; absence is unknown in restrictive modes. */
+  capabilityClaims?: readonly CapabilityClaim[];
 }
 
 /**

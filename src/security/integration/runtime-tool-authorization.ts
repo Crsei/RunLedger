@@ -13,6 +13,8 @@ import type {
 	ToolAuthorizationPolicy,
 	ToolAuthorizationRequest,
 } from "../../runtime/types.ts";
+import { evaluatePlanModeCapabilities } from "../../runtime/modes/plan/policy.ts";
+import type { PlanModeState } from "../../runtime/modes/plan/types.ts";
 
 const HOST_GOVERNED_TOOL_NAMES = new Set([
 	"read",
@@ -34,13 +36,26 @@ const HOST_GOVERNED_TOOL_NAMES = new Set([
 	"process_stop",
 	"process_resize",
 	"echo",
+	"mcp_catalog",
+	"mcp_search",
+	"mcp_call",
 ]);
 
 export class HostGovernedToolAuthorizationPolicy implements ToolAuthorizationPolicy {
+	readonly #planState: (() => PlanModeState | undefined) | undefined;
+
+	public constructor(options: { readonly planState?: () => PlanModeState | undefined } = {}) {
+		this.#planState = options.planState;
+	}
+
 	public authorize(request: ToolAuthorizationRequest, _signal?: AbortSignal): ToolAuthorizationDecision {
 		if (request.tool === undefined) return { decision: "deny", reason: "tool is not present in the Host registry" };
 		if (!HOST_GOVERNED_TOOL_NAMES.has(request.tool.name)) {
 			return { decision: "deny", reason: `tool ${request.tool.name} is not admitted by the Host composition` };
+		}
+		if (this.#planState !== undefined) {
+			const planDecision = evaluatePlanModeCapabilities({ state: this.#planState(), claims: request.tool.capabilityClaims ?? [] });
+			if (planDecision.decision === "deny") return { decision: "deny", reason: `${planDecision.reasonCode} at mode revision ${planDecision.modeRevision}` };
 		}
 		return { decision: "allow" };
 	}

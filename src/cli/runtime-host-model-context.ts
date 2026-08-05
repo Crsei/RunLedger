@@ -128,6 +128,11 @@ interface HostModelContextSnapshot {
 	readonly routes: readonly ModelRouteDecision[];
 }
 
+/** Internal Host composition seam for synchronous tool-admission reads. */
+export interface HostModelContextDomainPort extends HostRuntimeDomainPort {
+	planState(sessionId: string): PlanModeState | undefined;
+}
+
 interface DomainResultWithEvents extends HostRuntimeDomainResult {
 	readonly body?: Record<string, unknown>;
 	readonly events?: readonly RuntimeEventAppendInput[];
@@ -213,7 +218,7 @@ function isDomainSnapshot(value: unknown, sessionId: SessionId): value is HostMo
 	return true;
 }
 
-export function createHostModelContextDomainPort(options: HostModelContextDomainOptions): HostRuntimeDomainPort {
+export function createHostModelContextDomainPort(options: HostModelContextDomainOptions): HostModelContextDomainPort {
 	if (!/^ws-[a-f0-9]{64}$/u.test(options.workspaceStorageKey)) throw new Error("invalid model/context workspace storage key");
 	if (!isRuntimeId(options.authorityId, "authority") || !isRuntimeId(options.tenantId, "tenant") || !isRuntimeId(options.workspaceId, "workspace")) throw new Error("invalid model/context domain identity");
 	const clock = options.clock ?? (() => new Date());
@@ -241,6 +246,13 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 			const result = tail.then(() => execute(context));
 			tail = result.then(() => undefined, () => undefined);
 			return result;
+		},
+	};
+	const hostPort: HostModelContextDomainPort = {
+		...port,
+		planState: (sessionId) => {
+			const parsed = parseRuntimeId("session", sessionId);
+			return parsed === undefined ? undefined : sessions.get(stateKey(parsed))?.plan;
 		},
 	};
 
@@ -282,7 +294,7 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 		memoryLoaded = true;
 	}
 
-	return port;
+	return hostPort;
 }
 
 function initialPlanState(sessionId: SessionId, workspaceId: WorkspaceId, policyCeilingDigest: RuntimeDigest, updatedAt: string): PlanModeState {

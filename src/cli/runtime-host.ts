@@ -255,6 +255,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 					...(modelCompatibility.ok ? { router: modelCompatibility.router } : { unavailableCode: modelCompatibility.error.code }),
 				});
 			},
+			planStateProvider: (sessionId) => modelContextDomain.planState(sessionId),
 		}),
 		onShutdown: async () => {
 			await shutdownHost();

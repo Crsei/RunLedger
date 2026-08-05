@@ -19,6 +19,8 @@ import type { ModelRequestRouter } from "../runtime/interactive-session-controll
 import type { ToolRegistry } from "../runtime/tool-registry.ts";
 import type { HostMcpRuntime } from "./runtime-host-mcp.ts";
 import type { McpServerConfig } from "../extensions/mcp/connection-manager.ts";
+import type { PlanModeState } from "../runtime/modes/plan/types.ts";
+import { HostGovernedToolAuthorizationPolicy } from "../security/integration/runtime-tool-authorization.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
 import {
@@ -50,6 +52,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly contextAssemblySink?: ContextAssemblySink;
 	/** Host-owned route gate created after the canonical session identity is known. */
 	readonly createModelRequestRouter?: (sessionId: string) => ModelRequestRouter;
+	/** Host-owned Plan Mode state read used only for pre-execution denial. */
+	readonly planStateProvider?: (sessionId: string) => PlanModeState | undefined;
 	/** Host composition creates the MCP adapter against this session's process facade. */
 	readonly createMcpRuntime?: (input: {
 		readonly sessionId: string;
@@ -104,6 +108,9 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				...(managedProcess === undefined ? {} : { managedProcess }),
 				...(executionEnv === undefined ? {} : { executionEnv }),
 			});
+			const authorizationPolicy = options.planStateProvider === undefined
+				? options.security?.toolAuthorizationPolicy
+				: new HostGovernedToolAuthorizationPolicy({ planState: () => options.planStateProvider?.(manager.sessionId()) });
 			if (options.createMcpRuntime !== undefined) {
 				mcp = await options.createMcpRuntime({ sessionId: manager.sessionId(), sessionGeneration: 1, cwd, toolRegistry: tools });
 				const started = await mcp.start(options.mcpConfigs ?? []);
@@ -125,8 +132,8 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				},
 				traceRecorderFactory: options.traceRecorderFactory,
 				executionEnv,
-                toolResultOverflowStore: options.toolResultOverflowStore,
-                authorizationPolicy: options.security?.toolAuthorizationPolicy,
+				toolResultOverflowStore: options.toolResultOverflowStore,
+				authorizationPolicy,
                 ...(options.createModelRequestRouter === undefined ? {} : { modelRequestRouter: options.createModelRequestRouter(manager.sessionId()) }),
                 modelContextAssembler: assembleAgentModelContext,
                 ...(options.contextAssemblySink === undefined ? {} : { contextAssemblySink: options.contextAssemblySink }),

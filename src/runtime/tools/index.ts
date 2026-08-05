@@ -42,6 +42,7 @@ import { createWriteStdinTool } from "./write-stdin.ts";
 import { createProcessStopTool } from "./process-stop.ts";
 import { createProcessResizeTool } from "./process-resize.ts";
 import type { ProcessToolClient } from "./process-tool-support.ts";
+import { withBuiltinCapabilityClaims } from "./capabilities.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -60,6 +61,7 @@ export interface StdlibToolsOptions {
  */
 export function createStdlibTools(cwd: string = process.cwd(), options: StdlibToolsOptions = {}): ToolRegistry {
   const r = createToolRegistry([], { namespace: "stdlib" });
+  const register = (tool: AgentTool): void => { r.register(withBuiltinCapabilityClaims(tool), { namespace: "stdlib" }); };
   const env = options.executionEnv;
 	if (options.requireExecutionEnv === true && env === undefined) {
 		throw new Error("governed ExecutionEnv is required for production stdlib tools");
@@ -67,30 +69,30 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
   const helperShell = options.managedProcess?.exec === undefined
     ? env?.shell
     : managedProcessShell(options.managedProcess.exec, cwd);
-  r.register(createReadTool(cwd, env === undefined ? {} : { operations: readOperations(env) }), { namespace: "stdlib" });
-  r.register(createWriteTool(cwd, env === undefined ? {} : { operations: writeOperations(env) }), { namespace: "stdlib" });
-  r.register(createEditTool(cwd, env === undefined ? {} : { operations: editOperations(env) }), { namespace: "stdlib" });
-  r.register(createMultiEditTool(cwd, env === undefined ? {} : { fileSystem: env.fs }), { namespace: "stdlib" });
-	r.register(createBashTool(cwd, {
+	register(createReadTool(cwd, env === undefined ? {} : { operations: readOperations(env) }));
+	register(createWriteTool(cwd, env === undefined ? {} : { operations: writeOperations(env) }));
+	register(createEditTool(cwd, env === undefined ? {} : { operations: editOperations(env) }));
+	register(createMultiEditTool(cwd, env === undefined ? {} : { fileSystem: env.fs }));
+	register(createBashTool(cwd, {
 		...(env === undefined ? {} : { operations: { exec: (command, commandOptions) => env.shell.exec(command, commandOptions) } }),
 		...(options.managedProcess === undefined ? {} : { managedProcess: options.managedProcess }),
-	}), { namespace: "stdlib" });
-  r.register(createGrepTool(cwd, helperShell === undefined ? {} : { shell: helperShell }), { namespace: "stdlib" });
-  r.register(createFindTool(cwd, helperShell === undefined ? {} : { shell: helperShell }), { namespace: "stdlib" });
-  r.register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }), { namespace: "stdlib" });
-  r.register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }), { namespace: "stdlib" });
-  r.register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }), { namespace: "stdlib" });
-  r.register(createSkillTool(), { namespace: "stdlib" });
-	r.register(createNotebookEditTool(), { namespace: "stdlib" });
-	r.register(echoTool, { namespace: "stdlib" });
+	}));
+  register(createGrepTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
+  register(createFindTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
+  register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }));
+  register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }));
+  register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
+  register(createSkillTool());
+	register(createNotebookEditTool());
+	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
 		if (isCompleteProcessToolClient(processClient)) {
-			r.register(createProcessOutputTool(processClient), { namespace: "stdlib" });
-			r.register(createProcessWaitTool(processClient), { namespace: "stdlib" });
-			r.register(createWriteStdinTool(processClient, { actor: "driver" }), { namespace: "stdlib" });
-			r.register(createProcessStopTool(processClient, { actor: "driver" }), { namespace: "stdlib" });
-			r.register(createProcessResizeTool(processClient, { actor: "driver" }), { namespace: "stdlib" });
+			register(createProcessOutputTool(processClient));
+			register(createProcessWaitTool(processClient));
+			register(createWriteStdinTool(processClient, { actor: "driver" }));
+			register(createProcessStopTool(processClient, { actor: "driver" }));
+			register(createProcessResizeTool(processClient));
 		}
 	}
 	return r;
