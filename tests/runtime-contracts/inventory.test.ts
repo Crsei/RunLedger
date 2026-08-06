@@ -25,6 +25,8 @@ describe("Runtime public contract inventory", () => {
 			"adapter-ports",
 			"user-home-layout",
 			"control-telemetry",
+			"session-owner",
+			"session-server",
 			"host-process",
 			"public-surface",
 		]);
@@ -58,6 +60,8 @@ describe("Runtime public contract inventory", () => {
 			"src/runtime/model-routing",
 			"src/runtime/modes",
 			"src/runtime/context",
+			"src/runtime/session-owner",
+			"src/runtime/session-server",
 			"src/runtime/host",
 			"src/runtime/process",
 		]);

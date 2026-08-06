@@ -13,6 +13,14 @@
 > 的 P0–P6 已 `agent-verified`；本计划不重新设计或复制这些合同，只负责把它们分批接入
 > 当前生产 `InteractiveMode`、OpenTUI presentation 与 Host/controller port。
 >
+> **owner 路由：** 生产 Host 是现行基线（[`runtime/05`](../runtime/05-multi-client-background-terminal-refactor-plan.md)）；
+> 替代实施权威是 [`runtime/06`](../runtime/06-session-owner-runtime-replacement-plan.md)。R0 起 TUI 只消费
+> session owner 合同与 public barrel，禁止新增 Host 消费；R7 后接入统一 attach/claim TCP facade。
+>
+> **owner 路由：** 生产 Host 是现行基线（[`runtime/05`](../runtime/05-multi-client-background-terminal-refactor-plan.md)）；
+> 替代实施权威是 [`runtime/06`](../runtime/06-session-owner-runtime-replacement-plan.md)。R0 起 TUI 只消费
+> session owner 合同与 public barrel，禁止新增 Host 消费；R7 后接入统一 attach/claim TCP facade。
+>
 > **权威边界：** [`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md) 继续拥有
 > renderer、Bun 启动器、focus、resize、destroy 与 native frame 迁移；
 > [`18-opentui-streaming-performance-ux-plan.md`](18-opentui-streaming-performance-ux-plan.md)

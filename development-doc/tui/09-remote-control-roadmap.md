@@ -3,6 +3,8 @@
 > 本文件描述 RunLedger 未来如何让**非 TUI 代码**(daemon、`runledger remote send` CLI 子命令、外部 IDE 插件等)反向操作当前运行的 InteractiveMode。
 >
 > **本期 M0–M7 不实现**;本文件作为"远期契约位"留存,日后再决定落实时直接对照本文执行。
+>
+> **替代权威：** 本文的 daemon/远程控制路线与 [`runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md) 冲突部分（machine daemon、detach/autostart）已被 06 明确排除；多客户端接入改为 session owner 的 localhost TCP attach/claim 模型，现行基线仍为 [`runtime/05`](../runtime/05-multi-client-background-terminal-refactor-plan.md)。
 
 ---
 

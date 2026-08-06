@@ -13,7 +13,7 @@
 >
 > Runtime 公共契约来源：[`../runtime/00-reference.md`](../runtime/00-reference.md) 与 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)。
 >
-> 生产 Host/managed process 行为来源：[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)。
+> 生产 Host/managed process 行为来源（现行基线）：[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)；替代实施权威：[`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)（worktree 改绑 `sessionId + generation`，fence 不声称撤销外部副作用）。
 >
 > 当前多平台适配计划：[`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md)。
 >
@@ -69,7 +69,7 @@ RunLedger Runtime 新增文档的使用方式固定如下：
 
 - `runtime/00-reference.md` 是治理目标、术语和上游证据输入，不直接分配实现文件。
 - `runtime/04-governed-agent-harness-runtime-plan.md` 独占 Runtime 公共 ID、envelope/ref/receipt、event payload schema、projection 与 adapter port。
-- `runtime/05-multi-client-background-terminal-refactor-plan.md` 独占 production Host、client/driver/observer、durable command/subscription、managed process、pipe/PTY、private output 与 shutdown/recovery 行为。
+- `runtime/05-multi-client-background-terminal-refactor-plan.md` 独占 production Host、client/driver/observer、durable command/subscription、managed process、pipe/PTY、private output 与 shutdown/recovery 行为（现行基线，只作为迁移输入）；替代实施权威 `runtime/06-session-owner-runtime-replacement-plan.md`，R0 起禁止新增 machine leader、daemon、UDS/Named Pipe 与 Host lifecycle 行为。
 - 本计划消费上述契约并独占具体行为；发现契约缺口时先回到 Runtime 计划提交 exact schema/fixture，再继续实现，不在 `src/security/**` 或 `src/worktree/**` 复制公共类型。
 
 下文“Runtime Workspace/Security 契约域”指 [`04` 的 workspace、capability、approval 与 sandbox contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security),“Runtime Control/Telemetry 契约域”指 [`04` 的 control plane、policy、telemetry 与 remote metadata contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-control-telemetry)。

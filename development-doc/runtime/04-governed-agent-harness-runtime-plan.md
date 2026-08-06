@@ -339,11 +339,39 @@ router、manifest loader、Plan reducer/service、ContextEngine、token estimato
 Exact event:
 
 - `command.claimed`、`command.applied`、`command.rejected`、`command.reconciliation_required`;
-- `runtime.replacement_prepared`、`runtime.generation_activated`、`runtime.replacement_failed`;
 - `policy.effective_recorded`、`policy.normalization_recorded`;
 - `cost.recorded`、`cost.reconciled`、`telemetry.delivery_recorded`。
 
+Host 时代遗留的 `runtime.replacement_prepared`、`runtime.generation_activated`、`runtime.replacement_failed` 已在 R0 从当前 catalog 移除,由 [Session Owner 合同](#contract-session-owner) 的 `owner.*`/`driver.*`/`recovery.*` 事件取代;只有 Host legacy 源码与 `05` 历史文档允许出现该术语。
+
 daemon、transport、subscription worker、composition root、policy resolver、cost aggregator、exporter spool、remote executor、handoff/GC service 都不属于本计划。
+
+<a id="contract-session-owner"></a>
+
+### 3.9 Session Owner、fence、recovery 与 checkpoint cache
+
+Session Owner 是唯一 public owner contract(`06` 是唯一替代实施权威):Session 同一时刻至多一个 active owner,owner 生命周期跟随 attachment count,generation 是 durable-write fencing token。
+
+| Contract | 必需信息 |
+|---|---|
+| `SessionOwnerRecord` | sessionId/runtimeId、单调 generation、`unowned/starting/recovery_required/running/stopping`、loopback endpoint、heartbeat/ownerStarted/updated 时间戳;不含 authToken |
+| `OwnerFence` | sessionId + runtimeId + generation;每个 durable mutation 在同一 transaction 内验证 |
+| `OwnerEndpoint` | 只允许 `127.0.0.1:<1..65535>`;bind-before-publish,端口由 OS 分配 |
+| Claim/heartbeat | fresh/takeover CAS、`attached`/`claimed`/typed busy/schema error;heartbeat changes=0 等价 owner_fenced |
+| Handshake | protocolVersion/sessionId/expectedRuntimeId/expectedGeneration/authToken/clientId/clientCapabilities;错误全部 typed fail closed |
+| Owner/recovery event | `owner.claimed`、`owner.taken_over`、`owner.released`、`owner.fenced`、`driver.claimed`、`driver.released`、`driver.reset_on_takeover`、`recovery.verified_clean`、`recovery.verify`、`recovery.abort`、`recovery.resume_despite_uncertainty` |
+| Command intent + receipt | immutable `CommandIntent`(originGeneration)+ append-only `CommandAttemptReceipt`(outcome `started/committed/rejected/interrupted/uncertain/verified`,settledGeneration >= originGeneration) |
+| Checkpoint cache | `SessionCheckpointDescriptor` 绑定 sessionId + ownerGeneration + sourceSequence + snapshotDigest;boundary 只允许 `before_model/after_model/before_tool/after_tool/turn_completed/paused` |
+| Typed error | `owner_fenced`、`owner_store_busy`、`store_schema_too_new/too_old/incompatible`、`upgrade_requires_sessions_closed`、`session_owner_incompatible`、`legacy_host_active`、`recovery_barrier_active` 等 |
+
+Exact event 与字段 schema 冻结在 `src/runtime/session-owner/{types,schemas}.ts`、`src/runtime/session-server/protocol.ts` 与 `tests/runtime/{session-owner,session-server}/*.test.ts`(R0 退出条件:fixtures RED→GREEN、无两个 public owner contract)。
+
+硬规则:
+
+- `owner.*`/`driver.*`/`recovery.*` event 的 subject 是 session;driver 是 connection-scoped,`driver.claimed/released/reset_on_takeover` 递增 driverRevision,SQLite 不保存跨 connection 仍有效的 driver identity;
+- `generation` 只 fence SQLite durable mutation,不声称能撤销 filesystem/Git/subprocess/MCP/network 外部副作用;crash takeover 必须先进入 `RECOVERY_REQUIRED`,barrier 收口前 final leaf 拒绝新副作用;
+- checkpoint cache 是 acceleration cache,删除后必须能从 Event + Receipt 从 genesis 重建;cache 不得保存唯一事实;
+- authToken 属于 forbidden 分类:只存在受保护 owner row 与当前进程内存,不进入 event、Trace、Artifact、endpoint DTO 或诊断日志。
 
 <a id="contract-ports"></a>
 
@@ -548,11 +576,11 @@ daemon、transport、subscription worker、composition root、policy resolver、
 | Provider/API/Auth/catalog 行为 | [`providers/01-pi-ai-migration-plan.md`](../providers/01-pi-ai-migration-plan.md) 与当前代码/tests | model stream/compatibility bridge contract |
 | 现行 agent-loop、Agent、ledger、stdlib tools | `01`–`03` 历史计划、`AGENTS.md` 与当前代码/tests | 不由本计划改写其行为状态 |
 | 用户级 home 创建、旧目录 destructive migration、CLI 参数弃用 | [`storage-cli/02-user-home-migration-handoff.md`](../storage-cli/02-user-home-migration-handoff.md);现行旧行为见 [`storage-cli/01-project-layout-cli-plan.md`](../storage-cli/01-project-layout-cli-plan.md) | root/layout/permission/path-containment contract |
-| Local Runtime Host、多客户端 Control Plane、managed background terminal | [`05-multi-client-background-terminal-refactor-plan.md`](05-multi-client-background-terminal-refactor-plan.md) | command/query/ref/event/receipt 与保存位置 contract |
+| Session Owner Runtime、多客户端 Control Plane、managed background terminal | 替代实施权威：[`06-session-owner-runtime-replacement-plan.md`](06-session-owner-runtime-replacement-plan.md)；当前已实现 Host 基线：[`05-multi-client-background-terminal-refactor-plan.md`](05-multi-client-background-terminal-refactor-plan.md) | command/query/ref/event/receipt 与保存位置 contract；新行为不得继续扩展 machine/workspace Host |
 | Event Store writer/replay/reducer/recovery | 当前无本计划授权;实现前必须建立独立行为计划 | event/receipt/query ports |
 | Artifact CAS/redaction/retention/GC | 当前无本计划授权;实现前必须建立独立行为计划 | artifact/ref/intent/receipt ports |
 | Orchestrator/Verification/Multi-Agent | 当前无本计划授权;实现前必须建立独立行为计划 | goal/task/agent/evidence 被动合同 |
-| 其他 Daemon/Control Plane/Forge/Human Gate | 除 `05` 明确拥有的本地 Host/process surface 外当前无本计划授权;实现前必须建立独立行为计划 | command/query/composition/proposal ports |
+| 其他 Daemon/Control Plane/Forge/Human Gate | `06` 已明确排除 machine daemon；其余行为当前无本计划授权，实施前必须建立独立行为计划 | command/query/composition/proposal ports |
 | Telemetry exporter/remote executor/lifecycle service | 当前无本计划授权;安全执行部分仍受专项约束 | manifest/delivery/attestation/lifecycle refs |
 | TUI/CLI/IDE/CI client | 各产品专项或未来独立计划 | 只消费相同 public contract |
 

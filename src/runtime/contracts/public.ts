@@ -34,6 +34,11 @@ export * from "../context/compaction/types.ts";
 export * from "../context/compaction/schema.ts";
 export * from "../context/memory/types.ts";
 export * from "../context/memory/schema.ts";
+export * from "../session-owner/types.ts";
+export * from "../session-owner/schemas.ts";
+export * from "../session-server/protocol.ts";
+// R0:legacy Host 合同仍导出仅供 R9 删除前的生产回退窗口;新行为禁止消费,见
+// scripts/check-session-owner-boundaries.ts 的 R0-frozen allowlist。
 export * from "../host/types.ts";
 export * from "../host/contracts.ts";
 export type { HostCompositionDescriptor, ProductionHostCompositionDescriptor, TestHostCompositionDescriptor } from "../host/composition.ts";

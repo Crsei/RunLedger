@@ -8,7 +8,7 @@
 
 ## 0. 输入状态与使用方式
 
-本计划的目标目录已经存在 `00-reference.md`，但在本次审阅时该文件为 **0 字节空文件**。该文件仍保留不动。[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md) 是公共 contract 与 canonical `runledgerHome` 的权威入口；[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md) 拥有生产 Host、多客户端 Control Plane、driver fencing、managed process 与 durable command/subscription 行为。本文件继续结合 Codex、grok-build、RunLedger 当前实现和根目录 `AGENTS.md` 形成扩展侧唯一实施账本。
+本计划的目标目录已经存在 `00-reference.md`，但在本次审阅时该文件为 **0 字节空文件**。该文件仍保留不动。[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md) 是公共 contract 与 canonical `runledgerHome` 的权威入口；[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md) 是当前已实现的 machine/workspace Host 基线，仅作为迁移输入；替代实施权威是 [`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)，Extension/MCP/Hook/Skill 最终由每个 owned SessionRuntime 自己装配，无 shared broker。本文件继续结合 Codex、grok-build、RunLedger 当前实现和根目录 `AGENTS.md` 形成扩展侧唯一实施账本。
 
 ### 0.0.1 2026-08-04 历史实现切片证据
 
@@ -868,7 +868,7 @@ MVP 明确不做：
 
 - `development-doc/runtime/00-reference.md`
 - `development-doc/runtime/04-governed-agent-harness-runtime-plan.md` 的 [Workspace/Security contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-workspace-security)、[Resource contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-resources) 与 [Control/Telemetry contract](../runtime/04-governed-agent-harness-runtime-plan.md#contract-control-telemetry)
-- `development-doc/runtime/05-multi-client-background-terminal-refactor-plan.md` 的 Host ownership、driver fence、durable command/subscription、managed process 与 lifecycle contract
+- `development-doc/runtime/05-multi-client-background-terminal-refactor-plan.md` 的 Host ownership、driver fence、durable command/subscription、managed process 与 lifecycle contract（现行基线；替代权威 `development-doc/runtime/06-session-owner-runtime-replacement-plan.md`，R6 将扩展生命周期改绑 session-scoped SessionRuntime）
 - 计划生成的 `src/runtime/resources/{types,schemas,ports,events}.ts`
 
 ### Codex

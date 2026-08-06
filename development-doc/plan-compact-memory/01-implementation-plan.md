@@ -5,7 +5,7 @@
 > 适用范围:`src/runtime/`、`src/storage/`、`src/tui/`、`src/cli/`、canonical `runledgerHome` 与对应测试
 > 参考取证:[`00-reference.md`](00-reference.md)
 > 上位计划:[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)
-> 生产 Host/Control Plane 计划:[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)
+> 生产 Host/Control Plane 计划(现行基线):[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md);替代实施权威(目标):[`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)。新行为不得继续扩展 machine/workspace Host。
 
 ## 0. 文档定位与执行规则
 
