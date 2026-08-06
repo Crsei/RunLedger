@@ -47,6 +47,7 @@ export interface TuiInteractionState {
 	readonly viewportClearRevision: number;
 	readonly toolDetailsExpanded: boolean;
 	readonly composerEmpty: boolean;
+	readonly composerDraft: SafeBoundedText;
 	readonly transitionFrozen: boolean;
 }
 

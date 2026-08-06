@@ -29,11 +29,28 @@ export class ChatContainer implements Component {
   });
   private nextKey = 0;
 
+  // B2:Timeline projection 通道（生产路径）；push() 仅保留给组件级测试。
+  private timelineBlocks: readonly PresentationBlock[] | undefined;
+  private timelineGeneration = -1;
+  private presentCache: { readonly generation: number; readonly width: number; readonly blocks: PresentationBlock[] } | undefined;
+
   invalidate(): void {
     this.presentationCache.clear();
     for (const { component } of this.children) {
       component.invalidate();
     }
+  }
+
+  /** B2:Timeline projection 一次性替换 chat 内容；block id 必须稳定。 */
+  setTimelineBlocks(blocks: readonly PresentationBlock[], generation: number): void {
+    this.timelineBlocks = blocks;
+    this.timelineGeneration = generation;
+    this.presentCache = undefined;
+    this.presentationCache.clear();
+  }
+
+  getTimelineGeneration(): number {
+    return this.timelineGeneration;
   }
 
   push(component: Component, key?: string): void {
@@ -43,7 +60,9 @@ export class ChatContainer implements Component {
   /** M8d/clear 命令:清空 chat viewport。 */
   clear(): void {
     this.children.length = 0;
+    this.timelineBlocks = undefined;
     this.presentationCache.clear();
+    this.presentCache = undefined;
   }
 
   /** 取最末追加的组件,便于 InteractiveMode 调其 setPartial。 */
@@ -52,6 +71,9 @@ export class ChatContainer implements Component {
   }
 
   render(width: number): string[] {
+    if (this.timelineBlocks !== undefined) {
+      return this.timelineBlocks.map((block) => fitToWidth(("content" in block ? block.content : ""), width));
+    }
     const lines: string[] = [];
     for (const { component } of this.children) {
       try {
@@ -69,6 +91,17 @@ export class ChatContainer implements Component {
   }
 
   present(width: number): PresentationBlock[] {
+    if (this.timelineBlocks !== undefined) {
+      if (this.presentCache?.generation === this.timelineGeneration && this.presentCache.width === width) {
+        return this.presentCache.blocks;
+      }
+      const blocks = this.timelineBlocks.map((block) => ({
+        ...block,
+        content: "content" in block ? fitToWidth(block.content, width) : undefined,
+      })) as PresentationBlock[];
+      this.presentCache = { generation: this.timelineGeneration, width, blocks };
+      return blocks;
+    }
     const blocks: PresentationBlock[] = [];
     for (const { key, component } of this.children) {
       try {

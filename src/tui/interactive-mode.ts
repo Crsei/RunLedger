@@ -46,27 +46,39 @@ import { Footer } from "./components/footer.ts";
 import { KeybindingHints } from "./components/keybinding-hints.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
-import { UserMessageComponent } from "./components/user-message.ts";
-import { AssistantMessageComponent } from "./components/assistant-message.ts";
-import { ToolCallComponent } from "./components/tool-call.ts";
-import { ToolResultComponent } from "./components/tool-result.ts";
-import { CustomMessageComponent } from "./components/custom-message.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
-import { BashExecutionComponent } from "./components/bash-execution.ts";
-import { DiffPreviewComponent } from "./components/diff-preview.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
 import type { SelectItem } from "./index.ts";
-import type { AgentToolResult } from "../runtime/types.ts";
+import type { Component, OverlayOptions } from "./primitives.ts";
+import type { TuiOverlayState } from "./application/state.ts";
 import { createAppKeyListener } from "./keybindings/app-keys.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
-import type { ProcessOverlayController } from "./process/controller-adapter.ts";
+import type { ProcessOverlayController, ProcessOverlayHostClient } from "./process/controller-adapter.ts";
 import { ProcessOverlayComponent } from "./process/overlay-component.ts";
+import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
 import { DeltaCoalescer, type AppendTextDelta } from "./opentui/delta-coalescer.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import { approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
+import type { TuiBootstrapSnapshot } from "./presentation/types.ts";
+import type { TuiState } from "./application/state.ts";
+import { createInitialTuiState } from "./application/initial-state.ts";
+import type { TimelineEvent } from "./timeline/types.ts";
+import { TimelineEventProjector } from "./timeline/event-projector.ts";
+import { timelineToBlocks } from "./timeline/selectors.ts";
+import type { TuiStore } from "./application/store.ts";
+import { createTuiStore } from "./application/store.ts";
+import type { TuiDomainPorts } from "./application/ports.ts";
+import { capabilitiesFromPorts } from "./application/ports.ts";
+import { createInteractiveSessionAdapter, type InteractiveSessionAdapter } from "./adapters/interactive-session.ts";
+import { createHostDomainPorts } from "./adapters/host-domain.ts";
+import type { EffectRunner } from "./application/effect-runner.ts";
+import { createEffectRunner } from "./application/effect-runner.ts";
+import type { TuiEffect } from "./application/effect.ts";
+import type { CorrelatedRequestRef } from "./application/common.ts";
+import type { TuiResult } from "./application/result.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -87,10 +99,14 @@ export interface InteractiveModeOptions {
   onThinkingChange?: (level: ModelThinkingLevel) => void;
   /** R9:由 Host facade 提供的 safe process list/output/mutation adapter。 */
   processOverlayController?: ProcessOverlayController;
+  /** B7:process output 的真实 Host client（composition root 注入；缺失时 bridge 只读）。 */
+  processOverlayClient?: ProcessOverlayHostClient;
   /** P6:workspace/path 能力标签（真实 runner 证据矩阵），Footer 右侧显示；缺省不显示。 */
   workspaceCapability?: string;
   /** 可选的分层渲染 telemetry sink；不参与 UI 调度决策。 */
   performanceObserver?: TuiPerformanceObserver;
+  /** B1:显式 bootstrap snapshot；缺省由 controller/agent 派生。 */
+  initialBootstrap?: TuiBootstrapSnapshot;
 }
 
 /** M8d:/model 切换条目;由 caller(demo)注入候选。 */
@@ -144,27 +160,38 @@ export class InteractiveMode implements FooterSnapshotProvider {
     softEventLimit: 512,
     hardEventLimit: 4096,
   });
-  private readonly pendingAssistantPartials = new Map<string, AssistantMessage>();
+  // B2:帧前 flush 时按 correlationId 累积完整正文快照，再发 message_update
+  private readonly pendingMessageBuffers = new Map<string, { text: string; thinking: string }>();
 
-  // M3 toolExecution 映射:toolCallId -> ToolCallComponent;tool_execution_end 后移除。
-  private readonly toolCallComponents: Map<
-    string,
-    ToolCallComponent | BashExecutionComponent | DiffPreviewComponent
-  > = new Map();
+  // B2:Timeline 为 chat 内容的唯一业务 owner；DeltaCoalescer 只做 lossless append/帧前 drain。
+  private timelineProjector = new TimelineEventProjector();
+
+  // B3:client-local store 为 interaction/presentation 的唯一 owner
+  private store: TuiStore;
+  private lastTimelineGeneration = -1;
+  private unsubscribeStore: (() => void) | undefined;
+
+  // B4:EffectRunner + 领域 ports（capability 缺失 = undefined 端口，不发 effect）
+  private readonly ports: TuiDomainPorts;
+  private readonly runner: EffectRunner;
+  private effectSequence = 0;
+  private correlationSequence = 0;
 
   // 失败护栏状态(M1 不主动触发)
   private consecutiveInitFailures = 0;
 
-  // M8d/e:modelRegistry + thinking level 切换状态
-  private modelRegistry: ModelSwitchEntry[];
-  private thinkingLevel: ModelThinkingLevel;
-  private readonly onThinkingChange?: (level: ModelThinkingLevel) => void;
+  // B5:model/thinking 状态由 workflow 唯一持有（controller 是 authority）
   private readonly workspaceCapability?: string;
+  private authAdapter: InteractiveSessionAdapter;
   private lastIdleCtrlC = 0;
   private quitting = false;
   private readonly exitPromise: Promise<void>;
   private readonly resolveExit: () => void;
   private processOverlayComponent: ProcessOverlayComponent | undefined;
+  private readonly initialBootstrap?: TuiBootstrapSnapshot;
+
+  /** B1-B3:TuiState 由 store 唯一持有（此字段已由 store 取代，防止误用）。 */
+  private readonly storeRef: undefined = undefined;
 
   constructor(opts: InteractiveModeOptions) {
     if (!opts.controller && !opts.agent) {
@@ -176,10 +203,35 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.performanceObserver = opts.performanceObserver;
     this.terminal = opts.terminal ?? new ProcessTerminal();
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
-    this.modelRegistry = opts.modelRegistry ?? [];
-    this.thinkingLevel = opts.controller?.currentSelection.thinkingLevel ?? opts.initialThinkingLevel ?? "off";
-    this.onThinkingChange = opts.onThinkingChange;
     this.workspaceCapability = opts.workspaceCapability;
+    this.initialBootstrap = opts.initialBootstrap;
+    // B4:ports 聚合 controller + Host domain；runner 只执行 effect 并回送 TuiResult
+    this.authAdapter = createInteractiveSessionAdapter(this.controller);
+    this.ports = {
+      ...this.authAdapter.ports,
+      ...createHostDomainPorts(this.controller?.queryHostDomain === undefined
+        ? undefined
+        : {
+            query: (operation, body) => this.controller?.queryHostDomain!(operation, body ?? {}) ?? Promise.resolve({ ok: false as const, code: "host_unavailable" }),
+            command: (operation, body) => this.controller?.commandHostDomain!(operation, body ?? {}) ?? Promise.resolve({ ok: false as const, code: "host_unavailable" }),
+          }),
+    };
+    // B7:process passive bridge 复用既有 overlay facade（无第二 manager）
+    const bridge = createProcessPassiveBridge(this.processOverlayController, opts.processOverlayClient);
+    if (bridge !== undefined) this.ports = { ...this.ports, process: bridge };
+    this.store = createTuiStore(createInitialTuiState({
+      bootstrap: this.deriveBootstrap(),
+      capabilities: {
+        ...capabilitiesFromPorts(this.ports, { sessionCatalog: this.controller !== undefined, sessionMutation: this.controller !== undefined }),
+        // P1-3:reverse approval 的 authority 是 Host frame（driver TUI 可处理），不依赖 approval port
+        approval: this.controller === undefined ? { state: "unavailable", reason: "no-controller" } : { state: "available" },
+      },
+    }));
+    this.runner = createEffectRunner({
+      ports: this.ports,
+      currentGeneration: () => this.store.getState().authorityGeneration,
+      onResult: (result) => this.store.dispatch({ type: "query.result", result }),
+    });
     let resolveExit: (() => void) | undefined;
     this.exitPromise = new Promise<void>((resolve) => {
       resolveExit = resolve;
@@ -196,11 +248,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
     // 装配组件树
     this.refs = this.assembleTree();
+    // B3:store 订阅驱动 chat presentation（timeline generation 变化才重投影）
+    this.unsubscribeStore = this.store.subscribe((next) => {
+      if (next.timeline.generation !== this.lastTimelineGeneration) {
+        this.lastTimelineGeneration = next.timeline.generation;
+        this.refs.chat.setTimelineBlocks(timelineToBlocks(next.timeline), next.timeline.generation);
+      }
+    });
     if (this.processOverlayController) {
       this.processOverlayComponent = new ProcessOverlayComponent({
         controller: this.processOverlayController,
         onClose: () => {
-          this.ui.hideOverlay();
+          this.closeOverlay();
           this.ui.setFocus(this.refs.editor);
           this.ui.requestRender();
         },
@@ -254,6 +313,42 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.setFocus(editor);
 
     return { header, loadedResources, chat, status, editor, footer, hints };
+  }
+
+  /** B1:bootstrap 派生；composition root 显式传入时优先。 */
+  private deriveBootstrap(): TuiBootstrapSnapshot {
+    if (this.initialBootstrap) return this.initialBootstrap;
+    const sessionId = this.controller?.sessionId ?? this.agent?.sessionId;
+    return {
+      workspaceLabel: "unknown",
+      session: {
+        id: sessionId ?? "unknown-session",
+        format: "current-canonical",
+        lifecycle: sessionId ? "active" : "unknown",
+      },
+      authorityGeneration: 1,
+    };
+  }
+
+  /** B3:只读暴露 TuiState（store 为唯一 owner）。 */
+  getTuiState(): TuiState {
+    return this.store.getState();
+  }
+
+  /** B3:overlay 状态意图写入 store；组件/焦点仍由 renderer 管理（view side-effect）。 */
+  private showOverlayModal(component: Component, options?: OverlayOptions, kind: Exclude<TuiOverlayState["state"], "closed"> = "command"): void {
+    this.store.dispatch({
+      type: "overlay.open",
+      overlay: { state: kind, requestId: `overlay-${this.store.getState().interaction.generation + 1}` },
+    });
+    this.ui.showOverlay(component, options);
+    this.ui.requestRender();
+  }
+
+  /** B3:overlay 关闭意图写入 store。 */
+  private closeOverlay(): void {
+    this.store.dispatch({ type: "overlay.close" });
+    this.ui.hideOverlay();
   }
 
   /** 用 dark 主题色拼一个最小 SelectListTheme 占位;M6 阶段补完整色槽。 */
@@ -348,6 +443,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (this.quitting) return;
     this.quitting = true;
     this.flushStreamingDeltas();
+    // B8:先取消所有 in-flight effects，再执行 lifecycle cleanup（防止 Host 查询在销毁后回写）
+    this.runner.cancelAll();
+    // P2-2:destroy 清理所有 active timeline rows
+    this.dispatchTimeline(this.timelineProjector.project({ kind: "cleanup", reason: "destroy" }));
     if (this.inFlight()) {
       this.controller?.interrupt();
       this.agent?.interrupt();
@@ -357,6 +456,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribe();
       this.unsubscribe = undefined;
     }
+    this.unsubscribeStore?.();
+    this.unsubscribeStore = undefined;
     this.unsubscribeThemeMode?.();
     this.unsubscribeThemeMode = undefined;
     this.unsubscribeRenderPreparation?.();
@@ -376,25 +477,66 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.handleSubmit(text);
   }
 
-  /** Handles Host-owned reverse approval requests in the authenticated driver TUI. */
+  /** B6:Host 逆向 approval 请求 —— inbound action → overlay decision → Host result 全链。 */
   handleReverseRequest(frame: HostFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
     const view = parseApprovalReverseRequest(frame.body);
     if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
     return new Promise<Record<string, unknown>>((resolve) => {
       let settled = false;
+      // inbound:approval workflow 进入 loading（可观测的 pending 状态）
+      const approvalId = `reverse-${Date.now().toString(36)}`;
+      const effect = this.createEffect("approval.resolve", {
+        approvalId,
+        expectedDecisionRevision: 0,
+        decision: "cancelled" as const,
+      });
+      this.store.dispatch({ type: "query.start", effect });
       const finish = (body: Record<string, unknown>): void => {
         if (settled) return;
         settled = true;
         signal.removeEventListener("abort", onAbort);
-        this.ui.hideOverlay();
+        this.closeOverlay();
         resolve(body);
       };
-      const onAbort = (): void => finish({ ok: false, code: "approval_aborted" });
+      const settleResult = (result: TuiResult): void => {
+        this.store.dispatch({ type: "query.result", result });
+      };
+      const onAbort = (): void => {
+        settleResult({ status: "aborted", ref: effect, reason: "approval_aborted" });
+        finish({ ok: false, code: "approval_aborted" });
+      };
       if (signal.aborted) {
         onAbort();
         return;
       }
-      const choose = (decision: ApprovalDecision): void => finish(approvalDecisionBody(decision));
+      const choose = (decision: ApprovalDecision): void => {
+        // B6:决策经 timeline notice 记录（correlated chain 由 Host receipt 承载）
+        this.dispatchTimeline([{
+          type: "notice",
+          generation: 0,
+          correlationId: `approval-${this.store.getState().timeline.committedRows.length}`,
+          severity: "info",
+          message: { text: `approval ${decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision} for ${view.toolName}`).byteLength },
+        }]);
+        settleResult({
+          status: "completed",
+          ref: effect,
+          value: {
+            items: [{
+              approvalId,
+              sessionId: this.store.getState().bootstrap.session.id,
+              state: "resolved",
+              summary: { text: `${view.toolName}: ${decision}`, truncated: false, byteLength: new TextEncoder().encode(`${view.toolName}: ${decision}`).byteLength },
+              ticketDigestPrefix: { text: "reverse", truncated: false, byteLength: 7 },
+              decisionRevision: 0,
+              authorityGeneration: effect.generation,
+            }],
+            authorityGeneration: effect.generation,
+            decisionRevision: 0,
+          },
+        });
+        finish(approvalDecisionBody(decision));
+      };
       const modal = new SelectorModal({
         theme: this.theme,
         selectListTheme: makeSelectListTheme(this.theme),
@@ -408,7 +550,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         onCancel: () => choose("cancel"),
       });
       signal.addEventListener("abort", onAbort, { once: true });
-      this.ui.showOverlay(modal, { anchor: "center" });
+      this.showOverlayModal(modal, { anchor: "center" }, "approval");
       this.ui.requestRender();
     });
   }
@@ -445,7 +587,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       title: "/commands",
       items,
       onSelect: (item) => {
-        this.ui.hideOverlay();
+        this.closeOverlay();
         // 二级 selector 派发
         switch (item.value) {
           case "/model":
@@ -476,7 +618,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
             void this.openExtensionSelector("hook.list", "hooks", "/hooks");
             break;
           case "/plan":
-            void this.runDomainCommand("plan.inspect", {}, "/plan", true);
+            void this.openPlanWorkflow();
             break;
           case "/compact":
             void this.runDomainCommand("compaction.list", {}, "/compact", true);
@@ -494,113 +636,115 @@ export class InteractiveMode implements FooterSnapshotProvider {
             this.echoPrompt(item.value);
         }
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.closeOverlay(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
   }
 
   /**
    * 打开预设 prompt 选择器(M5 占位,M7+ 真实模板接入)。
    */
+  /** B5:/prompt —— 本地 demo 无 prompt authority 时显示 unavailable，不回退内建模板。 */
   openPromptSelector(): void {
-    const items: SelectItem[] = [
-      { value: "Summarize this repo", label: "Summarize this repo" },
-      { value: "Run tests", label: "Run tests" },
-    ];
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: "/prompt templates",
-      items,
-      onSelect: (item) => this.echoPrompt(item.label),
-      onCancel: () => this.ui.hideOverlay(),
-    });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    if (this.store.getState().capabilities.prompt.state !== "available") {
+      this.showNotice("Prompt templates are unavailable in this session.", "error");
+      return;
+    }
+    this.showNotice("Prompt templates are unavailable in this session.", "error");
   }
 
   /**
-   * 打开 mcp server 选择器;经 Host domain 查询真实 catalog,不再展示空列表。
-   * 选择项只展示状态,不提供 client-local 启停(启停走 /mcp 之外的 Host mutation 命令)。
+   * B4:打开 mcp server 选择器；经 extension.inspect workflow 查询真实 catalog，
+   * 不再直接解析 Host raw response。选择项只展示状态，不提供 client-local 启停。
    */
-  async openMcpServerSelector(): Promise<void> {
-    const controller = this.controller;
-    if (!controller?.queryHostDomain) {
+  openMcpServerSelector(): Promise<void> {
+    return this.openExtensionWorkflowSelector("mcp-server", "/mcp");
+  }
+
+  /**
+   * B4:打开 plugins/skills/hooks 资源选择器；经 extension.inspect workflow
+   * 查询真实 snapshot。只读展示 enabled/trusted/ready 状态。
+   */
+  openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", _kindLabel: string, commandName: string): Promise<void> {
+    const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : "hook";
+    return this.openExtensionWorkflowSelector(kind, commandName);
+  }
+
+  /** B4:extension workflow 驱动的资源选择器（loading → ready/empty/error/unavailable）。 */
+  private async openExtensionWorkflowSelector(kind: "mcp-server" | "plugin" | "skill" | "hook", commandName: string): Promise<void> {
+    if (this.store.getState().capabilities.extensions.state !== "available") {
       this.showNotice("Host domain query is unavailable in this session.", "error");
       return;
     }
-    const result = await controller.queryHostDomain("mcp.list", {}).catch((error: unknown) => {
-      this.showNotice(`MCP query failed: ${String(error)}`, "error");
-      return undefined;
-    });
-    if (result === undefined) return;
-    const servers = Array.isArray(result.servers) ? result.servers : [];
-    if (servers.length === 0) {
-      this.showNotice("No MCP servers are configured or connected.", "note");
+    const effect = this.createEffect("extension.inspect");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("extensionWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      const value = workflow.value as { readonly resources?: readonly { readonly kind: string; readonly resourceId: string; readonly label: { readonly text: string }; readonly trust: string; readonly activation: string; readonly digestPrefix: { readonly text: string } }[] };
+      const resources = (value.resources ?? []).filter((resource) => resource.kind === kind);
+      if (resources.length === 0) {
+        this.showNotice(`No ${kind} resources are discovered in the current snapshot.`, "note");
+        return;
+      }
+      const items: SelectItem[] = resources.map((resource) => ({
+        value: resource.resourceId,
+        label: resource.label.text,
+        description: `${resource.trust} · ${resource.activation}${resource.digestPrefix.text.length > 0 ? ` · ${resource.digestPrefix.text}` : ""}`,
+      }));
+      const modal = new SearchableSelectorModal({
+        title: `${commandName} (${resources.length})`,
+        items,
+        maxVisible: 12,
+        onSelect: () => this.closeOverlay(),
+        onCancel: () => this.closeOverlay(),
+      });
+      this.showOverlayModal(modal, { anchor: "bottom-left" });
       return;
     }
-    const items: SelectItem[] = servers.map((server: Record<string, unknown>) => ({
-      value: String(server.serverId ?? ""),
-      label: String(server.serverId ?? "unknown"),
-      description: `${String(server.transport ?? "unknown")} · ${String(server.state ?? "unknown")} · ${String(server.tools ?? []).length} tools`,
-    }));
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: `/mcp servers (${servers.length})`,
-      items,
-      onSelect: () => this.ui.hideOverlay(),
-      onCancel: () => this.ui.hideOverlay(),
-    });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    if (workflow.state === "empty") {
+      this.showNotice(`No ${kind} resources are discovered in the current snapshot.`, "note");
+      return;
+    }
+    if (workflow.state === "error") {
+      this.showNotice(`${commandName} query failed: ${workflow.message}`, "error");
+      return;
+    }
+    this.showNotice(`${commandName} query is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
+  }
+
+  /** B7:/plan 走 plan.inspect workflow（typed adapter 投影，不再 raw 解析）。 */
+  private async openPlanWorkflow(): Promise<void> {
+    if (this.store.getState().capabilities.plan.state !== "available") {
+      this.showNotice("/plan requires an authenticated Host connection.", "error");
+      return;
+    }
+    if (this.inFlight()) {
+      this.showNotice("/plan is available when the current turn is idle.", "note");
+      return;
+    }
+    const effect = this.createEffect("plan.inspect", { planId: "", expectedRevision: 0 });
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("planWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      const view = workflow.value as { readonly reference?: { readonly planId: string; readonly revision: number; readonly digestPrefix: { readonly text: string } }; readonly title: { readonly text: string }; readonly status: string; readonly summary: { readonly text: string } };
+      this.showNotice(
+        `/plan: ${view.title.text} · ${view.status} · rev=${view.reference?.revision ?? 0}${view.summary.text.length > 0 ? ` · ${view.summary.text}` : ""}`,
+      );
+      return;
+    }
+    if (workflow.state === "error") {
+      this.showNotice(`/plan failed: ${workflow.message}`, "error");
+      return;
+    }
+    this.showNotice("/plan state is unavailable in this session.", "error");
   }
 
   /**
-   * 打开 plugins/skills/hooks 资源选择器;经 Host domain 查询真实 snapshot。
-   * 只读展示 enabled/trusted/ready 状态;mutation 必须走 Host 控制命令。
-   */
-  async openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", kindLabel: string, commandName: string): Promise<void> {
-    const controller = this.controller;
-    if (!controller?.queryHostDomain) {
-      this.showNotice("Host domain query is unavailable in this session.", "error");
-      return;
-    }
-    const result = await controller.queryHostDomain(operation, {}).catch((error: unknown) => {
-      this.showNotice(`${commandName} query failed: ${String(error)}`, "error");
-      return undefined;
-    });
-    if (result === undefined) return;
-    const descriptors = Array.isArray(result.descriptors) ? result.descriptors : [];
-    if (descriptors.length === 0) {
-      this.showNotice(`No ${kindLabel} are discovered in the current snapshot.`, "note");
-      return;
-    }
-    const items: SelectItem[] = descriptors.map((descriptor: Record<string, unknown>) => {
-      const identity = (descriptor.identity ?? {}) as Record<string, unknown>;
-      const name = String(identity.qualifiedId ?? descriptor.displayName ?? "unknown");
-      const state = `${descriptor.enabled === true ? "enabled" : "disabled"} · ${descriptor.trusted === true ? "trusted" : "untrusted"} · ${descriptor.ready === true ? "ready" : descriptor.activation ?? "blocked"}`;
-      return {
-        value: name,
-        label: name,
-        description: state,
-      };
-    });
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: `${commandName} (${descriptors.length})`,
-      items,
-      onSelect: () => this.ui.hideOverlay(),
-      onCancel: () => this.ui.hideOverlay(),
-    });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
-  }
-
-  /**
-   * 执行 Host-owned plan/compact/memory/remember domain 命令并把结果
-   * 投影成 notice。mutation 命令经 commandHostDomain（Host 持有 durable
-   * intent/receipt 与 driver fence）；只读查询走 queryHostDomain。
-   * 本地 controller 无 Host 通道时给出 typed notice，不装配 client 侧
-   * manager。
+   * 执行 Host-owned compact/memory domain 命令并把结果投影成 notice。mutation
+   * 命令经 commandHostDomain（Host 持有 durable intent/receipt 与 driver fence）；
+   * 只读查询走 queryHostDomain。plan.inspect 已迁移到 plan workflow（B7）。
    */
   async runDomainCommand(
     operation: string,
@@ -634,7 +778,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.showNotice("Managed process view is unavailable in this session.", "error");
       return;
     }
-    this.ui.showOverlay(overlay, { anchor: "center" });
+    this.showOverlayModal(overlay, { anchor: "center" }, "process");
     void overlay.openList();
   }
 
@@ -645,7 +789,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.showNotice("A valid managed execution id is required.", "error");
       return;
     }
-    this.ui.showOverlay(overlay, { anchor: "center" });
+    this.showOverlayModal(overlay, { anchor: "center" }, "process");
     void overlay.openTerminal(executionId as ExecutionId);
   }
 
@@ -655,51 +799,99 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /**
-   * 打开 /model 选择器(M8d)。从 modelRegistry 取候选 SelectItem;
-   * 选中后调 agent.setModel(modelEntry.model),Footer 下次 pull 自动反映新 modelId。
+   * B5:/model 选择器走 model workflow；controller 返回 authoritative selection
+   * 后再更新 view。local demo（无 controller）显示 unavailable，不回退假 registry。
    */
-  openModelSelector(): void {
-    if (this.controller) {
-      void this.openControllerModelSelector();
+  openModelSelector(provider?: string): void {
+    void this.openModelWorkflowSelector(provider);
+  }
+
+  private async openModelWorkflowSelector(provider?: string): Promise<void> {
+    if (this.store.getState().capabilities.model.state !== "available") {
+      this.showNotice("Model selection is unavailable in this session.", "error");
       return;
     }
-    const items: SelectItem[] = this.modelRegistry.map((entry) => ({
-      value: entry.id,
-      label: entry.label,
-      description: entry.description,
-    }));
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: "/model — switch model",
-      items,
-      onSelect: (item) => {
-        const entry = this.modelRegistry.find((e) => e.id === item.value);
-        if (entry) {
-          this.agent?.setModel(entry.model);
-        }
-        this.ui.hideOverlay();
-      },
-      onCancel: () => this.ui.hideOverlay(),
-    });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    const effect = this.createEffect("model.list", { providerId: provider ?? "" });
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      const models = (workflow.value as { readonly models?: readonly { readonly providerId: string; readonly modelId: string; readonly label: { readonly text: string }; readonly availability: string }[] }).models ?? [];
+      if (models.length === 0) {
+        this.showNotice(provider
+          ? `No available models for ${provider}. Configure authentication first.`
+          : "No available models. Use /provider or /login first.", "error");
+        return;
+      }
+      const items: SelectItem[] = models.map((model) => ({
+        value: `${model.providerId}/${model.modelId}`,
+        label: model.label.text,
+        description: `[${model.providerId}]`,
+      }));
+      const modal = new SearchableSelectorModal({
+        title: provider ? `/model — ${provider}` : "/model — configured providers",
+        items,
+        maxVisible: 12,
+        onSelect: (item) => {
+          this.closeOverlay();
+          void this.selectModelByKey(item.value);
+        },
+        onCancel: () => this.closeOverlay(),
+      });
+      this.showOverlayModal(modal, { anchor: "bottom-left" });
+      return;
+    }
+    if (workflow.state === "empty") {
+      this.showNotice("No available models. Use /provider or /login first.", "error");
+      return;
+    }
+    if (workflow.state === "error") {
+      this.showNotice(`Model discovery failed: ${workflow.message}`, "error");
+      return;
+    }
+    this.showNotice(`Model selection is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
+  }
+
+  /** B5:model.select effect；controller/Host 返回 authoritative selection 后 Footer 自动反映。 */
+  private async selectModelByKey(key: string): Promise<void> {
+    const [providerId, modelId] = key.split("/");
+    if (providerId === undefined || modelId === undefined) return;
+    const effect = this.createEffect("model.select", { providerId, modelId });
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      const selection = workflow.value as { readonly providerId?: string; readonly modelId?: string };
+      this.showNotice(`Model: ${selection.providerId ?? providerId}/${selection.modelId ?? modelId}`);
+    } else if (workflow.state === "error") {
+      this.showNotice(`Model switch failed: ${workflow.message}`, "error");
+    }
   }
 
   /**
-   * 打开 /thinking 选择器(M8e)。候选 ThinkingLevel;
-   * 选中后注入到当前 thinkingLevel,触发 agent.setState 透传到下次 prompt。
-   * 注:thinking level 切换是 streamFn options 责任;对用 createAnthropicAgent 装的 agent,
-   *   其 streamFn 包络读取 thinkingLevel closure;改 thinking 需要 streamFn 重建。
-   *   M8 简化:thinkingLevel 切换通过 hook 注入(由 caller 注册 onThinkingChange 回调);
-   *   默认实现仅记录到 this.thinkingLevel 供 Footer 显示。
+   * B5:/thinking 选择器走 thinking workflow；level 由 controller.setThinkingLevel
+   * 持久化（authority），Footer 从 workflow 读取。
    */
   openThinkingSelector(): void {
-    const model = this.controller?.currentSelection.model ?? this.agent?.state.model;
-    if (!model) {
-      this.showNotice("Select a model before configuring thinking.", "error");
+    void this.openThinkingWorkflowSelector();
+  }
+
+  private async openThinkingWorkflowSelector(): Promise<void> {
+    if (this.store.getState().capabilities.thinking.state !== "available") {
+      this.showNotice("Thinking configuration is unavailable in this session.", "error");
       return;
     }
-    const items: SelectItem[] = getSupportedThinkingLevels(model).map((level) => ({
+    const effect = this.createEffect("thinking.inspect");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
+    if (workflow.state !== "ready") {
+      this.showNotice("Thinking configuration is unavailable in this session.", "error");
+      return;
+    }
+    const snapshot = workflow.value as { readonly level: string; readonly availableLevels: readonly string[] };
+    const levels = snapshot.availableLevels.length > 0 ? snapshot.availableLevels : [snapshot.level];
+    const items: SelectItem[] = levels.map((level) => ({
       value: level,
       label: level,
       description: level === "off" ? "reasoning disabled" : "provider-supported reasoning",
@@ -710,28 +902,38 @@ export class InteractiveMode implements FooterSnapshotProvider {
       title: "/thinking — switch thinking level",
       items,
       onSelect: (item) => {
+        this.closeOverlay();
         void this.setThinkingLevel(item.value as ModelThinkingLevel);
-        this.ui.hideOverlay();
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.closeOverlay(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
   }
 
-  /**
-   * 切换 thinking level:记录到 this.thinkingLevel + 调可选 onThinkingChange 钩子。
-   * 默认钩子(由 demo 注入)负责 agent.streamFn 重建或 AgentLoopConfig 透传。
-   */
+  /** B5:thinking.select effect；authoritative level 由 controller 返回。 */
   async setThinkingLevel(level: ModelThinkingLevel): Promise<void> {
-    this.thinkingLevel = this.controller
-      ? await this.controller.setThinkingLevel(level)
-      : this.agent?.setThinkingLevel(level) ?? level;
-    this.onThinkingChange?.(this.thinkingLevel);
+    if (this.store.getState().capabilities.thinking.state !== "available") {
+      this.showNotice("Thinking configuration is unavailable in this session.", "error");
+      return;
+    }
+    const effect = this.createEffect("thinking.select", { level });
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
+    if (workflow.state === "error") {
+      this.showNotice(`Thinking switch failed: ${workflow.message}`, "error");
+    }
     this.ui.requestRender();
   }
 
+  /** FooterSnapshotProvider:thinking level 从 thinking workflow 读取（ready 时）。 */
   getThinkingLevel(): ModelThinkingLevel {
-    return this.thinkingLevel;
+    const workflow = this.store.getState().thinkingWorkflow;
+    if (workflow.state === "ready") {
+      const level = (workflow.value as { readonly level: ModelThinkingLevel | "unknown" }).level;
+      if (level !== "unknown") return level;
+    }
+    return "off";
   }
 
   /** FooterSnapshotProvider:由 Footer.render 周期性 pull。 */
@@ -750,7 +952,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.controller?.currentSelection.provider ?? this.agent?.state.model.provider ?? "<no-provider>";
   }
   getSessionId(): string {
-    return this.controller?.sessionId ?? this.agent?.sessionId ?? "<no-ledger>";
+    // B1:session identity 由 TuiState bootstrap 唯一持有
+    return this.store.getState().bootstrap.session.id;
   }
 
   /** FooterSnapshotProvider：workspace/path 能力标签（P6，不宣称 sandbox）。 */
@@ -805,7 +1008,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
           void this.openExtensionSelector("hook.list", "hooks", "/hooks");
           return;
         case "plan":
-          void this.runDomainCommand("plan.inspect", {}, "/plan", true);
+          void this.openPlanWorkflow();
           return;
         case "compact":
           void this.runDomainCommand("compaction.list", {}, "/compact", true);
@@ -828,6 +1031,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.openSlashCommands();
           return;
         case "clear":
+          this.pendingMessageBuffers.clear();
+          this.streamingDeltas.drain();
+          this.timelineProjector.resetRows();
           this.refs.chat.clear();
           this.ui.requestRender();
           return;
@@ -897,149 +1103,155 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private showNotice(text: string, kind: "note" | "error" = "note"): void {
-    this.refs.chat.push(new CustomMessageComponent({
-      theme: this.theme,
-      kind,
-      text,
-      timestamp: Date.now(),
-    }));
+    const severity = kind === "error" ? "error" : "info";
+    this.dispatchTimeline([{
+      type: "notice",
+      generation: 0,
+      correlationId: `notice-${this.store.getState().timeline.committedRows.length}-${this.store.getState().timeline.activeOrder.length}`,
+      severity,
+      message: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
+    }]);
     this.ui.requestRender();
   }
 
-  private async openControllerModelSelector(provider?: string): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    const models = await controller.getAvailableModels(provider).catch((error: unknown) => {
-      this.showNotice(`Model discovery failed: ${String(error)}`, "error");
-      return [];
-    });
-    if (models.length === 0) {
-      this.showNotice(provider
-        ? `No available models for ${provider}. Configure authentication first.`
-        : "No available models. Use /provider or /login first.", "error");
-      return;
-    }
-    const byKey = new Map(models.map((model) => [`${model.provider}/${model.id}`, model]));
-    const modal = new SearchableSelectorModal({
-      title: provider ? `/model — ${provider}` : "/model — configured providers",
-      items: models.map((model) => ({
-        value: `${model.provider}/${model.id}`,
-        label: model.id,
-        description: `[${model.provider}] ${model.name ?? ""}`,
-      })),
-      maxVisible: 12,
-      onSelect: (item) => {
-        this.ui.hideOverlay();
-        const model = byKey.get(item.value);
-        if (!model) return;
-        void controller.selectModel(model).then(() => {
-          this.thinkingLevel = controller.currentSelection.thinkingLevel;
-          this.showNotice(`Model: ${model.provider}/${model.id}`);
-        }, (error: unknown) => this.showNotice(String(error), "error"));
-      },
-      onCancel: () => this.ui.hideOverlay(),
-    });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
-  }
-
+  /** B5:/provider 走 provider workflow；configured → model selector，否则 auth 流。 */
   private async openProviderSelector(): Promise<void> {
-    const controller = this.controller;
-    if (!controller) {
-      this.showNotice("Provider configuration is unavailable in demo mode.", "error");
+    if (this.store.getState().capabilities.provider.state !== "available") {
+      this.showNotice("Provider configuration is unavailable in this session.", "error");
       return;
     }
-    const statuses = await controller.getProviderStatuses();
-    const byId = new Map(statuses.map((status) => [status.id, status]));
+    const effect = this.createEffect("provider.list");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("providerWorkflow", effect.correlationId);
+    if (workflow.state !== "ready") {
+      this.showNotice("Provider configuration is unavailable in this session.", "error");
+      return;
+    }
+    const providers = (workflow.value as { readonly providers?: readonly { readonly providerId: string; readonly label: { readonly text: string }; readonly status: string; readonly authKinds: readonly string[] }[] }).providers ?? [];
     const modal = new SearchableSelectorModal({
       title: "/provider — all built-ins",
-      items: statuses.map((status) => ({
-        value: status.id,
-        label: status.name,
-        description: status.configured
-          ? `configured${status.source ? ` · ${status.source}` : ""}`
-          : status.interactiveAuthTypes.length > 0
-            ? `login: ${status.interactiveAuthTypes.join("/")}`
+      items: providers.map((provider) => ({
+        value: provider.providerId,
+        label: provider.label.text,
+        description: provider.status === "ready"
+          ? "configured"
+          : provider.authKinds.length > 0
+            ? `login: ${provider.authKinds.join("/")}`
             : "ambient credential required",
       })),
       maxVisible: 12,
       onSelect: (item) => {
-        this.ui.hideOverlay();
-        const status = byId.get(item.value);
-        if (!status) return;
-        if (status.configured) {
-          void this.openControllerModelSelector(status.id);
-        } else if (status.interactiveAuthTypes.length > 0) {
-          void this.startLogin(status.id, status.interactiveAuthTypes);
+        this.closeOverlay();
+        const provider = providers.find((entry) => entry.providerId === item.value);
+        if (!provider) return;
+        if (provider.status === "ready") {
+          this.openModelSelector(provider.providerId);
+        } else if (provider.authKinds.length > 0) {
+          void this.startLogin(provider.providerId);
         } else {
           this.showNotice(
-            `${status.name} uses ambient credentials. Configure its environment/profile, then reopen /provider.`,
+            `${provider.label.text} uses ambient credentials. Configure its environment/profile, then reopen /provider.`,
             "error",
           );
         }
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.closeOverlay(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
   }
 
+  /** B5:/login 走 auth workflow（auth.inspect 找 provider，再 auth.login effect）。 */
   private async openLoginSelector(providerId?: string): Promise<void> {
-    const controller = this.controller;
-    if (!controller) {
-      this.showNotice("Login is unavailable in demo mode.", "error");
+    if (this.store.getState().capabilities.auth.state !== "available") {
+      this.showNotice("Login is unavailable in this session.", "error");
       return;
     }
+    const effect = this.createEffect("auth.inspect");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
+    if (workflow.state !== "ready") {
+      this.showNotice("Login is unavailable in this session.", "error");
+      return;
+    }
+    const providers = (workflow.value as { readonly providers?: readonly { readonly providerId: string; readonly providerLabel: { readonly text: string }; readonly configured: string; readonly authKind: string }[] }).providers ?? [];
     if (providerId) {
-      const status = (await controller.getProviderStatuses()).find((entry) => entry.id === providerId);
-      if (!status) {
+      const provider = providers.find((entry) => entry.providerId === providerId);
+      if (!provider) {
         this.showNotice(`Unknown provider: ${providerId}`, "error");
         return;
       }
-      await this.startLogin(status.id, status.interactiveAuthTypes);
+      await this.startLogin(provider.providerId);
       return;
     }
-    const statuses = (await controller.getProviderStatuses())
-      .filter((status) => status.interactiveAuthTypes.length > 0);
+    const loginable = providers.filter((provider) => provider.authKind !== "unknown" && provider.configured !== "yes");
+    if (loginable.length === 0) {
+      this.showNotice("No providers require interactive login.", "note");
+      return;
+    }
     const modal = new SearchableSelectorModal({
       title: "/login — provider",
-      items: statuses.map((status) => ({
-        value: status.id,
-        label: status.name,
-        description: status.interactiveAuthTypes.join("/"),
+      items: loginable.map((provider) => ({
+        value: provider.providerId,
+        label: provider.providerLabel.text,
+        description: provider.authKind,
       })),
       maxVisible: 12,
       onSelect: (item) => {
-        this.ui.hideOverlay();
-        const status = statuses.find((entry) => entry.id === item.value);
-        if (status) void this.startLogin(status.id, status.interactiveAuthTypes);
+        this.closeOverlay();
+        const provider = loginable.find((entry) => entry.providerId === item.value);
+        if (provider) void this.startLogin(provider.providerId);
       },
-      onCancel: () => this.ui.hideOverlay(),
+      onCancel: () => this.closeOverlay(),
     });
-    this.ui.showOverlay(modal, { anchor: "bottom-left" });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
   }
 
-  private async startLogin(providerId: string, types: AuthType[]): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    if (types.length === 0) {
+  /** B5:auth.login effect；interaction（secret/URL 提示）是短生命周期 owner。 */
+  private async startLogin(providerId: string): Promise<void> {
+    if (this.store.getState().capabilities.auth.state !== "available") {
+      this.showNotice("Login is unavailable in this session.", "error");
+      return;
+    }
+    const authKind = await this.providerAuthKind(providerId);
+    if (authKind === undefined) {
       this.showNotice(`${providerId} has no interactive login flow; configure ambient credentials.`, "error");
       return;
     }
-    const type = types.length === 1 ? types[0]! : await this.selectAuthType(types);
-    if (!type) return;
     const abortController = new AbortController();
     const interaction: AuthInteraction = {
       signal: abortController.signal,
       prompt: (prompt) => this.promptAuth(prompt, abortController),
       notify: (event) => this.showAuthEvent(event),
     };
-    this.showNotice(`Starting ${type} login for ${providerId}…`);
-    try {
-      await controller.login(providerId, type, interaction);
+    this.authAdapter.setAuthInteraction(interaction);
+    this.showNotice(`Starting ${authKind} login for ${providerId}…`);
+    const effect = this.createEffect("auth.login", { providerId, authKind });
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
+    this.authAdapter.setAuthInteraction(undefined);
+    if (workflow.state === "ready") {
       this.showNotice(`Authenticated ${providerId}.`);
-      await this.openControllerModelSelector(providerId);
-    } catch (error) {
-      if (!abortController.signal.aborted) this.showNotice(`Login failed: ${String(error)}`, "error");
+      this.openModelSelector(providerId);
+    } else if (workflow.state === "error") {
+      if (!abortController.signal.aborted) this.showNotice(`Login failed: ${workflow.message}`, "error");
+    } else {
+      this.showNotice(`Login is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
     }
+  }
+
+  /** B5:从 auth workflow 读 provider 的 authKind（避免直接调 controller）。 */
+  private async providerAuthKind(providerId: string): Promise<"api-key" | "oauth" | undefined> {
+    const effect = this.createEffect("auth.inspect");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
+    if (workflow.state !== "ready") return undefined;
+    const providers = (workflow.value as { readonly providers?: readonly { readonly providerId: string; readonly authKind: string }[] }).providers ?? [];
+    const kind = providers.find((entry) => entry.providerId === providerId)?.authKind;
+    return kind === "oauth" ? "oauth" : kind === "api-key" ? "api-key" : undefined;
   }
 
   private selectAuthType(types: AuthType[]): Promise<AuthType | undefined> {
@@ -1050,15 +1262,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
         title: "Authentication method",
         items: types.map((type) => ({ value: type, label: type === "api_key" ? "API key" : "OAuth" })),
         onSelect: (item) => {
-          this.ui.hideOverlay();
+          this.closeOverlay();
           resolve(item.value as AuthType);
         },
         onCancel: () => {
-          this.ui.hideOverlay();
+          this.closeOverlay();
           resolve(undefined);
         },
       });
-      this.ui.showOverlay(modal, { anchor: "bottom-left" });
+      this.showOverlayModal(modal, { anchor: "bottom-left" });
     });
   }
 
@@ -1066,7 +1278,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (prompt.type === "select") {
       return new Promise((resolve, reject) => {
         const cancel = () => {
-          this.ui.hideOverlay();
+          this.closeOverlay();
           reject(new Error("Authentication cancelled"));
         };
         const modal = new SelectorModal({
@@ -1079,7 +1291,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
             description: option.description,
           })),
           onSelect: (item) => {
-            this.ui.hideOverlay();
+            this.closeOverlay();
             resolve(item.value);
           },
           onCancel: () => {
@@ -1088,12 +1300,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
           },
         });
         prompt.signal?.addEventListener("abort", cancel, { once: true });
-        this.ui.showOverlay(modal, { anchor: "bottom-left" });
+        this.showOverlayModal(modal, { anchor: "bottom-left" });
       });
     }
     return new Promise((resolve, reject) => {
       const cancel = () => {
-        this.ui.hideOverlay();
+        this.closeOverlay();
         reject(new Error("Authentication cancelled"));
       };
       const modal = new AuthInputModal({
@@ -1102,7 +1314,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         placeholder: prompt.placeholder,
         secret: prompt.type === "secret",
         onSubmit: (value) => {
-          this.ui.hideOverlay();
+          this.closeOverlay();
           resolve(value);
         },
         onCancel: () => {
@@ -1111,7 +1323,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         },
       });
       prompt.signal?.addEventListener("abort", cancel, { once: true });
-      this.ui.showOverlay(modal, { anchor: "bottom-left" });
+      this.showOverlayModal(modal, { anchor: "bottom-left" });
     });
   }
 
@@ -1128,68 +1340,101 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
   }
 
+  /** B5:/logout 走 auth.logout effect；controller/Host 返回 authoritative 结果。 */
   private async handleLogout(providerId?: string): Promise<void> {
-    const controller = this.controller;
-    if (!controller) return;
-    const id = providerId ?? controller.currentSelection.provider;
+    if (this.store.getState().capabilities.auth.state !== "available") {
+      this.showNotice("Logout is unavailable in this session.", "error");
+      return;
+    }
+    const id = providerId ?? this.controller?.currentSelection.provider;
     if (!id) {
       this.showNotice("No provider selected.", "error");
       return;
     }
-    await controller.logout(id);
-    this.showNotice(`Logged out ${id}.`);
+    const effect = this.createEffect("auth.logout", { providerId: id });
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      this.showNotice(`Logged out ${id}.`);
+    } else if (workflow.state === "error") {
+      this.showNotice(`Logout failed: ${workflow.message}`, "error");
+    }
   }
 
   private replayInitialHistory(): void {
     if (!this.controller) return;
-    for (const warning of this.controller.warnings) this.showNotice(warning, "note");
-    for (const message of this.controller.messages) this.renderHistoricalMessage(message);
+    for (const warning of this.controller.warnings) this.dispatchTimeline([{
+      type: "notice",
+      generation: 0,
+      correlationId: `warning-${this.store.getState().timeline.committedRows.length}`,
+      severity: "warning",
+      message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
+    }]);
+    for (let index = 0; index < this.controller.messages.length; index += 1) {
+      const message = this.controller.messages[index];
+      if (message === undefined) continue;
+      this.dispatchTimeline(this.timelineProjector.project({ kind: "replay-message", message, index }));
+    }
+    // 对齐 projector 计数，保证后续 live 行 id 不与 replay 冲突
+    this.timelineProjector.setMessageIndex(this.controller.messages.length);
     if (this.controller.warnings.length > 0) {
       for (const entry of this.controller.auditEntries) {
         const name = typeof entry.payload.toolName === "string" ? entry.payload.toolName : "tool";
         const content = typeof entry.payload.content === "string" ? `: ${entry.payload.content}` : "";
-        this.showNotice(`${entry.type} ${name}${content}`);
+        this.dispatchTimeline([{
+          type: "notice",
+          generation: 0,
+          correlationId: `audit-${this.store.getState().timeline.committedRows.length}`,
+          severity: "info",
+          message: { text: `${entry.type} ${name}${content}`, truncated: false, byteLength: new TextEncoder().encode(`${entry.type} ${name}${content}`).byteLength },
+        }]);
       }
     }
   }
 
-  private renderHistoricalMessage(message: AgentMessage): void {
-    if (message.role === "user") {
-      this.refs.chat.push(new UserMessageComponent({
-        theme: this.theme,
-        text: messageText(message),
-        timestamp: Date.now(),
-      }));
-      return;
+  /** B4:生成唯一 effect（generation = authority generation；effectId/correlationId 递增）。 */
+  private createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect {
+    this.effectSequence += 1;
+    this.correlationSequence += 1;
+    const ref: CorrelatedRequestRef = {
+      generation: this.store.getState().authorityGeneration,
+      effectId: `effect-${this.effectSequence}`,
+      correlationId: `corr-${this.correlationSequence}`,
+    };
+    const effect = { type, ...ref } as TuiEffect;
+    if (extra !== undefined) {
+      Object.assign(effect as unknown as Record<string, unknown>, extra);
     }
-    if (message.role === "assistant") {
-      const component = new AssistantMessageComponent({
-        theme: this.theme,
-        partial: message as AssistantMessage,
-      });
-      component.finalize();
-      this.refs.chat.push(component);
-      for (const toolCall of message.content.filter((content) => content.type === "toolCall")) {
-        const call = new ToolCallComponent({
-          theme: this.theme,
-          toolCallId: toolCall.id,
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          initialStatus: "ok",
-        });
-        this.refs.chat.push(call);
-      }
-      return;
-    }
-    for (const result of message.content) {
-      this.refs.chat.push(new ToolResultComponent({
-        theme: this.theme,
-        toolCallId: result.toolCallId,
-        toolName: result.toolName,
-        result: { content: result.content, details: result.details, isError: result.isError },
-        isError: result.isError === true,
-        timestamp: Date.now(),
-      }));
+    return effect;
+  }
+
+  /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
+  private waitForWorkflow(key: "extensionWorkflow" | "providerWorkflow" | "modelWorkflow" | "thinkingWorkflow" | "authWorkflow" | "promptWorkflow" | "keymapWorkflow" | "runtimeSnapshotWorkflow" | "processWorkflow" | "taskGoalWorkflow" | "planWorkflow" | "agentWorkflow" | "securityModeWorkflow" | "workspaceGitWorkflow" | "updateWorkflow" | "queueWorkflow" | "approvalWorkflow" | "shutdownWorkflow", requestId: string): Promise<{
+    readonly state: string;
+    readonly value?: unknown;
+    readonly message?: string;
+    readonly reason?: string;
+  }> {
+    return new Promise((resolve) => {
+      const check = (): void => {
+        const workflow = this.store.getState()[key] as { readonly state: string; readonly requestId?: string; readonly value?: unknown; readonly message?: string; readonly reason?: string };
+        if (workflow.state !== "loading" || workflow.requestId !== requestId) {
+          unsubscribe();
+          resolve(workflow);
+        }
+      };
+      const unsubscribe = this.store.subscribe(check);
+      check();
+    });
+  }
+
+  /** B2/B3:TimelineEvent -> store（reducer 更新 timeline，订阅者投影到 ChatContainer）。 */
+  private timelineEventGeneration = 0;
+  private dispatchTimeline(events: readonly TimelineEvent[]): void {
+    for (const event of events) {
+      this.timelineEventGeneration += 1;
+      this.store.dispatch({ type: "timeline.event", event: { ...event, generation: this.timelineEventGeneration } });
     }
   }
 
@@ -1233,41 +1478,31 @@ export class InteractiveMode implements FooterSnapshotProvider {
           break;
         case "message_start":
           this.flushStreamingDeltas();
-          if (ev.role === "user" && ev.message?.role === "user") {
-            this.refs.chat.push(new UserMessageComponent({
-              theme: this.theme,
-              text: messageText(ev.message),
-              timestamp: ev.timestamp,
-            }));
-          } else if (ev.role === "assistant") {
-            // push 一个新的 AssistantMessageComponent,流式阶段 partial 为空(等 message_update)
-            const comp = new AssistantMessageComponent({ theme: this.theme });
-            this.refs.chat.push(comp);
-          }
+          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
           break;
-        case "message_end":
+        case "message_end": {
           this.stopReason = ev.stopReason ?? this.stopReason;
           this.refs.status.setStopReason(this.stopReason);
-          if (ev.role === "assistant") {
-            // finalize:从 chat 末位调 finalize,通知 Markdown layout flush
-            this.flushStreamingDeltas();
-            const last = this.refs.chat.last();
-            if (last instanceof AssistantMessageComponent) {
-              if (ev.message?.role === "assistant") {
-                if (last.hasContent()) last.setPartialMetadata(ev.message as AssistantMessage);
-                else last.setPartial(ev.message as AssistantMessage);
-              }
-              last.finalize();
-            } else if (ev.message?.role === "assistant") {
-              const component = new AssistantMessageComponent({
-                theme: this.theme,
-                partial: ev.message as AssistantMessage,
-              });
-              component.finalize();
-              this.refs.chat.push(component);
-            }
+          // 1) 先把帧前累积的 delta 快照送入
+          this.flushStreamingDeltas();
+          // 2) 用完整消息正文覆盖最后一次 delta 快照
+          if (ev.message?.role === "assistant") {
+            const text = messageAssistantText(ev.message);
+            const thinking = messageAssistantThinking(ev.message);
+            const correlationId = this.timelineProjector.currentAssistantCorrelationId();
+            this.dispatchTimeline([{
+              type: "message_update",
+              generation: 0,
+              correlationId,
+              text: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
+              ...(thinking.length > 0 ? { thinking: { text: thinking, truncated: false, byteLength: new TextEncoder().encode(thinking).byteLength } } : {}),
+            }]);
           }
+          // 3) 提交行
+          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
+          this.pendingMessageBuffers.delete(this.timelineProjector.currentAssistantCorrelationId());
           break;
+        }
         case "message_update": {
           const e = ev.assistantMessageEvent;
           if (e.type === "done" || e.type === "error") {
@@ -1277,14 +1512,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
           }
           const partial = "partial" in e ? e.partial : undefined;
           if (partial !== undefined && partial.role !== "assistant") break;
-          // 找 chat 末位的 AssistantMessageComponent;若没有则补 push 一份
-          let last = this.refs.chat.last();
-          if (!(last instanceof AssistantMessageComponent)) {
-            const comp = new AssistantMessageComponent({ theme: this.theme });
-            this.refs.chat.push(comp);
-            last = comp;
-          }
-          if (!(last instanceof AssistantMessageComponent)) break;
           switch (e.type) {
             case "text_delta":
               this.queueAssistantDelta({
@@ -1295,7 +1522,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
                 generation: this.streamingGeneration,
                 text: e.delta,
                 receivedAt: Date.now(),
-              }, partial);
+              });
               break;
             case "thinking_delta":
               this.queueAssistantDelta({
@@ -1306,94 +1533,23 @@ export class InteractiveMode implements FooterSnapshotProvider {
                 generation: this.streamingGeneration,
                 text: e.delta,
                 receivedAt: Date.now(),
-              }, partial);
-              break;
-            case "start":
-              if (partial) last.setPartial(partial);
+              });
               break;
             default:
-              if (partial) last.setPartialMetadata(partial);
               break;
           }
           break;
         }
-        case "tool_execution_start": {
-          const args = isRecord(ev.args) ? ev.args : {};
-          const comp = ev.toolName === "bash"
-            ? new BashExecutionComponent({
-                command: typeof args.command === "string" ? args.command : "<command>",
-                runInBackground: args.run_in_background === true,
-                initialStatus: "running",
-              })
-            : isDiffTool(ev.toolName)
-              ? new DiffPreviewComponent({
-                  verb: ev.toolName === "write" ? "write" : "edit",
-                  path: typeof args.path === "string"
-                    ? args.path
-                    : typeof args.filePath === "string"
-                      ? args.filePath
-                      : "<path>",
-                  initialStatus: "running",
-                })
-              : new ToolCallComponent({
-                  theme: this.theme,
-                  toolCallId: ev.toolCallId,
-                  toolName: ev.toolName,
-                  args: ev.args,
-                  initialStatus: "running",
-                });
-          this.toolCallComponents.set(ev.toolCallId, comp);
-          this.refs.chat.push(comp);
+        case "tool_execution_start":
+          this.flushStreamingDeltas();
+          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
           break;
-        }
-        case "tool_execution_update": {
-          const comp = this.toolCallComponents.get(ev.toolCallId);
-          if (comp) {
-            const partial = ev.partialResult as AgentToolResult;
-            if (comp instanceof BashExecutionComponent) {
-              const details = isRecord(partial.details) ? partial.details : {};
-              if (typeof details.stdoutChunk === "string") comp.appendOutput(details.stdoutChunk, "stdout");
-              if (typeof details.stderrChunk === "string") comp.appendOutput(details.stderrChunk, "stderr");
-            } else if (comp instanceof ToolCallComponent) {
-              comp.setPartialResult(partial);
-            }
-          }
+        case "tool_execution_update":
+          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
           break;
-        }
         case "tool_execution_end": {
-          const comp = this.toolCallComponents.get(ev.toolCallId);
-          if (comp) {
-            const finalResult: AgentToolResult = {
-              content: ev.result.content,
-              details: ev.result.details,
-              isError: ev.isError,
-            };
-            if (comp instanceof BashExecutionComponent) {
-              const details = isRecord(finalResult.details) ? finalResult.details : {};
-              comp.finalize(
-                typeof details.exitCode === "number" ? details.exitCode : ev.isError ? 1 : 0,
-                typeof details.durationMs === "number" ? details.durationMs : 0,
-                ev.isError,
-                ev.isError ? toolResultText(finalResult) : undefined,
-              );
-            } else if (comp instanceof DiffPreviewComponent) {
-              if (ev.isError) comp.setError(toolResultText(finalResult));
-              else comp.setStatus("ok");
-            } else {
-              comp.finalize(finalResult, ev.isError);
-            }
-            // ToolResultComponent 也追加一份(显式 done 行)
-            const resultComp = new ToolResultComponent({
-              theme: this.theme,
-              toolCallId: ev.toolCallId,
-              toolName: ev.toolName,
-              result: finalResult,
-              isError: ev.isError,
-              timestamp: ev.timestamp,
-            });
-            this.refs.chat.push(resultComp);
-            this.toolCallComponents.delete(ev.toolCallId);
-          }
+          this.flushStreamingDeltas();
+          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
           break;
         }
         case "queue_update":
@@ -1413,7 +1569,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
   }
 
-  private queueAssistantDelta(delta: AppendTextDelta, partial: AssistantMessage | undefined): void {
+  private queueAssistantDelta(delta: AppendTextDelta): void {
     const before = this.streamingDeltas.stats;
     this.performanceObserver?.recordQueued({
       events: 1,
@@ -1426,20 +1582,32 @@ export class InteractiveMode implements FooterSnapshotProvider {
       supersededStatusEvents: after.supersededStatusEvents - before.supersededStatusEvents,
     });
     this.recordStreamingQueueDepth();
-    if (partial) this.pendingAssistantPartials.set(`${delta.entryId}:${delta.partId}`, partial);
     if (!this.ui.isStarted) this.flushStreamingDeltas();
   }
 
   private flushStreamingDeltas(): void {
+    let changed = false;
     for (const delta of this.streamingDeltas.drain()) {
       if (delta.kind !== "append-text") continue;
-      const component = this.refs.chat.last();
-      if (!(component instanceof AssistantMessageComponent)) continue;
-      const key = `${delta.entryId}:${delta.partId}`;
-      const partial = this.pendingAssistantPartials.get(key);
-      if (delta.channel === "thinking") component.appendThinkingDelta(delta.text, partial);
-      else component.appendTextDelta(delta.text, partial);
-      this.pendingAssistantPartials.delete(key);
+      const buffer = this.pendingMessageBuffers.get(this.timelineProjector.currentAssistantCorrelationId()) ?? { text: "", thinking: "" };
+      if (delta.channel === "thinking") buffer.thinking += delta.text;
+      else buffer.text += delta.text;
+      this.pendingMessageBuffers.set(this.timelineProjector.currentAssistantCorrelationId(), buffer);
+      changed = true;
+    }
+    if (changed) {
+      // 每次 flush 发完整快照（单调累积；行正文只会增长），buffer 在 message_end 时清除
+      const correlationId = this.timelineProjector.currentAssistantCorrelationId();
+      const buffer = this.pendingMessageBuffers.get(correlationId);
+      if (buffer !== undefined && (buffer.text.length > 0 || buffer.thinking.length > 0)) {
+        this.dispatchTimeline([{
+          type: "message_update",
+          generation: 0,
+          correlationId,
+          text: { text: buffer.text, truncated: false, byteLength: new TextEncoder().encode(buffer.text).byteLength },
+          ...(buffer.thinking.length > 0 ? { thinking: { text: buffer.thinking, truncated: false, byteLength: new TextEncoder().encode(buffer.thinking).byteLength } } : {}),
+        }]);
+      }
     }
     this.recordStreamingQueueDepth();
   }
@@ -1464,19 +1632,24 @@ function messageText(message: AgentMessage): string {
   return message.content.map((content) => content.text).join("");
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isDiffTool(name: string): boolean {
-  return name === "write" || name === "edit" || name === "MultiEdit";
-}
-
-function toolResultText(result: AgentToolResult): string {
-  return result.content
-    .filter((content): content is { type: "text"; text: string } => content.type === "text")
+function messageAssistantText(message: AgentMessage): string {
+  if (message.role !== "assistant") return "";
+  return message.content
+    .filter((content) => content.type === "text")
     .map((content) => content.text)
     .join("");
+}
+
+function messageAssistantThinking(message: AgentMessage): string {
+  if (message.role !== "assistant") return "";
+  return message.content
+    .filter((content) => content.type === "thinking")
+    .map((content) => content.thinking)
+    .join("");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** 把 domain 命令结果压缩为单行 notice 文本（只读展示，不解析执行）。 */

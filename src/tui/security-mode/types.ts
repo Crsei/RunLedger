@@ -20,7 +20,7 @@ export type SecurityModeResult = TuiResultEnvelope<SecurityModeTransitionReceipt
 export type SecurityModeWorkflowState =
 	| { readonly state: "unavailable"; readonly reason: string }
 	| { readonly state: "idle"; readonly generation: number }
-	| { readonly state: "loading"; readonly generation: number; readonly requestId: string }
+	| { readonly state: "loading"; readonly generation: number; readonly requestId: string; readonly effectId: string }
 	| { readonly state: "ready"; readonly generation: number; readonly value: SecurityModeSnapshot }
 	| { readonly state: "uncertain"; readonly generation: number; readonly message: string; readonly recoveryRequired: true }
 	| { readonly state: "error"; readonly generation: number; readonly code: string; readonly message: string; readonly retryable: boolean };

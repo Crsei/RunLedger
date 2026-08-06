@@ -26,7 +26,7 @@ export type TuiRuntimeSnapshotResult = TuiResultEnvelope<TuiRuntimeSnapshot>;
 export type RuntimeSnapshotWorkflowState =
 	| { readonly state: "unavailable"; readonly reason: string }
 	| { readonly state: "idle"; readonly generation: number }
-	| { readonly state: "loading"; readonly generation: number; readonly requestId: string; readonly previous?: TuiRuntimeSnapshot }
+	| { readonly state: "loading"; readonly generation: number; readonly requestId: string; readonly effectId: string; readonly previous?: TuiRuntimeSnapshot }
 	| { readonly state: "ready"; readonly generation: number; readonly value: TuiRuntimeSnapshot }
 	| { readonly state: "error"; readonly generation: number; readonly code: string; readonly message: string; readonly retryable: boolean; readonly previous?: TuiRuntimeSnapshot };
 

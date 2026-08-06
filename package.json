@@ -62,7 +62,7 @@
     "check:contract-consumers": "tsc --noEmit -p tsconfig.contract-consumers.json",
     "check:execution-boundaries": "tsx scripts/check-execution-boundaries.ts",
     "check:platform-boundaries": "tsx scripts/check-platform-boundaries.ts",
-    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && tsc --noEmit -p tsconfig.json",
+    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
     "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
@@ -75,7 +75,8 @@
     "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts",
     "verify:multi-client-host": "tsx scripts/verify-multi-client-host.ts",
     "verify:managed-process-pty": "tsx scripts/verify-managed-process-pty.ts",
-    "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts"
+    "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts",
+    "check:tui-boundaries": "tsx scripts/check-tui-boundaries.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",

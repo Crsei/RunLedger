@@ -24,7 +24,13 @@ export interface TimelineRowBase {
 
 export type TimelineRow =
 	| (TimelineRowBase & { readonly kind: "user"; readonly text: SafeBoundedText })
-	| (TimelineRowBase & { readonly kind: "assistant"; readonly text: SafeBoundedText; readonly streaming: boolean })
+	| (TimelineRowBase & {
+			readonly kind: "assistant";
+			readonly text: SafeBoundedText;
+			readonly streaming: boolean;
+			readonly thinking?: SafeBoundedText;
+			readonly usage?: Pick<SafeToolUsageView, "input" | "output">;
+	  })
 	| (TimelineRowBase & {
 			readonly kind: "tool";
 			readonly toolCallId: string;
@@ -72,7 +78,7 @@ export interface TimelineState {
 
 export type TimelineEvent =
 	| { readonly type: "message_start"; readonly generation: number; readonly correlationId: string; readonly row: TimelineRow }
-	| { readonly type: "message_update"; readonly generation: number; readonly correlationId: string; readonly text: SafeBoundedText }
+	| { readonly type: "message_update"; readonly generation: number; readonly correlationId: string; readonly text: SafeBoundedText; readonly thinking?: SafeBoundedText }
 	| { readonly type: "message_end"; readonly generation: number; readonly correlationId: string; readonly status: TimelineStatus }
 	| { readonly type: "tool_start"; readonly generation: number; readonly correlationId: string; readonly row: TimelineRow }
 	| { readonly type: "tool_update"; readonly generation: number; readonly correlationId: string; readonly presentation: TuiField<SafeToolPresentation> }
@@ -81,4 +87,4 @@ export type TimelineEvent =
 	| { readonly type: "notice"; readonly generation: number; readonly correlationId: string; readonly severity: "info" | "warning" | "error"; readonly message: SafeBoundedText }
 	| { readonly type: "goal_lifecycle"; readonly generation: number; readonly correlationId: string; readonly goalId: string; readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled" }
 	| { readonly type: "agent_lifecycle"; readonly generation: number; readonly correlationId: string; readonly agentId: string; readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled" }
-	| { readonly type: "cleanup"; readonly generation: number; readonly correlationId: string; readonly reason: "session-switch" | "abort" | "destroy" };
+	| { readonly type: "cleanup"; readonly generation: number; readonly correlationId?: string; readonly reason: "session-switch" | "abort" | "destroy" };

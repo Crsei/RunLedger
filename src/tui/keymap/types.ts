@@ -16,7 +16,7 @@ export interface KeymapSnapshot {
 export type KeymapWorkflowState =
 	| { readonly state: "unavailable"; readonly reason: string }
 	| { readonly state: "idle"; readonly generation: number }
-	| { readonly state: "loading"; readonly generation: number; readonly requestId: string }
+	| { readonly state: "loading"; readonly generation: number; readonly requestId: string; readonly effectId: string }
 	| { readonly state: "ready"; readonly generation: number; readonly value: KeymapSnapshot }
 	| { readonly state: "empty"; readonly generation: number }
 	| { readonly state: "error"; readonly generation: number; readonly code: string; readonly message: string; readonly retryable: boolean };

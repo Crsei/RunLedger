@@ -155,11 +155,9 @@ export async function main(argv: readonly string[]): Promise<void> {
 	      sessionGeneration: integerValue(claim.body.sessionGeneration),
 	      driverRevision: integerValue(claim.body.driverRevision),
 	    });
-	    const processOverlay = createProcessOverlayController(
-	      createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver, driverFence: () => controller.driverFence() }),
-      { driver: isDriver },
-    );
-    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay, workspaceCapability: workspaceCapabilityLabel() });
+	    const processOverlayClient = createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver, driverFence: () => controller.driverFence() });
+	    const processOverlay = createProcessOverlayController(processOverlayClient, { driver: isDriver });
+	    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay, processOverlayClient, workspaceCapability: workspaceCapabilityLabel() });
     interactive = activeInteractive;
     const onSigint = (): void => {
       if (controller.inFlight) controller.interrupt();
