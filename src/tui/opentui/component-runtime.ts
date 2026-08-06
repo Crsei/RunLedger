@@ -162,6 +162,13 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     key.preventDefault();
     key.stopPropagation();
     const input = normalizedInputFor(key);
+    if (input === "ctrl+c") {
+      const selectedText = renderer.getSelection()?.getSelectedText();
+      if (selectedText !== undefined && selectedText.length > 0) {
+        renderer.copyToClipboardOSC52(selectedText);
+        return;
+      }
+    }
     if (input === "pageUp" || input === "pageDown") {
       transcript.scrollBy(input === "pageUp" ? -1 : 1, "viewport");
       updateNewContentIndicator();

@@ -439,7 +439,14 @@ export class ResidentRuntimeHost {
 		if (reservation.status === "uncertain") return [this.response(context.frame, { ok: false, code: "uncertain_outcome" })];
 		if (reservation.status === "capacity") return [this.response(context.frame, { ok: false, code: "command_journal_capacity" })];
 		if (reservation.status === "replay") return [this.rebindResponse(reservation.response, context.frame)];
-		const response = await this.executeCommand(context.principal, context.frame);
+		let response: HostFrameEnvelope;
+		try {
+			response = await this.executeCommand(context.principal, context.frame);
+		} catch (error) {
+			// executeCommand 的 switch 分支可能直接返回一个随后拒绝的 Promise；
+			// 在 durable intent 边界统一收敛，避免把领域错误升级为连接断开。
+			response = this.response(context.frame, { ok: false, code: errorCode(error) });
+		}
 		try {
 			await this.commandStore.complete(context.principal.principalId, commandId, requestDigest, response);
 		} catch {

@@ -90,7 +90,7 @@ function apiKeyAuth(): ProviderAuth {
   };
 }
 
-function fixtureModels() {
+function fixtureModels(onStream?: () => void) {
   const models = createModels();
   const p1 = model("p1", "m1");
   const p2 = model("p2", "m2");
@@ -101,8 +101,14 @@ function fixtureModels() {
       auth: apiKeyAuth(),
       models: [entry[1]],
       api: {
-        stream: (requestModel, context) => stopStream(requestModel, context),
-        streamSimple: (requestModel, context) => stopStream(requestModel, context),
+        stream: (requestModel, context) => {
+          onStream?.();
+          return stopStream(requestModel, context);
+        },
+        streamSimple: (requestModel, context) => {
+          onStream?.();
+          return stopStream(requestModel, context);
+        },
       },
     }));
   }
@@ -165,6 +171,93 @@ describe("InteractiveSessionController", () => {
 		await controller.selectModel(p1);
 		await controller.prompt("original prompt");
 		expect(controller.messages.at(-1)).toMatchObject({ content: [{ type: "text", text: "reply:rewritten by hook" }] });
+		controller.dispose();
+	});
+
+	it("admits the extension turn before binding UserPromptSubmit to its snapshot", async () => {
+		const cwd = await tempDir();
+		const order: string[] = [];
+		let snapshotId: string | undefined;
+		const { models, p1 } = fixtureModels(() => order.push("model"));
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			extensionHookRuntime: {
+				run: async (input) => {
+					order.push(`hook:${input.snapshotId}`);
+					return {
+						decision: "allow",
+						blocked: false,
+						finalInput: input.input,
+						requiresRevalidation: false,
+						requiresAuthorization: false,
+						additionalContext: [],
+					};
+				},
+			},
+			extensionHookSnapshotId: () => snapshotId,
+			extensionTurnAdmission: async () => {
+				order.push("admit");
+				snapshotId = "snapshot_admitted-turn";
+			},
+		});
+		await controller.login("p1", "api_key", INTERACTION);
+		await controller.selectModel(p1);
+
+		await controller.prompt("ordered prompt");
+
+		expect(order).toEqual(["admit", "hook:snapshot_admitted-turn", "model"]);
+		controller.dispose();
+	});
+
+	it("aborts an admitted extension turn when UserPromptSubmit denies the prompt", async () => {
+		const cwd = await tempDir();
+		let snapshotId: string | undefined;
+		const order: string[] = [];
+		const { models, p1 } = fixtureModels(() => order.push("model"));
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			extensionHookRuntime: {
+				run: async () => {
+					order.push("hook");
+					return {
+						decision: "deny",
+						blocked: true,
+						finalInput: { text: "denied prompt" },
+						requiresRevalidation: false,
+						requiresAuthorization: true,
+						additionalContext: [],
+					};
+				},
+			},
+			extensionHookSnapshotId: () => snapshotId,
+			extensionTurnAdmission: async () => {
+				order.push("admit");
+				snapshotId = "snapshot_denied-turn";
+			},
+			extensionTurnAbort: async () => {
+				order.push("abort");
+			},
+		});
+		await controller.login("p1", "api_key", INTERACTION);
+		await controller.selectModel(p1);
+
+		await expect(controller.prompt("denied prompt")).rejects.toThrow("UserPromptSubmit hook denied the prompt");
+
+		expect(order).toEqual(["admit", "hook", "abort"]);
 		controller.dispose();
 	});
 

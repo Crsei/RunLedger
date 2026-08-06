@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
@@ -8,6 +8,35 @@ import {
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 
 describe("OpenTUI component projection", () => {
+  test("copies a non-empty native selection without forwarding Ctrl+C", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const inputs: string[] = [];
+    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: (data) => inputs.push(data),
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: ["RunLedger copy target"],
+        editorText: "",
+        footer: ["idle"],
+      });
+      await setup.renderOnce();
+      await setup.mockMouse.drag(0, 0, 9, 0);
+      const selectedText = setup.renderer.getSelection()?.getSelectedText();
+      expect(selectedText).toContain("RunLedger");
+
+      setup.mockInput.pressKey("c", { ctrl: true });
+
+      expect(copy).toHaveBeenCalledWith(selectedText);
+      expect(inputs).toEqual([]);
+    } finally {
+      copy.mockRestore();
+      runtime.destroy();
+    }
+  });
+
   test("updates keyed streaming blocks without rebuilding history, editor, or overlay", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
@@ -313,6 +342,7 @@ describe("OpenTUI component projection", () => {
       await setup.mockMouse.drag(0, 0, 9, 0);
       expect(setup.renderer.getSelection()?.getSelectedText()).toContain("RunLedger");
 
+      setup.renderer.clearSelection();
       setup.mockInput.pressKey("c", { ctrl: true });
       await setup.mockInput.pasteBracketedText("粘贴内容");
       expect(inputs).toEqual(["ctrl+c", "粘贴内容"]);

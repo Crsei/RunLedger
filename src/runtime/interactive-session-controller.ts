@@ -313,10 +313,10 @@ export class InteractiveSessionController {
     }
     const auth = await this.models.getAuth(model);
     if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
-    const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
-    if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
     await this.extensionTurnAdmission?.();
     try {
+      const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
+      if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
       await agent.prompt(promptText(submitted?.finalInput, text));
     } catch (error) {
       await this.extensionTurnAbort?.().catch(() => undefined);

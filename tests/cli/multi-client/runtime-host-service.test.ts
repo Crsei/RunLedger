@@ -17,7 +17,7 @@ import type {
 	ProviderStatus,
 	RuntimeSelection,
 } from "../../../src/runtime/interactive-session-controller.ts";
-import type { HostConnectionPrincipal, HostFrameEnvelope } from "../../../src/runtime/host/types.ts";
+import { RUNTIME_HOST_BOUNDS, type HostConnectionPrincipal, type HostFrameEnvelope } from "../../../src/runtime/host/types.ts";
 import { JsonLineHostClient } from "../../../src/cli/runtime-host-transport.ts";
 import { HostReversePermissionPrompter, ResidentRuntimeHost, type HostProcessPort, type HostSessionRuntime } from "../../../src/cli/runtime-host-service.ts";
 import type { PermissionPrompt } from "../../../src/security/types.ts";
@@ -47,7 +47,10 @@ function scope(): RuntimeHostScope {
 	};
 }
 
-function fakeSession(sessionId = createRuntimeId("session", "service")): HostSessionRuntime {
+function fakeSession(
+	sessionId = createRuntimeId("session", "service"),
+	eventsPerPrompt = 1,
+): HostSessionRuntime {
 	const listeners = new Set<AgentEventSink>();
 	const messages: AgentMessage[] = [];
 	let promptCount = 0;
@@ -75,12 +78,15 @@ function fakeSession(sessionId = createRuntimeId("session", "service")): HostSes
 		setThinkingLevel: async (level: ModelThinkingLevel) => level,
 		prompt: async (text: string) => {
 			promptCount += 1;
-			const event: AgentEvent = {
-				type: "agent_end",
-				timestamp: Date.now(),
-				message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" },
-			};
-			for (const listener of listeners) await listener(event);
+			for (let index = 0; index < eventsPerPrompt; index += 1) {
+				const event: AgentEvent = {
+					type: "agent_end",
+					timestamp: Date.now(),
+					message: { role: "assistant", content: [{ type: "text", text: `${text}-${index}` }], stopReason: "stop" },
+				};
+				for (const listener of listeners) await listener(event);
+				if (eventsPerPrompt > 1) await new Promise<void>((resolve) => setImmediate(resolve));
+			}
 		},
 		interrupt: () => {},
 		clearAllQueues: () => ({ steering: [], followUp: [] }),
@@ -329,6 +335,141 @@ describe("production Resident Runtime Host service", () => {
 			expect(resync[0]?.body).toMatchObject({ sessionId: opened.body.sessionId, safeCursor: 257 });
 			client.close();
 		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps streaming prompt connections alive while subscription cursors are acknowledged", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-stream-acks-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const sessionId = createRuntimeId("session", "stream-acks");
+		const runtime = fakeSession(sessionId, RUNTIME_HOST_BOUNDS.maxPreActivationPending + 8);
+		const host = new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			attestor: { attest: async () => ({
+				principalId: createRuntimeId("principal", "stream-acks"),
+				connectionId: createRuntimeId("connection", "stream-acks"),
+				attestationDigest: digest("stream-acks"),
+			}) },
+			createSession: async () => runtime,
+		});
+		let client: JsonLineHostClient | undefined;
+		try {
+			await host.start();
+			client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "stream-init", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const opened = await client.request({ frameId: "stream-open", kind: "command_request", protocolVersion: 1, body: { operation: "session.open", commandId: "stream-open-command", mode: "create" } });
+			await client.request({ frameId: "stream-subscribe", kind: "command_request", protocolVersion: 1, body: { operation: "session.subscribe", commandId: "stream-subscribe-command", sessionId, cursor: 0 } });
+			const claimed = await client.request({
+				frameId: "stream-claim",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: {
+					operation: "session.claim_driver",
+					commandId: "stream-claim-command",
+					sessionId,
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: opened.body.driverRevision,
+				},
+			});
+			client.onEvent((frame) => {
+				if (frame.kind !== "subscription_event") return;
+				client?.notify({
+					frameId: `stream-ack-${String(frame.body.sequence)}`,
+					kind: "ack_cursor",
+					protocolVersion: 1,
+					body: { sessionId, cursor: frame.body.sequence },
+				});
+			});
+			await expect(client.request({
+				frameId: "stream-prompt",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: {
+					operation: "session.prompt",
+					commandId: "stream-prompt-command",
+					sessionId,
+					text: "stream",
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: claimed.body.driverRevision,
+				},
+			})).resolves.toMatchObject({ body: { ok: true } });
+			await expect(client.request({
+				frameId: "stream-snapshot",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: { operation: "session.snapshot", commandId: "stream-snapshot-command", sessionId },
+			})).resolves.toMatchObject({ body: { ok: true, sessionId } });
+		} finally {
+			await client?.close();
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("returns prompt failures without closing the Host connection", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-prompt-failure-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const sessionId = createRuntimeId("session", "prompt-failure");
+		const runtime = fakeSession(sessionId);
+		runtime.controller.prompt = async () => { throw new Error("model preflight failed"); };
+		const host = new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			attestor: { attest: async () => ({
+				principalId: createRuntimeId("principal", "prompt-failure"),
+				connectionId: createRuntimeId("connection", "prompt-failure"),
+				attestationDigest: digest("prompt-failure"),
+			}) },
+			createSession: async () => runtime,
+		});
+		let client: JsonLineHostClient | undefined;
+		try {
+			await host.start();
+			client = await JsonLineHostClient.connect(socketPath);
+			await client.request({ frameId: "failure-init", kind: "initialize_request", protocolVersion: 1, body: { compatibility: hostScope } });
+			const opened = await client.request({ frameId: "failure-open", kind: "command_request", protocolVersion: 1, body: { operation: "session.open", commandId: "failure-open-command", mode: "create" } });
+			const claimed = await client.request({
+				frameId: "failure-claim",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: {
+					operation: "session.claim_driver",
+					commandId: "failure-claim-command",
+					sessionId,
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: opened.body.driverRevision,
+				},
+			});
+			await expect(client.request({
+				frameId: "failure-prompt",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: {
+					operation: "session.prompt",
+					commandId: "failure-prompt-command",
+					sessionId,
+					text: "fail",
+					expectedHostGeneration: opened.body.hostGeneration,
+					expectedSessionGeneration: opened.body.sessionGeneration,
+					expectedDriverRevision: claimed.body.driverRevision,
+				},
+			})).resolves.toMatchObject({ body: { ok: false, code: "model preflight failed" } });
+			await expect(client.request({
+				frameId: "failure-snapshot",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: { operation: "session.snapshot", commandId: "failure-snapshot-command", sessionId },
+			})).resolves.toMatchObject({ body: { ok: true, sessionId } });
+		} finally {
+			await client?.close();
 			await host.close();
 			await rm(root, { recursive: true, force: true });
 		}

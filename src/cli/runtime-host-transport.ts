@@ -177,17 +177,25 @@ export class JsonLineHostServer {
 				connection.socket.destroy();
 				return;
 			}
+			const typedFrame = frame as HostFrameEnvelope;
+			if (connection.initialized && (typedFrame.kind === "ack_cursor" || typedFrame.kind === "reverse_response")) {
+				// ACK 和 reverse response 是正在执行的长命令所依赖的控制流，
+				// 不能排在该命令之后，否则会形成连接级队头阻塞。
+				void this.route(connection, typedFrame).catch(() => {
+					connection.socket.destroy();
+				});
+				continue;
+			}
 			connection.pendingFrames += 1;
 			if (connection.pendingFrames > RUNTIME_HOST_BOUNDS.maxPreActivationPending) {
 				connection.socket.destroy();
 				return;
 			}
-			const typedFrame = frame as HostFrameEnvelope;
-				connection.processing = connection.processing
-					.then(() => this.route(connection, typedFrame))
-					.catch(() => {
-						connection.socket.destroy();
-					})
+			connection.processing = connection.processing
+				.then(() => this.route(connection, typedFrame))
+				.catch(() => {
+					connection.socket.destroy();
+				})
 				.finally(() => {
 					connection.pendingFrames = Math.max(0, connection.pendingFrames - 1);
 				});
