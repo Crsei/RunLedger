@@ -15,12 +15,19 @@ const MAX_TOOL_RESERVE_TOKENS = 4_096;
  * identity so a replay has a stable context digest.
  */
 export function assembleAgentModelContext(input: ModelContextAssemblyInput): ModelContextAssemblyResult {
+	const requestContextDigest = runtimeDigest({
+		systemPrompt: input.context.systemPrompt ?? null,
+		messages: input.context.messages.map(stableMessage),
+		tools: input.context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) ?? [],
+		sources: input.sources ?? [],
+	});
 	const seed = runtimeDigest({
 		kind: "model-context-request",
 		sessionId: input.sessionId,
 		turn: input.turn,
 		provider: input.model.provider,
 		model: input.model.id,
+		requestContextDigest,
 	});
 	const requestId = createRuntimeId("command", seed.digest.slice(0, 48));
 	const traceId = createRuntimeId("trace", runtimeDigest({ requestId, turn: input.turn }).digest.slice(0, 48));
@@ -81,16 +88,16 @@ function stableMessage(message: Message): unknown {
 		toolName: message.toolName,
 		content: message.content,
 		isError: message.isError,
-		addedToolNames: message.addedToolNames,
+		...(message.addedToolNames === undefined ? {} : { addedToolNames: message.addedToolNames }),
 	};
 	return {
 		role: message.role,
 		content: message.content,
-		api: message.api,
-		provider: message.provider,
-		model: message.model,
 		stopReason: message.stopReason,
-		errorMessage: message.errorMessage,
-		usage: message.usage,
+		...(message.api === undefined ? {} : { api: message.api }),
+		...(message.provider === undefined ? {} : { provider: message.provider }),
+		...(message.model === undefined ? {} : { model: message.model }),
+		...(message.errorMessage === undefined ? {} : { errorMessage: message.errorMessage }),
+		...(message.usage === undefined ? {} : { usage: message.usage }),
 	};
 }

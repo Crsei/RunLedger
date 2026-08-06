@@ -8,6 +8,10 @@ function user(text: string): AgentMessage {
 	return { role: "user", content: [{ type: "text", text }] };
 }
 
+function assistant(text: string): AgentMessage {
+	return { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" };
+}
+
 describe("Host model request context adapter", () => {
 	it("sends only the ContextEngine projection and returns a bounded receipt", async () => {
 		const messages = [user("first"), user("second")];
@@ -50,6 +54,23 @@ describe("Host model request context adapter", () => {
 
 		expect(first.receipt.contextDigest).toEqual(second.receipt.contextDigest);
 		expect(first.receipt.projectionDigest).toEqual(second.receipt.projectionDigest);
+	});
+
+	it("uses a distinct request identity when a later prompt changes the projected context", async () => {
+		const first = assembleAgentModelContext({
+			model: mockModel,
+			context: { systemPrompt: "system", messages: await defaultConvertToLlm([user("first")]), tools: [] },
+			turn: 1,
+			sessionId: "session-adapter-multiple-prompts",
+		});
+		const second = assembleAgentModelContext({
+			model: mockModel,
+			context: { systemPrompt: "system", messages: await defaultConvertToLlm([user("first"), assistant("reply"), user("second")]), tools: [] },
+			turn: 1,
+			sessionId: "session-adapter-multiple-prompts",
+		});
+
+		expect(second.receipt.requestId).not.toBe(first.receipt.requestId);
 	});
 
 	it("overlays Host domain sources (Plan Mode / approved memory) into the same projection", async () => {
