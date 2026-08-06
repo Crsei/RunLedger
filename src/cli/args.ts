@@ -121,6 +121,12 @@ const HELP_TEXT = `Usage: runledger [options]
   RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖
   RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root
 
+Host 运维命令:
+  runledger host list [--json]
+  runledger host status [--workspace-key <key>] [--json]
+  runledger host stop [--workspace-key <key>] [--confirm-active] [--force]
+  runledger host restart [--workspace-key <key>] [--confirm-active] [--force]
+
 布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。
 `;
 

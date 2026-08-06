@@ -8,19 +8,25 @@ import {
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { HostEndpointRecord } from "../../../src/storage/host/endpoint-store.ts";
+import { createHostEndpointRecord } from "../../../src/storage/host/endpoint-store.ts";
 
 const digest = (seed: string): RuntimeDigest => runtimeDigest(seed);
 const workspaceStorageKey = "ws-" + "a".repeat(64);
 
 function endpoint(state: HostEndpointRecord["state"] = "ready", generation = 1): HostEndpointRecord {
-	return {
+	return createHostEndpointRecord({
 		protocolVersion: 1,
+		managementProtocolVersion: 1,
 		workspaceStorageKey,
 		hostRuntimeId: createRuntimeId("runtime", `host-${generation}`),
 		hostGeneration: generation,
+		hostProcessId: process.pid,
+		hostProcessStartIdentityDigest: digest("process"),
+		hostBuildDigest: digest("build"),
 		state,
 		compatibilityDigest: digest("scope"),
-	};
+		publishedAt: "2026-08-07T00:00:00.000Z",
+	});
 }
 
 function options(overrides: Partial<RuntimeHostLauncherOptions> = {}): RuntimeHostLauncherOptions {
@@ -52,6 +58,7 @@ function options(overrides: Partial<RuntimeHostLauncherOptions> = {}): RuntimeHo
 			},
 		},
 		expectedCompatibilityDigest: digest("scope"),
+		expectedBuildDigest: digest("build"),
 		wait: { timeoutMs: 50, intervalMs: 1 },
 		clock: () => Date.now(),
 		delay: async (durationMs) => new Promise((resolve) => setTimeout(resolve, durationMs)),
@@ -141,4 +148,22 @@ describe("R3/R4 connect-or-spawn Host composition", () => {
 		});
 		await expect(connectOrSpawnHost(unsupported)).resolves.toMatchObject({ ok: false, code: "peer_attestation_required" });
 	});
+
+	it("reports an executable build mismatch separately from configuration conflicts", async () => {
+		const value = options({
+			endpoint: {
+				read: async () => createHostEndpointRecord({
+					...stripMetadata(endpoint()),
+					hostBuildDigest: digest("older-build"),
+				}),
+				remove: async () => {},
+			},
+		});
+		await expect(connectOrSpawnHost(value)).resolves.toEqual({ ok: false, code: "host_build_mismatch" });
+	});
 });
+
+function stripMetadata(value: HostEndpointRecord): Omit<HostEndpointRecord, "metadataDigest"> {
+	const { metadataDigest: _metadataDigest, ...body } = value;
+	return body;
+}

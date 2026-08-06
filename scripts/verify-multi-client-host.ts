@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRunledgerLayout } from "../src/runtime/contracts/storage-layout.ts";
 import { HOST_PROTOCOL_VERSION } from "../src/runtime/host/contracts.ts";
+import { runtimeDigest } from "../src/runtime/protocol/foundation.ts";
 import type { HostFrameEnvelope } from "../src/runtime/host/types.ts";
 import { EndpointStore } from "../src/storage/host/endpoint-store.ts";
 import {
@@ -29,6 +30,7 @@ import { buildLinuxPeerCredentialHelper } from "./build-linux-peer-credential-he
 // install under /home. Keep the acceptance command inside the declared runtime
 // read roots so this runner exercises the real restrictive Host path.
 const SANDBOX_NODE = "/usr/bin/node";
+const RUNNER_BUILD_DIGEST = runtimeDigest({ runner: "multi-client-host" });
 
 export interface AcceptanceRunnerResult {
 	readonly passed: boolean;
@@ -54,7 +56,7 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 	let shutdownRequested = false;
 	let sessionIdValue: string | undefined;
 	let driverFence: DriverFence | undefined;
-	const endpointScope = createLocalRuntimeHostScope({ layout, cwd: root, settings: {} });
+	const endpointScope = createLocalRuntimeHostScope({ layout, cwd: root, settings: {}, hostBuildDigest: RUNNER_BUILD_DIGEST });
 	const endpointStore = new EndpointStore(layout, endpointScope.workspaceStorageKey);
 	try {
 		await buildLinuxPeerCredentialHelper(helperPath);
@@ -62,6 +64,7 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 			layout,
 			cwd: root,
 			settings: {},
+			hostBuildDigest: RUNNER_BUILD_DIGEST,
 			peerCredentialHelperPath: helperPath,
 			wait: { timeoutMs: 15_000, intervalMs: 25 },
 		});
@@ -69,6 +72,7 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 			layout,
 			cwd: root,
 			settings: {},
+			hostBuildDigest: RUNNER_BUILD_DIGEST,
 			peerCredentialHelperPath: helperPath,
 			wait: { timeoutMs: 15_000, intervalMs: 25 },
 		});
@@ -215,6 +219,7 @@ async function verifyHostCrashRecovery(input: {
 			layout: input.layout,
 			cwd: input.root,
 			settings: {},
+			hostBuildDigest: RUNNER_BUILD_DIGEST,
 			peerCredentialHelperPath: input.helperPath,
 			wait: { timeoutMs: 15_000, intervalMs: 25 },
 		});
@@ -244,7 +249,7 @@ async function verifyHostCrashRecovery(input: {
 			throw new Error("crash recovery process create failed");
 		}
 		await waitForMarker(markerPath);
-		const socketPath = productionHostSocketPath(input.layout, createLocalRuntimeHostScope({ layout: input.layout, cwd: input.root, settings: {} }).workspaceStorageKey);
+		const socketPath = productionHostSocketPath(input.layout, createLocalRuntimeHostScope({ layout: input.layout, cwd: input.root, settings: {}, hostBuildDigest: RUNNER_BUILD_DIGEST }).workspaceStorageKey);
 		const hostPid = await unixSocketOwnerPid(socketPath);
 		process.kill(hostPid, "SIGKILL");
 		await driver.close().catch(() => undefined);
@@ -298,7 +303,7 @@ async function reconnectAfterCrash(
 	let lastError: unknown;
 	while (Date.now() < deadline) {
 		try {
-			return await connectProductionRuntimeHost({ layout, cwd, settings: {}, peerCredentialHelperPath: helperPath, wait: { timeoutMs: 2_000, intervalMs: 25 } });
+			return await connectProductionRuntimeHost({ layout, cwd, settings: {}, hostBuildDigest: RUNNER_BUILD_DIGEST, peerCredentialHelperPath: helperPath, wait: { timeoutMs: 2_000, intervalMs: 25 } });
 		} catch (error) {
 			lastError = error;
 			await new Promise((resolve) => setTimeout(resolve, 250));

@@ -96,4 +96,26 @@ describe("R4 Host-owned remote session facade", () => {
 		expect(transport.requests[1]).toMatchObject({ kind: "command_request", body: { operation: "plugin.reload", sessionId: "session_remote", expectedHostGeneration: 2, expectedSessionGeneration: 4, expectedDriverRevision: 8 } });
 		controller.dispose();
 	});
+
+	it("rebuilds its client projection from a reconnect resync snapshot", () => {
+		const controller = new RemoteInteractiveSessionController(new FakeTransport(), {
+			sessionId: "session_remote",
+			selection: { thinkingLevel: "off" },
+			messages: [], warnings: [], auditEntries: [], toolCount: 0,
+			hostGeneration: 1, sessionGeneration: 1, driverRevision: 1, eventCursor: 4,
+		});
+		controller.applyRecoverySnapshot({
+			sessionId: "session_remote",
+			selection: { provider: "fake", thinkingLevel: "high" },
+			messages: [{ role: "user", content: "restored" }],
+			warnings: ["recovered"], auditEntries: [], toolCount: 2,
+			hostGeneration: 3, sessionGeneration: 2, driverRevision: 5, eventCursor: 11,
+		});
+		expect(controller.messages).toEqual([{ role: "user", content: "restored" }]);
+		expect(controller.warnings).toEqual(["recovered"]);
+		expect(controller.currentSelection).toMatchObject({ thinkingLevel: "high" });
+		expect(controller.driverFence()).toEqual({ expectedHostGeneration: 3, expectedSessionGeneration: 2, expectedDriverRevision: 5 });
+		expect(controller.recoveryCursor()).toBe(11);
+		controller.dispose();
+	});
 });

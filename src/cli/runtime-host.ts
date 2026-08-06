@@ -10,6 +10,7 @@ import { builtinModels } from "../providers/all.ts";
 import { EndpointStore } from "../storage/host/endpoint-store.ts";
 import { acquireHostWriterLease } from "../storage/host/writer-lease.ts";
 import { HostRecoveryMarkerStore } from "../storage/host/recovery-marker.ts";
+import { HostShutdownIntentStore, createHostShutdownIntent } from "../storage/host/shutdown-intent-store.ts";
 import { buildRunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import { createRuntimeId, parseRuntimeId } from "../runtime/protocol/ids.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
@@ -17,7 +18,7 @@ import { HostCompatibilityEnvelopeSchema, type HostCompatibilityEnvelope } from 
 import { createLocalTraceRecorderFactory } from "../runtime/trace/composition.ts";
 import { FileArtifactStore } from "../runtime/trace/artifact-store.ts";
 import { createArtifactToolResultOverflowStore } from "../runtime/trace/tool-result-overflow.ts";
-import { HostReversePermissionPrompter, ResidentRuntimeHost } from "./runtime-host-service.ts";
+import { HostReversePermissionPrompter, ResidentRuntimeHost, type HostShutdownRequest } from "./runtime-host-service.ts";
 import { createProductionHostSessionFactory } from "./runtime-host-session.ts";
 import { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import { createProductionHostSecurity } from "./runtime-host-security.ts";
@@ -55,6 +56,8 @@ import { PluginManager } from "../extensions/plugins/manager.ts";
 import { ExtensionHostManager, projectExtensionSnapshot } from "../extensions/host-manager.ts";
 import { sourceKey } from "../extensions/paths.ts";
 import type { ExtensionSource, ExtensionSourceRoot } from "../extensions/types.ts";
+import { loadVerifiedHostBuildManifest, productionDistributionRoot } from "./host-build-identity.ts";
+import { readLinuxProcessIdentity } from "../storage/host/linux-process-identity.ts";
 
 export async function runResidentRuntimeHost(): Promise<void> {
 	if (process.platform !== "linux") throw new Error("resident production Host currently requires Linux local peer attestation");
@@ -64,6 +67,10 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const hostGeneration = parseGeneration(process.env.RUNLEDGER_HOST_GENERATION);
 	if (!home || !rawScope || !cwd) throw new Error("resident Host environment is incomplete");
 	const scope = parseScope(rawScope);
+	if (import.meta.url.endsWith(".js")) {
+		const manifest = await loadVerifiedHostBuildManifest(productionDistributionRoot());
+		if (manifest.contentDigest.digest !== scope.hostBuildDigest.digest) throw new Error("host_build_digest_mismatch");
+	}
 	const layout = buildRunledgerLayout(home, "posix");
 	const extensionStorage = new NodeExtensionStorage({ runledgerHome: layout.home });
 	const mcpConfig = await loadCanonicalMcpConfigs({
@@ -77,6 +84,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const lease = await acquireHostWriterLease(layout, scope.workspaceStorageKey);
 	if (!lease.ok) throw new Error(lease.code);
 	const markerStore = new HostRecoveryMarkerStore(layout, scope.workspaceStorageKey);
+	const shutdownIntentStore = new HostShutdownIntentStore(layout, scope.workspaceStorageKey);
 	const settings = await loadProjectSettings({ layout });
 	const recording = resolveRecordingConfig(settings);
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
@@ -95,6 +103,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	});
 	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd, workspaceAudit });
 	const hostRuntimeId = createRuntimeId("runtime", `host-${hostGeneration}-${scope.workspaceStorageKey.slice(3, 19)}`);
+	const hostProcessIdentity = await readLinuxProcessIdentity(process.pid);
 	const extensionStateRoot = join(layout.state, "extensions");
 	const extensionPrincipalId = createRuntimeId("principal", `host-extension-${scope.workspaceStorageKey.slice(3, 19)}`);
 	const extensionEventSessionId = createRuntimeId("session", `extensions-${scope.workspaceStorageKey.slice(3, 67)}`);
@@ -152,7 +161,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		: createArtifactToolResultOverflowStore(artifactStore);
 	let lifecycle: RuntimeHostLifecycle | undefined;
 	let closing = false;
-	let shutdownHost: () => Promise<void> = async () => {};
+	let shutdownHost: (request: HostShutdownRequest) => Promise<void> = async () => {};
 	const processPort = new ProductionManagedProcessPort({
 		layout,
 		scope,
@@ -181,6 +190,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		scope,
 		hostRuntimeId,
 		hostGeneration,
+		hostProcessStartIdentityDigest: hostProcessIdentity.digest,
 		processPort,
 		resolveWorkspaceCwd: async () => {
 			const current = await workspaceBindingService.read();
@@ -316,8 +326,8 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			planStateProvider: (sessionId) => modelContextDomain.planState(sessionId),
 			contextSourceProvider: (sessionId) => modelContextDomain.contextSources(sessionId),
 		}),
-		onShutdown: async () => {
-			await shutdownHost();
+		onShutdown: async (request) => {
+			await shutdownHost(request);
 			setImmediate(() => process.exit(process.exitCode ?? 0));
 		},
 	});
@@ -339,17 +349,25 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			writeRecoveryMarker: (marker) => markerStore.append(marker),
 		},
 	});
-	const shutdown = async (): Promise<void> => {
+	const shutdown = async (request: HostShutdownRequest): Promise<void> => {
 		if (closing) return;
 		closing = true;
+		await shutdownIntentStore.write(createHostShutdownIntent({
+			workspaceStorageKey: scope.workspaceStorageKey,
+			hostRuntimeId,
+			hostGeneration,
+			reason: request.reason,
+			...(request.targetBuildDigest === undefined ? {} : { targetBuildDigest: request.targetBuildDigest }),
+			requestedAt: new Date().toISOString(),
+		})).catch(() => { process.exitCode = 1; });
 		const result = await lifecycle.shutdown().catch(() => undefined);
 		await endpointStore.remove().catch(() => undefined);
 		await lease.release().catch(() => undefined);
 		if (result && !result.ok) process.exitCode = 1;
 	};
 	shutdownHost = shutdown;
-	process.once("SIGTERM", () => { void shutdown().finally(() => process.exit(process.exitCode ?? 0)); });
-	process.once("SIGINT", () => { void shutdown().finally(() => process.exit(process.exitCode ?? 0)); });
+	process.once("SIGTERM", () => { void shutdown({ reason: "external_signal" }).finally(() => process.exit(process.exitCode ?? 0)); });
+	process.once("SIGINT", () => { void shutdown({ reason: "external_signal" }).finally(() => process.exit(process.exitCode ?? 0)); });
 	try {
 		const recovery = await lifecycle.recoverAfterRestart();
 		if (!recovery.ok) throw new Error("Host recovery incomplete");

@@ -27,8 +27,8 @@ import type { ModelThinkingLevel } from "../types.ts";
 import { RUNTIME_HOST_BOUNDS, type HostConnectionPrincipal, type HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { RuntimeInstanceId } from "../runtime/protocol/ids.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
-import { runtimeDigest } from "../runtime/protocol/foundation.ts";
-import type { HostEndpointRecord } from "../storage/host/endpoint-store.ts";
+import { runtimeDigest, type RuntimeDigest } from "../runtime/protocol/foundation.ts";
+import { createHostEndpointRecord, type HostEndpointRecord } from "../storage/host/endpoint-store.ts";
 import type { ExecutionHandleRef } from "../runtime/process/types.ts";
 import type { OutputCursor } from "../runtime/process/output.ts";
 import type { ControlPlaneActor } from "../storage/process/control-plane.ts";
@@ -198,6 +198,7 @@ export interface ResidentRuntimeHostOptions {
 	readonly attestor: HostTransportAttestor;
 	readonly hostRuntimeId?: RuntimeInstanceId;
 	readonly hostGeneration?: number;
+	readonly hostProcessStartIdentityDigest?: RuntimeDigest;
 	readonly createSession: (input: HostSessionOpenRequest) => Promise<HostSessionRuntime>;
 	/** Host-private resolver used after a workspace binding mutation. */
 	readonly resolveWorkspaceCwd?: (sessionId: string) => Promise<string>;
@@ -210,9 +211,31 @@ export interface ResidentRuntimeHostOptions {
 	/** Durable per-session domain revisions used after Host cold restart. */
 	readonly domainRevisionStore?: HostDomainRevisionStore;
 	/** Explicit management shutdown; client detach never invokes this callback. */
-	readonly onShutdown?: () => Promise<void>;
+	readonly onShutdown?: (request: HostShutdownRequest) => Promise<void>;
 	readonly onEndpoint?: (endpoint: HostEndpointRecord) => Promise<void>;
 	readonly onConnectionClosed?: (connectionId: string) => Promise<void>;
+}
+
+export type HostShutdownReason = "manual_stop" | "maintenance_restart" | "external_signal" | "auto_update";
+
+export interface HostShutdownRequest {
+	readonly reason: HostShutdownReason;
+	readonly targetBuildDigest?: RuntimeDigest;
+}
+
+export type HostShutdownActivityDecision =
+	| { readonly ok: true; readonly activeTurnCount: number; readonly managedProcessCount: number }
+	| { readonly ok: false; readonly code: "host_busy"; readonly activeTurnCount: number; readonly managedProcessCount: number };
+
+export function evaluateHostShutdownActivity(input: {
+	readonly activeTurnCount: number;
+	readonly managedProcessCount: number;
+	readonly confirmActive: boolean;
+}): HostShutdownActivityDecision {
+	const counts = { activeTurnCount: input.activeTurnCount, managedProcessCount: input.managedProcessCount };
+	return (input.activeTurnCount > 0 || input.managedProcessCount > 0) && !input.confirmActive
+		? { ok: false, code: "host_busy", ...counts }
+		: { ok: true, ...counts };
 }
 
 interface SessionState {
@@ -288,6 +311,7 @@ export class ResidentRuntimeHost {
 		this.server = new JsonLineHostServer({
 			socketPath: options.socketPath,
 			scope: options.scope,
+			management: { protocolVersion: 1, hostRuntimeId: this.runtimeId, hostGeneration: this.generation },
 			attestor: options.attestor,
 			handleFrame: (context) => this.handleFrame(context),
 			onConnectionClosed: (connectionId) => this.handleConnectionClosed(connectionId),
@@ -296,18 +320,25 @@ export class ResidentRuntimeHost {
 
 	public async start(): Promise<HostEndpointRecord> {
 		if (this.started && this.endpoint) return this.endpoint;
-		this.endpoint = {
+		const publishedAt = new Date().toISOString();
+		this.endpoint = createHostEndpointRecord({
 			protocolVersion: 1,
+			managementProtocolVersion: 1,
 			workspaceStorageKey: this.options.scope.workspaceStorageKey,
 			hostRuntimeId: this.runtimeId,
 			hostGeneration: this.generation,
+			hostProcessId: process.pid,
+			hostProcessStartIdentityDigest: this.options.hostProcessStartIdentityDigest ?? runtimeDigest({ kind: "unverified-test-process", pid: process.pid }),
+			hostBuildDigest: this.options.scope.hostBuildDigest,
 			state: "starting",
 			compatibilityDigest: this.options.scope.compatibilityDigest,
-		};
+			publishedAt,
+		});
 		this.admissionOpen = true;
 		await this.options.onEndpoint?.(this.endpoint);
 		await this.server.listen();
-		this.endpoint = { ...this.endpoint, state: "ready" };
+		const { metadataDigest: _metadataDigest, ...endpoint } = this.endpoint;
+		this.endpoint = createHostEndpointRecord({ ...endpoint, state: "ready" });
 		await this.options.onEndpoint?.(this.endpoint);
 		this.started = true;
 		return this.endpoint;
@@ -374,7 +405,8 @@ export class ResidentRuntimeHost {
 	public async closeAdmission(): Promise<void> {
 		this.admissionOpen = false;
 		if (this.endpoint && this.endpoint.state === "ready") {
-			this.endpoint = { ...this.endpoint, state: "draining" };
+			const { metadataDigest: _metadataDigest, ...endpoint } = this.endpoint;
+			this.endpoint = createHostEndpointRecord({ ...endpoint, state: "draining" });
 			await this.options.onEndpoint?.(this.endpoint);
 		}
 	}
@@ -403,7 +435,8 @@ export class ResidentRuntimeHost {
 		this.admissionOpen = false;
 		this.rejectReverseRequests(new Error("Host is closing"));
 		if (this.endpoint) {
-			this.endpoint = { ...this.endpoint, state: "draining" };
+			const { metadataDigest: _metadataDigest, ...endpoint } = this.endpoint;
+			this.endpoint = createHostEndpointRecord({ ...endpoint, state: "draining" });
 			try {
 				await this.options.onEndpoint?.(this.endpoint);
 			} catch {
@@ -422,6 +455,7 @@ export class ResidentRuntimeHost {
 	}
 
 	private async handleFrame(context: HostTransportFrameContext): Promise<readonly HostFrameEnvelope[]> {
+		if (context.mode === "management") return [await this.handleManagementFrame(context)];
 		if (context.frame.kind === "ack_cursor") {
 			this.ackCursor(context.principal, context.frame);
 			return [];
@@ -453,6 +487,72 @@ export class ResidentRuntimeHost {
 			return [this.response(context.frame, { ok: false, code: "uncertain_outcome" })];
 		}
 		return [response];
+	}
+
+	private async handleManagementFrame(context: HostTransportFrameContext): Promise<HostFrameEnvelope> {
+		const operation = stringValue(context.frame.body.operation);
+		if (context.frame.kind === "query_request" && operation === "host.inspect") {
+			const counts = this.server.connectionCounts();
+			const activeTurnCount = [...this.sessions.values()].filter((session) => session.runtime.controller.inFlight).length;
+			let managedProcessCount = 0;
+			if (this.options.processPort) {
+				for (const session of this.sessions.values()) managedProcessCount += (await this.options.processPort.list(session.runtime.controller.sessionId)).length;
+			}
+			return this.response(context.frame, {
+				ok: true,
+				hostRuntimeId: this.runtimeId,
+				hostGeneration: this.generation,
+				state: this.endpoint?.state ?? "starting",
+				workspaceStorageKey: this.options.scope.workspaceStorageKey,
+				protocolVersion: this.options.scope.protocolVersion,
+				managementProtocolVersion: 1,
+				buildDigest: this.options.scope.hostBuildDigest,
+				runtimeClientCount: counts.runtime,
+				managementClientCount: counts.management,
+				loadedSessionCount: this.sessions.size,
+				activeTurnCount,
+				managedProcessCount,
+			});
+		}
+		if (context.frame.kind !== "command_request" || operation !== "host.shutdown") {
+			return this.response(context.frame, { ok: false, code: "management_operation_forbidden" });
+		}
+		const commandId = stringValue(context.frame.body.commandId) ?? context.frame.frameId;
+		const requestDigest = runtimeDigest(context.frame.body).digest;
+		const reservation = await this.commandStore.begin(context.principal.principalId, commandId, requestDigest);
+		if (reservation.status === "replay") return this.rebindResponse(reservation.response, context.frame);
+		if (reservation.status !== "execute") return this.response(context.frame, { ok: false, code: reservation.status === "conflict" ? "command_id_conflict" : reservation.status === "capacity" ? "command_journal_capacity" : "uncertain_outcome" });
+		const response = await this.managementShutdown(context.frame);
+		await this.commandStore.complete(context.principal.principalId, commandId, requestDigest, response);
+		return response;
+	}
+
+	private async managementShutdown(frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
+		if (frame.body.expectedHostRuntimeId !== this.runtimeId || frame.body.expectedHostGeneration !== this.generation) {
+			return this.response(frame, { ok: false, code: "host_identity_conflict" });
+		}
+		const reason = frame.body.reason;
+		if (reason === "auto_update") return this.response(frame, { ok: false, code: "updater_unavailable" });
+		if (reason !== "manual_stop" && reason !== "maintenance_restart") return this.response(frame, { ok: false, code: "shutdown_reason_invalid" });
+		const targetBuildDigest = isRuntimeDigest(frame.body.targetBuildDigest) ? frame.body.targetBuildDigest : undefined;
+		if (reason === "maintenance_restart" && targetBuildDigest === undefined) {
+			return this.response(frame, { ok: false, code: "host_restart_target_required" });
+		}
+		const activeTurnCount = [...this.sessions.values()].filter((session) => session.runtime.controller.inFlight).length;
+		let managedProcessCount = 0;
+		if (this.options.processPort) {
+			for (const session of this.sessions.values()) managedProcessCount += (await this.options.processPort.list(session.runtime.controller.sessionId)).length;
+		}
+		const activity = evaluateHostShutdownActivity({ activeTurnCount, managedProcessCount, confirmActive: frame.body.confirmActive === true });
+		if (!activity.ok) {
+			return this.response(frame, activity);
+		}
+		if (this.options.onShutdown === undefined) return this.response(frame, { ok: false, code: "host_shutdown_unavailable" });
+		if (!this.shutdownRequested) {
+			this.shutdownRequested = true;
+			setTimeout(() => { void this.options.onShutdown?.({ reason, ...(targetBuildDigest === undefined ? {} : { targetBuildDigest }) }).catch(() => undefined); }, 0);
+		}
+		return this.response(frame, { ok: true, accepted: true, reason });
 	}
 
 	private async executeCommand(principal: HostConnectionPrincipal, frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
@@ -765,7 +865,7 @@ export class ResidentRuntimeHost {
 		this.shutdownRequested = true;
 		// Let the command response enter the transport outbox before lifecycle
 		// release closes the listener and its connections.
-		setTimeout(() => { void this.options.onShutdown?.().catch(() => undefined); }, 0);
+		setTimeout(() => { void this.options.onShutdown?.({ reason: "manual_stop" }).catch(() => undefined); }, 0);
 		return this.response(frame, { ok: true, accepted: true });
 	}
 
@@ -1181,4 +1281,10 @@ function containmentValue(value: unknown): HostProcessCreateInput["containment"]
 
 function errorCode(error: unknown): string {
 	return error instanceof Error && error.message.length > 0 ? error.message : "host_command_failed";
+}
+
+function isRuntimeDigest(value: unknown): value is RuntimeDigest {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const digest = value as Record<string, unknown>;
+	return digest.algorithm === "sha256" && typeof digest.digest === "string" && /^[a-f0-9]{64}$/u.test(digest.digest);
 }

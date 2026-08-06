@@ -9,6 +9,7 @@ export interface HostConnectionAttempt {
 	readonly close?: () => Promise<void>;
 	readonly request?: (frame: HostFrameEnvelope) => Promise<HostFrameEnvelope>;
 	readonly onEvent?: (listener: (frame: HostFrameEnvelope) => void) => () => void;
+	readonly onClose?: (listener: (error: Error) => void) => () => void;
 	readonly notify?: (frame: HostFrameEnvelope) => void;
 }
 
@@ -16,7 +17,7 @@ export type HostConnectionResult =
 	| { readonly ok: true; readonly connection: HostConnectionAttempt }
 	| {
 			readonly ok: false;
-			readonly code: "unreachable" | "peer_attestation_required" | "host_configuration_conflict";
+			readonly code: "unreachable" | "peer_attestation_required" | "host_configuration_conflict" | "host_build_mismatch";
 			readonly retryable: boolean;
 	  };
 
@@ -27,7 +28,7 @@ export type HostSpawnResult =
 			readonly connection: HostConnectionAttempt;
 			readonly close: () => Promise<void>;
 	  }
-	| { readonly ok: false; readonly code: "peer_attestation_required" | "host_configuration_conflict" | "host_startup_timeout"; };
+	| { readonly ok: false; readonly code: "peer_attestation_required" | "host_configuration_conflict" | "host_build_mismatch" | "host_startup_timeout"; };
 
 export interface RuntimeHostLauncherOptions {
 	readonly endpoint: {
@@ -43,6 +44,9 @@ export interface RuntimeHostLauncherOptions {
 			| { readonly ok: false; readonly code: "startup_election_lost" }
 		>;
 	};
+	readonly generation?: {
+		allocate(): Promise<number>;
+	};
 	readonly connector: {
 		connect(endpoint: HostEndpointRecord): Promise<HostConnectionResult>;
 	};
@@ -50,6 +54,7 @@ export interface RuntimeHostLauncherOptions {
 		spawn(input: { readonly hostGeneration: number }): Promise<HostSpawnResult>;
 	};
 	readonly expectedCompatibilityDigest: { readonly digest: string };
+	readonly expectedBuildDigest: { readonly digest: string };
 	readonly wait?: {
 		readonly timeoutMs?: number;
 		readonly intervalMs?: number;
@@ -71,6 +76,7 @@ export type RuntimeHostLaunchResult =
 			readonly code:
 				| "active_writer_unreachable"
 				| "host_configuration_conflict"
+				| "host_build_mismatch"
 				| "peer_attestation_required"
 				| "host_startup_timeout"
 				| "writer_state_unknown"
@@ -125,9 +131,15 @@ export async function connectOrSpawnHost(options: RuntimeHostLauncherOptions): P
 			}
 		}
 
-		const generation = (raced?.hostGeneration ?? published?.hostGeneration ?? 0) + 1;
+		const generation = options.generation === undefined
+			? (raced?.hostGeneration ?? published?.hostGeneration ?? 0) + 1
+			: await options.generation.allocate();
 		const spawned = await options.spawner.spawn({ hostGeneration: generation });
 		if (spawned.ok === false) return spawned;
+		if (spawned.endpoint.hostBuildDigest.digest !== options.expectedBuildDigest.digest) {
+			await spawned.close().catch(() => undefined);
+			return { ok: false, code: "host_build_mismatch" };
+		}
 		if (spawned.endpoint.compatibilityDigest.digest !== options.expectedCompatibilityDigest.digest) {
 			await spawned.close().catch(() => undefined);
 			return { ok: false, code: "host_configuration_conflict" };
@@ -148,6 +160,9 @@ async function tryConnectExisting(
 	options: RuntimeHostLauncherOptions,
 	endpoint: HostEndpointRecord,
 ): Promise<RuntimeHostLaunchResult | undefined> {
+	if (endpoint.hostBuildDigest.digest !== options.expectedBuildDigest.digest) {
+		return { ok: false, code: "host_build_mismatch" };
+	}
 	if (endpoint.compatibilityDigest.digest !== options.expectedCompatibilityDigest.digest) {
 		return { ok: false, code: "host_configuration_conflict" };
 	}
@@ -162,6 +177,7 @@ async function tryConnectExisting(
 		return { ok: true, startedHost: false, endpoint, connection: connection.connection, close: connection.connection.close ?? (async () => {}) };
 	}
 	if (!connection.retryable) {
+		if (connection.code === "host_build_mismatch") return { ok: false, code: "host_build_mismatch" };
 		return connection.code === "host_configuration_conflict"
 			? { ok: false, code: "host_configuration_conflict" }
 			: { ok: false, code: "peer_attestation_required" };

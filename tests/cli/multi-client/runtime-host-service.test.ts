@@ -101,6 +101,68 @@ function fakeSession(
 }
 
 describe("production Resident Runtime Host service", () => {
+	it("exposes bounded management status and shutdown without runtime admission", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-management-service-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const runtimeId = createRuntimeId("runtime", "management-service");
+		let shutdownReason = "";
+		const host = new ResidentRuntimeHost({
+			socketPath,
+			scope: hostScope,
+			hostRuntimeId: runtimeId,
+			hostGeneration: 9,
+			attestor: { attest: async () => ({
+				principalId: createRuntimeId("principal", "management-service"),
+				connectionId: createRuntimeId("connection", "management-service"),
+				attestationDigest: digest("management-service"),
+			}) },
+			createSession: async () => fakeSession(),
+			onShutdown: async (request) => { shutdownReason = request.reason; },
+		});
+		try {
+			await host.start();
+			const client = await JsonLineHostClient.connect(socketPath);
+			await client.request({
+				frameId: "management-service-init",
+				kind: "initialize_request",
+				protocolVersion: 1,
+				body: { mode: "management", management: { protocolVersion: 1, workspaceStorageKey: hostScope.workspaceStorageKey, hostRuntimeId: runtimeId, hostGeneration: 9 } },
+			});
+			const inspected = await client.request({ frameId: "management-service-inspect", kind: "query_request", protocolVersion: 1, body: { operation: "host.inspect" } });
+			expect(inspected.body).toMatchObject({
+				ok: true,
+				hostRuntimeId: runtimeId,
+				hostGeneration: 9,
+				buildDigest: hostScope.hostBuildDigest,
+				loadedSessionCount: 0,
+				activeTurnCount: 0,
+			});
+			const forbidden = await client.request({ frameId: "management-service-open", kind: "command_request", protocolVersion: 1, body: { operation: "session.open", commandId: "management-service-open", mode: "create" } });
+			expect(forbidden.body).toMatchObject({ ok: false, code: "management_operation_forbidden" });
+			const unfencedRestart = await client.request({
+				frameId: "management-service-unfenced-restart",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: { operation: "host.shutdown", commandId: "management-service-unfenced-restart", expectedHostRuntimeId: runtimeId, expectedHostGeneration: 9, reason: "maintenance_restart", confirmActive: false },
+			});
+			expect(unfencedRestart.body).toMatchObject({ ok: false, code: "host_restart_target_required" });
+			const stopped = await client.request({
+				frameId: "management-service-stop",
+				kind: "command_request",
+				protocolVersion: 1,
+				body: { operation: "host.shutdown", commandId: "management-service-stop", expectedHostRuntimeId: runtimeId, expectedHostGeneration: 9, reason: "manual_stop", confirmActive: false },
+			});
+			expect(stopped.body).toMatchObject({ ok: true, accepted: true, reason: "manual_stop" });
+			for (let attempt = 0; attempt < 20 && shutdownReason === ""; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 2));
+			expect(shutdownReason).toBe("manual_stop");
+			await client.close();
+		} finally {
+			await host.close();
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rebuilds the same session at the Host-owned worktree cwd and advances the session fence", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-worktree-rebind-"));
 		const socketPath = join(root, "host.sock");

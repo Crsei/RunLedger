@@ -53,7 +53,7 @@ export class RemoteInteractiveSessionController implements InteractiveSessionCon
 	private readonly messageState: AgentMessage[];
 	private readonly warningState: string[];
 	private readonly auditState: LedgerEntry[];
-	private readonly toolCountValue: number;
+	private toolCountValue: number;
 	private selectionValue: RuntimeSelection;
 	private inFlightValue = false;
 	private sequence = 0;
@@ -91,6 +91,27 @@ export class RemoteInteractiveSessionController implements InteractiveSessionCon
 		if (value.hostGeneration !== undefined) this.hostGeneration = value.hostGeneration;
 		if (value.sessionGeneration !== undefined) this.sessionGeneration = value.sessionGeneration;
 		if (value.driverRevision !== undefined) this.driverRevision = value.driverRevision;
+	}
+
+	public recoveryCursor(): number { return this.eventCursor; }
+
+	/** Replaces the client projection only after Host declares cursor resync. */
+	public applyRecoverySnapshot(snapshot: RemoteSessionSnapshot): void {
+		if (snapshot.sessionId !== this.session) throw new Error("host_recovery_session_mismatch");
+		this.selectionValue = { ...snapshot.selection };
+		this.messageState.splice(0, this.messageState.length, ...snapshot.messages);
+		this.warningState.splice(0, this.warningState.length, ...snapshot.warnings);
+		this.auditState.splice(0, this.auditState.length, ...snapshot.auditEntries);
+		this.toolCountValue = snapshot.toolCount;
+		this.hostGeneration = snapshot.hostGeneration;
+		this.sessionGeneration = snapshot.sessionGeneration;
+		this.driverRevision = snapshot.driverRevision;
+		this.eventCursor = snapshot.eventCursor ?? 0;
+		this.pendingEvents.clear();
+		this.seenEventIds.clear();
+		this.seenEventOrder.splice(0);
+		this.inFlightValue = false;
+		for (const resolve of this.idleWaiters.splice(0)) resolve();
 	}
 
 	public async resumeEvents(): Promise<"subscribed" | "resync_required"> {

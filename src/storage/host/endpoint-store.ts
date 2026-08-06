@@ -8,26 +8,45 @@ import { Value } from "typebox/value";
 import type { RunledgerLayout } from "../../runtime/contracts/storage-layout.ts";
 import { hostEndpointRelativeLocator } from "../../runtime/contracts/storage-layout.ts";
 import { RuntimeDigestSchema, RuntimeIdSchema } from "../../runtime/protocol/foundation-schemas.ts";
-import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
+import { runtimeDigest, type RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import { RUNTIME_HOST_BOUNDS } from "../../runtime/host/types.ts";
 
 export interface HostEndpointRecord {
 	readonly protocolVersion: 1;
+	readonly managementProtocolVersion: 1;
 	readonly workspaceStorageKey: string;
 	readonly hostRuntimeId: string;
 	readonly hostGeneration: number;
+	readonly hostProcessId: number;
+	readonly hostProcessStartIdentityDigest: RuntimeDigest;
+	readonly hostBuildDigest: RuntimeDigest;
 	readonly state: "starting" | "ready" | "draining";
 	readonly compatibilityDigest: RuntimeDigest;
+	readonly publishedAt: string;
+	readonly metadataDigest: RuntimeDigest;
+}
+
+export type HostEndpointRecordInput = Omit<HostEndpointRecord, "metadataDigest">;
+
+/** Creates the only accepted endpoint format and binds every field to its digest. */
+export function createHostEndpointRecord(input: HostEndpointRecordInput): HostEndpointRecord {
+	return { ...input, metadataDigest: runtimeDigest(input) };
 }
 
 export const HostEndpointRecordSchema = Type.Object(
 	{
 		protocolVersion: Type.Literal(1),
+		managementProtocolVersion: Type.Literal(1),
 		workspaceStorageKey: Type.String({ pattern: "^ws-[a-f0-9]{64}$", minLength: 67, maxLength: 67 }),
 		hostRuntimeId: RuntimeIdSchema,
 		hostGeneration: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+		hostProcessId: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+		hostProcessStartIdentityDigest: RuntimeDigestSchema,
+		hostBuildDigest: RuntimeDigestSchema,
 		state: Type.Union([Type.Literal("starting"), Type.Literal("ready"), Type.Literal("draining")]),
 		compatibilityDigest: RuntimeDigestSchema,
+		publishedAt: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$" }),
+		metadataDigest: RuntimeDigestSchema,
 	},
 	{ additionalProperties: false },
 );
@@ -73,7 +92,7 @@ export class EndpointStore {
 	}
 
 	public async publish(record: HostEndpointRecord): Promise<void> {
-		if (!Value.Check(HostEndpointRecordSchema, record)) throw new Error("invalid Host endpoint record");
+		if (!isValidHostEndpointRecord(record)) throw new Error("invalid Host endpoint record");
 		if (record.workspaceStorageKey !== this.workspaceStorageKey) throw new Error("endpoint scope mismatch");
 		const parent = dirname(this.endpointFile);
 		await ensureContainedDirectoryChain(this.layout.home, parent);
@@ -127,7 +146,7 @@ export class EndpointStore {
 		} catch {
 			throw new Error("endpoint record is not valid JSON");
 		}
-		if (!Value.Check(HostEndpointRecordSchema, parsed)) throw new Error("endpoint record has invalid current-format shape");
+		if (!isValidHostEndpointRecord(parsed)) throw new Error("endpoint record has invalid current-format shape");
 		if (parsed.workspaceStorageKey !== this.workspaceStorageKey) throw new Error("endpoint scope mismatch");
 		return parsed as unknown as HostEndpointRecord;
 	}
@@ -137,6 +156,12 @@ export class EndpointStore {
 			if (!isNotFound(error)) throw error;
 		});
 	}
+}
+
+function isValidHostEndpointRecord(value: unknown): value is HostEndpointRecord {
+	if (!Value.Check(HostEndpointRecordSchema, value)) return false;
+	const { metadataDigest, ...body } = value as unknown as HostEndpointRecord;
+	return runtimeDigest(body).digest === metadataDigest.digest;
 }
 
 function isNotFound(error: unknown): boolean {

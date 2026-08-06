@@ -19,6 +19,17 @@ import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
 
 describe("R3/R4 production Host composition", () => {
+	it("binds the verified executable build digest into compatibility", () => {
+		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
+		const buildA = runtimeDigest("build-a");
+		const buildB = runtimeDigest("build-b");
+		const first = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {}, hostBuildDigest: buildA });
+		const second = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {}, hostBuildDigest: buildB });
+
+		expect(first.hostBuildDigest).toEqual(buildA);
+		expect(second.compatibilityDigest.digest).not.toBe(first.compatibilityDigest.digest);
+	});
+
 	it("derives one stable workspace scope and canonical socket path", () => {
 		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
 		const first = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });

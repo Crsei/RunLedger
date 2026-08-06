@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { runManagedProcessPtyVerification } from "../../../scripts/verify-managed-process-pty.ts";
 import { runMultiClientHostVerification } from "../../../scripts/verify-multi-client-host.ts";
+import { runHostBuildReplacementVerification } from "../../../scripts/verify-host-build-replacement.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -53,4 +54,15 @@ describe("R10 executable acceptance runners", () => {
 		expect(host).toMatchObject({ passed: false, outcome: "unsupported", checks: [] });
 		expect(pty).toMatchObject({ passed: false, outcome: "unsupported", checks: [] });
 	});
+
+	it("replaces a same-version Host only when the executable content digest matches the target", async () => {
+		const result = await runHostBuildReplacementVerification();
+		expect(result).toMatchObject({ passed: true, outcome: "pass" });
+		expect(result.checks).toEqual(expect.arrayContaining([
+			"same_version_different_content",
+			"host_build_mismatch",
+			"maintenance_target_fence",
+			"replacement_generation_advanced",
+		]));
+	}, 30_000);
 });

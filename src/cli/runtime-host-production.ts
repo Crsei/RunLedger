@@ -27,6 +27,8 @@ import { EndpointStore, type HostEndpointRecord } from "../storage/host/endpoint
 import { hostStartupElectionRelativeLocator } from "../runtime/contracts/storage-layout.ts";
 import { acquireStartupElection } from "../storage/host/startup-election.ts";
 import { isHostWriterLeaseActive } from "../storage/host/writer-lease.ts";
+import { HostGenerationStore } from "../storage/host/host-generation-store.ts";
+import { HostShutdownIntentStore, evaluateStoredHostReplacementAdmission } from "../storage/host/shutdown-intent-store.ts";
 import {
 	connectOrSpawnHost,
 	type HostConnectionResult,
@@ -49,6 +51,8 @@ export interface LocalRuntimeHostScopeOptions {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
+	/** Verified digest of the executable distribution used by both client and Host. */
+	readonly hostBuildDigest?: ReturnType<typeof runtimeDigest>;
 	/** 显式 CLI security 层属于 resident Host 固定组合，必须参与兼容性 fence。 */
 	readonly securityOverride?: SecurityConfigDocument;
 	/** `--no-worktree` disables canonical binding discovery for this Host scope. */
@@ -77,7 +81,7 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 		repositoryId,
 		workspaceStorageKey: workspaceKey,
 		protocolVersion: HOST_PROTOCOL_VERSION,
-		hostBuildDigest: runtimeDigest({ product: "runledger", hostProtocol: HOST_PROTOCOL_VERSION }),
+		hostBuildDigest: options.hostBuildDigest ?? runtimeDigest({ product: "runledger", hostProtocol: HOST_PROTOCOL_VERSION }),
 		compositionDigest: runtimeDigest({
 			kind: "production",
 			processBackend: "governed",
@@ -249,14 +253,52 @@ export interface ProductionRuntimeHostConnection {
 	readonly startedHost: boolean;
 	readonly request: (frame: import("../runtime/host/types.ts").HostFrameEnvelope) => Promise<import("../runtime/host/types.ts").HostFrameEnvelope>;
 	readonly onEvent: (listener: (frame: import("../runtime/host/types.ts").HostFrameEnvelope) => void) => () => void;
+	readonly onClose: (listener: (error: Error) => void) => () => void;
 	readonly notify: (frame: import("../runtime/host/types.ts").HostFrameEnvelope) => void;
 	close(): Promise<void>;
+}
+
+export interface ProductionHostManagementConnection {
+	readonly endpoint: HostEndpointRecord;
+	readonly request: (frame: HostFrameEnvelope) => Promise<HostFrameEnvelope>;
+	close(): Promise<void>;
+}
+
+export async function connectProductionHostManagement(options: {
+	readonly layout: RunledgerLayout;
+	readonly endpoint: HostEndpointRecord;
+}): Promise<ProductionHostManagementConnection> {
+	if (process.platform !== "linux") throw new Error("production Host management transport is unavailable on this platform");
+	const socketPath = productionHostSocketPath(options.layout, options.endpoint.workspaceStorageKey);
+	const client = await JsonLineHostClient.connect(socketPath);
+	try {
+		const initialized = await client.request({
+			frameId: `management_${options.endpoint.hostGeneration}_${Date.now()}`,
+			kind: "initialize_request",
+			protocolVersion: HOST_PROTOCOL_VERSION,
+			body: {
+				mode: "management",
+				management: {
+					protocolVersion: 1,
+					workspaceStorageKey: options.endpoint.workspaceStorageKey,
+					hostRuntimeId: options.endpoint.hostRuntimeId,
+					hostGeneration: options.endpoint.hostGeneration,
+				},
+			},
+		});
+		if (initialized.body.accepted !== true || initialized.body.mode !== "management") throw new Error("host_management_admission_rejected");
+		return { endpoint: options.endpoint, request: (frame) => client.request(frame), close: () => client.close() };
+	} catch (error) {
+		await client.close().catch(() => undefined);
+		throw error;
+	}
 }
 
 export interface ConnectProductionRuntimeHostOptions {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
+	readonly hostBuildDigest: ReturnType<typeof runtimeDigest>;
 	/** CLI 显式 security override，作为最高优先级 `cli` 层注入 Host。 */
 	readonly securityOverride?: SecurityConfigDocument;
 	readonly workspaceBindingMode?: "auto" | "disabled";
@@ -275,6 +317,7 @@ export async function connectProductionRuntimeHost(
 		layout: options.layout,
 		cwd: options.cwd,
 		settings: options.settings,
+		hostBuildDigest: options.hostBuildDigest,
 		...(options.securityOverride === undefined ? {} : { securityOverride: options.securityOverride }),
 		...(options.workspaceBindingMode === undefined ? {} : { workspaceBindingMode: options.workspaceBindingMode }),
 	});
@@ -299,6 +342,9 @@ export async function connectProductionRuntimeHost(
 		election: {
 			acquire: () => acquireStartupElection(join(options.layout.home, hostStartupElectionRelativeLocator(scope.workspaceStorageKey))),
 		},
+		generation: {
+			allocate: () => new HostGenerationStore(options.layout, scope.workspaceStorageKey).allocate(),
+		},
 		connector: {
 			connect: (endpoint: HostEndpointRecord) => connectProductionEndpoint(socketPath, scope, endpoint, options.reverseRequestHandler),
 		},
@@ -314,11 +360,12 @@ export async function connectProductionRuntimeHost(
 			}),
 		},
 		expectedCompatibilityDigest: scope.compatibilityDigest,
+		expectedBuildDigest: scope.hostBuildDigest,
 		wait: options.wait,
 	};
 	const result: RuntimeHostLaunchResult = await connectOrSpawnHost(launcherOptions);
 	if (!result.ok) throw new Error(result.code);
-	if (!result.connection.request || !result.connection.onEvent) {
+	if (!result.connection.request || !result.connection.onEvent || !result.connection.onClose) {
 		await result.close();
 		throw new Error("production Host connection does not expose a typed transport");
 	}
@@ -327,6 +374,7 @@ export async function connectProductionRuntimeHost(
 		startedHost: result.startedHost,
 		request: result.connection.request,
 		onEvent: result.connection.onEvent,
+		onClose: result.connection.onClose,
 		notify: (frame) => result.connection.notify?.(frame),
 		close: result.close,
 	};
@@ -362,6 +410,7 @@ async function connectProductionEndpoint(
 				close: () => client!.close(),
 					request: (frame) => client!.request(frame),
 					onEvent: (listener) => client!.onEvent(listener),
+					onClose: (listener) => client!.onClose(listener),
 					notify: (frame: HostFrameEnvelope) => client!.notify(frame),
 			},
 		};
@@ -378,6 +427,12 @@ async function spawnProductionHost(options: ConnectProductionRuntimeHostOptions 
 	readonly helperPath: string;
 	readonly hostGeneration: number;
 }): Promise<HostSpawnResult> {
+	const replacementAdmission = await evaluateStoredHostReplacementAdmission(
+		new HostShutdownIntentStore(options.layout, options.scope.workspaceStorageKey),
+		options.hostGeneration,
+		options.scope.hostBuildDigest,
+	);
+	if (!replacementAdmission.ok) return replacementAdmission;
 	const spec = productionHostSpawnSpec({
 		layout: options.layout,
 		scope: options.scope,

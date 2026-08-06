@@ -21,6 +21,12 @@ describe("parseArgs 帮助/版本", () => {
     expect(USAGE).toContain("runledger");
     expect(USAGE).toContain("--help");
   });
+
+  it("USAGE advertises resident Host lifecycle commands", () => {
+    expect(USAGE).toContain("runledger host status");
+    expect(USAGE).toContain("runledger host restart");
+    expect(USAGE).toContain("--confirm-active");
+  });
 });
 
 describe("parseArgs 会话操作旗", () => {

@@ -55,7 +55,7 @@
   ],
   "scripts": {
     "build:linux-peer-credential-helper": "tsx scripts/build-linux-peer-credential-helper.ts",
-    "build": "npm run build:linux-peer-credential-helper && tsc -p tsconfig.json",
+    "build": "npm run build:linux-peer-credential-helper && tsc -p tsconfig.json && tsx scripts/generate-host-build-manifest.ts",
     "check:current-format": "tsx scripts/check-current-format.ts",
     "check:storage-boundaries": "tsx scripts/check-storage-boundaries.ts",
     "check:runtime-boundaries": "tsx scripts/check-runtime-boundaries.ts",
@@ -71,10 +71,11 @@
     "test": "vitest run && npm run test:tui-native",
     "test:tui-native": "bun test tests/tui/*.bun.test.ts",
     "test:watch": "vitest",
-    "cli": "tsx src/cli/cli.ts",
-    "cli:debug": "RUNLEDGER_DEBUG=1 tsx src/cli/cli.ts",
+    "cli": "npm run build && ./bin/runledger.js",
+    "cli:debug": "npm run build && RUNLEDGER_DEBUG=1 ./bin/runledger.js",
     "verify:multi-client-host": "tsx scripts/verify-multi-client-host.ts",
     "verify:managed-process-pty": "tsx scripts/verify-managed-process-pty.ts",
+    "verify:host-build-replacement": "tsx scripts/verify-host-build-replacement.ts",
     "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts",
     "check:tui-boundaries": "tsx scripts/check-tui-boundaries.ts"
   },

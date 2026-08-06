@@ -23,12 +23,20 @@ export interface HostTransportAttestor {
 
 export interface HostTransportFrameContext {
 	readonly principal: HostConnectionPrincipal;
+	readonly mode: "runtime" | "management";
 	readonly frame: HostFrameEnvelope;
+}
+
+export interface HostManagementTransportIdentity {
+	readonly protocolVersion: 1;
+	readonly hostRuntimeId: string;
+	readonly hostGeneration: number;
 }
 
 export interface JsonLineHostServerOptions {
 	readonly socketPath: string;
 	readonly scope: HostCompatibilityEnvelope;
+	readonly management?: HostManagementTransportIdentity;
 	readonly attestor: HostTransportAttestor;
 	readonly handleFrame: (context: HostTransportFrameContext) => Promise<readonly HostFrameEnvelope[]>;
 	readonly onConnectionClosed?: (connectionId: string) => void | Promise<void>;
@@ -46,6 +54,7 @@ interface ServerConnection {
 	readonly socket: net.Socket;
 	buffer: Buffer;
 	principal?: HostConnectionPrincipal;
+	mode?: "runtime" | "management";
 	initialized: boolean;
 	pendingFrames: number;
 	processing: Promise<void>;
@@ -98,6 +107,17 @@ export class JsonLineHostServer {
 		if (!server) return;
 		await new Promise<void>((resolve) => server.close(() => resolve()));
 		await unlink(this.options.socketPath).catch(() => undefined);
+	}
+
+	public connectionCounts(): { readonly runtime: number; readonly management: number } {
+		let runtime = 0;
+		let management = 0;
+		for (const connection of this.connections) {
+			if (!connection.initialized) continue;
+			if (connection.mode === "management") management += 1;
+			else runtime += 1;
+		}
+		return { runtime, management };
 	}
 
 	/** Sends a bounded unsolicited event to one attested connection. */
@@ -209,6 +229,23 @@ export class JsonLineHostServer {
 				connection.socket.destroy();
 				return;
 			}
+			if (frame.body.mode === "management") {
+				const requested = frame.body.management;
+				const expected = this.options.management;
+				if (!expected || !isManagementInitialize(requested, this.options.scope.workspaceStorageKey, expected)) {
+					this.enqueue(connection, this.response(frame, "initialize_response", { accepted: false, code: "management_identity_conflict" }));
+					connection.socket.destroy();
+					return;
+				}
+				connection.mode = "management";
+				connection.initialized = true;
+				this.enqueue(connection, this.response(frame, "initialize_response", {
+					accepted: true,
+					mode: "management",
+					management: expected,
+				}));
+				return;
+			}
 			const actual = frame.body.compatibility;
 			const valid = Value.Check(HostCompatibilityEnvelopeSchema, actual)
 				? validateHostCompatibility(this.options.scope, actual as HostCompatibilityEnvelope)
@@ -218,6 +255,7 @@ export class JsonLineHostServer {
 				connection.socket.destroy();
 				return;
 			}
+			connection.mode = "runtime";
 			connection.initialized = true;
 			this.enqueue(connection, this.response(frame, "initialize_response", {
 				accepted: true,
@@ -245,7 +283,7 @@ export class JsonLineHostServer {
 			pending.resolve(frame);
 			return;
 		}
-		const responses = await this.options.handleFrame({ principal: connection.principal, frame });
+		const responses = await this.options.handleFrame({ principal: connection.principal, mode: connection.mode ?? "runtime", frame });
 		for (const response of responses) this.enqueue(connection, response);
 	}
 
@@ -384,8 +422,10 @@ export class JsonLineHostClient {
 	private readonly reverseControllers = new Set<AbortController>();
 	private readonly pending = new Map<string, PendingRequest>();
 	private readonly eventListeners = new Set<(frame: HostFrameEnvelope) => void>();
+	private readonly closeListeners = new Set<(error: Error) => void>();
 	private buffer = Buffer.alloc(0);
 	private closed = false;
+	private closeNotified = false;
 
 	private constructor(socket: net.Socket, options: JsonLineHostClientOptions) {
 		this.socket = socket;
@@ -393,8 +433,8 @@ export class JsonLineHostClient {
 		this.maxPendingRequests = options.maxPendingRequests ?? RUNTIME_HOST_BOUNDS.maxReverseRequestWaiters;
 		this.reverseRequestHandler = options.reverseRequestHandler;
 		socket.on("data", (chunk: Buffer) => this.receive(chunk));
-		socket.once("close", () => this.failPending(new Error("Host connection closed")));
-		socket.once("error", (error) => this.failPending(error));
+		socket.once("close", () => this.signalClosed(new Error("Host connection closed")));
+		socket.once("error", (error) => this.signalClosed(error));
 	}
 
 	public static async connect(socketPath: string, options: JsonLineHostClientOptions = {}): Promise<JsonLineHostClient> {
@@ -443,6 +483,11 @@ export class JsonLineHostClient {
 	public onEvent(listener: (frame: HostFrameEnvelope) => void): () => void {
 		this.eventListeners.add(listener);
 		return () => this.eventListeners.delete(listener);
+	}
+
+	public onClose(listener: (error: Error) => void): () => void {
+		this.closeListeners.add(listener);
+		return () => this.closeListeners.delete(listener);
 	}
 
 	public async close(): Promise<void> {
@@ -512,6 +557,15 @@ export class JsonLineHostClient {
 		this.reverseControllers.clear();
 	}
 
+	private signalClosed(error: Error): void {
+		this.failPending(error);
+		if (this.closeNotified) return;
+		this.closeNotified = true;
+		for (const listener of this.closeListeners) {
+			try { listener(error); } catch { /* Close observers are isolated. */ }
+		}
+	}
+
 	private async handleReverseRequest(frame: HostFrameEnvelope): Promise<void> {
 		if (this.closed) return;
 		if (this.reverseControllers.size >= RUNTIME_HOST_BOUNDS.maxReverseRequestWaiters) {
@@ -544,4 +598,16 @@ export class JsonLineHostClient {
 
 function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isManagementInitialize(
+	value: unknown,
+	workspaceStorageKey: string,
+	expected: HostManagementTransportIdentity,
+): boolean {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const record = value as Record<string, unknown>;
+	return Object.keys(record).sort().join(",") === "hostGeneration,hostRuntimeId,protocolVersion,workspaceStorageKey" &&
+		record.protocolVersion === expected.protocolVersion && record.workspaceStorageKey === workspaceStorageKey &&
+		record.hostRuntimeId === expected.hostRuntimeId && record.hostGeneration === expected.hostGeneration;
 }

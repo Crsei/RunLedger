@@ -45,6 +45,16 @@ function reverseFrame(): HostFrameEnvelope {
 }
 
 describe("P1 regression fixes at InteractiveMode level", () => {
+	it("keeps the TUI alive while projecting Host reconnect lifecycle states", () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		mode.setHostConnectionState("reconnecting");
+		expect(JSON.stringify(mode.getTuiState())).toContain("Host reconnecting");
+		mode.setHostConnectionState("ready");
+		expect(JSON.stringify(mode.getTuiState())).toContain("Host reconnected");
+		mode.setHostConnectionState("build_mismatch");
+		expect(JSON.stringify(mode.getTuiState())).toContain("Host build mismatch");
+	});
+
 	it("P1-3: reverse approval returns a decision without fabricating a completed workflow", async () => {
 		const controller = new ContractController();
 		const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });

@@ -108,6 +108,8 @@ export interface InteractiveModeOptions {
   initialBootstrap?: TuiBootstrapSnapshot;
 }
 
+export type HostConnectionUiState = "ready" | "reconnecting" | "stopped" | "build_mismatch" | "recovery_required";
+
 /** M8d:/model 切换条目;由 caller(demo)注入候选。 */
 export interface ModelSwitchEntry {
   /** 内部 ID(也是 SelectItem.value) */
@@ -184,6 +186,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private authAdapter: InteractiveSessionAdapter;
   private lastIdleCtrlC = 0;
   private quitting = false;
+	private hostConnectionState: HostConnectionUiState = "ready";
   private readonly exitPromise: Promise<void>;
   private readonly resolveExit: () => void;
   private processOverlayComponent: ProcessOverlayComponent | undefined;
@@ -273,6 +276,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
     void MAX_CONSECUTIVE_INIT_FAILURES;
     void INIT_FAILURE_BACKOFF_MS;
   }
+
+	public setHostConnectionState(state: HostConnectionUiState): void {
+		if (this.hostConnectionState === state) return;
+		this.hostConnectionState = state;
+		const presentation = state === "ready"
+			? { text: "Host reconnected.", kind: "note" as const }
+			: state === "reconnecting"
+				? { text: "Host reconnecting; new mutations are paused.", kind: "note" as const }
+				: state === "stopped"
+					? { text: "Host stopped; this client will not reconnect.", kind: "error" as const }
+					: state === "build_mismatch"
+						? { text: "Host build mismatch; run `runledger host restart` with the current build.", kind: "error" as const }
+						: { text: "Host recovery required; command outcome could not be proven.", kind: "error" as const };
+		this.showNotice(presentation.text, presentation.kind);
+	}
 
   /** 装配组件树并返回引用;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
   private assembleTree(): ContainerRefs {
@@ -1014,6 +1032,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       }
     }
 
+	if (this.hostConnectionState !== "ready") {
+		this.showNotice(this.hostConnectionState === "reconnecting" ? "host_reconnecting" : `host_${this.hostConnectionState}`, "error");
+		return;
+	}
     this.streaming = true;
     this.stopReason = undefined;
     this.ui.requestRender();
@@ -1032,6 +1054,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private handleFollowUpSubmit(text: string): void {
+	if (this.hostConnectionState !== "ready") {
+		this.showNotice(this.hostConnectionState === "reconnecting" ? "host_reconnecting" : `host_${this.hostConnectionState}`, "error");
+		return;
+	}
     if (!this.inFlight()) {
       this.handleSubmit(text);
       return;

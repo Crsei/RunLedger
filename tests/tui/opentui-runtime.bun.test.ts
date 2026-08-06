@@ -23,6 +23,31 @@ type RuntimeFactory = (options: {
 }) => RuntimeUnderTest;
 
 describe("OpenTUI runtime", () => {
+	test("Host reconnect status preserves the mounted transcript", async () => {
+		const tuiModule: object = await import("../../src/tui/index.ts");
+		const candidate = Reflect.get(tuiModule, "createOpenTuiRuntime");
+		expect(typeof candidate).toBe("function");
+		if (typeof candidate !== "function") return;
+		const setup = await createTestRenderer({ width: 72, height: 16 });
+		try {
+			const runtime = (candidate as RuntimeFactory)({ renderer: setup.renderer });
+			runtime.mount({ header: "RunLedger", resources: "", transcript: ["user: retained", "assistant: retained"], status: "Host reconnecting", footer: "model", hints: "" });
+			await setup.renderOnce();
+			const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+			expect(setup.captureCharFrame()).toContain("Host reconnecting");
+			runtime.mount({ header: "RunLedger", resources: "", transcript: ["user: retained", "assistant: retained"], status: "Host reconnected", footer: "model", hints: "" });
+			await setup.renderOnce();
+			expect(setup.renderer.root.findDescendantById("runledger-transcript")?.num).toBe(transcript?.num);
+			const frame = setup.captureCharFrame();
+			expect(frame).toContain("user: retained");
+			expect(frame).toContain("assistant: retained");
+			expect(frame).toContain("Host reconnected");
+			runtime.destroy();
+		} finally {
+			if (!setup.renderer.isDestroyed) setup.renderer.destroy();
+		}
+	});
+
   test("mount updates persistent screen nodes instead of rebuilding the whole tree", async () => {
     const tuiModule: object = await import("../../src/tui/index.ts");
     const candidate = Reflect.get(tuiModule, "createOpenTuiRuntime");

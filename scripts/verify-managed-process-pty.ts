@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildRunledgerLayout } from "../src/runtime/contracts/storage-layout.ts";
 import { HOST_PROTOCOL_VERSION } from "../src/runtime/host/contracts.ts";
+import { runtimeDigest } from "../src/runtime/protocol/foundation.ts";
 import type { HostFrameEnvelope } from "../src/runtime/host/types.ts";
 import { EndpointStore } from "../src/storage/host/endpoint-store.ts";
 import {
@@ -20,6 +21,7 @@ import { buildLinuxPeerCredentialHelper } from "./build-linux-peer-credential-he
 // install under /home. Keep the acceptance command inside the declared runtime
 // read roots so this runner exercises the real restrictive Host path.
 const SANDBOX_NODE = "/usr/bin/node";
+const RUNNER_BUILD_DIGEST = runtimeDigest({ runner: "managed-process-pty" });
 
 export interface ManagedProcessPtyRunnerResult {
 	readonly passed: boolean;
@@ -38,7 +40,7 @@ export async function runManagedProcessPtyVerification(options: ManagedProcessPt
 	}
 	const root = await mkdtemp(join(tmpdir(), "runledger-r10-pty-"));
 	const layout = buildRunledgerLayout(join(root, "home"), "posix");
-	const scope = createLocalRuntimeHostScope({ layout, cwd: root, settings: {} });
+	const scope = createLocalRuntimeHostScope({ layout, cwd: root, settings: {}, hostBuildDigest: RUNNER_BUILD_DIGEST });
 	const endpointStore = new EndpointStore(layout, scope.workspaceStorageKey);
 	const helperPath = join(root, "peer-credential-helper");
 	const checks: string[] = [];
@@ -55,6 +57,7 @@ export async function runManagedProcessPtyVerification(options: ManagedProcessPt
 			layout,
 			cwd: root,
 			settings: {},
+			hostBuildDigest: RUNNER_BUILD_DIGEST,
 			peerCredentialHelperPath: helperPath,
 			wait: { timeoutMs: 15_000, intervalMs: 25 },
 		});
@@ -62,6 +65,7 @@ export async function runManagedProcessPtyVerification(options: ManagedProcessPt
 			layout,
 			cwd: root,
 			settings: {},
+			hostBuildDigest: RUNNER_BUILD_DIGEST,
 			peerCredentialHelperPath: helperPath,
 			wait: { timeoutMs: 15_000, intervalMs: 25 },
 		});
@@ -164,6 +168,7 @@ export async function runManagedProcessPtyVerification(options: ManagedProcessPt
 			layout,
 			cwd: root,
 			settings: {},
+			hostBuildDigest: RUNNER_BUILD_DIGEST,
 			peerCredentialHelperPath: helperPath,
 			wait: { timeoutMs: 15_000, intervalMs: 25 },
 		});

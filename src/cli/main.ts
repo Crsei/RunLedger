@@ -31,6 +31,7 @@ import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
 import { runWorkspaceCommand } from "./workspace-command.ts";
 import { connectProductionRuntimeHost } from "./runtime-host-production.ts";
+import { loadVerifiedHostBuildManifest, productionDistributionRoot } from "./host-build-identity.ts";
 import { createProductionProcessOverlayClient } from "./runtime-host-client.ts";
 import {
 	controlCommandBody,
@@ -39,6 +40,9 @@ import {
 	parseControlCommand,
 	type ControlCommand,
 } from "./control-commands.ts";
+import { runHostCommand } from "./host-command.ts";
+import { ReconnectingHostBridge } from "./reconnecting-host-bridge.ts";
+import { HostShutdownIntentStore } from "../storage/host/shutdown-intent-store.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -56,6 +60,10 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (argv[0] === "workspace") {
     await runWorkspaceCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "host") {
+    await runHostCommand(argv.slice(1));
     return;
   }
   const { args, error } = parseArgs(argv);
@@ -90,21 +98,27 @@ export async function main(argv: readonly string[]): Promise<void> {
   const cwd = process.cwd();
   const { layout } = await resolveRunledgerHome();
   const settings = await loadProjectSettings({ layout });
+  const hostBuildManifest = await loadVerifiedHostBuildManifest(productionDistributionRoot());
   const securityOverride = cliSecurityOverride(args);
   let interactive: InteractiveMode | undefined;
-  const host = await connectProductionRuntimeHost({
-    layout,
-    cwd,
-    settings,
-    ...(securityOverride === undefined ? {} : { securityOverride }),
+	const connectHost = () => connectProductionRuntimeHost({
+		layout,
+		cwd,
+		settings,
+		hostBuildDigest: hostBuildManifest.contentDigest,
+		...(securityOverride === undefined ? {} : { securityOverride }),
 		...(args.noWorktree ? { workspaceBindingMode: "disabled" as const } : {}),
-    reverseRequestHandler: (frame, signal) => interactive?.handleReverseRequest(frame, signal) ?? { ok: false, code: "approval_ui_unavailable" },
-  });
-  const transport: HostRequestTransport = {
-    request: host.request,
-    onEvent: host.onEvent,
-    notify: host.notify,
-  };
+		reverseRequestHandler: (frame, signal) => interactive?.handleReverseRequest(frame, signal) ?? { ok: false, code: "approval_ui_unavailable" },
+	});
+	const initialHost = await connectHost();
+	const shutdownIntentStore = new HostShutdownIntentStore(layout, initialHost.endpoint.workspaceStorageKey);
+	const bridge = new ReconnectingHostBridge({
+		initialConnection: initialHost,
+		reconnect: connectHost,
+		policy: parsedControl?.ok === true ? "headless" : "tui",
+		readShutdownIntent: () => shutdownIntentStore.read(),
+	});
+	const transport: HostRequestTransport = bridge;
   const open = await requestHostCommand(transport, "session.open", {
     mode: sessionOpenMode(args),
     ...(args.session === undefined ? {} : { sessionPath: args.session }),
@@ -116,12 +130,12 @@ export async function main(argv: readonly string[]): Promise<void> {
     ...(args.thinking === undefined ? {} : { thinkingLevel: args.thinking }),
   });
   if (open.body.ok === false) {
-    await host.close().catch(() => undefined);
+		await bridge.close().catch(() => undefined);
     throw new Error(responseCode(open));
   }
   const sessionId = stringValue(open.body.sessionId);
   if (!sessionId) {
-    await host.close().catch(() => undefined);
+		await bridge.close().catch(() => undefined);
     throw new Error("Host session id is missing");
   }
 	let openedBody = open.body;
@@ -130,26 +144,47 @@ export async function main(argv: readonly string[]): Promise<void> {
 	}
 	if (parsedControl?.ok === true) {
 		await runControlCommand(transport, sessionId, openedBody, parsedControl.command);
-		await host.close().catch(() => undefined);
+		await bridge.close().catch(() => undefined);
 		return;
 	}
 	  const snapshot = parseRemoteSnapshot(openedBody.snapshot, sessionId);
 	  const controller = new RemoteInteractiveSessionController(transport, {
 	    ...snapshot,
-	    hostGeneration: integerValue(openedBody.hostGeneration) ?? host.endpoint.hostGeneration,
+	    hostGeneration: integerValue(openedBody.hostGeneration) ?? initialHost.endpoint.hostGeneration,
 	    sessionGeneration: integerValue(openedBody.sessionGeneration) ?? 1,
 	    driverRevision: integerValue(openedBody.driverRevision) ?? 0,
 	    eventCursor: integerValue(openedBody.eventCursor) ?? 0,
 	  });
+	let isDriver = false;
+	bridge.bindSession({
+		sessionId,
+		cursor: () => controller.recoveryCursor(),
+		onFence: (value) => {
+			isDriver = value.isDriver;
+			controller.updateDriverFence(value);
+		},
+		onResync: (value, safeCursor) => {
+			const recovered = parseRemoteSnapshot(value, sessionId);
+			const fence = controller.driverFence();
+			controller.applyRecoverySnapshot({
+				...recovered,
+				hostGeneration: fence.expectedHostGeneration,
+				sessionGeneration: fence.expectedSessionGeneration,
+				driverRevision: fence.expectedDriverRevision,
+				eventCursor: safeCursor,
+			});
+		},
+	});
   let removeSigint: (() => void) | undefined;
   let removeStdinEnd: (() => void) | undefined;
+	let removeBridgeState: (() => void) | undefined;
   try {
 	    await controller.resumeEvents();
 	    const claim = await requestHostCommand(transport, "session.claim_driver", {
 	      sessionId,
 	      ...controller.driverFence(),
 	    });
-	    let isDriver = claim.body.ok === true;
+	    isDriver = claim.body.ok === true;
 	    controller.updateDriverFence({
 	      hostGeneration: integerValue(claim.body.hostGeneration),
 	      sessionGeneration: integerValue(claim.body.sessionGeneration),
@@ -157,8 +192,9 @@ export async function main(argv: readonly string[]): Promise<void> {
 	    });
 	    const processOverlayClient = createProductionProcessOverlayClient(transport, sessionId, { isDriver: () => isDriver, driverFence: () => controller.driverFence() });
 	    const processOverlay = createProcessOverlayController(processOverlayClient, { driver: isDriver });
-	    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay, processOverlayClient, workspaceCapability: workspaceCapabilityLabel() });
+    const activeInteractive = new InteractiveMode({ controller, processOverlayController: processOverlay, processOverlayClient, workspaceCapability: workspaceCapabilityLabel() });
     interactive = activeInteractive;
+	removeBridgeState = bridge.onStateChange((state) => activeInteractive.setHostConnectionState(state));
     const onSigint = (): void => {
       if (controller.inFlight) controller.interrupt();
       else activeInteractive.quit();
@@ -174,8 +210,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   } finally {
     removeSigint?.();
     removeStdinEnd?.();
+	removeBridgeState?.();
     controller.dispose();
-    await host.close().catch(() => {
+	await bridge.close().catch(() => {
       // client detach 失败不阻断退出；resident Host 不由 client 关闭。
     });
     if (process.env.RUNLEDGER_DEBUG === "1") {

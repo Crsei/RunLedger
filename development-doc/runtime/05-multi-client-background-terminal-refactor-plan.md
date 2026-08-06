@@ -1,8 +1,8 @@
 # Multi-client Runtime Host 与 Background Terminal 重构计划
 
-> 状态：implementing；R0–R10 的 production Host/background-terminal 基线已在 `26d3c07` 提交。当前未提交工作树正在收敛复审 hardening：attestation 前输入上限、durable event replay/cursor ACK/ack-window resync、完整 generation/revision fence、driver-only shutdown、durable Host command intent/receipt、SIGTERM→SIGKILL、global shutdown deadline、Pipe split-byte UTF-8、independent final-leaf decision context、真实 Host SIGKILL/no-respawn runner，以及绑定 tracked/untracked candidate 的脱敏审计 manifest。自动化证据、独立只读审计与 human acceptance 分开记录；只有真实操作者可填写 `human-verified`。
+> 状态：implemented，verification open；R0–R10 的 production Host/background-terminal 基线已在 `26d3c07` 提交，后续 hardening 已进入当前分支。本次收口补齐真实构建内容 identity、Host 运维命令、durable generation/shutdown intent、build mismatch fence 与 TUI/headless 自动重连。自动化证据、agent 操作的真实 tmux smoke、独立只读审计与 human acceptance 分开记录；只有真实操作者可填写 `human-verified`。
 >
-> 当前目标分支：`rollback/pre-governed-agent-harness-runtime`；初始设计基线 `51642f8`，补充审计基线 `cec1b7d447cb`，已提交实现证据 HEAD `26d3c0791424`；上述复审 hardening 仍在未提交工作树，不能替代 commit、Linux 独立只读审计或人工验收。
+> 当前目标分支：`rollback/pre-governed-agent-harness-runtime`；初始设计基线 `51642f8`，补充审计基线 `cec1b7d447cb`，production Host 基线 `26d3c0791424`，本次生命周期收口基线 `8086e1b`。当前实现与测试仍不能替代 Linux 独立只读审计或人工验收。
 >
 > 旧实现参考：`/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-agent-loop-resurrect`，审计快照 `98e1449`；multi-client 主集成点 `0a09255`，background-terminal 主集成点 `b19ff61`，最终 Linux fault/PTY 验证点 `6597032`。
 >
@@ -223,7 +223,7 @@ grok-build 证据入口：
 - `SessionManager` 已固定到 canonical user home，session 只能写 `sessions/YYYY/MM/DD/`；这项 S0–S5 结果必须保留。
 - `RunledgerLayout` 已有 `state`、`ipc`、`log`、`events`、`artifacts`、`projections` 和 `tmp`；Host/process scoped locator、endpoint/election、writer lease、recovery marker 与 durable stores 已接入 production composition。
 - `src/runtime/tools/bash.ts` 的 raw detached `spawnBackground()` 已删除；foreground/background 均通过 Host-owned process facade，CLI/TUI 不再保留 raw spawn 或独立 PTY fallback。
-- `src/runtime/host/**`、`src/runtime/process/**` 与 `src/storage/{host,process}/**` 的 production baseline 已提交于 `26d3c07`；当前复审 hardening 仍在未提交工作树。两者都不能替代独立审计或人工验收。
+- `src/runtime/host/**`、`src/runtime/process/**` 与 `src/storage/{host,process}/**` 的 production baseline 已提交于 `26d3c07`；后续 hardening 与本次 Host 生命周期收口均在当前分支实现。它们不能替代独立审计或人工验收。
 - 当前 Trace Event Store/Artifact Store 记录模型、上下文和工具调用；它们是 observability truth，不是 session/process mutation truth。
 - OpenTUI process overlay 已接入 `InteractiveMode` 的 `/processes` 与 `/terminal <executionId>`，通过 production Host safe facade 做 lazy output 与 driver-fenced mutation；真实多终端 TUI 仍需人工验收。
 - `04` 只冻结 contract 与 port，不实现 daemon、Control Plane、Permission、Approval、Sandbox 或真实 adapter。
@@ -236,12 +236,56 @@ grok-build 证据入口：
 | writer ownership | resident Host 已是唯一 session/ledger/process writer，client 只持 remote facade | 真实双终端仍需人工确认单 writer 与 detach 行为 |
 | transport | production Unix listener、handshake、bounded pre-attestation/frame/outbox、durable replay、cursor ACK 与 connect-or-spawn 已接线 | Windows named-pipe adapter 未实现；ack loss/slow subscriber 仍需 fault/human evidence |
 | peer identity | Linux channel-bound `SO_PEERCRED` helper/attestor 已接入 production Host | Windows named-pipe 等价 adapter 未实现；跨平台结论必须按 capability 返回 unsupported |
-| process lifecycle | durable journal/recovery、真实 pipe、Host-owned node-pty、mutation/settlement adapter 与 deadline-bounded lifecycle 已接入 production composition | 当前 hardening 未提交；真实 Host SIGKILL 与用户环境验收仍待人工闭合 |
+| process lifecycle | durable journal/recovery、真实 pipe、Host-owned node-pty、mutation/settlement adapter 与 deadline-bounded lifecycle 已接入 production composition | 真实 Host crash/recovery 已有 runner 与 tmux smoke；用户环境验收仍待人工闭合 |
 | output | private durable output、UTF-8 cursor/checkpoint/seal/retention、mode-aware Artifact materialization 已接入 Host process facade | Artifact/Trace fault audit 与独立审计仍未闭合 |
 | Agent observation | `process_output/process_wait/write_stdin/process_stop/process_resize`、durable Queue reconciler 与 explicit suppression 已通过 Host-owned Agent composition 接线 | response-loss/reconcile fault matrix 与人工多终端验收仍需完成 |
 | execution decision | 五维 snapshot、builtin-none、receipt barrier 与独立 Host-owned decision context 已传到 backend final leaf，并再次绑定 request/handle | 限制性 Permission/Approval/Sandbox/Gateway adapter 仍未实现，选择这些 profile 时 fail closed |
 | PTY | production Host 私有 node-pty、UTF-8/resize/detach/control、第二 client cursor recovery 与 runner 已通过 | runner 是 POSIX automated acceptance，不是生产 tmux Host 或跨平台 PTY 声明 |
 | UI | safe process overlay 已接入 `InteractiveMode` 与 production Host facade，lazy page、observer read-only、focus restore 有 focused/Bun evidence | 真实双终端 TUI 与 human acceptance 仍缺 |
+
+### 2.3 Host 生命周期、构建替换与客户端恢复
+
+当前 production 语义固定为：`/quit` 只 detach client，最后一个 client 退出也不关闭 resident Host；活跃 turn 与 managed process 继续由 Host 持有。当前 session actor 尚未实现“工作态驻留、空闲态卸载”，已加载 session 会继续留在 Host 内存；这项资源回收属于后续专项，不能借关闭最后一个 client 偷换语义。
+
+构建与 endpoint identity：
+
+- `npm run build` 在 TypeScript/native helper 完成后生成并校验 `dist/host-build-manifest.json`；content digest 覆盖 CLI/Host bundle、Runtime、contract/security、catalog 与实际发布的 native helper，不再只绑定 package semver 或 protocol version；
+- endpoint 绑定 Host PID、Linux boot/process-start/UID/executable identity digest、build digest、Host generation、发布时间、management protocol 与完整 metadata digest；篡改、旧格式、构建内容不一致均 fail closed；
+- 同版本重新编译只要产物内容变化就得到不同 digest。新 client 遇到旧 build 返回结构化 `host_build_mismatch`，不会静默复用旧 Host，也不会自行 SIGTERM 正在执行的 Host；
+- durable Host generation 位于 canonical `state/hosts/<workspace-key>/`，endpoint 删除或 crash 后仍单调递增；generation 和 shutdown intent store 都逐祖先拒绝 symlink/越界，并在原子替换前复验 containment。
+
+运维面：
+
+- `runledger host list [--json]` 枚举 canonical home 中的 Host；`status [--workspace-key ...] [--json]` 显示 endpoint、lease、build/protocol、client/session、active turn 与 managed process 计数；
+- `stop|restart` 通过独立 management connection 调用现有 `host.shutdown`。Host 有 active turn/process 时返回 `host_busy`，只有显式 `--confirm-active` 才进入既有完整 drain；
+- `restart` 写入 `maintenance_restart + targetBuildDigest` intent，等待 endpoint/lease 释放后再走正常 connect-or-spawn。后续 election 的 candidate generation 必须更高且 build digest 必须命中 target，防止旧二进制抢回 leadership；
+- `--force` 只用于 management socket 不可连接时：Linux 上重复核验 socket owner PID 与 endpoint process-start identity 后发送一次 `SIGTERM`，绝不自动升级为 `SIGKILL`。跨平台没有等价证据时返回 `force_stop_unsupported`；
+- `auto_update` 仍明确返回 `updater_unavailable`，不伪造下载、发布、drain 或 relaunch 已完成。
+
+稳定客户端桥：
+
+- connection close 统一再次调用 production `connect-or-spawn`；TUI 使用上限为 1 秒的指数退避并无限重试，headless 最多尝试 5 次；
+- 每次连接激活递增 client-local connection generation，旧代 response/event 不能跨代写入当前状态；恢复失败的新连接在下一次尝试前显式关闭；
+- mutation 重试保留原 frame、command ID 与 body，依赖 Host durable command journal 幂等重放；`uncertain_outcome` 不盲目重试，转入 `recovery_required`；
+- 重连后按 `session.open -> session.claim_driver -> session.subscribe(cursor)` 恢复，subscription event 继续按 event ID/sequence 去重；`resync_required` 时读取 authoritative snapshot，并从 safe cursor 重建；
+- TUI 状态是 `ready|reconnecting|stopped|build_mismatch|recovery_required`。重连期间保留 transcript，但拒绝新的 mutation 并返回 `host_reconnecting`；
+- identity-matched `manual_stop|external_signal` shutdown intent 使原 client 停在 `stopped`，不把明确手动关闭误判为 crash；`maintenance_restart` 与无 intent crash 则透明恢复。
+
+### 2.4 当前候选验证证据
+
+2026-08-07 的当前候选必须以以下 fresh gates 为准：
+
+```bash
+npm run check
+npm test
+npm run build
+npm run verify:multi-client-host
+npm run verify:managed-process-pty
+npm run verify:host-build-replacement
+git diff --check
+```
+
+`verify:host-build-replacement` 使用两个 package version 相同、内容不同的真实 `dist`，验证 `same_version_different_content`、`host_build_mismatch`、`maintenance_target_fence` 与 `replacement_generation_advanced`。本轮另以隔离 `RUNLEDGER_DIR` 做过 agent 操作的真实 tmux smoke：generation 1 Host 被 `SIGKILL` 后，存活 TUI 通过同一 connect-or-spawn 路径拉起 generation 2 并恢复原 session；`host restart` 前进到 generation 3；`host stop` 后 client 显示 stopped，等待后 `host status` 仍为 `host_not_found`。这项 smoke 证明真实进程组合，不等于 10.3 的 `human-verified` 签字。
 
 ## 3. 目标架构与所有权
 
@@ -600,14 +644,14 @@ scripts/verify-managed-process-pty.ts
 | 阶段 | 当前状态 | 已有证据与未闭合边界 |
 |---|---|---|
 | R0–R2 | committed at `26d3c07` | raw detached background 已关闭；exact contract、pure state、bounded router 与 observer/driver 基线已建立 |
-| R3 | committed baseline + uncommitted hardening | endpoint/election、Unix listener、Linux channel attestation 已提交；pre-attestation byte bound、durable event replay、cursor ACK/ack-window resync 在当前工作树 |
-| R4 | committed baseline + uncommitted hardening | 标准 CLI 已切 authenticated connect-or-spawn；remote cursor/fence tracker 与所有 mutation 显式 fence 在当前工作树；真实 PATH 双终端仍待人工验收 |
-| R5 | committed baseline + uncommitted hardening | process journal/manager 已提交；Host command durable intent-before-execute、receipt replay、conflict 与 `uncertain_outcome` 在当前工作树 |
-| R6 | committed baseline + uncommitted hardening | governed pipe/PTY 与五维 barrier 已提交；独立 decision context、request/handle leaf binding、SIGTERM→SIGKILL 与 split-byte UTF-8 在当前工作树 |
-| R7 | committed baseline + uncommitted hardening | durable output/retention/Artifact/recovery 已提交；Host subscription event store 支持跨重启 bounded replay |
+| R3 | implemented in current lineage | endpoint/election、Unix listener、Linux channel attestation、pre-attestation byte bound、durable event replay、cursor ACK/ack-window resync 已接入；新增 endpoint process/build identity 与 durable generation |
+| R4 | implemented in current lineage | 标准 CLI 使用 authenticated connect-or-spawn；remote cursor/fence tracker、稳定重连桥与所有 mutation 显式 fence 已接入；真实 PATH 双终端仍待人工验收 |
+| R5 | implemented in current lineage | process journal/manager、Host command durable intent-before-execute、receipt replay、conflict 与 `uncertain_outcome` 已接入 |
+| R6 | implemented in current lineage | governed pipe/PTY、五维 barrier、独立 decision context、request/handle leaf binding、managed-process SIGTERM→SIGKILL 与 split-byte UTF-8 已接入；Host `--force` 仍严格只有一次 SIGTERM |
+| R7 | implemented in current lineage | durable output/retention/Artifact/recovery 与跨重启 bounded Host subscription replay 已接入 |
 | R8 | committed at `26d3c07` | process tools、Host Control Plane、terminal watcher 与 durable completion Queue 已接线；真实模型 completion follow-up 仍待 human evidence |
 | R9 | committed at `26d3c07` | `/processes`/`/terminal` safe overlay、observer read-only、lazy output 与 focus restore 已有自动化证据；真实双终端交互仍待人工验收 |
-| R10 | committed baseline + uncommitted hardening | recovery marker/runners 已提交；global shutdown deadline、TERM→KILL drain、driver-only shutdown 与准确 runner checks 在当前工作树；独立审计/human acceptance 未闭合 |
+| R10 | implemented, external verification open | recovery marker、global shutdown deadline、managed-process TERM→KILL drain、driver-only shutdown、Host lifecycle command、build replacement 与 reconnect runner 已接入；独立审计/human acceptance 未闭合 |
 
 ### R0：基线与 raw background closure
 
@@ -789,6 +833,7 @@ npx vitest run tests/runtime/host tests/storage/host tests/cli/multi-client test
 bun test tests/tui/process-overlay.bun.test.ts tests/tui/process/process-overlay.bun.test.ts
 npm run verify:multi-client-host
 npm run verify:managed-process-pty
+npm run verify:host-build-replacement
 mkdir -p /tmp/runledger-runtime-host-audit-evidence
 npm run verify:runtime-host-audit -- --output /tmp/runledger-runtime-host-audit-evidence
 ```
@@ -808,7 +853,8 @@ npm run verify:runtime-host-audit -- --output /tmp/runledger-runtime-host-audit-
 - active-turn completion 不 interrupt、idle completion 自动单飞、pending user input 优先、multi-completion bounded batch、synthetic turn cancel 后 Queue 可恢复；
 - Bash/CLI/direct PTY/recovery mutation 的 explicit deny 与缺失 receipt，五维 builtin-none 真实 spawn，stdin/EOF、PTY UTF-8/resize/detach，以及 `containment=none`/process-group/supervisor 分级 settlement；
 - output bounds/ENOSPC/EIO，以及仅在 `events_and_artifacts` 启用的 Artifact tamper/materialization failure；
-- intent/claim/spawn/started response loss、Host SIGKILL、reconnect recovery、graceful shutdown deadline；
+- intent/claim/spawn/started response loss、Host SIGKILL、connection generation、同 frame/command 重放、session cursor resume、reconnect recovery、graceful shutdown deadline；
+- 同 semver 不同 content digest、`host_build_mismatch`、maintenance target fence、generation 单调前进、manual stop 不重连；
 - no raw path/PID/credential/private reasoning leakage；
 - recording off/events/events_and_artifacts 三种 Trace 模式下 process truth/private output 一致，且 Artifact Store 调用次数分别为 0/0/启用。
 
@@ -860,7 +906,7 @@ readlink -f "$(command -v runledger)" | tee -a "$RL_HUMAN_ROOT/evidence/runledge
 2. 由 driver 要求 Agent 使用 `bash(run_in_background=true)` 启动一个持续至少 10 秒、每秒输出一行的命令；在终端 A detach/退出。终端 B 必须仍能通过 `/processes` 与 `/terminal <executionId>` 观察该进程。随后启动终端 C：`runledger -c`；C 必须以当前 generation/revision 显式 claim 成为新 driver，B 保持 observer。
 3. 执行 `npm run verify:managed-process-pty | tee "$RL_HUMAN_ROOT/evidence/pty-runner.txt"`。JSON 必须 `passed=true`，且包含 `pty_utf8`、`pty_resize`、`pty_stdin`、`client_detach`、`client_reconnect_output_cursor` 与 `terminal_wait_idempotency`。这一步使用真实 node-pty，不以 pipe 或 source-level fake 代替。
 4. 在 C detach 后等待后台命令继续完成，确认 client disconnect 没有使 Host 或 process 退出；重新运行 `runledger -c`，从先前 cursor 继续读取，无重复 output page 或重复 mutation。
-5. Host crash 场景：让 background command 仅在启动时向 workspace 的 `spawn-count.txt` 追加一行，然后保持运行；用 endpoint socket 的 `lsof -t` 精确取得 Host PID 并执行 `kill -KILL <host-pid>`。重新运行 `runledger -c` 后，确认 `spawn-count.txt` 仍只有一行、原 running projection 变为 `lost` 或 `uncertain`、可恢复的 output cursor 仍可读取；禁止按 PID reattach 或再次 spawn。
+5. Host crash 场景：让 background command 仅在启动时向 workspace 的 `spawn-count.txt` 追加一行，然后保持运行；保持 TUI 打开，用 endpoint socket 的 `lsof -t` 精确取得 Host PID 并执行 `kill -KILL <host-pid>`。确认现有 TUI 进入 `reconnecting`，由 connect-or-spawn 拉起更高 generation 后恢复同一 session；`spawn-count.txt` 仍只有一行、原 running projection 变为 `lost` 或 `uncertain`、可恢复的 output cursor 仍可读取。禁止按 PID reattach 或再次 spawn。
 6. 人工见证 backpressure/ACK fault：运行 `npx vitest run tests/runtime/host/router.test.ts tests/cli/multi-client/runtime-host-transport.test.ts tests/cli/multi-client/runtime-host-service.test.ts tests/runtime/host/remote-session.test.ts | tee "$RL_HUMAN_ROOT/evidence/subscription-faults.txt"`。确认 slow subscriber 隔离、ACK notify、ack-window overflow/invalid cursor `resync_required` 与 fast client 继续工作均 PASS。
 7. 真实模型 completion：启动 `sleep 2` 后输出唯一 marker 的 background command，不调用 `process_wait`，不继续输入；确认 terminal durable 后最多触发一次 completion follow-up/模型 turn。再分别用显式 wait 与 stop 重复，确认同一 delivery key 不会产生第二次 follow-up。保存脱敏 session transcript 与 ledger 中对应 delivery marker/digest。
 8. 执行 `npm run verify:multi-client-host | tee "$RL_HUMAN_ROOT/evidence/multi-client-runner.txt"`。确认 `production_api_connect_or_spawn`、`two_clients_one_host`、`stale_fence_rejected`、`explicit_driver_transfer`、`command_idempotency`、`host_sigkill_no_duplicate_spawn`、`lost_or_uncertain_projection` 与 `driver_only_explicit_host_shutdown` 全部存在；runner 中 observer shutdown 必须先失败，只有 active driver 携完整 fence 的 shutdown 成功。
@@ -893,8 +939,9 @@ notes: <redacted observations or failure references>
 - tmux/screen 作为生产 Runtime Host；
 - browser terminal、binary upload、无限 timeout 或无限日志；
 - 把 Task、Agent、LSP 与 process 合并成一个无领域边界 manager；
-- 首版 background process wait-all、基于 stdout pattern 的模型自动唤醒、每个 output chunk 自动触发 Agent turn；
 - 任何旧代际 Host protocol 兼容 reader 或双写；
+- 自动下载/发布二进制 updater；`auto_update` 在 updater 专项完成前固定 unsupported；
+- session actor idle eviction；当前只保证 client detach 后工作继续与 session 可恢复，不宣称空闲内存卸载；
 - 未有实际 backend/capability evidence 的 Windows/macOS pipe、PTY 或强 containment 能力声明；builtin-none constraint provider 的存在不能替代平台执行证据。
 
 ## 12. 完成定义
@@ -921,7 +968,11 @@ notes: <redacted observations or failure references>
 - [x] recording mode 不影响 canonical process truth、private durable output 或 recovery；
 - [x] TUI 不访问 Event/Artifact/spool/backend 文件，不暴露 PID/path/secret；
 - [x] production/test composition 完全分离，无 feature flag/fallback/legacy authority；
-- [x] focused、`npm run check`、`npm test`、`npm run build`、两套真实 runner 全绿；
+- [x] focused、`npm run check`、`npm test`、`npm run build` 与三套真实 runner 全绿；
+- [x] build manifest 绑定真实发布内容，同版本不同内容可区分且 tamper fail closed；
+- [x] `host list|status|stop|restart` 使用 management protocol，busy confirmation、maintenance target fence 与 validated SIGTERM force 路径有测试；
+- [x] durable Host generation/shutdown intent、build mismatch 与 restart replacement 已通过真实双构建 runner；
+- [x] TUI/headless 重连具备 connection generation、幂等 command replay、cursor resume/resync、shutdown reason 分流与失败连接释放；
 - [x] `verify:runtime-host-audit` 绑定 tracked/untracked candidate、脱敏 gate digest、机器可读 runner outcome，并在 candidate drift 时 fail closed；
 - [ ] Linux 独立只读审计通过；
 - [ ] 用户真实多终端与 PTY 验收后才标记 `human-verified`。

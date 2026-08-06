@@ -57,6 +57,49 @@ async function waitForClose(socket: net.Socket): Promise<void> {
 }
 
 describe("R3 bounded authenticated local Host transport", () => {
+	it("admits a scope-bound management connection across a runtime build mismatch", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-management-"));
+		const socketPath = join(root, "host.sock");
+		const hostScope = createHostCompatibilityEnvelope(scope());
+		const runtimeId = createRuntimeId("runtime", "management-host");
+		try {
+			let connectionMode = "";
+			const server = new JsonLineHostServer({
+				socketPath,
+				scope: hostScope,
+				management: { protocolVersion: 1, hostRuntimeId: runtimeId, hostGeneration: 7 },
+				attestor,
+				handleFrame: async ({ mode, frame }) => {
+					connectionMode = mode;
+					return [{ frameId: `result_${frame.frameId}`, kind: "query_result", protocolVersion: 1, body: { requestFrameId: frame.frameId, ok: true } }];
+				},
+			});
+			await server.listen();
+			const client = await JsonLineHostClient.connect(socketPath);
+			const initialized = await client.request({
+				frameId: "management-initialize",
+				kind: "initialize_request",
+				protocolVersion: 1,
+				body: {
+					mode: "management",
+					management: {
+						protocolVersion: 1,
+						workspaceStorageKey: hostScope.workspaceStorageKey,
+						hostRuntimeId: runtimeId,
+						hostGeneration: 7,
+					},
+				},
+			});
+			expect(initialized.body).toMatchObject({ accepted: true, mode: "management" });
+			await client.request({ frameId: "management-inspect", kind: "query_request", protocolVersion: 1, body: { operation: "host.inspect" } });
+			expect(connectionMode).toBe("management");
+			await client.close();
+			await server.close();
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("routes a Host reverse request to the client handler and resolves the targeted waiter", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-reverse-"));
 		const socketPath = join(root, "host.sock");
@@ -305,6 +348,23 @@ describe("R3 bounded authenticated local Host transport", () => {
 			await client.close();
 			await server.close();
 		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("notifies a client close observer when the Host socket disappears", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-transport-close-"));
+		const socketPath = join(root, "host.sock");
+		const server = new JsonLineHostServer({ socketPath, scope: createHostCompatibilityEnvelope(scope()), attestor, handleFrame: async () => [] });
+		try {
+			await server.listen();
+			const client = await JsonLineHostClient.connect(socketPath);
+			const closed = new Promise<string>((resolve) => client.onClose((error) => resolve(error.message)));
+			await server.close();
+			await expect(closed).resolves.toBe("Host connection closed");
+			await client.close();
+		} finally {
+			await server.close().catch(() => undefined);
 			await rm(root, { recursive: true, force: true });
 		}
 	});
