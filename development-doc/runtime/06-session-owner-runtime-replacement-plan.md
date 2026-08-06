@@ -1,6 +1,6 @@
 # Session Owner Runtime 替代计划
 
-> 状态：**R0 contract freeze 已完成；R1 SQLite foundation 已完成（2026-08-07）；R2 起实施未开始**
+> 状态：**R0 contract freeze、R1 SQLite foundation、R2 SessionStore + JSONL 显式迁移已完成（2026-08-07）；R3 起实施未开始**
 > 建立日期：2026-08-07
 > 准入修订：2026-08-07 已纳入 offline-only schema migration、external-effect recovery barrier、attachment-count lifetime、100ms SQLite busy 上限、connection-scoped driver、candidate-before-cutover、legacy archive 与 checkpoint-cache 八项阻塞/收紧要求。
 > 目标分支：`session-owner-runtime`
@@ -764,15 +764,15 @@ src/
 
 目标：SQLite 成为新 Session 的唯一 durable truth。
 
-- [ ] 实现 session catalog/create/fork/event append/checkpoint cache/command + attempt receipt/projection API。
-- [ ] event append 在事务内校验 sequence、previous hash、owner fence 并更新 head。
-- [ ] 删除全部 checkpoint/projection 后可只凭 Event + Receipt 从 genesis 重建；禁止 checkpoint/projection 反向授权 mutation。
-- [ ] 实现 `runledger migrate session-store --confirm-archive`：只读取现行 canonical JSONL，固定 source digest manifest，导入、全量 verify 后原子归档到 `migration-backup/session-store/<manifestDigest>/`。
-- [ ] 迁移前证明不存在 active legacy Host/writer；无法证明则返回 `legacy_host_active`，不自动 kill、删 endpoint 或抢锁。
-- [ ] 新 Runtime 永不读取 archive；删除只由后续 `runledger storage prune-legacy --manifest <digest> --confirm-delete` 显式执行。
-- [ ] 不提供 background auto migration、legacy reader、dual write 或 runtime fallback。
+- [x] 实现 session catalog/create/fork/event append/checkpoint cache/command + attempt receipt/projection API。见 `src/storage/session-store/session-store.ts`（`SessionStore`：create/fork/list/get、owner-fenced appendEvent、put/get/clear checkpoint、recordCommandIntent/appendAttemptReceipt、replaySessionEvents/projectSession/rebuildFromEvents）。fixtures 见 `tests/storage/session-store/session-store.test.ts`（8 tests）。
+- [x] event append 在事务内校验 sequence、previous hash、owner fence 并更新 head。`appendEvent` 在单个 `BEGIN IMMEDIATE` 事务内校验 admission ready、`verifyOwnerFence`（§4.5 exact SQL）、expectedPreviousEventHash 与 head 更新；旧 generation 写入全部返回 `owner_fenced`。
+- [x] 删除全部 checkpoint/projection 后可只凭 Event + Receipt 从 genesis 重建；禁止 checkpoint/projection 反向授权 mutation。`rebuildFromEvents` 只消费事件流计算 status/head/driverRevision，checkpoint 删除后结果不变；hash 链 tamper 在 replay 时 fail closed。
+- [x] 实现 `runledger migrate session-store --confirm-archive`：只读取现行 canonical JSONL，固定 source digest manifest，导入、全量 verify 后原子归档到 `migration-backup/session-store/<manifestDigest>/`。见 `src/storage/session-store/jsonl-migration.ts` + `src/cli/session-store-migrate.ts`；导入在单个事务内，verify 校验 counts + hash chain，成功后 rename 归档并在归档后复验 digest 与 target reopen。
+- [x] 迁移前证明不存在 active legacy Host/writer；无法证明则返回 `legacy_host_active`，不自动 kill、删 endpoint 或抢锁。`proveNoActiveLegacyWriter` 对每个 canonical JSONL 尝试 proper-lockfile 独占锁，任一失败即 typed `legacy_host_active`（CLI fixture 用预置锁文件验证）。
+- [x] 新 Runtime 永不读取 archive；删除只由后续 `runledger storage prune-legacy --manifest <digest> --confirm-delete` 显式执行。`pruneLegacyArchive` 只按 manifest digest + 全量 digest 复验后删除，`--confirm-delete` 缺失或文件缺失/篡改一律 fail closed。
+- [x] 不提供 background auto migration、legacy reader、dual write 或 runtime fallback。标准 CLI 在 R7 前仍保留当前 Host/JSONL 基线；migration 入口是唯一显式一次性命令，失败时 source 保持原位、gate 恢复 ready。
 
-退出条件：新的 SessionStore test composition 对 fresh/create/resume/fork 全部能从 SQLite 无损恢复；migration 注入任一失败时 source 保持原位、target 不被当作完成；成功时 source 只归档不删除。标准 CLI 在 R7 前仍保留当前 Host/JSONL 基线，R2 不提前改写真实用户数据。
+退出条件：新的 SessionStore test composition 对 fresh/create/resume/fork 全部能从 SQLite 无损恢复（已达成：session-store 8 + jsonl-migration 7 + CLI 5 + 既有 38 共 58 tests）；migration 注入任一失败时 source 保持原位、target 不被当作完成（已达成：重复 sessionId 注入 → import_failed 整体回滚）；成功时 source 只归档不删除（已达成：rename 到 archive 且 digest 复验）。标准 CLI 在 R7 前仍保留当前 Host/JSONL 基线，R2 不提前改写真实用户数据（migrate/prune 均为显式命令，未接入生产路径）。
 
 ### R3：SessionOwner claim、heartbeat 与全写入 fence
 

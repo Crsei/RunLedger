@@ -30,6 +30,7 @@ import type { SecurityConfigDocument } from "../security/types.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
 import { runWorkspaceCommand } from "./workspace-command.ts";
+import { runPruneLegacyCommand } from "./session-store-migrate.ts";
 import { connectProductionRuntimeHost } from "./runtime-host-production.ts";
 import { loadVerifiedHostBuildManifest, productionDistributionRoot } from "./host-build-identity.ts";
 import { createProductionProcessOverlayClient } from "./runtime-host-client.ts";
@@ -60,6 +61,15 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (argv[0] === "workspace") {
     await runWorkspaceCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "storage") {
+    if (argv[1] === "prune-legacy") {
+      await runPruneLegacyCommand(argv.slice(2));
+      return;
+    }
+    process.stderr.write(`[runledger] storage 子命令不存在: ${argv[1] ?? ""}\n`);
+    process.exit(2);
     return;
   }
   if (argv[0] === "host") {

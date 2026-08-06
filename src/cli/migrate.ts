@@ -1,6 +1,7 @@
 import { migrateLegacyData, MigrationError } from "../storage/migration.ts";
 import { resolveRunledgerHome } from "../storage/runledger-home.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
+import { runMigrateSessionStoreCommand } from "./session-store-migrate.ts";
 
 export interface MigrateArgs {
 	readonly source: string;
@@ -50,6 +51,10 @@ export function parseMigrateArgs(argv: readonly string[]): MigrateParseResult {
 }
 
 export async function runMigrateCommand(argv: readonly string[]): Promise<void> {
+	if (argv[0] === "session-store") {
+		await runMigrateSessionStoreCommand(argv.slice(1));
+		return;
+	}
 	const parsed = parseMigrateArgs(argv);
 	if (parsed.error || !parsed.args) {
 		process.stderr.write(`[runledger] ${parsed.error ?? "invalid migrate arguments"}`);
