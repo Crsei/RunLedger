@@ -59,6 +59,9 @@ describe("RunLedger single-home storage contract", () => {
 		expect(layout.artifacts).toBe("/home/alice/.runledger/artifacts");
 		expect(layout.ipc).toBe("/home/alice/.runledger/ipc");
 		expect(layout.tmp).toBe("/home/alice/.runledger/tmp");
+		expect(layout.database).toBe("/home/alice/.runledger/state.db");
+		expect(layout.worktrees).toBe("/home/alice/.runledger/worktrees");
+		expect(layout.migrationBackups).toBe("/home/alice/.runledger/migration-backup");
 		expect(RUNLEDGER_DIRECTORY_MODE).toBe(0o700);
 		expect(RUNLEDGER_FILE_MODE).toBe(0o600);
 	});

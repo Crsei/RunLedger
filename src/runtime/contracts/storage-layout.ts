@@ -75,6 +75,12 @@ export interface RunledgerLayout {
 	readonly cache: string;
 	readonly ipc: string;
 	readonly tmp: string;
+	/** 06 §4.1:Session Owner durable state 的 SQLite 数据库文件(<home>/state.db)。 */
+	readonly database: string;
+	/** 06 §7.5:worktree canonical locator 根(<home>/worktrees/<sessionId>)。 */
+	readonly worktrees: string;
+	/** 06 §12.2:JSONL/SQLite 显式迁移的 verified archive 根(<home>/migration-backup)。 */
+	readonly migrationBackups: string;
 }
 
 export interface WorkspaceStorageIdentity {
@@ -160,6 +166,9 @@ export function buildRunledgerLayout(home: string, flavor: RuntimePathFlavor): R
 		cache: paths.join(normalizedHome, "cache"),
 		ipc: paths.join(normalizedHome, "ipc"),
 		tmp: paths.join(normalizedHome, "tmp"),
+		database: paths.join(normalizedHome, "state.db"),
+		worktrees: paths.join(normalizedHome, "worktrees"),
+		migrationBackups: paths.join(normalizedHome, "migration-backup"),
 	};
 }
 

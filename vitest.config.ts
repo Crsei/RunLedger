@@ -5,6 +5,11 @@ export default defineConfig({
     include: ["tests/**/*.test.ts"],
     exclude: ["tests/**/*.bun.test.ts"],
     environment: "node",
-    globals: false
+    globals: false,
+    server: {
+      deps: {
+        external: [/node:sqlite/]
+      }
+    }
   }
 });
