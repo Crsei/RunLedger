@@ -293,7 +293,12 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         }
       }
       bodyNodes = nextBodyNodes;
-      if (editor.plainText !== frame.editorText) editor.setText(frame.editorText);
+      if (editor.plainText !== frame.editorText) {
+        editor.setText(frame.editorText);
+        // setText 会重置原生 buffer(含光标到起始),补位到文本末尾,
+        // 与 RunLedger Editor 输入模型(光标恒在末尾)保持一致。
+        editor.gotoBufferEnd();
+      }
       footer.content = ansiToStyledText(frame.footer.join("\n"));
       footer.height = Math.max(1, frame.footer.length);
       updateNewContentIndicator();

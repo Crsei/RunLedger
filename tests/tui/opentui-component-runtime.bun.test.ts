@@ -171,6 +171,31 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("keeps the editor cursor at the end of the draft as it grows", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({ body: [], editorText: "", footer: [] });
+      await setup.renderOnce();
+      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      expect(editor).toBeDefined();
+      if (!editor) return;
+      for (const ch of "hello") {
+        runtime.update({ body: [], editorText: editor.plainText + ch, footer: [] });
+        await setup.renderOnce();
+        expect(editor.cursorOffset).toBe(editor.plainText.length);
+      }
+      runtime.update({ body: [], editorText: "hello world", footer: [] });
+      await setup.renderOnce();
+      expect(editor.cursorOffset).toBe(editor.plainText.length);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("shows a new-content indicator while reading history and clears it at the bottom", async () => {
     const setup = await createTestRenderer({ width: 60, height: 12 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
