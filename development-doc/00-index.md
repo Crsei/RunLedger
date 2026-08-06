@@ -30,8 +30,9 @@
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`09` 专题导航 | `AGENTS.md` §1.2.x、§5 |
 | TUI | [`tui/10-documentation-update-plan.md`](tui/10-documentation-update-plan.md) | 跨项目 lessons 与远程控制路线文档更新记录 | [`tui/08-cross-project-lessons.md`](tui/08-cross-project-lessons.md)、[`tui/09-remote-control-roadmap.md`](tui/09-remote-control-roadmap.md) |
 | TUI / OpenTUI | [`tui/17-opentui-refactor-plan.md`](tui/17-opentui-refactor-plan.md) | pi-tui → OpenTUI imperative core 实现、PTY/native frame 与全仓门禁证据 | [`tui/reference/00-opentui-component-index.md`](tui/reference/00-opentui-component-index.md) |
-| TUI / Passive Data Contract | [`tui/17-passive-data-contract-placeholder-plan.md`](tui/17-passive-data-contract-placeholder-plan.md) | framework-neutral 被动数据合同、Timeline/safe presentation、workflow envelope 与 current canonical session format only 边界；不接 renderer/IO/生产行为 | 本文 §12、当前 TUI/runtime authority 与 focused contract evidence |
+| TUI / Passive Data Contract | [`tui/17-passive-data-contract-placeholder-plan.md`](tui/17-passive-data-contract-placeholder-plan.md) | framework-neutral 被动数据合同、Timeline/safe presentation、workflow envelope 与 current canonical session format only 边界；不接 renderer/IO/生产行为 | Passive Plan 17 §12、当前 TUI/runtime authority 与 focused contract evidence |
 | TUI / OpenTUI Performance | [`tui/18-opentui-streaming-performance-ux-plan.md`](tui/18-opentui-streaming-performance-ux-plan.md) | 迁移后的增量 timeline、流式合并、长会话窗口化、背压与响应式交互体验 | `17-opentui-refactor-plan.md` P8 证据、当前代码/tests 与本文 before/after artifact |
+| TUI / Passive Contract Integration | [`tui/19-passive-contract-integration-plan.md`](tui/19-passive-contract-integration-plan.md) | 将已提前建立的 TUI application/Timeline/presentation/workflow 数据结构分批接入 reducer、projector、EffectRunner、typed adapter 与标准 `runledger` | Passive Plan 17 的 P0–P6 合同证据、当前生产 TUI/Host authority、本文 B0–B8 状态表 |
 
 ## 2026-08-04 当前实现批次
 
@@ -103,6 +104,7 @@ development-doc/
     ├── 17-opentui-refactor-plan.md
     ├── 17-passive-data-contract-placeholder-plan.md
     ├── 18-opentui-streaming-performance-ux-plan.md
+    ├── 19-passive-contract-integration-plan.md
     └── reference/
         └── 00-opentui-component-index.md
 ```

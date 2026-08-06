@@ -591,6 +591,6 @@ process adapter 没有被本轮合同接入；reducer、EffectRunner、projector
 7. `npm run check`、`npm test`、focused boundary tests、`git diff --check` 全部通过；
 8. 计划状态表和两级文档导航已同步，但未伪造 reducer、OpenTUI 接线、PTY 或人工验收。
 
-后续若要把这些占位接入生产 TUI，必须另建“reducer/effect/projector/OpenTUI incremental
-render”实施计划；它应把本计划作为合同前置，而不是在本文继续扩张为第二个 Runtime
-实施总计划。
+后续生产接入以 [`19-passive-contract-integration-plan.md`](19-passive-contract-integration-plan.md)
+为唯一执行入口；它把本计划作为合同前置，按 reducer/projector/EffectRunner/typed adapter
+分批切换单一 state owner，而不是在本文继续扩张为第二个 Runtime 实施总计划。
