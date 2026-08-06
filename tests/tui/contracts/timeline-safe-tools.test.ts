@@ -50,7 +50,7 @@ describe("passive Timeline and safe tool contracts", () => {
 		};
 		const rows: TimelineRow[] = [
 			{ kind: "user", id: "user-1", timestamp: "2026-08-05T00:00:00.000Z", displayOrder: 1, status: "succeeded", text: bounded },
-			{ kind: "assistant", id: "assistant-1", timestamp: "2026-08-05T00:00:01.000Z", displayOrder: 2, status: "running", text: bounded, streaming: true },
+			{ kind: "assistant", id: "assistant-1", timestamp: "2026-08-05T00:00:01.000Z", displayOrder: 2, status: "running", text: bounded, streaming: true, thinking: bounded, usage: { input: { state: "unavailable", reason: "not reported" }, output: { state: "unavailable", reason: "not reported" } } },
 			{ kind: "tool", id: "tool-1", timestamp: "2026-08-05T00:00:02.000Z", displayOrder: 3, status: "succeeded", toolCallId: "call-1", toolName: bounded, presentation: { state: "ready", value: { renderer: "generic", title: bounded, chips: [], body: [], timestamps: { startedAt: "2026-08-05T00:00:02.000Z" } } } },
 			{ kind: "notice", id: "notice-1", timestamp: "2026-08-05T00:00:03.000Z", displayOrder: 4, status: "succeeded", severity: "info", message: bounded },
 			{ kind: "goal", id: "goal-1", timestamp: "2026-08-05T00:00:04.000Z", displayOrder: 5, status: "running", goalId: "goal-1", label: bounded, phase: bounded },
@@ -71,7 +71,7 @@ describe("passive Timeline and safe tool contracts", () => {
 		};
 		const events: TimelineEvent[] = [
 			{ type: "message_start", generation: 1, correlationId: "message-1", row: rows[0]! },
-			{ type: "message_update", generation: 1, correlationId: "message-1", text: bounded },
+			{ type: "message_update", generation: 1, correlationId: "message-1", text: bounded, thinking: bounded },
 			{ type: "message_end", generation: 1, correlationId: "message-1", status: "succeeded" },
 			{ type: "tool_start", generation: 1, correlationId: "call-1", row: rows[2]! },
 			{ type: "tool_update", generation: 1, correlationId: "call-1", presentation: { state: "unavailable", reason: "not yet safe" } },

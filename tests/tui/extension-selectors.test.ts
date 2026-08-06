@@ -1,15 +1,15 @@
 /**
  * TUI Host extension selectors 测试 —— /mcp、/plugins、/skills、/hooks
- * 经 controller.queryHostDomain 展示真实 Host snapshot，而不是空列表占位。
+ * 经 extension.inspect workflow（B4 adapter）展示真实 Host snapshot，
+ * 不再直接解析 Host raw response。
  */
 
 import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../../src/runtime/agent.ts";
 import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
-import type { StreamFn } from "../../src/runtime/types.ts";
-import type { AssistantMessage, AssistantMessageEventStream } from "../../src/types.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { TUI, type Terminal } from "../../src/tui/index.ts";
+import { ContractController, settleFrames } from "./fixtures/contract-integration.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -31,30 +31,15 @@ class FakeTerminal implements Terminal {
   }
   async drainInput(): Promise<void> {}
   write(data: string): void { this.writes.push(data); }
-  moveBy(_lines: number): void {}
+  moveBy(): void {}
   hideCursor(): void {}
   showCursor(): void {}
   clearLine(): void {}
   clearFromCursor(): void {}
   clearScreen(): void {}
-  setTitle(_title: string): void {}
-  setMode(_mode: "raw" | "cooked"): void {}
-  setSize(_columns: number, _rows: number): void {}
-  getSize(): { columns: number; rows: number } { return { columns: 100, rows: 30 }; }
-  onResize(_listener: () => void): () => void { return () => undefined; }
+  setTitle(): void {}
+  setProgress(): void {}
   send(data: string): void { this.input?.(data); }
-}
-
-function immediateStopStream(): StreamFn {
-  return async function* immediateStop(): AssistantMessageEventStream {
-    yield { type: "start", timestamp: Date.now() };
-    yield {
-      type: "done",
-      timestamp: Date.now(),
-      stopReason: "stop",
-      assistantMessage: { role: "assistant", content: [], model: mockModel.id, provider: mockModel.provider },
-    } as AssistantMessageEventStream extends AsyncGenerator<infer E> ? E : never;
-  };
 }
 
 interface StubController {
@@ -66,6 +51,7 @@ interface StubController {
   readonly warnings: string[];
   readonly auditEntries: unknown[];
   readonly toolCount: number;
+  readonly currentSelection: { readonly provider?: string; readonly model?: unknown; readonly thinkingLevel: string };
   prompt: () => Promise<void>;
   dispose: () => void;
 }
@@ -80,71 +66,89 @@ function stubController(query: Record<string, Record<string, unknown>>): StubCon
     warnings: [],
     auditEntries: [],
     toolCount: 0,
+    currentSelection: { thinkingLevel: "off" },
     prompt: async () => undefined,
     dispose: () => undefined,
   };
 }
 
-describe("TUI extension selectors query the Host snapshot", () => {
-  it("/mcp shows connected servers from mcp.list instead of an empty placeholder", async () => {
-    const terminal = new FakeTerminal();
-    const agent = new Agent({
-      initialState: { systemPrompt: "test", model: mockModel },
-      streamFn: immediateStopStream(),
-    });
-    const mode = new InteractiveMode({ agent, terminal } as never);
-    (mode as unknown as { controller: StubController }).controller = stubController({
-      "mcp.list": { servers: [{ serverId: "stdio-server", transport: "stdio", state: "running", tools: ["a", "b"] }], toolCount: 2 },
-    });
+const extensionSnapshot = (descriptors: unknown[]): Record<string, unknown> => ({
+  ok: true,
+  snapshot: { snapshotId: "snap-1", generation: 1, digest: "abc", descriptors },
+});
+
+const mcpServer = { kind: "mcp-server", identity: { qualifiedId: "mcp-server:stdio", version: "1.0.0", digest: { algorithm: "sha256", digest: "d1" } }, displayName: "stdio-server", enabled: true, trusted: true, ready: true, activation: "ready" };
+const plugin = { kind: "plugin", identity: { qualifiedId: "plugin:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d2" } }, displayName: "fixture", enabled: true, trusted: true, ready: true };
+const skill = { kind: "skill", identity: { qualifiedId: "skill:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d3" } }, displayName: "skill", enabled: true, trusted: true, ready: true };
+const hook = { kind: "hook", identity: { qualifiedId: "hook:pre-tool", version: "1.0.0", digest: { algorithm: "sha256", digest: "d4" } }, displayName: "pre-tool", enabled: true, trusted: true, ready: true };
+
+describe("TUI extension selectors query the Host snapshot via the B4 workflow", () => {
+  it("/mcp shows connected mcp-server resources from extension.inspect", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([mcpServer]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const query = controller.queryHostDomain as ReturnType<typeof vi.fn>;
 
     await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
+    await settleFrames();
     const tui = (mode as unknown as { ui: TUI }).ui;
     expect(tui.hasOverlay()).toBe(true);
+    expect(query).toHaveBeenCalledWith("extension.inspect", {});
   });
 
-  it("/plugins /skills /hooks query the real extension snapshot descriptors", async () => {
-    const terminal = new FakeTerminal();
-    const agent = new Agent({
-      initialState: { systemPrompt: "test", model: mockModel },
-      streamFn: immediateStopStream(),
-    });
-    const mode = new InteractiveMode({ agent, terminal } as never);
-    const controller = stubController({
-      "plugin.list": { descriptors: [{ identity: { qualifiedId: "plugin:fixture" }, enabled: true, trusted: true, ready: true }] },
-      "skill.list": { descriptors: [{ identity: { qualifiedId: "skill:fixture" }, enabled: true, trusted: true, activation: "ready" }] },
-      "hook.list": { descriptors: [{ identity: { qualifiedId: "hook:pre-tool" }, enabled: true, trusted: true, ready: true }] },
-    });
-    (mode as unknown as { controller: StubController }).controller = controller;
-
+  it("/plugins /skills /hooks filter the typed extension workflow snapshot", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([plugin, skill, hook]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
     const tui = (mode as unknown as { ui: TUI }).ui;
+
     await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
+    await settleFrames();
     expect(tui.hasOverlay()).toBe(true);
     tui.hideOverlay();
 
     await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("skill.list", "skills", "/skills");
+    await settleFrames();
     expect(tui.hasOverlay()).toBe(true);
     tui.hideOverlay();
 
     await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("hook.list", "hooks", "/hooks");
+    await settleFrames();
     expect(tui.hasOverlay()).toBe(true);
 
     const query = controller.queryHostDomain as ReturnType<typeof vi.fn>;
-    expect(query).toHaveBeenCalledWith("plugin.list", {});
-    expect(query).toHaveBeenCalledWith("skill.list", {});
-    expect(query).toHaveBeenCalledWith("hook.list", {});
+    expect(query).toHaveBeenCalledWith("extension.inspect", {});
+    // 不再直接调用 per-kind raw operations
+    expect(query).not.toHaveBeenCalledWith("plugin.list", expect.anything());
+    expect(query).not.toHaveBeenCalledWith("skill.list", expect.anything());
+    expect(query).not.toHaveBeenCalledWith("hook.list", expect.anything());
+  });
+
+  it("empty snapshot shows a typed notice instead of an empty overlay", async () => {
+    const controller = stubController({ "extension.inspect": extensionSnapshot([]) });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
+    await settleFrames();
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    expect(tui.hasOverlay()).toBe(false);
+    expect(mode.getTuiState().extensionWorkflow.state).toBe("empty");
   });
 
   it("fails visibly when the Host domain query is unavailable", async () => {
-    const terminal = new FakeTerminal();
-    const agent = new Agent({
-      initialState: { systemPrompt: "test", model: mockModel },
-      streamFn: immediateStopStream(),
-    });
-    const mode = new InteractiveMode({ agent, terminal } as never);
+    const controller = new ContractController();
+    const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
     const tui = (mode as unknown as { ui: TUI }).ui;
-    // 本地 controller 无 queryHostDomain → typed notice，不抛错。
+    // 本地 controller 无 queryHostDomain → capability unavailable → typed notice，不抛错。
     await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
     expect(tui.hasOverlay()).toBe(false);
+    expect(mode.getTuiState().capabilities.extensions.state).toBe("unavailable");
+  });
+
+  it("invalid Host body never reaches the workflow (typed validator)", async () => {
+    const controller = stubController({ "extension.inspect": { ok: true, snapshot: { descriptors: [{ identity: { qualifiedId: "" } }, "garbage", null] } } });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
+    await settleFrames();
+    const workflow = mode.getTuiState().extensionWorkflow;
+    expect(workflow.state).toBe("empty"); // 全部被 validator 拒绝 → 空
   });
 });
 
@@ -153,7 +157,7 @@ describe("TUI plan/compact/memory domain commands", () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },
-      streamFn: immediateStopStream(),
+      streamFn: () => { throw new Error("stream not called"); },
     });
     const mode = new InteractiveMode({ agent, terminal } as never);
     const controller = stubController({
@@ -180,7 +184,7 @@ describe("TUI plan/compact/memory domain commands", () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },
-      streamFn: immediateStopStream(),
+      streamFn: () => { throw new Error("stream not called"); },
     });
     const mode = new InteractiveMode({ agent, terminal } as never);
     const controller = stubController({
@@ -201,7 +205,7 @@ describe("TUI plan/compact/memory domain commands", () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },
-      streamFn: immediateStopStream(),
+      streamFn: () => { throw new Error("stream not called"); },
     });
     const mode = new InteractiveMode({ agent, terminal } as never);
     const run = mode as unknown as {
