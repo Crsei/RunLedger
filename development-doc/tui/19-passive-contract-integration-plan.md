@@ -1,10 +1,13 @@
 # RunLedger TUI 被动数据结构分批接入计划
 
-> **状态：** `planned`
+> **状态：** `implementing`
 >
 > **创建日期：** 2026-08-06
 >
 > **计划基线：** `rollback/pre-governed-agent-harness-runtime@92d9b3a`
+>
+> **当前修复基线：** `rollback/pre-governed-agent-harness-runtime@a09a408`（2026-08-06；
+> 后续未提交修复以工作区 diff 为准）
 >
 > **前置合同：** [`17-passive-data-contract-placeholder-plan.md`](17-passive-data-contract-placeholder-plan.md)
 > 的 P0–P6 已 `agent-verified`；本计划不重新设计或复制这些合同，只负责把它们分批接入
@@ -235,9 +238,9 @@ tests/tui/
 | B3 | `implemented` | normalized input、Action、纯 reducer | composer、overlay、selection、viewport 由 action/state 驱动 | local interaction state |
 | B4 | `implemented` | query EffectRunner 与只读 adapter | session/provider/model/prompt/keymap 等 selector 有 typed loading/error/empty | query workflow |
 | B5 | `implemented` | session/config/auth 选择工作流 | model/thinking/auth/session 操作显示 authoritative completion/stale/error | config workflow |
-| B6 | `implemented` | governed mutation | approval/queue/security/shutdown/update 显示 receipt 或 recovery-required | governed workflow |
-| B7 | `implemented` | 高级领域与 process 复用 | goal/task/agent/extension/runtime/process 视图消费真实 bounded snapshot | advanced workflow |
-| B8 | `implemented` | 旧状态退休与性能闭合 | standard TUI 仅一套 state owner，长会话/resize/input 无回归 | `InteractiveMode` 瘦身 |
+| B6 | `implementing` | governed mutation | 已移除伪造 Queue/Approval authority；真实 durable receipt/revision 接线仍待 Host contract | governed workflow |
+| B7 | `implementing` | 高级领域与 process 复用 | plan/extension/worktree/security/process 有真实通道；task/goal/agent/runtime/update 保持 unavailable | advanced workflow |
+| B8 | `implementing` | 旧状态退休与性能闭合 | state owner、取消/cleanup 已加固；须等待 B6/B7 authority 缺口闭合后完成 | `InteractiveMode` 瘦身 |
 
 状态只能按 `planned -> implementing -> implemented -> agent-verified -> human-verified` 推进。
 没有真实 terminal 用户确认不得标记 `human-verified`。
@@ -583,13 +586,21 @@ tests/tui/
 - 合同窄改（§4.2，先 RED）：`TuiEffect` 增 `security-mode.set`（target + expectedRevision）；
 - `effect-runner` 补 `security-mode.set` 映射（RED：capability_unavailable 误报）；
   request 继承 effect payload（B5 修复）；
-- `handleReverseRequest`：决策经 timeline notice 记录（`approval ${decision} for ${tool}`），
-  Host receipt/AbortSignal 相关链保持不变；
+- `handleReverseRequest`：决策经 timeline notice 记录（`approval ${decision} for ${tool}`）；
+  reverse response 只返回用户决策，不再由 UI 构造 `decisionRevision: 0`、`reverse` digest 或
+  completed workflow。Host durable receipt 尚无生产回传通道，因此 approval workflow 明确
+  unavailable；
 - 测试 `tests/tui/governed-mutations.test.ts`（8 例）：queue cancel 携带 expected revision +
   durable receipt、revision conflict 失败、approval resolve 相关链、security mode 失败不改
   visible authority fact（无乐观提交）、shutdown 只提交 intent、uncertain receipt 带
-  recoveryRequired、update 只展示 policy/receipt、observer mutation fail closed —— 全绿；
-- 门禁：`npm run check` + `npm test` 全绿。
+  recoveryRequired、update 只展示 policy/receipt、observer mutation fail closed —— 这些是
+  runner/port 合同验收，不代表生产 Host 已提供相应 mutation；
+- 本地 controller 只有 `clearAllQueues()`，没有单项取消、queue revision 或 durable receipt；
+  `interactive-session` 不再暴露 queue port，避免单项取消误清 steering/follow-up 全队列；
+- security 只映射真实 `security.inspect`，mutation 明确 unsupported；shutdown 仍只是本地
+  intent，update 无 Host operation，均不得据此宣称 B6 完成；
+- 当前结论：B6 保持 `implementing`，直至 Queue/Approval/Security/Shutdown 的 Host-owned
+  revision/receipt contract 落地并有生产组合测试。
 
 ### 12.5 P1/P2 修复记录（2026-08-06，review 跟进）
 
@@ -600,23 +611,28 @@ tests/tui/
 - P1-2 shell 流式累积：`tool_execution_update` 把含新 chunk 的 presentation 存回
   `activeToolPresentation`（不再从初始 presentation 重建）；`tool_execution_end` 后删除
   `shellChunks` 与 `activeToolPresentation`（内存释放）；
-- P1-3 B6 生产接线：`interactive-session` adapter 增加本地 queue 端口（getSteeringMessages/
-  getFollowUpMessages/clearAllQueues 事实）与 shutdown 端口（接受 intent）；
-  `handleReverseRequest` 全链走 approval workflow（inbound query.start → overlay decision →
-  query.result completed/aborted）；approval capability 由 Host frame authority 决定；
-  security-mode.set 改为 `host_operation_unsupported`（Host 无 mutation contract，不伪装）；
-- P1-4 B7 真实数据：`inspectTaskGoal` 真实校验 Host tasks/goals（非法枚举落缺省、非对象
-  丢弃）；process bridge 由 composition root 注入真实 `processOverlayClient`
-  （`main.ts` 传 `createProductionProcessOverlayClient`），output/mutate 不再恒 unavailable；
+- P1-3 B6 authority 修正：删除用 `clearAllQueues()` 冒充 durable 单项取消的 queue port；
+  reverse approval 只收集并返回决策，不伪造 completed workflow/revision/receipt；approval 与
+  queue capability 在缺真实 port 时均为 unavailable；security-mode.set 继续返回
+  `host_operation_unsupported`；
+- P1-4 B7 真实通道：Host adapter 只暴露真实支持的 `extension.inspect`、`plan.inspect`、
+  `security.inspect`、`worktree.inspect`；task-goal/agent/runtime/update 不再创建假 available
+  port；process bridge 由 composition root 注入真实 `processOverlayClient`（`main.ts` 传
+  `createProductionProcessOverlayClient`），output/mutate 不再恒 unavailable；
 - P1-5 退出清理：`requestQuit` 先 `runner.cancelAll()` 再 lifecycle cleanup，并 dispatch
   `cleanup(destroy)` 全局清 active timeline rows；
-- P2-1 typed validation：`enumOf` 校验 process state（非法落 uncertain）/ plan status /
-  agent residency / update policy；runtime snapshot 字段结构校验（shape 不符落 unknown，
-  不再 `value as T` cast）；
+- P2-1 generation/typed fence：stale/aborted reset 同样核对 generation；plan/extension 等
+  已接通投影继续做枚举与结构校验，未有真实 Host operation 的领域直接 unavailable；
 - P2-2 全局 cleanup：`TimelineEvent.cleanup.correlationId` 改 optional，projector 不传时
-  reducer 清全部 active rows；`requestQuit` 触发 destroy cleanup；
-- 回归测试：`tests/tui/regression-fixes.test.ts`（3 例）+ reducer/event-projector/adapters
-  补充用例；门禁 `npm run check` + `npm test`（220 files/1199 tests + bun 26）全绿。
+  reducer 清全部 active rows；`requestQuit` 触发 destroy cleanup；replay tool start/end 不再
+  留存 `activeToolPresentation`；
+- EffectRunner：`cancel/cancelAll` 同步发出且仅发出一次 aborted result，即使 port 忽略
+  AbortSignal 并永不 settle，workflow waiter 也不会永久 loading；重复 `prompt.list` case
+  已删除，Vite warning 消失；
+- 修复 RED/GREEN：5 个聚焦文件从 10 个预期失败转为 55 tests 全绿；随后
+  `npm run check`、全部 Vitest TUI（41 files / 273 tests）、`npm test`（Vitest 220 files /
+  1202 tests + Bun native 26 tests / 147 assertions）与 `npm run build` 通过；最终
+  `git diff --check` 通过。
 
 ## 13. B7：Task/Goal/Plan、Agents、Extensions、Runtime Snapshot 与 Process
 ### 13.1 RED
@@ -657,10 +673,14 @@ tests/tui/
 - `/plan` 迁移到 `plan.inspect` workflow（typed adapter 投影，`openPlanWorkflow`）；
   `compactDomainResult` 保留给 compact/memory（无 passive workflow）；
   inventory retired 断言更新；
-- task-goal/agents/plan/runtime-snapshot/update 均经 enum + 结构校验（P2-1），
-  task-goal 投影真实 Host tasks/goals（P1-4）；
+- Host adapter 仅为真实 operation 建 port：`plan.inspect`、`extension.inspect`、
+  `security.inspect`、`worktree.inspect`；worktree binding 的 head commit/lease revision 投影为
+  bounded workspace view；
+- task-goal、agents、runtime-snapshot、update 没有生产 Host operation，当前明确
+  unavailable，不再到调用阶段才返回 unsupported；
 - 测试 `tests/tui/process/passive-bridge.test.ts`（4 例）全绿；
-- 门禁：`npm run check` + `npm test` + `npm run build` 全绿。
+- 当前结论：process/plan/extension/worktree/security 子集有真实通道，B7 整体仍为
+  `implementing`；task/goal/agent/runtime/update 需先由对应 Host 专项提供合同。
 
 ## 14. B8：退休旧状态、接通性能 fence 与闭合生产入口
 ### 14.1 RED
@@ -697,9 +717,14 @@ tests/tui/
   mutable 字段仅剩 streaming/stopReason/streamingGeneration/streamingDeltas/
   pendingMessageBuffers/lastIdleCtrlC/quitting/processOverlayComponent/
   consecutiveInitFailures（inventory characterization 固定）；
+- EffectRunner cancel/cancelAll 对不合作 port 同步 settle，后到 Promise 结果按 controller
+  identity 丢弃；reducer stale/aborted reset 使用 generation/correlationId/effectId 三重 fence；
+- Timeline replay tool cycle 与 live tool end 均释放内部 presentation/chunk 缓存；
 - 全链路门禁：`npm run check`（含 tui-boundaries）+ `npm test`（219 files/1185 tests +
   bun 26）+ `npm run build` 全绿；`command -v runledger` 仍指向本 checkout 的
   `bin/runledger.js`。
+- 当前结论：本批代码加固已完成，但 B6/B7 authority 缺口仍会使生产能力保持
+  unavailable，因此 B8 在依赖批次闭合前保持 `implementing`。
 
 ## 15. 每批统一验证门禁
 

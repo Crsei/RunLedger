@@ -242,7 +242,6 @@ export class TimelineEventProjector {
 
 	private toolStartEnd(toolCallId: string, toolName: string, args: unknown): TimelineEvent[] {
 		const presentation = projectToolStart(toolName, args, this.startedAt);
-		this.activeToolPresentation.set(toolCallId, presentation);
 		const row = this.toolRow(toolCallId, toolName, presentation, "succeeded");
 		return [
 			{ type: "tool_start", generation: 0, correlationId: toolCallId, row },

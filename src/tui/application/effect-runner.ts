@@ -72,11 +72,18 @@ export function createEffectRunner(options: EffectRunnerOptions): EffectRunner {
 		},
 		cancel: (ref) => {
 			const entry = active.get(ref.effectId);
-			if (entry !== undefined) entry.controller.abort();
+			if (entry === undefined || !sameRef(entry.ref, ref)) return;
+			active.delete(ref.effectId);
+			entry.controller.abort();
+			options.onResult({ status: "aborted", ref: entry.ref, reason: "cancelled" });
 		},
 		cancelAll: () => {
-			for (const entry of active.values()) entry.controller.abort();
+			const entries = [...active.values()];
 			active.clear();
+			for (const entry of entries) {
+				entry.controller.abort();
+				options.onResult({ status: "aborted", ref: entry.ref, reason: "cancelled" });
+			}
 		},
 	};
 }
@@ -89,8 +96,9 @@ function settle(
 	envelope: TuiResultEnvelope<unknown>,
 ): void {
 	const entry = active.get(effect.effectId);
+	if (entry === undefined || entry.controller !== controller) return;
 	active.delete(effect.effectId);
-	if (controller.signal.aborted || entry === undefined) {
+	if (controller.signal.aborted) {
 		options.onResult({ status: "aborted", ref: effect, reason: "cancelled" });
 		return;
 	}
@@ -106,6 +114,12 @@ function settle(
 	options.onResult(error.recoveryRequired === true
 		? { status: "uncertain", ref: effect, error: { ...error, recoveryRequired: true }, recoveryRequired: true }
 		: { status: "failed", ref: effect, error });
+}
+
+function sameRef(left: CorrelatedRequestRef, right: CorrelatedRequestRef): boolean {
+	return left.effectId === right.effectId
+		&& left.correlationId === right.correlationId
+		&& left.generation === right.generation;
 }
 
 type QueryPort = (request: TuiPortRequest) => Promise<TuiResultEnvelope<unknown>>;
@@ -133,8 +147,6 @@ function portFor(effect: TuiEffect, ports: TuiDomainPorts): QueryPort | undefine
 			return wrap(ports.prompt, (port, request) => port.list(request));
 		case "prompt.submit":
 			return wrap(ports.prompt, (port, request: TuiPortRequest) => port.submit(request as Parameters<PromptWorkflowPort["submit"]>[0]));
-		case "prompt.list":
-			return wrap(ports.prompt, (port, request) => port.list(request));
 		case "keymap.inspect":
 			return wrap(ports.keymap, (port, request) => port.inspect(request));
 		case "queue.inspect":

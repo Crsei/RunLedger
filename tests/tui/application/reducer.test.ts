@@ -195,6 +195,19 @@ describe("B3 application reducer", () => {
 		expect(state.authWorkflow.state).toBe("loading");
 	});
 
+	it("P2: stale/aborted results from an older generation do not reset a reused request fence", () => {
+		let state = workflowState();
+		state = tuiReducer(state, {
+			type: "query.start",
+			effect: { type: "auth.inspect", generation: 2, effectId: "same-effect", correlationId: "same-corr" },
+		});
+		const next = tuiReducer(state, {
+			type: "query.result",
+			result: { status: "aborted", ref: { generation: 1, effectId: "same-effect", correlationId: "same-corr" }, reason: "old cancellation" },
+		});
+		expect(next.authWorkflow).toMatchObject({ state: "loading", generation: 2 });
+	});
+
 	it("P1-1: result with matching correlationId but old effectId/generation cannot land", () => {
 		let state = workflowState();
 		state = start(state, "model.list", "corr-m");

@@ -63,6 +63,12 @@ describe("B2 timeline event-projector", () => {
 		expect(toolStarts[0]!.row).toMatchObject({ kind: "tool", toolCallId: "call-1" });
 	});
 
+	it("replay tool call cycles release active presentation state", () => {
+		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		projector.project(assistantMessage());
+		expect(projector.snapshot().activeToolPresentation["call-1"]).toBeUndefined();
+	});
+
 	it("maps live tui-event message flow to the same row id scheme", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
 		const startEvent: TuiEvent = { type: "message_start", timestamp: 0, role: "assistant" };

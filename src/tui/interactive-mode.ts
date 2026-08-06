@@ -78,7 +78,6 @@ import type { EffectRunner } from "./application/effect-runner.ts";
 import { createEffectRunner } from "./application/effect-runner.ts";
 import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
-import type { TuiResult } from "./application/result.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -223,8 +222,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
       bootstrap: this.deriveBootstrap(),
       capabilities: {
         ...capabilitiesFromPorts(this.ports, { sessionCatalog: this.controller !== undefined, sessionMutation: this.controller !== undefined }),
-        // P1-3:reverse approval 的 authority 是 Host frame（driver TUI 可处理），不依赖 approval port
-        approval: this.controller === undefined ? { state: "unavailable", reason: "no-controller" } : { state: "available" },
       },
     }));
     this.runner = createEffectRunner({
@@ -477,20 +474,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.handleSubmit(text);
   }
 
-  /** B6:Host 逆向 approval 请求 —— inbound action → overlay decision → Host result 全链。 */
+  /** Host 逆向 approval 请求：只收集并返回决策；Host receipt 未接入前不更新 approval workflow。 */
   handleReverseRequest(frame: HostFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
     const view = parseApprovalReverseRequest(frame.body);
     if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
     return new Promise<Record<string, unknown>>((resolve) => {
       let settled = false;
-      // inbound:approval workflow 进入 loading（可观测的 pending 状态）
-      const approvalId = `reverse-${Date.now().toString(36)}`;
-      const effect = this.createEffect("approval.resolve", {
-        approvalId,
-        expectedDecisionRevision: 0,
-        decision: "cancelled" as const,
-      });
-      this.store.dispatch({ type: "query.start", effect });
       const finish = (body: Record<string, unknown>): void => {
         if (settled) return;
         settled = true;
@@ -498,11 +487,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.closeOverlay();
         resolve(body);
       };
-      const settleResult = (result: TuiResult): void => {
-        this.store.dispatch({ type: "query.result", result });
-      };
       const onAbort = (): void => {
-        settleResult({ status: "aborted", ref: effect, reason: "approval_aborted" });
         finish({ ok: false, code: "approval_aborted" });
       };
       if (signal.aborted) {
@@ -510,7 +495,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       }
       const choose = (decision: ApprovalDecision): void => {
-        // B6:决策经 timeline notice 记录（correlated chain 由 Host receipt 承载）
+        // 这里只记录用户决策意图；Host 是否接受由 reverse response 的调用方确认。
         this.dispatchTimeline([{
           type: "notice",
           generation: 0,
@@ -518,23 +503,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
           severity: "info",
           message: { text: `approval ${decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision} for ${view.toolName}`).byteLength },
         }]);
-        settleResult({
-          status: "completed",
-          ref: effect,
-          value: {
-            items: [{
-              approvalId,
-              sessionId: this.store.getState().bootstrap.session.id,
-              state: "resolved",
-              summary: { text: `${view.toolName}: ${decision}`, truncated: false, byteLength: new TextEncoder().encode(`${view.toolName}: ${decision}`).byteLength },
-              ticketDigestPrefix: { text: "reverse", truncated: false, byteLength: 7 },
-              decisionRevision: 0,
-              authorityGeneration: effect.generation,
-            }],
-            authorityGeneration: effect.generation,
-            decisionRevision: 0,
-          },
-        });
         finish(approvalDecisionBody(decision));
       };
       const modal = new SelectorModal({

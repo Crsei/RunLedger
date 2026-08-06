@@ -16,7 +16,6 @@ import type { ProviderWorkflowPort, ProviderCatalogSnapshot, ProviderSelectionSn
 import type { ModelWorkflowPort, ModelCatalogSnapshot, ModelSelectionSnapshot } from "../models/types.ts";
 import type { ThinkingWorkflowPort, ThinkingSnapshot } from "../thinking/types.ts";
 import type { AuthWorkflowPort, AuthSnapshot, AuthProviderSnapshot, AuthInteractionState } from "../auth/types.ts";
-import type { DurableQueueWorkflowPort, DurableQueueSnapshot, QueueCancellationReceipt } from "../queue/types.ts";
 import type { ShutdownWorkflowPort, ShutdownReceipt } from "../shutdown/types.ts";
 import { boundedToolText } from "../presentation/tools/projector.ts";
 import { getSupportedThinkingLevels } from "../../models.ts";
@@ -178,41 +177,6 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 			return { ok: true, ref: request, value: snapshot };
 		}),
 	};
-	// B6:本地 queue 事实（controller 队列；无 durable revision，receipt 为本地意图确认）
-	const queuePort: DurableQueueWorkflowPort = {
-		inspect: (request) => envelope(request, async () => {
-			const steering = controller.getSteeringMessages();
-			const followUp = controller.getFollowUpMessages();
-			const items = [...steering, ...followUp].map((message, index) => ({
-				itemId: `queue-${index}`,
-				sessionId: controller.sessionId,
-				state: index < steering.length ? "pending" as const : "claimed" as const,
-				digestPrefix: boundedToolText(messageText(message), 40),
-				label: boundedToolText(messageText(message), LABEL_BOUND),
-				queueRevision: 0,
-			}));
-			const snapshot: DurableQueueSnapshot = {
-				authorityGeneration: 1,
-				queueRevision: 0,
-				items,
-				pendingCount: { state: "known", value: steering.length },
-				claimedCount: { state: "known", value: followUp.length },
-			};
-			return snapshot;
-		}),
-		cancel: (request) => envelope(request, async () => {
-			const restored = controller.clearAllQueues();
-			const existed = restored.steering.length > 0 || restored.followUp.length > 0;
-			const receipt: QueueCancellationReceipt = {
-				itemId: request.item.itemId,
-				queueRevision: 0,
-				receiptPrefix: boundedToolText(request.item.itemId, 40),
-				outcome: existed ? "cancelled" : "already-terminal",
-				recoveryRequired: false,
-			};
-			return receipt;
-		}),
-	};
 	// B6:本地 shutdown 只提交 intent；renderer/lifecycle cleanup 由调用方执行
 	const shutdownPort: ShutdownWorkflowPort = {
 		request: (request) => envelope(request, async () => {
@@ -225,15 +189,11 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 		}),
 	};
 	return {
-		ports: { provider: providerPort, model: modelPort, thinking: thinkingPort, auth: authPort, queue: queuePort, shutdown: shutdownPort },
+		ports: { provider: providerPort, model: modelPort, thinking: thinkingPort, auth: authPort, shutdown: shutdownPort },
 		setAuthInteraction: (interaction) => {
 			authInteraction = interaction;
 		},
 	};
-}
-
-function messageText(message: { readonly content?: readonly { readonly text?: string }[] }): string {
-	return (message.content ?? []).map((content) => content.text ?? "").join("");
 }
 
 export type { AuthInteractionState };

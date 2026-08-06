@@ -238,7 +238,8 @@ function resetLoadingIfFenced(state: TuiState, result: TuiResult): TuiState {
 		const current = state[key] as { readonly state: string; readonly requestId?: string; readonly effectId?: string; readonly generation?: number } | undefined;
 		const inFlight = current?.state === "loading" || current?.state === "requesting";
 		if (inFlight && current.requestId === result.ref.correlationId
-			&& (current.effectId === undefined || current.effectId === result.ref.effectId)) {
+			&& (current.effectId === undefined || current.effectId === result.ref.effectId)
+			&& (current.generation === undefined || current.generation === result.ref.generation)) {
 			return { ...state, [key]: { state: "idle", generation: current.generation ?? result.ref.generation } };
 		}
 	}

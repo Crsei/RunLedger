@@ -94,27 +94,13 @@ describe("B4 interactive-session adapter", () => {
 		if (!selection.ok) expect(selection.error.code).toBe("not_supported");
 	});
 
-	it("P1-3: local queue port exposes real controller queue facts", async () => {
-		const steering = { role: "user" as const, content: [{ type: "text" as const, text: "steer me" }] };
-		const controller = fakeController({
-			getSteeringMessages: () => [steering] as never,
-			getFollowUpMessages: () => [],
-		});
+	it("local transient queues are not exposed as a durable queue capability", () => {
+		const clearAllQueues = vi.fn(() => ({ steering: [], followUp: [] }));
+		const controller = fakeController({ clearAllQueues });
 		const ports = createInteractiveSessionAdapter(controller).ports;
-		const inspect = await ports.queue!.inspect(request);
-		expect(inspect.ok).toBe(true);
-		if (inspect.ok) {
-			expect(inspect.value.pendingCount).toEqual({ state: "known", value: 1 });
-			expect(inspect.value.items).toHaveLength(1);
-			expect(inspect.value.items[0]).toMatchObject({ state: "pending" });
-		}
-		const cancel = await ports.queue!.cancel({
-			...request,
-			item: { itemId: "queue-0", sessionId: "session-1", state: "pending", digestPrefix: { text: "d", truncated: false, byteLength: 1 }, label: { text: "l", truncated: false, byteLength: 1 }, queueRevision: 0 },
-			reason: { text: "user", truncated: false, byteLength: 4 },
-		});
-		expect(cancel.ok).toBe(true);
-		if (cancel.ok) expect(cancel.value.outcome).toBe("already-terminal"); // clearAllQueues 后已空
+		expect(ports.queue).toBeUndefined();
+		expect(capabilitiesFromPorts(ports, { sessionCatalog: true }).queue).toMatchObject({ state: "unavailable" });
+		expect(clearAllQueues).not.toHaveBeenCalled();
 	});
 
 	it("P1-3: local shutdown port accepts intent with trigger", async () => {
@@ -160,16 +146,18 @@ describe("B4 host-domain adapter", () => {
 		if (!result.ok) expect(result.error.code).toBe("extension_snapshot_unavailable");
 	});
 
-	it("raw Host response never enters the workflow without validation", async () => {
-		const query = vi.fn(async () => ({ ok: true, snapshot: "not-an-object", descriptors: "nope" }));
+	it("only creates ports backed by real Host operations", () => {
+		const query = vi.fn(async () => ({ ok: true }));
 		const ports = createHostDomainPorts({ query });
-		const result = await ports.runtimeSnapshot!.getSnapshot(request);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			// 非结构化字段一律 unknown，不把 raw 值带进 state
-			expect(result.value.sourceRevision.state).toBe("unknown");
-			expect(result.value.authorityGeneration).toBe(0);
-		}
+		expect(ports.extensions).toBeDefined();
+		expect(ports.plan).toBeDefined();
+		expect(ports.securityMode).toBeDefined();
+		expect(ports.workspaceGit).toBeDefined();
+		expect(ports.runtimeSnapshot).toBeUndefined();
+		expect(ports.taskGoal).toBeUndefined();
+		expect(ports.agents).toBeUndefined();
+		expect(ports.update).toBeUndefined();
+		expect(ports.process).toBeUndefined();
 	});
 
 	it("no Host channel means the ports are undefined (unavailable)", () => {
@@ -177,83 +165,34 @@ describe("B4 host-domain adapter", () => {
 		expect(createHostDomainPorts({}).extensions).toBeUndefined();
 	});
 
-	it("P2-1: invalid enum values never cast into the contracts", async () => {
+	it("P2-1: invalid plan enum values never cast into the contracts", async () => {
 		const query = vi.fn(async () => ({
 			ok: true,
-			processes: [{ executionId: "execution_1", attemptId: "attempt_1", state: "not-a-real-state" }],
 			state: { status: "definitely-not-a-status", revision: 3 },
-			agents: [{ agentId: "agent-1", residency: "elsewhere", progress: 5 }],
-			channel: "stable",
-			releasePrefix: "release-1-2-3",
-			message: "update available",
-			policy: "aggressive-download",
 		}));
 		const ports = createHostDomainPorts({ query });
-		const processResult = await ports.process!.list(request);
-		expect(processResult.ok).toBe(true);
-		if (processResult.ok) expect(processResult.value[0]!.state).toBe("uncertain");
-		const planResult = await ports.plan!.inspect({ ...request, planId: "plan-1", expectedRevision: 0 });
+		const planResult = await ports.plan!.inspect({
+			...request,
+			reference: { repositoryId: "repo-1", planId: "plan-1", revision: 0, digestPrefix: { text: "", truncated: false, byteLength: 0 } },
+		});
 		expect(planResult.ok).toBe(true);
 		if (planResult.ok) expect(planResult.value.status).toBe("unknown");
-		const agentResult = await ports.agents!.inspect(request);
-		expect(agentResult.ok).toBe(true);
-		if (agentResult.ok) expect(agentResult.value.agents[0]!.residency).toBe("unknown");
-		const updateResult = await ports.update!.inspect(request);
-		expect(updateResult.ok).toBe(true);
-		if (updateResult.ok) expect(updateResult.value.policy).toBe("unknown");
 	});
 
-	it("P2-1: malformed runtime snapshot fields are unknown, never raw values", async () => {
-		const query = vi.fn(async () => ({
-			ok: true,
-			runtime: {
-				authorityGeneration: 5,
-				sourceRevision: "not-an-object",
-				session: { sessionId: "s-1", lifecycle: "active" },
-				activity: { phase: "working", turn: "not-a-number" },
-				queue: { steering: 1 },
-			},
-		}));
+	it("maps security and workspace queries to the canonical Host operation names", async () => {
+		const query = vi.fn(async (operation: string) => operation === "security.inspect"
+			? { ok: true, profile: "danger-full-access" }
+			: { ok: true, binding: { workspaceId: "workspace-1", headCommit: "abcdef123456", leaseRevision: 4 } });
 		const ports = createHostDomainPorts({ query });
-		const result = await ports.runtimeSnapshot!.getSnapshot(request);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.sourceRevision.state).toBe("unknown");
-			expect(result.value.activity.state).toBe("unknown");
-			expect(result.value.session.state).toBe("known");
-			expect(result.value.authorityGeneration).toBe(5);
-		}
-	});
-
-	it("P1-4: task-goal inspects real Host tasks/goals instead of hardcoding empty", async () => {
-		const query = vi.fn(async () => ({
-			ok: true,
-			repository: {
-				repositoryId: "repo-1",
-				repositoryRevision: 7,
-				tasks: [
-					{ taskId: "task-1", content: "write tests", priority: "high", status: "in_progress", revision: 2 },
-					{ taskId: "task-2", content: "nope", priority: "urgent", status: "bogus", revision: 1 },
-					"garbage",
-				],
-				goals: [{ goalId: "goal-1", label: "ship it", lifecycle: "active", repositoryRevision: 7, digestPrefix: "abc" }],
-			},
-		}));
-		const ports = createHostDomainPorts({ query });
-		const result = await ports.taskGoal!.inspect(request);
-		expect(result.ok).toBe(true);
-		if (result.ok) {
-			expect(result.value.repositoryRevision).toBe(7);
-			expect(result.value.tasks).toHaveLength(2);
-			expect(result.value.tasks[0]).toMatchObject({ taskId: "task-1", status: "in_progress" });
-			// 非法枚举落缺省、非对象丢弃
-			expect(result.value.tasks[1]).toMatchObject({ taskId: "task-2", priority: "medium", status: "pending" });
-			expect(result.value.goals).toHaveLength(1);
-		}
+		const security = await ports.securityMode!.inspect(request);
+		const workspace = await ports.workspaceGit!.inspect({ ...request, workspaceId: "workspace-1" });
+		expect(security.ok && security.value.mode).toEqual({ state: "known", value: "unrestricted" });
+		expect(workspace.ok && workspace.value).toMatchObject({ workspaceId: "workspace-1", observedRevision: 4, head: { kind: "detached" } });
+		expect(query.mock.calls.map(([operation]) => operation)).toEqual(["security.inspect", "worktree.inspect"]);
 	});
 
 	it("P1-3: Host security mutation is explicitly unavailable, not a stub", async () => {
-		const query = vi.fn(async () => ({ ok: true, mode: "guarded", modeRevision: 3 }));
+		const query = vi.fn(async () => ({ ok: true, profile: "workspace-write" }));
 		const ports = createHostDomainPorts({ query });
 		const result = await ports.securityMode!.set({ ...request, target: "unrestricted", expectedRevision: { state: "known", value: 3 } });
 		expect(result.ok).toBe(false);

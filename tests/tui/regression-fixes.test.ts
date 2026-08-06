@@ -1,7 +1,7 @@
 /**
  * P1 修复回归测试（InteractiveMode 层）。
  *
- *   - P1-3:handleReverseRequest 经 approval workflow（loading → decision → ready/aborted）；
+ *   - P1-3:handleReverseRequest 只返回 Host 决策，不伪造 approval receipt/workflow 完成；
  *   - P1-5:requestQuit 取消 in-flight effects 并清理 active timeline rows；
  *   - P2-2:destroy cleanup 全局清 active rows。
  */
@@ -45,12 +45,13 @@ function reverseFrame(): HostFrameEnvelope {
 }
 
 describe("P1 regression fixes at InteractiveMode level", () => {
-	it("P1-3: reverse approval flows through the approval workflow (loading → ready)", async () => {
+	it("P1-3: reverse approval returns a decision without fabricating a completed workflow", async () => {
 		const controller = new ContractController();
 		const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
 		const signal = new AbortController().signal;
 		const pending = mode.handleReverseRequest(reverseFrame(), signal);
-		expect(mode.getTuiState().approvalWorkflow.state).toBe("loading");
+		expect(mode.getTuiState().capabilities.approval.state).toBe("unavailable");
+		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 		// 选择 deny
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
@@ -61,19 +62,19 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		overlay?.handleInput?.("\r");
 		const body = await pending;
 		expect(body).toEqual({ ok: true, decision: "deny" });
-		expect(mode.getTuiState().approvalWorkflow.state).toBe("ready");
+		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
-	it("P1-3: aborting the reverse request exits the approval workflow loading", async () => {
+	it("P1-3: aborting a reverse request leaves the unavailable approval workflow unchanged", async () => {
 		const controller = new ContractController();
 		const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
 		const abort = new AbortController();
 		const pending = mode.handleReverseRequest(reverseFrame(), abort.signal);
-		expect(mode.getTuiState().approvalWorkflow.state).toBe("loading");
+		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 		abort.abort();
 		const body = await pending;
 		expect(body).toEqual({ ok: false, code: "approval_aborted" });
-		expect(mode.getTuiState().approvalWorkflow.state).toBe("idle");
+		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
 	it("P1-5: requestQuit cancels in-flight effects and cleans active timeline rows", async () => {

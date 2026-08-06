@@ -8,6 +8,8 @@
  *   - observer/driver capability 由端口实现方区分，runner 不做能力推断。
  */
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createEffectRunner } from "../../../src/tui/application/effect-runner.ts";
 import type { TuiDomainPorts } from "../../../src/tui/application/ports.ts";
@@ -31,6 +33,11 @@ function catalogPort(delayMs = 0): ProviderWorkflowPort & { readonly triggered: 
 }
 
 describe("B4 effect runner", () => {
+	it("routes prompt.list through exactly one switch branch", () => {
+		const source = readFileSync(join(process.cwd(), "src/tui/application/effect-runner.ts"), "utf8");
+		expect(source.match(/case "prompt\.list":/gu)).toHaveLength(1);
+	});
+
 	it("executes the port and correlates the result back", async () => {
 		const results: TuiResult[] = [];
 		const port = catalogPort();
@@ -135,9 +142,13 @@ describe("B4 effect runner", () => {
 		expect(JSON.stringify(results)).not.toContain("signal");
 	});
 
-	it("cancelAll aborts every in-flight effect", async () => {
+	it("cancelAll immediately settles every effect even when a port ignores AbortSignal", async () => {
 		const results: TuiResult[] = [];
-		const port = catalogPort(50);
+		const never = new Promise<never>(() => undefined);
+		const port: ProviderWorkflowPort = {
+			list: async () => never,
+			select: async () => never,
+		};
 		const runner = createEffectRunner({
 			ports: { provider: port },
 			currentGeneration: () => 1,
@@ -146,8 +157,30 @@ describe("B4 effect runner", () => {
 		runner.dispatch({ type: "provider.list", ...ref(1, "effect-1", "corr-1") });
 		runner.dispatch({ type: "provider.list", ...ref(1, "effect-2", "corr-2") });
 		runner.cancelAll();
-		await new Promise((resolve) => setTimeout(resolve, 80));
+		await Promise.resolve();
 		expect(results.map((result) => result.status).sort()).toEqual(["aborted", "aborted"]);
+	});
+
+	it("cancel emits one aborted result even if the port later settles", async () => {
+		const results: TuiResult[] = [];
+		let release: (() => void) | undefined;
+		const gate = new Promise<void>((resolve) => { release = resolve; });
+		const port: ProviderWorkflowPort = {
+			list: async (request) => {
+				await gate;
+				return { ok: true, ref: request, value: { providers: [], models: [], generation: 1 } };
+			},
+			select: async (request) => ({ ok: true, ref: request, value: { providerId: "p", modelId: "m", generation: 1 } }),
+		};
+		const runner = createEffectRunner({ ports: { provider: port }, currentGeneration: () => 1, onResult: (result) => results.push(result) });
+		const effect = { type: "provider.list" as const, ...ref() };
+		runner.dispatch(effect);
+		runner.cancel(effect);
+		expect(results.map((result) => result.status)).toEqual(["aborted"]);
+		release?.();
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(results.map((result) => result.status)).toEqual(["aborted"]);
 	});
 
 	it("a port throwing is encoded as failed, never thrown to the caller", async () => {
