@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -21,7 +22,7 @@ async function git(cwd: string, args: readonly string[]): Promise<void> {
 	await runFile("git", [...args], { cwd });
 }
 
-describe("resident Host worktree cold replay", () => {
+describe.skipIf(IS_WINDOWS)("resident Host worktree cold replay", () => {
 	it("revalidates persisted Git registration, head, registry lease, and effective cwd before Security", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-worktree-replay-"));
 		try {

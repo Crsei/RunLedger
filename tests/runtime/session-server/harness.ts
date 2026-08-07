@@ -4,6 +4,7 @@
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { rmSyncRetry } from "../../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
@@ -122,7 +123,7 @@ export async function createServerHarness(): Promise<ServerHarness> {
 		token: owner.currentAuthToken,
 		fence: claimed.fence,
 		cleanup: () => {
-			rmSync(dir, { recursive: true, force: true });
+			rmSyncRetry(dir);
 		},
 	};
 }

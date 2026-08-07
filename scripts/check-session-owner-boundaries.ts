@@ -15,6 +15,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, normalize, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface SessionOwnerBoundaryViolation {
 	file: string;
@@ -315,7 +316,7 @@ export function scanSessionOwnerBoundaries(repoRoot: string): SessionOwnerBounda
 }
 
 function run(): void {
-	const repoRoot = resolve(process.argv[2] ?? new URL("..", import.meta.url).pathname);
+	const repoRoot = resolve(process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url)));
 	const violations = scanSessionOwnerBoundaries(repoRoot);
 	if (violations.length > 0) {
 		for (const violation of violations) {

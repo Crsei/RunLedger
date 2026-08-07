@@ -70,7 +70,7 @@
     "dev": "tsx watch examples/run.ts",
     "generate-models": "node --experimental-strip-types scripts/generate-models.ts",
     "test": "vitest run && npm run test:tui-native",
-    "test:tui-native": "bun test tests/tui/*.bun.test.ts",
+    "test:tui-native": "node scripts/run-tui-bun-tests.mjs",
     "test:watch": "vitest",
     "cli": "npm run build && ./bin/runledger.js",
     "cli:debug": "npm run build && RUNLEDGER_DEBUG=1 ./bin/runledger.js",

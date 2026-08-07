@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canCreateSymlink } from "../../helpers/platform.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
@@ -11,6 +12,8 @@ import {
 	evaluateHostReplacementAdmission,
 	evaluateStoredHostReplacementAdmission,
 } from "../../../src/storage/host/shutdown-intent-store.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 describe("durable Host shutdown intent", () => {
 	it("persists an identity-bound maintenance target and rejects tampering", async () => {
@@ -50,7 +53,7 @@ describe("durable Host shutdown intent", () => {
 		expect(evaluateHostReplacementAdmission(intent, 6, targetBuildDigest)).toEqual({ ok: true });
 	});
 
-	it("rejects a symlinked Host state ancestor without writing outside canonical home", async () => {
+	it("rejects a symlinked Host state ancestor without writing outside canonical home", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-shutdown-intent-symlink-"));
 		try {
 			const home = join(root, "home");

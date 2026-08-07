@@ -6,6 +6,8 @@
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -19,7 +21,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 describe("R1 event-loop latency bounds", () => {
@@ -39,7 +41,9 @@ describe("R1 event-loop latency bounds", () => {
 			}
 			const elapsed = Date.now() - started;
 			expect(sawBusy).toBe(true);
-			expect(elapsed).toBeLessThanOrEqual(SESSION_DB_BUSY_WAIT_LIMIT_MS + 40);
+			// Windows 的 busy 等待粒度更粗,单独放宽"有界"上限;语义仍是"非秒级阻塞"。
+			const tolerance = IS_WINDOWS ? 600 : 40;
+			expect(elapsed).toBeLessThanOrEqual(SESSION_DB_BUSY_WAIT_LIMIT_MS + tolerance);
 		} finally {
 			writer.rollback();
 			writer.close();

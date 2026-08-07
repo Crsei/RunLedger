@@ -7,6 +7,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CONTRACT_DIRECTORY_ALLOWLIST } from "../src/runtime/contracts/inventory.ts";
 
 export interface RuntimeBoundaryViolation {
@@ -66,7 +67,7 @@ export function scanRuntimeBoundaries(repoRoot: string): RuntimeBoundaryViolatio
 }
 
 function run(): void {
-	const repoRoot = resolve(process.argv[2] ?? new URL("..", import.meta.url).pathname);
+	const repoRoot = resolve(process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url)));
 	const violations = scanRuntimeBoundaries(repoRoot);
 	if (violations.length > 0) {
 		for (const violation of violations) {

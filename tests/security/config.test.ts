@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import { loadSecurityConfigLayers } from "../../src/security/config/loader.ts";
 import { resolveSecuritySnapshot } from "../../src/security/config/resolver.ts";
 import { parseSecurityConfigDocument, parseSecurityConfigLayer } from "../../src/security/config/schema.ts";
+
+// resolver 把 workspaceRoot 相对路径按平台规则绝对化,期望值用平台 resolve 生成。
+const repo = (relative: string): string => resolve("/repo", relative);
 
 describe("security config", () => {
 	it("uses fail-closed workspace defaults and protects runtime metadata", () => {
@@ -19,7 +23,7 @@ describe("security config", () => {
 				sandbox: "workspace-write",
 				network: { mode: "deny", allowedHosts: [] },
 			},
-			filesystem: { protectedPaths: ["/repo/.git", "/repo/.runledger"] },
+			filesystem: { protectedPaths: [repo(".git"), repo(".runledger")] },
 		} });
 	});
 
@@ -52,8 +56,8 @@ describe("security config", () => {
 			createdAt: "2026-08-04T00:00:00.000Z",
 		});
 		if (!valid.ok) throw new Error(valid.error.message);
-		expect(valid.value.filesystem.readRoots).toContain("/repo/src");
-		expect(valid.value.filesystem.writeRoots).toContain("/repo/out");
+		expect(valid.value.filesystem.readRoots).toContain(repo("src"));
+		expect(valid.value.filesystem.writeRoots).toContain(repo("out"));
 
 		const invalidLayer = parseSecurityConfigLayer("project", JSON.stringify({ filesystem: { denyWrite: [":unknown"] } }));
 		if (!invalidLayer.ok) throw new Error(invalidLayer.error.message);

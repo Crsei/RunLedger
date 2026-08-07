@@ -237,7 +237,7 @@ async function validateOutputDirectory(repositoryRoot: string, requested: string
 	const info = await lstat(requested);
 	if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("audit_output_must_be_existing_directory");
 	const output = await realpath(requested);
-	const locator = relative(repositoryRoot, output);
+	const locator = relative(repositoryRoot, output).split("\\").join("/");
 	if (locator === "" || locator === ".." || !locator.startsWith("../")) throw new Error("audit_output_must_be_outside_repository");
 	return output;
 }

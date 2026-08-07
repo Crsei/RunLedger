@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, stat, symlink, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { CAN_ASSERT_FILE_MODE, canCreateSymlink } from "../../helpers/platform.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { NodeExtensionStorage } from "../../../src/storage/extensions/extension-storage.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 describe("canonical ExtensionStorage", () => {
 	it("writes only below the injected runledgerHome with bounded atomic files", async () => {
@@ -17,8 +20,8 @@ describe("canonical ExtensionStorage", () => {
 			const written = await storage.writeFileAtomic(target, new TextEncoder().encode("{\"revision\":0}\n"), { fileMode: 0o600, directoryMode: 0o700 });
 			expect(written).toEqual({ ok: true, value: undefined });
 			expect(JSON.parse(await readFile(target, "utf8"))).toEqual({ revision: 0 });
-			expect((await stat(target)).mode & 0o777).toBe(0o600);
-			expect((await stat(join(layout.state, "extensions"))).mode & 0o777).toBe(0o700);
+			if (CAN_ASSERT_FILE_MODE) expect((await stat(target)).mode & 0o777).toBe(0o600);
+			if (CAN_ASSERT_FILE_MODE) expect((await stat(join(layout.state, "extensions"))).mode & 0o777).toBe(0o700);
 
 			const denied = await storage.writeFileAtomic(outside, new TextEncoder().encode("no"), { fileMode: 0o600, directoryMode: 0o700 });
 			expect(denied).toMatchObject({ ok: false, code: "denied" });
@@ -28,7 +31,7 @@ describe("canonical ExtensionStorage", () => {
 		}
 	});
 
-	it("reports oversize and refuses a symlinked canonical parent", async () => {
+	it("reports oversize and refuses a symlinked canonical parent", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-extension-storage-"));
 		try {
 			const home = join(root, "home");

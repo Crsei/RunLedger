@@ -91,7 +91,7 @@ export class JsonApprovalStateStore implements ApprovalStateStorePort {
 		const encoded = `${canonicalJson(receipt)}\n`;
 		try {
 			await writeFile(temporary, encoded, { encoding: "utf8", mode: RUNLEDGER_FILE_MODE });
-			const handle = await open(temporary, "r");
+			const handle = await open(temporary, "r+");
 			try {
 				await handle.sync();
 			} finally {

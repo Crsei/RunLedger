@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
@@ -350,7 +351,7 @@ describe("R6 governed pipe process backend", () => {
 		}
 	});
 
-	it("uses a detached supervisor to settle the full process group", async () => {
+	it("uses a detached supervisor to settle the full process group", { skip: IS_WINDOWS }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-supervisor-"));
 		try {
 			const value = { ...request(), correlationId: createRuntimeId("command", "supervisor") };
@@ -395,7 +396,7 @@ describe("R6 governed pipe process backend", () => {
 		}
 	});
 
-	it("kills a supervisor child and its descendant without a false zero-members claim", async () => {
+	it("kills a supervisor child and its descendant without a false zero-members claim", { skip: IS_WINDOWS }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-supervisor-descendant-"));
 		try {
 			const marker = join(root, "descendant.log");

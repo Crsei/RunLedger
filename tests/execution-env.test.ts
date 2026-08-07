@@ -56,7 +56,7 @@ describe("localExecutionEnv", () => {
     }
   });
 
-  it("shell.exec stdin 注入", async () => {
+  it("shell.exec stdin 注入", { skip: process.platform === "win32" }, async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "runledger-env-stdin-"));
     try {
       const env = localExecutionEnv(dir);

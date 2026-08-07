@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -200,7 +201,7 @@ function workspaceBinding(root: string): PersistedWorkspaceBinding {
 	return { ...base, bindingDigest: runtimeDigest(base) };
 }
 
-describe("production Host Security/ExecutionGateway composition", () => {
+describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway composition", () => {
 	it("exposes a Host-owned tool admission policy instead of the local AllowAll fallback", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-tool-policy-"));
 		roots.push(root);

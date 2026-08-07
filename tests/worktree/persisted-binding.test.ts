@@ -10,6 +10,7 @@ import {
 	validatePersistedWorkspaceBinding,
 } from "../../src/worktree/persisted-binding.ts";
 import { validateHostWorkspaceBinding } from "../../src/cli/runtime-host-session.ts";
+import { IS_WINDOWS, CAN_ASSERT_FILE_MODE } from "../helpers/platform.ts";
 
 function record(root: string): WorktreeRecord {
 	return {
@@ -22,9 +23,9 @@ function record(root: string): WorktreeRecord {
 			displayName: "repository",
 		},
 		sourceRepositoryPath: root,
-		sourceSubdir: "packages/app",
+		sourceSubdir: join("packages", "app"),
 		worktreeLocator: join(root, ".managed", "worktree"),
-		effectiveSubdir: "packages/app",
+		effectiveSubdir: join("packages", "app"),
 		baseRef: "main",
 		baseCommit: "a".repeat(40),
 		label: "task",
@@ -61,7 +62,7 @@ describe("persisted workspace binding", () => {
 
 			const first = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: `ws-${"c".repeat(64)}` });
 			expect(await first.commit(binding.value)).toMatchObject({ ok: true });
-			expect((await stat(first.filePath)).mode & 0o777).toBe(0o600);
+			if (CAN_ASSERT_FILE_MODE) expect((await stat(first.filePath)).mode & 0o777).toBe(0o600);
 
 			const second = new JsonWorkspaceBindingStore({ layout, workspaceStorageKey: `ws-${"c".repeat(64)}` });
 			expect(await second.read()).toEqual(binding.value);
@@ -110,7 +111,7 @@ describe("persisted workspace binding", () => {
 		}
 	});
 
-	it("embeds a versioned worktree locator and classifies legacy records as migration_required", () => {
+	it("embeds a versioned worktree locator and classifies legacy records as migration_required", { skip: IS_WINDOWS }, () => {
 		const worktree = record(join("/", "home", "source"));
 		const binding = createPersistedWorkspaceBinding({ record: worktree, lease: lease(worktree.workspaceId), effectiveCwd: worktree.worktreeLocator });
 		expect(binding.ok).toBe(true);

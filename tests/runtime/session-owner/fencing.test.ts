@@ -8,6 +8,7 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +33,7 @@ beforeEach(() => {
 afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function openStore(): { store: SessionStore; ownerStore: OwnerStore; dbPath: string } {

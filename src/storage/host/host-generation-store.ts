@@ -26,7 +26,7 @@ export class HostGenerationStore {
 		const staging = `${this.path}.${randomUUID()}.tmp`;
 		try {
 			await writeFile(staging, `${JSON.stringify({ version: 1, generation: next })}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-			const handle = await open(staging, "r");
+			const handle = await open(staging, "r+");
 			try { await handle.sync(); } finally { await handle.close(); }
 			await ensureContainedHostStoreDirectory(this.layout.home, dirname(this.path));
 			await assertRegularOrMissing(this.path);

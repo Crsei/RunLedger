@@ -9,7 +9,11 @@ const evidenceRaw = resolve("tests/fixtures/platform-evidence/linux/raw");
 const syntheticRaw = resolve("tests/fixtures/workspace/git-porcelain");
 
 function fixtureContent(file: string): string {
-	return readFileSync(join(evidenceRaw, file), "utf8");
+	return readFileSync(join(evidenceRaw, file), "utf8").replace(/\r\n/g, "\n");
+}
+
+function syntheticContent(file: string): string {
+	return readFileSync(join(syntheticRaw, file), "utf8").replace(/\r\n/g, "\n");
 }
 
 describe("parseWorktreePorcelain against the real Linux runner fixture (P1 evidence)", () => {
@@ -45,27 +49,27 @@ describe("parseWorktreePorcelain against the real Linux runner fixture (P1 evide
 
 describe("parseWorktreePorcelain: synthetic cross-platform fixtures", () => {
 	it("parses a Windows drive path preserving case", () => {
-		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-windows-drive.txt"), "utf8"));
+		const entries = parseWorktreePorcelain(syntheticContent("synthetic-windows-drive.txt"));
 		expect(entries[0]).toMatchObject({ path: "C:\\runledger-state\\managed\\repo-one\\task-workspace-one", branch: "feature/x" });
 	});
 
 	it("parses an UNC path containing spaces verbatim", () => {
-		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-unc-spaces.txt"), "utf8"));
+		const entries = parseWorktreePorcelain(syntheticContent("synthetic-unc-spaces.txt"));
 		expect(entries[0]).toMatchObject({ path: "\\\\server\\share\\managed root\\repo\\task", detached: true });
 	});
 
 	it("unquotes C-style quoted paths and keeps the locked marker", () => {
-		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-quoted.txt"), "utf8"));
+		const entries = parseWorktreePorcelain(syntheticContent("synthetic-quoted.txt"));
 		expect(entries[0]).toMatchObject({ path: "/tmp/managed root/repo/task with space", locked: true });
 	});
 
 	it("parses a bare-only record", () => {
-		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-bare.txt"), "utf8"));
+		const entries = parseWorktreePorcelain(syntheticContent("synthetic-bare.txt"));
 		expect(entries[0]).toMatchObject({ path: "C:\\repos\\bare.git", bare: true });
 	});
 
 	it("decodes git's octal UTF-8 escapes for non-ASCII paths", () => {
-		const entries = parseWorktreePorcelain(readFileSync(join(syntheticRaw, "synthetic-octal-utf8.txt"), "utf8"));
+		const entries = parseWorktreePorcelain(syntheticContent("synthetic-octal-utf8.txt"));
 		expect(entries[0]).toMatchObject({ path: "/tmp/runledger-试验/task 测试", detached: true });
 	});
 });

@@ -140,7 +140,7 @@ async function writeDurable(path: string, record: HostCommandRecord): Promise<vo
 	const encoded = `${canonicalJson(record)}\n`;
 	if (Buffer.byteLength(encoded, "utf8") > RUNTIME_HOST_BOUNDS.maxFrameBytes) throw new Error("Host command record exceeds frame bound");
 	await writeFile(path, encoded, { encoding: "utf8", flag: "wx", mode: 0o600 });
-	const handle = await open(path, "r");
+	const handle = await open(path, "r+");
 	try {
 		await handle.sync();
 	} finally {

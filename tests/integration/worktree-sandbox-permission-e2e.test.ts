@@ -21,6 +21,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { IS_LINUX, IS_MACOS } from "../helpers/platform.ts";
 import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -114,7 +115,7 @@ function recordingAudit(events: string[]): WorkspaceBindingAuditPort {
 }
 
 describe("worktree → sandbox → permission 全链路 E2E", () => {
-	it("covers the full §7.5 scenario with real Git, durable receipts, resume and cleanup", async () => {
+	it.skipIf(!IS_LINUX)("covers the full §7.5 scenario with real Git, durable receipts, resume and cleanup", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-wsp-e2e-"));
 		try {
 			// 1. 临时 Git repo 建初始 commit

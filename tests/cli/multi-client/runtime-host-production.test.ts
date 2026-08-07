@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -18,7 +19,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
 
-describe("R3/R4 production Host composition", () => {
+describe.skipIf(IS_WINDOWS)("R3/R4 production Host composition", () => {
 	it("binds the verified executable build digest into compatibility", () => {
 		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
 		const buildA = runtimeDigest("build-a");

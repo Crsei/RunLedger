@@ -8,6 +8,7 @@
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function setupSession(seed: string): SessionId {

@@ -114,7 +114,7 @@ export class EndpointStore {
 				throw new Error("endpoint record exceeds frame bound");
 			}
 			await writeFile(staging, `${encoded}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-			const handle = await open(staging, "r");
+			const handle = await open(staging, "r+");
 			try {
 				await handle.sync();
 			} finally {

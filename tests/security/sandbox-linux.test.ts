@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_LINUX, IS_MACOS } from "../helpers/platform.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { WorkspaceExecutionEnvelope } from "../../src/runtime/contracts/public.ts";
@@ -58,7 +59,7 @@ function probe(path: string | undefined): SandboxProbe {
 }
 
 describe("LinuxBwrapBackend", () => {
-	it("fails closed for restrictive profiles when bwrap is unavailable without spawning", async () => {
+	it.skipIf(!IS_LINUX)("fails closed for restrictive profiles when bwrap is unavailable without spawning", async () => {
 		const backend = new LinuxBwrapBackend(probe(undefined));
 
 		expect(await backend.probe()).toMatchObject({
@@ -70,7 +71,7 @@ describe("LinuxBwrapBackend", () => {
 		expect(await backend.prepare(request())).toMatchObject({ ok: false, error: { code: "sandbox_unavailable" } });
 	});
 
-	it("creates an explicit builtin-none off plan even when the restrictive backend is unavailable", async () => {
+	it.skipIf(!IS_LINUX)("creates an explicit builtin-none off plan even when the restrictive backend is unavailable", async () => {
 		let probeCalls = 0;
 		const backend = new LinuxBwrapBackend({
 			which: async () => {
@@ -96,7 +97,7 @@ describe("LinuxBwrapBackend", () => {
 		expect(probeCalls).toBe(0);
 	});
 
-	it("generates a deterministic network-denying plan with workspace containment and protected paths", async () => {
+	it.skipIf(!IS_LINUX)("generates a deterministic network-denying plan with workspace containment and protected paths", async () => {
 		const backend = new LinuxBwrapBackend(probe("/opt/bwrap"));
 		const first = await backend.prepare(request());
 		const second = await backend.prepare(request());
@@ -124,7 +125,7 @@ describe("LinuxBwrapBackend", () => {
 		expect(first.value.planDigest.algorithm).toBe("sha256");
 	});
 
-	it("does not synthesize missing protected mount sources into a launch plan", async () => {
+	it.skipIf(!IS_LINUX)("does not synthesize missing protected mount sources into a launch plan", async () => {
 		const backend = new LinuxBwrapBackend(probe("/opt/bwrap"));
 		const result = await backend.prepare(request({ protectedPaths: [] }));
 
@@ -134,7 +135,7 @@ describe("LinuxBwrapBackend", () => {
 		expect(result.value.arguments).not.toContain("/repo/.runledger");
 	});
 
-	it("rejects an outside cwd or writable root before producing a launch plan", async () => {
+	it.skipIf(!IS_LINUX)("rejects an outside cwd or writable root before producing a launch plan", async () => {
 		const backend = new LinuxBwrapBackend(probe("/opt/bwrap"));
 
 		expect(await backend.prepare(request({ cwd: "/outside" }))).toMatchObject({ ok: false, error: { code: "path_escape" } });

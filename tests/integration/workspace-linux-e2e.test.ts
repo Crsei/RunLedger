@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { IS_LINUX, IS_MACOS } from "../helpers/platform.ts";
 import type { GitCommandPort } from "../../src/worktree/ports.ts";
 import { createWorkspaceAdapters } from "../../src/workspace/factory.ts";
 import { encodePrivateLocator } from "../../src/workspace/path-adapter.ts";
@@ -67,7 +68,7 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		if (result.status !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr}`);
 	}
 
-	it("create → list → resume → remove with verified identity through the native adapter", async () => {
+	it.skipIf(!IS_LINUX)("create → list → resume → remove with verified identity through the native adapter", async () => {
 		const pathAvailability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: root });
 		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(pathAvailability.ok && availability.ok).toBe(true);
@@ -133,7 +134,7 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		expect(existsSync(target)).toBe(false);
 	});
 
-	it("fails closed: removing an unregistered target or locked worktree is refused", async () => {
+	it.skipIf(!IS_LINUX)("fails closed: removing an unregistered target or locked worktree is refused", async () => {
 		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(availability.ok).toBe(true);
 		if (!availability.ok) return;
@@ -151,7 +152,7 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		expect(await adapters.git.remove(repo, locked, false)).toEqual({ ok: true, value: locked });
 	});
 
-	it("keeps dirty worktrees removable only via explicit force (P1 evidence semantics)", async () => {
+	it.skipIf(!IS_LINUX)("keeps dirty worktrees removable only via explicit force (P1 evidence semantics)", async () => {
 		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(availability.ok).toBe(true);
 		if (!availability.ok) return;
@@ -165,7 +166,7 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		expect(existsSync(dirty)).toBe(false);
 	});
 
-	it("matches git-registered non-ASCII worktree paths through octal-escaped porcelain", async () => {
+	it.skipIf(!IS_LINUX)("matches git-registered non-ASCII worktree paths through octal-escaped porcelain", async () => {
 		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(availability.ok).toBe(true);
 		if (!availability.ok) return;
@@ -183,7 +184,7 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 		expect(await adapters.git.remove(repo, target, false)).toEqual({ ok: true, value: target });
 	});
 
-	it("cold resume re-verifies a recorded locator and fails closed when the worktree is gone", async () => {
+	it.skipIf(!IS_LINUX)("cold resume re-verifies a recorded locator and fails closed when the worktree is gone", async () => {
 		const availability = createWorkspaceAdapters("linux", { git: gitPort(), managedRoot: managed });
 		expect(availability.ok).toBe(true);
 		if (!availability.ok) return;

@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { CAN_ASSERT_FILE_MODE, canCreateSymlink } from "../helpers/platform.ts";
 import { buildRunledgerLayout, isContainedRuntimePath, type RunledgerLayout } from "../../src/runtime/contracts/public.ts";
 import { SessionManager } from "../../src/storage/session-manager.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 const cleanup: string[] = [];
 
@@ -24,10 +27,10 @@ describe("canonical SessionManager", () => {
 		const manager = await SessionManager.create({ layout, cwd, sessionId: "session_fixture" });
 		const filePath = manager.filePath();
 
-		expect(relative(layout.sessions, filePath)).toMatch(/^\d{4}\/\d{2}\/\d{2}\/session_fixture\.jsonl$/u);
+		expect(relative(layout.sessions, filePath).replaceAll("\\", "/")).toMatch(/^\d{4}\/\d{2}\/\d{2}\/session_fixture\.jsonl$/u);
 		expect(isContainedRuntimePath(layout.home, filePath, "posix")).toBe(true);
 		expect(lstatSync(filePath).isSymbolicLink()).toBe(false);
-		expect(statSync(filePath).mode & 0o777).toBe(0o600);
+		if (CAN_ASSERT_FILE_MODE) expect(statSync(filePath).mode & 0o777).toBe(0o600);
 		await manager.closeAll();
 	});
 
@@ -41,7 +44,7 @@ describe("canonical SessionManager", () => {
 		expect(readFileSync(outside, "utf8")).toBe(original);
 	});
 
-	it("拒绝 home 内指向根外的 symlink session root", async () => {
+	it("拒绝 home 内指向根外的 symlink session root", { skip: !CAN_SYMLINK }, async () => {
 		const { cwd, layout } = fixture();
 		const outside = join(cwd, "outside-sessions");
 		const sessionsLink = layout.sessions;

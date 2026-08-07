@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../helpers/platform.ts";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -71,7 +72,7 @@ async function fixture(): Promise<{ root: string; source: string; managed: strin
 	return { root, source, managed, layout, workspaceStorageKey, service, registry, auditEvents };
 }
 
-describe("Host workspace binding composition", () => {
+describe.skipIf(IS_WINDOWS)("Host workspace binding composition", () => {
 	it("consumes workspace adapters for containment and porcelain identity (P6 adapter-driven mode)", async () => {
 		const value = await fixture();
 		try {

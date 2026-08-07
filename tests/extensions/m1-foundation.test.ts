@@ -3,6 +3,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { CAN_ASSERT_FILE_MODE, canCreateSymlink } from "../helpers/platform.ts";
 import { canonicalDigest } from "../../src/runtime/protocol/canonical-json.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { boundDiagnostics, DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, redactDiagnosticText, sortExtensionDiagnostics } from "../../src/extensions/diagnostics.ts";
@@ -17,6 +18,8 @@ import type { ExtensionResourceDescriptor } from "../../src/extensions/types.ts"
 import type { ResourceIdentity } from "../../src/runtime/resources/types.ts";
 
 const temporaryRoots: string[] = [];
+
+const CAN_SYMLINK = canCreateSymlink();
 
 function storageError(error: unknown): ExtensionStorageResult<never> {
 	const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "";
@@ -145,7 +148,7 @@ describe("M1 extension foundation", () => {
 		expect(intersectAllowedTools(["read"], ["write"])).toEqual([]);
 	});
 
-	it("rejects lexical and symlink escapes and bounds deterministic directory digests", async () => {
+	it("rejects lexical and symlink escapes and bounds deterministic directory digests", { skip: !CAN_SYMLINK }, async () => {
 		const root = await temporary("paths");
 		const outside = await temporary("outside");
 		await mkdir(join(root, "nested"), { recursive: true });
@@ -181,7 +184,7 @@ describe("M1 extension foundation", () => {
 		expect((await trust.evaluate({ identity, canonicalPath: root, binding: { ...binding, assetsDigest: canonicalDigest("changed") }, principalId })).state).toBe("stale");
 		await trust.revoke(identity.qualifiedId, new Date("2026-08-04T01:00:00.000Z"));
 		expect((await trust.evaluate({ identity, canonicalPath: root, binding, principalId })).state).toBe("revoked");
-		expect((await stat(join(root, "trust.json"))).mode & 0o777).toBe(0o600);
+		if (CAN_ASSERT_FILE_MODE) expect((await stat(join(root, "trust.json"))).mode & 0o777).toBe(0o600);
 	});
 
 	it("rejects a trust document missing its binding metadata instead of treating it as trusted", async () => {
@@ -211,7 +214,7 @@ describe("M1 extension foundation", () => {
 		await state.setEnabled("skill:project:fixture", false, new Date("2026-08-04T00:00:00.000Z"));
 		const saved = JSON.parse(await readFile(join(root, "extensions-state.json"), "utf8")) as { resources: Record<string, { enabled: boolean }> };
 		expect(saved.resources["skill:project:fixture"]?.enabled).toBe(false);
-		expect((await stat(join(root, "extensions-state.json"))).mode & 0o777).toBe(0o600);
+		if (CAN_ASSERT_FILE_MODE) expect((await stat(join(root, "extensions-state.json"))).mode & 0o777).toBe(0o600);
 		const first = buildExtensionSnapshot({ snapshotId: "snapshot-one", generation: 1, createdAt: "2026-08-04T00:00:00.000Z", descriptors: [descriptor("skill:project:a", "tool_a")], diagnostics: [] });
 		const second = buildExtensionSnapshot({ snapshotId: "snapshot-two", generation: 2, createdAt: "2026-08-04T00:01:00.000Z", descriptors: [descriptor("skill:project:b", "tool_b")], diagnostics: [] });
 		expect(Object.isFrozen(first.descriptors)).toBe(true);

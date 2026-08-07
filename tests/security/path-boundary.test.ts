@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { canCreateSymlink } from "../helpers/platform.ts";
 import { mkdir, mkdtemp, readFile, realpath, readdir, rename, rm, stat, lstat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -10,6 +11,8 @@ import {
 	type FileSystemBrokerPort,
 } from "../../src/security/policy-filesystem.ts";
 import type { SecuritySnapshot } from "../../src/security/types.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 const roots: string[] = [];
 
@@ -65,7 +68,7 @@ describe("canonical filesystem boundary", () => {
 		expect(await fs.writeFile(join(outside, "absolute.txt"), "blocked")).toMatchObject({ ok: false, error: { code: "path_escape" } });
 	});
 
-	it("detects symlink-parent and symlink-leaf escapes before write", async () => {
+	it("detects symlink-parent and symlink-leaf escapes before write", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-path-"));
 		const outside = await mkdtemp(join(tmpdir(), "runledger-outside-"));
 		roots.push(root, outside);

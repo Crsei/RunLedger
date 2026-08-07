@@ -11,6 +11,8 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +30,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function runWorker(command: string, dbPath: string, extraArgs: string[] = []): Record<string, unknown> {
@@ -80,7 +82,8 @@ describe("R1 real multi-process SQLite", () => {
 
 		const attempt = runWorker("write-attempt", dbPath);
 		expect(attempt).toMatchObject({ busy: true });
-		expect(Number(attempt.waitMs)).toBeLessThanOrEqual(SESSION_DB_BUSY_WAIT_LIMIT_MS + 40);
+		const tolerance = IS_WINDOWS ? 600 : 40;
+		expect(Number(attempt.waitMs)).toBeLessThanOrEqual(SESSION_DB_BUSY_WAIT_LIMIT_MS + tolerance);
 
 		writeFileSync(join(dir, "release"), "go");
 		const holderExit = await new Promise<number | null>((resolve) => {

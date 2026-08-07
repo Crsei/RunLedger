@@ -11,8 +11,7 @@ import { mkdtemp, rm, writeFile, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
-import { createReadTool } from "../src/runtime/tools/read.ts";
-import { createWriteTool } from "../src/runtime/tools/write.ts";
+import { createReadTool } from "../src/runtime/tools/read.ts";import { createWriteTool } from "../src/runtime/tools/write.ts";
 import { createEditTool } from "../src/runtime/tools/edit.ts";
 import { createBashTool } from "../src/runtime/tools/bash.ts";
 import { createGrepTool } from "../src/runtime/tools/grep.ts";
@@ -148,7 +147,7 @@ describe("stdlib tools (cross-platform)", () => {
     expect(calls.find((c) => c.cmd.startsWith("grep"))).toBeDefined();
   });
 
-  it("find: 找 .ts 文件(fallback find -name)", async () => {
+  it("find: 找 .ts 文件(fallback find -name)", { skip: process.platform === "win32" }, async () => {
     await writeFile(path.join(dir, "a.ts"), "export const x = 1;", "utf-8");
     await writeFile(path.join(dir, "b.txt"), "hello", "utf-8");
     const tool = createFindTool(dir);

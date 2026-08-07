@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -56,7 +57,7 @@ async function waitForClose(socket: net.Socket): Promise<void> {
 	await new Promise<void>((resolve) => socket.once("close", () => resolve()));
 }
 
-describe("R3 bounded authenticated local Host transport", () => {
+describe.skipIf(IS_WINDOWS)("R3 bounded authenticated local Host transport", () => {
 	it("admits a scope-bound management connection across a runtime build mismatch", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-management-"));
 		const socketPath = join(root, "host.sock");

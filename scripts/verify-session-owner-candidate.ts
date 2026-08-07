@@ -22,6 +22,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { openSessionDatabase, SESSION_DB_BUSY_WAIT_LIMIT_MS } from "../src/storage/session-store/database.ts";
 import { installSessionStoreSchema, sessionStoreSchemaFormatDigest } from "../src/storage/session-store/schema.ts";
@@ -31,7 +32,7 @@ import { createRuntimeId, type SessionId } from "../src/runtime/protocol/ids.ts"
 import { buildRunledgerLayout } from "../src/runtime/contracts/storage-layout.ts";
 import { createSessionSecurity } from "../src/security/session-composition.ts";
 
-const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
+const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const WORKER = join(REPO_ROOT, "tests", "fixtures", "session-owner", "runtime-worker.ts");
 
 interface CandidateContext {

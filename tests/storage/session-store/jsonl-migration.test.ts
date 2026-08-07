@@ -7,6 +7,7 @@
  */
 
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -40,7 +41,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	db.close();
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function ledgerHeader(sessionId: string, cwd: string): string {
@@ -201,7 +202,7 @@ describe("R2 prune-legacy", () => {
 		} finally {
 			gate.release();
 		}
-		rmSync(join(archiveDir!, "sessions"), { recursive: true, force: true });
+		rmSyncRetry(join(archiveDir!, "sessions"));
 		const digest = archiveDir!.split(sep).pop()!;
 		await expect(pruneLegacyArchive({ layout, manifestDigest: digest, confirmDelete: true })).rejects.toMatchObject({
 			code: "verify_failed",

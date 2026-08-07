@@ -2,6 +2,7 @@ import { lstat, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { CAN_ASSERT_FILE_MODE } from "../helpers/platform.ts";
 import { buildRunledgerLayout, createRuntimeId, runtimeDigest } from "../../src/runtime/contracts/public.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../../src/worktree/registry.ts";
 import type { WorktreeRecord } from "../../src/worktree/types.ts";
@@ -51,9 +52,11 @@ describe("JSONL WorktreeRegistryStore", () => {
 		expect(store.filePath).toBe(join(layout.home, "state", "worktrees", "registry.jsonl"));
 		await expect(registry.create(record())).resolves.toMatchObject({ ok: true, value: { inserted: true } });
 
-		expect((await stat(join(layout.home, "state"))).mode & 0o777).toBe(0o700);
-		expect((await stat(join(layout.home, "state", "worktrees"))).mode & 0o777).toBe(0o700);
-		expect((await lstat(store.filePath)).mode & 0o777).toBe(0o600);
+		if (CAN_ASSERT_FILE_MODE) {
+			expect((await stat(join(layout.home, "state"))).mode & 0o777).toBe(0o700);
+			expect((await stat(join(layout.home, "state", "worktrees"))).mode & 0o777).toBe(0o700);
+			expect((await lstat(store.filePath)).mode & 0o777).toBe(0o600);
+		}
 		expect((await readFile(store.filePath, "utf8")).trim().split("\n")).toHaveLength(1);
 	});
 

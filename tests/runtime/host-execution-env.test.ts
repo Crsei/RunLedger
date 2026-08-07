@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import { createStdlibTools } from "../../src/runtime/tools/index.ts";
 import type { ExecutionEnv } from "../../src/runtime/execution-env.ts";
+
+// 工具把相对路径按平台规则解析到 cwd 之下;断言用平台 resolve 生成期望值。
+const ws = (relative: string): string => resolve("/workspace", relative);
 
 describe("Host-injected stdlib ExecutionEnv", () => {
 	it("routes filesystem, shell, and WebFetch through the injected ports", async () => {
@@ -53,8 +57,8 @@ describe("Host-injected stdlib ExecutionEnv", () => {
 		await tools.get("WebFetch")?.execute("tool-fetch", { url: "https://example.com", prompt: "summarize" });
 
 		expect(calls).toEqual([
-			"read:/workspace/input.txt",
-			"write:/workspace/output.txt",
+			`read:${ws("input.txt")}`,
+			`write:${ws("output.txt")}`,
 			"shell:echo governed",
 			"network:https://example.com/",
 		]);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -100,7 +101,7 @@ function fakeSession(
 	};
 }
 
-describe("production Resident Runtime Host service", () => {
+describe.skipIf(IS_WINDOWS)("production Resident Runtime Host service", () => {
 	it("exposes bounded management status and shutdown without runtime admission", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-management-service-"));
 		const socketPath = join(root, "host.sock");

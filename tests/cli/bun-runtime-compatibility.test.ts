@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../helpers/cleanup.ts";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -36,7 +37,7 @@ describe("Bun CLI runtime compatibility", () => {
 			expect(result.status, result.stderr).toBe(0);
 			expect(result.stdout.trim()).toBe('{"value":"ok"}');
 		} finally {
-			rmSync(home, { recursive: true, force: true });
+			rmSyncRetry(home);
 		}
 	});
 });

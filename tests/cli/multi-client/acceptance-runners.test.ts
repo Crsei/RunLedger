@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { runManagedProcessPtyVerification } from "../../../scripts/verify-managed-process-pty.ts";
@@ -7,7 +8,7 @@ import { runHostBuildReplacementVerification } from "../../../scripts/verify-hos
 
 const execFileAsync = promisify(execFile);
 
-describe("R10 executable acceptance runners", () => {
+describe.skipIf(IS_WINDOWS)("R10 executable acceptance runners", () => {
 	it("verifies two real local Host clients over one authenticated socket", async () => {
 		const { stdout } = await execFileAsync(process.execPath, ["--import", "tsx", "scripts/verify-multi-client-host.ts"], {
 			cwd: process.cwd(),

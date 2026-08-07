@@ -7,6 +7,7 @@
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,7 +29,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.restoreAllMocks();
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function openStores(): { store: SessionStore; ownerStore: OwnerStore } {

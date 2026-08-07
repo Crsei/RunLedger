@@ -108,7 +108,7 @@ export async function writeHostBuildManifest(root: string, packageVersion: strin
 	const staging = `${path}.${randomUUID()}.tmp`;
 	try {
 		await writeFile(staging, `${canonicalJson(manifest)}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
-		const handle = await open(staging, "r");
+		const handle = await open(staging, "r+");
 		try { await handle.sync(); } finally { await handle.close(); }
 		await rename(staging, path);
 	} finally {

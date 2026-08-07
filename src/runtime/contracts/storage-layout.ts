@@ -112,8 +112,21 @@ function pathApi(flavor: RuntimePathFlavor): typeof posix | typeof win32 {
 	return flavor === "win32" ? win32 : posix;
 }
 
+/**
+ * 按 home 实际可识别的路径风格选择 path API。调用方常以 "posix" 硬编码,
+ * 而 home 可能是 Windows 绝对路径;这里自动纠正,仅当两种 flavor 都不识别
+ * home 时才返回传入的 flavor(由调用方继续做绝对性校验)。
+ */
+function effectivePathApi(home: string, flavor: RuntimePathFlavor): typeof posix | typeof win32 {
+	const paths = pathApi(flavor);
+	if (paths.isAbsolute(home)) return paths;
+	const other = flavor === "win32" ? posix : win32;
+	return other.isAbsolute(home) ? other : paths;
+}
+
 export function resolveRunledgerHomeContract(input: RunledgerHomeResolutionInput): RunledgerHomeResolution {
-	const paths = pathApi(input.pathFlavor);
+	const detectionInput = input.override?.rawValue ?? input.userHome;
+	const paths = detectionInput !== undefined ? effectivePathApi(detectionInput, input.pathFlavor) : pathApi(input.pathFlavor);
 	if (input.override) {
 		if (input.override.rawValue.length === 0) return { ok: false, code: "override_empty" };
 		if (!paths.isAbsolute(input.override.rawValue)) return { ok: false, code: "override_not_absolute" };
@@ -144,7 +157,7 @@ export function resolveRunledgerHomeContract(input: RunledgerHomeResolutionInput
 }
 
 export function buildRunledgerLayout(home: string, flavor: RuntimePathFlavor): RunledgerLayout {
-	const paths = pathApi(flavor);
+	const paths = effectivePathApi(home, flavor);
 	if (!paths.isAbsolute(home)) throw new Error("runledgerHome must be absolute");
 	const normalizedHome = paths.normalize(home);
 	return {
@@ -241,7 +254,7 @@ export function traceEventRelativeLocator(traceId: TraceId, createdAt: string): 
 }
 
 export function isContainedRuntimePath(home: string, target: string, flavor: RuntimePathFlavor): boolean {
-	const paths = pathApi(flavor);
+	const paths = effectivePathApi(home, flavor);
 	if (!paths.isAbsolute(home) || !paths.isAbsolute(target)) return false;
 	const normalizedHome = paths.resolve(home);
 	const normalizedTarget = paths.resolve(target);

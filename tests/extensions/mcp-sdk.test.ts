@@ -14,6 +14,7 @@ import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../src/runtime/host/types.ts";
+import { IS_WINDOWS } from "../helpers/platform.ts";
 
 function processScope(): RuntimeHostScope {
 	const digest = (seed: string) => runtimeDigest(seed);
@@ -146,7 +147,7 @@ describe("official MCP SDK transport factory", () => {
 		}
 	});
 
-	it("can run stdio through the Host managed-process facade", async () => {
+	it("can run stdio through the Host managed-process facade", { skip: IS_WINDOWS }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-mcp-managed-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const scope = processScope();

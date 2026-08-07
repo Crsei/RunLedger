@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 interface Evidence {
@@ -56,7 +56,8 @@ describe("platform evidence fixtures are immutable", () => {
 			const actual: Record<string, string> = {};
 			for (const file of fixtureFiles(dir)) {
 				if (file === "manifest.json" || file === "README.md") continue;
-				actual[file] = sha256(readFileSync(join(dir, file), "utf8"));
+				const content = readFileSync(join(dir, file), "utf8");
+				actual[file.split(sep).join("/")] = sha256(content.replace(/\r\n/g, "\n"));
 			}
 			expect(actual).toEqual(manifest);
 		}

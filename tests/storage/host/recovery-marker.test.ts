@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { canCreateSymlink } from "../../helpers/platform.ts";
 import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,8 @@ import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-lay
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostRecoveryMarker } from "../../../src/runtime/host/lifecycle.ts";
 import { HostRecoveryMarkerStore } from "../../../src/storage/host/recovery-marker.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 function marker(phase: RuntimeHostRecoveryMarker["phase"], generation = 3): RuntimeHostRecoveryMarker {
 	const body = {
@@ -46,7 +49,7 @@ describe("R10 durable Host recovery marker", () => {
 		}
 	});
 
-	it("rejects a symlinked Host state ancestor", async () => {
+	it("rejects a symlinked Host state ancestor", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-recovery-marker-symlink-"));
 		try {
 			const home = join(root, "home");

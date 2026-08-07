@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { canCreateSymlink } from "../helpers/platform.ts";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -7,6 +8,8 @@ import type { ExtensionStoragePort, ExtensionStorageResult } from "../../src/ext
 import { TrustStore } from "../../src/extensions/trust/trust-store.ts";
 import { ExtensionStateStore } from "../../src/extensions/state-store.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 class NodeExtensionStorage implements ExtensionStoragePort {
 	async realpath(path: string): Promise<ExtensionStorageResult<string>> {
@@ -120,7 +123,7 @@ describe("Plugin manifest and manager", () => {
 		}
 	});
 
-	it("rejects a component path that resolves outside the plugin root", async () => {
+	it("rejects a component path that resolves outside the plugin root", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-plugin-"));
 		const outside = await mkdtemp(join(tmpdir(), "runledger-plugin-outside-"));
 		try {

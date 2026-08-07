@@ -14,6 +14,7 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,7 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function openStores(): { store: SessionStore; ownerStore: OwnerStore; db: import("../../src/storage/session-store/database.ts").SessionDatabase } {

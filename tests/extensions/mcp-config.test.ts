@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
 import { loadCanonicalMcpConfigs, parseMcpConfigDocument } from "../../src/extensions/mcp/config.ts";
 import { NodeExtensionStorage } from "../../src/storage/extensions/extension-storage.ts";
+
+const expectedCwd = resolve(dirname("/runledger/state/extensions/user/mcp.json"));
 
 describe("canonical MCP config", () => {
 	it("resolves bounded env templates without exposing the template source", () => {
@@ -25,7 +27,7 @@ describe("canonical MCP config", () => {
 
 		expect(parsed.ok).toBe(true);
 		if (parsed.ok) {
-			expect(parsed.configs[0]).toMatchObject({ serverId: "mcp-server:user:fixture", trusted: true, stdio: { cwd: "/runledger/state/extensions/user" } });
+			expect(parsed.configs[0]).toMatchObject({ serverId: "mcp-server:user:fixture", trusted: true, stdio: { cwd: expectedCwd } });
 			expect(parsed.configs[0]?.stdio?.env).toEqual({ TOKEN: "secret-value" });
 		}
 	});

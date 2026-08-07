@@ -73,7 +73,7 @@ export function checkPlatformBoundaries(): readonly PlatformBoundaryViolation[] 
 	const files: string[] = [];
 	scanFiles(resolve("src"), files);
 	for (const full of files) {
-		const file = relative(resolve("."), full);
+		const file = relative(resolve("."), full).split("\\").join("/");
 		const content = readFileSync(full, "utf8");
 		if (PLATFORM_BRANCH_PATTERN.test(content)) {
 			const allowed = LEGACY_PLATFORM_BRANCH_ALLOWLIST.includes(file) || WORKSPACE_FACTORY_ALLOWLIST.includes(file);

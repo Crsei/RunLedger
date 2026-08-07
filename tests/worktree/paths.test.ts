@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { relative, resolve } from "node:path";
 import { createRuntimeId } from "../../src/runtime/contracts/public.ts";
 import {
 	buildManagedWorktreePath,
@@ -23,11 +24,11 @@ describe("worktree path boundary", () => {
 			createRuntimeId("repository", "repo-one"),
 			createRuntimeId("workspace", "workspace-one"),
 			"task",
-		)).toEqual({ ok: true, value: "/managed/repo-one/task-workspace-one" });
+		)).toEqual({ ok: true, value: resolve("/managed", "repo-one", "task-workspace-one") });
 	});
 
 	it("preserves a source subdirectory offset without prefix confusion", () => {
-		expect(resolveSubdirOffset("/repo", "/repo/packages/app")).toEqual({ ok: true, value: "packages/app" });
+		expect(resolveSubdirOffset("/repo", "/repo/packages/app")).toEqual({ ok: true, value: relative(resolve("/repo"), resolve("/repo/packages/app")) });
 		expect(resolveSubdirOffset("/repo", "/repo-other/app")).toMatchObject({ ok: false });
 		expect(pathWithin("/repo", "/repo-other")).toBe(false);
 	});

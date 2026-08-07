@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -75,7 +76,7 @@ async function request(client: JsonLineHostClient, frameId: string, body: Record
 	return client.request({ frameId, kind: "command_request", protocolVersion: HOST_PROTOCOL_VERSION, body: { commandId: frameId, ...body } });
 }
 
-describe("resident Host domain ports", () => {
+describe.skipIf(IS_WINDOWS)("resident Host domain ports", () => {
 	it("routes a query and a driver-only mutation through the durable Host boundary", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-domain-port-"));
 		const hostScope = createHostCompatibilityEnvelope(scope());

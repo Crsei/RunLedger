@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_LINUX, IS_MACOS } from "../helpers/platform.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { WorkspaceExecutionEnvelope } from "../../src/runtime/contracts/public.ts";
@@ -55,7 +56,7 @@ function probe(path: string | undefined): SandboxProbe {
 }
 
 describe("MacOsSeatbeltBackend", () => {
-	it("reports Seatbelt unavailable without claiming degraded enforcement", async () => {
+	it.skipIf(!IS_MACOS)("reports Seatbelt unavailable without claiming degraded enforcement", async () => {
 		const backend = new MacOsSeatbeltBackend(probe(undefined));
 
 		expect(await backend.probe()).toMatchObject({
@@ -66,7 +67,7 @@ describe("MacOsSeatbeltBackend", () => {
 		expect(await backend.prepare(request())).toMatchObject({ ok: false, error: { code: "sandbox_unavailable" } });
 	});
 
-	it("generates a deterministic Seatbelt profile with write, deny-read, protected, and network rules", async () => {
+	it.skipIf(!IS_MACOS)("generates a deterministic Seatbelt profile with write, deny-read, protected, and network rules", async () => {
 		const backend = new MacOsSeatbeltBackend(probe("/usr/bin/sandbox-exec"));
 		const result = await backend.prepare(request());
 
@@ -81,7 +82,7 @@ describe("MacOsSeatbeltBackend", () => {
 		expect(result.value.arguments.slice(-4)).toEqual(["--", "/bin/sh", "-lc", "pwd"]);
 	});
 
-	it("only allows network when the request explicitly resolves to allow", async () => {
+	it.skipIf(!IS_MACOS)("only allows network when the request explicitly resolves to allow", async () => {
 		const backend = new MacOsSeatbeltBackend(probe("/usr/bin/sandbox-exec"));
 		const result = await backend.prepare(request({ network: "allow" }));
 

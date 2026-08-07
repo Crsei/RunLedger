@@ -74,7 +74,7 @@ export class JsonHostDomainRevisionStore implements HostDomainRevisionStore {
 			const temporary = join(this.#root, `.revision-${randomUUID()}.tmp`);
 			try {
 				await writeFile(temporary, `${canonicalJson(snapshot)}\n`, { encoding: "utf8", mode: RUNLEDGER_FILE_MODE });
-				const handle = await open(temporary, "r");
+				const handle = await open(temporary, "r+");
 				try {
 					await handle.sync();
 				} finally {

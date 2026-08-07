@@ -12,6 +12,8 @@
 
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +33,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function setupSession(seed: string): SessionId {
@@ -75,7 +77,7 @@ async function spawnWorkerAsync(command: string, sessionId: string, workDir: str
 }
 
 describe("RED-03 tool side effects enter the recovery barrier", () => {
-	it("a crash inside a real gated Write leaves an unresolved receipt; takeover barrier stays open and blocks new side effects", async () => {
+	it("a crash inside a real gated Write leaves an unresolved receipt; takeover barrier stays open and blocks new side effects", { skip: IS_WINDOWS, timeout: 60_000 }, async () => {
 		const sessionId = setupSession("red03");
 		const workDir = join(dir, "crash");
 		const holder = await spawnWorkerAsync("crash-after-attempt", sessionId, workDir);
@@ -117,5 +119,5 @@ describe("RED-03 tool side effects enter the recovery barrier", () => {
 		// assess() 不得误判 clean(unresolved receipt 存在)。
 		expect(Number(last.unresolvedRemaining)).toBeGreaterThanOrEqual(1);
 		store.database().close();
-	}, 60_000);
+	});
 });

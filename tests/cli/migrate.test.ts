@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,7 +9,7 @@ const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 const cleanup: string[] = [];
 
 afterEach(() => {
-	for (const directory of cleanup.splice(0)) rmSync(directory, { recursive: true, force: true });
+	for (const directory of cleanup.splice(0)) rmSyncRetry(directory);
 });
 
 function runCli(args: string[], env: Record<string, string>): { stdout: string; stderr: string; status: number | null } {

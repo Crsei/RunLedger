@@ -13,7 +13,7 @@
 
 import { createRequire } from "node:module";
 import { chmodSync, lstatSync, readdirSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import type { DatabaseSync as NodeDatabaseSync, SQLInputValue } from "node:sqlite";
 
@@ -99,7 +99,11 @@ function classifySqliteError(error: unknown): SessionStoreDatabaseErrorCode {
 	return "unknown";
 }
 
-/** POSIX 上 state.db* 的权限下限:不宽于 0600。Windows 未取得真实 ACL 证据前不声明等价保护。 */
+/**
+ * POSIX 上 state.db* 的权限下限:不宽于 0600。
+ * Windows 无 POSIX mode 语义,node chmod 位恒为 0666,故对 win32 绝对路径
+ * 不在此层断言(ACL 保护由 platform-capability 单独声明)。
+ */
 function assertDatabaseFileMode(path: string): void {
 	const stat = lstatSync(path);
 	if (stat.isSymbolicLink()) {
@@ -108,7 +112,8 @@ function assertDatabaseFileMode(path: string): void {
 	if (!stat.isFile()) {
 		throw new SessionStoreDatabaseError("open_failed", `database path is not a regular file: ${path}`);
 	}
-	if ((stat.mode & 0o077) !== 0) {
+	const isWindowsPath = win32.isAbsolute(path);
+	if (!isWindowsPath && (stat.mode & 0o077) !== 0) {
 		throw new SessionStoreDatabaseError("permission_denied", `database file mode is wider than 0600: ${path}`);
 	}
 }
@@ -160,8 +165,10 @@ export class SessionDatabase {
 		}
 		const wasExisting = existsSync(path);
 		if (wasExisting) assertDatabaseFileMode(path);
+		let opened: SessionDatabase | undefined;
 		try {
 			const db = new SessionDatabase(path, options.readOnly ?? false);
+			opened = db;
 			// 新文件创建后立即收紧到 0600,避免 umask 竞态;已有文件在 assert 阶段已校验。
 			if (!options.readOnly && !wasExisting) {
 				chmodSync(path, 0o600);
@@ -170,6 +177,9 @@ export class SessionDatabase {
 			db.querySingle("SELECT 1 AS ok");
 			return db;
 		} catch (error) {
+			// 构造成功后验证失败必须关闭句柄,否则泄漏并锁住文件(Windows 上
+			// 会留下 EBUSY,无法删除)。
+			opened?.close();
 			if (error instanceof SessionStoreDatabaseError) throw error;
 			const code = classifySqliteError(error);
 			if (code === "not_a_database") {

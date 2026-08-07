@@ -11,6 +11,7 @@
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,7 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function openStores(): { store: SessionStore; ownerStore: OwnerStore } {
@@ -104,7 +105,7 @@ function hasCompleteResultLine(stdout: string): boolean {
 }
 
 describe("R6 production composition", () => {
-	it("separate processes claim different sessions through separate SQLite connections", async () => {
+	it("separate processes claim different sessions through separate SQLite connections", { timeout: 60_000 }, async () => {
 		const sessionIds = Array.from({ length: 4 }, (_, index) => setupSession(`claim-${index}`));
 		const workers = sessionIds.map((sessionId, index) => {
 			const workDir = join(dir, `claim-worker-${index}`);
@@ -126,7 +127,7 @@ describe("R6 production composition", () => {
 		ownerStore.database().close();
 	});
 
-	it("a second process attaches the same owner runtime (same generation and port)", async () => {
+	it("a second process attaches the same owner runtime (same generation and port)", { timeout: 60_000 }, async () => {
 		const sessionId = setupSession("two");
 		const holder = spawnWorkerAsync("embedded", sessionId);
 		await waitFor(() => hasCompleteResultLine(holder.stdout()), 20_000, "owner claim stdout frame");
@@ -171,7 +172,7 @@ describe("R6 production composition", () => {
 		store.database().close();
 	});
 
-	it("two different sessions run with parallel owners", async () => {
+	it("two different sessions run with parallel owners", { timeout: 60_000 }, async () => {
 		const sessionA = setupSession("pa");
 		const sessionB = setupSession("pb");
 		const holderA = spawnWorkerAsync("embedded", sessionA);
@@ -190,7 +191,7 @@ describe("R6 production composition", () => {
 		writeFileSync(join(dir, "release"), "release");
 	});
 
-	it("the last attachment closing pauses the session and releases the owner (unowned)", async () => {
+	it("the last attachment closing pauses the session and releases the owner (unowned)", { timeout: 60_000 }, async () => {
 		const sessionId = setupSession("last");
 		const holder = spawnWorkerAsync("embedded", sessionId);
 		await waitFor(() => hasCompleteResultLine(holder.stdout()), 20_000, "owner claim stdout frame");

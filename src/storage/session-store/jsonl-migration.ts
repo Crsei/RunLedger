@@ -21,7 +21,7 @@
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, relative, sep, win32 } from "node:path";
 import lockfile from "proper-lockfile";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import { runtimeDigest } from "../../runtime/protocol/foundation.ts";
@@ -137,7 +137,8 @@ export async function enumerateCanonicalJsonl(layout: RunledgerLayout): Promise<
 			assertInsideHome(layout, childPath);
 			const content = await fs.readFile(childPath, "utf8");
 			const stat = await fs.stat(childPath);
-			if ((stat.mode & 0o077) !== 0) {
+			// Windows 无 POSIX mode 语义,chmod 位恒为 0666;mode 保护由 platform-capability 单独声明。
+			if (!win32.isAbsolute(childPath) && (stat.mode & 0o077) !== 0) {
 				throw new JsonlMigrationError("invalid_source", `legacy session file mode is wider than 0600: ${childPath}`);
 			}
 			const lines = content.split(/\r?\n/).filter((line) => line.length > 0);

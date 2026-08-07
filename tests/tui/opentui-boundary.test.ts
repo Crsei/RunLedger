@@ -13,6 +13,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { canCreateSymlink } from "../helpers/platform.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 function collectTypeScriptFiles(root: string): string[] {
   const files: string[] = [];
@@ -41,16 +44,20 @@ describe("OpenTUI framework boundary", () => {
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
       scripts?: Record<string, string>;
     };
-    const shim = readFileSync(join(process.cwd(), "bin", "runledger.js"), "utf8");
+    const shim = readFileSync(join(process.cwd(), "bin", "runledger.js"), "utf8").replace(/\r\n/g, "\n");
+    const tuiRunner = readFileSync(join(process.cwd(), "scripts", "run-tui-bun-tests.mjs"), "utf8");
 
     expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
     expect(shim).toContain("[runledger] Bun");
     expect(shim).toContain("exec bun");
-    expect(packageJson.scripts?.["test:tui-native"]).toContain("bun test");
+    // 跨平台 runner 展开 glob 后显式调用 bun test(Windows cmd 不展开通配符)。
+    expect(packageJson.scripts?.["test:tui-native"]).toContain("run-tui-bun-tests.mjs");
+    expect(tuiRunner).toContain('"bun"');
+    expect(tuiRunner).toContain('["test",');
     expect(packageJson.scripts?.test).toContain("npm run test:tui-native");
   });
 
-  it("通过 npm 风格符号链接启动时仍定位 package 内的 dist", () => {
+  it("通过 npm 风格符号链接启动时仍定位 package 内的 dist", { skip: !CAN_SYMLINK }, () => {
     const root = mkdtempSync(join(tmpdir(), "runledger-linked-shim-"));
     try {
       const fakeBin = join(root, "fake-bin");

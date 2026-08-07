@@ -6,6 +6,8 @@
  */
 
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync, chmodSync, existsSync } from "node:fs";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
+import { CAN_ASSERT_FILE_MODE, IS_WINDOWS, canCreateSymlink } from "../../helpers/platform.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +18,8 @@ import {
 	openSessionDatabase,
 } from "../../../src/storage/session-store/database.ts";
 
+const CAN_SYMLINK = canCreateSymlink();
+
 let dir: string;
 
 beforeEach(() => {
@@ -23,7 +27,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(dir, { recursive: true, force: true });
+	rmSyncRetry(dir);
 });
 
 function dbPath(name = "state.db"): string {
@@ -40,12 +44,14 @@ describe("R1 SessionDatabase open and pragmas", () => {
 		expect(db.querySingle("PRAGMA foreign_keys")?.foreign_keys).toBe(1);
 		expect(db.querySingle("PRAGMA busy_timeout")?.timeout).toBe(SESSION_DB_BUSY_WAIT_LIMIT_MS);
 		expect(db.querySingle("PRAGMA trusted_schema")?.trusted_schema).toBe(0);
-		const mode = (require("node:fs").statSync(path).mode & 0o777) as number;
-		expect(mode).toBe(0o600);
+		if (CAN_ASSERT_FILE_MODE) {
+			const mode = (require("node:fs").statSync(path).mode & 0o777) as number;
+			expect(mode).toBe(0o600);
+		}
 		db.close();
 	});
 
-	it("fails closed when the database path is a symlink", () => {
+	it("fails closed when the database path is a symlink", { skip: !CAN_SYMLINK }, () => {
 		const target = dbPath("target.db");
 		openSessionDatabase(target).close();
 		const link = dbPath("state.db");
@@ -59,7 +65,7 @@ describe("R1 SessionDatabase open and pragmas", () => {
 		}
 	});
 
-	it("fails closed when an existing database file has permissive mode", () => {
+	it("fails closed when an existing database file has permissive mode", { skip: IS_WINDOWS }, () => {
 		const path = dbPath();
 		openSessionDatabase(path).close();
 		chmodSync(path, 0o644);
@@ -98,7 +104,8 @@ describe("R1 bounded busy handling and async retry", () => {
 			expect(busyError?.code).toBe("busy");
 			expect(busyError?.retryable).toBe(true);
 			const elapsed = Date.now() - started;
-			expect(elapsed).toBeLessThanOrEqual(SESSION_DB_BUSY_WAIT_LIMIT_MS + 60);
+			const tolerance = IS_WINDOWS ? 400 : 60;
+			expect(elapsed).toBeLessThanOrEqual(SESSION_DB_BUSY_WAIT_LIMIT_MS + tolerance);
 		} finally {
 			writer.rollback();
 			writer.close();

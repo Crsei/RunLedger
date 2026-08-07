@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +40,7 @@ function testPort(options: ConstructorParameters<typeof ProductionManagedProcess
 	return new ProductionManagedProcessPort({ ...options, allowTestOnlyUnrestrictedExecution: true });
 }
 
-describe("production Host managed process port", () => {
+describe.skipIf(IS_WINDOWS)("production Host managed process port", () => {
 	it("uses the security composition registered for the rebound session", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-process-session-security-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");

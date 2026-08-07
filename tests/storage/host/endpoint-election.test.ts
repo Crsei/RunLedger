@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { canCreateSymlink } from "../../helpers/platform.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../../src/runtime/protocol/foundation.ts";
@@ -12,6 +13,8 @@ import {
 	type HostEndpointRecord,
 } from "../../../src/storage/host/endpoint-store.ts";
 import { acquireStartupElection } from "../../../src/storage/host/startup-election.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 const digest = (seed: string): RuntimeDigest => runtimeDigest(seed);
 
@@ -83,7 +86,7 @@ describe("R3 local Host endpoint and startup election", () => {
 		}
 	});
 
-	it("rejects a symlinked endpoint ancestor instead of escaping canonical home", async () => {
+	it("rejects a symlinked endpoint ancestor instead of escaping canonical home", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-endpoint-symlink-"));
 		try {
 			const home = join(root, "home");

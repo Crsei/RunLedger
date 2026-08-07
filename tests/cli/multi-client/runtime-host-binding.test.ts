@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { IS_WINDOWS } from "../../helpers/platform.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -72,7 +73,7 @@ function binding(root: string, hostScope: RuntimeHostScope): PersistedWorkspaceB
 	return { ...body, bindingDigest: runtimeDigest(body) };
 }
 
-describe("resident Host workspace binding cold replay", () => {
+describe.skipIf(IS_WINDOWS)("resident Host workspace binding cold replay", () => {
 	it("forces a rebound session to the canonical effective cwd instead of the source cwd", () => {
 		const root = join(tmpdir(), "runledger-host-binding-session-workspace");
 		const persisted = binding(root, scope());

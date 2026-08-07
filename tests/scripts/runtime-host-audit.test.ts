@@ -111,7 +111,7 @@ describe("runtime Host audit evidence", () => {
 			const manifestText = await readFile(passed.manifestPath, "utf8");
 			expect(manifestText).not.toContain(root);
 			expect(manifestText).not.toContain("/private/raw-output");
-			expect((await stat(passed.manifestPath)).mode & 0o777).toBe(0o600);
+			if (process.platform !== "win32") expect((await stat(passed.manifestPath)).mode & 0o777).toBe(0o600);
 
 			await mkdir(join(output, "changed"));
 			const changed = await auditModule.runRuntimeHostAudit({

@@ -2,8 +2,11 @@ import { lstat, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
+import { canCreateSymlink } from "../../helpers/platform.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { HostGenerationStore } from "../../../src/storage/host/host-generation-store.ts";
+
+const CAN_SYMLINK = canCreateSymlink();
 
 describe("HostGenerationStore", () => {
 	it("allocates a durable monotonic generation after endpoint cleanup", async () => {
@@ -20,7 +23,7 @@ describe("HostGenerationStore", () => {
 		}
 	});
 
-	it("rejects a symlinked Host state ancestor without allocating outside canonical home", async () => {
+	it("rejects a symlinked Host state ancestor without allocating outside canonical home", { skip: !CAN_SYMLINK }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-generation-symlink-"));
 		try {
 			const home = join(root, "home");

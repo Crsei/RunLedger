@@ -4,6 +4,9 @@ import type { OutputCursor } from "../../src/runtime/process/output.ts";
 import type { ControlPlaneMutationResult, ControlPlaneOutputResult, ControlPlaneWaitResult } from "../../src/storage/process/control-plane.ts";
 import type { HookCommandRunnerRequest } from "../../src/extensions/hooks/types.ts";
 import { createHostManagedHookRunner } from "../../src/extensions/hooks/host-runner.ts";
+import { resolve } from "node:path";
+
+const cwd = resolve("/tmp/plugin/hooks");
 
 function handle(): ExecutionHandleRef {
 	return {
@@ -77,7 +80,7 @@ function request(overrides: Partial<HookCommandRunnerRequest> = {}): HookCommand
 		stdin: "{}",
 		timeoutMs: 100,
 		signal: new AbortController().signal,
-		cwd: "/tmp/plugin/hooks",
+		cwd,
 		...overrides,
 	};
 }
@@ -88,8 +91,8 @@ describe("Host-managed hook runner", () => {
 		const runner = createHostManagedHookRunner({ managedProcess: process });
 		const result = await runner.run(request());
 		expect(result).toEqual({ exitCode: 0, stdout: '{"decision":"allow"}\n', stderr: "" });
-		expect(process.starts[0]).toMatchObject({ cwd: "/tmp/plugin/hooks", stdin: "{}" });
-		expect(process.starts[0]?.command).toContain("'/tmp/plugin/hooks/guard.sh' '--mode' 'safe value'");
+		expect(process.starts[0]).toMatchObject({ cwd, stdin: "{}" });
+		expect(process.starts[0]?.command).toContain(`'${resolve("/tmp/plugin/hooks", "guard.sh")}' '--mode' 'safe value'`);
 		expect(process.starts[0]?.command).toContain("SAFE_VALUE='yes'");
 		expect(process.starts[0]?.command).not.toContain("RUNLEDGER_FORBIDDEN");
 	});

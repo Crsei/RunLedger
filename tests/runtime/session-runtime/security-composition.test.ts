@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	rmSync(root, { recursive: true, force: true });
+	rmSyncRetry(root);
 });
 
 function fence(): OwnerFence {

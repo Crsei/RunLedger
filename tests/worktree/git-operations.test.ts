@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { GitOperations, type GitCommandPort } from "../../src/worktree/git-operations.ts";
 import type { GitCommandRequest, GitCommandResult } from "../../src/worktree/ports.ts";
+import { resolve } from "node:path";
+
+const target = resolve("/managed/repo/task");
 
 function broker(responder?: (request: GitCommandRequest) => GitCommandResult): { port: GitCommandPort; requests: GitCommandRequest[] } {
 	const requests: GitCommandRequest[] = [];
@@ -21,7 +24,7 @@ describe("typed GitOperations", () => {
 		const git = new GitOperations(value.port, { managedRoot: "/managed" });
 		const result = await git.createDetachedWorktree("/repo", "/managed/repo/task", "a".repeat(40));
 		expect(result).toEqual({ ok: true, value: "" });
-		expect(value.requests[0]).toMatchObject({ cwd: "/repo", arguments: ["worktree", "add", "--detach", "/managed/repo/task", "a".repeat(40)] });
+		expect(value.requests[0]).toMatchObject({ cwd: "/repo", arguments: ["worktree", "add", "--detach", target, "a".repeat(40)] });
 		expect(value.requests[0]?.arguments).not.toContain("sh");
 	});
 
@@ -37,7 +40,7 @@ describe("typed GitOperations", () => {
 		const value = broker();
 		const git = new GitOperations(value.port, { managedRoot: "/managed" });
 		await git.createWorktree("/repo", "/managed/repo/task", "runledger/task", "a".repeat(40));
-		expect(value.requests[0]?.arguments).toEqual(["worktree", "add", "--no-track", "-b", "runledger/task", "/managed/repo/task", "a".repeat(40)]);
+		expect(value.requests[0]?.arguments).toEqual(["worktree", "add", "--no-track", "-b", "runledger/task", target, "a".repeat(40)]);
 	});
 
 	it("returns a promise when branch validation rejects before invoking git", () => {

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CAN_ASSERT_FILE_MODE } from "../helpers/platform.ts";
 import { buildRunledgerLayout, type RunledgerLayout } from "../../src/runtime/contracts/public.ts";
 import type { LedgerHeader } from "../../src/runtime/ledger/types.ts";
 import { SessionManager, type SessionInfo } from "../../src/storage/session-manager.ts";
@@ -33,17 +34,17 @@ describe("SessionManager.create", () => {
 	it("create 写 canonical UTC shard 与 LedgerHeader(metadata.cwd)", async () => {
 		const manager = await SessionManager.create({ layout, cwd, sessionId: "session_fixture" });
 		const filePath = manager.filePath();
-		expect(relative(layout.sessions, filePath)).toMatch(/^\d{4}\/\d{2}\/\d{2}\/session_fixture\.jsonl$/u);
+		expect(relative(layout.sessions, filePath).replaceAll("\\", "/")).toMatch(/^\d{4}\/\d{2}\/\d{2}\/session_fixture\.jsonl$/u);
 		expect(existsSync(filePath)).toBe(true);
 		expect(readFirstLine(filePath).metadata?.cwd).toBe(cwd);
 		expect(manager.sessionDir()).toBe(layout.sessions);
-		expect(statSync(filePath).mode & 0o777).toBe(0o600);
+		if (CAN_ASSERT_FILE_MODE) expect(statSync(filePath).mode & 0o777).toBe(0o600);
 		await manager.closeAll();
 	});
 
 	it("create 不依赖 cwd 下 .runledger", async () => {
 		const manager = await SessionManager.create({ layout, cwd });
-		expect(manager.filePath()).toContain("/home/sessions/");
+		expect(manager.filePath()).toContain(join("home", "sessions"));
 		expect(existsSync(join(cwd, ".runledger"))).toBe(false);
 		await manager.closeAll();
 	});
@@ -98,7 +99,7 @@ describe("SessionManager.continueRecent", () => {
 
 	it("无任何会话时在 canonical root 新建", async () => {
 		const manager = await SessionManager.continueRecent(layout, cwd);
-		expect(manager.filePath()).toContain("/home/sessions/");
+		expect(manager.filePath()).toContain(join("home", "sessions"));
 		await manager.closeAll();
 	});
 

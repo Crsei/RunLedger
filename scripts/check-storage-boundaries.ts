@@ -8,6 +8,7 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface StorageBoundaryViolation {
 	readonly file: string;
@@ -65,7 +66,7 @@ export function scanStorageCliBoundaries(repoRoot: string): StorageBoundaryViola
 }
 
 function run(): void {
-	const repoRoot = resolve(process.argv[2] ?? new URL("..", import.meta.url).pathname);
+	const repoRoot = resolve(process.argv[2] ?? fileURLToPath(new URL("..", import.meta.url)));
 	const violations = scanStorageCliBoundaries(repoRoot);
 	if (violations.length > 0) {
 		for (const violation of violations) console.error(`${violation.file}: ${violation.reason}`);
