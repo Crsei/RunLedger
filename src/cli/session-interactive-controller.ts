@@ -254,7 +254,11 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		const revision = numberValue(response.body.driverRevision);
 		if (revision !== undefined) this.driverRevision = revision;
 		if (response.body.ok !== true) {
-			throw new Error(stringValue(response.body.code) ?? "session command rejected");
+			const code = stringValue(response.body.code) ?? "session command rejected";
+			const detail = stringValue(response.body.detail);
+			// 保留 detail(如 "No model selected. Use /provider or /model."),否则 TUI 只显示
+			// domain_prompt_failed 这种 code,用户无法知道真正原因。
+			throw new Error(detail === undefined ? code : `${code}: ${detail}`);
 		}
 		return typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};
 	}
