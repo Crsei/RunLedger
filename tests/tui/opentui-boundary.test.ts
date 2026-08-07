@@ -47,9 +47,9 @@ describe("OpenTUI framework boundary", () => {
     const shim = readFileSync(join(process.cwd(), "bin", "runledger.js"), "utf8").replace(/\r\n/g, "\n");
     const tuiRunner = readFileSync(join(process.cwd(), "scripts", "run-tui-bun-tests.mjs"), "utf8");
 
-    expect(shim.startsWith("#!/bin/sh\n")).toBe(true);
+    expect(shim.startsWith("#!/usr/bin/env node\n")).toBe(true);
     expect(shim).toContain("[runledger] Bun");
-    expect(shim).toContain("exec bun");
+    expect(shim).toContain('spawnSync("bun"');
     // 跨平台 runner 展开 glob 后显式调用 bun test(Windows cmd 不展开通配符)。
     expect(packageJson.scripts?.["test:tui-native"]).toContain("run-tui-bun-tests.mjs");
     expect(tuiRunner).toContain('"bun"');
