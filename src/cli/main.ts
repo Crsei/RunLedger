@@ -16,6 +16,7 @@
  */
 
 import { readFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
@@ -103,7 +104,13 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   const cwd = process.cwd();
-  const { layout } = await resolveRunledgerHome();
+  const { resolution, layout } = await resolveRunledgerHome();
+  // 默认 home(<userHome>/.runledger)需要首启创建;显式 RUNLEDGER_DIR 必须
+  // 已是既有目录(createDefault=false)。openSessionDatabase 会 stat 父目录,
+  // 缺失时 fail closed,所以必须先建目录。
+  if (resolution.createDefault) {
+    await mkdir(layout.home, { recursive: true, mode: 0o700 });
+  }
   const settings = await loadProjectSettings({ layout });
 
   // §4.2:owner discovery 前只读冻结 schema header;too-new/too-old 全部 fail closed。
