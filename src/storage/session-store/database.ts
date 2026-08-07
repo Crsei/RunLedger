@@ -1,7 +1,7 @@
 /**
  * R1:Session Store SQLite database foundation(06 §4.1)。
  *
- * - 只使用 Node 自带 node:sqlite,不增加 native 依赖;
+ * - Node 使用自带 node:sqlite,Bun CLI 使用自带 bun:sqlite,不增加 native 依赖;
  * - 固定 PRAGMA(WAL / synchronous=FULL / foreign_keys=ON / busy_timeout=100 / trusted_schema=OFF);
  * - 单次 SQLite blocking wait 不超过 SESSION_DB_BUSY_WAIT_LIMIT_MS(100ms);
  *   SQLITE_BUSY 先返回 JS event loop,再用 setTimeout + bounded exponential
@@ -19,10 +19,24 @@ import type { DatabaseSync as NodeDatabaseSync, SQLInputValue } from "node:sqlit
 
 // node:sqlite 是 experimental builtin,不在 Node 22 的 builtinModules 白名单中,
 // vite-node/vitest 无法把它 externalize 成原生模块。改用 createRequire 在运行时
-// 加载,类型仍来自 @types/node 的 node:sqlite 声明;type-only import 在编译期擦除,
-// 不经过 vite-node 的 import 拦截。
+// 选择当前运行时内建 SQLite;类型仍来自 @types/node 的 node:sqlite 声明,
+// type-only import 在编译期擦除,不经过 vite-node 的 import 拦截。
 const requireFromCjs = createRequire(import.meta.url);
-const nodeSqlite = requireFromCjs("node:sqlite") as { DatabaseSync: typeof NodeDatabaseSync };
+type SqliteDatabaseConstructor = new (
+	path: string,
+	options?: { readonly readOnly?: boolean; readonly readonly?: boolean },
+) => NodeDatabaseSync;
+
+const processVersions = process.versions as NodeJS.ProcessVersions & { readonly bun?: string };
+const sqliteRuntime = processVersions.bun === undefined
+	? {
+		Database: (requireFromCjs("node:sqlite") as { DatabaseSync: SqliteDatabaseConstructor }).DatabaseSync,
+		readOnlyOption: "readOnly" as const,
+	}
+	: {
+		Database: (requireFromCjs("bun:sqlite") as { Database: SqliteDatabaseConstructor }).Database,
+		readOnlyOption: "readonly" as const,
+	};
 
 export type { NodeDatabaseSync };
 
@@ -118,7 +132,9 @@ export class SessionDatabase {
 
 	private constructor(path: string, readOnly: boolean) {
 		this.path = path;
-		this.database = new nodeSqlite.DatabaseSync(path, readOnly ? { readOnly: true } : {});
+		this.database = readOnly
+			? new sqliteRuntime.Database(path, sqliteRuntime.readOnlyOption === "readOnly" ? { readOnly: true } : { readonly: true })
+			: new sqliteRuntime.Database(path);
 		this.applyPragmas();
 	}
 
@@ -215,8 +231,8 @@ export class SessionDatabase {
 		if (!this.open) throw new SessionStoreDatabaseError("readonly", "database is closed");
 		try {
 			const statement = this.database.prepare(sql);
-			const row = statement.get(...((params ?? []) as readonly SQLInputValue[])) as Record<string, unknown> | undefined;
-			return row === undefined ? undefined : { ...row };
+			const row = statement.get(...((params ?? []) as readonly SQLInputValue[])) as Record<string, unknown> | null | undefined;
+			return row == null ? undefined : { ...row };
 		} catch (error) {
 			this.classifyAndThrow(error);
 		}

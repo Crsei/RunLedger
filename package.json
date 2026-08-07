@@ -78,6 +78,7 @@
     "verify:managed-process-pty": "tsx scripts/verify-managed-process-pty.ts",
     "verify:host-build-replacement": "tsx scripts/verify-host-build-replacement.ts",
     "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts",
+    "verify:session-owner-candidate": "tsx scripts/verify-session-owner-candidate.ts",
     "check:tui-boundaries": "tsx scripts/check-tui-boundaries.ts"
   },
   "dependencies": {

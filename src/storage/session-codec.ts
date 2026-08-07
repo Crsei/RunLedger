@@ -19,9 +19,21 @@ export interface SessionReplay {
 /** 从 ledger 重建可继续请求的上下文与 TUI 审计回放。 */
 export async function replaySession(ledger: LedgerSink): Promise<SessionReplay> {
   const entries = await ledger.entries();
-  const messages: AgentMessage[] = [];
-  const config: SessionRuntimeConfig = {};
-  const warnings: string[] = [];
+  return projectSessionReplay(entries);
+}
+
+/**
+ * 从 checkpoint projection 继续应用 ledger tail。seed 缺省时等价 genesis
+ * replay；调用方不得把 checkpoint 之外的状态当作 authority。
+ */
+export function projectSessionReplay(
+  entries: readonly LedgerEntry[],
+  seed?: SessionReplay,
+): SessionReplay {
+  const messages: AgentMessage[] = [...(seed?.messages ?? [])];
+  const config: SessionRuntimeConfig = { ...(seed?.config ?? {}) };
+  const warnings: string[] = [...(seed?.warnings ?? [])];
+  const auditEntries: LedgerEntry[] = [...(seed?.auditEntries ?? [])];
 
   for (const entry of entries) {
     if (entry.type === "message") {
@@ -38,12 +50,13 @@ export async function replaySession(ledger: LedgerSink): Promise<SessionReplay> 
         config.thinkingLevel = entry.payload.thinkingLevel;
       }
     }
+    if (entry.type === "tool_call" || entry.type === "tool_result") auditEntries.push(entry);
   }
 
   return {
     messages,
     config,
-    auditEntries: entries.filter((entry) => entry.type === "tool_call" || entry.type === "tool_result"),
+    auditEntries,
     warnings,
   };
 }

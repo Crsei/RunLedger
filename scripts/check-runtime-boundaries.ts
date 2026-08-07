@@ -21,6 +21,21 @@ const FORBIDDEN_IMPORT_PATTERNS: readonly [RegExp, string][] = [
 	[/\bfetch\s*\(/, "contract module cannot perform network I/O"],
 ];
 
+/**
+ * 目录级扫描的实现文件豁免。契约模块是 CONTRACT_INVENTORY.modules 中登记的
+ * 精确文件(session-owner/{types,schemas}.ts、session-server/protocol.ts);
+ * 同目录下的 transport/server/orchestration 实现允许持有 raw I/O 与 storage
+ * 依赖,其边界由 check-session-owner-boundaries 单独约束。
+ */
+const NON_CONTRACT_IMPLEMENTATION_FILES: readonly string[] = [
+	"src/runtime/session-owner/session-owner.ts",
+	"src/runtime/session-server/owner-probe.ts",
+	"src/runtime/session-server/client-transport.ts",
+	"src/runtime/session-server/runtime-server.ts",
+	"src/runtime/session-server/driver.ts",
+	"src/runtime/session-server/subscription.ts",
+];
+
 function listTypeScriptFiles(directory: string): string[] {
 	try {
 		return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -37,10 +52,12 @@ export function scanRuntimeBoundaries(repoRoot: string): RuntimeBoundaryViolatio
 	const violations: RuntimeBoundaryViolation[] = [];
 	for (const directory of CONTRACT_DIRECTORY_ALLOWLIST) {
 		for (const file of listTypeScriptFiles(join(repoRoot, directory))) {
+			const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
+			if (NON_CONTRACT_IMPLEMENTATION_FILES.includes(relativeFile)) continue;
 			const source = readFileSync(file, "utf8");
 			for (const [pattern, reason] of FORBIDDEN_IMPORT_PATTERNS) {
 				if (pattern.test(source)) {
-					violations.push({ file: relative(repoRoot, file), reason });
+					violations.push({ file: relativeFile, reason });
 				}
 			}
 		}

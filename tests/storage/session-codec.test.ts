@@ -11,7 +11,7 @@ import {
   type LedgerHeader,
 } from "../../src/runtime/ledger/types.ts";
 import { newId } from "../../src/runtime/ledger/types.ts";
-import { appendRuntimeConfig, replaySession } from "../../src/storage/session-codec.ts";
+import { appendRuntimeConfig, projectSessionReplay, replaySession } from "../../src/storage/session-codec.ts";
 import { SessionManager } from "../../src/storage/session-manager.ts";
 
 const cleanup: string[] = [];
@@ -41,6 +41,29 @@ function messageEntry(header: LedgerHeader, message: AgentMessage): LedgerEntry 
 }
 
 describe("session codec", () => {
+	it("applies a checkpoint projection and only the requested ledger tail", () => {
+		const first: AgentMessage = { role: "user", content: [{ type: "text", text: "before checkpoint" }] };
+		const second: AgentMessage = { role: "user", content: [{ type: "text", text: "tail" }] };
+		const seed = {
+			messages: [first],
+			config: { provider: "fixture" },
+			auditEntries: [],
+			warnings: [],
+		};
+		const tail: LedgerEntry[] = [{
+			id: "tail-entry",
+			sessionId: "session_tail",
+			parentId: "checkpoint",
+			timestamp: 2,
+			type: "message",
+			payload: { role: second.role, message: second },
+		}];
+
+		const replay = projectSessionReplay(tail, seed);
+		expect(replay.messages).toEqual([first, second]);
+		expect(replay.config).toEqual({ provider: "fixture" });
+	});
+
   it("跨 reopen 无损恢复 thinking signature、tool arguments/result 与 runtime config", async () => {
     const cwd = await tempDir();
     const layout = buildRunledgerLayout(join(cwd, "home"), "posix");

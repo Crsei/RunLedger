@@ -27,7 +27,7 @@ import type {
 	SecuritySnapshot,
 } from "./types.ts";
 import type {
-	HostProcessFinalLeafDecisionPort,
+	ProcessFinalLeafDecisionPort,
 } from "./integration/runtime-gateway-adapter.ts";
 
 export interface ExecutionGatewayOpenRequest {
@@ -49,7 +49,7 @@ export interface ExecutionGatewayContext {
 	readonly fs: PolicyFileSystem;
 	readonly filesystem: PolicyFileSystem;
 	readonly network: PolicyNetworkClient;
-	readonly finalLeaf: HostProcessFinalLeafDecisionPort;
+	readonly finalLeaf: ProcessFinalLeafDecisionPort;
 	/** Idempotent durable completion fence for an approval-backed effect. */
 	readonly complete: () => Promise<SecurityResult<void>>;
 }
@@ -61,7 +61,7 @@ export interface ExecutionGatewayOptions {
 	readonly networkBroker: NetworkBrokerPort;
 	readonly permissionEngine: PermissionEngine;
 	readonly approvalCoordinator: ApprovalCoordinator;
-	readonly finalLeaf: HostProcessFinalLeafDecisionPort;
+	readonly finalLeaf: ProcessFinalLeafDecisionPort;
 }
 
 function invalid(message: string): SecurityResult<never> {

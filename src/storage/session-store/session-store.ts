@@ -129,7 +129,9 @@ export function sessionEventHash(
 	return canonicalDigest(sessionEventHashInput(sessionId, sequence, eventId, eventType, payloadJson, previousEventHash));
 }
 
-/** §4.5 写 fence:同一事务内验证 owner row 仍属于当前 generation。 */
+/**
+ * §4.5 写 fence:同一事务内验证 owner row 仍属于当前 generation。
+ */
 export function verifyOwnerFence(db: SessionDatabase, fence: OwnerFence): boolean {
 	const row = db.querySingle(
 		`SELECT 1 AS ok FROM session_owners
@@ -138,6 +140,82 @@ export function verifyOwnerFence(db: SessionDatabase, fence: OwnerFence): boolea
 		[fence.sessionId, fence.runtimeId, fence.generation, ...ACTIVE_OWNER_STATES],
 	);
 	return row !== undefined;
+}
+
+/**
+ * R3:在既有事务(tx)内执行 owner-fenced event append。owner 状态迁移与 audit
+ * event 必须同属一个 DB transaction(06 §R3),claim/publish/release 在 CAS 写入
+ * owner row 后复用本函数追加 owner.* 事件;owner-store 与 SessionStore 共享同一
+ * hash 链与 head 更新逻辑,禁止出现“owner row 已迁移但事件缺失”的半写。
+ */
+export function appendEventInTransaction(tx: SessionDatabase, fence: OwnerFence, input: AppendEventInput): SessionEventRecord {
+	if (!fence.sessionId.startsWith("session_") || !input.eventId.startsWith("event_")) {
+		throw new SessionStoreError("invalid_input", "invalid session or event id");
+	}
+	tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
+	if (!verifyOwnerFence(tx, fence)) {
+		throw new SessionStoreError("owner_fenced", `owner fenced: ${fence.runtimeId} generation ${fence.generation}`);
+	}
+	const headRow = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [fence.sessionId]);
+	if (!headRow) throw new SessionStoreError("session_not_found", `session not found: ${fence.sessionId}`);
+	const headSequence = Number(headRow.head_sequence);
+	const previousRow = tx.querySingle(
+		"SELECT current_event_hash FROM session_events WHERE session_id = ? AND sequence = ?",
+		[fence.sessionId, headSequence],
+	);
+	const actualPrevious = previousRow === undefined ? null : String(previousRow.current_event_hash);
+	if (actualPrevious !== input.expectedPreviousEventHash) {
+		throw new SessionStoreError("previous_hash_mismatch", "expected previous event hash does not match the durable head");
+	}
+	const sequence = headSequence + 1;
+	const currentHash = sessionEventHash(
+		fence.sessionId,
+		sequence,
+		input.eventId,
+		input.eventType,
+		input.payloadJson,
+		actualPrevious,
+	);
+	try {
+		tx.runSync(
+			`INSERT INTO session_events
+			 (session_id, sequence, event_id, owner_generation, event_type, payload_json,
+			  previous_event_hash, current_event_hash, created_at_ms)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			[
+				fence.sessionId,
+				sequence,
+				input.eventId,
+				input.ownerGeneration,
+				input.eventType,
+				input.payloadJson,
+				actualPrevious,
+				currentHash,
+				input.createdAtMs,
+			],
+		);
+	} catch (error) {
+		if (error instanceof Error && /UNIQUE|PRIMARY/i.test(error.message)) {
+			throw new SessionStoreError("sequence_conflict", `event ${input.eventId} conflicts with the durable stream`);
+		}
+		throw error;
+	}
+	tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [
+		sequence,
+		Date.now(),
+		fence.sessionId,
+	]);
+	return {
+		sessionId: fence.sessionId,
+		sequence,
+		eventId: input.eventId,
+		ownerGeneration: input.ownerGeneration,
+		eventType: input.eventType,
+		payloadJson: input.payloadJson,
+		previousEventHash: actualPrevious,
+		currentEventHash: currentHash,
+		createdAtMs: input.createdAtMs,
+	};
 }
 
 export class SessionStore {
@@ -271,75 +349,53 @@ export class SessionStore {
 
 	/** §4.5/R2:owner-fenced event append,事务内校验 admission/fence/sequence/previous hash。 */
 	public appendEvent(fence: OwnerFence, input: AppendEventInput): SessionEventRecord {
-		if (!fence.sessionId.startsWith("session_") || !input.eventId.startsWith("event_")) {
-			throw new SessionStoreError("invalid_input", "invalid session or event id");
-		}
+		let appended: SessionEventRecord | undefined;
+		this.db.withImmediateTransactionSync((tx) => {
+			appended = appendEventInTransaction(tx, fence, input);
+		});
+		return appended!;
+	}
+
+	/**
+	 * §6.4/§R4:durable driver 事件与 driver_revision 递增在同一事务内提交。
+	 * driver 是 connection-scoped:disconnect/takeover 强制 NONE + revision 事件;
+	 * sessions.driver_revision 只是该投影的缓存列,rebuildFromEvents 可从事件重建。
+	 * payload 按 R0 契约(additionalProperties:false),eventId 由本方法注入。
+	 */
+	public appendDriverEvent(
+		fence: OwnerFence,
+		eventType: "driver.claimed" | "driver.released" | "driver.reset_on_takeover",
+		payload: Record<string, unknown>,
+	): SessionEventRecord {
 		let appended: SessionEventRecord | undefined;
 		this.db.withImmediateTransactionSync((tx) => {
 			tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
 			if (!verifyOwnerFence(tx, fence)) {
-				throw new SessionStoreError("owner_fenced", `owner fenced: ${fence.runtimeId} generation ${fence.generation}`);
+				throw new SessionStoreError("owner_fenced", "owner fenced");
 			}
+			const row = tx.querySingle("SELECT driver_revision FROM sessions WHERE session_id = ?", [fence.sessionId]);
+			if (!row) throw new SessionStoreError("session_not_found", `session not found: ${fence.sessionId}`);
+			const revision = Number(row.driver_revision) + 1;
+			const eventId = createRuntimeId("event", `driver-${fence.sessionId.slice(-12)}-${revision}`);
 			const headRow = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [fence.sessionId]);
-			if (!headRow) throw new SessionStoreError("session_not_found", `session not found: ${fence.sessionId}`);
-			const headSequence = Number(headRow.head_sequence);
+			const headSequence = Number(headRow?.head_sequence ?? 0);
 			const previousRow = tx.querySingle(
 				"SELECT current_event_hash FROM session_events WHERE session_id = ? AND sequence = ?",
 				[fence.sessionId, headSequence],
 			);
-			const actualPrevious = previousRow === undefined ? null : String(previousRow.current_event_hash);
-			if (actualPrevious !== input.expectedPreviousEventHash) {
-				throw new SessionStoreError("previous_hash_mismatch", "expected previous event hash does not match the durable head");
-			}
-			const sequence = headSequence + 1;
-			const currentHash = sessionEventHash(
-				fence.sessionId,
-				sequence,
-				input.eventId,
-				input.eventType,
-				input.payloadJson,
-				actualPrevious,
-			);
-			try {
-				tx.runSync(
-					`INSERT INTO session_events
-					 (session_id, sequence, event_id, owner_generation, event_type, payload_json,
-					  previous_event_hash, current_event_hash, created_at_ms)
-					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-					[
-						fence.sessionId,
-						sequence,
-						input.eventId,
-						input.ownerGeneration,
-						input.eventType,
-						input.payloadJson,
-						actualPrevious,
-						currentHash,
-						input.createdAtMs,
-					],
-				);
-			} catch (error) {
-				if (error instanceof Error && /UNIQUE|PRIMARY/i.test(error.message)) {
-					throw new SessionStoreError("sequence_conflict", `event ${input.eventId} conflicts with the durable stream`);
-				}
-				throw error;
-			}
-			tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [
-				sequence,
+			appended = appendEventInTransaction(tx, fence, {
+				eventId,
+				ownerGeneration: fence.generation,
+				eventType,
+				payloadJson: JSON.stringify({ ...payload, eventId }),
+				createdAtMs: Date.now(),
+				expectedPreviousEventHash: previousRow === undefined ? null : String(previousRow.current_event_hash),
+			});
+			tx.runSync("UPDATE sessions SET driver_revision = ?, updated_at_ms = ? WHERE session_id = ?", [
+				revision,
 				Date.now(),
 				fence.sessionId,
 			]);
-			appended = {
-				sessionId: fence.sessionId,
-				sequence,
-				eventId: input.eventId,
-				ownerGeneration: input.ownerGeneration,
-				eventType: input.eventType,
-				payloadJson: input.payloadJson,
-				previousEventHash: actualPrevious,
-				currentEventHash: currentHash,
-				createdAtMs: input.createdAtMs,
-			};
 		});
 		return appended!;
 	}
@@ -411,19 +467,14 @@ export class SessionStore {
 				sessionId,
 				commandId,
 			])
-			.map((row) => ({
-				receiptId: String(row.receipt_id) as CommandAttemptReceipt["receiptId"],
-				sessionId: String(row.session_id) as CommandAttemptReceipt["sessionId"],
-				commandId: String(row.command_id) as CommandAttemptReceipt["commandId"],
-				attemptId: String(row.attempt_id) as CommandAttemptReceipt["attemptId"],
-				originGeneration: Number(row.origin_generation),
-				settledGeneration: row.settled_generation === null ? undefined : Number(row.settled_generation),
-				effectClass: String(row.effect_class) as CommandAttemptReceipt["effectClass"],
-				outcome: String(row.outcome) as CommandAttemptReceipt["outcome"],
-				resultDigest: row.result_digest === null ? undefined : { algorithm: "sha256", digest: String(row.result_digest) as RuntimeDigest["digest"] },
-				evidenceDigest: row.evidence_digest === null ? undefined : { algorithm: "sha256", digest: String(row.evidence_digest) as RuntimeDigest["digest"] },
-				createdAtMs: Number(row.created_at_ms),
-			}));
+			.map((row) => rowToAttemptReceipt(row));
+	}
+
+	/** §7.3:某 Session 全部 attempt receipt(恢复评估用,只读 projection)。 */
+	public listAllAttemptReceipts(sessionId: string): readonly CommandAttemptReceipt[] {
+		return this.db
+			.queryAll("SELECT * FROM command_attempt_receipts WHERE session_id = ? ORDER BY created_at_ms, receipt_id", [sessionId])
+			.map((row) => rowToAttemptReceipt(row));
 	}
 
 	/** checkpoint cache:可整体删除的重建加速层。 */
@@ -555,8 +606,23 @@ export class SessionStore {
 	}
 }
 
-function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord {
+function rowToAttemptReceipt(row: Record<string, unknown>): CommandAttemptReceipt {
 	return {
+		receiptId: String(row.receipt_id) as CommandAttemptReceipt["receiptId"],
+		sessionId: String(row.session_id) as CommandAttemptReceipt["sessionId"],
+		commandId: String(row.command_id) as CommandAttemptReceipt["commandId"],
+		attemptId: String(row.attempt_id) as CommandAttemptReceipt["attemptId"],
+		originGeneration: Number(row.origin_generation),
+		settledGeneration: row.settled_generation === null ? undefined : Number(row.settled_generation),
+		effectClass: String(row.effect_class) as CommandAttemptReceipt["effectClass"],
+		outcome: String(row.outcome) as CommandAttemptReceipt["outcome"],
+		resultDigest: row.result_digest === null ? undefined : { algorithm: "sha256", digest: String(row.result_digest) as RuntimeDigest["digest"] },
+		evidenceDigest: row.evidence_digest === null ? undefined : { algorithm: "sha256", digest: String(row.evidence_digest) as RuntimeDigest["digest"] },
+		createdAtMs: Number(row.created_at_ms),
+	};
+}
+
+function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord {	return {
 		sessionId: String(row.session_id),
 		workspaceId: String(row.workspace_id),
 		repositoryId: String(row.repository_id),

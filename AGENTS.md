@@ -119,6 +119,21 @@
 - 公共 DTO 脱敏（ADR 02 D1/D5）：`WorkspaceExecutionEnvelope` 只投影 `worktreePathDigest`/`cwdDigest`，native path 只存在于 Host-private `HostWorkspaceExecutionContext`；`PersistedWorkspaceBinding` 嵌入 versioned `worktreeLocator`，legacy 记录 typed `binding_migration_required`；
 - 真实 runner 证据：`tests/fixtures/platform-evidence/linux/`（digest manifest 不可变）；macOS/Windows 缺口见 `development-doc/worktree-sandbox-permisson/evidence-verification-gaps.md`；OS sandbox 保持封存（04/05 ADR，P7 结论：解封条件未满足）。
 
+#### 1.2.w Session Owner Runtime 替代（2026-08-07，复核修正）
+
+`development-doc/runtime/06-session-owner-runtime-replacement-plan.md` 是唯一替代计划。当前工作树状态：R0–R5 implemented；R6 partial/blocked；R6.5 Linux automated candidate PASS but not accepted；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 只保留为安全窗口且标准 CLI 不可达）。已修复并覆盖：
+
+- P0-1 健康 owner 即时 attach（统一 open 不再无限 retry）、factory attached 分支 `runtime: undefined` 不再崩溃；
+- P0-2 生产工具副作用经 `attempt-gateway.ts` 进入 recovery barrier（Write/Bash/WebFetch 各自 beginAttempt/settleAttempt；崩溃留下 unresolved started receipt，takeover assess() 不误判 clean）；
+- P0-3 attachment count 决定 runtime lifetime（local UI detach 后 remote 保活，归零才 pause/checkpoint/release）；
+- P0-4 生产 composition 已接 onFenced → 完整 self-stop（server 关闭 + 领域中断 + 客户端断开）；
+- checkpoint live head、六个 boundary、replay-ready cache + durable tail、非 replay-ready genesis fallback；
+- Session Security/Gateway production composition（CLI source 优先，filesystem/network/sandbox final leaf fail closed）；通用 security 类型不再以 Host 命名，legacy Host 只使用兼容 alias；
+- RED 测试：`tests/runtime/session-runtime/red-01..04`、`security-composition.test.ts`、checkpoint/recovery suites；candidate runner 覆盖 keepalive、gate-crash、10 个独立子进程/SQLite connection 并发 claim 和内容 digest manifest。
+- R6 blocking gaps：真实 managed process/PTY/output、MCP/Hook/Skill/Plugin、worktree cold-resume/revalidation、Trace production factory、approval/credential reverse-request UI。
+- 遗留门禁：真实 model/MCP/PTY/worktree candidate、macOS/Windows runner、标准 PATH fault rehearsal、独立只读审计与 R8 human acceptance；`human-verified` 需真人填写，R9 只能在这些门禁闭合后开始。
+- 2026-08-07 fresh 本地门禁：`npm run check`、Session Owner focused 34 files / 209 tests、Vitest 260 files / 1427 tests、Bun OpenTUI 4 files / 29 tests、`npm run build`、隔离 Linux candidate 全部通过；该证据不提升 R6/R6.5/R8 的未完成项。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;

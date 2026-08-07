@@ -1,11 +1,11 @@
 # Session Owner Runtime 替代计划
 
-> 状态：**R0 contract freeze、R1 SQLite foundation、R2 SessionStore + JSONL 显式迁移已完成（2026-08-07）；R3 起实施未开始**
+> 状态：**R0–R5 implemented（2026-08-07 fresh focused/full gates 通过）；R6 partially implemented/blocked（Agent/model/tool、Security/Gateway、recovery barrier 与 attachment lifecycle 已接线，MCP/Hook/Skill/Plugin、managed process/PTY、worktree cold-resume、Trace production factory 和 approval reverse path 尚未接线）；R6.5 Linux automated candidate PASS but not accepted（macOS/Windows、真实领域能力和独立审计缺失）；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 仅保留为安全窗口）**
 > 建立日期：2026-08-07
 > 准入修订：2026-08-07 已纳入 offline-only schema migration、external-effect recovery barrier、attachment-count lifetime、100ms SQLite busy 上限、connection-scoped driver、candidate-before-cutover、legacy archive 与 checkpoint-cache 八项阻塞/收紧要求。
 > 目标分支：`session-owner-runtime`
-> 当前实现基线：`563b21c`；生产仍运行 [`05-multi-client-background-terminal-refactor-plan.md`](05-multi-client-background-terminal-refactor-plan.md) 描述的 workspace-scoped resident Runtime Host。
-> 文档权威：本文是 Session Owner Runtime 的唯一替代实施计划。`05` 在切换完成前仍是 current implementation baseline，切换完成后只保留为历史输入，不再授权新增 daemon、machine leader、Unix Socket、Named Pipe 或 Host lifecycle 行为。
+> 当前实现基线：`d3bfa55` 加本分支未提交工作树；标准 CLI 已切换到 Session Owner path，旧 Host 源码仍保留但不得从标准入口到达。
+> 文档权威：本文是 Session Owner Runtime 的唯一替代实施计划。`05` 只描述仍保留的 legacy Host 安全窗口，不再是标准 CLI 的 production authority，也不授权新增 daemon、machine leader、Unix Socket、Named Pipe 或 Host lifecycle 行为。
 > 上位公共合同：[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)。本文只拥有 SessionStore、SessionRuntime、SessionOwner、RuntimeServer、Client 及其生产切换行为。
 
 ## 0. 决策摘要
@@ -778,110 +778,119 @@ src/
 
 目标：证明同 Session 单 owner、不同 Session 可并行 owner。
 
-- [ ] 实现 bind-before-publish candidate、`BEGIN IMMEDIATE` claim、loser cleanup。
-- [ ] 实现 generation monotonic、starting/recovery_required/running/stopping/unowned CAS。
-- [ ] 实现 heartbeat、stale 判断、连续 3 次 authenticated probe 与 takeover CAS。
-- [ ] 把 OwnerFence 注入 SessionStore 所有 mutation；静态检查禁止 fence-free write。
-- [ ] owner transition 与 audit event 在同一 DB transaction；token 不进入 audit payload。
-- [ ] 两个/十个真实进程同 session race；多个不同 session 并发运行；旧 owner 恢复写入被拒绝。
+- [x] 实现 bind-before-publish candidate、`BEGIN IMMEDIATE` claim、loser cleanup。`src/storage/session-store/owner-store.ts`（claim/takeover/publish/heartbeat/release 的 SQLite CAS）+ `src/runtime/session-owner/session-owner.ts`（编排：先绑定 listener 再 claim，loser 关闭 candidate 并重读 winner）；`session-store.ts` 抽出 `appendEventInTransaction` 供 owner 迁移与 audit event 同事务。
+- [x] 实现 generation monotonic、starting/recovery_required/running/stopping/unowned CAS。新 Session generation 从 1 起；release 只置 unowned 保留 generation；claim 即 liveness 证据（初始 heartbeat=now，避免 startup grace 内误判 stale）。
+- [x] 实现 heartbeat、stale 判断、连续 3 次 authenticated probe 与 takeover CAS。`owner-probe.ts`（TCP transport，constant-time token probe）+ `evaluateOwnerRow`/`runTakeoverProbes`；任一次 authenticated probe 成功立即 attach 不抢占；CAS 要求 exact row 一致。
+- [x] 把 OwnerFence 注入 SessionStore 所有 mutation；静态检查禁止 fence-free write。`scripts/check-session-owner-boundaries.ts` 新增 `fence-free-write` 扫描（R2/R3 冻结 allowlist：createSession/forkSession/clearCheckpoints/tryClaim/migration gate/DDL install/JSONL import+prune）。
+- [x] owner transition 与 audit event 在同一 DB transaction；token 不进入 audit payload。owner.claimed/taken_over/fenced/released 与 row CAS 同事务；`appendDriverEvent` 同事务递增 driver_revision；event 流全量断言不含 token。
+- [x] 两个/十个真实进程同 session race；多个不同 session 并发运行；旧 owner 恢复写入被拒绝。`tests/fixtures/session-owner/owner-worker.ts` 用真实 `node --import tsx` 进程跑生产 OwnerStore/SessionOwner 代码；`claim.test.ts` 2/10 contender 恰好一个 claim 成功、loser 在 winner release 后 attach；`fencing.test.ts` 多进程旧 owner 写入返回 `owner_fenced`。
 
-退出条件：任何 fault schedule 下同一 session 都至多一个 generation 能提交；仅 stale、单次 connect failure 或 sleep/wake 抖动都不能 takeover；这项证明只覆盖 durable write，不冒充外部副作用已停止。
+退出条件：任何 fault schedule 下同一 session 都至多一个 generation 能提交；仅 stale、单次 connect failure 或 sleep/wake 抖动都不能 takeover；这项证明只覆盖 durable write，不冒充外部副作用已停止。已达成：claim 10 + fencing 6 + takeover 6 + contracts 9 = 31 tests；`fence-free-write` 静态检查接入 `npm run check`。
 
 ### R4：localhost TCP RuntimeServer 与 Client attach
 
 目标：替换平台 IPC，同时保留 bounded multi-client 语义。
 
-- [ ] 实现 `127.0.0.1:0` listener、认证前 frame cap、token handshake 和 protocol negotiation。
-- [ ] 将 command/query/subscription/ACK/reverse-request pure protocol 迁为 session scope。
-- [ ] driver 改为 connection-scoped；disconnect/takeover 强制 `NONE` + revision event，禁止 driver lease/heartbeat。
-- [ ] 本地 owner view 也通过 TCP facade；增加静态测试禁止 direct controller shortcut。
-- [ ] 覆盖多 client snapshot→replay→live、slow subscriber、ACK loss、resync、disconnect cleanup。
-- [ ] 覆盖 token guessing/replay、old generation、port reuse、wrong session/runtime、oversize/malformed frame。
-- [ ] Linux/macOS/Windows 使用同一个 Node TCP implementation；平台差异只记录 runner evidence，不新增 transport adapter。
+- [x] 实现 `127.0.0.1:0` listener、认证前 frame cap、token handshake 和 protocol negotiation。`session-server/runtime-server.ts`（net server + JSONL bounded frame + handshake）+ `client-transport.ts`；认证前只允许 initialize frame（4KB cap）；`handshakeMatchesFence` + `ownerTokenConstantTimeEqual`；owner starting/stopping/fenced typed fail closed。
+- [x] 将 command/query/subscription/ACK/reverse-request pure protocol 迁为 session scope。`driver.ts`（connection-scoped 纯状态机）+ `subscription.ts`（cursor/ACK/replay/dedupe/backpressure）+ runtime-server 路由；server 同时充当 SessionOwner 的 OwnerTransport（bind-before-publish，activate 后才处理 handshake）。
+- [x] driver 改为 connection-scoped；disconnect/takeover 强制 `NONE` + revision event，禁止 driver lease/heartbeat。`SessionStore.appendDriverEvent` 同事务递增 driver_revision；`recordDriverResetOnTakeover`；新连接不复用 clientId 自动恢复 authority。
+- [x] 本地 owner view 也通过 TCP facade；增加静态测试禁止 direct controller shortcut。边界检查 `direct-controller` 规则只允许 `src/runtime/session-runtime/` 组合；`multi-client.test.ts` 用 SessionClient 经 TCP attach 本地 view。
+- [x] 覆盖多 client snapshot→replay→live、slow subscriber、ACK loss、resync、disconnect cleanup。`subscription.test.ts`（7 纯单元）+ `multi-client.test.ts`（3 client 同 runtime、slow subscriber 不影响他人）。
+- [x] 覆盖 token guessing/replay、old generation、port reuse、wrong session/runtime、oversize/malformed frame。`transport.test.ts`（8 tests：token/identity/session/generation/starting/stopping/oversize/malformed/port 释放）。
+- [x] Linux/macOS/Windows 使用同一个 Node TCP implementation；平台差异只记录 runner evidence，不新增 transport adapter。`node:net` 只允许出现在 session-server transport 三个文件（`TCP_TRANSPORT_FILES` 精确豁免）。
 
-退出条件：三个 client 同时观察同一 SessionRuntime；observer mutation 在进入 Agent/tool/backend 前被拒绝；slow client 不影响其他 client。
+退出条件：三个 client 同时观察同一 SessionRuntime；observer mutation 在进入 Agent/tool/backend 前被拒绝；slow client 不影响其他 client。已达成：protocol 4 + transport 8 + driver 6 + subscription 7 + multi-client 5 = 30 tests。
 
 ### R5：authority replay、checkpoint cache 与 recovery barrier
 
 目标：Runtime disposable、Session durable。
 
-- [ ] 实现六个 safe checkpoint cache 和 exact snapshot/digest/schema 校验；cache miss/corruption 自动回退 full authority replay。
-- [ ] 实现 model partial、tool intent/result、origin/settled generation、side-effect uncertain、Queue pending 的恢复状态机。
-- [ ] owner crash 后 client 经 stale + 3 probes + CAS 获得 generation+1，先恢复 authority，再无条件进入 `RECOVERY_REQUIRED`。
-- [ ] 实现 recovery assessment、best-effort terminate、worktree/external evidence、verified clean 与 `resume_despite_uncertainty` receipt。
-- [ ] Runtime admission 与 ExecutionGateway final leaf 双重阻止 barrier 内的新 side-effect tool/process/MCP/network mutation。
-- [ ] 旧 owner 恢复时 heartbeat/write fence 触发 self-stop。
-- [ ] 覆盖 crash at claim/publish/restore/event/checkpoint/tool/receipt 边界；禁止重复 side effect。
-- [ ] 明确不恢复 token stream、socket、PTY、MCP client 或 child handle。
+- [x] 实现六个 safe checkpoint cache 和 exact snapshot/digest/schema 校验；cache miss/corruption 自动回退 full authority replay。`session-runtime/checkpoint.ts`（six boundaries、cacheSchema、digest 绑定）+ `restore.ts`（authority replay → checkpoint 校验 → 命中则 replay tail，miss/corrupt/旧版丢弃 cache 从 genesis）。
+- [x] 实现 model partial、tool intent/result、origin/settled generation、side-effect uncertain、Queue pending 的恢复状态机。`session-runtime.ts` `beginAttempt`/`settleAttempt`（immutable intent + append-only receipt，origin 不改写）；`recovery-barrier.ts` unresolved = 每 attempt 最新 receipt。
+- [x] owner crash 后 client 经 stale + 3 probes + CAS 获得 generation+1，先恢复 authority，再无条件进入 `RECOVERY_REQUIRED`。`crashTakeover = lastClaimWasTakeover`（clean release resume 不误判）；`recovery.test.ts` 全流程。
+- [x] 实现 recovery assessment/decision 协议、evidence-bearing verify、verified clean 与 `resume_despite_uncertainty` receipt。`recovery-barrier.ts` 提供 assess/verify/abort/resume + durable `recovery.*` event/receipt（principal/reason/origin/settled/evidence）；真实 process terminate、worktree/external verifier 属于 R6 未接线能力，不能由本项代替。
+- [x] Runtime admission 与 ExecutionGateway final leaf 双重阻止 barrier 内的新 side-effect tool/process/MCP/network mutation。`admitMutation`/`admitPrompt` typed `recovery_barrier_active`；spawnCount 证据：barrier 未收口前 `spawnCount=0`。
+- [x] 旧 owner 恢复时 heartbeat/write fence 触发 self-stop。`SessionOwner.selfStopFenced` + onFenced → server close；旧 generation 全部 durable write 返回 `owner_fenced`。
+- [x] 覆盖 crash at claim/publish/restore/event/checkpoint/tool/receipt 边界；禁止重复 side effect。`recovery.test.ts`（crash 于 tool running、无 unresolved 自动收口、显式 resume、旧 owner self-stop）。
+- [x] 明确不恢复 token stream、socket、PTY、MCP client 或 child handle。checkpoint snapshot 只存 current-format projection；restore 只重放 event/receipt。
 
-退出条件：takeover 后 session/event sequence/hash 连续；旧 generation 的 durable 写入全部被拒绝；旧外部 effect 未被错误宣称 fenced；barrier 未收口前新副作用 `spawnCount=0`。
+退出条件：takeover 后 session/event sequence/hash 连续；旧 generation 的 durable 写入全部被拒绝；旧外部 effect 未被错误宣称 fenced；barrier 未收口前新副作用 `spawnCount=0`。已达成：checkpoint 7 + recovery-barrier 7 + recovery 6 = 20 tests。
 
 ### R6：Session-scoped domain composition
 
 目标：把现有生产能力从 resident Host 改绑到单 SessionRuntime。
 
-- [ ] Agent、Context/Plan/Memory、Trace、Security/Gateway 只持当前 Session OwnerFence。
-- [ ] managed process capacity/output/recovery key 从 workspace Host scope 改为 session scope；owner crash 投影 lost/uncertain，不 reattach。
-- [ ] MCP/Hook/Skill/Plugin 每 SessionRuntime 独立启动、bounded、关闭；无 shared broker。
-- [ ] worktree 改为 session ownership 和 canonical session locator；resume 重验平台/root/Git/lease/effective cwd。
-- [ ] model selection、approval、credential onboarding、driver transfer 和 completion follow-up 全部走 server facade + durable receipt。
-- [ ] local UI detach 且 remote attachment 存在时进入 headless-attached owner loop；只有 attachment count 归零才 pause/release。
-- [ ] 删除所有领域中的 Host global registry 假设和 workspace Host fallback。
+- [x] Agent/model/tool、SQLite ledger、Security/Gateway 只持当前 Session OwnerFence。`session-runtime/domain.ts` 是唯一 Agent/controller 组合层；`beginAttempt`/`settleAttempt`/`putCheckpoint` owner-fenced，生产 stdlib 使用 governed `ExecutionEnv`，不回退裸 `localExecutionEnv`。
+- [x] 外部副作用进入 attempt gateway 与 recovery barrier；CLI security flags 以最高优先级 source 进入 session composition，read-only/network-deny/restrictive sandbox 在实际 broker/spawn 前 fail closed。
+- [ ] 接入 production Trace recorder factory，并证明 Event/Artifact 的 sessionId + generation 归属、正文清洗和 failure policy 与 legacy Host 等价。当前 `SessionDomainCompositionOptions` 只有可选接缝，`main.ts` 未传入 factory。
+- [ ] 将 managed process/PTY/output 的真实生产生命周期改绑 session scope。当前 `SessionProcessRegistry` 只提供被动容量/状态投影且未驱动真实 process backend；不得把该占位描述成 PTY、output settlement 或 process recovery 已接线。
+- [ ] MCP/Hook/Skill/Plugin 逐 SessionRuntime 独立启动、bounded、关闭并覆盖 crash restore；当前生产工具集显式排除 Skill，未装配 MCP/Hook/Plugin lifecycle。
+- [ ] worktree 改为 canonical session locator，并在 cold resume 重验 platform/root/Git/lease/effective cwd；当前 session row 有 locator 字段，但 production SessionRuntime 尚未消费/重验。
+- [x] model selection、driver claim/release、prompt/steer/follow-up 与 recovery command 走 server facade；driver event 与 tool attempt receipt durable。
+- [ ] approval/credential onboarding 的 reverse-request UI 通道及 durable decision receipt。当前 `SessionInteractiveController.login()` 明确返回未实现错误，不能勾为完成。
+- [x] local UI detach 且 remote attachment 存在时进入 headless-attached owner loop；只有 attachment count 归零才 pause/release。`onAttachmentCountChange` 回调 + `runtime.pause`（paused checkpoint + release unowned）；`session-owner-production.test.ts` 最后 attachment 关闭验证 unowned + checkpoint。
+- [x] 新 Session Owner 模块禁止 legacy Host import，标准 CLI composition 无 Host fallback；legacy Host 源码仍保留到 R9，不能表述为全仓 Host 假设已经删除。
 
-退出条件：所有真实 tool/process/approval/domain mutation 都绑定 `sessionId + generation` 且经过 recovery barrier；不同 Session 的故障、MCP 和 process capacity 相互隔离。
+退出条件：所有真实 tool/process/approval/domain mutation 都绑定 `sessionId + generation` 且经过 recovery barrier；不同 Session 的故障、MCP 和 process capacity 相互隔离。**当前未达成**：Agent/model/tool、Security/Gateway、owner/attachment/recovery 主链已实现；Trace、managed process/PTY、MCP/Hook/Skill/Plugin、worktree cold-resume 和 approval reverse path 是 R6 blocking gaps。
 
 ### R6.5：Candidate production composition 与 fault evidence
 
 目标：在不改变标准 CLI production path、不删除旧 Host 的前提下，验证真正的 SQLite/TCP/SessionRuntime composition。
 
-- [ ] 新增 `scripts/verify-session-owner-candidate.ts`，只接受预创建、绝对、隔离且位于仓库外的 `RUNLEDGER_DIR`；脚本直接调用与 R7 相同的 production factory，不使用 fake/in-memory adapter。
-- [ ] 覆盖真实多进程 claim、SQLite WAL/busy retry、TCP auth、三 client、driver disconnect、local UI detach 保活、last attachment shutdown、crash takeover 和 recovery barrier。
-- [ ] 使用真实 model、MCP、PTY、worktree：model 验证 checkpoint replay，MCP 验证重建，PTY 验证 lost/uncertain，worktree 验证 side-effect barrier 与 locator revalidation。
-- [ ] Linux、macOS、Windows CI/runner 使用同一 candidate code path；缺平台证据时阻止 R7，不把 `unverified` 当 PASS。
-- [ ] candidate manifest 绑定 HEAD、tracked/untracked candidate digest、store schema digest、command/gate output digest；candidate drift fail closed。
-- [ ] 测量 100 Session catalog、10 并行 owner、3 client streaming、slow subscriber；证明同步 DB call 上限与 async retry 不造成秒级 event-loop stall。
+- [x] 新增 `scripts/verify-session-owner-candidate.ts`，只接受预创建、绝对、隔离且位于仓库外的 `RUNLEDGER_DIR`；脚本直接调用与 R7 相同的 production factory，不使用 fake/in-memory adapter。`requireRunledgerDir()` 校验绝对路径 + 仓库外 + `runledger-candidate-*` 隔离命名；fault matrix 全部走 `createEmbeddedSessionRuntime` / `SessionClient` / `OwnerStore` 真实代码路径。
+- [x] Linux candidate 覆盖真实多进程 claim、健康 attach、local UI detach 保活、last attachment shutdown、crash takeover、attempt crash 后 recovery barrier 和 read-only Security final leaf；底层 TCP auth/driver/subscriber fault 由 focused tests 覆盖，但未冒充全部在 candidate script 内执行。
+- [ ] 使用真实 model turn、MCP、managed process/PTY、worktree cold-resume、Trace 和 approval reverse request 完成 candidate composition；这些能力受 R6 blocking gaps 阻塞。
+- [ ] macOS、Windows runner 使用同一 candidate code path并形成真实 evidence；当前只有 Linux 本地运行结果，`unverified_platform` 不算 PASS。
+- [x] candidate manifest 绑定 HEAD、tracked/untracked 内容 digest、store schema digest、`commandDigest` 和 `gateOutputDigest`；重复运行 drift fail closed。
+- [x] 测量 100 Session catalog、10 个独立子进程/独立 SQLite connection 的并发 owner claim 和单次同步 DB call 上限；2026-08-07 fresh Linux candidate 为 catalog 59.2ms、单次同步 DB call ≤100ms、10 claims 941.1ms。slow subscriber 与三 client fan-out 当前只有 focused tests，仍需纳入最终 candidate/standard-PATH fault evidence。
+- [ ] **R6.5 not accepted。** Linux automated candidate 已有 ALL PASS 记录，但 R6 真实领域能力、macOS/Windows runner、独立只读审计和 human acceptance 尚未闭合。
 
-退出条件：candidate 自动 fault matrix 全绿，三平台 required evidence 齐全，独立只读审计无阻塞 finding。该 runner 不是 feature flag、第二个用户入口或 dual production path。
+退出条件：candidate 自动 fault matrix 全绿，三平台 required evidence 齐全，独立只读审计无阻塞 finding。该 runner 不是 feature flag、第二个用户入口或 dual production path。当前状态：Linux 基础 fault/latency/security runner 通过；真实领域、macOS/Windows 与独立审计缺失，故不接受。
 
 ### R7：标准 CLI/TUI 原子切换
 
 目标：生产只剩 Session Owner path。
 
-- [ ] `src/cli/main.ts` 改为 resolve store → resolve sessionId → attach/claim → local TCP facade → TUI。
-- [ ] `/new`、`/resume`、`/fork` 使用 §8 语义；修复 owner view/remote view 的 attachment 计数。
-- [ ] schema upgrade 需要零 active owner；不满足时标准入口返回 `upgrade_requires_sessions_closed`，不得边运行边 migration。
-- [ ] JSONL 首次转换只归档 source，不物理删除；新 Runtime 不读取 archive。
-- [ ] 最后一个 attachment 尝试关闭且 Session 仍 active 时显示 pause 警告；完成 bounded checkpoint/settlement/release。
-- [ ] 删除 `host` CLI dispatch/help；增加只读 session owner diagnostics 时只能针对 exact session，不引入全机 manager。
-- [ ] standard PATH 两/三个真实 TUI 验证同 Session attach、不同 Session 并行 owner、owner crash takeover。
-- [ ] 切换提交中不得保留 feature flag、legacy fallback 或“TCP 失败就直接 SessionManager 写”。
+- [x] `src/cli/main.ts` 改为 resolve store → resolve sessionId → attach/claim → local TCP facade → TUI。fresh home 首次运行安装 schema；`readStoreHeader`/`checkStoreCompatibility` 前置 fail closed；`resolveSessionId`(create/open/resume/fork)→ `createEmbeddedSessionRuntime` → `SessionInteractiveController` → `InteractiveMode`；本地 view 与 remote view 同一 TCP facade。
+- [x] `/new`、`/resume`、`/fork` 使用 §8 语义；修复 owner view/remote view 的 attachment 计数。`sessionOpenMode` 映射 + `resolveSessionId` 实现；`onAttachmentCountChange` 驱动 headless-attached owner loop，attachment 归零才 pause/release。
+- [x] schema upgrade 需要零 active owner；不满足时标准入口返回 `upgrade_requires_sessions_closed`，不得边运行边 migration。claim 事务内 `assertAdmissionReady` + admission gate；migration_blocked 时标准入口 exit 2（`session-owner-cli.test.ts` 覆盖）。
+- [x] JSONL 首次转换只归档 source，不物理删除；新 Runtime 不读取 archive。R2 `migrate session-store` 语义保留；`--session <legacy path>` 返回 typed 迁移提示。
+- [x] 最后一个 attachment 尝试关闭且 Session 仍 active 时显示 pause 警告；完成 bounded checkpoint/settlement/release。main.ts finally：inFlight 时 stderr 警告 + interrupt → `runtime.pause("paused")`（paused checkpoint + owner release unowned）。
+- [x] 删除 `host` CLI dispatch/help；增加只读 session owner diagnostics 时只能针对 exact session，不引入全机 manager。main.ts 移除 `host` 分支；USAGE 移除 Host 运维命令段；`args.test.ts` 断言 USAGE 不再含 `runledger host`。
+- [ ] standard PATH 两/三个真实 TUI 验证同 Session attach、不同 Session 并行 owner、owner crash takeover。当前 `session-owner-cli.test.ts` 只证明 CLI 的 create/resume/fork/schema/error 路径；Node 环境下 OpenTUI FFI 失败不能作为真实 TUI 验收。
+- [x] 切换改动不保留 feature flag、legacy fallback 或“TCP 失败就直接 SessionManager 写”。`main.ts` 无 legacy Host import/fallback；全仓 R0 legacy consumer allowlist 仍保留到 R9，不能提前宣称已清空。
 
-退出条件：`runledger` 标准入口不再 import/call 任何 `runtime-host-*`、Host socket/election/writer lease；真实 TUI 能完成 create/attach/takeover/recovery/resume。旧源码和 verified JSONL archive 仍保留，必要时只能通过 revert R7 cutover commit + offline archive restore 处置，不能由新 Runtime 自动 fallback。
+退出条件：`runledger` 标准入口不再 import/call 任何 `runtime-host-*`、Host socket/election/writer lease；真实 TUI 能完成 create/attach/takeover/recovery/resume。旧源码和 verified JSONL archive 仍保留，必要时只能通过 revert R7 cutover change + offline archive restore 处置，不能由新 Runtime 自动 fallback。**当前部分达成**：标准入口静态与 CLI 测试已切换；真实 TUI/多窗口及 R6/R8 门禁未闭合。
+- [ ] **2026-08-07 复核：R7 本身不自证接受，随 R8 一起 not accepted。** 标准 PATH 已切换（7 tests 全绿），但 R8 人工验收未闭合前不宣告 R7 完成；R9 已在复核中回滚。
 
 ### R8：生产稳定化与 human acceptance
 
 目标：在旧 Host 源码尚未删除、但已从 production path 不可达的安全窗口验证真实升级与日常使用。
 
-- [ ] 用标准 PATH 而非 candidate script 重跑 R6.5 fault matrix 和 migration archive/restore rehearsal。
-- [ ] 真实 operator 验证同 Session 多窗口、不同 Session 并行、local UI detach 保活、whole-process crash、`RECOVERY_REQUIRED` 和 explicit uncertainty decision。
-- [ ] 验证 old binary 遇到新 schema 返回 `store_schema_too_new`；有 active owner 时新 binary 返回 `upgrade_requires_sessions_closed`。
-- [ ] 连续运行稳定窗口内记录 SQLite busy/event-loop latency、heartbeat、TCP disconnect、checkpoint full replay 和 archive retention。
-- [ ] 完成独立只读安全/数据审计；自动化 agent 不填写 `human-verified`。
+> **2026-08-07：R8 整体 not accepted（自动化 gate 曾误闭合）。** 已修复健康 attach、工具副作用 barrier、attachment lifetime、onFenced、checkpoint replay 和 Session Security 主链缺陷（见 §13.1）；R6 blocking gaps、跨平台 evidence、标准 PATH fault rehearsal 和 human acceptance 仍未完成。
 
-退出条件：§11 自动化 gate、标准 PATH fault matrix、独立审计和 human acceptance 全部 PASS；没有依赖旧 production fallback 的未解决问题。
+- [ ] 用标准 PATH 而非 candidate script 重跑完整 R6.5 fault matrix 和 migration archive/restore rehearsal。现有 CLI/production tests 提供部分自动化证据，不等于标准 PATH 完整 rehearsal。
+- [ ] 真实 operator 验证同 Session 多窗口、不同 Session 并行、local UI detach 保活、whole-process crash、`RECOVERY_REQUIRED` 和 explicit uncertainty decision。**待人工**：需要真人 TUI 操作，自动化 agent 不填写 `human-verified`。
+- [x] 验证 old binary 遇到新 schema 返回 `store_schema_too_new`；有 active owner 时新 binary 返回 `upgrade_requires_sessions_closed`。R1 `migration.test.ts`（old binary too-new）+ `session-owner-cli.test.ts`（schema 99 → exit 2）+ claim admission gate 测试。
+- [ ] 连续运行稳定窗口内记录 SQLite busy/event-loop latency、heartbeat、TCP disconnect、checkpoint full replay 和 archive retention。**待人工**：稳定窗口需真实使用时长；自动化部分由 `verify-session-owner-candidate.ts` latency 测量与 `event-loop-latency.test.ts` 覆盖。
+- [ ] 完成独立只读安全/数据审计；自动化 agent 不填写 `human-verified`。**待人工**。
+
+退出条件：§11 自动化 gate、标准 PATH fault matrix、独立审计和 human acceptance 全部 PASS；没有依赖旧 production fallback 的未解决问题。**当前未达成**：本轮本地 `check/test/build` 与 Linux candidate 已形成 fresh automated evidence，但不能替代上述 R6、跨平台、标准 PATH、独立审计和人工门禁。
 
 ### R9：删除 Host/daemon 遗产与最终收口
 
 目标：只在 R8 证据闭合后，从代码、构建、测试和文档中彻底移除旧生产架构。
 
+> **状态：not started；先前删除尝试已 reverted（2026-08-07）。** 旧 Host 源码、脚本、native helper、package scripts 与测试均已恢复为 R8 安全窗口；标准 CLI 仍只走 Session Owner path。以下项目都是未来工作，R8 全部门禁闭合前不得勾选。
+
 - [ ] 按 §9.3 删除 Host source、storage、scripts、native helper、commands 和 package scripts。
 - [ ] 删除 Host build manifest、maintenance/restart、peer attestation、endpoint cleanup 和旧 audit runner。
-- [ ] production 删除 SessionManager/JSONL lock path；test-only adapter 明确不导出。
-- [ ] 更新 Runtime contract inventory、barrels、AGENTS、开发索引和所有下游 owner 路由。
-- [ ] `rg` 静态门禁仅允许 `05` 历史文档、migration source/archive tooling 和历史 fixture 出现 legacy 术语。
+- [ ] production 删除 legacy SessionManager/JSONL lock 可达路径；仅保留迁移所需的受限 source adapter，且不从 public current-format barrel 导出。
+- [ ] 更新 Runtime contract inventory、barrels、AGENTS、开发索引和所有下游 owner 路由，去除 Host public contracts 与兼容别名。
+- [ ] `rg` 静态门禁仅允许 `05` 历史文档、migration source/archive tooling 和历史 fixture 出现 legacy 术语，并清空 R0 legacy consumer allowlist。
 - [ ] 保留 migration archive；只有用户另行执行 `storage prune-legacy --confirm-delete` 才物理删除，不把 prune 混入代码删除阶段。
 
-退出条件：构建产物无 resident Host entrypoint/native peer helper；package 只有 `runledger` client binary；旧架构不能通过配置复活；完整 gate 再跑通过；此时 `05` 才标为 superseded。
+退出条件：构建产物无 resident Host entrypoint/native peer helper；package 只有 `runledger` client binary；旧架构不能通过配置复活；完整 gate 再跑通过；此时 `05` 才标为 superseded。**当前未达成。** `05` 是 legacy safety-window/history 输入，不标 superseded。
 
 ## 11. 验证矩阵
 
@@ -935,6 +944,16 @@ tests/cli/session-owner-production.test.ts
 | isolation | Session A crash/MCP/process flood 不影响 Session B；不同 generation token 不串用 |
 | lifecycle | last attachment pauses、重新打开 resume；零 attachment 时不存在 runtime；健康 owner 不被强抢 |
 | audit | owner claim/takeover/release/fenced 与 model/tool/permission/timeline 全部可按 session+generation 归属 |
+
+### 11.1 2026-08-07 fresh 本地证据
+
+- `npm run check`：通过（current-format、storage、runtime、contract、execution、platform、TUI、Session Owner 边界与 TypeScript）。
+- Session Owner focused matrix：34 files / 209 tests 通过。
+- `npm test`：Vitest 260 files / 1427 tests；Bun OpenTUI 4 files / 29 tests，全部通过。
+- `npm run build`：通过（native helper、TypeScript build、legacy Host manifest；旧 Host 构建仍保留是因为 R9 未开始）。
+- 隔离 Linux candidate：`/tmp/runledger-candidate-SfKhTo`，fault/latency/read-only Security/manifest 全部 `ALL PASS`；100 Session catalog 59.2ms，单次同步 DB call ≤100ms，10 个独立子进程 claim 941.1ms。
+
+这些是当前 Linux 工作树的自动化证据，只支持 R0–R5 与 R6/R6.5 已勾选的子项；不能把 R6 未接线能力、macOS/Windows runner、标准 PATH 真实 TUI、独立审计或 human acceptance 推导为通过。
 
 生产 runner 的最小场景：
 
@@ -1023,6 +1042,25 @@ preflight no active legacy owner/writer and no active Session Owner
 - 旧 Host protocol/session JSONL compatibility reader、双写或自动迁移；
 - 新 Runtime 自动读取 migration archive，或在用户显式 prune 前自动物理删除 archive；
 - 健康 owner 的 force takeover。
+
+## 13.1 复核清单（2026-08-07，feedback 修复）
+
+自动化 gate 曾把 R6.5–R8 误报为闭合；复核后计划状态改为 R0–R5 implemented、R6 partial/blocked、R6.5/R8 not accepted、R7 switched but pending acceptance、R9 not started（删除尝试已 reverted）。本清单记录已修复的缺陷与 RED 测试：
+
+| 缺陷 | 修复 | RED 测试 |
+|---|---|---|
+| P0-1 健康 owner 无限 retry，第二客户端无法即时 attach；attached 分支 factory 返回 undefined runtime | `evaluateOwnerRow` 非 stale → `attach`；`SessionClient.openSession` attach 失败有界重试；`createEmbeddedSessionRuntime` attached 分支 attach 到 winner、`runtime: undefined`，CLI 按需消费 | `tests/runtime/session-runtime/red-01-healthy-attach.test.ts` |
+| P0-2 真实 Write/Bash/WebFetch 不进 barrier，崩溃后 assess() 误判 clean | `attempt-gateway.ts`：`gatedExecutionEnv` 包装 fs.write/rm/mkdir → workspace_mutation、shell.exec → process_spawn、network.request → external_mutation；begin/settle 走 runtime；`LateBoundAttemptPort` 解 domain 循环依赖；domain 装配强制 gateway | `red-03-tool-crash-barrier.test.ts`（FIFO 阻塞真实 Write + SIGKILL → takeover barrier open + spawnCount=0） |
+| P0-3 local UI detach 无条件终止 owner | `pauseIfLastAttachment`：仅当 connectionCounts()==0 才 pause；attachment count 决定 lifetime | `red-02-remote-keepalive.test.ts` + candidate 1.2c |
+| P0-4 生产 composition 未接 onFenced | `createEmbeddedSessionRuntime` 传 onFenced → `runtime.selfStopFenced()`（server 关闭 + 领域 interrupt + 客户端断开） | `red-04-fence-selfstop.test.ts`（进程内 spy domain + 真实多进程 heartbeat fence） |
+| P1 candidate “10 parallel owners” 实为同步循环、par-* 未创建、只看耗时 | 先创建 par-* Session，再由 10 个独立子进程/独立 SQLite connection 并发 claim，断言全部 claimed + row 存在 | candidate runner `[2/5]` |
+| P1 manifest 只 hash 文件名 | `contentDigestOf` 逐文件内容 sha256 | candidate runner `[3/5]` |
+| P1 `startsWith("/")` 不跨平台 | `isAbsolute` | candidate runner `requireRunledgerDir` |
+| P1 checkpoint 用启动时冻结 head | `currentHeadSequence()` 实时读 `sessions.head_sequence` | `session-runtime` snapshot/putCheckpoint |
+| P1 checkpoint seed 未应用 durable tail / 非 replay-ready cache 被误用 | `restoreSession()` 返回 replayEvents；只有 replay-ready paused cache 可作 seed，并由 `restoreCheckpointReplay()` 应用 tail，否则从 genesis replay | `checkpoint.test.ts`、`session-codec.test.ts`、`recovery.test.ts` |
+| P1 Session domain 回退裸 I/O、CLI security authority 未进入 production composition | 新 `security/session-composition.ts` 提供 governed filesystem/network/process final leaf；CLI source 优先；通用 security 类型去 Host 命名并保留 legacy alias | `security-composition.test.ts`、`cli/main.test.ts` |
+
+R9 回滚后遗留：旧 Host 源码/脚本/测试已恢复（`git status` 无删除）；`tests/cli/main.test.ts` 中依赖 R7 已移除 `bindHostWorktreeSession` 的 legacy 测试一并删除（该测试属于 R9 删除集，R7 后 production path 不可达）。
 
 ## 14. 完成定义
 

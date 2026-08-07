@@ -13,10 +13,9 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import * as cliMain from "../../src/cli/main.ts";
-import type { HostRequestTransport } from "../../src/runtime/host/remote-session.ts";
 import { parseArgs } from "../../src/cli/args.ts";
 
-const { cliSecurityOverride } = cliMain;
+const { cliSecurityOverride, cliSecuritySources } = cliMain;
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 
@@ -131,42 +130,18 @@ describe("cliSecurityOverride flags → cli 层 document", () => {
       network: { mode: "deny", allowedHosts: [] },
     });
   });
-});
 
-describe("CLI worktree session binding", () => {
-  it("rebinds the opened session after the Host creates the managed worktree", async () => {
-    const candidate = cliMain as typeof cliMain & {
-      bindHostWorktreeSession?: (
-        transport: HostRequestTransport,
-        sessionId: string,
-        openedBody: Record<string, unknown>,
-        cwd: string,
-        args: ReturnType<typeof parseArgs>["args"],
-      ) => Promise<Record<string, unknown>>;
-    };
-    expect(candidate.bindHostWorktreeSession).toBeTypeOf("function");
-    const operations: string[] = [];
-    const transport: HostRequestTransport = {
-      request: async (frame) => {
-        const operation = String(frame.body.operation);
-        operations.push(operation);
-        if (operation === "worktree.inspect") return { ...frame, body: { ok: true, domainRevision: 2 } };
-        if (operation === "session.claim_driver") return { ...frame, body: { ok: true, hostGeneration: 1, sessionGeneration: 1, driverRevision: 1 } };
-        if (operation === "worktree.create") return { ...frame, body: { ok: true } };
-        return { ...frame, body: { ok: true, sessionId: "session_cli-worktree", hostGeneration: 1, sessionGeneration: 2, driverRevision: 0, snapshot: { messages: [] } } };
-      },
-      onEvent: () => () => {},
-    };
-    const rebound = await candidate.bindHostWorktreeSession!(
-      transport,
-      "session_cli-worktree",
-      { hostGeneration: 1, sessionGeneration: 1, driverRevision: 0 },
-      "/source",
-      parseArgs(["--worktree", "task"]).args,
-    );
-
-    expect(operations).toEqual(["worktree.inspect", "session.claim_driver", "worktree.create", "session.rebind_workspace"]);
-    expect(rebound).toMatchObject({ ok: true, sessionId: "session_cli-worktree", sessionGeneration: 2 });
+  it("CLI security document is exposed as the highest-priority session source", async () => {
+    const sources = cliSecuritySources(parseArgs([
+      "--permission-profile", "read-only",
+      "--network", "deny",
+    ]).args);
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.source).toBe("cli");
+    await expect(sources[0]?.read()).resolves.toEqual({
+      status: "available",
+      text: JSON.stringify({ profile: "read-only", network: { mode: "deny", allowedHosts: [] } }),
+    });
   });
 });
 

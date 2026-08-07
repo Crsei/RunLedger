@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const localControllerSource = readFileSync(join(root, "src/runtime/interactive-session-controller.ts"), "utf8");
-const remoteControllerSource = readFileSync(join(root, "src/runtime/host/remote-session.ts"), "utf8");
+const remoteControllerSource = readFileSync(join(root, "src/cli/session-interactive-controller.ts"), "utf8");
 const effectSource = readFileSync(join(root, "src/tui/application/effect.ts"), "utf8");
 const processAdapterSource = readFileSync(join(root, "src/tui/process/controller-adapter.ts"), "utf8");
 const interactiveModeSource = readFileSync(join(root, "src/tui/interactive-mode.ts"), "utf8");
@@ -148,13 +148,13 @@ describe("B0 authority map: passive contract workflows", () => {
   });
 
   it("remote controller has no local queue facts", () => {
-    expect(remoteControllerSource).toMatch(/getSteeringMessages\(\): readonly UserAgentMessage\[\] \{ return \[\]; \}/u);
-    expect(remoteControllerSource).toMatch(/getFollowUpMessages\(\): readonly UserAgentMessage\[\] \{ return \[\]; \}/u);
+    expect(remoteControllerSource).toMatch(/getSteeringMessages\(\): readonly UserAgentMessage\[\] \{\s*return \[\];\s*\}/u);
+    expect(remoteControllerSource).toMatch(/getFollowUpMessages\(\): readonly UserAgentMessage\[\] \{\s*return \[\];\s*\}/u);
   });
 
   it("remote login is explicitly unavailable (no fake success path)", () => {
     expect(remoteControllerSource).toMatch(/login\(/u);
-    expect(remoteControllerSource).toContain("remote provider login requires an interactive Host auth channel");
+    expect(remoteControllerSource).toContain("credential onboarding requires a reverse-request UI channel");
   });
 
   it("approval authority lives on the Host reverse frame handled by InteractiveMode", () => {

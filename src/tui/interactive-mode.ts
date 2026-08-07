@@ -554,6 +554,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       { value: "/logout", label: "/logout", description: "Remove credential" },
       { value: "/model", label: "/model", description: "Switch model" },
       { value: "/thinking", label: "/thinking", description: "Switch thinking level" },
+      { value: "/recovery", label: "/recovery", description: "Inspect or resolve crash recovery" },
       { value: "/processes", label: "/processes", description: "List managed processes" },
       { value: "/terminal", label: "/terminal <executionId>", description: "Open managed terminal" },
       { value: "/quit", label: "/quit", description: "Exit safely" },
@@ -581,6 +582,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
             break;
           case "/thinking":
             this.openThinkingSelector();
+            break;
+          case "/recovery":
+            void this.runRecoveryWorkflow("");
             break;
           case "/provider":
             void this.openProviderSelector();
@@ -637,6 +641,58 @@ export class InteractiveMode implements FooterSnapshotProvider {
       return;
     }
     this.showNotice("Prompt templates are unavailable in this session.", "error");
+  }
+
+  /**
+   * Session Owner 最小 recovery workflow：status/assess/verify/resume 全部走
+   * typed controller facade，不在 TUI 猜测 durable outcome。
+   */
+  public async runRecoveryWorkflow(argument: string): Promise<void> {
+    const controller = this.controller;
+    if (controller?.recoveryStatus === undefined) {
+      this.showNotice("Session recovery is unavailable in this client.", "error");
+      return;
+    }
+    const [action = "status", ...rest] = argument.trim().split(/\s+/u).filter((part) => part.length > 0);
+    try {
+      if (action === "assess") {
+        if (controller.recoveryAssess === undefined) throw new Error("recovery assessment is unavailable");
+        const result = await controller.recoveryAssess();
+        this.showNotice(`Recovery assessment: state=${result.state} unresolved=${result.unresolvedRemaining}.`);
+        return;
+      }
+      if (action === "verify") {
+        const attemptId = rest[0];
+        if (attemptId === undefined || controller.recoveryVerify === undefined) {
+          this.showNotice("Usage: /recovery verify <attemptId>", "error");
+          return;
+        }
+        const result = await controller.recoveryVerify(attemptId);
+        this.showNotice(`Recovery verification recorded: state=${result.state}.`);
+        return;
+      }
+      if (action === "resume") {
+        const reason = rest.join(" ").trim();
+        if (reason.length === 0 || controller.recoveryResume === undefined) {
+          this.showNotice("Usage: /recovery resume <reason>", "error");
+          return;
+        }
+        const result = await controller.recoveryResume(reason);
+        this.showNotice(`Uncertain recovery explicitly accepted: state=${result.state}.`);
+        return;
+      }
+      if (action !== "status") {
+        this.showNotice("Usage: /recovery [status|assess|verify <attemptId>|resume <reason>]", "error");
+        return;
+      }
+      const status = await controller.recoveryStatus();
+      this.showNotice(
+        `Recovery: state=${status.state} barrier=${status.barrierState} unresolved=${status.unresolvedAttempts}. ` +
+        "Use /recovery assess, /recovery verify <attemptId>, or /recovery resume <reason>.",
+      );
+    } catch (error) {
+      this.showNotice(`Recovery command failed: ${String(error)}`, "error");
+    }
   }
 
   /**
@@ -974,6 +1030,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         case "thinking":
           if (this.rejectConfigWhileRunning()) return;
           this.openThinkingSelector();
+          return;
+        case "recovery":
+          void this.runRecoveryWorkflow(arg);
           return;
         case "processes":
           this.openProcessList();

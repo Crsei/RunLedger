@@ -1,4 +1,4 @@
-/** Host final-leaf 只做 decision/receipt 校验，不拥有 process 生命周期。 */
+/** Runtime final-leaf 只做 decision/receipt 校验，不拥有 process 生命周期。 */
 
 import {
 	runtimeDigest,
@@ -14,7 +14,7 @@ import type {
 	SandboxLaunchPlan,
 } from "../sandbox/types.ts";
 
-export interface HostProcessFinalLeafRequest {
+export interface ProcessFinalLeafRequest {
 	readonly constraintInput: ExecutionConstraintInput;
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
 	readonly requestDigest: RuntimeDigest;
@@ -24,7 +24,7 @@ export interface HostProcessFinalLeafRequest {
 	readonly sandboxReceipt?: SandboxDecisionReceipt;
 }
 
-export interface HostProcessFinalLeafDecision {
+export interface ProcessFinalLeafDecision {
 	readonly decision: "allow";
 	readonly requestDigest: RuntimeDigest;
 	readonly policyDigest: RuntimeDigest;
@@ -32,8 +32,8 @@ export interface HostProcessFinalLeafDecision {
 	readonly sandboxReceipt?: SandboxDecisionReceipt;
 }
 
-export interface HostProcessFinalLeafDecisionPort {
-	decide(input: HostProcessFinalLeafRequest): Promise<SecurityResult<HostProcessFinalLeafDecision>>;
+export interface ProcessFinalLeafDecisionPort {
+	decide(input: ProcessFinalLeafRequest): Promise<SecurityResult<ProcessFinalLeafDecision>>;
 }
 
 export interface RuntimeGatewayAdapterOptions {
@@ -67,7 +67,7 @@ function sandboxReceiptMatches(left: SandboxDecisionReceipt, right: SandboxDecis
 	return sandboxReceiptIsSelfConsistent(left) && sandboxReceiptIsSelfConsistent(right) && sameDigest(left.receiptDigest, right.receiptDigest);
 }
 
-export class HostProcessFinalLeafAdapter implements HostProcessFinalLeafDecisionPort {
+export class ProcessFinalLeafAdapter implements ProcessFinalLeafDecisionPort {
 	readonly #sandboxBackend: SandboxBackend;
 	readonly #currentPolicyDigest: RuntimeGatewayAdapterOptions["currentPolicyDigest"];
 
@@ -76,7 +76,7 @@ export class HostProcessFinalLeafAdapter implements HostProcessFinalLeafDecision
 		this.#currentPolicyDigest = options.currentPolicyDigest;
 	}
 
-	public async decide(input: HostProcessFinalLeafRequest): Promise<SecurityResult<HostProcessFinalLeafDecision>> {
+	public async decide(input: ProcessFinalLeafRequest): Promise<SecurityResult<ProcessFinalLeafDecision>> {
 		if (!validDigest(input.requestDigest) || !validDigest(input.policyDigest)) return invalid("final-leaf request or policy digest is malformed");
 		if (!input.constraintSnapshot) return invalid("final-leaf constraint decision is missing");
 		const constraint = input.constraintInput;
@@ -151,10 +151,16 @@ export class HostProcessFinalLeafAdapter implements HostProcessFinalLeafDecision
 		};
 	}
 
-	public validate(input: HostProcessFinalLeafRequest): Promise<SecurityResult<HostProcessFinalLeafDecision>> {
+	public validate(input: ProcessFinalLeafRequest): Promise<SecurityResult<ProcessFinalLeafDecision>> {
 		return this.decide(input);
 	}
 }
 
+/** legacy Host 源码在 R9 删除前使用的兼容类型/值别名。 */
+export type HostProcessFinalLeafRequest = ProcessFinalLeafRequest;
+export type HostProcessFinalLeafDecision = ProcessFinalLeafDecision;
+export type HostProcessFinalLeafDecisionPort = ProcessFinalLeafDecisionPort;
+export { ProcessFinalLeafAdapter as HostProcessFinalLeafAdapter };
+
 /** 与 Runtime adapter 命名保持一致；不创建第二个 process manager。 */
-export class RuntimeGatewayAdapter extends HostProcessFinalLeafAdapter {}
+export class RuntimeGatewayAdapter extends ProcessFinalLeafAdapter {}

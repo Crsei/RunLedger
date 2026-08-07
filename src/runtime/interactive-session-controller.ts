@@ -123,6 +123,27 @@ export interface InteractiveSessionControllerPort {
    * 此执行，Host 持有 durable intent/receipt 与 driver fence。
    */
   readonly commandHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /** Session Owner crash takeover 的 typed recovery facade；本地 legacy controller 可缺省。 */
+  readonly recoveryStatus?: () => Promise<SessionRecoveryStatus>;
+  readonly recoveryAssess?: () => Promise<SessionRecoveryAssessment>;
+  readonly recoveryVerify?: (attemptId: string) => Promise<SessionRecoveryDecisionResult>;
+  readonly recoveryResume?: (reasonCode: string) => Promise<SessionRecoveryDecisionResult>;
+}
+
+export interface SessionRecoveryStatus {
+  readonly state: string;
+  readonly barrierState: "open" | "closed";
+  readonly unresolvedAttempts: number;
+  readonly sideEffectSpawnCount: number;
+}
+
+export interface SessionRecoveryAssessment {
+  readonly state: string;
+  readonly unresolvedRemaining: number;
+}
+
+export interface SessionRecoveryDecisionResult {
+  readonly state: string;
 }
 
 export interface RuntimeSelection {

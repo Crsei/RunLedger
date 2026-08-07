@@ -14,6 +14,11 @@ export interface ExecutionBoundaryViolation {
  */
 export const CANONICAL_STORAGE_ADAPTER_ALLOWLIST: readonly string[] = [];
 
+/** Session Security 可触碰 raw I/O 的唯一精确 final-leaf adapter。 */
+export const EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST: readonly string[] = [
+	"src/security/integration/session-local-leaves.ts",
+];
+
 /**
  * R0 之后只有这里列出的 backend 文件可以直接持有 child_process/PTY 句柄。
  * native PTY adapter 也必须保持在精确文件路径内；新增条目不能豁免整个目录。
@@ -89,7 +94,9 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 			const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 			for (const [pattern, kind] of BOUNDARY_PATTERNS) {
 				if (!pattern.test(source)) continue;
-				if (!CANONICAL_STORAGE_ADAPTER_ALLOWLIST.includes(relativeFile)) violations.push({ file: relativeFile, kind });
+				if (!CANONICAL_STORAGE_ADAPTER_ALLOWLIST.includes(relativeFile) && !EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST.includes(relativeFile)) {
+					violations.push({ file: relativeFile, kind });
+				}
 			}
 			if (root === "src/runtime/tools" && !TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST.includes(relativeFile)) {
 				const localEnvCalls = source
@@ -106,7 +113,9 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 		for (const file of listTypeScriptFiles(join(repoRoot, root))) {
 			const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 			const source = readFileSync(file, "utf8");
-			if (BOUNDARY_PATTERNS[1][0].test(source) && !MANAGED_PROCESS_BACKEND_ALLOWLIST.includes(relativeFile)) {
+			if (BOUNDARY_PATTERNS[1][0].test(source) &&
+				!MANAGED_PROCESS_BACKEND_ALLOWLIST.includes(relativeFile) &&
+				!EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST.includes(relativeFile)) {
 				violations.push({ file: relativeFile, kind: "raw-process" });
 			}
 			if (RAW_BACKGROUND_PATTERNS.some((pattern) => pattern.test(source)) &&

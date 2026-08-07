@@ -1,5 +1,5 @@
 /**
- * Session Owner 边界静态检查(R0 冻结)。
+ * Session Owner 边界静态检查(R0 冻结;R9 已回滚,legacy Host 保留为 R8 安全窗口)。
  *
  * 禁止:
  * 1. 生产代码新增 legacy machine/workspace Host 消费(R0-frozen allowlist 之外);
@@ -7,7 +7,8 @@
  *    出现 machine leader、daemon、UDS/Named Pipe、非 loopback TCP、TUI 依赖
  *    或 direct controller fallback;
  * 3. 新 session 模块依赖 legacy Host(production Host import);
- * 4. Client 层绕过 owner server 直接驱动 controller(只有 SessionRuntime 可以组合)。
+ * 4. Client 层绕过 owner server 直接驱动 controller(只有 SessionRuntime 可以组合);
+ * 5. session-store/session-owner 的 durable write 必须消费 OwnerFence(R3)。
  *
  * 所有豁免必须是精确文件路径的 R0-frozen allowlist;新增豁免需要修改 06 计划。
  */
@@ -25,13 +26,15 @@ export interface SessionOwnerBoundaryViolation {
 		| "uds-or-pipe"
 		| "non-loopback-bind"
 		| "raw-transport"
-		| "direct-controller";
+		| "direct-controller"
+		| "fence-free-write";
 	reason: string;
 }
 
 /**
  * legacy Host 模块的 import source 模式。命中这些来源的文件要么属于
  * legacy Host 内部,要么必须位于 R0_FROZEN_LEGACY_CONSUMER_ALLOWLIST。
+ * (R9 曾清空,已回滚恢复;extensions/host-manager.ts 属 extensions 自身模块。)
  */
 const LEGACY_HOST_SOURCE_PATTERNS: readonly RegExp[] = [
 	/(?:runtime\/host|storage\/host)\//u,
@@ -45,7 +48,7 @@ const LEGACY_HOST_SOURCE_PATTERNS: readonly RegExp[] = [
 
 /**
  * 属于 legacy Host 自身的文件,允许互相 import,不被 legacy-consumer 规则约束。
- * 这些文件在 R9 从生产删除,期间不得被新代码消费。
+ * 这些文件在 R9 从生产删除,期间不得被新代码消费(当前 R9 已回滚,保留为 R8 安全窗口)。
  */
 const LEGACY_HOST_INTERNAL_PREFIXES: readonly string[] = [
 	"src/runtime/host/",
@@ -112,6 +115,17 @@ const DAEMON_PATTERNS: readonly [RegExp, SessionOwnerBoundaryViolation["kind"], 
 	[/from ['"]node:net['"]/u, "raw-transport", "node:net only belongs in the RuntimeServer transport"],
 ];
 
+/**
+ * node:net 的精确豁免文件:只允许 RuntimeServer transport 实现
+ * (owner-probe.ts / runtime-server.ts / client-transport.ts)直接持有 TCP,
+ * 其余 session 模块禁止。
+ */
+const TCP_TRANSPORT_FILES: readonly string[] = [
+	"src/runtime/session-server/owner-probe.ts",
+	"src/runtime/session-server/runtime-server.ts",
+	"src/runtime/session-server/client-transport.ts",
+];
+
 const LEGACY_HOST_LEADER_PATTERNS: readonly RegExp[] = [
 	/(?:startup-election|writer-lease|host-generation-store|shutdown-intent-store)/u,
 ];
@@ -120,6 +134,88 @@ const DIRECT_CONTROLLER_PATTERNS: readonly RegExp[] = [
 	/interactive-session-controller/u,
 	/from ["'][^"']*\/agent\.ts["']/u,
 ];
+
+/**
+ * R3:禁止 fence-free durable write。
+ *
+ * 扫描 session-store / session-owner 目录中所有写 SQL 行(INSERT/UPDATE/DELETE),
+ * 要求其所在方法签名必须消费 OwnerFence;例外只允许以下 R2/R3 冻结的
+ * fence-establishing / cache / bootstrap / migration-gate 方法:
+ * - createSession / forkSession:新 Session row 建立于任何 owner 之前(R2);
+ * - clearCheckpoints:projection cache 可整体删除,不改变 authority(R2);
+ * - tryClaim:claim 事务本身建立 fence(R3);
+ * - beginOfflineMigration / applyStructuralMigration / abortOfflineMigration /
+ *   resumeOfflineMigration:migration gate 用“零 active owner 证明”替代 fence(R1);
+ * - installSessionStoreSchema:首次 DDL 安装(R1);
+ * - migrateJsonlSessions / pruneLegacyArchive:显式一次性 JSONL migration/prune,
+ *   同样以零 active legacy writer 证明替代 fence(R2)。
+ */
+const FENCELESS_WRITE_ALLOWLIST: readonly string[] = [
+	"createSession",
+	"forkSession",
+	"clearCheckpoints",
+	"tryClaim",
+	"beginOfflineMigration",
+	"applyStructuralMigration",
+	"abortOfflineMigration",
+	"resumeOfflineMigration",
+	"installSessionStoreSchema",
+	"migrateJsonlSessions",
+	"importJsonlIntoSqlite",
+	"pruneLegacyArchive",
+];
+
+const WRITE_SQL_PATTERN = /(?:INSERT INTO|UPDATE|DELETE FROM)\s+[a-z_]+/u;
+const METHOD_SIGNATURE_PATTERN = /^\s*(?:export\s+)?(?:async\s+)?function\s+[a-zA-Z0-9_]+\s*\(|^\s*(?:public\s+|private\s+|protected\s+)(?:async\s+)?[a-zA-Z0-9_]+\s*\(/u;
+
+/**
+ * R3 fence-free write 扫描:对每个包含写 SQL 的行,向上回溯最近的方法签名;
+ * 签名含 fence 参数或在 allowlist 中则通过,否则违规。
+ */
+export function scanFenceFreeWrites(repoRoot: string, files: readonly string[]): SessionOwnerBoundaryViolation[] {
+	const violations: SessionOwnerBoundaryViolation[] = [];
+	for (const relativeFile of files) {
+		const lines = readFileSync(join(repoRoot, relativeFile), "utf8").split("\n");
+		for (let index = 0; index < lines.length; index += 1) {
+			const line = lines[index]!;
+			const trimmed = line.trim();
+			if (!WRITE_SQL_PATTERN.test(line)) continue;
+			if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) continue;
+			const signature = findEnclosingSignature(lines, index);
+			if (signature === undefined) {
+				violations.push({ file: relativeFile, kind: "fence-free-write", reason: `write SQL at line ${index + 1} has no enclosing method signature` });
+				continue;
+			}
+			if (/\bfence\b/u.test(signature)) continue;
+			const nameMatch = /(?:public\s+|private\s+|protected\s+|function\s+)?([a-zA-Z0-9_]+)\s*\(/u.exec(signature);
+			const methodName = nameMatch?.[1];
+			if (methodName !== undefined && FENCELESS_WRITE_ALLOWLIST.includes(methodName)) continue;
+			violations.push({
+				file: relativeFile,
+				kind: "fence-free-write",
+				reason: `write SQL at line ${index + 1} in ${methodName ?? "unknown"} is not owner-fenced (06 §4.5)`,
+			});
+		}
+	}
+	return violations;
+}
+
+function findEnclosingSignature(lines: readonly string[], fromLine: number): string | undefined {
+	for (let index = fromLine - 1; index >= Math.max(0, fromLine - 120); index -= 1) {
+		const line = lines[index]!;
+		if (!METHOD_SIGNATURE_PATTERN.test(line)) continue;
+		// 多行参数签名:收集直到包含 ")" 的行。
+		let signature = line.trim();
+		if (!signature.includes(")")) {
+			for (let forward = index + 1; forward < Math.min(lines.length, index + 12); forward += 1) {
+				signature += ` ${lines[forward]!.trim()}`;
+				if (lines[forward]!.includes(")")) break;
+			}
+		}
+		return signature;
+	}
+	return undefined;
+}
 
 function listTypeScriptFiles(directory: string): string[] {
 	try {
@@ -163,17 +259,17 @@ function hasLegacyHostImport(relativeFile: string, source: string): boolean {
 export function scanSessionOwnerBoundaries(repoRoot: string): SessionOwnerBoundaryViolation[] {
 	const violations: SessionOwnerBoundaryViolation[] = [];
 	const srcRoot = join(repoRoot, "src");
+	const fencedFiles: string[] = [];
 	for (const file of listTypeScriptFiles(srcRoot)) {
 		const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 		const source = readFileSync(file, "utf8");
 		const isSessionModule = SESSION_OWNER_MODULE_ROOTS.some((root) => relativeFile.startsWith(root));
-
 		if (isSessionModule) {
 			if (hasLegacyHostImport(relativeFile, source)) {
 				violations.push({ file: relativeFile, kind: "legacy-host-import", reason: "session module must not consume legacy Host" });
 			}
 			for (const [pattern, kind, reason] of DAEMON_PATTERNS) {
-				if (pattern.test(source)) {
+				if (pattern.test(source) && !(kind === "raw-transport" && TCP_TRANSPORT_FILES.includes(relativeFile))) {
 					violations.push({ file: relativeFile, kind, reason });
 				}
 			}
@@ -206,6 +302,13 @@ export function scanSessionOwnerBoundaries(repoRoot: string): SessionOwnerBounda
 			});
 		}
 	}
+
+	// R3:session-store / session-owner 的所有 durable write 必须消费 OwnerFence。
+	const ownerWriteFiles = listTypeScriptFiles(srcRoot)
+		.map((file) => relative(repoRoot, file).replaceAll("\\", "/"))
+		.filter((file) => file.startsWith("src/storage/session-store/") || file.startsWith("src/runtime/session-owner/"));
+	violations.push(...scanFenceFreeWrites(repoRoot, ownerWriteFiles));
+
 	return violations.sort(
 		(left, right) => left.file.localeCompare(right.file) || left.kind.localeCompare(right.kind),
 	);
