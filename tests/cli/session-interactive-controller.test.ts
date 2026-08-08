@@ -53,3 +53,57 @@ describe("SessionInteractiveController command error surfacing", () => {
 		);
 	});
 });
+
+describe("SessionInteractiveController login over the wire", () => {
+	it("sends a login command and returns a status marker on success", async () => {
+		const frames: Array<{ kind: string; body: Record<string, unknown> }> = [];
+		const transport = {
+			request: async (frame: SessionFrameEnvelope): Promise<SessionFrameEnvelope> => {
+				frames.push({ kind: frame.kind, body: frame.body as Record<string, unknown> });
+				return { kind: "command_result" as const, protocolVersion: 1, frameId: "result_1", body: { ok: true, kind: "login", result: {} } };
+			},
+			onEvent: (): (() => void) => () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = { transport } as unknown as OwnedSessionHandle;
+		const snapshot: SessionInteractiveSnapshot = {
+			sessionId: "session_fixture",
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 0,
+		};
+		const instance = new SessionInteractiveController(handle, snapshot);
+		await expect(instance.login("deepseek", "api_key", undefined as never)).resolves.toBeDefined();
+		expect(frames[0]).toMatchObject({ kind: "command_request" });
+		expect((frames[0]?.body as Record<string, unknown>).kind).toBe("login");
+		expect((frames[0]?.body as Record<string, unknown>).body).toEqual({ providerId: "deepseek", authType: "api_key" });
+	});
+
+	it("surfaces login_failed detail when the runtime rejects", async () => {
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => ({
+				kind: "command_result" as const,
+				protocolVersion: 1,
+				frameId: "result_1",
+				body: { ok: false, code: "login_failed", detail: "login cancelled by user" },
+			}),
+			onEvent: (): (() => void) => () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = { transport } as unknown as OwnedSessionHandle;
+		const snapshot: SessionInteractiveSnapshot = {
+			sessionId: "session_fixture",
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 0,
+		};
+		const instance = new SessionInteractiveController(handle, snapshot);
+		await expect(instance.login("deepseek", "api_key", undefined as never)).rejects.toThrow("login_failed: login cancelled by user");
+	});
+});

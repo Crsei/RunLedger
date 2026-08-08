@@ -145,9 +145,14 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		return Array.isArray(response.models) ? (response.models as Model<Api>[]) : [];
 	}
 
-	public async login(_providerId: string, _type: AuthType, _interaction: AuthInteraction): Promise<Credential> {
-		// §6.3 reverse request:credential/onboarding 走 UI interaction 通道。
-		throw new Error("credential onboarding requires a reverse-request UI channel");
+	public async login(providerId: string, type: AuthType, _interaction: AuthInteraction): Promise<Credential> {
+		// §6.3 credential onboarding 走 driver 连接的 reverse-request 通道:
+		// 本地 interaction 不再直接使用,server 侧 domain 经 reverse_request
+		// 把 secret/select 提示投递给本连接,TUI 的 reverseRequestHandler 渲染。
+		await this.command("login", { providerId, authType: type });
+		// 命令成功即认证完成;secret/token 留在 server 侧 auth.json,客户端不持有。
+		// 返回 status 标记而非伪造 token(调用方随后读 provider_status)。
+		return { type: "api_key" } as Credential;
 	}
 
 	public async logout(providerId: string): Promise<void> {

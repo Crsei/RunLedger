@@ -196,6 +196,9 @@ export async function main(argv: readonly string[]): Promise<void> {
   try {
     const activeInteractive = new InteractiveMode({ controller, workspaceCapability: workspaceCapabilityLabel() });
     interactive = activeInteractive;
+    // credential/approval reverse-request 由 TUI 渲染(连接建立后才注入 handler,
+    // reverse_request 只由用户 login/approval 触发,无构造期竞态)。
+    embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleCredentialReverseRequest(frame, signal));
     const onSigint = (): void => {
       if (controller.inFlight) controller.interrupt();
       else activeInteractive.quit();

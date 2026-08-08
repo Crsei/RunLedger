@@ -25,9 +25,10 @@ import { assembleSessionDomain, type SessionDomainCompositionOptions } from "../
 import { LateBoundAttemptPort } from "../runtime/session-runtime/attempt-gateway.ts";
 import { restoreSession } from "../runtime/session-runtime/restore.ts";
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
-import { SESSION_PROTOCOL_BOUNDS } from "../runtime/session-server/protocol.ts";
+import { SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { createRuntimeId, type ExecutionId, type SessionId } from "../runtime/protocol/ids.ts";
 
+export type SessionReverseRequestHandler = (frame: SessionFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
 export interface EmbeddedSessionRuntimeOptions {
 	readonly sessionId: SessionId;
@@ -37,6 +38,8 @@ export interface EmbeddedSessionRuntimeOptions {
 	readonly pauseDelayMs?: number;
 	/** R7:真实领域装配(InteractiveSessionController + Agent/model/tool/ledger)。 */
 	readonly domain?: SessionDomainCompositionOptions;
+	/** 本地 view 连接收到的 reverse_request(credential/approval UI)处理器;TUI 注入。 */
+	readonly reverseRequestHandler?: SessionReverseRequestHandler;
 }
 
 export interface EmbeddedSessionRuntimeResult {
@@ -136,11 +139,11 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		sessionId,
 		store,
 		controller: nullController(sessionId),
-			onAttachmentCountChange: (count) => {
+		onAttachmentCountChange: (count) => {
 			// §8.3 headless-attached owner loop:本地 view 已 detach 但仍有
 			// remote attachment → 保持运行;归零才 pause/release。
-				if (count === 0 && runtime !== undefined) {
-					void runtime.shutdownAfterLastAttachment("paused");
+			if (count === 0 && runtime !== undefined) {
+				void runtime.shutdownAfterLastAttachment("paused");
 			}
 		},
 	});
@@ -162,7 +165,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 	const processRegistry = new SessionProcessRegistry();
 	if (result.outcome === "attached") {
 		// P0-1:健康 owner 即时 attach —— 本进程是 remote client,不装配 runtime。
-		const client = new SessionClient({ store, ownerStore, claimTransport: server });
+		const client = new SessionClient({ store, ownerStore, claimTransport: server, ...(options.reverseRequestHandler === undefined ? {} : { reverseRequestHandler: options.reverseRequestHandler }) });
 		const opened = await client.attachDiscovered(sessionId, result.record);
 		if (!opened.ok) throw new Error(`local attach failed: ${opened.code}`);
 		return {
@@ -195,7 +198,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 	server.bindController(runtime);
 	runtime.start();
 	// 本地 view 也走 TCP facade(不直接调 controller)。
-	const client = new SessionClient({ store, ownerStore, claimTransport: server });
+	const client = new SessionClient({ store, ownerStore, claimTransport: server, ...(options.reverseRequestHandler === undefined ? {} : { reverseRequestHandler: options.reverseRequestHandler }) });
 	const opened = await client.attachTo(ownerStore.readOwner(sessionId)!, server.endpoint, claimOwner.currentAuthToken);
 	if (!opened.ok) throw new Error(`local attach failed: ${opened.code}`);
 	return {

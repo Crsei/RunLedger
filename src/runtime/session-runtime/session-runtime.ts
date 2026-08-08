@@ -30,6 +30,7 @@ import type { CommandAttemptOutcome, CommandEffectClass, OwnerFence, SessionChec
 import type { AgentEvent, AgentMessage } from "../types.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts";
+import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
 import type { Api, Model, ModelThinkingLevel } from "../../types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../interactive-session-controller.ts";
 
@@ -402,7 +403,7 @@ export class SessionRuntime implements SessionController {
 	}
 
 	public isMutatingKind(kind: string): boolean {
-		return (SESSION_MUTATING_COMMAND_KINDS as readonly string[]).includes(kind) || kind === "prompt" || kind === "steer" || kind === "follow_up" || kind === "clear_queues" || kind === "select_model" || kind === "set_thinking" || kind === "logout" || kind === "domain_command";
+		return (SESSION_MUTATING_COMMAND_KINDS as readonly string[]).includes(kind) || kind === "prompt" || kind === "steer" || kind === "follow_up" || kind === "clear_queues" || kind === "select_model" || kind === "set_thinking" || kind === "logout" || kind === "login" || kind === "domain_command";
 	}
 
 	public async handleCommand(request: SessionCommandRequest, meta: { readonly connectionId: ConnectionId; readonly clientId: string; readonly isDriver: boolean }): Promise<SessionCommandResult> {
@@ -472,6 +473,22 @@ export class SessionRuntime implements SessionController {
 				if (providerId.length === 0) return { ok: false, code: "invalid_input" };
 				await this.domain.controller.logout(providerId);
 				return { ok: true, kind: "logout", result: {} };
+			}
+			case "login": {
+				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
+				const loginBody = request.body as Record<string, unknown>;
+				const loginProvider = String(loginBody.providerId ?? "");
+				if (loginProvider.length === 0) return { ok: false, code: "invalid_input" };
+				if (loginBody.authType !== "api_key" && loginBody.authType !== "oauth") return { ok: false, code: "invalid_input" };
+				// credential onboarding 经 driver 连接的 reverse-request 投递 UI。
+				const interaction = createReverseRequestAuthInteraction({ sender: this.server, connectionId: meta.connectionId });
+				try {
+					await this.domain.controller.login(loginProvider, loginBody.authType, interaction);
+				} catch (error) {
+					return { ok: false, code: "login_failed", detail: error instanceof Error ? error.message.slice(0, 200) : undefined };
+				}
+				const loginProviders = await this.domain.controller.getProviderStatuses();
+				return { ok: true, kind: "login", result: { providers: loginProviders } };
 			}
 			case "domain_query": {
 				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };

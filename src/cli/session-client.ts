@@ -31,6 +31,12 @@ export interface SessionClientOptions {
 	/** claim 用 transport;生产由 embedded SessionRuntime 提供(bind-before-publish)。 */
 	readonly claimTransport: SessionOwnerOptions["transport"];
 	readonly clientId?: ClientId;
+	/**
+	 * 客户端收到 reverse_request(credential/approval UI)时的处理回调。
+	 * TUI 注入后,`/login` 的密钥输入/选择经此在 driver 连接上渲染并返回
+	 * reverse_response;headless 不注入则 server 侧 fail closed。
+	 */
+	readonly reverseRequestHandler?: (frame: SessionFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
 }
 
 export interface OwnedSessionHandle {
@@ -129,7 +135,7 @@ export class SessionClient {
 		}
 		let transport: SessionClientTransport | undefined;
 		try {
-			transport = await SessionClientTransport.connect(endpoint.port);
+			transport = await SessionClientTransport.connect(endpoint.port, { reverseRequestHandler: this.options.reverseRequestHandler });
 		} catch {
 			return { ok: false, code: "owner_connect_failed", retryable: true };
 		}

@@ -56,6 +56,8 @@ import type { TuiOverlayState } from "./application/state.ts";
 import { createAppKeyListener } from "./keybindings/app-keys.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
+import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
+import { decodeAuthEvent, decodeAuthPrompt } from "../runtime/session-runtime/credential-reverse-request.ts";
 import type { ProcessOverlayController, ProcessOverlayHostClient } from "./process/controller-adapter.ts";
 import { ProcessOverlayComponent } from "./process/overlay-component.ts";
 import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
@@ -539,6 +541,46 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.showOverlayModal(modal, { anchor: "center" }, "approval");
       this.ui.requestRender();
     });
+  }
+
+  /**
+   * Session 协议 credential reverse-request:`/login` 的 secret/select 提示
+   * 由 server 侧 domain 经 reverse_request 投递到这里渲染,并把用户输入
+   * 经 reverse_response 送回;credential_event(info/auth_url/device_code)只展示。
+   */
+  handleCredentialReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const body = frame.body;
+    const requestKind = typeof body.kind === "string" ? body.kind : undefined;
+    if (requestKind === "credential_prompt") {
+      const prompt = decodeAuthPrompt(body.body);
+      if (prompt === undefined) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+      return new Promise<Record<string, unknown>>((resolve) => {
+        let settled = false;
+        const finish = (result: Record<string, unknown>): void => {
+          if (settled) return;
+          settled = true;
+          this.closeOverlay();
+          resolve(result);
+        };
+        const onAbort = (): void => finish({ ok: false, code: "aborted" });
+        void this.promptAuth(prompt, new AbortController()).then(
+          (value) => finish({ ok: true, value }),
+          () => finish({ ok: false, code: "aborted" }),
+        );
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+    }
+    if (requestKind === "credential_event") {
+      const event = decodeAuthEvent(body.body);
+      if (event === undefined) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+      this.showAuthEvent(event);
+      return Promise.resolve({});
+    }
+    return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
   }
 
   /**

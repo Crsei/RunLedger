@@ -47,10 +47,10 @@ const authorityMap: WorkflowAuthority[] = [
   },
   {
     workflow: "auth.login",
-    authority: "local",
+    authority: "local+remote",
     localChannel: "login(providerId, type, interaction)",
-    remoteChannel: "remote login 抛错（需 Host auth channel）",
-    note: "remote 明确 unavailable，UI 不得伪装成功",
+    remoteChannel: "login 命令 -> server 经 driver 连接 reverse-request 渲染 UI",
+    note: "remote 走 driver 连接 reverse-request;headless 无 handler 时 fail closed",
   },
   {
     workflow: "auth.logout",
@@ -152,9 +152,11 @@ describe("B0 authority map: passive contract workflows", () => {
     expect(remoteControllerSource).toMatch(/getFollowUpMessages\(\): readonly UserAgentMessage\[\] \{\s*return \[\];\s*\}/u);
   });
 
-  it("remote login is explicitly unavailable (no fake success path)", () => {
+  it("remote login goes through the driver reverse-request channel (no fake success path)", () => {
     expect(remoteControllerSource).toMatch(/login\(/u);
-    expect(remoteControllerSource).toContain("credential onboarding requires a reverse-request UI channel");
+    expect(remoteControllerSource).toMatch(/this\.command\("login"/u);
+    // 不伪造 secret/token：命令成功后返回 status 标记,真实凭据留在 server 侧 auth.json。
+    expect(remoteControllerSource).not.toContain("credential onboarding requires a reverse-request UI channel");
   });
 
   it("approval authority lives on the Host reverse frame handled by InteractiveMode", () => {

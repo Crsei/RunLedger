@@ -827,7 +827,7 @@ src/
 - [ ] MCP/Hook/Skill/Plugin 逐 SessionRuntime 独立启动、bounded、关闭并覆盖 crash restore；当前生产工具集显式排除 Skill，未装配 MCP/Hook/Plugin lifecycle。
 - [ ] worktree 改为 canonical session locator，并在 cold resume 重验 platform/root/Git/lease/effective cwd；当前 session row 有 locator 字段，但 production SessionRuntime 尚未消费/重验。
 - [x] model selection、driver claim/release、prompt/steer/follow-up 与 recovery command 走 server facade；driver event 与 tool attempt receipt durable。
-- [ ] approval/credential onboarding 的 reverse-request UI 通道及 durable decision receipt。当前 `SessionInteractiveController.login()` 明确返回未实现错误，不能勾为完成。
+- [x] credential onboarding 的 reverse-request UI 通道（Session `login` 命令 + driver 连接 reverse-request + TUI 渲染 + auth.json 落库，见 [`07-credential-reverse-request-ui-plan.md`](07-credential-reverse-request-ui-plan.md)）。approval reverse-request 与 durable decision receipt 仍待排期。
 - [x] local UI detach 且 remote attachment 存在时进入 headless-attached owner loop；只有 attachment count 归零才 pause/release。`onAttachmentCountChange` 回调 + `runtime.pause`（paused checkpoint + release unowned）；`session-owner-production.test.ts` 最后 attachment 关闭验证 unowned + checkpoint。
 - [x] 新 Session Owner 模块禁止 legacy Host import，标准 CLI composition 无 Host fallback；legacy Host 源码仍保留到 R9，不能表述为全仓 Host 假设已经删除。
 

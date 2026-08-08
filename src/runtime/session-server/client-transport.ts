@@ -24,7 +24,7 @@ export class SessionClientTransport {
 	private readonly socket: net.Socket;
 	private readonly maxFrameBytes: number;
 	private readonly maxPendingRequests: number;
-	private readonly reverseRequestHandler: SessionClientTransportOptions["reverseRequestHandler"];
+	private reverseRequestHandler: SessionClientTransportOptions["reverseRequestHandler"];
 	private readonly reverseControllers = new Set<AbortController>();
 	private readonly pending = new Map<string, PendingRequest>();
 	private readonly eventListeners = new Set<(frame: SessionFrameEnvelope) => void>();
@@ -50,6 +50,15 @@ export class SessionClientTransport {
 			socket.once("error", reject);
 		});
 		return new SessionClientTransport(socket, options);
+	}
+
+	/**
+	 * 连接建立后注入 reverse-request handler(TUI 在 SessionClient 连接后才
+	 * 装配 InteractiveMode)。reverse_request 只由用户 login/approval 触发,
+	 * 无构造期竞态;未注入前 headless 客户端按 fail-closed 处理。
+	 */
+	public setReverseRequestHandler(handler: SessionClientTransportOptions["reverseRequestHandler"]): void {
+		this.reverseRequestHandler = handler;
 	}
 
 	public request(frame: SessionFrameEnvelope): Promise<SessionFrameEnvelope> {
