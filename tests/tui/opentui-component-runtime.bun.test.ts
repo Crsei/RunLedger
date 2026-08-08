@@ -260,6 +260,40 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("a growing streaming markdown block never shows the new-content indicator", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 10 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      let text = "line\n";
+      let sawIndicator = false;
+      for (let i = 0; i < 60; i++) {
+        text += `line ${i} padding content here\n`;
+        runtime.update({
+          body: [{ id: "md", kind: "markdown", content: text, streaming: true }],
+          editorText: "",
+          footer: [],
+        });
+        await setup.renderOnce();
+        // 内容尚未超出视口时 scrollTop 可能为负，但此时必然处于底部，
+        // 不得因此误积累 pendingNewContent 并显示“new content”提示。
+        if (setup.captureCharFrame().includes("new content")) {
+          sawIndicator = true;
+          break;
+        }
+      }
+      expect(sawIndicator).toBe(false);
+      expect(setup.captureCharFrame()).toContain("line 59");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("keeps 10,000 keyed history entries available to viewport culling", async () => {
     const setup = await createTestRenderer({ width: 80, height: 20 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {

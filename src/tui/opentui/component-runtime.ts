@@ -450,7 +450,12 @@ export function createOpenTuiComponentRuntimeFromRenderer(
 }
 
 function isAtBottom(transcript: ScrollBoxRenderable): boolean {
-  const maxScrollTop = Math.max(0, transcript.scrollHeight - transcript.height);
+  // 与 OpenTUI 内部 maxScrollTop（scrollHeight - viewport.height）保持一致，
+  // 避免 transcript.height（含 wrapper/scrollbar）与 viewport 高度不一致造成误判。
+  const viewportHeight = transcript.viewport?.height ?? transcript.height;
+  const maxScrollTop = Math.max(0, transcript.scrollHeight - viewportHeight);
+  // 内容未超出视口时 scrollTop 可能为负（OpenTUI 预布局态），此时必然在底部。
+  if (maxScrollTop <= 0) return true;
   return transcript.scrollTop >= maxScrollTop - 1;
 }
 
