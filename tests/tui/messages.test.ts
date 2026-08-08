@@ -76,6 +76,23 @@ describe("ChatContainer", () => {
     const lines = chat.render(40);
     expect(lines).toEqual(["[a] x", "[b] y"]);
   });
+  it("Timeline 投影保留完整助手正文交给 OpenTUI 换行", () => {
+    const chat = new ChatContainer();
+    const content = "第一段包含超过终端宽度的完整回复内容。\n第二段也必须原样保留，不能变成省略号。";
+    chat.setTimelineBlocks([{
+      id: "timeline-assistant:1/text",
+      kind: "markdown",
+      content,
+      streaming: false,
+    }], 1);
+
+    expect(chat.present(20)).toEqual([{
+      id: "timeline-assistant:1/text",
+      kind: "markdown",
+      content,
+      streaming: false,
+    }]);
+  });
   it("child 抛错时不外抛,记 stderr;空降占位行", () => {
     const chat = new ChatContainer();
     const badChild = {

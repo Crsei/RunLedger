@@ -95,10 +95,9 @@ export class ChatContainer implements Component {
       if (this.presentCache?.generation === this.timelineGeneration && this.presentCache.width === width) {
         return this.presentCache.blocks;
       }
-      const blocks = this.timelineBlocks.map((block) => ({
-        ...block,
-        content: "content" in block ? fitToWidth(block.content, width) : undefined,
-      })) as PresentationBlock[];
+      // Timeline blocks 是交给 OpenTUI Text/Markdown renderable 的结构化正文；
+      // 由原生布局按容器宽度换行，不能在这里把整块内容当成单行截断。
+      const blocks = this.timelineBlocks.map((block) => ({ ...block })) as PresentationBlock[];
       this.presentCache = { generation: this.timelineGeneration, width, blocks };
       return blocks;
     }
