@@ -174,6 +174,31 @@ describe("TUI input components", () => {
     expect(editor.getText()).toBe("");
     expect(restored).toBe(1);
   });
+
+  it("导航键(原始转义与 OpenTUI 归一化键名)不泄漏进编辑器文本", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const editor = new CustomEditor(tui, makeEditorTheme(theme, makeSelectListTheme(theme)), { theme, selectListTheme: makeSelectListTheme(theme) });
+    editor.setText("abc");
+
+    // 原始转义序列
+    editor.handleInput("\x1b[A"); // up
+    editor.handleInput("\x1b[B"); // down
+    editor.handleInput("\x1b[C"); // right
+    editor.handleInput("\x1b[D"); // left
+    // OpenTUI 运行时归一化键名
+    editor.handleInput("up");
+    editor.handleInput("down");
+    editor.handleInput("left");
+    editor.handleInput("right");
+    editor.handleInput("home");
+    editor.handleInput("end");
+    editor.handleInput("pageUp");
+    editor.handleInput("tab");
+
+    expect(editor.getText()).toBe("abc");
+  });
 });
 
 describe("startup session selector", () => {

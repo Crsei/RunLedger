@@ -1,5 +1,5 @@
 import type { Component } from "../index.ts";
-import { matchesKey } from "../index.ts";
+import { isNavigationKey, matchesKey } from "../index.ts";
 import { fitLinesToWidth } from "./render-width.ts";
 import type { PresentationBlock } from "../presentation.ts";
 
@@ -40,6 +40,9 @@ export class AuthInputModal implements Component {
     }
     if (matchesKey(data, "ctrl+u")) {
       this.value = "";
+      return;
+    }
+    if (isNavigationKey(data)) {
       return;
     }
     if (!/[\u0000-\u001f\u007f]/u.test(data)) {

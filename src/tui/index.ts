@@ -17,6 +17,7 @@ export {
   isKeyRelease,
   isKeyRepeat,
   isKittyProtocolActive,
+  isNavigationKey,
   matchesKey,
   parseKey,
   parseOsc11BackgroundColor,

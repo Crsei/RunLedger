@@ -193,6 +193,7 @@ export class Editor implements Component, Focusable {
     if (matchesKey(data, "shift+enter") || matchesKey(data, "ctrl+j")) { this.setText(this.text + "\n"); return; }
     if (matchesKey(data, "backspace")) { this.setText(Array.from(this.text).slice(0, -1).join("")); return; }
     if (matchesKey(data, "ctrl+u")) { this.setText(""); return; }
+    if (isNavigationKey(data)) { this.tui.requestRender(); return; }
     if (!/[\u0000-\u001f\u007f]/u.test(data)) this.setText(this.text + data);
   }
 }
@@ -413,6 +414,16 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
   const alt = /^alt\+(.+)$/u.exec(keyId);
   if (alt?.[1]?.length === 1 && data === `\x1b${alt[1]}`) return true;
   return data === keyId;
+}
+
+/**
+ * OpenTUI 运行时把导航键归一化为字符串键名(up/down/left/right/escape/tab/...)
+ * 而不是原始转义序列;matchesKey 的 `data === keyId` 兜底能识别它们,但文本
+ * 输入组件必须显式消费,否则 "up" 这种键名会被当成普通字符追加进 buffer。
+ */
+const NAMED_NAVIGATION_KEYS = ["escape", "tab", "delete", "home", "end", "pageUp", "pageDown", "up", "down", "left", "right"] as const;
+export function isNavigationKey(data: string): boolean {
+  return NAMED_NAVIGATION_KEYS.some((key) => matchesKey(data, key));
 }
 export function parseKey(data: string): string | undefined { return Object.entries(RAW_KEYS).find(([, values]) => values.includes(data))?.[0] ?? (data.length === 1 ? data : undefined); }
 export function isKeyRelease(_data: string): boolean { return false; }
