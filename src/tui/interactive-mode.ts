@@ -554,6 +554,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (requestKind === "credential_prompt") {
       const prompt = decodeAuthPrompt(body.body);
       if (prompt === undefined) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+      // 提示用户 modal 已打开(部分终端下 overlay 渲染偶发不可见,notice 兜底)。
+      this.showNotice(`Credential prompt: ${prompt.message}`, "note");
       return new Promise<Record<string, unknown>>((resolve) => {
         let settled = false;
         const finish = (result: Record<string, unknown>): void => {

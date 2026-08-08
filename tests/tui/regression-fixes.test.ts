@@ -12,6 +12,7 @@ import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { Terminal } from "../../src/tui/index.ts";
 import type { HostFrameEnvelope } from "../../src/runtime/host/types.ts";
+import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 import type { ProviderWorkflowPort, ProviderCatalogSnapshot } from "../../src/tui/providers/types.ts";
 import { ContractController, settleFrames } from "./fixtures/contract-integration.ts";
 
@@ -130,5 +131,47 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		await running;
 		await settleFrames();
 		expect(vi).toBeDefined();
+	});
+
+	function credentialFrame(body: Record<string, unknown>): SessionFrameEnvelope {
+		return { frameId: "cred-1", kind: "reverse_request", protocolVersion: 1, body } as SessionFrameEnvelope;
+	}
+
+	it("R6: credential reverse-request prompt renders and returns the entered secret", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const pending = mode.handleCredentialReverseRequest(
+			credentialFrame({ kind: "credential_prompt", body: { promptType: "secret", message: "Enter DeepSeek API key" } }),
+			new AbortController().signal,
+		);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
+		expect(ui.hasOverlay()).toBe(true);
+		const overlay = (mode as unknown as { ui: { overlay: { handleInput?(data: string): void } | undefined } }).ui.overlay;
+		overlay?.handleInput?.("s");
+		overlay?.handleInput?.("k");
+		overlay?.handleInput?.("\r");
+		const body = await pending;
+		expect(body).toEqual({ ok: true, value: "sk" });
+	});
+
+	it("R6: aborting a credential reverse-request returns aborted", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const abort = new AbortController();
+		const pending = mode.handleCredentialReverseRequest(
+			credentialFrame({ kind: "credential_prompt", body: { promptType: "secret", message: "Enter DeepSeek API key" } }),
+			abort.signal,
+		);
+		abort.abort();
+		const body = await pending;
+		expect(body).toEqual({ ok: false, code: "aborted" });
+	});
+
+	it("R6: credential event is shown without a blocking response", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const body = await mode.handleCredentialReverseRequest(
+			credentialFrame({ kind: "credential_event", body: { eventType: "info", message: "opening browser" } }),
+			new AbortController().signal,
+		);
+		expect(body).toEqual({});
 	});
 });
