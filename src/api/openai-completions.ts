@@ -499,8 +499,8 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			// into errorMessage, so only append the raw metadata when it is not already
 			// present to avoid double-printing it.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
-			if (rawMetadata && !output.errorMessage.includes(String(rawMetadata))) {
-				output.errorMessage += `\n${rawMetadata}`;
+			if (rawMetadata && !(output.errorMessage ?? "").includes(String(rawMetadata))) {
+				output.errorMessage = `${output.errorMessage ?? "provider request failed"}\n${rawMetadata}`;
 			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();

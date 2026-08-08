@@ -330,4 +330,24 @@ describe("InteractiveSessionController", () => {
     await expect(controller.prompt("must authenticate again")).rejects.toThrow("not configured");
     controller.dispose();
   });
+
+  it("resolves the full catalog model on selectModel even when the wire passes a minimal shape", async () => {
+    const cwd = await tempDir();
+    const { models, p1 } = fixtureModels();
+    const controller = await InteractiveSessionController.create({
+      cwd,
+      layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+      systemPrompt: "test",
+      models,
+      settings: {},
+      replay: EMPTY_REPLAY,
+      ledger: new MemoryLedger(),
+      tools: [],
+    });
+    // 命令面 select_model 只传 { provider, id }(无 baseUrl/compat 等字段)。
+    await controller.selectModel({ provider: "p1", id: "m1" } as Model<Api>);
+    expect(controller.currentSelection.model?.baseUrl).toBe(p1.baseUrl);
+    expect(controller.currentSelection.model?.provider).toBe("p1");
+    controller.dispose();
+  });
 });

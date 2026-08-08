@@ -305,10 +305,13 @@ export class InteractiveSessionController {
   }
 
   async selectModel(model: Model<Api>): Promise<void> {
-    const thinkingLevel = clampThinkingLevel(model, this.selection.thinkingLevel);
-    this.selection = { provider: model.provider, model, thinkingLevel };
+    // 命令面只传 { provider, id } 等最小形状,按 catalog 解析完整 model
+    // (baseUrl/api/reasoning/compat 等),避免流式调用时字段缺失。
+    const resolved = this.models.getModel(model.provider, model.id) ?? model;
+    const thinkingLevel = clampThinkingLevel(resolved, this.selection.thinkingLevel);
+    this.selection = { provider: resolved.provider, model: resolved, thinkingLevel };
     this.ensureAgent();
-    this.agent?.setModel(model);
+    this.agent?.setModel(resolved);
     this.agent?.setThinkingLevel(thinkingLevel);
     await this.persistSelection("model");
   }
