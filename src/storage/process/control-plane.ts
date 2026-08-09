@@ -18,7 +18,7 @@ import {
 	type ProcessCreateResult,
 } from "../../runtime/process/manager.ts";
 import type { ExecutionConstraintInput } from "../../runtime/process/execution-decision.ts";
-import { CompletionReconciler, type CompletionAgentPort, type CompletionSchedulerResult } from "../../runtime/process/completion-reconciler.ts";
+import { CompletionReconciler, type CompletionAgentPort, type CompletionQueuePort, type CompletionSchedulerResult } from "../../runtime/process/completion-reconciler.ts";
 import {
 	ManagedProcessOutputMaterializer,
 	type ProcessOutputMaterializationRecord,
@@ -32,7 +32,6 @@ import type {
 	ProcessState,
 	ProcessTerminalState,
 } from "../../runtime/process/types.ts";
-import { JsonlProcessCompletionQueue } from "./completion-queue.ts";
 import type { OutputCursor } from "../../runtime/process/output.ts";
 import type { FileProcessOutputStore, ProcessOutputReadResult } from "./output-store.ts";
 import type { RecordingFailurePolicy } from "../../storage/settings-manager.ts";
@@ -79,7 +78,7 @@ export interface ManagedProcessControlPlaneOptions {
 	readonly manager: ProcessManager;
 	readonly auditedManager: AuditedProcessManager;
 	readonly backend: ManagedProcessBackendPort;
-	readonly completionQueue: JsonlProcessCompletionQueue;
+	readonly completionQueue: CompletionQueuePort;
 	readonly completionReconciler?: CompletionReconciler;
 	/** Host-owned Agent bridge; terminal watchers never call it directly. */
 	readonly completionAgent?: CompletionAgentPort;
@@ -89,6 +88,8 @@ export interface ManagedProcessControlPlaneOptions {
 		readonly handle: ExecutionHandleRef;
 		readonly record: ProcessOutputMaterializationRecord;
 	}) => void | Promise<void>;
+	/** Durable terminal truth 已提交后的 Session/Host attempt 收口回调。 */
+	readonly onProcessTerminal?: (summary: ManagedProcessSummary) => void | Promise<void>;
 	readonly recordingFailurePolicy?: RecordingFailurePolicy;
 	/** Queue admission is followed by a scheduler wake-up; this callback never prompts the Agent directly. */
 	readonly onAutomaticCompletion?: (envelope: ProcessCompletionEnvelope) => void;
@@ -156,12 +157,14 @@ export class ManagedProcessControlPlane {
 	private readonly manager: ProcessManager;
 	private readonly auditedManager: AuditedProcessManager;
 	private readonly backend: ManagedProcessBackendPort;
-	private readonly completionQueue: JsonlProcessCompletionQueue;
+	private readonly completionQueue: CompletionQueuePort;
 	private readonly policyDigest: RuntimeDigest;
 	private readonly budgetDigest: RuntimeDigest;
 	private readonly completionReconciler: CompletionReconciler;
 	private readonly completionAgent: CompletionAgentPort | undefined;
 	private readonly terminalWatchers = new Map<string, () => void>();
+	private readonly terminalTasks = new Set<Promise<void>>();
+	private readonly terminalFailures: Error[] = [];
 	private readonly outputMaterializer: ManagedProcessOutputMaterializer | undefined;
 	private readonly materializations = new Map<string, Promise<ProcessOutputMaterializationResult>>();
 	private readonly onAutomaticCompletion: ((envelope: ProcessCompletionEnvelope) => void) | undefined;
@@ -169,6 +172,7 @@ export class ManagedProcessControlPlane {
 		readonly handle: ExecutionHandleRef;
 		readonly record: ProcessOutputMaterializationRecord;
 	}) => void | Promise<void>) | undefined;
+	private readonly onProcessTerminal: ((summary: ManagedProcessSummary) => void | Promise<void>) | undefined;
 	private readonly recordingFailurePolicy: RecordingFailurePolicy;
 
 	public constructor(options: ManagedProcessControlPlaneOptions) {
@@ -183,6 +187,7 @@ export class ManagedProcessControlPlane {
 		this.outputMaterializer = options.outputMaterializer;
 		this.onAutomaticCompletion = options.onAutomaticCompletion;
 		this.onOutputMaterialized = options.onOutputMaterialized;
+		this.onProcessTerminal = options.onProcessTerminal;
 		this.recordingFailurePolicy = options.recordingFailurePolicy ?? "best_effort";
 	}
 
@@ -219,6 +224,13 @@ export class ManagedProcessControlPlane {
 	public reconcileCompletions(maxItems = RUNTIME_HOST_BOUNDS.maxCompletionBatchMembers): Promise<CompletionSchedulerResult> {
 		if (!this.completionAgent) return Promise.resolve({ ok: false, code: "agent_unavailable" });
 		return this.completionReconciler.reconcile(this.completionAgent, maxItems);
+	}
+
+	/** Graceful shutdown 在关闭 Session Store 前等待所有自动 terminal 投影。 */
+	public async waitForTerminalTasks(): Promise<void> {
+		while (this.terminalTasks.size > 0) await Promise.all([...this.terminalTasks]);
+		const failure = this.terminalFailures.shift();
+		if (failure !== undefined) throw failure;
 	}
 
 	/** 把一个 Host-owned process 映射为 R10 admission/drain/seal/settle port。 */
@@ -362,6 +374,7 @@ export class ManagedProcessControlPlane {
 		const preview = await this.preview(control, checkpointed.summary.outputCursor);
 		const terminalEvidenceRef = settlement.evidenceRef;
 		const summary = settled.summary;
+		await this.onProcessTerminal?.(summary);
 		if (!await this.materializeOutput(handle, control)) return { ok: false, code: "artifact_materialization_failed" };
 		return this.finishTerminal(summary, preview, nextCursor, terminalEvidenceRef, "explicit_wait");
 	}
@@ -486,7 +499,12 @@ export class ManagedProcessControlPlane {
 	private watchTerminal(handle: ExecutionHandleRef, control: ManagedProcessBackendControl): void {
 		if (!control.onTerminal || this.terminalWatchers.has(handle.executionId)) return;
 		const unsubscribe = control.onTerminal((terminal) => {
-			void this.handleWatchedTerminal(handle, terminal);
+			const task = this.handleWatchedTerminal(handle, terminal).catch((error: unknown) => {
+				this.terminalFailures.push(error instanceof Error ? error : new Error(String(error)));
+			}).finally(() => {
+				this.terminalTasks.delete(task);
+			});
+			this.terminalTasks.add(task);
 		});
 		this.terminalWatchers.set(handle.executionId, unsubscribe);
 	}
@@ -498,6 +516,7 @@ export class ManagedProcessControlPlane {
 		if (!checkpointed.ok) return;
 		const settled = await this.manager.settle(handle, toSettlement(handle, terminal));
 		if (!settled.ok) return;
+		await this.onProcessTerminal?.(settled.summary);
 		const nextCursor = await control.output.head();
 		const preview = await this.preview(control, settled.summary.outputCursor);
 		if (!await this.materializeOutput(handle, control)) return;

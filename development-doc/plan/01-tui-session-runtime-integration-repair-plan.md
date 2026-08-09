@@ -1,6 +1,6 @@
 # RunLedger TUI 与 Session Runtime 全链路接入修复计划
 
-> 文档状态：implementing（S0–S3 complete；S4 pending）<br>
+> 文档状态：implementing（S0–S4 complete；S5 pending）<br>
 > 记录日期：2026-08-09<br>
 > 记录基线：`session-owner-runtime@c608c77`，记录时工作区干净；S3 实施起点：`2c5a7be`<br>
 > 文档职责：跨领域执行编排，不替代各专项的状态与设计权威
@@ -195,6 +195,16 @@ CLI composition root 负责 detach、open/attach、renderer 销毁和下一轮 T
 5. observer 可读取状态和输出，不能执行 stdin、resize、stop。
 
 退出条件：真实 pipe/PTY/output/input/resize/stop、observer denial、crash uncertain 和跨 Session capacity 隔离全绿。
+
+#### S4 执行记录（2026-08-09）
+
+- `SessionManagedProcessComposition` 在每个 owned Session 内独立装配真实 pipe/POSIX PTY、bounded output cursor、stdin/EOF/resize/stop/wait、per-Session capacity 与 graceful terminal drain；stdlib background Bash 复用同一 process client。
+- process transition、spawn claim/receipt、constraint snapshot 与 completion queue/suppression 全部写入 owner-fenced Session Event Store；payload 只保存 `SessionId + OwnerFence` 语义，不保存 Host scope、`hostGeneration`、authority/tenant/workspace 字段。filesystem 只保留 private output/content 与 Trace Artifact。
+- process domain revision 由 owner-fenced Session Event Store 单独提交并在重启后精确恢复，不再从 handle revision 推算；副作用成功但 revision commit 失败时返回 typed `recovery_required`，且 `process_spawn` attempt 保持 unresolved。attempt 从 spawn 前保持 unresolved，自动或显式 terminal truth 提交后才结算。crash takeover 不按 PID/PTY reattach 或 respawn，旧非 terminal execution 投影为 `lost/uncertain` 并保持 recovery barrier。
+- Trace `events|events_and_artifacts` 按 Session owner generation materialize bounded output；Security prepare/final-leaf/complete 贯穿 process 生命周期，自动 terminal 也完成 approval/authorization settlement。
+- 标准 CLI 只在精确协商 `session.process.list/output` 时构造 Session overlay client；driver mutation 按精确 operation 注入，observer 在客户端/TCP/server 两层拒绝且不触达 backend。
+- focused 证据：Session process domain/composition/security/TUI adapter/control-plane 5 files / 36 tests 全绿（含真实 TCP observer、durable revision 重启恢复与 commit uncertain 回归）。全量门禁：`npm run check`、`npm run build`、Vitest 273 files passed / 1 skipped、1539 tests passed / 3 skipped，Bun OpenTUI 4 files / 32 tests / 179 assertions 全绿；隔离 Linux candidate 基础 fault/latency/security runner再次 ALL PASS。
+- candidate runner 本身仍未新增真实 model/MCP/process/PTY/worktree/Trace/approval 组合场景；macOS/Windows、标准 PATH fault rehearsal、独立审计与 human acceptance 仍 pending，因此不提升 R6.5/R8，也不启动 S9/R9。
 
 ### S5：Extension/MCP/Hook/Skill/Plugin
 

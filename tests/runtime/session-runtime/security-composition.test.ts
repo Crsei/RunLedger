@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import type { FileSystemBrokerPort } from "../../../src/security/policy-filesystem.ts";
 import type { NetworkBrokerPort } from "../../../src/security/policy-network.ts";
@@ -148,6 +149,18 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(mainSource).toContain("handleSessionReverseRequest");
 	});
 
+	it("composes the managed process domain and tools inside the owned SessionRuntime", () => {
+		const domainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
+		const embeddedSource = readFileSync(join(process.cwd(), "src/cli/embedded-session-runtime.ts"), "utf8");
+		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
+		expect(domainSource).toContain("const process = createSessionProcessComposition");
+		expect(domainSource).toContain("process.toolClient()");
+		expect(domainSource).toContain("process,");
+		expect(embeddedSource).toContain("await domain?.process?.recoverUnattached?.()");
+		expect(mainSource).toContain("createSessionProcessOverlayClient(controller)");
+		expect(mainSource).toContain("processOverlayController: view.processOverlayController");
+	});
+
 	it("rejects a read-only write before the filesystem broker mutates", async () => {
 		let writeCalls = 0;
 		const security = await composition({
@@ -158,6 +171,37 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		await expect(security.executionEnv.fs.writeFile(join(root, "blocked.txt"), "blocked"))
 			.rejects.toThrow(/denied|allowed roots|policy/u);
 		expect(writeCalls).toBe(0);
+	});
+
+	it("exposes a Session-scoped managed-process security final leaf", async () => {
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+		});
+
+		const managedProcess = (security as typeof security & {
+			managedProcess?: {
+				prepare(input: {
+					readonly commandId: string;
+					readonly command: string;
+					readonly cwd: string;
+					readonly timeoutMs: number;
+					readonly backend: "pipe" | "pty";
+					readonly executionMode: "foreground" | "background";
+					readonly requestDigest: ReturnType<typeof runtimeDigest>;
+				}): Promise<{ readonly ok: boolean }>;
+			};
+		}).managedProcess;
+		expect(managedProcess).toBeDefined();
+		if (managedProcess === undefined) return;
+		await expect(managedProcess.prepare({
+			commandId: "command_session_process_security",
+			command: "printf managed",
+			cwd: root,
+			timeoutMs: 5_000,
+			backend: "pipe",
+			executionMode: "background",
+			requestDigest: runtimeDigest({ command: "printf managed", cwd: root }),
+		})).resolves.toMatchObject({ ok: true });
 	});
 
 	it("uses the injected Session durable approval ports for an on-request write", async () => {

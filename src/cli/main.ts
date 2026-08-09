@@ -53,6 +53,12 @@ import { createSessionWorkspaceFactory } from "../runtime/session-runtime/worktr
 import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
 import { createProductionGitCommandPort } from "./session-git-command.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
+import {
+  createProcessOverlayController,
+  createSessionProcessOverlayClient,
+  type ProcessOverlayController,
+  type ProcessOverlayHostClient,
+} from "../tui/process/controller-adapter.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -211,8 +217,12 @@ export async function main(argv: readonly string[]): Promise<void> {
     const snapshot = await fetchDomainSnapshot(embedded);
     const controller = new SessionInteractiveController(embedded.handle, snapshot);
     await controller.resumeEvents();
-    await claimDriver(embedded, controller);
-    return { sessionId: targetSessionId, embedded, controller };
+    const role = await claimDriver(embedded, controller);
+    const processOverlayClient = createSessionProcessOverlayClient(controller);
+    const processOverlayController = processOverlayClient === undefined
+      ? undefined
+      : createProcessOverlayController(processOverlayClient, { driver: role === "driver" });
+    return { sessionId: targetSessionId, embedded, controller, processOverlayClient, processOverlayController };
   };
 
   let initialView: CliSessionView;
@@ -278,7 +288,12 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   async function runInteractiveView(view: CliSessionView) {
-    const activeInteractive = new InteractiveMode({ controller: view.controller, workspaceCapability: workspaceCapabilityLabel() });
+    const activeInteractive = new InteractiveMode({
+      controller: view.controller,
+      workspaceCapability: workspaceCapabilityLabel(),
+      processOverlayController: view.processOverlayController,
+      processOverlayClient: view.processOverlayClient,
+    });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {
       if (view.controller.inFlight) view.controller.interrupt();
@@ -301,6 +316,8 @@ interface CliSessionView {
   readonly sessionId: string;
   readonly embedded: EmbeddedSessionRuntimeResult;
   readonly controller: SessionInteractiveController;
+  readonly processOverlayClient: ProcessOverlayHostClient | undefined;
+  readonly processOverlayController: ProcessOverlayController | undefined;
 }
 
 /**

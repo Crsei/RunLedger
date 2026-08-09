@@ -68,6 +68,11 @@ export interface BackendSpawnPort {
 	spawn(input: BackendSpawnInput): Promise<BackendSpawnReceipt>;
 }
 
+export interface ProcessManagerOptions {
+	readonly maxProcessesPerSession?: number;
+	readonly maxProcessesTotal?: number;
+}
+
 /**
  * R5 的最小 durable seam。真实 JSONL/store 实现可以在后续阶段替换，
  * 但不能减少 intent、claim、receipt 和按 handle 重放这四个能力。
@@ -138,6 +143,8 @@ const TERMINAL_STATES: ReadonlySet<ProcessState> = new Set([
 export class ProcessManager {
 	private readonly journal: ProcessJournal;
 	private readonly backend: BackendSpawnPort;
+	private readonly maxProcessesPerSession: number;
+	private readonly maxProcessesTotal: number;
 	/**
 	 * A claim without a receipt is retryable only by the manager instance that
 	 * created the claim. A new Host must not guess whether the old backend
@@ -145,9 +152,11 @@ export class ProcessManager {
 	 */
 	private readonly localSpawnClaims = new Set<string>();
 
-	public constructor(journal: ProcessJournal, backend: BackendSpawnPort) {
+	public constructor(journal: ProcessJournal, backend: BackendSpawnPort, options: ProcessManagerOptions = {}) {
 		this.journal = journal;
 		this.backend = backend;
+		this.maxProcessesPerSession = boundedCapacity(options.maxProcessesPerSession, RUNTIME_HOST_BOUNDS.maxProcessesPerSession);
+		this.maxProcessesTotal = boundedCapacity(options.maxProcessesTotal, RUNTIME_HOST_BOUNDS.maxProcessesPerHost);
 	}
 
 	public async create(
@@ -166,8 +175,8 @@ export class ProcessManager {
 			let reservation: ReturnType<ProcessJournal["reserveProcessCapacity"]>;
 			try {
 				reservation = this.journal.reserveProcessCapacity(handle, {
-					maxPerSession: RUNTIME_HOST_BOUNDS.maxProcessesPerSession,
-					maxPerHost: RUNTIME_HOST_BOUNDS.maxProcessesPerHost,
+					maxPerSession: this.maxProcessesPerSession,
+					maxPerHost: this.maxProcessesTotal,
 				});
 			} catch {
 				return { ok: false, code: "journal_unavailable" };
@@ -648,6 +657,12 @@ function isStarted(state: ProcessState): boolean {
 function isOutputCursor(value: OutputCursor): boolean {
 	return Number.isSafeInteger(value.sequence) && value.sequence >= 0 &&
 		Number.isSafeInteger(value.byteOffset) && value.byteOffset >= 0;
+}
+
+function boundedCapacity(value: number | undefined, fallback: number): number {
+	if (value === undefined) return fallback;
+	if (!Number.isSafeInteger(value) || value < 1 || value > fallback) throw new Error("managed process capacity is outside the bounded range");
+	return value;
 }
 
 function summaryFromProjection(projection: ProcessProjection): ManagedProcessSummary {

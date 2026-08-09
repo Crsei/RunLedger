@@ -217,6 +217,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 	let domain: SessionDomainPort | undefined;
 	try {
 		domain = domainOptions === undefined ? undefined : await assembleSessionDomain(domainOptions, sessionId, store, result.fence, restored, attemptPort);
+		if (crashTakeover) await domain?.process?.recoverUnattached?.();
 	} catch (error) {
 		await workspace?.release("error").catch(() => undefined);
 		throw error;
@@ -232,7 +233,12 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		restored,
 		domain,
 		attemptPortRef: attemptPort,
-		...(workspace === undefined ? {} : { lifecycleCleanup: (reason) => workspace.release(reason) }),
+		...((workspace === undefined && domain?.process?.shutdown === undefined) ? {} : {
+			lifecycleCleanup: async (reason) => {
+				await domain?.process?.shutdown?.(reason);
+				await workspace?.release(reason);
+			},
+		}),
 	});
 	server.bindController(runtime);
 	runtime.start();

@@ -33,8 +33,9 @@ import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts"
 import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
 import type { Api, Model, ModelThinkingLevel } from "../../types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../interactive-session-controller.ts";
-import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionStatus } from "../session-server/protocol.ts";
+import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionProtocolOperationDescriptor, type SessionStatus } from "../session-server/protocol.ts";
 import { SessionDomainRouter } from "./domain-router.ts";
+import type { SessionDomainResult } from "./domain-router.ts";
 import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, type HumanWaitReason } from "./run-timing.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
@@ -48,7 +49,25 @@ export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
+	readonly process?: SessionProcessDomainPort;
 	snapshot(): SessionDomainSnapshot;
+}
+
+export interface SessionProcessDomainPort {
+	readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
+	query(
+		operation: string,
+		payload: Record<string, unknown>,
+		context: { readonly correlationId: string; readonly effectId: string },
+	): Promise<SessionDomainResult>;
+	mutate(
+		operation: string,
+		payload: Record<string, unknown>,
+		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number },
+	): Promise<SessionDomainResult>;
+	recoverUnattached?(): Promise<readonly unknown[]>;
+	hasRecoveryUncertainty?(): boolean;
+	shutdown?(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
 }
 
 export interface SessionDomainSnapshot {
@@ -388,6 +407,10 @@ export class SessionRuntime implements SessionController {
 	// ── recovery decision(§7.3)───────────────────────────────────────────
 
 	public recoveryAssess(): { readonly ok: true; readonly barrierState: "closed" | "open"; readonly unresolvedRemaining: number } {
+		if (this.domain?.process?.hasRecoveryUncertainty?.() === true) {
+			this.state = "recovery_required";
+			return { ok: true, barrierState: "open", unresolvedRemaining: this.unresolvedAttemptsCount() };
+		}
 		const result = this.barrier.assess();
 		if (result.ok && result.state === "closed") {
 			this.state = "ready";
@@ -410,13 +433,15 @@ export class SessionRuntime implements SessionController {
 	// ── SessionController facade(server 路由进本 runtime)──────────────────
 
 	public protocolManifest(): SessionProtocolManifest {
+		const processManifest = this.domain?.process?.operationManifest ?? [];
 		return freezeSessionProtocolManifest({
 			protocolCapabilities: [
 				...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities,
 				"session.catalog",
+				...(processManifest.length === 0 ? [] : ["session.process" as const]),
 				...(this.domain?.protocolCapabilities ?? []),
 			],
-			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest],
+			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest, ...processManifest],
 		});
 	}
 
@@ -569,6 +594,34 @@ export class SessionRuntime implements SessionController {
 				return { ok: true, kind: "domain_query", result: this.domainRouter.query(request.body) };
 			}
 			case "domain_command": {
+				const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+				const process = this.domain?.process;
+				if (process !== undefined && process.operationManifest.some((entry) => entry.operation === operation)) {
+					if (this.state === "recovery_required") {
+						return {
+							ok: true,
+							kind: "domain_command",
+							result: { ok: false, status: "recovery_required", code: "recovery_barrier_active", operation },
+						};
+					}
+					const validated = this.domainRouter.mutate(request.body, meta.isDriver);
+					if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") {
+						return { ok: true, kind: "domain_command", result: validated };
+					}
+					return {
+						ok: true,
+						kind: "domain_command",
+						result: await process.mutate(
+							operation,
+							objectValue(request.body.payload) ?? {},
+							{
+								correlationId: String(request.body.correlationId),
+								effectId: String(request.body.effectId),
+								expectedRevision: Number(request.body.expectedRevision),
+							},
+						),
+					};
+				}
 				return { ok: true, kind: "domain_command", result: this.domainRouter.mutate(request.body, meta.isDriver) };
 			}
 			case "recovery_explain": {
@@ -635,8 +688,23 @@ export class SessionRuntime implements SessionController {
 
 	public async handleQuery(request: SessionQueryRequest): Promise<Record<string, unknown>> {
 		switch (request.kind) {
-			case "domain_query":
+			case "domain_query": {
+				const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+				const process = this.domain?.process;
+				if (process !== undefined && process.operationManifest.some((entry) => entry.operation === operation)) {
+					const validated = this.domainRouter.query(request.body);
+					if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return validated;
+					return process.query(
+						operation,
+						objectValue(request.body.payload) ?? {},
+						{
+							correlationId: String(request.body.correlationId),
+							effectId: String(request.body.effectId),
+						},
+					);
+				}
 				return this.domainRouter.query(request.body);
+			}
 			case "snapshot":
 				return this.domainSnapshot();
 			case "timeline":

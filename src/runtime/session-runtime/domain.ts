@@ -17,12 +17,13 @@ import { SqliteLedgerSink } from "./sqlite-ledger.ts";
 import { gatedExecutionEnv, type LateBoundAttemptPort } from "./attempt-gateway.ts";
 import { replaySession } from "../../storage/session-codec.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
-import { createStdlibTools } from "../tools/index.ts";
+import { createStdlibTools, type StdlibToolsOptions } from "../tools/index.ts";
 import { InteractiveSessionController, type RuntimeSelectionOverrides } from "../interactive-session-controller.ts";
 import type { AgentTool } from "../types.ts";
 import type { Models } from "../../models.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
 import type { ProjectSettings } from "../../storage/settings-manager.ts";
+import { resolveRecordingConfig } from "../../storage/settings-manager.ts";
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +35,8 @@ import type { RestoreOutcome } from "./restore.ts";
 import { restoreCheckpointReplay } from "./checkpoint.ts";
 import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
 import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
+import { createSessionProcessComposition } from "./process-composition.ts";
+export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
 	readonly cwd: string;
@@ -73,6 +76,19 @@ export async function assembleSessionDomain(
 		...(options.securitySources === undefined ? {} : { securitySources: options.securitySources }),
 		...(options.approvalPorts === undefined ? {} : { approvalPorts: options.approvalPorts }),
 	});
+	const recording = resolveRecordingConfig(options.settings);
+	const process = createSessionProcessComposition({
+		layout: options.layout,
+		store,
+		cwd: options.cwd,
+		fence,
+		workspaceId: catalog.workspaceId as Parameters<typeof createSessionProcessComposition>[0]["workspaceId"],
+		security: security.managedProcess,
+		attemptPort: () => attemptPort.get(),
+		recordingMode: recording.mode,
+		recordingFailurePolicy: recording.failurePolicy,
+		...(options.traceRecorderFactory === undefined ? {} : { traceRecorderFactory: options.traceRecorderFactory }),
+	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
 	const executionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
 	const traceRecorderFactory = options.traceRecorderFactory === undefined
@@ -93,13 +109,14 @@ export async function assembleSessionDomain(
 		replay,
 		ledger,
 		overrides: options.overrides,
-		tools: productionSessionTools(options.cwd, executionEnv),
+		tools: productionSessionTools(options.cwd, executionEnv, process.toolClient()),
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
 	});
 	return {
 		controller,
+		process,
 		protocolCapabilities: ["session.approval.reverse", "session.security.inspect"],
 		securityInspection: () => ({
 			ownerGeneration: fence.generation,
@@ -160,11 +177,16 @@ export function buildSystemPrompt(cwd: string, globalAgents: string): string {
 }
 
 /** 生产工具集:stdlib(read/write/edit/bash/grep/find/ls/multi-edit/web-fetch/todo/task),排除 echo/Skill/NotebookEdit。 */
-export function productionSessionTools(cwd: string, executionEnv: ExecutionEnv): AgentTool[] {
+export function productionSessionTools(
+	cwd: string,
+	executionEnv: ExecutionEnv,
+	managedProcess?: StdlibToolsOptions["managedProcess"],
+): AgentTool[] {
 	const excluded = new Set(["Skill", "NotebookEdit", "echo"]);
 	return createStdlibTools(cwd, {
 		requireExecutionEnv: true,
 		executionEnv,
+		...(managedProcess === undefined ? {} : { managedProcess }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

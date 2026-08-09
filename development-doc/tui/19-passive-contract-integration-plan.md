@@ -630,8 +630,8 @@ tests/tui/
   `host_operation_unsupported`；
 - P1-4 B7 真实通道：Host adapter 只暴露真实支持的 `extension.inspect`、`plan.inspect`、
   `security.inspect`、`worktree.inspect`；task-goal/agent/runtime/update 不再创建假 available
-  port；process bridge 由 composition root 注入真实 `processOverlayClient`（`main.ts` 传
-  `createProductionProcessOverlayClient`），output/mutate 不再恒 unavailable；
+  port；process bridge 由 composition root 注入真实 `processOverlayClient`；S4 后标准 CLI 改为
+  `createSessionProcessOverlayClient(controller)`，只按握手精确 operation 构造 output/mutate；
 - P1-5 退出清理：`requestQuit` 先 `runner.cancelAll()` 再 lifecycle cleanup，并 dispatch
   `cleanup(destroy)` 全局清 active timeline rows；
 - P1-6 Session capability negotiation（2026-08-09）：生产 `SessionInteractiveController`
@@ -651,6 +651,13 @@ tests/tui/
   `session.security.inspect` 时构造只读 security port，mutation 本地 unavailable 且不发 frame；无
   domain Runtime 不虚报 approval/security capability。该项闭合新集成计划 S3 的 TUI 接缝，不代表
   B6 全部 governed workflow 或 B7 process/extension 已完成；
+- P1-9 Session process overlay 接线（2026-08-09）：标准 CLI 在 driver claim 后按
+  `session.process.list/output/stdin/resize/stop` 精确协商结果构造 client/controller，并把真实
+  driver/observer role 注入 overlay；TCP observer 可读 list/output，但 mutation 在发送前返回
+  `driver_required`，server 仍保留 `observer_mutation_forbidden` 二次防线。真实 pipe/PTY/output、
+  cursor、Trace、Security、attempt 与 crash uncertain authority 均位于 SessionRuntime，不在 TUI
+  建第二 process manager；B7 的 process 子集因此闭合，extension/task/goal/agent/runtime/update
+  缺口仍使 B7 整体保持 `implementing`；
 - P2-1 generation/typed fence：stale/aborted reset 同样核对 generation；plan/extension 等
   已接通投影继续做枚举与结构校验，未有真实 Host operation 的领域直接 unavailable；
 - P2-2 全局 cleanup：`TimelineEvent.cleanup.correlationId` 改 optional，projector 不传时

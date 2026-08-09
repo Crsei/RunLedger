@@ -6,7 +6,7 @@
  * 必须执行已校验 launch plan，不能回退执行原始 shell command。
  */
 
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import type {
 	ExecutionEnv,
 	FileSystem,
@@ -24,6 +24,7 @@ import {
 	evaluateExecutionConstraints,
 	type ExecutionConstraintInput,
 	type ExecutionConstraintProviders,
+	type ExecutionConstraintSnapshot,
 } from "../runtime/process/execution-decision.ts";
 import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
 import { runtimeDigest, type RuntimeDigest } from "../runtime/protocol/foundation.ts";
@@ -99,6 +100,31 @@ export interface SessionSecurityComposition {
 	readonly snapshot: SecuritySnapshot;
 	readonly executionEnv: ExecutionEnv;
 	readonly authorizationPolicy: ToolAuthorizationPolicy;
+	readonly managedProcess: SessionManagedProcessSecurity;
+}
+
+export interface SessionManagedProcessSecurityRequest {
+	readonly commandId: string;
+	readonly command: string;
+	readonly cwd: string;
+	readonly timeoutMs: number;
+	readonly backend: "pipe" | "pty";
+	readonly executionMode: "foreground" | "background";
+	readonly requestDigest: RuntimeDigest;
+	readonly stdin?: string;
+}
+
+export interface PreparedSessionManagedProcessSecurity {
+	readonly constraintInput: ExecutionConstraintInput;
+	readonly constraintSnapshot: ExecutionConstraintSnapshot;
+	readonly requestDigest: RuntimeDigest;
+	readonly sandboxPlan?: SandboxLaunchPlan;
+	validateFinalLeaf(): ReturnType<ProcessFinalLeafAdapter["decide"]>;
+	complete(): Promise<SecurityResult<void>>;
+}
+
+export interface SessionManagedProcessSecurity {
+	prepare(input: SessionManagedProcessSecurityRequest, signal?: AbortSignal): Promise<SecurityResult<PreparedSessionManagedProcessSecurity>>;
 }
 
 interface SessionIdentity {
@@ -156,6 +182,17 @@ export async function createSessionSecurity(
 		finalLeaf,
 	});
 	const authorize = createAuthorizer({ options, identity, snapshot, gateway, providers, workspace });
+	const managedProcess = createManagedProcessSecurity({
+		options,
+		identity,
+		snapshot,
+		gateway,
+		providers,
+		workspace,
+		bindings,
+		finalLeaf,
+		sandboxBackend,
+	});
 	const executionEnv: ExecutionEnv = {
 		cwd,
 		fs: createGovernedFileSystem(authorize, cwd),
@@ -179,7 +216,121 @@ export async function createSessionSecurity(
 		snapshot,
 		executionEnv,
 		authorizationPolicy: new GovernedToolAuthorizationPolicy(),
+		managedProcess,
 	};
+}
+
+function createManagedProcessSecurity(input: {
+	readonly options: SessionSecurityCompositionOptions;
+	readonly identity: SessionIdentity;
+	readonly snapshot: SecuritySnapshot;
+	readonly gateway: ExecutionGateway;
+	readonly providers: ExecutionConstraintProviders;
+	readonly workspace: (toolCallId: string, cwd?: string) => HostWorkspaceExecutionContext;
+	readonly bindings: Map<string, ProcessBinding>;
+	readonly finalLeaf: ProcessFinalLeafAdapter;
+	readonly sandboxBackend: SandboxBackend;
+}): SessionManagedProcessSecurity {
+	return {
+		prepare: async (request, signal) => {
+			if (!isAbsolute(request.cwd) || !Number.isSafeInteger(request.timeoutMs) || request.timeoutMs < 1) {
+				return securityError("invalid_request", "managed process request is malformed");
+			}
+			const commandId = parseRuntimeId("command", request.commandId)
+				?? createRuntimeId("command", canonicalDigest(request.commandId).slice(0, 64));
+			const toolCallId = createRuntimeId("toolCall", `process-${request.requestDigest.digest.slice(0, 48)}`);
+			const workspace = input.workspace(toolCallId, request.cwd);
+			const authorization = {
+				...authorizationRequest(
+				input.options.fence,
+				input.snapshot,
+				workspace,
+				toolCallId,
+				"bash",
+				[{ kind: "shell", command: request.command, cwd: request.cwd, analysis: analyzeShellCommand(request.command).analysis }],
+				{
+					command: request.command,
+					cwd: request.cwd,
+					timeoutMs: request.timeoutMs,
+					backend: request.backend,
+					executionMode: request.executionMode,
+					stdinDigest: digestOf(request.stdin ?? ""),
+				},
+				request.cwd,
+				),
+				requestId: commandId,
+			};
+			const requestDigest = gatewayRequestDigest(authorization);
+			const restrictive = input.snapshot.profile.sandbox !== "off";
+			let plan: SandboxLaunchPlan | undefined;
+			if (restrictive) {
+				const prepared = await input.sandboxBackend.prepare(sandboxRequest(
+					input.snapshot,
+					workspace,
+					requestDigest,
+					request.command,
+					{ timeoutMs: request.timeoutMs, ...(request.stdin === undefined ? {} : { stdin: request.stdin }) },
+					request.cwd,
+				));
+				if (!prepared.ok) return securityError("policy_denied", prepared.error.message);
+				plan = prepared.value;
+				input.bindings.set(requestDigest.digest, { plan });
+			}
+			try {
+				const baseConstraintInput = executionConstraintInput(
+					input.identity,
+					input.options.fence,
+					commandId,
+					requestDigest,
+					input.snapshot,
+					restrictive ? "profile" : "none",
+				);
+				const executionIdentityDigest = canonicalDigest({ commandId, requestDigest });
+				const constraintInput: ExecutionConstraintInput = {
+					...baseConstraintInput,
+					executionId: createRuntimeId("execution", executionIdentityDigest),
+					attemptId: createRuntimeId("attempt", `${executionIdentityDigest}_1`),
+				};
+				const constraints = await evaluateExecutionConstraints(constraintInput, input.providers);
+				if (!constraints.ok) {
+					return securityError(
+						constraints.code === "constraint_denied" ? "policy_denied" : "invalid_request",
+						`managed process constraint ${constraints.code} at ${constraints.dimension}`,
+					);
+				}
+				const opened = await input.gateway.authorize({
+					request: authorization,
+					requestDigest,
+					constraintInput,
+					constraintSnapshot: constraints.snapshot,
+				}, signal);
+				if (!opened.ok) return opened;
+				return {
+					ok: true,
+					value: {
+						constraintInput,
+						constraintSnapshot: constraints.snapshot,
+						requestDigest,
+						...(plan === undefined ? {} : { sandboxPlan: plan }),
+						validateFinalLeaf: () => input.finalLeaf.decide({
+							constraintInput,
+							constraintSnapshot: constraints.snapshot,
+							requestDigest,
+							policyDigest: input.snapshot.policyDigest,
+							...(plan === undefined ? {} : { sandboxPlan: plan }),
+						}),
+						complete: opened.value.complete,
+					},
+				};
+			} finally {
+				input.bindings.delete(requestDigest.digest);
+			}
+		},
+	};
+}
+
+function securityError(code: "invalid_request" | "policy_denied", message: string): SecurityResult<never> {
+	return { ok: false, error: { code, message, retryable: false } };
 }
 
 function sessionIdentity(workspaceId: string, repositoryId: string): SessionIdentity {

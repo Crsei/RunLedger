@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import * as processAdapters from "../../../src/tui/process/controller-adapter.ts";
 import { createProcessOverlayController } from "../../../src/tui/process/controller-adapter.ts";
+import type { ProcessOverlayHostClient } from "../../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../../src/tui/process/types.ts";
 
 const executionId = createRuntimeId("execution", "controller");
@@ -16,6 +18,44 @@ const item: ProcessOverlayItem = {
 };
 
 describe("R9 process overlay Host facade adapter", () => {
+	it("builds a process overlay client only from negotiated Session operations", async () => {
+		const factory = (processAdapters as typeof processAdapters & {
+			createSessionProcessOverlayClient?: (controller: Record<string, unknown>) => ProcessOverlayHostClient | undefined;
+		}).createSessionProcessOverlayClient;
+		expect(factory).toBeTypeOf("function");
+		if (factory === undefined) return;
+		const calls: string[] = [];
+		const controller = {
+			supports: (operation: string) => new Set([
+				"session.process.list",
+				"session.process.output",
+				"session.process.stdin",
+				"session.process.resize",
+				"session.process.stop",
+			]).has(operation),
+			querySessionDomain: async (operation: string) => {
+				calls.push(operation);
+				if (operation === "session.process.list") return { ok: true, status: "ok", operation, domainRevision: 4, value: { items: [item] } };
+				return {
+					ok: true, status: "ok", operation, domainRevision: 4,
+					value: { text: "session output", startCursor: { sequence: 0, byteOffset: 0 }, endCursor: { sequence: 1, byteOffset: 14 }, nextCursor: { sequence: 1, byteOffset: 14 }, truncated: false, head: { sequence: 1, byteOffset: 14 } },
+				};
+			},
+			commandSessionDomain: async (operation: string) => {
+				calls.push(operation);
+				return { ok: true, status: "ok", operation, domainRevision: 4, value: { receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } } };
+			},
+		};
+		const client = factory(controller);
+		expect(client).toBeDefined();
+		if (client === undefined) return;
+		await expect(client.listProcesses()).resolves.toEqual([item]);
+		await expect(client.processOutput(executionId, { sequence: 0, byteOffset: 0 }, 1_024)).resolves.toMatchObject({ ok: true, text: "session output" });
+		await expect(client.writeStdin?.(executionId, "input")).resolves.toMatchObject({ ok: true });
+		expect(calls).toEqual(["session.process.list", "session.process.output", "session.process.stdin"]);
+
+		expect(factory({ ...controller, supports: () => false })).toBeUndefined();
+	});
 	it("refreshes safe list and reads output lazily by cursor", async () => {
 		const calls: string[] = [];
 		const controller = createProcessOverlayController({
