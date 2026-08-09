@@ -158,16 +158,21 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let pendingNewContent = 0;
   let syntaxStyle = createRunLedgerSyntaxStyle();
   let previousNativeCellsUpdated = 0;
+  const copySelection = (selectedText: string | undefined): boolean => {
+    if (selectedText === undefined || selectedText.length === 0) return false;
+    renderer.copyToClipboardOSC52(selectedText);
+    return true;
+  };
+  const onSelection = (): void => {
+    copySelection(renderer.getSelection()?.getSelectedText());
+  };
+  renderer.on("selection", onSelection);
   renderer.keyInput.on("keypress", (key) => {
     key.preventDefault();
     key.stopPropagation();
     const input = normalizedInputFor(key);
     if (input === "ctrl+c") {
-      const selectedText = renderer.getSelection()?.getSelectedText();
-      if (selectedText !== undefined && selectedText.length > 0) {
-        renderer.copyToClipboardOSC52(selectedText);
-        return;
-      }
+      if (copySelection(renderer.getSelection()?.getSelectedText())) return;
     }
     if (input === "pageUp" || input === "pageDown") {
       transcript.scrollBy(input === "pageUp" ? -1 : 1, "viewport");
@@ -435,6 +440,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     },
     destroy: () => {
       renderer.off("frame", onFrame);
+      renderer.off("selection", onSelection);
       renderer.destroy();
       syntaxStyle.destroy();
     },

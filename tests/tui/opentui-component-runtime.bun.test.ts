@@ -26,8 +26,45 @@ describe("OpenTUI component projection", () => {
       await setup.mockMouse.drag(0, 0, 9, 0);
       const selectedText = setup.renderer.getSelection()?.getSelectedText();
       expect(selectedText).toContain("RunLedger");
+      copy.mockClear();
 
       setup.mockInput.pressKey("c", { ctrl: true });
+
+      expect(copy).toHaveBeenCalledWith(selectedText);
+      expect(inputs).toEqual([]);
+    } finally {
+      copy.mockRestore();
+      runtime.destroy();
+    }
+  });
+
+  test("copies a native conversation selection when mouse selection finishes", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const inputs: string[] = [];
+    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: (data) => inputs.push(data),
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [
+          { id: "user-1", kind: "text", content: "user: copy this question" },
+          {
+            id: "assistant-1",
+            kind: "markdown",
+            content: "assistant: **copy this answer**",
+            streaming: false,
+          },
+        ],
+        editorText: "",
+        footer: ["idle"],
+      });
+      await setup.renderOnce();
+      await setup.mockMouse.drag(0, 0, 18, 1);
+      const selectedText = setup.renderer.getSelection()?.getSelectedText();
+      expect(selectedText).toContain("user: copy this");
+      expect(selectedText).toContain("assistant:");
 
       expect(copy).toHaveBeenCalledWith(selectedText);
       expect(inputs).toEqual([]);
