@@ -233,15 +233,26 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		restored,
 		domain,
 		attemptPortRef: attemptPort,
-		...((workspace === undefined && domain?.process?.shutdown === undefined) ? {} : {
+		...((workspace === undefined && domain?.process?.shutdown === undefined && domain?.shutdown === undefined) ? {} : {
 			lifecycleCleanup: async (reason) => {
+				await domain?.shutdown?.(reason);
 				await domain?.process?.shutdown?.(reason);
 				await workspace?.release(reason);
 			},
 		}),
 	});
-	server.bindController(runtime);
-	runtime.start();
+	try {
+		await domain?.start?.();
+		server.bindController(runtime);
+		runtime.start();
+	} catch (error) {
+		await domain?.shutdown?.("error").catch(() => undefined);
+		await domain?.process?.shutdown?.("error").catch(() => undefined);
+		await workspace?.release("error").catch(() => undefined);
+		claimOwner.release("error");
+		await server.closeCandidate().catch(() => undefined);
+		throw error;
+	}
 	// 本地 view 也走 TCP facade(不直接调 controller)。
 	const client = new SessionClient({ store, ownerStore, claimTransport: server, ...(options.reverseRequestHandler === undefined ? {} : { reverseRequestHandler: options.reverseRequestHandler }) });
 	const opened = await client.attachTo(ownerStore.readOwner(sessionId)!, server.endpoint, claimOwner.currentAuthToken);

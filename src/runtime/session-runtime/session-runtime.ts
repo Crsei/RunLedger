@@ -50,7 +50,27 @@ export interface SessionDomainPort {
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
 	readonly process?: SessionProcessDomainPort;
+	readonly resources?: SessionResourceDomainPort;
+	/** 外部资源只可在 attempt port 绑定后、server activate 前启动。 */
+	start?(): Promise<void>;
+	/** SessionRuntime 退出时关闭本 Session 私有的外部资源。 */
+	shutdown?(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
 	snapshot(): SessionDomainSnapshot;
+}
+
+/** Session-scoped Extension/MCP/Hook/Skill/Plugin read/mutation surface。 */
+export interface SessionResourceDomainPort {
+	readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
+	query(
+		operation: string,
+		payload: Record<string, unknown>,
+		context: { readonly correlationId: string; readonly effectId: string },
+	): Promise<SessionDomainResult>;
+	mutate?(
+		operation: string,
+		payload: Record<string, unknown>,
+		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number },
+	): Promise<SessionDomainResult>;
 }
 
 export interface SessionProcessDomainPort {
@@ -279,11 +299,11 @@ export class SessionRuntime implements SessionController {
 			}
 			if (this.domain !== undefined && typeof this.domain.controller.waitForIdle === "function") {
 				await boundedWait(this.domain.controller.waitForIdle(), 3_000);
-			}
-			this.persistAbortedRunIfNeeded();
-			this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
-			await this.lifecycleCleanup?.(reason).catch(() => undefined);
-			this.owner.release(reason);
+				}
+				this.persistAbortedRunIfNeeded();
+				await this.lifecycleCleanup?.(reason).catch(() => undefined);
+				this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
+				this.owner.release(reason);
 			await this.server.close();
 			this.domainListener?.();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
@@ -434,14 +454,16 @@ export class SessionRuntime implements SessionController {
 
 	public protocolManifest(): SessionProtocolManifest {
 		const processManifest = this.domain?.process?.operationManifest ?? [];
+		const resourceManifest = this.domain?.resources?.operationManifest ?? [];
 		return freezeSessionProtocolManifest({
 			protocolCapabilities: [
 				...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities,
 				"session.catalog",
 				...(processManifest.length === 0 ? [] : ["session.process" as const]),
+				...resourceManifest.map((entry) => entry.capability),
 				...(this.domain?.protocolCapabilities ?? []),
 			],
-			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest, ...processManifest],
+			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest, ...processManifest, ...resourceManifest],
 		});
 	}
 
@@ -688,9 +710,9 @@ export class SessionRuntime implements SessionController {
 
 	public async handleQuery(request: SessionQueryRequest): Promise<Record<string, unknown>> {
 		switch (request.kind) {
-			case "domain_query": {
-				const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
-				const process = this.domain?.process;
+				case "domain_query": {
+					const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+					const process = this.domain?.process;
 				if (process !== undefined && process.operationManifest.some((entry) => entry.operation === operation)) {
 					const validated = this.domainRouter.query(request.body);
 					if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return validated;
@@ -701,9 +723,22 @@ export class SessionRuntime implements SessionController {
 							correlationId: String(request.body.correlationId),
 							effectId: String(request.body.effectId),
 						},
-					);
-				}
-				return this.domainRouter.query(request.body);
+						);
+					}
+					const resources = this.domain?.resources;
+					if (resources !== undefined && resources.operationManifest.some((entry) => entry.operation === operation && entry.access === "read")) {
+						const validated = this.domainRouter.query(request.body);
+						if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return validated;
+						return resources.query(
+							operation,
+							objectValue(request.body.payload) ?? {},
+							{
+								correlationId: String(request.body.correlationId),
+								effectId: String(request.body.effectId),
+							},
+						);
+					}
+					return this.domainRouter.query(request.body);
 			}
 			case "snapshot":
 				return this.domainSnapshot();

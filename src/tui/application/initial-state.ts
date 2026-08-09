@@ -86,6 +86,8 @@ export function createInitialTuiState(input: InitialTuiStateInput): TuiState {
       selectedId: { state: "unknown", reason: "no-selection" },
       generation: 0,
       viewportClearRevision: 0,
+	  terminalFocused: true,
+	  viewport: { columns: 0, rows: 0 },
       toolDetailsExpanded: false,
       composerEmpty: true,
       composerDraft: { text: "", truncated: false, byteLength: 0 },

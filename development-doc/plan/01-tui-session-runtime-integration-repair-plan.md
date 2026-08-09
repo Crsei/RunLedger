@@ -1,6 +1,6 @@
 # RunLedger TUI 与 Session Runtime 全链路接入修复计划
 
-> 文档状态：implementing（S0–S4 complete；S5 pending）<br>
+> 文档状态：implementing（S0–S6 complete；S7 pending）<br>
 > 记录日期：2026-08-09<br>
 > 记录基线：`session-owner-runtime@c608c77`，记录时工作区干净；S3 实施起点：`2c5a7be`<br>
 > 文档职责：跨领域执行编排，不替代各专项的状态与设计权威
@@ -227,6 +227,17 @@ CLI composition root 负责 detach、open/attach、renderer 销毁和下一轮 T
 6. 删除未使用的 `debug`、`modelRegistry`、`initialThinkingLevel`、`onThinkingChange` 等 option；若发现真实唯一 authority，则先补合同和测试后接线，不能继续静默接受。
 
 退出条件：输入、paste、resize、focus、session workflow、process overlay 和 approval overlay 都通过真实 OpenTUI renderer 测试。
+
+#### S5–S6 执行记录（2026-08-09）
+
+- `extension-composition.ts` 已成为 production owned Session 的扩展组合根：每个 Session 独立创建 `ExtensionManager`、`PluginManager`、Skill resolver、Hook turn lifecycle 和 `McpConnectionManager`，读取各自 workspace MCP 配置，不存在跨 Session mutable registry 或 connection 复用。中立实现已迁到 `src/extensions/manager.ts`，`host-manager.ts` 只保留 R9 前兼容重导出，Session Owner 边界检查不再需要 legacy Host import 豁免。
+- required MCP 启动失败会在 Runtime activate 前 typed fail closed、写审计并释放 owner；optional 失败写 `extension.mcp.optional_failed` 后允许启动。MCP catalog discovery 失败会关闭已连接 transport；`mcp_call` 在接触 transport 前先进入 attempt gateway/recovery barrier，Hook managed process 在 barrier 拒绝后不会读取输出或执行 wait/stop。
+- Skill 正文继续通过 trust/digest/`allowedTools` 重验后按需加载；Plugin 只贡献已启用且受信的 Skill/Hook/MCP descriptor。当前支持的外部 lifecycle 在 checkpoint 与 owner release 前按 MCP -> Hook -> Plugin -> cleanup 顺序关闭，生产测试直接观察该顺序。
+- OpenTUI keypress、paste、resize、focus/blur 已统一进入 `normalize-action.ts`；第二套 app key interpreter 已删除。reducer 新增 normalized focus/viewport state，`projectInteractivePresentation()` 一次性投影 Timeline、session strip、active/status、footer、welcome 与 composer，`InteractiveMode` 不再直接解释 Timeline。
+- TUI capability view 只有在握手精确协商 operation 且 composition 注入对应 port 时才可用；既有 `/sessions`、`/new`、`/resume`、`/fork` 转场继续通过 typed Session intent，quit 仍只返回 typed exit intent。未使用的 InteractiveMode options 已删除。
+- 原生 OpenTUI 回归证明 key/paste/focus/resize、process overlay 与 approval overlay 都走真实 renderer；approval selector 依照 OpenTUI 每 option 两行的布局合同计算高度，`Allow once` 与 `Deny` 同时可见，renderer destroy 仍由 owner 控制。
+- focused GREEN：S5/S6 11 files / 94 tests；Extension manager/lifecycle/runtime 3 files / 15 tests；Bun OpenTUI 4 files / 33 tests / 187 assertions。全量 `npm test` exit 0，Vitest JSON reporter 为 627 suites / 1558 tests（1555 passed、3 skipped、0 failed）；`npm run check` 与 `npm run build` 通过。
+- 本批闭合 S5、S6 与 Runtime R6 的 MCP/Hook/Skill/Plugin production blocking gap，但不把 Extension 专项的完整 CLI mutation、trust/enable/reload、plugin fixture、MCP OAuth 等剩余范围标为完成。candidate runner 仍未覆盖真实 model/MCP/process/PTY/worktree/Trace/approval 组合，macOS/Windows、标准 PATH fault rehearsal、独立审计和 human acceptance 仍 pending，因此 R6.5/R8 不接受，S7 尚未开始，S9/R9 不启动。
 
 ### S7：Timeline 等价性与 TUI 清理
 

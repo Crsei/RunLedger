@@ -14,6 +14,8 @@ import { ansiToStyledText } from "./ansi-styled-text.ts";
 import type { TuiPerformanceObserver } from "./performance-observer.ts";
 import { createRunLedgerSyntaxStyle } from "./syntax-style.ts";
 import type { PresentationBlock } from "../presentation.ts";
+import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
+import type { TuiAction } from "../application/action.ts";
 
 export interface OpenTuiComponentFrame {
   body: readonly (string | PresentationBlock)[];
@@ -25,6 +27,7 @@ export interface OpenTuiComponentFrame {
 export interface OpenTuiComponentRuntimeOptions {
   onInput(data: string): void;
   onResize(): void;
+  onActions?(actions: readonly TuiAction[]): void;
   onThemeMode?(mode: "dark" | "light"): void;
   performanceObserver?: TuiPerformanceObserver;
 }
@@ -177,6 +180,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     key.preventDefault();
     key.stopPropagation();
     const input = normalizedInputFor(key);
+    const appInput = appInputForKeypress(input);
+    if (appInput !== undefined) options.onActions?.(normalizeAppInput(appInput));
     if (input === "ctrl+c") {
       if (copySelection(renderer.getSelection()?.getSelectedText())) return;
     }
@@ -191,9 +196,19 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   renderer.keyInput.on("paste", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    options.onInput(new TextDecoder().decode(event.bytes));
+    const text = new TextDecoder().decode(event.bytes);
+    options.onActions?.(normalizeAppInput({ kind: "paste", text }));
+    options.onInput(text);
   });
-  renderer.on("resize", options.onResize);
+  const onResize = (columns: number, rows: number): void => {
+    options.onActions?.(normalizeAppInput({ kind: "resize", columns, rows }));
+    options.onResize();
+  };
+  const onFocus = (): void => { options.onActions?.(normalizeAppInput({ kind: "focus", focused: true })); };
+  const onBlur = (): void => { options.onActions?.(normalizeAppInput({ kind: "focus", focused: false })); };
+  renderer.on("resize", onResize);
+  renderer.on("focus", onFocus);
+  renderer.on("blur", onBlur);
   if (options.onThemeMode) {
     renderer.on("theme_mode", (mode) => {
       const previousStyle = syntaxStyle;
@@ -447,6 +462,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     destroy: () => {
       renderer.off("frame", onFrame);
       renderer.off("selection", onSelection);
+	  renderer.off("resize", onResize);
+	  renderer.off("focus", onFocus);
+	  renderer.off("blur", onBlur);
       renderer.destroy();
       syntaxStyle.destroy();
     },
@@ -526,6 +544,7 @@ function getOverlaySelectNode(
   if (old?.contentKey !== contentKey) {
     node.options = options;
     node.selectedIndex = selectedIndex;
+    node.height = overlaySelectHeight(options);
   }
   next.set(key, { kind: "select", renderable: node, contentKey });
   return node;
@@ -581,12 +600,18 @@ function createOverlaySelectNode(
   return new SelectRenderable(renderer, {
     id: renderableId("runledger-overlay", key),
     width: "100%",
-    flexGrow: 1,
+    height: overlaySelectHeight(options),
     options,
     selectedIndex,
     showDescription: true,
     showSelectionIndicator: true,
   });
+}
+
+function overlaySelectHeight(options: readonly { readonly description: string }[]): number {
+  // SelectRenderable 在 showDescription=true 时始终为每项保留两行，哪怕
+  // description 为空；按同一布局契约给高度，避免安全决策被裁成单项。
+  return Math.max(2, Math.min(12, options.length * 2));
 }
 
 /** 生产路径只创建一个 OpenTUI renderer，并把销毁权交给 runtime owner。 */

@@ -238,9 +238,10 @@ export class McpConnectionManager {
 			entry.tools = built.value;
 			entry.state = "ready";
 			return { ok: true, value: this.#toSnapshot(entry) };
-		} catch (error) {
-			entry.state = error instanceof McpOperationError && error.code === "timeout" ? "failed" : "failed";
-			const code = error instanceof McpOperationError && error.code === "timeout" ? "mcp.startup_timeout" : "mcp.startup_failed";
+			} catch (error) {
+				await this.#closeEntry(entry).catch(() => undefined);
+				entry.state = "failed";
+				const code = error instanceof McpOperationError && error.code === "timeout" ? "mcp.startup_timeout" : "mcp.startup_failed";
 			const message = error instanceof Error ? error.message : "MCP server startup failed";
 			entry.diagnostics.push({ code, message, severity: "error" });
 			return failure("startup_failed", message, true);

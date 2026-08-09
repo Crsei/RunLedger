@@ -22,7 +22,7 @@ import { Agent } from "../src/runtime/agent.ts";
 import { echoTool } from "../src/runtime/tools/echo.ts";
 import { mockStreamFn, mockModel } from "../src/runtime/providers/mock-stream.ts";
 import { MemoryLedger } from "../src/runtime/ledger/memory-ledger.ts";
-import { InteractiveMode, type ModelSwitchEntry } from "../src/tui/interactive-mode.ts";
+import { InteractiveMode } from "../src/tui/interactive-mode.ts";
 import { createAnthropicAgent } from "../src/runtime/agents/create-anthropic-agent.ts";
 import type { ThinkingLevel, Model } from "../src/types.ts";
 
@@ -32,6 +32,13 @@ interface RuntimePlan {
   initialThinkingLevel: ThinkingLevel;
   onThinkingChange: (level: ThinkingLevel) => void;
   isMock: boolean;
+}
+
+interface ModelSwitchEntry {
+  id: string;
+  label: string;
+  description?: string;
+  model: Agent["state"]["model"];
 }
 
 /** 决定 provider 通路:有 anthropic key 走真实路径,否则 mock 回退。 */
@@ -154,9 +161,6 @@ async function main(): Promise<void> {
   const plan = planRuntime();
   const mode = new InteractiveMode({
     agent: plan.agent,
-    modelRegistry: plan.modelRegistry,
-    initialThinkingLevel: plan.initialThinkingLevel,
-    onThinkingChange: plan.onThinkingChange,
   });
 
   // 退出信号:外部 Ctrl+C 时优雅 stop

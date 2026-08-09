@@ -1,6 +1,6 @@
 # RunLedger Plugin / MCP / Skill / Hooks 实施计划
 
-> 文档状态: M1–M5 的多项行为实现与 resident Host 的 Skill/Hook/MCP/Plugin 接线已落地；各里程碑仍以本文逐项复选框为准，M6 的完整 CLI mutation surface、TUI 写操作和最终联合验收仍是部分完成（单一权威计划）<br>
+> 文档状态: M1–M5 的多项行为实现与 Session-scoped Skill/Hook/MCP/Plugin production composition 已落地；各里程碑仍以本文逐项复选框为准，M6 的完整 CLI mutation surface、TUI 写操作、trust/reload 与最终联合验收仍是部分完成（单一权威计划）<br>
 > 编写日期:2026-07-21;Runtime Host 适配校准:2026-08-04<br>
 > RunLedger 基线:`1658fe26fc675cc18498bb8c6a9f162b7a0b733f` (`feat/agent-loop-resurrect`)<br>
 > Codex 参考基线:`0b175e6439a8608ba7726ee153fd8590619e8f34` (`main`)<br>
@@ -32,6 +32,13 @@
 - Host baseline/hardening handoff 为 `1352bfc`；后续 `6fc2c9a`、`a7ace24`、`402ab9b`、`8930db5`、`c86d078`、`2c55881`、`5760cde`、`e12eb3e` 已分别接入受管 MCP/Hook、resident snapshot、Host Gateway、canonical event writer 与真实 Skill catalog。
 - 官方 MCP SDK 已由 `3172336` 固定为 `@modelcontextprotocol/sdk@1.30.0`；`PluginManager`、`ExtensionHostManager`、`McpConnectionManager`、Host extension/MCP domain ports 与 `/mcp`、`/plugins`、`/skills`、`/hooks` 只读 TUI selector 均已存在。
 - 仍不得宣称 M6 全部完成：完整 CLI inspect/trust/plugin/skill/hook/mcp 子命令矩阵、TUI trust/enable/reload 写操作与最终 fixture 联合验收尚未由本计划逐项关闭。
+
+### 0.0.3 2026-08-09 Session composition 校正
+
+- `src/runtime/session-runtime/extension-composition.ts` 已替代 resident Host 作为标准 CLI 的 production 组合根。每个 owned Session 独立创建 Extension/Plugin manager、Skill resolver、Hook turn lifecycle 与 MCP connections，并把只读 `extension.inspect`、`plugin.list`、`skill.list`、`hook.list`、`mcp.list|doctor` 加入该 Session 的冻结 operation manifest。
+- required MCP startup failure 在 activate 前 fail closed 并释放 owner；optional failure 写 canonical Session audit 后允许启动。`mcp_call` 与 Hook managed process 在外部接触前经过 recovery barrier，Skill 读取重验 trust/digest/`allowedTools`；关闭顺序先 external lifecycle/cleanup，再 checkpoint/release。
+- production tests 直接覆盖双 Session workspace MCP config/connection 隔离、required/optional 语义、transport cleanup、barrier denial 与 shutdown ordering。中立 manager 位于 `src/extensions/manager.ts`，`host-manager.ts` 只保留 R9 前兼容重导出。
+- 这闭合 Runtime 06 R6 的 MCP/Hook/Skill/Plugin blocking gap，也使 M6 的 production Session composition 子集成立；不闭合本计划更宽的 CLI trust/enable/reload mutation、完整 Plugin fixture、OAuth、配置热更新、TUI 写操作或最终 E2E。因此 M6 与整份专项仍保持部分完成。
 
 若后续向 `00-reference.md` 补入内容，实施前必须先做一次差异审阅：
 
@@ -701,12 +708,12 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 
 ### M6 — CLI、TUI 与热重载
 
-- [ ] 在开始 M6 前记录 Runtime resource/capability contract commit、`runtime/05` Host handoff commit、安全专项 ExecutionGateway implementation commit、Extension M1–M5 commit 和所有共享文件 HEAD；若 handoff 后已变化先重审再集成；
-- [ ] 由本里程碑单一所有者把 `src/extensions/integration/**` 接入 Host resident composition/Control Plane 与 Runtime shared files,禁止 Runtime Host 线同时修改这些路径；
-- [ ] 将 `ExtensionSnapshot`/TrustRecord/tool invocation/lifecycle audit adapter 接到 Runtime Resource 契约域 ports,不直接 import Runtime 内部 store/reducer；
-- [ ] 把 catalog fragment 与 extension Skill tool 接入 controller/现有 `src/runtime/tools/skill.ts`,把 snapshot tools 通过 public ToolRegistry API 注册；
-- [ ] 把 SessionStart/UserPromptSubmit/SessionEnd 与 PreToolUse/PostToolUse adapters 接入 controller/agent-loop,落地 `updatedInput` 重校验和重新授权；
-- [ ] 把 typed audit adapter 接入 Runtime event sink,确保 extension 不自建 durable truth 或 dual-write；
+- [~] 旧 Runtime/Host handoff commit 已有历史记录；2026-08-09 Session composition 以 `session-owner-runtime@a7d272a` 加未提交 S5/S6 diff 为当前审阅边界，提交前仍须补最终共享文件 HEAD；
+- [~] `src/extensions/integration/**` 已由 `extension-composition.ts` 接入单 SessionRuntime production composition；resident Host 只保留 R9 安全窗口，完整 CLI/Control Plane mutation surface 尚未迁移；
+- [~] `ExtensionSnapshot`、tool/lifecycle audit 已写 owner-fenced Session event；TrustRecord 与全部 plugin provenance 的统一 Resource port/event 覆盖仍未逐项闭合；
+- [~] Skill tool、MCP catalog/search/call 已接入该 Session 的 production ToolRegistry 输入；完整 catalog fragment、Plugin tool surface 与 reload 后原子 tool-set 切换仍未完成；
+- [~] SessionStart/UserPromptSubmit/SessionEnd 与 PreToolUse/PostToolUse 已接入 Session turn lifecycle；本计划要求的全部 `updatedInput` 重校验/重新授权 fixture 仍未形成最终联合验收；
+- [~] extension/skill/hook/MCP lifecycle audit 已进入 canonical Session event store，无 extension 自建 hash chain；完整 plugin state 与 trust mutation receipt 尚未覆盖；
 - [ ] 把 CLI parser 升级为 current exact subcommand parser；所有操作映射 Host command/query,不得建立 client-local manager 或兼容 direct path；
 - [ ] 实现 `runledger inspect [--json]`，输出 snapshot、来源、状态、diagnostics；
 - [ ] 实现 `trust list|grant|revoke <resource-id>`，所有授权均显示将执行的资源身份和 digest；
@@ -714,10 +721,10 @@ M1–M5 的实现必须通过 dependency injection 和 fake Runtime ports 独立
 - [ ] 实现 `skill list|show|validate`；
 - [ ] 实现 `hook list|validate|enable|disable`；
 - [ ] 实现 `mcp list|doctor|enable|disable`；
-- [ ] TUI 增 `/plugins`、`/skills`、`/hooks`，把现有 `/mcp` 从空 selector 接到真实状态；
-- [ ] 统一 modal 显示 source、enabled、trust、ready/error、component count 和最近 diagnostic；
-- [ ] reload 运行中由 Host durable command 排队，resident Agent idle 后原子生效；TUI 通过 bounded subscription 明示 pending/success/failure,断线后按 cursor 恢复；
-- [ ] Runtime Gateway/approval/event sink 不可用时,inspect/list 可只读降级,trust/activate/spawn/invoke 必须 fail closed；
+- [~] TUI `/plugins`、`/skills`、`/hooks`、`/mcp` 已接真实只读 Session snapshot；trust/enable/reload 写操作仍 unavailable；
+- [~] 只读 modal 已显示有界 resource 状态；完整 source/trust/component/diagnostic parity 仍待 fixture 验收；
+- [~] Session turn lifecycle 已支持 idle reload 接缝；durable reload command、TUI pending/success/failure subscription 与断线 cursor 恢复尚未实现；
+- [~] Gateway/attempt/event sink 不可用时 inspect/list 可只读，MCP/Hook 外部执行 fail closed；完整 trust/activate mutation matrix仍未关闭；
 - [ ] CLI JSON 输出使用 current contract fields，stderr 与 stdout 分离；
 - [ ] CLI 操作只提交 Host command；Host 逐项写 canonical state/receipt,不覆写用户未知字段或 secret。
 

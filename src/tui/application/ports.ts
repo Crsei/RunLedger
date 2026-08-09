@@ -53,12 +53,17 @@ export interface TuiDomainPorts {
 export interface CapabilityInput {
 	readonly sessionCatalog: boolean;
 	readonly sessionMutation?: boolean;
+	readonly process?: boolean;
 }
 
 /** 端口表 + 显式 session capability -> capability snapshot；缺端口 = unavailable。 */
 export function capabilitiesFromPorts(ports: TuiDomainPorts, session: CapabilityInput): TuiCapabilitySnapshot {
 	const availability = (port: unknown): PortAvailability =>
 		port === undefined ? { state: "unavailable", reason: "port-not-wired" } : { state: "available" };
+	const negotiatedAvailability = (negotiated: boolean | undefined, port: unknown): PortAvailability =>
+		negotiated !== true
+			? { state: "unavailable", reason: "operation-not-negotiated" }
+			: availability(port);
 	return {
 		sessionCatalog: session.sessionCatalog && ports.session !== undefined ? { state: "available" } : { state: "unavailable", reason: "port-not-wired" },
 		sessionMutation: session.sessionMutation && ports.session !== undefined ? { state: "available" } : { state: "unavailable", reason: "port-not-wired" },
@@ -78,7 +83,7 @@ export function capabilitiesFromPorts(ports: TuiDomainPorts, session: Capability
 		securityMode: availability(ports.securityMode),
 		shutdown: availability(ports.shutdown),
 		workspaceGit: availability(ports.workspaceGit),
-		process: availability(ports.process),
+		process: negotiatedAvailability(session.process, ports.process),
 		update: availability(ports.update),
 	};
 }

@@ -16,7 +16,17 @@ export type NormalizedAppInput =
 	| { readonly kind: "interrupt" }
 	| { readonly kind: "request-exit" }
 	| { readonly kind: "viewport-clear" }
+	| { readonly kind: "focus"; readonly focused: boolean }
+	| { readonly kind: "resize"; readonly columns: number; readonly rows: number }
 	| { readonly kind: "select"; readonly id: string };
+
+/** OpenTUI/测试终端共用的快捷键语义入口。 */
+export function appInputForKeypress(data: string): NormalizedAppInput | undefined {
+	if (data === "ctrl+c" || data === "\x03") return { kind: "interrupt" };
+	if (data === "ctrl+d" || data === "\x04") return { kind: "request-exit" };
+	if (data === "ctrl+l" || data === "\x0c") return { kind: "viewport-clear" };
+	return undefined;
+}
 
 const COMPOSER_BOUND_BYTES = 256 * 1024;
 
@@ -56,6 +66,12 @@ export function normalizeAppInput(input: NormalizedAppInput): TuiAction[] {
 			return [{ type: "interaction.viewport-clear" }];
 		case "select":
 			return input.id.length === 0 ? [] : [{ type: "interaction.select", id: input.id }];
+		case "focus":
+			return [{ type: "interaction.focus-changed", focused: input.focused }];
+		case "resize":
+			return Number.isSafeInteger(input.columns) && input.columns > 0 && Number.isSafeInteger(input.rows) && input.rows > 0
+				? [{ type: "interaction.viewport-resized", columns: input.columns, rows: input.rows }]
+				: [];
 		case "interrupt":
 		case "request-exit":
 			// lifecycle intent：由 InteractiveMode 持有并执行（reducer 不产生退出状态）

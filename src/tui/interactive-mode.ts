@@ -53,7 +53,6 @@ import { SelectorModal } from "./components/selector-modal.ts";
 import type { SelectItem } from "./index.ts";
 import type { Component, OverlayOptions } from "./primitives.ts";
 import type { TuiOverlayState } from "./application/state.ts";
-import { createAppKeyListener } from "./keybindings/app-keys.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
@@ -69,7 +68,7 @@ import type { TuiState } from "./application/state.ts";
 import { createInitialTuiState } from "./application/initial-state.ts";
 import type { TimelineEvent } from "./timeline/types.ts";
 import { TimelineEventProjector } from "./timeline/event-projector.ts";
-import { timelineToBlocks } from "./timeline/selectors.ts";
+import { projectInteractivePresentation } from "./presentation/projectors.ts";
 import type { TuiStore } from "./application/store.ts";
 import { createTuiStore } from "./application/store.ts";
 import type { TuiDomainPorts } from "./application/ports.ts";
@@ -92,14 +91,6 @@ export interface InteractiveModeOptions {
   terminal?: Terminal;
   /** 主题名，默认 dark；运行时由 OpenTUI theme_mode 更新。 */
   themeName?: "dark" | "light";
-  /** 调试模式:onError 时把堆栈写到 stderr。 */
-  debug?: boolean;
-  /** M8d:/model 选择器候选列表;空则 selector 不可用。 */
-  modelRegistry?: ModelSwitchEntry[];
-  /** M8e:thinking level 初始值,默认 "minimal"。 */
-  initialThinkingLevel?: ModelThinkingLevel;
-  /** M8e:thinking level change 回调,由 caller 决定如何传给 agent streamFn。 */
-  onThinkingChange?: (level: ModelThinkingLevel) => void;
   /** R9:由 Host facade 提供的 safe process list/output/mutation adapter。 */
   processOverlayController?: ProcessOverlayController;
   /** B7:process output 的真实 Host client（composition root 注入；缺失时 bridge 只读）。 */
@@ -121,18 +112,6 @@ export type InteractiveExitIntent =
   | { readonly kind: "switch"; readonly action: "new" | "resume" | "fork"; readonly target: SessionSwitchTarget };
 
 export type HostConnectionUiState = "ready" | "reconnecting" | "stopped" | "build_mismatch" | "recovery_required";
-
-/** M8d:/model 切换条目;由 caller(demo)注入候选。 */
-export interface ModelSwitchEntry {
-  /** 内部 ID(也是 SelectItem.value) */
-  id: string;
-  /** 显示 label */
-  label: string;
-  /** description */
-  description?: string;
-  /** 真正的 Model instance,将传给 agent.setModel */
-  model: Agent["state"]["model"];
-}
 
 /** 组件树引用,挂在 InteractiveMode 实例上以便 handleEvent 路由 mutation。 */
 interface ContainerRefs {
@@ -162,6 +141,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private unsubscribe?: () => void;
   private unsubscribeThemeMode?: () => void;
   private unsubscribeRenderPreparation?: () => void;
+  private unsubscribeBoundaryActions?: () => void;
 
   // FooterSnapshotProvider 状态(只有 handleEvent 路径写)
   private streaming = false;
@@ -237,6 +217,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 		...capabilitiesFromPorts(this.ports, {
 			sessionCatalog: this.authAdapter.supports("session.catalog.list"),
 			sessionMutation: ["session.create", "session.resume", "session.fork"].some((operation) => this.authAdapter.supports(operation)),
+			process: this.authAdapter.supports("session.process.list") && this.authAdapter.supports("session.process.output"),
 		}),
       },
     }));
@@ -254,6 +235,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
     // TUI 使用 showHardwareCursor=false,Editor 自身以 CURSOR_MARKER 通知光标位置
     this.ui = new TUI(this.terminal, false, { performanceObserver: opts.performanceObserver });
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => this.flushStreamingDeltas());
+    this.unsubscribeBoundaryActions = this.ui.addActionListener((actions) => {
+      for (const action of actions) this.store.dispatch(action);
+    });
+    this.ui.setAppIntentHandler({
+      onInterrupt: () => {
+        if (this.ui.hasOverlay()) return false;
+        this.handleInterrupt();
+        return true;
+      },
+      onExit: () => this.ui.hasOverlay() ? false : this.handleCtrlD(),
+      onRefresh: () => this.ui.invalidate(),
+    });
 
     // KeybindingsManager:本期安装默认 TUI_KEYBINDINGS,后续 M6 在此挂 user bindings
     this.kb = new KeybindingsManager(TUI_KEYBINDINGS);
@@ -265,7 +258,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeStore = this.store.subscribe((next) => {
       if (next.timeline.generation !== this.lastTimelineGeneration) {
         this.lastTimelineGeneration = next.timeline.generation;
-        this.refs.chat.setTimelineBlocks(timelineToBlocks(next.timeline), next.timeline.generation);
+        const presentation = projectInteractivePresentation(next);
+        this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
       }
     });
     if (this.processOverlayController) {
@@ -390,18 +384,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribe = this.controller
       ? this.controller.subscribe((ev) => this.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
-    // 注册全局 app.* 键位拦截(M6):在 Editor listener 之前注册,确保优先级
-    this.ui.addInputListener(
-      createAppKeyListener({
-        onInterrupt: () => {
-          if (this.ui.hasOverlay()) return false;
-          this.handleInterrupt();
-          return true;
-        },
-        onExit: () => this.ui.hasOverlay() ? false : this.handleCtrlD(),
-        onRefresh: () => this.ui.invalidate(),
-      }),
-    );
     this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
     try {
       await this.ui.start();
@@ -495,6 +477,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeThemeMode = undefined;
     this.unsubscribeRenderPreparation?.();
     this.unsubscribeRenderPreparation = undefined;
+    this.unsubscribeBoundaryActions?.();
+    this.unsubscribeBoundaryActions = undefined;
+    this.ui.setAppIntentHandler(undefined);
     this.ui.stop();
     this.resolveExit(intent);
   }

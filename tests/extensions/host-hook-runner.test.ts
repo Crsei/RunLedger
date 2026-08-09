@@ -3,7 +3,7 @@ import type { ExecutionHandleRef } from "../../src/runtime/process/types.ts";
 import type { OutputCursor } from "../../src/runtime/process/output.ts";
 import type { ControlPlaneMutationResult, ControlPlaneOutputResult, ControlPlaneWaitResult } from "../../src/storage/process/control-plane.ts";
 import type { HookCommandRunnerRequest } from "../../src/extensions/hooks/types.ts";
-import { createHostManagedHookRunner } from "../../src/extensions/hooks/host-runner.ts";
+import { createHostManagedHookRunner, type ManagedHookProcess } from "../../src/extensions/hooks/host-runner.ts";
 import { resolve } from "node:path";
 
 const cwd = resolve("/tmp/plugin/hooks");
@@ -106,5 +106,18 @@ describe("Host-managed hook runner", () => {
 		controller.abort();
 		await pending;
 		expect(process.stops).toEqual(["SIGTERM"]);
+	});
+
+	it("propagates recovery-barrier denial without reading output or controlling a child", async () => {
+		let downstreamCalls = 0;
+		const denied: ManagedHookProcess = {
+			start: async () => ({ ok: false, code: "recovery_barrier_active" }),
+			processOutput: async () => { downstreamCalls += 1; throw new Error("must not read output"); },
+			processWait: async () => { downstreamCalls += 1; throw new Error("must not wait"); },
+			stop: async () => { downstreamCalls += 1; throw new Error("must not stop"); },
+		};
+		const runner = createHostManagedHookRunner({ managedProcess: denied });
+		await expect(runner.run(request())).rejects.toThrow("recovery_barrier_active");
+		expect(downstreamCalls).toBe(0);
 	});
 });

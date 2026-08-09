@@ -202,7 +202,6 @@ export {
   ansi256ToAnsi16,
   type StyleFn,
 } from "./theme/ansi.ts";
-export { createAppKeyListener, type AppKeyCallbacks, type InputListener } from "./keybindings/app-keys.ts";
 
 // M3 工具调用相关组件
 export { ToolCallComponent, type ToolCallStatus, type ToolCallComponentProps } from "./components/tool-call.ts";

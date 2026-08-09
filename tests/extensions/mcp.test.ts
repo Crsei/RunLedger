@@ -114,4 +114,25 @@ describe("McpConnectionManager", () => {
 			error: { code: "server_not_ready" },
 		});
 	});
+
+	it("closes a connected transport when startup catalog discovery fails", async () => {
+		let closed = 0;
+		const factory: McpClientFactory = {
+			async connect() {
+				return {
+					async listTools() { throw new Error("catalog unavailable"); },
+					async callTool() { return { isError: false, content: [] }; },
+					async close() { closed += 1; },
+				};
+			},
+		};
+		const manager = new McpConnectionManager({ factory });
+
+		await expect(manager.start(config())).resolves.toMatchObject({
+			ok: false,
+			error: { code: "startup_failed" },
+		});
+		expect(closed).toBe(1);
+		expect(manager.snapshot("mcp-server:fixture:issues")).toMatchObject({ state: "failed" });
+	});
 });

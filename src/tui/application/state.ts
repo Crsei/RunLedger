@@ -45,6 +45,8 @@ export interface TuiInteractionState {
 	readonly selectedId: TuiField<string>;
 	readonly generation: number;
 	readonly viewportClearRevision: number;
+	readonly terminalFocused: boolean;
+	readonly viewport: { readonly columns: number; readonly rows: number };
 	readonly toolDetailsExpanded: boolean;
 	readonly composerEmpty: boolean;
 	readonly composerDraft: SafeBoundedText;

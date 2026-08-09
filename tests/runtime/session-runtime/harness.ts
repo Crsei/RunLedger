@@ -31,7 +31,11 @@ export interface RuntimeHarness {
 }
 
 /** 完整 runtime harness:create → claim → restore → runtime.start()。 */
-export async function createRuntimeHarness(seed = "h", options: { readonly crashTakeover?: boolean; readonly domain?: SessionDomainPort } = {}): Promise<RuntimeHarness> {
+export async function createRuntimeHarness(seed = "h", options: {
+	readonly crashTakeover?: boolean;
+	readonly domain?: SessionDomainPort;
+	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
+} = {}): Promise<RuntimeHarness> {
 	const dir = mkdtempSync(join(tmpdir(), "session-runtime-harness-"));
 	const db = openSessionDatabase(join(dir, "state.db"));
 	installSessionStoreSchema(db);
@@ -60,6 +64,7 @@ export async function createRuntimeHarness(seed = "h", options: { readonly crash
 		crashTakeover: options.crashTakeover === true,
 		restored,
 		...(options.domain === undefined ? {} : { domain: options.domain }),
+		...(options.lifecycleCleanup === undefined ? {} : { lifecycleCleanup: options.lifecycleCleanup }),
 	});
 	server.bindController(runtime);
 	runtime.start();

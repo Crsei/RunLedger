@@ -23,7 +23,7 @@ import type { AuthInteraction, AuthType, Credential } from "../../../src/auth/ty
 import type { AssistantMessage, ModelThinkingLevel } from "../../../src/types.ts";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import type { LedgerEntry } from "../../../src/runtime/ledger/types.ts";
-import { InteractiveMode, type ModelSwitchEntry } from "../../../src/tui/interactive-mode.ts";
+import { InteractiveMode } from "../../../src/tui/interactive-mode.ts";
 import type { Terminal } from "../../../src/tui/index.ts";
 import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "../../../src/runtime/session-runtime/domain-router.ts";
 import type { AgentRunSummary } from "../../../src/runtime/session-runtime/run-timing.ts";
@@ -316,7 +316,6 @@ export interface ContractHarnessOptions {
   readonly columns?: number;
   readonly rows?: number;
   readonly controller?: ContractController;
-  readonly modelRegistry?: ModelSwitchEntry[];
 }
 
 /**
@@ -332,7 +331,6 @@ export function createContractHarness(options: ContractHarnessOptions = {}): Con
   const mode = new InteractiveMode({
     controller,
     terminal,
-    modelRegistry: options.modelRegistry,
   });
   const running = mode.run();
   return {

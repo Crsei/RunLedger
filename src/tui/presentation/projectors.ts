@@ -5,6 +5,9 @@
  */
 
 import type { PortAvailability, TuiField } from "../application/common.ts";
+import type { TuiState } from "../application/state.ts";
+import type { PresentationBlock } from "../presentation.ts";
+import { timelineToBlocks } from "../timeline/selectors.ts";
 import type {
   ActiveStateView,
   ActivityPriority,
@@ -153,6 +156,77 @@ export function projectComposer(facts: ComposerFacts): CommandComposerView {
     queuedCount: facts.queuedCount,
     frozen: facts.frozen,
     provenance: facts.provenance,
+  };
+}
+
+export interface InteractivePresentationFacts {
+  readonly sessionStrip?: SessionStripFacts;
+  readonly activeState?: ActiveStateFacts;
+  readonly footer?: FooterFacts;
+  readonly welcome?: WelcomeFacts;
+  readonly composerMode?: ComposerFacts["mode"];
+  readonly footerStatus?: string;
+  readonly securityMode?: "guarded" | "unrestricted" | "unknown";
+}
+
+/**
+ * TuiState + 显式只读 facts -> 一次完整 presentation 快照。
+ *
+ * renderer 与组件只消费这个结果，不再各自解释 Timeline、bootstrap 或交互状态。
+ */
+export interface InteractivePresentation {
+  readonly timeline: readonly PresentationBlock[];
+  readonly sessionStrip: SessionStripView;
+  readonly activeState: ActiveStateView;
+  readonly footer: FooterView;
+  readonly welcome: WelcomeView;
+  readonly composer: CommandComposerView;
+}
+
+export function projectInteractivePresentation(
+  state: TuiState,
+  facts: InteractivePresentationFacts = {},
+): InteractivePresentation {
+  const activeRun = state.timeline.activeRun;
+  const activeState = projectActiveState(state.bootstrap, {
+    priority: state.recoveryRequired
+      ? "recovery"
+      : state.transitionFrozen
+        ? "frozen"
+        : activeRun?.state === "working"
+          ? "running"
+          : "idle",
+    query: state.queryGuard.state,
+    activeTurn: state.activeTurn,
+    steeringCount: state.steeringCount,
+    followUpCount: state.followUpCount,
+    claimedQueueCount: state.claimedQueueCount,
+    pendingApprovalCount: state.pendingApprovalCount,
+    frozen: state.transitionFrozen,
+    recoveryRequired: state.recoveryRequired,
+    ...facts.activeState,
+  });
+  const footerStatus = facts.footerStatus
+    ?? (activeRun?.state === "working" ? "working" : activeRun?.state === "waiting" ? "waiting" : "idle");
+  return {
+    timeline: timelineToBlocks(state.timeline),
+    sessionStrip: projectSessionStrip(state.bootstrap, {
+      securityMode: facts.securityMode,
+      ...facts.sessionStrip,
+    }),
+    activeState,
+    footer: projectFooter(state.bootstrap, {
+      status: footerStatus,
+      securityMode: facts.securityMode,
+      facts: facts.footer,
+    }),
+    welcome: projectWelcome(state.bootstrap, facts.welcome),
+    composer: projectComposer({
+      mode: facts.composerMode ?? (state.transitionFrozen ? "frozen" : "prompt"),
+      draft: state.interaction.composerDraft.text,
+      queuedCount: { state: "known", value: state.transientInputQueue.length },
+      frozen: state.transitionFrozen,
+    }),
   };
 }
 

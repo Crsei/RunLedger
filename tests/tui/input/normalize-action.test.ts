@@ -40,6 +40,16 @@ describe("B3 normalize-action", () => {
 		expect(normalizeAppInput({ kind: "select", id: "" })).toEqual([]);
 	});
 
+	it("maps native focus and resize observations into the single interaction reducer path", () => {
+		expect(normalizeAppInput({ kind: "focus", focused: true })).toEqual([
+			{ type: "interaction.focus-changed", focused: true },
+		]);
+		expect(normalizeAppInput({ kind: "resize", columns: 120, rows: 40 })).toEqual([
+			{ type: "interaction.viewport-resized", columns: 120, rows: 40 },
+		]);
+		expect(normalizeAppInput({ kind: "resize", columns: 0, rows: 40 })).toEqual([]);
+	});
+
 	it("lifecycle intents (interrupt / request-exit) never become state actions", () => {
 		expect(normalizeAppInput({ kind: "interrupt" })).toEqual([]);
 		expect(normalizeAppInput({ kind: "request-exit" })).toEqual([]);

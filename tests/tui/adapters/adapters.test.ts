@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createInteractiveSessionAdapter } from "../../../src/tui/adapters/interactive-session.ts";
 import { createSessionResourcePorts } from "../../../src/tui/adapters/session-resources.ts";
 import { capabilitiesFromPorts } from "../../../src/tui/application/ports.ts";
+import type { CapabilityInput, TuiDomainPorts } from "../../../src/tui/application/ports.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../../../src/runtime/interactive-session-controller.ts";
 import type { Model } from "../../../src/types.ts";
 
@@ -107,6 +108,18 @@ describe("B4 interactive-session adapter", () => {
 	it("keeps shutdown unavailable when no lifecycle operation was negotiated", () => {
 		const ports = createInteractiveSessionAdapter(fakeController()).ports;
 		expect(ports.shutdown).toBeUndefined();
+	});
+
+	it("requires both negotiated process operations and an injected process port", () => {
+		const process = {} as NonNullable<TuiDomainPorts["process"]>;
+		const withoutManifest: CapabilityInput = { sessionCatalog: false, process: false };
+		const withManifest: CapabilityInput = { sessionCatalog: false, process: true };
+		expect(capabilitiesFromPorts({ process }, withoutManifest).process).toEqual({
+			state: "unavailable",
+			reason: "operation-not-negotiated",
+		});
+		expect(capabilitiesFromPorts({ process }, withManifest).process).toEqual({ state: "available" });
+		expect(capabilitiesFromPorts({}, withManifest).process).toEqual({ state: "unavailable", reason: "port-not-wired" });
 	});
 });
 

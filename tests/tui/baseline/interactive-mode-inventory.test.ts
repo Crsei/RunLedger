@@ -127,8 +127,15 @@ describe("B0 InteractiveMode inventory characterization", () => {
 
   it("keeps renderer/lifecycle authority untouched by the migration", () => {
     expect(source).toContain("requestQuit");
-    expect(source).toContain("createAppKeyListener");
+    expect(source).not.toContain("createAppKeyListener");
+    expect(source).toContain("setAppIntentHandler");
+    expect(source).toContain("addActionListener");
     expect(source).toContain("addThemeModeListener");
     expect(source).toContain("flushStreamingDeltas");
   });
+
+	it("S6 consumes one presentation projector for timeline, status, footer, welcome, and composer", () => {
+		expect(source).toContain("projectInteractivePresentation");
+		expect(source).not.toContain("timelineToBlocks(next.timeline)");
+	});
 });

@@ -36,6 +36,7 @@ import { restoreCheckpointReplay } from "./checkpoint.ts";
 import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
 import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
+import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -99,7 +100,20 @@ export async function assembleSessionDomain(
 				sessionId,
 				ownerGeneration: fence.generation,
 			}),
-		};
+			};
+	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient());
+	const extensions = await createProductionSessionExtensionComposition({
+		layout: options.layout,
+		cwd: options.cwd,
+		store,
+		fence,
+		workspaceId: catalog.workspaceId,
+		repositoryId: catalog.repositoryId,
+		executionEnv,
+		managedProcess: process.toolClient(),
+		attemptPort: () => attemptPort.get(),
+		baseToolNames: baseTools.map((tool) => tool.name),
+	});
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -109,14 +123,27 @@ export async function assembleSessionDomain(
 		replay,
 		ledger,
 		overrides: options.overrides,
-		tools: productionSessionTools(options.cwd, executionEnv, process.toolClient()),
+		tools: [...baseTools, ...extensions.tools],
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
+		extensionHookRuntime: extensions.hookRuntime,
+		extensionHookSnapshotId: () => extensions.turnLifecycle?.snapshotId(),
+		extensionTurnAdmission: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.admitTurn(),
+		extensionTurnAbort: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.cancelTurn(),
 	});
+	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
+		? undefined
+		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
 	return {
 		controller,
 		process,
+		resources: extensions.resources,
+		start: extensions.start,
+		shutdown: async (reason) => {
+			removeExtensionLifecycle?.();
+			await extensions.shutdown(reason);
+		},
 		protocolCapabilities: ["session.approval.reverse", "session.security.inspect"],
 		securityInspection: () => ({
 			ownerGeneration: fence.generation,
@@ -182,7 +209,8 @@ export function productionSessionTools(
 	executionEnv: ExecutionEnv,
 	managedProcess?: StdlibToolsOptions["managedProcess"],
 ): AgentTool[] {
-	const excluded = new Set(["Skill", "NotebookEdit", "echo"]);
+	const excluded = new Set(["NotebookEdit", "echo"]);
+	excluded.add("Skill");
 	return createStdlibTools(cwd, {
 		requireExecutionEnv: true,
 		executionEnv,

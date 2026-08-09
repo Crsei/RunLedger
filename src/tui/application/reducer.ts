@@ -26,6 +26,8 @@ export const TUI_ACTION_TYPES = [
 	"interaction.select",
 	"interaction.search-changed",
 	"interaction.viewport-clear",
+	"interaction.focus-changed",
+	"interaction.viewport-resized",
 ] as const;
 
 export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
@@ -90,6 +92,18 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 					viewportClearRevision: state.interaction.viewportClearRevision + 1,
 					generation: state.interaction.generation + 1,
 				},
+			};
+		case "interaction.focus-changed":
+			if (state.interaction.terminalFocused === action.focused) return state;
+			return {
+				...state,
+				interaction: { ...state.interaction, terminalFocused: action.focused, generation: state.interaction.generation + 1 },
+			};
+		case "interaction.viewport-resized":
+			if (state.interaction.viewport.columns === action.columns && state.interaction.viewport.rows === action.rows) return state;
+			return {
+				...state,
+				interaction: { ...state.interaction, viewport: { columns: action.columns, rows: action.rows }, generation: state.interaction.generation + 1 },
 			};
 		case "timeline.event":
 			return { ...state, timeline: timelineReducer(state.timeline, action.event) };

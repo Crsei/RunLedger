@@ -18,4 +18,6 @@ export type TuiAction =
 	| { readonly type: "composer.changed"; readonly draft: SafeBoundedText }
 	| { readonly type: "interaction.select"; readonly id: string }
 	| { readonly type: "interaction.search-changed"; readonly query: string }
-	| { readonly type: "interaction.viewport-clear" };
+	| { readonly type: "interaction.viewport-clear" }
+	| { readonly type: "interaction.focus-changed"; readonly focused: boolean }
+	| { readonly type: "interaction.viewport-resized"; readonly columns: number; readonly rows: number };

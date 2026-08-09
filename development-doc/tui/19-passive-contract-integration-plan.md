@@ -9,19 +9,15 @@
 > **当前修复基线：** `rollback/pre-governed-agent-harness-runtime@a09a408`（2026-08-06；
 > 后续未提交修复以工作区 diff 为准）
 >
-> **Session 接线基线：** `session-owner-runtime@c608c77`（2026-08-09；S1/S2 未提交实现以工作区 diff 为准）
+> **Session 接线基线：** `session-owner-runtime@a7d272a`（2026-08-09；S1–S6 后续未提交实现以工作区 diff 为准）
 >
 > **前置合同：** [`17-passive-data-contract-placeholder-plan.md`](17-passive-data-contract-placeholder-plan.md)
 > 的 P0–P6 已 `agent-verified`；本计划不重新设计或复制这些合同，只负责把它们分批接入
 > 当前生产 `InteractiveMode`、OpenTUI presentation 与 Host/controller port。
 >
-> **owner 路由：** 生产 Host 是现行基线（[`runtime/05`](../runtime/05-multi-client-background-terminal-refactor-plan.md)）；
-> 替代实施权威是 [`runtime/06`](../runtime/06-session-owner-runtime-replacement-plan.md)。R0 起 TUI 只消费
-> session owner 合同与 public barrel，禁止新增 Host 消费；R7 后接入统一 attach/claim TCP facade。
->
-> **owner 路由：** 生产 Host 是现行基线（[`runtime/05`](../runtime/05-multi-client-background-terminal-refactor-plan.md)）；
-> 替代实施权威是 [`runtime/06`](../runtime/06-session-owner-runtime-replacement-plan.md)。R0 起 TUI 只消费
-> session owner 合同与 public barrel，禁止新增 Host 消费；R7 后接入统一 attach/claim TCP facade。
+> **owner 路由：** 标准 CLI production owner 已切换为 [`runtime/06`](../runtime/06-session-owner-runtime-replacement-plan.md)
+> 的 SessionRuntime 与统一 attach/claim TCP facade；[`runtime/05`](../runtime/05-multi-client-background-terminal-refactor-plan.md)
+> 只保留 R8/R9 前 legacy Host 安全窗口。TUI 只消费 session owner 合同与 public barrel，禁止新增 Host 消费。
 >
 > **权威边界：** [`17-opentui-refactor-plan.md`](17-opentui-refactor-plan.md) 继续拥有
 > renderer、Bun 启动器、focus、resize、destroy 与 native frame 迁移；
@@ -252,8 +248,8 @@ tests/tui/
 | B4 | `implemented` | query EffectRunner 与只读 adapter | session/provider/model/prompt/keymap 等 selector 有 typed loading/error/empty | query workflow |
 | B5 | `implemented` | session/config/auth 选择工作流 | model/thinking/auth/session 操作显示 authoritative completion/stale/error | config workflow |
 | B6 | `implementing` | governed mutation | 已移除伪造 Queue/Approval authority；真实 durable receipt/revision 接线仍待 Host contract | governed workflow |
-| B7 | `implementing` | 高级领域与 process 复用 | plan/extension/worktree/security/process 有真实通道；task/goal/agent/runtime/update 保持 unavailable | advanced workflow |
-| B8 | `implementing` | 旧状态退休与性能闭合 | state owner、取消/cleanup 已加固；须等待 B6/B7 authority 缺口闭合后完成 | `InteractiveMode` 瘦身 |
+| B7 | `implementing` | 高级领域与 process 复用 | plan/extension/MCP/Skill/Hook/Plugin/worktree/security/process 有真实 Session 通道；task/goal/agent/runtime/update 保持 unavailable | advanced workflow |
+| B8 | `implementing` | 旧状态退休与性能闭合 | normalized input 与统一 projector 已闭合；须等待 B6/B7 authority 缺口及 S7 等价清理后完成 | `InteractiveMode` 瘦身 |
 
 状态只能按 `planned -> implementing -> implemented -> agent-verified -> human-verified` 推进。
 没有真实 terminal 用户确认不得标记 `human-verified`。
@@ -458,6 +454,16 @@ tests/tui/
   composerEmpty 经 store 流转）全绿；
 - 门禁：`npm run check` + `npm test`（215 files/1145 tests + bun 24）全绿。
 
+#### 9.5 S6 收口证据（2026-08-09）
+
+- keypress、paste、resize、focus/blur 全部先形成 `NormalizedAppInput`，再进入同一 reducer；
+  `src/tui/keybindings/app-keys.ts` 已删除，不再保留第二套 app-key 解释器；
+- `TuiInteractionState`/reducer 新增 normalized focus 与 viewport，invalid resize 保持无副作用；
+  lifecycle interrupt/exit 继续由 `InteractiveMode` 持有，不被伪装成 reducer state；
+- 原生 OpenTUI 测试覆盖 key/paste/focus/resize、process overlay、approval overlay 与 owner-controlled
+  renderer destroy；approval selector 修正为每个 option 两行的真实高度，`Allow once` 与 `Deny` 均可见；
+- focused S5/S6 matrix 11 files / 94 tests，Bun OpenTUI 4 files / 33 tests / 187 assertions 全绿。
+
 ## 10. B4：Query EffectRunner 与只读 Controller/Host Adapter
 
 ### 10.1 RED
@@ -650,14 +656,22 @@ tests/tui/
   receipt authority 位于 owner Runtime 的 Session Event Store。资源 adapter 只在握手精确协商
   `session.security.inspect` 时构造只读 security port，mutation 本地 unavailable 且不发 frame；无
   domain Runtime 不虚报 approval/security capability。该项闭合新集成计划 S3 的 TUI 接缝，不代表
-  B6 全部 governed workflow 或 B7 process/extension 已完成；
+  B6 全部 governed workflow 或 B7 process/extension 只读子集已完成；
 - P1-9 Session process overlay 接线（2026-08-09）：标准 CLI 在 driver claim 后按
   `session.process.list/output/stdin/resize/stop` 精确协商结果构造 client/controller，并把真实
   driver/observer role 注入 overlay；TCP observer 可读 list/output，但 mutation 在发送前返回
   `driver_required`，server 仍保留 `observer_mutation_forbidden` 二次防线。真实 pipe/PTY/output、
   cursor、Trace、Security、attempt 与 crash uncertain authority 均位于 SessionRuntime，不在 TUI
-  建第二 process manager；B7 的 process 子集因此闭合，extension/task/goal/agent/runtime/update
-  缺口仍使 B7 整体保持 `implementing`；
+  建第二 process manager；B7 的 process 子集因此闭合；
+- P1-10 Session extension 接线（2026-08-09）：标准 CLI 的 owned SessionRuntime 独立装配
+  Extension/Plugin manager、Skill resolver、Hook turn lifecycle 与 MCP connections；只按冻结握手 manifest
+  构造 `extension.inspect`、`plugin.list`、`skill.list`、`hook.list`、`mcp.list|doctor` 只读 port。
+  required MCP failure 阻止 activate，optional failure 可审计；不同 Session 的 workspace config、snapshot
+  与 connection 不共享。B7 的 extension/MCP/Skill/Hook/Plugin 只读子集因此闭合，trust/enable/reload mutation
+  仍 unavailable；task/goal/agent/runtime/update 缺口继续使 B7 整体保持 `implementing`；
+- P2-0 S6 单一 presentation owner：`projectInteractivePresentation()` 统一产出 Timeline、session strip、
+  active/status、footer、welcome 与 composer；`InteractiveMode` 不再直接调用 `timelineToBlocks()`，capability
+  view 同时要求握手 operation 和已注入 port；
 - P2-1 generation/typed fence：stale/aborted reset 同样核对 generation；plan/extension 等
   已接通投影继续做枚举与结构校验，未有真实 Host operation 的领域直接 unavailable；
 - P2-2 全局 cleanup：`TimelineEvent.cleanup.correlationId` 改 optional，projector 不传时
@@ -710,14 +724,14 @@ tests/tui/
 - `/plan` 迁移到 `plan.inspect` workflow（typed adapter 投影，`openPlanWorkflow`）；
   `compactDomainResult` 保留给 compact/memory（无 passive workflow）；
   inventory retired 断言更新；
-- Host adapter 仅为真实 operation 建 port：`plan.inspect`、`extension.inspect`、
-  `security.inspect`、`worktree.inspect`；worktree binding 的 head commit/lease revision 投影为
+- Session adapter 仅为真实协商 operation 建 port：`plan.inspect`、`extension.inspect`、
+  `plugin.list`、`skill.list`、`hook.list`、`mcp.list|doctor`、`security.inspect`、`worktree.inspect`；worktree binding 的 head commit/lease revision 投影为
   bounded workspace view；
 - task-goal、agents、runtime-snapshot、update 没有生产 Host operation，当前明确
   unavailable，不再到调用阶段才返回 unsupported；
 - 测试 `tests/tui/process/passive-bridge.test.ts`（4 例）全绿；
-- 当前结论：process/plan/extension/worktree/security 子集有真实通道，B7 整体仍为
-  `implementing`；task/goal/agent/runtime/update 需先由对应 Host 专项提供合同。
+- 当前结论：process/plan/extension/MCP/Skill/Hook/Plugin/worktree/security 子集有真实 Session 通道，B7 整体仍为
+  `implementing`；task/goal/agent/runtime/update 需先由对应 Runtime 专项提供合同。
 
 ## 14. B8：退休旧状态、接通性能 fence 与闭合生产入口
 ### 14.1 RED
@@ -757,11 +771,14 @@ tests/tui/
 - EffectRunner cancel/cancelAll 对不合作 port 同步 settle，后到 Promise 结果按 controller
   identity 丢弃；reducer stale/aborted reset 使用 generation/correlationId/effectId 三重 fence；
 - Timeline replay tool cycle 与 live tool end 均释放内部 presentation/chunk 缓存；
+- S6 将 Timeline、session strip、active/status、footer、welcome、composer 收口到
+  `projectInteractivePresentation()`；input/paste/focus/resize 只走 normalized reducer path，未使用的
+  InteractiveMode options 与第二套 key interpreter 已删除；
 - 全链路门禁：`npm run check`（含 tui-boundaries）+ `npm test`（219 files/1185 tests +
   bun 26）+ `npm run build` 全绿；`command -v runledger` 仍指向本 checkout 的
   `bin/runledger.js`。
-- 当前结论：本批代码加固已完成，但 B6/B7 authority 缺口仍会使生产能力保持
-  unavailable，因此 B8 在依赖批次闭合前保持 `implementing`。
+- 当前结论：本批代码加固、normalized input 与统一 projector 已完成，但 B6/B7 authority 缺口及
+  跨计划 S7 Timeline 等价清理尚未闭合，因此 B8 保持 `implementing`。
 
 ## 15. 每批统一验证门禁
 

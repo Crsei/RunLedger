@@ -410,12 +410,15 @@ describe("OpenTUI component projection", () => {
   test("绘制 timeline/editor/footer/overlay，并由 owner 销毁 renderer", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const inputs: string[] = [];
+    const actions: Array<{ readonly type: string }> = [];
     const themeModes: string[] = [];
-    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+    const runtimeOptions = {
       onInput: (data) => inputs.push(data),
       onResize: () => {},
+      onActions: (next: readonly { readonly type: string }[]) => actions.push(...next),
       onThemeMode: (mode) => themeModes.push(mode),
-    });
+    };
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, runtimeOptions);
     try {
       runtime.update({
         body: ["RunLedger", "assistant: ready"],
@@ -437,8 +440,16 @@ describe("OpenTUI component projection", () => {
       setup.mockInput.pressKey("c", { ctrl: true });
       await setup.mockInput.pasteBracketedText("粘贴内容");
       expect(inputs).toEqual(["ctrl+c", "粘贴内容"]);
+	  expect(actions.map((action) => action.type)).toContain("composer.changed");
 
       setup.resize(80, 18);
+	  setup.renderer.emit("blur");
+	  setup.renderer.emit("focus");
+	  expect(actions).toEqual(expect.arrayContaining([
+		{ type: "interaction.viewport-resized", columns: 80, rows: 18 },
+		{ type: "interaction.focus-changed", focused: false },
+		{ type: "interaction.focus-changed", focused: true },
+	  ]));
       runtime.update({
         body: ["resize keeps one current projection"],
         editorText: "draft after resize",
@@ -519,6 +530,40 @@ describe("OpenTUI component projection", () => {
       expect(secret).not.toContain("s3cr3t");
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-overlay-input-0");
 
+    } finally {
+      runtime.destroy();
+    }
+    expect(setup.renderer.isDestroyed).toBe(true);
+  });
+
+  test("S6 renders the approval decision overlay in the real OpenTUI renderer", async () => {
+    const setup = await createTestRenderer({ width: 72, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [{ id: "approval-context", kind: "text", content: "write requests a governed mutation" }],
+        editorText: "",
+        footer: ["Waiting for approval"],
+        overlay: [{
+          kind: "select",
+          title: "Approval required",
+          options: [
+            { value: "allow-once", label: "Allow once" },
+            { value: "deny", label: "Deny" },
+          ],
+          selectedIndex: 0,
+        }],
+      });
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("Approval required");
+      expect(frame).toContain("Allow once");
+      expect(frame).toContain("Deny");
+      expect(frame).toContain("Waiting for approval");
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-overlay-select-0");
     } finally {
       runtime.destroy();
     }

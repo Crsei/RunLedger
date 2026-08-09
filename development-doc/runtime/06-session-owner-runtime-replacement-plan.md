@@ -1,6 +1,6 @@
 # Session Owner Runtime 替代计划
 
-> 状态：**R0–R5 implemented（2026-08-07 fresh focused/full gates 通过）；R6 partially implemented/blocked（Agent/model/tool、Security/Gateway、recovery barrier、attachment、worktree cold-resume、Trace、approval reverse 与 managed process/PTY/output 已接线；MCP/Hook/Skill/Plugin 仍阻塞）；R6.5 Linux automated candidate PASS but not accepted（基础 runner 已在 S4 后重跑，但尚未覆盖真实领域组合，且 macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 仅保留为安全窗口）**
+> 状态：**R0–R6 implemented（2026-08-09 S5/S6 已闭合 Session-scoped MCP/Hook/Skill/Plugin production composition）；R6.5 Linux automated candidate PASS but not accepted（基础 runner 已在 S4 后重跑，但尚未覆盖真实领域组合，且 macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 仅保留为安全窗口）**
 > 建立日期：2026-08-07
 > 准入修订：2026-08-07 已纳入 offline-only schema migration、external-effect recovery barrier、attachment-count lifetime、100ms SQLite busy 上限、connection-scoped driver、candidate-before-cutover、legacy archive 与 checkpoint-cache 八项阻塞/收紧要求。
 > 目标分支：`session-owner-runtime`
@@ -808,7 +808,7 @@ src/
 - [x] 实现六个 safe checkpoint cache 和 exact snapshot/digest/schema 校验；cache miss/corruption 自动回退 full authority replay。`session-runtime/checkpoint.ts`（six boundaries、cacheSchema、digest 绑定）+ `restore.ts`（authority replay → checkpoint 校验 → 命中则 replay tail，miss/corrupt/旧版丢弃 cache 从 genesis）。
 - [x] 实现 model partial、tool intent/result、origin/settled generation、side-effect uncertain、Queue pending 的恢复状态机。`session-runtime.ts` `beginAttempt`/`settleAttempt`（immutable intent + append-only receipt，origin 不改写）；`recovery-barrier.ts` unresolved = 每 attempt 最新 receipt。
 - [x] owner crash 后 client 经 stale + 3 probes + CAS 获得 generation+1，先恢复 authority，再无条件进入 `RECOVERY_REQUIRED`。`crashTakeover = lastClaimWasTakeover`（clean release resume 不误判）；`recovery.test.ts` 全流程。
-- [x] 实现 recovery assessment/decision 协议、evidence-bearing verify、verified clean 与 `resume_despite_uncertainty` receipt。`recovery-barrier.ts` 提供 assess/verify/abort/resume + durable `recovery.*` event/receipt（principal/reason/origin/settled/evidence）；真实 process terminate、worktree/external verifier 属于 R6 未接线能力，不能由本项代替。
+- [x] 实现 recovery assessment/decision 协议、evidence-bearing verify、verified clean 与 `resume_despite_uncertainty` receipt。`recovery-barrier.ts` 提供 assess/verify/abort/resume + durable `recovery.*` event/receipt（principal/reason/origin/settled/evidence）；真实 process、worktree 与 external verifier 由 R6 production composition 提供，不能由本项的纯 barrier 合同代替。
 - [x] Runtime admission 与 ExecutionGateway final leaf 双重阻止 barrier 内的新 side-effect tool/process/MCP/network mutation。`admitMutation`/`admitPrompt` typed `recovery_barrier_active`；spawnCount 证据：barrier 未收口前 `spawnCount=0`。
 - [x] 旧 owner 恢复时 heartbeat/write fence 触发 self-stop。`SessionOwner.selfStopFenced` + onFenced → server close；旧 generation 全部 durable write 返回 `owner_fenced`。
 - [x] 覆盖 crash at claim/publish/restore/event/checkpoint/tool/receipt 边界；禁止重复 side effect。`recovery.test.ts`（crash 于 tool running、无 unresolved 自动收口、显式 resume、旧 owner self-stop）。
@@ -824,7 +824,7 @@ src/
 - [x] 外部副作用进入 attempt gateway 与 recovery barrier；CLI security flags 以最高优先级 source 进入 session composition，read-only/network-deny/restrictive sandbox 在实际 broker/spawn 前 fail closed。
 - [x] 接入 production Trace recorder factory，并证明 Event/Artifact 的 sessionId + generation 归属、正文清洗和 failure policy 与既有本地 Trace 合同等价。`main.ts` 注入 CLI factory，domain 强制绑定当前 `sessionId + ownerGeneration`；off/events/events_and_artifacts、正文清洗与 best-effort/fail-closed 回归全绿。
 - [x] managed process/PTY/output 的真实生产生命周期已改绑 Session scope：`process-composition.ts` 独立拥有 pipe/PTY/backend/control/output/capacity，Event Store adapter 保存 owner-fenced transition/spawn/constraint/completion truth，filesystem 仅保存 private output；attempt/Trace/Security final leaf、automatic terminal settlement、graceful drain、crash `lost/uncertain` 与 observer read-only 均有直接证据。旧 `SessionProcessRegistry` 只保留为既有测试兼容占位，不参与 production composition。
-- [ ] MCP/Hook/Skill/Plugin 逐 SessionRuntime 独立启动、bounded、关闭并覆盖 crash restore；当前生产工具集显式排除 Skill，未装配 MCP/Hook/Plugin lifecycle。
+- [x] MCP/Hook/Skill/Plugin 逐 SessionRuntime 独立启动、bounded、关闭并覆盖恢复边界。`extension-composition.ts` 每 Session 创建独立 manager/plugin snapshot、Skill resolver、Hook turn lifecycle 与 MCP connections；required MCP failure 在 activate 前 fail closed，optional failure 可审计；`mcp_call` 与 Hook managed process 经 attempt gateway/recovery barrier，Skill 读取重验 trust/digest/`allowedTools`，外部 lifecycle 在 checkpoint/release 前关闭。`src/extensions/manager.ts` 是中立实现，legacy `host-manager.ts` 只保留兼容重导出。
 - [x] worktree 改为 canonical session locator，并在 cold resume 重验 platform/root/Git/lease/effective cwd。locator 与安全 workspace event 在 owner-fenced transaction 中提交；标准 CLI flags、lease release/reacquire、drift/disable fail closed 与 fork 不继承均有 focused 证据。
 - [x] model selection、driver claim/release、prompt/steer/follow-up 与 recovery command 走 server facade；driver event 与 tool attempt receipt durable。
 - [x] Session protocol version 3 握手由 Runtime composition 提供冻结的 capability/operation manifest，并声明 `session.run-timing`；Client handle 固化协商结果并以 `supports(operation)` 本地拒绝未协商 domain operation，server dispatch 前再次 fail closed。真实 domain 额外发布 `session.approval.reverse` 与只读 `session.security.inspect`；无 domain/test recovery Runtime 不虚报，仍不发布 process/extension mutation。
@@ -834,7 +834,7 @@ src/
 - [x] local UI detach 且 remote attachment 存在时进入 headless-attached owner loop；只有 attachment count 归零才 pause/release。`onAttachmentCountChange` 回调 + `runtime.pause`（paused checkpoint + release unowned）；`session-owner-production.test.ts` 最后 attachment 关闭验证 unowned + checkpoint。
 - [x] 新 Session Owner 模块禁止 legacy Host import，标准 CLI composition 无 Host fallback；legacy Host 源码仍保留到 R9，不能表述为全仓 Host 假设已经删除。
 
-退出条件：所有真实 tool/process/approval/domain mutation 都绑定 `sessionId + generation` 且经过 recovery barrier；不同 Session 的故障、MCP 和 process capacity 相互隔离。**当前未达成**：Agent/model/tool、Security/Gateway、owner/attachment/recovery、Trace、worktree、approval 与 managed process/PTY/output 主链已实现；MCP/Hook/Skill/Plugin 仍是 R6 blocking gap。
+退出条件：所有真实 tool/process/approval/domain mutation 都绑定 `sessionId + generation` 且经过 recovery barrier；不同 Session 的故障、MCP 和 process capacity 相互隔离。**当前已达成**：S5 production tests 证明 required/optional startup、MCP/Hook barrier、双 Session workspace/config 隔离与 lifecycle-before-checkpoint/release；这只闭合 R6 composition，不替代 R6.5 candidate-domain、跨平台、独立审计或 human acceptance。
 
 ### R6.5：Candidate production composition 与 fault evidence
 
@@ -842,11 +842,11 @@ src/
 
 - [x] 新增 `scripts/verify-session-owner-candidate.ts`，只接受预创建、绝对、隔离且位于仓库外的 `RUNLEDGER_DIR`；脚本直接调用与 R7 相同的 production factory，不使用 fake/in-memory adapter。`requireRunledgerDir()` 校验绝对路径 + 仓库外 + `runledger-candidate-*` 隔离命名；fault matrix 全部走 `createEmbeddedSessionRuntime` / `SessionClient` / `OwnerStore` 真实代码路径。
 - [x] Linux candidate 覆盖真实多进程 claim、健康 attach、local UI detach 保活、last attachment shutdown、crash takeover、attempt crash 后 recovery barrier 和 read-only Security final leaf；底层 TCP auth/driver/subscriber fault 由 focused tests 覆盖，但未冒充全部在 candidate script 内执行。
-- [ ] 使用真实 model turn、MCP、managed process/PTY、worktree cold-resume、Trace 和 approval reverse request 完成 candidate composition；这些能力除 MCP/Hook/Skill/Plugin 外已在 focused production composition 中转绿，S4 后也重跑了基础 candidate，但 runner 尚未覆盖这些真实领域组合场景。
+- [ ] 使用真实 model turn、MCP、managed process/PTY、worktree cold-resume、Trace 和 approval reverse request 完成 candidate composition；这些能力已在 focused production composition 中分别转绿，S4 后也重跑了基础 candidate，但 runner 尚未覆盖这些真实领域组合场景。
 - [ ] macOS、Windows runner 使用同一 candidate code path并形成真实 evidence；当前只有 Linux 本地运行结果，`unverified_platform` 不算 PASS。
 - [x] candidate manifest 绑定 HEAD、tracked/untracked 内容 digest、store schema digest、`commandDigest` 和 `gateOutputDigest`；重复运行 drift fail closed。
 - [x] 测量 100 Session catalog、10 个独立子进程/独立 SQLite connection 的并发 owner claim 和单次同步 DB call 上限；2026-08-07 fresh Linux candidate 为 catalog 59.2ms、单次同步 DB call ≤100ms、10 claims 941.1ms。slow subscriber 与三 client fan-out 当前只有 focused tests，仍需纳入最终 candidate/standard-PATH fault evidence。
-- [ ] **R6.5 not accepted。** Linux automated candidate 已有 ALL PASS 记录，但 R6 真实领域能力、macOS/Windows runner、独立只读审计和 human acceptance 尚未闭合。
+- [ ] **R6.5 not accepted。** Linux automated candidate 已有 ALL PASS 记录，但真实 candidate-domain 组合、macOS/Windows runner、独立只读审计和 human acceptance 尚未闭合。
 
 退出条件：candidate 自动 fault matrix 全绿，三平台 required evidence 齐全，独立只读审计无阻塞 finding。该 runner 不是 feature flag、第二个用户入口或 dual production path。当前状态：Linux 基础 fault/latency/security runner 通过；真实领域、macOS/Windows 与独立审计缺失，故不接受。
 
@@ -870,7 +870,7 @@ src/
 
 目标：在旧 Host 源码尚未删除、但已从 production path 不可达的安全窗口验证真实升级与日常使用。
 
-> **2026-08-07：R8 整体 not accepted（自动化 gate 曾误闭合）。** 已修复健康 attach、工具副作用 barrier、attachment lifetime、onFenced、checkpoint replay 和 Session Security 主链缺陷（见 §13.1）；R6 blocking gaps、跨平台 evidence、标准 PATH fault rehearsal 和 human acceptance 仍未完成。
+> **2026-08-09：R8 整体 not accepted。** 健康 attach、工具副作用 barrier、attachment lifetime、onFenced、checkpoint replay、Session Security 与 R6 production domain composition 已闭合；真实 candidate-domain 组合、跨平台 evidence、标准 PATH fault rehearsal、独立审计和 human acceptance 仍未完成。
 
 - [ ] 用标准 PATH 而非 candidate script 重跑完整 R6.5 fault matrix 和 migration archive/restore rehearsal。现有 CLI/production tests 提供部分自动化证据，不等于标准 PATH 完整 rehearsal。
 - [ ] 真实 operator 验证同 Session 多窗口、不同 Session 并行、local UI detach 保活、whole-process crash、`RECOVERY_REQUIRED` 和 explicit uncertainty decision。**待人工**：需要真人 TUI 操作，自动化 agent 不填写 `human-verified`。
@@ -956,7 +956,7 @@ tests/cli/session-owner-production.test.ts
 - `npm run build`：通过（native helper、TypeScript build、legacy Host manifest；旧 Host 构建仍保留是因为 R9 未开始）。
 - 隔离 Linux candidate：`/tmp/runledger-candidate-SfKhTo`，fault/latency/read-only Security/manifest 全部 `ALL PASS`；100 Session catalog 59.2ms，单次同步 DB call ≤100ms，10 个独立子进程 claim 941.1ms。
 
-这些是当前 Linux 工作树的自动化证据，只支持 R0–R5 与 R6/R6.5 已勾选的子项；不能把 R6 未接线能力、macOS/Windows runner、标准 PATH 真实 TUI、独立审计或 human acceptance 推导为通过。
+这些是 2026-08-07 Linux 工作树的自动化证据，只支持当时 R0–R5 与 R6/R6.5 已勾选的子项；后续 R6 关闭见 §11.5。不能把 macOS/Windows runner、标准 PATH 真实 TUI、独立审计或 human acceptance 推导为通过。
 
 ### 11.2 2026-08-09 S1/S2 fresh 本地证据
 
@@ -979,6 +979,14 @@ tests/cli/session-owner-production.test.ts
 - process transition、spawn claim/receipt、constraint snapshot 与 completion queue/suppression 写入 owner-fenced Session Event Store；durable payload 不含 Host scope、`hostGeneration`、authority/tenant/workspace 字段，private output 与 Trace Artifact 继续只存 filesystem content store。
 - process domain revision 作为 owner-fenced Session event 跨 handle 单调提交并在重启后精确恢复；副作用成功但 revision commit 失败时 typed `recovery_required`，spawn attempt 保持 unresolved 到 automatic/explicit terminal settlement。Trace 三模式、Security final leaf/complete 与 observer read-only 贯穿真实 composition。Session overlay 只按精确 operation manifest 构造，另有真实 TCP observer 回归。
 - focused process matrix 5 files / 36 tests，`npm run check`、`npm run build`、完整 Vitest 273 files passed / 1 skipped、1539 tests passed / 3 skipped，以及 Bun OpenTUI 4 files / 32 tests / 179 assertions 全绿；隔离 Linux `verify:session-owner-candidate` 基础 5-section runner 在本批后再次 ALL PASS。candidate 尚未覆盖真实 model/MCP/process/PTY/worktree/Trace/approval 组合，故 R6.5/R8 仍 not accepted，R9 仍 not started。
+
+### 11.5 2026-08-09 S5/S6 fresh 本地证据
+
+- production Session extension composition 覆盖独立 Extension/Plugin manager、Skill trust/digest/`allowedTools` 重验、Hook turn lifecycle、workspace-scoped MCP config/connection 与 owner-fenced audit。required MCP 启动失败阻止 activate 并释放 owner，optional failure 留审计后继续；两个同时运行的 Session 不共享 config、snapshot 或连接状态。
+- `mcp_call` 在 transport 前由 attempt gateway/recovery barrier 拒绝，Hook managed process 被拒后不访问 output/wait/stop；MCP catalog discovery 失败关闭已连接 transport。shutdown 证据证明外部 lifecycle/cleanup 先于 checkpoint 与 owner release。
+- Session Owner boundary check 不再允许生产 composition 直接引用 legacy `extensions/host-manager.ts`；中立 `extensions/manager.ts` 是当前实现，旧文件只做 R9 前兼容重导出。
+- S5/S6 focused matrix 11 files / 94 tests，Extension manager/lifecycle/runtime 3 files / 15 tests，Bun OpenTUI 4 files / 33 tests / 187 assertions 全绿。完整 Vitest JSON reporter 为 627 suites / 1558 tests（1555 passed、3 skipped、0 failed）；`npm run check` 与 `npm run build` 通过。
+- 这组证据闭合 R6 的 MCP/Hook/Skill/Plugin production blocking gap。R6.5 仍缺真实 domain candidate 场景与 macOS/Windows runner；R8 仍缺标准 PATH fault rehearsal、独立只读审计和 human acceptance，因此 R9 不得开始。
 
 生产 runner 的最小场景：
 

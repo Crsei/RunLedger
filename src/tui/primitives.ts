@@ -4,6 +4,8 @@ import { createOpenTuiComponentRuntime, type OpenTuiComponentRuntime } from "./o
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock } from "./presentation.ts";
+import type { TuiAction } from "./application/action.ts";
+import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action.ts";
 
 export interface Component {
   render(width: number): string[];
@@ -263,6 +265,8 @@ export class TUI extends Container {
   private readonly inputListeners: InputListener[] = [];
   private readonly renderPreparationListeners: RenderPreparationListener[] = [];
   private readonly themeModeListeners: Array<(mode: "dark" | "light") => void> = [];
+  private readonly actionListeners: Array<(actions: readonly TuiAction[]) => void> = [];
+  private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private overlay: Component | undefined;
   private overlayHidden = false;
@@ -289,6 +293,14 @@ export class TUI extends Container {
       if (index >= 0) this.themeModeListeners.splice(index, 1);
     };
   }
+  addActionListener(listener: (actions: readonly TuiAction[]) => void): () => void {
+    this.actionListeners.push(listener);
+    return () => {
+      const index = this.actionListeners.indexOf(listener);
+      if (index >= 0) this.actionListeners.splice(index, 1);
+    };
+  }
+  setAppIntentHandler(handler: TuiAppIntentHandler | undefined): void { this.appIntentHandler = handler; }
   setFocus(component: Component | null): void {
     if (isFocusable(this.focusedComponent)) this.focusedComponent.focused = false;
     this.focusedComponent = component;
@@ -326,8 +338,9 @@ export class TUI extends Container {
     });
     if (this.terminal instanceof ProcessTerminal) {
       this.runtime = await createOpenTuiComponentRuntime({
-        onInput: (data) => this.handleInput(data),
+        onInput: (data) => this.handleInput(data, true),
         onResize: () => this.requestRender(),
+        onActions: (actions) => this.emitActions(actions),
         onThemeMode: (mode) => {
           for (const listener of this.themeModeListeners) listener(mode);
         },
@@ -356,7 +369,24 @@ export class TUI extends Container {
     } else this.frameScheduler.markDirty(backlog);
   }
   invalidate(): void { super.invalidate(); this.requestRender(true); }
-  private handleInput(input: string): void {
+  private handleInput(input: string, boundaryActionsDispatched = false): void {
+    const appInput = appInputForKeypress(input);
+    if (appInput !== undefined) {
+      if (!boundaryActionsDispatched) this.emitActions(normalizeAppInput(appInput));
+      if (appInput.kind === "interrupt" && this.appIntentHandler?.onInterrupt?.() !== false) {
+        this.requestRender(true);
+        return;
+      }
+      if (appInput.kind === "request-exit" && this.appIntentHandler?.onExit?.() === true) {
+        this.requestRender(true);
+        return;
+      }
+      if (appInput.kind === "viewport-clear") {
+        this.appIntentHandler?.onRefresh?.();
+        this.requestRender(true);
+        return;
+      }
+    }
     let data = input;
     for (const listener of this.inputListeners) {
       const result = listener(data);
@@ -365,7 +395,15 @@ export class TUI extends Container {
     }
     const target = this.hasOverlay() ? this.overlay : this.focusedComponent;
     target?.handleInput?.(data);
+    if (!this.hasOverlay() && this.focusedComponent !== null && "getText" in this.focusedComponent) {
+      const draft = (this.focusedComponent as Component & { getText(): string }).getText();
+      this.emitActions(normalizeAppInput({ kind: "composer-changed", draft }));
+    }
     this.requestRender(true);
+  }
+  private emitActions(actions: readonly TuiAction[]): void {
+    if (actions.length === 0) return;
+    for (const listener of this.actionListeners) listener(actions);
   }
   private renderFrame(): void {
     for (const listener of this.renderPreparationListeners) listener();
@@ -393,6 +431,12 @@ export class TUI extends Container {
     }
     this.terminal.write([...body, ...this.focusedComponent?.render(width) ?? [], ...footer, ...overlay ?? []].join("\n"));
   }
+}
+
+export interface TuiAppIntentHandler {
+  onInterrupt?(): boolean | void;
+  onExit?(): boolean;
+  onRefresh?(): void;
 }
 
 export type KeyId = string;
