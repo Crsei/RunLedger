@@ -8,7 +8,7 @@
  */
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,6 +115,15 @@ function lastResultLine(stdout: string): Record<string, unknown> {
 	return JSON.parse(lines[lines.length - 1] ?? "{}");
 }
 
+function hasCompleteResultLine(stdout: string): boolean {
+	try {
+		lastResultLine(stdout);
+		return stdout.trim().length > 0;
+	} catch {
+		return false;
+	}
+}
+
 describe("R3 claim", () => {
 	it("binds the candidate listener before publishing the endpoint (bind-before-publish)", async () => {
 		const { store, ownerStore } = openStore();
@@ -209,6 +218,26 @@ describe("R3 claim", () => {
 		store.database().close();
 	});
 
+	it("returns retryable owner_store_busy when another SQLite connection holds the writer lock", () => {
+		const { store, ownerStore, dbPath } = openStore();
+		const sessionId = createSession(store, "busy");
+		const blocker = openSessionDatabase(dbPath);
+		blocker.beginImmediate();
+		try {
+			const result = ownerStore.tryClaim({ mode: "fresh", sessionId }, {
+				runtimeId: createRuntimeId("runtime", "busy-contender"),
+				endpoint: { host: "127.0.0.1", port: 40_001 },
+				authTokenHex: "a".repeat(64),
+				ownerStartedAtMs: Date.now(),
+			});
+			expect(result).toEqual({ ok: false, code: "owner_store_busy", retryable: true });
+		} finally {
+			blocker.rollback();
+			blocker.close();
+			store.database().close();
+		}
+	});
+
 	it("lets two real processes race a fresh claim; exactly one wins", async () => {
 		const sessionId = setupWorker("race");
 		const results = [runWorkerSync("claim-single", sessionId), runWorkerSync("claim-single", sessionId)];
@@ -234,7 +263,7 @@ describe("R3 claim", () => {
 	it("a loser attaches while the winner is healthy and claims after release (real processes)", async () => {
 		const sessionId = setupWorker("attach");
 		const holder = spawnWorkerAsync("claim-and-hold", sessionId);
-		await waitFor(() => existsSync(join(dir, "result.json")), 15_000, "holder claim result");
+		await waitFor(() => hasCompleteResultLine(holder.stdout()), 15_000, "holder claim stdout frame");
 		expect(lastResultLine(holder.stdout())).toMatchObject({ outcome: "claimed" });
 		// P0-1:winner 持有期间(heartbeat fresh),统一 open 即时 attach,不 retry 也不抢占。
 		const loserResult = runWorkerSync("open-deadline", sessionId, { deadlineMs: 3_000 });

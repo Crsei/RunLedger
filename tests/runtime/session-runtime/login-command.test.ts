@@ -117,6 +117,17 @@ async function runtimeWithDomain(domain: SessionDomainPort): Promise<SessionRunt
 }
 
 describe("SessionRuntime login command", () => {
+	it("allows an observer to execute an operation classified as read-only", async () => {
+		const { domain } = mockDomain();
+		const runtime = await runtimeWithDomain(domain);
+		const result = await runtime.handleCommand({ commandId: createRuntimeId("command", "read"), kind: "provider_status", body: {} }, {
+			connectionId: createRuntimeId("connection", "obs-read"),
+			clientId: "client_observer" as never,
+			isDriver: false,
+		});
+		expect(result).toMatchObject({ ok: true, kind: "provider_status" });
+	});
+
 	it("rejects non-driver connections", async () => {
 		const { domain } = mockDomain();
 		const runtime = await runtimeWithDomain(domain);

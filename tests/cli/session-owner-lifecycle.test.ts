@@ -57,6 +57,21 @@ async function attachRemote(embedded: EmbeddedSessionRuntimeResult, store: Sessi
 }
 
 describe("standard CLI Session Owner lifecycle", () => {
+	it("returns to the switch loop while a remote attachment keeps the old owned Runtime headless", async () => {
+		const { embedded, store, ownerStore } = await openEmbedded();
+		const remote = await attachRemote(embedded, store, ownerStore);
+		await embedded.handle.close();
+		const startedAt = Date.now();
+		await expect(pauseIfLastAttachment(embedded, false)).resolves.toBeUndefined();
+		expect(Date.now() - startedAt).toBeLessThan(500);
+		expect(embedded.runtime?.runtimeState).toBe("ready");
+		expect(embedded.owner.currentFence).toBeDefined();
+		await remote.close();
+		await embedded.runtime?.waitForStopped();
+		expect(embedded.owner.currentFence).toBeUndefined();
+		store.database().close();
+	});
+
 	it("waits headless while a remote attachment remains and stops only after the last detach", async () => {
 		const { embedded, store, ownerStore } = await openEmbedded();
 		const remote = await attachRemote(embedded, store, ownerStore);
@@ -92,6 +107,17 @@ describe("standard CLI Session Owner lifecycle", () => {
 		firstController.dispose();
 		secondController.dispose();
 		await remote.close();
+		await embedded.handle.close();
+		await pauseIfLastAttachment(embedded);
+		store.database().close();
+	});
+
+	it("uses the queried snapshot durable head as the subscription cursor", async () => {
+		const { embedded, store } = await openEmbedded();
+		const snapshot = await fetchDomainSnapshot(embedded);
+		expect(snapshot.eventCursor).toBe(embedded.runtime?.currentHeadSequence());
+		expect(snapshot.eventCursor).toBeGreaterThan(0);
+		expect(snapshot.agentRuns).toEqual([]);
 		await embedded.handle.close();
 		await pauseIfLastAttachment(embedded);
 		store.database().close();

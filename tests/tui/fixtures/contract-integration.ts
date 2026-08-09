@@ -25,6 +25,8 @@ import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import type { LedgerEntry } from "../../../src/runtime/ledger/types.ts";
 import { InteractiveMode, type ModelSwitchEntry } from "../../../src/tui/interactive-mode.ts";
 import type { Terminal } from "../../../src/tui/index.ts";
+import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "../../../src/runtime/session-runtime/domain-router.ts";
+import type { AgentRunSummary } from "../../../src/runtime/session-runtime/run-timing.ts";
 
 /** 可配置列/行的 fake terminal；writes 捕获渲染帧。 */
 export class ContractTerminal implements Terminal {
@@ -112,6 +114,7 @@ export interface ContractModelOption {
 }
 
 export interface ContractControllerOptions {
+	readonly agentRuns?: readonly AgentRunSummary[];
   readonly messages?: readonly AgentMessage[];
   readonly warnings?: readonly string[];
   readonly auditEntries?: readonly LedgerEntry[];
@@ -122,8 +125,9 @@ export interface ContractControllerOptions {
   readonly availableModels?: readonly ContractModelOption[];
   readonly onLogin?: (providerId: string) => Promise<void>;
   readonly onLogout?: (providerId: string) => Promise<void>;
-  readonly queryHostDomain?: (operation: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  readonly commandHostDomain?: (operation: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  readonly querySessionDomain?: (operation: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  readonly commandSessionDomain?: (operation: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  readonly supportedOperations?: readonly string[];
 }
 
 /** B0 harness：可控 event 源 + 可查询状态的 fake controller。 */
@@ -133,8 +137,9 @@ export class ContractController implements InteractiveSessionControllerPort {
   readonly warnings: readonly string[];
   readonly auditEntries: readonly LedgerEntry[];
   readonly toolCount: number;
-  readonly queryHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  readonly commandHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  readonly agentRuns: readonly AgentRunSummary[];
+  readonly querySessionDomain?: (operation: string, body: Record<string, unknown>, context: SessionDomainRequestContext) => Promise<SessionDomainResult>;
+  readonly commandSessionDomain?: (operation: string, body: Record<string, unknown>, context: SessionDomainMutationContext) => Promise<SessionDomainResult>;
   private readonly listeners = new Set<(event: AgentEvent) => void | Promise<void>>();
   private inFlightValue: boolean;
   private selectionValue: RuntimeSelection;
@@ -142,20 +147,43 @@ export class ContractController implements InteractiveSessionControllerPort {
   private disposedValue = false;
   promptCalls: string[] = [];
 
+  supports(operation: string): boolean {
+	const defaults = [
+		"session.provider.status",
+		"session.model.list",
+		"session.model.select",
+		"session.thinking.set",
+		"session.auth.login",
+		"session.auth.logout",
+		...(this.querySessionDomain === undefined ? [] : ["extension.inspect", "plan.inspect", "security.inspect", "worktree.inspect"]),
+		...(this.commandSessionDomain === undefined ? [] : ["extension.reload"]),
+	];
+	return (this.options.supportedOperations ?? defaults).includes(operation);
+  }
+
   constructor(options: ContractControllerOptions = {}) {
     this.options = options;
     this.messages = options.messages ?? [];
     this.warnings = options.warnings ?? [];
     this.auditEntries = options.auditEntries ?? [];
     this.toolCount = options.toolCount ?? 0;
+    this.agentRuns = options.agentRuns ?? [];
     this.inFlightValue = options.inFlight ?? false;
     this.selectionValue = {
       provider: options.selection?.provider,
       model: options.selection?.model,
       thinkingLevel: options.selection?.thinkingLevel ?? "off",
     };
-    this.queryHostDomain = options.queryHostDomain;
-    this.commandHostDomain = options.commandHostDomain;
+    this.querySessionDomain = options.querySessionDomain === undefined ? undefined : async (operation, body) => {
+      const value = await options.querySessionDomain!(operation, body);
+      const domainRevision = typeof value.domainRevision === "number" && Number.isSafeInteger(value.domainRevision) ? value.domainRevision : 0;
+      return { ok: true, status: "ok", operation, domainRevision, value };
+    };
+    this.commandSessionDomain = options.commandSessionDomain === undefined ? undefined : async (operation, body) => {
+      const value = await options.commandSessionDomain!(operation, body);
+      const domainRevision = typeof value.domainRevision === "number" && Number.isSafeInteger(value.domainRevision) ? value.domainRevision : 0;
+      return { ok: true, status: "ok", operation, domainRevision, value };
+    };
   }
 
   subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void {

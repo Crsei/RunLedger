@@ -188,7 +188,7 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
 
   test("B4: extension workflow drives the /mcp selector with typed loading states", async () => {
     const controller = new ContractController({
-      queryHostDomain: async (operation) => operation === "extension.inspect"
+      querySessionDomain: async (operation) => operation === "extension.inspect"
         ? { ok: true, snapshot: { snapshotId: "s1", generation: 1, digest: "d", descriptors: [{ kind: "mcp-server", identity: { qualifiedId: "mcp-server:stdio", version: "1.0.0", digest: { algorithm: "sha256", digest: "dd" } }, displayName: "stdio-server", enabled: true, trusted: true, ready: true }] } }
         : { ok: true },
     });

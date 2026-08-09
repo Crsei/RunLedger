@@ -59,7 +59,25 @@ export type TimelineRow =
 			readonly agentId: string;
 			readonly label: SafeBoundedText;
 			readonly phase: SafeBoundedText;
-	  });
+		  })
+	| (TimelineRowBase & {
+			readonly kind: "run-boundary";
+			readonly runId: string;
+			readonly stopReason: "stop" | "length" | "toolUse" | "error" | "aborted";
+			readonly activeDurationMs?: number;
+			readonly elapsedMs?: number;
+			readonly messageCountAtEnd?: number;
+		  });
+
+export interface ActiveRunState {
+	readonly runId: string;
+	readonly state: "working" | "waiting" | "recovery_required";
+	readonly startedAtMs: number;
+	readonly activeDurationMs: number;
+	readonly lastResumedAtMs?: number;
+	readonly waitId?: string;
+	readonly waitReason?: "approval" | "credential";
+}
 
 export interface TimelineProjectionCursor {
 	readonly messageIndex: number;
@@ -74,6 +92,7 @@ export interface TimelineState {
 	readonly activeRowsByCorrelationId: Readonly<Record<string, TimelineRow>>;
 	readonly activeOrder: readonly string[];
 	readonly cursor: TimelineProjectionCursor;
+	readonly activeRun?: ActiveRunState;
 }
 
 export type TimelineEvent =
@@ -87,4 +106,9 @@ export type TimelineEvent =
 	| { readonly type: "notice"; readonly generation: number; readonly correlationId: string; readonly severity: "info" | "warning" | "error"; readonly message: SafeBoundedText }
 	| { readonly type: "goal_lifecycle"; readonly generation: number; readonly correlationId: string; readonly goalId: string; readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled" }
 	| { readonly type: "agent_lifecycle"; readonly generation: number; readonly correlationId: string; readonly agentId: string; readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled" }
+	| { readonly type: "run_start"; readonly generation: number; readonly runId: string; readonly timestamp: number; readonly activeDurationMs: number }
+	| { readonly type: "run_pause"; readonly generation: number; readonly runId: string; readonly waitId: string; readonly reason: "approval" | "credential"; readonly timestamp: number; readonly activeDurationMs: number }
+	| { readonly type: "run_resume"; readonly generation: number; readonly runId: string; readonly waitId: string; readonly timestamp: number; readonly activeDurationMs: number }
+	| { readonly type: "run_end"; readonly generation: number; readonly runId: string; readonly timestamp: number; readonly stopReason: "stop" | "length" | "toolUse" | "error" | "aborted"; readonly elapsedMs?: number; readonly activeDurationMs?: number; readonly messageCountAtEnd?: number }
+	| { readonly type: "run_restore"; readonly generation: number; readonly runId: string; readonly timestamp: number; readonly status: "completed" | "active" | "recovery_required"; readonly stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; readonly elapsedMs?: number; readonly activeDurationMs?: number; readonly messageCountAtEnd?: number }
 	| { readonly type: "cleanup"; readonly generation: number; readonly correlationId?: string; readonly reason: "session-switch" | "abort" | "destroy" };

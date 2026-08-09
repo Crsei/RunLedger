@@ -65,6 +65,33 @@ describe("R2 catalog and lifecycle", () => {
 		store.database().close();
 	});
 
+	it("rejects create when the catalog revision changed before the transaction", () => {
+		const store = openStore();
+		store.createSession({
+			sessionId: createRuntimeId("session", "catalog-cas-existing"),
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const target = createRuntimeId("session", "catalog-cas-target");
+		let error: unknown;
+		try {
+			store.createSession({
+				sessionId: target,
+				workspaceId: createRuntimeId("workspace", "w"),
+				repositoryId: createRuntimeId("repository", "r"),
+				settingsDigest: "d".repeat(64),
+				expectedCatalogRevision: 0,
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		expect(error).toBeInstanceOf(SessionStoreError);
+		expect((error as SessionStoreError).code).toBe("catalog_revision_conflict");
+		expect(store.getSession(target)).toBeUndefined();
+		store.database().close();
+	});
+
 	it("forks a session by copying all events into a new hash chain", () => {
 		const store = openStore();
 		const sourceId = createRuntimeId("session", "source");
@@ -109,6 +136,77 @@ describe("R2 catalog and lifecycle", () => {
 		expect(forkEvents.map((e) => e.payloadJson)).toEqual(sourceEvents.map((e) => e.payloadJson));
 		expect(forkEvents[0]?.previousEventHash).toBeNull();
 		expect(forkEvents[0]?.currentEventHash).not.toBe(sourceEvents[0]?.currentEventHash);
+		store.database().close();
+	});
+
+	it("rejects a fork when the durable source head has advanced", () => {
+		const store = openStore();
+		const sourceId = createRuntimeId("session", "fork-cas-source");
+		store.createSession({
+			sessionId: sourceId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const runtimeId = createRuntimeId("runtime", "fork-cas-runtime");
+		ownerRow(store, sourceId, runtimeId, 1);
+		store.appendEvent({ sessionId: sourceId, runtimeId, generation: 1 }, {
+			eventId: createRuntimeId("event", "fork-cas-event"),
+			ownerGeneration: 1,
+			eventType: "message",
+			payloadJson: "{}",
+			createdAtMs: 1,
+			expectedPreviousEventHash: null,
+		});
+		const forkId = createRuntimeId("session", "fork-cas-target");
+
+		let error: unknown;
+		try {
+			store.forkSession({
+				sessionId: forkId,
+				sourceSessionId: sourceId,
+				expectedSourceHeadSequence: 0,
+				workspaceId: createRuntimeId("workspace", "w"),
+				repositoryId: createRuntimeId("repository", "r"),
+				settingsDigest: "d".repeat(64),
+			});
+		} catch (caught) {
+			error = caught;
+		}
+
+		expect(error).toBeInstanceOf(SessionStoreError);
+		expect((error as SessionStoreError).code).toBe("fork_source_head_conflict");
+		expect(store.getSession(forkId)).toBeUndefined();
+		store.database().close();
+	});
+
+	it("rejects a fork when the catalog revision changed before the transaction", () => {
+		const store = openStore();
+		const sourceId = createRuntimeId("session", "fork-catalog-cas-source");
+		store.createSession({
+			sessionId: sourceId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const forkId = createRuntimeId("session", "fork-catalog-cas-target");
+		let error: unknown;
+		try {
+			store.forkSession({
+				sessionId: forkId,
+				sourceSessionId: sourceId,
+				expectedSourceHeadSequence: 0,
+				expectedCatalogRevision: 0,
+				workspaceId: createRuntimeId("workspace", "w"),
+				repositoryId: createRuntimeId("repository", "r"),
+				settingsDigest: "d".repeat(64),
+			});
+		} catch (caught) {
+			error = caught;
+		}
+		expect(error).toBeInstanceOf(SessionStoreError);
+		expect((error as SessionStoreError).code).toBe("catalog_revision_conflict");
+		expect(store.getSession(forkId)).toBeUndefined();
 		store.database().close();
 	});
 });

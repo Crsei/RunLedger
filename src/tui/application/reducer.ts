@@ -155,13 +155,17 @@ export function safeReduce(state: TuiState, action: TuiAction): TuiState {
 // ===== query workflow 映射（B4） =====
 
 type WorkflowKey =
-	| "providerWorkflow" | "authWorkflow" | "modelWorkflow" | "thinkingWorkflow"
+	| "sessionWorkflow" | "providerWorkflow" | "authWorkflow" | "modelWorkflow" | "thinkingWorkflow"
 	| "promptWorkflow" | "keymapWorkflow" | "queueWorkflow" | "approvalWorkflow"
 	| "taskGoalWorkflow" | "planWorkflow" | "agentWorkflow" | "extensionWorkflow"
 	| "runtimeSnapshotWorkflow" | "securityModeWorkflow" | "shutdownWorkflow"
 	| "workspaceGitWorkflow" | "processWorkflow" | "updateWorkflow";
 
 const WORKFLOW_BY_EFFECT: Record<TuiEffect["type"], WorkflowKey> = {
+	"session.list": "sessionWorkflow",
+	"session.create": "sessionWorkflow",
+	"session.resume": "sessionWorkflow",
+	"session.fork": "sessionWorkflow",
 	"provider.list": "providerWorkflow",
 	"auth.inspect": "authWorkflow",
 	"auth.login": "authWorkflow",
@@ -281,6 +285,8 @@ function isEmptyWorkflowValue(key: WorkflowKey, value: unknown): boolean {
 	if (typeof value !== "object" || value === null) return true;
 	const record = value as Record<string, unknown>;
 	switch (key) {
+		case "sessionWorkflow":
+			return record.kind === "catalog" && Array.isArray(record.items) && record.items.length === 0;
 		case "providerWorkflow":
 			return Array.isArray(record.providers) && record.providers.length === 0;
 		case "modelWorkflow":

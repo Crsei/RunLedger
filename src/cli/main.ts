@@ -46,6 +46,8 @@ import { AuthStorage } from "../storage/auth-storage.ts";
 import { createRuntimeId, type SessionId } from "../runtime/protocol/ids.ts";
 import type { SecurityConfigDocument } from "../security/types.ts";
 import type { SessionSecurityConfigSource } from "../security/session-composition.ts";
+import { SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
+import { runSessionTransitionLoop } from "./session-transition-loop.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -142,14 +144,22 @@ export async function main(argv: readonly string[]): Promise<void> {
   const store = new SessionStore(db);
   const ownerStore = new OwnerStore(db);
 
-  let embedded: EmbeddedSessionRuntimeResult;
   let sessionId: SessionId;
   try {
     sessionId = await resolveSessionId(store, args, cwd);
-    const models = builtinModels({ credentials: AuthStorage.create(layout) });
-    await models.refresh({ allowNetwork: false });
-    embedded = await createEmbeddedSessionRuntime({
-      sessionId,
+  } catch (error) {
+    db.close();
+    process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(2);
+    return;
+  }
+
+  const models = builtinModels({ credentials: AuthStorage.create(layout) });
+  await models.refresh({ allowNetwork: false });
+  const ownedRuntimeRegistry = new Map<string, EmbeddedSessionRuntimeResult>();
+  const openView = async (targetSessionId: string): Promise<CliSessionView> => {
+    const embedded = await createEmbeddedSessionRuntime({
+      sessionId: targetSessionId as SessionId,
       store,
       ownerStore,
       domain: {
@@ -165,6 +175,17 @@ export async function main(argv: readonly string[]): Promise<void> {
         securitySources: cliSecuritySources(args),
       },
     });
+    if (embedded.runtime !== undefined) ownedRuntimeRegistry.set(targetSessionId, embedded);
+    const snapshot = await fetchDomainSnapshot(embedded);
+    const controller = new SessionInteractiveController(embedded.handle, snapshot);
+    await controller.resumeEvents();
+    await claimDriver(embedded, controller);
+    return { sessionId: targetSessionId, embedded, controller };
+  };
+
+  let initialView: CliSessionView;
+  try {
+    initialView = await openView(sessionId);
   } catch (error) {
     db.close();
     process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
@@ -172,56 +193,82 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
 
-  const snapshot = await fetchDomainSnapshot(embedded);
-  const controller = new SessionInteractiveController(embedded.handle, snapshot);
-  await controller.resumeEvents();
-  // 首个 client 成为 driver；冲突表示本连接是合法 observer。
-  await claimDriver(embedded, controller);
-
   if (parsedControl?.ok === true) {
     try {
-      await runControlCommand(controller, parsedControl.command);
+      await runControlCommand(initialView.controller, parsedControl.command);
     } finally {
-      controller.dispose();
-      await embedded.handle.close().catch(() => undefined);
-      await pauseIfLastAttachment(embedded);
+	  initialView.controller.dispose();
+	  await initialView.embedded.handle.close().catch(() => undefined);
+	  await pauseIfLastAttachment(initialView.embedded, true);
       db.close();
     }
     return;
   }
 
-  let interactive: InteractiveMode | undefined;
-  let removeSigint: (() => void) | undefined;
-  let removeStdinEnd: (() => void) | undefined;
+  let firstView: CliSessionView | undefined = initialView;
   try {
-    const activeInteractive = new InteractiveMode({ controller, workspaceCapability: workspaceCapabilityLabel() });
-    interactive = activeInteractive;
-    // credential/approval reverse-request 由 TUI 渲染(连接建立后才注入 handler,
-    // reverse_request 只由用户 login/approval 触发,无构造期竞态)。
-    embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleCredentialReverseRequest(frame, signal));
-    const onSigint = (): void => {
-      if (controller.inFlight) controller.interrupt();
-      else activeInteractive.quit();
-    };
-    process.on("SIGINT", onSigint);
-    removeSigint = () => process.off("SIGINT", onSigint);
-    const onStdinEnd = (): void => activeInteractive.quit();
-    process.stdin.once("end", onStdinEnd);
-    removeStdinEnd = () => process.stdin.off("end", onStdinEnd);
-    if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
-    await activeInteractive.run();
+    await runSessionTransitionLoop<CliSessionView>({
+      initialSessionId: sessionId,
+      open: async (targetSessionId) => {
+        if (firstView !== undefined && firstView.sessionId === targetSessionId) {
+          const view = firstView;
+          firstView = undefined;
+          return view;
+        }
+        return openView(targetSessionId);
+      },
+      run: runInteractiveView,
+      detach: async (view) => {
+        view.controller.dispose();
+        await view.embedded.handle.close().catch(() => undefined);
+        await pauseIfLastAttachment(view.embedded, false);
+        if (view.embedded.runtime !== undefined && (view.embedded.runtime.runtimeState === "stopping" || view.embedded.runtime.runtimeState === "fenced")) {
+          await view.embedded.runtime.waitForStopped();
+          ownedRuntimeRegistry.delete(view.sessionId);
+        }
+      },
+      onSwitchFailure: ({ fromSessionId, targetSessionId, error }) => {
+        process.stderr.write(`[runledger] switch ${fromSessionId} -> ${targetSessionId} failed; reopening original Session: ${error instanceof Error ? error.message : String(error)}\n`);
+      },
+    });
   } finally {
-    removeSigint?.();
-    removeStdinEnd?.();
-    controller.dispose();
-    // 先 detach；只有 attachment 归零的 owner shutdown 才中断领域执行。
-    await embedded.handle.close().catch(() => undefined);
-    await pauseIfLastAttachment(embedded);
+    // 退出最后一个 renderer 后，进程继续托管仍有 remote attachment 的 owned Runtime；
+    // 每个 Runtime 的 count=0 回调最终执行 checkpoint/pause/release。
+    await Promise.all([...ownedRuntimeRegistry.values()].map(async (entry) => {
+      if (entry.runtime === undefined) return;
+      if (entry.server.connectionCounts() === 0) await entry.runtime.shutdownAfterLastAttachment("paused");
+      await entry.runtime.waitForStopped();
+    }));
     db.close();
     if (process.env.RUNLEDGER_DEBUG === "1") {
-      process.stderr.write(`[runledger] exit. session=${sessionId}\n`);
+      process.stderr.write("[runledger] exit. all owned Session runtimes stopped\n");
     }
   }
+
+  async function runInteractiveView(view: CliSessionView) {
+    const activeInteractive = new InteractiveMode({ controller: view.controller, workspaceCapability: workspaceCapabilityLabel() });
+    view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleCredentialReverseRequest(frame, signal));
+    const onSigint = (): void => {
+      if (view.controller.inFlight) view.controller.interrupt();
+      else activeInteractive.quit();
+    };
+    const onStdinEnd = (): void => activeInteractive.quit();
+    process.on("SIGINT", onSigint);
+    process.stdin.once("end", onStdinEnd);
+    if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
+    try {
+      return await activeInteractive.run();
+    } finally {
+      process.off("SIGINT", onSigint);
+      process.stdin.off("end", onStdinEnd);
+    }
+  }
+}
+
+interface CliSessionView {
+  readonly sessionId: string;
+  readonly embedded: EmbeddedSessionRuntimeResult;
+  readonly controller: SessionInteractiveController;
 }
 
 /**
@@ -230,9 +277,21 @@ export async function main(argv: readonly string[]): Promise<void> {
  * (attachment count 决定 runtime lifetime)。attach 分支(runtime undefined)
  * 或 owner 已在 count=0 回调中 pause 时均为幂等空操作。
  */
-export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResult): Promise<void> {
+export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResult, waitForRemote = true): Promise<void> {
   const runtime = embedded.runtime;
   if (runtime === undefined) return;
+  if (!waitForRemote) {
+    // switch path 只等待本地 socket close 事件入队；remote attachment 不阻塞下一轮 TUI。
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    if (embedded.server.connectionCounts() > 0) {
+      if (process.env.RUNLEDGER_DEBUG === "1") {
+        process.stderr.write(`[runledger] local view detached; ${embedded.server.connectionCounts()} remote attachment(s) keep the owner headless\n`);
+      }
+      return;
+    }
+    await runtime.shutdownAfterLastAttachment("paused");
+    return;
+  }
   // 等待本地 socket close 事件被 server 处理(attachment count 收敛到真值)。
   const deadline = Date.now() + 2_000;
   while (embedded.server.connectionCounts() > 0 && Date.now() < deadline) {
@@ -242,7 +301,7 @@ export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResu
     if (process.env.RUNLEDGER_DEBUG === "1") {
       process.stderr.write(`[runledger] local view detached; ${embedded.server.connectionCounts()} remote attachment(s) keep the owner running\n`);
     }
-    await runtime.waitForStopped();
+    if (waitForRemote) await runtime.waitForStopped();
     return;
   }
   await runtime.shutdownAfterLastAttachment("paused");
@@ -311,7 +370,7 @@ export async function fetchDomainSnapshot(embedded: EmbeddedSessionRuntimeResult
 	const response = await embedded.handle.transport.request({
 		frameId: `init_snapshot_${Date.now().toString(36)}`,
 		kind: "query_request",
-		protocolVersion: 1,
+		protocolVersion: SESSION_PROTOCOL_VERSION,
 		body: { kind: "snapshot", body: {} },
 	});
 	if (response.kind !== "query_result" || response.body.ok !== true) {
@@ -325,8 +384,9 @@ export async function fetchDomainSnapshot(embedded: EmbeddedSessionRuntimeResult
 		auditEntries: Array.isArray(body.auditEntries) ? (body.auditEntries as never[]) : [],
 		selection: (body.selection ?? { thinkingLevel: "off" }) as SessionInteractiveSnapshot["selection"],
 		toolCount: typeof body.toolCount === "number" ? body.toolCount : 0,
-		eventCursor: 0,
+		eventCursor: typeof body.headSequence === "number" && Number.isSafeInteger(body.headSequence) ? body.headSequence : 0,
 		driverRevision: 0,
+		agentRuns: Array.isArray(body.agentRuns) ? body.agentRuns as SessionInteractiveSnapshot["agentRuns"] : [],
 	};
 }
 
@@ -335,11 +395,17 @@ export async function claimDriver(embedded: EmbeddedSessionRuntimeResult, _contr
 	const response = await embedded.handle.transport.request({
 		frameId: `driver_claim_${Date.now().toString(36)}`,
 		kind: "command_request",
-		protocolVersion: 1,
+		protocolVersion: SESSION_PROTOCOL_VERSION,
 		body: { commandId: `command_${Date.now().toString(36)}`, kind: "driver_claim", body: {} },
 	});
-	if (response.body.ok === true) return "driver";
-	if (response.body.code === "driver_revision_conflict") return "observer";
+	if (response.body.ok === true) {
+		_controller.setConnectionRole("driver");
+		return "driver";
+	}
+	if (response.body.code === "driver_revision_conflict") {
+		_controller.setConnectionRole("observer");
+		return "observer";
+	}
 	if (response.body.ok !== true) {
 		throw new Error(`driver claim rejected: ${String(response.body.code ?? "unknown")}`);
 	}
@@ -351,19 +417,32 @@ export async function runControlCommand(
 	controller: SessionInteractiveController,
 	command: ControlCommand,
 ): Promise<void> {
+	const correlationId = `control_${Date.now().toString(36)}`;
+	let effectSequence = 0;
 	const queryOperation = controlCommandQueryOperation(command);
 	let inspectedBody: Record<string, unknown> = {};
 	let domainRevision = 0;
 	if (queryOperation !== undefined) {
-		inspectedBody = await controller.queryHostDomain(queryOperation, {});
-		domainRevision = integerValue(inspectedBody.domainRevision) ?? 0;
+		effectSequence += 1;
+		const inspected = await controller.querySessionDomain(queryOperation, {}, { correlationId, effectId: `control_query_${effectSequence}` });
+		if (!inspected.ok) {
+			process.stdout.write(`${JSON.stringify(inspected)}\n`);
+			return;
+		}
+		inspectedBody = inspected.value;
+		domainRevision = inspected.domainRevision;
 	}
 	const request = {
 		operation: command.group === "remember" ? "memory.propose" : command.group === "plan" && command.action === "approve" ? "plan.resolve_approval" : `${command.group}.${command.action}`,
 		body: controlCommandBody(command, domainRevision, inspectedBody),
 	};
-	const response = await controller.commandHostDomain(request.operation, { ...request.body });
-	process.stdout.write(`${JSON.stringify({ operation: request.operation, ...response })}\n`);
+	effectSequence += 1;
+	const response = await controller.commandSessionDomain(request.operation, { ...request.body }, {
+		correlationId,
+		effectId: `control_command_${effectSequence}`,
+		expectedRevision: domainRevision,
+	});
+	process.stdout.write(`${JSON.stringify(response)}\n`);
 }
 
 /** CLI security flags → 最高优先级 `cli` 层 document;无 flags 时 undefined。 */

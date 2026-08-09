@@ -14,6 +14,7 @@ import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import type { FooterSnapshotProvider } from "../types.ts";
 import { padToWidth } from "./render-width.ts";
+import { formatActiveDuration } from "../timeline/selectors.ts";
 
 export interface FooterProps {
   theme: Theme;
@@ -44,7 +45,16 @@ export class Footer implements Component {
       const providerId = this.props.provider.getProviderId?.();
       const thinking = this.props.provider.getThinkingLevel?.();
       const workspaceCapability = this.props.provider.getWorkspaceCapability?.();
-      const status = streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
+      const timing = this.props.provider.getRunTiming?.();
+      const now = this.props.provider.now?.() ?? Date.now();
+      const activeDurationMs = timing === undefined
+        ? 0
+        : timing.activeDurationMs + (timing.state === "working" && timing.lastResumedAtMs !== undefined ? Math.max(0, now - timing.lastResumedAtMs) : 0);
+      const status = timing?.state === "working"
+        ? `Working ${formatActiveDuration(activeDurationMs)}`
+        : timing?.state === "waiting"
+          ? `Waiting for input · ${formatActiveDuration(activeDurationMs)}`
+          : streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
       left = status;
       middle = sessionId.length > 0 ? sessionId : "<no-session>";
       right = `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}${workspaceCapability ? ` · ${workspaceCapability}` : ""}`;

@@ -1,5 +1,5 @@
 /**
- * B4：interactive-session / host-domain adapters 验收。
+ * B4：interactive-session / Session resource adapters 验收。
  *
  *   - controller 方法 -> typed workflow 结果；错误编码为 failed 不抛；
  *   - Host Record<string, unknown> 必须经 schema/typed validator 才进 workflow；
@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { createInteractiveSessionAdapter } from "../../../src/tui/adapters/interactive-session.ts";
-import { createHostDomainPorts } from "../../../src/tui/adapters/host-domain.ts";
+import { createSessionResourcePorts } from "../../../src/tui/adapters/session-resources.ts";
 import { capabilitiesFromPorts } from "../../../src/tui/application/ports.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../../../src/runtime/interactive-session-controller.ts";
 import type { Model } from "../../../src/types.ts";
@@ -29,6 +29,7 @@ function fakeController(overrides: Partial<InteractiveSessionControllerPort> = {
 		warnings: [],
 		auditEntries: [],
 		toolCount: 3,
+		supports: () => true,
 		getSteeringMessages: () => [],
 		getFollowUpMessages: () => [],
 		getProviderStatuses: vi.fn(async () => statuses),
@@ -103,15 +104,13 @@ describe("B4 interactive-session adapter", () => {
 		expect(clearAllQueues).not.toHaveBeenCalled();
 	});
 
-	it("P1-3: local shutdown port accepts intent with trigger", async () => {
+	it("keeps shutdown unavailable when no lifecycle operation was negotiated", () => {
 		const ports = createInteractiveSessionAdapter(fakeController()).ports;
-		const result = await ports.shutdown!.request({ ...request, trigger: "user" });
-		expect(result.ok).toBe(true);
-		if (result.ok) expect(result.value).toMatchObject({ trigger: "user", outcome: "accepted" });
+		expect(ports.shutdown).toBeUndefined();
 	});
 });
 
-describe("B4 host-domain adapter", () => {
+describe("B4 Session resource adapter", () => {
 	const extensionSnapshot = (descriptors: unknown[]) => ({ ok: true, snapshot: { snapshotId: "s1", generation: 3, digest: "d", descriptors } });
 
 	it("validates extension bodies into typed bounded resources", async () => {
@@ -119,7 +118,7 @@ describe("B4 host-domain adapter", () => {
 			{ kind: "plugin", identity: { qualifiedId: "plugin:a", version: "1.0.0", digest: { algorithm: "sha256", digest: "dd" } }, displayName: "A", enabled: true, trusted: true, ready: true },
 			{ kind: "plugin", identity: { qualifiedId: "plugin:b" }, enabled: true, trusted: false, ready: false },
 		]));
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const result = await ports.extensions!.inspect(request);
 		expect(result.ok).toBe(true);
 		if (result.ok) {
@@ -127,12 +126,12 @@ describe("B4 host-domain adapter", () => {
 			expect(result.value.resources[0]).toMatchObject({ resourceId: "plugin:a", kind: "plugin", trust: "trusted", activation: "ready" });
 			expect(result.value.resources[1]).toMatchObject({ trust: "untrusted", activation: "disabled" });
 		}
-		expect(query).toHaveBeenCalledWith("extension.inspect", {});
+		expect(query).toHaveBeenCalledWith("extension.inspect", {}, expect.objectContaining({ correlationId: "corr-1", effectId: "effect-1" }));
 	});
 
 	it("drops invalid descriptors; empty result stays typed", async () => {
 		const query = vi.fn(async () => extensionSnapshot(["garbage", null, { identity: { qualifiedId: "" } }]));
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const result = await ports.extensions!.inspect(request);
 		expect(result.ok).toBe(true);
 		if (result.ok) expect(result.value.resources).toEqual([]);
@@ -140,7 +139,7 @@ describe("B4 host-domain adapter", () => {
 
 	it("host rejection is a typed failed envelope", async () => {
 		const query = vi.fn(async () => ({ ok: false, code: "extension_snapshot_unavailable" }));
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const result = await ports.extensions!.inspect(request);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.code).toBe("extension_snapshot_unavailable");
@@ -148,7 +147,7 @@ describe("B4 host-domain adapter", () => {
 
 	it("only creates ports backed by real Host operations", () => {
 		const query = vi.fn(async () => ({ ok: true }));
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		expect(ports.extensions).toBeDefined();
 		expect(ports.plan).toBeDefined();
 		expect(ports.securityMode).toBeDefined();
@@ -160,9 +159,21 @@ describe("B4 host-domain adapter", () => {
 		expect(ports.process).toBeUndefined();
 	});
 
+	it("creates each domain port only when its exact operation was negotiated", () => {
+		const query = vi.fn(async () => ({ ok: true }));
+		const ports = createSessionResourcePorts({
+			query,
+			supports: (operation) => operation === "security.inspect",
+		});
+		expect(ports.securityMode).toBeDefined();
+		expect(ports.extensions).toBeUndefined();
+		expect(ports.plan).toBeUndefined();
+		expect(ports.workspaceGit).toBeUndefined();
+	});
+
 	it("no Host channel means the ports are undefined (unavailable)", () => {
-		expect(createHostDomainPorts(undefined).extensions).toBeUndefined();
-		expect(createHostDomainPorts({}).extensions).toBeUndefined();
+		expect(createSessionResourcePorts(undefined).extensions).toBeUndefined();
+		expect(createSessionResourcePorts({}).extensions).toBeUndefined();
 	});
 
 	it("P2-1: invalid plan enum values never cast into the contracts", async () => {
@@ -170,7 +181,7 @@ describe("B4 host-domain adapter", () => {
 			ok: true,
 			state: { status: "definitely-not-a-status", revision: 3 },
 		}));
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const planResult = await ports.plan!.inspect({
 			...request,
 			reference: { repositoryId: "repo-1", planId: "plan-1", revision: 0, digestPrefix: { text: "", truncated: false, byteLength: 0 } },
@@ -183,7 +194,7 @@ describe("B4 host-domain adapter", () => {
 		const query = vi.fn(async (operation: string) => operation === "security.inspect"
 			? { ok: true, profile: "danger-full-access" }
 			: { ok: true, binding: { workspaceId: "workspace-1", headCommit: "abcdef123456", leaseRevision: 4 } });
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const security = await ports.securityMode!.inspect(request);
 		const workspace = await ports.workspaceGit!.inspect({ ...request, workspaceId: "workspace-1" });
 		expect(security.ok && security.value.mode).toEqual({ state: "known", value: "unrestricted" });
@@ -193,9 +204,9 @@ describe("B4 host-domain adapter", () => {
 
 	it("P1-3: Host security mutation is explicitly unavailable, not a stub", async () => {
 		const query = vi.fn(async () => ({ ok: true, profile: "workspace-write" }));
-		const ports = createHostDomainPorts({ query });
+		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const result = await ports.securityMode!.set({ ...request, target: "unrestricted", expectedRevision: { state: "known", value: 3 } });
 		expect(result.ok).toBe(false);
-		if (!result.ok) expect(result.error.code).toBe("host_operation_unsupported");
+		if (!result.ok) expect(result.error.code).toBe("session_operation_unsupported");
 	});
 });

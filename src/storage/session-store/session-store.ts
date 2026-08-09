@@ -22,12 +22,14 @@ export const SESSION_STORE_ERROR_CODES = [
 	"admission_blocked",
 	"session_not_found",
 	"session_conflict",
+	"catalog_revision_conflict",
 	"sequence_conflict",
 	"previous_hash_mismatch",
 	"command_intent_conflict",
 	"receipt_origin_mismatch",
 	"checkpoint_not_found",
 	"fork_source_not_found",
+	"fork_source_head_conflict",
 	"invalid_input",
 ] as const;
 export type SessionStoreErrorCode = (typeof SESSION_STORE_ERROR_CODES)[number];
@@ -63,6 +65,7 @@ export interface CreateSessionInput {
 	readonly settingsDigest: string;
 	readonly worktreeLocator?: string;
 	readonly status?: string;
+	readonly expectedCatalogRevision?: number;
 }
 
 export interface AppendEventInput {
@@ -258,23 +261,31 @@ export class SessionStore {
 		}
 		const now = Date.now();
 		try {
-			this.db.runSync(
-				`INSERT INTO sessions
+			this.db.withImmediateTransactionSync((tx) => {
+				if (input.expectedCatalogRevision !== undefined) {
+					const revision = tx.querySingle("SELECT COUNT(*) AS n FROM sessions");
+					if (Number(revision?.n ?? 0) !== input.expectedCatalogRevision) {
+						throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before session creation");
+					}
+				}
+				tx.runSync(
+					`INSERT INTO sessions
 				 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
 				  worktree_locator_json, settings_digest)
 				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?)`,
-				[
-					input.sessionId,
-					input.workspaceId,
-					input.repositoryId,
-					input.status ?? "active",
-					now,
-					now,
-					input.worktreeLocator ?? null,
-					input.settingsDigest,
-				],
-			);
+					[
+						input.sessionId,
+						input.workspaceId,
+						input.repositoryId,
+						input.status ?? "active",
+						now,
+						now,
+						input.worktreeLocator ?? null,
+						input.settingsDigest,
+					],
+				);
+			});
 		} catch (error) {
 			if (error instanceof Error && /UNIQUE|PRIMARY/i.test(error.message)) {
 				throw new SessionStoreError("session_conflict", `session already exists: ${input.sessionId}`);
@@ -285,12 +296,23 @@ export class SessionStore {
 	}
 
 	/** fork:同一事务内创建新 session 并复制 source 全部事件(新 hash 链,sequence 重排)。 */
-	public forkSession(input: CreateSessionInput & { readonly sourceSessionId: string }): SessionCatalogRecord {
+	public forkSession(input: CreateSessionInput & { readonly sourceSessionId: string; readonly expectedSourceHeadSequence?: number }): SessionCatalogRecord {
 		this.assertAdmissionReady();
 		const source = this.getSession(input.sourceSessionId);
 		if (!source) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
 		let forked: SessionCatalogRecord | undefined;
 		this.db.withImmediateTransactionSync((tx) => {
+			if (input.expectedCatalogRevision !== undefined) {
+				const revision = tx.querySingle("SELECT COUNT(*) AS n FROM sessions");
+				if (Number(revision?.n ?? 0) !== input.expectedCatalogRevision) {
+					throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the fork transaction");
+				}
+			}
+			const sourceHead = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [input.sourceSessionId]);
+			if (sourceHead === undefined) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
+			if (input.expectedSourceHeadSequence !== undefined && Number(sourceHead.head_sequence) !== input.expectedSourceHeadSequence) {
+				throw new SessionStoreError("fork_source_head_conflict", "fork source head advanced before the fork transaction");
+			}
 			tx.runSync(
 				`INSERT INTO sessions
 				 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,

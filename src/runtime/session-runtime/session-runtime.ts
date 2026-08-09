@@ -33,6 +33,9 @@ import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts"
 import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
 import type { Api, Model, ModelThinkingLevel } from "../../types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../interactive-session-controller.ts";
+import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolManifest, type SessionStatus } from "../session-server/protocol.ts";
+import { SessionDomainRouter } from "./domain-router.ts";
+import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, type HumanWaitReason } from "./run-timing.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
 
@@ -82,9 +85,11 @@ export class SessionRuntime implements SessionController {
 	private readonly barrier: RecoveryBarrier;
 	private readonly restored: Extract<RestoreOutcome, { readonly ok: true }>;
 	private readonly domain: SessionDomainPort | undefined;
+	private readonly domainRouter: SessionDomainRouter;
 	private readonly domainListener: (() => void) | undefined;
 	private state: SessionRuntimeState;
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
+	private readonly runTiming = new AgentRunTimingTracker();
 	private attemptCounter = 0;
 	private started = false;
 	private shutdownPromise: Promise<void> | undefined;
@@ -98,6 +103,7 @@ export class SessionRuntime implements SessionController {
 		this.owner = options.owner;
 		this.server = options.server;
 		this.fence = options.fence;
+		this.domainRouter = new SessionDomainRouter(options.sessionId, options.fence.generation, options.store, this);
 		this.restored = options.restored;
 		this.state = options.crashTakeover ? "recovery_required" : "ready";
 		this.barrier = new RecoveryBarrier({ store: options.store, fence: options.fence }, options.crashTakeover ? "open" : "closed");
@@ -137,9 +143,15 @@ export class SessionRuntime implements SessionController {
 
 	/** AgentEvent → durable `agent.event`(owner-fenced)+ emit 广播。 */
 	private persistAgentEvent(event: AgentEvent): void {
+		const normalized = this.runTiming.accept(event, this.domain?.snapshot().messages.length ?? 0);
+		this.persistNormalizedAgentEvent(normalized);
+	}
+
+	private persistNormalizedAgentEvent(event: AgentEvent): void {
+		let sequence: number | undefined;
 		try {
 			const tail = this.store.replaySessionEvents(this.sessionId).at(-1);
-			this.store.appendEvent(this.fence, {
+			const appended = this.store.appendEvent(this.fence, {
 				eventId: createRuntimeId("event", `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`),
 				ownerGeneration: this.fence.generation,
 				eventType: "agent.event",
@@ -147,10 +159,23 @@ export class SessionRuntime implements SessionController {
 				createdAtMs: event.timestamp,
 				expectedPreviousEventHash: tail?.currentEventHash ?? null,
 			});
+			sequence = appended.sequence;
 		} catch {
 			// 事件落库失败不阻断领域执行;fence 失效由 heartbeat/write fence 自停。
 		}
-		this.emit({ eventType: "agent_event", payload: { event: event as unknown as Record<string, unknown> }, sequence: undefined });
+		this.emit({ eventType: "agent_event", payload: { event: event as unknown as Record<string, unknown> }, sequence });
+	}
+
+	/** 现有/未来 reverse-request 的统一人工等待边界，finally 保证最后一个 wait 闭合。 */
+	public async withHumanInputWait<T>(waitId: string, reason: HumanWaitReason, operation: () => Promise<T>): Promise<T> {
+		const pause = this.runTiming.pause(waitId, reason, Date.now());
+		if (pause !== undefined) this.persistNormalizedAgentEvent(pause);
+		try {
+			return await operation();
+		} finally {
+			const resume = this.runTiming.resume(waitId, Date.now());
+			if (resume !== undefined) this.persistNormalizedAgentEvent(resume);
+		}
 	}
 
 	public get runtimeState(): SessionRuntimeState {
@@ -228,6 +253,7 @@ export class SessionRuntime implements SessionController {
 			if (this.domain !== undefined && typeof this.domain.controller.waitForIdle === "function") {
 				await boundedWait(this.domain.controller.waitForIdle(), 3_000);
 			}
+			this.persistAbortedRunIfNeeded();
 			this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
 			this.owner.release(reason);
 			await this.server.close();
@@ -249,6 +275,7 @@ export class SessionRuntime implements SessionController {
 			if (this.domain !== undefined && typeof this.domain.controller.waitForIdle === "function") {
 				await boundedWait(this.domain.controller.waitForIdle(), 3_000);
 			}
+			this.persistAbortedRunIfNeeded();
 			await this.server.close();
 			this.domainListener?.();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
@@ -372,13 +399,47 @@ export class SessionRuntime implements SessionController {
 
 	// ── SessionController facade(server 路由进本 runtime)──────────────────
 
+	public protocolManifest(): SessionProtocolManifest {
+		return freezeSessionProtocolManifest({
+			protocolCapabilities: [...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities, "session.catalog"],
+			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest],
+		});
+	}
+
 	public snapshot(): SessionSnapshot {
+		const events = this.store.replaySessionEvents(this.sessionId);
+		const messageCount = this.domain?.snapshot().messages.length ?? 0;
 		return {
 			sessionId: this.sessionId,
 			headSequence: this.currentHeadSequence(),
-			sessionStatus: this.state,
+			sessionStatus: this.wireSessionStatus(),
 			runtimeState: this.state,
+			agentRuns: this.runSummaries(events, messageCount),
 		};
+	}
+
+	private runSummaries(events: ReturnType<SessionStore["replaySessionEvents"]>, messageCount: number): readonly AgentRunSummary[] {
+		const projected = projectAgentRunSummaries(events, messageCount);
+		const active = this.runTiming.activeRun;
+		if (active === undefined) return projected;
+		return [...projected.filter((summary) => summary.runId !== active.runId), active];
+	}
+
+	private persistAbortedRunIfNeeded(): void {
+		const aborted = this.runTiming.abort(Date.now(), this.domain?.snapshot().messages.length ?? 0);
+		if (aborted !== undefined) this.persistNormalizedAgentEvent(aborted);
+	}
+
+	private wireSessionStatus(): SessionStatus {
+		switch (this.state) {
+			case "recovery_required": return "recovery_required";
+			case "fenced": return "failed";
+			case "stopping": return "paused";
+			case "starting":
+			case "ready":
+			case "ready_with_uncertainty":
+				return "active";
+		}
 	}
 
 	/** R7:领域投影(消息/审计/选择)经同一 facade 供 client 重建 TUI 状态。 */
@@ -407,7 +468,7 @@ export class SessionRuntime implements SessionController {
 	}
 
 	public async handleCommand(request: SessionCommandRequest, meta: { readonly connectionId: ConnectionId; readonly clientId: string; readonly isDriver: boolean }): Promise<SessionCommandResult> {
-		if (!meta.isDriver) {
+		if (this.isMutatingKind(request.kind) && !meta.isDriver) {
 			// §1.2 mutating client 受 driver/observer fence。
 			return { ok: false, code: "observer_mutation_forbidden" };
 		}
@@ -483,7 +544,7 @@ export class SessionRuntime implements SessionController {
 				// credential onboarding 经 driver 连接的 reverse-request 投递 UI。
 				const interaction = createReverseRequestAuthInteraction({ sender: this.server, connectionId: meta.connectionId });
 				try {
-					await this.domain.controller.login(loginProvider, loginBody.authType, interaction);
+					await this.withHumanInputWait(`credential-${request.commandId}`, "credential", () => this.domain!.controller.login(loginProvider, loginBody.authType as AuthType, interaction));
 				} catch (error) {
 					return { ok: false, code: "login_failed", detail: error instanceof Error ? error.message.slice(0, 200) : undefined };
 				}
@@ -491,19 +552,10 @@ export class SessionRuntime implements SessionController {
 				return { ok: true, kind: "login", result: { providers: loginProviders } };
 			}
 			case "domain_query": {
-				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
-				const operation = String(request.body.operation ?? "");
-				const result = await this.domain.controller.queryHostDomain?.(operation, objectValue(request.body.body));
-				if (result === undefined) return { ok: false, code: "domain_query_unavailable" };
-				return { ok: true, kind: "domain_query", result };
+				return { ok: true, kind: "domain_query", result: this.domainRouter.query(request.body) };
 			}
 			case "domain_command": {
-				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
-				if (this.state === "recovery_required") return { ok: false, code: "recovery_barrier_active" };
-				const operation = String(request.body.operation ?? "");
-				const result = await this.domain.controller.commandHostDomain?.(operation, objectValue(request.body.body));
-				if (result === undefined) return { ok: false, code: "domain_command_unavailable" };
-				return { ok: true, kind: "domain_command", result };
+				return { ok: true, kind: "domain_command", result: this.domainRouter.mutate(request.body, meta.isDriver) };
 			}
 			case "recovery_explain": {
 				return {
@@ -569,6 +621,8 @@ export class SessionRuntime implements SessionController {
 
 	public async handleQuery(request: SessionQueryRequest): Promise<Record<string, unknown>> {
 		switch (request.kind) {
+			case "domain_query":
+				return this.domainRouter.query(request.body);
 			case "snapshot":
 				return this.domainSnapshot();
 			case "timeline":

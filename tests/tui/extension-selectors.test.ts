@@ -1,7 +1,7 @@
 /**
- * TUI Host extension selectors 测试 —— /mcp、/plugins、/skills、/hooks
- * 经 extension.inspect workflow（B4 adapter）展示真实 Host snapshot，
- * 不再直接解析 Host raw response。
+ * TUI Session extension selectors 测试 —— /mcp、/plugins、/skills、/hooks
+ * 经 extension.inspect workflow（B4 adapter）展示协商后的 Session snapshot，
+ * 不再直接解析 raw response。
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -10,6 +10,7 @@ import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { TUI, type Terminal } from "../../src/tui/index.ts";
 import { ContractController, settleFrames } from "./fixtures/contract-integration.ts";
+import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -43,8 +44,9 @@ class FakeTerminal implements Terminal {
 }
 
 interface StubController {
-  readonly queryHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  readonly commandHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+	readonly supports: (operation: string) => boolean;
+	readonly querySessionDomain?: (operation: string, body: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string }) => Promise<SessionDomainResult>;
+	readonly commandSessionDomain?: (operation: string, body: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number }) => Promise<SessionDomainResult>;
   readonly sessionId: string;
   readonly inFlight: boolean;
   readonly messages: unknown[];
@@ -58,8 +60,9 @@ interface StubController {
 
 function stubController(query: Record<string, Record<string, unknown>>): StubController {
   return {
-    queryHostDomain: vi.fn(async (operation: string) => query[operation] ?? { ok: true }),
-    commandHostDomain: vi.fn(async (operation: string) => query[operation] ?? { ok: true }),
+	supports: (operation) => operation in query,
+    querySessionDomain: vi.fn(async (operation: string) => ({ ok: true, status: "ok", operation, domainRevision: 0, value: query[operation] ?? {} })),
+    commandSessionDomain: vi.fn(async (operation: string) => ({ ok: true, status: "ok", operation, domainRevision: 0, value: query[operation] ?? {} })),
     sessionId: "session-tui-extension-selector",
     inFlight: false,
     messages: [],
@@ -82,17 +85,17 @@ const plugin = { kind: "plugin", identity: { qualifiedId: "plugin:fixture", vers
 const skill = { kind: "skill", identity: { qualifiedId: "skill:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d3" } }, displayName: "skill", enabled: true, trusted: true, ready: true };
 const hook = { kind: "hook", identity: { qualifiedId: "hook:pre-tool", version: "1.0.0", digest: { algorithm: "sha256", digest: "d4" } }, displayName: "pre-tool", enabled: true, trusted: true, ready: true };
 
-describe("TUI extension selectors query the Host snapshot via the B4 workflow", () => {
+describe("TUI extension selectors query the Session snapshot via the B4 workflow", () => {
   it("/mcp shows connected mcp-server resources from extension.inspect", async () => {
     const controller = stubController({ "extension.inspect": extensionSnapshot([mcpServer]) });
     const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
-    const query = controller.queryHostDomain as ReturnType<typeof vi.fn>;
+    const query = controller.querySessionDomain as ReturnType<typeof vi.fn>;
 
     await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
     await settleFrames();
     const tui = (mode as unknown as { ui: TUI }).ui;
     expect(tui.hasOverlay()).toBe(true);
-    expect(query).toHaveBeenCalledWith("extension.inspect", {});
+    expect(query).toHaveBeenCalledWith("extension.inspect", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
   });
 
   it("/plugins /skills /hooks filter the typed extension workflow snapshot", async () => {
@@ -114,8 +117,8 @@ describe("TUI extension selectors query the Host snapshot via the B4 workflow", 
     await settleFrames();
     expect(tui.hasOverlay()).toBe(true);
 
-    const query = controller.queryHostDomain as ReturnType<typeof vi.fn>;
-    expect(query).toHaveBeenCalledWith("extension.inspect", {});
+    const query = controller.querySessionDomain as ReturnType<typeof vi.fn>;
+    expect(query).toHaveBeenCalledWith("extension.inspect", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
     // 不再直接调用 per-kind raw operations
     expect(query).not.toHaveBeenCalledWith("plugin.list", expect.anything());
     expect(query).not.toHaveBeenCalledWith("skill.list", expect.anything());
@@ -132,11 +135,11 @@ describe("TUI extension selectors query the Host snapshot via the B4 workflow", 
     expect(mode.getTuiState().extensionWorkflow.state).toBe("empty");
   });
 
-  it("fails visibly when the Host domain query is unavailable", async () => {
+  it("fails visibly when the Session domain query is unavailable", async () => {
     const controller = new ContractController();
     const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
     const tui = (mode as unknown as { ui: TUI }).ui;
-    // 本地 controller 无 queryHostDomain → capability unavailable → typed notice，不抛错。
+    // 本地 controller 无 querySessionDomain → capability unavailable → typed notice，不抛错。
     await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
     expect(tui.hasOverlay()).toBe(false);
     expect(mode.getTuiState().capabilities.extensions.state).toBe("unavailable");
@@ -153,7 +156,7 @@ describe("TUI extension selectors query the Host snapshot via the B4 workflow", 
 });
 
 describe("TUI plan/compact/memory domain commands", () => {
-  it("runs /plan /compact /memory queries through the Host domain channel", async () => {
+  it("runs /plan /compact /memory queries through the Session domain channel", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },
@@ -174,13 +177,13 @@ describe("TUI plan/compact/memory domain commands", () => {
     await run.runDomainCommand("compaction.list", {}, "/compact", true);
     await run.runDomainCommand("memory.inspect", {}, "/memory", true);
 
-    const query = controller.queryHostDomain as ReturnType<typeof vi.fn>;
-    expect(query).toHaveBeenCalledWith("plan.inspect", {});
-    expect(query).toHaveBeenCalledWith("compaction.list", {});
-    expect(query).toHaveBeenCalledWith("memory.inspect", {});
+    const query = controller.querySessionDomain as ReturnType<typeof vi.fn>;
+    expect(query).toHaveBeenCalledWith("plan.inspect", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
+    expect(query).toHaveBeenCalledWith("compaction.list", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
+    expect(query).toHaveBeenCalledWith("memory.inspect", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
   });
 
-  it("routes /remember proposal mutations through commandHostDomain", async () => {
+  it("routes /remember proposal mutations through commandSessionDomain", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },
@@ -197,8 +200,8 @@ describe("TUI plan/compact/memory domain commands", () => {
 
     await run.runDomainCommand("memory.propose", { scope: "workspace", title: "keep", content: "remember this", sourceKind: "user" }, "/remember", false);
 
-    const command = controller.commandHostDomain as ReturnType<typeof vi.fn>;
-    expect(command).toHaveBeenCalledWith("memory.propose", expect.objectContaining({ content: "remember this", sourceKind: "user" }));
+    const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+    expect(command).toHaveBeenCalledWith("memory.propose", expect.objectContaining({ content: "remember this", sourceKind: "user" }), expect.objectContaining({ expectedRevision: 0 }));
   });
 
   it("rejects plan/compact/memory commands without a Host connection", async () => {

@@ -18,11 +18,13 @@ import net from "node:net";
 import {
 	SESSION_PROTOCOL_BOUNDS,
 	SESSION_PROTOCOL_VERSION,
+	freezeSessionProtocolManifest,
 	isSessionFrameEnvelope,
 	isSessionHandshakeRequest,
 	handshakeMatchesFence,
 	type SessionHandshakeRequest,
 	type SessionFrameEnvelope,
+	type SessionProtocolManifest,
 } from "./protocol.ts";
 import { ownerTokenConstantTimeEqual } from "../session-owner/fence.ts";
 import type { OwnerEndpoint, OwnerFence, SessionOwnerState } from "../session-owner/types.ts";
@@ -32,6 +34,7 @@ import type { SessionStore, SessionEventRecord } from "../../storage/session-sto
 import { applyDriverTransition, initialDriverState, type DriverStateSnapshot } from "./driver.ts";
 import { SessionSubscriptionRegistry } from "./subscription.ts";
 import { createRuntimeId, type ConnectionId, type SessionId } from "../protocol/ids.ts";
+import type { AgentRunSummary } from "../session-runtime/run-timing.ts";
 
 export const SESSION_MUTATING_COMMAND_KINDS = [
 	"prompt",
@@ -51,6 +54,7 @@ export interface SessionSnapshot {
 	readonly headSequence: number;
 	readonly sessionStatus: string;
 	readonly runtimeState: string;
+	readonly agentRuns: readonly AgentRunSummary[];
 }
 
 export interface SessionCommandRequest {
@@ -77,6 +81,7 @@ export interface SessionControllerEvent {
 /** SessionRuntime(R5)或测试 double 实现的领域控制器;server 只做 facade。 */
 export interface SessionController {
 	readonly sessionId: SessionId;
+	readonly protocolManifest?: () => SessionProtocolManifest;
 	snapshot(): SessionSnapshot;
 	handleCommand(request: SessionCommandRequest, meta: { readonly connectionId: ConnectionId; readonly clientId: string; readonly isDriver: boolean }): Promise<SessionCommandResult>;
 	handleQuery(request: SessionQueryRequest): Promise<Record<string, unknown>>;
@@ -117,6 +122,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 	private readonly connections = new Set<ServerConnection>();
 	private readonly registry = new SessionSubscriptionRegistry();
 	private controller: SessionController;
+	private protocolManifest: SessionProtocolManifest;
 	private readonly store: SessionStore;
 	private server: net.Server | undefined;
 	private boundEndpoint: OwnerEndpoint | undefined;
@@ -132,6 +138,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 		this.options = options;
 		this.store = options.store;
 		this.controller = options.controller;
+		this.protocolManifest = manifestFromController(options.controller);
 		this.controllerListener = options.controller.onEvent((event) => {
 			this.broadcastEvent(event);
 		});
@@ -142,8 +149,10 @@ export class SessionRuntimeServer implements OwnerTransport {
 	 * 才能构造 SessionRuntime(需要 fence),再绑定回 server(循环依赖解耦)。
 	 */
 	public bindController(controller: SessionController): void {
+		if (this.activated) throw new Error("cannot replace the session controller after activation");
 		this.controllerListener?.();
 		this.controller = controller;
+		this.protocolManifest = manifestFromController(controller);
 		this.controllerListener = controller.onEvent((event) => {
 			this.broadcastEvent(event);
 		});
@@ -338,6 +347,10 @@ export class SessionRuntimeServer implements OwnerTransport {
 				await this.handleQueryRequest(connection, frame);
 				return;
 			case "subscribe_request": {
+				if (!this.supportsOperation("session.events.subscribe")) {
+					this.enqueue(connection, this.response(frame, "command_result", { ok: false, code: "operation_unavailable", operation: "session.events.subscribe" }));
+					return;
+				}
 				const cursor = numberValue(frame.body.cursor) ?? 0;
 				const view = this.registry.subscribe(connection.connectionId, cursor);
 				if (view === undefined) {
@@ -404,7 +417,8 @@ export class SessionRuntimeServer implements OwnerTransport {
 			accepted: true,
 			runtimeId: this.fence.runtimeId,
 			generation: this.fence.generation,
-			protocolCapabilities: ["session.core"],
+			protocolCapabilities: this.protocolManifest.protocolCapabilities,
+			operationManifest: this.protocolManifest.operationManifest,
 			snapshotCursor: snapshot.headSequence,
 			driverRevision: this.driverState.driverRevision,
 			sessionStatus: snapshot.sessionStatus,
@@ -428,6 +442,14 @@ export class SessionRuntimeServer implements OwnerTransport {
 			this.enqueue(connection, this.response(frame, "command_result", { ok: false, code: "frame_malformed" }));
 			return;
 		}
+		const operation = commandOperation(kind, requestBody);
+		const descriptor = operation === undefined
+			? undefined
+			: this.protocolManifest.operationManifest.find((candidate) => candidate.operation === operation);
+		if (operation === undefined || descriptor === undefined) {
+			this.enqueue(connection, this.response(frame, "command_result", { ok: false, code: "operation_unavailable", operation: operation ?? kind }));
+			return;
+		}
 		// driver claim/release 是 server 层 connection-scoped authority,不进 controller。
 		if (kind === "driver_claim") {
 			const result = this.claimDriver(connection);
@@ -440,7 +462,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 			return;
 		}
 		const isDriver = this.driverState.driver?.connectionId === connection.connectionId;
-		if (this.controller.isMutatingKind(kind) && !isDriver) {
+		if ((descriptor.access === "mutate" || this.controller.isMutatingKind(kind)) && !isDriver) {
 			this.enqueue(connection, this.response(frame, "command_result", { ok: false, code: "observer_mutation_forbidden" }));
 			return;
 		}
@@ -458,6 +480,11 @@ export class SessionRuntimeServer implements OwnerTransport {
 			this.enqueue(connection, this.response(frame, "query_result", { ok: false, code: "frame_malformed" }));
 			return;
 		}
+		const operation = queryOperation(kind, body);
+		if (operation === undefined || !this.supportsOperation(operation)) {
+			this.enqueue(connection, this.response(frame, "query_result", { ok: false, code: "operation_unavailable", operation: operation ?? kind }));
+			return;
+		}
 		const result = await this.controller.handleQuery({ kind, body });
 		this.enqueue(connection, this.response(frame, "query_result", result));
 	}
@@ -472,6 +499,10 @@ export class SessionRuntimeServer implements OwnerTransport {
 		this.persistDriverEvent(transition.eventType, { connectionId: connection.connectionId });
 		this.driverState = { ...this.driverState, lastDriverClientId: connection.clientId };
 		return { ok: true, driverRevision: transition.nextRevision };
+	}
+
+	private supportsOperation(operation: string): boolean {
+		return this.protocolManifest.operationManifest.some((descriptor) => descriptor.operation === operation);
 	}
 
 	private releaseDriver(connection: ServerConnection): { readonly ok: true; readonly driverRevision: number } | { readonly ok: false; readonly code: "driver_revision_conflict" } {
@@ -511,6 +542,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 	}
 
 	private broadcastEvent(event: SessionControllerEvent): void {
+		if (event.sequence !== undefined) this.registry.setHead(event.sequence);
 		for (const connection of this.connections) {
 			if (!connection.initialized || connection.closed) continue;
 			const cursor = this.registry.view(connection.connectionId)?.cursor ?? 0;
@@ -523,7 +555,6 @@ export class SessionRuntimeServer implements OwnerTransport {
 				if (!this.enqueueSubscriptionEvent(connection, durable)) break;
 			}
 		}
-		if (event.sequence !== undefined) this.registry.setHead(event.sequence);
 	}
 
 	private enqueueSubscriptionEvent(connection: ServerConnection, event: SessionEventRecord): boolean {
@@ -662,6 +693,40 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
+function commandOperation(kind: string, body: Record<string, unknown>): string | undefined {
+	switch (kind) {
+		case "driver_claim": return "session.driver.claim";
+		case "driver_release": return "session.driver.release";
+		case "provider_status": return "session.provider.status";
+		case "models": return "session.model.list";
+		case "select_model": return "session.model.select";
+		case "set_thinking": return "session.thinking.set";
+		case "login": return "session.auth.login";
+		case "logout": return "session.auth.logout";
+		case "prompt": return "session.prompt";
+		case "steer": return "session.steer";
+		case "follow_up": return "session.follow_up";
+		case "interrupt": return "session.interrupt";
+		case "clear_queues": return "session.queue.clear";
+		case "recovery_assess": return "session.recovery.assess";
+		case "recovery_verify": return "session.recovery.verify";
+		case "recovery_resume": return "session.recovery.resume";
+		case "domain_command": return stringValue(body.operation);
+		default: return undefined;
+	}
+}
+
+function queryOperation(kind: string, body: Record<string, unknown>): string | undefined {
+	switch (kind) {
+		case "snapshot": return "session.snapshot";
+		case "timeline": return "session.timeline";
+		case "receipts": return "session.receipts";
+		case "recovery_status": return "session.recovery.status";
+		case "domain_query": return stringValue(body.operation);
+		default: return undefined;
+	}
+}
+
 function safeJson(text: string): Record<string, unknown> {
 	try {
 		const parsed = JSON.parse(text) as unknown;
@@ -669,4 +734,11 @@ function safeJson(text: string): Record<string, unknown> {
 	} catch {
 		return { raw: text };
 	}
+}
+
+function manifestFromController(controller: SessionController): SessionProtocolManifest {
+	return freezeSessionProtocolManifest(controller.protocolManifest?.() ?? {
+		protocolCapabilities: [],
+		operationManifest: [],
+	});
 }

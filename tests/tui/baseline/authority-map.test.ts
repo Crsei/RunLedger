@@ -3,7 +3,7 @@
  *
  * 以源码静态检查固定“哪个端口拥有哪个领域事实”：
  *   - local   = InteractiveSessionControllerPort 本地实现（interactive-session-controller.ts）
- *   - remote  = RemoteInteractiveSessionController / Host domain 通道（remote-session.ts）
+ *   - remote  = SessionInteractiveController / Session domain 通道
  *   - facade  = 注入的专项 controller（如 process overlay facade）
  *   - none    = 合同存在但当前生产端口不可达
  * 后续批次迁移时按此表接线 EffectRunner/adapters，并同步更新本表。
@@ -35,7 +35,7 @@ const authorityMap: WorkflowAuthority[] = [
     workflow: "session.catalog/open/resume/fork",
     authority: "local+remote",
     localChannel: "InteractiveSessionController (session manager)",
-    remoteChannel: "Host session.open / session.subscribe",
+    remoteChannel: "Session Domain Router session.catalog/create/resume/fork",
     note: "两端都有真实 authority；TUI 不读 session JSONL",
   },
   {
@@ -77,14 +77,14 @@ const authorityMap: WorkflowAuthority[] = [
     workflow: "prompt.list/submit",
     authority: "none",
     localChannel: "无 controller 方法",
-    remoteChannel: "无 Host domain operation",
+    remoteChannel: "无 Session domain operation",
     note: "effect 存在但端口不可达，UI 显示 unavailable",
   },
   {
     workflow: "keymap.inspect/update",
     authority: "none",
     localChannel: "无 controller 方法",
-    remoteChannel: "无 Host domain operation",
+    remoteChannel: "无 Session domain operation",
     note: "effect 存在但端口不可达，UI 显示 unavailable",
   },
   {
@@ -105,7 +105,7 @@ const authorityMap: WorkflowAuthority[] = [
     workflow: "task-goal/plan/agents/extensions/runtime-snapshot/security-mode/workspace-git/update",
     authority: "remote",
     localChannel: "无",
-    remoteChannel: "queryHostDomain / commandHostDomain",
+    remoteChannel: "querySessionDomain / commandSessionDomain",
     note: "本地 controller 两通道均为 undefined",
   },
   {
@@ -139,12 +139,14 @@ describe("B0 authority map: passive contract workflows", () => {
     }
   });
 
-  it("local controller exposes Host domain channels only on the remote controller", () => {
-    expect(localControllerSource).toContain("queryHostDomain");
-    expect(localControllerSource).toContain("commandHostDomain");
-    expect(localControllerSource).toMatch(/queryHostDomain\?:/u);
-    expect(remoteControllerSource).toContain("async queryHostDomain");
-    expect(remoteControllerSource).toContain("async commandHostDomain");
+  it("exposes only Session-named typed domain channels", () => {
+    expect(localControllerSource).toContain("querySessionDomain");
+    expect(localControllerSource).toContain("commandSessionDomain");
+    expect(localControllerSource).toMatch(/querySessionDomain\?:/u);
+    expect(remoteControllerSource).toContain("async querySessionDomain");
+    expect(remoteControllerSource).toContain("async commandSessionDomain");
+		expect(localControllerSource).not.toContain("queryHostDomain");
+		expect(remoteControllerSource).not.toContain("commandHostDomain");
   });
 
   it("remote controller has no local queue facts", () => {

@@ -15,6 +15,7 @@ import { createEffectRunner } from "../../../src/tui/application/effect-runner.t
 import type { TuiDomainPorts } from "../../../src/tui/application/ports.ts";
 import type { TuiResult } from "../../../src/tui/application/result.ts";
 import type { ProviderWorkflowPort, ProviderCatalogSnapshot } from "../../../src/tui/providers/types.ts";
+import type { SessionWorkflowPort } from "../../../src/tui/sessions/port.ts";
 
 const ref = (generation = 1, effectId = "effect-1", correlationId = "corr-1") => ({ generation, effectId, correlationId });
 
@@ -33,6 +34,38 @@ function catalogPort(delayMs = 0): ProviderWorkflowPort & { readonly triggered: 
 }
 
 describe("B4 effect runner", () => {
+	it("S2: routes all session catalog and transition effects through the session port", async () => {
+		const calls: string[] = [];
+		const session: SessionWorkflowPort = {
+			list: async (request) => {
+				calls.push("list");
+				return { ok: true, ref: request, value: { kind: "catalog", revision: 0, items: [] } };
+			},
+			create: async (request) => {
+				calls.push(`create:${request.expectedRevision}`);
+				return { ok: true, ref: request, value: { kind: "transition", operation: "create", targetSessionId: "session-new", catalogRevision: 1 } };
+			},
+			resume: async (request) => {
+				calls.push(`resume:${request.targetSessionId}:${request.expectedRevision}`);
+				return { ok: true, ref: request, value: { kind: "transition", operation: "resume", targetSessionId: request.targetSessionId, catalogRevision: request.expectedRevision } };
+			},
+			fork: async (request) => {
+				calls.push(`fork:${request.sourceSessionId}:${request.expectedSourceHeadSequence}:${request.expectedRevision}`);
+				return { ok: true, ref: request, value: { kind: "transition", operation: "fork", targetSessionId: "session-fork", catalogRevision: request.expectedRevision + 1 } };
+			},
+		};
+		const results: TuiResult[] = [];
+		const runner = createEffectRunner({ ports: { session }, currentGeneration: () => 3, onResult: (result) => results.push(result) });
+		runner.dispatch({ type: "session.list", ...ref(3, "e-list", "c-list") });
+		runner.dispatch({ type: "session.create", expectedRevision: 4, ...ref(3, "e-create", "c-create") });
+		runner.dispatch({ type: "session.resume", targetSessionId: "session-old", expectedRevision: 4, ...ref(3, "e-resume", "c-resume") });
+		runner.dispatch({ type: "session.fork", sourceSessionId: "session-current", expectedSourceHeadSequence: 9, expectedRevision: 4, ...ref(3, "e-fork", "c-fork") });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(calls).toEqual(["list", "create:4", "resume:session-old:4", "fork:session-current:9:4"]);
+		expect(results).toHaveLength(4);
+		expect(results.every((result) => result.status === "completed")).toBe(true);
+	});
+
 	it("routes prompt.list through exactly one switch branch", () => {
 		const source = readFileSync(join(process.cwd(), "src/tui/application/effect-runner.ts"), "utf8");
 		expect(source.match(/case "prompt\.list":/gu)).toHaveLength(1);

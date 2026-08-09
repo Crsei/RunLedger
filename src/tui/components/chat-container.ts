@@ -72,7 +72,7 @@ export class ChatContainer implements Component {
 
   render(width: number): string[] {
     if (this.timelineBlocks !== undefined) {
-      return this.timelineBlocks.map((block) => fitToWidth(("content" in block ? block.content : ""), width));
+      return this.timelineBlocks.map((block) => fitToWidth(("content" in block ? block.content ?? "" : ""), width));
     }
     const lines: string[] = [];
     for (const { component } of this.children) {
@@ -97,7 +97,9 @@ export class ChatContainer implements Component {
       }
       // Timeline blocks 是交给 OpenTUI Text/Markdown renderable 的结构化正文；
       // 由原生布局按容器宽度换行，不能在这里把整块内容当成单行截断。
-      const blocks = this.timelineBlocks.map((block) => ({ ...block })) as PresentationBlock[];
+      const blocks = this.timelineBlocks.map((block): PresentationBlock => block.kind === "separator"
+        ? { ...block, content: separatorLine(block.label, width) }
+        : { ...block });
       this.presentCache = { generation: this.timelineGeneration, width, blocks };
       return blocks;
     }
@@ -131,6 +133,13 @@ export class ChatContainer implements Component {
     }
     return blocks;
   }
+}
+
+function separatorLine(label: string, width: number): string {
+  const prefix = `─ ${label} `;
+  if (width <= 0) return "";
+  if (prefix.length >= width) return fitToWidth(prefix, width);
+  return `${prefix}${"─".repeat(width - prefix.length)}`;
 }
 
 function presentationBytes(blocks: readonly PresentationBlock[]): number {

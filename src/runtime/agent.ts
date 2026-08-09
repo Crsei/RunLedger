@@ -302,11 +302,18 @@ export class Agent {
       }
     }
     this._inFlight = true;
+    let startedRun: Extract<AgentEvent, { type: "agent_start" }> | undefined;
+    let completionSeen = false;
+    const dispatchRunEvent = async (event: AgentEvent): Promise<void> => {
+      if (event.type === "agent_start") startedRun = event;
+      if (event.type === "agent_end") completionSeen = true;
+      await this.dispatch(event);
+    };
     const run = runAgentLoop(
       prompts,
       context,
       config,
-      (ev) => this.dispatch(ev),
+      dispatchRunEvent,
       this._abortController.signal,
       this._streamFn,
     );
@@ -317,6 +324,21 @@ export class Agent {
       this._state.messages = finalMessages.slice();
       // 给 ledger 追加 sessionId 占位的最终 custom entry(可选)
       return finalMessages;
+    } catch (error) {
+      if (startedRun !== undefined && !completionSeen) {
+        const timestamp = Date.now();
+        const elapsedMs = Math.max(0, timestamp - startedRun.timestamp);
+        await dispatchRunEvent({
+          type: "agent_end",
+          timestamp,
+          runId: startedRun.runId,
+          stopReason: this._abortController.signal.aborted ? "aborted" : "error",
+          elapsedMs,
+          activeDurationMs: elapsedMs,
+          messageCountAtEnd: context.messages.length,
+        });
+      }
+      throw error;
     } finally {
       removeExternalAbort?.();
       this._inFlight = false;

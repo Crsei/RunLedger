@@ -76,9 +76,13 @@ function fakeConnectedTransport(runtimeId: string, generation = 1): SessionClien
 				accepted: true,
 				runtimeId,
 				generation,
+				protocolCapabilities: ["session.core"],
+				operationManifest: [
+					{ operation: "session.snapshot", capability: "session.core", access: "read" },
+				],
 				snapshotCursor: 0,
 				driverRevision: 0,
-				sessionStatus: "running",
+				sessionStatus: "active",
 			},
 		}),
 		close: async () => undefined,
@@ -141,7 +145,14 @@ describe("R6 session client", () => {
 		const opened = await client.openSession(sessionId, { attachRetries: 2 });
 		expect(opened.ok).toBe(true);
 		expect(ports).toEqual([43193, 43194]);
-		if (opened.ok) await opened.handle.close();
+		if (opened.ok) {
+			expect(typeof opened.handle.supports).toBe("function");
+			expect(opened.handle.supports("session.snapshot")).toBe(true);
+			expect(opened.handle.supports("session.catalog.list")).toBe(false);
+			expect(Object.isFrozen(opened.handle.protocolCapabilities)).toBe(true);
+			expect(Object.isFrozen(opened.handle.operationManifest)).toBe(true);
+			await opened.handle.close();
+		}
 		store.database().close();
 	});
 	it("resolves sessions from the read-only catalog", () => {

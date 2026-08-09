@@ -1,6 +1,7 @@
 export type PresentationBlock =
   | { id?: string; kind: "text"; content: string }
   | { id?: string; kind: "markdown"; content: string; streaming: boolean }
+  | { id?: string; kind: "separator"; label: string; content?: string }
   | {
     id?: string;
     kind: "select";

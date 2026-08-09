@@ -24,6 +24,8 @@ import type {
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
 import type { ContextAssemblySink, ModelContextAssembler } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
+import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "./session-runtime/domain-router.ts";
+import type { AgentRunSummary } from "./session-runtime/run-timing.ts";
 import type { LedgerEntry } from "./ledger/types.ts";
 import { createStdlibTools } from "./tools/index.ts";
 import {
@@ -89,6 +91,10 @@ export interface ProviderStatus {
 /** Client-side contract shared by the Host-owned and local test controllers. */
 export interface InteractiveSessionControllerPort {
   subscribe(listener: AgentEventSink): () => void;
+  /** Session Owner 客户端握手冻结的精确 operation 判断；legacy/local controller 缺省为不可协商。 */
+  readonly supports?: (operation: string) => boolean;
+  /** 握手冻结的 Session owner generation；本地 legacy/test controller 可省略。 */
+  readonly authorityGeneration?: number;
   readonly sessionId: string;
   readonly inFlight: boolean;
   readonly currentSelection: RuntimeSelection;
@@ -97,6 +103,7 @@ export interface InteractiveSessionControllerPort {
   readonly auditEntries: readonly LedgerEntry[];
   readonly ledger?: LedgerSink;
   readonly toolCount: number;
+  readonly agentRuns?: readonly AgentRunSummary[];
   getSteeringMessages(): readonly UserAgentMessage[];
   getFollowUpMessages(): readonly UserAgentMessage[];
   getProviderStatuses(): Promise<ProviderStatus[]>;
@@ -111,18 +118,10 @@ export interface InteractiveSessionControllerPort {
   clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] };
   waitForIdle(): Promise<void>;
   dispose(): void;
-  /**
-   * Host domain 只读查询通道（仅 authenticated Host client 提供；本地
-   * controller 为 undefined）。CLI/TUI 通过它读 plugins/skills/hooks/mcp
-   * 真实 snapshot，不在 client 侧装配 manager。
-   */
-  readonly queryHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  /**
-   * Host domain mutation 通道（仅 authenticated Host client 提供；本地
-   * controller 为 undefined）。plan/compact/memory/remember 等命令经
-   * 此执行，Host 持有 durable intent/receipt 与 driver fence。
-   */
-  readonly commandHostDomain?: (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  /** Session-scoped typed domain query；缺失表示没有该 authority。 */
+  readonly querySessionDomain?: (operation: string, payload: Record<string, unknown>, context: SessionDomainRequestContext) => Promise<SessionDomainResult>;
+  /** Session-scoped typed domain mutation；driver 在 client/server 双端 fence。 */
+  readonly commandSessionDomain?: (operation: string, payload: Record<string, unknown>, context: SessionDomainMutationContext) => Promise<SessionDomainResult>;
   /** Session Owner crash takeover 的 typed recovery facade；本地 legacy controller 可缺省。 */
   readonly recoveryStatus?: () => Promise<SessionRecoveryStatus>;
   readonly recoveryAssess?: () => Promise<SessionRecoveryAssessment>;

@@ -30,6 +30,18 @@ function initialState(): ReturnType<typeof createInitialTuiState> {
 const draft = (text: string) => ({ text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength });
 
 describe("B3 application reducer", () => {
+	it("S2: session effects use the existing sessionWorkflow with the same correlation fence", () => {
+		let state = initialState();
+		const effect = { type: "session.list" as const, generation: 1, effectId: "session-effect", correlationId: "session-correlation" };
+		state = tuiReducer(state, { type: "query.start", effect });
+		expect(state.sessionWorkflow).toMatchObject({ state: "loading", requestId: "session-correlation", generation: 1 });
+		state = tuiReducer(state, {
+			type: "query.result",
+			result: { status: "completed", ref: effect, value: { kind: "catalog", revision: 0, items: [] } },
+		});
+		expect(state.sessionWorkflow).toEqual({ state: "empty", generation: 1 });
+	});
+
 	it("is pure: no OpenTUI, Node IO, controller, timer or storage imports", () => {
 		const imports = reducerSource.split("\n").filter((line) => line.trim().startsWith("import"));
 		for (const forbidden of ["@opentui", "node:", "AbortController", "storage"]) {

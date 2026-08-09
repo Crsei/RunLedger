@@ -43,6 +43,7 @@ const allowedControllerCalls = [
   "controller.messages",
   "controller.warnings",
   "controller.auditEntries",
+  "controller.agentRuns",
   "controller.toolCount",
   "controller.ledger",
   "controller.getSteeringMessages",

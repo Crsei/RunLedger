@@ -43,6 +43,176 @@ function controller(detail: string | undefined): SessionInteractiveController {
 }
 
 describe("SessionInteractiveController command error surfacing", () => {
+	it("buffers snapshot-to-listener run events and deduplicates replayed completion", async () => {
+		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
+		const endFrame: SessionFrameEnvelope = {
+			frameId: "event-2", kind: "subscription_event", protocolVersion: 3,
+			body: { sequence: 2, eventType: "agent.event", payload: { type: "agent_end", timestamp: 200, runId: "run-race", stopReason: "stop", elapsedMs: 100, activeDurationMs: 100, messageCountAtEnd: 2 } },
+		};
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => {
+				wireListener?.({ frameId: "event-1", kind: "subscription_event", protocolVersion: 3, body: { sequence: 1, eventType: "agent.event", payload: { type: "agent_start", timestamp: 100, runId: "run-race" } } });
+				wireListener?.(endFrame);
+				return { frameId: "subscribed", kind: "command_result", protocolVersion: 3, body: { ok: true, cursor: 0 } };
+			},
+			onEvent: (listener: (frame: SessionFrameEnvelope) => void): (() => void) => { wireListener = listener; return () => { wireListener = undefined; }; },
+			notify: () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
+		const instance = new SessionInteractiveController(handle, { sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0, agentRuns: [] });
+		expect(await instance.resumeEvents()).toBe("subscribed");
+		const seen: string[] = [];
+		instance.subscribe((event) => { seen.push(`${event.type}:${event.type === "agent_start" || event.type === "agent_end" ? event.runId : ""}`); });
+		wireListener?.(endFrame);
+		expect(seen).toEqual(["agent_start:run-race", "agent_end:run-race"]);
+		expect(instance.recoveryCursor()).toBe(2);
+	});
+	it("rejects malformed query correlation locally without sending a frame", async () => {
+		let requestCount = 0;
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => {
+				requestCount += 1;
+				throw new Error("wire should not be reached");
+			},
+			onEvent: (): (() => void) => () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = {
+			transport,
+			sessionId: "session_fixture",
+			generation: 7,
+			supports: (operation: string) => operation === "session.catalog.list",
+		} as unknown as OwnedSessionHandle;
+		const instance = new SessionInteractiveController(handle, {
+			sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
+		});
+		await expect(instance.querySessionDomain("session.catalog.list", {}, { correlationId: "", effectId: "effect-valid" })).resolves.toEqual({
+			ok: false,
+			status: "failed",
+			code: "invalid_domain_context",
+			operation: "session.catalog.list",
+		});
+		expect(requestCount).toBe(0);
+	});
+
+	it("rejects an observer Session domain mutation before sending a frame", async () => {
+		let requestCount = 0;
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => {
+				requestCount += 1;
+				throw new Error("wire should not be reached");
+			},
+			onEvent: (): (() => void) => () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = {
+			transport,
+			sessionId: "session_fixture",
+			generation: 7,
+			supports: (operation: string) => operation === "session.create",
+		} as unknown as OwnedSessionHandle;
+		const snapshot: SessionInteractiveSnapshot = {
+			sessionId: "session_fixture",
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 3,
+		};
+		const instance = new SessionInteractiveController(handle, snapshot);
+		const commandSessionDomain = (instance as unknown as {
+			commandSessionDomain?: (operation: string, payload: Record<string, unknown>, context: { correlationId: string; effectId: string; expectedRevision: number }) => Promise<Record<string, unknown>>;
+		}).commandSessionDomain;
+		expect(commandSessionDomain).toBeDefined();
+		await expect(commandSessionDomain!.call(instance, "session.create", {}, {
+			correlationId: "correlation_observer_create",
+			effectId: "effect_observer_create",
+			expectedRevision: 1,
+		})).resolves.toEqual({
+			ok: false,
+			status: "denied",
+			code: "driver_required",
+			operation: "session.create",
+		});
+		expect(requestCount).toBe(0);
+	});
+
+	it("rejects an invalid expected revision locally for a driver", async () => {
+		let requestCount = 0;
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => {
+				requestCount += 1;
+				throw new Error("wire should not be reached");
+			},
+			onEvent: (): (() => void) => () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = {
+			transport,
+			sessionId: "session_fixture",
+			generation: 7,
+			supports: (operation: string) => operation === "session.create",
+		} as unknown as OwnedSessionHandle;
+		const instance = new SessionInteractiveController(handle, {
+			sessionId: "session_fixture",
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 3,
+		});
+		instance.setConnectionRole("driver");
+
+		await expect(instance.commandSessionDomain("session.create", {}, {
+			correlationId: "correlation_invalid_revision",
+			effectId: "effect_invalid_revision",
+			expectedRevision: -1,
+		})).resolves.toEqual({
+			ok: false,
+			status: "failed",
+			code: "invalid_expected_revision",
+			operation: "session.create",
+		});
+		expect(requestCount).toBe(0);
+	});
+
+	it("rejects an unnegotiated domain operation locally without sending a frame", async () => {
+		let requestCount = 0;
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => {
+				requestCount += 1;
+				throw new Error("wire should not be reached");
+			},
+			onEvent: (): (() => void) => () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = {
+			transport,
+			supports: (operation: string) => operation === "security.inspect",
+		} as unknown as OwnedSessionHandle;
+		const snapshot: SessionInteractiveSnapshot = {
+			sessionId: "session_fixture",
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 0,
+		};
+		const instance = new SessionInteractiveController(handle, snapshot);
+		await expect(instance.querySessionDomain("plan.inspect", {}, {
+			correlationId: "correlation_plan_inspect",
+			effectId: "effect_plan_inspect",
+		})).resolves.toMatchObject({
+			ok: false,
+			status: "unavailable",
+			code: "operation_unavailable",
+			operation: "plan.inspect",
+		});
+		expect(requestCount).toBe(0);
+	});
+
 	it("无 detail 时抛出 code", async () => {
 		await expect(controller(undefined).prompt("hi")).rejects.toThrow("domain_prompt_failed");
 	});

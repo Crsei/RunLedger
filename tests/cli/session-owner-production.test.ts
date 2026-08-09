@@ -113,12 +113,16 @@ describe("R6 production composition", () => {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 			let stdout = "";
+			let stderr = "";
 			child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-			return { child, stdout: () => stdout };
+			child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+			return { child, stdout: () => stdout, stderr: () => stderr };
 		});
-		await Promise.all(workers.map(({ child }) => new Promise<void>((resolve, reject) => {
+		await Promise.all(workers.map(({ child, stdout, stderr }) => new Promise<void>((resolve, reject) => {
 			child.once("error", reject);
-			child.once("exit", (code) => code === 0 ? resolve() : reject(new Error(`claim worker exited ${String(code)}`)));
+			child.once("exit", (code) => code === 0
+				? resolve()
+				: reject(new Error(`claim worker exited ${String(code)}: stdout=${stdout().trim()} stderr=${stderr().trim()}`)));
 		})));
 		const results = workers.map((worker) => lastResultLine(worker.stdout()));
 		expect(results.every((result) => result.ok === true && result.outcome === "claimed")).toBe(true);

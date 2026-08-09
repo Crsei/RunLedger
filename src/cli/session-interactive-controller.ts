@@ -16,6 +16,7 @@ import type { LedgerEntry } from "../runtime/ledger/types.ts";
 import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { SESSION_PROTOCOL_BOUNDS, SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
 import type { SessionClientTransport } from "../runtime/session-server/client-transport.ts";
+import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "../runtime/session-runtime/domain-router.ts";
 import type {
 	InteractiveSessionControllerPort,
 	ProviderStatus,
@@ -25,6 +26,7 @@ import type {
 	SessionRecoveryStatus,
 } from "../runtime/interactive-session-controller.ts";
 import type { OwnedSessionHandle } from "./session-client.ts";
+import type { AgentRunSummary } from "../runtime/session-runtime/run-timing.ts";
 
 export interface SessionInteractiveSnapshot {
 	readonly sessionId: string;
@@ -35,13 +37,17 @@ export interface SessionInteractiveSnapshot {
 	readonly toolCount: number;
 	readonly eventCursor: number;
 	readonly driverRevision: number;
+	readonly agentRuns?: readonly AgentRunSummary[];
 }
 
 /** R7:TUI 的 session-owner 适配器(替代 legacy RemoteInteractiveSessionController)。 */
 export class SessionInteractiveController implements InteractiveSessionControllerPort {
 	private readonly transport: SessionClientTransport;
+	private readonly supportsOperation: (operation: string) => boolean;
 	private readonly listeners = new Set<AgentEventSink>();
 	private readonly session: string;
+	private readonly sessionGeneration: number;
+	private connectionRole: "driver" | "observer" = "observer";
 	private readonly messageState: AgentMessage[];
 	private readonly warningState: string[];
 	private readonly auditState: LedgerEntry[];
@@ -54,10 +60,15 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private disposed = false;
 	private idleWaiters: Array<() => void> = [];
 	private readonly removeTransportListener: () => void;
+	private readonly runSummaryState: readonly AgentRunSummary[];
+	private readonly pendingListenerEvents: AgentEvent[] = [];
+	private eventBufferOverflow = false;
 
 	public constructor(handle: OwnedSessionHandle, snapshot: SessionInteractiveSnapshot) {
 		this.transport = handle.transport;
+		this.supportsOperation = typeof handle.supports === "function" ? (operation) => handle.supports(operation) : () => false;
 		this.session = snapshot.sessionId;
+		this.sessionGeneration = handle.generation;
 		this.messageState = [...snapshot.messages];
 		this.warningState = [...snapshot.warnings];
 		this.auditState = [...snapshot.auditEntries];
@@ -65,11 +76,20 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.toolCountValue = snapshot.toolCount;
 		this.eventCursor = snapshot.eventCursor;
 		this.driverRevision = snapshot.driverRevision;
+		this.runSummaryState = snapshot.agentRuns ?? [];
 		this.removeTransportListener = handle.transport.onEvent((frame) => this.receive(frame));
 	}
 
 	public driverFence(): { readonly expectedDriverRevision: number } {
 		return { expectedDriverRevision: this.driverRevision };
+	}
+
+	public supports(operation: string): boolean {
+		return this.supportsOperation(operation);
+	}
+
+	public setConnectionRole(role: "driver" | "observer"): void {
+		this.connectionRole = role;
 	}
 
 	public recoveryCursor(): number {
@@ -78,11 +98,22 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 
 	public subscribe(listener: AgentEventSink): () => void {
 		this.listeners.add(listener);
+		if (this.listeners.size === 1 && this.pendingListenerEvents.length > 0) {
+			for (const event of this.pendingListenerEvents.splice(0)) void listener(event);
+		}
 		return () => this.listeners.delete(listener);
+	}
+
+	public get agentRuns(): readonly AgentRunSummary[] {
+		return this.runSummaryState;
 	}
 
 	public get sessionId(): string {
 		return this.session;
+	}
+
+	public get authorityGeneration(): number {
+		return this.sessionGeneration;
 	}
 
 	public get inFlight(): boolean {
@@ -123,11 +154,12 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 
 	public async resumeEvents(): Promise<"subscribed" | "resync_required"> {
 		const response = await this.transport.request(this.frame("subscribe_request", { cursor: this.eventCursor }));
+		if (this.eventBufferOverflow) return "resync_required";
 		if (response.kind !== "command_result" || response.body.ok !== true) {
 			return "resync_required";
 		}
 		const cursor = numberValue(response.body.cursor);
-		if (cursor !== undefined) this.eventCursor = cursor;
+		if (cursor !== undefined) this.eventCursor = Math.max(this.eventCursor, cursor);
 		return "subscribed";
 	}
 
@@ -188,17 +220,43 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		return new Promise<void>((resolve) => this.idleWaiters.push(resolve));
 	}
 
-	public async queryHostDomain(operation: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-		const response = await this.transport.request(this.frame("query_request", { kind: "domain_query", body: { operation, body } }));
-		if (response.kind !== "query_result" || response.body.ok !== true) {
-			throw new Error(stringValue(response.body.code) ?? "session domain query rejected");
+	public async querySessionDomain(operation: string, payload: Record<string, unknown>, context: SessionDomainRequestContext): Promise<SessionDomainResult> {
+		if (!this.supports(operation)) return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
+		if (!validDomainContext(context)) return { ok: false, status: "failed", code: "invalid_domain_context", operation };
+		const response = await this.transport.request(this.frame("query_request", {
+			kind: "domain_query",
+			body: {
+				sessionId: this.session,
+				generation: this.sessionGeneration,
+				correlationId: context.correlationId,
+				effectId: context.effectId,
+				operation,
+				payload,
+			},
+		}));
+		if (response.kind !== "query_result") {
+			return { ok: false, status: "failed", code: "session_domain_query_rejected", operation };
 		}
-		return (response.body.result ?? {}) as Record<string, unknown>;
+		return response.body as SessionDomainResult;
 	}
 
-	public async commandHostDomain(operation: string, body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-		const response = await this.command("domain_command", { operation, body });
-		return response;
+	public async commandSessionDomain(operation: string, payload: Record<string, unknown>, context: SessionDomainMutationContext): Promise<SessionDomainResult> {
+		if (!this.supports(operation)) return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
+		if (this.connectionRole !== "driver") return { ok: false, status: "denied", code: "driver_required", operation };
+		if (!validDomainContext(context)) return { ok: false, status: "failed", code: "invalid_domain_context", operation };
+		if (!Number.isSafeInteger(context.expectedRevision) || context.expectedRevision < 0) {
+			return { ok: false, status: "failed", code: "invalid_expected_revision", operation };
+		}
+		const response = await this.command("domain_command", {
+			sessionId: this.session,
+			generation: this.sessionGeneration,
+			correlationId: context.correlationId,
+			effectId: context.effectId,
+			operation,
+			expectedRevision: context.expectedRevision,
+			payload,
+		});
+		return response as SessionDomainResult;
 	}
 
 	public async recoveryStatus(): Promise<SessionRecoveryStatus> {
@@ -277,12 +335,20 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		}
 		if (frame.kind !== "subscription_event") return;
 		const sequence = numberValue(frame.body.sequence);
-		if (sequence !== undefined) this.eventCursor = Math.max(this.eventCursor, sequence);
+		if (sequence !== undefined && sequence <= this.eventCursor) return;
+		if (sequence !== undefined) this.eventCursor = sequence;
 		const event = frame.body.payload;
 		if (!isAgentEvent(event)) return;
 		this.inFlightValue = event.type !== "agent_end";
 		if (event.type === "agent_end") {
 			for (const resolve of this.idleWaiters.splice(0)) resolve();
+		}
+		if (this.listeners.size === 0) {
+			if (this.pendingListenerEvents.length >= SESSION_PROTOCOL_BOUNDS.maxPreActivationPending) {
+				this.pendingListenerEvents.shift();
+				this.eventBufferOverflow = true;
+			}
+			this.pendingListenerEvents.push(event);
 		}
 		for (const listener of this.listeners) {
 			try {
@@ -308,6 +374,14 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validDomainContext(context: SessionDomainRequestContext): boolean {
+	return boundedIdentifier(context.correlationId) && boundedIdentifier(context.effectId);
+}
+
+function boundedIdentifier(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0 && value.length <= 256;
 }
 
 function isAgentEvent(value: unknown): value is AgentEvent {

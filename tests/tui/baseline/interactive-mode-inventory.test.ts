@@ -52,9 +52,9 @@ const retiredDirectControllerCalls = [
 const directControllerCalls = [
   "clearAllQueues",
   "interrupt",
-  "queryHostDomain",
-  "commandHostDomain",
 ];
+
+const retiredDomainControllerCalls = ["queryHostDomain", "commandHostDomain", "querySessionDomain", "commandSessionDomain"];
 
 /** B4 已迁移到 typed adapter 的 raw parsing（extension/mcp workflow）；compactDomainResult 属 B6/B7。 */
 const hostRawResponseParsing = [
@@ -94,6 +94,10 @@ describe("B0 InteractiveMode inventory characterization", () => {
     for (const call of directControllerCalls) {
       expect(source, `direct controller call ${call}`).toContain(call);
     }
+  });
+
+  it("keeps all domain controller calls behind typed adapters", () => {
+	for (const call of retiredDomainControllerCalls) expect(source).not.toContain(`this.controller.${call}`);
   });
 
   it("pins the direct controller calls B5 moved into the adapter as retired", () => {

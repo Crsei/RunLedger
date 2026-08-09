@@ -89,6 +89,7 @@ export async function runAgentLoop(
   const ledger = config.ledger;
   const sessionStart = Date.now();
   const sessionId = ledger?.sessionId ?? newId();
+  const runId = `run-${newId()}`;
 
   if (config.traceRecorder) {
     await config.traceRecorder.startRun({ agentId: sessionId });
@@ -113,7 +114,7 @@ export async function runAgentLoop(
   };
 
   await fire(
-    { type: "agent_start", timestamp: sessionStart },
+    { type: "agent_start", timestamp: sessionStart, runId },
     {
       id: newId(),
       parentId: sessionId,
@@ -441,7 +442,15 @@ export async function runAgentLoop(
 
   const agentEnd = Date.now();
   await fire(
-    { type: "agent_end", timestamp: agentEnd },
+    {
+      type: "agent_end",
+      timestamp: agentEnd,
+      runId,
+      stopReason: lastStopReason,
+      elapsedMs: Math.max(0, agentEnd - sessionStart),
+      activeDurationMs: Math.max(0, agentEnd - sessionStart),
+      messageCountAtEnd: messages.length,
+    },
     {
       id: newId(),
       parentId: sessionId,

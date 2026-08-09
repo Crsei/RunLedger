@@ -1,7 +1,7 @@
 /**
- * Host domain adapter：Host `Record<string, unknown>` 响应 -> typed bounded 投影。
+ * Session resource adapter：Session Domain Router 响应 -> typed bounded 投影。
  *
- * 所有 Host 响应必须先过 schema/typed validator 才能进入 workflow；
+ * 所有 Session 响应必须先过 schema/typed validator 才能进入 workflow；
  * 非法 body 编码为 failed（不 throw），字段一律有界 + 终端安全。
  * capability 缺失（无 Host 通道）时端口 undefined，不发 effect。
  */
@@ -13,14 +13,36 @@ import type { PlanRenderQueryPort, PlanRenderView } from "../goal-plan/types.ts"
 import type { SecurityModeWorkflowPort, SecurityModeSnapshot } from "../security-mode/types.ts";
 import type { WorkspaceGitPort, WorkspaceGitSnapshot, WorkspaceGitHead } from "../workspace/types.ts";
 import { boundedToolText } from "../presentation/tools/projector.ts";
+import type { SessionDomainResult } from "../../runtime/session-runtime/domain-router.ts";
 
 const LABEL_BOUND = 120;
 
-type HostQuery = (operation: string, body?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+type ResourceQuery = (operation: string, body: Record<string, unknown> | undefined, request: TuiPortRequest) => Promise<Record<string, unknown>>;
 
-export interface HostDomainPortsInput {
-	readonly query?: HostQuery;
-	readonly command?: HostQuery;
+export interface SessionResourcePortsInput {
+	readonly query?: ResourceQuery;
+	readonly command?: ResourceQuery;
+	readonly supports?: (operation: string) => boolean;
+}
+
+export interface SessionResourceControllerInput {
+	readonly supports?: (operation: string) => boolean;
+	readonly querySessionDomain?: (operation: string, payload: Record<string, unknown>, context: { readonly correlationId: string; readonly effectId: string }) => Promise<SessionDomainResult>;
+}
+
+/** S1:Session 命名的 read-only resource adapter；未协商 operation 不构造 port。 */
+export function createSessionResourcePortsFromController(controller: SessionResourceControllerInput | undefined): TuiDomainPorts {
+	if (controller?.supports === undefined || controller.querySessionDomain === undefined) return {};
+	return createSessionResourcePorts({
+		supports: (operation) => controller.supports!(operation),
+		query: async (operation, payload, request) => {
+			const result = await controller.querySessionDomain!(operation, payload ?? {}, {
+				correlationId: request.correlationId,
+				effectId: request.effectId,
+			});
+			return result.ok ? result.value : { ok: false, code: result.code, message: result.code };
+		},
+	});
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -45,22 +67,23 @@ function envelope<T>(request: TuiPortRequest, produce: () => Promise<TuiResultEn
 		(error: unknown) => ({
 			ok: false as const,
 			ref: request,
-			error: { code: "host_query_error", message: String(error), retryable: true },
+			error: { code: "session_query_error", message: String(error), retryable: true },
 		}),
 	);
 }
 
-export function createHostDomainPorts(host: HostDomainPortsInput | undefined): TuiDomainPorts {
-	if (host === undefined || host.query === undefined) return {};
+export function createSessionResourcePorts(resources: SessionResourcePortsInput | undefined): TuiDomainPorts {
+	if (resources === undefined || resources.query === undefined) return {};
+	const supports = (operation: string): boolean => resources.supports?.(operation) === true;
 
 	const extensionPort: ExtensionResourcePort = {
-		inspect: (request) => envelope(request, () => inspectExtensions(host.query!, request)),
+		inspect: (request) => envelope(request, () => inspectExtensions(resources.query!, request)),
 		reload: async (request) => {
-			if (host.command === undefined) {
-				return { ok: false, ref: request, error: { code: "capability_unavailable", message: "extension mutation needs a Host command channel", retryable: false } };
+			if (resources.command === undefined || !supports("extension.reload")) {
+				return { ok: false, ref: request, error: { code: "capability_unavailable", message: "extension mutation needs a Session command channel", retryable: false } };
 			}
 			return envelope(request, async () => {
-				const body = await host.command!("extension.reload", {});
+				const body = await resources.command!("extension.reload", {}, request);
 				if (body.ok === false) return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 				return { ok: true, ref: request, value: { resourceId: "extension-snapshot", operation: "reload", generation: 1, receiptPrefix: boundedToolText("reload", 40), outcome: "completed", recoveryRequired: false } };
 			});
@@ -68,24 +91,24 @@ export function createHostDomainPorts(host: HostDomainPortsInput | undefined): T
 	};
 
 	const planPort: PlanRenderQueryPort = {
-		inspect: (request) => envelope(request, () => inspectPlan(host.query!, request)),
+		inspect: (request) => envelope(request, () => inspectPlan(resources.query!, request)),
 	};
 
 	const securityPort: SecurityModeWorkflowPort = {
-		inspect: (request) => envelope(request, () => inspectSecurityMode(host.query!, request)),
-		// Host 只有 security.inspect（无 mutation operation）→ 显式 unavailable，不伪装实现
-		set: async (request) => ({ ok: false, ref: request, error: { code: "host_operation_unsupported", message: "Host has no security-mode mutation contract", retryable: false } }),
+		inspect: (request) => envelope(request, () => inspectSecurityMode(resources.query!, request)),
+		// 当前 Session 只有 security.inspect（无 mutation operation）→ 显式 unavailable。
+		set: async (request) => ({ ok: false, ref: request, error: { code: "session_operation_unsupported", message: "Session has no security-mode mutation contract", retryable: false } }),
 	};
 
 	const workspaceGitPort: WorkspaceGitPort = {
-		inspect: (request) => envelope(request, () => inspectWorkspaceGit(host.query!, request)),
+		inspect: (request) => envelope(request, () => inspectWorkspaceGit(resources.query!, request)),
 	};
 
 	return {
-		extensions: extensionPort,
-		plan: planPort,
-		securityMode: securityPort,
-		workspaceGit: workspaceGitPort,
+		...(supports("extension.inspect") ? { extensions: extensionPort } : {}),
+		...(supports("plan.inspect") ? { plan: planPort } : {}),
+		...(supports("security.inspect") ? { securityMode: securityPort } : {}),
+		...(supports("worktree.inspect") ? { workspaceGit: workspaceGitPort } : {}),
 	};
 }
 
@@ -126,8 +149,8 @@ function extensionActivation(value: unknown, ready: boolean): ExtensionActivatio
 	}
 }
 
-async function inspectExtensions(query: HostQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<ExtensionResourceSnapshot>> {
-	const body = await query("extension.inspect", {});
+async function inspectExtensions(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<ExtensionResourceSnapshot>> {
+	const body = await query("extension.inspect", {}, request);
 	if (body.ok === false) {
 		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 	}
@@ -154,8 +177,8 @@ async function inspectExtensions(query: HostQuery, request: TuiPortRequest): Pro
 	return { ok: true, ref: request, value: { generation: numberField(snapshot.generation) ?? 1, resources } };
 }
 
-async function inspectPlan(query: HostQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<PlanRenderView>> {
-	const body = await query("plan.inspect", {});
+async function inspectPlan(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<PlanRenderView>> {
+	const body = await query("plan.inspect", {}, request);
 	if (body.ok === false) {
 		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 	}
@@ -181,8 +204,8 @@ async function inspectPlan(query: HostQuery, request: TuiPortRequest): Promise<T
 	};
 }
 
-async function inspectSecurityMode(query: HostQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<SecurityModeSnapshot>> {
-	const body = await query("security.inspect", {});
+async function inspectSecurityMode(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<SecurityModeSnapshot>> {
+	const body = await query("security.inspect", {}, request);
 	if (body.ok === false) {
 		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 	}
@@ -196,13 +219,13 @@ async function inspectSecurityMode(query: HostQuery, request: TuiPortRequest): P
 			mode: knownProfile
 				? { state: "known", value: profile === "danger-full-access" ? "unrestricted" : "guarded" }
 				: { state: "unknown", reason: "not-reported" },
-			modeRevision: { state: "unknown", reason: "host-does-not-report-security-revision" },
+			modeRevision: { state: "unknown", reason: "session-does-not-report-security-revision" },
 		},
 	};
 }
 
-async function inspectWorkspaceGit(query: HostQuery, request: Parameters<WorkspaceGitPort["inspect"]>[0]): Promise<TuiResultEnvelope<WorkspaceGitSnapshot>> {
-	const body = await query("worktree.inspect", { workspaceId: request.workspaceId });
+async function inspectWorkspaceGit(query: ResourceQuery, request: Parameters<WorkspaceGitPort["inspect"]>[0]): Promise<TuiResultEnvelope<WorkspaceGitSnapshot>> {
+	const body = await query("worktree.inspect", { workspaceId: request.workspaceId }, request);
 	if (body.ok === false) {
 		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 	}

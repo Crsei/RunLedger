@@ -16,7 +16,6 @@ import type { ProviderWorkflowPort, ProviderCatalogSnapshot, ProviderSelectionSn
 import type { ModelWorkflowPort, ModelCatalogSnapshot, ModelSelectionSnapshot } from "../models/types.ts";
 import type { ThinkingWorkflowPort, ThinkingSnapshot } from "../thinking/types.ts";
 import type { AuthWorkflowPort, AuthSnapshot, AuthProviderSnapshot, AuthInteractionState } from "../auth/types.ts";
-import type { ShutdownWorkflowPort, ShutdownReceipt } from "../shutdown/types.ts";
 import { boundedToolText } from "../presentation/tools/projector.ts";
 import { getSupportedThinkingLevels } from "../../models.ts";
 import type { InteractiveSessionControllerPort } from "../../runtime/interactive-session-controller.ts";
@@ -49,13 +48,15 @@ function fail<T>(request: TuiPortRequest, code: string, message: string, retryab
 
 export interface InteractiveSessionAdapter {
 	readonly ports: TuiDomainPorts;
+	readonly supports: (operation: string) => boolean;
 	/** auth interaction 槽：login 前注入，login 完成后由调用方清空（短生命周期 owner）。 */
 	setAuthInteraction(interaction: AuthInteraction | undefined): void;
 }
 
 export function createInteractiveSessionAdapter(controller: InteractiveSessionControllerPort | undefined): InteractiveSessionAdapter {
-	if (controller === undefined) return { ports: {}, setAuthInteraction: () => undefined };
+	if (controller === undefined) return { ports: {}, supports: () => false, setAuthInteraction: () => undefined };
 	let authInteraction: AuthInteraction | undefined;
+	const supports = (operation: string): boolean => controller.supports?.(operation) === true;
 
 	const providerPort: ProviderWorkflowPort = {
 		list: (request) => envelope(request, async () => {
@@ -96,6 +97,7 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 			return snapshot;
 		}),
 		select: (request) => envelope(request, async () => {
+			if (!supports("session.model.select")) return fail<ModelSelectionSnapshot>(request, "capability_unavailable", "session.model.select was not negotiated");
 			const models = await controller.getAvailableModels(request.providerId);
 			const model = models.find((candidate) => candidate.id === request.modelId);
 			if (model === undefined) {
@@ -126,6 +128,7 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 			return snapshot;
 		}),
 		select: (request) => envelope(request, async () => {
+			if (!supports("session.thinking.set")) return fail<ThinkingSnapshot>(request, "capability_unavailable", "session.thinking.set was not negotiated");
 			const level = await controller.setThinkingLevel(request.level);
 			const snapshot: ThinkingSnapshot = {
 				level,
@@ -153,6 +156,7 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 			return snapshot;
 		}),
 		beginLogin: (request) => envelope(request, async () => {
+			if (!supports("session.auth.login")) return fail<AuthSnapshot>(request, "capability_unavailable", "session.auth.login was not negotiated");
 			const interaction = authInteraction;
 			if (interaction === undefined) {
 				return { ok: false, ref: request, error: { code: "auth_interaction_required", message: "no auth interaction owner is attached", retryable: false } };
@@ -168,6 +172,7 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 			return { ok: true, ref: request, value: snapshot };
 		}),
 		logout: (request) => envelope(request, async () => {
+			if (!supports("session.auth.logout")) return fail<AuthSnapshot>(request, "capability_unavailable", "session.auth.logout was not negotiated");
 			await controller.logout(request.providerId);
 			const snapshot: AuthSnapshot = {
 				providers: [],
@@ -177,19 +182,13 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 			return { ok: true, ref: request, value: snapshot };
 		}),
 	};
-	// B6:本地 shutdown 只提交 intent；renderer/lifecycle cleanup 由调用方执行
-	const shutdownPort: ShutdownWorkflowPort = {
-		request: (request) => envelope(request, async () => {
-			const receipt: ShutdownReceipt = {
-				trigger: request.trigger,
-				outcome: "accepted",
-				recoveryRequired: false,
-			};
-			return receipt;
-		}),
-	};
 	return {
-		ports: { provider: providerPort, model: modelPort, thinking: thinkingPort, auth: authPort, shutdown: shutdownPort },
+		ports: {
+			...(supports("session.provider.status") ? { provider: providerPort, auth: authPort } : {}),
+			...(supports("session.model.list") ? { model: modelPort } : {}),
+			...(supports("session.thinking.set") ? { thinking: thinkingPort } : {}),
+		},
+		supports,
 		setAuthInteraction: (interaction) => {
 			authInteraction = interaction;
 		},

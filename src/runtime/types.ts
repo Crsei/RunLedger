@@ -228,7 +228,24 @@ export interface AfterToolCallResult {
 // ===== AgentEvent =====
 
 export type AgentEvent =
-  | { type: "agent_start" | "agent_end"; timestamp: number }
+  | { type: "agent_start"; timestamp: number; runId?: string }
+  | {
+      type: "agent_end";
+      timestamp: number;
+      runId?: string;
+      stopReason?: StopReason;
+      elapsedMs?: number;
+      activeDurationMs?: number;
+      messageCountAtEnd?: number;
+    }
+  | {
+      type: "agent_work_pause" | "agent_work_resume";
+      timestamp: number;
+      runId: string;
+      waitId: string;
+      reason: "approval" | "credential";
+      activeDurationMs: number;
+    }
   | {
       type: "turn_start" | "turn_end";
       timestamp: number;

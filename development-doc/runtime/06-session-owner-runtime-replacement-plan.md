@@ -827,6 +827,9 @@ src/
 - [ ] MCP/Hook/Skill/Plugin 逐 SessionRuntime 独立启动、bounded、关闭并覆盖 crash restore；当前生产工具集显式排除 Skill，未装配 MCP/Hook/Plugin lifecycle。
 - [ ] worktree 改为 canonical session locator，并在 cold resume 重验 platform/root/Git/lease/effective cwd；当前 session row 有 locator 字段，但 production SessionRuntime 尚未消费/重验。
 - [x] model selection、driver claim/release、prompt/steer/follow-up 与 recovery command 走 server facade；driver event 与 tool attempt receipt durable。
+- [x] Session protocol version 3 握手由 Runtime composition 提供冻结的 capability/operation manifest，并声明 `session.run-timing`；Client handle 固化协商结果并以 `supports(operation)` 本地拒绝未协商 domain operation，server dispatch 前再次 fail closed。当前只发布真实 core/credential/catalog/run-timing operation，不虚报 process/trace/extension/worktree/approval。
+- [x] Session `DomainRouter` 已替代生产 TUI 的 Host 命名 domain 通道；query/mutation envelope 统一校验 `sessionId + generation + correlationId + effectId`，mutation 额外校验 catalog revision/driver，create/fork 经 append-only attempt receipt 与 recovery barrier，fork 另有 source-head fence。
+- [x] SQLite Session catalog/create/resume/fork 已接入 `SessionWorkflowPort` 与标准 CLI 转场循环；`InteractiveMode.run()` 返回 typed `quit|switch` intent，composition root 严格 detach-before-attach，失败只经 canonical open 恢复原 Session，remote attachment 存在时旧 Runtime 保持 headless。
 - [x] credential onboarding 的 reverse-request UI 通道（Session `login` 命令 + driver 连接 reverse-request + TUI 渲染 + auth.json 落库，见 [`07-credential-reverse-request-ui-plan.md`](07-credential-reverse-request-ui-plan.md)）。approval reverse-request 与 durable decision receipt 仍待排期。
 - [x] local UI detach 且 remote attachment 存在时进入 headless-attached owner loop；只有 attachment count 归零才 pause/release。`onAttachmentCountChange` 回调 + `runtime.pause`（paused checkpoint + release unowned）；`session-owner-production.test.ts` 最后 attachment 关闭验证 unowned + checkpoint。
 - [x] 新 Session Owner 模块禁止 legacy Host import，标准 CLI composition 无 Host fallback；legacy Host 源码仍保留到 R9，不能表述为全仓 Host 假设已经删除。
@@ -954,6 +957,14 @@ tests/cli/session-owner-production.test.ts
 - 隔离 Linux candidate：`/tmp/runledger-candidate-SfKhTo`，fault/latency/read-only Security/manifest 全部 `ALL PASS`；100 Session catalog 59.2ms，单次同步 DB call ≤100ms，10 个独立子进程 claim 941.1ms。
 
 这些是当前 Linux 工作树的自动化证据，只支持 R0–R5 与 R6/R6.5 已勾选的子项；不能把 R6 未接线能力、macOS/Windows runner、标准 PATH 真实 TUI、独立审计或 human acceptance 推导为通过。
+
+### 11.2 2026-08-09 S1/S2 fresh 本地证据
+
+- Session protocol/Router、SQLite workflow 与 CLI transition 的 RED/GREEN 回归分别位于 `domain-router.test.ts`、`session-domain.test.ts`、`session-workflows.test.ts`、`session-transition-loop.test.ts`，并由既有 transport、lifecycle、recovery、TUI suites 共同覆盖。
+- 全量并发门禁复现并修复了两个 SQLite open/claim 收口缺陷：已处于 WAL 的数据库不再由每个进程重复执行 journal-mode write；`OwnerStore.tryClaim()` 将 bounded writer busy 映射为 retryable `owner_store_busy`。`database.test.ts`、`claim.test.ts` 与真实四进程 `session-owner-production.test.ts` 提供 RED/GREEN 证据。
+- `npm run check`、`npm run build` 与 `git diff --check` 通过。
+- `npm test`：Vitest 269 files passed / 1 skipped、1506 tests passed / 3 skipped；Bun OpenTUI 32 tests / 179 assertions passed。
+- 这组证据只闭合新集成计划 S1/S2 与 R6 对应子项；R6 仍 partial/blocked，R6.5/R8 仍 not accepted，R7 验收仍随 R8 pending，R9 仍 not started。
 
 生产 runner 的最小场景：
 

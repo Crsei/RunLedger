@@ -91,6 +91,12 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     // 顺序:agent_start 一定在 events[0],agent_end 一定是最后
     expect(events[0]!.type).toBe("agent_start");
     expect(events[events.length - 1]!.type).toBe("agent_end");
+    const started = events.find((event) => event.type === "agent_start");
+    const ended = events.find((event) => event.type === "agent_end");
+    expect(started?.runId).toBeTruthy();
+    expect(ended).toMatchObject({ runId: started?.runId, stopReason: "stop" });
+    expect(ended?.elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(ended?.activeDurationMs).toBe(ended?.elapsedMs);
 
     // 至少有一次 tool_execution_start
     const toolStarts = events.filter(
@@ -117,6 +123,22 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     for (const e of ledgerEntries) {
       expect(e.sessionId).toBe(ledger.sessionId);
     }
+  });
+
+  it("emits one authoritative error completion when a run throws", async () => {
+    const agent = new Agent({
+      initialState: { systemPrompt: "", model: mockModel, tools: [] },
+      streamFn: async () => { throw new Error("provider exploded"); },
+    });
+    const events: AgentEvent[] = [];
+    agent.subscribe((event) => { events.push(event); });
+
+    await expect(agent.prompt("fail")).rejects.toThrow("provider exploded");
+    const starts = events.filter((event) => event.type === "agent_start");
+    const ends = events.filter((event) => event.type === "agent_end");
+    expect(starts).toHaveLength(1);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({ runId: starts[0]?.runId, stopReason: "error" });
   });
 
   it("echo tool receives the user's text as input", async () => {

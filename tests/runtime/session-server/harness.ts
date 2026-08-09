@@ -13,6 +13,7 @@ import { SessionStore } from "../../../src/storage/session-store/session-store.t
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
 import { SessionRuntimeServer, SESSION_MUTATING_COMMAND_KINDS, type SessionController } from "../../../src/runtime/session-server/runtime-server.ts";
+import { freezeSessionProtocolManifest } from "../../../src/runtime/session-server/protocol.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
 
 export { SessionRuntimeServer, SessionOwner };
@@ -45,6 +46,16 @@ export function createTestController(options: TestControllerOptions): SessionCon
 	let promptCount = 0;
 	return {
 		sessionId: options.sessionId,
+		protocolManifest: () => freezeSessionProtocolManifest({
+			protocolCapabilities: ["session.core"],
+			operationManifest: [
+				{ operation: "session.snapshot", capability: "session.core", access: "read" },
+				{ operation: "session.events.subscribe", capability: "session.core", access: "read" },
+				{ operation: "session.driver.claim", capability: "session.core", access: "mutate" },
+				{ operation: "session.driver.release", capability: "session.core", access: "mutate" },
+				{ operation: "session.prompt", capability: "session.core", access: "mutate" },
+			],
+		}),
 		snapshot: () => ({
 			sessionId: options.sessionId,
 			headSequence: eventSequence,

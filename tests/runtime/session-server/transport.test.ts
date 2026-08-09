@@ -64,6 +64,41 @@ describe("R4 transport handshake", () => {
 		expect(result.accepted).toBe(true);
 	});
 
+	it("returns the immutable runtime operation manifest instead of a fixed capability placeholder", async () => {
+		const h = await setup();
+		const transport = await SessionClientTransport.connect(h.server.endpoint!.port);
+		try {
+			const response = await transport.request(handshakeFrame() as never);
+			expect(response.body.protocolCapabilities).toContain("session.core");
+			expect(response.body.operationManifest).toEqual(expect.arrayContaining([
+				expect.objectContaining({ operation: "session.snapshot", access: "read" }),
+				expect.objectContaining({ operation: "session.prompt", access: "mutate" }),
+			]));
+			expect(response.body.operationManifest).not.toEqual(expect.arrayContaining([
+				expect.objectContaining({ operation: "session.catalog.list" }),
+			]));
+		} finally {
+			await transport.close();
+		}
+	});
+
+	it("rejects an operation omitted from the negotiated manifest before controller dispatch", async () => {
+		const h = await setup();
+		const transport = await SessionClientTransport.connect(h.server.endpoint!.port);
+		try {
+			await transport.request(handshakeFrame() as never);
+			const response = await transport.request({
+				frameId: "query_unnegotiated_timeline",
+				kind: "query_request",
+				protocolVersion: SESSION_PROTOCOL_VERSION,
+				body: { kind: "timeline", body: {} },
+			});
+			expect(response.body).toMatchObject({ ok: false, code: "operation_unavailable", operation: "session.timeline" });
+		} finally {
+			await transport.close();
+		}
+	});
+
 	it("rejects a wrong token", async () => {
 		await setup();
 		const result = await tryHandshake({ authToken: "f".repeat(64) });

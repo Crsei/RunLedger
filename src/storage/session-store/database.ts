@@ -13,7 +13,7 @@
 
 import { createRequire } from "node:module";
 import { chmodSync, lstatSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, win32 } from "node:path";
+import { dirname, join } from "node:path";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import type { DatabaseSync as NodeDatabaseSync, SQLInputValue } from "node:sqlite";
 
@@ -112,7 +112,7 @@ function assertDatabaseFileMode(path: string): void {
 	if (!stat.isFile()) {
 		throw new SessionStoreDatabaseError("open_failed", `database path is not a regular file: ${path}`);
 	}
-	const isWindowsPath = win32.isAbsolute(path);
+	const isWindowsPath = /^[A-Za-z]:[\\/]/u.test(path) || path.startsWith("\\\\");
 	if (!isWindowsPath && (stat.mode & 0o077) !== 0) {
 		throw new SessionStoreDatabaseError("permission_denied", `database file mode is wider than 0600: ${path}`);
 	}
@@ -144,12 +144,28 @@ export class SessionDatabase {
 	}
 
 	private applyPragmas(): void {
-		// journal_mode 返回结果,exec 即可生效;其余 pragma 顺序固定。
-		this.database.exec(`PRAGMA journal_mode = ${SESSION_DB_PRAGMAS.journalMode}`);
+		// busy_timeout 必须先于任何可能触锁的 pragma 生效；并行 owner 进程
+		// 可能在本连接读取 journal_mode 前已进入短写事务。
+		this.database.exec(`PRAGMA busy_timeout = ${SESSION_DB_PRAGMAS.busyTimeoutMs}`);
+		// journal_mode 是持久化数据库状态；已处于 WAL 时只读校验，避免多个
+		// Session owner 进程同时 open 时重复执行写性质的 mode switch。
+		if (this.readJournalMode() !== SESSION_DB_PRAGMAS.journalMode.toLowerCase()) {
+			try {
+				this.database.exec(`PRAGMA journal_mode = ${SESSION_DB_PRAGMAS.journalMode}`);
+			} catch (error) {
+				// 两个首次打开者可能同时观察到非 WAL；winner 完成切换后 loser
+				// 只需复读确认，不把已满足的状态误报为 open_failed。
+				if (!isBusyError(error) || this.readJournalMode() !== SESSION_DB_PRAGMAS.journalMode.toLowerCase()) throw error;
+			}
+		}
 		this.database.exec(`PRAGMA synchronous = ${SESSION_DB_PRAGMAS.synchronous}`);
 		this.database.exec(`PRAGMA foreign_keys = ${SESSION_DB_PRAGMAS.foreignKeys}`);
-		this.database.exec(`PRAGMA busy_timeout = ${SESSION_DB_PRAGMAS.busyTimeoutMs}`);
 		this.database.exec(`PRAGMA trusted_schema = ${SESSION_DB_PRAGMAS.trustedSchema}`);
+	}
+
+	private readJournalMode(): string {
+		const row = this.database.prepare("PRAGMA journal_mode").get() as Record<string, unknown> | undefined;
+		return String(row?.journal_mode ?? "").toLowerCase();
 	}
 
 	private classifyAndThrow(error: unknown): never {

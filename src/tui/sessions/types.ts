@@ -1,4 +1,4 @@
-import type { Loadable, TuiField } from "../application/common.ts";
+import type { TuiField } from "../application/common.ts";
 import type { SafeBoundedText } from "../presentation/tools/types.ts";
 import type { TimelineState } from "../timeline/types.ts";
 
@@ -32,6 +32,19 @@ export interface SessionSummary {
 	readonly access: "read-write" | "read-only" | "unavailable";
 	readonly format: CanonicalSessionFormat;
 	readonly lineage: SessionLineage;
+	readonly current: boolean;
+}
+
+/** SQLite session catalog 的真实公开投影；不补造 title、cwd、locator 或 lineage。 */
+export interface SessionCatalogItem {
+	readonly sessionId: string;
+	readonly workspaceId: string;
+	readonly repositoryId: string;
+	readonly status: string;
+	readonly createdAtMs: number;
+	readonly updatedAtMs: number;
+	readonly headSequence: number;
+	readonly driverRevision: number;
 	readonly current: boolean;
 }
 
@@ -73,10 +86,17 @@ export type SessionDiagnostic =
 	| { readonly kind: "symlink"; readonly message: string }
 	| { readonly kind: "changed"; readonly message: string };
 
-export type SessionCatalogResult = { readonly kind: "catalog"; readonly items: readonly SessionSummary[] };
+export type SessionCatalogResult = { readonly kind: "catalog"; readonly revision: number; readonly items: readonly SessionCatalogItem[] };
 export type SessionDetailResult = { readonly kind: "detail"; readonly value: SessionDetail };
 export type SessionPreviewResult = { readonly kind: "preview"; readonly value: SessionPreview };
-export type SessionWorkflowValue = SessionCatalogResult | SessionDetailResult | SessionPreviewResult;
+export type SessionTransitionResult = {
+	readonly kind: "transition";
+	readonly operation: "create" | "resume" | "fork";
+	readonly targetSessionId: string;
+	readonly catalogRevision: number;
+	readonly attemptId?: string;
+};
+export type SessionWorkflowValue = SessionCatalogResult | SessionDetailResult | SessionPreviewResult | SessionTransitionResult;
 
 export type SessionWorkflowState =
 	| { readonly state: "idle"; readonly generation: number }

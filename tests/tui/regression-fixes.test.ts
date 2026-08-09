@@ -46,6 +46,70 @@ function reverseFrame(): HostFrameEnvelope {
 }
 
 describe("P1 regression fixes at InteractiveMode level", () => {
+	it("replays completed run summaries after their message boundary and skips recovery markers", () => {
+		const messages = [
+			{ role: "user" as const, content: [{ type: "text" as const, text: "hi" }] },
+			{ role: "assistant" as const, content: [{ type: "text" as const, text: "hello" }], stopReason: "stop" as const },
+		];
+		const mode = new InteractiveMode({
+			controller: new ContractController({
+				messages,
+				agentRuns: [
+					{ runId: "run-history", status: "completed", startedAtMs: 1_000, endedAtMs: 2_000, stopReason: "stop", elapsedMs: 1_000, activeDurationMs: 900, messageCountAtEnd: 2 },
+					{ runId: "run-incomplete", status: "recovery_required", startedAtMs: 3_000 },
+				],
+			}),
+			terminal: new FakeTerminal(),
+		});
+		const rows = mode.getTuiState().timeline.committedRows;
+		expect(rows.map((row) => row.kind)).toEqual(["user", "assistant", "run-boundary"]);
+		expect(rows[2]).toMatchObject({ kind: "run-boundary", runId: "run-history", activeDurationMs: 900 });
+		expect(mode.getTuiState().timeline.activeRun).toMatchObject({ runId: "run-incomplete", state: "recovery_required" });
+		mode.quit();
+	});
+
+	it("ticks only while working and produces exactly one live completion marker", async () => {
+		vi.useFakeTimers();
+		try {
+			vi.setSystemTime(10_000);
+			const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+			const ui = (mode as unknown as { ui: { requestRender: () => void } }).ui;
+			const render = vi.spyOn(ui, "requestRender");
+			const handleEvent = (Reflect.get(mode, "handleEvent") as (event: unknown) => void).bind(mode);
+			handleEvent({ type: "agent_start", timestamp: 10_000, runId: "run-live" });
+			render.mockClear();
+			await vi.advanceTimersByTimeAsync(2_100);
+			expect(render).toHaveBeenCalledTimes(2);
+			handleEvent({ type: "agent_work_pause", timestamp: 12_100, runId: "run-live", waitId: "wait-1", reason: "approval", activeDurationMs: 2_100 });
+			render.mockClear();
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(render).not.toHaveBeenCalled();
+			handleEvent({ type: "agent_work_resume", timestamp: 14_100, runId: "run-live", waitId: "wait-1", reason: "approval", activeDurationMs: 2_100 });
+			render.mockClear();
+			await vi.advanceTimersByTimeAsync(1_100);
+			expect(render).toHaveBeenCalledTimes(1);
+			handleEvent({ type: "agent_end", timestamp: 15_200, runId: "run-live", stopReason: "aborted", elapsedMs: 5_200, activeDurationMs: 3_200, messageCountAtEnd: 0 });
+			handleEvent({ type: "agent_end", timestamp: 15_200, runId: "run-live", stopReason: "error", elapsedMs: 5_200, activeDurationMs: 3_200, messageCountAtEnd: 0 });
+			expect(mode.getTuiState().timeline.committedRows.filter((row) => row.kind === "run-boundary")).toHaveLength(1);
+			expect(mode.getStopReason()).toBe("aborted");
+			render.mockClear();
+			await vi.advanceTimersByTimeAsync(2_000);
+			expect(render).not.toHaveBeenCalled();
+			mode.quit();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+	it("does not infer session catalog or mutation authority from controller presence", () => {
+		const mode = new InteractiveMode({ controller: new ContractController({ supportedOperations: [] }), terminal: new FakeTerminal() });
+		try {
+			expect(mode.getTuiState().capabilities.sessionCatalog.state).toBe("unavailable");
+			expect(mode.getTuiState().capabilities.sessionMutation.state).toBe("unavailable");
+		} finally {
+			mode.quit();
+		}
+	});
+
 	it("keeps the TUI alive while projecting Host reconnect lifecycle states", () => {
 		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
 		mode.setHostConnectionState("reconnecting");

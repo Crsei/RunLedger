@@ -51,6 +51,22 @@ describe("R1 SessionDatabase open and pragmas", () => {
 		db.close();
 	});
 
+	it("opens an already-WAL database while another connection holds the writer lock", () => {
+		const path = dbPath();
+		const writer = openSessionDatabase(path);
+		writer.runSync("CREATE TABLE t (x INTEGER)");
+		writer.beginImmediate();
+		let reader: SessionDatabase | undefined;
+		try {
+			reader = openSessionDatabase(path);
+			expect(reader.querySingle("PRAGMA journal_mode")?.journal_mode).toBe("wal");
+		} finally {
+			reader?.close();
+			writer.rollback();
+			writer.close();
+		}
+	});
+
 	it("fails closed when the database path is a symlink", { skip: !CAN_SYMLINK }, () => {
 		const target = dbPath("target.db");
 		openSessionDatabase(target).close();

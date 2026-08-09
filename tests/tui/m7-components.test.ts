@@ -103,6 +103,17 @@ describe("M7 TUI: BackgroundTaskComponent", () => {
 });
 
 describe("M7 TUI: Footer", () => {
+	it("shows active work time and freezes while waiting for human input", () => {
+		let timing: ReturnType<NonNullable<FooterSnapshotProvider["getRunTiming"]>> = { state: "working", activeDurationMs: 2_000, lastResumedAtMs: 10_000 };
+		const provider: FooterSnapshotProvider = {
+			isStreaming: () => true, getStopReason: () => undefined, getSessionId: () => "sess-1", getModelId: () => "model-1",
+			getRunTiming: () => timing, now: () => 15_999,
+		};
+		const footer = new Footer({ theme: loadTheme("dark"), provider });
+		expect(footer.render(100)[0]).toContain("Working 7s");
+		timing = { state: "waiting", activeDurationMs: 7_999, lastResumedAtMs: 15_999 };
+		expect(footer.render(100)[0]).toContain("Waiting for input · 7s");
+	});
   it("provider.snapshot: idle / modelId", () => {
     const provider: FooterSnapshotProvider = {
       isStreaming: () => false,

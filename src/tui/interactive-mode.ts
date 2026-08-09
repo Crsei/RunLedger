@@ -75,11 +75,13 @@ import { createTuiStore } from "./application/store.ts";
 import type { TuiDomainPorts } from "./application/ports.ts";
 import { capabilitiesFromPorts } from "./application/ports.ts";
 import { createInteractiveSessionAdapter, type InteractiveSessionAdapter } from "./adapters/interactive-session.ts";
-import { createHostDomainPorts } from "./adapters/host-domain.ts";
+import { createSessionResourcePortsFromController } from "./adapters/session-resources.ts";
+import { commandSessionController, createSessionDomainPortFromController, querySessionController, sessionAuthorityGeneration } from "./adapters/session-domain.ts";
 import type { EffectRunner } from "./application/effect-runner.ts";
 import { createEffectRunner } from "./application/effect-runner.ts";
 import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
+import type { SessionCatalogResult, SessionTransitionResult } from "./sessions/types.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -109,6 +111,14 @@ export interface InteractiveModeOptions {
   /** B1:显式 bootstrap snapshot；缺省由 controller/agent 派生。 */
   initialBootstrap?: TuiBootstrapSnapshot;
 }
+
+export interface SessionSwitchTarget {
+  readonly sessionId: string;
+}
+
+export type InteractiveExitIntent =
+  | { readonly kind: "quit" }
+  | { readonly kind: "switch"; readonly action: "new" | "resume" | "fork"; readonly target: SessionSwitchTarget };
 
 export type HostConnectionUiState = "ready" | "reconnecting" | "stopped" | "build_mismatch" | "recovery_required";
 
@@ -165,6 +175,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   });
   // B2:帧前 flush 时按 correlationId 累积完整正文快照，再发 message_update
   private readonly pendingMessageBuffers = new Map<string, { text: string; thinking: string }>();
+  private runTicker: ReturnType<typeof setTimeout> | undefined;
 
   // B2:Timeline 为 chat 内容的唯一业务 owner；DeltaCoalescer 只做 lossless append/帧前 drain。
   private timelineProjector = new TimelineEventProjector();
@@ -189,8 +200,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private lastIdleCtrlC = 0;
   private quitting = false;
 	private hostConnectionState: HostConnectionUiState = "ready";
-  private readonly exitPromise: Promise<void>;
-  private readonly resolveExit: () => void;
+  private readonly exitPromise: Promise<InteractiveExitIntent>;
+  private readonly resolveExit: (intent: InteractiveExitIntent) => void;
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
 
@@ -209,16 +220,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
     this.workspaceCapability = opts.workspaceCapability;
     this.initialBootstrap = opts.initialBootstrap;
-    // B4:ports 聚合 controller + Host domain；runner 只执行 effect 并回送 TuiResult
+    // B4:ports 聚合 controller + Session domain；runner 只执行 effect 并回送 TuiResult
     this.authAdapter = createInteractiveSessionAdapter(this.controller);
+    const sessionPort = createSessionDomainPortFromController(this.controller);
     this.ports = {
       ...this.authAdapter.ports,
-      ...createHostDomainPorts(this.controller?.queryHostDomain === undefined
-        ? undefined
-        : {
-            query: (operation, body) => this.controller?.queryHostDomain!(operation, body ?? {}) ?? Promise.resolve({ ok: false as const, code: "host_unavailable" }),
-            command: (operation, body) => this.controller?.commandHostDomain!(operation, body ?? {}) ?? Promise.resolve({ ok: false as const, code: "host_unavailable" }),
-          }),
+      ...(sessionPort === undefined ? {} : { session: sessionPort }),
+      ...createSessionResourcePortsFromController(this.controller),
     };
     // B7:process passive bridge 复用既有 overlay facade（无第二 manager）
     const bridge = createProcessPassiveBridge(this.processOverlayController, opts.processOverlayClient);
@@ -226,7 +234,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.store = createTuiStore(createInitialTuiState({
       bootstrap: this.deriveBootstrap(),
       capabilities: {
-        ...capabilitiesFromPorts(this.ports, { sessionCatalog: this.controller !== undefined, sessionMutation: this.controller !== undefined }),
+		...capabilitiesFromPorts(this.ports, {
+			sessionCatalog: this.authAdapter.supports("session.catalog.list"),
+			sessionMutation: ["session.create", "session.resume", "session.fork"].some((operation) => this.authAdapter.supports(operation)),
+		}),
       },
     }));
     this.runner = createEffectRunner({
@@ -234,11 +245,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
       currentGeneration: () => this.store.getState().authorityGeneration,
       onResult: (result) => this.store.dispatch({ type: "query.result", result }),
     });
-    let resolveExit: (() => void) | undefined;
-    this.exitPromise = new Promise<void>((resolve) => {
+    let resolveExit: ((intent: InteractiveExitIntent) => void) | undefined;
+    this.exitPromise = new Promise<InteractiveExitIntent>((resolve) => {
       resolveExit = resolve;
     });
-    this.resolveExit = () => resolveExit?.();
+    this.resolveExit = (intent) => resolveExit?.(intent);
 
     // TUI 使用 showHardwareCursor=false,Editor 自身以 CURSOR_MARKER 通知光标位置
     this.ui = new TUI(this.terminal, false, { performanceObserver: opts.performanceObserver });
@@ -343,7 +354,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         format: "current-canonical",
         lifecycle: sessionId ? "active" : "unknown",
       },
-      authorityGeneration: 1,
+      authorityGeneration: sessionAuthorityGeneration(this.controller),
     };
   }
 
@@ -374,8 +385,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /** 启动 TUI;Promise 在 quit() 完成终端清理后 resolve。 */
-  async run(): Promise<void> {
-    if (this.quitting) return;
+  async run(): Promise<InteractiveExitIntent> {
+    if (this.quitting) return this.exitPromise;
     this.unsubscribe = this.controller
       ? this.controller.subscribe((ev) => this.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
@@ -399,10 +410,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribe = undefined;
       this.unsubscribeThemeMode?.();
       this.unsubscribeThemeMode = undefined;
-      this.resolveExit();
+      this.resolveExit({ kind: "quit" });
       throw error;
     }
-    await this.exitPromise;
+    return this.exitPromise;
   }
 
   /** 中断当前 turn;M8c:真接 agent.interrupt()。 */
@@ -457,8 +468,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private async requestQuit(): Promise<void> {
+	return this.requestExit({ kind: "quit" });
+  }
+
+  private async requestExit(intent: InteractiveExitIntent): Promise<void> {
     if (this.quitting) return;
     this.quitting = true;
+    this.stopRunTicker();
     this.flushStreamingDeltas();
     // B8:先取消所有 in-flight effects，再执行 lifecycle cleanup（防止 Host 查询在销毁后回写）
     this.runner.cancelAll();
@@ -479,9 +495,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeThemeMode = undefined;
     this.unsubscribeRenderPreparation?.();
     this.unsubscribeRenderPreparation = undefined;
-    this.controller?.dispose();
     this.ui.stop();
-    this.resolveExit();
+    this.resolveExit(intent);
   }
 
   /**
@@ -593,6 +608,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const items: SelectItem[] = [
       { value: "/help", label: "/help", description: "Show help" },
       { value: "/clear", label: "/clear", description: "Clear chat" },
+      { value: "/sessions", label: "/sessions", description: "Browse canonical Sessions" },
+      { value: "/new", label: "/new", description: "Create a Session in this workspace" },
+      { value: "/resume", label: "/resume [sessionId]", description: "Resume a canonical Session" },
+      { value: "/fork", label: "/fork", description: "Fork the current durable head" },
       { value: "/provider", label: "/provider", description: "Configure provider" },
       { value: "/login", label: "/login", description: "Authenticate provider" },
       { value: "/logout", label: "/logout", description: "Remove credential" },
@@ -621,6 +640,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.closeOverlay();
         // 二级 selector 派发
         switch (item.value) {
+          case "/sessions":
+            void this.openSessionCatalog();
+            break;
+          case "/new":
+            void this.createNewSession();
+            break;
+          case "/resume":
+            void this.resumeSession();
+            break;
+          case "/fork":
+            void this.forkCurrentSession();
+            break;
           case "/model":
             this.openModelSelector();
             break;
@@ -759,7 +790,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** B4:extension workflow 驱动的资源选择器（loading → ready/empty/error/unavailable）。 */
   private async openExtensionWorkflowSelector(kind: "mcp-server" | "plugin" | "skill" | "hook", commandName: string): Promise<void> {
     if (this.store.getState().capabilities.extensions.state !== "available") {
-      this.showNotice("Host domain query is unavailable in this session.", "error");
+      this.showNotice("Session domain query is unavailable in this session.", "error");
       return;
     }
     const effect = this.createEffect("extension.inspect");
@@ -827,33 +858,33 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.showNotice("/plan state is unavailable in this session.", "error");
   }
 
-  /**
-   * 执行 Host-owned compact/memory domain 命令并把结果投影成 notice。mutation
-   * 命令经 commandHostDomain（Host 持有 durable intent/receipt 与 driver fence）；
-   * 只读查询走 queryHostDomain。plan.inspect 已迁移到 plan workflow（B7）。
-   */
+  /** 执行已协商的 Session domain 命令并把 typed 结果投影成 notice。 */
   async runDomainCommand(
     operation: string,
     body: Record<string, unknown>,
     commandName: string,
     readOnly: boolean,
   ): Promise<void> {
-    const controller = this.controller;
-    const channel = readOnly ? controller?.queryHostDomain : controller?.commandHostDomain;
-    if (controller === undefined || channel === undefined) {
-      this.showNotice(`${commandName} requires an authenticated Host connection.`, "error");
-      return;
-    }
     if (this.inFlight()) {
       this.showNotice(`${commandName} is available when the current turn is idle.`, "note");
       return;
     }
-    const result = await channel.call(controller, operation, body).catch((error: unknown) => {
+    this.effectSequence += 1;
+    this.correlationSequence += 1;
+    const context = { correlationId: `corr-${this.correlationSequence}`, effectId: `effect-${this.effectSequence}` };
+    const expectedRevision = typeof body.expectedRevision === "number" && Number.isSafeInteger(body.expectedRevision) ? body.expectedRevision : 0;
+    const result = await (readOnly
+      ? querySessionController(this.controller, operation, body, context)
+      : commandSessionController(this.controller, operation, body, { ...context, expectedRevision })).catch((error: unknown) => {
       this.showNotice(`${commandName} failed: ${String(error)}`, "error");
       return undefined;
     });
     if (result === undefined) return;
-    const text = compactDomainResult(operation, result);
+    if (!result.ok) {
+      this.showNotice(`${commandName} failed: ${result.code}`, "error");
+      return;
+    }
+    const text = compactDomainResult(operation, result.value);
     this.showNotice(`${commandName}: ${text}`, "note");
   }
 
@@ -1029,6 +1060,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
   getStopReason(): string | undefined {
     return this.stopReason;
   }
+  getRunTiming(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined {
+    const active = this.store.getState().timeline.activeRun;
+    if (active === undefined) return undefined;
+    return {
+      state: active.state,
+      activeDurationMs: active.activeDurationMs,
+      ...(active.lastResumedAtMs === undefined ? {} : { lastResumedAtMs: active.lastResumedAtMs }),
+    };
+  }
   getModelId(): string {
     const st = this.controller?.currentSelection.model ?? this.agent?.state.model;
     if (!st) return "<no-model>";
@@ -1055,6 +1095,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
       const cmd = rawCommand ?? "";
       const arg = argParts.join(" ");
       switch (cmd) {
+        case "sessions":
+          void this.openSessionCatalog();
+          return;
+        case "new":
+          void this.createNewSession();
+          return;
+        case "resume":
+          void this.resumeSession(arg || undefined);
+          return;
+        case "fork":
+          void this.forkCurrentSession();
+          return;
         case "provider":
           if (this.rejectConfigWhileRunning()) return;
           void this.openProviderSelector();
@@ -1209,6 +1261,133 @@ export class InteractiveMode implements FooterSnapshotProvider {
       message: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
     }]);
     this.ui.requestRender();
+  }
+
+  /** S2:/sessions 从 SQLite authority 拉取 catalog，不读取旧 JSONL selector。 */
+  async openSessionCatalog(): Promise<void> {
+    const catalog = await this.loadSessionCatalog();
+    if (catalog === undefined) return;
+    if (catalog.items.length === 0) {
+      this.showNotice("No canonical sessions are available.", "error");
+      return;
+    }
+    const modal = new SearchableSelectorModal({
+      title: `/sessions (${catalog.items.length})`,
+      items: catalog.items.map((item) => ({
+        value: item.sessionId,
+        label: item.sessionId,
+        description: `${item.status} · workspace=${item.workspaceId} · head=${item.headSequence}${item.current ? " · current" : ""}`,
+      })),
+      maxVisible: 12,
+      onSelect: (item) => {
+        this.closeOverlay();
+        const selected = catalog.items.find((candidate) => candidate.sessionId === item.value);
+        if (selected === undefined) return;
+        if (selected.current) {
+          this.showNotice(`${selected.sessionId} is already current.`);
+          return;
+        }
+        void this.resumeSession(selected.sessionId, catalog.revision);
+      },
+      onCancel: () => this.closeOverlay(),
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" }, "session");
+  }
+
+  /** S2:/new 使用刚读取的 catalog revision 做 CAS，成功后只返回 switch intent。 */
+  async createNewSession(): Promise<void> {
+    if (this.rejectSessionTransition()) return;
+    const catalog = await this.loadSessionCatalog();
+    if (catalog === undefined) return;
+    const transition = await this.runSessionTransition("session.create", { expectedRevision: catalog.revision });
+    if (transition !== undefined) await this.requestExit({ kind: "switch", action: "new", target: { sessionId: transition.targetSessionId } });
+  }
+
+  /** S2:/resume [sessionId]；无参数时复用 canonical catalog selector。 */
+  async resumeSession(targetSessionId?: string, knownRevision?: number): Promise<void> {
+    if (this.rejectSessionTransition()) return;
+    if (targetSessionId === undefined) {
+      await this.openSessionCatalog();
+      return;
+    }
+    let revision = knownRevision;
+    if (revision === undefined) {
+      const catalog = await this.loadSessionCatalog();
+      if (catalog === undefined) return;
+      const target = catalog.items.find((item) => item.sessionId === targetSessionId);
+      if (target === undefined) {
+        this.showNotice(`Session not found: ${targetSessionId}`, "error");
+        return;
+      }
+      revision = catalog.revision;
+    }
+    const transition = await this.runSessionTransition("session.resume", { targetSessionId, expectedRevision: revision });
+    if (transition !== undefined) await this.requestExit({ kind: "switch", action: "resume", target: { sessionId: transition.targetSessionId } });
+  }
+
+  /** S2:/fork 从 catalog 的 current row 读取 durable head，并同时 fence catalog/head。 */
+  async forkCurrentSession(): Promise<void> {
+    if (this.rejectSessionTransition()) return;
+    const catalog = await this.loadSessionCatalog();
+    if (catalog === undefined) return;
+    const current = catalog.items.find((item) => item.current && item.sessionId === this.getSessionId());
+    if (current === undefined) {
+      this.showNotice("Current Session is missing from the canonical catalog.", "error");
+      return;
+    }
+    const transition = await this.runSessionTransition("session.fork", {
+      sourceSessionId: current.sessionId,
+      expectedSourceHeadSequence: current.headSequence,
+      expectedRevision: catalog.revision,
+    });
+    if (transition !== undefined) await this.requestExit({ kind: "switch", action: "fork", target: { sessionId: transition.targetSessionId } });
+  }
+
+  private rejectSessionTransition(): boolean {
+    if (this.inFlight()) {
+      this.showNotice("Session transitions are available when the current turn is idle.", "note");
+      return true;
+    }
+    if (this.store.getState().capabilities.sessionMutation.state !== "available") {
+      this.showNotice("Session mutation is unavailable on this connection.", "error");
+      return true;
+    }
+    return false;
+  }
+
+  private async loadSessionCatalog(): Promise<SessionCatalogResult | undefined> {
+    if (this.store.getState().capabilities.sessionCatalog.state !== "available") {
+      this.showNotice("Session catalog is unavailable on this connection.", "error");
+      return undefined;
+    }
+    const effect = this.createEffect("session.list");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      const value = workflow.value as SessionCatalogResult;
+      if (value.kind === "catalog") return value;
+    }
+    if (workflow.state === "error") this.showNotice(`Session catalog failed: ${workflow.message ?? "unknown"}`, "error");
+    else this.showNotice("Session catalog is empty or unavailable.", "error");
+    return undefined;
+  }
+
+  private async runSessionTransition(
+    type: "session.create" | "session.resume" | "session.fork",
+    payload: Record<string, unknown>,
+  ): Promise<SessionTransitionResult | undefined> {
+    const effect = this.createEffect(type, payload);
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
+    if (workflow.state === "ready") {
+      const value = workflow.value as SessionTransitionResult;
+      if (value.kind === "transition") return value;
+    }
+    if (workflow.state === "error") this.showNotice(`Session transition failed: ${workflow.message ?? "unknown"}`, "error");
+    else this.showNotice("Session transition did not complete.", "error");
+    return undefined;
   }
 
   /** B5:/provider 走 provider workflow；configured → model selector，否则 auth 流。 */
@@ -1475,6 +1654,19 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     // 对齐 projector 计数，保证后续 live 行 id 不与 replay 冲突
     this.timelineProjector.setMessageIndex(this.controller.messages.length);
+    for (const run of this.controller.agentRuns ?? []) {
+      this.dispatchTimeline([{
+        type: "run_restore",
+        generation: 0,
+        runId: run.runId,
+        timestamp: run.startedAtMs,
+        status: run.status,
+        ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
+        ...(run.elapsedMs === undefined ? {} : { elapsedMs: run.elapsedMs }),
+        ...(run.activeDurationMs === undefined ? {} : { activeDurationMs: run.activeDurationMs }),
+        ...(run.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: run.messageCountAtEnd }),
+      }]);
+    }
     if (this.controller.warnings.length > 0) {
       for (const entry of this.controller.auditEntries) {
         const name = typeof entry.payload.toolName === "string" ? entry.payload.toolName : "tool";
@@ -1507,7 +1699,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
-  private waitForWorkflow(key: "extensionWorkflow" | "providerWorkflow" | "modelWorkflow" | "thinkingWorkflow" | "authWorkflow" | "promptWorkflow" | "keymapWorkflow" | "runtimeSnapshotWorkflow" | "processWorkflow" | "taskGoalWorkflow" | "planWorkflow" | "agentWorkflow" | "securityModeWorkflow" | "workspaceGitWorkflow" | "updateWorkflow" | "queueWorkflow" | "approvalWorkflow" | "shutdownWorkflow", requestId: string): Promise<{
+  private waitForWorkflow(key: "sessionWorkflow" | "extensionWorkflow" | "providerWorkflow" | "modelWorkflow" | "thinkingWorkflow" | "authWorkflow" | "promptWorkflow" | "keymapWorkflow" | "runtimeSnapshotWorkflow" | "processWorkflow" | "taskGoalWorkflow" | "planWorkflow" | "agentWorkflow" | "securityModeWorkflow" | "workspaceGitWorkflow" | "updateWorkflow" | "queueWorkflow" | "approvalWorkflow" | "shutdownWorkflow", requestId: string): Promise<{
     readonly state: string;
     readonly value?: unknown;
     readonly message?: string;
@@ -1560,11 +1752,45 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.streamingGeneration += 1;
           this.streaming = true;
           this.stopReason = undefined;
+          this.dispatchTimeline([{
+            type: "run_start",
+            generation: 0,
+            runId: ev.runId ?? `legacy-live-${ev.timestamp}`,
+            timestamp: ev.timestamp,
+            activeDurationMs: 0,
+          }]);
+          this.startRunTicker();
           break;
         case "agent_end":
+          {
+          const activeRunId = this.store.getState().timeline.activeRun?.runId;
+          if (activeRunId === undefined || (ev.runId !== undefined && ev.runId !== activeRunId)) break;
           this.flushStreamingDeltas();
           this.streaming = false;
-          // agent_end 不带 stopReason,保留最近一次 turn_end / message_end 的 stopReason
+          this.stopReason = ev.stopReason ?? this.stopReason ?? "stop";
+          this.refs.status.setStopReason(this.stopReason);
+          this.stopRunTicker();
+          if (isRunStopReason(this.stopReason)) {
+            this.dispatchTimeline([{
+              type: "run_end",
+              generation: 0,
+              runId: ev.runId ?? activeRunId,
+              timestamp: ev.timestamp,
+              stopReason: this.stopReason,
+              ...(ev.elapsedMs === undefined ? {} : { elapsedMs: ev.elapsedMs }),
+              ...(ev.activeDurationMs === undefined ? {} : { activeDurationMs: ev.activeDurationMs }),
+              ...(ev.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: ev.messageCountAtEnd }),
+            }]);
+          }
+          break;
+          }
+        case "agent_work_pause":
+          this.dispatchTimeline([{ type: "run_pause", generation: 0, runId: ev.runId, waitId: ev.waitId, reason: ev.reason, timestamp: ev.timestamp, activeDurationMs: ev.activeDurationMs }]);
+          this.stopRunTicker();
+          break;
+        case "agent_work_resume":
+          this.dispatchTimeline([{ type: "run_resume", generation: 0, runId: ev.runId, waitId: ev.waitId, timestamp: ev.timestamp, activeDurationMs: ev.activeDurationMs }]);
+          this.startRunTicker();
           break;
         case "turn_start":
           this.refs.status.setTurn(ev.turn);
@@ -1666,6 +1892,26 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
   }
 
+  private startRunTicker(): void {
+    this.stopRunTicker();
+    const tick = (): void => {
+      this.runTicker = undefined;
+      const active = this.store.getState().timeline.activeRun;
+      if (active?.state !== "working" || this.quitting) return;
+      this.ui.requestRender();
+      this.runTicker = setTimeout(tick, 1_000);
+      this.runTicker.unref?.();
+    };
+    this.runTicker = setTimeout(tick, 1_000);
+    this.runTicker.unref?.();
+  }
+
+  private stopRunTicker(): void {
+    if (this.runTicker === undefined) return;
+    clearTimeout(this.runTicker);
+    this.runTicker = undefined;
+  }
+
   private queueAssistantDelta(delta: AppendTextDelta): void {
     const before = this.streamingDeltas.stats;
     this.performanceObserver?.recordQueued({
@@ -1743,6 +1989,10 @@ function messageAssistantThinking(message: AgentMessage): string {
     .filter((content) => content.type === "thinking")
     .map((content) => content.thinking)
     .join("");
+}
+
+function isRunStopReason(value: string | undefined): value is "stop" | "length" | "toolUse" | "error" | "aborted" {
+  return value === "stop" || value === "length" || value === "toolUse" || value === "error" || value === "aborted";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -15,7 +15,9 @@ import type { AssistantMessageEvent } from "../types.ts";
 
 /** TUI 主控 switch 标签;对照 03-event-binding.md §1 表。 */
 export type TuiEvent =
-  | { type: "agent_start" | "agent_end"; timestamp: number }
+  | { type: "agent_start"; timestamp: number; runId?: string }
+  | { type: "agent_end"; timestamp: number; runId?: string; stopReason?: string; elapsedMs?: number; activeDurationMs?: number; messageCountAtEnd?: number }
+  | { type: "agent_work_pause" | "agent_work_resume"; timestamp: number; runId: string; waitId: string; reason: "approval" | "credential"; activeDurationMs: number }
   | {
       type: "turn_start" | "turn_end";
       timestamp: number;
@@ -68,8 +70,12 @@ export type TuiEvent =
 export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
   switch (ev.type) {
     case "agent_start":
+      return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId };
     case "agent_end":
-      return { type: ev.type, timestamp: ev.timestamp };
+      return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId, stopReason: ev.stopReason, elapsedMs: ev.elapsedMs, activeDurationMs: ev.activeDurationMs, messageCountAtEnd: ev.messageCountAtEnd };
+    case "agent_work_pause":
+    case "agent_work_resume":
+      return { ...ev };
     case "turn_start":
     case "turn_end":
       return {
@@ -159,4 +165,8 @@ export interface FooterSnapshotProvider {
    * 证据矩阵，不宣称 OS sandbox。未注入时不显示该段。
    */
   getWorkspaceCapability?(): string | undefined;
+  /** 当前 run 的安全计时投影；等待态的 activeDurationMs 已冻结。 */
+  getRunTiming?(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined;
+  /** 测试时钟接缝；生产缺省 Date.now。 */
+  now?(): number;
 }

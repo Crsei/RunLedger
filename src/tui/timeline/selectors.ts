@@ -56,7 +56,19 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 			return [{ id: baseId, kind: "text", content: `queue ${row.label.text}: ${row.state}` }];
 		case "agent":
 			return [{ id: baseId, kind: "text", content: `agent ${row.label.text}: ${row.phase.text}` }];
+		case "run-boundary":
+			return [{ id: baseId, kind: "separator", label: `${row.stopReason} · ${row.activeDurationMs === undefined ? "time unavailable" : `Worked for ${formatActiveDuration(row.activeDurationMs)}`}` }];
 	}
+}
+
+export function formatActiveDuration(durationMs: number): string {
+	const seconds = Math.max(0, Math.floor(durationMs / 1_000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const remainingSeconds = seconds % 60;
+	if (minutes < 60) return `${minutes}m ${String(remainingSeconds).padStart(2, "0")}s`;
+	const hours = Math.floor(minutes / 60);
+	return `${hours}h ${String(minutes % 60).padStart(2, "0")}m ${String(remainingSeconds).padStart(2, "0")}s`;
 }
 
 function toolLines(row: Extract<TimelineRow, { readonly kind: "tool" }>): string[] {

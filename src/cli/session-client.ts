@@ -16,9 +16,13 @@ import { SessionOwner, type SessionOwnerOptions } from "../runtime/session-owner
 import { SessionClientTransport } from "../runtime/session-server/client-transport.ts";
 import {
 	SESSION_PROTOCOL_VERSION,
+	freezeSessionProtocolManifest,
+	isSessionHandshakeResponse,
 	type ClientId,
 	type SessionFrameEnvelope,
 	type SessionHandshakeRequest,
+	type SessionProtocolCapability,
+	type SessionProtocolOperationDescriptor,
 } from "../runtime/session-server/protocol.ts";
 import type { OwnerClaimResult, OwnerEndpoint, OwnerFence, SessionOwnerRecord } from "../runtime/session-owner/types.ts";
 import { createRuntimeId, type ConnectionId, type SessionId } from "../runtime/protocol/ids.ts";
@@ -48,6 +52,9 @@ export interface OwnedSessionHandle {
 	readonly transport: SessionClientTransport;
 	readonly connectionId: ConnectionId;
 	readonly ownerRecord: SessionOwnerRecord;
+	readonly protocolCapabilities: readonly SessionProtocolCapability[];
+	readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
+	supports(operation: string): boolean;
 	close(): Promise<void>;
 }
 
@@ -159,6 +166,11 @@ export class SessionClient {
 			await transport.close();
 			return { ok: false, code: response.code, retryable: isRetryableAttachCode(response.code) };
 		}
+		const manifest = freezeSessionProtocolManifest({
+			protocolCapabilities: response.protocolCapabilities,
+			operationManifest: response.operationManifest,
+		});
+		const supportedOperations = new Set(manifest.operationManifest.map((descriptor) => descriptor.operation));
 		return {
 			ok: true,
 			handle: {
@@ -169,6 +181,9 @@ export class SessionClient {
 				transport,
 				connectionId: createRuntimeId("connection", `client-${Date.now().toString(36)}`),
 				ownerRecord: record,
+				protocolCapabilities: manifest.protocolCapabilities,
+				operationManifest: manifest.operationManifest,
+				supports: (operation) => supportedOperations.has(operation),
 				close: () => transport.close(),
 			},
 		};
@@ -187,7 +202,16 @@ export class SessionClient {
 	private async initialize(		transport: SessionClientTransport,
 		request: SessionHandshakeRequest,
 	): Promise<
-		| { readonly accepted: true; readonly runtimeId: string; readonly generation: number; readonly snapshotCursor: number; readonly driverRevision: number; readonly sessionStatus: string }
+		| {
+				readonly accepted: true;
+				readonly runtimeId: string;
+				readonly generation: number;
+				readonly protocolCapabilities: readonly SessionProtocolCapability[];
+				readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
+				readonly snapshotCursor: number;
+				readonly driverRevision: number;
+				readonly sessionStatus: string;
+		  }
 		| { readonly accepted: false; readonly code: string }
 	> {
 		const frame: SessionFrameEnvelope = {
@@ -200,14 +224,20 @@ export class SessionClient {
 		if (response.kind !== "initialize_response") return { accepted: false, code: "frame_malformed" };
 		const body = response.body as Record<string, unknown>;
 		if (body.accepted === true) {
-			return {
+			const candidate = {
 				accepted: true,
-				runtimeId: String(body.runtimeId),
-				generation: Number(body.generation),
-				snapshotCursor: Number(body.snapshotCursor ?? 0),
-				driverRevision: Number(body.driverRevision ?? 0),
-				sessionStatus: String(body.sessionStatus ?? "active"),
+				runtimeId: body.runtimeId,
+				generation: body.generation,
+				protocolCapabilities: body.protocolCapabilities,
+				operationManifest: body.operationManifest,
+				snapshotCursor: body.snapshotCursor,
+				driverRevision: body.driverRevision,
+				sessionStatus: body.sessionStatus,
 			};
+			if (!isSessionHandshakeResponse(candidate) || !candidate.accepted) {
+				return { accepted: false, code: "frame_malformed" };
+			}
+			return candidate;
 		}
 		return { accepted: false, code: typeof body.code === "string" ? body.code : "frame_malformed" };
 	}

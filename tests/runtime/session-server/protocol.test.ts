@@ -10,7 +10,9 @@ import { Value } from "typebox/value";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import {
 	SESSION_PROTOCOL_BOUNDS,
+	SESSION_PROTOCOL_CAPABILITIES,
 	SESSION_PROTOCOL_VERSION,
+	SESSION_CORE_PROTOCOL_MANIFEST,
 	SESSION_STATUSES,
 	SessionFrameEnvelopeSchema,
 	SessionHandshakeRequestSchema,
@@ -24,7 +26,9 @@ const runtimeId = () => createRuntimeId("runtime", "fixture");
 
 describe("R0 session-scoped protocol contracts", () => {
 	it("freezes session-scoped bounds without host-wide capacity", () => {
-		expect(SESSION_PROTOCOL_VERSION).toBe(1);
+		expect(SESSION_PROTOCOL_VERSION).toBe(3);
+		expect(SESSION_PROTOCOL_CAPABILITIES).toContain("session.run-timing");
+		expect(SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities).toContain("session.run-timing");
 		expect(SESSION_PROTOCOL_BOUNDS.maxFrameBytes).toBe(256 * 1024);
 		expect(SESSION_PROTOCOL_BOUNDS.maxAckWindow).toBe(256);
 		expect(SESSION_PROTOCOL_BOUNDS.maxSubscriptionReplay).toBe(2_048);
@@ -89,12 +93,24 @@ describe("R0 session-scoped protocol contracts", () => {
 			accepted: true,
 			runtimeId: runtimeId(),
 			generation: 3,
-			protocolCapabilities: ["command", "subscription"],
+			protocolCapabilities: ["session.core", "session.security.inspect"],
+			operationManifest: [
+				{ operation: "session.snapshot", capability: "session.core", access: "read" },
+				{ operation: "security.inspect", capability: "session.security.inspect", access: "read" },
+			],
 			snapshotCursor: 41,
 			driverRevision: 0,
 			sessionStatus: "active",
 		};
 		expect(Value.Check(SessionHandshakeResponseSchema, accepted)).toBe(true);
+		expect(Value.Check(SessionHandshakeResponseSchema, {
+			...accepted,
+			protocolCapabilities: ["session.core", "made-up-capability"],
+		})).toBe(false);
+		expect(Value.Check(SessionHandshakeResponseSchema, {
+			...accepted,
+			operationManifest: [{ operation: "security.inspect", capability: "session.security.inspect", access: "execute" }],
+		})).toBe(false);
 		expect(Value.Check(SessionHandshakeResponseSchema, { accepted: false, code: "handshake_token_mismatch" })).toBe(true);
 		expect(Value.Check(SessionHandshakeResponseSchema, { accepted: false, code: "owner_starting" })).toBe(true);
 		expect(Value.Check(SessionHandshakeResponseSchema, { accepted: false, code: "session_owner_incompatible" })).toBe(true);

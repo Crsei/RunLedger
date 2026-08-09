@@ -41,6 +41,23 @@ function toolStart(correlationId = "call-1"): TimelineEvent {
 }
 
 describe("B2 timeline reducer", () => {
+	it("tracks one active run and commits exactly one matching run boundary", () => {
+		let state = createInitialTimelineState();
+		state = timelineReducer(state, { type: "run_start", generation: 1, runId: "run-1", timestamp: 1_000, activeDurationMs: 0 });
+		expect(state.activeRun).toMatchObject({ runId: "run-1", state: "working", activeDurationMs: 0 });
+		state = timelineReducer(state, { type: "run_pause", generation: 2, runId: "other", waitId: "wait-x", reason: "approval", timestamp: 1_050, activeDurationMs: 50 });
+		expect(state.activeRun).toMatchObject({ runId: "run-1", state: "working" });
+		state = timelineReducer(state, { type: "run_pause", generation: 3, runId: "run-1", waitId: "wait-1", reason: "approval", timestamp: 1_100, activeDurationMs: 100 });
+		expect(state.activeRun).toMatchObject({ state: "waiting", activeDurationMs: 100 });
+		state = timelineReducer(state, { type: "run_resume", generation: 4, runId: "run-1", waitId: "wait-1", timestamp: 1_300, activeDurationMs: 100 });
+		expect(state.activeRun).toMatchObject({ state: "working", activeDurationMs: 100, lastResumedAtMs: 1_300 });
+		state = timelineReducer(state, { type: "run_end", generation: 5, runId: "run-1", timestamp: 1_500, stopReason: "stop", elapsedMs: 500, activeDurationMs: 300, messageCountAtEnd: 2 });
+		expect(state.activeRun).toBeUndefined();
+		expect(state.committedRows.filter((row) => row.kind === "run-boundary")).toHaveLength(1);
+		const completed = state;
+		state = timelineReducer(state, { type: "run_end", generation: 6, runId: "run-1", timestamp: 1_500, stopReason: "error", elapsedMs: 500, activeDurationMs: 300, messageCountAtEnd: 2 });
+		expect(state).toBe(completed);
+	});
 	it("moves an active message row into committed rows monotonically", () => {
 		let state = createInitialTimelineState();
 		state = timelineReducer(state, assistantStart());

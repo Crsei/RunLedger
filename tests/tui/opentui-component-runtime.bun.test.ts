@@ -6,8 +6,28 @@ import {
   createOpenTuiComponentRuntimeFromRenderer,
 } from "../../src/tui/opentui/component-runtime.ts";
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
+import { ChatContainer } from "../../src/tui/components/chat-container.ts";
 
 describe("OpenTUI component projection", () => {
+  test("renders and reflows a stable run separator at 60/80/143 columns", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });
+    const chat = new ChatContainer();
+    chat.setTimelineBlocks([{ id: "timeline-run:run-native", kind: "separator", label: "stop · Worked for 12s" }], 1);
+    try {
+      for (const width of [60, 80, 143]) {
+        setup.resize(width, 16);
+        runtime.update({ body: chat.present(width), editorText: "", footer: ["done:stop"] });
+        await setup.renderOnce();
+        const line = setup.captureCharFrame().split("\n").find((candidate) => candidate.includes("stop · Worked for 12s"));
+        expect(line).toBeDefined();
+        expect(stringWidth((line ?? "").trimEnd())).toBe(width);
+        expect(setup.renderer.root.findDescendantById("runledger-block-timeline-run-run-native")).toBeDefined();
+      }
+    } finally {
+      runtime.destroy();
+    }
+  });
   test("copies a non-empty native selection without forwarding Ctrl+C", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const inputs: string[] = [];

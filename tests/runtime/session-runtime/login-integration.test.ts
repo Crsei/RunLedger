@@ -26,7 +26,7 @@ import { SessionClient } from "../../../src/cli/session-client.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "../../../src/cli/session-interactive-controller.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
-import type { SessionFrameEnvelope } from "../../../src/runtime/session-server/protocol.ts";
+import { SESSION_PROTOCOL_VERSION, type SessionFrameEnvelope } from "../../../src/runtime/session-server/protocol.ts";
 import type { AuthInteraction, AuthType } from "../../../src/auth/types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus } from "../../../src/runtime/interactive-session-controller.ts";
 
@@ -152,7 +152,7 @@ describe("credential reverse-request login end-to-end", () => {
 		const claim = await opened.handle.transport.request({
 			frameId: `driver_claim_${Date.now().toString(36)}`,
 			kind: "command_request" as const,
-			protocolVersion: 1,
+			protocolVersion: SESSION_PROTOCOL_VERSION,
 			body: { commandId: `command_${Date.now().toString(36)}`, kind: "driver_claim", body: {} },
 		});
 		expect(claim.body.ok).toBe(true);

@@ -10,7 +10,7 @@
  *   heartbeat_at_ms, state) CAS 到 generation + 1。
  */
 
-import type { SessionDatabase } from "./database.ts";
+import { SessionStoreDatabaseError, type SessionDatabase } from "./database.ts";
 import type {
 	OwnerClaimAttempt,
 	OwnerClaimTarget,
@@ -323,6 +323,9 @@ export class OwnerStore {
 		} catch (error) {
 			if (error instanceof OwnerClaimLostError) {
 				return { ok: false, code: "owner_claim_lost", retryable: true };
+			}
+			if (error instanceof SessionStoreDatabaseError && error.code === "busy") {
+				return { ok: false, code: "owner_store_busy", retryable: true };
 			}
 			if (error instanceof OwnerStoreError) {
 				if (error.code === "admission_blocked") {

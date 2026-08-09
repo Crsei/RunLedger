@@ -9,6 +9,8 @@
 > **当前修复基线：** `rollback/pre-governed-agent-harness-runtime@a09a408`（2026-08-06；
 > 后续未提交修复以工作区 diff 为准）
 >
+> **Session 接线基线：** `session-owner-runtime@c608c77`（2026-08-09；S1/S2 未提交实现以工作区 diff 为准）
+>
 > **前置合同：** [`17-passive-data-contract-placeholder-plan.md`](17-passive-data-contract-placeholder-plan.md)
 > 的 P0–P6 已 `agent-verified`；本计划不重新设计或复制这些合同，只负责把它们分批接入
 > 当前生产 `InteractiveMode`、OpenTUI presentation 与 Host/controller port。
@@ -198,7 +200,10 @@ src/tui/
 │   └── normalize-action.ts        # normalized app input -> TuiAction；不接 raw bytes
 ├── adapters/
 │   ├── interactive-session.ts     # controller method -> typed workflow result
-│   └── host-domain.ts             # Host response validation + typed bounded projection
+│   ├── session-domain.ts          # Session Router -> SQLite workflow typed projection
+│   └── session-resources.ts       # 已协商的 Session resource bounded projection
+├── sessions/
+│   └── port.ts                    # catalog/create/resume/fork 的单一 TUI authority port
 └── interactive-mode.ts            # 逐批缩减为 composition/lifecycle/presentation adapter
 
 tests/tui/
@@ -629,6 +634,17 @@ tests/tui/
   `createProductionProcessOverlayClient`），output/mutate 不再恒 unavailable；
 - P1-5 退出清理：`requestQuit` 先 `runner.cancelAll()` 再 lifecycle cleanup，并 dispatch
   `cleanup(destroy)` 全局清 active timeline rows；
+- P1-6 Session capability negotiation（2026-08-09）：生产 `SessionInteractiveController`
+  从 version 3 握手 handle 暴露 `supports(operation)` 与 `session.run-timing`；`InteractiveMode` 不再以 controller presence
+  推断 session catalog/mutation，domain adapter 逐 operation 构造 port；未协商 operation 不发
+  frame；无真实 lifecycle operation 时删除 adapter 内伪 accepted shutdown port；
+- P1-7 Session Domain Router 与转场（2026-08-09）：`session-domain.ts` + `sessions/port.ts`
+  接通 SQLite catalog/create/resume/fork，只投影真实 catalog 字段；production controller 改为
+  `querySessionDomain`/`commandSessionDomain`，generation/correlation/effect/revision、driver、attempt
+  receipt、recovery barrier 与 fork source-head fence 均在 Router/Client/Server 边界校验；
+  `InteractiveMode.run()` 返回 typed `quit|switch` intent，CLI 严格 detach-before-attach，失败只经
+  canonical open 恢复原 Session，remote attachment 存在时旧 Runtime 保持 headless。该项闭合
+  新集成计划 S1/S2，但不提升本计划 B6–B8、Runtime R6/R6.5/R7/R8 或 human acceptance；
 - P2-1 generation/typed fence：stale/aborted reset 同样核对 generation；plan/extension 等
   已接通投影继续做枚举与结构校验，未有真实 Host operation 的领域直接 unavailable；
 - P2-2 全局 cleanup：`TimelineEvent.cleanup.correlationId` 改 optional，projector 不传时

@@ -93,6 +93,14 @@ describe("ChatContainer", () => {
       streaming: false,
     }]);
   });
+  it.each([60, 80, 143])("按真实宽度生成 run separator（%i 列）", (width) => {
+    const chat = new ChatContainer();
+    chat.setTimelineBlocks([{ id: "timeline-run:run-1", kind: "separator", label: "stop · Worked for 1m 00s" }], 1);
+    const block = chat.present(width)[0];
+    expect(block).toMatchObject({ id: "timeline-run:run-1", kind: "separator" });
+    expect(block && "content" in block ? visibleWidth(block.content) : -1).toBe(width);
+    expect(block && "content" in block ? block.content : "").toContain("stop · Worked for 1m 00s");
+  });
   it("child 抛错时不外抛,记 stderr;空降占位行", () => {
     const chat = new ChatContainer();
     const badChild = {

@@ -12,7 +12,93 @@ import { SESSION_OWNER_AUTH_TOKEN_BYTES, SESSION_OWNER_ERROR_CODES, type Session
 import type { OwnerFence } from "../session-owner/types.ts";
 import type { RuntimeInstanceId, SessionId } from "../protocol/ids.ts";
 
-export const SESSION_PROTOCOL_VERSION = 1 as const;
+export const SESSION_PROTOCOL_VERSION = 3 as const;
+
+/** S1:handshake 协商的协议族；不代表某个具体 operation 可用。 */
+export const SESSION_PROTOCOL_CAPABILITIES = [
+	"session.core",
+	"session.catalog",
+	"session.process",
+	"session.plan",
+	"session.extensions",
+	"session.mcp",
+	"session.hooks",
+	"session.skills",
+	"session.plugins",
+	"session.credential.reverse",
+	"session.approval.reverse",
+	"session.security.inspect",
+	"session.workspace",
+	"session.trace.local",
+	"session.run-timing",
+] as const;
+export type SessionProtocolCapability = (typeof SESSION_PROTOCOL_CAPABILITIES)[number];
+
+export const SESSION_OPERATION_ACCESS = ["read", "mutate"] as const;
+export type SessionOperationAccess = (typeof SESSION_OPERATION_ACCESS)[number];
+
+/** 精确 operation 描述；TUI 只以该清单决定是否构造端口或发送 frame。 */
+export interface SessionProtocolOperationDescriptor {
+	readonly operation: string;
+	readonly capability: SessionProtocolCapability;
+	readonly access: SessionOperationAccess;
+}
+
+export interface SessionProtocolManifest {
+	readonly protocolCapabilities: readonly SessionProtocolCapability[];
+	readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
+}
+
+/** 当前 SessionRuntime 已真实实现的 core operation；不包含 catalog/process/Host domain。 */
+export const SESSION_CORE_OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object.freeze([
+	Object.freeze({ operation: "session.snapshot", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.timeline", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.receipts", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.events.subscribe", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.driver.claim", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.driver.release", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.provider.status", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.model.list", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.model.select", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.thinking.set", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.auth.login", capability: "session.credential.reverse", access: "mutate" }),
+	Object.freeze({ operation: "session.auth.logout", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.prompt", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.steer", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.follow_up", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.interrupt", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.queue.clear", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.recovery.status", capability: "session.core", access: "read" }),
+	Object.freeze({ operation: "session.recovery.assess", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.recovery.verify", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.recovery.resume", capability: "session.core", access: "mutate" }),
+]);
+
+/** 深冻结并校验 capability/operation 对应关系，避免握手后被 composition 改写。 */
+export function freezeSessionProtocolManifest(input: SessionProtocolManifest): SessionProtocolManifest {
+	const protocolCapabilities = Object.freeze([...new Set(input.protocolCapabilities)]);
+	const capabilitySet = new Set<SessionProtocolCapability>(protocolCapabilities);
+	const operationNames = new Set<string>();
+	const operationManifest = input.operationManifest.map((descriptor) => {
+		if (!capabilitySet.has(descriptor.capability)) {
+			throw new Error(`operation capability was not negotiated: ${descriptor.operation}`);
+		}
+		if (operationNames.has(descriptor.operation)) {
+			throw new Error(`duplicate session operation: ${descriptor.operation}`);
+		}
+		operationNames.add(descriptor.operation);
+		return Object.freeze({ ...descriptor });
+	});
+	return Object.freeze({
+		protocolCapabilities,
+		operationManifest: Object.freeze(operationManifest),
+	});
+}
+
+export const SESSION_CORE_PROTOCOL_MANIFEST = freezeSessionProtocolManifest({
+	protocolCapabilities: ["session.core", "session.credential.reverse", "session.run-timing"],
+	operationManifest: SESSION_CORE_OPERATION_MANIFEST,
+});
 
 /**
  * §6.1 冻结的会话级传输上限。继承现有 bounded frame/outbox/replay/ACK 语义,
@@ -75,7 +161,8 @@ export type SessionHandshakeResponse =
 			readonly accepted: true;
 			readonly runtimeId: RuntimeInstanceId;
 			readonly generation: number;
-			readonly protocolCapabilities: readonly string[];
+			readonly protocolCapabilities: readonly SessionProtocolCapability[];
+			readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
 			readonly snapshotCursor: number;
 			readonly driverRevision: number;
 			readonly sessionStatus: SessionStatus;
@@ -120,6 +207,25 @@ const SessionStatusSchema = Type.Unsafe<SessionStatus>({
 	enum: [...SESSION_STATUSES],
 });
 
+const SessionProtocolCapabilitySchema = Type.Unsafe<SessionProtocolCapability>({
+	type: "string",
+	enum: [...SESSION_PROTOCOL_CAPABILITIES],
+});
+
+const SessionOperationAccessSchema = Type.Unsafe<SessionOperationAccess>({
+	type: "string",
+	enum: [...SESSION_OPERATION_ACCESS],
+});
+
+const SessionProtocolOperationDescriptorSchema = Type.Object(
+	{
+		operation: Type.String({ pattern: "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$", minLength: 1, maxLength: 128 }),
+		capability: SessionProtocolCapabilitySchema,
+		access: SessionOperationAccessSchema,
+	},
+	{ additionalProperties: false },
+);
+
 export const SessionHandshakeRequestSchema = Type.Object(
 	{
 		protocolVersion: Type.Literal(SESSION_PROTOCOL_VERSION),
@@ -143,7 +249,8 @@ const AcceptedHandshakeResponseSchema = Type.Object(
 		accepted: Type.Literal(true),
 		runtimeId: RuntimeIdSchema,
 		generation: PositiveSafeIntSchema,
-		protocolCapabilities: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { maxItems: 64 }),
+		protocolCapabilities: Type.Array(SessionProtocolCapabilitySchema, { maxItems: SESSION_PROTOCOL_CAPABILITIES.length, uniqueItems: true }),
+		operationManifest: Type.Array(SessionProtocolOperationDescriptorSchema, { maxItems: 256 }),
 		snapshotCursor: NonNegativeSafeIntSchema,
 		driverRevision: NonNegativeSafeIntSchema,
 		sessionStatus: SessionStatusSchema,

@@ -25,7 +25,7 @@ import { assembleSessionDomain, type SessionDomainCompositionOptions } from "../
 import { LateBoundAttemptPort } from "../runtime/session-runtime/attempt-gateway.ts";
 import { restoreSession } from "../runtime/session-runtime/restore.ts";
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
-import { SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
+import { SESSION_CORE_PROTOCOL_MANIFEST, SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { createRuntimeId, type ExecutionId, type SessionId } from "../runtime/protocol/ids.ts";
 
 export type SessionReverseRequestHandler = (frame: SessionFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
@@ -213,7 +213,8 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 function nullController(sessionId: SessionId) {
 	return {
 		sessionId,
-		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
+		protocolManifest: () => SESSION_CORE_PROTOCOL_MANIFEST,
+		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting", agentRuns: [] }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),
 		onEvent: () => () => undefined,

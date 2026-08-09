@@ -16,6 +16,7 @@ import { SessionRuntime } from "../../../src/runtime/session-runtime/session-run
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { SESSION_CORE_PROTOCOL_MANIFEST } from "../../../src/runtime/session-server/protocol.ts";
 
 export interface RuntimeHarness {
 	readonly dir: string;
@@ -30,7 +31,7 @@ export interface RuntimeHarness {
 }
 
 /** 完整 runtime harness:create → claim → restore → runtime.start()。 */
-export async function createRuntimeHarness(seed = "h"): Promise<RuntimeHarness> {
+export async function createRuntimeHarness(seed = "h", options: { readonly crashTakeover?: boolean } = {}): Promise<RuntimeHarness> {
 	const dir = mkdtempSync(join(tmpdir(), "session-runtime-harness-"));
 	const db = openSessionDatabase(join(dir, "state.db"));
 	installSessionStoreSchema(db);
@@ -49,7 +50,7 @@ export async function createRuntimeHarness(seed = "h"): Promise<RuntimeHarness> 
 	if (!claimed.ok || claimed.outcome !== "claimed") throw new Error("harness claim failed");
 	const restored = restoreSession(store, sessionId);
 	if (!restored.ok) throw new Error("harness restore failed");
-	const runtime = new SessionRuntime({ sessionId, store, ownerStore, owner, server, fence: claimed.fence, crashTakeover: false, restored });
+	const runtime = new SessionRuntime({ sessionId, store, ownerStore, owner, server, fence: claimed.fence, crashTakeover: options.crashTakeover === true, restored });
 	server.bindController(runtime);
 	runtime.start();
 	return {
@@ -70,6 +71,7 @@ export async function createRuntimeHarness(seed = "h"): Promise<RuntimeHarness> 
 function nullController(sessionId: SessionId) {
 	return {
 		sessionId,
+		protocolManifest: () => SESSION_CORE_PROTOCOL_MANIFEST,
 		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),

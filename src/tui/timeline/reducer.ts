@@ -141,9 +141,33 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 					};
 			return { ...state, generation, committedRows: [...state.committedRows, row] };
 		}
+		case "run_start": {
+			if (state.activeRun !== undefined) return state;
+			return { ...state, generation, activeRun: { runId: event.runId, state: "working", startedAtMs: event.timestamp, activeDurationMs: event.activeDurationMs, lastResumedAtMs: event.timestamp } };
+		}
+		case "run_pause": {
+			if (state.activeRun?.runId !== event.runId || state.activeRun.state !== "working") return state;
+			return { ...state, generation, activeRun: { ...state.activeRun, state: "waiting", activeDurationMs: event.activeDurationMs, waitId: event.waitId, waitReason: event.reason, lastResumedAtMs: undefined } };
+		}
+		case "run_resume": {
+			if (state.activeRun?.runId !== event.runId || state.activeRun.state !== "waiting") return state;
+			return { ...state, generation, activeRun: { runId: event.runId, state: "working", startedAtMs: state.activeRun.startedAtMs, activeDurationMs: event.activeDurationMs, lastResumedAtMs: event.timestamp } };
+		}
+		case "run_end": {
+			if (state.activeRun?.runId !== event.runId || hasRunBoundary(state, event.runId)) return state;
+			return commitRunBoundary(state, generation, { ...event, stopReason: event.stopReason });
+		}
+		case "run_restore": {
+			if (hasRunBoundary(state, event.runId)) return state;
+			if (event.status !== "completed" || event.stopReason === undefined) {
+				if (state.activeRun !== undefined) return state;
+				return { ...state, generation, activeRun: { runId: event.runId, state: event.status === "active" ? "working" : "recovery_required", startedAtMs: event.timestamp, activeDurationMs: event.activeDurationMs ?? 0, ...(event.status === "active" ? { lastResumedAtMs: event.timestamp } : {}) } };
+			}
+			return commitRunBoundary(state, generation, { ...event, stopReason: event.stopReason });
+		}
 		case "cleanup": {
 			const affected = state.activeOrder.filter((id) => event.correlationId === undefined || id === event.correlationId);
-			if (affected.length === 0) return state;
+			if (affected.length === 0) return state.activeRun === undefined ? state : { ...state, generation, activeRun: undefined };
 			const status: TimelineStatus = event.reason === "abort" ? "aborted" : "cancelled";
 			const nextCommitted = [...state.committedRows];
 			for (const id of affected) {
@@ -158,6 +182,7 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 				committedRows: nextCommitted,
 				activeRowsByCorrelationId,
 				activeOrder: state.activeOrder.filter((id) => !affected.includes(id)),
+				activeRun: undefined,
 				cursor: {
 					...state.cursor,
 					activeMessageId:
@@ -168,6 +193,55 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 			};
 		}
 	}
+}
+
+function hasRunBoundary(state: TimelineState, runId: string): boolean {
+	return state.committedRows.some((row) => row.kind === "run-boundary" && row.runId === runId);
+}
+
+interface RunBoundaryInput {
+	readonly runId: string;
+	readonly timestamp: number;
+	readonly stopReason: "stop" | "length" | "toolUse" | "error" | "aborted";
+	readonly elapsedMs?: number;
+	readonly activeDurationMs?: number;
+	readonly messageCountAtEnd?: number;
+}
+
+function commitRunBoundary(
+	state: TimelineState,
+	generation: number,
+	event: RunBoundaryInput,
+): TimelineState {
+	const row: TimelineRow = {
+		kind: "run-boundary",
+		id: `run:${event.runId}`,
+		timestamp: new Date(event.timestamp).toISOString(),
+		displayOrder: nextDisplayOrder(state),
+		status: event.stopReason === "error" ? "failed" : event.stopReason === "aborted" ? "aborted" : "succeeded",
+		runId: event.runId,
+		stopReason: event.stopReason,
+		...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),
+		...(event.activeDurationMs === undefined ? {} : { activeDurationMs: event.activeDurationMs }),
+		...(event.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: event.messageCountAtEnd }),
+	};
+	return { ...state, generation, activeRun: undefined, committedRows: insertBoundary(state.committedRows, row) };
+}
+
+function insertBoundary(rows: readonly TimelineRow[], boundary: Extract<TimelineRow, { readonly kind: "run-boundary" }>): readonly TimelineRow[] {
+	if (boundary.messageCountAtEnd === undefined) return [...rows, boundary];
+	let seenMessages = 0;
+	let index = rows.length;
+	for (let i = 0; i < rows.length; i += 1) {
+		const row = rows[i]!;
+		if (row.kind === "user" || row.kind === "assistant") seenMessages += 1;
+		if (seenMessages >= boundary.messageCountAtEnd) {
+			index = i + 1;
+			while (index < rows.length && rows[index]?.kind === "tool") index += 1;
+			break;
+		}
+	}
+	return [...rows.slice(0, index), boundary, ...rows.slice(index)];
 }
 
 function commit(state: TimelineState, correlationId: string, status: TimelineStatus, generation: number): TimelineState {

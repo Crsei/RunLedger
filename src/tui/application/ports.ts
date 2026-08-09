@@ -26,8 +26,10 @@ import type { ShutdownWorkflowPort } from "../shutdown/types.ts";
 import type { WorkspaceGitPort } from "../workspace/types.ts";
 import type { ProcessPassivePort } from "../process/types.ts";
 import type { UpdateQueryPort } from "../update/types.ts";
+import type { SessionWorkflowPort } from "../sessions/port.ts";
 
 export interface TuiDomainPorts {
+	readonly session?: SessionWorkflowPort;
 	readonly provider?: ProviderWorkflowPort;
 	readonly auth?: AuthWorkflowPort;
 	readonly model?: ModelWorkflowPort;
@@ -58,8 +60,8 @@ export function capabilitiesFromPorts(ports: TuiDomainPorts, session: Capability
 	const availability = (port: unknown): PortAvailability =>
 		port === undefined ? { state: "unavailable", reason: "port-not-wired" } : { state: "available" };
 	return {
-		sessionCatalog: session.sessionCatalog ? { state: "available" } : { state: "unavailable", reason: "port-not-wired" },
-		sessionMutation: session.sessionMutation ? { state: "available" } : { state: "unavailable", reason: "port-not-wired" },
+		sessionCatalog: session.sessionCatalog && ports.session !== undefined ? { state: "available" } : { state: "unavailable", reason: "port-not-wired" },
+		sessionMutation: session.sessionMutation && ports.session !== undefined ? { state: "available" } : { state: "unavailable", reason: "port-not-wired" },
 		provider: availability(ports.provider),
 		auth: availability(ports.auth),
 		model: availability(ports.model),

@@ -4,6 +4,10 @@ import type { ModelThinkingLevel } from "../../types.ts";
 import type { SafeBoundedText } from "../presentation/tools/types.ts";
 
 export type TuiEffect =
+	| ({ readonly type: "session.list" } & CorrelatedRequestRef)
+	| ({ readonly type: "session.create"; readonly expectedRevision: number } & CorrelatedRequestRef)
+	| ({ readonly type: "session.resume"; readonly targetSessionId: string; readonly expectedRevision: number } & CorrelatedRequestRef)
+	| ({ readonly type: "session.fork"; readonly sourceSessionId: string; readonly expectedSourceHeadSequence: number; readonly expectedRevision: number } & CorrelatedRequestRef)
 	| ({ readonly type: "provider.list" } & CorrelatedRequestRef)
 	| ({ readonly type: "auth.inspect" } & CorrelatedRequestRef)
 	| ({ readonly type: "auth.login"; readonly providerId: string; readonly authKind: AuthKind } & CorrelatedRequestRef)

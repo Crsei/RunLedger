@@ -75,6 +75,7 @@ function blockKey(block: PresentationBlock, index: number): string {
 function blockText(block: PresentationBlock): string {
   if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)].join("\n");
   if (block.kind === "input") return `${block.title}\n${block.message}\n${block.value}`;
+  if (block.kind === "separator") return block.content ?? block.label;
   return block.content;
 }
 
@@ -92,6 +93,8 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     ? block.title.length + block.options.reduce((total, option) => total + option.label.length, 0)
     : block.kind === "input"
     ? block.title.length + block.message.length + block.value.length
+    : block.kind === "separator"
+    ? (block.content ?? block.label).length
     : block.content.length;
 }
 
@@ -121,6 +124,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     stickyScroll: true,
     stickyStart: "bottom",
     viewportCulling: true,
+    // scrollbar 覆盖在 transcript 最右列，不占用正文布局宽度；全宽 separator
+    // 因而按真实终端列数重排，同时保留长历史的滚动位置提示。
+    verticalScrollbarOptions: { position: "absolute", right: 0 },
     contentOptions: { flexDirection: "column", minHeight: 0 },
   });
   const newContent = new TextRenderable(renderer, {

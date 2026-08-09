@@ -22,6 +22,8 @@ import { SessionRuntime } from "../../../src/runtime/session-runtime/session-run
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { bindCandidateListener } from "../../../src/runtime/session-server/owner-probe.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { createRuntimeHarness } from "./harness.ts";
+import { SESSION_CORE_PROTOCOL_MANIFEST } from "../../../src/runtime/session-server/protocol.ts";
 
 let dir: string;
 
@@ -132,6 +134,7 @@ async function takeoverRuntime(ctx: Ctx): Promise<{ runtime: SessionRuntime; own
 function nullController(sessionId: SessionId) {
 	return {
 		sessionId,
+		protocolManifest: () => SESSION_CORE_PROTOCOL_MANIFEST,
 		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),
@@ -141,6 +144,46 @@ function nullController(sessionId: SessionId) {
 }
 
 describe("R5 crash recovery", () => {
+	it("projects an active wire status while the internal runtime is ready", async () => {
+		const runtimeHarness = await createRuntimeHarness("wire-status");
+		try {
+			expect(runtimeHarness.runtime.runtimeState).toBe("ready");
+			expect(runtimeHarness.runtime.snapshot().sessionStatus).toBe("active");
+		} finally {
+			await runtimeHarness.server.close();
+			runtimeHarness.store.database().close();
+			runtimeHarness.cleanup();
+		}
+	});
+
+	it("projects safe completed run summaries at the same durable snapshot head", async () => {
+		const runtimeHarness = await createRuntimeHarness("run-summary");
+		try {
+			let tail = runtimeHarness.store.replaySessionEvents(runtimeHarness.sessionId).at(-1);
+			for (const [index, payload] of [
+				{ type: "agent_start", timestamp: 1_000, runId: "run-summary-1" },
+				{ type: "agent_end", timestamp: 1_250, runId: "run-summary-1", stopReason: "stop", elapsedMs: 250, activeDurationMs: 200, messageCountAtEnd: 2 },
+			].entries()) {
+				const appended = runtimeHarness.store.appendEvent(runtimeHarness.fence, {
+					eventId: createRuntimeId("event", `run-summary-${index}`), ownerGeneration: runtimeHarness.fence.generation,
+					eventType: "agent.event", payloadJson: JSON.stringify(payload), createdAtMs: payload.timestamp,
+					expectedPreviousEventHash: tail?.currentEventHash ?? null,
+				});
+				tail = appended;
+			}
+			const snapshot = runtimeHarness.runtime.snapshot();
+			expect(snapshot.headSequence).toBe(runtimeHarness.runtime.currentHeadSequence());
+			expect(snapshot.agentRuns).toEqual([
+				expect.objectContaining({ runId: "run-summary-1", status: "completed", stopReason: "stop", activeDurationMs: 200, messageCountAtEnd: 2 }),
+			]);
+			expect(JSON.stringify(snapshot.agentRuns)).not.toContain("prompt");
+		} finally {
+			await runtimeHarness.server.close();
+			runtimeHarness.store.database().close();
+			runtimeHarness.cleanup();
+		}
+	});
+
 	it("enters RECOVERY_REQUIRED unconditionally after a crash takeover", async () => {
 		const ctx = openCtx();
 		await crashWithUnresolvedAttempt(ctx);
