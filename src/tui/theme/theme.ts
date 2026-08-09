@@ -1,8 +1,8 @@
 /**
- * TUI 主题:20 色槽 schema 的核心类型与 dark/light 加载入口。
+ * TUI 主题:21 色槽 schema 的核心类型与 dark/light 加载入口。
  *
  * 对照 development-doc/tui/05-theme.md §1 与 §3:
- *   - Theme 接口包含 20 个色槽 + accentBold/Italic 字符变体;
+ *   - Theme 接口包含 21 个色槽 + accentBold/Italic 字符变体;
  *   - loadTheme(name) 在 M1 阶段只支持 "dark" 硬编码色值;
  *   - env 覆盖 RUNLEDGER_THEME_<KEY> 在 M6 接入,本期占位函数 noop;
  *   - 中文注释与色槽保持简洁技术化,不堆形容词。
@@ -10,7 +10,7 @@
  * dark/light 由 OpenTUI theme_mode 事件切换，不再保留第二套终端探测 authority。
  */
 
-/** ANSI 16 色基础槽 + accent 字符变体,共 20 项(对照 05-theme.md §3 表)。 */
+/** ANSI 16 色基础槽 + accent 字符变体,共 21 项(对照 05-theme.md §3 表)。 */
 export interface Theme {
   /** 8 个基础前景槽。 */
   primary: string;
@@ -21,11 +21,13 @@ export interface Theme {
   warning: string;
   error: string;
   info: string;
-  /** 4 个背景槽 */
+  /** 5 个背景槽 */
   background: string;
   surface: string;
   surfaceAlt: string;
   border: string;
+  /** 输入区整块背景(codex user_message_bg_rgb:暗 12% 白 / 亮 4% 黑)。 */
+  editorBackground: string;
   /** 8 个语义槽(细粒度业务着色) */
   userMessage: string;
   assistantMessage: string;
@@ -54,6 +56,9 @@ const DARK_THEME: Theme = {
   surface: "#11151c",
   surfaceAlt: "#1a1f29",
   border: "#2b3340",
+  // 静态回退值 = computeEditorBackground(解析 background);OSC 11 可用时由
+  // theme/editor-background.ts 重算,两者对默认主题保持一致。
+  editorBackground: "#282a30",
   userMessage: "#7dcfff",
   assistantMessage: "#e6e6e6",
   toolCall: "#e5c07b",
@@ -78,6 +83,8 @@ const LIGHT_THEME: Theme = {
   surface: "#f5f5f5",
   surfaceAlt: "#eaeaea",
   border: "#cccccc",
+  // 亮主题回退值 = computeEditorBackground(#ffffff) = 4% 黑混入。
+  editorBackground: "#f4f4f4",
   userMessage: "#0066cc",
   assistantMessage: "#1a1a1a",
   toolCall: "#a07000",

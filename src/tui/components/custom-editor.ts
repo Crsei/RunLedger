@@ -35,12 +35,18 @@ export interface CustomEditorProps {
   onDequeue?: () => void;
   /** paddingX,默认 0;若需要左侧留白(对照 pi 默认 1)由装配方调。 */
   paddingX?: number;
+  /** 空输入占位符文本;缺省 "Message RunLedger…"。 */
+  placeholder?: string;
 }
 
-/** 从 Theme 生成 RunLedger editor presentation 主题。 */
+/** 从 Theme 生成 RunLedger editor presentation 主题(identity 回退版,供无 ANSI 环境)。 */
 export function makeEditorTheme(theme: Theme, selectList: SelectListTheme): EditorTheme {
+  void theme;
   return {
     borderColor: (str: string) => str,
+    backgroundColor: (str: string) => str,
+    placeholderColor: (str: string) => str,
+    prompt: (str: string) => str,
     selectList,
   };
 }
@@ -50,7 +56,7 @@ export class CustomEditor extends Editor {
   private readonly onDequeue?: () => void;
 
   constructor(tui: TUI, theme: EditorTheme, props: CustomEditorProps) {
-    super(tui, theme, { paddingX: props.paddingX ?? 0 });
+    super(tui, theme, { paddingX: props.paddingX ?? 0, placeholder: props.placeholder });
     this.onSubmit = props.onSubmit;
     this.onChange = props.onChange;
     this.disableSubmit = false;

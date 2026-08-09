@@ -596,6 +596,16 @@ private extensionShortcutHandlers = new Map<string, () => void>();
 
 **render 契约**:继承 `Editor.render(width)`,不变。
 
+> 2026-08-09(计划 02)输入区复刻同步:
+> - `EditorTheme` 扩为 5 函数:`borderColor` / `backgroundColor` / `placeholderColor` / `prompt` / `selectList`;
+> - `Editor.render` 前缀由 `> ` 改为 `› `(prompt 用 bold accent),空输入渲染 dim 占位符,
+>   背景铺满整行;折行宽度 = width - 2(左 gutter)- 1(右留白);
+> - `Editor` 新增 `desiredHeight(width)`(word-wrap 行数 + 上下留白,最小 3),OpenTUI 原生路径再用
+>   `measureForDimensions(width - 3)`校正真实折行;
+> - 原生路径:输入区 = prompt 2 列 + Textarea + 右留白 1 列(editorRow 上下留白各 1),背景/占位符色随
+>   `editorAppearance` 帧下发;高度达到 viewport 上限后 textarea 内部滚动,始终保留 footer 与至少
+>   1 行 transcript(详见 `../plan/02-codex-input-area-replica-plan.md`)。
+
 **不可变契约**:
 
 - 不直接订阅 `agent.subscribe`,只暴露 handler 给 InteractiveMode 装配;

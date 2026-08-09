@@ -69,14 +69,15 @@ export function ansi256ToAnsi16(n: number): number {
     const gray = (n - 232) * 10 + 8;
     return gray < 80 ? 0 : gray > 180 ? 15 : 7;
   }
-  // 16~231 色立方回退到 ANSI 16,按欧氏距离最近邻
+  // 16~231 色立方回退到 ANSI 16,按欧氏距离最近邻;立方解码需先减去 16 偏移。
   let bestIdx = 0;
   let bestDist = Infinity;
+  const cube = n - 16;
   for (let i = 0; i < 16; i++) {
     const [r, g, b] = ANSI_16[i];
-    const rr = (Math.floor(n / 36) % 6) * 51;
-    const gg = (Math.floor(n / 6) % 6) * 51;
-    const bb = (n % 6) * 51;
+    const rr = (Math.floor(cube / 36) % 6) * 51;
+    const gg = (Math.floor(cube / 6) % 6) * 51;
+    const bb = (cube % 6) * 51;
     const dist = (r - rr) ** 2 + (g - gg) ** 2 + (b - bb) ** 2;
     if (dist < bestDist) {
       bestDist = dist;
@@ -94,8 +95,8 @@ export function wrapFg(hex: string, fallback16 = true): StyleFn {
   const wrap256 = (text: string): string => `\x1b[38;5;${rgbToAnsi256(r, g, b)}m${text}\x1b[39m`;
   if (!fallback16) return wrap256;
   const idx16 = ansi256ToAnsi16(rgbToAnsi256(r, g, b));
-  const wrap16 = (text: string): string => `\x1b[${30 + (idx16 >= 8 ? idx16 + 60 : idx16)}m${text}\x1b[39m`;
-  // M6 默认走 256 色;16 色 fallback 留作高阶调用点(更高级函数选择)
+  // 亮色(8-15)fg SGR 为 90+(idx-8);30+idx 只覆盖暗色,避免输出 98/99 等非法码。
+  const wrap16 = (text: string): string => `\x1b[${30 + (idx16 >= 8 ? idx16 + 52 : idx16)}m${text}\x1b[39m`;
   return wrap16 === null ? wrap256 : wrap16;
 }
 
@@ -106,7 +107,8 @@ export function wrapBg(hex: string, fallback16 = true): StyleFn {
     return (text: string): string => `\x1b[48;5;${rgbToAnsi256(r, g, b)}m${text}\x1b[49m`;
   }
   const idx16 = ansi256ToAnsi16(rgbToAnsi256(r, g, b));
-  return (text: string): string => `\x1b[${40 + (idx16 >= 8 ? idx16 + 60 : idx16)}m${text}\x1b[49m`;
+  // 亮色(8-15)bg SGR 为 100+(idx-8);40+idx 只覆盖暗色。
+  return (text: string): string => `\x1b[${40 + (idx16 >= 8 ? idx16 + 52 : idx16)}m${text}\x1b[49m`;
 }
 
 /** Bold wrap: \x1b[1m...\x1b[22m。 */

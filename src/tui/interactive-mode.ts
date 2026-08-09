@@ -41,16 +41,17 @@ import type { InteractiveSessionControllerPort, SessionRecoveryStatus } from "..
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
 import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
+import { editorBackgroundFromTerminal } from "./theme/editor-background.ts";
 import { CustomEditor, type CustomEditorProps } from "./components/custom-editor.ts";
+import { EditorHint } from "./components/editor-hint.ts";
 import { Footer } from "./components/footer.ts";
-import { KeybindingHints } from "./components/keybinding-hints.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
-import type { SelectItem } from "./index.ts";
+import type { SelectItem, RgbColor } from "./index.ts";
 import type { Component, OverlayOptions } from "./primitives.ts";
 import type { TuiOverlayState } from "./application/state.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
@@ -120,8 +121,8 @@ interface ContainerRefs {
   chat: ChatContainer;
   status: StatusComponent;
   editor: CustomEditor;
+  editorHint: EditorHint;
   footer: Footer;
-  hints: KeybindingHints;
 }
 
 /** 失败护栏常量(对照 02-spec §1 与 03-event-binding §5.1)。 */
@@ -140,6 +141,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly refs: ContainerRefs;
   private unsubscribe?: () => void;
   private unsubscribeThemeMode?: () => void;
+  private unsubscribeTerminalBackground?: () => void;
   private unsubscribeRenderPreparation?: () => void;
   private unsubscribeBoundaryActions?: () => void;
 
@@ -237,6 +239,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => this.flushStreamingDeltas());
     this.unsubscribeBoundaryActions = this.ui.addActionListener((actions) => {
       for (const action of actions) this.store.dispatch(action);
+      if (actions.some((action) => action.type === "interaction.focus-changed")) this.ui.requestRender();
     });
     this.ui.setAppIntentHandler({
       onInterrupt: () => {
@@ -317,22 +320,36 @@ export class InteractiveMode implements FooterSnapshotProvider {
     };
     const editor = new CustomEditor(this.ui, editorTheme, editorProps);
     const footer = new Footer({ theme: this.theme, provider: this });
-    const hints = new KeybindingHints({ theme: this.theme, hints: [] });
+    // codex footer 语义简化版:左侧快捷键 hint,右侧模式指示;overlay 打开时隐藏。
+    const resolved = this.kb.getResolvedBindings();
+    const editorHint = new EditorHint({
+      theme: this.theme,
+      provider: this,
+      hints: [
+        { key: resolved["tui.input.submit"]?.[0] ?? "enter", action: "send" },
+        { key: resolved["tui.input.followUp"]?.[0] ?? "alt+enter", action: "follow-up" },
+        { key: resolved["tui.input.interrupt"]?.[0] ?? "ctrl+c", action: "interrupt" },
+        { key: resolved["tui.input.quit"]?.[0] ?? "ctrl+d", action: "quit" },
+      ],
+      getVisible: () => editor.focused
+        && this.store.getState().interaction.terminalFocused
+        && !this.ui.hasOverlay(),
+    });
 
     // 组件树结构(对照 02 §1):
-    //   header / loadedResources / chat / status / editor / footer / hints
+    //   header / loadedResources / chat / status / editor / editorHint / footer
     this.ui.addChild(header);
     this.ui.addChild(loadedResources);
     this.ui.addChild(chat);
     this.ui.addChild(status);
     this.ui.addChild(editor);
+    this.ui.addChild(editorHint);
     this.ui.addChild(footer);
-    this.ui.addChild(hints);
 
     // Editor 拿焦点
     this.ui.setFocus(editor);
 
-    return { header, loadedResources, chat, status, editor, footer, hints };
+    return { header, loadedResources, chat, status, editor, editorHint, footer };
   }
 
   /** B1:bootstrap 派生；composition root 显式传入时优先。 */
@@ -383,19 +400,36 @@ export class InteractiveMode implements FooterSnapshotProvider {
       ? this.controller.subscribe((ev) => this.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
     this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
+    this.unsubscribeTerminalBackground = this.ui.addTerminalBackgroundListener((rgb) => this.refreshEditorAppearance(rgb));
     try {
 	  const recoverySync = this.syncRecoveryState();
 	  if (recoverySync !== undefined) await recoverySync;
       await this.ui.start();
+      // 启动即按当前主题(+已缓存的 OSC 11)下发一次输入区外观。
+      this.refreshEditorAppearance();
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
       this.unsubscribeThemeMode?.();
       this.unsubscribeThemeMode = undefined;
+      this.unsubscribeTerminalBackground?.();
+      this.unsubscribeTerminalBackground = undefined;
       this.resolveExit({ kind: "quit" });
       throw error;
     }
     return this.exitPromise;
+  }
+
+  /**
+   * 输入区外观重算:终端背景(OSC 11 优先,缺失回退 theme.background)经 blend
+   * 得到输入区背景;theme_mode 切换与 OSC 11 回复都会触发。OpenTUI 路径由帧驱动即时生效。
+   */
+  private refreshEditorAppearance(rgb?: RgbColor): void {
+    this.ui.setEditorAppearance({
+      backgroundColor: editorBackgroundFromTerminal(this.theme, rgb ?? this.ui.getTerminalBackgroundRgb()),
+      promptColor: this.theme.accent,
+      placeholderColor: this.theme.hint,
+    });
   }
 
   /** 中断当前 turn;M8c:真接 agent.interrupt()。 */
@@ -438,9 +472,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return false;
   }
 
-  /** OpenTUI theme_mode 变更后刷新共享 ThemeRef。 */
+  /** OpenTUI theme_mode 变更后刷新共享 ThemeRef,并重算输入区外观。 */
   private maybeSwitchTheme(scheme: "dark" | "light"): void {
     Object.assign(this.theme, applyEnvOverrides(loadTheme(scheme)));
+    this.refreshEditorAppearance();
     this.ui.invalidate();
   }
 
@@ -475,6 +510,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeStore = undefined;
     this.unsubscribeThemeMode?.();
     this.unsubscribeThemeMode = undefined;
+    this.unsubscribeTerminalBackground?.();
+    this.unsubscribeTerminalBackground = undefined;
     this.unsubscribeRenderPreparation?.();
     this.unsubscribeRenderPreparation = undefined;
     this.unsubscribeBoundaryActions?.();

@@ -163,6 +163,17 @@ export { ChatContainer } from "./components/chat-container.ts";
 // M2 主题工厂
 export { makeMarkdownTheme, makeSelectListTheme, makeEditorTheme } from "./theme/factories.ts";
 
+// M8 输入区复刻:高度模型常量与计算
+export {
+  EDITOR_LEFT_PAD,
+  EDITOR_RIGHT_PAD,
+  EDITOR_VERTICAL_PAD,
+  EDITOR_MIN_HEIGHT,
+  DEFAULT_EDITOR_PLACEHOLDER,
+  editorHeight,
+  wrapCount,
+} from "./editor-height.ts";
+
 // M6 ANSI helpers + OSC detector + app-keys
 export {
   wrapFg,

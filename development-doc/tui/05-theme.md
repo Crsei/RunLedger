@@ -1,12 +1,12 @@
 # 05 · 主题系统
 
-> 本文档定义 RunLedger TUI 的 20 色槽主题 schema、dark/light 占位值、`theme.fg/bg` API,以及 OSC 11 跟随切换的接入路径。
+> 本文档定义 RunLedger TUI 的 21 色槽主题 schema、dark/light 占位值、`theme.fg/bg` API,以及 OSC 11 跟随切换的接入路径。
 
 ---
 
 ## 1. 设计动机
 
-pi 主题有 ~70 个色槽,服务于彩蛋 / 扩展 / 各种细化状态。RunLedger 只复刻 11 个业务组件,把色槽收敛到 **20 个**,达成:
+pi 主题有 ~70 个色槽,服务于彩蛋 / 扩展 / 各种细化状态。RunLedger 只复刻 11 个业务组件,把色槽收敛到 **21 个**,达成:
 
 - 每个槽都有明确使用场景(无"孤儿槽");
 - dark/light 两套默认值落地即可演示;
@@ -47,12 +47,15 @@ export interface ThemeColors {
   pendingBlocked: string;      // PendingMessages 阻塞着色
   footerBg: string;            // footer 背景色
 
+  // ── 输入区 ────────────────────────────────────────
+  editorBackground: string;    // 输入区整块背景(codex user_message_bg 静态回退值)
+
   // ── markdown code ────────────────────────────────
   mdCodeBlock: string;         // ``` 块边框 + 背景
 }
 ```
 
-**总数 = 20**。可以做到"少 1 项无法运行,多 1 项可被精简"。每个槽与组件的对应见第 4 节。
+**总数 = 21**。可以做到"少 1 项无法运行,多 1 项可被精简"。每个槽与组件的对应见第 4 节。
 
 ---
 
@@ -111,7 +114,13 @@ color 解析: `#RRGGBB` / `rgb(r,g,b)` / 命名色(可选,本期不实现,只 16
 | `statusError` | `StatusIndicator.kind="error"` | 错误 spinner |
 | `pendingBlocked` | `PendingMessages.state="blocked"` | 着色警示 |
 | `footerBg` | `FooterComponent` 整行背景 | 状态栏 |
+| `editorBackground` | `Editor` / 原生输入区(editorRow)背景 | 整区块(codex `user_message_bg_rgb` 的静态回退;运行时由 `theme/editor-background.ts` 按终端背景重算) |
 | `mdCodeBlock` | `Markdown` 渲染 ``` ` ``` 块 | 代码块 |
+
+> 2026-08-09(计划 02):色槽从 20 扩到 21。`editorBackground` 为输入区专用背景槽,不
+> 与 surface/border 混用;默认值 = `computeEditorBackground(解析 theme.background)`。
+> OSC 11 可用时,OpenTUI 路径的输入区背景由终端真实背景实时重算(见
+> [`../plan/02-codex-input-area-replica-plan.md`](../plan/02-codex-input-area-replica-plan.md) S4)。
 
 每个色槽只对应上表中的 1 种用途(单一职责)。
 
@@ -266,4 +275,4 @@ RUNLEDGER_THEME_ACCENT=#ff00aa tsx examples/tui-demo.ts
 - `npm run check` 通过;
 - `tsx examples/tui-demo.ts` 切终端 OSC 11 颜色后,RunLedger 1 秒内自动切到对应 dark/light;
 - `RUNLEDGER_THEME_ACCENT=#ff00aa tsx examples/tui-demo.ts` 看到 logo 强调色变化;
-- 单测:`theme.test.ts` 验证 20 槽全部存在且 `#RRGGBB` 合法。
+- 单测:`theme.test.ts` 验证 21 槽全部存在且 `#RRGGBB` 合法。

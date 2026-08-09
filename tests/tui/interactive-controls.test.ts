@@ -13,6 +13,8 @@ import { createAssistantMessageEventStream } from "../../src/utils/event-stream.
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { createProcessOverlayController } from "../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
+import type { EditorHint } from "../../src/tui/components/editor-hint.ts";
+import type { TuiStore } from "../../src/tui/application/store.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -199,6 +201,76 @@ describe("TUI input components", () => {
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {
+  it("terminal blur 后隐藏 editor hint,focus 恢复后重新显示", () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const internals = mode as unknown as {
+      refs: { editorHint: EditorHint };
+      store: TuiStore;
+    };
+
+    expect(internals.refs.editorHint.render(80)).toHaveLength(1);
+    internals.store.dispatch({ type: "interaction.focus-changed", focused: false });
+    expect(internals.refs.editorHint.render(80)).toEqual([]);
+    internals.store.dispatch({ type: "interaction.focus-changed", focused: true });
+    expect(internals.refs.editorHint.render(80)).toHaveLength(1);
+  });
+
+  it("terminal focus boundary 触发重绘,blur 帧不再包含 editor hint", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const running = mode.run();
+    const ui = (mode as unknown as {
+      ui: { emitActions(actions: readonly { readonly type: "interaction.focus-changed"; readonly focused: boolean }[]): void };
+    }).ui;
+    try {
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      const writesBeforeBlur = terminal.writes.length;
+
+      ui.emitActions([{ type: "interaction.focus-changed", focused: false }]);
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+      expect(terminal.writes.length).toBeGreaterThan(writesBeforeBlur);
+      expect(terminal.writes.at(-1)).not.toContain("enter:send");
+    } finally {
+      terminal.send("\x04");
+      await running;
+    }
+  });
+
+  it("theme_mode 与 OSC 11 背景输入重算 production editor appearance", () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const internals = mode as unknown as {
+      maybeSwitchTheme(scheme: "dark" | "light"): void;
+      refreshEditorAppearance(rgb?: { readonly r: number; readonly g: number; readonly b: number }): void;
+      ui: { editorAppearance?: { readonly backgroundColor: string; readonly promptColor: string; readonly placeholderColor: string } };
+    };
+
+    internals.maybeSwitchTheme("light");
+    expect(internals.ui.editorAppearance).toEqual({
+      backgroundColor: "#f4f4f4",
+      promptColor: "#0066cc",
+      placeholderColor: "#888888",
+    });
+
+    internals.maybeSwitchTheme("dark");
+    internals.refreshEditorAppearance({ r: 255, g: 255, b: 255 });
+    expect(internals.ui.editorAppearance?.backgroundColor).toBe("#f4f4f4");
+  });
+
   it("overlay 打开时 Ctrl+C 交给 modal 取消，不触发主对话中断或退出", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({

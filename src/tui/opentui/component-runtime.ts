@@ -9,6 +9,7 @@ import {
   createCliRenderer,
   type CliRenderer,
   type KeyEvent,
+  type StyledText,
 } from "@opentui/core";
 import { ansiToStyledText } from "./ansi-styled-text.ts";
 import type { TuiPerformanceObserver } from "./performance-observer.ts";
@@ -17,9 +18,20 @@ import type { PresentationBlock } from "../presentation.ts";
 import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
 import type { TuiAction } from "../application/action.ts";
 
+/** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
+export interface EditorAppearance {
+  readonly backgroundColor: string;
+  readonly promptColor: string;
+  readonly placeholderColor: string;
+}
+
 export interface OpenTuiComponentFrame {
   body: readonly (string | PresentationBlock)[];
   editorText: string;
+  /** 输入区高度(随内容增长);缺省保持 3(与既有测试默认一致)。 */
+  editorHeight?: number;
+  /** 输入区外观;缺省不铺背景 / 不染色(测试与未接线环境保持原样)。 */
+  editorAppearance?: EditorAppearance;
   footer: readonly string[];
   overlay?: readonly (string | PresentationBlock)[];
 }
@@ -29,6 +41,8 @@ export interface OpenTuiComponentRuntimeOptions {
   onResize(): void;
   onActions?(actions: readonly TuiAction[]): void;
   onThemeMode?(mode: "dark" | "light"): void;
+  /** 终端回复的原始 OSC 序列(含 OSC 11 背景色);由调用方解析。 */
+  onOsc?(sequence: string): void;
   performanceObserver?: TuiPerformanceObserver;
 }
 
@@ -69,6 +83,17 @@ function normalizedInputFor(key: KeyEvent): string {
 
 function safeRenderableId(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/gu, "-");
+}
+
+/** 24-bit 精确色的 `›` prompt StyledText(不经 16 色降级,与主题 hex 一致)。 */
+function promptStyledText(hex: string): StyledText {
+  const match = /^#?([0-9a-fA-F]{6})$/.exec(hex);
+  if (!match) return ansiToStyledText("› ");
+  const value = match[1]!;
+  const r = Number.parseInt(value.slice(0, 2), 16);
+  const g = Number.parseInt(value.slice(2, 4), 16);
+  const b = Number.parseInt(value.slice(4, 6), 16);
+  return ansiToStyledText(`\x1b[1m\x1b[38;2;${r};${g};${b}m›\x1b[22m\x1b[39m `);
 }
 
 function blockKey(block: PresentationBlock, index: number): string {
@@ -139,14 +164,35 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     flexShrink: 0,
     content: "",
   });
-  const editor = new TextareaRenderable(renderer, {
-    id: "runledger-editor",
+  // 输入区 = 左 gutter(prompt 2 列)+ textarea,上下留白各 1 行(codex composer
+  // inset(top=1, left=LIVE_PREFIX_COLS, bottom=1, right=1) 的 row 布局复刻)。
+  const editorRow = new BoxRenderable(renderer, {
+    id: "runledger-editor-row",
     width: "100%",
     height: 3,
     flexShrink: 0,
+    flexDirection: "row",
+    paddingTop: 1,
+    paddingRight: 1,
+    paddingBottom: 1,
+  });
+  const editorPrompt = new TextRenderable(renderer, {
+    id: "runledger-editor-prompt",
+    width: 2,
+    height: 1,
+    flexShrink: 0,
+    content: "› ",
+  });
+  const editor = new TextareaRenderable(renderer, {
+    id: "runledger-editor",
+    width: "100%",
+    flexGrow: 1,
+    flexShrink: 1,
     placeholder: "Message RunLedger…",
     wrapMode: "word",
   });
+  editorRow.add(editorPrompt);
+  editorRow.add(editor);
   const footer = new TextRenderable(renderer, {
     id: "runledger-footer",
     width: "100%",
@@ -155,7 +201,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   });
   screen.add(transcript);
   screen.add(newContent);
-  screen.add(editor);
+  screen.add(editorRow);
   screen.add(footer);
   renderer.root.add(screen);
   editor.focus();
@@ -168,6 +214,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let pendingNewContent = 0;
   let syntaxStyle = createRunLedgerSyntaxStyle();
   let previousNativeCellsUpdated = 0;
+  let requestedEditorHeight = 3;
+  let lastEditorHeight = 3;
+  let lastEditorAppearance: EditorAppearance | undefined;
   const copySelection = (selectedText: string | undefined): boolean => {
     if (selectedText === undefined || selectedText.length === 0) return false;
     renderer.copyToClipboardOSC52(selectedText);
@@ -201,6 +250,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     options.onActions?.(normalizeAppInput({ kind: "paste", text }));
     options.onInput(text);
   });
+  // OpenTUI 自身会查询终端默认色(OSC 10/11);把回复原样转发给上层解析,
+  // 避免本适配层与 primitives 互相引用。
+  const unsubscribeOsc = renderer.subscribeOsc((sequence) => options.onOsc?.(sequence));
   const onResize = (columns: number, rows: number): void => {
     options.onActions?.(normalizeAppInput({ kind: "resize", columns, rows }));
     options.onResize();
@@ -350,8 +402,38 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         // 与 RunLedger Editor 输入模型(光标恒在末尾)保持一致。
         editor.gotoBufferEnd();
       }
+      if (frame.editorHeight !== undefined) requestedEditorHeight = frame.editorHeight;
+      // OpenTUI 的 native word-wrap 是原生路径的测量 authority；用真实 textarea
+      // 宽度(width - prompt 2 - right inset 1)校正纯组件估算，避免隐藏尾行。
+      const editorInnerWidth = Math.max(1, renderer.width - 3);
+      const measuredLines = editor.editorView.measureForDimensions(editorInnerWidth, 0x7fff)?.lineCount ?? 1;
+      const desiredEditorHeight = Math.max(3, requestedEditorHeight, measuredLines + 2);
+      // footer 与至少 1 行 transcript 必须留在 viewport 内；达到上限后 textarea
+      // 由 OpenTUI 自己滚动，而不是把 footer 推出屏幕。
+      const footerHeight = Math.max(1, frame.footer.length);
+      const maxEditorHeight = Math.max(1, renderer.height - footerHeight - 1);
+      const boundedEditorHeight = Math.min(desiredEditorHeight, maxEditorHeight);
+      if (boundedEditorHeight !== lastEditorHeight) {
+        lastEditorHeight = boundedEditorHeight;
+        editorRow.height = lastEditorHeight;
+      }
+      const appearance = frame.editorAppearance;
+      if (appearance !== undefined && appearance !== lastEditorAppearance) {
+        if (lastEditorAppearance === undefined || lastEditorAppearance.backgroundColor !== appearance.backgroundColor) {
+          editorRow.backgroundColor = appearance.backgroundColor;
+        }
+        if (lastEditorAppearance === undefined || lastEditorAppearance.promptColor !== appearance.promptColor) {
+          editorPrompt.content = appearance.promptColor.length > 0
+            ? promptStyledText(appearance.promptColor)
+            : ansiToStyledText("› ");
+        }
+        if (lastEditorAppearance === undefined || lastEditorAppearance.placeholderColor !== appearance.placeholderColor) {
+          editor.placeholderColor = appearance.placeholderColor;
+        }
+        lastEditorAppearance = appearance;
+      }
       footer.content = ansiToStyledText(frame.footer.join("\n"));
-      footer.height = Math.max(1, frame.footer.length);
+      footer.height = footerHeight;
       updateNewContentIndicator();
 
       if (frame.overlay) {
@@ -483,6 +565,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
 	  renderer.off("resize", onResize);
 	  renderer.off("focus", onFocus);
 	  renderer.off("blur", onBlur);
+      unsubscribeOsc();
       renderer.destroy();
       syntaxStyle.destroy();
     },

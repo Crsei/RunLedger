@@ -12,7 +12,7 @@
 
 import type { MarkdownTheme, SelectListTheme, EditorTheme } from "../index.ts";
 import type { Theme } from "./theme.ts";
-import { wrapFg, wrapBold, wrapItalic, wrapUnderline, wrapStrikethrough } from "./ansi.ts";
+import { wrapFg, wrapBg, wrapBold, wrapItalic, wrapUnderline, wrapStrikethrough } from "./ansi.ts";
 
 const identity = (text: string): string => text;
 
@@ -61,6 +61,9 @@ export function makeSelectListTheme(theme: Theme): SelectListTheme {
 export function makeEditorTheme(theme: Theme, selectList: SelectListTheme): EditorTheme {
   return {
     borderColor: (str: string): string => wrapFg(theme.border)(str),
+    backgroundColor: (str: string): string => wrapBg(theme.editorBackground)(str),
+    placeholderColor: (str: string): string => wrapFg(theme.hint)(str),
+    prompt: (str: string): string => wrapBold(wrapFg(theme.accent)(str)),
     selectList,
   };
 }

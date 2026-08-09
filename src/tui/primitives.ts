@@ -6,12 +6,16 @@ import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock } from "./presentation.ts";
 import type { TuiAction } from "./application/action.ts";
 import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action.ts";
+import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHeight, wrapEditorText } from "./editor-height.ts";
+import type { EditorAppearance } from "./opentui/component-runtime.ts";
 
 export interface Component {
   render(width: number): string[];
   present?(width: number): PresentationBlock[];
   getPresentationVersion?(): number;
   handleInput?(data: string): void;
+  /** 组件期望的渲染高度(OpenTUI 路径由帧驱动,缺省 3)。 */
+  desiredHeight?(width: number): number;
   invalidate(): void;
   wantsKeyRelease?: boolean;
 }
@@ -147,8 +151,22 @@ export class SelectList implements Component {
   }
 }
 
-export interface EditorTheme { borderColor(text: string): string; selectList: SelectListTheme }
-export interface EditorOptions { paddingX?: number; autocompleteMaxVisible?: number }
+export interface EditorTheme {
+  borderColor(text: string): string;
+  /** 输入区整块背景(codex user_message_style 的纯文本路径实现)。 */
+  backgroundColor(text: string): string;
+  /** 空输入占位符前景(codex placeholder Span::dim)。 */
+  placeholderColor(text: string): string;
+  /** 左侧 prompt(codex `›` bold accent;bash 模式 `!` 留作 promptFor 扩展)。 */
+  prompt(text: string): string;
+  selectList: SelectListTheme;
+}
+export interface EditorOptions {
+  paddingX?: number;
+  /** 空输入时显示的占位符;OpenTUI 侧由 TextareaRenderable.placeholder 承接。 */
+  placeholder?: string;
+  autocompleteMaxVisible?: number;
+}
 export class Editor implements Component, Focusable {
   focused = false;
   onSubmit?: (text: string) => void;
@@ -174,12 +192,22 @@ export class Editor implements Component, Focusable {
   setText(text: string): void { this.text = text.replace(/\r\n?|\t/gu, (value) => value === "\t" ? "    " : "\n"); this.onChange?.(this.text); this.tui.requestRender(); }
   insertTextAtCursor(text: string): void { this.setText(this.text + text); }
   addToHistory(_text: string): void {}
+  /** 帧驱动高度;OpenTUI 路径由 TUI.renderFrame 读取并传给 runtime。 */
+  desiredHeight(width: number): number {
+    return editorHeight(this.text, width);
+  }
   render(width: number): string[] {
-    void this.theme;
-    const padding = " ".repeat(this.options.paddingX ?? 0);
-    const available = Math.max(1, width - visibleWidth(padding) - 2);
-    const lines = wrapTextWithAnsi(this.text || "", available);
-    return (lines.length > 0 ? lines : [""]).map((line) => truncateToWidth(`${padding}> ${line}`, width, "…"));
+    const innerWidth = Math.max(1, width - EDITOR_LEFT_PAD - EDITOR_RIGHT_PAD);
+    // 空输入渲染占位符(dim),非空按输入区宽度折行;首行带 `›` prompt。
+    const body = this.text.length === 0
+      ? [this.theme.placeholderColor(this.options.placeholder ?? DEFAULT_EDITOR_PLACEHOLDER)]
+      : wrapEditorText(this.text, innerWidth);
+    return body.map((line, index) => {
+      const gutter = index === 0 ? `${this.theme.prompt("›")} ` : " ".repeat(EDITOR_LEFT_PAD);
+      const content = `${gutter}${line}`;
+      // 背景铺满整行(codex Block + user_message_style 的纯文本路径等效)。
+      return this.theme.backgroundColor(content + " ".repeat(Math.max(0, width - visibleWidth(content))));
+    });
   }
   handleInput(data: string): void {
     if (matchesKey(data, "enter")) {
@@ -266,6 +294,9 @@ export class TUI extends Container {
   private readonly renderPreparationListeners: RenderPreparationListener[] = [];
   private readonly themeModeListeners: Array<(mode: "dark" | "light") => void> = [];
   private readonly actionListeners: Array<(actions: readonly TuiAction[]) => void> = [];
+  private readonly terminalBackgroundListeners: Array<(rgb: RgbColor) => void> = [];
+  private terminalBackgroundRgb: RgbColor | undefined;
+  private editorAppearance: EditorAppearance | undefined;
   private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private overlay: Component | undefined;
@@ -292,6 +323,23 @@ export class TUI extends Container {
       const index = this.themeModeListeners.indexOf(listener);
       if (index >= 0) this.themeModeListeners.splice(index, 1);
     };
+  }
+  /** 终端 OSC 11 背景色回调;无回复(不支持 OSC 11)时永不触发。 */
+  addTerminalBackgroundListener(listener: (rgb: RgbColor) => void): () => void {
+    this.terminalBackgroundListeners.push(listener);
+    return () => {
+      const index = this.terminalBackgroundListeners.indexOf(listener);
+      if (index >= 0) this.terminalBackgroundListeners.splice(index, 1);
+    };
+  }
+  /** 最近一次 OSC 11 探测值;未收到回复时为 undefined(调用方回退主题)。 */
+  getTerminalBackgroundRgb(): RgbColor | undefined {
+    return this.terminalBackgroundRgb;
+  }
+  /** 输入区外观(背景/prompt/占位符颜色);由主题层在 theme_mode 切换时重算。 */
+  setEditorAppearance(appearance: EditorAppearance): void {
+    this.editorAppearance = appearance;
+    this.requestRender();
   }
   addActionListener(listener: (actions: readonly TuiAction[]) => void): () => void {
     this.actionListeners.push(listener);
@@ -343,6 +391,14 @@ export class TUI extends Container {
         onActions: (actions) => this.emitActions(actions),
         onThemeMode: (mode) => {
           for (const listener of this.themeModeListeners) listener(mode);
+        },
+        onOsc: (sequence) => {
+          // OpenTUI 自身查询终端默认色时会收到 OSC 11 回复;解析后广播给主题层。
+          const rgb = parseOsc11BackgroundColor(sequence);
+          if (rgb !== undefined) {
+            this.terminalBackgroundRgb = rgb;
+            for (const listener of this.terminalBackgroundListeners) listener(rgb);
+          }
         },
         performanceObserver: this.performanceObserver,
       });
@@ -419,6 +475,7 @@ export class TUI extends Container {
     const editorText = this.focusedComponent && "getText" in this.focusedComponent
       ? (this.focusedComponent as Component & { getText(): string }).getText()
       : "";
+    const editorHeight = this.focusedComponent?.desiredHeight?.(width);
     const overlay = this.hasOverlay() && this.overlay
       ? this.overlay.present?.(Math.max(1, width - 4)) ?? [{
         kind: "text" as const,
@@ -426,7 +483,7 @@ export class TUI extends Container {
       }]
       : undefined;
     if (this.runtime) {
-      this.runtime.update({ body, editorText, footer, overlay });
+      this.runtime.update({ body, editorText, editorHeight, editorAppearance: this.editorAppearance, footer, overlay });
       return;
     }
     this.terminal.write([...body, ...this.focusedComponent?.render(width) ?? [], ...footer, ...overlay ?? []].join("\n"));
@@ -481,7 +538,10 @@ export type KeybindingDefinitions = Record<string, KeybindingDefinition>;
 export type KeybindingsConfig = Record<string, KeyId | KeyId[] | undefined>;
 export interface KeybindingConflict { key: KeyId; keybindings: string[] }
 export const TUI_KEYBINDINGS: KeybindingDefinitions = {
-  "tui.input.submit": { defaultKeys: "enter" },
+  "tui.input.submit": { defaultKeys: "enter", description: "Send the current draft" },
+  "tui.input.followUp": { defaultKeys: "alt+enter", description: "Queue a follow-up without interrupting" },
+  "tui.input.interrupt": { defaultKeys: "ctrl+c", description: "Interrupt the active turn" },
+  "tui.input.quit": { defaultKeys: "ctrl+d", description: "Quit when idle" },
   "tui.select.up": { defaultKeys: "up" }, "tui.select.down": { defaultKeys: "down" },
   "tui.select.confirm": { defaultKeys: "enter" }, "tui.select.cancel": { defaultKeys: ["escape", "ctrl+c"] },
 };
@@ -553,10 +613,25 @@ export function wrapTextWithAnsi(value: string, width: number): string[] {
 export function hyperlink(text: string, url: string): string { return `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`; }
 
 export interface RgbColor { r: number; g: number; b: number }
+/**
+ * 解析 OSC 11 回复;兼容 `rgb:rr/gg/bb` 与 `#rrggbb` 两种格式
+ * (与 OpenTUI OSC_THEME_RESPONSE 对齐),非 11 号 OSC 返回 undefined。
+ */
 export function parseOsc11BackgroundColor(value: string): RgbColor | undefined {
-  const match = /rgb:([0-9a-f]{2,4})\/([0-9a-f]{2,4})\/([0-9a-f]{2,4})/iu.exec(value);
-  if (!match) return undefined;
-  const channel = (hex: string): number => Math.round(Number.parseInt(hex, 16) * 255 / (16 ** hex.length - 1));
-  return { r: channel(match[1]!), g: channel(match[2]!), b: channel(match[3]!) };
+  const rgb = /\x1b\]11;rgb:([0-9a-fA-F]{2,4})\/([0-9a-fA-F]{2,4})\/([0-9a-fA-F]{2,4})(?:\x07|\x1b\\)/u.exec(value);
+  if (rgb) {
+    const channel = (hex: string): number => Math.round(Number.parseInt(hex, 16) * 255 / (16 ** hex.length - 1));
+    return { r: channel(rgb[1]!), g: channel(rgb[2]!), b: channel(rgb[3]!) };
+  }
+  const hex = /\x1b\]11;#([0-9a-fA-F]{6})(?:\x07|\x1b\\)/u.exec(value);
+  if (hex) {
+    const v = hex[1]!;
+    return {
+      r: Number.parseInt(v.slice(0, 2), 16),
+      g: Number.parseInt(v.slice(2, 4), 16),
+      b: Number.parseInt(v.slice(4, 6), 16),
+    };
+  }
+  return undefined;
 }
 export function parseTerminalColorSchemeReport(_value: string): undefined { return undefined; }

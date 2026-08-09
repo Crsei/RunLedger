@@ -9,6 +9,7 @@ import {
   rgbToAnsi256,
   ansi256ToAnsi16,
   wrapFg,
+  wrapBg,
   wrapBold,
   wrapItalic,
   wrapUnderline,
@@ -41,6 +42,26 @@ describe("ansi256ToAnsi16", () => {
   });
   it("255(亮灰)->15", () => {
     expect(ansi256ToAnsi16(255)).toBe(15);
+  });
+  it("立方解码先减 16 偏移:117(浅蓝)->12(亮蓝)", () => {
+    // 117-16=101 -> 立方 (2,4,5) -> (102,204,255),最近 ANSI 16 = 亮蓝 12。
+    expect(ansi256ToAnsi16(117)).toBe(12);
+  });
+  it("立方索引 16(黑)->0", () => {
+    expect(ansi256ToAnsi16(16)).toBe(0);
+  });
+});
+
+describe("wrapFg / wrapBg 16 色亮色 SGR 修复", () => {
+  it("wrapFg 亮色映射输出 90+(idx-8),不产生 98/99 非法码", () => {
+    // #7dcfff -> 256 索引 117 -> 亮蓝 12 -> \x1b[94m(修复前为 \x1b[98m)。
+    expect(wrapFg("#7dcfff")("x")).toBe("\x1b[94mx\x1b[39m");
+  });
+  it("wrapBg 亮色映射输出 100+(idx-8),不产生 102 等 bg 误码", () => {
+    expect(wrapBg("#7dcfff")("x")).toBe("\x1b[104mx\x1b[49m");
+  });
+  it("wrapBg 暗色仍走 40+idx(editorBackground 深灰 -> 黑)", () => {
+    expect(wrapBg("#282a30")("x")).toBe("\x1b[40mx\x1b[49m");
   });
 });
 

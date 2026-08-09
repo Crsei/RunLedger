@@ -9,6 +9,9 @@ import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observ
 import { ChatContainer } from "../../src/tui/components/chat-container.ts";
 import { rowToBlocks } from "../../src/tui/timeline/selectors.ts";
 import type { TimelineRow } from "../../src/tui/timeline/types.ts";
+import { editorHeight } from "../../src/tui/editor-height.ts";
+import { editorBackgroundFromTerminal } from "../../src/tui/theme/editor-background.ts";
+import { loadTheme } from "../../src/tui/theme/theme.ts";
 
 describe("OpenTUI component projection", () => {
   test("wraps complete canonical Timeline user/assistant/thinking content at narrow width", async () => {
@@ -595,5 +598,217 @@ describe("OpenTUI component projection", () => {
       runtime.destroy();
     }
     expect(setup.renderer.isDestroyed).toBe(true);
+  });
+
+  test("M8 editor row height is frame-driven with a 3-row default", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({ body: [], editorText: "", footer: [] });
+      await setup.renderOnce();
+      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      expect(editorRow).toBeDefined();
+      expect(editorRow?.height).toBe(3);
+
+      runtime.update({ body: [], editorText: "", editorHeight: 5, footer: [] });
+      await setup.renderOnce();
+      expect(editorRow?.height).toBe(5);
+
+      runtime.update({ body: [], editorText: "", footer: [] });
+      await setup.renderOnce();
+      expect(editorRow?.height).toBe(5);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 editor row keeps a stable prompt gutter and a wrapping textarea", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 30 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "x".repeat(200),
+        editorHeight: 8,
+        footer: [],
+      });
+      await setup.renderOnce();
+      const prompt = setup.renderer.root.findDescendantById("runledger-editor-prompt");
+      expect(prompt?.plainText).toBe("› ");
+      expect(setup.captureCharFrame().split("\n").every((line) => stringWidth(stripAnsi(line)) <= 40)).toBe(true);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 reserves the Codex right inset after the two-column prompt gutter", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({ body: [], editorText: "draft", footer: [] });
+      await setup.renderOnce();
+      const prompt = setup.renderer.root.findDescendantById("runledger-editor-prompt");
+      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      expect(prompt?.x).toBe(0);
+      expect(prompt?.width).toBe(2);
+      expect(editor?.x).toBe(2);
+      expect(editor?.width).toBe(37);
+      expect((editor?.x ?? 0) + (editor?.width ?? 0)).toBe(39);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 word-wrapped drafts receive enough rows to render every word", async () => {
+    const setup = await createTestRenderer({ width: 20, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const draft = "1234567890 1234567890 1234567890";
+    try {
+      runtime.update({
+        body: ["transcript"],
+        editorText: draft,
+        editorHeight: editorHeight(draft, 20),
+        footer: ["hint", "footer"],
+      });
+      await setup.renderOnce();
+      const frame = setup.captureCharFrame();
+      expect(frame.match(/1234567890/gu)?.length).toBe(3);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 caps a long draft so transcript and footer remain visible", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const draft = "x".repeat(500);
+    try {
+      runtime.update({
+        body: ["transcript-marker"],
+        editorText: draft,
+        editorHeight: editorHeight(draft, 40),
+        footer: ["hint-marker", "footer-marker"],
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const footer = setup.renderer.root.findDescendantById("runledger-footer");
+      expect(transcript?.height).toBeGreaterThanOrEqual(1);
+      expect((editorRow?.height ?? 0) + (footer?.height ?? 0) + (transcript?.height ?? 0)).toBeLessThanOrEqual(16);
+      expect((footer?.y ?? 16) + (footer?.height ?? 0)).toBeLessThanOrEqual(16);
+      expect(setup.captureCharFrame()).toContain("footer-marker");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 applies frame-driven editor appearance (background/prompt/placeholder)", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "",
+        editorAppearance: {
+          backgroundColor: "#282a30",
+          promptColor: "#7dcfff",
+          placeholderColor: "#666666",
+        },
+        footer: [],
+      });
+      await setup.renderOnce();
+      const row = setup.renderer.root.findDescendantById("runledger-editor-row");
+      expect(row?.backgroundColor.toInts().slice(0, 3)).toEqual([0x28, 0x2a, 0x30]);
+      const prompt = setup.renderer.root.findDescendantById("runledger-editor-prompt");
+      expect(prompt?.plainText).toBe("› ");
+      const placeholderSpan = setup.captureSpans().lines
+        .flatMap((line) => line.spans)
+        .find((span) => span.text.includes("Message RunLedger"));
+      expect(placeholderSpan?.fg.toInts().slice(0, 3)).toEqual([0x66, 0x66, 0x66]);
+      const promptSpan = setup.captureSpans().lines
+        .flatMap((line) => line.spans)
+        .find((span) => span.text.includes("›"));
+      expect(promptSpan?.fg.toInts().slice(0, 3)).toEqual([0x7d, 0xcf, 0xff]);
+      expect(promptSpan?.attributes & 1).toBe(1); // TextAttributes.BOLD
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 forwards OSC 11 replies through onOsc for terminal background tracking", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const oscs: string[] = [];
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+      onOsc: (sequence) => oscs.push(sequence),
+    });
+    try {
+      setup.mockInput.pressKey("\x1b]11;rgb:0b0e/0b0e/1414\x07");
+      await setup.waitFor(() => oscs.some((sequence) => sequence.includes("rgb:0b0e/0b0e/1414")));
+      expect(oscs).toContain("\x1b]11;rgb:0b0e/0b0e/1414\x07");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 theme_mode callback applies the recomputed editor background to the native row", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    let runtime: ReturnType<typeof createOpenTuiComponentRuntimeFromRenderer> | undefined;
+    runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+      onThemeMode: (mode) => {
+        const theme = loadTheme(mode);
+        runtime?.update({
+          body: [],
+          editorText: "",
+          editorAppearance: {
+            backgroundColor: editorBackgroundFromTerminal(theme, undefined),
+            promptColor: theme.accent,
+            placeholderColor: theme.hint,
+          },
+          footer: [],
+        });
+      },
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "",
+        editorAppearance: {
+          backgroundColor: "#282a30",
+          promptColor: "#7dcfff",
+          placeholderColor: "#666666",
+        },
+        footer: [],
+      });
+      await setup.renderOnce();
+      setup.renderer.emit("theme_mode", "light");
+      await setup.renderOnce();
+      const row = setup.renderer.root.findDescendantById("runledger-editor-row");
+      expect(row?.backgroundColor.toInts().slice(0, 3)).toEqual([0xf4, 0xf4, 0xf4]);
+    } finally {
+      runtime.destroy();
+    }
   });
 });
