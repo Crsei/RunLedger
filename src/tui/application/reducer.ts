@@ -21,6 +21,7 @@ export const TUI_ACTION_TYPES = [
 	"query.cancel",
 	"query.start",
 	"query.result",
+	"recovery.set",
 	"session.replace",
 	"composer.changed",
 	"interaction.select",
@@ -107,6 +108,13 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 			};
 		case "timeline.event":
 			return { ...state, timeline: timelineReducer(state.timeline, action.event) };
+		case "recovery.set":
+			if (state.recoveryRequired === action.required && state.transitionFrozen === action.required) return state;
+			return {
+				...state,
+				recoveryRequired: action.required,
+				transitionFrozen: action.required,
+			};
 		case "command.submit": {
 			const commandOrder = [...state.commandOrder];
 			if (!commandOrder.includes(action.intent.invocationId)) commandOrder.push(action.intent.invocationId);

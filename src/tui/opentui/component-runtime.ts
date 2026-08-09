@@ -162,6 +162,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
 
   let overlay: BoxRenderable | undefined;
   let bodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
+  const pendingMarkdownFinalization = new Map<string, string>();
   let overlayNodes = new Map<string, KeyedRenderable<OverlayRenderable>>();
   let previousBodySignature: readonly string[] = [];
   let pendingNewContent = 0;
@@ -228,6 +229,19 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       durationMs: Math.max(0, stats.nativeLastFrameTime),
       cellsUpdated,
     });
+	if (pendingMarkdownFinalization.size > 0) {
+		for (const [key, content] of pendingMarkdownFinalization) {
+			const node = bodyNodes.get(key);
+			if (node?.renderable instanceof MarkdownRenderable) {
+				node.renderable.content = "";
+				node.renderable.streaming = false;
+				node.renderable.content = content;
+				node.streaming = false;
+			}
+		}
+		pendingMarkdownFinalization.clear();
+		renderer.requestRender();
+	}
   };
   renderer.on("frame", onFrame);
 
@@ -273,7 +287,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
               width: "100%",
               flexShrink: 0,
               content: block.content,
-              streaming: block.streaming,
+              // OpenTUI 0.4.5 首次以 streaming=false 创建时不会 materialize block cache。
+              // 先按 streaming 创建，再在下方走同一 finalization 边界。
+              streaming: true,
               syntaxStyle,
             })
             : new TextRenderable(renderer, {
@@ -286,10 +302,12 @@ export function createOpenTuiComponentRuntimeFromRenderer(
             kind: expectedKind,
             renderable,
             contentKey,
-            ...(block.kind === "markdown" ? { streaming: block.streaming } : {}),
+            ...(block.kind === "markdown" ? { streaming: renderable instanceof MarkdownRenderable ? renderable.streaming : block.streaming } : {}),
           };
+		  if (block.kind === "markdown" && !block.streaming) pendingMarkdownFinalization.set(key, block.content);
         } else if (block.kind === "markdown" && current.renderable instanceof MarkdownRenderable) {
-          if (current.renderable.streaming && !block.streaming) {
+		  if (block.streaming) pendingMarkdownFinalization.delete(key);
+          if (!pendingMarkdownFinalization.has(key) && current.renderable.streaming && !block.streaming) {
             // OpenTUI 0.4.5 需要在 streaming -> final 边界清空内部 block cache，
             // 但外层 renderable identity 仍保持稳定。
             current.renderable.content = "";

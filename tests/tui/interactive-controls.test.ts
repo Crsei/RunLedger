@@ -3,13 +3,10 @@ import { Agent } from "../../src/runtime/agent.ts";
 import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import type { StreamFn } from "../../src/runtime/types.ts";
 import type { AssistantMessage, AssistantMessageEventStream } from "../../src/types.ts";
-import type { SessionInfo } from "../../src/storage/session-manager.ts";
 import { AuthInputModal } from "../../src/tui/components/auth-input-modal.ts";
 import { CustomEditor } from "../../src/tui/components/custom-editor.ts";
-import { SearchableSelectorModal } from "../../src/tui/components/searchable-selector-modal.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
-import { Container, TUI, type Terminal } from "../../src/tui/index.ts";
-import { selectSessionInTui } from "../../src/tui/session-selector.ts";
+import { TUI, type Terminal } from "../../src/tui/index.ts";
 import { makeEditorTheme, makeSelectListTheme } from "../../src/tui/theme/factories.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
@@ -198,46 +195,6 @@ describe("TUI input components", () => {
     editor.handleInput("tab");
 
     expect(editor.getText()).toBe("abc");
-  });
-});
-
-describe("startup session selector", () => {
-  it("start 后保持 pending，选择或取消时才 stop 并 resolve", async () => {
-    const sessions: SessionInfo[] = [{
-      id: "session-1",
-      filePath: "/tmp/session-1.jsonl",
-      createdAt: 1,
-      modifiedMs: 2,
-      cwd: "/tmp/project",
-    }];
-    let modal: SearchableSelectorModal | undefined;
-    let starts = 0;
-    let stops = 0;
-    const selection = selectSessionInTui(sessions, {
-      createUi: () => ({
-        addChild: (_component: Container) => {},
-        clear: () => {},
-        hideOverlay: () => {},
-        requestRender: () => {},
-        showOverlay: (component: SearchableSelectorModal) => {
-          modal = component;
-        },
-        start: () => starts++,
-        stop: () => stops++,
-      }),
-    });
-    let settled = false;
-    void selection.then(() => {
-      settled = true;
-    });
-    await Promise.resolve();
-
-    expect(starts).toBe(1);
-    expect(stops).toBe(0);
-    expect(settled).toBe(false);
-    modal?.handleInput("\r");
-    await expect(selection).resolves.toEqual(sessions[0]);
-    expect(stops).toBe(1);
   });
 });
 

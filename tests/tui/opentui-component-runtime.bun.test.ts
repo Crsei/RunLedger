@@ -7,8 +7,35 @@ import {
 } from "../../src/tui/opentui/component-runtime.ts";
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 import { ChatContainer } from "../../src/tui/components/chat-container.ts";
+import { rowToBlocks } from "../../src/tui/timeline/selectors.ts";
+import type { TimelineRow } from "../../src/tui/timeline/types.ts";
 
 describe("OpenTUI component projection", () => {
+  test("wraps complete canonical Timeline user/assistant/thinking content at narrow width", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 30 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });
+    const bounded = (text: string) => ({ text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength });
+    const rows: TimelineRow[] = [
+      { kind: "user", id: "user:0", timestamp: "2026-08-09T00:00:00.000Z", displayOrder: 0, status: "succeeded", text: bounded("user first line\nuser final suffix") },
+      { kind: "assistant", id: "assistant:1", timestamp: "2026-08-09T00:00:00.000Z", displayOrder: 1, status: "succeeded", streaming: false, thinking: bounded("thinking first line\nthinking final suffix"), text: bounded("assistant first paragraph\n\nassistant final suffix") },
+    ];
+    try {
+      runtime.update({ body: rows.flatMap(rowToBlocks), editorText: "", footer: [] });
+      await setup.renderOnce();
+      expect(setup.renderer.root.findDescendantById("runledger-block-timeline-user-0")?.plainText).toBe("user first line\nuser final suffix");
+      expect(setup.renderer.root.findDescendantById("runledger-block-timeline-assistant-1-thinking")).toBeDefined();
+      expect(setup.renderer.root.findDescendantById("runledger-block-timeline-assistant-1-text")).toBeDefined();
+      const frame = setup.captureCharFrame();
+      expect(frame).toContain("thinking final suffix");
+      expect(frame).toContain("assistant final suffix");
+      expect(frame.split("\n").every((line) => stringWidth(stripAnsi(line)) <= 40)).toBe(true);
+	  // 首帧后 OpenTUI finalizes completed Markdown；等待该帧再销毁 TreeSitter owner。
+	  await setup.renderOnce();
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("renders and reflows a stable run separator at 60/80/143 columns", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });

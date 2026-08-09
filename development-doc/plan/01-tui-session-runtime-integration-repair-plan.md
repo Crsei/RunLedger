@@ -1,6 +1,6 @@
 # RunLedger TUI 与 Session Runtime 全链路接入修复计划
 
-> 文档状态：implementing（S0–S6 complete；S7 pending）<br>
+> 文档状态：implementing（S0–S7 complete；S8 partial/blocked；S9 not started）<br>
 > 记录日期：2026-08-09<br>
 > 记录基线：`session-owner-runtime@c608c77`，记录时工作区干净；S3 实施起点：`2c5a7be`<br>
 > 文档职责：跨领域执行编排，不替代各专项的状态与设计权威
@@ -256,6 +256,14 @@ CLI composition root 负责 detach、open/attach、renderer 销毁和下一轮 T
 
 退出条件：旧组件没有生产引用；Timeline 回归覆盖被删除组件的全部安全展示信息；删除不会恢复 raw args、secret 或无界 output。
 
+#### S7 执行记录（2026-08-09）
+
+- `tests/tui/timeline/equivalence.test.ts` 先形成 RED，随后证明 canonical Timeline 完整保留 user/assistant 多行、thinking、tool 四态与安全参数摘要、成功结果/错误、shell stdout/stderr 分通道 tail/background/exit code/duration，以及 unified diff context/add/delete；不会泄露 raw args、完整 before/after 或无界正文。
+- shell 每通道只保留最后 100 行并显式标记截断；diff 最多投影 400 行且单行上限 4 KiB；通用工具结果同样有界。`projector.ts` 保持 passive/no IO，正文继续完整交给 OpenTUI Text/Markdown renderable 换行，不使用 `fitToWidth` 截断 transcript。
+- 原生 `createTestRenderer()` 回归覆盖窄宽首次恢复态 Markdown。OpenTUI 0.4.5 的 component runtime 首帧先以 streaming renderable 创建，首个 frame 后再 finalization；测试在 `finally` 销毁 owner，并在销毁前完成最后一次 `renderOnce()`，没有 TreeSitter destroyed warning。
+- 已删除未挂载的旧 message/tool/bash/diff/background 组件、alternate OpenTUI runtime/TimelineStore、runtime repl handle、stub feature adapter、旧 session selector 及只为这些路径服务的测试/export；`check-tui-boundaries.ts` 增加退役路径不得恢复的静态门禁。canonical ChatContainer、Timeline projector/selector、input normalizer 与 component runtime 保留。
+- S7 focused 59/59；阶段完成时完整 Vitest 270 files passed / 1 skipped、1510 tests passed / 3 skipped，Bun OpenTUI 3 files / 30 tests / 167 assertions，`npm run check`、`npm run build` 与 `git diff --check` 全绿。
+
 ### S8：联合验收
 
 1. 完成全量自动化、真实 PATH、PTY、多窗口、跨平台和独立审计。
@@ -263,6 +271,15 @@ CLI composition root 负责 detach、open/attach、renderer 销毁和下一轮 T
 3. 任一真实领域仍依赖 legacy Host 时，Runtime 06 的 R8 保持 not accepted。
 
 退出条件：Runtime 06 R8 的自动、平台、独立审计和 human acceptance 全部签收。
+
+#### S8 当前证据与阻断（2026-08-09）
+
+- 隔离 Linux `verify:session-owner-candidate` 基础 runner 再次 ALL PASS：healthy attach、last-attachment pause、remote keepalive、crash takeover → `RECOVERY_REQUIRED`、unresolved attempt barrier、100-session catalog 18.8ms、单次同步 DB call ≤100ms、10 个独立子进程/SQLite connection claim 1215.1ms、read-only Security 与 manifest 均通过。runner 仍未覆盖真实 model/MCP/process/PTY/worktree/Trace/approval 组合，因此 R6.5 不接受。
+- 标准 PATH 已核对为 `/home/nzq/.npm-global/bin/runledger` → 本仓库 `bin/runledger.js`，`runledger --help`、`runledger --version` 与无参数真实 TTY 均成功。真实多窗口证明同一 Session 两个 TTY attach 时只有一个 generation/owner，先退出一个 view 后 owner 保持 running，最后一个退出才 unowned；两个不同 Session 也可同时拥有独立 owner，全部 Ctrl-D clean exit 0。
+- 标准 PATH crash takeover 首次 rehearsal 暴露真实 RED：SQLite 已为 `recovery_required`，但 TUI footer 显示 `idle`。修复后 `InteractiveMode.run()` 在真实 recovery facade 存在时于首帧前读取 durable status，`recovery.set` 同步 `recoveryRequired/transitionFrozen`，recovery workflow 每次 settle 后重读 authority，canonical projector/Footer 以 recovery 为最高优先级。新的隔离真实 TTY rehearsal 精确杀死 owner、回拨仅测试 DB heartbeat 后重新打开同一 Session，SQLite 为 `generation=2/state=recovery_required`，footer 显示 `Recovery required`，Ctrl-D exit 0。
+- `verify:managed-process-pty` 仍只验证 legacy Host facade，不能冒充 Session Owner candidate-domain 证据。标准 PATH 也尚未完成完整 R6.5 fault matrix 与 migration archive/restore rehearsal。
+- recovery 修复 RED/GREEN 为 4 files / 34 tests；fresh `npm run check`、`npm run build`、完整 Vitest 270 files passed / 1 skipped、1513 tests passed / 3 skipped，以及 Bun OpenTUI 3 files / 30 tests / 167 assertions 全绿。
+- **S8 partial/blocked。** macOS runner、Windows runner、真实 candidate-domain 联合场景、完整标准 PATH fault/migration rehearsal、独立只读审计、稳定窗口与真人 human acceptance 尚未闭合；本执行 agent 不填写 `human-verified`，也不把 legacy `verify:runtime-host-audit` 视为 Session Owner 独立审计。
 
 ### S9：Legacy Host 删除
 
@@ -274,6 +291,10 @@ CLI composition root 负责 detach、open/attach、renderer 销毁和下一轮 T
 4. 删除后重新执行全部 S8 门禁。
 
 退出条件：全仓只剩 Session Owner production authority；任何回归都阻止 R9 完成，不恢复双 authority。
+
+#### S9 停止结论（2026-08-09）
+
+S8/R8 未全部签收，触发本计划停止规则 9。S9 未开始；`runtime/host/**`、`storage/host/**`、legacy scripts/native helper/build manifest、兼容 alias 与安全窗口测试均不得删除。标准 CLI 继续只走 Session Owner production path，旧 Host 仅保留为 R8 期间的 revert/审计安全窗口，不能由配置恢复为第二 production authority。
 
 ## 5. 测试矩阵
 

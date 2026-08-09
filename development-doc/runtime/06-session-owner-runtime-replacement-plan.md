@@ -1,10 +1,10 @@
 # Session Owner Runtime 替代计划
 
-> 状态：**R0–R6 implemented（2026-08-09 S5/S6 已闭合 Session-scoped MCP/Hook/Skill/Plugin production composition）；R6.5 Linux automated candidate PASS but not accepted（基础 runner 已在 S4 后重跑，但尚未覆盖真实领域组合，且 macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 仅保留为安全窗口）**
+> 状态：**R0–R6 implemented；R6.5 Linux automated candidate PASS but not accepted（真实领域组合、macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换且 Linux 真实多窗口/crash takeover 已验证，但验收仍随 R8 pending；R8 partial/not accepted；R9 not started（旧 Host 仅保留为安全窗口）**
 > 建立日期：2026-08-07
 > 准入修订：2026-08-07 已纳入 offline-only schema migration、external-effect recovery barrier、attachment-count lifetime、100ms SQLite busy 上限、connection-scoped driver、candidate-before-cutover、legacy archive 与 checkpoint-cache 八项阻塞/收紧要求。
 > 目标分支：`session-owner-runtime`
-> 当前实现基线：`d3bfa55` 加本分支未提交工作树；标准 CLI 已切换到 Session Owner path，旧 Host 源码仍保留但不得从标准入口到达。
+> 当前实现基线：`b19dbef` 加本分支未提交 S7/S8 工作树；标准 CLI 已切换到 Session Owner path，旧 Host 源码仍保留但不得从标准入口到达。
 > 文档权威：本文是 Session Owner Runtime 的唯一替代实施计划。`05` 只描述仍保留的 legacy Host 安全窗口，不再是标准 CLI 的 production authority，也不授权新增 daemon、machine leader、Unix Socket、Named Pipe 或 Host lifecycle 行为。
 > 上位公共合同：[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)。本文只拥有 SessionStore、SessionRuntime、SessionOwner、RuntimeServer、Client 及其生产切换行为。
 
@@ -860,7 +860,7 @@ src/
 - [x] JSONL 首次转换只归档 source，不物理删除；新 Runtime 不读取 archive。R2 `migrate session-store` 语义保留；`--session <legacy path>` 返回 typed 迁移提示。
 - [x] 最后一个 attachment 尝试关闭且 Session 仍 active 时显示 pause 警告；完成 bounded checkpoint/settlement/release。main.ts finally：inFlight 时 stderr 警告 + interrupt → `runtime.pause("paused")`（paused checkpoint + owner release unowned）。
 - [x] 删除 `host` CLI dispatch/help；增加只读 session owner diagnostics 时只能针对 exact session，不引入全机 manager。main.ts 移除 `host` 分支；USAGE 移除 Host 运维命令段；`args.test.ts` 断言 USAGE 不再含 `runledger host`。
-- [ ] standard PATH 两/三个真实 TUI 验证同 Session attach、不同 Session 并行 owner、owner crash takeover。当前 `session-owner-cli.test.ts` 只证明 CLI 的 create/resume/fork/schema/error 路径；Node 环境下 OpenTUI FFI 失败不能作为真实 TUI 验收。
+- [x] standard PATH 两/三个真实 TUI 已验证同 Session attach、不同 Session 并行 owner与 owner crash takeover：全局 bin 解析到本仓库 `bin/runledger.js`；同 Session 两个 TTY 先退出一个时 owner 保持 running、最后 view 退出才 unowned；不同 Session 使用独立 owner 并行；精确杀死隔离 owner 后 takeover 得到 monotonic generation 与 `recovery_required`。这只闭合 Linux 自动/agent 操作证据，不替代 explicit uncertainty decision、跨平台或真人验收。
 - [x] 切换改动不保留 feature flag、legacy fallback 或“TCP 失败就直接 SessionManager 写”。`main.ts` 无 legacy Host import/fallback；全仓 R0 legacy consumer allowlist 仍保留到 R9，不能提前宣称已清空。
 
 退出条件：`runledger` 标准入口不再 import/call 任何 `runtime-host-*`、Host socket/election/writer lease；真实 TUI 能完成 create/attach/takeover/recovery/resume。旧源码和 verified JSONL archive 仍保留，必要时只能通过 revert R7 cutover change + offline archive restore 处置，不能由新 Runtime 自动 fallback。**当前部分达成**：标准入口静态与 CLI 测试已切换；真实 TUI/多窗口及 R6/R8 门禁未闭合。
@@ -870,7 +870,7 @@ src/
 
 目标：在旧 Host 源码尚未删除、但已从 production path 不可达的安全窗口验证真实升级与日常使用。
 
-> **2026-08-09：R8 整体 not accepted。** 健康 attach、工具副作用 barrier、attachment lifetime、onFenced、checkpoint replay、Session Security 与 R6 production domain composition 已闭合；真实 candidate-domain 组合、跨平台 evidence、标准 PATH fault rehearsal、独立审计和 human acceptance 仍未完成。
+> **2026-08-09：R8 partial/not accepted。** 健康 attach、工具副作用 barrier、attachment lifetime、onFenced、checkpoint replay、Session Security、R6 production domain composition，以及 Linux 标准 PATH 多窗口/crash takeover 已闭合；真实 candidate-domain 组合、跨平台 evidence、完整标准 PATH fault/migration rehearsal、独立审计和 human acceptance 仍未完成。
 
 - [ ] 用标准 PATH 而非 candidate script 重跑完整 R6.5 fault matrix 和 migration archive/restore rehearsal。现有 CLI/production tests 提供部分自动化证据，不等于标准 PATH 完整 rehearsal。
 - [ ] 真实 operator 验证同 Session 多窗口、不同 Session 并行、local UI detach 保活、whole-process crash、`RECOVERY_REQUIRED` 和 explicit uncertainty decision。**待人工**：需要真人 TUI 操作，自动化 agent 不填写 `human-verified`。
@@ -878,7 +878,7 @@ src/
 - [ ] 连续运行稳定窗口内记录 SQLite busy/event-loop latency、heartbeat、TCP disconnect、checkpoint full replay 和 archive retention。**待人工**：稳定窗口需真实使用时长；自动化部分由 `verify-session-owner-candidate.ts` latency 测量与 `event-loop-latency.test.ts` 覆盖。
 - [ ] 完成独立只读安全/数据审计；自动化 agent 不填写 `human-verified`。**待人工**。
 
-退出条件：§11 自动化 gate、标准 PATH fault matrix、独立审计和 human acceptance 全部 PASS；没有依赖旧 production fallback 的未解决问题。**当前未达成**：本轮本地 `check/test/build` 与 Linux candidate 已形成 fresh automated evidence，但不能替代上述 R6、跨平台、标准 PATH、独立审计和人工门禁。
+退出条件：§11 自动化 gate、标准 PATH fault matrix、独立审计和 human acceptance 全部 PASS；没有依赖旧 production fallback 的未解决问题。**当前未达成**：本轮本地 `check/test/build`、Linux candidate 与部分标准 PATH 真实 TTY 已形成 fresh evidence，但不能替代真实 candidate-domain、三平台、完整 migration/fault、独立审计和人工门禁。
 
 ### R9：删除 Host/daemon 遗产与最终收口
 
@@ -987,6 +987,14 @@ tests/cli/session-owner-production.test.ts
 - Session Owner boundary check 不再允许生产 composition 直接引用 legacy `extensions/host-manager.ts`；中立 `extensions/manager.ts` 是当前实现，旧文件只做 R9 前兼容重导出。
 - S5/S6 focused matrix 11 files / 94 tests，Extension manager/lifecycle/runtime 3 files / 15 tests，Bun OpenTUI 4 files / 33 tests / 187 assertions 全绿。完整 Vitest JSON reporter 为 627 suites / 1558 tests（1555 passed、3 skipped、0 failed）；`npm run check` 与 `npm run build` 通过。
 - 这组证据闭合 R6 的 MCP/Hook/Skill/Plugin production blocking gap。R6.5 仍缺真实 domain candidate 场景与 macOS/Windows runner；R8 仍缺标准 PATH fault rehearsal、独立只读审计和 human acceptance，因此 R9 不得开始。
+
+### 11.6 2026-08-09 S7/S8 fresh 本地证据
+
+- S7 Timeline 等价回归覆盖多行 user/assistant/thinking、tool 四态与安全摘要/结果/错误、shell 双通道有界 tail/background/exit/duration 和 unified diff；旧 message/tool/bash/diff/background、alternate renderer/TimelineStore、session selector、feature adapter 与 repl handle 已在等价通过后删除，静态门禁阻止退役路径恢复。
+- 隔离 Linux candidate 基础 runner ALL PASS：100-session catalog 18.8ms、单次同步 DB call ≤100ms、10 个独立子进程/独立 SQLite connection claim 1215.1ms；真实 model/MCP/process/PTY/worktree/Trace/approval 尚未纳入同一 candidate-domain runner。
+- 标准 PATH `/home/nzq/.npm-global/bin/runledger` 解析到本仓库 `bin/runledger.js`；help/version/无参数 TTY、同 Session 双窗口 attachment lifetime、不同 Session 并行 owner、owner crash takeover 均已真实运行。crash takeover 首次暴露 SQLite 为 recovery 但 footer 显示 `idle`；RED→GREEN 后，首帧读取 durable recovery status，真实 TTY 在 `generation=2/state=recovery_required` 时显示 `Recovery required` 并 clean exit 0。
+- fresh recovery focused 4 files / 34 tests；`npm run check`、`npm run build`、完整 Vitest 270 files passed / 1 skipped、1513 tests passed / 3 skipped，以及 Bun OpenTUI 3 files / 30 tests / 167 assertions 全绿。
+- R6.5 仍 not accepted；R7 已切换且 Linux 标准 PATH 子项转绿，但接受仍随 R8；R8 仍缺完整 fault/migration rehearsal、macOS/Windows、真实 candidate-domain、稳定窗口、独立只读审计和真人验收。因此 R9 继续 not started，legacy Host 安全窗口未删除。
 
 生产 runner 的最小场景：
 

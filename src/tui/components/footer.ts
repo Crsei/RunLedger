@@ -50,7 +50,9 @@ export class Footer implements Component {
       const activeDurationMs = timing === undefined
         ? 0
         : timing.activeDurationMs + (timing.state === "working" && timing.lastResumedAtMs !== undefined ? Math.max(0, now - timing.lastResumedAtMs) : 0);
-      const status = timing?.state === "working"
+      const status = timing?.state === "recovery_required"
+        ? "Recovery required"
+        : timing?.state === "working"
         ? `Working ${formatActiveDuration(activeDurationMs)}`
         : timing?.state === "waiting"
           ? `Waiting for input · ${formatActiveDuration(activeDurationMs)}`

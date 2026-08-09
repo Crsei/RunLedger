@@ -9,7 +9,7 @@
  *   2. 实现 FooterSnapshotProvider 三个方法(isStreaming / getStopReason / getModelId / getSessionId);
  *   3. handleEvent 把 TuiEvent 路由到各 container,M1 阶段除 agent_end / message_end
  *      更新 stopReason 之外其余 case 留 noop 占位(M2 起逐 case 落实);
- *   4. run() / quit() 对接 TUI.start / stop,并注册到 ReplHandle 单例(M8 远期任务接入);
+ *   4. run() / quit() 对接 TUI.start / stop；外部控制不拥有进程级 singleton；
  *   5. 失败护栏常量 MAX_CONSECUTIVE_INIT_FAILURES / INIT_FAILURE_BACKOFF_MS 在 spec 已定义,
  *      M1 不实际触发(无 init 重试路径)。
  *
@@ -36,7 +36,7 @@ import type { AgentEvent, AgentMessage } from "../runtime/types.ts";
 import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
 import { getSupportedThinkingLevels } from "../models.ts";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
-import type { InteractiveSessionControllerPort } from "../runtime/interactive-session-controller.ts";
+import type { InteractiveSessionControllerPort, SessionRecoveryStatus } from "../runtime/interactive-session-controller.ts";
 
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
@@ -278,8 +278,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.replayInitialHistory();
 
-    // 注册到 RunLedger 进程级单例 handle(M8 远期接通);M1 阶段 setReplHandle 仍 noop
-    // 此处仅保留 hook 点,不在本期调用 setReplHandle,避免引入运行时副作用。
     void MAX_CONSECUTIVE_INIT_FAILURES;
     void INIT_FAILURE_BACKOFF_MS;
   }
@@ -386,6 +384,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
     this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
     try {
+	  const recoverySync = this.syncRecoveryState();
+	  if (recoverySync !== undefined) await recoverySync;
       await this.ui.start();
     } catch (error) {
       this.unsubscribe?.();
@@ -485,10 +485,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /**
-   * 公共 prompt 注入入口;demo 与未来 ReplHandle.sendText 走同一通道。
+   * 公共 prompt 注入入口；内部调用走同一通道。
    *
    * 实现:把 Editor onSubmit 流转过来即可——等价于"程序模拟一键回车提交"。
-   * 不调 agent.prompt 直绕,保证 handleSubmit 中 _前_ push UserMessageComponent 一致路径。
+   * 不调 agent.prompt 直绕，保证 handleSubmit 先投影 canonical user Timeline row。
    */
   echoPrompt(text: string): void {
     this.handleSubmit(text);
@@ -738,6 +738,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         if (controller.recoveryAssess === undefined) throw new Error("recovery assessment is unavailable");
         const result = await controller.recoveryAssess();
         this.showNotice(`Recovery assessment: state=${result.state} unresolved=${result.unresolvedRemaining}.`);
+		await this.syncRecoveryState();
         return;
       }
       if (action === "verify") {
@@ -748,6 +749,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         }
         const result = await controller.recoveryVerify(attemptId);
         this.showNotice(`Recovery verification recorded: state=${result.state}.`);
+		await this.syncRecoveryState();
         return;
       }
       if (action === "resume") {
@@ -758,6 +760,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         }
         const result = await controller.recoveryResume(reason);
         this.showNotice(`Uncertain recovery explicitly accepted: state=${result.state}.`);
+		await this.syncRecoveryState();
         return;
       }
       if (action !== "status") {
@@ -765,6 +768,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       }
       const status = await controller.recoveryStatus();
+	  this.applyRecoveryStatus(status);
       this.showNotice(
         `Recovery: state=${status.state} barrier=${status.barrierState} unresolved=${status.unresolvedAttempts}. ` +
         "Use /recovery assess, /recovery verify <attemptId>, or /recovery resume <reason>.",
@@ -773,6 +777,22 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.showNotice(`Recovery command failed: ${String(error)}`, "error");
     }
   }
+
+	private syncRecoveryState(): Promise<void> | undefined {
+		const controller = this.controller;
+		if (controller?.recoveryStatus === undefined) return;
+		return controller.recoveryStatus().then((status) => {
+			this.applyRecoveryStatus(status);
+		}, (error: unknown) => {
+			this.showNotice(`Recovery status unavailable: ${String(error)}`, "error");
+		});
+	}
+
+	private applyRecoveryStatus(status: SessionRecoveryStatus): void {
+		const required = status.state === "recovery_required" || status.barrierState === "open";
+		this.store.dispatch({ type: "recovery.set", required });
+		this.ui.requestRender();
+	}
 
   /**
    * B4:打开 mcp server 选择器；经 extension.inspect workflow 查询真实 catalog，
@@ -1065,6 +1085,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.stopReason;
   }
   getRunTiming(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined {
+	if (this.store.getState().recoveryRequired) {
+		const active = this.store.getState().timeline.activeRun;
+		return { state: "recovery_required", activeDurationMs: active?.activeDurationMs ?? 0 };
+	}
     const active = this.store.getState().timeline.activeRun;
     if (active === undefined) return undefined;
     return {
@@ -1744,7 +1768,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /**
-   * 主控 switch;M2 阶段:message_* 路由把 AssistantMessageComponent 挂上 chat 并流式更新;
+   * 主控 switch：message_* 统一投影到 canonical Timeline 并流式更新；
    * user 消息块在 handleSubmit 阶段已 push,事件流不再处理 user 分支;
    * 其余 case 留 noop 占位,M3 起逐 case 落实(对照 03-event-binding §1 表)。
    */

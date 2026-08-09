@@ -10,12 +10,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createInitialTuiState } from "../../../src/tui/application/initial-state.ts";
 import {
   availabilityReason,
   boundedField,
   projectActiveState,
   projectComposer,
   projectFooter,
+  projectInteractivePresentation,
   projectSessionStrip,
   projectWelcome,
   sanitizeLabel,
@@ -111,4 +113,15 @@ describe("B1 presentation projectors", () => {
     expect(composer.mode).toBe("prompt");
     expect(composer.draft).toBe("hello world");
   });
+
+	it("recovery-required has priority in the canonical footer projection", () => {
+		const state = createInitialTuiState({ bootstrap });
+		const recovery = projectInteractivePresentation({
+			...state,
+			recoveryRequired: true,
+			transitionFrozen: true,
+		});
+		expect(recovery.footer.status).toBe("recovery-required");
+		expect(recovery.activeState.priority).toBe("recovery");
+	});
 });

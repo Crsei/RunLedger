@@ -207,7 +207,13 @@ export function projectInteractivePresentation(
     ...facts.activeState,
   });
   const footerStatus = facts.footerStatus
-    ?? (activeRun?.state === "working" ? "working" : activeRun?.state === "waiting" ? "waiting" : "idle");
+    ?? (state.recoveryRequired
+      ? "recovery-required"
+      : activeRun?.state === "working"
+        ? "working"
+        : activeRun?.state === "waiting"
+          ? "waiting"
+          : "idle");
   return {
     timeline: timelineToBlocks(state.timeline),
     sessionStrip: projectSessionStrip(state.bootstrap, {

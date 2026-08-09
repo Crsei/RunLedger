@@ -1,9 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
 import {
-  TimelineStore,
-  type TimelinePatch,
-} from "../../src/tui/opentui/timeline-store.ts";
-import {
   DeltaCoalescer,
   type StreamingDelta,
 } from "../../src/tui/opentui/delta-coalescer.ts";
@@ -16,8 +12,6 @@ import { HeightIndex } from "../../src/tui/opentui/viewport-window.ts";
 import { decideMarkdownProjection } from "../../src/tui/opentui/markdown-budget.ts";
 import { TUI, type Terminal } from "../../src/tui/primitives.ts";
 import { ChatContainer } from "../../src/tui/components/chat-container.ts";
-import { AssistantMessageComponent } from "../../src/tui/components/assistant-message.ts";
-import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { Agent } from "../../src/runtime/agent.ts";
 import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
@@ -98,53 +92,18 @@ function assistantPartial(text: string): AssistantMessage {
   };
 }
 
-function insertAssistant(generation: number): TimelinePatch {
-  return {
-    kind: "insert",
-    entryId: "entry:assistant-1",
-    partId: "part:markdown-1",
-    role: "assistant",
-    partKind: "markdown",
-    text: "",
-    generation,
-  };
-}
-
 describe("Plan 18 streaming state", () => {
   test("falls back to lossless plain text for an over-budget open code fence and upgrades after completion", () => {
-    const assistant = new AssistantMessageComponent({
-      theme: loadTheme("dark"),
-      markdownBudget: {
-        maxStreamingCharacters: 1_000,
-        maxStreamingLines: 100,
-        maxOpenFenceCharacters: 8,
-      },
-    });
-    assistant.appendTextDelta("```ts\n123456789");
-
-    const decision = decideMarkdownProjection("```ts\n123456789", true, {
+    const content = "```ts\n123456789";
+    const budget = {
       maxStreamingCharacters: 1_000,
       maxStreamingLines: 100,
       maxOpenFenceCharacters: 8,
-    });
+    };
+    const decision = decideMarkdownProjection(content, true, budget);
     expect(decision).toMatchObject({ mode: "plain-text", reason: "open-fence-limit", openFence: true });
-    const degraded = assistant.present(80);
-    expect(degraded).toContainEqual(expect.objectContaining({
-      kind: "text",
-      content: expect.stringContaining("123456789"),
-    }));
-    expect(degraded.find((block) => block.id === "markdown")).toMatchObject({
-      kind: "text",
-      content: expect.stringContaining("plain text fallback"),
-    });
-
-    assistant.finalize();
-    expect(assistant.present(80)).toContainEqual(expect.objectContaining({
-      id: "markdown",
-      kind: "markdown",
-      content: "```ts\n123456789",
-      streaming: false,
-    }));
+    // policy 只选择 renderer，不返回或改写正文。
+    expect(decideMarkdownProjection(content, false, budget)).toMatchObject({ mode: "markdown", openFence: true });
   });
 
   test("protects large tables and single lines with separate streaming budgets", () => {
@@ -170,58 +129,6 @@ describe("Plan 18 streaming state", () => {
       mode: "plain-text",
       reason: "streaming-character-limit",
       openFence: false,
-    });
-  });
-
-  test("keeps keyed entry and part identity while appending and fences stale generations", () => {
-    const store = new TimelineStore();
-    const generation = store.beginGeneration();
-
-    expect(store.apply(insertAssistant(generation)).changedEntryIds).toEqual(["entry:assistant-1"]);
-    store.apply({
-      kind: "append-text",
-      entryId: "entry:assistant-1",
-      partId: "part:markdown-1",
-      text: "hello",
-      generation,
-    });
-    store.apply({
-      kind: "append-text",
-      entryId: "entry:assistant-1",
-      partId: "part:markdown-1",
-      text: " world",
-      generation,
-    });
-
-    const beforeComplete = store.getEntry("entry:assistant-1");
-    expect(beforeComplete?.parts).toHaveLength(1);
-    expect(beforeComplete?.parts[0]).toMatchObject({
-      id: "part:markdown-1",
-      content: "hello world",
-      streaming: true,
-    });
-
-    const stale = store.apply({
-      kind: "append-text",
-      entryId: "entry:assistant-1",
-      partId: "part:markdown-1",
-      text: " stale",
-      generation: generation - 1,
-    });
-    expect(stale.staleGeneration).toBe(true);
-    expect(store.getEntry("entry:assistant-1")?.parts[0]?.content).toBe("hello world");
-
-    const completed = store.apply({
-      kind: "complete",
-      entryId: "entry:assistant-1",
-      partId: "part:markdown-1",
-      generation,
-    });
-    expect(completed.forceFlush).toBe(true);
-    expect(store.getEntry("entry:assistant-1")?.parts[0]).toMatchObject({
-      id: "part:markdown-1",
-      content: "hello world",
-      streaming: false,
     });
   });
 
@@ -461,46 +368,6 @@ describe("Plan 18 streaming state", () => {
     const second = chat.present(80)[0];
     expect(first?.id).toMatch(/^chat-/u);
     expect(second?.id).toBe(first?.id);
-  });
-
-  test("assistant presentation accepts lossless text deltas without a cumulative partial", () => {
-    const assistant = new AssistantMessageComponent({ theme: loadTheme("dark") });
-    assistant.appendTextDelta("hello");
-    assistant.appendTextDelta(" world");
-
-    expect(assistant.present(80)).toContainEqual(expect.objectContaining({
-      kind: "markdown",
-      content: "hello world",
-      streaming: true,
-    }));
-  });
-
-  test("assistant part keys stay stable when a thinking block appears", () => {
-    const assistant = new AssistantMessageComponent({ theme: loadTheme("dark") });
-    const chat = new ChatContainer();
-    chat.push(assistant);
-    assistant.appendTextDelta("body");
-    const firstMarkdown = chat.present(80).find((block) => block.kind === "markdown");
-    assistant.appendThinkingDelta("reason");
-    const secondMarkdown = chat.present(80).find((block) => block.kind === "markdown");
-
-    expect(firstMarkdown?.id).toBeDefined();
-    expect(secondMarkdown?.id).toBe(firstMarkdown?.id);
-  });
-
-  test("ChatContainer reuses unchanged assistant projection and invalidates only after a delta", () => {
-    const assistant = new AssistantMessageComponent({ theme: loadTheme("dark") });
-    const chat = new ChatContainer();
-    chat.push(assistant);
-    assistant.appendTextDelta("stable");
-    const present = vi.spyOn(assistant, "present");
-
-    chat.present(80);
-    chat.present(80);
-    expect(present).toHaveBeenCalledTimes(1);
-    assistant.appendTextDelta(" tail");
-    chat.present(80);
-    expect(present).toHaveBeenCalledTimes(2);
   });
 
   test("InteractiveMode forwards text_delta as the semantic append", () => {

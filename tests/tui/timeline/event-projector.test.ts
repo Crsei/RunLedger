@@ -110,8 +110,11 @@ describe("B2 timeline event-projector", () => {
 		const toolEnd = events.find((event) => event.type === "tool_end")!;
 		expect(toolEnd.status).toBe("succeeded");
 		expect(toolUpdate.presentation.state).toBe("known");
-		// 原始命令文本不进入 body（只进 bounded metadata）
-		expect(JSON.stringify(events)).not.toContain("ls -la");
+		// 命令只进入 bounded input metadata，不进入正文。
+		if (toolUpdate.presentation.state === "known") {
+			expect(toolUpdate.presentation.value.input).toMatchObject({ kind: "shell", commandLabel: { text: "ls -la" } });
+			expect(toolUpdate.presentation.value.body).toEqual([]);
+		}
 	});
 
 	it("stale/orphan/duplicate events are determined by the reducer, not the projector", () => {
@@ -141,7 +144,7 @@ describe("B2 timeline event-projector", () => {
 		expect(events[0]).not.toHaveProperty("correlationId");
 	});
 
-	it("P1-2: shell chunks accumulate across updates and the final body keeps all chunks", () => {
+	it("P1-2: shell chunks accumulate across updates in the bounded typed result", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
 		const start: TuiEvent = { type: "tool_execution_start", timestamp: 0, toolCallId: "call-1", toolName: "bash", args: {} };
 		const updateA: TuiEvent = { type: "tool_execution_update", timestamp: 1, toolCallId: "call-1", toolName: "bash", partialResult: { type: "toolResult", toolCallId: "call-1", toolName: "bash", content: [], details: { stdoutChunk: "first" } } };
@@ -156,9 +159,13 @@ describe("B2 timeline event-projector", () => {
 		const finalUpdate = events.filter((event) => event.type === "tool_update").at(-1)!;
 		expect(finalUpdate.presentation.state).toBe("known");
 		if (finalUpdate.presentation.state === "known") {
-			const bodyText = finalUpdate.presentation.value.body.map((block) => (block.kind === "text" ? block.content.text : "")).join("");
-			expect(bodyText).toContain("first");
-			expect(bodyText).toContain("second");
+			const result = finalUpdate.presentation.value.result;
+			expect(result?.kind).toBe("shell");
+			if (result?.kind === "shell") {
+				const output = result.chunks.map((chunk) => chunk.text.text).join("\n");
+				expect(output).toContain("first");
+				expect(output).toContain("second");
+			}
 		}
 		// tool end 后累积状态释放（内存不持续占用）
 		const snapshot = projector.snapshot();

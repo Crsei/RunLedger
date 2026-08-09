@@ -14,6 +14,7 @@ export type TuiAction =
 	| { readonly type: "query.cancel"; readonly ref: CorrelatedRequestRef }
 	| { readonly type: "query.start"; readonly effect: TuiEffect }
 	| { readonly type: "query.result"; readonly result: TuiResult }
+	| { readonly type: "recovery.set"; readonly required: boolean }
 	| { readonly type: "session.replace"; readonly generation: number; readonly sessionId: string }
 	| { readonly type: "composer.changed"; readonly draft: SafeBoundedText }
 	| { readonly type: "interaction.select"; readonly id: string }

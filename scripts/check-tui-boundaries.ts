@@ -9,7 +9,7 @@
  * 运行：npm run check（check:tui-boundaries）。
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -17,6 +17,25 @@ const source = readFileSync(join(root, "src/tui/interactive-mode.ts"), "utf8");
 const lines = source.split("\n");
 
 const failures: string[] = [];
+
+// 0) S7 已退役路径不得恢复；信息展示只能走 canonical Timeline/projector。
+for (const relativePath of [
+  "src/tui/components/user-message.ts",
+  "src/tui/components/assistant-message.ts",
+  "src/tui/components/custom-message.ts",
+  "src/tui/components/tool-call.ts",
+  "src/tui/components/tool-result.ts",
+  "src/tui/components/bash-execution.ts",
+  "src/tui/components/diff-preview.ts",
+  "src/tui/components/background-task.ts",
+  "src/tui/opentui/timeline-store.ts",
+  "src/tui/opentui/runtime.ts",
+  "src/tui/runtime/repl-handle.ts",
+  "src/tui/feature-adapters.ts",
+  "src/tui/session-selector.ts",
+]) {
+  if (existsSync(join(root, relativePath))) failures.push(`retired S7 TUI path restored: ${relativePath}`);
+}
 
 // 1) 禁止领域 mutable state owner（旧字段名或组件 Map 模式）
 const retiredFieldPattern = /\bprivate\s+(?:readonly\s+)?(?:toolCallComponents|pendingAssistantPartials|modelRegistry|thinkingLevel|state|timeline)\b/u;

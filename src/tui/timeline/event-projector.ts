@@ -17,6 +17,7 @@ import type {
 } from "../presentation/tools/types.ts";
 import {
 	boundedToolText,
+	appendShellPresentationChunk,
 	projectShellChunk,
 	projectToolEnd,
 	projectToolStart,
@@ -195,22 +196,24 @@ export class TimelineEventProjector {
 				return [{ type: "tool_start", generation: 0, correlationId: event.toolCallId, row }];
 			}
 			case "tool_execution_update": {
-				const chunks = this.shellChunks.get(event.toolCallId) ?? [];
+				let chunks = this.shellChunks.get(event.toolCallId) ?? [];
 				if (isRecord(event.partialResult) && isRecord(event.partialResult.details)) {
 					const details = event.partialResult.details;
 					if (typeof details.stdoutChunk === "string" && details.stdoutChunk.length > 0) {
-						chunks.push(projectShellChunk("stdout", details.stdoutChunk));
+						chunks = [...chunks, projectShellChunk("stdout", details.stdoutChunk)];
 					}
 					if (typeof details.stderrChunk === "string" && details.stderrChunk.length > 0) {
-						chunks.push(projectShellChunk("stderr", details.stderrChunk));
+						chunks = [...chunks, projectShellChunk("stderr", details.stderrChunk)];
 					}
 				}
 				this.shellChunks.set(event.toolCallId, chunks);
 				const presentation = this.activeToolPresentation.get(event.toolCallId);
 				if (presentation === undefined || chunks.length === 0) return [];
 				const chunk = chunks[chunks.length - 1]!;
-				// 累积：把含新 chunk 的 presentation 存回，保证后续 update/end 基于最新正文
-				const updated: SafeToolPresentation = { ...presentation, body: [...presentation.body, { kind: "text", content: chunk.text }] };
+				// 累积：只保留每通道有界 tail，避免长跑日志进入无界 Timeline state。
+				const updated = appendShellPresentationChunk(presentation, chunk);
+				if (updated.result?.kind === "shell") chunks = [...updated.result.chunks];
+				this.shellChunks.set(event.toolCallId, chunks);
 				this.activeToolPresentation.set(event.toolCallId, updated);
 				return [{
 					type: "tool_update",

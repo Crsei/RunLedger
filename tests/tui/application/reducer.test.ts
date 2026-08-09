@@ -129,6 +129,17 @@ describe("B3 application reducer", () => {
 		expect(next.timeline.committedRows[0]).toMatchObject({ kind: "notice" });
 	});
 
+	it("recovery.set synchronizes the durable barrier state and freezes conflicting transitions", () => {
+		const state = initialState();
+		const blocked = tuiReducer(state, { type: "recovery.set", required: true });
+		expect(blocked.recoveryRequired).toBe(true);
+		expect(blocked.transitionFrozen).toBe(true);
+
+		const resumed = tuiReducer(blocked, { type: "recovery.set", required: false });
+		expect(resumed.recoveryRequired).toBe(false);
+		expect(resumed.transitionFrozen).toBe(false);
+	});
+
 	it("unknown action types return unchanged via safeReduce and never throw", () => {
 		const state = initialState();
 		expect(safeReduce(state, { type: "query.cancel", ref: { generation: 1, effectId: "e", correlationId: "c" } })).toBe(state);

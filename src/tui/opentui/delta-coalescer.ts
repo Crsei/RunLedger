@@ -1,4 +1,14 @@
-import type { TimelinePatch } from "./timeline-store.ts";
+/** Streaming 队列的最小 patch envelope；canonical Timeline state 由 timeline/reducer.ts 持有。 */
+export interface TimelinePatch {
+  readonly entryId: string;
+  readonly partId?: string;
+  readonly kind: "append-text" | "replace-status" | "complete" | "insert" | "remove";
+  readonly text?: string;
+  readonly status?: string;
+  readonly role?: "user" | "assistant" | "tool" | "status";
+  readonly partKind?: "text" | "markdown" | "thinking" | "tool";
+  readonly generation: number;
+}
 
 export interface AppendTextDelta {
   readonly kind: "append-text";

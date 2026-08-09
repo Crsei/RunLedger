@@ -10,6 +10,9 @@
 import type {
 	SafeBoundedText,
 	SafeCount,
+	SafeDiffDocument,
+	SafeDiffHunk,
+	SafeDiffLine,
 	SafeShellChunk,
 	SafeToolChip,
 	SafeToolInputMetadata,
@@ -23,6 +26,9 @@ import type {
 export const TOOL_TEXT_BOUND_BYTES = 64 * 1024;
 const LABEL_BOUND_BYTES = 120;
 const CHUNK_BOUND_BYTES = 16 * 1024;
+const DIFF_LINE_BOUND_BYTES = 4 * 1024;
+const DIFF_MAX_LINES = 400;
+const SHELL_TAIL_LINES_PER_CHANNEL = 100;
 
 /** 把任意值做成有界文本：strip ANSI、UTF-8 字节截断。 */
 export function boundedToolText(value: unknown, maxBytes = TOOL_TEXT_BOUND_BYTES): SafeBoundedText {
@@ -94,6 +100,7 @@ export function projectInputMetadata(toolName: string, args: unknown): SafeToolI
 			return {
 				kind: "shell",
 				commandLabel: boundedToolText(command, LABEL_BOUND_BYTES),
+				background: args.run_in_background === true,
 			};
 		}
 		case "edit": {
@@ -131,10 +138,11 @@ export function projectToolStart(toolName: string, args: unknown, startedAt: str
 	if (input.kind === "shell") {
 		chips.push({ label: { text: "shell", truncated: false, byteLength: 5 }, tone: "neutral" });
 	}
-	return {
-		renderer: rendererForTool(toolName),
-		title,
-		chips,
+		return {
+			renderer: rendererForTool(toolName),
+			title,
+			input,
+			chips,
 		body: [],
 		timestamps: { startedAt },
 	};
@@ -143,6 +151,26 @@ export function projectToolStart(toolName: string, args: unknown, startedAt: str
 /** shell stdout/stderr chunk -> 有界 chunk；无界正文截断并标记。 */
 export function projectShellChunk(channel: "stdout" | "stderr", text: unknown): SafeShellChunk {
 	return { channel, text: boundedToolText(text, CHUNK_BOUND_BYTES) };
+}
+
+/** 把 shell 输出压成每通道最后 100 行，保持 stdout/stderr 标签且不保存无界日志。 */
+export function appendShellPresentationChunk(
+	presentation: SafeToolPresentation,
+	chunk: SafeShellChunk,
+): SafeToolPresentation {
+	const previous = presentation.result?.kind === "shell" ? presentation.result : undefined;
+	const chunks = boundShellChunks([...(previous?.chunks ?? []), chunk]);
+	return {
+		...presentation,
+		result: {
+			kind: "shell",
+			chunks,
+			truncated: previous?.truncated === true || chunk.text.truncated || chunks.truncated,
+			exitCode: previous?.exitCode ?? safeCount(undefined),
+			durationMs: previous?.durationMs ?? safeCount(undefined),
+			background: previous?.background === true || presentation.input?.kind === "shell" && presentation.input.background === true,
+		},
+	};
 }
 
 /** 工具执行结束：exitCode/duration 来自 details（unknown 不归零），lifecycle 由调用方定 status。 */
@@ -154,7 +182,7 @@ export function projectToolEnd(
 	const details = isRecord(result.details) ? result.details : {};
 	const exitCode = typeof details.exitCode === "number" ? details.exitCode : undefined;
 	const durationMs = typeof details.durationMs === "number" ? details.durationMs : undefined;
-	const chips = [...presentation.chips];
+	const chips = presentation.chips.filter((chip) => !["pending", "running", "ok", "error"].includes(chip.label.text));
 	if (exitCode !== undefined) {
 		chips.push({ label: boundedToolText(`exit ${exitCode}`, LABEL_BOUND_BYTES), tone: exitCode === 0 ? "positive" : "error" });
 	}
@@ -165,16 +193,34 @@ export function projectToolEnd(
 		label: boundedToolText(result.isError ? "error" : "ok", LABEL_BOUND_BYTES),
 		tone: result.isError ? "error" : "positive",
 	});
+	const resultText = toolResultText(result.content);
 	const body = [...presentation.body];
-	if (result.isError) {
-		const error = toolResultText(result.content);
-		if (error.length > 0) body.push({ kind: "text", content: boundedToolText(error, LABEL_BOUND_BYTES) });
+	if (presentation.renderer !== "shell" && resultText.length > 0 && !body.some((block) => block.kind === "text" && block.content.text === resultText)) {
+		body.push({ kind: "text", content: boundedToolText(resultText, TOOL_TEXT_BOUND_BYTES) });
+	}
+	let metadata = projectToolResultMetadata({ toolName: presentation.title.text, details: result.details, content: result.content });
+	if (metadata.kind === "shell") {
+		const previous = presentation.result?.kind === "shell" ? presentation.result : undefined;
+		const bounded = boundShellChunks([...(previous?.chunks ?? []), ...metadata.chunks]);
+		metadata = {
+			...metadata,
+			chunks: bounded,
+			truncated: metadata.truncated || previous?.truncated === true || bounded.truncated,
+			background: metadata.background || previous?.background === true || presentation.input?.kind === "shell" && presentation.input.background === true,
+		};
+	}
+	if (presentation.renderer === "edit" && isRecord(result.details) && typeof result.details.diff === "string") {
+		const path = presentation.input?.kind === "edit" ? presentation.input.path : boundedToolText("<path>", LABEL_BOUND_BYTES);
+		const document = projectDiffDocument(path, result.details.diff);
+		metadata = { kind: "edit", document, addedLines: document.addedLines, removedLines: document.removedLines };
+		body.push({ kind: "diff", document });
 	}
 	return {
 		...presentation,
 		chips,
 		body,
-		error: result.isError ? boundedToolText(toolResultText(result.content), TOOL_TEXT_BOUND_BYTES) : undefined,
+		result: metadata,
+		error: result.isError ? boundedToolText(resultText, TOOL_TEXT_BOUND_BYTES) : undefined,
 		timestamps: { ...presentation.timestamps, endedAt },
 	};
 }
@@ -197,7 +243,7 @@ export function projectToolResultMetadata(result: { readonly toolName: string; r
 				truncated: chunks.some((chunk) => chunk.text.truncated),
 				exitCode: safeCount(details.exitCode),
 				durationMs: safeCount(details.durationMs),
-				background: details.run_in_background === true,
+				background: details.run_in_background === true || isRecord(details.background),
 			};
 		}
 		case "read":
@@ -217,6 +263,88 @@ export function projectToolResultMetadata(result: { readonly toolName: string; r
 		default:
 			return { kind: "generic" };
 	}
+}
+
+/** 解析 runtime edit 的 unified diff；只保留有界 patch 行，不接收完整 before/after。 */
+export function projectDiffDocument(path: SafeBoundedText, diff: unknown): SafeDiffDocument {
+	if (typeof diff !== "string" || diff.length === 0) {
+		return {
+			kind: "document",
+			path,
+			hunks: [],
+			addedLines: safeCount(0),
+			removedLines: safeCount(0),
+			truncated: false,
+			diagnostic: "unavailable",
+		};
+	}
+	const sourceLines = diff.split(/\r?\n/u);
+	const truncated = sourceLines.length > DIFF_MAX_LINES;
+	const lines = sourceLines.slice(0, DIFF_MAX_LINES);
+	const hunks: SafeDiffHunk[] = [];
+	let current: { oldLine: number; newLine: number; lines: SafeDiffLine[] } | undefined;
+	let invalid = false;
+	let added = 0;
+	let removed = 0;
+	for (const line of lines) {
+		const header = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/u);
+		if (header !== null) {
+			if (current !== undefined) hunks.push({ oldStart: current.oldLine, newStart: current.newLine, lines: current.lines });
+			current = { oldLine: Number(header[1]), newLine: Number(header[2]), lines: [] };
+			continue;
+		}
+		if (current === undefined) {
+			invalid = true;
+			continue;
+		}
+		const content = boundedToolText(line.slice(1), DIFF_LINE_BOUND_BYTES);
+		if (line.startsWith("+")) {
+			current.lines.push({ kind: "add", newLine: current.newLine, text: content });
+			current.newLine += 1;
+			added += 1;
+		} else if (line.startsWith("-")) {
+			current.lines.push({ kind: "delete", oldLine: current.oldLine, text: content });
+			current.oldLine += 1;
+			removed += 1;
+		} else if (line.startsWith(" ")) {
+			current.lines.push({ kind: "context", oldLine: current.oldLine, newLine: current.newLine, text: content });
+			current.oldLine += 1;
+			current.newLine += 1;
+		} else {
+			invalid = true;
+		}
+	}
+	if (current !== undefined) hunks.push({ oldStart: current.oldLine - current.lines.filter((line) => line.kind !== "add").length, newStart: current.newLine - current.lines.filter((line) => line.kind !== "delete").length, lines: current.lines });
+	return {
+		kind: "document",
+		path,
+		hunks,
+		addedLines: safeCount(added),
+		removedLines: safeCount(removed),
+		truncated,
+		...(invalid ? { diagnostic: "invalid" as const } : truncated ? { diagnostic: "limit" as const } : {}),
+	};
+}
+
+function boundShellChunks(input: readonly SafeShellChunk[]): SafeShellChunk[] & { readonly truncated: boolean } {
+	const byChannel: Record<SafeShellChunk["channel"], SafeShellChunk[]> = { stdout: [], stderr: [] };
+	let truncated = false;
+	for (const chunk of input) {
+		const lines = chunk.text.text.split(/\r?\n/u);
+		if (lines.at(-1) === "") lines.pop();
+		for (const line of lines) {
+			byChannel[chunk.channel].push({ channel: chunk.channel, text: boundedToolText(line, CHUNK_BOUND_BYTES) });
+		}
+	}
+	for (const channel of ["stdout", "stderr"] as const) {
+		if (byChannel[channel].length > SHELL_TAIL_LINES_PER_CHANNEL) {
+			byChannel[channel] = byChannel[channel].slice(-SHELL_TAIL_LINES_PER_CHANNEL);
+			truncated = true;
+		}
+	}
+	const result = [...byChannel.stdout, ...byChannel.stderr] as SafeShellChunk[] & { truncated: boolean };
+	result.truncated = truncated;
+	return result;
 }
 
 /** usage -> SafeToolUsageView；provider 未报告时 unknown，绝不归零。 */

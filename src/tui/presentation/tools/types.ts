@@ -24,7 +24,7 @@ export type SafeToolInputMetadata =
 	| { readonly kind: "write"; readonly path: SafeBoundedText; readonly lineCount: SafeCount; readonly byteCount: SafeCount }
 	| { readonly kind: "read"; readonly path: SafeBoundedText; readonly offset?: SafeCount; readonly limit?: SafeCount }
 	| { readonly kind: "grep"; readonly path: SafeBoundedText }
-	| { readonly kind: "shell"; readonly commandLabel: SafeBoundedText };
+	| { readonly kind: "shell"; readonly commandLabel: SafeBoundedText; readonly background?: boolean };
 
 export type SafeDiffLine =
 	| { readonly kind: "context"; readonly oldLine: number; readonly newLine: number; readonly text: SafeBoundedText }
@@ -97,8 +97,10 @@ export interface SafeToolUsageView {
 export interface SafeToolPresentation {
 	readonly renderer: SafeToolRenderer;
 	readonly title: SafeBoundedText;
+	readonly input?: SafeToolInputMetadata;
 	readonly chips: readonly SafeToolChip[];
 	readonly body: readonly SafeToolBodyBlock[];
+	readonly result?: SafeToolResultMetadata;
 	readonly error?: SafeBoundedText;
 	readonly usage?: SafeToolUsageView;
 	readonly timestamps: {

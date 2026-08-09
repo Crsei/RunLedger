@@ -75,15 +75,64 @@ function toolLines(row: Extract<TimelineRow, { readonly kind: "tool" }>): string
 	const lines: string[] = [];
 	const presentation = row.presentation.state === "known" ? row.presentation.value : undefined;
 	const title = presentation?.title.text ?? row.toolName.text;
-	const status = row.status;
-	lines.push(`${title} · ${status}`);
+	lines.push(`${statusIcon(row.status)} ${title}`);
 	if (presentation !== undefined) {
-		const chips = presentation.chips.map((chip) => chip.label.text).filter((text) => text.length > 0);
+		const input = inputLine(presentation.input);
+		if (input !== undefined) lines.push(`  ${input}`);
+		const chips = presentation.chips.map((chip) => chip.label.text).filter((text) => text.length > 0 && !["pending", "running", "ok", "error", "shell"].includes(text));
 		if (chips.length > 0) lines.push(`  ${chips.join("  ")}`);
 		for (const block of presentation.body) {
 			if (block.kind === "text" && block.content.text.length > 0) lines.push(`  ${block.content.text}`);
+			if (block.kind === "diff") lines.push(...diffLines(block.document));
+		}
+		if (presentation.result?.kind === "shell") {
+			for (const channel of ["stdout", "stderr"] as const) {
+				const chunks = presentation.result.chunks.filter((chunk) => chunk.channel === channel);
+				if (chunks.length === 0) continue;
+				lines.push(`  ${channel}:`);
+				for (const chunk of chunks) lines.push(`    ${chunk.text.text}`);
+			}
+			if (presentation.result.truncated) lines.push("  … output tail truncated");
 		}
 		if (presentation.error !== undefined) lines.push(`  error: ${presentation.error.text}`);
 	}
+	return lines;
+}
+
+function statusIcon(status: Extract<TimelineRow, { readonly kind: "tool" }>["status"]): string {
+	switch (status) {
+		case "pending": return "⏳";
+		case "running": return "…";
+		case "succeeded": return "✓";
+		case "failed":
+		case "cancelled":
+		case "aborted": return "✗";
+	}
+}
+
+function inputLine(input: import("../presentation/tools/types.ts").SafeToolInputMetadata | undefined): string | undefined {
+	if (input === undefined || input.kind === "generic") return undefined;
+	if (input.kind === "shell") return `$ ${input.background === true ? "(bg) " : ""}${input.commandLabel.text}`;
+	if (input.kind === "edit") return `${input.path.text} · ${knownCount(input.editCount)} edit`;
+	if (input.kind === "write") return `${input.path.text} · ${knownCount(input.lineCount)} lines · ${knownCount(input.byteCount)} bytes`;
+	if (input.kind === "read") return input.path.text;
+	return input.path.text;
+}
+
+function knownCount(count: import("../presentation/tools/types.ts").SafeCount): string {
+	return count.state === "known" ? String(count.value) : "?";
+}
+
+function diffLines(document: import("../presentation/tools/types.ts").SafeDiffDocument): string[] {
+	const added = knownCount(document.addedLines);
+	const removed = knownCount(document.removedLines);
+	const lines = [`  diff ${document.path.text} (+${added} -${removed})`];
+	for (const hunk of document.hunks) {
+		for (const line of hunk.lines) {
+			const prefix = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
+			lines.push(`${prefix} ${line.text.text}`);
+		}
+	}
+	if (document.diagnostic !== undefined) lines.push(`  diff ${document.diagnostic}`);
 	return lines;
 }
