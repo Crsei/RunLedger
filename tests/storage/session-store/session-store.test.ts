@@ -43,6 +43,45 @@ function ownerRow(store: SessionStore, sessionId: string, runtimeId: string, gen
 const digest = (seed: string) => ({ algorithm: "sha256", digest: canonicalDigest({ seed }) }) as const;
 
 describe("R2 catalog and lifecycle", () => {
+	it("persists a private current worktree locator with an owner-fenced audit event", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "workspace-binding");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const runtimeId = createRuntimeId("runtime", "workspace-binding");
+		ownerRow(store, sessionId, runtimeId, 3);
+		const locatorJson = JSON.stringify({ version: 1, worktreeLocator: { version: 1, platform: "linux", kind: "posix", path: "/private/worktree" } });
+		const candidate = store as SessionStore & {
+			putWorktreeLocator?: (fence: { readonly sessionId: typeof sessionId; readonly runtimeId: typeof runtimeId; readonly generation: number }, input: {
+				readonly locatorJson: string;
+				readonly repositoryId?: string;
+				readonly eventType: "workspace.bound" | "workspace.validation_recorded";
+				readonly payload: Record<string, unknown>;
+			}) => void;
+		};
+		expect(typeof candidate.putWorktreeLocator).toBe("function");
+		if (candidate.putWorktreeLocator === undefined) return;
+		candidate.putWorktreeLocator({ sessionId, runtimeId, generation: 3 }, {
+			locatorJson,
+			eventType: "workspace.bound",
+			payload: { bindingDigest: "a".repeat(64) },
+			repositoryId: createRuntimeId("repository", "canonical-worktree-repository"),
+		});
+
+		expect(store.getSession(sessionId)?.worktreeLocator).toBe(locatorJson);
+		expect(store.getSession(sessionId)?.repositoryId).toBe("repository_canonical-worktree-repository");
+		expect(store.replaySessionEvents(sessionId)).toMatchObject([{
+			ownerGeneration: 3,
+			eventType: "workspace.bound",
+			payloadJson: JSON.stringify({ bindingDigest: "a".repeat(64) }),
+		}]);
+		store.database().close();
+	});
+
 	it("creates and lists sessions from the durable catalog", () => {
 		const store = openStore();
 		const created = store.createSession({

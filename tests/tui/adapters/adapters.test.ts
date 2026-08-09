@@ -163,7 +163,7 @@ describe("B4 Session resource adapter", () => {
 		const query = vi.fn(async () => ({ ok: true }));
 		const ports = createSessionResourcePorts({
 			query,
-			supports: (operation) => operation === "security.inspect",
+			supports: (operation) => operation === "session.security.inspect",
 		});
 		expect(ports.securityMode).toBeDefined();
 		expect(ports.extensions).toBeUndefined();
@@ -190,16 +190,16 @@ describe("B4 Session resource adapter", () => {
 		if (planResult.ok) expect(planResult.value.status).toBe("unknown");
 	});
 
-	it("maps security and workspace queries to the canonical Host operation names", async () => {
-		const query = vi.fn(async (operation: string) => operation === "security.inspect"
-			? { ok: true, profile: "danger-full-access" }
+	it("maps security to the canonical Session read operation without exposing a mutation", async () => {
+		const query = vi.fn(async (operation: string) => operation === "session.security.inspect"
+			? { ok: true, profile: "danger-full-access", ownerGeneration: 7 }
 			: { ok: true, binding: { workspaceId: "workspace-1", headCommit: "abcdef123456", leaseRevision: 4 } });
 		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const security = await ports.securityMode!.inspect(request);
 		const workspace = await ports.workspaceGit!.inspect({ ...request, workspaceId: "workspace-1" });
-		expect(security.ok && security.value.mode).toEqual({ state: "known", value: "unrestricted" });
+		expect(security.ok && security.value).toMatchObject({ authorityGeneration: 7, mode: { state: "known", value: "unrestricted" } });
 		expect(workspace.ok && workspace.value).toMatchObject({ workspaceId: "workspace-1", observedRevision: 4, head: { kind: "detached" } });
-		expect(query.mock.calls.map(([operation]) => operation)).toEqual(["security.inspect", "worktree.inspect"]);
+		expect(query.mock.calls.map(([operation]) => operation)).toEqual(["session.security.inspect", "worktree.inspect"]);
 	});
 
 	it("P1-3: Host security mutation is explicitly unavailable, not a stub", async () => {
@@ -208,5 +208,6 @@ describe("B4 Session resource adapter", () => {
 		const result = await ports.securityMode!.set({ ...request, target: "unrestricted", expectedRevision: { state: "known", value: 3 } });
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error.code).toBe("session_operation_unsupported");
+		expect(query).not.toHaveBeenCalled();
 	});
 });

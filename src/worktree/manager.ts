@@ -18,6 +18,8 @@ export interface WorktreeCreateRequest {
 	readonly label: string;
 	readonly baseRef?: string;
 	readonly branch?: string;
+	/** Session Owner production locator；必须仍位于 managedRoot 内。 */
+	readonly canonicalTarget?: string;
 	readonly signal?: AbortSignal;
 }
 
@@ -198,7 +200,9 @@ export class WorktreeManager {
 		// Workspace binding validation derives the repository identity from the
 		// canonical source root. Keep the manager and cold-replay formula equal.
 		const repositoryId = createRuntimeId("repository", runtimeDigest(repository.value.root).digest.slice(0, 48));
-		const target = buildManagedWorktreePath(this.#managedRoot, repositoryId, request.workspaceId, label.value);
+		const target = request.canonicalTarget === undefined
+			? buildManagedWorktreePath(this.#managedRoot, repositoryId, request.workspaceId, label.value)
+			: { ok: true as const, value: resolve(request.canonicalTarget) };
 		if (!target.ok) return target;
 		const contained = await this.#containedInManaged(target.value);
 		if (!contained.ok) return contained;

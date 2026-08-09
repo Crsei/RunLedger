@@ -50,7 +50,7 @@ import {
 	readLocalUtf8File,
 	type SessionProcessLeaf,
 } from "./integration/session-local-leaves.ts";
-import { ApprovalCoordinator, HeadlessDenyPrompter } from "./permission/approval-coordinator.ts";
+import { ApprovalCoordinator, HeadlessDenyPrompter, type ApprovalAuditPort, type ApprovalStateStorePort } from "./permission/approval-coordinator.ts";
 import { analyzeShellCommand } from "./permission/shell-analyzer.ts";
 import { PermissionEngine } from "./permission/engine.ts";
 import { pathWithin, type FileSystemBrokerPort } from "./policy-filesystem.ts";
@@ -62,6 +62,7 @@ import type {
 	AccessRequest,
 	AuthorizationRequest,
 	HostWorkspaceExecutionContext,
+	PermissionPrompter,
 	SecurityResult,
 	SecuritySnapshot,
 } from "./types.ts";
@@ -86,6 +87,12 @@ export interface SessionSecurityCompositionOptions {
 	/** 仅 sandbox=off 时使用；限制性 sandbox 永不调用此 port。 */
 	readonly unrestrictedShell?: Shell;
 	readonly now?: () => Date;
+	/** Session Event Store + driver reverse-request 的 production approval ports。 */
+	readonly approvalPorts?: {
+		readonly prompter: PermissionPrompter;
+		readonly stateStore: ApprovalStateStorePort;
+		readonly audit: ApprovalAuditPort;
+	};
 }
 
 export interface SessionSecurityComposition {
@@ -139,7 +146,13 @@ export async function createSessionSecurity(
 		filesystemBroker,
 		networkBroker,
 		permissionEngine: new PermissionEngine(),
-		approvalCoordinator: new ApprovalCoordinator({ prompter: new HeadlessDenyPrompter() }),
+		approvalCoordinator: new ApprovalCoordinator(options.approvalPorts === undefined
+			? { prompter: new HeadlessDenyPrompter() }
+			: {
+				prompter: options.approvalPorts.prompter,
+				store: options.approvalPorts.stateStore,
+				audit: options.approvalPorts.audit,
+			}),
 		finalLeaf,
 	});
 	const authorize = createAuthorizer({ options, identity, snapshot, gateway, providers, workspace });

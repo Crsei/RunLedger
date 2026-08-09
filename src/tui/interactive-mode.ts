@@ -511,7 +511,26 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** Host 逆向 approval 请求：只收集并返回决策；Host receipt 未接入前不更新 approval workflow。 */
   handleReverseRequest(frame: HostFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
-    const view = parseApprovalReverseRequest(frame.body);
+    return this.handleApprovalReverseRequest(frame.body, signal);
+  }
+
+  /** Session reverse-request 的唯一 TUI 分派：approval 与 credential 共用既有 UI authority。 */
+  handleSessionReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const requestKind = typeof frame.body.kind === "string" ? frame.body.kind : undefined;
+    if (requestKind === "approval_prompt") {
+      const body = isRecord(frame.body.body) ? frame.body.body : undefined;
+      return body === undefined
+        ? Promise.resolve({ ok: false, code: "reverse_request_invalid" })
+        : this.handleApprovalReverseRequest(body, signal);
+    }
+    if (requestKind === "credential_prompt" || requestKind === "credential_event") {
+      return this.handleCredentialReverseRequest(frame, signal);
+    }
+    return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+  }
+
+  private handleApprovalReverseRequest(body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const view = parseApprovalReverseRequest(body);
     if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
     return new Promise<Record<string, unknown>>((resolve) => {
       let settled = false;

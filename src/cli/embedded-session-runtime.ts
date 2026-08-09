@@ -20,9 +20,10 @@ import type { SessionStore } from "../storage/session-store/session-store.ts";
 import type { OwnerStore } from "../storage/session-store/owner-store.ts";
 import { SessionOwner } from "../runtime/session-owner/session-owner.ts";
 import { SessionRuntimeServer } from "../runtime/session-server/runtime-server.ts";
-import { SessionRuntime } from "../runtime/session-runtime/session-runtime.ts";
+import { SessionRuntime, type SessionDomainPort } from "../runtime/session-runtime/session-runtime.ts";
 import { assembleSessionDomain, type SessionDomainCompositionOptions } from "../runtime/session-runtime/domain.ts";
 import { LateBoundAttemptPort } from "../runtime/session-runtime/attempt-gateway.ts";
+import { createSessionApprovalPorts } from "../runtime/session-runtime/approval-reverse-request.ts";
 import { restoreSession } from "../runtime/session-runtime/restore.ts";
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
@@ -40,6 +41,21 @@ export interface EmbeddedSessionRuntimeOptions {
 	readonly domain?: SessionDomainCompositionOptions;
 	/** 本地 view 连接收到的 reverse_request(credential/approval UI)处理器;TUI 注入。 */
 	readonly reverseRequestHandler?: SessionReverseRequestHandler;
+	/** Session-scoped worktree open/lease lifecycle；不得由 TUI 直接持有。 */
+	readonly workspace?: SessionWorkspaceFactory;
+}
+
+export interface SessionWorkspaceHandle {
+	readonly effectiveCwd: string;
+	release(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
+}
+
+export interface SessionWorkspaceFactory {
+	open(input: {
+		readonly sessionId: SessionId;
+		readonly store: SessionStore;
+		readonly fence: import("../runtime/session-owner/types.ts").OwnerFence;
+	}): Promise<SessionWorkspaceHandle>;
 }
 
 export interface EmbeddedSessionRuntimeResult {
@@ -182,7 +198,29 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 	// §5.1:只有 crash takeover(active stale row 经 probe + CAS)才进
 	// RECOVERY_REQUIRED;clean create / clean release resume 直接 READY。
 	const crashTakeover = claimOwner.lastClaimWasTakeover;
-	const domain = options.domain === undefined ? undefined : await assembleSessionDomain(options.domain, sessionId, store, result.fence, restored, attemptPort);
+	const workspace = await options.workspace?.open({ sessionId, store, fence: result.fence });
+	const approvalPorts = options.domain === undefined
+		? undefined
+		: createSessionApprovalPorts({
+			store,
+			fence: result.fence,
+			sender: server,
+			driverConnectionId: () => server.driverConnectionId(),
+		});
+	const domainOptions = options.domain === undefined
+		? undefined
+		: {
+				...options.domain,
+				...(workspace === undefined ? {} : { cwd: workspace.effectiveCwd }),
+				...(approvalPorts === undefined ? {} : { approvalPorts }),
+			};
+	let domain: SessionDomainPort | undefined;
+	try {
+		domain = domainOptions === undefined ? undefined : await assembleSessionDomain(domainOptions, sessionId, store, result.fence, restored, attemptPort);
+	} catch (error) {
+		await workspace?.release("error").catch(() => undefined);
+		throw error;
+	}
 	runtime = new SessionRuntime({
 		sessionId,
 		store,
@@ -194,6 +232,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		restored,
 		domain,
 		attemptPortRef: attemptPort,
+		...(workspace === undefined ? {} : { lifecycleCleanup: (reason) => workspace.release(reason) }),
 	});
 	server.bindController(runtime);
 	runtime.start();

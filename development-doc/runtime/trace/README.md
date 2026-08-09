@@ -13,7 +13,7 @@
 
 ## 实施状态
 
-目标基线：当前 `rollback/pre-governed-agent-harness-runtime` 工作树。Phase 01–03 已在当前工作树实现：本地 Store、runtime recorder、用户级配置和 production composition 已接线；Opik/outbox 顺延到 Phase 04，尚未开始且当前代码不联网。
+历史目标基线为 `rollback/pre-governed-agent-harness-runtime`。Phase 01–03 已在当前 `session-owner-runtime` 工作树实现：本地 Store、runtime recorder、用户级配置和标准 CLI production composition 已接线；recorder 由 Session domain 强制绑定 `sessionId + ownerGeneration`。Opik/outbox 顺延到 Phase 04，尚未开始且当前代码不联网。
 
 | 文档 | 阶段 | 状态 |
 |---|---|---|

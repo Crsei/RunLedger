@@ -18,6 +18,7 @@ describe("current execution boundary baseline", () => {
 		expect(MANAGED_PROCESS_BACKEND_ALLOWLIST).toEqual([
 			"src/cli/linux-peer-attestor.ts",
 			"src/cli/runtime-host-production.ts",
+			"src/cli/session-git-command.ts",
 			"src/storage/process/node-pty-adapter.ts",
 			"src/storage/process/process-backend.ts",
 			"src/storage/process/supervisor-runner.ts",

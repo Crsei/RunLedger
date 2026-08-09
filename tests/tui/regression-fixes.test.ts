@@ -152,6 +152,21 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
+	it("S3: Session reverse-request handler dispatches approval prompts through the existing modal authority", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const pending = mode.handleSessionReverseRequest(
+			credentialFrame({
+				kind: "approval_prompt",
+				body: { requestType: "permission", toolName: "write", summary: "update workspace file", cwd: "/workspace" },
+			}),
+			new AbortController().signal,
+		);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		const overlay = (mode as unknown as { ui: { overlay: { handleInput?(data: string): void } | undefined } }).ui.overlay;
+		overlay?.handleInput?.("\r");
+		await expect(pending).resolves.toEqual({ ok: true, decision: "allow-once" });
+	});
+
 	it("P1-5: requestQuit cancels in-flight effects and cleans active timeline rows", async () => {
 		const terminal = new FakeTerminal();
 		let release: (() => void) | undefined;

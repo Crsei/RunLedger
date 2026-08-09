@@ -29,6 +29,8 @@ export const MANAGED_PROCESS_BACKEND_ALLOWLIST: readonly string[] = [
 	// production capability adapter, not a tool/TUI process escape hatch.
 	"src/cli/linux-peer-attestor.ts",
 	"src/cli/runtime-host-production.ts",
+	// Session-scoped worktree composition 的单一 bounded Git spawn adapter。
+	"src/cli/session-git-command.ts",
 	"src/storage/process/node-pty-adapter.ts",
 	"src/storage/process/process-backend.ts",
 	"src/storage/process/supervisor-runner.ts",

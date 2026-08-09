@@ -1,6 +1,6 @@
 # Session Owner Runtime 替代计划
 
-> 状态：**R0–R5 implemented（2026-08-07 fresh focused/full gates 通过）；R6 partially implemented/blocked（Agent/model/tool、Security/Gateway、recovery barrier 与 attachment lifecycle 已接线，MCP/Hook/Skill/Plugin、managed process/PTY、worktree cold-resume、Trace production factory 和 approval reverse path 尚未接线）；R6.5 Linux automated candidate PASS but not accepted（macOS/Windows、真实领域能力和独立审计缺失）；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 仅保留为安全窗口）**
+> 状态：**R0–R5 implemented（2026-08-07 fresh focused/full gates 通过）；R6 partially implemented/blocked（Agent/model/tool、Security/Gateway、recovery barrier、attachment、worktree cold-resume、Trace production factory 与 approval reverse path 已接线；MCP/Hook/Skill/Plugin 和 managed process/PTY/output 仍阻塞）；R6.5 Linux automated candidate PASS but not accepted（尚未以新增真实领域能力重跑，且 macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 仅保留为安全窗口）**
 > 建立日期：2026-08-07
 > 准入修订：2026-08-07 已纳入 offline-only schema migration、external-effect recovery barrier、attachment-count lifetime、100ms SQLite busy 上限、connection-scoped driver、candidate-before-cutover、legacy archive 与 checkpoint-cache 八项阻塞/收紧要求。
 > 目标分支：`session-owner-runtime`
@@ -822,19 +822,19 @@ src/
 
 - [x] Agent/model/tool、SQLite ledger、Security/Gateway 只持当前 Session OwnerFence。`session-runtime/domain.ts` 是唯一 Agent/controller 组合层；`beginAttempt`/`settleAttempt`/`putCheckpoint` owner-fenced，生产 stdlib 使用 governed `ExecutionEnv`，不回退裸 `localExecutionEnv`。
 - [x] 外部副作用进入 attempt gateway 与 recovery barrier；CLI security flags 以最高优先级 source 进入 session composition，read-only/network-deny/restrictive sandbox 在实际 broker/spawn 前 fail closed。
-- [ ] 接入 production Trace recorder factory，并证明 Event/Artifact 的 sessionId + generation 归属、正文清洗和 failure policy 与 legacy Host 等价。当前 `SessionDomainCompositionOptions` 只有可选接缝，`main.ts` 未传入 factory。
+- [x] 接入 production Trace recorder factory，并证明 Event/Artifact 的 sessionId + generation 归属、正文清洗和 failure policy 与既有本地 Trace 合同等价。`main.ts` 注入 CLI factory，domain 强制绑定当前 `sessionId + ownerGeneration`；off/events/events_and_artifacts、正文清洗与 best-effort/fail-closed 回归全绿。
 - [ ] 将 managed process/PTY/output 的真实生产生命周期改绑 session scope。当前 `SessionProcessRegistry` 只提供被动容量/状态投影且未驱动真实 process backend；不得把该占位描述成 PTY、output settlement 或 process recovery 已接线。
 - [ ] MCP/Hook/Skill/Plugin 逐 SessionRuntime 独立启动、bounded、关闭并覆盖 crash restore；当前生产工具集显式排除 Skill，未装配 MCP/Hook/Plugin lifecycle。
-- [ ] worktree 改为 canonical session locator，并在 cold resume 重验 platform/root/Git/lease/effective cwd；当前 session row 有 locator 字段，但 production SessionRuntime 尚未消费/重验。
+- [x] worktree 改为 canonical session locator，并在 cold resume 重验 platform/root/Git/lease/effective cwd。locator 与安全 workspace event 在 owner-fenced transaction 中提交；标准 CLI flags、lease release/reacquire、drift/disable fail closed 与 fork 不继承均有 focused 证据。
 - [x] model selection、driver claim/release、prompt/steer/follow-up 与 recovery command 走 server facade；driver event 与 tool attempt receipt durable。
-- [x] Session protocol version 3 握手由 Runtime composition 提供冻结的 capability/operation manifest，并声明 `session.run-timing`；Client handle 固化协商结果并以 `supports(operation)` 本地拒绝未协商 domain operation，server dispatch 前再次 fail closed。当前只发布真实 core/credential/catalog/run-timing operation，不虚报 process/trace/extension/worktree/approval。
+- [x] Session protocol version 3 握手由 Runtime composition 提供冻结的 capability/operation manifest，并声明 `session.run-timing`；Client handle 固化协商结果并以 `supports(operation)` 本地拒绝未协商 domain operation，server dispatch 前再次 fail closed。真实 domain 额外发布 `session.approval.reverse` 与只读 `session.security.inspect`；无 domain/test recovery Runtime 不虚报，仍不发布 process/extension mutation。
 - [x] Session `DomainRouter` 已替代生产 TUI 的 Host 命名 domain 通道；query/mutation envelope 统一校验 `sessionId + generation + correlationId + effectId`，mutation 额外校验 catalog revision/driver，create/fork 经 append-only attempt receipt 与 recovery barrier，fork 另有 source-head fence。
 - [x] SQLite Session catalog/create/resume/fork 已接入 `SessionWorkflowPort` 与标准 CLI 转场循环；`InteractiveMode.run()` 返回 typed `quit|switch` intent，composition root 严格 detach-before-attach，失败只经 canonical open 恢复原 Session，remote attachment 存在时旧 Runtime 保持 headless。
-- [x] credential onboarding 的 reverse-request UI 通道（Session `login` 命令 + driver 连接 reverse-request + TUI 渲染 + auth.json 落库，见 [`07-credential-reverse-request-ui-plan.md`](07-credential-reverse-request-ui-plan.md)）。approval reverse-request 与 durable decision receipt 仍待排期。
+- [x] credential 与 approval 共用 Session reverse-request UI 通道。approval request/decision/allow-once revoke 以 Session Event Store + receipt CAS durable 保存；driver reconnect、旧 generation response、timeout/abort fail closed，TUI 只返回 decision，不建立第二 authority（credential 细节见 [`07-credential-reverse-request-ui-plan.md`](07-credential-reverse-request-ui-plan.md)）。
 - [x] local UI detach 且 remote attachment 存在时进入 headless-attached owner loop；只有 attachment count 归零才 pause/release。`onAttachmentCountChange` 回调 + `runtime.pause`（paused checkpoint + release unowned）；`session-owner-production.test.ts` 最后 attachment 关闭验证 unowned + checkpoint。
 - [x] 新 Session Owner 模块禁止 legacy Host import，标准 CLI composition 无 Host fallback；legacy Host 源码仍保留到 R9，不能表述为全仓 Host 假设已经删除。
 
-退出条件：所有真实 tool/process/approval/domain mutation 都绑定 `sessionId + generation` 且经过 recovery barrier；不同 Session 的故障、MCP 和 process capacity 相互隔离。**当前未达成**：Agent/model/tool、Security/Gateway、owner/attachment/recovery 主链已实现；Trace、managed process/PTY、MCP/Hook/Skill/Plugin、worktree cold-resume 和 approval reverse path 是 R6 blocking gaps。
+退出条件：所有真实 tool/process/approval/domain mutation 都绑定 `sessionId + generation` 且经过 recovery barrier；不同 Session 的故障、MCP 和 process capacity 相互隔离。**当前未达成**：Agent/model/tool、Security/Gateway、owner/attachment/recovery、Trace、worktree 与 approval 主链已实现；managed process/PTY/output 和 MCP/Hook/Skill/Plugin 仍是 R6 blocking gaps。
 
 ### R6.5：Candidate production composition 与 fault evidence
 
@@ -842,7 +842,7 @@ src/
 
 - [x] 新增 `scripts/verify-session-owner-candidate.ts`，只接受预创建、绝对、隔离且位于仓库外的 `RUNLEDGER_DIR`；脚本直接调用与 R7 相同的 production factory，不使用 fake/in-memory adapter。`requireRunledgerDir()` 校验绝对路径 + 仓库外 + `runledger-candidate-*` 隔离命名；fault matrix 全部走 `createEmbeddedSessionRuntime` / `SessionClient` / `OwnerStore` 真实代码路径。
 - [x] Linux candidate 覆盖真实多进程 claim、健康 attach、local UI detach 保活、last attachment shutdown、crash takeover、attempt crash 后 recovery barrier 和 read-only Security final leaf；底层 TCP auth/driver/subscriber fault 由 focused tests 覆盖，但未冒充全部在 candidate script 内执行。
-- [ ] 使用真实 model turn、MCP、managed process/PTY、worktree cold-resume、Trace 和 approval reverse request 完成 candidate composition；这些能力受 R6 blocking gaps 阻塞。
+- [ ] 使用真实 model turn、MCP、managed process/PTY、worktree cold-resume、Trace 和 approval reverse request 完成 candidate composition；worktree/Trace/approval 已在 focused production composition 中转绿，但 candidate 尚未重跑这些场景，managed process/MCP 仍受 R6 blocking gaps 阻塞。
 - [ ] macOS、Windows runner 使用同一 candidate code path并形成真实 evidence；当前只有 Linux 本地运行结果，`unverified_platform` 不算 PASS。
 - [x] candidate manifest 绑定 HEAD、tracked/untracked 内容 digest、store schema digest、`commandDigest` 和 `gateOutputDigest`；重复运行 drift fail closed。
 - [x] 测量 100 Session catalog、10 个独立子进程/独立 SQLite connection 的并发 owner claim 和单次同步 DB call 上限；2026-08-07 fresh Linux candidate 为 catalog 59.2ms、单次同步 DB call ≤100ms、10 claims 941.1ms。slow subscriber 与三 client fan-out 当前只有 focused tests，仍需纳入最终 candidate/standard-PATH fault evidence。
@@ -965,6 +965,13 @@ tests/cli/session-owner-production.test.ts
 - `npm run check`、`npm run build` 与 `git diff --check` 通过。
 - `npm test`：Vitest 269 files passed / 1 skipped、1506 tests passed / 3 skipped；Bun OpenTUI 32 tests / 179 assertions passed。
 - 这组证据只闭合新集成计划 S1/S2 与 R6 对应子项；R6 仍 partial/blocked，R6.5/R8 仍 not accepted，R7 验收仍随 R8 pending，R9 仍 not started。
+
+### 11.3 2026-08-09 S3 fresh 本地证据
+
+- production Worktree/Trace/Approval/Security focused matrix：13 files / 84 tests 通过；覆盖 canonical locator cold resume/drift/disable、Trace 三模式与 owner generation、approval reconnect/timeout/stale/abort、capability 不虚报、只读 security 投影与 TUI reverse handler。
+- `npm run check` 与 `npm run build` 通过；执行边界继续使用精确文件 allowlist，Session Git broker 只允许 `src/cli/session-git-command.ts`，没有目录级或工具级 raw spawn 豁免。
+- `npm test`：Vitest 271 files passed / 1 skipped、1521 tests passed / 3 skipped；Bun OpenTUI 4 files / 32 tests / 179 assertions passed。
+- 这组证据闭合新集成计划 S3 与 R6 的 Worktree/Trace/Approval/Security 子项；未运行包含这些新增场景的隔离 candidate，且 managed process/PTY/output、MCP/Hook/Skill/Plugin、macOS/Windows、独立审计与 human acceptance 仍未完成，所以 R6 仍 partial/blocked，R6.5/R8 仍 not accepted，R9 仍 not started。
 
 生产 runner 的最小场景：
 

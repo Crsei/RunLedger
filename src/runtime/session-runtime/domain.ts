@@ -33,6 +33,7 @@ import {
 import type { RestoreOutcome } from "./restore.ts";
 import { restoreCheckpointReplay } from "./checkpoint.ts";
 import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
+import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
 
 export interface SessionDomainCompositionOptions {
 	readonly cwd: string;
@@ -41,6 +42,8 @@ export interface SessionDomainCompositionOptions {
 	readonly models: Models;
 	readonly overrides?: RuntimeSelectionOverrides;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
+	/** Session Event Store + 当前 driver reverse-request 的 approval authority。 */
+	readonly approvalPorts?: SessionApprovalPorts;
 	/** CLI > managed > project > user 的 session-scoped Security 配置层。 */
 	readonly securitySources?: readonly SessionSecurityConfigSource[];
 	/** 可选:AGENTS 拼接(缺省读 <cwd>/AGENTS.md)。 */
@@ -68,9 +71,19 @@ export async function assembleSessionDomain(
 		workspaceId: catalog.workspaceId,
 		repositoryId: catalog.repositoryId,
 		...(options.securitySources === undefined ? {} : { securitySources: options.securitySources }),
+		...(options.approvalPorts === undefined ? {} : { approvalPorts: options.approvalPorts }),
 	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
 	const executionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
+	const traceRecorderFactory = options.traceRecorderFactory === undefined
+		? undefined
+		: {
+			create: (input: Parameters<TraceRecorderFactory["create"]>[0]) => options.traceRecorderFactory!.create({
+				...input,
+				sessionId,
+				ownerGeneration: fence.generation,
+			}),
+		};
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -83,10 +96,21 @@ export async function assembleSessionDomain(
 		tools: productionSessionTools(options.cwd, executionEnv),
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
-		traceRecorderFactory: options.traceRecorderFactory,
+		traceRecorderFactory,
 	});
 	return {
 		controller,
+		protocolCapabilities: ["session.approval.reverse", "session.security.inspect"],
+		securityInspection: () => ({
+			ownerGeneration: fence.generation,
+			profile: security.snapshot.profile.name,
+			approvalPolicy: security.snapshot.profile.approvalPolicy,
+			filesystemMode: security.snapshot.profile.filesystemMode,
+			networkMode: security.snapshot.profile.network.mode,
+			sandboxMode: security.snapshot.profile.sandbox,
+			policyDigest: security.snapshot.policyDigest,
+			sourceCount: security.snapshot.sources.length,
+		}),
 		snapshot: (): SessionDomainSnapshot => ({
 			messages: controller.messages,
 			warnings: controller.warnings,

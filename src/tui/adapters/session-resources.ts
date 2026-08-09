@@ -96,7 +96,7 @@ export function createSessionResourcePorts(resources: SessionResourcePortsInput 
 
 	const securityPort: SecurityModeWorkflowPort = {
 		inspect: (request) => envelope(request, () => inspectSecurityMode(resources.query!, request)),
-		// 当前 Session 只有 security.inspect（无 mutation operation）→ 显式 unavailable。
+		// 当前 Session 只有 session.security.inspect（无 mutation operation）→ 显式 unavailable。
 		set: async (request) => ({ ok: false, ref: request, error: { code: "session_operation_unsupported", message: "Session has no security-mode mutation contract", retryable: false } }),
 	};
 
@@ -107,7 +107,7 @@ export function createSessionResourcePorts(resources: SessionResourcePortsInput 
 	return {
 		...(supports("extension.inspect") ? { extensions: extensionPort } : {}),
 		...(supports("plan.inspect") ? { plan: planPort } : {}),
-		...(supports("security.inspect") ? { securityMode: securityPort } : {}),
+		...(supports("session.security.inspect") ? { securityMode: securityPort } : {}),
 		...(supports("worktree.inspect") ? { workspaceGit: workspaceGitPort } : {}),
 	};
 }
@@ -205,7 +205,7 @@ async function inspectPlan(query: ResourceQuery, request: TuiPortRequest): Promi
 }
 
 async function inspectSecurityMode(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<SecurityModeSnapshot>> {
-	const body = await query("security.inspect", {}, request);
+	const body = await query("session.security.inspect", {}, request);
 	if (body.ok === false) {
 		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 	}
@@ -215,7 +215,7 @@ async function inspectSecurityMode(query: ResourceQuery, request: TuiPortRequest
 		ok: true,
 		ref: request,
 		value: {
-			authorityGeneration: 0,
+			authorityGeneration: numberField(body.ownerGeneration) ?? 0,
 			mode: knownProfile
 				? { state: "known", value: profile === "danger-full-access" ? "unrestricted" : "guarded" }
 				: { state: "unknown", reason: "not-reported" },

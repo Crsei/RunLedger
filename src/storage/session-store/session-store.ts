@@ -78,6 +78,14 @@ export interface AppendEventInput {
 	readonly expectedPreviousEventHash: string | null;
 }
 
+export interface PutWorktreeLocatorInput {
+	readonly locatorJson: string;
+	readonly repositoryId?: string;
+	readonly eventType: "workspace.bound" | "workspace.validation_recorded";
+	/** 只允许 bounded public identity/digest；private locator 只写 sessions 行。 */
+	readonly payload: Record<string, unknown>;
+}
+
 export interface SessionEventRecord {
 	readonly sessionId: string;
 	readonly sequence: number;
@@ -251,6 +259,51 @@ export class SessionStore {
 		this.assertAdmissionReady();
 		const row = this.db.querySingle("SELECT * FROM sessions WHERE session_id = ?", [sessionId]);
 		return row === undefined ? undefined : rowToCatalog(row);
+	}
+
+	/**
+	 * S3:private worktree locator 与 public audit event 在同一 owner-fenced
+	 * transaction 中提交；事件不复制绝对路径或 lease token。
+	 */
+	public putWorktreeLocator(fence: OwnerFence, input: PutWorktreeLocatorInput): void {
+		if (input.locatorJson.length === 0 || input.locatorJson.length > 256 * 1024) {
+			throw new SessionStoreError("invalid_input", "worktree locator JSON is empty or too large");
+		}
+		try {
+			const parsed = JSON.parse(input.locatorJson) as unknown;
+			if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("invalid object");
+		} catch {
+			throw new SessionStoreError("invalid_input", "worktree locator JSON is invalid");
+		}
+		const payloadJson = JSON.stringify(input.payload);
+		if (input.repositoryId !== undefined && !input.repositoryId.startsWith("repository_")) {
+			throw new SessionStoreError("invalid_input", "worktree repository id is invalid");
+		}
+		if (payloadJson.length > 16 * 1024) throw new SessionStoreError("invalid_input", "workspace audit payload is too large");
+		this.db.withImmediateTransactionSync((tx) => {
+			tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
+			if (!verifyOwnerFence(tx, fence)) throw new SessionStoreError("owner_fenced", "owner fenced");
+			const head = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [fence.sessionId]);
+			if (head === undefined) throw new SessionStoreError("session_not_found", `session not found: ${fence.sessionId}`);
+			const previous = tx.querySingle(
+				"SELECT current_event_hash FROM session_events WHERE session_id = ? AND sequence = ?",
+				[fence.sessionId, Number(head.head_sequence)],
+			);
+			tx.runSync("UPDATE sessions SET worktree_locator_json = ?, repository_id = COALESCE(?, repository_id), updated_at_ms = ? WHERE session_id = ?", [
+				input.locatorJson,
+				input.repositoryId ?? null,
+				Date.now(),
+				fence.sessionId,
+			]);
+			appendEventInTransaction(tx, fence, {
+				eventId: createRuntimeId("event", `workspace-${fence.generation}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`),
+				ownerGeneration: fence.generation,
+				eventType: input.eventType,
+				payloadJson,
+				createdAtMs: Date.now(),
+				expectedPreviousEventHash: previous === undefined ? null : String(previous.current_event_hash),
+			});
+		});
 	}
 
 	/** 新 Session 尚无 owner;只插入 durable row,generation 由 R3 owner claim 从 1 开始。 */

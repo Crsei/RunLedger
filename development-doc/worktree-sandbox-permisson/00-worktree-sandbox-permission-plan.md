@@ -13,7 +13,7 @@
 >
 > Runtime 公共契约来源：[`../runtime/00-reference.md`](../runtime/00-reference.md) 与 [`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)。
 >
-> 生产 Host/managed process 行为来源（现行基线）：[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)；替代实施权威：[`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)（worktree 改绑 `sessionId + generation`，fence 不声称撤销外部副作用）。
+> legacy Host/managed process 行为来源（迁移输入与 R9 前安全窗口）：[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)；当前标准 CLI 的替代实施权威：[`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)（worktree/approval 改绑 `sessionId + generation`，fence 不声称撤销外部副作用）。
 >
 > 当前多平台适配计划：[`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md)。
 >
@@ -56,6 +56,13 @@
 - `--no-worktree` 通过 `workspaceBindingMode="disabled"` 禁止 persisted binding discovery，而不是只隐藏 CLI 创建动作（`runtime-host-binding.test.ts`）。
 - `allow-once` 在受控 filesystem/network effect 或 process final-leaf 完成后，以 CAS 写入 revision 2 `revoked` receipt 并追加 `permission.revoked`；撤销或审计不确定时 fail closed（`approval-coordinator.test.ts`、`execution-gateway.test.ts`、`runtime-host-security.test.ts`）。MCP/Hook 的 pre-invocation resource gate 不伪装成 effect completion。
 - 全链路 E2E 不再直接伪造 registry `removed` 状态：先验证 dirty deny 和无 approval force deny，随后先 release binding，再由 `WorktreeManager.remove()` 真实执行 `git worktree remove --force`，并检查 registry、磁盘路径与 Git registration（`worktree-sandbox-permission-e2e.test.ts`）。
+
+### 0.0.3 2026-08-09 Session Owner 接线校正
+
+- 标准 CLI 已由 Session Owner composition 消费本专项现有 WorktreeManager/platform adapter 与 Security/ExecutionGateway，不再把 legacy Host 作为生产 owner。
+- canonical Session locator 为 `<runledgerHome>/worktrees/<sessionId>`，SQLite 保存 current versioned private locator；cold resume 重验 platform/root identity、Git registration、base/head、lease、registry 与 effective cwd containment。验证失败或已有 locator 时传 `--no-worktree` 均 fail closed，不回退 source checkout。
+- Session approval authority 使用 Event Store 保存 request/decision/revoked receipt，并经当前 authenticated driver reverse request 获取 allow-once/deny/cancel；driver reconnect、timeout、abort 与旧 generation response 均 fail closed。
+- 只读 `session.security.inspect` 仅返回安全 profile/mode/digest/count 投影，不返回绝对路径；未协商 mutation 在 client/TUI 本地 unavailable。managed process/PTY/output 仍由 Runtime 06 R6 后续迁移拥有，本校正不声称该项已接线。
 
 | 项目 | 基线 | 本计划主要读取的实现 |
 |---|---|---|

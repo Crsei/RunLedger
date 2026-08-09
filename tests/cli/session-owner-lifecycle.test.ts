@@ -57,6 +57,41 @@ async function attachRemote(embedded: EmbeddedSessionRuntimeResult, store: Sessi
 }
 
 describe("standard CLI Session Owner lifecycle", () => {
+	it("opens and releases the Session-scoped workspace inside the owner lifecycle", async () => {
+		const db = openSessionDatabase(join(dir, "workspace-state.db"));
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const sessionId = createRuntimeId("session", "workspace-lifecycle") as SessionId;
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "workspace-lifecycle"),
+			repositoryId: createRuntimeId("repository", "workspace-lifecycle"),
+			settingsDigest: "d".repeat(64),
+		});
+		const calls: string[] = [];
+		const options = {
+			sessionId,
+			store,
+			ownerStore,
+			workspace: {
+				open: async (input: { readonly fence: { readonly generation: number } }) => {
+					calls.push(`open:${input.fence.generation}`);
+					return {
+						effectiveCwd: `/managed/${sessionId}`,
+						release: async (reason: string) => { calls.push(`release:${reason}`); },
+					};
+				},
+			},
+		};
+		const embedded = await createEmbeddedSessionRuntime(options);
+		expect(calls).toEqual(["open:1"]);
+		await embedded.handle.close();
+		await pauseIfLastAttachment(embedded);
+		expect(calls).toEqual(["open:1", "release:paused"]);
+		store.database().close();
+	});
+
 	it("returns to the switch loop while a remote attachment keeps the old owned Runtime headless", async () => {
 		const { embedded, store, ownerStore } = await openEmbedded();
 		const remote = await attachRemote(embedded, store, ownerStore);

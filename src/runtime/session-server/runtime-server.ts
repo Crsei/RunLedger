@@ -217,6 +217,11 @@ export class SessionRuntimeServer implements OwnerTransport {
 		return [...this.connections].filter((connection) => connection.initialized).length;
 	}
 
+	/** 当前 authenticated driver connection；断线/release 后立即为空。 */
+	public driverConnectionId(): ConnectionId | undefined {
+		return this.driverState.driver?.connectionId;
+	}
+
 	/** §6.4:owner crash/takeover 后 driver 强制 NONE + durable revision 事件。 */
 	public recordDriverResetOnTakeover(): boolean {
 		if (this.fence === undefined) return false;

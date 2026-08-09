@@ -46,7 +46,10 @@ describe("local trace composition", () => {
 			createTraceId: () => createRuntimeId("trace", "composition"),
 		});
 
-		const recorder = await factory.create({ sessionId: createRuntimeId("session", "events") });
+		const recorder = await factory.create({
+			sessionId: createRuntimeId("session", "events"),
+			ownerGeneration: 7,
+		});
 		expect(recorder?.traceId).toBe("trace_composition");
 		await recorder?.startRun();
 		const eventPath = join(layout.events, "2026", "08", "02", "trace_composition.jsonl");
@@ -55,6 +58,8 @@ describe("local trace composition", () => {
 			metadata?: Record<string, unknown>;
 		};
 		expect(started.metadata).toMatchObject({
+			sessionId: "session_events",
+			ownerGeneration: 7,
 			recordingMode: "events",
 			failurePolicy: "fail_closed",
 			recordingConfigDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),

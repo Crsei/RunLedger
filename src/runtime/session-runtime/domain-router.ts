@@ -32,6 +32,11 @@ export interface SessionDomainMutationContext extends SessionDomainRequestContex
 	readonly expectedRevision: number;
 }
 
+export interface SessionDomainRouterOptions {
+	/** 只由真实 Session domain composition 注入的安全投影。 */
+	readonly securityInspection?: () => Record<string, unknown>;
+}
+
 export type SessionDomainResult =
 	| {
 			readonly ok: true;
@@ -59,19 +64,25 @@ export class SessionDomainRouter {
 	private readonly generation: number;
 	private readonly store: SessionStore;
 	private readonly attempts: AttemptPort;
+	private readonly securityInspection: SessionDomainRouterOptions["securityInspection"];
 
-	public readonly operationManifest: readonly SessionProtocolOperationDescriptor[] = Object.freeze([
-		Object.freeze({ operation: "session.catalog.list", capability: "session.catalog", access: "read" }),
-		Object.freeze({ operation: "session.create", capability: "session.catalog", access: "mutate" }),
-		Object.freeze({ operation: "session.resume", capability: "session.catalog", access: "mutate" }),
-		Object.freeze({ operation: "session.fork", capability: "session.catalog", access: "mutate" }),
-	]);
+	public readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
 
-	public constructor(sessionId: SessionId, generation: number, store: SessionStore, attempts: AttemptPort) {
+	public constructor(sessionId: SessionId, generation: number, store: SessionStore, attempts: AttemptPort, options: SessionDomainRouterOptions = {}) {
 		this.sessionId = sessionId;
 		this.generation = generation;
 		this.store = store;
 		this.attempts = attempts;
+		this.securityInspection = options.securityInspection;
+		this.operationManifest = Object.freeze([
+			Object.freeze({ operation: "session.catalog.list", capability: "session.catalog", access: "read" }),
+			Object.freeze({ operation: "session.create", capability: "session.catalog", access: "mutate" }),
+			Object.freeze({ operation: "session.resume", capability: "session.catalog", access: "mutate" }),
+			Object.freeze({ operation: "session.fork", capability: "session.catalog", access: "mutate" }),
+			...(this.securityInspection === undefined
+				? []
+				: [Object.freeze({ operation: "session.security.inspect", capability: "session.security.inspect", access: "read" })]),
+		]);
 	}
 
 	public query(input: Record<string, unknown>): SessionDomainResult {
@@ -107,6 +118,15 @@ export class SessionDomainRouter {
 						current: session.sessionId === this.sessionId,
 					})),
 				},
+			};
+		}
+		if (operation === "session.security.inspect" && this.securityInspection !== undefined) {
+			return {
+				ok: true,
+				status: "ok",
+				operation,
+				domainRevision: this.generation,
+				value: this.securityInspection(),
 			};
 		}
 		return {

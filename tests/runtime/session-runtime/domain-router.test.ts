@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntimeHarness, type RuntimeHarness } from "./harness.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import { SessionDomainRouter } from "../../../src/runtime/session-runtime/domain-router.ts";
+import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 
 let harness: RuntimeHarness | undefined;
 
@@ -13,6 +15,99 @@ afterEach(async () => {
 });
 
 describe("S1 Session Domain Router", () => {
+	it("does not advertise approval or security capabilities without a real domain authority", async () => {
+		harness = await createRuntimeHarness("security-capability-absent");
+		const manifest = harness.runtime.protocolManifest();
+		expect(manifest.protocolCapabilities).not.toContain("session.approval.reverse");
+		expect(manifest.protocolCapabilities).not.toContain("session.security.inspect");
+		expect(manifest.operationManifest).not.toContainEqual(expect.objectContaining({ operation: "session.security.inspect" }));
+	});
+
+	it("advertises approval reverse and read-only security only for a real domain authority", async () => {
+		const domain: SessionDomainPort = {
+			controller: {
+				subscribe: () => () => undefined,
+			} as unknown as SessionDomainPort["controller"],
+			protocolCapabilities: ["session.approval.reverse", "session.security.inspect"],
+			securityInspection: () => ({ profile: "workspace-write" }),
+			snapshot: () => ({
+				messages: [],
+				warnings: [],
+				auditEntries: [],
+				selection: { thinkingLevel: "off" },
+				toolCount: 0,
+				inFlight: false,
+				providerStatuses: [],
+			}),
+		};
+		harness = await createRuntimeHarness("security-capability-present", { domain });
+		const manifest = harness.runtime.protocolManifest();
+		expect(manifest.protocolCapabilities).toEqual(expect.arrayContaining([
+			"session.approval.reverse",
+			"session.security.inspect",
+		]));
+		expect(manifest.operationManifest).toContainEqual({
+			operation: "session.security.inspect",
+			capability: "session.security.inspect",
+			access: "read",
+		});
+		expect(manifest.operationManifest.some((entry) => entry.capability === "session.security.inspect" && entry.access === "mutate")).toBe(false);
+	});
+
+	it("publishes only the read-only Session security inspection supplied by real domain composition", () => {
+		const calls: string[] = [];
+		const router = new SessionDomainRouter(
+			createRuntimeId("session", "security-inspect"),
+			7,
+			{
+				listSessions: () => [],
+			} as unknown as RuntimeHarness["store"],
+			{
+				beginAttempt: () => ({ error: "recovery_barrier_active" as const }),
+				settleAttempt: () => ({ ok: false as const, code: "not_used" }),
+			},
+			{
+				securityInspection: () => {
+					calls.push("inspect");
+					return {
+						profile: "workspace-write",
+						approvalPolicy: "on-request",
+						filesystemMode: "workspace-write",
+						networkMode: "deny",
+						sandboxMode: "workspace-write",
+						policyDigest: { algorithm: "sha256", digest: "a".repeat(64) },
+						sourceCount: 2,
+					};
+				},
+			},
+		);
+
+		expect(router.operationManifest).toContainEqual({
+			operation: "session.security.inspect",
+			capability: "session.security.inspect",
+			access: "read",
+		});
+		expect(router.operationManifest.some((entry) => entry.operation.includes("security") && entry.access === "mutate")).toBe(false);
+		expect(router.query({
+			sessionId: createRuntimeId("session", "security-inspect"),
+			generation: 7,
+			correlationId: "correlation_security_inspect",
+			effectId: "effect_security_inspect",
+			operation: "session.security.inspect",
+			payload: {},
+		})).toMatchObject({
+			ok: true,
+			status: "ok",
+			operation: "session.security.inspect",
+			value: {
+				profile: "workspace-write",
+				approvalPolicy: "on-request",
+				sourceCount: 2,
+			},
+		});
+		expect(calls).toEqual(["inspect"]);
+	});
+
 	it("rejects malformed correlation/effect envelopes before reading the catalog", async () => {
 		harness = await createRuntimeHarness("domain-invalid-envelope");
 		const result = await harness.runtime.handleQuery({

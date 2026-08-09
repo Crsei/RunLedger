@@ -1,8 +1,8 @@
 # RunLedger TUI 与 Session Runtime 全链路接入修复计划
 
-> 文档状态：implementing（S0–S2 complete；S3 pending，未开始）<br>
+> 文档状态：implementing（S0–S3 complete；S4 pending）<br>
 > 记录日期：2026-08-09<br>
-> 基线：`session-owner-runtime@c608c77`，记录时工作区干净<br>
+> 记录基线：`session-owner-runtime@c608c77`，记录时工作区干净；S3 实施起点：`2c5a7be`<br>
 > 文档职责：跨领域执行编排，不替代各专项的状态与设计权威
 
 ## 1. 文档权威与目标
@@ -172,9 +172,19 @@ CLI composition root 负责 detach、open/attach、renderer 销毁和下一轮 T
 4. `main.ts` 注入 CLI Trace recorder factory；Trace 绑定 `sessionId + ownerGeneration`，遵守 `off/events/events_and_artifacts` 和 failure policy。
 5. 使用 Session Event Store 保存 approval request、decision、receipt、allow-once revoke 和恢复状态，不复用 legacy Host JSON 或仅内存 store。
 6. driver 断线时保留有界 reverse-request waiter；新 driver 可在超时前接管。重复、过期或旧 generation 响应必须拒绝。
-7. TUI 统一处理 credential 与 permission reverse request；本批只开放 `security.inspect`，security mutation 继续 `unavailable`。
+7. TUI 统一处理 credential 与 permission reverse request；本批只开放 `session.security.inspect`，security mutation 继续 `unavailable`。
 
 退出条件：worktree cold resume、Trace 三模式、approval reconnect/timeout/stale response 和 Security fail-closed 测试全绿。
+
+#### S3 执行记录（2026-08-09）
+
+- Session row 的 `worktree_locator_json` 已保存 current versioned private locator；canonical target 固定为 `<runledgerHome>/worktrees/<sessionId>`。owner-fenced transaction 同步提交 locator、repository identity 与安全的 workspace event；cold resume 重验 platform/version、realpath/symlink identity、Git registration、HEAD/base commit、effective cwd containment、registry record 与 active lease。
+- 标准 CLI 已接 `--worktree`、`--worktree-ref`、`--worktree-branch` 与 `--no-worktree`；已有 locator 时禁用或验证失败均 fail closed，不回退 source checkout。clean shutdown 释放 lease，下一 generation 重新获取；fork 不继承 locator/lease。
+- `main.ts` 注入 `composeCliTraceRecorderFactory(layout, settings)`；domain 覆盖 recorder 的 `sessionId + ownerGeneration`，继续遵守 `off|events|events_and_artifacts`、正文清洗与 `best_effort|fail_closed`。
+- `approval-reverse-request.ts` 以 Session Event Store 为 durable truth 保存 `approval.requested/decided/revoked` 与 receipt CAS；driver 断线后在 expiry 内轮询当前 driver，旧 generation response、timeout 与 abort 均 fail closed。attach-only client 不创建本地 approval authority。
+- 真实 domain composition 才协商 `session.approval.reverse` 与 `session.security.inspect`；后者只投影 profile、approval/filesystem/network/sandbox mode、policy digest 与 source count，不返回 native path。未装配 domain 的 test/recovery Runtime 不虚报这两项，security mutation 在客户端本地 `unavailable` 且不发 frame。
+- `InteractiveMode.handleSessionReverseRequest()` 统一分派 approval 与 credential，复用同一个 approval modal decision authority；标准 CLI 不再只注册 credential handler。legacy Host handler 仅保留到 R9 安全窗口。
+- focused 证据：13 files / 84 tests 全绿，覆盖 worktree cold resume/drift、Trace store/recorder/composition、approval reconnect/timeout/stale/abort、capability/readonly security、TUI adapter 与 reverse handler。完整门禁：`npm run check`、`npm run build`、Vitest 271 files passed / 1 skipped、1521 tests passed / 3 skipped，以及 Bun OpenTUI 4 files / 32 tests / 179 assertions 全绿；该证据不提升 S4–S9、R6.5/R8、跨平台或 human acceptance。
 
 ### S4：真实 Process/PTY/output
 

@@ -645,6 +645,12 @@ tests/tui/
   `InteractiveMode.run()` 返回 typed `quit|switch` intent，CLI 严格 detach-before-attach，失败只经
   canonical open 恢复原 Session，remote attachment 存在时旧 Runtime 保持 headless。该项闭合
   新集成计划 S1/S2，但不提升本计划 B6–B8、Runtime R6/R6.5/R7/R8 或 human acceptance；
+- P1-8 Session approval/security 接线（2026-08-09）：`handleSessionReverseRequest()` 统一分派
+  credential 与 `approval_prompt`，approval modal 仍只返回 decision；durable request/decision/revoke
+  receipt authority 位于 owner Runtime 的 Session Event Store。资源 adapter 只在握手精确协商
+  `session.security.inspect` 时构造只读 security port，mutation 本地 unavailable 且不发 frame；无
+  domain Runtime 不虚报 approval/security capability。该项闭合新集成计划 S3 的 TUI 接缝，不代表
+  B6 全部 governed workflow 或 B7 process/extension 已完成；
 - P2-1 generation/typed fence：stale/aborted reset 同样核对 generation；plan/extension 等
   已接通投影继续做枚举与结构校验，未有真实 Host operation 的领域直接 unavailable；
 - P2-2 全局 cleanup：`TimelineEvent.cleanup.correlationId` 改 optional，projector 不传时

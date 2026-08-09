@@ -9,6 +9,8 @@ import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import type { FileSystemBrokerPort } from "../../../src/security/policy-filesystem.ts";
 import type { NetworkBrokerPort } from "../../../src/security/policy-network.ts";
+import { MemoryApprovalStateStore, type ApprovalAuditPort } from "../../../src/security/permission/approval-coordinator.ts";
+import type { PermissionPrompter } from "../../../src/security/types.ts";
 import { UnavailableSandboxBackend } from "../../../src/security/sandbox/unavailable.ts";
 import {
 	HostProcessFinalLeafAdapter,
@@ -81,6 +83,11 @@ async function composition(input: {
 	readonly onWrite?: () => void;
 	readonly networkBroker?: NetworkBrokerPort;
 	readonly processLeaf?: SessionProcessLeaf;
+	readonly approvalPorts?: {
+		readonly prompter: PermissionPrompter;
+		readonly stateStore: MemoryApprovalStateStore;
+		readonly audit: ApprovalAuditPort;
+	};
 }) {
 	const home = join(root, "home");
 	await fs.mkdir(home, { recursive: true });
@@ -97,6 +104,7 @@ async function composition(input: {
 		},
 		sandboxBackend: new UnavailableSandboxBackend("unknown", "test backend unavailable"),
 		...(input.processLeaf === undefined ? {} : { processLeaf: input.processLeaf }),
+		...(input.approvalPorts === undefined ? {} : { approvalPorts: input.approvalPorts }),
 	});
 }
 
@@ -113,6 +121,33 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(source).not.toContain("localExecutionEnv");
 	});
 
+	it("binds production Trace recording to the Session owner generation", () => {
+		const domainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
+		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
+		expect(mainSource).toContain("composeCliTraceRecorderFactory(layout, settings)");
+		expect(mainSource).toContain("traceRecorderFactory");
+		expect(domainSource).toContain("ownerGeneration: fence.generation");
+	});
+
+	it("routes standard CLI worktree flags through the Session worktree composition", () => {
+		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
+		expect(mainSource).toContain("createSessionWorkspaceFactory");
+		expect(mainSource).toContain("layout.worktrees");
+		expect(mainSource).toContain("args.noWorktree");
+		expect(mainSource).not.toContain("HostWorkspaceBindingService");
+	});
+
+	it("wires durable approval reverse requests and read-only security inspection into production", () => {
+		const embeddedSource = readFileSync(join(process.cwd(), "src/cli/embedded-session-runtime.ts"), "utf8");
+		const domainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
+		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
+		expect(embeddedSource).toContain("createSessionApprovalPorts");
+		expect(domainSource).toContain("approvalPorts: options.approvalPorts");
+		expect(domainSource).toContain('"session.security.inspect"');
+		expect(domainSource).toContain('"session.approval.reverse"');
+		expect(mainSource).toContain("handleSessionReverseRequest");
+	});
+
 	it("rejects a read-only write before the filesystem broker mutates", async () => {
 		let writeCalls = 0;
 		const security = await composition({
@@ -123,6 +158,33 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		await expect(security.executionEnv.fs.writeFile(join(root, "blocked.txt"), "blocked"))
 			.rejects.toThrow(/denied|allowed roots|policy/u);
 		expect(writeCalls).toBe(0);
+	});
+
+	it("uses the injected Session durable approval ports for an on-request write", async () => {
+		let prompts = 0;
+		const approvalPorts = {
+			prompter: {
+				request: async () => {
+					prompts += 1;
+					return { decision: "allow-once" as const, decidedBy: createRuntimeId("principal", "session-driver") };
+				},
+			},
+			stateStore: new MemoryApprovalStateStore(),
+			audit: {
+				requested: async () => undefined,
+				decided: async () => undefined,
+				revoked: async () => undefined,
+			},
+		};
+		const security = await composition({
+			document: { profile: "workspace-write", approvalPolicy: "on-request", sandbox: "off" },
+			approvalPorts,
+		});
+		const target = join(root, "approved.txt");
+
+		await expect(security.executionEnv.fs.writeFile(target, "approved")).resolves.toBeUndefined();
+		expect(prompts).toBe(1);
+		expect(readFileSync(target, "utf8")).toBe("approved");
 	});
 
 	it("rejects network deny before the network broker or fetch leaf", async () => {

@@ -12,7 +12,7 @@ import { SessionStore } from "../../../src/storage/session-store/session-store.t
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
 import { SessionRuntimeServer } from "../../../src/runtime/session-server/runtime-server.ts";
-import { SessionRuntime } from "../../../src/runtime/session-runtime/session-runtime.ts";
+import { SessionRuntime, type SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
@@ -31,7 +31,7 @@ export interface RuntimeHarness {
 }
 
 /** 完整 runtime harness:create → claim → restore → runtime.start()。 */
-export async function createRuntimeHarness(seed = "h", options: { readonly crashTakeover?: boolean } = {}): Promise<RuntimeHarness> {
+export async function createRuntimeHarness(seed = "h", options: { readonly crashTakeover?: boolean; readonly domain?: SessionDomainPort } = {}): Promise<RuntimeHarness> {
 	const dir = mkdtempSync(join(tmpdir(), "session-runtime-harness-"));
 	const db = openSessionDatabase(join(dir, "state.db"));
 	installSessionStoreSchema(db);
@@ -50,7 +50,17 @@ export async function createRuntimeHarness(seed = "h", options: { readonly crash
 	if (!claimed.ok || claimed.outcome !== "claimed") throw new Error("harness claim failed");
 	const restored = restoreSession(store, sessionId);
 	if (!restored.ok) throw new Error("harness restore failed");
-	const runtime = new SessionRuntime({ sessionId, store, ownerStore, owner, server, fence: claimed.fence, crashTakeover: options.crashTakeover === true, restored });
+	const runtime = new SessionRuntime({
+		sessionId,
+		store,
+		ownerStore,
+		owner,
+		server,
+		fence: claimed.fence,
+		crashTakeover: options.crashTakeover === true,
+		restored,
+		...(options.domain === undefined ? {} : { domain: options.domain }),
+	});
 	server.bindController(runtime);
 	runtime.start();
 	return {

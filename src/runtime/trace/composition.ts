@@ -21,6 +21,8 @@ import {
 
 export interface TraceRecorderFactoryInput {
 	readonly sessionId: string;
+	/** Session Owner 代际；Session-scoped production composition 必须提供。 */
+	readonly ownerGeneration?: number;
 	/** Optional stable identity for Host-owned work that may be materialized after restart. */
 	readonly traceId?: TraceId;
 }
@@ -90,6 +92,8 @@ export function createLocalTraceRecorderFactory(
 				failurePolicy: options.config.failurePolicy,
 				onDiagnostic,
 				metadata: {
+					sessionId: input.sessionId,
+					...(input.ownerGeneration === undefined ? {} : { ownerGeneration: input.ownerGeneration }),
 					recordingMode: options.config.mode,
 					failurePolicy: options.config.failurePolicy,
 					recordingConfigDigest: recordingConfigDigest(options.config),

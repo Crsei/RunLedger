@@ -59,6 +59,24 @@ describe("managed worktree lifecycle", () => {
 		if (listed.ok) expect(listed.value[0]?.state).toBe("ready");
 	});
 
+	it("uses the Session canonical locator when production composition supplies it", async () => {
+		const git = new FakeGit();
+		const registry = new WorktreeRegistry(new MemoryWorktreeRegistryStore());
+		const manager = new WorktreeManager({ registry, git, managedRoot: "/managed" });
+		const request = {
+			sessionId,
+			workspaceId,
+			sourceCwd: "/source/packages/app",
+			label: "task",
+			canonicalTarget: `/managed/${sessionId}`,
+		};
+		const created = await manager.create(request);
+
+		expect(created).toMatchObject({ ok: true, value: { worktreeLocator: `/managed/${sessionId}` } });
+		expect(git.calls.find((call) => call.arguments[0] === "worktree" && call.arguments[1] === "add")?.arguments)
+			.toContain(`/managed/${sessionId}`);
+	});
+
 	it("rejects dirty removal unless an exact force approval is supplied", async () => {
 		const git = new FakeGit();
 		const registry = new WorktreeRegistry(new MemoryWorktreeRegistryStore());

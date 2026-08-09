@@ -39,7 +39,7 @@ import { checkStoreCompatibility, readStoreHeader } from "../storage/session-sto
 import { installSessionStoreSchema } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
 import { OwnerStore } from "../storage/session-store/owner-store.ts";
-import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult } from "./embedded-session-runtime.ts";
+import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult, type SessionWorkspaceFactory } from "./embedded-session-runtime.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "./session-interactive-controller.ts";
 import { builtinModels } from "../providers/all.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
@@ -48,6 +48,11 @@ import type { SecurityConfigDocument } from "../security/types.ts";
 import type { SessionSecurityConfigSource } from "../security/session-composition.ts";
 import { SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
 import { runSessionTransitionLoop } from "./session-transition-loop.ts";
+import { composeCliTraceRecorderFactory } from "./trace-config.ts";
+import { createSessionWorkspaceFactory } from "../runtime/session-runtime/worktree-composition.ts";
+import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
+import { createProductionGitCommandPort } from "./session-git-command.ts";
+import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -114,6 +119,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     await mkdir(layout.home, { recursive: true, mode: 0o700 });
   }
   const settings = await loadProjectSettings({ layout });
+  const traceRecorderFactory = composeCliTraceRecorderFactory(layout, settings);
 
   // §4.2:owner discovery 前只读冻结 schema header;too-new/too-old 全部 fail closed。
   // 首次运行(fresh 空库)直接安装首个 schema;非空库 missing_header 视为损坏。
@@ -156,17 +162,43 @@ export async function main(argv: readonly string[]): Promise<void> {
 
   const models = builtinModels({ credentials: AuthStorage.create(layout) });
   await models.refresh({ allowNetwork: false });
+  const worktreeGit = createProductionGitCommandPort();
+  const worktreeRegistry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout));
+  const workspaceFactoryFor = async (targetSessionId: string): Promise<SessionWorkspaceFactory | undefined> => {
+    const record = store.getSession(targetSessionId);
+    if (record?.worktreeLocator !== undefined && args.noWorktree) {
+      throw new Error("session is bound to a worktree; --no-worktree cannot bypass the persisted binding");
+    }
+    const requiresWorktree = record?.worktreeLocator !== undefined || args.worktree !== undefined;
+    if (!requiresWorktree) return undefined;
+    await mkdir(layout.worktrees, { recursive: true, mode: 0o700 });
+    const adapters = createWorkspaceAdaptersForCurrentPlatform({ git: worktreeGit, managedRoot: layout.worktrees });
+    if (!adapters.ok) throw new Error(`session worktree unavailable: ${adapters.error.code}: ${adapters.error.message}`);
+    return createSessionWorkspaceFactory({
+      layout,
+      sourceCwd: cwd,
+      mode: args.noWorktree ? "disabled" : args.worktree === undefined ? "auto" : "create",
+      ...(args.worktree === undefined ? {} : { label: args.worktree }),
+      ...(args.worktreeRef === undefined ? {} : { baseRef: args.worktreeRef }),
+      ...(args.worktreeBranch === undefined ? {} : { branch: args.worktreeBranch }),
+      git: worktreeGit,
+      registry: worktreeRegistry,
+      workspace: adapters.value,
+    });
+  };
   const ownedRuntimeRegistry = new Map<string, EmbeddedSessionRuntimeResult>();
   const openView = async (targetSessionId: string): Promise<CliSessionView> => {
     const embedded = await createEmbeddedSessionRuntime({
       sessionId: targetSessionId as SessionId,
       store,
       ownerStore,
+	  workspace: await workspaceFactoryFor(targetSessionId),
       domain: {
         cwd,
         layout,
         settings,
         models,
+		traceRecorderFactory,
         overrides: {
           ...(args.provider === undefined ? {} : { provider: args.provider }),
           ...(args.model === undefined ? {} : { model: args.model }),
@@ -247,7 +279,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 
   async function runInteractiveView(view: CliSessionView) {
     const activeInteractive = new InteractiveMode({ controller: view.controller, workspaceCapability: workspaceCapabilityLabel() });
-    view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleCredentialReverseRequest(frame, signal));
+    view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {
       if (view.controller.inFlight) view.controller.interrupt();
       else activeInteractive.quit();

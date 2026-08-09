@@ -33,7 +33,7 @@ import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts"
 import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
 import type { Api, Model, ModelThinkingLevel } from "../../types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../interactive-session-controller.ts";
-import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolManifest, type SessionStatus } from "../session-server/protocol.ts";
+import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionStatus } from "../session-server/protocol.ts";
 import { SessionDomainRouter } from "./domain-router.ts";
 import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, type HumanWaitReason } from "./run-timing.ts";
 
@@ -46,6 +46,8 @@ export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "
  */
 export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
+	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
+	readonly securityInspection?: () => Record<string, unknown>;
 	snapshot(): SessionDomainSnapshot;
 }
 
@@ -73,6 +75,8 @@ export interface SessionRuntimeOptions {
 	readonly domain?: SessionDomainPort;
 	/** P0-2:attempt gateway 的延迟绑定引用(domain 装配早于本对象构造)。 */
 	readonly attemptPortRef?: LateBoundAttemptPort;
+	/** Session-scoped external lifecycles(worktree lease, later MCP/process)有序收口。 */
+	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
 }
 
 export class SessionRuntime implements SessionController {
@@ -86,6 +90,7 @@ export class SessionRuntime implements SessionController {
 	private readonly restored: Extract<RestoreOutcome, { readonly ok: true }>;
 	private readonly domain: SessionDomainPort | undefined;
 	private readonly domainRouter: SessionDomainRouter;
+	private readonly lifecycleCleanup: SessionRuntimeOptions["lifecycleCleanup"];
 	private readonly domainListener: (() => void) | undefined;
 	private state: SessionRuntimeState;
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
@@ -103,7 +108,10 @@ export class SessionRuntime implements SessionController {
 		this.owner = options.owner;
 		this.server = options.server;
 		this.fence = options.fence;
-		this.domainRouter = new SessionDomainRouter(options.sessionId, options.fence.generation, options.store, this);
+		this.domainRouter = new SessionDomainRouter(options.sessionId, options.fence.generation, options.store, this, {
+			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
+		});
+		this.lifecycleCleanup = options.lifecycleCleanup;
 		this.restored = options.restored;
 		this.state = options.crashTakeover ? "recovery_required" : "ready";
 		this.barrier = new RecoveryBarrier({ store: options.store, fence: options.fence }, options.crashTakeover ? "open" : "closed");
@@ -255,6 +263,7 @@ export class SessionRuntime implements SessionController {
 			}
 			this.persistAbortedRunIfNeeded();
 			this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
+			await this.lifecycleCleanup?.(reason).catch(() => undefined);
 			this.owner.release(reason);
 			await this.server.close();
 			this.domainListener?.();
@@ -276,6 +285,7 @@ export class SessionRuntime implements SessionController {
 				await boundedWait(this.domain.controller.waitForIdle(), 3_000);
 			}
 			this.persistAbortedRunIfNeeded();
+			await this.lifecycleCleanup?.("fenced").catch(() => undefined);
 			await this.server.close();
 			this.domainListener?.();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
@@ -401,7 +411,11 @@ export class SessionRuntime implements SessionController {
 
 	public protocolManifest(): SessionProtocolManifest {
 		return freezeSessionProtocolManifest({
-			protocolCapabilities: [...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities, "session.catalog"],
+			protocolCapabilities: [
+				...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities,
+				"session.catalog",
+				...(this.domain?.protocolCapabilities ?? []),
+			],
 			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest],
 		});
 	}
