@@ -198,6 +198,26 @@ describe("TUI input components", () => {
 
     expect(editor.getText()).toBe("abc");
   });
+
+  it("left/right/home/end 会移动模型光标并在当前位置编辑", () => {
+    const terminal = new FakeTerminal();
+    const tui = new TUI(terminal, false);
+    const theme = loadTheme("dark");
+    const editor = new CustomEditor(tui, makeEditorTheme(theme, makeSelectListTheme(theme)), { theme, selectListTheme: makeSelectListTheme(theme) });
+    editor.setText("abcd");
+
+    editor.handleInput("left");
+    expect(editor.getCursor()).toEqual({ line: 0, col: 3 });
+    editor.handleInput("X");
+    expect(editor.getText()).toBe("abcXd");
+    editor.handleInput("home");
+    expect(editor.getCursor()).toEqual({ line: 0, col: 0 });
+    editor.handleInput("right");
+    editor.handleInput("backspace");
+    expect(editor.getText()).toBe("bcXd");
+    editor.handleInput("end");
+    expect(editor.getCursor()).toEqual({ line: 0, col: 4 });
+  });
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {

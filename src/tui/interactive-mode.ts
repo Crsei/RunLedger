@@ -51,8 +51,12 @@ import { AuthInputModal } from "./components/auth-input-modal.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
+import { SelectionView } from "./components/selection-view.ts";
 import type { SelectItem, RgbColor } from "./index.ts";
-import type { Component, OverlayOptions } from "./primitives.ts";
+import type { Component, OverlayHandle, OverlayOptions } from "./primitives.ts";
+import { matchesKey } from "./index.ts";
+import { findCommand, commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
+import { SlashCommandPopup } from "./components/slash-command-popup.ts";
 import type { TuiOverlayState } from "./application/state.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
@@ -187,6 +191,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
 
+  // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
+  private slashPopup: SlashCommandPopup | undefined;
+  private slashOverlayHandle: OverlayHandle | undefined;
+  /** Esc 关闭后记忆当前命令 token;token 变化才恢复弹窗(对照 codex dismissed_command_token)。 */
+  private dismissedCommandToken: string | undefined;
+
   /** B1-B3:TuiState 由 store 唯一持有（此字段已由 store 取代，防止误用）。 */
   private readonly storeRef: undefined = undefined;
 
@@ -243,7 +253,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
     this.ui.setAppIntentHandler({
       onInterrupt: () => {
-        if (this.ui.hasOverlay()) return false;
+        // nonCapturing 弹窗(如 slash 补全)不拦截 Ctrl+C
+        if (this.ui.hasCapturingOverlay()) return false;
         this.handleInterrupt();
         return true;
       },
@@ -315,6 +326,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       theme: this.theme,
       selectListTheme: this.makeSelectListTheme(),
       onSubmit: (text) => this.handleSubmit(text),
+      onChange: () => this.syncSlashPopup(),
+      onSlashPopupKey: (data) => this.handleSlashPopupKey(data),
       onFollowUp: (text) => this.handleFollowUpSubmit(text),
       onDequeue: () => this.restoreQueuesToEditor(),
     };
@@ -374,6 +387,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** B3:overlay 状态意图写入 store；组件/焦点仍由 renderer 管理（view side-effect）。 */
   private showOverlayModal(component: Component, options?: OverlayOptions, kind: Exclude<TuiOverlayState["state"], "closed"> = "command"): void {
+    // 真实 modal 抢占 overlay 槽;slash 补全弹窗随之失效(防止幽灵引用)
+    this.slashPopup = undefined;
+    this.slashOverlayHandle = undefined;
     this.store.dispatch({
       type: "overlay.open",
       overlay: { state: kind, requestId: `overlay-${this.store.getState().interaction.generation + 1}` },
@@ -384,6 +400,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** B3:overlay 关闭意图写入 store。 */
   private closeOverlay(): void {
+    if (this.ui.getOverlay() === this.slashPopup) {
+      this.slashPopup = undefined;
+      this.slashOverlayHandle = undefined;
+    }
     this.store.dispatch({ type: "overlay.close" });
     this.ui.hideOverlay();
   }
@@ -642,109 +662,26 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /**
-   * 打开 slash 命令选择器(M5 占位,M6 键位 / 触发接通)。
-   * 选中 / xxx 后,把 / xxx 当 user prompt 注入(目前 mock 占位)。
+   * 打开 slash 命令选择器;清单唯一来源为命令注册表(commandsForContext)。
+   * 选中项携带注册表 descriptor,经 dispatchCommand 统一派发(与 handleSubmit 同源)。
    */
   openSlashCommands(): void {
-    const items: SelectItem[] = [
-      { value: "/help", label: "/help", description: "Show help" },
-      { value: "/clear", label: "/clear", description: "Clear chat" },
-      { value: "/sessions", label: "/sessions", description: "Browse canonical Sessions" },
-      { value: "/new", label: "/new", description: "Create a Session in this workspace" },
-      { value: "/resume", label: "/resume [sessionId]", description: "Resume a canonical Session" },
-      { value: "/fork", label: "/fork", description: "Fork the current durable head" },
-      { value: "/provider", label: "/provider", description: "Configure provider" },
-      { value: "/login", label: "/login", description: "Authenticate provider" },
-      { value: "/logout", label: "/logout", description: "Remove credential" },
-      { value: "/model", label: "/model", description: "Switch model" },
-      { value: "/thinking", label: "/thinking", description: "Switch thinking level" },
-      { value: "/recovery", label: "/recovery", description: "Inspect or resolve crash recovery" },
-      { value: "/processes", label: "/processes", description: "List managed processes" },
-      { value: "/terminal", label: "/terminal <executionId>", description: "Open managed terminal" },
-      { value: "/quit", label: "/quit", description: "Exit safely" },
-      { value: "/mcp", label: "/mcp", description: "List connected MCP servers" },
-      { value: "/plugins", label: "/plugins", description: "List discovered plugins" },
-      { value: "/skills", label: "/skills", description: "List discovered skills" },
-      { value: "/hooks", label: "/hooks", description: "List configured hooks" },
-      { value: "/plan", label: "/plan", description: "Inspect Plan Mode state" },
-      { value: "/compact", label: "/compact", description: "List compaction checkpoints" },
-      { value: "/memory", label: "/memory", description: "Inspect memory store" },
-      { value: "/remember", label: "/remember <text>", description: "Propose a memory record" },
-      { value: "/prompt", label: "/prompt", description: "Pick prompt template" },
-    ];
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
+    this.hideSlashPopup();
+    const entries = commandsForContext({});
+    const view = new SelectionView({
       title: "/commands",
-      items,
-      onSelect: (item) => {
-        this.closeOverlay();
-        // 二级 selector 派发
-        switch (item.value) {
-          case "/sessions":
-            void this.openSessionCatalog();
-            break;
-          case "/new":
-            void this.createNewSession();
-            break;
-          case "/resume":
-            void this.resumeSession();
-            break;
-          case "/fork":
-            void this.forkCurrentSession();
-            break;
-          case "/model":
-            this.openModelSelector();
-            break;
-          case "/thinking":
-            this.openThinkingSelector();
-            break;
-          case "/recovery":
-            void this.runRecoveryWorkflow("");
-            break;
-          case "/provider":
-            void this.openProviderSelector();
-            break;
-          case "/login":
-            void this.openLoginSelector();
-            break;
-          case "/processes":
-            this.openProcessList();
-            break;
-          case "/mcp":
-            void this.openMcpServerSelector();
-            break;
-          case "/plugins":
-            void this.openExtensionSelector("plugin.list", "plugins", "/plugins");
-            break;
-          case "/skills":
-            void this.openExtensionSelector("skill.list", "skills", "/skills");
-            break;
-          case "/hooks":
-            void this.openExtensionSelector("hook.list", "hooks", "/hooks");
-            break;
-          case "/plan":
-            void this.openPlanWorkflow();
-            break;
-          case "/compact":
-            void this.runDomainCommand("compaction.list", {}, "/compact", true);
-            break;
-          case "/memory":
-            void this.runDomainCommand("memory.inspect", {}, "/memory", true);
-            break;
-          case "/remember":
-            void this.runDomainCommand("memory.propose", { scope: "workspace", title: "remember", content: "remember" }, "/remember", false);
-            break;
-          case "/terminal":
-            this.showNotice("Use /terminal <executionId> to open a managed terminal.");
-            break;
-          default:
-            this.echoPrompt(item.value);
-        }
-      },
+      items: entries.map((entry) => ({
+        name: `/${entry.canonicalName}${entry.usage ? ` ${entry.usage}` : ""}`,
+        description: entry.description,
+        dismissOnSelect: true,
+        action: () => this.dispatchCommand(entry, ""),
+      })),
+      selectListTheme: makeSelectListTheme(this.theme),
+      maxVisible: 12,
+      onDismiss: () => this.closeOverlay(),
       onCancel: () => this.closeOverlay(),
     });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
+    this.showOverlayModal(view, { anchor: "bottom-left" });
   }
 
   /**
@@ -1157,99 +1094,17 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (text.length === 0) return;
     if (text.startsWith("/")) {
       const [rawCommand, ...argParts] = text.slice(1).trim().split(/\s+/);
-      const cmd = rawCommand ?? "";
+      const name = rawCommand ?? "";
       const arg = argParts.join(" ");
-      switch (cmd) {
-        case "sessions":
-          void this.openSessionCatalog();
-          return;
-        case "new":
-          void this.createNewSession();
-          return;
-        case "resume":
-          void this.resumeSession(arg || undefined);
-          return;
-        case "fork":
-          void this.forkCurrentSession();
-          return;
-        case "provider":
-          if (this.rejectConfigWhileRunning()) return;
-          void this.openProviderSelector();
-          return;
-        case "login":
-          if (this.rejectConfigWhileRunning()) return;
-          void this.openLoginSelector(arg || undefined);
-          return;
-        case "logout":
-          if (this.rejectConfigWhileRunning()) return;
-          void this.handleLogout(arg || undefined);
-          return;
-        case "model":
-          if (this.rejectConfigWhileRunning()) return;
-          this.openModelSelector();
-          return;
-        case "thinking":
-          if (this.rejectConfigWhileRunning()) return;
-          this.openThinkingSelector();
-          return;
-        case "recovery":
-          void this.runRecoveryWorkflow(arg);
-          return;
-        case "processes":
-          this.openProcessList();
-          return;
-        case "terminal":
-          this.openProcessTerminal(arg);
-          return;
-        case "mcp":
-          void this.openMcpServerSelector();
-          return;
-        case "plugins":
-          void this.openExtensionSelector("plugin.list", "plugins", "/plugins");
-          return;
-        case "skills":
-          void this.openExtensionSelector("skill.list", "skills", "/skills");
-          return;
-        case "hooks":
-          void this.openExtensionSelector("hook.list", "hooks", "/hooks");
-          return;
-        case "plan":
-          void this.openPlanWorkflow();
-          return;
-        case "compact":
-          void this.runDomainCommand("compaction.list", {}, "/compact", true);
-          return;
-        case "memory":
-          void this.runDomainCommand("memory.inspect", {}, "/memory", true);
-          return;
-        case "remember":
-          if (arg.length === 0) {
-            this.showNotice("/remember <text> 需要提供要记住的内容。", "error");
-            return;
-          }
-          void this.runDomainCommand("memory.propose", { scope: "workspace", title: arg.slice(0, 256), content: arg, sourceKind: "user" }, "/remember", false);
-          return;
-        case "prompt":
-          this.openPromptSelector();
-          return;
-        case "commands":
-        case "help":
-          this.openSlashCommands();
-          return;
-        case "clear":
-          this.pendingMessageBuffers.clear();
-          this.streamingDeltas.drain();
-          this.timelineProjector.resetRows();
-          this.refs.chat.clear();
-          this.ui.requestRender();
-          return;
-        case "quit":
-          void this.requestQuit();
-          return;
-        default:
-          this.showNotice(`Unknown command: /${cmd}`, "error");
-          return;
+      this.hideSlashPopup();
+      // 注册表唯一事实源:未知命令 → 原 default 分支行为(报错提示)
+      const command = findCommand(name);
+      if (command === undefined) {
+        this.showNotice(`Unknown command: /${name}`, "error");
+        return;
       }
+      this.dispatchCommand(command, arg);
+      return;
     }
 
 	if (this.hostConnectionState !== "ready") {
@@ -1272,6 +1127,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       },
     );
   }
+
 
   private handleFollowUpSubmit(text: string): void {
 	if (this.hostConnectionState !== "ready") {
@@ -1310,10 +1166,245 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.controller?.inFlight ?? this.agent?.inFlight ?? false;
   }
 
-  private rejectConfigWhileRunning(): boolean {
-    if (!this.inFlight()) return false;
-    this.showNotice("Configuration commands are available when the current turn is idle.", "note");
-    return true;
+  /**
+   * P4:注册表派发 —— handleSubmit 与 openSlashCommands 的共同出口。
+   * 域逻辑(openXxxSelector / runDomainCommand / workflow)不动,只换入口形态;
+   * 任务运行中禁用的命令(availableDuringTask=false)在此统一拦截。
+   */
+  private dispatchCommand(command: RegisteredSlashCommand, arg: string): void {
+    this.hideSlashPopup();
+    if (!command.availableDuringTask && this.inFlight()) {
+      this.showNotice(command.unavailableDuringTaskMessage ?? `/${command.canonicalName} is available when the current turn is idle.`, "note");
+      return;
+    }
+    switch (command.actionType) {
+      case "session.catalog":
+        void this.openSessionCatalog();
+        return;
+      case "session.create":
+        void this.createNewSession();
+        return;
+      case "session.resume":
+        void this.resumeSession(arg || undefined);
+        return;
+      case "session.fork":
+        void this.forkCurrentSession();
+        return;
+      case "config.provider":
+        void this.openProviderSelector();
+        return;
+      case "auth.login":
+        void this.openLoginSelector(arg || undefined);
+        return;
+      case "auth.logout":
+        void this.handleLogout(arg || undefined);
+        return;
+      case "config.model":
+        this.openModelSelector();
+        return;
+      case "config.thinking":
+        this.openThinkingSelector();
+        return;
+      case "recovery.open":
+        void this.runRecoveryWorkflow(arg);
+        return;
+      case "process.list":
+        this.openProcessList();
+        return;
+      case "process.terminal":
+        if (arg.length === 0) {
+          this.showNotice("Use /terminal <executionId> to open a managed terminal.");
+          return;
+        }
+        this.openProcessTerminal(arg);
+        return;
+      case "extension.mcp":
+        void this.openMcpServerSelector();
+        return;
+      case "extension.plugins":
+        void this.openExtensionSelector("plugin.list", "plugins", "/plugins");
+        return;
+      case "extension.skills":
+        void this.openExtensionSelector("skill.list", "skills", "/skills");
+        return;
+      case "extension.hooks":
+        void this.openExtensionSelector("hook.list", "hooks", "/hooks");
+        return;
+      case "plan.inspect":
+        void this.openPlanWorkflow();
+        return;
+      case "compaction.list":
+        void this.runDomainCommand("compaction.list", {}, "/compact", true);
+        return;
+      case "memory.inspect":
+        void this.runDomainCommand("memory.inspect", {}, "/memory", true);
+        return;
+      case "memory.propose":
+        if (arg.length === 0) {
+          this.showNotice("/remember <text> 需要提供要记住的内容。", "error");
+          return;
+        }
+        void this.runDomainCommand("memory.propose", { scope: "workspace", title: arg.slice(0, 256), content: arg, sourceKind: "user" }, "/remember", false);
+        return;
+      case "prompt.select":
+        this.openPromptSelector();
+        return;
+      case "ui.help":
+        this.openSlashCommands();
+        return;
+      case "ui.clear":
+        this.pendingMessageBuffers.clear();
+        this.streamingDeltas.drain();
+        this.timelineProjector.resetRows();
+        this.refs.chat.clear();
+        this.ui.requestRender();
+        return;
+      case "ui.quit":
+        void this.requestQuit();
+        return;
+    }
+  }
+
+  // ─── P3:slash 输入期补全弹窗(对照 codex sync_command_popup / slash_input) ───
+
+  /** 编辑器文本变化后同步弹窗状态:是否在编辑首行命令名、过滤串、dismiss 记忆。 */
+  private syncSlashPopup(): void {
+    const editing = this.editingSlashCommandName();
+    if (editing === undefined) {
+      this.hideSlashPopup();
+      return;
+    }
+    // Esc 关闭后同一 token 不再弹,token 变化才恢复
+    if (this.dismissedCommandToken !== undefined && editing.token === this.dismissedCommandToken) return;
+    this.dismissedCommandToken = undefined;
+    const popup = this.slashPopup ?? this.createSlashPopup();
+    popup.setFilter(editing.filter);
+    this.ui.requestRender();
+  }
+
+  /** 解析首行 `/name` 片段:光标在命令名编辑态返回 { token, filter },否则 undefined。 */
+  private editingSlashCommandName(): { readonly token: string; readonly filter: string } | undefined {
+    const text = this.refs.editor.getText();
+    const cursor = this.refs.editor.getCursor();
+    const firstLine = text.split("\n")[0] ?? "";
+    if (!firstLine.startsWith("/")) return undefined;
+    if (cursor.line !== 0) return undefined;
+    const nameEnd = firstLine.indexOf(" ", 1) === -1 ? firstLine.length : firstLine.indexOf(" ", 1);
+    if (cursor.col > nameEnd) return undefined;
+    const fragment = firstLine.slice(1, Math.min(nameEnd, cursor.col === 0 ? nameEnd : cursor.col));
+    return { token: firstLine.slice(1, nameEnd), filter: `/${fragment}` };
+  }
+
+  /** 当前首行 `/token`(Esc dismiss 记忆用)。 */
+  private currentSlashToken(): string | undefined {
+    const firstLine = (this.refs.editor.getText().split("\n")[0] ?? "");
+    if (!firstLine.startsWith("/")) return undefined;
+    const nameEnd = firstLine.indexOf(" ", 1) === -1 ? firstLine.length : firstLine.indexOf(" ", 1);
+    return firstLine.slice(1, nameEnd);
+  }
+
+  private createSlashPopup(): SlashCommandPopup {
+    const popup = new SlashCommandPopup({
+      commands: commandsForContext({}),
+      theme: this.makeSelectListTheme(),
+    });
+    this.slashPopup = popup;
+    this.slashOverlayHandle = this.ui.showOverlay(popup, { anchor: "bottom-left", nonCapturing: true });
+    this.ui.requestRender();
+    return popup;
+  }
+
+  private hideSlashPopup(): void {
+    this.slashOverlayHandle = undefined;
+    if (this.ui.getOverlay() !== this.slashPopup) {
+      // overlay 槽已被真实 modal 抢占,只清引用
+      this.slashPopup = undefined;
+      return;
+    }
+    this.slashPopup = undefined;
+    this.ui.hideOverlay();
+    this.ui.requestRender();
+  }
+
+  /** 弹窗激活期按键拦截(挂在 CustomEditor.handleInput 最前);返回 true 表示已消费。 */
+  private handleSlashPopupKey(data: string): boolean {
+    const popup = this.slashPopup;
+    if (popup === undefined) return false;
+    if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
+      popup.moveUp();
+      this.ui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
+      popup.moveDown();
+      this.ui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "tab") || matchesKey(data, "/")) {
+      this.completeSelectedSlashCommand(popup.selectedItem(), popup.selectedName());
+      this.ui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "enter")) {
+      const selected = popup.selectedItem();
+      if (selected === undefined) return false; // 无选中回退默认提交路径
+      this.acceptSelectedSlashCommand(selected, popup.selectedName());
+      this.ui.requestRender();
+      return true;
+    }
+    if (matchesKey(data, "escape")) {
+      this.dismissedCommandToken = this.currentSlashToken();
+      this.hideSlashPopup();
+      this.ui.requestRender();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Tab/`/` 补全:内联参数命令保留草稿尾(/re + "view the diff" → /review view the diff),
+   * 其余命令整串替换为 `/cmd `(对照 codex selected_command_completion)。
+   */
+  private completeSelectedSlashCommand(command: RegisteredSlashCommand | undefined, selectedName?: string): void {
+    if (command === undefined) return;
+    const completionName = selectedName ?? command.canonicalName;
+    const editor = this.refs.editor;
+    const text = editor.getText();
+    const firstLineEnd = text.indexOf("\n") === -1 ? text.length : text.indexOf("\n");
+    const whitespace = text.indexOf(" ", 1);
+    const tokenEnd = whitespace === -1 ? firstLineEnd : Math.min(whitespace, firstLineEnd);
+    const tail = text.slice(tokenEnd);
+    if (command.supportsInlineArgs && tail.trim().length > 0) {
+      const tailStartsWithSpace = /^\s/u.test(tail);
+      editor.setText(tailStartsWithSpace
+        ? `/${completionName}${tail}`
+        : `/${completionName} ${tail}`);
+      return;
+    }
+    editor.setText(`/${completionName} `);
+  }
+
+  /**
+   * Enter 接受高亮命令:内联参数命令先补全再带参派发,其余直接派发;
+   * 派发统一走 dispatchCommand(对照 codex InputResult::Command / CommandWithArgs)。
+   */
+  private acceptSelectedSlashCommand(command: RegisteredSlashCommand, selectedName?: string): void {
+    const editor = this.refs.editor;
+    if (command.supportsInlineArgs) {
+      const text = editor.getText();
+      const firstLineEnd = text.indexOf("\n") === -1 ? text.length : text.indexOf("\n");
+      const whitespace = text.indexOf(" ", 1);
+      const tokenEnd = whitespace === -1 ? firstLineEnd : Math.min(whitespace, firstLineEnd);
+      const arg = text.slice(tokenEnd).trim();
+      this.hideSlashPopup();
+      editor.addToHistory(`/${selectedName ?? command.canonicalName}${arg.length > 0 ? ` ${arg}` : ""}`);
+      editor.setText("");
+      this.dispatchCommand(command, arg);
+      return;
+    }
+    this.hideSlashPopup();
+    editor.setText("");
+    this.dispatchCommand(command, "");
   }
 
   private showNotice(text: string, kind: "note" | "error" = "note"): void {

@@ -86,6 +86,8 @@ export interface SelectListTheme {
   description(text: string): string;
   scrollInfo(text: string): string;
   noMatch(text: string): string;
+  /** 过滤命中段高亮(slash popup 用);缺省回退 bold。 */
+  matchHighlight?(text: string): string;
 }
 export interface SelectListTruncatePrimaryContext { text: string; maxWidth: number; columnWidth: number; item: SelectItem; isSelected: boolean }
 export interface SelectListLayoutOptions { minPrimaryColumnWidth?: number; maxPrimaryColumnWidth?: number; truncatePrimary?(context: SelectListTruncatePrimaryContext): string }
@@ -173,6 +175,8 @@ export class Editor implements Component, Focusable {
   onChange?: (text: string) => void;
   disableSubmit = false;
   private text = "";
+  /** 真实光标位置,以 code point 计;getCursor() 由此投影为 line/col。 */
+  private cursorCodePoints = 0;
   protected readonly tui: TUI;
   private readonly theme: EditorTheme;
   private readonly options: EditorOptions;
@@ -186,11 +190,38 @@ export class Editor implements Component, Focusable {
   getExpandedText(): string { return this.text; }
   getLines(): string[] { return this.text.split("\n"); }
   getCursor(): { line: number; col: number } {
-    const lines = this.getLines();
-    return { line: lines.length - 1, col: lines.at(-1)?.length ?? 0 };
+    const points = Array.from(this.text);
+    const offset = Math.min(this.cursorCodePoints, points.length);
+    let line = 0;
+    let col = 0;
+    for (let index = 0; index < offset; index += 1) {
+      if (points[index] === "\n") {
+        line += 1;
+        col = 0;
+      } else {
+        col += 1;
+      }
+    }
+    return { line, col };
   }
-  setText(text: string): void { this.text = text.replace(/\r\n?|\t/gu, (value) => value === "\t" ? "    " : "\n"); this.onChange?.(this.text); this.tui.requestRender(); }
-  insertTextAtCursor(text: string): void { this.setText(this.text + text); }
+  /** OpenTUI Textarea 使用 UTF-16 offset;从内部 code point 光标稳定换算。 */
+  getCursorOffset(): number {
+    return Array.from(this.text).slice(0, this.cursorCodePoints).join("").length;
+  }
+  /** 移动真实光标到指定 code point offset;越界 clamp。光标移动同样触发 onChange(对照 codex 光标变化 sync_popups)。 */
+  setCursor(offset: number): void {
+    this.cursorCodePoints = Math.max(0, Math.min(offset, Array.from(this.text).length));
+    this.onChange?.(this.text);
+    this.tui.requestRender();
+  }
+  setText(text: string): void {
+    this.text = text.replace(/\r\n?|\t/gu, (value) => value === "\t" ? "    " : "\n");
+    this.cursorCodePoints = Array.from(this.text).length;
+    this.onChange?.(this.text);
+    this.tui.requestRender();
+  }
+  /** 在光标位置插入文本,光标移至插入内容之后(粘贴/输入路径共用)。 */
+  insertTextAtCursor(text: string): void { this.replaceRangeAtCursor(text); }
   addToHistory(_text: string): void {}
   /** 帧驱动高度;OpenTUI 路径由 TUI.renderFrame 读取并传给 runtime。 */
   desiredHeight(width: number): number {
@@ -209,22 +240,57 @@ export class Editor implements Component, Focusable {
       return this.theme.backgroundColor(content + " ".repeat(Math.max(0, width - visibleWidth(content))));
     });
   }
+  /** 光标处替换:normalize 后按 code point 重算光标。 */
+  private replaceRangeAtCursor(insert: string): void {
+    const points = Array.from(this.text);
+    const at = Math.min(this.cursorCodePoints, points.length);
+    const normalized = insert.replace(/\r\n?|\t/gu, (value) => value === "\t" ? "    " : "\n");
+    this.text = points.slice(0, at).join("") + normalized + points.slice(at).join("");
+    this.cursorCodePoints = at + Array.from(normalized).length;
+    this.onChange?.(this.text);
+    this.tui.requestRender();
+  }
   handleInput(data: string): void {
     if (matchesKey(data, "enter")) {
       if (!this.disableSubmit && this.text.trim().length > 0) {
         const value = this.text;
         this.text = "";
+        this.cursorCodePoints = 0;
         this.onChange?.(this.text);
         this.onSubmit?.(value);
       }
       this.tui.requestRender();
       return;
     }
-    if (matchesKey(data, "shift+enter") || matchesKey(data, "ctrl+j")) { this.setText(this.text + "\n"); return; }
-    if (matchesKey(data, "backspace")) { this.setText(Array.from(this.text).slice(0, -1).join("")); return; }
+    if (matchesKey(data, "shift+enter") || matchesKey(data, "ctrl+j")) { this.replaceRangeAtCursor("\n"); return; }
+    if (matchesKey(data, "backspace")) {
+      const points = Array.from(this.text);
+      const at = Math.min(this.cursorCodePoints, points.length);
+      if (at > 0) {
+        this.text = points.slice(0, at - 1).join("") + points.slice(at).join("");
+        this.cursorCodePoints = at - 1;
+        this.onChange?.(this.text);
+        this.tui.requestRender();
+      }
+      return;
+    }
     if (matchesKey(data, "ctrl+u")) { this.setText(""); return; }
+    if (matchesKey(data, "left")) { this.setCursor(this.cursorCodePoints - 1); return; }
+    if (matchesKey(data, "right")) { this.setCursor(this.cursorCodePoints + 1); return; }
+    if (matchesKey(data, "home")) {
+      const points = Array.from(this.text);
+      const before = points.slice(0, this.cursorCodePoints);
+      this.setCursor(before.lastIndexOf("\n") + 1);
+      return;
+    }
+    if (matchesKey(data, "end")) {
+      const points = Array.from(this.text);
+      const nextLine = points.indexOf("\n", this.cursorCodePoints);
+      this.setCursor(nextLine === -1 ? points.length : nextLine);
+      return;
+    }
     if (isNavigationKey(data)) { this.tui.requestRender(); return; }
-    if (!/[\u0000-\u001f\u007f]/u.test(data)) this.setText(this.text + data);
+    if (!/[\u0000-\u001f\u007f]/u.test(data)) this.replaceRangeAtCursor(data);
   }
 }
 
@@ -300,6 +366,7 @@ export class TUI extends Container {
   private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private overlay: Component | undefined;
+  private overlayOptions: OverlayOptions | undefined;
   private overlayHidden = false;
   private runtime: OpenTuiComponentRuntime | undefined;
   private frameScheduler: FrameScheduler | undefined;
@@ -355,9 +422,16 @@ export class TUI extends Container {
     if (isFocusable(component)) component.focused = true;
   }
   hasOverlay(): boolean { return this.overlay !== undefined && !this.overlayHidden; }
+  /** 当前 overlay 组件(供持有方判断 overlay 槽当前归属)。 */
+  getOverlay(): Component | undefined { return this.overlay; }
+  /** 是否有关键盘捕获的 overlay(nonCapturing 弹窗不拦截输入,仍路由给焦点组件)。 */
+  hasCapturingOverlay(): boolean {
+    return this.overlay !== undefined && !this.overlayHidden && this.overlayOptions?.nonCapturing !== true;
+  }
   get isStarted(): boolean { return this.started; }
-  showOverlay(component: Component, _options: OverlayOptions = {}): OverlayHandle {
+  showOverlay(component: Component, options: OverlayOptions = {}): OverlayHandle {
     this.overlay = component;
+    this.overlayOptions = options;
     this.overlayHidden = false;
     this.requestRender();
     return {
@@ -369,7 +443,7 @@ export class TUI extends Container {
       isFocused: () => this.hasOverlay(),
     };
   }
-  hideOverlay(): void { this.overlay = undefined; this.overlayHidden = false; this.requestRender(); }
+  hideOverlay(): void { this.overlay = undefined; this.overlayOptions = undefined; this.overlayHidden = false; this.requestRender(); }
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
@@ -449,9 +523,11 @@ export class TUI extends Container {
       if (result?.data !== undefined) data = result.data;
       if (result?.consume) { this.requestRender(true); return; }
     }
-    const target = this.hasOverlay() ? this.overlay : this.focusedComponent;
+    const overlayActive = this.hasOverlay();
+    const overlayCapturesInput = overlayActive && this.overlayOptions?.nonCapturing !== true;
+    const target = overlayCapturesInput ? this.overlay : this.focusedComponent;
     target?.handleInput?.(data);
-    if (!this.hasOverlay() && this.focusedComponent !== null && "getText" in this.focusedComponent) {
+    if (!overlayCapturesInput && this.focusedComponent !== null && "getText" in this.focusedComponent) {
       const draft = (this.focusedComponent as Component & { getText(): string }).getText();
       this.emitActions(normalizeAppInput({ kind: "composer-changed", draft }));
     }
@@ -476,6 +552,9 @@ export class TUI extends Container {
       ? (this.focusedComponent as Component & { getText(): string }).getText()
       : "";
     const editorHeight = this.focusedComponent?.desiredHeight?.(width);
+    const editorCursorOffset = this.focusedComponent && "getCursorOffset" in this.focusedComponent
+      ? (this.focusedComponent as Component & { getCursorOffset(): number }).getCursorOffset()
+      : undefined;
     const overlay = this.hasOverlay() && this.overlay
       ? this.overlay.present?.(Math.max(1, width - 4)) ?? [{
         kind: "text" as const,
@@ -483,7 +562,7 @@ export class TUI extends Container {
       }]
       : undefined;
     if (this.runtime) {
-      this.runtime.update({ body, editorText, editorHeight, editorAppearance: this.editorAppearance, footer, overlay });
+      this.runtime.update({ body, editorText, editorCursorOffset, editorHeight, editorAppearance: this.editorAppearance, footer, overlay });
       return;
     }
     this.terminal.write([...body, ...this.focusedComponent?.render(width) ?? [], ...footer, ...overlay ?? []].join("\n"));

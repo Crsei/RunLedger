@@ -12,6 +12,9 @@ import type { TimelineRow } from "../../src/tui/timeline/types.ts";
 import { editorHeight } from "../../src/tui/editor-height.ts";
 import { editorBackgroundFromTerminal } from "../../src/tui/theme/editor-background.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
+import { makeSelectListTheme } from "../../src/tui/theme/factories.ts";
+import { SlashCommandPopup } from "../../src/tui/components/slash-command-popup.ts";
+import { builtinCommandDescriptors } from "../../src/tui/commands/registry.ts";
 
 describe("OpenTUI component projection", () => {
   test("wraps complete canonical Timeline user/assistant/thinking content at narrow width", async () => {
@@ -307,6 +310,51 @@ describe("OpenTUI component projection", () => {
       runtime.update({ body: [], editorText: "hello world", footer: [] });
       await setup.renderOnce();
       expect(editor.cursorOffset).toBe(editor.plainText.length);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("projects an explicit model cursor offset into the native textarea", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 16 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      const frame = {
+        body: [],
+        editorText: "hello",
+        editorCursorOffset: 2,
+        footer: [],
+      } as Parameters<typeof runtime.update>[0] & { readonly editorCursorOffset: number };
+      runtime.update(frame);
+      await setup.renderOnce();
+      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      expect(editor?.plainText).toBe("hello");
+      expect(editor?.cursorOffset).toBe(2);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("projects slash popup rows as a multi-option native select", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 24 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      const popup = new SlashCommandPopup({
+        commands: builtinCommandDescriptors(),
+        theme: makeSelectListTheme(loadTheme("dark")),
+      });
+      popup.setFilter("/c");
+      runtime.update({ body: [], editorText: "/c", footer: [], overlay: popup.present(76) });
+      await setup.renderOnce();
+      const select = setup.renderer.root.findDescendantById("runledger-overlay-select-0") as { readonly options?: readonly { readonly name: string }[] } | undefined;
+      expect(select).toBeDefined();
+      expect(select?.options?.map((option) => option.name)).toEqual(["/commands", "/clear", "/compact"]);
     } finally {
       runtime.destroy();
     }

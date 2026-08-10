@@ -55,7 +55,8 @@ export function makeSelectListTheme(theme: Theme): SelectListTheme {
   const description = (text: string): string => wrapFg(theme.muted)(text);
   const scrollInfo = (text: string): string => wrapFg(theme.hint)(text);
   const noMatch = (text: string): string => wrapFg(theme.error)(text);
-  return { selectedPrefix, selectedText, description, scrollInfo, noMatch };
+  const matchHighlight = (text: string): string => wrapBold(wrapFg(theme.accent)(text));
+  return { selectedPrefix, selectedText, description, scrollInfo, noMatch, matchHighlight };
 }
 
 export function makeEditorTheme(theme: Theme, selectList: SelectListTheme): EditorTheme {

@@ -1,23 +1,19 @@
 /**
- * SlashCommandSelector —— `/` 触发的 slash 命令选择器。
+ * SlashCommandSelector —— `/` 命令输入期补全弹窗的兼容出口。
  *
- * 对照 development-doc/tui/02-component-spec.md §8 与 09-* Ideographic.
+ * 对照 development-doc/tui/20-codex-slash-command-adaptation-plan.md P3:
+ * 实现已迁移到 SlashCommandPopup(components/slash-command-popup.ts);
+ * InteractiveMode 以 nonCapturing overlay 直接挂载 SlashCommandPopup,
+ * 本类保留为旧 export 兼容,仅做薄代理。
  *
- * 设计:
- *   - 构造时传入 SelectItem[] (slash command idem list);
- *   - onSelect 回调把 item.value 与当前 Editor text 拼接(由 InteractiveMode 决定);
- *   - onCancel 触发 OverlayHandle.hide();
- *
- * 本 M5 阶段:
- *   - items 由 InteractiveMode 装配时构造占位(/help /clear /model /mcp /prompt 几条);
- *   - 真实 slash 注册器在 M5+ 远期接通。
+ * @deprecated 使用 SlashCommandPopup。
  */
 
-import { SelectorModal, type SelectorModalProps } from "./selector-modal.ts";
+import { SlashCommandPopup, type SlashCommandPopupOptions } from "./slash-command-popup.ts";
 
-export type SlashCommandSelectorProps = SelectorModalProps;
+export type SlashCommandSelectorProps = SlashCommandPopupOptions;
 
-export class SlashCommandSelector extends SelectorModal {
+export class SlashCommandSelector extends SlashCommandPopup {
   constructor(props: SlashCommandSelectorProps) {
     super(props);
   }

@@ -28,6 +28,8 @@ export interface EditorAppearance {
 export interface OpenTuiComponentFrame {
   body: readonly (string | PresentationBlock)[];
   editorText: string;
+  /** 自有 Editor 模型投影出的 UTF-16 光标 offset;缺省保持文本末尾。 */
+  editorCursorOffset?: number;
   /** 输入区高度(随内容增长);缺省保持 3(与既有测试默认一致)。 */
   editorHeight?: number;
   /** 输入区外观;缺省不铺背景 / 不染色(测试与未接线环境保持原样)。 */
@@ -398,10 +400,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       bodyNodes = nextBodyNodes;
       if (editor.plainText !== frame.editorText) {
         editor.setText(frame.editorText);
-        // setText 会重置原生 buffer(含光标到起始),补位到文本末尾,
-        // 与 RunLedger Editor 输入模型(光标恒在末尾)保持一致。
-        editor.gotoBufferEnd();
       }
+      const editorCursorOffset = Math.max(0, Math.min(frame.editorCursorOffset ?? frame.editorText.length, frame.editorText.length));
+      if (editor.cursorOffset !== editorCursorOffset) editor.cursorOffset = editorCursorOffset;
       if (frame.editorHeight !== undefined) requestedEditorHeight = frame.editorHeight;
       // OpenTUI 的 native word-wrap 是原生路径的测量 authority；用真实 textarea
       // 宽度(width - prompt 2 - right inset 1)校正纯组件估算，避免隐藏尾行。

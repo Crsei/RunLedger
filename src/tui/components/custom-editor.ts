@@ -33,6 +33,8 @@ export interface CustomEditorProps {
   onExit?: () => void;
   onFollowUp?: (text: string) => void;
   onDequeue?: () => void;
+  /** slash popup 激活期按键拦截;返回 true 表示已消费,不再进入编辑路径。 */
+  onSlashPopupKey?: (data: string) => boolean;
   /** paddingX,默认 0;若需要左侧留白(对照 pi 默认 1)由装配方调。 */
   paddingX?: number;
   /** 空输入占位符文本;缺省 "Message RunLedger…"。 */
@@ -54,6 +56,7 @@ export function makeEditorTheme(theme: Theme, selectList: SelectListTheme): Edit
 export class CustomEditor extends Editor {
   private readonly onFollowUp?: (text: string) => void;
   private readonly onDequeue?: () => void;
+  private readonly onSlashPopupKey?: (data: string) => boolean;
 
   constructor(tui: TUI, theme: EditorTheme, props: CustomEditorProps) {
     super(tui, theme, { paddingX: props.paddingX ?? 0, placeholder: props.placeholder });
@@ -62,9 +65,11 @@ export class CustomEditor extends Editor {
     this.disableSubmit = false;
     this.onFollowUp = props.onFollowUp;
     this.onDequeue = props.onDequeue;
+    this.onSlashPopupKey = props.onSlashPopupKey;
   }
 
   override handleInput(data: string): void {
+    if (this.onSlashPopupKey?.(data)) return;
     if (matchesKey(data, "alt+enter") && this.onFollowUp) {
       const text = this.getText();
       if (text.trim().length > 0) {
