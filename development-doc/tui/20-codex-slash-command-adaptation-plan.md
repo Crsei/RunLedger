@@ -318,6 +318,25 @@ enter/backspace/ctrl+u/可打印字符）。OpenTUI 的 `EditorView`（`@opentui
   `debug*` 前缀约定并入 `isCommandVisibleForContext`;`commandsForContext.dynamicCommands`
   会把动态命令稳定插入 `/model` 后。
 
+### 偏差补充:弹窗展示位(2026-08-10 修订)
+
+计划 P2 的行规格(单行 `/name + 高亮段 + description`)与 P3 的
+`anchor:"bottom-left" 贴合编辑器上方` 最初只落在组件层,OpenTUI 投影层
+(`src/tui/opentui/component-runtime.ts`)未消费:
+
+- overlay 盒子硬编码 `left:1 / bottom:5 / width:90%`,不读 anchor → 弹窗呈浮动居中宽框;
+- `SlashCommandPopup.present()` 误走 `select` 块,原生 Select 把 name/description 堆成两行;
+- 文本节点高度固定 1 行,多行内容被裁剪。
+
+修复(仍在 P2/P3 链路上,不触碰 17/18 的 streaming/performance machinery):
+- `OpenTuiComponentFrame` 增加 `overlayAnchor` / `overlayNonCapturing`;
+  `TUI.renderFrame` 透传;投影层对 nonCapturing 弹窗:全宽贴编辑器上方
+  (`bottom = footer + editor 高度 + 1`,随编辑器高度帧更新),无模态边框;
+  捕获型 `center` modal 按 renderer 尺寸居中,`bottom-left` modal 保持左下定位;
+  overlay 节点复用时逐帧重置位置、尺寸、边框与 padding,避免 popup 样式泄漏;
+- `SlashCommandPopup.present()` 改回 text 块(单行行内渲染);
+- `getOverlayTextNode` 高度按行数自适应。
+
 ### 与计划偏差
 
 - `@` mention / 文件补全 popup 优先级:RunLedger 当前无此类 popup,

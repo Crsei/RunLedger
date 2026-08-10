@@ -562,7 +562,17 @@ export class TUI extends Container {
       }]
       : undefined;
     if (this.runtime) {
-      this.runtime.update({ body, editorText, editorCursorOffset, editorHeight, editorAppearance: this.editorAppearance, footer, overlay });
+      this.runtime.update({
+        body,
+        editorText,
+        editorCursorOffset,
+        editorHeight,
+        editorAppearance: this.editorAppearance,
+        footer,
+        overlay,
+        overlayAnchor: this.overlayOptions?.anchor,
+        overlayNonCapturing: this.overlayOptions?.nonCapturing === true,
+      });
       return;
     }
     this.terminal.write([...body, ...this.focusedComponent?.render(width) ?? [], ...footer, ...overlay ?? []].join("\n"));

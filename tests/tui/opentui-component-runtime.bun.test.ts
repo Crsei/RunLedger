@@ -338,7 +338,7 @@ describe("OpenTUI component projection", () => {
     }
   });
 
-  test("projects slash popup rows as a multi-option native select", async () => {
+  test("projects slash popup rows as single-line text rows with the command box attached above the editor", async () => {
     const setup = await createTestRenderer({ width: 80, height: 24 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -350,11 +350,107 @@ describe("OpenTUI component projection", () => {
         theme: makeSelectListTheme(loadTheme("dark")),
       });
       popup.setFilter("/c");
-      runtime.update({ body: [], editorText: "/c", footer: [], overlay: popup.present(76) });
+      runtime.update({
+        body: [],
+        editorText: "/c",
+        footer: ["done:stop"],
+        overlay: popup.present(76),
+        overlayAnchor: "bottom-left",
+        overlayNonCapturing: true,
+      });
       await setup.renderOnce();
-      const select = setup.renderer.root.findDescendantById("runledger-overlay-select-0") as { readonly options?: readonly { readonly name: string }[] } | undefined;
-      expect(select).toBeDefined();
-      expect(select?.options?.map((option) => option.name)).toEqual(["/commands", "/clear", "/compact"]);
+      const frame = setup.captureCharFrame();
+      // 命令名与描述在同一行(计划 P2 行规格)
+      const clearLine = frame.split("\n").find((line) => line.includes("/clear"));
+      expect(clearLine).toBeDefined();
+      expect(clearLine).toContain("Clear chat");
+      // 无原生 select 堆叠节点
+      expect(setup.renderer.root.findDescendantById("runledger-overlay-select-0")).toBeUndefined();
+      // 弹窗附着在编辑器上方(底部偏移 = footer + editor 行)
+      const overlayBox = setup.renderer.root.findDescendantById("runledger-overlay") as { readonly bottom?: number; readonly left?: number; readonly width?: number } | undefined;
+      expect(overlayBox?.bottom).toBeGreaterThan(0);
+      expect(overlayBox?.left).toBe(0);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("restores modal chrome when a compact popup is replaced without an empty frame", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 24 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "/c",
+        footer: ["idle"],
+        overlay: [{ kind: "text", content: "/clear  Clear chat" }],
+        overlayAnchor: "bottom-left",
+        overlayNonCapturing: true,
+      });
+      await setup.renderOnce();
+
+      runtime.update({
+        body: [],
+        editorText: "",
+        footer: ["idle"],
+        overlay: [{
+          kind: "select",
+          title: "/commands",
+          options: [{ value: "help", label: "/help", description: "Show help" }],
+          selectedIndex: 0,
+        }],
+        overlayAnchor: "bottom-left",
+        overlayNonCapturing: false,
+      });
+      await setup.renderOnce();
+
+      const overlayBox = setup.renderer.root.findDescendantById("runledger-overlay") as {
+        readonly left?: number;
+        readonly width?: number;
+        readonly bottom?: number;
+        readonly border?: boolean;
+      } | undefined;
+      expect(overlayBox?.left).toBe(1);
+      expect(overlayBox?.width).toBe(72);
+      expect(overlayBox?.bottom).toBe(5);
+      expect(overlayBox?.border).toBe(true);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("centers a modal when the frame requests the center anchor", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 24 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "",
+        footer: ["idle"],
+        overlay: [{
+          kind: "select",
+          title: "Approval required",
+          options: [{ value: "deny", label: "Deny", description: "Reject" }],
+          selectedIndex: 0,
+        }],
+        overlayAnchor: "center",
+      });
+      await setup.renderOnce();
+
+      const overlayBox = setup.renderer.root.findDescendantById("runledger-overlay") as {
+        readonly left?: number;
+        readonly top?: number;
+        readonly bottom?: number;
+      } | undefined;
+      expect(overlayBox?.left).toBe(4);
+      expect(overlayBox?.top).toBe(6);
+      expect(overlayBox?.bottom).toBeUndefined();
     } finally {
       runtime.destroy();
     }

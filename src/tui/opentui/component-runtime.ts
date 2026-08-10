@@ -17,6 +17,7 @@ import { createRunLedgerSyntaxStyle } from "./syntax-style.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
 import type { TuiAction } from "../application/action.ts";
+import type { OverlayAnchor } from "../primitives.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
@@ -36,6 +37,10 @@ export interface OpenTuiComponentFrame {
   editorAppearance?: EditorAppearance;
   footer: readonly string[];
   overlay?: readonly (string | PresentationBlock)[];
+  /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
+  overlayAnchor?: OverlayAnchor;
+  /** nonCapturing 弹窗(如 slash 补全):贴编辑器上方、全宽、单行行内展示。 */
+  overlayNonCapturing?: boolean;
 }
 
 export interface OpenTuiComponentRuntimeOptions {
@@ -440,22 +445,51 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       if (frame.overlay) {
         const overlayBlocks = frame.overlay.map(toPresentationBlock);
         const hasInteractiveControl = overlayBlocks.some((block) => block.kind === "select" || block.kind === "input");
+        // nonCapturing 弹窗(slash 补全):贴编辑器上方、全宽、无模态边框;
+        // 其余 overlay 保持居中宽框(兼容既有 modal 外观)。
+        const bottomLeft = frame.overlayAnchor === "bottom-left";
+        const compactPopup = frame.overlayNonCapturing === true && bottomLeft;
+        const modalWidth = Math.max(1, Math.floor(renderer.width * 0.9));
+        const modalContentHeight = overlayBlocks.reduce(
+          (height, block) => height + blockText(block).split("\n").length,
+          0,
+        ) + 4;
+        const modalHeight = hasInteractiveControl
+          ? Math.max(1, Math.floor(renderer.height * 0.5))
+          : Math.min(Math.max(1, Math.floor(renderer.height * 0.8)), modalContentHeight);
         if (!overlay) {
           overlay = new BoxRenderable(renderer, {
             id: "runledger-overlay",
             position: "absolute",
-            left: 1,
-            bottom: 5,
-            width: "90%",
             maxHeight: "80%",
-            ...(hasInteractiveControl ? { height: "50%" } : {}),
             zIndex: 100,
-            borderStyle: "rounded",
-            padding: 1,
           });
           screen.add(overlay);
         }
-        overlay.height = hasInteractiveControl ? "50%" : "auto";
+        // overlay 节点跨帧复用；每帧重置完整布局，防止 compact popup 的
+        // 全宽/无边框样式泄漏到随后同步打开的捕获型 modal。
+        overlay.left = compactPopup
+          ? 0
+          : bottomLeft
+            ? 1
+            : Math.max(0, Math.floor((renderer.width - modalWidth) / 2));
+        overlay.right = undefined;
+        overlay.width = compactPopup ? renderer.width : modalWidth;
+        overlay.borderStyle = "rounded";
+        overlay.border = !compactPopup;
+        overlay.padding = compactPopup ? 0 : 1;
+        if (compactPopup) {
+          // 编辑器行上方 1 行留白;编辑器高度/行数变化时随帧更新
+          overlay.top = undefined;
+          overlay.bottom = footerHeight + boundedEditorHeight + 1;
+        } else if (bottomLeft) {
+          overlay.top = undefined;
+          overlay.bottom = 5;
+        } else {
+          overlay.top = Math.max(0, Math.floor((renderer.height - modalHeight) / 2));
+          overlay.bottom = undefined;
+        }
+        overlay.height = hasInteractiveControl ? modalHeight : "auto";
         const nextOverlayNodes = new Map<string, KeyedRenderable<OverlayRenderable>>();
         const desiredOverlayNodes: OverlayRenderable[] = [];
         let overlayFocus: InputRenderable | SelectRenderable | undefined;
@@ -607,7 +641,11 @@ function getOverlayTextNode(
   const node = old?.kind === "text" && old.renderable instanceof TextRenderable
     ? old.renderable
     : createOverlayTextNode(renderer, old, key);
-  if (old?.contentKey !== content) node.content = ansiToStyledText(content);
+  if (old?.contentKey !== content) {
+    node.content = ansiToStyledText(content);
+    // 多行内容按行数自适应高度(默认 1 会裁剪 slash popup 的后续行)
+    node.height = Math.max(1, content.split("\n").length);
+  }
   next.set(key, { kind: "text", renderable: node, contentKey: content });
   return node;
 }

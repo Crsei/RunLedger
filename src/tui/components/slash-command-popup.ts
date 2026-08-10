@@ -129,16 +129,12 @@ export class SlashCommandPopup {
     return lines;
   }
 
-  present(_width: number): PresentationBlock[] {
+  present(width: number): PresentationBlock[] {
+    // 计划 P2 行规格:每行 = `/name` + 高亮匹配段 + 描述(同一行);
+    // 以 text 块投影,避免 OpenTUI 原生 select 把 name/description 堆成两行。
     return [{
-      kind: "select",
-      title: "",
-      options: this.rows.map((row) => ({
-        value: row.name,
-        label: `/${row.name}`,
-        description: row.command.description,
-      })),
-      selectedIndex: this.selectedIndex,
+      kind: "text",
+      content: this.render(width).join("\n"),
     }];
   }
 
