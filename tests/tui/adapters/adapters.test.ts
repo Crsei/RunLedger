@@ -14,6 +14,9 @@ import { capabilitiesFromPorts } from "../../../src/tui/application/ports.ts";
 import type { CapabilityInput, TuiDomainPorts } from "../../../src/tui/application/ports.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../../../src/runtime/interactive-session-controller.ts";
 import type { Model } from "../../../src/types.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import type { PlanApprovalRef, PlanArtifactRef, PlanModeState, PlanModeStatus } from "../../../src/runtime/modes/plan/types.ts";
 
 const request = { generation: 1, effectId: "effect-1", correlationId: "corr-1", signal: new AbortController().signal, authorityGeneration: 1 };
 
@@ -148,6 +151,97 @@ describe("B4 Session resource adapter", () => {
 		const result = await ports.extensions!.inspect(request);
 		expect(result.ok).toBe(true);
 		if (result.ok) expect(result.value.resources).toEqual([]);
+	});
+
+	it("maps canonical inactive Plan Mode state into a bounded truthful view", async () => {
+		const sessionId = createRuntimeId("session", "plan-adapter");
+		const goalId = createRuntimeId("goal", "plan-adapter");
+		const repositoryId = createRuntimeId("repository", "plan-adapter");
+		const digest = runtimeDigest("plan-adapter");
+		const query = vi.fn(async () => ({
+			repositoryId,
+			state: {
+				status: "inactive",
+				sessionId,
+				goalId,
+				revision: 0,
+				policyCeilingDigest: digest,
+				sourceHead: { streamId: sessionId, sequence: 4, eventHash: digest },
+				projectionDigest: digest,
+				completeness: "complete",
+				updatedAt: "2026-08-11T00:00:00.000Z",
+			},
+		}));
+		const ports = createSessionResourcePorts({ query, supports: (operation) => operation === "plan.inspect" });
+		const result = await ports.plan!.inspect({
+			...request,
+			reference: { repositoryId, planId: goalId, revision: 0, digestPrefix: { text: "", byteLength: 0, truncated: false } },
+		});
+
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.value).toMatchObject({
+			reference: { repositoryId, planId: goalId, revision: 0, digestPrefix: { text: digest.digest.slice(0, 40) } },
+			title: { text: "Plan mode" },
+			status: "unknown",
+			summary: { text: "Plan mode is inactive." },
+			evidenceCount: { state: "unavailable", reason: "plan-mode-inactive" },
+		});
+	});
+
+	it("maps every canonical Plan Mode status without collapsing active state to unknown", async () => {
+		const sessionId = createRuntimeId("session", "plan-status-adapter");
+		const goalId = createRuntimeId("goal", "plan-status-adapter");
+		const workspaceId = createRuntimeId("workspace", "plan-status-adapter");
+		const repositoryId = createRuntimeId("repository", "plan-status-adapter");
+		const digest = runtimeDigest("plan-status-adapter");
+		const plan: PlanArtifactRef = {
+			goalId,
+			workspaceId,
+			revision: 2,
+			digest,
+			artifactRef: { subjectKind: "artifact", digest, mediaType: "text/markdown", size: 14 },
+		};
+		const pendingApproval: PlanApprovalRef = {
+			approvalId: createRuntimeId("approval", "plan-status-adapter"),
+			goalId,
+			revision: plan.revision,
+			digest,
+			status: "pending",
+		};
+		const state = (status: PlanModeStatus): PlanModeState => ({
+			status,
+			sessionId,
+			goalId,
+			revision: 3,
+			...(status === "inactive" || status === "pending" ? {} : { plan }),
+			...(status === "awaiting_approval" ? { approval: pendingApproval } : {}),
+			...(status === "exit_pending" ? { approval: { ...pendingApproval, status: "approved" as const, receiptRef: { subjectKind: "receipt" as const, digest } } } : {}),
+			policyCeilingDigest: digest,
+			sourceHead: { streamId: sessionId, sequence: 4, eventHash: digest },
+			projectionDigest: digest,
+			completeness: "complete",
+			updatedAt: "2026-08-11T00:00:00.000Z",
+		});
+		const expected: Readonly<Record<PlanModeStatus, "verified" | "in-progress" | "blocked" | "unknown">> = {
+			inactive: "unknown",
+			pending: "in-progress",
+			active: "in-progress",
+			awaiting_approval: "blocked",
+			exit_pending: "verified",
+		};
+
+		for (const status of Object.keys(expected) as PlanModeStatus[]) {
+			const ports = createSessionResourcePorts({
+				query: async () => ({ repositoryId, state: state(status) }),
+				supports: (operation) => operation === "plan.inspect",
+			});
+			const result = await ports.plan!.inspect({
+				...request,
+				reference: { repositoryId, planId: goalId, revision: 0, digestPrefix: { text: "", byteLength: 0, truncated: false } },
+			});
+			expect(result.ok && result.value.status).toBe(expected[status]);
+		}
 	});
 
 	it("host rejection is a typed failed envelope", async () => {

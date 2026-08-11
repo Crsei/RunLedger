@@ -14,6 +14,8 @@ import type { SecurityModeWorkflowPort, SecurityModeSnapshot } from "../security
 import type { WorkspaceGitPort, WorkspaceGitSnapshot, WorkspaceGitHead } from "../workspace/types.ts";
 import { boundedToolText } from "../presentation/tools/projector.ts";
 import type { SessionDomainResult } from "../../runtime/session-runtime/domain-router.ts";
+import { isValidPlanModeState } from "../../runtime/modes/plan/reducer.ts";
+import type { PlanModeStatus } from "../../runtime/modes/plan/types.ts";
 
 const LABEL_BOUND = 120;
 
@@ -183,25 +185,72 @@ async function inspectPlan(query: ResourceQuery, request: TuiPortRequest): Promi
 		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
 	}
 	const state = isRecord(body.state) ? body.state : body;
-	const planStatus = enumOf(state.status, ["verified", "in-progress", "blocked", "unknown"] as const, "unknown");
+	if (!isValidPlanModeState(state)) {
+		return {
+			ok: true,
+			ref: request,
+			value: {
+				reference: {
+					repositoryId: stringField(body.repositoryId) || "unknown",
+					planId: stringField(state.planId) || stringField(body.planId) || "unknown",
+					revision: numberField(state.revision) ?? 0,
+					digestPrefix: boundedToolText(stringField(state.digestPrefix) || stringField(body.digest), 40),
+				},
+				title: boundedToolText(stringField(state.title), LABEL_BOUND),
+				status: enumOf(state.status, ["verified", "in-progress", "blocked", "unknown"] as const, "unknown"),
+				summary: boundedToolText(stringField(state.summary), LABEL_BOUND),
+				evidenceCount: numberField(state.evidenceCount) === undefined
+					? { state: "unknown", reason: "not-reported" }
+					: { state: "known", value: numberField(state.evidenceCount)! },
+			},
+		};
+	}
+	const content = stringField(body.content);
 	return {
 		ok: true,
 		ref: request,
 		value: {
 			reference: {
 				repositoryId: stringField(body.repositoryId) || "unknown",
-				planId: stringField(state.planId) || stringField(body.planId) || "unknown",
-				revision: numberField(state.revision) ?? 0,
-				digestPrefix: boundedToolText(stringField(state.digestPrefix) || stringField(body.digest), 40),
+				planId: state.goalId,
+				revision: state.revision,
+				digestPrefix: boundedToolText((state.plan?.digest.digest ?? state.projectionDigest.digest).slice(0, 40), 40),
 			},
-			title: boundedToolText(stringField(state.title), LABEL_BOUND),
-			status: planStatus,
-			summary: boundedToolText(stringField(state.summary), LABEL_BOUND),
-			evidenceCount: numberField(state.evidenceCount) === undefined
-				? { state: "unknown", reason: "not-reported" }
-				: { state: "known", value: numberField(state.evidenceCount)! },
+			title: boundedToolText(planTitle(content), LABEL_BOUND),
+			status: planRenderStatus(state.status),
+			summary: boundedToolText(planSummary(state.status, content), LABEL_BOUND),
+			evidenceCount: state.status === "inactive"
+				? { state: "unavailable", reason: "plan-mode-inactive" }
+				: { state: "unknown", reason: "not-reported" },
 		},
 	};
+}
+
+function planRenderStatus(status: PlanModeStatus): PlanRenderView["status"] {
+	switch (status) {
+		case "inactive": return "unknown";
+		case "pending":
+		case "active": return "in-progress";
+		case "awaiting_approval": return "blocked";
+		case "exit_pending": return "verified";
+	}
+}
+
+function planTitle(content: string): string {
+	const heading = content.split(/\r?\n/u).find((line) => /^#{1,6}\s+\S/u.test(line.trim()));
+	return heading?.trim().replace(/^#{1,6}\s+/u, "") || "Plan mode";
+}
+
+function planSummary(status: PlanModeStatus, content: string): string {
+	const summary = content.split(/\r?\n/u).map((line) => line.trim()).find((line) => line.length > 0 && !line.startsWith("#"));
+	if (summary !== undefined) return summary;
+	switch (status) {
+		case "inactive": return "Plan mode is inactive.";
+		case "pending": return "Plan mode is waiting to activate.";
+		case "active": return "Plan mode is active.";
+		case "awaiting_approval": return "Plan mode is awaiting approval.";
+		case "exit_pending": return "The approved plan is waiting to exit Plan mode.";
+	}
 }
 
 async function inspectSecurityMode(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<SecurityModeSnapshot>> {

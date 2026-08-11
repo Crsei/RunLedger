@@ -37,6 +37,7 @@ import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type Ses
 import { SessionDomainRouter } from "./domain-router.ts";
 import type { SessionDomainResult } from "./domain-router.ts";
 import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, type HumanWaitReason } from "./run-timing.ts";
+import type { SessionPlanInspection } from "./plan-composition.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
 
@@ -49,6 +50,7 @@ export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
+	readonly planInspection?: () => SessionPlanInspection;
 	readonly process?: SessionProcessDomainPort;
 	readonly resources?: SessionResourceDomainPort;
 	/** 外部资源只可在 attempt port 绑定后、server activate 前启动。 */
@@ -149,6 +151,7 @@ export class SessionRuntime implements SessionController {
 		this.fence = options.fence;
 		this.domainRouter = new SessionDomainRouter(options.sessionId, options.fence.generation, options.store, this, {
 			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
+			...(options.domain?.planInspection === undefined ? {} : { planInspection: options.domain.planInspection }),
 		});
 		this.lifecycleCleanup = options.lifecycleCleanup;
 		this.restored = options.restored;

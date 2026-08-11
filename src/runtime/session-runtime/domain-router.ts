@@ -3,6 +3,7 @@ import type { SessionStore } from "../../storage/session-store/session-store.ts"
 import type { SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
 import type { AttemptPort } from "./attempt-gateway.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
+import type { SessionPlanInspection } from "./plan-composition.ts";
 
 export const SESSION_DOMAIN_RESULT_STATUSES = [
 	"ok",
@@ -35,6 +36,8 @@ export interface SessionDomainMutationContext extends SessionDomainRequestContex
 export interface SessionDomainRouterOptions {
 	/** 只由真实 Session domain composition 注入的安全投影。 */
 	readonly securityInspection?: () => Record<string, unknown>;
+	/** 只由 Session-owned Plan projection 注入的只读状态。 */
+	readonly planInspection?: () => SessionPlanInspection;
 }
 
 export type SessionDomainResult =
@@ -65,6 +68,7 @@ export class SessionDomainRouter {
 	private readonly store: SessionStore;
 	private readonly attempts: AttemptPort;
 	private readonly securityInspection: SessionDomainRouterOptions["securityInspection"];
+	private readonly planInspection: SessionDomainRouterOptions["planInspection"];
 
 	public readonly operationManifest: readonly SessionProtocolOperationDescriptor[];
 
@@ -74,6 +78,7 @@ export class SessionDomainRouter {
 		this.store = store;
 		this.attempts = attempts;
 		this.securityInspection = options.securityInspection;
+		this.planInspection = options.planInspection;
 		this.operationManifest = Object.freeze([
 			Object.freeze({ operation: "session.catalog.list", capability: "session.catalog", access: "read" }),
 			Object.freeze({ operation: "session.create", capability: "session.catalog", access: "mutate" }),
@@ -82,6 +87,9 @@ export class SessionDomainRouter {
 			...(this.securityInspection === undefined
 				? []
 				: [Object.freeze({ operation: "session.security.inspect", capability: "session.security.inspect", access: "read" })]),
+			...(this.planInspection === undefined
+				? []
+				: [Object.freeze({ operation: "plan.inspect", capability: "session.plan", access: "read" })]),
 		]);
 	}
 
@@ -127,6 +135,16 @@ export class SessionDomainRouter {
 				operation,
 				domainRevision: this.generation,
 				value: this.securityInspection(),
+			};
+		}
+		if (operation === "plan.inspect" && this.planInspection !== undefined) {
+			const value = this.planInspection();
+			return {
+				ok: true,
+				status: "ok",
+				operation,
+				domainRevision: value.state.revision,
+				value,
 			};
 		}
 		return {

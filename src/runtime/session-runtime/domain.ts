@@ -37,6 +37,7 @@ import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
 import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
+import { createSessionPlanInspection } from "./plan-composition.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -135,16 +136,22 @@ export async function assembleSessionDomain(
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
+	const planInspection = createSessionPlanInspection({
+		sessionId,
+		store,
+		policyCeilingDigest: security.snapshot.policyDigest,
+	});
 	return {
 		controller,
 		process,
 		resources: extensions.resources,
+		planInspection,
 		start: extensions.start,
 		shutdown: async (reason) => {
 			removeExtensionLifecycle?.();
 			await extensions.shutdown(reason);
 		},
-		protocolCapabilities: ["session.approval.reverse", "session.security.inspect"],
+		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan"],
 		securityInspection: () => ({
 			ownerGeneration: fence.generation,
 			profile: security.snapshot.profile.name,
