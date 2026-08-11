@@ -280,6 +280,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       if (entry.runtime === undefined) return;
       if (entry.server.connectionCounts() === 0) await entry.runtime.shutdownAfterLastAttachment("paused");
       await entry.runtime.waitForStopped();
+      if (entry.ownerFence !== undefined) entry.store.reclaimSessionWithoutUserMessages(entry.ownerFence);
     }));
     db.close();
     if (process.env.RUNLEDGER_DEBUG === "1") {
@@ -339,6 +340,7 @@ export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResu
       return;
     }
     await runtime.shutdownAfterLastAttachment("paused");
+    if (embedded.ownerFence !== undefined) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
     return;
   }
   // 等待本地 socket close 事件被 server 处理(attachment count 收敛到真值)。
@@ -350,10 +352,14 @@ export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResu
     if (process.env.RUNLEDGER_DEBUG === "1") {
       process.stderr.write(`[runledger] local view detached; ${embedded.server.connectionCounts()} remote attachment(s) keep the owner running\n`);
     }
-    if (waitForRemote) await runtime.waitForStopped();
+    if (waitForRemote) {
+      await runtime.waitForStopped();
+      if (embedded.ownerFence !== undefined) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
+    }
     return;
   }
   await runtime.shutdownAfterLastAttachment("paused");
+  if (embedded.ownerFence !== undefined) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
 }
 
 /** §8.1/§8.2:从 SQLite catalog resolve sessionId(create/open/resume/fork)。 */

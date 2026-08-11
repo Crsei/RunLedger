@@ -261,6 +261,46 @@ export class SessionStore {
 		return row === undefined ? undefined : rowToCatalog(row);
 	}
 
+	/** 正常退出后的 Session 回收入口；有 durable user message 时保留。 */
+	public reclaimSessionWithoutUserMessages(fence: OwnerFence): boolean {
+		this.assertAdmissionReady();
+		return this.db.runSync(
+			`DELETE FROM sessions
+			 WHERE session_id = ?
+			   AND EXISTS (
+			     SELECT 1
+			       FROM session_owners
+			      WHERE session_owners.session_id = sessions.session_id
+			        AND session_owners.generation = ?
+			        AND session_owners.state = 'unowned'
+			   )
+			   AND (
+			     SELECT CASE
+			              WHEN json_valid(release_event.payload_json)
+			              THEN json_extract(release_event.payload_json, '$.reason')
+			              ELSE NULL
+			            END
+			       FROM session_events AS release_event
+			      WHERE release_event.session_id = sessions.session_id
+			        AND release_event.event_type = 'owner.released'
+			        AND release_event.owner_generation = ?
+			      ORDER BY release_event.sequence DESC
+			      LIMIT 1
+			   ) IN ('paused', 'detached')
+			   AND NOT EXISTS (
+			     SELECT 1
+			       FROM session_events
+			      WHERE session_events.session_id = sessions.session_id
+			        AND session_events.event_type = 'ledger.message'
+			        AND (
+			          json_extract(session_events.payload_json, '$.payload.role') = 'user'
+			          OR json_extract(session_events.payload_json, '$.payload.message.role') = 'user'
+			        )
+			   )`,
+			[fence.sessionId, fence.generation, fence.generation],
+		).changes === 1;
+	}
+
 	/**
 	 * S3:private worktree locator 与 public audit event 在同一 owner-fenced
 	 * transaction 中提交；事件不复制绝对路径或 lease token。

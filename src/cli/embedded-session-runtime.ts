@@ -60,6 +60,8 @@ export interface SessionWorkspaceFactory {
 
 export interface EmbeddedSessionRuntimeResult {
 	readonly handle: OwnedSessionHandle;
+	readonly store: SessionStore;
+	readonly ownerFence: import("../runtime/session-owner/types.ts").OwnerFence | undefined;
 	/**
 	 * claim 成功(本进程是 owner)时为装配好的 SessionRuntime;
 	 * attach 健康 owner 时为 undefined(本进程只是 remote client,不拥有 runtime)。
@@ -186,6 +188,8 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		if (!opened.ok) throw new Error(`local attach failed: ${opened.code}`);
 		return {
 			handle: opened.handle,
+			store,
+			ownerFence: undefined,
 			runtime: undefined,
 			server,
 			owner: claimOwner,
@@ -259,6 +263,8 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 	if (!opened.ok) throw new Error(`local attach failed: ${opened.code}`);
 	return {
 		handle: opened.handle,
+		store,
+		ownerFence: result.fence,
 		runtime,
 		server,
 		owner: claimOwner,

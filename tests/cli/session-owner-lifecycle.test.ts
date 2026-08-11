@@ -57,6 +57,49 @@ async function attachRemote(embedded: EmbeddedSessionRuntimeResult, store: Sessi
 }
 
 describe("standard CLI Session Owner lifecycle", () => {
+	it("reclaims a Session with no user messages after the last attachment exits cleanly", async () => {
+		const { embedded, store } = await openEmbedded();
+		const sessionId = embedded.handle.sessionId;
+
+		await embedded.handle.close();
+		await pauseIfLastAttachment(embedded);
+
+		expect(store.getSession(sessionId)).toBeUndefined();
+		store.database().close();
+	});
+
+	it("keeps a Session that contains a durable user message", async () => {
+		const { embedded, store } = await openEmbedded();
+		const sessionId = embedded.handle.sessionId;
+		const fence = embedded.owner.currentFence;
+		if (fence === undefined) throw new Error("expected an owned Session");
+		const tail = store.replaySessionEvents(sessionId).at(-1);
+		store.appendEvent(fence, {
+			eventId: createRuntimeId("event", "durable-user-message"),
+			ownerGeneration: fence.generation,
+			eventType: "ledger.message",
+			payloadJson: JSON.stringify({
+				id: "message-user",
+				sessionId,
+				parentId: sessionId,
+				timestamp: Date.now(),
+				type: "message",
+				payload: {
+					role: "user",
+					message: { role: "user", content: [{ type: "text", text: "keep this Session" }] },
+				},
+			}),
+			createdAtMs: Date.now(),
+			expectedPreviousEventHash: tail?.currentEventHash ?? null,
+		});
+
+		await embedded.handle.close();
+		await pauseIfLastAttachment(embedded);
+
+		expect(store.getSession(sessionId)).toBeDefined();
+		store.database().close();
+	});
+
 	it("opens and releases the Session-scoped workspace inside the owner lifecycle", async () => {
 		const db = openSessionDatabase(join(dir, "workspace-state.db"));
 		installSessionStoreSchema(db);

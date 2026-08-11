@@ -16,6 +16,7 @@ import { canonicalDigest } from "../../../src/runtime/protocol/canonical-json.ts
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore, SessionStoreError, sessionEventHash } from "../../../src/storage/session-store/session-store.ts";
+import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 
 let dir: string;
 
@@ -101,6 +102,41 @@ describe("R2 catalog and lifecycle", () => {
 				settingsDigest: "d".repeat(64),
 			}),
 		).toThrowError(SessionStoreError);
+		store.database().close();
+	});
+
+	it("does not reclaim a Session while its owner is still running", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "reclaim-running");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const runtimeId = createRuntimeId("runtime", "reclaim-running");
+		ownerRow(store, sessionId, runtimeId, 1);
+
+		expect(store.reclaimSessionWithoutUserMessages({ sessionId, runtimeId, generation: 1 })).toBe(false);
+		expect(store.getSession(sessionId)).toBeDefined();
+		store.database().close();
+	});
+
+	it("does not reclaim a message-less Session retained for an error exit audit", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "reclaim-error");
+		const runtimeId = createRuntimeId("runtime", "reclaim-error");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		ownerRow(store, sessionId, runtimeId, 1);
+		new OwnerStore(store.database()).releaseOwner({ sessionId, runtimeId, generation: 1 }, "error");
+
+		expect(store.reclaimSessionWithoutUserMessages({ sessionId, runtimeId, generation: 1 })).toBe(false);
+		expect(store.getSession(sessionId)).toBeDefined();
 		store.database().close();
 	});
 
