@@ -53,9 +53,10 @@ describe("S2 InteractiveMode session workflows", () => {
 		const overlay = (mode as unknown as {
 			ui: { getOverlay(): { present?(): readonly { readonly kind: string; readonly title?: string }[] } | undefined };
 		}).ui.getOverlay();
-		expect(overlay?.present?.()[0]).toMatchObject({ kind: "select", title: "/resume (2)" });
+		const selectBlock = overlay?.present?.().find((block) => block.kind === "select");
+		expect(selectBlock).toMatchObject({ kind: "select", title: "/resume (2)" });
 		expect(querySessionDomain).toHaveBeenCalledWith("session.catalog.list", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
-		terminal.send("\x1b[B");
+		// 默认按 updated desc 排序:session-paused(updatedAtMs=4)位于第 0 项。
 		terminal.send("\r");
 		const intent = await running;
 		expect(commandSessionDomain).toHaveBeenCalledWith("session.resume", { targetSessionId: "session-paused" }, expect.objectContaining({ expectedRevision: 2 }));

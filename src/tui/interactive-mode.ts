@@ -49,6 +49,7 @@ import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
+import { SessionPickerModal, buildSessionPickerItems } from "./components/session-picker-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
 import { SelectionView } from "./components/selection-view.ts";
@@ -1424,14 +1425,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.showNotice("No canonical sessions are available.", "error");
       return;
     }
-    const modal = new SearchableSelectorModal({
-      title: `/resume (${catalog.items.length})`,
-      items: catalog.items.map((item) => ({
-        value: item.sessionId,
-        label: item.sessionId,
-        description: `${item.status} · workspace=${item.workspaceId} · head=${item.headSequence}${item.current ? " · current" : ""}`,
-      })),
-      maxVisible: 12,
+    const current = catalog.items.find((item) => item.current);
+    const modal = new SessionPickerModal({
+      title: "/resume",
+      items: buildSessionPickerItems(catalog.items, Date.now()),
+      currentWorkspaceId: current?.workspaceId,
       onSelect: (item) => {
         this.closeOverlay();
         const selected = catalog.items.find((candidate) => candidate.sessionId === item.value);
