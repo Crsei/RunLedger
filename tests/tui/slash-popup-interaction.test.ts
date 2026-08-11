@@ -129,6 +129,7 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
       terminal.send("/");
       expect(internals.slashPopup).toBeDefined();
       expect(internals.slashPopup?.getVisibleRows().length).toBeGreaterThan(20);
+      expect(internals.slashPopup?.getVisibleRows().some((row) => row.command.canonicalName === "help")).toBe(false);
 
       terminal.send("m");
       const rows = internals.slashPopup!.getVisibleRows().map((row) => row.command.canonicalName);
@@ -157,18 +158,13 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
     }
   });
 
-  it("Tab 补全真实别名时保留别名文本,后续提交仍派发 canonical action", async () => {
+  it("隐藏 /help 后不通过 /commands 别名暴露补全项", async () => {
     const { terminal, internals, mode } = setupMode();
     const running = mode.run();
     try {
       terminal.send("/");
       terminal.send("co");
-      expect(internals.slashPopup?.selectedName()).toBe("commands");
-      terminal.send("\t");
-      expect(internals.refs.editor.getText()).toBe("/commands ");
-      terminal.send("\r");
-      const ui = (mode as unknown as { ui: TUI }).ui;
-      expect(ui.getOverlay()).toBeInstanceOf(SelectionView);
+      expect(internals.slashPopup?.getVisibleRows().map((row) => row.name)).toEqual(["compact"]);
     } finally {
       await quit(mode, internals, terminal, running);
     }
@@ -215,15 +211,21 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
     }
   });
 
-  it("Enter 派发选中命令(/help 打开通用 SelectionView)", async () => {
+  it("直接输入隐藏命令 /help 仍打开不含自身的通用 SelectionView", async () => {
     const { terminal, internals, mode } = setupMode();
     const running = mode.run();
     try {
       terminal.send("/");
-      terminal.send("he");
+      terminal.send("help");
       terminal.send("\r");
       const ui = (mode as unknown as { ui: TUI }).ui;
-      expect(ui.getOverlay()).toBeInstanceOf(SelectionView);
+      const overlay = ui.getOverlay();
+      expect(overlay).toBeInstanceOf(SelectionView);
+      const options = overlay?.present?.()[0];
+      expect(options?.kind).toBe("select");
+      if (options?.kind === "select") {
+        expect(options.options.some((option) => option.label === "/help")).toBe(false);
+      }
     } finally {
       await quit(mode, internals, terminal, running);
     }

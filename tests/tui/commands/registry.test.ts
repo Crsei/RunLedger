@@ -17,7 +17,7 @@ describe("slash command registry", () => {
     expect(names[1]).toBe("clear");
     expect(names.indexOf("model")).toBeLessThan(names.indexOf("recovery"));
     expect(names.indexOf("recovery")).toBeLessThan(names.indexOf("mcp"));
-    expect(names.indexOf("quit")).toBeGreaterThan(names.indexOf("sessions"));
+    expect(names.indexOf("quit")).toBeGreaterThan(names.indexOf("resume"));
   });
 
   it("findCommand 解析 canonicalName 与别名(help/commands, quit/exit)", () => {
@@ -30,15 +30,29 @@ describe("slash command registry", () => {
     expect(findCommand("")).toBeUndefined();
   });
 
-  it("commandsForContext 预留 debug 门控(当前注册表无 debug 命令,全部可见)", () => {
+  it("/resume 是唯一 Session 恢复入口,/sessions 仅作为兼容别名", () => {
+    const entries = builtinCommandDescriptors();
+    expect(entries.filter((entry) => entry.actionType === "session.resume")).toHaveLength(1);
+    expect(entries.some((entry) => entry.canonicalName === "sessions")).toBe(false);
+    expect(findCommand("sessions")?.canonicalName).toBe("resume");
+  });
+
+  it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
-    expect(visible.length).toBe(builtinCommandDescriptors().length);
+    expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);
+    expect(commandsForContext({ showDebugCommands: true }).some((entry) => entry.canonicalName === "help")).toBe(false);
+    expect(findCommand("help")?.actionType).toBe("ui.help");
+    expect(findCommand("commands")?.actionType).toBe("ui.help");
     expect(visible.every((entry) => entry.debug !== true)).toBe(true);
-    const flagged = { ...builtinCommandDescriptors()[0]!, debug: true as const };
+  });
+
+  it("commandsForContext 预留 debug 门控", () => {
+    const clear = builtinCommandDescriptors().find((entry) => entry.canonicalName === "clear")!;
+    const flagged = { ...clear, debug: true as const };
     expect(isCommandVisibleForContext(flagged, {})).toBe(false);
     expect(isCommandVisibleForContext(flagged, { showDebugCommands: true })).toBe(true);
     // debug* 前缀约定(对照 codex command_popup 过滤)
-    const prefixed = { ...builtinCommandDescriptors()[0]!, canonicalName: "debug-memory" as const };
+    const prefixed = { ...clear, canonicalName: "debug-memory" as const };
     expect(isCommandVisibleForContext(prefixed, {})).toBe(false);
     expect(isCommandVisibleForContext(prefixed, { showDebugCommands: true })).toBe(true);
   });

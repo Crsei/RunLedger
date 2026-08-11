@@ -17,7 +17,7 @@ import type { CommandDescriptor, CommandPolicy } from "./types.ts";
 
 /** 命令上下文门控;当前只有可见性,派发期门控由 availableDuringTask 表达。 */
 export interface SlashCommandContext {
-  /** 是否展示 debug 命令(/commands 弹窗隐藏;直接输入仍可解析)。 */
+  /** 是否展示 debug 命令(/commands 弹窗默认隐藏;直接输入仍可解析)。 */
   readonly showDebugCommands?: boolean;
   /** 动态命令按注册顺序插入 `/model` 之后。 */
   readonly dynamicCommands?: readonly RegisteredSlashCommand[];
@@ -27,7 +27,6 @@ export type SlashCommandActionType =
   | "ui.help"
   | "ui.clear"
   | "ui.quit"
-  | "session.catalog"
   | "session.create"
   | "session.resume"
   | "session.fork"
@@ -59,6 +58,8 @@ export interface RegisteredSlashCommand extends CommandDescriptor {
   readonly availableDuringTask: boolean;
   /** debug 命令:默认不在 /commands 弹窗展示(对照 codex CommandPopup::new debug 过滤)。 */
   readonly debug?: boolean;
+  /** 始终不在 TUI 命令列表展示;直接输入仍可解析。 */
+  readonly hidden?: boolean;
   /** 别名命令:仅在前缀过滤命中时展示,空过滤全量列表隐藏(对照 codex ALIAS_COMMANDS)。 */
   readonly hiddenInFullList?: boolean;
   /** 弹窗中的用法提示(如 "[sessionId]"),渲染在命令名右侧。 */
@@ -126,12 +127,13 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       aliases: ["commands"],
       category: "ui",
       policy: READONLY_POLICY,
+      hidden: true,
     }),
     command("clear", "Clear chat", 2, { actionType: "ui.clear", category: "ui" }),
-    command("sessions", "Browse canonical Sessions", 3, { actionType: "session.catalog", category: "session", policy: READONLY_POLICY }),
     command("new", "Create a Session in this workspace", 4, { actionType: "session.create", category: "session", policy: IDLE_ONLY_POLICY }),
-    command("resume", "Resume a canonical Session", 5, {
+    command("resume", "Browse or resume a canonical Session", 5, {
       actionType: "session.resume",
+      aliases: ["sessions"],
       category: "session",
       policy: IDLE_ONLY_POLICY,
       supportsInlineArgs: true,
@@ -239,6 +241,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
 
 /** 单条命令的上下文可见性门控(debug 命令默认隐藏,对照 codex CommandPopup debug 前缀过滤)。 */
 export function isCommandVisibleForContext(entry: RegisteredSlashCommand, context: SlashCommandContext): boolean {
+  if (entry.hidden === true) return false;
   const isDebug = entry.debug === true || entry.canonicalName.startsWith("debug");
   return !(isDebug && context.showDebugCommands !== true);
 }

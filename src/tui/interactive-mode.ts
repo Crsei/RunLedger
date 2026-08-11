@@ -1178,9 +1178,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
       return;
     }
     switch (command.actionType) {
-      case "session.catalog":
-        void this.openSessionCatalog();
-        return;
       case "session.create":
         void this.createNewSession();
         return;
@@ -1419,7 +1416,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.requestRender();
   }
 
-  /** S2:/sessions 从 SQLite authority 拉取 catalog，不读取旧 JSONL selector。 */
+  /** S2:/resume 从 SQLite authority 拉取 catalog，不读取旧 JSONL selector。 */
   async openSessionCatalog(): Promise<void> {
     const catalog = await this.loadSessionCatalog();
     if (catalog === undefined) return;
@@ -1428,7 +1425,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       return;
     }
     const modal = new SearchableSelectorModal({
-      title: `/sessions (${catalog.items.length})`,
+      title: `/resume (${catalog.items.length})`,
       items: catalog.items.map((item) => ({
         value: item.sessionId,
         label: item.sessionId,

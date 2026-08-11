@@ -43,13 +43,17 @@ describe("S2 InteractiveMode session workflows", () => {
 		}
 	});
 
-	it("/sessions opens the canonical catalog and selection returns a resume switch intent", async () => {
+	it("/resume opens the canonical catalog and selection returns a resume switch intent", async () => {
 		const terminal = new ContractTerminal();
 		const { controller, querySessionDomain, commandSessionDomain } = sessionController();
 		const mode = new InteractiveMode({ controller, terminal });
 		const running = mode.run();
 		await (mode as unknown as { openSessionCatalog(): Promise<void> }).openSessionCatalog();
 		await settleFrames();
+		const overlay = (mode as unknown as {
+			ui: { getOverlay(): { present?(): readonly { readonly kind: string; readonly title?: string }[] } | undefined };
+		}).ui.getOverlay();
+		expect(overlay?.present?.()[0]).toMatchObject({ kind: "select", title: "/resume (2)" });
 		expect(querySessionDomain).toHaveBeenCalledWith("session.catalog.list", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
 		terminal.send("\x1b[B");
 		terminal.send("\r");

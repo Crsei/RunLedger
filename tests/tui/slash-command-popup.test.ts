@@ -41,7 +41,8 @@ describe("SlashCommandPopup 过滤", () => {
     popup.setFilter("/m");
     expect(names(popup)).toEqual(["model", "mcp", "memory"]);
     popup.setFilter("/s");
-    expect(names(popup)).toEqual(["sessions", "skills"]);
+    expect(popup.getVisibleRows().map((row) => row.name)).toEqual(["sessions", "skills"]);
+    expect(names(popup)).toEqual(["resume", "skills"]);
     popup.setFilter("/c");
     expect(popup.getVisibleRows().map((row) => row.name)).toEqual(["commands", "clear", "compact"]);
   });
@@ -116,7 +117,7 @@ describe("SlashCommandPopup 高亮与选中", () => {
     popup.moveDown();
     popup.moveDown();
     const lines = visible(popup);
-    expect(stripAnsi(lines[lines.length - 1]!)).toContain("(4/24)");
+    expect(stripAnsi(lines[lines.length - 1]!)).toContain(`(4/${commands.length})`);
     expect(lines.length).toBeLessThanOrEqual(6);
   });
 
@@ -134,7 +135,8 @@ describe("SlashCommandPopup 高亮与选中", () => {
     const text = stripAnsi(visible(popup, 80).join("\n"));
     expect(text.match(/Show help/gu)).toHaveLength(1);
     expect(text.match(/Clear chat/gu)).toHaveLength(1);
-    expect(text).toContain("/sessions");
+    expect(text).toContain("/resume");
+    expect(text).not.toContain("/sessions");
     expect(text).toContain("/new");
   });
 });
