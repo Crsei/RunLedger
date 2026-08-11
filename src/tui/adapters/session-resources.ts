@@ -8,7 +8,8 @@
 
 import type { TuiPortRequest, TuiResultEnvelope } from "../application/common.ts";
 import type { TuiDomainPorts } from "../application/ports.ts";
-import type { ExtensionResourcePort, ExtensionResourceSnapshot, ExtensionResourceView, ExtensionKind, ExtensionTrust, ExtensionActivation, ExtensionReloadReceipt } from "../extensions/types.ts";
+import type { ExtensionMutationReceiptOperation, ExtensionResourcePort, ExtensionResourceSnapshot, ExtensionResourceView, ExtensionKind, ExtensionTrust, ExtensionActivation, ExtensionReloadReceipt } from "../extensions/types.ts";
+import type { McpResourcePort, McpCatalogSnapshot, McpServerView, McpToolView, McpDiagnosticView } from "../mcp/types.ts";
 import type { PlanRenderQueryPort, PlanRenderView } from "../goal-plan/types.ts";
 import type { SecurityModeWorkflowPort, SecurityModeSnapshot } from "../security-mode/types.ts";
 import type { WorkspaceGitPort, WorkspaceGitSnapshot, WorkspaceGitHead } from "../workspace/types.ts";
@@ -76,38 +77,73 @@ function envelope<T>(request: TuiPortRequest, produce: () => Promise<TuiResultEn
 
 export function createSessionResourcePorts(resources: SessionResourcePortsInput | undefined): TuiDomainPorts {
 	if (resources === undefined || resources.query === undefined) return {};
+	return createAvailableResourcePorts(resources);
+}
+
+function createAvailableResourcePorts(resources: SessionResourcePortsInput): TuiDomainPorts {
+	if (resources.query === undefined) return {};
+	const query = resources.query;
 	const supports = (operation: string): boolean => resources.supports?.(operation) === true;
 
-	const extensionPort: ExtensionResourcePort = {
-		inspect: (request) => envelope(request, () => inspectExtensions(resources.query!, request)),
-		reload: async (request) => {
-			if (resources.command === undefined || !supports("extension.reload")) {
+	function commandMutation(
+		operation: string,
+		receiptOperation: ExtensionMutationReceiptOperation,
+		body: Record<string, unknown>,
+	): (request: TuiPortRequest) => Promise<ExtensionReloadReceipt> {
+		return async (request) => {
+			if (resources.command === undefined || !supports(operation)) {
 				return { ok: false, ref: request, error: { code: "capability_unavailable", message: "extension mutation needs a Session command channel", retryable: false } };
 			}
 			return envelope(request, async () => {
-				const body = await resources.command!("extension.reload", {}, request);
-				if (body.ok === false) return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
-				return { ok: true, ref: request, value: { resourceId: "extension-snapshot", operation: "reload", generation: 1, receiptPrefix: boundedToolText("reload", 40), outcome: "completed", recoveryRequired: false } };
+				const result = await resources.command!(operation, body, request);
+				if (result.ok === false) return { ok: false, ref: request, error: { code: stringField(result.code), message: stringField(result.message), retryable: true } };
+				const generation = numberField((result.value as Record<string, unknown> | undefined)?.generation) ?? 1;
+				return { ok: true, ref: request, value: { resourceId: "extension-snapshot", operation: receiptOperation, generation, receiptPrefix: boundedToolText(receiptOperation, 40), outcome: "completed", recoveryRequired: false } };
+			});
+		};
+	}
+
+	const extensionPort: ExtensionResourcePort = {
+		inspect: (request) => envelope(request, () => inspectExtensions(query, request)),
+		reload: commandMutation("extension.reload", "reload", {}),
+		setPluginEnabled: (request) => commandMutation(request.enabled ? "plugin.enable" : "plugin.disable", request.enabled ? "enable" : "disable", { pluginId: request.pluginId })(request),
+		setPluginTrusted: (request) => commandMutation(request.trusted ? "plugin.trust" : "plugin.untrust", request.trusted ? "trust" : "untrust", { pluginId: request.pluginId })(request),
+	};
+
+	const mcpPort: McpResourcePort = {
+		list: (request) => envelope(request, () => listMcpServers(query, request)),
+		restart: async (request) => {
+			if (resources.command === undefined || !supports("mcp.restart")) {
+				return { ok: false, ref: request, error: { code: "capability_unavailable", message: "MCP mutation needs a Session command channel", retryable: false } };
+			}
+			return envelope(request, async () => {
+				const result = await resources.command!("mcp.restart", { serverId: request.serverId }, request);
+				if (result.ok === false) return { ok: false, ref: request, error: { code: stringField(result.code), message: stringField(result.message), retryable: true } };
+				const rawValue = isRecord(result.value) ? result.value : {};
+				const server = isRecord(rawValue.server) ? rawValue.server : undefined;
+				if (server === undefined) return { ok: false, ref: request, error: { code: "malformed_restart_result", message: "MCP restart returned no server snapshot", retryable: false } };
+				return { ok: true, ref: request, value: mcpServerView(server) };
 			});
 		},
 	};
 
 	const planPort: PlanRenderQueryPort = {
-		inspect: (request) => envelope(request, () => inspectPlan(resources.query!, request)),
+		inspect: (request) => envelope(request, () => inspectPlan(query, request)),
 	};
 
 	const securityPort: SecurityModeWorkflowPort = {
-		inspect: (request) => envelope(request, () => inspectSecurityMode(resources.query!, request)),
+		inspect: (request) => envelope(request, () => inspectSecurityMode(query, request)),
 		// 当前 Session 只有 session.security.inspect（无 mutation operation）→ 显式 unavailable。
 		set: async (request) => ({ ok: false, ref: request, error: { code: "session_operation_unsupported", message: "Session has no security-mode mutation contract", retryable: false } }),
 	};
 
 	const workspaceGitPort: WorkspaceGitPort = {
-		inspect: (request) => envelope(request, () => inspectWorkspaceGit(resources.query!, request)),
+		inspect: (request) => envelope(request, () => inspectWorkspaceGit(query, request)),
 	};
 
 	return {
 		...(supports("extension.inspect") ? { extensions: extensionPort } : {}),
+		...(supports("mcp.list") ? { mcp: mcpPort } : {}),
 		...(supports("plan.inspect") ? { plan: planPort } : {}),
 		...(supports("session.security.inspect") ? { securityMode: securityPort } : {}),
 		...(supports("worktree.inspect") ? { workspaceGit: workspaceGitPort } : {}),
@@ -169,7 +205,13 @@ async function inspectExtensions(query: ResourceQuery, request: TuiPortRequest):
 			resourceId: qualifiedId,
 			kind: extensionKind(identity.kind ?? descriptor.kind),
 			label: boundedToolText(stringField(descriptor.displayName) || qualifiedId, LABEL_BOUND),
+			description: stringField(descriptor.description).length === 0 ? undefined : boundedToolText(stringField(descriptor.description), LABEL_BOUND),
+			pluginId: stringField(descriptor.pluginId).length === 0 ? undefined : boundedToolText(stringField(descriptor.pluginId), LABEL_BOUND),
+			runtimeName: stringField(descriptor.runtimeName).length === 0 ? undefined : boundedToolText(stringField(descriptor.runtimeName), LABEL_BOUND),
 			digestPrefix: boundedToolText(digest || `${qualifiedId}@${version || "unknown"}`, LABEL_BOUND),
+			enabled: descriptor.enabled === true,
+			trusted: descriptor.trusted === true,
+			ready: descriptor.ready === true,
 			trust: extensionTrust(descriptor.trust ?? (descriptor.trusted === true ? "trusted" : "untrusted")),
 			activation: extensionActivation(descriptor.activation, descriptor.ready === true),
 			...(isRecord(descriptor.diagnostics) ? { diagnostic: boundedToolText(stringField((descriptor.diagnostics as Record<string, unknown>).message), LABEL_BOUND) } : {}),
@@ -177,6 +219,71 @@ async function inspectExtensions(query: ResourceQuery, request: TuiPortRequest):
 		return [view];
 	});
 	return { ok: true, ref: request, value: { generation: numberField(snapshot.generation) ?? 1, resources } };
+}
+
+function mcpServerState(value: unknown): McpServerView["state"] {
+	switch (value) {
+		case "disabled": return "disabled";
+		case "starting": return "starting";
+		case "ready": return "ready";
+		case "stopping": return "stopping";
+		case "stopped": return "stopped";
+		case "failed": return "failed";
+		case "blocked-untrusted": return "blocked-untrusted";
+		default: return "stopped";
+	}
+}
+
+function mcpServerView(value: Record<string, unknown>): McpServerView {
+	const serverId = stringField(value.serverId);
+	const tools: McpToolView[] = asArray(value.tools).flatMap((tool) => {
+		if (!isRecord(tool)) return [];
+		const rawName = stringField(tool.rawName ?? tool.name);
+		if (rawName.length === 0) return [];
+		const view: McpToolView = {
+			rawName: boundedToolText(rawName, LABEL_BOUND),
+			runtimeName: boundedToolText(stringField(tool.runtimeName) || rawName, LABEL_BOUND),
+			...(stringField(tool.description).length === 0 ? {} : { description: boundedToolText(stringField(tool.description), LABEL_BOUND) }),
+			isReadOnly: tool.isReadOnly === true,
+			isDestructive: tool.isDestructive !== false,
+		};
+		return [view];
+	});
+	const diagnostics: McpDiagnosticView[] = asArray(value.diagnostics).flatMap((item) => {
+		if (!isRecord(item)) return [];
+		const message = stringField(item.message);
+		if (message.length === 0) return [];
+		return [{
+			code: boundedToolText(stringField(item.code) || "mcp.diagnostic", LABEL_BOUND),
+			message: boundedToolText(message, LABEL_BOUND),
+			severity: boundedToolText(stringField(item.severity) || "error", LABEL_BOUND),
+		}];
+	});
+	return {
+		serverId: serverId || `mcp-server:${stringField(value.displayName) || "unknown"}`,
+		displayName: boundedToolText(stringField(value.displayName) || serverId || "unknown", LABEL_BOUND),
+		transport: stringField(value.transport) || "unknown",
+		required: value.required === true,
+		state: mcpServerState(value.state),
+		generation: numberField(value.generation) ?? 0,
+		tools,
+		diagnostics,
+	};
+}
+
+async function listMcpServers(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<McpCatalogSnapshot>> {
+	const body = await query("mcp.list", {}, request);
+	if (body.ok === false) {
+		return { ok: false, ref: request, error: { code: stringField(body.code), message: stringField(body.message), retryable: true } };
+	}
+	const items = isRecord(body.items) || Array.isArray(body.items)
+		? Array.isArray(body.items) ? body.items : asArray(body.items.servers)
+		: asArray(body.servers);
+	const servers: McpServerView[] = items.flatMap((item) => {
+		if (!isRecord(item)) return [];
+		return [mcpServerView(item)];
+	});
+	return { ok: true, ref: request, value: { servers } };
 }
 
 async function inspectPlan(query: ResourceQuery, request: TuiPortRequest): Promise<TuiResultEnvelope<PlanRenderView>> {

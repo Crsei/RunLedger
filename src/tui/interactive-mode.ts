@@ -50,6 +50,9 @@ import { ChatContainer } from "./components/chat-container.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
 import { SessionPickerModal, buildSessionPickerItems } from "./components/session-picker-modal.ts";
+import { ListSelectionModal, type ListSelectionItem } from "./components/list-selection-modal.ts";
+import { ExtensionToggleModal, type ExtensionToggleItem } from "./components/extension-toggle-modal.ts";
+import { McpServersModal, type McpServerViewItem } from "./components/mcp-servers-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
 import { SelectionView } from "./components/selection-view.ts";
@@ -60,6 +63,7 @@ import { findCommand, commandsForContext, type RegisteredSlashCommand } from "./
 import { SlashCommandPopup } from "./components/slash-command-popup.ts";
 import type { TuiOverlayState } from "./application/state.ts";
 import type { ExecutionId } from "../runtime/protocol/ids.ts";
+import type { ExtensionResourceView } from "./extensions/types.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { decodeAuthEvent, decodeAuthPrompt } from "../runtime/session-runtime/credential-reverse-request.ts";
@@ -111,6 +115,13 @@ export interface InteractiveModeOptions {
 
 export interface SessionSwitchTarget {
   readonly sessionId: string;
+}
+
+/** /model 弹窗模型条目(model.list workflow 值的投影)。 */
+export interface ModelPickerModel {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly label: string;
 }
 
 export type InteractiveExitIntent =
@@ -186,6 +197,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private authAdapter: InteractiveSessionAdapter;
   private lastIdleCtrlC = 0;
   private quitting = false;
+
+  // /model 二级弹窗缓存:workflow ready 快照投影,供二级 Esc 返回一级复用。
+  private modelPickSource: {
+    readonly models: readonly ModelPickerModel[];
+    readonly currentProviderId?: string;
+    readonly currentModelId?: string;
+  } | undefined;
 	private hostConnectionState: HostConnectionUiState = "ready";
   private readonly exitPromise: Promise<InteractiveExitIntent>;
   private readonly resolveExit: (intent: InteractiveExitIntent) => void;
@@ -770,63 +788,178 @@ export class InteractiveMode implements FooterSnapshotProvider {
 	}
 
   /**
-   * B4:打开 mcp server 选择器；经 extension.inspect workflow 查询真实 catalog，
-   * 不再直接解析 Host raw response。选择项只展示状态，不提供 client-local 启停。
+   * B4+:打开 MCP server 管理视图(/mcp)。经 mcp.list 查询真实 catalog,
+   * r 重启走 mcp.restart,操作成功后重新查询刷新。
    */
   openMcpServerSelector(): Promise<void> {
-    return this.openExtensionWorkflowSelector("mcp-server", "/mcp");
+    return this.openMcpServersModal();
   }
 
-  /**
-   * B4:打开 plugins/skills/hooks 资源选择器；经 extension.inspect workflow
-   * 查询真实 snapshot。只读展示 enabled/trusted/ready 状态。
-   */
+  /** B4+:打开 plugins/skills/hooks 管理视图(/plugins /skills /hooks)。 */
   openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", _kindLabel: string, commandName: string): Promise<void> {
     const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : "hook";
-    return this.openExtensionWorkflowSelector(kind, commandName);
+    return this.openExtensionToggleModal(kind, commandName);
   }
 
-  /** B4:extension workflow 驱动的资源选择器（loading → ready/empty/error/unavailable）。 */
-  private async openExtensionWorkflowSelector(kind: "mcp-server" | "plugin" | "skill" | "hook", commandName: string): Promise<void> {
+  /** /mcp:server 列表 + Enter 详情 + r 重启,全部经 Session domain 通道。 */
+  private async openMcpServersModal(): Promise<void> {
+    if (this.store.getState().capabilities.mcp.state !== "available") {
+      this.showNotice("MCP catalog is unavailable in this session.", "error");
+      return;
+    }
+    const servers = await this.queryMcpServers();
+    if (servers === undefined) return;
+    let modal: McpServersModal | undefined;
+    modal = new McpServersModal({
+      title: `/mcp (${servers.length})`,
+      servers,
+      onRestart: (server) => {
+        void this.restartMcpServer(server, modal);
+      },
+      onCancel: () => this.closeOverlay(),
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
+  }
+
+  private async restartMcpServer(server: McpServerViewItem, modal: McpServersModal | undefined): Promise<void> {
+    const { serverId } = server;
+    const ok = await this.runSessionMutation("mcp.restart", { serverId }, "/mcp restart");
+    if (!ok || modal === undefined) return;
+    const fresh = await this.queryMcpServers();
+    if (fresh !== undefined) {
+      modal.update(fresh);
+      this.showNotice(`/mcp: ${server.displayName} restarted.`, "note");
+    }
+  }
+
+  private async queryMcpServers(): Promise<McpServerViewItem[] | undefined> {
+    const context = { correlationId: `corr-${this.correlationSequence + 1}`, effectId: `effect-${this.effectSequence + 1}` };
+    const result = await querySessionController(this.controller, "mcp.list", {}, context).catch((error: unknown) => {
+      this.showNotice(`/mcp query failed: ${String(error)}`, "error");
+      return undefined;
+    });
+    if (result === undefined) return undefined;
+    if (!result.ok) {
+      this.showNotice(`/mcp query failed: ${result.code}`, "error");
+      return undefined;
+    }
+    const items = isRecordArray(result.value?.items) ? result.value.items : isRecordArray(result.value?.servers) ? result.value.servers : [];
+    return items.flatMap((item) => {
+      if (!isRecord(item)) return [];
+      const view = mcpServerViewFromDomain(item);
+      return view === undefined ? [] : [view];
+    });
+  }
+
+  /** /plugins /skills /hooks:codex 风格 toggle 视图,Space/Enter 切换 enable,t 信任。 */
+  private async openExtensionToggleModal(kind: "plugin" | "skill" | "hook", commandName: string): Promise<void> {
+    const resources = await this.queryExtensionResources(kind, commandName);
+    if (resources === undefined) return;
+    if (resources.length === 0) {
+      this.showNotice(`No ${kind} resources are discovered in the current snapshot.`, "note");
+      return;
+    }
+    const items: ExtensionToggleItem[] = resources.map(resourceToToggleItem);
+    const showTrust = kind === "plugin" || kind === "hook";
+    const showReload = kind === "plugin";
+    let modal: ExtensionToggleModal | undefined;
+    modal = new ExtensionToggleModal({
+      title: `${commandName} (${items.length})`,
+      subtitle: kind === "skill"
+        ? "Turn skills on or off. Changes apply to the owning plugin and are saved automatically."
+        : kind === "hook"
+          ? "Toggle hooks and review their trust. Changes apply to the owning plugin."
+          : "Enable, disable, trust or untrust plugins. Changes are saved automatically.",
+      items,
+      showTrust,
+      showReload,
+      onToggle: (item) => {
+        void this.toggleExtensionItem(kind, item, modal);
+      },
+      onTrust: (item) => {
+        void this.trustExtensionItem(kind, item, modal);
+      },
+      onReload: () => {
+        void this.reloadExtensions(kind, commandName, modal);
+      },
+      onCancel: () => this.closeOverlay(),
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
+  }
+
+  private async toggleExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
+    if (item.pluginId === undefined) {
+      this.showNotice(`${kind} ${item.name} has no owning plugin and cannot be toggled.`, "error");
+      return;
+    }
+    const ok = await this.runSessionMutation(item.enabled ? "plugin.disable" : "plugin.enable", { pluginId: item.pluginId }, `/${kind} toggle`);
+    if (!ok || modal === undefined) return;
+    const fresh = await this.queryExtensionResources(kind, `/${kind}`);
+    if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
+  }
+
+  private async trustExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
+    if (item.pluginId === undefined) {
+      this.showNotice(`${kind} ${item.name} has no owning plugin and cannot be re-trusted.`, "error");
+      return;
+    }
+    const ok = await this.runSessionMutation(item.trusted ? "plugin.untrust" : "plugin.trust", { pluginId: item.pluginId }, `/${kind} trust`);
+    if (!ok || modal === undefined) return;
+    const fresh = await this.queryExtensionResources(kind, `/${kind}`);
+    if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
+  }
+
+  private async reloadExtensions(kind: "plugin" | "skill" | "hook", commandName: string, modal: ExtensionToggleModal | undefined): Promise<void> {
+    const ok = await this.runSessionMutation("extension.reload", {}, commandName);
+    if (!ok || modal === undefined) return;
+    const fresh = await this.queryExtensionResources(kind, commandName);
+    if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
+  }
+
+  /** Session domain mutation 公共 runner;失败投影 typed notice,返回成功与否。 */
+  private async runSessionMutation(operation: string, body: Record<string, unknown>, commandName: string): Promise<boolean> {
+    if (this.inFlight()) {
+      this.showNotice(`${commandName} is available when the current turn is idle.`, "note");
+      return false;
+    }
+    this.effectSequence += 1;
+    this.correlationSequence += 1;
+    const context = { correlationId: `corr-${this.correlationSequence}`, effectId: `effect-${this.effectSequence}` };
+    const result = await commandSessionController(this.controller, operation, body, { ...context, expectedRevision: 0 }).catch((error: unknown) => {
+      this.showNotice(`${commandName} failed: ${String(error)}`, "error");
+      return undefined;
+    });
+    if (result === undefined) return false;
+    if (!result.ok) {
+      this.showNotice(`${commandName} failed: ${result.code}`, "error");
+      return false;
+    }
+    return true;
+  }
+
+  /** 经 extension.inspect workflow 查询快照并按 kind 过滤(只读)。 */
+  private async queryExtensionResources(kind: "plugin" | "skill" | "hook", commandName: string): Promise<ExtensionResourceView[] | undefined> {
     if (this.store.getState().capabilities.extensions.state !== "available") {
       this.showNotice("Session domain query is unavailable in this session.", "error");
-      return;
+      return undefined;
     }
     const effect = this.createEffect("extension.inspect");
     this.store.dispatch({ type: "query.start", effect });
     this.runner.dispatch(effect);
     const workflow = await this.waitForWorkflow("extensionWorkflow", effect.correlationId);
     if (workflow.state === "ready") {
-      const value = workflow.value as { readonly resources?: readonly { readonly kind: string; readonly resourceId: string; readonly label: { readonly text: string }; readonly trust: string; readonly activation: string; readonly digestPrefix: { readonly text: string } }[] };
-      const resources = (value.resources ?? []).filter((resource) => resource.kind === kind);
-      if (resources.length === 0) {
-        this.showNotice(`No ${kind} resources are discovered in the current snapshot.`, "note");
-        return;
-      }
-      const items: SelectItem[] = resources.map((resource) => ({
-        value: resource.resourceId,
-        label: resource.label.text,
-        description: `${resource.trust} · ${resource.activation}${resource.digestPrefix.text.length > 0 ? ` · ${resource.digestPrefix.text}` : ""}`,
-      }));
-      const modal = new SearchableSelectorModal({
-        title: `${commandName} (${resources.length})`,
-        items,
-        maxVisible: 12,
-        onSelect: () => this.closeOverlay(),
-        onCancel: () => this.closeOverlay(),
-      });
-      this.showOverlayModal(modal, { anchor: "bottom-left" });
-      return;
+      const value = workflow.value as { readonly resources?: readonly ExtensionResourceView[] };
+      return (value.resources ?? []).filter((resource) => resource.kind === kind);
     }
     if (workflow.state === "empty") {
-      this.showNotice(`No ${kind} resources are discovered in the current snapshot.`, "note");
-      return;
+      return [];
     }
     if (workflow.state === "error") {
       this.showNotice(`${commandName} query failed: ${workflow.message}`, "error");
-      return;
+      return undefined;
     }
     this.showNotice(`${commandName} query is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
+    return undefined;
   }
 
   /** B7:/plan 走 plan.inspect workflow（typed adapter 投影，不再 raw 解析）。 */
@@ -922,6 +1055,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     void this.openModelWorkflowSelector(provider);
   }
 
+  /** /model 二级弹窗的模型快照(workflow ready 值的投影)。 */
   private async openModelWorkflowSelector(provider?: string): Promise<void> {
     if (this.store.getState().capabilities.model.state !== "available") {
       this.showNotice("Model selection is unavailable in this session.", "error");
@@ -932,29 +1066,29 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.runner.dispatch(effect);
     const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
     if (workflow.state === "ready") {
-      const models = (workflow.value as { readonly models?: readonly { readonly providerId: string; readonly modelId: string; readonly label: { readonly text: string }; readonly availability: string }[] }).models ?? [];
+      const value = workflow.value as {
+        readonly models?: readonly { readonly providerId: string; readonly modelId: string; readonly label: { readonly text: string } }[];
+        readonly currentProviderId?: string;
+        readonly currentModelId?: string;
+      };
+      const models: ModelPickerModel[] = (value.models ?? []).map((model) => ({
+        providerId: model.providerId,
+        modelId: model.modelId,
+        label: model.label.text,
+      }));
       if (models.length === 0) {
         this.showNotice(provider
           ? `No available models for ${provider}. Configure authentication first.`
           : "No available models. Use /provider or /login first.", "error");
         return;
       }
-      const items: SelectItem[] = models.map((model) => ({
-        value: `${model.providerId}/${model.modelId}`,
-        label: model.label.text,
-        description: `[${model.providerId}]`,
-      }));
-      const modal = new SearchableSelectorModal({
-        title: provider ? `/model — ${provider}` : "/model — configured providers",
-        items,
-        maxVisible: 12,
-        onSelect: (item) => {
-          this.closeOverlay();
-          void this.selectModelByKey(item.value);
-        },
-        onCancel: () => this.closeOverlay(),
-      });
-      this.showOverlayModal(modal, { anchor: "bottom-left" });
+      this.modelPickSource = {
+        models,
+        currentProviderId: value.currentProviderId,
+        currentModelId: value.currentModelId,
+      };
+      if (provider !== undefined) this.openModelListModal(provider, { back: false });
+      else this.openModelQuickPickModal();
       return;
     }
     if (workflow.state === "empty") {
@@ -968,10 +1102,108 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.showNotice(`Model selection is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
   }
 
+  /**
+   * 一级弹窗(对照 codex open_model_popup_with_presets):配置了模型的 provider
+   * 作为快速选择项,末尾固定 "All models" 进入全量列表。
+   */
+  private openModelQuickPickModal(): void {
+    const source = this.modelPickSource;
+    if (!source) return;
+    const counts = new Map<string, number>();
+    for (const model of source.models) {
+      counts.set(model.providerId, (counts.get(model.providerId) ?? 0) + 1);
+    }
+    const providers = [...counts.keys()];
+    const items: ListSelectionItem[] = providers.map((providerId) => ({
+      value: providerId,
+      name: providerId,
+      description: `${counts.get(providerId) ?? 0} available models`,
+      isCurrent: source.currentProviderId === providerId,
+    }));
+    const currentLabel = this.currentModelLabel(source);
+    items.push({
+      value: "all",
+      name: "All models",
+      description: currentLabel === undefined
+        ? "Choose a specific model and provider"
+        : `Choose a specific model and provider (current: ${currentLabel})`,
+    });
+    const modal = new ListSelectionModal({
+      title: "Select Model",
+      subtitle: "Pick a quick provider or browse all models.",
+      items,
+      selectListTheme: this.selectListTheme(),
+      onSelect: (item) => {
+        this.closeOverlay();
+        if (item.value === "all") this.openModelListModal(undefined, { back: true });
+        else this.openModelListModal(item.value, { back: true });
+      },
+      onCancel: () => this.closeOverlay(),
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
+  }
+
+  /**
+   * 二级弹窗(对照 codex open_all_models_popup):全量或单 provider 的模型列表,
+   * 行尾 (current) 标记当前选择;Esc 返回一级(back 时),否则关闭。
+   */
+  private openModelListModal(providerId: string | undefined, opts: { readonly back: boolean }): void {
+    const source = this.modelPickSource;
+    if (!source) return;
+    const models = providerId === undefined
+      ? source.models
+      : source.models.filter((model) => model.providerId === providerId);
+    if (models.length === 0) {
+      this.showNotice(`No available models for ${providerId}. Configure authentication first.`, "error");
+      return;
+    }
+    const currentLabel = this.currentModelLabel(source);
+    const items: ListSelectionItem[] = models.map((model) => ({
+      value: `${model.providerId}/${model.modelId}`,
+      name: model.label,
+      description: providerId === undefined ? `[${model.providerId}]` : model.modelId,
+      isCurrent: source.currentProviderId === model.providerId && source.currentModelId === model.modelId,
+    }));
+    const suffix = currentLabel === undefined ? "" : ` (current: ${currentLabel})`;
+    const modal = new ListSelectionModal({
+      title: providerId === undefined ? "Select Model and Provider" : `Select Model — ${providerId}`,
+      subtitle: providerId === undefined
+        ? `Choose a specific model and provider${suffix}`
+        : `Choose a specific model${suffix}`,
+      items,
+      selectListTheme: this.selectListTheme(),
+      onSelect: (item) => {
+        this.closeOverlay();
+        void this.selectModelByKey(item.value);
+      },
+      onCancel: () => {
+        this.closeOverlay();
+        if (opts.back) this.openModelQuickPickModal();
+      },
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
+  }
+
+  /** 当前模型在列表中的 label；不在列表时回退 modelId；都没有返回 undefined。 */
+  private currentModelLabel(source: { readonly models: readonly ModelPickerModel[]; readonly currentProviderId?: string; readonly currentModelId?: string }): string | undefined {
+    if (source.currentProviderId === undefined || source.currentModelId === undefined) return undefined;
+    const match = source.models.find((model) =>
+      model.providerId === source.currentProviderId && model.modelId === source.currentModelId,
+    );
+    return match?.label ?? source.currentModelId;
+  }
+
+  private selectListTheme(): SelectListTheme {
+    return makeSelectListTheme(this.theme);
+  }
+
   /** B5:model.select effect；controller/Host 返回 authoritative selection 后 Footer 自动反映。 */
   private async selectModelByKey(key: string): Promise<void> {
-    const [providerId, modelId] = key.split("/");
-    if (providerId === undefined || modelId === undefined) return;
+    const slash = key.indexOf("/");
+    if (slash <= 0) return;
+    const providerId = key.slice(0, slash);
+    const modelId = key.slice(slash + 1);
+    if (providerId.length === 0 || modelId.length === 0) return;
     const effect = this.createEffect("model.select", { providerId, modelId });
     this.store.dispatch({ type: "query.start", effect });
     this.runner.dispatch(effect);
@@ -2148,6 +2380,52 @@ function isRunStopReason(value: string | undefined): value is "stop" | "length" 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isRecordArray(value: unknown): value is readonly Record<string, unknown>[] {
+  return Array.isArray(value) && value.every((item) => isRecord(item));
+}
+
+/** mcp.list raw snapshot -> McpServersModal 视图项(bounded,缺失字段落缺省)。 */
+function mcpServerViewFromDomain(value: Record<string, unknown>): McpServerViewItem | undefined {
+  const serverId = typeof value.serverId === "string" ? value.serverId : "";
+  const displayName = typeof value.displayName === "string" ? value.displayName : serverId;
+  if (displayName.length === 0) return undefined;
+  const tools = isRecordArray(value.tools) ? value.tools.map((tool) => ({
+    rawName: typeof tool.rawName === "string" ? tool.rawName : typeof tool.name === "string" ? tool.name : "unknown",
+    ...(typeof tool.description === "string" && tool.description.length > 0 ? { description: tool.description.slice(0, 200) } : {}),
+    isReadOnly: tool.isReadOnly === true,
+    isDestructive: tool.isDestructive !== false,
+  })) : [];
+  const diagnostics = isRecordArray(value.diagnostics) ? value.diagnostics.map((item) => ({
+    code: typeof item.code === "string" ? item.code : "mcp.diagnostic",
+    message: typeof item.message === "string" ? item.message : "",
+    severity: typeof item.severity === "string" ? item.severity : "error",
+  })).filter((item) => item.message.length > 0) : [];
+  return {
+    serverId: serverId || `mcp-server:${displayName}`,
+    displayName,
+    transport: typeof value.transport === "string" ? value.transport : "unknown",
+    required: value.required === true,
+    state: typeof value.state === "string" ? value.state : "stopped",
+    generation: typeof value.generation === "number" ? value.generation : 0,
+    tools,
+    diagnostics,
+  };
+}
+
+/** ExtensionResourceView(typed adapter 投影)-> ExtensionToggleModal 项。 */
+function resourceToToggleItem(resource: ExtensionResourceView): ExtensionToggleItem {
+  return {
+    resourceId: resource.resourceId,
+    name: resource.label.text,
+    ...(resource.description === undefined ? {} : { description: resource.description.text }),
+    ...(resource.pluginId === undefined ? {} : { pluginId: resource.pluginId.text }),
+    enabled: resource.enabled,
+    trusted: resource.trusted,
+    ready: resource.ready,
+    trustLabel: resource.trust,
+  };
 }
 
 /** 把 domain 命令结果压缩为单行 notice 文本（只读展示，不解析执行）。 */

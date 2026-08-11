@@ -68,6 +68,7 @@ export interface TuiCapabilitySnapshot {
 	readonly plan: PortAvailability;
 	readonly agents: PortAvailability;
 	readonly extensions: PortAvailability;
+	readonly mcp: PortAvailability;
 	readonly runtimeSnapshot: PortAvailability;
 	readonly securityMode: PortAvailability;
 	readonly shutdown: PortAvailability;

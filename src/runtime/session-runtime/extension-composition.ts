@@ -9,7 +9,7 @@ import { NodeExtensionStorage } from "../../storage/extensions/extension-storage
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
 import { sourceKey } from "../../extensions/paths.ts";
 import type { ExtensionSource, ExtensionSourceRoot } from "../../extensions/types.ts";
-import type { McpServerSnapshot } from "../../extensions/mcp/connection-manager.ts";
+import type { McpManagerResult, McpServerSnapshot } from "../../extensions/mcp/connection-manager.ts";
 import { McpConnectionManager } from "../../extensions/mcp/connection-manager.ts";
 import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../../extensions/mcp/sdk-factory.ts";
 import { loadCanonicalMcpConfigs, parseMcpConfigDocument } from "../../extensions/mcp/config.ts";
@@ -34,11 +34,15 @@ import type { OwnerFence } from "../session-owner/types.ts";
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
 import type { AttemptPort } from "./attempt-gateway.ts";
 import type { SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
-import type { SessionDomainResult } from "./domain-router.ts";
+import type { SessionDomainMutationContext, SessionDomainResult } from "./domain-router.ts";
 import type { SessionResourceDomainPort } from "./session-runtime.ts";
 
 export interface SessionExtensionManagerPort {
 	load(): Promise<ExtensionReloadResult>;
+	reload(): Promise<ExtensionReloadResult>;
+	setEnabled(pluginId: string, enabled: boolean): Promise<ExtensionReloadResult>;
+	trust(pluginId: string): Promise<ExtensionReloadResult>;
+	untrust(pluginId: string): Promise<ExtensionReloadResult>;
 	publicSnapshot(): ExtensionPublicSnapshot | undefined;
 }
 
@@ -49,6 +53,7 @@ export interface SessionMcpRuntimePort {
 		readonly requiredFailures: readonly { readonly serverId: string; readonly code: string; readonly message: string }[];
 	}>;
 	snapshots(): readonly McpServerSnapshot[];
+	restart(serverId: string): Promise<McpManagerResult<McpServerSnapshot>>;
 	tools(): readonly AgentTool[];
 	close(): Promise<void>;
 }
@@ -70,6 +75,8 @@ export interface SessionExtensionCompositionOptions {
 	readonly closePlugins: () => Promise<void>;
 	readonly cleanup: () => Promise<void>;
 	readonly audit?: (event: SessionExtensionAuditEvent) => Promise<void>;
+	/** mutation 经 recovery barrier 记账;缺省时 mutation 直通(测试接缝)。 */
+	readonly attemptPort?: () => AttemptPort | undefined;
 }
 
 export interface SessionExtensionComposition {
@@ -111,6 +118,12 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "hook.list", capability: "session.hooks", access: "read" }),
 	Object.freeze({ operation: "mcp.list", capability: "session.mcp", access: "read" }),
 	Object.freeze({ operation: "mcp.doctor", capability: "session.mcp", access: "read" }),
+	Object.freeze({ operation: "extension.reload", capability: "session.extensions", access: "mutate" }),
+	Object.freeze({ operation: "plugin.enable", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.disable", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.trust", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "plugin.untrust", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "mcp.restart", capability: "session.mcp", access: "mutate" }),
 ]);
 
 /**
@@ -127,6 +140,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	const resources: SessionResourceDomainPort = {
 		operationManifest: OPERATION_MANIFEST,
 		query: async (operation) => queryResources(options, operation),
+		mutate: (operation, payload, context) => mutateResources(options, operation, payload, context),
 	};
 	return {
 		tools,
@@ -168,8 +182,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	};
 }
 
-function queryResources(options: SessionExtensionCompositionOptions, operation: string): SessionDomainResult {
-	const snapshot = options.manager.publicSnapshot();
+function queryResources(options: SessionExtensionCompositionOptions, operation: string): SessionDomainResult {	const snapshot = options.manager.publicSnapshot();
 	const mcp = options.mcp.snapshots();
 	if (operation === "extension.inspect") {
 		return ok(operation, options.generation, { snapshot: snapshot ?? emptySnapshot(options.generation), mcp });
@@ -188,6 +201,83 @@ function queryResources(options: SessionExtensionCompositionOptions, operation: 
 
 function ok(operation: string, domainRevision: number, value: Record<string, unknown>): SessionDomainResult {
 	return { ok: true, status: "ok", operation, domainRevision, value };
+}
+
+function stringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function mutationResult(
+	operation: string,
+	options: SessionExtensionCompositionOptions,
+	result: { readonly ok: boolean; readonly value?: Record<string, unknown>; readonly nextSnapshot?: ExtensionPublicSnapshot; readonly code?: string },
+): SessionDomainResult {
+	if (!result.ok) return { ok: false, status: "failed", code: result.code ?? "extension_operation_failed", operation };
+	return ok(operation, options.manager.publicSnapshot()?.generation ?? options.generation, result.value ?? {});
+}
+
+/**
+ * S5.1:Session extension mutation 面。plugin/skill/hook 的 enable/trust 与
+ * extension.reload 经 manager 持久化并 swap snapshot;mcp.restart 走
+ * McpConnectionManager 既有 config 重启。全部经 recovery barrier 的
+ * beginAttempt/settleAttempt(崩溃后遗留 started receipt 由 takeover assess)。
+ */
+async function mutateResources(
+	options: SessionExtensionCompositionOptions,
+	operation: string,
+	payload: Record<string, unknown>,
+	context: SessionDomainMutationContext,
+): Promise<SessionDomainResult> {
+	const attemptPort = options.attemptPort?.();
+	const begun = attemptPort?.beginAttempt("external_mutation", runtimeDigest({
+		operation,
+		payload,
+		correlationId: context.correlationId,
+		effectId: context.effectId,
+		expectedRevision: context.expectedRevision,
+	}));
+	const attemptId = begun !== undefined && "attemptId" in begun ? begun.attemptId : undefined;
+	const settle = (outcome: "committed" | "rejected", details: unknown): boolean => {
+		if (attemptPort === undefined || attemptId === undefined) return true;
+		const settled = attemptPort.settleAttempt(attemptId, outcome, runtimeDigest({ operation, ...payload, details }));
+		return settled.ok;
+	};
+	try {
+		let result: { readonly ok: boolean; readonly value?: Record<string, unknown>; readonly nextSnapshot?: ExtensionPublicSnapshot; readonly code?: string };
+		if (operation === "extension.reload") {
+			const reloaded = await options.manager.reload();
+			result = reloaded.status === "failed"
+				? { ok: false, code: "extension_reload_failed" }
+				: { ok: true, nextSnapshot: reloaded.snapshot ?? reloaded.retained ?? options.manager.publicSnapshot() };
+		} else if (operation === "plugin.enable" || operation === "plugin.disable" || operation === "plugin.trust" || operation === "plugin.untrust") {
+			const pluginId = stringValue(payload.pluginId);
+			if (pluginId === undefined) return { ok: false, status: "failed", code: "plugin_id_required", operation };
+			let applied: ExtensionReloadResult;
+			switch (operation) {
+				case "plugin.enable": applied = await options.manager.setEnabled(pluginId, true); break;
+				case "plugin.disable": applied = await options.manager.setEnabled(pluginId, false); break;
+				case "plugin.trust": applied = await options.manager.trust(pluginId); break;
+				default: applied = await options.manager.untrust(pluginId); break;
+			}
+			result = applied.status === "failed"
+				? { ok: false, code: "extension_operation_failed" }
+				: { ok: true, nextSnapshot: applied.snapshot ?? applied.retained ?? options.manager.publicSnapshot() };
+		} else if (operation === "mcp.restart") {
+			const serverId = stringValue(payload.serverId);
+			if (serverId === undefined) return { ok: false, status: "failed", code: "mcp_server_required", operation };
+			const restarted = await options.mcp.restart(serverId);
+			result = restarted.ok
+				? { ok: true, value: { server: restarted.value } }
+				: { ok: false, code: `mcp_${restarted.error.code}` };
+		} else {
+			return { ok: false, status: "unavailable", code: "operation_unavailable", operation };
+		}
+		if (!settle(result.ok ? "committed" : "rejected", result)) return { ok: false, status: "failed", code: "attempt_settle_failed", operation };
+		return mutationResult(operation, options, result);
+	} catch (error) {
+		settle("rejected", error instanceof Error ? error.message : String(error));
+		return { ok: false, status: "failed", code: "extension_mutation_failed", operation };
+	}
 }
 
 function emptySnapshot(generation: number): ExtensionPublicSnapshot {
@@ -400,6 +490,7 @@ function createSessionMcpRuntime(input: {
 			return { ok: requiredFailures.length === 0, snapshots: catalog(), requiredFailures };
 		},
 		snapshots: catalog,
+		restart: (serverId: string) => input.manager.restart(serverId),
 		tools: () => tools,
 		close: () => input.manager.closeAll(),
 	};

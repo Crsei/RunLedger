@@ -20,6 +20,9 @@ export interface ModelCatalogSnapshot {
 	readonly providerId: string;
 	readonly models: readonly ModelSnapshot[];
 	readonly generation: number;
+	/** 当前生效选择(controller.currentSelection 投影),用于 ` (current)` 标记。 */
+	readonly currentProviderId?: string;
+	readonly currentModelId?: string;
 }
 
 export type ModelWorkflowState =

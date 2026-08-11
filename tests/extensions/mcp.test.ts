@@ -135,4 +135,36 @@ describe("McpConnectionManager", () => {
 		expect(closed).toBe(1);
 		expect(manager.snapshot("mcp-server:fixture:issues")).toMatchObject({ state: "failed" });
 	});
+
+	it("restarts a server using its existing config after a failure", async () => {
+		let connects = 0;
+		const factory: McpClientFactory = {
+			async connect() {
+				connects += 1;
+				if (connects === 1) throw new Error("transport down");
+				return client([{ name: "search" }]);
+			},
+		};
+		const manager = new McpConnectionManager({ factory });
+		await manager.start(config({ enabledTools: ["search"], disabledTools: [] }));
+		expect(manager.snapshot("mcp-server:fixture:issues")).toMatchObject({ state: "failed" });
+
+		const restarted = await manager.restart("mcp-server:fixture:issues");
+
+		expect(restarted).toMatchObject({ ok: true, value: { state: "ready" } });
+		expect(connects).toBe(2);
+		if (!restarted.ok) return;
+		expect(restarted.value.generation).toBeGreaterThan(0);
+		expect(restarted.value.tools.map((tool) => tool.rawName)).toEqual(["search"]);
+	});
+
+	it("rejects restart for an unknown server id", async () => {
+		const factory: McpClientFactory = { async connect() { return client([]); } };
+		const manager = new McpConnectionManager({ factory });
+
+		await expect(manager.restart("mcp-server:missing")).resolves.toMatchObject({
+			ok: false,
+			error: { code: "server_not_found" },
+		});
+	});
 });

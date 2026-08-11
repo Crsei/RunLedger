@@ -145,7 +145,8 @@ export type McpErrorCode =
 	| "tool_not_found"
 	| "authorization_denied"
 	| "tool_failed"
-	| "tool_timeout";
+	| "tool_timeout"
+	| "server_not_found";
 
 export interface McpManagerError {
 	readonly code: McpErrorCode;

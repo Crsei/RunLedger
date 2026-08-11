@@ -647,6 +647,29 @@ export class SessionRuntime implements SessionController {
 						),
 					};
 				}
+				const resources = this.domain?.resources;
+				if (resources?.mutate !== undefined && resources.operationManifest.some((entry) => entry.operation === operation && entry.access === "mutate")) {
+					if (this.state === "recovery_required") {
+						return {
+							ok: true,
+							kind: "domain_command",
+							result: { ok: false, status: "recovery_required", code: "recovery_barrier_active", operation },
+						};
+					}
+					return {
+						ok: true,
+						kind: "domain_command",
+						result: await resources.mutate(
+							operation,
+							objectValue(request.body.payload) ?? {},
+							{
+								correlationId: String(request.body.correlationId),
+								effectId: String(request.body.effectId),
+								expectedRevision: Number(request.body.expectedRevision),
+							},
+						),
+					};
+				}
 				return { ok: true, kind: "domain_command", result: this.domainRouter.mutate(request.body, meta.isDriver) };
 			}
 			case "recovery_explain": {

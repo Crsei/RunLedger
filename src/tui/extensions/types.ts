@@ -9,7 +9,13 @@ export interface ExtensionResourceView {
 	readonly resourceId: string;
 	readonly kind: ExtensionKind;
 	readonly label: SafeBoundedText;
+	readonly description?: SafeBoundedText;
+	readonly pluginId?: SafeBoundedText;
+	readonly runtimeName?: SafeBoundedText;
 	readonly digestPrefix: SafeBoundedText;
+	readonly enabled: boolean;
+	readonly trusted: boolean;
+	readonly ready: boolean;
 	readonly trust: ExtensionTrust;
 	readonly activation: ExtensionActivation;
 	readonly diagnostic?: SafeBoundedText;
@@ -22,12 +28,14 @@ export interface ExtensionResourceSnapshot {
 
 export interface ExtensionMutationReceipt {
 	readonly resourceId: string;
-	readonly operation: "activate" | "deactivate" | "reload";
+	readonly operation: "activate" | "deactivate" | "reload" | "enable" | "disable" | "trust" | "untrust";
 	readonly generation: number;
 	readonly receiptPrefix: SafeBoundedText;
 	readonly outcome: "accepted" | "completed" | "failed" | "uncertain";
 	readonly recoveryRequired: boolean;
 }
+
+export type ExtensionMutationReceiptOperation = ExtensionMutationReceipt["operation"];
 
 export type ExtensionWorkflowResult = TuiResultEnvelope<ExtensionResourceSnapshot>;
 export type ExtensionReloadReceipt = TuiResultEnvelope<ExtensionMutationReceipt>;
@@ -50,4 +58,8 @@ export type ExtensionReloadWorkflowState =
 export interface ExtensionResourcePort {
 	readonly inspect: (input: TuiPortRequest) => Promise<ExtensionWorkflowResult>;
 	readonly reload: (input: TuiPortRequest & { readonly resourceId: string }) => Promise<ExtensionReloadReceipt>;
+	/** plugin.enable / plugin.disable —— plugin 及其 skill/hook 组件共享同一开关。 */
+	readonly setPluginEnabled: (input: TuiPortRequest & { readonly pluginId: string; readonly enabled: boolean }) => Promise<ExtensionReloadReceipt>;
+	/** plugin.trust / plugin.untrust —— 信任与吊销 plugin 及其组件。 */
+	readonly setPluginTrusted: (input: TuiPortRequest & { readonly pluginId: string; readonly trusted: boolean }) => Promise<ExtensionReloadReceipt>;
 }

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import type { SessionProtocolOperationDescriptor } from "../../../src/runtime/session-server/protocol.ts";
 import { createProductionSessionExtensionComposition, createSessionExtensionComposition } from "../../../src/runtime/session-runtime/extension-composition.ts";
+import type { ExtensionReloadResult } from "../../../src/extensions/manager.ts";
 import type { AgentTool } from "../../../src/runtime/types.ts";
 import { localExecutionEnv } from "../../../src/runtime/execution-env.ts";
 import { createEmbeddedSessionRuntime } from "../../../src/cli/embedded-session-runtime.ts";
@@ -29,6 +30,31 @@ function snapshot() {
 		inFlight: false,
 		providerStatuses: [],
 	};
+}
+
+const readyReload: ExtensionReloadResult = { status: "ready" };
+
+function managerStub(extra: Record<string, unknown> = {}): Parameters<typeof createSessionExtensionComposition>[0]["manager"] {
+	return {
+		load: async () => readyReload,
+		reload: async () => readyReload,
+		setEnabled: async () => readyReload,
+		trust: async () => readyReload,
+		untrust: async () => readyReload,
+		publicSnapshot: () => undefined,
+		...extra,
+	} as Parameters<typeof createSessionExtensionComposition>[0]["manager"];
+}
+
+function mcpStub(extra: Record<string, unknown> = {}): Parameters<typeof createSessionExtensionComposition>[0]["mcp"] {
+	return {
+		start: async () => ({ ok: true, snapshots: [], requiredFailures: [] }),
+		snapshots: () => [],
+		restart: async () => ({ ok: false, error: { code: "server_not_found", message: "no server", retryable: false } }),
+		tools: () => [],
+		close: async () => undefined,
+		...extra,
+	} as Parameters<typeof createSessionExtensionComposition>[0]["mcp"];
 }
 
 const noPromptTestSecurity = [{
@@ -314,7 +340,7 @@ describe("SessionRuntime extension domain", () => {
 		const build = (name: string) => createSessionExtensionComposition({
 			sessionId: `session_${name}`,
 			generation: 1,
-			manager: {
+			manager: managerStub({
 				load: async () => ({ status: "ready" as const }),
 				publicSnapshot: () => ({
 					snapshotId: `snapshot_${name}`,
@@ -328,16 +354,13 @@ describe("SessionRuntime extension domain", () => {
 						ready: true,
 					}],
 					diagnostics: [],
-					counts: { plugins: 1, skills: 0, hooks: 0, mcpServers: 0, ready: 1, blocked: 0, failed: 0 },
+					counts: { plugins: 1, skills: 0, hooks: 0, mcpServers: 0, mcpTools: 0, ready: 1, blocked: 0, disabled: 0, error: 0 },
 					digest: "e".repeat(64),
 				}),
-			},
-			mcp: {
-				start: async () => ({ ok: true, snapshots: [], requiredFailures: [] }),
+			}),
+			mcp: mcpStub({
 				snapshots: () => [{ serverId: `mcp-server:${name}`, displayName: name, transport: "stdio" as const, required: false, state: "ready" as const, generation: 1, tools: [], diagnostics: [] }],
-				tools: () => [],
-				close: async () => undefined,
-			},
+			}),
 			closeHooks: async () => undefined,
 			closePlugins: async () => undefined,
 			cleanup: async () => undefined,
@@ -364,13 +387,11 @@ describe("SessionRuntime extension domain", () => {
 		const required = createSessionExtensionComposition({
 			sessionId: "session_required",
 			generation: 2,
-			manager: { load: async () => ({ status: "ready" as const }), publicSnapshot: () => undefined },
-			mcp: {
+			manager: managerStub({ load: async () => ({ status: "ready" as const }), publicSnapshot: () => undefined }),
+			mcp: mcpStub({
 				start: async () => ({ ok: false, snapshots: [], requiredFailures: [{ serverId: "mcp-server:required", code: "startup_failed", message: "offline" }] }),
-				snapshots: () => [],
-				tools: () => [],
 				close: async () => { closed += 1; },
-			},
+			}),
 			closeHooks: async () => undefined,
 			closePlugins: async () => undefined,
 			cleanup: async () => undefined,
@@ -383,13 +404,10 @@ describe("SessionRuntime extension domain", () => {
 		const optional = createSessionExtensionComposition({
 			sessionId: "session_optional",
 			generation: 1,
-			manager: { load: async () => ({ status: "ready" as const }), publicSnapshot: () => undefined },
-			mcp: {
-				start: async () => ({ ok: true, snapshots: [{ serverId: "mcp-server:optional", transport: "stdio" as const, required: false, state: "failed" as const, generation: 1, tools: [], diagnostics: [] }], requiredFailures: [] }),
-				snapshots: () => [],
-				tools: () => [],
-				close: async () => undefined,
-			},
+			manager: managerStub({ load: async () => ({ status: "ready" as const }), publicSnapshot: () => undefined }),
+			mcp: mcpStub({
+				start: async () => ({ ok: true, snapshots: [{ serverId: "mcp-server:optional", displayName: "optional", transport: "stdio" as const, required: false, state: "failed" as const, generation: 1, tools: [], diagnostics: [] }], requiredFailures: [] }),
+			}),
 			closeHooks: async () => undefined,
 			closePlugins: async () => undefined,
 			cleanup: async () => undefined,
@@ -404,13 +422,11 @@ describe("SessionRuntime extension domain", () => {
 		const composition = createSessionExtensionComposition({
 			sessionId: "session_skill",
 			generation: 4,
-			manager: { load: async () => ({ status: "ready" as const }), publicSnapshot: () => undefined },
-			mcp: {
-				start: async () => ({ ok: true, snapshots: [], requiredFailures: [] }),
-				snapshots: () => [],
+			manager: managerStub({ load: async () => ({ status: "ready" as const }), publicSnapshot: () => undefined }),
+			mcp: mcpStub({
 				tools: () => [{ name: "mcp_catalog" } as AgentTool],
 				close: async () => { order.push("mcp"); },
-			},
+			}),
 			skillLoader: async () => ({ ok: true, body: "trusted body", allowedTools: ["read"] }),
 			closeHooks: async () => { order.push("hooks"); },
 			closePlugins: async () => { order.push("plugins"); },
@@ -468,6 +484,167 @@ describe("SessionRuntime extension domain", () => {
 			await harness.runtime.shutdownAfterLastAttachment("paused");
 			harness.cleanup();
 		}
+	});
+
+	it("routes extension mutations to resources.mutate through the Session domain command channel", async () => {
+		const mutated: string[] = [];
+		const operationManifest: readonly SessionProtocolOperationDescriptor[] = [
+			{ operation: "extension.inspect", capability: "session.extensions", access: "read" },
+			{ operation: "plugin.enable", capability: "session.plugins", access: "mutate" },
+			{ operation: "plugin.trust", capability: "session.plugins", access: "mutate" },
+			{ operation: "mcp.restart", capability: "session.mcp", access: "mutate" },
+		];
+		const domain = {
+			controller: { subscribe: () => () => undefined },
+			resources: {
+				operationManifest,
+				query: async (operation: string) => ({
+					ok: true as const,
+					status: "ok" as const,
+					operation,
+					domainRevision: 1,
+					value: {},
+				}),
+				mutate: async (operation: string, payload: Record<string, unknown>) => {
+					mutated.push(`${operation}:${JSON.stringify(payload)}`);
+					return {
+						ok: true as const,
+						status: "ok" as const,
+						operation,
+						domainRevision: 1,
+						value: { pluginId: payload.pluginId, serverId: payload.serverId },
+					};
+				},
+			},
+			snapshot,
+		} as unknown as SessionDomainPort;
+		const harness = await createRuntimeHarness("extension-mutation-route", { domain });
+		const meta = { connectionId: "connection_ext_mutation" as never, clientId: "driver", isDriver: true };
+		try {
+			const command = async (operation: string, payload: Record<string, unknown>) => harness.runtime.handleCommand({
+				commandId: `command_${operation.replaceAll(".", "_")}`,
+				kind: "domain_command",
+				body: {
+					sessionId: harness.sessionId,
+					generation: harness.fence.generation,
+					correlationId: `correlation_${operation}`,
+					effectId: `effect_${operation}`,
+					operation,
+					payload,
+					expectedRevision: 1,
+				},
+			}, meta);
+			const enabled = await command("plugin.enable", { pluginId: "plugin:fixture" });
+			const trusted = await command("plugin.trust", { pluginId: "plugin:fixture" });
+			const restarted = await command("mcp.restart", { serverId: "mcp-server:fixture" });
+			expect(enabled).toMatchObject({ ok: true, result: { ok: true, operation: "plugin.enable" } });
+			expect(trusted).toMatchObject({ ok: true, result: { ok: true, operation: "plugin.trust" } });
+			expect(restarted).toMatchObject({ ok: true, result: { ok: true, operation: "mcp.restart" } });
+			expect(mutated).toEqual([
+				'plugin.enable:{"pluginId":"plugin:fixture"}',
+				'plugin.trust:{"pluginId":"plugin:fixture"}',
+				'mcp.restart:{"serverId":"mcp-server:fixture"}',
+			]);
+		} finally {
+			await harness.runtime.shutdownAfterLastAttachment("paused");
+			harness.cleanup();
+		}
+	});
+
+	it("rejects extension mutations while the recovery barrier is open", async () => {
+		const operationManifest: readonly SessionProtocolOperationDescriptor[] = [
+			{ operation: "plugin.enable", capability: "session.plugins", access: "mutate" },
+		];
+		let mutationCalls = 0;
+		const domain = {
+			controller: { subscribe: () => () => undefined },
+			process: { operationManifest: [], hasRecoveryUncertainty: () => true },
+			resources: {
+				operationManifest,
+				query: async (operation: string) => ({
+					ok: true as const,
+					status: "ok" as const,
+					operation,
+					domainRevision: 1,
+					value: {},
+				}),
+				mutate: async () => {
+					mutationCalls += 1;
+					return { ok: false, status: "failed" as const, code: "must_not_run", operation: "plugin.enable" };
+				},
+			},
+			snapshot,
+		} as unknown as SessionDomainPort;
+		const harness = await createRuntimeHarness("extension-mutation-barrier", { crashTakeover: true, domain });
+		try {
+			expect(harness.runtime.recoveryAssess()).toMatchObject({ barrierState: "open" });
+			const result = await harness.runtime.handleCommand({
+				commandId: "command_plugin_enable_barrier",
+				kind: "domain_command",
+				body: {
+					sessionId: harness.sessionId,
+					generation: harness.fence.generation,
+					correlationId: "correlation_barrier",
+					effectId: "effect_barrier",
+					operation: "plugin.enable",
+					payload: { pluginId: "plugin:fixture" },
+					expectedRevision: 1,
+				},
+			}, { connectionId: "connection_ext_barrier" as never, clientId: "driver", isDriver: true });
+			expect(result).toMatchObject({ ok: true, result: { ok: false, status: "recovery_required", code: "recovery_barrier_active" } });
+			expect(mutationCalls).toBe(0);
+		} finally {
+			await harness.runtime.shutdownAfterLastAttachment("paused");
+			harness.cleanup();
+		}
+	});
+
+	it("routes plugin mutations and MCP restarts through the composition manager", async () => {
+		const calls: string[] = [];
+		const reloaded: ExtensionReloadResult = { status: "ready", snapshot: {
+			snapshotId: "snapshot_reloaded",
+			generation: 2,
+			createdAt: "2026-08-09T00:00:00.000Z",
+			descriptors: [],
+			diagnostics: [],
+			counts: { plugins: 0, skills: 0, hooks: 0, mcpServers: 0, mcpTools: 0, ready: 0, blocked: 0, disabled: 0, error: 0 },
+			digest: "f".repeat(64),
+		} };
+		const composition = createSessionExtensionComposition({
+			sessionId: "session_mutation",
+			generation: 1,
+			manager: {
+				load: async () => ({ status: "ready" as const }),
+				reload: async () => { calls.push("reload"); return reloaded; },
+				setEnabled: async (pluginId, enabled) => { calls.push(`setEnabled:${pluginId}:${enabled}`); return reloaded; },
+				trust: async (pluginId) => { calls.push(`trust:${pluginId}`); return reloaded; },
+				untrust: async (pluginId) => { calls.push(`untrust:${pluginId}`); return reloaded; },
+				publicSnapshot: () => reloaded.snapshot ?? undefined,
+			},
+			mcp: {
+				start: async () => ({ ok: true, snapshots: [], requiredFailures: [] }),
+				snapshots: () => [],
+				restart: async (serverId) => { calls.push(`restart:${serverId}`); return { ok: true, value: { serverId, displayName: serverId, transport: "stdio" as const, required: false, state: "ready" as const, generation: 3, tools: [], diagnostics: [] } }; },
+				tools: () => [],
+				close: async () => undefined,
+			},
+			closeHooks: async () => undefined,
+			closePlugins: async () => undefined,
+			cleanup: async () => undefined,
+		});
+		const ctx = { correlationId: "corr-m", effectId: "effect-m", expectedRevision: 1 };
+
+		await expect(composition.resources.mutate!("plugin.enable", { pluginId: "plugin:fixture" }, ctx)).resolves.toMatchObject({ ok: true, operation: "plugin.enable" });
+		await expect(composition.resources.mutate!("plugin.trust", { pluginId: "plugin:fixture" }, ctx)).resolves.toMatchObject({ ok: true, operation: "plugin.trust" });
+		await expect(composition.resources.mutate!("extension.reload", {}, ctx)).resolves.toMatchObject({ ok: true, operation: "extension.reload" });
+		await expect(composition.resources.mutate!("mcp.restart", { serverId: "mcp-server:fixture" }, ctx)).resolves.toMatchObject({ ok: true, operation: "mcp.restart" });
+		await expect(composition.resources.mutate!("plugin.enable", {}, ctx)).resolves.toMatchObject({ ok: false, code: "plugin_id_required" });
+		expect(calls).toEqual([
+			"setEnabled:plugin:fixture:true",
+			"trust:plugin:fixture",
+			"reload",
+			"restart:mcp-server:fixture",
+		]);
 	});
 
 	it("closes external lifecycles before checkpointing and releasing the owner", async () => {

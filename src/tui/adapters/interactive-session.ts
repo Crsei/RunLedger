@@ -80,6 +80,7 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 	const modelPort: ModelWorkflowPort = {
 		list: (request) => envelope(request, async () => {
 			const models = await controller.getAvailableModels(request.providerId.length === 0 ? undefined : request.providerId);
+			const current = controller.currentSelection;
 			const snapshot: ModelCatalogSnapshot = {
 				providerId: request.providerId,
 				models: models.map((model) => ({
@@ -93,6 +94,8 @@ export function createInteractiveSessionAdapter(controller: InteractiveSessionCo
 					generation: 1,
 				})),
 				generation: 1,
+				currentProviderId: current.provider,
+				currentModelId: typeof current.model === "string" ? current.model : (current.model as { id?: string } | undefined)?.id,
 			};
 			return snapshot;
 		}),

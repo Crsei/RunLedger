@@ -58,11 +58,13 @@ interface StubController {
   dispose: () => void;
 }
 
+const MUTATION_OPERATIONS = new Set(["plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust", "extension.reload", "mcp.restart"]);
+
 function stubController(query: Record<string, Record<string, unknown>>): StubController {
   return {
-	supports: (operation) => operation in query,
-    querySessionDomain: vi.fn(async (operation: string) => ({ ok: true, status: "ok", operation, domainRevision: 0, value: query[operation] ?? {} })),
-    commandSessionDomain: vi.fn(async (operation: string) => ({ ok: true, status: "ok", operation, domainRevision: 0, value: query[operation] ?? {} })),
+	supports: (operation) => operation in query || MUTATION_OPERATIONS.has(operation),
+    querySessionDomain: vi.fn(async (operation: string, _body: Record<string, unknown>, _context: { readonly correlationId: string; readonly effectId: string }): Promise<SessionDomainResult> => ({ ok: true, status: "ok", operation, domainRevision: 0, value: query[operation] ?? {} })),
+    commandSessionDomain: vi.fn(async (operation: string, _body: Record<string, unknown>, _context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number }): Promise<SessionDomainResult> => ({ ok: true, status: "ok", operation, domainRevision: 0, value: query[operation] ?? {} })),
     sessionId: "session-tui-extension-selector",
     inFlight: false,
     messages: [],
@@ -81,13 +83,17 @@ const extensionSnapshot = (descriptors: unknown[]): Record<string, unknown> => (
 });
 
 const mcpServer = { kind: "mcp-server", identity: { qualifiedId: "mcp-server:stdio", version: "1.0.0", digest: { algorithm: "sha256", digest: "d1" } }, displayName: "stdio-server", enabled: true, trusted: true, ready: true, activation: "ready" };
-const plugin = { kind: "plugin", identity: { qualifiedId: "plugin:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d2" } }, displayName: "fixture", enabled: true, trusted: true, ready: true };
-const skill = { kind: "skill", identity: { qualifiedId: "skill:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d3" } }, displayName: "skill", enabled: true, trusted: true, ready: true };
-const hook = { kind: "hook", identity: { qualifiedId: "hook:pre-tool", version: "1.0.0", digest: { algorithm: "sha256", digest: "d4" } }, displayName: "pre-tool", enabled: true, trusted: true, ready: true };
+const plugin = { kind: "plugin", identity: { qualifiedId: "plugin:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d2" } }, displayName: "fixture", pluginId: "plugin:fixture", enabled: true, trusted: true, ready: true };
+const skill = { kind: "skill", identity: { qualifiedId: "skill:fixture", version: "1.0.0", digest: { algorithm: "sha256", digest: "d3" } }, displayName: "skill", pluginId: "plugin:fixture", enabled: true, trusted: true, ready: true };
+const hook = { kind: "hook", identity: { qualifiedId: "hook:pre-tool", version: "1.0.0", digest: { algorithm: "sha256", digest: "d4" } }, displayName: "pre-tool", pluginId: "plugin:fixture", enabled: true, trusted: true, ready: true };
 
 describe("TUI extension selectors query the Session snapshot via the B4 workflow", () => {
-  it("/mcp shows connected mcp-server resources from extension.inspect", async () => {
-    const controller = stubController({ "extension.inspect": extensionSnapshot([mcpServer]) });
+  it("/mcp shows connected mcp-server resources via mcp.list", async () => {
+    const controller = stubController({
+      "mcp.list": {
+        items: [{ serverId: "mcp-server:stdio", displayName: "stdio-server", transport: "stdio", required: false, state: "ready", generation: 2, tools: [{ rawName: "search", runtimeName: "mcp__stdio__search", isReadOnly: true, isDestructive: false }], diagnostics: [] }],
+      },
+    });
     const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
     const query = controller.querySessionDomain as ReturnType<typeof vi.fn>;
 
@@ -95,7 +101,7 @@ describe("TUI extension selectors query the Session snapshot via the B4 workflow
     await settleFrames();
     const tui = (mode as unknown as { ui: TUI }).ui;
     expect(tui.hasOverlay()).toBe(true);
-    expect(query).toHaveBeenCalledWith("extension.inspect", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
+    expect(query).toHaveBeenCalledWith("mcp.list", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
   });
 
   it("/plugins /skills /hooks filter the typed extension workflow snapshot", async () => {
@@ -125,14 +131,13 @@ describe("TUI extension selectors query the Session snapshot via the B4 workflow
     expect(query).not.toHaveBeenCalledWith("hook.list", expect.anything());
   });
 
-  it("empty snapshot shows a typed notice instead of an empty overlay", async () => {
-    const controller = stubController({ "extension.inspect": extensionSnapshot([]) });
+  it("empty mcp catalog opens the empty-state modal instead of a notice", async () => {
+    const controller = stubController({ "mcp.list": { items: [] } });
     const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
     await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
     await settleFrames();
     const tui = (mode as unknown as { ui: TUI }).ui;
-    expect(tui.hasOverlay()).toBe(false);
-    expect(mode.getTuiState().extensionWorkflow.state).toBe("empty");
+    expect(tui.hasOverlay()).toBe(true);
   });
 
   it("fails visibly when the Session domain query is unavailable", async () => {
@@ -152,6 +157,68 @@ describe("TUI extension selectors query the Session snapshot via the B4 workflow
     await settleFrames();
     const workflow = mode.getTuiState().extensionWorkflow;
     expect(workflow.state).toBe("empty"); // 全部被 validator 拒绝 → 空
+  });
+});
+
+describe("TUI extension mutation wiring routes through commandSessionDomain", () => {
+  it("space toggles a plugin through plugin.enable/disable and refreshes the snapshot", async () => {
+    const controller = stubController({
+      "extension.inspect": extensionSnapshot([plugin, skill, hook]),
+    });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const query = controller.querySessionDomain as ReturnType<typeof vi.fn>;
+    await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
+    await settleFrames();
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    expect(tui.hasOverlay()).toBe(true);
+    const queryCallsBefore = (query.mock.calls as string[][]).filter((call) => call[0] === "extension.inspect").length;
+
+    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    modal.handleInput("space");
+    await settleFrames();
+
+    const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+    expect(command).toHaveBeenCalledWith("plugin.disable", { pluginId: "plugin:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
+    // mutation 成功后重新查询快照刷新 modal
+    expect((query.mock.calls as string[][]).filter((call) => call[0] === "extension.inspect").length).toBeGreaterThan(queryCallsBefore);
+  });
+
+  it("trust toggling routes plugin.trust/untrust with the selected plugin id", async () => {
+    const controller = stubController({
+      "extension.inspect": extensionSnapshot([{ ...plugin, trusted: false }]),
+    });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    await (mode as unknown as { openExtensionSelector(op: "plugin.list" | "skill.list" | "hook.list", label: string, name: string): Promise<void> }).openExtensionSelector("plugin.list", "plugins", "/plugins");
+    await settleFrames();
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    modal.handleInput("t");
+    await settleFrames();
+
+    const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+    expect(command).toHaveBeenCalledWith("plugin.trust", { pluginId: "plugin:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
+  });
+
+  it("mcp restart routes mcp.restart and refreshes the catalog", async () => {
+    const controller = stubController({
+      "mcp.list": {
+        items: [{ serverId: "mcp-server:stdio", displayName: "stdio-server", transport: "stdio", required: false, state: "ready", generation: 2, tools: [], diagnostics: [] }],
+      },
+    });
+    const mode = new InteractiveMode({ controller: controller as never, terminal: new FakeTerminal() });
+    const query = controller.querySessionDomain as ReturnType<typeof vi.fn>;
+    await (mode as unknown as { openMcpServerSelector(): Promise<void> }).openMcpServerSelector();
+    await settleFrames();
+    const tui = (mode as unknown as { ui: TUI }).ui;
+    const mcpCallsBefore = (query.mock.calls as string[][]).filter((call) => call[0] === "mcp.list").length;
+
+    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    modal.handleInput("r");
+    await settleFrames();
+
+    const command = controller.commandSessionDomain as ReturnType<typeof vi.fn>;
+    expect(command).toHaveBeenCalledWith("mcp.restart", { serverId: "mcp-server:stdio" }, expect.objectContaining({ expectedRevision: 0 }));
+    expect((query.mock.calls as string[][]).filter((call) => call[0] === "mcp.list").length).toBeGreaterThan(mcpCallsBefore);
   });
 });
 

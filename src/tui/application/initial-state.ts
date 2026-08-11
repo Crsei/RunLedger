@@ -33,6 +33,7 @@ export function defaultCapabilities(): TuiCapabilitySnapshot {
     plan: unavailable,
     agents: unavailable,
     extensions: unavailable,
+    mcp: unavailable,
     runtimeSnapshot: unavailable,
     securityMode: unavailable,
     shutdown: unavailable,

@@ -555,10 +555,13 @@ export class TUI extends Container {
     const editorCursorOffset = this.focusedComponent && "getCursorOffset" in this.focusedComponent
       ? (this.focusedComponent as Component & { getCursorOffset(): number }).getCursorOffset()
       : undefined;
+    // modal 内容宽度与 OpenTUI runtime 的 modalWidth(=90% 宽,边框+padding 各 2)对齐,
+    // 避免文本 overlay 按 width-4 渲染时被原生渲染器二次换行挤出固定高度。
+    const overlayContentWidth = Math.max(1, Math.floor(Math.max(1, width) * 0.9) - 4);
     const overlay = this.hasOverlay() && this.overlay
-      ? this.overlay.present?.(Math.max(1, width - 4)) ?? [{
+      ? this.overlay.present?.(overlayContentWidth) ?? [{
         kind: "text" as const,
-        content: this.overlay.render(Math.max(1, width - 4)).join("\n"),
+        content: this.overlay.render(overlayContentWidth).join("\n"),
       }]
       : undefined;
     if (this.runtime) {

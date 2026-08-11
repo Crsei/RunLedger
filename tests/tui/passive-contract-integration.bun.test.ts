@@ -14,6 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import stripAnsi from "strip-ansi";
 import {
   ContractController,
   contractAssistantMessage,
@@ -24,6 +25,7 @@ import type { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
 import type { PresentationBlock } from "../../src/tui/presentation.ts";
 import type { AgentMessage } from "../../src/runtime/types.ts";
+import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 
 /** 剥离 ANSI 控制序列后返回纯文本帧。 */
 function plainFrame(terminal: { frame(): string }): string {
@@ -188,17 +190,15 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
 
   test("B4: extension workflow drives the /mcp selector with typed loading states", async () => {
     const controller = new ContractController({
-      querySessionDomain: async (operation) => operation === "extension.inspect"
-        ? { ok: true, snapshot: { snapshotId: "s1", generation: 1, digest: "d", descriptors: [{ kind: "mcp-server", identity: { qualifiedId: "mcp-server:stdio", version: "1.0.0", digest: { algorithm: "sha256", digest: "dd" } }, displayName: "stdio-server", enabled: true, trusted: true, ready: true }] } }
+      querySessionDomain: async (operation) => operation === "mcp.list"
+        ? { ok: true, items: [{ serverId: "mcp-server:stdio", displayName: "stdio-server", transport: "stdio", required: false, state: "ready", generation: 1, tools: [], diagnostics: [] }] }
         : { ok: true },
     });
     const harness = createContractHarness({ controller });
     try {
-      expect(harness.mode.getTuiState().capabilities.extensions.state).toBe("available");
+      expect(harness.mode.getTuiState().capabilities.mcp.state).toBe("available");
       await harness.mode.openMcpServerSelector();
       await settleFrames();
-      const workflow = harness.mode.getTuiState().extensionWorkflow;
-      expect(workflow.state).toBe("ready");
       // fake-terminal render 路径把 present() 组件投影为 [object Object]（B0 基线缺陷），
       // overlay 可见性以结构化状态断言
       const ui = (harness.mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
@@ -230,6 +230,70 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       await settleFrames();
       expect(harness.mode.getTuiState().capabilities.prompt.state).toBe("unavailable");
     } finally {
+      await harness.dispose();
+    }
+  });
+
+  test("/model 两级弹窗:一级 provider 快速选择 + All models,二级 Esc 返回一级", async () => {
+    const controller = new ContractController({
+      providerStatuses: [
+        { id: "anthropic", name: "Anthropic", configured: true, interactiveAuthTypes: [] },
+        { id: "deepseek", name: "DeepSeek", configured: true, interactiveAuthTypes: [] },
+      ],
+      availableModels: [
+        { provider: "anthropic", id: "claude-x", name: "Claude X" },
+        { provider: "deepseek", id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+      ],
+      selection: {
+        provider: "deepseek",
+        model: { ...mockModel, provider: "deepseek", id: "deepseek-v4-pro", name: "DeepSeek V4 Pro" },
+        thinkingLevel: "off",
+      },
+    });
+    const harness = createContractHarness({ controller });
+    try {
+      const overlay = (harness.mode as unknown as {
+        ui: { hasOverlay(): boolean; getOverlay(): { render(width: number): string[] } | undefined };
+      }).ui;
+      const overlayText = (): string => {
+        const component = overlay.getOverlay();
+        return component === undefined ? "" : stripAnsi(component.render(96).join("\n"));
+      };
+      await harness.mode.openModelSelector();
+      await settleFrames();
+      // 一级:Select Model,provider 为快速项,当前 provider 带 (current)
+      expect(overlay.hasOverlay()).toBe(true);
+      const first = overlayText();
+      expect(first).toContain("Select Model");
+      expect(first).toContain("Pick a quick provider or browse all models.");
+      expect(first).toContain("1. anthropic");
+      expect(first).toContain("1 available models");
+      expect(first).toContain("2. deepseek (current)");
+      expect(first).toContain("All models");
+      expect(first).toContain("Choose a specific model and provider (current: deepseek-v4-pro)");
+      // Enter 选中第一个 provider → 二级单 provider 模型列表
+      harness.terminal.send("\r");
+      await settleFrames();
+      expect(overlayText()).toContain("Select Model — anthropic");
+      // Esc 返回一级
+      harness.terminal.send("\x1b");
+      await settleFrames();
+      expect(overlayText()).toContain("Select Model");
+      // 下移到 All models 并选中 → 全量列表,当前模型带 (current)
+      harness.terminal.send("\x1b[B");
+      harness.terminal.send("\x1b[B");
+      harness.terminal.send("\r");
+      await settleFrames();
+      const all = overlayText();
+      expect(all).toContain("Select Model and Provider");
+      expect(all).toContain("1. claude-x");
+      expect(all).toContain("2. deepseek-v4-pro (current)");
+    } finally {
+      // 无论断言成败,先逐级 Esc 关掉两级 overlay,dispose 的 Esc+Ctrl+D 才能退出
+      harness.terminal.send("\x1b");
+      await settleFrames();
+      harness.terminal.send("\x1b");
+      await settleFrames();
       await harness.dispose();
     }
   });

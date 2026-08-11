@@ -279,6 +279,13 @@ export class McpConnectionManager {
 		}
 	}
 
+	/** 按既有 config 重启(close + start);不存在的 server 返回 server_not_found。 */
+	public async restart(serverId: string, signal?: AbortSignal): Promise<McpManagerResult<McpServerSnapshot>> {
+		const entry = this.#entries.get(serverId);
+		if (entry === undefined) return failure("server_not_found", "MCP server is not in the catalog", false);
+		return this.start(entry.config, signal);
+	}
+
 	public async closeAll(): Promise<void> {
 		for (const entry of this.#entries.values()) await this.#closeEntry(entry);
 	}

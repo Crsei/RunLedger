@@ -231,6 +231,7 @@ export class PluginManager {
 					displayName: parsed.manifest.name,
 					description: parsed.manifest.description,
 					sourcePath: manifestPath,
+					pluginId: qualifiedId,
 					priority: root.priority,
 					enabled,
 					trusted: trust.state === "trusted",

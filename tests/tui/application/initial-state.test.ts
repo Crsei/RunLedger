@@ -76,7 +76,7 @@ describe("B1 createInitialTuiState", () => {
       expect(value.state, key).toBe("unavailable");
       expect(value.reason.length, key).toBeGreaterThan(0);
     }
-    expect(Object.keys(capabilities)).toHaveLength(20);
+    expect(Object.keys(capabilities)).toHaveLength(21);
   });
 
   it("never fabricates a connected host or zeroed counts", () => {

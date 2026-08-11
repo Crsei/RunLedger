@@ -116,6 +116,11 @@ export function wrapBold(text: string): string {
   return `\x1b[1m${text}\x1b[22m`;
 }
 
+/** Dim wrap: \x1b[2m...\x1b[22m(对照 codex Line::dim 的副标题/描述/提示)。 */
+export function wrapDim(text: string): string {
+  return `\x1b[2m${text}\x1b[22m`;
+}
+
 /** Italic wrap: \x1b[3m...\x1b[23m。 */
 export function wrapItalic(text: string): string {
   return `\x1b[3m${text}\x1b[23m`;

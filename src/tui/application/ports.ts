@@ -20,6 +20,7 @@ import type { TaskGoalQueryPort } from "../task-goal/types.ts";
 import type { PlanRenderQueryPort } from "../goal-plan/types.ts";
 import type { AgentActivityQueryPort } from "../agents/types.ts";
 import type { ExtensionResourcePort } from "../extensions/types.ts";
+import type { McpResourcePort } from "../mcp/types.ts";
 import type { RuntimeSnapshotQueryPort } from "../runtime-snapshot/types.ts";
 import type { SecurityModeWorkflowPort } from "../security-mode/types.ts";
 import type { ShutdownWorkflowPort } from "../shutdown/types.ts";
@@ -42,6 +43,7 @@ export interface TuiDomainPorts {
 	readonly plan?: PlanRenderQueryPort;
 	readonly agents?: AgentActivityQueryPort;
 	readonly extensions?: ExtensionResourcePort;
+	readonly mcp?: McpResourcePort;
 	readonly runtimeSnapshot?: RuntimeSnapshotQueryPort;
 	readonly securityMode?: SecurityModeWorkflowPort;
 	readonly shutdown?: ShutdownWorkflowPort;
@@ -79,6 +81,7 @@ export function capabilitiesFromPorts(ports: TuiDomainPorts, session: Capability
 		plan: availability(ports.plan),
 		agents: availability(ports.agents),
 		extensions: availability(ports.extensions),
+		mcp: availability(ports.mcp),
 		runtimeSnapshot: availability(ports.runtimeSnapshot),
 		securityMode: availability(ports.securityMode),
 		shutdown: availability(ports.shutdown),

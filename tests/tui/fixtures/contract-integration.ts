@@ -155,8 +155,8 @@ export class ContractController implements InteractiveSessionControllerPort {
 		"session.thinking.set",
 		"session.auth.login",
 		"session.auth.logout",
-		...(this.querySessionDomain === undefined ? [] : ["extension.inspect", "plan.inspect", "security.inspect", "worktree.inspect"]),
-		...(this.commandSessionDomain === undefined ? [] : ["extension.reload"]),
+		...(this.querySessionDomain === undefined ? [] : ["extension.inspect", "mcp.list", "plan.inspect", "security.inspect", "worktree.inspect"]),
+		...(this.commandSessionDomain === undefined ? [] : ["extension.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust", "mcp.restart"]),
 	];
 	return (this.options.supportedOperations ?? defaults).includes(operation);
   }
