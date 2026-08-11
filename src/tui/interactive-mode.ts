@@ -72,7 +72,7 @@ import { ProcessOverlayComponent } from "./process/overlay-component.ts";
 import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
 import { DeltaCoalescer, type AppendTextDelta } from "./opentui/delta-coalescer.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
-import { approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
+import { approvalChoices, approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
 import type { TuiBootstrapSnapshot } from "./presentation/types.ts";
 import type { TuiState } from "./application/state.ts";
 import { createInitialTuiState } from "./application/initial-state.ts";
@@ -616,21 +616,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
           generation: 0,
           correlationId: `approval-${this.store.getState().timeline.committedRows.length}`,
           severity: "info",
-          message: { text: `approval ${decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision} for ${view.toolName}`).byteLength },
+          message: { text: `approval ${decision.decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision.decision} for ${view.toolName}`).byteLength },
         }]);
         finish(approvalDecisionBody(decision));
       };
+	  const choices = approvalChoices(view);
       const modal = new SelectorModal({
         theme: this.theme,
         selectListTheme: makeSelectListTheme(this.theme),
         title: `Approval required · ${view.toolName}: ${view.summary}`,
-        items: [
-          { value: "allow-once", label: "Allow once", description: view.cwd === undefined ? "Permit this request once" : `Permit once in ${view.cwd}` },
-          { value: "deny", label: "Deny", description: "Reject without executing" },
-          { value: "cancel", label: "Cancel", description: "Cancel this approval request" },
-        ],
-        onSelect: (item) => choose(item.value as ApprovalDecision),
-        onCancel: () => choose("cancel"),
+        items: choices.map((choice) => ({ value: choice.id, label: choice.label, description: choice.description })),
+        onSelect: (item) => choose(choices.find((choice) => choice.id === item.value)?.decision ?? { decision: "cancel" }),
+        onCancel: () => choose({ decision: "cancel" }),
       });
       signal.addEventListener("abort", onAbort, { once: true });
       this.showOverlayModal(modal, { anchor: "center" }, "approval");

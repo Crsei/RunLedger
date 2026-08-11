@@ -43,6 +43,7 @@ import { createProcessStopTool } from "./process-stop.ts";
 import { createProcessResizeTool } from "./process-resize.ts";
 import type { ProcessToolClient } from "./process-tool-support.ts";
 import { withBuiltinCapabilityClaims } from "./capabilities.ts";
+import { createRequestPermissionsTool, type RequestPermissionsPort } from "../../security/tools/request-permissions.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -52,6 +53,8 @@ export interface StdlibToolsOptions {
 	readonly requireExecutionEnv?: boolean;
 	/** Host-injected progressive-disclosure Skill loader（trust + digest 复核）。 */
 	readonly skillLoader?: import("./skill.ts").SkillLoader;
+	/** Host-governed permission request port；P6 接入完整 approval UX。 */
+	readonly permissionRequester?: RequestPermissionsPort;
 }
 
 /**
@@ -86,6 +89,7 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
   register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
   register(createSkillTool(options.skillLoader === undefined ? {} : { loader: options.skillLoader }));
 	register(createNotebookEditTool());
+	if (options.permissionRequester !== undefined) register(createRequestPermissionsTool(options.permissionRequester));
 	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
@@ -197,4 +201,5 @@ export function stdlibTools(cwd: string = process.cwd()): AgentTool[] {
 
 export { createReadTool, createWriteTool, createEditTool, createMultiEditTool, createBashTool, createGrepTool, createFindTool, createGlobTool, createLsTool, createWebFetchTool, createSkillTool, createNotebookEditTool, createTodoWriteTool };
 export { createProcessOutputTool, createProcessWaitTool, createWriteStdinTool, createProcessStopTool, createProcessResizeTool };
+export { createRequestPermissionsTool } from "../../security/tools/request-permissions.ts";
 export { echoTool };

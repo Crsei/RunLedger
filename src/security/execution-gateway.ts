@@ -15,12 +15,16 @@ import {
 	type FileSystemBrokerPort,
 } from "./policy-filesystem.ts";
 import { PolicyNetworkClient, type NetworkBrokerPort } from "./policy-network.ts";
+import { normalizeNetworkApprovalKey, type NetworkApprovalReviewPort } from "./network/network-approval.ts";
 import {
 	ApprovalCoordinator,
+	sessionApprovalRequestDigest,
 	type ApprovalRevalidationPort,
 } from "./permission/approval-coordinator.ts";
 import { PermissionEngine } from "./permission/engine.ts";
+import type { MemoryPermissionGrantStore } from "./permission/grants.ts";
 import type {
+	AccessRequest,
 	AuthorizationRequest,
 	AuthorizationResult,
 	SecurityResult,
@@ -62,6 +66,7 @@ export interface ExecutionGatewayOptions {
 	readonly permissionEngine: PermissionEngine;
 	readonly approvalCoordinator: ApprovalCoordinator;
 	readonly finalLeaf: ProcessFinalLeafDecisionPort;
+	readonly permissionGrantStore?: MemoryPermissionGrantStore;
 }
 
 function invalid(message: string): SecurityResult<never> {
@@ -134,7 +139,8 @@ function approvalReceiptIsBound(request: AuthorizationRequest, authorization: Au
 	const receipt = authorization.approval;
 	if (receipt === undefined) return authorization.decisionSource !== "approval";
 	if (!isApprovalReceiptRef(receipt) || receipt.decision !== "allowed") return false;
-	if (!sameDigest(receipt.requestDigest, approvalRequestDigest(request))) return false;
+	const expected = receipt.scope === "session" ? sessionApprovalRequestDigest(request) : approvalRequestDigest(request);
+	if (!sameDigest(receipt.requestDigest, expected)) return false;
 	const { receiptId: _receiptId, receiptDigest: _receiptDigest, ...body } = receipt;
 	return sameDigest(receipt.receiptDigest, runtimeDigest(body));
 }
@@ -142,12 +148,10 @@ function approvalReceiptIsBound(request: AuthorizationRequest, authorization: Au
 export class ExecutionGateway {
 	readonly #options: ExecutionGatewayOptions;
 	readonly #filesystem: PolicyFileSystem;
-	readonly #network: PolicyNetworkClient;
 
 	public constructor(options: ExecutionGatewayOptions) {
 		this.#options = options;
 		this.#filesystem = new PolicyFileSystem(options.filesystemBroker, options.workspace.cwd, options.snapshot);
-		this.#network = new PolicyNetworkClient(options.networkBroker, options.snapshot.profile.network);
 	}
 
 	public async authorize(
@@ -156,6 +160,22 @@ export class ExecutionGateway {
 	): Promise<SecurityResult<ExecutionGatewayContext>> {
 		const structural = this.#validateRequest(input.request, input.requestDigest, input.constraintInput, input.constraintSnapshot);
 		if (!structural.ok) return structural;
+		const grant = await this.#options.permissionGrantStore?.authorize({
+			sessionId: input.request.sessionId,
+			turnId: input.request.turnId,
+			policyDigest: input.request.snapshot.policyDigest,
+			requests: input.request.requests,
+		});
+		if (grant !== undefined) {
+			const authorization: AuthorizationResult = {
+				outcome: "allow",
+				decisionSource: "session",
+				requests: input.request.requests,
+				policyDigest: input.request.snapshot.policyDigest,
+				reason: `matched ${grant.scope} request_permissions grant`,
+			};
+			return this.open({ ...input, authorization, authorizationDigest: runtimeDigest(authorization) });
+		}
 		const evaluation = this.#options.permissionEngine.evaluate(input.request.requests, input.request.snapshot);
 		const revalidate: ApprovalRevalidationPort = () => ({
 			argumentsDigest: input.request.argumentsDigest,
@@ -193,7 +213,11 @@ export class ExecutionGateway {
 				constraintSnapshot: input.constraintSnapshot!,
 				fs: this.#filesystem,
 				filesystem: this.#filesystem,
-				network: this.#network,
+				network: new PolicyNetworkClient(
+					this.#options.networkBroker,
+					this.#options.snapshot.profile.network,
+					exactAuthorizedNetworkReview(input.request.requests),
+				),
 				finalLeaf: this.#options.finalLeaf,
 				complete,
 			},
@@ -238,4 +262,22 @@ export class ExecutionGateway {
 		if (!validateExecutionConstraintSnapshot(constraintInput, constraintSnapshot)) return invalid("gateway constraint receipt is stale or invalid");
 		return { ok: true, value: undefined };
 	}
+}
+
+function exactAuthorizedNetworkReview(requests: readonly AccessRequest[]): NetworkApprovalReviewPort {
+	const allowed = requests.flatMap((request) => {
+		if (request.kind !== "network" || request.protocol === undefined) return [];
+		const key = normalizeNetworkApprovalKey({ host: request.host, protocol: request.protocol, ...(request.port === undefined ? {} : { port: request.port }) });
+		return key === undefined ? [] : [key];
+	});
+	return {
+		authorize: async (input) => {
+			const key = normalizeNetworkApprovalKey(input);
+			if (key === undefined) return { ok: false, error: { code: "network_denied", message: "network approval key is invalid", retryable: false } };
+			const exact = allowed.some((candidate) => candidate.host === key.host && candidate.protocol === key.protocol && candidate.port === key.port);
+			return exact
+				? { ok: true, value: "allow" }
+				: { ok: false, error: { code: "network_denied", message: "network endpoint is not bound to the authorized request", retryable: false } };
+		},
+	};
 }

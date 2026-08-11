@@ -24,4 +24,45 @@ describe("TUI approval reverse request projection", () => {
 		expect(approvalDecisionBody("deny")).toEqual({ ok: true, decision: "deny" });
 		expect(approvalDecisionBody("cancel")).toEqual({ ok: true, decision: "cancel" });
 	});
+
+	it("encodes session, exec-prefix, and exact network amendment payloads", () => {
+		expect(approvalDecisionBody({ decision: "allow-session" } as never)).toEqual({ ok: true, decision: "allow-session" });
+		expect(approvalDecisionBody({ decision: "allow-with-prefix-rule", prefixRule: ["npm", "test"] } as never)).toEqual({
+			ok: true,
+			decision: "allow-with-prefix-rule",
+			prefixRule: ["npm", "test"],
+		});
+		expect(approvalDecisionBody({ decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443 } as never)).toEqual({
+			ok: true,
+			decision: "allow-with-network-rule",
+			host: "api.example",
+			protocol: "https",
+			port: 8443,
+		});
+	});
+
+	it("projects popup choices only from exact shell or network requests", async () => {
+		const module = await import("../../src/tui/approval.ts") as typeof import("../../src/tui/approval.ts") & {
+			approvalChoices?: (view: unknown) => readonly { readonly decision: Record<string, unknown>; readonly label: string }[];
+		};
+		const shellView = parseApprovalReverseRequest({
+			requestType: "permission",
+			toolName: "bash",
+			summary: "run tests",
+			requests: [{ kind: "shell", command: "npm test", cwd: "/workspace", analysis: "known" }],
+		});
+		const networkView = parseApprovalReverseRequest({
+			requestType: "permission",
+			toolName: "WebFetch",
+			summary: "fetch API",
+			requests: [{ kind: "network", operation: "fetch", host: "API.Example.", protocol: "https", port: 8443 }],
+		});
+		expect(module.approvalChoices?.(shellView)).toEqual(expect.arrayContaining([
+			expect.objectContaining({ decision: { decision: "allow-session" } }),
+			expect.objectContaining({ decision: { decision: "allow-with-prefix-rule", prefixRule: ["npm", "test"] } }),
+		]));
+		expect(module.approvalChoices?.(networkView)).toEqual(expect.arrayContaining([
+			expect.objectContaining({ decision: { decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443 } }),
+		]));
+	});
 });

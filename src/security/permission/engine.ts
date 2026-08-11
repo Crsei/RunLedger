@@ -1,7 +1,9 @@
 /** 无 UI 的最小 PermissionEngine；规则和默认边界均 fail closed。 */
 
 import { isAbsolute, relative, resolve } from "node:path";
+import { runtimeWorkspacePlatform } from "../../workspace/runtime-platform.ts";
 import type { AccessRequest, PolicyDecision, SecurityAccessEvaluation, SecuritySnapshot } from "../types.ts";
+import { resolveFilesystemAccess } from "./filesystem-entries.ts";
 import { aggregatePolicyDecisions, strongestRuleDecision } from "./rule-matcher.ts";
 import { analyzeShellCommand, hardlineShellDenialReason } from "./shell-analyzer.ts";
 
@@ -27,6 +29,19 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 			if (protectedPath) return { action: "deny", reason: "target is a protected control-plane path", matchedRuleIds: ["builtin-protected-path"], source: "builtin" };
 			const denied = request.operation === "read" ? snapshot.filesystem.denyRead : snapshot.filesystem.denyWrite;
 			if (denied.some((path) => within(path, target))) return { action: "deny", reason: "target matches a denied path", matchedRuleIds: ["builtin-denied-path"], source: "builtin" };
+			if (snapshot.filesystem.entriesPolicy !== undefined) {
+				const access = resolveFilesystemAccess(snapshot.filesystem.entriesPolicy, {
+					path: target,
+					cwd: snapshot.workspaceRoot,
+					platform: runtimeWorkspacePlatform(),
+				});
+				if (access === "deny" || (request.operation !== "read" && access !== "write")) {
+					return { action: "deny", reason: "compiled filesystem entries denied the requested access", matchedRuleIds: ["builtin-filesystem-entry"], source: "builtin" };
+				}
+				return request.operation === "read"
+					? { action: "allow", reason: "compiled filesystem entries allow read access", matchedRuleIds: ["builtin-filesystem-entry"], source: "builtin" }
+					: { action: "ask", reason: "compiled filesystem entries allow mutation after approval", matchedRuleIds: ["builtin-filesystem-entry"], source: "builtin" };
+			}
 			const roots = request.operation === "read" ? snapshot.filesystem.readRoots : snapshot.filesystem.writeRoots;
 			if (snapshot.profile.filesystemMode !== "unrestricted" && !roots.some((root) => within(root, target))) {
 				return { action: "deny", reason: "target is outside allowed roots", matchedRuleIds: ["builtin-root-boundary"], source: "builtin" };
@@ -48,6 +63,7 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 		case "network":
 			if (snapshot.profile.network.mode === "deny") return { action: "deny", reason: "network policy is deny", matchedRuleIds: ["builtin-network-deny"], source: "builtin" };
 			if (snapshot.profile.network.mode === "allowlist" && !snapshot.profile.network.allowedHosts.includes(request.host)) return { action: "deny", reason: "host is outside the network allowlist", matchedRuleIds: ["builtin-network-host"], source: "builtin" };
+			if (snapshot.profile.network.mode === "review" && !snapshot.profile.network.allowedHosts.includes(request.host)) return { action: "ask", reason: "network allowlist miss requires review", matchedRuleIds: ["builtin-network-review"], source: "builtin" };
 			return { action: "allow", reason: "network target is allowed", matchedRuleIds: ["builtin-network-allow"], source: "builtin" };
 		case "worktree":
 			if (!isAbsolute(request.target) || resolve(request.target) !== request.target || request.target.includes("\0")) {
@@ -59,21 +75,59 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 	}
 }
 
+function isBuiltinSkippableOnRequest(request: AccessRequest, decision: PolicyDecision, snapshot: SecuritySnapshot): boolean {
+	if (snapshot.profile.filesystemMode !== "unrestricted" || request.kind !== "filesystem" || request.operation === "read") return false;
+	return decision.action === "ask" && decision.source === "builtin" &&
+		decision.matchedRuleIds.every((id) => id === "builtin-write-approval" || id === "builtin-filesystem-entry");
+}
+
+function granularCategoryEnabled(request: AccessRequest, decision: PolicyDecision, snapshot: SecuritySnapshot): boolean {
+	const granular = snapshot.profile.granularApproval;
+	if (granular === undefined) return false;
+	if (request.kind === "tool") {
+		if (request.toolName === "Skill") return granular.skillApproval;
+		if (request.toolName === "request_permissions") return granular.requestPermissions;
+		if (request.toolName === "mcp_elicitation" || request.provider === "mcp") return granular.mcpElicitations;
+	}
+	if (request.kind === "shell" || decision.matchedRuleIds.some((id) => !id.startsWith("builtin-"))) return granular.rules;
+	return granular.sandboxApproval;
+}
+
+function applyApprovalPolicy(
+	request: AccessRequest,
+	decision: PolicyDecision,
+	snapshot: SecuritySnapshot,
+): PolicyDecision {
+	if (decision.action === "deny") return decision;
+	switch (snapshot.profile.approvalPolicy) {
+		case "never":
+			return decision.action === "ask"
+				? { ...decision, action: "deny", reason: `approval policy never converted ask to deny: ${decision.reason}` }
+				: decision;
+		case "on-request":
+			return isBuiltinSkippableOnRequest(request, decision, snapshot)
+				? { ...decision, action: "allow", reason: `unrestricted on-request skipped ordinary mutation approval: ${decision.reason}` }
+				: decision;
+		case "untrusted":
+			return request.kind === "filesystem" && request.operation === "read"
+				? decision
+				: { ...decision, action: "ask", reason: `untrusted policy requires approval: ${decision.reason}` };
+		case "granular":
+			if (decision.action !== "ask") return decision;
+			return granularCategoryEnabled(request, decision, snapshot)
+				? decision
+				: { ...decision, action: "deny", reason: `granular approval category is disabled: ${decision.reason}` };
+	}
+}
+
 export class PermissionEngine {
 	public evaluate(requests: readonly AccessRequest[], snapshot: SecuritySnapshot): SecurityAccessEvaluation {
 		const requestDecisions = requests.map((request) => {
 			const builtin = builtinDecision(request, snapshot);
 			if (builtin.action === "deny") return builtin;
-			return strongestRuleDecision(request, snapshot.rules, builtin);
+			return applyApprovalPolicy(request, strongestRuleDecision(request, snapshot.rules, builtin), snapshot);
 		});
-		let aggregate = aggregatePolicyDecisions(requestDecisions);
-		if (aggregate.action === "ask" && snapshot.profile.approvalPolicy === "never") {
-			aggregate = {
-				...aggregate,
-				action: "deny",
-				reason: `approval policy never converted ask to deny: ${aggregate.reason}`,
-			};
-		}
+		const aggregate = aggregatePolicyDecisions(requestDecisions);
 		return { decision: aggregate.action, requests, requestDecisions, policyDigest: snapshot.policyDigest, reason: aggregate.reason };
 	}
 }

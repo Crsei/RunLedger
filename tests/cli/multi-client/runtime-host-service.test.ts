@@ -268,6 +268,35 @@ describe.skipIf(IS_WINDOWS)("production Resident Runtime Host service", () => {
 		expect(requestBody).toMatchObject({ requestType: "permission", requestId: prompt.requestId, toolName: "bash", summary: "write file" });
 	});
 
+	it("decodes session, exec-prefix, and network amendment responses from the driver", async () => {
+		const principalId = createRuntimeId("principal", "approval-amendment-driver");
+		const responses = [
+			{ ok: true, decision: "allow-session" },
+			{ ok: true, decision: "allow-with-prefix-rule", prefixRule: ["npm", "test"] },
+			{ ok: true, decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443 },
+		];
+		let index = 0;
+		const prompter = new HostReversePermissionPrompter(() => ({
+			requestDriverResponse: async () => ({ principalId, body: responses[index++]! }),
+		}));
+		const approvalPrompt = {
+			requestId: createRuntimeId("command", "approval-amendment"),
+			sessionId: createRuntimeId("session", "approval-amendment"),
+			toolCallId: createRuntimeId("toolCall", "approval-amendment"),
+			toolName: "bash",
+			summary: "run tests",
+			requests: [{ kind: "shell" as const, command: "npm test", cwd: "/workspace", analysis: "known" as const }],
+			argumentsDigest: runtimeDigest("approval-amendment-args"),
+			cwd: "/workspace",
+			policyDigest: runtimeDigest("approval-amendment-policy"),
+			createdAt: "2026-08-11T00:00:00.000Z",
+			expiresAt: "2026-08-11T00:01:00.000Z",
+		} satisfies PermissionPrompt;
+		await expect(prompter.request(approvalPrompt)).resolves.toMatchObject({ decision: "allow-session", decidedBy: principalId });
+		await expect(prompter.request(approvalPrompt)).resolves.toMatchObject({ decision: "allow-with-prefix-rule", prefixRule: ["npm", "test"], decidedBy: principalId });
+		await expect(prompter.request(approvalPrompt)).resolves.toMatchObject({ decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443, decidedBy: principalId });
+	});
+
 	it("delivers approval reverse requests only to the driver and resumes the same waiter after driver reconnect", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-reverse-approval-"));
 		const socketPath = join(root, "host.sock");

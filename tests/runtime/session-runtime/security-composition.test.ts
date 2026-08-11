@@ -149,6 +149,48 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(mainSource).toContain("handleSessionReverseRequest");
 	});
 
+	it("wires network review amendments and request_permissions grants through the resident Session Host", async () => {
+		let prompts = 0;
+		let writes = 0;
+		const security = await composition({
+			document: {
+				approvalPolicy: "on-request",
+				sandbox: "off",
+				network: { mode: "review", allowedHosts: [] },
+			},
+			onWrite: () => { writes += 1; },
+			networkBroker: {
+				request: async (request) => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: request.url }),
+			},
+			approvalPorts: {
+				prompter: {
+					request: async (prompt) => {
+						prompts += 1;
+						return prompt.toolName === "request_permissions"
+							? { decision: "allow-once", decidedBy: createRuntimeId("principal", "security-approver") }
+							: { decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443, decidedBy: createRuntimeId("principal", "security-approver") };
+					},
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: { requested: async () => {}, decided: async () => {}, revoked: async () => {} },
+			},
+		});
+		await expect(security.executionEnv.network!.request({ url: "https://api.example:8443/data", method: "GET", headers: {}, maxBytes: 1024 })).resolves.toMatchObject({ status: 200 });
+		await expect(security.executionEnv.network!.request({ url: "https://api.example:8443/next", method: "GET", headers: {}, maxBytes: 1024 })).resolves.toMatchObject({ status: 200 });
+		expect(prompts).toBe(1);
+
+		const path = join(root, "granted.txt");
+		const grant = await security.permissionRequester.request({
+			toolCallId: "toolCall_request-permissions-production",
+			scope: "session",
+			permissions: { filesystem: [{ path, access: "write" }] },
+		});
+		expect(grant).toMatchObject({ ok: true, value: { scope: "session" } });
+		await security.executionEnv.fs.writeFile(path, "granted");
+		expect(writes).toBe(1);
+		expect(prompts).toBe(2);
+	});
+
 	it("composes the managed process domain and tools inside the owned SessionRuntime", () => {
 		const domainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
 		const embeddedSource = readFileSync(join(process.cwd(), "src/cli/embedded-session-runtime.ts"), "utf8");

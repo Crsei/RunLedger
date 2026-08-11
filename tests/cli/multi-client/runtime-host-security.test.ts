@@ -22,6 +22,7 @@ import type {
 import { createDecisionReceipt, createResolutionState, digestOf } from "../../../src/security/sandbox/common.ts";
 import type { PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
 import type { ToolAuthorizationPolicy } from "../../../src/runtime/types.ts";
+import { createStdlibTools } from "../../../src/runtime/tools/index.ts";
 
 const roots: string[] = [];
 
@@ -214,8 +215,15 @@ describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway compositi
 		});
 
 		expect(security).toHaveProperty("toolAuthorizationPolicy");
+		expect(security).toHaveProperty("permissionRequester");
 		const policy = (security as unknown as { readonly toolAuthorizationPolicy: ToolAuthorizationPolicy }).toolAuthorizationPolicy;
 		expect(policy).toBeDefined();
+		const governed = security as typeof security & { readonly permissionRequester: Parameters<typeof createStdlibTools>[1]["permissionRequester"] };
+		expect(createStdlibTools(root, {
+			requireExecutionEnv: true,
+			executionEnv: security.createExecutionEnv(),
+			permissionRequester: governed.permissionRequester,
+		}).has("request_permissions")).toBe(true);
 	});
 
 	it("requires the canonical Runtime event writer from Host composition", async () => {

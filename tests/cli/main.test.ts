@@ -106,6 +106,14 @@ describe("cliSecurityOverride flags → cli 层 document", () => {
     expect(doc).toEqual({ approvalPolicy: "never" });
   });
 
+  it("granular approval 与 named profile 映射成可独立解析的 CLI layer", () => {
+    expect(cliSecurityOverride(parseArgs(["--permission-profile", "team.review-prod"]).args)).toEqual({ profile: "team.review-prod" });
+    expect(cliSecurityOverride(parseArgs(["--approval-policy", "granular"]).args)).toEqual({
+      approvalPolicy: "granular",
+      granularApproval: { sandboxApproval: true, rules: true, skillApproval: true, requestPermissions: true, mcpElicitations: true },
+    });
+  });
+
   it("sandbox 单独映射", () => {
     const doc = cliSecurityOverride(parseArgs(["--sandbox", "strict"]).args);
     expect(doc).toEqual({ sandbox: "strict" });
@@ -114,6 +122,15 @@ describe("cliSecurityOverride flags → cli 层 document", () => {
   it("network 映射为 deny/allow + 空 allowlist", () => {
     const doc = cliSecurityOverride(parseArgs(["--network", "deny"]).args);
     expect(doc).toEqual({ network: { mode: "deny", allowedHosts: [] } });
+  });
+
+  it("network review/allowlist 保留显式 host 集", () => {
+    expect(cliSecurityOverride(parseArgs(["--network", "review", "--network-host", "api.example"]).args)).toEqual({
+      network: { mode: "review", allowedHosts: ["api.example"] },
+    });
+    expect(cliSecurityOverride(parseArgs(["--network", "allowlist", "--network-host", "api.example"]).args)).toEqual({
+      network: { mode: "allowlist", allowedHosts: ["api.example"] },
+    });
   });
 
   it("组合 flags 合并进同一 document", () => {

@@ -29,7 +29,7 @@ interface ApprovalModule {
 		readonly driverConnectionId: () => ConnectionId | undefined;
 		readonly pollIntervalMs?: number;
 	}): {
-		readonly prompter: { request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<{ readonly decision: "allow-once" | "deny" | "cancel"; readonly decidedBy: string }> };
+		readonly prompter: { request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<Record<string, unknown>> };
 		readonly stateStore: {
 			read(approvalId: string): Promise<unknown>;
 			commit(receipt: ReturnType<typeof createApprovalReceipt>, expectedRevision: number): Promise<{ readonly ok: boolean }>;
@@ -183,6 +183,63 @@ describe("Session durable approval reverse requests", () => {
 		const pending = ports.prompter.request(prompt(value.fence.sessionId, 5_000), abort.signal);
 		abort.abort();
 		await expect(pending).rejects.toThrow(/aborted/u);
+		value.close();
+	});
+
+	it("round-trips session, exec-prefix, and exact network decisions without changing Runtime events", async () => {
+		const module = await loadModule();
+		if (module === undefined) return;
+		const value = await fixture();
+		const decisions = [
+			{ decision: "allow-session" },
+			{ decision: "allow-with-prefix-rule", prefixRule: ["npm", "test"] },
+			{ decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443 },
+		] as const;
+		const sent: Record<string, unknown>[] = [];
+		let index = 0;
+		const ports = module.createSessionApprovalPorts({
+			store: value.store,
+			fence: value.fence,
+			driverConnectionId: () => createRuntimeId("connection", "approval-driver"),
+			sender: {
+				requestToConnection: async (_connectionId, request) => {
+					sent.push(request.body);
+					return response({ ok: true, ...decisions[index++]! });
+				},
+			},
+		});
+		for (const decision of decisions) {
+			await expect(ports.prompter.request(prompt(value.fence.sessionId))).resolves.toMatchObject(decision);
+		}
+		expect(sent[0]).toMatchObject({ requests: [{ kind: "filesystem", operation: "write", path: "file.ts" }] });
+		expect(value.store.replaySessionEvents(value.fence.sessionId)).toEqual([]);
+		value.close();
+	});
+
+	it("atomically persists an exec-prefix amendment in the Session event chain", async () => {
+		const module = await loadModule();
+		if (module === undefined) return;
+		const value = await fixture();
+		const ports = module.createSessionApprovalPorts({
+			store: value.store,
+			fence: value.fence,
+			driverConnectionId: () => createRuntimeId("connection", "approval-driver"),
+			sender: { requestToConnection: async () => response({ ok: true, decision: "allow-once" }) },
+		});
+		const stateStore = ports.stateStore as typeof ports.stateStore & {
+			commitWithExecPrefixRule(receipt: ReturnType<typeof createApprovalReceipt>, expectedRevision: number, rule: Record<string, unknown>): Promise<{ readonly ok: boolean }>;
+			findExecPrefixApproval(input: Record<string, unknown>): Promise<unknown>;
+		};
+		const ticket = {
+			approvalId: createRuntimeId("approval", "session-prefix"), requestDigest: runtimeDigest("session-prefix-request"),
+			scope: "session" as const, status: "pending" as const, principalId: createRuntimeId("principal", "requester"),
+			createdAt: new Date().toISOString(),
+		};
+		const receipt = createApprovalReceipt(ticket, { decision: "allow-session", decidedBy: createRuntimeId("principal", "approval-driver") });
+		const rule = { sessionId: value.fence.sessionId, policyDigest: runtimeDigest("session-prefix-policy"), prefix: ["npm", "test"] };
+		expect(await stateStore.commitWithExecPrefixRule(receipt, 0, rule)).toMatchObject({ ok: true });
+		expect(await stateStore.findExecPrefixApproval({ sessionId: value.fence.sessionId, policyDigest: rule.policyDigest, command: "npm test -- run" })).toMatchObject({ receipt, rule });
+		expect(value.store.replaySessionEvents(value.fence.sessionId)).toHaveLength(1);
 		value.close();
 	});
 });

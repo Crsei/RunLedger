@@ -12,6 +12,7 @@ import type {
 	ApprovalTicket,
 	PrincipalId,
 	RuntimeDigest,
+	SessionId,
 } from "../../runtime/contracts/public.ts";
 import type {
 	AuthorizationRequest,
@@ -22,6 +23,13 @@ import type {
 	SecurityAccessEvaluation,
 	SecurityResult,
 } from "../types.ts";
+import {
+	execPrefixRuleMatches,
+	isDangerousExecCommand,
+	validateExecPrefixRule,
+	type ExecPrefixRule,
+} from "./exec-prefix-rule.ts";
+import { normalizeNetworkApprovalKey, type NetworkApprovalKey } from "../network/network-approval.ts";
 
 export const SYSTEM_APPROVAL_PRINCIPAL_ID = createRuntimeId("principal", "runledger-system-approval");
 
@@ -30,14 +38,39 @@ export interface ApprovalStateStorePort {
 	commit(receipt: ApprovalReceiptRef, expectedRevision: number): Promise<SecurityResult<ApprovalReceiptRef>>;
 }
 
+export interface ExecPrefixApproval {
+	readonly rule: ExecPrefixRule;
+	readonly receipt: ApprovalReceiptRef;
+}
+
+export interface NetworkApprovalRule {
+	readonly sessionId: SessionId;
+	readonly policyDigest: RuntimeDigest;
+	readonly key: NetworkApprovalKey;
+}
+
+export interface NetworkRuleApproval {
+	readonly rule: NetworkApprovalRule;
+	readonly receipt: ApprovalReceiptRef;
+}
+
+export interface ApprovalAmendmentStateStorePort extends ApprovalStateStorePort {
+	findExecPrefixApproval(input: { readonly sessionId: SessionId; readonly policyDigest: RuntimeDigest; readonly command: string }): Promise<ExecPrefixApproval | undefined>;
+	commitWithExecPrefixRule(receipt: ApprovalReceiptRef, expectedRevision: number, rule: ExecPrefixRule): Promise<SecurityResult<ExecPrefixApproval>>;
+	findNetworkApproval(input: { readonly sessionId: SessionId; readonly policyDigest: RuntimeDigest; readonly key: NetworkApprovalKey }): Promise<NetworkRuleApproval | undefined>;
+	commitWithNetworkRule(receipt: ApprovalReceiptRef, expectedRevision: number, rule: NetworkApprovalRule): Promise<SecurityResult<NetworkRuleApproval>>;
+}
+
 export interface ApprovalAuditPort {
 	requested(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket }): Promise<void>;
 	decided(input: { readonly request: AuthorizationRequest; readonly ticket: ApprovalTicket; readonly receipt: ApprovalReceiptRef }): Promise<void>;
 	revoked(input: { readonly request: AuthorizationRequest; readonly receipt: ApprovalReceiptRef }): Promise<void>;
 }
 
-export class MemoryApprovalStateStore implements ApprovalStateStorePort {
+export class MemoryApprovalStateStore implements ApprovalAmendmentStateStorePort {
 	readonly #receipts = new Map<ApprovalId, ApprovalReceiptRef>();
+	readonly #execPrefixApprovals: ExecPrefixApproval[] = [];
+	readonly #networkApprovals: NetworkRuleApproval[] = [];
 
 	public async read(approvalId: ApprovalId): Promise<ApprovalReceiptRef | undefined> {
 		const receipt = this.#receipts.get(approvalId);
@@ -45,6 +78,44 @@ export class MemoryApprovalStateStore implements ApprovalStateStorePort {
 	}
 
 	public async commit(receipt: ApprovalReceiptRef, expectedRevision: number): Promise<SecurityResult<ApprovalReceiptRef>> {
+		const checked = this.#validateCommit(receipt, expectedRevision);
+		if (!checked.ok) return checked;
+		const stored = structuredClone(receipt);
+		this.#receipts.set(receipt.approvalId, stored);
+		return { ok: true, value: structuredClone(stored) };
+	}
+
+	public async findExecPrefixApproval(input: { readonly sessionId: SessionId; readonly policyDigest: RuntimeDigest; readonly command: string }): Promise<ExecPrefixApproval | undefined> {
+		const approval = this.#execPrefixApprovals.find((candidate) => execPrefixRuleMatches(candidate.rule, input.command, input.sessionId, input.policyDigest));
+		return approval === undefined ? undefined : structuredClone(approval);
+	}
+
+	public async commitWithExecPrefixRule(receipt: ApprovalReceiptRef, expectedRevision: number, rule: ExecPrefixRule): Promise<SecurityResult<ExecPrefixApproval>> {
+		const checked = this.#validateCommit(receipt, expectedRevision);
+		if (!checked.ok) return checked;
+		const approval: ExecPrefixApproval = { receipt: structuredClone(receipt), rule: structuredClone(rule) };
+		this.#receipts.set(receipt.approvalId, approval.receipt);
+		this.#execPrefixApprovals.push(approval);
+		return { ok: true, value: structuredClone(approval) };
+	}
+
+	public async findNetworkApproval(input: { readonly sessionId: SessionId; readonly policyDigest: RuntimeDigest; readonly key: NetworkApprovalKey }): Promise<NetworkRuleApproval | undefined> {
+		const approval = this.#networkApprovals.find((candidate) => candidate.rule.sessionId === input.sessionId &&
+			candidate.rule.policyDigest.digest === input.policyDigest.digest &&
+			canonicalDigest(candidate.rule.key) === canonicalDigest(input.key));
+		return approval === undefined ? undefined : structuredClone(approval);
+	}
+
+	public async commitWithNetworkRule(receipt: ApprovalReceiptRef, expectedRevision: number, rule: NetworkApprovalRule): Promise<SecurityResult<NetworkRuleApproval>> {
+		const checked = this.#validateCommit(receipt, expectedRevision);
+		if (!checked.ok) return checked;
+		const approval: NetworkRuleApproval = { receipt: structuredClone(receipt), rule: structuredClone(rule) };
+		this.#receipts.set(receipt.approvalId, approval.receipt);
+		this.#networkApprovals.push(approval);
+		return { ok: true, value: structuredClone(approval) };
+	}
+
+	#validateCommit(receipt: ApprovalReceiptRef, expectedRevision: number): SecurityResult<true> {
 		if (!isApprovalReceiptRef(receipt)) return failure("approval receipt failed Runtime validation", "approval_stale");
 		const current = this.#receipts.get(receipt.approvalId);
 		const currentRevision = current?.decisionRevision ?? 0;
@@ -56,9 +127,7 @@ export class MemoryApprovalStateStore implements ApprovalStateStorePort {
 			current.scope !== receipt.scope ||
 			current.principalId !== receipt.principalId
 		)) return failure("approval receipt binding changed", "approval_stale");
-		const stored = structuredClone(receipt);
-		this.#receipts.set(receipt.approvalId, stored);
-		return { ok: true, value: structuredClone(stored) };
+		return { ok: true, value: true };
 	}
 }
 
@@ -85,6 +154,18 @@ type PromptRace =
 	| { readonly kind: "timeout" }
 	| { readonly kind: "channel" };
 
+function supportsAmendments(store: ApprovalStateStorePort): store is ApprovalAmendmentStateStorePort {
+	return "findExecPrefixApproval" in store && typeof store.findExecPrefixApproval === "function" &&
+		"commitWithExecPrefixRule" in store && typeof store.commitWithExecPrefixRule === "function" &&
+		"findNetworkApproval" in store && typeof store.findNetworkApproval === "function" &&
+		"commitWithNetworkRule" in store && typeof store.commitWithNetworkRule === "function";
+}
+
+function isAllowResponse(response: PermissionPromptResponse): boolean {
+	return response.decision === "allow-once" || response.decision === "allow-session" ||
+		response.decision === "allow-with-prefix-rule" || response.decision === "allow-with-network-rule";
+}
+
 function failure(message: string, code: "approval_stale" | "approval_cancelled" | "approval_expired"): SecurityResult<never> {
 	return { ok: false, error: { code, message, retryable: false } };
 }
@@ -97,6 +178,20 @@ function requestDigest(request: AuthorizationRequest): RuntimeDigest {
 		argumentsDigest: request.argumentsDigest,
 		cwd: request.cwd,
 		requests: request.requests,
+		policyDigest: request.snapshot.policyDigest,
+	});
+}
+
+function normalizedRequestSet(request: AuthorizationRequest): readonly AuthorizationRequest["requests"][number][] {
+	return [...request.requests].sort((left, right) => canonicalDigest(left).localeCompare(canonicalDigest(right)));
+}
+
+export function sessionApprovalRequestDigest(request: AuthorizationRequest): RuntimeDigest {
+	return runtimeDigest({
+		sessionId: request.sessionId,
+		argumentsDigest: request.argumentsDigest,
+		cwd: request.cwd,
+		requests: normalizedRequestSet(request),
 		policyDigest: request.snapshot.policyDigest,
 	});
 }
@@ -114,24 +209,24 @@ function promptSummary(request: AuthorizationRequest): string {
 	return `${request.toolName}: ${summary}`.slice(0, 512);
 }
 
-function createTicket(request: AuthorizationRequest, now: Date, timeoutMs: number): ApprovalTicket {
-	const digest = requestDigest(request);
-	const approvalId = createRuntimeId("approval", `tool-${digest.digest.slice(0, 48)}`);
+function createTicket(request: AuthorizationRequest, now: Date, timeoutMs: number, scope: "once" | "session" = "once"): ApprovalTicket {
+	const digest = scope === "session" ? sessionApprovalRequestDigest(request) : requestDigest(request);
+	const approvalId = createRuntimeId("approval", `${scope}-${digest.digest.slice(0, 48)}`);
 	return {
 		approvalId,
 		requestDigest: digest,
-		scope: "once",
+		scope,
 		status: "pending",
 		principalId: request.workspace.principalId,
 		createdAt: now.toISOString(),
-		expiresAt: new Date(now.getTime() + timeoutMs).toISOString(),
+		...(scope === "once" ? { expiresAt: new Date(now.getTime() + timeoutMs).toISOString() } : {}),
 	};
 }
 
 function approvalDecision(response: PermissionPromptResponse, reason: "timeout" | "abort" | "channel" | "response"): ApprovalReceiptRef["decision"] {
 	if (reason === "timeout") return "expired";
 	if (reason === "abort" || reason === "channel") return "cancelled";
-	if (response.decision === "allow-once") return "allowed";
+	if (response.decision === "allow-once" || response.decision === "allow-session" || response.decision === "allow-with-prefix-rule" || response.decision === "allow-with-network-rule") return "allowed";
 	if (response.decision === "deny") return "denied";
 	return "cancelled";
 }
@@ -152,7 +247,7 @@ export function createApprovalReceipt(
 		decisionRevision: 1,
 		principalId,
 		decidedAt,
-		expiresAt: ticket.expiresAt,
+		...(ticket.expiresAt === undefined ? {} : { expiresAt: ticket.expiresAt }),
 	};
 	const receiptDigest = runtimeDigest(body);
 	return {
@@ -176,7 +271,7 @@ export function createApprovalSupersessionReceipt(
 		decisionRevision: current.decisionRevision + 1,
 		principalId,
 		decidedAt,
-		expiresAt: current.expiresAt,
+		...(current.expiresAt === undefined ? {} : { expiresAt: current.expiresAt }),
 	};
 	const receiptDigest = runtimeDigest(body);
 	return {
@@ -290,8 +385,50 @@ export class ApprovalCoordinator {
 		revalidate: ApprovalRevalidationPort,
 		signal?: AbortSignal,
 	): Promise<SecurityResult<AuthorizationResult>> {
-		const ticket = createTicket(request, this.#clock(), this.#timeoutMs);
-		const replayed = await this.#replayDurableDecision(request, evaluation, ticket);
+		const shellRequest = request.requests.length === 1 && request.requests[0]?.kind === "shell" ? request.requests[0] : undefined;
+		const networkRequest = request.requests.length === 1 && request.requests[0]?.kind === "network" ? request.requests[0] : undefined;
+		if (shellRequest !== undefined && supportsAmendments(this.#store)) {
+			let amendment: ExecPrefixApproval | undefined;
+			try {
+				amendment = await this.#store.findExecPrefixApproval({ sessionId: request.sessionId, policyDigest: request.snapshot.policyDigest, command: shellRequest.command });
+			} catch {
+				return failure("exec prefix approval store is unavailable", "approval_stale");
+			}
+			if (amendment !== undefined && amendment.receipt.decision === "allowed") {
+				const current = await this.#revalidateBinding(request, revalidate);
+				if (!current.ok) return current;
+				return {
+					ok: true,
+					value: {
+						outcome: "allow",
+						decisionSource: "session",
+						requests: request.requests,
+						policyDigest: request.snapshot.policyDigest,
+						reason: "matched an approved session exec prefix rule",
+					},
+				};
+			}
+		}
+		if (networkRequest?.protocol !== undefined && supportsAmendments(this.#store)) {
+			const key = normalizeNetworkApprovalKey({ host: networkRequest.host, protocol: networkRequest.protocol, ...(networkRequest.port === undefined ? {} : { port: networkRequest.port }) });
+			if (key === undefined) return failure("network approval key is invalid", "approval_stale");
+			let amendment: NetworkRuleApproval | undefined;
+			try {
+				amendment = await this.#store.findNetworkApproval({ sessionId: request.sessionId, policyDigest: request.snapshot.policyDigest, key });
+			} catch {
+				return failure("network approval store is unavailable", "approval_stale");
+			}
+			if (amendment?.receipt.decision === "allowed") {
+				const current = await this.#revalidateBinding(request, revalidate);
+				if (!current.ok) return current;
+				return { ok: true, value: { outcome: "allow", decisionSource: "session", requests: request.requests, policyDigest: request.snapshot.policyDigest, reason: "matched an approved session network rule" } };
+			}
+		}
+		const sessionTicket = createTicket(request, this.#clock(), this.#timeoutMs, "session");
+		const sessionReplay = await this.#replayDurableDecision(request, evaluation, sessionTicket, revalidate);
+		if (sessionReplay !== undefined) return sessionReplay;
+		const ticket = createTicket(request, this.#clock(), this.#timeoutMs, "once");
+		const replayed = await this.#replayDurableDecision(request, evaluation, ticket, revalidate);
 		if (replayed !== undefined) return replayed;
 		const prompt: PermissionPrompt = {
 			requestId: request.requestId,
@@ -312,10 +449,30 @@ export class ApprovalCoordinator {
 			return failure("approval request audit is unavailable", "approval_stale");
 		}
 		const raced = await this.#racePrompt(prompt, signal);
-		const response: PermissionPromptResponse = raced.kind === "response"
+		let response: PermissionPromptResponse = raced.kind === "response"
 			? raced.response
 			: { decision: raced.kind === "timeout" ? "cancel" : "cancel", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID };
-		if (raced.kind === "response" && response.decision === "allow-once") {
+		if (response.decision === "allow-session" && request.requests.some((item) => item.kind === "shell" && isDangerousExecCommand(item.command))) {
+			response = { decision: "allow-once", decidedBy: response.decidedBy };
+		}
+		let prefixRule: ExecPrefixRule | undefined;
+		let networkRule: NetworkApprovalRule | undefined;
+		if (response.decision === "allow-with-prefix-rule") {
+			if (shellRequest === undefined) return this.#commitDenied(request, ticket, response, "abort", "exec prefix approval requires exactly one shell request");
+			const validated = validateExecPrefixRule(shellRequest.command, response.prefixRule, request.sessionId, request.snapshot.policyDigest);
+			if (!validated.ok) return this.#commitDenied(request, ticket, response, "abort", validated.error.message);
+			prefixRule = validated.value;
+		}
+		if (response.decision === "allow-with-network-rule") {
+			if (networkRequest?.protocol === undefined) return this.#commitDenied(request, ticket, response, "abort", "network approval requires exactly one protocol-bound network request");
+			const requestedKey = normalizeNetworkApprovalKey({ host: networkRequest.host, protocol: networkRequest.protocol, ...(networkRequest.port === undefined ? {} : { port: networkRequest.port }) });
+			const responseKey = normalizeNetworkApprovalKey({ host: response.host, protocol: response.protocol, ...(response.port === undefined ? {} : { port: response.port }) });
+			if (requestedKey === undefined || responseKey === undefined || canonicalDigest(requestedKey) !== canonicalDigest(responseKey)) {
+				return this.#commitDenied(request, ticket, response, "abort", "network policy amendment does not match the exact approved endpoint");
+			}
+			networkRule = { sessionId: request.sessionId, policyDigest: request.snapshot.policyDigest, key: requestedKey };
+		}
+		if (raced.kind === "response" && isAllowResponse(response)) {
 			let current: ApprovalRevalidation;
 			try {
 				current = await revalidate();
@@ -326,15 +483,30 @@ export class ApprovalCoordinator {
 					return this.#commitDenied(request, ticket, response, "abort", "approval binding changed before execution");
 			}
 		}
-		const receipt = createApprovalReceipt(ticket, response, raced.kind === "response" ? "response" : raced.kind, this.#clock().toISOString());
-		const committed = await this.#store.commit(receipt, 0);
-		if (!committed.ok) return committed;
+		const selectedTicket = response.decision === "allow-session" || response.decision === "allow-with-prefix-rule" || response.decision === "allow-with-network-rule" ? sessionTicket : ticket;
+		const receipt = createApprovalReceipt(selectedTicket, response, raced.kind === "response" ? "response" : raced.kind, this.#clock().toISOString());
+		let committedReceipt: ApprovalReceiptRef;
+		if (prefixRule !== undefined) {
+			if (!supportsAmendments(this.#store)) return failure("approval store cannot atomically persist exec prefix amendments", "approval_stale");
+			const committed = await this.#store.commitWithExecPrefixRule(receipt, 0, prefixRule);
+			if (!committed.ok) return committed;
+			committedReceipt = committed.value.receipt;
+		} else if (networkRule !== undefined) {
+			if (!supportsAmendments(this.#store)) return failure("approval store cannot atomically persist network amendments", "approval_stale");
+			const committed = await this.#store.commitWithNetworkRule(receipt, 0, networkRule);
+			if (!committed.ok) return committed;
+			committedReceipt = committed.value.receipt;
+		} else {
+			const committed = await this.#store.commit(receipt, 0);
+			if (!committed.ok) return committed;
+			committedReceipt = committed.value;
+		}
 		try {
-			await this.#audit?.decided({ request, ticket, receipt: committed.value });
+			await this.#audit?.decided({ request, ticket: selectedTicket, receipt: committedReceipt });
 		} catch {
 			return failure("approval decision audit is uncertain", "approval_stale");
 		}
-		const outcome = committed.value.decision === "allowed" ? "allow" : "deny";
+		const outcome = committedReceipt.decision === "allowed" ? "allow" : "deny";
 		return {
 			ok: true,
 			value: {
@@ -342,8 +514,8 @@ export class ApprovalCoordinator {
 				decisionSource: "approval",
 				requests: request.requests,
 				policyDigest: request.snapshot.policyDigest,
-				approval: committed.value,
-				reason: outcome === "allow" ? evaluation.reason : `approval ${committed.value.decision}`,
+				approval: committedReceipt,
+				reason: outcome === "allow" ? evaluation.reason : `approval ${committedReceipt.decision}`,
 			},
 		};
 	}
@@ -357,6 +529,7 @@ export class ApprovalCoordinator {
 		request: AuthorizationRequest,
 		evaluation: SecurityAccessEvaluation,
 		ticket: ApprovalTicket,
+		revalidate: ApprovalRevalidationPort,
 	): Promise<SecurityResult<AuthorizationResult> | undefined> {
 		let existing: ApprovalReceiptRef | undefined;
 		try {
@@ -383,6 +556,10 @@ export class ApprovalCoordinator {
 			existing = committed.value;
 		}
 
+		if (existing.decision === "allowed") {
+			const current = await this.#revalidateBinding(request, revalidate);
+			if (!current.ok) return current;
+		}
 		const outcome = existing.decision === "allowed" ? "allow" : "deny";
 		return {
 			ok: true,
@@ -395,6 +572,19 @@ export class ApprovalCoordinator {
 				reason: outcome === "allow" ? evaluation.reason : `approval ${existing.decision}`,
 			},
 		};
+	}
+
+	async #revalidateBinding(request: AuthorizationRequest, revalidate: ApprovalRevalidationPort): Promise<SecurityResult<true>> {
+		let current: ApprovalRevalidation;
+		try {
+			current = await revalidate();
+		} catch {
+			return failure("approval revalidation failed", "approval_stale");
+		}
+		if (current.argumentsDigest.digest !== request.argumentsDigest.digest || current.cwd !== request.cwd || current.policyDigest.digest !== request.snapshot.policyDigest.digest) {
+			return failure("approval binding changed before replay", "approval_stale");
+		}
+		return { ok: true, value: true };
 	}
 
 	async #commitDenied(

@@ -54,6 +54,8 @@ import {
 import { ApprovalCoordinator, HeadlessDenyPrompter, type ApprovalAuditPort, type ApprovalStateStorePort } from "./permission/approval-coordinator.ts";
 import { analyzeShellCommand } from "./permission/shell-analyzer.ts";
 import { PermissionEngine } from "./permission/engine.ts";
+import { MemoryPermissionGrantStore } from "./permission/grants.ts";
+import type { RequestPermissionsPort, GovernedPermissionRequest } from "./tools/request-permissions.ts";
 import { pathWithin, type FileSystemBrokerPort } from "./policy-filesystem.ts";
 import type { NetworkBrokerPort } from "./policy-network.ts";
 import { createSandboxBackend } from "./sandbox/factory.ts";
@@ -101,6 +103,7 @@ export interface SessionSecurityComposition {
 	readonly executionEnv: ExecutionEnv;
 	readonly authorizationPolicy: ToolAuthorizationPolicy;
 	readonly managedProcess: SessionManagedProcessSecurity;
+	readonly permissionRequester: RequestPermissionsPort;
 }
 
 export interface SessionManagedProcessSecurityRequest {
@@ -166,19 +169,23 @@ export async function createSessionSecurity(
 		sandboxBackend,
 		currentPolicyDigest: () => snapshot.policyDigest,
 	});
+	const permissionEngine = new PermissionEngine();
+	const approvalCoordinator = new ApprovalCoordinator(options.approvalPorts === undefined
+		? { prompter: new HeadlessDenyPrompter() }
+		: {
+			prompter: options.approvalPorts.prompter,
+			store: options.approvalPorts.stateStore,
+			audit: options.approvalPorts.audit,
+		});
+	const permissionGrantStore = new MemoryPermissionGrantStore(options.now ?? (() => new Date()));
 	const gateway = new ExecutionGateway({
 		snapshot,
 		workspace: workspace("toolCall_session-security"),
 		filesystemBroker,
 		networkBroker,
-		permissionEngine: new PermissionEngine(),
-		approvalCoordinator: new ApprovalCoordinator(options.approvalPorts === undefined
-			? { prompter: new HeadlessDenyPrompter() }
-			: {
-				prompter: options.approvalPorts.prompter,
-				store: options.approvalPorts.stateStore,
-				audit: options.approvalPorts.audit,
-			}),
+		permissionEngine,
+		approvalCoordinator,
+		permissionGrantStore,
 		finalLeaf,
 	});
 	const authorize = createAuthorizer({ options, identity, snapshot, gateway, providers, workspace });
@@ -217,7 +224,59 @@ export async function createSessionSecurity(
 		executionEnv,
 		authorizationPolicy: new GovernedToolAuthorizationPolicy(),
 		managedProcess,
+		permissionRequester: createPermissionRequester({ options, snapshot, workspace, permissionEngine, approvalCoordinator, permissionGrantStore, cwd }),
 	};
+}
+
+function createPermissionRequester(input: {
+	readonly options: SessionSecurityCompositionOptions;
+	readonly snapshot: SecuritySnapshot;
+	readonly workspace: (toolCallId: string, cwd?: string) => HostWorkspaceExecutionContext;
+	readonly permissionEngine: PermissionEngine;
+	readonly approvalCoordinator: ApprovalCoordinator;
+	readonly permissionGrantStore: MemoryPermissionGrantStore;
+	readonly cwd: string;
+}): RequestPermissionsPort {
+	return {
+		request: async (request, signal) => {
+			const requests = permissionGrantRequests(request);
+			if (!requests.ok) return requests;
+			const toolCallId = createRuntimeId("toolCall", canonicalDigest(request.toolCallId).slice(0, 64));
+			const workspace = input.workspace(toolCallId, input.cwd);
+			const authorization = authorizationRequest(input.options.fence, input.snapshot, workspace, toolCallId, "request_permissions", requests.value, request, input.cwd);
+			const category = input.permissionEngine.evaluate([{ kind: "tool", toolName: "request_permissions" }], input.snapshot);
+			const evaluation = { ...category, requests: requests.value };
+			const approved = await input.approvalCoordinator.authorize(authorization, evaluation, () => ({
+				argumentsDigest: authorization.argumentsDigest,
+				cwd: authorization.cwd,
+				policyDigest: authorization.snapshot.policyDigest,
+			}), signal);
+			if (!approved.ok) return approved;
+			if (approved.value.outcome !== "allow") return { ok: false, error: { code: "policy_denied", message: approved.value.reason, retryable: false } };
+			return { ok: true, value: await input.permissionGrantStore.issue({
+				scope: request.scope,
+				sessionId: authorization.sessionId,
+				turnId: authorization.turnId,
+				policyDigest: authorization.snapshot.policyDigest,
+				requests: requests.value,
+			}) };
+		},
+	};
+}
+
+function permissionGrantRequests(input: GovernedPermissionRequest): SecurityResult<readonly AccessRequest[]> {
+	const requests: AccessRequest[] = [];
+	for (const permission of input.permissions.filesystem ?? []) {
+		if (permission.access === "deny") return { ok: false, error: { code: "invalid_request", message: "request_permissions cannot elevate a deny filesystem entry", retryable: false } };
+		requests.push({ kind: "filesystem", operation: permission.access, path: permission.path });
+	}
+	for (const permission of input.permissions.network ?? []) {
+		if (permission.access === "deny") return { ok: false, error: { code: "invalid_request", message: "request_permissions cannot elevate a deny network entry", retryable: false } };
+		requests.push({ kind: "network", operation: "connect", host: permission.host, protocol: permission.protocol, ...(permission.port === undefined ? {} : { port: permission.port }) });
+	}
+	return requests.length === 0
+		? { ok: false, error: { code: "invalid_request", message: "request_permissions requires at least one permission", retryable: false } }
+		: { ok: true, value: requests };
 }
 
 function createManagedProcessSecurity(input: {
@@ -461,7 +520,7 @@ function createGovernedNetwork(
 			const url = new URL(request.url);
 			const context = await authorize(
 				"WebFetch",
-				[{ kind: "network", operation: "fetch", host: url.hostname, ...(url.port ? { port: Number(url.port) } : {}) }],
+				[{ kind: "network", operation: "fetch", host: url.hostname, protocol: url.protocol === "http:" ? "http" : "https", ...(url.port ? { port: Number(url.port) } : {}) }],
 				networkDigestInput(request),
 				cwd,
 				signal,

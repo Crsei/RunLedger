@@ -102,7 +102,7 @@ export async function assembleSessionDomain(
 				ownerGeneration: fence.generation,
 			}),
 			};
-	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient());
+	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester);
 	const extensions = await createProductionSessionExtensionComposition({
 		layout: options.layout,
 		cwd: options.cwd,
@@ -215,6 +215,7 @@ export function productionSessionTools(
 	cwd: string,
 	executionEnv: ExecutionEnv,
 	managedProcess?: StdlibToolsOptions["managedProcess"],
+	permissionRequester?: StdlibToolsOptions["permissionRequester"],
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -222,6 +223,7 @@ export function productionSessionTools(
 		requireExecutionEnv: true,
 		executionEnv,
 		...(managedProcess === undefined ? {} : { managedProcess }),
+		...(permissionRequester === undefined ? {} : { permissionRequester }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));

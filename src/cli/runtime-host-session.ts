@@ -27,6 +27,7 @@ import type { RuntimeEventWriter } from "../storage/host/runtime-event-store.ts"
 import { createExtensionInvocationEvent } from "../extensions/integration/runtime-events.ts";
 import { parseRuntimeId } from "../runtime/protocol/ids.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../security/integration/runtime-tool-authorization.ts";
+import { composePermissionsSystemPrompt } from "../security/prompts/permissions-prompt.ts";
 import { assembleAgentModelContext } from "../runtime/context/model-request-adapter.ts";
 import type { RuntimeContextSource } from "../runtime/context/runtime-adapter.ts";
 import { ExtensionTurnLifecycle, type ExtensionTurnLifecycleManager } from "../extensions/turn-lifecycle.ts";
@@ -208,6 +209,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				...(managedProcess === undefined ? {} : { managedProcess }),
 				...(executionEnv === undefined ? {} : { executionEnv }),
 				...(options.skillLoader === undefined ? {} : { skillLoader: options.skillLoader }),
+				...(security === undefined ? {} : { permissionRequester: security.permissionRequester }),
 			});
 			if (options.domainClient !== undefined) {
 				// 绑定 session 的 domain client：agent 工具的 plan.write / memory.*
@@ -258,7 +260,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 			const controller = await InteractiveSessionController.create({
 				cwd,
 				layout: options.layout,
-				systemPrompt: options.systemPrompt,
+				systemPrompt: security === undefined ? options.systemPrompt : composePermissionsSystemPrompt(options.systemPrompt, security.snapshot),
 				models: options.models,
 				settings: options.settings,
 				replay,

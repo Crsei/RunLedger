@@ -6,6 +6,7 @@ import type { AgentContext, AgentToolCall, AssistantAgentMessage, ToolAuthorizat
 import type { PlanModeState } from "../../src/runtime/modes/plan/types.ts";
 import { echoTool } from "../../src/runtime/tools/echo.ts";
 import { createStdlibTools } from "../../src/runtime/tools/index.ts";
+import { createRequestPermissionsTool } from "../../src/security/tools/request-permissions.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../../src/security/integration/runtime-tool-authorization.ts";
 
 const sessionId = createRuntimeId("session", "plan-tool-admission");
@@ -43,6 +44,14 @@ function request(tool: typeof echoTool): ToolAuthorizationRequest {
 }
 
 describe("Host tool admission in Plan Mode", () => {
+	it("admits the governed Skill and request_permissions tool names outside Plan Mode", () => {
+		const policy = new HostGovernedToolAuthorizationPolicy();
+		const skill = createStdlibTools("/tmp/runledger-plan-policy").get("Skill")!;
+		const requestPermissions = createRequestPermissionsTool();
+		expect(policy.authorize(request(skill))).toEqual({ decision: "allow" });
+		expect(policy.authorize(request(requestPermissions))).toEqual({ decision: "allow" });
+	});
+
 	it("preserves a restrictive Security decision when Plan Mode is inactive", () => {
 		const basePolicy = {
 			authorize: () => ({ decision: "deny" as const, reason: "security policy denied" }),

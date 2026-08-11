@@ -4,7 +4,6 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import { canonicalDigest, runtimeDigest } from "../../runtime/contracts/public.ts";
 import {
-	PERMISSION_PROFILE_NAMES,
 	SECURITY_POLICY_SOURCES,
 	type SecurityConfigDocument,
 	type SecurityConfigLayer,
@@ -14,10 +13,48 @@ import {
 
 const pathText = Type.String({ minLength: 1, maxLength: 4096 });
 const token = Type.String({ minLength: 1, maxLength: 512 });
+const profileId = Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._~-]*$", minLength: 1, maxLength: 128 });
+const approvalPolicy = Type.Union([
+	Type.Literal("on-request"),
+	Type.Literal("never"),
+	Type.Literal("untrusted"),
+	Type.Literal("granular"),
+]);
+const granularApproval = Type.Object({
+	sandboxApproval: Type.Boolean(),
+	rules: Type.Boolean(),
+	skillApproval: Type.Boolean(),
+	requestPermissions: Type.Boolean(),
+	mcpElicitations: Type.Boolean(),
+}, { additionalProperties: false });
+const networkPolicy = Type.Object({
+	mode: Type.Union([Type.Literal("deny"), Type.Literal("allow"), Type.Literal("allowlist"), Type.Literal("review")]),
+	allowedHosts: Type.Array(token, { maxItems: 256, uniqueItems: true }),
+}, { additionalProperties: false });
+const filesystemPolicy = Type.Object({
+	readRoots: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
+	writeRoots: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
+	denyRead: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
+	denyWrite: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
+	protectedPaths: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
+}, { additionalProperties: false });
+const permissionProfile = Type.Object({
+	extends: Type.Optional(profileId),
+	approvalPolicy: Type.Optional(approvalPolicy),
+	granularApproval: Type.Optional(granularApproval),
+	filesystemMode: Type.Optional(Type.Union([Type.Literal("read-only"), Type.Literal("workspace-write"), Type.Literal("unrestricted")])),
+	sandbox: Type.Optional(Type.Union([
+		Type.Literal("off"), Type.Literal("read-only"), Type.Literal("workspace-write"), Type.Literal("strict"), Type.Literal("external"),
+	])),
+	network: Type.Optional(networkPolicy),
+	filesystem: Type.Optional(filesystemPolicy),
+}, { additionalProperties: false });
 
 export const SecurityConfigDocumentSchema = Type.Object({
-	profile: Type.Optional(Type.Union(PERMISSION_PROFILE_NAMES.map((name) => Type.Literal(name)))),
-	approvalPolicy: Type.Optional(Type.Union([Type.Literal("on-request"), Type.Literal("never")])),
+	profile: Type.Optional(profileId),
+	profiles: Type.Optional(Type.Record(profileId, permissionProfile)),
+	approvalPolicy: Type.Optional(approvalPolicy),
+	granularApproval: Type.Optional(granularApproval),
 	sandbox: Type.Optional(Type.Union([
 		Type.Literal("off"),
 		Type.Literal("read-only"),
@@ -25,17 +62,8 @@ export const SecurityConfigDocumentSchema = Type.Object({
 		Type.Literal("strict"),
 		Type.Literal("external"),
 	])),
-	network: Type.Optional(Type.Object({
-		mode: Type.Union([Type.Literal("deny"), Type.Literal("allow"), Type.Literal("allowlist")]),
-		allowedHosts: Type.Array(token, { maxItems: 256, uniqueItems: true }),
-	}, { additionalProperties: false })),
-	filesystem: Type.Optional(Type.Object({
-		readRoots: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
-		writeRoots: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
-		denyRead: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
-		denyWrite: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
-		protectedPaths: Type.Optional(Type.Array(pathText, { maxItems: 256, uniqueItems: true })),
-	}, { additionalProperties: false })),
+	network: Type.Optional(networkPolicy),
+	filesystem: Type.Optional(filesystemPolicy),
 	rules: Type.Optional(Type.Array(Type.Object({
 		id: Type.String({ pattern: "^[A-Za-z0-9][A-Za-z0-9._~-]*$", minLength: 1, maxLength: 128 }),
 		action: Type.Union([Type.Literal("allow"), Type.Literal("ask"), Type.Literal("deny")]),
@@ -59,6 +87,7 @@ function validHost(host: string): boolean {
 export function parseSecurityConfigDocument(value: unknown): SecurityResult<SecurityConfigDocument> {
 	if (!Value.Check(SecurityConfigDocumentSchema, value)) return failure("security config does not match the exact schema");
 	const document = value as SecurityConfigDocument;
+	if (document.approvalPolicy === "granular" && document.granularApproval === undefined) return failure("granular approval policy requires granularApproval");
 	if (document.network) {
 		if (document.network.allowedHosts.some((host) => !validHost(host))) return failure("security config contains an invalid network host");
 		if (document.network.mode === "deny" && document.network.allowedHosts.length > 0) return failure("network deny mode cannot include allowed hosts");

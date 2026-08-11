@@ -500,9 +500,20 @@ export function cliSecurityOverride(args: ReturnType<typeof parseArgs>["args"]):
       args.sandbox === undefined && args.network === undefined) return undefined;
   return {
     ...(args.permissionProfile === undefined ? {} : { profile: args.permissionProfile }),
-    ...(args.approvalPolicy === undefined ? {} : { approvalPolicy: args.approvalPolicy }),
+    ...(args.approvalPolicy === undefined ? {} : {
+      approvalPolicy: args.approvalPolicy,
+      ...(args.approvalPolicy === "granular" ? {
+        granularApproval: {
+          sandboxApproval: true,
+          rules: true,
+          skillApproval: true,
+          requestPermissions: true,
+          mcpElicitations: true,
+        },
+      } : {}),
+    }),
     ...(args.sandbox === undefined ? {} : { sandbox: args.sandbox }),
-    ...(args.network === undefined ? {} : { network: { mode: args.network, allowedHosts: [] } }),
+    ...(args.network === undefined ? {} : { network: { mode: args.network, allowedHosts: args.networkHosts } }),
   };
 }
 

@@ -144,17 +144,20 @@ describe("parseArgs 多 flag 组合", () => {
 });
 
 describe("parseArgs security / worktree flags", () => {
-  it("--permission-profile 接受合法值并拒绝非法值", () => {
+  it("--permission-profile 接受内置与 named profile id 并拒绝非法 id", () => {
     expect(parseArgs(["--permission-profile", "workspace-write"]).args.permissionProfile).toBe("workspace-write");
     expect(parseArgs(["--permission-profile", "read-only"]).args.permissionProfile).toBe("read-only");
-    const bad = parseArgs(["--permission-profile", "everything"]);
+    expect(parseArgs(["--permission-profile", "team.review-prod"]).args.permissionProfile).toBe("team.review-prod");
+    const bad = parseArgs(["--permission-profile", "bad/profile"]);
     expect(bad.error).toContain("--permission-profile");
     expect(bad.args.permissionProfile).toBeUndefined();
   });
 
-  it("--approval-policy on-request|never", () => {
+  it("--approval-policy 接受四种 Codex 语义", () => {
     expect(parseArgs(["--approval-policy", "on-request"]).args.approvalPolicy).toBe("on-request");
     expect(parseArgs(["--approval-policy", "never"]).args.approvalPolicy).toBe("never");
+    expect(parseArgs(["--approval-policy", "untrusted"]).args.approvalPolicy).toBe("untrusted");
+    expect(parseArgs(["--approval-policy", "granular"]).args.approvalPolicy).toBe("granular");
     expect(parseArgs(["--approval-policy", "allow-all"]).error).toContain("--approval-policy");
   });
 
@@ -164,10 +167,25 @@ describe("parseArgs security / worktree flags", () => {
     expect(parseArgs(["--sandbox", "jail"]).error).toContain("--sandbox");
   });
 
-  it("--network deny|allow", () => {
+  it("--network 接受 deny|allow|allowlist|review 并校验 allowlist host", () => {
     expect(parseArgs(["--network", "deny"]).args.network).toBe("deny");
     expect(parseArgs(["--network", "allow"]).args.network).toBe("allow");
+    expect(parseArgs(["--network", "allowlist"]).error).toContain("--network-host");
+    const allowlist = parseArgs(["--network", "allowlist", "--network-host", "api.example", "--network-host", "cdn.example"]);
+    expect(allowlist.args.network).toBe("allowlist");
+    expect(allowlist.args.networkHosts).toEqual(["api.example", "cdn.example"]);
+    expect(parseArgs(["--network", "review"]).args.network).toBe("review");
     expect(parseArgs(["--network", "proxy"]).error).toContain("--network");
+    expect(parseArgs(["--network", "deny", "--network-host", "api.example"]).error).toContain("deny");
+  });
+
+  it("USAGE advertises the expanded permission selections", () => {
+    expect(USAGE).toContain("untrusted");
+    expect(USAGE).toContain("granular");
+    expect(USAGE).toContain("allowlist");
+    expect(USAGE).toContain("review");
+    expect(USAGE).toContain("named-profile-id");
+    expect(USAGE).toContain("--network-host");
   });
 
   it("--worktree 无 label 时为空字符串,有 label 时取 label", () => {

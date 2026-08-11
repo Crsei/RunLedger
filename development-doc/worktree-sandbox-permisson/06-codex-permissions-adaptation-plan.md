@@ -4,6 +4,8 @@
 >
 > 建立日期：2026-08-11。
 >
+> 实施状态（2026-08-11）：P1 已由 `00629e0` 提交；P2–P6 已完成实现并提交。P6 focused suite 为 36 passed / 1 skipped files、206 passed / 3 skipped tests；`npm run check`、仓库级 `npm test`（Vitest 291 passed / 1 skipped files、1680 passed / 3 skipped tests；Bun OpenTUI 43 passed / 217 assertions）与 `npm run build` 全部通过。全局链接确认指向本仓库，linked `runledger --version` / `--help`（含新增权限 flags）通过；隔离 `RUNLEDGER_DIR` 的真实 tmux TTY 已成功渲染标准 CLI idle 界面并以 Ctrl+D 干净退出。P6 保持 Runtime 公共事件字段不变，standard Session Owner Runtime 与 compatibility Host 均由 Host 注入 `request_permissions`，OS sandbox 冻结面未改动。
+>
 > 参考基线：本地 codex checkout `0b175e6439a8608ba7726ee153fd8590619e8f34`（2026-07-21，与 00 计划同一基线），主要读取：
 >
 > - `codex-rs/protocol/src/permissions.rs`（3218 行）—— `FileSystemSandboxPolicy` / `FileSystemPath` / `FileSystemAccessMode` / `FileSystemSpecialPath` / `ReadDenyMatcher` / `PROTECTED_METADATA_PATH_NAMES`；

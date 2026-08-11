@@ -37,6 +37,7 @@ import { BoundedHostCommandStore, type HostCommandStore } from "../storage/host/
 import type { HostDomainRevisionStore } from "../storage/host/domain-revision-store.ts";
 import type { RuntimeEventAppendInput, RuntimeEventWriter } from "../storage/host/runtime-event-store.ts";
 import { SYSTEM_APPROVAL_PRINCIPAL_ID } from "../security/permission/approval-coordinator.ts";
+import { decodePermissionPromptResponse } from "../security/permission/approval-response.ts";
 import type { PermissionPrompt, PermissionPromptResponse, PermissionPrompter } from "../security/types.ts";
 import type { HostMcpRuntime } from "./runtime-host-mcp.ts";
 
@@ -150,14 +151,8 @@ export class HostReversePermissionPrompter implements PermissionPrompter {
 				reason: stringValue(response.body.code) ?? "approval was not accepted",
 			};
 		}
-		const decision = response.body.decision;
-		if (decision === "allow-once" || decision === "deny" || decision === "cancel") {
-			return {
-				decision,
-				decidedBy: response.principalId as PermissionPromptResponse["decidedBy"],
-				...(typeof response.body.reason === "string" ? { reason: response.body.reason } : {}),
-			};
-		}
+			const decoded = decodePermissionPromptResponse(response.body, response.principalId as PermissionPromptResponse["decidedBy"]);
+			if (decoded !== undefined) return decoded;
 		return { decision: "deny", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID, reason: "approval decision is invalid" };
 	}
 }

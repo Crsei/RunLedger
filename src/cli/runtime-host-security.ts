@@ -42,6 +42,8 @@ import {
 } from "../security/permission/approval-coordinator.ts";
 import { analyzeShellCommand } from "../security/permission/shell-analyzer.ts";
 import { PermissionEngine } from "../security/permission/engine.ts";
+import { MemoryPermissionGrantStore } from "../security/permission/grants.ts";
+import type { GovernedPermissionRequest, RequestPermissionsPort } from "../security/tools/request-permissions.ts";
 import { pathWithin, type FileSystemBrokerPort } from "../security/policy-filesystem.ts";
 import {
 	PolicyNetworkClient,
@@ -157,6 +159,7 @@ export interface ProductionHostSecurity {
 	readonly finalLeaf: HostProcessFinalLeafDecisionPort;
 	readonly constraintProviders: ExecutionConstraintProviders;
 	readonly sandboxBackend: SandboxBackend;
+	readonly permissionRequester: RequestPermissionsPort;
 	createExecutionEnv(options?: HostExecutionEnvOptions): ExecutionEnv;
 	prepareProcess(input: HostProcessSecurityRequest): Promise<SecurityResult<PreparedHostProcessSecurity>>;
 	validateProcessFinalLeaf(input: HostProcessFinalLeafInput): Promise<SecurityResult<HostProcessFinalLeafDecision>>;
@@ -203,12 +206,14 @@ export async function createProductionHostSecurity(
 	const permissionEngine = new PermissionEngine();
 	if (options.runtimeEventWriter === undefined) throw new Error("canonical Runtime event writer is required from Host composition");
 	const audit = new HostSecurityAuditAdapter({ authorityId: options.scope.authorityId, tenantId: options.scope.tenantId, writer: options.runtimeEventWriter });
+	const approvalStore = new JsonApprovalStateStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey });
 	const approvalCoordinator = new ApprovalCoordinator({
 		...(options.approval ?? {}),
 		prompter: options.permissionPrompter ?? new HeadlessDenyPrompter(),
-		store: new JsonApprovalStateStore({ layout: options.layout, workspaceStorageKey: options.scope.workspaceStorageKey }),
+		store: approvalStore,
 		audit,
 	});
+	const permissionGrantStore = new MemoryPermissionGrantStore(options.now ?? (() => new Date()));
 	const bindings = new Map<string, ProcessBinding>();
 	const baseProviders = createHostConstraintProviders(bindings);
 	const finalLeaf = new HostProcessFinalLeafAdapter({
@@ -224,6 +229,7 @@ export async function createProductionHostSecurity(
 		networkBroker,
 		permissionEngine,
 		approvalCoordinator,
+		permissionGrantStore,
 		finalLeaf,
 	});
 
@@ -234,6 +240,16 @@ export async function createProductionHostSecurity(
 		finalLeaf,
 		constraintProviders: baseProviders,
 		sandboxBackend,
+		permissionRequester: createHostPermissionRequester({
+			options,
+			snapshot,
+			permissionEngine,
+			approvalCoordinator,
+			permissionGrantStore,
+			baseWorkspace,
+			baseSessionId,
+			basePrincipalId,
+		}),
 		createExecutionEnv: (input = {}) => createGovernedExecutionEnv({
 			composition: {
 				gateway,
@@ -297,6 +313,70 @@ export async function createProductionHostSecurity(
 		processSandboxPlan: (requestDigest) => bindings.get(requestDigest.digest)?.sandboxPlan,
 	};
 	return composition;
+}
+
+function createHostPermissionRequester(input: {
+	readonly options: HostSecurityCompositionOptions;
+	readonly snapshot: SecuritySnapshot;
+	readonly permissionEngine: PermissionEngine;
+	readonly approvalCoordinator: ApprovalCoordinator;
+	readonly permissionGrantStore: MemoryPermissionGrantStore;
+	readonly baseWorkspace: (sessionId: string, principalId: string, toolCallId: string, cwd: string) => ReturnType<typeof createWorkspaceEnvelope>;
+	readonly baseSessionId: string;
+	readonly basePrincipalId: string;
+}): RequestPermissionsPort {
+	return {
+		request: async (requested, signal) => {
+			const requests = hostPermissionGrantRequests(requested);
+			if (!requests.ok) return requests;
+			const sessionId = runtimeId("session", input.baseSessionId);
+			const principalId = runtimeId("principal", input.basePrincipalId);
+			const toolCallId = runtimeId("toolCall", canonicalDigest(requested.toolCallId).slice(0, 64));
+			const cwd = resolve(input.options.cwd);
+			const workspace = input.baseWorkspace(sessionId, principalId, toolCallId, cwd);
+			const requestId = runtimeId("command", canonicalDigest({ sessionId, toolCallId, requested }).slice(0, 64));
+			const authorization: AuthorizationRequest = {
+				requestId,
+				sessionId,
+				turnId: runtimeId("turn", canonicalDigest({ requestId, toolCallId }).slice(0, 64)),
+				toolCallId,
+				toolName: "request_permissions",
+				argumentsDigest: digestOf(requested),
+				cwd,
+				requests: requests.value,
+				workspace,
+				snapshot: input.snapshot,
+			};
+			const category = input.permissionEngine.evaluate([{ kind: "tool", toolName: "request_permissions" }], input.snapshot);
+			const approved = await input.approvalCoordinator.authorize(authorization, { ...category, requests: requests.value }, () => ({
+				argumentsDigest: authorization.argumentsDigest,
+				cwd: authorization.cwd,
+				policyDigest: authorization.snapshot.policyDigest,
+			}), signal);
+			if (!approved.ok) return approved;
+			if (approved.value.outcome !== "allow") return securityFailure("policy_denied", approved.value.reason);
+			return { ok: true, value: await input.permissionGrantStore.issue({
+				scope: requested.scope,
+				sessionId,
+				turnId: authorization.turnId,
+				policyDigest: input.snapshot.policyDigest,
+				requests: requests.value,
+			}) };
+		},
+	};
+}
+
+function hostPermissionGrantRequests(input: GovernedPermissionRequest): SecurityResult<readonly AccessRequest[]> {
+	const requests: AccessRequest[] = [];
+	for (const permission of input.permissions.filesystem ?? []) {
+		if (permission.access === "deny") return securityFailure("invalid_request", "request_permissions cannot elevate a deny filesystem entry");
+		requests.push({ kind: "filesystem", operation: permission.access, path: permission.path });
+	}
+	for (const permission of input.permissions.network ?? []) {
+		if (permission.access === "deny") return securityFailure("invalid_request", "request_permissions cannot elevate a deny network entry");
+		requests.push({ kind: "network", operation: "connect", host: permission.host, protocol: permission.protocol, ...(permission.port === undefined ? {} : { port: permission.port }) });
+	}
+	return requests.length === 0 ? securityFailure("invalid_request", "request_permissions requires at least one permission") : { ok: true, value: requests };
 }
 
 async function authorizeHostResource(input: {
@@ -721,7 +801,7 @@ function createGovernedNetwork(input: {
 	return {
 		request: async (request: NetworkRequest, signal?: AbortSignal): Promise<NetworkResponse> => {
 			const url = new URL(request.url);
-			const context = await input.authorize("WebFetch", [{ kind: "network", operation: "fetch", host: url.hostname, ...(url.port ? { port: Number(url.port) } : {}) }], request, undefined, signal);
+			const context = await input.authorize("WebFetch", [{ kind: "network", operation: "fetch", host: url.hostname, protocol: url.protocol === "http:" ? "http" : "https", ...(url.port ? { port: Number(url.port) } : {}) }], request, undefined, signal);
 			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.network.request({
 				url: request.url,
 				method: request.method,

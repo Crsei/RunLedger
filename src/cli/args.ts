@@ -11,9 +11,10 @@
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
  *   --permission-profile <name>        显式选择 restrictive security profile
- *   --approval-policy <on-request|never>
+ *   --approval-policy <on-request|never|untrusted|granular>
  *   --sandbox <off|read-only|workspace-write|strict|external>
- *   --network <deny|allow>
+ *   --network <deny|allow|allowlist|review>
+ *   --network-host <host>               repeatable allowlist/review entry
  *   --worktree [label]                 在 Host 创建/复用 session worktree
  *   --worktree-ref <ref>               worktree 创建基线 ref
  *   --worktree-branch <name>           worktree 创建分支
@@ -27,7 +28,7 @@
  */
 
 import type { ModelThinkingLevel } from "../types.ts";
-import type { PermissionProfileName } from "../security/types.ts";
+import type { ApprovalPolicyName, NetworkPolicyMode } from "../security/types.ts";
 import type { SandboxProfileName } from "../runtime/contracts/public.ts";
 import { controlCommandHelp } from "./control-commands.ts";
 
@@ -41,12 +42,7 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
   "max",
 ]);
 
-const PERMISSION_PROFILE_VALUES: ReadonlySet<string> = new Set<PermissionProfileName>([
-  "read-only",
-  "workspace-write",
-  "danger-full-access",
-  "custom",
-]);
+const PERMISSION_PROFILE_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 
 const SANDBOX_VALUES: ReadonlySet<string> = new Set<SandboxProfileName>([
   "off",
@@ -68,11 +64,12 @@ export interface ParsedArgs {
   model?: string;
   thinking?: ModelThinkingLevel;
   /** 显式 restrictive security profile;仅通过 Host 生效。 */
-  permissionProfile?: PermissionProfileName;
-  approvalPolicy?: "on-request" | "never";
+  permissionProfile?: string;
+  approvalPolicy?: ApprovalPolicyName;
   sandbox?: SandboxProfileName;
-  /** --network deny|allow;allow 只在无 managed forceNetworkDeny 时有效。 */
-  network?: "deny" | "allow";
+  /** --network 只在无 managed forceNetworkDeny 时有效。 */
+  network?: NetworkPolicyMode;
+  networkHosts: readonly string[];
   /** --worktree 显式请求 worktree(label 可选)。 */
   worktree?: string;
   worktreeRef?: string;
@@ -103,10 +100,11 @@ const HELP_TEXT = `Usage: runledger [options]
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
       --permission-profile <name>
-                              read-only|workspace-write|danger-full-access|custom
-      --approval-policy <p>   on-request|never
+                              read-only|workspace-write|danger-full-access|named-profile-id
+      --approval-policy <p>   on-request|never|untrusted|granular
       --sandbox <profile>     off|read-only|workspace-write|strict|external
-      --network <mode>        deny|allow
+      --network <mode>        deny|allow|allowlist|review
+      --network-host <host>   allowlist/review host，可重复
       --worktree [label]      在 Host 创建/复用 session worktree
       --worktree-ref <ref>    worktree 基线 ref
       --worktree-branch <n>   worktree 分支名
@@ -138,10 +136,11 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
-  let permissionProfile: PermissionProfileName | undefined;
-  let approvalPolicy: "on-request" | "never" | undefined;
+  let permissionProfile: string | undefined;
+  let approvalPolicy: ApprovalPolicyName | undefined;
   let sandbox: SandboxProfileName | undefined;
-  let network: "deny" | "allow" | undefined;
+  let network: NetworkPolicyMode | undefined;
+  const networkHosts: string[] = [];
   let worktree: string | undefined;
   let worktreeRef: string | undefined;
   let worktreeBranch: string | undefined;
@@ -245,11 +244,11 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         error = `${a} 缺少值`;
         break;
       }
-      if (!PERMISSION_PROFILE_VALUES.has(v)) {
-        error = `--permission-profile 不合法:${v}(合法值 read-only/workspace-write/danger-full-access/custom)`;
+      if (!PERMISSION_PROFILE_ID.test(v)) {
+        error = `--permission-profile 不合法:${v}(应为内置或 named profile id)`;
         break;
       }
-      permissionProfile = v as PermissionProfileName;
+      permissionProfile = v;
       continue;
     }
     if (a === "--approval-policy") {
@@ -258,8 +257,8 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         error = `${a} 缺少值`;
         break;
       }
-      if (v !== "on-request" && v !== "never") {
-        error = `--approval-policy 不合法:${v}(合法值 on-request/never)`;
+      if (v !== "on-request" && v !== "never" && v !== "untrusted" && v !== "granular") {
+        error = `--approval-policy 不合法:${v}(合法值 on-request/never/untrusted/granular)`;
         break;
       }
       approvalPolicy = v;
@@ -284,11 +283,24 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         error = `${a} 缺少值`;
         break;
       }
-      if (v !== "deny" && v !== "allow") {
-        error = `--network 不合法:${v}(合法值 deny/allow)`;
+      if (v !== "deny" && v !== "allow" && v !== "allowlist" && v !== "review") {
+        error = `--network 不合法:${v}(合法值 deny/allow/allowlist/review)`;
         break;
       }
       network = v;
+      continue;
+    }
+    if (a === "--network-host") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (!validNetworkHost(v)) {
+        error = `--network-host 不合法:${v}`;
+        break;
+      }
+      networkHosts.push(v.toLowerCase().replace(/\.$/u, ""));
       continue;
     }
     if (a === "--worktree") {
@@ -349,6 +361,12 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   if (worktree !== undefined && noWorktree) {
     error = "--worktree 与 --no-worktree 互斥";
   }
+  if (error === undefined && network === "allowlist" && networkHosts.length === 0) {
+    error = "--network allowlist 至少需要一个 --network-host";
+  }
+  if (error === undefined && (network === undefined || network === "deny") && networkHosts.length > 0) {
+    error = network === "deny" ? "--network deny 不能配置 --network-host" : "--network-host 需要显式 --network review|allowlist|allow";
+  }
 
   return {
     args: {
@@ -366,6 +384,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       approvalPolicy,
       sandbox,
       network,
+      networkHosts: [...new Set(networkHosts)],
       worktree,
       worktreeRef,
       worktreeBranch,
@@ -376,4 +395,8 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     },
     error,
   };
+}
+
+function validNetworkHost(host: string): boolean {
+  return host.length > 0 && host.length <= 512 && !host.includes("://") && !host.includes("/") && !host.includes("@") && !host.includes("\0");
 }

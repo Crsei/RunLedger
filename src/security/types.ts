@@ -13,6 +13,7 @@ import type {
 	WorkspaceExecutionEnvelope,
 } from "../runtime/contracts/public.ts";
 import type { SandboxProfileName } from "../runtime/contracts/public.ts";
+import type { CompiledFilesystemPolicy } from "./permission/filesystem-entries.ts";
 
 export const SECURITY_POLICY_SOURCES = [
 	"managed",
@@ -34,14 +35,23 @@ export const PERMISSION_PROFILE_NAMES = [
 	"custom",
 ] as const;
 export type PermissionProfileName = (typeof PERMISSION_PROFILE_NAMES)[number];
-export type ApprovalPolicyName = "on-request" | "never";
-export type NetworkPolicyMode = "deny" | "allow" | "allowlist";
+export type ApprovalPolicyName = "on-request" | "never" | "untrusted" | "granular";
+export type NetworkPolicyMode = "deny" | "allow" | "allowlist" | "review";
+export type NetworkApprovalProtocol = "http" | "https" | "socks5-tcp" | "socks5-udp";
 export type FilesystemAccessOperation = "read" | "write" | "delete";
+
+export interface GranularApprovalConfig {
+	readonly sandboxApproval: boolean;
+	readonly rules: boolean;
+	readonly skillApproval: boolean;
+	readonly requestPermissions: boolean;
+	readonly mcpElicitations: boolean;
+}
 
 export type AccessRequest =
 	| { readonly kind: "filesystem"; readonly operation: FilesystemAccessOperation; readonly path: string }
 	| { readonly kind: "shell"; readonly command: string; readonly cwd: string; readonly analysis: "known" | "unknown" }
-	| { readonly kind: "network"; readonly operation: "connect" | "fetch"; readonly host: string; readonly port?: number }
+	| { readonly kind: "network"; readonly operation: "connect" | "fetch"; readonly host: string; readonly protocol?: NetworkApprovalProtocol; readonly port?: number }
 	| { readonly kind: "worktree"; readonly operation: "create" | "remove" | "apply" | "gc"; readonly target: string }
 	| { readonly kind: "tool"; readonly toolName: string; readonly provider?: string };
 
@@ -59,6 +69,7 @@ export interface FilesystemPolicy {
 	readonly denyRead: readonly string[];
 	readonly denyWrite: readonly string[];
 	readonly protectedPaths: readonly string[];
+	readonly entriesPolicy?: CompiledFilesystemPolicy;
 }
 
 export interface NetworkPolicy {
@@ -67,16 +78,30 @@ export interface NetworkPolicy {
 }
 
 export interface SecurityProfile {
-	readonly name: PermissionProfileName;
+	readonly name: string;
+	readonly profileSource?: SecurityPolicySource;
 	readonly approvalPolicy: ApprovalPolicyName;
+	readonly granularApproval?: GranularApprovalConfig;
 	readonly filesystemMode: "read-only" | "workspace-write" | "unrestricted";
 	readonly network: NetworkPolicy;
 	readonly sandbox: SandboxProfileName;
 }
 
-export interface SecurityConfigDocument {
-	readonly profile?: PermissionProfileName;
+export interface PermissionProfileDefinition {
+	readonly extends?: string;
 	readonly approvalPolicy?: ApprovalPolicyName;
+	readonly granularApproval?: GranularApprovalConfig;
+	readonly filesystemMode?: SecurityProfile["filesystemMode"];
+	readonly sandbox?: SandboxProfileName;
+	readonly network?: NetworkPolicy;
+	readonly filesystem?: Partial<FilesystemPolicy>;
+}
+
+export interface SecurityConfigDocument {
+	readonly profile?: string;
+	readonly profiles?: Readonly<Record<string, PermissionProfileDefinition>>;
+	readonly approvalPolicy?: ApprovalPolicyName;
+	readonly granularApproval?: GranularApprovalConfig;
 	readonly sandbox?: SandboxProfileName;
 	readonly network?: NetworkPolicy;
 	readonly filesystem?: Partial<FilesystemPolicy>;
@@ -84,7 +109,7 @@ export interface SecurityConfigDocument {
 }
 
 export interface ManagedSecurityConstraints {
-	readonly allowedProfiles: readonly PermissionProfileName[];
+	readonly allowedProfiles: readonly string[];
 	readonly allowedApprovalPolicies: readonly ApprovalPolicyName[];
 	readonly minimumSandbox: SandboxProfileName;
 	readonly forceNetworkDeny: boolean;
@@ -138,6 +163,9 @@ export interface PermissionPrompt {
 
 export type PermissionPromptResponse =
 	| { readonly decision: "allow-once"; readonly decidedBy: PrincipalId }
+	| { readonly decision: "allow-session"; readonly decidedBy: PrincipalId }
+	| { readonly decision: "allow-with-prefix-rule"; readonly prefixRule: readonly string[]; readonly decidedBy: PrincipalId }
+	| { readonly decision: "allow-with-network-rule"; readonly host: string; readonly protocol: "http" | "https" | "socks5-tcp" | "socks5-udp"; readonly port?: number; readonly decidedBy: PrincipalId }
 	| { readonly decision: "deny"; readonly decidedBy: PrincipalId; readonly reason?: string }
 	| { readonly decision: "cancel"; readonly decidedBy: PrincipalId };
 

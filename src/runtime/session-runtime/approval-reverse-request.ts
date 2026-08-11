@@ -6,6 +6,8 @@ import {
 	type ApprovalId,
 	type ApprovalReceiptRef,
 	type ConnectionId,
+	type RuntimeDigest,
+	type SessionId,
 } from "../contracts/public.ts";
 import type { SessionFrameEnvelope } from "../session-server/protocol.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
@@ -14,9 +16,14 @@ import {
 	type SessionStore,
 } from "../../storage/session-store/session-store.ts";
 import type {
+	ApprovalAmendmentStateStorePort,
 	ApprovalAuditPort,
-	ApprovalStateStorePort,
+	ExecPrefixApproval,
+	NetworkApprovalRule,
+	NetworkRuleApproval,
 } from "../../security/permission/approval-coordinator.ts";
+import { execPrefixRuleMatches, type ExecPrefixRule } from "../../security/permission/exec-prefix-rule.ts";
+import type { NetworkApprovalKey } from "../../security/network/network-approval.ts";
 import type {
 	PermissionPrompt,
 	PermissionPrompter,
@@ -24,12 +31,13 @@ import type {
 	SecurityResult,
 } from "../../security/types.ts";
 import type { ReverseRequestSender } from "./credential-reverse-request.ts";
+import { decodePermissionPromptResponse } from "../../security/permission/approval-response.ts";
 
 export const APPROVAL_REVERSE_REQUEST_KIND = "approval_prompt" as const;
 
 export interface SessionApprovalPorts {
 	readonly prompter: PermissionPrompter;
-	readonly stateStore: ApprovalStateStorePort;
+	readonly stateStore: ApprovalAmendmentStateStorePort;
 	readonly audit: ApprovalAuditPort;
 }
 
@@ -50,7 +58,7 @@ export function createSessionApprovalPorts(options: SessionApprovalPortsOptions)
 	};
 }
 
-class SessionApprovalStateStore implements ApprovalStateStorePort {
+class SessionApprovalStateStore implements ApprovalAmendmentStateStorePort {
 	readonly #store: SessionStore;
 	readonly #fence: OwnerFence;
 
@@ -73,6 +81,51 @@ class SessionApprovalStateStore implements ApprovalStateStorePort {
 	}
 
 	public async commit(receipt: ApprovalReceiptRef, expectedRevision: number): Promise<SecurityResult<ApprovalReceiptRef>> {
+		return this.#commitRecord(receipt, expectedRevision, {});
+	}
+
+	public async findExecPrefixApproval(input: { readonly sessionId: SessionId; readonly policyDigest: RuntimeDigest; readonly command: string }): Promise<ExecPrefixApproval | undefined> {
+		for (const event of [...this.#store.replaySessionEvents(this.#fence.sessionId)].reverse()) {
+			if (event.eventType !== "approval.decided") continue;
+			let payload: unknown;
+			try { payload = JSON.parse(event.payloadJson) as unknown; } catch { continue; }
+			const record = recordValue(payload);
+			const receipt = record.receipt;
+			const rule = record.execPrefixRule;
+			if (isApprovalReceiptRef(receipt) && isExecPrefixRule(rule) && receipt.decision === "allowed" && execPrefixRuleMatches(rule, input.command, input.sessionId, input.policyDigest)) {
+				return { receipt, rule };
+			}
+		}
+		return undefined;
+	}
+
+	public async commitWithExecPrefixRule(receipt: ApprovalReceiptRef, expectedRevision: number, rule: ExecPrefixRule): Promise<SecurityResult<ExecPrefixApproval>> {
+		if (!isExecPrefixRule(rule) || receipt.scope !== "session" || receipt.decision !== "allowed") return approvalFailure("exec prefix amendment failed validation");
+		const committed = await this.#commitRecord(receipt, expectedRevision, { execPrefixRule: rule });
+		return committed.ok ? { ok: true, value: { receipt: committed.value, rule } } : committed;
+	}
+
+	public async findNetworkApproval(input: { readonly sessionId: SessionId; readonly policyDigest: RuntimeDigest; readonly key: NetworkApprovalKey }): Promise<NetworkRuleApproval | undefined> {
+		for (const event of [...this.#store.replaySessionEvents(this.#fence.sessionId)].reverse()) {
+			if (event.eventType !== "approval.decided") continue;
+			let payload: unknown;
+			try { payload = JSON.parse(event.payloadJson) as unknown; } catch { continue; }
+			const record = recordValue(payload);
+			const receipt = record.receipt;
+			const rule = record.networkRule;
+			if (isApprovalReceiptRef(receipt) && isNetworkApprovalRule(rule) && receipt.decision === "allowed" && rule.sessionId === input.sessionId &&
+				rule.policyDigest.digest === input.policyDigest.digest && sameNetworkKey(rule.key, input.key)) return { receipt, rule };
+		}
+		return undefined;
+	}
+
+	public async commitWithNetworkRule(receipt: ApprovalReceiptRef, expectedRevision: number, rule: NetworkApprovalRule): Promise<SecurityResult<NetworkRuleApproval>> {
+		if (!isNetworkApprovalRule(rule) || receipt.scope !== "session" || receipt.decision !== "allowed") return approvalFailure("network amendment failed validation");
+		const committed = await this.#commitRecord(receipt, expectedRevision, { networkRule: rule });
+		return committed.ok ? { ok: true, value: { receipt: committed.value, rule } } : committed;
+	}
+
+	async #commitRecord(receipt: ApprovalReceiptRef, expectedRevision: number, amendments: { readonly execPrefixRule?: ExecPrefixRule; readonly networkRule?: NetworkApprovalRule }): Promise<SecurityResult<ApprovalReceiptRef>> {
 		if (!isApprovalReceiptRef(receipt)) return approvalFailure("approval receipt failed Runtime validation");
 		const current = await this.read(receipt.approvalId);
 		if ((current?.decisionRevision ?? 0) !== expectedRevision || receipt.decisionRevision !== expectedRevision + 1) {
@@ -88,7 +141,7 @@ class SessionApprovalStateStore implements ApprovalStateStorePort {
 			this.#fence,
 			receipt.decision === "revoked" ? "approval.revoked" : "approval.decided",
 			`decision-${receipt.approvalId}-${receipt.decisionRevision}`,
-			{ receipt },
+			{ receipt, ...amendments },
 		);
 		return { ok: true, value: receipt };
 	}
@@ -142,21 +195,22 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 					kind: APPROVAL_REVERSE_REQUEST_KIND,
 					body: {
 						requestType: "permission",
-						toolName: prompt.toolName,
-						summary: prompt.summary,
+							toolName: prompt.toolName,
+							summary: prompt.summary,
+							requests: prompt.requests,
 						cwd: prompt.cwd,
 						expiresAt: prompt.expiresAt,
 					},
 				}, Math.max(1, deadline - Date.now()));
 				this.#assertFence();
-				const decision = frame.body.ok === true ? frame.body.decision : undefined;
-				if (decision !== "allow-once" && decision !== "deny" && decision !== "cancel") {
-					throw new Error("approval reverse response is invalid");
-				}
-				const decidedBy = createRuntimeId("principal", `session-driver-${connectionId.slice(-64)}`);
-				return decision === "deny"
-					? { decision, decidedBy, reason: "driver denied the request" }
-					: { decision, decidedBy };
+					const decidedBy = createRuntimeId("principal", `session-driver-${connectionId.slice(-64)}`);
+					const decision = decodePermissionPromptResponse(frame.body, decidedBy);
+					if (decision === undefined) {
+						throw new Error("approval reverse response is invalid");
+					}
+					return decision.decision === "deny" && decision.reason === undefined
+						? { ...decision, reason: "driver denied the request" }
+						: decision;
 			} catch (error) {
 				this.#assertFence();
 				if (signal?.aborted) throw error;
@@ -200,6 +254,31 @@ function approvalFailure(message: string): SecurityResult<never> {
 
 function recordValue(value: unknown): Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function isExecPrefixRule(value: unknown): value is ExecPrefixRule {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const rule = value as Readonly<Record<string, unknown>>;
+	return typeof rule.sessionId === "string" && isDigest(rule.policyDigest) && Array.isArray(rule.prefix) && rule.prefix.length > 0 &&
+		rule.prefix.every((token) => typeof token === "string" && /^[A-Za-z0-9_./:@%+=,-]+$/u.test(token));
+}
+
+function isNetworkApprovalRule(value: unknown): value is NetworkApprovalRule {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const rule = value as Readonly<Record<string, unknown>>;
+	if (typeof rule.sessionId !== "string" || !isDigest(rule.policyDigest) || typeof rule.key !== "object" || rule.key === null || Array.isArray(rule.key)) return false;
+	const key = rule.key as Readonly<Record<string, unknown>>;
+	return typeof key.host === "string" && (key.protocol === "http" || key.protocol === "https" || key.protocol === "socks5-tcp" || key.protocol === "socks5-udp") && Number.isSafeInteger(key.port);
+}
+
+function isDigest(value: unknown): value is ExecPrefixRule["policyDigest"] {
+	return typeof value === "object" && value !== null && !Array.isArray(value) &&
+		(value as Readonly<Record<string, unknown>>).algorithm === "sha256" &&
+		typeof (value as Readonly<Record<string, unknown>>).digest === "string" && /^[a-f0-9]{64}$/u.test((value as Readonly<Record<string, unknown>>).digest as string);
+}
+
+function sameNetworkKey(left: NetworkApprovalKey, right: NetworkApprovalKey): boolean {
+	return left.host === right.host && left.protocol === right.protocol && left.port === right.port;
 }
 
 function waitForDriver(delayMs: number, signal?: AbortSignal): Promise<void> {
