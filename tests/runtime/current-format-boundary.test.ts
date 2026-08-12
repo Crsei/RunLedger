@@ -17,6 +17,34 @@ describe("current format boundary", () => {
 		expect(scanCurrentFormatMarkers(repoRoot)).toEqual([]);
 	});
 
+	it("does not classify Mermaid stateDiagram-v2 syntax as an internal generation marker", async () => {
+		const fixtureRoot = await mkdtemp(join(tmpdir(), "runledger-current-mermaid-marker-"));
+		try {
+			await writeFile(join(fixtureRoot, "README.md"), `${["stateDiagram", "v" + "2"].join("-")}\n`, "utf8");
+
+			expect(scanCurrentFormatMarkers(fixtureRoot)).toEqual([]);
+		} finally {
+			await rm(fixtureRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("continues to reject an unrelated hyphenated generation marker", async () => {
+		const fixtureRoot = await mkdtemp(join(tmpdir(), "runledger-current-hyphenated-marker-"));
+		try {
+			const marker = ["feature", "v" + "2"].join("-");
+			await writeFile(join(fixtureRoot, "README.md"), `${marker}\n`, "utf8");
+
+			expect(scanCurrentFormatMarkers(fixtureRoot)).toEqual([{
+				file: "README.md",
+				line: 1,
+				reason: "internal generation marker",
+				text: marker,
+			}]);
+		} finally {
+			await rm(fixtureRoot, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects glued internal generation identifiers", async () => {
 		const fixtureRoot = await mkdtemp(join(tmpdir(), "runledger-current-marker-"));
 		try {

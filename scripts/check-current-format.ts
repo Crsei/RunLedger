@@ -36,7 +36,7 @@ const EXTERNAL_VERSION_ALLOWLIST: readonly RegExp[] = [
 ];
 
 const MARKER_PATTERNS: readonly [RegExp, string][] = [
-	[/\b[vV][123]\b/g, "internal generation marker"],
+	[/(?<!stateDiagram-)\b[vV][123]\b/g, "internal generation marker"],
 	[/\bschemaVersion\b/g, "numeric schema field"],
 	[/\bsessionV3\b/g, "generation feature flag"],
 	[/\b(?:RuntimeEventV3|QueueItemV3)\b/g, "generation-specific identifier"],

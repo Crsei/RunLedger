@@ -1,5 +1,6 @@
 import {
   BoxRenderable,
+  CodeRenderable,
   InputRenderable,
   MarkdownRenderable,
   ScrollBoxRenderable,
@@ -9,11 +10,14 @@ import {
   createCliRenderer,
   type CliRenderer,
   type KeyEvent,
+  type Renderable,
   type StyledText,
 } from "@opentui/core";
 import { ansiToStyledText } from "./ansi-styled-text.ts";
 import type { TuiPerformanceObserver } from "./performance-observer.ts";
 import { createRunLedgerSyntaxStyle } from "./syntax-style.ts";
+import { createMermaidCodeBlockRenderer } from "./mermaid-code-block-renderer.ts";
+import { MermaidBlockRenderable, type MermaidThemeMode } from "./mermaid-block-renderable.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
 import type { TuiAction } from "../application/action.ts";
@@ -220,6 +224,11 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let previousBodySignature: readonly string[] = [];
   let pendingNewContent = 0;
   let syntaxStyle = createRunLedgerSyntaxStyle();
+  let mermaidThemeMode: MermaidThemeMode = renderer.themeMode ?? "dark";
+  const mermaidRenderNode = createMermaidCodeBlockRenderer(renderer, {
+    performanceObserver: options.performanceObserver,
+    getThemeMode: () => mermaidThemeMode,
+  });
   let previousNativeCellsUpdated = 0;
   let requestedEditorHeight = 3;
   let lastEditorHeight = 3;
@@ -269,17 +278,18 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   renderer.on("resize", onResize);
   renderer.on("focus", onFocus);
   renderer.on("blur", onBlur);
-  if (options.onThemeMode) {
-    renderer.on("theme_mode", (mode) => {
-      const previousStyle = syntaxStyle;
-      syntaxStyle = createRunLedgerSyntaxStyle();
-      for (const node of bodyNodes.values()) {
-        if (node.renderable instanceof MarkdownRenderable) node.renderable.syntaxStyle = syntaxStyle;
-      }
-      previousStyle.destroy();
-      options.onThemeMode?.(mode);
-    });
-  }
+  const onThemeMode = (mode: "dark" | "light"): void => {
+    mermaidThemeMode = mode;
+    const previousStyle = syntaxStyle;
+    syntaxStyle = createRunLedgerSyntaxStyle();
+    for (const node of bodyNodes.values()) {
+      if (node.renderable instanceof MarkdownRenderable) node.renderable.syntaxStyle = syntaxStyle;
+      updateMermaidTheme(node.renderable, mode);
+    }
+    previousStyle.destroy();
+    options.onThemeMode?.(mode);
+  };
+  renderer.on("theme_mode", onThemeMode);
   const onFrame = (): void => {
     const stats = renderer.getNativeStats();
     const cellsUpdated = Math.max(0, stats.cellsUpdated - previousNativeCellsUpdated);
@@ -288,19 +298,20 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       durationMs: Math.max(0, stats.nativeLastFrameTime),
       cellsUpdated,
     });
-	if (pendingMarkdownFinalization.size > 0) {
-		for (const [key, content] of pendingMarkdownFinalization) {
-			const node = bodyNodes.get(key);
-			if (node?.renderable instanceof MarkdownRenderable) {
-				node.renderable.content = "";
-				node.renderable.streaming = false;
-				node.renderable.content = content;
-				node.streaming = false;
-			}
-		}
-		pendingMarkdownFinalization.clear();
-		renderer.requestRender();
-	}
+    if (pendingMarkdownFinalization.size > 0) {
+      for (const [key, content] of pendingMarkdownFinalization) {
+        const node = bodyNodes.get(key);
+        if (node?.renderable instanceof MarkdownRenderable) {
+          node.renderable.content = "";
+          node.renderable.streaming = false;
+          node.renderable.content = content;
+          finalizeMarkdownChildren(node.renderable);
+          node.streaming = false;
+        }
+      }
+      pendingMarkdownFinalization.clear();
+      renderer.requestRender();
+    }
   };
   renderer.on("frame", onFrame);
 
@@ -350,6 +361,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
               // 先按 streaming 创建，再在下方走同一 finalization 边界。
               streaming: true,
               syntaxStyle,
+              internalBlockMode: "top-level",
+              renderNode: mermaidRenderNode,
             })
             : new TextRenderable(renderer, {
               id: renderableId("runledger-block", key),
@@ -597,10 +610,12 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     destroy: () => {
       renderer.off("frame", onFrame);
       renderer.off("selection", onSelection);
-	  renderer.off("resize", onResize);
-	  renderer.off("focus", onFocus);
-	  renderer.off("blur", onBlur);
+      renderer.off("resize", onResize);
+      renderer.off("focus", onFocus);
+      renderer.off("blur", onBlur);
+      renderer.off("theme_mode", onThemeMode);
       unsubscribeOsc();
+      mermaidRenderNode.dispose();
       renderer.destroy();
       syntaxStyle.destroy();
     },
@@ -612,6 +627,21 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       ? `↓ ${pendingNewContent} new content — PageDown to follow`
       : "";
     newContent.height = pendingNewContent > 0 ? 1 : 0;
+  }
+}
+
+function updateMermaidTheme(renderable: Renderable, mode: MermaidThemeMode): void {
+  if (renderable instanceof MermaidBlockRenderable) renderable.setThemeMode(mode);
+  for (const child of renderable.getChildren()) updateMermaidTheme(child, mode);
+}
+
+function finalizeMarkdownChildren(renderable: Renderable): void {
+  for (const child of renderable.getChildren()) {
+    if (child instanceof CodeRenderable) {
+      child.drawUnstyledText = true;
+      child.streaming = false;
+    }
+    finalizeMarkdownChildren(child);
   }
 }
 

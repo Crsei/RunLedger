@@ -578,6 +578,34 @@ describe("Plan 18 streaming state", () => {
       nativeFrameTimeMs: 2.25,
       nativeCellsUpdated: 18,
       generationDiscardCount: 1,
+      mermaidProjectionCount: 0,
+      mermaidProjectionTimeMs: 0,
+      mermaidCacheHits: 0,
+      mermaidCacheMisses: 0,
+      mermaidCacheEntries: 0,
+      mermaidCacheBytes: 0,
+      mermaidCacheEvictions: 0,
+      mermaidCacheOversized: 0,
+      mermaidFallbackCount: 0,
+    });
+  });
+
+  test("records Mermaid cache latency and bounded cache counters in the shared observer", () => {
+    const observer = new TuiPerformanceObserver();
+    observer.recordMermaidProjection({ durationMs: 3.5, cacheHit: false, fallback: false });
+    observer.recordMermaidProjection({ durationMs: 0.5, cacheHit: true, fallback: true });
+    observer.recordMermaidCache({ entries: 4, bytes: 512, evictions: 2, oversized: 1 });
+
+    expect(observer.snapshot()).toMatchObject({
+      mermaidProjectionCount: 2,
+      mermaidProjectionTimeMs: 4,
+      mermaidCacheHits: 1,
+      mermaidCacheMisses: 1,
+      mermaidCacheEntries: 4,
+      mermaidCacheBytes: 512,
+      mermaidCacheEvictions: 2,
+      mermaidCacheOversized: 1,
+      mermaidFallbackCount: 1,
     });
   });
 

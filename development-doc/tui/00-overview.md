@@ -111,8 +111,16 @@ development-doc/tui/            本计划所在目录
 | `18-opentui-streaming-performance-ux-plan.md` | OpenTUI 迁移后的增量 timeline、delta 合并、长会话窗口化、背压与响应式交互体验补充计划 |
 | `19-passive-contract-integration-plan.md` | 将已完成的 `TuiState`、Timeline、safe presentation 与各领域 workflow 分批接入 reducer/projector/EffectRunner/controller adapter 和标准 `runledger`；不重写合同、renderer 或 Runtime authority |
 | `20-codex-slash-command-adaptation-plan.md` | 对照 codex-rs 的 slash command registry、输入期 popup、统一派发、门控与 SelectionView 适配；区分工作树候选、HEAD 与标准 CLI 证据 |
+| `21-mermaid-diagram-rendering-implementation-plan.md` | Mermaid fenced block 的受限 Unicode inline projection、OpenTUI 接缝、fallback、缓存/预算与 R1/R2 验收边界；当前 M0–M7 自动门禁完成，人工视觉验收与 license formal review 待确认 |
+| `21-mermaid-diagram-rendering-license-manifest.md` | Mermaid R1 直接依赖、未引入的参考实现与 Apache/MIT attribution 边界；不授权 R2 engine/font/sidecar 引入 |
 
-阅读顺序:`00 → 01 → 02 → 03`(原 pi-tui 设计主路径)→ `04/05/06`(原渲染与定制)→ `07`(历史落地节奏)→ `08/09`(跨项目参照与远期设计)。`10` 是历史更新计划。OpenTUI renderer 重构先以 `17-opentui-refactor-plan.md` 为当前执行入口，并从 `reference/00-opentui-component-index.md` 查组件能力；被动数据合同另读 `17-passive-data-contract-placeholder-plan.md`，它不替换 renderer authority；renderer 计划 P8 获得证据后，再按 `18-opentui-streaming-performance-ux-plan.md` 执行性能与体验阶段；生产接入则从 `19-passive-contract-integration-plan.md` 的 B0 开始，逐域切换单一 state owner；slash 命令链路查 `20-codex-slash-command-adaptation-plan.md`。计划和参考文档都不能冒充已实现状态。
+阅读顺序:`00 → 01 → 02 → 03`(原 pi-tui 设计主路径)→ `04/05/06`(原渲染与定制)→ `07`(历史落地节奏)→ `08/09`(跨项目参照与远期设计)。`10` 是历史更新计划。OpenTUI renderer 重构先以 `17-opentui-refactor-plan.md` 为当前执行入口，并从 `reference/00-opentui-component-index.md` 查组件能力；被动数据合同另读 `17-passive-data-contract-placeholder-plan.md`，它不替换 renderer authority；renderer 计划 P8 获得证据后，再按 `18-opentui-streaming-performance-ux-plan.md` 执行性能与体验阶段；生产接入则从 `19-passive-contract-integration-plan.md` 的 B0 开始，逐域切换单一 state owner；slash 命令链路查 `20-codex-slash-command-adaptation-plan.md`；Mermaid terminal projection 查 `21-mermaid-diagram-rendering-implementation-plan.md` 及配套许可清单。计划和参考文档都不能冒充已实现状态。
+
+### Mermaid terminal projection 当前状态
+
+Plan 21 的 R1 已在独立工作树完成 M0–M7 的实现与自动门禁：五类受限 Mermaid parser/layout/render、OpenTUI native code-block 接缝、streaming/fallback/resize/theme/selection、bounded cache 与性能观测均已接入当前实现。`npm test`、`npm run check`、`npm run build` 和隔离 `RUNLEDGER_DIR` 的标准 PATH smoke 已有 fresh evidence。
+
+当前仍不能把 R1 标记为最终完成：维护者的 license/NOTICE formal review、dark/light 人工视觉检查、鼠标选择/复制检查、真实终端 resize 视觉检查和五类图表逐类视觉确认尚未完成。R2 PNG/外部查看器仍是独立条件性专项，不因 R1 自动启用。
 
 ---
 

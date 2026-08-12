@@ -88,6 +88,24 @@ export {
   type RenderCacheSnapshot,
 } from "./opentui/render-cache.ts";
 export {
+  MERMAID_LIMITS,
+  MERMAID_RENDER_REVISION,
+  inspectMermaidFence,
+  parseMermaidSource,
+  renderMermaidDiagram,
+} from "./mermaid/index.ts";
+export {
+  MermaidProjectionCache,
+  makeMermaidCacheKey,
+  makeMermaidCacheKeyFromDigest,
+  mermaidSourceDigest,
+  mermaidWidthBucket,
+  type MermaidProjectionCacheOptions,
+  type MermaidProjectionCacheSnapshot,
+  type MermaidRenderCacheKey,
+} from "./mermaid/cache.ts";
+export type * from "./mermaid/types.ts";
+export {
   HeightIndex,
   type ScrollAnchor,
   type ViewportWindowRequest,
@@ -96,6 +114,8 @@ export {
 export {
   TuiPerformanceObserver,
   type CoalescedObservation,
+  type MermaidCacheObservation,
+  type MermaidProjectionObservation,
   type NativeFrameObservation,
   type ProjectionObservation,
   type QueueDepthObservation,
