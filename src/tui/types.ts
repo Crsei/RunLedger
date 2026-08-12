@@ -10,13 +10,12 @@
  *   - FooterSnapshotProvider 由 InteractiveMode 实现,Footer 周期性 pull 状态。
  */
 
-import type { AgentEvent, AgentMessage, ToolResultContent } from "../runtime/types.ts";
-import type { AssistantMessageEvent } from "../types.ts";
+import type { AgentEvent, AgentMessage, AgentRunTerminationReason, RuntimeAssistantMessageEvent, ToolResultContent } from "../runtime/types.ts";
 
 /** TUI 主控 switch 标签;对照 03-event-binding.md §1 表。 */
 export type TuiEvent =
   | { type: "agent_start"; timestamp: number; runId?: string }
-  | { type: "agent_end"; timestamp: number; runId?: string; stopReason?: string; elapsedMs?: number; activeDurationMs?: number; messageCountAtEnd?: number }
+  | { type: "agent_end"; timestamp: number; runId?: string; stopReason?: string; elapsedMs?: number; activeDurationMs?: number; messageCountAtEnd?: number; terminationReason?: AgentRunTerminationReason }
   | { type: "agent_work_pause" | "agent_work_resume"; timestamp: number; runId: string; waitId: string; reason: "approval" | "credential"; activeDurationMs: number }
   | {
       type: "turn_start" | "turn_end";
@@ -31,7 +30,7 @@ export type TuiEvent =
       stopReason?: string;
       message?: AgentMessage;
     }
-  | { type: "message_update"; timestamp: number; assistantMessageEvent: AssistantMessageEvent }
+  | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent }
   | {
       type: "tool_execution_start";
       timestamp: number;
@@ -72,7 +71,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
     case "agent_start":
       return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId };
     case "agent_end":
-      return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId, stopReason: ev.stopReason, elapsedMs: ev.elapsedMs, activeDurationMs: ev.activeDurationMs, messageCountAtEnd: ev.messageCountAtEnd };
+      return { type: ev.type, timestamp: ev.timestamp, runId: ev.runId, stopReason: ev.stopReason, elapsedMs: ev.elapsedMs, activeDurationMs: ev.activeDurationMs, messageCountAtEnd: ev.messageCountAtEnd, terminationReason: ev.terminationReason };
     case "agent_work_pause":
     case "agent_work_resume":
       return { ...ev };

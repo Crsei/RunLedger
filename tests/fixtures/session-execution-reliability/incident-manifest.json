@@ -1,0 +1,55 @@
+{
+  "format": "runledger.session-execution-incident",
+  "capturedAt": "2026-08-12",
+  "codeBaseline": {
+    "branch": "session-owner-runtime",
+    "commit": "0b608b1e871d59fd540cec339121415ba657bde6"
+  },
+  "sessionIdDigest": {
+    "algorithm": "sha256",
+    "digest": "1a8d147c165a916214fdd60b9bbb4857f51692386e6c6b2e8cadd624d71486aa"
+  },
+  "executableProvenance": {
+    "commandPath": "/home/nzq/.npm-global/bin/runledger",
+    "resolvedPath": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-tui-mermaid/bin/runledger.js",
+    "resolvedCheckoutCommit": "40c94cd9ea1e58083559469ba971e8f26510381c",
+    "expectedCheckoutPath": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger-session-execution-reliability",
+    "expectedCheckoutCommit": "0b608b1e871d59fd540cec339121415ba657bde6",
+    "status": "invalid_wrong_checkout"
+  },
+  "observations": {
+    "modelTurns": 12,
+    "bashCalls": 11,
+    "elapsedMs": 239757,
+    "activeDurationMs": 239757,
+    "approvalRequested": 9,
+    "approvalDecidedOrRevoked": 7,
+    "messageCountAtEnd": 0,
+    "checkpointMessageCount": 24,
+    "processTraceCount": 9,
+    "processTraceTerminalCount": 0,
+    "sqliteEventCount": 2437,
+    "messageUpdateCount": 2122,
+    "messageUpdatePayloadBytes": 2180000
+  },
+  "stateCombination": {
+    "agentStopReason": "aborted",
+    "sessionCatalog": "active",
+    "owner": "unowned",
+    "checkpoint": "paused"
+  },
+  "integrity": {
+    "sequenceValid": true,
+    "hashChainValid": true,
+    "checkpointDigestValid": true,
+    "toolResultsComplete": true,
+    "processAttemptsCommitted": true
+  },
+  "redaction": {
+    "containsSessionIdentifier": false,
+    "containsUserOrAssistantBody": false,
+    "containsReasoning": false,
+    "containsCredential": false,
+    "containsArtifactBody": false
+  }
+}

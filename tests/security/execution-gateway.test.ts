@@ -214,6 +214,36 @@ function unavailableBackend(): SandboxBackend {
 }
 
 describe("ExecutionGateway", () => {
+	it("preserves an expired approval as a typed denial", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-expired-"));
+		roots.push(root);
+		const currentSnapshot = snapshot(root);
+		const base = authorizationRequest(root, currentSnapshot);
+		const request: AuthorizationRequest = {
+			...base,
+			toolName: "write",
+			argumentsDigest: runtimeDigest({ path: "expired.txt" }),
+			requests: [{ kind: "filesystem", operation: "write", path: "expired.txt" }],
+		};
+		const requestDigest = gatewayRequestDigest(request);
+		const binding = await constraint(request, currentSnapshot, requestDigest);
+		const gateway = new ExecutionGateway({
+			snapshot: currentSnapshot,
+			workspace: request.workspace,
+			filesystemBroker: broker,
+			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
+			permissionEngine: new PermissionEngine(),
+			approvalCoordinator: new ApprovalCoordinator({
+				prompter: { request: async () => new Promise(() => undefined) },
+				timeoutMs: 1,
+			}),
+			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
+		});
+
+		await expect(gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot }))
+			.resolves.toMatchObject({ ok: false, error: { code: "approval_expired" } });
+	});
+
 	it("uses PermissionEngine and ApprovalCoordinator before returning a write-capable port", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-"));
 		roots.push(root);

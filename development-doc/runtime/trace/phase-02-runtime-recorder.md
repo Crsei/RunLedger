@@ -9,6 +9,10 @@ implemented in current worktree。已实现 `RuntimeTraceRecorder`，并通过 `
 - provider 调用前清洗 system prompt、完整 LLM message context 和工具 schema，并按 recording mode 形成 digest-only 或 Artifact descriptor；
 - provider stream 完成后记录 model output descriptor、provider usage、reasoning/cache token、USD micros、stop reason 和 monotonic duration；缺失 usage/cost 使用 `unavailable`，不伪造 0；
 - agent/turn/tool start/end 复用现有 AgentEvent，工具 input/output 通过同一 redaction 边界处理；Tool 节点显式挂到当前 Model 节点；
+- `RuntimeTraceRecorder.finishRun()` 提供幂等 public terminal API；Session-owned
+  process 在 output materialization 后映射 finished/failed/interrupted，
+  timed-out/killed/lost/uncertain 与 crash takeover 均闭合为可解释终态，且不重连
+  旧 PID/PTY；watcher 与 explicit wait 共用同一 terminal task，完成后释放 recorder；
 - private reasoning、credential、auth header、env、不可序列化值和 CAS path escape 有 focused negative coverage。
 
 ## 尚未实现

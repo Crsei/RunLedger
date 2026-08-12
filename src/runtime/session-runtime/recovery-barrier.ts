@@ -157,7 +157,11 @@ export class RecoveryBarrier {
 					evidenceDigest: decision.evidenceDigest?.digest,
 				});
 				const remaining = this.unresolvedAttempts().length;
-				if (remaining === 0) this.state = "closed";
+				if (remaining === 0) {
+					this.closeBarrier("recovery.verified_clean", {
+						evidenceDigest: decision.evidenceDigest?.digest ?? canonicalRuntimeDigest({ verify: decision.attemptId }),
+					});
+				}
 				return { ok: true, state: this.state, unresolvedRemaining: remaining };
 			}
 			case "abort": {

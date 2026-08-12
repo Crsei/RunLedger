@@ -8,6 +8,11 @@
 > 文档权威：本文是 Session Owner Runtime 的唯一替代实施计划。`05` 只描述仍保留的 legacy Host 安全窗口，不再是标准 CLI 的 production authority，也不授权新增 daemon、machine leader、Unix Socket、Named Pipe 或 Host lifecycle 行为。
 > 上位公共合同：[`04-governed-agent-harness-runtime-plan.md`](04-governed-agent-harness-runtime-plan.md)。本文只拥有 SessionStore、SessionRuntime、SessionOwner、RuntimeServer、Client 及其生产切换行为。
 
+> 2026-08-12 reliability hardening：P2–P6 已在隔离工作树实现并通过 focused
+> 15 files / 109 tests。它补齐了统一人工等待计时、per-request run budget、
+> message-count/lifecycle projection、process Trace terminal settlement 与 durable
+> delta coalescing；不提升 R6.5/R8、standard PATH、三平台或 human acceptance。
+
 ## 0. 决策摘要
 
 RunLedger 从机器或 workspace 级 resident Host 改为 session-scoped embedded runtime：
@@ -995,6 +1000,30 @@ tests/cli/session-owner-production.test.ts
 - 标准 PATH `/home/nzq/.npm-global/bin/runledger` 解析到本仓库 `bin/runledger.js`；help/version/无参数 TTY、同 Session 双窗口 attachment lifetime、不同 Session 并行 owner、owner crash takeover 均已真实运行。crash takeover 首次暴露 SQLite 为 recovery 但 footer 显示 `idle`；RED→GREEN 后，首帧读取 durable recovery status，真实 TTY 在 `generation=2/state=recovery_required` 时显示 `Recovery required` 并 clean exit 0。
 - fresh recovery focused 4 files / 34 tests；`npm run check`、`npm run build`、完整 Vitest 270 files passed / 1 skipped、1513 tests passed / 3 skipped，以及 Bun OpenTUI 3 files / 30 tests / 167 assertions 全绿。
 - R6.5 仍 not accepted；R7 已切换且 Linux 标准 PATH 子项转绿，但接受仍随 R8；R8 仍缺完整 fault/migration rehearsal、macOS/Windows、真实 candidate-domain、稳定窗口、独立只读审计和真人验收。因此 R9 继续 not started，legacy Host 安全窗口未删除。
+
+### 11.7 2026-08-12 Session execution reliability evidence
+
+- Approval/Credential 由同一 `LateBoundHumanInputWaitPort` 绑定
+  `SessionRuntime.withHumanInputWait()`；driver reconnect、timeout、abort 与 nested
+  wait 的 pause/resume 可回放，active duration 不再包含人工等待。
+- production Agent 每个 prompt 注入默认 run budget；model/tool/active-time、重复
+  tool failure 与 approval expiration 达界后不再发起下一副作用，并保留 pi-ai
+  `StopReason` + RunLedger typed `terminationReason` 的分层。
+- owner lifecycle event 与 catalog status 同事务投影；`messageCountAtEnd` 使用最终
+  Agent 消息数。旧 `active + unowned + paused` cache drift 只能在 matching offline
+  migration gate 且 zero active owner 时从已校验 event stream 幂等修复。
+- process Trace 在 output materialization 后以 finished/failed/interrupted 终结；
+  timed-out/killed/lost/uncertain 与 takeover 不伪造成功，也不重连旧 PID/PTY。
+- Session durable streaming 每 50 ms 或 4 KiB flush bounded delta，最终
+  `message_end` 仍是 authoritative message；content end/dispose 释放 state，新
+  message start 前先 flush pending delta。P2–P6 focused matrix 为 15 files / 109 tests。
+- 收尾重构后的跨域 focused matrix 为 5 files / 21 tests；`npm run check`、
+  `npm run build` 与 `git diff --check` 通过。完整 Vitest 为 297 files / 1724
+  passed，另有 1 file / 3 macOS-only tests skipped；Bun/OpenTUI 为 3 files /
+  44 passed / 222 assertions。
+- 本节仍不是 R6.5/R8 接受：P1 restrictive sandbox runtime mounts 被 ADR 04
+  冻结，P7 candidate/linked CLI/TTY、完整 fault rehearsal、三平台、独立审计和
+  human acceptance 均未完成。
 
 生产 runner 的最小场景：
 

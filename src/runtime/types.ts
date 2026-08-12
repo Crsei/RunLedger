@@ -237,6 +237,7 @@ export type AgentEvent =
       elapsedMs?: number;
       activeDurationMs?: number;
       messageCountAtEnd?: number;
+      terminationReason?: AgentRunTerminationReason;
     }
   | {
       type: "agent_work_pause" | "agent_work_resume";
@@ -259,7 +260,7 @@ export type AgentEvent =
       stopReason?: StopReason;
       message?: AgentMessage;
     }
-  | { type: "message_update"; timestamp: number; assistantMessageEvent: AssistantMessageEvent }
+  | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent }
   | {
       type: "tool_execution_start";
       timestamp: number;
@@ -288,6 +289,25 @@ export type AgentEvent =
       steering: AgentMessage[];
       followUp: AgentMessage[];
     };
+
+/** Durable stream delta 不携带 provider 累积 partial，digest/size 描述已确认前缀。 */
+export interface DurableAssistantMessageDelta {
+  readonly type: "text_delta" | "thinking_delta" | "toolcall_delta";
+  readonly contentIndex: number;
+  readonly delta: string;
+  readonly aggregateDigest: string;
+  readonly aggregateSize: number;
+}
+
+export interface DurableAssistantMessageBoundary {
+  readonly type: "text_start" | "text_end" | "thinking_start" | "thinking_end" | "toolcall_start" | "toolcall_end";
+  readonly contentIndex: number;
+  readonly aggregateDigest: string;
+  readonly aggregateSize: number;
+  readonly toolCall?: Pick<ToolCall, "id" | "name">;
+}
+
+export type RuntimeAssistantMessageEvent = AssistantMessageEvent | DurableAssistantMessageDelta | DurableAssistantMessageBoundary;
 
 export type AgentEventSink = (event: AgentEvent) => void | Promise<void>;
 
@@ -364,6 +384,10 @@ export interface AgentLoopConfig {
   apiKey?: string;
   /** 透传给 streamFn 的 env overrides,激活 ANTHROPIC_BASE_URL 等 */
   env?: Record<string, string>;
+  /** 每个用户请求的 Runtime-owned 有界停止条件。 */
+  runBudget?: AgentRunBudget;
+  /** active time 来自 Session Runtime，不在 loop 内重复用 wall clock 推算。 */
+  runBudgetUsage?: AgentRunBudgetUsage;
   /**
    * 工具执行基目录;缺省 = process.cwd()。dispatch 阶段把 cwd 写进每个
    * toolCall 的 ToolContext(对齐 claude-code-bun docs/tools 中的 cwd 概念)。
@@ -421,6 +445,33 @@ export interface AgentLoopConfig {
   /** Canonical Host sink for the bounded `context.assembled` receipt. */
   contextAssemblySink?: ContextAssemblySink;
 }
+
+export interface AgentRunBudget {
+  readonly maxModelTurns: number;
+  readonly maxToolTurns: number;
+  readonly maxActiveDurationMs: number;
+  readonly maxRepeatedFailureFingerprint: number;
+  readonly maxApprovalExpirations: number;
+}
+
+export interface AgentRunBudgetUsage {
+  activeDurationMs(): number;
+}
+
+export const DEFAULT_AGENT_RUN_BUDGET: AgentRunBudget = Object.freeze({
+  maxModelTurns: 32,
+  maxToolTurns: 16,
+  maxActiveDurationMs: 900_000,
+  maxRepeatedFailureFingerprint: 3,
+  maxApprovalExpirations: 2,
+});
+
+export type AgentRunTerminationReason =
+  | "model_turn_limit"
+  | "tool_turn_limit"
+  | "active_duration_limit"
+  | "repeated_tool_failure"
+  | "approval_expiration_limit";
 
 export interface ToolResultOverflowStore {
 	put(input: {

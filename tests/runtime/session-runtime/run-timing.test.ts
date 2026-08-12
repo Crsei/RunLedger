@@ -31,6 +31,45 @@ describe("Session Runtime run timing", () => {
 		expect(tracker.abort(2_500, 2)).toMatchObject({ type: "agent_end", stopReason: "aborted", elapsedMs: 500, activeDurationMs: 75, messageCountAtEnd: 2 });
 		expect(tracker.activeRun).toBeUndefined();
 	});
+
+	it("preserves the Agent final message count when the Runtime snapshot is stale", () => {
+		let now = 0;
+		const tracker = new AgentRunTimingTracker(() => now);
+		tracker.accept({ type: "agent_start", timestamp: 3_000, runId: "run-stale-snapshot" }, 0);
+		now = 25;
+
+		expect(tracker.accept({
+			type: "agent_end",
+			timestamp: 3_025,
+			runId: "run-stale-snapshot",
+			stopReason: "aborted",
+			messageCountAtEnd: 24,
+		}, 0)).toMatchObject({
+			type: "agent_end",
+			runId: "run-stale-snapshot",
+			messageCountAtEnd: 24,
+		});
+	});
+
+	it("preserves a structured budget termination reason", () => {
+		let now = 0;
+		const tracker = new AgentRunTimingTracker(() => now);
+		tracker.accept({ type: "agent_start", timestamp: 4_000, runId: "run-budget" }, 0);
+		now = 10;
+
+		expect(tracker.accept({
+			type: "agent_end",
+			timestamp: 4_010,
+			runId: "run-budget",
+			stopReason: "length",
+			terminationReason: "tool_turn_limit",
+			messageCountAtEnd: 2,
+		}, 0)).toMatchObject({
+			type: "agent_end",
+			runId: "run-budget",
+			terminationReason: "tool_turn_limit",
+		});
+	});
 });
 
 describe("durable Agent run summary projection", () => {
@@ -59,6 +98,27 @@ describe("durable Agent run summary projection", () => {
 		expect(summaries).toEqual([
 			expect.objectContaining({ runId: "legacy-run-1", status: "completed", stopReason: "length", activeDurationMs: 125, messageCountAtEnd: 2 }),
 			expect.objectContaining({ runId: "legacy-run-5", status: "recovery_required" }),
+		]);
+	});
+
+	it("restores a validated budget termination reason from durable events", () => {
+		const summaries = projectAgentRunSummaries([
+			event(1, { type: "agent_start", timestamp: 4_000, runId: "run-budget" }),
+			event(2, {
+				type: "agent_end",
+				timestamp: 4_050,
+				runId: "run-budget",
+				stopReason: "length",
+				terminationReason: "repeated_tool_failure",
+				messageCountAtEnd: 4,
+			}),
+		], 4);
+
+		expect(summaries).toEqual([
+			expect.objectContaining({
+				runId: "run-budget",
+				terminationReason: "repeated_tool_failure",
+			}),
 		]);
 	});
 });

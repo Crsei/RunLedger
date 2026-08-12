@@ -17,6 +17,8 @@ import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts"
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST } from "../../../src/runtime/session-server/protocol.ts";
+import type { LateBoundHumanInputWaitPort } from "../../../src/runtime/session-runtime/approval-reverse-request.ts";
+import type { LateBoundAgentRunBudgetUsage } from "../../../src/runtime/session-runtime/run-timing.ts";
 
 export interface RuntimeHarness {
 	readonly dir: string;
@@ -34,6 +36,8 @@ export interface RuntimeHarness {
 export async function createRuntimeHarness(seed = "h", options: {
 	readonly crashTakeover?: boolean;
 	readonly domain?: SessionDomainPort;
+	readonly humanInputWaitPortRef?: LateBoundHumanInputWaitPort;
+	readonly runBudgetUsageRef?: LateBoundAgentRunBudgetUsage;
 	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
 } = {}): Promise<RuntimeHarness> {
 	const dir = mkdtempSync(join(tmpdir(), "session-runtime-harness-"));
@@ -64,6 +68,8 @@ export async function createRuntimeHarness(seed = "h", options: {
 		crashTakeover: options.crashTakeover === true,
 		restored,
 		...(options.domain === undefined ? {} : { domain: options.domain }),
+		...(options.humanInputWaitPortRef === undefined ? {} : { humanInputWaitPortRef: options.humanInputWaitPortRef }),
+		...(options.runBudgetUsageRef === undefined ? {} : { runBudgetUsageRef: options.runBudgetUsageRef }),
 		...(options.lifecycleCleanup === undefined ? {} : { lifecycleCleanup: options.lifecycleCleanup }),
 	});
 	server.bindController(runtime);

@@ -38,6 +38,7 @@
 | TUI / Mermaid Rendering | [`tui/21-mermaid-diagram-rendering-implementation-plan.md`](tui/21-mermaid-diagram-rendering-implementation-plan.md)、[`tui/21-mermaid-diagram-rendering-license-manifest.md`](tui/21-mermaid-diagram-rendering-license-manifest.md) | 受限 Mermaid Unicode inline projection、OpenTUI 接缝、完整源码 fallback、缓存/预算与 R1/R2 安全边界 | M0–M7 自动门禁与标准 PATH smoke 已完成；人工视觉验收、license formal review 与 R2 仍未完成，状态查 Plan 21 |
 | TUI / Conversation Scrollbar | [`tui/22-opencode-conversation-scrollbar-adaptation-plan.md`](tui/22-opencode-conversation-scrollbar-adaptation-plan.md) | 默认隐藏、`/scrollbar`、canonical-home preference、右侧留白与主题化内建 bar 的独立工作树候选已实现；单一 OpenTUI ScrollBox 继续持有位置、sticky 与拖拽 | Plan 22 §0.1/§5.0：agent gates 与隔离候选 bin PTY 已通过；标准全局链接、真实鼠标/视觉 human verification pending |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
+| Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 
 ## 2026-08-04 当前实现批次
 

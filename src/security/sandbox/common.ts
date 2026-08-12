@@ -289,7 +289,7 @@ export function offPlan(request: NormalizedSandboxRequest, shellProgram: string)
 		createResolutionState("builtin-none", request.requested, "off", "off", "off", "explicit builtin-none/off request"),
 		request,
 		shellProgram,
-		["-lc", request.command],
+		["-c", request.command],
 	);
 }
 

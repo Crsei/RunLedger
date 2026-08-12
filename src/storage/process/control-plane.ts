@@ -374,8 +374,8 @@ export class ManagedProcessControlPlane {
 		const preview = await this.preview(control, checkpointed.summary.outputCursor);
 		const terminalEvidenceRef = settlement.evidenceRef;
 		const summary = settled.summary;
-		await this.onProcessTerminal?.(summary);
 		if (!await this.materializeOutput(handle, control)) return { ok: false, code: "artifact_materialization_failed" };
+		await this.onProcessTerminal?.(summary);
 		return this.finishTerminal(summary, preview, nextCursor, terminalEvidenceRef, "explicit_wait");
 	}
 
@@ -516,10 +516,10 @@ export class ManagedProcessControlPlane {
 		if (!checkpointed.ok) return;
 		const settled = await this.manager.settle(handle, toSettlement(handle, terminal));
 		if (!settled.ok) return;
-		await this.onProcessTerminal?.(settled.summary);
 		const nextCursor = await control.output.head();
 		const preview = await this.preview(control, settled.summary.outputCursor);
 		if (!await this.materializeOutput(handle, control)) return;
+		await this.onProcessTerminal?.(settled.summary);
 		await this.reconcileCompletion(settled.summary, preview, nextCursor, "automatic_follow_up");
 	}
 

@@ -167,7 +167,7 @@ export function appendEventInTransaction(tx: SessionDatabase, fence: OwnerFence,
 	if (!verifyOwnerFence(tx, fence)) {
 		throw new SessionStoreError("owner_fenced", `owner fenced: ${fence.runtimeId} generation ${fence.generation}`);
 	}
-	const headRow = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [fence.sessionId]);
+	const headRow = tx.querySingle("SELECT head_sequence, status FROM sessions WHERE session_id = ?", [fence.sessionId]);
 	if (!headRow) throw new SessionStoreError("session_not_found", `session not found: ${fence.sessionId}`);
 	const headSequence = Number(headRow.head_sequence);
 	const previousRow = tx.querySingle(
@@ -211,8 +211,10 @@ export function appendEventInTransaction(tx: SessionDatabase, fence: OwnerFence,
 		}
 		throw error;
 	}
-	tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [
+	const status = projectSessionStatus(String(headRow.status), input.eventType, input.payloadJson);
+	tx.runSync("UPDATE sessions SET head_sequence = ?, status = ?, updated_at_ms = ? WHERE session_id = ?", [
 		sequence,
+		status,
 		Date.now(),
 		fence.sessionId,
 	]);
@@ -704,13 +706,9 @@ export class SessionStore {
 		let status = "active";
 		let driverRevision = 0;
 		for (const event of events) {
-			if (event.eventType === "session.closed" || event.eventType === "session.stopped") {
-				status = event.eventType === "session.closed" ? "completed" : "paused";
-			}
+			status = projectSessionStatus(status, event.eventType, event.payloadJson);
 			if (event.eventType === "driver.claimed") driverRevision += 1;
 			if (event.eventType === "driver.released" || event.eventType === "driver.reset_on_takeover") driverRevision += 1;
-			if (event.eventType === "session.corrupted") status = "failed";
-			if (event.eventType === "session.handoff_committed") status = "paused";
 		}
 		return {
 			sessionId,
@@ -718,6 +716,30 @@ export class SessionStore {
 			headSequence: events.length,
 			driverRevision,
 		};
+	}
+}
+
+/** Event 是 authority；catalog status 只是同事务更新的可重建投影。 */
+export function projectSessionStatus(current: string, eventType: string, payloadJson: string): string {
+	if (eventType === "owner.claimed") return "active";
+	if (eventType === "owner.fenced" || eventType === "owner.taken_over") return "recovery_required";
+	if (eventType === "recovery.verified_clean" || eventType === "recovery.resume_despite_uncertainty") return "active";
+	if (eventType === "session.closed") return "completed";
+	if (eventType === "session.stopped" || eventType === "session.handoff_committed") return "paused";
+	if (eventType === "session.corrupted") return "failed";
+	if (eventType !== "owner.released") return current;
+	const reason = releaseReason(payloadJson);
+	return reason === "error" ? "failed" : reason === "paused" || reason === "detached" ? "paused" : current;
+}
+
+function releaseReason(payloadJson: string): string | undefined {
+	try {
+		const value = JSON.parse(payloadJson) as unknown;
+		if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+		const reason = (value as Readonly<Record<string, unknown>>).reason;
+		return typeof reason === "string" ? reason : undefined;
+	} catch {
+		return undefined;
 	}
 }
 

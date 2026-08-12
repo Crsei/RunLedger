@@ -74,6 +74,8 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 	private readonly authorizationCompletions = new Map<string, () => Promise<unknown>>();
 	private readonly processAttempts = new Map<string, AttemptId>();
 	private readonly processTraceRecorders = new Map<string, Promise<RuntimeTraceRecorder | undefined>>();
+	private readonly processTraceTerminalTasks = new Map<string, Promise<void>>();
+	private readonly finishedProcessTraces = new Set<string>();
 
 	public constructor(options: SessionProcessCompositionOptions) {
 		this.options = options;
@@ -134,6 +136,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 				onOutputMaterialized: (input: { readonly handle: ExecutionHandleRef; readonly record: ProcessOutputMaterializationRecord }) => this.recordOutputMaterialization(input.handle, input.record),
 			}),
 			onProcessTerminal: async (summary) => {
+				await this.finishProcessTrace(summary);
 				await this.settleProcessAttempt(summary.handle.executionId, "committed");
 				await this.completeAuthorization(summary.handle.executionId);
 			},
@@ -283,13 +286,13 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 			timeoutMs,
 			correlationId,
 		};
-		const launchPlan: BackendLaunchPlan | undefined = prepared.value.sandboxPlan === undefined
+		const launchPlan: BackendLaunchPlan | undefined = prepared.value.launchPlan === undefined
 			? undefined
 			: {
-				program: prepared.value.sandboxPlan.program,
-				arguments: prepared.value.sandboxPlan.arguments,
-				cwd: prepared.value.sandboxPlan.cwd,
-				environment: prepared.value.sandboxPlan.environment,
+				program: prepared.value.launchPlan.program,
+				arguments: prepared.value.launchPlan.arguments,
+				cwd: prepared.value.launchPlan.cwd,
+				environment: prepared.value.launchPlan.environment,
 			};
 		const created = await this.plane.create(request, prepared.value.constraintInput, {
 			constraintSnapshot: prepared.value.constraintSnapshot,
@@ -371,7 +374,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 			effectId: `effect_${contextSeed.digest.slice(0, 64)}`,
 			expectedRevision: this.revision(),
 		});
-		if (!started.ok) throw new Error(`foreground process rejected: ${started.code}`);
+		if (!started.ok) throw Object.assign(new Error("foreground process rejected"), { code: started.code });
 		const executionId = stringValue(started.value.executionId);
 		const handle = executionId === undefined ? undefined : this.findHandle(executionId);
 		if (handle === undefined) throw new Error("foreground process handle is unavailable");
@@ -478,8 +481,25 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 	}
 
 	/** Takeover 只结算 durable projection；绝不按 PID/PTY handle 重连。 */
-	public recoverUnattached(): ReturnType<ProcessManager["recoverUnattached"]> {
-		return this.manager.recoverUnattached();
+	public async recoverUnattached(): ReturnType<ProcessManager["recoverUnattached"]> {
+		const recovered = await this.manager.recoverUnattached();
+		for (const result of recovered) {
+			if (!result.ok) continue;
+			const output = new FileProcessOutputStore({
+				layout: this.options.layout,
+				workspaceStorageKey: this.storageKey,
+				executionId: result.handle.executionId,
+				attemptId: result.handle.attemptId,
+			});
+			if (!await this.plane.materializeRecoveredOutput(result.handle, output)) {
+				if (this.options.recordingFailurePolicy === "fail_closed") {
+					throw new Error("Session recovered process Trace materialization failed");
+				}
+				continue;
+			}
+			await this.finishProcessTrace(result.summary);
+		}
+		return recovered;
 	}
 
 	public hasRecoveryUncertainty(): boolean {
@@ -559,7 +579,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 		if (recorderPromise === undefined) {
 			const traceId = createRuntimeId("trace", runtimeDigest({
 				sessionId: this.options.fence.sessionId,
-				ownerGeneration: this.options.fence.generation,
+				ownerGeneration: handle.sessionGeneration,
 				executionId: handle.executionId,
 				attemptId: handle.attemptId,
 			}).digest.slice(0, 64));
@@ -588,6 +608,29 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 		});
 	}
 
+	private async finishProcessTrace(summary: ManagedProcessSummary): Promise<void> {
+		const key = `${summary.handle.executionId}:${summary.handle.attemptId}`;
+		if (this.finishedProcessTraces.has(key)) return;
+		let task = this.processTraceTerminalTasks.get(key);
+		if (task === undefined) {
+			task = (async () => {
+				const recorderPromise = this.processTraceRecorders.get(key);
+				if (recorderPromise === undefined) return;
+				const recorder = await recorderPromise;
+				if (recorder === undefined) return;
+				await recorder.finishRun(processTraceTerminal(summary.state));
+				this.processTraceRecorders.delete(key);
+				this.finishedProcessTraces.add(key);
+			})();
+			this.processTraceTerminalTasks.set(key, task);
+		}
+		try {
+			await task;
+		} finally {
+			this.processTraceTerminalTasks.delete(key);
+		}
+	}
+
 	private async readRecoveredOutput(
 		handle: ExecutionHandleRef,
 		cursor: { readonly sequence: number; readonly byteOffset: number },
@@ -601,6 +644,46 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 		}).read(cursor, maxBytes);
 		if (!result.ok) return { ok: false as const, code: result.code };
 		return { ok: true as const, page: result.page, head: result.head };
+	}
+}
+
+function processTraceTerminal(state: ManagedProcessSummary["state"]): Parameters<RuntimeTraceRecorder["finishRun"]>[0] {
+	switch (state) {
+		case "completed":
+			return { phase: "finished" };
+		case "failed":
+		case "timed_out":
+			return {
+				phase: "failed",
+				error: {
+					code: state === "failed" ? "process_failed" : "process_timed_out",
+					message: state === "failed" ? "managed process failed" : "managed process timed out",
+					outcomeCertain: true,
+				},
+			};
+		case "killed":
+			return {
+				phase: "interrupted",
+				error: { code: "process_killed", message: "managed process was killed", outcomeCertain: true },
+			};
+		case "lost":
+		case "uncertain":
+			return {
+				phase: "interrupted",
+				error: {
+					code: state === "lost" ? "process_lost" : "process_uncertain",
+					message: state === "lost" ? "managed process was lost" : "managed process outcome is uncertain",
+					outcomeCertain: false,
+				},
+			};
+		case "queued":
+		case "starting":
+		case "running":
+		case "backgrounded":
+			return {
+				phase: "interrupted",
+				error: { code: "process_interrupted", message: "managed process was interrupted", outcomeCertain: false },
+			};
 	}
 }
 

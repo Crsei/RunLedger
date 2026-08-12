@@ -13,7 +13,7 @@
 
 ## 实施状态
 
-历史目标基线为 `rollback/pre-governed-agent-harness-runtime`。Phase 01–03 已在当前 `session-owner-runtime` 工作树实现：本地 Store、runtime recorder、用户级配置和标准 CLI production composition 已接线；recorder 由 Session domain 强制绑定 `sessionId + ownerGeneration`。Opik/outbox 顺延到 Phase 04，尚未开始且当前代码不联网。
+历史目标基线为 `rollback/pre-governed-agent-harness-runtime`。Phase 01–03 已在当前 `session-owner-runtime` 工作树实现：本地 Store、runtime recorder、用户级配置和标准 CLI production composition 已接线；recorder 由 Session domain 强制绑定 `sessionId + ownerGeneration`。2026-08-12 reliability hardening 又把 Session-owned process 的 normal/failed/timed-out/killed/lost/uncertain/takeover 终态接入同一 recorder；output materialization 先完成，随后幂等 terminal settlement 并释放 recorder。Opik/outbox 顺延到 Phase 04，尚未开始且当前代码不联网。
 
 | 文档 | 阶段 | 状态 |
 |---|---|---|

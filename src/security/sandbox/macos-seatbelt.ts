@@ -111,6 +111,6 @@ export class MacOsSeatbeltBackend implements SandboxBackend {
 		for (const denied of request.denyRead) rules.push(`(deny file-read* (subpath "${quoteSeatbelt(denied)}"))`);
 		for (const protectedPath of request.protectedPaths) rules.push(`(deny file-write* (subpath "${quoteSeatbelt(protectedPath)}"))`);
 		if (request.network === "allow") rules.push("(allow network*)");
-		return makePlan(state, request, sandboxExecPath, ["-p", rules.join(" "), "--", this.#shellProgram, "-lc", request.command]);
+		return makePlan(state, request, sandboxExecPath, ["-p", rules.join(" "), "--", this.#shellProgram, "-c", request.command]);
 	}
 }

@@ -44,6 +44,8 @@ export interface BashToolDetails {
   stdoutTruncated?: number;
   stderrTruncated?: number;
   exitCode?: number;
+  /** Host/Security 的 typed failure code；不从正文推断。 */
+  errorCode?: string;
   unsupported?: {
     code: "managed_process_unavailable";
     operation: "run_in_background" | "foreground";
@@ -160,7 +162,7 @@ export function createBashTool(
             }
             return {
               content: [{ type: "text", text: `background process rejected: ${started.code}` }],
-              details: { outputFormat },
+              details: { outputFormat, errorCode: started.code },
               isError: true,
               terminate: false,
             };
@@ -230,9 +232,10 @@ export function createBashTool(
           ? await options.managedProcess.exec({ command: cmd, ...executionOptions })
           : await ops.exec(cmd, executionOptions);
       } catch (e) {
+		const errorCode = codedError(e);
         return {
           content: [{ type: "text", text: `bash 执行失败: ${(e as Error).message ?? String(e)}` }],
-          details: { exitCode: 127 },
+          details: { exitCode: 127, ...(errorCode === undefined ? {} : { errorCode }) },
           isError: true,
           terminate: false,
         };
@@ -269,6 +272,12 @@ export function createBashTool(
       };
     },
   };
+}
+
+function codedError(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("code" in value)) return undefined;
+  const code = value.code;
+  return typeof code === "string" && code.length > 0 && code.length <= 128 ? code : undefined;
 }
 
 /**

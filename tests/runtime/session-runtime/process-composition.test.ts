@@ -66,6 +66,38 @@ function securitySource(): SessionSecurityConfigSource {
 }
 
 describe("S4 Session managed process composition", () => {
+	it("preserves a typed approval expiry through foreground Bash", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-foreground-approval-expired"),
+			runtimeId: createRuntimeId("runtime", "process-foreground-approval-expired"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-foreground-approval-expired");
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: {
+				prepare: async () => ({
+					ok: false,
+					error: { code: "approval_expired", message: "approval expired", retryable: false },
+				}),
+			},
+		});
+		const bash = createBashTool(root, { managedProcess: process.toolClient() });
+
+		const result = await bash.execute("toolCall_session_foreground_expired", {
+			command: "printf never",
+			timeout: 5_000,
+		});
+
+		expect(result).toMatchObject({ isError: true, details: { errorCode: "approval_expired" } });
+	});
+
 	it("executes foreground Bash through the Session-owned process facade", async () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		await mkdir(layout.home, { recursive: true });
@@ -454,10 +486,15 @@ describe("S4 Session managed process composition", () => {
 			securitySources: [securitySource()],
 		});
 		const recorded: Record<string, unknown>[] = [];
+		const lifecycle: string[] = [];
 		const factory: TraceRecorderFactory = {
 			create: async (input) => ({
 				traceId: input.traceId ?? createRuntimeId("trace", "process-trace"),
-				recordManagedProcessOutput: async (value: Record<string, unknown>) => { recorded.push(value); },
+				recordManagedProcessOutput: async (value: Record<string, unknown>) => {
+					recorded.push(value);
+					lifecycle.push("output");
+				},
+				finishRun: async (value: { readonly phase: string }) => { lifecycle.push(`terminal:${value.phase}`); },
 			} as never),
 		};
 		const process = sessionDomain.createSessionProcessComposition({
@@ -479,7 +516,7 @@ describe("S4 Session managed process composition", () => {
 			executionMode: "background",
 		}, { correlationId: "correlation_trace", effectId: "effect_trace", expectedRevision: 0 });
 		expect(started).toMatchObject({ ok: true });
-		for (let poll = 0; poll < 100 && recorded.length === 0; poll += 1) {
+		for (let poll = 0; poll < 100 && lifecycle.length < 2; poll += 1) {
 			await new Promise((resolve) => setTimeout(resolve, 10));
 		}
 		expect(recorded).toEqual([
@@ -488,6 +525,64 @@ describe("S4 Session managed process composition", () => {
 				outputContent: expect.objectContaining({ storage: "digest_only", size: expect.any(Number) }),
 			}),
 		]);
+		expect(lifecycle).toEqual(["output", "terminal:finished"]);
+	});
+
+	it("marks a failed managed process trace as failed with certain outcome", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-trace-failed"),
+			runtimeId: createRuntimeId("runtime", "process-trace-failed"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-trace-failed");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-trace-failed"),
+			securitySources: [securitySource()],
+		});
+		const terminals: unknown[] = [];
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+			recordingMode: "events",
+			recordingFailurePolicy: "fail_closed",
+			traceRecorderFactory: {
+				create: async () => ({
+					traceId: createRuntimeId("trace", "process-trace-failed"),
+					recordManagedProcessOutput: async () => undefined,
+					finishRun: async (value: unknown) => { terminals.push(value); },
+				} as never),
+			},
+		});
+		const started = await process.mutate("session.process.start", {
+			command: "node -e \"process.exit(7)\"",
+			cwd: root,
+			timeoutMs: 5_000,
+			backend: "pipe",
+			executionMode: "background",
+		}, { correlationId: "correlation_trace_failed", effectId: "effect_trace_failed", expectedRevision: 0 });
+		expect(started).toMatchObject({ ok: true });
+		if (!started.ok) return;
+		await expect(process.query("session.process.wait", {
+			executionId: started.value.executionId,
+			timeoutMs: 5_000,
+		}, { correlationId: "correlation_trace_failed_wait", effectId: "effect_trace_failed_wait" })).resolves.toMatchObject({
+			ok: true,
+			value: { outcome: "terminal", summary: { state: "failed" } },
+		});
+		expect(terminals).toEqual([{
+			phase: "failed",
+			error: { code: "process_failed", message: "managed process failed", outcomeCertain: true },
+		}]);
 	});
 
 	it("uses the owner-fenced Session Event Store as process truth without Host fields", async () => {
@@ -626,6 +721,18 @@ describe("S4 Session managed process composition", () => {
 		await mkdir(layout.home, { recursive: true });
 		const sessionId = createRuntimeId("session", "process-takeover");
 		const workspaceId = createRuntimeId("workspace", "process-takeover");
+		const traceEvents: Array<{ readonly traceId: string; readonly event: string; readonly value?: unknown }> = [];
+		const traceRecorderFactory: TraceRecorderFactory = {
+			create: async (input) => ({
+				traceId: input.traceId ?? createRuntimeId("trace", "process-takeover"),
+				recordManagedProcessOutput: async () => {
+					traceEvents.push({ traceId: String(input.traceId), event: "output" });
+				},
+				finishRun: async (value: unknown) => {
+					traceEvents.push({ traceId: String(input.traceId), event: "terminal", value });
+				},
+			} as never),
+		};
 		const create = async (generation: number) => {
 			const fence: OwnerFence = { sessionId, runtimeId: createRuntimeId("runtime", `process-takeover-${generation}`), generation };
 			const security = await createSessionSecurity({
@@ -636,7 +743,17 @@ describe("S4 Session managed process composition", () => {
 				repositoryId: createRuntimeId("repository", "process-takeover"),
 				securitySources: [securitySource()],
 			});
-			return sessionDomain.createSessionProcessComposition({ layout, store: ownedStore(layout, fence, workspaceId), cwd: root, fence, workspaceId, security: security.managedProcess });
+			return sessionDomain.createSessionProcessComposition({
+				layout,
+				store: ownedStore(layout, fence, workspaceId),
+				cwd: root,
+				fence,
+				workspaceId,
+				security: security.managedProcess,
+				recordingMode: "events",
+				recordingFailurePolicy: "fail_closed",
+				traceRecorderFactory,
+			});
 		};
 		const first = await create(1);
 		const started = await first.mutate("session.process.start", {
@@ -659,6 +776,16 @@ describe("S4 Session managed process composition", () => {
 		await expect(recover.call(second)).resolves.toEqual([
 			expect.objectContaining({ ok: true, summary: expect.objectContaining({ state: "uncertain" }) }),
 		]);
+		expect(traceEvents.map((event) => event.event)).toEqual(["output", "terminal"]);
+		expect(traceEvents[1]?.value).toEqual({
+			phase: "interrupted",
+			error: {
+				code: "process_uncertain",
+				message: "managed process outcome is uncertain",
+				outcomeCertain: false,
+			},
+		});
+		expect(new Set(traceEvents.map((event) => event.traceId)).size).toBe(1);
 		const list = await second.query("session.process.list", {}, {
 			correlationId: "correlation_process_takeover_list",
 			effectId: "effect_process_takeover_list",
@@ -700,7 +827,24 @@ describe("S4 Session managed process composition", () => {
 			repositoryId: createRuntimeId("repository", "process-shutdown"),
 			securitySources: [securitySource()],
 		});
-		const process = sessionDomain.createSessionProcessComposition({ layout, store: ownedStore(layout, fence, workspaceId), cwd: root, fence, workspaceId, security: security.managedProcess });
+		const terminals: unknown[] = [];
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+			recordingMode: "events",
+			recordingFailurePolicy: "fail_closed",
+			traceRecorderFactory: {
+				create: async () => ({
+					traceId: createRuntimeId("trace", "process-shutdown"),
+					recordManagedProcessOutput: async () => undefined,
+					finishRun: async (value: unknown) => { terminals.push(value); },
+				} as never),
+			},
+		});
 		const started = await process.mutate("session.process.start", {
 			command: "node -e \"setTimeout(()=>{},30000)\"",
 			cwd: root,
@@ -716,5 +860,9 @@ describe("S4 Session managed process composition", () => {
 		await expect(shutdown.call(process, "paused")).resolves.toBeUndefined();
 		const list = await process.query("session.process.list", {}, { correlationId: "correlation_shutdown_list", effectId: "effect_shutdown_list" });
 		expect(list).toMatchObject({ ok: true, value: { items: [expect.objectContaining({ state: "killed" })] } });
+		expect(terminals).toEqual([{
+			phase: "interrupted",
+			error: { code: "process_killed", message: "managed process was killed", outcomeCertain: true },
+		}]);
 	});
 });

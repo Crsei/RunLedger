@@ -79,7 +79,7 @@ describe("MacOsSeatbeltBackend", () => {
 		expect(profile).toContain('(deny file-write* (subpath "/repo/.git"))');
 		expect(profile).toContain('(allow file-write* (subpath "/repo/out"))');
 		expect(profile).not.toContain("(allow network*)");
-		expect(result.value.arguments.slice(-4)).toEqual(["--", "/bin/sh", "-lc", "pwd"]);
+		expect(result.value.arguments.slice(-4)).toEqual(["--", "/bin/sh", "-c", "pwd"]);
 	});
 
 	it.skipIf(!IS_MACOS)("only allows network when the request explicitly resolves to allow", async () => {

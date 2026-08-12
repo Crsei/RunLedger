@@ -20,6 +20,7 @@ import type {
 	TraceCost,
 	TraceError,
 	TraceEventInput,
+	TraceEventPhase,
 	TraceMetadata,
 	TraceTreeNode,
 	TraceUsage,
@@ -68,6 +69,12 @@ export interface TraceModelHandle {
 	readonly inputContent: TraceContentDescriptor;
 	readonly startedWallTime: number;
 	readonly startedMonotonic: number;
+}
+
+export interface TraceRunTerminal {
+	readonly phase: Exclude<TraceEventPhase, "started">;
+	readonly error?: TraceError;
+	readonly timestamp?: number;
 }
 
 interface TraceTurnState {
@@ -176,7 +183,7 @@ export class RuntimeTraceRecorder {
 				await this.startRun();
 				return;
 			case "agent_end":
-				await this.#finishRun(event.timestamp);
+				await this.finishRun({ phase: "finished", timestamp: event.timestamp });
 				return;
 			case "turn_start":
 				await this.#startTurn(event.turn, event.timestamp);
@@ -197,6 +204,35 @@ export class RuntimeTraceRecorder {
 			case "queue_update":
 				return;
 		}
+	}
+
+	/** 显式闭合非 AgentEvent 驱动的 Runtime；重复调用不追加第二组终态。 */
+	public async finishRun(input: TraceRunTerminal): Promise<void> {
+		if (this.#finished) return;
+		if (!this.#started) await this.startRun();
+		this.#finished = true;
+		const timestamp = this.#iso(input.timestamp ?? this.#clock.now());
+		const eventName = input.phase === "finished" ? "finished" : input.phase;
+		await this.#append({
+			nodeId: this.#agentNodeId ?? `agent:${this.traceId}`,
+			parentNodeId: this.traceId,
+			kind: "agent",
+			name: "agent",
+			phase: input.phase,
+			timestamp,
+			...(input.error === undefined ? {} : { error: input.error }),
+			metadata: { event: `agent.${eventName}` },
+		});
+		await this.#append({
+			nodeId: this.traceId,
+			parentNodeId: null,
+			kind: "trace",
+			name: "agent.run",
+			phase: input.phase,
+			timestamp,
+			...(input.error === undefined ? {} : { error: input.error }),
+			metadata: { event: `trace.${eventName}` },
+		});
 	}
 
 	/** 记录 Host-owned process output 的可观测投影，不复制 process truth。 */
@@ -438,29 +474,6 @@ export class RuntimeTraceRecorder {
 			outputContent,
 			...(event.isError ? { error: { code: "tool_failed", message: "tool execution failed", outcomeCertain: true } } : {}),
 			metadata: { event: event.isError ? "tool.failed" : "tool.finished", tool: state.toolName, toolCallId: event.toolCallId },
-		});
-	}
-
-	async #finishRun(timestamp: number): Promise<void> {
-		if (this.#finished) return;
-		this.#finished = true;
-		await this.#append({
-			nodeId: this.#agentNodeId ?? `agent:${this.traceId}`,
-			parentNodeId: this.traceId,
-			kind: "agent",
-			name: "agent",
-			phase: "finished",
-			timestamp: this.#iso(timestamp),
-			metadata: { event: "agent.finished" },
-		});
-		await this.#append({
-			nodeId: this.traceId,
-			parentNodeId: null,
-			kind: "trace",
-			name: "agent.run",
-			phase: "finished",
-			timestamp: this.#iso(timestamp),
-			metadata: { event: "trace.finished" },
 		});
 	}
 

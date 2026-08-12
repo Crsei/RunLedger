@@ -46,8 +46,10 @@ import {
 	createLocalFileSystemBroker,
 	createLocalNetworkBroker,
 	createLocalSessionProcessLeaf,
+	createLocalSessionToolchainProbe,
 	existingLocalPaths,
 	findLocalExecutable,
+	prepareLocalGovernedProcessDirectories,
 	readLocalUtf8File,
 	type SessionProcessLeaf,
 } from "./integration/session-local-leaves.ts";
@@ -61,6 +63,13 @@ import type { NetworkBrokerPort } from "./policy-network.ts";
 import { createSandboxBackend } from "./sandbox/factory.ts";
 import { digestOf } from "./sandbox/common.ts";
 import type { SandboxBackend, SandboxLaunchPlan, SandboxPrepareRequest } from "./sandbox/types.ts";
+import {
+	validateSessionToolchainSnapshot,
+	validateGovernedEnvironmentOverrides,
+	type GovernedProcessEnvironment,
+	type SessionToolchainProbe,
+	type SessionToolchainSnapshot,
+} from "./toolchain.ts";
 import type {
 	AccessRequest,
 	AuthorizationRequest,
@@ -89,6 +98,10 @@ export interface SessionSecurityCompositionOptions {
 	readonly processLeaf?: SessionProcessLeaf;
 	/** 仅 sandbox=off 时使用；限制性 sandbox 永不调用此 port。 */
 	readonly unrestrictedShell?: Shell;
+	/** Production composition root 解析一次；缺失时仅保留低层/legacy 测试接缝。 */
+	readonly toolchain?: SessionToolchainSnapshot;
+	readonly processEnvironment?: GovernedProcessEnvironment;
+	readonly toolchainProbe?: SessionToolchainProbe;
 	readonly now?: () => Date;
 	/** Session Event Store + driver reverse-request 的 production approval ports。 */
 	readonly approvalPorts?: {
@@ -122,6 +135,9 @@ export interface PreparedSessionManagedProcessSecurity {
 	readonly constraintSnapshot: ExecutionConstraintSnapshot;
 	readonly requestDigest: RuntimeDigest;
 	readonly sandboxPlan?: SandboxLaunchPlan;
+	readonly launchPlan?: SandboxLaunchPlan;
+	readonly toolchainSnapshotDigest?: RuntimeDigest;
+	readonly environmentDigest?: RuntimeDigest;
 	validateFinalLeaf(): ReturnType<ProcessFinalLeafAdapter["decide"]>;
 	complete(): Promise<SecurityResult<void>>;
 }
@@ -144,6 +160,15 @@ interface ProcessBinding {
 export async function createSessionSecurity(
 	options: SessionSecurityCompositionOptions,
 ): Promise<SessionSecurityComposition> {
+	if ((options.toolchain === undefined) !== (options.processEnvironment === undefined)) {
+		throw new Error("toolchain and governed process environment must be supplied together");
+	}
+	if (options.processEnvironment !== undefined) {
+		if (runtimeDigest(options.processEnvironment.environment).digest !== options.processEnvironment.environmentDigest.digest) {
+			throw new Error("governed process environment digest is invalid");
+		}
+		await prepareLocalGovernedProcessDirectories(options.layout.tmp, options.processEnvironment);
+	}
 	const cwd = resolve(options.cwd);
 	const identity = sessionIdentity(options.workspaceId, options.repositoryId);
 	const storageKey = workspaceStorageKey(identity);
@@ -299,6 +324,13 @@ function createManagedProcessSecurity(input: {
 				?? createRuntimeId("command", canonicalDigest(request.commandId).slice(0, 64));
 			const toolCallId = createRuntimeId("toolCall", `process-${request.requestDigest.digest.slice(0, 48)}`);
 			const workspace = input.workspace(toolCallId, request.cwd);
+			const environment = input.options.processEnvironment?.environment ?? {};
+			if (input.options.processEnvironment !== undefined && runtimeDigest(environment).digest !== input.options.processEnvironment.environmentDigest.digest) {
+				return securityError("invalid_request", "governed process environment digest is invalid");
+			}
+			if ((input.options.toolchain === undefined) !== (input.options.processEnvironment === undefined)) {
+				return securityError("invalid_request", "toolchain and governed process environment must be supplied together");
+			}
 			const authorization = {
 				...authorizationRequest(
 				input.options.fence,
@@ -314,6 +346,8 @@ function createManagedProcessSecurity(input: {
 					backend: request.backend,
 					executionMode: request.executionMode,
 					stdinDigest: digestOf(request.stdin ?? ""),
+					...(input.options.toolchain === undefined ? {} : { toolchainSnapshotDigest: input.options.toolchain.snapshotDigest }),
+					...(input.options.processEnvironment === undefined ? {} : { environmentDigest: input.options.processEnvironment.environmentDigest }),
 				},
 				request.cwd,
 				),
@@ -322,7 +356,7 @@ function createManagedProcessSecurity(input: {
 			const requestDigest = gatewayRequestDigest(authorization);
 			const restrictive = input.snapshot.profile.sandbox !== "off";
 			let plan: SandboxLaunchPlan | undefined;
-			if (restrictive) {
+			if (restrictive || input.options.toolchain !== undefined) {
 				const prepared = await input.sandboxBackend.prepare(sandboxRequest(
 					input.snapshot,
 					workspace,
@@ -330,10 +364,11 @@ function createManagedProcessSecurity(input: {
 					request.command,
 					{ timeoutMs: request.timeoutMs, ...(request.stdin === undefined ? {} : { stdin: request.stdin }) },
 					request.cwd,
+					environment,
 				));
 				if (!prepared.ok) return securityError("policy_denied", prepared.error.message);
 				plan = prepared.value;
-				input.bindings.set(requestDigest.digest, { plan });
+				if (restrictive) input.bindings.set(requestDigest.digest, { plan });
 			}
 			try {
 				const baseConstraintInput = executionConstraintInput(
@@ -370,14 +405,39 @@ function createManagedProcessSecurity(input: {
 						constraintInput,
 						constraintSnapshot: constraints.snapshot,
 						requestDigest,
-						...(plan === undefined ? {} : { sandboxPlan: plan }),
-						validateFinalLeaf: () => input.finalLeaf.decide({
-							constraintInput,
-							constraintSnapshot: constraints.snapshot,
-							requestDigest,
-							policyDigest: input.snapshot.policyDigest,
-							...(plan === undefined ? {} : { sandboxPlan: plan }),
-						}),
+						...(plan === undefined ? {} : { launchPlan: plan }),
+						...(restrictive && plan !== undefined ? { sandboxPlan: plan } : {}),
+						...(input.options.toolchain === undefined ? {} : { toolchainSnapshotDigest: input.options.toolchain.snapshotDigest }),
+						...(input.options.processEnvironment === undefined ? {} : { environmentDigest: input.options.processEnvironment.environmentDigest }),
+						validateFinalLeaf: async () => {
+							if (input.options.processEnvironment !== undefined) {
+								try {
+									await prepareLocalGovernedProcessDirectories(input.options.layout.tmp, input.options.processEnvironment);
+								} catch (error) {
+									return securityError("invalid_request", error instanceof Error ? error.message : "governed process directories are invalid");
+								}
+							}
+							if (input.options.toolchain !== undefined) {
+								const validToolchain = await validateSessionToolchainSnapshot(
+									input.options.toolchain,
+									input.options.toolchainProbe ?? createLocalSessionToolchainProbe(),
+								);
+								if (!validToolchain.ok) return securityError("invalid_request", validToolchain.error.message);
+							}
+							if (!restrictive && plan !== undefined) {
+								const receipt = await input.sandboxBackend.validateFinalLeaf(plan, requestDigest);
+								if (receipt.decision !== "off" || receipt.planDigest.digest !== plan.planDigest.digest) {
+									return securityError("invalid_request", "off launch plan final-leaf validation failed");
+								}
+							}
+							return input.finalLeaf.decide({
+								constraintInput,
+								constraintSnapshot: constraints.snapshot,
+								requestDigest,
+								policyDigest: input.snapshot.policyDigest,
+								...(restrictive && plan !== undefined ? { sandboxPlan: plan } : {}),
+							});
+						},
 						complete: opened.value.complete,
 					},
 				};
@@ -547,17 +607,33 @@ function createGovernedShell(input: {
 	return {
 		exec: async (command, opts) => {
 			const cwd = resolve(opts?.cwd ?? input.cwd);
+			if (input.options.processEnvironment !== undefined) {
+				const overrides = validateGovernedEnvironmentOverrides(opts?.env ?? {});
+				if (!overrides.ok) throw Object.assign(new Error(overrides.error.message), { code: "invalid_request" });
+			}
 			const argumentsDigest = digestOf(shellDigestInput(command, opts, cwd));
 			const toolCallId = createRuntimeId("toolCall", argumentsDigest.digest.slice(0, 64));
 			const workspace = input.workspace(toolCallId, cwd);
 			const requests: readonly AccessRequest[] = [{ kind: "shell", command, cwd, analysis: analyzeShellCommand(command).analysis }];
-			const request = authorizationRequest(input.options.fence, input.snapshot, workspace, toolCallId, "bash", requests, argumentsDigest, cwd);
+			const request = authorizationRequest(input.options.fence, input.snapshot, workspace, toolCallId, "bash", requests, {
+				argumentsDigest,
+				...(input.options.toolchain === undefined ? {} : { toolchainSnapshotDigest: input.options.toolchain.snapshotDigest }),
+				...(input.options.processEnvironment === undefined ? {} : { environmentDigest: input.options.processEnvironment.environmentDigest }),
+			}, cwd);
 			const requestDigest = gatewayRequestDigest(request);
 			const restrictive = input.snapshot.profile.sandbox !== "off";
 			let plan: SandboxLaunchPlan | undefined;
-			if (restrictive) {
-				plan = unwrapSandboxResult(await input.sandboxBackend.prepare(sandboxRequest(input.snapshot, workspace, requestDigest, command, opts, cwd)));
-				input.bindings.set(requestDigest.digest, { plan });
+			if (restrictive || input.options.toolchain !== undefined) {
+				plan = unwrapSandboxResult(await input.sandboxBackend.prepare(sandboxRequest(
+					input.snapshot,
+					workspace,
+					requestDigest,
+					command,
+					opts,
+					cwd,
+					input.options.processEnvironment?.environment,
+				)));
+				if (restrictive) input.bindings.set(requestDigest.digest, { plan });
 			}
 			try {
 				const constraintInput = executionConstraintInput(
@@ -571,18 +647,34 @@ function createGovernedShell(input: {
 				const constraints = await evaluateExecutionConstraints(constraintInput, input.providers);
 				if (!constraints.ok) throw new Error(`execution constraint ${constraints.code} at ${constraints.dimension}`);
 				const context = unwrapSecurityResult(await input.gateway.authorize({ request, requestDigest, constraintInput, constraintSnapshot: constraints.snapshot }, opts?.signal));
+				if (input.options.processEnvironment !== undefined) {
+					await prepareLocalGovernedProcessDirectories(input.options.layout.tmp, input.options.processEnvironment);
+				}
+				if (input.options.toolchain !== undefined) {
+					const validToolchain = await validateSessionToolchainSnapshot(
+						input.options.toolchain,
+						input.options.toolchainProbe ?? createLocalSessionToolchainProbe(),
+					);
+					if (!validToolchain.ok) throw new Error(validToolchain.error.message);
+				}
+				if (!restrictive && plan !== undefined) {
+					const receipt = await input.sandboxBackend.validateFinalLeaf(plan, requestDigest);
+					if (receipt.decision !== "off" || receipt.planDigest.digest !== plan.planDigest.digest) {
+						throw new Error("off launch plan final-leaf validation failed");
+					}
+				}
 				const leaf = await input.finalLeaf.decide({
 					constraintInput,
 					constraintSnapshot: constraints.snapshot,
 					requestDigest,
 					policyDigest: input.snapshot.policyDigest,
-					...(plan === undefined ? {} : { sandboxPlan: plan }),
+					...(restrictive && plan !== undefined ? { sandboxPlan: plan } : {}),
 				});
 				unwrapSecurityResult(leaf);
-				if (!restrictive) {
+				if (plan === undefined) {
 					return settleGatewayEffect(context, () => input.unrestrictedShell.exec(command, opts));
 				}
-				return settleGatewayEffect(context, () => input.processLeaf.execute(plan!, {
+				return settleGatewayEffect(context, () => input.processLeaf.execute(plan, {
 					...(opts?.signal === undefined ? {} : { signal: opts.signal }),
 					...(opts?.maxOutputChars === undefined ? {} : { maxOutputChars: opts.maxOutputChars }),
 					...(opts?.onStdout === undefined ? {} : { onStdout: opts.onStdout }),
@@ -672,6 +764,7 @@ function sandboxRequest(
 	command: string,
 	opts: ShellExecOptions | undefined,
 	cwd: string,
+	baseEnvironment: Readonly<Record<string, string>> = {},
 ): SandboxPrepareRequest {
 	return {
 		requested: snapshot.profile.sandbox,
@@ -687,7 +780,7 @@ function sandboxRequest(
 		network: snapshot.profile.network.mode === "deny" ? "deny" : "allow",
 		command,
 		cwd,
-		environment: opts?.env ?? {},
+		environment: { ...baseEnvironment, ...(opts?.env ?? {}) },
 		timeoutMs: opts?.timeoutMs ?? 60_000,
 		...(opts?.stdin === undefined ? {} : { stdin: opts.stdin }),
 	};
@@ -757,7 +850,7 @@ async function settleGatewayEffect<T>(context: ExecutionGatewayContext, effect: 
 }
 
 function unwrapSecurityResult<T>(result: SecurityResult<T>): T {
-	if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+	if (!result.ok) throw Object.assign(new Error(result.error.message), { code: result.error.code });
 	return result.value;
 }
 

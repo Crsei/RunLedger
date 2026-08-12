@@ -1,6 +1,6 @@
 import type { StopReason } from "../../types.ts";
 import type { SessionEventRecord } from "../../storage/session-store/session-store.ts";
-import type { AgentEvent } from "../types.ts";
+import type { AgentEvent, AgentRunBudgetUsage, AgentRunTerminationReason } from "../types.ts";
 
 export type HumanWaitReason = "approval" | "credential";
 
@@ -13,6 +13,7 @@ export interface AgentRunSummary {
 	readonly elapsedMs?: number;
 	readonly activeDurationMs?: number;
 	readonly messageCountAtEnd?: number;
+	readonly terminationReason?: AgentRunTerminationReason;
 }
 
 interface ActiveRun {
@@ -22,6 +23,21 @@ interface ActiveRun {
 	activeStartedAtMonotonicMs: number | undefined;
 	activeDurationMs: number;
 	readonly waits: Map<string, HumanWaitReason>;
+}
+
+/** 领域装配早于 SessionRuntime；绑定前读取必须 fail closed。 */
+export class LateBoundAgentRunBudgetUsage implements AgentRunBudgetUsage {
+	private current: AgentRunBudgetUsage | undefined;
+
+	public bind(usage: AgentRunBudgetUsage): void {
+		this.current = usage;
+	}
+
+	public activeDurationMs(): number {
+		const current = this.current;
+		if (current === undefined) throw new Error("Agent run budget usage is not bound");
+		return current.activeDurationMs();
+	}
 }
 
 /** SessionRuntime 的单调时钟计时器；只把人工 reverse-request 等待排除。 */
@@ -63,6 +79,9 @@ export class AgentRunTimingTracker {
 		if (run === undefined || (event.runId !== undefined && event.runId !== run.runId)) return event;
 		const now = this.monotonicNow();
 		const activeDurationMs = this.accumulated(run, now);
+		const explicitMessageCount = Number.isSafeInteger(event.messageCountAtEnd) && (event.messageCountAtEnd ?? -1) >= 0
+			? event.messageCountAtEnd
+			: undefined;
 		const normalized: AgentEvent = {
 			type: "agent_end",
 			timestamp: event.timestamp,
@@ -70,7 +89,8 @@ export class AgentRunTimingTracker {
 			stopReason: event.stopReason ?? "stop",
 			elapsedMs: nonNegative(now - run.startedAtMonotonicMs),
 			activeDurationMs,
-			messageCountAtEnd: messageCount,
+			messageCountAtEnd: explicitMessageCount ?? messageCount,
+			...(event.terminationReason === undefined ? {} : { terminationReason: event.terminationReason }),
 		};
 		this.current = undefined;
 		return normalized;
@@ -147,6 +167,7 @@ export function projectAgentRunSummaries(events: readonly SessionEventRecord[], 
 			elapsedMs,
 			activeDurationMs: numberValue(event.activeDurationMs) ?? elapsedMs,
 			messageCountAtEnd: explicitMessageCount ?? (messageCount > 0 ? messageCount : currentMessageCount),
+			...(isTerminationReason(event.terminationReason) ? { terminationReason: event.terminationReason } : {}),
 		});
 		active = undefined;
 	}
@@ -181,4 +202,12 @@ function numberValue(value: unknown): number | undefined {
 
 function isStopReason(value: unknown): value is StopReason {
 	return value === "stop" || value === "length" || value === "toolUse" || value === "error" || value === "aborted";
+}
+
+function isTerminationReason(value: unknown): value is AgentRunTerminationReason {
+	return value === "model_turn_limit"
+		|| value === "tool_turn_limit"
+		|| value === "active_duration_limit"
+		|| value === "repeated_tool_failure"
+		|| value === "approval_expiration_limit";
 }

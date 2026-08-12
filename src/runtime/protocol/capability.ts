@@ -441,13 +441,16 @@ export function isApprovalTicket(value: unknown): value is ApprovalTicket {
 
 export function isApprovalReceiptRef(value: unknown): value is ApprovalReceiptRef {
 	if (!Value.Check(ApprovalReceiptRefSchema, value)) return false;
+	const timestampOrderIsValid = value.decision === "expired"
+		? value.expiresAt !== undefined && Date.parse(value.decidedAt) >= Date.parse(value.expiresAt)
+		: isOrderedTimestamp(value.decidedAt, value.expiresAt);
 	return (
 		isRuntimeId(value.receiptId, "receipt") &&
 		isRuntimeId(value.approvalId, "approval") &&
 		isRuntimeId(value.principalId, "principal") &&
 		isCanonicalUtcTimestamp(value.decidedAt) &&
 		(value.expiresAt === undefined || isCanonicalUtcTimestamp(value.expiresAt)) &&
-		isOrderedTimestamp(value.decidedAt, value.expiresAt)
+		timestampOrderIsValid
 	);
 }
 

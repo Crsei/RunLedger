@@ -23,8 +23,9 @@ import { SessionRuntimeServer } from "../runtime/session-server/runtime-server.t
 import { SessionRuntime, type SessionDomainPort } from "../runtime/session-runtime/session-runtime.ts";
 import { assembleSessionDomain, type SessionDomainCompositionOptions } from "../runtime/session-runtime/domain.ts";
 import { LateBoundAttemptPort } from "../runtime/session-runtime/attempt-gateway.ts";
-import { createSessionApprovalPorts } from "../runtime/session-runtime/approval-reverse-request.ts";
+import { createSessionApprovalPorts, LateBoundHumanInputWaitPort } from "../runtime/session-runtime/approval-reverse-request.ts";
 import { restoreSession } from "../runtime/session-runtime/restore.ts";
+import { LateBoundAgentRunBudgetUsage } from "../runtime/session-runtime/run-timing.ts";
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { createRuntimeId, type ExecutionId, type SessionId } from "../runtime/protocol/ids.ts";
@@ -153,6 +154,8 @@ export class SessionProcessRegistry {
 export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRuntimeOptions): Promise<EmbeddedSessionRuntimeResult> {
 	const { sessionId, store, ownerStore } = options;
 	const attemptPort = new LateBoundAttemptPort();
+	const humanInputWaitPort = new LateBoundHumanInputWaitPort();
+	const runBudgetUsage = new LateBoundAgentRunBudgetUsage();
 	const server = new SessionRuntimeServer({
 		sessionId,
 		store,
@@ -210,6 +213,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			fence: result.fence,
 			sender: server,
 			driverConnectionId: () => server.driverConnectionId(),
+			humanInputWait: humanInputWaitPort,
 		});
 	const domainOptions = options.domain === undefined
 		? undefined
@@ -220,7 +224,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			};
 	let domain: SessionDomainPort | undefined;
 	try {
-		domain = domainOptions === undefined ? undefined : await assembleSessionDomain(domainOptions, sessionId, store, result.fence, restored, attemptPort);
+		domain = domainOptions === undefined ? undefined : await assembleSessionDomain(domainOptions, sessionId, store, result.fence, restored, attemptPort, runBudgetUsage);
 		if (crashTakeover) await domain?.process?.recoverUnattached?.();
 	} catch (error) {
 		await workspace?.release("error").catch(() => undefined);
@@ -237,6 +241,8 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		restored,
 		domain,
 		attemptPortRef: attemptPort,
+		humanInputWaitPortRef: humanInputWaitPort,
+		runBudgetUsageRef: runBudgetUsage,
 		...((workspace === undefined && domain?.process?.shutdown === undefined && domain?.shutdown === undefined) ? {} : {
 			lifecycleCleanup: async (reason) => {
 				await domain?.shutdown?.(reason);

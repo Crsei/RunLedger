@@ -146,7 +146,8 @@ const DIRECT_CONTROLLER_PATTERNS: readonly RegExp[] = [
  * - clearCheckpoints:projection cache 可整体删除,不改变 authority(R2);
  * - tryClaim:claim 事务本身建立 fence(R3);
  * - beginOfflineMigration / applyStructuralMigration / abortOfflineMigration /
- *   resumeOfflineMigration:migration gate 用“零 active owner 证明”替代 fence(R1);
+ *   resumeOfflineMigration / applySessionStatusProjectionRepair:migration gate
+ *   用“匹配 epoch + 零 active owner 证明”替代 fence(R1/P4);
  * - installSessionStoreSchema:首次 DDL 安装(R1);
  * - migrateJsonlSessions / pruneLegacyArchive:显式一次性 JSONL migration/prune,
  *   同样以零 active legacy writer 证明替代 fence(R2)。
@@ -160,6 +161,7 @@ const FENCELESS_WRITE_ALLOWLIST: readonly string[] = [
 	"applyStructuralMigration",
 	"abortOfflineMigration",
 	"resumeOfflineMigration",
+	"applySessionStatusProjectionRepair",
 	"installSessionStoreSchema",
 	"migrateJsonlSessions",
 	"importJsonlIntoSqlite",

@@ -77,6 +77,16 @@ function denied(message: string): SecurityResult<never> {
 	return { ok: false, error: { code: "policy_denied", message, retryable: false } };
 }
 
+function approvalDenied(authorization: AuthorizationResult): SecurityResult<never> {
+	const decision = authorization.approval?.decision;
+	const code = decision === "expired"
+		? "approval_expired"
+		: decision === "cancelled"
+			? "approval_cancelled"
+			: "policy_denied";
+	return { ok: false, error: { code, message: authorization.reason, retryable: false } };
+}
+
 function validDigest(value: RuntimeDigest): boolean {
 	return value.algorithm === "sha256" && /^[a-f0-9]{64}$/u.test(value.digest);
 }
@@ -184,7 +194,7 @@ export class ExecutionGateway {
 		});
 		const authorized = await this.#options.approvalCoordinator.authorize(input.request, evaluation, revalidate, signal);
 		if (!authorized.ok) return authorized;
-		if (authorized.value.outcome !== "allow") return denied(authorized.value.reason);
+		if (authorized.value.outcome !== "allow") return approvalDenied(authorized.value);
 		return this.open({
 			...input,
 			authorization: authorized.value,
