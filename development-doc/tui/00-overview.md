@@ -6,6 +6,8 @@
 > 2. `pi/packages/coding-agent/src/modes/interactive/`—— 在 `pi-tui` 上构建的 `InteractiveMode` 命令式组件树 + AgentSession 事件订阅。
 >
 > RunLedger 不重新发明 TUI 框架,**直接复用 `@earendil-works/pi-tui` 作为外部依赖**,只移植"事件 → 组件 mutation → requestRender"三段式架构本身。本计划的对象是第 (2) 部分,框架层只在"边界契约"章节出现。
+>
+> 当前 permission 展示例外：Host reverse request 进入 `PermissionRequestView` 后临时替换 transcript 对话正文，采用 Codex 风格 environment/reason/command/编号决策布局；结束或取消后恢复原 Timeline。permission 不再使用居中 overlay，credential/process/selector 等既有 overlay 不受影响。
 
 ---
 

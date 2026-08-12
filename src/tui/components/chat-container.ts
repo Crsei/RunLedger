@@ -23,6 +23,7 @@ import { fitToWidth } from "./render-width.ts";
 
 export class ChatContainer implements Component {
   private readonly children: Array<{ key: string; component: Component }> = [];
+  private replacement: { readonly key: string; readonly component: Component } | undefined;
   private readonly presentationCache = new RenderCache<PresentationBlock[]>({
     maxEntries: 1024,
     maxBytes: 4 * 1024 * 1024,
@@ -36,6 +37,7 @@ export class ChatContainer implements Component {
 
   invalidate(): void {
     this.presentationCache.clear();
+    this.replacement?.component.invalidate();
     for (const { component } of this.children) {
       component.invalidate();
     }
@@ -51,6 +53,19 @@ export class ChatContainer implements Component {
 
   getTimelineGeneration(): number {
     return this.timelineGeneration;
+  }
+
+  /** 临时工作流（例如 permission）占据 transcript 时隐藏对话，但不破坏 Timeline。 */
+  setReplacement(component: Component, key = "chat-replacement"): void {
+    this.replacement = { key, component };
+    this.presentationCache.clear();
+  }
+
+  /** 结束临时工作流并恢复原 Timeline 对话。 */
+  clearReplacement(component?: Component): void {
+    if (component !== undefined && this.replacement?.component !== component) return;
+    this.replacement = undefined;
+    this.presentationCache.clear();
   }
 
   push(component: Component, key?: string): void {
@@ -71,6 +86,7 @@ export class ChatContainer implements Component {
   }
 
   render(width: number): string[] {
+    if (this.replacement !== undefined) return this.replacement.component.render(width);
     if (this.timelineBlocks !== undefined) {
       return this.timelineBlocks.map((block) => fitToWidth(("content" in block ? block.content ?? "" : ""), width));
     }
@@ -91,6 +107,14 @@ export class ChatContainer implements Component {
   }
 
   present(width: number): PresentationBlock[] {
+    if (this.replacement !== undefined) {
+      const { key, component } = this.replacement;
+      const projected = component.present?.(width) ?? [{
+        kind: "text" as const,
+        content: component.render(width).map((line) => fitToWidth(line, width)).join("\n"),
+      }];
+      return projected.map((block, index) => ({ ...block, id: `${key}/${block.id ?? `part-${index}`}` }));
+    }
     if (this.timelineBlocks !== undefined) {
       if (this.presentCache?.generation === this.timelineGeneration && this.presentCache.width === width) {
         return this.presentCache.blocks;

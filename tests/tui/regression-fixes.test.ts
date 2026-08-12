@@ -14,17 +14,20 @@ import type { Terminal } from "../../src/tui/index.ts";
 import type { HostFrameEnvelope } from "../../src/runtime/host/types.ts";
 import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 import type { ProviderWorkflowPort, ProviderCatalogSnapshot } from "../../src/tui/providers/types.ts";
+import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
+import type { PresentationBlock } from "../../src/tui/presentation.ts";
 import { ContractController, settleFrames } from "./fixtures/contract-integration.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
+  private output = "";
   get columns(): number { return 100; }
   get rows(): number { return 30; }
   get kittyProtocolActive(): boolean { return false; }
   start(onInput: (data: string) => void): void { this.input = onInput; }
   stop(): void { this.input = undefined; }
   async drainInput(): Promise<void> {}
-  write(): void {}
+  write(data: string): void { this.output = data; }
   moveBy(): void {}
   hideCursor(): void {}
   showCursor(): void {}
@@ -34,6 +37,7 @@ class FakeTerminal implements Terminal {
   setTitle(): void {}
   setProgress(): void {}
   send(data: string): void { this.input?.(data); }
+  frame(): string { return this.output; }
 }
 
 function reverseFrame(): HostFrameEnvelope {
@@ -43,6 +47,12 @@ function reverseFrame(): HostFrameEnvelope {
     protocolVersion: 1,
     body: { requestType: "permission", toolName: "bash", summary: "run ls", cwd: "/tmp" },
   } as HostFrameEnvelope;
+}
+
+function conversationText(mode: InteractiveMode): string {
+	const refs = (mode as unknown as { refs: { chat: ChatContainer } }).refs;
+	const blocks: PresentationBlock[] = refs.chat.present(100);
+	return blocks.map((block) => ("content" in block ? block.content : "")).join("\n");
 }
 
 describe("P1 regression fixes at InteractiveMode level", () => {
@@ -127,17 +137,65 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		const pending = mode.handleReverseRequest(reverseFrame(), signal);
 		expect(mode.getTuiState().capabilities.approval.state).toBe("unavailable");
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
-		// 选择 deny
+		// permission view 取代对话区，Esc 选择 deny。
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
-		expect(ui.hasOverlay()).toBe(true);
-		// 直接调 modal 选择项：找到 overlay 的 SelectList 并选择 deny
-		const overlay = (mode as unknown as { ui: { overlay: { getSelectedItem?: () => { value: string } | null; handleInput?(data: string): void } | undefined } }).ui.overlay;
-		overlay?.handleInput?.("\x1b[B"); // 下移到 deny
-		overlay?.handleInput?.("\r");
+		expect(ui.hasOverlay()).toBe(false);
+		const permissionView = Reflect.get(mode, "activePermissionView") as { handleInput(data: string): void } | undefined;
+		permissionView?.handleInput("\x1b");
 		const body = await pending;
 		expect(body).toEqual({ ok: true, decision: "deny" });
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
+	});
+
+	it("replaces the conversation with a Codex-style permission view and restores it after selection", async () => {
+		const terminal = new FakeTerminal();
+		const controller = new ContractController({
+			messages: [{ role: "user", content: [{ type: "text", text: "historical conversation" }] }],
+		});
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			expect(conversationText(mode)).toContain("historical conversation");
+
+			const pending = mode.handleReverseRequest({
+				...reverseFrame(),
+				body: {
+					requestType: "permission",
+					toolName: "bash",
+					summary: "Sandbox blocked tsx from creating its IPC socket.",
+					cwd: "/workspace",
+					requests: [{ kind: "shell", command: "npm run check", cwd: "/workspace", analysis: "known" }],
+				},
+			}, new AbortController().signal);
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+			const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
+			expect(ui.hasOverlay()).toBe(false);
+			const permissionView = conversationText(mode);
+			expect(permissionView).not.toContain("historical conversation");
+			expect(permissionView).toContain("Would you like to run the following command?");
+			expect(permissionView).toContain("Environment: local");
+			expect(permissionView).toContain("Reason: Sandbox blocked tsx from creating its IPC socket.");
+			expect(permissionView).toContain("$ npm run check");
+			expect(permissionView).toContain("1. Yes, proceed");
+			expect(permissionView).toContain("2. Yes, and don't ask again for commands that start with `npm run check`");
+			expect(permissionView).toContain("3. No, and tell Codex what to do differently");
+
+			terminal.send("\x1b[B");
+			terminal.send("\r");
+			await expect(pending).resolves.toEqual({
+				ok: true,
+				decision: "allow-with-prefix-rule",
+				prefixRule: ["npm", "run", "check"],
+			});
+			await new Promise<void>((resolve) => setTimeout(resolve, 20));
+			expect(conversationText(mode)).toContain("historical conversation");
+		} finally {
+			mode.quit();
+			await running;
+		}
 	});
 
 	it("P1-3: aborting a reverse request leaves the unavailable approval workflow unchanged", async () => {
@@ -152,7 +210,19 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
-	it("S3: Session reverse-request handler dispatches approval prompts through the existing modal authority", async () => {
+	it("fails closed when a second permission request arrives while the conversation view is active", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const first = mode.handleReverseRequest(reverseFrame(), new AbortController().signal);
+		await expect(mode.handleReverseRequest({ ...reverseFrame(), frameId: "frame-2" }, new AbortController().signal)).resolves.toEqual({
+			ok: false,
+			code: "approval_busy",
+		});
+		const permissionView = Reflect.get(mode, "activePermissionView") as { handleInput(data: string): void } | undefined;
+		permissionView?.handleInput("\x1b");
+		await expect(first).resolves.toEqual({ ok: true, decision: "deny" });
+	});
+
+	it("S3: Session reverse-request handler dispatches approval prompts through the conversation permission authority", async () => {
 		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
 		const pending = mode.handleSessionReverseRequest(
 			credentialFrame({
@@ -162,8 +232,8 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 			new AbortController().signal,
 		);
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
-		const overlay = (mode as unknown as { ui: { overlay: { handleInput?(data: string): void } | undefined } }).ui.overlay;
-		overlay?.handleInput?.("\r");
+		const permissionView = Reflect.get(mode, "activePermissionView") as { handleInput(data: string): void } | undefined;
+		permissionView?.handleInput("\r");
 		await expect(pending).resolves.toEqual({ ok: true, decision: "allow-once" });
 	});
 
