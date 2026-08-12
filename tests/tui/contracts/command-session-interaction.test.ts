@@ -153,6 +153,7 @@ describe("passive command, session, and interaction contracts", () => {
 			selectedId: { state: "unknown", reason: "nothing selected" },
 			generation: 1,
 			viewportClearRevision: 0,
+			transcriptScrollbarVisible: false,
 			toolDetailsExpanded: false,
 			composerEmpty: true,
 			transitionFrozen: false,

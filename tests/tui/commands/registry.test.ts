@@ -37,6 +37,24 @@ describe("slash command registry", () => {
     expect(findCommand("sessions")?.canonicalName).toBe("resume");
   });
 
+  it("registers /scrollbar as a local readonly command available during a task", () => {
+    const entry = findCommand("scrollbar");
+    expect(entry).toMatchObject({
+      canonicalName: "scrollbar",
+      actionType: "ui.scrollbar.toggle",
+      category: "ui",
+      availableDuringTask: true,
+      supportsInlineArgs: false,
+    });
+    expect(entry?.policy).toEqual({
+      draft: "allowed",
+      history: "allowed",
+      query: "allowed",
+      frozen: "allowed",
+    });
+    expect(commandsForContext().some((candidate) => candidate.canonicalName === "scrollbar")).toBe(true);
+  });
+
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
     expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);

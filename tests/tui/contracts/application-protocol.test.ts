@@ -99,6 +99,7 @@ describe("passive TUI application protocol", () => {
 				selectedId: unknown,
 				generation: 1,
 				viewportClearRevision: 0,
+				transcriptScrollbarVisible: false,
 				toolDetailsExpanded: false,
 				composerEmpty: true,
 				transitionFrozen: false,

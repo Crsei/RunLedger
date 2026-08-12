@@ -1,6 +1,10 @@
 import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
-import { createOpenTuiComponentRuntime, type OpenTuiComponentRuntime } from "./opentui/component-runtime.ts";
+import {
+  createOpenTuiComponentRuntime,
+  type OpenTuiComponentRuntime,
+  type TranscriptScrollPresentation,
+} from "./opentui/component-runtime.ts";
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock } from "./presentation.ts";
@@ -363,6 +367,7 @@ export class TUI extends Container {
   private readonly terminalBackgroundListeners: Array<(rgb: RgbColor) => void> = [];
   private terminalBackgroundRgb: RgbColor | undefined;
   private editorAppearance: EditorAppearance | undefined;
+  private transcriptScrollPresentation: TranscriptScrollPresentation | undefined;
   private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private overlay: Component | undefined;
@@ -406,6 +411,11 @@ export class TUI extends Container {
   /** 输入区外观(背景/prompt/占位符颜色);由主题层在 theme_mode 切换时重算。 */
   setEditorAppearance(appearance: EditorAppearance): void {
     this.editorAppearance = appearance;
+    this.requestRender();
+  }
+  /** 主对话内建 scrollbar 外观；滚动位置仍只由 ScrollBox 持有。 */
+  setTranscriptScrollPresentation(presentation: TranscriptScrollPresentation): void {
+    this.transcriptScrollPresentation = presentation;
     this.requestRender();
   }
   addActionListener(listener: (actions: readonly TuiAction[]) => void): () => void {
@@ -571,6 +581,7 @@ export class TUI extends Container {
         editorCursorOffset,
         editorHeight,
         editorAppearance: this.editorAppearance,
+        transcriptScrollPresentation: this.transcriptScrollPresentation,
         footer,
         overlay,
         overlayAnchor: this.overlayOptions?.anchor,

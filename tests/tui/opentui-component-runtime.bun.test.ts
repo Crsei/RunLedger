@@ -17,6 +17,310 @@ import { SlashCommandPopup } from "../../src/tui/components/slash-command-popup.
 import { builtinCommandDescriptors } from "../../src/tui/commands/registry.ts";
 
 describe("OpenTUI component projection", () => {
+  test("keeps the native transcript scrollbar hidden by default and reserves space only when enabled", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 10 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const body = Array.from({ length: 30 }, (_, index) => ({
+      id: `scrollbar-entry-${index}`,
+      kind: "text" as const,
+      content: `entry ${index} ${"x".repeat(24)}`,
+    }));
+    try {
+      runtime.update({
+        body,
+        editorText: "draft",
+        footer: ["idle"],
+        transcriptScrollPresentation: {
+          visible: false,
+          trackColor: "#112233",
+          thumbColor: "#445566",
+        },
+      } as Parameters<typeof runtime.update>[0]);
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      expect(transcript.verticalScrollBar.visible).toBe(false);
+      const transcriptId = transcript.num;
+      const editorId = setup.renderer.root.findDescendantById("runledger-editor")?.num;
+      const firstBodyId = setup.renderer.root.findDescendantById("runledger-block-scrollbar-entry-0")?.num;
+      const hiddenBodyWidth = transcript.getChildren()[0]?.width;
+
+      runtime.update({
+        body,
+        editorText: "draft",
+        footer: ["idle"],
+        transcriptScrollPresentation: {
+          visible: true,
+          trackColor: "#112233",
+          thumbColor: "#445566",
+        },
+      } as Parameters<typeof runtime.update>[0]);
+      await setup.renderOnce();
+
+      expect(transcript.verticalScrollBar.visible).toBe(true);
+      expect(transcript.verticalScrollBar.x + transcript.verticalScrollBar.width).toBe(40);
+      expect(transcript.verticalScrollBar.slider.x).toBe(39);
+      expect(transcript.getChildren()[0]?.width).toBeLessThan(hiddenBodyWidth ?? 0);
+      expect(transcript.num).toBe(transcriptId);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.num).toBe(editorId);
+      expect(setup.renderer.root.findDescendantById("runledger-block-scrollbar-entry-0")?.num).toBe(firstBodyId);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("updates the existing native scrollbar colors from a later frame", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 10 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const frame = (trackColor: string, thumbColor: string) => ({
+      body: Array.from({ length: 30 }, (_, index) => `theme entry ${index}`),
+      editorText: "",
+      footer: [],
+      transcriptScrollPresentation: { visible: true, trackColor, thumbColor },
+    });
+    try {
+      runtime.update(frame("#112233", "#445566") as Parameters<typeof runtime.update>[0]);
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      const barId = transcript.verticalScrollBar.num;
+      expect(transcript.verticalScrollBar.slider.backgroundColor.toInts()).toEqual([17, 34, 51, 255]);
+      expect(transcript.verticalScrollBar.slider.foregroundColor.toInts()).toEqual([68, 85, 102, 255]);
+
+      runtime.update(frame("#223344", "#667788") as Parameters<typeof runtime.update>[0]);
+      await setup.renderOnce();
+      expect(transcript.verticalScrollBar.num).toBe(barId);
+      expect(transcript.verticalScrollBar.slider.backgroundColor.toInts()).toEqual([34, 51, 68, 255]);
+      expect(transcript.verticalScrollBar.slider.foregroundColor.toInts()).toEqual([102, 119, 136, 255]);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("uses the native track and thumb to update the transcript scrollTop", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 80 }, (_, index) => ({
+          id: `mouse-entry-${index}`,
+          kind: "text" as const,
+          content: `mouse entry ${index}`,
+        })),
+        editorText: "draft",
+        footer: ["idle"],
+        transcriptScrollPresentation: {
+          visible: true,
+          trackColor: "#112233",
+          thumbColor: "#445566",
+        },
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      transcript.scrollTop = 0;
+      await setup.renderOnce();
+      const slider = transcript.verticalScrollBar.slider;
+      const maxScrollTop = transcript.scrollHeight - transcript.viewport.height;
+      expect(maxScrollTop).toBeGreaterThan(0);
+      expect(slider.height).toBeGreaterThan(2);
+
+      await setup.mockMouse.click(slider.x, slider.y + slider.height - 1);
+      await setup.renderOnce();
+      const trackPosition = transcript.scrollTop;
+      expect(trackPosition).toBeGreaterThan(0);
+      expect(trackPosition).toBeLessThanOrEqual(maxScrollTop);
+
+      transcript.scrollTop = 0;
+      await setup.renderOnce();
+      await setup.mockMouse.drag(slider.x, slider.y, slider.x, slider.y + slider.height - 1);
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeGreaterThan(trackPosition);
+      expect(transcript.scrollTop).toBeLessThanOrEqual(maxScrollTop);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("keeps wheel and PageUp behavior identical while the scrollbar is hidden", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const body = Array.from({ length: 60 }, (_, index) => ({
+      id: `hidden-entry-${index}`,
+      kind: "text" as const,
+      content: `hidden entry ${index}`,
+    }));
+    try {
+      runtime.update({
+        body,
+        editorText: "draft",
+        footer: ["idle"],
+        transcriptScrollPresentation: { visible: false, trackColor: "#112233", thumbColor: "#445566" },
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      const bottom = transcript.scrollTop;
+      await setup.mockMouse.scroll(10, 10, "up");
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeLessThan(bottom);
+      const afterWheel = transcript.scrollTop;
+      setup.mockInput.pressKey("\x1b[5~");
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeLessThan(afterWheel);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("recomputes native scrollbar geometry across resize without rebuilding content", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 14 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 100 }, (_, index) => ({
+          id: `resize-entry-${index}`,
+          kind: "text" as const,
+          content: `resize entry ${index} ${"wide content ".repeat(4)}`,
+        })),
+        editorText: "draft",
+        footer: ["idle"],
+        transcriptScrollPresentation: { visible: true, trackColor: "#112233", thumbColor: "#445566" },
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      const first = setup.renderer.root.findDescendantById("runledger-block-resize-entry-0");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      transcript.scrollTop = 0;
+      await setup.renderOnce();
+      const firstId = first?.num;
+      const narrowScrollSize = transcript.verticalScrollBar.scrollSize;
+      const narrowViewportSize = transcript.verticalScrollBar.viewportSize;
+
+      setup.resize(143, 18);
+      await setup.renderOnce();
+      expect(transcript.verticalScrollBar.x + transcript.verticalScrollBar.width).toBe(143);
+      expect(transcript.verticalScrollBar.viewportSize).not.toBe(narrowViewportSize);
+      expect(transcript.verticalScrollBar.scrollSize).toBeLessThan(narrowScrollSize);
+      expect(setup.renderer.root.findDescendantById("runledger-block-resize-entry-0")?.num).toBe(firstId);
+      expect(transcript.scrollTop).toBe(0);
+
+      setup.resize(40, 12);
+      await setup.renderOnce();
+      expect(transcript.verticalScrollBar.x + transcript.verticalScrollBar.width).toBe(40);
+      expect(transcript.verticalScrollBar.scrollPosition).toBe(transcript.scrollTop);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("keeps reader position and native selection separate while toggling or dragging the scrollbar", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 12 });
+    const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const body = Array.from({ length: 80 }, (_, index) => ({
+      id: `selection-entry-${index}`,
+      kind: "text" as const,
+      content: `selectable entry ${index}`,
+    }));
+    const frame = (visible: boolean) => ({
+      body,
+      editorText: "draft",
+      footer: ["idle"],
+      transcriptScrollPresentation: { visible, trackColor: "#112233", thumbColor: "#445566" },
+    });
+    try {
+      runtime.update(frame(false));
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      transcript.scrollTop = 10;
+      await setup.renderOnce();
+
+      runtime.update(frame(true));
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBe(10);
+      await setup.mockMouse.drag(
+        transcript.verticalScrollBar.slider.x,
+        transcript.verticalScrollBar.slider.y,
+        transcript.verticalScrollBar.slider.x,
+        transcript.verticalScrollBar.slider.y + transcript.verticalScrollBar.slider.height - 1,
+      );
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeGreaterThan(10);
+      expect(setup.renderer.getSelection()?.getSelectedText() ?? "").toBe("");
+      expect(copy).not.toHaveBeenCalled();
+
+      transcript.scrollTop = 0;
+      await setup.renderOnce();
+      await setup.mockMouse.drag(0, 0, 16, 0);
+      expect(setup.renderer.getSelection()?.getSelectedText()).toContain("selectable entry");
+      expect(copy).toHaveBeenCalled();
+    } finally {
+      copy.mockRestore();
+      runtime.destroy();
+    }
+  });
+
+  test("capturing overlays prevent the transcript scrollbar from consuming mouse input", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 14 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 80 }, (_, index) => `overlay entry ${index}`),
+        editorText: "draft",
+        footer: ["idle"],
+        overlay: [{ id: "modal", kind: "text", content: "capturing modal" }],
+        overlayAnchor: "center",
+        transcriptScrollPresentation: { visible: true, trackColor: "#112233", thumbColor: "#445566" },
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      transcript.scrollTop = 0;
+      await setup.renderOnce();
+      const before = transcript.scrollTop;
+
+      await setup.mockMouse.click(
+        transcript.verticalScrollBar.slider.x,
+        transcript.verticalScrollBar.slider.y + transcript.verticalScrollBar.slider.height - 1,
+      );
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBe(before);
+    } finally {
+      runtime.destroy();
+    }
+  });
   test("wraps complete canonical Timeline user/assistant/thinking content at narrow width", async () => {
     const setup = await createTestRenderer({ width: 40, height: 30 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });

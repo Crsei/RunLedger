@@ -26,6 +26,12 @@ export interface EditorAppearance {
   readonly placeholderColor: string;
 }
 
+export interface TranscriptScrollPresentation {
+  readonly visible: boolean;
+  readonly trackColor: string;
+  readonly thumbColor: string;
+}
+
 export interface OpenTuiComponentFrame {
   body: readonly (string | PresentationBlock)[];
   editorText: string;
@@ -35,6 +41,8 @@ export interface OpenTuiComponentFrame {
   editorHeight?: number;
   /** 输入区外观;缺省不铺背景 / 不染色(测试与未接线环境保持原样)。 */
   editorAppearance?: EditorAppearance;
+  /** 主对话内建 scrollbar 的纯 presentation；缺省保持 hidden。 */
+  transcriptScrollPresentation?: TranscriptScrollPresentation;
   footer: readonly string[];
   overlay?: readonly (string | PresentationBlock)[];
   /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
@@ -159,9 +167,11 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     stickyScroll: true,
     stickyStart: "bottom",
     viewportCulling: true,
-    // scrollbar 覆盖在 transcript 最右列，不占用正文布局宽度；全宽 separator
-    // 因而按真实终端列数重排，同时保留长历史的滚动位置提示。
-    verticalScrollbarOptions: { position: "absolute", right: 0 },
+    viewportOptions: { paddingRight: 0 },
+    verticalScrollbarOptions: {
+      paddingLeft: 1,
+      visible: false,
+    },
     contentOptions: { flexDirection: "column", minHeight: 0 },
   });
   const newContent = new TextRenderable(renderer, {
@@ -224,6 +234,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let requestedEditorHeight = 3;
   let lastEditorHeight = 3;
   let lastEditorAppearance: EditorAppearance | undefined;
+  let lastTranscriptScrollPresentation: TranscriptScrollPresentation | undefined;
   const copySelection = (selectedText: string | undefined): boolean => {
     if (selectedText === undefined || selectedText.length === 0) return false;
     renderer.copyToClipboardOSC52(selectedText);
@@ -318,6 +329,37 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   return {
     update: (frame) => {
       const projectionStartedAt = Date.now();
+      const requestedScrollPresentation = frame.transcriptScrollPresentation ?? {
+        visible: false,
+        trackColor: "",
+        thumbColor: "",
+      };
+      const scrollPresentation: TranscriptScrollPresentation = {
+        ...requestedScrollPresentation,
+        visible: requestedScrollPresentation.visible
+          && !(frame.overlay !== undefined && frame.overlayNonCapturing !== true),
+      };
+      if (lastTranscriptScrollPresentation === undefined
+        || lastTranscriptScrollPresentation.visible !== scrollPresentation.visible) {
+        transcript.viewportOptions = { paddingRight: scrollPresentation.visible ? 1 : 0 };
+        transcript.verticalScrollBar.visible = scrollPresentation.visible;
+      }
+      if (lastTranscriptScrollPresentation === undefined
+        || lastTranscriptScrollPresentation.trackColor !== scrollPresentation.trackColor
+        || lastTranscriptScrollPresentation.thumbColor !== scrollPresentation.thumbColor) {
+        transcript.verticalScrollbarOptions = {
+          paddingLeft: 1,
+          trackOptions: {
+            ...(scrollPresentation.trackColor.length > 0
+              ? { backgroundColor: scrollPresentation.trackColor }
+              : {}),
+            ...(scrollPresentation.thumbColor.length > 0
+              ? { foregroundColor: scrollPresentation.thumbColor }
+              : {}),
+          },
+        };
+      }
+      lastTranscriptScrollPresentation = scrollPresentation;
       const nextBodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
       const desiredBodyNodes: BodyRenderable[] = [];
       const usedBodyKeys = new Set<string>();
