@@ -81,6 +81,17 @@ describe("B2 safe tool projector", () => {
 		}
 	});
 
+	it("preserves only bounded SGR for shell output and removes active terminal controls", () => {
+		const chunk = projectShellChunk(
+			"stdout",
+			"\x1b[38;5;196mred\x1b[0m\x1b]52;c;secret\x07\x1b[2J\x1b_unknown\x1b\\",
+		);
+		expect(chunk.text.text).toBe("red");
+		expect(chunk.safeSgrText?.text).toBe("\x1b[38;5;196mred\x1b[0m");
+		expect(chunk.safeSgrText?.text).not.toContain("secret");
+		expect(chunk.safeSgrText?.text).not.toContain("[2J");
+	});
+
 	it("bounds text by UTF-8 bytes and strips ANSI", () => {
 		const bounded = boundedToolText("\x1b[31mhello\x1b[0m", 100);
 		expect(bounded.text).toBe("hello");

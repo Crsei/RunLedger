@@ -12,7 +12,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "runledger": "./bin/runledger.js"
+    "runledger": "bin/runledger.js"
   },
   "exports": {
     ".": {
@@ -51,11 +51,14 @@
   },
   "files": [
     "dist",
+    "!dist/native/runledger-syntax-highlighter.node",
     "README.md"
   ],
   "scripts": {
     "build:linux-peer-credential-helper": "tsx scripts/build-linux-peer-credential-helper.ts",
-    "build": "npm run build:linux-peer-credential-helper && tsc -p tsconfig.json && tsx scripts/generate-host-build-manifest.ts",
+    "build:syntax-highlighter": "tsx scripts/build-syntax-highlighter.ts",
+    "check:syntax-highlighter": "cargo test --locked --manifest-path native/syntax-highlighter/Cargo.toml",
+    "build": "npm run build:linux-peer-credential-helper && npm run build:syntax-highlighter && tsc -p tsconfig.json && tsx scripts/generate-host-build-manifest.ts",
     "check:current-format": "tsx scripts/check-current-format.ts",
     "check:storage-boundaries": "tsx scripts/check-storage-boundaries.ts",
     "check:runtime-boundaries": "tsx scripts/check-runtime-boundaries.ts",
@@ -63,10 +66,11 @@
     "check:execution-boundaries": "tsx scripts/check-execution-boundaries.ts",
     "check:platform-boundaries": "tsx scripts/check-platform-boundaries.ts",
     "check:session-owner-boundaries": "tsx scripts/check-session-owner-boundaries.ts",
-    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && tsc --noEmit -p tsconfig.json",
+    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
     "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
+    "benchmark:syntax-highlighter": "tsx scripts/benchmark-syntax-highlighter.ts",
     "dev": "tsx watch examples/run.ts",
     "generate-models": "node --experimental-strip-types scripts/generate-models.ts",
     "test": "vitest run && npm run test:tui-native",
@@ -100,11 +104,28 @@
     "strip-ansi": "7.1.2",
     "typebox": "1.1.38"
   },
+  "optionalDependencies": {
+    "@runledger/syntax-highlighter-linux-x64-gnu": "0.0.1",
+    "@runledger/syntax-highlighter-linux-arm64-gnu": "0.0.1",
+    "@runledger/syntax-highlighter-linux-x64-musl": "0.0.1",
+    "@runledger/syntax-highlighter-linux-arm64-musl": "0.0.1",
+    "@runledger/syntax-highlighter-darwin-x64": "0.0.1",
+    "@runledger/syntax-highlighter-darwin-arm64": "0.0.1",
+    "@runledger/syntax-highlighter-win32-x64-msvc": "0.0.1",
+    "@runledger/syntax-highlighter-win32-arm64-msvc": "0.0.1"
+  },
   "devDependencies": {
     "@types/node": "^22.10.0",
     "@types/proper-lockfile": "4.1.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "vitest": "^2.1.8"
-  }
+  },
+  "directories": {
+    "doc": "docs",
+    "example": "examples",
+    "test": "tests"
+  },
+  "keywords": [],
+  "author": ""
 }

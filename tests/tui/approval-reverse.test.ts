@@ -65,4 +65,25 @@ describe("TUI approval reverse request projection", () => {
 			expect.objectContaining({ decision: { decision: "allow-with-network-rule", host: "api.example", protocol: "https", port: 8443 } }),
 		]));
 	});
+
+	it("projects an exact single shell request as a command preview without inventing one for other approvals", async () => {
+		const module = await import("../../src/tui/approval.ts") as typeof import("../../src/tui/approval.ts") & {
+			approvalShellCommand?: (view: ReturnType<typeof parseApprovalReverseRequest>) => string | undefined;
+		};
+		const shell = parseApprovalReverseRequest({
+			requestType: "permission",
+			toolName: "bash",
+			summary: "run tests",
+			requests: [{ kind: "shell", command: "bash -lc 'npm test'", cwd: "/workspace", analysis: "known" }],
+		});
+		const network = parseApprovalReverseRequest({
+			requestType: "permission",
+			toolName: "WebFetch",
+			summary: "fetch API",
+			requests: [{ kind: "network", operation: "fetch", host: "api.example", protocol: "https" }],
+		});
+		expect(module.approvalShellCommand?.(shell)).toBe("bash -lc 'npm test'");
+		expect(module.approvalShellCommand?.(network)).toBeUndefined();
+	});
+
 });

@@ -18,6 +18,9 @@ export function renderProcessOverlay(state: ProcessOverlayState, width: number, 
 		if (state.processes.length === 0) lines.push("No managed processes");
 	} else if (selected) {
 		lines.push(`${selected.executionId}  ${selected.state}`);
+		lines.push(selected.commandDisplay === undefined || selected.commandDisplay.authority === "unavailable"
+			? "command unavailable"
+			: `${selected.commandDisplay.label} · ${selected.commandDisplay.authority}`);
 		lines.push(`output cursor ${state.cursor}${state.truncated ? " · truncated" : ""}`);
 		if (state.mode === "terminal") lines.push(state.driver ? "stdin/resize/stop enabled" : "observer · read only");
 		for (const line of state.output.split("\n")) lines.push(line);

@@ -71,6 +71,13 @@ export function approvalChoices(view: ApprovalReverseRequestView | undefined): r
 	return choices;
 }
 
+/** 只把 canonical permission DTO 中唯一的 shell request 当作命令展示 authority。 */
+export function approvalShellCommand(view: ApprovalReverseRequestView | undefined): string | undefined {
+	return view?.requests?.length === 1 && view.requests[0]?.kind === "shell"
+		? view.requests[0].command
+		: undefined;
+}
+
 function isBoundedString(value: unknown, maxLength: number): value is string {
 	return typeof value === "string" && value.length > 0 && value.length <= maxLength;
 }

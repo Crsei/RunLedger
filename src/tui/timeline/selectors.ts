@@ -43,8 +43,25 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 			return blocks;
 		}
 		case "tool": {
+			const presentation = row.presentation.state === "known" ? row.presentation.value : undefined;
+			if (presentation?.renderer === "shell" && presentation.input?.kind === "shell") {
+				const result = presentation.result?.kind === "shell" ? presentation.result : undefined;
+				return [{
+					id: baseId,
+					kind: "exec",
+					command: presentation.input.commandLabel.text,
+					status: row.status,
+					output: result?.chunks.map((chunk) => ({ channel: chunk.channel, text: chunk.safeSgrText?.text ?? chunk.text.text })) ?? [],
+					...(result?.exitCode.state === "known" ? { exitCode: result.exitCode.value } : {}),
+					...(result?.durationMs.state === "known" ? { durationMs: result.durationMs.value } : {}),
+					...(result?.background === true || presentation.input.background === true ? { background: true } : {}),
+				}];
+			}
 			const lines = toolLines(row);
-			return [{ id: baseId, kind: "text", content: lines.join("\n") }];
+			const diffBlocks = presentation?.body.flatMap((block, index): PresentationBlock[] => block.kind === "diff"
+				? [{ id: `${baseId}/diff-${index}`, kind: "diff", document: block.document }]
+				: []) ?? [];
+			return [{ id: baseId, kind: "text", content: lines.join("\n") }, ...diffBlocks];
 		}
 		case "notice": {
 			const prefix = row.severity === "error" ? "error: " : row.severity === "warning" ? "warning: " : "note: ";
@@ -83,7 +100,6 @@ function toolLines(row: Extract<TimelineRow, { readonly kind: "tool" }>): string
 		if (chips.length > 0) lines.push(`  ${chips.join("  ")}`);
 		for (const block of presentation.body) {
 			if (block.kind === "text" && block.content.text.length > 0) lines.push(`  ${block.content.text}`);
-			if (block.kind === "diff") lines.push(...diffLines(block.document));
 		}
 		if (presentation.result?.kind === "shell") {
 			for (const channel of ["stdout", "stderr"] as const) {
@@ -121,18 +137,4 @@ function inputLine(input: import("../presentation/tools/types.ts").SafeToolInput
 
 function knownCount(count: import("../presentation/tools/types.ts").SafeCount): string {
 	return count.state === "known" ? String(count.value) : "?";
-}
-
-function diffLines(document: import("../presentation/tools/types.ts").SafeDiffDocument): string[] {
-	const added = knownCount(document.addedLines);
-	const removed = knownCount(document.removedLines);
-	const lines = [`  diff ${document.path.text} (+${added} -${removed})`];
-	for (const hunk of document.hunks) {
-		for (const line of hunk.lines) {
-			const prefix = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
-			lines.push(`${prefix} ${line.text.text}`);
-		}
-	}
-	if (document.diagnostic !== undefined) lines.push(`  diff ${document.diagnostic}`);
-	return lines;
 }

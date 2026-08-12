@@ -198,8 +198,20 @@ function processItems(value: unknown): readonly ProcessOverlayItem[] {
 			canWrite: capabilities.canWrite,
 			canResize: capabilities.canResize,
 			canStop: capabilities.canStop,
+			commandDisplay: commandDisplay(entry.commandDisplay),
 		}];
 	});
+}
+
+function commandDisplay(value: unknown): ProcessOverlayItem["commandDisplay"] {
+	if (!isRecord(value) || typeof value.authority !== "string") return { authority: "unavailable" };
+	if (value.authority === "unavailable") return { authority: "unavailable" };
+	if (
+		(value.authority !== "authorized" && value.authority !== "spawned") ||
+		typeof value.label !== "string" || value.label.length === 0 || Buffer.byteLength(value.label, "utf8") > 256 ||
+		/[\u0000-\u001f\u007f]/u.test(value.label) || !isRuntimeDigest(value.receiptDigest)
+	) return { authority: "unavailable" };
+	return { authority: value.authority, label: value.label, receiptDigest: value.receiptDigest };
 }
 
 function isCursor(value: unknown): value is OutputCursor {

@@ -72,7 +72,7 @@ import { ProcessOverlayComponent } from "./process/overlay-component.ts";
 import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
 import { DeltaCoalescer, type AppendTextDelta } from "./opentui/delta-coalescer.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
-import { approvalChoices, approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
+import { approvalChoices, approvalDecisionBody, approvalShellCommand, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
 import type { TuiBootstrapSnapshot } from "./presentation/types.ts";
 import type { TuiState } from "./application/state.ts";
 import { createInitialTuiState } from "./application/initial-state.ts";
@@ -92,6 +92,11 @@ import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
 import type { SessionCatalogResult, SessionTransitionResult } from "./sessions/types.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "./preferences/types.ts";
+import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/theme-controller.ts";
+
+export interface SyntaxThemeSettingsPort {
+  save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
+}
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -102,12 +107,20 @@ export interface InteractiveModeOptions {
   terminal?: Terminal;
   /** 主题名，默认 dark；运行时由 OpenTUI theme_mode 更新。 */
   themeName?: "dark" | "light";
+  syntaxThemeName?: string;
+  syntaxThemeController?: SyntaxThemeController;
+  syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
+  syntaxThemeWarnings?: readonly string[];
   /** R9:由 Host facade 提供的 safe process list/output/mutation adapter。 */
   processOverlayController?: ProcessOverlayController;
   /** B7:process output 的真实 Host client（composition root 注入；缺失时 bridge 只读）。 */
   processOverlayClient?: ProcessOverlayHostClient;
   /** P6:workspace/path 能力标签（真实 runner 证据矩阵），Footer 右侧显示；缺省不显示。 */
   workspaceCapability?: string;
+  /** Host/composition 生成的 home-relative 或 basename label。 */
+  workspaceDisplayLabel?: string;
+  projectRootDisplayLabel?: string;
+  gitBranchLabel?: string;
   /** 可选的分层渲染 telemetry sink；不参与 UI 调度决策。 */
   performanceObserver?: TuiPerformanceObserver;
   /** B1:显式 bootstrap snapshot；缺省由 controller/agent 派生。 */
@@ -199,6 +212,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   // B5:model/thinking 状态由 workflow 唯一持有（controller 是 authority）
   private readonly workspaceCapability?: string;
+  private readonly workspaceDisplayLabel?: string;
+  private readonly projectRootDisplayLabel?: string;
+  private readonly gitBranchLabel?: string;
   private authAdapter: InteractiveSessionAdapter;
   private lastIdleCtrlC = 0;
   private quitting = false;
@@ -215,6 +231,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
   private readonly preferencesPort?: TuiPreferencesPort;
+  private readonly syntaxThemeController: SyntaxThemeController;
+  private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
 
   // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
@@ -237,8 +255,17 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.terminal = opts.terminal ?? new ProcessTerminal();
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
     this.workspaceCapability = opts.workspaceCapability;
+    this.workspaceDisplayLabel = opts.workspaceDisplayLabel;
+    this.projectRootDisplayLabel = opts.projectRootDisplayLabel;
+    this.gitBranchLabel = opts.gitBranchLabel;
     this.initialBootstrap = opts.initialBootstrap;
     this.preferencesPort = opts.preferencesPort;
+    this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
+      availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
+      configuredName: opts.syntaxThemeName,
+      terminalMode: "unknown",
+    });
+    this.syntaxThemeSettingsPort = opts.syntaxThemeSettingsPort;
     // B4:ports 聚合 controller + Session domain；runner 只执行 effect 并回送 TuiResult
     this.authAdapter = createInteractiveSessionAdapter(this.controller);
     const sessionPort = createSessionDomainPortFromController(this.controller);
@@ -275,7 +302,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.resolveExit = (intent) => resolveExit?.(intent);
 
     // TUI 使用 showHardwareCursor=false,Editor 自身以 CURSOR_MARKER 通知光标位置
-    this.ui = new TUI(this.terminal, false, { performanceObserver: opts.performanceObserver });
+    this.ui = new TUI(this.terminal, false, {
+      performanceObserver: opts.performanceObserver,
+      syntaxThemeName: opts.syntaxThemeName,
+      syntaxThemeController: this.syntaxThemeController,
+    });
     this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => this.flushStreamingDeltas());
     this.unsubscribeBoundaryActions = this.ui.addActionListener((actions) => {
@@ -325,6 +356,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
       });
     }
     this.replayInitialHistory();
+	for (const warning of opts.syntaxThemeWarnings ?? []) this.dispatchTimeline([{
+		type: "notice",
+		generation: 0,
+		correlationId: `syntax-theme-warning-${this.store.getState().timeline.committedRows.length}`,
+		severity: "warning",
+		message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
+	}]);
 
     void MAX_CONSECUTIVE_INIT_FAILURES;
     void INIT_FAILURE_BACKOFF_MS;
@@ -651,6 +689,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         theme: this.theme,
         selectListTheme: makeSelectListTheme(this.theme),
         title: `Approval required · ${view.toolName}: ${view.summary}`,
+		commandPreview: approvalShellCommand(view),
         items: choices.map((choice) => ({ value: choice.id, label: choice.label, description: choice.description })),
         onSelect: (item) => choose(choices.find((choice) => choice.id === item.value)?.decision ?? { decision: "cancel" }),
         onCancel: () => choose({ decision: "cancel" }),
@@ -1345,6 +1384,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.workspaceCapability;
   }
 
+  getWorkspaceDisplayLabel(): string | undefined {
+    return this.workspaceDisplayLabel;
+  }
+
+  getProjectRootDisplayLabel(): string | undefined {
+    return this.projectRootDisplayLabel;
+  }
+
+  getGitBranchLabel(): string | undefined {
+    return this.gitBranchLabel;
+  }
+
   /** Editor.onSubmit 回调;把文本作为 user prompt 投递给 Agent,同时落 UI。 */
   private handleSubmit(text: string): void {
     if (text.length === 0) return;
@@ -1458,6 +1509,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
       case "config.thinking":
         this.openThinkingSelector();
         return;
+      case "config.theme":
+        this.openSyntaxThemePicker();
+        return;
       case "recovery.open":
         void this.runRecoveryWorkflow(arg);
         return;
@@ -1533,6 +1587,55 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (!result.ok) {
       this.showNotice("Scrollbar changed for this run but could not be saved.", "error");
     }
+  }
+
+  openSyntaxThemePicker(): void {
+    this.hideSlashPopup();
+    this.syntaxThemeController.cancelPreview();
+    const opening = this.syntaxThemeController.snapshot();
+    const modal = new ListSelectionModal({
+      title: "Select Syntax Theme",
+      subtitle: "Preview with arrows; Enter saves, Esc restores.",
+      items: this.syntaxThemeController.themeEntries().map((entry) => ({
+		value: entry.name,
+		name: entry.name,
+		description: entry.available ? entry.kind : "load error",
+		isCurrent: entry.name === opening.activeName,
+		disabled: !entry.available,
+	  })),
+      initialSelectedValue: opening.activeName,
+      onSelectionChange: (item) => {
+        this.syntaxThemeController.preview(item.value);
+        this.ui.requestRender();
+      },
+      selectListTheme: this.selectListTheme(),
+      onSelect: (item) => { void this.persistSyntaxTheme(item.value); },
+      onCancel: () => {
+        this.syntaxThemeController.cancelPreview();
+        this.closeOverlay();
+        this.ui.requestRender();
+      },
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
+  }
+
+  private async persistSyntaxTheme(name: string): Promise<void> {
+    if (this.syntaxThemeController.snapshot().previewName !== name) {
+      const preview = this.syntaxThemeController.preview(name);
+      if (!preview.ok) return;
+    }
+    const saved = this.syntaxThemeSettingsPort === undefined
+      ? { ok: false as const, code: "theme_settings_unavailable" }
+      : await this.syntaxThemeSettingsPort.save(name);
+    if (!saved.ok) {
+      this.syntaxThemeController.cancelPreview();
+      this.closeOverlay();
+      this.showNotice("Syntax theme could not be saved; the previous theme was restored.", "error");
+      return;
+    }
+    this.syntaxThemeController.commitPreview();
+    this.closeOverlay();
+    this.ui.requestRender();
   }
 
   // ─── P3:slash 输入期补全弹窗(对照 codex sync_command_popup / slash_input) ───

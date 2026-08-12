@@ -10,13 +10,40 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { globSync } from "node:fs";
 
 const root = process.cwd();
 const source = readFileSync(join(root, "src/tui/interactive-mode.ts"), "utf8");
 const lines = source.split("\n");
 
 const failures: string[] = [];
+
+const COLOR_PROJECTION_ALLOWLIST = new Set([
+  "src/tui/highlight/contracts.ts",
+  "src/tui/highlight/status-style.ts",
+  "src/tui/opentui/diff-renderable.ts",
+  "src/tui/opentui/ansi-styled-text.ts",
+  "src/tui/opentui/mermaid-block-renderable.ts",
+  "src/tui/theme/editor-background.ts",
+]);
+
+/** 普通 UI 只用 ANSI semantic palette；RGB foreground 仅限精确 projection boundary。 */
+export function findTuiColorBoundaryFailures(relativePath: string, contents: string): string[] {
+  if (COLOR_PROJECTION_ALLOWLIST.has(relativePath)) return [];
+  const code = contents.replace(/\/\*[\s\S]*?\*\//gu, "").replace(/\/\/[^\n]*/gu, "");
+  const found: string[] = [];
+  if (/RGBA\.fromInts\s*\(/u.test(code)) found.push(`${relativePath}: custom RGB foreground outside projection allowlist`);
+  if (/\b(?:black|white|blue|yellow)\s*\(/u.test(code) || /RGBA\.fromIndex\s*\(\s*(?:0|3|4|7)\s*\)/u.test(code)) {
+    found.push(`${relativePath}: forbidden ANSI foreground (black/white/blue/yellow)`);
+  }
+  return found;
+}
+
+for (const absolutePath of globSync(join(root, "src/tui/**/*.ts"))) {
+  const relativePath = relative(root, absolutePath).replaceAll("\\", "/");
+  failures.push(...findTuiColorBoundaryFailures(relativePath, readFileSync(absolutePath, "utf8")));
+}
 
 // 0) S7 已退役路径不得恢复；信息展示只能走 canonical Timeline/projector。
 for (const relativePath of [

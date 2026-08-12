@@ -21,6 +21,7 @@ import {
 	type ProcessExecutionMode,
 	type ProcessState,
 	type ProcessTerminalState,
+	type AuthorizedCommandDisplayReceipt,
 } from "./types.ts";
 import type { OutputCursor } from "./output.ts";
 
@@ -65,6 +66,15 @@ const OutputCursorSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const AuthorizedCommandDisplayReceiptSchema = Type.Object({
+	kind: Type.Literal("authorized_command_display"),
+	label: Type.String({ minLength: 1, maxLength: 256 }),
+	truncated: Type.Boolean(),
+	commandDigest: RuntimeDigestSchema,
+	requestDigest: RuntimeDigestSchema,
+	constraintSnapshotDigest: RuntimeDigestSchema,
+	receiptDigest: RuntimeDigestSchema,
+}, { additionalProperties: false });
 
 export interface ProcessEvent {
 	readonly eventId: EventId;
@@ -85,6 +95,7 @@ export interface ProcessEvent {
 	readonly backend?: ProcessBackendKind;
 	readonly executionMode?: ProcessExecutionMode;
 	readonly constraintSnapshotDigest?: RuntimeDigest;
+	readonly commandDisplayReceipt?: AuthorizedCommandDisplayReceipt;
 	readonly previousState: ProcessState | null;
 	readonly nextState: ProcessState;
 	readonly previousEventHash: RuntimeDigest | null;
@@ -121,6 +132,7 @@ export const ProcessEventSchema = Type.Object(
 		backend: Type.Optional(Type.Union([Type.Literal("pipe"), Type.Literal("pty")])),
 		executionMode: Type.Optional(Type.Union([Type.Literal("foreground"), Type.Literal("background")])),
 		constraintSnapshotDigest: Type.Optional(RuntimeDigestSchema),
+		commandDisplayReceipt: Type.Optional(AuthorizedCommandDisplayReceiptSchema),
 		previousState: Type.Union([ProcessStateSchema, Type.Null()]),
 		nextState: ProcessStateSchema,
 		previousEventHash: Type.Union([RuntimeDigestSchema, Type.Null()]),
@@ -152,6 +164,7 @@ export interface CreateProcessEventInput {
 	readonly backend?: ProcessBackendKind;
 	readonly executionMode?: ProcessExecutionMode;
 	readonly constraintSnapshotDigest?: RuntimeDigest;
+	readonly commandDisplayReceipt?: AuthorizedCommandDisplayReceipt;
 	readonly outputCursor?: OutputCursor;
 	readonly outputSize?: number;
 	readonly spawnReceiptDigest?: RuntimeDigest;
@@ -184,6 +197,7 @@ export function createProcessEvent(input: CreateProcessEventInput): ProcessEvent
 		...(input.backend === undefined ? {} : { backend: input.backend }),
 		...(input.executionMode === undefined ? {} : { executionMode: input.executionMode }),
 		...(input.constraintSnapshotDigest === undefined ? {} : { constraintSnapshotDigest: input.constraintSnapshotDigest }),
+		...(input.commandDisplayReceipt === undefined ? {} : { commandDisplayReceipt: input.commandDisplayReceipt }),
 		previousState: input.previousState,
 		nextState: input.nextState,
 		previousEventHash: input.previousEventHash,

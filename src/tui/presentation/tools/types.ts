@@ -58,6 +58,8 @@ export interface SafeMediaView {
 export interface SafeShellChunk {
 	readonly channel: "stdout" | "stderr";
 	readonly text: SafeBoundedText;
+	/** 仅含安全 SGR 的同正文投影；缺失时 renderer 使用 plain text。 */
+	readonly safeSgrText?: SafeBoundedText;
 }
 
 export type SafeToolResultMetadata =

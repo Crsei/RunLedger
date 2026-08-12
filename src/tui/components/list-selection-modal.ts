@@ -26,6 +26,7 @@ export interface ListSelectionItem {
   readonly isCurrent?: boolean;
   /** 默认项,行尾追加 " (default)"(对照 codex SelectionItem.is_default)。 */
   readonly isDefault?: boolean;
+  readonly disabled?: boolean;
 }
 
 export interface ListSelectionModalProps {
@@ -33,6 +34,8 @@ export interface ListSelectionModalProps {
   readonly subtitle?: string;
   readonly items: readonly ListSelectionItem[];
   readonly maxVisible?: number;
+  readonly initialSelectedValue?: string;
+  readonly onSelectionChange?: (item: ListSelectionItem) => void;
   /** 底部提示行,默认 "Press Enter to confirm or Esc to go back"(对照 codex standard_popup_hint_line)。 */
   readonly footerHint?: string;
   readonly selectListTheme: SelectListTheme;
@@ -48,6 +51,10 @@ export class ListSelectionModal implements Component {
 
   constructor(props: ListSelectionModalProps) {
     this.props = props;
+    const selected = props.initialSelectedValue === undefined
+      ? -1
+      : props.items.findIndex((item) => item.value === props.initialSelectedValue);
+    this.selectedIndex = selected < 0 ? 0 : selected;
   }
 
   invalidate(): void {
@@ -57,33 +64,50 @@ export class ListSelectionModal implements Component {
   handleInput(data: string): void {
     const items = this.props.items;
     if (matchesKey(data, "up")) {
-      this.selectedIndex = items.length === 0
-        ? 0
-        : (this.selectedIndex - 1 + items.length) % items.length;
+	  this.selectedIndex = this.nextEnabledIndex(-1);
+      this.notifySelectionChange();
       return;
     }
     if (matchesKey(data, "down")) {
-      this.selectedIndex = items.length === 0 ? 0 : (this.selectedIndex + 1) % items.length;
+	  this.selectedIndex = this.nextEnabledIndex(1);
+      this.notifySelectionChange();
       return;
     }
     if (matchesKey(data, "pageUp")) {
       const maxVisible = this.props.maxVisible ?? 8;
       this.selectedIndex = Math.max(0, this.selectedIndex - maxVisible);
+      this.notifySelectionChange();
       return;
     }
     if (matchesKey(data, "pageDown")) {
       const maxVisible = this.props.maxVisible ?? 8;
       this.selectedIndex = Math.min(Math.max(0, items.length - 1), this.selectedIndex + maxVisible);
+      this.notifySelectionChange();
       return;
     }
     if (matchesKey(data, "enter")) {
       const selected = items[this.selectedIndex];
-      if (selected) this.props.onSelect(selected);
+	  if (selected && !selected.disabled) this.props.onSelect(selected);
       return;
     }
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       this.props.onCancel();
     }
+  }
+
+  private notifySelectionChange(): void {
+    const selected = this.props.items[this.selectedIndex];
+    if (selected !== undefined) this.props.onSelectionChange?.(selected);
+  }
+
+  private nextEnabledIndex(direction: -1 | 1): number {
+	const items = this.props.items;
+	if (items.length === 0) return 0;
+	for (let offset = 1; offset <= items.length; offset += 1) {
+	  const index = (this.selectedIndex + direction * offset + items.length) % items.length;
+	  if (items[index]?.disabled !== true) return index;
+	}
+	return this.selectedIndex;
   }
 
   render(width: number): string[] {

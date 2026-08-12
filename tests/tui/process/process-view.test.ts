@@ -15,6 +15,7 @@ function state(): ProcessOverlayState {
 			canWrite: true,
 			canResize: true,
 			canStop: true,
+			commandDisplay: { authority: "unavailable" },
 		}],
 		driver: true,
 	});

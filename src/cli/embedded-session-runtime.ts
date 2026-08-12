@@ -70,6 +70,8 @@ export interface EmbeddedSessionRuntimeResult {
 	readonly server: SessionRuntimeServer;
 	readonly owner: SessionOwner;
 	readonly processRegistry: SessionProcessRegistry;
+	/** 仅本进程完成 workspace revalidation 时可见；remote attach 保持 unavailable。 */
+	readonly effectiveCwd: string | undefined;
 }
 
 // ── session-scoped process capacity(§7.4)─────────────────────────────────
@@ -194,6 +196,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			server,
 			owner: claimOwner,
 			processRegistry,
+			effectiveCwd: undefined,
 		};
 	}
 	// claimed:装配本地 SessionRuntime。
@@ -269,6 +272,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		server,
 		owner: claimOwner,
 		processRegistry,
+		effectiveCwd: workspace?.effectiveCwd ?? options.domain?.cwd,
 	};
 }
 

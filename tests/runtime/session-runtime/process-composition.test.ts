@@ -200,6 +200,58 @@ describe("S4 Session managed process composition", () => {
 		expect(outputText).toContain("session-managed-output");
 	});
 
+	it("replays only the Security-authorized command display receipt after cold restart", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-command-display"),
+			runtimeId: createRuntimeId("runtime", "process-command-display"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-command-display");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-command-display"),
+			securitySources: [securitySource()],
+		});
+		const store = ownedStore(layout, fence, workspaceId);
+		const first = sessionDomain.createSessionProcessComposition({ layout, store, cwd: root, fence, workspaceId, security: security.managedProcess });
+		const started = await first.mutate("session.process.start", {
+			command: "API_TOKEN=supersecret printf 'display-authority\\n'",
+			cwd: root,
+			timeoutMs: 5_000,
+			backend: "pipe",
+			executionMode: "background",
+		}, { correlationId: "correlation_command_display", effectId: "effect_command_display", expectedRevision: 0 });
+		expect(started).toMatchObject({
+			ok: true,
+			value: {
+				commandDisplay: {
+					authority: "spawned",
+					label: "API_TOKEN=[redacted] printf 'display-authority\\n'",
+					receiptDigest: { algorithm: "sha256", digest: expect.stringMatching(/^[a-f0-9]{64}$/u) },
+				},
+			},
+		});
+		expect(JSON.stringify(started)).not.toContain("supersecret");
+		await first.shutdown("paused");
+
+		const restarted = sessionDomain.createSessionProcessComposition({ layout, store, cwd: root, fence, workspaceId, security: security.managedProcess });
+		const listed = await restarted.query("session.process.list", {}, {
+			correlationId: "correlation_command_display_list",
+			effectId: "effect_command_display_list",
+		});
+		expect(listed).toMatchObject({
+			ok: true,
+			value: { items: [expect.objectContaining({ commandDisplay: expect.objectContaining({ authority: "spawned", label: "API_TOKEN=[redacted] printf 'display-authority\\n'" }) })] },
+		});
+		expect(JSON.stringify(listed)).not.toContain("supersecret");
+		await restarted.shutdown("paused");
+	});
+
 	it.skipIf(IS_WINDOWS)("runs a real PTY with resize, stdin, output cursor, and terminal completion", async () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		await mkdir(layout.home, { recursive: true });

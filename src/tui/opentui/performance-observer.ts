@@ -1,3 +1,5 @@
+import type { HighlightFallbackReason } from "../highlight/contracts.ts";
+
 export interface QueuedDeltaObservation {
   readonly events: number;
   readonly bytes: number;
@@ -41,6 +43,27 @@ export interface MermaidCacheObservation {
   readonly oversized: number;
 }
 
+export interface SyntaxHighlightObservation {
+  readonly ok: boolean;
+  readonly cacheHit: boolean;
+  readonly fallbackReason?: HighlightFallbackReason;
+  readonly durationMs: number;
+  readonly queueWaitMs: number;
+  readonly nativeDurationMs: number;
+  readonly adapterDurationMs: number;
+  readonly inputBytes: number;
+  readonly inputLines: number;
+  readonly activeJobs: number;
+  readonly queuedJobs: number;
+  readonly queuedBytes: number;
+  readonly cacheEntries: number;
+  readonly cacheBytes: number;
+  readonly cacheSpans: number;
+  readonly cacheEvictions: number;
+  readonly themeRevision: number;
+  readonly engineBuildId: string;
+}
+
 export interface TuiPerformanceSnapshot {
   readonly queuedEvents: number;
   readonly queuedBytes: number;
@@ -70,6 +93,27 @@ export interface TuiPerformanceSnapshot {
   readonly mermaidCacheEvictions: number;
   readonly mermaidCacheOversized: number;
   readonly mermaidFallbackCount: number;
+  readonly highlightRequests: number;
+  readonly highlightOk: number;
+  readonly highlightFallbacks: number;
+  readonly highlightCacheHits: number;
+  readonly highlightCacheMisses: number;
+  readonly highlightCacheEvictions: number;
+  readonly highlightDurationMs: number;
+  readonly highlightQueueWaitMs: number;
+  readonly highlightNativeDurationMs: number;
+  readonly highlightAdapterDurationMs: number;
+  readonly highlightFallbackReasons: Readonly<Record<HighlightFallbackReason, number>>;
+  readonly highlightInputBytes: number;
+  readonly highlightInputLines: number;
+  readonly highlightActiveJobs: number;
+  readonly highlightQueuedJobs: number;
+  readonly highlightQueuedBytes: number;
+  readonly highlightCacheEntries: number;
+  readonly highlightCacheBytes: number;
+  readonly highlightCacheSpans: number;
+  readonly highlightThemeRevision: number;
+  readonly highlightEngineBuildId: string;
 }
 
 /**
@@ -154,6 +198,33 @@ export class TuiPerformanceObserver {
     };
   }
 
+  recordSyntaxHighlight(observation: SyntaxHighlightObservation): void {
+    this.counters = {
+      ...this.counters,
+      highlightRequests: this.counters.highlightRequests + 1,
+      highlightOk: this.counters.highlightOk + (observation.ok ? 1 : 0),
+      highlightFallbacks: this.counters.highlightFallbacks + (observation.ok ? 0 : 1),
+      highlightCacheHits: this.counters.highlightCacheHits + (observation.cacheHit ? 1 : 0),
+      highlightCacheMisses: this.counters.highlightCacheMisses + (observation.cacheHit ? 0 : 1),
+      highlightCacheEvictions: Math.max(this.counters.highlightCacheEvictions, observation.cacheEvictions),
+      highlightDurationMs: this.counters.highlightDurationMs + Math.max(0, observation.durationMs),
+      highlightQueueWaitMs: this.counters.highlightQueueWaitMs + Math.max(0, observation.queueWaitMs),
+      highlightNativeDurationMs: this.counters.highlightNativeDurationMs + Math.max(0, observation.nativeDurationMs),
+      highlightAdapterDurationMs: this.counters.highlightAdapterDurationMs + Math.max(0, observation.adapterDurationMs),
+      highlightFallbackReasons: incrementFallbackReason(this.counters.highlightFallbackReasons, observation.fallbackReason),
+      highlightInputBytes: this.counters.highlightInputBytes + Math.max(0, observation.inputBytes),
+      highlightInputLines: this.counters.highlightInputLines + Math.max(0, observation.inputLines),
+      highlightActiveJobs: Math.max(0, observation.activeJobs),
+      highlightQueuedJobs: Math.max(0, observation.queuedJobs),
+      highlightQueuedBytes: Math.max(0, observation.queuedBytes),
+      highlightCacheEntries: Math.max(0, observation.cacheEntries),
+      highlightCacheBytes: Math.max(0, observation.cacheBytes),
+      highlightCacheSpans: Math.max(0, observation.cacheSpans),
+      highlightThemeRevision: Math.max(0, observation.themeRevision),
+      highlightEngineBuildId: observation.engineBuildId,
+    };
+  }
+
   recordGenerationDiscard(): void {
     this.counters = {
       ...this.counters,
@@ -162,7 +233,7 @@ export class TuiPerformanceObserver {
   }
 
   snapshot(): TuiPerformanceSnapshot {
-    return { ...this.counters };
+    return { ...this.counters, highlightFallbackReasons: { ...this.counters.highlightFallbackReasons } };
   }
 
   reset(): void {
@@ -200,5 +271,48 @@ function emptySnapshot(): TuiPerformanceSnapshot {
     mermaidCacheEvictions: 0,
     mermaidCacheOversized: 0,
     mermaidFallbackCount: 0,
+    highlightRequests: 0,
+    highlightOk: 0,
+    highlightFallbacks: 0,
+    highlightCacheHits: 0,
+    highlightCacheMisses: 0,
+    highlightCacheEvictions: 0,
+    highlightDurationMs: 0,
+    highlightQueueWaitMs: 0,
+    highlightNativeDurationMs: 0,
+    highlightAdapterDurationMs: 0,
+    highlightFallbackReasons: emptyHighlightFallbackReasons(),
+    highlightInputBytes: 0,
+    highlightInputLines: 0,
+    highlightActiveJobs: 0,
+    highlightQueuedJobs: 0,
+    highlightQueuedBytes: 0,
+    highlightCacheEntries: 0,
+    highlightCacheBytes: 0,
+    highlightCacheSpans: 0,
+    highlightThemeRevision: 0,
+    highlightEngineBuildId: "native-unavailable",
   };
+}
+
+function emptyHighlightFallbackReasons(): Record<HighlightFallbackReason, number> {
+  return {
+    empty: 0,
+    unknown_language: 0,
+    oversize_bytes: 0,
+    oversize_lines: 0,
+    native_unavailable: 0,
+    theme_invalid: 0,
+    highlight_error: 0,
+    timeout: 0,
+    queue_pressure: 0,
+    stale_generation: 0,
+  };
+}
+
+function incrementFallbackReason(
+  current: Readonly<Record<HighlightFallbackReason, number>>,
+  reason: HighlightFallbackReason | undefined,
+): Readonly<Record<HighlightFallbackReason, number>> {
+  return reason === undefined ? current : { ...current, [reason]: current[reason] + 1 };
 }

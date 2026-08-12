@@ -60,6 +60,77 @@ describe("B2 timeline selectors", () => {
 		expect(blocks[1]!.id).toBe("timeline-tool:call-1");
 	});
 
+	it("preserves shell command/output/status as a typed exec block", () => {
+		const command = { text: "bash -lc 'echo hello'", truncated: false, byteLength: 21 };
+		const output = { text: "hello\n", truncated: false, byteLength: 6 };
+		const blocks = rowToBlocks(row({
+			kind: "tool",
+			id: "tool:shell",
+			toolCallId: "shell",
+			toolName: { text: "bash", truncated: false, byteLength: 4 },
+			status: "succeeded",
+			presentation: {
+				state: "known",
+				value: {
+					renderer: "shell",
+					title: { text: "bash", truncated: false, byteLength: 4 },
+					input: { kind: "shell", commandLabel: command },
+					chips: [],
+					body: [],
+					result: {
+						kind: "shell",
+						chunks: [{ channel: "stdout", text: output }],
+						truncated: false,
+						exitCode: { state: "known", value: 0 },
+						durationMs: { state: "known", value: 42 },
+						background: false,
+					},
+					timestamps: { startedAt: "2026-08-06T00:00:00.000Z" },
+				},
+			},
+		}));
+		expect(blocks).toHaveLength(1);
+		expect(blocks[0]).toMatchObject({
+			kind: "exec",
+			command: "bash -lc 'echo hello'",
+			status: "succeeded",
+			exitCode: 0,
+			durationMs: 42,
+			output: [{ channel: "stdout", text: "hello\n" }],
+		});
+	});
+
+	it("preserves safe edit diffs as a structured presentation block", () => {
+		const document = {
+			kind: "document" as const,
+			path: { text: "src/a.ts", truncated: false, byteLength: 8 },
+			hunks: [{ oldStart: 1, newStart: 1, lines: [
+				{ kind: "delete" as const, oldLine: 1, text: { text: "before", truncated: false, byteLength: 6 } },
+				{ kind: "add" as const, newLine: 1, text: { text: "after", truncated: false, byteLength: 5 } },
+			] }],
+			addedLines: { state: "known" as const, value: 1 },
+			removedLines: { state: "known" as const, value: 1 },
+			truncated: false,
+		};
+		const blocks = rowToBlocks(row({
+			kind: "tool",
+			id: "tool:edit",
+			toolCallId: "edit",
+			toolName: { text: "edit", truncated: false, byteLength: 4 },
+			status: "succeeded",
+			presentation: { state: "known", value: {
+				renderer: "edit",
+				title: { text: "edit", truncated: false, byteLength: 4 },
+				chips: [],
+				body: [{ kind: "diff", document }],
+				timestamps: { startedAt: "2026-08-06T00:00:00.000Z" },
+			} },
+		}));
+		const diff = blocks.find((block) => block.kind === "diff");
+		expect(diff).toEqual({ id: "timeline-tool:edit/diff-0", kind: "diff", document });
+		expect(blocks.filter((block) => block.kind === "text").map((block) => block.content).join("\n")).not.toContain("+ after");
+	});
+
 	it("projects notices with severity prefix", () => {
 		const blocks = rowToBlocks(row({ kind: "notice", severity: "error", message: { text: "boom", truncated: false, byteLength: 4 } }));
 		expect(blocks[0]!.content).toBe("error: boom");

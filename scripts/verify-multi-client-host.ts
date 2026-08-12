@@ -155,7 +155,7 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 		});
 		const handle = isRecord(created.body.handle) ? created.body.handle : undefined;
 		const executionId = handle === undefined ? undefined : stringValue(handle.executionId);
-		if (created.body.ok !== true || executionId === undefined || /(?:pid|outputPath|command|cwd)/iu.test(JSON.stringify(created.body))) {
+		if (created.body.ok !== true || executionId === undefined || /"(?:pid|outputPath|command|cwd)"\s*:/iu.test(JSON.stringify(created.body))) {
 				return {
 					passed: false,
 					outcome: "fail",
@@ -245,7 +245,7 @@ async function verifyHostCrashRecovery(input: {
 		});
 		const handle = isRecord(created.body.handle) ? created.body.handle : undefined;
 		const executionId = handle === undefined ? undefined : stringValue(handle.executionId);
-		if (created.body.ok !== true || executionId === undefined || /(?:pid|outputPath|command|cwd)/iu.test(JSON.stringify(created.body))) {
+		if (created.body.ok !== true || executionId === undefined || /"(?:pid|outputPath|command|cwd)"\s*:/iu.test(JSON.stringify(created.body))) {
 			throw new Error("crash recovery process create failed");
 		}
 		await waitForMarker(markerPath);
@@ -267,7 +267,7 @@ async function verifyHostCrashRecovery(input: {
 		if (listed.body.ok !== true || projection === undefined || (projection.state !== "lost" && projection.state !== "uncertain")) {
 			throw new Error("crash recovery did not expose lost or uncertain projection");
 		}
-		if (/(?:pid|outputPath|command|cwd)/iu.test(JSON.stringify(listed.body))) throw new Error("crash recovery list leaked private process data");
+		if (/"(?:pid|outputPath|command|cwd)"\s*:/iu.test(JSON.stringify(listed.body))) throw new Error("crash recovery list leaked private process data");
 		const output = await command(recovered, "crash-process-output", "process.output", {
 			sessionId,
 			executionId,

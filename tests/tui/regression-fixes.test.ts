@@ -167,6 +167,28 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		await expect(pending).resolves.toEqual({ ok: true, decision: "allow-once" });
 	});
 
+	it("projects the canonical shell request as a structured approval command before choices", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const abort = new AbortController();
+		const pending = mode.handleReverseRequest({
+			...reverseFrame(),
+			body: {
+				requestType: "permission",
+				toolName: "bash",
+				summary: "run tests",
+				requests: [{ kind: "shell", command: "bash -lc 'npm test'", cwd: "/workspace", analysis: "known" }],
+			},
+		} as HostFrameEnvelope, abort.signal);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		const overlay = (mode as unknown as { ui: { overlay?: { present?(): readonly unknown[] } } }).ui.overlay;
+		expect(overlay?.present?.()).toEqual([
+			{ kind: "command", command: "bash -lc 'npm test'" },
+			expect.objectContaining({ kind: "select" }),
+		]);
+		abort.abort();
+		await pending;
+	});
+
 	it("P1-5: requestQuit cancels in-flight effects and cleans active timeline rows", async () => {
 		const terminal = new FakeTerminal();
 		let release: (() => void) | undefined;

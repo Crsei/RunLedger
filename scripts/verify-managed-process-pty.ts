@@ -104,7 +104,7 @@ export async function runManagedProcessPtyVerification(options: ManagedProcessPt
 		if (
 			created.body.ok !== true ||
 			executionId === undefined ||
-		/(?:pid|outputPath|command|cwd)/iu.test(JSON.stringify(created.body))
+			/"(?:pid|outputPath|command|cwd)"\s*:/iu.test(JSON.stringify(created.body))
 		) {
 			return { passed: false, outcome: "fail", checks, failures: ["production PTY facade did not return a safe handle"] };
 		}
