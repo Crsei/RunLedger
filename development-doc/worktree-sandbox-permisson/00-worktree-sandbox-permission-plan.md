@@ -64,6 +64,32 @@
 - Session approval authority 使用 Event Store 保存 request/decision/revoked receipt，并经当前 authenticated driver reverse request 获取 allow-once/deny/cancel；driver reconnect、timeout、abort 与旧 generation response 均 fail closed。
 - 只读 `session.security.inspect` 仅返回安全 profile/mode/digest/count 投影，不返回绝对路径；未协商 mutation 在 client/TUI 本地 unavailable。managed process/PTY/output 仍由 Runtime 06 R6 后续迁移拥有，本校正不声称该项已接线。
 
+### 0.0.4 2026-08-12 Session governed toolchain hardening
+
+- production Session domain 每个 owner 装配一次 `SessionToolchainSnapshot`，校验
+  RunLedger `package.json#engines`、Node/npm/Bun canonical path、版本、file identity
+  与 content digest；spawn 前通过同一个 final-leaf probe 再验证，identity drift
+  时不调用 raw process leaf。
+- `GovernedProcessEnvironment` 只继承 locale/terminal allowlist，固定 workspace
+  `node_modules/.bin` + attested executable dirs + `/usr/bin:/bin`；真实 home、proxy、
+  token/secret 不继承。每命令 override 不能替换 HOME/PATH/USER/cache 等保留键，
+  也不能注入 secret/proxy/token-like key。
+- Session 私有 HOME/tmp/cache/npm-cache 位于 canonical `layout.tmp` 下，创建后
+  拒绝 symlink/non-directory 并强制 `0700`；toolchain/environment digest 绑定
+  authorization request 与 immutable launch plan。sandbox-off 的 foreground、
+  background、pipe 与 PTY 都消费同一 plan，不再回退 ambient unrestricted shell。
+- shell plan 使用 `-c` 而非 login `-lc`，阻止 profile 在 child 内扩张 PATH。
+  这属于恢复既有 env/final-leaf fail-closed 语义，不新增 sandbox capability。
+  本机 off-plan focused integration 已运行 Node 22.23.1、npm 10.9.8、Bun 1.3.14
+  和 workspace-local `tsx`，且 parent secret/proxy 不可见。
+- Linux restrictive runtime mounts、最小 identity files、macOS/Windows 等价
+  enforcement 会扩展已冻结能力面，当前保持 blocked；必须先满足 ADR 04 并由
+  新 unfreeze ADR 授权。不得从 off-plan 证据推导 restrictive sandbox 完成。
+- 本批 fresh 本地门禁为 `npm run check`、完整 Vitest 297 files / 1724 passed
+  （另有 1 file / 3 macOS-only tests skipped）、Bun/OpenTUI 3 files / 44 passed /
+  222 assertions、`npm run build` 与 `git diff --check` 全绿；这些是当前 checkout
+  的回归证据，不是 restrictive sandbox 或跨平台 enforcement 证据。
+
 | 项目 | 基线 | 本计划主要读取的实现 |
 |---|---|---|
 | Codex | 0b175e6439a8608ba7726ee153fd8590619e8f34，2026-07-21 | codex-rs/protocol/src/permissions.rs、protocol.rs、approvals.rs；codex-rs/core/src/config/permissions.rs、resolved_permission_profile.rs；codex-rs/core/src/tools/approvals.rs、sandboxing.rs、orchestrator.rs；codex-rs/sandboxing/src/manager.rs、spawn.rs、denial.rs |

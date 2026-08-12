@@ -20,7 +20,10 @@ import type {
   ToolResultOverflowStore,
   UserAgentMessage,
   LlmContext,
+  AgentRunBudget,
+  AgentRunBudgetUsage,
 } from "./types.ts";
+import { DEFAULT_AGENT_RUN_BUDGET } from "./types.ts";
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
 import type { ContextAssemblySink, ModelContextAssembler } from "./types.ts";
 import type { LedgerSink } from "./ledger/types.ts";
@@ -77,6 +80,10 @@ export interface InteractiveSessionControllerOptions {
   extensionTurnAdmission?: () => Promise<void>;
   /** Releases a turn admitted by the Host when Agent startup fails. */
   extensionTurnAbort?: () => Promise<void>;
+  /** 测试可缩小预算；production 默认不可省略。 */
+  runBudget?: AgentRunBudget;
+  /** Session Runtime active-time authority；production composition 必须注入。 */
+  runBudgetUsage?: AgentRunBudgetUsage;
 }
 
 export interface ProviderStatus {
@@ -175,6 +182,8 @@ export class InteractiveSessionController {
   private readonly extensionHookSnapshotId: (() => string | undefined) | undefined;
   private readonly extensionTurnAdmission: (() => Promise<void>) | undefined;
   private readonly extensionTurnAbort: (() => Promise<void>) | undefined;
+  private readonly runBudget: AgentRunBudget;
+  private readonly runBudgetUsage: AgentRunBudgetUsage | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -203,6 +212,8 @@ export class InteractiveSessionController {
     this.extensionHookSnapshotId = opts.extensionHookSnapshotId;
     this.extensionTurnAdmission = opts.extensionTurnAdmission;
     this.extensionTurnAbort = opts.extensionTurnAbort;
+    this.runBudget = opts.runBudget ?? DEFAULT_AGENT_RUN_BUDGET;
+    this.runBudgetUsage = opts.runBudgetUsage;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -406,6 +417,8 @@ export class InteractiveSessionController {
         beforeToolCall,
         afterToolCall,
         executionEnv: this.executionEnv,
+        runBudget: this.runBudget,
+        ...(this.runBudgetUsage === undefined ? {} : { runBudgetUsage: this.runBudgetUsage }),
         ...(this.toolResultOverflowStore === undefined ? {} : { toolResultOverflowStore: this.toolResultOverflowStore }),
         ...(this.modelContextAssembler === undefined ? {} : { modelContextAssembler: this.modelContextAssembler }),
         ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),

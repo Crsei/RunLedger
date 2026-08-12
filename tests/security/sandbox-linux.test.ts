@@ -91,7 +91,7 @@ describe("LinuxBwrapBackend", () => {
 				effective: "off",
 				enforcement: "off",
 				program: "/bin/sh",
-				arguments: ["-lc", "printf ok"],
+				arguments: ["-c", "printf ok"],
 			},
 		});
 		expect(probeCalls).toBe(0);
@@ -121,7 +121,7 @@ describe("LinuxBwrapBackend", () => {
 		expect(first.value.arguments).toEqual(expect.arrayContaining([
 			"/repo", "/repo/private", "/repo/readonly", "/repo/.git", "/repo/.runledger",
 		]));
-		expect(first.value.arguments.slice(-3)).toEqual(["/bin/sh", "-lc", "printf ok"]);
+		expect(first.value.arguments.slice(-3)).toEqual(["/bin/sh", "-c", "printf ok"]);
 		expect(first.value.planDigest.algorithm).toBe("sha256");
 	});
 

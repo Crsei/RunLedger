@@ -47,6 +47,27 @@ export interface SessionApprovalPortsOptions {
 	readonly sender: ReverseRequestSender;
 	readonly driverConnectionId: () => ConnectionId | undefined;
 	readonly pollIntervalMs?: number;
+	readonly humanInputWait?: HumanInputWaitPort;
+}
+
+export interface HumanInputWaitPort {
+	withHumanInputWait<T>(waitId: string, reason: "approval" | "credential", operation: () => Promise<T>): Promise<T>;
+}
+
+/** Approval ports 早于 SessionRuntime 装配；绑定前必须拒绝等待，不能绕过计时。 */
+export class LateBoundHumanInputWaitPort implements HumanInputWaitPort {
+	private current: HumanInputWaitPort | undefined;
+
+	public bind(port: HumanInputWaitPort): void {
+		this.current = port;
+	}
+
+	public withHumanInputWait<T>(waitId: string, reason: "approval" | "credential", operation: () => Promise<T>): Promise<T> {
+		const target = this.current;
+		return target === undefined
+			? Promise.reject(new Error("human input wait port is unavailable; Runtime is not bound"))
+			: target.withHumanInputWait(waitId, reason, operation);
+	}
 }
 
 export function createSessionApprovalPorts(options: SessionApprovalPortsOptions): SessionApprovalPorts {
@@ -180,6 +201,13 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 	}
 
 	public async request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<PermissionPromptResponse> {
+		const operation = (): Promise<PermissionPromptResponse> => this.#request(prompt, signal);
+		return this.#options.humanInputWait === undefined
+			? operation()
+			: this.#options.humanInputWait.withHumanInputWait(`approval-${prompt.requestId}`, "approval", operation);
+	}
+
+	async #request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<PermissionPromptResponse> {
 		const deadline = Date.parse(prompt.expiresAt);
 		if (!Number.isFinite(deadline)) throw new Error("approval expiry is invalid");
 		while (Date.now() < deadline) {

@@ -240,6 +240,10 @@ describe("R5 crash recovery", () => {
 		expect(verify.ok).toBe(true);
 		expect(runtime.runtimeState).toBe("ready");
 		expect(runtime.barrierState).toBe("closed");
+		expect(ctx.ownerStore.readOwner(ctx.sessionId)?.state).toBe("running");
+		expect(ctx.store.getSession(ctx.sessionId)?.status).toBe("active");
+		expect(ctx.store.rebuildFromEvents(ctx.sessionId).status).toBe("active");
+		expect(ctx.store.replaySessionEvents(ctx.sessionId).some((event) => event.eventType === "recovery.verified_clean")).toBe(true);
 		// settled generation = 新 generation > origin。
 		const receipts = ctx.store.listAllAttemptReceipts(ctx.sessionId);
 		const settled = receipts.find((receipt) => receipt.outcome === "verified");
@@ -278,6 +282,7 @@ describe("R5 crash recovery", () => {
 		expect(resume.ok).toBe(true);
 		expect(runtime.runtimeState).toBe("ready_with_uncertainty");
 		expect(runtime.barrierState).toBe("closed");
+		expect(ctx.ownerStore.readOwner(ctx.sessionId)?.state).toBe("running");
 		// 显式 decision 落库。
 		const events = ctx.store.replaySessionEvents(ctx.sessionId);
 		const decision = events.find((event) => event.eventType === "recovery.resume_despite_uncertainty");

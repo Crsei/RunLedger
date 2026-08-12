@@ -36,6 +36,7 @@
 | TUI / Passive Contract Integration | [`tui/19-passive-contract-integration-plan.md`](tui/19-passive-contract-integration-plan.md) | 将已提前建立的 TUI application/Timeline/presentation/workflow 数据结构分批接入 reducer、projector、EffectRunner、typed adapter 与标准 `runledger` | Passive Plan 17 的 P0–P6 合同证据、当前生产 TUI/Host authority、本文 B0–B8 状态表 |
 | TUI / Slash Command Adaptation | [`tui/20-codex-slash-command-adaptation-plan.md`](tui/20-codex-slash-command-adaptation-plan.md) | `/` 命令 registry、输入期 popup、别名/参数补全、统一派发、门控与 SelectionView | 当前 HEAD、未提交工作树、聚焦/全量测试、build 与标准 PATH PTY 证据分开核对 |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
+| Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 
 ## 2026-08-04 当前实现批次
 

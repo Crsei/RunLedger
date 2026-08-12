@@ -52,6 +52,34 @@ afterEach(async () => {
 });
 
 describe("RuntimeTraceRecorder", () => {
+	it("exposes an idempotent explicit terminal API for non-Agent runtimes", async () => {
+		const { eventStore, recorder } = await createRecorder(undefined, "events");
+		const finishRun = (recorder as RuntimeTraceRecorder & {
+			finishRun?: (input: {
+				readonly phase: "failed";
+				readonly error: { readonly code: string; readonly message: string; readonly outcomeCertain: boolean };
+			}) => Promise<void>;
+		}).finishRun;
+		expect(finishRun).toBeTypeOf("function");
+		if (finishRun === undefined) return;
+
+		const terminal = {
+			phase: "failed" as const,
+			error: { code: "process_failed", message: "managed process failed", outcomeCertain: true },
+		};
+		await finishRun.call(recorder, terminal);
+		await finishRun.call(recorder, terminal);
+
+		const terminalEvents = (await eventStore.events()).filter((event) =>
+			(event.kind === "agent" || event.kind === "trace") && event.phase === "failed"
+		);
+		expect(terminalEvents).toHaveLength(2);
+		expect(terminalEvents).toEqual([
+			expect.objectContaining({ kind: "agent", error: terminal.error, metadata: { event: "agent.failed" } }),
+			expect.objectContaining({ kind: "trace", error: terminal.error, metadata: { event: "trace.failed" } }),
+		]);
+	});
+
 	it("redacts credentials, auth headers, and environment values", () => {
 		const value = sanitizeTraceValue({
 			apiKey: "sk-secret",

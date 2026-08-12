@@ -20,6 +20,10 @@ afterEach(async () => {
 });
 
 interface ApprovalModule {
+	LateBoundHumanInputWaitPort?: new () => {
+		bind(port: { withHumanInputWait<T>(waitId: string, reason: "approval" | "credential", operation: () => Promise<T>): Promise<T> }): void;
+		withHumanInputWait<T>(waitId: string, reason: "approval" | "credential", operation: () => Promise<T>): Promise<T>;
+	};
 	createSessionApprovalPorts(options: {
 		readonly store: SessionStore;
 		readonly fence: OwnerFence;
@@ -28,6 +32,9 @@ interface ApprovalModule {
 		};
 		readonly driverConnectionId: () => ConnectionId | undefined;
 		readonly pollIntervalMs?: number;
+		readonly humanInputWait?: {
+			withHumanInputWait<T>(waitId: string, reason: "approval" | "credential", operation: () => Promise<T>): Promise<T>;
+		};
 	}): {
 		readonly prompter: { request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<Record<string, unknown>> };
 		readonly stateStore: {
@@ -184,6 +191,55 @@ describe("Session durable approval reverse requests", () => {
 		abort.abort();
 		await expect(pending).rejects.toThrow(/aborted/u);
 		value.close();
+	});
+
+	it("wraps the complete approval request in the Runtime human-wait boundary", async () => {
+		const module = await loadModule();
+		if (module === undefined) return;
+		const value = await fixture();
+		const waits: string[] = [];
+		const ports = module.createSessionApprovalPorts({
+			store: value.store,
+			fence: value.fence,
+			driverConnectionId: () => createRuntimeId("connection", "approval-driver"),
+			sender: { requestToConnection: async () => response({ ok: true, decision: "allow-once" }) },
+			humanInputWait: {
+				withHumanInputWait: async (waitId, reason, operation) => {
+					waits.push(`begin:${reason}:${waitId}`);
+					try {
+						return await operation();
+					} finally {
+						waits.push(`end:${reason}:${waitId}`);
+					}
+				},
+			},
+		});
+
+		await expect(ports.prompter.request(prompt(value.fence.sessionId))).resolves.toMatchObject({ decision: "allow-once" });
+		expect(waits).toEqual([
+			"begin:approval:approval-command_approval-reverse",
+			"end:approval:approval-command_approval-reverse",
+		]);
+		value.close();
+	});
+
+	it("fails closed before the Runtime wait port binds and delegates after binding", async () => {
+		const module = await loadModule();
+		if (module === undefined) return;
+		expect(module.LateBoundHumanInputWaitPort).toBeTypeOf("function");
+		if (module.LateBoundHumanInputWaitPort === undefined) return;
+		const port = new module.LateBoundHumanInputWaitPort();
+		await expect(port.withHumanInputWait("approval-before-bind", "approval", async () => "unexpected"))
+			.rejects.toThrow(/unavailable|not bound/u);
+		const calls: string[] = [];
+		port.bind({
+			withHumanInputWait: async (waitId, reason, operation) => {
+				calls.push(`${reason}:${waitId}`);
+				return operation();
+			},
+		});
+		await expect(port.withHumanInputWait("approval-after-bind", "approval", async () => "ok")).resolves.toBe("ok");
+		expect(calls).toEqual(["approval:approval-after-bind"]);
 	});
 
 	it("round-trips session, exec-prefix, and exact network decisions without changing Runtime events", async () => {

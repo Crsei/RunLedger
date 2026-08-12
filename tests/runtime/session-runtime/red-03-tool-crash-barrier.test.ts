@@ -89,6 +89,11 @@ describe("RED-03 tool side effects enter the recovery barrier", () => {
 
 		// started receipt 必须已落库(effectClass=workspace_mutation,无 settled)。
 		const { store } = openStores();
+		await waitFor(
+			() => store.listAllAttemptReceipts(sessionId).some((receipt) => receipt.effectClass === "workspace_mutation" && receipt.outcome === "started"),
+			20_000,
+			"durable started receipt",
+		);
 		const receipts = store.listAllAttemptReceipts(sessionId);
 		const gateStarted = receipts.filter((receipt) => receipt.effectClass === "workspace_mutation" && receipt.outcome === "started");
 		expect(gateStarted.length).toBeGreaterThanOrEqual(1);

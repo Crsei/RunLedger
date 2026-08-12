@@ -22,6 +22,11 @@
 - 若 `17-opentui-refactor-plan.md` 的 renderer 基线发生回归，先恢复其门禁证据，再继续本计划，禁止本计划或被动数据合同配套计划争夺 renderer 结构 authority；
 - 继续使用 OpenTUI imperative core，不切换 React/Solid，不隐式更改 `alternate-screen`；
 - UI 仍只消费 controller/runtime 事件，不接管 Session、Auth、Tool、ledger 或 lifecycle authority。
+- 2026-08-12 Session Runtime 上游已把 durable `message_update` 改为 50 ms/4 KiB
+  的 bounded delta + aggregate digest/size，移除 cumulative `partial`，并在
+  message/tool/turn/run/shutdown 边界强制 flush；TUI 继续消费 lossless delta，
+  最终 `message_end` 覆盖临时组装值。该 focused 证据只降低 SQLite 写放大，
+  不替代本文 renderer queue、native frame、PTY、hard-memory 或 human UX 门禁。
 
 本文的核心不是“把刷新间隔改成一个常数”，而是建立四层协同：
 

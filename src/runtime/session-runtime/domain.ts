@@ -27,14 +27,21 @@ import { resolveRecordingConfig } from "../../storage/settings-manager.ts";
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	createSessionSecurity,
 	type SessionSecurityConfigSource,
 } from "../../security/session-composition.ts";
+import { createLocalSessionToolchainProbe } from "../../security/integration/session-local-leaves.ts";
+import {
+	buildGovernedProcessEnvironment,
+	resolveSessionToolchainSnapshot,
+} from "../../security/toolchain.ts";
 import type { RestoreOutcome } from "./restore.ts";
 import { restoreCheckpointReplay } from "./checkpoint.ts";
 import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
 import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
+import type { AgentRunBudgetUsage } from "../types.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection } from "./plan-composition.ts";
@@ -63,18 +70,37 @@ export async function assembleSessionDomain(
 	fence: OwnerFence,
 	restored: Extract<RestoreOutcome, { readonly ok: true }>,
 	attemptPort?: LateBoundAttemptPort,
+	runBudgetUsage?: AgentRunBudgetUsage,
 ): Promise<SessionDomainPort> {
 	const ledger = new SqliteLedgerSink({ store, fence: () => fence });
 	const replay = await replayDomain(ledger, restored);
 	const catalog = store.getSession(sessionId);
 	if (catalog === undefined) throw new Error(`session not found during domain composition: ${sessionId}`);
 	if (attemptPort === undefined) throw new Error("session attempt gateway is required for production composition");
+	const toolchainProbe = createLocalSessionToolchainProbe();
+	const toolchainResult = await resolveSessionToolchainSnapshot({
+		packageRoot: runledgerPackageRoot(),
+		workspaceRoot: options.cwd,
+		nodeExecutable: globalThis.process.execPath,
+		probe: toolchainProbe,
+	});
+	if (!toolchainResult.ok) throw new Error(`${toolchainResult.error.code}: ${toolchainResult.error.message}`);
+	const environmentResult = buildGovernedProcessEnvironment({
+		sessionId,
+		toolchain: toolchainResult.value,
+		temporaryRoot: options.layout.tmp,
+		inherited: globalThis.process.env,
+	});
+	if (!environmentResult.ok) throw new Error(`${environmentResult.error.code}: ${environmentResult.error.message}`);
 	const security = await createSessionSecurity({
 		layout: options.layout,
 		cwd: options.cwd,
 		fence,
 		workspaceId: catalog.workspaceId,
 		repositoryId: catalog.repositoryId,
+		toolchain: toolchainResult.value,
+		processEnvironment: environmentResult.value,
+		toolchainProbe,
 		...(options.securitySources === undefined ? {} : { securitySources: options.securitySources }),
 		...(options.approvalPorts === undefined ? {} : { approvalPorts: options.approvalPorts }),
 	});
@@ -132,6 +158,7 @@ export async function assembleSessionDomain(
 		extensionHookSnapshotId: () => extensions.turnLifecycle?.snapshotId(),
 		extensionTurnAdmission: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.admitTurn(),
 		extensionTurnAbort: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.cancelTurn(),
+		...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
 	});
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined
@@ -172,6 +199,10 @@ export async function assembleSessionDomain(
 			providerStatuses: [],
 		}),
 	};
+}
+
+function runledgerPackageRoot(): string {
+	return fileURLToPath(new URL("../../../", import.meta.url));
 }
 
 async function replayDomain(

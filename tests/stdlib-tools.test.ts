@@ -108,6 +108,32 @@ describe("stdlib tools (cross-platform)", () => {
     expect(r.details?.exitCode).not.toBe(0);
   });
 
+	it("bash: preserves a typed Host denial without parsing its message", async () => {
+		const failure = Object.assign(new Error("request failed without a parseable marker"), { code: "approval_expired" });
+		const tool = createBashTool(dir, {
+			managedProcess: {
+				start: async () => ({ ok: false, code: "unused" }),
+				exec: async () => { throw failure; },
+			},
+		});
+
+		const result = await tool.execute("tc-expired", { command: "printf never" });
+
+		expect(result).toMatchObject({ isError: true, details: { errorCode: "approval_expired" } });
+	});
+
+	it("bash: preserves a typed background-process rejection", async () => {
+		const tool = createBashTool(dir, {
+			managedProcess: {
+				start: async () => ({ ok: false, code: "approval_expired" }),
+			},
+		});
+
+		const result = await tool.execute("tc-expired-background", { command: "printf never", run_in_background: true });
+
+		expect(result).toMatchObject({ isError: true, details: { errorCode: "approval_expired" } });
+	});
+
   it("grep: 在文件内查 pattern(注入 mock shell 跑 grep -F)", async () => {
     const sub = path.join(dir, "sub");
     await mkdir(sub, { recursive: true });

@@ -36,8 +36,10 @@ import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection
 import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionProtocolOperationDescriptor, type SessionStatus } from "../session-server/protocol.ts";
 import { SessionDomainRouter } from "./domain-router.ts";
 import type { SessionDomainResult } from "./domain-router.ts";
-import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, type HumanWaitReason } from "./run-timing.ts";
+import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, type HumanWaitReason, type LateBoundAgentRunBudgetUsage } from "./run-timing.ts";
 import type { SessionPlanInspection } from "./plan-composition.ts";
+import type { LateBoundHumanInputWaitPort } from "./approval-reverse-request.ts";
+import { SessionStreamEventCoalescer } from "./stream-event-coalescer.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
 
@@ -116,6 +118,10 @@ export interface SessionRuntimeOptions {
 	readonly domain?: SessionDomainPort;
 	/** P0-2:attempt gateway 的延迟绑定引用(domain 装配早于本对象构造)。 */
 	readonly attemptPortRef?: LateBoundAttemptPort;
+	/** Approval ports 早于 Runtime 装配；构造时统一绑定人工等待计时 authority。 */
+	readonly humanInputWaitPortRef?: LateBoundHumanInputWaitPort;
+	/** Agent loop 早于 Runtime 装配时持有的 active-time 只读引用。 */
+	readonly runBudgetUsageRef?: LateBoundAgentRunBudgetUsage;
 	/** Session-scoped external lifecycles(worktree lease, later MCP/process)有序收口。 */
 	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
 }
@@ -136,6 +142,7 @@ export class SessionRuntime implements SessionController {
 	private state: SessionRuntimeState;
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
 	private readonly runTiming = new AgentRunTimingTracker();
+	private readonly streamEvents: SessionStreamEventCoalescer;
 	private attemptCounter = 0;
 	private started = false;
 	private shutdownPromise: Promise<void> | undefined;
@@ -158,20 +165,25 @@ export class SessionRuntime implements SessionController {
 		this.state = options.crashTakeover ? "recovery_required" : "ready";
 		this.barrier = new RecoveryBarrier({ store: options.store, fence: options.fence }, options.crashTakeover ? "open" : "closed");
 		this.domain = options.domain;
+		this.streamEvents = new SessionStreamEventCoalescer({ emit: (event) => this.persistDomainAgentEvent(event) });
 		this.stoppedPromise = new Promise<void>((resolve) => {
 			this.resolveStopped = resolve;
 		});
 		// P0-2:gateway 在构造时绑定(工具执行必然发生在构造之后)。
 		options.attemptPortRef?.bind(this);
+		options.humanInputWaitPortRef?.bind(this);
+		options.runBudgetUsageRef?.bind(this);
 		if (this.domain !== undefined) {
 			// R7:领域 AgentEvent 以 owner-fenced durable event 落库并广播,
 			// 恢复时从权威流重建(checkpoint 可删)。
-			this.domainListener = this.domain.controller.subscribe((event) => {
-				this.persistAgentEvent(event);
-				const boundary = checkpointBoundaryForAgentEvent(event);
-				if (boundary !== undefined) this.putCheckpoint(boundary, this.checkpointState(event.type, event.timestamp, false));
-			});
+			this.domainListener = this.domain.controller.subscribe((event) => this.streamEvents.accept(event));
 		}
+	}
+
+	private persistDomainAgentEvent(event: AgentEvent): void {
+		this.persistAgentEvent(event);
+		const boundary = checkpointBoundaryForAgentEvent(event);
+		if (boundary !== undefined) this.putCheckpoint(boundary, this.checkpointState(event.type, event.timestamp, false));
 	}
 
 	private checkpointState(eventType: string, eventTimestamp: number, replayReady: boolean): Record<string, unknown> {
@@ -244,6 +256,10 @@ export class SessionRuntime implements SessionController {
 		return this.barrier.sideEffectSpawnCount;
 	}
 
+	public activeDurationMs(): number {
+		return this.runTiming.activeRun?.activeDurationMs ?? 0;
+	}
+
 	public get restoredCheckpoint(): { readonly checkpoint: { readonly descriptor: { readonly checkpointId: string }; readonly snapshot: CheckpointSnapshot }; readonly usedCheckpoint: boolean } | undefined {
 		return this.restored.checkpoint === undefined ? undefined : { checkpoint: this.restored.checkpoint, usedCheckpoint: true };
 	}
@@ -302,13 +318,15 @@ export class SessionRuntime implements SessionController {
 			}
 			if (this.domain !== undefined && typeof this.domain.controller.waitForIdle === "function") {
 				await boundedWait(this.domain.controller.waitForIdle(), 3_000);
-				}
-				this.persistAbortedRunIfNeeded();
-				await this.lifecycleCleanup?.(reason).catch(() => undefined);
-				this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
-				this.owner.release(reason);
+			}
+			this.streamEvents.flush();
+			this.persistAbortedRunIfNeeded();
+			await this.lifecycleCleanup?.(reason).catch(() => undefined);
+			this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
+			this.owner.release(reason);
 			await this.server.close();
 			this.domainListener?.();
+			this.streamEvents.dispose();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
 		} finally {
 			this.resolveStopped?.();
@@ -326,10 +344,12 @@ export class SessionRuntime implements SessionController {
 			if (this.domain !== undefined && typeof this.domain.controller.waitForIdle === "function") {
 				await boundedWait(this.domain.controller.waitForIdle(), 3_000);
 			}
+			this.streamEvents.flush();
 			this.persistAbortedRunIfNeeded();
 			await this.lifecycleCleanup?.("fenced").catch(() => undefined);
 			await this.server.close();
 			this.domainListener?.();
+			this.streamEvents.dispose();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
 		} finally {
 			this.resolveStopped?.();
@@ -437,6 +457,7 @@ export class SessionRuntime implements SessionController {
 		const result = this.barrier.assess();
 		if (result.ok && result.state === "closed") {
 			this.state = "ready";
+			this.owner.publish("running");
 			this.emit({ eventType: "recovery.assessed_clean", payload: { barrierState: "closed" } });
 		}
 		return { ok: true, barrierState: result.ok ? result.state : "open", unresolvedRemaining: result.ok ? result.unresolvedRemaining : this.unresolvedAttemptsCount() };
@@ -450,6 +471,7 @@ export class SessionRuntime implements SessionController {
 		} else if (result.state === "closed") {
 			this.state = "ready";
 		}
+		if (result.state === "closed") this.owner.publish("running");
 		return { ok: true, state: this.state };
 	}
 
@@ -509,21 +531,22 @@ export class SessionRuntime implements SessionController {
 	/** R7:领域投影(消息/审计/选择)经同一 facade 供 client 重建 TUI 状态。 */
 	public domainSnapshot(): Record<string, unknown> {
 		const domain = this.domain?.snapshot();
+		const projection = domain === undefined
+			? { messages: [], warnings: [], auditEntries: [], toolCount: 0, inFlight: false, selection: { thinkingLevel: "off" } }
+			: {
+				messages: domain.messages,
+				warnings: domain.warnings,
+				auditEntries: domain.auditEntries,
+				selection: domain.selection,
+				toolCount: domain.toolCount,
+				inFlight: domain.inFlight,
+				providerStatuses: domain.providerStatuses,
+			};
 		return {
 			ok: true,
 			kind: "snapshot",
 			...this.snapshot(),
-			...(domain === undefined
-				? { messages: [], warnings: [], auditEntries: [], toolCount: 0, inFlight: false, selection: { thinkingLevel: "off" } }
-				: {
-						messages: domain.messages,
-						warnings: domain.warnings,
-						auditEntries: domain.auditEntries,
-						selection: domain.selection,
-						toolCount: domain.toolCount,
-						inFlight: domain.inFlight,
-						providerStatuses: domain.providerStatuses,
-				  }),
+			...projection,
 		};
 	}
 
@@ -543,7 +566,7 @@ export class SessionRuntime implements SessionController {
 				}
 				const admission = this.barrier.admitPrompt();
 				if (!admission.ok) return { ok: false, code: "recovery_barrier_active" };
-					this.emit({ eventType: "turn.started", payload: { promptText: String(request.body.promptText ?? "").slice(0, 512) } });
+				this.emit({ eventType: "turn.started", payload: { promptText: String(request.body.promptText ?? "").slice(0, 512) } });
 				// R7:有 domain 时转发真实领域执行;无 domain 时只记录 intent/receipt。
 				if (this.domain !== undefined) {
 					const text = String(request.body.promptText ?? "");
@@ -554,7 +577,7 @@ export class SessionRuntime implements SessionController {
 						return { ok: false, code: "domain_prompt_failed", detail: error instanceof Error ? error.message.slice(0, 200) : undefined };
 					}
 				}
-					return { ok: true, kind: "prompt", result: { accepted: true } };
+				return { ok: true, kind: "prompt", result: { accepted: true } };
 			}
 			case "steer":
 			case "follow_up": {

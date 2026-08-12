@@ -170,13 +170,31 @@ describe("R3 claim", () => {
 		if (!claimed.ok) throw new Error("expected claim");
 		first.release("paused");
 		expect(ownerStore.readOwner(sessionId)?.state).toBe("unowned");
+		expect(store.getSession(sessionId)?.status).toBe("paused");
+		expect(store.rebuildFromEvents(sessionId).status).toBe("paused");
 		const second = makeOwner();
 		const result = await second.open(sessionId);
 		expect(result.ok && result.outcome === "claimed").toBe(true);
 		if (!result.ok) throw new Error("expected claim");
 		expect(result.fence.generation).toBe(2);
 		expect(ownerStore.readOwner(sessionId)?.generation).toBe(2);
+		expect(store.getSession(sessionId)?.status).toBe("active");
+		expect(store.rebuildFromEvents(sessionId).status).toBe("active");
 		second.release("detached");
+		store.database().close();
+	});
+
+	it("projects an error release as failed in both cache and replay", async () => {
+		const { store } = openStore();
+		const sessionId = createSession(store, "release-error");
+		const owner = makeOwner();
+		const claimed = await owner.open(sessionId);
+		expect(claimed.ok && claimed.outcome === "claimed").toBe(true);
+
+		owner.release("error");
+
+		expect(store.getSession(sessionId)?.status).toBe("failed");
+		expect(store.rebuildFromEvents(sessionId).status).toBe("failed");
 		store.database().close();
 	});
 

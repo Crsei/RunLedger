@@ -106,7 +106,7 @@ export class LinuxBwrapBackend implements SandboxBackend {
 		for (const protectedPath of request.protectedPaths) argumentsList.push("--ro-bind", protectedPath, protectedPath);
 		for (const denied of request.denyRead) argumentsList.push("--tmpfs", denied);
 		if (request.network === "deny") argumentsList.push("--unshare-net");
-		argumentsList.push("--chdir", request.cwd, this.#shellProgram, "-lc", request.command);
+		argumentsList.push("--chdir", request.cwd, this.#shellProgram, "-c", request.command);
 		return makePlan(state, request, bwrapPath, argumentsList);
 	}
 }

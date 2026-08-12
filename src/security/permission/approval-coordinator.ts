@@ -484,7 +484,12 @@ export class ApprovalCoordinator {
 			}
 		}
 		const selectedTicket = response.decision === "allow-session" || response.decision === "allow-with-prefix-rule" || response.decision === "allow-with-network-rule" ? sessionTicket : ticket;
-		const receipt = createApprovalReceipt(selectedTicket, response, raced.kind === "response" ? "response" : raced.kind, this.#clock().toISOString());
+		const receipt = createApprovalReceipt(
+			selectedTicket,
+			response,
+			raced.kind === "response" ? "response" : raced.kind,
+			raced.kind === "timeout" ? ticket.expiresAt ?? this.#clock().toISOString() : this.#clock().toISOString(),
+		);
 		let committedReceipt: ApprovalReceiptRef;
 		if (prefixRule !== undefined) {
 			if (!supportsAmendments(this.#store)) return failure("approval store cannot atomically persist exec prefix amendments", "approval_stale");

@@ -192,6 +192,8 @@ describe("R3 crash takeover", () => {
 		const fencedPayload = JSON.parse(fenced[0]!.payloadJson) as Record<string, unknown>;
 		expect(fencedPayload.runtimeId).toBe(claimedA.fence.runtimeId);
 		expect(fencedPayload.generation).toBe(claimedA.fence.generation);
+		expect(store.getSession(sessionId)?.status).toBe("recovery_required");
+		expect(store.rebuildFromEvents(sessionId).status).toBe("recovery_required");
 		ownerStore.database().close();
 	});
 

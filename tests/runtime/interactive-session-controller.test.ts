@@ -12,6 +12,9 @@ import { loadProjectSettings } from "../../src/storage/settings-manager.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model } from "../../src/types.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import type { ExtensionHookRuntime } from "../../src/extensions/turn-lifecycle.ts";
+import { Type } from "typebox";
+import type { AgentEvent, AgentTool } from "../../src/runtime/types.ts";
+import type { ToolCall } from "../../src/types.ts";
 
 const cleanup: string[] = [];
 
@@ -128,6 +131,116 @@ const INTERACTION: AuthInteraction = {
 };
 
 describe("InteractiveSessionController", () => {
+	it("passes the Session Runtime active-time authority into the Agent loop", async () => {
+		const cwd = await tempDir();
+		const models = createModels();
+		const selected = model("active-budget-provider", "active-budget-model");
+		let modelCalls = 0;
+		const stream = (): AssistantMessageEventStream => {
+			modelCalls += 1;
+			throw new Error("provider called after active-duration exhaustion");
+		};
+		models.setProvider(createProvider({
+			id: selected.provider,
+			name: "Active Budget Provider",
+			auth: apiKeyAuth(),
+			models: [selected],
+			api: { stream, streamSimple: stream },
+		}));
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: selected.provider, model: selected.id },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			runBudget: {
+				maxModelTurns: 8,
+				maxToolTurns: 8,
+				maxActiveDurationMs: 10,
+				maxRepeatedFailureFingerprint: 3,
+				maxApprovalExpirations: 2,
+			},
+			runBudgetUsage: { activeDurationMs: () => 10 },
+		});
+		const events: AgentEvent[] = [];
+		controller.subscribe((event) => { events.push(event); });
+		await controller.login(selected.provider, "api_key", INTERACTION);
+
+		await expect(controller.prompt("already exhausted")).resolves.toBeUndefined();
+		expect(modelCalls).toBe(0);
+		expect(events.at(-1)).toMatchObject({ type: "agent_end", terminationReason: "active_duration_limit" });
+		controller.dispose();
+	});
+
+	it("enforces the production default run budget", async () => {
+		const cwd = await tempDir();
+		const models = createModels();
+		const selected = model("budget-provider", "budget-model");
+		let modelCalls = 0;
+		let toolCalls = 0;
+		const loopingStream = (): AssistantMessageEventStream => {
+			modelCalls += 1;
+			if (modelCalls > 16) throw new Error("production default run budget was omitted");
+			const call: ToolCall = { type: "toolCall", id: `controller-budget-${modelCalls}`, name: "budget-loop", arguments: {} };
+			const usage: AssistantMessage["usage"] = {
+				input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			};
+			const message: AssistantMessage = {
+				role: "assistant", content: [call], api: selected.api, provider: selected.provider, model: selected.id,
+				usage, stopReason: "toolUse", timestamp: Date.now(),
+			};
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: { ...message, content: [] } });
+				stream.push({ type: "toolcall_end", contentIndex: 0, toolCall: call, partial: message });
+				stream.push({ type: "done", reason: "toolUse", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+		models.setProvider(createProvider({
+			id: "budget-provider",
+			name: "Budget Provider",
+			auth: apiKeyAuth(),
+			models: [selected],
+			api: { stream: loopingStream, streamSimple: loopingStream },
+		}));
+		const parameters = Type.Object({});
+		const tool: AgentTool<typeof parameters> = {
+			name: "budget-loop",
+			label: "budget-loop",
+			description: "production budget fixture",
+			parameters,
+			execute: async () => {
+				toolCalls += 1;
+				return { content: [{ type: "text", text: "continue" }], details: {} };
+			},
+		};
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: selected.provider, model: selected.id },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [tool],
+		});
+		const events: AgentEvent[] = [];
+		controller.subscribe((event) => { events.push(event); });
+		await controller.login(selected.provider, "api_key", INTERACTION);
+
+		await expect(controller.prompt("loop until bounded")).resolves.toBeUndefined();
+		expect(modelCalls).toBe(16);
+		expect(toolCalls).toBe(16);
+		expect(events.at(-1)).toMatchObject({ type: "agent_end", stopReason: "length", terminationReason: "tool_turn_limit" });
+		controller.dispose();
+	});
+
 	it("refuses to construct production stdlib tools without a Host ExecutionEnv", async () => {
 		const cwd = await tempDir();
 		const { models, p1 } = fixtureModels();

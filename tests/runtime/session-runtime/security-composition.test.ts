@@ -1,4 +1,5 @@
 import * as fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +13,7 @@ import type { FileSystemBrokerPort } from "../../../src/security/policy-filesyst
 import type { NetworkBrokerPort } from "../../../src/security/policy-network.ts";
 import { MemoryApprovalStateStore, type ApprovalAuditPort } from "../../../src/security/permission/approval-coordinator.ts";
 import type { PermissionPrompter } from "../../../src/security/types.ts";
+import type { Shell } from "../../../src/runtime/execution-env.ts";
 import { UnavailableSandboxBackend } from "../../../src/security/sandbox/unavailable.ts";
 import {
 	HostProcessFinalLeafAdapter,
@@ -26,6 +28,7 @@ import {
 	type SessionProcessLeaf,
 	type SessionSecurityConfigSource,
 } from "../../../src/security/session-composition.ts";
+import type { GovernedProcessEnvironment, SessionToolchainProbe, SessionToolchainSnapshot } from "../../../src/security/toolchain.ts";
 
 let root: string;
 
@@ -89,6 +92,10 @@ async function composition(input: {
 		readonly stateStore: MemoryApprovalStateStore;
 		readonly audit: ApprovalAuditPort;
 	};
+	readonly toolchain?: SessionToolchainSnapshot;
+	readonly processEnvironment?: GovernedProcessEnvironment;
+	readonly toolchainProbe?: SessionToolchainProbe;
+	readonly unrestrictedShell?: Shell;
 }) {
 	const home = join(root, "home");
 	await fs.mkdir(home, { recursive: true });
@@ -106,6 +113,10 @@ async function composition(input: {
 		sandboxBackend: new UnavailableSandboxBackend("unknown", "test backend unavailable"),
 		...(input.processLeaf === undefined ? {} : { processLeaf: input.processLeaf }),
 		...(input.approvalPorts === undefined ? {} : { approvalPorts: input.approvalPorts }),
+		...(input.toolchain === undefined ? {} : { toolchain: input.toolchain }),
+		...(input.processEnvironment === undefined ? {} : { processEnvironment: input.processEnvironment }),
+		...(input.toolchainProbe === undefined ? {} : { toolchainProbe: input.toolchainProbe }),
+		...(input.unrestrictedShell === undefined ? {} : { unrestrictedShell: input.unrestrictedShell }),
 	});
 }
 
@@ -118,6 +129,10 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 	it("production SessionDomain consumes governed env and policy without raw local fallback", () => {
 		const source = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
 		expect(source).toContain("createSessionSecurity");
+		expect(source).toContain("resolveSessionToolchainSnapshot");
+		expect(source).toContain("buildGovernedProcessEnvironment");
+		expect(source).toContain("toolchain:");
+		expect(source).toContain("processEnvironment:");
 		expect(source).toContain("authorizationPolicy: security.authorizationPolicy");
 		expect(source).not.toContain("localExecutionEnv");
 	});
@@ -244,6 +259,190 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			executionMode: "background",
 			requestDigest: runtimeDigest({ command: "printf managed", cwd: root }),
 		})).resolves.toMatchObject({ ok: true });
+	});
+
+	it("uses the attested immutable launch plan even when sandbox is off", async () => {
+		const identity = {
+			device: 1,
+			inode: 1,
+			size: 1,
+			mtimeMs: 1,
+			contentDigest: runtimeDigest("binary"),
+		};
+		const body = {
+			node: { launchPath: "/runtime/bin/node", canonicalPath: "/runtime/bin/node", version: "22.23.1", identity },
+			npm: { launchPath: "/runtime/bin/npm", canonicalPath: "/runtime/lib/npm-cli.js", version: "10.9.8", identity: { ...identity, inode: 2 } },
+			bun: { launchPath: "/runtime/bin/bun", canonicalPath: "/runtime/bin/bun", version: "1.3.14", identity: { ...identity, inode: 3 } },
+			packageBinDirectory: join(root, "node_modules", ".bin"),
+			packageRoot: root,
+		};
+		const toolchain: SessionToolchainSnapshot = { ...body, snapshotDigest: runtimeDigest(body) };
+		const privateRoot = join(root, "home", "tmp", "governed-process");
+		const environment = {
+			HOME: join(privateRoot, "home"),
+			TMPDIR: join(privateRoot, "tmp"),
+			XDG_CACHE_HOME: join(privateRoot, "cache"),
+			npm_config_cache: join(privateRoot, "npm-cache"),
+			USER: "runledger",
+			LOGNAME: "runledger",
+			SHELL: "/bin/sh",
+			PATH: `${body.packageBinDirectory}:/runtime/bin:/usr/bin:/bin`,
+		};
+		const processEnvironment: GovernedProcessEnvironment = {
+			environment,
+			environmentDigest: runtimeDigest(environment),
+			privateRoot,
+		};
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+			toolchain,
+			processEnvironment,
+		});
+		const prepared = await security.managedProcess.prepare({
+			commandId: "command_attested_off",
+			command: "node -v",
+			cwd: root,
+			timeoutMs: 5_000,
+			backend: "pipe",
+			executionMode: "background",
+			requestDigest: runtimeDigest("attested-off"),
+		});
+		expect(prepared).toMatchObject({
+			ok: true,
+			value: {
+				launchPlan: {
+					enforcement: "off",
+					environment,
+				},
+				toolchainSnapshotDigest: toolchain.snapshotDigest,
+				environmentDigest: processEnvironment.environmentDigest,
+			},
+		});
+		if (!prepared.ok) return;
+		expect(prepared.value.requestDigest).toMatchObject({ algorithm: "sha256", digest: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+		expect(JSON.stringify(prepared.value.launchPlan)).not.toContain("process.env");
+		for (const directory of [privateRoot, environment.HOME, environment.TMPDIR, environment.XDG_CACHE_HOME, environment.npm_config_cache]) {
+			const info = await fs.lstat(directory);
+			expect(info.isDirectory()).toBe(true);
+			expect(info.isSymbolicLink()).toBe(false);
+			expect(info.mode & 0o777).toBe(0o700);
+		}
+	});
+
+	it("routes sandbox-off governed shell execution through the immutable launch plan", async () => {
+		const bytes = Buffer.from("binary");
+		const identity = {
+			device: 1,
+			inode: 1,
+			size: bytes.length,
+			mtimeMs: 1,
+			contentDigest: { algorithm: "sha256" as const, digest: createHash("sha256").update(bytes).digest("hex") as SessionToolchainSnapshot["node"]["identity"]["contentDigest"]["digest"] },
+		};
+		const body = {
+			node: { launchPath: "/runtime/bin/node", canonicalPath: "/runtime/bin/node", version: "22.23.1", identity },
+			npm: { launchPath: "/runtime/bin/npm", canonicalPath: "/runtime/lib/npm-cli.js", version: "10.9.8", identity },
+			bun: { launchPath: "/runtime/bin/bun", canonicalPath: "/runtime/bin/bun", version: "1.3.14", identity },
+			packageBinDirectory: join(root, "node_modules", ".bin"),
+			packageRoot: root,
+		};
+		const toolchain: SessionToolchainSnapshot = { ...body, snapshotDigest: runtimeDigest(body) };
+		const privateRoot = join(root, "home", "tmp", "shell-environment");
+		const environment = {
+			HOME: join(privateRoot, "home"), TMPDIR: join(privateRoot, "tmp"), XDG_CACHE_HOME: join(privateRoot, "cache"), npm_config_cache: join(privateRoot, "npm-cache"),
+			USER: "runledger", LOGNAME: "runledger", SHELL: "/bin/sh", PATH: `${body.packageBinDirectory}:/runtime/bin:/usr/bin:/bin`,
+		};
+		const processEnvironment: GovernedProcessEnvironment = { environment, environmentDigest: runtimeDigest(environment), privateRoot };
+		let leafPlan: Parameters<SessionProcessLeaf["execute"]>[0] | undefined;
+		let unrestrictedCalls = 0;
+		const toolchainProbe: SessionToolchainProbe = {
+			which: async () => undefined,
+			realpath: async (path) => path === "/runtime/bin/npm" ? "/runtime/lib/npm-cli.js" : path,
+			readFile: async () => bytes,
+			stat: async () => ({ device: 1, inode: 1, size: bytes.length, mtimeMs: 1 }),
+			run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+		};
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+			toolchain,
+			processEnvironment,
+			toolchainProbe,
+			processLeaf: { execute: async (plan) => { leafPlan = plan; return { stdout: "v22.23.1", stderr: "", exitCode: 0 }; } },
+			unrestrictedShell: { exec: async () => { unrestrictedCalls += 1; return { stdout: "ambient", stderr: "", exitCode: 0 }; } },
+		});
+		await expect(security.executionEnv.shell.exec("node --version")).resolves.toMatchObject({ stdout: "v22.23.1", exitCode: 0 });
+		expect(leafPlan?.environment).toEqual(environment);
+		expect(unrestrictedCalls).toBe(0);
+	});
+
+	it("rejects executable identity drift before the sandbox-off process leaf", async () => {
+		const bytes = Buffer.from("binary");
+		const contentDigest = { algorithm: "sha256" as const, digest: createHash("sha256").update(bytes).digest("hex") as SessionToolchainSnapshot["node"]["identity"]["contentDigest"]["digest"] };
+		const identity = { device: 1, inode: 1, size: bytes.length, mtimeMs: 1, contentDigest };
+		const body = {
+			node: { launchPath: "/runtime/bin/node", canonicalPath: "/runtime/bin/node", version: "22.23.1", identity },
+			npm: { launchPath: "/runtime/bin/npm", canonicalPath: "/runtime/lib/npm-cli.js", version: "10.9.8", identity },
+			bun: { launchPath: "/runtime/bin/bun", canonicalPath: "/runtime/bin/bun", version: "1.3.14", identity },
+			packageBinDirectory: join(root, "node_modules", ".bin"),
+			packageRoot: root,
+		};
+		const toolchain: SessionToolchainSnapshot = { ...body, snapshotDigest: runtimeDigest(body) };
+		const privateRoot = join(root, "home", "tmp", "identity-drift");
+		const environment = {
+			HOME: join(privateRoot, "home"), TMPDIR: join(privateRoot, "tmp"), XDG_CACHE_HOME: join(privateRoot, "cache"), npm_config_cache: join(privateRoot, "npm-cache"),
+			USER: "runledger", LOGNAME: "runledger", SHELL: "/bin/sh", PATH: `${body.packageBinDirectory}:/runtime/bin:/usr/bin:/bin`,
+		};
+		let leafCalls = 0;
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+			toolchain,
+			processEnvironment: { environment, environmentDigest: runtimeDigest(environment), privateRoot },
+			toolchainProbe: {
+				which: async () => undefined,
+				realpath: async (path) => path === "/runtime/bin/npm" ? "/runtime/lib/npm-cli.js" : path,
+				readFile: async () => bytes,
+				stat: async () => ({ device: 1, inode: 99, size: bytes.length, mtimeMs: 1 }),
+				run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+			},
+			processLeaf: { execute: async () => { leafCalls += 1; return { stdout: "", stderr: "", exitCode: 0 }; } },
+		});
+		await expect(security.executionEnv.shell.exec("node --version")).rejects.toThrow("toolchain executable identity changed");
+		expect(leafCalls).toBe(0);
+	});
+
+	it("rejects reserved or secret per-command environment overrides before the process leaf", async () => {
+		const bytes = Buffer.from("binary");
+		const contentDigest = { algorithm: "sha256" as const, digest: createHash("sha256").update(bytes).digest("hex") as SessionToolchainSnapshot["node"]["identity"]["contentDigest"]["digest"] };
+		const identity = { device: 1, inode: 1, size: bytes.length, mtimeMs: 1, contentDigest };
+		const body = {
+			node: { launchPath: "/runtime/bin/node", canonicalPath: "/runtime/bin/node", version: "22.23.1", identity },
+			npm: { launchPath: "/runtime/bin/npm", canonicalPath: "/runtime/lib/npm-cli.js", version: "10.9.8", identity },
+			bun: { launchPath: "/runtime/bin/bun", canonicalPath: "/runtime/bin/bun", version: "1.3.14", identity },
+			packageBinDirectory: join(root, "node_modules", ".bin"),
+			packageRoot: root,
+		};
+		const toolchain: SessionToolchainSnapshot = { ...body, snapshotDigest: runtimeDigest(body) };
+		const privateRoot = join(root, "home", "tmp", "override-rejection");
+		const environment = {
+			HOME: join(privateRoot, "home"), TMPDIR: join(privateRoot, "tmp"), XDG_CACHE_HOME: join(privateRoot, "cache"), npm_config_cache: join(privateRoot, "npm-cache"),
+			USER: "runledger", LOGNAME: "runledger", SHELL: "/bin/sh", PATH: `${body.packageBinDirectory}:/runtime/bin:/usr/bin:/bin`,
+		};
+		let leafCalls = 0;
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+			toolchain,
+			processEnvironment: { environment, environmentDigest: runtimeDigest(environment), privateRoot },
+			toolchainProbe: {
+				which: async () => undefined,
+				realpath: async (path) => path === "/runtime/bin/npm" ? "/runtime/lib/npm-cli.js" : path,
+				readFile: async () => bytes,
+				stat: async () => ({ device: 1, inode: 1, size: bytes.length, mtimeMs: 1 }),
+				run: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+			},
+			processLeaf: { execute: async () => { leafCalls += 1; return { stdout: "", stderr: "", exitCode: 0 }; } },
+		});
+		await expect(security.executionEnv.shell.exec("printf blocked", { env: { HOME: "/escape" } })).rejects.toMatchObject({ code: "invalid_request" });
+		await expect(security.executionEnv.shell.exec("printf blocked", { env: { SERVICE_TOKEN: "secret" } })).rejects.toMatchObject({ code: "invalid_request" });
+		expect(leafCalls).toBe(0);
 	});
 
 	it("uses the injected Session durable approval ports for an on-request write", async () => {
