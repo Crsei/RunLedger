@@ -233,6 +233,17 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     copySelection(renderer.getSelection()?.getSelectedText());
   };
   renderer.on("selection", onSelection);
+  const scrollTranscriptForWheel: NonNullable<typeof editorRow.onMouseScroll> = (event) => {
+    const direction = event.scroll?.direction;
+    if (direction !== "up" && direction !== "down") return;
+    const delta = Math.max(1, event.scroll?.delta ?? 1);
+    transcript.scrollBy(direction === "up" ? -delta : delta);
+    updateNewContentIndicator();
+    renderer.requestRender();
+  };
+  editorRow.onMouseScroll = scrollTranscriptForWheel;
+  newContent.onMouseScroll = scrollTranscriptForWheel;
+  footer.onMouseScroll = scrollTranscriptForWheel;
   renderer.keyInput.on("keypress", (key) => {
     key.preventDefault();
     key.stopPropagation();

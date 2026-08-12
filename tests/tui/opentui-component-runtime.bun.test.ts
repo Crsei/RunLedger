@@ -290,6 +290,47 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("routes the mouse wheel outside the transcript to the session history", async () => {
+    const setup = await createTestRenderer({ width: 60, height: 12 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: Array.from({ length: 40 }, (_, index) => ({
+          id: `entry-${index}`,
+          kind: "text" as const,
+          content: `entry ${index}`,
+        })),
+        editorText: "draft",
+        footer: [],
+      });
+      await setup.renderOnce();
+      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+      expect(transcript).toBeDefined();
+      if (!transcript) return;
+      const bottom = transcript.scrollTop;
+
+      // 用户提交请求后鼠标通常仍停在 composer；滚轮仍应移动 session 历史。
+      await setup.mockMouse.scroll(10, 10, "up");
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeLessThan(bottom);
+
+      const scrolledUp = transcript.scrollTop;
+      await setup.mockMouse.scroll(10, 10, "down");
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeGreaterThan(scrolledUp);
+
+      await setup.mockMouse.scroll(10, 11, "up");
+      await setup.renderOnce();
+      expect(transcript.scrollTop).toBeLessThan(bottom);
+      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("keeps the editor cursor at the end of the draft as it grows", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
