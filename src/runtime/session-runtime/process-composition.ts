@@ -10,15 +10,17 @@ import type { SessionDomainResult } from "./domain-router.ts";
 import type { SessionProcessDomainPort } from "./session-runtime.ts";
 import type { SessionManagedProcessSecurity } from "../../security/session-composition.ts";
 import type { ManagedProcessRequest, ExecutionHandleRef, ManagedProcessSummary } from "../process/types.ts";
+import { clipUtf8Output, type OutputCursor } from "../process/output.ts";
 import { ProcessManager, AuditedProcessManager, type BackendLaunchPlan, type BackendSpawnInput, type BackendSpawnReceipt } from "../process/manager.ts";
 import { FileProcessOutputStore } from "../../storage/process/output-store.ts";
 import { PipeProcessBackend } from "../../storage/process/process-backend.ts";
 import { PtyProcessBackend } from "../../storage/process/pty-backend.ts";
 import { createPosixNodePtyAdapter } from "../../storage/process/node-pty-adapter.ts";
-import { ManagedProcessControlPlane, type ManagedProcessBackendControl, type ManagedProcessBackendPort } from "../../storage/process/control-plane.ts";
+import { ManagedProcessControlPlane, type ControlPlaneWaitResult, type ManagedProcessBackendControl, type ManagedProcessBackendPort } from "../../storage/process/control-plane.ts";
 import { SESSION_PROTOCOL_BOUNDS, type SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
 import type { ProcessToolClient } from "../tools/process-tool-support.ts";
-import type { ManagedBackgroundBashOperations } from "../tools/bash.ts";
+import type { ManagedBackgroundBashOperations, ManagedForegroundBashInput, ManagedForegroundBashOperations } from "../tools/bash.ts";
+import type { ShellResult } from "../execution-env.ts";
 import { runtimeWorkspacePlatform } from "../../workspace/runtime-platform.ts";
 import type { AttemptPort } from "./attempt-gateway.ts";
 import { FileArtifactStore } from "../trace/artifact-store.ts";
@@ -309,7 +311,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 		return this.commitMutation(operation, context.effectId, safeSummary(created.summary));
 	}
 
-	public toolClient(): ManagedBackgroundBashOperations & ProcessToolClient {
+	public toolClient(): ManagedBackgroundBashOperations & ManagedForegroundBashOperations & ProcessToolClient {
 		return {
 			start: async (input) => {
 				const contextSeed = runtimeDigest({
@@ -339,12 +341,140 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 					? { ok: true, handle: current.handle, summary: current.summary }
 					: { ok: false, code: current.code };
 			},
+			exec: (input) => this.executeForeground(input),
 			processOutput: (handle, cursor, maxBytes) => this.plane.processOutput(handle, cursor, maxBytes),
 			processWait: (handle, timeoutMs, actor) => this.plane.processWait(handle, timeoutMs, actor),
 			write: (handle, actor, input) => this.plane.write(handle, actor, input),
 			stop: (handle, actor, signal) => this.plane.stop(handle, actor, signal),
 			resize: (handle, actor, columns, rows) => this.plane.resize(handle, actor, columns, rows),
 		};
+	}
+
+	private async executeForeground(input: ManagedForegroundBashInput): Promise<ShellResult> {
+		const maxOutputBytes = input.maxOutputChars ?? 1_000_000;
+		if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 0) throw new Error("foreground output limit is invalid");
+		const contextSeed = runtimeDigest({
+			sessionId: this.options.fence.sessionId,
+			generation: this.options.fence.generation,
+			command: input.command,
+			cwd: input.cwd,
+			now: Date.now(),
+		});
+		const started = await this.mutate("session.process.start", {
+			command: input.command,
+			cwd: input.cwd,
+			timeoutMs: input.timeoutMs,
+			backend: "pipe",
+			executionMode: "foreground",
+		}, {
+			correlationId: `correlation_${contextSeed.digest.slice(0, 64)}`,
+			effectId: `effect_${contextSeed.digest.slice(0, 64)}`,
+			expectedRevision: this.revision(),
+		});
+		if (!started.ok) throw new Error(`foreground process rejected: ${started.code}`);
+		const executionId = stringValue(started.value.executionId);
+		const handle = executionId === undefined ? undefined : this.findHandle(executionId);
+		if (handle === undefined) throw new Error("foreground process handle is unavailable");
+
+		if (input.stdin !== undefined && input.stdin.length > 0) {
+			const written = await this.mutate("session.process.stdin", { executionId, input: input.stdin }, {
+				correlationId: `correlation_${contextSeed.digest.slice(0, 60)}_stdin`,
+				effectId: `effect_${contextSeed.digest.slice(0, 60)}_stdin`,
+				expectedRevision: this.revision(),
+			});
+			if (!written.ok) throw new Error(`foreground process stdin failed: ${written.code}`);
+		}
+		const eof = await this.mutate("session.process.eof", { executionId }, {
+			correlationId: `correlation_${contextSeed.digest.slice(0, 62)}_eof`,
+			effectId: `effect_${contextSeed.digest.slice(0, 62)}_eof`,
+			expectedRevision: this.revision(),
+		});
+		if (!eof.ok && !this.isTerminal(handle)) throw new Error(`foreground process EOF failed: ${eof.code}`);
+
+		let cursor: OutputCursor = { sequence: 0, byteOffset: 0 };
+		let stdout = "";
+		let capturedBytes = 0;
+		let stopRequested = false;
+		let stopDeadline = Number.POSITIVE_INFINITY;
+		let terminal: Extract<ControlPlaneWaitResult, { readonly ok: true }> | undefined;
+		const flushOutput = async (): Promise<void> => {
+			while (capturedBytes < maxOutputBytes) {
+				const previousCursor = cursor;
+				const result = await this.plane.processOutput(handle, cursor, SESSION_PROTOCOL_BOUNDS.maxOutputPageBytes);
+				if (!result.ok) throw new Error(`foreground process output failed: ${result.code}`);
+				cursor = result.page.nextCursor;
+				if (result.page.text.length > 0) {
+					const clipped = clipUtf8Output(result.page.text, maxOutputBytes - capturedBytes);
+					if (clipped.text.length > 0) {
+						stdout += clipped.text;
+						capturedBytes += clipped.byteLength;
+						input.onStdout?.(clipped.text);
+					}
+				}
+				if (!result.page.truncated || sameOutputCursor(result.page.nextCursor, previousCursor)) return;
+			}
+		};
+		const requestStop = async (): Promise<void> => {
+			if (stopRequested) return;
+			stopRequested = true;
+			stopDeadline = Date.now() + SESSION_PROTOCOL_BOUNDS.maxWaitMs;
+			const stopped = await this.mutate("session.process.stop", { executionId }, {
+				correlationId: `correlation_${contextSeed.digest.slice(0, 60)}_stop`,
+				effectId: `effect_${contextSeed.digest.slice(0, 60)}_stop`,
+				expectedRevision: this.revision(),
+			});
+			if (!stopped.ok && !this.isTerminal(handle)) throw new Error(`foreground process stop failed: ${stopped.code}`);
+		};
+		let abortListener: (() => void) | undefined;
+		let abortSignal: Promise<"aborted"> | undefined;
+		if (input.signal) {
+			abortSignal = new Promise<"aborted">((resolve) => {
+				abortListener = () => resolve("aborted");
+				input.signal?.addEventListener("abort", abortListener, { once: true });
+			});
+		}
+		try {
+			const deadline = Date.now() + input.timeoutMs;
+			while (terminal === undefined) {
+				await flushOutput();
+				if (input.signal?.aborted) await requestStop();
+				if (!stopRequested && Date.now() >= deadline) await requestStop();
+				const waitMs = stopRequested
+					? Math.min(SESSION_PROTOCOL_BOUNDS.maxWaitMs, Math.max(1, stopDeadline - Date.now()))
+					: Math.min(SESSION_PROTOCOL_BOUNDS.maxWaitMs, Math.max(1, deadline - Date.now()));
+				const waitPromise = this.plane.processWait(handle, waitMs, "driver");
+				const waited = abortSignal === undefined || stopRequested
+					? await waitPromise
+					: await Promise.race([
+							waitPromise,
+							abortSignal.then(async () => {
+								await requestStop();
+								return waitPromise;
+							}),
+						]);
+				const resolved = waited instanceof Promise ? await waited : waited;
+				if (!resolved.ok) throw new Error(`foreground process wait failed: ${resolved.code}`);
+				if (resolved.outcome === "terminal" || resolved.outcome === "uncertain") terminal = resolved;
+				if (stopRequested && terminal === undefined && Date.now() >= stopDeadline) {
+					throw new Error("foreground process termination is uncertain");
+				}
+			}
+			await flushOutput();
+			const evidence = terminal.summary.terminal;
+			return {
+				stdout,
+				stderr: "",
+				exitCode: evidence?.exitCode ?? (terminal.summary.state === "completed" ? 0 : 1),
+				...(evidence?.signal === undefined ? {} : { signaled: true }),
+			};
+		} finally {
+			if (input.signal && abortListener) input.signal.removeEventListener("abort", abortListener);
+		}
+	}
+
+	private isTerminal(handle: ExecutionHandleRef): boolean {
+		const current = this.manager.query(handle);
+		return current.ok && current.summary.terminal !== undefined;
 	}
 
 	/** Takeover 只结算 durable projection；绝不按 PID/PTY handle 重连。 */
@@ -496,6 +626,10 @@ function safeSummary(summary: ManagedProcessSummary): Record<string, unknown> {
 
 function isTerminalSummary(summary: ManagedProcessSummary): boolean {
 	return summary.terminal !== undefined;
+}
+
+function sameOutputCursor(left: OutputCursor, right: OutputCursor): boolean {
+	return left.sequence === right.sequence && left.byteOffset === right.byteOffset;
 }
 
 function domainSuccess(operation: string, domainRevision: number, value: Record<string, unknown>): SessionDomainResult {

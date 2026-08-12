@@ -12,6 +12,7 @@ import type { SessionProcessDomainPort } from "../../../src/runtime/session-runt
 import { IS_WINDOWS } from "../../helpers/platform.ts";
 import type { AttemptPort } from "../../../src/runtime/session-runtime/attempt-gateway.ts";
 import type { TraceRecorderFactory } from "../../../src/runtime/trace/composition.ts";
+import { createBashTool } from "../../../src/runtime/tools/bash.ts";
 import { openSessionDatabase, type SessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
@@ -65,6 +66,80 @@ function securitySource(): SessionSecurityConfigSource {
 }
 
 describe("S4 Session managed process composition", () => {
+	it("executes foreground Bash through the Session-owned process facade", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-foreground"),
+			runtimeId: createRuntimeId("runtime", "process-foreground"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-foreground");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-foreground"),
+			securitySources: [securitySource()],
+		});
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+		});
+		const bash = createBashTool(root, { managedProcess: process.toolClient() });
+		const result = await bash.execute("toolCall_session_foreground", {
+			command: "node -e \"process.stdin.setEncoding('utf8');let value='';process.stdin.on('data',chunk=>value+=chunk);process.stdin.on('end',()=>process.stdout.write('session-foreground:'+value.trim()+'\\\\n'))\"",
+			stdin: "input-ok\\n",
+			timeout: 5_000,
+		});
+
+		expect(result.isError, JSON.stringify(result)).not.toBe(true);
+		expect(result.details).toMatchObject({ exitCode: 0 });
+		expect(result.content).toEqual([{ type: "text", text: expect.stringContaining("session-foreground:input-ok") }]);
+		expect(JSON.stringify(result)).not.toContain("foreground process facade unavailable");
+	});
+
+	it("settles a foreground Bash timeout through the Session-owned process facade", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-foreground-timeout"),
+			runtimeId: createRuntimeId("runtime", "process-foreground-timeout"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-foreground-timeout");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-foreground-timeout"),
+			securitySources: [securitySource()],
+		});
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+		});
+		const result = await process.toolClient().exec({
+			command: "node -e \"setTimeout(() => {}, 10000)\"",
+			cwd: root,
+			timeoutMs: 60,
+			maxOutputChars: 1_024,
+		});
+
+		expect(result).toMatchObject({ signaled: true });
+		expect(result.exitCode).not.toBe(0);
+	});
+
 	it("runs a real pipe and exposes bounded output through the Session process domain", async () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		await mkdir(layout.home, { recursive: true });
