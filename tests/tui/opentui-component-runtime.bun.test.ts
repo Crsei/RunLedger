@@ -15,6 +15,8 @@ import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { makeSelectListTheme } from "../../src/tui/theme/factories.ts";
 import { SlashCommandPopup } from "../../src/tui/components/slash-command-popup.ts";
 import { builtinCommandDescriptors } from "../../src/tui/commands/registry.ts";
+import { PermissionRequestView } from "../../src/tui/components/permission-request-view.ts";
+import { approvalChoices, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
 
 describe("OpenTUI component projection", () => {
   test("wraps complete canonical Timeline user/assistant/thinking content at narrow width", async () => {
@@ -751,34 +753,43 @@ describe("OpenTUI component projection", () => {
     expect(setup.renderer.isDestroyed).toBe(true);
   });
 
-  test("S6 renders the approval decision overlay in the real OpenTUI renderer", async () => {
+  test("S6 renders a Codex-style permission request in the transcript without an overlay", async () => {
     const setup = await createTestRenderer({ width: 72, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
       onResize: () => {},
     });
     try {
+      const request = parseApprovalReverseRequest({
+        requestType: "permission",
+        toolName: "bash",
+        summary: "Sandbox blocked tsx from creating its IPC socket.",
+        cwd: "/workspace",
+        requests: [{ kind: "shell", command: "npm run check", cwd: "/workspace", analysis: "known" }],
+      });
+      expect(request).toBeDefined();
+      if (request === undefined) return;
+      const view = new PermissionRequestView({
+        request,
+        choices: approvalChoices(request),
+        onSelect: () => {},
+        onCancel: () => {},
+      });
       runtime.update({
-        body: [{ id: "approval-context", kind: "text", content: "write requests a governed mutation" }],
+        body: view.present(72),
         editorText: "",
         footer: ["Waiting for approval"],
-        overlay: [{
-          kind: "select",
-          title: "Approval required",
-          options: [
-            { value: "allow-once", label: "Allow once" },
-            { value: "deny", label: "Deny" },
-          ],
-          selectedIndex: 0,
-        }],
       });
       await setup.renderOnce();
       const frame = setup.captureCharFrame();
-      expect(frame).toContain("Approval required");
-      expect(frame).toContain("Allow once");
-      expect(frame).toContain("Deny");
+      expect(frame).toContain("Would you like to run the following command?");
+      expect(frame).toContain("Environment: local");
+      expect(frame).toContain("$ npm run check");
+      expect(frame).toContain("Yes, proceed");
+      expect(frame).toContain("No, and tell Codex what to do differently");
       expect(frame).toContain("Waiting for approval");
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-overlay-select-0");
+      expect(setup.renderer.root.findDescendantById("runledger-overlay")).toBeUndefined();
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-editor");
     } finally {
       runtime.destroy();
     }

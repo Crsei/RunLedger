@@ -55,6 +55,7 @@ import { ExtensionToggleModal, type ExtensionToggleItem } from "./components/ext
 import { McpServersModal, type McpServerViewItem } from "./components/mcp-servers-modal.ts";
 import { StatusComponent } from "./components/status.ts";
 import { SelectorModal } from "./components/selector-modal.ts";
+import { PermissionRequestView } from "./components/permission-request-view.ts";
 import { SelectionView } from "./components/selection-view.ts";
 import type { SelectItem, RgbColor } from "./index.ts";
 import type { Component, OverlayHandle, OverlayOptions } from "./primitives.ts";
@@ -209,6 +210,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly resolveExit: (intent: InteractiveExitIntent) => void;
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
+  private activePermissionView: PermissionRequestView | undefined;
+  private unsubscribePermissionInput: (() => void) | undefined;
 
   // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
   private slashPopup: SlashCommandPopup | undefined;
@@ -273,11 +276,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.setAppIntentHandler({
       onInterrupt: () => {
         // nonCapturing 弹窗(如 slash 补全)不拦截 Ctrl+C
-        if (this.ui.hasCapturingOverlay()) return false;
+        if (this.ui.hasCapturingOverlay() || this.activePermissionView !== undefined) return false;
         this.handleInterrupt();
         return true;
       },
-      onExit: () => this.ui.hasOverlay() ? false : this.handleCtrlD(),
+      onExit: () => this.ui.hasOverlay() || this.activePermissionView !== undefined ? false : this.handleCtrlD(),
       onRefresh: () => this.ui.invalidate(),
     });
 
@@ -593,22 +596,25 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private handleApprovalReverseRequest(body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
     const view = parseApprovalReverseRequest(body);
     if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+    if (this.activePermissionView !== undefined) return Promise.resolve({ ok: false, code: "approval_busy" });
+    if (signal.aborted) return Promise.resolve({ ok: false, code: "approval_aborted" });
     return new Promise<Record<string, unknown>>((resolve) => {
       let settled = false;
-      const finish = (body: Record<string, unknown>): void => {
+      const finish = (responseBody: Record<string, unknown>): void => {
         if (settled) return;
         settled = true;
         signal.removeEventListener("abort", onAbort);
-        this.closeOverlay();
-        resolve(body);
+        this.unsubscribePermissionInput?.();
+        this.unsubscribePermissionInput = undefined;
+        this.refs.chat.clearReplacement(permissionView);
+        if (this.activePermissionView === permissionView) this.activePermissionView = undefined;
+        this.ui.setFocus(this.refs.editor);
+        this.ui.requestRender(true);
+        resolve(responseBody);
       };
       const onAbort = (): void => {
         finish({ ok: false, code: "approval_aborted" });
       };
-      if (signal.aborted) {
-        onAbort();
-        return;
-      }
       const choose = (decision: ApprovalDecision): void => {
         // 这里只记录用户决策意图；Host 是否接受由 reverse response 的调用方确认。
         this.dispatchTimeline([{
@@ -621,17 +627,23 @@ export class InteractiveMode implements FooterSnapshotProvider {
         finish(approvalDecisionBody(decision));
       };
 	  const choices = approvalChoices(view);
-      const modal = new SelectorModal({
-        theme: this.theme,
-        selectListTheme: makeSelectListTheme(this.theme),
-        title: `Approval required · ${view.toolName}: ${view.summary}`,
-        items: choices.map((choice) => ({ value: choice.id, label: choice.label, description: choice.description })),
-        onSelect: (item) => choose(choices.find((choice) => choice.id === item.value)?.decision ?? { decision: "cancel" }),
-        onCancel: () => choose({ decision: "cancel" }),
-      });
+	  const permissionView = new PermissionRequestView({
+	    request: view,
+	    choices,
+	    onSelect: (choice) => choose(choice.decision),
+	    onCancel: () => choose({ decision: "cancel" }),
+	    onChange: () => this.ui.requestRender(true),
+	  });
       signal.addEventListener("abort", onAbort, { once: true });
-      this.showOverlayModal(modal, { anchor: "center" }, "approval");
-      this.ui.requestRender();
+	  if (this.ui.hasOverlay()) this.closeOverlay();
+	  this.activePermissionView = permissionView;
+	  this.refs.chat.setReplacement(permissionView, "permission-request");
+	  this.unsubscribePermissionInput = this.ui.addInputListener((data) => {
+	    if (this.activePermissionView !== permissionView) return undefined;
+	    permissionView.handleInput(data);
+	    return { consume: true };
+	  });
+	  this.ui.requestRender(true);
     });
   }
 
