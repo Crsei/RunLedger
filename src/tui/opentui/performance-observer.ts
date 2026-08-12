@@ -28,6 +28,19 @@ export interface NativeFrameObservation {
   readonly cellsUpdated: number;
 }
 
+export interface MermaidProjectionObservation {
+  readonly durationMs: number;
+  readonly cacheHit: boolean;
+  readonly fallback: boolean;
+}
+
+export interface MermaidCacheObservation {
+  readonly entries: number;
+  readonly bytes: number;
+  readonly evictions: number;
+  readonly oversized: number;
+}
+
 export interface TuiPerformanceSnapshot {
   readonly queuedEvents: number;
   readonly queuedBytes: number;
@@ -48,6 +61,15 @@ export interface TuiPerformanceSnapshot {
   readonly nativeFrameTimeMs: number;
   readonly nativeCellsUpdated: number;
   readonly generationDiscardCount: number;
+  readonly mermaidProjectionCount: number;
+  readonly mermaidProjectionTimeMs: number;
+  readonly mermaidCacheHits: number;
+  readonly mermaidCacheMisses: number;
+  readonly mermaidCacheEntries: number;
+  readonly mermaidCacheBytes: number;
+  readonly mermaidCacheEvictions: number;
+  readonly mermaidCacheOversized: number;
+  readonly mermaidFallbackCount: number;
 }
 
 /**
@@ -111,6 +133,27 @@ export class TuiPerformanceObserver {
     };
   }
 
+  recordMermaidProjection(observation: MermaidProjectionObservation): void {
+    this.counters = {
+      ...this.counters,
+      mermaidProjectionCount: this.counters.mermaidProjectionCount + 1,
+      mermaidProjectionTimeMs: this.counters.mermaidProjectionTimeMs + Math.max(0, observation.durationMs),
+      mermaidCacheHits: this.counters.mermaidCacheHits + (observation.cacheHit ? 1 : 0),
+      mermaidCacheMisses: this.counters.mermaidCacheMisses + (observation.cacheHit ? 0 : 1),
+      mermaidFallbackCount: this.counters.mermaidFallbackCount + (observation.fallback ? 1 : 0),
+    };
+  }
+
+  recordMermaidCache(observation: MermaidCacheObservation): void {
+    this.counters = {
+      ...this.counters,
+      mermaidCacheEntries: Math.max(0, Math.floor(observation.entries)),
+      mermaidCacheBytes: Math.max(0, Math.floor(observation.bytes)),
+      mermaidCacheEvictions: Math.max(0, Math.floor(observation.evictions)),
+      mermaidCacheOversized: Math.max(0, Math.floor(observation.oversized)),
+    };
+  }
+
   recordGenerationDiscard(): void {
     this.counters = {
       ...this.counters,
@@ -148,5 +191,14 @@ function emptySnapshot(): TuiPerformanceSnapshot {
     nativeFrameTimeMs: 0,
     nativeCellsUpdated: 0,
     generationDiscardCount: 0,
+    mermaidProjectionCount: 0,
+    mermaidProjectionTimeMs: 0,
+    mermaidCacheHits: 0,
+    mermaidCacheMisses: 0,
+    mermaidCacheEntries: 0,
+    mermaidCacheBytes: 0,
+    mermaidCacheEvictions: 0,
+    mermaidCacheOversized: 0,
+    mermaidFallbackCount: 0,
   };
 }

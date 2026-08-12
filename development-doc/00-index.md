@@ -35,6 +35,7 @@
 | TUI / OpenTUI Performance | [`tui/18-opentui-streaming-performance-ux-plan.md`](tui/18-opentui-streaming-performance-ux-plan.md) | 迁移后的增量 timeline、流式合并、长会话窗口化、背压与响应式交互体验 | `17-opentui-refactor-plan.md` P8 证据、当前代码/tests 与本文 before/after artifact |
 | TUI / Passive Contract Integration | [`tui/19-passive-contract-integration-plan.md`](tui/19-passive-contract-integration-plan.md) | 将已提前建立的 TUI application/Timeline/presentation/workflow 数据结构分批接入 reducer、projector、EffectRunner、typed adapter 与标准 `runledger` | Passive Plan 17 的 P0–P6 合同证据、当前生产 TUI/Host authority、本文 B0–B8 状态表 |
 | TUI / Slash Command Adaptation | [`tui/20-codex-slash-command-adaptation-plan.md`](tui/20-codex-slash-command-adaptation-plan.md) | `/` 命令 registry、输入期 popup、别名/参数补全、统一派发、门控与 SelectionView | 当前 HEAD、未提交工作树、聚焦/全量测试、build 与标准 PATH PTY 证据分开核对 |
+| TUI / Mermaid Rendering | [`tui/21-mermaid-diagram-rendering-implementation-plan.md`](tui/21-mermaid-diagram-rendering-implementation-plan.md)、[`tui/21-mermaid-diagram-rendering-license-manifest.md`](tui/21-mermaid-diagram-rendering-license-manifest.md) | 受限 Mermaid Unicode inline projection、OpenTUI 接缝、完整源码 fallback、缓存/预算与 R1/R2 安全边界 | M0–M7 自动门禁与标准 PATH smoke 已完成；人工视觉验收、license formal review 与 R2 仍未完成，状态查 Plan 21 |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
 
 ## 2026-08-04 当前实现批次
@@ -112,6 +113,8 @@ development-doc/
     ├── 18-opentui-streaming-performance-ux-plan.md
     ├── 19-passive-contract-integration-plan.md
     ├── 20-codex-slash-command-adaptation-plan.md
+    ├── 21-mermaid-diagram-rendering-implementation-plan.md
+    ├── 21-mermaid-diagram-rendering-license-manifest.md
     └── reference/
         └── 00-opentui-component-index.md
 ```
