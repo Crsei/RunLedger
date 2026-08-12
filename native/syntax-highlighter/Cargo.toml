@@ -1,0 +1,19 @@
+[package]
+name = "runledger-syntax-highlighter"
+version = "0.0.1"
+edition = "2024"
+license = "MIT"
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3.12.1", default-features = false, features = ["napi8"] }
+napi-derive = "3.6.3"
+syntect = "5.3.0"
+two-face = { version = "=0.5.1", default-features = false, features = ["syntect-default-onig"] }
+
+[build-dependencies]
+napi-build = "2.4.1"
+sha2 = "=0.10.9"

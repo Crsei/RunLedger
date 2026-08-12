@@ -16,6 +16,7 @@ import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
 const WORKSPACE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
+const SYNTAX_THEME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 export interface SettingsStoreOptions {
 	readonly layout: RunledgerLayout;
@@ -35,8 +36,8 @@ export interface ProjectSettings {
 	model?: string;
 	/** 默认 thinking level;CLI `--thinking` 优先级高于此字段 */
 	thinkingLevel?: ModelThinkingLevel;
-	/** 主题名,TUI 已用 dark/light 二选一 */
-	theme?: "dark" | "light";
+	/** syntax theme 名；dark/light 是兼容输入，分别映射为自适应 pair。 */
+	theme?: string;
 	/** /model 选择器可见模型白名单;空数组或 undefined 表示无白名单 */
 	enabledModels?: string[];
 	steeringMode?: QueueMode;
@@ -189,7 +190,7 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (typeof raw.provider === "string" && raw.provider.length > 0) out.provider = raw.provider;
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
 	if (isThinkingLevel(raw.thinkingLevel)) out.thinkingLevel = raw.thinkingLevel;
-	if (raw.theme === "dark" || raw.theme === "light") out.theme = raw.theme;
+	if (isSyntaxThemeName(raw.theme)) out.theme = raw.theme;
 	if (Array.isArray(raw.enabledModels)) {
 		const filtered = raw.enabledModels.filter(
 			(value): value is string => typeof value === "string" && value.length > 0,
@@ -207,6 +208,10 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 		if (recording) out.recording = recording;
 	}
 	return out;
+}
+
+function isSyntaxThemeName(value: unknown): value is string {
+	return typeof value === "string" && !value.includes("..") && SYNTAX_THEME_NAME_PATTERN.test(value);
 }
 
 /** 将缺失或非法配置解析为安全且不可变的启动快照。 */

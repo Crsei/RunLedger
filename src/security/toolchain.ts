@@ -29,7 +29,7 @@ export interface SessionToolchainSnapshot {
 }
 
 export interface SessionToolchainProbe {
-	which(program: "npm" | "bun"): Promise<string | undefined>;
+	which(program: "node" | "npm" | "bun"): Promise<string | undefined>;
 	realpath(path: string): Promise<string | undefined>;
 	readFile(path: string): Promise<Uint8Array>;
 	stat(path: string): Promise<{ readonly device: number; readonly inode: number; readonly size: number; readonly mtimeMs: number }>;
@@ -69,10 +69,11 @@ const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 export async function resolveSessionToolchainSnapshot(input: {
 	readonly packageRoot: string;
 	readonly workspaceRoot: string;
-	readonly nodeExecutable: string;
+	/** 测试/嵌入方可固定 Node；标准 Bun CLI 从同一受校验 PATH probe 解析。 */
+	readonly nodeExecutable?: string;
 	readonly probe: SessionToolchainProbe;
 }): Promise<SessionToolchainResult<SessionToolchainSnapshot>> {
-	if (!isAbsolute(input.packageRoot) || !isAbsolute(input.workspaceRoot) || !isAbsolute(input.nodeExecutable)) {
+	if (!isAbsolute(input.packageRoot) || !isAbsolute(input.workspaceRoot) || (input.nodeExecutable !== undefined && !isAbsolute(input.nodeExecutable))) {
 		return failure("toolchain_invalid_request", "package root, workspace root and Node executable must be absolute");
 	}
 	const probe = input.probe;
@@ -80,12 +81,13 @@ export async function resolveSessionToolchainSnapshot(input: {
 		const packageRoot = resolve(input.packageRoot);
 		const packageJson = parsePackageJson(await probe.readFile(join(packageRoot, "package.json")));
 		if (!packageJson.ok) return packageJson;
+		const nodePath = input.nodeExecutable ?? await probe.which("node");
 		const npmPath = await probe.which("npm");
 		const bunPath = await probe.which("bun");
-		if (npmPath === undefined || bunPath === undefined || !isAbsolute(npmPath) || !isAbsolute(bunPath)) {
-			return failure("toolchain_executable_missing", "absolute npm and Bun executables are required");
+		if (nodePath === undefined || npmPath === undefined || bunPath === undefined || !isAbsolute(nodePath) || !isAbsolute(npmPath) || !isAbsolute(bunPath)) {
+			return failure("toolchain_executable_missing", "absolute Node, npm and Bun executables are required");
 		}
-		const node = await attest(input.nodeExecutable, probe, async (canonical) => probe.run(canonical, ["--version"]));
+		const node = await attest(nodePath, probe, async (canonical) => probe.run(canonical, ["--version"]));
 		if (!node.ok) return node;
 		const npm = await attest(npmPath, probe, async (canonical) => probe.run(node.value.canonicalPath, [canonical, "--version"]));
 		if (!npm.ok) return npm;

@@ -81,7 +81,6 @@ export async function assembleSessionDomain(
 	const toolchainResult = await resolveSessionToolchainSnapshot({
 		packageRoot: runledgerPackageRoot(),
 		workspaceRoot: options.cwd,
-		nodeExecutable: globalThis.process.execPath,
 		probe: toolchainProbe,
 	});
 	if (!toolchainResult.ok) throw new Error(`${toolchainResult.error.code}: ${toolchainResult.error.message}`);

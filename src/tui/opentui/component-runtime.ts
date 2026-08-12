@@ -22,6 +22,15 @@ import type { PresentationBlock } from "../presentation.ts";
 import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
 import type { TuiAction } from "../application/action.ts";
 import type { OverlayAnchor } from "../primitives.ts";
+import { loadNativeSyntaxAddon } from "../highlight/native-loader.ts";
+import { SyntaxHighlightService } from "../highlight/service.ts";
+import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "../highlight/theme-controller.ts";
+import { createSyntectCodeBlockRenderer } from "./syntect-code-block-renderer.ts";
+import { SyntectCodeBlockRenderable, type HighlightAdmission } from "./syntect-code-block-renderable.ts";
+import { ExecRenderable } from "./exec-renderable.ts";
+import { stripShellLoginWrapper } from "./exec-renderable.ts";
+import { DiffRenderable } from "./diff-renderable.ts";
+import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
@@ -47,7 +56,7 @@ export interface OpenTuiComponentFrame {
   editorAppearance?: EditorAppearance;
   /** 主对话内建 scrollbar 的纯 presentation；缺省保持 hidden。 */
   transcriptScrollPresentation?: TranscriptScrollPresentation;
-  footer: readonly string[];
+  footer: readonly (string | { readonly kind: "status-line"; readonly segments: readonly StatusLineSegment[] })[];
   overlay?: readonly (string | PresentationBlock)[];
   /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
   overlayAnchor?: OverlayAnchor;
@@ -63,6 +72,11 @@ export interface OpenTuiComponentRuntimeOptions {
   /** 终端回复的原始 OSC 序列(含 OSC 11 背景色);由调用方解析。 */
   onOsc?(sequence: string): void;
   performanceObserver?: TuiPerformanceObserver;
+  syntaxHighlightService?: SyntaxHighlightService;
+  /** 构造 runtime-owned highlighter 的测试/组合接缝；销毁语义与默认 native loader 路径一致。 */
+  createSyntaxHighlightService?: () => SyntaxHighlightService;
+  syntaxThemeController?: SyntaxThemeController;
+  initialSyntaxThemeName?: string;
 }
 
 export interface OpenTuiComponentRuntime {
@@ -70,8 +84,8 @@ export interface OpenTuiComponentRuntime {
   destroy(): void;
 }
 
-type BodyRenderable = TextRenderable | MarkdownRenderable;
-type OverlayRenderable = TextRenderable | InputRenderable | SelectRenderable;
+type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable;
+type OverlayRenderable = TextRenderable | InputRenderable | SelectRenderable | ExecRenderable;
 interface KeyedRenderable<T extends BodyRenderable | OverlayRenderable> {
   readonly kind: string;
   readonly renderable: T;
@@ -123,6 +137,10 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)].join("\n");
   if (block.kind === "input") return `${block.title}\n${block.message}\n${block.value}`;
   if (block.kind === "separator") return block.content ?? block.label;
+  if (block.kind === "command") return `$ ${stripCommandForPlaintext(block.command)}`;
+  if (block.kind === "exec") return [block.command, ...block.output.map((chunk) => chunk.text)].join("\n");
+  if (block.kind === "diff") return block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text.text)).join("\n");
+  if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   return block.content;
 }
 
@@ -134,6 +152,10 @@ function renderableId(prefix: string, key: string): string {
   return `${prefix}-${safeRenderableId(key)}`;
 }
 
+function stripCommandForPlaintext(command: string): string {
+  return stripShellLoginWrapper(command);
+}
+
 function blockCharacterCount(block: string | PresentationBlock): number {
   if (typeof block === "string") return block.length;
   return block.kind === "select"
@@ -142,13 +164,21 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     ? block.title.length + block.message.length + block.value.length
     : block.kind === "separator"
     ? (block.content ?? block.label).length
+    : block.kind === "command"
+    ? block.command.length + 2
+    : block.kind === "exec"
+    ? block.command.length + block.output.reduce((total, chunk) => total + chunk.text.length, 0)
+    : block.kind === "diff"
+    ? block.document.hunks.reduce((total, hunk) => total + hunk.lines.reduce((lineTotal, line) => lineTotal + line.text.text.length, 0), 0)
+    : block.kind === "status-line"
+    ? block.segments.reduce((total, segment) => total + segment.text.length, 0)
     : block.content.length;
 }
 
 function frameCharacterCount(frame: OpenTuiComponentFrame): number {
   return frame.body.reduce((total, block) => total + blockCharacterCount(block), 0)
     + frame.editorText.length
-    + frame.footer.reduce((total, line) => total + line.length, 0)
+    + frame.footer.reduce((total, line) => total + (typeof line === "string" ? line.length : line.segments.reduce((sum, segment) => sum + segment.text.length, 0)), 0)
     + (frame.overlay?.reduce((total, block) => total + blockCharacterCount(block), 0) ?? 0);
 }
 
@@ -239,6 +269,26 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     performanceObserver: options.performanceObserver,
     getThemeMode: () => mermaidThemeMode,
   });
+  const nativeSyntax = options.syntaxHighlightService === undefined && options.createSyntaxHighlightService === undefined
+    ? loadNativeSyntaxAddon()
+    : undefined;
+  const ownsSyntaxHighlightService = options.syntaxHighlightService === undefined;
+  const syntaxHighlightService = options.syntaxHighlightService
+    ?? options.createSyntaxHighlightService?.()
+    ?? new SyntaxHighlightService({
+      addon: nativeSyntax?.ok === true ? nativeSyntax.addon : undefined,
+      performanceObserver: options.performanceObserver,
+    });
+  const syntaxThemeController = options.syntaxThemeController ?? new SyntaxThemeController({
+    availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
+    configuredName: options.initialSyntaxThemeName,
+    terminalMode: mermaidThemeMode,
+  });
+  const codeBlockRenderNode = createSyntectCodeBlockRenderer(renderer, {
+    highlightService: syntaxHighlightService,
+    mermaidRenderNode,
+    themeController: syntaxThemeController,
+  });
   let previousNativeCellsUpdated = 0;
   let requestedEditorHeight = 3;
   let lastEditorHeight = 3;
@@ -302,6 +352,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   renderer.on("blur", onBlur);
   const onThemeMode = (mode: "dark" | "light"): void => {
     mermaidThemeMode = mode;
+    syntaxThemeController.setTerminalMode(mode);
     const previousStyle = syntaxStyle;
     syntaxStyle = createRunLedgerSyntaxStyle();
     for (const node of bodyNodes.values()) {
@@ -320,6 +371,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       durationMs: Math.max(0, stats.nativeLastFrameTime),
       cellsUpdated,
     });
+	updateTranscriptHighlightAdmission(transcript, bodyNodes);
     if (pendingMarkdownFinalization.size > 0) {
       for (const [key, content] of pendingMarkdownFinalization) {
         const node = bodyNodes.get(key);
@@ -415,7 +467,25 @@ export function createOpenTuiComponentRuntimeFromRenderer(
               streaming: true,
               syntaxStyle,
               internalBlockMode: "top-level",
-              renderNode: mermaidRenderNode,
+              renderNode: codeBlockRenderNode,
+            })
+            : block.kind === "exec"
+            ? new ExecRenderable(renderer, {
+              id: renderableId("runledger-block", key),
+              width: "100%",
+              flexShrink: 0,
+              block,
+              highlightService: syntaxHighlightService,
+              themeController: syntaxThemeController,
+            })
+            : block.kind === "diff"
+            ? new DiffRenderable(renderer, {
+              id: renderableId("runledger-block", key),
+              width: "100%",
+              flexShrink: 0,
+              document: block.document,
+              highlightService: syntaxHighlightService,
+              themeController: syntaxThemeController,
             })
             : new TextRenderable(renderer, {
               id: renderableId("runledger-block", key),
@@ -445,6 +515,18 @@ export function createOpenTuiComponentRuntimeFromRenderer(
           if (current.contentKey !== block.content) {
             current.renderable.content = block.content;
             current.contentKey = block.content;
+          }
+        } else if (block.kind === "exec" && current.renderable instanceof ExecRenderable) {
+          const contentKey = blockText(block);
+          if (current.contentKey !== contentKey) {
+            current.renderable.updateBlock(block);
+            current.contentKey = contentKey;
+          }
+        } else if (block.kind === "diff" && current.renderable instanceof DiffRenderable) {
+          const contentKey = blockText(block);
+          if (current.contentKey !== contentKey) {
+            current.renderable.updateDocument(block.document);
+            current.contentKey = contentKey;
           }
         } else if (current.renderable instanceof TextRenderable) {
           const contentKey = blockText(block);
@@ -504,7 +586,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         }
         lastEditorAppearance = appearance;
       }
-      footer.content = ansiToStyledText(frame.footer.join("\n"));
+      footer.content = styledFooter(frame.footer, syntaxHighlightService, syntaxThemeController);
       footer.height = footerHeight;
       updateNewContentIndicator();
 
@@ -621,6 +703,16 @@ export function createOpenTuiComponentRuntimeFromRenderer(
             );
             desiredOverlayNodes.push(input);
             overlayFocus = input;
+		  } else if (block.kind === "command") {
+			desiredOverlayNodes.push(getOverlayCommandNode(
+			  renderer,
+			  overlayNodes,
+			  nextOverlayNodes,
+			  `command-${baseKey}`,
+			  block,
+			  syntaxHighlightService,
+			  syntaxThemeController,
+			));
           } else {
             desiredOverlayNodes.push(getOverlayTextNode(
               renderer,
@@ -668,7 +760,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       renderer.off("blur", onBlur);
       renderer.off("theme_mode", onThemeMode);
       unsubscribeOsc();
-      mermaidRenderNode.dispose();
+      codeBlockRenderNode.dispose();
+      if (ownsSyntaxHighlightService) syntaxHighlightService.destroy();
       renderer.destroy();
       syntaxStyle.destroy();
     },
@@ -683,9 +776,50 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   }
 }
 
+function styledFooter(
+  lines: OpenTuiComponentFrame["footer"],
+  service: SyntaxHighlightService,
+  themeController: SyntaxThemeController,
+): StyledText {
+  if (lines.length === 1 && typeof lines[0] !== "string") {
+    return statusLineToStyledText(lines[0].segments, (scopes) =>
+      service.foregroundForScopes(themeController.snapshot().activeName, scopes));
+  }
+  return ansiToStyledText(lines.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · ")).join("\n"));
+}
+
 function updateMermaidTheme(renderable: Renderable, mode: MermaidThemeMode): void {
   if (renderable instanceof MermaidBlockRenderable) renderable.setThemeMode(mode);
   for (const child of renderable.getChildren()) updateMermaidTheme(child, mode);
+}
+
+function updateTranscriptHighlightAdmission(
+	transcript: ScrollBoxRenderable,
+	nodes: ReadonlyMap<string, KeyedRenderable<BodyRenderable>>,
+): void {
+	const viewportTop = transcript.viewport.screenY;
+	const viewportHeight = Math.max(1, transcript.viewport.height);
+	const viewportBottom = viewportTop + viewportHeight;
+	for (const node of nodes.values()) {
+		visitHighlightRenderables(node.renderable, (renderable) => {
+			const top = renderable.screenY;
+			const bottom = top + Math.max(1, renderable.height);
+			const admission: HighlightAdmission = bottom > viewportTop && top < viewportBottom
+				? "visible"
+				: bottom > viewportTop - viewportHeight && top < viewportBottom + viewportHeight
+					? "overscan"
+					: "offscreen";
+			renderable.setHighlightAdmission(admission);
+		});
+	}
+}
+
+function visitHighlightRenderables(
+	renderable: Renderable,
+	visit: (renderable: SyntectCodeBlockRenderable | ExecRenderable) => void,
+): void {
+	if (renderable instanceof SyntectCodeBlockRenderable || renderable instanceof ExecRenderable) visit(renderable);
+	for (const child of renderable.getChildren()) visitHighlightRenderables(child, visit);
 }
 
 function finalizeMarkdownChildren(renderable: Renderable): void {
@@ -751,6 +885,25 @@ function getOverlayInputNode(
   return node;
 }
 
+function getOverlayCommandNode(
+  renderer: CliRenderer,
+  previous: Map<string, KeyedRenderable<OverlayRenderable>>,
+  next: Map<string, KeyedRenderable<OverlayRenderable>>,
+  key: string,
+  block: Extract<PresentationBlock, { readonly kind: "command" }>,
+  service: SyntaxHighlightService,
+  themeController: SyntaxThemeController,
+): ExecRenderable {
+  const old = previous.get(key);
+  const node = old?.kind === "command" && old.renderable instanceof ExecRenderable
+    ? old.renderable
+    : createOverlayCommandNode(renderer, old, key, block, service, themeController);
+  if (old?.contentKey !== block.command) node.updateBlock(block);
+	node.setHighlightAdmission("visible");
+  next.set(key, { kind: "command", renderable: node, contentKey: block.command });
+  return node;
+}
+
 function getOverlaySelectNode(
   renderer: CliRenderer,
   previous: Map<string, KeyedRenderable<OverlayRenderable>>,
@@ -809,6 +962,25 @@ function createOverlayInputNode(
     width: "100%",
     value,
     placeholder,
+  });
+}
+
+function createOverlayCommandNode(
+  renderer: CliRenderer,
+  old: KeyedRenderable<OverlayRenderable> | undefined,
+  key: string,
+  block: Extract<PresentationBlock, { readonly kind: "command" }>,
+  service: SyntaxHighlightService,
+  themeController: SyntaxThemeController,
+): ExecRenderable {
+  disposeWrongOverlayNode(old, "command");
+  return new ExecRenderable(renderer, {
+    id: renderableId("runledger-overlay", key),
+    width: "100%",
+    height: 1,
+    block,
+    highlightService: service,
+    themeController,
   });
 }
 

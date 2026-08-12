@@ -88,6 +88,15 @@ const OutputCursorSchema = Type.Object(
 	},
 	{ additionalProperties: false },
 );
+const CommandDisplaySchema = Type.Union([
+	Type.Object({ authority: Type.Literal("unavailable") }, { additionalProperties: false }),
+	Type.Object({
+		authority: Type.Union([Type.Literal("authorized"), Type.Literal("spawned")]),
+		label: Type.String({ minLength: 1, maxLength: 256 }),
+		truncated: Type.Boolean(),
+		receiptDigest: RuntimeDigestSchema,
+	}, { additionalProperties: false }),
+]);
 
 const TerminalSchema = Type.Object(
 	{
@@ -114,6 +123,7 @@ export const ManagedProcessSummarySchema = Type.Object(
 		outputCursor: OutputCursorSchema,
 		outputSize: Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
 		capabilities: CapabilitiesSchema,
+		commandDisplay: Type.Optional(CommandDisplaySchema),
 		terminal: Type.Optional(TerminalSchema),
 	},
 	{ additionalProperties: false },

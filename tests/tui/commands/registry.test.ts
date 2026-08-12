@@ -55,6 +55,16 @@ describe("slash command registry", () => {
     expect(commandsForContext().some((candidate) => candidate.canonicalName === "scrollbar")).toBe(true);
   });
 
+	it("registers /theme as the syntax-theme preview and persistence entrypoint", () => {
+		expect(findCommand("theme")).toMatchObject({
+			canonicalName: "theme",
+			actionType: "config.theme",
+			category: "config",
+			availableDuringTask: true,
+			supportsInlineArgs: false,
+		});
+	});
+
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
     expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);

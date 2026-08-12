@@ -53,7 +53,31 @@ export class PermissionRequestView implements Component {
 	}
 
 	public present(width: number): PresentationBlock[] {
-		return [{ kind: "text", content: this.render(width).join("\n") }];
+		const command = shellCommand(this.#request);
+		return [
+			{
+				kind: "text",
+				content: [
+					command === undefined ? "Would you like to allow the following request?" : "Would you like to run the following command?",
+					"",
+					"  Environment: local",
+					`  Reason: ${safeLine(this.#request.summary)}`,
+				].flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width))).join("\n"),
+			},
+			...(command === undefined
+				? [{ kind: "text" as const, content: requestLines(this.#request).join("\n") }]
+				: [{ kind: "command" as const, command }]),
+			{
+				kind: "select",
+				title: "",
+				options: this.#choices.map((choice, index) => ({
+					value: choice.id,
+					label: `${index + 1}. ${choiceLabel(choice)}`,
+					description: choice.description,
+				})),
+				selectedIndex: this.#selectedIndex,
+			},
+		];
 	}
 
 	#move(delta: number): void {
@@ -89,9 +113,7 @@ function codexPermissionChoices(choices: readonly ApprovalChoice[]): readonly Ap
 }
 
 function permissionLines(request: ApprovalReverseRequestView, choices: readonly ApprovalChoice[], selectedIndex: number): string[] {
-	const command = request.requests?.length === 1 && request.requests[0]?.kind === "shell"
-		? safeLine(request.requests[0].command)
-		: undefined;
+	const command = shellCommand(request);
 	const lines = [
 		command === undefined ? "Would you like to allow the following request?" : "Would you like to run the following command?",
 		"",
@@ -106,6 +128,12 @@ function permissionLines(request: ApprovalReverseRequestView, choices: readonly 
 		lines.push(`${marker} ${index + 1}. ${choiceLabel(choice)}`);
 	}
 	return lines;
+}
+
+function shellCommand(request: ApprovalReverseRequestView): string | undefined {
+	return request.requests?.length === 1 && request.requests[0]?.kind === "shell"
+		? safeLine(request.requests[0].command)
+		: undefined;
 }
 
 function requestLines(request: ApprovalReverseRequestView): string[] {

@@ -48,6 +48,22 @@ function probe(overrides: Partial<SessionToolchainProbe> = {}): SessionToolchain
 }
 
 describe("Session governed toolchain and process environment", () => {
+	it("resolves Node from the attested PATH instead of assuming the CLI runtime is Node", async () => {
+		const requested: string[] = [];
+		const result = await resolveSessionToolchainSnapshot({
+			packageRoot: "/repo",
+			workspaceRoot: "/workspace",
+			probe: probe({
+				which: async (program) => {
+					requested.push(program);
+					return `/runtime/bin/${program}`;
+				},
+			}),
+		});
+		expect(result).toMatchObject({ ok: true, value: { node: { launchPath: "/runtime/bin/node", version: "22.23.1" } } });
+		expect(requested).toEqual(["node", "npm", "bun"]);
+	});
+
 	it("attests Node npm Bun and rejects identity drift before spawn", async () => {
 		const resolved = await resolveSessionToolchainSnapshot({
 			packageRoot: "/repo",

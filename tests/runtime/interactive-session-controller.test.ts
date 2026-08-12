@@ -8,7 +8,7 @@ import { InteractiveSessionController } from "../../src/runtime/interactive-sess
 import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
 import { MemoryLedger } from "../../src/runtime/ledger/memory-ledger.ts";
 import type { SessionReplay } from "../../src/storage/session-codec.ts";
-import { loadProjectSettings } from "../../src/storage/settings-manager.ts";
+import { loadProjectSettings, saveProjectSettings } from "../../src/storage/settings-manager.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model } from "../../src/types.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import type { ExtensionHookRuntime } from "../../src/extensions/turn-lifecycle.ts";
@@ -443,6 +443,26 @@ describe("InteractiveSessionController", () => {
     await expect(controller.prompt("must authenticate again")).rejects.toThrow("not configured");
     controller.dispose();
   });
+
+	it("preserves a concurrently saved syntax theme when model selection persists", async () => {
+		const cwd = await tempDir();
+		const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
+		const { models, p1 } = fixtureModels();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout,
+			systemPrompt: "test",
+			models,
+			settings: { theme: "dracula" },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+		await saveProjectSettings({ layout }, { theme: "ansi" });
+		await controller.selectModel(p1);
+		expect(await loadProjectSettings({ layout })).toMatchObject({ theme: "ansi", provider: "p1", model: "m1" });
+		controller.dispose();
+	});
 
   it("resolves the full catalog model on selectModel even when the wire passes a minimal shape", async () => {
     const cwd = await tempDir();

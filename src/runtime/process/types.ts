@@ -86,12 +86,32 @@ export interface ManagedProcessTerminal {
 	readonly evidenceRef: RuntimeContentRef;
 }
 
+export interface AuthorizedCommandDisplayReceipt {
+	readonly kind: "authorized_command_display";
+	readonly label: string;
+	readonly truncated: boolean;
+	readonly commandDigest: RuntimeDigest;
+	readonly requestDigest: RuntimeDigest;
+	readonly constraintSnapshotDigest: RuntimeDigest;
+	readonly receiptDigest: RuntimeDigest;
+}
+
+export type ManagedProcessCommandDisplay =
+	| { readonly authority: "unavailable" }
+	| {
+		readonly authority: "authorized" | "spawned";
+		readonly label: string;
+		readonly truncated: boolean;
+		readonly receiptDigest: RuntimeDigest;
+	  };
+
 export interface ManagedProcessSummary {
 	readonly handle: ExecutionHandleRef;
 	readonly state: ProcessState;
 	readonly outputCursor: OutputCursor;
 	readonly outputSize: number;
 	readonly capabilities: ManagedProcessCapabilities;
+	readonly commandDisplay?: ManagedProcessCommandDisplay;
 	readonly terminal?: ManagedProcessTerminal;
 }
 

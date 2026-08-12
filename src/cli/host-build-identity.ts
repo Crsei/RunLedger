@@ -141,7 +141,7 @@ async function executableArtifactPaths(root: string): Promise<string[]> {
 
 function isExecutableArtifact(path: string): boolean {
 	if (path === HOST_BUILD_MANIFEST_FILE) return false;
-	return path.endsWith(".js") || path.endsWith(".json") || path === "native/runledger-linux-peer-credential";
+	return path.endsWith(".js") || path.endsWith(".json") || path.endsWith(".node") || path === "native/runledger-linux-peer-credential";
 }
 
 function artifactGroup(path: string): HostBuildArtifactGroup {

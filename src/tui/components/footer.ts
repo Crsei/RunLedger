@@ -13,8 +13,12 @@
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import type { FooterSnapshotProvider } from "../types.ts";
-import { padToWidth } from "./render-width.ts";
+import { fitToWidth, padToWidth } from "./render-width.ts";
 import { formatActiveDuration } from "../timeline/selectors.ts";
+import type { PresentationBlock } from "../presentation.ts";
+import type { StatusLineSegment } from "../highlight/status-style.ts";
+import { sanitizeLabel } from "../presentation/projectors.ts";
+import { visibleWidth } from "../primitives.ts";
 
 export interface FooterProps {
   theme: Theme;
@@ -34,6 +38,15 @@ export class Footer implements Component {
   }
 
   render(width: number): string[] {
+	return [padToWidth(fitStatusLineSegments(this.segments(), width).map((segment) => segment.text).join(" · "), width)];
+  }
+
+  present(width: number): PresentationBlock[] {
+	const fitted = fitStatusLineSegments(this.segments(), width);
+	return [{ kind: "status-line", segments: fitted }];
+  }
+
+  private segments(): StatusLineSegment[] {
     let left: string;
     let middle: string;
     let right: string;
@@ -45,6 +58,9 @@ export class Footer implements Component {
       const providerId = this.props.provider.getProviderId?.();
       const thinking = this.props.provider.getThinkingLevel?.();
       const workspaceCapability = this.props.provider.getWorkspaceCapability?.();
+      const workspaceDisplayLabel = this.props.provider.getWorkspaceDisplayLabel?.();
+	  const projectRootDisplayLabel = this.props.provider.getProjectRootDisplayLabel?.();
+	  const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
       const timing = this.props.provider.getRunTiming?.();
       const now = this.props.provider.now?.() ?? Date.now();
       const activeDurationMs = timing === undefined
@@ -59,17 +75,75 @@ export class Footer implements Component {
           : streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
       left = status;
       middle = sessionId.length > 0 ? sessionId : "<no-session>";
-      right = `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}${workspaceCapability ? ` · ${workspaceCapability}` : ""}`;
+	  const segments: StatusLineSegment[] = [
+		{ accent: "state", text: status },
+		...(workspaceDisplayLabel ? [{ accent: "path" as const, text: workspaceDisplayLabel }] : []),
+		...(projectRootDisplayLabel && projectRootDisplayLabel !== workspaceDisplayLabel ? [{ accent: "path" as const, text: projectRootDisplayLabel }] : []),
+		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
+		...(sessionId.length > 0 ? [{ accent: "metadata" as const, text: sessionId }] : []),
+		{ accent: "model", text: `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}` },
+		...(workspaceCapability ? [{ accent: "mode" as const, text: workspaceCapability }] : []),
+	  ];
+	  return segments
+		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
+		.filter((segment) => segment.text.length > 0);
     } catch {
       // 失败护栏:provider 抛错时给出可观测的占位,不影响整屏渲染
       left = "[footer:err]";
       middle = "";
       right = "";
     }
-    const sep = "  ";
-    const parts = [left, middle, right].filter((s) => s.length > 0);
-    const joined = parts.join(sep);
-    // 左对齐,右边补空格到 width(防止上一帧残余字符)
-    return [padToWidth(joined, width)];
+	return [
+		{ accent: "state", text: left },
+		...(middle ? [{ accent: "metadata" as const, text: middle }] : []),
+		...(right ? [{ accent: "model" as const, text: right }] : []),
+	];
   }
+
+}
+
+const OPTIONAL_DROP_ORDER: readonly StatusLineSegment["accent"][] = [
+	"mode", "usage", "limit", "thread", "progress", "branch",
+];
+
+/** 保留 state/session/path/model，窄屏先移除能力等可选段，再按显示列截断最长核心段。 */
+export function fitStatusLineSegments(input: readonly StatusLineSegment[], width: number): StatusLineSegment[] {
+	const safeWidth = Math.max(0, Math.floor(width));
+	let segments = input
+		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
+		.filter((segment) => segment.text.length > 0);
+	for (const accent of OPTIONAL_DROP_ORDER) {
+		if (statusLineWidth(segments) <= safeWidth) break;
+		segments = segments.filter((segment) => segment.accent !== accent);
+	}
+	while (segments.length > 1 && separatorWidth(segments) >= safeWidth) segments.pop();
+	let excess = Math.max(0, statusLineWidth(segments) - safeWidth);
+	while (excess > 0) {
+		const candidate = segments
+			.map((segment, index) => ({ index, width: visibleWidth(segment.text), minimum: minimumWidth(segment.accent) }))
+			.filter((entry) => entry.width > entry.minimum)
+			.sort((left, right) => (right.width - right.minimum) - (left.width - left.minimum))[0];
+		if (candidate === undefined) break;
+		const target = Math.max(candidate.minimum, candidate.width - excess);
+		segments = segments.map((segment, index) => index === candidate.index
+			? { ...segment, text: fitToWidth(segment.text, target) }
+			: segment);
+		excess = Math.max(0, statusLineWidth(segments) - safeWidth);
+	}
+	return segments;
+}
+
+function statusLineWidth(segments: readonly StatusLineSegment[]): number {
+	return segments.reduce((total, segment) => total + visibleWidth(segment.text), separatorWidth(segments));
+}
+
+function separatorWidth(segments: readonly StatusLineSegment[]): number {
+	return Math.max(0, segments.length - 1) * 3;
+}
+
+function minimumWidth(accent: StatusLineSegment["accent"]): number {
+	if (accent === "model") return 12;
+	if (accent === "path") return 8;
+	if (accent === "metadata") return 16;
+	return 4;
 }

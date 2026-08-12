@@ -68,6 +68,7 @@ describe("production Host process overlay client", () => {
 			canWrite: true,
 			canResize: true,
 			canStop: true,
+			commandDisplay: { authority: "unavailable" },
 		}]);
 		expect(await client.processOutput(executionId, { sequence: 0, byteOffset: 0 }, 64)).toEqual({
 			ok: true,
@@ -93,6 +94,39 @@ describe("production Host process overlay client", () => {
 		expect(await client.resizeProcess?.(executionId, 80, 24)).toEqual({ ok: false, code: "observer_mutation_forbidden" });
 		expect(await client.stopProcess?.(executionId)).toEqual({ ok: false, code: "observer_mutation_forbidden" });
 		expect(transport.operations).toEqual([]);
+	});
+
+	it("fails closed on unbounded or control-bearing command display labels", async () => {
+		const base = {
+			attemptId: createRuntimeId("attempt", "label_1"),
+			state: "running",
+			outputCursor: { sequence: 0, byteOffset: 0 },
+			outputSize: 0,
+			capabilities: { canWrite: true, canResize: false, canStop: true },
+		};
+		const transport = new FakeTransport({
+			"process.list": {
+				ok: true,
+				processes: [
+					{
+						...base,
+						executionId: createRuntimeId("execution", "control_label"),
+						commandDisplay: { authority: "spawned", label: "npm test\u001b[2J", receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } },
+					},
+					{
+						...base,
+						executionId: createRuntimeId("execution", "long_label"),
+						commandDisplay: { authority: "authorized", label: "x".repeat(257), receiptDigest: { algorithm: "sha256", digest: "b".repeat(64) } },
+					},
+				],
+			},
+		});
+		const client = createProductionProcessOverlayClient(transport, "session_labels", { isDriver: () => false });
+
+		expect(await client.listProcesses()).toEqual([
+			expect.objectContaining({ commandDisplay: { authority: "unavailable" } }),
+			expect.objectContaining({ commandDisplay: { authority: "unavailable" } }),
+		]);
 	});
 
 	it("preserves the structured output cursor across the Host wire", async () => {

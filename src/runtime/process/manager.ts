@@ -29,9 +29,11 @@ import type {
 	ManagedProcessMutationReceipt,
 	ManagedProcessRequest,
 	ManagedProcessSummary,
+	AuthorizedCommandDisplayReceipt,
 	ProcessState,
 	ProcessTerminalState,
 } from "./types.ts";
+import { validateAuthorizedCommandDisplayReceipt } from "./command-display.ts";
 import type { OutputCursor } from "./output.ts";
 
 export interface BackendSpawnReceipt {
@@ -52,6 +54,7 @@ export interface BackendSpawnOptions {
 	readonly constraintSnapshot?: ExecutionConstraintSnapshot;
 	readonly launchPlan?: BackendLaunchPlan;
 	readonly beforeSpawn?: () => Promise<void>;
+	readonly commandDisplayReceipt?: AuthorizedCommandDisplayReceipt;
 }
 
 export interface BackendSpawnInput {
@@ -171,6 +174,10 @@ export class ProcessManager {
 			if (!sameRequestScope(intent, request, constraintSnapshot)) return { ok: false, code: "command_id_conflict" };
 			handle = handleFromEvent(intent);
 		} else {
+			if (spawnOptions?.commandDisplayReceipt !== undefined && !validateAuthorizedCommandDisplayReceipt(
+				spawnOptions.commandDisplayReceipt,
+				{ requestDigest: request.requestDigest, constraintSnapshotDigest: constraintSnapshot?.snapshotDigest },
+			)) return { ok: false, code: "journal_invalid" };
 			handle = createHandle(request);
 			let reservation: ReturnType<ProcessJournal["reserveProcessCapacity"]>;
 			try {
@@ -197,6 +204,7 @@ export class ProcessManager {
 				backend: request.backend,
 				executionMode: request.executionMode,
 				...(constraintSnapshot === undefined ? {} : { constraintSnapshotDigest: constraintSnapshot.snapshotDigest }),
+				...(spawnOptions?.commandDisplayReceipt === undefined ? {} : { commandDisplayReceipt: spawnOptions.commandDisplayReceipt }),
 			});
 			try {
 				await this.journal.append(requested);
@@ -427,6 +435,10 @@ export class ProcessManager {
 		if (events.length === 0) return { ok: false, code: "process_not_found" };
 		const projected = projectProcessEvents(events);
 		if (!projected.ok) return { ok: false, code: "journal_invalid" };
+		if (projected.state.commandDisplayReceipt !== undefined && !validateAuthorizedCommandDisplayReceipt(
+			projected.state.commandDisplayReceipt,
+			{ requestDigest: projected.state.handle.requestDigest, constraintSnapshotDigest: projected.state.constraintSnapshotDigest },
+		)) return { ok: false, code: "journal_invalid" };
 		if (projected.state.spawnReceiptDigest) {
 			let receipt: BackendSpawnReceipt | undefined;
 			try {
@@ -680,6 +692,14 @@ function summaryFromProjection(projection: ProcessProjection): ManagedProcessSum
 			canStop: !settled,
 			canReadOutput: true,
 		},
+		commandDisplay: projection.commandDisplayReceipt === undefined
+			? { authority: "unavailable" }
+			: {
+				authority: projection.spawnReceiptDigest === undefined ? "authorized" : "spawned",
+				label: projection.commandDisplayReceipt.label,
+				truncated: projection.commandDisplayReceipt.truncated,
+				receiptDigest: projection.commandDisplayReceipt.receiptDigest,
+			},
 		...(terminal === undefined ? {} : { terminal }),
 	};
 }

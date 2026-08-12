@@ -5,6 +5,13 @@ node_modules/
 
 # Build artifacts
 dist/
+native/syntax-highlighter/target/
+runledger-*.tgz
+npm/syntax-highlighter-*/*.tgz
+npm/syntax-highlighter-*/runledger-syntax-highlighter.node
+npm/syntax-highlighter-*/runledger-syntax-highlighter.node.sigstore.json
+npm/syntax-highlighter-*/checksums.json
+npm/syntax-highlighter-*/THIRD_PARTY_NOTICES.md
 *.tsbuildinfo
 tsconfig.tsbuildinfo
 

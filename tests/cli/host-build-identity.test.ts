@@ -57,4 +57,23 @@ describe("Host build identity", () => {
 		expect(persisted).toEqual(manifest);
 		await expect(verifyHostBuildManifest(root, manifest)).resolves.toMatchObject({ ok: true });
 	});
+
+	it("includes the syntax highlighter addon in the native build identity", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-build-native-addon-"));
+		await mkdir(join(root, "native"), { recursive: true });
+		await writeFile(join(root, "entry.js"), "export {};\n");
+		await writeFile(join(root, "native/runledger-syntax-highlighter.node"), "native-addon-one\n");
+
+		const first = await createHostBuildManifest(root, "0.0.1");
+		expect(first.artifacts).toEqual(expect.arrayContaining([
+			expect.objectContaining({
+				path: "native/runledger-syntax-highlighter.node",
+				group: "native",
+			}),
+		]));
+
+		await writeFile(join(root, "native/runledger-syntax-highlighter.node"), "native-addon-two\n");
+		const second = await createHostBuildManifest(root, "0.0.1");
+		expect(second.contentDigest).not.toEqual(first.contentDigest);
+	});
 });

@@ -17,6 +17,7 @@
 
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
@@ -60,6 +61,9 @@ import {
   type ProcessOverlayController,
   type ProcessOverlayHostClient,
 } from "../tui/process/controller-adapter.ts";
+import { gitWorkspaceDisplayFacts, workspaceDisplayLabelForView } from "./workspace-display-label.ts";
+import { createCliSyntaxThemeSettings } from "./syntax-theme-settings.ts";
+import { composeCliSyntaxThemes } from "./syntax-theme-composition.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -126,6 +130,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     await mkdir(layout.home, { recursive: true, mode: 0o700 });
   }
   const settings = await loadProjectSettings({ layout });
+  const syntaxThemes = await composeCliSyntaxThemes(layout, settings.theme);
   const tuiPreferences = await createCliTuiPreferences(layout);
   if (tuiPreferences.startupDiagnostic !== undefined) {
     process.stderr.write(`[runledger] ${tuiPreferences.startupDiagnostic.code}; using hidden transcript scrollbar\n`);
@@ -294,9 +299,20 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   async function runInteractiveView(view: CliSessionView) {
+	const effectiveCwd = view.embedded.effectiveCwd;
+	const gitDisplay = effectiveCwd === undefined
+	  ? {}
+	  : await gitWorkspaceDisplayFacts(effectiveCwd, worktreeGit);
     const activeInteractive = new InteractiveMode({
       controller: view.controller,
       workspaceCapability: workspaceCapabilityLabel(),
+      workspaceDisplayLabel: workspaceDisplayLabelForView({ effectiveCwd }, homedir()),
+      projectRootDisplayLabel: gitDisplay.projectRootLabel,
+      gitBranchLabel: gitDisplay.branchLabel,
+      syntaxThemeName: settings.theme,
+      syntaxThemeController: syntaxThemes.controller,
+      syntaxThemeSettingsPort: createCliSyntaxThemeSettings(layout, syntaxThemes.customThemeNames),
+      syntaxThemeWarnings: syntaxThemes.takeWarnings(),
       processOverlayController: view.processOverlayController,
       processOverlayClient: view.processOverlayClient,
       initialPreferences: tuiPreferences.current(),

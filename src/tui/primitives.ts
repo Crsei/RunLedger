@@ -2,6 +2,7 @@ import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 import {
   createOpenTuiComponentRuntime,
+  type OpenTuiComponentFrame,
   type OpenTuiComponentRuntime,
   type TranscriptScrollPresentation,
 } from "./opentui/component-runtime.ts";
@@ -12,6 +13,7 @@ import type { TuiAction } from "./application/action.ts";
 import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action.ts";
 import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHeight, wrapEditorText } from "./editor-height.ts";
 import type { EditorAppearance } from "./opentui/component-runtime.ts";
+import type { SyntaxThemeController } from "./highlight/theme-controller.ts";
 
 export interface Component {
   render(width: number): string[];
@@ -326,6 +328,8 @@ export type InputListener = (data: string) => InputListenerResult;
 export type RenderPreparationListener = () => void;
 export interface TUIOptions {
   readonly performanceObserver?: TuiPerformanceObserver;
+  readonly syntaxThemeName?: string;
+  readonly syntaxThemeController?: SyntaxThemeController;
 }
 export interface Terminal {
   start(onInput: (data: string) => void, onResize: () => void): void;
@@ -370,6 +374,8 @@ export class TUI extends Container {
   private transcriptScrollPresentation: TranscriptScrollPresentation | undefined;
   private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
+  private readonly syntaxThemeName: string | undefined;
+  private readonly syntaxThemeController: SyntaxThemeController | undefined;
   private overlay: Component | undefined;
   private overlayOptions: OverlayOptions | undefined;
   private overlayHidden = false;
@@ -380,6 +386,8 @@ export class TUI extends Container {
     super();
     this.terminal = terminal;
     this.performanceObserver = options.performanceObserver;
+    this.syntaxThemeName = options.syntaxThemeName;
+    this.syntaxThemeController = options.syntaxThemeController;
   }
   addInputListener(listener: InputListener): () => void { this.inputListeners.push(listener); return () => { const i = this.inputListeners.indexOf(listener); if (i >= 0) this.inputListeners.splice(i, 1); }; }
   addBeforeRenderListener(listener: RenderPreparationListener): () => void {
@@ -485,6 +493,8 @@ export class TUI extends Container {
           }
         },
         performanceObserver: this.performanceObserver,
+        initialSyntaxThemeName: this.syntaxThemeName,
+        syntaxThemeController: this.syntaxThemeController,
       });
       this.renderFrame();
       return;
@@ -557,7 +567,14 @@ export class TUI extends Container {
       kind: "text",
       content: component.render(width).join("\n"),
     }]);
-    const footer = footerComponents.flatMap((component) => component.render(width));
+    const footer = footerComponents.flatMap((component): Array<OpenTuiComponentFrame["footer"][number]> => {
+      const presented = component.present?.(width);
+      if (presented !== undefined) {
+        return presented.flatMap((block): Array<OpenTuiComponentFrame["footer"][number]> =>
+          block.kind === "status-line" ? [block] : [blockTextForTerminal(block)]);
+      }
+      return component.render(width);
+    });
     const editorText = this.focusedComponent && "getText" in this.focusedComponent
       ? (this.focusedComponent as Component & { getText(): string }).getText()
       : "";
@@ -589,8 +606,23 @@ export class TUI extends Container {
       });
       return;
     }
-    this.terminal.write([...body, ...this.focusedComponent?.render(width) ?? [], ...footer, ...overlay ?? []].join("\n"));
+    const footerText = footer.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · "));
+    this.terminal.write([...body.map((block) => blockTextForTerminal(block)), ...this.focusedComponent?.render(width) ?? [], ...footerText, ...overlay?.map(blockTextForTerminal) ?? []].join("\n"));
   }
+}
+
+function blockTextForTerminal(block: PresentationBlock): string {
+  if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)].join("\n");
+  if (block.kind === "input") return `${block.title}\n${block.message}\n${block.value}`;
+  if (block.kind === "separator") return block.content ?? block.label;
+  if (block.kind === "command") return `$ ${block.command}`;
+  if (block.kind === "exec") return [`$ ${block.command}`, ...block.output.map((chunk) => chunk.text)].join("\n");
+  if (block.kind === "diff") return [
+	`diff ${block.document.path.text}`,
+	...block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => `${line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " "} ${line.text.text}`)),
+  ].join("\n");
+  if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
+  return block.content;
 }
 
 export interface TuiAppIntentHandler {

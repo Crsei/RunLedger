@@ -52,7 +52,12 @@ function reverseFrame(): HostFrameEnvelope {
 function conversationText(mode: InteractiveMode): string {
 	const refs = (mode as unknown as { refs: { chat: ChatContainer } }).refs;
 	const blocks: PresentationBlock[] = refs.chat.present(100);
-	return blocks.map((block) => ("content" in block ? block.content : "")).join("\n");
+	return blocks.map((block) => {
+		if ("content" in block) return block.content;
+		if (block.kind === "command") return `$ ${block.command}`;
+		if (block.kind === "select") return block.options.map((option) => option.label).join("\n");
+		return "";
+	}).join("\n");
 }
 
 describe("P1 regression fixes at InteractiveMode level", () => {
@@ -235,6 +240,29 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		const permissionView = Reflect.get(mode, "activePermissionView") as { handleInput(data: string): void } | undefined;
 		permissionView?.handleInput("\r");
 		await expect(pending).resolves.toEqual({ ok: true, decision: "allow-once" });
+	});
+
+	it("projects the canonical shell request as a structured approval command before choices", async () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const abort = new AbortController();
+		const pending = mode.handleReverseRequest({
+			...reverseFrame(),
+			body: {
+				requestType: "permission",
+				toolName: "bash",
+				summary: "run tests",
+				requests: [{ kind: "shell", command: "bash -lc 'npm test'", cwd: "/workspace", analysis: "known" }],
+			},
+		} as HostFrameEnvelope, abort.signal);
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		const permissionView = Reflect.get(mode, "activePermissionView") as { present(width: number): readonly unknown[] } | undefined;
+		expect(permissionView?.present(80)).toEqual([
+			expect.objectContaining({ kind: "text" }),
+			{ kind: "command", command: "bash -lc 'npm test'" },
+			expect.objectContaining({ kind: "select" }),
+		]);
+		abort.abort();
+		await pending;
 	});
 
 	it("P1-5: requestQuit cancels in-flight effects and cleans active timeline rows", async () => {
