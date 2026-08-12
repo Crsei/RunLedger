@@ -76,6 +76,20 @@ describe("B3 application reducer", () => {
 		expect(tuiReducer(state, { type: "composer.changed", draft: draft("") })).toBe(before);
 	});
 
+	it("sets transcript scrollbar visibility with a same-value no-op", () => {
+		const state = initialState();
+		const visible = tuiReducer(state, {
+			type: "interaction.transcript-scrollbar-set",
+			visible: true,
+		} as never);
+		expect(visible.interaction.transcriptScrollbarVisible).toBe(true);
+		expect(visible.interaction.generation).toBe(state.interaction.generation + 1);
+		expect(tuiReducer(visible, {
+			type: "interaction.transcript-scrollbar-set",
+			visible: true,
+		} as never)).toBe(visible);
+	});
+
 	it("selection / search / viewport-clear are pure transitions", () => {
 		let state = initialState();
 		state = tuiReducer(state, { type: "interaction.select", id: "item-1" });

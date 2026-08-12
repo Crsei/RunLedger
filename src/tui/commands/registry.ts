@@ -26,6 +26,7 @@ export interface SlashCommandContext {
 export type SlashCommandActionType =
   | "ui.help"
   | "ui.clear"
+  | "ui.scrollbar.toggle"
   | "ui.quit"
   | "session.create"
   | "session.resume"
@@ -236,6 +237,11 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       argumentSchema: [schema("text", "Memory content to propose", true)],
     }),
     command("prompt", "Pick prompt template", 24, { actionType: "prompt.select", category: "prompts", policy: READONLY_POLICY }),
+    command("scrollbar", "Toggle the conversation scrollbar", 25, {
+      actionType: "ui.scrollbar.toggle",
+      category: "ui",
+      policy: READONLY_POLICY,
+    }),
   ];
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../../src/runtime/agent.ts";
 import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import type { StreamFn } from "../../src/runtime/types.ts";
@@ -15,6 +15,7 @@ import { createProcessOverlayController } from "../../src/tui/process/controller
 import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
 import type { EditorHint } from "../../src/tui/components/editor-hint.ts";
 import type { TuiStore } from "../../src/tui/application/store.ts";
+import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -221,6 +222,93 @@ describe("TUI input components", () => {
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {
+  it("projects the initial scrollbar preference and persists /scrollbar without touching the draft", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const saved: TuiPreferencesDocument[] = [];
+    const preferencesPort: TuiPreferencesPort = {
+      load: async () => ({
+        preferences: { version: 1, transcript: { scrollbar: "visible" } },
+      }),
+      save: async (next) => {
+        saved.push(next);
+        return { ok: true };
+      },
+    };
+    const mode = new InteractiveMode({
+      agent,
+      terminal,
+      initialPreferences: { version: 1, transcript: { scrollbar: "visible" } },
+      preferencesPort,
+    } as ConstructorParameters<typeof InteractiveMode>[0]);
+    const internals = mode as unknown as {
+      refs: { editor: { setText(text: string): void; getText(): string } };
+      ui: { transcriptScrollPresentation?: { visible: boolean; trackColor: string; thumbColor: string } };
+    };
+
+    expect(mode.getTuiState().interaction.transcriptScrollbarVisible).toBe(true);
+    expect(internals.ui.transcriptScrollPresentation).toEqual({
+      visible: true,
+      trackColor: "#11151c",
+      thumbColor: "#2b3340",
+    });
+    internals.refs.editor.setText("draft remains");
+    mode.echoPrompt("/scrollbar");
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+
+    expect(mode.getTuiState().interaction.transcriptScrollbarVisible).toBe(false);
+    expect(internals.refs.editor.getText()).toBe("draft remains");
+    expect(saved).toEqual([{ version: 1, transcript: { scrollbar: "hidden" } }]);
+    expect(internals.ui.transcriptScrollPresentation?.visible).toBe(false);
+  });
+
+  it("keeps the current scrollbar state and shows a bounded note when persistence fails", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const preferencesPort: TuiPreferencesPort = {
+      load: async () => ({ preferences: { version: 1, transcript: { scrollbar: "hidden" } } }),
+      save: async () => ({ ok: false, code: "tui_preferences_save_failed" }),
+    };
+    const mode = new InteractiveMode({ agent, terminal, preferencesPort } as ConstructorParameters<typeof InteractiveMode>[0]);
+
+    mode.echoPrompt("/scrollbar");
+    await vi.waitFor(() => {
+      const notices = mode.getTuiState().timeline.committedRows
+        .filter((row) => row.kind === "notice")
+        .map((row) => row.message.text)
+        .join("\n");
+      expect(notices).toContain("Scrollbar changed for this run but could not be saved.");
+      expect(notices).not.toContain("tui_preferences_save_failed");
+    });
+    expect(mode.getTuiState().interaction.transcriptScrollbarVisible).toBe(true);
+  });
+
+  it("refreshes native scrollbar colors when the terminal theme changes", () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const internals = mode as unknown as {
+      maybeSwitchTheme(scheme: "dark" | "light"): void;
+      ui: { transcriptScrollPresentation?: { visible: boolean; trackColor: string; thumbColor: string } };
+    };
+
+    internals.maybeSwitchTheme("light");
+    expect(internals.ui.transcriptScrollPresentation).toEqual({
+      visible: false,
+      trackColor: "#f5f5f5",
+      thumbColor: "#cccccc",
+    });
+  });
+
   it("terminal blur 后隐藏 editor hint,focus 恢复后重新显示", () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({

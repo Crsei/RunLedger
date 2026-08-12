@@ -48,6 +48,7 @@ import type { SecurityConfigDocument } from "../security/types.ts";
 import type { SessionSecurityConfigSource } from "../security/session-composition.ts";
 import { SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
 import { runSessionTransitionLoop } from "./session-transition-loop.ts";
+import { createCliTuiPreferences } from "./tui-preferences.ts";
 import { composeCliTraceRecorderFactory } from "./trace-config.ts";
 import { createSessionWorkspaceFactory } from "../runtime/session-runtime/worktree-composition.ts";
 import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
@@ -125,6 +126,10 @@ export async function main(argv: readonly string[]): Promise<void> {
     await mkdir(layout.home, { recursive: true, mode: 0o700 });
   }
   const settings = await loadProjectSettings({ layout });
+  const tuiPreferences = await createCliTuiPreferences(layout);
+  if (tuiPreferences.startupDiagnostic !== undefined) {
+    process.stderr.write(`[runledger] ${tuiPreferences.startupDiagnostic.code}; using hidden transcript scrollbar\n`);
+  }
   const traceRecorderFactory = composeCliTraceRecorderFactory(layout, settings);
 
   // §4.2:owner discovery 前只读冻结 schema header;too-new/too-old 全部 fail closed。
@@ -294,6 +299,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       workspaceCapability: workspaceCapabilityLabel(),
       processOverlayController: view.processOverlayController,
       processOverlayClient: view.processOverlayClient,
+      initialPreferences: tuiPreferences.current(),
+      preferencesPort: tuiPreferences.port,
     });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {

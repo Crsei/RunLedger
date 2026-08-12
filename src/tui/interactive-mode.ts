@@ -91,6 +91,7 @@ import { createEffectRunner } from "./application/effect-runner.ts";
 import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
 import type { SessionCatalogResult, SessionTransitionResult } from "./sessions/types.ts";
+import type { TuiPreferencesDocument, TuiPreferencesPort } from "./preferences/types.ts";
 
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
@@ -111,6 +112,10 @@ export interface InteractiveModeOptions {
   performanceObserver?: TuiPerformanceObserver;
   /** B1:显式 bootstrap snapshot；缺省由 controller/agent 派生。 */
   initialBootstrap?: TuiBootstrapSnapshot;
+  /** CLI composition 注入的本地 presentation preference 初值。 */
+  initialPreferences?: TuiPreferencesDocument;
+  /** 只负责 presentation preference 的持久化；TUI 不接触 layout/path。 */
+  preferencesPort?: TuiPreferencesPort;
 }
 
 export interface SessionSwitchTarget {
@@ -209,6 +214,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly resolveExit: (intent: InteractiveExitIntent) => void;
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
+  private readonly preferencesPort?: TuiPreferencesPort;
+  private lastTranscriptScrollbarVisible: boolean | undefined;
 
   // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
   private slashPopup: SlashCommandPopup | undefined;
@@ -231,6 +238,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
     this.workspaceCapability = opts.workspaceCapability;
     this.initialBootstrap = opts.initialBootstrap;
+    this.preferencesPort = opts.preferencesPort;
     // B4:ports 聚合 controller + Session domain；runner 只执行 effect 并回送 TuiResult
     this.authAdapter = createInteractiveSessionAdapter(this.controller);
     const sessionPort = createSessionDomainPortFromController(this.controller);
@@ -251,6 +259,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
 			process: this.authAdapter.supports("session.process.list") && this.authAdapter.supports("session.process.output"),
 		}),
       },
+      preferences: {
+        transcriptScrollbarVisible: opts.initialPreferences?.transcript.scrollbar === "visible",
+      },
     }));
     this.runner = createEffectRunner({
       ports: this.ports,
@@ -265,6 +276,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
     // TUI 使用 showHardwareCursor=false,Editor 自身以 CURSOR_MARKER 通知光标位置
     this.ui = new TUI(this.terminal, false, { performanceObserver: opts.performanceObserver });
+    this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => this.flushStreamingDeltas());
     this.unsubscribeBoundaryActions = this.ui.addActionListener((actions) => {
       for (const action of actions) this.store.dispatch(action);
@@ -293,6 +305,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.lastTimelineGeneration = next.timeline.generation;
         const presentation = projectInteractivePresentation(next);
         this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
+      }
+      if (next.interaction.transcriptScrollbarVisible !== this.lastTranscriptScrollbarVisible) {
+        this.refreshTranscriptScrollPresentation();
       }
     });
     if (this.processOverlayController) {
@@ -515,7 +530,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private maybeSwitchTheme(scheme: "dark" | "light"): void {
     Object.assign(this.theme, applyEnvOverrides(loadTheme(scheme)));
     this.refreshEditorAppearance();
+    this.refreshTranscriptScrollPresentation();
     this.ui.invalidate();
+  }
+
+  private refreshTranscriptScrollPresentation(): void {
+    const visible = this.store.getState().interaction.transcriptScrollbarVisible;
+    this.lastTranscriptScrollbarVisible = visible;
+    this.ui.setTranscriptScrollPresentation({
+      visible,
+      trackColor: this.theme.surface,
+      thumbColor: this.theme.border,
+    });
   }
 
   /** 退出 TUI。 */
@@ -1486,9 +1512,26 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.refs.chat.clear();
         this.ui.requestRender();
         return;
+      case "ui.scrollbar.toggle":
+        void this.toggleTranscriptScrollbar();
+        return;
       case "ui.quit":
         void this.requestQuit();
         return;
+    }
+  }
+
+  private async toggleTranscriptScrollbar(): Promise<void> {
+    const visible = !this.store.getState().interaction.transcriptScrollbarVisible;
+    this.store.dispatch({ type: "interaction.transcript-scrollbar-set", visible });
+    this.ui.requestRender();
+    if (this.preferencesPort === undefined) return;
+    const result = await this.preferencesPort.save({
+      version: 1,
+      transcript: { scrollbar: visible ? "visible" : "hidden" },
+    });
+    if (!result.ok) {
+      this.showNotice("Scrollbar changed for this run but could not be saved.", "error");
     }
   }
 

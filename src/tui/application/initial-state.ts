@@ -13,6 +13,9 @@ import type { TuiBootstrapSnapshot } from "../presentation/types.ts";
 export interface InitialTuiStateInput {
   readonly bootstrap: TuiBootstrapSnapshot;
   readonly capabilities?: Partial<TuiCapabilitySnapshot>;
+  readonly preferences?: {
+    readonly transcriptScrollbarVisible?: boolean;
+  };
 }
 
 /** 未接线端口统一落到 explicit unavailable；调用方可按真实端口覆盖。 */
@@ -87,6 +90,7 @@ export function createInitialTuiState(input: InitialTuiStateInput): TuiState {
       selectedId: { state: "unknown", reason: "no-selection" },
       generation: 0,
       viewportClearRevision: 0,
+	  transcriptScrollbarVisible: input.preferences?.transcriptScrollbarVisible ?? false,
 	  terminalFocused: true,
 	  viewport: { columns: 0, rows: 0 },
       toolDetailsExpanded: false,

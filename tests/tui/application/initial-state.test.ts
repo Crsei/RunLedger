@@ -27,12 +27,23 @@ describe("B1 createInitialTuiState", () => {
     expect(state.timeline.committedRows).toEqual([]);
     expect(state.timeline.activeOrder).toEqual([]);
     expect(state.interaction.overlay).toEqual({ state: "closed" });
+    expect(state.interaction.transcriptScrollbarVisible).toBe(false);
     expect(state.commandsById).toEqual({});
     expect(state.commandOrder).toEqual([]);
     expect(state.transientInputQueue).toEqual([]);
     expect(state.queryGuard).toEqual({ state: "idle" });
     expect(state.transitionFrozen).toBe(false);
     expect(state.recoveryRequired).toBe(false);
+  });
+
+  it("initializes the transcript scrollbar only from an explicit TUI preference", () => {
+    const state = createInitialTuiState({
+      bootstrap,
+      preferences: { transcriptScrollbarVisible: true },
+    } as Parameters<typeof createInitialTuiState>[0]);
+    expect(state.interaction.transcriptScrollbarVisible).toBe(true);
+    expect(structuredClone(state)).toEqual(state);
+    expect(state.interaction).not.toHaveProperty("scrollTop");
   });
 
   it("distinguishes known vs unknown vs unavailable vs empty", () => {

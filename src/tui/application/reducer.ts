@@ -27,6 +27,7 @@ export const TUI_ACTION_TYPES = [
 	"interaction.select",
 	"interaction.search-changed",
 	"interaction.viewport-clear",
+	"interaction.transcript-scrollbar-set",
 	"interaction.focus-changed",
 	"interaction.viewport-resized",
 ] as const;
@@ -91,6 +92,16 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				interaction: {
 					...state.interaction,
 					viewportClearRevision: state.interaction.viewportClearRevision + 1,
+					generation: state.interaction.generation + 1,
+				},
+			};
+		case "interaction.transcript-scrollbar-set":
+			if (state.interaction.transcriptScrollbarVisible === action.visible) return state;
+			return {
+				...state,
+				interaction: {
+					...state.interaction,
+					transcriptScrollbarVisible: action.visible,
 					generation: state.interaction.generation + 1,
 				},
 			};
