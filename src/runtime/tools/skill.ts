@@ -60,6 +60,7 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
     async execute(_tc, params): Promise<{
       content: Array<{ type: "text"; text: string }>;
       details: SkillDetails;
+      isError?: boolean;
       terminate: false;
     }> {
       const name = params.name;
@@ -69,6 +70,7 @@ export function createSkillTool(options: SkillToolOptions = {}): AgentTool<typeo
           return {
             content: [{ type: "text", text: `Skill unavailable: ${loaded.message}` }],
             details: { matched: false, code: loaded.code, message: loaded.message },
+            isError: true,
             terminate: false,
           };
         }

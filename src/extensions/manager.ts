@@ -7,6 +7,39 @@ import type { ExtensionResourceDescriptor } from "./types.ts";
 import type { PluginDiscoveryResult, PluginManager } from "./plugins/manager.ts";
 import type { HookDefinition } from "./hooks/types.ts";
 import type { SkillDescriptor } from "./skills/types.ts";
+import type { SkillRegistry, SkillProviderStatus } from "./skills/registry.ts";
+import type { SkillsPolicyResult } from "./skills/policy.ts";
+import type { ExtensionSkillProviderProjection } from "./snapshot.ts";
+
+/** 合并 Plugin/Hook/MCP 与 SkillRegistry descriptors，按 identity 去重（保留首个）。 */
+function mergeExtensionDescriptors(
+	pluginDescriptors: readonly ExtensionResourceDescriptor[],
+	skillDescriptors: readonly ExtensionResourceDescriptor[],
+): ExtensionResourceDescriptor[] {
+	const seen = new Set<string>();
+	const merged: ExtensionResourceDescriptor[] = [];
+	for (const descriptor of [...pluginDescriptors, ...skillDescriptors]) {
+		const key = `${descriptor.identity.kind}:${descriptor.identity.qualifiedId}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		merged.push(descriptor);
+	}
+	return merged;
+}
+
+function projectSkillProvider(status: SkillProviderStatus): ExtensionSkillProviderProjection {
+	return {
+		providerId: status.providerId,
+		displayName: status.displayName,
+		rank: status.rank,
+		effectiveEnabled: status.effectiveEnabled,
+		state: status.state,
+		candidateCount: status.candidateCount,
+		activeCount: status.activeCount,
+		failedCount: status.failedCount,
+		...(status.lastError === undefined ? {} : { lastError: status.lastError }),
+	};
+}
 
 export type ExtensionReloadStatus = "ready" | "pending" | "failed";
 
@@ -43,13 +76,19 @@ export interface ExtensionPublicSnapshot {
 	readonly descriptors: readonly ExtensionPublicDescriptor[];
 	readonly diagnostics: readonly Pick<ExtensionDiagnostic, "code" | "severity" | "message">[];
 	readonly counts: ExtensionSnapshot["counts"];
+	readonly skillProviders: ExtensionSnapshot["skillProviders"];
 	readonly digest: string;
 }
 
 export interface ExtensionManagerOptions {
 	readonly pluginManager: PluginManager;
+	readonly skillRegistry: SkillRegistry;
 	readonly snapshotStore?: ExtensionSnapshotStore;
 	readonly now?: () => Date;
+	/** 异步返回当前已合并 skills policy（可随 settings mutation 变化）。 */
+	readonly skillsPolicyLoader?: () => Promise<SkillsPolicyResult | undefined>;
+	/** 持久化 provider enable mutation 到 canonical settings（composition root 注入）。 */
+	readonly updateSkillsProviderPolicy?: (providerId: string, enabled: boolean, scope: "user" | "workspace") => Promise<void>;
 }
 
 /**
@@ -58,14 +97,20 @@ export interface ExtensionManagerOptions {
  */
 export class ExtensionManager {
 	readonly #pluginManager: PluginManager;
+	readonly #skillRegistry: SkillRegistry;
 	readonly #snapshots: ExtensionSnapshotStore;
 	readonly #now: () => Date;
+	readonly #skillsPolicyLoader: (() => Promise<SkillsPolicyResult | undefined>) | undefined;
+	readonly #updateSkillsProviderPolicy: ((providerId: string, enabled: boolean, scope: "user" | "workspace") => Promise<void>) | undefined;
 	#reloadPromise: Promise<ExtensionReloadResult> | undefined;
 
 	public constructor(options: ExtensionManagerOptions) {
 		this.#pluginManager = options.pluginManager;
+		this.#skillRegistry = options.skillRegistry;
 		this.#snapshots = options.snapshotStore ?? new ExtensionSnapshotStore();
 		this.#now = options.now ?? (() => new Date());
+		this.#skillsPolicyLoader = options.skillsPolicyLoader;
+		this.#updateSkillsProviderPolicy = options.updateSkillsProviderPolicy;
 	}
 
 	public current(): ExtensionSnapshot | undefined {
@@ -77,9 +122,9 @@ export class ExtensionManager {
 		return this.current() === undefined ? [] : this.#pluginManager.hooks();
 	}
 
-	/** Returns full skill descriptors from the current discovery (trusted/enabled only). */
+	/** Returns the active Skill descriptors of the currently published snapshot (loader/catalog view). */
 	public currentSkills(): readonly SkillDescriptor[] {
-		return this.current() === undefined ? [] : this.#pluginManager.skills();
+		return this.current() === undefined ? [] : this.#skillRegistry.current()?.active ?? [];
 	}
 
 	public publicSnapshot(): ExtensionPublicSnapshot | undefined {
@@ -137,6 +182,37 @@ export class ExtensionManager {
 		return this.reload();
 	}
 
+	public async trustSkill(skillId: string): Promise<ExtensionReloadResult> {
+		await this.#ensureDiscovery();
+		try {
+			await this.#skillRegistry.trust(skillId);
+		} catch (error) {
+			return this.#failed(error);
+		}
+		return this.reload();
+	}
+
+	public async untrustSkill(skillId: string): Promise<ExtensionReloadResult> {
+		await this.#ensureDiscovery();
+		try {
+			await this.#skillRegistry.untrust(skillId);
+		} catch (error) {
+			return this.#failed(error);
+		}
+		return this.reload();
+	}
+
+	public async setSkillProviderEnabled(providerId: string, enabled: boolean, scope: "user" | "workspace"): Promise<ExtensionReloadResult> {
+		if (this.#updateSkillsProviderPolicy === undefined) return { status: "failed", retained: this.current(), error: "provider policy writer is unavailable" };
+		await this.#ensureDiscovery();
+		try {
+			await this.#updateSkillsProviderPolicy(providerId, enabled, scope);
+		} catch (error) {
+			return this.#failed(error);
+		}
+		return this.reload();
+	}
+
 	async #ensureDiscovery(): Promise<void> {
 		if (this.#pluginManager.last() === undefined) await this.#pluginManager.discover();
 	}
@@ -154,14 +230,19 @@ export class ExtensionManager {
 	async #buildAndSwap(): Promise<ExtensionReloadResult> {
 		try {
 			const discovered: PluginDiscoveryResult = await this.#pluginManager.discover();
+			const skillPolicy = this.#skillsPolicyLoader === undefined ? undefined : await this.#skillsPolicyLoader();
+			const skillSnapshot = await this.#skillRegistry.load({
+				...(skillPolicy === undefined ? {} : { providerEnabled: skillPolicy.providerEnabled, masterEnabled: skillPolicy.masterEnabled }),
+			});
 			const current = this.current();
 			const generation = (current?.generation ?? 0) + 1;
 			const snapshot = buildExtensionSnapshot({
 				snapshotId: createRuntimeId("snapshot", `extensions-${generation}`),
 				generation,
 				createdAt: this.#now().toISOString(),
-				descriptors: discovered.descriptors,
-				diagnostics: discovered.diagnostics,
+				descriptors: mergeExtensionDescriptors(discovered.descriptors, skillSnapshot.all.map((skill) => skill.descriptor)),
+				diagnostics: [...discovered.diagnostics, ...skillSnapshot.diagnostics, ...(skillPolicy?.diagnostics ?? [])],
+				skillProviders: skillSnapshot.providers.map(projectSkillProvider),
 			});
 			const swapped = this.#snapshots.swap(snapshot);
 			if (!swapped.ok) return { status: "failed", retained: swapped.retained, error: swapped.error, diagnostics: discovered.diagnostics };
@@ -201,5 +282,6 @@ export function projectExtensionSnapshot(snapshot: ExtensionSnapshot): Extension
 			diagnostics: descriptor.diagnostics?.map(({ code, severity, message }) => ({ code, severity, message })),
 		})),
 		diagnostics: snapshot.diagnostics.map(({ code, severity, message }) => ({ code, severity, message })),
+		skillProviders: snapshot.skillProviders,
 	};
 }

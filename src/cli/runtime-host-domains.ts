@@ -137,12 +137,19 @@ function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function scopeOf(value: unknown): "user" | "workspace" {
+	return value === "workspace" ? "workspace" : "user";
+}
+
 export interface ExtensionManagerDomainPort {
 	publicSnapshot(): ExtensionPublicSnapshot | undefined;
 	reload(): Promise<ExtensionReloadResult>;
 	setEnabled(pluginId: string, enabled: boolean): Promise<ExtensionReloadResult>;
 	trust(pluginId: string): Promise<ExtensionReloadResult>;
 	untrust(pluginId: string): Promise<ExtensionReloadResult>;
+	trustSkill(skillId: string): Promise<ExtensionReloadResult>;
+	untrustSkill(skillId: string): Promise<ExtensionReloadResult>;
+	setSkillProviderEnabled(providerId: string, enabled: boolean, scope: "user" | "workspace"): Promise<ExtensionReloadResult>;
 }
 
 export interface ExtensionDomainOptions {
@@ -183,8 +190,8 @@ export function createExtensionSnapshotEvent(input: {
 	};
 }
 
-const EXTENSION_QUERY_OPERATIONS = new Set(["extension.inspect", "plugin.list", "skill.list", "hook.list"]);
-const EXTENSION_MUTATION_OPERATIONS = new Set(["extension.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust"]);
+const EXTENSION_QUERY_OPERATIONS = new Set(["extension.inspect", "plugin.list", "skill.list", "skill.provider.list", "hook.list"]);
+const EXTENSION_MUTATION_OPERATIONS = new Set(["extension.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust", "skill.trust", "skill.untrust", "skill.provider.enable", "skill.provider.disable"]);
 
 const MCP_QUERY_OPERATIONS = new Set(["mcp.list", "mcp.inspect", "mcp.doctor"]);
 const MCP_MUTATION_OPERATIONS = new Set(["mcp.restart"]);
@@ -262,14 +269,21 @@ async function executeExtensionDomain(options: ExtensionDomainOptions, context: 
 	if (EXTENSION_QUERY_OPERATIONS.has(context.operation)) {
 		if (!snapshot) return rejected("extension_snapshot_unavailable");
 		if (context.operation === "extension.inspect") return { ok: true, body: { snapshot } };
+		if (context.operation === "skill.provider.list") return { ok: true, body: { items: snapshot.skillProviders } };
 		const kind = context.operation === "plugin.list" ? "plugin" : context.operation === "skill.list" ? "skill" : context.operation === "hook.list" ? "hook" : undefined;
 		const descriptors = kind === undefined ? snapshot.descriptors.filter((descriptor) => descriptor.kind === "mcp" || descriptor.kind === "mcp-server" || descriptor.kind === "mcp-tool") : snapshot.descriptors.filter((descriptor) => descriptor.kind === kind);
 		return { ok: true, body: { snapshotId: snapshot.snapshotId, generation: snapshot.generation, digest: snapshot.digest, descriptors } };
 	}
 
 	const pluginId = stringValue(context.frame.body.pluginId);
+	const skillId = stringValue(context.frame.body.skillId);
+	const providerId = stringValue(context.frame.body.providerId);
 	let result: ExtensionReloadResult;
 	if (context.operation === "extension.reload") result = await options.manager.reload();
+	else if (context.operation === "skill.trust" && skillId) result = await options.manager.trustSkill(skillId);
+	else if (context.operation === "skill.untrust" && skillId) result = await options.manager.untrustSkill(skillId);
+	else if (context.operation === "skill.provider.enable" && providerId) result = await options.manager.setSkillProviderEnabled(providerId, true, scopeOf(context.frame.body.scope));
+	else if (context.operation === "skill.provider.disable" && providerId) result = await options.manager.setSkillProviderEnabled(providerId, false, scopeOf(context.frame.body.scope));
 	else if (!pluginId) return rejected("plugin_id_required");
 	else if (context.operation === "plugin.enable") result = await options.manager.setEnabled(pluginId, true);
 	else if (context.operation === "plugin.disable") result = await options.manager.setEnabled(pluginId, false);

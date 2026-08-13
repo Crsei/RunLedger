@@ -41,9 +41,20 @@ function managerStub(extra: Record<string, unknown> = {}): Parameters<typeof cre
 		setEnabled: async () => readyReload,
 		trust: async () => readyReload,
 		untrust: async () => readyReload,
+		trustSkill: async () => readyReload,
+		untrustSkill: async () => readyReload,
 		publicSnapshot: () => undefined,
 		...extra,
 	} as Parameters<typeof createSessionExtensionComposition>[0]["manager"];
+}
+
+/** 从 extension.inspect 的 domain value 中安全读取 skillProviders 投影。 */
+function inspectSkillProviders(value: unknown): readonly { readonly providerId?: string; readonly state?: string; readonly candidateCount?: number }[] {
+	if (value === null || typeof value !== "object" || !("snapshot" in value)) return [];
+	const snapshot = (value as { readonly snapshot?: unknown }).snapshot;
+	if (snapshot === null || typeof snapshot !== "object" || !("skillProviders" in snapshot)) return [];
+	const providers = (snapshot as { readonly skillProviders?: unknown }).skillProviders;
+	return Array.isArray(providers) ? providers as readonly { readonly providerId?: string; readonly state?: string; readonly candidateCount?: number }[] : [];
 }
 
 function mcpStub(extra: Record<string, unknown> = {}): Parameters<typeof createSessionExtensionComposition>[0]["mcp"] {
@@ -100,6 +111,7 @@ describe("SessionRuntime extension domain", () => {
 		expect(source).toContain("extensionHookRuntime");
 		expect(source).toContain("extensionTurnAdmission");
 		expect(source).toContain("extensionTurnAbort");
+		expect(source).toContain("modelContextAssembler");
 		expect(source).not.toMatch(/runtime-host-(?:mcp|hooks|skills)/u);
 		expect(source).not.toContain('new Set(["Skill"');
 	});
@@ -288,6 +300,220 @@ describe("SessionRuntime extension domain", () => {
 			await first?.runtime?.shutdownAfterLastAttachment("paused");
 			await second?.runtime?.shutdownAfterLastAttachment("paused");
 			db.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("reuses local-user Plugin trust across different production Sessions", async () => {
+		const root = mkdtempSync(resolve(tmpdir(), "runledger-session-stable-extension-principal-"));
+		const home = resolve(root, "home");
+		const layout = buildRunledgerLayout(home, "posix");
+		const pluginRoot = join(layout.state, "extensions", "user", "plugins", "anthropic-smoke");
+		mkdirSync(join(pluginRoot, ".runledger-plugin"), { recursive: true, mode: 0o700 });
+		mkdirSync(join(pluginRoot, "skills", "frontend-design"), { recursive: true, mode: 0o700 });
+		writeFileSync(join(pluginRoot, ".runledger-plugin", "plugin.json"), JSON.stringify({
+			name: "anthropic-smoke",
+			version: "1.0.0",
+			description: "Stable trust fixture",
+			skills: ["./skills"],
+		}), { mode: 0o600 });
+		writeFileSync(join(pluginRoot, "skills", "frontend-design", "SKILL.md"), "---\nname: frontend-design\ndescription: Build polished interfaces\n---\nStable trusted body.", { mode: 0o600 });
+		const firstHarness = await createRuntimeHarness("stable-extension-principal-first");
+		const secondHarness = await createRuntimeHarness("stable-extension-principal-second", { crashTakeover: true });
+		const managedProcess = {
+			start: async () => { throw new Error("MCP transport must not start"); },
+		} as unknown as Parameters<typeof createProductionSessionExtensionComposition>[0]["managedProcess"];
+		let first: Awaited<ReturnType<typeof createProductionSessionExtensionComposition>> | undefined;
+		let second: Awaited<ReturnType<typeof createProductionSessionExtensionComposition>> | undefined;
+		try {
+			first = await createProductionSessionExtensionComposition({
+				layout,
+				cwd: root,
+				store: firstHarness.store,
+				fence: firstHarness.fence,
+				workspaceId: createRuntimeId("workspace", "stable-extension-principal"),
+				repositoryId: createRuntimeId("repository", "stable-extension-principal"),
+				executionEnv: localExecutionEnv(root),
+				managedProcess,
+				attemptPort: () => undefined,
+				baseToolNames: ["read", "write"],
+			});
+			await first.start();
+			const listed = await first.resources.query("plugin.list", {}, { correlationId: "corr-first-plugin", effectId: "effect-first-plugin" });
+			expect(listed.ok).toBe(true);
+			if (!listed.ok) throw new Error("plugin list failed");
+			const pluginId = (listed.value as { readonly items?: readonly { readonly identity?: { readonly qualifiedId?: string } }[] }).items?.[0]?.identity?.qualifiedId;
+			expect(pluginId).toContain("anthropic-smoke");
+			if (pluginId === undefined) throw new Error("plugin identity missing");
+			const mutationContext = { correlationId: "corr-first-mutation", effectId: "effect-first-mutation", expectedRevision: 1 };
+			await expect(first.resources.mutate!("plugin.trust", { pluginId }, mutationContext)).resolves.toMatchObject({ ok: true });
+			await expect(first.resources.mutate!("plugin.enable", { pluginId }, mutationContext)).resolves.toMatchObject({ ok: true });
+			await first.shutdown("paused");
+
+			second = await createProductionSessionExtensionComposition({
+				layout,
+				cwd: root,
+				store: secondHarness.store,
+				fence: secondHarness.fence,
+				workspaceId: createRuntimeId("workspace", "stable-extension-principal"),
+				repositoryId: createRuntimeId("repository", "stable-extension-principal"),
+				executionEnv: localExecutionEnv(root),
+				managedProcess,
+				attemptPort: () => undefined,
+				baseToolNames: ["read", "write"],
+			});
+			await second.start();
+			const skills = await second.resources.query("skill.list", {}, { correlationId: "corr-second-skill", effectId: "effect-second-skill" });
+			expect(skills).toMatchObject({
+				ok: true,
+				value: { items: [expect.objectContaining({ displayName: "frontend-design", ready: true, trusted: true })] },
+			});
+			expect("contextSources" in second).toBe(true);
+			if (!("contextSources" in second)) return;
+			const contextSources = (second as unknown as { readonly contextSources: (modelContextChars: number) => readonly { readonly layer: string; readonly content: string }[] }).contextSources(20_000);
+			expect(contextSources).toEqual([expect.objectContaining({ layer: "resources" })]);
+			expect(contextSources[0]?.content).toContain("frontend-design");
+			expect(contextSources[0]?.content).toContain("skill:plugin:user:");
+			expect(contextSources[0]?.content).not.toContain("Stable trusted body.");
+			const skillTool = second.tools.find((tool) => tool.name === "Skill");
+			expect(skillTool).toBeDefined();
+			if (skillTool === undefined) throw new Error("Skill tool missing");
+			await expect(skillTool.execute("toolCall_stable_skill", { name: "frontend-design" }, new AbortController().signal)).resolves.toMatchObject({
+				content: [{ type: "text", text: "Stable trusted body." }],
+			});
+		} finally {
+			await second?.shutdown("paused").catch(() => undefined);
+			await first?.shutdown("paused").catch(() => undefined);
+			await firstHarness.runtime.shutdownAfterLastAttachment("paused").catch(() => undefined);
+			await secondHarness.runtime.shutdownAfterLastAttachment("paused").catch(() => undefined);
+			firstHarness.cleanup();
+			secondHarness.cleanup();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("lets a canonical user standalone Skill enter the standard production Session through exact trust", async () => {
+		const root = mkdtempSync(resolve(tmpdir(), "runledger-session-standalone-skill-"));
+		const home = resolve(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		// 正控：Plugin-owned Skill 仍经 runledger-plugin provider 进入标准 Session。
+		const pluginRoot = join(layout.state, "extensions", "user", "plugins", "anthropic-smoke");
+		mkdirSync(join(pluginRoot, ".runledger-plugin"), { recursive: true, mode: 0o700 });
+		mkdirSync(join(pluginRoot, "skills", "frontend-design"), { recursive: true, mode: 0o700 });
+		writeFileSync(join(pluginRoot, ".runledger-plugin", "plugin.json"), JSON.stringify({ name: "anthropic-smoke", version: "1.0.0", description: "Plugin fixture", skills: ["./skills"] }), { mode: 0o600 });
+		writeFileSync(join(pluginRoot, "skills", "frontend-design", "SKILL.md"), "---\nname: frontend-design\ndescription: Build polished interfaces\n---\nPlugin body.", { mode: 0o600 });
+		// canonical user standalone Skill（02 计划 §6.1 runledger-user 装配后进入 production）。
+		const standaloneRoot = join(layout.state, "extensions", "user", "skills", "release-review");
+		mkdirSync(standaloneRoot, { recursive: true, mode: 0o700 });
+		writeFileSync(join(standaloneRoot, "SKILL.md"), "---\nname: release-review\ndescription: Review a release safely\n---\nStandalone body.", { mode: 0o600 });
+		const harness = await createRuntimeHarness("standalone-skill");
+		const managedProcess = { start: async () => { throw new Error("MCP transport must not start"); } } as unknown as Parameters<typeof createProductionSessionExtensionComposition>[0]["managedProcess"];
+		let composition: Awaited<ReturnType<typeof createProductionSessionExtensionComposition>> | undefined;
+		try {
+			composition = await createProductionSessionExtensionComposition({
+				layout,
+				cwd: root,
+				store: harness.store,
+				fence: harness.fence,
+				workspaceId: createRuntimeId("workspace", "standalone-skill"),
+				repositoryId: createRuntimeId("repository", "standalone-skill"),
+				executionEnv: localExecutionEnv(root),
+				managedProcess,
+				attemptPort: () => undefined,
+				baseToolNames: ["read", "write"],
+			});
+			await composition.start();
+			const listed = await composition.resources.query("plugin.list", {}, { correlationId: "corr-skill-plugin", effectId: "effect-skill-plugin" });
+			expect(listed.ok).toBe(true);
+			if (!listed.ok) throw new Error("plugin list failed");
+			const pluginId = (listed.value as { readonly items?: readonly { readonly identity?: { readonly qualifiedId?: string } }[] }).items?.[0]?.identity?.qualifiedId;
+			expect(pluginId).toContain("anthropic-smoke");
+			if (pluginId === undefined) throw new Error("plugin identity missing");
+			const mutationContext = { correlationId: "corr-skill-mutation", effectId: "effect-skill-mutation", expectedRevision: 1 };
+			await expect(composition.resources.mutate!("plugin.trust", { pluginId }, mutationContext)).resolves.toMatchObject({ ok: true });
+			await expect(composition.resources.mutate!("plugin.enable", { pluginId }, mutationContext)).resolves.toMatchObject({ ok: true });
+
+			const listSkills = async (): Promise<readonly { readonly displayName?: string; readonly identity?: { readonly qualifiedId?: string }; readonly ready?: boolean; readonly trusted?: boolean; readonly activation?: string }[]> => {
+				const result = await composition!.resources.query("skill.list", {}, { correlationId: "corr-skill-list", effectId: "effect-skill-list" });
+				expect(result.ok).toBe(true);
+				if (!result.ok) throw new Error("skill list failed");
+				return (result.value as { readonly items?: readonly { readonly displayName?: string; readonly identity?: { readonly qualifiedId?: string }; readonly ready?: boolean; readonly trusted?: boolean; readonly activation?: string }[] }).items ?? [];
+			};
+			const skillTool = composition.tools.find((tool) => tool.name === "Skill");
+			expect(skillTool).toBeDefined();
+			if (skillTool === undefined) throw new Error("Skill tool missing");
+			const contextSources = (composition as unknown as { readonly contextSources: (modelContextChars: number) => readonly { readonly content: string }[] }).contextSources(20_000);
+
+			// provider status/counts 进入有界 public snapshot（P3）。
+			const inspected = await composition.resources.query("extension.inspect", {}, { correlationId: "corr-skill-inspect", effectId: "effect-skill-inspect" });
+			expect(inspected.ok).toBe(true);
+			if (!inspected.ok) throw new Error("extension inspect failed");
+			const skillProviders = inspectSkillProviders(inspected.value);
+			const userProvider = skillProviders.find((item) => item.providerId === "runledger-user");
+			expect(userProvider).toMatchObject({ state: "loaded", candidateCount: 1 });
+
+			// 未 trust：standalone 是 inspect 可见的 blocked 候选，不进 catalog、loader 不可达。
+			const before = await listSkills();
+			const standaloneId = before.find((item) => item.displayName === "release-review")?.identity?.qualifiedId;
+			const standaloneBefore = before.find((item) => item.displayName === "release-review");
+			expect(standaloneBefore).toMatchObject({ ready: false, trusted: false, activation: "blocked" });
+			expect(standaloneId).toContain("skill:user:");
+			if (standaloneId === undefined) throw new Error("standalone skill identity missing");
+			const pluginBefore = before.find((item) => item.displayName === "frontend-design");
+			expect(pluginBefore).toMatchObject({ ready: true, trusted: true });
+			expect(contextSources[0]?.content).toContain("frontend-design");
+			expect(contextSources[0]?.content).not.toContain("release-review");
+			await expect(skillTool.execute("toolCall_s_plugin", { name: "frontend-design" }, new AbortController().signal)).resolves.toMatchObject({ content: [{ type: "text", text: "Plugin body." }] });
+			const untrustedCall = await skillTool.execute("toolCall_s_untrusted", { name: "release-review" }, new AbortController().signal);
+			expect(untrustedCall.details).toMatchObject({ matched: false, code: "not_found" });
+
+			// exact trust 后：standalone 进入 catalog 并按需读取正文。
+			await expect(composition.resources.mutate!("skill.trust", { skillId: standaloneId }, mutationContext)).resolves.toMatchObject({ ok: true });
+			const after = await listSkills();
+			expect(after.find((item) => item.displayName === "release-review")).toMatchObject({ ready: true, trusted: true, activation: "ready" });
+			const afterSources = (composition as unknown as { readonly contextSources: (modelContextChars: number) => readonly { readonly content: string }[] }).contextSources(20_000);
+			expect(afterSources[0]?.content).toContain("release-review");
+			expect(afterSources[0]?.content).not.toContain("Standalone body.");
+			await expect(skillTool.execute("toolCall_s_trusted", { name: "release-review" }, new AbortController().signal)).resolves.toMatchObject({ content: [{ type: "text", text: "Standalone body." }] });
+
+			// untrust 后：撤出 active，loader 不可达，正文不再可读。
+			await expect(composition.resources.mutate!("skill.untrust", { skillId: standaloneId }, mutationContext)).resolves.toMatchObject({ ok: true });
+			const revoked = await listSkills();
+			expect(revoked.find((item) => item.displayName === "release-review")).toMatchObject({ ready: false, trusted: false, activation: "blocked" });
+			const revokedCall = await skillTool.execute("toolCall_s_revoked", { name: "release-review" }, new AbortController().signal);
+			expect(revokedCall.details).toMatchObject({ matched: false, code: "not_found" });
+
+			// provider enable/disable 只改 canonical policy 并 idle reload；关闭不遮蔽其他 provider。
+			const listProviders = async (): Promise<readonly { readonly providerId?: string; readonly state?: string }[]> => {
+				const result = await composition!.resources.query("skill.provider.list", {}, { correlationId: "corr-skill-providers", effectId: "effect-skill-providers" });
+				expect(result.ok).toBe(true);
+				if (!result.ok) throw new Error("skill provider list failed");
+				const value = result.value;
+				if (value === undefined || typeof value !== "object" || !("items" in value) || !Array.isArray(value.items)) return [];
+				return value.items as readonly { readonly providerId?: string; readonly state?: string }[];
+			};
+			await expect(composition.resources.mutate!("skill.provider.disable", { providerId: "runledger-user" }, mutationContext)).resolves.toMatchObject({ ok: true });
+			const afterDisable = await listSkills();
+			expect(afterDisable.find((item) => item.displayName === "release-review")).toBeUndefined();
+			expect(afterDisable.find((item) => item.displayName === "frontend-design")).toMatchObject({ ready: true, trusted: true });
+			const disabledProvider = (await listProviders()).find((item) => item.providerId === "runledger-user");
+			expect(disabledProvider).toMatchObject({ state: "disabled" });
+			const persistedDocument = JSON.parse(readFileSync(layout.settings, "utf8")) as unknown;
+			const persistedProviders = persistedDocument !== null && typeof persistedDocument === "object" && "skills" in persistedDocument
+				? (persistedDocument as { readonly skills?: unknown }).skills
+				: undefined;
+			const persistedMap = persistedProviders !== null && typeof persistedProviders === "object" && "providers" in persistedProviders
+				? (persistedProviders as { readonly providers?: Record<string, boolean> }).providers
+				: undefined;
+			expect(persistedMap?.["runledger-user"]).toBe(false);
+			await expect(composition.resources.mutate!("skill.provider.enable", { providerId: "runledger-user" }, mutationContext)).resolves.toMatchObject({ ok: true });
+			const afterEnable = await listSkills();
+			expect(afterEnable.find((item) => item.displayName === "release-review")).toMatchObject({ activation: "blocked" });
+		} finally {
+			await composition?.shutdown("paused").catch(() => undefined);
+			await harness.runtime.shutdownAfterLastAttachment("paused").catch(() => undefined);
+			harness.cleanup();
 			rmSync(root, { recursive: true, force: true });
 		}
 	});

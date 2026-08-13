@@ -867,8 +867,40 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
   }
 
-  private async queryMcpServers(): Promise<McpServerViewItem[] | undefined> {
+  /** /skillsproviders:只读 provider status 列表（mutation 仍走 authenticated Session command）。 */
+  private async openSkillProvidersModal(): Promise<void> {
     const context = { correlationId: `corr-${this.correlationSequence + 1}`, effectId: `effect-${this.effectSequence + 1}` };
+    const result = await querySessionController(this.controller, "skill.provider.list", {}, context).catch((error: unknown) => {
+      this.showNotice(`/skillsproviders query failed: ${String(error)}`, "error");
+      return undefined;
+    });
+    if (result === undefined) return;
+    if (!result.ok) {
+      this.showNotice(`/skillsproviders query failed: ${result.code}`, "error");
+      return;
+    }
+    const rawItems = isRecordArray(result.value?.items) ? result.value.items : [];
+    const items: SelectItem[] = rawItems.flatMap((item) => {
+      if (!isRecord(item) || typeof item.providerId !== "string") return [];
+      const state = typeof item.state === "string" ? item.state : "unknown";
+      const candidateCount = typeof item.candidateCount === "number" ? item.candidateCount : 0;
+      const activeCount = typeof item.activeCount === "number" ? item.activeCount : 0;
+      const failedCount = typeof item.failedCount === "number" ? item.failedCount : 0;
+      const label = `${item.providerId} — ${state}`;
+      const description = `candidates=${candidateCount} active=${activeCount} failed=${failedCount}`;
+      return [{ value: item.providerId, label, description }];
+    });
+    const modal = new SelectorModal({
+      theme: this.theme,
+      selectListTheme: makeSelectListTheme(this.theme),
+      title: `/skillsproviders (${items.length})`,
+      items,
+      onCancel: () => this.closeOverlay(),
+    });
+    this.showOverlayModal(modal, { anchor: "bottom-left" });
+  }
+
+  private async queryMcpServers(): Promise<McpServerViewItem[] | undefined> {    const context = { correlationId: `corr-${this.correlationSequence + 1}`, effectId: `effect-${this.effectSequence + 1}` };
     const result = await querySessionController(this.controller, "mcp.list", {}, context).catch((error: unknown) => {
       this.showNotice(`/mcp query failed: ${String(error)}`, "error");
       return undefined;
@@ -930,7 +962,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const ok = await this.runSessionMutation(item.enabled ? "plugin.disable" : "plugin.enable", { pluginId: item.pluginId }, `/${kind} toggle`);
     if (!ok || modal === undefined) return;
     const fresh = await this.queryExtensionResources(kind, `/${kind}`);
-    if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
+    if (fresh !== undefined) {
+      modal.update(fresh.map(resourceToToggleItem));
+      this.ui.requestRender();
+    }
   }
 
   private async trustExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
@@ -1491,6 +1526,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "extension.skills":
         void this.openExtensionSelector("skill.list", "skills", "/skills");
+        return;
+      case "extension.skills.providers":
+        void this.openSkillProvidersModal();
         return;
       case "extension.hooks":
         void this.openExtensionSelector("hook.list", "hooks", "/hooks");

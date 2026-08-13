@@ -79,7 +79,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	security: new Set(["inspect"]),
 	worktree: new Set(["list", "inspect", "create", "resume", "release"]),
 	plugin: new Set(["list", "inspect", "reload", "enable", "disable", "trust", "untrust"]),
-	skill: new Set(["list"]),
+	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
 	mcp: new Set(["list", "inspect", "doctor", "restart"]),
 	plan: new Set(["inspect", "enter", "activate", "write", "approve", "cancel"]),
@@ -92,6 +92,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 const MUTATIONS = new Set([
 	"worktree.create", "worktree.resume", "worktree.release",
 	"plugin.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust",
+	"skill.trust", "skill.untrust",
 	"plan.enter", "plan.activate", "plan.write", "plan.approve", "plan.cancel",
 	"compact.run", "context.assemble",
 	"memory.propose", "memory.approve", "memory.reject", "memory.revoke",
@@ -108,6 +109,16 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	const key = `${group}.${rawAction}`;
 	if ((group === "plugin" && ["enable", "disable", "trust", "untrust"].includes(rawAction)) && args.length < 1) {
 		return { ok: false, error: `${rawAction} requires a plugin id` };
+	}
+	if (group === "skill" && (rawAction === "trust" || rawAction === "untrust") && args.length < 1) {
+		return { ok: false, error: `${rawAction} requires a skill id` };
+	}
+	if (group === "skill" && rawAction === "provider") {
+		const sub = args[0];
+		if (sub === undefined || !["list", "enable", "disable"].includes(sub)) return { ok: false, error: "provider requires list|enable|disable" };
+		if ((sub === "enable" || sub === "disable") && args.length < 2) return { ok: false, error: `${sub} requires a provider id` };
+		const scope = args.find((arg) => arg.startsWith("--scope="));
+		if (scope !== undefined && scope !== "--scope=user" && scope !== "--scope=workspace") return { ok: false, error: "scope must be user or workspace" };
 	}
 	if (group === "worktree" && rawAction === "create" && args.length < 2) return { ok: false, error: "create requires a source cwd and label" };
 	if (group === "memory" && rawAction === "get" && args.length < 1) return { ok: false, error: "get requires a memory id" };
@@ -132,7 +143,9 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 			if (!Array.isArray(sources)) return { ok: false, error: "context assemble sources must be a JSON array" };
 		} catch { return { ok: false, error: "context assemble arguments must be valid JSON" }; }
 	}
-	return { ok: true, command: { group, action: rawAction, args, mutation: MUTATIONS.has(key) } };
+	const skillProviderAction = group === "skill" && rawAction === "provider" ? args[0] : undefined;
+	const mutation = skillProviderAction === "enable" || skillProviderAction === "disable" ? true : MUTATIONS.has(key);
+	return { ok: true, command: { group, action: rawAction, args, mutation } };
 }
 
 export function controlCommandRequest(command: ControlCommand): HostControlRequest {
@@ -145,6 +158,19 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 		case "plugin.untrust":
 			body.pluginId = command.args[0];
 			break;
+		case "skill.trust":
+		case "skill.untrust":
+			body.skillId = command.args[0];
+			break;
+		case "skill.provider": {
+			const sub = command.args[0];
+			if (sub === "enable" || sub === "disable") {
+				body.providerId = command.args[1];
+				const scope = command.args.find((arg) => arg.startsWith("--scope="));
+				if (scope === "--scope=workspace") body.scope = "workspace";
+			}
+			break;
+		}
 		case "worktree.create":
 			body.sourceCwd = command.args[0];
 			body.label = command.args[1];
@@ -205,7 +231,11 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			if (command.args[0] !== undefined) body.serverId = command.args[0];
 			break;
 	}
-	return { operation: key === "remember.propose" ? "memory.propose" : key === "plan.approve" ? "plan.resolve_approval" : key, body, mutation: command.mutation };
+	return {
+		operation: key === "remember.propose" ? "memory.propose" : key === "plan.approve" ? "plan.resolve_approval" : key === "skill.provider" ? `skill.provider.${command.args[0] ?? "list"}` : key,
+		body,
+		mutation: command.mutation,
+	};
 }
 
 /** Query used to obtain the current Host-owned domain revision before a mutation. */
@@ -213,6 +243,7 @@ export function controlCommandQueryOperation(command: ControlCommand): string | 
 	if (!command.mutation) return undefined;
 	if (command.group === "worktree") return "worktree.inspect";
 	if (command.group === "plugin") return "plugin.list";
+	if (command.group === "skill") return "skill.list";
 	if (command.group === "mcp") return "mcp.list";
 	if (command.group === "plan") return "plan.inspect";
 	if (command.group === "compact") return "compaction.list";
@@ -255,7 +286,8 @@ export function controlCommandHelp(): string {
 		"  runledger security inspect",
 		"  runledger worktree list|inspect|create|resume|release confirm",
 		"  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]",
-		"  runledger skill list   runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
+		"  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>",
+		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
 		"  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel",
 		"  runledger compact list|run '<source-range-json>' <transcript>",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",

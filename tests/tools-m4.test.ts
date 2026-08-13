@@ -149,6 +149,15 @@ describe("M4 占位工具", () => {
       expect(text).toContain("hi alice");
       expect(r.details.matched).toBe(true);
     });
+
+    it("loader 拒绝时标记 isError=true", async () => {
+      const tool = createSkillTool({
+        loader: async () => ({ ok: false, code: "not_found", message: "skill not found" }),
+      });
+      const r = await tool.execute("tc", { name: "missing" });
+      expect(r.isError).toBe(true);
+      expect(r.details).toMatchObject({ matched: false, code: "not_found" });
+    });
   });
 
   describe("NotebookEdit (占位)", () => {

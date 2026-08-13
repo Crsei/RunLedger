@@ -12,7 +12,21 @@ export interface ExtensionSnapshot {
 	readonly descriptors: readonly ExtensionResourceDescriptor[];
 	readonly diagnostics: readonly ExtensionDiagnostic[];
 	readonly counts: ExtensionComponentCounts;
+	readonly skillProviders: readonly ExtensionSkillProviderProjection[];
 	readonly digest: string;
+}
+
+/** provider status/counts 的中立 public 投影（不含 provider 实现或 handle）。 */
+export interface ExtensionSkillProviderProjection {
+	readonly providerId: string;
+	readonly displayName: string;
+	readonly rank: number;
+	readonly effectiveEnabled: boolean;
+	readonly state: "disabled" | "unavailable" | "loaded" | "failed" | "aborted";
+	readonly candidateCount: number;
+	readonly activeCount: number;
+	readonly failedCount: number;
+	readonly lastError?: string;
 }
 
 function countComponents(descriptors: readonly ExtensionResourceDescriptor[]): ExtensionComponentCounts {
@@ -57,6 +71,7 @@ export function buildExtensionSnapshot(args: {
 	readonly createdAt: string;
 	readonly descriptors: readonly ExtensionResourceDescriptor[];
 	readonly diagnostics: readonly ExtensionDiagnostic[];
+	readonly skillProviders?: readonly ExtensionSkillProviderProjection[];
 }): ExtensionSnapshot {
 	if (!Number.isSafeInteger(args.generation) || args.generation < 0) throw new Error("invalid snapshot generation");
 	const descriptors = stableDescriptors(args.descriptors);
@@ -75,6 +90,7 @@ export function buildExtensionSnapshot(args: {
 	}
 	const diagnostics = boundDiagnostics(sortExtensionDiagnostics(args.diagnostics));
 	const counts = countComponents(descriptors);
+	const skillProviders = Object.freeze([...(args.skillProviders ?? [])].sort((left, right) => left.rank - right.rank || (left.providerId < right.providerId ? -1 : left.providerId > right.providerId ? 1 : 0)));
 	const body = {
 		snapshotId: args.snapshotId,
 		generation: args.generation,
@@ -82,6 +98,7 @@ export function buildExtensionSnapshot(args: {
 		descriptors,
 		diagnostics,
 		counts,
+		skillProviders,
 	};
 	const digest = canonicalDigest(body);
 	return Object.freeze({

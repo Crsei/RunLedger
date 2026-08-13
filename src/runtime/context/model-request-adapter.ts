@@ -69,7 +69,14 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 	});
 	const selected = new Set(assembled.receipt.fragmentIds);
 	const messages = input.context.messages.filter((_message, index) => selected.has(`agent-history-${index}`));
-	const systemPrompt = selected.has("agent-system-prompt") ? input.context.systemPrompt : undefined;
+	const baseSystemPrompt = selected.has("agent-system-prompt") ? input.context.systemPrompt : undefined;
+	const selectedSourceContent = assembled.fragments
+		.filter((fragment) => fragment.fragmentId !== "agent-system-prompt" && !fragment.fragmentId.startsWith("agent-history-"))
+		.map((fragment) => assembled.contentByFragmentId[fragment.fragmentId])
+		.filter((content): content is string => typeof content === "string" && content.length > 0);
+	const systemPrompt = selectedSourceContent.length === 0
+		? baseSystemPrompt
+		: [baseSystemPrompt, ...selectedSourceContent].filter((content): content is string => typeof content === "string" && content.length > 0).join("\n\n");
 	return {
 		context: {
 			...(systemPrompt === undefined ? {} : { systemPrompt }),

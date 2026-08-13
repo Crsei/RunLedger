@@ -31,6 +31,7 @@ import {
 	controlCommandBody,
 	controlCommandHelp,
 	controlCommandQueryOperation,
+	controlCommandRequest,
 	parseControlCommand,
 	type ControlCommand,
 } from "./control-commands.ts";
@@ -481,6 +482,15 @@ export async function runControlCommand(
 ): Promise<void> {
 	const correlationId = `control_${Date.now().toString(36)}`;
 	let effectSequence = 0;
+	const directRequest = controlCommandRequest(command);
+	if (!directRequest.mutation) {
+		const response = await controller.querySessionDomain(directRequest.operation, directRequest.body, {
+			correlationId,
+			effectId: "control_query_1",
+		});
+		process.stdout.write(`${JSON.stringify(response)}\n`);
+		return;
+	}
 	const queryOperation = controlCommandQueryOperation(command);
 	let inspectedBody: Record<string, unknown> = {};
 	let domainRevision = 0;

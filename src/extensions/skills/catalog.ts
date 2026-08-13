@@ -48,6 +48,7 @@ export class SkillCatalog {
 		if (!skill) return { ok: false, code: "not_found", message: `skill not found: ${parsed.name}` };
 		if (!skill.descriptor.enabled || skill.descriptor.activation !== "ready") return { ok: false, code: "blocked", message: `skill is not active: ${skill.descriptor.identity.qualifiedId}` };
 		if (parsed.trigger === "model-tool" && skill.frontmatter.disableModelInvocation) return { ok: false, code: "blocked", message: `skill does not allow model invocation: ${skill.descriptor.identity.qualifiedId}` };
+		if (parsed.trigger !== "model-tool" && skill.frontmatter.userInvocable === false) return { ok: false, code: "blocked", message: `skill does not allow user invocation: ${skill.descriptor.identity.qualifiedId}` };
 		return { ok: true, skill, trigger: parsed.trigger, ...(parsed.argument ? { argument: parsed.argument } : {}) };
 	}
 }

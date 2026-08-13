@@ -64,7 +64,7 @@ export interface ProductionHostSessionFactoryOptions {
 	/** 渐进披露 Skill loader（trust + digest 复核），注入 stdlib Skill 工具。 */
 	readonly skillLoader?: import("../runtime/tools/skill.ts").SkillLoader;
 	/** Host-owned 领域上下文碎片（Plan Mode / approved memory），叠加进唯一 model-request 投影。 */
-	readonly contextSourceProvider?: (sessionId: string) => Promise<readonly RuntimeContextSource[]>;
+	readonly contextSourceProvider?: (sessionId: string, modelContextChars: number) => Promise<readonly RuntimeContextSource[]>;
 	/** Host 内部 domain client（plan.write / memory.* agent 工具使用）。 */
 	readonly domainClient?: import("../runtime/tools/plan-memory-tools.ts").HostDomainToolClient;
 	/** Canonical event sink callback for a reload applied at Agent idle. */
@@ -280,7 +280,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
                   ? assembleAgentModelContext
                   : async (input) => assembleAgentModelContext({
                       ...input,
-                      sources: await options.contextSourceProvider!(manager.sessionId()),
+                      sources: await options.contextSourceProvider!(manager.sessionId(), input.model.contextWindow),
                     }),
                 ...(options.contextAssemblySink === undefined ? {} : { contextAssemblySink: options.contextAssemblySink }),
 				...(extensionHookRuntime === undefined ? {} : {

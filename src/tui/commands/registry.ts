@@ -42,6 +42,7 @@ export type SlashCommandActionType =
   | "extension.mcp"
   | "extension.plugins"
   | "extension.skills"
+  | "extension.skills.providers"
   | "extension.hooks"
   | "plan.inspect"
   | "compaction.list"
@@ -204,7 +205,8 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
     command("mcp", "List connected MCP servers", 16, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY }),
     command("plugins", "List discovered plugins", 17, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY }),
     command("skills", "List discovered skills", 18, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY }),
-    command("hooks", "List configured hooks", 19, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY }),
+    command("skillsproviders", "List skill discovery providers", 19, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY }),
+    command("hooks", "List configured hooks", 20, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY }),
     command("plan", "Inspect Plan Mode state", 20, {
       actionType: "plan.inspect",
       category: "plan",

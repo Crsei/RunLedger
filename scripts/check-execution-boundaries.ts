@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 export interface ExecutionBoundaryViolation {
 	file: string;
-	kind: "raw-fs" | "raw-process" | "raw-network" | "raw-background";
+	kind: "raw-fs" | "raw-process" | "raw-network" | "raw-background" | "provider-execution-port";
 }
 
 /**
@@ -76,6 +76,25 @@ const RAW_BACKGROUND_PATTERNS: readonly RegExp[] = [
 	/(?:^|[\\/])tmp[\\/]bash-/u,
 ];
 
+/**
+ * Discovery Provider 实现不得持有 TrustStore/ExtensionStateStore/Gateway/
+ * MCP client/process handle（02 计划 §5）。只允许导入类型、diagnostics 与
+ * observation/skill schema；任何 execution/state 端口 import 都是违反。
+ */
+const PROVIDER_EXECUTION_PORT_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
+	[/from ["'][^"']*(?:trust-store|state-store)[^"']*["']/u, "provider-execution-port"],
+	[/from ["'][^"']*(?:connection-manager|attempt-gateway|session-runtime|tool-registry|agent-loop)[^"']*["']/u, "provider-execution-port"],
+	[/from ["'][^"']*\/mcp\/[^"']*["']/u, "provider-execution-port"],
+	[/from ["']node:child_process["']/u, "provider-execution-port"],
+	// 路径/设置 authority：provider 不得自行调用 homedir/cwd/env/Bun.Glob（02 计划 D6）。
+	[/\bos\.homedir\s*\(/u, "provider-execution-port"],
+	[/\bprocess\.cwd\s*\(/u, "provider-execution-port"],
+	[/\bprocess\.env\b/u, "provider-execution-port"],
+	[/\bBun\.Glob\b/u, "provider-execution-port"],
+];
+
+const PROVIDER_DIRECTORY_PATTERN = /^src\/extensions\/[^/]+\/providers\//u;
+
 function listTypeScriptFiles(directory: string): string[] {
 	try {
 		return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -86,6 +105,15 @@ function listTypeScriptFiles(directory: string): string[] {
 	} catch {
 		return [];
 	}
+}
+
+export function findProviderExecutionPortViolations(relativeFile: string, source: string): ExecutionBoundaryViolation[] {
+	if (!PROVIDER_DIRECTORY_PATTERN.test(relativeFile)) return [];
+	const violations: ExecutionBoundaryViolation[] = [];
+	for (const [pattern] of PROVIDER_EXECUTION_PORT_PATTERNS) {
+		if (pattern.test(source)) violations.push({ file: relativeFile, kind: "provider-execution-port" });
+	}
+	return violations;
 }
 
 export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViolation[] {
@@ -101,6 +129,7 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 					violations.push({ file: relativeFile, kind });
 				}
 			}
+			violations.push(...findProviderExecutionPortViolations(relativeFile, source));
 			if (root === "src/runtime/tools" && !TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST.includes(relativeFile)) {
 				const localEnvCalls = source
 					.split("\n")

@@ -17,11 +17,11 @@ export function renderSkillCatalog(
 	const maxChars = Math.max(0, Math.min(options.maxChars ?? DEFAULT_EXTENSION_LIMITS.maxCatalogChars, contextBudget));
 	if (maxChars === 0) return "";
 	const active = [...skills]
-		.filter((skill) => skill.descriptor.enabled)
+		.filter((skill) => skill.descriptor.enabled && skill.frontmatter.disableModelInvocation !== true)
 		.sort((left, right) => left.descriptor.identity.qualifiedId < right.descriptor.identity.qualifiedId ? -1 : left.descriptor.identity.qualifiedId > right.descriptor.identity.qualifiedId ? 1 : 0);
-	const header = "Available skills (load exact qualified identity on demand; bodies are not included):\n";
+	const header = "Skills: pass exactly name or qualifiedId to Skill; never combine values.\n";
 	if (header.length >= maxChars) return clip(header, maxChars);
-	const minimumRows = active.map((skill) => `- ${skill.frontmatter.name} (${skill.descriptor.identity.qualifiedId})\n`);
+	const minimumRows = active.map((skill) => `- name=${skill.frontmatter.name};qualifiedId=${skill.descriptor.identity.qualifiedId}\n`);
 	const minimumLength = minimumRows.reduce((sum, row) => sum + row.length, header.length);
 	const descriptionBudget = Math.max(0, maxChars - minimumLength);
 	const perSkill = active.length > 0 ? Math.floor(descriptionBudget / active.length) : 0;
@@ -29,8 +29,8 @@ export function renderSkillCatalog(
 	for (let index = 0; index < active.length; index += 1) {
 		const skill = active[index];
 		if (!skill) continue;
-		const suffix = perSkill > 3 ? `: ${clip(skill.frontmatter.description.replace(/\s+/gu, " "), perSkill - 2)}` : "";
-		const row = `- ${skill.frontmatter.name} (${skill.descriptor.identity.qualifiedId})${suffix}\n`;
+		const suffix = perSkill > 2 ? `;${clip(skill.frontmatter.description.replace(/\s+/gu, " "), perSkill - 1)}` : "";
+		const row = `- name=${skill.frontmatter.name};qualifiedId=${skill.descriptor.identity.qualifiedId}${suffix}\n`;
 		if (output.length + row.length > maxChars) {
 			const remaining = maxChars - output.length;
 			if (remaining > 0) output += clip(row, remaining);

@@ -11,7 +11,9 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 // 用 child_process spawn 真跑 src/cli/cli.ts,避免污染当前 vitest 进程。
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import * as cliMain from "../../src/cli/main.ts";
 import { parseArgs } from "../../src/cli/args.ts";
 
@@ -79,6 +81,28 @@ describe("CLI main() --help / --version", () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain("RUNLEDGER_SESSION_DIR");
     expect(r.stderr).toContain("unsupported_environment_override");
+  });
+});
+
+describe("CLI read-only Extension control commands", () => {
+  it.each([
+    ["plugin", "list"],
+    ["skill", "list"],
+    ["mcp", "list"],
+  ])("routes runledger %s %s through the Session query channel", (group, action) => {
+    const home = mkdtempSync(join(tmpdir(), "runledger-cli-extension-query-"));
+    try {
+      const result = runCli([group, action], { RUNLEDGER_DIR: home });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout) as unknown).toMatchObject({
+        ok: true,
+        status: "ok",
+        operation: `${group}.${action}`,
+        value: { items: [] },
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

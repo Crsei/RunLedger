@@ -6,6 +6,7 @@ import { ExtensionHostManager } from "../../src/extensions/host-manager.ts";
 import { PluginManager } from "../../src/extensions/plugins/manager.ts";
 import { ExtensionStateStore } from "../../src/extensions/state-store.ts";
 import { TrustStore } from "../../src/extensions/trust/trust-store.ts";
+import { createSkillRegistry } from "../../src/extensions/skills/registry.ts";
 import { NodeExtensionStorage } from "../../src/storage/extensions/extension-storage.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 
@@ -25,14 +26,22 @@ describe("resident ExtensionHostManager", () => {
 			await mkdir(join(pluginRoot, ".runledger-plugin"), { recursive: true });
 			await writeFile(join(pluginRoot, ".runledger-plugin", "plugin.json"), JSON.stringify({ name: "fixture", version: "1.0.0", description: "fixture" }));
 			const storage = new NodeExtensionStorage({ runledgerHome: join(root, "home") });
+			const stateStore = new ExtensionStateStore(join(root, "home", "state", "extensions", "extensions-state.json"), storage);
 			const pluginManager = new PluginManager({
 				storage,
 				trustStore: new TrustStore(join(root, "home", "state", "extensions", "trust.json"), storage),
-				stateStore: new ExtensionStateStore(join(root, "home", "state", "extensions", "extensions-state.json"), storage),
+				stateStore,
 				scope: scope(),
 				roots: [{ source: "project", sourceKey: "project:fixture", rootPath: resolve(pluginRoot), priority: 200 }],
 			});
-			const manager = new ExtensionHostManager({ pluginManager, now: () => new Date("2026-08-05T00:00:00.000Z") });
+			const skillRegistry = createSkillRegistry({
+				storage,
+				trustStore: new TrustStore(join(root, "home", "state", "extensions", "trust.json"), storage),
+				stateStore,
+				scope: scope(),
+				pluginContributions: () => pluginManager.last()?.skillContributions ?? [],
+			});
+			const manager = new ExtensionHostManager({ pluginManager, skillRegistry, now: () => new Date("2026-08-05T00:00:00.000Z") });
 			const first = await manager.load();
 			expect(first.status).toBe("ready");
 			if (first.status !== "ready") return;

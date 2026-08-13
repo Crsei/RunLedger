@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import { defaultConvertToLlm } from "../../../src/runtime/agent-loop.ts";
 import { assembleAgentModelContext } from "../../../src/runtime/context/model-request-adapter.ts";
+import { skillCatalogPromptFragment } from "../../../src/extensions/skills/renderer.ts";
 import type { AgentMessage, LlmContext } from "../../../src/runtime/types.ts";
 
 function user(text: string): AgentMessage {
@@ -107,9 +108,74 @@ describe("Host model request context adapter", () => {
 
 		expect(assembled.receipt.fragmentIds).toContain("plan-mode-3");
 		expect(assembled.receipt.fragmentIds).toContain("memory-abc");
-		expect(assembled.context.systemPrompt).toBe("system");
+		expect(assembled.context.systemPrompt).toContain("system");
+		expect(assembled.context.systemPrompt).toContain("plan mode: active\nrevision: 3");
+		expect(assembled.context.systemPrompt).toContain("[workspace memory-abc] release process");
 		expect(assembled.context.messages).toEqual(context.messages);
 		expect(assembled.receipt.diagnostics).toEqual([]);
+	});
+
+	it("projects the bounded Skill catalog fragment into the provider-facing request without bodies or hidden skills", async () => {
+		const context: LlmContext = {
+			systemPrompt: "system",
+			messages: await defaultConvertToLlm([user("hello")]),
+			tools: [],
+		};
+		const descriptorBase = {
+			kind: "skill" as const,
+			identity: { kind: "skill" as const, qualifiedId: "skill:user:fixture:plain", version: "1", source: "user" as const, digest: "a".repeat(64) },
+			resource: { resourceId: "resource_a", kind: "skill" as const, qualifiedId: "skill:user:fixture:plain", version: "1", source: "user" as const, digest: { algorithm: "sha256" as const, digest: "a".repeat(64) } },
+			provenance: { source: "user" as const, sourceLocatorDigest: { algorithm: "sha256" as const, digest: "b".repeat(64) } },
+			displayName: "plain",
+			description: "plain skill",
+			sourcePath: "/fixture/plain/SKILL.md",
+			priority: 100,
+			enabled: true,
+			trusted: true,
+			ready: true,
+			trust: "trusted" as const,
+			activation: "ready" as const,
+			diagnostics: [],
+			capabilities: [],
+		};
+		const skills = [
+			{
+				descriptor: { ...descriptorBase },
+				frontmatter: { name: "plain", description: "plain skill", userInvocable: true, disableModelInvocation: false, metadata: {} },
+				rootPath: "/fixture/plain",
+				skillFile: "/fixture/plain/SKILL.md",
+				bodyDigest: "c".repeat(64),
+				resourceSet: { qualifiedId: "skill:user:fixture:plain", metadata: {} as never, body: {} as never, budget: { maxBytes: 1, maxEntries: 1 } },
+				sourceRoot: { source: "user" as const, sourceKey: "user:fixture", rootPath: "/fixture", priority: 100 },
+				priority: 100,
+				trustBinding: { identity: {} as never, canonicalPath: "/fixture/plain", binding: {} as never, principalId: "principal_a" },
+			},
+			{
+				descriptor: { ...descriptorBase, identity: { ...descriptorBase.identity, qualifiedId: "skill:user:fixture:hidden" }, displayName: "hidden", description: "hidden skill" },
+				frontmatter: { name: "hidden", description: "hidden skill", userInvocable: true, disableModelInvocation: true, metadata: {} },
+				rootPath: "/fixture/hidden",
+				skillFile: "/fixture/hidden/SKILL.md",
+				bodyDigest: "d".repeat(64),
+				resourceSet: { qualifiedId: "skill:user:fixture:hidden", metadata: {} as never, body: {} as never, budget: { maxBytes: 1, maxEntries: 1 } },
+				sourceRoot: { source: "user" as const, sourceKey: "user:fixture", rootPath: "/fixture", priority: 100 },
+				priority: 100,
+				trustBinding: { identity: {} as never, canonicalPath: "/fixture/hidden", binding: {} as never, principalId: "principal_a" },
+			},
+		];
+		const fragmentId = `skill-catalog-${"e".repeat(32)}`;
+		const content = skillCatalogPromptFragment(skills, 20_000);
+		const assembled = assembleAgentModelContext({
+			model: mockModel,
+			context,
+			turn: 1,
+			sessionId: "session-adapter-skill",
+			sources: [{ fragmentId, key: "skill-catalog", layer: "resources", content, trust: "trusted", taint: "none", priority: "normal" }],
+		});
+		expect(assembled.receipt.fragmentIds).toContain(fragmentId);
+		expect(assembled.context.systemPrompt).toContain("name=plain;qualifiedId=skill:user:fixture:plain");
+		expect(assembled.context.systemPrompt).not.toContain("hidden");
+		expect(assembled.context.systemPrompt).not.toContain("SKILL.md body");
+		expect(assembled.context.messages).toEqual(context.messages);
 	});
 
 	it("keeps the assembled projection deterministic when domain sources repeat", async () => {

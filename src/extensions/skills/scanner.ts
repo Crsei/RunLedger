@@ -1,10 +1,17 @@
-/** 用户、项目与 plugin Skill 的只读、有界发现。 */
+/**
+ * 统一 Skill 扫描与归一化：非递归 immediate-child 扫描、frontmatter 校验、
+ * 目录/文件 digest、resource facet 与 trust evaluation。
+ *
+ * 从原 discovery.ts 拆出，供 discoverSkills facade（迁移期）与 SkillRegistry
+ * 的 canonical/plugin providers 共用；frontmatter/digest/facet/containment
+ * 输出必须与原 discoverOne 等价（P0 characterization 守护）。
+ */
 
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import { createRuntimeId } from "../../runtime/protocol/ids.ts";
 import type { ResourceIdentity, ResourceSource } from "../../runtime/resources/types.ts";
-import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, sortExtensionDiagnostics } from "../diagnostics.ts";
-import type { ExtensionScanLimits, ExtensionDiagnostic } from "../diagnostics.ts";
+import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, type ExtensionDiagnostic } from "../diagnostics.ts";
+import type { ExtensionScanLimits } from "../diagnostics.ts";
 import { qualifiedResourceId, createExtensionResourceIdentity, createExtensionResourceProvenance } from "../identity.ts";
 import { resolveContainedPath } from "../paths.ts";
 import type { ExtensionStoragePort } from "../storage-port.ts";
@@ -12,7 +19,17 @@ import type { ExtensionRuntimeScope, ExtensionSourceRoot, ExtensionStateDocument
 import { buildResourceManifestDigest, digestDirectory, digestFile } from "../trust/digest.ts";
 import type { TrustStore } from "../trust/trust-store.ts";
 import { parseSkillDocument } from "./frontmatter.ts";
-import type { SkillDescriptor, SkillDiscoveryResult, SkillResourceFacet, SkillResourceFacetRole, SkillResourceSet } from "./types.ts";
+import type { SkillDescriptor, SkillDiscoveryResult, SkillResourceFacet, SkillResourceFacetRole, SkillResourceSet, SkillTrustBinding } from "./types.ts";
+
+export interface SkillScanOptions {
+	readonly root: ExtensionSourceRoot;
+	readonly scope: ExtensionRuntimeScope;
+	readonly trustStore: TrustStore;
+	readonly state?: ExtensionStateDocument;
+	readonly limits: ExtensionScanLimits;
+	/** 产生该 observation 的 provider（P2 provider status 归属）。 */
+	readonly providerId?: string;
+}
 
 function facetIdentity(base: ResourceIdentity, role: SkillResourceFacetRole, digest: string): ResourceIdentity {
 	return {
@@ -45,16 +62,15 @@ function extensionIdentityDigest(value: string): string {
 	return value;
 }
 
-async function discoverOne(options: {
-	readonly root: ExtensionSourceRoot;
-	readonly skillRoot: string;
-	readonly scope: ExtensionRuntimeScope;
-	readonly trustStore: TrustStore;
-	readonly state?: ExtensionStateDocument;
-	readonly storage: ExtensionStoragePort;
-	readonly limits: ExtensionScanLimits;
-}): Promise<{ readonly skill?: SkillDescriptor; readonly diagnostics: readonly ExtensionDiagnostic[] }> {
-	const { root, skillRoot, scope, trustStore, state, storage, limits } = options;
+/**
+ * 扫描单个 Skill 目录（等价原 discoverOne）：digest SKILL.md 与整目录、
+ * 校验 frontmatter、构建 resource facets 与 trust binding，不做激活决策。
+ */
+export async function scanSkill(
+	storage: ExtensionStoragePort,
+	options: SkillScanOptions & { readonly skillRoot: string; readonly inheritedTrustBinding?: SkillTrustBinding },
+): Promise<{ readonly skill?: SkillDescriptor; readonly diagnostics: readonly ExtensionDiagnostic[] }> {
+	const { root, skillRoot, scope, trustStore, state, limits, inheritedTrustBinding } = options;
 	const diagnostics: ExtensionDiagnostic[] = [];
 	const skillFile = `${skillRoot}/SKILL.md`;
 	const fileDigest = await digestFile(storage, skillFile, limits.maxSkillBodyBytes);
@@ -78,9 +94,16 @@ async function discoverOne(options: {
 	const source: ResourceSource = root.pluginId ? "plugin" : root.source;
 	const resourceIdentity = createExtensionResourceIdentity({ kind: "skill", qualifiedId, version: "1", source, digest: binding.combinedDigest });
 	const trustScope = root.source === "user" ? "user" : root.source === "session" ? "session" : "project";
-	const trust = await trustStore.evaluate({ identity: resourceIdentity, canonicalPath: skillRoot, binding, principalId: scope.principalId, scope: trustScope });
+	const trustInput = inheritedTrustBinding ?? { identity: resourceIdentity, canonicalPath: skillRoot, binding, principalId: scope.principalId };
+	const trust = await trustStore.evaluate({
+		identity: trustInput.identity,
+		canonicalPath: trustInput.canonicalPath,
+		binding: trustInput.binding,
+		principalId: trustInput.principalId,
+		...(inheritedTrustBinding === undefined ? { scope: trustScope } : {}),
+	});
 	const enabled = state?.resources[qualifiedId]?.enabled ?? true;
-	const trusted = trust.state === "trusted";
+	const trusted = trust.state === "trusted" && (inheritedTrustBinding === undefined || inheritedTrustBinding.receiptId === trust.receipt.receiptId);
 	const activation: "disabled" | "ready" | "blocked" = !enabled ? "disabled" : trusted ? "ready" : "blocked";
 	const referencesPath = await optionalDirectory(storage, skillRoot, "references");
 	const assetsPath = await optionalDirectory(storage, skillRoot, "assets");
@@ -97,7 +120,10 @@ async function discoverOne(options: {
 		...(scriptsPath && scriptsDigest?.ok ? { script: facet(resourceIdentity, "script", scriptsDigest.digest, scriptsDigest.bytes, scriptsDigest.files, ["process:spawn"]) } : {}),
 		budget: { maxBytes: limits.maxDirectoryBytes, maxEntries: limits.maxEntries },
 	};
-	if (!trusted) diagnostics.push(extensionDiagnostic(`skill.${trust.state}`, "warning", trust.reason, "skill", skillFile));
+	if (!trusted) {
+		const reason = trust.state === "trusted" ? "inherited trust receipt is missing or stale" : trust.reason;
+		diagnostics.push(extensionDiagnostic(`skill.${trust.state}`, "warning", reason, "skill", skillFile));
+	}
 	const descriptor: SkillDescriptor["descriptor"] = {
 		kind: "skill",
 		identity: { kind: "skill", qualifiedId, version: "1", source, digest: extensionIdentityDigest(binding.combinedDigest) },
@@ -130,58 +156,76 @@ async function discoverOne(options: {
 			...(scriptsPath ? { scriptsPath } : {}),
 			sourceRoot: root,
 			priority: root.priority,
-			trustBinding: { identity: resourceIdentity, canonicalPath: skillRoot, binding, principalId: scope.principalId, ...(trusted ? { receiptId: trust.receipt.receiptId } : {}) },
+			trustBinding: {
+				...trustInput,
+				...(trusted ? { receiptId: trust.receipt.receiptId } : {}),
+			},
+			...(options.providerId === undefined ? {} : { providerIds: [options.providerId] }),
 		},
 		diagnostics,
 	};
 }
 
-export async function discoverSkills(options: {
-	readonly roots: readonly ExtensionSourceRoot[];
-	readonly scope: ExtensionRuntimeScope;
-	readonly trustStore: TrustStore;
-	readonly state?: ExtensionStateDocument;
-	readonly storage: ExtensionStoragePort;
-	readonly limits?: ExtensionScanLimits;
-}): Promise<SkillDiscoveryResult> {
-	const limits = options.limits ?? DEFAULT_EXTENSION_LIMITS;
-	const diagnostics: ExtensionDiagnostic[] = [];
-	const skills: SkillDescriptor[] = [];
-	let scannedEntries = 0;
-	const roots = [...options.roots].sort((left, right) => left.priority - right.priority || (left.rootPath < right.rootPath ? -1 : 1));
-	for (const root of roots) {
-		const rootResult = await options.storage.realpath(root.rootPath);
-		if (!rootResult.ok) continue;
-		const skillsPath = root.skillsPath ?? `${rootResult.value}/skills`;
-		const skillsResult = await resolveContainedPath(options.storage, rootResult.value, root.skillsPath ? root.skillsPath : "./skills");
-		if (!skillsResult.ok) continue;
-		const listed = await options.storage.readDirectory(skillsResult.path);
-		if (!listed.ok) continue;
-		const entries = [...listed.value].sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-		const work = entries.filter((entry) => entry.kind === "directory");
-		let cursor = 0;
-		const worker = async (): Promise<void> => {
-			while (cursor < work.length) {
-				const entry = work[cursor];
-				cursor += 1;
-				if (!entry) return;
-				scannedEntries += 1;
-				if (scannedEntries > Math.min(limits.maxFiles, limits.maxEntries)) {
-					diagnostics.push(extensionDiagnostic("skill.scan_bound", "error", "skill scan entry bound reached", "skill", skillsPath));
-					return;
-				}
-				const contained = await resolveContainedPath(options.storage, skillsResult.path, entry.name);
-				if (!contained.ok) {
-					diagnostics.push(extensionDiagnostic("skill.path_escape", "error", contained.message, "skill", `${skillsPath}/${entry.name}`));
-					continue;
-				}
-				const result = await discoverOne({ root, skillRoot: contained.path, scope: options.scope, trustStore: options.trustStore, ...(options.state ? { state: options.state } : {}), storage: options.storage, limits });
-				diagnostics.push(...result.diagnostics);
-				if (result.skill) skills.push(result.skill);
-			}
-		};
-		const workers = Math.min(Math.max(1, limits.maxConcurrentScans), Math.max(1, work.length));
-		await Promise.all(Array.from({ length: workers }, () => worker()));
-	}
-	return { skills: skills.sort((left, right) => left.descriptor.identity.qualifiedId < right.descriptor.identity.qualifiedId ? -1 : left.descriptor.identity.qualifiedId > right.descriptor.identity.qualifiedId ? 1 : 0), diagnostics: sortExtensionDiagnostics(diagnostics) };
+export interface SkillEntryList {
+	readonly entries: readonly string[];
+	readonly diagnostics: readonly ExtensionDiagnostic[];
 }
+
+/**
+ * 非递归列出一个 skills root 的 immediate-child 目录：排序、bounded、
+ * containment 校验。symlink/device 条目按原行为静默跳过（不产生 descriptor）。
+ */
+export async function listSkillEntries(storage: ExtensionStoragePort, skillsRoot: string, limits: ExtensionScanLimits): Promise<SkillEntryList> {
+	const diagnostics: ExtensionDiagnostic[] = [];
+	const listed = await storage.readDirectory(skillsRoot);
+	if (!listed.ok) return { entries: [], diagnostics };
+	const entries = [...listed.value].sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+	const work = entries.filter((entry) => entry.kind === "directory");
+	const roots: string[] = [];
+	let scanned = 0;
+	for (const entry of work) {
+		if (!entry) continue;
+		scanned += 1;
+		if (scanned > Math.min(limits.maxFiles, limits.maxEntries)) {
+			diagnostics.push(extensionDiagnostic("skill.scan_bound", "error", "skill scan entry bound reached", "skill", skillsRoot));
+			break;
+		}
+		const contained = await resolveContainedPath(storage, skillsRoot, entry.name);
+		if (!contained.ok) {
+			diagnostics.push(extensionDiagnostic("skill.path_escape", "error", contained.message, "skill", `${skillsRoot}/${entry.name}`));
+			continue;
+		}
+		roots.push(contained.path);
+	}
+	return { entries: roots, diagnostics };
+}
+
+/**
+ * 扫描一个 skills root 下全部 immediate-child skill 目录（等价原 discoverSkills
+ * 的单 root 内部循环，含并发上限）。
+ */
+export async function scanSkillsDirectory(
+	storage: ExtensionStoragePort,
+	options: SkillScanOptions & { readonly skillsRoot: string },
+): Promise<{ readonly skills: readonly SkillDescriptor[]; readonly diagnostics: readonly ExtensionDiagnostic[] }> {
+	const { skillsRoot, limits } = options;
+	const listed = await listSkillEntries(storage, skillsRoot, limits);
+	const diagnostics = [...listed.diagnostics];
+	const skills: SkillDescriptor[] = [];
+	let cursor = 0;
+	const worker = async (): Promise<void> => {
+		while (cursor < listed.entries.length) {
+			const entry = listed.entries[cursor];
+			cursor += 1;
+			if (!entry) continue;
+			const result = await scanSkill(storage, { ...options, skillRoot: entry });
+			diagnostics.push(...result.diagnostics);
+			if (result.skill) skills.push(result.skill);
+		}
+	};
+	const workers = Math.min(Math.max(1, limits.maxConcurrentScans), Math.max(1, listed.entries.length));
+	await Promise.all(Array.from({ length: workers }, () => worker()));
+	return { skills, diagnostics };
+}
+
+export type { SkillDiscoveryResult };

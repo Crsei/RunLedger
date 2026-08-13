@@ -114,7 +114,7 @@ function managedStdioCommand(config: McpServerConfig): string {
 		.filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) && !RESERVED_ENVIRONMENT_KEYS.has(key) && !key.startsWith("RUNLEDGER_"))
 		.sort(([left], [right]) => left.localeCompare(right));
 	const assignments = environment.map(([key, value]) => `${key}=${shellQuote(value)}`);
-	return [...assignments, shellQuote(config.stdio.command), ...(config.stdio.args ?? []).map(shellQuote)].join(" ");
+	return [...assignments, shellQuote(config.stdio.command), ...(config.stdio.args ?? []).map(shellQuote), "2>/dev/null"].join(" ");
 }
 
 function sameCursor(left: OutputCursor, right: OutputCursor): boolean {
@@ -163,7 +163,7 @@ class HostManagedMcpTransport implements Transport {
 		if (this.signal?.aborted) throw new Error("MCP managed transport was aborted");
 		const stdio = this.config.stdio;
 		if (stdio === undefined) throw new Error("MCP stdio configuration is missing");
-		const cwd = stdio.cwd ?? this.executionCwd;
+		const cwd = this.executionCwd ?? stdio.cwd;
 		if (cwd === undefined || !isAbsolute(cwd)) throw new Error("MCP managed stdio cwd must be an absolute Host path");
 		const started = await this.processPort.start({
 			command: managedStdioCommand(this.config),

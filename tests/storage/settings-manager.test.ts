@@ -219,3 +219,45 @@ describe("saveProjectSettings", () => {
 		expect(existsSync(layout.settings)).toBe(false);
 	});
 });
+
+describe("skills provider policy settings", () => {
+	let cwd: string;
+	let layout: RunledgerLayout;
+
+	beforeEach(() => {
+		cwd = tmpCwd();
+		layout = canonicalFixture(cwd);
+	});
+
+	afterEach(() => {
+		rmSync(cwd, { recursive: true, force: true });
+	});
+
+	it("加载并持久化 versioned skills policy", async () => {
+		const settings = { skills: { enabled: true, providers: { "runledger-user": true, "runledger-workspace": false } } };
+		await saveProjectSettings({ layout }, settings);
+		expect(await loadProjectSettings({ layout })).toEqual(settings);
+	});
+
+	it("丢弃非法 skills 结构而不拒绝整个 settings", async () => {
+		await saveProjectSettings({ layout }, { model: "x" });
+		writeFileSync(layout.settings, JSON.stringify({ model: "y", skills: { providers: { "bad id!": true } } }), { mode: 0o600 });
+		const loaded = await loadProjectSettings({ layout });
+		expect(loaded.model).toBe("y");
+		expect(loaded.skills).toBeUndefined();
+	});
+
+	it("接受空 skills 节点并解析为空对象", async () => {
+		await saveProjectSettings({ layout }, {});
+		writeFileSync(layout.settings, JSON.stringify({ skills: {} }), { mode: 0o600 });
+		expect(await loadProjectSettings({ layout })).toEqual({});
+	});
+
+	it("skills policy 可在 workspace settings 保存与加载", async () => {
+		const workspace = { workspaceKey: "ws-fixture" };
+		const settings = { skills: { providers: { "runledger-workspace": false } } };
+		await saveProjectSettings({ layout, ...workspace }, settings);
+		expect(await loadProjectSettings({ layout, ...workspace })).toEqual(settings);
+		expect(await loadProjectSettings({ layout })).toEqual({});
+	});
+});

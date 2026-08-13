@@ -4,7 +4,7 @@ import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AuthStorage } from "../storage/auth-storage.ts";
-import { loadProjectSettings } from "../storage/settings-manager.ts";
+import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../storage/settings-manager.ts";
 import { builtinModels } from "../providers/all.ts";
 import { EndpointStore } from "../storage/host/endpoint-store.ts";
@@ -41,6 +41,7 @@ import { loadCanonicalModelCompatibilityRouter } from "./runtime-host-model-mani
 import { createHostModelRequestRouter } from "./runtime-host-model-router.ts";
 import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./runtime-host-mcp.ts";
 import { createHostSkillLoader } from "./runtime-host-skills.ts";
+import { skillCatalogPromptFragment } from "../extensions/skills/renderer.ts";
 import { createProductionSummarizer } from "./runtime-host-summarizer.ts";
 import type { HostSecurityConfigSource } from "./runtime-host-security.ts";
 import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../extensions/mcp/sdk-factory.ts";
@@ -53,6 +54,8 @@ import { NodeExtensionStorage } from "../storage/extensions/extension-storage.ts
 import { ExtensionStateStore } from "../extensions/state-store.ts";
 import { TrustStore } from "../extensions/trust/trust-store.ts";
 import { PluginManager } from "../extensions/plugins/manager.ts";
+import { createSkillRegistry } from "../extensions/skills/registry.ts";
+import { resolveSkillsPolicy } from "../extensions/skills/policy.ts";
 import { ExtensionHostManager, projectExtensionSnapshot } from "../extensions/host-manager.ts";
 import { sourceKey } from "../extensions/paths.ts";
 import type { ExtensionSource, ExtensionSourceRoot } from "../extensions/types.ts";
@@ -112,14 +115,36 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		{ source: "project", root: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "plugins"), priority: 200 },
 	]);
 	const extensionTrustStore = new TrustStore(join(extensionStateRoot, "trust.json"), extensionStorage);
+	const extensionStateStore = new ExtensionStateStore(join(extensionStateRoot, "extensions-state.json"), extensionStorage);
+	const extensionPluginManager = new PluginManager({
+		storage: extensionStorage,
+		trustStore: extensionTrustStore,
+		stateStore: extensionStateStore,
+		scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId },
+		roots: extensionRoots,
+	});
+	// 与 Session Owner production composition 复用同一 createSkillRegistry factory；
+	// 不复制 provider 列表（builtin/user/workspace/repo/session/plugin 由 factory 装配）。
+	const extensionSkillRegistry = createSkillRegistry({
+		storage: extensionStorage,
+		trustStore: extensionTrustStore,
+		stateStore: extensionStateStore,
+		scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId },
+		pluginContributions: () => extensionPluginManager.last()?.skillContributions ?? [],
+		userSkillRoot: join(extensionStateRoot, "user", "skills"),
+		workspaceSkillRoot: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "skills"),
+	});
 	const extensionManager = new ExtensionHostManager({
-		pluginManager: new PluginManager({
-			storage: extensionStorage,
-			trustStore: extensionTrustStore,
-			stateStore: new ExtensionStateStore(join(extensionStateRoot, "extensions-state.json"), extensionStorage),
-			scope: { authorityId: scope.authorityId, tenantId: scope.tenantId, principalId: extensionPrincipalId },
-			roots: extensionRoots,
-		}),
+		pluginManager: extensionPluginManager,
+		skillRegistry: extensionSkillRegistry,
+		skillsPolicyLoader: async () => resolveSkillsPolicy((await loadProjectSettings({ layout })).skills, undefined),
+		updateSkillsProviderPolicy: async (providerId, enabled, scope) => {
+			if (scope !== "user") throw new Error("workspace-scoped provider mutation is not wired in the resident Host path");
+			const current = await loadProjectSettings({ layout });
+			const providers = { ...(current.skills?.providers ?? {}) };
+			providers[providerId] = enabled;
+			await saveProjectSettings({ layout }, { ...current, skills: { enabled: current.skills?.enabled ?? true, providers } });
+		},
 	});
 	const extensionLoad = await extensionManager.load();
 	if (extensionLoad.status === "failed") throw new Error(extensionLoad.error ?? "extension snapshot could not be loaded");
@@ -324,7 +349,24 @@ export async function runResidentRuntimeHost(): Promise<void> {
 				});
 			},
 			planStateProvider: (sessionId) => modelContextDomain.planState(sessionId),
-			contextSourceProvider: (sessionId) => modelContextDomain.contextSources(sessionId),
+			contextSourceProvider: async (sessionId, modelContextChars) => {
+				const sources = [...await modelContextDomain.contextSources(sessionId)];
+				const skills = extensionManager.currentSkills().filter((skill) => skill.descriptor.activation === "ready");
+				if (skills.length === 0) return sources;
+				const content = skillCatalogPromptFragment(skills, modelContextChars);
+				if (content.length === 0) return sources;
+				sources.push({
+					fragmentId: `skill-catalog-${runtimeDigest(content).digest.slice(0, 32)}`,
+					key: "skill-catalog",
+					layer: "resources",
+					content,
+					trust: "trusted",
+					taint: "none",
+					priority: "normal",
+					estimatedTokens: Math.max(1, Math.ceil(content.length / 4)),
+				});
+				return sources;
+			},
 		}),
 		onShutdown: async (request) => {
 			await shutdownHost(request);

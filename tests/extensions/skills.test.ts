@@ -4,14 +4,17 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
-import { discoverSkills } from "../../src/extensions/skills/discovery.ts";
+import { scanSkillsDirectory } from "../../src/extensions/skills/scanner.ts";
+import { DEFAULT_EXTENSION_LIMITS } from "../../src/extensions/diagnostics.ts";
 import { parseSkillDocument } from "../../src/extensions/skills/frontmatter.ts";
 import { SkillCatalog } from "../../src/extensions/skills/catalog.ts";
 import { renderSkillCatalog } from "../../src/extensions/skills/renderer.ts";
 import { SkillToolResolver } from "../../src/extensions/skills/skill-tool.ts";
 import { TrustStore } from "../../src/extensions/trust/trust-store.ts";
 import type { ExtensionStoragePort, ExtensionStorageResult } from "../../src/extensions/storage-port.ts";
+import type { ExtensionDiagnostic } from "../../src/extensions/diagnostics.ts";
 import type { ExtensionRuntimeScope, ExtensionSourceRoot } from "../../src/extensions/types.ts";
+import type { SkillDescriptor } from "../../src/extensions/skills/types.ts";
 
 const temporaryRoots: string[] = [];
 
@@ -98,6 +101,17 @@ function root(rootPath: string, sourceKey: string, priority = 200): ExtensionSou
 	return { source: "project", sourceKey, rootPath, priority };
 }
 
+/** 迁移期测试助手：discoverSkills facade 已删除（P8），扫描经统一 scanner。 */
+async function scanRoot(trust: TrustStore, rootPath: string, sourceKey: string, priority = 200, source: ExtensionSourceRoot["source"] = "project", pluginId?: string): Promise<{ readonly skills: readonly SkillDescriptor[]; readonly diagnostics: readonly ExtensionDiagnostic[] }> {
+	return scanSkillsDirectory(storage, {
+		root: { source, sourceKey, rootPath, priority, ...(pluginId === undefined ? {} : { pluginId }) },
+		skillsRoot: join(rootPath, "skills"),
+		scope,
+		trustStore: trust,
+		limits: DEFAULT_EXTENSION_LIMITS,
+	});
+}
+
 describe("M2 Skill discovery and on-demand loading", () => {
 	it("parses a bounded frontmatter subset and reports unknown fields without executing content", () => {
 		const parsed = parseSkillDocument("---\nname: fixture\ndescription: Fixture skill\nunknown: ignored\n---\nBody\n", "/fixture/SKILL.md");
@@ -117,7 +131,7 @@ describe("M2 Skill discovery and on-demand loading", () => {
 		const extensionRoot = join(parent, ".runledger");
 		const skillRoot = await writeSkill(extensionRoot, "release-review");
 		const trust = new TrustStore(join(parent, "trust.json"), storage);
-		const result = await discoverSkills({ roots: [root(extensionRoot, "project:fixture")], scope, trustStore: trust, storage });
+		const result = await scanRoot(trust, extensionRoot, "project:fixture");
 		expect(result.skills).toHaveLength(1);
 		const discovered = result.skills[0];
 		expect(discovered?.descriptor.activation).toBe("blocked");
@@ -133,12 +147,7 @@ describe("M2 Skill discovery and on-demand loading", () => {
 		const extensionRoot = join(parent, ".runledger");
 		await writeSkill(extensionRoot, "release-review");
 		const trust = new TrustStore(join(parent, "trust.json"), storage);
-		const result = await discoverSkills({
-			roots: [{ ...root(extensionRoot, "project:plugin"), pluginId: "plugin:fixture" }],
-			scope,
-			trustStore: trust,
-			storage,
-		});
+		const result = await scanRoot(trust, extensionRoot, "project:plugin", 200, "project", "plugin:fixture");
 
 		expect(result.skills[0]?.descriptor).toMatchObject({
 			pluginId: "plugin:fixture",
@@ -153,12 +162,12 @@ describe("M2 Skill discovery and on-demand loading", () => {
 		const extensionRoot = join(parent, ".runledger");
 		const skillRoot = await writeSkill(extensionRoot, "release-review");
 		const trust = new TrustStore(join(parent, "trust.json"), storage);
-		const untrusted = await discoverSkills({ roots: [root(extensionRoot, "project:fixture")], scope, trustStore: trust, storage });
+		const untrusted = await scanRoot(trust, extensionRoot, "project:fixture");
 		const binding = untrusted.skills[0]?.trustBinding;
 		expect(binding).toBeDefined();
 		if (!binding) return;
 		await trust.grant({ identity: binding.identity, canonicalPath: binding.canonicalPath, binding: binding.binding, principalId: scope.principalId, scope: "project" });
-		const trusted = await discoverSkills({ roots: [root(extensionRoot, "project:fixture")], scope, trustStore: trust, storage });
+		const trusted = await scanRoot(trust, extensionRoot, "project:fixture");
 		expect(trusted.skills[0]?.descriptor.activation).toBe("ready");
 		const resolver = new SkillToolResolver({ catalog: new SkillCatalog(trusted.skills), trustStore: trust, principalId: scope.principalId, storage, currentTools: () => ["read", "write", "bash"] });
 		const loaded = await resolver.load("$release-review deploy production");
@@ -173,12 +182,12 @@ describe("M2 Skill discovery and on-demand loading", () => {
 		const extensionRoot = join(parent, ".runledger");
 		await writeSkill(extensionRoot, "release-review");
 		const trust = new TrustStore(join(parent, "trust.json"), storage);
-		const untrusted = await discoverSkills({ roots: [root(extensionRoot, "project:scope")], scope, trustStore: trust, storage });
+		const untrusted = await scanRoot(trust, extensionRoot, "project:scope");
 		const binding = untrusted.skills[0]?.trustBinding;
 		expect(binding).toBeDefined();
 		if (!binding) return;
 		await trust.grant({ identity: binding.identity, canonicalPath: binding.canonicalPath, binding: binding.binding, principalId: scope.principalId, scope: "user" });
-		const rediscovered = await discoverSkills({ roots: [root(extensionRoot, "project:scope")], scope, trustStore: trust, storage });
+		const rediscovered = await scanRoot(trust, extensionRoot, "project:scope");
 		expect(rediscovered.skills[0]?.descriptor.activation).toBe("blocked");
 	});
 
@@ -189,15 +198,20 @@ describe("M2 Skill discovery and on-demand loading", () => {
 		await writeSkill(first, "one", "shared", "A".repeat(300));
 		await writeSkill(second, "two", "shared", "B".repeat(300));
 		const trust = new TrustStore(join(parent, "trust.json"), storage);
-		const result = await discoverSkills({ roots: [root(first, "project:first", 100), root(second, "project:second", 200)], scope, trustStore: trust, storage });
-		const catalog = new SkillCatalog(result.skills);
+		const firstScan = await scanRoot(trust, first, "project:first", 100);
+		const secondScan = await scanRoot(trust, second, "project:second", 200);
+		const merged = [...firstScan.skills, ...secondScan.skills].sort((left, right) => left.descriptor.identity.qualifiedId < right.descriptor.identity.qualifiedId ? -1 : 1);
+		const catalog = new SkillCatalog(merged);
 		const ambiguous = catalog.resolve("/shared");
 		expect(ambiguous).toMatchObject({ ok: false, code: "ambiguous" });
 		if (!ambiguous.ok) expect(ambiguous.candidates).toHaveLength(2);
-		const rendered = renderSkillCatalog(result.skills, { maxChars: 180, modelContextChars: 20_000 });
+		const rendered = renderSkillCatalog(merged, { maxChars: 180, modelContextChars: 20_000 });
 		expect(rendered.length).toBeLessThanOrEqual(180);
+		expect(rendered).toContain("name=shared");
+		expect(rendered).toContain("qualifiedId=skill:project:first:shared");
+		expect(rendered).not.toContain("shared (skill:");
 		expect(rendered).toContain("skill:project:first:shared");
 		expect(rendered).toContain("skill:project:second:shared");
-		expect(renderSkillCatalog([...result.skills].reverse(), { maxChars: 180, modelContextChars: 20_000 })).toBe(rendered);
+		expect(renderSkillCatalog([...merged].reverse(), { maxChars: 180, modelContextChars: 20_000 })).toBe(rendered);
 	});
 });

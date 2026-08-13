@@ -7,7 +7,10 @@ import { parsePluginManifest, PluginManager } from "../../src/extensions/plugins
 import type { ExtensionStoragePort, ExtensionStorageResult } from "../../src/extensions/storage-port.ts";
 import { TrustStore } from "../../src/extensions/trust/trust-store.ts";
 import { ExtensionStateStore } from "../../src/extensions/state-store.ts";
+import { createSkillRegistry } from "../../src/extensions/skills/registry.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+import { SkillCatalog } from "../../src/extensions/skills/catalog.ts";
+import { SkillToolResolver } from "../../src/extensions/skills/skill-tool.ts";
 
 const CAN_SYMLINK = canCreateSymlink();
 
@@ -117,6 +120,116 @@ describe("Plugin manifest and manager", () => {
 			const result = await manager.setEnabled(pluginId, true);
 			expect(result.hooks).toHaveLength(1);
 			expect(result.hooks[0]).toMatchObject({ id: "start", event: "SessionStart" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+			await rm(stateRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("makes a plugin-owned Skill ready by inheriting the trusted Plugin receipt", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-plugin-skill-"));
+		const stateRoot = await mkdtemp(join(tmpdir(), "runledger-plugin-skill-state-"));
+		try {
+			await mkdir(join(root, ".runledger-plugin"));
+			await mkdir(join(root, "skills", "frontend-design"), { recursive: true });
+			await writeFile(join(root, ".runledger-plugin", "plugin.json"), JSON.stringify({
+				name: "anthropic-smoke",
+				version: "1.0.0",
+				description: "Plugin Skill fixture",
+				skills: ["./skills"],
+			}));
+			await writeFile(join(root, "skills", "frontend-design", "SKILL.md"), "---\nname: frontend-design\ndescription: Build polished interfaces\n---\nUse strong visual hierarchy.");
+			const storage = new NodeExtensionStorage();
+			const trust = new TrustStore(join(stateRoot, "trust.json"), storage);
+			const stateStore = new ExtensionStateStore(join(stateRoot, "state.json"), storage);
+			const manager = new PluginManager({
+				storage,
+				trustStore: trust,
+				stateStore,
+				scope: scope(),
+				roots: [{ source: "user", sourceKey: "user:anthropic", rootPath: resolve(root), priority: 100 }],
+			});
+			const initial = await manager.discover();
+			const pluginId = initial.plugins[0]!.descriptor.identity.qualifiedId;
+			await manager.trust(pluginId);
+			const enabled = await manager.setEnabled(pluginId, true);
+			const plugin = enabled.plugins[0]!;
+			const registry = createSkillRegistry({
+				storage,
+				trustStore: trust,
+				stateStore,
+				scope: scope(),
+				pluginContributions: () => manager.last()?.skillContributions ?? [],
+			});
+			const snapshot = await registry.load();
+			const skill = snapshot.active[0]!;
+
+			expect(skill.descriptor).toMatchObject({ ready: true, trusted: true, trust: "trusted", activation: "ready" });
+			expect(skill.trustBinding).toMatchObject({
+				identity: { qualifiedId: pluginId },
+				canonicalPath: resolve(root),
+				receiptId: plugin.descriptor.approvalReceiptId,
+			});
+			const loaded = await new SkillToolResolver({
+				catalog: new SkillCatalog(snapshot.active),
+				trustStore: trust,
+				principalId: scope().principalId,
+				storage,
+				currentTools: () => ["read", "write"],
+			}).load("$frontend-design");
+			expect(loaded).toMatchObject({ ok: true, value: { body: "Use strong visual hierarchy." } });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+			await rm(stateRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects a plugin-owned Skill when its body changes after the trusted snapshot", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-plugin-skill-stale-"));
+		const stateRoot = await mkdtemp(join(tmpdir(), "runledger-plugin-skill-stale-state-"));
+		try {
+			await mkdir(join(root, ".runledger-plugin"));
+			await mkdir(join(root, "skills", "frontend-design"), { recursive: true });
+			await writeFile(join(root, ".runledger-plugin", "plugin.json"), JSON.stringify({
+				name: "anthropic-smoke",
+				version: "1.0.0",
+				description: "Plugin Skill fixture",
+				skills: ["./skills"],
+			}));
+			const skillFile = join(root, "skills", "frontend-design", "SKILL.md");
+			await writeFile(skillFile, "---\nname: frontend-design\ndescription: Build polished interfaces\n---\nOriginal trusted body.");
+			const storage = new NodeExtensionStorage();
+			const trust = new TrustStore(join(stateRoot, "trust.json"), storage);
+			const stateStore = new ExtensionStateStore(join(stateRoot, "state.json"), storage);
+			const manager = new PluginManager({
+				storage,
+				trustStore: trust,
+				stateStore,
+				scope: scope(),
+				roots: [{ source: "user", sourceKey: "user:anthropic", rootPath: resolve(root), priority: 100 }],
+			});
+			const initial = await manager.discover();
+			const pluginId = initial.plugins[0]!.descriptor.identity.qualifiedId;
+			await manager.trust(pluginId);
+			await manager.setEnabled(pluginId, true);
+			const registry = createSkillRegistry({
+				storage,
+				trustStore: trust,
+				stateStore,
+				scope: scope(),
+				pluginContributions: () => manager.last()?.skillContributions ?? [],
+			});
+			const snapshot = await registry.load();
+			const resolver = new SkillToolResolver({
+				catalog: new SkillCatalog(snapshot.active),
+				trustStore: trust,
+				principalId: scope().principalId,
+				storage,
+				currentTools: () => ["read"],
+			});
+
+			await writeFile(skillFile, "---\nname: frontend-design\ndescription: Build polished interfaces\n---\nChanged untrusted body.");
+			await expect(resolver.load("$frontend-design")).resolves.toMatchObject({ ok: false, code: "stale" });
 		} finally {
 			await rm(root, { recursive: true, force: true });
 			await rm(stateRoot, { recursive: true, force: true });

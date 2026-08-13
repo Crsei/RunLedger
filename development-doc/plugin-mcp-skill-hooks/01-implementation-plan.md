@@ -6,6 +6,8 @@
 > Codex 参考基线:`0b175e6439a8608ba7726ee153fd8590619e8f34` (`main`)<br>
 > grok-build 参考基线:`c68e39f60462f28d9be5e683d9cbe2c57b1a5027` (`main`)
 
+> Skill registry/discovery provider 的结构重构、兼容来源开关、冲突语义与分阶段门禁见 [`02-skill-registry-discovery-provider-refactor-plan.md`](02-skill-registry-discovery-provider-refactor-plan.md)。本文件继续拥有总状态；`02` 只拥有该专题的设计与阶段证据。
+
 ## 0. 输入状态与使用方式
 
 本计划的目标目录已经存在 `00-reference.md`，但在本次审阅时该文件为 **0 字节空文件**。该文件仍保留不动。[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md) 是公共 contract 与 canonical `runledgerHome` 的权威入口；[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md) 是当前已实现的 machine/workspace Host 基线，仅作为迁移输入；替代实施权威是 [`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)，Extension/MCP/Hook/Skill 最终由每个 owned SessionRuntime 自己装配，无 shared broker。本文件继续结合 Codex、grok-build、RunLedger 当前实现和根目录 `AGENTS.md` 形成扩展侧唯一实施账本。
@@ -40,6 +42,21 @@
 - production tests 直接覆盖双 Session workspace MCP config/connection 隔离、required/optional 语义、transport cleanup、barrier denial 与 shutdown ordering。中立 manager 位于 `src/extensions/manager.ts`，`host-manager.ts` 只保留 R9 前兼容重导出。
 - 这闭合 Runtime 06 R6 的 MCP/Hook/Skill/Plugin blocking gap，也使 M6 的 production Session composition 子集成立；不闭合本计划更宽的 CLI trust/enable/reload mutation、完整 Plugin fixture、OAuth、配置热更新、TUI 写操作或最终 E2E。因此 M6 与整份专项仍保持部分完成。
 
+### 0.0.4 2026-08-11 DeepSeek live E2E 修复记录
+
+本轮使用隔离 `RUNLEDGER_DIR=tmp/extension-live-smoke-20260811/home`、隔离 workspace 与真实 `deepseek/deepseek-v4-flash` 复测 Plugin/Skill/MCP。真实用户 `~/.runledger` 只作为既有凭据来源，不作为测试状态目录；HTTP MCP 显式使用 `--network allow`，默认 `network=deny` 继续保持安全默认值，不列为缺陷。
+
+- [x] MCP live 对话通过：Everything 显示 `ready`，模型先调用 `mcp_catalog`，再调用 `mcp_call(get-sum, {a:17,b:25})`，最终回答 `The sum of 17 and 25 is 42.`。最终 Trace 为 `tmp/extension-live-smoke-20260811/home/events/2026/08/11/trace_a9765bf0-e883-44a6-83df-e9e3641342a2.jsonl`；三个 `context.assembled` artifact 依次包含 `mcp_*` 元工具、1114-byte Everything catalog（含 `get-sum`/runtime name/schema）和 294-byte call result（含 `42`）。
+- [x] Plugin-owned Skill live 对话通过：`plugin list` 为 `trusted/ready`，`skill list` 中 `frontend-design` 与 `mcp-builder` 均为 `trusted/ready`，TUI `/skills (2)` 显示两项 `[x]`。最终 Trace 为 `tmp/extension-live-smoke-20260811/home/events/2026/08/11/trace_77fa9d3b-8248-49b6-8dc7-71a8959d160a.jsonl`；首轮 994-byte system prompt 只含两项有界 catalog 和 `Skill` 工具定义，不含正文；模型在用户未给 Skill 名称时自行选中 exact qualifiedId，仅一次 `Skill` 调用即返回 7973-byte 正文，后续上下文含 `visual identity` 与 `hero is a thesis`。
+- [x] 根因一已修复：plugin-owned Skill 继承并复核 Plugin binding/receipt，同时保留 Skill identity/body digest 复核；独立 user/project Skill 仍使用自己的 trust receipt。
+- [x] 根因二已修复：production extension principal 改为稳定 `authorityId + tenantId` 派生，同一 local-user Plugin trust 可跨新 Session 复用，resource identity/scope/digest 隔离不变。
+- [x] CLI list route 已经 RED→GREEN：`runledger plugin list`、`runledger skill list`、`runledger mcp list` 改走 query channel，不再返回 `operation_unavailable`。
+- [x] stdio MCP 已经两组 RED→GREEN：Host-managed JSONL stdout 与 stderr 启动日志隔离；production Host workspace cwd 优先于 config cwd，不再被 workspace containment 拒绝。`tests/extensions/mcp-sdk.test.ts` 的真实 stdio child 用例通过。
+- [x] 根因三已修复：ContextEngine receipt 原先选中 Plan/Memory/Skill source，但 provider-facing request 没有重建这些 fragment；且标准 CLI 的 Session Owner production path 未装配 `modelContextAssembler`。现在只把实际 selected 的非历史 fragment 并入 system prompt，Session-scoped extension composition 按当前 `ready` Skills 生成有界 `resources` source。
+- [x] live 过程暴露的 TUI/catalog 细节已修复：Plugin toggle 异步刷新后显式 request render；Skill catalog 使用 `name=...;qualifiedId=...` 并声明不得拼接；loader 拒绝返回 `isError=true`。最终对话不再先传入合并显示值而重试。
+- [x] 最终功能验收通过：隔离安装视图、全局链接、`npm run build`、tmux 真实 TTY、`deepseek/deepseek-v4-flash`、Skill progressive disclosure、Everything `get-sum=42` 与上述 final `context.assembled` artifacts 均已复核；五个 final artifacts 均不含官方 DeepSeek key。
+- [~] 仓库级门禁：focused 9 files / 96 tests、Bun OpenTUI 3 files / 43 tests / 217 assertions、`tsc --noEmit`、`npm run build` 通过。完整 `npm test` 为 290 files / 1691 tests passed、1 file / 1 test failed、1 file / 3 tests skipped；`npm run check` 与完整 `npm test` 的唯一失败均为用户既有未跟踪 `development-doc/tui/21-mermaid-diagram-rendering-implementation-plan.md` 第 275、365 行的 `internal generation marker`。本任务不修改该文件，也不把完整 gate 伪报为全绿。
+
 若后续向 `00-reference.md` 补入内容，实施前必须先做一次差异审阅：
 
 1. 把新增约束映射到本计划的“固定决策、里程碑、验收矩阵、非目标”；
@@ -47,6 +64,15 @@
 3. 任何安全边界、配置格式或生命周期变更都必须先形成明确的兼容策略。
 
 本文件是后续 Plugin / MCP / Skill / Hooks 工作的执行状态账本。实施时只在本文件的复选框上更新状态；专题设计可以作为附录增加，但不得另建平行的总计划。
+
+### 0.0.5 2026-08-13 Skill Registry / Discovery Provider 重构完成（02 计划 P0–P8）
+
+`02-skill-registry-discovery-provider-refactor-plan.md` 全阶段完成：Skill discovery 不再由 PluginManager 私有拥有；`SkillRegistry`（被动 registry + canonical providers + 四视图 snapshot）成为 Plugin 与 standalone 的唯一 Skill 入口，production Session Owner 与 resident Host 复用同一 `createSkillRegistry` factory。要点：
+
+- P0 基线冻结（characterization 套件 + fixtures）；P1 被动 `CapabilityRegistry`；P2 canonical cutover（scanner 拆分、PluginManager→`PluginSkillContribution[]`、production composition user/workspace/plugin 装配）；P3 versioned `skills` policy + 四视图 visibility + snapshot provider statuses；P4 Codex/Agents providers（默认 off）；P5 Claude roots + `installed_plugins.json` 有界 parser（默认 off）；P6 `skill.provider list/enable|disable` + `skill trust/untrust`（Session Owner command + CLI + TUI `/skillsproviders`）；P7 progressive disclosure + Trace context.assembled 验证；P8 清理（删除 discovery.ts facade）。
+- 门禁：`npm run check` / `npm test`（321 files / 1887 passed / 3 skipped）/ `npm run build` / `git diff --check` 全绿；compatibility providers 全部默认 off（KNOWN 集 + defaultEnabled 双保险）。
+- 未完成/blocked（环境，见 02 §15.6）：worktree 内真实 TTY 全会话 smoke 与真实模型 E2E —— `asset/api-key.json` 未携带 + bun-as-execPath toolchain gate 误判 + OpenTUI FFI node 不可用；01 的 2026-08-11 live E2E 仍为该语义的既有证据。
+- 本文件仍是 Plugin/MCP/Skill/Hooks 总状态账本；02 保留设计与阶段证据但不篡夺总状态。
 
 ### 0.1 与 Runtime contract 计划的依赖和所有权
 

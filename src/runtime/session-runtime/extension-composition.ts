@@ -5,6 +5,9 @@ import type { ExtensionPublicSnapshot, ExtensionReloadResult } from "../../exten
 import { ExtensionManager } from "../../extensions/manager.ts";
 import { PluginManager } from "../../extensions/plugins/manager.ts";
 import { ExtensionStateStore } from "../../extensions/state-store.ts";
+import { createSkillRegistry } from "../../extensions/skills/registry.ts";
+import { resolveSkillsPolicy } from "../../extensions/skills/policy.ts";
+import { loadProjectSettings, saveProjectSettings } from "../../storage/settings-manager.ts";
 import { NodeExtensionStorage } from "../../storage/extensions/extension-storage.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
 import { sourceKey } from "../../extensions/paths.ts";
@@ -16,6 +19,7 @@ import { loadCanonicalMcpConfigs, parseMcpConfigDocument } from "../../extension
 import type { McpServerConfig } from "../../extensions/mcp/types.ts";
 import { SkillCatalog } from "../../extensions/skills/catalog.ts";
 import { SkillToolResolver } from "../../extensions/skills/skill-tool.ts";
+import { skillCatalogPromptFragment } from "../../extensions/skills/renderer.ts";
 import { RuntimeHookAdapter } from "../../extensions/integration/runtime-hook-adapter.ts";
 import { runHookPipeline } from "../../extensions/hooks/pipeline.ts";
 import { createHostManagedHookRunner } from "../../extensions/hooks/host-runner.ts";
@@ -36,6 +40,7 @@ import type { AttemptPort } from "./attempt-gateway.ts";
 import type { SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
 import type { SessionDomainMutationContext, SessionDomainResult } from "./domain-router.ts";
 import type { SessionResourceDomainPort } from "./session-runtime.ts";
+import type { RuntimeContextSource } from "../context/runtime-adapter.ts";
 
 export interface SessionExtensionManagerPort {
 	load(): Promise<ExtensionReloadResult>;
@@ -43,6 +48,9 @@ export interface SessionExtensionManagerPort {
 	setEnabled(pluginId: string, enabled: boolean): Promise<ExtensionReloadResult>;
 	trust(pluginId: string): Promise<ExtensionReloadResult>;
 	untrust(pluginId: string): Promise<ExtensionReloadResult>;
+	trustSkill(skillId: string): Promise<ExtensionReloadResult>;
+	untrustSkill(skillId: string): Promise<ExtensionReloadResult>;
+	setSkillProviderEnabled(providerId: string, enabled: boolean, scope: "user" | "workspace"): Promise<ExtensionReloadResult>;
 	publicSnapshot(): ExtensionPublicSnapshot | undefined;
 }
 
@@ -71,6 +79,7 @@ export interface SessionExtensionCompositionOptions {
 	readonly manager: SessionExtensionManagerPort;
 	readonly mcp: SessionMcpRuntimePort;
 	readonly skillLoader?: SkillLoader;
+	readonly contextSources?: (modelContextChars: number) => readonly RuntimeContextSource[];
 	readonly closeHooks: () => Promise<void>;
 	readonly closePlugins: () => Promise<void>;
 	readonly cleanup: () => Promise<void>;
@@ -82,6 +91,7 @@ export interface SessionExtensionCompositionOptions {
 export interface SessionExtensionComposition {
 	readonly tools: readonly AgentTool[];
 	readonly resources: SessionResourceDomainPort;
+	readonly contextSources: (modelContextChars: number) => readonly RuntimeContextSource[];
 	readonly hookRuntime?: ExtensionHookRuntime;
 	readonly turnLifecycle?: ExtensionTurnLifecycle;
 	start(): Promise<void>;
@@ -115,6 +125,7 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "extension.inspect", capability: "session.extensions", access: "read" }),
 	Object.freeze({ operation: "plugin.list", capability: "session.plugins", access: "read" }),
 	Object.freeze({ operation: "skill.list", capability: "session.skills", access: "read" }),
+	Object.freeze({ operation: "skill.provider.list", capability: "session.skills", access: "read" }),
 	Object.freeze({ operation: "hook.list", capability: "session.hooks", access: "read" }),
 	Object.freeze({ operation: "mcp.list", capability: "session.mcp", access: "read" }),
 	Object.freeze({ operation: "mcp.doctor", capability: "session.mcp", access: "read" }),
@@ -123,6 +134,10 @@ const OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object
 	Object.freeze({ operation: "plugin.disable", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.trust", capability: "session.plugins", access: "mutate" }),
 	Object.freeze({ operation: "plugin.untrust", capability: "session.plugins", access: "mutate" }),
+	Object.freeze({ operation: "skill.trust", capability: "session.skills", access: "mutate" }),
+	Object.freeze({ operation: "skill.untrust", capability: "session.skills", access: "mutate" }),
+	Object.freeze({ operation: "skill.provider.enable", capability: "session.skills", access: "mutate" }),
+	Object.freeze({ operation: "skill.provider.disable", capability: "session.skills", access: "mutate" }),
 	Object.freeze({ operation: "mcp.restart", capability: "session.mcp", access: "mutate" }),
 ]);
 
@@ -145,6 +160,7 @@ export function createSessionExtensionComposition(options: SessionExtensionCompo
 	return {
 		tools,
 		resources,
+		contextSources: options.contextSources ?? (() => []),
 		start: async () => {
 			const loaded = await options.manager.load();
 			if (loaded.status === "failed") {
@@ -186,6 +202,9 @@ function queryResources(options: SessionExtensionCompositionOptions, operation: 
 	const mcp = options.mcp.snapshots();
 	if (operation === "extension.inspect") {
 		return ok(operation, options.generation, { snapshot: snapshot ?? emptySnapshot(options.generation), mcp });
+	}
+	if (operation === "skill.provider.list") {
+		return ok(operation, options.generation, { items: snapshot?.skillProviders ?? [] });
 	}
 	if (operation === "mcp.list" || operation === "mcp.doctor") {
 		return ok(operation, options.generation, { items: mcp });
@@ -262,6 +281,25 @@ async function mutateResources(
 			result = applied.status === "failed"
 				? { ok: false, code: "extension_operation_failed" }
 				: { ok: true, nextSnapshot: applied.snapshot ?? applied.retained ?? options.manager.publicSnapshot() };
+		} else if (operation === "skill.trust" || operation === "skill.untrust") {
+			const skillId = stringValue(payload.skillId);
+			if (skillId === undefined) return { ok: false, status: "failed", code: "skill_id_required", operation };
+			const applied = operation === "skill.trust"
+				? await options.manager.trustSkill(skillId)
+				: await options.manager.untrustSkill(skillId);
+			result = applied.status === "failed"
+				? { ok: false, code: "extension_operation_failed" }
+				: { ok: true, nextSnapshot: applied.snapshot ?? applied.retained ?? options.manager.publicSnapshot() };
+		} else if (operation === "skill.provider.enable" || operation === "skill.provider.disable") {
+			const providerId = stringValue(payload.providerId);
+			if (providerId === undefined) return { ok: false, status: "failed", code: "provider_id_required", operation };
+			const scope = payload.scope === "workspace" ? "workspace" as const : "user" as const;
+			const applied = operation === "skill.provider.enable"
+				? await options.manager.setSkillProviderEnabled(providerId, true, scope)
+				: await options.manager.setSkillProviderEnabled(providerId, false, scope);
+			result = applied.status === "failed"
+				? { ok: false, code: "extension_operation_failed" }
+				: { ok: true, nextSnapshot: applied.snapshot ?? applied.retained ?? options.manager.publicSnapshot() };
 		} else if (operation === "mcp.restart") {
 			const serverId = stringValue(payload.serverId);
 			if (serverId === undefined) return { ok: false, status: "failed", code: "mcp_server_required", operation };
@@ -288,6 +326,7 @@ function emptySnapshot(generation: number): ExtensionPublicSnapshot {
 		descriptors: [],
 		diagnostics: [],
 		counts: { plugins: 0, skills: 0, hooks: 0, mcpServers: 0, mcpTools: 0, ready: 0, blocked: 0, disabled: 0, error: 0 },
+		skillProviders: [],
 		digest: "0".repeat(64),
 	};
 }
@@ -324,19 +363,43 @@ export async function createProductionSessionExtensionComposition(
 	const workspaceId = parseRuntimeId("workspace", options.workspaceId) ?? createRuntimeId("workspace", runtimeDigest(options.workspaceId).digest);
 	const repositoryId = parseRuntimeId("repository", options.repositoryId) ?? createRuntimeId("repository", runtimeDigest(options.repositoryId).digest);
 	const storageKey = workspaceStorageKey({ authorityId, tenantId, workspaceId, repositoryId });
-	const principalId = createRuntimeId("principal", `session-extension-${runtimeDigest({ sessionId: options.fence.sessionId, generation: options.fence.generation }).digest.slice(0, 48)}`);
+	const principalId = createRuntimeId("principal", `local-user-extension-${runtimeDigest({ authorityId, tenantId }).digest.slice(0, 48)}`);
 	const trustStore = new TrustStore(join(stateRoot, "trust.json"), storage);
+	const extensionStateStore = new ExtensionStateStore(join(stateRoot, "extensions-state.json"), storage);
 	const pluginManager = new PluginManager({
 		storage,
 		trustStore,
-		stateStore: new ExtensionStateStore(join(stateRoot, "extensions-state.json"), storage),
+		stateStore: extensionStateStore,
 		scope: { authorityId, tenantId, principalId },
 		roots: await discoverPluginRoots(storage, [
 			{ source: "user", root: join(stateRoot, "user", "plugins"), priority: 100 },
 			{ source: "project", root: join(stateRoot, "workspaces", storageKey, "plugins"), priority: 200 },
 		]),
 	});
-	const manager = new ExtensionManager({ pluginManager });
+	const skillRegistry = createSkillRegistry({
+		storage,
+		trustStore,
+		stateStore: extensionStateStore,
+		scope: { authorityId, tenantId, principalId },
+		pluginContributions: () => pluginManager.last()?.skillContributions ?? [],
+		userSkillRoot: join(stateRoot, "user", "skills"),
+		workspaceSkillRoot: join(stateRoot, "workspaces", storageKey, "skills"),
+	});
+	const manager = new ExtensionManager({
+		pluginManager,
+		skillRegistry,
+		skillsPolicyLoader: async () => {
+			const settings = await loadProjectSettings({ layout: options.layout });
+			return resolveSkillsPolicy(settings.skills, undefined);
+		},
+		updateSkillsProviderPolicy: async (providerId, enabled, scope) => {
+			if (scope !== "user") throw new Error("workspace-scoped provider mutation is not wired in the session path");
+			const settings = await loadProjectSettings({ layout: options.layout });
+			const providers = { ...(settings.skills?.providers ?? {}) };
+			providers[providerId] = enabled;
+			await saveProjectSettings({ layout: options.layout }, { ...settings, skills: { enabled: settings.skills?.enabled ?? true, providers } });
+		},
+	});
 	const mcpManager = new McpConnectionManager({
 		factory: createSdkMcpClientFactory({
 			managedProcess: options.managedProcess,
@@ -423,6 +486,22 @@ export async function createProductionSessionExtensionComposition(
 		manager,
 		mcp,
 		skillLoader,
+		contextSources: (modelContextChars) => {
+			const skills = manager.currentSkills().filter((skill) => skill.descriptor.activation === "ready");
+			if (skills.length === 0) return [];
+			const content = skillCatalogPromptFragment(skills, modelContextChars);
+			if (content.length === 0) return [];
+			return [{
+				fragmentId: `skill-catalog-${runtimeDigest(content).digest.slice(0, 32)}`,
+				key: "skill-catalog",
+				layer: "resources",
+				content,
+				trust: "trusted",
+				taint: "none",
+				priority: "normal",
+				estimatedTokens: Math.max(1, Math.ceil(content.length / 4)),
+			}];
+		},
 		closeHooks: () => turnLifecycle.cancelTurn(),
 		closePlugins: async () => undefined,
 		cleanup: async () => undefined,

@@ -43,6 +43,8 @@ export interface ProjectSettings {
 	followUpMode?: QueueMode;
 	/** 用户级本地 trace 记录策略；workspace settings 不拥有该 authority。 */
 	recording?: RecordingSettings;
+	/** 版本化 skills provider policy（user/workspace 均可写，workspace 只能收窄）。 */
+	skills?: SkillsSettings;
 }
 
 export type RecordingMode = "off" | "events" | "events_and_artifacts";
@@ -52,6 +54,18 @@ export type RecordingFailurePolicy = "best_effort" | "fail_closed";
 export interface RecordingSettings {
 	readonly mode: RecordingMode;
 	readonly failurePolicy: RecordingFailurePolicy;
+}
+
+/**
+ * 版本化 skills provider policy：user/workspace 均可写；workspace 只能收窄。
+ * 外部路径不保存；provider exact ID 的已知性由 extensions/skills/policy.ts
+ * 在消费时校验（storage 层只做结构清洗）。
+ */
+export interface SkillsSettings {
+	/** 总闸：user false 后 workspace/session 只能进一步关闭。 */
+	readonly enabled?: boolean;
+	/** 已知 provider exact ID → boolean；未知 ID 保留 diagnostic，不自动运行。 */
+	readonly providers?: Readonly<Record<string, boolean>>;
 }
 
 export type EffectiveRecordingConfig = Readonly<RecordingSettings>;
@@ -206,7 +220,31 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 		const recording = sanitizeRecordingSettings(raw.recording);
 		if (recording) out.recording = recording;
 	}
+	const skills = sanitizeSkillsSettings(raw.skills);
+	if (skills !== undefined) out.skills = skills;
 	return out;
+}
+
+const SKILLS_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
+
+/** 结构清洗 skills policy；非法结构整体丢弃（不拒绝整个 settings 文件）。 */
+function sanitizeSkillsSettings(value: unknown): SkillsSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const out: { enabled?: boolean; providers?: Record<string, boolean> } = {};
+	if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+	if (raw.providers !== undefined) {
+		if (typeof raw.providers !== "object" || raw.providers === null || Array.isArray(raw.providers)) return undefined;
+		const entries = Object.entries(raw.providers as Record<string, unknown>);
+		if (entries.length > 32) return undefined;
+		const providers: Record<string, boolean> = {};
+		for (const [id, enabled] of entries) {
+			if (!SKILLS_PROVIDER_KEY_PATTERN.test(id) || typeof enabled !== "boolean") return undefined;
+			providers[id] = enabled;
+		}
+		out.providers = providers;
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** 将缺失或非法配置解析为安全且不可变的启动快照。 */

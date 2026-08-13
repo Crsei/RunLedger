@@ -45,6 +45,7 @@ import type { AgentRunBudgetUsage } from "../types.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection } from "./plan-composition.ts";
+import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -159,6 +160,10 @@ export async function assembleSessionDomain(
 		extensionTurnAdmission: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.admitTurn(),
 		extensionTurnAbort: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.cancelTurn(),
 		...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
+		modelContextAssembler: async (input) => assembleAgentModelContext({
+			...input,
+			sources: extensions.contextSources(input.model.contextWindow),
+		}),
 	});
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined

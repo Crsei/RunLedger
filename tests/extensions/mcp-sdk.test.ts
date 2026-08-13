@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -15,6 +16,8 @@ import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../src/runtime/host/types.ts";
 import { IS_WINDOWS } from "../helpers/platform.ts";
+
+const requireFromTest = createRequire(import.meta.url);
 
 function processScope(): RuntimeHostScope {
 	const digest = (seed: string) => runtimeDigest(seed);
@@ -147,7 +150,7 @@ describe("official MCP SDK transport factory", () => {
 		}
 	});
 
-	it("can run stdio through the Host managed-process facade", { skip: IS_WINDOWS }, async () => {
+	it("keeps MCP stderr startup logs out of the Host-managed JSONL protocol stream", { skip: IS_WINDOWS }, async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-mcp-managed-"));
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const scope = processScope();
@@ -155,7 +158,8 @@ describe("official MCP SDK transport factory", () => {
 		const script = [
 			"const {Server}=require('@modelcontextprotocol/sdk/server/index.js');",
 			"const {StdioServerTransport}=require('@modelcontextprotocol/sdk/server/stdio.js');",
-			"const {ListToolsRequestSchema,CallToolRequestSchema}=require('@modelcontextprotocol/sdk/types.js');",
+				"const {ListToolsRequestSchema,CallToolRequestSchema}=require('@modelcontextprotocol/sdk/types.js');",
+				"process.stderr.write('managed fixture booted\\n');",
 			"const server=new Server({name:'runledger-managed-fixture',version:'1.0.0'},{capabilities:{tools:{}}});",
 			"server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'managed',inputSchema:{type:'object'}}]}));",
 			"server.setRequestHandler(CallToolRequestSchema,async()=>({content:[{type:'text',text:'managed-ok'}]}));",
@@ -182,6 +186,55 @@ describe("official MCP SDK transport factory", () => {
 			if (!started.ok) return;
 			expect(await manager.call({ serverId: "mcp-server:managed", toolName: "managed", input: {} })).toMatchObject({ ok: true, value: { content: [{ text: "managed-ok" }] } });
 			await assertManagedProcess();
+		} finally {
+			await manager.closeAll();
+			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+		}
+	});
+
+	it("uses the Host execution cwd instead of an out-of-workspace MCP config cwd", { skip: IS_WINDOWS }, async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-mcp-managed-cwd-"));
+		const workspaceCwd = join(root, "workspace");
+		const configCwd = join(root, "extension-config");
+		await mkdir(workspaceCwd);
+		await mkdir(configCwd);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const scope = processScope();
+		const sessionId = createRuntimeId("session", "mcp-managed-cwd");
+		const script = [
+			`const {Server}=require(${JSON.stringify(requireFromTest.resolve("@modelcontextprotocol/sdk/server/index.js"))});`,
+			`const {StdioServerTransport}=require(${JSON.stringify(requireFromTest.resolve("@modelcontextprotocol/sdk/server/stdio.js"))});`,
+			`const {ListToolsRequestSchema,CallToolRequestSchema}=require(${JSON.stringify(requireFromTest.resolve("@modelcontextprotocol/sdk/types.js"))});`,
+			"const server=new Server({name:'runledger-managed-cwd-fixture',version:'1.0.0'},{capabilities:{tools:{}}});",
+			"server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'cwd',inputSchema:{type:'object'}}]}));",
+			"server.setRequestHandler(CallToolRequestSchema,async()=>({content:[{type:'text',text:process.cwd()}]}));",
+			"server.connect(new StdioServerTransport());",
+		].join("");
+		const processPort = new ProductionManagedProcessPort({ layout, scope, hostGeneration: 1, allowTestOnlyUnrestrictedExecution: true });
+		const manager = new McpConnectionManager({
+			factory: createSdkMcpClientFactory({
+				managedProcess: processPort.toolClient(sessionId, 1, "principal_mcp"),
+				managedProcessCwd: workspaceCwd,
+			}),
+		});
+		try {
+			const started = await manager.start({
+				serverId: "mcp-server:managed-cwd",
+				displayName: "managed-cwd",
+				transport: "stdio",
+				enabled: true,
+				trusted: true,
+				required: true,
+				startupTimeoutMs: 5_000,
+				toolTimeoutMs: 5_000,
+				stdio: { command: process.execPath, args: ["-e", script], cwd: configCwd },
+			});
+			expect(started.ok, JSON.stringify(started)).toBe(true);
+			if (!started.ok) return;
+			await expect(manager.call({ serverId: "mcp-server:managed-cwd", toolName: "cwd", input: {} })).resolves.toMatchObject({
+				ok: true,
+				value: { content: [{ type: "text", text: workspaceCwd }] },
+			});
 		} finally {
 			await manager.closeAll();
 			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });

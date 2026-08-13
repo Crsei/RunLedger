@@ -34,6 +34,14 @@ export interface SkillResourceSet {
 	readonly budget: Readonly<{ maxBytes: number; maxEntries: number }>;
 }
 
+export interface SkillTrustBinding {
+	readonly identity: ResourceIdentity;
+	readonly canonicalPath: string;
+	readonly binding: ExtensionManifestDigest;
+	readonly principalId: PrincipalId;
+	readonly receiptId?: ReceiptId;
+}
+
 export interface SkillDescriptor {
 	readonly descriptor: ExtensionResourceDescriptor;
 	readonly frontmatter: SkillFrontmatter;
@@ -46,13 +54,9 @@ export interface SkillDescriptor {
 	readonly scriptsPath?: string;
 	readonly sourceRoot: ExtensionSourceRoot;
 	readonly priority: number;
-	readonly trustBinding: {
-		readonly identity: ResourceIdentity;
-		readonly canonicalPath: string;
-		readonly binding: ExtensionManifestDigest;
-		readonly principalId: PrincipalId;
-		readonly receiptId?: ReceiptId;
-	};
+	readonly trustBinding: SkillTrustBinding;
+	/** 产生该 descriptor 的 discovery provider（P2 provider status 归属；P3 合并 observedBy）。 */
+	readonly providerIds?: readonly string[];
 }
 
 export interface SkillDiscoveryResult {

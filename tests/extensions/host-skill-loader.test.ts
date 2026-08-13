@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
-import { discoverSkills } from "../../src/extensions/skills/discovery.ts";
+import { scanSkillsDirectory } from "../../src/extensions/skills/scanner.ts";
+import { DEFAULT_EXTENSION_LIMITS } from "../../src/extensions/diagnostics.ts";
 import { createHostSkillLoader } from "../../src/cli/runtime-host-skills.ts";
 import { TrustStore } from "../../src/extensions/trust/trust-store.ts";
 import type { ExtensionStoragePort, ExtensionStorageResult } from "../../src/extensions/storage-port.ts";
@@ -94,16 +95,26 @@ async function writeSkill(root: string, directory: string, name = "release-revie
 	return skillRoot;
 }
 
+async function scanRoot(trust: TrustStore, extensionRoot: string, sourceKey: string): Promise<{ readonly skills: readonly SkillDescriptor[] }> {
+	return scanSkillsDirectory(storage, {
+		root: { source: "project", sourceKey, rootPath: extensionRoot, priority: 200 },
+		skillsRoot: join(extensionRoot, "skills"),
+		scope,
+		trustStore: trust,
+		limits: DEFAULT_EXTENSION_LIMITS,
+	});
+}
+
 async function discoverAndTrust(parent: string): Promise<{ readonly skills: readonly SkillDescriptor[] }> {
 	const extensionRoot = join(parent, ".runledger");
 	const trust = new TrustStore(join(parent, "trust.json"), storage);
 	await writeSkill(extensionRoot, "release-review");
-	const untrusted = await discoverSkills({ roots: [root(extensionRoot, "project:host-skill")], scope, trustStore: trust, storage });
+	const untrusted = await scanRoot(trust, extensionRoot, "project:host-skill");
 	const binding = untrusted.skills[0]?.trustBinding;
 	expect(binding).toBeDefined();
 	if (!binding) return { skills: [] };
 	await trust.grant({ identity: binding.identity, canonicalPath: binding.canonicalPath, binding: binding.binding, principalId: scope.principalId, scope: "project" });
-	const trusted = await discoverSkills({ roots: [root(extensionRoot, "project:host-skill")], scope, trustStore: trust, storage });
+	const trusted = await scanRoot(trust, extensionRoot, "project:host-skill");
 	expect(trusted.skills[0]?.descriptor.activation).toBe("ready");
 	return { skills: trusted.skills };
 }
@@ -137,7 +148,7 @@ describe("createHostSkillLoader", () => {
 			const trust = new TrustStore(join(parent, "trust.json"), storage);
 			const extensionRoot = join(parent, ".runledger");
 			await writeSkill(extensionRoot, "release-review");
-			const untrusted = await discoverSkills({ roots: [root(extensionRoot, "project:host-untrusted")], scope, trustStore: trust, storage });
+			const untrusted = await scanRoot(trust, extensionRoot, "project:host-untrusted");
 			const loader = createHostSkillLoader({
 				skills: () => untrusted.skills,
 				trustStore: trust,

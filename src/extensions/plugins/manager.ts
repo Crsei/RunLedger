@@ -14,13 +14,12 @@ import { DEFAULT_EXTENSION_LIMITS, extensionDiagnostic, sortExtensionDiagnostics
 import { createExtensionResourceIdentity, createExtensionResourceProvenance, qualifiedResourceId } from "../identity.ts";
 import { resolveDeclaredPath } from "../paths.ts";
 import type { ExtensionStoragePort } from "../storage-port.ts";
-import type { ExtensionResourceDescriptor, ExtensionRuntimeScope, ExtensionSourceRoot } from "../types.ts";
+import type { ExtensionResourceDescriptor, ExtensionRuntimeScope, ExtensionSource, ExtensionSourceRoot } from "../types.ts";
 import { buildResourceManifestDigest, digestDirectory, digestFile, type ExtensionManifestDigest } from "../trust/digest.ts";
 import { TrustStore } from "../trust/trust-store.ts";
 import type { TrustEvaluation } from "../trust/types.ts";
 import { ExtensionStateStore } from "../state-store.ts";
-import { discoverSkills } from "../skills/discovery.ts";
-import type { SkillDescriptor } from "../skills/types.ts";
+import type { SkillTrustBinding } from "../skills/types.ts";
 import { parseHookDocument } from "../hooks/parser.ts";
 import type { HookDefinition } from "../hooks/types.ts";
 
@@ -106,13 +105,29 @@ export interface PluginRecord {
 	readonly componentPaths: readonly string[];
 }
 
+/**
+ * 被动 Skill contribution：PluginManager 只解析/校验声明路径并携带 parent
+ * binding，不扫描、不激活、不拥有 Skill 列表；SkillRegistry 的
+ * runledger-plugin provider 消费它。
+ */
+export interface PluginSkillContribution {
+	readonly pluginId: string;
+	readonly source: ExtensionSource;
+	readonly sourceKey: string;
+	readonly priority: number;
+	/** canonical 解析后的 skill 目录（single-skill-directory）。 */
+	readonly skillRoot: string;
+	/** plugin trusted+enabled 时携带 parent receipt binding；否则缺省（候选不激活）。 */
+	readonly inheritedTrustBinding?: SkillTrustBinding;
+}
+
 export interface PluginDiscoveryResult {
 	readonly plugins: readonly PluginRecord[];
 	readonly descriptors: readonly ExtensionResourceDescriptor[];
 	/** Parsed hooks retained only for trusted and enabled plugin resources. */
 	readonly hooks: readonly HookDefinition[];
-	/** Full skill descriptors retained for the progressive-disclosure Skill tool. */
-	readonly skills: readonly SkillDescriptor[];
+	/** Passive Skill contributions consumed by SkillRegistry's runledger-plugin provider. */
+	readonly skillContributions: readonly PluginSkillContribution[];
 	readonly diagnostics: readonly ExtensionDiagnostic[];
 }
 
@@ -191,7 +206,7 @@ export class PluginManager {
 		const plugins: PluginRecord[] = [];
 		const descriptors: ExtensionResourceDescriptor[] = [];
 		const hooks: HookDefinition[] = [];
-		const skills: SkillDescriptor[] = [];
+		const skillContributions: PluginSkillContribution[] = [];
 		const diagnostics: ExtensionDiagnostic[] = [];
 		const state = await this.#options.stateStore.load();
 		for (const root of [...this.#options.roots].sort((left, right) => left.priority - right.priority || left.rootPath.localeCompare(right.rootPath))) {
@@ -221,6 +236,13 @@ export class PluginManager {
 			const resource = pluginIdentity(root, parsed.manifest, binding.combinedDigest);
 			const qualifiedId = resource.qualifiedId;
 			const trust = await this.#options.trustStore.evaluate({ identity: resource, canonicalPath: rootResult.value, binding, principalId: this.#options.scope.principalId, scope: trustScope(root) });
+			const pluginTrustBinding = trust.state === "trusted" ? {
+				identity: resource,
+				canonicalPath: rootResult.value,
+				binding,
+				principalId: this.#options.scope.principalId,
+				receiptId: trust.receipt.receiptId,
+			} : undefined;
 			const enabled = state.resources[qualifiedId]?.enabled ?? false;
 			let plugin: PluginRecord = {
 				descriptor: {
@@ -248,7 +270,7 @@ export class PluginManager {
 				componentPaths: [...(parsed.manifest.skills ?? []), ...(parsed.manifest.hooks ?? []), ...(parsed.manifest.mcpServers === undefined ? [] : [parsed.manifest.mcpServers])],
 			};
 			let pathFailure = !rootDigest.ok;
-			const trustedAndEnabled = plugin.descriptor.enabled && plugin.descriptor.trusted;
+			const trustedAndEnabled = plugin.descriptor.enabled && pluginTrustBinding !== undefined;
 			for (const declaration of parsed.manifest.skills ?? []) {
 				const path = await resolveDeclaredPath(this.#options.storage, rootResult.value, declaration);
 				if (!path.ok) {
@@ -262,10 +284,14 @@ export class PluginManager {
 					descriptors.push(componentDescriptor({ plugin, kind: "skill", name, path: path.path, digest: binding.combinedDigest, enabled: plugin.descriptor.enabled, trusted: plugin.descriptor.trusted, ready: false }));
 					continue;
 				}
-				const discovered = await discoverSkills({ roots: [{ ...root, rootPath: rootResult.value, skillsPath: path.path, pluginId: qualifiedId, layout: "plugin-root" }], scope: this.#options.scope, trustStore: this.#options.trustStore, state, storage: this.#options.storage });
-				diagnostics.push(...discovered.diagnostics);
-				skills.push(...discovered.skills);
-				for (const skill of discovered.skills) descriptors.push(skill.descriptor);
+				skillContributions.push({
+					pluginId: qualifiedId,
+					source: root.source,
+					sourceKey: root.sourceKey,
+					priority: root.priority,
+					skillRoot: path.path,
+					inheritedTrustBinding: pluginTrustBinding,
+				});
 			}
 			for (const declaration of parsed.manifest.hooks ?? []) {
 				const path = await resolveDeclaredPath(this.#options.storage, rootResult.value, declaration);
@@ -331,7 +357,7 @@ export class PluginManager {
 			plugins: resolvedPlugins,
 			descriptors: resolvedDescriptors,
 			hooks: [...hooks].sort((left, right) => left.event.localeCompare(right.event) || left.sourcePath.localeCompare(right.sourcePath) || left.declarationIndex - right.declarationIndex || left.id.localeCompare(right.id)),
-			skills: [...skills].sort((left, right) => left.descriptor.identity.qualifiedId.localeCompare(right.descriptor.identity.qualifiedId)),
+			skillContributions: [...skillContributions].sort((left, right) => left.pluginId.localeCompare(right.pluginId) || left.skillRoot.localeCompare(right.skillRoot)),
 			diagnostics: sortExtensionDiagnostics(diagnostics),
 		};
 		this.#last = result;
@@ -342,8 +368,8 @@ export class PluginManager {
 		return this.#last?.hooks ?? [];
 	}
 
-	public skills(): readonly SkillDescriptor[] {
-		return this.#last?.skills ?? [];
+	public skillContributions(): readonly PluginSkillContribution[] {
+		return this.#last?.skillContributions ?? [];
 	}
 
 	public async setEnabled(pluginId: string, enabled: boolean): Promise<PluginDiscoveryResult> {
@@ -403,5 +429,3 @@ function mcpNames(value: unknown): readonly string[] {
 	if (!record(value) || !record(value.mcpServers)) return ["mcp"];
 	return Object.keys(value.mcpServers).filter((name) => PLUGIN_NAME.test(name)).sort();
 }
-
-export type { SkillDescriptor };

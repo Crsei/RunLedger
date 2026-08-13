@@ -173,7 +173,10 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
     expect(tui.hasOverlay()).toBe(true);
     const queryCallsBefore = (query.mock.calls as string[][]).filter((call) => call[0] === "extension.inspect").length;
 
-    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void };
+    const modal = tui.getOverlay() as unknown as { handleInput(data: string): void; update(items: readonly unknown[]): void };
+    const update = vi.spyOn(modal, "update");
+    const requestRender = vi.spyOn(tui, "requestRender");
+    requestRender.mockClear();
     modal.handleInput("space");
     await settleFrames();
 
@@ -181,6 +184,8 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
     expect(command).toHaveBeenCalledWith("plugin.disable", { pluginId: "plugin:fixture" }, expect.objectContaining({ expectedRevision: 0 }));
     // mutation 成功后重新查询快照刷新 modal
     expect((query.mock.calls as string[][]).filter((call) => call[0] === "extension.inspect").length).toBeGreaterThan(queryCallsBefore);
+    expect(update).toHaveBeenCalledOnce();
+    expect(requestRender.mock.invocationCallOrder.at(-1)).toBeGreaterThan(update.mock.invocationCallOrder.at(-1)!);
   });
 
   it("trust toggling routes plugin.trust/untrust with the selected plugin id", async () => {
