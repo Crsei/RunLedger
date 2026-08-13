@@ -13,6 +13,7 @@ import {
   type Renderable,
   type StyledText,
 } from "@opentui/core";
+import stringWidth from "string-width";
 import { ansiToStyledText } from "./ansi-styled-text.ts";
 import type { TuiPerformanceObserver } from "./performance-observer.ts";
 import { createRunLedgerSyntaxStyle } from "./syntax-style.ts";
@@ -77,6 +78,24 @@ export interface OpenTuiComponentRuntimeOptions {
   createSyntaxHighlightService?: () => SyntaxHighlightService;
   syntaxThemeController?: SyntaxThemeController;
   initialSyntaxThemeName?: string;
+}
+
+/** OpenTUI 0.4.x visualCol 按字符计；终端光标必须按实际 cell 宽度投影。 */
+class RunLedgerTextareaRenderable extends TextareaRenderable {
+  protected override renderCursor(_buffer: Parameters<TextareaRenderable["render"]>[0]): void {
+    if (!this._showCursor || !this.focused) return;
+    const visualCursor = this.editorView.getVisualCursor();
+    const logicalLine = this.plainText.split("\n")[visualCursor.logicalRow] ?? "";
+    const logicalPrefix = logicalLine.slice(0, visualCursor.logicalCol);
+    const visualLineStartColumn = this.editorView.getLineInfo().lineStartCols[visualCursor.visualRow] ?? 0;
+    const cursorColumn = Math.max(0, stringWidth(logicalPrefix) - visualLineStartColumn);
+    this.ctx.setCursorPosition(
+      this.screenX + cursorColumn + 1,
+      this.screenY + visualCursor.visualRow + 1,
+      true,
+    );
+    this.ctx.setCursorStyle({ ...this._cursorStyle, color: this._cursorColor });
+  }
 }
 
 export interface OpenTuiComponentRuntime {
@@ -234,7 +253,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     flexShrink: 0,
     content: "› ",
   });
-  const editor = new TextareaRenderable(renderer, {
+  const editor = new RunLedgerTextareaRenderable(renderer, {
     id: "runledger-editor",
     width: "100%",
     flexGrow: 1,

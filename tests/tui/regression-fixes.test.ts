@@ -136,20 +136,25 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 	});
 
 	it("P1-3: reverse approval returns a decision without fabricating a completed workflow", async () => {
-		const controller = new ContractController();
+		class InterruptTrackingController extends ContractController {
+			interruptCount = 0;
+			override interrupt(): void { this.interruptCount += 1; }
+		}
+		const controller = new InterruptTrackingController({ inFlight: true });
 		const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
 		const signal = new AbortController().signal;
 		const pending = mode.handleReverseRequest(reverseFrame(), signal);
 		expect(mode.getTuiState().capabilities.approval.state).toBe("unavailable");
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
-		// permission view 取代对话区，Esc 选择 deny。
+		// permission view 取代对话区，选择 3 会拒绝当前工具并停止当前 turn。
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
 		expect(ui.hasOverlay()).toBe(false);
 		const permissionView = Reflect.get(mode, "activePermissionView") as { handleInput(data: string): void } | undefined;
-		permissionView?.handleInput("\x1b");
+		permissionView?.handleInput("3");
 		const body = await pending;
 		expect(body).toEqual({ ok: true, decision: "deny" });
+		expect(controller.interruptCount).toBe(1);
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
@@ -186,7 +191,7 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 			expect(permissionView).toContain("$ npm run check");
 			expect(permissionView).toContain("1. Yes, proceed");
 			expect(permissionView).toContain("2. Yes, and don't ask again for commands that start with `npm run check`");
-			expect(permissionView).toContain("3. No, and tell Codex what to do differently");
+			expect(permissionView).toContain("3. No, and tell RunLedger what to do differently");
 
 			terminal.send("\x1b[B");
 			terminal.send("\r");

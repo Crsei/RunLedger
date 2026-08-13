@@ -530,18 +530,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** 中断当前 turn;M8c:真接 agent.interrupt()。 */
   private handleInterrupt(): void {
     if (this.streaming || this.inFlight()) {
-      const restored = this.controller?.clearAllQueues();
-      const queued = [
-        ...(restored?.steering ?? []),
-        ...(restored?.followUp ?? []),
-      ].map(messageText).filter((text) => text.length > 0);
-      if (queued.length > 0) {
-        const current = this.refs.editor.getText();
-        this.refs.editor.setText([...queued, current].filter((text) => text.trim()).join("\n\n"));
-      }
-      this.controller?.interrupt();
-      this.agent?.interrupt();
-      this.ui.requestRender();
+      this.interruptCurrentTurn();
       return;
     }
     const text = this.refs.editor.getText();
@@ -557,6 +546,22 @@ export class InteractiveMode implements FooterSnapshotProvider {
     } else {
       this.lastIdleCtrlC = now;
     }
+  }
+
+  /** Permission deny 与 Ctrl+C 共用同一 canonical turn 中断和队列恢复路径。 */
+  private interruptCurrentTurn(): void {
+    const restored = this.controller?.clearAllQueues();
+    const queued = [
+      ...(restored?.steering ?? []),
+      ...(restored?.followUp ?? []),
+    ].map(messageText).filter((text) => text.length > 0);
+    if (queued.length > 0) {
+      const current = this.refs.editor.getText();
+      this.refs.editor.setText([...queued, current].filter((text) => text.trim()).join("\n\n"));
+    }
+    this.controller?.interrupt();
+    this.agent?.interrupt();
+    this.ui.requestRender();
   }
 
   private handleCtrlD(): boolean {
@@ -689,6 +694,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
           message: { text: `approval ${decision.decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision.decision} for ${view.toolName}`).byteLength },
         }]);
         finish(approvalDecisionBody(decision));
+        if (decision.decision === "deny") {
+          // 先让 reverse response 的 continuation 发送 deny，再中断 canonical turn，
+          // 避免模型把单次拒绝当成可继续重试的新 permission 请求。
+          queueMicrotask(() => this.interruptCurrentTurn());
+        }
       };
 	  const choices = approvalChoices(view);
 	  const permissionView = new PermissionRequestView({

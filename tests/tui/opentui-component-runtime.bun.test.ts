@@ -685,6 +685,38 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("places the hardware cursor after CJK cells, including a wrapped mixed-width line", async () => {
+    const setup = await createTestRenderer({ width: 30, height: 8 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      const cjk = "测试中文输入";
+      runtime.update({ body: [], editorText: cjk, editorCursorOffset: cjk.length, footer: [] });
+      await setup.renderOnce();
+      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      expect(setup.renderer.getCursorState()).toMatchObject({
+        x: (editor?.screenX ?? 0) + stringWidth(cjk) + 1,
+        y: (editor?.screenY ?? 0) + 1,
+        visible: true,
+      });
+
+      setup.resize(12, 8);
+      const mixed = "abc测试xyz中文尾";
+      runtime.update({ body: [], editorText: mixed, editorCursorOffset: mixed.length, footer: [] });
+      await setup.renderOnce();
+      expect(editor?.visualCursor.visualRow).toBe(1);
+      expect(setup.renderer.getCursorState()).toMatchObject({
+        x: (editor?.screenX ?? 0) + stringWidth("xyz中文尾") + 1,
+        y: (editor?.screenY ?? 0) + 2,
+        visible: true,
+      });
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("projects slash popup rows as single-line text rows with the command box attached above the editor", async () => {
     const setup = await createTestRenderer({ width: 80, height: 24 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
@@ -1090,7 +1122,7 @@ describe("OpenTUI component projection", () => {
       expect(frame).toContain("Environment: local");
       expect(frame).toContain("$ npm run check");
       expect(frame).toContain("Yes, proceed");
-      expect(frame).toContain("No, and tell Codex what to do differently");
+      expect(frame).toContain("No, and tell RunLedger what to do differently");
       expect(frame).toContain("Waiting for approval");
       expect(setup.renderer.root.findDescendantById("runledger-overlay")).toBeUndefined();
       expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-editor");

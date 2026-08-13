@@ -154,7 +154,7 @@ function choiceLabel(choice: ApprovalChoice): string {
 		case "allow-with-prefix-rule": return `Yes, and don't ask again for commands that start with \`${safeLine(choice.decision.prefixRule.join(" "))}\` (p)`;
 		case "allow-with-network-rule": return `Yes, and don't ask again for ${choice.decision.protocol}://${safeLine(choice.decision.host)}${choice.decision.port === undefined ? "" : `:${choice.decision.port}`} (p)`;
 		case "allow-session": return "Yes, allow this request for the session (p)";
-		case "deny": return "No, and tell Codex what to do differently (esc)";
+		case "deny": return "No, and tell RunLedger what to do differently (esc)";
 		case "cancel": return "Cancel";
 	}
 }
