@@ -43,7 +43,7 @@ export function createFixedRootsProvider(options: FixedRootsProviderOptions): Di
 					priority: options.priority,
 				});
 			}
-			if (observations.length === 0) return { ok: false, providerId: options.providerId, code: "unavailable", message: `no compatible skill directory exists under ${options.roots.join(", ")}` };
+			if (observations.length === 0) return { ok: false, providerId: options.providerId, code: "unavailable", message: "no compatible skill directory is available" };
 			return { ok: true, providerId: options.providerId, observations };
 		},
 	};

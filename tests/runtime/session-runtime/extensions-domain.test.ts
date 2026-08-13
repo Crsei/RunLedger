@@ -414,6 +414,7 @@ describe("SessionRuntime extension domain", () => {
 			composition = await createProductionSessionExtensionComposition({
 				layout,
 				cwd: root,
+				skillCompatibility: { osUserHome: home, projectBoundary: root },
 				store: harness.store,
 				fence: harness.fence,
 				workspaceId: createRuntimeId("workspace", "standalone-skill"),
@@ -452,6 +453,7 @@ describe("SessionRuntime extension domain", () => {
 			const skillProviders = inspectSkillProviders(inspected.value);
 			const userProvider = skillProviders.find((item) => item.providerId === "runledger-user");
 			expect(userProvider).toMatchObject({ state: "loaded", candidateCount: 1 });
+			expect(skillProviders.find((item) => item.providerId === "codex-user")).toMatchObject({ state: "disabled" });
 
 			// 未 trust：standalone 是 inspect 可见的 blocked 候选，不进 catalog、loader 不可达。
 			const before = await listSkills();
@@ -510,6 +512,10 @@ describe("SessionRuntime extension domain", () => {
 			await expect(composition.resources.mutate!("skill.provider.enable", { providerId: "runledger-user" }, mutationContext)).resolves.toMatchObject({ ok: true });
 			const afterEnable = await listSkills();
 			expect(afterEnable.find((item) => item.displayName === "release-review")).toMatchObject({ activation: "blocked" });
+
+			const settingsBeforeUnknownMutation = readFileSync(layout.settings, "utf8");
+			await expect(composition.resources.mutate!("skill.provider.enable", { providerId: "unregistered-provider" }, mutationContext)).resolves.toMatchObject({ ok: false, code: "extension_operation_failed" });
+			expect(readFileSync(layout.settings, "utf8")).toBe(settingsBeforeUnknownMutation);
 		} finally {
 			await composition?.shutdown("paused").catch(() => undefined);
 			await harness.runtime.shutdownAfterLastAttachment("paused").catch(() => undefined);

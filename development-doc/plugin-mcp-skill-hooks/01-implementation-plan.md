@@ -65,12 +65,12 @@
 
 本文件是后续 Plugin / MCP / Skill / Hooks 工作的执行状态账本。实施时只在本文件的复选框上更新状态；专题设计可以作为附录增加，但不得另建平行的总计划。
 
-### 0.0.5 2026-08-13 Skill Registry / Discovery Provider 重构完成（02 计划 P0–P8）
+### 0.0.5 2026-08-13 Skill Registry / Discovery Provider 重构实现完成，P8 human/environment gates pending
 
-`02-skill-registry-discovery-provider-refactor-plan.md` 全阶段完成：Skill discovery 不再由 PluginManager 私有拥有；`SkillRegistry`（被动 registry + canonical providers + 四视图 snapshot）成为 Plugin 与 standalone 的唯一 Skill 入口，production Session Owner 与 resident Host 复用同一 `createSkillRegistry` factory。要点：
+`02-skill-registry-discovery-provider-refactor-plan.md` 的代码与自动化范围已实现；P8 的本 worktree 真实 TTY/tmux 和真实模型 E2E 仍受环境阻塞，不能宣称 P0–P8 全阶段验收完成。Skill discovery 不再由 PluginManager 私有拥有；`SkillRegistry`（被动 registry + canonical providers + 四视图 snapshot）成为 Plugin 与 standalone 的唯一 Skill 入口，production Session Owner 与 resident Host 复用同一 `createSkillRegistry` factory。要点：
 
 - P0 基线冻结（characterization 套件 + fixtures）；P1 被动 `CapabilityRegistry`；P2 canonical cutover（scanner 拆分、PluginManager→`PluginSkillContribution[]`、production composition user/workspace/plugin 装配）；P3 versioned `skills` policy + 四视图 visibility + snapshot provider statuses；P4 Codex/Agents providers（默认 off）；P5 Claude roots + `installed_plugins.json` 有界 parser（默认 off）；P6 `skill.provider list/enable|disable` + `skill trust/untrust`（Session Owner command + CLI + TUI `/skillsproviders`）；P7 progressive disclosure + Trace context.assembled 验证；P8 清理（删除 discovery.ts facade）。
-- 门禁：`npm run check` / `npm test`（321 files / 1887 passed / 3 skipped）/ `npm run build` / `git diff --check` 全绿；compatibility providers 全部默认 off（KNOWN 集 + defaultEnabled 双保险）。
+- 历史自动门禁：`npm run check` / `npm test`（321 files / 1887 passed / 3 skipped）/ `npm run build` / `git diff --check` 全绿；compatibility providers 全部默认 off（KNOWN 集 + defaultEnabled 双保险）。本次 review 修复后的 fresh 证据以 02 §15.7 为准。
 - 未完成/blocked（环境，见 02 §15.6）：worktree 内真实 TTY 全会话 smoke 与真实模型 E2E —— `asset/api-key.json` 未携带 + bun-as-execPath toolchain gate 误判 + OpenTUI FFI node 不可用；01 的 2026-08-11 live E2E 仍为该语义的既有证据。
 - 本文件仍是 Plugin/MCP/Skill/Hooks 总状态账本；02 保留设计与阶段证据但不篡夺总状态。
 

@@ -27,6 +27,7 @@ import { resolveRecordingConfig } from "../../storage/settings-manager.ts";
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
 	createSessionSecurity,
@@ -141,6 +142,7 @@ export async function assembleSessionDomain(
 		managedProcess: process.toolClient(),
 		attemptPort: () => attemptPort.get(),
 		baseToolNames: baseTools.map((tool) => tool.name),
+		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,

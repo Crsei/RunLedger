@@ -109,6 +109,11 @@ export interface ProductionSessionExtensionCompositionOptions {
 	readonly managedProcess: ProcessToolClient & Pick<ManagedBackgroundBashOperations, "start">;
 	readonly attemptPort: () => AttemptPort | undefined;
 	readonly baseToolNames: readonly string[];
+	/** composition root 解析的兼容 Skill locator；providers 不自行读取 OS/cwd。 */
+	readonly skillCompatibility?: Readonly<{
+		readonly osUserHome: string;
+		readonly projectBoundary: string;
+	}>;
 }
 
 export class SessionExtensionStartupError extends Error {
@@ -384,6 +389,15 @@ export async function createProductionSessionExtensionComposition(
 		pluginContributions: () => pluginManager.last()?.skillContributions ?? [],
 		userSkillRoot: join(stateRoot, "user", "skills"),
 		workspaceSkillRoot: join(stateRoot, "workspaces", storageKey, "skills"),
+		...(options.skillCompatibility === undefined ? {} : {
+			codexUserHome: options.skillCompatibility.osUserHome,
+			codexProjectBoundary: options.skillCompatibility.projectBoundary,
+			agentsUserHome: options.skillCompatibility.osUserHome,
+			agentsProjectBoundary: options.skillCompatibility.projectBoundary,
+			claudeUserHome: options.skillCompatibility.osUserHome,
+			claudeProjectBoundary: options.skillCompatibility.projectBoundary,
+			claudePluginsHome: options.skillCompatibility.osUserHome,
+		}),
 	});
 	const manager = new ExtensionManager({
 		pluginManager,

@@ -47,6 +47,21 @@ describe("skills provider policy merge", () => {
 		expect(result.providerEnabled.get("runledger-workspace")).toBe(true);
 	});
 
+	it("lets workspace disable the master switch but never re-enable it", () => {
+		const narrowed = resolveSkillsPolicy({ enabled: true }, { enabled: false });
+		expect(narrowed.masterEnabled).toBe(false);
+
+		const blocked = resolveSkillsPolicy({ enabled: false }, { enabled: true });
+		expect(blocked.masterEnabled).toBe(false);
+		expect(blocked.diagnostics.map((item) => item.code)).toContain("skill.policy_workspace_cannot_reopen");
+	});
+
+	it("does not let workspace enable a default-off provider omitted by user policy", () => {
+		const result = resolveSkillsPolicy(undefined, { providers: providers([["codex-user", true]]) });
+		expect(result.providerEnabled.has("codex-user")).toBe(false);
+		expect(result.diagnostics.map((item) => item.code)).toEqual(["skill.policy_workspace_cannot_reopen"]);
+	});
+
 	it("exposes the canonical provider ID set for schema validation", () => {
 		expect(KNOWN_SKILL_PROVIDER_IDS).toEqual(expect.arrayContaining(["runledger-user", "runledger-workspace", "runledger-plugin", "runledger-repo", "runledger-session", "runledger-builtin"]));
 		expect(Object.isFrozen(KNOWN_SKILL_PROVIDER_IDS)).toBe(true);

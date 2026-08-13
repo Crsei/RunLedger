@@ -159,6 +159,7 @@ export class SkillRegistry {
 		if (options.claudePluginsHome !== undefined) defaultProviders.push(createClaudePluginsProvider({
 			registryPath: join(options.claudePluginsHome, ".claude", "plugins", "installed_plugins.json"),
 			pluginCacheRoot: join(options.claudePluginsHome, ".claude", "plugins"),
+			...(options.claudeProjectBoundary === undefined ? {} : { activeProjectBoundary: options.claudeProjectBoundary }),
 		}));
 		defaultProviders.push(createPluginContributionsProvider({ contributions: options.pluginContributions }));
 		for (const provider of [...defaultProviders, ...(options.providers ?? [])]) registry.registerProvider(provider);
@@ -170,21 +171,36 @@ export class SkillRegistry {
 		return this.#current;
 	}
 
+	/** ExtensionManager 成功交换 parent snapshot 后才发布对应 child snapshot。 */
+	public publish(snapshot: SkillRegistrySnapshot): void {
+		if (snapshot.generation <= this.#generation) throw new Error("skill snapshot generation must increase");
+		this.#generation = snapshot.generation;
+		this.#current = snapshot;
+	}
+
 	public providers(): readonly DiscoveryProvider<SkillDiscoveryObservation>[] {
 		return this.#registry.providers() as readonly DiscoveryProvider<SkillDiscoveryObservation>[];
 	}
 
-	public async load(input: { readonly providerEnabled?: ReadonlyMap<string, boolean>; readonly masterEnabled?: boolean; readonly signal?: AbortSignal } = {}): Promise<SkillRegistrySnapshot> {
+	public async load(input: { readonly providerEnabled?: ReadonlyMap<string, boolean>; readonly masterEnabled?: boolean; readonly signal?: AbortSignal; readonly publish?: boolean; readonly pluginContributions?: readonly PluginSkillContribution[] } = {}): Promise<SkillRegistrySnapshot> {
 		const providerEnabled = input.masterEnabled === false
 			? new Map(this.providers().map((provider) => [provider.id, false] as const))
 			: input.providerEnabled;
-		const result = await this.#registry.load({ providerEnabled, signal: input.signal, storage: this.#storage });
+		const result = await this.#registry.load({
+			providerEnabled,
+			signal: input.signal,
+			storage: this.#storage,
+			...(input.pluginContributions === undefined ? {} : { inputs: new Map<string, unknown>([["runledger-plugin", input.pluginContributions]]) }),
+		});
 		const base = result.snapshots.get("skills") as Omit<SkillRegistrySnapshot, "generation"> | undefined;
-		if (base === undefined) throw new Error("skills capability snapshot is unavailable");
-		this.#generation += 1;
+		if (base === undefined) {
+			const failure = result.diagnostics.find((diagnostic) => diagnostic.code === "capability.snapshot_failed");
+			throw new Error(failure?.message ?? "skills capability snapshot is unavailable");
+		}
+		const generation = this.#generation + 1;
 		const snapshot: SkillRegistrySnapshot = Object.freeze({
 			...base,
-			generation: this.#generation,
+			generation,
 			providers: Object.freeze([...base.providers]),
 			all: Object.freeze([...base.all]),
 			active: Object.freeze([...base.active]),
@@ -192,7 +208,7 @@ export class SkillRegistry {
 			userInvocable: Object.freeze([...base.userInvocable]),
 			diagnostics: Object.freeze([...base.diagnostics]),
 		});
-		this.#current = snapshot;
+		if (input.publish !== false) this.publish(snapshot);
 		return snapshot;
 	}
 
@@ -218,6 +234,8 @@ export class SkillRegistry {
 	async #buildSnapshot(input: CapabilityBuildInput<SkillDiscoveryObservation>): Promise<SkillRegistrySnapshot> {
 		const diagnostics: ExtensionDiagnostic[] = [...input.diagnostics];
 		const state: ExtensionStateDocument = await this.#stateStore.load();
+		const stateError = this.#stateStore.loadError();
+		if (stateError !== undefined) throw new Error(stateError);
 		const scanned: SkillDescriptor[] = [];
 		for (const observation of input.observations) {
 			const root: ExtensionSourceRoot = {

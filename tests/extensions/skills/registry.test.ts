@@ -244,6 +244,26 @@ describe("P2 SkillRegistry canonical providers", () => {
 		expect(Object.isFrozen(first)).toBe(true);
 		expect(Object.isFrozen(first.all)).toBe(true);
 	});
+
+	it("retains the last-known-good snapshot when canonical extension state is corrupt", async () => {
+		const parent = await temporary("corrupt-state");
+		const statePath = join(parent, "state.json");
+		const userRoot = join(parent, "user", "skills");
+		await writeSkill(userRoot, "release-review");
+		const stateStore = new ExtensionStateStore(statePath, storage);
+		const registry = createSkillRegistry(registryOptions(parent, { userSkillRoot: userRoot, stateStore }));
+		const discovered = await registry.load();
+		const qualifiedId = discovered.all[0]!.descriptor.identity.qualifiedId;
+		await registry.trust(qualifiedId);
+		await stateStore.setEnabled(qualifiedId, false);
+		const disabled = await registry.load();
+		expect(disabled.all[0]?.descriptor.activation).toBe("disabled");
+
+		await writeFile(statePath, "{ invalid json");
+		await expect(registry.load()).rejects.toThrow("extensions-state.json is invalid JSON");
+		expect(registry.current()).toBe(disabled);
+		expect(registry.current()?.all[0]?.descriptor.activation).toBe("disabled");
+	});
 });
 
 describe("P3 four-view visibility matrix", () => {

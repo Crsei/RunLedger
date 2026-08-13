@@ -202,7 +202,12 @@ export class PluginManager {
 		return this.#last;
 	}
 
-	public async discover(): Promise<PluginDiscoveryResult> {
+	/** ExtensionManager 成功交换 parent snapshot 后才发布对应 Plugin candidate。 */
+	public publish(result: PluginDiscoveryResult): void {
+		this.#last = result;
+	}
+
+	public async discover(options: { readonly publish?: boolean } = {}): Promise<PluginDiscoveryResult> {
 		const plugins: PluginRecord[] = [];
 		const descriptors: ExtensionResourceDescriptor[] = [];
 		const hooks: HookDefinition[] = [];
@@ -360,7 +365,7 @@ export class PluginManager {
 			skillContributions: [...skillContributions].sort((left, right) => left.pluginId.localeCompare(right.pluginId) || left.skillRoot.localeCompare(right.skillRoot)),
 			diagnostics: sortExtensionDiagnostics(diagnostics),
 		};
-		this.#last = result;
+		if (options.publish !== false) this.publish(result);
 		return result;
 	}
 
@@ -372,24 +377,24 @@ export class PluginManager {
 		return this.#last?.skillContributions ?? [];
 	}
 
-	public async setEnabled(pluginId: string, enabled: boolean): Promise<PluginDiscoveryResult> {
+	public async setEnabled(pluginId: string, enabled: boolean, options: { readonly publish?: boolean } = {}): Promise<PluginDiscoveryResult> {
 		if (!this.#last?.plugins.some((plugin) => plugin.descriptor.identity.qualifiedId === pluginId)) throw new Error("plugin identity is not present in the current snapshot");
 		await this.#options.stateStore.setEnabled(pluginId, enabled);
-		return this.discover();
+		return this.discover(options);
 	}
 
-	public async trust(pluginId: string): Promise<PluginDiscoveryResult> {
+	public async trust(pluginId: string, options: { readonly publish?: boolean } = {}): Promise<PluginDiscoveryResult> {
 		const plugin = this.#last?.plugins.find((item) => item.descriptor.identity.qualifiedId === pluginId);
 		if (!plugin) throw new Error("plugin identity is not present in the current snapshot");
 		await this.#options.trustStore.grant({ identity: plugin.descriptor.resource, canonicalPath: plugin.rootPath, binding: plugin.binding, principalId: this.#options.scope.principalId, scope: trustScope(this.#options.roots.find((root) => root.rootPath === plugin.rootPath) ?? this.#options.roots[0]!) });
-		return this.discover();
+		return this.discover(options);
 	}
 
-	public async untrust(pluginId: string): Promise<PluginDiscoveryResult> {
+	public async untrust(pluginId: string, options: { readonly publish?: boolean } = {}): Promise<PluginDiscoveryResult> {
 		const plugin = this.#last?.plugins.find((item) => item.descriptor.identity.qualifiedId === pluginId);
 		if (!plugin) throw new Error("plugin identity is not present in the current snapshot");
 		await this.#options.trustStore.revoke(plugin.descriptor.resource);
-		return this.discover();
+		return this.discover(options);
 	}
 }
 

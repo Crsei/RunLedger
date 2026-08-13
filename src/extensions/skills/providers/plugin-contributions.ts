@@ -17,10 +17,10 @@ export function createPluginContributionsProvider(input: {
 		capabilityId: "skills",
 		rank: 400,
 		defaultEnabled: true,
-		load: async () => ({
+		load: async (context) => ({
 			ok: true,
 			providerId: "runledger-plugin",
-			observations: input.contributions().map((contribution): SkillDiscoveryObservation => ({
+			observations: ((context.inputs?.get("runledger-plugin") as readonly PluginSkillContribution[] | undefined) ?? input.contributions()).map((contribution): SkillDiscoveryObservation => ({
 				providerId: "runledger-plugin",
 				source: contribution.source,
 				level: "plugin",

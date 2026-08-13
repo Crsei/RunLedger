@@ -20,6 +20,8 @@ export interface DiscoveryContext {
 	readonly signal?: AbortSignal;
 	/** 注入的 storage adapter：provider 只用来 stat/realpath 候选 root，不做扫描。 */
 	readonly storage?: ExtensionStoragePort;
+	/** composition 注入的 capability-specific 被动输入；provider 按自身 exact key 读取。 */
+	readonly inputs?: ReadonlyMap<string, unknown>;
 }
 
 /** provider result 必须携带自身 ID；registry 校验它等于已注册的 provider，不信任 provider 自报。 */
@@ -65,6 +67,7 @@ export interface CapabilityLoadOptions {
 	readonly signal?: AbortSignal;
 	/** 注入 provider DiscoveryContext 的 storage adapter（provider 只 stat 候选 root）。 */
 	readonly storage?: ExtensionStoragePort;
+	readonly inputs?: ReadonlyMap<string, unknown>;
 }
 
 export interface CapabilityLoadResult {

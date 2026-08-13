@@ -3,6 +3,7 @@
 import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { AuthStorage } from "../storage/auth-storage.ts";
 import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../storage/settings-manager.ts";
@@ -133,6 +134,13 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		pluginContributions: () => extensionPluginManager.last()?.skillContributions ?? [],
 		userSkillRoot: join(extensionStateRoot, "user", "skills"),
 		workspaceSkillRoot: join(extensionStateRoot, "workspaces", scope.workspaceStorageKey, "skills"),
+		codexUserHome: homedir(),
+		codexProjectBoundary: cwd,
+		agentsUserHome: homedir(),
+		agentsProjectBoundary: cwd,
+		claudeUserHome: homedir(),
+		claudeProjectBoundary: cwd,
+		claudePluginsHome: homedir(),
 	});
 	const extensionManager = new ExtensionHostManager({
 		pluginManager: extensionPluginManager,

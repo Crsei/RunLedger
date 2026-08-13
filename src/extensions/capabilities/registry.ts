@@ -101,7 +101,7 @@ export class CapabilityRegistry {
 			dispatched.push({
 				provider,
 				effectiveEnabled,
-				work: provider.load({ signal, ...(options.storage === undefined ? {} : { storage: options.storage }) }).then(
+				work: provider.load({ signal, ...(options.storage === undefined ? {} : { storage: options.storage }), ...(options.inputs === undefined ? {} : { inputs: options.inputs }) }).then(
 					(result): ProviderOutcome => ({ kind: "result", result }),
 					(error): ProviderOutcome => ({ kind: "threw", error }),
 				),

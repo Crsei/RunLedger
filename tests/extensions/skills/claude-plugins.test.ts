@@ -101,29 +101,35 @@ function registryOptions(parent: string, extra: Partial<Parameters<typeof create
 const FIXTURES = resolve(process.cwd(), "tests", "fixtures", "extensions", "skills", "claude-plugins", "plugins");
 
 describe("P5 claude-plugins registry parser", () => {
-	it("parses bounded identity/version/installPath/enabled and ignores unknown fields", () => {
+	it("parses the versioned Claude registry with multiple scoped entries per plugin", () => {
 		const result = parseInstalledPluginsRegistry({
-			"superpowers": { version: "1.0.0", installPath: "/home/u/.claude/plugins/superpowers", enabled: true, extra: "ignored" },
-			"legacy": { version: "0.1.0", installPath: "/home/u/.claude/plugins/legacy" },
+			version: 2,
+			plugins: {
+				"superpowers@official": [
+					{ scope: "user", version: "1.0.0", installPath: "/home/u/.claude/plugins/superpowers", enabled: true, installedAt: "2026-01-01", lastUpdated: "2026-01-02", extra: "ignored" },
+					{ scope: "local", version: "1.1.0", installPath: "/home/u/.claude/plugins/superpowers-local", projectPath: "/repo", installedAt: "2026-01-03", lastUpdated: "2026-01-04" },
+				],
+			},
 		}, "/registry.json");
 		expect(result.entries).toEqual([
-			{ entryId: "legacy", version: "0.1.0", installPath: "/home/u/.claude/plugins/legacy" },
-			{ entryId: "superpowers", version: "1.0.0", installPath: "/home/u/.claude/plugins/superpowers", declaredEnabled: true },
+			{ entryId: "superpowers@official", version: "1.0.0", installPath: "/home/u/.claude/plugins/superpowers", declaredEnabled: true, scope: "user" },
+			{ entryId: "superpowers@official", version: "1.1.0", installPath: "/home/u/.claude/plugins/superpowers-local", scope: "local", projectPath: "/repo" },
 		]);
 		expect(result.diagnostics).toEqual([]);
 	});
 
 	it("rejects non-absolute install paths, non-boolean enabled, and oversized registries", () => {
-		const relative = parseInstalledPluginsRegistry({ "x": { version: "1.0.0", installPath: "relative/path" } }, "/r.json");
+		const relative = parseInstalledPluginsRegistry({ version: 1, plugins: { "x@m": [{ version: "1.0.0", installPath: "relative/path" }] } }, "/r.json");
 		expect(relative.entries).toHaveLength(0);
 		expect(relative.diagnostics.some((item) => item.code === "claude_plugins.entry_path_invalid")).toBe(true);
 
-		const badEnabled = parseInstalledPluginsRegistry({ "x": { version: "1.0.0", installPath: "/a/b", enabled: "yes" } }, "/r.json");
+		const badEnabled = parseInstalledPluginsRegistry({ version: 1, plugins: { "x@m": [{ version: "1.0.0", installPath: "/a/b", enabled: "yes" }] } }, "/r.json");
 		expect(badEnabled.entries).toHaveLength(0);
 		expect(badEnabled.diagnostics.some((item) => item.code === "claude_plugins.entry_enabled_invalid")).toBe(true);
 
-		const oversized = { "a": { version: "1.0.0", installPath: "/a/b" } };
-		for (let index = 1; index < 130; index += 1) oversized[`entry-${index}`] = { version: "1.0.0", installPath: "/a/b" };
+		const plugins: Record<string, unknown> = { "a@m": [{ version: "1.0.0", installPath: "/a/b" }] };
+		for (let index = 1; index < 130; index += 1) plugins[`entry-${index}@m`] = [{ version: "1.0.0", installPath: "/a/b" }];
+		const oversized = { version: 1, plugins };
 		const bound = parseInstalledPluginsRegistry(oversized, "/r.json");
 		expect(bound.entries).toHaveLength(0);
 		expect(bound.diagnostics.some((item) => item.code === "claude_plugins.registry_bound")).toBe(true);
@@ -134,7 +140,7 @@ describe("P5 claude-plugins provider semantics", () => {
 	async function writeRegistry(parent: string, entries: Record<string, unknown>): Promise<string> {
 		const registryPath = join(parent, ".claude", "plugins", "installed_plugins.json");
 		await mkdir(dirname(registryPath), { recursive: true });
-		await writeFile(registryPath, JSON.stringify(entries, null, 2));
+		await writeFile(registryPath, JSON.stringify({ version: 1, plugins: Object.fromEntries(Object.entries(entries).map(([id, entry]) => [id.includes("@") ? id : `${id}@test`, Array.isArray(entry) ? entry : [entry]])) }, null, 2));
 		return registryPath;
 	}
 
@@ -190,6 +196,24 @@ describe("P5 claude-plugins provider semantics", () => {
 		expect(result.all).toHaveLength(1);
 		// declared enabled:true 不等于 RunLedger trust（候选 blocked，仅 inspect 可见）。
 		expect(result.all[0]?.descriptor.activation).toBe("blocked");
+	});
+
+	it("loads a local-scope entry only for its active project boundary", async () => {
+		const parent = await temporary("local-scope");
+		const activeProject = join(parent, "active-project");
+		const otherProject = join(parent, "other-project");
+		await Promise.all([mkdir(activeProject), mkdir(otherProject)]);
+		await installPlugins(parent, ["superpowers"]);
+		await writeRegistry(parent, {
+			"superpowers@official": [{ scope: "local", projectPath: activeProject, version: "1.0.0", installPath: installPath(parent, "superpowers"), enabled: true }],
+		});
+		const excluded = createSkillRegistry(registryOptions(parent, { claudePluginsHome: parent, claudeProjectBoundary: otherProject }));
+		expect((await excluded.load({ providerEnabled: new Map([["claude-plugins", true]]) })).all).toHaveLength(0);
+
+		const included = createSkillRegistry(registryOptions(parent, { claudePluginsHome: parent, claudeProjectBoundary: activeProject }));
+		const result = await included.load({ providerEnabled: new Map([["claude-plugins", true]]) });
+		expect(result.all).toHaveLength(1);
+		expect(result.all[0]?.sourceRoot.source).toBe("project");
 	});
 
 	it("keeps same-named plugin Skills as distinct identities (ambiguous, no first-wins)", async () => {

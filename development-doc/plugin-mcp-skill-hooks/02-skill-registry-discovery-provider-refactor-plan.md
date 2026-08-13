@@ -462,13 +462,13 @@ P4 验收证据（2026-08-13，见 §15.5）：fake home/repo 隔离测试全绿
 
 ### P5 — RED→GREEN：Claude 与 plugin registry compatibility
 
-- [ ] 实现 Claude user/project skills roots；
-- [ ] 为 `installed_plugins.json` 定义有界、版本化兼容 parser，只读取必要 identity/installPath/version/enabled 字段；
-- [ ] installPath 必须 absolute、realpath 可解析、在允许的 plugin cache/root policy 内；registry/path escape 只产生 blocked diagnostic；
-- [ ] `enabled:false` 抑制该外部 entry，true/缺失不授 RunLedger trust；
-- [ ] 不读取/写回 Claude settings 作为 RunLedger authority；可把检测到的冲突状态显示为 diagnostic；
-- [ ] plugin skills 继续经 common scanner，Plugin package root containment 与 child digest 都要复核；
-- [ ] fixture 覆盖 superpowers/oh-my-mermaid/allthecodes-bridge 风格的同名副本和 Claude settings false 场景，但不依赖真实第三方内容。
+- [x] 实现 Claude user/project skills roots；
+- [x] 为真实 `{version, plugins: {id: entry[]}}` `installed_plugins.json` 定义有界 parser，只读取必要 identity/installPath/version/enabled/scope/projectPath 字段；
+- [x] installPath 必须 absolute、realpath 可解析、在允许的 plugin cache/root policy 内；registry/path escape 只产生 blocked diagnostic；
+- [x] `enabled:false` 抑制该外部 entry，true/缺失不授 RunLedger trust；`local` entry 只在 projectPath 与当前 boundary 匹配时进入 project scope；
+- [x] 不读取/写回 Claude settings 作为 RunLedger authority；可把检测到的冲突状态显示为 diagnostic；
+- [x] plugin skills 继续经 common scanner，Plugin package root containment 与 child digest 都要复核；
+- [x] fixture 覆盖 superpowers/oh-my-mermaid 风格的同名副本、disabled entry 与 local project scope，不依赖真实第三方内容。
 
 验收：RunLedger provider off 时外部 Skill 不可见；provider on 但 untrusted 时仅 inspect 可见；exact trust 后按需读取；外部 registry/文件从未被修改。
 
@@ -499,8 +499,8 @@ P4 验收证据（2026-08-13，见 §15.5）：fake home/repo 隔离测试全绿
 - [x] `npm run check`、focused tests、完整 `npm test`、`npm run build`；完整输出不截断；
 - [x] `git diff --check`、execution/runtime/storage/session-owner boundaries；
 - [x] 重建 `dist`，核对 `which runledger` 与全局 npm link；
-- [x] 使用隔离 `RUNLEDGER_DIR`、fake external homes 和真实 TTY/tmux 验证 provider list/toggle、Skill list、catalog、调用与 reload；
-- [x] 至少一次真实模型 E2E，检查 Trace/artifact 不含凭据、完整外部 home path 和未调用 Skill 正文；
+- [ ] 使用隔离 `RUNLEDGER_DIR`、fake external homes 和真实 TTY/tmux 验证 provider list/toggle、Skill list、catalog、调用与 reload；当前 worktree 环境阻塞见 §15.6；
+- [ ] 至少一次本 worktree 真实模型 E2E，检查 Trace/artifact 不含凭据、完整外部 home path 和未调用 Skill 正文；当前仅有 2026-08-11 既有语义证据，不能计作本轮 fresh 证据；
 - [x] 审阅所有 provider 默认值，确认 compatibility provider 仍为 off；
 - [x] 删除旧 PluginManager Skill ownership、重复 scanner、临时 adapter/feature flag；不保留 silent fallback；
 - [x] 回写本文件阶段证据和 `01` 总状态；不以 focused gate 代替完整 gate。
@@ -766,3 +766,16 @@ cutover 完成，Skill discovery 不再由 PluginManager 私有拥有；Plugin �
 - dist 重建完成；worktree 内 `bun dist/cli/cli.js --version/--help` 验证 CLI 参数面正常。
 - provider 默认值审阅：`runledger-{builtin,user,workspace,plugin}` on；`runledger-{repo,session}` 与 `codex-*`/`agents-*`/`claude-*`/`claude-plugins` 全部默认 off（KNOWN 集 + defaultEnabled 双保险）。
 - **blocked 记录（环境）**：真实 TTY/tmux 全会话 smoke 与真实模型 E2E 未执行 —— (1) `asset/api-key.json` 未随 worktree 携带（gitignored），真实模型不可用；(2) bin shim 用 `bun dist/cli/cli.js` 启动，`process.execPath`=bun 二进制，session toolchain gate（`src/security/toolchain.ts` 用 execPath 当 node 版本）误判 `toolchain_version_unsupported`，且 OpenTUI FFI 在 node 运行时不可用——两者均为本次专项之外的既有环境/启动门禁，未在 worktree 内修复；`--version/--help` 参数面已验证。01 的 2026-08-11 live E2E（真实 deepseek + Trace context.assembled）仍为该语义的既有证据。
+
+### 15.7 Review 修复与 fresh 验证（2026-08-13）
+
+本轮以 RED→GREEN 修复实现审阅发现的六类缺口：
+
+- parent Extension snapshot 与 child Plugin/Hook/Skill candidate 改为 build + parent swap 成功后共同发布；turn admission 抢在 reload 完成前时，各视图都保留 last-known-good，idle boundary 才发布下一代；
+- `extensions-state.json` 的 JSON/schema/I/O authority failure 会终止 Skill snapshot build，不再把空 state 当成 enabled 默认值；
+- workspace `skills.enabled` 与 provider policy 只能收窄 user/default authority；default-off compatibility provider 不能由 workspace 单独 reopen；
+- standard Session Owner 与 resident Host 都显式注入 OS user home/project boundary，注册 Codex/Agents/Claude/Claude Plugins compatibility providers；未注册 provider mutation 在写 settings 前失败；
+- Claude plugin registry parser 对齐真实 `{version, plugins: {id: entry[]}}`，覆盖多 scope entry、`local.projectPath` 匹配、containment、disabled 和 trust 独立语义；
+- fixed-root 与 Claude registry unavailable status 改为有界消息，public `skillProviders.lastError`/JSON 不再泄漏完整 external home path。
+
+fresh 自动证据：review focused 8 files / 77 tests 全绿；mutation/atomicity focused 4 files / 38 tests 全绿；`npm run check` EXIT=0；完整 `npm test` 为 Vitest 322 files（321 passed / 1 skipped）、1894 passed / 3 skipped，Bun OpenTUI 66 passed；`npm run build` EXIT=0；隔离临时 `RUNLEDGER_DIR` 下编译后的 `node dist/cli/cli.js --version/--help` 通过。全局 `which runledger` 当前链接到 sibling `RunLedger-codex-syntax-highlighting`，不是本 worktree，因此未替换用户全局链接，也未把它计为本分支 PATH smoke；`git diff --check` 在最终审阅完成。真实 TTY/tmux 与真实模型仍保持 §15.6 的 pending/blocked 状态，P8 不提升为全部完成。

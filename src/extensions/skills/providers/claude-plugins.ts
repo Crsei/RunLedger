@@ -27,6 +27,8 @@ export interface ClaudePluginRegistryEntry {
 	readonly version: string;
 	readonly installPath: string;
 	readonly declaredEnabled?: boolean;
+	readonly scope?: "user" | "project" | "local";
+	readonly projectPath?: string;
 }
 
 export interface InstalledPluginsRegistryResult {
@@ -49,43 +51,71 @@ export function parseInstalledPluginsRegistry(value: unknown, sourcePath: string
 		diagnostics.push(extensionDiagnostic("claude_plugins.registry_invalid", "error", "installed plugins registry must be a JSON object", "claude-plugins", sourcePath));
 		return { entries: [], diagnostics };
 	}
-	const keys = Object.keys(value);
+	if (typeof value.version !== "number" || !Number.isSafeInteger(value.version) || value.version < 0 || !record(value.plugins)) {
+		diagnostics.push(extensionDiagnostic("claude_plugins.registry_invalid", "error", "installed plugins registry must contain a numeric version and plugins object", "claude-plugins", sourcePath));
+		return { entries: [], diagnostics };
+	}
+	const keys = Object.keys(value.plugins);
 	if (keys.length > MAX_REGISTRY_ENTRIES) {
 		diagnostics.push(extensionDiagnostic("claude_plugins.registry_bound", "error", "installed plugins registry exceeds the entry bound", "claude-plugins", sourcePath));
 		return { entries: [], diagnostics };
 	}
 	const entries: ClaudePluginRegistryEntry[] = [];
 	for (const entryId of keys.sort()) {
-		const raw = value[entryId];
-		if (!record(raw)) {
-			diagnostics.push(extensionDiagnostic("claude_plugins.entry_invalid", "error", `plugin registry entry is not an object: ${entryId}`, "claude-plugins", `${sourcePath}#/${entryId}`));
+		const group = value.plugins[entryId];
+		if (!Array.isArray(group)) {
+			diagnostics.push(extensionDiagnostic("claude_plugins.entry_invalid", "error", `plugin registry entries must be an array: ${entryId}`, "claude-plugins", `${sourcePath}#/plugins/${entryId}`));
 			continue;
 		}
 		if (!boundedText(entryId, MAX_ENTRY_ID)) {
 			diagnostics.push(extensionDiagnostic("claude_plugins.entry_id_invalid", "error", "plugin registry entry id is invalid", "claude-plugins", sourcePath));
 			continue;
 		}
-		const version = raw.version;
-		const installPath = raw.installPath;
-		const enabled = raw.enabled;
-		if (!boundedText(version, MAX_VERSION)) {
-			diagnostics.push(extensionDiagnostic("claude_plugins.entry_version_invalid", "error", `plugin registry entry version is invalid: ${entryId}`, "claude-plugins", `${sourcePath}#/${entryId}`));
-			continue;
+		if (entries.length + group.length > MAX_REGISTRY_ENTRIES) {
+			diagnostics.push(extensionDiagnostic("claude_plugins.registry_bound", "error", "installed plugins registry exceeds the entry bound", "claude-plugins", sourcePath));
+			return { entries: [], diagnostics };
 		}
-		if (!boundedText(installPath, MAX_INSTALL_PATH) || !isAbsolute(installPath)) {
-			diagnostics.push(extensionDiagnostic("claude_plugins.entry_path_invalid", "error", `plugin install path must be an absolute path: ${entryId}`, "claude-plugins", `${sourcePath}#/${entryId}`));
-			continue;
+		for (let index = 0; index < group.length; index += 1) {
+			const raw = group[index];
+			const locator = `${sourcePath}#/plugins/${entryId}/${index}`;
+			if (!record(raw)) {
+				diagnostics.push(extensionDiagnostic("claude_plugins.entry_invalid", "error", `plugin registry entry is not an object: ${entryId}`, "claude-plugins", locator));
+				continue;
+			}
+			const version = raw.version;
+			const installPath = raw.installPath;
+			const enabled = raw.enabled;
+			const entryScope = raw.scope;
+			const projectPath = raw.projectPath;
+			if (!boundedText(version, MAX_VERSION)) {
+				diagnostics.push(extensionDiagnostic("claude_plugins.entry_version_invalid", "error", `plugin registry entry version is invalid: ${entryId}`, "claude-plugins", locator));
+				continue;
+			}
+			if (!boundedText(installPath, MAX_INSTALL_PATH) || !isAbsolute(installPath)) {
+				diagnostics.push(extensionDiagnostic("claude_plugins.entry_path_invalid", "error", `plugin install path must be an absolute path: ${entryId}`, "claude-plugins", locator));
+				continue;
+			}
+			if (enabled !== undefined && typeof enabled !== "boolean") {
+				diagnostics.push(extensionDiagnostic("claude_plugins.entry_enabled_invalid", "error", `plugin enabled flag must be a boolean: ${entryId}`, "claude-plugins", locator));
+				continue;
+			}
+			if (entryScope !== undefined && entryScope !== "user" && entryScope !== "project" && entryScope !== "local") {
+				diagnostics.push(extensionDiagnostic("claude_plugins.entry_scope_invalid", "error", `plugin scope is invalid: ${entryId}`, "claude-plugins", locator));
+				continue;
+			}
+			if (projectPath !== undefined && (!boundedText(projectPath, MAX_INSTALL_PATH) || !isAbsolute(projectPath))) {
+				diagnostics.push(extensionDiagnostic("claude_plugins.entry_project_path_invalid", "error", `plugin project path must be absolute: ${entryId}`, "claude-plugins", locator));
+				continue;
+			}
+			entries.push({
+				entryId,
+				version,
+				installPath,
+				...(enabled === undefined ? {} : { declaredEnabled: enabled }),
+				...(entryScope === undefined ? {} : { scope: entryScope }),
+				...(projectPath === undefined ? {} : { projectPath }),
+			});
 		}
-		if (enabled !== undefined && typeof enabled !== "boolean") {
-			diagnostics.push(extensionDiagnostic("claude_plugins.entry_enabled_invalid", "error", `plugin enabled flag must be a boolean: ${entryId}`, "claude-plugins", `${sourcePath}#/${entryId}`));
-			continue;
-		}
-		entries.push({
-			entryId,
-			version,
-			installPath,
-			...(enabled === undefined ? {} : { declaredEnabled: enabled as boolean }),
-		});
 	}
 	return { entries, diagnostics };
 }
@@ -95,6 +125,8 @@ export interface ClaudePluginsProviderOptions {
 	readonly registryPath: string;
 	/** `~/.claude/plugins/`（installPath containment 的允许 root）。 */
 	readonly pluginCacheRoot: string;
+	/** 当前 repo/project boundary；只允许匹配它的 local entry。 */
+	readonly activeProjectBoundary?: string;
 }
 
 export function createClaudePluginsProvider(options: ClaudePluginsProviderOptions): DiscoveryProvider<SkillDiscoveryObservation> {
@@ -107,7 +139,7 @@ export function createClaudePluginsProvider(options: ClaudePluginsProviderOption
 		load: async (context: DiscoveryContext): Promise<DiscoveryProviderResult<SkillDiscoveryObservation>> => {
 			if (context.storage === undefined) return { ok: false, providerId: "claude-plugins", code: "failed", message: "storage is unavailable" };
 			const read = await context.storage.readFile(options.registryPath, MAX_REGISTRY_BYTES);
-			if (!read.ok) return { ok: false, providerId: "claude-plugins", code: "unavailable", message: `installed plugins registry is missing: ${options.registryPath}` };
+			if (!read.ok) return { ok: false, providerId: "claude-plugins", code: "unavailable", message: "installed plugins registry is unavailable" };
 			let document: unknown;
 			try {
 				document = JSON.parse(Buffer.from(read.value).toString("utf8")) as unknown;
@@ -117,8 +149,14 @@ export function createClaudePluginsProvider(options: ClaudePluginsProviderOption
 			const parsed = parseInstalledPluginsRegistry(document, options.registryPath);
 			const diagnostics = [...parsed.diagnostics];
 			const observations: SkillDiscoveryObservation[] = [];
+			const activeProject = options.activeProjectBoundary === undefined ? undefined : await context.storage.realpath(options.activeProjectBoundary);
 			for (const entry of parsed.entries) {
 				if (entry.declaredEnabled === false) continue;
+				if (entry.scope === "local") {
+					if (entry.projectPath === undefined || activeProject === undefined || !activeProject.ok) continue;
+					const entryProject = await context.storage.realpath(entry.projectPath);
+					if (!entryProject.ok || entryProject.value !== activeProject.value) continue;
+				}
 				const contained = await resolveContainedPath(context.storage, options.pluginCacheRoot, entry.installPath);
 				if (!contained.ok) {
 					diagnostics.push(extensionDiagnostic("claude_plugins.path_escape", "error", `plugin install path escapes the allowed plugin cache: ${entry.entryId}`, "claude-plugins", entry.entryId));
@@ -129,8 +167,8 @@ export function createClaudePluginsProvider(options: ClaudePluginsProviderOption
 				if (!info.ok || info.value.kind !== "directory") continue;
 				observations.push({
 					providerId: "claude-plugins",
-					source: "user",
-					level: "user",
+					source: entry.scope === "project" || entry.scope === "local" ? "project" : "user",
+					level: entry.scope === "project" || entry.scope === "local" ? "project" : "user",
 					canonicalRoot: skillsRoot,
 					scanKind: "skills-directory",
 					priority: 2600,

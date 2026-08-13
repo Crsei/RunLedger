@@ -155,7 +155,7 @@ export class ExtensionManager {
 	public async setEnabled(pluginId: string, enabled: boolean): Promise<ExtensionReloadResult> {
 		await this.#ensureDiscovery();
 		try {
-			await this.#pluginManager.setEnabled(pluginId, enabled);
+			await this.#pluginManager.setEnabled(pluginId, enabled, { publish: false });
 		} catch (error) {
 			return this.#failed(error);
 		}
@@ -165,7 +165,7 @@ export class ExtensionManager {
 	public async trust(pluginId: string): Promise<ExtensionReloadResult> {
 		await this.#ensureDiscovery();
 		try {
-			await this.#pluginManager.trust(pluginId);
+			await this.#pluginManager.trust(pluginId, { publish: false });
 		} catch (error) {
 			return this.#failed(error);
 		}
@@ -175,7 +175,7 @@ export class ExtensionManager {
 	public async untrust(pluginId: string): Promise<ExtensionReloadResult> {
 		await this.#ensureDiscovery();
 		try {
-			await this.#pluginManager.untrust(pluginId);
+			await this.#pluginManager.untrust(pluginId, { publish: false });
 		} catch (error) {
 			return this.#failed(error);
 		}
@@ -206,6 +206,7 @@ export class ExtensionManager {
 		if (this.#updateSkillsProviderPolicy === undefined) return { status: "failed", retained: this.current(), error: "provider policy writer is unavailable" };
 		await this.#ensureDiscovery();
 		try {
+			if (!this.#skillRegistry.providers().some((provider) => provider.id === providerId)) throw new Error(`skill provider is not registered: ${providerId}`);
 			await this.#updateSkillsProviderPolicy(providerId, enabled, scope);
 		} catch (error) {
 			return this.#failed(error);
@@ -229,10 +230,12 @@ export class ExtensionManager {
 
 	async #buildAndSwap(): Promise<ExtensionReloadResult> {
 		try {
-			const discovered: PluginDiscoveryResult = await this.#pluginManager.discover();
+			const discovered: PluginDiscoveryResult = await this.#pluginManager.discover({ publish: false });
 			const skillPolicy = this.#skillsPolicyLoader === undefined ? undefined : await this.#skillsPolicyLoader();
 			const skillSnapshot = await this.#skillRegistry.load({
 				...(skillPolicy === undefined ? {} : { providerEnabled: skillPolicy.providerEnabled, masterEnabled: skillPolicy.masterEnabled }),
+				publish: false,
+				pluginContributions: discovered.skillContributions,
 			});
 			const current = this.current();
 			const generation = (current?.generation ?? 0) + 1;
@@ -246,6 +249,8 @@ export class ExtensionManager {
 			});
 			const swapped = this.#snapshots.swap(snapshot);
 			if (!swapped.ok) return { status: "failed", retained: swapped.retained, error: swapped.error, diagnostics: discovered.diagnostics };
+			this.#pluginManager.publish(discovered);
+			this.#skillRegistry.publish(skillSnapshot);
 			return { status: "ready", snapshot: swapped.snapshot, diagnostics: discovered.diagnostics };
 		} catch (error) {
 			return this.#failed(error);

@@ -28,6 +28,13 @@ export const KNOWN_SKILL_PROVIDER_IDS: readonly string[] = Object.freeze([
 	"claude-plugins",
 ]);
 
+const DEFAULT_ENABLED_SKILL_PROVIDER_IDS = new Set([
+	"runledger-builtin",
+	"runledger-user",
+	"runledger-workspace",
+	"runledger-plugin",
+]);
+
 export interface SkillsPolicyResult {
 	/** user master switch；false 时全部 provider 关闭（零 I/O）。 */
 	readonly masterEnabled: boolean;
@@ -41,12 +48,28 @@ export function resolveSkillsPolicy(
 	workspace: SkillsSettings | undefined,
 ): SkillsPolicyResult {
 	const diagnostics: ExtensionDiagnostic[] = [];
-	const masterEnabled = user?.enabled ?? true;
+	const userMasterEnabled = user?.enabled ?? true;
+	let masterEnabled = userMasterEnabled;
+	if (workspace?.enabled === false) masterEnabled = false;
+	else if (workspace?.enabled === true && !userMasterEnabled) {
+		diagnostics.push(extensionDiagnostic("skill.policy_workspace_cannot_reopen", "warning", "workspace cannot re-enable Skills disabled at user scope", "skill", "skills"));
+	}
 	const explicit = new Map<string, boolean>();
-	for (const [id, enabled] of Object.entries(user?.providers ?? {})) explicit.set(id, enabled);
+	for (const [id, enabled] of Object.entries(user?.providers ?? {})) {
+		if (!KNOWN_SKILL_PROVIDER_IDS.includes(id)) {
+			diagnostics.push(extensionDiagnostic("skill.policy_unknown_provider", "warning", `unknown skill provider id: ${id}`, "skill", id));
+			continue;
+		}
+		explicit.set(id, enabled);
+	}
 	for (const [id, enabled] of Object.entries(workspace?.providers ?? {})) {
+		if (!KNOWN_SKILL_PROVIDER_IDS.includes(id)) {
+			diagnostics.push(extensionDiagnostic("skill.policy_unknown_provider", "warning", `unknown skill provider id: ${id}`, "skill", id));
+			continue;
+		}
 		const userValue = explicit.get(id);
-		if (userValue === false && enabled === true) {
+		const userAllows = userValue ?? DEFAULT_ENABLED_SKILL_PROVIDER_IDS.has(id);
+		if (!userAllows && enabled) {
 			diagnostics.push(extensionDiagnostic("skill.policy_workspace_cannot_reopen", "warning", `workspace cannot re-enable provider ${id} disabled at user scope`, "skill", id));
 			continue;
 		}
@@ -54,10 +77,6 @@ export function resolveSkillsPolicy(
 	}
 	const providerEnabled = new Map<string, boolean>();
 	for (const [id, enabled] of explicit) {
-		if (!KNOWN_SKILL_PROVIDER_IDS.includes(id)) {
-			diagnostics.push(extensionDiagnostic("skill.policy_unknown_provider", "warning", `unknown skill provider id: ${id}`, "skill", id));
-			continue;
-		}
 		providerEnabled.set(id, enabled);
 	}
 	return { masterEnabled, providerEnabled, diagnostics };
