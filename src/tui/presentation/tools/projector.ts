@@ -150,7 +150,13 @@ export function projectToolStart(toolName: string, args: unknown, startedAt: str
 
 /** shell stdout/stderr chunk -> 有界 chunk；无界正文截断并标记。 */
 export function projectShellChunk(channel: "stdout" | "stderr", text: unknown): SafeShellChunk {
-	return { channel, text: boundedToolText(text, CHUNK_BOUND_BYTES) };
+	const raw = typeof text === "string" ? text : "";
+	const safeSgr = sanitizeSgr(raw);
+	return {
+		channel,
+		text: boundedToolText(safeSgr, CHUNK_BOUND_BYTES),
+		...(safeSgr.includes("\x1b[") ? { safeSgrText: boundedSgrText(safeSgr, CHUNK_BOUND_BYTES) } : {}),
+	};
 }
 
 /** 把 shell 输出压成每通道最后 100 行，保持 stdout/stderr 标签且不保存无界日志。 */
@@ -331,9 +337,18 @@ function boundShellChunks(input: readonly SafeShellChunk[]): SafeShellChunk[] & 
 	let truncated = false;
 	for (const chunk of input) {
 		const lines = chunk.text.text.split(/\r?\n/u);
+		const sgrLines = chunk.safeSgrText?.text.split(/\r?\n/u);
 		if (lines.at(-1) === "") lines.pop();
-		for (const line of lines) {
-			byChannel[chunk.channel].push({ channel: chunk.channel, text: boundedToolText(line, CHUNK_BOUND_BYTES) });
+		if (sgrLines?.at(-1) === "") sgrLines.pop();
+		for (const [index, line] of lines.entries()) {
+			const safeSgrLine = sgrLines?.[index];
+			byChannel[chunk.channel].push({
+				channel: chunk.channel,
+				text: boundedToolText(line, CHUNK_BOUND_BYTES),
+				...(safeSgrLine !== undefined && safeSgrLine.includes("\x1b[")
+					? { safeSgrText: boundedSgrText(safeSgrLine, CHUNK_BOUND_BYTES) }
+					: {}),
+			});
 		}
 	}
 	for (const channel of ["stdout", "stderr"] as const) {
@@ -345,6 +360,47 @@ function boundShellChunks(input: readonly SafeShellChunk[]): SafeShellChunk[] & 
 	const result = [...byChannel.stdout, ...byChannel.stderr] as SafeShellChunk[] & { truncated: boolean };
 	result.truncated = truncated;
 	return result;
+}
+
+function sanitizeSgr(input: string): string {
+	let result = "";
+	let offset = 0;
+	while (offset < input.length) {
+		const character = input[offset]!;
+		if (character !== "\x1b") {
+			if (character === "\n" || character === "\r" || character === "\t" || character.charCodeAt(0) >= 0x20) result += character;
+			offset += 1;
+			continue;
+		}
+		const kind = input[offset + 1];
+		if (kind === "[") {
+			const match = input.slice(offset).match(/^\x1b\[([0-9;]*)m/u);
+			if (match) {
+				result += match[0];
+				offset += match[0].length;
+				continue;
+			}
+			const finalOffset = input.slice(offset + 2).search(/[@-~]/u);
+			offset = finalOffset < 0 ? input.length : offset + finalOffset + 3;
+			continue;
+		}
+		if (kind === "]" || kind === "_") {
+			const bel = input.indexOf("\x07", offset + 2);
+			const st = input.indexOf("\x1b\\", offset + 2);
+			const candidates = [bel >= 0 ? bel + 1 : -1, st >= 0 ? st + 2 : -1].filter((value) => value >= 0);
+			offset = candidates.length === 0 ? input.length : Math.min(...candidates);
+			continue;
+		}
+		offset += 2;
+	}
+	return result;
+}
+
+function boundedSgrText(value: string, maxBytes: number): SafeBoundedText {
+	const bytes = new TextEncoder().encode(value);
+	if (bytes.byteLength <= maxBytes) return { text: value, truncated: false, byteLength: bytes.byteLength };
+	const cut = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, maxBytes)).replace(/\uFFFD$/u, "");
+	return { text: `${cut}\x1b[0m…`, truncated: true, byteLength: maxBytes + 7 };
 }
 
 /** usage -> SafeToolUsageView；provider 未报告时 unknown，绝不归零。 */

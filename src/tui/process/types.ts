@@ -5,6 +5,7 @@ import type { OutputCursor } from "../../runtime/process/output.ts";
 import type { ProcessState } from "../../runtime/process/types.ts";
 import type { TuiField, TuiPortRequest, TuiResultEnvelope } from "../application/common.ts";
 import type { SafeBoundedText } from "../presentation/tools/types.ts";
+import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 
 export interface ProcessOverlayItem {
 	readonly executionId: ExecutionId;
@@ -15,6 +16,9 @@ export interface ProcessOverlayItem {
 	readonly canWrite: boolean;
 	readonly canResize: boolean;
 	readonly canStop: boolean;
+	readonly commandDisplay:
+		| { readonly authority: "unavailable" }
+		| { readonly authority: "authorized" | "spawned"; readonly label: string; readonly receiptDigest: RuntimeDigest };
 }
 
 export interface ProcessOverlayState {

@@ -23,6 +23,7 @@ export interface SelectorModalProps {
   theme?: Theme;
   selectListTheme: SelectListTheme;
   title: string;
+  commandPreview?: string;
   items: SelectItem[];
   maxVisible?: number;
   layout?: SelectListLayoutOptions;
@@ -32,11 +33,13 @@ export interface SelectorModalProps {
 
 export class SelectorModal implements Component {
   private readonly title: string;
+  private readonly commandPreview: string | undefined;
   private readonly list: SelectList;
   private readonly box: Box;
 
   constructor(props: SelectorModalProps) {
     this.title = props.title;
+    this.commandPreview = props.commandPreview;
     this.list = new SelectList(
       props.items,
       props.maxVisible ?? Math.min(props.items.length, 8),
@@ -62,15 +65,22 @@ export class SelectorModal implements Component {
   }
 
   render(width: number): string[] {
-    return [fitToWidth(this.title, width), ...fitLinesToWidth(this.box.render(width), width)];
+    return [
+      fitToWidth(this.title, width),
+      ...(this.commandPreview === undefined ? [] : [fitToWidth(`$ ${this.commandPreview}`, width)]),
+      ...fitLinesToWidth(this.box.render(width), width),
+    ];
   }
 
   present(): PresentationBlock[] {
-    return [{
+    return [
+      ...(this.commandPreview === undefined ? [] : [{ kind: "command" as const, command: this.commandPreview }]),
+      {
       kind: "select",
       title: this.title,
       options: this.list.getVisibleItems(),
       selectedIndex: this.list.getSelectedIndex(),
-    }];
+      },
+    ];
   }
 }

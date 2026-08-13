@@ -20,3 +20,9 @@ export function runtimeWorkspacePlatform(): WorkspacePlatform {
 export function runtimePathFlavor(): RuntimePathFlavor {
 	return runtimeWorkspacePlatform() === "windows" ? "win32" : "posix";
 }
+
+export function runtimeNodePlatform(): "linux" | "darwin" | "win32" {
+	const runtime = process.platform;
+	if (runtime === "linux" || runtime === "darwin" || runtime === "win32") return runtime;
+	throw new Error(`unsupported runtime platform: ${runtime}`);
+}

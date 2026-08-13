@@ -28,6 +28,24 @@ describe("loadProjectSettings", () => {
 	let cwd: string;
 	let layout: RunledgerLayout;
 
+	it("accepts a Codex syntax theme name and drops unsafe path-like theme values", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({ theme: "catppuccin-mocha" }));
+		expect(await loadProjectSettings({ layout })).toEqual({ theme: "catppuccin-mocha" });
+		writeFileSync(layout.settings, JSON.stringify({ theme: "../outside" }));
+		expect(await loadProjectSettings({ layout })).toEqual({});
+		writeFileSync(layout.settings, JSON.stringify({ theme: "bad..name" }));
+		expect(await loadProjectSettings({ layout })).toEqual({});
+	});
+
+	it("round-trips a safe custom syntax theme name until composition validates its bytes", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({ theme: "company-audit" }));
+		expect(await loadProjectSettings({ layout })).toEqual({ theme: "company-audit" });
+		await saveProjectSettings({ layout }, { theme: "company-audit" });
+		expect(loadProjectSettingsSync({ layout })).toEqual({ theme: "company-audit" });
+	});
+
 	beforeEach(() => {
 		cwd = tmpCwd();
 		layout = canonicalFixture(cwd);

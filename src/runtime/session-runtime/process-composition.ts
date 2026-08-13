@@ -296,6 +296,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 			};
 		const created = await this.plane.create(request, prepared.value.constraintInput, {
 			constraintSnapshot: prepared.value.constraintSnapshot,
+			commandDisplayReceipt: prepared.value.commandDisplayReceipt,
 			...(launchPlan === undefined ? {} : { launchPlan }),
 			beforeSpawn: async () => {
 				const finalLeaf = await prepared.value.validateFinalLeaf();
@@ -703,6 +704,7 @@ function safeSummary(summary: ManagedProcessSummary): Record<string, unknown> {
 		outputCursor: summary.outputCursor,
 		outputSize: summary.outputSize,
 		capabilities: summary.capabilities,
+		commandDisplay: summary.commandDisplay ?? { authority: "unavailable" },
 		...(summary.terminal === undefined ? {} : { terminal: summary.terminal }),
 	};
 }

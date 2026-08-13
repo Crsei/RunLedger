@@ -8,6 +8,7 @@ import type {
 	ProcessExecutionMode,
 	ProcessState,
 	ProcessTerminalState,
+	AuthorizedCommandDisplayReceipt,
 } from "./types.ts";
 import type { OutputCursor } from "./output.ts";
 
@@ -21,6 +22,7 @@ export interface ProcessProjection {
 	readonly backend: ProcessBackendKind;
 	readonly executionMode: ProcessExecutionMode;
 	readonly constraintSnapshotDigest?: RuntimeDigest;
+	readonly commandDisplayReceipt?: AuthorizedCommandDisplayReceipt;
 	readonly spawnReceiptDigest?: RuntimeDigest;
 	readonly spawnEvidenceRef?: RuntimeContentRef;
 	readonly terminal?: {
@@ -51,6 +53,7 @@ export interface ProcessTransitionInput {
 	readonly spawnReceiptDigest?: RuntimeDigest;
 	readonly spawnEvidenceRef?: RuntimeContentRef;
 	readonly constraintSnapshotDigest?: RuntimeDigest;
+	readonly commandDisplayReceipt?: AuthorizedCommandDisplayReceipt;
 	readonly terminal?: ProcessProjection["terminal"];
 }
 
@@ -115,6 +118,7 @@ export function transitionProcess(state: ProcessProjection, input: ProcessTransi
 			spawnReceiptDigest: input.spawnReceiptDigest ?? state.spawnReceiptDigest,
 			spawnEvidenceRef: input.spawnEvidenceRef ?? state.spawnEvidenceRef,
 			constraintSnapshotDigest: input.constraintSnapshotDigest ?? state.constraintSnapshotDigest,
+			commandDisplayReceipt: input.commandDisplayReceipt ?? state.commandDisplayReceipt,
 			terminal: input.terminal ?? state.terminal,
 		},
 	};
@@ -184,6 +188,7 @@ export function projectProcessEvents(events: readonly ProcessEvent[]): ProcessPr
 		backend: first.backend,
 		executionMode: first.executionMode,
 		...(first.constraintSnapshotDigest === undefined ? {} : { constraintSnapshotDigest: first.constraintSnapshotDigest }),
+		...(first.commandDisplayReceipt === undefined ? {} : { commandDisplayReceipt: first.commandDisplayReceipt }),
 		lastSequence: first.sequence,
 		lastEventHash: first.eventHash,
 	};
@@ -225,6 +230,7 @@ export function projectProcessEvents(events: readonly ProcessEvent[]): ProcessPr
 			spawnReceiptDigest: event.spawnReceiptDigest,
 			spawnEvidenceRef: event.spawnEvidenceRef,
 			constraintSnapshotDigest: event.constraintSnapshotDigest,
+			commandDisplayReceipt: event.commandDisplayReceipt,
 			terminal: event.terminal,
 		});
 		if (!next.ok) return next;
@@ -273,7 +279,7 @@ function isEventTransitionValid(state: ProcessState, input: ProcessTransitionInp
 }
 
 function isEventPayloadValid(event: ProcessEvent): boolean {
-	if (event.managedRequestDigest !== undefined || event.backend !== undefined || event.executionMode !== undefined) return false;
+	if (event.managedRequestDigest !== undefined || event.backend !== undefined || event.executionMode !== undefined || event.commandDisplayReceipt !== undefined) return false;
 	switch (event.type) {
 		case "process.execution_requested":
 			return false;

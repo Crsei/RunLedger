@@ -93,17 +93,14 @@ describe("S7 canonical Timeline information equivalence", () => {
 		const endEvents = projector.project({ kind: "tui-event", event: { type: "tool_execution_end", timestamp: 250, toolCallId: "bash-1", toolName: "bash", result: { content: [], details: { exitCode: 0, durationMs: 1250, background: { summary: { state: "completed" } } }, isError: false }, isError: false } });
 		const update = endEvents.find((event) => event.type === "tool_update");
 		if (update?.type !== "tool_update" || update.presentation.state !== "known") throw new Error("missing shell update");
-		const output = textOf({ ...running, status: "succeeded", presentation: update.presentation });
-		expect(output).toContain("✓ bash");
-		expect(output).toContain("$ (bg) npm test");
-		expect(output).toContain("stdout:");
-		expect(output).toContain("stderr:");
-		expect(output).toContain("out-238");
-		expect(output).toContain("err-239");
-		expect(output.split("\n").map((line) => line.trim())).not.toContain("out-0");
-		expect(output.split("\n").map((line) => line.trim())).not.toContain("err-1");
-		expect(output).toContain("exit 0");
-		expect(output).toContain("1250ms");
+		const blocks = rowToBlocks({ ...running, status: "succeeded", presentation: update.presentation });
+		expect(blocks).toHaveLength(1);
+		const exec = blocks[0];
+		if (exec?.kind !== "exec") throw new Error("missing structured exec block");
+		expect(exec).toMatchObject({ command: "npm test", status: "succeeded", background: true, exitCode: 0, durationMs: 1250 });
+		expect(exec.output.some((chunk) => chunk.channel === "stdout" && chunk.text === "out-238")).toBe(true);
+		expect(exec.output.some((chunk) => chunk.channel === "stderr" && chunk.text === "err-239")).toBe(true);
+		expect(exec.output.some((chunk) => chunk.text === "out-0" || chunk.text === "err-1")).toBe(false);
 	});
 
 	it("projects unified diff additions/deletions and an error without full before/after bodies", () => {
@@ -112,12 +109,18 @@ describe("S7 canonical Timeline information equivalence", () => {
 		const endEvents = projector.project({ kind: "tui-event", event: { type: "tool_execution_end", timestamp: 2, toolCallId: "edit-2", toolName: "edit", result: { content: [], details: { diff: "@@ -1,2 +1,2 @@\n const a = 1;\n-old line\n+new line" }, isError: false }, isError: false } });
 		const update = endEvents.find((event) => event.type === "tool_update");
 		if (update?.type !== "tool_update" || update.presentation.state !== "known") throw new Error("missing diff update");
-		const output = textOf({ ...running, status: "succeeded", presentation: update.presentation });
-		expect(output).toContain("diff src/a.ts (+1 -1)");
-		expect(output).toContain("  const a = 1;");
-		expect(output).toContain("- old line");
-		expect(output).toContain("+ new line");
-		expect(output).not.toContain("old secret body");
-		expect(output).not.toContain("new secret body");
+		const blocks = rowToBlocks({ ...running, status: "succeeded", presentation: update.presentation });
+		const diff = blocks.find((block) => block.kind === "diff");
+		if (diff?.kind !== "diff") throw new Error("missing structured diff block");
+		expect(diff.document.path.text).toBe("src/a.ts");
+		expect(diff.document.addedLines).toEqual({ state: "known", value: 1 });
+		expect(diff.document.removedLines).toEqual({ state: "known", value: 1 });
+		expect(diff.document.hunks[0]?.lines).toEqual([
+			expect.objectContaining({ kind: "context", text: expect.objectContaining({ text: "const a = 1;" }) }),
+			expect.objectContaining({ kind: "delete", text: expect.objectContaining({ text: "old line" }) }),
+			expect.objectContaining({ kind: "add", text: expect.objectContaining({ text: "new line" }) }),
+		]);
+		expect(JSON.stringify(blocks)).not.toContain("old secret body");
+		expect(JSON.stringify(blocks)).not.toContain("new secret body");
 	});
 });

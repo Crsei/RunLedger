@@ -128,4 +128,43 @@ describe("ListSelectionModal(codex /model 展示格式)", () => {
       expect(line.length).toBeLessThanOrEqual(20);
     }
   });
+
+	it("starts on the current value and reports cursor changes for live preview", () => {
+		const previews: string[] = [];
+		const modal = new ListSelectionModal({
+			title: "Select Syntax Theme",
+			items,
+			initialSelectedValue: "openai",
+			onSelectionChange: (item) => previews.push(item.value),
+			selectListTheme: theme,
+			onSelect: () => undefined,
+			onCancel: () => undefined,
+		});
+		expect(plain(modal)).toContain("› 2. openai");
+		modal.handleInput("down");
+		expect(previews).toEqual(["all"]);
+	});
+
+	it("shows disabled load errors but skips them during preview and confirmation", () => {
+		const previews: string[] = [];
+		const selected: string[] = [];
+		const modal = new ListSelectionModal({
+			title: "Select Syntax Theme",
+			items: [
+				{ value: "ansi", name: "ansi", description: "built-in" },
+				{ value: "broken", name: "broken", description: "load error", disabled: true },
+				{ value: "custom", name: "custom", description: "custom" },
+			],
+			selectListTheme: theme,
+			onSelectionChange: (item) => previews.push(item.value),
+			onSelect: (item) => selected.push(item.value),
+			onCancel: () => undefined,
+		});
+		expect(plain(modal)).toContain("broken");
+		expect(plain(modal)).toContain("load error");
+		modal.handleInput("down");
+		expect(previews).toEqual(["custom"]);
+		modal.handleInput("enter");
+		expect(selected).toEqual(["custom"]);
+	});
 });

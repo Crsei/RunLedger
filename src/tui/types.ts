@@ -164,6 +164,10 @@ export interface FooterSnapshotProvider {
    * 证据矩阵，不宣称 OS sandbox。未注入时不显示该段。
    */
   getWorkspaceCapability?(): string | undefined;
+  /** composition 生成的安全 cwd/project label；不得是未经处理的公共绝对路径。 */
+  getWorkspaceDisplayLabel?(): string | undefined;
+  getProjectRootDisplayLabel?(): string | undefined;
+  getGitBranchLabel?(): string | undefined;
   /** 当前 run 的安全计时投影；等待态的 activeDurationMs 已冻结。 */
   getRunTiming?(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined;
   /** 测试时钟接缝；生产缺省 Date.now。 */

@@ -14,6 +14,7 @@ const item: ProcessOverlayItem = {
 	canWrite: true,
 	canResize: true,
 	canStop: true,
+	commandDisplay: { authority: "spawned", label: "npm test", receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } },
 };
 
 describe("R9 process overlay component", () => {
@@ -37,6 +38,7 @@ describe("R9 process overlay component", () => {
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 		expect(component.render(60).join("\n")).toContain("lazy😀");
+		expect(component.render(60).join("\n")).toContain("npm test · spawned");
 		expect(calls).toEqual(["write:x"]);
 		component.handleInput("\x1b");
 		expect(closed).toBe(1);

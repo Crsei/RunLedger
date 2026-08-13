@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import * as processAdapters from "../../../src/tui/process/controller-adapter.ts";
 import { createProcessOverlayController } from "../../../src/tui/process/controller-adapter.ts";
+import { createSessionProcessOverlayClient } from "../../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayHostClient } from "../../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../../src/tui/process/types.ts";
 
@@ -15,6 +16,7 @@ const item: ProcessOverlayItem = {
 	canWrite: true,
 	canResize: true,
 	canStop: true,
+	commandDisplay: { authority: "spawned", label: "npm test", receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } },
 };
 
 describe("R9 process overlay Host facade adapter", () => {
@@ -35,7 +37,7 @@ describe("R9 process overlay Host facade adapter", () => {
 			]).has(operation),
 			querySessionDomain: async (operation: string) => {
 				calls.push(operation);
-				if (operation === "session.process.list") return { ok: true, status: "ok", operation, domainRevision: 4, value: { items: [item] } };
+				if (operation === "session.process.list") return { ok: true, status: "ok", operation, domainRevision: 4, value: { items: [{ ...item, command: "untrusted tool args" }] } };
 				return {
 					ok: true, status: "ok", operation, domainRevision: 4,
 					value: { text: "session output", startCursor: { sequence: 0, byteOffset: 0 }, endCursor: { sequence: 1, byteOffset: 14 }, nextCursor: { sequence: 1, byteOffset: 14 }, truncated: false, head: { sequence: 1, byteOffset: 14 } },
@@ -55,6 +57,23 @@ describe("R9 process overlay Host facade adapter", () => {
 		expect(calls).toEqual(["session.process.list", "session.process.output", "session.process.stdin"]);
 
 		expect(factory({ ...controller, supports: () => false })).toBeUndefined();
+	});
+
+	it("maps legacy or malformed command metadata to unavailable without reading raw command", async () => {
+		const controller = {
+			supports: (operation: string) => operation === "session.process.list" || operation === "session.process.output",
+			querySessionDomain: async (operation: string) => ({
+				ok: true, status: "ok", operation, domainRevision: 0,
+				value: operation === "session.process.list"
+					? { items: [{ ...item, commandDisplay: undefined, command: "must-not-display" }] }
+					: { text: "", startCursor: item.outputCursor, endCursor: item.outputCursor, nextCursor: item.outputCursor, truncated: false, head: item.outputCursor },
+			}),
+			commandSessionDomain: async () => ({ ok: false, code: "unsupported" }),
+		};
+		const client = createSessionProcessOverlayClient(controller);
+		expect(client).toBeDefined();
+		if (client === undefined) return;
+		await expect(client.listProcesses()).resolves.toEqual([{ ...item, commandDisplay: { authority: "unavailable" } }]);
 	});
 	it("refreshes safe list and reads output lazily by cursor", async () => {
 		const calls: string[] = [];

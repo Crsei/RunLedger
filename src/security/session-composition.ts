@@ -35,6 +35,8 @@ import {
 	type WorkspaceId,
 } from "../runtime/protocol/ids.ts";
 import type { OwnerFence } from "../runtime/session-owner/types.ts";
+import { createAuthorizedCommandDisplayReceipt } from "../runtime/process/command-display.ts";
+import type { AuthorizedCommandDisplayReceipt } from "../runtime/process/types.ts";
 import type { ToolAuthorizationPolicy } from "../runtime/types.ts";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { loadSecurityConfigLayers, type SecurityConfigSourcePort } from "./config/loader.ts";
@@ -134,6 +136,7 @@ export interface PreparedSessionManagedProcessSecurity {
 	readonly constraintInput: ExecutionConstraintInput;
 	readonly constraintSnapshot: ExecutionConstraintSnapshot;
 	readonly requestDigest: RuntimeDigest;
+	readonly commandDisplayReceipt: AuthorizedCommandDisplayReceipt;
 	readonly sandboxPlan?: SandboxLaunchPlan;
 	readonly launchPlan?: SandboxLaunchPlan;
 	readonly toolchainSnapshotDigest?: RuntimeDigest;
@@ -405,6 +408,11 @@ function createManagedProcessSecurity(input: {
 						constraintInput,
 						constraintSnapshot: constraints.snapshot,
 						requestDigest,
+						commandDisplayReceipt: createAuthorizedCommandDisplayReceipt({
+							command: request.command,
+							requestDigest,
+							constraintSnapshotDigest: constraints.snapshot.snapshotDigest,
+						}),
 						...(plan === undefined ? {} : { launchPlan: plan }),
 						...(restrictive && plan !== undefined ? { sandboxPlan: plan } : {}),
 						...(input.options.toolchain === undefined ? {} : { toolchainSnapshotDigest: input.options.toolchain.snapshotDigest }),

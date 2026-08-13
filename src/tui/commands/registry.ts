@@ -34,6 +34,7 @@ export type SlashCommandActionType =
   | "config.provider"
   | "config.model"
   | "config.thinking"
+  | "config.theme"
   | "auth.login"
   | "auth.logout"
   | "recovery.open"
@@ -184,7 +185,12 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       availableDuringTask: false,
       unavailableDuringTaskMessage: "Configuration commands are available when the current turn is idle.",
     }),
-    command("recovery", "Inspect or resolve crash recovery", 12, {
+    command("theme", "Switch syntax theme", 12, {
+      actionType: "config.theme",
+      category: "config",
+      policy: READONLY_POLICY,
+    }),
+    command("recovery", "Inspect or resolve crash recovery", 13, {
       actionType: "recovery.open",
       category: "recovery",
       policy: READONLY_POLICY,
@@ -192,8 +198,8 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       usage: "[status|assess|verify <attemptId>|resume <reason>]",
       argumentSchema: [schema("action", "status|assess|verify <attemptId>|resume <reason>", false)],
     }),
-    command("processes", "List managed processes", 13, { actionType: "process.list", category: "process", policy: READONLY_POLICY }),
-    command("terminal", "Open managed terminal", 14, {
+    command("processes", "List managed processes", 14, { actionType: "process.list", category: "process", policy: READONLY_POLICY }),
+    command("terminal", "Open managed terminal", 15, {
       actionType: "process.terminal",
       category: "process",
       policy: READONLY_POLICY,
@@ -201,34 +207,34 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       usage: "<executionId>",
       argumentSchema: [schema("executionId", "Managed process execution id", true)],
     }),
-    command("quit", "Exit safely", 15, { actionType: "ui.quit", category: "ui", aliases: ["exit"] }),
-    command("mcp", "List connected MCP servers", 16, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY }),
-    command("plugins", "List discovered plugins", 17, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY }),
-    command("skills", "List discovered skills", 18, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY }),
-    command("skillsproviders", "List skill discovery providers", 19, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY }),
-    command("hooks", "List configured hooks", 20, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY }),
-    command("plan", "Inspect Plan Mode state", 20, {
+	    command("quit", "Exit safely", 16, { actionType: "ui.quit", category: "ui", aliases: ["exit"] }),
+	    command("mcp", "List connected MCP servers", 17, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY }),
+	    command("plugins", "List discovered plugins", 18, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY }),
+	    command("skills", "List discovered skills", 19, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY }),
+	    command("skillsproviders", "List skill discovery providers", 20, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY }),
+	    command("hooks", "List configured hooks", 21, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY }),
+	    command("plan", "Inspect Plan Mode state", 22, {
       actionType: "plan.inspect",
       category: "plan",
       policy: READONLY_POLICY,
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/plan is available when the current turn is idle.",
     }),
-    command("compact", "List compaction checkpoints", 21, {
+	    command("compact", "List compaction checkpoints", 23, {
       actionType: "compaction.list",
       category: "domain",
       policy: READONLY_POLICY,
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/compact is available when the current turn is idle.",
     }),
-    command("memory", "Inspect memory store", 22, {
+	    command("memory", "Inspect memory store", 24, {
       actionType: "memory.inspect",
       category: "domain",
       policy: READONLY_POLICY,
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/memory is available when the current turn is idle.",
     }),
-    command("remember", "Propose a memory record", 23, {
+	    command("remember", "Propose a memory record", 25, {
       actionType: "memory.propose",
       category: "domain",
       policy: IDLE_ONLY_POLICY,
@@ -238,8 +244,8 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       usage: "<text>",
       argumentSchema: [schema("text", "Memory content to propose", true)],
     }),
-    command("prompt", "Pick prompt template", 24, { actionType: "prompt.select", category: "prompts", policy: READONLY_POLICY }),
-    command("scrollbar", "Toggle the conversation scrollbar", 25, {
+	    command("prompt", "Pick prompt template", 26, { actionType: "prompt.select", category: "prompts", policy: READONLY_POLICY }),
+	    command("scrollbar", "Toggle the conversation scrollbar", 27, {
       actionType: "ui.scrollbar.toggle",
       category: "ui",
       policy: READONLY_POLICY,

@@ -184,7 +184,9 @@ describe.skipIf(IS_WINDOWS)("production Host managed process port", () => {
 			});
 			expect(created.ok).toBe(true);
 			if (created.ok !== true) return;
-			expect(JSON.stringify(created)).not.toMatch(/(?:pid|outputPath|command|cwd)/iu);
+			const serialized = JSON.stringify(created);
+			expect(serialized).not.toMatch(/"(?:pid|outputPath|command|cwd)"\s*:/iu);
+			expect(created).toMatchObject({ summary: { commandDisplay: { authority: "unavailable" } } });
 			const executionId = String((created.handle as { executionId: string }).executionId);
 			let output = await first.output(sessionId, executionId, { sequence: 0, byteOffset: 0 }, 1024);
 			for (let attempt = 0; attempt < 100 && !String(output.page ?? "").includes("managed✅"); attempt += 1) {
