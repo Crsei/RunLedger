@@ -61,6 +61,9 @@ export class Footer implements Component {
       const workspaceDisplayLabel = this.props.provider.getWorkspaceDisplayLabel?.();
 	  const projectRootDisplayLabel = this.props.provider.getProjectRootDisplayLabel?.();
 	  const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
+      const planProgress = this.props.provider.getPlanProgress?.();
+      const contextUsage = this.props.provider.getContextUsage?.();
+      const threadLabel = this.props.provider.getThreadLabel?.();
       const timing = this.props.provider.getRunTiming?.();
       const now = this.props.provider.now?.() ?? Date.now();
       const activeDurationMs = timing === undefined
@@ -80,9 +83,19 @@ export class Footer implements Component {
 		...(workspaceDisplayLabel ? [{ accent: "path" as const, text: workspaceDisplayLabel }] : []),
 		...(projectRootDisplayLabel && projectRootDisplayLabel !== workspaceDisplayLabel ? [{ accent: "path" as const, text: projectRootDisplayLabel }] : []),
 		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
-		...(sessionId.length > 0 ? [{ accent: "metadata" as const, text: sessionId }] : []),
+		...(sessionId.length > 0 && !threadLabel ? [{ accent: "metadata" as const, text: sessionId }] : []),
 		{ accent: "model", text: `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}` },
 		...(workspaceCapability ? [{ accent: "mode" as const, text: workspaceCapability }] : []),
+		...(planProgress !== undefined && validProgress(planProgress)
+			? [{ accent: "progress" as const, text: `plan (${planProgress.completed}/${planProgress.total})` }]
+			: []),
+		...(knownNonNegative(contextUsage?.totalTokens)
+			? [{ accent: "usage" as const, text: `usage ${formatTokenCount(contextUsage.totalTokens)}` }]
+			: []),
+		...(knownNonNegative(contextUsage?.contextWindow)
+			? [{ accent: "limit" as const, text: `limit ${formatTokenCount(contextUsage.contextWindow)}` }]
+			: []),
+		...(threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
 	  ];
 	  return segments
 		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
@@ -102,11 +115,29 @@ export class Footer implements Component {
 
 }
 
+export function formatTokenCount(value: number): string {
+	if (value < 1_000) return String(value);
+	if (value < 1_000_000) return `${(value / 1_000).toFixed(1)}k`;
+	return `${(value / 1_000_000).toFixed(1)}m`;
+}
+
+function validProgress(progress: { readonly completed: number; readonly total: number }): boolean {
+	return Number.isSafeInteger(progress.completed)
+		&& Number.isSafeInteger(progress.total)
+		&& progress.total > 0
+		&& progress.completed >= 0
+		&& progress.completed <= progress.total;
+}
+
+function knownNonNegative(value: number | undefined): value is number {
+	return value !== undefined && Number.isFinite(value) && value >= 0;
+}
+
 const OPTIONAL_DROP_ORDER: readonly StatusLineSegment["accent"][] = [
-	"mode", "usage", "limit", "thread", "progress", "branch",
+	"mode", "usage", "limit", "progress", "branch",
 ];
 
-/** 保留 state/session/path/model，窄屏先移除能力等可选段，再按显示列截断最长核心段。 */
+/** 保留 state/session-or-thread/path/model，窄屏先移除能力等可选段，再按显示列截断最长核心段。 */
 export function fitStatusLineSegments(input: readonly StatusLineSegment[], width: number): StatusLineSegment[] {
 	const safeWidth = Math.max(0, Math.floor(width));
 	let segments = input

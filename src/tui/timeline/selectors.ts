@@ -6,6 +6,7 @@
  */
 
 import type { PresentationBlock } from "../presentation.ts";
+import type { SafeToolUsageView } from "../presentation/tools/types.ts";
 import type { TimelineRow, TimelineState } from "./types.ts";
 import { diffLineNumberWidth } from "../opentui/block-layout.ts";
 
@@ -17,13 +18,29 @@ export interface TimelineToBlocksOptions {
 export function timelineToBlocks(state: TimelineState, options: TimelineToBlocksOptions = {}): PresentationBlock[] {
 	const blocks: PresentationBlock[] = [];
 	const includeActive = options.includeActive ?? true;
+	let rowsSinceBoundary: TimelineRow[] = [];
 	for (const row of state.committedRows) {
+		if (row.kind === "run-boundary") {
+			if (hasWorkActivity(rowsSinceBoundary)) {
+				for (const block of rowToBlocks(row)) {
+					blocks.push(block.kind === "separator"
+						? { ...block, metrics: runtimeMetrics(rowsSinceBoundary) }
+						: block);
+				}
+			}
+			rowsSinceBoundary = [];
+			continue;
+		}
+		rowsSinceBoundary.push(row);
 		blocks.push(...rowToBlocks(row));
 	}
 	if (includeActive) {
 		for (const id of state.activeOrder) {
 			const row = state.activeRowsByCorrelationId[id];
-			if (row !== undefined) blocks.push(...rowToBlocks(row));
+			if (row !== undefined) {
+				rowsSinceBoundary.push(row);
+				blocks.push(...rowToBlocks(row));
+			}
 		}
 	}
 	return blocks;
@@ -90,7 +107,7 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 		}
 		case "notice": {
 			const prefix = row.severity === "error" ? "error: " : row.severity === "warning" ? "warning: " : "note: ";
-			return [{ id: baseId, kind: "text", content: `${prefix}${row.message.text}` }];
+			return [{ id: baseId, kind: "notice", severity: row.severity, message: `${prefix}${row.message.text}` }];
 		}
 		case "goal":
 			return [{ id: baseId, kind: "text", content: `goal ${row.label.text}: ${row.phase.text}` }];
@@ -101,6 +118,34 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 		case "run-boundary":
 			return [{ id: baseId, kind: "separator", label: `${row.stopReason} · ${row.activeDurationMs === undefined ? "time unavailable" : `Worked for ${formatActiveDuration(row.activeDurationMs)}`}` }];
 	}
+}
+
+function hasWorkActivity(rows: readonly TimelineRow[]): boolean {
+	return rows.some((row) => row.kind === "tool");
+}
+
+function runtimeMetrics(rows: readonly TimelineRow[]): readonly string[] {
+	const toolCount = rows.filter((row) => row.kind === "tool").length;
+	const totalTokens = rows.reduce((total, row) => {
+		if (row.kind !== "assistant" || row.usage === undefined) return total;
+		const input = quantityValue(row.usage.input);
+		const output = quantityValue(row.usage.output);
+		return input === undefined || output === undefined ? total : total + input + output;
+	}, 0);
+	const metrics: string[] = [];
+	if (toolCount > 0) metrics.push(`${toolCount} tools`);
+	if (totalTokens > 0) metrics.push(`${formatCompactCount(totalTokens)} tokens`);
+	return metrics;
+}
+
+function quantityValue(quantity: SafeToolUsageView["input"]): number | undefined {
+	return quantity.state === "exact" || quantity.state === "estimated" ? quantity.value : undefined;
+}
+
+function formatCompactCount(value: number): string {
+	if (value < 1_000) return String(value);
+	if (value < 1_000_000) return `${(value / 1_000).toFixed(1)}k`;
+	return `${(value / 1_000_000).toFixed(1)}m`;
 }
 
 function diffDocumentLineNumberWidth(document: import("../presentation/tools/types.ts").SafeDiffDocument): number {

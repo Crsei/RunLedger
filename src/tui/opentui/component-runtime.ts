@@ -32,6 +32,8 @@ import { ExecRenderable, plainExecText } from "./exec-renderable.ts";
 import { stripShellLoginWrapper } from "./exec-renderable.ts";
 import { DiffRenderable, diffPlainText } from "./diff-renderable.ts";
 import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-renderable.ts";
+import { NoticeRenderable, noticePlainText } from "./notice-renderable.ts";
+import { formatSeparatorLabel } from "./block-layout.ts";
 import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
@@ -104,7 +106,7 @@ export interface OpenTuiComponentRuntime {
   destroy(): void;
 }
 
-type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable | PlanUpdateRenderable;
+type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable | PlanUpdateRenderable | NoticeRenderable;
 type OverlayRenderable = TextRenderable | InputRenderable | SelectRenderable | ExecRenderable;
 interface KeyedRenderable<T extends BodyRenderable | OverlayRenderable> {
   readonly kind: string;
@@ -156,12 +158,13 @@ function blockKey(block: PresentationBlock, index: number): string {
 function blockText(block: PresentationBlock): string {
   if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)].join("\n");
   if (block.kind === "input") return `${block.title}\n${block.message}\n${block.value}`;
-  if (block.kind === "separator") return block.content ?? block.label;
+  if (block.kind === "separator") return block.content ?? formatSeparatorLabel(block.label, block.metrics);
   if (block.kind === "command") return `$ ${stripCommandForPlaintext(block.command)}`;
   if (block.kind === "exec") return plainExecText(block);
   if (block.kind === "diff") return `${diffPlainText(block)}\u0000syntax=${block.syntaxHighlight !== false}`;
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
+  if (block.kind === "notice") return noticePlainText(block);
   return block.content;
 }
 
@@ -184,7 +187,7 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     : block.kind === "input"
     ? block.title.length + block.message.length + block.value.length
     : block.kind === "separator"
-    ? (block.content ?? block.label).length
+    ? (block.content ?? formatSeparatorLabel(block.label, block.metrics)).length
     : block.kind === "command"
     ? block.command.length + 2
     : block.kind === "exec"
@@ -195,6 +198,8 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     ? block.segments.reduce((total, segment) => total + segment.text.length, 0)
     : block.kind === "plan-update"
     ? planUpdatePlainText(block).length
+    : block.kind === "notice"
+    ? noticePlainText(block).length
     : block.content.length;
 }
 
@@ -517,6 +522,15 @@ export function createOpenTuiComponentRuntimeFromRenderer(
               flexShrink: 0,
               block,
             })
+            : block.kind === "notice"
+            ? new NoticeRenderable(renderer, {
+              id: renderableId("runledger-block", key),
+              width: "100%",
+              flexShrink: 0,
+              block,
+              highlightService: syntaxHighlightService,
+              themeController: syntaxThemeController,
+            })
             : new TextRenderable(renderer, {
               id: renderableId("runledger-block", key),
               width: "100%",
@@ -559,6 +573,12 @@ export function createOpenTuiComponentRuntimeFromRenderer(
             current.contentKey = contentKey;
           }
         } else if (block.kind === "plan-update" && current.renderable instanceof PlanUpdateRenderable) {
+          const contentKey = blockText(block);
+          if (current.contentKey !== contentKey) {
+            current.renderable.updateBlock(block);
+            current.contentKey = contentKey;
+          }
+        } else if (block.kind === "notice" && current.renderable instanceof NoticeRenderable) {
           const contentKey = blockText(block);
           if (current.contentKey !== contentKey) {
             current.renderable.updateBlock(block);

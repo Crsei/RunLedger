@@ -27,6 +27,9 @@ export const STATUS_DETAILS_MAX_LINES = 3;
 export const NOTICE_WARN_PREFIX = "⚠ ";
 export const NOTICE_CONTINUATION_INDENT = "  ";
 
+/** 分隔行的运行时指标使用 DIM bullet 连接。 */
+export const SEPARATOR_METRIC_SEPARATOR = " • ";
+
 /** Exec 中段截断提示的括号部分。 */
 export const EXEC_TRUNCATION_HINT = "(Ctrl+T for transcript)";
 
@@ -50,6 +53,11 @@ export function formatElapsedCompact(seconds: number): string {
 
 export function formatExecTruncationHint(omittedLines: number): string {
 	return `… +${Math.max(0, Math.floor(finiteOrZero(omittedLines)))} lines ${EXEC_TRUNCATION_HINT}`;
+}
+
+export function formatSeparatorLabel(label: string, metrics: readonly string[] = []): string {
+	const safeMetrics = metrics.filter((metric) => metric.trim().length > 0);
+	return safeMetrics.length === 0 ? label : `${label}${SEPARATOR_METRIC_SEPARATOR}${safeMetrics.join(SEPARATOR_METRIC_SEPARATOR)}`;
 }
 
 function finiteOrZero(value: number): number {

@@ -8,6 +8,8 @@ import {
 } from "./opentui/component-runtime.ts";
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
 import { planUpdatePlainText } from "./opentui/plan-update-renderable.ts";
+import { noticePlainText } from "./opentui/notice-renderable.ts";
+import { formatSeparatorLabel } from "./opentui/block-layout.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock } from "./presentation.ts";
 import type { TuiAction } from "./application/action.ts";
@@ -615,7 +617,7 @@ export class TUI extends Container {
 function blockTextForTerminal(block: PresentationBlock): string {
   if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)].join("\n");
   if (block.kind === "input") return `${block.title}\n${block.message}\n${block.value}`;
-  if (block.kind === "separator") return block.content ?? block.label;
+  if (block.kind === "separator") return block.content ?? formatSeparatorLabel(block.label, block.metrics);
   if (block.kind === "command") return `$ ${block.command}`;
   if (block.kind === "exec") return [`$ ${block.command}`, ...block.output.map((chunk) => chunk.text)].join("\n");
   if (block.kind === "diff") return [
@@ -624,6 +626,7 @@ function blockTextForTerminal(block: PresentationBlock): string {
   ].join("\n");
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
+  if (block.kind === "notice") return noticePlainText(block);
   return block.content;
 }
 

@@ -15,6 +15,16 @@ export type PlanUpdateBlock = {
 	steps: readonly PlanStepView[];
 };
 
+export type NoticeSeverity = "info" | "warning" | "error";
+
+export type NoticeBlock = {
+	id?: string;
+	kind: "notice";
+	severity: NoticeSeverity;
+	/** 已保留既有 severity label 的安全正文，例如 "warning: host is reconnecting"。 */
+	message: string;
+};
+
 export type PresentationBlock =
   | { id?: string; kind: "text"; content: string }
   | { id?: string; kind: "markdown"; content: string; streaming: boolean }
@@ -45,13 +55,14 @@ export type PresentationBlock =
     /** 允许按 hunk 调用 23 的语法高亮服务。 */
     syntaxHighlight?: boolean;
   }
-  | PlanUpdateBlock
+	| PlanUpdateBlock
+	| NoticeBlock
   | {
     id?: string;
     kind: "status-line";
     segments: readonly import("./highlight/status-style.ts").StatusLineSegment[];
   }
-  | { id?: string; kind: "separator"; label: string; content?: string }
+  | { id?: string; kind: "separator"; label: string; content?: string; metrics?: readonly string[] }
   | {
     id?: string;
     kind: "select";

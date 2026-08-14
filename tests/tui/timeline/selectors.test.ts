@@ -140,7 +140,12 @@ describe("B2 timeline selectors", () => {
 
 	it("projects notices with severity prefix", () => {
 		const blocks = rowToBlocks(row({ kind: "notice", severity: "error", message: { text: "boom", truncated: false, byteLength: 4 } }));
-		expect(blocks[0]!.content).toBe("error: boom");
+		expect(blocks).toEqual([{
+			id: "timeline-row-1",
+			kind: "notice",
+			severity: "error",
+			message: "error: boom",
+		}]);
 	});
 
 	it("is a pure conversion (no state mutation across calls)", () => {

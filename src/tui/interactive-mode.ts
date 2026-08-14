@@ -1452,6 +1452,46 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.gitBranchLabel;
   }
 
+  /** FooterSnapshotProvider：只从已完成的 task snapshot 投影计划进度。 */
+  getPlanProgress(): { readonly completed: number; readonly total: number } | undefined {
+    const workflow = this.store.getState().taskGoalWorkflow;
+    if (workflow.state !== "ready") return undefined;
+    const tasks = workflow.value.tasks.filter((task) => task.status !== "deleted");
+    if (tasks.length === 0) return undefined;
+    return {
+      completed: tasks.filter((task) => task.status === "completed").length,
+      total: tasks.length,
+    };
+  }
+
+  /** FooterSnapshotProvider：runtime snapshot 不可用时不将 token 强制归零。 */
+  getContextUsage(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined {
+    const workflow = this.store.getState().runtimeSnapshotWorkflow;
+    const snapshot = workflow.state === "ready"
+      ? workflow.value
+      : workflow.state === "loading" || workflow.state === "error"
+        ? workflow.previous
+        : undefined;
+    if (snapshot?.context.state !== "known") return undefined;
+    const totalTokens = snapshot.context.value.totalTokens.state === "known"
+      ? snapshot.context.value.totalTokens.value
+      : undefined;
+    const contextWindow = snapshot.context.value.contextWindow.state === "known"
+      ? snapshot.context.value.contextWindow.value
+      : undefined;
+    if (totalTokens === undefined && contextWindow === undefined) return undefined;
+    return {
+      ...(totalTokens === undefined ? {} : { totalTokens }),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+    };
+  }
+
+  /** 当前 canonical session id 是唯一可确认的 thread label。 */
+  getThreadLabel(): string | undefined {
+    const sessionId = this.getSessionId();
+    return sessionId.length > 0 ? sessionId : undefined;
+  }
+
   /** Editor.onSubmit 回调;把文本作为 user prompt 投递给 Agent,同时落 UI。 */
   private handleSubmit(text: string): void {
     if (text.length === 0) return;

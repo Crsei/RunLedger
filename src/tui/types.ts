@@ -168,6 +168,12 @@ export interface FooterSnapshotProvider {
   getWorkspaceDisplayLabel?(): string | undefined;
   getProjectRootDisplayLabel?(): string | undefined;
   getGitBranchLabel?(): string | undefined;
+  /** 已知 task/plan 完成数；缺失时不显示 progress。 */
+  getPlanProgress?(): { readonly completed: number; readonly total: number } | undefined;
+  /** context window 的安全 token 快照；每个字段独立 capability-gated。 */
+  getContextUsage?(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined;
+  /** 可选 thread 展示标签；未提供时不伪造。 */
+  getThreadLabel?(): string | undefined;
   /** 当前 run 的安全计时投影；等待态的 activeDurationMs 已冻结。 */
   getRunTiming?(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined;
   /** 测试时钟接缝；生产缺省 Date.now。 */

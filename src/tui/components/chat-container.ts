@@ -20,6 +20,7 @@ import type { Component } from "../index.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import { RenderCache } from "../opentui/render-cache.ts";
 import { fitToWidth } from "./render-width.ts";
+import { formatSeparatorLabel } from "../opentui/block-layout.ts";
 
 export class ChatContainer implements Component {
   private readonly children: Array<{ key: string; component: Component }> = [];
@@ -122,8 +123,8 @@ export class ChatContainer implements Component {
       // Timeline blocks 是交给 OpenTUI Text/Markdown renderable 的结构化正文；
       // 由原生布局按容器宽度换行，不能在这里把整块内容当成单行截断。
       const blocks = this.timelineBlocks.map((block): PresentationBlock => block.kind === "separator"
-        ? { ...block, content: separatorLine(block.label, width) }
-        : { ...block });
+		? { ...block, content: separatorLine(formatSeparatorLabel(block.label, block.metrics), width) }
+		: { ...block });
       this.presentCache = { generation: this.timelineGeneration, width, blocks };
       return blocks;
     }

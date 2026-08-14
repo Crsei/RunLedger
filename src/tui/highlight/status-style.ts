@@ -41,9 +41,16 @@ export function statusLineToStyledText(segments: readonly StatusLineSegment[], r
 	for (const [index, segment] of segments.entries()) {
 		if (index > 0) chunks.push({ __isChunk: true, text: " · ", attributes: TextAttributes.DIM });
 		const color = softenStatusColor(resolve(scopes[segment.accent]) ?? { kind: "indexed", index: fallbackIndex[segment.accent] });
-		chunks.push({ __isChunk: true, text: segment.text, fg: colorToRgba(color) });
+		chunks.push({ __isChunk: true, text: segment.text, fg: highlightColorToRgba(color) });
 	}
 	return new StyledText(chunks);
+}
+
+/** Shared OpenTUI color projection for syntax-derived semantic styles. */
+export function highlightColorToRgba(color: HighlightColor): RGBA {
+	if (color.kind === "default") return RGBA.defaultForeground();
+	if (color.kind === "indexed") return RGBA.fromIndex(color.index);
+	return RGBA.fromInts(color.r, color.g, color.b);
 }
 
 export function softenStatusColor(color: HighlightColor): HighlightColor {
@@ -59,10 +66,4 @@ export function softenStatusColor(color: HighlightColor): HighlightColor {
 
 function softenChannel(channel: number, luma: number): number {
 	return Math.floor((channel * 85 + luma * 15 + 50) / 100);
-}
-
-function colorToRgba(color: HighlightColor): RGBA {
-	if (color.kind === "default") return RGBA.defaultForeground();
-	if (color.kind === "indexed") return RGBA.fromIndex(color.index);
-	return RGBA.fromInts(color.r, color.g, color.b);
 }
