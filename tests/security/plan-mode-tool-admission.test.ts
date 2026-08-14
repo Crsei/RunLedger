@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import type { CapabilityClaim } from "../../src/runtime/protocol/capability.ts";
-import type { AgentContext, AgentToolCall, AssistantAgentMessage, ToolAuthorizationRequest } from "../../src/runtime/types.ts";
+import type { AgentContext, AgentTool, AgentToolCall, AssistantAgentMessage, ToolAuthorizationRequest } from "../../src/runtime/types.ts";
 import type { PlanModeState } from "../../src/runtime/modes/plan/types.ts";
 import { echoTool } from "../../src/runtime/tools/echo.ts";
 import { createStdlibTools } from "../../src/runtime/tools/index.ts";
 import { createRequestPermissionsTool } from "../../src/security/tools/request-permissions.ts";
 import { HostGovernedToolAuthorizationPolicy } from "../../src/security/integration/runtime-tool-authorization.ts";
+import { createLspTool } from "../../src/lsp/tool.ts";
 
 const sessionId = createRuntimeId("session", "plan-tool-admission");
 const activeState: PlanModeState = {
@@ -33,7 +34,7 @@ function claim(name: CapabilityClaim["name"], resourceKind: CapabilityClaim["res
 	return { name, resourceKind, resourceDigest: runtimeDigest(name), constraintsDigest: runtimeDigest(resourceKind), scope: "invocation" };
 }
 
-function request(tool: typeof echoTool): ToolAuthorizationRequest {
+function request(tool: AgentTool): ToolAuthorizationRequest {
 	return {
 		assistantMessage: { role: "assistant", content: [], stopReason: "toolUse" } as AssistantAgentMessage,
 		toolCall: { type: "toolCall", id: "tool-call-plan", name: tool.name, arguments: {} } as AgentToolCall,
@@ -50,6 +51,12 @@ describe("Host tool admission in Plan Mode", () => {
 		const requestPermissions = createRequestPermissionsTool();
 		expect(policy.authorize(request(skill))).toEqual({ decision: "allow" });
 		expect(policy.authorize(request(requestPermissions))).toEqual({ decision: "allow" });
+	});
+
+	it("admits the governed lsp tool outside Plan Mode", () => {
+		const policy = new HostGovernedToolAuthorizationPolicy();
+		const lsp = createLspTool("/tmp/runledger-plan-policy", { getConfig: () => ({ servers: {} }) });
+		expect(policy.authorize(request(lsp))).toEqual({ decision: "allow" });
 	});
 
 	it("preserves a restrictive Security decision when Plan Mode is inactive", () => {

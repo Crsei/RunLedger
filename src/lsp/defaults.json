@@ -1,0 +1,149 @@
+{
+	"rust-analyzer": {
+		"command": "rust-analyzer",
+		"args": [],
+		"fileTypes": [".rs"],
+		"rootMarkers": ["Cargo.toml", "rust-analyzer.toml"],
+		"initOptions": {},
+		"settings": { "rust-analyzer": { "checkOnSave": false } },
+		"capabilities": { "flycheck": true, "ssr": true, "expandMacro": true, "runnables": true, "relatedTests": true }
+	},
+	"clangd": {
+		"command": "clangd",
+		"args": ["--background-index", "--clang-tidy", "--header-insertion=iwyu"],
+		"fileTypes": [".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", ".m", ".mm"],
+		"rootMarkers": ["compile_commands.json", "CMakeLists.txt", ".clangd", ".clang-format", "Makefile"]
+	},
+	"gopls": {
+		"command": "gopls",
+		"args": ["serve"],
+		"fileTypes": [".go", ".mod", ".sum"],
+		"rootMarkers": ["go.mod", "go.work", "go.sum"],
+		"settings": { "gopls": { "analyses": { "unusedparams": true, "shadow": true }, "staticcheck": true, "gofumpt": true } }
+	},
+	"typescript-language-server": {
+		"command": "typescript-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+		"rootMarkers": ["package.json", "tsconfig.json", "jsconfig.json"],
+		"initOptions": {
+			"hostInfo": "runledger-coding-agent",
+			"preferences": {
+				"includeInlayParameterNameHints": "all",
+				"includeInlayVariableTypeHints": true,
+				"includeInlayFunctionParameterTypeHints": true
+			}
+		}
+	},
+	"biome": {
+		"command": "biome",
+		"args": ["lsp-proxy"],
+		"fileTypes": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json", ".jsonc"],
+		"rootMarkers": ["biome.json", "biome.jsonc"],
+		"isLinter": true
+	},
+	"eslint": {
+		"command": "vscode-eslint-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte"],
+		"rootMarkers": [".eslintrc", ".eslintrc.js", ".eslintrc.json", ".eslintrc.yml", "eslint.config.js", "eslint.config.mjs"],
+		"isLinter": true,
+		"settings": { "validate": "on", "run": "onType" }
+	},
+	"denols": {
+		"command": "deno",
+		"args": ["lsp"],
+		"fileTypes": [".ts", ".tsx", ".js", ".jsx"],
+		"rootMarkers": ["deno.json", "deno.jsonc", "deno.lock"],
+		"initOptions": { "enable": true, "lint": true, "unstable": true }
+	},
+	"vscode-html-language-server": {
+		"command": "vscode-html-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".html", ".htm"],
+		"rootMarkers": ["package.json", ".git"],
+		"initOptions": { "provideFormatter": true }
+	},
+	"vscode-css-language-server": {
+		"command": "vscode-css-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".css", ".scss", ".sass", ".less"],
+		"rootMarkers": ["package.json", ".git"],
+		"initOptions": { "provideFormatter": true }
+	},
+	"vscode-json-language-server": {
+		"command": "vscode-json-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".json", ".jsonc"],
+		"rootMarkers": ["package.json", ".git"],
+		"initOptions": { "provideFormatter": true }
+	},
+	"tailwindcss": {
+		"command": "tailwindcss-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".html", ".css", ".scss", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte"],
+		"rootMarkers": ["tailwind.config.js", "tailwind.config.ts", "tailwind.config.mjs", "tailwind.config.cjs"]
+	},
+	"svelte": {
+		"command": "svelteserver",
+		"args": ["--stdio"],
+		"fileTypes": [".svelte"],
+		"rootMarkers": ["svelte.config.js", "svelte.config.mjs", "package.json"]
+	},
+	"vue-language-server": {
+		"command": "vue-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".vue"],
+		"rootMarkers": ["vue.config.js", "nuxt.config.js", "nuxt.config.ts", "package.json"]
+	},
+	"astro": {
+		"command": "astro-ls",
+		"args": ["--stdio"],
+		"fileTypes": [".astro"],
+		"rootMarkers": ["astro.config.mjs", "astro.config.js", "astro.config.ts"]
+	},
+	"pyright": {
+		"command": "pyright-langserver",
+		"args": ["--stdio"],
+		"fileTypes": [".py", ".pyi"],
+		"rootMarkers": ["pyproject.toml", "pyrightconfig.json", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"],
+		"settings": { "python": { "analysis": { "autoSearchPaths": true, "diagnosticMode": "openFilesOnly", "useLibraryCodeForTypes": true } } }
+	},
+	"pylsp": {
+		"command": "pylsp",
+		"args": [],
+		"fileTypes": [".py"],
+		"rootMarkers": ["pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "Pipfile"]
+	},
+	"ruff": {
+		"command": "ruff",
+		"args": ["server"],
+		"fileTypes": [".py", ".pyi"],
+		"rootMarkers": ["pyproject.toml", "ruff.toml", ".ruff.toml"],
+		"isLinter": true
+	},
+	"bashls": {
+		"command": "bash-language-server",
+		"args": ["start"],
+		"fileTypes": [".sh", ".bash", ".zsh"],
+		"rootMarkers": [".git"],
+		"settings": { "bashIde": { "globPattern": "*@(.sh|.inc|.bash|.command)" } }
+	},
+	"yamlls": {
+		"command": "yaml-language-server",
+		"args": ["--stdio"],
+		"fileTypes": [".yaml", ".yml"],
+		"rootMarkers": [".git"],
+		"settings": {
+			"yaml": { "validate": true, "format": { "enable": true }, "hover": true, "completion": true },
+			"redhat": { "telemetry": { "enabled": false } }
+		}
+	},
+	"marksman": {
+		"command": "marksman",
+		"args": ["server"],
+		"fileTypes": [".md", ".markdown"],
+		"rootMarkers": [".marksman.toml", ".git"],
+		"warmupTimeoutMs": 2000
+	}
+}

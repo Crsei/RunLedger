@@ -576,6 +576,13 @@ function createGovernedFileSystem(
 			const context = await authorize("rm", [{ kind: "filesystem", operation: "delete", path }], { path, opts: opts ?? {} }, cwd);
 			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.fs.rm(path, opts)));
 		},
+		rename: async (from, to) => {
+			const context = await authorize("rename", [
+				{ kind: "filesystem", operation: "delete", path: from },
+				{ kind: "filesystem", operation: "write", path: to },
+			], { from, to }, cwd);
+			return settleGatewayEffect(context, async () => unwrapSecurityResult(await context.fs.rename(from, to)));
+		},
 	};
 }
 

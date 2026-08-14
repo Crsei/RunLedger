@@ -40,6 +40,7 @@ const GOVERNED_TOOL_NAMES = new Set([
 	"mcp_catalog",
 	"mcp_search",
 	"mcp_call",
+	"lsp",
 ]);
 
 export class GovernedToolAuthorizationPolicy implements ToolAuthorizationPolicy {

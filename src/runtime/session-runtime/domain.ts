@@ -47,6 +47,14 @@ import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection } from "./plan-composition.ts";
 import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
+import { createLspTool, type LspToolOptions } from "../../lsp/tool.ts";
+import { shutdownAll } from "../../lsp/client.ts";
+import { clearLinterClientCache } from "../../lsp/clients/index.ts";
+import {
+	createGovernedLinterFactories,
+	createGovernedLspSpawner,
+	createGovernedLspWriteOperations,
+} from "./lsp-composition.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -120,6 +128,12 @@ export async function assembleSessionDomain(
 	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
 	const executionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
+	const lspOptions: LspToolOptions = {
+		spawn: createGovernedLspSpawner(process.toolClient()),
+		writeOperations: createGovernedLspWriteOperations(executionEnv.fs),
+		scope: sessionId,
+		linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
+	};
 	const traceRecorderFactory = options.traceRecorderFactory === undefined
 		? undefined
 		: {
@@ -129,7 +143,7 @@ export async function assembleSessionDomain(
 				ownerGeneration: fence.generation,
 			}),
 			};
-	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester);
+	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions);
 	const extensions = await createProductionSessionExtensionComposition({
 		layout: options.layout,
 		cwd: options.cwd,
@@ -182,7 +196,12 @@ export async function assembleSessionDomain(
 		start: extensions.start,
 		shutdown: async (reason) => {
 			removeExtensionLifecycle?.();
-			await extensions.shutdown(reason);
+			try {
+				await extensions.shutdown(reason);
+			} finally {
+				await shutdownAll(sessionId);
+				clearLinterClientCache(sessionId);
+			}
 		},
 		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan"],
 		securityInspection: () => ({
@@ -253,10 +272,11 @@ export function productionSessionTools(
 	executionEnv: ExecutionEnv,
 	managedProcess?: StdlibToolsOptions["managedProcess"],
 	permissionRequester?: StdlibToolsOptions["permissionRequester"],
+	lspOptions?: LspToolOptions,
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
-	return createStdlibTools(cwd, {
+	const tools = createStdlibTools(cwd, {
 		requireExecutionEnv: true,
 		executionEnv,
 		...(managedProcess === undefined ? {} : { managedProcess }),
@@ -264,4 +284,6 @@ export function productionSessionTools(
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));
+	if (lspOptions !== undefined) tools.push(createLspTool(cwd, lspOptions));
+	return tools;
 }

@@ -28,6 +28,7 @@ function fakeEnv(write: (path: string, data: string | Buffer) => Promise<void>):
 			writeFile: write,
 			mkdir: async () => undefined,
 			rm: async () => undefined,
+			rename: async () => undefined,
 		},
 		shell: {
 			exec: async () => ({ stdout: "", stderr: "", exitCode: 0 }),
@@ -39,6 +40,19 @@ function fakeEnv(write: (path: string, data: string | Buffer) => Promise<void>):
 }
 
 describe("attempt gateway audit safety", () => {
+	it("records governed rename as one workspace mutation attempt", async () => {
+		const harness = await createRuntimeHarness("rename-attempt");
+		harnesses.push(harness);
+		let renames = 0;
+		const base = fakeEnv(async () => undefined);
+		base.fs.rename = async () => { renames += 1; };
+		const env = gatedExecutionEnv(base, () => harness.runtime, harness.sessionId);
+		await env.fs.rename("/workspace/old.ts", "/workspace/new.ts");
+		expect(renames).toBe(1);
+		const commands = harness.store.database().queryAll("SELECT command_id FROM commands WHERE session_id = ?", [harness.sessionId]);
+		expect(commands).toHaveLength(1);
+	});
+
 	it("marks a post-invocation write error uncertain because partial effects cannot be disproved", async () => {
 		const harness = await createRuntimeHarness("partial-effect");
 		harnesses.push(harness);
