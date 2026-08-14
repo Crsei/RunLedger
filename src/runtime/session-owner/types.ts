@@ -293,6 +293,7 @@ export const COMMAND_EFFECT_CLASSES = [
 	"workspace_mutation",
 	"process_spawn",
 	"external_mutation",
+	"agent_spawn",
 ] as const;
 export type CommandEffectClass = (typeof COMMAND_EFFECT_CLASSES)[number];
 
@@ -303,6 +304,17 @@ export type CommandEffectClass = (typeof COMMAND_EFFECT_CLASSES)[number];
 export interface CommandIntent {
 	readonly sessionId: SessionId;
 	readonly commandId: CommandId;
+	readonly requestDigest: RuntimeDigest;
+	readonly originGeneration: number;
+	readonly createdAtMs: number;
+}
+
+/** M1 stable command identity:同一 command 在 takeover/retry 中不重新分配。 */
+export interface CommandAttemptBeginInput {
+	readonly sessionId: SessionId;
+	readonly commandId: CommandId;
+	readonly attemptId: AttemptId;
+	readonly effectClass: CommandEffectClass;
 	readonly requestDigest: RuntimeDigest;
 	readonly originGeneration: number;
 	readonly createdAtMs: number;
@@ -326,6 +338,30 @@ export interface CommandAttemptReceipt {
 	readonly evidenceDigest?: RuntimeDigest;
 	readonly createdAtMs: number;
 }
+
+export type CommandAttemptBeginResult =
+	| {
+			readonly status: "started";
+			readonly commandId: CommandId;
+			readonly attemptId: AttemptId;
+		}
+	| {
+			readonly status: "replay_committed";
+			readonly commandId: CommandId;
+			readonly attemptId: AttemptId;
+			readonly receipt: CommandAttemptReceipt;
+		}
+	| {
+			readonly status: "recovery_required";
+			readonly commandId: CommandId;
+			readonly attemptId: AttemptId;
+			readonly existingReceipts: readonly CommandAttemptReceipt[];
+		}
+	| {
+			readonly status: "conflict";
+			readonly commandId: CommandId;
+			readonly attemptId: AttemptId;
+		};
 
 /** §7.2 首版只支持的六个 safe checkpoint boundary。 */
 export const SESSION_CHECKPOINT_BOUNDARIES = [

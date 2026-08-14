@@ -16,14 +16,33 @@
  *   domain 在 SessionRuntime 构造前装配,绑定发生在构造时)。
  */
 
-import type { CommandAttemptOutcome, CommandEffectClass } from "../session-owner/types.ts";
+import type {
+	CommandAttemptBeginResult,
+	CommandAttemptOutcome,
+	CommandEffectClass,
+} from "../session-owner/types.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import type { AttemptId, CommandId, SessionId } from "../protocol/ids.ts";
 
+export interface StableAttemptRequest {
+	readonly commandId: CommandId;
+	readonly attemptId: AttemptId;
+	readonly effectClass: CommandEffectClass;
+	readonly requestDigest: RuntimeDigest;
+}
+
+export type AttemptPortBeginResult =
+	| { readonly attemptId: AttemptId; readonly commandId: CommandId }
+	| CommandAttemptBeginResult
+	| { readonly error: "recovery_barrier_active" | "owner_fenced" };
+
 /** SessionRuntime 暴露给 gateway 的 attempt 生命周期入口。 */
 export interface AttemptPort {
-	beginAttempt(effectClass: CommandEffectClass, requestDigest?: RuntimeDigest): { readonly attemptId: AttemptId; readonly commandId: CommandId } | { readonly error: "recovery_barrier_active" | "owner_fenced" };
+	beginAttempt(
+		effectClassOrRequest: CommandEffectClass | StableAttemptRequest,
+		requestDigest?: RuntimeDigest,
+	): AttemptPortBeginResult;
 	settleAttempt(attemptId: AttemptId, outcome: CommandAttemptOutcome, resultDigest?: RuntimeDigest, evidenceDigest?: RuntimeDigest): { readonly ok: true } | { readonly ok: false; readonly code: string };
 }
 
@@ -65,6 +84,12 @@ export function gatedExecutionEnv(base: ExecutionEnv, port: () => AttemptPort | 
 		const begun = target.beginAttempt(effectClass, requestDigest);
 		if ("error" in begun) {
 			throw new Error(`recovery barrier active (${begun.error}); side effect not executed`);
+		}
+		if ("status" in begun && begun.status !== "started") {
+			throw new Error(`attempt cannot execute: ${begun.status}`);
+		}
+		if (!("attemptId" in begun)) {
+			throw new Error("attempt start did not return an attempt identity");
 		}
 		let result: T;
 		try {

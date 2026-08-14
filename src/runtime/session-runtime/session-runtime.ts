@@ -23,7 +23,7 @@ import { SESSION_MUTATING_COMMAND_KINDS, type SessionCommandRequest, type Sessio
 import { RecoveryBarrier, type RecoveryDecision } from "./recovery-barrier.ts";
 import type { RestoreOutcome } from "./restore.ts";
 import { putSessionCheckpoint, type CheckpointSnapshot } from "./checkpoint.ts";
-import type { LateBoundAttemptPort } from "./attempt-gateway.ts";
+import type { LateBoundAttemptPort, StableAttemptRequest, AttemptPortBeginResult } from "./attempt-gateway.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import { createRuntimeId, type AttemptId, type CommandId, type SessionId, type ConnectionId, type PrincipalId } from "../protocol/ids.ts";
 import type { CommandAttemptOutcome, CommandEffectClass, OwnerFence, SessionCheckpointBoundary } from "../session-owner/types.ts";
@@ -367,30 +367,29 @@ export class SessionRuntime implements SessionController {
 	 * §7.3 开始一次 attempt:先经 barrier admission(只读放行、side-effect 需
 	 * barrier closed),再 owner-fenced 记录 command intent + started receipt。
 	 */
-	public beginAttempt(effectClass: CommandEffectClass, requestDigest?: RuntimeDigest): { readonly attemptId: AttemptId; readonly commandId: CommandId } | { readonly error: "recovery_barrier_active" | "owner_fenced" } {
+	public beginAttempt(
+		effectClassOrRequest: CommandEffectClass | StableAttemptRequest,
+		requestDigest?: RuntimeDigest,
+	): AttemptPortBeginResult {
+		const stableRequest = typeof effectClassOrRequest === "string" ? undefined : effectClassOrRequest;
+		const effectClass: CommandEffectClass = typeof effectClassOrRequest === "string" ? effectClassOrRequest : effectClassOrRequest.effectClass;
 		const admission = this.barrier.admitMutation(effectClass);
 		if (!admission.ok) return { error: admission.code };
-		this.attemptCounter += 1;
-		const attemptId = createRuntimeId("attempt", `a${this.attemptCounter}-${Date.now().toString(36)}`);
-		const commandId = createRuntimeId("command", `c${this.attemptCounter}-${Date.now().toString(36)}`);
+		const attemptId = stableRequest?.attemptId ?? createRuntimeId("attempt", `a${++this.attemptCounter}-${Date.now().toString(36)}`);
+		const commandId = stableRequest?.commandId ?? createRuntimeId("command", `c${this.attemptCounter}-${Date.now().toString(36)}`);
 		try {
-			this.store.recordCommandIntent(this.fence, {
-				sessionId: this.sessionId,
-				commandId,
-				requestDigest: requestDigest ?? runtimeDigest({ effectClass, operation: "unspecified" }),
-				originGeneration: this.fence.generation,
-				createdAtMs: Date.now(),
-			});
-			this.store.appendAttemptReceipt(this.fence, {
-				receiptId: createRuntimeId("receipt", `start-${attemptId.slice(-20)}`),
+			const result = this.store.beginCommandAttempt(this.fence, {
 				sessionId: this.sessionId,
 				commandId,
 				attemptId,
-				originGeneration: this.fence.generation,
 				effectClass,
-				outcome: "started",
+				requestDigest: stableRequest?.requestDigest ?? requestDigest ?? runtimeDigest({ effectClass, operation: "unspecified" }),
+				originGeneration: this.fence.generation,
 				createdAtMs: Date.now(),
 			});
+			if (stableRequest !== undefined) return result;
+			if (result.status === "started") return { attemptId, commandId };
+			return result;
 		} catch {
 			this.selfStopFenced();
 			return { error: "owner_fenced" };
