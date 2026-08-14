@@ -40,6 +40,7 @@
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
 | Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 | LSP Server Adapter | [`plan/04-lsp-server-adaptation-plan.md`](plan/04-lsp-server-adaptation-plan.md) | defaults/config 自动探测、stdio JSON-RPC、LspClient、AgentTool、WorkspaceEdit、managed LinterClient 与 SessionRuntime governed 接线 | P0–P6 review 修复已通过 fresh check/test/build 与隔离 CLI/TTY；P7 修复后 Session-managed 真实语言服务器/TUI smoke pending，状态查本文 §状态表 |
+| Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
 
 ## 2026-08-04 当前实现批次
 
@@ -79,6 +80,8 @@ development-doc/
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md
+├── plugin/
+│   └── 01-tree-sitter-bash-ast-port-plan.md
 ├── providers/
 │   └── 01-pi-ai-migration-plan.md
 ├── runtime/

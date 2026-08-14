@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import {
 	CANONICAL_STORAGE_ADAPTER_ALLOWLIST,
 	EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST,
+	BASH_AST_ASSET_ALLOWLIST,
 	MANAGED_PROCESS_BACKEND_ALLOWLIST,
 	scanExecutionBoundaries,
 } from "../../scripts/check-execution-boundaries.ts";
@@ -14,6 +15,10 @@ describe("current execution boundary baseline", () => {
 		expect(CANONICAL_STORAGE_ADAPTER_ALLOWLIST).toEqual([]);
 		expect(EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST).toEqual([
 			"src/security/integration/session-local-leaves.ts",
+		]);
+		expect(BASH_AST_ASSET_ALLOWLIST).toEqual([
+			"src/security/permission/bash-ast/assets.ts",
+			"src/security/permission/bash-ast/worker.ts",
 		]);
 		expect(MANAGED_PROCESS_BACKEND_ALLOWLIST).toEqual([
 			"src/cli/linux-peer-attestor.ts",

@@ -2,6 +2,10 @@
 
 import type { AccessRequest, SecurityResult } from "../types.ts";
 import { analyzeShellCommand } from "./shell-analyzer.ts";
+import type {
+	BashSecurityAnalyzerMode,
+	BashSecurityAnalyzerPort,
+} from "./bash-ast/types.ts";
 
 function record(value: unknown): Readonly<Record<string, unknown>> | undefined {
 	return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : undefined;
@@ -55,4 +59,54 @@ export function resolveToolAccessRequests(
 		return { ok: true, value: [{ kind: "worktree", operation: operation as "create" | "remove" | "apply" | "gc", target: text(args.target) ?? text(args.path) ?? cwd }] };
 	}
 	return { ok: true, value: [{ kind: "tool", toolName }] };
+}
+
+export async function resolveToolAccessRequestsWithBashAnalyzer(
+	toolName: string,
+	argumentsValue: unknown,
+	cwd: string,
+	mode: BashSecurityAnalyzerMode,
+	analyzer: BashSecurityAnalyzerPort,
+): Promise<SecurityResult<readonly AccessRequest[]>> {
+	if (toolName !== "bash") return resolveToolAccessRequests(toolName, argumentsValue, cwd);
+	const args = record(argumentsValue);
+	if (!args) return failure("tool arguments must be an object");
+	const command = text(args.command) ?? text(args.cmd);
+	if (!command) return failure("bash requires a command");
+	let analysis;
+	try {
+		analysis = await analyzer.analyze(command, mode);
+	} catch {
+		analysis = mode === "legacy"
+			? { mode, legacyKind: "unknown" as const }
+			: {
+					mode,
+					ast: {
+						kind: "parse-unavailable" as const,
+						reasonCode: "bash_analyzer_failure",
+					},
+				};
+	}
+	const shell: AccessRequest = {
+		kind: "shell",
+		command,
+		cwd,
+		analysis: analysis.mode === "ast"
+			? analysis.ast?.kind === "simple" ? "known" : "unknown"
+			: analysis.legacyKind ?? "unknown",
+		bashAnalyzerMode: analysis.mode,
+		...(analysis.ast === undefined ? {} : { bashAst: analysis.ast }),
+		...(analysis.metrics === undefined ? {} : { bashMetrics: analysis.metrics }),
+	};
+	if (analysis.mode !== "ast" || analysis.ast?.kind !== "simple") {
+		return { ok: true, value: [shell] };
+	}
+	const redirects: AccessRequest[] = analysis.ast.commands.flatMap((item) =>
+		item.redirects.map((redirect): AccessRequest => ({
+			kind: "filesystem",
+			operation: redirect.operation === "read" ? "read" : "write",
+			path: redirect.path,
+		}))
+	);
+	return { ok: true, value: [shell, ...redirects] };
 }

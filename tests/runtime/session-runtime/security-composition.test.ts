@@ -29,6 +29,7 @@ import {
 	type SessionSecurityConfigSource,
 } from "../../../src/security/session-composition.ts";
 import type { GovernedProcessEnvironment, SessionToolchainProbe, SessionToolchainSnapshot } from "../../../src/security/toolchain.ts";
+import type { BashSecurityAnalyzerPort } from "../../../src/security/permission/bash-ast/types.ts";
 
 let root: string;
 
@@ -96,6 +97,13 @@ async function composition(input: {
 	readonly processEnvironment?: GovernedProcessEnvironment;
 	readonly toolchainProbe?: SessionToolchainProbe;
 	readonly unrestrictedShell?: Shell;
+	readonly bashShadowTelemetry?: { record(record: Record<string, unknown>): Promise<void> };
+	readonly bashClassificationAudit?: {
+		record(record: Record<string, unknown>): Promise<void>;
+		link?(record: Record<string, unknown>): Promise<void>;
+	};
+	readonly bashAnalyzer?: BashSecurityAnalyzerPort;
+	readonly approvalTimeoutMs?: number;
 }) {
 	const home = join(root, "home");
 	await fs.mkdir(home, { recursive: true });
@@ -117,10 +125,341 @@ async function composition(input: {
 		...(input.processEnvironment === undefined ? {} : { processEnvironment: input.processEnvironment }),
 		...(input.toolchainProbe === undefined ? {} : { toolchainProbe: input.toolchainProbe }),
 		...(input.unrestrictedShell === undefined ? {} : { unrestrictedShell: input.unrestrictedShell }),
+		...(input.bashShadowTelemetry === undefined ? {} : { bashShadowTelemetry: input.bashShadowTelemetry }),
+		...(input.bashClassificationAudit === undefined ? {} : { bashClassificationAudit: input.bashClassificationAudit }),
+		...(input.bashAnalyzer === undefined ? {} : { bashAnalyzer: input.bashAnalyzer }),
+		...(input.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: input.approvalTimeoutMs }),
 	});
 }
 
+function unavailableAnalyzer(): BashSecurityAnalyzerPort {
+	return {
+		analyze: async (_command, mode) => ({
+			mode,
+			ast: { kind: "parse-unavailable", reasonCode: "bash_worker_crash" },
+		}),
+	};
+}
+
 describe("session-scoped Security/ExecutionGateway composition", () => {
+	it("routes AST classification through the Session shell and closes its worker pool", async () => {
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "never",
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+			},
+			unrestrictedShell: {
+				exec: async () => ({ stdout: "ast", stderr: "", exitCode: 0 }),
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("printf ast")).resolves.toMatchObject({
+				stdout: "ast",
+				exitCode: 0,
+			});
+		} finally {
+			await security.close();
+		}
+		expect(await security.bashAnalyzer.status()).toMatchObject({ workerHealth: "closed" });
+	});
+
+	it("wires redacted AST classification into the Session Gateway audit port", async () => {
+		const records: Record<string, unknown>[] = [];
+		const links: Record<string, unknown>[] = [];
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },
+			unrestrictedShell: { exec: async () => ({ stdout: "audited", stderr: "", exitCode: 0 }) },
+			bashClassificationAudit: {
+				record: async (record) => { records.push(record); },
+				link: async (record) => { links.push(record); },
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("printf audit-sentinel")).resolves.toMatchObject({ stdout: "audited" });
+		} finally {
+			await security.close();
+		}
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({ mode: "ast", classification: "simple", authorizationOutcome: "allow" });
+		expect(links).toHaveLength(1);
+		expect(links[0]).toMatchObject({
+			requestDigest: records[0]?.requestDigest,
+			constraintSnapshotDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+		});
+		expect(JSON.stringify(records)).not.toContain("audit-sentinel");
+	});
+
+	it("keeps shadow telemetry redacted and non-authoritative", async () => {
+		const records: Record<string, unknown>[] = [];
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "never",
+				sandbox: "off",
+				bashAnalyzerMode: "shadow",
+			},
+			unrestrictedShell: {
+				exec: async () => ({ stdout: "shadow", stderr: "", exitCode: 0 }),
+			},
+			bashShadowTelemetry: {
+				record: async (record) => { records.push(record); },
+			},
+		});
+		try {
+			await security.executionEnv.shell.exec("printf secret-command");
+		} finally {
+			await security.close();
+		}
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({ mode: "shadow", astKind: "simple" });
+		expect(JSON.stringify(records)).not.toContain("secret-command");
+	});
+
+	it("routes an AST-dangerous shell through approval and never executes after cancellation", async () => {
+		let shellCalls = 0;
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "on-request",
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+			},
+			unrestrictedShell: {
+				exec: async () => {
+					shellCalls += 1;
+					return { stdout: "executed", stderr: "", exitCode: 0 };
+				},
+			},
+			approvalPorts: {
+				prompter: {
+					request: async () => ({
+						decision: "cancel" as const,
+						decidedBy: createRuntimeId("principal", "ast-canceller"),
+					}),
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("rm -f safe-file"))
+				.rejects.toMatchObject({ code: "approval_cancelled" });
+		} finally {
+			await security.close();
+		}
+		expect(shellCalls).toBe(0);
+	});
+
+	it("headless composition denies an AST-too-complex shell before the process leaf", async () => {
+		let shellCalls = 0;
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "on-request",
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+			},
+			unrestrictedShell: {
+				exec: async () => {
+					shellCalls += 1;
+					return { stdout: "executed", stderr: "", exitCode: 0 };
+				},
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("printf\u00a0unsafe"))
+				.rejects.toMatchObject({ code: "policy_denied" });
+		} finally {
+			await security.close();
+		}
+		expect(shellCalls).toBe(0);
+	});
+
+	it("headless production composition denies an injected AST parse-unavailable result", async () => {
+		let shellCalls = 0;
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "on-request",
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+			},
+			bashAnalyzer: unavailableAnalyzer(),
+			unrestrictedShell: {
+				exec: async () => {
+					shellCalls += 1;
+					return { stdout: "executed", stderr: "", exitCode: 0 };
+				},
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("printf unavailable"))
+				.rejects.toMatchObject({ code: "policy_denied" });
+		} finally {
+			await security.close();
+		}
+		expect(shellCalls).toBe(0);
+	});
+
+	it.each([
+		["on-request", undefined],
+		["untrusted", undefined],
+		["granular", {
+			sandboxApproval: true,
+			rules: true,
+			skillApproval: true,
+			requestPermissions: true,
+			mcpElicitations: true,
+		}],
+	] as const)("allows an interactive approval for AST parse-unavailable under %s", async (approvalPolicy, granularApproval) => {
+		let shellCalls = 0;
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy,
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+				...(granularApproval === undefined ? {} : { granularApproval }),
+			},
+			bashAnalyzer: unavailableAnalyzer(),
+			unrestrictedShell: {
+				exec: async () => {
+					shellCalls += 1;
+					return { stdout: "approved", stderr: "", exitCode: 0 };
+				},
+			},
+			approvalPorts: {
+				prompter: {
+					request: async () => ({
+						decision: "allow-once" as const,
+						decidedBy: createRuntimeId("principal", `ast-${approvalPolicy}`),
+					}),
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("printf approved-unavailable"))
+				.resolves.toMatchObject({ stdout: "approved" });
+		} finally {
+			await security.close();
+		}
+		expect(shellCalls).toBe(1);
+	});
+
+	it("denies AST parse-unavailable when granular rules approval is disabled", async () => {
+		let prompts = 0;
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "granular",
+				granularApproval: {
+					sandboxApproval: true,
+					rules: false,
+					skillApproval: true,
+					requestPermissions: true,
+					mcpElicitations: true,
+				},
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+			},
+			bashAnalyzer: unavailableAnalyzer(),
+			approvalPorts: {
+				prompter: {
+					request: async () => {
+						prompts += 1;
+						return { decision: "allow-once" as const, decidedBy: createRuntimeId("principal", "unexpected") };
+					},
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+			},
+		});
+		try {
+			await expect(security.executionEnv.shell.exec("printf denied-unavailable"))
+				.rejects.toMatchObject({ code: "policy_denied" });
+		} finally {
+			await security.close();
+		}
+		expect(prompts).toBe(0);
+	});
+
+	it("expires an AST approval through the production shell path", async () => {
+		let shellCalls = 0;
+		const security = await composition({
+			document: {
+				profile: "danger-full-access",
+				approvalPolicy: "on-request",
+				sandbox: "off",
+				bashAnalyzerMode: "ast",
+			},
+			approvalTimeoutMs: 1,
+			unrestrictedShell: {
+				exec: async () => {
+					shellCalls += 1;
+					return { stdout: "executed", stderr: "", exitCode: 0 };
+				},
+			},
+			approvalPorts: {
+				prompter: {
+					request: async (_prompt, signal) => new Promise((_, reject) => {
+						signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+					}),
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+			},
+		});
+		const controller = new AbortController();
+		const abortTimer = setTimeout(() => controller.abort(), 50);
+		try {
+			await expect(security.executionEnv.shell.exec("rm -f safe-file", { signal: controller.signal }))
+				.rejects.toMatchObject({ code: "approval_expired" });
+		} finally {
+			clearTimeout(abortTimer);
+			await security.close();
+		}
+		expect(shellCalls).toBe(0);
+	});
+
+	it("keeps two Session-owned worker pools isolated when one Session closes", async () => {
+		const first = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },
+			unrestrictedShell: { exec: async () => ({ stdout: "first", stderr: "", exitCode: 0 }) },
+		});
+		const second = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },
+			unrestrictedShell: { exec: async () => ({ stdout: "second", stderr: "", exitCode: 0 }) },
+		});
+		try {
+			await first.close();
+			await expect(second.executionEnv.shell.exec("printf isolated")).resolves.toMatchObject({ stdout: "second" });
+			expect(await first.bashAnalyzer.status?.()).toMatchObject({ workerHealth: "closed" });
+			expect(await second.bashAnalyzer.status?.()).toMatchObject({ workerHealth: "ready" });
+		} finally {
+			await second.close();
+		}
+	});
+
 	it("exposes session-neutral security names while retaining legacy Host aliases", () => {
 		expect(ProcessFinalLeafAdapter).toBe(HostProcessFinalLeafAdapter);
 		expect(GovernedToolAuthorizationPolicy).toBe(HostGovernedToolAuthorizationPolicy);
@@ -128,13 +467,21 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 
 	it("production SessionDomain consumes governed env and policy without raw local fallback", () => {
 		const source = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
+		const securitySource = readFileSync(join(process.cwd(), "src/security/session-composition.ts"), "utf8");
 		expect(source).toContain("createSessionSecurity");
 		expect(source).toContain("resolveSessionToolchainSnapshot");
 		expect(source).toContain("buildGovernedProcessEnvironment");
 		expect(source).toContain("toolchain:");
 		expect(source).toContain("processEnvironment:");
 		expect(source).toContain("authorizationPolicy: security.authorizationPolicy");
+		expect(source).toContain("security.close()");
+		expect(source).toContain("bashAnalyzerMode: security.snapshot.bashAnalyzer?.mode");
+		expect(source).toContain("bashClassificationAudit: options.bashClassificationAudit");
+		expect(source).toContain("createSessionBashClassificationAudit");
 		expect(source).not.toContain("localExecutionEnv");
+		expect(securitySource).toContain("resolveToolAccessRequestsWithBashAnalyzer");
+		expect(securitySource).not.toContain("function bashAccessRequests(");
+		expect(securitySource).toContain("await bashAnalyzer.initialize?.()");
 	});
 
 	it("binds production Trace recording to the Session owner generation", () => {
@@ -259,6 +606,25 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			executionMode: "background",
 			requestDigest: runtimeDigest({ command: "printf managed", cwd: root }),
 		})).resolves.toMatchObject({ ok: true });
+	});
+
+	it("carries AST classification into the managed-process authorization path", async () => {
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },
+		});
+		try {
+			await expect(security.managedProcess.prepare({
+				commandId: "command_session_process_ast",
+				command: "printf managed-ast",
+				cwd: root,
+				timeoutMs: 5_000,
+				backend: "pipe",
+				executionMode: "background",
+				requestDigest: runtimeDigest({ command: "printf managed-ast", cwd: root }),
+			})).resolves.toMatchObject({ ok: true });
+		} finally {
+			await security.close();
+		}
 	});
 
 	it("uses the attested immutable launch plan even when sandbox is off", async () => {

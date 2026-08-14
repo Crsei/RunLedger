@@ -20,6 +20,11 @@ const approvalPolicy = Type.Union([
 	Type.Literal("untrusted"),
 	Type.Literal("granular"),
 ]);
+const bashAnalyzerMode = Type.Union([
+	Type.Literal("legacy"),
+	Type.Literal("shadow"),
+	Type.Literal("ast"),
+]);
 const granularApproval = Type.Object({
 	sandboxApproval: Type.Boolean(),
 	rules: Type.Boolean(),
@@ -73,6 +78,7 @@ export const SecurityConfigDocumentSchema = Type.Object({
 		]),
 		pattern: token,
 	}, { additionalProperties: false }), { maxItems: 1024 })),
+	bashAnalyzerMode: Type.Optional(bashAnalyzerMode),
 }, { additionalProperties: false });
 
 function failure(message: string): SecurityResult<never> {

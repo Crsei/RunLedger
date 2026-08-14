@@ -536,7 +536,7 @@ export async function runControlCommand(
 /** CLI security flags → 最高优先级 `cli` 层 document;无 flags 时 undefined。 */
 export function cliSecurityOverride(args: ReturnType<typeof parseArgs>["args"]): SecurityConfigDocument | undefined {
   if (args.permissionProfile === undefined && args.approvalPolicy === undefined &&
-      args.sandbox === undefined && args.network === undefined) return undefined;
+      args.bashAnalyzer === undefined && args.sandbox === undefined && args.network === undefined) return undefined;
   return {
     ...(args.permissionProfile === undefined ? {} : { profile: args.permissionProfile }),
     ...(args.approvalPolicy === undefined ? {} : {
@@ -551,6 +551,7 @@ export function cliSecurityOverride(args: ReturnType<typeof parseArgs>["args"]):
         },
       } : {}),
     }),
+    ...(args.bashAnalyzer === undefined ? {} : { bashAnalyzerMode: args.bashAnalyzer }),
     ...(args.sandbox === undefined ? {} : { sandbox: args.sandbox }),
     ...(args.network === undefined ? {} : { network: { mode: args.network, allowedHosts: args.networkHosts } }),
   };

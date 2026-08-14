@@ -1,6 +1,7 @@
 /** 唯一 policy-aware 执行面；不拥有 child process、PTY 或 output 生命周期。 */
 
 import {
+	canonicalDigest,
 	isApprovalReceiptRef,
 	runtimeDigest,
 	validateExecutionConstraintSnapshot,
@@ -30,6 +31,7 @@ import type {
 	SecurityResult,
 	SecuritySnapshot,
 } from "./types.ts";
+import type { BashClassificationAuditPort } from "./permission/bash-ast/types.ts";
 import type {
 	ProcessFinalLeafDecisionPort,
 } from "./integration/runtime-gateway-adapter.ts";
@@ -67,6 +69,7 @@ export interface ExecutionGatewayOptions {
 	readonly approvalCoordinator: ApprovalCoordinator;
 	readonly finalLeaf: ProcessFinalLeafDecisionPort;
 	readonly permissionGrantStore?: MemoryPermissionGrantStore;
+	readonly bashClassificationAudit?: BashClassificationAuditPort;
 }
 
 function invalid(message: string): SecurityResult<never> {
@@ -184,7 +187,7 @@ export class ExecutionGateway {
 				policyDigest: input.request.snapshot.policyDigest,
 				reason: `matched ${grant.scope} request_permissions grant`,
 			};
-			return this.open({ ...input, authorization, authorizationDigest: runtimeDigest(authorization) });
+			return this.#finishAuthorization(input, authorization);
 		}
 		const evaluation = this.#options.permissionEngine.evaluate(input.request.requests, input.request.snapshot);
 		const revalidate: ApprovalRevalidationPort = () => ({
@@ -194,12 +197,59 @@ export class ExecutionGateway {
 		});
 		const authorized = await this.#options.approvalCoordinator.authorize(input.request, evaluation, revalidate, signal);
 		if (!authorized.ok) return authorized;
-		if (authorized.value.outcome !== "allow") return approvalDenied(authorized.value);
+		return this.#finishAuthorization(input, authorized.value);
+	}
+
+	async #finishAuthorization(
+		input: ExecutionGatewayAuthorizationRequest,
+		authorization: AuthorizationResult,
+	): Promise<SecurityResult<ExecutionGatewayContext>> {
+		await this.#recordBashClassification(input.request, input.requestDigest, authorization);
+		if (authorization.outcome !== "allow") return approvalDenied(authorization);
 		return this.open({
 			...input,
-			authorization: authorized.value,
-			authorizationDigest: runtimeDigest(authorized.value),
+			authorization,
+			authorizationDigest: runtimeDigest(authorization),
 		});
+	}
+
+	async #recordBashClassification(
+		request: AuthorizationRequest,
+		requestDigestValue: RuntimeDigest,
+		authorization: AuthorizationResult,
+	): Promise<void> {
+		const audit = this.#options.bashClassificationAudit;
+		if (audit === undefined) return;
+		const shell = request.requests.find((item): item is Extract<AccessRequest, { readonly kind: "shell" }> =>
+			item.kind === "shell" &&
+			(item.bashAnalyzerMode === "shadow" || item.bashAnalyzerMode === "ast") &&
+			item.bashAst !== undefined,
+		);
+		const mode = shell?.bashAnalyzerMode;
+		if (shell === undefined || shell.bashAst === undefined || (mode !== "shadow" && mode !== "ast")) return;
+		const record: Parameters<BashClassificationAuditPort["record"]>[0] = {
+			protocolVersion: 1,
+			sessionId: request.sessionId,
+			toolCallId: request.toolCallId,
+			requestDigest: requestDigestValue.digest,
+			commandDigest: canonicalDigest(shell.command),
+			accessRequestsDigest: runtimeDigest(request.requests).digest,
+			mode,
+			classification: shell.bashAst.kind,
+			configDigest: request.snapshot.bashAnalyzer?.configDigest ?? canonicalDigest({ mode, source: "default" }),
+			...(shell.bashAst.kind === "simple" ? {} : { reasonCode: shell.bashAst.reasonCode }),
+			...(shell.bashAst.parserDigest === undefined ? {} : { parserDigest: shell.bashAst.parserDigest }),
+			...(mode === "shadow" ? { legacyKind: shell.analysis } : {}),
+			durationBucket: shell.bashMetrics?.durationBucket ?? "unavailable",
+			nodeCountBucket: shell.bashMetrics?.nodeCountBucket ?? "unavailable",
+			authorizationOutcome: authorization.outcome,
+			...(authorization.approval === undefined ? {} : { approvalReceiptId: authorization.approval.receiptId }),
+		};
+		try {
+			await audit.record(record);
+		} catch {
+			// 分类审计 sink 是 best-effort；不把 sink 故障变成授权旁路或放权。
+		}
 	}
 
 	public async open(input: ExecutionGatewayOpenRequest): Promise<SecurityResult<ExecutionGatewayContext>> {

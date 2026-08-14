@@ -80,7 +80,11 @@ function envelope(root: string): WorkspaceExecutionEnvelope {
 	};
 }
 
-function snapshot(root: string, sandbox: "off" | "workspace-write" = "off"): SecuritySnapshot {
+function snapshot(
+	root: string,
+	sandbox: "off" | "workspace-write" = "off",
+	bashAnalyzer?: SecuritySnapshot["bashAnalyzer"],
+): SecuritySnapshot {
 	const body = {
 		profile: {
 			name: sandbox === "off" ? "danger-full-access" : "workspace-write",
@@ -101,6 +105,7 @@ function snapshot(root: string, sandbox: "off" | "workspace-write" = "off"): Sec
 		workspaceRoot: root,
 		tempRoot: join(root, ".tmp"),
 		createdAt: "2026-08-04T00:00:00.000Z",
+		...(bashAnalyzer === undefined ? {} : { bashAnalyzer }),
 	};
 	return { ...body, policyDigest: runtimeDigest(body) };
 }
@@ -272,6 +277,116 @@ describe("ExecutionGateway", () => {
 
 		expect(result).toMatchObject({ ok: true, value: { authorization: { outcome: "allow", decisionSource: "approval" } } });
 		expect(prompts).toBe(1);
+	});
+
+	it("records AST classification at the Gateway without retaining the shell command", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-bash-audit-"));
+		roots.push(root);
+		const currentSnapshot = snapshot(root, "off", {
+			mode: "ast",
+			source: "cli",
+			configDigest: "c".repeat(64),
+		});
+		const base = authorizationRequest(root, currentSnapshot);
+		const command = "git status --porcelain";
+		const request: AuthorizationRequest = {
+			...base,
+			toolName: "bash",
+			argumentsDigest: runtimeDigest({ command }),
+			requests: [{
+				kind: "shell",
+				command,
+				cwd: root,
+				analysis: "known",
+				bashAnalyzerMode: "ast",
+				bashAst: {
+					kind: "simple",
+					parserDigest: "a".repeat(64),
+					commands: [{ executable: "git", arguments: ["status", "--porcelain"], assignments: [], redirects: [] }],
+				},
+				bashMetrics: { durationBucket: "0-5ms", nodeCountBucket: "0-100", nodeCount: 8 },
+			}],
+		};
+		const requestDigest = gatewayRequestDigest(request);
+		const binding = await constraint(request, currentSnapshot, requestDigest);
+		const records: Record<string, unknown>[] = [];
+		const gateway = new ExecutionGateway({
+			snapshot: currentSnapshot,
+			workspace: request.workspace,
+			filesystemBroker: broker,
+			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
+			permissionEngine: new PermissionEngine(),
+			approvalCoordinator: new ApprovalCoordinator({ prompter: { request: async () => { throw new Error("AST simple must not prompt"); } } }),
+			bashClassificationAudit: { record: async (record) => { records.push(record); } },
+			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
+		});
+
+		await expect(gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot }))
+			.resolves.toMatchObject({ ok: true });
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({
+			mode: "ast",
+			classification: "simple",
+			configDigest: "c".repeat(64),
+			parserDigest: "a".repeat(64),
+			accessRequestsDigest: runtimeDigest(request.requests).digest,
+			authorizationOutcome: "allow",
+		});
+		expect(JSON.stringify(records)).not.toContain(command);
+		expect(records[0]).not.toHaveProperty("command");
+	});
+
+	it("links an AST classification to its approval receipt", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-bash-approval-audit-"));
+		roots.push(root);
+		const currentSnapshot = snapshot(root, "off", {
+			mode: "ast",
+			source: "cli",
+			configDigest: "c".repeat(64),
+		});
+		const base = authorizationRequest(root, currentSnapshot);
+		const command = "rm -f safe-file";
+		const request: AuthorizationRequest = {
+			...base,
+			toolName: "bash",
+			argumentsDigest: runtimeDigest({ command }),
+			requests: [{
+				kind: "shell",
+				command,
+				cwd: root,
+				analysis: "known",
+				bashAnalyzerMode: "ast",
+				bashAst: {
+					kind: "simple",
+					parserDigest: "a".repeat(64),
+					commands: [{ executable: "rm", arguments: ["-f", "safe-file"], assignments: [], redirects: [] }],
+				},
+			}],
+		};
+		const requestDigest = gatewayRequestDigest(request);
+		const binding = await constraint(request, currentSnapshot, requestDigest);
+		const records: Record<string, unknown>[] = [];
+		const gateway = new ExecutionGateway({
+			snapshot: currentSnapshot,
+			workspace: request.workspace,
+			filesystemBroker: broker,
+			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
+			permissionEngine: new PermissionEngine(),
+			approvalCoordinator: new ApprovalCoordinator({
+				prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "bash-approver") }) },
+			}),
+			bashClassificationAudit: { record: async (record) => { records.push(record); } },
+			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
+		});
+
+		await expect(gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot }))
+			.resolves.toMatchObject({ ok: true });
+		expect(records).toHaveLength(1);
+		expect(records[0]).toMatchObject({
+			authorizationOutcome: "allow",
+			approvalReceiptId: expect.stringMatching(/^receipt_/u),
+		});
+		expect(JSON.stringify(records)).not.toContain(command);
 	});
 
 	it("durably completes an allow-once authorization exactly once", async () => {

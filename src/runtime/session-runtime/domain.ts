@@ -33,6 +33,7 @@ import {
 	createSessionSecurity,
 	type SessionSecurityConfigSource,
 } from "../../security/session-composition.ts";
+import type { BashClassificationAuditPort } from "../../security/permission/bash-ast/types.ts";
 import { createLocalSessionToolchainProbe } from "../../security/integration/session-local-leaves.ts";
 import {
 	buildGovernedProcessEnvironment,
@@ -42,6 +43,7 @@ import type { RestoreOutcome } from "./restore.ts";
 import { restoreCheckpointReplay } from "./checkpoint.ts";
 import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
 import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
+import { createSessionBashClassificationAudit } from "./bash-classification-audit.ts";
 import type { AgentRunBudgetUsage } from "../types.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
@@ -68,6 +70,8 @@ export interface SessionDomainCompositionOptions {
 	readonly approvalPorts?: SessionApprovalPorts;
 	/** CLI > managed > project > user 的 session-scoped Security 配置层。 */
 	readonly securitySources?: readonly SessionSecurityConfigSource[];
+	/** 可选的脱敏 Bash AST 分类审计端口。 */
+	readonly bashClassificationAudit?: BashClassificationAuditPort;
 	/** 可选:AGENTS 拼接(缺省读 <cwd>/AGENTS.md)。 */
 	readonly systemPrompt?: string;
 }
@@ -112,6 +116,7 @@ export async function assembleSessionDomain(
 		toolchainProbe,
 		...(options.securitySources === undefined ? {} : { securitySources: options.securitySources }),
 		...(options.approvalPorts === undefined ? {} : { approvalPorts: options.approvalPorts }),
+		bashClassificationAudit: options.bashClassificationAudit ?? createSessionBashClassificationAudit({ store, fence }),
 	});
 	const recording = resolveRecordingConfig(options.settings);
 	const process = createSessionProcessComposition({
@@ -199,8 +204,12 @@ export async function assembleSessionDomain(
 			try {
 				await extensions.shutdown(reason);
 			} finally {
-				await shutdownAll(sessionId);
-				clearLinterClientCache(sessionId);
+				try {
+					await shutdownAll(sessionId);
+					clearLinterClientCache(sessionId);
+				} finally {
+					await security.close();
+				}
 			}
 		},
 		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan"],
@@ -213,6 +222,9 @@ export async function assembleSessionDomain(
 			sandboxMode: security.snapshot.profile.sandbox,
 			policyDigest: security.snapshot.policyDigest,
 			sourceCount: security.snapshot.sources.length,
+			bashAnalyzerMode: security.snapshot.bashAnalyzer?.mode,
+			bashAnalyzerSource: security.snapshot.bashAnalyzer?.source,
+			bashAnalyzerConfigDigest: security.snapshot.bashAnalyzer?.configDigest,
 		}),
 		snapshot: (): SessionDomainSnapshot => ({
 			messages: controller.messages,

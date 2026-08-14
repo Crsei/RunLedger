@@ -144,6 +144,14 @@ describe("parseArgs 多 flag 组合", () => {
 });
 
 describe("parseArgs security / worktree flags", () => {
+	 it("解析 --bash-analyzer 并拒绝非法值", () => {
+		expect(parseArgs(["--bash-analyzer", "legacy"]).args.bashAnalyzer).toBe("legacy");
+		expect(parseArgs(["--bash-analyzer", "shadow"]).args.bashAnalyzer).toBe("shadow");
+		expect(parseArgs(["--bash-analyzer", "ast"]).args.bashAnalyzer).toBe("ast");
+		const invalid = parseArgs(["--bash-analyzer", "allow-all"]);
+		expect(invalid.error).toContain("--bash-analyzer");
+	});
+
   it("--permission-profile 接受内置与 named profile id 并拒绝非法 id", () => {
     expect(parseArgs(["--permission-profile", "workspace-write"]).args.permissionProfile).toBe("workspace-write");
     expect(parseArgs(["--permission-profile", "read-only"]).args.permissionProfile).toBe("read-only");

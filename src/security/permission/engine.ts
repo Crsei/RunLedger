@@ -53,6 +53,23 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 		case "shell": {
 			const hardlineReason = hardlineShellDenialReason(request.command);
 			if (hardlineReason) return { action: "deny", reason: `hardline shell policy denied ${hardlineReason}`, matchedRuleIds: ["builtin-shell-hardline"], source: "builtin" };
+			const analyzerMode = request.bashAnalyzerMode ?? snapshot.bashAnalyzer?.mode ?? "legacy";
+			if (analyzerMode === "ast") {
+				if (request.bashAst?.kind !== "simple") {
+					return {
+						action: "ask",
+						reason: `Bash AST classification failed closed: ${request.bashAst?.reasonCode ?? "bash_ast_result_missing"}`,
+						matchedRuleIds: ["builtin-shell-ast-failure"],
+						source: "builtin",
+					};
+				}
+				const dangerous = request.bashAst.commands.some((segment) =>
+					DANGEROUS.has(segment.executable) ||
+					(segment.executable === "git" && segment.arguments[0] === "push")
+				);
+				if (dangerous) return { action: "ask", reason: "dangerous AST-classified shell command requires exact approval", matchedRuleIds: ["builtin-shell-dangerous"], source: "builtin" };
+				return { action: "allow", reason: "AST-classified shell command is structurally understood", matchedRuleIds: ["builtin-shell-known"], source: "builtin" };
+			}
 			const executable = request.command.trim().split(/\s+/u)[0]?.replace(/^.*[\\/]/u, "") ?? "";
 			if (hasDangerousSegment(request.command) || DANGEROUS.has(executable)) {
 				return { action: "ask", reason: "dangerous shell command requires exact approval", matchedRuleIds: ["builtin-shell-dangerous"], source: "builtin" };
@@ -125,7 +142,14 @@ export class PermissionEngine {
 		const requestDecisions = requests.map((request) => {
 			const builtin = builtinDecision(request, snapshot);
 			if (builtin.action === "deny") return builtin;
-			return applyApprovalPolicy(request, strongestRuleDecision(request, snapshot.rules, builtin), snapshot);
+			const ruleDecision = strongestRuleDecision(request, snapshot.rules, builtin);
+			// AST failure is a fail-closed approval boundary: an allow rule cannot
+			// turn an unknown parse into allow, while a matching deny still wins.
+			const selected = builtin.matchedRuleIds.includes("builtin-shell-ast-failure") &&
+				ruleDecision.action === "allow"
+				? builtin
+				: ruleDecision;
+			return applyApprovalPolicy(request, selected, snapshot);
 		});
 		const aggregate = aggregatePolicyDecisions(requestDecisions);
 		return { decision: aggregate.action, requests, requestDecisions, policyDigest: snapshot.policyDigest, reason: aggregate.reason };

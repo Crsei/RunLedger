@@ -130,6 +130,16 @@ describe("cliSecurityOverride flags → cli 层 document", () => {
     expect(doc).toEqual({ approvalPolicy: "never" });
   });
 
+  it("bash analyzer mode maps into the CLI security layer", async () => {
+    const args = parseArgs(["--bash-analyzer", "ast"]).args;
+    expect(cliSecurityOverride(args)).toEqual({ bashAnalyzerMode: "ast" });
+    const sources = cliSecuritySources(args);
+    await expect(sources[0]?.read()).resolves.toEqual({
+      status: "available",
+      text: JSON.stringify({ bashAnalyzerMode: "ast" }),
+    });
+  });
+
   it("granular approval 与 named profile 映射成可独立解析的 CLI layer", () => {
     expect(cliSecurityOverride(parseArgs(["--permission-profile", "team.review-prod"]).args)).toEqual({ profile: "team.review-prod" });
     expect(cliSecurityOverride(parseArgs(["--approval-policy", "granular"]).args)).toEqual({

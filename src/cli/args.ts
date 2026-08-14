@@ -12,6 +12,7 @@
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
  *   --permission-profile <name>        显式选择 restrictive security profile
  *   --approval-policy <on-request|never|untrusted|granular>
+ *   --bash-analyzer <legacy|shadow|ast>
  *   --sandbox <off|read-only|workspace-write|strict|external>
  *   --network <deny|allow|allowlist|review>
  *   --network-host <host>               repeatable allowlist/review entry
@@ -29,6 +30,7 @@
 
 import type { ModelThinkingLevel } from "../types.ts";
 import type { ApprovalPolicyName, NetworkPolicyMode } from "../security/types.ts";
+import type { BashSecurityAnalyzerMode } from "../security/permission/bash-ast/types.ts";
 import type { SandboxProfileName } from "../runtime/contracts/public.ts";
 import { controlCommandHelp } from "./control-commands.ts";
 
@@ -66,6 +68,7 @@ export interface ParsedArgs {
   /** 显式 restrictive security profile;仅通过 Host 生效。 */
   permissionProfile?: string;
   approvalPolicy?: ApprovalPolicyName;
+  bashAnalyzer?: BashSecurityAnalyzerMode;
   sandbox?: SandboxProfileName;
   /** --network 只在无 managed forceNetworkDeny 时有效。 */
   network?: NetworkPolicyMode;
@@ -102,6 +105,7 @@ const HELP_TEXT = `Usage: runledger [options]
       --permission-profile <name>
                               read-only|workspace-write|danger-full-access|named-profile-id
       --approval-policy <p>   on-request|never|untrusted|granular
+      --bash-analyzer <mode>  legacy|shadow|ast
       --sandbox <profile>     off|read-only|workspace-write|strict|external
       --network <mode>        deny|allow|allowlist|review
       --network-host <host>   allowlist/review host，可重复
@@ -138,6 +142,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let thinking: ModelThinkingLevel | undefined;
   let permissionProfile: string | undefined;
   let approvalPolicy: ApprovalPolicyName | undefined;
+  let bashAnalyzer: BashSecurityAnalyzerMode | undefined;
   let sandbox: SandboxProfileName | undefined;
   let network: NetworkPolicyMode | undefined;
   const networkHosts: string[] = [];
@@ -264,6 +269,19 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       approvalPolicy = v;
       continue;
     }
+    if (a === "--bash-analyzer") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (v !== "legacy" && v !== "shadow" && v !== "ast") {
+        error = `--bash-analyzer 不合法:${v}(合法值 legacy/shadow/ast)`;
+        break;
+      }
+      bashAnalyzer = v;
+      continue;
+    }
     if (a === "--sandbox") {
       const v = argv[++i];
       if (v === undefined) {
@@ -382,6 +400,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       thinking,
       permissionProfile,
       approvalPolicy,
+      bashAnalyzer,
       sandbox,
       network,
       networkHosts: [...new Set(networkHosts)],

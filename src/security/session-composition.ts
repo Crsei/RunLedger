@@ -42,7 +42,10 @@ import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { loadSecurityConfigLayers, type SecurityConfigSourcePort } from "./config/loader.ts";
 import { resolveSecuritySnapshot } from "./config/resolver.ts";
 import { ExecutionGateway, gatewayRequestDigest, type ExecutionGatewayContext } from "./execution-gateway.ts";
-import { ProcessFinalLeafAdapter } from "./integration/runtime-gateway-adapter.ts";
+import {
+	ProcessFinalLeafAdapter,
+	type ProcessFinalLeafDecision,
+} from "./integration/runtime-gateway-adapter.ts";
 import { GovernedToolAuthorizationPolicy } from "./integration/runtime-tool-authorization.ts";
 import {
 	createLocalFileSystemBroker,
@@ -56,8 +59,14 @@ import {
 	type SessionProcessLeaf,
 } from "./integration/session-local-leaves.ts";
 import { ApprovalCoordinator, HeadlessDenyPrompter, type ApprovalAuditPort, type ApprovalStateStorePort } from "./permission/approval-coordinator.ts";
-import { analyzeShellCommand } from "./permission/shell-analyzer.ts";
 import { PermissionEngine } from "./permission/engine.ts";
+import { resolveToolAccessRequestsWithBashAnalyzer } from "./permission/access-resolver.ts";
+import { BashSecurityAnalyzer } from "./permission/bash-ast/classifier.ts";
+import type {
+	BashSecurityAnalyzerPort,
+	BashClassificationAuditPort,
+	BashShadowTelemetryPort,
+} from "./permission/bash-ast/types.ts";
 import { MemoryPermissionGrantStore } from "./permission/grants.ts";
 import type { RequestPermissionsPort, GovernedPermissionRequest } from "./tools/request-permissions.ts";
 import { pathWithin, type FileSystemBrokerPort } from "./policy-filesystem.ts";
@@ -111,6 +120,11 @@ export interface SessionSecurityCompositionOptions {
 		readonly stateStore: ApprovalStateStorePort;
 		readonly audit: ApprovalAuditPort;
 	};
+	readonly bashShadowTelemetry?: BashShadowTelemetryPort;
+	readonly bashClassificationAudit?: BashClassificationAuditPort;
+	/** 测试/受控组合接缝；生产默认创建并独占 Session-scoped analyzer。 */
+	readonly bashAnalyzer?: BashSecurityAnalyzerPort;
+	readonly approvalTimeoutMs?: number;
 }
 
 export interface SessionSecurityComposition {
@@ -119,6 +133,8 @@ export interface SessionSecurityComposition {
 	readonly authorizationPolicy: ToolAuthorizationPolicy;
 	readonly managedProcess: SessionManagedProcessSecurity;
 	readonly permissionRequester: RequestPermissionsPort;
+	readonly bashAnalyzer: BashSecurityAnalyzerPort;
+	close(): Promise<void>;
 }
 
 export interface SessionManagedProcessSecurityRequest {
@@ -176,6 +192,14 @@ export async function createSessionSecurity(
 	const identity = sessionIdentity(options.workspaceId, options.repositoryId);
 	const storageKey = workspaceStorageKey(identity);
 	const snapshot = await loadSnapshot(options, storageKey, cwd);
+	const ownedBashAnalyzer = options.bashAnalyzer === undefined
+		? new BashSecurityAnalyzer({
+				...(options.bashShadowTelemetry === undefined ? {} : { telemetry: options.bashShadowTelemetry }),
+				...(snapshot.bashAnalyzer === undefined ? {} : { resolution: snapshot.bashAnalyzer }),
+			})
+		: undefined;
+	const bashAnalyzer: BashSecurityAnalyzerPort = options.bashAnalyzer ?? ownedBashAnalyzer!;
+	if (snapshot.bashAnalyzer?.mode !== "legacy") await bashAnalyzer.initialize?.();
 	const sandboxBackend = options.sandboxBackend ?? createSandboxBackend(
 		runtimeWorkspacePlatform(),
 		{ probe: { which: findLocalExecutable } },
@@ -199,11 +223,17 @@ export async function createSessionSecurity(
 	});
 	const permissionEngine = new PermissionEngine();
 	const approvalCoordinator = new ApprovalCoordinator(options.approvalPorts === undefined
-		? { prompter: new HeadlessDenyPrompter() }
+		? {
+			prompter: new HeadlessDenyPrompter(),
+			...(options.now === undefined ? {} : { clock: options.now }),
+			...(options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs }),
+		}
 		: {
 			prompter: options.approvalPorts.prompter,
 			store: options.approvalPorts.stateStore,
 			audit: options.approvalPorts.audit,
+			...(options.now === undefined ? {} : { clock: options.now }),
+			...(options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs }),
 		});
 	const permissionGrantStore = new MemoryPermissionGrantStore(options.now ?? (() => new Date()));
 	const gateway = new ExecutionGateway({
@@ -215,6 +245,7 @@ export async function createSessionSecurity(
 		approvalCoordinator,
 		permissionGrantStore,
 		finalLeaf,
+		...(options.bashClassificationAudit === undefined ? {} : { bashClassificationAudit: options.bashClassificationAudit }),
 	});
 	const authorize = createAuthorizer({ options, identity, snapshot, gateway, providers, workspace });
 	const managedProcess = createManagedProcessSecurity({
@@ -222,6 +253,7 @@ export async function createSessionSecurity(
 		identity,
 		snapshot,
 		gateway,
+		bashAnalyzer,
 		providers,
 		workspace,
 		bindings,
@@ -244,6 +276,7 @@ export async function createSessionSecurity(
 			sandboxBackend,
 			processLeaf,
 			unrestrictedShell,
+			bashAnalyzer,
 			cwd,
 		}),
 	};
@@ -253,6 +286,10 @@ export async function createSessionSecurity(
 		authorizationPolicy: new GovernedToolAuthorizationPolicy(),
 		managedProcess,
 		permissionRequester: createPermissionRequester({ options, snapshot, workspace, permissionEngine, approvalCoordinator, permissionGrantStore, cwd }),
+		bashAnalyzer,
+		close: async () => {
+			await ownedBashAnalyzer?.close();
+		},
 	};
 }
 
@@ -312,6 +349,7 @@ function createManagedProcessSecurity(input: {
 	readonly identity: SessionIdentity;
 	readonly snapshot: SecuritySnapshot;
 	readonly gateway: ExecutionGateway;
+	readonly bashAnalyzer: BashSecurityAnalyzerPort;
 	readonly providers: ExecutionConstraintProviders;
 	readonly workspace: (toolCallId: string, cwd?: string) => HostWorkspaceExecutionContext;
 	readonly bindings: Map<string, ProcessBinding>;
@@ -334,6 +372,14 @@ function createManagedProcessSecurity(input: {
 			if ((input.options.toolchain === undefined) !== (input.options.processEnvironment === undefined)) {
 				return securityError("invalid_request", "toolchain and governed process environment must be supplied together");
 			}
+			const mode = input.snapshot.bashAnalyzer?.mode ?? "legacy";
+			const requests = unwrapSecurityResult(await resolveToolAccessRequestsWithBashAnalyzer(
+				"bash",
+				{ command: request.command },
+				request.cwd,
+				mode,
+				input.bashAnalyzer,
+			));
 			const authorization = {
 				...authorizationRequest(
 				input.options.fence,
@@ -341,7 +387,7 @@ function createManagedProcessSecurity(input: {
 				workspace,
 				toolCallId,
 				"bash",
-				[{ kind: "shell", command: request.command, cwd: request.cwd, analysis: analyzeShellCommand(request.command).analysis }],
+				requests,
 				{
 					command: request.command,
 					cwd: request.cwd,
@@ -438,13 +484,22 @@ function createManagedProcessSecurity(input: {
 									return securityError("invalid_request", "off launch plan final-leaf validation failed");
 								}
 							}
-							return input.finalLeaf.decide({
+							const decision = await input.finalLeaf.decide({
 								constraintInput,
 								constraintSnapshot: constraints.snapshot,
 								requestDigest,
 								policyDigest: input.snapshot.policyDigest,
 								...(restrictive && plan !== undefined ? { sandboxPlan: plan } : {}),
 							});
+							if (decision.ok) {
+								await linkBashClassificationAudit(
+									input.options.bashClassificationAudit,
+									input.options.fence.sessionId,
+									requestDigest,
+									decision.value,
+								);
+							}
+							return decision;
 						},
 						complete: opened.value.complete,
 					},
@@ -617,6 +672,7 @@ function createGovernedShell(input: {
 	readonly sandboxBackend: SandboxBackend;
 	readonly processLeaf: SessionProcessLeaf;
 	readonly unrestrictedShell: Shell;
+	readonly bashAnalyzer: BashSecurityAnalyzerPort;
 	readonly cwd: string;
 }): Shell {
 	return {
@@ -629,7 +685,14 @@ function createGovernedShell(input: {
 			const argumentsDigest = digestOf(shellDigestInput(command, opts, cwd));
 			const toolCallId = createRuntimeId("toolCall", argumentsDigest.digest.slice(0, 64));
 			const workspace = input.workspace(toolCallId, cwd);
-			const requests: readonly AccessRequest[] = [{ kind: "shell", command, cwd, analysis: analyzeShellCommand(command).analysis }];
+			const mode = input.snapshot.bashAnalyzer?.mode ?? "legacy";
+			const requests = unwrapSecurityResult(await resolveToolAccessRequestsWithBashAnalyzer(
+				"bash",
+				{ command },
+				cwd,
+				mode,
+				input.bashAnalyzer,
+			));
 			const request = authorizationRequest(input.options.fence, input.snapshot, workspace, toolCallId, "bash", requests, {
 				argumentsDigest,
 				...(input.options.toolchain === undefined ? {} : { toolchainSnapshotDigest: input.options.toolchain.snapshotDigest }),
@@ -685,7 +748,13 @@ function createGovernedShell(input: {
 					policyDigest: input.snapshot.policyDigest,
 					...(restrictive && plan !== undefined ? { sandboxPlan: plan } : {}),
 				});
-				unwrapSecurityResult(leaf);
+				const leafDecision = unwrapSecurityResult(leaf);
+				await linkBashClassificationAudit(
+					input.options.bashClassificationAudit,
+					input.options.fence.sessionId,
+					requestDigest,
+					leafDecision,
+				);
 				if (plan === undefined) {
 					return settleGatewayEffect(context, () => input.unrestrictedShell.exec(command, opts));
 				}
@@ -861,6 +930,28 @@ async function settleGatewayEffect<T>(context: ExecutionGatewayContext, effect: 
 	} catch (error) {
 		unwrapSecurityResult(await context.complete());
 		throw error;
+	}
+}
+
+async function linkBashClassificationAudit(
+	audit: BashClassificationAuditPort | undefined,
+	sessionId: string,
+	requestDigest: RuntimeDigest,
+	decision: ProcessFinalLeafDecision,
+): Promise<void> {
+	if (audit?.link === undefined) return;
+	try {
+		await audit.link({
+			protocolVersion: 1,
+			sessionId,
+			requestDigest: requestDigest.digest,
+			constraintSnapshotDigest: decision.constraintSnapshotDigest.digest,
+			...(decision.sandboxReceipt === undefined
+				? {}
+				: { sandboxReceiptDigest: decision.sandboxReceipt.receiptDigest.digest }),
+		});
+	} catch {
+		// 分类 linkage 审计为 best-effort，不改变已经收窄的授权结果。
 	}
 }
 

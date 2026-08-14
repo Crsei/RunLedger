@@ -14,6 +14,12 @@ import type {
 } from "../runtime/contracts/public.ts";
 import type { SandboxProfileName } from "../runtime/contracts/public.ts";
 import type { CompiledFilesystemPolicy } from "./permission/filesystem-entries.ts";
+import type {
+	BashAnalyzerResolution,
+	BashAstClassification,
+	BashAstClassificationMetrics,
+	BashSecurityAnalyzerMode,
+} from "./permission/bash-ast/types.ts";
 
 export const SECURITY_POLICY_SOURCES = [
 	"managed",
@@ -50,7 +56,15 @@ export interface GranularApprovalConfig {
 
 export type AccessRequest =
 	| { readonly kind: "filesystem"; readonly operation: FilesystemAccessOperation; readonly path: string }
-	| { readonly kind: "shell"; readonly command: string; readonly cwd: string; readonly analysis: "known" | "unknown" }
+	| {
+			readonly kind: "shell";
+			readonly command: string;
+			readonly cwd: string;
+			readonly analysis: "known" | "unknown";
+			readonly bashAnalyzerMode?: BashSecurityAnalyzerMode;
+			readonly bashAst?: BashAstClassification;
+			readonly bashMetrics?: BashAstClassificationMetrics;
+	  }
 	| { readonly kind: "network"; readonly operation: "connect" | "fetch"; readonly host: string; readonly protocol?: NetworkApprovalProtocol; readonly port?: number }
 	| { readonly kind: "worktree"; readonly operation: "create" | "remove" | "apply" | "gc"; readonly target: string }
 	| { readonly kind: "tool"; readonly toolName: string; readonly provider?: string };
@@ -106,6 +120,7 @@ export interface SecurityConfigDocument {
 	readonly network?: NetworkPolicy;
 	readonly filesystem?: Partial<FilesystemPolicy>;
 	readonly rules?: readonly Omit<SecurityRule, "source">[];
+	readonly bashAnalyzerMode?: BashSecurityAnalyzerMode;
 }
 
 export interface ManagedSecurityConstraints {
@@ -113,6 +128,7 @@ export interface ManagedSecurityConstraints {
 	readonly allowedApprovalPolicies: readonly ApprovalPolicyName[];
 	readonly minimumSandbox: SandboxProfileName;
 	readonly forceNetworkDeny: boolean;
+	readonly minimumBashAnalyzerMode?: BashSecurityAnalyzerMode;
 }
 
 export interface SecurityConfigLayer {
@@ -130,6 +146,7 @@ export interface SecuritySnapshot {
 	readonly tempRoot: string;
 	readonly policyDigest: RuntimeDigest;
 	readonly createdAt: string;
+	readonly bashAnalyzer?: BashAnalyzerResolution;
 }
 
 export interface PolicyDecision {

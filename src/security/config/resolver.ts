@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { runtimeDigest } from "../../runtime/contracts/public.ts";
 import type { SandboxProfileName } from "../../runtime/contracts/public.ts";
 import { PERMISSION_PROFILE_NAMES } from "../types.ts";
+import { resolveBashSecurityAnalyzerMode } from "../permission/bash-ast/mode.ts";
 import type {
 	ApprovalPolicyName,
 	FilesystemPolicy,
@@ -155,6 +156,15 @@ export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions)
 	if (approvalPolicy === "granular" && granularApproval === undefined) return failure("granular approval policy requires granularApproval");
 	const sandbox = firstValue(options.layers, (layer) => layer.document.sandbox) ?? defaults.sandbox;
 	const network = firstValue(options.layers, (layer) => layer.document.network) ?? defaults.network;
+	const bashAnalyzer = resolveBashSecurityAnalyzerMode({
+		user: firstValue(options.layers.filter((layer) => layer.source === "user"), (layer) => layer.document.bashAnalyzerMode),
+		project: firstValue(options.layers.filter((layer) => layer.source === "project"), (layer) => layer.document.bashAnalyzerMode),
+		cli: firstValue(options.layers.filter((layer) => layer.source === "cli" || layer.source === "session"), (layer) => layer.document.bashAnalyzerMode),
+		managedMinimum: options.constraints?.minimumBashAnalyzerMode ?? firstValue(
+			options.layers.filter((layer) => layer.source === "managed" || layer.source === "organization"),
+			(layer) => layer.document.bashAnalyzerMode,
+		),
+	});
 	const constraints = options.constraints;
 	if (constraints) {
 		if (!constraints.allowedProfiles.includes(selectedName)) return failure(`profile is forbidden by managed policy: ${selectedName}`);
@@ -196,6 +206,7 @@ export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions)
 		workspaceRoot: options.workspaceRoot,
 		tempRoot: options.tempRoot,
 		createdAt: options.createdAt,
+		bashAnalyzer,
 	};
 	return { ok: true, value: { ...body, policyDigest: runtimeDigest(body) } };
 }

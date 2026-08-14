@@ -20,6 +20,12 @@ export const EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST: readonly string[] = [
 	"src/security/integration/session-local-leaves.ts",
 ];
 
+/** Bash AST 自包含 parser asset verification；不向工具或扩展暴露 raw I/O。 */
+export const BASH_AST_ASSET_ALLOWLIST: readonly string[] = [
+	"src/security/permission/bash-ast/assets.ts",
+	"src/security/permission/bash-ast/worker.ts",
+];
+
 /**
  * R0 之后只有这里列出的 backend 文件可以直接持有 child_process/PTY 句柄。
  * native PTY adapter 也必须保持在精确文件路径内；新增条目不能豁免整个目录。
@@ -125,7 +131,7 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 			const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
 			for (const [pattern, kind] of BOUNDARY_PATTERNS) {
 				if (!pattern.test(source)) continue;
-				if (!CANONICAL_STORAGE_ADAPTER_ALLOWLIST.includes(relativeFile) && !EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST.includes(relativeFile)) {
+				if (!CANONICAL_STORAGE_ADAPTER_ALLOWLIST.includes(relativeFile) && !EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST.includes(relativeFile) && !BASH_AST_ASSET_ALLOWLIST.includes(relativeFile)) {
 					violations.push({ file: relativeFile, kind });
 				}
 			}
@@ -147,7 +153,8 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 			const source = readFileSync(file, "utf8");
 			if (BOUNDARY_PATTERNS[1][0].test(source) &&
 				!MANAGED_PROCESS_BACKEND_ALLOWLIST.includes(relativeFile) &&
-				!EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST.includes(relativeFile)) {
+				!EXECUTION_FINAL_LEAF_ADAPTER_ALLOWLIST.includes(relativeFile) &&
+				!BASH_AST_ASSET_ALLOWLIST.includes(relativeFile)) {
 				violations.push({ file: relativeFile, kind: "raw-process" });
 			}
 			if (RAW_BACKGROUND_PATTERNS.some((pattern) => pattern.test(source)) &&

@@ -52,6 +52,7 @@
   "files": [
     "dist",
     "!dist/native/runledger-syntax-highlighter.node",
+    "assets/tree-sitter",
     "README.md"
   ],
   "scripts": {
@@ -64,9 +65,10 @@
     "check:runtime-boundaries": "tsx scripts/check-runtime-boundaries.ts",
     "check:contract-consumers": "tsc --noEmit -p tsconfig.contract-consumers.json",
     "check:execution-boundaries": "tsx scripts/check-execution-boundaries.ts",
+    "check:bash-ast-assets": "tsx scripts/check-bash-ast-assets.ts",
     "check:platform-boundaries": "tsx scripts/check-platform-boundaries.ts",
     "check:session-owner-boundaries": "tsx scripts/check-session-owner-boundaries.ts",
-    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && tsc --noEmit -p tsconfig.json",
+    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && npm run check:bash-ast-assets && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
     "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
@@ -102,7 +104,9 @@
     "proper-lockfile": "4.1.2",
     "string-width": "7.2.0",
     "strip-ansi": "7.1.2",
-    "typebox": "1.1.38"
+    "tree-sitter-bash": "0.25.1",
+    "typebox": "1.1.38",
+    "web-tree-sitter": "0.26.11"
   },
   "optionalDependencies": {
     "@runledger/syntax-highlighter-linux-x64-gnu": "0.0.1",
