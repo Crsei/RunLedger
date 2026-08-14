@@ -11,7 +11,13 @@ import { dirname, join } from "node:path";
 import type { ModelThinkingLevel } from "../types.ts";
 import type { QueueMode } from "../runtime/types.ts";
 import type { RunledgerLayout } from "../runtime/contracts/public.ts";
+import {
+	validateMultiAgentSettingsSource,
+	type MultiAgentDiagnostic,
+	type MultiAgentSettingsSource,
+} from "../runtime/agents/index.ts";
 import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
+import { runtimeDigest, type RuntimeDigest } from "../runtime/protocol/foundation.ts";
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
@@ -44,6 +50,8 @@ export interface ProjectSettings {
 	followUpMode?: QueueMode;
 	/** 用户级本地 trace 记录策略；workspace settings 不拥有该 authority。 */
 	recording?: RecordingSettings;
+	/** M1 bounded root delegation policy；workspace 层只能进一步收窄。 */
+	multiAgent?: MultiAgentSettingsSource;
 	/** 版本化 skills provider policy（user/workspace 均可写，workspace 只能收窄）。 */
 	skills?: SkillsSettings;
 }
@@ -79,7 +87,34 @@ export const DEFAULT_RECORDING_CONFIG: EffectiveRecordingConfig = Object.freeze(
 /** 用于边界检查的输入类型；sessionDir 只能被识别为拒绝字段，不能被持久化。 */
 export type ProjectSettingsInput = ProjectSettings & { readonly sessionDir?: unknown };
 
-export type SettingsStorageErrorCode = "unsupported_setting" | "invalid_workspace_key";
+export type SettingsStorageErrorCode = "unsupported_setting" | "invalid_workspace_key" | "invalid_multi_agent_settings";
+
+export interface LayeredMultiAgentSettings {
+	readonly state: "absent" | "valid" | "invalid";
+	readonly value?: MultiAgentSettingsSource;
+	/** 保留 presence 与原始 JSON，供 policy resolver 产生 fail-closed diagnostic。 */
+	readonly raw?: unknown;
+	readonly sourceDigest: RuntimeDigest;
+}
+
+export interface LayeredSettingsLayer {
+	readonly source: "user" | "workspace";
+	readonly path: string;
+	readonly settings: ProjectSettings;
+	readonly multiAgent: LayeredMultiAgentSettings;
+	readonly sourceDigest: RuntimeDigest;
+}
+
+export interface LayeredProjectSettings {
+	readonly user: LayeredSettingsLayer;
+	readonly workspace: LayeredSettingsLayer;
+	readonly diagnostics: readonly MultiAgentDiagnostic[];
+}
+
+export interface LayeredProjectSettingsOptions {
+	readonly layout: RunledgerLayout;
+	readonly workspaceKey: string;
+}
 
 export class SettingsStorageError extends Error {
 	readonly code: SettingsStorageErrorCode;
@@ -90,7 +125,7 @@ export class SettingsStorageError extends Error {
 		super(
 			code === "unsupported_setting"
 				? `unsupported settings field${field ? `: ${field}` : ""}`
-				: "invalid workspace storage key",
+				: code === "invalid_workspace_key" ? "invalid workspace storage key" : "invalid multi-agent settings",
 		);
 		this.name = "SettingsStorageError";
 		this.code = code;
@@ -123,6 +158,27 @@ export async function loadProjectSettings(
 		return {};
 	}
 	return parseSettings(text, path, options.workspaceKey === undefined);
+}
+
+/**
+ * 读取 user/workspace 两层，而不是把它们先合并成一个 settings 对象。
+ * multiAgent 的 invalid presence 会保留在 layer.raw，并以结构化诊断让上层
+ * policy resolver fail closed；普通单 Agent settings 仍照常返回。
+ */
+export async function loadLayeredProjectSettings(
+	options: LayeredProjectSettingsOptions,
+): Promise<LayeredProjectSettings> {
+	const user = await loadSettingsLayer(options.layout.settings, "user", true);
+	const workspacePath = getSettingsPath({ layout: options.layout, workspaceKey: options.workspaceKey });
+	const workspace = await loadSettingsLayer(workspacePath, "workspace", false);
+	return Object.freeze({
+		user: Object.freeze(user),
+		workspace: Object.freeze(workspace),
+		diagnostics: Object.freeze([
+			...user.multiAgentDiagnostics,
+			...workspace.multiAgentDiagnostics,
+		].map((diagnostic) => Object.freeze(diagnostic))),
+	});
 }
 
 /** 同步加载 canonical settings。 */
@@ -175,7 +231,82 @@ function parseSettings(text: string, path: string, allowRecording: boolean): Pro
 	) {
 		process.stderr.write(`[runledger] invalid_recording_settings at ${path}; recording disabled\n`);
 	}
+	const multiAgentValidation = validateMultiAgentSettingsSource(raw.multiAgent, "multiAgent");
+	if (Object.prototype.hasOwnProperty.call(raw, "multiAgent") && multiAgentValidation.diagnostics.length > 0) {
+		process.stderr.write(`[runledger] invalid_multi_agent_settings at ${path}; multi-agent disabled\n`);
+	}
 	return sanitizeProjectSettings(raw, allowRecording);
+}
+
+interface InternalSettingsLayer extends LayeredSettingsLayer {
+	readonly multiAgentDiagnostics: readonly MultiAgentDiagnostic[];
+}
+
+async function loadSettingsLayer(
+	path: string,
+	source: "user" | "workspace",
+	allowRecording: boolean,
+): Promise<InternalSettingsLayer> {
+	let text: string;
+	try {
+		text = await fs.readFile(path, "utf8");
+	} catch {
+		return makeSettingsLayer(path, source, {}, allowRecording, false, []);
+	}
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		const diagnostics: MultiAgentDiagnostic[] = [{
+			code: "invalid_policy",
+			path: `${source}.settings`,
+			message: "settings JSON is invalid; multi-agent capability is unavailable",
+		}];
+		return makeSettingsLayer(path, source, {}, allowRecording, true, diagnostics);
+	}
+	if (!isPlainRecord(parsed)) {
+		const diagnostics: MultiAgentDiagnostic[] = [{
+			code: "invalid_policy",
+			path: `${source}.settings`,
+			message: "settings root must be an object; multi-agent capability is unavailable",
+		}];
+		return makeSettingsLayer(path, source, {}, allowRecording, true, diagnostics);
+	}
+
+	const hasMultiAgent = Object.prototype.hasOwnProperty.call(parsed, "multiAgent");
+	const validation = validateMultiAgentSettingsSource(parsed.multiAgent, `${source}.multiAgent`);
+	return makeSettingsLayer(path, source, parsed, allowRecording, hasMultiAgent, validation.diagnostics);
+}
+
+function makeSettingsLayer(
+	path: string,
+	source: "user" | "workspace",
+	raw: Record<string, unknown>,
+	allowRecording: boolean,
+	present: boolean,
+	diagnostics: readonly MultiAgentDiagnostic[],
+): InternalSettingsLayer {
+	const validation = validateMultiAgentSettingsSource(raw.multiAgent, `${source}.multiAgent`);
+	const state = !present ? "absent" : diagnostics.length === 0 && validation.value !== undefined ? "valid" : "invalid";
+	const multiAgent: LayeredMultiAgentSettings = Object.freeze({
+		state,
+		...(present ? { raw: raw.multiAgent } : {}),
+		...(state === "valid" && validation.value !== undefined ? { value: validation.value } : {}),
+		sourceDigest: runtimeDigest(present ? raw.multiAgent : null),
+	});
+	return {
+		source,
+		path,
+		settings: sanitizeProjectSettings(raw, allowRecording),
+		multiAgent,
+		sourceDigest: runtimeDigest(raw),
+		multiAgentDiagnostics: Object.freeze([...diagnostics]),
+	};
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function assertSupportedSettings(
@@ -195,6 +326,12 @@ function assertSupportedSettings(
 		sanitizeRecordingSettings(settings.recording) === undefined
 	) {
 		throw new SettingsStorageError("unsupported_setting", path, "recording");
+	}
+	if (Object.prototype.hasOwnProperty.call(settings, "multiAgent")) {
+		const validation = validateMultiAgentSettingsSource(settings.multiAgent, "multiAgent");
+		if (validation.diagnostics.length > 0 || validation.value === undefined) {
+			throw new SettingsStorageError("invalid_multi_agent_settings", path, "multiAgent");
+		}
 	}
 }
 
@@ -221,9 +358,16 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 		const recording = sanitizeRecordingSettings(raw.recording);
 		if (recording) out.recording = recording;
 	}
+	const multiAgent = sanitizeMultiAgentSettings(raw.multiAgent);
+	if (multiAgent !== undefined) out.multiAgent = multiAgent;
 	const skills = sanitizeSkillsSettings(raw.skills);
 	if (skills !== undefined) out.skills = skills;
 	return out;
+}
+
+function sanitizeMultiAgentSettings(value: unknown): MultiAgentSettingsSource | undefined {
+	const validation = validateMultiAgentSettingsSource(value, "multiAgent");
+	return validation.diagnostics.length === 0 ? validation.value : undefined;
 }
 
 const SKILLS_PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;

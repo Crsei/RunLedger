@@ -5,6 +5,7 @@ import {
 	type MultiAgentError,
 	type MultiAgentLimits,
 	type MultiAgentPolicy,
+	type MultiAgentPolicyReceipt,
 	type MultiAgentPolicyResolution,
 	type MultiAgentResult,
 	type MultiAgentSettingsSource,
@@ -13,6 +14,7 @@ import {
 	type Utf8TextValue,
 	type ValidatedSpawnSubagentInput,
 } from "./types.ts";
+import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 
 export const MULTI_AGENT_HARD_LIMITS: Readonly<MultiAgentLimits> = Object.freeze({
 	maxChildrenPerRoot: 3,
@@ -52,10 +54,25 @@ export interface Utf8TextBounds {
 	readonly rejectWhitespaceOnly?: boolean;
 }
 
+export interface MultiAgentSettingsSourceValidation {
+	readonly value?: MultiAgentSettingsSource;
+	readonly diagnostics: readonly MultiAgentDiagnostic[];
+}
+
+export interface BuildMultiAgentPolicyReceiptInput {
+	readonly runtimeEnabled: boolean;
+	readonly userSourceDigest: RuntimeDigest;
+	readonly workspaceSourceDigest: RuntimeDigest;
+	readonly resolution: MultiAgentPolicyResolution;
+}
+
 export function resolveMultiAgentPolicy(input: ResolveMultiAgentPolicyInput): MultiAgentPolicyResolution {
 	const diagnostics: MultiAgentDiagnostic[] = [];
-	const userParsed = parseSettingsSource(input.user, "user", diagnostics);
-	const workspaceParsed = parseSettingsSource(input.workspace, "workspace", diagnostics);
+	const userValidation = validateMultiAgentSettingsSource(input.user, "user");
+	const workspaceValidation = validateMultiAgentSettingsSource(input.workspace, "workspace");
+	diagnostics.push(...userValidation.diagnostics, ...workspaceValidation.diagnostics);
+	const userParsed = userValidation.value;
+	const workspaceParsed = workspaceValidation.value;
 	let effectiveLimits: MultiAgentLimits = { ...MULTI_AGENT_HARD_LIMITS };
 
 	if (userParsed !== undefined) {
@@ -97,6 +114,35 @@ export function resolveMultiAgentPolicy(input: ResolveMultiAgentPolicyInput): Mu
 	return Object.freeze({
 		policy,
 		diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))),
+	});
+}
+
+export function validateMultiAgentSettingsSource(
+	value: unknown,
+	path: string,
+): MultiAgentSettingsSourceValidation {
+	const diagnostics: MultiAgentDiagnostic[] = [];
+	const parsed = parseSettingsSource(value, path, diagnostics);
+	return Object.freeze({
+		...(parsed === undefined ? {} : { value: Object.freeze({ ...parsed }) }),
+		diagnostics: Object.freeze(diagnostics.map((diagnostic) => Object.freeze(diagnostic))),
+	});
+}
+
+export function buildMultiAgentPolicyReceipt(
+	input: BuildMultiAgentPolicyReceiptInput,
+): MultiAgentPolicyReceipt {
+	const body = {
+		runtimeEnabled: input.runtimeEnabled,
+		userSourceDigest: input.userSourceDigest,
+		workspaceSourceDigest: input.workspaceSourceDigest,
+		effectiveLimits: Object.freeze({ ...input.resolution.policy.limits }),
+		diagnostics: Object.freeze(input.resolution.diagnostics.map((diagnostic) => Object.freeze({ ...diagnostic }))),
+		resolverVersion: MULTI_AGENT_RESOLVER_VERSION,
+	};
+	return Object.freeze({
+		...body,
+		receiptDigest: runtimeDigest(body),
 	});
 }
 
@@ -162,7 +208,7 @@ export function validateBoundedUtf8Text(
 
 function parseSettingsSource(
 	value: unknown,
-	path: "user" | "workspace",
+	path: string,
 	diagnostics: MultiAgentDiagnostic[],
 ): MultiAgentSettingsSource | undefined {
 	if (value === undefined) return undefined;
