@@ -4,6 +4,7 @@ export const EXEC_CONTINUATION_MAX_LINES = 2;
 
 /** Codex ExecCell 输出块的首行前缀和屏幕行预算。 */
 export const EXEC_OUTPUT_PREFIX = "  └ ";
+export const EXEC_OUTPUT_CONTINUATION_INDENT = "    ";
 export const EXEC_OUTPUT_MAX_LINES = 5;
 export const EXEC_OUTPUT_MAX_LINES_TOOL = EXEC_OUTPUT_MAX_LINES;
 export const EXEC_OUTPUT_MAX_LINES_USER_SHELL = 50;

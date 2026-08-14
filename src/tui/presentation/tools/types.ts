@@ -63,6 +63,14 @@ export interface SafeShellChunk {
 	readonly safeSgrText?: SafeBoundedText;
 }
 
+export interface SafeExecLayout {
+	readonly continuationPrefix: string;
+	readonly continuationMaxLines: number;
+	readonly outputPrefix: string;
+	readonly outputMaxLines: number;
+	readonly transcriptForm: "dollar";
+}
+
 export type SafePlanStepStatus = "pending" | "in-progress" | "completed";
 
 export interface SafePlanStep {
@@ -115,6 +123,7 @@ export interface SafeToolPresentation {
 	readonly input?: SafeToolInputMetadata;
 	readonly chips: readonly SafeToolChip[];
 	readonly body: readonly SafeToolBodyBlock[];
+	readonly exec?: SafeExecLayout;
 	readonly plan?: SafePlanUpdate;
 	readonly result?: SafeToolResultMetadata;
 	readonly error?: SafeBoundedText;

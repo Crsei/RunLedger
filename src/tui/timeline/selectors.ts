@@ -65,6 +65,13 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 					...(result?.exitCode.state === "known" ? { exitCode: result.exitCode.value } : {}),
 					...(result?.durationMs.state === "known" ? { durationMs: result.durationMs.value } : {}),
 					...(result?.background === true || presentation.input.background === true ? { background: true } : {}),
+					...(presentation.exec === undefined ? {} : {
+						continuationPrefix: presentation.exec.continuationPrefix,
+						continuationMaxLines: presentation.exec.continuationMaxLines,
+						outputPrefix: presentation.exec.outputPrefix,
+						outputMaxLines: presentation.exec.outputMaxLines,
+						transcriptForm: presentation.exec.transcriptForm,
+					}),
 				}];
 			}
 			const lines = toolLines(row);

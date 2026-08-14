@@ -13,6 +13,7 @@ import type {
 	SafeDiffDocument,
 	SafeDiffHunk,
 	SafeDiffLine,
+	SafeExecLayout,
 	SafePlanStepStatus,
 	SafePlanUpdate,
 	SafeShellChunk,
@@ -23,6 +24,13 @@ import type {
 	SafeToolResultMetadata,
 	SafeToolUsageView,
 } from "./types.ts";
+import {
+	EXEC_CONTINUATION_MAX_LINES,
+	EXEC_CONTINUATION_PREFIX,
+	EXEC_OUTPUT_MAX_LINES,
+	EXEC_OUTPUT_MAX_LINES_USER_SHELL,
+	EXEC_OUTPUT_PREFIX,
+} from "../../opentui/block-layout.ts";
 
 /** 工具正文/标签的显示上界；超出截断并标记 truncated。 */
 export const TOOL_TEXT_BOUND_BYTES = 64 * 1024;
@@ -93,6 +101,7 @@ export function rendererForTool(toolName: string): SafeToolRenderer {
 	switch (toolName) {
 		case "bash":
 		case "sh":
+		case "!":
 			return "shell";
 		case "TodoWrite":
 		case "todo-write":
@@ -167,6 +176,15 @@ export function projectToolStart(toolName: string, args: unknown, startedAt: str
 	const title = boundedToolText(toolName, LABEL_BOUND_BYTES);
 	const input = projectInputMetadata(toolName, args);
 	const renderer = rendererForTool(toolName);
+	const exec: SafeExecLayout | undefined = renderer === "shell"
+		? {
+			continuationPrefix: EXEC_CONTINUATION_PREFIX,
+			continuationMaxLines: EXEC_CONTINUATION_MAX_LINES,
+			outputPrefix: EXEC_OUTPUT_PREFIX,
+			outputMaxLines: toolName === "!" ? EXEC_OUTPUT_MAX_LINES_USER_SHELL : EXEC_OUTPUT_MAX_LINES,
+			transcriptForm: "dollar",
+		}
+		: undefined;
 	const chips: SafeToolChip[] = [
 		{ label: { text: "running", truncated: false, byteLength: 7 }, tone: "neutral" },
 	];
@@ -179,6 +197,7 @@ export function projectToolStart(toolName: string, args: unknown, startedAt: str
 		input,
 		chips,
 		body: [],
+		...(exec === undefined ? {} : { exec }),
 		...(renderer === "plan" ? { plan: projectPlanUpdate(args) } : {}),
 		timestamps: { startedAt },
 	};

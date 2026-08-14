@@ -28,7 +28,7 @@ import { SyntaxHighlightService } from "../highlight/service.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "../highlight/theme-controller.ts";
 import { createSyntectCodeBlockRenderer } from "./syntect-code-block-renderer.ts";
 import { SyntectCodeBlockRenderable, type HighlightAdmission } from "./syntect-code-block-renderable.ts";
-import { ExecRenderable } from "./exec-renderable.ts";
+import { ExecRenderable, plainExecText } from "./exec-renderable.ts";
 import { stripShellLoginWrapper } from "./exec-renderable.ts";
 import { DiffRenderable } from "./diff-renderable.ts";
 import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-renderable.ts";
@@ -158,7 +158,7 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "input") return `${block.title}\n${block.message}\n${block.value}`;
   if (block.kind === "separator") return block.content ?? block.label;
   if (block.kind === "command") return `$ ${stripCommandForPlaintext(block.command)}`;
-  if (block.kind === "exec") return [block.command, ...block.output.map((chunk) => chunk.text)].join("\n");
+  if (block.kind === "exec") return plainExecText(block);
   if (block.kind === "diff") return block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text.text)).join("\n");
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
@@ -188,7 +188,7 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     : block.kind === "command"
     ? block.command.length + 2
     : block.kind === "exec"
-    ? block.command.length + block.output.reduce((total, chunk) => total + chunk.text.length, 0)
+    ? plainExecText(block).length
     : block.kind === "diff"
     ? block.document.hunks.reduce((total, hunk) => total + hunk.lines.reduce((lineTotal, line) => lineTotal + line.text.text.length, 0), 0)
     : block.kind === "status-line"

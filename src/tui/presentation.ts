@@ -28,6 +28,11 @@ export type PresentationBlock =
     exitCode?: number;
     durationMs?: number;
     background?: boolean;
+    continuationPrefix?: string;
+    continuationMaxLines?: number;
+    outputPrefix?: string;
+    outputMaxLines?: number;
+    transcriptForm?: "dollar";
   }
   | {
     id?: string;
