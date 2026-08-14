@@ -52,7 +52,7 @@ export class LateBoundAttemptPort {
 	}
 }
 
-const SIDE_EFFECT_TOOL_CALLS = new Set(["fs_write", "fs_rm", "fs_mkdir", "shell_exec", "network_request"]);
+const SIDE_EFFECT_TOOL_CALLS = new Set(["fs_write", "fs_rm", "fs_mkdir", "fs_rename", "shell_exec", "network_request"]);
 
 /**
  * 包装 ExecutionEnv:副作用调用进入 attempt 生命周期。unbound/不可用时
@@ -92,6 +92,11 @@ export function gatedExecutionEnv(base: ExecutionEnv, port: () => AttemptPort | 
 			writeFile: (p, data) => attempt("workspace_mutation", digestWrite(p, data), () => base.fs.writeFile(p, data)),
 			mkdir: (p, opts) => attempt("workspace_mutation", digestPathOperation("fs.mkdir", p, opts ?? {}), () => base.fs.mkdir(p, opts)),
 			rm: (p, opts) => attempt("workspace_mutation", digestPathOperation("fs.rm", p, opts ?? {}), () => base.fs.rm(p, opts)),
+			rename: (from, to) => attempt("workspace_mutation", runtimeDigest({
+				operation: "fs.rename",
+				fromDigest: runtimeDigest(from).digest,
+				toDigest: runtimeDigest(to).digest,
+			}), () => base.fs.rename(from, to)),
 		},
 		shell: {
 			exec: (cmd, opts) => attempt("process_spawn", digestShell(cmd, opts), () => base.shell.exec(cmd, opts)),

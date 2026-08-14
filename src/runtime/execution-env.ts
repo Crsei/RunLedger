@@ -9,7 +9,7 @@
  *   - 远端运行(后续接 streamProxy + Browser ExecutionEnv)可重写 fs / shell
  */
 
-import { readFile, writeFile, stat, readdir, mkdir, rm } from "node:fs/promises";
+import { readFile, writeFile, stat, readdir, mkdir, rm, rename } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
 import { findGitBash } from "../utils/shell.ts";
@@ -32,6 +32,7 @@ export interface FileSystem {
   readdir(p: string): Promise<string[]>;
   mkdir(p: string, opts?: { recursive?: boolean }): Promise<void>;
   rm(p: string, opts?: { recursive?: boolean; force?: boolean }): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
 }
 
 /** Host-gated network request; the implementation owns transport and redirects. */
@@ -152,6 +153,9 @@ function localFs(): FileSystem {
     },
     async rm(p, opts) {
       await rm(p, opts);
+    },
+    async rename(from, to) {
+      await rename(from, to);
     },
   };
 }
