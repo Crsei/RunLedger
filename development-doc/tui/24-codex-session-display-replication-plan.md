@@ -1,6 +1,6 @@
 # RunLedger TUI Codex 会话展示区完整复刻计划
 
-> 状态：**S0–S7 已实现并通过 fresh evidence；状态：implemented/accepted**
+> 状态：**S0–S6 已实现；复核缺口已修复；S7 repository-wide / human acceptance 待闭合，状态：implemented/unaccepted**
 >
 > 计划日期：2026-08-14
 >
@@ -8,7 +8,7 @@
 >
 > Codex 固定参照：`main@0b175e6439a8608ba7726ee153fd8590619e8f34`
 >
-> 交付性质：本文冻结会话展示区（transcript 区域）的展示块语义、布局契约、实施阶段与验收；状态指示行与 Ctrl+T 转写视图已落地，最终人工验收已随 S7 完成。
+> 交付性质：本文冻结会话展示区（transcript 区域）的展示块语义、布局契约、实施阶段与验收；状态指示行与 Ctrl+T 转写视图已落地。2026-08-14 复核发现的生产数据源、增量缓存和窄宽布局缺口已修复，但新候选尚未完成 dark/light 全场景人工复验，且仓库级门禁被任务外未跟踪文档阻塞。
 
 ---
 
@@ -375,14 +375,14 @@ export interface TranscriptOverlayView {
   │ --save                          ← 续行前缀 dim, max 2 屏幕行
   └ added 3 packages in 2s          ← 输出前缀 dim, max 5(工具)/50(用户 shell) 屏幕行
     … +12 lines (Ctrl+T for transcript)   ← 中段截断提示 dim
-✓ Ran grep -r foo src/              ← 完成后: 绿• + "Ran", ✓ • 1.2s 或 ✗ (exit) • 1.2s
+• Ran grep -r foo src/              ← 完成后: 绿/红 • + "Ran"
 ```
 
 - bullet 三态：运行中 = tick 动画；成功 = 绿 `•`；失败 = 红 `•`；
 - 输出先 wrap 后截断（截断针对屏幕行而非逻辑行）；
 - 空输出显示 `(no output)` dim；
 - `background` 工具追加 `(bg)` 标记；
-- 转写形式：每条命令 `$ ` magenta + bash 高亮 + bounded 完整输出 + `✓/✗ (code) • duration`；
+- 主 cell 不内联 exit/duration 结果行；转写形式才使用 `$ ` magenta + bash 高亮 + bounded 完整输出 + 独立 `✓/✗ (code) • duration`；
 - 命令高亮失败时降级 plaintext（23 护栏），布局不受影响。
 
 ### 6.3 diff
@@ -411,7 +411,7 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 
 - 单行：`{indicator} {header} ({elapsed} • ^C to interrupt) · {inlineMessage}`，超宽省略号截断；
 - elapsed 用 `formatElapsedCompact`；
-- details 最多 3 行，`  └ ` 前缀；
+- details 最多 3 个屏幕行，首行 `  └ `、续行 4 空格；首行按终端显示宽度截断；
 - 任务结束即隐藏；waiting（approval/credential）时 header 换 `Waiting`，interruptKey 隐藏；
 - 打开模态/overlay 时不抢焦点，行仍可见（Codex 语义）。
 
@@ -419,14 +419,14 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 
 - 打开：全屏 overlay，内容 = 全量 committed rows 投影 + active cell 尾部；
 - exec → `$` 形式；plan → raw 形式；notice/separator → 原样；
-- 缓存 key：timeline generation + active-cell revision（对应 Codex `ActiveCellTranscriptKey`），变化时重建尾部；
+- committed 投影按 `committedRows` identity/revision 缓存，active tail 按 active-row identity/revision 单独失效；active streaming 更新不得重投影 committed 历史；
 - 关闭恢复主对话，不改变 sticky/滚动位置；
-- 键位：j/k/g/G/PgUp/PgDn/Esc/Ctrl+C。
+- 键位：j/k/g/G/PgUp/PgDn/Esc/Ctrl+C/Ctrl+T。
 
 ### 6.7 status line 段补全
 
-- `progress`：plan 进度 `plan (n/m)`，数据源 = plan workflow 状态（19 接线）；
-- `usage` / `limit`：context window 百分比与 token 数，数据源 = session usage（若 capability 可用；不可用则不发射，不伪造 0）；
+- `progress`：plan 进度 `plan (n/m)`；优先 task-goal workflow，标准 CLI 未接该 port 时回退到最新 safe plan presentation；
+- `usage` / `limit`：优先 runtime snapshot，缺失字段回退到已完成 assistant timeline usage 与当前 model `contextWindow`；展示 `usage N` + `limit P%`，不可用时不发射、不伪造 0；
 - `thread`：会话标题/编号；
 - 颜色一律经 23 的 `foregroundForScopes`（`status-style.ts` 已有 accent→scope 映射）；
 - 宽度不足时沿用 `fitStatusLineSegments` 与 `OPTIONAL_DROP_ORDER`。
@@ -439,7 +439,7 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 
 - plan-update、diff 是终态块：tool end / 投影完成时一次性进入 `PresentationBlock[]`，无流式形态；
 - exec 是流式块：输出经既有 `projectShellChunk` tail-100 与 18 的 keyed renderable 更新，布局字段只影响渲染不改变 identity；
-- 转写视图的活跃尾部随 timeline generation 更新，不逐 token 重建。
+- 转写视图的活跃尾部随 active-row revision 更新；committed 投影保持引用稳定，不逐 token 重建或序列化全历史。
 
 ### 7.2 tick 与合帧
 
@@ -450,7 +450,7 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 ### 7.3 缓存
 
 - plan-update/diff/exec 的投影结果进入 `ChatContainer.present` 的既有 `RenderCache`（1024 entries / 4MiB），key 含 timeline generation 与 width；
-- 转写视图 overlay 内容独立缓存：key = timeline generation + active revision + width；全量行数超预算（建议 10_000 块）时截断并显示 `(truncated)`，绝不丢 committed 语义（只丢视图）；
+- 转写视图 overlay 内容拆分缓存：committed key = committed revision + width + bounded range，active key = active revision + width + bounded range；全量行数超预算（10_000 块）时截断并显示 `(truncated)`，绝不改变 Timeline；
 - 高亮结果缓存只属于 23 的 service。
 
 ### 7.4 失败模型与降级
@@ -561,10 +561,10 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 
 ### S7 · 完整门禁与人工验收
 
-- [x] `npm run check`、`npm test`（含新增套件）、`npm run build` 全绿；
-- [x] 标准 PATH `runledger` 真实 TTY：todo、exec（成功/失败/长输出）、diff、分隔、状态行、Ctrl+T 逐项视觉验收（dark/light 双主题）；
-- [x] 80 / 143 列宽下前缀与截断不破版；
-- [x] 回写两个索引（00-overview / 00-index）与本文状态。
+- [~] `npm run check`、`npm test`（含新增套件）、`npm run build`：本任务代码的静态边界、TypeScript、native TUI 与 build 通过；repository-wide check/test 被任务外未跟踪 LSP 计划的 current-format marker 阻塞；
+- [~] 标准 PATH `runledger` 真实 TTY：本候选完成隔离 80 列启动与 `Ctrl+T → Ctrl+T → Ctrl+D` 生命周期；todo、exec、diff、分隔、状态行及 dark/light 双主题仍需真人逐项复验；
+- [~] 80 列真实 TTY 生命周期通过；60/80/143 与窄宽布局有自动回归，143 列真实 TTY 仍待复验；
+- [x] 回写本文状态；两个索引已有任务外未提交改动，本轮未覆盖。
 
 #### S7 fresh evidence（2026-08-14）
 
@@ -574,6 +574,26 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 - 真实 TTY 视觉验收覆盖 dark/light 两主题的 80、143 列；light 主题通过真实 OSC 10/11 响应触发。两主题均完成 `Ctrl+T → Esc → Ctrl+D` 生命周期。
 - 使用标准 `runledger`、隔离 `RUNLEDGER_DIR` 与隔离 SQLite session fixture 的 80 列真实 TTY 验证覆盖：todo 三态（含 `✔` / `□` 映射）、exec 成功/失败/长输出、`$` transcript 前缀、`  └ ` 输出前缀、失败 exit code 与 duration、Edit diff 行号 gutter、`+/-` 行、delete DIM 与背景色，以及 PageUp 回看 plan 和早期内容。
 - 80 / 143 列均未发现前缀或截断破版；转写视图为只读，验收过程中未改变主对话滚动或 sticky 状态。
+
+#### S7 复核修正与当前候选证据（2026-08-14）
+
+先前 evidence 只属于 `085ce37` 候选，不能证明本次修正后的工作树。对当前 `session-owner-runtime@b699b70` 工作树复核后，已修复：
+
+- main exec cell 改为 `◌ Running` / `• Ran`，`$` + 独立 exit/duration 结果行只属于 Ctrl+T transcript；
+- `InteractiveMode` 标准生产路径可从最新 safe plan presentation、完成的 assistant usage 与当前 model context window 发射 `plan (n/m)`、`usage N`、`limit P%`；
+- transcript committed projection 使用 identity cache，active tail 单独失效，不再在每个 streaming generation 对全历史执行 `JSON.stringify`；separator 复用 canonical selector；Ctrl+T 可再次关闭 overlay；
+- diff 长行按显示宽度换行到空 gutter 下，延续行保留背景与 delete DIM；status indicator 首行宽度截断、detail 按屏幕行换行并限制为 3 行；
+- `projectPlanUpdate` 对不可信步骤输入增加 256 项上限。
+
+Fresh automatic evidence：
+
+- focused：7 个 Vitest 文件 / 47 tests 通过；相关 Bun 回归均通过；
+- 静态：storage/runtime/contract/execution/platform/TUI/session-owner/syntax-highlighter 边界与 `tsc --noEmit` 通过；`npm run check` 仅在 `check:current-format` 被任务外未跟踪 `development-doc/plan/04-lsp-server-adaptation-plan.md` 的 15 个 marker 阻塞；
+- Vitest：341 files / 2023 tests 通过，3 tests skipped；唯一失败为同一任务外 LSP 文档触发的 `current-format-boundary`；
+- Bun OpenTUI：11 files / 91 tests / 449 assertions 全绿；`npm run build` 通过；
+- 标准 PATH：`/home/nzq/.npm-global/bin/runledger` 解析到本仓库 `bin/runledger.js`；隔离 `RUNLEDGER_DIR`、80×24 tmux 中启动成功，`Ctrl+T` 打开只读 transcript，第二次 `Ctrl+T` 关闭，`Ctrl+D` 干净退出。
+
+因此代码实现状态为 implemented；repository-wide gate 与本候选的人工作品验收尚未闭合，不得标记 accepted。
 
 ---
 

@@ -75,4 +75,29 @@ describe("OpenTUI S5 status indicator frame", () => {
 			runtime.destroy();
 		}
 	});
+
+	test("measures wrapped narrow status lines instead of logical detail count", async () => {
+		const setup = await createTestRenderer({ width: 30, height: 14 });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {},
+			onResize: () => {},
+		});
+		try {
+			runtime.update(frame({
+				indicator: "⠋",
+				header: "Working",
+				elapsed: "12s",
+				interruptKey: "^C",
+				inlineMessage: "a very long inline status message",
+				details: [{ text: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP", truncated: false, byteLength: 52 }],
+			}));
+			await setup.renderOnce();
+
+			const status = setup.renderer.root.findDescendantById("runledger-status-indicator");
+			expect(status?.height).toBe(3);
+			expect(setup.captureCharFrame()).toContain("    0123456789ABCDEFGHIJKLMNOP");
+		} finally {
+			runtime.destroy();
+		}
+	});
 });

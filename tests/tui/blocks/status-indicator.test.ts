@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { projectStatusIndicator } from "../../../src/tui/presentation/projectors.ts";
 import type { ActiveRunState } from "../../../src/tui/timeline/types.ts";
+import { statusIndicatorPlainText } from "../../../src/tui/opentui/component-runtime.ts";
+import { displayWidth } from "../../../src/tui/mermaid/display-width.ts";
 
 function activeRun(overrides: Partial<ActiveRunState> = {}): ActiveRunState {
 	return {
@@ -54,5 +56,29 @@ describe("Codex session display S5 status indicator", () => {
 	it("does not project a status row after a run has ended or entered recovery", () => {
 		expect(projectStatusIndicator(undefined, { nowMs: 13_000 })).toBeUndefined();
 		expect(projectStatusIndicator(activeRun({ state: "recovery_required" }), { nowMs: 13_000 })).toBeUndefined();
+	});
+
+	it("truncates the header and wraps details within a narrow screen-line budget", () => {
+		const text = statusIndicatorPlainText({
+			indicator: "⠋",
+			header: "Working",
+			elapsed: "12s",
+			interruptKey: "^C",
+			inlineMessage: "a very long inline status message that cannot fit",
+			details: [{
+				text: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP",
+				truncated: false,
+				byteLength: 52,
+			}],
+		}, 30);
+		const lines = text.split("\n");
+
+		expect(lines[0]?.endsWith("…")).toBe(true);
+		expect(lines.slice(1)).toEqual([
+			"  └ abcdefghijklmnopqrstuvwxyz",
+			"    0123456789ABCDEFGHIJKLMNOP",
+		]);
+		expect(lines.every((line) => displayWidth(line) <= 30)).toBe(true);
+		expect(lines.length).toBeLessThanOrEqual(4);
 	});
 });

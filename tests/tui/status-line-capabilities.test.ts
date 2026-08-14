@@ -32,7 +32,7 @@ describe("S4 capability-gated status line segments", () => {
 		expect(result).toEqual(expect.arrayContaining([
 			{ accent: "progress", text: "plan (2/5)" },
 			{ accent: "usage", text: "usage 12.3k" },
-			{ accent: "limit", text: "limit 202.8k" },
+			{ accent: "limit", text: "limit 6%" },
 			{ accent: "thread", text: "thread-17" },
 		]));
 	});

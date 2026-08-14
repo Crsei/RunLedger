@@ -6,9 +6,11 @@ import type { SyntaxThemeController, SyntaxThemeSnapshot } from "../highlight/th
 import type { PresentationBlock } from "../presentation.ts";
 import type { SafeDiffDocument, SafeDiffHunk, SafeDiffLine } from "../presentation/tools/types.ts";
 import type { HighlightAdmission } from "./syntect-code-block-renderable.ts";
+import { displayWidth, graphemes, wrapDisplayWidth } from "../mermaid/display-width.ts";
 
 const MAX_DIFF_HIGHLIGHT_BYTES = 512 * 1024;
 const MAX_DIFF_HIGHLIGHT_LINES = 10_000;
+const MAX_DIFF_MANUAL_WRAP_BYTES = 64 * 1024;
 
 export type DiffBlock = Extract<PresentationBlock, { readonly kind: "diff" }>;
 
@@ -30,6 +32,7 @@ export class DiffRenderable extends TextRenderable {
 	private scheduledSignature: string | undefined;
 	private highlightKeys: string[] = [];
 	private highlightedHunks: readonly (readonly HighlightLine[] | undefined)[] = [];
+	private renderWidth: number | undefined;
 
 	constructor(ctx: RenderContext, options: DiffRenderableOptions) {
 		const { block, highlightService, themeController, ...renderableOptions } = options;
@@ -89,6 +92,14 @@ export class DiffRenderable extends TextRenderable {
 		super.destroy();
 	}
 
+	protected override onResize(width: number, height: number): void {
+		super.onResize(width, height);
+		const nextWidth = Math.max(1, Math.floor(width));
+		if (this.renderWidth === nextWidth) return;
+		this.renderWidth = nextWidth;
+		if (this.themeController !== undefined) this.applyTheme(this.themeController.snapshot());
+	}
+
 	private applyTheme(snapshot: SyntaxThemeSnapshot): void {
 		if (this.isDestroyed) return;
 		const scoped = this.highlightService.diffScopeBackgrounds(snapshot.activeName);
@@ -96,7 +107,7 @@ export class DiffRenderable extends TextRenderable {
 		this.content = diffStyledText(this.block, {
 			inserted: scoped?.inserted ?? fallback.inserted,
 			deleted: scoped?.deleted ?? fallback.deleted,
-		}, this.highlightedHunks);
+		}, this.highlightedHunks, this.renderWidth);
 		this.requestRender();
 	}
 
@@ -152,14 +163,21 @@ export class DiffRenderable extends TextRenderable {
 }
 
 /** 把 diff block 投影为可复制的终端行；样式不改变这些文本。 */
-export function diffDisplayLines(block: DiffBlock): readonly string[] {
-	const lines = [diffHeader(block.document)];
+export function diffDisplayLines(block: DiffBlock, requestedWidth?: number): readonly string[] {
+	const widthLimit = requestedWidth === undefined ? undefined : Math.max(1, Math.floor(requestedWidth));
+	const lines = widthLimit === undefined ? [diffHeader(block.document)] : [...wrapPlainText(diffHeader(block.document), widthLimit)];
 	const showLineNumbers = block.showLineNumbers !== false;
 	const width = normalizedLineNumberWidth(block);
 	for (const hunk of block.document.hunks) {
-		for (const line of hunk.lines) lines.push(diffLineText(line, showLineNumbers, width));
+		for (const line of hunk.lines) {
+			if (widthLimit === undefined) lines.push(diffLineText(line, showLineNumbers, width));
+			else lines.push(...diffLineDisplayLines(line, showLineNumbers, width, widthLimit));
+		}
 	}
-	if (block.document.diagnostic !== undefined) lines.push(`  diff ${block.document.diagnostic}`);
+	if (block.document.diagnostic !== undefined) {
+		const diagnostic = `  diff ${block.document.diagnostic}`;
+		lines.push(...(widthLimit === undefined ? [diagnostic] : wrapPlainText(diagnostic, widthLimit)));
+	}
 	return lines;
 }
 
@@ -208,28 +226,33 @@ function diffStyledText(
 	block: DiffBlock,
 	backgrounds: DiffBackgrounds,
 	highlightedHunks: readonly (readonly HighlightLine[] | undefined)[],
+	width?: number,
 ): StyledText {
-	const chunks: TextChunk[] = [{
+	const lines: TextChunk[][] = wrapStyledChunks([{
 		__isChunk: true,
 		text: diffHeader(block.document),
 		attributes: TextAttributes.BOLD,
-	}];
+	}], width);
 	for (const [hunkIndex, hunk] of block.document.hunks.entries()) {
 		const highlighted = highlightedHunks[hunkIndex];
 		for (const [lineIndex, line] of hunk.lines.entries()) {
-			chunks.push({ __isChunk: true, text: "\n" });
-			chunks.push(...diffLineChunks(
+			lines.push(...diffLineChunks(
 				block,
 				line,
 				backgrounds,
 				highlighted?.[lineIndex],
+				width,
 			));
 		}
 	}
 	if (block.document.diagnostic !== undefined) {
-		chunks.push({ __isChunk: true, text: `\n  diff ${block.document.diagnostic}`, attributes: TextAttributes.DIM });
+		lines.push(...wrapStyledChunks([{
+			__isChunk: true,
+			text: `  diff ${block.document.diagnostic}`,
+			attributes: TextAttributes.DIM,
+		}], width));
 	}
-	return new StyledText(chunks);
+	return styledLinesText(lines);
 }
 
 function diffLineChunks(
@@ -237,7 +260,8 @@ function diffLineChunks(
 	line: SafeDiffLine,
 	backgrounds: DiffBackgrounds,
 	highlighted: HighlightLine | undefined,
-): TextChunk[] {
+	width?: number,
+): TextChunk[][] {
 	const showLineNumbers = block.showLineNumbers !== false;
 	const lineNumberWidth = normalizedLineNumberWidth(block);
 	const lineNumber = lineNumberFor(line);
@@ -246,16 +270,12 @@ function diffLineChunks(
 		? `${String(lineNumber).padStart(lineNumberWidth)} ${sign}`
 		: `${sign} `;
 	const lineStyle = diffLineStyle(line.kind, backgrounds);
-	const chunks: TextChunk[] = [{
-		__isChunk: true,
-		text: prefix,
-		...lineStyle,
-		...(line.kind === "delete" ? { attributes: TextAttributes.DIM } : {}),
-	}];
+	const attributes = line.kind === "delete" ? TextAttributes.DIM : undefined;
+	const contentChunks: TextChunk[] = [];
 	const text = normalizeDiffText(line.text.text);
 	if (highlighted !== undefined) {
 		for (const span of highlighted.spans) {
-			chunks.push({
+			contentChunks.push({
 				__isChunk: true,
 				text: span.text,
 				fg: colorToRgba(span.foreground),
@@ -265,21 +285,117 @@ function diffLineChunks(
 					: {}),
 			});
 		}
-		return chunks;
+	} else {
+		contentChunks.push({
+			__isChunk: true,
+			text,
+			...lineStyle,
+			...(attributes === undefined ? {} : { attributes }),
+		});
 	}
-	chunks.push({
+	const prefixWidth = displayWidth(prefix);
+	// canonical projector 已把单行限制在 4 KiB；超大 direct fixture 保持单块，避免绕过边界时制造数千 native chunks。
+	const contentWidth = width === undefined || Buffer.byteLength(text, "utf8") > MAX_DIFF_MANUAL_WRAP_BYTES
+		? undefined
+		: Math.max(1, width - prefixWidth);
+	const wrapped = wrapStyledChunks(contentChunks, contentWidth);
+	return wrapped.map((chunks, index) => [{
 		__isChunk: true,
-		text,
+		text: index === 0 ? prefix : " ".repeat(prefixWidth),
 		...lineStyle,
-		...(line.kind === "delete" ? { attributes: TextAttributes.DIM } : {}),
-	});
-	return chunks;
+		...(attributes === undefined ? {} : { attributes }),
+	}, ...chunks]);
 }
 
 function diffLineText(line: SafeDiffLine, showLineNumbers: boolean, lineNumberWidth: number): string {
 	const text = normalizeDiffText(line.text.text);
 	if (!showLineNumbers) return `${signFor(line)} ${text}`;
 	return `${String(lineNumberFor(line)).padStart(lineNumberWidth)} ${signFor(line)}${text}`;
+}
+
+function diffLineDisplayLines(line: SafeDiffLine, showLineNumbers: boolean, lineNumberWidth: number, width: number): readonly string[] {
+	const prefix = diffLinePrefix(line, showLineNumbers, lineNumberWidth);
+	const contentWidth = Math.max(1, width - displayWidth(prefix));
+	return wrapPlainText(normalizeDiffText(line.text.text), contentWidth).map((text, index) => `${index === 0 ? prefix : " ".repeat(displayWidth(prefix))}${text}`);
+}
+
+function diffLinePrefix(line: SafeDiffLine, showLineNumbers: boolean, lineNumberWidth: number): string {
+	if (!showLineNumbers) return `${signFor(line)} `;
+	return `${String(lineNumberFor(line)).padStart(lineNumberWidth)} ${signFor(line)}`;
+}
+
+function wrapPlainText(text: string, width: number): readonly string[] {
+	if (displayWidth(text) <= width) return [text];
+	return wrapDisplayWidth(text, Math.max(1, width), Math.max(1, graphemes(text).length + 1));
+}
+
+function wrapStyledChunks(chunks: readonly TextChunk[], width?: number): TextChunk[][] {
+	if (width === undefined) return [[...chunks]];
+	const ascii = chunks.every((chunk) => /^[\x20-\x7E]*$/u.test(chunk.text));
+	const totalWidth = ascii
+		? chunks.reduce((total, chunk) => total + chunk.text.length, 0)
+		: chunks.reduce((total, chunk) => total + displayWidth(chunk.text), 0);
+	if (totalWidth <= width) return [[...chunks]];
+	if (ascii) return wrapAsciiStyledChunks(chunks, width);
+	const lines: TextChunk[][] = [];
+	let current: TextChunk[] = [];
+	let currentWidth = 0;
+	const flush = (): void => {
+		lines.push(current);
+		current = [];
+		currentWidth = 0;
+	};
+	for (const chunk of chunks) {
+		for (const grapheme of graphemes(chunk.text)) {
+			const graphemeWidth = displayWidth(grapheme);
+			if (graphemeWidth > 0 && currentWidth > 0 && currentWidth + graphemeWidth > width) flush();
+			const previous = current.at(-1);
+			if (previous !== undefined && sameChunkStyle(previous, chunk)) current[current.length - 1] = { ...previous, text: `${previous.text}${grapheme}` };
+			else current.push({ ...chunk, text: grapheme });
+			currentWidth += graphemeWidth;
+		}
+	}
+	flush();
+	return lines;
+}
+
+function wrapAsciiStyledChunks(chunks: readonly TextChunk[], width: number): TextChunk[][] {
+	const lines: TextChunk[][] = [];
+	let current: TextChunk[] = [];
+	let currentWidth = 0;
+	const flush = (): void => {
+		lines.push(current);
+		current = [];
+		currentWidth = 0;
+	};
+	for (const chunk of chunks) {
+		let offset = 0;
+		while (offset < chunk.text.length) {
+			const take = Math.min(width - currentWidth, chunk.text.length - offset);
+			const text = chunk.text.slice(offset, offset + take);
+			const previous = current.at(-1);
+			if (previous !== undefined && sameChunkStyle(previous, chunk)) current[current.length - 1] = { ...previous, text: `${previous.text}${text}` };
+			else current.push({ ...chunk, text });
+			offset += take;
+			currentWidth += take;
+			if (currentWidth >= width) flush();
+		}
+	}
+	if (current.length > 0 || lines.length === 0) flush();
+	return lines;
+}
+
+function sameChunkStyle(left: TextChunk, right: TextChunk): boolean {
+	return left.fg === right.fg && left.bg === right.bg && left.attributes === right.attributes;
+}
+
+function styledLinesText(lines: readonly (readonly TextChunk[])[]): StyledText {
+	const chunks: TextChunk[] = [];
+	for (const [index, line] of lines.entries()) {
+		if (index > 0) chunks.push({ __isChunk: true, text: "\n" });
+		chunks.push(...line);
+	}
+	return new StyledText(chunks);
 }
 
 function diffLineStyle(kind: SafeDiffLine["kind"], backgrounds: DiffBackgrounds): { readonly fg?: RGBA; readonly bg?: RGBA } {

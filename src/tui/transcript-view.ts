@@ -1,8 +1,8 @@
 import type { NoticeBlock, PresentationBlock } from "./presentation.ts";
 import type { TimelineRow, TimelineState } from "./timeline/types.ts";
-import { rowToBlocks } from "./timeline/selectors.ts";
+import { rowToBlocks, timelineToBlocks } from "./timeline/selectors.ts";
 import { diffDisplayLines, type DiffBlock } from "./opentui/diff-renderable.ts";
-import { execDisplayLines, type ExecDisplayBlock } from "./opentui/exec-renderable.ts";
+import { execTranscriptLines, type ExecDisplayBlock } from "./opentui/exec-renderable.ts";
 import { noticeDisplayLines } from "./opentui/notice-renderable.ts";
 import { formatSeparatorLabel } from "./opentui/block-layout.ts";
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "./mermaid/display-width.ts";
@@ -29,19 +29,36 @@ export interface TranscriptOverlayOptions {
 	readonly maxBlocks?: number;
 }
 
+interface CommittedTranscriptProjection {
+	readonly blocks: readonly PresentationBlock[];
+	readonly revision: string;
+}
+
+const committedProjectionCache = new WeakMap<readonly TimelineRow[], CommittedTranscriptProjection>();
+const rowRevisionIds = new WeakMap<TimelineRow, number>();
+let nextProjectionRevision = 1;
+
 /** Timeline -> 只读转写 view；不读取 session/ledger，也不改变主 ScrollBox。 */
 export function projectTranscriptOverlay(state: TimelineState): TranscriptOverlayView {
-	const rows = state.committedRows.flatMap((row) => rowToBlocks(row));
+	let committed = committedProjectionCache.get(state.committedRows);
+	if (committed === undefined) {
+		committed = {
+			blocks: timelineToBlocks(state, { includeActive: false }),
+			revision: `committed-${nextProjectionRevision}`,
+		};
+		nextProjectionRevision += 1;
+		committedProjectionCache.set(state.committedRows, committed);
+	}
 	const activeRows = state.activeOrder
 		.map((id) => state.activeRowsByCorrelationId[id])
 		.filter((row): row is TimelineRow => row !== undefined);
 	const liveTail = activeRows.flatMap((row) => rowToBlocks(row));
 	return {
-		rows,
+		rows: committed.blocks,
 		...(liveTail.length > 0 ? { liveTail } : {}),
 		timelineGeneration: state.generation,
-		committedRevision: rowsRevision(state.committedRows),
-		activeRevision: rowsRevision(activeRows),
+		committedRevision: committed.revision,
+		activeRevision: activeRows.map(rowRevisionId).join(","),
 	};
 }
 
@@ -51,7 +68,7 @@ export function transcriptBlockLines(block: PresentationBlock, width = 80): read
 		const transcriptBlock = block.kind === "exec"
 			? { ...block, outputMaxLines: Math.max(block.outputMaxLines ?? 0, TRANSCRIPT_OUTPUT_MAX_LINES) }
 			: block;
-		return execDisplayLines(transcriptBlock as ExecDisplayBlock, width);
+		return execTranscriptLines(transcriptBlock as ExecDisplayBlock, width);
 	}
 	if (block.kind === "plan-update") {
 		return [
@@ -60,7 +77,7 @@ export function transcriptBlockLines(block: PresentationBlock, width = 80): read
 			...block.steps.map((step) => `${planStatusLabel(step.status)}: ${step.text.text}`),
 		];
 	}
-	if (block.kind === "diff") return diffDisplayLines(block as DiffBlock);
+	if (block.kind === "diff") return diffDisplayLines(block as DiffBlock, width);
 	if (block.kind === "notice") return noticeDisplayLines((block as NoticeBlock).message, width);
 	if (block.kind === "separator") return [block.content ?? formatSeparatorLabel(block.label, block.metrics)];
 	if (block.kind === "status-line") return [block.segments.map((segment) => segment.text).join(" · ")];
@@ -78,8 +95,8 @@ export class TranscriptOverlayComponent implements Component {
 	private readonly maxBlocks: number;
 	private offset = 0;
 	private version = 0;
-	private cachedKey: string | undefined;
-	private cachedLines: readonly string[] | undefined;
+	private readonly committedLineCache = new Map<string, readonly string[]>();
+	private readonly activeLineCache = new Map<string, readonly string[]>();
 
 	constructor(view: TranscriptOverlayView, options: TranscriptOverlayOptions = {}) {
 		this.view = view;
@@ -90,9 +107,9 @@ export class TranscriptOverlayComponent implements Component {
 
 	update(view: TranscriptOverlayView): void {
 		if (sameViewRevision(this.view, view)) return;
+		if (this.view.committedRevision !== view.committedRevision) this.committedLineCache.clear();
+		if (this.view.activeRevision !== view.activeRevision) this.activeLineCache.clear();
 		this.view = view;
-		this.cachedKey = undefined;
-		this.cachedLines = undefined;
 		this.version += 1;
 	}
 
@@ -101,13 +118,13 @@ export class TranscriptOverlayComponent implements Component {
 	}
 
 	invalidate(): void {
-		this.cachedKey = undefined;
-		this.cachedLines = undefined;
+		this.committedLineCache.clear();
+		this.activeLineCache.clear();
 		this.version += 1;
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
+		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || matchesKey(data, "ctrl+t")) {
 			this.onClose?.();
 			return;
 		}
@@ -150,17 +167,20 @@ export class TranscriptOverlayComponent implements Component {
 	}
 
 	private linesForWidth(width: number): readonly string[] {
-		const key = `${this.view.timelineGeneration}\u0000${this.view.committedRevision}\u0000${this.view.activeRevision}\u0000${width}`;
-		if (this.cachedKey === key && this.cachedLines !== undefined) return this.cachedLines;
-		const blocks = boundedBlocks([
-			...this.view.rows,
-			...(this.view.liveTail ?? []),
-		], this.maxBlocks);
-		const lines = blocks.flatMap((block) => transcriptBlockLines(block, width))
-			.flatMap((line) => wrapTranscriptLine(line, width));
-		this.cachedKey = key;
-		this.cachedLines = lines;
-		return lines;
+		const active = this.view.liveTail ?? [];
+		return boundedBlockSegments(this.view.rows, active, this.maxBlocks).flatMap((segment) => {
+			if (segment.source === "marker") return wrapTranscriptLine("… (truncated)", width);
+			const cache = segment.source === "committed" ? this.committedLineCache : this.activeLineCache;
+			const key = `${width}:${segment.start}:${segment.end}`;
+			const cached = cache.get(key);
+			if (cached !== undefined) return cached;
+			const source = segment.source === "committed" ? this.view.rows : active;
+			const lines = source.slice(segment.start, segment.end)
+				.flatMap((block) => transcriptBlockLines(block, width))
+				.flatMap((line) => wrapTranscriptLine(line, width));
+			cache.set(key, lines);
+			return lines;
+		});
 	}
 
 	private pageSize(): number {
@@ -183,22 +203,55 @@ function planStatusLabel(status: "pending" | "in-progress" | "completed"): strin
 	return "Pending";
 }
 
-function rowsRevision(rows: readonly TimelineRow[]): string {
-	return rows.map((row) => `${row.id}\u0000${row.status}\u0000${JSON.stringify(row) ?? ""}`).join("\u0001");
+function rowRevisionId(row: TimelineRow): number {
+	const existing = rowRevisionIds.get(row);
+	if (existing !== undefined) return existing;
+	const revision = nextProjectionRevision;
+	nextProjectionRevision += 1;
+	rowRevisionIds.set(row, revision);
+	return revision;
 }
 
 function sameViewRevision(left: TranscriptOverlayView, right: TranscriptOverlayView): boolean {
-	return left.timelineGeneration === right.timelineGeneration
-		&& left.committedRevision === right.committedRevision
+	return left.committedRevision === right.committedRevision
 		&& left.activeRevision === right.activeRevision;
 }
 
-function boundedBlocks(blocks: readonly PresentationBlock[], maxBlocks: number): readonly PresentationBlock[] {
-	if (blocks.length <= maxBlocks) return blocks;
-	const marker: PresentationBlock = { kind: "text", content: "… (truncated)" };
+interface TranscriptBlockSegment {
+	readonly source: "committed" | "active" | "marker";
+	readonly start: number;
+	readonly end: number;
+}
+
+function boundedBlockSegments(committed: readonly PresentationBlock[], active: readonly PresentationBlock[], maxBlocks: number): readonly TranscriptBlockSegment[] {
+	const total = committed.length + active.length;
+	if (total <= maxBlocks) {
+		return [
+			...(committed.length === 0 ? [] : [{ source: "committed" as const, start: 0, end: committed.length }]),
+			...(active.length === 0 ? [] : [{ source: "active" as const, start: 0, end: active.length }]),
+		];
+	}
 	const head = Math.max(0, Math.floor((maxBlocks - 1) / 2));
 	const tail = Math.max(0, maxBlocks - head - 1);
-	return [...blocks.slice(0, head), marker, ...blocks.slice(blocks.length - tail)];
+	return [
+		...combinedRangeSegments(committed.length, active.length, 0, head),
+		{ source: "marker", start: 0, end: 1 },
+		...combinedRangeSegments(committed.length, active.length, total - tail, total),
+	];
+}
+
+function combinedRangeSegments(committedCount: number, activeCount: number, start: number, end: number): TranscriptBlockSegment[] {
+	const total = committedCount + activeCount;
+	const boundedStart = Math.max(0, Math.min(total, start));
+	const boundedEnd = Math.max(boundedStart, Math.min(total, end));
+	const committedStart = Math.min(committedCount, boundedStart);
+	const committedEnd = Math.min(committedCount, boundedEnd);
+	const activeStart = Math.max(0, boundedStart - committedCount);
+	const activeEnd = Math.max(0, boundedEnd - committedCount);
+	return [
+		...(committedEnd > committedStart ? [{ source: "committed" as const, start: committedStart, end: committedEnd }] : []),
+		...(activeEnd > activeStart ? [{ source: "active" as const, start: activeStart, end: activeEnd }] : []),
+	];
 }
 
 function wrapTranscriptLine(line: string, width: number): readonly string[] {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { diffDisplayLines } from "../../../src/tui/opentui/diff-renderable.ts";
 import type { PresentationBlock } from "../../../src/tui/presentation.ts";
+import { displayWidth } from "../../../src/tui/mermaid/display-width.ts";
 
 const bounded = (text: string) => ({
 	text,
@@ -77,5 +78,27 @@ describe("Codex-style diff gutter projection", () => {
 			"   7 -removed",
 			"   8 +added",
 		]);
+	});
+
+	it("wraps long lines beneath a blank gutter within the requested width", () => {
+		const block = diffBlock(documentWith([
+			{ kind: "add", newLine: 8, text: "abcdefghijklmnopqrstuvwxyz0123456789" },
+		]));
+
+		const lines = diffDisplayLines(block, 24);
+		const firstDiffLine = lines.findIndex((line) => line.startsWith("8 +"));
+		expect(lines[firstDiffLine]).toBe("8 +abcdefghijklmnopqrstu");
+		expect(lines[firstDiffLine + 1]).toBe("   vwxyz0123456789");
+		expect(lines.every((line) => displayWidth(line) <= 24)).toBe(true);
+	});
+
+	it("keeps a blank two-column continuation gutter when line numbers are disabled", () => {
+		const block = diffBlock(documentWith([
+			{ kind: "delete", oldLine: 8, text: "abcdefghijklmnopqrstuvwxyz" },
+		]), { showLineNumbers: false });
+
+		const lines = diffDisplayLines(block, 12);
+		const firstDiffLine = lines.indexOf("- abcdefghij");
+		expect(lines.slice(firstDiffLine)).toEqual(["- abcdefghij", "  klmnopqrst", "  uvwxyz"]);
 	});
 });

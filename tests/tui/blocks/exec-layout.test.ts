@@ -56,7 +56,7 @@ describe("S2 exec layout projection", () => {
 			outputMaxLines: 5,
 		} satisfies PresentationBlock;
 		const lines = execDisplayLines(block, 60);
-		expect(lines).toContain("$ echo first");
+		expect(lines).toContain("◌ Running echo first");
 		expect(lines).toContain("  │ echo second");
 		expect(lines.some((line) => line.startsWith("  │ echo third"))).toBe(true);
 		expect(lines.filter((line) => line.startsWith("  │ "))).toHaveLength(2);
@@ -76,9 +76,10 @@ describe("S2 exec layout projection", () => {
 			durationMs: 1_250,
 			background: true,
 		}, 80);
+		expect(lines[0]).toContain("• Ran false");
 		expect(lines).toContain("  └ (no output)");
-		expect(lines.some((line) => line.includes("✗ (7) • 1.3s"))).toBe(true);
-		expect(lines.some((line) => line.includes("(bg)"))).toBe(true);
+		expect(lines[0]).toContain("(bg)");
+		expect(lines.some((line) => line.includes("✗ (7) • 1.3s"))).toBe(false);
 	});
 
 	it("wraps a long single output line before applying the output budget", () => {

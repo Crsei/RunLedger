@@ -5,11 +5,12 @@ import {
   type OpenTuiComponentFrame,
   type OpenTuiComponentRuntime,
   type TranscriptScrollPresentation,
+  statusIndicatorPlainText,
 } from "./opentui/component-runtime.ts";
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
 import { planUpdatePlainText } from "./opentui/plan-update-renderable.ts";
 import { noticePlainText } from "./opentui/notice-renderable.ts";
-import { formatSeparatorLabel, STATUS_DETAILS_PREFIX } from "./opentui/block-layout.ts";
+import { formatSeparatorLabel } from "./opentui/block-layout.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock, StatusIndicatorView } from "./presentation.ts";
 import type { TuiAction } from "./application/action.ts";
@@ -633,18 +634,9 @@ export class TUI extends Container {
       return;
     }
     const footerText = footer.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · "));
-    const statusText = this.statusIndicator === undefined ? [] : [statusIndicatorText(this.statusIndicator)];
+    const statusText = this.statusIndicator === undefined ? [] : [statusIndicatorPlainText(this.statusIndicator, width)];
     this.terminal.write([...body.map((block) => blockTextForTerminal(block)), ...statusText, ...this.focusedComponent?.render(width) ?? [], ...footerText, ...overlay?.map(blockTextForTerminal) ?? []].join("\n"));
   }
-}
-
-function statusIndicatorText(view: StatusIndicatorView): string {
-  const interrupt = view.interruptKey === undefined ? "" : ` • ${view.interruptKey} to interrupt`;
-  const inline = view.inlineMessage === undefined ? "" : ` ${view.inlineMessage}`;
-  return [
-    `${view.indicator} ${view.header} (${view.elapsed}${interrupt})${inline}`,
-    ...(view.details ?? []).map((detail) => `${STATUS_DETAILS_PREFIX}${detail.text}`),
-  ].join("\n");
 }
 
 function blockTextForTerminal(block: PresentationBlock): string {

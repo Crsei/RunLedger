@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PresentationBlock } from "../../../src/tui/presentation.ts";
 import type { TimelineState } from "../../../src/tui/timeline/types.ts";
+import { timelineToBlocks } from "../../../src/tui/timeline/selectors.ts";
 import {
 	TranscriptOverlayComponent,
 	projectTranscriptOverlay,
@@ -48,13 +49,41 @@ function timelineWithActiveText(text: string): TimelineState {
 
 describe("transcript view projection", () => {
 	it("keeps committed rows and an active tail while changing the active revision", () => {
-		const first = projectTranscriptOverlay(timelineWithActiveText("first tail"));
-		const second = projectTranscriptOverlay(timelineWithActiveText("second tail"));
+		const firstState = timelineWithActiveText("first tail");
+		const secondState = {
+			...firstState,
+			activeRowsByCorrelationId: timelineWithActiveText("second tail").activeRowsByCorrelationId,
+		};
+		const first = projectTranscriptOverlay(firstState);
+		const second = projectTranscriptOverlay(secondState);
 
 		expect(first.rows).toEqual([{ id: "timeline-user:1", kind: "text", content: "committed question" }]);
+		expect(second.rows).toBe(first.rows);
 		expect(first.liveTail?.[0]).toMatchObject({ id: "timeline-assistant:1/text", kind: "markdown", content: "first tail" });
 		expect(first.timelineGeneration).toBe(7);
 		expect(first.activeRevision).not.toBe(second.activeRevision);
+	});
+
+	it("uses the canonical committed selector for separator filtering and metrics", () => {
+		const state: TimelineState = {
+			...timelineWithActiveText("tail"),
+			committedRows: [
+				...timelineWithActiveText("tail").committedRows,
+				{
+					kind: "run-boundary",
+					id: "run:empty",
+					timestamp: "2026-08-14T00:00:02.000Z",
+					displayOrder: 1,
+					status: "succeeded",
+					runId: "run:empty",
+					stopReason: "stop",
+					activeDurationMs: 1000,
+				},
+			],
+		};
+
+		expect(projectTranscriptOverlay(state).rows).toEqual(timelineToBlocks(state, { includeActive: false }));
+		expect(projectTranscriptOverlay(state).rows.some((block) => block.kind === "separator")).toBe(false);
 	});
 
 	it("projects plan and exec blocks into selectable transcript forms", () => {
@@ -88,14 +117,36 @@ describe("transcript view projection", () => {
 			"Pending: pending step",
 		]);
 		const execLines = transcriptBlockLines(exec, 80);
-		expect(execLines[0]).toBe("$ printf 'hello'  ✓ • 1.2s");
-		expect(execLines).toContain("  └ first output");
-		expect(execLines).toContain("    second output");
+		expect(execLines[0]).toBe("$ printf 'hello'");
+		expect(execLines).toContain("first output");
+		expect(execLines).toContain("second output");
+		expect(execLines.at(-1)).toBe("✓ • 1.2s");
+	});
+
+	it("keeps the complete command in transcript form instead of the main-cell continuation budget", () => {
+		const exec: PresentationBlock = {
+			kind: "exec",
+			command: "first\nsecond\nthird\nfourth",
+			status: "succeeded",
+			output: [],
+			exitCode: 0,
+			durationMs: 10,
+			continuationMaxLines: 2,
+			transcriptForm: "dollar",
+		};
+
+		expect(transcriptBlockLines(exec, 80)).toEqual([
+			"$ first",
+			"    second",
+			"    third",
+			"    fourth",
+			"✓ • 10ms",
+		]);
 	});
 });
 
 describe("TranscriptOverlayComponent", () => {
-	it("pages read-only content and closes on escape or Ctrl+C", () => {
+	it("pages read-only content and closes on escape, Ctrl+C or Ctrl+T", () => {
 		const onClose = vi.fn();
 		const component = new TranscriptOverlayComponent({
 			rows: Array.from({ length: 12 }, (_, index) => ({
@@ -120,8 +171,9 @@ describe("TranscriptOverlayComponent", () => {
 		expect(component.render(30).join("\n")).toContain("entry 10");
 		component.handleInput("escape");
 		component.handleInput("ctrl+c");
+		component.handleInput("ctrl+t");
 
-		expect(onClose).toHaveBeenCalledTimes(2);
+		expect(onClose).toHaveBeenCalledTimes(3);
 	});
 
 	it("refreshes the cached page when the active revision changes", () => {
@@ -143,6 +195,38 @@ describe("TranscriptOverlayComponent", () => {
 		});
 		expect(component.render(40).join("\n")).toContain("new tail");
 		expect(component.render(40).join("\n")).not.toContain("old tail");
+	});
+
+	it("does not re-project committed block lines when only the active tail changes", () => {
+		let committedReads = 0;
+		const committed = {
+			id: "history",
+			kind: "text" as const,
+			get content() {
+				committedReads += 1;
+				return "history";
+			},
+		};
+		const component = new TranscriptOverlayComponent({
+			rows: [committed],
+			liveTail: [{ id: "active", kind: "text", content: "old tail" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+		});
+
+		component.render(40);
+		const readsAfterFirstRender = committedReads;
+		component.update({
+			rows: [committed],
+			liveTail: [{ id: "active", kind: "text", content: "new tail" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-2",
+		});
+		component.render(40);
+
+		expect(committedReads).toBe(readsAfterFirstRender);
 	});
 
 	it("marks a bounded view without changing the source rows", () => {

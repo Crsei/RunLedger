@@ -92,8 +92,8 @@ export class Footer implements Component {
 		...(knownNonNegative(contextUsage?.totalTokens)
 			? [{ accent: "usage" as const, text: `usage ${formatTokenCount(contextUsage.totalTokens)}` }]
 			: []),
-		...(knownNonNegative(contextUsage?.contextWindow)
-			? [{ accent: "limit" as const, text: `limit ${formatTokenCount(contextUsage.contextWindow)}` }]
+		...(knownNonNegative(contextUsage?.totalTokens) && knownPositive(contextUsage.contextWindow)
+			? [{ accent: "limit" as const, text: `limit ${Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.contextWindow) * 100))}%` }]
 			: []),
 		...(threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
 	  ];
@@ -131,6 +131,10 @@ function validProgress(progress: { readonly completed: number; readonly total: n
 
 function knownNonNegative(value: number | undefined): value is number {
 	return value !== undefined && Number.isFinite(value) && value >= 0;
+}
+
+function knownPositive(value: number | undefined): value is number {
+	return value !== undefined && Number.isFinite(value) && value > 0;
 }
 
 const OPTIONAL_DROP_ORDER: readonly StatusLineSegment["accent"][] = [

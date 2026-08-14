@@ -39,6 +39,7 @@ const CHUNK_BOUND_BYTES = 16 * 1024;
 const DIFF_LINE_BOUND_BYTES = 4 * 1024;
 const DIFF_MAX_LINES = 400;
 const SHELL_TAIL_LINES_PER_CHANNEL = 100;
+export const PLAN_STEP_MAX_COUNT = 256;
 
 /** 把任意值做成有界文本：strip ANSI、UTF-8 字节截断。 */
 export function boundedToolText(value: unknown, maxBytes = TOOL_TEXT_BOUND_BYTES): SafeBoundedText {
@@ -60,7 +61,7 @@ export function boundedToolText(value: unknown, maxBytes = TOOL_TEXT_BOUND_BYTES
 /** TodoWrite 输入 -> 有界 plan update；不把 raw args 直接交给 renderer。 */
 export function projectPlanUpdate(input: unknown): SafePlanUpdate {
 	if (!isRecord(input)) return { steps: [] };
-	const rawTodos = Array.isArray(input.todos) ? input.todos : [];
+	const rawTodos = Array.isArray(input.todos) ? input.todos.slice(0, PLAN_STEP_MAX_COUNT) : [];
 	const steps = rawTodos.flatMap((todo): SafePlanUpdate["steps"] => {
 		if (!isRecord(todo)) return [];
 		const content = typeof todo.content === "string" ? todo.content : typeof todo.text === "string" ? todo.text : "";

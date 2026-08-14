@@ -39,7 +39,7 @@ describe("OpenTUI exec layout", () => {
 		}
 	});
 
-	test("updates a failed block in place with the exit and duration suffix", async () => {
+	test("updates a failed block in place with the terminal Ran header", async () => {
 		const setup = await createTestRenderer({ width: 80, height: 10 });
 		const service = new SyntaxHighlightService();
 		const themeController = new SyntaxThemeController({ availableThemes: ["ansi"], terminalMode: "dark" });
@@ -61,7 +61,8 @@ describe("OpenTUI exec layout", () => {
 			await setup.renderOnce();
 			renderable.updateBlock({ ...initial, status: "failed", exitCode: 7, durationMs: 1_250, background: true });
 			await setup.renderOnce();
-			expect(renderable.plainText).toContain("✗ (7) • 1.3s");
+			expect(renderable.plainText).toContain("• Ran false");
+			expect(renderable.plainText).not.toContain("✗ (7) • 1.3s");
 			expect(renderable.plainText).toContain("(bg)");
 			expect(renderable.plainText).toContain("(no output)");
 		} finally {

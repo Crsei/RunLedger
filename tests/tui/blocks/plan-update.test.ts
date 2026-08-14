@@ -76,4 +76,13 @@ describe("S1 plan-update safe projection", () => {
 		expect(presentation.renderer).toBe("plan");
 		expect(presentation.plan?.steps[0]?.text.text).toBe("keep me");
 	});
+
+	it("caps untrusted plan input at the presentation step budget", () => {
+		const projected = projectPlanUpdate({
+			todos: Array.from({ length: 300 }, (_, index) => ({ content: `step ${index}`, status: "pending" })),
+		});
+
+		expect(projected.steps).toHaveLength(256);
+		expect(projected.steps.at(-1)?.text.text).toBe("step 255");
+	});
 });

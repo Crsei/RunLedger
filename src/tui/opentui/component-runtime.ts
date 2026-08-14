@@ -35,6 +35,7 @@ import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-rendera
 import { NoticeRenderable, noticePlainText } from "./notice-renderable.ts";
 import { formatSeparatorLabel, STATUS_DETAILS_PREFIX } from "./block-layout.ts";
 import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
+import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "../mermaid/display-width.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
@@ -626,7 +627,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       const editorCursorOffset = Math.max(0, Math.min(frame.editorCursorOffset ?? frame.editorText.length, frame.editorText.length));
       if (editor.cursorOffset !== editorCursorOffset) editor.cursorOffset = editorCursorOffset;
       if (frame.editorHeight !== undefined) requestedEditorHeight = frame.editorHeight;
-      const projectedStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator);
+      const projectedStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator, renderer.width);
       statusIndicator.visible = projectedStatus.length > 0;
       statusIndicator.content = projectedStatus.length > 0 ? ansiToStyledText(projectedStatus) : "";
       statusIndicator.height = projectedStatus.length > 0 ? projectedStatus.split("\n").length : 0;
@@ -861,13 +862,41 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   }
 }
 
-export function statusIndicatorPlainText(view: StatusIndicatorView): string {
+export function statusIndicatorPlainText(view: StatusIndicatorView, width?: number): string {
   const interrupt = view.interruptKey === undefined ? "" : ` • ${view.interruptKey} to interrupt`;
   const inline = view.inlineMessage === undefined ? "" : ` ${view.inlineMessage}`;
-  return [
-    `${view.indicator} ${view.header} (${view.elapsed}${interrupt})${inline}`,
-    ...(view.details ?? []).map((detail) => `${STATUS_DETAILS_PREFIX}${detail.text}`),
-  ].join("\n");
+  const header = `${view.indicator} ${view.header} (${view.elapsed}${interrupt})${inline}`;
+  if (width === undefined) {
+    return [header, ...(view.details ?? []).map((detail) => `${STATUS_DETAILS_PREFIX}${detail.text}`)].join("\n");
+  }
+  const safeWidth = Math.max(1, Math.floor(width));
+  const detailLines: string[] = [];
+  let detailsTruncated = false;
+  for (const [detailIndex, detail] of (view.details ?? []).entries()) {
+    const firstPrefix = boundedStatusPrefix(STATUS_DETAILS_PREFIX, safeWidth);
+    const continuationPrefix = boundedStatusPrefix("    ", safeWidth);
+    const contentWidth = Math.max(1, safeWidth - displayWidth(firstPrefix));
+    const wrapped = wrapDisplayWidth(detail.text, contentWidth, Math.max(1, graphemes(detail.text).length + 1));
+    for (const [lineIndex, line] of wrapped.entries()) {
+      if (detailLines.length >= 3) {
+        detailsTruncated = true;
+        break;
+      }
+      const prefix = lineIndex === 0 ? firstPrefix : continuationPrefix;
+      detailLines.push(truncateDisplayWidth(`${prefix}${line}`, safeWidth));
+    }
+    if (detailsTruncated) break;
+    if (detailIndex < (view.details?.length ?? 0) - 1 && detailLines.length >= 3) detailsTruncated = true;
+  }
+  if (detailsTruncated && detailLines.length > 0) {
+    const lastIndex = detailLines.length - 1;
+    detailLines[lastIndex] = truncateDisplayWidth(`${detailLines[lastIndex]}…`, safeWidth, true);
+  }
+  return [truncateDisplayWidth(header, safeWidth, true), ...detailLines].join("\n");
+}
+
+function boundedStatusPrefix(prefix: string, width: number): string {
+  return truncateDisplayWidth(prefix, Math.max(0, width - 1));
 }
 
 function styledFooter(

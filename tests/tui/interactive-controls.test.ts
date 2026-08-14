@@ -17,6 +17,7 @@ import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
 import type { EditorHint } from "../../src/tui/components/editor-hint.ts";
 import type { TuiStore } from "../../src/tui/application/store.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
+import type { TuiEvent } from "../../src/tui/types.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -427,6 +428,53 @@ describe("InteractiveMode lifecycle and global controls", () => {
 
     terminal.send("\x04");
     await running;
+  });
+
+  it("derives footer plan progress from the live safe timeline when taskGoal is not wired", () => {
+    const mode = new InteractiveMode({
+      agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+      terminal: new FakeTerminal(),
+    });
+    const internals = mode as unknown as { handleEvent(event: TuiEvent): void };
+
+    internals.handleEvent({
+      type: "tool_execution_start",
+      timestamp: 1,
+      toolCallId: "todo-1",
+      toolName: "TodoWrite",
+      args: {
+        todos: [
+          { content: "done", status: "completed" },
+          { content: "next", status: "pending" },
+        ],
+      },
+    });
+
+    expect(mode.getPlanProgress()).toEqual({ completed: 1, total: 2 });
+  });
+
+  it("derives footer usage and context limit from completed assistant messages", () => {
+    const mode = new InteractiveMode({
+      agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+      terminal: new FakeTerminal(),
+    });
+    const internals = mode as unknown as { handleEvent(event: TuiEvent): void };
+    const message: AssistantMessage = {
+      ...stoppedAssistant(),
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 120,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+    };
+
+    internals.handleEvent({ type: "message_start", timestamp: 1, role: "assistant", message });
+    internals.handleEvent({ type: "message_end", timestamp: 2, role: "assistant", stopReason: "stop", message });
+
+    expect(mode.getContextUsage()).toEqual({ totalTokens: 120, contextWindow: mockModel.contextWindow });
   });
 
   it("run 持续到退出；非空 Ctrl+D 不退出，Ctrl+C 清稿后空 Ctrl+D 退出", async () => {

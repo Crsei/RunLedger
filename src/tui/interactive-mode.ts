@@ -97,6 +97,8 @@ import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/t
 import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
 import { projectStatusIndicator } from "./presentation/projectors.ts";
 import { projectTranscriptOverlay, TranscriptOverlayComponent } from "./transcript-view.ts";
+import { projectToolUsage } from "./presentation/tools/projector.ts";
+import type { SafeUsageQuantity } from "./presentation/tools/types.ts";
 
 export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
@@ -1489,33 +1491,81 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.gitBranchLabel;
   }
 
-  /** FooterSnapshotProvider：只从已完成的 task snapshot 投影计划进度。 */
+  /** FooterSnapshotProvider：优先 authoritative task snapshot，缺失时读取最新 safe plan presentation。 */
   getPlanProgress(): { readonly completed: number; readonly total: number } | undefined {
-    const workflow = this.store.getState().taskGoalWorkflow;
-    if (workflow.state !== "ready") return undefined;
-    const tasks = workflow.value.tasks.filter((task) => task.status !== "deleted");
-    if (tasks.length === 0) return undefined;
-    return {
-      completed: tasks.filter((task) => task.status === "completed").length,
-      total: tasks.length,
-    };
+    const state = this.store.getState();
+    const workflow = state.taskGoalWorkflow;
+    if (workflow.state === "ready") {
+      const tasks = workflow.value.tasks.filter((task) => task.status !== "deleted");
+      if (tasks.length > 0) {
+        return {
+          completed: tasks.filter((task) => task.status === "completed").length,
+          total: tasks.length,
+        };
+      }
+    }
+    const rows = [
+      ...state.timeline.committedRows,
+      ...state.timeline.activeOrder.flatMap((id) => {
+        const row = state.timeline.activeRowsByCorrelationId[id];
+        return row === undefined ? [] : [row];
+      }),
+    ];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index];
+      if (row?.kind !== "tool" || row.presentation.state !== "known") continue;
+      const presentation = row.presentation.value;
+      if (presentation.renderer !== "plan" || presentation.plan === undefined) continue;
+      const steps = presentation.plan.steps;
+      if (steps.length === 0) return undefined;
+      return {
+        completed: steps.filter((step) => step.status === "completed").length,
+        total: steps.length,
+      };
+    }
+    return undefined;
   }
 
-  /** FooterSnapshotProvider：runtime snapshot 不可用时不将 token 强制归零。 */
+  /** FooterSnapshotProvider：优先 runtime snapshot，缺失字段回退到已投影 usage 与当前 model。 */
   getContextUsage(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined {
-    const workflow = this.store.getState().runtimeSnapshotWorkflow;
+    const state = this.store.getState();
+    const workflow = state.runtimeSnapshotWorkflow;
     const snapshot = workflow.state === "ready"
       ? workflow.value
       : workflow.state === "loading" || workflow.state === "error"
         ? workflow.previous
         : undefined;
-    if (snapshot?.context.state !== "known") return undefined;
-    const totalTokens = snapshot.context.value.totalTokens.state === "known"
+    let totalTokens = snapshot?.context.state === "known" && snapshot.context.value.totalTokens.state === "known"
       ? snapshot.context.value.totalTokens.value
       : undefined;
-    const contextWindow = snapshot.context.value.contextWindow.state === "known"
+    let contextWindow = snapshot?.context.state === "known" && snapshot.context.value.contextWindow.state === "known"
       ? snapshot.context.value.contextWindow.value
       : undefined;
+    if (totalTokens === undefined) {
+      const rows = [
+        ...state.timeline.committedRows,
+        ...state.timeline.activeOrder.flatMap((id) => {
+          const row = state.timeline.activeRowsByCorrelationId[id];
+          return row === undefined ? [] : [row];
+        }),
+      ];
+      for (let index = rows.length - 1; index >= 0; index -= 1) {
+        const row = rows[index];
+        if (row?.kind !== "assistant" || row.usage === undefined) continue;
+        const input = timelineUsageValue(row.usage.input);
+        const output = timelineUsageValue(row.usage.output);
+        if (input !== undefined && output !== undefined) {
+          totalTokens = input + output;
+          break;
+        }
+      }
+    }
+    if (contextWindow === undefined) {
+      const model = this.controller?.currentSelection.model ?? this.agent?.state.model;
+      if (typeof model === "object" && model !== null && Number.isFinite(model.contextWindow) && model.contextWindow > 0) {
+        contextWindow = model.contextWindow;
+      }
+    }
     if (totalTokens === undefined && contextWindow === undefined) return undefined;
     return {
       ...(totalTokens === undefined ? {} : { totalTokens }),
@@ -2474,13 +2524,23 @@ export class InteractiveMode implements FooterSnapshotProvider {
             const text = messageAssistantText(ev.message);
             const thinking = messageAssistantThinking(ev.message);
             const correlationId = this.timelineProjector.currentAssistantCorrelationId();
-            this.dispatchTimeline([{
+            const finalEvents: TimelineEvent[] = [{
               type: "message_update",
               generation: 0,
               correlationId,
               text: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
               ...(thinking.length > 0 ? { thinking: { text: thinking, truncated: false, byteLength: new TextEncoder().encode(thinking).byteLength } } : {}),
-            }]);
+            }];
+            if (ev.message.usage !== undefined) {
+              const usage = projectToolUsage(ev.message.usage.input, ev.message.usage.output);
+              finalEvents.push({
+                type: "usage",
+                generation: 0,
+                correlationId,
+                usage: { input: usage.input, output: usage.output },
+              });
+            }
+            this.dispatchTimeline(finalEvents);
           }
           // 3) 提交行
           this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
@@ -2660,6 +2720,10 @@ function messageAssistantThinking(message: AgentMessage): string {
 
 function isRunStopReason(value: string | undefined): value is "stop" | "length" | "toolUse" | "error" | "aborted" {
   return value === "stop" || value === "length" || value === "toolUse" || value === "error" || value === "aborted";
+}
+
+function timelineUsageValue(quantity: SafeUsageQuantity): number | undefined {
+  return quantity.state === "exact" || quantity.state === "estimated" ? quantity.value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

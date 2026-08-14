@@ -144,6 +144,28 @@ describe("OpenTUI Codex-style diff gutter", () => {
 		}
 	});
 
+	test("wraps long deleted lines under a styled blank gutter", async () => {
+		const setup = await createTestRenderer({ width: 24, height: 12 });
+		const native = fixture();
+		const service = new SyntaxHighlightService({ addon: native.addon });
+		const controller = new SyntaxThemeController({ availableThemes: themes, terminalMode: "dark" });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {}, onResize: () => {}, syntaxHighlightService: service, syntaxThemeController: controller,
+		});
+		try {
+			runtime.update({ body: [diffBlock("wrapped", "src/x.ts", ["context", "abcdefghijklmnopqrstuvwxyz0123456789"])], editorText: "", footer: [] });
+			await settle(setup.renderOnce);
+			const diff = findDiffBlocks(setup.renderer.root)[0];
+			const continuation = diff?.content.chunks.find((chunk) => chunk.text === "   " && chunk.bg !== undefined);
+			expect(continuation).toBeDefined();
+			expect((continuation?.attributes ?? 0) & TextAttributes.DIM).toBe(TextAttributes.DIM);
+			expect(setup.captureCharFrame()).toContain("   vwxyz0123456789");
+		} finally {
+			runtime.destroy();
+			service.destroy();
+		}
+	});
+
 	test("does not schedule offscreen diff highlighting", async () => {
 		const setup = await createTestRenderer({ width: 80, height: 12 });
 		const native = fixture();

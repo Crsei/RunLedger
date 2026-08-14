@@ -323,7 +323,7 @@ describe("OpenTUI syntect Markdown seam", () => {
 });
 
 describe("OpenTUI exec highlighting", () => {
-	test("colors prompt/status semantically, highlights Bash, and dims safe output", async () => {
+	test("colors the Ran header semantically, highlights Bash, and dims safe output", async () => {
 		const setup = await createTestRenderer({ width: 80, height: 20 });
 		const native = fixture();
 		const service = new SyntaxHighlightService({ addon: native.addon });
@@ -350,11 +350,11 @@ describe("OpenTUI exec highlighting", () => {
 			expect(exec).toBeDefined();
 			expect(native.calls).toContainEqual({ source: "echo hello", language: "bash", theme: "catppuccin-mocha" });
 			const chunks = exec?.content.chunks ?? [];
-			expect(chunks.find((chunk) => chunk.text === "$ ")?.fg?.intent).toBe("indexed");
-			expect(chunks.find((chunk) => chunk.text === "$ ")?.fg?.slot).toBe(5);
+			expect(chunks.find((chunk) => chunk.text === "• Ran ")?.fg?.intent).toBe("indexed");
+			expect(chunks.find((chunk) => chunk.text === "• Ran ")?.fg?.slot).toBe(2);
 			expect(chunks.find((chunk) => chunk.text.includes("hello") && chunk.fg?.slot === 196)?.attributes).not.toBe(0);
-			expect(chunks.find((chunk) => chunk.text.includes("✓"))?.fg?.slot).toBe(2);
-			expect(setup.captureCharFrame()).toContain("42ms");
+			expect(setup.captureCharFrame()).toContain("• Ran echo hello");
+			expect(setup.captureCharFrame()).not.toContain("42ms");
 		} finally {
 			runtime.destroy();
 			service.destroy();

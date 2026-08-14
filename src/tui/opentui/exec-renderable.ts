@@ -125,11 +125,24 @@ export class ExecRenderable extends TextRenderable {
 /** 把 exec/command 块投影为可复制、宽度有界的终端行。 */
 export function execDisplayLines(block: ExecDisplayBlock, width = 80): readonly string[] {
 	const boundedWidth = boundedWidthValue(width);
-	const lines = commandDisplayLines(block.command, boundedWidth, block.kind === "exec" ? block.continuationPrefix : undefined, block.kind === "exec" ? block.continuationMaxLines : undefined);
-	if (block.kind === "command") return lines;
-	appendStatusLine(lines, execStatusText(block), boundedWidth);
+	if (block.kind === "command") return commandDisplayLines(block.command, boundedWidth);
+	const lines = mainCommandDisplayLines(block, boundedWidth);
 	const outputLines = outputDisplayLines(block, boundedWidth);
 	return [...lines, ...outputLines];
+}
+
+/** Codex transcript form：完整命令、bounded retention 输出与独立结果行。 */
+export function execTranscriptLines(block: ExecDisplayBlock, width = 80): readonly string[] {
+	const boundedWidth = boundedWidthValue(width);
+	if (block.kind === "command") return transcriptCommandLines(block.command, boundedWidth);
+	const lines = [...transcriptCommandLines(block.command, boundedWidth)];
+	for (const output of block.output) {
+		const plain = plainOutputText(output.text);
+		for (const logicalLine of plain.split("\n")) lines.push(...wrapPlainLine(logicalLine, boundedWidth));
+	}
+	const result = transcriptResultLine(block);
+	if (result !== undefined) lines.push(truncateDisplayWidth(result, boundedWidth, true));
+	return lines;
 }
 
 export function plainExecText(block: ExecDisplayBlock, width = 80): string {
@@ -149,13 +162,45 @@ function commandDisplayLines(command: string, width: number, continuationPrefix 
 	return lines.concat(continuation.slice(0, Math.max(0, Math.floor(continuationMaxLines))));
 }
 
+function mainCommandDisplayLines(block: ExecBlock, width: number): string[] {
+	const prefix = `${mainStatusBullet(block)} ${block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `;
+	const commandWidth = Math.max(1, width - displayWidth(prefix));
+	const normalized = stripShellLoginWrapper(block.command).replace(/\r\n?/gu, "\n");
+	const logicalLines = normalized.split("\n");
+	const first = wrapPlainLine(logicalLines.shift() ?? "", commandWidth);
+	const lines = [`${prefix}${first[0] ?? ""}`];
+	const continuationPrefix = block.continuationPrefix ?? EXEC_CONTINUATION_PREFIX;
+	const continuationWidth = Math.max(1, width - displayWidth(continuationPrefix));
+	const continuation = first.slice(1).map((line) => `${continuationPrefix}${line}`);
+	for (const logicalLine of logicalLines) {
+		for (const line of wrapPlainLine(logicalLine, continuationWidth)) continuation.push(`${continuationPrefix}${line}`);
+	}
+	lines.push(...continuation.slice(0, Math.max(0, Math.floor(block.continuationMaxLines ?? EXEC_CONTINUATION_MAX_LINES))));
+	if (block.background === true) appendInlineSuffix(lines, " (bg)", width);
+	return lines;
+}
+
+function transcriptCommandLines(command: string, width: number): string[] {
+	const normalized = stripShellLoginWrapper(command).replace(/\r\n?/gu, "\n");
+	const logicalLines = normalized.split("\n");
+	const lines: string[] = [];
+	for (const [logicalIndex, logicalLine] of logicalLines.entries()) {
+		const prefix = logicalIndex === 0 ? "$ " : EXEC_OUTPUT_CONTINUATION_INDENT;
+		const wrapped = wrapPlainLine(logicalLine, Math.max(1, width - displayWidth(prefix)));
+		for (const [wrappedIndex, line] of wrapped.entries()) {
+			lines.push(`${logicalIndex === 0 && wrappedIndex === 0 ? "$ " : EXEC_OUTPUT_CONTINUATION_INDENT}${line}`);
+		}
+	}
+	return lines;
+}
+
 function outputDisplayLines(block: ExecBlock, width: number): string[] {
 	const prefix = block.outputPrefix ?? EXEC_OUTPUT_PREFIX;
 	const continuation = EXEC_OUTPUT_CONTINUATION_INDENT;
 	const outputWidth = Math.max(1, width - displayWidth(continuation));
 	const fullLines: string[] = [];
 	for (const output of block.output) {
-		const plain = ansiToStyledText(output.text).chunks.map((chunk) => chunk.text).join("").replace(/\r\n?/gu, "\n");
+		const plain = plainOutputText(output.text);
 		for (const logicalLine of plain.split("\n")) fullLines.push(...wrapPlainLine(logicalLine, outputWidth));
 	}
 	if (fullLines.length === 0) fullLines.push("(no output)");
@@ -177,7 +222,7 @@ function truncateMiddlePlainLines(lines: readonly string[], maxLines: number, wi
 	];
 }
 
-function appendStatusLine(lines: string[], status: string, width: number): void {
+function appendInlineSuffix(lines: string[], status: string, width: number): void {
 	const last = lines.at(-1) ?? "";
 	if (displayWidth(last) + displayWidth(status) <= width) {
 		lines[lines.length - 1] = `${last}${status}`;
@@ -186,16 +231,23 @@ function appendStatusLine(lines: string[], status: string, width: number): void 
 	lines.push(truncateDisplayWidth(status, width, true));
 }
 
-function execStatusText(block: ExecBlock): string {
+function mainStatusBullet(block: ExecBlock): string {
+	if (block.status === "running" || block.status === "pending") return "◌";
+	return "•";
+}
+
+function transcriptResultLine(block: ExecBlock): string | undefined {
 	const duration = block.durationMs === undefined ? "" : ` • ${formatExecDuration(block.durationMs)}`;
-	const background = block.background === true ? " (bg)" : "";
-	if (block.status === "succeeded") return `  ✓${duration}${background}`;
+	if (block.status === "succeeded") return `✓${duration}`;
 	if (["failed", "cancelled", "aborted"].includes(block.status)) {
 		const exit = block.exitCode === undefined ? "exit" : String(block.exitCode);
-		return `  ✗ (${exit})${duration}${background}`;
+		return `✗ (${exit})${duration}`;
 	}
-	if (block.status === "running") return `  • running${background}`;
-	return `  ○ pending${background}`;
+	return undefined;
+}
+
+function plainOutputText(value: string): string {
+	return ansiToStyledText(value).chunks.map((chunk) => chunk.text).join("").replace(/\r\n?/gu, "\n");
 }
 
 function formatExecDuration(durationMs: number): string {
@@ -215,18 +267,28 @@ function wrapPlainLine(value: string, width: number): readonly string[] {
 }
 
 function styledExecText(block: ExecDisplayBlock, command: string, highlighted: StyledText | undefined, width: number): StyledText {
-	const commandLines = styledCommandLines(command, highlighted ?? ansiToStyledText(command), width, block.kind === "exec" ? block.continuationPrefix : undefined, block.kind === "exec" ? block.continuationMaxLines : undefined);
+	const source = highlighted ?? ansiToStyledText(command);
+	const commandLines = block.kind === "command"
+		? styledCommandLines(source, width, "$ ", EXEC_CONTINUATION_PREFIX, EXEC_CONTINUATION_MAX_LINES, RGBA.fromIndex(5))
+		: styledCommandLines(
+			source,
+			width,
+			`${mainStatusBullet(block)} ${block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `,
+			block.continuationPrefix ?? EXEC_CONTINUATION_PREFIX,
+			block.continuationMaxLines ?? EXEC_CONTINUATION_MAX_LINES,
+			execPrefixColor(block),
+		);
 	if (block.kind === "command") return flattenStyledLines(commandLines);
-	appendStyledStatusLine(commandLines, block, width);
+	if (block.background === true) appendStyledBackground(commandLines, width);
 	const outputLines = styledOutputLines(block, width);
 	return flattenStyledLines([...commandLines, ...outputLines]);
 }
 
-function styledCommandLines(command: string, source: StyledText, width: number, continuationPrefix = EXEC_CONTINUATION_PREFIX, continuationMaxLines = EXEC_CONTINUATION_MAX_LINES): StyledLine[] {
+function styledCommandLines(source: StyledText, width: number, initialPrefix: string, continuationPrefix: string, continuationMaxLines: number, initialFg?: RGBA): StyledLine[] {
 	const sourceLines = splitStyledLines(source.chunks);
 	const firstSource = sourceLines.shift() ?? [];
-	const first = wrapStyledLine(firstSource, Math.max(1, width - displayWidth("$ ")));
-	const lines: StyledLine[] = [withPrefix("$ ", first[0]?.chunks ?? [], false)];
+	const first = wrapStyledLine(firstSource, Math.max(1, width - displayWidth(initialPrefix)));
+	const lines: StyledLine[] = [withPrefix(initialPrefix, first[0]?.chunks ?? [], false, initialFg)];
 	const continuationWidth = Math.max(1, width - displayWidth(continuationPrefix));
 	const continuation: StyledLine[] = first.slice(1).map((line) => withPrefix(continuationPrefix, line.chunks, true));
 	for (const sourceLine of sourceLines) {
@@ -264,20 +326,15 @@ function truncateMiddleStyledLines(lines: readonly StyledLine[], maxLines: numbe
 	];
 }
 
-function appendStyledStatusLine(lines: StyledLine[], block: ExecBlock, width: number): void {
-	const status = execStatusText(block);
+function appendStyledBackground(lines: StyledLine[], width: number): void {
+	const status = " (bg)";
 	const last = lines.at(-1);
 	if (last !== undefined && displayWidth(last.plain) + displayWidth(status) <= width) {
-		lines[lines.length - 1] = { chunks: [...last.chunks, statusChunk(block, status)], plain: `${last.plain}${status}` };
+		lines[lines.length - 1] = { chunks: [...last.chunks, { __isChunk: true, text: status, attributes: TextAttributes.DIM }], plain: `${last.plain}${status}` };
 		return;
 	}
-	lines.push({ chunks: [statusChunk(block, truncateDisplayWidth(status, width, true))], plain: truncateDisplayWidth(status, width, true) });
-}
-
-function statusChunk(block: ExecBlock, text: string): TextChunk {
-	const attributes = ["failed", "cancelled", "aborted", "succeeded"].includes(block.status) ? TextAttributes.BOLD : TextAttributes.DIM;
-	const fg = block.status === "succeeded" ? 2 : ["failed", "cancelled", "aborted"].includes(block.status) ? 1 : 3;
-	return { __isChunk: true, text, fg: RGBA.fromIndex(fg), attributes };
+	const text = truncateDisplayWidth(status.trimStart(), width, true);
+	lines.push({ chunks: [{ __isChunk: true, text, attributes: TextAttributes.DIM }], plain: text });
 }
 
 function splitStyledLines(chunks: readonly TextChunk[]): TextChunk[][] {
@@ -313,14 +370,20 @@ function wrapStyledLine(chunks: readonly TextChunk[], width: number): StyledLine
 	return lines;
 }
 
-function withPrefix(prefix: string, chunks: readonly TextChunk[], dim: boolean): StyledLine {
+function withPrefix(prefix: string, chunks: readonly TextChunk[], dim: boolean, fg?: RGBA): StyledLine {
 	const prefixChunk: TextChunk = {
 		__isChunk: true,
 		text: prefix,
-		...(prefix === "$ " ? { fg: RGBA.fromIndex(5) } : {}),
+		...(fg === undefined ? {} : { fg }),
 		...(dim ? { attributes: TextAttributes.DIM } : {}),
 	};
 	return { chunks: [prefixChunk, ...chunks], plain: `${prefix}${chunks.map((chunk) => chunk.text).join("")}` };
+}
+
+function execPrefixColor(block: ExecBlock): RGBA {
+	if (block.status === "succeeded") return RGBA.fromIndex(2);
+	if (["failed", "cancelled", "aborted"].includes(block.status)) return RGBA.fromIndex(1);
+	return RGBA.fromIndex(3);
 }
 
 function dimLine(chunks: readonly TextChunk[]): StyledLine {
