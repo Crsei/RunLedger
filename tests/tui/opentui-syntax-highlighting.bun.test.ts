@@ -457,16 +457,16 @@ describe("OpenTUI syntax-theme diff", () => {
 			runtime.update({ body: [{ id: "diff", kind: "diff", document }], editorText: "", footer: [] });
 			await setup.renderOnce();
 			const before = findDiffBlock(setup.renderer.root);
-			expect(before?.plainText).toContain("- before");
-			expect(before?.plainText).toContain("+ after");
-			expect(before?.content.chunks.find((chunk) => chunk.text === "+ after")?.bg?.slot).toBe(22);
-			expect(before?.content.chunks.find((chunk) => chunk.text === "- before")?.bg?.slot).toBe(52);
+			expect(before?.plainText).toContain("-before");
+			expect(before?.plainText).toContain("+after");
+			expect(before?.content.chunks.find((chunk) => chunk.text === "after")?.bg?.slot).toBe(22);
+			expect(before?.content.chunks.find((chunk) => chunk.text === "before")?.bg?.slot).toBe(52);
 
 			controller.preview("catppuccin-latte");
 			await setup.renderOnce();
 			const after = findDiffBlock(setup.renderer.root);
 			expect(after?.num).toBe(before?.num);
-			expect(after?.content.chunks.find((chunk) => chunk.text === "+ after")?.bg?.toInts().slice(0, 3)).toEqual([1, 2, 3]);
+			expect(after?.content.chunks.find((chunk) => chunk.text === "after")?.bg?.toInts().slice(0, 3)).toEqual([1, 2, 3]);
 			expect(setup.captureCharFrame()).toContain("before");
 			expect(setup.captureCharFrame()).toContain("after");
 		} finally {

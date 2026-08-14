@@ -30,7 +30,7 @@ import { createSyntectCodeBlockRenderer } from "./syntect-code-block-renderer.ts
 import { SyntectCodeBlockRenderable, type HighlightAdmission } from "./syntect-code-block-renderable.ts";
 import { ExecRenderable, plainExecText } from "./exec-renderable.ts";
 import { stripShellLoginWrapper } from "./exec-renderable.ts";
-import { DiffRenderable } from "./diff-renderable.ts";
+import { DiffRenderable, diffPlainText } from "./diff-renderable.ts";
 import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-renderable.ts";
 import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
 
@@ -159,7 +159,7 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "separator") return block.content ?? block.label;
   if (block.kind === "command") return `$ ${stripCommandForPlaintext(block.command)}`;
   if (block.kind === "exec") return plainExecText(block);
-  if (block.kind === "diff") return block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text.text)).join("\n");
+  if (block.kind === "diff") return `${diffPlainText(block)}\u0000syntax=${block.syntaxHighlight !== false}`;
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   return block.content;
@@ -190,7 +190,7 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     : block.kind === "exec"
     ? plainExecText(block).length
     : block.kind === "diff"
-    ? block.document.hunks.reduce((total, hunk) => total + hunk.lines.reduce((lineTotal, line) => lineTotal + line.text.text.length, 0), 0)
+    ? diffPlainText(block).length
     : block.kind === "status-line"
     ? block.segments.reduce((total, segment) => total + segment.text.length, 0)
     : block.kind === "plan-update"
@@ -506,7 +506,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
               id: renderableId("runledger-block", key),
               width: "100%",
               flexShrink: 0,
-              document: block.document,
+              block,
               highlightService: syntaxHighlightService,
               themeController: syntaxThemeController,
             })
@@ -555,7 +555,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         } else if (block.kind === "diff" && current.renderable instanceof DiffRenderable) {
           const contentKey = blockText(block);
           if (current.contentKey !== contentKey) {
-            current.renderable.updateDocument(block.document);
+            current.renderable.updateBlock(block);
             current.contentKey = contentKey;
           }
         } else if (block.kind === "plan-update" && current.renderable instanceof PlanUpdateRenderable) {
@@ -852,9 +852,9 @@ function updateTranscriptHighlightAdmission(
 
 function visitHighlightRenderables(
 	renderable: Renderable,
-	visit: (renderable: SyntectCodeBlockRenderable | ExecRenderable) => void,
+  visit: (renderable: SyntectCodeBlockRenderable | ExecRenderable | DiffRenderable) => void,
 ): void {
-	if (renderable instanceof SyntectCodeBlockRenderable || renderable instanceof ExecRenderable) visit(renderable);
+  if (renderable instanceof SyntectCodeBlockRenderable || renderable instanceof ExecRenderable || renderable instanceof DiffRenderable) visit(renderable);
 	for (const child of renderable.getChildren()) visitHighlightRenderables(child, visit);
 }
 

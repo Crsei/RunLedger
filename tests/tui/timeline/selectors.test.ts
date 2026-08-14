@@ -127,7 +127,14 @@ describe("B2 timeline selectors", () => {
 			} },
 		}));
 		const diff = blocks.find((block) => block.kind === "diff");
-		expect(diff).toEqual({ id: "timeline-tool:edit/diff-0", kind: "diff", document });
+		expect(diff).toEqual({
+			id: "timeline-tool:edit/diff-0",
+			kind: "diff",
+			document,
+			showLineNumbers: true,
+			lineNumberWidth: 1,
+			syntaxHighlight: true,
+		});
 		expect(blocks.filter((block) => block.kind === "text").map((block) => block.content).join("\n")).not.toContain("+ after");
 	});
 

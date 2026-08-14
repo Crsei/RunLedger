@@ -38,6 +38,12 @@ export type PresentationBlock =
     id?: string;
     kind: "diff";
     document: import("./presentation/tools/types.ts").SafeDiffDocument;
+    /** 显示右对齐的旧/新行号 gutter；缺省由 renderer 按 Codex 布局开启。 */
+    showLineNumbers?: boolean;
+    /** 行号 gutter 宽度；selector 会按当前文档最大行号预计算。 */
+    lineNumberWidth?: number;
+    /** 允许按 hunk 调用 23 的语法高亮服务。 */
+    syntaxHighlight?: boolean;
   }
   | PlanUpdateBlock
   | {

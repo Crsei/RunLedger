@@ -7,6 +7,7 @@
 
 import type { PresentationBlock } from "../presentation.ts";
 import type { TimelineRow, TimelineState } from "./types.ts";
+import { diffLineNumberWidth } from "../opentui/block-layout.ts";
 
 export interface TimelineToBlocksOptions {
 	readonly includeActive?: boolean;
@@ -76,7 +77,14 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 			}
 			const lines = toolLines(row);
 			const diffBlocks = presentation?.body.flatMap((block, index): PresentationBlock[] => block.kind === "diff"
-				? [{ id: `${baseId}/diff-${index}`, kind: "diff", document: block.document }]
+				? [{
+					id: `${baseId}/diff-${index}`,
+					kind: "diff",
+					document: block.document,
+					showLineNumbers: true,
+					lineNumberWidth: diffDocumentLineNumberWidth(block.document),
+					syntaxHighlight: true,
+				}]
 				: []) ?? [];
 			return [{ id: baseId, kind: "text", content: lines.join("\n") }, ...diffBlocks];
 		}
@@ -93,6 +101,17 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 		case "run-boundary":
 			return [{ id: baseId, kind: "separator", label: `${row.stopReason} · ${row.activeDurationMs === undefined ? "time unavailable" : `Worked for ${formatActiveDuration(row.activeDurationMs)}`}` }];
 	}
+}
+
+function diffDocumentLineNumberWidth(document: import("../presentation/tools/types.ts").SafeDiffDocument): number {
+	let maxLineNumber = 0;
+	for (const hunk of document.hunks) {
+		for (const line of hunk.lines) {
+			if (line.kind !== "add") maxLineNumber = Math.max(maxLineNumber, line.oldLine);
+			if (line.kind !== "delete") maxLineNumber = Math.max(maxLineNumber, line.newLine);
+		}
+	}
+	return diffLineNumberWidth(maxLineNumber);
 }
 
 export function formatActiveDuration(durationMs: number): string {
