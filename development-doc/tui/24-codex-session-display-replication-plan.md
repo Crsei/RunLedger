@@ -1,6 +1,6 @@
 # RunLedger TUI Codex 会话展示区完整复刻计划
 
-> 状态：**S0–S5 已实现并通过 fresh evidence；S6–S7 待实现/验收**
+> 状态：**S0–S6 已实现并通过 fresh evidence；S7 待最终验收**
 >
 > 计划日期：2026-08-14
 >
@@ -8,7 +8,7 @@
 >
 > Codex 固定参照：`main@0b175e6439a8608ba7726ee153fd8590619e8f34`
 >
-> 交付性质：本文冻结会话展示区（transcript 区域）的展示块语义、布局契约、实施阶段与验收；当前状态指示行已落地，Ctrl+T 转写视图与最终人工验收仍未完成。
+> 交付性质：本文冻结会话展示区（transcript 区域）的展示块语义、布局契约、实施阶段与验收；状态指示行与 Ctrl+T 转写视图已落地，最终人工验收仍随 S7 进行。
 
 ---
 
@@ -549,15 +549,15 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 ### S6 · 转写视图（Ctrl+T）
 
 **RED**
-- [ ] Ctrl+T 打开只读 overlay：全量 committed rows + 活跃尾部；exec `$` 形式、plan raw 形式；
-- [ ] 尾部缓存随 timeline generation / active revision 失效；
-- [ ] Esc/Ctrl+C 关闭，主对话 sticky 与滚动不变。
+- [x] Ctrl+T 打开只读 overlay：全量 committed rows + 活跃尾部；exec `$` 形式、plan raw 形式；
+- [x] 尾部缓存随 timeline generation / active revision 失效；
+- [x] Esc/Ctrl+C 关闭，主对话 sticky 与滚动不变。
 
 **GREEN**
-- [ ] `TranscriptOverlayView` 投影 + pager 键位（j/k/g/G/PgUp/PgDn）；
-- [ ] 行数超预算截断 + `(truncated)` 标记。
+- [x] `TranscriptOverlayView` 投影 + pager 键位（j/k/g/G/PgUp/PgDn）；
+- [x] 行数超预算截断 + `(truncated)` 标记。
 
-**门禁**：真实 PTY 键盘验收 + overlay 生命周期测试。
+**门禁**：Vitest transcript/InteractiveMode 生命周期测试、Bun OpenTUI 全屏 surface/滚动保持测试、隔离 `RUNLEDGER_DIR` 标准 PATH PTY 的 Ctrl+T → Esc → Ctrl+D smoke 已通过；完整 dark/light 逐项人工验收仍随 S7 进行。
 
 ### S7 · 完整门禁与人工验收
 

@@ -13,6 +13,7 @@ import { createAssistantMessageEventStream } from "../../src/utils/event-stream.
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { createProcessOverlayController } from "../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
+import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
 import type { EditorHint } from "../../src/tui/components/editor-hint.ts";
 import type { TuiStore } from "../../src/tui/application/store.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
@@ -396,6 +397,36 @@ describe("InteractiveMode lifecycle and global controls", () => {
     terminal.send("\x04");
     await running;
     expect(terminal.stopCount).toBe(1);
+  });
+
+  it("Ctrl+T 打开只读 transcript overlay，Esc 关闭后恢复主对话", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const running = mode.run();
+    const internals = mode as unknown as {
+      ui: {
+        hasOverlay(): boolean;
+        getOverlay(): unknown;
+      };
+    };
+
+    mode.echoPrompt("committed question");
+    await vi.waitFor(() => expect(mode.getTuiState().timeline.committedRows.length).toBeGreaterThan(0));
+
+    terminal.send("\x14");
+    expect(internals.ui.hasOverlay()).toBe(true);
+    expect(internals.ui.getOverlay()).toBeInstanceOf(TranscriptOverlayComponent);
+    expect((internals.ui.getOverlay() as TranscriptOverlayComponent).render(80).join("\n")).toContain("committed question");
+
+    terminal.send("\x1b");
+    expect(internals.ui.hasOverlay()).toBe(false);
+
+    terminal.send("\x04");
+    await running;
   });
 
   it("run 持续到退出；非空 Ctrl+D 不退出，Ctrl+C 清稿后空 Ctrl+D 退出", async () => {

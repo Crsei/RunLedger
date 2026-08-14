@@ -58,7 +58,7 @@ import { SelectorModal } from "./components/selector-modal.ts";
 import { PermissionRequestView } from "./components/permission-request-view.ts";
 import { SelectionView } from "./components/selection-view.ts";
 import type { SelectItem, RgbColor } from "./index.ts";
-import type { Component, OverlayHandle, OverlayOptions } from "./primitives.ts";
+import type { Component, InputListenerResult, OverlayHandle, OverlayOptions } from "./primitives.ts";
 import { matchesKey } from "./index.ts";
 import { findCommand, commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
 import { SlashCommandPopup } from "./components/slash-command-popup.ts";
@@ -96,6 +96,7 @@ import type { TuiPreferencesDocument, TuiPreferencesPort } from "./preferences/t
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/theme-controller.ts";
 import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
 import { projectStatusIndicator } from "./presentation/projectors.ts";
+import { projectTranscriptOverlay, TranscriptOverlayComponent } from "./transcript-view.ts";
 
 export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
@@ -237,6 +238,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private lastTranscriptScrollbarVisible: boolean | undefined;
   private activePermissionView: PermissionRequestView | undefined;
   private unsubscribePermissionInput: (() => void) | undefined;
+  private transcriptOverlay: TranscriptOverlayComponent | undefined;
+  private unsubscribeTranscriptInput: (() => void) | undefined;
 
   // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
   private slashPopup: SlashCommandPopup | undefined;
@@ -315,6 +318,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.flushStreamingDeltas();
       this.refreshStatusIndicator();
     });
+    this.unsubscribeTranscriptInput = this.ui.addInputListener((data) => this.handleTranscriptInput(data));
     this.unsubscribeBoundaryActions = this.ui.addActionListener((actions) => {
       for (const action of actions) this.store.dispatch(action);
       if (actions.some((action) => action.type === "interaction.focus-changed")) this.ui.requestRender();
@@ -342,6 +346,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.lastTimelineGeneration = next.timeline.generation;
         const presentation = projectInteractivePresentation(next);
         this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
+      }
+      if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
+        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline));
       }
       if (next.interaction.transcriptScrollbarVisible !== this.lastTranscriptScrollbarVisible) {
         this.refreshTranscriptScrollPresentation();
@@ -468,6 +475,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     // 真实 modal 抢占 overlay 槽;slash 补全弹窗随之失效(防止幽灵引用)
     this.slashPopup = undefined;
     this.slashOverlayHandle = undefined;
+    this.transcriptOverlay = undefined;
     this.store.dispatch({
       type: "overlay.open",
       overlay: { state: kind, requestId: `overlay-${this.store.getState().interaction.generation + 1}` },
@@ -482,8 +490,32 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.slashPopup = undefined;
       this.slashOverlayHandle = undefined;
     }
+    if (this.ui.getOverlay() === this.transcriptOverlay) this.transcriptOverlay = undefined;
     this.store.dispatch({ type: "overlay.close" });
     this.ui.hideOverlay();
+  }
+
+  /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
+  private openTranscriptOverlay(): void {
+    if (this.quitting || this.ui.hasOverlay() || this.activePermissionView !== undefined) return;
+    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline), {
+      getViewportHeight: () => Math.max(4, this.terminal.rows - 2),
+      onClose: () => this.closeOverlay(),
+    });
+    this.showOverlayModal(overlay, { anchor: "center", variant: "transcript" }, "transcript");
+    this.transcriptOverlay = overlay;
+  }
+
+  /** transcript overlay 捕获期间所有键都不应落入 composer；未知键保持只读。 */
+  private handleTranscriptInput(data: string): InputListenerResult {
+    if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
+      this.transcriptOverlay.handleInput(data);
+      return { consume: true };
+    }
+    if (!matchesKey(data, "ctrl+t")) return undefined;
+    if (this.ui.hasOverlay() || this.activePermissionView !== undefined) return undefined;
+    this.openTranscriptOverlay();
+    return { consume: true };
   }
 
   /** 用 dark 主题色拼一个最小 SelectListTheme 占位;M6 阶段补完整色槽。 */
@@ -627,6 +659,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeTerminalBackground = undefined;
     this.unsubscribeRenderPreparation?.();
     this.unsubscribeRenderPreparation = undefined;
+    this.unsubscribeTranscriptInput?.();
+    this.unsubscribeTranscriptInput = undefined;
+    this.transcriptOverlay = undefined;
     this.unsubscribeBoundaryActions?.();
     this.unsubscribeBoundaryActions = undefined;
     this.ui.setAppIntentHandler(undefined);

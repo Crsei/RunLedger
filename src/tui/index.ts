@@ -47,6 +47,7 @@ export {
   type OverlayMargin,
   type OverlayOptions,
   type OverlayUnfocusOptions,
+  type OverlayVariant,
   type RgbColor,
   type RenderPreparationListener,
   type SelectItem,
@@ -181,6 +182,15 @@ export { createManagedProcessOverlayFromRenderer } from "./opentui/process-overl
 export { LoadedResourcesComponent, type LoadedResourceKind, type LoadedResourceEntry, type LoadedResourcesComponentProps } from "./components/loaded-resources.ts";
 export { ChatContainer } from "./components/chat-container.ts";
 export { PlanUpdateRenderable, type PlanUpdateRenderableOptions } from "./opentui/plan-update-renderable.ts";
+export {
+  TRANSCRIPT_MAX_BLOCKS,
+  TRANSCRIPT_OUTPUT_MAX_LINES,
+  TranscriptOverlayComponent,
+  projectTranscriptOverlay,
+  transcriptBlockLines,
+  type TranscriptOverlayOptions,
+  type TranscriptOverlayView,
+} from "./transcript-view.ts";
 
 // M2 主题工厂
 export { makeMarkdownTheme, makeSelectListTheme, makeEditorTheme } from "./theme/factories.ts";

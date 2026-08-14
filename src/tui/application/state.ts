@@ -37,6 +37,7 @@ export type TuiOverlayState =
 	| { readonly state: "keymap"; readonly requestId: string }
 	| { readonly state: "approval"; readonly requestId: string }
 	| { readonly state: "process"; readonly requestId: string }
+	| { readonly state: "transcript"; readonly requestId: string }
 	| { readonly state: "transition"; readonly requestId: string };
 
 export interface TuiInteractionState {

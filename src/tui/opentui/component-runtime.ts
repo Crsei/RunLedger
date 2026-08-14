@@ -22,7 +22,7 @@ import { MermaidBlockRenderable, type MermaidThemeMode } from "./mermaid-block-r
 import type { PresentationBlock, StatusIndicatorView } from "../presentation.ts";
 import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
 import type { TuiAction } from "../application/action.ts";
-import type { OverlayAnchor } from "../primitives.ts";
+import type { OverlayAnchor, OverlayVariant } from "../primitives.ts";
 import { loadNativeSyntaxAddon } from "../highlight/native-loader.ts";
 import { SyntaxHighlightService } from "../highlight/service.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "../highlight/theme-controller.ts";
@@ -66,6 +66,8 @@ export interface OpenTuiComponentFrame {
   overlay?: readonly (string | PresentationBlock)[];
   /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
   overlayAnchor?: OverlayAnchor;
+  /** transcript overlay 使用全屏 surface；普通 modal 保持既有布局。 */
+  overlayVariant?: OverlayVariant;
   /** nonCapturing 弹窗(如 slash 补全):贴编辑器上方、全宽、单行行内展示。 */
   overlayNonCapturing?: boolean;
 }
@@ -663,12 +665,13 @@ export function createOpenTuiComponentRuntimeFromRenderer(
 
       if (frame.overlay) {
         const overlayBlocks = frame.overlay.map(toPresentationBlock);
+        const isTranscriptOverlay = frame.overlayVariant === "transcript";
         const hasInteractiveControl = overlayBlocks.some((block) => block.kind === "select" || block.kind === "input");
         // nonCapturing 弹窗(slash 补全):贴编辑器上方、全宽、无模态边框;
         // 其余 overlay 保持居中宽框(兼容既有 modal 外观)。
         const bottomLeft = frame.overlayAnchor === "bottom-left";
         const compactPopup = frame.overlayNonCapturing === true && bottomLeft;
-        const modalWidth = Math.max(1, Math.floor(renderer.width * 0.9));
+        const modalWidth = isTranscriptOverlay ? renderer.width : Math.max(1, Math.floor(renderer.width * 0.9));
         const modalContentHeight = overlayBlocks.reduce(
           (height, block) => height + blockText(block).split("\n").length,
           0,
@@ -680,35 +683,46 @@ export function createOpenTuiComponentRuntimeFromRenderer(
           overlay = new BoxRenderable(renderer, {
             id: "runledger-overlay",
             position: "absolute",
-            maxHeight: "80%",
+            maxHeight: isTranscriptOverlay ? renderer.height : "80%",
             zIndex: 100,
           });
           screen.add(overlay);
         }
         // overlay 节点跨帧复用；每帧重置完整布局，防止 compact popup 的
         // 全宽/无边框样式泄漏到随后同步打开的捕获型 modal。
-        overlay.left = compactPopup
+        overlay.left = isTranscriptOverlay
+          ? 0
+          : compactPopup
           ? 0
           : bottomLeft
             ? 1
             : Math.max(0, Math.floor((renderer.width - modalWidth) / 2));
         overlay.right = undefined;
-        overlay.width = compactPopup ? renderer.width : modalWidth;
+        overlay.width = isTranscriptOverlay || compactPopup ? renderer.width : modalWidth;
         overlay.borderStyle = "rounded";
-        overlay.border = !compactPopup;
+        overlay.border = !compactPopup && !isTranscriptOverlay;
         overlay.padding = compactPopup ? 0 : 1;
-        if (compactPopup) {
+        if (isTranscriptOverlay) {
+          overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
+          overlay.top = 0;
+          overlay.bottom = 0;
+          overlay.height = renderer.height;
+          overlay.maxHeight = renderer.height;
+        } else if (compactPopup) {
+          overlay.backgroundColor = undefined;
           // 编辑器行上方 1 行留白;编辑器高度/行数变化时随帧更新
           overlay.top = undefined;
           overlay.bottom = footerHeight + boundedEditorHeight + 1;
         } else if (bottomLeft) {
+          overlay.backgroundColor = undefined;
           overlay.top = undefined;
           overlay.bottom = 5;
         } else {
+          overlay.backgroundColor = undefined;
           overlay.top = Math.max(0, Math.floor((renderer.height - modalHeight) / 2));
           overlay.bottom = undefined;
         }
-        overlay.height = hasInteractiveControl ? modalHeight : "auto";
+        if (!isTranscriptOverlay) overlay.height = hasInteractiveControl ? modalHeight : "auto";
         const nextOverlayNodes = new Map<string, KeyedRenderable<OverlayRenderable>>();
         const desiredOverlayNodes: OverlayRenderable[] = [];
         let overlayFocus: InputRenderable | SelectRenderable | undefined;
