@@ -59,7 +59,7 @@ export class AttemptSettlementError extends Error {
  * 解循环依赖:domain 装配发生在 SessionRuntime 构造之前,工具执行必然发生在
  * 构造之后;gateway 持有一个可绑定引用,构造时由 SessionRuntime 写入。
  */
-export class LateBoundAttemptPort {
+export class LateBoundAttemptPort implements AttemptPort {
 	private current: AttemptPort | undefined;
 
 	public bind(port: AttemptPort): void {
@@ -68,6 +68,22 @@ export class LateBoundAttemptPort {
 
 	public get(): AttemptPort | undefined {
 		return this.current;
+	}
+
+	public beginAttempt(
+		effectClassOrRequest: CommandEffectClass | StableAttemptRequest,
+		requestDigest?: RuntimeDigest,
+	): AttemptPortBeginResult {
+		return this.current?.beginAttempt(effectClassOrRequest, requestDigest) ?? { error: "owner_fenced" };
+	}
+
+	public settleAttempt(
+		attemptId: AttemptId,
+		outcome: CommandAttemptOutcome,
+		resultDigest?: RuntimeDigest,
+		evidenceDigest?: RuntimeDigest,
+	): { readonly ok: true } | { readonly ok: false; readonly code: string } {
+		return this.current?.settleAttempt(attemptId, outcome, resultDigest, evidenceDigest) ?? { ok: false, code: "owner_fenced" };
 	}
 }
 

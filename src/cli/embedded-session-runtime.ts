@@ -228,7 +228,13 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 	let domain: SessionDomainPort | undefined;
 	try {
 		domain = domainOptions === undefined ? undefined : await assembleSessionDomain(domainOptions, sessionId, store, result.fence, restored, attemptPort, runBudgetUsage);
-		if (crashTakeover) await domain?.process?.recoverUnattached?.();
+		if (crashTakeover) {
+			const multiAgentRecovery = await domain?.multiAgent?.recover?.();
+			if (multiAgentRecovery !== undefined && !multiAgentRecovery.ok) {
+				throw new Error(`${multiAgentRecovery.error.code}: ${multiAgentRecovery.error.message}`);
+			}
+			await domain?.process?.recoverUnattached?.();
+		}
 	} catch (error) {
 		await workspace?.release("error").catch(() => undefined);
 		throw error;

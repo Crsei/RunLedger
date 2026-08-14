@@ -40,6 +40,10 @@ export interface AgentSupervisorOptions {
 	readonly policyReceiptDigest: RuntimeDigest;
 	readonly provider: ChildRuntimeProviderPort;
 	readonly childRuntime: SupervisorChildRuntimeTemplate;
+	/** 每个请求按 capability 投影 governed child runtime；缺省沿用静态模板。 */
+	readonly childRuntimeForRequest?: (
+		request: ValidatedSpawnSubagentInput,
+	) => Promise<MultiAgentResult<SupervisorChildRuntimeTemplate>>;
 	/** 仅用于与当前 Session Owner 的 agent_spawn attempt/recovery barrier 对接。 */
 	readonly attemptPort?: AttemptPort;
 	/** 新 owner 启动时由 Host 提供 previous owner 的可验证 liveness 证据。 */
@@ -77,6 +81,7 @@ export class AgentSupervisor {
 	private readonly policyReceiptDigest: RuntimeDigest;
 	private readonly provider: ChildRuntimeProviderPort;
 	private readonly childRuntime: SupervisorChildRuntimeTemplate;
+	private readonly childRuntimeForRequest: AgentSupervisorOptions["childRuntimeForRequest"];
 	private readonly attemptPort: AttemptPort | undefined;
 	private readonly previousOwnerLiveness: ((node: AgentGraphNode) => PreviousOwnerLiveness | Promise<PreviousOwnerLiveness>) | undefined;
 	private readonly operations = new Map<CommandId, SpawnOperation>();
@@ -88,6 +93,7 @@ export class AgentSupervisor {
 		this.policyReceiptDigest = options.policyReceiptDigest;
 		this.provider = options.provider;
 		this.childRuntime = options.childRuntime;
+		this.childRuntimeForRequest = options.childRuntimeForRequest;
 		this.attemptPort = options.attemptPort;
 		this.previousOwnerLiveness = options.previousOwnerLiveness;
 	}
@@ -260,9 +266,23 @@ export class AgentSupervisor {
 		}
 
 		let prepared: PreparedChildHandle;
+		let selectedChildRuntime = this.childRuntime;
+		if (this.childRuntimeForRequest !== undefined) {
+			try {
+				const selected = await this.childRuntimeForRequest(request);
+				if (!selected.ok) {
+					const report = stoppedOrFailedReport(identity.agentId, "failed", "runtime_failed");
+					return this.finishAndSettle(operation, await this.commitTerminalForNode(await this.requireNode(identity.agentId), report, identity.commandId));
+				}
+				selectedChildRuntime = selected.value;
+			} catch {
+				const report = stoppedOrFailedReport(identity.agentId, "failed", "runtime_failed");
+				return this.finishAndSettle(operation, await this.commitTerminalForNode(await this.requireNode(identity.agentId), report, identity.commandId));
+			}
+		}
 		try {
 			const preparedResult = await this.provider.prepare({
-				...this.childRuntime,
+				...selectedChildRuntime,
 				agentId: identity.agentId,
 				objective: request.objective,
 				budget: {
@@ -489,7 +509,6 @@ function deriveChildIdentity(
 		sessionId: invocation.sessionId,
 		rootAgentId: invocation.rootAgentId,
 		parentAgentId: invocation.parentAgentId,
-		source: invocation.source,
 		effectId: invocation.effectId,
 	});
 	const commandId = createRuntimeId("command", `agent-spawn-${identityDigest.digest.slice(0, 64)}`);

@@ -56,6 +56,7 @@ import {
 	createGovernedLspWriteOperations,
 } from "./lsp-composition.ts";
 import { createSessionProductionToolSource } from "../agents/capability-subset.ts";
+import { createMultiAgentDomain, type SessionMultiAgentPolicySources } from "../agents/domain.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -71,6 +72,8 @@ export interface SessionDomainCompositionOptions {
 	readonly securitySources?: readonly SessionSecurityConfigSource[];
 	/** 可选:AGENTS 拼接(缺省读 <cwd>/AGENTS.md)。 */
 	readonly systemPrompt?: string;
+	/** Runtime gate + preserved user/workspace policy layers for M1 delegation. */
+	readonly multiAgent?: SessionMultiAgentPolicySources;
 }
 
 /** 在 SessionRuntime 内装配真实 InteractiveSessionController(单一 Session 域)。 */
@@ -192,6 +195,23 @@ export async function assembleSessionDomain(
 		}),
 		modelRuntimeFactory: controller.createChildModelRuntimeFactory(),
 	};
+	const multiAgentResult = options.multiAgent === undefined
+		? { ok: true as const, value: undefined }
+		: await createMultiAgentDomain({
+			sessionId,
+			ownerGeneration: fence.generation,
+			store,
+			fence,
+			policySources: options.multiAgent,
+			childRuntime: {
+				systemPrompt: options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents),
+				productionToolSource: childRuntime.productionToolSource,
+				modelRuntimeFactory: childRuntime.modelRuntimeFactory,
+			},
+			attemptPort,
+		});
+	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
+	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
@@ -203,6 +223,7 @@ export async function assembleSessionDomain(
 	return {
 		controller,
 		childRuntime,
+		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
 		process,
 		resources: extensions.resources,
 		planInspection,

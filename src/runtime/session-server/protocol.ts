@@ -31,6 +31,7 @@ export const SESSION_PROTOCOL_CAPABILITIES = [
 	"session.workspace",
 	"session.trace.local",
 	"session.run-timing",
+	"session.multi-agent",
 ] as const;
 export type SessionProtocolCapability = (typeof SESSION_PROTOCOL_CAPABILITIES)[number];
 

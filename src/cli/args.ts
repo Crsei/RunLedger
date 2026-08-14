@@ -19,6 +19,7 @@
  *   --worktree-ref <ref>               worktree 创建基线 ref
  *   --worktree-branch <name>           worktree 创建分支
  *   --no-worktree                      显式不使用 worktree(与 --worktree 互斥)
+ *   --experimental-multi-agent         开启有界 multi-agent(仍需 settings)
  *   --debug                            打开 RUNLEDGER_DEBUG=1 stderr log
  *   --version / -v                     打 version 退出
  *   --help / -h                        打 usage 退出
@@ -76,6 +77,8 @@ export interface ParsedArgs {
   worktreeBranch?: string;
   /** --no-worktree 与 --worktree 互斥。 */
   noWorktree: boolean;
+  /** 显式 runtime gate；缺省 false，仍需 user/workspace settings。 */
+  experimentalMultiAgent: boolean;
   debug: boolean;
   /** 未知 flag 兜底,key 不带前导 --;有 =value 时 value 为 string,否则为 true */
   unknown: ReadonlyMap<string, string | true>;
@@ -109,6 +112,8 @@ const HELP_TEXT = `Usage: runledger [options]
       --worktree-ref <ref>    worktree 基线 ref
       --worktree-branch <n>   worktree 分支名
       --no-worktree           显式不使用 worktree(与 --worktree 互斥)
+      --experimental-multi-agent
+                              开启有界 multi-agent(仍需 user/workspace settings)
       --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出
@@ -145,6 +150,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let worktreeRef: string | undefined;
   let worktreeBranch: string | undefined;
   let noWorktree = false;
+  let experimentalMultiAgent = false;
   let debug = false;
   const unknown = new Map<string, string | true>();
   const positional: string[] = [];
@@ -178,6 +184,19 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     }
     if (a === "--debug") {
       debug = true;
+      continue;
+    }
+    if (a === "--experimental-multi-agent") {
+      experimentalMultiAgent = true;
+      continue;
+    }
+    if (a.startsWith("--experimental-multi-agent=")) {
+      const value = a.slice("--experimental-multi-agent=".length);
+      if (value !== "true" && value !== "false") {
+        error = `--experimental-multi-agent 不合法:${value}(合法值 true/false)`;
+        break;
+      }
+      experimentalMultiAgent = value === "true";
       continue;
     }
     if (a === "-m" || a === "--model") {
@@ -389,6 +408,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       worktreeRef,
       worktreeBranch,
       noWorktree,
+      experimentalMultiAgent,
       debug,
       unknown,
       positional,

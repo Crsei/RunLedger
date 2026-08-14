@@ -108,7 +108,9 @@ export interface InteractiveSessionControllerPort {
   readonly warnings: readonly string[];
   readonly auditEntries: readonly LedgerEntry[];
   readonly ledger?: LedgerSink;
-  readonly toolCount: number;
+	readonly toolCount: number;
+	/** Composition-only tool extension point; callers must add already governed tools. */
+	readonly addTools?: (tools: readonly AgentTool[]) => void;
   readonly agentRuns?: readonly AgentRunSummary[];
   getSteeringMessages(): readonly UserAgentMessage[];
   getFollowUpMessages(): readonly UserAgentMessage[];
@@ -265,6 +267,17 @@ export class InteractiveSessionController {
 
   get toolCount(): number {
     return this.tools.length;
+  }
+
+  /** 在 policy receipt/root registration 完成后加入 Session-owned tools。 */
+  addTools(tools: readonly AgentTool[]): void {
+    const existing = new Set(this.tools.map((tool) => tool.name));
+    for (const tool of tools) {
+      if (existing.has(tool.name)) throw new Error(`duplicate Session tool: ${tool.name}`);
+      existing.add(tool.name);
+      this.tools.push(tool);
+    }
+    this.agent?.setTools(this.tools);
   }
 
   getSteeringMessages(): readonly UserAgentMessage[] {

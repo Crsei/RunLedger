@@ -1,6 +1,6 @@
 # 有界根级子 Agent 系统实施计划
 
-> 状态：**in progress**。M0–M3 已闭合；M4 Task 7 已实现并完成 focused 验证；M5–M6 尚未开始。
+> 状态：**in progress**。M0–M4 已闭合；M5 Task 8 已实现并完成 focused/组合验证；M6 尚未开始。
 > 建立日期：2026-08-14
 > 重写日期：2026-08-15
 > 目标分支：`worktree/bounded-multi-agent-system`
@@ -21,7 +21,11 @@
 - M3 closure：`npm run build` passed。
 - M4 Task 7 fresh focused gate：`npx vitest run tests/runtime/multi-agent --no-file-parallelism`，7 files / 53 tests passed；`npx vitest run tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，2 files / 8 tests passed；activation uncertainty、requested/prepared/running duplicate、terminal append acknowledgement loss、terminal-before-settle 和 cancel/completion 双向竞态均有定向证据；`npx tsc --noEmit -p tsconfig.json` 与 `git diff --check` passed。
 - 当前 `npm run check` 已通过其前置 boundaries，但被既有无关文件 `src/tui/opentui/exec-renderable.ts` 的 forbidden ANSI foreground 检查阻断；该文件不属于本计划，未修改。
-- 完整 `npm test` 本轮 Vitest 阶段为 355 个文件通过、1 个跳过、1 个失败（2117 tests passed、3 skipped）；唯一失败仍是上述既有 TUI boundary suite，`tests/cli/multi-client/acceptance-runners.test.ts` 的 4 个测试已通过。由于 Vitest failure 使 npm script 短路，单独运行 `npm run test:tui-native` 时断言全部通过后发生 Bun 1.3.14 原生 segmentation fault；`npm run build` passed。
+- 完整 `npm test` 本轮 Vitest 阶段为 361 个文件通过、1 个跳过、1 个失败（2164 tests passed、3 skipped）；唯一失败仍是上述既有 `tests/scripts/check-tui-color-boundaries.test.ts`，`tests/cli/multi-client/acceptance-runners.test.ts` 的 4 个测试已通过。由于 Vitest failure 使 npm script 短路，本轮未进入 `npm run test:tui-native`；`npm run build` passed。
+- M5 Task 8 已实现：async `MultiAgentDomainPort` 接入 SessionRuntime flat operation routing，`agent.inspect` query、`agent.spawn`/`agent.cancel` mutation 保留 observer/driver fence 与 recovery barrier；`spawn_agent` 只从 trusted `ToolContext` 派生 identity，和 domain command 复用 replay identity；CLI `--experimental-multi-agent` 默认关闭，user/workspace layered policy 仍为必要 gate；crash takeover 在 Runtime ready 前自动 recovery。
+- Task 8 的生产组合修正冻结了 `SessionProductionToolSource.tools` 快照，避免 root 注册 `spawn_agent` 后污染 child source；domain envelope 现在只接受普通 JSON record，malformed async payload 不会被转换成 `{}` 继续执行。
+- Task 8 focused gate：`npx vitest run tests/runtime/multi-agent tests/runtime/session-runtime/multi-agent-composition.test.ts tests/runtime/session-runtime/multi-agent-domain.test.ts tests/storage/multi-agent-attempts.test.ts tests/storage/multi-agent-settings.test.ts tests/cli/args.test.ts --no-file-parallelism`，12 files / 109 tests passed；真实 embedded production composition 覆盖 enabled settings 下 durable root registration、root-only `spawn_agent`、governed child read/search/list projection，以及 runtime gate closed。
+- Task 8 broader gate：`npx vitest run tests/runtime/session-runtime tests/cli --no-file-parallelism`，68 files / 432 tests passed；`npm run build` passed；`git diff --check` passed。`npm run check` 的 storage/runtime/contract/execution/platform 前置边界通过，仍被上述既有 TUI ANSI boundary failure 阻断，未修改该文件。
 
 ## Goal
 
@@ -658,6 +662,7 @@ tests/integration/
 - Create: `src/runtime/agents/spawn-tool.ts`
 - Modify: `src/runtime/session-runtime/domain.ts`
 - Modify: `src/runtime/session-runtime/domain-router.ts`
+- Modify: `src/runtime/agents/capability-subset.ts`（冻结 production source 工具快照，防止 root-only tool 反向进入 child source）
 - Modify: `src/runtime/session-runtime/session-runtime.ts`
 - Modify: `src/cli/embedded-session-runtime.ts`
 - Modify: `src/cli/args.ts`
@@ -666,22 +671,26 @@ tests/integration/
 - Test: `tests/runtime/session-runtime/multi-agent-composition.test.ts`
 - Test: `tests/cli/args.test.ts`
 
-- [ ] RED：Runtime flag false、user disabled、workspace disabled、invalid policy 时工具不注册，commands 返回明确 unavailable/invalid-policy code。
-- [ ] RED：`domain_query operation="agent.inspect"` observer 可读；`domain_command operation="agent.spawn|agent.cancel"` observer 被现有 driver fence 拒绝。
-- [ ] RED：recovery barrier open 时 spawn 拒绝、inspect 可读；不公开普通 `agent.reconcile` 命令。
-- [ ] RED：spawn tool 参数 schema 不含 authority/idempotency/provider/model 字段，execute 使用 ToolContext 派生 identity。
-- [ ] RED：spawn tool 和 domain command 对同一 command identity 共享 replay，不产生两个 child。
-- [ ] RED：`--experimental-multi-agent` 默认 false；显式开启仍需 settings gate；无效 CLI 值 fail closed。
-- [ ] GREEN：增加 async `MultiAgentDomainPort`，沿用 flat operation manifest；不得把 inspect 塞进 `domain_command`。
-- [ ] GREEN：policy receipt/root registration durable 后才把 tool 添加到父 Agent 工具集。
-- [ ] GREEN：`embedded-session-runtime` 在 crash takeover、Runtime ready 前调用 automatic recovery。
-- [ ] Run: `npx vitest run tests/runtime/session-runtime/multi-agent-domain.test.ts tests/runtime/session-runtime/multi-agent-composition.test.ts tests/cli/args.test.ts`
-- [ ] Run: `npm run check && git diff --check`
-- [ ] Commit: `feat(runtime): wire bounded child delegation into session owner`
+- [x] RED：Runtime flag false、user disabled、workspace disabled、invalid policy 时工具不注册，commands 返回 unavailable/invalid-policy 的 fail-closed 结果。
+- [x] RED：`domain_query operation="agent.inspect"` observer 可读；`domain_command operation="agent.spawn|agent.cancel"` observer 被现有 driver fence 拒绝。
+- [x] RED：recovery barrier open 时 spawn 拒绝、inspect 可读；不公开普通 `agent.reconcile` 命令。
+- [x] RED：spawn tool 参数 schema 不含 authority/idempotency/provider/model 字段，execute 使用 ToolContext 派生 identity。
+- [x] RED：spawn tool 和 domain command 对同一 command identity 共享 replay，不产生两个 child。
+- [x] RED：`--experimental-multi-agent` 默认 false；显式开启仍需 settings gate；无效 CLI 值 fail closed。
+- [x] RED：真实 production source 与父 controller 共享可变工具数组时，root-only `spawn_agent` 会污染 child source；malformed async payload 会被错误地作为空对象路由。
+- [x] GREEN：增加 async `MultiAgentDomainPort`，沿用 flat operation manifest；不得把 inspect 塞进 `domain_command`。
+- [x] GREEN：policy receipt/root registration durable 后才把 tool 添加到父 Agent 工具集；production source 使用冻结工具快照。
+- [x] GREEN：`embedded-session-runtime` 在 crash takeover、Runtime ready 前调用 automatic recovery。
+- [x] GREEN：domain envelope 只接受普通 JSON record，拒绝非 record payload。
+- [x] Run: focused multi-agent/storage/CLI gate，12 files / 109 tests passed；真实 embedded production composition included。
+- [x] Run: full Session Runtime + CLI gate，68 files / 432 tests passed。
+- [ ] Run: `npm run check`（storage/runtime/contract/execution/platform 前置边界通过；被既有未修改的 `src/tui/opentui/exec-renderable.ts` forbidden ANSI foreground failure 阻断）；`git diff --check` passed。
+- [x] Run: `npm run build` passed。
+- [x] Commit: `feat(runtime): wire bounded child delegation into session owner`
 
 **M5 closure**
 
-- [ ] Run: `npm run build`
+- [x] Run: `npm run build`
 
 ### M6：真实组合、故障矩阵与文档
 

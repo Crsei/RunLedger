@@ -7,3 +7,5 @@ export * from "./capability-subset.ts";
 export * from "./child-model-runtime.ts";
 export * from "./child-runtime.ts";
 export * from "./supervisor.ts";
+export * from "./spawn-tool.ts";
+export * from "./domain.ts";

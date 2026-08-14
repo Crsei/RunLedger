@@ -42,7 +42,11 @@ const registeredProductionSources = new WeakSet<object>();
 
 /** 只有 Session Domain production composition 应调用此注册函数。 */
 export function createSessionProductionToolSource(input: Omit<SessionProductionToolSource, "origin">): SessionProductionToolSource {
-	const source = Object.freeze({ origin: "session-production" as const, ...input });
+	const source = Object.freeze({
+		origin: "session-production" as const,
+		...input,
+		tools: Object.freeze([...input.tools]),
+	});
 	registeredProductionSources.add(source);
 	return source;
 }
