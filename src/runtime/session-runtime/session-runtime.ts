@@ -40,6 +40,8 @@ import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, 
 import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { LateBoundHumanInputWaitPort } from "./approval-reverse-request.ts";
 import { SessionStreamEventCoalescer } from "./stream-event-coalescer.ts";
+import type { SessionProductionToolSource } from "../agents/capability-subset.ts";
+import type { ChildModelRuntimeFactoryPort } from "../agents/child-model-runtime.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
 
@@ -50,6 +52,8 @@ export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "
  */
 export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
+	/** Session-owned child runtime inputs; absent only on non-production test domains. */
+	readonly childRuntime?: SessionChildRuntimePort;
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
 	readonly planInspection?: () => SessionPlanInspection;
@@ -60,6 +64,11 @@ export interface SessionDomainPort {
 	/** SessionRuntime 退出时关闭本 Session 私有的外部资源。 */
 	shutdown?(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
 	snapshot(): SessionDomainSnapshot;
+}
+
+export interface SessionChildRuntimePort {
+	readonly productionToolSource: SessionProductionToolSource;
+	readonly modelRuntimeFactory: ChildModelRuntimeFactoryPort;
 }
 
 /** Session-scoped Extension/MCP/Hook/Skill/Plugin read/mutation surface。 */

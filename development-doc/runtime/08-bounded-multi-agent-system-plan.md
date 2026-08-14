@@ -14,6 +14,7 @@
 - M0 Task 2 已提交为 `9f8947f`：user/workspace layered settings、invalid block diagnostics、policy receipt、默认关闭 feature flag。
 - M1 Task 3 已提交为 `fd32942`：原子 `beginCommandAttempt`、稳定 command identity、replay/conflict/recovery、`agent_spawn` recovery barrier。
 - M2 Task 4 已实现 `graph-events.ts`、`graph-projection.ts`、`graph-store.ts`，并将 `agent.root_registered`、`agent.activated`、`agent.reconciliation_required` 接入 current Runtime event vocabulary；graph revision 与普通 Session event head 分离。
+- M3 Task 5 已实现 `capability-subset.ts`、`child-model-runtime.ts`，并由 `assembleSessionDomain()` 登记 production tool source、同一 model/router factory；child capability 只读投影不缩减 parent 工具集。
 - M2 focused gate：`npx vitest run tests/runtime/multi-agent/graph-projection.test.ts tests/runtime/multi-agent/graph-store.test.ts tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，18 tests passed；`npx tsc --noEmit -p tsconfig.json` passed；`git diff --check` passed。
 - 当前 `npm run check` 已通过其前置 boundaries，但被既有无关文件 `src/tui/opentui/exec-renderable.ts` 的 forbidden ANSI foreground 检查阻断；该文件不属于本计划，未修改。
 - 完整 `npm test` 本轮 Vitest 阶段为 355 个文件通过、1 个跳过、1 个失败（2117 tests passed、3 skipped）；唯一失败仍是上述既有 TUI boundary suite，`tests/cli/multi-client/acceptance-runners.test.ts` 的 4 个测试已通过。由于 Vitest failure 使 npm script 短路，单独运行 `npm run test:tui-native` 时断言全部通过后发生 Bun 1.3.14 原生 segmentation fault；`npm run build` passed。
@@ -590,15 +591,15 @@ tests/integration/
 - Modify: `src/runtime/session-runtime/domain.ts`
 - Test: `tests/runtime/multi-agent/capability-subset.test.ts`
 
-- [ ] RED：只允许 §4.1 映射；unknown/write/network/process/MCP/Skill/LSP/todo 全部不出现在 schema。
-- [ ] RED：允许名但 `isReadOnly` 缺失、claims 不符、tool instance 非 production composition 来源时 fail closed。
-- [ ] RED：恶意直接调用隐藏 write/bash 时最终 authorization/ExecutionGateway 拒绝，workspace 不变。
-- [ ] RED：child 与 parent 共享 model compatibility router；模型选择不可用时 prepare 前失败。
-- [ ] GREEN：从已治理 tool instances 过滤并构建新 registry；不复制 raw executor，不调用 legacy Anthropic helper。
-- [ ] GREEN：提取最小 session-owned model runtime factory；graph 只记录 descriptor，不记录 credential。
-- [ ] Run: `npx vitest run tests/runtime/multi-agent/capability-subset.test.ts tests/runtime/session-runtime/security-composition.test.ts`
-- [ ] Run: `npm run check && git diff --check`
-- [ ] Commit: `feat(agents): derive governed child runtime capabilities`
+- [x] RED：只允许 §4.1 映射；unknown/write/network/process/MCP/Skill/LSP/todo 全部不出现在 schema。
+- [x] RED：允许名但 `isReadOnly` 缺失、claims 不符、tool instance 非 production composition 来源时 fail closed。
+- [x] RED：恶意直接调用隐藏 write/bash 时最终 authorization/ExecutionGateway 拒绝，workspace 不变。
+- [x] RED：child 与 parent 共享 model compatibility router；模型选择不可用时 prepare 前失败。
+- [x] GREEN：从已治理 tool instances 过滤并构建新 registry；不复制 raw executor，不调用 legacy Anthropic helper。
+- [x] GREEN：提取最小 session-owned model runtime factory；graph 只记录 descriptor，不记录 credential。
+- [x] Run: `npx vitest run tests/runtime/multi-agent/capability-subset.test.ts tests/runtime/session-runtime/security-composition.test.ts --no-file-parallelism`（21 tests passed）；`npx tsc --noEmit -p tsconfig.json` passed；`git diff --check` passed。
+- [x] Run: `npm run check` 前置 boundaries 通过；完整 gate 被既有 TUI ANSI boundary failure 阻断。
+- [x] Commit: `feat(agents): derive governed child runtime capabilities`
 
 #### Task 6：prepare/activate/cancel/dispose 与预算
 

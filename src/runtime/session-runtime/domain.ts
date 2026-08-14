@@ -55,6 +55,7 @@ import {
 	createGovernedLspSpawner,
 	createGovernedLspWriteOperations,
 } from "./lsp-composition.ts";
+import { createSessionProductionToolSource } from "../agents/capability-subset.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -157,6 +158,7 @@ export async function assembleSessionDomain(
 		baseToolNames: baseTools.map((tool) => tool.name),
 		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
+	const composedTools = [...baseTools, ...extensions.tools];
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -166,7 +168,7 @@ export async function assembleSessionDomain(
 		replay,
 		ledger,
 		overrides: options.overrides,
-		tools: [...baseTools, ...extensions.tools],
+		tools: composedTools,
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
@@ -180,6 +182,16 @@ export async function assembleSessionDomain(
 			sources: extensions.contextSources(input.model.contextWindow),
 		}),
 	});
+	const childRuntime = {
+		productionToolSource: createSessionProductionToolSource({
+			sessionId,
+			cwd: options.cwd,
+			executionEnv,
+			authorizationPolicy: security.authorizationPolicy,
+			tools: composedTools,
+		}),
+		modelRuntimeFactory: controller.createChildModelRuntimeFactory(),
+	};
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
@@ -190,6 +202,7 @@ export async function assembleSessionDomain(
 	});
 	return {
 		controller,
+		childRuntime,
 		process,
 		resources: extensions.resources,
 		planInspection,
