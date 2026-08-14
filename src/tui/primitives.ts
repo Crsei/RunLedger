@@ -9,9 +9,9 @@ import {
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
 import { planUpdatePlainText } from "./opentui/plan-update-renderable.ts";
 import { noticePlainText } from "./opentui/notice-renderable.ts";
-import { formatSeparatorLabel } from "./opentui/block-layout.ts";
+import { formatSeparatorLabel, STATUS_DETAILS_PREFIX } from "./opentui/block-layout.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
-import type { PresentationBlock } from "./presentation.ts";
+import type { PresentationBlock, StatusIndicatorView } from "./presentation.ts";
 import type { TuiAction } from "./application/action.ts";
 import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action.ts";
 import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHeight, wrapEditorText } from "./editor-height.ts";
@@ -375,6 +375,7 @@ export class TUI extends Container {
   private terminalBackgroundRgb: RgbColor | undefined;
   private editorAppearance: EditorAppearance | undefined;
   private transcriptScrollPresentation: TranscriptScrollPresentation | undefined;
+  private statusIndicator: StatusIndicatorView | undefined;
   private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private readonly syntaxThemeName: string | undefined;
@@ -423,6 +424,14 @@ export class TUI extends Container {
   setEditorAppearance(appearance: EditorAppearance): void {
     this.editorAppearance = appearance;
     this.requestRender();
+  }
+  /** 状态指示行由 InteractiveMode 在共享帧准备阶段投影。 */
+  setStatusIndicator(statusIndicator: StatusIndicatorView | undefined): void {
+    this.statusIndicator = statusIndicator;
+  }
+  /** 时间驱动 UI 只通过应用层 FrameScheduler 安排下一帧。 */
+  scheduleFrameIn(delayMs: number): void {
+    this.frameScheduler?.scheduleFrameIn(delayMs);
   }
   /** 主对话内建 scrollbar 外观；滚动位置仍只由 ScrollBox 持有。 */
   setTranscriptScrollPresentation(presentation: TranscriptScrollPresentation): void {
@@ -602,6 +611,7 @@ export class TUI extends Container {
         editorHeight,
         editorAppearance: this.editorAppearance,
         transcriptScrollPresentation: this.transcriptScrollPresentation,
+        statusIndicator: this.statusIndicator,
         footer,
         overlay,
         overlayAnchor: this.overlayOptions?.anchor,
@@ -610,8 +620,18 @@ export class TUI extends Container {
       return;
     }
     const footerText = footer.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · "));
-    this.terminal.write([...body.map((block) => blockTextForTerminal(block)), ...this.focusedComponent?.render(width) ?? [], ...footerText, ...overlay?.map(blockTextForTerminal) ?? []].join("\n"));
+    const statusText = this.statusIndicator === undefined ? [] : [statusIndicatorText(this.statusIndicator)];
+    this.terminal.write([...body.map((block) => blockTextForTerminal(block)), ...statusText, ...this.focusedComponent?.render(width) ?? [], ...footerText, ...overlay?.map(blockTextForTerminal) ?? []].join("\n"));
   }
+}
+
+function statusIndicatorText(view: StatusIndicatorView): string {
+  const interrupt = view.interruptKey === undefined ? "" : ` • ${view.interruptKey} to interrupt`;
+  const inline = view.inlineMessage === undefined ? "" : ` ${view.inlineMessage}`;
+  return [
+    `${view.indicator} ${view.header} (${view.elapsed}${interrupt})${inline}`,
+    ...(view.details ?? []).map((detail) => `${STATUS_DETAILS_PREFIX}${detail.text}`),
+  ].join("\n");
 }
 
 function blockTextForTerminal(block: PresentationBlock): string {

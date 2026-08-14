@@ -83,37 +83,22 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		mode.quit();
 	});
 
-	it("ticks only while working and produces exactly one live completion marker", async () => {
-		vi.useFakeTimers();
-		try {
-			vi.setSystemTime(10_000);
-			const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
-			const ui = (mode as unknown as { ui: { requestRender: () => void } }).ui;
-			const render = vi.spyOn(ui, "requestRender");
-			const handleEvent = (Reflect.get(mode, "handleEvent") as (event: unknown) => void).bind(mode);
-			handleEvent({ type: "agent_start", timestamp: 10_000, runId: "run-live" });
-			render.mockClear();
-			await vi.advanceTimersByTimeAsync(2_100);
-			expect(render).toHaveBeenCalledTimes(2);
-			handleEvent({ type: "agent_work_pause", timestamp: 12_100, runId: "run-live", waitId: "wait-1", reason: "approval", activeDurationMs: 2_100 });
-			render.mockClear();
-			await vi.advanceTimersByTimeAsync(2_000);
-			expect(render).not.toHaveBeenCalled();
-			handleEvent({ type: "agent_work_resume", timestamp: 14_100, runId: "run-live", waitId: "wait-1", reason: "approval", activeDurationMs: 2_100 });
-			render.mockClear();
-			await vi.advanceTimersByTimeAsync(1_100);
-			expect(render).toHaveBeenCalledTimes(1);
-			handleEvent({ type: "agent_end", timestamp: 15_200, runId: "run-live", stopReason: "aborted", elapsedMs: 5_200, activeDurationMs: 3_200, messageCountAtEnd: 0 });
-			handleEvent({ type: "agent_end", timestamp: 15_200, runId: "run-live", stopReason: "error", elapsedMs: 5_200, activeDurationMs: 3_200, messageCountAtEnd: 0 });
-			expect(mode.getTuiState().timeline.committedRows.filter((row) => row.kind === "run-boundary")).toHaveLength(1);
-			expect(mode.getStopReason()).toBe("aborted");
-			render.mockClear();
-			await vi.advanceTimersByTimeAsync(2_000);
-			expect(render).not.toHaveBeenCalled();
-			mode.quit();
-		} finally {
-			vi.useRealTimers();
-		}
+	it("uses the shared frame scheduler while active and stops scheduling after completion", () => {
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const ui = (mode as unknown as { ui: { scheduleFrameIn: (delayMs: number) => void } }).ui;
+		const schedule = vi.spyOn(ui, "scheduleFrameIn");
+		const handleEvent = (Reflect.get(mode, "handleEvent") as (event: unknown) => void).bind(mode);
+		handleEvent({ type: "agent_start", timestamp: 10_000, runId: "run-live" });
+		expect(schedule).toHaveBeenCalledWith(32);
+		handleEvent({ type: "agent_work_pause", timestamp: 12_100, runId: "run-live", waitId: "wait-1", reason: "approval", activeDurationMs: 2_100 });
+		handleEvent({ type: "agent_work_resume", timestamp: 14_100, runId: "run-live", waitId: "wait-1", reason: "approval", activeDurationMs: 2_100 });
+		const scheduledWhileActive = schedule.mock.calls.length;
+		handleEvent({ type: "agent_end", timestamp: 15_200, runId: "run-live", stopReason: "aborted", elapsedMs: 5_200, activeDurationMs: 3_200, messageCountAtEnd: 0 });
+		handleEvent({ type: "agent_end", timestamp: 15_200, runId: "run-live", stopReason: "error", elapsedMs: 5_200, activeDurationMs: 3_200, messageCountAtEnd: 0 });
+		expect(schedule).toHaveBeenCalledTimes(scheduledWhileActive);
+		expect(mode.getTuiState().timeline.committedRows.filter((row) => row.kind === "run-boundary")).toHaveLength(1);
+		expect(mode.getStopReason()).toBe("aborted");
+		mode.quit();
 	});
 	it("does not infer session catalog or mutation authority from controller presence", () => {
 		const mode = new InteractiveMode({ controller: new ContractController({ supportedOperations: [] }), terminal: new FakeTerminal() });

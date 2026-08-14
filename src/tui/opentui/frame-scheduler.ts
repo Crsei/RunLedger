@@ -4,7 +4,7 @@ export interface FrameClock {
   clearTimeout(handle: ReturnType<typeof globalThis.setTimeout>): void;
 }
 
-export type FrameReason = "window" | "force" | "terminal" | "input";
+export type FrameReason = "window" | "force" | "terminal" | "input" | "scheduled";
 
 export interface FrameSchedulerOptions {
   readonly clock?: FrameClock;
@@ -43,7 +43,9 @@ export class FrameScheduler {
   private readonly backlogLimits: Required<FrameBacklogLimits>;
   private readonly onFrame: FrameSchedulerOptions["onFrame"];
   private timer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  private scheduledTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   private scheduledAt = 0;
+  private scheduledFrameAt = 0;
   private dirty = false;
   private destroyed = false;
 
@@ -63,7 +65,7 @@ export class FrameScheduler {
   }
 
   get hasScheduledFrame(): boolean {
-    return this.timer !== undefined;
+    return this.timer !== undefined || this.scheduledTimer !== undefined;
   }
 
   markDirty(backlog?: FrameBacklogSnapshot): void {
@@ -83,6 +85,23 @@ export class FrameScheduler {
     }, this.frameWindowMs);
   }
 
+  /** 在共享帧调度器中安排一次时间驱动帧，不创建调用方私有 ticker。 */
+  scheduleFrameIn(delayMs: number): void {
+    if (this.destroyed) return;
+    const delay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : 0;
+    const nextFrameAt = this.clock.now() + delay;
+    if (this.scheduledTimer !== undefined && this.scheduledFrameAt <= nextFrameAt) return;
+    this.cancelScheduledTimer();
+    this.scheduledFrameAt = nextFrameAt;
+    this.scheduledTimer = this.clock.setTimeout(() => {
+      this.scheduledTimer = undefined;
+      if (this.destroyed) return;
+      this.cancelTimer();
+      this.dirty = false;
+      this.onFrame("scheduled", this.scheduledFrameAt);
+    }, delay);
+  }
+
   flush(reason: Exclude<FrameReason, "window"> = "force"): void {
     if (this.destroyed || !this.dirty) return;
     this.cancelTimer();
@@ -94,6 +113,7 @@ export class FrameScheduler {
     if (this.destroyed) return;
     this.destroyed = true;
     this.cancelTimer();
+    this.cancelScheduledTimer();
     this.dirty = false;
   }
 
@@ -101,6 +121,12 @@ export class FrameScheduler {
     if (this.timer === undefined) return;
     this.clock.clearTimeout(this.timer);
     this.timer = undefined;
+  }
+
+  private cancelScheduledTimer(): void {
+    if (this.scheduledTimer === undefined) return;
+    this.clock.clearTimeout(this.scheduledTimer);
+    this.scheduledTimer = undefined;
   }
 
   private exceedsBacklogLimit(backlog: FrameBacklogSnapshot): boolean {

@@ -134,7 +134,7 @@ export {
 
 // Framework-neutral passive data contracts. These exports intentionally carry no runtime values.
 export type * from "./application/types.ts";
-export type { NoticeBlock, NoticeSeverity, PlanStepStatus, PlanStepView, PlanUpdateBlock, PresentationBlock } from "./presentation.ts";
+export type { NoticeBlock, NoticeSeverity, PlanStepStatus, PlanStepView, PlanUpdateBlock, PresentationBlock, StatusIndicatorView } from "./presentation.ts";
 export type * from "./presentation/types.ts";
 export type * from "./presentation/tools/types.ts";
 export type * from "./timeline/types.ts";

@@ -15,6 +15,16 @@ export type PlanUpdateBlock = {
 	steps: readonly PlanStepView[];
 };
 
+/** 运行中的状态指示行；正文只来自 safe presentation。 */
+export interface StatusIndicatorView {
+	readonly indicator: string;
+	readonly header: string;
+	readonly elapsed: string;
+	readonly inlineMessage?: string;
+	readonly interruptKey?: string;
+	readonly details?: readonly SafeBoundedText[];
+}
+
 export type NoticeSeverity = "info" | "warning" | "error";
 
 export type NoticeBlock = {

@@ -22,6 +22,8 @@ export const DIFF_TAB_REPLACEMENT = "    ";
 /** 状态指示详情行的前缀和数量上限。 */
 export const STATUS_DETAILS_PREFIX = "  └ ";
 export const STATUS_DETAILS_MAX_LINES = 3;
+export const STATUS_INDICATOR_FRAME_MS = 32;
+export const STATUS_INDICATOR_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
 /** NoticeCell warning 前缀和续行缩进。 */
 export const NOTICE_WARN_PREFIX = "⚠ ";

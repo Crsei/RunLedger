@@ -19,7 +19,7 @@ import type { TuiPerformanceObserver } from "./performance-observer.ts";
 import { createRunLedgerSyntaxStyle } from "./syntax-style.ts";
 import { createMermaidCodeBlockRenderer } from "./mermaid-code-block-renderer.ts";
 import { MermaidBlockRenderable, type MermaidThemeMode } from "./mermaid-block-renderable.ts";
-import type { PresentationBlock } from "../presentation.ts";
+import type { PresentationBlock, StatusIndicatorView } from "../presentation.ts";
 import { appInputForKeypress, normalizeAppInput } from "../input/normalize-action.ts";
 import type { TuiAction } from "../application/action.ts";
 import type { OverlayAnchor } from "../primitives.ts";
@@ -33,7 +33,7 @@ import { stripShellLoginWrapper } from "./exec-renderable.ts";
 import { DiffRenderable, diffPlainText } from "./diff-renderable.ts";
 import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-renderable.ts";
 import { NoticeRenderable, noticePlainText } from "./notice-renderable.ts";
-import { formatSeparatorLabel } from "./block-layout.ts";
+import { formatSeparatorLabel, STATUS_DETAILS_PREFIX } from "./block-layout.ts";
 import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
@@ -60,6 +60,8 @@ export interface OpenTuiComponentFrame {
   editorAppearance?: EditorAppearance;
   /** 主对话内建 scrollbar 的纯 presentation；缺省保持 hidden。 */
   transcriptScrollPresentation?: TranscriptScrollPresentation;
+  /** editor 上方的运行中状态指示行；undefined 时占用零高度。 */
+  statusIndicator?: StatusIndicatorView;
   footer: readonly (string | { readonly kind: "status-line"; readonly segments: readonly StatusLineSegment[] })[];
   overlay?: readonly (string | PresentationBlock)[];
   /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
@@ -206,6 +208,7 @@ function blockCharacterCount(block: string | PresentationBlock): number {
 function frameCharacterCount(frame: OpenTuiComponentFrame): number {
   return frame.body.reduce((total, block) => total + blockCharacterCount(block), 0)
     + frame.editorText.length
+    + (frame.statusIndicator === undefined ? 0 : statusIndicatorPlainText(frame.statusIndicator).length)
     + frame.footer.reduce((total, line) => total + (typeof line === "string" ? line.length : line.segments.reduce((sum, segment) => sum + segment.text.length, 0)), 0)
     + (frame.overlay?.reduce((total, block) => total + blockCharacterCount(block), 0) ?? 0);
 }
@@ -238,6 +241,13 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   });
   const newContent = new TextRenderable(renderer, {
     id: "runledger-new-content",
+    width: "100%",
+    height: 0,
+    flexShrink: 0,
+    content: "",
+  });
+  const statusIndicator = new TextRenderable(renderer, {
+    id: "runledger-status-indicator",
     width: "100%",
     height: 0,
     flexShrink: 0,
@@ -280,6 +290,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   });
   screen.add(transcript);
   screen.add(newContent);
+  screen.add(statusIndicator);
   screen.add(editorRow);
   screen.add(footer);
   renderer.root.add(screen);
@@ -613,6 +624,10 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       const editorCursorOffset = Math.max(0, Math.min(frame.editorCursorOffset ?? frame.editorText.length, frame.editorText.length));
       if (editor.cursorOffset !== editorCursorOffset) editor.cursorOffset = editorCursorOffset;
       if (frame.editorHeight !== undefined) requestedEditorHeight = frame.editorHeight;
+      const projectedStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator);
+      statusIndicator.visible = projectedStatus.length > 0;
+      statusIndicator.content = projectedStatus.length > 0 ? ansiToStyledText(projectedStatus) : "";
+      statusIndicator.height = projectedStatus.length > 0 ? projectedStatus.split("\n").length : 0;
       // OpenTUI 的 native word-wrap 是原生路径的测量 authority；用真实 textarea
       // 宽度(width - prompt 2 - right inset 1)校正纯组件估算，避免隐藏尾行。
       const editorInnerWidth = Math.max(1, renderer.width - 3);
@@ -621,7 +636,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       // footer 与至少 1 行 transcript 必须留在 viewport 内；达到上限后 textarea
       // 由 OpenTUI 自己滚动，而不是把 footer 推出屏幕。
       const footerHeight = Math.max(1, frame.footer.length);
-      const maxEditorHeight = Math.max(1, renderer.height - footerHeight - 1);
+      const maxEditorHeight = Math.max(1, renderer.height - footerHeight - statusIndicator.height - 1);
       const boundedEditorHeight = Math.min(desiredEditorHeight, maxEditorHeight);
       if (boundedEditorHeight !== lastEditorHeight) {
         lastEditorHeight = boundedEditorHeight;
@@ -830,6 +845,15 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       : "";
     newContent.height = pendingNewContent > 0 ? 1 : 0;
   }
+}
+
+export function statusIndicatorPlainText(view: StatusIndicatorView): string {
+  const interrupt = view.interruptKey === undefined ? "" : ` • ${view.interruptKey} to interrupt`;
+  const inline = view.inlineMessage === undefined ? "" : ` ${view.inlineMessage}`;
+  return [
+    `${view.indicator} ${view.header} (${view.elapsed}${interrupt})${inline}`,
+    ...(view.details ?? []).map((detail) => `${STATUS_DETAILS_PREFIX}${detail.text}`),
+  ].join("\n");
 }
 
 function styledFooter(

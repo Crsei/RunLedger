@@ -6,7 +6,10 @@
 
 import type { PortAvailability, TuiField } from "../application/common.ts";
 import type { TuiState } from "../application/state.ts";
-import type { PresentationBlock } from "../presentation.ts";
+import type { PresentationBlock, StatusIndicatorView } from "../presentation.ts";
+import { STATUS_DETAILS_MAX_LINES, STATUS_INDICATOR_FRAMES, formatElapsedCompact } from "../opentui/block-layout.ts";
+import type { ActiveRunState } from "../timeline/types.ts";
+import type { SafeBoundedText } from "./tools/types.ts";
 import { timelineToBlocks } from "../timeline/selectors.ts";
 import type {
   ActiveStateView,
@@ -37,6 +40,39 @@ export function boundedField(value: unknown, maxBytes = 80): TuiField<string> {
   const text = sanitizeLabel(value, maxBytes);
   if (text.length === 0) return { state: "unknown", reason: "empty-label" };
   return { state: "known", value: text };
+}
+
+export interface StatusIndicatorFacts {
+	readonly nowMs?: number;
+	readonly animationFrame?: number;
+	readonly interruptKey?: string;
+	readonly inlineMessage?: string;
+	readonly details?: readonly SafeBoundedText[];
+}
+
+/** ActiveRunState -> editor 上方的 Codex 风格状态指示帧段。 */
+export function projectStatusIndicator(
+	activeRun: ActiveRunState | undefined,
+	facts: StatusIndicatorFacts = {},
+): StatusIndicatorView | undefined {
+	if (activeRun === undefined || activeRun.state === "recovery_required") return undefined;
+	const nowMs = facts.nowMs ?? Date.now();
+	const resumedAtMs = activeRun.lastResumedAtMs ?? activeRun.startedAtMs;
+	const runningDeltaMs = activeRun.state === "working"
+		? Math.max(0, nowMs - resumedAtMs)
+		: 0;
+	const elapsed = formatElapsedCompact((activeRun.activeDurationMs + runningDeltaMs) / 1_000);
+	const frame = Math.max(0, Math.floor(facts.animationFrame ?? 0)) % STATUS_INDICATOR_FRAMES.length;
+	const details = facts.details?.slice(0, STATUS_DETAILS_MAX_LINES);
+	const inlineMessage = facts.inlineMessage === undefined ? undefined : sanitizeLabel(facts.inlineMessage, 120);
+	return {
+		indicator: activeRun.state === "waiting" ? "⏸" : STATUS_INDICATOR_FRAMES[frame] ?? STATUS_INDICATOR_FRAMES[0],
+		header: activeRun.state === "waiting" ? "Waiting" : "Working",
+		elapsed,
+		...(activeRun.state === "working" && facts.interruptKey !== undefined ? { interruptKey: facts.interruptKey } : {}),
+		...(inlineMessage === undefined || inlineMessage.length === 0 ? {} : { inlineMessage }),
+		...(details === undefined || details.length === 0 ? {} : { details }),
+	};
 }
 
 export interface SessionStripFacts {

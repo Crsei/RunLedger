@@ -94,6 +94,8 @@ import type { CorrelatedRequestRef } from "./application/common.ts";
 import type { SessionCatalogResult, SessionTransitionResult } from "./sessions/types.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "./preferences/types.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/theme-controller.ts";
+import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
+import { projectStatusIndicator } from "./presentation/projectors.ts";
 
 export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
@@ -192,8 +194,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
   });
   // B2:帧前 flush 时按 correlationId 累积完整正文快照，再发 message_update
   private readonly pendingMessageBuffers = new Map<string, { text: string; thinking: string }>();
-  private runTicker: ReturnType<typeof setTimeout> | undefined;
-
   // B2:Timeline 为 chat 内容的唯一业务 owner；DeltaCoalescer 只做 lossless append/帧前 drain。
   private timelineProjector = new TimelineEventProjector();
 
@@ -311,7 +311,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
       syntaxThemeController: this.syntaxThemeController,
     });
     this.refreshTranscriptScrollPresentation();
-    this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => this.flushStreamingDeltas());
+    this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => {
+      this.flushStreamingDeltas();
+      this.refreshStatusIndicator();
+    });
     this.unsubscribeBoundaryActions = this.ui.addActionListener((actions) => {
       for (const action of actions) this.store.dispatch(action);
       if (actions.some((action) => action.type === "interaction.focus-changed")) this.ui.requestRender();
@@ -602,7 +605,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private async requestExit(intent: InteractiveExitIntent): Promise<void> {
     if (this.quitting) return;
     this.quitting = true;
-    this.stopRunTicker();
     this.flushStreamingDeltas();
     // B8:先取消所有 in-flight effects，再执行 lifecycle cleanup（防止 Host 查询在销毁后回写）
     this.runner.cancelAll();
@@ -2384,7 +2386,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
             timestamp: ev.timestamp,
             activeDurationMs: 0,
           }]);
-          this.startRunTicker();
+          this.scheduleStatusIndicatorFrame();
           break;
         case "agent_end":
           {
@@ -2394,7 +2396,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.streaming = false;
           this.stopReason = ev.stopReason ?? this.stopReason ?? "stop";
           this.refs.status.setStopReason(this.stopReason);
-          this.stopRunTicker();
           if (isRunStopReason(this.stopReason)) {
             this.dispatchTimeline([{
               type: "run_end",
@@ -2411,11 +2412,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
           }
         case "agent_work_pause":
           this.dispatchTimeline([{ type: "run_pause", generation: 0, runId: ev.runId, waitId: ev.waitId, reason: ev.reason, timestamp: ev.timestamp, activeDurationMs: ev.activeDurationMs }]);
-          this.stopRunTicker();
+          this.scheduleStatusIndicatorFrame();
           break;
         case "agent_work_resume":
           this.dispatchTimeline([{ type: "run_resume", generation: 0, runId: ev.runId, waitId: ev.waitId, timestamp: ev.timestamp, activeDurationMs: ev.activeDurationMs }]);
-          this.startRunTicker();
+          this.scheduleStatusIndicatorFrame();
           break;
         case "turn_start":
           this.refs.status.setTurn(ev.turn);
@@ -2517,24 +2518,30 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
   }
 
-  private startRunTicker(): void {
-    this.stopRunTicker();
-    const tick = (): void => {
-      this.runTicker = undefined;
-      const active = this.store.getState().timeline.activeRun;
-      if (active?.state !== "working" || this.quitting) return;
-      this.ui.requestRender();
-      this.runTicker = setTimeout(tick, 1_000);
-      this.runTicker.unref?.();
-    };
-    this.runTicker = setTimeout(tick, 1_000);
-    this.runTicker.unref?.();
+  private scheduleStatusIndicatorFrame(): void {
+    if (this.quitting) return;
+    this.ui.scheduleFrameIn(STATUS_INDICATOR_FRAME_MS);
   }
 
-  private stopRunTicker(): void {
-    if (this.runTicker === undefined) return;
-    clearTimeout(this.runTicker);
-    this.runTicker = undefined;
+  private refreshStatusIndicator(): void {
+    const nowMs = Date.now();
+    const activeRun = this.store.getState().timeline.activeRun;
+    this.ui.setStatusIndicator(projectStatusIndicator(activeRun, {
+      nowMs,
+      animationFrame: Math.floor(nowMs / STATUS_INDICATOR_FRAME_MS),
+      interruptKey: this.statusInterruptKey(),
+    }));
+    if (activeRun?.state === "working" || activeRun?.state === "waiting") {
+      this.scheduleStatusIndicatorFrame();
+    }
+  }
+
+  private statusInterruptKey(): string | undefined {
+    const configured = this.kb.getResolvedBindings()["tui.input.interrupt"];
+    const key = Array.isArray(configured) ? configured[0] : configured;
+    if (key === undefined) return undefined;
+    const control = /^ctrl\+([a-z])$/iu.exec(key);
+    return control === null ? key : `^${control[1]!.toUpperCase()}`;
   }
 
   private queueAssistantDelta(delta: AppendTextDelta): void {

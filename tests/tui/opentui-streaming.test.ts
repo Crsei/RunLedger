@@ -267,6 +267,28 @@ describe("Plan 18 streaming state", () => {
     scheduler.destroy();
   });
 
+  test("schedules an animation frame through the shared scheduler without a private ticker", () => {
+    const clock = new TestClock();
+    const reasons: string[] = [];
+    const scheduler = new FrameScheduler({
+      clock,
+      frameWindowMs: 20,
+      onFrame: (reason) => reasons.push(reason),
+    });
+
+    scheduler.scheduleFrameIn(32);
+    clock.advance(31);
+    expect(reasons).toEqual([]);
+    clock.advance(1);
+    expect(reasons).toEqual(["scheduled"]);
+
+    scheduler.scheduleFrameIn(32);
+    scheduler.scheduleFrameIn(1);
+    clock.advance(1);
+    expect(reasons).toEqual(["scheduled", "scheduled"]);
+    scheduler.destroy();
+  });
+
   test("flushes early when backlog age or size crosses the fairness budget", () => {
     const clock = new TestClock();
     const reasons: string[] = [];
