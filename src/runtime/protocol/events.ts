@@ -52,8 +52,11 @@ export const RUNTIME_EVENT_TYPES = [
 	"queue.claimed",
 	"queue.consumed",
 	"queue.cancelled",
+	"agent.root_registered",
 	"agent.spawn_requested",
 	"agent.spawned",
+	"agent.activated",
+	"agent.reconciliation_required",
 	"agent.paused",
 	"agent.stopped",
 	"agent.partial_committed",
@@ -168,6 +171,7 @@ export const EVENT_TRANSITION_ACTIONS = [
 	"claimed",
 	"consumed",
 	"cancelled",
+	"root_registered",
 	"spawn_requested",
 	"spawned",
 	"paused",
@@ -292,10 +296,12 @@ export const EVENT_REF_REQUIRED_TYPES = [
 	"artifact.created",
 	"change_proposal.created",
 	"draft_pr.created",
+	"agent.reconciliation_required",
 ] as const satisfies readonly RuntimeEventType[];
 
 export const EVENT_IDEMPOTENCY_ACTIONS = [
 	"created",
+	"root_registered",
 	"requested",
 	"started",
 	"acquired",
