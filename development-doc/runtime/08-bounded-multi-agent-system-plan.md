@@ -1,6 +1,6 @@
 # 有界根级子 Agent 系统实施计划
 
-> 状态：**in progress**。M0、M1 已闭合；M2 Task 4 与 M3 Task 5–6 已实现并完成 focused 验证；M4–M6 尚未开始。
+> 状态：**in progress**。M0–M3 已闭合；M4 Task 7 已实现并完成 focused 验证；M5–M6 尚未开始。
 > 建立日期：2026-08-14
 > 重写日期：2026-08-15
 > 目标分支：`worktree/bounded-multi-agent-system`
@@ -16,7 +16,10 @@
 - M2 Task 4 已实现 `graph-events.ts`、`graph-projection.ts`、`graph-store.ts`，并将 `agent.root_registered`、`agent.activated`、`agent.reconciliation_required` 接入 current Runtime event vocabulary；graph revision 与普通 Session event head 分离。
 - M3 Task 5 已实现 `capability-subset.ts`、`child-model-runtime.ts`，并由 `assembleSessionDomain()` 登记 production tool source、同一 model/router factory；child capability 只读投影不缩减 parent 工具集。
 - M3 Task 6 已实现 `child-runtime.ts`：prepare/activate barrier、Session authorization、Agent budget、实际 loop event usage、abort/cancel/dispose、activation certain/uncertain 分类和 UTF-8 bounded report。
+- M4 Task 7 已实现 `supervisor.ts`：root-owned sequential spawn/cancel/inspect、durable lifecycle replay、active/lifetime slot enforcement、terminal first-wins、attempt settlement seam，以及 previous-owner dead/unknown takeover reconciliation。
 - M2 focused gate：`npx vitest run tests/runtime/multi-agent/graph-projection.test.ts tests/runtime/multi-agent/graph-store.test.ts tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，18 tests passed；`npx tsc --noEmit -p tsconfig.json` passed；`git diff --check` passed。
+- M3 closure：`npm run build` passed。
+- M4 Task 7 fresh focused gate：`npx vitest run tests/runtime/multi-agent --no-file-parallelism`，7 files / 53 tests passed；`npx vitest run tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，2 files / 8 tests passed；activation uncertainty、requested/prepared/running duplicate、terminal append acknowledgement loss、terminal-before-settle 和 cancel/completion 双向竞态均有定向证据；`npx tsc --noEmit -p tsconfig.json` 与 `git diff --check` passed。
 - 当前 `npm run check` 已通过其前置 boundaries，但被既有无关文件 `src/tui/opentui/exec-renderable.ts` 的 forbidden ANSI foreground 检查阻断；该文件不属于本计划，未修改。
 - 完整 `npm test` 本轮 Vitest 阶段为 355 个文件通过、1 个跳过、1 个失败（2117 tests passed、3 skipped）；唯一失败仍是上述既有 TUI boundary suite，`tests/cli/multi-client/acceptance-runners.test.ts` 的 4 个测试已通过。由于 Vitest failure 使 npm script 短路，单独运行 `npm run test:tui-native` 时断言全部通过后发生 Bun 1.3.14 原生 segmentation fault；`npm run build` passed。
 
@@ -525,7 +528,7 @@ tests/integration/
 
 **M0 closure**
 
-- [ ] Run: `npm run build`（M0 closure 待当前 M2 slice 一并执行）。
+- [x] Run: `npm run build`（随当前 M3 closure 延后执行并于 2026-08-15 passed）。
 - [x] 记录实际命令和结果；不得记录历史测试数量。
 
 ### M1：稳定 command identity 与 attempt recovery
@@ -621,7 +624,7 @@ tests/integration/
 
 **M3 closure**
 
-- [ ] Run: `npm run build`
+- [x] Run: `npm run build`（2026-08-15，passed）。
 
 ### M4：Supervisor 与 crash takeover
 
@@ -633,17 +636,17 @@ tests/integration/
 - Test: `tests/runtime/multi-agent/supervisor.test.ts`
 - Test: `tests/runtime/multi-agent/recovery.test.ts`
 
-- [ ] RED：完整 `requested → prepared → running → completed`，并断言每个 event 在正确外部调用之前/之后出现。
-- [ ] RED：children/total lifetime limits、一个 active child、failed spawn 消耗 slot、child 再委托拒绝。
-- [ ] RED：duplicate tool call 在 requested/prepared/running/terminal 各阶段的 replay 行为。
-- [ ] RED：cancel/completion race 两种顺序；durable terminal first-wins，晚到结果不能覆写。
-- [ ] RED：crash after requested、after prepare、activation ack loss、after activated、terminal append ack loss、terminal-before-attempt-settle。
-- [ ] RED：已证明 previous owner process dead时自动 stopped；证明不足时 recovery_required，禁止新 spawn。
-- [ ] GREEN：每个 child 使用短临界区状态锁；spawn 等 completion 时 cancel/inspect 仍可运行。
-- [ ] GREEN：registerRoot 为内部 composition 操作；root ID 从 session canonical 派生，goalId 仅可选关联。
-- [ ] Run: `npx vitest run tests/runtime/multi-agent/supervisor.test.ts tests/runtime/multi-agent/recovery.test.ts`
-- [ ] Run: `npm run check && git diff --check`
-- [ ] Commit: `feat(agents): orchestrate bounded child lifecycle recovery`
+- [x] RED：完整 `requested → prepared → running → completed`，并通过 append hook 断言 `spawned/activated` 先于真实 model start、terminal 随后追加。
+- [x] RED：children/total lifetime limits、一个 active child、failed spawn 消耗 slot、child 再委托拒绝。
+- [x] RED：duplicate tool call 在 requested/prepared/running/terminal 各阶段的 replay/recovery 行为。
+- [x] RED：cancel/completion race 两种顺序；durable terminal first-wins，晚到结果不能覆写。
+- [x] RED：crash after requested、after prepare、activation ack loss、after activated、terminal append ack loss、terminal-before-attempt-settle。
+- [x] RED：已证明 previous owner process dead时自动 stopped；证明不足时 recovery_required，禁止新 spawn。
+- [x] GREEN：每个 child 使用短临界区状态锁；spawn 等 completion 时 cancel/inspect 仍可运行。
+- [x] GREEN：registerRoot 为内部 composition 操作；root ID 从 session canonical 派生，goalId 仅可选关联。
+- [x] Run: `npx vitest run tests/runtime/multi-agent --no-file-parallelism`（7 files / 53 tests passed）；runtime contract 2 files / 8 tests passed；`npx tsc --noEmit -p tsconfig.json` 与 `git diff --check` passed。
+- [ ] Run: `npm run check`（前置 boundaries 通过，但仍被既有未修改的 `src/tui/opentui/exec-renderable.ts` forbidden ANSI foreground 检查阻断）；`git diff --check` passed。
+- [x] Commit: `feat(agents): orchestrate bounded child lifecycle recovery`。
 
 ### M5：Session Domain 与模型工具接线
 
