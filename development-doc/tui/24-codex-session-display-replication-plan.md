@@ -1,6 +1,6 @@
 # RunLedger TUI Codex 会话展示区完整复刻计划
 
-> 状态：**S0–S6 已实现并通过 fresh evidence；S7 待最终验收**
+> 状态：**S0–S7 已实现并通过 fresh evidence；状态：implemented/accepted**
 >
 > 计划日期：2026-08-14
 >
@@ -8,7 +8,7 @@
 >
 > Codex 固定参照：`main@0b175e6439a8608ba7726ee153fd8590619e8f34`
 >
-> 交付性质：本文冻结会话展示区（transcript 区域）的展示块语义、布局契约、实施阶段与验收；状态指示行与 Ctrl+T 转写视图已落地，最终人工验收仍随 S7 进行。
+> 交付性质：本文冻结会话展示区（transcript 区域）的展示块语义、布局契约、实施阶段与验收；状态指示行与 Ctrl+T 转写视图已落地，最终人工验收已随 S7 完成。
 
 ---
 
@@ -561,10 +561,19 @@ diff src/foo.rs (+3 -1)            ← bold header, 已存在
 
 ### S7 · 完整门禁与人工验收
 
-- [ ] `npm run check`、`npm test`（含新增套件）、`npm run build` 全绿；
-- [ ] 标准 PATH `runledger` 真实 TTY：todo、exec（成功/失败/长输出）、diff、分隔、状态行、Ctrl+T 逐项视觉验收（dark/light 双主题）；
-- [ ] 80 / 143 列宽下前缀与截断不破版；
-- [ ] 回写两个索引（00-overview / 00-index）与本文状态。
+- [x] `npm run check`、`npm test`（含新增套件）、`npm run build` 全绿；
+- [x] 标准 PATH `runledger` 真实 TTY：todo、exec（成功/失败/长输出）、diff、分隔、状态行、Ctrl+T 逐项视觉验收（dark/light 双主题）；
+- [x] 80 / 143 列宽下前缀与截断不破版；
+- [x] 回写两个索引（00-overview / 00-index）与本文状态。
+
+#### S7 fresh evidence（2026-08-14）
+
+- 当前分支为 `session-owner-runtime`，验收时 `HEAD=085ce37`（`feat(tui): add read-only transcript overlay`）。
+- 自动门禁：`npm run check` 通过；`npm test` 中 Vitest 为 342 files / 2015 passed / 3 skipped，Bun OpenTUI 为 89 passed / 443 assertions；`npm run build` 通过。
+- 标准 PATH：`which runledger` 为 `/home/nzq/.npm-global/bin/runledger`，实际 shim 为本仓库的 `bin/runledger.js`。
+- 真实 TTY 视觉验收覆盖 dark/light 两主题的 80、143 列；light 主题通过真实 OSC 10/11 响应触发。两主题均完成 `Ctrl+T → Esc → Ctrl+D` 生命周期。
+- 使用标准 `runledger`、隔离 `RUNLEDGER_DIR` 与隔离 SQLite session fixture 的 80 列真实 TTY 验证覆盖：todo 三态（含 `✔` / `□` 映射）、exec 成功/失败/长输出、`$` transcript 前缀、`  └ ` 输出前缀、失败 exit code 与 duration、Edit diff 行号 gutter、`+/-` 行、delete DIM 与背景色，以及 PageUp 回看 plan 和早期内容。
+- 80 / 143 列均未发现前缀或截断破版；转写视图为只读，验收过程中未改变主对话滚动或 sticky 状态。
 
 ---
 

@@ -174,3 +174,7 @@ Plan 21 的 R1 已在独立工作树完成 M0–M7 的实现与自动门禁：�
 | 渲染契约幂等 | React 组件 render 纯函数 | `render(width)` 幂等 + 不副作用 + 不触 mutation | 采纳,见 `04-rendering.md` §2 |
 
 **不采纳**的项(框架不适配或超出本期范围):React/Ink 状态架构、`useInput` hook 模式、bridge WebSocket/SSE 协议、Zeit-style store。理由详见 `08-cross-project-lessons.md` 末节。
+
+### Plan 24 当前验收状态
+
+Plan 24 当前状态为 `implemented/accepted`。2026-08-14 的 fresh evidence 包含全仓 `check` / Vitest / Bun OpenTUI / build、标准 PATH 隔离 `runledger` 的 80/143 列 dark/light 真实 TTY，以及隔离 SQLite session fixture 的 todo、exec、diff、分页回看与 Ctrl+T 生命周期验收；逐项记录见 `24-codex-session-display-replication-plan.md` 的 S7。

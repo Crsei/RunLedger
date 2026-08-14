@@ -51,6 +51,10 @@
 
 下一阶段必须从各专项当前入口继续。Worktree/Sandbox/Permission 不得再从旧 Sandbox Phase 4 继续，而应按 `01-multiplatform-workspace-path-adaptation-plan.md` 从真实平台证据开始；OS sandbox 只有在 P0–P6 和新的解封 ADR 后才能重新规划。不能以本节的历史 focused tests 宣称当前专项或多平台能力完成。
 
+### Plan 24 当前验收状态
+
+Plan 24（Codex Session Display）当前状态为 `implemented/accepted`。2026-08-14 fresh evidence：`npm run check`、Vitest 342 files / 2015 passed / 3 skipped、Bun OpenTUI 89 passed / 443 assertions、`npm run build`，以及标准 PATH 隔离 `runledger` 的 80/143 列 dark/light 真实 TTY 和隔离 SQLite session fixture 验收；逐项记录见 [`tui/24-codex-session-display-replication-plan.md`](tui/24-codex-session-display-replication-plan.md) §S7。
+
 ## 原始计划迁移映射
 
 | 原 `.zcode/plans/` 文件 | 归档位置 |
