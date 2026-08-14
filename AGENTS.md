@@ -134,6 +134,14 @@
 - 遗留门禁：真实 model/MCP/PTY/worktree candidate、macOS/Windows runner、标准 PATH fault rehearsal、独立只读审计与 R8 human acceptance；`human-verified` 需真人填写，R9 只能在这些门禁闭合后开始。
 - 2026-08-07 fresh 本地门禁：`npm run check`、Session Owner focused 34 files / 209 tests、Vitest 260 files / 1427 tests、Bun OpenTUI 4 files / 29 tests、`npm run build`、隔离 Linux candidate 全部通过；该证据不提升 R6/R6.5/R8 的未完成项。
 
+#### 1.2.va 有界根级子 Agent 委托（M0–M5、M6 Task 9）
+
+`development-doc/runtime/08-bounded-multi-agent-system-plan.md` 是本专项唯一状态入口。当前实现是默认关闭的 **root-owned sequential readonly delegation**：root depth=0，child 固定 depth=1；同一 root 同时最多一个 child；child 只从 Session Owner production composition 派生 `read`/`grep`/`find`/`glob`/`ls` 等治理后的只读能力，模型 schema 不出现 authority、provider、model 或幂等字段，最终 leaf 仍由 Security/ExecutionGateway fail closed。Session Domain 的 `agent.inspect` 是 query，`agent.spawn`/`agent.cancel` 是受 driver fence 保护的 mutation；graph、terminal report、attempt identity 和 owner takeover 可 replay。
+
+M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `tests/integration/multi-agent-faults.test.ts` 共 7 tests，覆盖真实 SessionStore/SessionOwner/embedded production composition、真实 child Agent、deterministic keyless model、read/search/report、不可见 write leaf、duplicate byte-identical report、inspect JSON round-trip，以及 requested/prepared/activation-uncertain/running/terminal-ack/terminal-before-settle takeover 矩阵。`node scripts/check-execution-boundaries.ts` 已加入 `src/runtime/agents/**` 与精确 Session Domain 文件扫描，legacy `create-anthropic-agent.ts` 明确隔离，Session Domain 仅允许 `requireExecutionEnv: true` 的 governed stdlib factory。
+
+以下仍是 M1 非目标：DAG、child 再委托、并行 spawn、可写工作区或独立 worktree、MCP/Hook/Skill/Plugin child 能力、外部 Codex/Claude/ACP provider、child transcript cold continuation、Artifact/CAS/handoff/merge、USD cost、TUI `/agents` 面板和跨进程热替换。不要以空字段、未使用状态或 `verified:false` placeholder 提前宣传这些能力。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;

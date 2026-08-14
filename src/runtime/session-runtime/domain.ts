@@ -57,6 +57,7 @@ import {
 } from "./lsp-composition.ts";
 import { createSessionProductionToolSource } from "../agents/capability-subset.ts";
 import { createMultiAgentDomain, type SessionMultiAgentPolicySources } from "../agents/domain.ts";
+import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -74,6 +75,8 @@ export interface SessionDomainCompositionOptions {
 	readonly systemPrompt?: string;
 	/** Runtime gate + preserved user/workspace policy layers for M1 delegation. */
 	readonly multiAgent?: SessionMultiAgentPolicySources;
+	/** Host-controlled child provider seam; it must preserve the governed prepare spec. */
+	readonly multiAgentChildRuntimeProvider?: ChildRuntimeProviderPort;
 }
 
 /** 在 SessionRuntime 内装配真实 InteractiveSessionController(单一 Session 域)。 */
@@ -209,6 +212,7 @@ export async function assembleSessionDomain(
 				modelRuntimeFactory: childRuntime.modelRuntimeFactory,
 			},
 			attemptPort,
+			...(options.multiAgentChildRuntimeProvider === undefined ? {} : { provider: options.multiAgentChildRuntimeProvider }),
 		});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
 	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);

@@ -1,6 +1,6 @@
 # 有界根级子 Agent 系统实施计划
 
-> 状态：**in progress**。M0–M4 已闭合；M5 Task 8 已实现并完成 focused/组合验证；M6 尚未开始。
+> 状态：**in progress**。M0–M4 已闭合；M5 Task 8 已实现并完成 focused/组合验证；M6 Task 9 实现、focused 验证与阶段提交已完成，最终全量门禁仍受既有无关 TUI ANSI boundary 阻断。
 > 建立日期：2026-08-14
 > 重写日期：2026-08-15
 > 目标分支：`worktree/bounded-multi-agent-system`
@@ -20,12 +20,14 @@
 - M2 focused gate：`npx vitest run tests/runtime/multi-agent/graph-projection.test.ts tests/runtime/multi-agent/graph-store.test.ts tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，18 tests passed；`npx tsc --noEmit -p tsconfig.json` passed；`git diff --check` passed。
 - M3 closure：`npm run build` passed。
 - M4 Task 7 fresh focused gate：`npx vitest run tests/runtime/multi-agent --no-file-parallelism`，7 files / 53 tests passed；`npx vitest run tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，2 files / 8 tests passed；activation uncertainty、requested/prepared/running duplicate、terminal append acknowledgement loss、terminal-before-settle 和 cancel/completion 双向竞态均有定向证据；`npx tsc --noEmit -p tsconfig.json` 与 `git diff --check` passed。
-- 当前 `npm run check` 已通过其前置 boundaries，但被既有无关文件 `src/tui/opentui/exec-renderable.ts` 的 forbidden ANSI foreground 检查阻断；该文件不属于本计划，未修改。
-- 完整 `npm test` 本轮 Vitest 阶段为 361 个文件通过、1 个跳过、1 个失败（2164 tests passed、3 skipped）；唯一失败仍是上述既有 `tests/scripts/check-tui-color-boundaries.test.ts`，`tests/cli/multi-client/acceptance-runners.test.ts` 的 4 个测试已通过。由于 Vitest failure 使 npm script 短路，本轮未进入 `npm run test:tui-native`；`npm run build` passed。
+- Task 8 predecessor gate：`npm run check` 的前置 boundaries 通过，但被既有无关文件 `src/tui/opentui/exec-renderable.ts` 的 forbidden ANSI foreground 检查阻断；该文件不属于本计划，未修改。此前完整 `npm test` 的 Vitest 阶段为 361 个文件通过、1 个跳过、1 个失败（2164 tests passed、3 skipped），仅作 Task 8 基线，不覆盖 Task 9 新增测试。
 - M5 Task 8 已实现：async `MultiAgentDomainPort` 接入 SessionRuntime flat operation routing，`agent.inspect` query、`agent.spawn`/`agent.cancel` mutation 保留 observer/driver fence 与 recovery barrier；`spawn_agent` 只从 trusted `ToolContext` 派生 identity，和 domain command 复用 replay identity；CLI `--experimental-multi-agent` 默认关闭，user/workspace layered policy 仍为必要 gate；crash takeover 在 Runtime ready 前自动 recovery。
 - Task 8 的生产组合修正冻结了 `SessionProductionToolSource.tools` 快照，避免 root 注册 `spawn_agent` 后污染 child source；domain envelope 现在只接受普通 JSON record，malformed async payload 不会被转换成 `{}` 继续执行。
 - Task 8 focused gate：`npx vitest run tests/runtime/multi-agent tests/runtime/session-runtime/multi-agent-composition.test.ts tests/runtime/session-runtime/multi-agent-domain.test.ts tests/storage/multi-agent-attempts.test.ts tests/storage/multi-agent-settings.test.ts tests/cli/args.test.ts --no-file-parallelism`，12 files / 109 tests passed；真实 embedded production composition 覆盖 enabled settings 下 durable root registration、root-only `spawn_agent`、governed child read/search/list projection，以及 runtime gate closed。
 - Task 8 broader gate：`npx vitest run tests/runtime/session-runtime tests/cli --no-file-parallelism`，68 files / 432 tests passed；`npm run build` passed；`git diff --check` passed。`npm run check` 的 storage/runtime/contract/execution/platform 前置边界通过，仍被上述既有 TUI ANSI boundary failure 阻断，未修改该文件。
+- Task 9 bounded integration：新增 `tests/integration/multi-agent-bounded.test.ts`，使用真实 `SessionStore`、`SessionOwner`、`assembleSessionDomain`/embedded composition、production governed tool source、deterministic keyless model provider 与真实 child `Agent`，覆盖 read/search/report、schema authority 缺失、不可见 write leaf、duplicate byte-identical report 和 inspect JSON round-trip；新增 `multiAgentChildRuntimeProvider` 受控 composition seam，provider 仍只接收 governed `ChildPrepareSpec`。
+- Task 9 fault integration：新增 `tests/integration/multi-agent-faults.test.ts`，真实 owner takeover 后覆盖 after requested、after prepare、activation acknowledgement loss、after activated、terminal append acknowledgement loss、terminal-before-attempt-settle；focused integration + existing multi-agent/domain/security boundary 共 12 files / 71 tests passed；`npx tsc --noEmit -p tsconfig.json` passed。
+- Task 9 static boundary：`check-execution-boundaries.ts` 现在扫描 `src/runtime/agents/**` 与精确的 `src/runtime/session-runtime/domain.ts`（显式隔离 legacy `create-anthropic-agent.ts`）；拒绝 legacy helper import、`localExecutionEnv`、`AllowAllToolAuthorizationPolicy` 和未治理 stdlib factory，`domain.ts` 仅允许带 `requireExecutionEnv: true` 的 governed factory；synthetic RED/GREEN test 与 `node scripts/check-execution-boundaries.ts` passed。
 
 ## Goal
 
@@ -704,19 +706,19 @@ tests/integration/
 - Modify: `development-doc/00-index.md`
 - Modify: `AGENTS.md`
 
-- [ ] RED/GREEN：使用真实 SessionStore、owner fence、`assembleSessionDomain`、真实 `Agent`、生产派生只读工具和 deterministic mock model，完成 spawn→read/search→report→parent tool result。
-- [ ] RED/GREEN：断言 child 尝试 write/bash/MCP 时 schema 不可见且最终 leaf 不执行。
-- [ ] RED/GREEN：按 Task 7 的每个 crash point 注入故障，并重新创建 Session Owner 验证 replay/recovery。
-- [ ] RED/GREEN：重复 tool call 返回 byte-identical report；inspect JSON 可由 client round-trip。
-- [ ] Static gate：生产 multi-agent 文件不得 import `create-anthropic-agent.ts`、`localExecutionEnv`、`AllowAllToolAuthorizationPolicy` 或未经治理的 stdlib factory。
-- [ ] 更新 `development-doc/00-index.md` 和 `AGENTS.md`：只声明 M1 root-owned sequential readonly delegation；列出全部非目标。
-- [ ] Run: `npx vitest run tests/integration/multi-agent-bounded.test.ts tests/integration/multi-agent-faults.test.ts`
-- [ ] Run: `node scripts/check-execution-boundaries.ts`
-- [ ] Run: `npm run check`
-- [ ] Run: `npm run build`
-- [ ] Run: `npm test`
-- [ ] Run: `git diff --check`
-- [ ] Commit: `docs(runtime): record bounded child delegation evidence`
+- [x] RED/GREEN：使用真实 SessionStore、owner fence、`assembleSessionDomain`、真实 `Agent`、生产派生只读工具和 deterministic mock model，完成 spawn→read/search→report→parent tool result。
+- [x] RED/GREEN：断言 child 尝试 write/bash/MCP 时 schema 不可见且最终 leaf 不执行。
+- [x] RED/GREEN：按 Task 7 的每个 crash point 注入故障，并重新创建 Session Owner 验证 replay/recovery。
+- [x] RED/GREEN：重复 tool call 返回 byte-identical report；inspect JSON 可由 client round-trip。
+- [x] Static gate：生产 multi-agent 文件不得 import `create-anthropic-agent.ts`、`localExecutionEnv`、`AllowAllToolAuthorizationPolicy` 或未经治理的 stdlib factory。
+- [x] 更新 `development-doc/00-index.md` 和 `AGENTS.md`：只声明 M1 root-owned sequential readonly delegation；列出全部非目标。
+- [x] Run: `npx vitest run tests/integration/multi-agent-bounded.test.ts tests/integration/multi-agent-faults.test.ts`（7 tests passed）；相关 multi-agent/domain/security boundary 共 12 files / 71 tests passed。
+- [x] Run: `node scripts/check-execution-boundaries.ts`
+- [ ] Run: `npm run check`（本任务相关 storage/runtime/contract/execution/platform/session-owner/tsc 前置均通过；唯一失败为未修改的 `src/tui/opentui/exec-renderable.ts` forbidden ANSI foreground）
+- [x] Run: `npm run build`
+- [ ] Run: `npm test`（Vitest 363 files passed、1 skipped，2172 tests passed、3 skipped；唯一失败为同一未修改的 `tests/scripts/check-tui-color-boundaries.test.ts`，npm script因此未自动进入 native 阶段；单独 `npm run test:tui-native` 通过 11 files / 91 tests / 449 assertions）
+- [x] Run: `git diff --check`
+- [x] Commit: `docs(runtime): record bounded child delegation evidence`
 
 ---
 

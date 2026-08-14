@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
 	CANONICAL_STORAGE_ADAPTER_ALLOWLIST,
@@ -23,5 +26,27 @@ describe("current execution boundary baseline", () => {
 			"src/storage/process/process-backend.ts",
 			"src/storage/process/supervisor-runner.ts",
 		]);
+	});
+
+	it("rejects legacy and ungoverned execution paths in multi-agent production files", () => {
+		const root = mkdtempSync(join(tmpdir(), "runledger-multi-agent-boundary-"));
+		try {
+			const agents = join(root, "src/runtime/agents");
+			mkdirSync(agents, { recursive: true });
+			writeFileSync(join(agents, "domain.ts"), [
+				'import { createAnthropicAgent } from "./create-anthropic-agent.ts";',
+				"localExecutionEnv();",
+				"new AllowAllToolAuthorizationPolicy();",
+				"createStdlibTools(cwd);",
+			].join("\n"), "utf8");
+			const sessionRuntime = join(root, "src/runtime/session-runtime");
+			mkdirSync(sessionRuntime, { recursive: true });
+			writeFileSync(join(sessionRuntime, "domain.ts"), "createStdlibTools(cwd);", "utf8");
+			const violations = scanExecutionBoundaries(root);
+			expect(violations).toHaveLength(5);
+			expect(violations.every((violation) => violation.kind === "multi-agent-raw-boundary")).toBe(true);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
