@@ -31,6 +31,7 @@ import { SyntectCodeBlockRenderable, type HighlightAdmission } from "./syntect-c
 import { ExecRenderable } from "./exec-renderable.ts";
 import { stripShellLoginWrapper } from "./exec-renderable.ts";
 import { DiffRenderable } from "./diff-renderable.ts";
+import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-renderable.ts";
 import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
@@ -103,7 +104,7 @@ export interface OpenTuiComponentRuntime {
   destroy(): void;
 }
 
-type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable;
+type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable | PlanUpdateRenderable;
 type OverlayRenderable = TextRenderable | InputRenderable | SelectRenderable | ExecRenderable;
 interface KeyedRenderable<T extends BodyRenderable | OverlayRenderable> {
   readonly kind: string;
@@ -160,6 +161,7 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "exec") return [block.command, ...block.output.map((chunk) => chunk.text)].join("\n");
   if (block.kind === "diff") return block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => line.text.text)).join("\n");
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
+  if (block.kind === "plan-update") return planUpdatePlainText(block);
   return block.content;
 }
 
@@ -191,6 +193,8 @@ function blockCharacterCount(block: string | PresentationBlock): number {
     ? block.document.hunks.reduce((total, hunk) => total + hunk.lines.reduce((lineTotal, line) => lineTotal + line.text.text.length, 0), 0)
     : block.kind === "status-line"
     ? block.segments.reduce((total, segment) => total + segment.text.length, 0)
+    : block.kind === "plan-update"
+    ? planUpdatePlainText(block).length
     : block.content.length;
 }
 
@@ -506,6 +510,13 @@ export function createOpenTuiComponentRuntimeFromRenderer(
               highlightService: syntaxHighlightService,
               themeController: syntaxThemeController,
             })
+            : block.kind === "plan-update"
+            ? new PlanUpdateRenderable(renderer, {
+              id: renderableId("runledger-block", key),
+              width: "100%",
+              flexShrink: 0,
+              block,
+            })
             : new TextRenderable(renderer, {
               id: renderableId("runledger-block", key),
               width: "100%",
@@ -545,6 +556,12 @@ export function createOpenTuiComponentRuntimeFromRenderer(
           const contentKey = blockText(block);
           if (current.contentKey !== contentKey) {
             current.renderable.updateDocument(block.document);
+            current.contentKey = contentKey;
+          }
+        } else if (block.kind === "plan-update" && current.renderable instanceof PlanUpdateRenderable) {
+          const contentKey = blockText(block);
+          if (current.contentKey !== contentKey) {
+            current.renderable.updateBlock(block);
             current.contentKey = contentKey;
           }
         } else if (current.renderable instanceof TextRenderable) {

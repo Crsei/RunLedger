@@ -1,3 +1,20 @@
+import type { SafeBoundedText } from "./presentation/tools/types.ts";
+
+export type PlanStepStatus = "pending" | "in-progress" | "completed";
+
+export interface PlanStepView {
+	/** 已经经过 safe projector bounds 的步骤文本。 */
+	readonly text: SafeBoundedText;
+	readonly status: PlanStepStatus;
+}
+
+export type PlanUpdateBlock = {
+	id?: string;
+	kind: "plan-update";
+	explanation?: SafeBoundedText;
+	steps: readonly PlanStepView[];
+};
+
 export type PresentationBlock =
   | { id?: string; kind: "text"; content: string }
   | { id?: string; kind: "markdown"; content: string; streaming: boolean }
@@ -17,6 +34,7 @@ export type PresentationBlock =
     kind: "diff";
     document: import("./presentation/tools/types.ts").SafeDiffDocument;
   }
+  | PlanUpdateBlock
   | {
     id?: string;
     kind: "status-line";

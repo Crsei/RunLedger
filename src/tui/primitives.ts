@@ -7,6 +7,7 @@ import {
   type TranscriptScrollPresentation,
 } from "./opentui/component-runtime.ts";
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
+import { planUpdatePlainText } from "./opentui/plan-update-renderable.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock } from "./presentation.ts";
 import type { TuiAction } from "./application/action.ts";
@@ -622,6 +623,7 @@ function blockTextForTerminal(block: PresentationBlock): string {
 	...block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => `${line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " "} ${line.text.text}`)),
   ].join("\n");
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
+  if (block.kind === "plan-update") return planUpdatePlainText(block);
   return block.content;
 }
 

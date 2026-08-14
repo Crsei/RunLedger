@@ -13,6 +13,8 @@ import type {
 	SafeDiffDocument,
 	SafeDiffHunk,
 	SafeDiffLine,
+	SafePlanStepStatus,
+	SafePlanUpdate,
 	SafeShellChunk,
 	SafeToolChip,
 	SafeToolInputMetadata,
@@ -47,6 +49,33 @@ export function boundedToolText(value: unknown, maxBytes = TOOL_TEXT_BOUND_BYTES
 	};
 }
 
+/** TodoWrite 输入 -> 有界 plan update；不把 raw args 直接交给 renderer。 */
+export function projectPlanUpdate(input: unknown): SafePlanUpdate {
+	if (!isRecord(input)) return { steps: [] };
+	const rawTodos = Array.isArray(input.todos) ? input.todos : [];
+	const steps = rawTodos.flatMap((todo): SafePlanUpdate["steps"] => {
+		if (!isRecord(todo)) return [];
+		const content = typeof todo.content === "string" ? todo.content : typeof todo.text === "string" ? todo.text : "";
+		if (content.length === 0) return [];
+		return [{ text: boundedToolText(content), status: planStepStatus(todo.status) }];
+	});
+	const explanation = typeof input.explanation === "string" ? boundedToolText(input.explanation) : undefined;
+	return {
+		...(explanation === undefined ? {} : { explanation }),
+		steps,
+	};
+}
+
+function planStepStatus(value: unknown): SafePlanStepStatus {
+	switch (value) {
+		case "completed": return "completed";
+		case "in_progress":
+		case "in-progress": return "in-progress";
+		case "pending": return "pending";
+		default: return "pending";
+	}
+}
+
 function safeCount(value: unknown): SafeCount {
 	return typeof value === "number" && Number.isSafeInteger(value)
 		? { state: "known", value }
@@ -65,6 +94,11 @@ export function rendererForTool(toolName: string): SafeToolRenderer {
 		case "bash":
 		case "sh":
 			return "shell";
+		case "TodoWrite":
+		case "todo-write":
+		case "todo":
+		case "plan":
+			return "plan";
 		case "write":
 			return "write";
 		case "edit":
@@ -132,18 +166,20 @@ export function projectInputMetadata(toolName: string, args: unknown): SafeToolI
 export function projectToolStart(toolName: string, args: unknown, startedAt: string): SafeToolPresentation {
 	const title = boundedToolText(toolName, LABEL_BOUND_BYTES);
 	const input = projectInputMetadata(toolName, args);
+	const renderer = rendererForTool(toolName);
 	const chips: SafeToolChip[] = [
 		{ label: { text: "running", truncated: false, byteLength: 7 }, tone: "neutral" },
 	];
 	if (input.kind === "shell") {
 		chips.push({ label: { text: "shell", truncated: false, byteLength: 5 }, tone: "neutral" });
 	}
-		return {
-			renderer: rendererForTool(toolName),
-			title,
-			input,
-			chips,
+	return {
+		renderer,
+		title,
+		input,
+		chips,
 		body: [],
+		...(renderer === "plan" ? { plan: projectPlanUpdate(args) } : {}),
 		timestamps: { startedAt },
 	};
 }
@@ -201,7 +237,7 @@ export function projectToolEnd(
 	});
 	const resultText = toolResultText(result.content);
 	const body = [...presentation.body];
-	if (presentation.renderer !== "shell" && resultText.length > 0 && !body.some((block) => block.kind === "text" && block.content.text === resultText)) {
+	if (presentation.renderer !== "shell" && presentation.renderer !== "plan" && resultText.length > 0 && !body.some((block) => block.kind === "text" && block.content.text === resultText)) {
 		body.push({ kind: "text", content: boundedToolText(resultText, TOOL_TEXT_BOUND_BYTES) });
 	}
 	let metadata = projectToolResultMetadata({ toolName: presentation.title.text, details: result.details, content: result.content });

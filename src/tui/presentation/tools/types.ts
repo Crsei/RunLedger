@@ -10,6 +10,7 @@ export type SafeCount = TuiField<number>;
 
 export type SafeToolRenderer =
 	| "generic"
+	| "plan"
 	| "edit"
 	| "write"
 	| "read"
@@ -62,6 +63,18 @@ export interface SafeShellChunk {
 	readonly safeSgrText?: SafeBoundedText;
 }
 
+export type SafePlanStepStatus = "pending" | "in-progress" | "completed";
+
+export interface SafePlanStep {
+	readonly text: SafeBoundedText;
+	readonly status: SafePlanStepStatus;
+}
+
+export interface SafePlanUpdate {
+	readonly explanation?: SafeBoundedText;
+	readonly steps: readonly SafePlanStep[];
+}
+
 export type SafeToolResultMetadata =
 	| { readonly kind: "generic" }
 	| { readonly kind: "edit"; readonly document?: SafeDiffDocument; readonly addedLines?: SafeCount; readonly removedLines?: SafeCount }
@@ -102,6 +115,7 @@ export interface SafeToolPresentation {
 	readonly input?: SafeToolInputMetadata;
 	readonly chips: readonly SafeToolChip[];
 	readonly body: readonly SafeToolBodyBlock[];
+	readonly plan?: SafePlanUpdate;
 	readonly result?: SafeToolResultMetadata;
 	readonly error?: SafeBoundedText;
 	readonly usage?: SafeToolUsageView;

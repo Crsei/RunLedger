@@ -44,6 +44,16 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 		}
 		case "tool": {
 			const presentation = row.presentation.state === "known" ? row.presentation.value : undefined;
+			if (presentation?.renderer === "plan") {
+				const plan = presentation.plan;
+				if (plan === undefined || (plan.steps.length === 0 && plan.explanation === undefined)) return [];
+				return [{
+					id: baseId,
+					kind: "plan-update",
+					explanation: plan.explanation,
+					steps: plan.steps,
+				}];
+			}
 			if (presentation?.renderer === "shell" && presentation.input?.kind === "shell") {
 				const result = presentation.result?.kind === "shell" ? presentation.result : undefined;
 				return [{

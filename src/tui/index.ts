@@ -134,6 +134,7 @@ export {
 
 // Framework-neutral passive data contracts. These exports intentionally carry no runtime values.
 export type * from "./application/types.ts";
+export type { PlanStepStatus, PlanStepView, PlanUpdateBlock, PresentationBlock } from "./presentation.ts";
 export type * from "./presentation/types.ts";
 export type * from "./presentation/tools/types.ts";
 export type * from "./timeline/types.ts";
@@ -179,6 +180,7 @@ export { createManagedProcessOverlayFromRenderer } from "./opentui/process-overl
 // 当前仍由 production composition 使用的业务组件
 export { LoadedResourcesComponent, type LoadedResourceKind, type LoadedResourceEntry, type LoadedResourcesComponentProps } from "./components/loaded-resources.ts";
 export { ChatContainer } from "./components/chat-container.ts";
+export { PlanUpdateRenderable, type PlanUpdateRenderableOptions } from "./opentui/plan-update-renderable.ts";
 
 // M2 主题工厂
 export { makeMarkdownTheme, makeSelectListTheme, makeEditorTheme } from "./theme/factories.ts";
