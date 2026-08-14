@@ -1,6 +1,6 @@
 # 有界根级子 Agent 系统实施计划
 
-> 状态：**in progress**。M0、M1 已闭合；M2 Task 4 已实现并完成 focused 验证；M3–M6 尚未开始。
+> 状态：**in progress**。M0、M1 已闭合；M2 Task 4 与 M3 Task 5–6 已实现并完成 focused 验证；M4–M6 尚未开始。
 > 建立日期：2026-08-14
 > 重写日期：2026-08-15
 > 目标分支：`worktree/bounded-multi-agent-system`
@@ -15,6 +15,7 @@
 - M1 Task 3 已提交为 `fd32942`：原子 `beginCommandAttempt`、稳定 command identity、replay/conflict/recovery、`agent_spawn` recovery barrier。
 - M2 Task 4 已实现 `graph-events.ts`、`graph-projection.ts`、`graph-store.ts`，并将 `agent.root_registered`、`agent.activated`、`agent.reconciliation_required` 接入 current Runtime event vocabulary；graph revision 与普通 Session event head 分离。
 - M3 Task 5 已实现 `capability-subset.ts`、`child-model-runtime.ts`，并由 `assembleSessionDomain()` 登记 production tool source、同一 model/router factory；child capability 只读投影不缩减 parent 工具集。
+- M3 Task 6 已实现 `child-runtime.ts`：prepare/activate barrier、Session authorization、Agent budget、实际 loop event usage、abort/cancel/dispose、activation certain/uncertain 分类和 UTF-8 bounded report。
 - M2 focused gate：`npx vitest run tests/runtime/multi-agent/graph-projection.test.ts tests/runtime/multi-agent/graph-store.test.ts tests/runtime-contracts/event-contracts.test.ts tests/runtime-contracts/schema.test.ts --no-file-parallelism`，18 tests passed；`npx tsc --noEmit -p tsconfig.json` passed；`git diff --check` passed。
 - 当前 `npm run check` 已通过其前置 boundaries，但被既有无关文件 `src/tui/opentui/exec-renderable.ts` 的 forbidden ANSI foreground 检查阻断；该文件不属于本计划，未修改。
 - 完整 `npm test` 本轮 Vitest 阶段为 355 个文件通过、1 个跳过、1 个失败（2117 tests passed、3 skipped）；唯一失败仍是上述既有 TUI boundary suite，`tests/cli/multi-client/acceptance-runners.test.ts` 的 4 个测试已通过。由于 Vitest failure 使 npm script 短路，单独运行 `npm run test:tui-native` 时断言全部通过后发生 Bun 1.3.14 原生 segmentation fault；`npm run build` passed。
@@ -608,15 +609,15 @@ tests/integration/
 - Create: `src/runtime/agents/child-runtime.ts`
 - Test: `tests/runtime/multi-agent/child-runtime.test.ts`
 
-- [ ] RED：prepare 零 model/tool 调用；activate 后才允许第一轮。
-- [ ] RED：max model turns、max tool calls、active duration、abort before activation、abort during model、abort during tool、report byte overflow。
-- [ ] RED：activation certain rejection 与 uncertain throw 返回不同结果。
-- [ ] RED：completion 统计来自实际 loop events，不接受外部伪造 usage。
-- [ ] GREEN：复用 `Agent` + `runAgentLoop` 现有 budget；只为精确 tool-call count 增加 child hook。
-- [ ] GREEN：报告先 canonical digest/byte validation，再生成 completion；dispose 可幂等调用。
-- [ ] Run: `npx vitest run tests/runtime/multi-agent/child-runtime.test.ts tests/agent-loop.test.ts tests/runtime/agent-loop-overflow.test.ts`
-- [ ] Run: `npm run check && git diff --check`
-- [ ] Commit: `feat(agents): add prepared in-process child runtime`
+- [x] RED：prepare 零 model/tool 调用；activate 后才允许第一轮。
+- [x] RED：max model turns、max tool calls、active duration、abort before activation、abort during model、abort during tool、report byte overflow。
+- [x] RED：activation certain rejection 与 uncertain throw 返回不同结果。
+- [x] RED：completion 统计来自实际 loop events，不接受外部伪造 usage。
+- [x] GREEN：复用 `Agent` + `runAgentLoop` 现有 budget；只为精确 tool-call count 增加 child hook。
+- [x] GREEN：报告先 canonical digest/byte validation，再生成 completion；dispose 可幂等调用。
+- [x] Run: `npx vitest run tests/runtime/multi-agent/child-runtime.test.ts tests/agent-loop.test.ts tests/runtime/agent-loop-overflow.test.ts --no-file-parallelism`（18 tests passed，含 child authorization/dispose 回归）。
+- [x] Run: `npm run check` 前置 boundaries、contract consumers、tsc 通过；完整 gate 被既有未修改的 `src/tui/opentui/exec-renderable.ts` forbidden ANSI foreground 检查阻断；`git diff --check` passed。
+- [x] Commit: `feat(agents): add prepared in-process child runtime`
 
 **M3 closure**
 
