@@ -10,7 +10,14 @@
  * - command intent 不可变,attempt receipt 只 append 不原地改写。
  */
 
-import type { OwnerFence, CommandAttemptReceipt, CommandIntent, SessionCheckpointDescriptor } from "../../runtime/session-owner/types.ts";
+import type {
+	CommandAttemptBeginInput,
+	CommandAttemptBeginResult,
+	CommandAttemptReceipt,
+	CommandIntent,
+	OwnerFence,
+	SessionCheckpointDescriptor,
+} from "../../runtime/session-owner/types.ts";
 import { createRuntimeId, type SessionId } from "../../runtime/protocol/ids.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
@@ -518,6 +525,73 @@ export class SessionStore {
 	}
 
 	/** §4.3:不可变 command intent。同 ID 重复且 digest 一致视为幂等成功。 */
+	public beginCommandAttempt(fence: OwnerFence, input: CommandAttemptBeginInput): CommandAttemptBeginResult {
+		let result: CommandAttemptBeginResult | undefined;
+		this.db.withImmediateTransactionSync((tx) => {
+			tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
+			if (!verifyOwnerFence(tx, fence)) throw new SessionStoreError("owner_fenced", "owner fenced");
+			if (input.sessionId !== fence.sessionId || input.originGeneration !== fence.generation) {
+				throw new SessionStoreError("invalid_input", "attempt identity does not match the current owner fence");
+			}
+			if (!input.commandId.startsWith("command_") || !input.attemptId.startsWith("attempt_")) {
+				throw new SessionStoreError("invalid_input", "attempt identity has an invalid runtime id");
+			}
+
+			const existing = tx.querySingle(
+				"SELECT request_digest FROM commands WHERE session_id = ? AND command_id = ?",
+				[input.sessionId, input.commandId],
+			);
+			if (existing !== undefined) {
+				if (String(existing.request_digest) !== input.requestDigest.digest) {
+					result = { status: "conflict", commandId: input.commandId, attemptId: input.attemptId };
+					return;
+				}
+				const receipts = tx
+					.queryAll(
+						"SELECT * FROM command_attempt_receipts WHERE session_id = ? AND command_id = ? ORDER BY created_at_ms, receipt_id",
+						[input.sessionId, input.commandId],
+					)
+					.map((row) => rowToAttemptReceipt(row));
+				const latest = receipts.at(-1);
+				if (latest !== undefined && isReplayableAttemptOutcome(latest.outcome)) {
+					result = {
+						status: "replay_committed",
+						commandId: input.commandId,
+						attemptId: latest.attemptId,
+						receipt: latest,
+					};
+					return;
+				}
+				result = {
+					status: "recovery_required",
+					commandId: input.commandId,
+					attemptId: latest?.attemptId ?? input.attemptId,
+					existingReceipts: receipts,
+				};
+				return;
+			}
+
+			tx.runSync(
+				"INSERT INTO commands (session_id, command_id, request_digest, origin_generation, created_at_ms) VALUES (?, ?, ?, ?, ?)",
+				[input.sessionId, input.commandId, input.requestDigest.digest, input.originGeneration, input.createdAtMs],
+			);
+			const receiptId = createRuntimeId(
+				"receipt",
+				`start-${canonicalDigest({ sessionId: input.sessionId, commandId: input.commandId, attemptId: input.attemptId }).slice(0, 32)}`,
+			);
+			tx.runSync(
+				`INSERT INTO command_attempt_receipts
+				 (receipt_id, session_id, command_id, attempt_id, origin_generation, settled_generation,
+				  effect_class, outcome, result_json, result_digest, evidence_digest, created_at_ms)
+				 VALUES (?, ?, ?, ?, ?, NULL, ?, 'started', NULL, NULL, NULL, ?)`,
+				[receiptId, input.sessionId, input.commandId, input.attemptId, input.originGeneration, input.effectClass, input.createdAtMs],
+			);
+			result = { status: "started", commandId: input.commandId, attemptId: input.attemptId };
+		});
+		return result!;
+	}
+
+	/** §4.3:不可变 command intent。同 ID 重复且 digest 一致视为幂等成功。 */
 	public recordCommandIntent(fence: OwnerFence, intent: CommandIntent): void {
 		this.db.withImmediateTransactionSync((tx) => {
 			tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
@@ -741,6 +815,10 @@ function releaseReason(payloadJson: string): string | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+function isReplayableAttemptOutcome(outcome: CommandAttemptReceipt["outcome"]): boolean {
+	return outcome === "committed" || outcome === "rejected" || outcome === "verified";
 }
 
 function rowToAttemptReceipt(row: Record<string, unknown>): CommandAttemptReceipt {

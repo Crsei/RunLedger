@@ -1,16 +1,19 @@
 import { RGBA, StyledText, TextAttributes, TextRenderable, type RenderContext, type TextChunk, type TextOptions } from "@opentui/core";
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "../mermaid/display-width.ts";
 import { formatExecTruncationHint, EXEC_CONTINUATION_MAX_LINES, EXEC_CONTINUATION_PREFIX, EXEC_OUTPUT_CONTINUATION_INDENT, EXEC_OUTPUT_MAX_LINES, EXEC_OUTPUT_PREFIX } from "./block-layout.ts";
+import type { HighlightColor } from "../highlight/contracts.ts";
 import { highlightResultToStyledText } from "../highlight/contracts.ts";
+import { highlightColorToRgba } from "../highlight/status-style.ts";
 import type { SyntaxHighlightService } from "../highlight/service.ts";
 import type { SyntaxThemeController, SyntaxThemeSnapshot } from "../highlight/theme-controller.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import { ansiToStyledText } from "./ansi-styled-text.ts";
 import type { HighlightAdmission } from "./syntect-code-block-renderable.ts";
 
-type ExecBlock = Extract<PresentationBlock, { readonly kind: "exec" }>;
+export type ExecBlock = Extract<PresentationBlock, { readonly kind: "exec" }>;
 type CommandBlock = Extract<PresentationBlock, { readonly kind: "command" }>;
 export type ExecDisplayBlock = ExecBlock | CommandBlock;
+export type ExecForegroundResolver = (scopes: readonly string[]) => HighlightColor | undefined;
 
 export type ExecRenderableOptions = Omit<TextOptions, "content"> & {
 	readonly block: ExecDisplayBlock;
@@ -92,7 +95,13 @@ export class ExecRenderable extends TextRenderable {
 		if (width === this.projectedWidth && this.content.chunks.length > 0) return;
 		this.projectedWidth = width;
 		const command = stripShellLoginWrapper(this.block.command);
-		this.content = styledExecText(this.block, command, this.highlightedCommand, width);
+		this.content = styledExecText(
+			this.block,
+			command,
+			this.highlightedCommand,
+			width,
+			(scopes) => this.highlightService.foregroundForScopes(this.pendingTheme.activeName, scopes),
+		);
 	}
 
 	private scheduleIfAdmitted(): void {
@@ -266,7 +275,13 @@ function wrapPlainLine(value: string, width: number): readonly string[] {
 	return lines.length === 0 ? [""] : lines;
 }
 
-function styledExecText(block: ExecDisplayBlock, command: string, highlighted: StyledText | undefined, width: number): StyledText {
+function styledExecText(
+	block: ExecDisplayBlock,
+	command: string,
+	highlighted: StyledText | undefined,
+	width: number,
+	resolveForeground: ExecForegroundResolver,
+): StyledText {
 	const source = highlighted ?? ansiToStyledText(command);
 	const commandLines = block.kind === "command"
 		? styledCommandLines(source, width, "$ ", EXEC_CONTINUATION_PREFIX, EXEC_CONTINUATION_MAX_LINES, RGBA.fromIndex(5))
@@ -276,7 +291,7 @@ function styledExecText(block: ExecDisplayBlock, command: string, highlighted: S
 			`${mainStatusBullet(block)} ${block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `,
 			block.continuationPrefix ?? EXEC_CONTINUATION_PREFIX,
 			block.continuationMaxLines ?? EXEC_CONTINUATION_MAX_LINES,
-			execPrefixColor(block),
+			execPrefixColor(block, resolveForeground),
 		);
 	if (block.kind === "command") return flattenStyledLines(commandLines);
 	if (block.background === true) appendStyledBackground(commandLines, width);
@@ -380,10 +395,20 @@ function withPrefix(prefix: string, chunks: readonly TextChunk[], dim: boolean, 
 	return { chunks: [prefixChunk, ...chunks], plain: `${prefix}${chunks.map((chunk) => chunk.text).join("")}` };
 }
 
-function execPrefixColor(block: ExecBlock): RGBA {
-	if (block.status === "succeeded") return RGBA.fromIndex(2);
-	if (["failed", "cancelled", "aborted"].includes(block.status)) return RGBA.fromIndex(1);
-	return RGBA.fromIndex(3);
+export function execPrefixColor(block: ExecBlock, resolveForeground: ExecForegroundResolver): RGBA {
+	return highlightColorToRgba(resolveForeground(execPrefixScopes(block)) ?? execPrefixFallbackColor(block));
+}
+
+function execPrefixScopes(block: ExecBlock): readonly string[] {
+	if (block.status === "succeeded") return ["markup.inserted", "string.other", "success"];
+	if (["failed", "cancelled", "aborted"].includes(block.status)) return ["invalid", "markup.deleted", "error"];
+	return ["markup.warning", "warning", "keyword.warning"];
+}
+
+function execPrefixFallbackColor(block: ExecBlock): HighlightColor {
+	if (block.status === "succeeded") return { kind: "indexed", index: 2 };
+	if (["failed", "cancelled", "aborted"].includes(block.status)) return { kind: "indexed", index: 1 };
+	return { kind: "indexed", index: 3 };
 }
 
 function dimLine(chunks: readonly TextChunk[]): StyledLine {

@@ -93,6 +93,17 @@ describe("parseArgs model/thinking/session-dir", () => {
 });
 
 describe("parseArgs debug / unknown / positional", () => {
+  it("--experimental-multi-agent defaults false and accepts an explicit enable", () => {
+    expect(parseArgs([]).args.experimentalMultiAgent).toBe(false);
+    expect(parseArgs(["--experimental-multi-agent"]).args.experimentalMultiAgent).toBe(true);
+  });
+
+  it("--experimental-multi-agent rejects an invalid explicit value", () => {
+    const result = parseArgs(["--experimental-multi-agent=maybe"]);
+    expect(result.error).toContain("--experimental-multi-agent");
+    expect(result.args.experimentalMultiAgent).toBe(false);
+  });
+
   it("--debug 设 debug=true", () => {
     expect(parseArgs(["--debug"]).args.debug).toBe(true);
   });

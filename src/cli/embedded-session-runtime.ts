@@ -227,8 +227,18 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			};
 	let domain: SessionDomainPort | undefined;
 	try {
-		domain = domainOptions === undefined ? undefined : await assembleSessionDomain(domainOptions, sessionId, store, result.fence, restored, attemptPort, runBudgetUsage);
-		if (crashTakeover) await domain?.process?.recoverUnattached?.();
+		domain = domainOptions === undefined
+			? undefined
+			: await assembleSessionDomain(
+				domainOptions,
+				sessionId,
+				store,
+				result.fence,
+				restored,
+				attemptPort,
+				runBudgetUsage,
+				crashTakeover ? "dead" : undefined,
+			);
 	} catch (error) {
 		await workspace?.release("error").catch(() => undefined);
 		throw error;
@@ -255,6 +265,14 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		}),
 	});
 	try {
+		if (crashTakeover) {
+			const multiAgentRecovery = await domain?.multiAgent?.recover?.();
+			if (multiAgentRecovery !== undefined && !multiAgentRecovery.ok) {
+				throw new Error(`${multiAgentRecovery.error.code}: ${multiAgentRecovery.error.message}`);
+			}
+			await domain?.process?.recoverUnattached?.();
+			if (multiAgentRecovery !== undefined) runtime.recoveryAssess();
+		}
 		await domain?.start?.();
 		server.bindController(runtime);
 		runtime.start();

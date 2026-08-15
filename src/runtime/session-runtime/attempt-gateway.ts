@@ -16,15 +16,37 @@
  *   domain 在 SessionRuntime 构造前装配,绑定发生在构造时)。
  */
 
-import type { CommandAttemptOutcome, CommandEffectClass } from "../session-owner/types.ts";
+import type {
+	CommandAttemptBeginResult,
+	CommandAttemptReceipt,
+	CommandAttemptOutcome,
+	CommandEffectClass,
+} from "../session-owner/types.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import type { AttemptId, CommandId, SessionId } from "../protocol/ids.ts";
 
+export interface StableAttemptRequest {
+	readonly commandId: CommandId;
+	readonly attemptId: AttemptId;
+	readonly effectClass: CommandEffectClass;
+	readonly requestDigest: RuntimeDigest;
+}
+
+export type AttemptPortBeginResult =
+	| { readonly attemptId: AttemptId; readonly commandId: CommandId }
+	| CommandAttemptBeginResult
+	| { readonly error: "recovery_barrier_active" | "owner_fenced" };
+
 /** SessionRuntime 暴露给 gateway 的 attempt 生命周期入口。 */
 export interface AttemptPort {
-	beginAttempt(effectClass: CommandEffectClass, requestDigest?: RuntimeDigest): { readonly attemptId: AttemptId; readonly commandId: CommandId } | { readonly error: "recovery_barrier_active" | "owner_fenced" };
+	beginAttempt(
+		effectClassOrRequest: CommandEffectClass | StableAttemptRequest,
+		requestDigest?: RuntimeDigest,
+	): AttemptPortBeginResult;
 	settleAttempt(attemptId: AttemptId, outcome: CommandAttemptOutcome, resultDigest?: RuntimeDigest, evidenceDigest?: RuntimeDigest): { readonly ok: true } | { readonly ok: false; readonly code: string };
+	/** Crash recovery 使用的只读最新 unresolved receipt projection。 */
+	listUnresolvedAttempts?(): readonly CommandAttemptReceipt[];
 }
 
 export class AttemptSettlementError extends Error {
@@ -40,7 +62,7 @@ export class AttemptSettlementError extends Error {
  * 解循环依赖:domain 装配发生在 SessionRuntime 构造之前,工具执行必然发生在
  * 构造之后;gateway 持有一个可绑定引用,构造时由 SessionRuntime 写入。
  */
-export class LateBoundAttemptPort {
+export class LateBoundAttemptPort implements AttemptPort {
 	private current: AttemptPort | undefined;
 
 	public bind(port: AttemptPort): void {
@@ -49,6 +71,26 @@ export class LateBoundAttemptPort {
 
 	public get(): AttemptPort | undefined {
 		return this.current;
+	}
+
+	public beginAttempt(
+		effectClassOrRequest: CommandEffectClass | StableAttemptRequest,
+		requestDigest?: RuntimeDigest,
+	): AttemptPortBeginResult {
+		return this.current?.beginAttempt(effectClassOrRequest, requestDigest) ?? { error: "owner_fenced" };
+	}
+
+	public settleAttempt(
+		attemptId: AttemptId,
+		outcome: CommandAttemptOutcome,
+		resultDigest?: RuntimeDigest,
+		evidenceDigest?: RuntimeDigest,
+	): { readonly ok: true } | { readonly ok: false; readonly code: string } {
+		return this.current?.settleAttempt(attemptId, outcome, resultDigest, evidenceDigest) ?? { ok: false, code: "owner_fenced" };
+	}
+
+	public listUnresolvedAttempts(): readonly CommandAttemptReceipt[] {
+		return this.current?.listUnresolvedAttempts?.() ?? [];
 	}
 }
 
@@ -65,6 +107,12 @@ export function gatedExecutionEnv(base: ExecutionEnv, port: () => AttemptPort | 
 		const begun = target.beginAttempt(effectClass, requestDigest);
 		if ("error" in begun) {
 			throw new Error(`recovery barrier active (${begun.error}); side effect not executed`);
+		}
+		if ("status" in begun && begun.status !== "started") {
+			throw new Error(`attempt cannot execute: ${begun.status}`);
+		}
+		if (!("attemptId" in begun)) {
+			throw new Error("attempt start did not return an attempt identity");
 		}
 		let result: T;
 		try {

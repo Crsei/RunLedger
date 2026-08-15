@@ -26,7 +26,7 @@ export type BarrierState = "closed" | "open";
 export const BARRIER_SAFE_READONLY: readonly CommandEffectClass[] = ["readonly"] as const;
 
 /** side-effect effect class:barrier open 时一律拒绝。 */
-export const BARRIER_SIDE_EFFECT_CLASSES: readonly CommandEffectClass[] = ["workspace_mutation", "process_spawn", "external_mutation"] as const;
+export const BARRIER_SIDE_EFFECT_CLASSES: readonly CommandEffectClass[] = ["workspace_mutation", "process_spawn", "external_mutation", "agent_spawn"] as const;
 
 export const UNRESOLVED_ATTEMPT_OUTCOMES = ["started", "interrupted", "uncertain"] as const;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canonicalDigest } from "../../src/runtime/protocol/canonical-json.ts";
-import { RUNTIME_EVENT_TYPES } from "../../src/runtime/protocol/events.ts";
+import { RUNTIME_EVENT_TYPES, type RuntimeEvent, type RuntimeEventType } from "../../src/runtime/protocol/events.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import {
 	RUNTIME_EVENT_PAYLOAD_REQUIREMENTS,
@@ -65,12 +65,52 @@ function sessionCreatedEvent() {
 	return { ...eventWithoutHash, currentEventHash };
 }
 
+function agentProjectionEvent(type: RuntimeEventType, payload: Record<string, unknown>): RuntimeEvent {
+	const eventWithoutHash = {
+		authorityId: createRuntimeId("authority", "agent-contract"),
+		tenantId: createRuntimeId("tenant", "agent-contract"),
+		principalId: createRuntimeId("principal", "agent-contract"),
+		eventId: createRuntimeId("event", `agent-${type.replaceAll(".", "-")}`),
+		stream: {
+			scope: "session" as const,
+			streamId: createRuntimeId("session", "agent-contract"),
+			sessionId: createRuntimeId("session", "agent-contract"),
+		},
+		sequence: 0,
+		timestamp: "2026-08-01T00:00:00.000Z",
+		type,
+		previousEventHash: null,
+		payloadDigest: sha256(payload),
+		traceId: createRuntimeId("trace", `agent-${type.replaceAll(".", "-")}`),
+		payload,
+	};
+	return {
+		...eventWithoutHash,
+		currentEventHash: sha256({
+			authorityId: eventWithoutHash.authorityId,
+			tenantId: eventWithoutHash.tenantId,
+			principalId: eventWithoutHash.principalId,
+			eventId: eventWithoutHash.eventId,
+			stream: eventWithoutHash.stream,
+			sequence: eventWithoutHash.sequence,
+			timestamp: eventWithoutHash.timestamp,
+			type: eventWithoutHash.type,
+			previousEventHash: eventWithoutHash.previousEventHash,
+			payloadDigest: eventWithoutHash.payloadDigest,
+			traceId: eventWithoutHash.traceId,
+		}),
+	} as unknown as RuntimeEvent;
+}
+
 describe("Runtime exact event contract", () => {
 	it("freezes all planned event names without retired aliases", () => {
 		expect(new Set(RUNTIME_EVENT_TYPES).size).toBe(RUNTIME_EVENT_TYPES.length);
 		expect(RUNTIME_EVENT_TYPES).toContain("session.created");
 		expect(RUNTIME_EVENT_TYPES).toContain("session.handoff_committed");
 		expect(RUNTIME_EVENT_TYPES).toContain("task.definition_revised");
+		expect(RUNTIME_EVENT_TYPES).toContain("agent.root_registered");
+		expect(RUNTIME_EVENT_TYPES).toContain("agent.activated");
+		expect(RUNTIME_EVENT_TYPES).toContain("agent.reconciliation_required");
 		expect(RUNTIME_EVENT_TYPES).toContain("agent.merge_committed");
 		expect(RUNTIME_EVENT_TYPES).toContain("capability.rate_limit_recorded");
 		expect(RUNTIME_EVENT_TYPES).toContain("episode.seal_recorded");
@@ -95,6 +135,46 @@ describe("Runtime exact event contract", () => {
 			"refs",
 			"expectedRevision",
 		]);
+		expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS["agent.root_registered"]).toEqual([
+			"transition",
+			"idempotencyKey",
+		]);
+		expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS["agent.activated"]).toEqual([
+			"transition",
+			"refs",
+			"expectedRevision",
+		]);
+		expect(RUNTIME_EVENT_PAYLOAD_REQUIREMENTS["agent.reconciliation_required"]).toEqual([
+			"transition",
+			"refs",
+			"expectedRevision",
+			"reasonCode",
+		]);
+
+		expect(validateRuntimeEvent(agentProjectionEvent("agent.root_registered", {
+			subject: { kind: "agent", id: createRuntimeId("agent", "agent-contract-root") },
+			correlationId: createRuntimeId("trace", "agent-agent-root_registered"),
+			effect: "committed",
+			idempotencyKey: "root-register",
+			transition: { revision: 0, previousStatus: null, nextStatus: "running" },
+		}))).toMatchObject({ ok: true });
+		expect(validateRuntimeEvent(agentProjectionEvent("agent.activated", {
+			subject: { kind: "agent", id: createRuntimeId("agent", "agent-contract-child") },
+			correlationId: createRuntimeId("trace", "agent-agent-activated"),
+			effect: "committed",
+			transition: { revision: 1, previousStatus: "prepared", nextStatus: "running" },
+			expectedRevision: 0,
+			refs: [{ subjectKind: "receipt", digest: sha256({ activation: true }) }],
+		}))).toMatchObject({ ok: true });
+		expect(validateRuntimeEvent(agentProjectionEvent("agent.reconciliation_required", {
+			subject: { kind: "agent", id: createRuntimeId("agent", "agent-contract-child") },
+			correlationId: createRuntimeId("trace", "agent-agent-reconciliation_required"),
+			effect: "uncertain",
+			transition: { revision: 2, previousStatus: "running", nextStatus: "recovery_required" },
+			expectedRevision: 1,
+			reasonCode: "activation_uncertain",
+			refs: [{ subjectKind: "details", digest: sha256({ uncertain: true }) }],
+		}))).toMatchObject({ ok: true });
 	});
 
 	it("accepts a type-bound exact payload and rejects unknown fields", () => {

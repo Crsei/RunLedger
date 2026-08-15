@@ -57,6 +57,10 @@ import {
 	createGovernedLspSpawner,
 	createGovernedLspWriteOperations,
 } from "./lsp-composition.ts";
+import { createSessionProductionToolSource } from "../agents/capability-subset.ts";
+import { createMultiAgentDomain, type SessionMultiAgentPolicySources } from "../agents/domain.ts";
+import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
+import type { PreviousOwnerLiveness } from "../agents/supervisor.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -74,6 +78,10 @@ export interface SessionDomainCompositionOptions {
 	readonly bashClassificationAudit?: BashClassificationAuditPort;
 	/** 可选:AGENTS 拼接(缺省读 <cwd>/AGENTS.md)。 */
 	readonly systemPrompt?: string;
+	/** Runtime gate + preserved user/workspace policy layers for M1 delegation. */
+	readonly multiAgent?: SessionMultiAgentPolicySources;
+	/** Host-controlled child provider seam; it must preserve the governed prepare spec. */
+	readonly multiAgentChildRuntimeProvider?: ChildRuntimeProviderPort;
 }
 
 /** 在 SessionRuntime 内装配真实 InteractiveSessionController(单一 Session 域)。 */
@@ -85,6 +93,7 @@ export async function assembleSessionDomain(
 	restored: Extract<RestoreOutcome, { readonly ok: true }>,
 	attemptPort?: LateBoundAttemptPort,
 	runBudgetUsage?: AgentRunBudgetUsage,
+	multiAgentPreviousOwnerLiveness?: PreviousOwnerLiveness,
 ): Promise<SessionDomainPort> {
 	const ledger = new SqliteLedgerSink({ store, fence: () => fence });
 	const replay = await replayDomain(ledger, restored);
@@ -162,6 +171,7 @@ export async function assembleSessionDomain(
 		baseToolNames: baseTools.map((tool) => tool.name),
 		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
+	const composedTools = [...baseTools, ...extensions.tools];
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -171,7 +181,7 @@ export async function assembleSessionDomain(
 		replay,
 		ledger,
 		overrides: options.overrides,
-		tools: [...baseTools, ...extensions.tools],
+		tools: composedTools,
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
@@ -185,6 +195,35 @@ export async function assembleSessionDomain(
 			sources: extensions.contextSources(input.model.contextWindow),
 		}),
 	});
+	const childRuntime = {
+		productionToolSource: createSessionProductionToolSource({
+			sessionId,
+			cwd: options.cwd,
+			executionEnv,
+			authorizationPolicy: security.authorizationPolicy,
+			tools: composedTools,
+		}),
+		modelRuntimeFactory: controller.createChildModelRuntimeFactory(),
+	};
+	const multiAgentResult = options.multiAgent === undefined
+		? { ok: true as const, value: undefined }
+		: await createMultiAgentDomain({
+			sessionId,
+			ownerGeneration: fence.generation,
+			store,
+			fence,
+			policySources: options.multiAgent,
+			childRuntime: {
+				systemPrompt: options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents),
+				productionToolSource: childRuntime.productionToolSource,
+				modelRuntimeFactory: childRuntime.modelRuntimeFactory,
+			},
+			attemptPort,
+			...(multiAgentPreviousOwnerLiveness === undefined ? {} : { previousOwnerLiveness: multiAgentPreviousOwnerLiveness }),
+			...(options.multiAgentChildRuntimeProvider === undefined ? {} : { provider: options.multiAgentChildRuntimeProvider }),
+		});
+	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
+	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
@@ -195,6 +234,8 @@ export async function assembleSessionDomain(
 	});
 	return {
 		controller,
+		childRuntime,
+		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
 		process,
 		resources: extensions.resources,
 		planInspection,

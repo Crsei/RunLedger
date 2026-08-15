@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 export interface ExecutionBoundaryViolation {
 	file: string;
-	kind: "raw-fs" | "raw-process" | "raw-network" | "raw-background" | "provider-execution-port";
+	kind: "raw-fs" | "raw-process" | "raw-network" | "raw-background" | "provider-execution-port" | "multi-agent-raw-boundary";
 }
 
 /**
@@ -58,6 +58,11 @@ export const TOOLS_LOCAL_ENV_DEFAULT_ALLOWLIST: readonly string[] = [
 	"src/runtime/tools/local-defaults.ts",
 ];
 
+/** 旧 Anthropic helper 只保留给历史/demo 入口，不属于 Session Owner child composition。 */
+export const MULTI_AGENT_LEGACY_HELPER_ALLOWLIST: readonly string[] = [
+	"src/runtime/agents/create-anthropic-agent.ts",
+];
+
 const BOUNDARY_PATTERNS: readonly [RegExp, ExecutionBoundaryViolation["kind"]][] = [
 	[/from [\"'](?:node:)?fs(?:\/promises)?[\"']/, "raw-fs"],
 	[/from [\"']node:child_process[\"']/, "raw-process"],
@@ -101,6 +106,14 @@ const PROVIDER_EXECUTION_PORT_PATTERNS: readonly [RegExp, ExecutionBoundaryViola
 
 const PROVIDER_DIRECTORY_PATTERN = /^src\/extensions\/[^/]+\/providers\//u;
 
+const MULTI_AGENT_SYMBOL_BOUNDARY_PATTERNS: readonly RegExp[] = [
+	/['"](?:\.\/)?create-anthropic-agent\.ts['"]/u,
+	/\blocalExecutionEnv\s*\(/u,
+	/\bAllowAllToolAuthorizationPolicy\b/u,
+];
+const MULTI_AGENT_STDLIB_FACTORY_PATTERN = /\b(?:createStdlibTools|stdlibTools)\s*\(/u;
+const MULTI_AGENT_SESSION_DOMAIN_FILE = "src/runtime/session-runtime/domain.ts";
+
 function listTypeScriptFiles(directory: string): string[] {
 	try {
 		return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -120,6 +133,26 @@ export function findProviderExecutionPortViolations(relativeFile: string, source
 		if (pattern.test(source)) violations.push({ file: relativeFile, kind: "provider-execution-port" });
 	}
 	return violations;
+}
+
+export function findMultiAgentBoundaryViolations(relativeFile: string, source: string): ExecutionBoundaryViolation[] {
+	const isAgentProductionFile = relativeFile.startsWith("src/runtime/agents/") && !MULTI_AGENT_LEGACY_HELPER_ALLOWLIST.includes(relativeFile);
+	if (!isAgentProductionFile && relativeFile !== MULTI_AGENT_SESSION_DOMAIN_FILE) return [];
+	const violations = MULTI_AGENT_SYMBOL_BOUNDARY_PATTERNS
+		.filter((pattern) => pattern.test(source))
+		.map(() => ({ file: relativeFile, kind: "multi-agent-raw-boundary" as const }));
+	if (MULTI_AGENT_STDLIB_FACTORY_PATTERN.test(source) && hasUngovernedMultiAgentStdlibFactory(relativeFile, source)) {
+		violations.push({ file: relativeFile, kind: "multi-agent-raw-boundary" });
+	}
+	return violations;
+}
+
+function hasUngovernedMultiAgentStdlibFactory(relativeFile: string, source: string): boolean {
+	if (relativeFile !== MULTI_AGENT_SESSION_DOMAIN_FILE) return true;
+	if (/\bstdlibTools\s*\(/u.test(source)) return true;
+	const call = source.match(/\bcreateStdlibTools\s*\(/u);
+	if (call?.index === undefined) return false;
+	return !/requireExecutionEnv\s*:\s*true/u.test(source.slice(call.index, call.index + 2_000));
 }
 
 export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViolation[] {
@@ -163,6 +196,16 @@ export function scanExecutionBoundaries(repoRoot: string): ExecutionBoundaryViol
 				violations.push({ file: relativeFile, kind: "raw-background" });
 			}
 		}
+	}
+	for (const file of listTypeScriptFiles(join(repoRoot, "src/runtime/agents"))) {
+		const relativeFile = relative(repoRoot, file).replaceAll("\\", "/");
+		violations.push(...findMultiAgentBoundaryViolations(relativeFile, readFileSync(file, "utf8")));
+	}
+	const sessionDomainPath = join(repoRoot, MULTI_AGENT_SESSION_DOMAIN_FILE);
+	try {
+		violations.push(...findMultiAgentBoundaryViolations(MULTI_AGENT_SESSION_DOMAIN_FILE, readFileSync(sessionDomainPath, "utf8")));
+	} catch {
+		// Synthetic boundary tests and library consumers may not have the production file.
 	}
 	return violations.sort((left, right) => left.file.localeCompare(right.file) || left.kind.localeCompare(right.kind));
 }

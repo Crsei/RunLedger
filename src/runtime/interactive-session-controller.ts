@@ -1,6 +1,6 @@
 import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
-import type { Api, AssistantMessage, Context, Model, ModelThinkingLevel, SimpleStreamOptions } from "../types.ts";
+import type { Api, Model, ModelThinkingLevel } from "../types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
 import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
 import type { RunledgerLayout } from "./contracts/public.ts";
@@ -19,7 +19,6 @@ import type {
   ToolAuthorizationPolicy,
   ToolResultOverflowStore,
   UserAgentMessage,
-  LlmContext,
   AgentRunBudget,
   AgentRunBudgetUsage,
 } from "./types.ts";
@@ -37,14 +36,14 @@ import {
 } from "./tool-authorization.ts";
 import type { TraceRecorderFactory } from "./trace/composition.ts";
 import type { ExecutionEnv } from "./execution-env.ts";
-import { createAssistantMessageEventStream } from "../utils/event-stream.ts";
-import { runtimeDigest } from "./protocol/foundation.ts";
-import { createRuntimeId } from "./protocol/ids.ts";
-import type { ModelRouteDecision, ModelRouteRequest } from "./model-routing/types.ts";
+import {
+  createChildModelRuntimeFactory,
+  createSessionModelStreamFn,
+  type ChildModelRequestRouter,
+  type ChildModelRuntimeFactoryPort,
+} from "./agents/child-model-runtime.ts";
 
-export interface ModelRequestRouter {
-  route(request: ModelRouteRequest): ModelRouteDecision | Promise<ModelRouteDecision>;
-}
+export interface ModelRequestRouter extends ChildModelRequestRouter {}
 
 export interface RuntimeSelectionOverrides {
   provider?: string;
@@ -109,7 +108,9 @@ export interface InteractiveSessionControllerPort {
   readonly warnings: readonly string[];
   readonly auditEntries: readonly LedgerEntry[];
   readonly ledger?: LedgerSink;
-  readonly toolCount: number;
+	readonly toolCount: number;
+	/** Composition-only tool extension point; callers must add already governed tools. */
+	readonly addTools?: (tools: readonly AgentTool[]) => void;
   readonly agentRuns?: readonly AgentRunSummary[];
   getSteeringMessages(): readonly UserAgentMessage[];
   getFollowUpMessages(): readonly UserAgentMessage[];
@@ -268,6 +269,17 @@ export class InteractiveSessionController {
     return this.tools.length;
   }
 
+  /** 在 policy receipt/root registration 完成后加入 Session-owned tools。 */
+  addTools(tools: readonly AgentTool[]): void {
+    const existing = new Set(this.tools.map((tool) => tool.name));
+    for (const tool of tools) {
+      if (existing.has(tool.name)) throw new Error(`duplicate Session tool: ${tool.name}`);
+      existing.add(tool.name);
+      this.tools.push(tool);
+    }
+    this.agent?.setTools(this.tools);
+  }
+
   getSteeringMessages(): readonly UserAgentMessage[] {
     return this.agent?.getSteeringMessages() ?? [];
   }
@@ -376,18 +388,28 @@ export class InteractiveSessionController {
     this.listeners.clear();
   }
 
+  /** 为 Session-owned child runtime 提供当前 selection 与同一 model router。 */
+  createChildModelRuntimeFactory(): ChildModelRuntimeFactoryPort {
+    return createChildModelRuntimeFactory({
+      models: this.models,
+      sessionId: this.sessionId,
+      getSelection: () => ({
+        model: this.selection.model,
+        thinkingLevel: this.selection.thinkingLevel,
+      }),
+      ...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
+    });
+  }
+
   private ensureAgent(): void {
     const model = this.selection.model;
     if (!model) return;
     if (this.agent) return;
-    const streamFn: StreamFn = async (requestModel, context, options) => {
-      if (this.modelRequestRouter !== undefined) {
-        const request = createModelRouteRequest(this.sessionId, requestModel, context, options);
-        const decision = await this.modelRequestRouter.route(request);
-        if (decision.outcome !== "compatible") return deniedModelStream(requestModel, decision);
-      }
-      return this.models.streamSimple(requestModel, context as Context, options);
-    };
+    const streamFn: StreamFn = createSessionModelStreamFn({
+      models: this.models,
+      sessionId: this.sessionId,
+      ...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
+    });
     const authorization = authorizationBeforeToolCall(this.policy);
     const beforeToolCall = async (request: Parameters<NonNullable<AgentLoopConfig["beforeToolCall"]>>[0], signal?: AbortSignal) => {
       const hook = await this.runExtensionHook("PreToolUse", request.args, request.toolCall.name, signal);
@@ -540,66 +562,6 @@ function interactiveProviderAuthTypes(provider: Provider): AuthType[] {
   if (provider.auth.apiKey?.login) types.push("api_key");
   if (provider.auth.oauth) types.push("oauth");
   return types;
-}
-
-function createModelRouteRequest(
-  sessionId: string,
-  model: Model<Api>,
-  context: LlmContext,
-  options?: SimpleStreamOptions,
-): ModelRouteRequest {
-  const contextBody = JSON.parse(JSON.stringify({
-    systemPrompt: context.systemPrompt,
-    messages: context.messages,
-    tools: context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
-    reasoning: options?.reasoning,
-  })) as Record<string, unknown>;
-  const contextDigest = runtimeDigest(contextBody);
-  const requestId = createRuntimeId("command", runtimeDigest({ sessionId, model: `${model.provider}/${model.id}`, contextDigest }).digest.slice(0, 48));
-  const traceId = createRuntimeId("trace", runtimeDigest({ requestId, sessionId }).digest.slice(0, 48));
-  const content = JSON.stringify(contextBody);
-  return {
-    requestId,
-    operation: "request",
-    targetProfileId: `${model.provider}/${model.id}`,
-    contextDigest,
-    planDigest: runtimeDigest({ kind: "plan-state", sessionId }),
-    resourceDigest: runtimeDigest(context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) ?? []),
-    requiredContextTokens: Math.ceil(Buffer.byteLength(content, "utf8") / 3),
-    requiredOutputTokens: model.maxTokens,
-    requiresTools: (context.tools?.length ?? 0) > 0,
-    requiresReasoningReplay: context.messages.some((message) => message.role === "assistant" && message.content.some((part) => part.type === "thinking")),
-    requiresImages: context.messages.some((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((part) => part.type === "image")),
-    traceId,
-  };
-}
-
-function deniedModelStream(model: Model<Api>, decision: ModelRouteDecision) {
-  const stream = createAssistantMessageEventStream();
-  const message: AssistantMessage = {
-    role: "assistant",
-    content: [],
-    api: model.api,
-    provider: model.provider,
-    model: model.id,
-    stopReason: "error",
-    errorMessage: `model route denied (${decision.reasonCode})`,
-    timestamp: Date.now(),
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-  };
-  queueMicrotask(() => {
-    stream.push({ type: "start", partial: message });
-    stream.push({ type: "error", reason: "error", error: message });
-    stream.end(message);
-  });
-  return stream;
 }
 
 function productionTools(cwd: string, executionEnv?: ExecutionEnv): AgentTool[] {

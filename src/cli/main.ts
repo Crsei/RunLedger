@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
-import { loadProjectSettings } from "../storage/settings-manager.ts";
+import { loadLayeredProjectSettings, loadProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRunledgerHome } from "../storage/runledger-home.ts";
 import { parseArgs, USAGE } from "./args.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
@@ -45,7 +45,8 @@ import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult, type S
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "./session-interactive-controller.ts";
 import { builtinModels } from "../providers/all.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
-import { createRuntimeId, type SessionId } from "../runtime/protocol/ids.ts";
+import { createRuntimeId, parseRuntimeId, type SessionId } from "../runtime/protocol/ids.ts";
+import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import type { SecurityConfigDocument } from "../security/types.ts";
 import type { SessionSecurityConfigSource } from "../security/session-composition.ts";
 import { SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
@@ -65,6 +66,7 @@ import {
 import { gitWorkspaceDisplayFacts, workspaceDisplayLabelForView } from "./workspace-display-label.ts";
 import { createCliSyntaxThemeSettings } from "./syntax-theme-settings.ts";
 import { composeCliSyntaxThemes } from "./syntax-theme-composition.ts";
+import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -176,6 +178,25 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.exit(2);
     return;
   }
+  const multiAgentPolicySourcesFor = async (targetSessionId: SessionId) => {
+    const catalog = store.getSession(targetSessionId);
+    if (catalog === undefined) throw new Error(`session not found while loading multi-agent settings: ${targetSessionId}`);
+    const key = workspaceStorageKey({
+      authorityId: createRuntimeId("authority", "session-owner-runtime"),
+      tenantId: createRuntimeId("tenant", "local-user"),
+      workspaceId: parseRuntimeId("workspace", catalog.workspaceId) ?? createRuntimeId("workspace", runtimeDigest(catalog.workspaceId).digest),
+      repositoryId: parseRuntimeId("repository", catalog.repositoryId) ?? createRuntimeId("repository", runtimeDigest(catalog.repositoryId).digest),
+    });
+    const layered = await loadLayeredProjectSettings({ layout, workspaceKey: key });
+    const source = (layer: typeof layered.user) => layer.multiAgent.state === "valid"
+      ? layer.multiAgent.value
+      : layer.multiAgent.state === "invalid" ? layer.multiAgent.raw : undefined;
+    return {
+      runtimeEnabled: args.experimentalMultiAgent,
+      user: source(layered.user),
+      workspace: source(layered.workspace),
+    };
+  };
 
   const models = builtinModels({ credentials: AuthStorage.create(layout) });
   await models.refresh({ allowNetwork: false });
@@ -216,6 +237,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         settings,
         models,
 		traceRecorderFactory,
+        multiAgent: await multiAgentPolicySourcesFor(targetSessionId as SessionId),
         overrides: {
           ...(args.provider === undefined ? {} : { provider: args.provider }),
           ...(args.model === undefined ? {} : { model: args.model }),

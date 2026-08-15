@@ -23,7 +23,7 @@ import { SESSION_MUTATING_COMMAND_KINDS, type SessionCommandRequest, type Sessio
 import { RecoveryBarrier, type RecoveryDecision } from "./recovery-barrier.ts";
 import type { RestoreOutcome } from "./restore.ts";
 import { putSessionCheckpoint, type CheckpointSnapshot } from "./checkpoint.ts";
-import type { LateBoundAttemptPort } from "./attempt-gateway.ts";
+import type { LateBoundAttemptPort, StableAttemptRequest, AttemptPortBeginResult } from "./attempt-gateway.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import { createRuntimeId, type AttemptId, type CommandId, type SessionId, type ConnectionId, type PrincipalId } from "../protocol/ids.ts";
 import type { CommandAttemptOutcome, CommandEffectClass, OwnerFence, SessionCheckpointBoundary } from "../session-owner/types.ts";
@@ -40,6 +40,9 @@ import { AgentRunTimingTracker, projectAgentRunSummaries, type AgentRunSummary, 
 import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { LateBoundHumanInputWaitPort } from "./approval-reverse-request.ts";
 import { SessionStreamEventCoalescer } from "./stream-event-coalescer.ts";
+import type { SessionProductionToolSource } from "../agents/capability-subset.ts";
+import type { ChildModelRuntimeFactoryPort } from "../agents/child-model-runtime.ts";
+import type { MultiAgentDomainPort } from "../agents/domain.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
 
@@ -50,6 +53,10 @@ export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "
  */
 export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
+	/** Session-owned child runtime inputs; absent only on non-production test domains. */
+	readonly childRuntime?: SessionChildRuntimePort;
+	/** Async Session-owned root delegation domain; absent when any gate is closed. */
+	readonly multiAgent?: MultiAgentDomainPort;
 	readonly protocolCapabilities?: readonly SessionProtocolCapability[];
 	readonly securityInspection?: () => Record<string, unknown>;
 	readonly planInspection?: () => SessionPlanInspection;
@@ -60,6 +67,11 @@ export interface SessionDomainPort {
 	/** SessionRuntime 退出时关闭本 Session 私有的外部资源。 */
 	shutdown?(reason: "paused" | "detached" | "error" | "fenced"): Promise<void>;
 	snapshot(): SessionDomainSnapshot;
+}
+
+export interface SessionChildRuntimePort {
+	readonly productionToolSource: SessionProductionToolSource;
+	readonly modelRuntimeFactory: ChildModelRuntimeFactoryPort;
 }
 
 /** Session-scoped Extension/MCP/Hook/Skill/Plugin read/mutation surface。 */
@@ -159,6 +171,7 @@ export class SessionRuntime implements SessionController {
 		this.domainRouter = new SessionDomainRouter(options.sessionId, options.fence.generation, options.store, this, {
 			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
 			...(options.domain?.planInspection === undefined ? {} : { planInspection: options.domain.planInspection }),
+			...(options.domain?.multiAgent === undefined ? {} : { additionalOperations: options.domain.multiAgent.operationManifest }),
 		});
 		this.lifecycleCleanup = options.lifecycleCleanup;
 		this.restored = options.restored;
@@ -361,36 +374,39 @@ export class SessionRuntime implements SessionController {
 		return this.barrier.unresolvedAttempts().length;
 	}
 
+	public listUnresolvedAttempts(): ReturnType<RecoveryBarrier["unresolvedAttempts"]> {
+		return this.barrier.unresolvedAttempts();
+	}
+
 	// ── attempt / receipt 生命周期(领域执行由 R6 composition 注入)──────────
 
 	/**
 	 * §7.3 开始一次 attempt:先经 barrier admission(只读放行、side-effect 需
 	 * barrier closed),再 owner-fenced 记录 command intent + started receipt。
 	 */
-	public beginAttempt(effectClass: CommandEffectClass, requestDigest?: RuntimeDigest): { readonly attemptId: AttemptId; readonly commandId: CommandId } | { readonly error: "recovery_barrier_active" | "owner_fenced" } {
+	public beginAttempt(
+		effectClassOrRequest: CommandEffectClass | StableAttemptRequest,
+		requestDigest?: RuntimeDigest,
+	): AttemptPortBeginResult {
+		const stableRequest = typeof effectClassOrRequest === "string" ? undefined : effectClassOrRequest;
+		const effectClass: CommandEffectClass = typeof effectClassOrRequest === "string" ? effectClassOrRequest : effectClassOrRequest.effectClass;
 		const admission = this.barrier.admitMutation(effectClass);
 		if (!admission.ok) return { error: admission.code };
-		this.attemptCounter += 1;
-		const attemptId = createRuntimeId("attempt", `a${this.attemptCounter}-${Date.now().toString(36)}`);
-		const commandId = createRuntimeId("command", `c${this.attemptCounter}-${Date.now().toString(36)}`);
+		const attemptId = stableRequest?.attemptId ?? createRuntimeId("attempt", `a${++this.attemptCounter}-${Date.now().toString(36)}`);
+		const commandId = stableRequest?.commandId ?? createRuntimeId("command", `c${this.attemptCounter}-${Date.now().toString(36)}`);
 		try {
-			this.store.recordCommandIntent(this.fence, {
-				sessionId: this.sessionId,
-				commandId,
-				requestDigest: requestDigest ?? runtimeDigest({ effectClass, operation: "unspecified" }),
-				originGeneration: this.fence.generation,
-				createdAtMs: Date.now(),
-			});
-			this.store.appendAttemptReceipt(this.fence, {
-				receiptId: createRuntimeId("receipt", `start-${attemptId.slice(-20)}`),
+			const result = this.store.beginCommandAttempt(this.fence, {
 				sessionId: this.sessionId,
 				commandId,
 				attemptId,
-				originGeneration: this.fence.generation,
 				effectClass,
-				outcome: "started",
+				requestDigest: stableRequest?.requestDigest ?? requestDigest ?? runtimeDigest({ effectClass, operation: "unspecified" }),
+				originGeneration: this.fence.generation,
 				createdAtMs: Date.now(),
 			});
+			if (stableRequest !== undefined) return result;
+			if (result.status === "started") return { attemptId, commandId };
+			return result;
 		} catch {
 			this.selfStopFenced();
 			return { error: "owner_fenced" };
@@ -480,12 +496,14 @@ export class SessionRuntime implements SessionController {
 	public protocolManifest(): SessionProtocolManifest {
 		const processManifest = this.domain?.process?.operationManifest ?? [];
 		const resourceManifest = this.domain?.resources?.operationManifest ?? [];
+		const multiAgentManifest = this.domain?.multiAgent?.operationManifest ?? [];
 		return freezeSessionProtocolManifest({
 			protocolCapabilities: [
 				...SESSION_CORE_PROTOCOL_MANIFEST.protocolCapabilities,
 				"session.catalog",
 				...(processManifest.length === 0 ? [] : ["session.process" as const]),
 				...resourceManifest.map((entry) => entry.capability),
+				...(multiAgentManifest.length === 0 ? [] : ["session.multi-agent" as const]),
 				...(this.domain?.protocolCapabilities ?? []),
 			],
 			operationManifest: [...SESSION_CORE_PROTOCOL_MANIFEST.operationManifest, ...this.domainRouter.operationManifest, ...processManifest, ...resourceManifest],
@@ -639,10 +657,54 @@ export class SessionRuntime implements SessionController {
 				return { ok: true, kind: "login", result: { providers: loginProviders } };
 			}
 			case "domain_query": {
+				const multiAgent = this.domain?.multiAgent;
+				const multiOperation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+				if (multiAgent !== undefined && multiAgent.operationManifest.some((entry) => entry.operation === multiOperation)) {
+					const validated = this.domainRouter.query(request.body);
+					if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") {
+						return { ok: true, kind: "domain_query", result: validated };
+					}
+					return {
+						ok: true,
+						kind: "domain_query",
+						result: await multiAgent.query(
+							multiOperation,
+							objectValue(request.body.payload) ?? {},
+							{ correlationId: String(request.body.correlationId), effectId: String(request.body.effectId) },
+						),
+					};
+				}
 				return { ok: true, kind: "domain_query", result: this.domainRouter.query(request.body) };
 			}
 			case "domain_command": {
 				const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+				const multiAgent = this.domain?.multiAgent;
+				if (multiAgent !== undefined && multiAgent.operationManifest.some((entry) => entry.operation === operation)) {
+					const validated = this.domainRouter.mutate(request.body, meta.isDriver);
+					if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") {
+						return { ok: true, kind: "domain_command", result: validated };
+					}
+					if (this.state === "recovery_required" && operation === "agent.spawn") {
+						return {
+							ok: true,
+							kind: "domain_command",
+							result: { ok: false, status: "recovery_required", code: "recovery_barrier_active", operation },
+						};
+					}
+					return {
+						ok: true,
+						kind: "domain_command",
+						result: await multiAgent.mutate(
+							operation,
+							objectValue(request.body.payload) ?? {},
+							{
+								correlationId: String(request.body.correlationId),
+								effectId: String(request.body.effectId),
+								expectedRevision: Number(request.body.expectedRevision),
+							},
+						),
+					};
+				}
 				const process = this.domain?.process;
 				if (process !== undefined && process.operationManifest.some((entry) => entry.operation === operation)) {
 					if (this.state === "recovery_required") {
@@ -759,8 +821,18 @@ export class SessionRuntime implements SessionController {
 
 	public async handleQuery(request: SessionQueryRequest): Promise<Record<string, unknown>> {
 		switch (request.kind) {
-				case "domain_query": {
+			case "domain_query": {
 					const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+					const multiAgent = this.domain?.multiAgent;
+					if (multiAgent !== undefined && multiAgent.operationManifest.some((entry) => entry.operation === operation)) {
+						const validated = this.domainRouter.query(request.body);
+						if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return validated;
+						return multiAgent.query(
+							operation,
+							objectValue(request.body.payload) ?? {},
+							{ correlationId: String(request.body.correlationId), effectId: String(request.body.effectId) },
+						);
+					}
 					const process = this.domain?.process;
 				if (process !== undefined && process.operationManifest.some((entry) => entry.operation === operation)) {
 					const validated = this.domainRouter.query(request.body);

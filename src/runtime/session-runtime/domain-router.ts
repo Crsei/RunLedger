@@ -38,6 +38,8 @@ export interface SessionDomainRouterOptions {
 	readonly securityInspection?: () => Record<string, unknown>;
 	/** 只由 Session-owned Plan projection 注入的只读状态。 */
 	readonly planInspection?: () => SessionPlanInspection;
+	/** Async domain consumers register their exact manifest here; execution is routed by SessionRuntime. */
+	readonly additionalOperations?: readonly SessionProtocolOperationDescriptor[];
 }
 
 export type SessionDomainResult =
@@ -90,6 +92,7 @@ export class SessionDomainRouter {
 			...(this.planInspection === undefined
 				? []
 				: [Object.freeze({ operation: "plan.inspect", capability: "session.plan", access: "read" })]),
+			...(options.additionalOperations ?? []).map((entry) => Object.freeze({ ...entry })),
 		]);
 	}
 
@@ -320,9 +323,14 @@ function validEnvelope(input: Record<string, unknown>): boolean {
 	return boundedIdentifier(input.correlationId)
 		&& boundedIdentifier(input.effectId)
 		&& boundedIdentifier(input.operation)
-		&& typeof input.payload === "object"
-		&& input.payload !== null
-		&& !Array.isArray(input.payload);
+		&& isPlainRecord(input.payload);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object"
+		&& value !== null
+		&& !Array.isArray(value)
+		&& Object.getPrototypeOf(value) === Object.prototype;
 }
 
 function boundedIdentifier(value: unknown): value is string {

@@ -10,6 +10,8 @@ export interface RuntimeFeatureFlags {
 	securityContracts: boolean;
 	resourceContracts: boolean;
 	planContextMemoryContracts: boolean;
+	/** M1 root-owned sequential readonly delegation; no CLI enable path yet. */
+	multiAgent: boolean;
 }
 
 export const DEFAULT_RUNTIME_FEATURES: Readonly<RuntimeFeatureFlags> = {
@@ -17,6 +19,7 @@ export const DEFAULT_RUNTIME_FEATURES: Readonly<RuntimeFeatureFlags> = {
 	securityContracts: false,
 	resourceContracts: false,
 	planContextMemoryContracts: false,
+	multiAgent: false,
 };
 
 export function isRuntimeFeatureEnabled(
