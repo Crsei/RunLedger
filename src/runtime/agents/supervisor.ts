@@ -3,6 +3,7 @@
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import { createRuntimeId, type AgentId, type AttemptId, type CommandId } from "../protocol/ids.ts";
 import type { AttemptPort } from "../session-runtime/attempt-gateway.ts";
+import type { CommandAttemptReceipt, CommandAttemptOutcome } from "../session-owner/types.ts";
 import {
 	AgentGraphStore,
 	type AgentGraphCommitOutcome,
@@ -57,7 +58,7 @@ export interface AgentRecoverySummary {
 	readonly recoveryRequired: readonly AgentId[];
 }
 
-interface ChildIdentity {
+export interface ChildIdentity {
 	readonly commandId: CommandId;
 	readonly attemptId: AttemptId;
 	readonly agentId: AgentId;
@@ -210,6 +211,12 @@ export class AgentSupervisor {
 			if (!terminal.ok) return terminal;
 			stopped.push(terminal.value.agentId);
 		}
+		const attempts = this.attemptPort?.listUnresolvedAttempts?.()
+			.filter((receipt) => receipt.effectClass === "agent_spawn") ?? [];
+		for (const attempt of attempts) {
+			const settled = await this.reconcileAttempt(attempt);
+			if (!settled.ok) return settled;
+		}
 		return { ok: true, value: { stopped: Object.freeze(stopped), recoveryRequired: Object.freeze(recoveryRequired) } };
 	}
 
@@ -345,6 +352,8 @@ export class AgentSupervisor {
 			activationReceiptDigest: activated.value.activationReceipt.receiptDigest,
 		}));
 		if (!activeEvent.ok) {
+			await prepared.cancel("cancelled");
+			await prepared.dispose();
 			const reconciled = await this.commitReconciliation(await this.requireNode(identity.agentId), "activation_uncertain");
 			if (!reconciled.ok) return reconciled;
 			return failure("recovery_required", "child activation is live but its durable activation event is uncertain");
@@ -380,7 +389,7 @@ export class AgentSupervisor {
 		terminal: MultiAgentResult<ChildReport>,
 	): Promise<MultiAgentResult<ChildReport>> {
 		if (terminal.ok && this.attemptPort !== undefined) {
-			const outcome = terminal.value.outcome === "completed" ? "committed" : terminal.value.outcome === "failed" ? "rejected" : "interrupted";
+			const outcome = terminal.value.outcome === "completed" ? "committed" : "rejected";
 			this.attemptPort.settleAttempt(operation.identity.attemptId, outcome, terminal.value.reportDigest);
 		}
 		return terminal;
@@ -420,6 +429,46 @@ export class AgentSupervisor {
 		}
 		const winner = await this.findTerminalReport(node.agentId);
 		return winner.ok && winner.value !== undefined ? { ok: true, value: winner.value } : failure("store_conflict", "terminal graph event acknowledgement could not be verified");
+	}
+
+	private async reconcileAttempt(attempt: CommandAttemptReceipt): Promise<MultiAgentResult<void>> {
+		if (this.attemptPort === undefined) return failure("recovery_required", "agent_spawn attempt recovery port is unavailable");
+		const loaded = await this.graph.load();
+		if (!loaded.ok) return loaded;
+		const record = loaded.value.commands.get(attempt.commandId);
+		if (record === undefined || record.command.type !== "agent.spawn_requested") {
+			const evidence = runtimeDigest({
+				recovery: "no_durable_spawn_request",
+				commandId: attempt.commandId,
+				attemptId: attempt.attemptId,
+			});
+			return this.settleRecoveredAttempt(attempt, "rejected", evidence, evidence);
+		}
+		const report = await this.findTerminalReport(record.command.agentId);
+		if (!report.ok) return report;
+		if (report.value === undefined) return { ok: true, value: undefined };
+		const outcome: CommandAttemptOutcome = report.value.outcome === "completed"
+			? "committed"
+			: report.value.outcome === "failed" ? "rejected" : "verified";
+		return this.settleRecoveredAttempt(attempt, outcome, report.value.reportDigest, runtimeDigest({
+			recovery: "durable_agent_terminal",
+			commandId: attempt.commandId,
+			agentId: report.value.agentId,
+			outcome: report.value.outcome,
+			reportDigest: report.value.reportDigest,
+		}));
+	}
+
+	private settleRecoveredAttempt(
+		attempt: CommandAttemptReceipt,
+		outcome: CommandAttemptOutcome,
+		resultDigest: RuntimeDigest,
+		evidenceDigest: RuntimeDigest,
+	): MultiAgentResult<void> {
+		const settled = this.attemptPort?.settleAttempt(attempt.attemptId, outcome, resultDigest, evidenceDigest);
+		return settled?.ok === true
+			? { ok: true, value: undefined }
+			: failure("recovery_required", `agent_spawn attempt settlement failed: ${settled?.code ?? "attempt_port_unavailable"}`);
 	}
 
 	private async commitReconciliation(
@@ -501,7 +550,7 @@ export class AgentSupervisor {
 	}
 }
 
-function deriveChildIdentity(
+export function deriveChildIdentity(
 	request: ValidatedSpawnSubagentInput,
 	invocation: SubagentInvocationContext,
 ): ChildIdentity {
@@ -514,7 +563,7 @@ function deriveChildIdentity(
 	const commandId = createRuntimeId("command", `agent-spawn-${identityDigest.digest.slice(0, 64)}`);
 	return {
 		commandId,
-		attemptId: createRuntimeId("attempt", `agent-spawn-${identityDigest.digest.slice(0, 48)}-g${invocation.ownerGeneration}`),
+		attemptId: createRuntimeId("attempt", `agent-spawn-${identityDigest.digest.slice(0, 64)}`),
 		agentId: createRuntimeId("agent", `child-${identityDigest.digest.slice(0, 64)}`),
 		requestDigest: runtimeDigest({ sessionId: invocation.sessionId, rootAgentId: invocation.rootAgentId, parentAgentId: invocation.parentAgentId, request }),
 		identityDigest,

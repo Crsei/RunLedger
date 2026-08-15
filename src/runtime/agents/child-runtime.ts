@@ -95,6 +95,7 @@ interface ChildUsage {
 }
 
 type ChildLifecycle = "prepared" | "activating" | "active" | "terminal" | "disposed" | "uncertain";
+type ForcedTerminalReason = ChildStopReason | "budget_exhausted";
 
 export function createInProcessChildRuntimeProvider(
 	options: InProcessChildRuntimeProviderOptions = {},
@@ -159,8 +160,15 @@ async function prepareChild(
 	let completion: Promise<MultiAgentResult<ChildRuntimeCompletion>> | undefined;
 	let activeHandle: ActiveChildHandle | undefined;
 	let lastAgentEnd: Extract<AgentEvent, { type: "agent_end" }> | undefined;
+	let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+	let finalCompletion: MultiAgentResult<ChildRuntimeCompletion> | undefined;
+	let resolveForcedCompletion!: (value: MultiAgentResult<ChildRuntimeCompletion>) => void;
+	const forcedCompletion = new Promise<MultiAgentResult<ChildRuntimeCompletion>>((resolve) => {
+		resolveForcedCompletion = resolve;
+	});
+	const childController = new AbortController();
 	const onSignalAbort = (): void => {
-		if (lifecycle === "active" || lifecycle === "activating") cancelReason ??= "cancelled";
+		if (lifecycle === "active" || lifecycle === "activating") forceCompletion("cancelled");
 	};
 	if (spec.signal !== undefined && !spec.signal.aborted) {
 		spec.signal.addEventListener("abort", onSignalAbort, { once: true });
@@ -190,7 +198,7 @@ async function prepareChild(
 		},
 		streamFn: modelRuntime.streamFn,
 		ledger: spec.ledger,
-		signal: spec.signal,
+		signal: childController.signal,
 		loopConfig: {
 			cwd: spec.cwd,
 			executionEnv: spec.executionEnv,
@@ -230,12 +238,13 @@ async function prepareChild(
 
 			lifecycle = "activating";
 			activationStartedAtMs = Date.now();
+			deadlineTimer = setTimeout(() => forceCompletion("budget_exhausted"), spec.budget.maxActiveDurationMs);
 			let started: Promise<AgentMessage[]>;
 			try {
 				started = start(agent, spec.objective);
 			} catch (error) {
 				lifecycle = "uncertain";
-				spec.signal?.removeEventListener("abort", onSignalAbort);
+				cleanupCompletionResources();
 				return failure("recovery_required", errorMessage(error, "child activation outcome is uncertain"));
 			}
 
@@ -251,7 +260,7 @@ async function prepareChild(
 				receiptDigest: runtimeDigest(receiptBody),
 			});
 			lifecycle = "active";
-			completion = Promise.resolve(started)
+			const startedCompletion = Promise.resolve(started)
 				.then(
 					(messages) => completeChild(messages, undefined),
 					(error) => completeChild([], error),
@@ -263,6 +272,7 @@ async function prepareChild(
 						messages: Object.freeze([]),
 					},
 				}));
+			completion = Promise.race([startedCompletion, forcedCompletion]);
 			activeHandle = Object.freeze({ activationReceipt, completion });
 			return { ok: true, value: activeHandle };
 		},
@@ -271,30 +281,53 @@ async function prepareChild(
 			cancelReason = reason;
 			if (lifecycle === "prepared") {
 				lifecycle = "disposed";
-				spec.signal?.removeEventListener("abort", onSignalAbort);
+				cleanupCompletionResources();
 				return { ok: true, value: undefined };
 			}
-			if (lifecycle === "active" || lifecycle === "activating") agent.interrupt();
+			if (lifecycle === "active" || lifecycle === "activating") forceCompletion(reason);
 			return { ok: true, value: undefined };
 		},
 		dispose: async () => {
 			if (lifecycle === "disposed" || lifecycle === "terminal") return { ok: true, value: undefined };
 			cancelReason ??= "cancelled";
-			if (lifecycle === "active" || lifecycle === "activating") agent.interrupt();
+			if (lifecycle === "active" || lifecycle === "activating") {
+				forceCompletion("cancelled");
+				return { ok: true, value: undefined };
+			}
 			lifecycle = "disposed";
-			spec.signal?.removeEventListener("abort", onSignalAbort);
+			cleanupCompletionResources();
 			return { ok: true, value: undefined };
 		},
 	};
 
+	function forceCompletion(reason: ForcedTerminalReason): void {
+		if (finalCompletion !== undefined || lifecycle === "terminal" || lifecycle === "disposed") return;
+		if (reason !== "budget_exhausted") cancelReason ??= reason;
+		childController.abort();
+		agent.interrupt();
+		void completeChild([], undefined, reason).then(resolveForcedCompletion);
+	}
+
+	function cleanupCompletionResources(): void {
+		if (deadlineTimer !== undefined) {
+			clearTimeout(deadlineTimer);
+			deadlineTimer = undefined;
+		}
+		spec.signal?.removeEventListener("abort", onSignalAbort);
+	}
+
 	async function completeChild(
 		messages: AgentMessage[],
 		error: unknown,
+		forcedReason?: ForcedTerminalReason,
 	): Promise<MultiAgentResult<ChildRuntimeCompletion>> {
+		if (finalCompletion !== undefined) return finalCompletion;
 		lifecycle = "terminal";
-		spec.signal?.removeEventListener("abort", onSignalAbort);
+		cleanupCompletionResources();
 		usage.activeDurationMs = usageAuthority.activeDurationMs();
-		const terminal = cancelReason !== undefined
+		const terminal = forcedReason === "budget_exhausted"
+			? { outcome: "stopped" as const, reasonCode: "budget_exhausted" as const }
+			: cancelReason !== undefined
 			? { outcome: "stopped" as const, reasonCode: cancelReason === "owner_takeover" ? "owner_takeover" as const : "cancelled" as const }
 			: error !== undefined
 				? { outcome: "failed" as const, reasonCode: "runtime_failed" as const }
@@ -305,10 +338,11 @@ async function prepareChild(
 		const reportBytes = new TextEncoder().encode(reportText).byteLength;
 		if (reportBytes > spec.budget.maxReportBytes) {
 			const report = failedReport(spec.agentId, "report_limit_exceeded", usage);
-			return {
+			finalCompletion = {
 				ok: true,
 				value: { report, messages: Object.freeze([...messages]) },
 			};
+			return finalCompletion;
 		}
 		const report: ChildReport = Object.freeze({
 			agentId: spec.agentId,
@@ -319,7 +353,8 @@ async function prepareChild(
 			usage: Object.freeze({ ...usage }),
 			...(terminal.reasonCode === undefined ? {} : { reasonCode: terminal.reasonCode }),
 		});
-		return { ok: true, value: { report, messages: Object.freeze([...messages]) } };
+		finalCompletion = { ok: true, value: { report, messages: Object.freeze([...messages]) } };
+		return finalCompletion;
 	}
 
 	function failedReport(

@@ -275,4 +275,68 @@ describe("Session Domain multi-agent consumer", () => {
 		expect(prepareCalls).toBe(1);
 		expect(harness.store.replaySessionEvents(harness.sessionId).filter((event) => event.eventType === "agent.spawn_requested")).toHaveLength(1);
 	});
+
+	it("records the complete effective policy receipt before root registration and fails closed on conflicting replay", async () => {
+		harness = await createRuntimeHarness("multi-agent-policy-receipt");
+		const options = {
+			sessionId: harness.sessionId,
+			ownerGeneration: harness.fence.generation,
+			store: harness.store,
+			fence: harness.fence,
+			policySources: {
+				runtimeEnabled: true,
+				user: { enabled: true, maxToolCallsPerAgent: 7 },
+				workspace: { enabled: true, maxToolCallsPerAgent: 5 },
+			},
+			childRuntime: {
+				systemPrompt: "child",
+				productionToolSource: childSource(harness.sessionId),
+				modelRuntimeFactory: childModelRuntimeFactory(),
+			},
+		} as const;
+		const first = await createMultiAgentDomain(options);
+		const duplicate = await createMultiAgentDomain(options);
+		expect(first.ok).toBe(true);
+		expect(duplicate.ok).toBe(true);
+
+		const events = harness.store.replaySessionEvents(harness.sessionId);
+		expect(events.map((event) => event.eventType).filter((eventType) =>
+			eventType === "policy.effective_recorded" || eventType === "agent.root_registered",
+		)).toEqual([
+			"policy.effective_recorded",
+			"agent.root_registered",
+		]);
+		const policyEvents = events.filter((event) => event.eventType === "policy.effective_recorded");
+		expect(policyEvents).toHaveLength(1);
+		const payload = JSON.parse(policyEvents[0]!.payloadJson) as Record<string, unknown>;
+		expect(payload).toMatchObject({
+			policyKind: "multi_agent",
+			receipt: {
+				runtimeEnabled: true,
+				userSourceDigest: runtimeDigest(options.policySources.user),
+				workspaceSourceDigest: runtimeDigest(options.policySources.workspace),
+				effectiveLimits: {
+					maxChildrenPerRoot: 3,
+					maxTotalAgents: 4,
+					maxModelTurnsPerAgent: 12,
+					maxToolCallsPerAgent: 5,
+					maxActiveDurationMsPerAgent: 300_000,
+					maxReportBytes: 65_536,
+				},
+				diagnostics: [],
+				resolverVersion: "m1.0",
+				receiptDigest: first.ok && first.value !== undefined ? first.value.policyReceipt.receiptDigest : undefined,
+			},
+		});
+
+		const conflicting = await createMultiAgentDomain({
+			...options,
+			policySources: {
+				...options.policySources,
+				workspace: { enabled: true, maxToolCallsPerAgent: 4 },
+			},
+		});
+		expect(conflicting).toMatchObject({ ok: false, error: { code: "idempotency_conflict" } });
+		expect(harness.store.replaySessionEvents(harness.sessionId).filter((event) => event.eventType === "policy.effective_recorded")).toHaveLength(1);
+	});
 });

@@ -16,6 +16,9 @@ import { loadLayeredProjectSettings, loadProjectSettings, saveProjectSettings } 
 import { builtinModels } from "../../../src/providers/all.ts";
 import { AuthStorage } from "../../../src/storage/auth-storage.ts";
 import { deriveGovernedChildCapabilitySubset } from "../../../src/runtime/agents/capability-subset.ts";
+import { AgentGraphStore } from "../../../src/runtime/agents/graph-store.ts";
+import { deriveRootAgentId } from "../../../src/runtime/agents/domain.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 
 let harness: RuntimeHarness | undefined;
 
@@ -264,6 +267,101 @@ describe("SessionRuntime multi-agent composition", () => {
 		} finally {
 			await embedded?.handle.close().catch(() => undefined);
 			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses verified crash-takeover liveness to stop a durable child and close its real attempt barrier before readiness", async () => {
+		const root = mkdtempSync(join(tmpdir(), "runledger-session-multi-agent-takeover-"));
+		const home = join(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const workspaceId = "multi-agent-takeover";
+		const repositoryId = "multi-agent-takeover";
+		const workspaceKey = workspacePolicyKey(workspaceId, repositoryId);
+		await saveProjectSettings({ layout }, { multiAgent: { enabled: true } });
+		await saveProjectSettings({ layout, workspaceKey }, { multiAgent: { enabled: true } });
+		const sessionId = createRuntimeId("session", "multi-agent-takeover");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", workspaceId),
+			repositoryId: createRuntimeId("repository", repositoryId),
+			settingsDigest: "d".repeat(64),
+		});
+		const settings = await loadProjectSettings({ layout });
+		const models = builtinModels({ credentials: AuthStorage.create(layout) });
+		await models.refresh({ allowNetwork: false });
+		const sources = await layeredMultiAgentSources(layout, workspaceKey);
+		const domainOptions = {
+			cwd: root,
+			layout,
+			settings,
+			models,
+			securitySources: noPromptTestSecurity,
+			multiAgent: { runtimeEnabled: true, ...sources },
+		} as const;
+		let first: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		let takeover: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			first = await createEmbeddedSessionRuntime({ sessionId, store, ownerStore, domain: domainOptions });
+			expect(first.runtime).toBeDefined();
+			if (first.runtime === undefined || first.ownerFence === undefined) throw new Error("first runtime was not claimed");
+			const rootAgentId = deriveRootAgentId(sessionId);
+			const graph = new AgentGraphStore({ store, fence: first.ownerFence, rootAgentId });
+			const graphHead = await graph.load();
+			expect(graphHead).toMatchObject({ ok: true, value: { revision: 1 } });
+			if (!graphHead.ok) return;
+			const commandId = createRuntimeId("command", "production-takeover-spawn");
+			const attemptId = createRuntimeId("attempt", "production-takeover-spawn");
+			const requestDigest = runtimeDigest("production-takeover-spawn");
+			expect(first.runtime.beginAttempt({
+				commandId,
+				attemptId,
+				effectClass: "agent_spawn",
+				requestDigest,
+			})).toMatchObject({ status: "started" });
+			expect(await graph.commit({
+				type: "agent.spawn_requested",
+				commandId,
+				requestDigest,
+				expectedRevision: graphHead.value.revision,
+				rootAgentId,
+				agentId: createRuntimeId("agent", "production-takeover-child"),
+				parentAgentId: rootAgentId,
+				role: "research",
+				objective: "recover the production-composed child",
+				requestedCapabilities: ["workspace.read"],
+				budget: { maxModelTurns: 1, maxToolCalls: 1, maxActiveDurationMs: 1_000 },
+				maxReportBytes: 1_024,
+			})).toMatchObject({ ok: true, value: { status: "committed" } });
+
+			first.runtime.selfStopFenced();
+			await first.runtime.waitForStopped();
+			db.runSync(
+				"UPDATE session_owners SET heartbeat_at_ms = 0, updated_at_ms = 0 WHERE session_id = ?",
+				[sessionId],
+			);
+
+			takeover = await createEmbeddedSessionRuntime({ sessionId, store, ownerStore, domain: domainOptions });
+			expect(takeover.runtime).toBeDefined();
+			expect(takeover.runtime?.barrierState).toBe("closed");
+			expect(takeover.runtime?.runtimeState).toBe("ready");
+			expect(store.replaySessionEvents(sessionId).filter((event) => event.eventType === "agent.stopped")).toHaveLength(1);
+			expect(store.listAttemptReceipts(sessionId, commandId).at(-1)).toMatchObject({
+				attemptId,
+				outcome: "verified",
+				settledGeneration: takeover.ownerFence?.generation,
+			});
+		} finally {
+			await takeover?.handle.close().catch(() => undefined);
+			await takeover?.runtime?.shutdownAfterLastAttachment("paused");
+			await first?.handle.close().catch(() => undefined);
+			await first?.runtime?.waitForStopped();
 			db.close();
 			rmSync(root, { recursive: true, force: true });
 		}

@@ -374,6 +374,10 @@ export class SessionRuntime implements SessionController {
 		return this.barrier.unresolvedAttempts().length;
 	}
 
+	public listUnresolvedAttempts(): ReturnType<RecoveryBarrier["unresolvedAttempts"]> {
+		return this.barrier.unresolvedAttempts();
+	}
+
 	// ── attempt / receipt 生命周期(领域执行由 R6 composition 注入)──────────
 
 	/**

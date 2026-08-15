@@ -58,6 +58,7 @@ import {
 import { createSessionProductionToolSource } from "../agents/capability-subset.ts";
 import { createMultiAgentDomain, type SessionMultiAgentPolicySources } from "../agents/domain.ts";
 import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
+import type { PreviousOwnerLiveness } from "../agents/supervisor.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -88,6 +89,7 @@ export async function assembleSessionDomain(
 	restored: Extract<RestoreOutcome, { readonly ok: true }>,
 	attemptPort?: LateBoundAttemptPort,
 	runBudgetUsage?: AgentRunBudgetUsage,
+	multiAgentPreviousOwnerLiveness?: PreviousOwnerLiveness,
 ): Promise<SessionDomainPort> {
 	const ledger = new SqliteLedgerSink({ store, fence: () => fence });
 	const replay = await replayDomain(ledger, restored);
@@ -212,6 +214,7 @@ export async function assembleSessionDomain(
 				modelRuntimeFactory: childRuntime.modelRuntimeFactory,
 			},
 			attemptPort,
+			...(multiAgentPreviousOwnerLiveness === undefined ? {} : { previousOwnerLiveness: multiAgentPreviousOwnerLiveness }),
 			...(options.multiAgentChildRuntimeProvider === undefined ? {} : { provider: options.multiAgentChildRuntimeProvider }),
 		});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);

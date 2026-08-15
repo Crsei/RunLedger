@@ -12,7 +12,7 @@ import { AgentGraphStore } from "../../../src/runtime/agents/graph-store.ts";
 import { createInProcessChildRuntimeProvider, type ActiveChildHandle, type ChildRuntimeProviderPort } from "../../../src/runtime/agents/child-runtime.ts";
 import type { ChildModelRuntimeFactoryPort } from "../../../src/runtime/agents/child-model-runtime.ts";
 import type { MultiAgentResult, SubagentInvocationContext, ValidatedSpawnSubagentInput } from "../../../src/runtime/agents/types.ts";
-import { AgentSupervisor, type AgentSupervisorOptions } from "../../../src/runtime/agents/supervisor.ts";
+import { AgentSupervisor, deriveChildIdentity, type AgentSupervisorOptions } from "../../../src/runtime/agents/supervisor.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
@@ -280,6 +280,30 @@ describe("bounded child supervisor", () => {
 		expect(calls.count).toBe(1);
 	});
 
+	it("derives command, child, and attempt identities independently of consumer source and owner generation", () => {
+		const firstInvocation = invocation("shared-identity");
+		const replayInvocation: SubagentInvocationContext = {
+			...firstInvocation,
+			ownerGeneration: firstInvocation.ownerGeneration + 1,
+			source: "domain_command",
+		};
+		const first = deriveChildIdentity(request(), firstInvocation);
+		const replay = deriveChildIdentity(request(), replayInvocation);
+		const conflictingRequest = deriveChildIdentity(
+			request({ objective: "Inspect a different bounded request." }),
+			replayInvocation,
+		);
+
+		expect(replay.commandId).toBe(first.commandId);
+		expect(replay.agentId).toBe(first.agentId);
+		expect(replay.attemptId).toBe(first.attemptId);
+		expect(replay.requestDigest).toEqual(first.requestDigest);
+		expect(conflictingRequest.commandId).toBe(first.commandId);
+		expect(conflictingRequest.agentId).toBe(first.agentId);
+		expect(conflictingRequest.attemptId).toBe(first.attemptId);
+		expect(conflictingRequest.requestDigest).not.toEqual(first.requestDigest);
+	});
+
 	it("rejects a child delegation and preserves the root-owned boundary", async () => {
 		const childSupervisor = supervisor();
 		expect(await childSupervisor.registerRoot()).toMatchObject({ ok: true });
@@ -326,6 +350,84 @@ describe("bounded child supervisor", () => {
 		]);
 		const inspected = await childSupervisor.inspect();
 		expect(inspected).toMatchObject({ ok: true, value: { nodes: [{ role: "root" }, { state: "recovery_required", reasonCode: "activation_uncertain" }] } });
+	});
+
+	it("stops and disposes a live child when durable activation publication fails", async () => {
+		let cancelCalls = 0;
+		let disposeCalls = 0;
+		let releaseCompletion!: () => void;
+		const completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+		const graph = new AgentGraphStore({
+			store: sessionStore,
+			fence,
+			rootAgentId: ROOT_AGENT_ID,
+			appendEvent: (input) => {
+				if (input.eventType === "agent.activated") throw new Error("activation event append failed");
+				return sessionStore.appendEvent(fence, input);
+			},
+		});
+		const provider: ChildRuntimeProviderPort = {
+			providerId: "in_process",
+			prepare: async (spec) => {
+				const descriptorDigest = runtimeDigest({ agentId: spec.agentId, stage: "activation-publication" });
+				return {
+					ok: true,
+					value: {
+						descriptor: {
+							agentId: spec.agentId,
+							model: {
+								providerId: "fixture",
+								modelId: "fixture",
+								profileId: "fixture/fixture",
+								api: "mock",
+								thinkingLevel: "off",
+								systemPromptDigest: descriptorDigest,
+								toolManifestDigest: descriptorDigest,
+							},
+							descriptorDigest,
+						},
+						activate: async () => ({
+							ok: true,
+							value: {
+								activationReceipt: {
+									receiptId: createRuntimeId("receipt", "activation-publication"),
+									agentId: spec.agentId,
+									activatedAtMs: 1,
+									receiptDigest: descriptorDigest,
+								},
+								completion: completionGate.then(() => ({ ok: true as const, value: { report: {
+									agentId: spec.agentId,
+									outcome: "completed" as const,
+									report: "must not escape",
+									reportDigest: runtimeDigest("must not escape"),
+									reportBytes: 15,
+									usage: { modelTurns: 1, toolCalls: 0, activeDurationMs: 1 },
+								}, messages: [] } })),
+							},
+						}),
+						cancel: async () => { cancelCalls += 1; return { ok: true, value: undefined }; },
+						dispose: async () => { disposeCalls += 1; return { ok: true, value: undefined }; },
+					},
+				};
+			},
+		};
+		const childSupervisor = supervisor(stopStream({ count: 0 }), { graph, provider });
+		expect(await childSupervisor.registerRoot()).toMatchObject({ ok: true });
+
+		const result = await childSupervisor.spawn(request(), invocation("activation-publication-failure"));
+
+		expect(result).toMatchObject({ ok: false, error: { code: "recovery_required" } });
+		expect(cancelCalls).toBe(1);
+		expect(disposeCalls).toBe(1);
+		expect(eventTypes()).toEqual([
+			"agent.root_registered",
+			"agent.spawn_requested",
+			"agent.spawned",
+			"agent.reconciliation_required",
+		]);
+		releaseCompletion();
+		await Promise.resolve();
+		expect(eventTypes().some((eventType) => eventType === "agent.finished")).toBe(false);
 	});
 
 	it("does not replay a durable requested child after owner recreation", async () => {

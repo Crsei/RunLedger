@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Type } from "typebox";
 import { createAssistantMessageEventStream } from "../../../src/utils/event-stream.ts";
 import type {
@@ -141,6 +141,13 @@ function waitingForAbortStream(calls: { count: number }): StreamFn {
 			}, { once: true });
 		}
 		return stream;
+	};
+}
+
+function neverEndingStream(calls: { count: number }): StreamFn {
+	return () => {
+		calls.count += 1;
+		return createAssistantMessageEventStream();
 	};
 }
 
@@ -295,6 +302,74 @@ describe("in-process governed child runtime", () => {
 		expect(completion).toMatchObject({ ok: true, value: { report: { outcome: "stopped", reasonCode: "budget_exhausted" } } });
 		if (completion.ok) expect(completion.value.report.usage.modelTurns).toBe(0);
 		expect(modelCalls.count).toBe(0);
+	});
+
+	it("enforces the active-duration deadline while a model stream never settles", async () => {
+		vi.useFakeTimers();
+		try {
+			const modelCalls = { count: 0 };
+			const provider = createInProcessChildRuntimeProvider();
+			const prepared = await provider.prepare({
+				...prepareSpec(createRuntimeId("agent", "hanging-model-deadline"), neverEndingStream(modelCalls)),
+				budget: budget({ maxActiveDurationMs: 25 }),
+			});
+			expect(prepared.ok).toBe(true);
+			if (!prepared.ok) return;
+			const active = await prepared.value.activate();
+			expect(active.ok).toBe(true);
+			if (!active.ok) return;
+			let completion: Awaited<typeof active.value.completion> | undefined;
+			void active.value.completion.then((value) => { completion = value; });
+
+			await vi.advanceTimersByTimeAsync(26);
+
+			expect(completion).toMatchObject({
+				ok: true,
+				value: { report: { outcome: "stopped", reasonCode: "budget_exhausted" } },
+			});
+			expect(modelCalls.count).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("enforces the active-duration deadline while a child tool promise never settles", async () => {
+		vi.useFakeTimers();
+		try {
+			const modelCalls = { count: 0 };
+			const toolCalls = { count: 0 };
+			const childTool = tool("wait_forever", async () => {
+				toolCalls.count += 1;
+				return new Promise<never>(() => undefined);
+			});
+			const provider = createInProcessChildRuntimeProvider();
+			const prepared = await provider.prepare({
+				...prepareSpec(
+					createRuntimeId("agent", "hanging-tool-deadline"),
+					toolStream("wait_forever", modelCalls),
+					[childTool],
+				),
+				budget: budget({ maxActiveDurationMs: 25 }),
+			});
+			expect(prepared.ok).toBe(true);
+			if (!prepared.ok) return;
+			const active = await prepared.value.activate();
+			expect(active.ok).toBe(true);
+			if (!active.ok) return;
+			let completion: Awaited<typeof active.value.completion> | undefined;
+			void active.value.completion.then((value) => { completion = value; });
+
+			await vi.advanceTimersByTimeAsync(26);
+
+			expect(completion).toMatchObject({
+				ok: true,
+				value: { report: { outcome: "stopped", reasonCode: "budget_exhausted" } },
+			});
+			expect(modelCalls.count).toBe(1);
+			expect(toolCalls.count).toBe(1);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("rejects abort before activation without invoking the model", async () => {

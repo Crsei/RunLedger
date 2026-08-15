@@ -18,6 +18,7 @@
 
 import type {
 	CommandAttemptBeginResult,
+	CommandAttemptReceipt,
 	CommandAttemptOutcome,
 	CommandEffectClass,
 } from "../session-owner/types.ts";
@@ -44,6 +45,8 @@ export interface AttemptPort {
 		requestDigest?: RuntimeDigest,
 	): AttemptPortBeginResult;
 	settleAttempt(attemptId: AttemptId, outcome: CommandAttemptOutcome, resultDigest?: RuntimeDigest, evidenceDigest?: RuntimeDigest): { readonly ok: true } | { readonly ok: false; readonly code: string };
+	/** Crash recovery 使用的只读最新 unresolved receipt projection。 */
+	listUnresolvedAttempts?(): readonly CommandAttemptReceipt[];
 }
 
 export class AttemptSettlementError extends Error {
@@ -84,6 +87,10 @@ export class LateBoundAttemptPort implements AttemptPort {
 		evidenceDigest?: RuntimeDigest,
 	): { readonly ok: true } | { readonly ok: false; readonly code: string } {
 		return this.current?.settleAttempt(attemptId, outcome, resultDigest, evidenceDigest) ?? { ok: false, code: "owner_fenced" };
+	}
+
+	public listUnresolvedAttempts(): readonly CommandAttemptReceipt[] {
+		return this.current?.listUnresolvedAttempts?.() ?? [];
 	}
 }
 

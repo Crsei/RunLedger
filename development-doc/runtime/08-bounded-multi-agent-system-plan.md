@@ -28,6 +28,8 @@
 - Task 9 bounded integration：新增 `tests/integration/multi-agent-bounded.test.ts`，使用真实 `SessionStore`、`SessionOwner`、`assembleSessionDomain`/embedded composition、production governed tool source、deterministic keyless model provider 与真实 child `Agent`，覆盖 read/search/report、schema authority 缺失、不可见 write leaf、duplicate byte-identical report 和 inspect JSON round-trip；新增 `multiAgentChildRuntimeProvider` 受控 composition seam，provider 仍只接收 governed `ChildPrepareSpec`。
 - Task 9 fault integration：新增 `tests/integration/multi-agent-faults.test.ts`，真实 owner takeover 后覆盖 after requested、after prepare、activation acknowledgement loss、after activated、terminal append acknowledgement loss、terminal-before-attempt-settle；focused integration + existing multi-agent/domain/security boundary 共 12 files / 71 tests passed；`npx tsc --noEmit -p tsconfig.json` passed。
 - Task 9 static boundary：`check-execution-boundaries.ts` 现在扫描 `src/runtime/agents/**` 与精确的 `src/runtime/session-runtime/domain.ts`（显式隔离 legacy `create-anthropic-agent.ts`）；拒绝 legacy helper import、`localExecutionEnv`、`AllowAllToolAuthorizationPolicy` 和未治理 stdlib factory，`domain.ts` 仅允许带 `requireExecutionEnv: true` 的 governed factory；synthetic RED/GREEN test 与 `node scripts/check-execution-boundaries.ts` passed。
+- 2026-08-15 review remediation：production crash takeover 现在把已验证的 dead-owner evidence 传给 Supervisor，并在 `SessionRuntime` 绑定 attempt port 后、server ready 前恢复；无 graph request 的 `agent_spawn` started attempt 会安全拒绝，已有 durable terminal 的 attempt 会按 terminal evidence 收口，未知 owner/nonterminal 仍保持 uncertainty。child active-duration 使用独立 deadline controller 和 bounded completion race；activation event 发布失败会 cancel + dispose live handle。完整 `MultiAgentPolicyReceipt` 在 root/tool 之前以 deterministic `policy.effective_recorded` 落库；command/child/attempt identity 均排除 consumer source 与 owner generation。
+- Review remediation focused gate：`npx vitest run tests/runtime/multi-agent tests/runtime/session-runtime/multi-agent-composition.test.ts tests/runtime/session-runtime/multi-agent-domain.test.ts tests/storage/multi-agent-attempts.test.ts tests/storage/multi-agent-settings.test.ts tests/integration/multi-agent-bounded.test.ts tests/integration/multi-agent-faults.test.ts --no-file-parallelism`，13 files / 89 tests passed；随后 `npm run check`、完整 `npm test`、`npm run build` 与 `git diff --check` passed。
 - 2026-08-15 final gate：`npm run check`、`npm test`、`npm run build`、`npx tsc --noEmit -p tsconfig.json` 与 `git diff --check` 全部通过；`npm test` 的 Vitest 与 Bun/OpenTUI 阶段均通过，Bun 为 11 files / 91 tests / 449 assertions。此前阻断 `exec-renderable.ts` 的 ANSI foreground 已由独立 TUI 修复提交收口。
 
 ## Goal
@@ -134,7 +136,7 @@ export interface SubagentInvocationContext {
 }
 ```
 
-`parentAgentId` 在 M1 必须等于 root；其他值 fail closed。`commandId`、`childAgentId`、event ID 和 attempt identity 从 `sessionId + parentAgentId + source + effectId` 的 canonical digest 派生，不包含 owner generation，因此 crash takeover 后仍能命中原 command。origin/settled generation 只进入 attempt receipt 和 fence。相同 identity + 不同 request digest 返回 `idempotency_conflict`。
+`parentAgentId` 在 M1 必须等于 root；其他值 fail closed。`commandId`、`childAgentId`、event ID 和 attempt identity 从 `sessionId + rootAgentId + parentAgentId + effectId` 的 canonical digest 派生；`source` 与 owner generation 都不进入 identity，因此模型工具与 Domain command 可共享 replay，crash takeover 后也仍命中原 command。origin/settled generation 只进入 attempt receipt 和 fence。相同 identity + 不同 request digest 返回 `idempotency_conflict`。
 
 ### 1.3 模型可见输出
 

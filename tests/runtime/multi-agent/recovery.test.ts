@@ -10,6 +10,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
 import { AgentGraphStore } from "../../../src/runtime/agents/graph-store.ts";
 import type { AgentGraphCommand as AgentGraphCommandType } from "../../../src/runtime/agents/graph-events.ts";
+import { createAgentSemanticTerminalRecord } from "../../../src/runtime/agents/graph-events.ts";
 import { createInProcessChildRuntimeProvider } from "../../../src/runtime/agents/child-runtime.ts";
 import type { ChildModelRuntimeFactoryPort } from "../../../src/runtime/agents/child-model-runtime.ts";
 import { AgentSupervisor, type AgentSupervisorOptions } from "../../../src/runtime/agents/supervisor.ts";
@@ -17,6 +18,7 @@ import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { createRuntimeHarness } from "../session-runtime/harness.ts";
 
 const MODEL: Model<Api> = {
 	id: "recovery-fixture-model",
@@ -233,6 +235,132 @@ function eventTypes(): string[] {
 }
 
 describe("bounded child recovery", () => {
+	it("settles an agent_spawn attempt that crashed before its durable spawn request", async () => {
+		const runtime = await createRuntimeHarness("multi-agent-pre-request-attempt", { crashTakeover: true });
+		try {
+			const graph = new AgentGraphStore({ store: runtime.store, fence: runtime.fence, rootAgentId: ROOT_AGENT_ID });
+			await commit(graph, rootCommand());
+			const commandId = createRuntimeId("command", "pre-request-attempt");
+			const attemptId = createRuntimeId("attempt", "pre-request-attempt");
+			runtime.store.beginCommandAttempt(runtime.fence, {
+				sessionId: runtime.sessionId,
+				commandId,
+				attemptId,
+				effectClass: "agent_spawn",
+				requestDigest: runtimeDigest("pre-request-attempt"),
+				originGeneration: runtime.fence.generation,
+				createdAtMs: 1,
+			});
+			const childSupervisor = new AgentSupervisor({
+				graph,
+				rootAgentId: ROOT_AGENT_ID,
+				policyReceiptDigest: POLICY_DIGEST,
+				provider: createInProcessChildRuntimeProvider(),
+				childRuntime: childRuntime(),
+				attemptPort: runtime.runtime,
+				previousOwnerLiveness: () => "dead",
+			});
+
+			expect(await childSupervisor.recover()).toMatchObject({ ok: true, value: { stopped: [], recoveryRequired: [] } });
+			const receipts = runtime.store.listAttemptReceipts(runtime.sessionId, commandId);
+			expect(receipts.at(-1)).toMatchObject({
+				attemptId,
+				outcome: "rejected",
+				settledGeneration: runtime.fence.generation,
+			});
+			expect(runtime.runtime.recoveryAssess()).toEqual({ ok: true, barrierState: "closed", unresolvedRemaining: 0 });
+		} finally {
+			await runtime.runtime.shutdownAfterLastAttachment("paused");
+			runtime.store.database().close();
+			runtime.cleanup();
+		}
+	});
+
+	it("settles an unresolved attempt from durable terminal graph evidence", async () => {
+		const runtime = await createRuntimeHarness("multi-agent-terminal-attempt", { crashTakeover: true });
+		try {
+			const graph = new AgentGraphStore({ store: runtime.store, fence: runtime.fence, rootAgentId: ROOT_AGENT_ID });
+			await commit(graph, rootCommand());
+			const commandId = createRuntimeId("command", "terminal-attempt");
+			const attemptId = createRuntimeId("attempt", "terminal-attempt");
+			const requestDigest = runtimeDigest("terminal-attempt");
+			const reportDigest = runtimeDigest("terminal recovery report");
+			runtime.store.beginCommandAttempt(runtime.fence, {
+				sessionId: runtime.sessionId,
+				commandId,
+				attemptId,
+				effectClass: "agent_spawn",
+				requestDigest,
+				originGeneration: runtime.fence.generation,
+				createdAtMs: 1,
+			});
+			await commit(graph, {
+				...spawnCommand(),
+				commandId,
+				requestDigest,
+			});
+			await commit(graph, {
+				type: "agent.spawned",
+				commandId: createRuntimeId("command", "terminal-attempt-spawned"),
+				requestDigest: runtimeDigest("terminal-attempt-spawned"),
+				expectedRevision: 2,
+				rootAgentId: ROOT_AGENT_ID,
+				agentId: CHILD_AGENT_ID,
+				runtimeDescriptorDigest: DESCRIPTOR_DIGEST,
+			});
+			await commit(graph, {
+				type: "agent.activated",
+				commandId: createRuntimeId("command", "terminal-attempt-activated"),
+				requestDigest: runtimeDigest("terminal-attempt-activated"),
+				expectedRevision: 3,
+				rootAgentId: ROOT_AGENT_ID,
+				agentId: CHILD_AGENT_ID,
+				activationReceiptDigest: runtimeDigest("terminal-attempt-activation"),
+			});
+			const terminal = createAgentSemanticTerminalRecord({
+				spawnRequestDigest: requestDigest,
+				runtimeDescriptorDigest: DESCRIPTOR_DIGEST,
+				outcome: "completed",
+				report: "terminal recovery report",
+				reportDigest,
+				reportBytes: 24,
+				usage: { modelTurns: 1, toolCalls: 0, activeDurationMs: 1 },
+			});
+			await commit(graph, {
+				type: "agent.finished",
+				commandId: createRuntimeId("command", "terminal-attempt-finished"),
+				requestDigest: runtimeDigest(terminal),
+				expectedRevision: 4,
+				rootAgentId: ROOT_AGENT_ID,
+				agentId: CHILD_AGENT_ID,
+				terminal,
+			});
+			const childSupervisor = new AgentSupervisor({
+				graph,
+				rootAgentId: ROOT_AGENT_ID,
+				policyReceiptDigest: POLICY_DIGEST,
+				provider: createInProcessChildRuntimeProvider(),
+				childRuntime: childRuntime(),
+				attemptPort: runtime.runtime,
+				previousOwnerLiveness: () => "dead",
+			});
+
+			expect(await childSupervisor.recover()).toMatchObject({ ok: true, value: { stopped: [], recoveryRequired: [] } });
+			const receipts = runtime.store.listAttemptReceipts(runtime.sessionId, commandId);
+			expect(receipts.at(-1)).toMatchObject({
+				attemptId,
+				outcome: "committed",
+				settledGeneration: runtime.fence.generation,
+				resultDigest: reportDigest,
+			});
+			expect(runtime.runtime.recoveryAssess()).toEqual({ ok: true, barrierState: "closed", unresolvedRemaining: 0 });
+		} finally {
+			await runtime.runtime.shutdownAfterLastAttachment("paused");
+			runtime.store.database().close();
+			runtime.cleanup();
+		}
+	});
+
 	it("takes over a requested child as stopped only when previous owner death is proven", async () => {
 		const graph = await setupRequested();
 		const childSupervisor = supervisor(graph, "dead");

@@ -99,6 +99,8 @@ export async function createMultiAgentDomain(
 		workspaceSourceDigest: runtimeDigest(options.policySources.workspace ?? null),
 		resolution,
 	});
+	const recordedPolicy = recordMultiAgentPolicyReceipt(options, policyReceipt);
+	if (!recordedPolicy.ok) return recordedPolicy;
 	const rootAgentId = deriveRootAgentId(options.sessionId);
 	const graph = new AgentGraphStore({
 		store: options.store,
@@ -208,6 +210,47 @@ export async function createMultiAgentDomain(
 	return { ok: true, value: domain };
 }
 
+function recordMultiAgentPolicyReceipt(
+	options: Pick<MultiAgentDomainCompositionOptions, "sessionId" | "store" | "fence">,
+	receipt: MultiAgentPolicyReceipt,
+): MultiAgentResult<void> {
+	const payload = { policyKind: "multi_agent", receipt } as const;
+	const payloadJson = JSON.stringify(payload);
+	const existing = options.store.replaySessionEvents(options.sessionId)
+		.filter((event) => event.eventType === "policy.effective_recorded")
+		.filter((event) => {
+			try {
+				const parsed = JSON.parse(event.payloadJson) as unknown;
+				return isRecord(parsed) && parsed.policyKind === "multi_agent";
+			} catch {
+				return false;
+			}
+		});
+	if (existing.length > 0) {
+		return existing.length === 1 && existing[0]!.payloadJson === payloadJson
+			? { ok: true, value: undefined }
+			: multiAgentFailure("idempotency_conflict", "recorded multi-agent policy receipt differs from the effective policy");
+	}
+	const events = options.store.replaySessionEvents(options.sessionId);
+	const tail = events.at(-1);
+	try {
+		options.store.appendEvent(options.fence, {
+			eventId: createRuntimeId("event", `multi-agent-policy-${runtimeDigest({ sessionId: options.sessionId, policyKind: "multi_agent" }).digest.slice(0, 64)}`),
+			ownerGeneration: options.fence.generation,
+			eventType: "policy.effective_recorded",
+			payloadJson,
+			createdAtMs: Date.now(),
+			expectedPreviousEventHash: tail?.currentEventHash ?? null,
+		});
+	} catch {
+		const durable = options.store.replaySessionEvents(options.sessionId)
+			.filter((event) => event.eventType === "policy.effective_recorded")
+			.filter((event) => event.payloadJson === payloadJson);
+		if (durable.length !== 1) return multiAgentFailure("store_conflict", "effective multi-agent policy receipt could not be durably recorded");
+	}
+	return { ok: true, value: undefined };
+}
+
 function success(operation: string, domainRevision: number, value: Record<string, unknown>): SessionDomainResult {
 	return { ok: true, status: "ok", operation, domainRevision, value };
 }
@@ -238,4 +281,12 @@ async function reportResult(operation: string, result: MultiAgentResult<ChildRep
 	return inspected.ok
 		? success(operation, inspected.value.revision, { report: result.value })
 		: failureResult(operation, inspected.error.code, inspected.error.message);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function multiAgentFailure<T>(code: "idempotency_conflict" | "store_conflict", message: string): MultiAgentResult<T> {
+	return { ok: false, error: { code, message } };
 }
