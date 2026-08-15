@@ -131,6 +131,75 @@ const INTERACTION: AuthInteraction = {
 };
 
 describe("InteractiveSessionController", () => {
+	it("defaults an explicitly selected model to medium thinking", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		await controller.selectModel(p1);
+
+		expect(controller.currentSelection.thinkingLevel).toBe("medium");
+		controller.dispose();
+	});
+
+	it("falls back to high when the selected model does not support medium thinking", async () => {
+		const cwd = await tempDir();
+		const models = createModels();
+		const highOnly = {
+			...model("p1", "high-only"),
+			thinkingLevelMap: { medium: null },
+		} satisfies Model<Api>;
+		models.setProvider(createProvider({
+			id: "p1",
+			name: "P1",
+			auth: apiKeyAuth(),
+			models: [highOnly],
+			api: { stream: stopStream, streamSimple: stopStream },
+		}));
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		await controller.selectModel(highOnly);
+
+		expect(controller.currentSelection.thinkingLevel).toBe("high");
+		controller.dispose();
+	});
+
+	it("uses medium thinking when startup selects a model without an explicit thinking setting", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		expect(controller.currentSelection.thinkingLevel).toBe("medium");
+		controller.dispose();
+	});
+
 	it("passes the Session Runtime active-time authority into the Agent loop", async () => {
 		const cwd = await tempDir();
 		const models = createModels();

@@ -330,7 +330,7 @@ export class InteractiveSessionController {
     // 命令面只传 { provider, id } 等最小形状,按 catalog 解析完整 model
     // (baseUrl/api/reasoning/compat 等),避免流式调用时字段缺失。
     const resolved = this.models.getModel(model.provider, model.id) ?? model;
-    const thinkingLevel = clampThinkingLevel(resolved, this.selection.thinkingLevel);
+    const thinkingLevel = clampThinkingLevel(resolved, "medium");
     this.selection = { provider: resolved.provider, model: resolved, thinkingLevel };
     this.ensureAgent();
     this.agent?.setModel(resolved);
@@ -515,7 +515,7 @@ async function resolveInitialSelection(
   const modelId = cli.model ??
     (provider === session.provider ? session.model : undefined) ??
     (provider === settings.provider ? settings.model : undefined);
-  const thinkingLevel = cli.thinkingLevel ?? session.thinkingLevel ?? settings.thinkingLevel ?? "off";
+  const configuredThinkingLevel = cli.thinkingLevel ?? session.thinkingLevel ?? settings.thinkingLevel;
 
   let model: Model<Api> | undefined;
   if (provider && modelId) model = opts.models.getModel(provider, modelId);
@@ -535,7 +535,9 @@ async function resolveInitialSelection(
   return {
     provider: model?.provider ?? provider,
     model,
-    thinkingLevel: model ? clampThinkingLevel(model, thinkingLevel) : thinkingLevel,
+    thinkingLevel: model
+      ? clampThinkingLevel(model, configuredThinkingLevel ?? "medium")
+      : configuredThinkingLevel ?? "off",
   };
 }
 
