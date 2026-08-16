@@ -425,6 +425,45 @@ describe("OpenTUI syntax-theme status line", () => {
 			service.destroy();
 		}
 	});
+
+	test("keeps status-line colors while the composer hint remains visible", async () => {
+		const setup = await createTestRenderer({ width: 80, height: 12 });
+		const native = fixture();
+		const scopedAddon: NativeSyntaxAddon = {
+			...native.addon,
+			foregroundForScopes: () => ({ kind: "rgb", r: 255, g: 0, b: 0 }),
+		};
+		const service = new SyntaxHighlightService({ addon: scopedAddon });
+		const controller = new SyntaxThemeController({ availableThemes: themes, terminalMode: "dark" });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {}, onResize: () => {}, syntaxHighlightService: service, syntaxThemeController: controller,
+		});
+		try {
+			runtime.update({
+				body: [], editorText: "",
+				footer: [
+					"enter:send  ctrl+d:quit",
+					{ kind: "status-line", segments: [
+						{ accent: "state", text: "idle" },
+						{ accent: "model", text: "deepseek/deepseek-v4-pro" },
+						{ accent: "usage", text: "usage 12.3k" },
+					] },
+				],
+			});
+			await setup.renderOnce();
+			const footer = setup.renderer.root.findDescendantById("runledger-footer");
+			const chunks = footer?.content.chunks ?? [];
+			expect(chunks.map((chunk) => chunk.text).join("")).toBe(
+				"enter:send  ctrl+d:quit\nidle · deepseek/deepseek-v4-pro · usage 12.3k",
+			);
+			for (const text of ["idle", "deepseek/deepseek-v4-pro", "usage 12.3k"]) {
+				expect(chunks.find((chunk) => chunk.text === text)?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
+			}
+		} finally {
+			runtime.destroy();
+			service.destroy();
+		}
+	});
 });
 
 describe("OpenTUI syntax-theme diff", () => {

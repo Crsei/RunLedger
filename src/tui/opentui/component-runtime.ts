@@ -5,13 +5,13 @@ import {
   MarkdownRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
+  StyledText,
   TextRenderable,
   TextareaRenderable,
   createCliRenderer,
   type CliRenderer,
   type KeyEvent,
   type Renderable,
-  type StyledText,
 } from "@opentui/core";
 import stringWidth from "string-width";
 import { ansiToStyledText } from "./ansi-styled-text.ts";
@@ -904,11 +904,16 @@ function styledFooter(
   service: SyntaxHighlightService,
   themeController: SyntaxThemeController,
 ): StyledText {
-  if (lines.length === 1 && typeof lines[0] !== "string") {
-    return statusLineToStyledText(lines[0].segments, (scopes) =>
-      service.foregroundForScopes(themeController.snapshot().activeName, scopes));
-  }
-  return ansiToStyledText(lines.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · ")).join("\n"));
+	const chunks = lines.flatMap((line, index) => {
+		const styled = typeof line === "string"
+			? ansiToStyledText(line)
+			: statusLineToStyledText(line.segments, (scopes) =>
+				service.foregroundForScopes(themeController.snapshot().activeName, scopes));
+		return index === 0
+			? [...styled.chunks]
+			: [...ansiToStyledText("\n").chunks, ...styled.chunks];
+	});
+	return new StyledText(chunks);
 }
 
 function updateMermaidTheme(renderable: Renderable, mode: MermaidThemeMode): void {
