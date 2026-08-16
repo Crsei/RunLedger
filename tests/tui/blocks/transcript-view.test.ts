@@ -229,6 +229,75 @@ describe("TranscriptOverlayComponent", () => {
 		expect(committedReads).toBe(readsAfterFirstRender);
 	});
 
+	it("reuses bounded settled projection rows on a repeated readback", () => {
+		const component = new TranscriptOverlayComponent({
+			rows: [{ id: "history", kind: "text", content: "history" }],
+			liveTail: [{ id: "active", kind: "text", content: "active" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+		});
+
+		component.render(40);
+		component.render(40);
+
+		expect(component.getSettledPartCacheSnapshot()).toMatchObject({ entries: 1, hits: 1 });
+	});
+
+	it("invalidates settled rows when the presentation theme generation changes", () => {
+		const component = new TranscriptOverlayComponent({
+			rows: [{ id: "history", kind: "text", content: "history" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+			themeGeneration: 1,
+		});
+		component.render(40);
+		component.update({
+			rows: [{ id: "history", kind: "text", content: "history" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+			themeGeneration: 2,
+		});
+		component.render(40);
+
+		expect(component.getSettledPartCacheSnapshot()).toMatchObject({ entries: 1, hits: 0, misses: 2 });
+	});
+
+	it("resets the theme fence when a session reuses an older theme generation", () => {
+		const component = new TranscriptOverlayComponent({
+			rows: [{ id: "history", kind: "text", content: "history" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+			themeGeneration: 1,
+		});
+		component.render(40);
+		component.update({
+			rows: [{ id: "history", kind: "text", content: "history" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+			themeGeneration: 2,
+		});
+		component.render(40);
+		component.update({
+			rows: [{ id: "history", kind: "text", content: "history" }],
+			timelineGeneration: 4,
+			committedRevision: "committed-1",
+			activeRevision: "active-1",
+			themeGeneration: 1,
+		});
+		component.render(40);
+
+		expect(component.getSettledPartCacheSnapshot()).toMatchObject({
+			entries: 1,
+			staleReads: 0,
+			staleWrites: 0,
+		});
+	});
+
 	it("marks a bounded view without changing the source rows", () => {
 		const component = new TranscriptOverlayComponent({
 			rows: Array.from({ length: 5 }, (_, index) => ({

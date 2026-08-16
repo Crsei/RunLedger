@@ -23,7 +23,7 @@
 | Session Owner Runtime / Terminal | [`runtime/06-session-owner-runtime-replacement-plan.md`](runtime/06-session-owner-runtime-replacement-plan.md) | 用 session-scoped embedded runtime、SQLite ownership/durable state 与 localhost TCP 替代 machine/workspace Host；offline migration、recovery barrier、attachment lifetime、connection-scoped driver 与 checkpoint cache 已冻结；R0–R2 已完成（R0 contract freeze：`session-owner/{types,schemas}.ts`、`session-server/protocol.ts`、`check:session-owner-boundaries`、[consumer/delete inventory](runtime/06-session-owner-inventory.md)；R1 SQLite foundation：`storage/session-store/` database/schema/schema-compatibility/platform-capability；R2 SessionStore API + JSONL 显式迁移：session-store/jsonl-migration + `migrate session-store`/`storage prune-legacy`） | 当前实现仍查 `runtime/05`、当前代码/tests；替代实施与完成状态查 `runtime/06` |
 | Runtime Host / Terminal（current baseline） | [`runtime/05-multi-client-background-terminal-refactor-plan.md`](runtime/05-multi-client-background-terminal-refactor-plan.md) | 当前已实现的 resident Host、平台 IPC 与 Host lifecycle；只作为迁移输入，不再授权扩展 | 当前代码/tests；目标架构查 `runtime/06` |
 | Plan / Context / Compaction / Memory | [`plan-compact-memory/01-implementation-plan.md`](plan-compact-memory/01-implementation-plan.md) | Model Router、Plan Mode、ContextEngine、Compaction、Memory 行为；生产接线消费 Runtime Contract 与 session command/query/subscription | 本专项阶段证据、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
-| Plugin / MCP / Skill / Hooks | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md) | 扩展 discovery/trust/snapshot、Skill、Hook、MCP、Plugin；目标为 SessionRuntime-owned lifecycle 与 managed process 接线 | 本专项里程碑证据、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
+| Plugin / MCP / Skill / Hooks | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md)、[`plugin-mcp-skill-hooks/02-skill-registry-discovery-provider-refactor-plan.md`](plugin-mcp-skill-hooks/02-skill-registry-discovery-provider-refactor-plan.md) | 扩展 discovery/trust/snapshot、Skill、Hook、MCP、Plugin；目标为 SessionRuntime-owned lifecycle 与 managed process 接线 | 本专项里程碑证据、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结，当前先解决多平台 path/Git/Shell/process/cleanup 适配 | `00` 总入口、`01` 当前适配状态、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
 | Session Audit Note | [`note/README.md`](note/README.md) | 当前打开 session 的 `/audit` 只读调用树、计量与 Artifact 阅读模式 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
@@ -38,9 +38,12 @@
 | TUI / Slash Command Adaptation | [`tui/20-codex-slash-command-adaptation-plan.md`](tui/20-codex-slash-command-adaptation-plan.md) | `/` 命令 registry、输入期 popup、别名/参数补全、统一派发、门控与 SelectionView | 当前 HEAD、未提交工作树、聚焦/全量测试、build 与标准 PATH PTY 证据分开核对 |
 | TUI / Mermaid Rendering | [`tui/21-mermaid-diagram-rendering-implementation-plan.md`](tui/21-mermaid-diagram-rendering-implementation-plan.md)、[`tui/21-mermaid-diagram-rendering-license-manifest.md`](tui/21-mermaid-diagram-rendering-license-manifest.md) | 受限 Mermaid Unicode inline projection、OpenTUI 接缝、完整源码 fallback、缓存/预算与 R1/R2 安全边界 | M0–M7 自动门禁与标准 PATH smoke 已完成；人工视觉验收、license formal review 与 R2 仍未完成，状态查 Plan 21 |
 | TUI / Conversation Scrollbar | [`tui/22-opencode-conversation-scrollbar-adaptation-plan.md`](tui/22-opencode-conversation-scrollbar-adaptation-plan.md) | 默认隐藏、`/scrollbar`、canonical-home preference、右侧留白与主题化内建 bar 的独立工作树候选已实现；单一 OpenTUI ScrollBox 继续持有位置、sticky 与拖拽 | Plan 22 §0.1/§5.0：agent gates 与隔离候选 bin PTY 已通过；标准全局链接、真实鼠标/视觉 human verification pending |
+| TUI / Codex Syntax Highlighting | [`tui/23-codex-syntax-highlighting-replication-plan.md`](tui/23-codex-syntax-highlighting-replication-plan.md)、[`tui/23-codex-syntax-highlighting-license-manifest.md`](tui/23-codex-syntax-highlighting-license-manifest.md) | Codex 风格代码块语法高亮复制、主题映射、语言识别、流式与长会话性能边界 | Plan 23 状态表、focused/full gates、标准 PATH TTY 与 license manifest |
+| TUI / Codex Session Display | [`tui/24-codex-session-display-replication-plan.md`](tui/24-codex-session-display-replication-plan.md) | Codex 风格 session header、消息分组、工具调用与状态展示复制 | Plan 24 §S7 fresh gates、标准 PATH 隔离 TTY 与 session fixture 验收 |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
 | Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 | LSP Server Adapter | [`plan/04-lsp-server-adaptation-plan.md`](plan/04-lsp-server-adaptation-plan.md) | defaults/config 自动探测、stdio JSON-RPC、LspClient、AgentTool、WorkspaceEdit、managed LinterClient 与 SessionRuntime governed 接线 | P0–P6 review 修复已通过 fresh check/test/build 与隔离 CLI/TTY；P7 修复后 Session-managed 真实语言服务器/TUI smoke pending，状态查本文 §状态表 |
+| Streaming Write 展示稳定性 | [`plan/05-streaming-prefix-stability-plan.md`](plan/05-streaming-prefix-stability-plan.md) | oh-my-pi 稳定前缀能力族移植：part 级 settled 契约、冻结前缀判定与字节稳定契约门、settled 行缓存、流式表格列宽锁定、流式 diff 行级高亮；不改 renderer/screen mode/OpenTUI 内部 | 本文 §现状核实与 §状态表；P2 `partial`、P3–P5 `implemented`、P6 `partial / blocked`；压力证据见 [`plan/05-streaming-prefix-stability-evidence-2026-08-15.json`](plan/05-streaming-prefix-stability-evidence-2026-08-15.json)，全量 check/test 的既有 TUI boundary blocker 不伪装为本任务通过 |
 | Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
 
 ## 2026-08-04 当前实现批次
@@ -77,7 +80,10 @@ development-doc/
 ├── project-cli-layout.md
 ├── plan/
 │   ├── 01-tui-session-runtime-integration-repair-plan.md
-│   └── 04-lsp-server-adaptation-plan.md
+│   ├── 02-codex-input-area-replica-plan.md
+│   ├── 03-session-execution-reliability-repair-plan.md
+│   ├── 04-lsp-server-adaptation-plan.md
+│   └── 05-streaming-prefix-stability-plan.md
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md
@@ -85,6 +91,9 @@ development-doc/
 │   └── 01-tree-sitter-bash-ast-port-plan.md
 ├── providers/
 │   └── 01-pi-ai-migration-plan.md
+├── plugin-mcp-skill-hooks/
+│   ├── 01-implementation-plan.md
+│   └── 02-skill-registry-discovery-provider-refactor-plan.md
 ├── runtime/
 │   ├── 00-reference.md
 │   ├── 01-minimum-runtime-scaffold-plan.md
@@ -128,6 +137,9 @@ development-doc/
     ├── 21-mermaid-diagram-rendering-implementation-plan.md
     ├── 21-mermaid-diagram-rendering-license-manifest.md
     ├── 22-opencode-conversation-scrollbar-adaptation-plan.md
+    ├── 23-codex-syntax-highlighting-replication-plan.md
+    ├── 23-codex-syntax-highlighting-license-manifest.md
+    ├── 24-codex-session-display-replication-plan.md
     └── reference/
         └── 00-opentui-component-index.md
 ```

@@ -144,6 +144,76 @@ describe("OpenTUI Codex-style diff gutter", () => {
 		}
 	});
 
+	test("admits only closed diff lines while the final line is still streaming", async () => {
+		const setup = await createTestRenderer({ width: 80, height: 16 });
+		const native = fixture();
+		const service = new SyntaxHighlightService({ addon: native.addon });
+		const controller = new SyntaxThemeController({ availableThemes: themes, terminalMode: "dark" });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {}, onResize: () => {}, syntaxHighlightService: service, syntaxThemeController: controller,
+		});
+		try {
+			const streamingBlock = {
+				...diffBlock("streaming", "src/example.ts", ["const closed = 1;", "const stillGrowing = 2;"]),
+				streaming: true,
+			} as Extract<PresentationBlock, { kind: "diff" }> & { readonly streaming: boolean };
+			runtime.update({ body: [streamingBlock as PresentationBlock], editorText: "", footer: [] });
+			await settle(setup.renderOnce);
+
+			expect(native.calls).toEqual([{
+				source: "const closed = 1;",
+				language: "typescript",
+				theme: "catppuccin-mocha",
+			}]);
+			expect(findDiffBlocks(setup.renderer.root)[0]?.plainText).toContain("stillGrowing");
+
+			runtime.update({ body: [{ ...streamingBlock, streaming: false } as PresentationBlock], editorText: "", footer: [] });
+			await settle(setup.renderOnce);
+			expect(native.calls.at(-1)?.source).toBe("const closed = 1;\nconst stillGrowing = 2;");
+			expect(findDiffBlocks(setup.renderer.root)[0]?.plainText).toContain("stillGrowing");
+		} finally {
+			runtime.destroy();
+			service.destroy();
+		}
+	});
+
+	test("does not let an aborted diff generation write highlights into the replacement", async () => {
+		const setup = await createTestRenderer({ width: 80, height: 16 });
+		const native = fixture();
+		const deferredCalls: Array<{ readonly source: string; readonly resolve: (result: HighlightResult) => void }> = [];
+		const deferredAddon: NativeSyntaxAddon = {
+			...native.addon,
+			highlightAsync: (source) => new Promise((resolve) => deferredCalls.push({ source, resolve })),
+		};
+		const service = new SyntaxHighlightService({ addon: deferredAddon, maxConcurrency: 1 });
+		const controller = new SyntaxThemeController({ availableThemes: themes, terminalMode: "dark" });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {}, onResize: () => {}, syntaxHighlightService: service, syntaxThemeController: controller,
+		});
+		try {
+			runtime.update({ body: [diffBlock("generation", "src/old.ts", ["old line"])], editorText: "", footer: [] });
+			await setup.renderOnce();
+			expect(deferredCalls.map((call) => call.source)).toEqual(["old line"]);
+
+			runtime.update({ body: [diffBlock("generation", "src/new.ts", ["new line"])], editorText: "", footer: [] });
+			deferredCalls[0]?.resolve(highlighted("old line"));
+			for (let turn = 0; turn < 8 && deferredCalls.length < 2; turn += 1) {
+				await Promise.resolve();
+				await setup.renderOnce();
+			}
+			expect(deferredCalls.map((call) => call.source)).toEqual(["old line", "new line"]);
+			deferredCalls[1]?.resolve(highlighted("new line"));
+			await settle(setup.renderOnce);
+
+			const diff = findDiffBlocks(setup.renderer.root)[0];
+			expect(diff?.plainText).toContain("new line");
+			expect(diff?.plainText).not.toContain("old line");
+		} finally {
+			runtime.destroy();
+			service.destroy();
+		}
+	});
+
 	test("wraps long deleted lines under a styled blank gutter", async () => {
 		const setup = await createTestRenderer({ width: 24, height: 12 });
 		const native = fixture();

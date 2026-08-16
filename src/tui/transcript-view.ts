@@ -7,6 +7,10 @@ import { noticeDisplayLines } from "./opentui/notice-renderable.ts";
 import { formatSeparatorLabel } from "./opentui/block-layout.ts";
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "./mermaid/display-width.ts";
 import { matchesKey, type Component } from "./primitives.ts";
+import {
+	SettledPartCache,
+	type SettledPartCacheSnapshot,
+} from "./opentui/settled-part-cache.ts";
 
 /** 转写视图最多投影的块数量；超出只影响 overlay，不改变 Timeline。 */
 export const TRANSCRIPT_MAX_BLOCKS = 10_000;
@@ -21,6 +25,8 @@ export interface TranscriptOverlayView {
 	readonly timelineGeneration: number;
 	readonly committedRevision: string;
 	readonly activeRevision: string;
+	/** 主题切换时由 presentation owner 递增；缺省为首个主题。 */
+	readonly themeGeneration?: number;
 }
 
 export interface TranscriptOverlayOptions {
@@ -39,7 +45,7 @@ const rowRevisionIds = new WeakMap<TimelineRow, number>();
 let nextProjectionRevision = 1;
 
 /** Timeline -> 只读转写 view；不读取 session/ledger，也不改变主 ScrollBox。 */
-export function projectTranscriptOverlay(state: TimelineState): TranscriptOverlayView {
+export function projectTranscriptOverlay(state: TimelineState, themeGeneration = 0): TranscriptOverlayView {
 	let committed = committedProjectionCache.get(state.committedRows);
 	if (committed === undefined) {
 		committed = {
@@ -59,6 +65,7 @@ export function projectTranscriptOverlay(state: TimelineState): TranscriptOverla
 		timelineGeneration: state.generation,
 		committedRevision: committed.revision,
 		activeRevision: activeRows.map(rowRevisionId).join(","),
+		themeGeneration: normalizedGeneration(themeGeneration),
 	};
 }
 
@@ -95,20 +102,34 @@ export class TranscriptOverlayComponent implements Component {
 	private readonly maxBlocks: number;
 	private offset = 0;
 	private version = 0;
-	private readonly committedLineCache = new Map<string, readonly string[]>();
-	private readonly activeLineCache = new Map<string, readonly string[]>();
+	private readonly settledLineCache = new SettledPartCache<readonly string[]>({
+		maxEntries: 2_048,
+		maxBytes: 4 * 1024 * 1024,
+	});
+	private committedContentGeneration = 1;
+	private themeGeneration: number;
 
 	constructor(view: TranscriptOverlayView, options: TranscriptOverlayOptions = {}) {
 		this.view = view;
 		this.onClose = options.onClose;
 		this.getViewportHeight = options.getViewportHeight ?? (() => 24);
 		this.maxBlocks = Math.max(1, Math.floor(options.maxBlocks ?? TRANSCRIPT_MAX_BLOCKS));
+		this.themeGeneration = normalizedGeneration(view.themeGeneration);
 	}
 
 	update(view: TranscriptOverlayView): void {
 		if (sameViewRevision(this.view, view)) return;
-		if (this.view.committedRevision !== view.committedRevision) this.committedLineCache.clear();
-		if (this.view.activeRevision !== view.activeRevision) this.activeLineCache.clear();
+		if (this.view.committedRevision !== view.committedRevision) {
+			this.committedContentGeneration += 1;
+			this.settledLineCache.clear();
+		}
+		const nextThemeGeneration = normalizedGeneration(view.themeGeneration);
+		if (nextThemeGeneration !== this.themeGeneration) {
+			this.themeGeneration = nextThemeGeneration;
+			// 主题 revision 可能随 session/theme controller 重建而回退；清除
+			// 内容与主题 fence，避免旧 revision 把当前结果误判为迟到写入。
+			this.settledLineCache.clear();
+		}
 		this.view = view;
 		this.version += 1;
 	}
@@ -118,9 +139,12 @@ export class TranscriptOverlayComponent implements Component {
 	}
 
 	invalidate(): void {
-		this.committedLineCache.clear();
-		this.activeLineCache.clear();
+		this.settledLineCache.clear();
 		this.version += 1;
+	}
+
+	getSettledPartCacheSnapshot(): SettledPartCacheSnapshot {
+		return this.settledLineCache.snapshot();
 	}
 
 	handleInput(data: string): void {
@@ -170,15 +194,24 @@ export class TranscriptOverlayComponent implements Component {
 		const active = this.view.liveTail ?? [];
 		return boundedBlockSegments(this.view.rows, active, this.maxBlocks).flatMap((segment) => {
 			if (segment.source === "marker") return wrapTranscriptLine("… (truncated)", width);
-			const cache = segment.source === "committed" ? this.committedLineCache : this.activeLineCache;
-			const key = `${width}:${segment.start}:${segment.end}`;
-			const cached = cache.get(key);
-			if (cached !== undefined) return cached;
-			const source = segment.source === "committed" ? this.view.rows : active;
-			const lines = source.slice(segment.start, segment.end)
+			if (segment.source === "committed") {
+				const key = {
+					partId: `committed:${segment.start}:${segment.end}`,
+					width,
+					contentGeneration: this.committedContentGeneration,
+					themeGeneration: this.themeGeneration,
+				};
+				const cached = this.settledLineCache.get(key);
+				if (cached !== undefined) return cached;
+				const lines = this.view.rows.slice(segment.start, segment.end)
+					.flatMap((block) => transcriptBlockLines(block, width))
+					.flatMap((line) => wrapTranscriptLine(line, width));
+				this.settledLineCache.set(key, lines, stringArrayBytes(lines));
+				return lines;
+			}
+			const lines = active.slice(segment.start, segment.end)
 				.flatMap((block) => transcriptBlockLines(block, width))
 				.flatMap((line) => wrapTranscriptLine(line, width));
-			cache.set(key, lines);
 			return lines;
 		});
 	}
@@ -214,7 +247,16 @@ function rowRevisionId(row: TimelineRow): number {
 
 function sameViewRevision(left: TranscriptOverlayView, right: TranscriptOverlayView): boolean {
 	return left.committedRevision === right.committedRevision
-		&& left.activeRevision === right.activeRevision;
+		&& left.activeRevision === right.activeRevision
+		&& normalizedGeneration(left.themeGeneration) === normalizedGeneration(right.themeGeneration);
+}
+
+function normalizedGeneration(value: number | undefined): number {
+	return value === undefined || !Number.isFinite(value) ? 0 : Math.max(0, Math.floor(value));
+}
+
+function stringArrayBytes(lines: readonly string[]): number {
+	return lines.reduce((total, line) => total + Buffer.byteLength(line, "utf8") + 1, 0);
 }
 
 interface TranscriptBlockSegment {

@@ -1,0 +1,103 @@
+{
+  "plan": "05-streaming-prefix-stability",
+  "date": "2026-08-15",
+  "environment": {
+    "node": "v22.23.1",
+    "bun": "1.3.14",
+    "platform": "linux",
+    "arch": "x64",
+    "opentui": "0.4.5",
+    "terminalWidths": [60, 80, 143]
+  },
+  "pressureFixtures": [
+    {
+      "name": "10000 x 1-char delta",
+      "inputEvents": 10000,
+      "inputBytes": 10000,
+      "projectedItems": 1,
+      "textLossless": true,
+      "pushMs": 21.321,
+      "drainMs": 0.517
+    },
+    {
+      "name": "1 MiB message",
+      "inputEvents": 1,
+      "inputBytes": 1048576,
+      "projectedItems": 1,
+      "textLossless": true,
+      "pushMs": 1.7,
+      "drainMs": 0.972
+    },
+    {
+      "name": "open fence",
+      "openFence": true,
+      "settledEnd": 0
+    },
+    {
+      "name": "growing table",
+      "split": true,
+      "prefixStable": true
+    },
+    {
+      "name": "streaming diff",
+      "admittedLines": 1,
+      "tailLines": 1,
+      "fallback": "none"
+    },
+    {
+      "name": "settled cache bound",
+      "bounded": true,
+      "entries": 64,
+      "maxEntries": 64,
+      "maxBytes": 1024
+    },
+    {
+      "name": "abort/error lineage",
+      "oldGenerationVisible": false,
+      "terminalEvents": 2
+    }
+  ],
+  "focusedGates": {
+    "vitest": {
+      "files": 6,
+      "tests": 33,
+      "status": "pass"
+    },
+    "bunOpenTui": {
+      "files": 12,
+      "tests": 97,
+      "assertions": 618,
+      "status": "pass"
+    },
+    "typecheck": "pass",
+    "build": "pass"
+  },
+  "runtimeSmoke": {
+    "linkedRunledger": "pass",
+    "isolatedRunledgerDir": true,
+    "ptyWidths": [60, 80, 143],
+    "status": "pass"
+  },
+  "repositoryGates": {
+    "npmRunCheck": {
+      "status": "blocked_existing",
+      "failure": "development-doc/runtime/08-bounded-multi-agent-system-plan.md: internal generation marker; direct check:tui-boundaries also reports src/tui/opentui/exec-renderable.ts: forbidden ANSI foreground (black/white/blue/yellow)"
+    },
+    "npmTest": {
+      "vitestPassed": 2168,
+      "vitestSkipped": 3,
+      "vitestFailedSuites": 3,
+      "vitestFailedTests": 2,
+      "status": "blocked_existing",
+      "failure": "tests/runtime/current-format-boundary.test.ts -> development-doc/runtime/08-bounded-multi-agent-system-plan.md; tests/scripts/check-tui-color-boundaries.test.ts -> src/tui/opentui/exec-renderable.ts; tests/security/bash-ast-worker.test.ts -> bash_worker_unavailable"
+    }
+  },
+  "commands": [
+    "npm run benchmark:streaming-prefix-stability",
+    "npm run benchmark:tui-streaming",
+    "npx vitest run tests/tui/settled-prefix.test.ts tests/tui/settled-part-cache.test.ts tests/tui/streaming-table-lock.test.ts tests/tui/streaming-diff-admission.test.ts tests/tui/streaming-prefix-stability-stress.test.ts tests/tui/blocks/transcript-view.test.ts",
+    "npx tsc --noEmit -p tsconfig.json",
+    "npm run test:tui-native",
+    "npm run build"
+  ]
+}

@@ -223,6 +223,8 @@ interface ProjectionResult {
 
 ### S4 · 长会话窗口化、分页与缓存回收
 
+Plan 05 的 settled-prefix 专项已提供独立的稳定性证据：[`../plan/05-streaming-prefix-stability-evidence-2026-08-15.json`](../plan/05-streaming-prefix-stability-evidence-2026-08-15.json)。其中 P3 settled 行缓存、P4 闭合表格拆分和 P5 streaming diff admission 已有直接实现与测试；该文件只作为 S3/S4 的补充 evidence，不改写本文现有阶段 checkbox，也不覆盖本文仍缺的完整 before/after 性能预算。
+
 - [~] RED：已有 10,000 keyed native history 与滚动位置测试；尚未证明 frame 只访问 viewport + overscan。
 - [x] transcript 已改为每 entry/part 独立 child，OpenTUI `viewportCulling=true` 在实际树上生效。
 - [x] OpenTUI `stickyScroll` 已验证用户上滚后新 append 不抢回 `scrollTop`；已接入持久的“new content”提示，PageDown 回到底部后清除。

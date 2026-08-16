@@ -72,6 +72,7 @@
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
     "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
+    "benchmark:streaming-prefix-stability": "tsx scripts/benchmark-streaming-prefix-stability.ts",
     "benchmark:syntax-highlighter": "tsx scripts/benchmark-syntax-highlighter.ts",
     "dev": "tsx watch examples/run.ts",
     "generate-models": "node --experimental-strip-types scripts/generate-models.ts",

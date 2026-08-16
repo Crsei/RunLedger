@@ -89,6 +89,28 @@ export {
   type RenderCacheSnapshot,
 } from "./opentui/render-cache.ts";
 export {
+	SettledPartCache,
+	type SettledPartCacheKey,
+	type SettledPartCacheOptions,
+	type SettledPartCacheSnapshot,
+} from "./opentui/settled-part-cache.ts";
+export {
+	freezeStreamPrefix,
+	type SettledSpan,
+} from "./opentui/settled-prefix.ts";
+export {
+	splitClosedStreamingTable,
+	isMarkdownTableDelimiter,
+	type StreamingTableSplit,
+} from "./opentui/streaming-table-split.ts";
+export {
+	admitStreamingDiff,
+	type StreamingDiffAdmission,
+	type StreamingDiffAdmissionOptions,
+	type StreamingDiffLineRef,
+	type StreamingDiffOpenLine,
+} from "./opentui/streaming-diff-admission.ts";
+export {
   MERMAID_LIMITS,
   MERMAID_RENDER_REVISION,
   inspectMermaidFence,

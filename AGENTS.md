@@ -174,6 +174,21 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 - Git:只暂存本任务明确涉及的路径;禁止宽泛的 `git add -A` / `git add .` / `git commit -a` / `--no-verify`;禁止 `git reset --hard` / `git checkout .` / `git stash`;
 - 每个 PR/commit 关注一件小事,描述写"为什么",不写"是什么"(差异本身已说明是什么)。
 
+### TUI/CLI 改动的 runledger 运行验证
+
+`runledger` 全局链接指向本仓库(`which runledger` 应为 `~/.npm-global/bin/runledger`,指向本仓库),bin shim 直接 import 编译后的 `dist/cli/cli.js`,运行时不依赖 tsx 或 src。因此**每次修改 TUI/CLI(或任何进入 `dist/` 的代码)后,必须重建 dist 并用 runledger 实测**:
+
+```bash
+cd /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger
+npm run build          # 重建 dist(tsc 编译 + host build manifest)
+which runledger        # 确认全局链接指向本仓库;缺失时先 npm link
+runledger              # 真实终端验证(需真实 TTY;可用 tmux 捕获帧做视觉验证)
+```
+
+- 链接校验:`npm ls -g --depth=0 | grep runledger` 应显示 `-> ./../../../../data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger`;链接不存在或指向他处时先 `npm link` 修复;
+- 视觉验证可用 tmux:`tmux new-session -d -s check 'runledger'` → `tmux send-keys -t check '/model'` → `tmux send-keys -t check Enter` → `tmux capture-pane -t check -p`,结束后 `tmux kill-session -t check`(注意 TUI 需 Esc 逐级关闭弹窗后再 Ctrl+D 才能干净退出);
+- 真实运行依赖用户级 `~/.runledger/`(settings/auth);测试永远使用隔离 `RUNLEDGER_DIR`,不得操作真实用户目录;
+
 ### Git 提交与推送
 
 提交和推送是独立的状态变更。只有用户明确要求提交时才创建 commit；只有用户明确要求推送时才推送。工作区可能同时存在其他任务的改动，不能把 `git status` 中出现的全部文件视为本任务范围。

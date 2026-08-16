@@ -36,6 +36,8 @@ import { NoticeRenderable, noticePlainText } from "./notice-renderable.ts";
 import { formatSeparatorLabel, STATUS_DETAILS_PREFIX } from "./block-layout.ts";
 import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "../mermaid/display-width.ts";
+import { freezeStreamPrefix, type SettledSpan } from "./settled-prefix.ts";
+import { splitClosedStreamingTable } from "./streaming-table-split.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
@@ -120,6 +122,11 @@ interface KeyedRenderable<T extends BodyRenderable | OverlayRenderable> {
   streaming?: boolean;
 }
 
+interface SettledMarkdownState {
+  readonly span: SettledSpan;
+  readonly renderable: MarkdownRenderable;
+}
+
 function normalizedInputFor(key: KeyEvent): string {
   const aliases: Record<string, string> = {
     return: "enter",
@@ -166,7 +173,7 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "separator") return block.content ?? formatSeparatorLabel(block.label, block.metrics);
   if (block.kind === "command") return `$ ${stripCommandForPlaintext(block.command)}`;
   if (block.kind === "exec") return plainExecText(block);
-  if (block.kind === "diff") return `${diffPlainText(block)}\u0000syntax=${block.syntaxHighlight !== false}`;
+  if (block.kind === "diff") return `${diffPlainText(block)}\u0000syntax=${block.syntaxHighlight !== false}\u0000streaming=${block.streaming === true}`;
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
@@ -301,7 +308,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
 
   let overlay: BoxRenderable | undefined;
   let bodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
-  const pendingMarkdownFinalization = new Map<string, string>();
+  let settledMarkdownStates = new Map<string, SettledMarkdownState>();
   let overlayNodes = new Map<string, KeyedRenderable<OverlayRenderable>>();
   let previousBodySignature: readonly string[] = [];
   let pendingNewContent = 0;
@@ -401,6 +408,10 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       if (node.renderable instanceof MarkdownRenderable) node.renderable.syntaxStyle = syntaxStyle;
       updateMermaidTheme(node.renderable, mode);
     }
+    for (const state of settledMarkdownStates.values()) {
+      state.renderable.syntaxStyle = syntaxStyle;
+      updateMermaidTheme(state.renderable, mode);
+    }
     previousStyle.destroy();
     options.onThemeMode?.(mode);
   };
@@ -413,21 +424,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       durationMs: Math.max(0, stats.nativeLastFrameTime),
       cellsUpdated,
     });
-	updateTranscriptHighlightAdmission(transcript, bodyNodes);
-    if (pendingMarkdownFinalization.size > 0) {
-      for (const [key, content] of pendingMarkdownFinalization) {
-        const node = bodyNodes.get(key);
-        if (node?.renderable instanceof MarkdownRenderable) {
-          node.renderable.content = "";
-          node.renderable.streaming = false;
-          node.renderable.content = content;
-          finalizeMarkdownChildren(node.renderable);
-          node.streaming = false;
-        }
-      }
-      pendingMarkdownFinalization.clear();
-      renderer.requestRender();
-    }
+    updateTranscriptHighlightAdmission(transcript, bodyNodes, settledMarkdownStates);
   };
   renderer.on("frame", onFrame);
 
@@ -466,6 +463,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       }
       lastTranscriptScrollPresentation = scrollPresentation;
       const nextBodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
+      const nextSettledMarkdownStates = new Map<string, SettledMarkdownState>();
       const desiredBodyNodes: BodyRenderable[] = [];
       const usedBodyKeys = new Set<string>();
       const bodyBlocks = frame.body.length > 0
@@ -490,6 +488,45 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         usedBodyKeys.add(key);
         const previous = bodyNodes.get(key);
         const expectedKind = block.kind;
+        const previousSettled = settledMarkdownStates.get(key);
+        const markdownBlock = block.kind === "markdown" ? block : undefined;
+        const settledSpan = markdownBlock?.streaming === true
+          ? chooseSettledMarkdownSpan(
+            markdownBlock.content,
+            previousSettled?.span,
+            splitClosedStreamingTable(markdownBlock.content),
+          )
+          : undefined;
+        const splitMarkdown = markdownBlock !== undefined
+          && settledSpan !== undefined
+          && settledSpan.end > 0
+          && settledSpan.end < markdownBlock.content.length;
+        let settledRenderable: MarkdownRenderable | undefined;
+        if (splitMarkdown && settledSpan !== undefined) {
+          settledRenderable = previousSettled?.renderable ?? new MarkdownRenderable(renderer, {
+            id: renderableId("runledger-block", `${key}-settled`),
+            width: "100%",
+            flexShrink: 0,
+            content: settledSpan.prefixText,
+            streaming: true,
+            syntaxStyle,
+            internalBlockMode: "top-level",
+            renderNode: codeBlockRenderNode,
+          });
+          if (settledRenderable.content !== settledSpan.prefixText) {
+            settledRenderable.content = "";
+            settledRenderable.content = settledSpan.prefixText;
+          }
+          settledRenderable.streaming = false;
+          finalizeMarkdownChildren(settledRenderable);
+          nextSettledMarkdownStates.set(key, { span: settledSpan, renderable: settledRenderable });
+        }
+        const markdownContent = splitMarkdown && settledSpan !== undefined && markdownBlock !== undefined
+          ? markdownBlock.content.slice(settledSpan.end)
+          : undefined;
+        const contentKey = block.kind === "markdown"
+          ? markdownContent ?? block.content
+          : blockText(block);
         let current = previous;
         if (current?.kind !== expectedKind) {
           if (current) transcript.remove(current.renderable);
@@ -497,15 +534,15 @@ export function createOpenTuiComponentRuntimeFromRenderer(
           current = undefined;
         }
         if (!current) {
-          const contentKey = blockText(block);
           const renderable = block.kind === "markdown"
             ? new MarkdownRenderable(renderer, {
               id: renderableId("runledger-block", key),
               width: "100%",
               flexShrink: 0,
-              content: block.content,
-              // OpenTUI 0.4.5 首次以 streaming=false 创建时不会 materialize block cache。
-              // 先按 streaming 创建，再在下方走同一 finalization 边界。
+              content: contentKey,
+              // OpenTUI 0.4.5 首次以 streaming=false 创建时不会 materialize block cache，
+              // 因此一律先按 streaming=true 创建；final 帧在内容落定后
+              // 翻转 streaming 并 finalize 子 block（见下方 final 分支）。
               streaming: true,
               syntaxStyle,
               internalBlockMode: "top-level",
@@ -555,25 +592,37 @@ export function createOpenTuiComponentRuntimeFromRenderer(
             kind: expectedKind,
             renderable,
             contentKey,
-            ...(block.kind === "markdown" ? { streaming: renderable instanceof MarkdownRenderable ? renderable.streaming : block.streaming } : {}),
+            ...(block.kind === "markdown" ? { streaming: block.streaming } : {}),
           };
-		  if (block.kind === "markdown" && !block.streaming) pendingMarkdownFinalization.set(key, block.content);
-        } else if (block.kind === "markdown" && current.renderable instanceof MarkdownRenderable) {
-		  if (block.streaming) pendingMarkdownFinalization.delete(key);
-          if (!pendingMarkdownFinalization.has(key) && current.renderable.streaming && !block.streaming) {
-            // OpenTUI 0.4.5 需要在 streaming -> final 边界清空内部 block cache，
-            // 但外层 renderable identity 仍保持稳定。
-            current.renderable.content = "";
-            current.contentKey = undefined;
+          if (block.kind === "markdown" && !block.streaming && renderable instanceof MarkdownRenderable) {
+            // OpenTUI 0.4.5：markdown 只在 streaming 态 materialize 内部 block；
+            // final 帧在内容落定后翻转并强制子 block 以 unstyled 文本绘制，否则内容整体消失。
+            renderable.streaming = false;
+            finalizeMarkdownChildren(renderable);
           }
+        } else if (block.kind === "markdown" && current.renderable instanceof MarkdownRenderable) {
           if (current.streaming !== block.streaming) {
+            if (!block.streaming) {
+              // OpenTUI 0.4.5：streaming -> final 边界先清空内部 block cache，
+              // 防止旧 block 与内容重建结果并存（残留原始 fence 文本等）。
+              current.renderable.content = "";
+              current.contentKey = undefined;
+            }
             current.renderable.streaming = block.streaming;
             current.streaming = block.streaming;
           }
-          if (current.contentKey !== block.content) {
-            current.renderable.content = block.content;
-            current.contentKey = block.content;
+          if (current.contentKey !== contentKey) {
+            // split/rewind 后 tail 不再是旧正文的 append；先清空 OpenTUI 的
+            // 内部 block cache，避免旧前缀状态污染新的 tail。
+            if (current.contentKey !== undefined && !contentKey.startsWith(current.contentKey)) {
+              current.renderable.content = "";
+              current.contentKey = undefined;
+            }
+            current.renderable.content = contentKey;
+            current.contentKey = contentKey;
           }
+          // 同上：final 帧内容落定后再 finalize 子 block（顺序必须在 content set 之后）。
+          if (!block.streaming) finalizeMarkdownChildren(current.renderable);
         } else if (block.kind === "exec" && current.renderable instanceof ExecRenderable) {
           const contentKey = blockText(block);
           if (current.contentKey !== contentKey) {
@@ -606,7 +655,13 @@ export function createOpenTuiComponentRuntimeFromRenderer(
           }
         }
         nextBodyNodes.set(key, current);
+        if (settledRenderable !== undefined) desiredBodyNodes.push(settledRenderable);
         desiredBodyNodes.push(current.renderable);
+      }
+      for (const [key, state] of settledMarkdownStates) {
+        if (nextSettledMarkdownStates.has(key)) continue;
+        transcript.remove(state.renderable);
+        state.renderable.destroyRecursively();
       }
       for (const [key, node] of bodyNodes) {
         if (!nextBodyNodes.has(key)) {
@@ -621,6 +676,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         }
       }
       bodyNodes = nextBodyNodes;
+      settledMarkdownStates = nextSettledMarkdownStates;
       if (editor.plainText !== frame.editorText) {
         editor.setText(frame.editorText);
       }
@@ -848,6 +904,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       unsubscribeOsc();
       codeBlockRenderNode.dispose();
       if (ownsSyntaxHighlightService) syntaxHighlightService.destroy();
+      for (const state of settledMarkdownStates.values()) state.renderable.destroyRecursively();
+      settledMarkdownStates.clear();
       renderer.destroy();
       syntaxStyle.destroy();
     },
@@ -895,6 +953,30 @@ export function statusIndicatorPlainText(view: StatusIndicatorView, width?: numb
   return [truncateDisplayWidth(header, safeWidth, true), ...detailLines].join("\n");
 }
 
+function chooseSettledMarkdownSpan(
+	text: string,
+	previous: SettledSpan | undefined,
+	tableSplit: ReturnType<typeof splitClosedStreamingTable>,
+): SettledSpan | undefined {
+	const regular = freezeStreamPrefix(text, previous);
+	if (tableSplit === undefined) return regular;
+	if (previous !== undefined && !tableSplit.prefixText.startsWith(previous.prefixText)) return regular;
+	if (previous !== undefined && tableSplit.prefixEnd <= previous.end) return regular;
+	const tableSpan: SettledSpan = {
+		start: 0,
+		end: tableSplit.prefixEnd,
+		prefixText: tableSplit.prefixText,
+		lineCount: countNewlines(tableSplit.prefixText),
+	};
+	return regular === undefined || tableSpan.end > regular.end ? tableSpan : regular;
+}
+
+function countNewlines(text: string): number {
+	let count = 0;
+	for (const character of text) if (character === "\n") count += 1;
+	return count;
+}
+
 function boundedStatusPrefix(prefix: string, width: number): string {
   return truncateDisplayWidth(prefix, Math.max(0, width - 1));
 }
@@ -924,22 +1006,27 @@ function updateMermaidTheme(renderable: Renderable, mode: MermaidThemeMode): voi
 function updateTranscriptHighlightAdmission(
 	transcript: ScrollBoxRenderable,
 	nodes: ReadonlyMap<string, KeyedRenderable<BodyRenderable>>,
+	settledMarkdownStates: ReadonlyMap<string, SettledMarkdownState>,
 ): void {
 	const viewportTop = transcript.viewport.screenY;
 	const viewportHeight = Math.max(1, transcript.viewport.height);
 	const viewportBottom = viewportTop + viewportHeight;
-	for (const node of nodes.values()) {
-		visitHighlightRenderables(node.renderable, (renderable) => {
-			const top = renderable.screenY;
-			const bottom = top + Math.max(1, renderable.height);
+	const updateNode = (renderable: Renderable): void => {
+		visitHighlightRenderables(renderable, (highlightable) => {
+			const top = highlightable.screenY;
+			const bottom = top + Math.max(1, highlightable.height);
 			const admission: HighlightAdmission = bottom > viewportTop && top < viewportBottom
 				? "visible"
 				: bottom > viewportTop - viewportHeight && top < viewportBottom + viewportHeight
 					? "overscan"
 					: "offscreen";
-			renderable.setHighlightAdmission(admission);
+			highlightable.setHighlightAdmission(admission);
 		});
+	};
+	for (const node of nodes.values()) {
+		updateNode(node.renderable);
 	}
+	for (const state of settledMarkdownStates.values()) updateNode(state.renderable);
 }
 
 function visitHighlightRenderables(

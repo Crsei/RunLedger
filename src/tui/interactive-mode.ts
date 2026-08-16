@@ -350,7 +350,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
       }
       if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
-        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline));
+        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision));
       }
       if (next.interaction.transcriptScrollbarVisible !== this.lastTranscriptScrollbarVisible) {
         this.refreshTranscriptScrollPresentation();
@@ -500,7 +500,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
   private openTranscriptOverlay(): void {
     if (this.quitting || this.ui.hasOverlay() || this.activePermissionView !== undefined) return;
-    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline), {
+    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision), {
       getViewportHeight: () => Math.max(4, this.terminal.rows - 2),
       onClose: () => this.closeOverlay(),
     });

@@ -1,15 +1,15 @@
 import { RGBA, StyledText, TextAttributes, TextRenderable, type RenderContext, type TextChunk, type TextOptions } from "@opentui/core";
 import { DIFF_TAB_REPLACEMENT, diffLineNumberWidth } from "./block-layout.ts";
 import type { HighlightColor, HighlightLine } from "../highlight/contracts.ts";
+import type { HighlightResult } from "../highlight/contracts.ts";
 import type { SyntaxHighlightService } from "../highlight/service.ts";
 import type { SyntaxThemeController, SyntaxThemeSnapshot } from "../highlight/theme-controller.ts";
 import type { PresentationBlock } from "../presentation.ts";
-import type { SafeDiffDocument, SafeDiffHunk, SafeDiffLine } from "../presentation/tools/types.ts";
+import type { SafeDiffDocument, SafeDiffLine } from "../presentation/tools/types.ts";
 import type { HighlightAdmission } from "./syntect-code-block-renderable.ts";
 import { displayWidth, graphemes, wrapDisplayWidth } from "../mermaid/display-width.ts";
+import { admitStreamingDiff, type StreamingDiffLineRef } from "./streaming-diff-admission.ts";
 
-const MAX_DIFF_HIGHLIGHT_BYTES = 512 * 1024;
-const MAX_DIFF_HIGHLIGHT_LINES = 10_000;
 const MAX_DIFF_MANUAL_WRAP_BYTES = 64 * 1024;
 
 export type DiffBlock = Extract<PresentationBlock, { readonly kind: "diff" }>;
@@ -31,7 +31,7 @@ export class DiffRenderable extends TextRenderable {
 	private requestGeneration = 0;
 	private scheduledSignature: string | undefined;
 	private highlightKeys: string[] = [];
-	private highlightedHunks: readonly (readonly HighlightLine[] | undefined)[] = [];
+	private highlightedHunks: readonly (readonly (HighlightLine | undefined)[] | undefined)[] = [];
 	private renderWidth: number | undefined;
 
 	constructor(ctx: RenderContext, options: DiffRenderableOptions) {
@@ -120,16 +120,18 @@ export class DiffRenderable extends TextRenderable {
 		this.scheduledSignature = signature;
 		this.highlightedHunks = [];
 		this.applyTheme(theme);
-		if (!withinDiffHighlightLimits(this.block.document)) return;
+		const admission = admitStreamingDiff(this.block.document, { streaming: this.block.streaming === true });
+		if (admission.fallback === "budget" || admission.admitted.length === 0) return;
 		const generation = this.requestGeneration;
 		const language = languageForDiffPath(this.block.document.path.text);
 		const priority = this.admission === "visible" ? "visible" : "overscan";
-		const requests = this.block.document.hunks.map((hunk, index) => {
-			const key = `${this.id}:diff-hunk:${index}`;
+		const admittedByHunk = admittedLinesByHunk(admission.admitted);
+		const requests = [...admittedByHunk.entries()].map(([hunkIndex, refs]) => {
+			const key = `${this.id}:diff-hunk:${hunkIndex}`;
 			this.highlightKeys.push(key);
 			return this.highlightService.highlight({
 				key,
-				source: diffHunkSource(hunk),
+				source: refs.map((ref) => normalizeDiffText(ref.line.text.text)).join("\n"),
 				language,
 				themeName: theme.activeName,
 				themeRevision: theme.revision,
@@ -139,12 +141,7 @@ export class DiffRenderable extends TextRenderable {
 		void Promise.all(requests).then((results) => {
 			if (this.isDestroyed || generation !== this.requestGeneration) return;
 			this.highlightKeys = [];
-			this.highlightedHunks = results.map((result, index) => {
-				const hunk = this.block.document.hunks[index];
-				return result.ok && hunk !== undefined && validHighlightLines(result.lines, hunk)
-					? result.lines
-					: undefined;
-			});
+			this.highlightedHunks = mergeAdmittedHighlights(this.block.document, [...admittedByHunk.values()], results);
 			this.applyTheme(this.themeController.snapshot());
 		}, () => {
 			if (this.isDestroyed || generation !== this.requestGeneration) return;
@@ -225,7 +222,7 @@ interface DiffBackgrounds {
 function diffStyledText(
 	block: DiffBlock,
 	backgrounds: DiffBackgrounds,
-	highlightedHunks: readonly (readonly HighlightLine[] | undefined)[],
+	highlightedHunks: readonly (readonly (HighlightLine | undefined)[] | undefined)[],
 	width?: number,
 ): StyledText {
 	const lines: TextChunk[][] = wrapStyledChunks([{
@@ -423,27 +420,37 @@ function normalizedLineNumberWidth(block: DiffBlock): number {
 	return diffLineNumberWidth(maxLineNumber);
 }
 
-function diffHunkSource(hunk: SafeDiffHunk): string {
-	return hunk.lines.map((line) => normalizeDiffText(line.text.text)).join("\n");
-}
-
-function withinDiffHighlightLimits(document: SafeDiffDocument): boolean {
-	let bytes = 0;
-	let lines = 0;
-	for (const hunk of document.hunks) {
-		const source = diffHunkSource(hunk);
-		bytes += Buffer.byteLength(source, "utf8");
-		lines += hunk.lines.length;
-		if (bytes > MAX_DIFF_HIGHLIGHT_BYTES || lines > MAX_DIFF_HIGHLIGHT_LINES) return false;
+function admittedLinesByHunk(lines: readonly StreamingDiffLineRef[]): Map<number, StreamingDiffLineRef[]> {
+	const grouped = new Map<number, StreamingDiffLineRef[]>();
+	for (const line of lines) {
+		const existing = grouped.get(line.hunkIndex);
+		if (existing === undefined) grouped.set(line.hunkIndex, [line]);
+		else existing.push(line);
 	}
-	return true;
+	return grouped;
 }
 
-function validHighlightLines(lines: readonly HighlightLine[], hunk: SafeDiffHunk): boolean {
-	return lines.length === hunk.lines.length && lines.every((line, index) => {
-		const source = line.spans.map((span) => span.text).join("");
-		return source === normalizeDiffText(hunk.lines[index]!.text.text);
-	});
+function mergeAdmittedHighlights(
+	document: SafeDiffDocument,
+	groups: readonly (readonly StreamingDiffLineRef[])[],
+	results: readonly HighlightResult[],
+): readonly (readonly (HighlightLine | undefined)[] | undefined)[] {
+	const merged = document.hunks.map((hunk) => new Array<HighlightLine | undefined>(hunk.lines.length));
+	for (const [groupIndex, refs] of groups.entries()) {
+		const result = results[groupIndex];
+		if (result === undefined || !result.ok || result.lines.length !== refs.length) continue;
+		for (const [lineIndex, ref] of refs.entries()) {
+			const highlighted = result.lines[lineIndex];
+			if (highlighted === undefined || !validHighlightLine(highlighted, ref.line)) continue;
+			const target = merged[ref.hunkIndex];
+			if (target !== undefined) target[ref.lineIndex] = highlighted;
+		}
+	}
+	return merged.map((lines) => lines.some((line) => line !== undefined) ? lines : undefined);
+}
+
+function validHighlightLine(highlighted: HighlightLine, line: SafeDiffLine): boolean {
+	return highlighted.spans.map((span) => span.text).join("") === normalizeDiffText(line.text.text);
 }
 
 function normalizeDiffText(text: string): string {

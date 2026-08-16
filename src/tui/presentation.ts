@@ -58,6 +58,8 @@ export type PresentationBlock =
     id?: string;
     kind: "diff";
     document: import("./presentation/tools/types.ts").SafeDiffDocument;
+    /** 流式 diff 中最后一行仍可继续接收 delta；final 帧省略或置 false。 */
+    streaming?: boolean;
     /** 显示右对齐的旧/新行号 gutter；缺省由 renderer 按 Codex 布局开启。 */
     showLineNumbers?: boolean;
     /** 行号 gutter 宽度；selector 会按当前文档最大行号预计算。 */

@@ -17,6 +17,8 @@
 >
 > 当前多平台适配计划：[`01-multiplatform-workspace-path-adaptation-plan.md`](01-multiplatform-workspace-path-adaptation-plan.md)。
 >
+> permissions 语义细化（Codex 参考）：[`06-codex-permissions-adaptation-plan.md`](06-codex-permissions-adaptation-plan.md)。
+>
 > 已封存 OS sandbox 扩展：[`archive/00-os-sandbox-cross-platform-expansion-archived.md`](archive/00-os-sandbox-cross-platform-expansion-archived.md)。
 
 ## 0. 参考基线与结论边界

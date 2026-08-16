@@ -98,10 +98,11 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 					id: `${baseId}/diff-${index}`,
 					kind: "diff",
 					document: block.document,
-					showLineNumbers: true,
-					lineNumberWidth: diffDocumentLineNumberWidth(block.document),
-					syntaxHighlight: true,
-				}]
+						showLineNumbers: true,
+						lineNumberWidth: diffDocumentLineNumberWidth(block.document),
+						syntaxHighlight: true,
+						...(row.status === "running" ? { streaming: true } : {}),
+					}]
 				: []) ?? [];
 			return [{ id: baseId, kind: "text", content: lines.join("\n") }, ...diffBlocks];
 		}
