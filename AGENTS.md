@@ -142,6 +142,18 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 
 以下仍是 M1 非目标：DAG、child 再委托、并行 spawn、可写工作区或独立 worktree、MCP/Hook/Skill/Plugin child 能力、外部 Codex/Claude/ACP provider、child transcript cold continuation、Artifact/CAS/handoff/merge、USD cost、TUI `/agents` 面板和跨进程热替换。不要以空字段、未使用状态或 `verified:false` placeholder 提前宣传这些能力。
 
+#### 1.2.vb oh-my-pi 新增 Provider 移植（2026-08，partial/deferred 批次）
+
+唯一状态入口：`development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md`（来源快照 oh-my-pi 06aecdd5 v17.2.15，目标基线 b5100b2）。当前 `src/providers/` 有 68 个 builtin provider（原 36/37 + 本批新增），实现于独立 worktree `RunLedger-oh-my-pi-provider-port`，未提交。
+
+状态分层（不要混用）：
+
+- **代码已存在 + focused tests 通过 + 组合链通过**：A 批次 16 个（aimlapi、baseten、coreweave、firepass、gmi-cloud、litellm、lm-studio、nanogpt、novita、qianfan、siliconflow、siliconflow-cn、synthetic、venice、vllm、zhipu-coding-plan）与 B 批次 14 个（alibaba-coding-plan、alibaba-token-plan、bedrock-mantle、kilo、kimi-code、meta、minimax-code、minimax-code-cn、opencode-zen、qwen-portal、sakana、umans、wafer-serverless、zenmux）+ llama.cpp。全部标记 **partial**——真实凭据 E2E 未闭合，不做 implemented 宣称。
+- **identity 映射（不新增 ID）**：azure → azure-openai-responses；moonshot → moonshotai + KIMI_API_KEY fallback；xai-oauth → xai 的既有 OAuth 路径 + 5 个 responses 模型并入 xai catalog。
+- **deferred**：cursor / devin / gitlab-duo / gitlab-duo-agent / google-antigravity / google-gemini-cli / ollama / ollama-cloud（目标无对应 transport，RED 测试锁定 fail-closed）；zai-coding-plan / openai-codex-device（已有 provider 的 auth 变体，OAuth 流另建专项）；exa / kagi / parallel / perplexity / tavily（搜索/工具范畴，不在 chat provider DoD）。
+- 关键机制：模型数据唯一来源 `scripts/sources/oh-my-pi-provider-models-17.2.15.json`（extract 脚本从冻结快照生成）+ `scripts/ported-provider-catalog.ts` 归一化；动态 provider 只声明进程内 refresh + last-known-good（InMemoryModelsStore），不宣称跨进程恢复；kimi-code device-code OAuth 流在 `src/auth/oauth/kimi-code.ts`（load.ts/bun-oauth.ts 已接线）。
+
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;

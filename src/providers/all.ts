@@ -2,6 +2,38 @@ import { createImagesModels, type ImagesProvider, type MutableImagesModels } fro
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { Api, Model } from "../types.ts";
+import { aiandProvider } from "./aiand.ts";
+import { aimlapiProvider } from "./aimlapi.ts";
+import { alibabaCodingPlanProvider } from "./alibaba-coding-plan.ts";
+import { alibabaTokenPlanProvider } from "./alibaba-token-plan.ts";
+import { basetenProvider } from "./baseten.ts";
+import { bedrockMantleProvider } from "./bedrock-mantle.ts";
+import { coreweaveProvider } from "./coreweave.ts";
+import { firepassProvider } from "./firepass.ts";
+import { gmiCloudProvider } from "./gmi-cloud.ts";
+import { llamaCppProvider } from "./llama-cpp.ts";
+import { kiloProvider } from "./kilo.ts";
+import { kimiCodeProvider } from "./kimi-code.ts";
+import { litellmProvider } from "./litellm.ts";
+import { lmStudioProvider } from "./lm-studio.ts";
+import { metaProvider } from "./meta.ts";
+import { minimaxCodeProvider } from "./minimax-code.ts";
+import { minimaxCodeCnProvider } from "./minimax-code-cn.ts";
+import { nanogptProvider } from "./nanogpt.ts";
+import { novitaProvider } from "./novita.ts";
+import { opencodeZenProvider } from "./opencode-zen.ts";
+import { qianfanProvider } from "./qianfan.ts";
+import { qwenPortalProvider } from "./qwen-portal.ts";
+import { sakanaProvider } from "./sakana.ts";
+import { siliconflowProvider } from "./siliconflow.ts";
+import { siliconflowCnProvider } from "./siliconflow-cn.ts";
+import { syntheticProvider } from "./synthetic.ts";
+import { umansProvider } from "./umans.ts";
+import { veniceProvider } from "./venice.ts";
+import { vllmProvider } from "./vllm.ts";
+import { waferServerlessProvider } from "./wafer-serverless.ts";
+import { zenmuxProvider } from "./zenmux.ts";
+import { zhipuCodingPlanProvider } from "./zhipu-coding-plan.ts";
 import { amazonBedrockProvider } from "./amazon-bedrock.ts";
 import { antLingProvider } from "./ant-ling.ts";
 import { anthropicProvider } from "./anthropic.ts";
@@ -77,8 +109,40 @@ export function getBuiltinModels<TProvider extends BuiltinProvider>(
 /** All built-in providers, freshly constructed. */
 export function builtinProviders(): Provider[] {
 	return [
-		amazonBedrockProvider(),
+		aiandProvider(),
+		aimlapiProvider(),
+		alibabaCodingPlanProvider(),
+		alibabaTokenPlanProvider(),
+		basetenProvider(),
+		bedrockMantleProvider(),
+		coreweaveProvider(),
+		firepassProvider(),
+		gmiCloudProvider(),
+		kiloProvider(),
+		kimiCodeProvider(),
+		llamaCppProvider(),
+		litellmProvider(),
+		lmStudioProvider(),
+		metaProvider(),
+		minimaxCodeProvider(),
+		minimaxCodeCnProvider(),
+		nanogptProvider(),
+		novitaProvider(),
+		opencodeZenProvider(),
+		qianfanProvider(),
+		qwenPortalProvider(),
+		sakanaProvider(),
+		siliconflowProvider(),
+		siliconflowCnProvider(),
+		syntheticProvider(),
+		umansProvider(),
+		veniceProvider(),
+		vllmProvider(),
+		waferServerlessProvider(),
+		zenmuxProvider(),
+		zhipuCodingPlanProvider(),
 		antLingProvider(),
+		amazonBedrockProvider(),
 		anthropicProvider(),
 		azureOpenAIResponsesProvider(),
 		cerebrasProvider(),

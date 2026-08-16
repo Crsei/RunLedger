@@ -32,6 +32,7 @@ export type KnownImagesApi = "openrouter-images";
 export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
+	| "aiand"
 	| "amazon-bedrock"
 	| "ant-ling"
 	| "anthropic"
@@ -67,7 +68,39 @@ export type KnownProvider =
 	| "xiaomi"
 	| "xiaomi-token-plan-cn"
 	| "xiaomi-token-plan-ams"
-	| "xiaomi-token-plan-sgp";
+	| "xiaomi-token-plan-sgp"
+	// oh-my-pi 移植批次(2026-08,见 development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md)
+	| "aimlapi"
+	| "baseten"
+	| "coreweave"
+	| "firepass"
+	| "gmi-cloud"
+	| "litellm"
+	| "lm-studio"
+	| "nanogpt"
+	| "novita"
+	| "qianfan"
+	| "siliconflow"
+	| "siliconflow-cn"
+	| "synthetic"
+	| "venice"
+	| "vllm"
+	| "zhipu-coding-plan"
+	| "alibaba-coding-plan"
+	| "alibaba-token-plan"
+	| "bedrock-mantle"
+	| "kimi-code"
+	| "meta"
+	| "minimax-code"
+	| "minimax-code-cn"
+	| "kilo"
+	| "opencode-zen"
+	| "zenmux"
+	| "llama.cpp"
+	| "qwen-portal"
+	| "sakana"
+	| "umans"
+	| "wafer-serverless";
 export type ProviderId = KnownProvider | string;
 
 export type KnownImagesProvider = "openrouter";
