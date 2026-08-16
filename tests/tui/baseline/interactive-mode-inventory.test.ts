@@ -25,7 +25,6 @@ const mutableFields = [
   "streamingGeneration",
   "streamingDeltas",
   "pendingMessageBuffers",
-  "lastIdleCtrlC",
   "quitting",
   "processOverlayComponent",
   "consecutiveInitFailures",

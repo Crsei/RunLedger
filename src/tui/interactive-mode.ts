@@ -220,7 +220,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly projectRootDisplayLabel?: string;
   private readonly gitBranchLabel?: string;
   private authAdapter: InteractiveSessionAdapter;
-  private lastIdleCtrlC = 0;
   private quitting = false;
 
   // /model 二级弹窗缓存:workflow ready 快照投影,供二级 Esc 返回一级复用。
@@ -564,7 +563,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
   }
 
-  /** 中断当前 turn;M8c:真接 agent.interrupt()。 */
+  /**
+   * Ctrl+C 三态:流式中断当前 turn;空闲有草稿清空输入区;
+   * 空闲且输入区为空退出 TUI。
+   */
   private handleInterrupt(): void {
     if (this.streaming || this.inFlight()) {
       this.interruptCurrentTurn();
@@ -573,16 +575,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const text = this.refs.editor.getText();
     if (text.length > 0) {
       this.refs.editor.setText("");
-      this.lastIdleCtrlC = Date.now();
       this.ui.requestRender();
       return;
     }
-    const now = Date.now();
-    if (now - this.lastIdleCtrlC <= 500) {
-      void this.requestQuit();
-    } else {
-      this.lastIdleCtrlC = now;
-    }
+    void this.requestQuit();
   }
 
   /** Permission deny 与 Ctrl+C 共用同一 canonical turn 中断和队列恢复路径。 */

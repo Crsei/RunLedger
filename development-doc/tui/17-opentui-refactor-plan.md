@@ -51,7 +51,7 @@ OpenTUI 0.4.5 的 native renderer 在 Node.js 中要求 Node 26.4.0 和 experime
 
 - `InteractiveSessionController` 继续拥有 prompt、provider/model、thinking、Auth、queue、interrupt 和 dispose。
 - `AgentEvent` / `TuiEvent` 仍是 runtime 到 UI 的单向输入；UI 不直接改 ledger/runtime 状态。
-- Ctrl+C：有 in-flight 时 interrupt；idle 且 editor 非空时清空；idle 空 editor 双击退出。
+- Ctrl+C：有 in-flight 时 interrupt；idle 且 editor 非空时清空输入区；idle 且 editor 为空时退出。
 - Ctrl+D：仅 idle 且 editor 为空时退出。
 - overlay 打开时全局退出/中断键不得越权穿透。
 - model/thinking/provider/login/logout 继续走 controller；选择器 highlight 不等于配置已提交。

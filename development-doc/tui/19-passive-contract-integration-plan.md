@@ -289,7 +289,7 @@ tests/tui/
 - InteractiveMode inventory：`tests/tui/baseline/interactive-mode-inventory.test.ts` 固定
   mutable 字段（streaming / stopReason / streamingGeneration / streamingDeltas /
   pendingAssistantPartials / toolCallComponents / modelRegistry / thinkingLevel /
-  lastIdleCtrlC / quitting / processOverlayComponent / consecutiveInitFailures）、直接
+  quitting / processOverlayComponent / consecutiveInitFailures）、直接
   controller 调用、Host raw response 解析与组件 mutation 清单；
 - 可复用 harness：`tests/tui/fixtures/contract-integration.ts`（ContractTerminal 60/80/143
   可配列宽 + ContractController 事件源 + 隔离 RUNLEDGER_DIR 的 createContractHarness，
@@ -766,7 +766,7 @@ tests/tui/
   领域调用、raw Host response 解析（result.servers/result.descriptors 等）；
 - `InteractiveMode` 现为 composition/lifecycle/presentation adapter + store/runner 装配点：
   mutable 字段仅剩 streaming/stopReason/streamingGeneration/streamingDeltas/
-  pendingMessageBuffers/lastIdleCtrlC/quitting/processOverlayComponent/
+  pendingMessageBuffers/quitting/processOverlayComponent/
   consecutiveInitFailures（inventory characterization 固定）；
 - EffectRunner cancel/cancelAll 对不合作 port 同步 settle，后到 Promise 结果按 controller
   identity 丢弃；reducer stale/aborted reset 使用 generation/correlationId/effectId 三重 fence；

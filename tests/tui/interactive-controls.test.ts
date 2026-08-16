@@ -502,6 +502,48 @@ describe("InteractiveMode lifecycle and global controls", () => {
     expect(terminal.stopCount).toBe(1);
   });
 
+  it("非空 Ctrl+C 只清空输入区不退出,空输入再按 Ctrl+C 退出", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const running = mode.run();
+    let settled = false;
+    void running.then(() => {
+      settled = true;
+    });
+    const internals = mode as unknown as {
+      refs: { editor: { getText(): string } };
+    };
+
+    terminal.send("draft");
+    terminal.send("\x03");
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    expect(internals.refs.editor.getText()).toBe("");
+
+    terminal.send("\x03");
+    await running;
+    expect(terminal.stopCount).toBe(1);
+  });
+
+  it("空闲且输入区为空时 Ctrl+C 单次直接退出", async () => {
+    const terminal = new FakeTerminal();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: immediateStopStream(),
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const running = mode.run();
+
+    terminal.send("\x03");
+    await running;
+    expect(terminal.stopCount).toBe(1);
+  });
+
+
 	it("流式 Ctrl+C 中断当前 provider，但不退出 TUI", async () => {
     const terminal = new FakeTerminal();
     const controlled = interruptibleStream();
