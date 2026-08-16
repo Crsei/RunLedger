@@ -164,9 +164,8 @@ export interface FooterSnapshotProvider {
    * 证据矩阵，不宣称 OS sandbox。未注入时不显示该段。
    */
   getWorkspaceCapability?(): string | undefined;
-  /** composition 生成的安全 cwd/project label；不得是未经处理的公共绝对路径。 */
-  getWorkspaceDisplayLabel?(): string | undefined;
-  getProjectRootDisplayLabel?(): string | undefined;
+  /** agent 运行时绝对地址：sanitize + 有界但保留绝对路径（用户显式要求展示）；仅本机 footer。 */
+  getWorkspaceDisplayAbsolutePath?(): string | undefined;
   getGitBranchLabel?(): string | undefined;
   /** 已知 task/plan 完成数；缺失时不显示 progress。 */
   getPlanProgress?(): { readonly completed: number; readonly total: number } | undefined;

@@ -123,9 +123,8 @@ export interface InteractiveModeOptions {
   processOverlayClient?: ProcessOverlayHostClient;
   /** P6:workspace/path 能力标签（真实 runner 证据矩阵），Footer 右侧显示；缺省不显示。 */
   workspaceCapability?: string;
-  /** Host/composition 生成的 home-relative 或 basename label。 */
-  workspaceDisplayLabel?: string;
-  projectRootDisplayLabel?: string;
+  /** agent 运行时绝对地址：sanitize + 有界但保留绝对路径；仅本机 footer，不进公共 DTO/remote snapshot。 */
+  workspaceDisplayAbsolutePath?: string;
   gitBranchLabel?: string;
   /** 可选的分层渲染 telemetry sink；不参与 UI 调度决策。 */
   performanceObserver?: TuiPerformanceObserver;
@@ -216,8 +215,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   // B5:model/thinking 状态由 workflow 唯一持有（controller 是 authority）
   private readonly workspaceCapability?: string;
-  private readonly workspaceDisplayLabel?: string;
-  private readonly projectRootDisplayLabel?: string;
+  private readonly workspaceDisplayAbsolutePath?: string;
   private readonly gitBranchLabel?: string;
   private authAdapter: InteractiveSessionAdapter;
   private quitting = false;
@@ -262,8 +260,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.terminal = opts.terminal ?? new ProcessTerminal();
     this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
     this.workspaceCapability = opts.workspaceCapability;
-    this.workspaceDisplayLabel = opts.workspaceDisplayLabel;
-    this.projectRootDisplayLabel = opts.projectRootDisplayLabel;
+    this.workspaceDisplayAbsolutePath = opts.workspaceDisplayAbsolutePath;
     this.gitBranchLabel = opts.gitBranchLabel;
     this.initialBootstrap = opts.initialBootstrap;
     this.preferencesPort = opts.preferencesPort;
@@ -1475,12 +1472,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return this.workspaceCapability;
   }
 
-  getWorkspaceDisplayLabel(): string | undefined {
-    return this.workspaceDisplayLabel;
-  }
 
-  getProjectRootDisplayLabel(): string | undefined {
-    return this.projectRootDisplayLabel;
+  getWorkspaceDisplayAbsolutePath(): string | undefined {
+    return this.workspaceDisplayAbsolutePath;
   }
 
   getGitBranchLabel(): string | undefined {

@@ -17,7 +17,6 @@
 
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
@@ -63,9 +62,9 @@ import {
   type ProcessOverlayController,
   type ProcessOverlayHostClient,
 } from "../tui/process/controller-adapter.ts";
-import { gitWorkspaceDisplayFacts, workspaceDisplayLabelForView } from "./workspace-display-label.ts";
 import { createCliSyntaxThemeSettings } from "./syntax-theme-settings.ts";
 import { composeCliSyntaxThemes } from "./syntax-theme-composition.ts";
+import { gitWorkspaceDisplayFacts, workspaceDisplayAbsolutePathForView } from "./workspace-display-label.ts";
 import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
 
 const VERSION = readVersionFromPackage();
@@ -329,8 +328,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     const activeInteractive = new InteractiveMode({
       controller: view.controller,
       workspaceCapability: workspaceCapabilityLabel(),
-      workspaceDisplayLabel: workspaceDisplayLabelForView({ effectiveCwd }, homedir()),
-      projectRootDisplayLabel: gitDisplay.projectRootLabel,
+      workspaceDisplayAbsolutePath: workspaceDisplayAbsolutePathForView({ effectiveCwd }),
       gitBranchLabel: gitDisplay.branchLabel,
       syntaxThemeName: settings.theme,
       syntaxThemeController: syntaxThemes.controller,

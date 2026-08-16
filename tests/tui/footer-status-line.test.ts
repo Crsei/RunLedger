@@ -12,8 +12,7 @@ function provider(): FooterSnapshotProvider {
 		getProviderId: () => "deepseek",
 		getModelId: () => "deepseek-v4-pro",
 		getThinkingLevel: () => "high",
-		getWorkspaceDisplayLabel: () => "~/work/RunLedger\u001b]0;owned\u0007",
-		getProjectRootDisplayLabel: () => "RunLedger",
+		getWorkspaceDisplayAbsolutePath: () => "/home/alice/work/RunLedger",
 		getGitBranchLabel: () => "feature/highlight",
 		getWorkspaceCapability: () => "ws:linux-verified",
 	};
@@ -33,12 +32,12 @@ describe("structured Footer status line", () => {
 		expect(visibleWidth(text)).toBeLessThanOrEqual(width);
 	});
 
-	it("assigns project root and Git branch their own semantic accents", () => {
+	it("assigns the agent runtime absolute path and Git branch their own semantic accents", () => {
 		const footer = new Footer({ theme: loadTheme("dark"), provider: provider() });
 		const block = footer.present(143)[0];
 		if (block?.kind !== "status-line") throw new Error("status line missing");
 		expect(block.segments).toEqual(expect.arrayContaining([
-			{ accent: "path", text: "RunLedger" },
+			{ accent: "path", text: "/home/alice/work/RunLedger" },
 			{ accent: "branch", text: "feature/highlight" },
 		]));
 	});

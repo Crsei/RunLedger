@@ -58,8 +58,7 @@ export class Footer implements Component {
       const providerId = this.props.provider.getProviderId?.();
       const thinking = this.props.provider.getThinkingLevel?.();
       const workspaceCapability = this.props.provider.getWorkspaceCapability?.();
-      const workspaceDisplayLabel = this.props.provider.getWorkspaceDisplayLabel?.();
-	  const projectRootDisplayLabel = this.props.provider.getProjectRootDisplayLabel?.();
+	  const workspaceDisplayAbsolutePath = this.props.provider.getWorkspaceDisplayAbsolutePath?.();
 	  const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
       const planProgress = this.props.provider.getPlanProgress?.();
       const contextUsage = this.props.provider.getContextUsage?.();
@@ -80,8 +79,7 @@ export class Footer implements Component {
       middle = sessionId.length > 0 ? sessionId : "<no-session>";
 	  const segments: StatusLineSegment[] = [
 		{ accent: "state", text: status },
-		...(workspaceDisplayLabel ? [{ accent: "path" as const, text: workspaceDisplayLabel }] : []),
-		...(projectRootDisplayLabel && projectRootDisplayLabel !== workspaceDisplayLabel ? [{ accent: "path" as const, text: projectRootDisplayLabel }] : []),
+		...(workspaceDisplayAbsolutePath ? [{ accent: "path" as const, text: workspaceDisplayAbsolutePath }] : []),
 		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
 		...(sessionId.length > 0 && !threadLabel ? [{ accent: "metadata" as const, text: sessionId }] : []),
 		{ accent: "model", text: `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}` },
