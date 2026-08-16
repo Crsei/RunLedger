@@ -146,6 +146,8 @@ export class ContractController implements InteractiveSessionControllerPort {
   private readonly options: ContractControllerOptions;
   private disposedValue = false;
   promptCalls: string[] = [];
+  /** 与 promptCalls 对齐的 behavior 记录；null 表示空闲提交(无 behavior)。 */
+  promptBehaviorCalls: (("steer" | "followUp") | undefined)[] = [];
 
   supports(operation: string): boolean {
 	const defaults = [
@@ -230,8 +232,9 @@ export class ContractController implements InteractiveSessionControllerPort {
     this.selectionValue = { ...this.selectionValue, thinkingLevel: level };
     return level;
   }
-  async prompt(text: string): Promise<void> {
+  async prompt(text: string, behavior?: "steer" | "followUp"): Promise<void> {
     this.promptCalls.push(text);
+    this.promptBehaviorCalls.push(behavior);
     this.inFlightValue = true;
     this.options.onPrompt?.(text);
     const now = Date.now();

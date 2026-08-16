@@ -1575,7 +1575,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return sessionId.length > 0 ? sessionId : undefined;
   }
 
-  /** Editor.onSubmit 回调;把文本作为 user prompt 投递给 Agent,同时落 UI。 */
+  /** Editor.onSubmit 回调;空闲时作为 user prompt 投递,运行中自动排队为 follow-up 不打断当前 turn。 */
   private handleSubmit(text: string): void {
     if (text.length === 0) return;
     if (text.startsWith("/")) {
@@ -1601,8 +1601,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.stopReason = undefined;
     this.ui.requestRender();
     const prompt = this.controller
-      ? this.controller.prompt(text, this.inFlight() ? "steer" : undefined)
-      : this.agent!.prompt(text).then(() => undefined);
+      ? this.controller.prompt(text, this.inFlight() ? "followUp" : undefined)
+      : this.inFlight()
+        ? Promise.resolve(this.agent!.followUp(text))
+        : this.agent!.prompt(text).then(() => undefined);
     void prompt.then(
       () => {
         // 最终状态由 agent_end 路径写入。
@@ -1626,7 +1628,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     const prompt = this.controller
       ? this.controller.prompt(text, "followUp")
-      : Promise.reject(new Error("Follow-up queue is unavailable in demo mode."));
+      : Promise.resolve(this.agent!.followUp(text));
     void prompt.catch((error: unknown) => this.showNotice(String(error), "error"));
   }
 

@@ -703,7 +703,7 @@ export type KeybindingDefinitions = Record<string, KeybindingDefinition>;
 export type KeybindingsConfig = Record<string, KeyId | KeyId[] | undefined>;
 export interface KeybindingConflict { key: KeyId; keybindings: string[] }
 export const TUI_KEYBINDINGS: KeybindingDefinitions = {
-  "tui.input.submit": { defaultKeys: "enter", description: "Send the current draft" },
+  "tui.input.submit": { defaultKeys: "enter", description: "Send the current draft; queues as follow-up while the turn is running" },
   "tui.input.followUp": { defaultKeys: "alt+enter", description: "Queue a follow-up without interrupting" },
   "tui.input.interrupt": { defaultKeys: "ctrl+c", description: "Interrupt the active turn; clear the draft; quit when idle" },
   "tui.input.quit": { defaultKeys: "ctrl+d", description: "Quit when idle" },

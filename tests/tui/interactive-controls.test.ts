@@ -18,6 +18,7 @@ import type { EditorHint } from "../../src/tui/components/editor-hint.ts";
 import type { TuiStore } from "../../src/tui/application/store.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
 import type { TuiEvent } from "../../src/tui/types.ts";
+import { ContractController } from "./fixtures/contract-integration.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -564,6 +565,49 @@ describe("InteractiveMode lifecycle and global controls", () => {
     terminal.send("\x04");
     await running;
 		expect(terminal.stopCount).toBe(1);
+	});
+
+	it("运行中提交输入自动排队为 follow-up，不中断当前 turn(demo 模式)", async () => {
+    const terminal = new FakeTerminal();
+    const controlled = interruptibleStream();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: controlled.streamFn,
+    });
+    const mode = new InteractiveMode({ agent, terminal });
+    const running = mode.run();
+    mode.echoPrompt("long request");
+    await controlled.started;
+    expect(agent.inFlight).toBe(true);
+
+    mode.echoPrompt("queued while running");
+    await Promise.resolve();
+    const queued = agent.getFollowUpMessages().map((message) => message.content.map((content) => content.text).join(""));
+    expect(queued).toEqual(["queued while running"]);
+    expect(agent.getSteeringMessages()).toEqual([]);
+    expect(controlled.signal()?.aborted).toBe(false);
+
+    terminal.send("\x03");
+    await agent.waitForIdle();
+    expect(controlled.signal()?.aborted).toBe(true);
+    terminal.send("\x04");
+    await running;
+    expect(terminal.stopCount).toBe(1);
+	});
+
+	it("运行中 Enter 提交经 controller 走 followUp 而非 steer", async () => {
+    const controller = new ContractController({ inFlight: true });
+    const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
+    const running = mode.run();
+    try {
+      mode.echoPrompt("queued via controller");
+      await Promise.resolve();
+      expect(controller.promptCalls).toEqual(["queued via controller"]);
+      expect(controller.promptBehaviorCalls).toEqual(["followUp"]);
+    } finally {
+      mode.quit();
+      await running;
+    }
 	});
 
 	it("routes /processes and /terminal through the safe Host facade and restores editor focus", async () => {
