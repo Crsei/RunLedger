@@ -1,0 +1,1 @@
+{"gpt-oss-20b":{"id":"gpt-oss-20b","name":"GPT-OSS 20B","api":"openai-completions","provider":"vllm","baseUrl":"http://127.0.0.1:8000/v1","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":32768,"maxTokens":8192}}

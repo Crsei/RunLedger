@@ -5,6 +5,18 @@ import values from "./data/xai.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const XAI_MODELS = values as {
+	"grok-4.20-0309-non-reasoning": Model<"openai-responses"> & {
+		id: "grok-4.20-0309-non-reasoning";
+		provider: "xai";
+	};
+	"grok-4.20-0309-reasoning": Model<"openai-responses"> & {
+		id: "grok-4.20-0309-reasoning";
+		provider: "xai";
+	};
+	"grok-4.20-multi-agent-0309": Model<"openai-responses"> & {
+		id: "grok-4.20-multi-agent-0309";
+		provider: "xai";
+	};
 	"grok-4.3": Model<"openai-completions"> & {
 		id: "grok-4.3";
 		provider: "xai";
@@ -13,8 +25,16 @@ export const XAI_MODELS = values as {
 		id: "grok-4.5";
 		provider: "xai";
 	};
+	"grok-build": Model<"openai-responses"> & {
+		id: "grok-build";
+		provider: "xai";
+	};
 	"grok-build-0.1": Model<"openai-completions"> & {
 		id: "grok-build-0.1";
+		provider: "xai";
+	};
+	"grok-composer-2.5-fast": Model<"openai-responses"> & {
+		id: "grok-composer-2.5-fast";
 		provider: "xai";
 	};
 };

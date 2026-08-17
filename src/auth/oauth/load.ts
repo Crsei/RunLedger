@@ -15,6 +15,7 @@ type OAuthFlowLoaders = {
 	anthropic: () => OAuthAuth | Promise<OAuthAuth>;
 	openaiCodex: () => OAuthAuth | Promise<OAuthAuth>;
 	githubCopilot: () => OAuthAuth | Promise<OAuthAuth>;
+	kimiCode: () => OAuthAuth | Promise<OAuthAuth>;
 	xai: () => OAuthAuth | Promise<OAuthAuth>;
 	radius: (options: { name: string; gateway: string }) => OAuthAuth | Promise<OAuthAuth>;
 };
@@ -35,6 +36,11 @@ export const loadOpenAICodexOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.openaiCodex();
 	return ((await importOAuthModule("./openai-codex.ts")) as { openaiCodexOAuth: OAuthAuth }).openaiCodexOAuth;
 };
+export const loadKimiCodeOAuth = async (): Promise<OAuthAuth> => {
+	if (bundledLoaders) return bundledLoaders.kimiCode();
+	return ((await importOAuthModule("./kimi-code.ts")) as { kimiCodeOAuth: OAuthAuth }).kimiCodeOAuth;
+};
+
 
 export const loadGitHubCopilotOAuth = async (): Promise<OAuthAuth> => {
 	if (bundledLoaders) return bundledLoaders.githubCopilot();
