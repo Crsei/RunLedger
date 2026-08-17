@@ -395,6 +395,13 @@ export interface RuntimeEventPayload {
 	readonly metadataDigest?: RuntimeDigest;
 }
 
+/** Model route evidence may carry purpose, but never prompt or provider secrets. */
+export type RuntimeModelRequestKind = "interactive" | "idle-recap" | "auto-title";
+
+export interface ModelRoutedPayloadFields {
+	readonly requestKind?: RuntimeModelRequestKind;
+}
+
 type RuntimeEventAction<TType extends RuntimeEventType> = TType extends `${string}.${infer TAction}` ? TAction : never;
 type RequiredPayloadField<TKey extends keyof RuntimeEventPayload> = Required<Pick<RuntimeEventPayload, TKey>>;
 type EmptyPayloadRequirement = Record<never, never>;
@@ -402,6 +409,7 @@ type ActionRequires<TType extends RuntimeEventType, TActions extends string> =
 	RuntimeEventAction<TType> extends TActions ? true : false;
 
 export type RuntimeEventPayloadFor<TType extends RuntimeEventType> = RuntimeEventPayload &
+	(TType extends "model.routed" ? ModelRoutedPayloadFields : EmptyPayloadRequirement) &
 	(ActionRequires<TType, (typeof EVENT_TRANSITION_ACTIONS)[number]> extends true
 		? RequiredPayloadField<"transition">
 		: EmptyPayloadRequirement) &

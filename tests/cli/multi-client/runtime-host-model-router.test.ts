@@ -63,4 +63,27 @@ describe("Host model request router", () => {
 			await rm(root, { recursive: true, force: true });
 		}
 	});
+
+	it("persists only the bounded request kind as route evidence", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-router-kind-"));
+		try {
+			const layout = buildRunledgerLayout(root, "posix");
+			const writer = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: `ws-${"b".repeat(64)}` });
+			const routed = createHostModelRequestRouter({
+				authorityId: createRuntimeId("authority", "host-model-router-kind"),
+				tenantId: createRuntimeId("tenant", "host-model-router-kind"),
+				principalId: createRuntimeId("principal", "host-model-router-kind"),
+				sessionId,
+				writer,
+				router: { route: (input) => decision(input, "compatible") },
+			});
+			const routeResult = await routed.route({ ...request("recap"), requestKind: "idle-recap" });
+			expect(routeResult).toMatchObject({ outcome: "compatible" });
+			const events = await writer.read(sessionId);
+			expect(events[0]).toMatchObject({ type: "model.routed", payload: { requestKind: "idle-recap" } });
+			expect(JSON.stringify(events[0])).not.toContain("rawPrompt");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
 });

@@ -379,6 +379,8 @@ export interface StreamFn {
  */
 export interface AgentLoopConfig {
   model: Model<Api>;
+  /** Purpose label propagated to the Host model route without prompt content. */
+  requestKind?: "interactive" | "idle-recap" | "auto-title";
   /** 当前有效 thinking level;off 时请求不发送 reasoning。 */
   reasoning?: ModelThinkingLevel;
   apiKey?: string;

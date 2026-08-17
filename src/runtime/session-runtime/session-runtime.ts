@@ -43,6 +43,15 @@ import { SessionStreamEventCoalescer } from "./stream-event-coalescer.ts";
 import type { SessionProductionToolSource } from "../agents/capability-subset.ts";
 import type { ChildModelRuntimeFactoryPort } from "../agents/child-model-runtime.ts";
 import type { MultiAgentDomainPort } from "../agents/domain.ts";
+import type { EffectiveRecapSettings } from "../../storage/settings-manager.ts";
+import { DEFAULT_RECAP_SETTINGS } from "../../storage/settings-manager.ts";
+import {
+	IdleRecapCoordinator,
+	IDLE_RECAP_PROMPT,
+	isIdleRecapEligible,
+	type IdleRecapActivity,
+	type IdleRecapRequest,
+} from "./idle-recap.ts";
 
 export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "ready_with_uncertainty" | "stopping" | "fenced";
 
@@ -136,6 +145,8 @@ export interface SessionRuntimeOptions {
 	readonly runBudgetUsageRef?: LateBoundAgentRunBudgetUsage;
 	/** Session-scoped external lifecycles(worktree lease, later MCP/process)有序收口。 */
 	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
+	/** Canonical user recap settings; absent in low-level runtime fixtures uses defaults. */
+	readonly recapSettings?: EffectiveRecapSettings;
 }
 
 export class SessionRuntime implements SessionController {
@@ -155,6 +166,11 @@ export class SessionRuntime implements SessionController {
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
 	private readonly runTiming = new AgentRunTimingTracker();
 	private readonly streamEvents: SessionStreamEventCoalescer;
+	private readonly idleRecap: IdleRecapCoordinator;
+	private editorEmpty = true;
+	private idleRecapEpochReady = false;
+	private idleRecapStatusRequestId: string | undefined;
+	private idleRecapStatusActivityGeneration: number | undefined;
 	private attemptCounter = 0;
 	private started = false;
 	private shutdownPromise: Promise<void> | undefined;
@@ -179,6 +195,11 @@ export class SessionRuntime implements SessionController {
 		this.barrier = new RecoveryBarrier({ store: options.store, fence: options.fence }, options.crashTakeover ? "open" : "closed");
 		this.domain = options.domain;
 		this.streamEvents = new SessionStreamEventCoalescer({ emit: (event) => this.persistDomainAgentEvent(event) });
+		this.idleRecap = new IdleRecapCoordinator({
+			settings: options.recapSettings ?? DEFAULT_RECAP_SETTINGS,
+			onFire: (request) => this.fireIdleRecap(request),
+			onStatus: (replyText, request) => this.publishIdleRecap(replyText, request),
+		});
 		this.stoppedPromise = new Promise<void>((resolve) => {
 			this.resolveStopped = resolve;
 		});
@@ -189,7 +210,10 @@ export class SessionRuntime implements SessionController {
 		if (this.domain !== undefined) {
 			// R7:领域 AgentEvent 以 owner-fenced durable event 落库并广播,
 			// 恢复时从权威流重建(checkpoint 可删)。
-			this.domainListener = this.domain.controller.subscribe((event) => this.streamEvents.accept(event));
+			this.domainListener = this.domain.controller.subscribe((event) => {
+				this.streamEvents.accept(event);
+				this.handleDomainAgentEvent(event);
+			});
 		}
 	}
 
@@ -294,6 +318,7 @@ export class SessionRuntime implements SessionController {
 	public selfStopFenced(): void {
 		if (this.state === "fenced" || this.state === "stopping") return;
 		this.state = "fenced";
+		this.invalidateIdleRecap();
 		this.owner.selfStopFenced();
 		// P0-4:生产 onFenced 必须中断领域 Runtime(中断 in-flight turn),再关 server。
 		this.emit({ eventType: "runtime.fenced", payload: { sessionId: this.sessionId, generation: this.fence.generation } });
@@ -324,6 +349,8 @@ export class SessionRuntime implements SessionController {
 
 	private async performOrderlyShutdown(reason: "paused" | "detached" | "error"): Promise<void> {
 		try {
+			this.idleRecap.dispose();
+			this.clearIdleRecapStatus();
 			try {
 				this.domain?.controller.interrupt();
 			} catch {
@@ -349,6 +376,8 @@ export class SessionRuntime implements SessionController {
 
 	private async finishFencedStop(): Promise<void> {
 		try {
+			this.idleRecap.dispose();
+			this.clearIdleRecapStatus();
 			try {
 				this.domain?.controller.interrupt();
 			} catch {
@@ -468,11 +497,13 @@ export class SessionRuntime implements SessionController {
 	public recoveryAssess(): { readonly ok: true; readonly barrierState: "closed" | "open"; readonly unresolvedRemaining: number } {
 		if (this.domain?.process?.hasRecoveryUncertainty?.() === true) {
 			this.state = "recovery_required";
+			this.invalidateIdleRecap();
 			return { ok: true, barrierState: "open", unresolvedRemaining: this.unresolvedAttemptsCount() };
 		}
 		const result = this.barrier.assess();
 		if (result.ok && result.state === "closed") {
 			this.state = "ready";
+			this.invalidateIdleRecap();
 			this.owner.publish("running");
 			this.emit({ eventType: "recovery.assessed_clean", payload: { barrierState: "closed" } });
 		}
@@ -484,8 +515,10 @@ export class SessionRuntime implements SessionController {
 		if (!result.ok) return { ok: false, code: result.code, state: this.state };
 		if (decision.kind === "resume_despite_uncertainty") {
 			this.state = "ready_with_uncertainty";
+			this.invalidateIdleRecap();
 		} else if (result.state === "closed") {
 			this.state = "ready";
+			this.invalidateIdleRecap();
 		}
 		if (result.state === "closed") this.owner.publish("running");
 		return { ok: true, state: this.state };
@@ -568,8 +601,131 @@ export class SessionRuntime implements SessionController {
 		};
 	}
 
+	private handleDomainAgentEvent(event: AgentEvent): void {
+		if (event.type === "agent_start" || event.type === "turn_start" || event.type === "message_start") {
+			this.invalidateIdleRecap();
+			return;
+		}
+		if (event.type !== "agent_end") return;
+		this.idleRecapEpochReady = true;
+		// Agent marks inFlight false in its prompt() finally after agent_end is
+		// dispatched. A macrotask lets that lifecycle settle before we snapshot.
+		const messageCount = event.messageCountAtEnd;
+		const timer = setTimeout(() => {
+			if (this.state !== "ready" && this.state !== "ready_with_uncertainty") return;
+			const activity = this.currentIdleRecapActivity(messageCount);
+			this.idleRecap.arm(activity);
+		}, 0);
+		timer.unref?.();
+	}
+
+	private currentIdleRecapActivity(messageCountOverride?: number): IdleRecapActivity {
+		const snapshot = this.domain?.snapshot();
+		const selection = snapshot?.selection;
+		const model = selection?.model;
+		const streaming = snapshot?.inFlight ?? false;
+		const maintenance = (this.state === "ready" || this.state === "ready_with_uncertainty") && !streaming ? "idle" : "busy";
+		return {
+			sessionId: this.sessionId,
+			ownerGeneration: this.fence.generation,
+			driverRevision: this.server.driverRevision?.() ?? 0,
+			driverAttached: this.server.driverConnectionId?.() !== undefined,
+			editorEmpty: this.editorEmpty,
+			streaming,
+			maintenance,
+			hasModel: model !== undefined,
+			hasHistory: (snapshot?.messages.length ?? 0) > 0 || (messageCountOverride ?? 0) > 0,
+			selectionDigest: runtimeDigest({
+				provider: selection?.provider ?? null,
+				model: model?.id ?? null,
+				thinkingLevel: selection?.thinkingLevel ?? "off",
+			}).digest,
+		};
+	}
+
+	private invalidateIdleRecap(): void {
+		this.idleRecapEpochReady = false;
+		this.idleRecap.notifyActivity(this.currentIdleRecapActivity());
+		this.clearIdleRecapStatus();
+	}
+
+	private refreshIdleRecapActivity(): void {
+		this.idleRecap.notifyActivity(this.currentIdleRecapActivity());
+		this.clearIdleRecapStatus();
+	}
+
+	public handleDriverStateChange(): void {
+		const activity = this.currentIdleRecapActivity();
+		if (this.idleRecapEpochReady && activity.driverAttached && activity.editorEmpty && !activity.streaming) this.idleRecap.arm(activity);
+		else {
+			this.idleRecap.notifyActivity(activity);
+			this.clearIdleRecapStatus();
+		}
+	}
+
+	private async fireIdleRecap(request: IdleRecapRequest): Promise<string | undefined> {
+		const activity = this.currentIdleRecapActivity();
+		if (
+			!isIdleRecapEligible(activity) ||
+			activity.ownerGeneration !== request.ownerGeneration ||
+			activity.driverRevision !== request.driverRevision ||
+			activity.selectionDigest !== request.expectedSelectionDigest
+		) return undefined;
+		const runEphemeralTurn = this.domain?.controller.runEphemeralTurn;
+		if (runEphemeralTurn === undefined) return undefined;
+		return runEphemeralTurn({
+			kind: "idle-recap",
+			requestId: request.requestId,
+			ownerGeneration: request.ownerGeneration,
+			activityGeneration: request.activityGeneration,
+			promptText: IDLE_RECAP_PROMPT,
+			signal: request.signal,
+		});
+	}
+
+	private publishIdleRecap(replyText: string, request: IdleRecapRequest): void {
+		const activity = this.currentIdleRecapActivity();
+		if (
+			!isIdleRecapEligible(activity) ||
+			activity.ownerGeneration !== request.ownerGeneration ||
+			activity.driverRevision !== request.driverRevision ||
+			activity.selectionDigest !== request.expectedSelectionDigest
+		) return;
+		this.idleRecapStatusRequestId = request.requestId;
+		this.idleRecapStatusActivityGeneration = request.activityGeneration;
+		this.emit({
+			eventType: "session.idle_recap",
+			payload: {
+				sessionId: this.sessionId,
+				requestId: request.requestId,
+				ownerGeneration: request.ownerGeneration,
+				activityGeneration: request.activityGeneration,
+				driverRevision: request.driverRevision,
+				text: replyText,
+			},
+		});
+	}
+
+	private clearIdleRecapStatus(): void {
+		const requestId = this.idleRecapStatusRequestId;
+		if (requestId === undefined) return;
+		const activityGeneration = this.idleRecapStatusActivityGeneration;
+		this.idleRecapStatusRequestId = undefined;
+		this.idleRecapStatusActivityGeneration = undefined;
+		this.emit({
+			eventType: "session.idle_recap",
+			payload: {
+				sessionId: this.sessionId,
+				requestId,
+				ownerGeneration: this.fence.generation,
+				...(activityGeneration === undefined ? {} : { activityGeneration }),
+				cleared: true,
+			},
+		});
+	}
+
 	public isMutatingKind(kind: string): boolean {
-		return (SESSION_MUTATING_COMMAND_KINDS as readonly string[]).includes(kind) || kind === "prompt" || kind === "steer" || kind === "follow_up" || kind === "clear_queues" || kind === "select_model" || kind === "set_thinking" || kind === "logout" || kind === "login" || kind === "domain_command";
+		return (SESSION_MUTATING_COMMAND_KINDS as readonly string[]).includes(kind) || kind === "prompt" || kind === "steer" || kind === "follow_up" || kind === "clear_queues" || kind === "select_model" || kind === "set_thinking" || kind === "logout" || kind === "login" || kind === "editor_activity" || kind === "domain_command";
 	}
 
 	public async handleCommand(request: SessionCommandRequest, meta: { readonly connectionId: ConnectionId; readonly clientId: string; readonly isDriver: boolean }): Promise<SessionCommandResult> {
@@ -579,6 +735,7 @@ export class SessionRuntime implements SessionController {
 		}
 		switch (request.kind) {
 			case "prompt": {
+				this.invalidateIdleRecap();
 				if (this.state === "recovery_required") {
 					return { ok: false, code: "recovery_barrier_active", detail: "session is in RECOVERY_REQUIRED" };
 				}
@@ -599,12 +756,14 @@ export class SessionRuntime implements SessionController {
 			}
 			case "steer":
 			case "follow_up": {
+				this.invalidateIdleRecap();
 				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
 				if (this.state === "recovery_required") return { ok: false, code: "recovery_barrier_active" };
 				await this.domain.controller.prompt(String(request.body.text ?? ""), request.kind === "steer" ? "steer" : "followUp");
 				return { ok: true, kind: request.kind, result: {} };
 			}
 			case "clear_queues": {
+				this.invalidateIdleRecap();
 				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
 				this.domain.controller.clearAllQueues();
 				return { ok: true, kind: "clear_queues", result: {} };
@@ -621,6 +780,7 @@ export class SessionRuntime implements SessionController {
 				return { ok: true, kind: "models", result: { models } };
 			}
 			case "select_model": {
+				this.invalidateIdleRecap();
 				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
 				const body = request.body as Record<string, unknown>;
 				if (typeof body.provider !== "string" || typeof body.model !== "string") return { ok: false, code: "invalid_input" };
@@ -628,10 +788,18 @@ export class SessionRuntime implements SessionController {
 				return { ok: true, kind: "select_model", result: { selection: this.domain.snapshot().selection } };
 			}
 			case "set_thinking": {
+				this.invalidateIdleRecap();
 				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
 				const level = String(request.body.level ?? "off") as ModelThinkingLevel;
 				await this.domain.controller.setThinkingLevel(level);
 				return { ok: true, kind: "set_thinking", result: { selection: this.domain.snapshot().selection } };
+			}
+			case "editor_activity": {
+				if (typeof request.body.empty !== "boolean") return { ok: false, code: "invalid_input" };
+				this.editorEmpty = request.body.empty;
+				if (this.editorEmpty) this.handleDriverStateChange();
+				else this.refreshIdleRecapActivity();
+				return { ok: true, kind: "editor_activity", result: {} };
 			}
 			case "logout": {
 				if (this.domain === undefined) return { ok: false, code: "domain_unavailable" };
@@ -811,6 +979,7 @@ export class SessionRuntime implements SessionController {
 				return { ok: true, kind: "recovery_resume", result: { state: result.state } };
 			}
 			case "interrupt":
+				this.invalidateIdleRecap();
 				this.domain?.controller.interrupt();
 				this.emit({ eventType: "turn.interrupted", payload: {} });
 				return { ok: true, kind: "interrupt", result: {} };

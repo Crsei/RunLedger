@@ -17,8 +17,237 @@ import {
   echoTool,
 } from "../src/index.ts";
 import type { AgentEvent } from "../src/index.ts";
+import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "../src/types.ts";
+import { createAssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import type { StreamFn } from "../src/runtime/types.ts";
+import { defaultConvertToLlm } from "../src/runtime/agent-loop.ts";
+
+function assistantMessageFor(
+	model: Model<Api>,
+	content: AssistantMessage["content"],
+	stopReason: AssistantMessage["stopReason"] = "stop",
+): AssistantMessage {
+	return {
+		role: "assistant",
+		content,
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		stopReason,
+		timestamp: Date.now(),
+	};
+}
 
 describe("runAgentLoop with mockStreamFn + echoTool", () => {
+	it("runs an ephemeral recap without mutating Agent state, ledger, events, or tools", async () => {
+		const ledger = new MemoryLedger();
+		const initialMessages = [{ role: "user" as const, content: [{ type: "text" as const, text: "ship the feature" }] }];
+		let capturedContext: Context | undefined;
+		let capturedOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (requestModel, context, options) => {
+			capturedContext = context as Context;
+			capturedOptions = options;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const message: AssistantMessage = {
+					role: "assistant",
+					content: [
+						{ type: "text", text: "recap: continue with the next action" },
+						{ type: "toolCall", id: "tool_side", name: "echo", arguments: { text: "must not execute" } },
+					],
+					api: requestModel.api,
+					provider: requestModel.provider,
+					model: requestModel.id,
+					usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "toolUse",
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "start", partial: message });
+				stream.push({ type: "done", reason: "toolUse", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: { systemPrompt: "system", model: mockModel, tools: [echoTool], messages: initialMessages },
+			streamFn,
+			ledger,
+		});
+		const events: AgentEvent[] = [];
+		agent.subscribe((event) => events.push(event));
+		const before = agent.state;
+
+		const result = await (agent as unknown as {
+			runEphemeralTurn: (input: { promptText: string; ownerGeneration: number; activityGeneration: number }) => Promise<{ replyText: string; assistantMessage: AssistantMessage }>;
+		}).runEphemeralTurn({ promptText: "what should I do next?", ownerGeneration: 4, activityGeneration: 7 });
+
+		expect(result.replyText).toContain("continue with the next action");
+		expect(result.assistantMessage.content.some((part) => part.type === "toolCall")).toBe(false);
+		expect(agent.state.messages).toEqual(before.messages);
+		expect(ledger.entries()).toEqual([]);
+		expect(events).toEqual([]);
+		expect(capturedContext?.systemPrompt).toBe("system");
+		expect(capturedContext?.tools).toHaveLength(1);
+		expect(capturedOptions).toMatchObject({
+			maxTokens: 128,
+			timeoutMs: 30_000,
+			maxRetries: 0,
+			metadata: { requestKind: "idle-recap", ownerGeneration: 4, activityGeneration: 7 },
+		});
+		expect(capturedOptions?.sessionId).toContain(":owner-4:activity-7");
+	});
+
+	it("uses the system prompt and thinking level captured before async context conversion", async () => {
+		const reasoningModel = { ...mockModel, reasoning: true };
+		let releaseConversion!: () => void;
+		let conversionStarted!: () => void;
+		const conversionReady = new Promise<void>((resolve) => { conversionStarted = resolve; });
+		const conversionRelease = new Promise<void>((resolve) => { releaseConversion = resolve; });
+		let capturedContext: Context | undefined;
+		let capturedOptions: SimpleStreamOptions | undefined;
+		const streamFn: StreamFn = (requestModel, context, options) => {
+			capturedContext = context as Context;
+			capturedOptions = options;
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const message: AssistantMessage = {
+					role: "assistant",
+					content: [{ type: "text", text: "snapshot reply" }],
+					api: requestModel.api,
+					provider: requestModel.provider,
+					model: requestModel.id,
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "start", partial: message });
+				stream.push({ type: "done", reason: "stop", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "system at request start",
+				model: reasoningModel,
+				thinkingLevel: "low",
+				messages: [{ role: "user", content: [{ type: "text", text: "existing history" }] }],
+			},
+			streamFn,
+			convertToLlm: async (messages) => {
+				conversionStarted();
+				await conversionRelease;
+				return defaultConvertToLlm(messages);
+			},
+		});
+
+		const request = agent.runEphemeralTurn({ promptText: "recap the current task" });
+		await conversionReady;
+		agent.setSystemPrompt("system changed while request was preparing");
+		agent.setThinkingLevel("high");
+		releaseConversion();
+		await request;
+
+		expect(capturedContext?.systemPrompt).toBe("system at request start");
+		expect(capturedOptions?.reasoning).toBe("low");
+	});
+
+	it("suppresses a provider error from an ephemeral recap", async () => {
+		const streamFn: StreamFn = (requestModel) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const error = assistantMessageFor(requestModel, [], "error");
+				stream.push({ type: "error", reason: "error", error });
+				stream.end(error);
+			});
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "system",
+				model: mockModel,
+				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+			},
+			streamFn,
+		});
+
+		await expect(agent.runEphemeralTurn({ promptText: "recap" })).resolves.toBeUndefined();
+	});
+
+	it("suppresses an aborted ephemeral recap without emitting a partial result", async () => {
+		const abort = new AbortController();
+		let streamStarted!: () => void;
+		const started = new Promise<void>((resolve) => { streamStarted = resolve; });
+		const streamFn: StreamFn = (requestModel, _context, options) => {
+			const stream = createAssistantMessageEventStream();
+			streamStarted();
+			options?.signal?.addEventListener("abort", () => {
+				const error = assistantMessageFor(requestModel, [], "aborted");
+				stream.push({ type: "error", reason: "aborted", error });
+				stream.end(error);
+			}, { once: true });
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "system",
+				model: mockModel,
+				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+			},
+			streamFn,
+		});
+
+		const request = agent.runEphemeralTurn({ promptText: "recap", signal: abort.signal });
+		await streamStarted;
+		abort.abort();
+		await expect(request).resolves.toBeUndefined();
+	});
+
+	it("suppresses an empty ephemeral reply", async () => {
+		const streamFn: StreamFn = (requestModel) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const message = assistantMessageFor(requestModel, [], "stop");
+				stream.push({ type: "done", reason: "stop", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "system",
+				model: mockModel,
+				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+			},
+			streamFn,
+		});
+
+		await expect(agent.runEphemeralTurn({ promptText: "recap" })).resolves.toBeUndefined();
+	});
+
+	it("suppresses malformed provider content instead of leaking an ephemeral error", async () => {
+		const streamFn: StreamFn = (requestModel) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const malformed = { ...assistantMessageFor(requestModel, [], "stop"), content: undefined } as unknown as AssistantMessage;
+				stream.push({ type: "done", reason: "stop", message: malformed });
+				stream.end(malformed);
+			});
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "system",
+				model: mockModel,
+				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+			},
+			streamFn,
+		});
+
+		await expect(agent.runEphemeralTurn({ promptText: "recap" })).resolves.toBeUndefined();
+	});
+
 	it("revalidates and reauthorizes hook-updated tool input before execution", async () => {
 		const ledger = new MemoryLedger();
 		const seen: unknown[] = [];

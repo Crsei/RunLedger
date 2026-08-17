@@ -44,6 +44,7 @@
 | Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 | LSP Server Adapter | [`plan/04-lsp-server-adaptation-plan.md`](plan/04-lsp-server-adaptation-plan.md) | defaults/config 自动探测、stdio JSON-RPC、LspClient、AgentTool、WorkspaceEdit、managed LinterClient 与 SessionRuntime governed 接线 | P0–P6 review 修复已通过 fresh check/test/build 与隔离 CLI/TTY；P7 修复后 Session-managed 真实语言服务器/TUI smoke pending，状态查本文 §状态表 |
 | Streaming Write 展示稳定性 | [`plan/05-streaming-prefix-stability-plan.md`](plan/05-streaming-prefix-stability-plan.md) | oh-my-pi 稳定前缀能力族移植：part 级 settled 契约、冻结前缀判定与字节稳定契约门、settled 行缓存、流式表格列宽锁定、流式 diff 行级高亮；不改 renderer/screen mode/OpenTUI 内部 | 本文 §现状核实与 §状态表；P2 `partial`、P3–P5 `implemented`、P6 `partial / blocked`；压力证据见 [`plan/05-streaming-prefix-stability-evidence-2026-08-15.json`](plan/05-streaming-prefix-stability-evidence-2026-08-15.json)，全量 check/test 的既有 TUI boundary blocker 不伪装为本任务通过 |
+| Idle Recap | [`plan/07-idle-recap-replication-plan.md`](plan/07-idle-recap-replication-plan.md) | oh-my-pi 空闲 recap 的 ephemeral side-channel、当前模型复用、工具调用丢弃、owner/activity fencing、可配置 idle delay 与 fail-closed 接线 | 本文 §0 配置结论、§2 RunLedger 基线、§11 状态表 |
 | Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
 
 ## 2026-08-04 当前实现批次
@@ -83,7 +84,8 @@ development-doc/
 │   ├── 02-codex-input-area-replica-plan.md
 │   ├── 03-session-execution-reliability-repair-plan.md
 │   ├── 04-lsp-server-adaptation-plan.md
-│   └── 05-streaming-prefix-stability-plan.md
+│   ├── 05-streaming-prefix-stability-plan.md
+│   └── 07-idle-recap-replication-plan.md
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md

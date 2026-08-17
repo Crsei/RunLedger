@@ -552,4 +552,40 @@ describe("InteractiveSessionController", () => {
     expect(controller.currentSelection.model?.provider).toBe("p1");
     controller.dispose();
   });
+
+	it("runs idle recap through the active model without mutating the interactive transcript", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const initialMessages: AgentTool[] = [];
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test system",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			replay: {
+				...EMPTY_REPLAY,
+				messages: [{ role: "user", content: [{ type: "text", text: "ship the feature" }] }],
+			},
+			ledger: new MemoryLedger(),
+			tools: initialMessages,
+		});
+		await controller.login(p1.provider, "api_key", INTERACTION);
+		const before = controller.messages;
+		const events: AgentEvent[] = [];
+		controller.subscribe((event) => events.push(event));
+
+		const result = await (controller as unknown as {
+			runEphemeralTurn(input: { promptText: string; requestId: string; signal: AbortSignal }): Promise<string | undefined>;
+		}).runEphemeralTurn({
+			promptText: "User stepped away; returning. Summarize the next action in plain text.",
+			requestId: "idle-recap-controller-fixture",
+			signal: new AbortController().signal,
+		});
+
+		expect(result).toContain("Summarize the next action");
+		expect(controller.messages).toEqual(before);
+		expect(events).toEqual([]);
+		controller.dispose();
+	});
 });

@@ -29,6 +29,7 @@ import { LateBoundAgentRunBudgetUsage } from "../runtime/session-runtime/run-tim
 import { SessionClient, type OwnedSessionHandle } from "./session-client.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, SESSION_PROTOCOL_BOUNDS, type SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { createRuntimeId, type ExecutionId, type SessionId } from "../runtime/protocol/ids.ts";
+import { resolveRecapSettings } from "../storage/settings-manager.ts";
 
 export type SessionReverseRequestHandler = (frame: SessionFrameEnvelope, signal: AbortSignal) => Promise<Record<string, unknown>> | Record<string, unknown>;
 
@@ -162,6 +163,7 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		sessionId,
 		store,
 		controller: nullController(sessionId),
+		onDriverStateChange: () => runtime?.handleDriverStateChange(),
 		onAttachmentCountChange: (count) => {
 			// §8.3 headless-attached owner loop:本地 view 已 detach 但仍有
 			// remote attachment → 保持运行;归零才 pause/release。
@@ -257,12 +259,13 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 		humanInputWaitPortRef: humanInputWaitPort,
 		runBudgetUsageRef: runBudgetUsage,
 		...((workspace === undefined && domain?.process?.shutdown === undefined && domain?.shutdown === undefined) ? {} : {
-			lifecycleCleanup: async (reason) => {
+		lifecycleCleanup: async (reason) => {
 				await domain?.shutdown?.(reason);
 				await domain?.process?.shutdown?.(reason);
 				await workspace?.release(reason);
 			},
 		}),
+		recapSettings: resolveRecapSettings(options.domain?.settings ?? {}),
 	});
 	try {
 		if (crashTakeover) {

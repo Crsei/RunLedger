@@ -24,9 +24,29 @@ import type {
   StreamFn,
   UserAgentMessage,
 } from "./types.ts";
-import type { Message, ModelThinkingLevel } from "../types.ts";
+import type { AssistantMessage, Message, ModelThinkingLevel } from "../types.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type { TraceRecorderFactory } from "./trace/composition.ts";
+import { newId } from "./ledger/types.ts";
+
+export interface EphemeralTurnRequest {
+  readonly promptText: string;
+  readonly requestId?: string;
+  readonly signal?: AbortSignal;
+  readonly ownerGeneration?: number;
+  readonly activityGeneration?: number;
+}
+
+export interface EphemeralTurnResult {
+  readonly requestId: string;
+  readonly replyText: string;
+  readonly assistantMessage: AssistantMessage;
+}
+
+/** Idle recap is a bounded, non-retrying side request rather than a normal model turn. */
+export const IDLE_RECAP_MAX_TOKENS = 128;
+export const IDLE_RECAP_TIMEOUT_MS = 30_000;
+export const IDLE_RECAP_MAX_RETRIES = 0;
 
 export interface AgentOptions {
   initialState: {
@@ -269,6 +289,7 @@ export class Agent {
     const config: AgentLoopConfig = {
       ...this._loopConfig,
       model: this._state.model,
+      requestKind: "interactive",
       reasoning: this._state.thinkingLevel,
       apiKey: this._loopConfig.apiKey,
       convertToLlm: this._convertToLlm as AgentLoopConfig["convertToLlm"],
@@ -344,6 +365,108 @@ export class Agent {
       this._inFlight = false;
       this._activePromise = undefined;
       this._abortController = undefined;
+    }
+  }
+
+  /**
+   * Run a provider completion against a snapshot of the current Agent context.
+   *
+   * This is deliberately not implemented in terms of prompt()/runAgentLoop():
+   * idle recap is a transient side channel and must not append messages, emit
+   * AgentEvents, execute tools, or write the ledger.  The returned assistant
+   * message is restricted to text content so a provider tool call can never
+   * cross this seam into tool execution.
+   */
+  async runEphemeralTurn(input: EphemeralTurnRequest): Promise<EphemeralTurnResult | undefined> {
+    const requestId = input.requestId ?? `idle-recap-${newId()}`;
+    const externalSignal = input.signal ?? this._signal;
+    if (externalSignal?.aborted) return undefined;
+    const deadline = new AbortController();
+    const forwardAbort = (): void => deadline.abort(externalSignal?.reason);
+    externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+    const timeout = setTimeout(() => deadline.abort(), IDLE_RECAP_TIMEOUT_MS);
+    timeout.unref?.();
+    const signal = deadline.signal;
+
+    const model = this._state.model;
+    const snapshotSystemPrompt = this._state.systemPrompt;
+    const snapshotThinkingLevel = this._state.thinkingLevel;
+    const snapshotMessages = this._state.messages.slice();
+    const snapshotTools = this._state.tools.slice();
+    const contextMessages: AgentMessage[] = [
+      ...snapshotMessages,
+      {
+        role: "user",
+        content: [{
+          type: "text",
+          text: "This is an idle recap side request. Do not call tools or propose tool calls; reply with plain text only.",
+        }],
+      },
+      {
+        role: "user",
+        content: [{ type: "text", text: input.promptText }],
+      },
+    ];
+
+    try {
+      const messages = await this._convertToLlm(contextMessages);
+      const ownerLineage = input.ownerGeneration === undefined ? "" : `:owner-${input.ownerGeneration}`;
+      const activityLineage = input.activityGeneration === undefined ? "" : `:activity-${input.activityGeneration}`;
+      const sideSessionId = `${this.sessionId}:idle-recap:${requestId}${ownerLineage}${activityLineage}`;
+      const stream = await Promise.resolve(this._streamFn(model, {
+        systemPrompt: snapshotSystemPrompt,
+        messages,
+        tools: snapshotTools,
+      }, {
+        apiKey: this._loopConfig.apiKey,
+        env: this._loopConfig.env,
+        signal,
+        sessionId: sideSessionId,
+        metadata: {
+          requestKind: "idle-recap",
+          requestId,
+          ...(input.ownerGeneration === undefined ? {} : { ownerGeneration: input.ownerGeneration }),
+          ...(input.activityGeneration === undefined ? {} : { activityGeneration: input.activityGeneration }),
+        },
+        maxTokens: IDLE_RECAP_MAX_TOKENS,
+        timeoutMs: IDLE_RECAP_TIMEOUT_MS,
+        maxRetries: IDLE_RECAP_MAX_RETRIES,
+        ...(snapshotThinkingLevel !== "off" ? { reasoning: snapshotThinkingLevel } : {}),
+      }));
+
+      let providerMessage: AssistantMessage | undefined;
+      const streamedText: string[] = [];
+      for await (const event of stream) {
+        if (signal?.aborted) return undefined;
+        if (event.type === "text_delta") streamedText.push(event.delta);
+        if (event.type === "done" || event.type === "error") providerMessage = event.type === "done" ? event.message : event.error;
+      }
+      if (signal?.aborted || providerMessage === undefined) return undefined;
+      if (providerMessage.stopReason === "error" || providerMessage.stopReason === "aborted") return undefined;
+
+      const textContent = providerMessage.content.filter(
+        (part): part is Extract<AssistantMessage["content"][number], { type: "text" }> => part.type === "text",
+      );
+      const effectiveText = textContent.length > 0 ? textContent : streamedText.length > 0
+        ? [{ type: "text" as const, text: streamedText.join("") }]
+        : [];
+      const replyText = effectiveText.map((part) => part.text).join("");
+      if (replyText.trim().length === 0) return undefined;
+
+      return {
+        requestId,
+        replyText,
+        assistantMessage: {
+          ...providerMessage,
+          content: effectiveText,
+        },
+      };
+    } catch {
+      // A transient recap failure must not affect the ordinary prompt lifecycle.
+      return undefined;
+    } finally {
+      clearTimeout(timeout);
+      externalSignal?.removeEventListener("abort", forwardAbort);
     }
   }
 

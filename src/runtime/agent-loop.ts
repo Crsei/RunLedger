@@ -257,6 +257,7 @@ export async function runAgentLoop(
         apiKey: config.apiKey,
         env: config.env,
         signal,
+        metadata: { requestKind: config.requestKind ?? "interactive" },
         ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
       }),
     );

@@ -117,6 +117,11 @@ const IDEMPOTENCY_ACTIONS = new Set<string>(EVENT_IDEMPOTENCY_ACTIONS);
 const REASON_ACTIONS = new Set<string>(EVENT_REASON_REQUIRED_ACTIONS);
 const METADATA_ACTIONS = new Set<string>(EVENT_METADATA_REQUIRED_ACTIONS);
 
+const RuntimeModelRequestKindSchema = Type.Unsafe<"interactive" | "idle-recap" | "auto-title">({
+	type: "string",
+	enum: ["interactive", "idle-recap", "auto-title"],
+});
+
 function eventAction(type: RuntimeEventType): string {
 	return type.slice(type.indexOf(".") + 1);
 }
@@ -166,6 +171,7 @@ function createRuntimeEventPayloadSchema(type?: RuntimeEventType) {
 			metadataDigest: requirements.has("metadataDigest")
 				? RuntimeDigestSchema
 				: Type.Optional(RuntimeDigestSchema),
+			...(type === undefined || type === "model.routed" ? { requestKind: Type.Optional(RuntimeModelRequestKindSchema) } : {}),
 		},
 		{ additionalProperties: false },
 	);

@@ -69,6 +69,7 @@ export const SESSION_CORE_OPERATION_MANIFEST: readonly SessionProtocolOperationD
 	Object.freeze({ operation: "session.follow_up", capability: "session.core", access: "mutate" }),
 	Object.freeze({ operation: "session.interrupt", capability: "session.core", access: "mutate" }),
 	Object.freeze({ operation: "session.queue.clear", capability: "session.core", access: "mutate" }),
+	Object.freeze({ operation: "session.editor.activity", capability: "session.core", access: "mutate" }),
 	Object.freeze({ operation: "session.recovery.status", capability: "session.core", access: "read" }),
 	Object.freeze({ operation: "session.recovery.assess", capability: "session.core", access: "mutate" }),
 	Object.freeze({ operation: "session.recovery.verify", capability: "session.core", access: "mutate" }),

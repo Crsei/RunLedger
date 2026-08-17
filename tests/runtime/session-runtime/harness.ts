@@ -19,6 +19,7 @@ import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/i
 import { SESSION_CORE_PROTOCOL_MANIFEST } from "../../../src/runtime/session-server/protocol.ts";
 import type { LateBoundHumanInputWaitPort } from "../../../src/runtime/session-runtime/approval-reverse-request.ts";
 import type { LateBoundAgentRunBudgetUsage } from "../../../src/runtime/session-runtime/run-timing.ts";
+import type { EffectiveRecapSettings } from "../../../src/storage/settings-manager.ts";
 
 export interface RuntimeHarness {
 	readonly dir: string;
@@ -39,6 +40,7 @@ export async function createRuntimeHarness(seed = "h", options: {
 	readonly humanInputWaitPortRef?: LateBoundHumanInputWaitPort;
 	readonly runBudgetUsageRef?: LateBoundAgentRunBudgetUsage;
 	readonly lifecycleCleanup?: (reason: "paused" | "detached" | "error" | "fenced") => Promise<void>;
+	readonly recapSettings?: EffectiveRecapSettings;
 } = {}): Promise<RuntimeHarness> {
 	const dir = mkdtempSync(join(tmpdir(), "session-runtime-harness-"));
 	const db = openSessionDatabase(join(dir, "state.db"));
@@ -71,6 +73,7 @@ export async function createRuntimeHarness(seed = "h", options: {
 		...(options.humanInputWaitPortRef === undefined ? {} : { humanInputWaitPortRef: options.humanInputWaitPortRef }),
 		...(options.runBudgetUsageRef === undefined ? {} : { runBudgetUsageRef: options.runBudgetUsageRef }),
 		...(options.lifecycleCleanup === undefined ? {} : { lifecycleCleanup: options.lifecycleCleanup }),
+		...(options.recapSettings === undefined ? {} : { recapSettings: options.recapSettings }),
 	});
 	server.bindController(runtime);
 	runtime.start();

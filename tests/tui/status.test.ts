@@ -45,4 +45,13 @@ describe("StatusComponent", () => {
     const line = comp.render(8)[0] ?? "";
     expect(line.endsWith("…")).toBe(true);
   });
+  it("renders and clears a transient idle recap without changing turn fields", () => {
+    const comp = new StatusComponent({});
+    comp.setTurn(3);
+    comp.setIdleRecap("ship the next action");
+    expect(comp.render(80)[0]).toContain("※ recap: ship the next action");
+    comp.setIdleRecap(undefined);
+    expect(comp.render(80)[0]).not.toContain("recap:");
+    expect(comp.render(80)[0]).toContain("turn:3");
+  });
 });

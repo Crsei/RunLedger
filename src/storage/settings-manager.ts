@@ -36,6 +36,8 @@ export interface SettingsStoreOptions {
 
 /** 用户级或 workspace 级 settings schema。sessionDir 不属于 canonical schema。 */
 export interface ProjectSettings {
+	/** 空闲 recap 的用户级开关与延迟；运行时会解析为完整有效快照。 */
+	recap?: RecapSettings;
 	/** 默认 provider ID,与 model 共同组成稳定模型身份。 */
 	provider?: string;
 	/** 默认模型 ID;CLI `--model` 优先级高于此字段 */
@@ -55,6 +57,24 @@ export interface ProjectSettings {
 	/** 版本化 skills provider policy（user/workspace 均可写，workspace 只能收窄）。 */
 	skills?: SkillsSettings;
 }
+
+export interface RecapSettings {
+	readonly enabled?: boolean;
+	readonly idleSeconds?: number;
+}
+
+export interface EffectiveRecapSettings {
+	readonly enabled: boolean;
+	readonly idleSeconds: number;
+}
+
+export const DEFAULT_RECAP_SETTINGS: EffectiveRecapSettings = Object.freeze({
+	enabled: true,
+	idleSeconds: 240,
+});
+
+export const RECAP_MIN_IDLE_SECONDS = 1;
+export const RECAP_MAX_IDLE_SECONDS = 3600;
 
 export type RecordingMode = "off" | "events" | "events_and_artifacts";
 
@@ -211,6 +231,16 @@ export async function saveProjectSettings(
 	);
 }
 
+/** 将缺失、非法或越界 recap 配置解析为安全的不可变运行时快照。 */
+export function resolveRecapSettings(settings: { readonly recap?: unknown }): EffectiveRecapSettings {
+	const recap = sanitizeRecapSettings(settings.recap);
+	const idleSeconds = recap?.idleSeconds ?? DEFAULT_RECAP_SETTINGS.idleSeconds;
+	return Object.freeze({
+		enabled: recap?.enabled ?? DEFAULT_RECAP_SETTINGS.enabled,
+		idleSeconds: Math.min(RECAP_MAX_IDLE_SECONDS, Math.max(RECAP_MIN_IDLE_SECONDS, Math.trunc(idleSeconds))),
+	});
+}
+
 function parseSettings(text: string, path: string, allowRecording: boolean): ProjectSettings {
 	let parsed: unknown;
 	try {
@@ -338,6 +368,8 @@ function assertSupportedSettings(
 /** 把裸 JSON 对象清洗成 canonical ProjectSettings，丢弃 legacy/未知字段。 */
 function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = true): ProjectSettings {
 	const out: ProjectSettings = {};
+	const recap = sanitizeRecapSettings(raw.recap);
+	if (recap !== undefined) out.recap = recap;
 	if (typeof raw.provider === "string" && raw.provider.length > 0) out.provider = raw.provider;
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
 	if (isThinkingLevel(raw.thinkingLevel)) out.thinkingLevel = raw.thinkingLevel;
@@ -363,6 +395,17 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	const skills = sanitizeSkillsSettings(raw.skills);
 	if (skills !== undefined) out.skills = skills;
 	return out;
+}
+
+function sanitizeRecapSettings(value: unknown): RecapSettings | undefined {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+	const raw = value as Record<string, unknown>;
+	const out: { enabled?: boolean; idleSeconds?: number } = {};
+	if (typeof raw.enabled === "boolean") out.enabled = raw.enabled;
+	if (typeof raw.idleSeconds === "number" && Number.isFinite(raw.idleSeconds)) {
+		out.idleSeconds = raw.idleSeconds;
+	}
+	return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function sanitizeMultiAgentSettings(value: unknown): MultiAgentSettingsSource | undefined {

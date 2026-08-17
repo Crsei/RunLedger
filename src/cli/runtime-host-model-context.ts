@@ -1022,9 +1022,10 @@ async function modelRoute(options: HostModelContextDomainOptions, _clock: () => 
 				effect: decision.outcome === "deny" ? "none" : "committed",
 				transition: transition(state.routes.length, null, decision.outcome),
 				expectedRevision: context.domainRevision,
-				refs: [contentRef("details", decision), ...(decision.conversionRef === undefined ? [] : [decision.conversionRef])],
-				metadataDigest: decision.decisionDigest,
-			},
+					refs: [contentRef("details", decision), ...(decision.conversionRef === undefined ? [] : [decision.conversionRef])],
+					metadataDigest: decision.decisionDigest,
+					...(request.requestKind === undefined ? {} : { requestKind: request.requestKind }),
+				},
 		})],
 	};
 }

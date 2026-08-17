@@ -32,6 +32,7 @@ export const ModelRouteRequestSchema = Type.Object(
 	{
 		requestId: RuntimeIdSchema,
 		operation: Type.Union([Type.Literal("request"), Type.Literal("switch"), Type.Literal("summarize"), Type.Literal("compact")]),
+		requestKind: Type.Optional(Type.Union([Type.Literal("interactive"), Type.Literal("idle-recap"), Type.Literal("auto-title")])),
 		sourceProfileId: Type.Optional(IdentifierSchema),
 		targetProfileId: IdentifierSchema,
 		contextDigest: RuntimeDigestSchema,

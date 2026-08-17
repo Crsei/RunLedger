@@ -25,6 +25,7 @@ export class StatusComponent implements Component {
   private outputTokens: number | undefined;
   private steeringCount = 0;
   private followUpCount = 0;
+  private idleRecap: string | undefined;
 
   constructor(props: StatusComponentProps) {
     this.turn = props.initialTurn;
@@ -53,6 +54,11 @@ export class StatusComponent implements Component {
     this.followUpCount = followUp;
   }
 
+  /** Transient side-channel status; never projected into the transcript. */
+  setIdleRecap(text: string | undefined): void {
+    this.idleRecap = text === undefined || text.trim().length === 0 ? undefined : text;
+  }
+
   render(width: number): string[] {
     const parts: string[] = [];
     if (this.turn !== undefined) parts.push(`turn:${this.turn}`);
@@ -63,6 +69,7 @@ export class StatusComponent implements Component {
     if (this.steeringCount > 0 || this.followUpCount > 0) {
       parts.push(`queue:s${this.steeringCount}/f${this.followUpCount}`);
     }
+    if (this.idleRecap !== undefined) parts.push(`※ recap: ${this.idleRecap}`);
     const line = parts.join("  ");
     return [padToWidth(line, width)];
   }

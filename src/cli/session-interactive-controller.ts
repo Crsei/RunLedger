@@ -21,6 +21,8 @@ import type {
 	InteractiveSessionControllerPort,
 	ProviderStatus,
 	RuntimeSelection,
+	SessionIdleRecapSink,
+	SessionIdleRecapEvent,
 	SessionRecoveryAssessment,
 	SessionRecoveryDecisionResult,
 	SessionRecoveryStatus,
@@ -45,6 +47,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private readonly transport: SessionClientTransport;
 	private readonly supportsOperation: (operation: string) => boolean;
 	private readonly listeners = new Set<AgentEventSink>();
+	private readonly idleRecapListeners = new Set<SessionIdleRecapSink>();
 	private readonly session: string;
 	private readonly sessionGeneration: number;
 	private connectionRole: "driver" | "observer" = "observer";
@@ -103,6 +106,11 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		}
 		return () => this.listeners.delete(listener);
 	}
+	public subscribeIdleRecap(listener: SessionIdleRecapSink): () => void {
+		this.idleRecapListeners.add(listener);
+		return () => this.idleRecapListeners.delete(listener);
+	}
+
 
 	public get agentRuns(): readonly AgentRunSummary[] {
 		return this.runSummaryState;
@@ -206,6 +214,10 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		await this.command(kind, behavior === undefined ? { promptText: text } : { text });
 	}
 
+	public notifyEditorActivity(editorEmpty: boolean): void {
+		void this.command("editor_activity", { empty: editorEmpty }).catch(() => undefined);
+	}
+
 	public interrupt(): void {
 		void this.command("interrupt", {}).catch(() => undefined);
 	}
@@ -296,6 +308,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.removeTransportListener();
 		this.listeners.clear();
 		for (const resolve of this.idleWaiters.splice(0)) resolve();
+		this.idleRecapListeners.clear();
 	}
 
 	// ── 私有 ─────────────────────────────────────────────────────────────
@@ -338,6 +351,19 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		if (sequence !== undefined && sequence <= this.eventCursor) return;
 		if (sequence !== undefined) this.eventCursor = sequence;
 		const event = frame.body.payload;
+		if (frame.body.eventType === "session.idle_recap") {
+			const recapEvent = parseSessionIdleRecapEvent(frame.body.payload, this.session);
+			if (recapEvent !== undefined) {
+				for (const listener of this.idleRecapListeners) {
+					try {
+						void listener(recapEvent);
+					} catch {
+						// transient status observers are isolated from wire delivery.
+					}
+				}
+			}
+			return;
+		}
 		if (!isAgentEvent(event)) return;
 		this.inFlightValue = event.type !== "agent_end";
 		if (event.type === "agent_end") {
@@ -386,6 +412,24 @@ function boundedIdentifier(value: unknown): value is string {
 
 function isAgentEvent(value: unknown): value is AgentEvent {
 	return isRecord(value) && typeof value.type === "string" && typeof value.timestamp === "number";
+}
+
+function parseSessionIdleRecapEvent(value: unknown, sessionId: string): SessionIdleRecapEvent | undefined {
+	if (!isRecord(value) || value.sessionId !== sessionId || typeof value.requestId !== "string" || value.requestId.length === 0) return undefined;
+	if (typeof value.ownerGeneration !== "number" || !Number.isSafeInteger(value.ownerGeneration) || value.ownerGeneration <= 0) return undefined;
+	if (value.activityGeneration !== undefined && (typeof value.activityGeneration !== "number" || !Number.isSafeInteger(value.activityGeneration) || value.activityGeneration <= 0)) return undefined;
+	if (value.driverRevision !== undefined && (typeof value.driverRevision !== "number" || !Number.isSafeInteger(value.driverRevision) || value.driverRevision < 0)) return undefined;
+	if (value.text !== undefined && typeof value.text !== "string") return undefined;
+	if (value.cleared !== undefined && typeof value.cleared !== "boolean") return undefined;
+	return {
+		sessionId,
+		requestId: value.requestId,
+		ownerGeneration: value.ownerGeneration,
+		...(value.activityGeneration === undefined ? {} : { activityGeneration: value.activityGeneration }),
+		...(value.driverRevision === undefined ? {} : { driverRevision: value.driverRevision }),
+		...(value.text === undefined ? {} : { text: value.text }),
+		...(value.cleared === undefined ? {} : { cleared: value.cleared }),
+	};
 }
 
 function numberValue(value: unknown): number | undefined {

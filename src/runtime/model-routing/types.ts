@@ -5,6 +5,7 @@ import type { CommandId, SessionId, TraceId } from "../protocol/ids.ts";
 
 export type ModelRouteOperation = "request" | "switch" | "summarize" | "compact";
 export type ModelRouteOutcome = "compatible" | "fork" | "deny";
+export type ModelRequestKind = "interactive" | "idle-recap" | "auto-title";
 
 export interface ModelCapabilityProfile {
 	readonly profileId: string;
@@ -26,6 +27,8 @@ export interface ModelCapabilityProfile {
 export interface ModelRouteRequest {
 	readonly requestId: CommandId;
 	readonly operation: ModelRouteOperation;
+	/** Identifies the bounded request purpose without exposing prompt content. */
+	readonly requestKind?: ModelRequestKind;
 	readonly sourceProfileId?: string;
 	readonly targetProfileId: string;
 	readonly contextDigest: RuntimeDigest;

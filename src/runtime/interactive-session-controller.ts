@@ -6,7 +6,7 @@ import { loadProjectSettings, saveProjectSettings } from "../storage/settings-ma
 import type { RunledgerLayout } from "./contracts/public.ts";
 import type { SessionReplay, SessionRuntimeConfig } from "../storage/session-codec.ts";
 import { appendRuntimeConfig } from "../storage/session-codec.ts";
-import { Agent } from "./agent.ts";
+import { Agent, type EphemeralTurnRequest } from "./agent.ts";
 import type {
   AgentEventSink,
   AgentMessage,
@@ -94,9 +94,23 @@ export interface ProviderStatus {
   interactiveAuthTypes: AuthType[];
 }
 
+export interface SessionIdleRecapEvent {
+	readonly sessionId: string;
+	readonly requestId: string;
+	readonly ownerGeneration: number;
+	readonly activityGeneration?: number;
+	readonly driverRevision?: number;
+	readonly text?: string;
+	readonly cleared?: boolean;
+}
+
+export type SessionIdleRecapSink = (event: SessionIdleRecapEvent) => void | Promise<void>;
+
 /** Client-side contract shared by the Host-owned and local test controllers. */
 export interface InteractiveSessionControllerPort {
   subscribe(listener: AgentEventSink): () => void;
+	/** Optional transient idle recap subscription; never part of AgentEvent/replay. */
+	readonly subscribeIdleRecap?: (listener: SessionIdleRecapSink) => () => void;
   /** Session Owner 客户端握手冻结的精确 operation 判断；legacy/local controller 缺省为不可协商。 */
   readonly supports?: (operation: string) => boolean;
   /** 握手冻结的 Session owner generation；本地 legacy/test controller 可省略。 */
@@ -122,6 +136,10 @@ export interface InteractiveSessionControllerPort {
   selectModel(model: Model<Api>): Promise<void>;
   setThinkingLevel(level: ModelThinkingLevel): Promise<ModelThinkingLevel>;
   prompt(text: string, behavior?: "steer" | "followUp"): Promise<void>;
+	/** Host/SessionRuntime-owned side-channel completion; never a normal turn. */
+	readonly runEphemeralTurn?: (request: EphemeralSessionTurnRequest) => Promise<string | undefined>;
+	/** Driver-only editor activity hint used to cancel/arm the owner-side timer. */
+	readonly notifyEditorActivity?: (editorEmpty: boolean) => void;
   interrupt(): void;
   clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] };
   waitForIdle(): Promise<void>;
@@ -158,6 +176,12 @@ export interface RuntimeSelection {
   model?: Model<Api>;
   thinkingLevel: ModelThinkingLevel;
 }
+
+export type EphemeralSessionTurnRequest = EphemeralTurnRequest & {
+	readonly kind: "idle-recap";
+	readonly ownerGeneration: number;
+	readonly activityGeneration: number;
+};
 
 /**
  * CLI/TUI 的统一运行时控制器。Models 负责 provider/auth,Agent 负责单次活跃 run,
@@ -369,6 +393,14 @@ export class InteractiveSessionController {
       throw error;
     }
   }
+
+	/** Run a transient completion through this Session's one Agent/model pipeline. */
+	async runEphemeralTurn(request: EphemeralSessionTurnRequest): Promise<string | undefined> {
+		const agent = this.agent;
+		if (agent === undefined || this.selection.model === undefined || agent.state.messages.length === 0) return undefined;
+		const result = await agent.runEphemeralTurn(request);
+		return result?.replyText;
+	}
 
   interrupt(): void {
     this.agent?.interrupt();

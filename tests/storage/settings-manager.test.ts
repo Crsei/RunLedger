@@ -8,6 +8,7 @@ import {
 	loadProjectSettings,
 	loadProjectSettingsSync,
 	recordingConfigDigest,
+	resolveRecapSettings,
 	resolveRecordingConfig,
 	saveProjectSettings,
 	SettingsStorageError,
@@ -80,6 +81,40 @@ describe("loadProjectSettings", () => {
 			theme: "dark",
 			enabledModels: ["claude-sonnet-4-5", "claude-haiku-4-5"],
 		});
+	});
+
+	it("加载 canonical recap 配置并保留合法 enabled/idleSeconds", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(
+			layout.settings,
+			JSON.stringify({ recap: { enabled: false, idleSeconds: 600 }, unknownRecap: true }),
+			"utf8",
+		);
+
+		expect(await loadProjectSettings({ layout })).toEqual({
+			recap: { enabled: false, idleSeconds: 600 },
+		});
+	});
+
+	it("保存 recap 配置到用户级 canonical settings", async () => {
+		await saveProjectSettings(
+			{ layout },
+			{ recap: { enabled: true, idleSeconds: 120 } } as never,
+		);
+
+		expect(await loadProjectSettings({ layout })).toEqual({
+			recap: { enabled: true, idleSeconds: 120 },
+		});
+	});
+
+	it("将 recap 延迟解析为有限整数秒并限制到安全范围", () => {
+		expect(resolveRecapSettings({})).toEqual({ enabled: true, idleSeconds: 240 });
+		expect(resolveRecapSettings({ recap: { enabled: false, idleSeconds: 120.9 } })).toEqual({
+			enabled: false,
+			idleSeconds: 120,
+		});
+		expect(resolveRecapSettings({ recap: { idleSeconds: 0 } })).toEqual({ enabled: true, idleSeconds: 1 });
+		expect(resolveRecapSettings({ recap: { idleSeconds: 99999 } })).toEqual({ enabled: true, idleSeconds: 3600 });
 	});
 
 	it("加载用户级 recording 配置", async () => {

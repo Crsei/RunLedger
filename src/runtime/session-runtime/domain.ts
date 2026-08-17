@@ -18,7 +18,7 @@ import { gatedExecutionEnv, type LateBoundAttemptPort } from "./attempt-gateway.
 import { replaySession } from "../../storage/session-codec.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { createStdlibTools, type StdlibToolsOptions } from "../tools/index.ts";
-import { InteractiveSessionController, type RuntimeSelectionOverrides } from "../interactive-session-controller.ts";
+import { InteractiveSessionController, type ModelRequestRouter, type RuntimeSelectionOverrides } from "../interactive-session-controller.ts";
 import type { AgentTool } from "../types.ts";
 import type { Models } from "../../models.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
@@ -69,6 +69,8 @@ export interface SessionDomainCompositionOptions {
 	readonly settings: ProjectSettings;
 	readonly models: Models;
 	readonly overrides?: RuntimeSelectionOverrides;
+	/** Host-owned route gate shared by coding and idle recap completions. */
+	readonly modelRequestRouter?: ModelRequestRouter;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	/** Session Event Store + 当前 driver reverse-request 的 approval authority。 */
 	readonly approvalPorts?: SessionApprovalPorts;
@@ -181,6 +183,7 @@ export async function assembleSessionDomain(
 		replay,
 		ledger,
 		overrides: options.overrides,
+		...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
 		tools: composedTools,
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,

@@ -66,6 +66,7 @@ import { createCliSyntaxThemeSettings } from "./syntax-theme-settings.ts";
 import { composeCliSyntaxThemes } from "./syntax-theme-composition.ts";
 import { gitWorkspaceDisplayFacts, workspaceDisplayAbsolutePathForView } from "./workspace-display-label.ts";
 import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
+import { createCliSessionModelRequestRouterFactory } from "./session-model-router.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -167,6 +168,8 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   const store = new SessionStore(db);
   const ownerStore = new OwnerStore(db);
+  const authorityId = createRuntimeId("authority", "session-owner-runtime");
+  const tenantId = createRuntimeId("tenant", "local-user");
 
   let sessionId: SessionId;
   try {
@@ -177,15 +180,18 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.exit(2);
     return;
   }
-  const multiAgentPolicySourcesFor = async (targetSessionId: SessionId) => {
+  const workspaceStorageKeyFor = (targetSessionId: SessionId): string => {
     const catalog = store.getSession(targetSessionId);
-    if (catalog === undefined) throw new Error(`session not found while loading multi-agent settings: ${targetSessionId}`);
-    const key = workspaceStorageKey({
-      authorityId: createRuntimeId("authority", "session-owner-runtime"),
-      tenantId: createRuntimeId("tenant", "local-user"),
+    if (catalog === undefined) throw new Error(`session not found while loading workspace scope: ${targetSessionId}`);
+    return workspaceStorageKey({
+	  authorityId,
+	  tenantId,
       workspaceId: parseRuntimeId("workspace", catalog.workspaceId) ?? createRuntimeId("workspace", runtimeDigest(catalog.workspaceId).digest),
       repositoryId: parseRuntimeId("repository", catalog.repositoryId) ?? createRuntimeId("repository", runtimeDigest(catalog.repositoryId).digest),
     });
+	};
+  const multiAgentPolicySourcesFor = async (targetSessionId: SessionId) => {
+	const key = workspaceStorageKeyFor(targetSessionId);
     const layered = await loadLayeredProjectSettings({ layout, workspaceKey: key });
     const source = (layer: typeof layered.user) => layer.multiAgent.state === "valid"
       ? layer.multiAgent.value
@@ -199,6 +205,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 
   const models = builtinModels({ credentials: AuthStorage.create(layout) });
   await models.refresh({ allowNetwork: false });
+  const modelRequestRouters = await createCliSessionModelRequestRouterFactory({ layout, authorityId, tenantId });
   const worktreeGit = createProductionGitCommandPort();
   const worktreeRegistry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout));
   const workspaceFactoryFor = async (targetSessionId: string): Promise<SessionWorkspaceFactory | undefined> => {
@@ -225,18 +232,21 @@ export async function main(argv: readonly string[]): Promise<void> {
   };
   const ownedRuntimeRegistry = new Map<string, EmbeddedSessionRuntimeResult>();
   const openView = async (targetSessionId: string): Promise<CliSessionView> => {
+	const typedSessionId = targetSessionId as SessionId;
+	const workspaceStorageKey = workspaceStorageKeyFor(typedSessionId);
     const embedded = await createEmbeddedSessionRuntime({
-      sessionId: targetSessionId as SessionId,
+	  sessionId: typedSessionId,
       store,
       ownerStore,
 	  workspace: await workspaceFactoryFor(targetSessionId),
-      domain: {
+	  domain: {
         cwd,
         layout,
         settings,
         models,
 		traceRecorderFactory,
-        multiAgent: await multiAgentPolicySourcesFor(targetSessionId as SessionId),
+		modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
+		multiAgent: await multiAgentPolicySourcesFor(typedSessionId),
         overrides: {
           ...(args.provider === undefined ? {} : { provider: args.provider }),
           ...(args.model === undefined ? {} : { model: args.model }),

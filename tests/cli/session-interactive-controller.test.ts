@@ -67,6 +67,34 @@ describe("SessionInteractiveController command error surfacing", () => {
 		expect(seen).toEqual(["agent_start:run-race", "agent_end:run-race"]);
 		expect(instance.recoveryCursor()).toBe(2);
 	});
+
+	it("delivers idle recap status as a transient non-agent event", () => {
+		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => ({ frameId: "unused", kind: "command_result", protocolVersion: 3, body: { ok: true } }),
+			onEvent: (listener: (frame: SessionFrameEnvelope) => void): (() => void) => { wireListener = listener; return () => { wireListener = undefined; }; },
+			notify: () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
+		const instance = new SessionInteractiveController(handle, {
+			sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
+		});
+		const seen: unknown[] = [];
+		instance.subscribeIdleRecap((event) => seen.push(event));
+
+		wireListener?.({
+			frameId: "recap-event",
+			kind: "subscription_event",
+			protocolVersion: 3,
+			body: {
+				eventType: "session.idle_recap",
+				payload: { sessionId: "session_fixture", requestId: "recap_1", ownerGeneration: 1, activityGeneration: 2, driverRevision: 3, text: "ship the next action" },
+			},
+		});
+
+		expect(seen).toEqual([expect.objectContaining({ requestId: "recap_1", text: "ship the next action" })]);
+	});
+
 	it("rejects malformed query correlation locally without sending a frame", async () => {
 		let requestCount = 0;
 		const transport = {

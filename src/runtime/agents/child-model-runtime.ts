@@ -129,19 +129,35 @@ function createModelRouteRequest(
 		tools: context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })),
 		reasoning: options?.reasoning,
 	})) as Record<string, unknown>;
+	const requestKind = options?.metadata?.requestKind;
 	const contextDigest = runtimeDigest(contextBody);
-	const requestId = createRuntimeId("command", runtimeDigest({ sessionId, model: `${model.provider}/${model.id}`, contextDigest }).digest.slice(0, 48));
+	const sideRequestId = typeof options?.metadata?.requestId === "string" ? options.metadata.requestId : undefined;
+	const ownerGeneration = typeof options?.metadata?.ownerGeneration === "number" && Number.isSafeInteger(options.metadata.ownerGeneration)
+		? options.metadata.ownerGeneration
+		: undefined;
+	const activityGeneration = typeof options?.metadata?.activityGeneration === "number" && Number.isSafeInteger(options.metadata.activityGeneration)
+		? options.metadata.activityGeneration
+		: undefined;
+	const requestId = createRuntimeId("command", runtimeDigest({
+		sessionId,
+		model: `${model.provider}/${model.id}`,
+		contextDigest,
+		...(sideRequestId === undefined ? {} : { sideRequestId }),
+		...(ownerGeneration === undefined ? {} : { ownerGeneration }),
+		...(activityGeneration === undefined ? {} : { activityGeneration }),
+	}).digest.slice(0, 48));
 	const traceId = createRuntimeId("trace", runtimeDigest({ requestId, sessionId }).digest.slice(0, 48));
 	const content = JSON.stringify(contextBody);
 	return {
 		requestId,
 		operation: "request",
+		...(requestKind === "interactive" || requestKind === "idle-recap" || requestKind === "auto-title" ? { requestKind } : {}),
 		targetProfileId: `${model.provider}/${model.id}`,
 		contextDigest,
 		planDigest: runtimeDigest({ kind: "plan-state", sessionId }),
 		resourceDigest: runtimeDigest(context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) ?? []),
 		requiredContextTokens: Math.ceil(Buffer.byteLength(content, "utf8") / 3),
-		requiredOutputTokens: model.maxTokens,
+		requiredOutputTokens: options?.maxTokens ?? model.maxTokens,
 		requiresTools: (context.tools?.length ?? 0) > 0,
 		requiresReasoningReplay: context.messages.some((message) => message.role === "assistant" && message.content.some((part) => part.type === "thinking")),
 		requiresImages: context.messages.some((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((part) => part.type === "image")),

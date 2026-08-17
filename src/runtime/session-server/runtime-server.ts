@@ -115,6 +115,8 @@ export interface SessionRuntimeServerOptions {
 	readonly controller: SessionController;
 	/** §8.3 attachment count 变化回调(headless-attached owner loop 用)。 */
 	readonly onAttachmentCountChange?: (count: number) => void;
+	/** Notifies the SessionRuntime-owned transient coordinator of driver changes. */
+	readonly onDriverStateChange?: () => void;
 }
 
 export class SessionRuntimeServer implements OwnerTransport {
@@ -124,6 +126,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 	private controller: SessionController;
 	private protocolManifest: SessionProtocolManifest;
 	private readonly store: SessionStore;
+	private readonly onDriverStateChange: (() => void) | undefined;
 	private server: net.Server | undefined;
 	private boundEndpoint: OwnerEndpoint | undefined;
 	private fence: OwnerFence | undefined;
@@ -137,6 +140,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 	public constructor(options: SessionRuntimeServerOptions) {
 		this.options = options;
 		this.store = options.store;
+		this.onDriverStateChange = options.onDriverStateChange;
 		this.controller = options.controller;
 		this.protocolManifest = manifestFromController(options.controller);
 		this.controllerListener = options.controller.onEvent((event) => {
@@ -222,6 +226,10 @@ export class SessionRuntimeServer implements OwnerTransport {
 		return this.driverState.driver?.connectionId;
 	}
 
+	public driverRevision(): number {
+		return this.driverState.driverRevision;
+	}
+
 	/** §6.4:owner crash/takeover 后 driver 强制 NONE + durable revision 事件。 */
 	public recordDriverResetOnTakeover(): boolean {
 		if (this.fence === undefined) return false;
@@ -230,6 +238,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 		this.driverState = { driver: undefined, driverRevision: transition.nextRevision, lastDriverClientId: this.driverState.driver?.clientId };
 		this.persistDriverEvent(transition.eventType, {});
 		this.driverState = { ...this.driverState, lastDriverClientId: undefined };
+		this.onDriverStateChange?.();
 		return true;
 	}
 
@@ -503,6 +512,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 		this.driverState = { driver: { connectionId: connection.connectionId, clientId: connection.clientId }, driverRevision: transition.nextRevision, lastDriverClientId: this.driverState.lastDriverClientId };
 		this.persistDriverEvent(transition.eventType, { connectionId: connection.connectionId });
 		this.driverState = { ...this.driverState, lastDriverClientId: connection.clientId };
+		this.onDriverStateChange?.();
 		return { ok: true, driverRevision: transition.nextRevision };
 	}
 
@@ -515,6 +525,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 		if (!transition.ok) return transition;
 		this.driverState = { driver: undefined, driverRevision: transition.nextRevision, lastDriverClientId: this.driverState.driver?.clientId };
 		this.persistDriverEvent(transition.eventType, { connectionId: connection.connectionId });
+		this.onDriverStateChange?.();
 		return { ok: true, driverRevision: transition.nextRevision };
 	}
 
@@ -547,6 +558,18 @@ export class SessionRuntimeServer implements OwnerTransport {
 	}
 
 	private broadcastEvent(event: SessionControllerEvent): void {
+		if (event.eventType === "session.idle_recap") {
+			const driverConnectionId = this.driverState.driver?.connectionId;
+			if (driverConnectionId === undefined) return;
+			const connection = [...this.connections].find((candidate) => candidate.connectionId === driverConnectionId && candidate.initialized && !candidate.closed);
+			if (connection === undefined) return;
+			this.enqueue(connection, this.frameFor("subscription_event", {
+				eventId: `ephemeral_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+				eventType: event.eventType,
+				payload: event.payload,
+			}));
+			return;
+		}
 		if (event.sequence !== undefined) this.registry.setHead(event.sequence);
 		for (const connection of this.connections) {
 			if (!connection.initialized || connection.closed) continue;
@@ -713,6 +736,7 @@ function commandOperation(kind: string, body: Record<string, unknown>): string |
 		case "follow_up": return "session.follow_up";
 		case "interrupt": return "session.interrupt";
 		case "clear_queues": return "session.queue.clear";
+		case "editor_activity": return "session.editor.activity";
 		case "recovery_assess": return "session.recovery.assess";
 		case "recovery_verify": return "session.recovery.verify";
 		case "recovery_resume": return "session.recovery.resume";

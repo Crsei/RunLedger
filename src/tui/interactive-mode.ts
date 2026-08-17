@@ -179,6 +179,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
   private unsubscribe?: () => void;
+  private unsubscribeIdleRecap?: () => void;
+  private idleRecapRequestId: string | undefined;
+  private idleRecapActivityGeneration = 0;
   private unsubscribeThemeMode?: () => void;
   private unsubscribeTerminalBackground?: () => void;
   private unsubscribeRenderPreparation?: () => void;
@@ -409,7 +412,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
       theme: this.theme,
       selectListTheme: this.makeSelectListTheme(),
       onSubmit: (text) => this.handleSubmit(text),
-      onChange: () => this.syncSlashPopup(),
+      onChange: (text) => {
+        this.clearIdleRecapStatus();
+        this.controller?.notifyEditorActivity?.(text.trim().length === 0);
+        this.syncSlashPopup();
+      },
       onSlashPopupKey: (data) => this.handleSlashPopupKey(data),
       onFollowUp: (text) => this.handleFollowUpSubmit(text),
       onDequeue: () => this.restoreQueuesToEditor(),
@@ -527,6 +534,19 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribe = this.controller
       ? this.controller.subscribe((ev) => this.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
+    this.unsubscribeIdleRecap = this.controller?.subscribeIdleRecap?.((event) => {
+      if (event.cleared === true) {
+        if (event.requestId !== this.idleRecapRequestId) return;
+        this.clearIdleRecapStatus();
+      } else {
+        if (event.text === undefined) return;
+        if (event.activityGeneration !== undefined && event.activityGeneration < this.idleRecapActivityGeneration) return;
+        this.idleRecapRequestId = event.requestId;
+        if (event.activityGeneration !== undefined) this.idleRecapActivityGeneration = event.activityGeneration;
+        this.refs.status.setIdleRecap(event.text);
+      }
+      this.ui.requestRender();
+    });
     this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
     this.unsubscribeTerminalBackground = this.ui.addTerminalBackgroundListener((rgb) => this.refreshEditorAppearance(rgb));
     try {
@@ -538,6 +558,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
+      this.unsubscribeIdleRecap?.();
+      this.unsubscribeIdleRecap = undefined;
       this.unsubscribeThemeMode?.();
       this.unsubscribeThemeMode = undefined;
       this.unsubscribeTerminalBackground?.();
@@ -646,6 +668,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribe();
       this.unsubscribe = undefined;
     }
+    this.unsubscribeIdleRecap?.();
+    this.unsubscribeIdleRecap = undefined;
     this.unsubscribeStore?.();
     this.unsubscribeStore = undefined;
     this.unsubscribeThemeMode?.();
@@ -1572,6 +1596,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** Editor.onSubmit 回调;空闲时作为 user prompt 投递,运行中自动排队为 follow-up 不打断当前 turn。 */
   private handleSubmit(text: string): void {
     if (text.length === 0) return;
+    this.clearIdleRecapStatus();
     if (text.startsWith("/")) {
       const [rawCommand, ...argParts] = text.slice(1).trim().split(/\s+/);
       const name = rawCommand ?? "";
@@ -2442,6 +2467,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.handleEvent(adapted);
   }
+  /** Clears the local-only recap slot and advances its client-side stale fence. */
+  private clearIdleRecapStatus(): void {
+    this.idleRecapRequestId = undefined;
+    this.idleRecapActivityGeneration += 1;
+    this.refs.status.setIdleRecap(undefined);
+  }
+
 
   /**
    * 主控 switch：message_* 统一投影到 canonical Timeline 并流式更新；
@@ -2453,6 +2485,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       switch (ev.type) {
         case "agent_start":
           this.flushStreamingDeltas();
+          this.clearIdleRecapStatus();
           this.streamingGeneration += 1;
           this.streaming = true;
           this.stopReason = undefined;

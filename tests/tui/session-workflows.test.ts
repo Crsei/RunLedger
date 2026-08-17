@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { ContractController, ContractTerminal, settleFrames } from "./fixtures/contract-integration.ts";
+import type { SessionIdleRecapEvent } from "../../src/runtime/interactive-session-controller.ts";
+import { SessionInteractiveController } from "../../src/cli/session-interactive-controller.ts";
+import type { OwnedSessionHandle } from "../../src/cli/session-client.ts";
+import type { SessionClientTransport } from "../../src/runtime/session-server/client-transport.ts";
+import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 
 const catalogItems = [
 	{ sessionId: "contract-session", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: 1, updatedAtMs: 3, headSequence: 7, driverRevision: 1, current: true },
@@ -32,6 +37,54 @@ function sessionController() {
 }
 
 describe("S2 InteractiveMode session workflows", () => {
+	it("keeps the owner-side editor state empty after Enter submits through the TCP controller", async () => {
+		const terminal = new ContractTerminal();
+		const editorActivity: boolean[] = [];
+		const transport = {
+			request: async (frame: SessionFrameEnvelope): Promise<SessionFrameEnvelope> => {
+				if (frame.kind === "command_request" && frame.body.kind === "editor_activity") {
+					const body = frame.body.body as { readonly empty?: unknown };
+					if (typeof body.empty === "boolean") editorActivity.push(body.empty);
+				}
+				return { frameId: `result-${editorActivity.length}`, kind: "command_result", protocolVersion: 3, body: { ok: true } };
+			},
+			onEvent: (): (() => void) => () => undefined,
+			notify: () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = {
+			transport,
+			sessionId: "contract-session",
+			generation: 4,
+			supports: () => true,
+		} as unknown as OwnedSessionHandle;
+		const controller = new SessionInteractiveController(handle, {
+			sessionId: "contract-session",
+			messages: [],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 1,
+		});
+		controller.setConnectionRole("driver");
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			terminal.send("ship recap");
+			terminal.send("\r");
+			await vi.waitFor(() => expect(editorActivity.length).toBeGreaterThanOrEqual(2));
+
+			expect(editorActivity).toContain(false);
+			expect(editorActivity.at(-1)).toBe(true);
+		} finally {
+			mode.quit();
+			await running;
+			controller.dispose();
+		}
+	});
+
 	it("uses the negotiated Session owner generation as the TUI stale-result fence", () => {
 		const { controller } = sessionController();
 		Object.defineProperty(controller, "authorityGeneration", { value: 17 });
@@ -96,5 +149,35 @@ describe("S2 InteractiveMode session workflows", () => {
 		mode.quit();
 		expect(await running).toEqual({ kind: "quit" });
 		expect(controller.disposed).toBe(false);
+	});
+
+	it("does not let stale idle recap events replace or clear the current transient status", async () => {
+		const controller = new ContractController();
+		const listeners = new Set<(event: SessionIdleRecapEvent) => void>();
+		let emitRecap!: (event: SessionIdleRecapEvent) => void;
+		Object.assign(controller, {
+			subscribeIdleRecap: (listener: (event: SessionIdleRecapEvent) => void) => {
+				listeners.add(listener);
+				emitRecap = (event) => { for (const current of listeners) current(event); };
+				return () => listeners.delete(listener);
+			},
+		});
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			const status = (mode as unknown as { refs: { status: { render(width: number): string[] } } }).refs.status;
+			emitRecap({ sessionId: controller.sessionId, requestId: "recap-new", ownerGeneration: 1, activityGeneration: 2, text: "current recap" });
+			expect(status.render(100)[0]).toContain("current recap");
+			emitRecap({ sessionId: controller.sessionId, requestId: "recap-old", ownerGeneration: 1, activityGeneration: 1, text: "stale recap" });
+			expect(status.render(100)[0]).toContain("current recap");
+			emitRecap({ sessionId: controller.sessionId, requestId: "recap-old", ownerGeneration: 1, activityGeneration: 1, cleared: true });
+			expect(status.render(100)[0]).toContain("current recap");
+			emitRecap({ sessionId: controller.sessionId, requestId: "recap-new", ownerGeneration: 1, activityGeneration: 2, cleared: true });
+			expect(status.render(100)[0]).not.toContain("recap:");
+		} finally {
+			mode.quit();
+			await running;
+		}
 	});
 });

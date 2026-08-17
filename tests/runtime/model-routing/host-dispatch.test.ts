@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createModels, createProvider } from "../../../src/models.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model } from "../../../src/types.ts";
 import { createAssistantMessageEventStream } from "../../../src/utils/event-stream.ts";
@@ -48,10 +48,11 @@ function stopStream(requestModel: Model<Api>, _context: Context): AssistantMessa
 	return stream;
 }
 
-function deniedRouter(calls: { count: number }): ModelRequestRouter {
+function deniedRouter(calls: { count: number; kind?: string }): ModelRequestRouter {
 	return {
 		route: async (request) => {
 			calls.count += 1;
+			calls.kind = request.requestKind;
 			return {
 				requestId: request.requestId,
 				outcome: "deny",
@@ -108,8 +109,140 @@ describe("Host model request dispatch", () => {
 		await controller.prompt("should be denied");
 
 		expect(calls.count).toBe(1);
+		expect(calls.kind).toBe("interactive");
 		expect(providerCalls).toBe(0);
 		expect(controller.messages.at(-1)).toMatchObject({ role: "assistant", stopReason: "error" });
 		controller.dispose();
+	});
+
+	it("marks an idle recap as a separate route request kind while reusing the active provider", async () => {
+		const selected = model();
+		let providerCalls = 0;
+		let requestKind: string | undefined;
+		let requiredOutputTokens: number | undefined;
+		const models = createModels();
+		models.setProvider(createProvider({
+			id: "fixture",
+			name: "Fixture",
+			auth: {
+				apiKey: {
+					name: "fixture",
+					login: async () => ({ type: "api_key", key: "fixture" }),
+					check: async () => ({ source: "fixture", type: "api_key" }),
+					resolve: async () => ({ auth: { apiKey: "fixture" } }),
+				},
+			},
+			models: [selected],
+			api: {
+				stream: (requestModel, context) => stopStream(requestModel, context),
+				streamSimple: (requestModel, context) => {
+					providerCalls += 1;
+					return stopStream(requestModel, context);
+				},
+			},
+		}));
+		const controller = await InteractiveSessionController.create({
+			cwd: process.cwd(),
+			layout: buildRunledgerLayout(process.cwd(), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: "fixture", model: "model" },
+			replay: { messages: [{ role: "user", content: [{ type: "text", text: "work" }] }], config: {}, auditEntries: [], warnings: [] },
+			ledger: new MemoryLedger(),
+			tools: [],
+			modelRequestRouter: {
+				route: async (request) => {
+					requestKind = request.requestKind;
+					requiredOutputTokens = request.requiredOutputTokens;
+					return {
+						requestId: request.requestId,
+						outcome: "compatible",
+						targetProviderId: selected.provider,
+						targetModelId: selected.id,
+						targetProfileId: request.targetProfileId,
+						manifestDigest: request.contextDigest,
+						reasonCode: "fixture_compatible",
+						diagnostics: [],
+						decisionDigest: request.contextDigest,
+					};
+				},
+			},
+		});
+		await controller.login(selected.provider, "api_key", { prompt: async () => "fixture", notify: () => {} });
+
+		await expect(controller.runEphemeralTurn({
+			kind: "idle-recap",
+			requestId: "idle-recap-route-fixture",
+			ownerGeneration: 3,
+			activityGeneration: 5,
+			promptText: "recap",
+			signal: new AbortController().signal,
+		})).resolves.toContain("provider-called");
+		expect(requestKind).toBe("idle-recap");
+		expect(requiredOutputTokens).toBe(128);
+		expect(providerCalls).toBe(1);
+		controller.dispose();
+	});
+
+	it("keeps repeated idle recap route requests on distinct side-channel lineages", async () => {
+		vi.useFakeTimers({ now: 1_000 });
+		const selected = model();
+		const routeIds: string[] = [];
+		const models = createModels();
+		models.setProvider(createProvider({
+			id: "fixture",
+			name: "Fixture",
+			auth: {
+				apiKey: {
+					name: "fixture",
+					login: async () => ({ type: "api_key", key: "fixture" }),
+					check: async () => ({ source: "fixture", type: "api_key" }),
+					resolve: async () => ({ auth: { apiKey: "fixture" } }),
+				},
+			},
+			models: [selected],
+			api: {
+				stream: (requestModel, context) => stopStream(requestModel, context),
+				streamSimple: (requestModel, context) => stopStream(requestModel, context),
+			},
+		}));
+		const controller = await InteractiveSessionController.create({
+			cwd: process.cwd(),
+			layout: buildRunledgerLayout(process.cwd(), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: "fixture", model: "model" },
+			replay: { messages: [{ role: "user", content: [{ type: "text", text: "work" }] }], config: {}, auditEntries: [], warnings: [] },
+			ledger: new MemoryLedger(),
+			tools: [],
+			modelRequestRouter: {
+				route: async (request) => {
+					routeIds.push(request.requestId);
+					return {
+						requestId: request.requestId,
+						outcome: "compatible",
+						targetProviderId: selected.provider,
+						targetModelId: selected.id,
+						targetProfileId: request.targetProfileId,
+						manifestDigest: request.contextDigest,
+						reasonCode: "fixture_compatible",
+						diagnostics: [],
+						decisionDigest: request.contextDigest,
+					};
+				},
+			},
+		});
+		await controller.login(selected.provider, "api_key", { prompt: async () => "fixture", notify: () => {} });
+
+		try {
+			await controller.runEphemeralTurn({ kind: "idle-recap", requestId: "idle-recap-lineage-reused", ownerGeneration: 7, activityGeneration: 11, promptText: "recap", signal: new AbortController().signal });
+			await controller.runEphemeralTurn({ kind: "idle-recap", requestId: "idle-recap-lineage-reused", ownerGeneration: 8, activityGeneration: 1, promptText: "recap", signal: new AbortController().signal });
+
+			expect(routeIds).toHaveLength(2);
+			expect(routeIds[0]).not.toBe(routeIds[1]);
+		} finally {
+			controller.dispose();
+			vi.useRealTimers();
+		}
 	});
 });
