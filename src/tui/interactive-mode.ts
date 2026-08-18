@@ -121,7 +121,7 @@ export interface InteractiveModeOptions {
   processOverlayController?: ProcessOverlayController;
   /** B7:process output 的真实 Host client（composition root 注入；缺失时 bridge 只读）。 */
   processOverlayClient?: ProcessOverlayHostClient;
-  /** P6:workspace/path 能力标签（真实 runner 证据矩阵），Footer 右侧显示；缺省不显示。 */
+  /** P6:workspace/path 能力标签（真实 runner 证据矩阵）；仅 unverified 值进入启动 warning notice。 */
   workspaceCapability?: string;
   /** agent 运行时绝对地址：sanitize + 有界但保留绝对路径；仅本机 footer，不进公共 DTO/remote snapshot。 */
   workspaceDisplayAbsolutePath?: string;
@@ -369,14 +369,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         getTerminalSize: () => ({ columns: this.terminal.columns, rows: this.terminal.rows }),
       });
     }
-    this.replayInitialHistory();
-	for (const warning of opts.syntaxThemeWarnings ?? []) this.dispatchTimeline([{
-		type: "notice",
-		generation: 0,
-		correlationId: `syntax-theme-warning-${this.store.getState().timeline.committedRows.length}`,
-		severity: "warning",
-		message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
-	}]);
+    this.replayInitialHistory(opts.syntaxThemeWarnings ?? []);
 
     void MAX_CONSECUTIVE_INIT_FAILURES;
     void INIT_FAILURE_BACKOFF_MS;
@@ -2405,16 +2398,30 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
   }
 
-  private replayInitialHistory(): void {
-    if (!this.controller) return;
-    for (const warning of this.controller.warnings) this.dispatchTimeline([{
-      type: "notice",
-      generation: 0,
-      correlationId: `warning-${this.store.getState().timeline.committedRows.length}`,
-      severity: "warning",
-      message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
-    }]);
-    for (let index = 0; index < this.controller.messages.length; index += 1) {
+	private replayInitialHistory(syntaxThemeWarnings: readonly string[] = []): void {
+		if (this.workspaceCapability?.endsWith("-unverified") === true) this.dispatchTimeline([{
+			type: "notice",
+			generation: 0,
+			correlationId: `workspace-capability-${this.store.getState().timeline.committedRows.length}`,
+			severity: "warning",
+			message: { text: this.workspaceCapability, truncated: false, byteLength: new TextEncoder().encode(this.workspaceCapability).byteLength },
+		}]);
+		if (this.controller !== undefined) for (const warning of this.controller.warnings) this.dispatchTimeline([{
+			type: "notice",
+			generation: 0,
+			correlationId: `warning-${this.store.getState().timeline.committedRows.length}`,
+			severity: "warning",
+			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
+		}]);
+		for (const warning of syntaxThemeWarnings) this.dispatchTimeline([{
+			type: "notice",
+			generation: 0,
+			correlationId: `syntax-theme-warning-${this.store.getState().timeline.committedRows.length}`,
+			severity: "warning",
+			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
+		}]);
+		if (!this.controller) return;
+		for (let index = 0; index < this.controller.messages.length; index += 1) {
       const message = this.controller.messages[index];
       if (message === undefined) continue;
       this.dispatchTimeline(this.timelineProjector.project({ kind: "replay-message", message, index }));

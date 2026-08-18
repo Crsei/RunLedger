@@ -70,7 +70,7 @@ import { createCliSessionModelRequestRouterFactory } from "./session-model-route
 
 const VERSION = readVersionFromPackage();
 
-/** P6:Footer 展示的 workspace/path 能力标签(真实 runner 证据,不宣称 sandbox)。 */
+/** P6:TUI 启动 notice 使用的 workspace/path 能力标签(真实 runner 证据,不宣称 sandbox)。 */
 function workspaceCapabilityLabel(): string {
 	const platform = runtimeWorkspacePlatform();
 	const row = capabilityRowFor(platform);
