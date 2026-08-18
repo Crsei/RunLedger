@@ -19,14 +19,15 @@ function provider(): FooterSnapshotProvider {
 }
 
 describe("structured Footer status line", () => {
-	it.each([60, 80, 143])("keeps state and model visible without exceeding %i columns", (width) => {
+	it.each([60, 80, 143])("hides idle while keeping the model visible without exceeding %i columns", (width) => {
 		const footer = new Footer({ theme: loadTheme("dark"), provider: provider() });
 		const block = footer.present(width)[0];
 		expect(block?.kind).toBe("status-line");
 		if (block?.kind !== "status-line") return;
 		const text = block.segments.map((segment) => segment.text).join(" · ");
-		expect(block.segments.some((segment) => segment.accent === "state")).toBe(true);
+		expect(block.segments.some((segment) => segment.accent === "state")).toBe(false);
 		expect(block.segments.some((segment) => segment.accent === "model")).toBe(true);
+		expect(text).not.toContain("idle");
 		expect(text).not.toContain("\u001b");
 		expect(text).not.toContain("\u0007");
 		expect(visibleWidth(text)).toBeLessThanOrEqual(width);

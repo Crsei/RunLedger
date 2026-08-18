@@ -77,8 +77,9 @@ export class Footer implements Component {
           : streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
       left = status;
       middle = sessionId.length > 0 ? sessionId : "<no-session>";
-	  const segments: StatusLineSegment[] = [
-		{ accent: "state", text: status },
+	  const segments: StatusLineSegment[] = [];
+	  if (status !== "idle") segments.push({ accent: "state", text: status });
+	  segments.push(
 		...(workspaceDisplayAbsolutePath ? [{ accent: "path" as const, text: workspaceDisplayAbsolutePath }] : []),
 		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
 		...(sessionId.length > 0 && !threadLabel ? [{ accent: "metadata" as const, text: sessionId }] : []),
@@ -94,7 +95,7 @@ export class Footer implements Component {
 			? [{ accent: "limit" as const, text: `limit ${Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.contextWindow) * 100))}%` }]
 			: []),
 		...(threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
-	  ];
+	  );
 	  return segments
 		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
 		.filter((segment) => segment.text.length > 0);

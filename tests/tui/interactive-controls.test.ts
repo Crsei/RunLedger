@@ -14,8 +14,6 @@ import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { createProcessOverlayController } from "../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
 import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
-import type { EditorHint } from "../../src/tui/components/editor-hint.ts";
-import type { TuiStore } from "../../src/tui/application/store.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
 import type { TuiEvent } from "../../src/tui/types.ts";
 import { ContractController } from "./fixtures/contract-integration.ts";
@@ -312,26 +310,25 @@ describe("InteractiveMode lifecycle and global controls", () => {
     });
   });
 
-  it("terminal blur 后隐藏 editor hint,focus 恢复后重新显示", () => {
+  it("底部只渲染 Footer 状态且隐藏 idle", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },
       streamFn: immediateStopStream(),
     });
     const mode = new InteractiveMode({ agent, terminal });
-    const internals = mode as unknown as {
-      refs: { editorHint: EditorHint };
-      store: TuiStore;
-    };
-
-    expect(internals.refs.editorHint.render(80)).toHaveLength(1);
-    internals.store.dispatch({ type: "interaction.focus-changed", focused: false });
-    expect(internals.refs.editorHint.render(80)).toEqual([]);
-    internals.store.dispatch({ type: "interaction.focus-changed", focused: true });
-    expect(internals.refs.editorHint.render(80)).toHaveLength(1);
+    const running = mode.run();
+    try {
+      await vi.waitFor(() => expect(terminal.writes.length).toBeGreaterThan(0));
+      const idleLines = (terminal.writes.at(-1) ?? "").split("\n").filter((line) => line.includes("idle"));
+      expect(idleLines).toHaveLength(0);
+    } finally {
+      terminal.send("\x04");
+      await running;
+    }
   });
 
-  it("terminal focus boundary 触发重绘,blur 帧不再包含 editor hint", async () => {
+  it("terminal focus boundary 触发重绘,blur 帧仍只包含 Footer", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({
       initialState: { systemPrompt: "test", model: mockModel },

@@ -43,7 +43,6 @@ import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
 import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
 import { editorBackgroundFromTerminal } from "./theme/editor-background.ts";
 import { CustomEditor, type CustomEditorProps } from "./components/custom-editor.ts";
-import { EditorHint } from "./components/editor-hint.ts";
 import { Footer } from "./components/footer.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
@@ -161,7 +160,6 @@ interface ContainerRefs {
   chat: ChatContainer;
   status: StatusComponent;
   editor: CustomEditor;
-  editorHint: EditorHint;
   footer: Footer;
 }
 
@@ -421,36 +419,20 @@ export class InteractiveMode implements FooterSnapshotProvider {
     };
     const editor = new CustomEditor(this.ui, editorTheme, editorProps);
     const footer = new Footer({ theme: this.theme, provider: this });
-    // codex footer 语义简化版:左侧快捷键 hint,右侧模式指示;overlay 打开时隐藏。
-    const resolved = this.kb.getResolvedBindings();
-    const editorHint = new EditorHint({
-      theme: this.theme,
-      provider: this,
-      hints: [
-        { key: resolved["tui.input.submit"]?.[0] ?? "enter", action: "send" },
-        { key: resolved["tui.input.followUp"]?.[0] ?? "alt+enter", action: "follow-up" },
-        { key: resolved["tui.input.interrupt"]?.[0] ?? "ctrl+c", action: "interrupt" },
-        { key: resolved["tui.input.quit"]?.[0] ?? "ctrl+d", action: "quit" },
-      ],
-      getVisible: () => editor.focused
-        && this.store.getState().interaction.terminalFocused
-        && !this.ui.hasOverlay(),
-    });
 
     // 组件树结构(对照 02 §1):
-    //   header / loadedResources / chat / status / editor / editorHint / footer
+    //   header / loadedResources / chat / status / editor / footer
     this.ui.addChild(header);
     this.ui.addChild(loadedResources);
     this.ui.addChild(chat);
     this.ui.addChild(status);
     this.ui.addChild(editor);
-    this.ui.addChild(editorHint);
     this.ui.addChild(footer);
 
     // Editor 拿焦点
     this.ui.setFocus(editor);
 
-    return { header, loadedResources, chat, status, editor, editorHint, footer };
+    return { header, loadedResources, chat, status, editor, footer };
   }
 
   /** B1:bootstrap 派生；composition root 显式传入时优先。 */

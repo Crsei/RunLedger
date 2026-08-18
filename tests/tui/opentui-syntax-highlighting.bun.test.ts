@@ -426,7 +426,7 @@ describe("OpenTUI syntax-theme status line", () => {
 		}
 	});
 
-	test("keeps status-line colors while the composer hint remains visible", async () => {
+	test("keeps status-line colors when the composer hint is removed", async () => {
 		const setup = await createTestRenderer({ width: 80, height: 12 });
 		const native = fixture();
 		const scopedAddon: NativeSyntaxAddon = {
@@ -441,20 +441,17 @@ describe("OpenTUI syntax-theme status line", () => {
 		try {
 			runtime.update({
 				body: [], editorText: "",
-				footer: [
-					"enter:send  ctrl+d:quit",
-					{ kind: "status-line", segments: [
-						{ accent: "state", text: "idle" },
-						{ accent: "model", text: "deepseek/deepseek-v4-pro" },
-						{ accent: "usage", text: "usage 12.3k" },
-					] },
-				],
+				footer: [{ kind: "status-line", segments: [
+					{ accent: "state", text: "idle" },
+					{ accent: "model", text: "deepseek/deepseek-v4-pro" },
+					{ accent: "usage", text: "usage 12.3k" },
+				] }],
 			});
 			await setup.renderOnce();
 			const footer = setup.renderer.root.findDescendantById("runledger-footer");
 			const chunks = footer?.content.chunks ?? [];
 			expect(chunks.map((chunk) => chunk.text).join("")).toBe(
-				"enter:send  ctrl+d:quit\nidle · deepseek/deepseek-v4-pro · usage 12.3k",
+				"idle · deepseek/deepseek-v4-pro · usage 12.3k",
 			);
 			for (const text of ["idle", "deepseek/deepseek-v4-pro", "usage 12.3k"]) {
 				expect(chunks.find((chunk) => chunk.text === text)?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
