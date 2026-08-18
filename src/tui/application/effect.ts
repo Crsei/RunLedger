@@ -8,6 +8,7 @@ export type TuiEffect =
 	| ({ readonly type: "session.create"; readonly expectedRevision: number } & CorrelatedRequestRef)
 	| ({ readonly type: "session.resume"; readonly targetSessionId: string; readonly expectedRevision: number } & CorrelatedRequestRef)
 	| ({ readonly type: "session.fork"; readonly sourceSessionId: string; readonly expectedSourceHeadSequence: number; readonly expectedRevision: number } & CorrelatedRequestRef)
+	| ({ readonly type: "session.rename"; readonly title: string; readonly expectedRevision: number; readonly expectedTitle?: string | null } & CorrelatedRequestRef)
 	| ({ readonly type: "provider.list" } & CorrelatedRequestRef)
 	| ({ readonly type: "auth.inspect" } & CorrelatedRequestRef)
 	| ({ readonly type: "auth.login"; readonly providerId: string; readonly authKind: AuthKind } & CorrelatedRequestRef)

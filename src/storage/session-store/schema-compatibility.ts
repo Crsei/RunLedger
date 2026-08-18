@@ -14,7 +14,13 @@
 
 import { SESSION_STORE_SCHEMA_MAX, SESSION_STORE_SCHEMA_MIN } from "../../runtime/session-owner/types.ts";
 import type { SessionDatabase } from "./database.ts";
-import { SESSION_STORE_SCHEMA_VERSION, sessionStoreSchemaFormatDigest } from "./schema.ts";
+import {
+	SESSION_STORE_SCHEMA_V1_SQL,
+	SESSION_STORE_SCHEMA_V1_TO_V2_SQL,
+	SESSION_STORE_SCHEMA_V2_SQL,
+	SESSION_STORE_SCHEMA_VERSION,
+	sessionStoreSchemaFormatDigest,
+} from "./schema.ts";
 
 export const ACTIVE_OWNER_STATES = ["starting", "recovery_required", "running", "stopping"] as const;
 
@@ -82,8 +88,13 @@ export function checkStoreCompatibility(db: SessionDatabase): StoreSchemaCompati
 	if (storeVersion < SESSION_STORE_SCHEMA_MIN) {
 		return { ok: false, code: "store_schema_too_old", detail: `store schema ${storeVersion} is below binary min ${SESSION_STORE_SCHEMA_MIN}` };
 	}
-	// 当前版本必须匹配 binary 的 exact DDL digest;未来版本由 MIN/MAX 窗口覆盖。
-	if (storeVersion === SESSION_STORE_SCHEMA_VERSION && formatDigest !== sessionStoreSchemaFormatDigest()) {
+	// 每个已知版本必须匹配其 exact DDL digest;未来版本由 MIN/MAX 窗口覆盖。
+	const expectedDigest = storeVersion === 1
+		? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V1_SQL)
+		: storeVersion === SESSION_STORE_SCHEMA_VERSION
+			? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V2_SQL)
+			: undefined;
+	if (expectedDigest !== undefined && formatDigest !== expectedDigest) {
 		return { ok: false, code: "format_digest_mismatch", detail: "schema format digest does not match the binary expectation" };
 	}
 	return { ok: true, header: result.header };
@@ -185,11 +196,11 @@ export function applyStructuralMigration(
 		nextFormatDigest: string;
 	},
 ): ApplyStructuralMigrationResult {
-	if (options.nextVersion <= SESSION_STORE_SCHEMA_VERSION) {
-		return { ok: false, code: "migration_failed", detail: "next version must exceed current" };
-	}
 	const before = readStoreHeader(db);
 	if (!before.ok) return { ok: false, code: "migration_failed", detail: before.detail };
+	if (options.nextVersion <= before.header.storeVersion) {
+		return { ok: false, code: "migration_failed", detail: "next version must exceed current store version" };
+	}
 	if (before.header.admission !== "migration_blocked") {
 		return { ok: false, code: "gate_not_held", detail: "admission is not migration_blocked" };
 	}
@@ -203,6 +214,11 @@ export function applyStructuralMigration(
 				throw new ActiveOwnersError(owners);
 			}
 			tx.execSync(options.nextSql);
+			if (options.nextVersion === SESSION_STORE_SCHEMA_VERSION) {
+				// Legacy stores had no durable catalog counter; seed it from the existing
+				// session rows while the offline migration transaction still owns the gate.
+				tx.runSync("UPDATE store_control SET catalog_revision = (SELECT COUNT(*) FROM sessions) WHERE singleton_id = 1");
+			}
 			tx.runSync("UPDATE schema_meta SET schema_version = ?, format_digest = ?, applied_at_ms = ? WHERE schema_version = ?", [
 				options.nextVersion,
 				options.nextFormatDigest,
@@ -218,6 +234,28 @@ export function applyStructuralMigration(
 		return { ok: false, code: "migration_failed", detail: error instanceof Error ? error.message : String(error) };
 	}
 	return { ok: true, storeVersion: options.nextVersion };
+}
+
+/** Built-in legacy -> current migration used by the CLI before owner discovery. */
+export function migrateSessionStoreV1ToV2(db: SessionDatabase): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 2; readonly alreadyCurrent: true } {
+	const compatibility = checkStoreCompatibility(db);
+	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
+	if (compatibility.header.storeVersion === SESSION_STORE_SCHEMA_VERSION) {
+		return { ok: true, storeVersion: SESSION_STORE_SCHEMA_VERSION, alreadyCurrent: true };
+	}
+	if (compatibility.header.storeVersion !== 1) {
+		return { ok: false, code: "migration_failed", detail: `unsupported migration source version ${compatibility.header.storeVersion}` };
+	}
+	const gateResult = beginOfflineMigration(db);
+	if (!gateResult.ok) return { ok: false, code: "active_owners_present", detail: gateResult.detail };
+	const applied = applyStructuralMigration(db, {
+		gate: gateResult.gate,
+		nextVersion: SESSION_STORE_SCHEMA_VERSION,
+		nextSql: SESSION_STORE_SCHEMA_V1_TO_V2_SQL,
+		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V2_SQL),
+	});
+	if (!applied.ok) return applied;
+	return applied;
 }
 
 /** 显式 abort:gate 持有者(epoch 匹配)恢复 ready。migrator crash 后唯一合法出口之一。 */

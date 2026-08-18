@@ -23,6 +23,14 @@ import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import type { SessionDatabase } from "./database.ts";
 import { ACTIVE_OWNER_STATES } from "./schema-compatibility.ts";
+import {
+	isSessionTitleSource,
+	isValidSessionTitleState,
+	normalizeSessionTitle,
+	type SessionTitleModelRef,
+	type SessionTitleSource,
+	type SessionTitleState,
+} from "../../runtime/session-owner/title.ts";
 
 export const SESSION_STORE_ERROR_CODES = [
 	"owner_fenced",
@@ -37,6 +45,9 @@ export const SESSION_STORE_ERROR_CODES = [
 	"checkpoint_not_found",
 	"fork_source_not_found",
 	"fork_source_head_conflict",
+	"title_conflict",
+	"invalid_title",
+	"projection_invalid",
 	"invalid_input",
 ] as const;
 export type SessionStoreErrorCode = (typeof SESSION_STORE_ERROR_CODES)[number];
@@ -63,6 +74,21 @@ export interface SessionCatalogRecord {
 	readonly driverRevision: number;
 	readonly worktreeLocator?: string;
 	readonly settingsDigest: string;
+	readonly title?: string;
+	readonly titleSource?: SessionTitleSource;
+	readonly titleUpdatedAtMs?: number;
+	readonly firstUserMessagePreview?: string;
+}
+
+export interface SetSessionTitleInput {
+	readonly title: string;
+	readonly source: SessionTitleSource;
+	readonly trigger?: "first-user-message" | "manual-rename" | "retry";
+	/** null means the caller requires an unnamed session; omitted disables the CAS for user rename. */
+	readonly expectedTitle?: string | null;
+	/** Catalog CAS captured by the Session Domain before this mutation began. */
+	readonly expectedCatalogRevision?: number;
+	readonly modelRef?: SessionTitleModelRef;
 }
 
 export interface CreateSessionInput {
@@ -105,7 +131,7 @@ export interface SessionEventRecord {
 	readonly createdAtMs: number;
 }
 
-export interface SessionProjection {
+export interface SessionProjection extends SessionTitleState {
 	readonly sessionId: string;
 	readonly status: string;
 	readonly headSequence: number;
@@ -219,7 +245,12 @@ export function appendEventInTransaction(tx: SessionDatabase, fence: OwnerFence,
 		throw error;
 	}
 	const status = projectSessionStatus(String(headRow.status), input.eventType, input.payloadJson);
-	tx.runSync("UPDATE sessions SET head_sequence = ?, status = ?, updated_at_ms = ? WHERE session_id = ?", [
+	const driverRevisionUpdate = input.eventType === "driver.claimed"
+		|| input.eventType === "driver.released"
+		|| input.eventType === "driver.reset_on_takeover"
+		? ", driver_revision = driver_revision + 1"
+		: "";
+	tx.runSync(`UPDATE sessions SET head_sequence = ?, status = ?, updated_at_ms = ?${driverRevisionUpdate} WHERE session_id = ?`, [
 		sequence,
 		status,
 		Date.now(),
@@ -260,20 +291,93 @@ export class SessionStore {
 	public listSessions(): SessionCatalogRecord[] {
 		this.assertAdmissionReady();
 		return this.db
-			.queryAll("SELECT * FROM sessions ORDER BY created_at_ms DESC, session_id")
+			.queryAll(`${catalogSelectSql()} ORDER BY created_at_ms DESC, session_id`)
 			.map(rowToCatalog);
 	}
 
 	public getSession(sessionId: string): SessionCatalogRecord | undefined {
 		this.assertAdmissionReady();
-		const row = this.db.querySingle("SELECT * FROM sessions WHERE session_id = ?", [sessionId]);
+		const row = this.db.querySingle(`${catalogSelectSql()} WHERE session_id = ?`, [sessionId]);
 		return row === undefined ? undefined : rowToCatalog(row);
+	}
+
+	/**
+	 * Durable catalog revision for session create/fork/title/reclaim mutations.
+	 * It lives beside the admission gate so copied event history and deleted
+	 * draft rows cannot make a stale revision repeat or move backwards.
+	 */
+	public catalogRevision(): number {
+		this.assertAdmissionReady();
+		return catalogRevisionInTransaction(this.db);
+	}
+
+	/**
+	 * Owner-fenced title mutation. The projection update and title event share one
+	 * BEGIN IMMEDIATE transaction, so a late auto completion cannot appear to win.
+	 */
+	public setTitle(fence: OwnerFence, input: SetSessionTitleInput): SessionCatalogRecord {
+		const title = normalizeSessionTitle(input.title);
+		if (title === null) throw new SessionStoreError("invalid_title", "session title is empty, unsafe, or exceeds 160 UTF-8 bytes");
+		if (input.source === "auto" && input.expectedTitle !== null) {
+			throw new SessionStoreError("invalid_title", "auto title writes must use an unnamed-session CAS");
+		}
+		if (input.modelRef !== undefined && (!boundedTitleRef(input.modelRef.providerId) || !boundedTitleRef(input.modelRef.modelId))) {
+			throw new SessionStoreError("invalid_title", "title model reference is invalid");
+		}
+		this.db.withImmediateTransactionSync((tx) => {
+			tx.querySingle("SELECT 1 FROM store_control WHERE singleton_id = 1 AND admission = 'ready'");
+			if (!verifyOwnerFence(tx, fence)) throw new SessionStoreError("owner_fenced", "owner fenced");
+			if (input.expectedCatalogRevision !== undefined && catalogRevisionInTransaction(tx) !== input.expectedCatalogRevision) {
+				throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the title transaction");
+			}
+			const current = tx.querySingle("SELECT title, title_source, title_updated_at_ms, head_sequence FROM sessions WHERE session_id = ?", [fence.sessionId]);
+			if (current === undefined) throw new SessionStoreError("session_not_found", `session not found: ${fence.sessionId}`);
+			const currentTitle = current.title === null ? undefined : String(current.title);
+			if (input.expectedTitle !== undefined && (input.expectedTitle ?? undefined) !== currentTitle) {
+				throw new SessionStoreError("title_conflict", "session title changed before this mutation committed");
+			}
+			if (input.source === "auto" && currentTitle !== undefined) {
+				throw new SessionStoreError("title_conflict", "an existing title wins the auto-title race");
+			}
+			const now = Date.now();
+			const previous = tx.querySingle(
+				"SELECT current_event_hash FROM session_events WHERE session_id = ? AND sequence = ?",
+				[fence.sessionId, Number(current.head_sequence)],
+			);
+			const payload: Record<string, unknown> = {
+				title,
+				source: input.source,
+				...(currentTitle === undefined ? {} : { previousTitle: currentTitle }),
+				...(input.trigger === undefined ? {} : { trigger: input.trigger }),
+				...(input.modelRef === undefined ? {} : { modelRef: { providerId: input.modelRef.providerId, modelId: input.modelRef.modelId } }),
+				...(input.source === "auto" ? { expectedTitle: null } : {}),
+			};
+			tx.runSync("UPDATE sessions SET title = ?, title_source = ?, title_updated_at_ms = ?, updated_at_ms = ? WHERE session_id = ?", [
+				title,
+				input.source,
+				now,
+				now,
+				fence.sessionId,
+			]);
+			appendEventInTransaction(tx, fence, {
+				eventId: createRuntimeId("event", `title-${fence.sessionId.slice(-12)}-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`),
+				ownerGeneration: fence.generation,
+				eventType: "session.title_changed",
+				payloadJson: JSON.stringify(payload),
+				createdAtMs: now,
+				expectedPreviousEventHash: previous === undefined ? null : String(previous.current_event_hash),
+			});
+			tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
+		});
+		return this.getSession(fence.sessionId)!;
 	}
 
 	/** 正常退出后的 Session 回收入口；有 durable user message 时保留。 */
 	public reclaimSessionWithoutUserMessages(fence: OwnerFence): boolean {
 		this.assertAdmissionReady();
-		return this.db.runSync(
+		let reclaimed = false;
+		this.db.withImmediateTransactionSync((tx) => {
+			reclaimed = tx.runSync(
 			`DELETE FROM sessions
 			 WHERE session_id = ?
 			   AND EXISTS (
@@ -307,7 +411,10 @@ export class SessionStore {
 			        )
 			   )`,
 			[fence.sessionId, fence.generation, fence.generation],
-		).changes === 1;
+			).changes === 1;
+			if (reclaimed) tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
+		});
+		return reclaimed;
 	}
 
 	/**
@@ -365,17 +472,16 @@ export class SessionStore {
 		try {
 			this.db.withImmediateTransactionSync((tx) => {
 				if (input.expectedCatalogRevision !== undefined) {
-					const revision = tx.querySingle("SELECT COUNT(*) AS n FROM sessions");
-					if (Number(revision?.n ?? 0) !== input.expectedCatalogRevision) {
+					if (catalogRevisionInTransaction(tx) !== input.expectedCatalogRevision) {
 						throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before session creation");
 					}
 				}
 				tx.runSync(
 					`INSERT INTO sessions
-				 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
+					 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-				  worktree_locator_json, settings_digest)
-				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?)`,
+				  worktree_locator_json, settings_digest, title, title_source, title_updated_at_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?, NULL, NULL, NULL)`,
 					[
 						input.sessionId,
 						input.workspaceId,
@@ -387,6 +493,7 @@ export class SessionStore {
 						input.settingsDigest,
 					],
 				);
+				tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
 			});
 		} catch (error) {
 			if (error instanceof Error && /UNIQUE|PRIMARY/i.test(error.message)) {
@@ -404,11 +511,10 @@ export class SessionStore {
 		if (!source) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
 		let forked: SessionCatalogRecord | undefined;
 		this.db.withImmediateTransactionSync((tx) => {
-			if (input.expectedCatalogRevision !== undefined) {
-				const revision = tx.querySingle("SELECT COUNT(*) AS n FROM sessions");
-				if (Number(revision?.n ?? 0) !== input.expectedCatalogRevision) {
-					throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the fork transaction");
-				}
+				if (input.expectedCatalogRevision !== undefined) {
+					if (catalogRevisionInTransaction(tx) !== input.expectedCatalogRevision) {
+						throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the fork transaction");
+					}
 			}
 			const sourceHead = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [input.sourceSessionId]);
 			if (sourceHead === undefined) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
@@ -419,9 +525,9 @@ export class SessionStore {
 				`INSERT INTO sessions
 				 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-				  worktree_locator_json, settings_digest)
-				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?)`,
-				[input.sessionId, input.workspaceId, input.repositoryId, "active", Date.now(), Date.now(), input.settingsDigest],
+				  worktree_locator_json, settings_digest, title, title_source, title_updated_at_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?, ?, ?, ?)`,
+				[input.sessionId, input.workspaceId, input.repositoryId, "active", Date.now(), Date.now(), input.settingsDigest, source.title ?? null, source.titleSource ?? null, source.titleUpdatedAtMs ?? null],
 			);
 			const sourceEvents = tx.queryAll(
 				"SELECT event_id, owner_generation, event_type, payload_json, created_at_ms FROM session_events WHERE session_id = ? ORDER BY sequence",
@@ -466,6 +572,7 @@ export class SessionStore {
 				Date.now(),
 				input.sessionId,
 			]);
+			tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
 		});
 		forked = this.getSession(input.sessionId);
 		return forked!;
@@ -515,11 +622,6 @@ export class SessionStore {
 				createdAtMs: Date.now(),
 				expectedPreviousEventHash: previousRow === undefined ? null : String(previousRow.current_event_hash),
 			});
-			tx.runSync("UPDATE sessions SET driver_revision = ?, updated_at_ms = ? WHERE session_id = ?", [
-				revision,
-				Date.now(),
-				fence.sessionId,
-			]);
 		});
 		return appended!;
 	}
@@ -765,11 +867,10 @@ export class SessionStore {
 	public projectSession(sessionId: string): SessionProjection {
 		const record = this.getSession(sessionId);
 		if (!record) throw new SessionStoreError("session_not_found", `session not found: ${sessionId}`);
+		const rebuilt = this.rebuildFromEvents(sessionId);
+		assertProjectionMatches(record, rebuilt);
 		return {
-			sessionId: record.sessionId,
-			status: record.status,
-			headSequence: record.headSequence,
-			driverRevision: record.driverRevision,
+			...rebuilt,
 			currentCheckpointId: record.currentCheckpointId,
 		};
 	}
@@ -779,17 +880,92 @@ export class SessionStore {
 		const events = this.replaySessionEvents(sessionId);
 		let status = "active";
 		let driverRevision = 0;
+		let titleState: SessionTitleState = {};
 		for (const event of events) {
 			status = projectSessionStatus(status, event.eventType, event.payloadJson);
 			if (event.eventType === "driver.claimed") driverRevision += 1;
 			if (event.eventType === "driver.released" || event.eventType === "driver.reset_on_takeover") driverRevision += 1;
+			if (event.eventType === "session.title_changed") titleState = projectSessionTitle(titleState, event);
 		}
 		return {
 			sessionId,
 			status,
 			headSequence: events.length,
 			driverRevision,
+			...titleState,
 		};
+	}
+}
+
+function projectSessionTitle(current: SessionTitleState, event: SessionEventRecord): SessionTitleState {
+		let payload: unknown;
+		try {
+			payload = JSON.parse(event.payloadJson) as unknown;
+		} catch {
+			throw new SessionStoreError("projection_invalid", `invalid title event payload at sequence ${event.sequence}`);
+		}
+		if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+			throw new SessionStoreError("projection_invalid", `title event payload is not an object at sequence ${event.sequence}`);
+		}
+		const value = payload as Record<string, unknown>;
+		const title = typeof value.title === "string" ? value.title : undefined;
+		const source = isSessionTitleSource(value.source) ? value.source : undefined;
+		if (title === undefined || source === undefined || normalizeSessionTitle(title) !== title) {
+			throw new SessionStoreError("projection_invalid", `title event contains an invalid title state at sequence ${event.sequence}`);
+		}
+		if (source === "auto" && value.expectedTitle !== null) {
+			throw new SessionStoreError(
+				"projection_invalid",
+				`auto title event expectedTitle must be null as the unnamed-session CAS marker at sequence ${event.sequence}`,
+			);
+		}
+		if (value.expectedTitle !== undefined && value.expectedTitle !== null) {
+			throw new SessionStoreError("projection_invalid", `title event expectedTitle is invalid at sequence ${event.sequence}`);
+		}
+		if (!Number.isSafeInteger(event.createdAtMs) || event.createdAtMs < 0) {
+			throw new SessionStoreError("projection_invalid", `title event timestamp is invalid at sequence ${event.sequence}`);
+		}
+		const previousTitle = value.previousTitle;
+		if (previousTitle !== undefined && (typeof previousTitle !== "string" || normalizeSessionTitle(previousTitle) !== previousTitle)) {
+			throw new SessionStoreError("projection_invalid", `title event previousTitle is invalid at sequence ${event.sequence}`);
+		}
+		if (current.title === undefined && previousTitle !== undefined) {
+			throw new SessionStoreError("projection_invalid", `title event has an unexpected previous title at sequence ${event.sequence}`);
+		}
+		if (current.title !== undefined && previousTitle !== current.title) {
+			throw new SessionStoreError("projection_invalid", `title event previousTitle does not match the projected title at sequence ${event.sequence}`);
+		}
+		if (source === "auto" && current.title !== undefined) {
+			throw new SessionStoreError("projection_invalid", `auto title event overwrites an existing title at sequence ${event.sequence}`);
+		}
+		const modelRef = value.modelRef;
+		if (modelRef !== undefined && !isSafeTitleModelRef(modelRef)) {
+			throw new SessionStoreError("projection_invalid", `title event model reference is invalid at sequence ${event.sequence}`);
+		}
+		return { title, titleSource: source, titleUpdatedAtMs: event.createdAtMs };
+}
+
+function isSafeTitleModelRef(value: unknown): boolean {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	const candidate = value as Record<string, unknown>;
+	return typeof candidate.providerId === "string"
+		&& typeof candidate.modelId === "string"
+		&& boundedTitleRef(candidate.providerId)
+		&& boundedTitleRef(candidate.modelId)
+		&& Object.keys(candidate).every((key) => key === "providerId" || key === "modelId");
+}
+
+function assertProjectionMatches(record: SessionCatalogRecord, rebuilt: SessionProjection): void {
+	if (
+		record.status !== rebuilt.status
+		|| record.headSequence !== rebuilt.headSequence
+		|| record.driverRevision !== rebuilt.driverRevision
+		|| record.title !== rebuilt.title
+		|| record.titleSource !== rebuilt.titleSource
+		|| record.titleUpdatedAtMs !== rebuilt.titleUpdatedAtMs
+		|| !isValidSessionTitleState({ title: record.title, titleSource: record.titleSource, titleUpdatedAtMs: record.titleUpdatedAtMs })
+	) {
+		throw new SessionStoreError("projection_invalid", `session projection drift detected: ${record.sessionId}`);
 	}
 }
 
@@ -837,6 +1013,11 @@ function rowToAttemptReceipt(row: Record<string, unknown>): CommandAttemptReceip
 	};
 }
 
+function catalogRevisionInTransaction(db: Pick<SessionDatabase, "querySingle">): number {
+	const row = db.querySingle("SELECT catalog_revision FROM store_control WHERE singleton_id = 1");
+	return Number(row?.catalog_revision ?? 0);
+}
+
 function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord {	return {
 		sessionId: String(row.session_id),
 		workspaceId: String(row.workspace_id),
@@ -850,5 +1031,32 @@ function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord {	retu
 		driverRevision: Number(row.driver_revision),
 		worktreeLocator: row.worktree_locator_json === null ? undefined : String(row.worktree_locator_json),
 		settingsDigest: String(row.settings_digest),
+		title: row.title === null || row.title === undefined ? undefined : String(row.title),
+		titleSource: row.title_source === "auto" || row.title_source === "user" ? row.title_source : undefined,
+		titleUpdatedAtMs: row.title_updated_at_ms === null || row.title_updated_at_ms === undefined ? undefined : Number(row.title_updated_at_ms),
+		firstUserMessagePreview: row.first_user_message_preview === null || row.first_user_message_preview === undefined
+			? undefined
+			: normalizeSessionTitle(String(row.first_user_message_preview)) ?? undefined,
 	};
+}
+
+/** Catalog projection owns the bounded first-user-message fallback; TUI never reads events directly. */
+function catalogSelectSql(): string {
+	return `SELECT sessions.*,
+		(SELECT COALESCE(
+			json_extract(event.payload_json, '$.payload.message.content[0].text'),
+			json_extract(event.payload_json, '$.payload.content[0].text')
+		)
+		 FROM session_events AS event
+		 WHERE event.session_id = sessions.session_id
+		   AND event.event_type = 'ledger.message'
+		   AND (json_extract(event.payload_json, '$.payload.message.role') = 'user'
+		     OR json_extract(event.payload_json, '$.payload.role') = 'user')
+		 ORDER BY event.sequence
+		 LIMIT 1) AS first_user_message_preview
+	FROM sessions`;
+}
+
+function boundedTitleRef(value: string): boolean {
+	return value.length > 0 && value.length <= 160 && !/[\u0000-\u001F\u007F-\u009F]/u.test(value);
 }

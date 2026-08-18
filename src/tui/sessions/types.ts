@@ -45,7 +45,19 @@ export interface SessionCatalogItem {
 	readonly updatedAtMs: number;
 	readonly headSequence: number;
 	readonly driverRevision: number;
+	readonly title?: string;
+	readonly titleSource?: "auto" | "user";
+	readonly titleUpdatedAtMs?: number;
+	readonly firstUserMessagePreview?: string;
 	readonly current: boolean;
+}
+
+export interface SessionTitleResult {
+	readonly sessionId: string;
+	readonly title: string;
+	readonly titleSource: "auto" | "user";
+	readonly titleUpdatedAtMs: number;
+	readonly catalogRevision: number;
 }
 
 export interface SessionSelection {
@@ -96,7 +108,7 @@ export type SessionTransitionResult = {
 	readonly catalogRevision: number;
 	readonly attemptId?: string;
 };
-export type SessionWorkflowValue = SessionCatalogResult | SessionDetailResult | SessionPreviewResult | SessionTransitionResult;
+export type SessionWorkflowValue = SessionCatalogResult | SessionDetailResult | SessionPreviewResult | SessionTransitionResult | SessionTitleResult;
 
 export type SessionWorkflowState =
 	| { readonly state: "idle"; readonly generation: number }

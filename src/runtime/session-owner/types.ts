@@ -22,6 +22,8 @@ import type {
 	SessionId,
 	SnapshotId,
 } from "../protocol/ids.ts";
+export type { SessionTitleModelRef, SessionTitleSource, SessionTitleState } from "./title.ts";
+export { SESSION_TITLE_MAX_BYTES, isSessionTitleSource, isValidSessionTitleState, normalizeSessionTitle } from "./title.ts";
 
 export const SESSION_OWNER_PROTOCOL_VERSION = 1 as const;
 
@@ -394,5 +396,5 @@ export interface SessionCheckpointDescriptor {
  * store_schema_too_new,低于 MIN 且无对应 migration 返回 store_schema_too_old。
  */
 export const SESSION_STORE_SCHEMA_MIN = 1 as const;
-export const SESSION_STORE_SCHEMA_MAX = 1 as const;
-export const SESSION_STORE_SCHEMA_CURRENT = 1 as const;
+export const SESSION_STORE_SCHEMA_MAX = 2 as const;
+export const SESSION_STORE_SCHEMA_CURRENT = 2 as const;

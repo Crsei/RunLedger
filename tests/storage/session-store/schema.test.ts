@@ -40,9 +40,10 @@ describe("R1 exact 首版 schema", () => {
 			schema_version: SESSION_STORE_SCHEMA_VERSION,
 			format_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
 		});
-		expect(db.querySingle("SELECT admission, migration_epoch FROM store_control")).toEqual({
+		expect(db.querySingle("SELECT admission, migration_epoch, catalog_revision FROM store_control")).toEqual({
 			admission: "ready",
 			migration_epoch: 0,
+			catalog_revision: 0,
 		});
 		const tables = db
 			.queryAll("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")

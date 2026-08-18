@@ -2,7 +2,7 @@
 
 import type { SessionDatabase } from "./database.ts";
 import { countActiveOwners, readStoreHeader, type MigrationGateHandle } from "./schema-compatibility.ts";
-import { projectSessionStatus, sessionEventHash } from "./session-store.ts";
+import { projectSessionStatus, sessionEventHash, SessionStore } from "./session-store.ts";
 
 export const SESSION_STATUS_PROJECTION_REPAIR_VERSION = 1 as const;
 
@@ -31,7 +31,7 @@ export function applySessionStatusProjectionRepair(
 			}
 			const activeOwners = countActiveOwners(tx);
 			if (activeOwners > 0) throw new ProjectionRepairError("active_owners_present", `cannot repair while ${activeOwners} owners are active`);
-			const sessions = tx.queryAll("SELECT session_id, status, head_sequence FROM sessions ORDER BY session_id");
+			const sessions = tx.queryAll("SELECT session_id, status, head_sequence, title, title_source, title_updated_at_ms FROM sessions ORDER BY session_id");
 			for (const session of sessions) {
 				scanned += 1;
 				const sessionId = String(session.session_id);
@@ -54,6 +54,24 @@ export function applySessionStatusProjectionRepair(
 				}
 				if (Number(session.head_sequence) !== events.length) {
 					throw new ProjectionRepairError("projection_invalid", `Session ${sessionId} cached head does not match its event stream`);
+				}
+				let rebuilt: ReturnType<SessionStore["rebuildFromEvents"]>;
+				try {
+					rebuilt = new SessionStore(tx).rebuildFromEvents(sessionId);
+				} catch (error) {
+					throw new ProjectionRepairError("projection_invalid", error instanceof Error ? error.message : String(error));
+				}
+				const rowTitle = session.title === null || session.title === undefined ? undefined : String(session.title);
+				const rowTitleSource = session.title_source === "auto" || session.title_source === "user" ? session.title_source : undefined;
+				const rowTitleUpdatedAtMs = session.title_updated_at_ms === null || session.title_updated_at_ms === undefined
+					? undefined
+					: Number(session.title_updated_at_ms);
+				if (
+					rowTitle !== rebuilt.title
+					|| rowTitleSource !== rebuilt.titleSource
+					|| rowTitleUpdatedAtMs !== rebuilt.titleUpdatedAtMs
+				) {
+					throw new ProjectionRepairError("projection_invalid", `Session ${sessionId} title projection does not match its event stream`);
 				}
 				const owner = tx.querySingle("SELECT state FROM session_owners WHERE session_id = ?", [sessionId]);
 				if (owner?.state === "unowned" && projectedStatus !== "paused" && projectedStatus !== "failed" && projectedStatus !== "completed") {

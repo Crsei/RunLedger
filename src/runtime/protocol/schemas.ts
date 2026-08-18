@@ -107,7 +107,8 @@ export type RuntimeEventPayloadRequirement =
 	| "expectedRevision"
 	| "idempotencyKey"
 	| "reasonCode"
-	| "metadataDigest";
+	| "metadataDigest"
+	| "title";
 
 const TRANSITION_ACTIONS = new Set<string>(EVENT_TRANSITION_ACTIONS);
 const BINDING_TYPES = new Set<RuntimeEventType>(EVENT_BINDING_REQUIRED_TYPES);
@@ -117,6 +118,19 @@ const IDEMPOTENCY_ACTIONS = new Set<string>(EVENT_IDEMPOTENCY_ACTIONS);
 const REASON_ACTIONS = new Set<string>(EVENT_REASON_REQUIRED_ACTIONS);
 const METADATA_ACTIONS = new Set<string>(EVENT_METADATA_REQUIRED_ACTIONS);
 
+const SessionTitleValueSchema = Type.String({ minLength: 1, maxLength: 160 });
+const SessionTitleSourceSchema = Type.Unsafe<"auto" | "user">({ type: "string", enum: ["auto", "user"] });
+const SessionTitleTriggerSchema = Type.Unsafe<"first-user-message" | "manual-rename" | "retry">({
+	type: "string",
+	enum: ["first-user-message", "manual-rename", "retry"],
+});
+const SessionTitleModelRefSchema = Type.Object(
+	{
+		providerId: Type.String({ minLength: 1, maxLength: 128 }),
+		modelId: Type.String({ minLength: 1, maxLength: 128 }),
+	},
+	{ additionalProperties: false },
+);
 const RuntimeModelRequestKindSchema = Type.Unsafe<"interactive" | "idle-recap" | "auto-title">({
 	type: "string",
 	enum: ["interactive", "idle-recap", "auto-title"],
@@ -136,6 +150,7 @@ function payloadRequirements(type: RuntimeEventType): readonly RuntimeEventPaylo
 	if (IDEMPOTENCY_ACTIONS.has(action)) requirements.push("idempotencyKey");
 	if (REASON_ACTIONS.has(action)) requirements.push("reasonCode");
 	if (METADATA_ACTIONS.has(action)) requirements.push("metadataDigest");
+	if (type === "session.title_changed") requirements.push("title");
 	return requirements;
 }
 
@@ -171,7 +186,20 @@ function createRuntimeEventPayloadSchema(type?: RuntimeEventType) {
 			metadataDigest: requirements.has("metadataDigest")
 				? RuntimeDigestSchema
 				: Type.Optional(RuntimeDigestSchema),
+			title: requirements.has("title")
+				? SessionTitleValueSchema
+				: Type.Optional(SessionTitleValueSchema),
+			source: requirements.has("title")
+				? SessionTitleSourceSchema
+				: Type.Optional(SessionTitleSourceSchema),
+			previousTitle: Type.Optional(SessionTitleValueSchema),
+			trigger: Type.Optional(SessionTitleTriggerSchema),
+			modelRef: Type.Optional(SessionTitleModelRefSchema),
 			...(type === undefined || type === "model.routed" ? { requestKind: Type.Optional(RuntimeModelRequestKindSchema) } : {}),
+			// The envelope is validated before the type-specific payload schema. Keep the
+			// generic envelope permissive for the title CAS marker; the concrete schema
+			// below rejects it for every event type that does not own title fields.
+			expectedTitle: Type.Optional(Type.Null()),
 		},
 		{ additionalProperties: false },
 	);
@@ -408,6 +436,9 @@ export function validateRuntimeEvent(value: unknown): SchemaValidationResult<Run
 	if (!Value.Check(RUNTIME_EVENT_PAYLOAD_SCHEMAS[event.type], event.payload)) {
 		return { ok: false, code: "invalid_schema", message: "event payload does not match its registered schema" };
 	}
+	if (event.type === "session.title_changed" && !isValidSessionTitleChangedPayload(event.payload as unknown as Record<string, unknown>)) {
+		return { ok: false, code: "invalid_schema", message: "session.title_changed title fields are unsafe or exceed their byte bounds" };
+	}
 	if (
 		!isRuntimeId(event.authorityId, "authority") ||
 		!isRuntimeId(event.tenantId, "tenant") ||
@@ -448,6 +479,27 @@ export function validateRuntimeEvent(value: unknown): SchemaValidationResult<Run
 		return { ok: false, code: "invalid_digest", message: "event hash does not match the canonical hash input" };
 	}
 	return { ok: true, value: event };
+}
+
+function isValidSessionTitleChangedPayload(payload: Record<string, unknown>): boolean {
+	if (payload.source === "auto" && payload.expectedTitle !== null) return false;
+	if (payload.expectedTitle !== undefined && payload.expectedTitle !== null) return false;
+	for (const key of ["title", "previousTitle"] as const) {
+		const value = payload[key];
+		if (value === undefined) continue;
+		if (typeof value !== "string" || value.length === 0 || new TextEncoder().encode(value).byteLength > 160 || /[\u0000-\u001F\u007F-\u009F]/u.test(value)) {
+			return false;
+		}
+	}
+	const modelRef = payload.modelRef;
+	if (modelRef !== undefined) {
+		if (typeof modelRef !== "object" || modelRef === null || Array.isArray(modelRef)) return false;
+		for (const key of ["providerId", "modelId"] as const) {
+			const value = (modelRef as Record<string, unknown>)[key];
+			if (typeof value !== "string" || value.length === 0 || /[\u0000-\u001F\u007F-\u009F]/u.test(value)) return false;
+		}
+	}
+	return true;
 }
 
 export function assertRuntimeEvent(value: unknown): RuntimeEvent {

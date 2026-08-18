@@ -87,7 +87,7 @@ export interface SessionStripFacts {
 export function projectSessionStrip(bootstrap: TuiBootstrapSnapshot, facts: SessionStripFacts = {}): SessionStripView {
   return {
     workspaceLabel: sanitizeLabel(bootstrap.workspaceLabel) || "unknown",
-    sessionLabel: sanitizeLabel(bootstrap.session.id) || "unknown",
+    sessionLabel: sanitizeLabel(bootstrap.session.title ?? bootstrap.session.id) || "unknown",
     sessionFormat: "current-canonical",
     lifecycle: bootstrap.session.lifecycle,
     authorityGeneration: bootstrap.authorityGeneration,

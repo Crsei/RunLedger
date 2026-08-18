@@ -134,8 +134,10 @@ function portFor(effect: TuiEffect, ports: TuiDomainPorts): QueryPort | undefine
 			return wrap(ports.session, (port, request: TuiPortRequest) => port.create(request as Parameters<SessionWorkflowPort["create"]>[0]));
 		case "session.resume":
 			return wrap(ports.session, (port, request: TuiPortRequest) => port.resume(request as Parameters<SessionWorkflowPort["resume"]>[0]));
-		case "session.fork":
-			return wrap(ports.session, (port, request: TuiPortRequest) => port.fork(request as Parameters<SessionWorkflowPort["fork"]>[0]));
+			case "session.fork":
+				return wrap(ports.session, (port, request: TuiPortRequest) => port.fork(request as Parameters<SessionWorkflowPort["fork"]>[0]));
+			case "session.rename":
+				return wrap(ports.session, (port, request: TuiPortRequest) => port.rename(request as Parameters<SessionWorkflowPort["rename"]>[0]));
 		case "provider.list":
 			return wrap(ports.provider, (port, request) => port.list(request));
 		case "auth.inspect":

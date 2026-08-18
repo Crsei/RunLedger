@@ -12,8 +12,8 @@ const NOW_MS = 1_000_000_000_000;
 // updated desc 顺序:11111111(1m 前更新)> 22222222(1h 前更新)> 33333333(2d 前);
 // created desc 顺序:22222222(1h 前创建)> 11111111(1d 前创建)> 33333333(2d 前创建)。
 const catalogItems: SessionCatalogItem[] = [
-	{ sessionId: "session_11111111aaaaaaaa", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: NOW_MS - 86_400_000, updatedAtMs: NOW_MS - 60_000, headSequence: 7, driverRevision: 1, current: true },
-	{ sessionId: "session_22222222bbbbbbbb", workspaceId: "workspace-1", repositoryId: "repository-1", status: "paused", createdAtMs: NOW_MS - 3_600_000, updatedAtMs: NOW_MS - 3_600_000, headSequence: 5, driverRevision: 0, current: false },
+	{ sessionId: "session_11111111aaaaaaaa", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: NOW_MS - 86_400_000, updatedAtMs: NOW_MS - 60_000, headSequence: 7, driverRevision: 1, title: "Fix login button", titleSource: "user", titleUpdatedAtMs: NOW_MS - 50_000, current: true },
+	{ sessionId: "session_22222222bbbbbbbb", workspaceId: "workspace-1", repositoryId: "repository-1", status: "paused", createdAtMs: NOW_MS - 3_600_000, updatedAtMs: NOW_MS - 3_600_000, headSequence: 5, driverRevision: 0, firstUserMessagePreview: "Resume paused session", current: false },
 	{ sessionId: "session_33333333cccccccc", workspaceId: "workspace-2", repositoryId: "repository-2", status: "completed", createdAtMs: NOW_MS - 2 * 86_400_000, updatedAtMs: NOW_MS - 2 * 86_400_000, headSequence: 12, driverRevision: 2, current: false },
 ];
 
@@ -49,24 +49,26 @@ describe("formatRelativeTime", () => {
 });
 
 describe("buildSessionPickerItems", () => {
-	it("enriches catalog rows with short id, status, workspace, head and relative time", () => {
+	it("prioritizes title, then first-message preview, then the time fallback", () => {
 		const rows = items();
 		expect(rows).toHaveLength(3);
 		expect(rows[0]).toMatchObject({
 			value: "session_11111111aaaaaaaa",
-			label: "session_11111111 · active · current",
+			label: "Fix login button · active · current",
 			description: "workspace-1 · head 7 · 1m ago",
-			denseLabel: "1m ago    session_11111111 · active",
+			denseLabel: "1m ago    Fix login button · active",
 			denseDescription: "head 7 · workspace-1",
 			current: true,
 		});
+		expect(rows[1]!.label).toBe("Resume paused session · paused");
+		expect(rows[2]!.label).toBe("Untitled · 2d ago · completed");
 		expect(rows[0]!.expandedDescription).toContain("session_11111111aaaaaaaa");
 		expect(rows[0]!.expandedDescription).toContain("created 1d ago");
 		expect(rows[0]!.searchText).toContain("workspace-1");
 	});
 
 	it("marks non-current rows without the current suffix", () => {
-		expect(items()[1]!.label).toBe("session_22222222 · paused");
+		expect(items()[1]!.label).toBe("Resume paused session · paused");
 	});
 });
 
@@ -155,7 +157,7 @@ describe("SessionPickerModal", () => {
 		expect(presentSelect(modal).options[0]!.label).toContain("· active");
 		modal.handleInput("ctrl+o");
 		const dense = presentSelect(modal);
-		expect(dense.options[0]!.label).toBe("1m ago    session_11111111 · active");
+		expect(dense.options[0]!.label).toBe("1m ago    Fix login button · active");
 		expect(dense.options[0]!.description).toBe("head 7 · workspace-1");
 		modal.handleInput("ctrl+o");
 		expect(presentSelect(modal).options[0]!.label).toContain("· active");

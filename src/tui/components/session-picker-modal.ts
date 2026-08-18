@@ -15,11 +15,11 @@ export type SessionPickerDensity = "comfortable" | "dense";
 
 export interface SessionPickerItem {
 	readonly value: string;
-	/** comfortable 主行:短 session id · status(· current)。 */
+	/** comfortable 主行:标题/preview/time fallback · status(· current)。 */
 	readonly label: string;
 	/** comfortable 元数据行:workspace · head · 相对时间。 */
 	readonly description: string;
-	/** dense 主行:日期列 + 短 id。 */
+	/** dense 主行:日期列 + 标题/preview/time fallback。 */
 	readonly denseLabel: string;
 	/** dense 元数据行:最短信息。 */
 	readonly denseDescription: string;
@@ -72,20 +72,35 @@ export function buildSessionPickerItems(items: readonly SessionCatalogItem[], no
 		const current = item.current ? " · current" : "";
 		const head = `head ${item.headSequence}`;
 		const driver = `driver ${item.driverRevision}`;
+		const displayName = safePickerLabel(item.title ?? item.firstUserMessagePreview ?? `Untitled · ${created}`) || `Untitled · ${created}`;
 		return {
 			value: item.sessionId,
-			label: `${displayId} · ${item.status}${current}`,
+			label: `${displayName} · ${item.status}${current}`,
 			description: `${item.workspaceId} · ${head} · ${updated}`,
-			denseLabel: `${updated.padEnd(DENSE_DATE_WIDTH)}${displayId} · ${item.status}`,
+			denseLabel: `${updated.padEnd(DENSE_DATE_WIDTH)}${displayName} · ${item.status}`,
 			denseDescription: `${head} · ${item.workspaceId}`,
-			expandedDescription: `${item.sessionId} · ${item.workspaceId} · ${item.repositoryId} · ${head} · ${driver} · created ${created} · updated ${updated}${current}`,
+			expandedDescription: `${displayName} · ${item.sessionId} · ${item.workspaceId} · ${item.repositoryId} · ${head} · ${driver} · created ${created} · updated ${updated}${current}`,
 			workspaceId: item.workspaceId,
 			createdAtMs: item.createdAtMs,
 			updatedAtMs: item.updatedAtMs,
 			current: item.current,
-			searchText: `${item.sessionId} ${displayId} ${item.workspaceId} ${item.repositoryId} ${item.status}`.toLowerCase(),
+			searchText: `${item.sessionId} ${displayId} ${displayName} ${item.title ?? ""} ${item.firstUserMessagePreview ?? ""} ${item.workspaceId} ${item.repositoryId} ${item.status}`.toLowerCase(),
 		};
 	});
+}
+
+function safePickerLabel(value: string, maxBytes = 120): string {
+	const stripped = value
+		.replace(/\x1b\[[0-9;?]*[a-zA-Z]/gu, "")
+		.replace(/\x1b\][^\x07]*\x07/gu, "")
+		.replace(/[\u0000-\u001F\u007F-\u009F]/gu, " ")
+		.replace(/\s+/gu, " ")
+		.trim();
+	if (stripped.length === 0) return "";
+	const bytes = new TextEncoder().encode(stripped);
+	if (bytes.byteLength <= maxBytes) return stripped;
+	const clipped = new TextDecoder().decode(bytes.subarray(0, maxBytes));
+	return `${clipped.replace(/\uFFFD$/u, "")}…`;
 }
 
 export function filterSessionPickerItems(

@@ -141,6 +141,74 @@ describe("S2 InteractiveMode session workflows", () => {
 		);
 	});
 
+	it("/rename dispatches through the effect runner and requeries the canonical catalog", async () => {
+		let currentTitle: string | undefined;
+		const querySessionDomain = vi.fn(async (operation: string): Promise<Record<string, unknown>> => ({
+			domainRevision: 2,
+			items: catalogItems.map((item) => item.current && currentTitle === undefined
+				? { ...item, title: "Existing title", titleSource: "user", titleUpdatedAtMs: 9 }
+				: currentTitle === undefined
+				? item
+				: { ...item, title: currentTitle, titleSource: "user", titleUpdatedAtMs: 10 }),
+		}));
+		const commandSessionDomain = vi.fn(async (operation: string, body: Record<string, unknown>): Promise<Record<string, unknown>> => {
+				expect(operation).toBe("session.title.set");
+				expect(body.expectedTitle).toBe("Existing title");
+			currentTitle = String(body.title);
+				return {
+					domainRevision: 3,
+					sessionId: "contract-session",
+					title: currentTitle,
+					titleSource: "user",
+					titleUpdatedAtMs: 10,
+					catalogRevision: 3,
+				};
+		});
+		const controller = new ContractController({
+			supportedOperations: ["session.catalog.list", "session.title.set"],
+			querySessionDomain,
+			commandSessionDomain,
+		});
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		try {
+			await (mode as unknown as { renameCurrentSession(title: string): Promise<void> }).renameCurrentSession("Fix login flow");
+				expect(commandSessionDomain).toHaveBeenCalledWith("session.title.set", {
+					title: "Fix login flow",
+					source: "user",
+					expectedTitle: "Existing title",
+				}, expect.objectContaining({ expectedRevision: 2 }));
+			expect(querySessionDomain).toHaveBeenCalledTimes(2);
+		expect(mode.getTuiState().sessionWorkflow).toMatchObject({
+				state: "ready",
+				value: { kind: "catalog", items: expect.arrayContaining([expect.objectContaining({ title: "Fix login flow", titleSource: "user" })]) },
+			});
+		} finally {
+			mode.quit();
+		}
+	});
+
+	it("refreshes the catalog and bootstrap when a subscribed title event arrives", async () => {
+		const querySessionDomain = vi.fn(async (): Promise<Record<string, unknown>> => ({
+			domainRevision: 2,
+			items: catalogItems,
+		}));
+		const controller = new ContractController({
+			supportedOperations: ["session.catalog.list"],
+			querySessionDomain,
+		});
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			controller.emitTitleChanged({ sessionId: "contract-session", title: "External title", source: "user", sequence: 8 });
+			await vi.waitFor(() => expect(querySessionDomain).toHaveBeenCalledTimes(1));
+			expect(mode.getTuiState().bootstrap.session).toMatchObject({ id: "contract-session", title: "External title" });
+		} finally {
+			mode.quit();
+			await running;
+		}
+	});
+
 	it("quit returns a typed quit intent without disposing the Session client", async () => {
 		const terminal = new ContractTerminal();
 		const { controller } = sessionController();

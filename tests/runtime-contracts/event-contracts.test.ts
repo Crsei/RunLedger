@@ -195,6 +195,37 @@ describe("Runtime exact event contract", () => {
 		});
 	});
 
+	it("registers an exact session title-changed event payload", () => {
+		const sessionId = createRuntimeId("session", "title-contract");
+		const payload = {
+			subject: { kind: "session", id: sessionId },
+			correlationId: createRuntimeId("trace", "agent-session-title_changed"),
+			effect: "committed",
+			title: "Fix login button",
+				source: "auto",
+			expectedTitle: null,
+				previousTitle: "Investigate login",
+			trigger: "retry",
+			modelRef: { providerId: "openai", modelId: "gpt-test" },
+		};
+		const event = agentProjectionEvent("session.title_changed" as RuntimeEventType, payload);
+
+		expect(RUNTIME_EVENT_TYPES).toContain("session.title_changed");
+		expect(validateRuntimeEvent(event)).toMatchObject({ ok: true });
+		expect(validateRuntimeEvent({
+			...event,
+			payload: { ...event.payload, expectedTitle: "already named" },
+		})).toMatchObject({ ok: false, code: "invalid_schema" });
+		expect(validateRuntimeEvent({
+			...event,
+			payload: { ...event.payload, rawPrompt: "must not be persisted" },
+		})).toMatchObject({ ok: false, code: "invalid_schema" });
+		expect(validateRuntimeEvent({
+			...event,
+			payload: { ...event.payload, title: "x".repeat(161) },
+		})).toMatchObject({ ok: false, code: "invalid_schema" });
+	});
+
 	it("rejects subject/type mismatches, oversize metadata, and tampering", () => {
 		const event = sessionCreatedEvent();
 		expect(validateRuntimeEvent({

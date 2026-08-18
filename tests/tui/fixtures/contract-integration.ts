@@ -18,6 +18,8 @@ import type {
   InteractiveSessionControllerPort,
   ProviderStatus,
   RuntimeSelection,
+  SessionTitleChangedEvent,
+  SessionTitleChangedSink,
 } from "../../../src/runtime/interactive-session-controller.ts";
 import type { AuthInteraction, AuthType, Credential } from "../../../src/auth/types.ts";
 import type { AssistantMessage, ModelThinkingLevel } from "../../../src/types.ts";
@@ -125,9 +127,10 @@ export interface ContractControllerOptions {
   readonly availableModels?: readonly ContractModelOption[];
   readonly onLogin?: (providerId: string) => Promise<void>;
   readonly onLogout?: (providerId: string) => Promise<void>;
-  readonly querySessionDomain?: (operation: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
-  readonly commandSessionDomain?: (operation: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  readonly querySessionDomain?: (operation: string, body: Record<string, unknown>, context?: SessionDomainRequestContext) => Promise<Record<string, unknown>>;
+  readonly commandSessionDomain?: (operation: string, body: Record<string, unknown>, context?: SessionDomainMutationContext) => Promise<Record<string, unknown>>;
   readonly supportedOperations?: readonly string[];
+  readonly onTitleChanged?: (event: SessionTitleChangedEvent) => void;
 }
 
 /** B0 harness：可控 event 源 + 可查询状态的 fake controller。 */
@@ -141,6 +144,7 @@ export class ContractController implements InteractiveSessionControllerPort {
   readonly querySessionDomain?: (operation: string, body: Record<string, unknown>, context: SessionDomainRequestContext) => Promise<SessionDomainResult>;
   readonly commandSessionDomain?: (operation: string, body: Record<string, unknown>, context: SessionDomainMutationContext) => Promise<SessionDomainResult>;
   private readonly listeners = new Set<(event: AgentEvent) => void | Promise<void>>();
+  private readonly titleListeners = new Set<SessionTitleChangedSink>();
   private inFlightValue: boolean;
   private selectionValue: RuntimeSelection;
   private readonly options: ContractControllerOptions;
@@ -176,13 +180,13 @@ export class ContractController implements InteractiveSessionControllerPort {
       model: options.selection?.model,
       thinkingLevel: options.selection?.thinkingLevel ?? "off",
     };
-    this.querySessionDomain = options.querySessionDomain === undefined ? undefined : async (operation, body) => {
-      const value = await options.querySessionDomain!(operation, body);
+    this.querySessionDomain = options.querySessionDomain === undefined ? undefined : async (operation, body, context) => {
+      const value = await options.querySessionDomain!(operation, body, context);
       const domainRevision = typeof value.domainRevision === "number" && Number.isSafeInteger(value.domainRevision) ? value.domainRevision : 0;
       return { ok: true, status: "ok", operation, domainRevision, value };
     };
-    this.commandSessionDomain = options.commandSessionDomain === undefined ? undefined : async (operation, body) => {
-      const value = await options.commandSessionDomain!(operation, body);
+    this.commandSessionDomain = options.commandSessionDomain === undefined ? undefined : async (operation, body, context) => {
+      const value = await options.commandSessionDomain!(operation, body, context);
       const domainRevision = typeof value.domainRevision === "number" && Number.isSafeInteger(value.domainRevision) ? value.domainRevision : 0;
       return { ok: true, status: "ok", operation, domainRevision, value };
     };
@@ -191,6 +195,14 @@ export class ContractController implements InteractiveSessionControllerPort {
   subscribe(listener: (event: AgentEvent) => void | Promise<void>): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+  subscribeSessionTitleChanged(listener: SessionTitleChangedSink): () => void {
+    this.titleListeners.add(listener);
+    return () => this.titleListeners.delete(listener);
+  }
+  emitTitleChanged(event: SessionTitleChangedEvent): void {
+    this.options.onTitleChanged?.(event);
+    for (const listener of this.titleListeners) void listener(event);
   }
   get inFlight(): boolean {
     return this.inFlightValue;

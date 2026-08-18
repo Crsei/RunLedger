@@ -1,9 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { createSessionDomainPort } from "../../../src/tui/adapters/session-domain.ts";
+import { createSessionDomainPort, createSessionDomainPortFromController } from "../../../src/tui/adapters/session-domain.ts";
 
 const ref = { generation: 7, effectId: "effect-session", correlationId: "corr-session", signal: new AbortController().signal, authorityGeneration: 11 };
 
 describe("S2 session domain adapter", () => {
+	it("keeps catalog queries available when this connection has no mutation handler", async () => {
+		const query = vi.fn(async () => ({
+			ok: true as const,
+			status: "ok" as const,
+			operation: "session.catalog.list",
+			domainRevision: 3,
+			value: { items: [] },
+		}));
+		const port = createSessionDomainPortFromController({
+			supports: (operation) => operation === "session.catalog.list",
+			querySessionDomain: query,
+		});
+
+		expect(port).toBeDefined();
+		await expect(port!.list(ref)).resolves.toMatchObject({
+			ok: true,
+			value: { kind: "catalog", revision: 3, items: [] },
+		});
+		expect(query).toHaveBeenCalledTimes(1);
+	});
+
 	it("projects only canonical SQLite catalog fields and preserves the domain revision", async () => {
 		const query = vi.fn(async () => ({
 			ok: true as const,
@@ -45,6 +66,7 @@ describe("S2 session domain adapter", () => {
 					headSequence: 4,
 					driverRevision: 3,
 					current: false,
+					title: "must-not-leak",
 				}],
 			},
 		});
@@ -69,5 +91,21 @@ describe("S2 session domain adapter", () => {
 		});
 		expect(command).toHaveBeenNthCalledWith(2, "session.resume", { targetSessionId: "session-target" }, { correlationId: "corr-session", effectId: "effect-session", expectedRevision: 8 });
 		expect(command).toHaveBeenNthCalledWith(3, "session.fork", { sourceSessionId: "session-source", expectedSourceHeadSequence: 5 }, { correlationId: "corr-session", effectId: "effect-session", expectedRevision: 8 });
+	});
+
+	it("preserves the committed catalog revision for a title mutation", async () => {
+		const command = vi.fn(async () => ({
+			ok: true as const,
+			status: "ok" as const,
+			operation: "session.title.set",
+			domainRevision: 4,
+			value: { sessionId: "session-a", title: "Renamed session", titleSource: "user", titleUpdatedAtMs: 12 },
+		}));
+		const port = createSessionDomainPort({ query: vi.fn(), command, supports: () => true });
+
+		await expect(port.rename({ ...ref, title: "Renamed session", expectedRevision: 3 })).resolves.toMatchObject({
+			ok: true,
+			value: { sessionId: "session-a", title: "Renamed session", titleSource: "user", titleUpdatedAtMs: 12, catalogRevision: 4 },
+		});
 	});
 });

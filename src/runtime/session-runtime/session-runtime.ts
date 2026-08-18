@@ -32,7 +32,7 @@ import type { LedgerEntry } from "../ledger/types.ts";
 import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts";
 import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
 import type { Api, Model, ModelThinkingLevel } from "../../types.ts";
-import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../interactive-session-controller.ts";
+import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection, SessionTitleChangedEvent } from "../interactive-session-controller.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionProtocolOperationDescriptor, type SessionStatus } from "../session-server/protocol.ts";
 import { SessionDomainRouter } from "./domain-router.ts";
 import type { SessionDomainResult } from "./domain-router.ts";
@@ -62,6 +62,8 @@ export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "
  */
 export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
+	/** Internal bridge for auto-title commits; the Runtime publishes the canonical event to clients. */
+	readonly subscribeTitleChanged?: (listener: (event: SessionTitleChangedEvent) => void) => () => void;
 	/** Session-owned child runtime inputs; absent only on non-production test domains. */
 	readonly childRuntime?: SessionChildRuntimePort;
 	/** Async Session-owned root delegation domain; absent when any gate is closed. */
@@ -162,6 +164,7 @@ export class SessionRuntime implements SessionController {
 	private readonly domainRouter: SessionDomainRouter;
 	private readonly lifecycleCleanup: SessionRuntimeOptions["lifecycleCleanup"];
 	private readonly domainListener: (() => void) | undefined;
+	private readonly domainTitleListener: (() => void) | undefined;
 	private state: SessionRuntimeState;
 	private readonly listeners = new Set<(event: SessionControllerEvent) => void>();
 	private readonly runTiming = new AgentRunTimingTracker();
@@ -185,6 +188,7 @@ export class SessionRuntime implements SessionController {
 		this.server = options.server;
 		this.fence = options.fence;
 		this.domainRouter = new SessionDomainRouter(options.sessionId, options.fence.generation, options.store, this, {
+			ownerFence: options.fence,
 			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
 			...(options.domain?.planInspection === undefined ? {} : { planInspection: options.domain.planInspection }),
 			...(options.domain?.multiAgent === undefined ? {} : { additionalOperations: options.domain.multiAgent.operationManifest }),
@@ -213,6 +217,13 @@ export class SessionRuntime implements SessionController {
 			this.domainListener = this.domain.controller.subscribe((event) => {
 				this.streamEvents.accept(event);
 				this.handleDomainAgentEvent(event);
+				});
+			this.domainTitleListener = this.domain.subscribeTitleChanged?.((event) => {
+				this.emit({
+					eventType: "session.title_changed",
+					payload: { sessionId: event.sessionId, title: event.title, source: event.source },
+					sequence: event.sequence,
+				});
 			});
 		}
 	}
@@ -365,8 +376,9 @@ export class SessionRuntime implements SessionController {
 			this.putCheckpoint("paused", { reason, ...this.checkpointState("paused", Date.now(), true) });
 			this.owner.release(reason);
 			await this.server.close();
-			this.domainListener?.();
-			this.streamEvents.dispose();
+				this.domainListener?.();
+				this.domainTitleListener?.();
+				this.streamEvents.dispose();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
 		} finally {
 			this.resolveStopped?.();
@@ -390,8 +402,9 @@ export class SessionRuntime implements SessionController {
 			this.persistAbortedRunIfNeeded();
 			await this.lifecycleCleanup?.("fenced").catch(() => undefined);
 			await this.server.close();
-			this.domainListener?.();
-			this.streamEvents.dispose();
+				this.domainListener?.();
+				this.domainTitleListener?.();
+				this.streamEvents.dispose();
 			if (this.domain !== undefined && typeof this.domain.controller.dispose === "function") this.domain.controller.dispose();
 		} finally {
 			this.resolveStopped?.();
@@ -923,7 +936,9 @@ export class SessionRuntime implements SessionController {
 						),
 					};
 				}
-				return { ok: true, kind: "domain_command", result: this.domainRouter.mutate(request.body, meta.isDriver) };
+				const result = this.domainRouter.mutate(request.body, meta.isDriver);
+				this.emitCommittedTitleMutation(request.body, result);
+				return { ok: true, kind: "domain_command", result };
 			}
 			case "recovery_explain": {
 				return {
@@ -1087,6 +1102,27 @@ export class SessionRuntime implements SessionController {
 			} catch {
 				// observer 隔离。
 			}
+		}
+	}
+
+	/**
+	 * A title mutation already appends its canonical event inside SessionStore.
+	 * Publish that exact row once so SessionRuntimeServer replays/broadcasts it;
+	 * do not append a second event or synthesize a client-local notification.
+	 */
+	private emitCommittedTitleMutation(input: Record<string, unknown>, result: SessionDomainResult): void {
+		if (input.operation !== "session.title.set" || !result.ok) return;
+		try {
+			const event = this.store.replaySessionEvents(this.sessionId).at(-1);
+			if (event?.eventType !== "session.title_changed") return;
+			this.emit({
+				eventType: event.eventType,
+				payload: safeJson(event.payloadJson),
+				sequence: event.sequence,
+			});
+		} catch {
+			// The mutation result remains typed; a failed observer publication must
+			// not cause a second title write or turn the committed write into a retry.
 		}
 	}
 }

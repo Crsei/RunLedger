@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthInteraction, ProviderAuth } from "../../src/auth/types.ts";
 import { createModels, createProvider } from "../../src/models.ts";
 import { InteractiveSessionController } from "../../src/runtime/interactive-session-controller.ts";
@@ -148,6 +148,30 @@ describe("InteractiveSessionController", () => {
 		await controller.selectModel(p1);
 
 		expect(controller.currentSelection.thinkingLevel).toBe("high");
+		controller.dispose();
+	});
+
+	it("notifies the Session title lifecycle immediately after an active model selection changes", async () => {
+		const cwd = await tempDir();
+		const { models, p1, p2 } = fixtureModels();
+		const onModelSelectionChanged = vi.fn();
+		const options = {
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			onModelSelectionChanged,
+		} as unknown as Parameters<typeof InteractiveSessionController.create>[0];
+		const controller = await InteractiveSessionController.create(options);
+
+		await controller.selectModel(p1);
+		await controller.selectModel(p2);
+
+		expect(onModelSelectionChanged).toHaveBeenCalledTimes(2);
 		controller.dispose();
 	});
 
@@ -533,7 +557,7 @@ describe("InteractiveSessionController", () => {
 		controller.dispose();
 	});
 
-  it("resolves the full catalog model on selectModel even when the wire passes a minimal shape", async () => {
+	it("resolves the full catalog model on selectModel even when the wire passes a minimal shape", async () => {
     const cwd = await tempDir();
     const { models, p1 } = fixtureModels();
     const controller = await InteractiveSessionController.create({
@@ -550,8 +574,8 @@ describe("InteractiveSessionController", () => {
     await controller.selectModel({ provider: "p1", id: "m1" } as Model<Api>);
     expect(controller.currentSelection.model?.baseUrl).toBe(p1.baseUrl);
     expect(controller.currentSelection.model?.provider).toBe("p1");
-    controller.dispose();
-  });
+		controller.dispose();
+	});
 
 	it("runs idle recap through the active model without mutating the interactive transcript", async () => {
 		const cwd = await tempDir();

@@ -15,6 +15,7 @@ import type {
 export const RUNTIME_EVENT_TYPES = [
 	"session.created",
 	"session.forked",
+	"session.title_changed",
 	"session.stop_requested",
 	"session.stopped",
 	"session.closed",
@@ -395,6 +396,20 @@ export interface RuntimeEventPayload {
 	readonly metadataDigest?: RuntimeDigest;
 }
 
+/** Exact fields carried by the public session title event. Raw prompt text is intentionally absent. */
+export interface SessionTitleChangedPayloadFields {
+	readonly title: string;
+	readonly source: "auto" | "user";
+	/** Auto title events must prove the unnamed-session CAS winner. */
+	readonly expectedTitle?: null;
+	readonly previousTitle?: string;
+	readonly trigger?: "first-user-message" | "manual-rename" | "retry";
+	readonly modelRef?: {
+		readonly providerId: string;
+		readonly modelId: string;
+	};
+}
+
 /** Model route evidence may carry purpose, but never prompt or provider secrets. */
 export type RuntimeModelRequestKind = "interactive" | "idle-recap" | "auto-title";
 
@@ -409,6 +424,7 @@ type ActionRequires<TType extends RuntimeEventType, TActions extends string> =
 	RuntimeEventAction<TType> extends TActions ? true : false;
 
 export type RuntimeEventPayloadFor<TType extends RuntimeEventType> = RuntimeEventPayload &
+	(TType extends "session.title_changed" ? SessionTitleChangedPayloadFields : EmptyPayloadRequirement) &
 	(TType extends "model.routed" ? ModelRoutedPayloadFields : EmptyPayloadRequirement) &
 	(ActionRequires<TType, (typeof EVENT_TRANSITION_ACTIONS)[number]> extends true
 		? RequiredPayloadField<"transition">

@@ -21,6 +21,8 @@ import type {
 	InteractiveSessionControllerPort,
 	ProviderStatus,
 	RuntimeSelection,
+	SessionTitleChangedSink,
+	SessionTitleChangedEvent,
 	SessionIdleRecapSink,
 	SessionIdleRecapEvent,
 	SessionRecoveryAssessment,
@@ -47,7 +49,9 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private readonly transport: SessionClientTransport;
 	private readonly supportsOperation: (operation: string) => boolean;
 	private readonly listeners = new Set<AgentEventSink>();
+	private readonly titleListeners = new Set<SessionTitleChangedSink>();
 	private readonly idleRecapListeners = new Set<SessionIdleRecapSink>();
+	private readonly pendingTitleEvents: SessionTitleChangedEvent[] = [];
 	private readonly session: string;
 	private readonly sessionGeneration: number;
 	private connectionRole: "driver" | "observer" = "observer";
@@ -106,11 +110,19 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		}
 		return () => this.listeners.delete(listener);
 	}
+
+	public subscribeSessionTitleChanged(listener: SessionTitleChangedSink): () => void {
+		this.titleListeners.add(listener);
+		if (this.titleListeners.size === 1 && this.pendingTitleEvents.length > 0) {
+			for (const event of this.pendingTitleEvents.splice(0)) void listener(event);
+		}
+		return () => this.titleListeners.delete(listener);
+	}
+
 	public subscribeIdleRecap(listener: SessionIdleRecapSink): () => void {
 		this.idleRecapListeners.add(listener);
 		return () => this.idleRecapListeners.delete(listener);
 	}
-
 
 	public get agentRuns(): readonly AgentRunSummary[] {
 		return this.runSummaryState;
@@ -307,8 +319,10 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.disposed = true;
 		this.removeTransportListener();
 		this.listeners.clear();
-		for (const resolve of this.idleWaiters.splice(0)) resolve();
+		this.titleListeners.clear();
 		this.idleRecapListeners.clear();
+		this.pendingTitleEvents.splice(0);
+		for (const resolve of this.idleWaiters.splice(0)) resolve();
 	}
 
 	// ── 私有 ─────────────────────────────────────────────────────────────
@@ -351,6 +365,24 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		if (sequence !== undefined && sequence <= this.eventCursor) return;
 		if (sequence !== undefined) this.eventCursor = sequence;
 		const event = frame.body.payload;
+		if (frame.body.eventType === "session.title_changed") {
+			const titleEvent = parseSessionTitleChangedEvent(event, this.session, sequence);
+			if (titleEvent !== undefined) {
+				if (this.titleListeners.size === 0) {
+					if (this.pendingTitleEvents.length >= SESSION_PROTOCOL_BOUNDS.maxPreActivationPending) this.pendingTitleEvents.shift();
+					this.pendingTitleEvents.push(titleEvent);
+				}
+				for (const listener of this.titleListeners) {
+					try {
+						void listener(titleEvent);
+					} catch {
+						// title observers are isolated from subscription delivery.
+					}
+				}
+			}
+			this.ackCursor();
+			return;
+		}
 		if (frame.body.eventType === "session.idle_recap") {
 			const recapEvent = parseSessionIdleRecapEvent(frame.body.payload, this.session);
 			if (recapEvent !== undefined) {
@@ -364,7 +396,10 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			}
 			return;
 		}
-		if (!isAgentEvent(event)) return;
+		if (!isAgentEvent(event)) {
+			this.ackCursor();
+			return;
+		}
 		this.inFlightValue = event.type !== "agent_end";
 		if (event.type === "agent_end") {
 			for (const resolve of this.idleWaiters.splice(0)) resolve();
@@ -412,6 +447,17 @@ function boundedIdentifier(value: unknown): value is string {
 
 function isAgentEvent(value: unknown): value is AgentEvent {
 	return isRecord(value) && typeof value.type === "string" && typeof value.timestamp === "number";
+}
+
+function parseSessionTitleChangedEvent(value: unknown, sessionId: string, sequence: number | undefined): SessionTitleChangedEvent | undefined {
+	if (!isRecord(value) || typeof value.title !== "string" || value.title.length === 0) return undefined;
+	if (value.source !== "auto" && value.source !== "user") return undefined;
+	return {
+		sessionId,
+		title: value.title,
+		source: value.source,
+		...(sequence === undefined ? {} : { sequence }),
+	};
 }
 
 function parseSessionIdleRecapEvent(value: unknown, sessionId: string): SessionIdleRecapEvent | undefined {

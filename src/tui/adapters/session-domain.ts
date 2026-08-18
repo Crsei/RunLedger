@@ -5,13 +5,14 @@ import type { TuiPortRequest, TuiResultEnvelope } from "../application/common.ts
 import type {
 	SessionCatalogItem,
 	SessionCatalogResult,
+	SessionTitleResult,
 	SessionTransitionResult,
 } from "../sessions/types.ts";
-import type { SessionCreateRequest, SessionForkRequest, SessionResumeRequest, SessionWorkflowPort } from "../sessions/port.ts";
+import type { SessionCreateRequest, SessionForkRequest, SessionRenameRequest, SessionResumeRequest, SessionWorkflowPort } from "../sessions/port.ts";
 
 export interface SessionDomainPortInput {
-	readonly query: (operation: string, payload: Record<string, unknown>, context: SessionDomainRequestContext) => Promise<SessionDomainResult>;
-	readonly command: (operation: string, payload: Record<string, unknown>, context: SessionDomainMutationContext) => Promise<SessionDomainResult>;
+	readonly query?: (operation: string, payload: Record<string, unknown>, context: SessionDomainRequestContext) => Promise<SessionDomainResult>;
+	readonly command?: (operation: string, payload: Record<string, unknown>, context: SessionDomainMutationContext) => Promise<SessionDomainResult>;
 	readonly supports: (operation: string) => boolean;
 }
 
@@ -29,10 +30,14 @@ export function sessionAuthorityGeneration(controller: SessionDomainControllerIn
 
 /** controller 方法读取收敛在 adapter；InteractiveMode 不直接调用 authority。 */
 export function createSessionDomainPortFromController(controller: SessionDomainControllerInput | undefined): SessionWorkflowPort | undefined {
-	if (controller?.querySessionDomain === undefined || controller.commandSessionDomain === undefined || controller.supports === undefined) return undefined;
+	if ((controller?.querySessionDomain === undefined && controller?.commandSessionDomain === undefined) || controller.supports === undefined) return undefined;
 	return createSessionDomainPort({
-		query: (operation, payload, requestContext) => controller.querySessionDomain!(operation, payload, requestContext),
-		command: (operation, payload, requestContext) => controller.commandSessionDomain!(operation, payload, requestContext),
+		...(controller.querySessionDomain === undefined ? {} : {
+			query: (operation: string, payload: Record<string, unknown>, requestContext: SessionDomainRequestContext) => controller.querySessionDomain!(operation, payload, requestContext),
+		}),
+		...(controller.commandSessionDomain === undefined ? {} : {
+			command: (operation: string, payload: Record<string, unknown>, requestContext: SessionDomainMutationContext) => controller.commandSessionDomain!(operation, payload, requestContext),
+		}),
 		supports: (operation) => controller.supports!(operation),
 	});
 }
@@ -64,8 +69,8 @@ export async function commandSessionController(
 export function createSessionDomainPort(domain: SessionDomainPortInput): SessionWorkflowPort {
 	return {
 		list: async (request) => {
-			if (!domain.supports("session.catalog.list")) return unavailable(request, "session.catalog.list");
-			const result = await invoke(request, () => domain.query("session.catalog.list", {}, context(request)));
+			if (!domain.supports("session.catalog.list") || domain.query === undefined) return unavailable(request, "session.catalog.list");
+			const result = await invoke(request, () => domain.query!("session.catalog.list", {}, context(request)));
 			if (!result.ok) return result;
 			const items = catalogItems(result.value.items);
 			if (items === undefined) return malformed(request, "session.catalog.list");
@@ -73,11 +78,29 @@ export function createSessionDomainPort(domain: SessionDomainPortInput): Session
 		},
 		create: async (request) => transition(domain, request, "session.create", "create", {}),
 		resume: async (request) => transition(domain, request, "session.resume", "resume", { targetSessionId: request.targetSessionId }),
-		fork: async (request) => transition(domain, request, "session.fork", "fork", {
-			sourceSessionId: request.sourceSessionId,
-			expectedSourceHeadSequence: request.expectedSourceHeadSequence,
-		}),
-	};
+			fork: async (request) => transition(domain, request, "session.fork", "fork", {
+				sourceSessionId: request.sourceSessionId,
+				expectedSourceHeadSequence: request.expectedSourceHeadSequence,
+			}),
+			rename: async (request) => {
+				if (!domain.supports("session.title.set") || domain.command === undefined) return unavailable(request, "session.title.set");
+				const result = await invoke(request, () => domain.command!("session.title.set", {
+					title: request.title,
+					source: "user",
+					...(request.expectedTitle === undefined ? {} : { expectedTitle: request.expectedTitle }),
+				}, { ...context(request), expectedRevision: request.expectedRevision }));
+				if (!result.ok) return result;
+				const sessionId = stringValue(result.value.sessionId);
+				const title = stringValue(result.value.title);
+				const titleSource = result.value.titleSource === "auto" || result.value.titleSource === "user" ? result.value.titleSource : undefined;
+				const titleUpdatedAtMs = integerValue(result.value.titleUpdatedAtMs);
+				const catalogRevision = integerValue(result.domainRevision);
+				if (sessionId === undefined || title === undefined || titleSource === undefined || titleUpdatedAtMs === undefined || catalogRevision === undefined) {
+					return malformed(request, "session.title.set");
+				}
+				return { ok: true, ref: request, value: { sessionId, title, titleSource, titleUpdatedAtMs, catalogRevision } satisfies SessionTitleResult };
+			},
+		};
 }
 
 async function transition(
@@ -87,8 +110,8 @@ async function transition(
 	transitionOperation: SessionTransitionResult["operation"],
 	payload: Record<string, unknown>,
 ): Promise<TuiResultEnvelope<SessionTransitionResult>> {
-	if (!domain.supports(operation)) return unavailable(request, operation);
-	const result = await invoke(request, () => domain.command(operation, payload, { ...context(request), expectedRevision: request.expectedRevision }));
+	if (!domain.supports(operation) || domain.command === undefined) return unavailable(request, operation);
+	const result = await invoke(request, () => domain.command!(operation, payload, { ...context(request), expectedRevision: request.expectedRevision }));
 	if (!result.ok) return result;
 	const targetSessionId = stringValue(result.value.targetSessionId);
 	if (targetSessionId === undefined) return malformed(request, operation);
@@ -147,7 +170,20 @@ function catalogItems(value: unknown): readonly SessionCatalogItem[] | undefined
 		if (sessionId === undefined || workspaceId === undefined || repositoryId === undefined || status === undefined
 			|| createdAtMs === undefined || updatedAtMs === undefined || headSequence === undefined || driverRevision === undefined
 			|| typeof candidate.current !== "boolean") return undefined;
-		items.push({ sessionId, workspaceId, repositoryId, status, createdAtMs, updatedAtMs, headSequence, driverRevision, current: candidate.current });
+			const title = optionalStringValue(candidate.title);
+			const titleSource = candidate.titleSource === "auto" || candidate.titleSource === "user" ? candidate.titleSource : undefined;
+			const titleUpdatedAtMs = candidate.titleUpdatedAtMs === undefined ? undefined : integerValue(candidate.titleUpdatedAtMs);
+			const firstUserMessagePreview = optionalStringValue(candidate.firstUserMessagePreview);
+			if (candidate.titleSource !== undefined && titleSource === undefined) return undefined;
+			if (candidate.titleUpdatedAtMs !== undefined && titleUpdatedAtMs === undefined) return undefined;
+			items.push({
+				sessionId, workspaceId, repositoryId, status, createdAtMs, updatedAtMs, headSequence, driverRevision,
+				...(title === undefined ? {} : { title }),
+				...(titleSource === undefined ? {} : { titleSource }),
+				...(titleUpdatedAtMs === undefined ? {} : { titleUpdatedAtMs }),
+				...(firstUserMessagePreview === undefined ? {} : { firstUserMessagePreview }),
+				current: candidate.current,
+			});
 	}
 	return items;
 }
@@ -165,6 +201,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function stringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function optionalStringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 

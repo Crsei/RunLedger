@@ -83,6 +83,10 @@ export interface InteractiveSessionControllerOptions {
   runBudget?: AgentRunBudget;
   /** Session Runtime active-time authority；production composition 必须注入。 */
   runBudgetUsage?: AgentRunBudgetUsage;
+	/** Accepted prompt metadata hook; must not mutate the Agent transcript. */
+	onAcceptedUserPrompt?: (text: string) => void;
+	/** Cancels session-scoped background work that captured the previous model selection. */
+	onModelSelectionChanged?: () => void;
 }
 
 export interface ProviderStatus {
@@ -93,6 +97,16 @@ export interface ProviderStatus {
   authTypes: AuthType[];
   interactiveAuthTypes: AuthType[];
 }
+
+/** Typed projection of the durable Session Store title event on a client subscription. */
+export interface SessionTitleChangedEvent {
+	readonly sessionId: string;
+	readonly title: string;
+	readonly source: "auto" | "user";
+	readonly sequence?: number;
+}
+
+export type SessionTitleChangedSink = (event: SessionTitleChangedEvent) => void | Promise<void>;
 
 export interface SessionIdleRecapEvent {
 	readonly sessionId: string;
@@ -109,6 +123,8 @@ export type SessionIdleRecapSink = (event: SessionIdleRecapEvent) => void | Prom
 /** Client-side contract shared by the Host-owned and local test controllers. */
 export interface InteractiveSessionControllerPort {
   subscribe(listener: AgentEventSink): () => void;
+	/** Optional durable title-event subscription; absent on legacy/local controllers. */
+	readonly subscribeSessionTitleChanged?: (listener: SessionTitleChangedSink) => () => void;
 	/** Optional transient idle recap subscription; never part of AgentEvent/replay. */
 	readonly subscribeIdleRecap?: (listener: SessionIdleRecapSink) => () => void;
   /** Session Owner 客户端握手冻结的精确 operation 判断；legacy/local controller 缺省为不可协商。 */
@@ -209,6 +225,8 @@ export class InteractiveSessionController {
   private readonly extensionTurnAbort: (() => Promise<void>) | undefined;
   private readonly runBudget: AgentRunBudget;
   private readonly runBudgetUsage: AgentRunBudgetUsage | undefined;
+	private readonly onAcceptedUserPrompt: ((text: string) => void) | undefined;
+	private readonly onModelSelectionChanged: (() => void) | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private agent: Agent | undefined;
@@ -239,6 +257,8 @@ export class InteractiveSessionController {
     this.extensionTurnAbort = opts.extensionTurnAbort;
     this.runBudget = opts.runBudget ?? DEFAULT_AGENT_RUN_BUDGET;
     this.runBudgetUsage = opts.runBudgetUsage;
+	this.onAcceptedUserPrompt = opts.onAcceptedUserPrompt;
+	this.onModelSelectionChanged = opts.onModelSelectionChanged;
     this.selection = selection;
     this.ensureAgent();
   }
@@ -355,8 +375,9 @@ export class InteractiveSessionController {
     // (baseUrl/api/reasoning/compat 等),避免流式调用时字段缺失。
     const resolved = this.models.getModel(model.provider, model.id) ?? model;
     const thinkingLevel = clampThinkingLevel(resolved, "high");
-    this.selection = { provider: resolved.provider, model: resolved, thinkingLevel };
-    this.ensureAgent();
+		this.selection = { provider: resolved.provider, model: resolved, thinkingLevel };
+		this.onModelSelectionChanged?.();
+		this.ensureAgent();
     this.agent?.setModel(resolved);
     this.agent?.setThinkingLevel(thinkingLevel);
     await this.persistSelection("model");
@@ -387,7 +408,9 @@ export class InteractiveSessionController {
     try {
       const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
       if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
-      await agent.prompt(promptText(submitted?.finalInput, text));
+	      const acceptedInput = promptText(submitted?.finalInput, text);
+	      this.onAcceptedUserPrompt?.(acceptedInput);
+	      await agent.prompt(acceptedInput);
     } catch (error) {
       await this.extensionTurnAbort?.().catch(() => undefined);
       throw error;

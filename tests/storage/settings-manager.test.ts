@@ -83,6 +83,15 @@ describe("loadProjectSettings", () => {
 		});
 	});
 
+	it("保留 canonical autoTitle 布尔开关并丢弃非法值", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({ autoTitle: false, unknownAutoTitle: "off" }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({ autoTitle: false });
+
+		writeFileSync(layout.settings, JSON.stringify({ autoTitle: "false" }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({});
+	});
+
 	it("加载 canonical recap 配置并保留合法 enabled/idleSeconds", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(
@@ -111,8 +120,8 @@ describe("loadProjectSettings", () => {
 		expect(resolveRecapSettings({})).toEqual({ enabled: true, idleSeconds: 240 });
 		expect(resolveRecapSettings({ recap: { enabled: false, idleSeconds: 120.9 } })).toEqual({
 			enabled: false,
-			idleSeconds: 120,
-		});
+		idleSeconds: 120,
+	});
 		expect(resolveRecapSettings({ recap: { idleSeconds: 0 } })).toEqual({ enabled: true, idleSeconds: 1 });
 		expect(resolveRecapSettings({ recap: { idleSeconds: 99999 } })).toEqual({ enabled: true, idleSeconds: 3600 });
 	});

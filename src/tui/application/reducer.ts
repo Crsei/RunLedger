@@ -23,6 +23,7 @@ export const TUI_ACTION_TYPES = [
 	"query.result",
 	"recovery.set",
 	"session.replace",
+	"session.title.changed",
 	"composer.changed",
 	"interaction.select",
 	"interaction.search-changed",
@@ -160,6 +161,21 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 				interaction: { ...state.interaction, generation: state.interaction.generation + 1 },
 			};
 		}
+		case "session.title.changed": {
+			if (action.generation !== state.authorityGeneration
+				|| action.sessionId.length === 0
+				|| action.sessionId !== state.bootstrap.session.id
+				|| action.title.trim().length === 0
+				|| action.title === state.bootstrap.session.title) return state;
+			return {
+				...state,
+				bootstrap: {
+					...state.bootstrap,
+					session: { ...state.bootstrap.session, title: action.title },
+				},
+				interaction: { ...state.interaction, generation: state.interaction.generation + 1 },
+			};
+		}
 		case "query.cancel":
 			// B4:cancel 由 EffectRunner 处理（AbortController registry）；reducer 状态不变。
 			return state;
@@ -199,6 +215,7 @@ const WORKFLOW_BY_EFFECT: Record<TuiEffect["type"], WorkflowKey> = {
 	"session.create": "sessionWorkflow",
 	"session.resume": "sessionWorkflow",
 	"session.fork": "sessionWorkflow",
+	"session.rename": "sessionWorkflow",
 	"provider.list": "providerWorkflow",
 	"auth.inspect": "authWorkflow",
 	"auth.login": "authWorkflow",

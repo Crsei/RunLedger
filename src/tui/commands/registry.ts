@@ -31,6 +31,7 @@ export type SlashCommandActionType =
   | "session.create"
   | "session.resume"
   | "session.fork"
+  | "session.rename"
   | "config.provider"
   | "config.model"
   | "config.thinking"
@@ -144,6 +145,14 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       argumentSchema: [schema("sessionId", "Session id to resume", false)],
     }),
     command("fork", "Fork the current durable head", 6, { actionType: "session.fork", category: "session", policy: IDLE_ONLY_POLICY }),
+    command("rename", "Set the current Session display title", 6.5, {
+      actionType: "session.rename",
+      category: "session",
+      policy: IDLE_ONLY_POLICY,
+      supportsInlineArgs: true,
+      usage: "<title>",
+      argumentSchema: [schema("title", "Display title", true)],
+    }),
     command("provider", "Configure provider", 7, {
       actionType: "config.provider",
       category: "config",

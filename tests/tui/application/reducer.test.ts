@@ -114,6 +114,18 @@ describe("B3 application reducer", () => {
 		expect(replaced.interaction.generation).toBe(state.interaction.generation + 1);
 	});
 
+	it("projects a durable title change into the bootstrap without changing session identity", () => {
+		const state = initialState();
+		const changed = tuiReducer(state, {
+			type: "session.title.changed",
+			generation: 1,
+			sessionId: "session-1",
+			title: "Fix login flow",
+		});
+		expect(changed.bootstrap.session).toMatchObject({ id: "session-1", title: "Fix login flow" });
+		expect(changed.interaction.generation).toBe(state.interaction.generation + 1);
+	});
+
 	it("command.submit records bounded history (cap 512)", () => {
 		let state = initialState();
 		for (let index = 0; index < 600; index += 1) {

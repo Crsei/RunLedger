@@ -104,11 +104,11 @@ describe("R1 offline-only migration admission gate", () => {
 		const nextSql = "ALTER TABLE sessions ADD COLUMN probe_column INTEGER;";
 		const applied = applyStructuralMigration(db, {
 			gate: gate.gate,
-			nextVersion: 2,
+			nextVersion: SESSION_STORE_SCHEMA_VERSION + 1,
 			nextSql,
 			nextFormatDigest: "a".repeat(64),
 		});
-		expect(applied).toEqual({ ok: true, storeVersion: 2 });
+		expect(applied).toEqual({ ok: true, storeVersion: SESSION_STORE_SCHEMA_VERSION + 1 });
 		const after = checkStoreCompatibility(db);
 		expect(after).toMatchObject({ ok: false, code: "store_schema_too_new" });
 		db.close();
@@ -138,7 +138,7 @@ describe("R1 offline-only migration admission gate", () => {
 		db.runSync("UPDATE store_control SET migration_epoch = migration_epoch + 1, updated_at_ms = ? WHERE singleton_id = 1", [Date.now()]);
 		const applied = applyStructuralMigration(db, {
 			gate: gate.gate,
-			nextVersion: 2,
+			nextVersion: SESSION_STORE_SCHEMA_VERSION + 1,
 			nextSql: "ALTER TABLE sessions ADD COLUMN probe_column INTEGER;",
 			nextFormatDigest: "a".repeat(64),
 		});

@@ -148,6 +148,43 @@ describe("S1 Session Domain Router", () => {
 		expect(harness.store.listSessions()).toHaveLength(1);
 	});
 
+	it("refuses session.title.set from an observer before opening an attempt", async () => {
+		const domain: SessionDomainPort = {
+			controller: { subscribe: () => () => undefined } as unknown as SessionDomainPort["controller"],
+			snapshot: () => ({
+				messages: [],
+				warnings: [],
+				auditEntries: [],
+				selection: { thinkingLevel: "off" },
+				toolCount: 0,
+				inFlight: false,
+				providerStatuses: [],
+			}),
+		};
+		harness = await createRuntimeHarness("title-observer", { domain });
+		const result = await harness.runtime.handleCommand({
+			commandId: createRuntimeId("command", "title-observer"),
+			kind: "domain_command",
+			body: {
+				sessionId: harness.sessionId,
+				generation: harness.fence.generation,
+				correlationId: "correlation_title_observer",
+				effectId: "effect_title_observer",
+				operation: "session.title.set",
+				expectedRevision: 1,
+				payload: { title: "Observer must not rename", source: "user" },
+			},
+		}, {
+			connectionId: createRuntimeId("connection", "title-observer"),
+			clientId: "client_title_observer",
+			isDriver: false,
+		});
+
+		expect(result).toEqual({ ok: false, code: "observer_mutation_forbidden" });
+		expect(harness.store.getSession(harness.sessionId)?.title).toBeUndefined();
+		expect(harness.store.listAllAttemptReceipts(harness.sessionId)).toHaveLength(0);
+	});
+
 	it("returns a typed unavailable result for an unregistered operation", async () => {
 		harness = await createRuntimeHarness("domain-unavailable");
 		const result = await harness.runtime.handleQuery({
@@ -240,6 +277,115 @@ describe("S1 Session Domain Router", () => {
 		expect(JSON.stringify(result)).not.toContain("/private/worktree");
 		expect(JSON.stringify(result)).not.toContain("settingsDigest");
 		expect(JSON.stringify(result)).not.toContain("title");
+	});
+
+	it("broadcasts one session.title_changed event after a committed title mutation", async () => {
+		const domain: SessionDomainPort = {
+			controller: { subscribe: () => () => undefined } as unknown as SessionDomainPort["controller"],
+			snapshot: () => ({
+				messages: [],
+				warnings: [],
+				auditEntries: [],
+				selection: { thinkingLevel: "off" },
+				toolCount: 0,
+				inFlight: false,
+				providerStatuses: [],
+			}),
+		};
+		harness = await createRuntimeHarness("title-broadcast", { domain });
+		const events: Array<{ readonly eventType: string; readonly payload: Record<string, unknown> }> = [];
+		const unsubscribe = harness.runtime.onEvent((event) => events.push(event));
+		try {
+			const result = await harness.runtime.handleCommand({
+				commandId: createRuntimeId("command", "title-broadcast"),
+				kind: "domain_command",
+				body: {
+					sessionId: harness.sessionId,
+					generation: harness.fence.generation,
+					correlationId: "correlation_title_broadcast",
+					effectId: "effect_title_broadcast",
+					operation: "session.title.set",
+					expectedRevision: 1,
+					payload: { title: "Fix login flow", source: "user" },
+				},
+			}, {
+				connectionId: createRuntimeId("connection", "title-broadcast"),
+				clientId: "client_title_broadcast",
+				isDriver: true,
+			});
+			expect(result).toMatchObject({ ok: true, kind: "domain_command", result: { ok: true, operation: "session.title.set" } });
+			const titleEvents = events.filter((event) => event.eventType === "session.title_changed");
+			expect(titleEvents).toHaveLength(1);
+			expect(titleEvents[0]).toMatchObject({
+				eventType: "session.title_changed",
+				payload: expect.objectContaining({ title: "Fix login flow", source: "user" }),
+				sequence: expect.any(Number),
+			});
+		} finally {
+			unsubscribe();
+		}
+	});
+
+	it("advances the catalog revision for title writes and rejects a stale rename", async () => {
+		const domain: SessionDomainPort = {
+			controller: { subscribe: () => () => undefined } as unknown as SessionDomainPort["controller"],
+			snapshot: () => ({
+				messages: [],
+				warnings: [],
+				auditEntries: [],
+				selection: { thinkingLevel: "off" },
+				toolCount: 0,
+				inFlight: false,
+				providerStatuses: [],
+			}),
+		};
+		harness = await createRuntimeHarness("title-revision", { domain });
+		const first = await harness.runtime.handleCommand({
+			commandId: createRuntimeId("command", "title-revision-first"),
+			kind: "domain_command",
+			body: {
+				sessionId: harness.sessionId,
+				generation: harness.fence.generation,
+				correlationId: "correlation_title_revision_first",
+				effectId: "effect_title_revision_first",
+				operation: "session.title.set",
+				expectedRevision: 1,
+				payload: { title: "First durable title", source: "user" },
+			},
+		}, {
+			connectionId: createRuntimeId("connection", "title-revision-first"),
+			clientId: "client_title_revision_first",
+			isDriver: true,
+		});
+		expect(first).toMatchObject({ ok: true, result: { ok: true, domainRevision: 2 } });
+
+		const stale = await harness.runtime.handleCommand({
+			commandId: createRuntimeId("command", "title-revision-stale"),
+			kind: "domain_command",
+			body: {
+				sessionId: harness.sessionId,
+				generation: harness.fence.generation,
+				correlationId: "correlation_title_revision_stale",
+				effectId: "effect_title_revision_stale",
+				operation: "session.title.set",
+				expectedRevision: 1,
+				payload: { title: "Stale durable title", source: "user" },
+			},
+		}, {
+			connectionId: createRuntimeId("connection", "title-revision-stale"),
+			clientId: "client_title_revision_stale",
+			isDriver: true,
+		});
+		expect(stale).toMatchObject({
+			ok: true,
+			result: {
+				ok: false,
+				status: "stale",
+				code: "domain_revision_conflict",
+				currentRevision: 2,
+			},
+		});
+		expect(harness.store.getSession(harness.sessionId)?.title).toBe("First durable title");
 	});
 
 	it("rejects a stale catalog mutation before creating a session or recording an attempt", async () => {

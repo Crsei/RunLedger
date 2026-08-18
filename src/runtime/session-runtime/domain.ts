@@ -18,7 +18,7 @@ import { gatedExecutionEnv, type LateBoundAttemptPort } from "./attempt-gateway.
 import { replaySession } from "../../storage/session-codec.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { createStdlibTools, type StdlibToolsOptions } from "../tools/index.ts";
-import { InteractiveSessionController, type ModelRequestRouter, type RuntimeSelectionOverrides } from "../interactive-session-controller.ts";
+import { InteractiveSessionController, type ModelRequestRouter, type RuntimeSelectionOverrides, type SessionTitleChangedEvent } from "../interactive-session-controller.ts";
 import type { AgentTool } from "../types.ts";
 import type { Models } from "../../models.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
@@ -45,6 +45,7 @@ import { isCurrentLedgerEntry, type LedgerEntry } from "../ledger/types.ts";
 import type { SessionApprovalPorts } from "./approval-reverse-request.ts";
 import { createSessionBashClassificationAudit } from "./bash-classification-audit.ts";
 import type { AgentRunBudgetUsage } from "../types.ts";
+import { SessionTitleLifecycle } from "./title-lifecycle.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection } from "./plan-composition.ts";
@@ -69,7 +70,7 @@ export interface SessionDomainCompositionOptions {
 	readonly settings: ProjectSettings;
 	readonly models: Models;
 	readonly overrides?: RuntimeSelectionOverrides;
-	/** Host-owned route gate shared by coding and idle recap completions. */
+	/** Host-owned route gate shared by coding and title completions. */
 	readonly modelRequestRouter?: ModelRequestRouter;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	/** Session Event Store + 当前 driver reverse-request 的 approval authority。 */
@@ -174,6 +175,8 @@ export async function assembleSessionDomain(
 		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
 	const composedTools = [...baseTools, ...extensions.tools];
+	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
+	let titleLifecycle: SessionTitleLifecycle | undefined;
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
@@ -182,8 +185,8 @@ export async function assembleSessionDomain(
 		settings: options.settings,
 		replay,
 		ledger,
-		overrides: options.overrides,
-		...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
+			overrides: options.overrides,
+			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
 		tools: composedTools,
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
@@ -191,8 +194,10 @@ export async function assembleSessionDomain(
 		extensionHookRuntime: extensions.hookRuntime,
 		extensionHookSnapshotId: () => extensions.turnLifecycle?.snapshotId(),
 		extensionTurnAdmission: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.admitTurn(),
-		extensionTurnAbort: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.cancelTurn(),
-		...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
+			extensionTurnAbort: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.cancelTurn(),
+			onModelSelectionChanged: () => titleLifecycle?.selectionChanged(),
+			...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
+			onAcceptedUserPrompt: (text) => titleLifecycle?.handleAcceptedInput(text),
 		modelContextAssembler: async (input) => assembleAgentModelContext({
 			...input,
 			sources: extensions.contextSources(input.model.contextWindow),
@@ -225,6 +230,39 @@ export async function assembleSessionDomain(
 			...(multiAgentPreviousOwnerLiveness === undefined ? {} : { previousOwnerLiveness: multiAgentPreviousOwnerLiveness }),
 			...(options.multiAgentChildRuntimeProvider === undefined ? {} : { provider: options.multiAgentChildRuntimeProvider }),
 		});
+	titleLifecycle = new SessionTitleLifecycle({
+			sessionId,
+			fence,
+			models: options.models,
+			enabled: options.settings.autoTitle !== false,
+			getSelection: () => controller.currentSelection,
+			getCurrentTitle: () => store.getSession(sessionId)?.title,
+				setAutoTitle: (input) => {
+					const titled = store.setTitle(fence, {
+						title: input.title,
+						source: "auto",
+					expectedTitle: input.expectedTitle,
+					trigger: input.trigger,
+						modelRef: { providerId: input.providerId, modelId: input.modelId },
+					});
+					const event = store.replaySessionEvents(sessionId).at(-1);
+					if (event?.eventType !== "session.title_changed") return;
+					const titleEvent: SessionTitleChangedEvent = {
+						sessionId,
+						title: titled.title!,
+						source: "auto",
+						sequence: event.sequence,
+					};
+					for (const listener of titleListeners) {
+						try {
+							listener(titleEvent);
+						} catch {
+							// A subscriber cannot turn a committed title into a failed mutation.
+						}
+					}
+				},
+			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
+		});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
 	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
@@ -235,16 +273,21 @@ export async function assembleSessionDomain(
 		store,
 		policyCeilingDigest: security.snapshot.policyDigest,
 	});
-	return {
-		controller,
+		return {
+			controller,
+			subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
+				titleListeners.add(listener);
+				return () => titleListeners.delete(listener);
+			},
 		childRuntime,
 		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
 		process,
 		resources: extensions.resources,
 		planInspection,
 		start: extensions.start,
-		shutdown: async (reason) => {
-			removeExtensionLifecycle?.();
+			shutdown: async (reason) => {
+				titleLifecycle?.dispose();
+				removeExtensionLifecycle?.();
 			try {
 				await extensions.shutdown(reason);
 			} finally {

@@ -36,6 +36,8 @@ export interface SettingsStoreOptions {
 
 /** 用户级或 workspace 级 settings schema。sessionDir 不属于 canonical schema。 */
 export interface ProjectSettings {
+	/** 是否允许首个合格用户输入触发异步 Session 自动标题；缺省开启。 */
+	autoTitle?: boolean;
 	/** 空闲 recap 的用户级开关与延迟；运行时会解析为完整有效快照。 */
 	recap?: RecapSettings;
 	/** 默认 provider ID,与 model 共同组成稳定模型身份。 */
@@ -368,6 +370,7 @@ function assertSupportedSettings(
 /** 把裸 JSON 对象清洗成 canonical ProjectSettings，丢弃 legacy/未知字段。 */
 function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = true): ProjectSettings {
 	const out: ProjectSettings = {};
+	if (typeof raw.autoTitle === "boolean") out.autoTitle = raw.autoTitle;
 	const recap = sanitizeRecapSettings(raw.recap);
 	if (recap !== undefined) out.recap = recap;
 	if (typeof raw.provider === "string" && raw.provider.length > 0) out.provider = raw.provider;

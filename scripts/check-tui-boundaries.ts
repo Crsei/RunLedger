@@ -76,6 +76,7 @@ if (/private\s+(?:readonly\s+)?\w+\s*:\s*Map</u.test(source)) {
 // 2) 直接 controller 调用白名单（生命周期/队列/通道仍属 InteractiveMode authority）
 const allowedControllerCalls = [
   "controller.subscribe",
+  "controller.subscribeSessionTitleChanged",
   "controller.subscribeIdleRecap",
   "controller.notifyEditorActivity",
   "controller.prompt",

@@ -16,6 +16,7 @@ export type TuiAction =
 	| { readonly type: "query.result"; readonly result: TuiResult }
 	| { readonly type: "recovery.set"; readonly required: boolean }
 	| { readonly type: "session.replace"; readonly generation: number; readonly sessionId: string }
+	| { readonly type: "session.title.changed"; readonly generation: number; readonly sessionId: string; readonly title: string }
 	| { readonly type: "composer.changed"; readonly draft: SafeBoundedText }
 	| { readonly type: "interaction.select"; readonly id: string }
 	| { readonly type: "interaction.search-changed"; readonly query: string }

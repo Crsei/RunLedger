@@ -36,7 +36,7 @@ import type { AgentEvent, AgentMessage } from "../runtime/types.ts";
 import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
 import { getSupportedThinkingLevels } from "../models.ts";
 import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
-import type { InteractiveSessionControllerPort, SessionRecoveryStatus } from "../runtime/interactive-session-controller.ts";
+import type { InteractiveSessionControllerPort, SessionRecoveryStatus, SessionTitleChangedEvent } from "../runtime/interactive-session-controller.ts";
 
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
@@ -91,8 +91,9 @@ import type { EffectRunner } from "./application/effect-runner.ts";
 import { createEffectRunner } from "./application/effect-runner.ts";
 import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
-import type { SessionCatalogResult, SessionTransitionResult } from "./sessions/types.ts";
+import type { SessionCatalogResult, SessionTitleResult, SessionTransitionResult } from "./sessions/types.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "./preferences/types.ts";
+import { normalizeSessionTitle } from "../runtime/session-owner/title.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/theme-controller.ts";
 import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
 import { projectStatusIndicator } from "./presentation/projectors.ts";
@@ -179,6 +180,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly kb: KeybindingsManager;
   private readonly refs: ContainerRefs;
   private unsubscribe?: () => void;
+  private unsubscribeSessionTitle?: () => void;
   private unsubscribeIdleRecap?: () => void;
   private idleRecapRequestId: string | undefined;
   private idleRecapActivityGeneration = 0;
@@ -289,7 +291,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       capabilities: {
 		...capabilitiesFromPorts(this.ports, {
 			sessionCatalog: this.authAdapter.supports("session.catalog.list"),
-			sessionMutation: ["session.create", "session.resume", "session.fork"].some((operation) => this.authAdapter.supports(operation)),
+			sessionMutation: ["session.create", "session.resume", "session.fork", "session.title.set"].some((operation) => this.authAdapter.supports(operation)),
 			process: this.authAdapter.supports("session.process.list") && this.authAdapter.supports("session.process.output"),
 		}),
       },
@@ -530,6 +532,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribe = this.controller
       ? this.controller.subscribe((ev) => this.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
+    this.unsubscribeSessionTitle = this.controller?.subscribeSessionTitleChanged?.((event) => this.handleSessionTitleChanged(event));
     this.unsubscribeIdleRecap = this.controller?.subscribeIdleRecap?.((event) => {
       if (event.cleared === true) {
         if (event.requestId !== this.idleRecapRequestId) return;
@@ -545,10 +548,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
     this.unsubscribeThemeMode = this.ui.addThemeModeListener((mode) => this.maybeSwitchTheme(mode));
     this.unsubscribeTerminalBackground = this.ui.addTerminalBackgroundListener((rgb) => this.refreshEditorAppearance(rgb));
-    try {
-	  const recoverySync = this.syncRecoveryState();
-	  if (recoverySync !== undefined) await recoverySync;
-      await this.ui.start();
+	    try {
+		  const recoverySync = this.syncRecoveryState();
+		  if (recoverySync !== undefined) await recoverySync;
+	      await this.ui.start();
       await this.syncThinkingWorkflow();
       this.ui.requestRender();
       // 启动即按当前主题(+已缓存的 OSC 11)下发一次输入区外观。
@@ -556,6 +559,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
+      this.unsubscribeSessionTitle?.();
+      this.unsubscribeSessionTitle = undefined;
       this.unsubscribeIdleRecap?.();
       this.unsubscribeIdleRecap = undefined;
       this.unsubscribeThemeMode?.();
@@ -666,6 +671,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribe();
       this.unsubscribe = undefined;
     }
+    this.unsubscribeSessionTitle?.();
+    this.unsubscribeSessionTitle = undefined;
     this.unsubscribeIdleRecap?.();
     this.unsubscribeIdleRecap = undefined;
     this.unsubscribeStore?.();
@@ -1379,10 +1386,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const effect = this.createEffect("model.select", { providerId, modelId });
     this.store.dispatch({ type: "query.start", effect });
     this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
+	    const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
+	    if (workflow.state === "ready") {
       await this.syncThinkingWorkflow();
-      const selection = workflow.value as { readonly providerId?: string; readonly modelId?: string };
+	      const selection = workflow.value as { readonly providerId?: string; readonly modelId?: string };
       this.showNotice(`Model: ${selection.providerId ?? providerId}/${selection.modelId ?? modelId}`);
     } else if (workflow.state === "error") {
       this.showNotice(`Model switch failed: ${workflow.message}`, "error");
@@ -1692,6 +1699,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "session.fork":
         void this.forkCurrentSession();
+        return;
+      case "session.rename":
+        void this.renameCurrentSession(arg);
         return;
       case "config.provider":
         void this.openProviderSelector();
@@ -2071,6 +2081,53 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (transition !== undefined) await this.requestExit({ kind: "switch", action: "fork", target: { sessionId: transition.targetSessionId } });
   }
 
+	/** `/rename <title>` uses the typed Session Domain effect workflow and catalog CAS. */
+	async renameCurrentSession(title: string): Promise<void> {
+		const normalizedTitle = normalizeSessionTitle(title);
+		if (normalizedTitle === null || /[\u0000-\u001F\u007F-\u009F]/u.test(title) || /\u001B(?:\[[0-?]*[ -\/]*[@-~]|\][^\u0007]*(?:\u0007|$))/u.test(title)) {
+			this.showNotice("Usage: /rename <title>", "error");
+			return;
+		}
+		if (this.rejectSessionTransition()) return;
+		const catalog = await this.loadSessionCatalog();
+		if (catalog === undefined) return;
+		const current = catalog.items.find((item) => item.sessionId === this.getSessionId());
+		if (current === undefined) {
+			this.showNotice("Current Session is missing from the canonical catalog.", "error");
+			return;
+		}
+		const port = this.ports.session;
+		if (port === undefined) {
+			this.showNotice("Session title mutation is unavailable on this connection.", "error");
+			return;
+		}
+		const effect = this.createEffect("session.rename", {
+			title: normalizedTitle,
+			expectedRevision: catalog.revision,
+			expectedTitle: current.title ?? null,
+		});
+		this.store.dispatch({ type: "query.start", effect });
+		this.runner.dispatch(effect);
+		const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
+		if (workflow.state !== "ready" || !isSessionTitleResult(workflow.value)) {
+			if (workflow.state === "error") this.showNotice(`/rename failed: ${workflow.message ?? "unknown outcome"}`, "error");
+			else this.showNotice("/rename did not complete.", "error");
+			return;
+		}
+		const result = workflow.value;
+		this.store.dispatch({
+			type: "session.title.changed",
+			generation: this.store.getState().authorityGeneration,
+			sessionId: result.sessionId,
+			title: result.title,
+		});
+		// The mutation result is authoritative for the immediate header; requery
+		// the catalog so picker/workflow state is refreshed from the same domain.
+		await this.loadSessionCatalog();
+		this.showNotice(`Session renamed: ${result.title}`);
+		this.ui.requestRender();
+	}
+
   private rejectSessionTransition(): boolean {
     if (this.inFlight()) {
       this.showNotice("Session transitions are available when the current turn is idle.", "note");
@@ -2411,7 +2468,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /** B4:生成唯一 effect（generation = authority generation；effectId/correlationId 递增）。 */
-  private createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect {
+	  private createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect {
     this.effectSequence += 1;
     this.correlationSequence += 1;
     const ref: CorrelatedRequestRef = {
@@ -2423,8 +2480,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (extra !== undefined) {
       Object.assign(effect as unknown as Record<string, unknown>, extra);
     }
-    return effect;
-  }
+	    return effect;
+	  }
 
   /** 首帧前同步当前 controller 的 authoritative thinking selection。 */
   private async syncThinkingWorkflow(): Promise<void> {
@@ -2435,7 +2492,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
   }
 
-  /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
+	  /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
   private waitForWorkflow(key: "sessionWorkflow" | "extensionWorkflow" | "providerWorkflow" | "modelWorkflow" | "thinkingWorkflow" | "authWorkflow" | "promptWorkflow" | "keymapWorkflow" | "runtimeSnapshotWorkflow" | "processWorkflow" | "taskGoalWorkflow" | "planWorkflow" | "agentWorkflow" | "securityModeWorkflow" | "workspaceGitWorkflow" | "updateWorkflow" | "queueWorkflow" | "approvalWorkflow" | "shutdownWorkflow", requestId: string): Promise<{
     readonly state: string;
     readonly value?: unknown;
@@ -2475,13 +2532,31 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.handleEvent(adapted);
   }
+
+  /** Durable title events update the immediate strip and requery catalog state. */
+  private handleSessionTitleChanged(event: SessionTitleChangedEvent): void {
+		if (this.quitting || event.sessionId !== this.getSessionId()) return;
+		this.store.dispatch({
+			type: "session.title.changed",
+			generation: this.store.getState().authorityGeneration,
+			sessionId: event.sessionId,
+			title: event.title,
+		});
+		const workflow = this.store.getState().sessionWorkflow;
+		if (workflow.state === "loading") return;
+		if (workflow.state === "ready" && isSessionCatalogResult(workflow.value)) {
+			const current = workflow.value.items.find((item) => item.sessionId === event.sessionId);
+			if (current?.title === event.title && (event.sequence === undefined || current.headSequence >= event.sequence)) return;
+		}
+    void this.loadSessionCatalog();
+  }
+
   /** Clears the local-only recap slot and advances its client-side stale fence. */
   private clearIdleRecapStatus(): void {
     this.idleRecapRequestId = undefined;
     this.idleRecapActivityGeneration += 1;
     this.refs.status.setIdleRecap(undefined);
   }
-
 
   /**
    * 主控 switch：message_* 统一投影到 canonical Timeline 并流式更新；
@@ -2761,6 +2836,27 @@ function timelineUsageValue(quantity: SafeUsageQuantity): number | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSessionTitleResult(value: unknown): value is SessionTitleResult {
+	return isRecord(value)
+		&& typeof value.sessionId === "string" && value.sessionId.length > 0
+		&& typeof value.title === "string" && value.title.length > 0
+		&& (value.titleSource === "auto" || value.titleSource === "user")
+		&& typeof value.titleUpdatedAtMs === "number"
+		&& Number.isSafeInteger(value.titleUpdatedAtMs)
+		&& value.titleUpdatedAtMs >= 0
+		&& typeof value.catalogRevision === "number"
+		&& Number.isSafeInteger(value.catalogRevision)
+		&& value.catalogRevision >= 0;
+}
+
+function isSessionCatalogResult(value: unknown): value is SessionCatalogResult {
+	return isRecord(value)
+		&& value.kind === "catalog"
+		&& typeof value.revision === "number"
+		&& Number.isSafeInteger(value.revision)
+		&& Array.isArray(value.items);
 }
 
 function isRecordArray(value: unknown): value is readonly Record<string, unknown>[] {

@@ -36,7 +36,7 @@ import {
 	type ControlCommand,
 } from "./control-commands.ts";
 import { openSessionDatabase } from "../storage/session-store/database.ts";
-import { checkStoreCompatibility, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
+import { checkStoreCompatibility, migrateSessionStoreV1ToV2, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
 import { installSessionStoreSchema } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
 import { OwnerStore } from "../storage/session-store/owner-store.ts";
@@ -155,7 +155,17 @@ export async function main(argv: readonly string[]): Promise<void> {
       return;
     }
   }
-  const compatibility = checkStoreCompatibility(db);
+  let compatibility = checkStoreCompatibility(db);
+  if (compatibility.ok && compatibility.header.storeVersion === 1) {
+    const migration = migrateSessionStoreV1ToV2(db);
+    if (!migration.ok) {
+      db.close();
+		process.stderr.write(`[runledger] session store legacy -> current migration failed: ${migration.code}: ${migration.detail}\n`);
+      process.exit(2);
+      return;
+    }
+    compatibility = checkStoreCompatibility(db);
+  }
   if (!compatibility.ok) {
     db.close();
     process.stderr.write(`[runledger] ${compatibility.detail}\n`);
