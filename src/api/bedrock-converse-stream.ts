@@ -51,7 +51,7 @@ import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
-import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import {
@@ -96,6 +96,14 @@ export interface BedrockOptions extends StreamOptions {
 	 * Set via AWS_BEARER_TOKEN_BEDROCK env var or pass directly.
 	 * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html */
 	bearerToken?: string;
+}
+
+/** Resolve the Bedrock request proxy with the same provider-scoped precedence as other transports. */
+export function resolveBedrockProxyUrl(
+	model: Model<"bedrock-converse-stream">,
+	env?: ProviderEnv,
+): URL | undefined {
+	return getCachedProviderProxyUrl(model.provider, model.baseUrl, env);
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
@@ -187,7 +195,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				config.credentials = credentials;
 			}
 
-			const proxyUrl = resolveHttpProxyUrlForTarget(model.baseUrl, options.env);
+			const proxyUrl = resolveBedrockProxyUrl(model, options.env);
 			if (proxyUrl) {
 				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
 				// on `http2` module and has no support for http agent.

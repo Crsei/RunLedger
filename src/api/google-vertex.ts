@@ -27,6 +27,8 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
+import { runWithProviderProxyFetch } from "../utils/provider-fetch-context.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
@@ -102,7 +104,11 @@ export const stream: StreamFunction<"google-vertex", GoogleVertexOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await client.models.generateContentStream(params);
+			const proxyTarget = resolveCustomBaseUrl(model.baseUrl) ?? defaultVertexBaseUrl(resolveLocation(options));
+			const proxyUrl = getCachedProviderProxyUrl(model.provider, proxyTarget, options?.env);
+			const googleStream = proxyUrl
+				? await runWithProviderProxyFetch(proxyTarget, proxyUrl, () => client.models.generateContentStream(params))
+				: await client.models.generateContentStream(params);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;
@@ -390,6 +396,12 @@ function resolveCustomBaseUrl(baseUrl: string): string | undefined {
 		return undefined;
 	}
 	return trimmed;
+}
+
+function defaultVertexBaseUrl(location: string): string {
+	if (location === "global") return "https://aiplatform.googleapis.com";
+	if (location === "us" || location === "eu") return `https://aiplatform.${location}.rep.googleapis.com`;
+	return `https://${location}-aiplatform.googleapis.com`;
 }
 
 function baseUrlIncludesApiVersion(baseUrl: string): boolean {

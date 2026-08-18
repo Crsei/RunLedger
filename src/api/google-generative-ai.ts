@@ -23,6 +23,8 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
+import { runWithProviderProxyFetch } from "../utils/provider-fetch-context.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import type { GoogleThinkingLevel } from "./google-shared.ts";
 import {
@@ -84,7 +86,11 @@ export const stream: StreamFunction<"google-generative-ai", GoogleOptions> = (
 			if (nextParams !== undefined) {
 				params = nextParams as GenerateContentParameters;
 			}
-			const googleStream = await client.models.generateContentStream(params);
+			const proxyTarget = model.baseUrl ?? "https://generativelanguage.googleapis.com";
+			const proxyUrl = getCachedProviderProxyUrl(model.provider, proxyTarget, options?.env);
+			const googleStream = proxyUrl
+				? await runWithProviderProxyFetch(proxyTarget, proxyUrl, () => client.models.generateContentStream(params))
+				: await client.models.generateContentStream(params);
 
 			stream.push({ type: "start", partial: output });
 			let currentBlock: TextContent | ThinkingContent | null = null;

@@ -46,7 +46,7 @@ import { formatProviderError, normalizeProviderError } from "../utils/error-body
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { fetchWithProviderProxy } from "../utils/fetch-provider-proxy.ts";
 import { headersToRecord } from "../utils/headers.ts";
-import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
 import { uuidv7 } from "../utils/uuid.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -889,9 +889,22 @@ type WebSocketConstructor = new (
 	protocols?: string | string[] | { headers?: Record<string, string> },
 ) => WebSocketLike;
 
-let _cachedWebsocket: WebSocketConstructor | null = null;
-async function getWebSocketConstructor(env?: ProviderEnv): Promise<WebSocketConstructor | null> {
-	if (!env && _cachedWebsocket) return _cachedWebsocket;
+const cachedWebsockets = new Map<string, WebSocketConstructor>();
+
+export function resolveCodexWebSocketProxyUrl(
+	providerId: string,
+	url: string,
+	env?: ProviderEnv,
+): URL | undefined {
+	const httpTarget = url.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+	return getCachedProviderProxyUrl(providerId, httpTarget, env);
+}
+
+async function getWebSocketConstructor(providerId: string, env?: ProviderEnv): Promise<WebSocketConstructor | null> {
+	if (!env) {
+		const cached = cachedWebsockets.get(providerId);
+		if (cached) return cached;
+	}
 
 	// bun doesn't respect http proxy envs, ref: https://github.com/oven-sh/bun/issues/15489
 	// TODO: remove this when bun supports proxy envs in websocket.
@@ -905,15 +918,12 @@ async function getWebSocketConstructor(env?: ProviderEnv): Promise<WebSocketCons
 					_opts = { ...options };
 				}
 
-				const proxyUrl = resolveHttpProxyUrlForTarget(
-					url.toString().replace(/^wss:/, "https:").replace(/^ws:/, "http:"),
-					env,
-				);
+				const proxyUrl = resolveCodexWebSocketProxyUrl(providerId, url.toString(), env);
 				super(url, { ..._opts, ...(proxyUrl ? { proxy: proxyUrl.toString() } : {}) } as any);
 			}
 		};
 		if (!env) {
-			_cachedWebsocket = WebSocketWithProxy;
+			cachedWebsockets.set(providerId, WebSocketWithProxy);
 		}
 		return WebSocketWithProxy;
 	}
@@ -970,13 +980,14 @@ function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocke
 }
 
 async function connectWebSocket(
+	providerId: string,
 	url: string,
 	headers: Headers,
 	signal?: AbortSignal,
 	connectTimeoutMs = DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS,
 	env?: ProviderEnv,
 ): Promise<WebSocketLike> {
-	const WebSocketCtor = await getWebSocketConstructor(env);
+	const WebSocketCtor = await getWebSocketConstructor(providerId, env);
 	if (!WebSocketCtor) {
 		throw new Error("WebSocket transport is not available in this runtime");
 	}
@@ -1048,6 +1059,7 @@ async function connectWebSocket(
 }
 
 async function acquireWebSocket(
+	providerId: string,
 	url: string,
 	headers: Headers,
 	sessionId: string | undefined,
@@ -1061,7 +1073,7 @@ async function acquireWebSocket(
 	release: (options?: { keep?: boolean }) => void;
 }> {
 	if (!sessionId) {
-		const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
+		const socket = await connectWebSocket(providerId, url, headers, signal, connectTimeoutMs, env);
 		return {
 			socket,
 			reused: false,
@@ -1096,7 +1108,7 @@ async function acquireWebSocket(
 			};
 		}
 		if (cached.busy) {
-			const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
+			const socket = await connectWebSocket(providerId, url, headers, signal, connectTimeoutMs, env);
 			return {
 				socket,
 				reused: false,
@@ -1111,7 +1123,7 @@ async function acquireWebSocket(
 		}
 	}
 
-	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
+	const socket = await connectWebSocket(providerId, url, headers, signal, connectTimeoutMs, env);
 	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now() };
 	websocketSessionCache.set(sessionId, entry);
 	return {
@@ -1392,6 +1404,7 @@ async function processWebSocketStream(
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
 	const { socket, entry, reused, release } = await acquireWebSocket(
+		model.provider,
 		url,
 		headers,
 		options?.sessionId,

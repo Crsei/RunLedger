@@ -14,6 +14,13 @@ export interface BunProxyAgent {
 export type NodeProxyAgent = HttpProxyAgent<string> | HttpsProxyAgent<string>;
 export type ProxyAgent = NodeProxyAgent | BunProxyAgent;
 
+export interface ProxyFetchOptions {
+	/** Use the direct node-fetch bridge even when global fetch is test-wrapped or routed. */
+	readonly forceNodeFetch?: boolean;
+	/** Use this already-captured fetch implementation instead of looking up global fetch later. */
+	readonly baseFetch?: typeof globalThis.fetch;
+}
+
 type NodeFetchFunction = (
 	input: string | URL | NodeFetchRequest,
 	init?: NodeFetchRequestInit,
@@ -114,12 +121,17 @@ async function buildNodeFetchArguments(
  * 为支持自定义 fetch 的 SDK 创建 provider-scoped fetch。
  * 没有该适配器时不能把 Node http.Agent 直接塞进 undici fetch。
  */
-export function createProxyFetchForUrl(targetUrl: string | URL, proxyUrl: string | URL): typeof globalThis.fetch {
+export function createProxyFetchForUrl(
+	targetUrl: string | URL,
+	proxyUrl: string | URL,
+	options: ProxyFetchOptions = {},
+): typeof globalThis.fetch {
 	const agent = createProxyAgentForUrl(targetUrl, proxyUrl);
+	const baseFetch = options.baseFetch ?? globalThis.fetch;
 
 	if (isBunProxyAgent(agent)) {
 		return (input, init) =>
-			globalThis.fetch(input, {
+			baseFetch(input, {
 				...init,
 				proxy: agent.proxy,
 			} as RequestInit & { proxy: string });
@@ -127,9 +139,9 @@ export function createProxyFetchForUrl(targetUrl: string | URL, proxyUrl: string
 
 	// SDK consumers and tests may deliberately replace global fetch. Preserve that
 	// transport while still exposing the Node agent extension it can understand.
-	if (hasCustomFetchImplementation()) {
+	if (!options.forceNodeFetch && hasCustomFetchImplementation()) {
 		return (input, init) =>
-			globalThis.fetch(input, {
+			baseFetch(input, {
 				...init,
 				agent,
 			} as RequestInit & { agent: NodeProxyAgent });
