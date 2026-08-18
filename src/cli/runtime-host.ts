@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { AuthStorage } from "../storage/auth-storage.ts";
+import { registerConfiguredProxyProvidersFromHome } from "../providers/configured-proxy.ts";
 import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../storage/settings-manager.ts";
 import { builtinModels } from "../providers/all.ts";
@@ -93,6 +94,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const recording = resolveRecordingConfig(settings);
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
+	await registerConfiguredProxyProvidersFromHome(models, layout.home);
 	await models.refresh({ allowNetwork: false });
 	const modelCompatibility = await loadCanonicalModelCompatibilityRouter(layout);
 	const modelPrincipalId = createRuntimeId("principal", `host-model-${scope.workspaceStorageKey.slice(3, 67)}`);

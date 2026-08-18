@@ -17,6 +17,7 @@
 
 import { readFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { registerConfiguredProxyProvidersFromHome } from "../providers/configured-proxy.ts";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
@@ -214,6 +215,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   };
 
   const models = builtinModels({ credentials: AuthStorage.create(layout) });
+  await registerConfiguredProxyProvidersFromHome(models, layout.home);
   await models.refresh({ allowNetwork: false });
   const modelRequestRouters = await createCliSessionModelRequestRouterFactory({ layout, authorityId, tenantId });
   const worktreeGit = createProductionGitCommandPort();

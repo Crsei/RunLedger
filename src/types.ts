@@ -579,6 +579,8 @@ export interface OpenAIResponsesCompat {
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
+	/** Whether API-key auth is sent as `Authorization: Bearer` instead of `x-api-key`. */
+	authHeader?: boolean;
 	/**
 	 * Whether the provider accepts per-tool `eager_input_streaming`.
 	 * When false, the Anthropic provider omits `tools[].eager_input_streaming`

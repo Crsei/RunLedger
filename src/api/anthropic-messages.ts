@@ -181,6 +181,7 @@ function getAnthropicCompat(
 		supportsTemperature: model.compat?.supportsTemperature ?? true,
 		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 		supportsToolReferences: model.compat?.supportsToolReferences ?? defaultSupportsToolReferences(model),
+		authHeader: model.compat?.authHeader ?? false,
 	};
 }
 
@@ -914,9 +915,10 @@ function createClient(
 		model.headers,
 		optionsHeaders,
 	);
+	const useAuthHeader = model.compat?.authHeader === true;
 	const client = new Anthropic({
-		apiKey: apiKey ?? null,
-		authToken: null,
+		apiKey: useAuthHeader ? null : (apiKey ?? null),
+		authToken: useAuthHeader ? (apiKey ?? null) : null,
 		baseURL: model.baseUrl,
 		...(proxyFetch ? { fetch: proxyFetch } : {}),
 		dangerouslyAllowBrowser: true,
