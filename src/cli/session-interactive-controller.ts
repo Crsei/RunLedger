@@ -400,6 +400,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			this.ackCursor();
 			return;
 		}
+		this.applyCanonicalMessageEvent(event);
 		this.inFlightValue = event.type !== "agent_end";
 		if (event.type === "agent_end") {
 			for (const resolve of this.idleWaiters.splice(0)) resolve();
@@ -419,6 +420,20 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			}
 		}
 		this.ackCursor();
+	}
+
+	/**
+	 * Live event 是 snapshot 之后的 canonical message 增量。
+	 * TUI recovery/reseed 读取同一个 projection，不能只把事件转发给 renderer。
+	 */
+	private applyCanonicalMessageEvent(event: AgentEvent): void {
+		if (event.type === "message_end" && event.message !== undefined) {
+			this.messageState.push(event.message);
+			return;
+		}
+		if (event.type === "tool_execution_end") {
+			this.messageState.push({ role: "toolResult", content: [event.result] });
+		}
 	}
 
 	private ackCursor(): void {

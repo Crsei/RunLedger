@@ -15,6 +15,27 @@ import {
 } from "../../src/cli/session-interactive-controller.ts";
 import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 import type { SessionClientTransport } from "../../src/runtime/session-server/client-transport.ts";
+import type { AssistantMessage } from "../../src/types.ts";
+
+function assistantMessage(output: number): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [],
+		api: "openai-completions",
+		provider: "fixture",
+		model: "fixture-model",
+		stopReason: "stop",
+		usage: {
+			input: 10,
+			output,
+			cacheRead: 20,
+			cacheWrite: 1,
+			totalTokens: 31 + output,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+		},
+	};
+}
 
 function failingTransport(detail: string | undefined): SessionClientTransport {
 	const request = async (_frame: SessionFrameEnvelope): Promise<SessionFrameEnvelope> => ({
@@ -43,6 +64,40 @@ function controller(detail: string | undefined): SessionInteractiveController {
 }
 
 describe("SessionInteractiveController command error surfacing", () => {
+	it("keeps the canonical message projection current after a live assistant event", () => {
+		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
+		const transport = {
+			request: async (): Promise<SessionFrameEnvelope> => ({ frameId: "unused", kind: "command_result", protocolVersion: 3, body: { ok: true } }),
+			onEvent: (listener: (frame: SessionFrameEnvelope) => void): (() => void) => { wireListener = listener; return () => { wireListener = undefined; }; },
+			notify: () => undefined,
+		} as unknown as SessionClientTransport;
+		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
+		const instance = new SessionInteractiveController(handle, {
+			sessionId: "session_fixture",
+			messages: [assistantMessage(5)],
+			warnings: [],
+			auditEntries: [],
+			selection: { thinkingLevel: "off" },
+			toolCount: 0,
+			eventCursor: 0,
+			driverRevision: 0,
+		});
+
+		wireListener?.({
+			frameId: "assistant-event",
+			kind: "subscription_event",
+			protocolVersion: 3,
+			body: {
+				sequence: 1,
+				eventType: "agent.event",
+				payload: { type: "message_end", timestamp: 200, role: "assistant", stopReason: "stop", message: assistantMessage(7) },
+			},
+		});
+
+		expect(instance.messages).toHaveLength(2);
+		expect((instance.messages[1] as AssistantMessage).usage?.output).toBe(7);
+	});
+
 	it("buffers snapshot-to-listener run events and deduplicates replayed completion", async () => {
 		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
 		const endFrame: SessionFrameEnvelope = {
