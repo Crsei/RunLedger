@@ -154,6 +154,12 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 - 关键机制：模型数据唯一来源 `scripts/sources/oh-my-pi-provider-models-17.2.15.json`（extract 脚本从冻结快照生成）+ `scripts/ported-provider-catalog.ts` 归一化；动态 provider 只声明进程内 refresh + last-known-good（InMemoryModelsStore），不宣称跨进程恢复；kimi-code device-code OAuth 流在 `src/auth/oauth/kimi-code.ts`（load.ts/bun-oauth.ts 已接线）。
 
 
+#### 1.2.vc 自建正向代理网关（P0–P5，2026-08-19）
+
+`runledger auth-gateway serve` 提供本地 HTTP forward proxy：`/v1/chat/completions`、`/v1/messages`、`/v1/responses`、`/messages` 与 `/v1/pi/stream` 都先经过模型解析、`Models.getAuth()` 和 `Models.streamSimple()`，再以对应 SSE wire 编码返回；不提供 raw upstream passthrough。`/healthz` 是唯一免 bearer 的 liveness 路由，其余路由使用用户级 `<RUNLEDGER_DIR>/auth-gateway.token`（默认 `0600`）；`--no-auth` 仅允许 loopback bind。`token`、`status`、`check` 命令复用同一用户级 layout，生产测试使用隔离 `RUNLEDGER_DIR`。
+
+网关默认 idle timeout 为 255 秒、请求体上限为 4 MiB；客户端断开或 gateway 关闭会 abort 在途 provider stream，凭证 OAuth 刷新仍由现有 `CredentialStore.modify()` 的跨进程锁语义负责。四类 wire 的错误体、模型解析和 SSE terminal event 由 `src/auth-gateway/codecs/` 与 `src/auth-gateway/server.ts` 统一处理。真实 HTTP smoke 使用本地双 wire fixture；未宣称真实外部 provider 凭据或 auth-broker 能力。状态入口为 `development-doc/plan/11-forward-proxy-gateway-plan.md`。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;

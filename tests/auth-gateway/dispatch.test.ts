@@ -222,4 +222,68 @@ describe("auth-gateway model dispatch", () => {
 		])).resolves.toBeUndefined();
 		expect(observedSignal?.aborted).toBe(true);
 	});
+
+	test("aborts an in-flight provider stream when the gateway closes", async () => {
+		let observedSignal: AbortSignal | undefined;
+		let released: (() => void) | undefined;
+		const providerReleased = new Promise<void>((resolve) => { released = resolve; });
+		const server = await open(fixtureModels({
+			credential: "upstream-secret",
+			streamSimple: (model, _context, streamOptions) => {
+				observedSignal = streamOptions?.signal;
+				const stream = createAssistantMessageEventStream();
+				stream.push({ type: "start", partial: assistant(model) });
+				streamOptions?.signal?.addEventListener("abort", () => {
+					released?.();
+					stream.push({ type: "error", reason: "aborted", error: { ...assistant(model), stopReason: "aborted", errorMessage: "Request aborted" } });
+				}, { once: true });
+				return stream;
+			},
+		}));
+		const response = await post(server, "/v1/chat/completions", { model: "fixture-model", messages: [{ role: "user", content: "ping" }] });
+		expect(response.status).toBe(200);
+
+		const closing = server.close();
+		try {
+			await expect(Promise.race([
+				providerReleased,
+				new Promise<never>((_, reject) => setTimeout(() => reject(new Error("gateway close did not abort the provider")), 1_000)),
+			])).resolves.toBeUndefined();
+			await response.body?.cancel();
+			await closing;
+		} finally {
+			await response.body?.cancel();
+			await closing;
+		}
+		expect(observedSignal?.aborted).toBe(true);
+	});
+
+	test("keeps a long-thinking stream alive while SSE activity stays below the idle timeout", async () => {
+		const server = await startAuthGatewayServer({
+			bindHost: "127.0.0.1",
+			port: 0,
+			token: "gateway-secret",
+			idleTimeoutMs: 80,
+			models: fixtureModels({
+				credential: "upstream-secret",
+				streamSimple: (model) => {
+					const stream = createAssistantMessageEventStream();
+					const partial = assistant(model);
+					stream.push({ type: "start", partial });
+					setTimeout(() => stream.push({ type: "thinking_start", contentIndex: 0, partial }), 20);
+					setTimeout(() => stream.push({ type: "thinking_delta", contentIndex: 0, delta: "reasoning", partial }), 45);
+					setTimeout(() => stream.push({ type: "thinking_end", contentIndex: 0, content: "reasoning", partial }), 70);
+					setTimeout(() => stream.push({ type: "done", reason: "stop", message: partial }), 110);
+					return stream;
+				},
+			}),
+		});
+		openServers.push(server);
+		const response = await post(server, "/v1/chat/completions", { model: "fixture-model", messages: [{ role: "user", content: "think" }] });
+
+		const text = await response.text();
+		expect(response.status, text).toBe(200);
+		expect(text).toContain("reasoning");
+		expect(text).toContain("data: [DONE]");
+	});
 });

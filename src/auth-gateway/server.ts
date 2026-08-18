@@ -278,6 +278,7 @@ async function dispatchGatewayRequest(
 	res: ServerResponse,
 	models: Models,
 	wire: GatewayWire,
+	activeRequests: Set<AbortController>,
 ): Promise<void> {
 	const codec = CODECS[wire];
 	let decoded: GatewayRequest;
@@ -308,6 +309,7 @@ async function dispatchGatewayRequest(
 	}
 
 	const controller = new AbortController();
+	activeRequests.add(controller);
 	const detachAbort = attachAbortSignal(req, res, controller);
 	let stream: AsyncIterable<AssistantMessageEvent>;
 	try {
@@ -318,6 +320,7 @@ async function dispatchGatewayRequest(
 		);
 	} catch (error) {
 		detachAbort();
+		activeRequests.delete(controller);
 		writeWireError(res, wire, errorStatus(error), redactSecrets(errorMessage(error), secrets), errorCode(error));
 		return;
 	}
@@ -349,11 +352,13 @@ async function dispatchGatewayRequest(
 		else if (!res.writableEnded && !res.destroyed) res.end();
 	} finally {
 		detachAbort();
+		activeRequests.delete(controller);
 	}
 }
 
 function createRequestHandler(
 	options: Required<Pick<AuthGatewayServerOptions, "noAuth">> & Pick<AuthGatewayServerOptions, "token" | "models">,
+	activeRequests: Set<AbortController>,
 ): (req: IncomingMessage, res: ServerResponse) => void {
 	return (req, res) => {
 		const path = requestPath(req);
@@ -397,7 +402,7 @@ function createRequestHandler(
 				writeNotImplemented(res);
 				return;
 			}
-			void dispatchGatewayRequest(req, res, options.models, wire).catch((error: unknown) => {
+			void dispatchGatewayRequest(req, res, options.models, wire, activeRequests).catch((error: unknown) => {
 				if (!res.headersSent) writeGatewayFailure(res, wire, error);
 				else if (!res.writableEnded && !res.destroyed) res.end();
 			});
@@ -415,7 +420,8 @@ function createRequestHandler(
 /** Start the authenticated HTTP gateway and its model/provider dispatch. */
 export async function startAuthGatewayServer(options: AuthGatewayServerOptions = {}): Promise<AuthGatewayServerHandle> {
 	const resolved = validateAuthGatewayServerOptions(options);
-	const server = createServer(createRequestHandler(resolved));
+	const activeRequests = new Set<AbortController>();
+	const server = createServer(createRequestHandler(resolved, activeRequests));
 	server.timeout = resolved.idleTimeoutMs;
 	server.requestTimeout = 0;
 	server.headersTimeout = Math.max(resolved.idleTimeoutMs + 5_000, 60_000);
@@ -436,7 +442,7 @@ export async function startAuthGatewayServer(options: AuthGatewayServerOptions =
 
 	const address = server.address();
 	if (address === null || typeof address === "string") {
-		await closeServer(server);
+		await closeServer(server, activeRequests);
 		throw new Error("Auth gateway did not expose a TCP address");
 	}
 
@@ -444,11 +450,12 @@ export async function startAuthGatewayServer(options: AuthGatewayServerOptions =
 		server,
 		bindHost: resolved.bindHost,
 		port: address.port,
-		close: () => closeServer(server),
+		close: () => closeServer(server, activeRequests),
 	};
 }
 
-function closeServer(server: Server): Promise<void> {
+function closeServer(server: Server, activeRequests: Set<AbortController>): Promise<void> {
+	for (const controller of activeRequests) controller.abort(new Error("Auth gateway is shutting down"));
 	if (!server.listening) return Promise.resolve();
 	return new Promise<void>((resolve, reject) => {
 		server.close((error) => (error ? reject(error) : resolve()));

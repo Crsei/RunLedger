@@ -131,6 +131,42 @@ export interface AuthGatewayCliDependencies {
 	readonly writeStdout?: (text: string) => void;
 }
 
+export interface AuthGatewayProviderCheck {
+	readonly providerId: string;
+	readonly modelId?: string;
+	readonly ok: boolean;
+	readonly error?: string;
+}
+
+/** Probe one inexpensive text completion for every configured provider without exposing credentials. */
+export async function checkConfiguredGatewayProviders(models: Models): Promise<readonly AuthGatewayProviderCheck[]> {
+	const results = await Promise.all(models.getProviders().map(async (provider): Promise<AuthGatewayProviderCheck | undefined> => {
+		let configured: Awaited<ReturnType<Models["checkAuth"]>>;
+		try {
+			configured = await models.checkAuth(provider.id);
+		} catch {
+			return { providerId: provider.id, ok: false, error: "credential check failed" };
+		}
+		if (configured === undefined) return undefined;
+
+		try {
+			const model = (await models.getAvailable(provider.id))[0];
+			if (model === undefined) return { providerId: provider.id, ok: false, error: "no available model" };
+			const message = await models.completeSimple(model, {
+				messages: [{ role: "user", content: "Reply with OK.", timestamp: Date.now() }],
+			});
+			return {
+				providerId: provider.id,
+				modelId: model.id,
+				ok: message.stopReason !== "error" && message.stopReason !== "aborted",
+			};
+		} catch {
+			return { providerId: provider.id, ok: false, error: "upstream check failed" };
+		}
+	}));
+	return results.filter((result): result is AuthGatewayProviderCheck => result !== undefined);
+}
+
 function output(value: unknown, json: boolean, writeStdout: (text: string) => void): void {
 	writeStdout(json ? `${JSON.stringify(value)}\n` : `${typeof value === "string" ? value : JSON.stringify(value, null, 2)}\n`);
 }
@@ -175,8 +211,14 @@ export async function runAuthGatewayCommand(argv: readonly string[], dependencie
 
 	if (parsed.command.action === "status" || parsed.command.action === "check") {
 		const token = await tokenFileStatus(tokenPath);
+		if (parsed.command.action === "check" && parsed.command.strict) {
+			const models = dependencies.models ?? await createGatewayModels(home);
+			const providers = await checkConfiguredGatewayProviders(models);
+			output({ ok: token.configured && providers.length > 0 && providers.every((provider) => provider.ok), strict: true, token, providers }, parsed.command.json, writeStdout);
+			return;
+		}
 		const result = parsed.command.action === "check"
-			? { ok: token.configured, strict: parsed.command.strict, token }
+			? { ok: token.configured, strict: false, token }
 			: { ok: true, token };
 		output(result, parsed.command.json, writeStdout);
 		return;
