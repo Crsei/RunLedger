@@ -1,0 +1,100 @@
+首次使用先执行 npm install；运行时要求 Node.js >= 22.19.0 与 Bun >= 1.3.0。
+改动代码后先执行 npm run check，再执行 npm test；CLI/TUI 改动还要执行 npm run build。
+npm test 会同时运行 Vitest 与 Bun OpenTUI 测试，测试失败时不要把历史通过记录当作当前证据。
+npm run demo 会展示模型 catalog、无密钥 mock Agent loop，以及在凭据可用时的真实 provider demo。
+npm run demo:tui 可用 mock stream 启动独立 TUI 示例，不需要远程模型密钥。
+npx tsx examples/m3-demo.ts 可演示 Task、TodoWrite、MultiEdit、ledger high-water mark 与 lockfile。
+npm run generate-models 会重新生成 provider 模型 catalog；修改 provider 或模型数据后必须重新执行它。
+npm run build 会生成 dist 与 Host build manifest；全局 runledger 只加载编译产物，不直接加载 src。
+npm link 后可用 runledger --version 检查全局链接；链接异常时先确认 npm link 指向当前仓库。
+测试或演示请使用预创建的隔离 RUNLEDGER_DIR，避免读写真实用户的 ~/.runledger。
+runledger --help 查看 CLI 旗标与 control command；runledger --version 查看当前版本。
+直接运行 runledger 会在当前工作区创建或打开一个新的 canonical Session，并进入 TUI。
+无凭据启动时可使用 /provider 选择 provider，或使用 /login 进入 API key/OAuth onboarding。
+也可在启动前设置对应的 <PROVIDER>_API_KEY；凭据由 canonical auth.json 管理，应用不会把 token 放进提示文本。
+runledger --provider <provider-id> --model <model-id> 可覆盖当前 Session 的 provider 与 model。
+runledger -m <model-id> 是 --model 的短参数；runledger --thinking <level> 可设置 off、minimal、low、medium、high、xhigh 或 max。
+runledger -c 或 runledger --continue 会继续 canonical user home 中最近的 Session。
+runledger -r 或 runledger --resume 会打开历史 Session 选择器；也可在 TUI 中输入 /resume。
+runledger --session-id <session-id> 按精确 canonical Session ID 打开会话。
+runledger --fork <session-id> 从 canonical Session 的 durable head 创建新会话。
+--session <path> 不再直接读取旧 JSONL 路径；旧路径必须先通过显式 migration 导入。
+RUNLEDGER_DIR 必须是既有的绝对目录；未设置时使用用户主目录下的 ~/.runledger。
+RUNLEDGER_SESSION_DIR 与 --session-dir 被明确拒绝，不能绕过 canonical Session root。
+用户级 settings.json 可配置 provider、model、thinkingLevel、theme、autoTitle、recap、skills 与 multiAgent；workspace settings 只能按策略收窄。
+本地 trace 默认关闭；在用户级 settings.json 中设置 recording.mode 为 off、events 或 events_and_artifacts，并设置 failurePolicy 为 best_effort 或 fail_closed。
+recording=events 只记录受治理的事件与正文 digest/size/media type；events_and_artifacts 才会在安全清洗后保存 Artifact 正文。
+Trace 事件写入用户 home 的 events/YYYY/MM/DD，Artifact 以 SHA-256 CAS 写入 artifacts 与 artifact-metadata；当前没有 Opik 网络 exporter。
+--permission-profile、--approval-policy、--bash-analyzer、--sandbox、--network 与 --network-host 用于为当前 CLI 请求覆盖安全策略。
+approval-policy 支持 on-request、never、untrusted、granular；granular 会启用更细粒度的权限与反向请求审查。
+bash-analyzer 支持 legacy、shadow、ast；sandbox profile 支持 off、read-only、workspace-write、strict、external。
+network 支持 deny、allow、allowlist、review；allowlist 或 review 需要重复提供 --network-host。
+--worktree [label] 可为 Session 创建或复用受治理 worktree，--worktree-ref 与 --worktree-branch 可指定基线和分支。
+--no-worktree 明确禁用新建 worktree，但不能绕过已经持久化的 Session worktree binding。
+--experimental-multi-agent 只是打开运行时 gate，仍需要 user/workspace settings；默认是关闭的。
+有界 multi-agent 当前仅支持 root-owned、sequential、depth=1 的受治理只读 child；不提供 child 写入、并行 DAG 或 child 冷恢复。
+runledger workspace capability 只读展示当前平台 path、Git、process、cleanup 的真实证据，不等于 OS sandbox 承诺。
+--debug 或 RUNLEDGER_DEBUG=1 会开启 stderr 调试日志；日志中仍不得放入 API key、OAuth token 或完整私密路径。
+在编辑器中按 Enter 发送当前草稿；turn 运行期间再次发送会排入 follow-up，不会强行打断当前 turn。
+按 Alt+Enter 可在不打断当前 turn 的情况下显式排队 follow-up；按 Alt+Up 可把队列恢复回编辑器。
+运行中按 Ctrl+C 会中断当前 turn 并恢复尚未执行的队列；空闲且有草稿时 Ctrl+C 只清空草稿。
+空闲且编辑器为空时 Ctrl+C 会请求退出；Ctrl+D 也会在空闲空编辑器时安全退出。
+/quit 与 /exit 是 TUI 退出命令；退出前会等待当前运行收口并释放本地 attachment。
+Ctrl+L 清空当前 TUI 的对话展示视图，不删除 canonical Session 的持久账本。
+Ctrl+U 清空编辑器；Shift+Enter 或 Ctrl+J 在编辑器中插入换行。
+Ctrl+T 打开只读 transcript overlay；在其中用 j/k、方向键、PageUp/PageDown、g/G 浏览，Esc 或 Ctrl+T 关闭。
+输入 / 会打开 slash command 补全；Ctrl+P/Ctrl+N 上下移动，Tab 或 / 补全，Enter 接受，Esc 关闭。
+/help 与 /commands 打开当前可用命令列表；未知 slash command 会显示错误而不会提交给模型。
+/clear 清空当前对话的展示状态，适合重新整理视图；它不执行 Session 删除或历史迁移。
+/new 在当前 workspace 创建新 Session；该命令在 turn 运行期间会被拒绝。
+/resume [session-id] 打开 Session 选择器；输入文字可搜索，方向键/PageUp/PageDown/Home/End 可浏览。
+Session 选择器中 Ctrl+E 展开完整元数据，Ctrl+O 切换紧凑/舒适密度，Ctrl+F 切换当前 workspace/全部会话过滤。
+Session 选择器中 Ctrl+S 在 Updated 与 Created 排序之间切换；Enter 确认，Esc 返回。
+/fork 从当前 durable head 派生 Session；/rename <title> 保存当前 Session 的显示标题。
+/provider 打开 provider 选择器；选择结果写入当前 Session 的权威配置并影响后续模型请求。
+/login [provider-id] 启动指定 provider 的认证流程；/logout [provider-id] 删除对应 provider 的持久凭据。
+/model 打开模型 catalog 选择器；启动参数 --model 的优先级高于 settings.model。
+/thinking 打开 thinking level 选择器；当前值会显示在 Session 状态与后续请求配置中。
+/theme 打开语法主题选择器；方向键预览，Enter 保存，Esc 恢复原主题。
+/scrollbar 切换 transcript scrollbar；若偏好存储不可用，当前运行仍生效但不会持久化。
+/recovery 可查看恢复状态；使用 /recovery assess、/recovery verify <attempt-id> 或 /recovery resume <reason> 处理 recovery_required。
+/processes 打开 managed process 列表；列表中 Enter 或 d 查看详情，t 直接进入终端，Esc 关闭。
+/terminal <execution-id> 打开指定 managed process 的终端；详情中 t/Enter 进入终端，o 刷新输出。
+managed terminal 中输入会发送 stdin，Enter 发送换行；Ctrl+S 请求停止进程，Ctrl+R 请求按当前窗口调整 PTY 大小。
+/mcp 查看当前 MCP server；Enter 查看工具与诊断，r 重启选中 server，Esc 返回。
+/plugins、/skills、/hooks 打开扩展 toggle 视图；Space/Enter 切换启用状态，插件与 hook 可用 t 处理信任，插件可用 r reload。
+/skillsproviders 查看已配置的 Skill discovery provider 状态、候选数、激活数与失败数。
+/plan 查看当前 Plan Mode 状态与审批信息；Plan 的写入、激活、批准与取消也可通过 headless control command 执行。
+/compact 查看 compaction checkpoints；实际 compact run 需要受治理的 source range 与 transcript 输入。
+/memory 查看当前 memory store；/remember <text> 提交一条 workspace memory proposal，是否生效由批准流程决定。
+/prompt 打开 prompt template 选择器；模板来源依赖当前配置，未配置模板时不会凭空生成模板。
+配置、认证、Session 切换、recovery 与 memory mutation 命令只在当前 turn 空闲或 Host/domain 状态允许时执行。
+出现 permission 或 approval 反向请求时，选择器中的允许/拒绝结果会回到同一 Session 审计链；拒绝与 Ctrl+C 使用同一中断路径。
+runledger security inspect 只读查看当前生效的安全配置、权限与 capability 证据。
+runledger worktree list|inspect|create|resume|release confirm 管理受治理 worktree；release 必须显式提供 confirm。
+runledger plugin list|inspect|reload|enable|disable|trust|untrust <plugin-id> 管理插件发现、启用和信任状态。
+runledger skill list|provider list|provider enable|disable <provider-id> --scope=user|workspace|trust|untrust <skill-id> 管理 Skill 与 discovery provider。
+runledger hook list 查看当前 Hook；runledger mcp list|inspect|doctor|restart [server-id] 管理 MCP 连接诊断与重启。
+runledger plan inspect|enter|activate|write|approve <approval-id>|cancel 管理 Plan Mode 的生命周期与审批。
+runledger compact list|run '<source-range-json>' '<transcript>' 查询或执行受治理的上下文压缩。
+runledger context inspect 查看上下文状态；runledger context assemble '<request-json>' '<sources-json>' 组装受治理模型上下文。
+runledger memory search|get|projection|approve|reject|revoke 与 runledger remember <text> 管理可审计 memory proposal、projection 与撤销。
+control command 由已认证 resident Session Runtime 执行；mutation 会先读取 domain revision，过期 revision 会 fail closed。
+runledger migrate --source <path> --confirm-delete 会把旧 settings/auth/AGENTS/session source 迁移到 canonical home，并删除已验证 source manifest 对应内容。
+migrate 不提供 --dry-run、--read-only 或 --fallback；执行前必须确认 source 范围，迁移失败时不要手工删除 source。
+runledger migrate session-store --confirm-archive 将现行 JSONL Session 导入 state.db 并归档 source；归档本身不会物理删除 source。
+确认归档可恢复且不再需要后，才使用 runledger storage prune-legacy --manifest=<digest> --confirm-delete 物理删除指定归档。
+生产标准工具集由受治理 ExecutionEnv 提供 read、write、edit、bash、grep、find、glob、ls 等文件与命令能力。
+标准工具集另外提供 MultiEdit、WebFetch、Skill、NotebookEdit 与 echo；WebFetch、Skill 和后台进程能力仍受 Host policy 与 capability gate 控制。
+createExtendedTools 会在标准工具集上加入 TodoWrite；Task、TaskUpdate、TaskList 通过 LedgerSink 注入并把任务状态追加到 ledger。
+createStdlibAgent({ systemPrompt, cwd, model, streamFn, tools, ledger }) 可在几行代码内组装 Agent；未提供 model/streamFn 时使用 mock 默认值。
+runAgentLoop 与 Agent 支持 reasoning、toolCalls、steering、follow-up、interrupt、waitForIdle 与完整 agent/tool 事件。
+mockStreamFn 用于无密钥测试，按 toolResult 数量运行 phase 0/1/2；stdlibStreamFn 只是 mockStreamFn 的便利别名，不是新的协议。
+MemoryLedger 适合测试；JsonlLedger 提供 append-only 文件账本；多进程写入 JsonlLedger 前使用 acquireLedgerLock 并在 finally 中 release。
+read、write、edit、MultiEdit、bash、grep、find、glob、ls 的路径与命令最终由 Security/ExecutionGateway 约束，生产路径不回退到 raw I/O。
+NotebookEdit 当前是明确的 not-implemented 占位；Skill 没有注入 loader 时会返回可诊断的不可用结果。
+工作区放置 lsp.json 或 .lsp.json 可触发受治理的 LSP 配置加载；配置仍需通过 root marker、可执行文件与权限检查。
+MCP、Plugin、Skill、Hook 的发现与启用状态由 Host snapshot 管理；目录存在不代表资源已经获得信任或已经可执行。
+provider 未配置凭据、网络被拒绝、扩展不可用或恢复状态未解决时，生产路径会返回诊断或 fail closed，不自动切换到 mock。
+当前 sandbox profile 是 governed execution policy；runledger workspace capability 的 unverified 结果不能被解释成跨平台 OS 隔离已完成。
+tips.txt 每一行都是独立提示；新增提示请保持单行、短句、可直接操作，并不要写入任何真实凭据或用户私密数据。
