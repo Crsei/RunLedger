@@ -500,7 +500,7 @@ Line 1:  Esc interrupt    Ctrl+S send    Ctrl+L clear    ↑↓ scrollback
 
 ## 9. `LoadedResources`
 
-**角色**:启动时加载的资源条,展示 `@file` 列表、注册的工具数、ledger 路径。
+**角色**:启动时加载的资源条,展示 MCP / Skills / Slash commands / Hooks 计数。
 
 **继承**:`extends Container`。
 
@@ -509,15 +509,11 @@ Line 1:  Esc interrupt    Ctrl+S send    Ctrl+L clear    ↑↓ scrollback
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `theme` | `Theme` | |
-| `files` | `string[]` | @file 列表 |
-| `toolCount` | `number` | Agent.tools.length |
-| `ledgerPath` | `string \| undefined` | |
 
 **render 契约**:
 
 ```
-Line 0:  ⏵ @file: ./src/runtime/agent.ts, ./README.md  (前 2 个 + "+ N more")
-Line 1:  ⏵ tools: 3   ⏵ ledger: ~/.runledger/agent/abc.jsonl
+Line 0:  ⏵ mcp: 2   ⏵ skills: 1
 ```
 
 无内容时不渲染任何行(`render` 返回 `[]`)。

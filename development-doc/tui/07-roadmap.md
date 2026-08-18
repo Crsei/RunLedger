@@ -122,7 +122,7 @@ StatusIndicator 在 working/error/idle 三态可显,LoadedResources 启动信息
 ### 验证
 - 看到工作状态 spinner;
 - 工具失败 → status 切 error 1 秒后清;
-- 启动时 LoadedResources 显示工具数与 ledger 路径。
+- 启动时 LoadedResources 显示资源类计数(MCP / Skills / Hooks / Slash)。
 
 ### 风险
 - Loader 在 startContainer 为空时不渲染:确保至少留一空行避免布局抖动。

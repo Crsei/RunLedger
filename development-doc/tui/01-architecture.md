@@ -33,7 +33,7 @@ RunLedger 把左侧 (框架) 换成 npm 依赖,只自研右侧 (业务)。同时
 ```
 TUI (来自 pi-tui)
 ├── headerContainer            KeybindingHints         顶部键位提示/logo
-├── loadedResourcesContainer   LoadedResources        启动资源条(@file、工具数)
+├── loadedResourcesContainer   LoadedResources        启动资源条(MCP / Skills / Hooks / Slash 计数)
 ├── chatContainer              Container               对话流(顺序追加)
 │   ├── UserMessage / AssistantMessage / ToolExecution
 │   └── PendingMessages(已入队未发送)

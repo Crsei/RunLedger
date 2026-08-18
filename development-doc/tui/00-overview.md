@@ -47,7 +47,7 @@ src/
       status-indicator.ts       Working / Idle / Error / Compaction 状态指示器
       footer.ts                 pwd / model / tokens / context% / thinking 模式
       keybinding-hints.ts       顶部 logo + 键位提示条
-      loaded-resources.ts       启动资源条(@file / 工具声明计数)
+      loaded-resources.ts       启动资源条(MCP / Skills / Hooks / Slash 计数)
       pending-messages.ts       已排队未发送的 follow-up 消息
     selectors/
       ledger-session-selector.ts   选择历史 ledger session

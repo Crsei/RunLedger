@@ -400,11 +400,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** 装配组件树并返回引用;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
   private assembleTree(): ContainerRefs {
     const header = new Container();
-    const loadedResources = new LoadedResourcesComponent({
-      activeLedgerSessionId: this.getSessionId(),
-    });
-    // 把已注册工具数填到 loadedResources
-    loadedResources.setResource("tools", this.controller?.toolCount ?? this.agent?.state.tools.length ?? 0);
+    const loadedResources = new LoadedResourcesComponent({});
     const chat = new ChatContainer();
     const status = new StatusComponent({});
     const editorTheme: EditorTheme = makeEditorTheme(this.theme, this.makeSelectListTheme());
