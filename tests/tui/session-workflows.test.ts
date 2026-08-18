@@ -338,4 +338,40 @@ describe("S2 InteractiveMode session workflows", () => {
 			await running;
 		}
 	});
+
+	it("keeps idle recap status out of the transcript body", async () => {
+		const controller = new ContractController();
+		const listeners = new Set<(event: SessionIdleRecapEvent) => void>();
+		let emitRecap!: (event: SessionIdleRecapEvent) => void;
+		Object.assign(controller, {
+			subscribeIdleRecap: (listener: (event: SessionIdleRecapEvent) => void) => {
+				listeners.add(listener);
+				emitRecap = (event) => { for (const current of listeners) current(event); };
+				return () => listeners.delete(listener);
+			},
+		});
+		const terminal = new ContractTerminal(80, 24);
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			emitRecap({
+				sessionId: controller.sessionId,
+				requestId: "recap-footer",
+				ownerGeneration: 1,
+				activityGeneration: 1,
+				text: "目标 🚀 next action",
+			});
+			await vi.waitFor(() => expect(terminal.writes.at(-1) ?? "").toContain("※ recap: 目标 🚀 next action"));
+
+			const frame = terminal.writes.at(-1) ?? "";
+			const editorIndex = frame.indexOf("Message RunLedger");
+			const recapIndex = frame.indexOf("※ recap: 目标 🚀 next action");
+			expect(editorIndex).toBeGreaterThanOrEqual(0);
+			expect(recapIndex).toBeGreaterThan(editorIndex);
+		} finally {
+			mode.quit();
+			await running;
+		}
+	});
 });

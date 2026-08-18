@@ -432,12 +432,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const footer = new Footer({ theme: this.theme, provider: this });
 
     // 组件树结构(对照 02 §1):
-    //   header / loadedResources / chat / status / editor / footer
+    //   header / loadedResources / chat / editor / status / footer
+    // status 放在 editor 后，使 transient recap 进入 footer 分区而不是 transcript body。
     this.ui.addChild(header);
     this.ui.addChild(loadedResources);
     this.ui.addChild(chat);
-    this.ui.addChild(status);
     this.ui.addChild(editor);
+    this.ui.addChild(status);
     this.ui.addChild(footer);
 
     // Editor 拿焦点
