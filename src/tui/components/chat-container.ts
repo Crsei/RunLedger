@@ -23,6 +23,20 @@ import { fitToWidth } from "./render-width.ts";
 import { formatSeparatorLabel } from "../opentui/block-layout.ts";
 import { PartGenerationFence, settled, type PresentationPart } from "../timeline/part-stability.ts";
 
+export interface TimelineProjectionSnapshot {
+  readonly calls: number;
+  readonly wholeTimelineHits: number;
+  readonly settledBlockHits: number;
+  readonly blockProjectionMisses: number;
+}
+
+interface TimelineProjectionCache {
+  readonly generation: number;
+  readonly width: number;
+  readonly themeGeneration: number;
+  readonly blocks: PresentationBlock[];
+}
+
 export class ChatContainer implements Component {
   private readonly children: Array<{ key: string; component: Component }> = [];
   private replacement: { readonly key: string; readonly component: Component } | undefined;
@@ -35,14 +49,20 @@ export class ChatContainer implements Component {
   // B2:Timeline projection 通道（生产路径）；push() 仅保留给组件级测试。
   private timelineBlocks: readonly PresentationBlock[] | undefined;
   private timelineGeneration = -1;
-  private presentCache: { readonly generation: number; readonly width: number; readonly blocks: PresentationBlock[] } | undefined;
+  private presentCache: TimelineProjectionCache | undefined;
+  private reusablePresentCache: TimelineProjectionCache | undefined;
   private timelineThemeGeneration = 0;
   private readonly partGenerationFence = new PartGenerationFence();
+  private timelineProjectionCalls = 0;
+  private wholeTimelineHitCount = 0;
+  private settledBlockHitCount = 0;
+  private blockProjectionMissCount = 0;
 
   invalidate(): void {
     this.presentationCache.clear();
     this.partGenerationFence.reset();
     this.presentCache = undefined;
+    this.reusablePresentCache = undefined;
     this.replacement?.component.invalidate();
     for (const { component } of this.children) {
       component.invalidate();
@@ -54,10 +74,14 @@ export class ChatContainer implements Component {
     if (generation < this.timelineGeneration) {
       this.presentationCache.clear();
       this.partGenerationFence.reset();
+      this.presentCache = undefined;
+      this.reusablePresentCache = undefined;
+    } else {
+      this.reusablePresentCache = this.presentCache;
+      this.presentCache = undefined;
     }
     this.timelineBlocks = blocks;
     this.timelineGeneration = generation;
-    this.presentCache = undefined;
   }
 
   /** 主题只影响派生 presentation，不改变 Timeline 内容 generation。 */
@@ -66,6 +90,7 @@ export class ChatContainer implements Component {
     if (next === this.timelineThemeGeneration) return;
     this.timelineThemeGeneration = next;
     this.presentCache = undefined;
+    this.reusablePresentCache = undefined;
   }
 
   getPresentationCacheSnapshot(): RenderCacheSnapshot {
@@ -74,6 +99,15 @@ export class ChatContainer implements Component {
 
   getTimelineGeneration(): number {
     return this.timelineGeneration;
+  }
+
+  getTimelineProjectionSnapshot(): TimelineProjectionSnapshot {
+    return {
+      calls: this.timelineProjectionCalls,
+      wholeTimelineHits: this.wholeTimelineHitCount,
+      settledBlockHits: this.settledBlockHitCount,
+      blockProjectionMisses: this.blockProjectionMissCount,
+    };
   }
 
   /** 临时工作流（例如 permission）占据 transcript 时隐藏对话，但不破坏 Timeline。 */
@@ -100,6 +134,7 @@ export class ChatContainer implements Component {
     this.presentationCache.clear();
     this.partGenerationFence.reset();
     this.presentCache = undefined;
+    this.reusablePresentCache = undefined;
   }
 
   /** 取最末追加的组件,便于 InteractiveMode 调其 setPartial。 */
@@ -138,13 +173,33 @@ export class ChatContainer implements Component {
       return projected.map((block, index) => ({ ...block, id: `${key}/${block.id ?? `part-${index}`}` }));
     }
     if (this.timelineBlocks !== undefined) {
-      if (this.presentCache?.generation === this.timelineGeneration && this.presentCache.width === width) {
+      this.timelineProjectionCalls += 1;
+      if (this.presentCache?.generation === this.timelineGeneration
+        && this.presentCache.width === width
+        && this.presentCache.themeGeneration === this.timelineThemeGeneration) {
+        this.wholeTimelineHitCount += 1;
         return this.presentCache.blocks;
       }
       // Timeline blocks 是交给 OpenTUI Text/Markdown renderable 的结构化正文；
       // 由原生布局按容器宽度换行，不能在这里把整块内容当成单行截断。
-      const blocks = this.timelineBlocks.map((block): PresentationBlock => this.presentTimelineBlock(block, width));
-      this.presentCache = { generation: this.timelineGeneration, width, blocks };
+      const seed = this.reusablePresentCache;
+      const canReuseSeed = seed?.width === width && seed.themeGeneration === this.timelineThemeGeneration;
+      const blocks = this.timelineBlocks.map((block, index): PresentationBlock => {
+        const previous = canReuseSeed ? seed.blocks[index] : undefined;
+        if (previous !== undefined && canReuseTimelineBlock(block, previous, this.timelineThemeGeneration)) {
+          this.settledBlockHitCount += 1;
+          return previous;
+        }
+        this.blockProjectionMissCount += 1;
+        return this.presentTimelineBlock(block, width);
+      });
+      this.presentCache = {
+        generation: this.timelineGeneration,
+        width,
+        themeGeneration: this.timelineThemeGeneration,
+        blocks,
+      };
+      this.reusablePresentCache = undefined;
       return blocks;
     }
     const blocks: PresentationBlock[] = [];
@@ -234,4 +289,20 @@ function timelineCacheKey(
     contentGeneration: part.contentGeneration,
     themeGeneration,
   };
+}
+
+function canReuseTimelineBlock(
+  block: PresentationBlock,
+  previous: PresentationBlock,
+  themeGeneration: number,
+): boolean {
+  if (block.kind !== previous.kind || block.id !== previous.id) return false;
+  if ((block.themeGeneration ?? themeGeneration) !== (previous.themeGeneration ?? themeGeneration)) return false;
+  const currentPart = presentationPart(block);
+  const previousPart = presentationPart(previous);
+  if (currentPart === undefined || previousPart === undefined || !settled(currentPart)) return false;
+  return currentPart.entryId === previousPart.entryId
+    && currentPart.partId === previousPart.partId
+    && currentPart.contentGeneration === previousPart.contentGeneration
+    && previousPart.finalized === true;
 }

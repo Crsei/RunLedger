@@ -1,9 +1,15 @@
+import { performance } from "node:perf_hooks";
+import { ChatContainer } from "../src/tui/components/chat-container.ts";
 import { DeltaCoalescer } from "../src/tui/opentui/delta-coalescer.ts";
 import { admitStreamingDiff } from "../src/tui/opentui/streaming-diff-admission.ts";
 import { SettledPartCache } from "../src/tui/opentui/settled-part-cache.ts";
 import { freezeStreamPrefix } from "../src/tui/opentui/settled-prefix.ts";
 import { splitClosedStreamingTable } from "../src/tui/opentui/streaming-table-split.ts";
+import type { PresentationBlock } from "../src/tui/presentation.ts";
 import type { SafeDiffDocument } from "../src/tui/presentation/tools/types.ts";
+
+export const STREAMING_PROJECTION_BLOCK_COUNT = 10_000;
+export const STREAMING_PROJECTION_WIDTH = 96;
 
 export interface StreamingPrefixStressResult {
 	readonly name: string;
@@ -22,6 +28,18 @@ export interface StreamingPrefixStressResult {
 	readonly entries?: number;
 	readonly oldGenerationVisible?: boolean;
 	readonly terminalEvents?: number;
+	readonly coldMs?: number;
+	readonly warmMs?: number;
+	readonly updateMs?: number;
+	readonly warmReused?: boolean;
+	readonly activeTailReplaced?: boolean;
+	readonly stableSettledBlocks?: number;
+	readonly wholeTimelineHits?: number;
+	readonly settledBlockHits?: number;
+	readonly blockProjectionMisses?: number;
+	readonly cacheEntries?: number;
+	readonly cacheHits?: number;
+	readonly cacheMisses?: number;
 }
 
 export function runStreamingPrefixStressCases(): readonly StreamingPrefixStressResult[] {
@@ -30,10 +48,37 @@ export function runStreamingPrefixStressCases(): readonly StreamingPrefixStressR
 		runDeltaCase("1 MiB message", ["b".repeat(1024 * 1024)]),
 		runOpenFenceCase(),
 		runGrowingTableCase(),
-	runStreamingDiffCase(),
-	runCacheCase(),
+		runStreamingDiffCase(),
+		runCacheCase(),
 		runLineageCase(),
+		runTimelineProjectionCase(),
 	];
+}
+
+export function makeTimelineProjectionBlocks(activeText: string): PresentationBlock[] {
+	const blocks: PresentationBlock[] = [];
+	for (let index = 0; index < STREAMING_PROJECTION_BLOCK_COUNT - 1; index += 1) {
+		blocks.push({
+			id: `timeline:history-${index}`,
+			entryId: `timeline:history-${index}`,
+			partId: `timeline:history-${index}/text`,
+			contentGeneration: 1,
+			finalized: true,
+			kind: "text",
+			content: `history ${index}`,
+		});
+	}
+	blocks.push({
+		id: "timeline:active",
+		entryId: "timeline:active",
+		partId: "timeline:active/text",
+		contentGeneration: 2,
+		finalized: false,
+		kind: "markdown",
+		content: activeText,
+		streaming: true,
+	});
+	return blocks;
 }
 
 function runDeltaCase(name: string, chunks: readonly string[]): StreamingPrefixStressResult {
@@ -130,6 +175,57 @@ function runLineageCase(): StreamingPrefixStressResult {
 		oldGenerationVisible: cache.get({ partId: "session-part", width: 80, contentGeneration: 1, themeGeneration: 1 }) === "old",
 		terminalEvents,
 	};
+}
+
+function runTimelineProjectionCase(): StreamingPrefixStressResult {
+	const chat = new ChatContainer();
+	const coldStartedAt = performance.now();
+	chat.setTimelineBlocks(makeTimelineProjectionBlocks("draft"), 1);
+	const cold = chat.present(STREAMING_PROJECTION_WIDTH);
+	const coldMs = performance.now() - coldStartedAt;
+	const coldCache = chat.getPresentationCacheSnapshot();
+
+	const warmStartedAt = performance.now();
+	const warm = chat.present(STREAMING_PROJECTION_WIDTH);
+	const warmMs = performance.now() - warmStartedAt;
+
+	const updateStartedAt = performance.now();
+	chat.setTimelineBlocks(makeTimelineProjectionBlocks("draft grew"), 2);
+	const updated = chat.present(STREAMING_PROJECTION_WIDTH);
+	const updateMs = performance.now() - updateStartedAt;
+	const updateCache = chat.getPresentationCacheSnapshot();
+	const projection = chat.getTimelineProjectionSnapshot();
+	const updatedTail = updated.at(-1);
+	const stableSettledBlocks = updated.reduce(
+		(total, block, index) => total + (index < cold.length - 1 && block === cold[index] ? 1 : 0),
+		0,
+	);
+
+	return {
+		name: "10000 timeline application projection",
+		inputEvents: STREAMING_PROJECTION_BLOCK_COUNT,
+		projectedItems: cold.length,
+		textLossless: updated.length === STREAMING_PROJECTION_BLOCK_COUNT
+			&& updatedTail?.kind === "markdown"
+			&& updatedTail.content === "draft grew",
+		coldMs: roundMilliseconds(coldMs),
+		warmMs: roundMilliseconds(warmMs),
+		updateMs: roundMilliseconds(updateMs),
+		warmReused: warm === cold,
+		activeTailReplaced: updatedTail !== cold.at(-1),
+		stableSettledBlocks,
+		wholeTimelineHits: projection.wholeTimelineHits,
+		settledBlockHits: projection.settledBlockHits,
+		blockProjectionMisses: projection.blockProjectionMisses,
+		cacheEntries: updateCache.entries,
+		cacheHits: updateCache.hits,
+		cacheMisses: updateCache.misses - coldCache.misses,
+		bounded: updateCache.entries <= 1_024 && updateCache.bytes <= 4 * 1024 * 1024,
+	};
+}
+
+function roundMilliseconds(value: number): number {
+	return Math.round(value * 1000) / 1000;
 }
 
 function stressDiff(): SafeDiffDocument {

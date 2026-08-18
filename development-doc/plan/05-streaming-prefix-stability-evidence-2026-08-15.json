@@ -57,16 +57,56 @@
       "terminalEvents": 2
     }
   ],
+  "applicationProjection": {
+    "capturedAt": "2026-08-19",
+    "blockCount": 10000,
+    "width": 96,
+    "scenario": "9999 finalized text blocks plus one streaming markdown tail; timeline generation 1 -> 2",
+    "cold": {
+      "durationMs": 47.178,
+      "blockProjectionMisses": 10000,
+      "presentationCacheMisses": 9999
+    },
+    "sameGenerationWidth": {
+      "durationMs": 0.005,
+      "wholeTimelineHits": 1,
+      "sameArrayIdentity": true,
+      "blockProjectionMisses": 0
+    },
+    "activeTailUpdate": {
+      "durationMs": 20.082,
+      "stableSettledBlocks": 9999,
+      "activeTailReplaced": true,
+      "settledBlockHits": 9999,
+      "blockProjectionMisses": 1,
+      "textLossless": true
+    },
+    "projectionSnapshot": {
+      "calls": 3,
+      "wholeTimelineHits": 1,
+      "settledBlockHits": 9999,
+      "blockProjectionMisses": 10001
+    },
+    "boundedPresentationCache": {
+      "entries": 1024,
+      "maxEntries": 1024,
+      "hits": 0,
+      "updateMisses": 0,
+      "maxBytes": 4194304,
+      "bounded": true
+    },
+    "status": "pass"
+  },
   "focusedGates": {
     "vitest": {
-      "files": 6,
-      "tests": 33,
+      "files": 8,
+      "tests": 40,
       "status": "pass"
     },
     "bunOpenTui": {
-      "files": 12,
-      "tests": 97,
-      "assertions": 618,
+      "files": 14,
+      "tests": 104,
+      "assertions": 654,
       "status": "pass"
     },
     "typecheck": "pass",
@@ -81,15 +121,15 @@
   "repositoryGates": {
     "npmRunCheck": {
       "status": "blocked_existing",
-      "failure": "development-doc/runtime/08-bounded-multi-agent-system-plan.md: internal generation marker; direct check:tui-boundaries also reports src/tui/opentui/exec-renderable.ts: forbidden ANSI foreground (black/white/blue/yellow)"
+      "failure": "npm run check stops at check:current-format because existing internal generation markers are present in AGENTS.md, development-doc/00-index.md and plans 09-11, untracked docs/architecture.md, auth-gateway source, and related tests"
     },
     "npmTest": {
-      "vitestPassed": 2168,
+      "vitestPassed": 2677,
       "vitestSkipped": 3,
-      "vitestFailedSuites": 3,
-      "vitestFailedTests": 2,
+      "vitestFailedSuites": 1,
+      "vitestFailedTests": 1,
       "status": "blocked_existing",
-      "failure": "tests/runtime/current-format-boundary.test.ts -> development-doc/runtime/08-bounded-multi-agent-system-plan.md; tests/scripts/check-tui-color-boundaries.test.ts -> src/tui/opentui/exec-renderable.ts; tests/security/bash-ast-worker.test.ts -> bash_worker_unavailable"
+      "failure": "tests/runtime/current-format-boundary.test.ts -> existing internal generation markers in AGENTS.md, development-doc plans, untracked docs/architecture.md, auth-gateway routes, and related tests"
     }
   },
   "commands": [
