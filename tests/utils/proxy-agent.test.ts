@@ -45,6 +45,8 @@ describe("provider proxy agent", () => {
 
 			expect(response.status).toBe(200);
 			expect(receivedPath).toBe(`http://api.runledger.test/${apiVersion}/messages`);
+			expect(response.body?.getReader).toBeTypeOf("function");
+			expect(await response.text()).toBe("ok");
 		} finally {
 			await new Promise<void>((resolve) => proxyServer.close(() => resolve()));
 		}

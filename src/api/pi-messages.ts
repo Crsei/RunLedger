@@ -24,6 +24,7 @@ import type {
 } from "../types.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import { fetchWithProviderProxy } from "../utils/fetch-provider-proxy.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
@@ -379,17 +380,22 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 				payload = nextPayload;
 			}
 
-			const response = await fetch(url, {
-				method: "POST",
-				headers: {
-					authorization: `Bearer ${apiKey}`,
-					accept: "text/event-stream",
-					"content-type": "application/json",
-					...providerHeadersToRecord(options?.headers),
+			const response = await fetchWithProviderProxy(
+				model.provider,
+				url,
+				{
+					method: "POST",
+					headers: {
+						authorization: `Bearer ${apiKey}`,
+						accept: "text/event-stream",
+						"content-type": "application/json",
+						...providerHeadersToRecord(options?.headers),
+					},
+					body: JSON.stringify(payload),
+					signal: options?.signal,
 				},
-				body: JSON.stringify(payload),
-				signal: options?.signal,
-			});
+				options?.env,
+			);
 
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 

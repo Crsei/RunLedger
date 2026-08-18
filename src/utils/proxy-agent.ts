@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import nodeFetch, {
@@ -20,6 +21,17 @@ type NodeFetchFunction = (
 
 const nodeFetchFunction = nodeFetch as unknown as NodeFetchFunction;
 const originalGlobalFetch = globalThis.fetch;
+
+function toWebResponse(response: NodeFetchResponse): Response {
+	const body = response.body
+		? (Readable.toWeb(response.body as unknown as Readable) as unknown as ReadableStream<Uint8Array>)
+		: null;
+	return new Response(body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: Object.fromEntries(response.headers.entries()),
+	});
+}
 
 function hasCustomFetchImplementation(): boolean {
 	const currentFetch = globalThis.fetch as typeof globalThis.fetch & { mock?: unknown };
@@ -126,6 +138,6 @@ export function createProxyFetchForUrl(targetUrl: string | URL, proxyUrl: string
 	return async (input, init) => {
 		const argumentsForNodeFetch = await buildNodeFetchArguments(input, init, agent);
 		const response = await nodeFetchFunction(argumentsForNodeFetch.input, argumentsForNodeFetch.init);
-		return response as unknown as Response;
+		return toWebResponse(response);
 	};
 }
