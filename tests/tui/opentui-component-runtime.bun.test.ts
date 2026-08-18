@@ -801,6 +801,87 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("keeps a provider selector's lower rows inside the modal chrome", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 24 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "",
+        footer: ["idle"],
+        overlay: [{
+          id: "provider",
+          kind: "select",
+          title: "/provider — all built-ins",
+          options: Array.from({ length: 20 }, (_, index) => ({
+            value: `provider-${index}`,
+            label: `provider-${index}`,
+            description: "configured",
+          })),
+          selectedIndex: 0,
+        }],
+        overlayAnchor: "bottom-left",
+      });
+      await setup.renderOnce();
+
+      const overlay = setup.renderer.root.findDescendantById("runledger-overlay");
+      const select = setup.renderer.root.findDescendantById("runledger-overlay-select-provider");
+      expect(overlay).toBeDefined();
+      expect(select).toBeDefined();
+      if (!overlay || !select) return;
+
+      expect(select.screenY + select.height).toBeLessThanOrEqual(overlay.screenY + overlay.height - 1);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("moves a provider selector to a lower row when clicked with the mouse", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 24 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({
+        body: [],
+        editorText: "",
+        footer: ["idle"],
+        overlay: [{
+          id: "provider",
+          kind: "select",
+          title: "/provider — all built-ins",
+          options: Array.from({ length: 20 }, (_, index) => ({
+            value: `provider-${index}`,
+            label: `provider-${index}`,
+            description: "configured",
+          })),
+          selectedIndex: 0,
+        }],
+        overlayAnchor: "bottom-left",
+      });
+      await setup.renderOnce();
+
+      const select = setup.renderer.root.findDescendantById("runledger-overlay-select-provider") as {
+        readonly screenX: number;
+        readonly screenY: number;
+        getSelectedIndex(): number;
+      } | undefined;
+      expect(select).toBeDefined();
+      if (!select) return;
+
+      await setup.mockMouse.click(select.screenX + 4, select.screenY + 8);
+      await setup.renderOnce();
+
+      expect(select.getSelectedIndex()).toBe(4);
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("centers a modal when the frame requests the center anchor", async () => {
     const setup = await createTestRenderer({ width: 80, height: 24 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {

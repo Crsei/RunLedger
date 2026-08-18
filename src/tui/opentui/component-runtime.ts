@@ -11,6 +11,7 @@ import {
   createCliRenderer,
   type CliRenderer,
   type KeyEvent,
+  type MouseEvent,
   type Renderable,
 } from "@opentui/core";
 import stringWidth from "string-width";
@@ -178,6 +179,14 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
   return block.content;
+}
+
+function overlayBlockHeight(block: PresentationBlock): number {
+  if (block.kind === "select") {
+    return 1 + (block.query === undefined ? 0 : 1) + overlaySelectHeight(block.options);
+  }
+  if (block.kind === "input") return 3;
+  return blockText(block).split("\n").length;
 }
 
 function toPresentationBlock(rawBlock: string | PresentationBlock): PresentationBlock {
@@ -730,12 +739,16 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         const compactPopup = frame.overlayNonCapturing === true && bottomLeft;
         const modalWidth = isTranscriptOverlay ? renderer.width : Math.max(1, Math.floor(renderer.width * 0.9));
         const modalContentHeight = overlayBlocks.reduce(
-          (height, block) => height + blockText(block).split("\n").length,
+          (height, block) => height + overlayBlockHeight(block),
           0,
         ) + 4;
+        const maxModalHeight = Math.max(1, Math.floor(renderer.height * 0.8));
         const modalHeight = hasInteractiveControl
-          ? Math.max(1, Math.floor(renderer.height * 0.5))
-          : Math.min(Math.max(1, Math.floor(renderer.height * 0.8)), modalContentHeight);
+          ? Math.min(
+            maxModalHeight,
+            Math.max(Math.max(1, Math.floor(renderer.height * 0.5)), modalContentHeight),
+          )
+          : Math.min(maxModalHeight, modalContentHeight);
         if (!overlay) {
           overlay = new BoxRenderable(renderer, {
             id: "runledger-overlay",
@@ -817,6 +830,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
                 value: option.value,
               })),
               block.selectedIndex,
+              options.onInput,
             );
             desiredOverlayNodes.push(select);
             overlayFocus ??= select;
@@ -1126,6 +1140,7 @@ function getOverlaySelectNode(
   key: string,
   options: { name: string; description: string; value: string }[],
   selectedIndex: number,
+  onInput: (data: string) => void,
 ): SelectRenderable {
   const old = previous.get(key);
   const node = old?.kind === "select" && old.renderable instanceof SelectRenderable
@@ -1137,8 +1152,40 @@ function getOverlaySelectNode(
     node.selectedIndex = selectedIndex;
     node.height = overlaySelectHeight(options);
   }
+  node.onMouseDown = (event) => handleOverlaySelectMouseDown(node, event, onInput);
   next.set(key, { kind: "select", renderable: node, contentKey });
   return node;
+}
+
+function handleOverlaySelectMouseDown(
+  node: SelectRenderable,
+  event: MouseEvent,
+  onInput: (data: string) => void,
+): void {
+  if (event.button !== 0) return;
+  const localY = event.y - node.screenY;
+  if (localY < 0 || localY >= node.height) return;
+
+  const visibleItems = Math.max(1, Math.floor(node.height / 2));
+  const maxScrollOffset = Math.max(0, node.options.length - visibleItems);
+  const scrollOffset = Math.max(
+    0,
+    Math.min(
+      node.getSelectedIndex() - Math.floor(visibleItems / 2),
+      maxScrollOffset,
+    ),
+  );
+  const selectedIndex = scrollOffset + Math.floor(localY / 2);
+  if (selectedIndex < 0 || selectedIndex >= node.options.length) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  const currentIndex = node.getSelectedIndex();
+  node.setSelectedIndex(selectedIndex);
+  const direction = selectedIndex >= currentIndex ? "down" : "up";
+  for (let index = currentIndex; index !== selectedIndex; index += direction === "down" ? 1 : -1) {
+    onInput(direction);
+  }
 }
 
 function disposeWrongOverlayNode(
@@ -1218,7 +1265,7 @@ function createOverlaySelectNode(
   });
 }
 
-function overlaySelectHeight(options: readonly { readonly description: string }[]): number {
+function overlaySelectHeight(options: readonly { readonly description?: string }[]): number {
   // SelectRenderable 在 showDescription=true 时始终为每项保留两行，哪怕
   // description 为空；按同一布局契约给高度，避免安全决策被裁成单项。
   return Math.max(2, Math.min(12, options.length * 2));
