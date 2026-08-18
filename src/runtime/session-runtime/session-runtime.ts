@@ -28,6 +28,7 @@ import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import { createRuntimeId, type AttemptId, type CommandId, type SessionId, type ConnectionId, type PrincipalId } from "../protocol/ids.ts";
 import type { CommandAttemptOutcome, CommandEffectClass, OwnerFence, SessionCheckpointBoundary } from "../session-owner/types.ts";
 import type { AgentEvent, AgentMessage } from "../types.ts";
+import type { EphemeralTurnDiagnostic } from "../agent.ts";
 import type { LedgerEntry } from "../ledger/types.ts";
 import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts";
 import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
@@ -693,6 +694,30 @@ export class SessionRuntime implements SessionController {
 			activityGeneration: request.activityGeneration,
 			promptText: IDLE_RECAP_PROMPT,
 			signal: request.signal,
+			onDiagnostic: (diagnostic) => this.publishIdleRecapDiagnostic(diagnostic, request),
+		});
+	}
+
+	private publishIdleRecapDiagnostic(diagnostic: EphemeralTurnDiagnostic, request: IdleRecapRequest): void {
+		const activity = this.currentIdleRecapActivity();
+		if (
+			diagnostic.kind !== "idle-recap" ||
+			diagnostic.requestId !== request.requestId ||
+			!isIdleRecapEligible(activity) ||
+			activity.ownerGeneration !== request.ownerGeneration ||
+			activity.driverRevision !== request.driverRevision ||
+			activity.selectionDigest !== request.expectedSelectionDigest
+		) return;
+		this.emit({
+			eventType: "session.idle_recap",
+			payload: {
+				sessionId: this.sessionId,
+				requestId: request.requestId,
+				ownerGeneration: request.ownerGeneration,
+				activityGeneration: request.activityGeneration,
+				driverRevision: request.driverRevision,
+				diagnostic,
+			},
 		});
 	}
 

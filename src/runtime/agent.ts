@@ -35,6 +35,28 @@ export interface EphemeralTurnRequest {
   readonly signal?: AbortSignal;
   readonly ownerGeneration?: number;
   readonly activityGeneration?: number;
+  /** Bounded, non-secret failure observation for the owner-side side channel. */
+  readonly onDiagnostic?: (diagnostic: EphemeralTurnDiagnostic) => void;
+}
+
+export const EPHEMERAL_TURN_DIAGNOSTIC_CODES = [
+  "router_denied",
+  "auth_missing",
+  "provider_timeout",
+  "provider_error",
+  "malformed_response",
+  "empty_response",
+  "aborted",
+] as const;
+
+export type EphemeralTurnDiagnosticCode = (typeof EPHEMERAL_TURN_DIAGNOSTIC_CODES)[number];
+
+export interface EphemeralTurnDiagnostic {
+  readonly kind: "idle-recap";
+  readonly requestId: string;
+  readonly code: EphemeralTurnDiagnosticCode;
+  readonly ownerGeneration?: number;
+  readonly activityGeneration?: number;
 }
 
 export interface EphemeralTurnResult {
@@ -383,12 +405,35 @@ export class Agent {
    */
   async runEphemeralTurn(input: EphemeralTurnRequest): Promise<EphemeralTurnResult | undefined> {
     const requestId = input.requestId ?? `idle-recap-${newId()}`;
+    let diagnosticReported = false;
+    const reportDiagnostic = (code: EphemeralTurnDiagnosticCode): void => {
+      if (diagnosticReported) return;
+      diagnosticReported = true;
+      try {
+        input.onDiagnostic?.({
+          kind: "idle-recap",
+          requestId,
+          code,
+          ...(input.ownerGeneration === undefined ? {} : { ownerGeneration: input.ownerGeneration }),
+          ...(input.activityGeneration === undefined ? {} : { activityGeneration: input.activityGeneration }),
+        });
+      } catch {
+        // Diagnostics are observational and must not change side-channel failure semantics.
+      }
+    };
     const externalSignal = input.signal ?? this._signal;
-    if (externalSignal?.aborted) return undefined;
+    if (externalSignal?.aborted) {
+      reportDiagnostic("aborted");
+      return undefined;
+    }
     const deadline = new AbortController();
     const forwardAbort = (): void => deadline.abort(externalSignal?.reason);
     externalSignal?.addEventListener("abort", forwardAbort, { once: true });
-    const timeout = setTimeout(() => deadline.abort(), IDLE_RECAP_TIMEOUT_MS);
+    let timeoutExpired = false;
+    const timeout = setTimeout(() => {
+      timeoutExpired = true;
+      deadline.abort();
+    }, IDLE_RECAP_TIMEOUT_MS);
     timeout.unref?.();
     const signal = deadline.signal;
 
@@ -441,12 +486,29 @@ export class Agent {
       let providerMessage: AssistantMessage | undefined;
       const streamedText: string[] = [];
       for await (const event of stream) {
-        if (signal?.aborted) return undefined;
+        if (signal?.aborted) {
+          reportDiagnostic(timeoutExpired ? "provider_timeout" : "aborted");
+          return undefined;
+        }
         if (event.type === "text_delta") streamedText.push(event.delta);
         if (event.type === "done" || event.type === "error") providerMessage = event.type === "done" ? event.message : event.error;
       }
-      if (signal?.aborted || providerMessage === undefined) return undefined;
-      if (providerMessage.stopReason === "error" || providerMessage.stopReason === "aborted") return undefined;
+      if (signal?.aborted) {
+        reportDiagnostic(timeoutExpired ? "provider_timeout" : "aborted");
+        return undefined;
+      }
+      if (providerMessage === undefined) {
+        reportDiagnostic("malformed_response");
+        return undefined;
+      }
+      if (providerMessage.stopReason === "error" || providerMessage.stopReason === "aborted") {
+        reportDiagnostic(providerMessage.stopReason === "aborted" ? (timeoutExpired ? "provider_timeout" : "aborted") : classifyEphemeralProviderError(providerMessage.errorMessage));
+        return undefined;
+      }
+      if (!Array.isArray(providerMessage.content)) {
+        reportDiagnostic("malformed_response");
+        return undefined;
+      }
 
       const textContent = providerMessage.content.filter(
         (part): part is Extract<AssistantMessage["content"][number], { type: "text" }> => part.type === "text",
@@ -455,7 +517,10 @@ export class Agent {
         ? [{ type: "text" as const, text: streamedText.join("") }]
         : [];
       const replyText = effectiveText.map((part) => part.text).join("");
-      if (replyText.trim().length === 0) return undefined;
+      if (replyText.trim().length === 0) {
+        reportDiagnostic("empty_response");
+        return undefined;
+      }
 
       return {
         requestId,
@@ -465,7 +530,8 @@ export class Agent {
           content: effectiveText,
         },
       };
-    } catch {
+    } catch (error) {
+      reportDiagnostic(timeoutExpired ? "provider_timeout" : classifyEphemeralProviderError(error instanceof Error ? error.message : undefined));
       // A transient recap failure must not affect the ordinary prompt lifecycle.
       return undefined;
     } finally {
@@ -505,6 +571,14 @@ export class Agent {
       followUp: this.followUpQueue.snapshot(),
     });
   }
+}
+
+function classifyEphemeralProviderError(errorMessage: string | undefined): EphemeralTurnDiagnosticCode {
+  const message = errorMessage ?? "";
+  if (/model route denied\s*\(/iu.test(message)) return "router_denied";
+  if (/provider is not configured|missing\s+(?:an?\s+)?(?:api\s+)?key|authentication required|auth(?:entication)?\s+(?:is\s+)?missing/iu.test(message)) return "auth_missing";
+  if (/tim(?:e|ed)\s*out|timeout|deadline exceeded/iu.test(message)) return "provider_timeout";
+  return "provider_error";
 }
 
 function normalizePrompts(input: string | UserAgentMessage | UserAgentMessage[]): UserAgentMessage[] {

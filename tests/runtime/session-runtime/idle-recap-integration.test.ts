@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionClient } from "../../../src/cli/session-client.ts";
 import { SessionInteractiveController } from "../../../src/cli/session-interactive-controller.ts";
-import type { AgentEvent, AgentMessage, EphemeralSessionTurnRequest } from "../../../src/runtime/types.ts";
-import type { InteractiveSessionControllerPort, RuntimeSelection } from "../../../src/runtime/interactive-session-controller.ts";
+import type { AgentEvent, AgentMessage } from "../../../src/runtime/types.ts";
+import type { EphemeralTurnDiagnostic } from "../../../src/runtime/agent.ts";
+import type { EphemeralSessionTurnRequest, InteractiveSessionControllerPort, RuntimeSelection } from "../../../src/runtime/interactive-session-controller.ts";
 import type { SessionDomainPort, SessionDomainSnapshot } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import type { Model, Api } from "../../../src/types.ts";
 import { mockModel } from "../../../src/index.ts";
@@ -204,6 +205,40 @@ describe("SessionRuntime idle recap production composition", () => {
 			domain.resolveNext("current selection reply");
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			expect(events).toEqual([expect.objectContaining({ text: "current selection reply" })]);
+		} finally {
+			await closeHarness(harness, [driver.controller], [driver.handle]);
+		}
+	});
+
+	it("publishes a typed provider diagnostic transiently without projecting success or mutating durable state", async () => {
+		const domain = createFakeRecapDomain();
+		const harness = await createRuntimeHarness("idle-recap-diagnostic", { domain: domain.domain, recapSettings: { enabled: true, idleSeconds: 1 } });
+		const driver = await attachController(harness, "idle-recap-diagnostic-client");
+		const events: unknown[] = [];
+		driver.controller.subscribeIdleRecap?.((event) => events.push(event));
+		try {
+			expect((await command(harness, driver.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
+			domain.emit({ type: "agent_end", timestamp: Date.now(), runId: "run-diagnostic", stopReason: "stop", messageCountAtEnd: 1 });
+			await waitForRequests(domain, 1);
+			const request = domain.requests[0]!;
+			const durableBeforeDiagnostic = harness.store.replaySessionEvents(harness.sessionId);
+			const diagnostic: EphemeralTurnDiagnostic = {
+				kind: "idle-recap",
+				requestId: request.requestId,
+				ownerGeneration: request.ownerGeneration,
+				activityGeneration: request.activityGeneration,
+				code: "router_denied",
+			};
+			request.onDiagnostic?.(diagnostic);
+			domain.resolveNext(undefined);
+			await new Promise((resolve) => setTimeout(resolve, 50));
+
+			expect(events).toEqual([expect.objectContaining({
+				requestId: request.requestId,
+				diagnostic,
+			})]);
+			expect(events[0]).not.toHaveProperty("text");
+			expect(harness.store.replaySessionEvents(harness.sessionId)).toEqual(durableBeforeDiagnostic);
 		} finally {
 			await closeHarness(harness, [driver.controller], [driver.handle]);
 		}

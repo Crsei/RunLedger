@@ -175,6 +175,47 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 		await expect(agent.runEphemeralTurn({ promptText: "recap" })).resolves.toBeUndefined();
 	});
 
+	it.each([
+		["router denial", "model route denied (profile_unknown)", "router_denied"],
+		["missing auth", "Provider is not configured: fixture-provider", "auth_missing"],
+		["provider timeout", "provider request timed out", "provider_timeout"],
+	] as const)("reports a typed %s diagnostic without projecting recap success", async (_label, errorMessage, code) => {
+		const streamFn: StreamFn = (requestModel) => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const error = { ...assistantMessageFor(requestModel, [], "error"), errorMessage };
+				stream.push({ type: "error", reason: "error", error });
+				stream.end(error);
+			});
+			return stream;
+		};
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "system",
+				model: mockModel,
+				messages: [{ role: "user", content: [{ type: "text", text: "history" }] }],
+			},
+			streamFn,
+		});
+		const diagnostics: unknown[] = [];
+		const request = {
+			promptText: "recap",
+			requestId: "idle-recap-diagnostic-fixture",
+			ownerGeneration: 4,
+			activityGeneration: 2,
+			onDiagnostic: (diagnostic: unknown) => diagnostics.push(diagnostic),
+		} as Parameters<Agent["runEphemeralTurn"]>[0];
+
+		await expect(agent.runEphemeralTurn(request)).resolves.toBeUndefined();
+		expect(diagnostics).toEqual([expect.objectContaining({
+			kind: "idle-recap",
+			requestId: "idle-recap-diagnostic-fixture",
+			ownerGeneration: 4,
+			activityGeneration: 2,
+			code,
+		})]);
+	});
+
 	it("suppresses an aborted ephemeral recap without emitting a partial result", async () => {
 		const abort = new AbortController();
 		let streamStarted!: () => void;

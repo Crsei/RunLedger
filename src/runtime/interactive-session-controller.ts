@@ -6,7 +6,7 @@ import { loadProjectSettings, saveProjectSettings } from "../storage/settings-ma
 import type { RunledgerLayout } from "./contracts/public.ts";
 import type { SessionReplay, SessionRuntimeConfig } from "../storage/session-codec.ts";
 import { appendRuntimeConfig } from "../storage/session-codec.ts";
-import { Agent, type EphemeralTurnRequest } from "./agent.ts";
+import { Agent, type EphemeralTurnDiagnostic, type EphemeralTurnRequest } from "./agent.ts";
 import type {
   AgentEventSink,
   AgentMessage,
@@ -115,6 +115,7 @@ export interface SessionIdleRecapEvent {
 	readonly activityGeneration?: number;
 	readonly driverRevision?: number;
 	readonly text?: string;
+	readonly diagnostic?: EphemeralTurnDiagnostic;
 	readonly cleared?: boolean;
 }
 

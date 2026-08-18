@@ -12,6 +12,7 @@
 import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import type { Api, Model, ModelThinkingLevel } from "../types.ts";
 import type { AgentEvent, AgentEventSink, AgentMessage, UserAgentMessage } from "../runtime/types.ts";
+import type { EphemeralTurnDiagnostic } from "../runtime/agent.ts";
 import type { LedgerEntry } from "../runtime/ledger/types.ts";
 import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
 import { SESSION_PROTOCOL_BOUNDS, SESSION_PROTOCOL_VERSION } from "../runtime/session-server/protocol.ts";
@@ -482,6 +483,8 @@ function parseSessionIdleRecapEvent(value: unknown, sessionId: string): SessionI
 	if (value.driverRevision !== undefined && (typeof value.driverRevision !== "number" || !Number.isSafeInteger(value.driverRevision) || value.driverRevision < 0)) return undefined;
 	if (value.text !== undefined && typeof value.text !== "string") return undefined;
 	if (value.cleared !== undefined && typeof value.cleared !== "boolean") return undefined;
+	const diagnostic = parseEphemeralTurnDiagnostic(value.diagnostic, value.requestId);
+	if (value.diagnostic !== undefined && diagnostic === undefined) return undefined;
 	return {
 		sessionId,
 		requestId: value.requestId,
@@ -489,9 +492,34 @@ function parseSessionIdleRecapEvent(value: unknown, sessionId: string): SessionI
 		...(value.activityGeneration === undefined ? {} : { activityGeneration: value.activityGeneration }),
 		...(value.driverRevision === undefined ? {} : { driverRevision: value.driverRevision }),
 		...(value.text === undefined ? {} : { text: value.text }),
+		...(diagnostic === undefined ? {} : { diagnostic }),
 		...(value.cleared === undefined ? {} : { cleared: value.cleared }),
 	};
 }
+
+function parseEphemeralTurnDiagnostic(value: unknown, requestId: string): EphemeralTurnDiagnostic | undefined {
+	if (!isRecord(value) || value.kind !== "idle-recap" || value.requestId !== requestId || typeof value.code !== "string") return undefined;
+	if (!(EPHEMERAL_DIAGNOSTIC_CODES as readonly string[]).includes(value.code)) return undefined;
+	if (value.ownerGeneration !== undefined && (typeof value.ownerGeneration !== "number" || !Number.isSafeInteger(value.ownerGeneration) || value.ownerGeneration <= 0)) return undefined;
+	if (value.activityGeneration !== undefined && (typeof value.activityGeneration !== "number" || !Number.isSafeInteger(value.activityGeneration) || value.activityGeneration <= 0)) return undefined;
+	return {
+		kind: "idle-recap",
+		requestId,
+		code: value.code as EphemeralTurnDiagnostic["code"],
+		...(value.ownerGeneration === undefined ? {} : { ownerGeneration: value.ownerGeneration }),
+		...(value.activityGeneration === undefined ? {} : { activityGeneration: value.activityGeneration }),
+	};
+}
+
+const EPHEMERAL_DIAGNOSTIC_CODES = [
+	"router_denied",
+	"auth_missing",
+	"provider_timeout",
+	"provider_error",
+	"malformed_response",
+	"empty_response",
+	"aborted",
+] as const;
 
 function numberValue(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
