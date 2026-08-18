@@ -157,7 +157,7 @@ export interface FooterSnapshotProvider {
   getModelId(): string;
   getProviderId?(): string;
   getThinkingLevel?(): import("../types.ts").ModelThinkingLevel;
-  /** 当前 session id(显示在 footer 中间)。 */
+  /** 当前 canonical session id；身份寻址使用，status line 不直接展示。 */
   getSessionId(): string;
   /**
    * P6：workspace/path 能力标签（如 "ws:linux-verified"）；来自真实 runner
@@ -171,7 +171,7 @@ export interface FooterSnapshotProvider {
   getPlanProgress?(): { readonly completed: number; readonly total: number } | undefined;
   /** context window 的安全 token 快照；每个字段独立 capability-gated。 */
   getContextUsage?(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined;
-  /** 可选 thread 展示标签；未提供时不伪造。 */
+  /** 可选会话标题/线程展示标签；未提供时不以 session id 伪造。 */
   getThreadLabel?(): string | undefined;
   /** 当前 run 的安全计时投影；等待态的 activeDurationMs 已冻结。 */
   getRunTiming?(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined;

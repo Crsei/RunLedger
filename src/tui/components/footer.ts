@@ -47,19 +47,14 @@ export class Footer implements Component {
   }
 
   private segments(): StatusLineSegment[] {
-    let left: string;
-    let middle: string;
-    let right: string;
     try {
       const streaming = this.props.provider.isStreaming();
       const stopReason = this.props.provider.getStopReason();
-      const sessionId = this.props.provider.getSessionId();
       const modelId = this.props.provider.getModelId();
       const providerId = this.props.provider.getProviderId?.();
       const thinking = this.props.provider.getThinkingLevel?.();
-      const workspaceCapability = this.props.provider.getWorkspaceCapability?.();
-	  const workspaceDisplayAbsolutePath = this.props.provider.getWorkspaceDisplayAbsolutePath?.();
-	  const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
+      const workspaceDisplayAbsolutePath = this.props.provider.getWorkspaceDisplayAbsolutePath?.();
+      const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
       const planProgress = this.props.provider.getPlanProgress?.();
       const contextUsage = this.props.provider.getContextUsage?.();
       const threadLabel = this.props.provider.getThreadLabel?.();
@@ -75,16 +70,12 @@ export class Footer implements Component {
         : timing?.state === "waiting"
           ? `Waiting for input · ${formatActiveDuration(activeDurationMs)}`
           : streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
-      left = status;
-      middle = sessionId.length > 0 ? sessionId : "<no-session>";
 	  const segments: StatusLineSegment[] = [];
 	  if (status !== "idle") segments.push({ accent: "state", text: status });
 	  segments.push(
 		...(workspaceDisplayAbsolutePath ? [{ accent: "path" as const, text: workspaceDisplayAbsolutePath }] : []),
 		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
-		...(sessionId.length > 0 && !threadLabel ? [{ accent: "metadata" as const, text: sessionId }] : []),
 		{ accent: "model", text: `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}` },
-		...(workspaceCapability ? [{ accent: "mode" as const, text: workspaceCapability }] : []),
 		...(planProgress !== undefined && validProgress(planProgress)
 			? [{ accent: "progress" as const, text: `plan (${planProgress.completed}/${planProgress.total})` }]
 			: []),
@@ -101,15 +92,8 @@ export class Footer implements Component {
 		.filter((segment) => segment.text.length > 0);
     } catch {
       // 失败护栏:provider 抛错时给出可观测的占位,不影响整屏渲染
-      left = "[footer:err]";
-      middle = "";
-      right = "";
+      return [{ accent: "state", text: "[footer:err]" }];
     }
-	return [
-		{ accent: "state", text: left },
-		...(middle ? [{ accent: "metadata" as const, text: middle }] : []),
-		...(right ? [{ accent: "model" as const, text: right }] : []),
-	];
   }
 
 }

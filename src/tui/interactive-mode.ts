@@ -1568,10 +1568,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     };
   }
 
-  /** 当前 canonical session id 是唯一可确认的 thread label。 */
+  /** 当前 Session 的可读标题；未命名时不把 durable session id 暴露到 status line。 */
   getThreadLabel(): string | undefined {
-    const sessionId = this.getSessionId();
-    return sessionId.length > 0 ? sessionId : undefined;
+    const title = this.store.getState().bootstrap.session.title;
+    return title === undefined || title.trim().length === 0 ? undefined : title;
   }
 
   /** Editor.onSubmit 回调;空闲时作为 user prompt 投递,运行中自动排队为 follow-up 不打断当前 turn。 */
@@ -2531,6 +2531,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 			sessionId: event.sessionId,
 			title: event.title,
 		});
+		this.ui.requestRender();
 		const workflow = this.store.getState().sessionWorkflow;
 		if (workflow.state === "loading") return;
 		if (workflow.state === "ready" && isSessionCatalogResult(workflow.value)) {

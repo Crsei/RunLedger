@@ -96,6 +96,22 @@ describe("S2 InteractiveMode session workflows", () => {
 		}
 	});
 
+	it("keeps the canonical session id hidden until the durable title arrives", async () => {
+		const controller = new ContractController();
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			expect(mode.getThreadLabel()).toBeUndefined();
+			controller.emitTitleChanged({ sessionId: controller.sessionId, title: "Fix login flow", source: "auto" });
+			await settleFrames();
+			expect(mode.getThreadLabel()).toBe("Fix login flow");
+		} finally {
+			mode.quit();
+			await running;
+		}
+	});
+
 	it("/resume opens the canonical catalog and selection returns a resume switch intent", async () => {
 		const terminal = new ContractTerminal();
 		const { controller, querySessionDomain, commandSessionDomain } = sessionController();

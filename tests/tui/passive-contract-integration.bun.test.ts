@@ -64,14 +64,14 @@ function seededReplayController(): ContractController {
 
 describe("B0 baseline: standard InteractiveMode production behavior", () => {
   for (const columns of [60, 80, 143]) {
-    test(`startup renders a footer frame at ${columns} columns and quits cleanly`, async () => {
+    test(`startup hides the unnamed session id at ${columns} columns and quits cleanly`, async () => {
       const harness = createContractHarness({ columns, rows: 24 });
       try {
         await settleFrames();
         expect(harness.terminal.startCount).toBe(1);
         expect(harness.terminal.writes.length).toBeGreaterThan(0);
         const frame = plainFrame(harness.terminal);
-        expect(frame).toContain("contract-session");
+        expect(frame).not.toContain("contract-session");
       } finally {
         await harness.dispose();
       }
@@ -107,8 +107,11 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       const text = chatText(harness.mode);
       expect(text).toContain("contract reply");
       expect(text).toContain("echo");
+      harness.controller.emitTitleChanged({ sessionId: harness.controller.sessionId, title: "Contract reply task", source: "auto" });
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
       const frame = plainFrame(harness.terminal);
-      expect(frame).toContain("contract-session");
+      expect(frame).toContain("Contract reply task");
+      expect(frame).not.toContain("contract-session");
     } finally {
       await harness.dispose();
     }
@@ -137,7 +140,7 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       expect(state.bootstrap.session.format).toBe("current-canonical");
       expect(state.bootstrap.authorityGeneration).toBe(1);
       const frame = plainFrame(harness.terminal);
-      expect(frame).toContain("contract-session");
+      expect(frame).not.toContain("contract-session");
     } finally {
       await harness.dispose();
     }
@@ -307,7 +310,7 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       expect(harness.runDir).not.toBe(realHomeRunledger);
       expect(existsSync(harness.runDir)).toBe(true);
       await settleFrames();
-      expect(plainFrame(harness.terminal)).toContain("contract-session");
+      expect(plainFrame(harness.terminal)).not.toContain("contract-session");
     } finally {
       await harness.dispose();
     }
