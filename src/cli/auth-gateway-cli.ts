@@ -1,5 +1,9 @@
 import { mkdir, stat } from "node:fs/promises";
 import { resolveRunledgerHome, type ResolvedRunledgerHome } from "../storage/runledger-home.ts";
+import { AuthStorage } from "../storage/auth-storage.ts";
+import { builtinModels } from "../providers/all.ts";
+import { registerConfiguredProxyProvidersFromHome } from "../providers/configured-proxy.ts";
+import type { Models } from "../models.ts";
 import {
 	authGatewayTokenPath,
 	ensureAuthGatewayToken,
@@ -123,6 +127,7 @@ export function parseAuthGatewayArgs(argv: readonly string[]): AuthGatewayArgsRe
 export interface AuthGatewayCliDependencies {
 	readonly resolveHome?: () => Promise<ResolvedRunledgerHome>;
 	readonly startServer?: (options: Parameters<typeof startAuthGatewayServer>[0]) => Promise<AuthGatewayServerHandle>;
+	readonly models?: Models;
 	readonly writeStdout?: (text: string) => void;
 }
 
@@ -134,6 +139,13 @@ async function resolvedHome(dependencies: AuthGatewayCliDependencies): Promise<R
 	const home = await (dependencies.resolveHome ?? resolveRunledgerHome)();
 	if (home.resolution.createDefault) await mkdir(home.layout.home, { recursive: true, mode: 0o700 });
 	return home;
+}
+
+async function createGatewayModels(home: ResolvedRunledgerHome): Promise<Models> {
+	const models = builtinModels({ credentials: AuthStorage.create(home.layout) });
+	await registerConfiguredProxyProvidersFromHome(models, home.layout.home);
+	await models.refresh({ allowNetwork: false });
+	return models;
 }
 
 async function tokenFileStatus(path: string): Promise<{ configured: boolean; mode?: number }> {
@@ -171,11 +183,13 @@ export async function runAuthGatewayCommand(argv: readonly string[], dependencie
 	}
 
 	const token = await ensureAuthGatewayToken(tokenPath);
+	const models = dependencies.models ?? await createGatewayModels(home);
 	const server = await (dependencies.startServer ?? startAuthGatewayServer)({
 		bindHost: parsed.command.bindHost,
 		port: parsed.command.port,
 		noAuth: parsed.command.noAuth,
 		token,
+		models,
 	});
 	writeStdout(`runledger auth-gateway listening on ${server.bindHost}:${server.port}\n`);
 	await waitForShutdown(server);
