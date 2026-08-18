@@ -68,6 +68,7 @@ import { composeCliSyntaxThemes } from "./syntax-theme-composition.ts";
 import { gitWorkspaceDisplayFacts, workspaceDisplayAbsolutePathForView } from "./workspace-display-label.ts";
 import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
 import { createCliSessionModelRequestRouterFactory } from "./session-model-router.ts";
+import { runAuthGatewayCommand } from "./auth-gateway-cli.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -79,6 +80,15 @@ function workspaceCapabilityLabel(): string {
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
+  if (argv[0] === "auth-gateway") {
+    try {
+      await runAuthGatewayCommand(argv.slice(1));
+    } catch (error) {
+      process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(2);
+    }
+    return;
+  }
   if (argv[0] === "migrate") {
     await runMigrateCommand(argv.slice(1));
     return;
