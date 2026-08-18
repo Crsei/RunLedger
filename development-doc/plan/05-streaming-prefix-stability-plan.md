@@ -100,13 +100,13 @@ development-doc/00-index.md      # 本计划完成登记（规划阶段已加行
 
 ### P1 · part 级 settled 契约与增量签名
 
-- [ ] RED：streaming 期间，历史 finalized part 的 projection/renderable 不因活跃 part 的 delta 变化（identity + 内容不变）；活跃 part 的 dirty 集合只含自身。
-- [ ] 引入 `settled(part)`：`part.finalized === true` 且 `contentGeneration` 未变 ⇒ 整 part byte-stable。generation 回退（retry/session switch）整体作废（复用 TimelineStore generation fence 语义）。
-- [ ] `component-runtime.ts:460-464` 的 `bodySignature` 增量化：block 级 `contentGeneration`（或内容长度+尾哈希链）替代全量 `blockText` join 比较；保留字符串比较作为低代价 fallback。
-- [ ] `chat-container.ts` presentationCache 键改为 `(entryId, partId, width, contentGeneration, themeGeneration)`；streaming 期间历史 part 继续命中。
-- [ ] `component-runtime.ts:563-564` 的 content 全量重设保留（OpenTUI 内部增量解析），但仅对 `contentKey` 实际变化的 block 执行（现状已比较，P0 测量后决定比较方式是否升级为长度+哈希）。
+- [x] RED：streaming 期间，历史 finalized part 的 projection/renderable 不因活跃 part 的 delta 变化（identity + 内容不变）；活跃 part 的 dirty 集合只含自身。证据：`tests/tui/streaming-part-stability.test.ts` 与 `tests/tui/opentui-part-stability.bun.test.ts`。
+- [x] 引入 `settled(part)`：`part.finalized === true` 且 `contentGeneration` 未变 ⇒ 整 part byte-stable。generation 回退（retry/session switch）整体作废（复用 TimelineStore generation fence 语义）。实现：`src/tui/timeline/part-stability.ts`。
+- [x] `component-runtime.ts:460-464` 的 `bodySignature` 增量化：由 block 级 `contentGeneration` 与 finalized identity 驱动稳定 part，活跃 part 使用长度+短哈希并保留正文作为 contentKey fallback。实现：`src/tui/opentui/body-signature.ts`。
+- [x] `chat-container.ts` presentationCache 键改为 `(entryId, partId, width, contentGeneration, themeGeneration)`；streaming 期间历史 part 继续命中。
+- [x] `component-runtime.ts:563-564` 的 content 全量重设保留（OpenTUI 内部增量解析），但仅对 `contentKey` 实际变化的 block 执行；part 级 dirty 集合不再因活跃 delta 扩散到历史 part。
 
-验收：10,000 entry burst 下单 delta 的 application projection 不触碰历史 part；cache 命中率与 P0 对比有据；`npm run check` 清零。
+验收：当前切片已通过 focused Vitest 80 tests、native OpenTUI 103 tests/644 assertions、`tsc --noEmit`、`npm run build`、streaming benchmark，以及 linked `runledger` 在 60/80/143 列隔离 `RUNLEDGER_DIR` 下的真实 TTY smoke。仍待补齐 10,000 entry burst 的 application-level projection/cache-hit 对比与仓库级 `npm run check`；后者当前被任务外 `check:current-format` internal marker 扫描阻塞，因此 P1 保持 `partial`。
 
 ### P2 · 冻结前缀判定与字节稳定契约门
 
@@ -148,7 +148,7 @@ development-doc/00-index.md      # 本计划完成登记（规划阶段已加行
 ### P6 · 压力、门禁与回写
 
 - [x] 压力 fixture：`scripts/streaming-prefix-stability-fixtures.ts` 覆盖 10,000 × 1-char delta、1 MiB 单消息、开放 fence、生长表格、流式 diff、有界缓存、abort/error lineage；既有 Bun frame 覆盖 streaming 中滚动与 resize storm。
-- [~] 背压验证：settled cache 的 entry/byte 上限与 cache snapshot 已通过；`bodySignature` 增量化属于尚未开始的 P1，本文不把该项冒充完成。
+- [~] 背压验证：settled cache 的 entry/byte 上限与 cache snapshot 已通过；P1 的 `bodySignature` 增量化已接入，但 10,000 entry application-level projection/cache-hit 对比仍待补齐。
 - [~] 门禁：`npm run build`、`tsc --noEmit`、focused Vitest、Bun OpenTUI、60/80/143 linked `runledger` PTY smoke 通过；`npm run check` 与全量 `npm test` 被既有 `exec-renderable.ts` TUI boundary 规则阻塞，详见 evidence JSON。
 - [x] 回写：本计划状态表、独立压力证据 [`05-streaming-prefix-stability-evidence-2026-08-15.json`](05-streaming-prefix-stability-evidence-2026-08-15.json)、`tui/18` S3/S4 证据入口与 `00-index.md` 已更新。
 
@@ -171,12 +171,12 @@ development-doc/00-index.md      # 本计划完成登记（规划阶段已加行
 | 阶段 | 状态 | 证据 |
 |---|---|---|
 | P0 现状证据基线 | `planned` | — |
-| P1 part 级 settled + 增量签名 | `planned` | — |
+| P1 part 级 settled + 增量签名 | `partial` | `src/tui/timeline/part-stability.ts`、`src/tui/opentui/body-signature.ts`、`tests/tui/streaming-part-stability.test.ts`、`tests/tui/opentui-part-stability.bun.test.ts`；focused Vitest 80 tests、native OpenTUI 103 tests/644 assertions、build、benchmark、60/80/143 linked TTY smoke 通过；10,000 entry application projection/cache-hit 对比与仓库级 check 待补齐 |
 | P2 冻结前缀 + 契约门 | `partial` | `src/tui/opentui/settled-prefix.ts`；`tests/tui/settled-prefix.test.ts`；`tests/tui/streaming-prefix-stability.bun.test.ts`；P2 focused Vitest/Bun + `tsc --noEmit` 通过 |
 | P3 settled 行缓存 | `implemented` | `src/tui/opentui/settled-part-cache.ts`；`tests/tui/settled-part-cache.test.ts`；`tests/tui/blocks/transcript-view.test.ts`；focused 18 tests；cache snapshot/淘汰/generation/theme/revision-rewind evidence |
 | P4 流式表格列宽锁定 | `implemented` | `src/tui/opentui/streaming-table-split.ts`；`tests/tui/streaming-table-lock.test.ts`；`tests/tui/streaming-prefix-stability.bun.test.ts`；Bun closed-table frame evidence |
 | P5 流式 diff 行级高亮 | `implemented` | `src/tui/opentui/streaming-diff-admission.ts`；`tests/tui/streaming-diff-admission.test.ts`；`tests/tui/opentui-diff-gutter.bun.test.ts`；final/预算/generation fence evidence |
-| P6 压力、门禁与回写 | `partial / blocked` | [`05-streaming-prefix-stability-evidence-2026-08-15.json`](05-streaming-prefix-stability-evidence-2026-08-15.json)；pressure fixture、Bun 97 tests/618 assertions、build、60/80/143 PTY 通过；check/full npm test 仍受任务外 current-format marker、`exec-renderable.ts` boundary 与 Bash AST worker 失败阻塞，P1 signature baseline 仍 planned |
+| P6 压力、门禁与回写 | `partial / blocked` | [`05-streaming-prefix-stability-evidence-2026-08-15.json`](05-streaming-prefix-stability-evidence-2026-08-15.json)；pressure fixture、current native OpenTUI 103 tests/644 assertions、build、60/80/143 PTY 通过；check/full npm test 仍受任务外 current-format marker、`exec-renderable.ts` boundary 与 Bash AST worker 失败阻塞，P1 signature 已为 partial，10,000 entry application projection/cache-hit 对比仍待补齐 |
 
 ## 约束（本计划遵守）
 

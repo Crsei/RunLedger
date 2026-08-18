@@ -1,4 +1,5 @@
 import type { SafeBoundedText } from "./presentation/tools/types.ts";
+import type { PresentationPart } from "./timeline/part-stability.ts";
 
 export type PlanStepStatus = "pending" | "in-progress" | "completed";
 
@@ -35,7 +36,12 @@ export type NoticeBlock = {
 	message: string;
 };
 
-export type PresentationBlock =
+export interface PresentationBlockMetadata extends Partial<PresentationPart> {
+	/** 仅影响派生样式/缓存，不属于 Timeline 内容 generation。 */
+	readonly themeGeneration?: number;
+}
+
+export type PresentationBlock = (
   | { id?: string; kind: "text"; content: string }
   | { id?: string; kind: "markdown"; content: string; streaming: boolean }
   | { id?: string; kind: "command"; command: string }
@@ -90,4 +96,5 @@ export type PresentationBlock =
     message: string;
     value: string;
     placeholder?: string;
-  };
+  }
+  ) & PresentationBlockMetadata;

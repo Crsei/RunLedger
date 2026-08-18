@@ -85,6 +85,7 @@ export class MermaidProjectionCache {
 function toRenderCacheKey(key: MermaidRenderCacheKey): RenderCacheKey {
   return {
     entryId: key.sourceDigest,
+    partId: "mermaid",
     width: key.width,
     contentGeneration: key.renderRevision,
     themeGeneration: 0,

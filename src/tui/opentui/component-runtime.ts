@@ -39,6 +39,8 @@ import { statusLineToStyledText, type StatusLineSegment } from "../highlight/sta
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "../mermaid/display-width.ts";
 import { freezeStreamPrefix, type SettledSpan } from "./settled-prefix.ts";
 import { splitClosedStreamingTable } from "./streaming-table-split.ts";
+import { BodySignatureTracker } from "./body-signature.ts";
+import { settled, type PresentationPart } from "../timeline/part-stability.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
@@ -111,6 +113,7 @@ class RunLedgerTextareaRenderable extends TextareaRenderable {
 
 export interface OpenTuiComponentRuntime {
   update(frame: OpenTuiComponentFrame): void;
+  getLastDirtyPartIds(): readonly string[];
   destroy(): void;
 }
 
@@ -320,6 +323,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let settledMarkdownStates = new Map<string, SettledMarkdownState>();
   let overlayNodes = new Map<string, KeyedRenderable<OverlayRenderable>>();
   let previousBodySignature: readonly string[] = [];
+  const bodySignatureTracker = new BodySignatureTracker();
+  let lastDirtyPartIds: readonly string[] = [];
   let pendingNewContent = 0;
   let syntaxStyle = createRunLedgerSyntaxStyle();
   let mermaidThemeMode: MermaidThemeMode = renderer.themeMode ?? "dark";
@@ -474,16 +479,29 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       const nextBodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
       const nextSettledMarkdownStates = new Map<string, SettledMarkdownState>();
       const desiredBodyNodes: BodyRenderable[] = [];
-      const usedBodyKeys = new Set<string>();
       const bodyBlocks = frame.body.length > 0
         ? frame.body.map(toPresentationBlock)
         : [{ id: "empty", kind: "text" as const, content: "" }];
-      const bodySignature = bodyBlocks.map((block, index) => {
+      const keyedBodyBlocks: Array<{ readonly block: PresentationBlock; readonly key: string }> = [];
+      const usedBodyKeys = new Set<string>();
+      for (const [index, block] of bodyBlocks.entries()) {
         const key = blockKey(block, index);
-        const streaming = block.kind === "markdown" ? String(block.streaming) : "";
-        return `${key}\u0000${block.kind}\u0000${streaming}\u0000${blockText(block)}`;
-      });
-      const bodyChanged = !sameStringArray(previousBodySignature, bodySignature);
+        const uniqueKey = usedBodyKeys.has(key) ? `${key}-${index}` : key;
+        usedBodyKeys.add(uniqueKey);
+        keyedBodyBlocks.push({ block, key: uniqueKey });
+      }
+      const bodySignatureSnapshot = bodySignatureTracker.update(keyedBodyBlocks.map(({ block, key }) => ({
+        key,
+        ...(block.partId === undefined ? {} : { partId: block.partId }),
+        kind: block.kind,
+        streaming: block.kind === "markdown" ? block.streaming : block.kind === "diff" ? block.streaming === true : false,
+        ...(block.contentGeneration === undefined ? {} : { contentGeneration: block.contentGeneration }),
+        ...(block.finalized === undefined ? {} : { finalized: block.finalized }),
+        contentKey: isSettledPresentationBlock(block) ? "" : blockSignatureText(block),
+      })));
+      const bodySignature = bodySignatureSnapshot.signature;
+      const bodyChanged = bodySignatureSnapshot.changed;
+      lastDirtyPartIds = bodySignatureSnapshot.changedKeys;
       const wasFollowing = isAtBottom(transcript);
       if (previousBodySignature.length > 0 && bodyChanged) {
         if (bodySignature.length < previousBodySignature.length) pendingNewContent = 0;
@@ -491,10 +509,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         else pendingNewContent += Math.max(1, bodySignature.length - previousBodySignature.length);
       }
       previousBodySignature = bodySignature;
-      for (const [index, block] of bodyBlocks.entries()) {
-        const baseKey = blockKey(block, index);
-        const key = usedBodyKeys.has(baseKey) ? `${baseKey}-${index}` : baseKey;
-        usedBodyKeys.add(key);
+      for (const { block, key } of keyedBodyBlocks) {
         const previous = bodyNodes.get(key);
         const expectedKind = block.kind;
         const previousSettled = settledMarkdownStates.get(key);
@@ -904,10 +919,11 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       options.performanceObserver?.recordProjection({
         durationMs: Math.max(0, Date.now() - projectionStartedAt),
         processedChars: frameCharacterCount(frame),
-        dirtyEntries: frame.body.length,
+        dirtyEntries: lastDirtyPartIds.length,
       });
       renderer.requestRender();
     },
+    getLastDirtyPartIds: () => lastDirtyPartIds,
     destroy: () => {
       renderer.off("frame", onFrame);
       renderer.off("selection", onSelection);
@@ -1071,9 +1087,26 @@ function isAtBottom(transcript: ScrollBoxRenderable): boolean {
   return transcript.scrollTop >= maxScrollTop - 1;
 }
 
-function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
-  if (left.length !== right.length) return false;
-  return left.every((value, index) => value === right[index]);
+function blockSignatureText(block: PresentationBlock): string {
+  return block.kind === "markdown" ? block.content : blockText(block);
+}
+
+function presentationPart(block: PresentationBlock): PresentationPart | undefined {
+  if (typeof block.entryId !== "string"
+    || typeof block.partId !== "string"
+    || typeof block.contentGeneration !== "number"
+    || typeof block.finalized !== "boolean") return undefined;
+  return {
+    entryId: block.entryId,
+    partId: block.partId,
+    contentGeneration: block.contentGeneration,
+    finalized: block.finalized,
+  };
+}
+
+function isSettledPresentationBlock(block: PresentationBlock): boolean {
+  const part = presentationPart(block);
+  return part !== undefined && settled(part);
 }
 
 function getOverlayTextNode(

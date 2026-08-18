@@ -31,7 +31,7 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 			if (event.type === "message_start" && event.row.kind !== "user" && event.row.kind !== "assistant") return state;
 			if (event.type === "tool_start" && event.row.kind !== "tool") return state;
 			const next = nextDisplayOrder(state);
-			const row = { ...event.row, displayOrder: next };
+			const row = { ...event.row, generation, displayOrder: next };
 			return {
 				...state,
 				generation,
@@ -105,6 +105,7 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 				timestamp: new Date().toISOString(),
 				displayOrder: nextDisplayOrder(state),
 				status: "succeeded",
+				generation,
 				severity: event.severity,
 				message: event.message,
 			};
@@ -115,7 +116,7 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 			const kind = event.type === "goal_lifecycle" ? "goal" : "agent";
 			const existing = state.committedRows.find((row) => row.id === `${kind}:${event.correlationId}`);
 			if (existing !== undefined) {
-				const updated = { ...existing, status: event.status as TimelineStatus };
+				const updated = { ...existing, status: event.status as TimelineStatus, generation };
 				return {
 					...state,
 					generation,
@@ -124,25 +125,27 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 			}
 			const row: TimelineRow = event.type === "goal_lifecycle"
 				? {
-						kind: "goal",
-						id: `goal:${event.correlationId}`,
-						timestamp: new Date().toISOString(),
-						displayOrder: nextDisplayOrder(state),
-						status: event.status,
-						goalId: event.goalId,
-						label: { text: "goal", truncated: false, byteLength: 4 },
-						phase: { text: event.status, truncated: false, byteLength: event.status.length },
-					}
+					kind: "goal",
+					id: `goal:${event.correlationId}`,
+					timestamp: new Date().toISOString(),
+					displayOrder: nextDisplayOrder(state),
+					status: event.status,
+					generation,
+					goalId: event.goalId,
+					label: { text: "goal", truncated: false, byteLength: 4 },
+					phase: { text: event.status, truncated: false, byteLength: event.status.length },
+				}
 				: {
-						kind: "agent",
-						id: `agent:${event.correlationId}`,
-						timestamp: new Date().toISOString(),
-						displayOrder: nextDisplayOrder(state),
-						status: event.status,
-						agentId: event.agentId,
-						label: { text: "agent", truncated: false, byteLength: 5 },
-						phase: { text: event.status, truncated: false, byteLength: event.status.length },
-					};
+					kind: "agent",
+					id: `agent:${event.correlationId}`,
+					timestamp: new Date().toISOString(),
+					displayOrder: nextDisplayOrder(state),
+					status: event.status,
+					generation,
+					agentId: event.agentId,
+					label: { text: "agent", truncated: false, byteLength: 5 },
+					phase: { text: event.status, truncated: false, byteLength: event.status.length },
+				};
 			return { ...state, generation, committedRows: [...state.committedRows, row] };
 		}
 		case "run_start": {
@@ -223,6 +226,7 @@ function commitRunBoundary(
 		timestamp: new Date(event.timestamp).toISOString(),
 		displayOrder: nextDisplayOrder(state),
 		status: event.stopReason === "error" ? "failed" : event.stopReason === "aborted" ? "aborted" : "succeeded",
+		generation,
 		runId: event.runId,
 		stopReason: event.stopReason,
 		...(event.elapsedMs === undefined ? {} : { elapsedMs: event.elapsedMs }),

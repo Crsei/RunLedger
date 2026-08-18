@@ -18,9 +18,10 @@
 
 import type { Component } from "../index.ts";
 import type { PresentationBlock } from "../presentation.ts";
-import { RenderCache } from "../opentui/render-cache.ts";
+import { RenderCache, type RenderCacheKey, type RenderCacheSnapshot } from "../opentui/render-cache.ts";
 import { fitToWidth } from "./render-width.ts";
 import { formatSeparatorLabel } from "../opentui/block-layout.ts";
+import { PartGenerationFence, settled, type PresentationPart } from "../timeline/part-stability.ts";
 
 export class ChatContainer implements Component {
   private readonly children: Array<{ key: string; component: Component }> = [];
@@ -35,9 +36,13 @@ export class ChatContainer implements Component {
   private timelineBlocks: readonly PresentationBlock[] | undefined;
   private timelineGeneration = -1;
   private presentCache: { readonly generation: number; readonly width: number; readonly blocks: PresentationBlock[] } | undefined;
+  private timelineThemeGeneration = 0;
+  private readonly partGenerationFence = new PartGenerationFence();
 
   invalidate(): void {
     this.presentationCache.clear();
+    this.partGenerationFence.reset();
+    this.presentCache = undefined;
     this.replacement?.component.invalidate();
     for (const { component } of this.children) {
       component.invalidate();
@@ -46,10 +51,25 @@ export class ChatContainer implements Component {
 
   /** B2:Timeline projection 一次性替换 chat 内容；block id 必须稳定。 */
   setTimelineBlocks(blocks: readonly PresentationBlock[], generation: number): void {
+    if (generation < this.timelineGeneration) {
+      this.presentationCache.clear();
+      this.partGenerationFence.reset();
+    }
     this.timelineBlocks = blocks;
     this.timelineGeneration = generation;
     this.presentCache = undefined;
-    this.presentationCache.clear();
+  }
+
+  /** 主题只影响派生 presentation，不改变 Timeline 内容 generation。 */
+  setThemeGeneration(generation: number): void {
+    const next = Number.isFinite(generation) ? Math.max(0, Math.floor(generation)) : 0;
+    if (next === this.timelineThemeGeneration) return;
+    this.timelineThemeGeneration = next;
+    this.presentCache = undefined;
+  }
+
+  getPresentationCacheSnapshot(): RenderCacheSnapshot {
+    return this.presentationCache.snapshot();
   }
 
   getTimelineGeneration(): number {
@@ -78,6 +98,7 @@ export class ChatContainer implements Component {
     this.children.length = 0;
     this.timelineBlocks = undefined;
     this.presentationCache.clear();
+    this.partGenerationFence.reset();
     this.presentCache = undefined;
   }
 
@@ -122,9 +143,7 @@ export class ChatContainer implements Component {
       }
       // Timeline blocks 是交给 OpenTUI Text/Markdown renderable 的结构化正文；
       // 由原生布局按容器宽度换行，不能在这里把整块内容当成单行截断。
-      const blocks = this.timelineBlocks.map((block): PresentationBlock => block.kind === "separator"
-		? { ...block, content: separatorLine(formatSeparatorLabel(block.label, block.metrics), width) }
-		: { ...block });
+      const blocks = this.timelineBlocks.map((block): PresentationBlock => this.presentTimelineBlock(block, width));
       this.presentCache = { generation: this.timelineGeneration, width, blocks };
       return blocks;
     }
@@ -134,7 +153,7 @@ export class ChatContainer implements Component {
         const version = component.getPresentationVersion?.();
         const cacheKey = version === undefined
           ? undefined
-          : { entryId: key, width, contentGeneration: version, themeGeneration: 0 };
+          : { entryId: key, partId: `${key}/projection`, width, contentGeneration: version, themeGeneration: this.timelineThemeGeneration };
         const cached = cacheKey ? this.presentationCache.get(cacheKey) : undefined;
         const projected = cached
           ? cached
@@ -158,6 +177,25 @@ export class ChatContainer implements Component {
     }
     return blocks;
   }
+
+  private presentTimelineBlock(block: PresentationBlock, width: number): PresentationBlock {
+    const part = presentationPart(block);
+    const cacheKey = part === undefined ? undefined : timelineCacheKey(part, block.themeGeneration ?? this.timelineThemeGeneration, width);
+    const transition = part === undefined ? undefined : this.partGenerationFence.observe(part);
+    if (part !== undefined && transition === "rewound") this.presentationCache.invalidateEntry(part.entryId);
+    const cacheable = part !== undefined && settled(part) && cacheKey !== undefined;
+    if (cacheable && cacheKey !== undefined) {
+      const cached = this.presentationCache.get(cacheKey)?.[0];
+      if (cached !== undefined) return cached;
+    }
+    const projected = block.kind === "separator"
+      ? { ...block, content: separatorLine(formatSeparatorLabel(block.label, block.metrics), width) }
+      : { ...block };
+    if (cacheable && cacheKey !== undefined) {
+      this.presentationCache.set(cacheKey, [projected], presentationBytes([projected]));
+    }
+    return projected;
+  }
 }
 
 function separatorLine(label: string, width: number): string {
@@ -169,4 +207,31 @@ function separatorLine(label: string, width: number): string {
 
 function presentationBytes(blocks: readonly PresentationBlock[]): number {
   return blocks.reduce((total, block) => total + JSON.stringify(block).length, 0);
+}
+
+function presentationPart(block: PresentationBlock): PresentationPart | undefined {
+  if (typeof block.entryId !== "string"
+    || typeof block.partId !== "string"
+    || typeof block.contentGeneration !== "number"
+    || typeof block.finalized !== "boolean") return undefined;
+  return {
+    entryId: block.entryId,
+    partId: block.partId,
+    contentGeneration: block.contentGeneration,
+    finalized: block.finalized,
+  };
+}
+
+function timelineCacheKey(
+  part: PresentationPart,
+  themeGeneration: number,
+  width: number,
+): RenderCacheKey {
+  return {
+    entryId: part.entryId,
+    partId: part.partId,
+    width,
+    contentGeneration: part.contentGeneration,
+    themeGeneration,
+  };
 }

@@ -800,6 +800,7 @@ describe("Plan 18 streaming state", () => {
     const cache = new RenderCache<string>({ maxEntries: 2, maxBytes: 6 });
     const baseKey = {
       entryId: "entry-1",
+      partId: "part-1",
       width: 80,
       contentGeneration: 1,
       themeGeneration: 1,
@@ -807,12 +808,13 @@ describe("Plan 18 streaming state", () => {
 
     cache.set(baseKey, "abc", 3);
     expect(cache.get(baseKey)).toBe("abc");
+    expect(cache.get({ ...baseKey, partId: "part-2" })).toBeUndefined();
     expect(cache.get({ ...baseKey, width: 100 })).toBeUndefined();
     cache.set({ ...baseKey, entryId: "entry-2" }, "def", 3);
     cache.set({ ...baseKey, entryId: "entry-3" }, "ghi", 3);
 
     expect(cache.get(baseKey)).toBeUndefined();
-    expect(cache.snapshot()).toMatchObject({ entries: 2, bytes: 6, evictions: 1, misses: 2 });
+    expect(cache.snapshot()).toMatchObject({ entries: 2, bytes: 6, evictions: 1, misses: 3 });
     cache.invalidateGenerationBelow(2);
     expect(cache.snapshot().entries).toBe(0);
   });

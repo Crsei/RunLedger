@@ -129,6 +129,10 @@ describe("B2 timeline selectors", () => {
 		const diff = blocks.find((block) => block.kind === "diff");
 		expect(diff).toEqual({
 			id: "timeline-tool:edit/diff-0",
+			entryId: "tool:edit",
+			partId: "tool:edit/diff-0",
+			contentGeneration: 0,
+			finalized: true,
 			kind: "diff",
 			document,
 			showLineNumbers: true,
@@ -142,6 +146,10 @@ describe("B2 timeline selectors", () => {
 		const blocks = rowToBlocks(row({ kind: "notice", severity: "error", message: { text: "boom", truncated: false, byteLength: 4 } }));
 		expect(blocks).toEqual([{
 			id: "timeline-row-1",
+			entryId: "row-1",
+			partId: "row-1/notice",
+			contentGeneration: 0,
+			finalized: true,
 			kind: "notice",
 			severity: "error",
 			message: "error: boom",

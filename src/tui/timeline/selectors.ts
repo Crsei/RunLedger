@@ -5,7 +5,7 @@
  * 供 ChatContainer keyed render cache 与 OpenTUI renderable map 消费。
  */
 
-import type { PresentationBlock } from "../presentation.ts";
+import type { PresentationBlock, PresentationBlockMetadata } from "../presentation.ts";
 import type { SafeToolUsageView } from "../presentation/tools/types.ts";
 import type { TimelineRow, TimelineState } from "./types.ts";
 import { diffLineNumberWidth } from "../opentui/block-layout.ts";
@@ -51,13 +51,25 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 	const baseId = `timeline-${row.id}`;
 	switch (row.kind) {
 		case "user":
-			return [{ id: baseId, kind: "text", content: row.text.text }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", content: row.text.text }];
 		case "assistant": {
 			const blocks: PresentationBlock[] = [];
 			if (row.thinking !== undefined && row.thinking.text.length > 0) {
-				blocks.push({ id: `${baseId}/thinking`, kind: "markdown", content: row.thinking.text, streaming: row.streaming });
+				blocks.push({
+					id: `${baseId}/thinking`,
+					...partMetadata(row, `${row.id}/thinking`),
+					kind: "markdown",
+					content: row.thinking.text,
+					streaming: row.streaming,
+				});
 			}
-			blocks.push({ id: `${baseId}/text`, kind: "markdown", content: row.text.text, streaming: row.streaming });
+			blocks.push({
+				id: `${baseId}/text`,
+				...partMetadata(row, `${row.id}/text`),
+				kind: "markdown",
+				content: row.text.text,
+				streaming: row.streaming,
+			});
 			return blocks;
 		}
 		case "tool": {
@@ -67,6 +79,7 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 				if (plan === undefined || (plan.steps.length === 0 && plan.explanation === undefined)) return [];
 				return [{
 					id: baseId,
+					...partMetadata(row, `${row.id}/plan`),
 					kind: "plan-update",
 					explanation: plan.explanation,
 					steps: plan.steps,
@@ -76,6 +89,7 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 				const result = presentation.result?.kind === "shell" ? presentation.result : undefined;
 				return [{
 					id: baseId,
+					...partMetadata(row, `${row.id}/exec`),
 					kind: "exec",
 					command: presentation.input.commandLabel.text,
 					status: row.status,
@@ -96,29 +110,44 @@ export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
 			const diffBlocks = presentation?.body.flatMap((block, index): PresentationBlock[] => block.kind === "diff"
 				? [{
 					id: `${baseId}/diff-${index}`,
+					...partMetadata(row, `${row.id}/diff-${index}`),
 					kind: "diff",
 					document: block.document,
-						showLineNumbers: true,
-						lineNumberWidth: diffDocumentLineNumberWidth(block.document),
-						syntaxHighlight: true,
-						...(row.status === "running" ? { streaming: true } : {}),
-					}]
+					showLineNumbers: true,
+					lineNumberWidth: diffDocumentLineNumberWidth(block.document),
+					syntaxHighlight: true,
+					...(row.status === "running" ? { streaming: true } : {}),
+				}]
 				: []) ?? [];
-			return [{ id: baseId, kind: "text", content: lines.join("\n") }, ...diffBlocks];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", content: lines.join("\n") }, ...diffBlocks];
 		}
 		case "notice": {
 			const prefix = row.severity === "error" ? "error: " : row.severity === "warning" ? "warning: " : "note: ";
-			return [{ id: baseId, kind: "notice", severity: row.severity, message: `${prefix}${row.message.text}` }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/notice`), kind: "notice", severity: row.severity, message: `${prefix}${row.message.text}` }];
 		}
 		case "goal":
-			return [{ id: baseId, kind: "text", content: `goal ${row.label.text}: ${row.phase.text}` }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/goal`), kind: "text", content: `goal ${row.label.text}: ${row.phase.text}` }];
 		case "queue":
-			return [{ id: baseId, kind: "text", content: `queue ${row.label.text}: ${row.state}` }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/queue`), kind: "text", content: `queue ${row.label.text}: ${row.state}` }];
 		case "agent":
-			return [{ id: baseId, kind: "text", content: `agent ${row.label.text}: ${row.phase.text}` }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/agent`), kind: "text", content: `agent ${row.label.text}: ${row.phase.text}` }];
 		case "run-boundary":
-			return [{ id: baseId, kind: "separator", label: `${row.stopReason} · ${row.activeDurationMs === undefined ? "time unavailable" : `Worked for ${formatActiveDuration(row.activeDurationMs)}`}` }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/boundary`), kind: "separator", label: `${row.stopReason} · ${row.activeDurationMs === undefined ? "time unavailable" : `Worked for ${formatActiveDuration(row.activeDurationMs)}`}` }];
 	}
+}
+
+function partMetadata(row: TimelineRow, partId: string): PresentationBlockMetadata {
+	return {
+		entryId: row.id,
+		partId,
+		contentGeneration: row.generation ?? 0,
+		finalized: rowFinalized(row),
+	};
+}
+
+function rowFinalized(row: TimelineRow): boolean {
+	if (row.kind === "assistant") return !row.streaming;
+	return row.status !== "pending" && row.status !== "running";
 }
 
 function hasWorkActivity(rows: readonly TimelineRow[]): boolean {

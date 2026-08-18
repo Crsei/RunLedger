@@ -89,6 +89,11 @@ export {
   type RenderCacheSnapshot,
 } from "./opentui/render-cache.ts";
 export {
+	BodySignatureTracker,
+	type BodySignatureInput,
+	type BodySignatureSnapshot,
+} from "./opentui/body-signature.ts";
+export {
 	SettledPartCache,
 	type SettledPartCacheKey,
 	type SettledPartCacheOptions,
@@ -157,10 +162,17 @@ export {
 
 // Framework-neutral passive data contracts. These exports intentionally carry no runtime values.
 export type * from "./application/types.ts";
-export type { NoticeBlock, NoticeSeverity, PlanStepStatus, PlanStepView, PlanUpdateBlock, PresentationBlock, StatusIndicatorView } from "./presentation.ts";
+export type { NoticeBlock, NoticeSeverity, PlanStepStatus, PlanStepView, PlanUpdateBlock, PresentationBlock, PresentationBlockMetadata, StatusIndicatorView } from "./presentation.ts";
 export type * from "./presentation/types.ts";
 export type * from "./presentation/tools/types.ts";
 export type * from "./timeline/types.ts";
+export {
+	PartGenerationFence,
+	comparePartGeneration,
+	settled,
+	type PartGenerationTransition,
+	type PresentationPart,
+} from "./timeline/part-stability.ts";
 export type * from "./commands/types.ts";
 export type * from "./sessions/types.ts";
 export type * from "./providers/types.ts";

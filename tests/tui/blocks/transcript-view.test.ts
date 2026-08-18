@@ -57,7 +57,15 @@ describe("transcript view projection", () => {
 		const first = projectTranscriptOverlay(firstState);
 		const second = projectTranscriptOverlay(secondState);
 
-		expect(first.rows).toEqual([{ id: "timeline-user:1", kind: "text", content: "committed question" }]);
+		expect(first.rows).toEqual([{
+			id: "timeline-user:1",
+			entryId: "user:1",
+			partId: "user:1/text",
+			contentGeneration: 0,
+			finalized: true,
+			kind: "text",
+			content: "committed question",
+		}]);
 		expect(second.rows).toBe(first.rows);
 		expect(first.liveTail?.[0]).toMatchObject({ id: "timeline-assistant:1/text", kind: "markdown", content: "first tail" });
 		expect(first.timelineGeneration).toBe(7);

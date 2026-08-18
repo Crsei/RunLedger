@@ -122,6 +122,10 @@ describe("S4 separator and notice projection", () => {
 
 		expect(blocks).toEqual([{
 			id: "timeline-notice:warning",
+			entryId: "notice:warning",
+			partId: "notice:warning/notice",
+			contentGeneration: 0,
+			finalized: true,
 			kind: "notice",
 			severity: "warning",
 			message: "warning: host is reconnecting",

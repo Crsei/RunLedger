@@ -55,6 +55,10 @@ describe("S1 plan-update safe projection", () => {
 		const blocks = rowToBlocks(planRow(presentation));
 		expect(blocks).toEqual([{
 			id: "timeline-tool:todo-1",
+			entryId: "tool:todo-1",
+			partId: "tool:todo-1/plan",
+			contentGeneration: 0,
+			finalized: false,
 			kind: "plan-update",
 			explanation: { text: "Replicate the plan cell", truncated: false, byteLength: 23 },
 			steps: [

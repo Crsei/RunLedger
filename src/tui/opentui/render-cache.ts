@@ -1,5 +1,6 @@
 export interface RenderCacheKey {
   readonly entryId: string;
+  readonly partId: string;
   readonly width: number;
   readonly contentGeneration: number;
   readonly themeGeneration: number;
@@ -127,5 +128,5 @@ export class RenderCache<T> {
 }
 
 function serializeKey(key: RenderCacheKey): string {
-  return JSON.stringify([key.entryId, key.width, key.contentGeneration, key.themeGeneration]);
+  return JSON.stringify([key.entryId, key.partId, key.width, key.contentGeneration, key.themeGeneration]);
 }
