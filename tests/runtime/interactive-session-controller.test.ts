@@ -131,7 +131,7 @@ const INTERACTION: AuthInteraction = {
 };
 
 describe("InteractiveSessionController", () => {
-	it("defaults an explicitly selected model to medium thinking", async () => {
+	it("defaults an explicitly selected model without a thinking setting to high", async () => {
 		const cwd = await tempDir();
 		const { models, p1 } = fixtureModels();
 		const controller = await InteractiveSessionController.create({
@@ -147,7 +147,7 @@ describe("InteractiveSessionController", () => {
 
 		await controller.selectModel(p1);
 
-		expect(controller.currentSelection.thinkingLevel).toBe("medium");
+		expect(controller.currentSelection.thinkingLevel).toBe("high");
 		controller.dispose();
 	});
 
@@ -182,7 +182,7 @@ describe("InteractiveSessionController", () => {
 		controller.dispose();
 	});
 
-	it("uses medium thinking when startup selects a model without an explicit thinking setting", async () => {
+	it("uses high thinking when startup selects a model without an explicit thinking setting", async () => {
 		const cwd = await tempDir();
 		const { models, p1 } = fixtureModels();
 		const controller = await InteractiveSessionController.create({
@@ -196,7 +196,7 @@ describe("InteractiveSessionController", () => {
 			tools: [],
 		});
 
-		expect(controller.currentSelection.thinkingLevel).toBe("medium");
+		expect(controller.currentSelection.thinkingLevel).toBe("high");
 		controller.dispose();
 	});
 

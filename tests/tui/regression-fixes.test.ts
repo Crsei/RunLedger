@@ -16,7 +16,43 @@ import type { SessionFrameEnvelope } from "../../src/runtime/session-server/prot
 import type { ProviderWorkflowPort, ProviderCatalogSnapshot } from "../../src/tui/providers/types.ts";
 import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
 import type { PresentationBlock } from "../../src/tui/presentation.ts";
-import { ContractController, settleFrames } from "./fixtures/contract-integration.ts";
+import { ContractController, createContractHarness, settleFrames } from "./fixtures/contract-integration.ts";
+
+describe("thinking initialization", () => {
+	it("hydrates the authoritative thinking level before the first new-session footer render", async () => {
+		const harness = createContractHarness({
+			controller: new ContractController({
+				selection: { model: mockModel, thinkingLevel: "high" },
+			}),
+		});
+		try {
+			await settleFrames();
+			expect(harness.mode.getTuiState().thinkingWorkflow).toMatchObject({
+				state: "ready",
+				value: { level: "high" },
+			});
+			expect(harness.mode.getThinkingLevel()).toBe("high");
+		} finally {
+			await harness.dispose();
+		}
+	});
+
+	it("refreshes thinking after the model selection workflow completes", async () => {
+		const controller = new ContractController({
+			selection: { model: mockModel, thinkingLevel: "high" },
+			availableModels: [{ provider: "deepseek", id: "deepseek-v4-pro" }],
+		});
+		const harness = createContractHarness({ controller });
+		try {
+			await settleFrames();
+			await controller.setThinkingLevel("max");
+			await (harness.mode as unknown as { selectModelByKey(key: string): Promise<void> }).selectModelByKey("deepseek/deepseek-v4-pro");
+			expect(harness.mode.getThinkingLevel()).toBe("max");
+		} finally {
+			await harness.dispose();
+		}
+	});
+});
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;

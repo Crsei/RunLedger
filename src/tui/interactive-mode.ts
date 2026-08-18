@@ -549,6 +549,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
 	  const recoverySync = this.syncRecoveryState();
 	  if (recoverySync !== undefined) await recoverySync;
       await this.ui.start();
+      await this.syncThinkingWorkflow();
+      this.ui.requestRender();
       // 启动即按当前主题(+已缓存的 OSC 11)下发一次输入区外观。
       this.refreshEditorAppearance();
     } catch (error) {
@@ -1379,6 +1381,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.runner.dispatch(effect);
     const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
     if (workflow.state === "ready") {
+      await this.syncThinkingWorkflow();
       const selection = workflow.value as { readonly providerId?: string; readonly modelId?: string };
       this.showNotice(`Model: ${selection.providerId ?? providerId}/${selection.modelId ?? modelId}`);
     } else if (workflow.state === "error") {
@@ -2421,6 +2424,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
       Object.assign(effect as unknown as Record<string, unknown>, extra);
     }
     return effect;
+  }
+
+  /** 首帧前同步当前 controller 的 authoritative thinking selection。 */
+  private async syncThinkingWorkflow(): Promise<void> {
+    if (this.store.getState().capabilities.thinking.state !== "available") return;
+    const effect = this.createEffect("thinking.inspect");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
   }
 
   /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
