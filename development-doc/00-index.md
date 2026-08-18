@@ -27,7 +27,7 @@
 | Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结，当前先解决多平台 path/Git/Shell/process/cleanup 适配 | `00` 总入口、`01` 当前适配状态、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
 | Session Audit Note | [`note/README.md`](note/README.md) | 当前打开 session 的 `/audit` 只读调用树、计量与 Artifact 阅读模式 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
-| Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md) | API、OAuth、provider、model catalog、凭据存储 | `AGENTS.md` §1.1 |
+| Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md)、[`providers/02-oh-my-pi-provider-port-execution-checklist.md`](providers/02-oh-my-pi-provider-port-execution-checklist.md) | 历史 pi-ai 全量移植；oh-my-pi 当前新增 provider 的差集、适配批次、特殊协议、动态 catalog、认证和生产验收清单 | 当前实现查 `AGENTS.md` §1.1；增量执行状态查 `providers/02` |
 | Storage / CLI | [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md)、[`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | 用户级单一 home 破坏性迁移 handoff（S0–S5 已完成）;旧项目级 `.runledger/`、settings、session 与 CLI 计划仅作为 superseded 迁移输入 | 迁移状态与最终证据查 `02`;旧布局历史见 [`project-cli-layout.md`](project-cli-layout.md) |
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`09` 专题导航 | `AGENTS.md` §1.2.x、§5 |
 | TUI | [`tui/10-documentation-update-plan.md`](tui/10-documentation-update-plan.md) | 跨项目 lessons 与远程控制路线文档更新记录 | [`tui/08-cross-project-lessons.md`](tui/08-cross-project-lessons.md)、[`tui/09-remote-control-roadmap.md`](tui/09-remote-control-roadmap.md) |
@@ -44,7 +44,9 @@
 | Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 | LSP Server Adapter | [`plan/04-lsp-server-adaptation-plan.md`](plan/04-lsp-server-adaptation-plan.md) | defaults/config 自动探测、stdio JSON-RPC、LspClient、AgentTool、WorkspaceEdit、managed LinterClient 与 SessionRuntime governed 接线 | P0–P6 review 修复已通过 fresh check/test/build 与隔离 CLI/TTY；P7 修复后 Session-managed 真实语言服务器/TUI smoke pending，状态查本文 §状态表 |
 | Streaming Write 展示稳定性 | [`plan/05-streaming-prefix-stability-plan.md`](plan/05-streaming-prefix-stability-plan.md) | oh-my-pi 稳定前缀能力族移植：part 级 settled 契约、冻结前缀判定与字节稳定契约门、settled 行缓存、流式表格列宽锁定、流式 diff 行级高亮；不改 renderer/screen mode/OpenTUI 内部 | 本文 §现状核实与 §状态表；P2 `partial`、P3–P5 `implemented`、P6 `partial / blocked`；压力证据见 [`plan/05-streaming-prefix-stability-evidence-2026-08-15.json`](plan/05-streaming-prefix-stability-evidence-2026-08-15.json)，全量 check/test 的既有 TUI boundary blocker 不伪装为本任务通过 |
+| Session Naming / Auto Title | [`plan/06-session-naming-and-auto-title-plan.md`](plan/06-session-naming-and-auto-title-plan.md) | Session Owner 内的 durable display title、oh-my-pi 语义适配、`/rename`、首个合格输入异步命名；默认复用当前 coding session active `provider/model`，不使用独立 tiny/smol | 本文 §Current implementation state and fresh evidence、§Status table |
 | Idle Recap | [`plan/07-idle-recap-replication-plan.md`](plan/07-idle-recap-replication-plan.md) | oh-my-pi 空闲 recap 的 ephemeral side-channel、当前模型复用、工具调用丢弃、owner/activity fencing、可配置 idle delay 与 fail-closed 接线 | 本文 §0 配置结论、§2 RunLedger 基线、§11 状态表 |
+| Usage Status Line | [`plan/08-usage-status-line-replication-plan.md`](plan/08-usage-status-line-replication-plan.md) | 参考 oh-my-pi 在输入框下方展示累计 input/output/cache/cost、cache hit、output tok/s 与 context usage；复用 RunLedger 多行结构化 OpenTUI footer | 本文 §0 目标与结论、§3 冻结合同、§7 状态表 |
 | Plugin / Tree-sitter Bash AST | [`plugin/01-tree-sitter-bash-ast-port-plan.md`](plugin/01-tree-sitter-bash-ast-port-plan.md) | Tree-sitter Bash AST 安全分类移植：WASM worker、allowlist walker、语义规则、fail-closed 授权与 rollout | B0–B4 `implemented`；B5 `planned`，Node/Bun、pack、PTY、审计与 human gate 仍按计划闭合 |
 
 ## 2026-08-04 当前实现批次
@@ -85,14 +87,17 @@ development-doc/
 │   ├── 03-session-execution-reliability-repair-plan.md
 │   ├── 04-lsp-server-adaptation-plan.md
 │   ├── 05-streaming-prefix-stability-plan.md
-│   └── 07-idle-recap-replication-plan.md
+│   ├── 06-session-naming-and-auto-title-plan.md
+│   ├── 07-idle-recap-replication-plan.md
+│   └── 08-usage-status-line-replication-plan.md
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md
 ├── plugin/
 │   └── 01-tree-sitter-bash-ast-port-plan.md
 ├── providers/
-│   └── 01-pi-ai-migration-plan.md
+│   ├── 01-pi-ai-migration-plan.md
+│   └── 02-oh-my-pi-provider-port-execution-checklist.md
 ├── plugin-mcp-skill-hooks/
 │   ├── 01-implementation-plan.md
 │   └── 02-skill-registry-discovery-provider-refactor-plan.md
