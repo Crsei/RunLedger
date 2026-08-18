@@ -13,7 +13,9 @@ import type {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { createProxyFetchForUrl } from "../utils/proxy-agent.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
@@ -239,10 +241,13 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 	}
 
 	const { baseUrl, apiVersion } = resolveAzureConfig(model, options);
+	const proxyUrl = getCachedProviderProxyUrl(model.provider, baseUrl, options?.env);
+	const proxyFetch = proxyUrl ? createProxyFetchForUrl(baseUrl, proxyUrl) : undefined;
 
 	return new AzureOpenAI({
 		apiKey,
 		apiVersion,
+		...(proxyFetch ? { fetch: proxyFetch } : {}),
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
 		baseURL: baseUrl,

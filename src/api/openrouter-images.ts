@@ -18,6 +18,8 @@ import type {
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
+import { createProxyFetchForUrl } from "../utils/proxy-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 interface OpenRouterGeneratedImage {
@@ -55,7 +57,7 @@ export const generateImages: ImagesFunction<"openrouter-images", ImagesOptions> 
 		if (!apiKey) {
 			throw new Error(`No API key for provider: ${model.provider}`);
 		}
-		const client = createClient(model, apiKey, options?.headers);
+		const client = createClient(model, apiKey, options?.headers, options?.env);
 		let params = buildParams(model, context);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
@@ -109,10 +111,15 @@ function createClient(
 	model: ImagesModel<"openrouter-images">,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
+	env?: Record<string, string>,
 ): OpenAI {
+	const proxyUrl = getCachedProviderProxyUrl(model.provider, model.baseUrl, env);
+	const proxyFetch = proxyUrl ? createProxyFetchForUrl(model.baseUrl, proxyUrl) : undefined;
+
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
+		...(proxyFetch ? { fetch: proxyFetch } : {}),
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: providerHeadersToRecord({ ...model.headers, ...optionsHeaders }),
 	});

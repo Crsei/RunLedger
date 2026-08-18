@@ -1,4 +1,4 @@
-import { Mistral } from "@mistralai/mistralai";
+import { HTTPClient, Mistral } from "@mistralai/mistralai";
 import type {
 	ChatCompletionStreamRequest,
 	ChatCompletionStreamRequestMessage,
@@ -23,7 +23,9 @@ import type {
 } from "../types.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { createProxyFetchForUrl } from "../utils/proxy-agent.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
@@ -60,11 +62,16 @@ export const stream: StreamFunction<"mistral-conversations", MistralOptions> = (
 			if (!apiKey) {
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
+			const proxyUrl = getCachedProviderProxyUrl(model.provider, model.baseUrl, options?.env);
+			const httpClient = proxyUrl
+				? new HTTPClient({ fetcher: createProxyFetchForUrl(model.baseUrl, proxyUrl) })
+				: undefined;
 
 			// Intentionally per-request: avoids shared SDK mutable state across concurrent consumers.
 			const mistral = new Mistral({
 				apiKey,
 				serverURL: model.baseUrl,
+				...(httpClient ? { httpClient } : {}),
 			});
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();

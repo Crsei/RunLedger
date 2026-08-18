@@ -19,7 +19,9 @@ import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { createProxyFetchForUrl } from "../utils/proxy-agent.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
@@ -125,7 +127,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const apiKey = getClientApiKey(model.provider, options?.apiKey, options?.headers);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId);
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, options?.env);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -194,6 +196,7 @@ function createClient(
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
 	sessionId?: string,
+	env?: ProviderEnv,
 ) {
 	const compat = getCompat(model);
 	const headers: ProviderHeaders = { ...model.headers };
@@ -221,10 +224,13 @@ function createClient(
 	if (optionsHeaders) {
 		Object.assign(headers, optionsHeaders);
 	}
+	const proxyUrl = getCachedProviderProxyUrl(model.provider, model.baseUrl, env);
+	const proxyFetch = proxyUrl ? createProxyFetchForUrl(model.baseUrl, proxyUrl) : undefined;
 
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
+		...(proxyFetch ? { fetch: proxyFetch } : {}),
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
 	});

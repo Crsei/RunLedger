@@ -99,6 +99,7 @@
     "@smithy/node-http-handler": "4.7.3",
     "http-proxy-agent": "7.0.2",
     "https-proxy-agent": "7.0.6",
+    "node-fetch": "3.3.2",
     "node-pty": "1.1.0",
     "openai": "6.26.0",
     "partial-json": "0.1.7",

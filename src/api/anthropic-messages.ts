@@ -32,8 +32,10 @@ import type {
 import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { createProxyFetchForUrl } from "../utils/proxy-agent.ts";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.ts";
 import { getProviderEnvValue } from "../utils/provider-env.ts";
+import { getCachedProviderProxyUrl } from "../utils/node-http-proxy.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
@@ -538,6 +540,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
 					options?.headers,
 					copilotDynamicHeaders,
 					cacheSessionId,
+					options?.env,
 				);
 				client = created.client;
 				isOAuth = created.isOAuthToken;
@@ -837,6 +840,7 @@ function createClient(
 	optionsHeaders?: ProviderHeaders,
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
+	env?: ProviderEnv,
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && model.compat?.forceAdaptiveThinking !== true;
@@ -847,6 +851,8 @@ function createClient(
 	if (needsInterleavedBeta) {
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
 	}
+	const proxyUrl = getCachedProviderProxyUrl(model.provider, model.baseUrl, env);
+	const proxyFetch = proxyUrl ? createProxyFetchForUrl(model.baseUrl, proxyUrl) : undefined;
 
 	// Copilot: Bearer auth, selective betas.
 	if (model.provider === "github-copilot") {
@@ -854,6 +860,7 @@ function createClient(
 			apiKey: null,
 			authToken: apiKey ?? null,
 			baseURL: model.baseUrl,
+			...(proxyFetch ? { fetch: proxyFetch } : {}),
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
 				{
@@ -876,6 +883,7 @@ function createClient(
 			apiKey: null,
 			authToken: apiKey,
 			baseURL: model.baseUrl,
+			...(proxyFetch ? { fetch: proxyFetch } : {}),
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
 				{
@@ -910,6 +918,7 @@ function createClient(
 		apiKey: apiKey ?? null,
 		authToken: null,
 		baseURL: model.baseUrl,
+		...(proxyFetch ? { fetch: proxyFetch } : {}),
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
 	});
