@@ -102,7 +102,8 @@ export async function runAgentLoop(
     ev: AgentEvent,
     ledgerEntry?: Omit<LedgerEntry, "sessionId">,
   ): Promise<void> => {
-    await emit(ev);
+    const normalizedEvent = ev.runId === undefined ? { ...ev, runId } : ev;
+    await emit(normalizedEvent);
     if (ledger && ledgerEntry) {
       const entry: LedgerEntry = {
         ...ledgerEntry,
@@ -111,7 +112,7 @@ export async function runAgentLoop(
       await ledger.append(entry);
     }
     if (config.traceRecorder) {
-      await config.traceRecorder.recordAgentEvent(ev);
+      await config.traceRecorder.recordAgentEvent(normalizedEvent);
     }
   };
 
@@ -269,11 +270,13 @@ export async function runAgentLoop(
     let assistantErrorMessage: string | undefined;
     let providerMessage: AssistantMessage | undefined;
     let messageOpen = false;
+    let streamStartedAt: number | undefined;
     for await (const ev of stream) {
       const ts = Date.now();
       if (ev.type === "start") {
         if (!messageOpen) {
           messageOpen = true;
+          streamStartedAt = ts;
           await fire({
             type: "message_start",
             timestamp: ts,
@@ -329,19 +332,35 @@ export async function runAgentLoop(
         assistantErrorMessage = ev.error.errorMessage;
       }
     }
+    const measuredDurationMs = providerMessage !== undefined
+      && providerMessage.durationMs === undefined
+      && providerMessage.stopReason !== "error"
+      && providerMessage.stopReason !== "aborted"
+      && streamStartedAt !== undefined
+      ? Math.max(0, Date.now() - streamStartedAt)
+      : undefined;
+    const retainedProviderMessage = providerMessage === undefined || measuredDurationMs === undefined
+      ? providerMessage
+      : { ...providerMessage, durationMs: measuredDurationMs, timingSource: "measured" as const };
+    const retainedDurationMs = retainedProviderMessage?.durationMs;
+    const retainedTimingSource = retainedProviderMessage?.timingSource
+      ?? (retainedDurationMs === undefined ? undefined : "provider");
     const assistantMessage: AssistantAgentMessage = {
       role: "assistant",
-      content: providerMessage?.content ?? assistantContent,
+      content: retainedProviderMessage?.content ?? assistantContent,
       stopReason: assistantStopReason,
       usage: assistantUsage,
       errorMessage: assistantErrorMessage,
-      api: providerMessage?.api,
-      provider: providerMessage?.provider,
-      model: providerMessage?.model,
-      timestamp: providerMessage?.timestamp,
+      api: retainedProviderMessage?.api,
+      provider: retainedProviderMessage?.provider,
+      model: retainedProviderMessage?.model,
+      timestamp: retainedProviderMessage?.timestamp,
+      durationMs: retainedDurationMs,
+      ttftMs: retainedProviderMessage?.ttftMs,
+      timingSource: retainedTimingSource,
     };
     if (traceModel && config.traceRecorder) {
-      await config.traceRecorder.finishModel(traceModel, providerMessage);
+      await config.traceRecorder.finishModel(traceModel, retainedProviderMessage);
     }
     if (messageOpen || providerMessage) {
       const ts = Date.now();
@@ -636,6 +655,9 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
           totalTokens: 0,
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
         },
+        ...(m.durationMs === undefined ? {} : { durationMs: m.durationMs }),
+        ...(m.ttftMs === undefined ? {} : { ttftMs: m.ttftMs }),
+        ...(m.timingSource === undefined ? {} : { timingSource: m.timingSource }),
         stopReason: m.stopReason,
         errorMessage: m.errorMessage,
         timestamp: m.timestamp ?? Date.now(),

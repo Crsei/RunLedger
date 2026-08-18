@@ -461,6 +461,44 @@ describe("OpenTUI syntax-theme status line", () => {
 			service.destroy();
 		}
 	});
+
+	test("keeps semantic colors independently on identity and usage rows", async () => {
+		const setup = await createTestRenderer({ width: 100, height: 12 });
+		const native = fixture();
+		const scopedAddon: NativeSyntaxAddon = {
+			...native.addon,
+			foregroundForScopes: () => ({ kind: "rgb", r: 255, g: 0, b: 0 }),
+		};
+		const service = new SyntaxHighlightService({ addon: scopedAddon });
+		const controller = new SyntaxThemeController({ availableThemes: themes, terminalMode: "dark" });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {}, onResize: () => {}, syntaxHighlightService: service, syntaxThemeController: controller,
+		});
+		try {
+			runtime.update({
+				body: [],
+				editorText: "",
+				footer: [
+					{ kind: "status-line", segments: [{ accent: "model", text: "deepseek" }] },
+					{ kind: "status-line", segments: [
+						{ accent: "usage", text: "in 1.2k" },
+						{ accent: "usage", text: "700.0 tok/s" },
+					] },
+				],
+			});
+			await setup.renderOnce();
+			const footer = setup.renderer.root.findDescendantById("runledger-footer");
+			const chunks = footer?.content.chunks ?? [];
+			expect(footer?.height).toBe(2);
+			expect(chunks.map((chunk) => chunk.text).join("")).toBe("deepseek\nin 1.2k · 700.0 tok/s");
+			for (const text of ["deepseek", "in 1.2k", "700.0 tok/s"]) {
+				expect(chunks.find((chunk) => chunk.text === text)?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
+			}
+		} finally {
+			runtime.destroy();
+			service.destroy();
+		}
+	});
 });
 
 describe("OpenTUI syntax-theme diff", () => {

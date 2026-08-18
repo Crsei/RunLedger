@@ -11,6 +11,7 @@
  */
 
 import type { AgentEvent, AgentMessage, AgentRunTerminationReason, RuntimeAssistantMessageEvent, ToolResultContent } from "../runtime/types.ts";
+import type { UsageSnapshot } from "../runtime/usage/index.ts";
 
 /** TUI 主控 switch 标签;对照 03-event-binding.md §1 表。 */
 export type TuiEvent =
@@ -22,6 +23,7 @@ export type TuiEvent =
       timestamp: number;
       turn: number;
       stopReason?: string;
+      runId?: string;
     }
   | {
       type: "message_start" | "message_end";
@@ -29,14 +31,16 @@ export type TuiEvent =
       role: "user" | "assistant";
       stopReason?: string;
       message?: AgentMessage;
+      runId?: string;
     }
-  | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent }
+  | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent; runId?: string }
   | {
       type: "tool_execution_start";
       timestamp: number;
       toolCallId: string;
       toolName: string;
       args: unknown;
+      runId?: string;
     }
   | {
       type: "tool_execution_end";
@@ -45,6 +49,7 @@ export type TuiEvent =
       toolName: string;
       isError: boolean;
       result: ToolResultContent;
+      runId?: string;
     }
   | {
       type: "tool_execution_update";
@@ -52,12 +57,14 @@ export type TuiEvent =
       toolCallId: string;
       toolName: string;
       partialResult: unknown;
+      runId?: string;
     }
   | {
       type: "queue_update";
       timestamp: number;
       steering: AgentMessage[];
       followUp: AgentMessage[];
+      runId?: string;
     };
 
 /**
@@ -82,6 +89,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         timestamp: ev.timestamp,
         turn: ev.turn,
         stopReason: ev.stopReason,
+        runId: ev.runId,
       };
     case "message_start":
     case "message_end":
@@ -91,12 +99,14 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         role: ev.role,
         stopReason: ev.stopReason,
         message: ev.message,
+        runId: ev.runId,
       };
     case "message_update":
       return {
         type: "message_update",
         timestamp: ev.timestamp,
         assistantMessageEvent: ev.assistantMessageEvent,
+        runId: ev.runId,
       };
     case "tool_execution_start":
       return {
@@ -105,6 +115,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         toolCallId: ev.toolCallId,
         toolName: ev.toolName,
         args: ev.args,
+        runId: ev.runId,
       };
     case "tool_execution_end":
       return {
@@ -114,6 +125,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         toolName: ev.toolName,
         isError: ev.isError,
         result: ev.result,
+        runId: ev.runId,
       };
     case "tool_execution_update":
       return {
@@ -122,6 +134,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         toolCallId: ev.toolCallId,
         toolName: ev.toolName,
         partialResult: ev.partialResult,
+        runId: ev.runId,
       };
     case "queue_update":
       return {
@@ -129,6 +142,7 @@ export function adaptAgentEvent(ev: AgentEvent): TuiEvent {
         timestamp: ev.timestamp,
         steering: ev.steering,
         followUp: ev.followUp,
+        runId: ev.runId,
       };
   }
 }
@@ -171,6 +185,8 @@ export interface FooterSnapshotProvider {
   getPlanProgress?(): { readonly completed: number; readonly total: number } | undefined;
   /** context window 的安全 token 快照；每个字段独立 capability-gated。 */
   getContextUsage?(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined;
+  /** One immutable, provenance-aware usage projection for the footer. */
+  getUsageSnapshot?(): UsageSnapshot | undefined;
   /** 可选会话标题/线程展示标签；未提供时不以 session id 伪造。 */
   getThreadLabel?(): string | undefined;
   /** 当前 run 的安全计时投影；等待态的 activeDurationMs 已冻结。 */

@@ -328,7 +328,11 @@ export class Agent {
     const dispatchRunEvent = async (event: AgentEvent): Promise<void> => {
       if (event.type === "agent_start") startedRun = event;
       if (event.type === "agent_end") completionSeen = true;
-      await this.dispatch(event);
+      const runId = startedRun?.runId;
+      const enriched = event.runId === undefined && runId !== undefined
+        ? { ...event, runId }
+        : event;
+      await this.dispatch(enriched);
     };
     const run = runAgentLoop(
       prompts,

@@ -1,6 +1,6 @@
 # RunLedger 输入区 Usage Status Line 复刻计划
 
-> 状态：`planned`。本文件只冻结 oh-my-pi 的可观察 usage 展示语义、RunLedger 的数据接线和验收门禁；本轮不实现代码、不提交。
+> 状态：`partial`。P1–P4 已实现并有 focused/runtime/native 证据；P5 真实 provider/TTY 与 P6 人工验收仍未完成。本文件继续作为 usage status line 的唯一状态入口。
 >
 > 基线：RunLedger `session-owner-runtime` / `4eecd499e715f3d588388fdbde937ec4699d9ab0`，2026-08-17；oh-my-pi `main` / `06aecdd51f07e689e970ceaa180abe2be0c14bbb`，工作树干净。
 
@@ -314,15 +314,30 @@ editor
 
 ## 7. 状态表
 
+截至 2026-08-19，以下实现证据来自当前 `session-owner-runtime` 工作树；它们不是 commit、真实 provider 或真实 TTY 验收声明：
+
+- P1：assistant message、AgentEvent、ledger payload、session replay 和 `defaultConvertToLlm` 保留 usage、`durationMs`、`ttftMs`、timing source；没有 provider duration 的成功 stream 只使用明确标记的 measured stream duration；AgentEvent 的 message/turn/tool 事件带同一 `runId`，TUI 会拒绝旧 run 事件。
+- P2：`src/runtime/usage/index.ts` 提供字段级 provenance、去重替换、累计 reducer、cache hit、token total、sticky output tok/s 和格式化；`cacheRead` 不进入 total，unknown 不被渲染为零。
+- P3：`InteractiveMode` 从 canonical initial messages seed；partial/final usage 共享 request id；owner recovery 状态切换从 controller messages 重新 seed；resume/fork/new view 的构造路径按目标 controller messages seed；context usage 优先 runtime snapshot，旧 `input + output` 只保留为 legacy approximate getter fallback。
+- P4：Footer usage 是独立结构化 status row，identity/usage 分开拟合；窄屏保留 `out`、`tok/s`、`ctx` 优先级；OpenTUI 多行颜色、editor height、resize 和 timeline usage round-trip 有 focused/native tests。
+
 | 阶段 | 状态 | 完成证据 |
 |---|---|---|
-| P0 基线/合同/视觉 | `planned` | 本计划已记录 oh-my-pi 与 RunLedger baseline；实现时补 frozen contract review |
-| P1 provider timing/usage 保留 | `planned` | assistant message、event、codec、replay focused tests |
-| P2 聚合/速率/格式化 | `planned` | pure unit tests 和边界 fixture |
-| P3 runtime/TUI snapshot | `planned` | live/replay/session-switch/recovery integration tests |
-| P4 footer/OpenTUI | `planned` | footer tests、Bun native layout/color tests |
-| P5 real TTY/provider | `planned` | isolated standard PATH and real provider evidence |
-| P6 acceptance | `planned` | all gates, diff boundary and manual acceptance recorded |
+| P0 基线/合同/视觉 | `documented` | 本计划冻结数据范围、unknown/zero、segment/drop 顺序与安全边界 |
+| P1 provider timing/usage 保留 | `implemented` | `tests/runtime/usage-retention.test.ts`、agent loop、replay 与 conversion 证据 |
+| P2 聚合/速率/格式化 | `implemented` | `tests/runtime/usage.test.ts` 覆盖 reducer、去重、rate、cache hit、format/provenance |
+| P3 runtime/TUI snapshot | `implemented` | streaming partial replacement、stale run fence、recovery re-seed、resume/fork/new seed tests |
+| P4 footer/OpenTUI | `implemented` | Footer focused tests、OpenTUI native layout/color/resize tests、timeline reducer round-trip |
+| P5 real TTY/provider | `pending` | 隔离标准 PATH、`runledger --help`、tmux `/model` 与干净 `Ctrl+D` 退出已验证；真实 provider usage/cache/cost/timing 与 live/replay 对比仍缺失 |
+| P6 acceptance | `pending` | 尚未完成全量门禁记录与 human acceptance；不因 P1–P4 focused evidence 提前闭合 |
+
+### 7.1 Fresh validation（2026-08-19）
+
+- focused Vitest：usage/runtime/TUI 相关 8 files / 96 tests 通过；Bun OpenTUI 102 tests / 638 assertions 通过；`npx tsc --noEmit -p tsconfig.json`、`npm run build`、`git diff --check` 通过。
+- 其余静态门禁逐项通过：storage/runtime/contract-consumers/execution/platform/TUI/session-owner、syntax-highlighter、bash-ast-assets；`which runledger` 为 `/home/nzq/.npm-global/bin/runledger`，全局链接指向当前仓库。
+- 排除既有 `tests/runtime/current-format-boundary.test.ts` 后的完整 Vitest 为 438 files passed / 1 skipped、2664 tests passed / 3 skipped；native Bun 已单独通过。完整 `npm test` 与 `npm run check` 仍在 `check:current-format` 首个既有 internal generation marker 扫描处失败；未修改扫描器或文档规避。
+- 隔离 `RUNLEDGER_DIR` 的标准 `runledger` 已完成 `--help` 与 tmux TTY `/model` smoke；usage row 在无累计 provider usage 时只显示 `ctx window 200.0k`，未伪造 token/cost 为零；逐级 Esc 后 Ctrl+D 使 tmux pane/session 退出。
+- P5 仍不闭合：没有真实 provider 的 input/output/cacheRead/cacheWrite/cost/duration 证据，也没有真实 prompt/tool-use/resume/fork 的 live 与 replay usage 对比；P6 human acceptance 同样 pending。
 
 ## 8. 不实现清单
 

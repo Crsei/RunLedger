@@ -326,6 +326,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     expect(ended).toMatchObject({ runId: started?.runId, stopReason: "stop" });
     expect(ended?.elapsedMs).toBeGreaterThanOrEqual(0);
     expect(ended?.activeDurationMs).toBe(ended?.elapsedMs);
+    expect(events.filter((event) => event.type === "turn_start" || event.type === "turn_end" || event.type === "message_start" || event.type === "message_end" || event.type === "message_update" || event.type.startsWith("tool_execution_")).every((event) => event.runId === started?.runId)).toBe(true);
 
     // 至少有一次 tool_execution_start
     const toolStarts = events.filter(

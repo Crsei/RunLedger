@@ -97,8 +97,17 @@ import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/t
 import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
 import { projectStatusIndicator } from "./presentation/projectors.ts";
 import { projectTranscriptOverlay, TranscriptOverlayComponent } from "./transcript-view.ts";
-import { projectToolUsage } from "./presentation/tools/projector.ts";
 import type { SafeUsageQuantity } from "./presentation/tools/types.ts";
+import {
+  applyUsageObservation,
+  seedUsageAccumulator,
+  usageObservationFromAssistantMessage,
+  usageSnapshot,
+  type UsageAccumulator,
+  type UsageContextInput,
+  type UsageObservation,
+  type UsageSnapshot,
+} from "../runtime/usage/index.ts";
 
 export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
@@ -191,6 +200,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private streaming = false;
   private stopReason: string | undefined = undefined;
   private streamingGeneration = 0;
+  private usageLifecycleObserved = false;
+  private usageRunActive = false;
+  private activeUsageRunId: string | undefined;
+  private usageAccumulator: UsageAccumulator;
+  private activeUsageRequestStartedAtMs: number | undefined;
   private readonly streamingDeltas = new DeltaCoalescer({
     softByteLimit: 256 * 1024,
     hardByteLimit: 1024 * 1024,
@@ -258,6 +272,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.controller = opts.controller;
     this.agent = opts.agent;
+    const initialMessages = this.controller?.messages ?? this.agent?.state.messages ?? [];
+    this.usageAccumulator = seedUsageAccumulator(initialMessages);
+    if (this.controller === undefined) this.timelineProjector.setMessageIndex(initialMessages.length);
+    this.getUsageSnapshot = this.getUsageSnapshot.bind(this);
     this.processOverlayController = opts.processOverlayController;
     this.performanceObserver = opts.performanceObserver;
     this.terminal = opts.terminal ?? new ProcessTerminal();
@@ -902,8 +920,20 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
 	private applyRecoveryStatus(status: SessionRecoveryStatus): void {
 		const required = status.state === "recovery_required" || status.barrierState === "open";
+		if (required !== this.store.getState().recoveryRequired) this.resetUsageFromCanonicalMessages();
 		this.store.dispatch({ type: "recovery.set", required });
 		this.ui.requestRender();
+	}
+
+	private resetUsageFromCanonicalMessages(): void {
+		const messages = this.controller?.messages ?? this.agent?.state.messages ?? [];
+		this.usageAccumulator = seedUsageAccumulator(messages);
+		this.activeUsageRequestStartedAtMs = undefined;
+		this.usageRunActive = false;
+		this.activeUsageRunId = undefined;
+		this.streaming = false;
+		this.stopReason = undefined;
+		this.streamingGeneration += 1;
 	}
 
   /**
@@ -1521,21 +1551,16 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return undefined;
   }
 
-  /** FooterSnapshotProvider：优先 runtime snapshot，缺失字段回退到已投影 usage 与当前 model。 */
+  /**
+   * FooterSnapshotProvider legacy context getter：优先 runtime snapshot；仅为兼容旧 identity 行，
+   * 缺失 used token 时才回退到最新 assistant 的 input + output 近似值。
+   * Usage 行不消费这个近似 fallback。
+   */
   getContextUsage(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined {
     const state = this.store.getState();
-    const workflow = state.runtimeSnapshotWorkflow;
-    const snapshot = workflow.state === "ready"
-      ? workflow.value
-      : workflow.state === "loading" || workflow.state === "error"
-        ? workflow.previous
-        : undefined;
-    let totalTokens = snapshot?.context.state === "known" && snapshot.context.value.totalTokens.state === "known"
-      ? snapshot.context.value.totalTokens.value
-      : undefined;
-    let contextWindow = snapshot?.context.state === "known" && snapshot.context.value.contextWindow.state === "known"
-      ? snapshot.context.value.contextWindow.value
-      : undefined;
+    const context = this.runtimeContextUsage();
+    let totalTokens = context?.usedTokens;
+    let contextWindow = context?.contextWindow;
     if (totalTokens === undefined) {
       const rows = [
         ...state.timeline.committedRows,
@@ -1566,6 +1591,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
       ...(totalTokens === undefined ? {} : { totalTokens }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
     };
+  }
+
+  /** FooterSnapshotProvider：从 runtime reducer 读取唯一 usage 快照。 */
+  getUsageSnapshot(): UsageSnapshot {
+    return usageSnapshot(this.usageAccumulator, this.runtimeContextUsage(), this.usageStatus());
   }
 
   /** 当前 Session 的可读标题；未命名时不把 durable session id 暴露到 status line。 */
@@ -2560,8 +2590,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.flushStreamingDeltas();
           this.clearIdleRecapStatus();
           this.streamingGeneration += 1;
+          this.usageLifecycleObserved = true;
+          this.usageRunActive = true;
+          this.activeUsageRunId = ev.runId ?? `legacy-live-${ev.timestamp}`;
           this.streaming = true;
           this.stopReason = undefined;
+          this.activeUsageRequestStartedAtMs = undefined;
           this.dispatchTimeline([{
             type: "run_start",
             generation: 0,
@@ -2577,6 +2611,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
           if (activeRunId === undefined || (ev.runId !== undefined && ev.runId !== activeRunId)) break;
           this.flushStreamingDeltas();
           this.streaming = false;
+          this.usageRunActive = false;
+          this.activeUsageRunId = undefined;
           this.stopReason = ev.stopReason ?? this.stopReason ?? "stop";
           this.refs.status.setStopReason(this.stopReason);
           if (isRunStopReason(this.stopReason)) {
@@ -2609,16 +2645,33 @@ export class InteractiveMode implements FooterSnapshotProvider {
           if (ev.stopReason) this.refs.status.setStopReason(ev.stopReason);
           break;
         case "message_start":
+          if (!this.acceptUsageRunEvent(ev.runId)) break;
           this.flushStreamingDeltas();
           this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
+          if (ev.role === "assistant") {
+            this.activeUsageRequestStartedAtMs = ev.timestamp;
+            this.observeAssistantUsage(
+              this.timelineProjector.currentAssistantCorrelationId(),
+              ev.message,
+              ev.timestamp,
+              "streaming",
+            );
+          }
           break;
         case "message_end": {
+          if (!this.acceptUsageRunEvent(ev.runId)) break;
           this.stopReason = ev.stopReason ?? this.stopReason;
           this.refs.status.setStopReason(this.stopReason);
           // 1) 先把帧前累积的 delta 快照送入
           this.flushStreamingDeltas();
           // 2) 用完整消息正文覆盖最后一次 delta 快照
           if (ev.message?.role === "assistant") {
+            this.observeAssistantUsage(
+              this.timelineProjector.currentAssistantCorrelationId(),
+              ev.message,
+              ev.timestamp,
+              ev.stopReason === "error" || ev.stopReason === "aborted" ? "error" : "completed",
+            );
             const text = messageAssistantText(ev.message);
             const thinking = messageAssistantThinking(ev.message);
             const correlationId = this.timelineProjector.currentAssistantCorrelationId();
@@ -2629,30 +2682,37 @@ export class InteractiveMode implements FooterSnapshotProvider {
               text: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
               ...(thinking.length > 0 ? { thinking: { text: thinking, truncated: false, byteLength: new TextEncoder().encode(thinking).byteLength } } : {}),
             }];
-            if (ev.message.usage !== undefined) {
-              const usage = projectToolUsage(ev.message.usage.input, ev.message.usage.output);
-              finalEvents.push({
-                type: "usage",
-                generation: 0,
-                correlationId,
-                usage: { input: usage.input, output: usage.output },
-              });
-            }
             this.dispatchTimeline(finalEvents);
           }
           // 3) 提交行
           this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
           this.pendingMessageBuffers.delete(this.timelineProjector.currentAssistantCorrelationId());
+          this.activeUsageRequestStartedAtMs = undefined;
           break;
         }
         case "message_update": {
+          if (!this.acceptUsageRunEvent(ev.runId)) break;
           const e = ev.assistantMessageEvent;
+          const partial = "partial" in e ? e.partial : undefined;
+          if (partial?.role === "assistant") {
+            this.observeAssistantUsage(
+              this.timelineProjector.currentAssistantCorrelationId(),
+              partial,
+              ev.timestamp,
+              "streaming",
+            );
+          }
           if (e.type === "done" || e.type === "error") {
+            this.observeAssistantUsage(
+              this.timelineProjector.currentAssistantCorrelationId(),
+              e.type === "done" ? e.message : e.error,
+              ev.timestamp,
+              e.type === "error" ? "error" : "completed",
+            );
             // done/error 即 stream fan-in 终点;先把已接受正文送入最终 frame。
             this.flushStreamingDeltas();
             break;
           }
-          const partial = "partial" in e ? e.partial : undefined;
           if (partial !== undefined && partial.role !== "assistant") break;
           switch (e.type) {
             case "text_delta":
@@ -2788,6 +2848,63 @@ export class InteractiveMode implements FooterSnapshotProvider {
       oldestAgeMs: pressure.oldestAgeMs,
       pressureLevel: pressure.level,
     });
+  }
+
+  private observeAssistantUsage(
+    id: string,
+    message: AgentMessage | AssistantMessage | undefined,
+    observedAtMs: number,
+    status: UsageObservation["status"],
+  ): void {
+    if (message?.role !== "assistant") return;
+    const observation = usageObservationFromAssistantMessage(id, message, "provider", status);
+    this.usageAccumulator = applyUsageObservation(this.usageAccumulator, {
+      ...observation,
+      observedAtMs,
+      ...(this.activeUsageRequestStartedAtMs === undefined ? {} : { streamStartedAtMs: this.activeUsageRequestStartedAtMs }),
+    });
+  }
+
+  private acceptUsageRunEvent(runId: string | undefined): boolean {
+    if (!this.usageLifecycleObserved) return true;
+    if (!this.usageRunActive) return false;
+    return runId === undefined || this.activeUsageRunId === undefined || runId === this.activeUsageRunId;
+  }
+
+  private usageStatus(): UsageSnapshot["status"] {
+    if (this.store.getState().recoveryRequired) return "unavailable";
+    const activeRun = this.store.getState().timeline.activeRun;
+    if (activeRun?.state === "waiting") return "waiting";
+    if (this.streaming || activeRun?.state === "working") return "streaming";
+    if (this.stopReason === "error" || this.stopReason === "aborted") return "error";
+    return "idle";
+  }
+
+  /** Usage row 只接受 runtime snapshot；旧 getter 的 input+output 仅是 legacy approximate fallback。 */
+  private runtimeContextUsage(): UsageContextInput | undefined {
+    const workflow = this.store.getState().runtimeSnapshotWorkflow;
+    const snapshot = workflow.state === "ready"
+      ? workflow.value
+      : workflow.state === "loading" || workflow.state === "error"
+        ? workflow.previous
+        : undefined;
+    const usedTokens = snapshot?.context.state === "known" && snapshot.context.value.totalTokens.state === "known"
+      ? snapshot.context.value.totalTokens.value
+      : undefined;
+    let contextWindow = snapshot?.context.state === "known" && snapshot.context.value.contextWindow.state === "known"
+      ? snapshot.context.value.contextWindow.value
+      : undefined;
+    if (contextWindow === undefined) {
+      const model = this.controller?.currentSelection.model ?? this.agent?.state.model;
+      if (typeof model === "object" && model !== null && Number.isFinite(model.contextWindow) && model.contextWindow > 0) {
+        contextWindow = model.contextWindow;
+      }
+    }
+    if (usedTokens === undefined && contextWindow === undefined) return undefined;
+    return {
+      ...(usedTokens === undefined ? {} : { usedTokens }),
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+    };
   }
 }
 

@@ -4,6 +4,20 @@ import type {
 	SafeToolPresentation,
 	SafeToolUsageView,
 } from "../presentation/tools/types.ts";
+import type { UsageQuantity } from "../../runtime/usage/index.ts";
+
+/** 单个 assistant response 的可回放 usage；累计值仍由 runtime usage reducer 负责。 */
+export interface TimelineAssistantUsage {
+	readonly input: UsageQuantity;
+	readonly output: UsageQuantity;
+	readonly cacheRead: UsageQuantity;
+	readonly cacheWrite: UsageQuantity;
+	readonly tokenTotal: UsageQuantity;
+	readonly cost: UsageQuantity;
+	readonly durationMs: UsageQuantity;
+	readonly ttftMs: UsageQuantity;
+	readonly timingSource?: "provider" | "measured";
+}
 
 export type TimelineStatus =
 	| "pending"
@@ -26,11 +40,12 @@ export type TimelineRow =
 	| (TimelineRowBase & { readonly kind: "user"; readonly text: SafeBoundedText })
 	| (TimelineRowBase & {
 			readonly kind: "assistant";
-			readonly text: SafeBoundedText;
-			readonly streaming: boolean;
-			readonly thinking?: SafeBoundedText;
-			readonly usage?: Pick<SafeToolUsageView, "input" | "output">;
-	  })
+				readonly text: SafeBoundedText;
+				readonly streaming: boolean;
+				readonly thinking?: SafeBoundedText;
+				readonly usage?: Pick<SafeToolUsageView, "input" | "output">;
+				readonly usageDetails?: TimelineAssistantUsage;
+		  })
 	| (TimelineRowBase & {
 			readonly kind: "tool";
 			readonly toolCallId: string;
@@ -102,7 +117,13 @@ export type TimelineEvent =
 	| { readonly type: "tool_start"; readonly generation: number; readonly correlationId: string; readonly row: TimelineRow }
 	| { readonly type: "tool_update"; readonly generation: number; readonly correlationId: string; readonly presentation: TuiField<SafeToolPresentation> }
 	| { readonly type: "tool_end"; readonly generation: number; readonly correlationId: string; readonly status: TimelineStatus }
-	| { readonly type: "usage"; readonly generation: number; readonly correlationId: string; readonly usage: Pick<SafeToolUsageView, "input" | "output"> }
+	| {
+			readonly type: "usage";
+			readonly generation: number;
+			readonly correlationId: string;
+			readonly usage: Pick<SafeToolUsageView, "input" | "output">;
+			readonly usageDetails?: TimelineAssistantUsage;
+	  }
 	| { readonly type: "notice"; readonly generation: number; readonly correlationId: string; readonly severity: "info" | "warning" | "error"; readonly message: SafeBoundedText }
 	| { readonly type: "goal_lifecycle"; readonly generation: number; readonly correlationId: string; readonly goalId: string; readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled" }
 	| { readonly type: "agent_lifecycle"; readonly generation: number; readonly correlationId: string; readonly agentId: string; readonly status: "pending" | "running" | "succeeded" | "failed" | "cancelled" }

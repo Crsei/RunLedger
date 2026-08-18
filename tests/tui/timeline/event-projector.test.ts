@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { TimelineEventProjector } from "../../../src/tui/timeline/event-projector.ts";
+import { createInitialTimelineState, timelineReducer } from "../../../src/tui/timeline/reducer.ts";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import type { TuiEvent } from "../../../src/tui/types.ts";
 
@@ -61,6 +62,72 @@ describe("B2 timeline event-projector", () => {
 		expect(ends[0]!.status).toBe("succeeded");
 		expect(toolStarts).toHaveLength(1);
 		expect(toolStarts[0]!.row).toMatchObject({ kind: "tool", toolCallId: "call-1" });
+	});
+
+	it("retains assistant cache, cost, and timing in replayable timeline usage", () => {
+		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		const events = projector.project(assistantMessage({
+			usage: {
+				input: 100,
+				output: 20,
+				cacheRead: 400,
+				cacheWrite: 10,
+				totalTokens: 530,
+				cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+				reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+			},
+			durationMs: 200,
+			ttftMs: 50,
+			timingSource: "provider",
+		}));
+		const usage = events.find((event) => event.type === "usage");
+		expect(usage).toMatchObject({
+			usage: {
+				input: { state: "exact", value: 100 },
+				output: { state: "exact", value: 20 },
+			},
+			usageDetails: {
+				cacheRead: { state: "exact", value: 400 },
+				cacheWrite: { state: "exact", value: 10 },
+				tokenTotal: { state: "exact", value: 130 },
+				cost: { state: "exact", value: 0.03 },
+				durationMs: { state: "exact", value: 200 },
+				ttftMs: { state: "exact", value: 50 },
+			},
+		});
+	});
+
+	it("round-trips replay usage through the reducer without losing timing details", () => {
+		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		const events = projector.project(assistantMessage({
+			usage: {
+				input: 100,
+				output: 20,
+				cacheRead: 400,
+				cacheWrite: 10,
+				totalTokens: 530,
+				cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+				reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+			},
+			durationMs: 200,
+			ttftMs: 50,
+			timingSource: "provider",
+		}));
+		let state = createInitialTimelineState();
+		for (const event of events) state = timelineReducer(state, event);
+
+		const committed = state.committedRows.find((row) => row.kind === "assistant");
+		expect(committed).toMatchObject({
+			kind: "assistant",
+			usageDetails: {
+				cacheRead: { state: "exact", value: 400 },
+				cacheWrite: { state: "exact", value: 10 },
+				tokenTotal: { state: "exact", value: 130 },
+				cost: { state: "exact", value: 0.03 },
+				durationMs: { state: "exact", value: 200 },
+				ttftMs: { state: "exact", value: 50 },
+			},
+		});
 	});
 
 	it("replay tool call cycles release active presentation state", () => {

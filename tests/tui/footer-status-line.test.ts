@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { Footer, fitStatusLineSegments } from "../../src/tui/components/footer.ts";
+import { Footer, fitStatusLineSegments, fitUsageStatusLineSegments } from "../../src/tui/components/footer.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import type { FooterSnapshotProvider } from "../../src/tui/types.ts";
 import { visibleWidth } from "../../src/tui/primitives.ts";
+import { applyUsageObservation, createUsageAccumulator, usageSnapshot } from "../../src/runtime/usage/index.ts";
 
 function provider(threadLabel?: string): FooterSnapshotProvider {
 	return {
@@ -69,5 +70,69 @@ describe("structured Footer status line", () => {
 		const title = fitted.find((segment) => segment.accent === "thread")?.text ?? "";
 		expect(title).not.toContain("session-");
 		expect(title.length).toBeGreaterThan(0);
+	});
+
+	it("renders usage as a separate structured row below identity status", () => {
+		let accumulator = createUsageAccumulator();
+		accumulator = applyUsageObservation(accumulator, {
+			id: "assistant:1",
+			usage: {
+				input: 1_200,
+				output: 300,
+				cacheRead: 2_000,
+				cacheWrite: 20,
+				totalTokens: 3_520,
+				cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+				reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+			},
+			durationMs: 500,
+			timingSource: "provider",
+			status: "completed",
+		});
+		const snapshot = usageSnapshot(accumulator, { usedTokens: 2_000, contextWindow: 8_000 }, "idle");
+		const footerProvider = {
+			...provider(),
+			getUsageSnapshot: () => snapshot,
+		};
+		const footer = new Footer({ theme: loadTheme("dark"), provider: footerProvider });
+		const blocks = footer.present(240);
+
+		expect(blocks).toHaveLength(2);
+		expect(blocks[0]?.kind).toBe("status-line");
+		expect(blocks[1]?.kind).toBe("status-line");
+		if (blocks[1]?.kind !== "status-line") return;
+		expect(blocks[1].segments.map((segment) => segment.text)).toEqual(expect.arrayContaining([
+			"in 1.2k",
+			"out 300",
+			"cache-read 2.0k",
+			"cache-write 20",
+			"hit 62.1%",
+			"600.0 tok/s",
+			"$0.03",
+			"ctx 2.0k/8.0k (25.0%)",
+		]));
+		expect(blocks[1].segments.find((segment) => segment.text.startsWith("ctx "))?.accent).toBe("limit");
+	});
+
+	it("keeps output, rate, and context before optional usage fields on narrow rows", () => {
+		const fitted = fitUsageStatusLineSegments([
+			{ accent: "usage", text: "in 12.3k" },
+			{ accent: "usage", text: "out 1.4k" },
+			{ accent: "usage", text: "cache-read 8.0k" },
+			{ accent: "usage", text: "cache-write 512" },
+			{ accent: "usage", text: "hit 38.4%" },
+			{ accent: "usage", text: "700.0 tok/s" },
+			{ accent: "usage", text: "$0.03" },
+			{ accent: "usage", text: "ctx 18.2k/128.0k (14.2%)" },
+		], 60);
+		const text = fitted.map((segment) => segment.text);
+		expect(text).toContain("out 1.4k");
+		expect(text).toContain("700.0 tok/s");
+		expect(text.some((segment) => segment.startsWith("ctx "))).toBe(true);
+		expect(text).not.toContain("$0.03");
+		expect(text).not.toContain("hit 38.4%");
+		expect(text).not.toContain("cache-read 8.0k");
+		expect(text).not.toContain("cache-write 512");
+		expect(visibleWidth(text.join(" · "))).toBeLessThanOrEqual(60);
 	});
 });

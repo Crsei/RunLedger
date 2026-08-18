@@ -158,6 +158,9 @@ export interface AssistantAgentMessage {
   content: AssistantMessage["content"];
   stopReason: StopReason;
   usage?: AssistantMessage["usage"];
+  durationMs?: AssistantMessage["durationMs"];
+  ttftMs?: AssistantMessage["ttftMs"];
+  timingSource?: AssistantMessage["timingSource"];
   errorMessage?: string;
   api?: AssistantMessage["api"];
   provider?: AssistantMessage["provider"];
@@ -252,6 +255,7 @@ export type AgentEvent =
       timestamp: number;
       turn: number;
       stopReason?: StopReason;
+      runId?: string;
     }
   | {
       type: "message_start" | "message_end";
@@ -259,14 +263,16 @@ export type AgentEvent =
       role: "user" | "assistant";
       stopReason?: StopReason;
       message?: AgentMessage;
+      runId?: string;
     }
-  | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent }
+  | { type: "message_update"; timestamp: number; assistantMessageEvent: RuntimeAssistantMessageEvent; runId?: string }
   | {
       type: "tool_execution_start";
       timestamp: number;
       toolCallId: string;
       toolName: string;
       args: unknown;
+      runId?: string;
     }
   | {
       type: "tool_execution_end";
@@ -275,6 +281,7 @@ export type AgentEvent =
       toolName: string;
       isError: boolean;
       result: ToolResultContent;
+      runId?: string;
     }
   | {
       type: "tool_execution_update";
@@ -282,12 +289,14 @@ export type AgentEvent =
       toolCallId: string;
       toolName: string;
       partialResult: AgentToolResult;
+      runId?: string;
     }
   | {
       type: "queue_update";
       timestamp: number;
       steering: AgentMessage[];
       followUp: AgentMessage[];
+      runId?: string;
     };
 
 /** Durable stream delta 不携带 provider 累积 partial，digest/size 描述已确认前缀。 */

@@ -434,6 +434,139 @@ describe("Plan 18 streaming state", () => {
     }));
   });
 
+  test("InteractiveMode replaces streaming partial usage with the completed assistant usage", () => {
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: () => {
+        throw new Error("stream not called");
+      },
+    });
+    const mode = new InteractiveMode({ agent, terminal: new TestTerminal() });
+    const handleEvent = Reflect.get(mode, "handleEvent");
+    expect(typeof handleEvent).toBe("function");
+    if (typeof handleEvent !== "function") return;
+    const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+    const message = (output: number): AssistantMessage => ({
+      ...assistantPartial("partial"),
+      usage: {
+        input: 10,
+        output,
+        cacheRead: 20,
+        cacheWrite: 2,
+        totalTokens: 10 + output + 20 + 2,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+    });
+
+    dispatch({ type: "message_start", timestamp: 100, role: "assistant" });
+    dispatch({
+      type: "message_update",
+      timestamp: 200,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "partial",
+        partial: message(2),
+      },
+    });
+    expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 2 });
+
+    dispatch({
+      type: "message_update",
+      timestamp: 300,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "!",
+        partial: message(3),
+      },
+    });
+    expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 3 });
+
+    dispatch({
+      type: "message_end",
+      timestamp: 500,
+      role: "assistant",
+      stopReason: "stop",
+      message: { ...message(4), durationMs: 400, timingSource: "provider" },
+    });
+    expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 4 });
+  });
+
+  test("InteractiveMode ignores assistant usage events after the active run has ended", () => {
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: () => {
+        throw new Error("stream not called");
+      },
+    });
+    const mode = new InteractiveMode({ agent, terminal: new TestTerminal() });
+    const handleEvent = Reflect.get(mode, "handleEvent");
+    expect(typeof handleEvent).toBe("function");
+    if (typeof handleEvent !== "function") return;
+    const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+    const message = (output: number): AssistantMessage => ({
+      ...assistantPartial("reply"),
+      usage: {
+        input: 1,
+        output,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 1 + output,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+    });
+
+    dispatch({ type: "agent_start", timestamp: 1, runId: "run-current" });
+    dispatch({ type: "message_start", timestamp: 2, role: "assistant" });
+    dispatch({ type: "message_end", timestamp: 3, role: "assistant", stopReason: "stop", message: message(4) });
+    dispatch({ type: "agent_end", timestamp: 4, runId: "run-current", stopReason: "stop" });
+    const afterRun = mode.getUsageSnapshot().cumulative.output;
+    expect(afterRun).toMatchObject({ state: "exact", value: 4 });
+
+    dispatch({ type: "message_start", timestamp: 5, role: "assistant" });
+    dispatch({ type: "message_end", timestamp: 6, role: "assistant", stopReason: "stop", message: message(99) });
+    expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 4 });
+  });
+
+  test("InteractiveMode ignores a stale run generation while a newer run is active", () => {
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: () => {
+        throw new Error("stream not called");
+      },
+    });
+    const mode = new InteractiveMode({ agent, terminal: new TestTerminal() });
+    const handleEvent = Reflect.get(mode, "handleEvent");
+    expect(typeof handleEvent).toBe("function");
+    if (typeof handleEvent !== "function") return;
+    const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+    const message = (output: number): AssistantMessage => ({
+      ...assistantPartial("reply"),
+      usage: {
+        input: 1,
+        output,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 1 + output,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+    });
+
+    dispatch({ type: "agent_start", timestamp: 1, runId: "run-old" });
+    dispatch({ type: "message_start", timestamp: 2, role: "assistant", runId: "run-old" } as TuiEvent);
+    dispatch({ type: "message_end", timestamp: 3, role: "assistant", stopReason: "stop", message: message(4), runId: "run-old" } as TuiEvent);
+    dispatch({ type: "agent_end", timestamp: 4, runId: "run-old", stopReason: "stop" });
+    dispatch({ type: "agent_start", timestamp: 5, runId: "run-new" });
+
+    dispatch({ type: "message_start", timestamp: 6, role: "assistant", runId: "run-old" } as TuiEvent);
+    dispatch({ type: "message_end", timestamp: 7, role: "assistant", stopReason: "stop", message: message(99), runId: "run-old" } as TuiEvent);
+    expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 4 });
+  });
+
   test("InteractiveMode queues streaming deltas until the shared frame preparation phase", async () => {
     vi.useFakeTimers();
     try {

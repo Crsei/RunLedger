@@ -1331,6 +1331,52 @@ describe("OpenTUI component projection", () => {
     }
   });
 
+  test("M8 usage footer height survives narrow resize and protects the editor", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 10 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    const footer = ["identity", "in 1.2k · out 300 · ctx 2.0k/8.0k (25.0%)"];
+    try {
+      runtime.update({
+        body: ["transcript-marker"],
+        editorText: "x".repeat(500),
+        editorHeight: 100,
+        footer: [footer[0]!],
+      });
+      await setup.renderOnce();
+      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const oneRowEditorHeight = editorRow?.height ?? 0;
+
+      runtime.update({
+        body: ["transcript-marker"],
+        editorText: "x".repeat(500),
+        editorHeight: 100,
+        footer,
+      });
+      await setup.renderOnce();
+      const twoRowEditor = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const footerNode = setup.renderer.root.findDescendantById("runledger-footer");
+      expect(footerNode?.height).toBe(2);
+      expect((twoRowEditor?.height ?? 0)).toBeLessThan(oneRowEditorHeight);
+      expect((twoRowEditor?.height ?? 0) + (footerNode?.height ?? 0) + 1).toBeLessThanOrEqual(10);
+
+      setup.resize(24, 10);
+      runtime.update({
+        body: ["transcript-marker"],
+        editorText: "draft",
+        editorHeight: 4,
+        footer,
+      });
+      await setup.renderOnce();
+      expect(setup.renderer.root.findDescendantById("runledger-footer")?.height).toBe(2);
+      expect(setup.captureCharFrame()).toContain("out 300");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
   test("M8 applies frame-driven editor appearance (background/prompt/placeholder)", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {

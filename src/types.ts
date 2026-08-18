@@ -387,6 +387,18 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
+export type UsageField = "input" | "output" | "cacheRead" | "cacheWrite" | "totalTokens" | "cost";
+
+/** Provider-side field presence; `false` is different from a reported zero. */
+export interface UsageReporting {
+	input?: boolean;
+	output?: boolean;
+	cacheRead?: boolean;
+	cacheWrite?: boolean;
+	totalTokens?: boolean;
+	cost?: boolean;
+}
+
 export interface Usage {
 	input: number;
 	output: number;
@@ -408,6 +420,8 @@ export interface Usage {
 		cacheWrite: number;
 		total: number;
 	};
+	/** Optional field-level provenance from providers that distinguish absent and zero. */
+	reported?: UsageReporting;
 }
 
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
@@ -428,6 +442,12 @@ export interface AssistantMessage {
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
+	/** Provider-reported generation duration, excluding approval/credential waits. */
+	durationMs?: number;
+	/** Provider-reported time to first token, retained for later display/analysis. */
+	ttftMs?: number;
+	/** Provenance for duration; measured is only a stream start/end fallback. */
+	timingSource?: "provider" | "measured";
 	stopReason: StopReason;
 	errorMessage?: string;
 	timestamp: number; // Unix timestamp in milliseconds

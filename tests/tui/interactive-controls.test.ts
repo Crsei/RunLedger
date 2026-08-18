@@ -16,6 +16,7 @@ import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
 import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
 import type { TuiEvent } from "../../src/tui/types.ts";
+import type { UsageSnapshot } from "../../src/runtime/usage/index.ts";
 import { ContractController } from "./fixtures/contract-integration.ts";
 
 class FakeTerminal implements Terminal {
@@ -473,6 +474,106 @@ describe("InteractiveMode lifecycle and global controls", () => {
     internals.handleEvent({ type: "message_end", timestamp: 2, role: "assistant", stopReason: "stop", message });
 
     expect(mode.getContextUsage()).toEqual({ totalTokens: 120, contextWindow: mockModel.contextWindow });
+  });
+
+  it("projects the canonical assistant usage into one pull-only runtime snapshot", () => {
+    const mode = new InteractiveMode({
+      agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+      terminal: new FakeTerminal(),
+    });
+    const internals = mode as unknown as { handleEvent(event: TuiEvent): void };
+    const message: AssistantMessage = {
+      ...stoppedAssistant(),
+      usage: {
+        input: 100,
+        output: 20,
+        cacheRead: 400,
+        cacheWrite: 10,
+        totalTokens: 530,
+        cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+      durationMs: 200,
+      timingSource: "provider",
+    };
+
+    internals.handleEvent({ type: "message_start", timestamp: 1, role: "assistant", message });
+    internals.handleEvent({ type: "message_end", timestamp: 2, role: "assistant", stopReason: "stop", message });
+
+    const getUsageSnapshot = (mode as unknown as { getUsageSnapshot?: () => UsageSnapshot }).getUsageSnapshot;
+    expect(getUsageSnapshot).toBeTypeOf("function");
+    if (getUsageSnapshot === undefined) return;
+    const snapshot = getUsageSnapshot();
+    expect(snapshot.cumulative.input).toMatchObject({ state: "exact", value: 100 });
+    expect(snapshot.cumulative.cacheRead).toMatchObject({ state: "exact", value: 400 });
+    expect(snapshot.cumulative.tokenTotal).toMatchObject({ state: "exact", value: 130 });
+    expect(snapshot.latestRequest?.outputTokensPerSecond).toMatchObject({ state: "exact", value: 100 });
+  });
+
+  it("seeds replayed usage and replaces partial usage for one assistant request", () => {
+    const replayed: AssistantMessage = {
+      ...stoppedAssistant(),
+      usage: {
+        input: 40,
+        output: 8,
+        cacheRead: 100,
+        cacheWrite: 2,
+        totalTokens: 150,
+        cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.02 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+      durationMs: 200,
+      timingSource: "provider",
+    };
+    const mode = new InteractiveMode({
+      agent: new Agent({
+        initialState: { systemPrompt: "test", model: mockModel, messages: [replayed] },
+        streamFn: immediateStopStream(),
+      }),
+      terminal: new FakeTerminal(),
+    });
+    const internals = mode as unknown as { handleEvent(event: TuiEvent): void };
+    const partial: AssistantMessage = {
+      ...stoppedAssistant(),
+      usage: {
+        input: 10,
+        output: 2,
+        cacheRead: 20,
+        cacheWrite: 1,
+        totalTokens: 33,
+        cost: { input: 0.02, output: 0.01, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+    };
+    const final: AssistantMessage = {
+      ...partial,
+      usage: {
+        input: 12,
+        output: 3,
+        cacheRead: 30,
+        cacheWrite: 1,
+        totalTokens: 46,
+        cost: { input: 0.02, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.04 },
+        reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+      },
+      durationMs: 300,
+      timingSource: "provider",
+    };
+
+    internals.handleEvent({ type: "message_start", timestamp: 1, role: "assistant", message: partial });
+    internals.handleEvent({
+      type: "message_update",
+      timestamp: 2,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "reply", partial: final },
+    });
+    internals.handleEvent({ type: "message_end", timestamp: 3, role: "assistant", stopReason: "stop", message: final });
+
+    const snapshot = mode.getUsageSnapshot();
+    expect(snapshot.cumulative.input).toMatchObject({ state: "exact", value: 52 });
+    expect(snapshot.cumulative.output).toMatchObject({ state: "exact", value: 11 });
+    expect(snapshot.cumulative.cacheRead).toMatchObject({ state: "exact", value: 130 });
+    expect(snapshot.cumulative.tokenTotal).toMatchObject({ state: "exact", value: 66 });
+    expect(snapshot.latestRequest?.outputTokensPerSecond).toMatchObject({ state: "exact", value: 10 });
   });
 
   it("run 持续到退出；非空 Ctrl+D 不退出，Ctrl+C 清稿后空 Ctrl+D 退出", async () => {

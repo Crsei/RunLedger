@@ -90,7 +90,11 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 				generation,
 				activeRowsByCorrelationId: {
 					...state.activeRowsByCorrelationId,
-					[event.correlationId]: { ...row, usage: event.usage },
+					[event.correlationId]: {
+						...row,
+						usage: event.usage,
+						...(event.usageDetails === undefined ? {} : { usageDetails: event.usageDetails }),
+					},
 				},
 			};
 		}

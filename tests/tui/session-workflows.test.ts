@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
-import { ContractController, ContractTerminal, settleFrames } from "./fixtures/contract-integration.ts";
+import { ContractController, ContractTerminal, contractAssistantMessage, settleFrames } from "./fixtures/contract-integration.ts";
 import type { SessionIdleRecapEvent } from "../../src/runtime/interactive-session-controller.ts";
 import { SessionInteractiveController } from "../../src/cli/session-interactive-controller.ts";
 import type { OwnedSessionHandle } from "../../src/cli/session-client.ts";
@@ -37,6 +37,80 @@ function sessionController() {
 }
 
 describe("S2 InteractiveMode session workflows", () => {
+	it("re-seeds usage from canonical messages when owner recovery changes state", () => {
+		const canonical = contractAssistantMessage({
+			usage: {
+				input: 10,
+				output: 5,
+				cacheRead: 20,
+				cacheWrite: 1,
+				totalTokens: 36,
+				cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+				reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+			},
+		});
+		const controller = new ContractController({ messages: [canonical] });
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		const applyRecoveryStatus = Reflect.get(mode, "applyRecoveryStatus");
+		expect(typeof applyRecoveryStatus).toBe("function");
+		if (typeof applyRecoveryStatus !== "function") return;
+
+		const handleEvent = Reflect.get(mode, "handleEvent");
+		expect(typeof handleEvent).toBe("function");
+		if (typeof handleEvent !== "function") return;
+		const dispatch = (handleEvent as (event: { type: "message_start" | "message_end"; timestamp: number; role: "assistant"; stopReason?: string; message?: typeof canonical }) => void).bind(mode);
+		dispatch({ type: "message_start", timestamp: 10, role: "assistant" });
+		dispatch({ type: "message_end", timestamp: 11, role: "assistant", stopReason: "stop", message: { ...canonical, usage: { ...canonical.usage, output: 99, totalTokens: 130 } } });
+		expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 104 });
+
+		(applyRecoveryStatus as (status: { state: string; barrierState: "open" | "closed"; unresolvedAttempts: number; sideEffectSpawnCount: number }) => void).call(mode, {
+			state: "recovery_required",
+			barrierState: "open",
+			unresolvedAttempts: 1,
+			sideEffectSpawnCount: 0,
+		});
+		expect(mode.getUsageSnapshot().status).toBe("unavailable");
+		expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 5 });
+
+		(applyRecoveryStatus as (status: { state: string; barrierState: "open" | "closed"; unresolvedAttempts: number; sideEffectSpawnCount: number }) => void).call(mode, {
+			state: "ready",
+			barrierState: "closed",
+			unresolvedAttempts: 0,
+			sideEffectSpawnCount: 0,
+		});
+		expect(mode.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 5 });
+		mode.quit();
+	});
+
+	it("seeds each newly opened resume or fork view from that session's canonical messages", () => {
+		const message = (output: number) => contractAssistantMessage({
+			usage: {
+				input: 1,
+				output,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 1 + output,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				reported: { input: true, output: true, cacheRead: true, cacheWrite: true, cost: true },
+			},
+		});
+		const resumed = new InteractiveMode({
+			controller: new ContractController({ messages: [message(2)] }),
+			terminal: new ContractTerminal(),
+		});
+		const forked = new InteractiveMode({
+			controller: new ContractController({ messages: [message(2), message(3)] }),
+			terminal: new ContractTerminal(),
+		});
+		try {
+			expect(resumed.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 2 });
+			expect(forked.getUsageSnapshot().cumulative.output).toMatchObject({ state: "exact", value: 5 });
+		} finally {
+			resumed.quit();
+			forked.quit();
+		}
+	});
+
 	it("keeps the owner-side editor state empty after Enter submits through the TCP controller", async () => {
 		const terminal = new ContractTerminal();
 		const editorActivity: boolean[] = [];

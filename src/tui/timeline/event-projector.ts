@@ -9,11 +9,18 @@
  * message_update（text + thinking），不在投影器里按 delta 零散发送。
  */
 
-import type { AgentMessage } from "../../runtime/types.ts";
+import type { AgentMessage, AssistantAgentMessage } from "../../runtime/types.ts";
+import {
+	applyUsageObservation,
+	createUsageAccumulator,
+	usageObservationFromAssistantMessage,
+	usageSnapshot,
+} from "../../runtime/usage/index.ts";
 import type { TuiEvent } from "../types.ts";
 import type {
 	SafeShellChunk,
 	SafeToolPresentation,
+	SafeToolUsageView,
 } from "../presentation/tools/types.ts";
 import {
 	boundedToolText,
@@ -22,7 +29,7 @@ import {
 	projectToolEnd,
 	projectToolStart,
 } from "../presentation/tools/projector.ts";
-import type { TimelineEvent, TimelineRow, TimelineStatus } from "./types.ts";
+import type { TimelineAssistantUsage, TimelineEvent, TimelineRow, TimelineStatus } from "./types.ts";
 
 export type TimelineProjectionInput =
 	| { readonly kind: "replay-message"; readonly message: AgentMessage; readonly index: number }
@@ -126,16 +133,25 @@ export class TimelineEventProjector {
 				.map((content) => content.thinking)
 				.join("");
 			const status: TimelineStatus = message.stopReason === "aborted" ? "aborted" : "succeeded";
+			const usageDetails = projectAssistantUsage(message, "replayed");
 			const row = this.messageRow("assistant", index, {
 				text,
 				status,
 				streaming: false,
 				thinking,
+				usageDetails,
 			});
 			const events: TimelineEvent[] = [
 				{ type: "message_start", generation: 0, correlationId: row.id, row },
-				{ type: "message_end", generation: 0, correlationId: row.id, status },
 			];
+			if (usageDetails !== undefined) events.push({
+				type: "usage",
+				generation: 0,
+				correlationId: row.id,
+				usage: legacyUsage(usageDetails),
+				usageDetails,
+			});
+			events.push({ type: "message_end", generation: 0, correlationId: row.id, status });
 			for (const toolCall of message.content.filter((content) => content.type === "toolCall")) {
 				events.push(...this.toolStartEnd(toolCall.id, toolCall.name, toolCall.arguments));
 			}
@@ -170,11 +186,15 @@ export class TimelineEventProjector {
 						? event.message.content.map((content) => content.text).join("")
 						: "";
 				const thinking = event.role === "assistant" ? assistantThinking(event.message) : "";
+				const usageDetails = event.role === "assistant" && event.message?.role === "assistant"
+					? projectAssistantUsage(event.message)
+					: undefined;
 				const row = this.messageRow(event.role, index, {
 					text: body,
 					status: event.role === "user" ? "succeeded" : "running",
 					streaming: event.role === "assistant",
 					thinking,
+					usageDetails,
 				});
 				// user 行立即完成（事件流不为 user 消息发 message_end）
 				if (event.role === "user") {
@@ -183,11 +203,31 @@ export class TimelineEventProjector {
 						{ type: "message_end", generation: 0, correlationId: row.id, status: "succeeded" },
 					];
 				}
-				return [{ type: "message_start", generation: 0, correlationId: row.id, row }];
+				const events: TimelineEvent[] = [{ type: "message_start", generation: 0, correlationId: row.id, row }];
+				if (usageDetails !== undefined) events.push({
+					type: "usage",
+					generation: 0,
+					correlationId: row.id,
+					usage: legacyUsage(usageDetails),
+					usageDetails,
+				});
+				return events;
 			}
 			case "message_end": {
 				const status: TimelineStatus = event.stopReason === "aborted" ? "aborted" : event.stopReason === "error" ? "failed" : "succeeded";
-				return [{ type: "message_end", generation: 0, correlationId: this.currentAssistantCorrelationId(), status }];
+				const events: TimelineEvent[] = [];
+				if (event.message?.role === "assistant") {
+					const usageDetails = projectAssistantUsage(event.message);
+					if (usageDetails !== undefined) events.push({
+						type: "usage",
+						generation: 0,
+						correlationId: this.currentAssistantCorrelationId(),
+						usage: legacyUsage(usageDetails),
+						usageDetails,
+					});
+				}
+				events.push({ type: "message_end", generation: 0, correlationId: this.currentAssistantCorrelationId(), status });
+				return events;
 			}
 			case "tool_execution_start": {
 				const presentation = projectToolStart(event.toolName, event.args, this.startedAt);
@@ -257,6 +297,7 @@ export class TimelineEventProjector {
 		status: TimelineStatus;
 		streaming: boolean;
 		thinking?: string;
+		usageDetails?: TimelineAssistantUsage;
 	}): TimelineRow {
 		const base = {
 			id: `${role}:${index}`,
@@ -273,6 +314,7 @@ export class TimelineEventProjector {
 				...(options.thinking !== undefined && options.thinking.length > 0
 					? { thinking: boundedToolText(options.thinking, MESSAGE_TEXT_BOUND_BYTES) }
 					: {}),
+				...(options.usageDetails === undefined ? {} : { usageDetails: options.usageDetails }),
 			};
 		}
 		return { ...base, kind: "user" as const };
@@ -310,6 +352,42 @@ function assistantText(message: { readonly role?: string; readonly content?: rea
 		.filter((content): content is { type: string; text: string } => isRecord(content) && content.type === "text" && typeof content.text === "string")
 		.map((content) => content.text)
 		.join("");
+}
+
+/** 把 canonical assistant message 投影为可回放的单 request usage。 */
+export function projectAssistantUsage(
+	message: AssistantAgentMessage,
+	source: "provider" | "replayed" = "provider",
+): TimelineAssistantUsage | undefined {
+	if (message.usage === undefined && message.durationMs === undefined && message.ttftMs === undefined) return undefined;
+	const status: "completed" | "error" = message.stopReason === "error" || message.stopReason === "aborted" ? "error" : "completed";
+	const state = applyUsageObservation(
+		createUsageAccumulator(),
+		usageObservationFromAssistantMessage("timeline", message, source, status),
+	);
+	const snapshot = usageSnapshot(state, undefined, status === "error" ? "error" : "idle");
+	const latest = snapshot.latestRequest;
+	if (latest === undefined) return undefined;
+	return {
+		input: latest.input,
+		output: latest.output,
+		cacheRead: latest.cacheRead,
+		cacheWrite: latest.cacheWrite,
+		tokenTotal: snapshot.cumulative.tokenTotal,
+		cost: snapshot.cumulative.cost,
+		durationMs: latest.durationMs,
+		ttftMs: latest.ttftMs,
+		...(message.timingSource === undefined ? {} : { timingSource: message.timingSource }),
+	};
+}
+
+function legacyUsage(usage: TimelineAssistantUsage): Pick<SafeToolUsageView, "input" | "output"> {
+	return { input: legacyQuantity(usage.input), output: legacyQuantity(usage.output) };
+}
+
+function legacyQuantity(quantity: TimelineAssistantUsage["input"]): SafeToolUsageView["input"] {
+	if (quantity.state === "exact" || quantity.state === "estimated") return { state: quantity.state, value: quantity.value };
+	return quantity;
 }
 
 function assistantThinking(message: { readonly role?: string; readonly content?: readonly unknown[] } | undefined): string {

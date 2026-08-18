@@ -19,6 +19,7 @@ import type { PresentationBlock } from "../presentation.ts";
 import type { StatusLineSegment } from "../highlight/status-style.ts";
 import { sanitizeLabel } from "../presentation/projectors.ts";
 import { visibleWidth } from "../primitives.ts";
+import { formatUsageSegments } from "../../runtime/usage/index.ts";
 
 export interface FooterProps {
   theme: Theme;
@@ -38,16 +39,21 @@ export class Footer implements Component {
   }
 
   render(width: number): string[] {
-	return [padToWidth(fitStatusLineSegments(this.segments(), width).map((segment) => segment.text).join(" · "), width)];
+	return this.present(width).flatMap((block) => block.kind === "status-line"
+		? [padToWidth(block.segments.map((segment) => segment.text).join(" · "), width)]
+		: []);
   }
 
   present(width: number): PresentationBlock[] {
-	const fitted = fitStatusLineSegments(this.segments(), width);
-	return [{ kind: "status-line", segments: fitted }];
+		const fitted = fitStatusLineSegments(this.segments(), width);
+		const blocks: PresentationBlock[] = [{ kind: "status-line", segments: fitted }];
+		const usage = this.usageSegments(width);
+		if (usage.length > 0) blocks.push({ kind: "status-line", segments: usage });
+		return blocks;
   }
 
   private segments(): StatusLineSegment[] {
-    try {
+	    try {
       const streaming = this.props.provider.isStreaming();
       const stopReason = this.props.provider.getStopReason();
       const modelId = this.props.provider.getModelId();
@@ -55,8 +61,9 @@ export class Footer implements Component {
       const thinking = this.props.provider.getThinkingLevel?.();
       const workspaceDisplayAbsolutePath = this.props.provider.getWorkspaceDisplayAbsolutePath?.();
       const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
-      const planProgress = this.props.provider.getPlanProgress?.();
-      const contextUsage = this.props.provider.getContextUsage?.();
+	      const planProgress = this.props.provider.getPlanProgress?.();
+	      const contextUsage = this.props.provider.getContextUsage?.();
+	      const usageSnapshot = this.props.provider.getUsageSnapshot?.();
       const threadLabel = this.props.provider.getThreadLabel?.();
       const timing = this.props.provider.getRunTiming?.();
       const now = this.props.provider.now?.() ?? Date.now();
@@ -79,11 +86,11 @@ export class Footer implements Component {
 		...(planProgress !== undefined && validProgress(planProgress)
 			? [{ accent: "progress" as const, text: `plan (${planProgress.completed}/${planProgress.total})` }]
 			: []),
-		...(knownNonNegative(contextUsage?.totalTokens)
-			? [{ accent: "usage" as const, text: `usage ${formatTokenCount(contextUsage.totalTokens)}` }]
-			: []),
-		...(knownNonNegative(contextUsage?.totalTokens) && knownPositive(contextUsage.contextWindow)
-			? [{ accent: "limit" as const, text: `limit ${Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.contextWindow) * 100))}%` }]
+			...(usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens)
+				? [{ accent: "usage" as const, text: `usage ${formatTokenCount(contextUsage.totalTokens)}` }]
+				: []),
+			...(usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens) && knownPositive(contextUsage.contextWindow)
+				? [{ accent: "limit" as const, text: `limit ${Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.contextWindow) * 100))}%` }]
 			: []),
 		...(threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
 	  );
@@ -93,8 +100,19 @@ export class Footer implements Component {
     } catch {
       // 失败护栏:provider 抛错时给出可观测的占位,不影响整屏渲染
       return [{ accent: "state", text: "[footer:err]" }];
-    }
+	    }
   }
+
+	private usageSegments(width: number): StatusLineSegment[] {
+		try {
+			const snapshot = this.props.provider.getUsageSnapshot?.();
+			if (snapshot === undefined) return [];
+			const segments = formatUsageSegments(snapshot).map((segment) => ({ ...segment }));
+			return fitUsageStatusLineSegments(segments, width);
+		} catch {
+			return [];
+		}
+	}
 
 }
 
@@ -124,15 +142,39 @@ const OPTIONAL_DROP_ORDER: readonly StatusLineSegment["accent"][] = [
 	"mode", "usage", "limit", "progress", "branch",
 ];
 
+const IDENTITY_DROP_RULES: readonly ((segment: StatusLineSegment) => boolean)[] = OPTIONAL_DROP_ORDER.map((accent) =>
+	(segment) => segment.accent === accent,
+);
+
+const USAGE_DROP_RULES: readonly ((segment: StatusLineSegment) => boolean)[] = [
+	(segment) => segment.text.startsWith("$"),
+	(segment) => segment.text.startsWith("hit "),
+	(segment) => segment.text.startsWith("cache-read ") || segment.text.startsWith("cache-write "),
+	(segment) => segment.text.startsWith("in "),
+];
+
 /** 保留 state/session-or-thread/path/model，窄屏先移除能力等可选段，再按显示列截断最长核心段。 */
 export function fitStatusLineSegments(input: readonly StatusLineSegment[], width: number): StatusLineSegment[] {
+	return fitStatusLineSegmentsWithRules(input, width, IDENTITY_DROP_RULES);
+}
+
+/** usage 行与 identity 行独立拟合，窄屏保留 output/rate/context 核心数值。 */
+export function fitUsageStatusLineSegments(input: readonly StatusLineSegment[], width: number): StatusLineSegment[] {
+	return fitStatusLineSegmentsWithRules(input, width, USAGE_DROP_RULES);
+}
+
+function fitStatusLineSegmentsWithRules(
+	input: readonly StatusLineSegment[],
+	width: number,
+	dropRules: readonly ((segment: StatusLineSegment) => boolean)[],
+): StatusLineSegment[] {
 	const safeWidth = Math.max(0, Math.floor(width));
 	let segments = input
 		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
 		.filter((segment) => segment.text.length > 0);
-	for (const accent of OPTIONAL_DROP_ORDER) {
+	for (const shouldDrop of dropRules) {
 		if (statusLineWidth(segments) <= safeWidth) break;
-		segments = segments.filter((segment) => segment.accent !== accent);
+		segments = segments.filter((segment) => !shouldDrop(segment));
 	}
 	while (segments.length > 1 && separatorWidth(segments) >= safeWidth) segments.pop();
 	let excess = Math.max(0, statusLineWidth(segments) - safeWidth);
@@ -152,7 +194,7 @@ export function fitStatusLineSegments(input: readonly StatusLineSegment[], width
 }
 
 function statusLineWidth(segments: readonly StatusLineSegment[]): number {
-	return segments.reduce((total, segment) => total + visibleWidth(segment.text), separatorWidth(segments));
+	return segments.reduce((total, segment) => total + visibleWidth(segment.text), 0) + separatorWidth(segments);
 }
 
 function separatorWidth(segments: readonly StatusLineSegment[]): number {
