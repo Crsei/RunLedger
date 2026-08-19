@@ -121,6 +121,7 @@ function responseOutput(message: AssistantMessage): Record<string, unknown>[] {
 export async function* encodeStream(source: GatewayEventSource): AsyncGenerator<string> {
 	let started = false;
 	const closedItems = new Set<number>();
+	const functionCallItemIds = new Map<number, string>();
 	for await (const event of source) {
 		const id = assistantId(event);
 		const model = assistantModel(event);
@@ -155,11 +156,14 @@ export async function* encodeStream(source: GatewayEventSource): AsyncGenerator<
 		} else if (event.type === "toolcall_start") {
 			const block = event.partial.content[event.contentIndex];
 			const toolCall = block?.type === "toolCall" ? block : undefined;
-			yield sseData({ type: "response.output_item.added", output_index: event.contentIndex, item: { type: "function_call", id: `fc_${toolCall?.id ?? event.contentIndex}`, call_id: toolCall?.id ?? `call_${event.contentIndex}`, name: toolCall?.name ?? "tool", arguments: "", status: "in_progress" } });
+			const itemId = `fc_${toolCall?.id ?? event.contentIndex}`;
+			functionCallItemIds.set(event.contentIndex, itemId);
+			yield sseData({ type: "response.output_item.added", output_index: event.contentIndex, item: { type: "function_call", id: itemId, call_id: toolCall?.id ?? `call_${event.contentIndex}`, name: toolCall?.name ?? "tool", arguments: "", status: "in_progress" } });
 		} else if (event.type === "toolcall_delta") {
-			yield sseData({ type: "response.function_call_arguments.delta", item_id: `fc_${event.contentIndex}`, output_index: event.contentIndex, delta: event.delta });
+			yield sseData({ type: "response.function_call_arguments.delta", item_id: functionCallItemIds.get(event.contentIndex) ?? `fc_${event.contentIndex}`, output_index: event.contentIndex, delta: event.delta });
 		} else if (event.type === "toolcall_end") {
-			yield sseData({ type: "response.function_call_arguments.done", item_id: `fc_${event.contentIndex}`, output_index: event.contentIndex, arguments: JSON.stringify(event.toolCall.arguments) });
+			const itemId = functionCallItemIds.get(event.contentIndex) ?? `fc_${event.toolCall.id}`;
+			yield sseData({ type: "response.function_call_arguments.done", item_id: itemId, output_index: event.contentIndex, arguments: JSON.stringify(event.toolCall.arguments) });
 			yield sseData({ type: "response.output_item.done", output_index: event.contentIndex, item: { type: "function_call", id: `fc_${event.toolCall.id}`, call_id: event.toolCall.id, name: event.toolCall.name, arguments: JSON.stringify(event.toolCall.arguments), status: "completed" } });
 		} else if (event.type === "done") {
 			yield sseData({ type: event.reason === "length" ? "response.incomplete" : "response.completed", response: { id, object: "response", status: event.reason === "length" ? "incomplete" : "completed", model, output: responseOutput(event.message), usage: usagePayload(event) } });

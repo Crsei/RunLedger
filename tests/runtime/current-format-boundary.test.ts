@@ -28,6 +28,17 @@ describe("current format boundary", () => {
 		}
 	});
 
+	it("does not classify an external API route version as an internal generation marker", async () => {
+		const fixtureRoot = await mkdtemp(join(tmpdir(), "runledger-current-api-route-marker-"));
+		try {
+			await writeFile(join(fixtureRoot, "README.md"), "POST /v1/chat/completions\n", "utf8");
+
+			expect(scanCurrentFormatMarkers(fixtureRoot)).toEqual([]);
+		} finally {
+			await rm(fixtureRoot, { recursive: true, force: true });
+		}
+	});
+
 	it("continues to reject an unrelated hyphenated generation marker", async () => {
 		const fixtureRoot = await mkdtemp(join(tmpdir(), "runledger-current-hyphenated-marker-"));
 		try {

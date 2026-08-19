@@ -164,6 +164,23 @@ describe("provider outbound proxy resolution", () => {
 		).toThrow("Invalid proxy URL");
 	});
 
+	test("does not expose embedded proxy credentials when URL validation fails", () => {
+		const secret = "proxy-password-review";
+		let message = "";
+
+		try {
+			resolveProviderProxyUrl("credential-redaction", "https://api.proxy-redaction.runledger.test", {
+				RUNLEDGER_PROXY: `http://proxy-user:${secret}@`,
+				no_proxy: neutralNoProxy,
+			});
+		} catch (error) {
+			message = error instanceof Error ? error.message : String(error);
+		}
+
+		expect(message).toContain("Invalid proxy URL");
+		expect(message).not.toContain(secret);
+	});
+
 	test("caches a normalized provider-target lookup for the process lifetime", () => {
 		const providerId = "cache-provider/release";
 		const firstTarget = "https://cache.runledger.test/path/../endpoint";

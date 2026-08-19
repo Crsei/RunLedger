@@ -168,6 +168,35 @@ describe("auth-gateway pure wire codecs", () => {
 		expect(lines.join("")).toContain('"input_tokens":7');
 	});
 
+	test("keeps one Responses item id across function-call start, delta, and completion", async () => {
+		const toolCall = { type: "toolCall" as const, id: "call_2", name: "lookup", arguments: { q: "x" } };
+		const message: AssistantMessage = {
+			...partial(),
+			content: [
+				{ type: "text", text: "before tool" },
+				toolCall,
+			],
+		};
+		const lines = await collect(encodeResponsesStream(eventStream([
+			{ type: "start", partial: message },
+			{ type: "toolcall_start", contentIndex: 1, partial: message },
+			{ type: "toolcall_delta", contentIndex: 1, delta: '{"q":"x"}', partial: message },
+			{ type: "toolcall_end", contentIndex: 1, toolCall, partial: message },
+		])));
+		const events = lines.map((line) => JSON.parse(line.slice("data: ".length).trim()) as {
+			type: string;
+			item_id?: string;
+			item?: { id?: string };
+		});
+		const added = events.find((event) => event.type === "response.output_item.added");
+		const delta = events.find((event) => event.type === "response.function_call_arguments.delta");
+		const done = events.find((event) => event.type === "response.function_call_arguments.done");
+
+		expect(added?.item?.id).toBe("fc_call_2");
+		expect(delta?.item_id).toBe(added?.item?.id);
+		expect(done?.item_id).toBe(added?.item?.id);
+	});
+
 	test("passes native pi-messages context through validation and maps terminal events", async () => {
 		const context: Context = {
 			systemPrompt: "native",

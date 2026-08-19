@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import lockfile from "proper-lockfile";
 
 export const AUTH_GATEWAY_TOKEN_FILE = "auth-gateway.token";
 export const AUTH_GATEWAY_TOKEN_MODE = 0o600;
@@ -62,11 +63,28 @@ async function readExistingToken(path: string): Promise<string | undefined> {
 
 /** Ensure the canonical token exists and return it without regenerating a valid secret. */
 export async function ensureAuthGatewayToken(path: string): Promise<string> {
-	const existing = await readExistingToken(path);
-	if (existing !== undefined) return existing;
-	const token = generateAuthGatewayToken();
-	await persistToken(path, token);
-	return token;
+	await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+	const release = await lockfile.lock(path, {
+		realpath: false,
+		lockfilePath: `${path}.lock`,
+		stale: 30_000,
+		retries: {
+			retries: 10,
+			factor: 2,
+			minTimeout: 10,
+			maxTimeout: 500,
+			randomize: true,
+		},
+	});
+	try {
+		const existing = await readExistingToken(path);
+		if (existing !== undefined) return existing;
+		const token = generateAuthGatewayToken();
+		await persistToken(path, token);
+		return token;
+	} finally {
+		await release();
+	}
 }
 
 /** Replace the canonical token and return the new secret exactly once to the caller. */

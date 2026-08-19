@@ -347,6 +347,7 @@ export function createProxyProvider(options: ProxyProviderOptions): Provider<Pro
 		const cached = wireCache.get(options.id, model.id);
 		if (cached?.state === "success") return cached.wire;
 		if (cached?.state === "failure") throw new Error(`Proxy wire detection failed for ${options.id}/${model.id}`);
+		optionsArg?.signal?.throwIfAborted();
 
 		const candidates: ProxyWireCandidates = {};
 		for (const wire of PROXY_WIRE_ORDER) {
@@ -362,8 +363,10 @@ export function createProxyProvider(options: ProxyProviderOptions): Provider<Pro
 					signal: optionsArg?.signal,
 				});
 			} catch {
+				optionsArg?.signal?.throwIfAborted();
 				candidates[wire] = { accepted: false, reason: "probe_failed" };
 			}
+			optionsArg?.signal?.throwIfAborted();
 			if (candidates[wire]?.accepted) break;
 		}
 

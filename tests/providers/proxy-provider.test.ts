@@ -255,4 +255,26 @@ describe("configuration-driven upstream proxy provider", () => {
 			compat: { authHeader: true },
 		});
 	});
+
+	test("does not cache a wire-detection failure caused by caller cancellation", async () => {
+		const calls: Array<{ wire: ProxyWire; model: Model<Api> }> = [];
+		const provider = createProxyProvider(
+			baseOptions({
+				probe: async ({ signal, wire }) =>
+					signal?.aborted
+						? { accepted: false, reason: "aborted" }
+						: { accepted: wire === "openai-completions", status: wire === "openai-completions" ? 200 : 404 },
+				transports: transportSet(calls),
+			}),
+		);
+		const requestModel = model("cancelled-discovery-model");
+		const controller = new AbortController();
+		controller.abort(new Error("caller cancelled"));
+
+		await provider.streamSimple(requestModel, { messages: [] }, { apiKey: "stored-secret", signal: controller.signal }).result();
+		const retry = await provider.streamSimple(requestModel, { messages: [] }, { apiKey: "stored-secret" }).result();
+
+		expect(retry.stopReason).toBe("stop");
+		expect(calls).toHaveLength(1);
+	});
 });

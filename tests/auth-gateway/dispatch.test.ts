@@ -86,6 +86,32 @@ function fixtureModels(options: FixtureOptions = {}): MutableModels {
 	return models;
 }
 
+function duplicateFixtureModels(configuredProviderIds: readonly string[]): MutableModels {
+	const credentials = Object.fromEntries(
+		configuredProviderIds.map((providerId) => [providerId, { type: "api_key" as const, key: `${providerId}-secret` }]),
+	);
+	const models = createModels({ credentials: AuthStorage.inMemory(credentials) });
+	for (const providerId of ["fixture-a", "fixture-b"]) {
+		const model = { ...fixtureModel("shared-model"), provider: providerId };
+		models.setProvider({
+			id: providerId,
+			name: providerId,
+			auth: {
+				apiKey: {
+					name: `${providerId} key`,
+					resolve: async ({ credential }) => credential?.key === undefined
+						? undefined
+						: { auth: { apiKey: credential.key }, source: "fixture credential" },
+				},
+			},
+			getModels: () => [model],
+			stream: (requestModel) => completedStream(requestModel),
+			streamSimple: (requestModel) => completedStream(requestModel),
+		});
+	}
+	return models;
+}
+
 async function open(models: MutableModels): Promise<AuthGatewayServerHandle> {
 	const server = await startAuthGatewayServer({ bindHost: "127.0.0.1", port: 0, token: "gateway-secret", models });
 	openServers.push(server);
@@ -141,6 +167,43 @@ describe("auth-gateway model dispatch", () => {
 		expect(seen).toEqual([{ model: "fixture-model", apiKey: "upstream-secret" }, { model: "fixture-model", apiKey: "upstream-secret" }]);
 	});
 
+	test("rejects an ambiguous bare model id and accepts an explicit provider/model id", async () => {
+		const server = await open(duplicateFixtureModels(["fixture-a", "fixture-b"]));
+
+		const ambiguous = await post(server, "/v1/chat/completions", {
+			model: "shared-model",
+			messages: [{ role: "user", content: "ping" }],
+		});
+		const explicit = await post(server, "/v1/chat/completions", {
+			model: "fixture-b/shared-model",
+			messages: [{ role: "user", content: "ping" }],
+		});
+		const catalog = await fetch(url(server, "/v1/models"), {
+			headers: { authorization: "Bearer gateway-secret" },
+		});
+
+		expect(ambiguous.status).toBe(400);
+		expect(await ambiguous.json()).toMatchObject({ error: { code: "ambiguous_model" } });
+		expect(explicit.status).toBe(200);
+		expect(await catalog.json()).toMatchObject({
+			data: [
+				{ id: "fixture-a/shared-model", owned_by: "fixture-a" },
+				{ id: "fixture-b/shared-model", owned_by: "fixture-b" },
+			],
+		});
+	});
+
+	test("accepts a duplicated bare model id when exactly one provider is available", async () => {
+		const server = await open(duplicateFixtureModels(["fixture-b"]));
+
+		const response = await post(server, "/v1/chat/completions", {
+			model: "shared-model",
+			messages: [{ role: "user", content: "ping" }],
+		});
+
+		expect(response.status).toBe(200);
+	});
+
 	test("lists only models whose provider credentials resolve", async () => {
 		const server = await open(fixtureModels({ credential: "upstream-secret" }));
 		const response = await fetch(url(server, "/v1/models"), { headers: { authorization: "Bearer gateway-secret" } });
@@ -177,6 +240,37 @@ describe("auth-gateway model dispatch", () => {
 
 		expect(response.status).toBe(502);
 		expect(await response.json()).toMatchObject({ error: { type: "upstream_error", message: "upstream failed [redacted]" } });
+	});
+
+	test("redacts provider credentials from an error emitted after SSE starts", async () => {
+		const credential = 'upstream-"secret';
+		const server = await open(fixtureModels({
+			credential,
+			streamSimple: (model) => {
+				const stream = createAssistantMessageEventStream();
+				stream.push({ type: "start", partial: assistant(model) });
+				stream.push({
+					type: "error",
+					reason: "error",
+					error: {
+						...assistant(model),
+						stopReason: "error",
+						errorMessage: `upstream echoed ${credential}`,
+					},
+				});
+				return stream;
+			},
+		}));
+
+		const response = await post(server, "/v1/chat/completions", {
+			model: "fixture-model",
+			messages: [{ role: "user", content: "ping" }],
+		});
+		const body = await response.text();
+
+		expect(response.status).toBe(200);
+		expect(body).toContain("upstream echoed [redacted]");
+		expect(body).not.toContain(JSON.stringify(credential).slice(1, -1));
 	});
 
 	test("propagates client disconnect abort to the provider stream", async () => {

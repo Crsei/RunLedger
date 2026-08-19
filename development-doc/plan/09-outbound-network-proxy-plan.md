@@ -61,7 +61,7 @@ RUNLEDGER_PROXY_<PROVIDER>  →  RUNLEDGER_PROXY  →  HTTPS_PROXY/https_proxy �
 2. Google SDK 的 scoped fetch 需要一次性的进程级 global fetch router；`AsyncLocalStorage` 保证并发请求按 scope 隔离，但浏览器运行时不在支持范围内。
 3. 本地记录型代理已证明真实 Node SDK 与裸 fetch 请求先到代理，未证明代理对真实公网 upstream 的 CONNECT/转发策略。
 4. 当前环境没有已配置的 new-api/one-api endpoint、models.json 或可安全使用的外部凭据；不把本地 fixture 当作外部代理 parity。
-5. `npm run check` 的 `check:current-format` 仍会把计划文档和网关要求的 `/v1/...` 路由报告为既有扫描器误报；不得通过改扫描器或改用户文档伪造闭合，其他门禁单独记录。
+5. `check:current-format` 对 `/v1/...` 外部 API 路由采用窄语法豁免，同时继续拒绝第一方内部代际标记。
 
 ## 3. 冻结的产品与数据合同
 
@@ -107,7 +107,7 @@ export function getCachedProviderProxyUrl(
 |---|---|---|
 | `anthropic-messages` | `new Anthropic` SDK | `createProxyFetchForUrl()` 注入 `fetch`；Node 生产路径使用 `node-fetch` + target-matched agent |
 | `openai-completions` / `openai-responses` / `azure-openai-responses` | `new OpenAI` / `new AzureOpenAI` SDK | 同上；Azure 以解析后的 deployment URL 为目标 |
-| `google-generative-ai` | `new GoogleGenAI` SDK，v1.52 无公开 fetch/agent option | `runWithProviderProxyFetch()` 在 `AsyncLocalStorage` scope 内路由 SDK 使用的 global fetch |
+| `google-generative-ai` | `new GoogleGenAI` SDK 1.52 无公开 fetch/agent option | `runWithProviderProxyFetch()` 在 `AsyncLocalStorage` scope 内路由 SDK 使用的 global fetch |
 | `google-vertex` | `new GoogleGenAI` SDK，custom endpoint 或 location endpoint | 同上，target 使用 custom base URL 或 location-derived Vertex endpoint |
 | `mistral-conversations` | `new Mistral` + `HTTPClient` | `HTTPClient({ fetcher })` 注入 scoped fetch |
 | `openrouter-images` | `new OpenAI` image client | `fetch` 注入，作为 image API 的额外 client 覆盖 |

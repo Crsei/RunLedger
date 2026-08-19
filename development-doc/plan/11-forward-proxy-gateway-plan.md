@@ -21,9 +21,9 @@ api.anthropic.com / api.openai.com / …（上游）
 - 无原始透传路径：所有路由都过 RunLedger provider 逻辑（对齐 omp：credential shaping、OAuth refresh-on-auth-error、provider quirks 集中在 `pi-ai` 侧）。
 - 除 `/healthz` 外所有端点要求 bearer token（`<config-dir>/auth-gateway.token`，`0600`）；`--no-auth` 仅供 loopback。
 - `idleTimeout` 255s，长 thinking 不被默认超时杀掉。
-- v1 范围**不含** auth-broker：gateway 直接用本地 `CredentialStore`（与正常 session 相同的解析路径）；broker（远程凭证库 + 快照流）作为明确后续项。
+- 当前范围**不含** auth-broker：gateway 直接用本地 `CredentialStore`（与正常 session 相同的解析路径）；broker（远程凭证库 + 快照流）作为明确后续项。
 
-非目标（v1）：
+非目标（当前版本）：
 
 - auth-broker（远程 SQLite 凭证库、SSE 快照、账户池、用量聚合）；TLS 终止（交给 Tailscale/Wireguard/反代，与 omp 一致）；
 - `/v1/pi/stream` 的 omp 兼容别名仅作路由别名保留，不实现 pi-native 之外的第二种原生 wire；
@@ -64,7 +64,7 @@ api.anthropic.com / api.openai.com / …（上游）
 
 - P1–P3 的 server、token、CLI、四类 codec、模型/凭证派发与 wire 错误映射已落地；P4 的真实 HTTP smoke 使用本地双 wire fixture，未把 fixture 当作外部 provider parity 证据。
 - `check --strict` 会对每个已配置 provider 选择一个可用模型执行一次最小文本 completion；响应只返回 provider/model/成功状态，不返回凭证或上游错误正文。
-- v1 固定请求体上限 4 MiB、HTTP idle timeout 255 秒；没有额外的应用层并发配额，连接背压和 provider stream abort 是当前资源边界，独立并发限流仍属后续工作。
+- 当前版本固定请求体上限 4 MiB、HTTP idle timeout 255 秒；没有额外的应用层并发配额，连接背压和 provider stream abort 是当前资源边界，独立并发限流仍属后续工作。
 - auth-broker、真实外部 provider 凭据、TLS 终止、多租户和 usage 报表仍按 §3.5/P6 排除。
 
 ## 3. 冻结的产品与数据合同
@@ -81,7 +81,7 @@ runledger auth-gateway check   [--strict] [--json]
 - `serve` 默认绑定 `127.0.0.1:4000`；启动时确保 `<config-dir>/auth-gateway.token`（`0600`）；`--no-auth` 跳过 bearer 检查（仅 loopback）。
 - `token`/`status`/`check` 管理 bearer 与上游凭证健康；`check --strict` 对每个 credential 打 chat 端点，可能消耗少量配额。
 - 进程生命周期：SIGINT/SIGTERM 优雅关闭在途流；`idleTimeout` 255s（对齐 omp）。
-- 配置：v1 无专用配置键；token 文件 + CLI flag 足够。`RUNLEDGER_AUTH_GATEWAY_BIND` 可作可选 env（P0 冻结）。
+- 配置：当前版本无专用配置键；token 文件 + CLI flag 足够。`RUNLEDGER_AUTH_GATEWAY_BIND` 可作可选 env（P0 冻结）。
 
 ### 3.2 路由与 wire 映射
 
@@ -104,14 +104,14 @@ runledger auth-gateway check   [--strict] [--json]
 - 除 `/healthz` 外所有端点 `Authorization: Bearer <token>`；timing-safe 比较（`crypto.timingSafeEqual`）。
 - `--no-auth` 只允许 `--bind 127.0.0.1`（P0 冻结：拒绝非 loopback + no-auth）。
 - 凭证永不进入响应体/日志；`resolveProviderAuth` 返回的 `AuthResult` 只用于构造出站请求。
-- 请求体大小上限固定为 4 MiB；HTTP idle timeout 固定为 255 秒；v1 不增加独立应用层并发配额，abort 传播是已实现的资源边界。
+- 请求体大小上限固定为 4 MiB；HTTP idle timeout 固定为 255 秒；当前版本不增加独立应用层并发配额，abort 传播是已实现的资源边界。
 
 ### 3.4 错误映射
 
 - `ModelsError.code` → HTTP 状态：`auth`/`oauth` → 401/502、`provider` → 502、`model_source`/`model_validation` → 400/404、`stream` → 502；每个 wire 用自己的错误体形状（Anthropic `{type, error:{type,message}}`、OpenAI `{error:{message,type,code}}`、pi-messages `{error}` 事件）。
 - 入站解码失败 → 400 + wire 形状错误体；不 panic、不半写 SSE。
 
-### 3.5 非目标（v1 明确排除）
+### 3.5 非目标（当前版本明确排除）
 
 - auth-broker 远程凭证库、快照/SSE 同步、账户池、用量聚合、凭证上传/迁移；
 - TLS 终止、多租户、RBAC、审计报表；
@@ -121,12 +121,12 @@ runledger auth-gateway check   [--strict] [--json]
 
 ### P0 — 冻结合同（RED 前置）
 
-**目标**：先冻结路由/wire 映射、model 解析、认证、错误映射与 v1 边界。
+**目标**：先冻结路由/wire 映射、model 解析、认证、错误映射与当前版本边界。
 
 **工作项**：
 
 - 核对 `createModels`/`getModel` 的 model id 查找语义、`pi-messages.ts` 的完整 SSE 事件集（start/text_delta/thinking_delta/tool_call/done/error 等）、`error-body.ts` 的可用提取字段。
-- 核对 gateway 与 session 共享本地 `CredentialStore` 的写锁语义（`modify` 串行化是否跨进程安全；不安全则 v1 只读 + 刷新，写入仍由 session CLI 完成）。
+- 核对 gateway 与 session 共享本地 `CredentialStore` 的写锁语义（`modify` 串行化是否跨进程安全；不安全则当前版本只读 + 刷新，写入仍由 session CLI 完成）。
 - 冻结 §3.1–§3.5 全部数值与规则；记录 dirty worktree 基线。
 
 **门禁**：contract review 能逐项回答“每条 wire 的解码/编码入口、model 如何解析、未知模型返回什么、401/502/400 如何映射、与 session 凭证库的并发规则”。
@@ -191,7 +191,7 @@ runledger auth-gateway check   [--strict] [--json]
 
 **门禁**：文档与实现一致；状态表更新。
 
-### P6 — 后续项（不属 v1）
+### P6 — 后续项（不属当前版本）
 
 - auth-broker（远程 SQLite 凭证库、SSE 快照、账户池、用量聚合、`--via=user@host` 登录）；
 - `/v1/usage` 与用量缓存（5min jitter + 15s single-flight）；
@@ -223,7 +223,7 @@ runledger auth-gateway check   [--strict] [--json]
 - 所有路由都过 `resolveProviderAuth` + `models.*` 派发；不新增 raw passthrough 路径。
 - gateway 的 Node-only server 代码不进入 Bun 主路径；遵守仓库禁止内联动态 `import()` 的规则。
 - 凭证永不写日志/响应体；token 文件 `0600`。
-- broker 能力不得以“预留字段/半成品路由”形式提前进入 v1 代码。
+- broker 能力不得以“预留字段/半成品路由”形式提前进入当前版本代码。
 
 ## 7. 状态表
 

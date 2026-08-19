@@ -135,10 +135,8 @@ function validateProxyUrl(proxy: string): string {
 	let proxyUrl: URL;
 	try {
 		proxyUrl = new URL(proxy);
-	} catch (error) {
-		throw new Error(
-			`Invalid proxy URL ${JSON.stringify(proxy)}: ${error instanceof Error ? error.message : String(error)}`,
-		);
+	} catch {
+		throw new Error("Invalid proxy URL");
 	}
 
 	if (proxyUrl.protocol !== "http:" && proxyUrl.protocol !== "https:") {

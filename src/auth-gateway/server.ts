@@ -62,6 +62,15 @@ class GatewayModelNotFoundError extends Error {
 	}
 }
 
+class GatewayAmbiguousModelError extends Error {
+	readonly code = "ambiguous_model";
+
+	constructor(model: string) {
+		super(`Model id is ambiguous; use provider/model: ${model}`);
+		this.name = "GatewayAmbiguousModelError";
+	}
+}
+
 function wireForPath(path: string): GatewayWire | undefined {
 	if (path === "/v1/chat/completions") return "chat-completions";
 	if (path === "/v1/messages") return "messages";
@@ -70,7 +79,7 @@ function wireForPath(path: string): GatewayWire | undefined {
 	return undefined;
 }
 
-function providerModel(models: Models, requested: string): Model<Api> | undefined {
+async function providerModel(models: Models, requested: string): Promise<Model<Api> | undefined> {
 	const separator = requested.indexOf("/");
 	if (separator > 0) {
 		const providerId = requested.slice(0, separator);
@@ -78,7 +87,13 @@ function providerModel(models: Models, requested: string): Model<Api> | undefine
 			return models.getModel(providerId, requested.slice(separator + 1));
 		}
 	}
-	return models.getModels().find((model) => model.id === requested);
+	const matches = models.getModels().filter((model) => model.id === requested);
+	if (matches.length > 1) {
+		const available = (await models.getAvailable()).filter((model) => model.id === requested);
+		if (available.length === 1) return available[0];
+		throw new GatewayAmbiguousModelError(requested);
+	}
+	return matches[0];
 }
 
 export function isLoopbackBindHost(host: string): boolean {
@@ -175,11 +190,15 @@ function authSecretValues(auth: AuthResult): string[] {
 }
 
 function redactSecrets(message: string, secrets: readonly string[]): string {
-	return secrets.reduce((current, secret) => current.replaceAll(secret, "[redacted]"), message);
+	return secrets.reduce((current, secret) => {
+		const encoded = JSON.stringify(secret).slice(1, -1);
+		return current.replaceAll(encoded, "[redacted]").replaceAll(secret, "[redacted]");
+	}, message);
 }
 
 function errorCode(error: unknown): string {
 	if (error instanceof GatewayModelNotFoundError) return error.code;
+	if (error instanceof GatewayAmbiguousModelError) return error.code;
 	if (error instanceof GatewayCodecError) return "invalid_request";
 	if (error instanceof ModelsError) return error.code;
 	return "upstream_error";
@@ -187,6 +206,7 @@ function errorCode(error: unknown): string {
 
 function errorStatus(error: unknown): number {
 	if (error instanceof GatewayModelNotFoundError) return 404;
+	if (error instanceof GatewayAmbiguousModelError) return 400;
 	if (error instanceof GatewayCodecError) return 400;
 	if (error instanceof ModelsError) {
 		if (error.code === "auth") return 401;
@@ -216,9 +236,15 @@ function writeUpstreamFailure(res: ServerResponse, wire: GatewayWire, message: s
 }
 
 function writeModels(res: ServerResponse, models: readonly Model<Api>[]): void {
+	const modelIdCounts = new Map<string, number>();
+	for (const model of models) modelIdCounts.set(model.id, (modelIdCounts.get(model.id) ?? 0) + 1);
 	writeJson(res, 200, {
 		object: "list",
-		data: models.map((model) => ({ id: model.id, object: "model", owned_by: model.provider })),
+		data: models.map((model) => ({
+			id: (modelIdCounts.get(model.id) ?? 0) > 1 ? `${model.provider}/${model.id}` : model.id,
+			object: "model",
+			owned_by: model.provider,
+		})),
 	});
 }
 
@@ -289,7 +315,7 @@ async function dispatchGatewayRequest(
 		return;
 	}
 
-	const model = providerModel(models, decoded.model);
+	const model = await providerModel(models, decoded.model);
 	if (model === undefined) {
 		writeGatewayFailure(res, wire, new GatewayModelNotFoundError(decoded.model));
 		return;
@@ -344,7 +370,7 @@ async function dispatchGatewayRequest(
 		});
 		for await (const line of codec.encodeStream(prependEvent(first.value, iterator))) {
 			if (res.destroyed) break;
-			res.write(line);
+			res.write(redactSecrets(line, secrets));
 		}
 		if (!res.writableEnded && !res.destroyed) res.end();
 	} catch (error) {

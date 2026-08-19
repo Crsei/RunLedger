@@ -31,6 +31,17 @@ describe("auth-gateway token storage", () => {
 		expect(file.mode & 0o777).toBe(0o600);
 	});
 
+	test("returns one canonical token to concurrent first-time callers", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-auth-gateway-token-race-"));
+		roots.push(root);
+		const path = authGatewayTokenPath(root);
+
+		const tokens = await Promise.all(Array.from({ length: 20 }, () => ensureAuthGatewayToken(path)));
+
+		expect(new Set(tokens)).toHaveLength(1);
+		expect(await readFile(path, "utf8")).toBe(`${tokens[0]}\n`);
+	});
+
 	test("regenerates a token without weakening file permissions", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-auth-gateway-token-"));
 		roots.push(root);
