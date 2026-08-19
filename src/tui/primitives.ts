@@ -387,6 +387,7 @@ export class TUI extends Container {
   private editorAppearance: EditorAppearance | undefined;
   private transcriptScrollPresentation: TranscriptScrollPresentation | undefined;
   private statusIndicator: StatusIndicatorView | undefined;
+  private statusIndicatorShimmer: OpenTuiComponentFrame["statusIndicatorShimmer"];
   private appIntentHandler: TuiAppIntentHandler | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private readonly syntaxThemeName: string | undefined;
@@ -437,8 +438,12 @@ export class TUI extends Container {
     this.requestRender();
   }
   /** 状态指示行由 InteractiveMode 在共享帧准备阶段投影。 */
-  setStatusIndicator(statusIndicator: StatusIndicatorView | undefined): void {
+  setStatusIndicator(
+    statusIndicator: StatusIndicatorView | undefined,
+    shimmer?: OpenTuiComponentFrame["statusIndicatorShimmer"],
+  ): void {
     this.statusIndicator = statusIndicator;
+    this.statusIndicatorShimmer = shimmer;
   }
   /** 时间驱动 UI 只通过应用层 FrameScheduler 安排下一帧。 */
   scheduleFrameIn(delayMs: number): void {
@@ -625,6 +630,7 @@ export class TUI extends Container {
         editorAppearance: this.editorAppearance,
         transcriptScrollPresentation: this.transcriptScrollPresentation,
         statusIndicator: this.statusIndicator,
+        statusIndicatorShimmer: this.statusIndicatorShimmer,
         footer,
         overlay,
         overlayAnchor: this.overlayOptions?.anchor,

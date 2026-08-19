@@ -4,6 +4,7 @@ import {
 	createOpenTuiComponentRuntimeFromRenderer,
 	type OpenTuiComponentFrame,
 } from "../../src/tui/opentui/component-runtime.ts";
+import { loadTheme } from "../../src/tui/theme/theme.ts";
 
 function frame(statusIndicator: NonNullable<OpenTuiComponentFrame["statusIndicator"]>): OpenTuiComponentFrame {
 	return {
@@ -15,6 +16,34 @@ function frame(statusIndicator: NonNullable<OpenTuiComponentFrame["statusIndicat
 }
 
 describe("OpenTUI S5 status indicator frame", () => {
+	test("applies the frame-owned shimmer style after plain-text measurement", async () => {
+		const setup = await createTestRenderer({ width: 72, height: 14 });
+		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+			onInput: () => {},
+			onResize: () => {},
+		});
+		try {
+			runtime.update({
+				...frame({ indicator: "⠋", header: "Working", elapsed: "12s", interruptKey: "^C" }),
+				statusIndicatorShimmer: {
+					mode: "classic",
+					nowMs: 500,
+					theme: loadTheme("dark"),
+					truecolor: true,
+				},
+			} as OpenTuiComponentFrame);
+			await setup.renderOnce();
+
+			const status = setup.renderer.root.findDescendantById("runledger-status-indicator") as unknown as {
+				content?: { readonly chunks?: readonly { readonly text: string; readonly fg?: unknown }[] };
+			};
+			expect(status.content?.chunks?.some((chunk) => chunk.fg !== undefined)).toBe(true);
+			expect(setup.captureCharFrame()).toContain("⠋ Working (12s • ^C to interrupt)");
+		} finally {
+			runtime.destroy();
+		}
+	});
+
 	test("renders working status above the editor and keeps details bounded", async () => {
 		const setup = await createTestRenderer({ width: 72, height: 14 });
 		const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {

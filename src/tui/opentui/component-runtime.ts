@@ -41,6 +41,7 @@ import { freezeStreamPrefix, type SettledSpan } from "./settled-prefix.ts";
 import { splitClosedStreamingTable } from "./streaming-table-split.ts";
 import { BodySignatureTracker } from "./body-signature.ts";
 import { settled, type PresentationPart } from "../timeline/part-stability.ts";
+import { shimmerStatusLine, type ShimmerStatusLineOptions } from "./shimmer-status-line.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
@@ -68,6 +69,8 @@ export interface OpenTuiComponentFrame {
   transcriptScrollPresentation?: TranscriptScrollPresentation;
   /** editor 上方的运行中状态指示行；undefined 时占用零高度。 */
   statusIndicator?: StatusIndicatorView;
+  /** 纯文本测量完成后应用的状态行渐变参数。 */
+  statusIndicatorShimmer?: ShimmerStatusLineOptions;
   footer: readonly (string | { readonly kind: "status-line"; readonly segments: readonly StatusLineSegment[] })[];
   overlay?: readonly (string | PresentationBlock)[];
   /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
@@ -707,10 +710,13 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       const editorCursorOffset = Math.max(0, Math.min(frame.editorCursorOffset ?? frame.editorText.length, frame.editorText.length));
       if (editor.cursorOffset !== editorCursorOffset) editor.cursorOffset = editorCursorOffset;
       if (frame.editorHeight !== undefined) requestedEditorHeight = frame.editorHeight;
-      const projectedStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator, renderer.width);
+      const plainStatus = frame.statusIndicator === undefined ? "" : statusIndicatorPlainText(frame.statusIndicator, renderer.width);
+      const projectedStatus = plainStatus.length > 0 && frame.statusIndicator !== undefined && frame.statusIndicatorShimmer !== undefined
+        ? shimmerStatusLine(plainStatus, frame.statusIndicator, frame.statusIndicatorShimmer)
+        : plainStatus;
       statusIndicator.visible = projectedStatus.length > 0;
       statusIndicator.content = projectedStatus.length > 0 ? ansiToStyledText(projectedStatus) : "";
-      statusIndicator.height = projectedStatus.length > 0 ? projectedStatus.split("\n").length : 0;
+      statusIndicator.height = plainStatus.length > 0 ? plainStatus.split("\n").length : 0;
       // OpenTUI 的 native word-wrap 是原生路径的测量 authority；用真实 textarea
       // 宽度(width - prompt 2 - right inset 1)校正纯组件估算，避免隐藏尾行。
       const editorInnerWidth = Math.max(1, renderer.width - 3);

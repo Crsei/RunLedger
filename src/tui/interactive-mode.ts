@@ -2880,7 +2880,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
       nowMs,
       animationFrame: Math.floor(nowMs / STATUS_INDICATOR_FRAME_MS),
       interruptKey: this.statusInterruptKey(),
-    }));
+    }), {
+      mode: "classic",
+      nowMs,
+      theme: this.theme,
+      truecolor: /^(?:truecolor|24bit)$/iu.test(process.env.COLORTERM ?? ""),
+    });
     if (activeRun?.state === "working" || activeRun?.state === "waiting") {
       this.scheduleStatusIndicatorFrame();
     }

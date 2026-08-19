@@ -1,6 +1,6 @@
 # RunLedger TUI oh-my-pi Working Loader（渐变 shimmer + esc 提示）复刻计划
 
-> 状态：**实施中（S0 implemented；S1–S4 pending）**
+> 状态：**实施中（S0–S1 implemented；S2–S4 pending）**
 >
 > 计划日期：2026-08-20
 >
@@ -334,9 +334,9 @@ export interface TuiPreferencesDocument {
 
 ### S1 · 着色层 + 渲染接线
 
-- [ ] 新增 `src/tui/opentui/shimmer-status-line.ts`：`shimmerStatusLine(plain, view, opts)`，span 定位 + 双段着色 + 非渐变段原样拼接；
-- [ ] `component-runtime.ts` 状态指示行渲染路径：`statusIndicatorPlainText` 输出 → `shimmerStatusLine` → `ansiToStyledText`（保持 height 按纯文本行数）；
-- [ ] 接线 `mode` / `nowMs` / `truecolor`：`interactive-mode.ts` 从 preferences 读 `display.shimmer`，把 `nowMs` 与模式传给 UI（`setStatusIndicator` 扩展或新 setter——见 §9 定案）；
+- [x] 新增 `src/tui/opentui/shimmer-status-line.ts`：`shimmerStatusLine(plain, view, opts)`，span 定位 + 双段着色 + 非渐变段原样拼接；
+- [x] `component-runtime.ts` 状态指示行渲染路径：`statusIndicatorPlainText` 输出 → `shimmerStatusLine` → `ansiToStyledText`（保持 height 按纯文本行数）；
+- [x] 接线 `mode` / `nowMs` / `truecolor`：`interactive-mode.ts` 以 S1 默认 `classic` 把 `nowMs` 与终端色彩能力传给 UI；preferences authority 留给 S3；
 - **门禁**：`tests/tui/blocks/status-indicator-shimmer.test.ts`——Bun OpenTUI 渲染含 SGR 的 `⠋ Working (12s • ⸢esc⸣)`、宽度不变、`header !== "Working"` 时原样、截断吞 span 时不抛错；既有 `status-indicator.test.ts` / `opentui-status-indicator.bun.test.ts` 全绿（纯文本路径未变）。
 
 ### S2 · esc bracket 字形
@@ -427,7 +427,7 @@ export interface TuiPreferencesDocument {
 | 阶段 | 内容 | 状态 | 证据 |
 |---|---|---|---|
 | S0 | 引擎纯函数 + 常量 + truecolor 辅助 | implemented | `tests/tui/opentui/shimmer.test.ts` + `tests/tui/ansi.test.ts`：27 passed；`tsc --noEmit`、current-format 通过 |
-| S1 | 着色层 + 渲染接线 | pending | — |
+| S1 | 着色层 + 渲染接线 | implemented | 纯函数 5 tests、状态指示回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
 | S2 | esc bracket 字形 | pending | — |
 | S3 | `display.shimmer` 设置项 | pending | — |
 | S4 | 完整门禁 + 人工验收 | pending | — |
