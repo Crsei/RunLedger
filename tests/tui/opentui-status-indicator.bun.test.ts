@@ -38,7 +38,7 @@ describe("OpenTUI S5 status indicator frame", () => {
 				content?: { readonly chunks?: readonly { readonly text: string; readonly fg?: unknown }[] };
 			};
 			expect(status.content?.chunks?.some((chunk) => chunk.fg !== undefined)).toBe(true);
-			expect(setup.captureCharFrame()).toContain("⠋ Working (12s • ^C to interrupt)");
+			expect(setup.captureCharFrame()).toContain("⠋ Working (12s • ⸢^C⸣)");
 		} finally {
 			runtime.destroy();
 		}

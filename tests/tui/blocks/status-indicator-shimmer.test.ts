@@ -32,9 +32,10 @@ describe("status indicator shimmer", () => {
 			theme,
 			truecolor: true,
 		});
+		const expectedPlain = plain.replace("• ^C to interrupt", "• ⸢^C⸣");
 
-		expect(stripAnsi(rendered)).toBe(plain);
-		expect(visibleWidth(rendered.split("\n")[0] ?? "")).toBe(visibleWidth(plain.split("\n")[0] ?? ""));
+		expect(stripAnsi(rendered)).toBe(expectedPlain);
+		expect(visibleWidth(rendered.split("\n")[0] ?? "")).toBeLessThanOrEqual(visibleWidth(plain.split("\n")[0] ?? ""));
 		expect(rendered.split("\n")[0]).toContain("\x1b[38;2;");
 		expect(rendered.split("\n")[1]).toBe("  └ detail remains static");
 	});
@@ -72,7 +73,7 @@ describe("status indicator shimmer", () => {
 			truecolor: false,
 		});
 		expect(rendered).toContain("\x1b[38;5;");
-		expect(stripAnsi(rendered)).toBe(plain);
+		expect(stripAnsi(rendered)).toBe(plain.replace("• ^C to interrupt", "• ⸢^C⸣"));
 	});
 
 	it("keeps disabled mode static while applying the mid tier", () => {
@@ -92,6 +93,36 @@ describe("status indicator shimmer", () => {
 		});
 		expect(first).toBe(later);
 		expect(first).toContain("\x1b[38;2;");
-		expect(stripAnsi(first)).toBe(plain);
+		expect(stripAnsi(first)).toBe(plain.replace("• ^C to interrupt", "• ⸢^C⸣"));
+	});
+
+	it.each([
+		["esc", "⸢esc⸣"],
+		["^C", "⸢^C⸣"],
+	] as const)("renders the %s key with governed brackets", (interruptKey, expected) => {
+		const view = working({ interruptKey, inlineMessage: undefined });
+		const plain = statusIndicatorPlainText(view, 80);
+		const rendered = shimmerStatusLine(plain, view, {
+			mode: "classic",
+			nowMs: 500,
+			theme,
+			truecolor: true,
+		});
+		expect(stripAnsi(rendered)).toContain(`• ${expected}`);
+		expect(stripAnsi(rendered)).not.toContain("to interrupt");
+		expect(plain).toContain(`• ${interruptKey} to interrupt`);
+	});
+
+	it("does not invent brackets when no interrupt key is projected", () => {
+		const view = working({ interruptKey: undefined, inlineMessage: undefined });
+		const plain = statusIndicatorPlainText(view, 80);
+		const rendered = shimmerStatusLine(plain, view, {
+			mode: "classic",
+			nowMs: 500,
+			theme,
+			truecolor: true,
+		});
+		expect(stripAnsi(rendered)).not.toContain("⸢");
+		expect(stripAnsi(rendered)).not.toContain("⸣");
 	});
 });

@@ -1,7 +1,13 @@
 import type { StatusIndicatorView } from "../presentation.ts";
 import { wrapFg, wrapFgTruecolor } from "../theme/ansi.ts";
 import type { Theme } from "../theme/theme.ts";
-import { shimmerText, type ShimmerMode, type ShimmerPalette } from "./shimmer.ts";
+import {
+	SHIMMER_BRACKET_LEFT,
+	SHIMMER_BRACKET_RIGHT,
+	shimmerText,
+	type ShimmerMode,
+	type ShimmerPalette,
+} from "./shimmer.ts";
 
 export interface ShimmerStatusLineOptions {
 	readonly mode: ShimmerMode;
@@ -11,35 +17,49 @@ export interface ShimmerStatusLineOptions {
 }
 
 const FG_RESET = "\x1b[39m";
-const paletteCache = new WeakMap<Theme, Map<boolean, ShimmerPalette>>();
+interface StatusPalettes {
+	readonly main: ShimmerPalette;
+	readonly hint: ShimmerPalette;
+}
+
+const paletteCache = new WeakMap<Theme, Map<boolean, StatusPalettes>>();
 
 function foregroundOpen(hex: string, truecolor: boolean): string {
 	const wrapped = (truecolor ? wrapFgTruecolor(hex) : wrapFg(hex, false))("");
 	return wrapped.endsWith(FG_RESET) ? wrapped.slice(0, -FG_RESET.length) : wrapped;
 }
 
-function workingPalette(theme: Theme, truecolor: boolean): ShimmerPalette {
+function statusPalettes(theme: Theme, truecolor: boolean): StatusPalettes {
 	let byCapability = paletteCache.get(theme);
 	if (byCapability === undefined) {
-		byCapability = new Map<boolean, ShimmerPalette>();
+		byCapability = new Map<boolean, StatusPalettes>();
 		paletteCache.set(theme, byCapability);
 	}
 	const cached = byCapability.get(truecolor);
 	if (cached !== undefined) return cached;
-	const palette: ShimmerPalette = {
-		low: { ansi: foregroundOpen(theme.muted, truecolor) },
-		mid: { ansi: foregroundOpen(theme.secondary, truecolor) },
-		high: { ansi: foregroundOpen(theme.accent, truecolor) },
-		bold: true,
+	const muted = foregroundOpen(theme.muted, truecolor);
+	const palettes: StatusPalettes = {
+		main: {
+			low: { ansi: muted },
+			mid: { ansi: foregroundOpen(theme.secondary, truecolor) },
+			high: { ansi: foregroundOpen(theme.accent, truecolor) },
+			bold: true,
+		},
+		hint: {
+			low: { ansi: muted },
+			mid: { ansi: muted },
+			high: { ansi: foregroundOpen(theme.hint, truecolor) },
+		},
 	};
-	byCapability.set(truecolor, palette);
-	return palette;
+	byCapability.set(truecolor, palettes);
+	return palettes;
 }
 
 interface ColoredSpan {
 	readonly start: number;
 	readonly end: number;
 	readonly text: string;
+	readonly palette: ShimmerPalette;
 }
 
 export function shimmerStatusLine(
@@ -53,11 +73,26 @@ export function shimmerStatusLine(
 	const headerStart = firstLine.indexOf(view.header, view.indicator.length);
 	if (headerStart < 0) return plain;
 
+	const palettes = statusPalettes(options.theme, options.truecolor);
 	const spans: ColoredSpan[] = [{
 		start: headerStart,
 		end: headerStart + view.header.length,
 		text: view.header,
+		palette: palettes.main,
 	}];
+	if (view.interruptKey !== undefined) {
+		const interruptPrefix = "• ";
+		const interruptText = `${view.interruptKey} to interrupt`;
+		const interruptStart = firstLine.indexOf(`${interruptPrefix}${interruptText}`, headerStart + view.header.length);
+		if (interruptStart >= 0) {
+			spans.push({
+				start: interruptStart + interruptPrefix.length,
+				end: interruptStart + interruptPrefix.length + interruptText.length,
+				text: `${SHIMMER_BRACKET_LEFT}${view.interruptKey}${SHIMMER_BRACKET_RIGHT}`,
+				palette: palettes.hint,
+			});
+		}
+	}
 	if (view.inlineMessage !== undefined) {
 		const inlineStart = firstLine.indexOf(view.inlineMessage, headerStart + view.header.length);
 		if (inlineStart >= 0) {
@@ -65,16 +100,17 @@ export function shimmerStatusLine(
 				start: inlineStart,
 				end: inlineStart + view.inlineMessage.length,
 				text: view.inlineMessage,
+				palette: palettes.main,
 			});
 		}
 	}
+	spans.sort((left, right) => left.start - right.start);
 
-	const palette = workingPalette(options.theme, options.truecolor);
 	let renderedFirstLine = "";
 	let offset = 0;
 	for (const span of spans) {
 		renderedFirstLine += firstLine.slice(offset, span.start);
-		renderedFirstLine += shimmerText(span.text, palette, options.mode, options.nowMs);
+		renderedFirstLine += shimmerText(span.text, span.palette, options.mode, options.nowMs);
 		offset = span.end;
 	}
 	renderedFirstLine += firstLine.slice(offset);

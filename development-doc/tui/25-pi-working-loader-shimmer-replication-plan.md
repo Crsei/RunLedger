@@ -1,6 +1,6 @@
 # RunLedger TUI oh-my-pi Working Loader（渐变 shimmer + esc 提示）复刻计划
 
-> 状态：**实施中（S0–S1 implemented；S2–S4 pending）**
+> 状态：**实施中（S0–S2 implemented；S3–S4 pending）**
 >
 > 计划日期：2026-08-20
 >
@@ -341,8 +341,8 @@ export interface TuiPreferencesDocument {
 
 ### S2 · esc bracket 字形
 
-- [ ] 着色层把 interrupt 段渲染为 `• ⸢{key}⸣`（hint 色）；
-- [ ] `statusIndicatorPlainText` 的纯文本 `• ^C to interrupt` 保留（降级/快照路径）；
+- [x] 着色层把 interrupt 段渲染为 `• ⸢{key}⸣`（hint 色）；
+- [x] `statusIndicatorPlainText` 的纯文本 `• ^C to interrupt` 保留（降级/快照路径）；
 - **门禁**：测试——`interruptKey: "esc"` → 帧含 `⸢esc⸣`；`"^C"` → `⸢^C⸣`；未配置 → 无括号段；纯文本快照不回归。
 
 ### S3 · 设置项 `display.shimmer`
@@ -428,6 +428,6 @@ export interface TuiPreferencesDocument {
 |---|---|---|---|
 | S0 | 引擎纯函数 + 常量 + truecolor 辅助 | implemented | `tests/tui/opentui/shimmer.test.ts` + `tests/tui/ansi.test.ts`：27 passed；`tsc --noEmit`、current-format 通过 |
 | S1 | 着色层 + 渲染接线 | implemented | 纯函数 5 tests、状态指示回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
-| S2 | esc bracket 字形 | pending | — |
+| S2 | esc bracket 字形 | implemented | shimmer status 8 tests、纯文本回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
 | S3 | `display.shimmer` 设置项 | pending | — |
 | S4 | 完整门禁 + 人工验收 | pending | — |
