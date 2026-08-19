@@ -81,15 +81,21 @@ function redirect(
 	if (budget.remaining <= 0) return undefined;
 	budget.remaining -= 1;
 	const item = record(value);
+	if (!item) return undefined;
 	const path = boundedText(item?.path, BASH_AST_COMMAND_MAX_CHARS);
+	const fdValue = item.fd;
+	let fd: number | undefined;
+	if (fdValue !== undefined) {
+		if (typeof fdValue !== "number" || !Number.isSafeInteger(fdValue) || fdValue < 0) return undefined;
+		fd = fdValue;
+	}
 	if (
-		!item ||
 		(item.operation !== "read" &&
 			item.operation !== "write" &&
 			item.operation !== "append") ||
 		path === undefined
 	) return undefined;
-	return { operation: item.operation, path };
+	return { operation: item.operation, path, ...(fd === undefined ? {} : { fd }) };
 }
 
 function simpleCommand(

@@ -608,6 +608,44 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		})).resolves.toMatchObject({ ok: true });
 	});
 
+	it("allows a governed LSP command with its stderr sink under danger-full-access", async () => {
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+		});
+		try {
+			await expect(security.managedProcess.prepare({
+				commandId: "command_session_lsp_typescript",
+				command: `${root}/node_modules/.bin/typescript-language-server --stdio 2>/dev/null`,
+				cwd: root,
+				timeoutMs: 86_400_000,
+				backend: "pipe",
+				executionMode: "background",
+				requestDigest: runtimeDigest("session-lsp-typescript"),
+			})).resolves.toMatchObject({ ok: true });
+		} finally {
+			await security.close();
+		}
+	});
+
+	it("allows the governed LSP command with its stderr sink in AST mode", async () => {
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },
+		});
+		try {
+			await expect(security.managedProcess.prepare({
+				commandId: "command_session_lsp_typescript_ast",
+				command: `${root}/node_modules/.bin/typescript-language-server --stdio 2>/dev/null`,
+				cwd: root,
+				timeoutMs: 86_400_000,
+				backend: "pipe",
+				executionMode: "background",
+				requestDigest: runtimeDigest("session-lsp-typescript-ast"),
+			})).resolves.toMatchObject({ ok: true });
+		} finally {
+			await security.close();
+		}
+	});
+
 	it("carries AST classification into the managed-process authorization path", async () => {
 		const security = await composition({
 			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },

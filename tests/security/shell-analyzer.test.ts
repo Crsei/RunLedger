@@ -21,10 +21,19 @@ describe("conservative shell analyzer", () => {
 		});
 	});
 
+	it("recognizes LSP commands with the dedicated stderr sink", () => {
+		expect(analyzeShellCommand("/workspace/node_modules/.bin/typescript-language-server --stdio 2>/dev/null")).toMatchObject({
+			analysis: "known",
+			reasonCodes: [],
+			segments: [{ executable: "typescript-language-server", arguments: ["--stdio"] }],
+		});
+	});
+
 	it.each([
 		["echo $(rm -rf x)", "unsupported_shell_syntax"],
 		["rg --pre evil needle .", "rg_preprocessor"],
 		["cat x > out", "unsupported_shell_syntax"],
+		["typescript-language-server --stdio 2>>/dev/null", "unsupported_shell_syntax"],
 		["cmd & other", "unsupported_shell_syntax"],
 		["sudo ls", "unsafe_wrapper:sudo"],
 	] as const)("classifies unsafe syntax: %s", (command, reason) => {

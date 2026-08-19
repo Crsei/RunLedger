@@ -83,6 +83,23 @@ describe("Bash AST WASM worker", () => {
 		}
 	});
 
+	it("preserves the file descriptor for an explicit stderr redirect", async () => {
+		const pool = new BashAstWorkerPool(1);
+		try {
+			await expect(pool.classify("typescript-language-server --stdio 2>/dev/null")).resolves.toMatchObject({
+				classification: {
+					kind: "simple",
+					commands: [{
+						executable: "typescript-language-server",
+						redirects: [{ operation: "write", path: "/dev/null", fd: 2 }],
+					}],
+				},
+			});
+		} finally {
+			await pool.close();
+		}
+	});
+
 	it("terminates a deadline worker and classifies the next request on a fresh worker", async () => {
 		const pool = new BashAstWorkerPool(1);
 		try {

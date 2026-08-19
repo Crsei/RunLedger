@@ -102,11 +102,17 @@ export async function resolveToolAccessRequestsWithBashAnalyzer(
 		return { ok: true, value: [shell] };
 	}
 	const redirects: AccessRequest[] = analysis.ast.commands.flatMap((item) =>
-		item.redirects.map((redirect): AccessRequest => ({
-			kind: "filesystem",
-			operation: redirect.operation === "read" ? "read" : "write",
-			path: redirect.path,
-		}))
+		item.redirects
+			.filter((redirect) => !(
+				redirect.operation === "write" &&
+				redirect.fd === 2 &&
+				redirect.path === "/dev/null"
+			))
+			.map((redirect): AccessRequest => ({
+				kind: "filesystem",
+				operation: redirect.operation === "read" ? "read" : "write",
+				path: redirect.path,
+			}))
 	);
 	return { ok: true, value: [shell, ...redirects] };
 }

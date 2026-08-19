@@ -19,9 +19,9 @@ const UNSAFE_WRAPPERS = new Set(["sudo", "xargs", "nohup", "tee", "bash", "dash"
 const SHELLS = new Set(["bash", "dash", "ksh", "sh", "zsh"]);
 const PRIVILEGE_WRAPPERS = new Set(["sudo", "doas"]);
 const KNOWN_EXECUTABLES = new Set([
-	"awk", "basename", "cat", "cd", "cmp", "command", "cut", "diff", "dirname", "echo", "env", "false", "fd", "find",
-	"git", "grep", "head", "ls", "nice", "node", "perl", "printf", "pwd", "rg", "rm", "sed", "sort", "stdbuf", "tail",
-	"timeout", "tr", "true", "uniq", "uname", "wc", "which", "xargs", "yes",
+	"astro-ls", "awk", "basename", "bash-language-server", "biome", "cat", "cd", "clangd", "cmp", "command", "cut", "deno", "diff", "dirname", "echo", "env", "false", "fd", "find",
+	"git", "gopls", "grep", "head", "ls", "marksman", "nice", "node", "perl", "printf", "pylsp", "pyright-langserver", "pwd", "rg", "rm", "ruff", "rust-analyzer", "sed", "sort", "stdbuf", "svelte-language-server", "svelteserver", "swiftlint", "tail",
+	"tailwindcss-language-server", "timeout", "tr", "true", "typescript-language-server", "uniq", "uname", "vscode-css-language-server", "vscode-eslint-language-server", "vscode-html-language-server", "vscode-json-language-server", "vue-language-server", "wc", "which", "xargs", "yaml-language-server", "yes",
 ]);
 
 function executableName(value: string): string {
@@ -135,10 +135,16 @@ function normalizeSegment(raw: string): ShellSegment | undefined {
 	return { raw, executable: executableName(executable), arguments: words.slice(index + 1) };
 }
 
+/** LSP transport 将 stderr 与 stdout 汇入同一受治理输出流，只允许丢弃 stderr。 */
+function stripSafeStderrRedirect(command: string): string {
+	const match = /(?:^|\s)2\s*>\s*\/dev\/null\s*$/u.exec(command);
+	return match === null ? command : command.slice(0, match.index).trimEnd();
+}
+
 export function analyzeShellCommand(command: string): ShellAnalysis {
 	const reasons: string[] = [];
 	if (!command.trim() || command.length > 65_536 || command.includes("\0")) return { analysis: "unknown", segments: [], reasonCodes: ["invalid_command"] };
-	const split = splitSegments(command);
+	const split = splitSegments(stripSafeStderrRedirect(command));
 	if (split.unknown) reasons.push("unsupported_shell_syntax");
 	if (/<<-?\s*[A-Za-z_][A-Za-z0-9_]*/u.test(command)) reasons.push("heredoc");
 	const segments: ShellSegment[] = [];

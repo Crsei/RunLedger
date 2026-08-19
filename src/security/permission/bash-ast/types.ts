@@ -25,6 +25,8 @@ export interface CanonicalBashAssignment {
 export interface CanonicalBashRedirect {
 	operation: "read" | "write" | "append";
 	path: string;
+	/** 显式文件描述符；省略表示 shell 默认描述符。 */
+	fd?: number;
 }
 
 export interface CanonicalSimpleCommand {

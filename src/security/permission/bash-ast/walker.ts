@@ -153,7 +153,19 @@ function redirect(
 		: prefix.includes("<")
 			? "read" as const
 			: "write" as const;
-	return { ok: true, value: { operation, path: path.value } };
+	const descriptor = /^(\d+)(?:>>?|<)/u.exec(prefix)?.[1];
+	const fd = descriptor === undefined ? undefined : Number(descriptor);
+	if (fd !== undefined && (!Number.isSafeInteger(fd) || fd < 0)) {
+		return { ok: false, reasonCode: "bash_redirect_descriptor", nodeType: node.type };
+	}
+	return {
+		ok: true,
+		value: {
+			operation,
+			path: path.value,
+			...(fd === undefined ? {} : { fd }),
+		},
+	};
 }
 
 function command(

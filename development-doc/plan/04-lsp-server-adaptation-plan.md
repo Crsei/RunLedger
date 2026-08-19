@@ -27,6 +27,13 @@
 - fresh 自动证据：LSP/Session/Security focused 12 files / 94 tests、`npm run check`、`npm test`、`npm run build`、标准 PATH help/version 与隔离 TTY smoke 全部通过。全局链接确认指向本工作树。
 - 修复后的真实 Session-managed rust-analyzer 与 TUI 内 LSP 动作尚未重跑；旧 standalone rust-analyzer 结果只保留为历史证据。Biome/SwiftLint/TypeScript server 当前不在 PATH，因此 P7 继续保持部分完成。
 
+## 2026-08-19 真实 TypeScript Session smoke 与授权修复
+
+- 新增 devDependency `typescript-language-server@5.3.0`，使用仓库本地 `node_modules/.bin/typescript-language-server`；真实 toolchain attestation、Session Security、Session managed process composition、governed LSP spawner 与 `createLspTool` 均在同一工作区链路中运行。
+- 真实 `symbols` 查询 `src/lsp/tool.ts` 成功返回 TypeScript language server 的符号结果；这只证明 TypeScript managed process + LSP 协议路径，不等同于 TUI/human acceptance。
+- 修复 `approvalPolicy=never` 下的真实启动拒绝：legacy shell analyzer 仅识别内建 LSP/SwiftLint/Biome 可执行名，并只剥离命令末尾精确 `2>/dev/null`；AST 分类保留显式 fd，仅将 `write + fd=2 + /dev/null` 视为 stderr sink，不生成 filesystem mutation request。普通重定向与 `2>>/dev/null` 继续 fail closed。
+- 当前环境的 `rust-analyzer` 仅是 `/home/nzq/.cargo/bin/rust-analyzer -> rustup` shim，`rustup` 报告官方 toolchain 未安装该 binary；真实 `rust-analyzer`、`biome`、`swiftlint` 服务证据保持 pending。TUI 内 LSP 动作与真人验收仍 pending。
+
 ## 适配总览（pi → RunLedger）
 
 | pi 机制 | RunLedger 适配 | 决策理由 |
@@ -3624,7 +3631,7 @@ npm run check && npm test && npm run build
 
 Expected: 全绿（Vitest 全量 + Bun OpenTUI + build），无截断输出。
 
-- [ ] **Step 2: RunLedger 仓库 dogfood（真实语言服务器）**
+- [x] **Step 2: RunLedger 仓库 dogfood（真实 TypeScript language server）**
 
 ```bash
 npm run build
@@ -3636,6 +3643,8 @@ console.log(Object.keys(config.servers));
 ```
 
 Expected: 输出包含 `typescript-language-server` 与 `biome`（RunLedger 根目录有 `package.json` 与 `biome.json`，本地 bin 解析命中）。
+
+2026-08-19 实际证据：真实 Session-managed TypeScript language server 已启动，`symbols` 查询 `src/lsp/tool.ts` 成功；Biome、SwiftLint 不可用，`rust-analyzer` 只有 rustup shim 且无实际 binary，未将它们标记为通过。
 
 - [ ] **Step 3: 真实 TUI 会话验证（真实 TTY，tmux 捕获）**
 
@@ -3676,7 +3685,7 @@ git commit -m "lsp: dogfood 依赖 typescript-language-server"
 | P4 | 写动作 + 治理接缝 | 已实现/验证 | `tests/lsp/edits.test.ts`、`tool-write.test.ts`；全量门禁 |
 | P5 | LinterClient 适配 + rust-analyzer 轮询 | 已实现/验证 | `tests/lsp/clients.test.ts`、`client.test.ts`；全量门禁 |
 | P6 | 生产接线 | 已修复/自动验证 | managed LSP/linter、governed filesystem、Session isolation 与 authorization 回归；focused 12 files / 94 tests；fresh check/test/build |
-| P7 | 真实验收与门禁 | 部分完成 | fresh 标准入口与隔离 TTY 已通过；旧 standalone rust-analyzer（ready + 66 symbols）仅为历史证据；修复后 Session-managed rust-analyzer、TUI LSP 动作与缺失二进制 dogfood pending |
+| P7 | 真实验收与门禁 | 部分完成 | 2026-08-19 真实 Session-managed TypeScript language server `symbols(src/lsp/tool.ts)` 通过；rust-analyzer/Biome/SwiftLint 不可用，TUI LSP 动作与 human acceptance pending；旧 standalone rust-analyzer（ready + 66 symbols）仅为历史证据 |
 
 ## 测试矩阵（完成后预期）
 

@@ -113,6 +113,61 @@ describe("Bash AST authorization", () => {
 		});
 	});
 
+	it("does not project the exact stderr null sink into a filesystem request", async () => {
+		const resolved = await resolveToolAccessRequestsWithBashAnalyzer(
+			"bash",
+			{ command: "typescript-language-server --stdio 2>/dev/null" },
+			"/repo",
+			"ast",
+			analyzer({
+				mode: "ast",
+				ast: {
+					kind: "simple",
+					parserDigest: "a".repeat(64),
+					commands: [{
+						executable: "typescript-language-server",
+						arguments: ["--stdio"],
+						assignments: [],
+						redirects: [{ operation: "write", path: "/dev/null", fd: 2 }],
+					}],
+				},
+			}),
+		);
+		expect(resolved).toMatchObject({
+			ok: true,
+			value: [{ kind: "shell", bashAnalyzerMode: "ast", analysis: "known" }],
+		});
+	});
+
+	it("keeps non-stderr redirects as filesystem requests", async () => {
+		const resolved = await resolveToolAccessRequestsWithBashAnalyzer(
+			"bash",
+			{ command: "typescript-language-server --stdio 1>/tmp/lsp.log" },
+			"/repo",
+			"ast",
+			analyzer({
+				mode: "ast",
+				ast: {
+					kind: "simple",
+					parserDigest: "a".repeat(64),
+					commands: [{
+						executable: "typescript-language-server",
+						arguments: ["--stdio"],
+						assignments: [],
+						redirects: [{ operation: "write", path: "/tmp/lsp.log", fd: 1 }],
+					}],
+				},
+			}),
+		);
+		expect(resolved).toMatchObject({
+			ok: true,
+			value: [
+				{ kind: "shell", bashAnalyzerMode: "ast", analysis: "known" },
+				{ kind: "filesystem", operation: "write", path: "/tmp/lsp.log" },
+			],
+		});
+	});
+
 	it.each([
 		["guarded on-request", snapshot("on-request"), "ask"],
 		["approval never", snapshot("never"), "deny"],
