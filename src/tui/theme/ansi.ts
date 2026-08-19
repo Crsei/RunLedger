@@ -100,6 +100,12 @@ export function wrapFg(hex: string, fallback16 = true): StyleFn {
   return wrap16 === null ? wrap256 : wrap16;
 }
 
+/** 把 hex 字符串转成 24-bit truecolor foreground SGR。 */
+export function wrapFgTruecolor(hex: string): StyleFn {
+  const [r, g, b] = hexToRgb(hex);
+  return (text: string): string => `\x1b[38;2;${r};${g};${b}m${text}\x1b[39m`;
+}
+
 /** 把 hex 字符串转成 SGR ANSI 函数(background)。 */
 export function wrapBg(hex: string, fallback16 = true): StyleFn {
   const [r, g, b] = hexToRgb(hex);
