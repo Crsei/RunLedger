@@ -45,6 +45,58 @@ describe("B2 timeline selectors", () => {
 		expect(blocks[1]).toMatchObject({ kind: "markdown", content: "hello", streaming: true });
 	});
 
+	it("display-only hideThinking omits reasoning while preserving the text block id", () => {
+		const assistant = row({
+			kind: "assistant",
+			id: "assistant:1",
+			streaming: false,
+			thinking: { text: "reasoning", truncated: false, byteLength: 9 },
+		});
+
+		const visible = rowToBlocks(assistant);
+		const hidden = rowToBlocks(assistant, { hideThinking: true });
+
+		expect(visible.map((block) => block.id)).toEqual([
+			"timeline-assistant:1/thinking",
+			"timeline-assistant:1/text",
+		]);
+		expect(hidden).toHaveLength(1);
+		expect(hidden[0]).toMatchObject({
+			id: "timeline-assistant:1/text",
+			kind: "markdown",
+			content: "hello",
+		});
+		expect((assistant as Extract<TimelineRow, { readonly kind: "assistant" }>).thinking?.text).toBe("reasoning");
+	});
+
+	it("timelineToBlocks applies hideThinking to committed and active assistant rows", () => {
+		const committed = row({
+			kind: "assistant",
+			id: "assistant:committed",
+			streaming: false,
+			thinking: { text: "past reasoning", truncated: false, byteLength: 14 },
+		});
+		const active = row({
+			kind: "assistant",
+			id: "assistant:active",
+			streaming: true,
+			thinking: { text: "live reasoning", truncated: false, byteLength: 14 },
+		});
+		const state: TimelineState = {
+			generation: 2,
+			committedRows: [committed],
+			activeRowsByCorrelationId: { active },
+			activeOrder: ["active"],
+			cursor: { messageIndex: 2 },
+		};
+
+		const hidden = timelineToBlocks(state, { hideThinking: true });
+		expect(hidden.map((block) => block.id)).toEqual([
+			"timeline-assistant:committed/text",
+			"timeline-assistant:active/text",
+		]);
+	});
+
 	it("appends active rows after committed rows in activeOrder", () => {
 		const active: TimelineRow = row({ kind: "tool", id: "tool:call-1", toolCallId: "call-1", toolName: bounded, presentation: { state: "known", value: { renderer: "shell", title: bounded, chips: [], body: [], timestamps: { startedAt: "2026-08-06T00:00:00.000Z" } } }, status: "running" });
 		const state: TimelineState = {

@@ -224,6 +224,78 @@ describe("TUI input components", () => {
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {
+
+	it("Alt+T reversibly hides thinking blocks without removing timeline data", () => {
+		const terminal = new FakeTerminal();
+		const mode = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal,
+		});
+		const internals = mode as unknown as {
+			handleEvent(event: TuiEvent): void;
+			handleTranscriptInput(data: string): { consume: true } | undefined;
+			refs: { chat: { present(width: number): readonly { readonly id?: string }[] } };
+		};
+		const message: AssistantMessage = {
+			...stoppedAssistant(),
+			content: [
+				{ type: "thinking", thinking: "private reasoning" },
+				{ type: "text", text: "public answer" },
+			],
+		};
+		internals.handleEvent({ type: "message_start", timestamp: 1, role: "assistant", message });
+		internals.handleEvent({ type: "message_end", timestamp: 2, role: "assistant", stopReason: "stop", message });
+
+		expect(internals.refs.chat.present(80).map((block) => block.id)).toContain("timeline-assistant:0/thinking");
+		expect(internals.handleTranscriptInput("\x1bt")).toEqual({ consume: true });
+		expect(internals.refs.chat.present(80).map((block) => block.id)).not.toContain("timeline-assistant:0/thinking");
+		expect(mode.getTuiState().timeline.committedRows.some((row) => row.kind === "assistant" && row.thinking?.text === "private reasoning")).toBe(true);
+		internals.handleTranscriptInput("\x1bt");
+		expect(internals.refs.chat.present(80).map((block) => block.id)).toContain("timeline-assistant:0/thinking");
+	});
+
+	it("initial hidden state applies on the first projection and Alt+T is ignored by an open transcript", () => {
+		const mode = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal: new FakeTerminal(),
+			hideThinkingBlock: true,
+		});
+		const internals = mode as unknown as {
+			hideThinkingBlock: boolean;
+			handleEvent(event: TuiEvent): void;
+			handleTranscriptInput(data: string): { consume: true } | undefined;
+			openTranscriptOverlay(): void;
+			refs: { chat: { present(width: number): readonly { readonly id?: string }[] } };
+		};
+		const message: AssistantMessage = {
+			...stoppedAssistant(),
+			content: [{ type: "thinking", thinking: "hidden by default" }, { type: "text", text: "answer" }],
+		};
+		internals.handleEvent({ type: "message_start", timestamp: 1, role: "assistant", message });
+		internals.handleEvent({ type: "message_end", timestamp: 2, role: "assistant", stopReason: "stop", message });
+
+		expect(internals.refs.chat.present(80).map((block) => block.id)).not.toContain("timeline-assistant:0/thinking");
+		internals.openTranscriptOverlay();
+		internals.handleTranscriptInput("\x1bt");
+		expect(internals.hideThinkingBlock).toBe(true);
+	});
+
+	it("/hide-thinking persists the next visibility while keeping the change active on save failure", async () => {
+		const saved: boolean[] = [];
+		const mode = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal: new FakeTerminal(),
+			hideThinkingSettingsPort: {
+				save: async (hidden: boolean) => {
+					saved.push(hidden);
+					return { ok: true };
+				},
+			},
+		});
+		mode.echoPrompt("/hide-thinking");
+		await vi.waitFor(() => expect(saved).toEqual([true]));
+	});
+
   it("projects the initial scrollbar preference and persists /scrollbar without touching the draft", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({

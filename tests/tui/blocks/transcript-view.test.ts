@@ -48,6 +48,40 @@ function timelineWithActiveText(text: string): TimelineState {
 }
 
 describe("transcript view projection", () => {
+	it("keeps committed and live thinking data reversible across display-only projections", () => {
+		const base = timelineWithActiveText("active answer");
+		const committedAssistant = {
+			kind: "assistant" as const,
+			id: "assistant:committed",
+			timestamp: "2026-08-14T00:00:00.500Z",
+			displayOrder: 1,
+			status: "succeeded" as const,
+			streaming: false,
+			thinking: bounded("committed reasoning"),
+			text: bounded("committed answer"),
+		};
+		const active = base.activeRowsByCorrelationId["assistant:1"];
+		if (active?.kind !== "assistant") throw new Error("assistant fixture missing");
+		const state: TimelineState = {
+			...base,
+			committedRows: [...base.committedRows, committedAssistant],
+			activeRowsByCorrelationId: {
+				"assistant:1": { ...active, thinking: bounded("active reasoning") },
+			},
+		};
+
+		const visible = projectTranscriptOverlay(state, 0, { hideThinking: false });
+		const hidden = projectTranscriptOverlay(state, 0, { hideThinking: true });
+		const restored = projectTranscriptOverlay(state, 0, { hideThinking: false });
+
+		expect(visible.rows.some((block) => block.id === "timeline-assistant:committed/thinking")).toBe(true);
+		expect(visible.liveTail?.some((block) => block.id === "timeline-assistant:1/thinking")).toBe(true);
+		expect(hidden.rows.some((block) => block.id?.endsWith("/thinking"))).toBe(false);
+		expect(hidden.liveTail?.some((block) => block.id?.endsWith("/thinking"))).toBe(false);
+		expect(restored.rows).toBe(visible.rows);
+		expect(restored.liveTail?.some((block) => block.id === "timeline-assistant:1/thinking")).toBe(true);
+	});
+
 	it("keeps committed rows and an active tail while changing the active revision", () => {
 		const firstState = timelineWithActiveText("first tail");
 		const secondState = {

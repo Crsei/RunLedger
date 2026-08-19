@@ -69,6 +69,7 @@ import { gitWorkspaceDisplayFacts, workspaceDisplayAbsolutePathForView } from ".
 import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
 import { createCliSessionModelRequestRouterFactory } from "./session-model-router.ts";
 import { runAuthGatewayCommand } from "./auth-gateway-cli.ts";
+import { createCliHideThinkingSettings, resolveHideThinkingBlock } from "./hide-thinking-settings.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -370,6 +371,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       processOverlayClient: view.processOverlayClient,
       initialPreferences: tuiPreferences.current(),
       preferencesPort: tuiPreferences.port,
+      hideThinkingBlock: resolveHideThinkingBlock(args.hideThinking, settings.hideThinkingBlock),
+      hideThinkingSettingsPort: createCliHideThinkingSettings(layout),
     });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {

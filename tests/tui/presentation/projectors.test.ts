@@ -114,6 +114,29 @@ describe("B1 presentation projectors", () => {
     expect(composer.draft).toBe("hello world");
   });
 
+	it("passes display-only thinking visibility through the canonical timeline projection", () => {
+		const state = createInitialTuiState({ bootstrap });
+		const assistant = {
+			kind: "assistant" as const,
+			id: "assistant:1",
+			timestamp: "2026-08-20T00:00:00.000Z",
+			displayOrder: 0,
+			status: "succeeded" as const,
+			streaming: false,
+			thinking: { text: "reasoning", truncated: false, byteLength: 9 },
+			text: { text: "answer", truncated: false, byteLength: 6 },
+		};
+		const withTimeline = {
+			...state,
+			timeline: { ...state.timeline, committedRows: [assistant], generation: 1 },
+		};
+
+		expect(projectInteractivePresentation(withTimeline).timeline).toHaveLength(2);
+		expect(projectInteractivePresentation(withTimeline, { hideThinking: true }).timeline).toEqual([
+			expect.objectContaining({ id: "timeline-assistant:1/text", content: "answer" }),
+		]);
+	});
+
 	it("recovery-required has priority in the canonical footer projection", () => {
 		const state = createInitialTuiState({ bootstrap });
 		const recovery = projectInteractivePresentation({

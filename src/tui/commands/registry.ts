@@ -35,6 +35,7 @@ export type SlashCommandActionType =
   | "config.provider"
   | "config.model"
   | "config.thinking"
+  | "config.hide-thinking"
   | "config.theme"
   | "auth.login"
   | "auth.logout"
@@ -194,12 +195,19 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       availableDuringTask: false,
       unavailableDuringTaskMessage: "Configuration commands are available when the current turn is idle.",
     }),
-    command("theme", "Switch syntax theme", 12, {
+    command("hide-thinking", "Toggle hiding thinking blocks and save the setting", 12, {
+		actionType: "config.hide-thinking",
+		category: "config",
+		policy: READONLY_POLICY,
+		availableDuringTask: false,
+		unavailableDuringTaskMessage: "Configuration commands are available when the current turn is idle.",
+	}),
+    command("theme", "Switch syntax theme", 13, {
       actionType: "config.theme",
       category: "config",
       policy: READONLY_POLICY,
     }),
-    command("recovery", "Inspect or resolve crash recovery", 13, {
+    command("recovery", "Inspect or resolve crash recovery", 14, {
       actionType: "recovery.open",
       category: "recovery",
       policy: READONLY_POLICY,

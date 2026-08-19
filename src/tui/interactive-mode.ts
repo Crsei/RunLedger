@@ -113,6 +113,10 @@ export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
 }
 
+export interface HideThinkingSettingsPort {
+	save(hidden: boolean): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
+}
+
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
   /** 新 CLI 使用统一 controller;agent 仅保留 demo 兼容。 */
@@ -143,6 +147,10 @@ export interface InteractiveModeOptions {
   initialPreferences?: TuiPreferencesDocument;
   /** 只负责 presentation preference 的持久化；TUI 不接触 layout/path。 */
   preferencesPort?: TuiPreferencesPort;
+  /** `hideThinkingBlock` 的 canonical settings 写端口；TUI 不持有 layout/path。 */
+  hideThinkingSettingsPort?: HideThinkingSettingsPort;
+  /** thinking blocks 的启动展示状态；仅影响 projection。 */
+  hideThinkingBlock?: boolean;
 }
 
 export interface SessionSwitchTarget {
@@ -249,6 +257,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
   private readonly preferencesPort?: TuiPreferencesPort;
+  private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
+  private hideThinkingBlock: boolean;
   private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
@@ -285,6 +295,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.gitBranchLabel = opts.gitBranchLabel;
     this.initialBootstrap = opts.initialBootstrap;
     this.preferencesPort = opts.preferencesPort;
+    this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
+    this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
     this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
       configuredName: opts.syntaxThemeName,
@@ -363,11 +375,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeStore = this.store.subscribe((next) => {
       if (next.timeline.generation !== this.lastTimelineGeneration) {
         this.lastTimelineGeneration = next.timeline.generation;
-        const presentation = projectInteractivePresentation(next);
+        const presentation = projectInteractivePresentation(next, { hideThinking: this.hideThinkingBlock });
         this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
       }
       if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
-        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision));
+        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }));
       }
       if (next.interaction.transcriptScrollbarVisible !== this.lastTranscriptScrollbarVisible) {
         this.refreshTranscriptScrollPresentation();
@@ -495,7 +507,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
   private openTranscriptOverlay(): void {
     if (this.quitting || this.ui.hasOverlay() || this.activePermissionView !== undefined) return;
-    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision), {
+    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }), {
       getViewportHeight: () => Math.max(4, this.terminal.rows - 2),
       onClose: () => this.closeOverlay(),
     });
@@ -509,10 +521,33 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.transcriptOverlay.handleInput(data);
       return { consume: true };
     }
+	if (this.kb.matches(data, "tui.thinking.toggle")) {
+		if (this.ui.hasOverlay() || this.activePermissionView !== undefined) return undefined;
+		this.toggleThinkingVisibility();
+		return { consume: true };
+	}
     if (!matchesKey(data, "ctrl+t")) return undefined;
     if (this.ui.hasOverlay() || this.activePermissionView !== undefined) return undefined;
     this.openTranscriptOverlay();
     return { consume: true };
+  }
+
+  /** display-only 切换；Timeline 与 provider 请求保持不变。 */
+  private toggleThinkingVisibility(): boolean {
+	this.hideThinkingBlock = !this.hideThinkingBlock;
+	const state = this.store.getState();
+	const presentation = projectInteractivePresentation(state, { hideThinking: this.hideThinkingBlock });
+	this.refs.chat.setTimelineBlocks(presentation.timeline, state.timeline.generation);
+	if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
+		this.transcriptOverlay.update(projectTranscriptOverlay(
+			state.timeline,
+			this.syntaxThemeController.snapshot().revision,
+			{ hideThinking: this.hideThinkingBlock },
+		));
+	}
+	this.showNotice(this.hideThinkingBlock ? "Thinking blocks hidden (display only)." : "Thinking blocks visible.");
+	this.ui.requestRender();
+	return this.hideThinkingBlock;
   }
 
   /** 用 dark 主题色拼一个最小 SelectListTheme 占位;M6 阶段补完整色槽。 */
@@ -1724,6 +1759,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
       case "config.thinking":
         this.openThinkingSelector();
         return;
+      case "config.hide-thinking":
+		void this.persistThinkingVisibility();
+		return;
       case "config.theme":
         this.openSyntaxThemePicker();
         return;
@@ -1805,6 +1843,18 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (!result.ok) {
       this.showNotice("Scrollbar changed for this run but could not be saved.", "error");
     }
+  }
+
+  private async persistThinkingVisibility(): Promise<void> {
+	const hidden = this.toggleThinkingVisibility();
+	if (this.hideThinkingSettingsPort === undefined) {
+		this.showNotice("Thinking visibility changed for this run but could not be saved.", "error");
+		return;
+	}
+	const result = await this.hideThinkingSettingsPort.save(hidden);
+	if (!result.ok) {
+		this.showNotice("Thinking visibility changed for this run but could not be saved.", "error");
+	}
   }
 
   openSyntaxThemePicker(): void {

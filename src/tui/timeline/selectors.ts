@@ -12,6 +12,8 @@ import { diffLineNumberWidth } from "../opentui/block-layout.ts";
 
 export interface TimelineToBlocksOptions {
 	readonly includeActive?: boolean;
+	/** 仅跳过 thinking block 的展示投影；TimelineRow 原始数据保持不变。 */
+	readonly hideThinking?: boolean;
 }
 
 /** 按 committed + active（activeOrder 顺序）产出稳定 id 的 blocks。 */
@@ -22,7 +24,7 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 	for (const row of state.committedRows) {
 		if (row.kind === "run-boundary") {
 			if (hasWorkActivity(rowsSinceBoundary)) {
-				for (const block of rowToBlocks(row)) {
+				for (const block of rowToBlocks(row, options)) {
 					blocks.push(block.kind === "separator"
 						? { ...block, metrics: runtimeMetrics(rowsSinceBoundary) }
 						: block);
@@ -32,14 +34,14 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 			continue;
 		}
 		rowsSinceBoundary.push(row);
-		blocks.push(...rowToBlocks(row));
+		blocks.push(...rowToBlocks(row, options));
 	}
 	if (includeActive) {
 		for (const id of state.activeOrder) {
 			const row = state.activeRowsByCorrelationId[id];
 			if (row !== undefined) {
 				rowsSinceBoundary.push(row);
-				blocks.push(...rowToBlocks(row));
+				blocks.push(...rowToBlocks(row, options));
 			}
 		}
 	}
@@ -47,14 +49,14 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 }
 
 /** 单行 -> blocks；assistant 行拆 thinking + text 两个 markdown block。 */
-export function rowToBlocks(row: TimelineRow): PresentationBlock[] {
+export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions = {}): PresentationBlock[] {
 	const baseId = `timeline-${row.id}`;
 	switch (row.kind) {
 		case "user":
 			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", content: row.text.text }];
 		case "assistant": {
 			const blocks: PresentationBlock[] = [];
-			if (row.thinking !== undefined && row.thinking.text.length > 0) {
+			if (options.hideThinking !== true && row.thinking !== undefined && row.thinking.text.length > 0) {
 				blocks.push({
 					id: `${baseId}/thinking`,
 					...partMetadata(row, `${row.id}/thinking`),

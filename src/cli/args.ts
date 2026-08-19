@@ -10,6 +10,7 @@
  *                                       (本期只支持精确 path)
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
+ *   --hide-thinking                    单次运行隐藏 thinking blocks（仅展示）
  *   --permission-profile <name>        显式选择 restrictive security profile
  *   --approval-policy <on-request|never|untrusted|granular>
  *   --bash-analyzer <legacy|shadow|ast>
@@ -66,6 +67,8 @@ export interface ParsedArgs {
   provider?: string;
   model?: string;
   thinking?: ModelThinkingLevel;
+  /** 单次运行隐藏 thinking blocks；不写 settings，不改变模型请求。 */
+  hideThinking?: boolean;
   /** 显式 restrictive security profile;仅通过 Host 生效。 */
   permissionProfile?: string;
   approvalPolicy?: ApprovalPolicyName;
@@ -105,6 +108,7 @@ const HELP_TEXT = `Usage: runledger [options]
   -m, --model <id>            覆盖 settings.model
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
+      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）
       --permission-profile <name>
                               read-only|workspace-write|danger-full-access|named-profile-id
       --approval-policy <p>   on-request|never|untrusted|granular
@@ -146,6 +150,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
+  let hideThinking: boolean | undefined;
   let permissionProfile: string | undefined;
   let approvalPolicy: ApprovalPolicyName | undefined;
   let bashAnalyzer: BashSecurityAnalyzerMode | undefined;
@@ -194,6 +199,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     }
     if (a === "--experimental-multi-agent") {
       experimentalMultiAgent = true;
+      continue;
+    }
+    if (a === "--hide-thinking") {
+      hideThinking = true;
       continue;
     }
     if (a.startsWith("--experimental-multi-agent=")) {
@@ -418,6 +427,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       provider,
       model,
       thinking,
+      hideThinking,
       permissionProfile,
       approvalPolicy,
       bashAnalyzer,

@@ -46,6 +46,8 @@ export interface ProjectSettings {
 	model?: string;
 	/** 默认 thinking level;CLI `--thinking` 优先级高于此字段 */
 	thinkingLevel?: ModelThinkingLevel;
+	/** 是否仅在 TUI 展示层隐藏 thinking blocks；不改变模型请求或持久消息。 */
+	hideThinkingBlock?: boolean;
 	/** syntax theme 名；dark/light 是兼容输入，分别映射为自适应 pair。 */
 	theme?: string;
 	/** /model 选择器可见模型白名单;空数组或 undefined 表示无白名单 */
@@ -376,6 +378,7 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (typeof raw.provider === "string" && raw.provider.length > 0) out.provider = raw.provider;
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
 	if (isThinkingLevel(raw.thinkingLevel)) out.thinkingLevel = raw.thinkingLevel;
+	if (typeof raw.hideThinkingBlock === "boolean") out.hideThinkingBlock = raw.hideThinkingBlock;
 	if (isSyntaxThemeName(raw.theme)) out.theme = raw.theme;
 	if (Array.isArray(raw.enabledModels)) {
 		const filtered = raw.enabledModels.filter(

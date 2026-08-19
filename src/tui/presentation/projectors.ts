@@ -203,6 +203,8 @@ export interface InteractivePresentationFacts {
   readonly composerMode?: ComposerFacts["mode"];
   readonly footerStatus?: string;
   readonly securityMode?: "guarded" | "unrestricted" | "unknown";
+  /** 仅影响 thinking block 的展示投影，不改变 canonical Timeline。 */
+  readonly hideThinking?: boolean;
 }
 
 /**
@@ -251,7 +253,7 @@ export function projectInteractivePresentation(
           ? "waiting"
           : "idle");
   return {
-    timeline: timelineToBlocks(state.timeline),
+    timeline: timelineToBlocks(state.timeline, { hideThinking: facts.hideThinking }),
     sessionStrip: projectSessionStrip(state.bootstrap, {
       securityMode: facts.securityMode,
       ...facts.sessionStrip,

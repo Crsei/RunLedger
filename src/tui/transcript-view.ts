@@ -40,31 +40,45 @@ interface CommittedTranscriptProjection {
 	readonly revision: string;
 }
 
-const committedProjectionCache = new WeakMap<readonly TimelineRow[], CommittedTranscriptProjection>();
+interface CommittedTranscriptProjectionVariants {
+	visible?: CommittedTranscriptProjection;
+	hidden?: CommittedTranscriptProjection;
+}
+
+const committedProjectionCache = new WeakMap<readonly TimelineRow[], CommittedTranscriptProjectionVariants>();
 const rowRevisionIds = new WeakMap<TimelineRow, number>();
 let nextProjectionRevision = 1;
 
 /** Timeline -> 只读转写 view；不读取 session/ledger，也不改变主 ScrollBox。 */
-export function projectTranscriptOverlay(state: TimelineState, themeGeneration = 0): TranscriptOverlayView {
-	let committed = committedProjectionCache.get(state.committedRows);
+export function projectTranscriptOverlay(
+	state: TimelineState,
+	themeGeneration = 0,
+	options: { readonly hideThinking?: boolean } = {},
+): TranscriptOverlayView {
+	const hidden = options.hideThinking === true;
+	const variantKey = hidden ? "hidden" : "visible";
+	let variants = committedProjectionCache.get(state.committedRows);
+	let committed = variants?.[variantKey];
 	if (committed === undefined) {
 		committed = {
-			blocks: timelineToBlocks(state, { includeActive: false }),
+			blocks: timelineToBlocks(state, { includeActive: false, hideThinking: hidden }),
 			revision: `committed-${nextProjectionRevision}`,
 		};
 		nextProjectionRevision += 1;
-		committedProjectionCache.set(state.committedRows, committed);
+		variants = variants ?? {};
+		variants[variantKey] = committed;
+		committedProjectionCache.set(state.committedRows, variants);
 	}
 	const activeRows = state.activeOrder
 		.map((id) => state.activeRowsByCorrelationId[id])
 		.filter((row): row is TimelineRow => row !== undefined);
-	const liveTail = activeRows.flatMap((row) => rowToBlocks(row));
+	const liveTail = activeRows.flatMap((row) => rowToBlocks(row, { hideThinking: hidden }));
 	return {
 		rows: committed.blocks,
 		...(liveTail.length > 0 ? { liveTail } : {}),
 		timelineGeneration: state.generation,
 		committedRevision: committed.revision,
-		activeRevision: activeRows.map(rowRevisionId).join(","),
+		activeRevision: `${hidden ? "hidden" : "visible"}:${activeRows.map(rowRevisionId).join(",")}`,
 		themeGeneration: normalizedGeneration(themeGeneration),
 	};
 }

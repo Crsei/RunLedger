@@ -92,6 +92,17 @@ describe("loadProjectSettings", () => {
 		expect(await loadProjectSettings({ layout })).toEqual({});
 	});
 
+	it("保留 hideThinkingBlock 布尔开关并丢弃非法值", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({ hideThinkingBlock: true }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({ hideThinkingBlock: true });
+
+		for (const invalid of ["yes", 1, null]) {
+			writeFileSync(layout.settings, JSON.stringify({ hideThinkingBlock: invalid }), "utf8");
+			expect(await loadProjectSettings({ layout })).toEqual({});
+		}
+	});
+
 	it("加载 canonical recap 配置并保留合法 enabled/idleSeconds", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(
@@ -243,6 +254,11 @@ describe("saveProjectSettings", () => {
 		};
 		await saveProjectSettings({ layout }, input);
 		expect(await loadProjectSettings({ layout })).toEqual(input);
+	});
+
+	it("往返保存 hideThinkingBlock 到 canonical settings", async () => {
+		await saveProjectSettings({ layout }, { hideThinkingBlock: true });
+		expect(await loadProjectSettings({ layout })).toEqual({ hideThinkingBlock: true });
 	});
 
 	it("写入 canonical settings 文件 mode 为 0o600(unix)", async () => {

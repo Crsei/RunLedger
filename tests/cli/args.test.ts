@@ -84,6 +84,14 @@ describe("parseArgs model/thinking/session-dir", () => {
     expect(parseArgs(["--thinking"]).error).toContain("--thinking");
   });
 
+  it("--hide-thinking 是不取值的单次运行布尔标志", () => {
+    const enabled = parseArgs(["--hide-thinking"]);
+    expect(enabled.error).toBeUndefined();
+    expect(enabled.args.hideThinking).toBe(true);
+    expect(parseArgs([]).args.hideThinking).toBeUndefined();
+    expect(USAGE).toContain("--hide-thinking");
+  });
+
   it("--session-dir 明确 error，不进入 unknown 或 args authority", () => {
     const r = parseArgs(["--session-dir", "/tmp/s"]);
     expect(r.error).toContain("--session-dir");

@@ -65,6 +65,16 @@ describe("slash command registry", () => {
 		});
 	});
 
+	it("registers /hide-thinking as the persistent display-only visibility command", () => {
+		expect(findCommand("hide-thinking")).toMatchObject({
+			canonicalName: "hide-thinking",
+			actionType: "config.hide-thinking",
+			category: "config",
+			availableDuringTask: false,
+			supportsInlineArgs: false,
+		});
+	});
+
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
     expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);

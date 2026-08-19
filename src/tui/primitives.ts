@@ -707,6 +707,7 @@ export const TUI_KEYBINDINGS: KeybindingDefinitions = {
   "tui.input.followUp": { defaultKeys: "alt+enter", description: "Queue a follow-up without interrupting" },
   "tui.input.interrupt": { defaultKeys: "ctrl+c", description: "Interrupt the active turn; clear the draft; quit when idle" },
   "tui.input.quit": { defaultKeys: "ctrl+d", description: "Quit when idle" },
+  "tui.thinking.toggle": { defaultKeys: "alt+t", description: "Toggle thinking-block visibility (display only)" },
   "tui.select.up": { defaultKeys: "up" }, "tui.select.down": { defaultKeys: "down" },
   "tui.select.confirm": { defaultKeys: "enter" }, "tui.select.cancel": { defaultKeys: ["escape", "ctrl+c"] },
 };
