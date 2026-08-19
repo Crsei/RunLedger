@@ -14,6 +14,7 @@ import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { createProcessOverlayController } from "../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
 import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
+import { WelcomeComponent } from "../../src/tui/components/welcome.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
 import type { TuiEvent } from "../../src/tui/types.ts";
 import type { UsageSnapshot } from "../../src/runtime/usage/index.ts";
@@ -224,6 +225,65 @@ describe("TUI input components", () => {
 });
 
 describe("InteractiveMode lifecycle and global controls", () => {
+	it("assembles the welcome component only when requested and injects startup facts", () => {
+		const visible = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal: new FakeTerminal(),
+			showWelcome: true,
+			version: "9.8.7",
+			workspaceDisplayAbsolutePath: "/workspace/repo",
+			gitBranchLabel: "feature/welcome",
+		});
+		const hidden = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal: new FakeTerminal(),
+			showWelcome: false,
+		});
+		const defaultHidden = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal: new FakeTerminal(),
+		});
+		const visibleRefs = (visible as unknown as { refs: { welcome?: WelcomeComponent } }).refs;
+		const hiddenRefs = (hidden as unknown as { refs: { welcome?: WelcomeComponent } }).refs;
+		const defaultRefs = (defaultHidden as unknown as { refs: { welcome?: WelcomeComponent } }).refs;
+
+		expect(visibleRefs.welcome).toBeInstanceOf(WelcomeComponent);
+		const rendered = visibleRefs.welcome?.render(100).join("\n") ?? "";
+		expect(rendered).toContain("RunLedger v9.8.7");
+		expect(rendered).toContain(mockModel.id);
+		expect(rendered).toContain(mockModel.provider);
+		expect(rendered).toContain("/workspace/repo");
+		expect(rendered).toContain("feature/welcome");
+		expect(hiddenRefs.welcome).toBeUndefined();
+		expect(defaultRefs.welcome).toBeUndefined();
+	});
+
+	it("silently refreshes welcome recent sessions through the governed catalog workflow", async () => {
+		const controller = new ContractController({
+			supportedOperations: ["session.catalog.list"],
+			querySessionDomain: async () => ({
+				domainRevision: 3,
+				items: [{
+					sessionId: "session-recent",
+					workspaceId: "workspace-1",
+					repositoryId: "repository-1",
+					status: "paused",
+					createdAtMs: Date.now() - 120_000,
+					updatedAtMs: Date.now() - 60_000,
+					headSequence: 4,
+					driverRevision: 1,
+					title: "Recent audit session",
+					current: false,
+				}],
+			}),
+		});
+		const mode = new InteractiveMode({ controller, terminal: new FakeTerminal(), showWelcome: true });
+		const welcome = (mode as unknown as { refs: { welcome?: WelcomeComponent } }).refs.welcome;
+		expect(welcome).toBeDefined();
+		await vi.waitFor(() => expect(welcome?.render(100).join("\n")).toContain("Recent audit session"));
+		const notices = mode.getTuiState().timeline.committedRows.filter((row) => row.kind === "notice");
+		expect(notices).toHaveLength(0);
+	});
 
 	it("Alt+T reversibly hides thinking blocks without removing timeline data", () => {
 		const terminal = new FakeTerminal();

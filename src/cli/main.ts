@@ -313,6 +313,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   let firstView: CliSessionView | undefined = initialView;
+  let showWelcomeOnNextView = sessionOpenMode(args) === "create";
   try {
     await runSessionTransitionLoop<CliSessionView>({
       initialSessionId: sessionId,
@@ -354,6 +355,8 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   async function runInteractiveView(view: CliSessionView) {
+	const showWelcome = showWelcomeOnNextView;
+	showWelcomeOnNextView = false;
 	const effectiveCwd = view.embedded.effectiveCwd;
 	const gitDisplay = effectiveCwd === undefined
 	  ? {}
@@ -373,6 +376,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       preferencesPort: tuiPreferences.port,
       hideThinkingBlock: resolveHideThinkingBlock(args.hideThinking, settings.hideThinkingBlock),
       hideThinkingSettingsPort: createCliHideThinkingSettings(layout),
+      showWelcome,
+      version: VERSION,
     });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {

@@ -215,6 +215,9 @@ export { createManagedProcessOverlayFromRenderer } from "./opentui/process-overl
 // 当前仍由 production composition 使用的业务组件
 export { LoadedResourcesComponent, type LoadedResourceKind, type LoadedResourceEntry, type LoadedResourcesComponentProps } from "./components/loaded-resources.ts";
 export { ChatContainer } from "./components/chat-container.ts";
+export { WelcomeComponent, WELCOME_SESSION_SLOTS, type WelcomeComponentProps, type RecentSession } from "./components/welcome.ts";
+export { logo, LOGO_GAP, logoLineWidth, renderLogo } from "./components/logo.ts";
+export { loadTips, pickTip, renderWelcomeTip, TIPS } from "./components/welcome-tips.ts";
 export { PlanUpdateRenderable, type PlanUpdateRenderableOptions } from "./opentui/plan-update-renderable.ts";
 export {
   TRANSCRIPT_MAX_BLOCKS,

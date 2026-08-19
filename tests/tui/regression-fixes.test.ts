@@ -52,6 +52,22 @@ describe("thinking initialization", () => {
 			await harness.dispose();
 		}
 	});
+
+	it("refreshes the welcome model labels after model selection", async () => {
+		const controller = new ContractController({
+			selection: { model: mockModel, thinkingLevel: "high" },
+			availableModels: [{ provider: "deepseek", id: "deepseek-v4-pro" }],
+		});
+		const mode = new InteractiveMode({ controller, terminal: new FakeTerminal(), showWelcome: true });
+		const setModel = vi.fn();
+		const internals = mode as unknown as {
+			selectModelByKey(key: string): Promise<void>;
+			refs: { welcome?: { setModel(modelLabel: string, providerLabel: string): void } };
+		};
+		internals.refs.welcome = { setModel };
+		await internals.selectModelByKey("deepseek/deepseek-v4-pro");
+		expect(setModel).toHaveBeenCalledWith(mockModel.id, "deepseek");
+	});
 });
 
 class FakeTerminal implements Terminal {

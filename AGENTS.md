@@ -160,6 +160,12 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 
 网关默认 idle timeout 为 255 秒、请求体上限为 4 MiB；客户端断开或 gateway 关闭会 abort 在途 provider stream，凭证 OAuth 刷新仍由现有 `CredentialStore.modify()` 的跨进程锁语义负责。四类 wire 的错误体、模型解析和 SSE terminal event 由 `src/auth-gateway/codecs/` 与 `src/auth-gateway/server.ts` 统一处理。真实 HTTP smoke 使用本地双 wire fixture；未宣称真实外部 provider 凭据或 auth-broker 能力。状态入口为 `development-doc/plan/11-forward-proxy-gateway-plan.md`。
 
+#### 1.2.vd TUI thinking 展示开关与 Welcome 页面（2026-08-20）
+
+- `hideThinkingBlock` 是纯展示设置：canonical settings 可持久保存，`--hide-thinking` 只覆盖当前运行，`alt+t` 当前会话可逆切换，`/hide-thinking` 切换并持久化；Timeline、reasoning 正文与 token 消耗均不改变。
+- fresh create 启动显示响应式两栏 Welcome 页面（RUN/LEDGER 双段 LOGO、当前 Session 摘要、最近会话与 Tip）；resume/continue/fork 及同进程后续 Session 视图不重复显示。
+- `tips.txt` 通过 `readFileSync(new URL(..., import.meta.url))` 同时兼容 Bun、tsx 与 Node，构建时复制到 `dist/tui/components/tips.txt`，全局 `runledger` 继续只加载 `dist`。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;

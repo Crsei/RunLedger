@@ -161,6 +161,7 @@ async function main(): Promise<void> {
   const plan = planRuntime();
   const mode = new InteractiveMode({
     agent: plan.agent,
+    showWelcome: true,
   });
 
   // 退出信号:外部 Ctrl+C 时优雅 stop

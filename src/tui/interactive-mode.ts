@@ -22,6 +22,7 @@
 import {
   Container,
   ProcessTerminal,
+  Spacer,
   TUI,
   type Terminal,
   KeybindingsManager,
@@ -48,7 +49,8 @@ import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
 import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
-import { SessionPickerModal, buildSessionPickerItems } from "./components/session-picker-modal.ts";
+import { SessionPickerModal, buildSessionPickerItems, formatRelativeTime } from "./components/session-picker-modal.ts";
+import { WelcomeComponent, WELCOME_SESSION_SLOTS } from "./components/welcome.ts";
 import { ListSelectionModal, type ListSelectionItem } from "./components/list-selection-modal.ts";
 import { ExtensionToggleModal, type ExtensionToggleItem } from "./components/extension-toggle-modal.ts";
 import { McpServersModal, type McpServerViewItem } from "./components/mcp-servers-modal.ts";
@@ -151,6 +153,10 @@ export interface InteractiveModeOptions {
   hideThinkingSettingsPort?: HideThinkingSettingsPort;
   /** thinking blocks 的启动展示状态；仅影响 projection。 */
   hideThinkingBlock?: boolean;
+  /** 仅全新启动视图展示 welcome；resume/continue/fork 传 false。 */
+  showWelcome?: boolean;
+  /** welcome 顶边框版本号。 */
+  version?: string;
 }
 
 export interface SessionSwitchTarget {
@@ -173,6 +179,7 @@ export type HostConnectionUiState = "ready" | "reconnecting" | "stopped" | "buil
 /** 组件树引用,挂在 InteractiveMode 实例上以便 handleEvent 路由 mutation。 */
 interface ContainerRefs {
   header: Container;
+  welcome: WelcomeComponent | undefined;
   loadedResources: LoadedResourcesComponent;
   chat: ChatContainer;
   status: StatusComponent;
@@ -259,6 +266,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly preferencesPort?: TuiPreferencesPort;
   private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
   private hideThinkingBlock: boolean;
+  private readonly showWelcome: boolean;
+  private readonly version: string;
   private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
@@ -297,6 +306,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.preferencesPort = opts.preferencesPort;
     this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
     this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
+    this.showWelcome = opts.showWelcome ?? false;
+    this.version = opts.version ?? "unknown";
     this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
       configuredName: opts.syntaxThemeName,
@@ -400,6 +411,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       });
     }
     this.replayInitialHistory(opts.syntaxThemeWarnings ?? []);
+    void this.refreshWelcomeSessions();
 
     void MAX_CONSECUTIVE_INIT_FAILURES;
     void INIT_FAILURE_BACKOFF_MS;
@@ -423,6 +435,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** 装配组件树并返回引用;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
   private assembleTree(): ContainerRefs {
     const header = new Container();
+    let welcome: WelcomeComponent | undefined;
+    if (this.showWelcome) {
+		welcome = new WelcomeComponent({
+			version: this.version,
+			theme: this.theme,
+			modelLabel: this.getModelId(),
+			providerLabel: this.getProviderId(),
+			thinkingLabel: this.getThinkingLevel(),
+			directoryLabel: this.workspaceDisplayAbsolutePath,
+			branchLabel: this.gitBranchLabel,
+		});
+		header.addChild(new Spacer(1));
+		header.addChild(welcome);
+		header.addChild(new Spacer(1));
+	}
     const loadedResources = new LoadedResourcesComponent({});
     const chat = new ChatContainer();
     const status = new StatusComponent({});
@@ -456,7 +483,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     // Editor 拿焦点
     this.ui.setFocus(editor);
 
-    return { header, loadedResources, chat, status, editor, footer };
+    return { header, welcome, loadedResources, chat, status, editor, footer };
   }
 
   /** B1:bootstrap 派生；composition root 显式传入时优先。 */
@@ -1431,6 +1458,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 	    if (workflow.state === "ready") {
       await this.syncThinkingWorkflow();
 	      const selection = workflow.value as { readonly providerId?: string; readonly modelId?: string };
+	  this.refs.welcome?.setModel(selection.modelId ?? modelId, selection.providerId ?? providerId);
       this.showNotice(`Model: ${selection.providerId ?? providerId}/${selection.modelId ?? modelId}`);
     } else if (workflow.state === "error") {
       this.showNotice(`Model switch failed: ${workflow.message}`, "error");
@@ -2212,6 +2240,24 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (workflow.state === "error") this.showNotice(`Session catalog failed: ${workflow.message ?? "unknown"}`, "error");
     else this.showNotice("Session catalog is empty or unavailable.", "error");
     return undefined;
+  }
+
+  /** welcome 后台目录刷新失败时静默返回，不阻塞输入也不追加 notice。 */
+  private async refreshWelcomeSessions(): Promise<void> {
+	const welcome = this.refs.welcome;
+	if (welcome === undefined) return;
+	if (this.store.getState().capabilities.sessionCatalog.state !== "available") return;
+	const effect = this.createEffect("session.list");
+	this.store.dispatch({ type: "query.start", effect });
+	this.runner.dispatch(effect);
+	const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
+	if (workflow.state !== "ready" || !isSessionCatalogResult(workflow.value)) return;
+	const now = Date.now();
+	welcome.setRecentSessions(workflow.value.items.slice(0, WELCOME_SESSION_SLOTS).map((item) => ({
+		name: item.title ?? item.firstUserMessagePreview ?? item.sessionId,
+		timeAgo: formatRelativeTime(item.updatedAtMs, now),
+	})));
+	this.ui.requestRender();
   }
 
   private async runSessionTransition(
