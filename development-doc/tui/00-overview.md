@@ -118,10 +118,13 @@ development-doc/tui/            本计划所在目录
 | `22-opencode-conversation-scrollbar-adaptation-plan.md` | 对照 OpenCode 主对话 `ScrollBoxRenderable` 的默认隐藏、显隐 preference、右侧留白、主题化轨道和内建拖拽行为；独立工作树候选已 agent-verified，标准全局链接和真实鼠标/视觉仍 pending |
 | `23-codex-syntax-highlighting-replication-plan.md` | 以同源 syntect/two-face native bridge 复刻 fenced code、exec、cwd/status、diff 与 32 个主题；以完整 prebuild matrix、纯文本降级和 path privacy 为启用门 |
 | `24-codex-session-display-replication-plan.md` | 会话展示区块级复刻：plan-update(todo)、exec 前缀/截断、diff 行号 gutter、per-turn 分隔、状态指示行、Ctrl+T 转写视图与 status line 段补全；渲染/流式/高亮/滚动继续由 17/18/22/23 持有权威 |
+| `25-pi-working-loader-shimmer-replication-plan.md` | 已完成并验收 oh-my-pi working loader 渐变运行态：classic/KITT shimmer 引擎（纯函数）、状态指示行零宽渐变着色、esc bracket 字形与 `display.shimmer` 设置；spinner/elapsed/details/帧调度仍由 24 持有权威 |
 
 阅读顺序:`00 → 01 → 02 → 03`(原 pi-tui 设计主路径)→ `04/05/06`(原渲染与定制)→ `07`(历史落地节奏)→ `08/09`(跨项目参照与远期设计)。`10` 是历史更新计划。OpenTUI renderer 重构先以 `17-opentui-refactor-plan.md` 为当前执行入口，并从 `reference/00-opentui-component-index.md` 查组件能力；被动数据合同另读 `17-passive-data-contract-placeholder-plan.md`，它不替换 renderer authority；renderer 计划 P8 获得证据后，再按 `18-opentui-streaming-performance-ux-plan.md` 执行性能与体验阶段；生产接入则从 `19-passive-contract-integration-plan.md` 的 B0 开始，逐域切换单一 state owner；slash 命令链路查 `20-codex-slash-command-adaptation-plan.md`；Mermaid terminal projection 查 `21-mermaid-diagram-rendering-implementation-plan.md` 及配套许可清单。主对话滚动条的当前候选实现与证据查 `22-opencode-conversation-scrollbar-adaptation-plan.md` §0.1/§5.0：它只补 presentation preference 与内建 bar，没有重写 ScrollBox；真实鼠标/视觉和标准全局链接仍不能冒充已验收；代码、命令和状态栏高亮从 `23-codex-syntax-highlighting-replication-plan.md` 的 H0 packaging spike 开始，native matrix 未闭合前保持 plaintext fallback。
 
 会话展示区（transcript 区域）的块级展示语义、todo、exec 布局、diff gutter、转写视图与状态指示行只以 `24-codex-session-display-replication-plan.md` 为权威；它不替换 17（renderer）、18（流式/identity）、19（数据接线）、22（滚动）与 23（高亮）的任何 authority，执行前必须逐项核对 §0.1 边界表。
+
+状态指示行的渐变（shimmer）着色、esc bracket 字形与 `display.shimmer` 设置只以 `25-pi-working-loader-shimmer-replication-plan.md` 为权威；S0–S4 已 `implemented / accepted`，且不替换 24（状态指示行字段/帧段/调度）、17（FrameScheduler）与 23（高亮）的任何 authority。
 
 ### Mermaid terminal projection 当前状态
 

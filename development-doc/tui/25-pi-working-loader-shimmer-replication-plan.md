@@ -1,6 +1,6 @@
 # RunLedger TUI oh-my-pi Working Loader（渐变 shimmer + esc 提示）复刻计划
 
-> 状态：**实施中（S0–S3 implemented；S4 pending）**
+> 状态：**implemented / accepted（S0–S4 全部完成）**
 >
 > 计划日期：2026-08-20
 >
@@ -353,10 +353,17 @@ export interface TuiPreferencesDocument {
 
 ### S4 · 完整门禁与人工验收
 
-- [ ] `npm run check`（zero error/warning/info）、`npm test`、Bun OpenTUI 测试、`npm run build`；
-- [ ] 标准 PATH 隔离 `runledger`：80/143 列 dark/light 真实 TTY 人工目检——classic 扫过流畅、kitt 往返、disabled 静态、esc 提示可见、窄终端不抖动；
-- [ ] `git diff --check`；按 §0.2 只暂存本文相关文件；
+- [x] `npm run check`（zero error/warning/info）、`npm test`、Bun OpenTUI 测试、`npm run build`；
+- [x] 标准 PATH 隔离 `runledger`：80/143 列 dark/light 真实 TTY 人工目检——classic 扫过流畅、kitt 往返、disabled 静态、esc 提示可见、窄终端不抖动；
+- [x] `git diff --check`；按 §0.2 只暂存本文相关文件；
 - **门禁**：全部通过后本文状态置 `implemented/accepted`，`00-index.md` / `00-overview.md` 状态行更新。
+
+2026-08-20 fresh evidence：
+
+- `npm run check`、`npm run build` 退出码均为 0；`npm test` 为 Vitest 263 files / 1448 tests 与 Bun OpenTUI 4 files / 52 tests / 239 assertions 全绿；
+- `command -v runledger` 为 `/home/nzq/.npm-global/bin/runledger`，解析到本仓库 `bin/runledger.js`，全局 npm link 也指向本仓库；
+- 标准 PATH `runledger` 使用六个隔离 `RUNLEDGER_DIR`、本地延迟 LiteLLM fixture 与 dummy key，在 80/143 列分别捕获三模式真实 working 帧；非空 ANSI 状态集合计数为 80 列 classic/KITT/disabled = 4/5/1，143 列 = 2/3/1；全部帧可见 `⸢^C⸣`，disabled 保持单一静态状态；
+- 同一份已构建 `dist` 的 Bun/OpenTUI dark/light TTY harness 在 80/143 列补充目检：classic 与 KITT 连续帧不同，disabled 两种宽度均只有一个着色状态；临时 fixture、tmux Session 与隔离 home 已清理，未读取或修改真实用户目录。
 
 ---
 
@@ -430,4 +437,4 @@ export interface TuiPreferencesDocument {
 | S1 | 着色层 + 渲染接线 | implemented | 纯函数 5 tests、状态指示回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
 | S2 | esc bracket 字形 | implemented | shimmer status 8 tests、纯文本回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
 | S3 | `display.shimmer` 设置项 | implemented | RED 7 failures；GREEN 5 files / 65 tests；`tsc --noEmit` 通过 |
-| S4 | 完整门禁 + 人工验收 | pending | — |
+| S4 | 完整门禁 + 人工验收 | implemented / accepted | full check/test/build；标准 PATH + dark/light TTY 80/143 列三模式通过；`⸢^C⸣` 可见，disabled 静态 |
