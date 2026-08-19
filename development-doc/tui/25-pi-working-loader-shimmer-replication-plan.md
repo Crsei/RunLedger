@@ -1,6 +1,6 @@
 # RunLedger TUI oh-my-pi Working Loader（渐变 shimmer + esc 提示）复刻计划
 
-> 状态：**实施中（S0–S2 implemented；S3–S4 pending）**
+> 状态：**实施中（S0–S3 implemented；S4 pending）**
 >
 > 计划日期：2026-08-20
 >
@@ -347,8 +347,8 @@ export interface TuiPreferencesDocument {
 
 ### S3 · 设置项 `display.shimmer`
 
-- [ ] `tui/preferences/types.ts`：version 2 + `display.shimmer`，`createDefaultTuiPreferences` / `sanitizePreferences` 兼容 version 1；
-- [ ] `storage/tui-preferences.ts` 跟随类型；`interactive-mode` 读取并注入着色层；
+- [x] `tui/preferences/types.ts`：version 2 + `display.shimmer`，`createDefaultTuiPreferences` / `sanitizePreferences` 兼容 version 1；
+- [x] `storage/tui-preferences.ts` 跟随类型；`interactive-mode` 读取并注入着色层；
 - **门禁**：preferences 单测——旧格式（`version` 字段为 1）读为 `classic`、非法值回退 `classic`、round-trip 保存时 `version` 字段写 2；TUI 冒烟：三模式切换后帧内容差异可见。
 
 ### S4 · 完整门禁与人工验收
@@ -429,5 +429,5 @@ export interface TuiPreferencesDocument {
 | S0 | 引擎纯函数 + 常量 + truecolor 辅助 | implemented | `tests/tui/opentui/shimmer.test.ts` + `tests/tui/ansi.test.ts`：27 passed；`tsc --noEmit`、current-format 通过 |
 | S1 | 着色层 + 渲染接线 | implemented | 纯函数 5 tests、状态指示回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
 | S2 | esc bracket 字形 | implemented | shimmer status 8 tests、纯文本回归 4 tests、Bun OpenTUI 4 tests、`tsc --noEmit` 通过 |
-| S3 | `display.shimmer` 设置项 | pending | — |
+| S3 | `display.shimmer` 设置项 | implemented | RED 7 failures；GREEN 5 files / 65 tests；`tsc --noEmit` 通过 |
 | S4 | 完整门禁 + 人工验收 | pending | — |

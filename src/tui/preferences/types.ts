@@ -1,8 +1,13 @@
+export type TuiShimmerMode = "classic" | "kitt" | "disabled";
+
 /** 本地 TUI presentation preference；不包含 Session 或滚动位置。 */
 export interface TuiPreferencesDocument {
-  readonly version: 1;
+  readonly version: 2;
   readonly transcript: {
     readonly scrollbar: "hidden" | "visible";
+  };
+  readonly display: {
+    readonly shimmer: TuiShimmerMode;
   };
 }
 
@@ -27,5 +32,9 @@ export interface TuiPreferencesPort {
 }
 
 export function createDefaultTuiPreferences(): TuiPreferencesDocument {
-  return { version: 1, transcript: { scrollbar: "hidden" } };
+  return {
+    version: 2,
+    transcript: { scrollbar: "hidden" },
+    display: { shimmer: "classic" },
+  };
 }

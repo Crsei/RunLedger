@@ -152,6 +152,23 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		expect(mode.getStopReason()).toBe("aborted");
 		mode.quit();
 	});
+	it("does not schedule working shimmer frames when animation is disabled", () => {
+		const mode = new InteractiveMode({
+			controller: new ContractController(),
+			terminal: new FakeTerminal(),
+			initialPreferences: {
+				version: 2,
+				transcript: { scrollbar: "hidden" },
+				display: { shimmer: "disabled" },
+			},
+		});
+		const ui = (mode as unknown as { ui: { scheduleFrameIn: (delayMs: number) => void } }).ui;
+		const schedule = vi.spyOn(ui, "scheduleFrameIn");
+		const handleEvent = (Reflect.get(mode, "handleEvent") as (event: unknown) => void).bind(mode);
+		handleEvent({ type: "agent_start", timestamp: 10_000, runId: "run-static" });
+		expect(schedule).not.toHaveBeenCalled();
+		mode.quit();
+	});
 	it("does not infer session catalog or mutation authority from controller presence", () => {
 		const mode = new InteractiveMode({ controller: new ContractController({ supportedOperations: [] }), terminal: new FakeTerminal() });
 		try {

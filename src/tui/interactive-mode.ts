@@ -93,7 +93,11 @@ import { createEffectRunner } from "./application/effect-runner.ts";
 import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
 import type { SessionCatalogResult, SessionTitleResult, SessionTransitionResult } from "./sessions/types.ts";
-import type { TuiPreferencesDocument, TuiPreferencesPort } from "./preferences/types.ts";
+import type {
+  TuiPreferencesDocument,
+  TuiPreferencesPort,
+  TuiShimmerMode,
+} from "./preferences/types.ts";
 import { normalizeSessionTitle } from "../runtime/session-owner/title.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/theme-controller.ts";
 import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
@@ -264,6 +268,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private processOverlayComponent: ProcessOverlayComponent | undefined;
   private readonly initialBootstrap?: TuiBootstrapSnapshot;
   private readonly preferencesPort?: TuiPreferencesPort;
+  private readonly shimmerMode: TuiShimmerMode;
   private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
   private hideThinkingBlock: boolean;
   private readonly showWelcome: boolean;
@@ -304,6 +309,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.gitBranchLabel = opts.gitBranchLabel;
     this.initialBootstrap = opts.initialBootstrap;
     this.preferencesPort = opts.preferencesPort;
+    this.shimmerMode = opts.initialPreferences?.display.shimmer ?? "classic";
     this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
     this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
     this.showWelcome = opts.showWelcome ?? false;
@@ -1865,8 +1871,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.requestRender();
     if (this.preferencesPort === undefined) return;
     const result = await this.preferencesPort.save({
-      version: 1,
+      version: 2,
       transcript: { scrollbar: visible ? "visible" : "hidden" },
+      display: { shimmer: this.shimmerMode },
     });
     if (!result.ok) {
       this.showNotice("Scrollbar changed for this run but could not be saved.", "error");
@@ -2869,7 +2876,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   private scheduleStatusIndicatorFrame(): void {
-    if (this.quitting) return;
+    if (this.quitting || this.shimmerMode === "disabled") return;
     this.ui.scheduleFrameIn(STATUS_INDICATOR_FRAME_MS);
   }
 
@@ -2881,7 +2888,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       animationFrame: Math.floor(nowMs / STATUS_INDICATOR_FRAME_MS),
       interruptKey: this.statusInterruptKey(),
     }), {
-      mode: "classic",
+      mode: this.shimmerMode,
       nowMs,
       theme: this.theme,
       truecolor: /^(?:truecolor|24bit)$/iu.test(process.env.COLORTERM ?? ""),

@@ -10,13 +10,15 @@ const CAN_SYMLINK = canCreateSymlink();
 
 interface CliPreferencesComposition {
   current(): {
-    readonly version: 1;
+    readonly version: 2;
     readonly transcript: { readonly scrollbar: "hidden" | "visible" };
+    readonly display: { readonly shimmer: "classic" | "kitt" | "disabled" };
   };
   readonly port: {
     save(next: {
-      readonly version: 1;
+      readonly version: 2;
       readonly transcript: { readonly scrollbar: "hidden" | "visible" };
+      readonly display: { readonly shimmer: "classic" | "kitt" | "disabled" };
     }): Promise<{ readonly ok: boolean }>;
   };
   readonly startupDiagnostic?: { readonly code: string };
@@ -40,16 +42,22 @@ describe("CLI TUI preference composition", () => {
     const root = await mkdtemp(join(tmpdir(), "runledger-cli-tui-preferences-"));
     try {
       const layout = buildRunledgerLayout(join(root, "home"), "posix");
-      await saveTuiPreferences(layout, { version: 1, transcript: { scrollbar: "visible" } });
+      await saveTuiPreferences(layout, {
+        version: 2,
+        transcript: { scrollbar: "visible" },
+        display: { shimmer: "kitt" },
+      });
       const { createCliTuiPreferences } = await compositionModule();
       const composition = await createCliTuiPreferences(layout);
 
       expect(composition.current().transcript.scrollbar).toBe("visible");
       expect(await composition.port.save({
-        version: 1,
+        version: 2,
         transcript: { scrollbar: "hidden" },
+        display: { shimmer: "disabled" },
       })).toEqual({ ok: true });
       expect(composition.current().transcript.scrollbar).toBe("hidden");
+      expect(composition.current().display.shimmer).toBe("disabled");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -67,8 +75,9 @@ describe("CLI TUI preference composition", () => {
       await symlink(outside, layout.state);
 
       expect(await composition.port.save({
-        version: 1,
+        version: 2,
         transcript: { scrollbar: "visible" },
+        display: { shimmer: "classic" },
       })).toEqual({ ok: false, code: "tui_preferences_save_failed" });
       expect(composition.current().transcript.scrollbar).toBe("visible");
     } finally {

@@ -92,7 +92,7 @@ function parsePreferences(raw: string): TuiPreferencesLoadResult {
       diagnostic: { code: "invalid_tui_preferences" },
     };
   }
-  if (value.version !== 1) {
+  if (value.version !== 1 && value.version !== 2) {
     return {
       preferences: createDefaultTuiPreferences(),
       diagnostic: { code: "unsupported_tui_preferences_version" },
@@ -105,14 +105,22 @@ function parsePreferences(raw: string): TuiPreferencesLoadResult {
       diagnostic: { code: "invalid_tui_preferences" },
     };
   }
-  return { preferences: sanitizePreferences(value as unknown as TuiPreferencesDocument) };
+  return { preferences: sanitizePreferences(value) };
 }
 
-function sanitizePreferences(value: TuiPreferencesDocument): TuiPreferencesDocument {
+function sanitizePreferences(value: unknown): TuiPreferencesDocument {
+  const document = isRecord(value) ? value : {};
+  const transcript = isRecord(document.transcript) ? document.transcript : {};
+  const display = isRecord(document.display) ? document.display : {};
   return {
-    version: 1,
+    version: 2,
     transcript: {
-      scrollbar: value.transcript?.scrollbar === "visible" ? "visible" : "hidden",
+      scrollbar: transcript.scrollbar === "visible" ? "visible" : "hidden",
+    },
+    display: {
+      shimmer: display.shimmer === "kitt" || display.shimmer === "disabled"
+        ? display.shimmer
+        : "classic",
     },
   };
 }

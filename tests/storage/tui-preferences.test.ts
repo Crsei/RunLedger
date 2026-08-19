@@ -9,21 +9,24 @@ const CAN_SYMLINK = canCreateSymlink();
 
 interface PreferencesModule {
   createDefaultTuiPreferences(): {
-    readonly version: 1;
+    readonly version: 2;
     readonly transcript: { readonly scrollbar: "hidden" | "visible" };
+    readonly display: { readonly shimmer: "classic" | "kitt" | "disabled" };
   };
   loadTuiPreferences(layout: ReturnType<typeof buildRunledgerLayout>): Promise<{
     readonly preferences: {
-      readonly version: 1;
+      readonly version: 2;
       readonly transcript: { readonly scrollbar: "hidden" | "visible" };
+      readonly display: { readonly shimmer: "classic" | "kitt" | "disabled" };
     };
     readonly diagnostic?: { readonly code: string };
   }>;
   saveTuiPreferences(
     layout: ReturnType<typeof buildRunledgerLayout>,
     next: {
-      readonly version: 1;
+      readonly version: 2;
       readonly transcript: { readonly scrollbar: "hidden" | "visible" };
+      readonly display: { readonly shimmer: "classic" | "kitt" | "disabled" };
     },
   ): Promise<{ readonly ok: boolean; readonly code?: string }>;
 }
@@ -52,7 +55,11 @@ describe("canonical TUI preferences", () => {
     try {
       const module = await preferencesModule();
       const layout = buildRunledgerLayout(join(root, "home"), "posix");
-      const next = { version: 1 as const, transcript: { scrollbar: "visible" as const } };
+      const next = {
+        version: 2 as const,
+        transcript: { scrollbar: "visible" as const },
+        display: { shimmer: "kitt" as const },
+      };
       expect(await module.saveTuiPreferences(layout, next)).toEqual({ ok: true });
       expect(await module.loadTuiPreferences(layout)).toEqual({ preferences: next });
       const target = join(layout.state, "tui-preferences.json");
@@ -61,6 +68,53 @@ describe("canonical TUI preferences", () => {
         expect((await stat(layout.state)).mode & 0o777).toBe(0o700);
         expect((await stat(target)).mode & 0o777).toBe(0o600);
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("migrates revision 1 documents in memory with classic shimmer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "runledger-tui-preferences-"));
+    try {
+      const module = await preferencesModule();
+      const layout = buildRunledgerLayout(join(root, "home"), "posix");
+      await mkdir(layout.state, { recursive: true });
+      await writeFile(join(layout.state, "tui-preferences.json"), JSON.stringify({
+        version: 1,
+        transcript: { scrollbar: "visible" },
+      }), "utf8");
+
+      expect(await module.loadTuiPreferences(layout)).toEqual({
+        preferences: {
+          version: 2,
+          transcript: { scrollbar: "visible" },
+          display: { shimmer: "classic" },
+        },
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to classic for an invalid revision 2 shimmer value", async () => {
+    const root = await mkdtemp(join(tmpdir(), "runledger-tui-preferences-"));
+    try {
+      const module = await preferencesModule();
+      const layout = buildRunledgerLayout(join(root, "home"), "posix");
+      await mkdir(layout.state, { recursive: true });
+      await writeFile(join(layout.state, "tui-preferences.json"), JSON.stringify({
+        version: 2,
+        transcript: { scrollbar: "visible" },
+        display: { shimmer: "rainbow" },
+      }), "utf8");
+
+      expect(await module.loadTuiPreferences(layout)).toEqual({
+        preferences: {
+          version: 2,
+          transcript: { scrollbar: "visible" },
+          display: { shimmer: "classic" },
+        },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -105,8 +159,9 @@ describe("canonical TUI preferences", () => {
       expect(await module.saveTuiPreferences(layout, unsafe)).toEqual({ ok: true });
       const raw = await readFile(join(layout.state, "tui-preferences.json"), "utf8");
       expect(JSON.parse(raw)).toEqual({
-        version: 1,
+        version: 2,
         transcript: { scrollbar: "visible" },
+        display: { shimmer: "classic" },
       });
       expect(raw).not.toMatch(/scrollTop|sessionId|credential|secret/u);
     } finally {
@@ -119,8 +174,16 @@ describe("canonical TUI preferences", () => {
     try {
       const module = await preferencesModule();
       const layout = buildRunledgerLayout(join(root, "home"), "posix");
-      const hidden = { version: 1 as const, transcript: { scrollbar: "hidden" as const } };
-      const visible = { version: 1 as const, transcript: { scrollbar: "visible" as const } };
+      const hidden = {
+        version: 2 as const,
+        transcript: { scrollbar: "hidden" as const },
+        display: { shimmer: "classic" as const },
+      };
+      const visible = {
+        version: 2 as const,
+        transcript: { scrollbar: "visible" as const },
+        display: { shimmer: "kitt" as const },
+      };
       const results = await Promise.all(Array.from({ length: 12 }, (_, index) =>
         module.saveTuiPreferences(layout, index % 2 === 0 ? hidden : visible)));
       expect(results.every((result) => result.ok)).toBe(true);
@@ -143,8 +206,9 @@ describe("canonical TUI preferences", () => {
       await symlink(outside, layout.state);
 
       expect(await module.saveTuiPreferences(layout, {
-        version: 1,
+        version: 2,
         transcript: { scrollbar: "visible" },
+        display: { shimmer: "disabled" },
       })).toEqual({ ok: false, code: "tui_preferences_save_failed" });
       await expect(readFile(join(outside, "tui-preferences.json"))).rejects.toMatchObject({ code: "ENOENT" });
     } finally {

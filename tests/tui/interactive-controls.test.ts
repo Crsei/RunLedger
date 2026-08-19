@@ -365,7 +365,7 @@ describe("InteractiveMode lifecycle and global controls", () => {
     const saved: TuiPreferencesDocument[] = [];
     const preferencesPort: TuiPreferencesPort = {
       load: async () => ({
-        preferences: { version: 1, transcript: { scrollbar: "visible" } },
+        preferences: { version: 2, transcript: { scrollbar: "visible" }, display: { shimmer: "kitt" } },
       }),
       save: async (next) => {
         saved.push(next);
@@ -375,15 +375,21 @@ describe("InteractiveMode lifecycle and global controls", () => {
     const mode = new InteractiveMode({
       agent,
       terminal,
-      initialPreferences: { version: 1, transcript: { scrollbar: "visible" } },
+      initialPreferences: { version: 2, transcript: { scrollbar: "visible" }, display: { shimmer: "kitt" } },
       preferencesPort,
     } as ConstructorParameters<typeof InteractiveMode>[0]);
     const internals = mode as unknown as {
       refs: { editor: { setText(text: string): void; getText(): string } };
-      ui: { transcriptScrollPresentation?: { visible: boolean; trackColor: string; thumbColor: string } };
+      ui: {
+        transcriptScrollPresentation?: { visible: boolean; trackColor: string; thumbColor: string };
+        statusIndicatorShimmer?: { readonly mode: "classic" | "kitt" | "disabled" };
+      };
+      refreshStatusIndicator(): void;
     };
 
+    internals.refreshStatusIndicator();
     expect(mode.getTuiState().interaction.transcriptScrollbarVisible).toBe(true);
+    expect(internals.ui.statusIndicatorShimmer?.mode).toBe("kitt");
     expect(internals.ui.transcriptScrollPresentation).toEqual({
       visible: true,
       trackColor: "#11151c",
@@ -395,7 +401,11 @@ describe("InteractiveMode lifecycle and global controls", () => {
 
     expect(mode.getTuiState().interaction.transcriptScrollbarVisible).toBe(false);
     expect(internals.refs.editor.getText()).toBe("draft remains");
-    expect(saved).toEqual([{ version: 1, transcript: { scrollbar: "hidden" } }]);
+    expect(saved).toEqual([{
+      version: 2,
+      transcript: { scrollbar: "hidden" },
+      display: { shimmer: "kitt" },
+    }]);
     expect(internals.ui.transcriptScrollPresentation?.visible).toBe(false);
   });
 
@@ -406,7 +416,9 @@ describe("InteractiveMode lifecycle and global controls", () => {
       streamFn: immediateStopStream(),
     });
     const preferencesPort: TuiPreferencesPort = {
-      load: async () => ({ preferences: { version: 1, transcript: { scrollbar: "hidden" } } }),
+      load: async () => ({
+        preferences: { version: 2, transcript: { scrollbar: "hidden" }, display: { shimmer: "classic" } },
+      }),
       save: async () => ({ ok: false, code: "tui_preferences_save_failed" }),
     };
     const mode = new InteractiveMode({ agent, terminal, preferencesPort } as ConstructorParameters<typeof InteractiveMode>[0]);
