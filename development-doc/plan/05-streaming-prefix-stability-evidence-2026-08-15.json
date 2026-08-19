@@ -112,6 +112,24 @@
     "typecheck": "pass",
     "build": "pass"
   },
+  "additionalContractCoverage": {
+    "capturedAt": "2026-08-19",
+    "file": "tests/tui/streaming-prefix-stability.bun.test.ts",
+    "tests": 8,
+    "scenarios": [
+      "nested-list continuation remains mutable until the completed list settles",
+      "visual wrapping alone does not settle a long single line",
+      "cold-final markdown retains all rows",
+      "warm-final removes the settled split and retains one current renderable"
+    ],
+    "nativeOpenTui": {
+      "files": 14,
+      "tests": 108,
+      "assertions": 674,
+      "status": "pass"
+    },
+    "status": "pass"
+  },
   "runtimeSmoke": {
     "linkedRunledger": "pass",
     "isolatedRunledgerDir": true,

@@ -77,7 +77,7 @@ src/tui/components/chat-container.ts
 src/tui/timeline/                # P1: settled 派生与 generation fence（如 selector 层已有即复用）
 tests/tui/
 ├── settled-prefix.test.ts       # P2: 冻结判定纯测试（单调、闭合、列表续行、fence、rewind）
-├── streaming-prefix-stability.bun.test.ts  # P2: OpenTUI 输出字节稳定契约门（逐 step append）
+├── streaming-prefix-stability.bun.test.ts  # P2: OpenTUI 输出字节稳定契约门（逐 step append、嵌套列表/长单行/cold-final）
 ├── settled-part-cache.test.ts   # P3: 缓存命中/失效/generation fence/上限
 ├── streaming-table-lock.test.ts # P4: 闭合表格拆分后前缀渲染不变 + 回看列宽不变
 └── streaming-diff-admission.test.ts    # P5: 行级 admission/降级/abort
@@ -112,7 +112,7 @@ development-doc/00-index.md      # 本计划完成登记（规划阶段已加行
 
 - [x] RED：写契约测试骨架，断言"逐步 append 下冻结前缀渲染行逐字节不变"，并用标题完成态 reflow fixture 驱动失败。
 - [x] `freezeStreamPrefix(text)` pure 模块：保守判定最后一个"闭合 block 边界"——fence/数学块平衡闭合 + 空行边界 + 列表 marker 续行判定（移植 oh-my-pi `stableBlockBoundary`/`listMayContinueAt` 语义，文本规则版）。输出 `SettledSpan { prefixText, }`；append-only 下前缀单调不收缩，rewind 返回 undefined（重挣）。
-- [~] 契约门 `streaming-prefix-stability.bun.test.ts`：对 OpenTUI `MarkdownRenderable`（`streaming=true`、`internalBlockMode: "top-level"`）逐步 append fixture（标题/段落/列表/开放 fence/表格/引用/数学），断言 settled renderable 行在每步 append 后逐字节不变；Bun OpenTUI test renderer 真实 frame。嵌套列表、长单行和 cold-final 对照仍待补齐。
+- [x] 契约门 `streaming-prefix-stability.bun.test.ts`：对 OpenTUI `MarkdownRenderable`（`streaming=true`、`internalBlockMode: "top-level"`）逐步 append fixture（标题/段落/列表/开放 fence/表格/引用/数学），断言 settled renderable 行在每步 append 后逐字节不变；Bun OpenTUI test renderer 真实 frame 已补齐嵌套列表续行、长单行不因视觉换行冻结、cold-final 与 warm-final 收束对照。
 - [x] 冻结前缀不进入缓存；当前切片把声明物化为同级 settled final 前缀 + streaming tail renderable，误判只损失缓存机会，不改变领域状态；P3 再接 settled 行缓存。
 
 验收：契约门全绿；fixture 覆盖至少含"表格 append 更宽 cell"与"开放 fence 后追加列表项"两个 reflow 陷阱；前缀判定纯测试覆盖单调性与 rewind。
@@ -172,11 +172,11 @@ development-doc/00-index.md      # 本计划完成登记（规划阶段已加行
 |---|---|---|
 | P0 现状证据基线 | `planned` | — |
 | P1 part 级 settled + 增量签名 | `partial` | `src/tui/timeline/part-stability.ts`、`src/tui/opentui/body-signature.ts`、`tests/tui/streaming-part-stability.test.ts`、`tests/tui/opentui-part-stability.bun.test.ts`、`tests/tui/streaming-projection-cache.test.ts`；focused Vitest 40 tests、native OpenTUI 104 tests/654 assertions、build、benchmark、60/80/143 linked TTY smoke 通过；10,000 entry application projection/cache-hit 证据已补齐，仓库级 check 仍受既有 marker 扫描阻塞 |
-| P2 冻结前缀 + 契约门 | `partial` | `src/tui/opentui/settled-prefix.ts`；`tests/tui/settled-prefix.test.ts`；`tests/tui/streaming-prefix-stability.bun.test.ts`；P2 focused Vitest/Bun + `tsc --noEmit` 通过 |
+| P2 冻结前缀 + 契约门 | `implemented` | `src/tui/opentui/settled-prefix.ts`；`tests/tui/settled-prefix.test.ts`；`tests/tui/streaming-prefix-stability.bun.test.ts`（8 tests，含嵌套列表/长单行/cold-final）；P2 focused Vitest/Bun、native OpenTUI 108 tests/674 assertions + `tsc --noEmit` 通过 |
 | P3 settled 行缓存 | `implemented` | `src/tui/opentui/settled-part-cache.ts`；`tests/tui/settled-part-cache.test.ts`；`tests/tui/blocks/transcript-view.test.ts`；focused 18 tests；cache snapshot/淘汰/generation/theme/revision-rewind evidence |
 | P4 流式表格列宽锁定 | `implemented` | `src/tui/opentui/streaming-table-split.ts`；`tests/tui/streaming-table-lock.test.ts`；`tests/tui/streaming-prefix-stability.bun.test.ts`；Bun closed-table frame evidence |
 | P5 流式 diff 行级高亮 | `implemented` | `src/tui/opentui/streaming-diff-admission.ts`；`tests/tui/streaming-diff-admission.test.ts`；`tests/tui/opentui-diff-gutter.bun.test.ts`；final/预算/generation fence evidence |
-| P6 压力、门禁与回写 | `partial / blocked` | [`05-streaming-prefix-stability-evidence-2026-08-15.json`](05-streaming-prefix-stability-evidence-2026-08-15.json)；pressure fixture、新增 10,000 timeline application projection 对比、current native OpenTUI 104 tests/654 assertions、build、60/80/143 PTY 通过；check/full npm test 仍受任务外 current-format marker 阻塞，P1/P6 的 application projection/cache-hit 缺口已补齐 |
+| P6 压力、门禁与回写 | `partial / blocked` | [`05-streaming-prefix-stability-evidence-2026-08-15.json`](05-streaming-prefix-stability-evidence-2026-08-15.json)；pressure fixture、新增 10,000 timeline application projection 对比、current native OpenTUI 108 tests/674 assertions、build、60/80/143 PTY 通过；check/full npm test 仍受任务外 current-format marker 阻塞，P1/P6 的 application projection/cache-hit 缺口已补齐 |
 
 ## 约束（本计划遵守）
 
