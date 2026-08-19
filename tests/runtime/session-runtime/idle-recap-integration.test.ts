@@ -243,4 +243,56 @@ describe("SessionRuntime idle recap production composition", () => {
 			await closeHarness(harness, [driver.controller], [driver.handle]);
 		}
 	});
+
+	it("does not dispatch while a crash-takeover recovery barrier is active", async () => {
+		const domain = createFakeRecapDomain();
+		const harness = await createRuntimeHarness("idle-recap-recovery", {
+			domain: domain.domain,
+			crashTakeover: true,
+			recapSettings: { enabled: true, idleSeconds: 1 },
+		});
+		const driver = await attachController(harness, "idle-recap-recovery-client");
+		try {
+			expect(harness.runtime.runtimeState).toBe("recovery_required");
+			expect(harness.runtime.barrierState).toBe("open");
+			expect((await command(harness, driver.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
+			domain.emit({ type: "agent_end", timestamp: Date.now(), runId: "run-recovery", stopReason: "stop", messageCountAtEnd: 1 });
+			await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+			expect(domain.requests).toEqual([]);
+		} finally {
+			await closeHarness(harness, [driver.controller], [driver.handle]);
+		}
+	});
+
+	it("drops the old completion across driver reconnect and only accepts the new idle epoch", async () => {
+		const domain = createFakeRecapDomain();
+		const harness = await createRuntimeHarness("idle-recap-reconnect", { domain: domain.domain, recapSettings: { enabled: true, idleSeconds: 1 } });
+		const driver = await attachController(harness, "idle-recap-reconnect-first");
+		const observer = await attachController(harness, "idle-recap-reconnect-observer");
+		let replacement: Awaited<ReturnType<typeof attachController>> | undefined;
+		try {
+			expect((await command(harness, driver.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
+			domain.emit({ type: "agent_end", timestamp: Date.now(), runId: "run-reconnect-1", stopReason: "stop", messageCountAtEnd: 1 });
+			await waitForRequests(domain, 1);
+
+			await driver.handle.close();
+			await new Promise((resolve) => setTimeout(resolve, 75));
+			replacement = await attachController(harness, "idle-recap-reconnect-second");
+			const replacementEvents: unknown[] = [];
+			replacement.controller.subscribeIdleRecap?.((event) => replacementEvents.push(event));
+			expect((await command(harness, replacement.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
+
+			domain.resolveNext("stale after driver reconnect");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(replacementEvents).toEqual([]);
+
+			await waitForRequests(domain, 2);
+			domain.resolveNext("fresh after driver reconnect");
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(replacementEvents).toEqual([expect.objectContaining({ text: "fresh after driver reconnect" })]);
+		} finally {
+			await closeHarness(harness, [driver.controller, observer.controller, ...(replacement === undefined ? [] : [replacement.controller])], [driver.handle, observer.handle, ...(replacement === undefined ? [] : [replacement.handle])]);
+		}
+	});
 });

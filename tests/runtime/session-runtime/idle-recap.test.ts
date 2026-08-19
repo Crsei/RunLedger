@@ -9,6 +9,7 @@ const eligibleActivity: IdleRecapActivity = {
 	editorEmpty: true,
 	streaming: false,
 	maintenance: "idle",
+	recoveryBarrier: "closed",
 	hasModel: true,
 	hasHistory: true,
 	selectionDigest: "selection_fixture",
@@ -36,6 +37,23 @@ describe("IdleRecapCoordinator", () => {
 		coordinator.updateSettings({ enabled: true, idleSeconds: 1 });
 		coordinator.arm({ ...eligibleActivity, maintenance: "unknown" });
 		await vi.advanceTimersByTimeAsync(2_000);
+		expect(onFire).not.toHaveBeenCalled();
+		expect(onStatus).not.toHaveBeenCalled();
+	});
+
+	it("does not dispatch while the recovery barrier is open even when maintenance appears idle", async () => {
+		vi.useFakeTimers();
+		const onFire = vi.fn().mockResolvedValue("must not display");
+		const onStatus = vi.fn();
+		const coordinator = new IdleRecapCoordinator({
+			settings: { enabled: true, idleSeconds: 1 },
+			onFire,
+			onStatus,
+		});
+
+		coordinator.arm({ ...eligibleActivity, recoveryBarrier: "open" as const });
+		await vi.advanceTimersByTimeAsync(1_000);
+
 		expect(onFire).not.toHaveBeenCalled();
 		expect(onStatus).not.toHaveBeenCalled();
 	});

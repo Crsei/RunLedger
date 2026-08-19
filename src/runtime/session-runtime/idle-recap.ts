@@ -3,6 +3,7 @@ import stringWidth from "string-width";
 import { newId } from "../ledger/types.ts";
 
 export type IdleRecapMaintenance = "idle" | "busy" | "unknown";
+export type IdleRecapRecoveryBarrier = "closed" | "open";
 
 export type IdleRecapState = "disabled" | "disarmed" | "armed" | "running" | "settled" | "cancelled";
 
@@ -19,6 +20,7 @@ export interface IdleRecapActivity {
 	readonly editorEmpty: boolean;
 	readonly streaming: boolean;
 	readonly maintenance: IdleRecapMaintenance;
+	readonly recoveryBarrier: IdleRecapRecoveryBarrier;
 	readonly hasModel: boolean;
 	readonly hasHistory: boolean;
 	readonly selectionDigest: string;
@@ -180,6 +182,7 @@ export function isIdleRecapEligible(activity: IdleRecapActivity): boolean {
 		activity.editorEmpty &&
 		!activity.streaming &&
 		activity.maintenance === "idle" &&
+		activity.recoveryBarrier === "closed" &&
 		activity.hasModel &&
 		activity.hasHistory &&
 		activity.selectionDigest.length > 0

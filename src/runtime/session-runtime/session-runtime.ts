@@ -647,6 +647,7 @@ export class SessionRuntime implements SessionController {
 			editorEmpty: this.editorEmpty,
 			streaming,
 			maintenance,
+			recoveryBarrier: this.barrier.currentState,
 			hasModel: model !== undefined,
 			hasHistory: (snapshot?.messages.length ?? 0) > 0 || (messageCountOverride ?? 0) > 0,
 			selectionDigest: runtimeDigest({

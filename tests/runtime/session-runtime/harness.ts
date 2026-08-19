@@ -54,13 +54,19 @@ export async function createRuntimeHarness(seed = "h", options: {
 		repositoryId: createRuntimeId("repository", "r"),
 		settingsDigest: "d".repeat(64),
 	});
-	const server = new SessionRuntimeServer({ sessionId, store, controller: nullController(sessionId) });
+	let runtime: SessionRuntime | undefined;
+	const server = new SessionRuntimeServer({
+		sessionId,
+		store,
+		controller: nullController(sessionId),
+		onDriverStateChange: () => runtime?.handleDriverStateChange(),
+	});
 	const owner = new SessionOwner({ store, ownerStore, transport: server });
 	const claimed = await owner.open(sessionId);
 	if (!claimed.ok || claimed.outcome !== "claimed") throw new Error("harness claim failed");
 	const restored = restoreSession(store, sessionId);
 	if (!restored.ok) throw new Error("harness restore failed");
-	const runtime = new SessionRuntime({
+	const createdRuntime = new SessionRuntime({
 		sessionId,
 		store,
 		ownerStore,
@@ -75,15 +81,16 @@ export async function createRuntimeHarness(seed = "h", options: {
 		...(options.lifecycleCleanup === undefined ? {} : { lifecycleCleanup: options.lifecycleCleanup }),
 		...(options.recapSettings === undefined ? {} : { recapSettings: options.recapSettings }),
 	});
-	server.bindController(runtime);
-	runtime.start();
+	runtime = createdRuntime;
+	server.bindController(createdRuntime);
+	createdRuntime.start();
 	return {
 		dir,
 		store,
 		ownerStore,
 		owner,
 		server,
-		runtime,
+		runtime: createdRuntime,
 		sessionId,
 		fence: claimed.fence,
 		cleanup: () => {
