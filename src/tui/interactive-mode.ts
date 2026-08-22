@@ -103,6 +103,13 @@ import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/t
 import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
 import { projectStatusIndicator } from "./presentation/projectors.ts";
 import { projectTranscriptOverlay, TranscriptOverlayComponent } from "./transcript-view.ts";
+import {
+	createComposerShapeRegistry,
+	type ComposerShapeRegistry,
+} from "./composer/registry.ts";
+import { ComposerShapeSelector } from "./composer/selector.ts";
+import type { ComposerShapeSettingsPort, ComposerStyle } from "./composer/types.ts";
+import { ComposerSetupWizard } from "./setup-wizard/composer.ts";
 import type { SafeUsageQuantity } from "./presentation/tools/types.ts";
 import {
   applyUsageObservation,
@@ -161,6 +168,10 @@ export interface InteractiveModeOptions {
   showWelcome?: boolean;
   /** welcome 顶边框版本号。 */
   version?: string;
+  /** CLI composition 注入的用户级 composer shape；未注入时保留旧测试布局。 */
+  composerShape?: string;
+  composerShapeRegistry?: ComposerShapeRegistry;
+  composerShapeSettingsPort?: ComposerShapeSettingsPort;
 }
 
 export interface SessionSwitchTarget {
@@ -275,6 +286,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly version: string;
   private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
+  private readonly composerShapeRegistry: ComposerShapeRegistry;
+  private readonly composerShapeSettingsPort?: ComposerShapeSettingsPort;
+  private committedComposerShapeId: string;
   private lastTranscriptScrollbarVisible: boolean | undefined;
   private activePermissionView: PermissionRequestView | undefined;
   private unsubscribePermissionInput: (() => void) | undefined;
@@ -314,12 +328,19 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
     this.showWelcome = opts.showWelcome ?? false;
     this.version = opts.version ?? "unknown";
-    this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
+	this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
       configuredName: opts.syntaxThemeName,
       terminalMode: "unknown",
-    });
-    this.syntaxThemeSettingsPort = opts.syntaxThemeSettingsPort;
+	});
+	this.syntaxThemeSettingsPort = opts.syntaxThemeSettingsPort;
+	this.composerShapeRegistry = opts.composerShapeRegistry ?? createComposerShapeRegistry();
+	this.composerShapeSettingsPort = opts.composerShapeSettingsPort;
+	let initialComposerShapeDiagnostic = false;
+	this.committedComposerShapeId = this.composerShapeRegistry.getComposerStyle(
+		opts.composerShape,
+		opts.composerShape === undefined ? undefined : () => { initialComposerShapeDiagnostic = true; },
+	).id;
     // B4:ports 聚合 controller + Session domain；runner 只执行 effect 并回送 TuiResult
     this.authAdapter = createInteractiveSessionAdapter(this.controller);
     const sessionPort = createSessionDomainPortFromController(this.controller);
@@ -361,6 +382,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
       syntaxThemeName: opts.syntaxThemeName,
       syntaxThemeController: this.syntaxThemeController,
     });
+	if (opts.composerShape !== undefined || opts.composerShapeRegistry !== undefined || opts.composerShapeSettingsPort !== undefined) {
+		this.ui.setComposerShape(this.composerShapeRegistry.getComposerStyle(opts.composerShape));
+	}
     this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => {
       this.flushStreamingDeltas();
@@ -388,6 +412,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
     // 装配组件树
     this.refs = this.assembleTree();
+	if (initialComposerShapeDiagnostic) {
+		this.showNotice("Unknown composer shape; using the Box shape.", "note");
+	}
     // B3:store 订阅驱动 chat presentation（timeline generation 变化才重投影）
     this.unsubscribeStore = this.store.subscribe((next) => {
       if (next.timeline.generation !== this.lastTimelineGeneration) {
@@ -640,10 +667,14 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 得到输入区背景;theme_mode 切换与 OSC 11 回复都会触发。OpenTUI 路径由帧驱动即时生效。
    */
   private refreshEditorAppearance(rgb?: RgbColor): void {
+    const surfaceColor = editorBackgroundFromTerminal(this.theme, rgb ?? this.ui.getTerminalBackgroundRgb());
     this.ui.setEditorAppearance({
-      backgroundColor: editorBackgroundFromTerminal(this.theme, rgb ?? this.ui.getTerminalBackgroundRgb()),
+      backgroundColor: surfaceColor,
       promptColor: this.theme.accent,
       placeholderColor: this.theme.hint,
+      borderColor: this.theme.border,
+      accentColor: this.theme.accent,
+      surfaceColor,
     });
   }
 
@@ -1799,6 +1830,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
       case "config.theme":
         this.openSyntaxThemePicker();
         return;
+      case "config.composer-shape":
+        this.openComposerShapeSelector();
+        return;
+      case "config.setup-wizard":
+        this.openComposerSetupWizard();
+        return;
       case "recovery.open":
         void this.runRecoveryWorkflow(arg);
         return;
@@ -1938,6 +1975,69 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.syntaxThemeController.commitPreview();
     this.closeOverlay();
+    this.ui.requestRender();
+  }
+
+  /** `/shape` 只改变本地 composer presentation；settings port 成功后才提交。 */
+  openComposerShapeSelector(): void {
+    this.hideSlashPopup();
+    const settingsPort = this.composerShapeSettingsPort ?? {
+      save: async () => ({ ok: false as const, code: "composer_shape_settings_unavailable" }),
+    };
+    const selector = new ComposerShapeSelector({
+      registry: this.composerShapeRegistry,
+      options: this.composerShapeRegistry.getComposerShapeOptions(),
+      initialShape: this.committedComposerShapeId,
+      selectListTheme: this.selectListTheme(),
+      settingsPort,
+      onCommitted: (shape) => {
+        this.syncComposerShape(shape);
+        this.closeOverlay();
+      },
+      onCancel: () => {
+        this.closeOverlay();
+        this.ui.requestRender();
+      },
+      onSaveFailure: () => {
+        this.showNotice("Composer shape could not be saved; the previous shape was restored.", "error");
+      },
+    });
+    this.showOverlayModal(selector, { anchor: "bottom-left" });
+  }
+
+  /** `/setup` 是真实 wizard runner；scene 仍复用同一 registry、preview 和 settings port。 */
+  openComposerSetupWizard(): void {
+    this.hideSlashPopup();
+    const settingsPort = this.composerShapeSettingsPort ?? {
+      save: async () => ({ ok: false as const, code: "composer_shape_settings_unavailable" }),
+    };
+    const wizard = new ComposerSetupWizard({
+      registry: this.composerShapeRegistry,
+      initialShape: this.committedComposerShapeId,
+      selectListTheme: this.selectListTheme(),
+      settingsPort,
+      onCommitted: (shape) => {
+        this.syncComposerShape(shape);
+        this.closeOverlay();
+      },
+      onCancel: () => {
+        this.closeOverlay();
+        this.ui.requestRender();
+      },
+      onSaveFailure: () => {
+        this.showNotice("Composer shape could not be saved; the previous shape was restored.", "error");
+      },
+    });
+    this.showOverlayModal(wizard, { anchor: "bottom-left" });
+  }
+
+  /** 设置或 registry 失效时都回退 box；diagnostic 不回显原始配置值。 */
+  private syncComposerShape(shape: string): void {
+    const style = this.composerShapeRegistry.getComposerStyle(shape, () => {
+      this.showNotice("Unknown composer shape; using the Box shape.", "note");
+    });
+    this.committedComposerShapeId = style.id;
+    this.ui.setComposerShape(style);
     this.ui.requestRender();
   }
 

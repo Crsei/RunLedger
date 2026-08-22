@@ -37,6 +37,8 @@ export type SlashCommandActionType =
   | "config.thinking"
   | "config.hide-thinking"
   | "config.theme"
+  | "config.composer-shape"
+  | "config.setup-wizard"
   | "auth.login"
   | "auth.logout"
   | "recovery.open"
@@ -206,6 +208,20 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       actionType: "config.theme",
       category: "config",
       policy: READONLY_POLICY,
+    }),
+    command("shape", "Switch composer shape", 13.5, {
+      actionType: "config.composer-shape",
+      category: "config",
+      policy: READONLY_POLICY,
+      availableDuringTask: false,
+      unavailableDuringTaskMessage: "Composer shape is available when the current turn is idle.",
+    }),
+    command("setup", "Run the user setup wizard", 13.6, {
+      actionType: "config.setup-wizard",
+      category: "config",
+      policy: READONLY_POLICY,
+      availableDuringTask: false,
+      unavailableDuringTaskMessage: "Setup is available when the current turn is idle.",
     }),
     command("recovery", "Inspect or resolve crash recovery", 14, {
       actionType: "recovery.open",

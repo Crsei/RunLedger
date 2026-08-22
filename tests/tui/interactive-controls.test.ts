@@ -509,7 +509,14 @@ describe("InteractiveMode lifecycle and global controls", () => {
     const internals = mode as unknown as {
       maybeSwitchTheme(scheme: "dark" | "light"): void;
       refreshEditorAppearance(rgb?: { readonly r: number; readonly g: number; readonly b: number }): void;
-      ui: { editorAppearance?: { readonly backgroundColor: string; readonly promptColor: string; readonly placeholderColor: string } };
+      ui: { editorAppearance?: {
+        readonly backgroundColor: string;
+        readonly promptColor: string;
+        readonly placeholderColor: string;
+        readonly borderColor: string;
+        readonly accentColor: string;
+        readonly surfaceColor: string;
+      } };
     };
 
     internals.maybeSwitchTheme("light");
@@ -517,6 +524,9 @@ describe("InteractiveMode lifecycle and global controls", () => {
       backgroundColor: "#f4f4f4",
       promptColor: "#0066cc",
       placeholderColor: "#888888",
+      borderColor: "#cccccc",
+      accentColor: "#0066cc",
+      surfaceColor: "#f4f4f4",
     });
 
     internals.maybeSwitchTheme("dark");
