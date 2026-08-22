@@ -72,6 +72,8 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 		throw new Error("persisted workspace storage key does not match binding identity");
 	}
 	const tracePolicyDigest = runtimeDigest({ recording: options.settings.recording ?? { mode: "off", failurePolicy: "best_effort" } });
+	const { composer, ...runtimeSettings } = options.settings;
+	void composer;
 	const scope: RuntimeHostScope = {
 		authorityId,
 		tenantId,
@@ -85,7 +87,7 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 			processBackend: "governed",
 			securityOverride: options.securityOverride ?? null,
 		}),
-		settingsDigest: runtimeDigest(options.settings),
+		settingsDigest: runtimeDigest(runtimeSettings),
 		modelCatalogDigest: runtimeDigest({ catalog: "builtin" }),
 		tracePolicyDigest,
 		securityAdapterDigest: productionSecurityAdapterDigest(),

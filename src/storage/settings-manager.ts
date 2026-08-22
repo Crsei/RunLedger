@@ -5,9 +5,11 @@
  * settings 与任意 sessionDir 不再参与 canonical settings authority。
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
+import lockfile from "proper-lockfile";
 import type { ModelThinkingLevel } from "../types.ts";
 import type { QueueMode } from "../runtime/types.ts";
 import type { RunledgerLayout } from "../runtime/contracts/public.ts";
@@ -21,8 +23,14 @@ import { runtimeDigest, type RuntimeDigest } from "../runtime/protocol/foundatio
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
+const SETTINGS_LOCK_OPTS = {
+	retries: { retries: 50, factor: 1.25, minTimeout: 10, maxTimeout: 100 },
+	stale: 30_000,
+	realpath: false,
+} as const;
 const WORKSPACE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const SYNTAX_THEME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const COMPOSER_SHAPE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/u;
 
 export interface SettingsStoreOptions {
 	readonly layout: RunledgerLayout;
@@ -60,6 +68,8 @@ export interface ProjectSettings {
 	multiAgent?: MultiAgentSettingsSource;
 	/** 版本化 skills provider policy（user/workspace 均可写，workspace 只能收窄）。 */
 	skills?: SkillsSettings;
+	/** composer shape 只允许出现在用户级 canonical settings。 */
+	composer?: ComposerSettings;
 }
 
 export interface RecapSettings {
@@ -99,6 +109,11 @@ export interface SkillsSettings {
 	readonly enabled?: boolean;
 	/** 已知 provider exact ID → boolean；未知 ID 保留 diagnostic，不自动运行。 */
 	readonly providers?: Readonly<Record<string, boolean>>;
+}
+
+/** 用户级 TUI composer presentation 设置；workspace 层不拥有该 authority。 */
+export interface ComposerSettings {
+	readonly shape: string;
 }
 
 export type EffectiveRecordingConfig = Readonly<RecordingSettings>;
@@ -175,13 +190,7 @@ export async function loadProjectSettings(
 	options: SettingsStoreOptions,
 ): Promise<ProjectSettings> {
 	const path = getSettingsPath(options);
-	let text: string;
-	try {
-		text = await fs.readFile(path, "utf8");
-	} catch {
-		return {};
-	}
-	return parseSettings(text, path, options.workspaceKey === undefined);
+	return readSettingsFile(path, options.workspaceKey === undefined);
 }
 
 /**
@@ -228,11 +237,67 @@ export async function saveProjectSettings(
 	const path = getSettingsPath(options);
 	assertSupportedSettings(options, path, settings);
 	await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
-	await fs.writeFile(
-		path,
-		JSON.stringify(sanitizeProjectSettings(settings as Record<string, unknown>, options.workspaceKey === undefined), null, 2) + "\n",
-		SETTINGS_WRITE_OPTS,
-	);
+	const release = await acquireSettingsLock(path);
+	try {
+		await writeSettingsFile(path, sanitizeProjectSettings(settings as Record<string, unknown>, options.workspaceKey === undefined));
+	} finally {
+		await release();
+	}
+}
+
+/**
+ * 在 canonical settings 锁内完成 read-modify-write，避免 TUI presentation
+ * preference 与 model/theme/runtime settings 的并发保存互相覆盖。
+ */
+export async function updateProjectSettings(
+	options: SettingsStoreOptions,
+	update: (current: ProjectSettings) => ProjectSettingsInput | Promise<ProjectSettingsInput>,
+): Promise<ProjectSettings> {
+	const path = getSettingsPath(options);
+	await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
+	const release = await acquireSettingsLock(path);
+	try {
+		const current = await readSettingsFile(path, options.workspaceKey === undefined);
+		const next = await update(current);
+		assertSupportedSettings(options, path, next);
+		const sanitized = sanitizeProjectSettings(next as Record<string, unknown>, options.workspaceKey === undefined);
+		await writeSettingsFile(path, sanitized);
+		return sanitized;
+	} finally {
+		await release();
+	}
+}
+
+async function acquireSettingsLock(path: string): Promise<() => Promise<void>> {
+	return lockfile.lock(path, {
+		...SETTINGS_LOCK_OPTS,
+		lockfilePath: `${path}.lock`,
+	});
+}
+
+async function readSettingsFile(path: string, allowRecording: boolean): Promise<ProjectSettings> {
+	let text: string;
+	try {
+		text = await fs.readFile(path, "utf8");
+	} catch {
+		return {};
+	}
+	return parseSettings(text, path, allowRecording);
+}
+
+async function writeSettingsFile(path: string, settings: ProjectSettings): Promise<void> {
+	const temporary = `${path}.${randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(
+			temporary,
+			JSON.stringify(settings, null, 2) + "\n",
+			{ ...SETTINGS_WRITE_OPTS, flag: "wx" },
+		);
+		await fs.rename(temporary, path);
+		await fs.chmod(path, 0o600);
+	} finally {
+		await fs.unlink(temporary).catch(() => undefined);
+	}
 }
 
 /** 将缺失、非法或越界 recap 配置解析为安全的不可变运行时快照。 */
@@ -400,6 +465,10 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (multiAgent !== undefined) out.multiAgent = multiAgent;
 	const skills = sanitizeSkillsSettings(raw.skills);
 	if (skills !== undefined) out.skills = skills;
+	if (allowRecording) {
+		const composer = sanitizeComposerSettings(raw.composer);
+		if (composer !== undefined) out.composer = composer;
+	}
 	return out;
 }
 
@@ -439,6 +508,13 @@ function sanitizeSkillsSettings(value: unknown): SkillsSettings | undefined {
 		out.providers = providers;
 	}
 	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeComposerSettings(value: unknown): ComposerSettings | undefined {
+	if (!isPlainRecord(value)) return undefined;
+	const shape = value.shape;
+	if (typeof shape !== "string" || !COMPOSER_SHAPE_ID_PATTERN.test(shape)) return undefined;
+	return { shape };
 }
 
 function isSyntaxThemeName(value: unknown): value is string {
