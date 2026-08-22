@@ -257,10 +257,17 @@ export function projectToolEnd(
 	});
 	const resultText = toolResultText(result.content);
 	const body = [...presentation.body];
-	if (presentation.renderer !== "shell" && presentation.renderer !== "plan" && resultText.length > 0 && !body.some((block) => block.kind === "text" && block.content.text === resultText)) {
-		body.push({ kind: "text", content: boundedToolText(resultText, TOOL_TEXT_BOUND_BYTES) });
-	}
 	let metadata = projectToolResultMetadata({ toolName: presentation.title.text, details: result.details, content: result.content });
+	if (presentation.renderer !== "shell" && presentation.renderer !== "plan" && resultText.length > 0) {
+		const content = boundedToolText(resultText, TOOL_TEXT_BOUND_BYTES);
+		if (metadata.kind === "read" && metadata.renderMarkdown === true) {
+			if (!body.some((block) => block.kind === "markdown" && block.content.text === content.text)) {
+				body.push({ kind: "markdown", content });
+			}
+		} else if (!body.some((block) => block.kind === "text" && block.content.text === content.text)) {
+			body.push({ kind: "text", content });
+		}
+	}
 	if (metadata.kind === "shell") {
 		const previous = presentation.result?.kind === "shell" ? presentation.result : undefined;
 		const bounded = boundShellChunks([...(previous?.chunks ?? []), ...metadata.chunks]);
@@ -313,6 +320,7 @@ export function projectToolResultMetadata(result: { readonly toolName: string; r
 				kind: "read",
 				lineCount: safeCount(details.lineCount),
 				truncated: details.truncated === true,
+				...(details.renderMarkdown === true ? { renderMarkdown: true } : {}),
 			};
 		case "grep":
 			return {

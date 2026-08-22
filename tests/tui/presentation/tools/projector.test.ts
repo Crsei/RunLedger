@@ -109,4 +109,23 @@ describe("B2 safe tool projector", () => {
 			expect(grepMeta.fileCount).toEqual({ state: "known", value: 2 });
 		}
 	});
+
+	it("projects read.renderMarkdown as a Markdown body block", () => {
+		const start = projectToolStart("read", { path: "README.md" }, startedAt);
+		const final = projectToolEnd(start, {
+			content: [{ type: "text", text: "# heading\n\nbody" }],
+			details: { lineCount: 3, renderMarkdown: true },
+			isError: false,
+		}, startedAt);
+
+		expect(final.result).toEqual({
+			kind: "read",
+			lineCount: { state: "known", value: 3 },
+			truncated: false,
+			renderMarkdown: true,
+		});
+		expect(final.body).toEqual([
+			{ kind: "markdown", content: { text: "# heading\n\nbody", truncated: false, byteLength: 15 } },
+		]);
+	});
 });

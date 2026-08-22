@@ -167,6 +167,44 @@ describe("R7 process output artifact materialization", () => {
 		}
 	});
 
+	it("redacts process output before CAS persistence while binding raw source and policy metadata", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-process-artifact-redaction-"));
+		try {
+			const layout = buildRunledgerLayout(join(root, "home"), "posix");
+			const options = {
+				layout,
+				workspaceStorageKey: "ws-" + "p".repeat(64),
+				executionId: createRuntimeId("execution", "artifact-redaction"),
+				attemptId: createRuntimeId("attempt", "artifact-redaction_1"),
+			};
+			const output = new FileProcessOutputStore(options);
+			const raw = "Authorization: Bearer process-secret\npassword=hunter2\n";
+			await output.append(raw);
+			const artifactStore = new FileArtifactStore({
+				dataRoot: layout.artifacts,
+				metadataRoot: layout.artifactMetadata,
+			});
+
+			const result = await new ManagedProcessOutputMaterializer({
+				mode: "events_and_artifacts",
+				artifactStore,
+				redactionPolicyDigest: "policy-process",
+			}).materialize(output);
+
+			expect(result.ok).toBe(true);
+			if (!result.ok || result.materialization.artifactRef === undefined) return;
+			const stored = new TextDecoder().decode(await artifactStore.read(result.materialization.artifactRef));
+			expect(stored).not.toContain("process-secret");
+			expect(stored).not.toContain("hunter2");
+			expect(result.materialization.outputRef.size).toBe(result.materialization.artifactRef.size);
+			const metadata = await artifactStore.metadata(result.materialization.artifactRef);
+			expect(metadata.sourceDigest).toBe(runtimeDigest(raw).digest);
+			expect(metadata.redactionPolicyDigest).toBe("policy-process");
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("rejects sealed private output tampering before materialization", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-process-output-tamper-"));
 		try {

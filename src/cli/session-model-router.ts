@@ -8,9 +8,19 @@ import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import { JsonlRuntimeEventStore } from "../storage/runtime-event-store.ts";
+import type { Models } from "../models.ts";
+import type { ProviderRequestGate } from "../runtime/agents/child-model-runtime.ts";
+import type { RetryPolicy } from "../runtime/retry/policy.ts";
+import type { CompactionSummarizer } from "../runtime/types.ts";
+import { createProductionSummarizer } from "../runtime/context/compaction/production-summarizer.ts";
 
 export interface CliSessionModelRequestRouterFactory {
 	forSession(input: { readonly sessionId: SessionId; readonly workspaceStorageKey: string }): ModelRequestRouter;
+	compactionSummarizer(input: {
+		readonly models: Models;
+		readonly providerGate: ProviderRequestGate;
+		readonly retryPolicy: RetryPolicy;
+	}): CompactionSummarizer;
 }
 
 export async function createCliSessionModelRequestRouterFactory(options: {
@@ -22,6 +32,23 @@ export async function createCliSessionModelRequestRouterFactory(options: {
 	const writers = new Map<string, JsonlRuntimeEventStore>();
 	const routers = new Map<string, ModelRequestRouter>();
 	return {
+		compactionSummarizer: ({ models, providerGate, retryPolicy }) => {
+			if (!compatibility.ok) return async () => undefined;
+			const summarize = createProductionSummarizer({
+				models,
+				router: compatibility.router,
+				providerGate,
+				retryPolicy,
+			});
+			return async (input) => {
+				const result = await summarize({
+					transcript: JSON.stringify(input.messages),
+					focus: input.reason,
+					sessionId: input.sessionId,
+				});
+				return result.ok ? result.summary : undefined;
+			};
+		},
 		forSession: ({ sessionId, workspaceStorageKey }) => {
 			const key = `${workspaceStorageKey}:${sessionId}`;
 			const prior = routers.get(key);

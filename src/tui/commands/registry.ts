@@ -37,6 +37,7 @@ export type SlashCommandActionType =
   | "config.thinking"
   | "config.hide-thinking"
   | "config.theme"
+  | "config.settings"
   | "auth.login"
   | "auth.logout"
   | "recovery.open"
@@ -206,6 +207,13 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       actionType: "config.theme",
       category: "config",
       policy: READONLY_POLICY,
+    }),
+    command("settings", "Browse and edit RunLedger settings", 13.5, {
+      actionType: "config.settings",
+      category: "config",
+      policy: READONLY_POLICY,
+      availableDuringTask: false,
+      unavailableDuringTaskMessage: "Settings are available when the current turn is idle.",
     }),
     command("recovery", "Inspect or resolve crash recovery", 14, {
       actionType: "recovery.open",

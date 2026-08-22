@@ -16,8 +16,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import * as cliMain from "../../src/cli/main.ts";
 import { parseArgs } from "../../src/cli/args.ts";
+import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
+import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
+import { SessionStore } from "../../src/storage/session-store/session-store.ts";
 
-const { cliSecurityOverride, cliSecuritySources } = cliMain;
+const { cliSecurityOverride, cliSecuritySources, resolveSessionId, sessionOpenMode, shouldShowWelcomeOnInitialView } = cliMain;
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 
@@ -82,6 +85,47 @@ describe("CLI main() --help / --version", () => {
     expect(r.stderr).toContain("RUNLEDGER_SESSION_DIR");
     expect(r.stderr).toContain("unsupported_environment_override");
   });
+});
+
+describe("startup autoResume session selection", () => {
+	it("uses the most-recent-session mode only when no explicit session flag is present", () => {
+		expect(sessionOpenMode(parseArgs([]).args, { autoResume: true })).toBe("continue_recent");
+		expect(sessionOpenMode(parseArgs(["--continue"]).args, { autoResume: false })).toBe("continue_recent");
+		expect(sessionOpenMode(parseArgs(["--resume"]).args, { autoResume: true })).toBe("resume");
+		expect(sessionOpenMode(parseArgs(["--session-id", "session-1"]).args, { autoResume: true })).toBe("open");
+		expect(sessionOpenMode(parseArgs([]).args, { autoResume: false })).toBe("create");
+	});
+
+	it("creates a fresh session when automatic resume has no candidate, but explicit continue still fails", async () => {
+		const automaticRoot = mkdtempSync(join(tmpdir(), "runledger-auto-resume-empty-"));
+		const explicitRoot = mkdtempSync(join(tmpdir(), "runledger-explicit-continue-empty-"));
+		try {
+			const automaticDb = openSessionDatabase(join(automaticRoot, "state.db"));
+			installSessionStoreSchema(automaticDb);
+			const automaticStore = new SessionStore(automaticDb);
+			const created = await resolveSessionId(automaticStore, parseArgs([]).args, "/workspace", "digest", { autoResume: true });
+			expect(automaticStore.getSession(created)).toBeDefined();
+			automaticDb.close();
+
+			const explicitDb = openSessionDatabase(join(explicitRoot, "state.db"));
+			installSessionStoreSchema(explicitDb);
+			const explicitStore = new SessionStore(explicitDb);
+			await expect(resolveSessionId(explicitStore, parseArgs(["--continue"]).args, "/workspace", "digest", { autoResume: true }))
+				.rejects.toThrow("no session to resume");
+			explicitDb.close();
+		} finally {
+			rmSync(automaticRoot, { recursive: true, force: true });
+			rmSync(explicitRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("shows Welcome only for fresh create or automatic resume fallback", () => {
+		expect(shouldShowWelcomeOnInitialView(parseArgs([]).args, { autoResume: false }, false)).toBe(true);
+		expect(shouldShowWelcomeOnInitialView(parseArgs([]).args, { autoResume: true }, true)).toBe(false);
+		expect(shouldShowWelcomeOnInitialView(parseArgs([]).args, { autoResume: true }, false)).toBe(true);
+		expect(shouldShowWelcomeOnInitialView(parseArgs(["--continue"]).args, { autoResume: true }, false)).toBe(false);
+		expect(shouldShowWelcomeOnInitialView(parseArgs(["--resume"]).args, { autoResume: true }, false)).toBe(false);
+	});
 });
 
 describe("CLI read-only Extension control commands", () => {

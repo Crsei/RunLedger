@@ -1,7 +1,7 @@
 /** Session-owned managed process composition。 */
 
 import { isAbsolute } from "node:path";
-import { defaultShell } from "../../utils/shell.ts";
+import { buildShellInvocation, defaultShell } from "../../utils/shell.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
 import { createRuntimeId, type AttemptId, type CommandId, type WorkspaceId } from "../protocol/ids.ts";
@@ -38,6 +38,8 @@ export interface SessionProcessCompositionOptions {
 	readonly fence: OwnerFence;
 	readonly workspaceId: WorkspaceId;
 	readonly security: SessionManagedProcessSecurity;
+	/** User-owned settings shell; validated once at Session process composition. */
+	readonly shellPath?: string;
 	readonly store: SessionStore;
 	readonly attemptPort?: () => AttemptPort | undefined;
 	readonly recordingMode?: RecordingMode;
@@ -89,11 +91,15 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 			executionId: input.handle.executionId,
 			attemptId: input.handle.attemptId,
 		});
+		const configuredShell = defaultShell(options.shellPath);
 		const pipe = new PipeProcessBackend({
 			resolveCommand: (request) => {
 				const descriptor = this.commands.get(request.correlationId);
 				if (descriptor === undefined) throw new Error("Session process command resolver is unavailable");
-				return { executable: defaultShell(), args: ["-lc", descriptor.command], cwd: descriptor.cwd };
+				return {
+					...buildShellInvocation(configuredShell, descriptor.command, { login: options.shellPath === undefined }),
+					cwd: descriptor.cwd,
+				};
 			},
 			createOutputStore: output,
 		});
@@ -104,7 +110,10 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 				resolveCommand: (request) => {
 					const descriptor = this.commands.get(request.correlationId);
 					if (descriptor === undefined) throw new Error("Session PTY command resolver is unavailable");
-					return { executable: defaultShell(), args: ["-lc", descriptor.command], cwd: descriptor.cwd };
+					return {
+						...buildShellInvocation(configuredShell, descriptor.command, { login: options.shellPath === undefined }),
+						cwd: descriptor.cwd,
+					};
 				},
 				createOutputStore: output,
 			})

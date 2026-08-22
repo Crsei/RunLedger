@@ -30,4 +30,16 @@ describe("workspace display facts", () => {
 		expect(workspaceDisplayAbsolutePathForView({ effectiveCwd: undefined })).toBeUndefined();
 		expect(workspaceDisplayAbsolutePathForView({ effectiveCwd: "/srv/private/RunLedger" })).toBe("/srv/private/RunLedger");
 	});
+
+	it("does not query Git when the presentation-only setting is disabled", async () => {
+		let calls = 0;
+		const facts = await gitWorkspaceDisplayFacts("/repo", {
+			run: async () => {
+				calls += 1;
+				return { stdout: "main\n", stderr: "", exitCode: 0, signaled: false };
+			},
+		}, false);
+		expect(facts).toEqual({});
+		expect(calls).toBe(0);
+	});
 });

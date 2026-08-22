@@ -36,10 +36,14 @@ const fallbackIndex: Record<StatusLineAccent, number> = {
 	progress: 2,
 };
 
-export function statusLineToStyledText(segments: readonly StatusLineSegment[], resolve: StatusScopeResolver): StyledText {
+export function statusLineToStyledText(
+	segments: readonly StatusLineSegment[],
+	resolve: StatusScopeResolver,
+	separator = " · ",
+): StyledText {
 	const chunks: TextChunk[] = [];
 	for (const [index, segment] of segments.entries()) {
-		if (index > 0) chunks.push({ __isChunk: true, text: " · ", attributes: TextAttributes.DIM });
+		if (index > 0) chunks.push({ __isChunk: true, text: separator, attributes: TextAttributes.DIM });
 		const color = softenStatusColor(resolve(scopes[segment.accent]) ?? { kind: "indexed", index: fallbackIndex[segment.accent] });
 		chunks.push({ __isChunk: true, text: segment.text, fg: highlightColorToRgba(color) });
 	}

@@ -7,6 +7,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import type { HostRuntimeDomainContext, HostRuntimeDomainPort } from "../../../src/cli/runtime-host-service.ts";
 import { createHostModelContextDomainPort } from "../../../src/cli/runtime-host-model-context.ts";
+import { SettingsResolver } from "../../../src/storage/settings-resolver.ts";
 
 const timestamp = "2026-08-05T00:00:00.000Z";
 
@@ -233,6 +234,220 @@ describe("Host model/context domain", () => {
 			expect((compacted.events ?? []).map((event) => event.type)).toEqual(["compaction.started", "compaction.completed"]);
 			const checkpoints = await domain.execute(context("compaction.list", {}, 4, false));
 			expect(value<{ checkpoints: readonly { status: string }[] }>(checkpoints).checkpoints).toHaveLength(1);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed without mutating state when compaction is disabled by policy", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-compaction-disabled-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const domain = createHostModelContextDomainPort({
+			layout,
+			workspaceStorageKey: `ws-${"c".repeat(64)}`,
+			authorityId: createRuntimeId("authority", "model-context-compaction-disabled-test"),
+			tenantId: createRuntimeId("tenant", "model-context-compaction-disabled-test"),
+			workspaceId: createRuntimeId("workspace", "model-context-compaction-disabled-test"),
+			policyCeilingDigest: runtimeDigest("compaction-policy-ceiling"),
+			clock: () => new Date(timestamp),
+			compactionPolicy: {
+				enabled: false,
+				midTurnEnabled: false,
+				strategy: "summary",
+				thresholdPercent: 80,
+				thresholdTokens: 0,
+				retainRecentTurns: 1,
+				minCompactedTurns: 1,
+			},
+		});
+		try {
+			const sessionId = createRuntimeId("session", "model-context-test");
+			const sourceRange = {
+				stream: { scope: "session" as const, streamId: sessionId, sessionId },
+				startSequence: 1,
+				endSequence: 2,
+				head: { streamId: sessionId, sequence: 2, eventHash: runtimeDigest("head") },
+				rangeDigest: runtimeDigest("range"),
+				complete: true,
+			};
+			const result = await domain.execute(context("compact.run", {
+				reason: "manual",
+				sourceRange,
+				transcript: "user: compact this",
+				summary: "unused because policy is disabled",
+			}, 0));
+			expect(result).toMatchObject({ ok: false, body: { code: "compaction_disabled" } });
+			expect(result.events).toBeUndefined();
+			const checkpoints = await domain.execute(context("compaction.list", {}, 1, false));
+			expect(value<{ checkpoints: readonly unknown[] }>(checkpoints).checkpoints).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("uses the Host snapshot over legacy policy seams and binds provenance", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-runtime-settings-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const runtimeSettings = new SettingsResolver({
+			user: { compaction: { enabled: false }, memory: { backend: "off" } },
+			workspace: { compaction: { thresholdPercent: 101 } },
+		}).effectiveRuntimeSnapshot();
+		const domain = createHostModelContextDomainPort({
+			layout,
+			workspaceStorageKey: `ws-${"e".repeat(64)}`,
+			authorityId: createRuntimeId("authority", "model-context-runtime-settings-test"),
+			tenantId: createRuntimeId("tenant", "model-context-runtime-settings-test"),
+			workspaceId: createRuntimeId("workspace", "model-context-runtime-settings-test"),
+			policyCeilingDigest: runtimeDigest("runtime-settings-policy-ceiling"),
+			runtimeSettings,
+			compactionPolicy: {
+				enabled: true,
+				midTurnEnabled: true,
+				strategy: "summary",
+				thresholdPercent: 10,
+				thresholdTokens: 1,
+				retainRecentTurns: 0,
+				minCompactedTurns: 0,
+			},
+			memoryBackend: "local",
+		});
+		try {
+			const snapshot = domain.runtimeSettingsSnapshot?.();
+			expect(snapshot).toBe(runtimeSettings);
+			expect(snapshot?.digest).toEqual(runtimeSettings.digest);
+			expect(snapshot?.sourceLayers["compaction.enabled"]).toBe("user");
+			expect(snapshot?.sourceLayers["compaction.thresholdPercent"]).toBe("default");
+			expect(snapshot?.diagnostics).toContainEqual(expect.objectContaining({
+				code: "out_of_range",
+				path: "compaction.thresholdPercent",
+				source: "workspace",
+			}));
+
+			const sessionId = createRuntimeId("session", "model-context-runtime-settings-test");
+			const sourceRange = {
+				stream: { scope: "session" as const, streamId: sessionId, sessionId },
+				startSequence: 1,
+				endSequence: 2,
+				head: { streamId: sessionId, sequence: 2, eventHash: runtimeDigest("head") },
+				rangeDigest: runtimeDigest("range"),
+				complete: true,
+			};
+			expect(await domain.execute(context("compact.run", {
+				reason: "manual",
+				sourceRange,
+				transcript: "user: compact this",
+				summary: "legacy policy must not enable compaction",
+			}, 0))).toMatchObject({ ok: false, body: { code: "compaction_disabled" } });
+			expect(await domain.internal.command(sessionId, "memory.propose", {
+				scope: "workspace",
+				title: "legacy memory backend must not enable local memory",
+				content: "not persisted",
+				sourceKind: "user",
+				sourceRef: { subjectKind: "content", digest: runtimeDigest("source"), mediaType: "text/plain", size: 0 },
+				sourceDigest: runtimeDigest("source"),
+			})).toEqual({ ok: false, code: "memory_backend_disabled" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps local Memory unavailable when the effective backend is off", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-memory-off-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const domain = createHostModelContextDomainPort({
+			layout,
+			workspaceStorageKey: `ws-${"d".repeat(64)}`,
+			authorityId: createRuntimeId("authority", "model-context-memory-off-test"),
+			tenantId: createRuntimeId("tenant", "model-context-memory-off-test"),
+			workspaceId: createRuntimeId("workspace", "model-context-memory-off-test"),
+			policyCeilingDigest: runtimeDigest("memory-policy-ceiling"),
+			clock: () => new Date(timestamp),
+			memoryBackend: "off",
+		});
+		try {
+			const sessionId = createRuntimeId("session", "model-context-test");
+			const result = await domain.internal.command(sessionId, "memory.propose", {
+				scope: "workspace",
+				title: "should remain unavailable",
+				content: "this must not be persisted",
+				sourceKind: "user",
+				sourceRef: { subjectKind: "content", digest: runtimeDigest("source"), mediaType: "text/plain", size: 6 },
+				sourceDigest: runtimeDigest("source"),
+			});
+			expect(result).toEqual({ ok: false, code: "memory_backend_disabled" });
+			expect(await domain.contextSources(sessionId, "should remain unavailable")).toEqual([]);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("fails closed for every Host Plan operation when plan settings disable the capability", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-plan-disabled-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const runtimeSettings = new SettingsResolver({ user: { plan: { enabled: false } } }).effectiveRuntimeSnapshot();
+		const domain = createHostModelContextDomainPort({
+			layout,
+			workspaceStorageKey: `ws-${"f".repeat(64)}`,
+			authorityId: createRuntimeId("authority", "model-context-plan-disabled-test"),
+			tenantId: createRuntimeId("tenant", "model-context-plan-disabled-test"),
+			workspaceId: createRuntimeId("workspace", "model-context-plan-disabled-test"),
+			policyCeilingDigest: runtimeDigest("plan-disabled-policy-ceiling"),
+			runtimeSettings,
+		});
+		const sessionId = createRuntimeId("session", "model-context-test");
+		try {
+			expect(await domain.execute(context("plan.enter", { requestedBy: "user", expectedRevision: 0 }, 0))).toMatchObject({
+				ok: false,
+				body: { code: "plan_disabled" },
+			});
+			expect(await domain.execute(context("plan.inspect", {}, 0, false))).toMatchObject({
+				ok: false,
+				body: { code: "plan_disabled" },
+			});
+			expect(await domain.internal.command(sessionId, "plan.enter", { requestedBy: "agent", expectedRevision: 0 })).toEqual({
+			ok: false,
+			code: "plan_disabled",
+		});
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("applies defaultOnStartup only to an uninitialized Session and preserves existing Plan state", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-model-context-plan-startup-"));
+		const layout = buildRunledgerLayout(root, "posix");
+		const workspaceStorageKey = `ws-${"c".repeat(64)}`;
+		const base = {
+			layout,
+			workspaceStorageKey,
+			authorityId: createRuntimeId("authority", "model-context-plan-startup-test"),
+			tenantId: createRuntimeId("tenant", "model-context-plan-startup-test"),
+			workspaceId: createRuntimeId("workspace", "model-context-plan-startup-test"),
+			policyCeilingDigest: runtimeDigest("plan-startup-policy-ceiling"),
+			clock: () => new Date(timestamp),
+		};
+		const sessionId = createRuntimeId("session", "model-context-test");
+		try {
+			const existingStateDomain = createHostModelContextDomainPort({
+				...base,
+				runtimeSettings: new SettingsResolver({ user: { plan: { defaultOnStartup: false } } }).effectiveRuntimeSnapshot(),
+			});
+			expect(await existingStateDomain.execute(context("plan.enter", { requestedBy: "user", expectedRevision: 0 }, 0))).toMatchObject({ ok: true });
+			expect(await existingStateDomain.execute(context("plan.activate", { expectedRevision: 1, content: "# Existing plan" }, 1))).toMatchObject({
+				ok: true,
+				body: { state: { status: "active", revision: 2 } },
+			});
+
+			const startupDefaultDomain = createHostModelContextDomainPort({
+				...base,
+				runtimeSettings: new SettingsResolver({ user: { plan: { defaultOnStartup: true } } }).effectiveRuntimeSnapshot(),
+			});
+			const existing = await startupDefaultDomain.execute(context("plan.inspect", {}, 0, false));
+			expect(value<{ state: { status: string; revision: number } }>(existing).state).toMatchObject({ status: "active", revision: 2 });
+
+			const newSession = createRuntimeId("session", "model-context-new-session");
+			const fresh = await startupDefaultDomain.internal.query(newSession, "plan.inspect");
+			expect(fresh).toMatchObject({ ok: true, body: { state: { status: "pending", revision: 0 } } });
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

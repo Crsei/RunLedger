@@ -2,12 +2,13 @@
 
 import { Value } from "typebox/value";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { AuthStorage } from "../storage/auth-storage.ts";
 import { registerConfiguredProxyProvidersFromHome } from "../providers/configured-proxy.ts";
-import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
+import { loadProjectSettings, updateProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../storage/settings-manager.ts";
+import { SettingsResolver } from "../storage/settings-resolver.ts";
 import { builtinModels } from "../providers/all.ts";
 import { EndpointStore } from "../storage/host/endpoint-store.ts";
 import { acquireHostWriterLease } from "../storage/host/writer-lease.ts";
@@ -34,6 +35,9 @@ import { JsonHostDomainRevisionStore } from "../storage/host/domain-revision-sto
 import { JsonWorkspaceBindingStore } from "../worktree/persisted-binding.ts";
 import { HostWorkspaceBindingService, type WorkspaceBindingAuditPort } from "../worktree/host-binding.ts";
 import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
+import { resolveAdditionalWorkspaceRoots } from "../workspace/additional-roots.ts";
+import { createNativeWorkspacePathAdapter } from "../workspace/native/adapters.ts";
+import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { RuntimeWorkspaceAuditAdapter } from "../worktree/integration/runtime-workspace-events.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import { createProductionGitCommandPort } from "./runtime-host-production.ts";
@@ -45,6 +49,7 @@ import { createHostMcpResourceInvocationPort, createHostMcpRuntime } from "./run
 import { createHostSkillLoader } from "./runtime-host-skills.ts";
 import { skillCatalogPromptFragment } from "../extensions/skills/renderer.ts";
 import { createProductionSummarizer } from "./runtime-host-summarizer.ts";
+import { createProviderRequestGate } from "../runtime/agents/child-model-runtime.ts";
 import type { HostSecurityConfigSource } from "./runtime-host-security.ts";
 import { createMcpExecutionEnvFetch, createSdkMcpClientFactory } from "../extensions/mcp/sdk-factory.ts";
 import { McpConnectionManager } from "../extensions/mcp/connection-manager.ts";
@@ -85,12 +90,19 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		environment: process.env,
 	});
 	if (mcpConfig.diagnostics.some((item) => item.severity === "error")) throw new Error("canonical MCP configuration is invalid");
+	const settings = await loadProjectSettings({ layout });
+	const workspaceSettings = await loadProjectSettings({ layout, workspaceKey: scope.workspaceStorageKey });
+	const effectiveSettings = new SettingsResolver({ user: settings, workspace: workspaceSettings });
+	const runtimeSettings = effectiveSettings.effectiveRuntimeSnapshot();
+	const providerGate = createProviderRequestGate(runtimeSettings.providerPolicy);
+	if (scope.settingsDigest.algorithm !== runtimeSettings.digest.algorithm || scope.settingsDigest.digest !== runtimeSettings.digest.digest) {
+		throw new Error("host_settings_digest_mismatch");
+	}
 	const endpointStore = new EndpointStore(layout, scope.workspaceStorageKey);
 	const lease = await acquireHostWriterLease(layout, scope.workspaceStorageKey);
 	if (!lease.ok) throw new Error(lease.code);
 	const markerStore = new HostRecoveryMarkerStore(layout, scope.workspaceStorageKey);
 	const shutdownIntentStore = new HostShutdownIntentStore(layout, scope.workspaceStorageKey);
-	const settings = await loadProjectSettings({ layout });
 	const recording = resolveRecordingConfig(settings);
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
 	const models = builtinModels({ credentials: AuthStorage.create(layout) });
@@ -108,6 +120,14 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		writer: runtimeEventWriter,
 	});
 	const workspaceBinding = await restoreResidentWorkspaceBinding({ layout, scope, cwd, workspaceAudit });
+	const initialWorkspaceRoot = resolve(workspaceBinding?.worktreePath ?? cwd);
+	const initialAdditionalRoots = await resolveAdditionalWorkspaceRoots({
+		adapter: createNativeWorkspacePathAdapter(runtimeWorkspacePlatform()),
+		workspaceRoot: initialWorkspaceRoot,
+		paths: runtimeSettings.workspacePolicy.additionalDirectories,
+	});
+	if (!initialAdditionalRoots.ok) throw new Error(`${initialAdditionalRoots.error.code}: ${initialAdditionalRoots.error.message}`);
+	const additionalWorkspaceRoots = initialAdditionalRoots.value.map((root) => root.canonicalPath);
 	const hostRuntimeId = createRuntimeId("runtime", `host-${hostGeneration}-${scope.workspaceStorageKey.slice(3, 19)}`);
 	const hostProcessIdentity = await readLinuxProcessIdentity(process.pid);
 	const extensionStateRoot = join(layout.state, "extensions");
@@ -150,10 +170,10 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		skillsPolicyLoader: async () => resolveSkillsPolicy((await loadProjectSettings({ layout })).skills, undefined),
 		updateSkillsProviderPolicy: async (providerId, enabled, scope) => {
 			if (scope !== "user") throw new Error("workspace-scoped provider mutation is not wired in the resident Host path");
-			const current = await loadProjectSettings({ layout });
-			const providers = { ...(current.skills?.providers ?? {}) };
-			providers[providerId] = enabled;
-			await saveProjectSettings({ layout }, { ...current, skills: { enabled: current.skills?.enabled ?? true, providers } });
+			await updateProjectSettings({ layout }, (current) => {
+				const providers = { ...(current.skills?.providers ?? {}), [providerId]: enabled };
+				return { ...current, skills: { enabled: current.skills?.enabled ?? true, providers } };
+			});
 		},
 	});
 	const extensionLoad = await extensionManager.load();
@@ -184,6 +204,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		scope,
 		cwd,
 		...(workspaceBinding === undefined ? {} : { workspaceBinding }),
+		additionalWorkspaceRoots,
 		runtimeEventWriter,
 		permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
 		securitySources: hostSecuritySources(),
@@ -208,13 +229,19 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		security,
 	});
 	const modelContextDomain = createProductionModelContextDomainPort({
-		layout,
-		scope,
-		policyCeilingDigest: security.snapshot.policyDigest,
+			layout,
+			scope,
+			runtimeSettings,
+			policyCeilingDigest: security.snapshot.policyDigest,
 		...(modelCompatibility.ok ? { modelRouter: modelCompatibility.router } : { modelRouterUnavailable: modelCompatibility.error.code }),
 		...(modelCompatibility.ok ? {
 			summarizer: async (input) => {
-				const result = await createProductionSummarizer({ models, router: modelCompatibility.router })(input);
+				const result = await createProductionSummarizer({
+					models,
+					router: modelCompatibility.router,
+					retryPolicy: runtimeSettings.retry,
+					providerGate,
+				})(input);
 				if (!result.ok) throw new Error(result.code);
 				return result.summary;
 			},
@@ -254,22 +281,34 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			layout,
 			defaultCwd: cwd,
 			systemPrompt: buildSystemPrompt(cwd, layout.agents),
-			models,
+				models,
 			settings,
+				runtimeSettings,
+				providerGate,
 			traceRecorderFactory,
 			toolResultOverflowStore,
 			processPort,
 			security,
-			createSecurity: (input) => createProductionHostSecurity({
-				layout,
-				scope,
-				cwd: input.cwd,
-				sessionId: input.sessionId,
-				...(input.workspaceBinding === undefined ? {} : { workspaceBinding: input.workspaceBinding }),
-				runtimeEventWriter,
-				permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
-				securitySources: hostSecuritySources(),
-			}),
+			createSecurity: async (input) => {
+				const workspaceRoot = resolve(input.workspaceBinding?.worktreePath ?? input.cwd);
+				const resolvedAdditionalRoots = await resolveAdditionalWorkspaceRoots({
+					adapter: createNativeWorkspacePathAdapter(runtimeWorkspacePlatform()),
+					workspaceRoot,
+					paths: runtimeSettings.workspacePolicy.additionalDirectories,
+				});
+				if (!resolvedAdditionalRoots.ok) throw new Error(`${resolvedAdditionalRoots.error.code}: ${resolvedAdditionalRoots.error.message}`);
+				return createProductionHostSecurity({
+					layout,
+					scope,
+					cwd: input.cwd,
+					sessionId: input.sessionId,
+					...(input.workspaceBinding === undefined ? {} : { workspaceBinding: input.workspaceBinding }),
+					runtimeEventWriter,
+					permissionPrompter: new HostReversePermissionPrompter(() => residentHost),
+					securitySources: hostSecuritySources(),
+					additionalWorkspaceRoots: resolvedAdditionalRoots.value.map((root) => root.canonicalPath),
+				});
+			},
 			runtimeEventWriter,
 			workspaceBinding,
 			workspaceBindingStore,
@@ -434,23 +473,29 @@ export async function runResidentRuntimeHost(): Promise<void> {
 
 /** Production composition helper used by the resident Host and its tests. */
 export function createProductionModelContextDomainPort(options: {
-	readonly layout: ReturnType<typeof buildRunledgerLayout>;
-	readonly scope: HostCompatibilityEnvelope;
+		readonly layout: ReturnType<typeof buildRunledgerLayout>;
+		readonly scope: HostCompatibilityEnvelope;
+		readonly runtimeSettings?: import("../storage/settings-resolver.ts").EffectiveRuntimeSettingsSnapshot;
 	readonly policyCeilingDigest?: HostModelContextDomainOptions["policyCeilingDigest"];
 	readonly modelRouter?: HostModelContextDomainOptions["modelRouter"];
 	readonly modelRouterUnavailable?: HostModelContextDomainOptions["modelRouterUnavailable"];
 	readonly summarizer?: HostModelContextDomainOptions["summarizer"];
+	readonly compactionPolicy?: HostModelContextDomainOptions["compactionPolicy"];
+	readonly memoryBackend?: HostModelContextDomainOptions["memoryBackend"];
 }) {
 	return createHostModelContextDomainPort({
 		layout: options.layout,
 		workspaceStorageKey: options.scope.workspaceStorageKey,
 		authorityId: options.scope.authorityId,
 		tenantId: options.scope.tenantId,
-		workspaceId: options.scope.workspaceId,
+			workspaceId: options.scope.workspaceId,
+			...(options.runtimeSettings === undefined ? {} : { runtimeSettings: options.runtimeSettings }),
 		policyCeilingDigest: options.policyCeilingDigest ?? runtimeDigest({ securityAdapterDigest: options.scope.securityAdapterDigest }),
 		...(options.modelRouter === undefined ? {} : { modelRouter: options.modelRouter }),
 		...(options.modelRouterUnavailable === undefined ? {} : { modelRouterUnavailable: options.modelRouterUnavailable }),
 		...(options.summarizer === undefined ? {} : { summarizer: options.summarizer }),
+		...(options.compactionPolicy === undefined ? {} : { compactionPolicy: options.compactionPolicy }),
+		...(options.memoryBackend === undefined ? {} : { memoryBackend: options.memoryBackend }),
 	});
 }
 

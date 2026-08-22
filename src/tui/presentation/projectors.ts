@@ -7,10 +7,11 @@
 import type { PortAvailability, TuiField } from "../application/common.ts";
 import type { TuiState } from "../application/state.ts";
 import type { PresentationBlock, StatusIndicatorView } from "../presentation.ts";
-import { STATUS_DETAILS_MAX_LINES, STATUS_INDICATOR_FRAMES, formatElapsedCompact } from "../opentui/block-layout.ts";
+import { STATUS_DETAILS_MAX_LINES, formatElapsedCompact } from "../opentui/block-layout.ts";
 import type { ActiveRunState } from "../timeline/types.ts";
 import type { SafeBoundedText } from "./tools/types.ts";
 import { timelineToBlocks } from "../timeline/selectors.ts";
+import { statusSymbolsFor, type SymbolPreset } from "../symbols.ts";
 import type {
   ActiveStateView,
   ActivityPriority,
@@ -45,6 +46,7 @@ export function boundedField(value: unknown, maxBytes = 80): TuiField<string> {
 export interface StatusIndicatorFacts {
 	readonly nowMs?: number;
 	readonly animationFrame?: number;
+	readonly symbolPreset?: SymbolPreset;
 	readonly interruptKey?: string;
 	readonly inlineMessage?: string;
 	readonly details?: readonly SafeBoundedText[];
@@ -62,11 +64,12 @@ export function projectStatusIndicator(
 		? Math.max(0, nowMs - resumedAtMs)
 		: 0;
 	const elapsed = formatElapsedCompact((activeRun.activeDurationMs + runningDeltaMs) / 1_000);
-	const frame = Math.max(0, Math.floor(facts.animationFrame ?? 0)) % STATUS_INDICATOR_FRAMES.length;
+	const symbols = statusSymbolsFor(facts.symbolPreset);
+	const frame = Math.max(0, Math.floor(facts.animationFrame ?? 0)) % symbols.activityFrames.length;
 	const details = facts.details?.slice(0, STATUS_DETAILS_MAX_LINES);
 	const inlineMessage = facts.inlineMessage === undefined ? undefined : sanitizeLabel(facts.inlineMessage, 120);
 	return {
-		indicator: activeRun.state === "waiting" ? "⏸" : STATUS_INDICATOR_FRAMES[frame] ?? STATUS_INDICATOR_FRAMES[0],
+		indicator: activeRun.state === "waiting" ? symbols.waitingGlyph : symbols.activityFrames[frame] ?? symbols.activityFrames[0],
 		header: activeRun.state === "waiting" ? "Waiting" : "Working",
 		elapsed,
 		...(activeRun.state === "working" && facts.interruptKey !== undefined ? { interruptKey: facts.interruptKey } : {}),
@@ -203,8 +206,10 @@ export interface InteractivePresentationFacts {
   readonly composerMode?: ComposerFacts["mode"];
   readonly footerStatus?: string;
   readonly securityMode?: "guarded" | "unrestricted" | "unknown";
-  /** 仅影响 thinking block 的展示投影，不改变 canonical Timeline。 */
-  readonly hideThinking?: boolean;
+	/** 仅影响 thinking block 的展示投影，不改变 canonical Timeline。 */
+	readonly hideThinking?: boolean;
+	/** 仅影响 prompt-cache miss divider 的展示投影，不改变 canonical Timeline。 */
+	readonly cacheMissMarker?: boolean;
 }
 
 /**
@@ -253,7 +258,7 @@ export function projectInteractivePresentation(
           ? "waiting"
           : "idle");
   return {
-    timeline: timelineToBlocks(state.timeline, { hideThinking: facts.hideThinking }),
+		timeline: timelineToBlocks(state.timeline, { hideThinking: facts.hideThinking, cacheMissMarker: facts.cacheMissMarker }),
     sessionStrip: projectSessionStrip(state.bootstrap, {
       securityMode: facts.securityMode,
       ...facts.sessionStrip,

@@ -2,7 +2,8 @@ import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
 import type { Api, Model, ModelThinkingLevel } from "../types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
-import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
+import { updateProjectSettings } from "../storage/settings-manager.ts";
+import { SettingsResolver, type EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
 import type { RunledgerLayout } from "./contracts/public.ts";
 import type { SessionReplay, SessionRuntimeConfig } from "../storage/session-codec.ts";
 import { appendRuntimeConfig } from "../storage/session-codec.ts";
@@ -21,6 +22,7 @@ import type {
   UserAgentMessage,
   AgentRunBudget,
   AgentRunBudgetUsage,
+	CompactionSummarizer,
 } from "./types.ts";
 import { DEFAULT_AGENT_RUN_BUDGET } from "./types.ts";
 import type { ExtensionHookRuntime, ExtensionHookRuntimeResult } from "../extensions/turn-lifecycle.ts";
@@ -37,13 +39,32 @@ import {
 import type { TraceRecorderFactory } from "./trace/composition.ts";
 import type { ExecutionEnv } from "./execution-env.ts";
 import {
-  createChildModelRuntimeFactory,
-  createSessionModelStreamFn,
-  type ChildModelRequestRouter,
-  type ChildModelRuntimeFactoryPort,
+	createChildModelRuntimeFactory,
+	createProviderRequestGate,
+	createSessionModelStreamFn,
+	type ChildModelRequestRouter,
+	type ChildModelRuntimeFactoryPort,
+	type ProviderRequestGate,
 } from "./agents/child-model-runtime.ts";
+import type { RetryPolicy } from "./retry/policy.ts";
+import { resolveProviderPolicy, type ProviderPolicyProjection, type ToolPolicyProjection } from "../storage/settings-policies.ts";
 
 export interface ModelRequestRouter extends ChildModelRequestRouter {}
+
+function settingsRuntimeConfig(
+	settings: EffectiveRuntimeSettingsSnapshot,
+): Pick<SessionRuntimeConfig, "settingsDigest" | "settingsSourceLayers" | "settingsApplyModes" | "settingsDiagnostics"> {
+	return {
+		settingsDigest: settings.digest.digest,
+		settingsSourceLayers: { ...settings.sourceLayers },
+		settingsApplyModes: { ...settings.applyModes },
+		settingsDiagnostics: settings.diagnostics.map(({ code, path, source }) => ({
+			code,
+			path,
+			...(source === undefined ? {} : { source }),
+		})),
+	};
+}
 
 export interface RuntimeSelectionOverrides {
   provider?: string;
@@ -57,10 +78,16 @@ export interface InteractiveSessionControllerOptions {
   systemPrompt: string;
   models: Models;
   settings: ProjectSettings;
+  /** Composition 注入的 immutable effective settings；每个 Session/turn 只消费这一份。 */
+  runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
+  /** Host prompt admission supplies exactly one immutable snapshot per new run. */
+  runtimeSettingsForTurn?: () => EffectiveRuntimeSettingsSnapshot | Promise<EffectiveRuntimeSettingsSnapshot>;
   replay: SessionReplay;
   ledger: LedgerSink;
   overrides?: RuntimeSelectionOverrides;
   tools?: AgentTool[];
+  /** Rebuild governed tools when a next-turn policy snapshot is adopted. */
+  toolsForRuntimeSettings?: (settings: EffectiveRuntimeSettingsSnapshot) => AgentTool[];
   authorizationPolicy?: ToolAuthorizationPolicy;
   traceRecorderFactory?: TraceRecorderFactory;
   executionEnv?: ExecutionEnv;
@@ -83,6 +110,14 @@ export interface InteractiveSessionControllerOptions {
   runBudget?: AgentRunBudget;
   /** Session Runtime active-time authority；production composition 必须注入。 */
   runBudgetUsage?: AgentRunBudgetUsage;
+  /** 当前 Session turn 使用的 immutable retry policy。 */
+  retryPolicy?: RetryPolicy;
+	/** Host-owned provider gate shared by the Session side requests and child runtime. */
+	providerGate?: ProviderRequestGate;
+	/** Host-owned model path for automatic/manual/overflow compaction. */
+	compactionSummarizer?: CompactionSummarizer;
+	/** Rebuilds the Host summarizer when next-turn retry/provider policy changes. */
+	compactionSummarizerForRuntimeSettings?: (settings: EffectiveRuntimeSettingsSnapshot) => CompactionSummarizer;
 	/** Accepted prompt metadata hook; must not mutate the Agent transcript. */
 	onAcceptedUserPrompt?: (text: string) => void;
 	/** Cancels session-scoped background work that captured the previous model selection. */
@@ -210,9 +245,13 @@ export class InteractiveSessionController {
   private readonly systemPrompt: string;
   private readonly models: Models;
   private settings: ProjectSettings;
+  private runtimeSettings: EffectiveRuntimeSettingsSnapshot;
+	private readonly runtimeSettingsForTurn: InteractiveSessionControllerOptions["runtimeSettingsForTurn"];
   private readonly replay: SessionReplay;
   private readonly ledgerSink: LedgerSink;
-  private readonly tools: AgentTool[];
+  private tools: AgentTool[];
+	private readonly toolsForRuntimeSettings: InteractiveSessionControllerOptions["toolsForRuntimeSettings"];
+	private readonly additionalTools: AgentTool[] = [];
   private readonly policy: ToolAuthorizationPolicy;
   private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
   private readonly executionEnv: ExecutionEnv | undefined;
@@ -226,6 +265,11 @@ export class InteractiveSessionController {
   private readonly extensionTurnAbort: (() => Promise<void>) | undefined;
   private readonly runBudget: AgentRunBudget;
   private readonly runBudgetUsage: AgentRunBudgetUsage | undefined;
+	private retryPolicy: RetryPolicy | undefined;
+	private providerPolicy: ProviderPolicyProjection;
+	private readonly providerGate: ProviderRequestGate;
+	private compactionSummarizer: CompactionSummarizer | undefined;
+	private readonly compactionSummarizerForRuntimeSettings: InteractiveSessionControllerOptions["compactionSummarizerForRuntimeSettings"];
 	private readonly onAcceptedUserPrompt: ((text: string) => void) | undefined;
 	private readonly onModelSelectionChanged: (() => void) | undefined;
   private readonly listeners = new Set<AgentEventSink>();
@@ -242,9 +286,13 @@ export class InteractiveSessionController {
     this.systemPrompt = opts.systemPrompt;
     this.models = opts.models;
     this.settings = { ...opts.settings };
+    this.runtimeSettings = opts.runtimeSettings ?? new SettingsResolver({ user: opts.settings }).effectiveRuntimeSnapshot();
+	this.runtimeSettingsForTurn = opts.runtimeSettingsForTurn;
     this.replay = opts.replay;
     this.ledgerSink = opts.ledger;
-    this.tools = opts.tools ?? productionTools(opts.cwd, opts.executionEnv);
+    this.toolsForRuntimeSettings = opts.toolsForRuntimeSettings
+		?? (opts.tools === undefined ? (settings) => productionTools(opts.cwd, opts.executionEnv, settings.toolPolicy) : undefined);
+    this.tools = opts.tools ?? this.toolsForRuntimeSettings?.(this.runtimeSettings) ?? [];
     this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
     this.traceRecorderFactory = opts.traceRecorderFactory;
     this.executionEnv = opts.executionEnv;
@@ -258,6 +306,15 @@ export class InteractiveSessionController {
     this.extensionTurnAbort = opts.extensionTurnAbort;
     this.runBudget = opts.runBudget ?? DEFAULT_AGENT_RUN_BUDGET;
     this.runBudgetUsage = opts.runBudgetUsage;
+    // composition root 注入 snapshot 时，legacy retryPolicy 仅保留兼容类型，
+    // 不得覆盖当前 Session 已冻结的 effective policy。
+    this.retryPolicy = opts.runtimeSettings === undefined
+      ? (opts.retryPolicy ?? this.runtimeSettings.retry)
+      : this.runtimeSettings.retry;
+	this.providerPolicy = this.runtimeSettings.providerPolicy;
+	this.providerGate = opts.providerGate ?? createProviderRequestGate(this.providerPolicy);
+	this.compactionSummarizerForRuntimeSettings = opts.compactionSummarizerForRuntimeSettings;
+	this.compactionSummarizer = opts.compactionSummarizer ?? opts.compactionSummarizerForRuntimeSettings?.(this.runtimeSettings);
 	this.onAcceptedUserPrompt = opts.onAcceptedUserPrompt;
 	this.onModelSelectionChanged = opts.onModelSelectionChanged;
     this.selection = selection;
@@ -268,11 +325,11 @@ export class InteractiveSessionController {
     const selection = await resolveInitialSelection(opts);
     const controller = new InteractiveSessionController(opts, selection);
     if (selection.model) {
-      await appendRuntimeConfig(
-        opts.ledger,
-        controller.configSnapshot(),
-        opts.replay.messages.length > 0 ? "resume" : "startup",
-      );
+		await appendRuntimeConfig(
+			opts.ledger,
+			{ ...controller.configSnapshot(), ...settingsRuntimeConfig(controller.runtimeSettings) },
+			opts.replay.messages.length > 0 ? "resume" : "startup",
+		);
     }
     return controller;
   }
@@ -292,6 +349,11 @@ export class InteractiveSessionController {
 
   get currentSelection(): RuntimeSelection {
     return { ...this.selection };
+  }
+
+  /** 当前 Session/turn 使用的不可变 settings snapshot；不暴露 raw JSON。 */
+  runtimeSettingsSnapshot(): EffectiveRuntimeSettingsSnapshot {
+    return this.runtimeSettings;
   }
 
   get messages(): readonly AgentMessage[] {
@@ -320,6 +382,7 @@ export class InteractiveSessionController {
     for (const tool of tools) {
       if (existing.has(tool.name)) throw new Error(`duplicate Session tool: ${tool.name}`);
       existing.add(tool.name);
+	  this.additionalTools.push(tool);
       this.tools.push(tool);
     }
     this.agent?.setTools(this.tools);
@@ -354,9 +417,10 @@ export class InteractiveSessionController {
 
   async getAvailableModels(provider?: string): Promise<readonly Model<Api>[]> {
     const available = await this.models.getAvailable(provider);
-    const enabled = this.settings.enabledModels;
-    if (!enabled || enabled.length === 0) return available;
-    return available.filter((model) => enabled.some((entry) =>
+	    const policyFiltered = applyProviderPolicy(available, this.providerPolicy);
+	    const enabled = this.settings.enabledModels;
+	    if (!enabled || enabled.length === 0) return policyFiltered;
+	    return policyFiltered.filter((model) => enabled.some((entry) =>
       entry === model.id || entry === `${model.provider}/${model.id}`
     ));
   }
@@ -372,6 +436,9 @@ export class InteractiveSessionController {
   }
 
   async selectModel(model: Model<Api>): Promise<void> {
+	if (this.providerPolicy.disabledProviders?.includes(model.provider)) {
+		throw new Error(`Provider ${model.provider} is disabled by settings`);
+	}
     // 命令面只传 { provider, id } 等最小形状,按 catalog 解析完整 model
     // (baseUrl/api/reasoning/compat 等),避免流式调用时字段缺失。
     const resolved = this.models.getModel(model.provider, model.id) ?? model;
@@ -403,6 +470,10 @@ export class InteractiveSessionController {
       else agent.steer(text);
       return;
     }
+	await this.admitRuntimeSettingsTurn();
+	if (this.providerPolicy.disabledProviders?.includes(model.provider)) {
+		throw new Error(`Provider ${model.provider} is disabled by settings`);
+	}
     const auth = await this.models.getAuth(model);
     if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
     await this.extensionTurnAdmission?.();
@@ -445,7 +516,7 @@ export class InteractiveSessionController {
   }
 
   /** 为 Session-owned child runtime 提供当前 selection 与同一 model router。 */
-  createChildModelRuntimeFactory(): ChildModelRuntimeFactoryPort {
+	createChildModelRuntimeFactory(): ChildModelRuntimeFactoryPort {
     return createChildModelRuntimeFactory({
       models: this.models,
       sessionId: this.sessionId,
@@ -454,10 +525,23 @@ export class InteractiveSessionController {
         thinkingLevel: this.selection.thinkingLevel,
       }),
       ...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
+	  getRetryPolicy: () => this.retryPolicy,
+	  getProviderPolicy: () => this.providerPolicy,
+	  providerGate: this.providerGate,
     });
-  }
+	}
 
-  private ensureAgent(): void {
+	/** Title/side-request composition must share this Session-wide gate. */
+	get providerRequestGate(): ProviderRequestGate {
+		return this.providerGate;
+	}
+
+	/** Exposes the immutable retry policy captured for this Session turn seam. */
+	get retryPolicySnapshot(): RetryPolicy {
+		return this.retryPolicy ?? this.runtimeSettings.retry;
+	}
+
+	private ensureAgent(): void {
     const model = this.selection.model;
     if (!model) return;
     if (this.agent) return;
@@ -465,6 +549,9 @@ export class InteractiveSessionController {
       models: this.models,
       sessionId: this.sessionId,
       ...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
+      ...(this.retryPolicy === undefined ? {} : { retryPolicy: this.retryPolicy }),
+	  providerPolicy: this.providerPolicy,
+	  providerGate: this.providerGate,
     });
     const authorization = authorizationBeforeToolCall(this.policy);
     const beforeToolCall = async (request: Parameters<NonNullable<AgentLoopConfig["beforeToolCall"]>>[0], signal?: AbortSignal) => {
@@ -492,6 +579,8 @@ export class InteractiveSessionController {
       ledger: this.ledgerSink,
       loopConfig: {
         cwd: this.cwd,
+        runtimeSettings: this.runtimeSettings,
+		...(this.compactionSummarizer === undefined ? {} : { compactionSummarizer: this.compactionSummarizer }),
         beforeToolCall,
         afterToolCall,
         executionEnv: this.executionEnv,
@@ -502,12 +591,45 @@ export class InteractiveSessionController {
         ...(this.contextAssemblySink === undefined ? {} : { contextAssemblySink: this.contextAssemblySink }),
       },
       toolExecution: "sequential",
-      steeringMode: this.settings.steeringMode ?? "one-at-a-time",
-      followUpMode: this.settings.followUpMode ?? "one-at-a-time",
+      steeringMode: this.runtimeSettings.sessionPolicy.steeringMode,
+      followUpMode: this.runtimeSettings.sessionPolicy.followUpMode,
       traceRecorderFactory: this.traceRecorderFactory,
     });
     this.unsubscribeAgent = this.agent.subscribe((event) => this.dispatch(event));
   }
+
+	private async admitRuntimeSettingsTurn(): Promise<void> {
+		if (this.runtimeSettingsForTurn === undefined) return;
+		const snapshot = await this.runtimeSettingsForTurn();
+		const policyChanged = snapshot.digest.digest !== this.runtimeSettings.digest.digest;
+		this.runtimeSettings = snapshot;
+		this.retryPolicy = snapshot.retry;
+		this.providerPolicy = snapshot.providerPolicy;
+		this.providerGate.reconfigure?.(snapshot.providerPolicy);
+		if (policyChanged && this.compactionSummarizerForRuntimeSettings !== undefined) {
+			this.compactionSummarizer = this.compactionSummarizerForRuntimeSettings(snapshot);
+		}
+		if (this.toolsForRuntimeSettings !== undefined) {
+			this.tools = [...this.toolsForRuntimeSettings(snapshot), ...this.additionalTools];
+		}
+		const agent = this.agent;
+		if (agent === undefined) return;
+		agent.setTools(this.tools);
+		agent.steeringMode = snapshot.sessionPolicy.steeringMode;
+		agent.followUpMode = snapshot.sessionPolicy.followUpMode;
+		agent.setLoopConfig({
+			runtimeSettings: snapshot,
+			...(this.compactionSummarizer === undefined ? {} : { compactionSummarizer: this.compactionSummarizer }),
+		});
+		agent.setStreamFn(createSessionModelStreamFn({
+			models: this.models,
+			sessionId: this.sessionId,
+			...(this.modelRequestRouter === undefined ? {} : { modelRequestRouter: this.modelRequestRouter }),
+			retryPolicy: snapshot.retry,
+			providerPolicy: snapshot.providerPolicy,
+			providerGate: this.providerGate,
+		}));
+	}
 
   private async runExtensionHook(
     event: import("../extensions/hooks/types.ts").HookEventName,
@@ -541,17 +663,15 @@ export class InteractiveSessionController {
 
   private async persistSelection(source: "model" | "thinking"): Promise<void> {
     const config = this.configSnapshot();
-	const persisted = await loadProjectSettings({ layout: this.layout });
-    this.settings = {
-	  ...persisted,
-	  ...this.settings,
-	  ...(persisted.theme === undefined ? {} : { theme: persisted.theme }),
-      provider: config.provider,
-      model: config.model,
-      thinkingLevel: config.thinkingLevel,
-    };
-    await saveProjectSettings({ layout: this.layout }, this.settings);
-    await appendRuntimeConfig(this.ledgerSink, config, source);
+	this.settings = await updateProjectSettings({ layout: this.layout }, (persisted) => ({
+		...persisted,
+		...this.settings,
+		...(persisted.theme === undefined ? {} : { theme: persisted.theme }),
+		provider: config.provider,
+		model: config.model,
+		thinkingLevel: config.thinkingLevel,
+	}));
+		await appendRuntimeConfig(this.ledgerSink, { ...config, ...settingsRuntimeConfig(this.runtimeSettings) }, source);
   }
 }
 
@@ -566,7 +686,8 @@ async function resolveInitialSelection(
 ): Promise<RuntimeSelection> {
   const cli = normalizeModelOverride(opts.overrides ?? {});
   const session = opts.replay.config;
-  const settings = opts.settings;
+	const settings = opts.settings;
+	const providerPolicy = opts.runtimeSettings?.providerPolicy ?? resolveProviderPolicy(settings);
   const provider = cli.provider ?? session.provider ?? settings.provider;
   const modelId = cli.model ??
     (provider === session.provider ? session.model : undefined) ??
@@ -584,10 +705,16 @@ async function resolveInitialSelection(
       );
     }
   }
-  if (!model && (opts.overrides?.provider || opts.overrides?.model)) {
+	if (!model && (opts.overrides?.provider || opts.overrides?.model)) {
     throw new Error(`Unknown model selection: ${provider ?? "<provider>"}/${modelId ?? "<model>"}`);
-  }
-  if (!model) model = (await opts.models.getAvailable())[0];
+	}
+	if (model !== undefined && providerPolicy.disabledProviders?.includes(model.provider)) {
+		if (opts.overrides?.provider !== undefined || opts.overrides?.model !== undefined) {
+			throw new Error(`Provider ${model.provider} is disabled by settings`);
+		}
+		model = undefined;
+	}
+	if (!model) model = applyProviderPolicy(await opts.models.getAvailable(), providerPolicy)[0];
   return {
     provider: model?.provider ?? provider,
     model,
@@ -622,10 +749,19 @@ function interactiveProviderAuthTypes(provider: Provider): AuthType[] {
   return types;
 }
 
-function productionTools(cwd: string, executionEnv?: ExecutionEnv): AgentTool[] {
+function productionTools(cwd: string, executionEnv: ExecutionEnv | undefined, toolPolicy: ToolPolicyProjection): AgentTool[] {
   const excluded = new Set(["Skill", "NotebookEdit", "echo"]);
   return createStdlibTools(cwd, {
     requireExecutionEnv: true,
     ...(executionEnv === undefined ? {} : { executionEnv }),
+    toolPolicy,
   }).toContext().filter((tool) => !excluded.has(tool.name));
+}
+
+function applyProviderPolicy(
+	models: readonly Model<Api>[],
+	policy: ProviderPolicyProjection,
+): readonly Model<Api>[] {
+	const disabled = new Set(policy.disabledProviders ?? []);
+	return models.filter((model) => !disabled.has(model.provider));
 }

@@ -36,7 +36,9 @@ export interface LsOperations {
 
 /** ls 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface LsToolOptions {
-  operations?: LsOperations;
+	operations?: LsOperations;
+	/** settings 注入的默认条目上限；调用参数 limit 仍优先。 */
+	defaultLimit?: number;
 }
 
 const DEFAULT_LIMIT = 500;
@@ -45,7 +47,8 @@ export function createLsTool(
   cwd: string,
   options: LsToolOptions = {},
 ): AgentTool<typeof lsSchema, LsToolDetails> {
-  const ops = options.operations ?? localLsOperations();
+	const ops = options.operations ?? localLsOperations();
+	const defaultLimit = options.defaultLimit ?? DEFAULT_LIMIT;
   return {
     name: "ls",
     label: "ls",
@@ -55,7 +58,7 @@ export function createLsTool(
     isConcurrencySafe: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<LsToolDetails>> {
       const dirPath = resolveToCwd(params.path ?? "", cwd);
-      const limit = params.limit ?? DEFAULT_LIMIT;
+		const limit = params.limit ?? defaultLimit;
       if (!(await ops.exists(dirPath))) {
         throw new Error(`Path not found: ${dirPath}`);
       }

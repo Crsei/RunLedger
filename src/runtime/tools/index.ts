@@ -44,6 +44,13 @@ import { createProcessResizeTool } from "./process-resize.ts";
 import type { ProcessToolClient } from "./process-tool-support.ts";
 import { withBuiltinCapabilityClaims } from "./capabilities.ts";
 import { createRequestPermissionsTool, type RequestPermissionsPort } from "../../security/tools/request-permissions.ts";
+import type { ToolPolicyProjection } from "../../storage/settings-policies.ts";
+import {
+	createTaskListTool,
+	createTaskTool,
+	createTaskUpdateTool,
+	type TaskToolOptions,
+} from "../tasks/task-tools.ts";
 
 export interface StdlibToolsOptions {
 	readonly managedProcess?: ManagedBackgroundBashOperations & Partial<ProcessToolClient>;
@@ -55,6 +62,10 @@ export interface StdlibToolsOptions {
 	readonly skillLoader?: import("./skill.ts").SkillLoader;
 	/** Host-governed permission request port；P6 接入完整 approval UX。 */
 	readonly permissionRequester?: RequestPermissionsPort;
+	/** 当前 turn 的 immutable tool policy；不改变 ExecutionGateway authority。 */
+	readonly toolPolicy?: ToolPolicyProjection;
+	/** Session-owned task ledger；未注入时不把 task tools 暴露给 production context。 */
+	readonly taskOptions?: TaskToolOptions;
 }
 
 /**
@@ -74,22 +85,48 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
   const helperShell = options.managedProcess?.exec === undefined
     ? env?.shell
     : managedProcessShell(options.managedProcess.exec, cwd);
-	register(createReadTool(cwd, env === undefined ? {} : { operations: readOperations(env) }));
-	register(createWriteTool(cwd, env === undefined ? {} : { operations: writeOperations(env) }));
-	register(createEditTool(cwd, env === undefined ? {} : { operations: editOperations(env) }));
+	if (toolEnabled(options.toolPolicy, "read")) register(createReadTool(cwd, {
+		...(env === undefined ? {} : { operations: readOperations(env) }),
+		...(options.toolPolicy?.read?.defaultLimit === undefined ? {} : { defaultLimit: options.toolPolicy.read.defaultLimit }),
+		...(options.toolPolicy?.read?.renderMarkdown === true ? { renderMarkdown: true } : {}),
+	}));
+	if (toolEnabled(options.toolPolicy, "write")) register(createWriteTool(cwd, env === undefined ? {} : { operations: writeOperations(env) }));
+	if (toolEnabled(options.toolPolicy, "edit")) register(createEditTool(cwd, env === undefined ? {} : { operations: editOperations(env) }));
 	register(createMultiEditTool(cwd, env === undefined ? {} : { fileSystem: env.fs }));
-	register(createBashTool(cwd, {
+	if (toolEnabled(options.toolPolicy, "bash")) register(createBashTool(cwd, {
 		...(env === undefined ? {} : { operations: { exec: (command, commandOptions) => env.shell.exec(command, commandOptions) } }),
 		...(options.managedProcess === undefined ? {} : { managedProcess: options.managedProcess }),
+		...(options.toolPolicy?.bash?.defaultTimeoutMs === undefined ? {} : { defaultTimeoutMs: options.toolPolicy.bash.defaultTimeoutMs }),
+		...(options.toolPolicy?.bash?.maxOutputChars === undefined ? {} : { defaultMaxOutputChars: options.toolPolicy.bash.maxOutputChars }),
 	}));
-  register(createGrepTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
-  register(createFindTool(cwd, helperShell === undefined ? {} : { shell: helperShell }));
-  register(createGlobTool(cwd, env === undefined ? {} : { operations: globOperations(env) }));
-  register(createLsTool(cwd, env === undefined ? {} : { operations: lsOperations(env) }));
-  register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
+	if (toolEnabled(options.toolPolicy, "grep")) register(createGrepTool(cwd, {
+		...(helperShell === undefined ? {} : { shell: helperShell }),
+		...(options.toolPolicy?.grep?.defaultLimit === undefined ? {} : { defaultLimit: options.toolPolicy.grep.defaultLimit }),
+		...(options.toolPolicy?.grep?.contextBefore === undefined ? {} : { contextBefore: options.toolPolicy.grep.contextBefore }),
+		...(options.toolPolicy?.grep?.contextAfter === undefined ? {} : { contextAfter: options.toolPolicy.grep.contextAfter }),
+	}));
+	if (toolEnabled(options.toolPolicy, "find")) register(createFindTool(cwd, {
+		...(helperShell === undefined ? {} : { shell: helperShell }),
+		...(options.toolPolicy?.find?.defaultLimit === undefined ? {} : { defaultLimit: options.toolPolicy.find.defaultLimit }),
+	}));
+	if (toolEnabled(options.toolPolicy, "glob")) register(createGlobTool(cwd, {
+		...(env === undefined ? {} : { operations: globOperations(env) }),
+		...(options.toolPolicy?.glob?.defaultLimit === undefined ? {} : { defaultLimit: options.toolPolicy.glob.defaultLimit }),
+	}));
+	if (toolEnabled(options.toolPolicy, "ls")) register(createLsTool(cwd, {
+		...(env === undefined ? {} : { operations: lsOperations(env) }),
+		...(options.toolPolicy?.ls?.defaultLimit === undefined ? {} : { defaultLimit: options.toolPolicy.ls.defaultLimit }),
+	}));
+	if (toolEnabled(options.toolPolicy, "webFetch")) register(createWebFetchTool(env === undefined ? {} : { network: env.network ?? unavailableNetwork() }));
   register(createSkillTool(options.skillLoader === undefined ? {} : { loader: options.skillLoader }));
 	register(createNotebookEditTool());
 	if (options.permissionRequester !== undefined) register(createRequestPermissionsTool(options.permissionRequester));
+	if (options.taskOptions !== undefined) {
+		register(createTaskTool(options.taskOptions));
+		register(createTaskUpdateTool(options.taskOptions));
+		register(createTaskListTool(options.taskOptions));
+		register(createTodoWriteTool(options.taskOptions));
+	}
 	register(echoTool);
 	if (options.managedProcess) {
 		const processClient = options.managedProcess;
@@ -102,6 +139,14 @@ export function createStdlibTools(cwd: string = process.cwd(), options: StdlibTo
 		}
 	}
 	return r;
+}
+
+type ToolPolicyGateName = "read" | "write" | "edit" | "bash" | "grep" | "find" | "glob" | "ls" | "webFetch";
+
+function toolEnabled(policy: ToolPolicyProjection | undefined, name: ToolPolicyGateName): boolean {
+	if (policy === undefined) return true;
+	const group = policy[name];
+	return group?.enabled !== false;
 }
 
 function readOperations(env: ExecutionEnv): NonNullable<ReadToolOptions["operations"]> {
@@ -189,9 +234,7 @@ function isCompleteProcessToolClient(
  * WebFetch + Skill + NotebookEdit。
  */
 export function createExtendedTools(cwd: string = process.cwd(), taskOptions: { ledger?: import("../ledger/types.ts").LedgerSink } = {}): ToolRegistry {
-  const r = createStdlibTools(cwd);
-  r.register(createTodoWriteTool(taskOptions), { namespace: "stdlib" });
-  return r;
+  return createStdlibTools(cwd, { taskOptions });
 }
 
 /** AgentTool[] 视图,与 AgentContext.tools 直接相容。 */

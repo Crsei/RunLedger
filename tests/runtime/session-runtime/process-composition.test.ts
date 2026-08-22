@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as sessionDomain from "../../../src/runtime/session-runtime/domain.ts";
@@ -134,6 +134,47 @@ describe("S4 Session managed process composition", () => {
 		expect(result.details).toMatchObject({ exitCode: 0 });
 		expect(result.content).toEqual([{ type: "text", text: expect.stringContaining("session-foreground:input-ok") }]);
 		expect(JSON.stringify(result)).not.toContain("foreground process facade unavailable");
+	});
+
+	it("uses the configured shell executable in the production security and process composition", async () => {
+		if (IS_WINDOWS) return;
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const shellPath = join(root, "configured-shell");
+		await writeFile(shellPath, "#!/bin/sh\nprintf configured-session-shell\\n\n", "utf8");
+		await chmod(shellPath, 0o755);
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-configured-shell"),
+			runtimeId: createRuntimeId("runtime", "process-configured-shell"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-configured-shell");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-configured-shell"),
+			securitySources: [securitySource()],
+			shellPath,
+		});
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+			shellPath,
+		});
+		try {
+			const result = await process.toolClient().exec({ command: "printf ignored", cwd: root, timeoutMs: 5_000 });
+			expect(result.exitCode).toBe(0);
+			expect(result.stdout).toContain("configured-session-shell");
+		} finally {
+			await process.shutdown("paused");
+			await security.close();
+		}
 	});
 
 	it("settles a foreground Bash timeout through the Session-owned process facade", async () => {

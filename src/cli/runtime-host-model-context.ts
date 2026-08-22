@@ -47,6 +47,8 @@ import {
 	InMemoryCompactionCheckpointStore,
 	type CompactionCheckpointStorePort,
 } from "../runtime/context/compaction/checkpoint-store.ts";
+import type { CompactionPolicy } from "../runtime/context/compaction/cut-planner.ts";
+import type { EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
 import { isMemoryStoreSnapshot, MemoryStoreSnapshotCodec, type MemoryStoreSnapshot } from "../runtime/context/memory/persistence.ts";
 import { MemoryStore, type MemoryProposalInput, type MemorySearchOptions } from "../runtime/context/memory/store.ts";
 import { renderMemoryProjection } from "../runtime/context/memory/projection.ts";
@@ -109,6 +111,10 @@ export interface HostModelContextDomainOptions {
 	/** Typed reason exposed by read-only queries when the canonical manifest is unavailable. */
 	readonly modelRouterUnavailable?: string;
 	readonly summarizer?: (input: { readonly transcript: string; readonly focus?: string }) => Promise<string>;
+	readonly compactionPolicy?: CompactionPolicy;
+	readonly memoryBackend?: "off" | "local";
+	/** Host-owned immutable settings snapshot; legacy policy fields remain test seams. */
+	readonly runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
 }
 
 interface SessionDomainState {
@@ -132,6 +138,8 @@ interface HostModelContextSnapshot {
 
 /** Internal Host composition seam for synchronous tool-admission reads. */
 export interface HostModelContextDomainPort extends HostRuntimeDomainPort {
+	/** Host composition 冻结的 settings provenance；不从 domain 内重新读取文件。 */
+	runtimeSettingsSnapshot?: () => EffectiveRuntimeSettingsSnapshot;
 	planState(sessionId: string): PlanModeState | undefined;
 	/**
 	 * 生成领域上下文碎片（Plan Mode 状态 + approved memory 片段），由 Host
@@ -282,7 +290,17 @@ function isDomainSnapshot(value: unknown, sessionId: SessionId): value is HostMo
 
 export function createHostModelContextDomainPort(options: HostModelContextDomainOptions): HostModelContextDomainPort {
 	if (!/^ws-[a-f0-9]{64}$/u.test(options.workspaceStorageKey)) throw new Error("invalid model/context workspace storage key");
-	if (!isRuntimeId(options.authorityId, "authority") || !isRuntimeId(options.tenantId, "tenant") || !isRuntimeId(options.workspaceId, "workspace")) throw new Error("invalid model/context domain identity");
+		if (!isRuntimeId(options.authorityId, "authority") || !isRuntimeId(options.tenantId, "tenant") || !isRuntimeId(options.workspaceId, "workspace")) throw new Error("invalid model/context domain identity");
+	const runtimeSettings = options.runtimeSettings;
+	const memoryBackend = runtimeSettings?.sessionPolicy.memoryBackend ?? options.memoryBackend ?? "local";
+	const compactionPolicy = runtimeSettings?.compaction ?? options.compactionPolicy;
+	const planEnabled = runtimeSettings?.plan.enabled ?? true;
+	const defaultPlanOnStartup = planEnabled && (runtimeSettings?.plan.defaultOnStartup ?? false);
+	const effectiveOptions: HostModelContextDomainOptions = {
+		...options,
+		memoryBackend,
+		...(compactionPolicy === undefined ? {} : { compactionPolicy }),
+	};
 	const clock = options.clock ?? (() => new Date());
 	const sessions = new Map<string, SessionDomainState>();
 	const memory = new MemoryStore({ clock });
@@ -293,11 +311,13 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 		const operation = context.operation;
 		if (!HOST_MODEL_CONTEXT_QUERY_OPERATIONS.has(operation) && !HOST_MODEL_CONTEXT_MUTATION_OPERATIONS.has(operation)) return failure("unsupported_operation");
 		if (HOST_MODEL_CONTEXT_MUTATION_OPERATIONS.has(operation) && !context.mutation) return failure("mutation_required");
+		if (operation.startsWith("plan.") && !planEnabled) return failure("plan_disabled");
+		if (operation.startsWith("memory.") && memoryBackend === "off") return failure("memory_backend_disabled");
 		const sessionId = parseRuntimeId("session", context.sessionId);
 		if (!sessionId) return failure("session_required");
 		const state = await ensureSession(sessionId);
 		if (operation.startsWith("memory.")) await ensureMemory();
-		return executeOperation(options, clock, memory, state, context);
+		return executeOperation(effectiveOptions, clock, memory, state, context);
 	};
 
 	const port: HostRuntimeDomainPort = {
@@ -312,7 +332,9 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 	};
 	const hostPort: HostModelContextDomainPort = {
 		...port,
+		...(runtimeSettings === undefined ? {} : { runtimeSettingsSnapshot: () => runtimeSettings }),
 		planState: (sessionId) => {
+			if (!planEnabled) return undefined;
 			const parsed = parseRuntimeId("session", sessionId);
 			return parsed === undefined ? undefined : sessions.get(stateKey(parsed))?.plan;
 		},
@@ -320,18 +342,22 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 			query: async (sessionId, operation, body = {}) => {
 				const parsed = parseRuntimeId("session", sessionId);
 				if (parsed === undefined) return { ok: false as const, code: "session_required" };
+				if (operation.startsWith("plan.") && !planEnabled) return { ok: false as const, code: "plan_disabled" };
+				if (operation.startsWith("memory.") && memoryBackend === "off") return { ok: false as const, code: "memory_backend_disabled" };
 				const state = await ensureSession(parsed);
 				if (operation.startsWith("memory.")) await ensureMemory();
-				const result = await executeOperation(options, clock, memory, state, internalContext(parsed, operation, false, body));
+				const result = await executeOperation(effectiveOptions, clock, memory, state, internalContext(parsed, operation, false, body));
 				if (!result.ok) return { ok: false as const, code: internalCode(result) };
 				return { ok: true as const, body: result.body };
 			},
 			command: async (sessionId, operation, body = {}) => {
 				const parsed = parseRuntimeId("session", sessionId);
 				if (parsed === undefined) return { ok: false as const, code: "session_required" };
+				if (operation.startsWith("plan.") && !planEnabled) return { ok: false as const, code: "plan_disabled" };
+				if (operation.startsWith("memory.") && memoryBackend === "off") return { ok: false as const, code: "memory_backend_disabled" };
 				const state = await ensureSession(parsed);
 				if (operation.startsWith("memory.")) await ensureMemory();
-				const result = await executeOperation(options, clock, memory, state, internalContext(parsed, operation, true, body));
+				const result = await executeOperation(effectiveOptions, clock, memory, state, internalContext(parsed, operation, true, body));
 				if (!result.ok) return { ok: false as const, code: internalCode(result) };
 				return { ok: true as const, body: result.body };
 			},
@@ -341,7 +367,7 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 			if (parsed === undefined) return [];
 			const state = await ensureSession(parsed);
 			const sources: RuntimeContextSource[] = [];
-			if (state.plan.status !== "inactive") {
+			if (planEnabled && state.plan.status !== "inactive") {
 				const planText = renderPlanModeFragment(state.plan);
 				sources.push({
 					fragmentId: `plan-mode-${state.plan.revision}`,
@@ -354,6 +380,7 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 					estimatedTokens: 96 + Math.ceil(planText.length / 4),
 				});
 			}
+			if (memoryBackend === "off") return sources;
 			const trimmed = query?.trim();
 			if (trimmed !== undefined && trimmed.length > 0) {
 				await ensureMemory();
@@ -393,7 +420,7 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 			sessionId,
 			planStore,
 			compactionStore,
-			plan: initialPlanState(sessionId, options.workspaceId, options.policyCeilingDigest, timestamp(clock)),
+			plan: initialPlanState(sessionId, options.workspaceId, options.policyCeilingDigest, timestamp(clock), defaultPlanOnStartup),
 			contextReceipts: [],
 			routes: [],
 		};
@@ -425,17 +452,24 @@ export function createHostModelContextDomainPort(options: HostModelContextDomain
 	return hostPort;
 }
 
-function initialPlanState(sessionId: SessionId, workspaceId: WorkspaceId, policyCeilingDigest: RuntimeDigest, updatedAt: string): PlanModeState {
+function initialPlanState(
+	sessionId: SessionId,
+	workspaceId: WorkspaceId,
+	policyCeilingDigest: RuntimeDigest,
+	updatedAt: string,
+	defaultOnStartup = false,
+): PlanModeState {
 	const goalId = createRuntimeId("goal", runtimeDigest({ sessionId, workspaceId }).digest.slice(0, 48));
 	const sourceHead: RuntimeStreamHead = { streamId: sessionId, sequence: 0, eventHash: EMPTY_EVENT_HASH };
+	const status = defaultOnStartup ? "pending" : "inactive";
 	const state: PlanModeState = {
-		status: "inactive",
+		status,
 		sessionId,
 		goalId,
 		revision: 0,
 		policyCeilingDigest,
 		sourceHead,
-		projectionDigest: runtimeDigest({ status: "inactive", sessionId, goalId }),
+		projectionDigest: runtimeDigest({ status, sessionId, goalId }),
 		completeness: "complete",
 		updatedAt,
 	};
@@ -784,6 +818,7 @@ async function compactRun(options: HostModelContextDomainOptions, clock: () => D
 	const sourceRange = context.frame.body.sourceRange;
 	const transcript = stringValue(context.frame.body.transcript);
 	if ((reason !== "manual" && reason !== "auto" && reason !== "overflow" && reason !== "model_switch") || !isRuntimeEventRangeRef(sourceRange) || transcript === undefined) return failure("compaction_request_invalid");
+	if (options.compactionPolicy !== undefined && (!options.compactionPolicy.enabled || options.compactionPolicy.strategy === "off")) return failure("compaction_disabled");
 	const compactionId = createRuntimeId("snapshot", runtimeDigest({ sessionId: state.sessionId, sourceRange, reason, transcript }).digest.slice(0, 48));
 	const createdAt = timestamp(clock);
 	const initial = checkpoint({ compactionId, sessionId: state.sessionId, reason, status: "planned", sourceRange, attempt: 1, projectionDigest: runtimeDigest({ transcript }), completeness: "complete", createdAt });

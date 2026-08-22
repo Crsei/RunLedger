@@ -26,6 +26,7 @@ import type {
 	TraceUsage,
 } from "./types.ts";
 import { TraceTreeProjection } from "./tree.ts";
+import { redactRuntimeArtifactText } from "./redaction.ts";
 
 export interface TraceClock {
 	now(): number;
@@ -597,7 +598,8 @@ function redactErrorMessage(message: string): string {
 function sanitizeValue(value: unknown, key: string | undefined, seen: Set<object>): unknown {
 	if (key !== undefined && isSensitiveKey(key)) return "[REDACTED]";
 	if (key !== undefined && isPrivateReasoningKey(key)) return { redacted: true };
-	if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+	if (value === null || typeof value === "boolean") return value;
+	if (typeof value === "string") return redactRuntimeArtifactText(value);
 	if (typeof value === "number") return Number.isFinite(value) ? value : "[NON_FINITE_NUMBER]";
 	if (value === undefined) return undefined;
 	if (typeof value === "bigint") return `[BIGINT ${value.toString()}]`;

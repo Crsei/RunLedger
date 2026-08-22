@@ -240,6 +240,24 @@ describe("stdlib tools (cross-platform)", () => {
     expect(r.has("nonexistent")).toBe(false);
   });
 
+  it("createStdlibTools: applies bounded read and bash defaults without changing the execution authority", async () => {
+    const file = path.join(dir, "policy-lines.txt");
+    await writeFile(file, "line1\nline2\nline3\n", "utf-8");
+    const registry = createStdlibTools(dir, {
+      toolPolicy: {
+        read: { defaultLimit: 1 },
+        bash: { defaultTimeoutMs: 1234, maxOutputChars: 32 },
+      },
+    });
+    const read = registry.get("read");
+    if (read === undefined) throw new Error("read tool missing");
+    const result = await read.execute("policy-read", { path: "policy-lines.txt", lineNumbers: false });
+    const text = (result.content[0] as { readonly text: string }).text;
+    expect(text).toContain("line1");
+    expect(text).not.toContain("line2");
+    expect(registry.get("bash")).toBeDefined();
+  });
+
   it("stdlibTools helper: 返回 AgentTool[]", () => {
     const tools = stdlibTools(dir);
     expect(Array.isArray(tools)).toBe(true);

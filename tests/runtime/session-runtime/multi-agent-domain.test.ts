@@ -11,6 +11,7 @@ import {
 	deriveSpawnEffectId,
 	type MultiAgentDomainPort,
 } from "../../../src/runtime/agents/domain.ts";
+import { validateSpawnSubagentRequest } from "../../../src/runtime/agents/limits.ts";
 import { createSpawnAgentTool } from "../../../src/runtime/agents/spawn-tool.ts";
 import { createSessionProductionToolSource } from "../../../src/runtime/agents/capability-subset.ts";
 import type { ChildModelRuntimeFactoryPort } from "../../../src/runtime/agents/child-model-runtime.ts";
@@ -19,6 +20,7 @@ import type { ExecutionEnv } from "../../../src/runtime/execution-env.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { MultiAgentPolicy, ChildReport, SubagentInvocationContext } from "../../../src/runtime/agents/types.ts";
+import { applyTaskPolicyNarrowing } from "../../../src/runtime/agents/limits.ts";
 import type { SessionStore } from "../../../src/storage/session-store/session-store.ts";
 
 let harness: RuntimeHarness | undefined;
@@ -103,6 +105,55 @@ function policy(): MultiAgentPolicy {
 		},
 	};
 }
+
+describe("Session task policy narrowing", () => {
+	it("narrows child runtime budget and rejects disabled roles without widening M1 limits", () => {
+		const narrowed = applyTaskPolicyNarrowing(policy(), {
+			maxConcurrency: 16,
+			maxRecursionDepth: 8,
+			maxRuntimeMs: 1_500,
+			softRequestBudget: 2,
+			disabledAgents: ["research"],
+		});
+
+		expect(narrowed.limits).toMatchObject({
+			maxChildrenPerRoot: 3,
+			maxTotalAgents: 4,
+			maxModelTurnsPerAgent: 2,
+			maxActiveDurationMsPerAgent: 1_500,
+		});
+		expect(narrowed.disabledAgents).toEqual(["research"]);
+		expect(validateSpawnSubagentRequest({ role: "research", objective: "read" }, narrowed)).toMatchObject({
+		ok: false,
+		error: { code: "unsupported_feature", path: "role" },
+	});
+	});
+
+	it("uses task narrowing in the durable multi-agent production policy", async () => {
+		harness = await createRuntimeHarness("multi-agent-task-policy");
+		const created = await createMultiAgentDomain({
+			sessionId: harness.sessionId,
+			ownerGeneration: harness.fence.generation,
+			store: harness.store,
+			fence: harness.fence,
+			policySources: {
+				runtimeEnabled: true,
+				user: { enabled: true },
+				taskPolicy: { maxConcurrency: 1, maxRecursionDepth: 1, maxRuntimeMs: 1_000, softRequestBudget: 3, disabledAgents: ["qa"] },
+			},
+			childRuntime: {
+				systemPrompt: "child",
+				productionToolSource: childSource(harness.sessionId),
+				modelRuntimeFactory: childModelRuntimeFactory(),
+			},
+		});
+
+		expect(created).toMatchObject({ ok: true, value: { policy: { limits: {
+			maxModelTurnsPerAgent: 3,
+			maxActiveDurationMsPerAgent: 1_000,
+		}, disabledAgents: ["qa"] } } });
+	});
+});
 
 describe("Session Domain multi-agent consumer", () => {
 	it("does not register spawn_agent when runtime, user, workspace, or policy gates are closed", async () => {

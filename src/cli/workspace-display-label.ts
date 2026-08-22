@@ -17,7 +17,8 @@ export interface GitWorkspaceDisplayFacts {
 }
 
 /** 只读 Git branch fact；失败时省略，不伪造分支。 */
-export async function gitWorkspaceDisplayFacts(cwd: string, git: GitCommandPort): Promise<GitWorkspaceDisplayFacts> {
+export async function gitWorkspaceDisplayFacts(cwd: string, git: GitCommandPort, enabled = true): Promise<GitWorkspaceDisplayFacts> {
+	if (!enabled) return {};
 	const branch = await git.run({ cwd, arguments: ["symbolic-ref", "--quiet", "--short", "HEAD"], stdin: "", timeoutMs: 2_000 });
 	const branchLabel = branch.exitCode === 0 ? sanitizeLabel(branch.stdout) : "";
 	return {

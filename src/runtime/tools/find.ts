@@ -36,7 +36,9 @@ export interface FindToolDetails {
 }
 
 export interface FindToolOptions {
-  shell?: Shell;
+	shell?: Shell;
+	/** settings 注入的默认结果上限；调用参数 limit 仍优先。 */
+	defaultLimit?: number;
 }
 
 const DEFAULT_LIMIT = 1000;
@@ -45,7 +47,8 @@ export function createFindTool(
   cwd: string,
   options: FindToolOptions = {},
 ): AgentTool<typeof findSchema, FindToolDetails> {
-  const shell = options.shell ?? localFindShell(cwd);
+	const shell = options.shell ?? localFindShell(cwd);
+	const defaultLimit = options.defaultLimit ?? DEFAULT_LIMIT;
   return {
     name: "find",
     label: "find",
@@ -55,7 +58,7 @@ export function createFindTool(
     isConcurrencySafe: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<FindToolDetails>> {
       const searchPath = resolveToCwd(params.path, cwd);
-      const limit = params.limit ?? DEFAULT_LIMIT;
+		const limit = params.limit ?? defaultLimit;
       const pattern = params.pattern;
 
       // 探测 fd 是否可用;失败即直接走 find fallback

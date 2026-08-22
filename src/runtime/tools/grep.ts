@@ -52,7 +52,12 @@ export interface GrepToolDetails {
 }
 
 export interface GrepToolOptions {
-  shell?: Shell;
+	shell?: Shell;
+	/** settings 注入的默认结果上限；调用参数 limit 仍优先。 */
+	defaultLimit?: number;
+	/** settings 注入的默认匹配前后文；显式参数 context/afterContext/beforeContext 优先。 */
+	contextBefore?: number;
+	contextAfter?: number;
 }
 
 const DEFAULT_LIMIT = 100;
@@ -62,7 +67,10 @@ export function createGrepTool(
   cwd: string,
   options: GrepToolOptions = {},
 ): AgentTool<typeof grepSchema, GrepToolDetails> {
-  const shell = options.shell ?? localGrepShell(cwd);
+	const shell = options.shell ?? localGrepShell(cwd);
+	const defaultLimit = options.defaultLimit ?? DEFAULT_LIMIT;
+	const defaultContextBefore = options.contextBefore ?? 0;
+	const defaultContextAfter = options.contextAfter ?? 0;
   return {
     name: "grep",
     label: "grep",
@@ -72,12 +80,12 @@ export function createGrepTool(
     isConcurrencySafe: () => true,
     async execute(_toolCallId, params, signal?): Promise<AgentToolResult<GrepToolDetails>> {
       const searchPath = resolveToCwd(params.path, cwd);
-      const limit = params.limit ?? DEFAULT_LIMIT;
+		const limit = params.limit ?? defaultLimit;
       const ignoreCase = params.ignoreCase === true;
       const literal = params.literal === true;
-      const context = params.context ?? 0;
-      const afterContext = params.afterContext ?? context;
-      const beforeContext = params.beforeContext ?? context;
+		const context = params.context;
+		const afterContext = params.afterContext ?? (context ?? defaultContextAfter);
+		const beforeContext = params.beforeContext ?? (context ?? defaultContextBefore);
       const multiline = params.multiline === true;
       const outputFormat: "text" | "files-with-matches" =
         params.outputFormat === "files-with-matches" ? "files-with-matches" : "text";

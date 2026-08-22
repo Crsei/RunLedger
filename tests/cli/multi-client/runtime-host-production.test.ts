@@ -11,6 +11,10 @@ import {
 	productionHostSocketPath,
 	productionHostSpawnSpec,
 } from "../../../src/cli/runtime-host-production.ts";
+import {
+	registerProductionHostDomainTools,
+	resolveProductionHostRuntimeSettings,
+} from "../../../src/cli/runtime-host-session.ts";
 import { createContextAssemblySink, createProductionModelContextDomainPort } from "../../../src/cli/runtime-host.ts";
 import { assembleAgentModelContext } from "../../../src/runtime/context/model-request-adapter.ts";
 import type { RuntimeEventAppendInput } from "../../../src/storage/host/runtime-event-store.ts";
@@ -18,6 +22,9 @@ import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { JsonWorkspaceBindingStore, type PersistedWorkspaceBinding } from "../../../src/worktree/persisted-binding.ts";
+import type { CompactionPolicy } from "../../../src/runtime/context/compaction/cut-planner.ts";
+import { SettingsResolver } from "../../../src/storage/settings-resolver.ts";
+import { createToolRegistry } from "../../../src/runtime/tool-registry.ts";
 
 describe.skipIf(IS_WINDOWS)("R3/R4 production Host composition", () => {
 	it("binds the verified executable build digest into compatibility", () => {
@@ -48,6 +55,49 @@ describe.skipIf(IS_WINDOWS)("R3/R4 production Host composition", () => {
 		const second = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: { model: "changed" } });
 		expect(second.compatibilityDigest.digest).not.toBe(first.compatibilityDigest.digest);
 	});
+
+	it("binds the effective settings snapshot digest into Host compatibility", () => {
+		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
+		const runtimeSettings = new SettingsResolver({
+			user: { retry: { maxRetries: 4 } },
+			workspace: { retry: { maxRetries: 99 } },
+		}).effectiveRuntimeSnapshot();
+		const scope = createLocalRuntimeHostScope({
+			layout,
+			cwd: "/workspace/project",
+			settings: { retry: { maxRetries: 0 } },
+			runtimeSettings,
+		});
+
+		expect(scope.settingsDigest).toEqual(runtimeSettings.digest);
+	});
+
+	it("resolves one fallback snapshot for the Host session tool composition", () => {
+		const runtimeSettings = resolveProductionHostRuntimeSettings({
+			settings: { tools: { read: { defaultLimit: 7 } } },
+		});
+
+		expect(runtimeSettings.toolPolicy.read?.defaultLimit).toBe(7);
+		expect(runtimeSettings.digest).toEqual(new SettingsResolver({
+			user: { tools: { read: { defaultLimit: 7 } } },
+		}).effectiveRuntimeSnapshot().digest);
+	});
+
+	it("does not expose memory tools when the effective memory backend is off", () => {
+		const registry = createToolRegistry([]);
+		const runtimeSettings = new SettingsResolver({ user: { memory: { backend: "off" } } }).effectiveRuntimeSnapshot();
+
+		registerProductionHostDomainTools(registry, {
+			query: async () => ({ ok: true }),
+			command: async () => ({ ok: true }),
+		}, runtimeSettings);
+
+		expect(registry.has("plan_write")).toBe(true);
+		expect(registry.has("memory_search")).toBe(false);
+		expect(registry.has("memory_get")).toBe(false);
+		expect(registry.has("memory_propose")).toBe(false);
+	});
+
 
 	it("fences an existing Host when the explicit CLI security override changes", () => {
 		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
@@ -199,6 +249,63 @@ describe.skipIf(IS_WINDOWS)("R3/R4 production Host composition", () => {
 		expect(domain.name).toBe("model-context");
 		expect(domain.mutationOperations?.has("plan.enter")).toBe(true);
 		expect(domain.queryOperations?.has("memory.search")).toBe(true);
+	});
+
+	it("passes the effective memory backend through production composition", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-production-memory-policy-"));
+		try {
+			const layout = buildRunledgerLayout(root, "posix");
+			const scope = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
+			const domain = createProductionModelContextDomainPort({ layout, scope, memoryBackend: "off" });
+			const sessionId = createRuntimeId("session", "production-memory-policy");
+			const result = await domain.internal.command(sessionId, "memory.propose", {
+				scope: "workspace",
+				title: "should remain unavailable",
+				content: "this must not be persisted",
+				sourceKind: "user",
+				sourceRef: { subjectKind: "content", digest: runtimeDigest("source"), mediaType: "text/plain", size: 6 },
+				sourceDigest: runtimeDigest("source"),
+			});
+			expect(result).toEqual({ ok: false, code: "memory_backend_disabled" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	it("passes the effective compaction policy through production composition", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-host-production-compaction-policy-"));
+		try {
+			const layout = buildRunledgerLayout(root, "posix");
+			const scope = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });
+			const disabledPolicy: CompactionPolicy = {
+				enabled: false,
+				midTurnEnabled: false,
+				strategy: "summary",
+				thresholdPercent: 80,
+				thresholdTokens: 0,
+				retainRecentTurns: 1,
+				minCompactedTurns: 1,
+			};
+			const domain = createProductionModelContextDomainPort({ layout, scope, compactionPolicy: disabledPolicy });
+			const sessionId = createRuntimeId("session", "production-compaction-policy");
+			const sourceRange = {
+				stream: { scope: "session" as const, streamId: sessionId, sessionId },
+				startSequence: 1,
+				endSequence: 2,
+				head: { streamId: sessionId, sequence: 2, eventHash: runtimeDigest("head") },
+				rangeDigest: runtimeDigest("range"),
+				complete: true,
+			};
+			const result = await domain.internal.command(sessionId, "compact.run", {
+				reason: "manual",
+				sourceRange,
+				transcript: "user: compact this",
+				summary: "unused because policy is disabled",
+			});
+			expect(result).toEqual({ ok: false, code: "compaction_disabled" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 
 	it("writes the assembled model projection through the canonical Host event writer", async () => {

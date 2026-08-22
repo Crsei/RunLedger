@@ -35,7 +35,7 @@ import { DiffRenderable, diffPlainText } from "./diff-renderable.ts";
 import { PlanUpdateRenderable, planUpdatePlainText } from "./plan-update-renderable.ts";
 import { NoticeRenderable, noticePlainText } from "./notice-renderable.ts";
 import { formatSeparatorLabel, STATUS_DETAILS_PREFIX } from "./block-layout.ts";
-import { statusLineToStyledText, type StatusLineSegment } from "../highlight/status-style.ts";
+import { statusLineToStyledText } from "../highlight/status-style.ts";
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "../mermaid/display-width.ts";
 import { freezeStreamPrefix, type SettledSpan } from "./settled-prefix.ts";
 import { splitClosedStreamingTable } from "./streaming-table-split.ts";
@@ -71,7 +71,7 @@ export interface OpenTuiComponentFrame {
   statusIndicator?: StatusIndicatorView;
   /** 纯文本测量完成后应用的状态行渐变参数。 */
   statusIndicatorShimmer?: ShimmerStatusLineOptions;
-  footer: readonly (string | { readonly kind: "status-line"; readonly segments: readonly StatusLineSegment[] })[];
+  footer: readonly (string | Extract<PresentationBlock, { readonly kind: "status-line" }>)[];
   overlay?: readonly (string | PresentationBlock)[];
   /** overlay 定位锚点;当前仅区分 bottom-left(贴合编辑器)与其余(居中)。 */
   overlayAnchor?: OverlayAnchor;
@@ -89,6 +89,8 @@ export interface OpenTuiComponentRuntimeOptions {
   /** 终端回复的原始 OSC 序列(含 OSC 11 背景色);由调用方解析。 */
   onOsc?(sequence: string): void;
   performanceObserver?: TuiPerformanceObserver;
+  /** Effective presentation setting; false keeps Mermaid fences on native Markdown rendering. */
+  renderMermaid?: boolean;
   syntaxHighlightService?: SyntaxHighlightService;
   /** 构造 runtime-owned highlighter 的测试/组合接缝；销毁语义与默认 native loader 路径一致。 */
   createSyntaxHighlightService?: () => SyntaxHighlightService;
@@ -181,7 +183,7 @@ function blockText(block: PresentationBlock): string {
   if (block.kind === "command") return `$ ${stripCommandForPlaintext(block.command)}`;
   if (block.kind === "exec") return plainExecText(block);
   if (block.kind === "diff") return `${diffPlainText(block)}\u0000syntax=${block.syntaxHighlight !== false}\u0000streaming=${block.streaming === true}`;
-  if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
+  if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(block.separator ?? " · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
   return block.content;
@@ -333,6 +335,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   let mermaidThemeMode: MermaidThemeMode = renderer.themeMode ?? "dark";
   const mermaidRenderNode = createMermaidCodeBlockRenderer(renderer, {
     performanceObserver: options.performanceObserver,
+    renderMermaid: options.renderMermaid,
     getThemeMode: () => mermaidThemeMode,
   });
   const nativeSyntax = options.syntaxHighlightService === undefined && options.createSyntaxHighlightService === undefined
@@ -1026,7 +1029,7 @@ function styledFooter(
 		const styled = typeof line === "string"
 			? ansiToStyledText(line)
 			: statusLineToStyledText(line.segments, (scopes) =>
-				service.foregroundForScopes(themeController.snapshot().activeName, scopes));
+				service.foregroundForScopes(themeController.snapshot().activeName, scopes), line.separator);
 		return index === 0
 			? [...styled.chunks]
 			: [...ansiToStyledText("\n").chunks, ...styled.chunks];

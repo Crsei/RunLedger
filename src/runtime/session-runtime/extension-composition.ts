@@ -7,7 +7,7 @@ import { PluginManager } from "../../extensions/plugins/manager.ts";
 import { ExtensionStateStore } from "../../extensions/state-store.ts";
 import { createSkillRegistry } from "../../extensions/skills/registry.ts";
 import { resolveSkillsPolicy } from "../../extensions/skills/policy.ts";
-import { loadProjectSettings, saveProjectSettings } from "../../storage/settings-manager.ts";
+import { loadProjectSettings, updateProjectSettings } from "../../storage/settings-manager.ts";
 import { NodeExtensionStorage } from "../../storage/extensions/extension-storage.ts";
 import { TrustStore } from "../../extensions/trust/trust-store.ts";
 import { sourceKey } from "../../extensions/paths.ts";
@@ -408,10 +408,10 @@ export async function createProductionSessionExtensionComposition(
 		},
 		updateSkillsProviderPolicy: async (providerId, enabled, scope) => {
 			if (scope !== "user") throw new Error("workspace-scoped provider mutation is not wired in the session path");
-			const settings = await loadProjectSettings({ layout: options.layout });
-			const providers = { ...(settings.skills?.providers ?? {}) };
-			providers[providerId] = enabled;
-			await saveProjectSettings({ layout: options.layout }, { ...settings, skills: { enabled: settings.skills?.enabled ?? true, providers } });
+			await updateProjectSettings({ layout: options.layout }, (settings) => {
+				const providers = { ...(settings.skills?.providers ?? {}), [providerId]: enabled };
+				return { ...settings, skills: { enabled: settings.skills?.enabled ?? true, providers } };
+			});
 		},
 	});
 	const mcpManager = new McpConnectionManager({

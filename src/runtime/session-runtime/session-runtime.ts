@@ -34,6 +34,7 @@ import type { AuthType, Credential, AuthInteraction } from "../../auth/types.ts"
 import { createReverseRequestAuthInteraction } from "./credential-reverse-request.ts";
 import type { Api, Model, ModelThinkingLevel } from "../../types.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection, SessionTitleChangedEvent } from "../interactive-session-controller.ts";
+import type { EffectiveRuntimeSettingsSnapshot } from "../../storage/settings-resolver.ts";
 import { SESSION_CORE_PROTOCOL_MANIFEST, freezeSessionProtocolManifest, type SessionProtocolCapability, type SessionProtocolManifest, type SessionProtocolOperationDescriptor, type SessionStatus } from "../session-server/protocol.ts";
 import { SessionDomainRouter } from "./domain-router.ts";
 import type { SessionDomainResult } from "./domain-router.ts";
@@ -63,6 +64,8 @@ export type SessionRuntimeState = "starting" | "ready" | "recovery_required" | "
  */
 export interface SessionDomainPort {
 	readonly controller: InteractiveSessionControllerPort;
+	/** Composition-owned effective settings identity; values are immutable for this Session. */
+	readonly runtimeSettingsSnapshot?: () => EffectiveRuntimeSettingsSnapshot;
 	/** Internal bridge for auto-title commits; the Runtime publishes the canonical event to clients. */
 	readonly subscribeTitleChanged?: (listener: (event: SessionTitleChangedEvent) => void) => () => void;
 	/** Session-owned child runtime inputs; absent only on non-production test domains. */
@@ -613,6 +616,11 @@ export class SessionRuntime implements SessionController {
 			...this.snapshot(),
 			...projection,
 		};
+	}
+
+	/** Internal owner-side read of the frozen settings provenance; never client authority. */
+	public runtimeSettingsSnapshot(): EffectiveRuntimeSettingsSnapshot | undefined {
+		return this.domain?.runtimeSettingsSnapshot?.();
 	}
 
 	private handleDomainAgentEvent(event: AgentEvent): void {

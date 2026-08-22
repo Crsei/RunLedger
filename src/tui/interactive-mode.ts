@@ -40,7 +40,7 @@ import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/t
 import type { InteractiveSessionControllerPort, SessionRecoveryStatus, SessionTitleChangedEvent } from "../runtime/interactive-session-controller.ts";
 
 import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
-import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
+import { loadTheme, applyColorBlindMode, applyEnvOverrides, type Theme } from "./theme/theme.ts";
 import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
 import { editorBackgroundFromTerminal } from "./theme/editor-background.ts";
 import { CustomEditor, type CustomEditorProps } from "./components/custom-editor.ts";
@@ -52,6 +52,11 @@ import { SearchableSelectorModal } from "./components/searchable-selector-modal.
 import { SessionPickerModal, buildSessionPickerItems, formatRelativeTime } from "./components/session-picker-modal.ts";
 import { WelcomeComponent, WELCOME_SESSION_SLOTS } from "./components/welcome.ts";
 import { ListSelectionModal, type ListSelectionItem } from "./components/list-selection-modal.ts";
+import { SettingsPanel } from "./components/settings-panel.ts";
+import type { SettingListItem, SettingValueResult } from "../storage/settings-service.ts";
+import { parseSettingCliValue } from "../storage/settings-service.ts";
+import { getSettingDefinition, type SettingPath, type SettingValue } from "../storage/settings-schema.ts";
+import type { SettingsSelectorItem } from "./settings-selector.ts";
 import { ExtensionToggleModal, type ExtensionToggleItem } from "./components/extension-toggle-modal.ts";
 import { McpServersModal, type McpServerViewItem } from "./components/mcp-servers-modal.ts";
 import { StatusComponent } from "./components/status.ts";
@@ -104,6 +109,8 @@ import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
 import { projectStatusIndicator } from "./presentation/projectors.ts";
 import { projectTranscriptOverlay, TranscriptOverlayComponent } from "./transcript-view.ts";
 import type { SafeUsageQuantity } from "./presentation/tools/types.ts";
+import type { EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
+import type { SettingsRuntimeChange, SettingsRuntimeSubscriber } from "../storage/settings-runtime-store.ts";
 import {
   applyUsageObservation,
   seedUsageAccumulator,
@@ -115,6 +122,38 @@ import {
   type UsageSnapshot,
 } from "../runtime/usage/index.ts";
 
+function freezeDisplaySettings(
+	value: EffectiveRuntimeSettingsSnapshot["display"] | undefined,
+): EffectiveRuntimeSettingsSnapshot["display"] {
+	const source = value ?? {};
+	return Object.freeze({
+		...(source.symbolPreset === undefined ? {} : { symbolPreset: source.symbolPreset }),
+		...(source.colorBlindMode === undefined ? {} : { colorBlindMode: source.colorBlindMode }),
+		...(source.statusLine === undefined ? {} : { statusLine: Object.freeze({ ...source.statusLine }) }),
+		...(source.display === undefined ? {} : { display: Object.freeze({ ...source.display }) }),
+		...(source.tui === undefined ? {} : { tui: Object.freeze({ ...source.tui }) }),
+	});
+}
+
+function freezeStartupSettings(
+	value: EffectiveRuntimeSettingsSnapshot["startup"] | undefined,
+): EffectiveRuntimeSettingsSnapshot["startup"] {
+	const source = value ?? {};
+	return Object.freeze({
+		...(source.startup === undefined ? {} : { startup: Object.freeze({ ...source.startup }) }),
+	});
+}
+
+function isLivePresentationSetting(path: string): boolean {
+	return path === "statusLine.preset"
+		|| path === "statusLine.separator"
+		|| path === "statusLine.sessionAccent"
+		|| path === "display.smoothStreaming"
+		|| path === "display.hideToolActivity"
+		|| path === "display.showTokenUsage"
+		|| path === "display.cacheMissMarker";
+}
+
 export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
 }
@@ -123,10 +162,24 @@ export interface HideThinkingSettingsPort {
 	save(hidden: boolean): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
 }
 
+export interface SettingsRuntimeStorePort {
+	subscribe(listener: SettingsRuntimeSubscriber): () => void;
+}
+
+/** `/settings` 的 typed composition port；TUI 不直接读写 canonical settings 文件。 */
+export interface SettingsEditorPort {
+	list(): Promise<readonly SettingListItem[]>;
+	get(path: string): Promise<SettingValueResult>;
+	set(path: string, value: unknown): Promise<SettingValueResult>;
+	reset(path: string): Promise<SettingValueResult>;
+}
+
 /** InteractiveMode 装配参数。 */
 export interface InteractiveModeOptions {
   /** 新 CLI 使用统一 controller;agent 仅保留 demo 兼容。 */
   controller?: InteractiveSessionControllerPort;
+  /** Composition-owned effective settings snapshot; presentation may only project it. */
+  runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
   agent?: Agent;
   /** 终端实现,默认 ProcessTerminal;可传入 mock 终端用于单测。 */
   terminal?: Terminal;
@@ -155,6 +208,10 @@ export interface InteractiveModeOptions {
   preferencesPort?: TuiPreferencesPort;
   /** `hideThinkingBlock` 的 canonical settings 写端口；TUI 不持有 layout/path。 */
   hideThinkingSettingsPort?: HideThinkingSettingsPort;
+  /** Runtime settings reload port；只允许 live presentation projection 进入当前 TUI。 */
+  settingsRuntimeStore?: SettingsRuntimeStorePort;
+	/** `/settings` 的唯一 typed read/write port；TUI 不持有 layout/path。 */
+	settingsEditorPort?: SettingsEditorPort;
   /** thinking blocks 的启动展示状态；仅影响 projection。 */
   hideThinkingBlock?: boolean;
   /** 仅全新启动视图展示 welcome；resume/continue/fork 传 false。 */
@@ -214,6 +271,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private unsubscribeTerminalBackground?: () => void;
   private unsubscribeRenderPreparation?: () => void;
   private unsubscribeBoundaryActions?: () => void;
+  private unsubscribeSettingsRuntime?: () => void;
 
   // FooterSnapshotProvider 状态(只有 handleEvent 路径写)
   private streaming = false;
@@ -270,7 +328,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly preferencesPort?: TuiPreferencesPort;
   private readonly shimmerMode: TuiShimmerMode;
   private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
+	private readonly settingsEditorPort?: SettingsEditorPort;
   private hideThinkingBlock: boolean;
+  private displaySettingsSnapshot: EffectiveRuntimeSettingsSnapshot["display"];
+  private smoothStreaming: boolean;
+  private cacheMissMarker: boolean;
+  private readonly startupSettingsSnapshot: EffectiveRuntimeSettingsSnapshot["startup"];
   private readonly showWelcome: boolean;
   private readonly version: string;
   private readonly syntaxThemeController: SyntaxThemeController;
@@ -297,22 +360,31 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.controller = opts.controller;
     this.agent = opts.agent;
     const initialMessages = this.controller?.messages ?? this.agent?.state.messages ?? [];
-    this.usageAccumulator = seedUsageAccumulator(initialMessages);
+		this.usageAccumulator = seedUsageAccumulator(initialMessages);
     if (this.controller === undefined) this.timelineProjector.setMessageIndex(initialMessages.length);
     this.getUsageSnapshot = this.getUsageSnapshot.bind(this);
-    this.processOverlayController = opts.processOverlayController;
-    this.performanceObserver = opts.performanceObserver;
-    this.terminal = opts.terminal ?? new ProcessTerminal();
-    this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
-    this.workspaceCapability = opts.workspaceCapability;
+		this.processOverlayController = opts.processOverlayController;
+		this.performanceObserver = opts.performanceObserver;
+		this.terminal = opts.terminal ?? new ProcessTerminal();
+		this.workspaceCapability = opts.workspaceCapability;
     this.workspaceDisplayAbsolutePath = opts.workspaceDisplayAbsolutePath;
     this.gitBranchLabel = opts.gitBranchLabel;
     this.initialBootstrap = opts.initialBootstrap;
     this.preferencesPort = opts.preferencesPort;
     this.shimmerMode = opts.initialPreferences?.display.shimmer ?? "classic";
-    this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
-    this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
-    this.showWelcome = opts.showWelcome ?? false;
+		this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
+	this.settingsEditorPort = opts.settingsEditorPort;
+		this.displaySettingsSnapshot = freezeDisplaySettings(opts.runtimeSettings?.display);
+		this.theme = applyEnvOverrides(applyColorBlindMode(
+			loadTheme(opts.themeName ?? "dark"),
+			this.displaySettingsSnapshot.colorBlindMode === true,
+		));
+		this.smoothStreaming = opts.runtimeSettings?.display.display?.smoothStreaming !== false;
+    this.cacheMissMarker = opts.runtimeSettings?.display.display?.cacheMissMarker === true;
+    this.startupSettingsSnapshot = freezeStartupSettings(opts.runtimeSettings?.startup);
+    const configuredHideThinking = opts.runtimeSettings?.values.hideThinkingBlock;
+    this.hideThinkingBlock = opts.hideThinkingBlock ?? (typeof configuredHideThinking === "boolean" ? configuredHideThinking : false);
+    this.showWelcome = (opts.showWelcome ?? false) && this.startupSettingsSnapshot.startup?.showSplash !== false;
     this.version = opts.version ?? "unknown";
     this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
@@ -360,6 +432,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       performanceObserver: opts.performanceObserver,
       syntaxThemeName: opts.syntaxThemeName,
       syntaxThemeController: this.syntaxThemeController,
+      renderMermaid: opts.runtimeSettings?.display.tui?.renderMermaid !== false,
     });
     this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => {
@@ -392,11 +465,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeStore = this.store.subscribe((next) => {
       if (next.timeline.generation !== this.lastTimelineGeneration) {
         this.lastTimelineGeneration = next.timeline.generation;
-        const presentation = projectInteractivePresentation(next, { hideThinking: this.hideThinkingBlock });
+        const presentation = projectInteractivePresentation(next, { hideThinking: this.hideThinkingBlock, cacheMissMarker: this.cacheMissMarker });
         this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
       }
       if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
-        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }));
+        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock, cacheMissMarker: this.cacheMissMarker }));
       }
       if (next.interaction.transcriptScrollbarVisible !== this.lastTranscriptScrollbarVisible) {
         this.refreshTranscriptScrollPresentation();
@@ -416,6 +489,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         getTerminalSize: () => ({ columns: this.terminal.columns, rows: this.terminal.rows }),
       });
     }
+    this.unsubscribeSettingsRuntime = opts.settingsRuntimeStore?.subscribe((change) => this.applySettingsRuntimeChange(change));
     this.replayInitialHistory(opts.syntaxThemeWarnings ?? []);
     void this.refreshWelcomeSessions();
 
@@ -436,6 +510,88 @@ export class InteractiveMode implements FooterSnapshotProvider {
 						? { text: "Host build mismatch; run `runledger host restart` with the current build.", kind: "error" as const }
 						: { text: "Host recovery required; command outcome could not be proven.", kind: "error" as const };
 		this.showNotice(presentation.text, presentation.kind);
+	}
+
+	private applySettingsRuntimeChange(change: SettingsRuntimeChange): void {
+		if (!change.appliedPaths.some((path) => isLivePresentationSetting(path))) return;
+		this.displaySettingsSnapshot = freezeDisplaySettings(change.current.display);
+		this.smoothStreaming = this.displaySettingsSnapshot.display?.smoothStreaming !== false;
+		this.cacheMissMarker = this.displaySettingsSnapshot.display?.cacheMissMarker === true;
+
+		const state = this.store.getState();
+		const presentation = projectInteractivePresentation(state, {
+			hideThinking: this.hideThinkingBlock,
+			cacheMissMarker: this.cacheMissMarker,
+		});
+		this.refs.chat.setTimelineBlocks(presentation.timeline, state.timeline.generation);
+		if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
+			this.transcriptOverlay.update(projectTranscriptOverlay(
+				state.timeline,
+				this.syntaxThemeController.snapshot().revision,
+				{ hideThinking: this.hideThinkingBlock, cacheMissMarker: this.cacheMissMarker },
+			));
+		}
+		this.ui.invalidate();
+	}
+
+	/** 打开分组设置编辑器；值写入后仍经 SettingsService + RuntimeStore reload。 */
+	private async openSettingsSelector(): Promise<void> {
+		const port = this.settingsEditorPort;
+		if (port === undefined) {
+			this.showNotice("Settings editor is unavailable in this session.", "error");
+			return;
+		}
+		try {
+			const listed = await port.list();
+			const items: SettingsSelectorItem[] = [];
+			for (const entry of listed) {
+				const current = await port.get(entry.path);
+				items.push({
+					path: entry.path,
+					value: current.value,
+					defaultValue: entry.defaultValue,
+					apply: entry.apply,
+					scope: entry.scope,
+				});
+			}
+			const panel = new SettingsPanel({
+				items,
+				selectListTheme: this.selectListTheme(),
+				onSet: async (path, rawValue) => {
+					try {
+						const result = await port.set(path, parseSettingCliValue(rawValue));
+						return { ok: true, value: result.value };
+					} catch (error) {
+						return { ok: false, message: this.settingsErrorMessage(error) };
+					}
+				},
+				onReset: async (path) => {
+					try {
+						const result = await port.reset(path);
+						return { ok: true, value: result.value };
+					} catch (error) {
+						return { ok: false, message: this.settingsErrorMessage(error) };
+					}
+				},
+				onCancel: () => this.closeOverlay(),
+				onResult: (result) => {
+					if (!result.ok) this.showNotice(`Setting ${result.path} failed: ${result.message}`, "error");
+					else this.showNotice(`Setting ${result.path} updated; apply=${this.settingsApplyMode(result.path)}.`);
+					this.ui.requestRender(true);
+				},
+			});
+			this.showOverlayModal(panel, { anchor: "bottom-left" });
+		} catch (error) {
+			this.showNotice(`Settings unavailable: ${this.settingsErrorMessage(error)}`, "error");
+		}
+	}
+
+	private settingsErrorMessage(error: unknown): string {
+		return error instanceof Error ? error.message : String(error);
+	}
+
+	private settingsApplyMode(path: SettingPath): string {
+		return getSettingDefinition(path)?.apply ?? "next-turn";
 	}
 
   /** 装配组件树并返回引用;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
@@ -540,7 +696,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
   private openTranscriptOverlay(): void {
     if (this.quitting || this.ui.hasOverlay() || this.activePermissionView !== undefined) return;
-    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }), {
+    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock, cacheMissMarker: this.cacheMissMarker }), {
       getViewportHeight: () => Math.max(4, this.terminal.rows - 2),
       onClose: () => this.closeOverlay(),
     });
@@ -569,13 +725,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private toggleThinkingVisibility(): boolean {
 	this.hideThinkingBlock = !this.hideThinkingBlock;
 	const state = this.store.getState();
-	const presentation = projectInteractivePresentation(state, { hideThinking: this.hideThinkingBlock });
+	const presentation = projectInteractivePresentation(state, { hideThinking: this.hideThinkingBlock, cacheMissMarker: this.cacheMissMarker });
 	this.refs.chat.setTimelineBlocks(presentation.timeline, state.timeline.generation);
 	if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
 		this.transcriptOverlay.update(projectTranscriptOverlay(
 			state.timeline,
 			this.syntaxThemeController.snapshot().revision,
-			{ hideThinking: this.hideThinkingBlock },
+			{ hideThinking: this.hideThinkingBlock, cacheMissMarker: this.cacheMissMarker },
 		));
 	}
 	this.showNotice(this.hideThinkingBlock ? "Thinking blocks hidden (display only)." : "Thinking blocks visible.");
@@ -690,8 +846,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /** OpenTUI theme_mode 变更后刷新共享 ThemeRef,并重算输入区外观。 */
-  private maybeSwitchTheme(scheme: "dark" | "light"): void {
-    Object.assign(this.theme, applyEnvOverrides(loadTheme(scheme)));
+	private maybeSwitchTheme(scheme: "dark" | "light"): void {
+		Object.assign(this.theme, applyEnvOverrides(applyColorBlindMode(
+			loadTheme(scheme),
+			this.displaySettingsSnapshot.colorBlindMode === true,
+		)));
     this.refreshEditorAppearance();
     this.refreshTranscriptScrollPresentation();
     this.ui.invalidate();
@@ -739,6 +898,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeIdleRecap = undefined;
     this.unsubscribeStore?.();
     this.unsubscribeStore = undefined;
+    this.unsubscribeSettingsRuntime?.();
+    this.unsubscribeSettingsRuntime = undefined;
     this.unsubscribeThemeMode?.();
     this.unsubscribeThemeMode = undefined;
     this.unsubscribeTerminalBackground?.();
@@ -1546,6 +1707,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   getStopReason(): string | undefined {
     return this.stopReason;
   }
+  getDisplaySettings(): EffectiveRuntimeSettingsSnapshot["display"] {
+    return this.displaySettingsSnapshot;
+  }
   getRunTiming(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined {
 	if (this.store.getState().recoveryRequired) {
 		const active = this.store.getState().timeline.activeRun;
@@ -1798,6 +1962,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
 		return;
       case "config.theme":
         this.openSyntaxThemePicker();
+        return;
+      case "config.settings":
+        void this.openSettingsSelector();
         return;
       case "recovery.open":
         void this.runRecoveryWorkflow(arg);
@@ -2533,21 +2700,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
 	private replayInitialHistory(syntaxThemeWarnings: readonly string[] = []): void {
-		if (this.workspaceCapability?.endsWith("-unverified") === true) this.dispatchTimeline([{
+		if (this.startupSettingsSnapshot.startup?.quiet !== true && this.workspaceCapability?.endsWith("-unverified") === true) this.dispatchTimeline([{
 			type: "notice",
 			generation: 0,
 			correlationId: `workspace-capability-${this.store.getState().timeline.committedRows.length}`,
 			severity: "warning",
 			message: { text: this.workspaceCapability, truncated: false, byteLength: new TextEncoder().encode(this.workspaceCapability).byteLength },
 		}]);
-		if (this.controller !== undefined) for (const warning of this.controller.warnings) this.dispatchTimeline([{
+		if (this.startupSettingsSnapshot.startup?.quiet !== true && this.controller !== undefined) for (const warning of this.controller.warnings) this.dispatchTimeline([{
 			type: "notice",
 			generation: 0,
 			correlationId: `warning-${this.store.getState().timeline.committedRows.length}`,
 			severity: "warning",
 			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
 		}]);
-		for (const warning of syntaxThemeWarnings) this.dispatchTimeline([{
+		if (this.startupSettingsSnapshot.startup?.quiet !== true) for (const warning of syntaxThemeWarnings) this.dispatchTimeline([{
 			type: "notice",
 			generation: 0,
 			correlationId: `syntax-theme-warning-${this.store.getState().timeline.committedRows.length}`,
@@ -2575,7 +2742,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         ...(run.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: run.messageCountAtEnd }),
       }]);
     }
-    if (this.controller.warnings.length > 0) {
+		if (this.startupSettingsSnapshot.startup?.quiet !== true && this.controller.warnings.length > 0) {
       for (const entry of this.controller.auditEntries) {
         const name = typeof entry.payload.toolName === "string" ? entry.payload.toolName : "tool";
         const content = typeof entry.payload.content === "string" ? `: ${entry.payload.content}` : "";
@@ -2883,10 +3050,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private refreshStatusIndicator(): void {
     const nowMs = Date.now();
     const activeRun = this.store.getState().timeline.activeRun;
-    this.ui.setStatusIndicator(projectStatusIndicator(activeRun, {
-      nowMs,
-      animationFrame: Math.floor(nowMs / STATUS_INDICATOR_FRAME_MS),
-      interruptKey: this.statusInterruptKey(),
+		this.ui.setStatusIndicator(projectStatusIndicator(activeRun, {
+			nowMs,
+			animationFrame: Math.floor(nowMs / STATUS_INDICATOR_FRAME_MS),
+			symbolPreset: this.displaySettingsSnapshot.symbolPreset,
+			interruptKey: this.statusInterruptKey(),
     }), {
       mode: this.shimmerMode,
       nowMs,
@@ -2919,7 +3087,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       supersededStatusEvents: after.supersededStatusEvents - before.supersededStatusEvents,
     });
     this.recordStreamingQueueDepth();
-    if (!this.ui.isStarted) this.flushStreamingDeltas();
+    if (!this.ui.isStarted || !this.smoothStreaming) this.flushStreamingDeltas();
   }
 
   private flushStreamingDeltas(): void {

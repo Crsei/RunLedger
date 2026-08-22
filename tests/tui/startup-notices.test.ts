@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { PresentationBlock } from "../../src/tui/presentation.ts";
 import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
+import { SettingsResolver } from "../../src/storage/settings-resolver.ts";
 import { ContractController, ContractTerminal } from "./fixtures/contract-integration.ts";
 
 function presentationText(block: PresentationBlock): string {
@@ -61,6 +62,42 @@ describe("startup notices", () => {
 			const refs = (mode as unknown as { refs: { chat: ChatContainer } }).refs;
 			const conversation = refs.chat.present(120).map(presentationText).join("\n");
 			expect(conversation).not.toContain("ws:linux-verified");
+		} finally {
+			mode.quit();
+		}
+	});
+
+	it("suppresses startup notices when the effective startup policy is quiet", () => {
+		const runtimeSettings = new SettingsResolver({
+			user: { startup: { quiet: true } },
+		}).effectiveRuntimeSnapshot();
+		const mode = new InteractiveMode({
+			controller: new ContractController({ warnings: ["project warning"] }),
+			terminal: new ContractTerminal(),
+			workspaceCapability: "ws:macos-unverified",
+			syntaxThemeWarnings: ["syntax warning"],
+			runtimeSettings,
+		});
+		try {
+			expect(mode.getTuiState().timeline.committedRows.filter((row) => row.kind === "notice")).toHaveLength(0);
+		} finally {
+			mode.quit();
+		}
+	});
+
+	it("does not mount the Welcome splash when startup.showSplash is disabled", () => {
+		const runtimeSettings = new SettingsResolver({
+			user: { startup: { showSplash: false } },
+		}).effectiveRuntimeSnapshot();
+		const mode = new InteractiveMode({
+			controller: new ContractController(),
+			terminal: new ContractTerminal(),
+			runtimeSettings,
+			showWelcome: true,
+		});
+		try {
+			const refs = (mode as unknown as { readonly refs: { readonly welcome?: unknown } }).refs;
+			expect(refs.welcome).toBeUndefined();
 		} finally {
 			mode.quit();
 		}

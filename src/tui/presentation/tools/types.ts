@@ -86,7 +86,7 @@ export interface SafePlanUpdate {
 export type SafeToolResultMetadata =
 	| { readonly kind: "generic" }
 	| { readonly kind: "edit"; readonly document?: SafeDiffDocument; readonly addedLines?: SafeCount; readonly removedLines?: SafeCount }
-	| { readonly kind: "read"; readonly lineCount: SafeCount; readonly truncated: boolean }
+	| { readonly kind: "read"; readonly lineCount: SafeCount; readonly truncated: boolean; readonly renderMarkdown?: boolean }
 	| { readonly kind: "grep"; readonly matchCount: SafeCount; readonly fileCount: SafeCount; readonly samples: readonly SafeBoundedText[]; readonly truncated: boolean }
 	| { readonly kind: "media"; readonly items: readonly SafeMediaView[] }
 	| { readonly kind: "shell"; readonly chunks: readonly SafeShellChunk[]; readonly truncated: boolean; readonly exitCode: SafeCount; readonly durationMs: SafeCount; readonly background: boolean }
@@ -99,6 +99,7 @@ export interface SafeToolChip {
 
 export type SafeToolBodyBlock =
 	| { readonly kind: "text"; readonly content: SafeBoundedText }
+	| { readonly kind: "markdown"; readonly content: SafeBoundedText }
 	| { readonly kind: "diff"; readonly document: SafeDiffDocument };
 
 export type SafeUsageQuantity =

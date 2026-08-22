@@ -45,6 +45,8 @@ export interface ReadToolDetails {
   truncation?: TruncationResult;
   /** 命中 mtime 去重缓存;UI / ledger 可选消费 */
   cacheHit?: boolean;
+  /** 将结果作为 Markdown presentation block 渲染；不改变模型可见正文。 */
+  renderMarkdown?: boolean;
 }
 
 /** 可替换 IO;默认走 node:fs。便于测试注入 / 远端代理。 */
@@ -61,6 +63,10 @@ export interface ReadToolOptions {
   enableCache?: boolean;
   /** 缓存容量上限(LRU);缺省 64 条。 */
   cacheLimit?: number;
+  /** settings 注入的默认读取行数；调用参数 limit 仍优先。 */
+  defaultLimit?: number;
+  /** settings 注入的 TUI 结果展示模式；缺省保持纯文本。 */
+  renderMarkdown?: boolean;
 }
 
 interface CacheEntry {
@@ -83,6 +89,8 @@ export function createReadTool(
   const ops = options.operations ?? localReadOperations();
   const enableCache = options.enableCache ?? true;
   const cacheLimit = options.cacheLimit ?? 64;
+  const defaultLimit = options.defaultLimit ?? DEFAULT_MAX_LINES;
+  const renderMarkdown = options.renderMarkdown === true;
   // 简单 LRU:Map insertion order,LRU 通过 delete+set 实现
   const cache = new Map<string, CacheEntry>();
 
@@ -140,7 +148,8 @@ export function createReadTool(
 
       const allLines = text === "" ? [] : text.split("\n");
       const startLine = (offset ?? 1) - 1;
-      const sliceEnd = limit !== undefined ? startLine + limit : allLines.length;
+      const effectiveLimit = limit ?? defaultLimit;
+      const sliceEnd = startLine + effectiveLimit;
       const sliced = allLines.slice(Math.max(0, startLine), Math.max(0, sliceEnd));
 
       // cat -n 前缀只能在输出时加工,不污染切片逻辑。
@@ -153,7 +162,7 @@ export function createReadTool(
       }
       const joined = displayLines.join("\n");
 
-      const maxLines = limit ?? DEFAULT_MAX_LINES;
+      const maxLines = effectiveLimit;
       const { text: outText, truncation } = truncateHead(joined, {
         maxLines,
         maxBytes: DEFAULT_MAX_BYTES,
@@ -184,6 +193,7 @@ export function createReadTool(
       const details: ReadToolDetails = {};
       if (truncation.truncated) details.truncation = truncation;
       if (cacheHit) details.cacheHit = true;
+      if (renderMarkdown) details.renderMarkdown = true;
       return {
         content: [{ type: "text", text: displayText }],
         details,

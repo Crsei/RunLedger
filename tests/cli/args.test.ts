@@ -22,6 +22,10 @@ describe("parseArgs 帮助/版本", () => {
     expect(USAGE).toContain("--help");
   });
 
+  it("USAGE advertises the canonical settings command surface", () => {
+    expect(USAGE).toContain("settings list|get|set|reset");
+  });
+
   it("USAGE 不再宣传 resident Host 运维命令(R7)", () => {
     expect(USAGE).not.toContain("runledger host ");
     expect(USAGE).not.toContain("--confirm-active");

@@ -7,6 +7,8 @@ import { runtimeDigest } from "../protocol/foundation.ts";
 import { createRuntimeId } from "../protocol/ids.ts";
 import type { ModelRouteRequest } from "../model-routing/types.ts";
 import type { ChildModelRequestRouter } from "../agents/child-model-runtime.ts";
+import type { ProviderRequestGate } from "../agents/child-model-runtime.ts";
+import { applyRetryPolicy, DEFAULT_RETRY_POLICY, type RetryPolicy } from "../retry/policy.ts";
 import { assistantTextForSessionTitle, isLowSignalTitleInput, normalizeGeneratedSessionTitle, SESSION_TITLE_SYSTEM_PROMPT } from "./title-generator.ts";
 
 export interface SessionTitleLifecycleSelection {
@@ -28,6 +30,8 @@ export interface SessionTitleLifecycleOptions {
 		readonly trigger: "first-user-message" | "retry";
 	}) => void;
 	readonly modelRequestRouter?: ChildModelRequestRouter;
+	readonly retryPolicy?: RetryPolicy | (() => RetryPolicy);
+	readonly providerGate?: ProviderRequestGate;
 	readonly enabled?: boolean;
 	readonly timeoutMs?: number;
 	readonly onFailure?: (reason: "no-model" | "low-signal" | "command" | "busy" | "cancelled" | "provider-error" | "empty" | "invalid-output" | "stale") => void;
@@ -95,6 +99,7 @@ export class SessionTitleLifecycle {
 		this.request = request;
 		const timeoutMs = this.options.timeoutMs ?? DEFAULT_TITLE_TIMEOUT_MS;
 		const timeout = setTimeout(() => controller.abort(), timeoutMs);
+		let releaseProvider: (() => void) | undefined;
 		try {
 			const context: Context = {
 				systemPrompt: SESSION_TITLE_SYSTEM_PROMPT,
@@ -109,14 +114,17 @@ export class SessionTitleLifecycle {
 					return;
 				}
 			}
+			releaseProvider = this.options.providerGate === undefined
+				? undefined
+				: await this.options.providerGate.acquire(model.provider, controller.signal);
 			const completion = await Promise.race([
-				this.options.models.completeSimple(model, context, {
+				this.options.models.completeSimple(model, context, applyRetryPolicy({
 					signal: controller.signal,
 					maxTokens: 64,
 					temperature: 0,
 					reasoning: "minimal",
 					timeoutMs,
-				}),
+			}, typeof this.options.retryPolicy === "function" ? this.options.retryPolicy() : this.options.retryPolicy ?? DEFAULT_RETRY_POLICY)),
 				abortOnSignal(controller.signal),
 			]);
 			if (this.disposed || controller.signal.aborted) {
@@ -154,6 +162,7 @@ export class SessionTitleLifecycle {
 			}
 			void error;
 		} finally {
+			releaseProvider?.();
 			clearTimeout(timeout);
 			if (this.request?.controller === controller) this.request = undefined;
 		}

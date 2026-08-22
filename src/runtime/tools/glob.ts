@@ -49,7 +49,9 @@ export interface GlobOperations {
 
 /** glob 默认 ops:本地 fs;生产由 createStdlibTools 注入 governed env。 */
 export interface GlobToolOptions {
-  operations?: GlobOperations;
+	operations?: GlobOperations;
+	/** settings 注入的默认结果上限；调用参数 limit 仍优先。 */
+	defaultLimit?: number;
 }
 
 const DEFAULT_LIMIT = 100;
@@ -104,7 +106,8 @@ export function createGlobTool(
   cwd: string,
   options: GlobToolOptions = {},
 ): AgentTool<typeof globSchema, GlobToolDetails> {
-  const ops = options.operations ?? localGlobOperations();
+	const ops = options.operations ?? localGlobOperations();
+	const defaultLimit = options.defaultLimit ?? DEFAULT_LIMIT;
   return {
     name: "glob",
     label: "glob",
@@ -115,7 +118,7 @@ export function createGlobTool(
     isConcurrencySafe: () => true,
     async execute(_toolCallId, params, _signal?): Promise<AgentToolResult<GlobToolDetails>> {
       const root = resolveToCwd(params.path ?? "", cwd);
-      const limit = params.limit ?? DEFAULT_LIMIT;
+		const limit = params.limit ?? defaultLimit;
       const segs = parsePattern(params.pattern);
       const compiledStarsiSegs = segs.map((s) =>
         s.kind === "star-any" && s.literal ? compileStarAnySeg(s.literal) : null,

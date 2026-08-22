@@ -10,6 +10,7 @@ import { runtimeDigest } from "../protocol/foundation.ts";
 import { createHash } from "node:crypto";
 import type { ArtifactMetadata } from "../trace/artifact-store.ts";
 import type { TraceArtifactRef, TraceContentDescriptor } from "../trace/types.ts";
+import { redactRuntimeArtifactText } from "../trace/redaction.ts";
 
 export type ProcessRecordingMode = "off" | "events" | "events_and_artifacts";
 
@@ -96,14 +97,20 @@ export class ManagedProcessOutputMaterializer {
 		}
 		if (!this.artifactStore) return { ok: false, code: "artifact_store_unavailable" };
 		try {
+			const redactedText = redactRuntimeArtifactText(output.text);
 			const artifactRef = await this.artifactStore.put({
-				bytes: new TextEncoder().encode(output.text),
+				bytes: new TextEncoder().encode(redactedText),
 				mediaType: "text/plain; charset=utf-8",
 				redactionPolicyDigest: this.redactionPolicyDigest,
 				sourceDigest: digest.digest,
 			});
 			return this.persist(store, digest, {
-				outputRef: { ...outputRef, subjectKind: "artifact", digest: runtimeDigest(artifactRef.digest) },
+				outputRef: {
+					...outputRef,
+					subjectKind: "artifact",
+					digest: runtimeDigest(artifactRef.digest),
+					size: artifactRef.size,
+				},
 				artifactRef,
 				traceContent: artifactRef,
 			});
@@ -124,7 +131,7 @@ export class ManagedProcessOutputMaterializer {
 				this.artifactStore.read(artifactRef),
 				this.artifactStore.metadata(artifactRef),
 			]);
-			const expected = new TextEncoder().encode(text);
+			const expected = new TextEncoder().encode(redactRuntimeArtifactText(text));
 			const digest = createHash("sha256").update(bytes).digest("hex");
 			return bytes.byteLength === expected.byteLength &&
 				digest === artifactRef.digest &&
@@ -133,7 +140,9 @@ export class ManagedProcessOutputMaterializer {
 				metadata.digest === artifactRef.digest &&
 				metadata.storedDigest === artifactRef.digest &&
 				metadata.mediaType === artifactRef.mediaType &&
-				metadata.size === artifactRef.size;
+				metadata.size === artifactRef.size &&
+				metadata.sourceDigest === record.sourceDigest.digest &&
+				metadata.redactionPolicyDigest === this.redactionPolicyDigest;
 		} catch {
 			return false;
 		}

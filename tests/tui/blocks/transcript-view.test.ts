@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PresentationBlock } from "../../../src/tui/presentation.ts";
-import type { TimelineState } from "../../../src/tui/timeline/types.ts";
+import type { TimelineAssistantUsage, TimelineRow, TimelineState } from "../../../src/tui/timeline/types.ts";
 import { timelineToBlocks } from "../../../src/tui/timeline/selectors.ts";
 import {
 	TranscriptOverlayComponent,
@@ -13,6 +13,20 @@ const bounded = (text: string) => ({
 	truncated: false,
 	byteLength: new TextEncoder().encode(text).byteLength,
 });
+
+function usage(input: number, cacheRead: number, cacheWrite: number): TimelineAssistantUsage {
+	const exact = (value: number) => ({ state: "exact" as const, value, source: "provider" as const });
+	return {
+		input: exact(input),
+		output: exact(10),
+		cacheRead: exact(cacheRead),
+		cacheWrite: exact(cacheWrite),
+		tokenTotal: exact(input + cacheRead + cacheWrite + 10),
+		cost: exact(0),
+		durationMs: exact(10),
+		ttftMs: exact(5),
+	};
+}
 
 function timelineWithActiveText(text: string): TimelineState {
 	return {
@@ -126,6 +140,38 @@ describe("transcript view projection", () => {
 
 		expect(projectTranscriptOverlay(state).rows).toEqual(timelineToBlocks(state, { includeActive: false }));
 		expect(projectTranscriptOverlay(state).rows.some((block) => block.kind === "separator")).toBe(false);
+	});
+
+	it("projects a cache-miss divider only for a warm-to-cold prompt-cache transition", () => {
+		const previous: TimelineRow = {
+			kind: "assistant",
+			id: "assistant:previous",
+			timestamp: "2026-08-14T00:00:01.000Z",
+			displayOrder: 1,
+			status: "succeeded",
+			streaming: false,
+			text: bounded("previous answer"),
+			usageDetails: usage(512, 4_096, 0),
+		};
+		const current: TimelineRow = {
+			kind: "assistant",
+			id: "assistant:current",
+			timestamp: "2026-08-14T00:00:02.000Z",
+			displayOrder: 2,
+			status: "succeeded",
+			streaming: false,
+			text: bounded("current answer"),
+			usageDetails: usage(512, 0, 4_096),
+		};
+		const state: TimelineState = {
+			...timelineWithActiveText("tail"),
+			committedRows: [previous, current],
+		};
+
+		const enabled = timelineToBlocks(state, { includeActive: false, cacheMissMarker: true });
+		const marker = enabled.find((block) => block.kind === "separator" && block.label.includes("cache miss"));
+		expect(marker).toMatchObject({ kind: "separator", label: expect.stringContaining("4.6k tokens") });
+		expect(timelineToBlocks(state, { includeActive: false }).some((block) => block.kind === "separator" && block.label.includes("cache miss"))).toBe(false);
 	});
 
 	it("projects plan and exec blocks into selectable transcript forms", () => {

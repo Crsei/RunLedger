@@ -178,6 +178,19 @@ export type * from "./sessions/types.ts";
 export type * from "./providers/types.ts";
 export type * from "./auth/types.ts";
 export type * from "./models/types.ts";
+
+export {
+	SettingsPanel,
+	type SettingsPanelProps,
+	type SettingsPanelResult,
+	type SettingsPanelWriteResult,
+} from "./components/settings-panel.ts";
+export {
+	groupSettings,
+	settingValueChoices,
+	type SettingsSelectorGroup,
+	type SettingsSelectorItem,
+} from "./settings-selector.ts";
 export type * from "./thinking/types.ts";
 export type * from "./prompts/types.ts";
 export type * from "./keymap/types.ts";

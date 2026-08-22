@@ -21,6 +21,20 @@ import { sanitizeLabel } from "../presentation/projectors.ts";
 import { visibleWidth } from "../primitives.ts";
 import { formatUsageSegments } from "../../runtime/usage/index.ts";
 
+const DEFAULT_SEPARATOR = " · ";
+
+interface FooterDisplaySettings {
+	readonly statusLine: {
+		readonly preset: "default" | "compact" | "minimal";
+		readonly separator: string;
+		readonly sessionAccent: boolean;
+	};
+	readonly display: {
+		readonly hideToolActivity: boolean;
+		readonly showTokenUsage: boolean;
+	};
+}
+
 export interface FooterProps {
   theme: Theme;
   /** InteractiveMode 实现的快照 provider;Footer 周期性 pull。 */
@@ -38,21 +52,29 @@ export class Footer implements Component {
     // 无缓存
   }
 
-  render(width: number): string[] {
+	render(width: number): string[] {
 	return this.present(width).flatMap((block) => block.kind === "status-line"
-		? [padToWidth(block.segments.map((segment) => segment.text).join(" · "), width)]
-		: []);
-  }
+			? [padToWidth(block.segments.map((segment) => segment.text).join(block.separator ?? DEFAULT_SEPARATOR), width)]
+			: []);
+	}
 
-  present(width: number): PresentationBlock[] {
-		const fitted = fitStatusLineSegments(this.segments(), width);
-		const blocks: PresentationBlock[] = [{ kind: "status-line", segments: fitted }];
-		const usage = this.usageSegments(width);
-		if (usage.length > 0) blocks.push({ kind: "status-line", segments: usage });
-		return blocks;
-  }
+	present(width: number): PresentationBlock[] {
+		try {
+			const settings = this.displaySettings();
+			const fitted = fitStatusLineSegments(this.segments(settings), width, settings.statusLine.separator);
+			const separator = settings.statusLine.separator === DEFAULT_SEPARATOR ? {} : { separator: settings.statusLine.separator };
+			const blocks: PresentationBlock[] = [{ kind: "status-line", segments: fitted, ...separator }];
+			const usage = settings.display.showTokenUsage && settings.statusLine.preset !== "minimal"
+				? this.usageSegments(width, settings.statusLine.separator)
+				: [];
+			if (usage.length > 0) blocks.push({ kind: "status-line", segments: usage, ...separator });
+			return blocks;
+		} catch {
+			return [{ kind: "status-line", segments: [{ accent: "state", text: "[footer:err]" }] }];
+		}
+	}
 
-  private segments(): StatusLineSegment[] {
+	private segments(settings: FooterDisplaySettings): StatusLineSegment[] {
 	    try {
       const streaming = this.props.provider.isStreaming();
       const stopReason = this.props.provider.getStopReason();
@@ -62,8 +84,12 @@ export class Footer implements Component {
       const workspaceDisplayAbsolutePath = this.props.provider.getWorkspaceDisplayAbsolutePath?.();
       const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
 	      const planProgress = this.props.provider.getPlanProgress?.();
-	      const contextUsage = this.props.provider.getContextUsage?.();
-	      const usageSnapshot = this.props.provider.getUsageSnapshot?.();
+	      const contextUsage = settings.display.showTokenUsage && settings.statusLine.preset !== "minimal"
+			? this.props.provider.getContextUsage?.()
+			: undefined;
+	      const usageSnapshot = settings.display.showTokenUsage && settings.statusLine.preset !== "minimal"
+			? this.props.provider.getUsageSnapshot?.()
+			: undefined;
       const threadLabel = this.props.provider.getThreadLabel?.();
       const timing = this.props.provider.getRunTiming?.();
       const now = this.props.provider.now?.() ?? Date.now();
@@ -83,18 +109,23 @@ export class Footer implements Component {
 		...(workspaceDisplayAbsolutePath ? [{ accent: "path" as const, text: workspaceDisplayAbsolutePath }] : []),
 		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
 		{ accent: "model", text: `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}` },
-		...(planProgress !== undefined && validProgress(planProgress)
+		...(settings.statusLine.preset !== "minimal" && !settings.display.hideToolActivity && planProgress !== undefined && validProgress(planProgress)
 			? [{ accent: "progress" as const, text: `plan (${planProgress.completed}/${planProgress.total})` }]
 			: []),
-			...(usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens)
+			...(settings.display.showTokenUsage && settings.statusLine.preset !== "minimal" && usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens)
 				? [{ accent: "usage" as const, text: `usage ${formatTokenCount(contextUsage.totalTokens)}` }]
 				: []),
-			...(usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens) && knownPositive(contextUsage.contextWindow)
+			...(settings.display.showTokenUsage && settings.statusLine.preset !== "minimal" && usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens) && knownPositive(contextUsage.contextWindow)
 				? [{ accent: "limit" as const, text: `limit ${Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.contextWindow) * 100))}%` }]
 			: []),
-		...(threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
+		...(settings.statusLine.preset !== "minimal" && settings.statusLine.sessionAccent && threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
 	  );
-	  return segments
+	  const presetSegments = settings.statusLine.preset === "minimal"
+		? segments.filter((segment) => segment.accent === "state" || segment.accent === "model")
+		: settings.statusLine.preset === "compact"
+			? segments.filter((segment) => segment.accent !== "path" && segment.accent !== "progress")
+			: segments;
+	  return presetSegments
 		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
 		.filter((segment) => segment.text.length > 0);
     } catch {
@@ -103,15 +134,19 @@ export class Footer implements Component {
 	    }
   }
 
-	private usageSegments(width: number): StatusLineSegment[] {
+	private usageSegments(width: number, separator: string): StatusLineSegment[] {
 		try {
 			const snapshot = this.props.provider.getUsageSnapshot?.();
 			if (snapshot === undefined) return [];
 			const segments = formatUsageSegments(snapshot).map((segment) => ({ ...segment }));
-			return fitUsageStatusLineSegments(segments, width);
+			return fitUsageStatusLineSegments(segments, width, separator);
 		} catch {
 			return [];
 		}
+	}
+
+	private displaySettings(): FooterDisplaySettings {
+		return normalizeFooterDisplaySettings(this.props.provider.getDisplaySettings?.());
 	}
 
 }
@@ -154,30 +189,31 @@ const USAGE_DROP_RULES: readonly ((segment: StatusLineSegment) => boolean)[] = [
 ];
 
 /** 保留 state/session-or-thread/path/model，窄屏先移除能力等可选段，再按显示列截断最长核心段。 */
-export function fitStatusLineSegments(input: readonly StatusLineSegment[], width: number): StatusLineSegment[] {
-	return fitStatusLineSegmentsWithRules(input, width, IDENTITY_DROP_RULES);
+export function fitStatusLineSegments(input: readonly StatusLineSegment[], width: number, separator = DEFAULT_SEPARATOR): StatusLineSegment[] {
+	return fitStatusLineSegmentsWithRules(input, width, IDENTITY_DROP_RULES, safeSeparator(separator));
 }
 
 /** usage 行与 identity 行独立拟合，窄屏保留 output/rate/context 核心数值。 */
-export function fitUsageStatusLineSegments(input: readonly StatusLineSegment[], width: number): StatusLineSegment[] {
-	return fitStatusLineSegmentsWithRules(input, width, USAGE_DROP_RULES);
+export function fitUsageStatusLineSegments(input: readonly StatusLineSegment[], width: number, separator = DEFAULT_SEPARATOR): StatusLineSegment[] {
+	return fitStatusLineSegmentsWithRules(input, width, USAGE_DROP_RULES, safeSeparator(separator));
 }
 
 function fitStatusLineSegmentsWithRules(
 	input: readonly StatusLineSegment[],
 	width: number,
 	dropRules: readonly ((segment: StatusLineSegment) => boolean)[],
+	separator: string,
 ): StatusLineSegment[] {
 	const safeWidth = Math.max(0, Math.floor(width));
 	let segments = input
 		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
 		.filter((segment) => segment.text.length > 0);
 	for (const shouldDrop of dropRules) {
-		if (statusLineWidth(segments) <= safeWidth) break;
+		if (statusLineWidth(segments, separator) <= safeWidth) break;
 		segments = segments.filter((segment) => !shouldDrop(segment));
 	}
-	while (segments.length > 1 && separatorWidth(segments) >= safeWidth) segments.pop();
-	let excess = Math.max(0, statusLineWidth(segments) - safeWidth);
+	while (segments.length > 1 && separatorWidth(segments, separator) >= safeWidth) segments.pop();
+	let excess = Math.max(0, statusLineWidth(segments, separator) - safeWidth);
 	while (excess > 0) {
 		const candidate = segments
 			.map((segment, index) => ({ index, width: visibleWidth(segment.text), minimum: minimumWidth(segment.accent) }))
@@ -188,17 +224,46 @@ function fitStatusLineSegmentsWithRules(
 		segments = segments.map((segment, index) => index === candidate.index
 			? { ...segment, text: fitToWidth(segment.text, target) }
 			: segment);
-		excess = Math.max(0, statusLineWidth(segments) - safeWidth);
+		excess = Math.max(0, statusLineWidth(segments, separator) - safeWidth);
 	}
 	return segments;
 }
 
-function statusLineWidth(segments: readonly StatusLineSegment[]): number {
-	return segments.reduce((total, segment) => total + visibleWidth(segment.text), 0) + separatorWidth(segments);
+function statusLineWidth(segments: readonly StatusLineSegment[], separator: string): number {
+	return segments.reduce((total, segment) => total + visibleWidth(segment.text), 0) + separatorWidth(segments, separator);
 }
 
-function separatorWidth(segments: readonly StatusLineSegment[]): number {
-	return Math.max(0, segments.length - 1) * 3;
+function separatorWidth(segments: readonly StatusLineSegment[], separator: string): number {
+	return Math.max(0, segments.length - 1) * visibleWidth(separator);
+}
+
+function safeSeparator(value: string): string {
+	return value.trim().length > 0 && value.length <= 16 && !/[\u0000-\u001f\u007f]/u.test(value)
+		? value
+		: DEFAULT_SEPARATOR;
+}
+
+function normalizeFooterDisplaySettings(value: unknown): FooterDisplaySettings {
+	const raw = isRecord(value) ? value : {};
+	const statusLine = isRecord(raw.statusLine) ? raw.statusLine : {};
+	const display = isRecord(raw.display) ? raw.display : {};
+	const preset = statusLine.preset === "compact" || statusLine.preset === "minimal" ? statusLine.preset : "default";
+	const separator = typeof statusLine.separator === "string" ? safeSeparator(statusLine.separator) : DEFAULT_SEPARATOR;
+	return {
+		statusLine: {
+			preset,
+			separator,
+			sessionAccent: statusLine.sessionAccent !== false,
+		},
+		display: {
+			hideToolActivity: display.hideToolActivity === true,
+			showTokenUsage: display.showTokenUsage !== false,
+		},
+	};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function minimumWidth(accent: StatusLineSegment["accent"]): number {
