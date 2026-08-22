@@ -2,6 +2,7 @@ import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 import {
   createOpenTuiComponentRuntime,
+  type ComposerScrollbarPresentation,
   type OpenTuiComponentFrame,
   type OpenTuiComponentRuntime,
   type TranscriptScrollPresentation,
@@ -18,6 +19,8 @@ import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action
 import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHeight, wrapEditorText } from "./editor-height.ts";
 import type { EditorAppearance } from "./opentui/component-runtime.ts";
 import type { SyntaxThemeController } from "./highlight/theme-controller.ts";
+import { composerStatusConsumption, projectComposerFrame, type ComposerChromeFrame } from "./composer/frame.ts";
+import type { ComposerStyle } from "./composer/types.ts";
 
 export interface Component {
   render(width: number): string[];
@@ -385,6 +388,9 @@ export class TUI extends Container {
   private readonly terminalBackgroundListeners: Array<(rgb: RgbColor) => void> = [];
   private terminalBackgroundRgb: RgbColor | undefined;
   private editorAppearance: EditorAppearance | undefined;
+  private composerStyle: ComposerStyle | undefined;
+  private composerFrameOverride: ComposerChromeFrame | undefined;
+  private composerScrollPresentation: ComposerScrollbarPresentation = { visible: false, position: 0 };
   private transcriptScrollPresentation: TranscriptScrollPresentation | undefined;
   private statusIndicator: StatusIndicatorView | undefined;
   private statusIndicatorShimmer: OpenTuiComponentFrame["statusIndicatorShimmer"];
@@ -435,6 +441,21 @@ export class TUI extends Container {
   /** 输入区外观(背景/prompt/占位符颜色);由主题层在 theme_mode 切换时重算。 */
   setEditorAppearance(appearance: EditorAppearance): void {
     this.editorAppearance = appearance;
+    this.requestRender();
+  }
+  /** 只替换 composer presentation；native adapter 保留 Textarea identity。 */
+  setComposerShape(shape: ComposerStyle | ComposerChromeFrame | undefined): void {
+    if (shape === undefined) {
+      this.composerStyle = undefined;
+      this.composerFrameOverride = undefined;
+      this.composerScrollPresentation = { visible: false, position: 0 };
+    } else if (isComposerFrame(shape)) {
+      this.composerStyle = undefined;
+      this.composerFrameOverride = shape;
+    } else {
+      this.composerStyle = shape;
+      this.composerFrameOverride = undefined;
+    }
     this.requestRender();
   }
   /** 状态指示行由 InteractiveMode 在共享帧准备阶段投影。 */
@@ -511,6 +532,12 @@ export class TUI extends Container {
         onActions: (actions) => this.emitActions(actions),
         onThemeMode: (mode) => {
           for (const listener of this.themeModeListeners) listener(mode);
+        },
+        onComposerScrollChange: (presentation) => {
+          if (this.composerScrollPresentation.visible === presentation.visible
+            && this.composerScrollPresentation.position === presentation.position) return;
+          this.composerScrollPresentation = presentation;
+          this.requestRender();
         },
         onOsc: (sequence) => {
           // OpenTUI 自身查询终端默认色时会收到 OSC 11 回复;解析后广播给主题层。
@@ -610,6 +637,25 @@ export class TUI extends Container {
     const editorCursorOffset = this.focusedComponent && "getCursorOffset" in this.focusedComponent
       ? (this.focusedComponent as Component & { getCursorOffset(): number }).getCursorOffset()
       : undefined;
+    const composerFrame = this.composerFrameOverride ?? (this.composerStyle === undefined
+      ? undefined
+      : projectComposerFrame(this.composerStyle, {
+        terminalWidth: width,
+        input: {
+          text: editorText,
+          placeholder: DEFAULT_EDITOR_PLACEHOLDER,
+          cursorOffset: editorCursorOffset ?? editorText.length,
+          maxLines: Math.max(1, editorHeight ?? 8),
+        },
+        status: composerStatusFromFooter(footer),
+        scrollbar: this.composerScrollPresentation,
+        theme: {
+          borderColor: this.editorAppearance?.borderColor ?? "",
+          accentColor: this.editorAppearance?.accentColor ?? this.editorAppearance?.promptColor ?? "",
+          surfaceColor: this.editorAppearance?.surfaceColor ?? this.editorAppearance?.backgroundColor ?? "",
+        },
+      }));
+    const visibleFooter = footerAfterComposerConsumption(footer, composerFrame);
     // modal 内容宽度与 OpenTUI runtime 的 modalWidth(=90% 宽,边框+padding 各 2)对齐,
     // 避免文本 overlay 按 width-4 渲染时被原生渲染器二次换行挤出固定高度。
     const overlayContentWidth = this.overlayOptions?.variant === "transcript"
@@ -628,10 +674,11 @@ export class TUI extends Container {
         editorCursorOffset,
         editorHeight,
         editorAppearance: this.editorAppearance,
+        composerFrame,
         transcriptScrollPresentation: this.transcriptScrollPresentation,
         statusIndicator: this.statusIndicator,
         statusIndicatorShimmer: this.statusIndicatorShimmer,
-        footer,
+        footer: visibleFooter,
         overlay,
         overlayAnchor: this.overlayOptions?.anchor,
         overlayNonCapturing: this.overlayOptions?.nonCapturing === true,
@@ -639,9 +686,12 @@ export class TUI extends Container {
       });
       return;
     }
-    const footerText = footer.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · "));
+    const footerText = visibleFooter.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · "));
     const statusText = this.statusIndicator === undefined ? [] : [statusIndicatorPlainText(this.statusIndicator, width)];
-    this.terminal.write([...body.map((block) => blockTextForTerminal(block)), ...statusText, ...this.focusedComponent?.render(width) ?? [], ...footerText, ...overlay?.map(blockTextForTerminal) ?? []].join("\n"));
+    const editorOutput = composerFrame?.rows.map((row) => row.text)
+      ?? this.focusedComponent?.render(width)
+      ?? [];
+    this.terminal.write([...body.map((block) => blockTextForTerminal(block)), ...statusText, ...editorOutput, ...footerText, ...overlay?.map(blockTextForTerminal) ?? []].join("\n"));
   }
 }
 
@@ -659,6 +709,36 @@ function blockTextForTerminal(block: PresentationBlock): string {
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
   return block.content;
+}
+
+function isComposerFrame(value: ComposerStyle | ComposerChromeFrame): value is ComposerChromeFrame {
+  return "styleId" in value;
+}
+
+function composerStatusFromFooter(
+  footer: readonly OpenTuiComponentFrame["footer"][number][],
+): { readonly identity: string; readonly usage: string } {
+  const lines = footer.filter((line): line is Extract<OpenTuiComponentFrame["footer"][number], { readonly kind: "status-line" }> =>
+    typeof line !== "string" && line.kind === "status-line",
+  );
+  const text = (line: typeof lines[number] | undefined): string =>
+    line?.segments.map((segment) => segment.text).join(" · ") ?? "";
+  return { identity: text(lines[0]), usage: text(lines[1]) };
+}
+
+function footerAfterComposerConsumption(
+	footer: readonly OpenTuiComponentFrame["footer"][number][],
+	frame: ComposerChromeFrame | undefined,
+): readonly OpenTuiComponentFrame["footer"][number][] {
+	if (frame === undefined) return footer;
+	const consumption = composerStatusConsumption(frame);
+	let statusIndex = 0;
+	return footer.filter((line) => {
+		if (typeof line === "string" || line.kind !== "status-line") return true;
+		const current = statusIndex;
+		statusIndex += 1;
+		return current === 0 ? !consumption.identity : current === 1 ? !consumption.usage : true;
+	});
 }
 
 export interface TuiAppIntentHandler {
