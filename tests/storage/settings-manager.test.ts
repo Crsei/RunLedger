@@ -103,6 +103,21 @@ describe("loadProjectSettings", () => {
 		}
 	});
 
+	it("保留用户级 shellPath 供启动时做可执行性校验，不允许 workspace 持有", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		const missingShell = join(cwd, "missing-shell");
+		writeFileSync(layout.settings, JSON.stringify({ shellPath: missingShell }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({ shellPath: missingShell });
+
+		await saveProjectSettings({ layout, workspaceKey: "ws-shell" }, { shellPath: missingShell });
+		expect(await loadProjectSettings({ layout, workspaceKey: "ws-shell" })).toEqual({});
+	});
+
+	it("保留 git.enabled 作为 workspace presentation setting", async () => {
+		await saveProjectSettings({ layout, workspaceKey: "ws-git" }, { git: { enabled: false } });
+		expect(await loadProjectSettings({ layout, workspaceKey: "ws-git" })).toEqual({ git: { enabled: false } });
+	});
+
 	it("加载 canonical recap 配置并保留合法 enabled/idleSeconds", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(
@@ -113,6 +128,53 @@ describe("loadProjectSettings", () => {
 
 		expect(await loadProjectSettings({ layout })).toEqual({
 			recap: { enabled: false, idleSeconds: 600 },
+		});
+	});
+
+	it("清洗 local Memory backend 并丢弃未知或非法 backend", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({ memory: { backend: "off", unknown: true } }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({ memory: { backend: "off" } });
+
+		writeFileSync(layout.settings, JSON.stringify({ memory: { backend: "remote" } }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({});
+	});
+
+	it("清洗已有 display/tool/provider/task policies并保留 workspace additional directories only in workspace layer", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({
+			symbolPreset: "ascii",
+			colorBlindMode: true,
+			statusLine: { preset: "compact", separator: " | ", sessionAccent: false },
+			display: { smoothStreaming: false, showTokenUsage: true },
+			autoResume: true,
+			startup: { quiet: true, showSplash: false },
+			tools: { approval: "record", approvalMode: "always-ask", read: { defaultLimit: 50 } },
+			disabledProviders: ["openai", "openai", " anthropic "],
+			providers: { maxInFlightRequests: { openai: 2 }, imageOrder: ["openrouter"] },
+			task: { maxConcurrency: 2, maxRecursionDepth: 2 },
+			workspace: { additionalDirectories: ["packages/shared"] },
+		}), "utf8");
+
+		expect(await loadProjectSettings({ layout })).toMatchObject({
+			symbolPreset: "ascii",
+			colorBlindMode: true,
+			statusLine: { preset: "compact", separator: " | ", sessionAccent: false },
+			display: { smoothStreaming: false, showTokenUsage: true },
+			autoResume: true,
+			startup: { quiet: true, showSplash: false },
+			tools: { approval: "record", approvalMode: "always-ask", read: { defaultLimit: 50 } },
+			disabledProviders: ["openai", "anthropic"],
+			providers: { maxInFlightRequests: { openai: 2 } },
+			task: { maxConcurrency: 2, maxRecursionDepth: 2 },
+		});
+		expect(await loadProjectSettings({ layout })).not.toHaveProperty("workspace");
+
+		await saveProjectSettings({ layout, workspaceKey: "ws-fixture" }, {
+			workspace: { additionalDirectories: ["packages/shared"] },
+		});
+		expect(await loadProjectSettings({ layout, workspaceKey: "ws-fixture" })).toEqual({
+			workspace: { additionalDirectories: ["packages/shared"] },
 		});
 	});
 

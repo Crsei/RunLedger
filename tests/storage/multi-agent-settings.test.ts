@@ -36,13 +36,13 @@ describe("layered multi-agent settings", () => {
 		);
 		await saveProjectSettings(
 			{ layout, workspaceKey: "ws-fixture" },
-			{ theme: "workspace-theme", multiAgent: { enabled: true, maxToolCallsPerAgent: 4 } },
+			{ autoTitle: false, multiAgent: { enabled: true, maxToolCallsPerAgent: 4 } },
 		);
 
 		const loaded = await loadLayeredProjectSettings({ layout, workspaceKey: "ws-fixture" });
 
 		expect(loaded.user.settings).toMatchObject({ model: "parent-model" });
-		expect(loaded.workspace.settings).toMatchObject({ theme: "workspace-theme" });
+		expect(loaded.workspace.settings).toMatchObject({ autoTitle: false });
 		expect(loaded.user.multiAgent).toMatchObject({ state: "valid", value: { enabled: true, maxToolCallsPerAgent: 8 } });
 		expect(loaded.workspace.multiAgent).toMatchObject({ state: "valid", value: { enabled: true, maxToolCallsPerAgent: 4 } });
 		expect(loaded.user.sourceDigest.digest).toMatch(/^[a-f0-9]{64}$/u);

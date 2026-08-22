@@ -64,6 +64,49 @@ describe("session codec", () => {
 		expect(replay.config).toEqual({ provider: "fixture" });
 	});
 
+	it("replays the immutable settings digest from a runtime config event", () => {
+		const settingsDigest = "a".repeat(64);
+		const replay = projectSessionReplay([{
+			id: "settings-runtime-config",
+			sessionId: "session-settings",
+			parentId: "header-settings",
+			timestamp: 1,
+			type: "custom",
+			payload: {
+				kind: "runtime.config",
+				source: "startup",
+				settingsDigest,
+				settingsSourceLayers: { "display.showTokenUsage": "user" },
+				settingsApplyModes: { "display.showTokenUsage": "live" },
+				settingsDiagnostics: [{ code: "invalid_value", path: "retry.maxRetries", source: "workspace" }],
+			},
+		}]);
+
+		expect(replay.config).toMatchObject({
+			settingsDigest,
+			settingsSourceLayers: { "display.showTokenUsage": "user" },
+			settingsApplyModes: { "display.showTokenUsage": "live" },
+			settingsDiagnostics: [{ code: "invalid_value", path: "retry.maxRetries", source: "workspace" }],
+		});
+	});
+
+	it("drops malformed settings diagnostics during replay", () => {
+		const replay = projectSessionReplay([{
+			id: "malformed-settings-runtime-config",
+			sessionId: "session-settings",
+			parentId: "header-settings",
+			timestamp: 1,
+			type: "custom",
+			payload: {
+				kind: "runtime.config",
+				source: "startup",
+				settingsDiagnostics: [{ code: "invalid_value", path: "retry.maxRetries", source: "untrusted" }],
+			},
+		}]);
+
+		expect(replay.config.settingsDiagnostics).toBeUndefined();
+	});
+
   it("跨 reopen 无损恢复 thinking signature、tool arguments/result 与 runtime config", async () => {
     const cwd = await tempDir();
     const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
