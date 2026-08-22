@@ -27,6 +27,8 @@
 | Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结，当前先解决多平台 path/Git/Shell/process/cleanup 适配 | `00` 总入口、`01` 当前适配状态、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
 | Session Audit Note | [`note/README.md`](note/README.md) | 当前打开 session 的 `/audit` 只读调用树、计量与 Artifact 阅读模式 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
+| Settings Gap Note | [`notez/README.md`](notez/README.md) | 对照 oh-my-pi `SETTINGS_SCHEMA` 的 RunLedger 缺失设置盘点：重试 → 运维；模型/采样为待核实项 | [`notez/00-settings-gap-vs-oh-my-pi.md`](notez/00-settings-gap-vs-oh-my-pi.md) |
+| Settings Completion | [`settings/README.md`](settings/README.md) | 按低/中/高难度把正文 settings 缺口拆成可执行计划；H0 逐 capability 区分 settings/capability 缺失；附录 A/B 暂不实现；逐 group 验收以矩阵为准 | [`settings/01-low-complexity-settings-plan.md`](settings/01-low-complexity-settings-plan.md)、[`settings/02-medium-complexity-runtime-settings-plan.md`](settings/02-medium-complexity-runtime-settings-plan.md)、[`settings/03-high-complexity-capability-settings-plan.md`](settings/03-high-complexity-capability-settings-plan.md)、[`settings/04-settings-acceptance-matrix.md`](settings/04-settings-acceptance-matrix.md)、[`settings/05-high-complexity-capability-inventory.md`](settings/05-high-complexity-capability-inventory.md) |
 | Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md)、[`providers/02-oh-my-pi-provider-port-execution-checklist.md`](providers/02-oh-my-pi-provider-port-execution-checklist.md) | 历史 pi-ai 全量移植；oh-my-pi 当前新增 provider 的差集、适配批次、特殊协议、动态 catalog、认证和生产验收清单 | 当前实现查 `AGENTS.md` §1.1；增量执行状态查 `providers/02` |
 | Storage / CLI | [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md)、[`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | 用户级单一 home 破坏性迁移 handoff（S0–S5 已完成）;旧项目级 `.runledger/`、settings、session 与 CLI 计划仅作为 superseded 迁移输入 | 迁移状态与最终证据查 `02`;旧布局历史见 [`project-cli-layout.md`](project-cli-layout.md) |
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`09` 专题导航 | `AGENTS.md` §1.2.x、§5 |
@@ -94,6 +96,16 @@ development-doc/
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md
+├── notez/
+│   ├── README.md
+│   └── 00-settings-gap-vs-oh-my-pi.md
+├── settings/
+│   ├── README.md
+│   ├── 01-low-complexity-settings-plan.md
+│   ├── 02-medium-complexity-runtime-settings-plan.md
+│   ├── 03-high-complexity-capability-settings-plan.md
+│   ├── 04-settings-acceptance-matrix.md
+│   └── 05-high-complexity-capability-inventory.md
 ├── plugin/
 │   └── 01-tree-sitter-bash-ast-port-plan.md
 ├── providers/
