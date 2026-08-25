@@ -409,8 +409,7 @@ export async function createProductionSessionExtensionComposition(
 		updateSkillsProviderPolicy: async (providerId, enabled, scope) => {
 			if (scope !== "user") throw new Error("workspace-scoped provider mutation is not wired in the session path");
 			await updateProjectSettings({ layout: options.layout }, (settings) => {
-				const providers = { ...(settings.skills?.providers ?? {}) };
-				providers[providerId] = enabled;
+				const providers = { ...(settings.skills?.providers ?? {}), [providerId]: enabled };
 				return { ...settings, skills: { enabled: settings.skills?.enabled ?? true, providers } };
 			});
 		},

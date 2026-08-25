@@ -22,7 +22,10 @@ import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
 import { loadLayeredProjectSettings, loadProjectSettings } from "../storage/settings-manager.ts";
-import { resolveRunledgerHome } from "../storage/runledger-home.ts";
+import { SettingsRuntimeStore } from "../storage/settings-runtime-store.ts";
+import type { EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
+import type { TaskPolicyProjection } from "../storage/settings-policies.ts";
+import { RunledgerHomeError, resolveRunledgerHome } from "../storage/runledger-home.ts";
 import { parseArgs, USAGE } from "./args.ts";
 import { validateLegacyCliEnvironment } from "./authority.ts";
 import { runMigrateCommand } from "./migrate.ts";
@@ -73,6 +76,8 @@ import { createCliHideThinkingSettings, resolveHideThinkingBlock } from "./hide-
 import { createCliComposerShapeSettings } from "./composer-shape-settings.ts";
 import { createComposerShapeRegistry } from "../tui/composer/registry.ts";
 import { createCliComposerShapeComposition } from "./composer-shape-composition.ts";
+import { runSettingsCommand } from "./settings-command.ts";
+import { SettingsCommandError } from "../storage/settings-service.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -89,6 +94,25 @@ export async function main(argv: readonly string[]): Promise<void> {
       await runAuthGatewayCommand(argv.slice(1));
     } catch (error) {
       process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
+      process.exit(2);
+    }
+    return;
+  }
+  if (argv[0] === "settings") {
+    try {
+      const { resolution, layout } = await resolveRunledgerHome();
+      if (resolution.createDefault) await mkdir(layout.home, { recursive: true, mode: 0o700 });
+      await runSettingsCommand(argv.slice(1), { layout });
+    } catch (error) {
+      const code = error instanceof SettingsCommandError
+        ? error.code
+        : error instanceof RunledgerHomeError
+          ? error.code
+          : "settings_command_failed";
+      const detail = error instanceof SettingsCommandError || error instanceof RunledgerHomeError
+        ? error.message
+        : "settings command failed";
+      process.stderr.write(`[runledger] ${code}: ${detail}\n`);
       process.exit(2);
     }
     return;
@@ -202,10 +226,18 @@ export async function main(argv: readonly string[]): Promise<void> {
   const ownerStore = new OwnerStore(db);
   const authorityId = createRuntimeId("authority", "session-owner-runtime");
   const tenantId = createRuntimeId("tenant", "local-user");
+  const initialSettingsRuntimeStore = new SettingsRuntimeStore({ layout });
+  const initialRuntimeSettings = await initialSettingsRuntimeStore.load();
+  const initialStartupPolicy: StartupSelectionPolicy = {
+		autoResume: initialRuntimeSettings.startup.autoResume === true,
+	};
+	const hasInitialResumeCandidate = store.listSessions().some((record) =>
+		record.status === "active" || record.status === "paused" || record.status === "recovery_required",
+	);
 
   let sessionId: SessionId;
   try {
-    sessionId = await resolveSessionId(store, args, cwd);
+		sessionId = await resolveSessionId(store, args, cwd, initialRuntimeSettings.digest.digest, initialStartupPolicy);
   } catch (error) {
     db.close();
     process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
@@ -222,7 +254,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       repositoryId: parseRuntimeId("repository", catalog.repositoryId) ?? createRuntimeId("repository", runtimeDigest(catalog.repositoryId).digest),
     });
 	};
-  const multiAgentPolicySourcesFor = async (targetSessionId: SessionId) => {
+  const multiAgentPolicySourcesFor = async (targetSessionId: SessionId, taskPolicy?: TaskPolicyProjection) => {
 	const key = workspaceStorageKeyFor(targetSessionId);
     const layered = await loadLayeredProjectSettings({ layout, workspaceKey: key });
     const source = (layer: typeof layered.user) => layer.multiAgent.state === "valid"
@@ -232,6 +264,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       runtimeEnabled: args.experimentalMultiAgent,
       user: source(layered.user),
       workspace: source(layered.workspace),
+      ...(taskPolicy === undefined ? {} : { taskPolicy }),
     };
   };
 
@@ -267,27 +300,37 @@ export async function main(argv: readonly string[]): Promise<void> {
   const openView = async (targetSessionId: string): Promise<CliSessionView> => {
 	const typedSessionId = targetSessionId as SessionId;
 	const workspaceStorageKey = workspaceStorageKeyFor(typedSessionId);
-    const embedded = await createEmbeddedSessionRuntime({
-	  sessionId: typedSessionId,
-      store,
-      ownerStore,
-	  workspace: await workspaceFactoryFor(targetSessionId),
-	  domain: {
-        cwd,
-        layout,
-        settings,
-        models,
-		traceRecorderFactory,
-		modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
-		multiAgent: await multiAgentPolicySourcesFor(typedSessionId),
-        overrides: {
-          ...(args.provider === undefined ? {} : { provider: args.provider }),
-          ...(args.model === undefined ? {} : { model: args.model }),
-          ...(args.thinking === undefined ? {} : { thinkingLevel: args.thinking }),
-        },
-        securitySources: cliSecuritySources(args),
-      },
-    });
+	const settingsRuntimeStore = new SettingsRuntimeStore({ layout, workspaceKey: workspaceStorageKey });
+	const runtimeSettings = await settingsRuntimeStore.load();
+	const embedded = await createEmbeddedSessionRuntime({
+		sessionId: typedSessionId,
+		store,
+		ownerStore,
+		workspace: await workspaceFactoryFor(targetSessionId),
+		domain: {
+			cwd,
+			layout,
+			settings,
+				runtimeSettings,
+				runtimeSettingsForTurn: () => settingsRuntimeStore.admitTurn(),
+				compactionSummarizerFactory: ({ providerGate, retryPolicy }) => modelRequestRouters.compactionSummarizer({
+					models,
+					providerGate,
+					retryPolicy,
+				}),
+				retryPolicy: runtimeSettings.retry,
+			models,
+			traceRecorderFactory,
+			modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
+			multiAgent: await multiAgentPolicySourcesFor(typedSessionId, runtimeSettings.taskPolicy),
+			overrides: {
+				...(args.provider === undefined ? {} : { provider: args.provider }),
+				...(args.model === undefined ? {} : { model: args.model }),
+				...(args.thinking === undefined ? {} : { thinkingLevel: args.thinking }),
+			},
+			securitySources: cliSecuritySources(args),
+		},
+	});
     if (embedded.runtime !== undefined) ownedRuntimeRegistry.set(targetSessionId, embedded);
     const snapshot = await fetchDomainSnapshot(embedded);
     const controller = new SessionInteractiveController(embedded.handle, snapshot);
@@ -297,7 +340,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     const processOverlayController = processOverlayClient === undefined
       ? undefined
       : createProcessOverlayController(processOverlayClient, { driver: role === "driver" });
-    return { sessionId: targetSessionId, embedded, controller, processOverlayClient, processOverlayController };
+	return { sessionId: targetSessionId, embedded, controller, processOverlayClient, processOverlayController, runtimeSettings, settingsRuntimeStore };
   };
 
   let initialView: CliSessionView;
@@ -323,7 +366,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
 
   let firstView: CliSessionView | undefined = initialView;
-  let showWelcomeOnNextView = sessionOpenMode(args) === "create";
+	  let showWelcomeOnNextView = shouldShowWelcomeOnInitialView(args, initialStartupPolicy, hasInitialResumeCandidate);
   try {
     await runSessionTransitionLoop<CliSessionView>({
       initialSessionId: sessionId,
@@ -372,10 +415,13 @@ export async function main(argv: readonly string[]): Promise<void> {
 	const effectiveCwd = view.embedded.effectiveCwd;
 	const gitDisplay = effectiveCwd === undefined
 	  ? {}
-	  : await gitWorkspaceDisplayFacts(effectiveCwd, worktreeGit);
-    const activeInteractive = new InteractiveMode({
-      controller: view.controller,
-      workspaceCapability: workspaceCapabilityLabel(),
+	  : await gitWorkspaceDisplayFacts(effectiveCwd, worktreeGit, view.runtimeSettings.git.enabled);
+	    const activeInteractive = new InteractiveMode({
+	      controller: view.controller,
+	      runtimeSettings: view.runtimeSettings,
+	      settingsRuntimeStore: view.settingsRuntimeStore,
+	      settingsEditorPort: view.settingsRuntimeStore.editorPort(),
+	      workspaceCapability: workspaceCapabilityLabel(),
       workspaceDisplayAbsolutePath: workspaceDisplayAbsolutePathForView({ effectiveCwd }),
       gitBranchLabel: gitDisplay.branchLabel,
       syntaxThemeName: settings.theme,
@@ -413,11 +459,13 @@ export async function main(argv: readonly string[]): Promise<void> {
 }
 
 interface CliSessionView {
-  readonly sessionId: string;
-  readonly embedded: EmbeddedSessionRuntimeResult;
-  readonly controller: SessionInteractiveController;
-  readonly processOverlayClient: ProcessOverlayHostClient | undefined;
-  readonly processOverlayController: ProcessOverlayController | undefined;
+	readonly sessionId: string;
+	readonly embedded: EmbeddedSessionRuntimeResult;
+	readonly controller: SessionInteractiveController;
+	readonly processOverlayClient: ProcessOverlayHostClient | undefined;
+	readonly processOverlayController: ProcessOverlayController | undefined;
+	readonly runtimeSettings: EffectiveRuntimeSettingsSnapshot;
+	readonly settingsRuntimeStore: SettingsRuntimeStore;
 }
 
 /**
@@ -463,20 +511,25 @@ export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResu
 
 /** §8.1/§8.2:从 SQLite catalog resolve sessionId(create/open/resume/fork)。 */
 export async function resolveSessionId(
-	store: SessionStore,
-	args: ReturnType<typeof parseArgs>["args"],
-	cwd: string,
+		store: SessionStore,
+		args: ReturnType<typeof parseArgs>["args"],
+		cwd: string,
+		settingsDigest: string = runtimeDigest({ settings: "default" }).digest,
+		startupPolicy: StartupSelectionPolicy = {},
 ): Promise<SessionId> {
-	const mode = sessionOpenMode(args);
-	if (mode === "create") {
+	const mode = sessionOpenMode(args, startupPolicy);
+	const createSession = (): SessionId => {
 		const sessionId = createRuntimeId("session", `cwd-${cwd.replace(/[^A-Za-z0-9._~-]/g, "_").slice(0, 40)}-${Date.now().toString(36)}`);
 		store.createSession({
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "default"),
 			repositoryId: createRuntimeId("repository", "default"),
-			settingsDigest: "d".repeat(64),
+			settingsDigest,
 		});
 		return sessionId;
+	};
+	if (mode === "create") {
+		return createSession();
 	}
 	if (mode === "open") {
 		if (args.sessionId !== undefined) {
@@ -507,16 +560,41 @@ export async function resolveSessionId(
 	// resume / continue_recent:从 SQLite catalog 选最近 session。
 	const candidates = store.listSessions().filter((record) => record.status === "active" || record.status === "paused" || record.status === "recovery_required");
 	const recent = candidates.sort((a, b) => b.updatedAtMs - a.updatedAtMs)[0];
-	if (recent === undefined) throw new Error("no session to resume; create a new session first");
+	if (recent === undefined) {
+		// 只有 settings 驱动的隐式 autoResume 可以在首次启动时创建；显式
+		// --continue/--resume 没有候选时仍保持可诊断的失败语义。
+		if (startupPolicy.autoResume === true && !args.continueRecent && !args.resume) return createSession();
+		throw new Error("no session to resume; create a new session first");
+	}
 	return recent.sessionId as SessionId;
 }
 
-function sessionOpenMode(args: ReturnType<typeof parseArgs>["args"]): "create" | "open" | "continue_recent" | "resume" | "fork" {
+export interface StartupSelectionPolicy {
+	readonly autoResume?: boolean;
+}
+
+export function sessionOpenMode(
+	args: ReturnType<typeof parseArgs>["args"],
+	startupPolicy: StartupSelectionPolicy = {},
+): "create" | "open" | "continue_recent" | "resume" | "fork" {
   if (args.session !== undefined || args.sessionId !== undefined) return "open";
   if (args.fork !== undefined) return "fork";
   if (args.resume) return "resume";
   if (args.continueRecent) return "continue_recent";
-  return "create";
+  return startupPolicy.autoResume === true ? "continue_recent" : "create";
+}
+
+export function shouldShowWelcomeOnInitialView(
+	args: ReturnType<typeof parseArgs>["args"],
+	startupPolicy: StartupSelectionPolicy,
+	hasResumeCandidate: boolean,
+): boolean {
+	const mode = sessionOpenMode(args, startupPolicy);
+	if (mode === "create") return true;
+	return mode === "continue_recent"
+		&& startupPolicy.autoResume === true
+		&& !args.continueRecent
+		&& !hasResumeCandidate;
 }
 
 /** R7:通过 TCP facade 拉取 TUI 初始投影(snapshot 查询)。 */

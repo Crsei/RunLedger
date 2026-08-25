@@ -101,6 +101,8 @@ export interface MultiAgentSettingsSource {
 export interface MultiAgentPolicy {
 	readonly enabled: boolean;
 	readonly limits: MultiAgentLimits;
+	/** Task settings may only disable named roles; they cannot add authority. */
+	readonly disabledAgents?: readonly string[];
 }
 
 export interface MultiAgentPolicyResolution {

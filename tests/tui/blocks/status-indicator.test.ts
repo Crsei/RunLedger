@@ -38,6 +38,14 @@ describe("Codex session display S5 status indicator", () => {
 		expect(view?.details).toHaveLength(3);
 	});
 
+	it("projects the configured symbol preset without changing status facts", () => {
+		const ascii = projectStatusIndicator(activeRun(), { nowMs: 13_000, animationFrame: 0, symbolPreset: "ascii" });
+		const nerd = projectStatusIndicator(activeRun(), { nowMs: 13_000, animationFrame: 0, symbolPreset: "nerd" });
+
+		expect(ascii).toMatchObject({ indicator: "|", header: "Working", elapsed: "12s" });
+		expect(nerd).toMatchObject({ indicator: "󱑖", header: "Working", elapsed: "12s" });
+	});
+
 	it("projects waiting without an interrupt hint and freezes active elapsed time", () => {
 		const view = projectStatusIndicator(activeRun({
 			state: "waiting",

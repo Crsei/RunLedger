@@ -103,6 +103,10 @@ export interface SessionSecurityCompositionOptions {
 	readonly workspaceId: string;
 	readonly repositoryId: string;
 	readonly securitySources?: readonly SessionSecurityConfigSource[];
+	/** User-owned settings shell; validated before it can reach any process leaf. */
+	readonly shellPath?: string;
+	/** Canonical workspace roots resolved by the workspace path adapter. */
+	readonly additionalWorkspaceRoots?: readonly string[];
 	readonly sandboxBackend?: SandboxBackend;
 	readonly filesystemBroker?: FileSystemBrokerPort;
 	readonly networkBroker?: NetworkBrokerPort;
@@ -202,12 +206,21 @@ export async function createSessionSecurity(
 	if (snapshot.bashAnalyzer?.mode !== "legacy") await bashAnalyzer.initialize?.();
 	const sandboxBackend = options.sandboxBackend ?? createSandboxBackend(
 		runtimeWorkspacePlatform(),
-		{ probe: { which: findLocalExecutable } },
+		{
+			probe: { which: findLocalExecutable },
+			...(options.shellPath === undefined ? {} : {
+				linuxShellProgram: options.shellPath,
+				macosShellProgram: options.shellPath,
+				windowsShellProgram: options.shellPath,
+			}),
+		},
 	);
 	const filesystemBroker = options.filesystemBroker ?? createLocalFileSystemBroker();
 	const networkBroker = options.networkBroker ?? createLocalNetworkBroker();
 	const processLeaf = options.processLeaf ?? createLocalSessionProcessLeaf();
-	const unrestrictedShell = options.unrestrictedShell ?? localExecutionEnv(cwd).shell;
+	const unrestrictedShell = options.unrestrictedShell ?? localExecutionEnv(cwd, {
+		...(options.shellPath === undefined ? {} : { shellPath: options.shellPath }),
+	}).shell;
 	const bindings = new Map<string, ProcessBinding>();
 	const providers = createConstraintProviders(bindings);
 	const workspace = (toolCallId: string, requestCwd = cwd) => createWorkspaceEnvelope(
@@ -539,6 +552,7 @@ async function loadSnapshot(
 	const resolved = resolveSecuritySnapshot({
 		layers: loaded.value,
 		workspaceRoot: cwd,
+		workspaceRoots: options.additionalWorkspaceRoots,
 		tempRoot: resolve(options.layout.tmp, options.fence.sessionId),
 		createdAt: (options.now ?? (() => new Date()))().toISOString(),
 	});
@@ -857,7 +871,7 @@ function sandboxRequest(
 		requestDigest,
 		workspace,
 		readRoots: existingLocalPaths(snapshot.filesystem.readRoots),
-		writeRoots: existingLocalPaths(snapshot.filesystem.writeRoots.filter((path) => pathWithin(workspace.worktreePath, path))),
+		writeRoots: existingLocalPaths(snapshot.filesystem.writeRoots.filter((path) => snapshot.workspaceRoots?.some((root) => pathWithin(root, path)) ?? pathWithin(workspace.worktreePath, path))),
 		denyRead: existingLocalPaths(snapshot.filesystem.denyRead),
 		denyWrite: existingLocalPaths(snapshot.filesystem.denyWrite),
 		protectedPaths: existingLocalPaths(snapshot.filesystem.protectedPaths),

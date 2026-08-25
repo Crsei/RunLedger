@@ -11,6 +11,7 @@
 
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
 import type { SessionId } from "../protocol/ids.ts";
+import { runtimeDigest } from "../protocol/foundation.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 import type { SessionDomainPort, SessionDomainSnapshot } from "./session-runtime.ts";
 import { SqliteLedgerSink } from "./sqlite-ledger.ts";
@@ -24,6 +25,7 @@ import type { Models } from "../../models.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
 import type { ProjectSettings } from "../../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../../storage/settings-manager.ts";
+import { SettingsResolver, type EffectiveRuntimeSettingsSnapshot } from "../../storage/settings-resolver.ts";
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -62,12 +64,30 @@ import { createSessionProductionToolSource } from "../agents/capability-subset.t
 import { createMultiAgentDomain, type SessionMultiAgentPolicySources } from "../agents/domain.ts";
 import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
 import type { PreviousOwnerLiveness } from "../agents/supervisor.ts";
+import type { RetryPolicy } from "../retry/policy.ts";
+import type { ToolPolicyProjection } from "../../storage/settings-policies.ts";
+import { createProviderRequestGate, type ProviderRequestGate } from "../agents/child-model-runtime.ts";
+import type { CompactionSummarizer } from "../types.ts";
+import type { TaskToolOptions } from "../tasks/task-tools.ts";
+import { resolveAdditionalWorkspaceRoots } from "../../workspace/additional-roots.ts";
+import { createNativeWorkspacePathAdapter } from "../../workspace/native/adapters.ts";
+import { runtimeWorkspacePlatform } from "../../workspace/runtime-platform.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
 	readonly cwd: string;
 	readonly layout: RunledgerLayout;
 	readonly settings: ProjectSettings;
+	/** Composition root 的 user/workspace effective snapshot projection。 */
+	readonly runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
+	/** Host-owned prompt-admission boundary for live/next-turn settings. */
+	readonly runtimeSettingsForTurn?: () => EffectiveRuntimeSettingsSnapshot | Promise<EffectiveRuntimeSettingsSnapshot>;
+	/** Builds a production summarizer that shares this Session's request gate. */
+	readonly compactionSummarizerFactory?: (input: {
+		readonly providerGate: ProviderRequestGate;
+		readonly retryPolicy: RetryPolicy;
+	}) => CompactionSummarizer;
+	readonly retryPolicy?: RetryPolicy;
 	readonly models: Models;
 	readonly overrides?: RuntimeSelectionOverrides;
 	/** Host-owned route gate shared by coding and title completions. */
@@ -98,6 +118,14 @@ export async function assembleSessionDomain(
 	runBudgetUsage?: AgentRunBudgetUsage,
 	multiAgentPreviousOwnerLiveness?: PreviousOwnerLiveness,
 ): Promise<SessionDomainPort> {
+	const runtimeSettings = options.runtimeSettings ?? new SettingsResolver({ user: options.settings }).effectiveRuntimeSnapshot();
+	const additionalRoots = await resolveAdditionalWorkspaceRoots({
+		adapter: createNativeWorkspacePathAdapter(runtimeWorkspacePlatform()),
+		workspaceRoot: options.cwd,
+		paths: runtimeSettings.workspacePolicy.additionalDirectories,
+	});
+	if (!additionalRoots.ok) throw new Error(`${additionalRoots.error.code}: ${additionalRoots.error.message}`);
+	const additionalWorkspaceRoots = additionalRoots.value.map((root) => root.canonicalPath);
 	const ledger = new SqliteLedgerSink({ store, fence: () => fence });
 	const replay = await replayDomain(ledger, restored);
 	const catalog = store.getSession(sessionId);
@@ -127,6 +155,8 @@ export async function assembleSessionDomain(
 		processEnvironment: environmentResult.value,
 		toolchainProbe,
 		...(options.securitySources === undefined ? {} : { securitySources: options.securitySources }),
+		...(runtimeSettings.shellPath === undefined ? {} : { shellPath: runtimeSettings.shellPath }),
+		additionalWorkspaceRoots,
 		...(options.approvalPorts === undefined ? {} : { approvalPorts: options.approvalPorts }),
 		bashClassificationAudit: options.bashClassificationAudit ?? createSessionBashClassificationAudit({ store, fence }),
 	});
@@ -138,6 +168,7 @@ export async function assembleSessionDomain(
 		fence,
 		workspaceId: catalog.workspaceId as Parameters<typeof createSessionProcessComposition>[0]["workspaceId"],
 		security: security.managedProcess,
+		...(runtimeSettings.shellPath === undefined ? {} : { shellPath: runtimeSettings.shellPath }),
 		attemptPort: () => attemptPort.get(),
 		recordingMode: recording.mode,
 		recordingFailurePolicy: recording.failurePolicy,
@@ -160,7 +191,15 @@ export async function assembleSessionDomain(
 				ownerGeneration: fence.generation,
 			}),
 			};
-	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions);
+	const baseTools = productionSessionTools(
+		options.cwd,
+		executionEnv,
+		process.toolClient(),
+		security.permissionRequester,
+		lspOptions,
+		runtimeSettings.toolPolicy,
+		{ ledger } satisfies TaskToolOptions,
+	);
 	const extensions = await createProductionSessionExtensionComposition({
 		layout: options.layout,
 		cwd: options.cwd,
@@ -175,6 +214,25 @@ export async function assembleSessionDomain(
 		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
 	const composedTools = [...baseTools, ...extensions.tools];
+	const toolsForRuntimeSettings = (settings: EffectiveRuntimeSettingsSnapshot): AgentTool[] => [
+		...productionSessionTools(
+			options.cwd,
+			executionEnv,
+			process.toolClient(),
+			security.permissionRequester,
+			lspOptions,
+			settings.toolPolicy,
+			{ ledger } satisfies TaskToolOptions,
+		),
+		...extensions.tools,
+	];
+	const providerGate = createProviderRequestGate(runtimeSettings.providerPolicy);
+	const compactionSummarizerForRuntimeSettings = options.compactionSummarizerFactory === undefined
+		? undefined
+		: (settings: EffectiveRuntimeSettingsSnapshot) => options.compactionSummarizerFactory!({
+			providerGate,
+			retryPolicy: settings.retry,
+		});
 	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
 	let titleLifecycle: SessionTitleLifecycle | undefined;
 	const controller = await InteractiveSessionController.create({
@@ -182,12 +240,20 @@ export async function assembleSessionDomain(
 		layout: options.layout,
 		systemPrompt: options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents),
 		models: options.models,
-		settings: options.settings,
+			settings: options.settings,
+			runtimeSettings,
+			...(options.runtimeSettingsForTurn === undefined ? {} : { runtimeSettingsForTurn: options.runtimeSettingsForTurn }),
+			retryPolicy: options.runtimeSettings === undefined
+				? (options.retryPolicy ?? runtimeSettings.retry)
+				: runtimeSettings.retry,
 		replay,
 		ledger,
 			overrides: options.overrides,
 			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
 		tools: composedTools,
+		toolsForRuntimeSettings,
+		providerGate,
+		...(compactionSummarizerForRuntimeSettings === undefined ? {} : { compactionSummarizerForRuntimeSettings }),
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
@@ -213,14 +279,20 @@ export async function assembleSessionDomain(
 		}),
 		modelRuntimeFactory: controller.createChildModelRuntimeFactory(),
 	};
-	const multiAgentResult = options.multiAgent === undefined
+	const multiAgentSources = options.multiAgent === undefined
+		? undefined
+		: {
+			...options.multiAgent,
+			taskPolicy: options.multiAgent.taskPolicy ?? runtimeSettings.taskPolicy,
+		};
+	const multiAgentResult = multiAgentSources === undefined
 		? { ok: true as const, value: undefined }
 		: await createMultiAgentDomain({
 			sessionId,
 			ownerGeneration: fence.generation,
 			store,
 			fence,
-			policySources: options.multiAgent,
+			policySources: multiAgentSources,
 			childRuntime: {
 				systemPrompt: options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents),
 				productionToolSource: childRuntime.productionToolSource,
@@ -234,7 +306,7 @@ export async function assembleSessionDomain(
 			sessionId,
 			fence,
 			models: options.models,
-			enabled: options.settings.autoTitle !== false,
+			enabled: runtimeSettings.sessionPolicy.autoTitle,
 			getSelection: () => controller.currentSelection,
 			getCurrentTitle: () => store.getSession(sessionId)?.title,
 				setAutoTitle: (input) => {
@@ -262,19 +334,24 @@ export async function assembleSessionDomain(
 					}
 				},
 			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
+			retryPolicy: () => controller.retryPolicySnapshot,
+			providerGate: controller.providerRequestGate,
 		});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
 	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);
 	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
-	const planInspection = createSessionPlanInspection({
-		sessionId,
-		store,
-		policyCeilingDigest: security.snapshot.policyDigest,
-	});
+	const planInspection = runtimeSettings.plan.enabled
+		? createSessionPlanInspection({
+			sessionId,
+			store,
+			policyCeilingDigest: security.snapshot.policyDigest,
+		})
+		: undefined;
 		return {
 			controller,
+			runtimeSettingsSnapshot: () => controller.runtimeSettingsSnapshot(),
 			subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
 				titleListeners.add(listener);
 				return () => titleListeners.delete(listener);
@@ -299,8 +376,14 @@ export async function assembleSessionDomain(
 				}
 			}
 		},
-		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan"],
+		protocolCapabilities: [
+			"session.approval.reverse",
+			"session.security.inspect",
+			...(runtimeSettings.plan.enabled ? ["session.plan" as const] : []),
+		],
 		securityInspection: () => ({
+			workspaceRootCount: (security.snapshot.workspaceRoots ?? [security.snapshot.workspaceRoot]).length,
+			workspaceRootDigests: (security.snapshot.workspaceRoots ?? [security.snapshot.workspaceRoot]).map((root) => runtimeDigest(root)),
 			ownerGeneration: fence.generation,
 			profile: security.snapshot.profile.name,
 			approvalPolicy: security.snapshot.profile.approvalPolicy,
@@ -372,6 +455,8 @@ export function productionSessionTools(
 	managedProcess?: StdlibToolsOptions["managedProcess"],
 	permissionRequester?: StdlibToolsOptions["permissionRequester"],
 	lspOptions?: LspToolOptions,
+	toolPolicy?: ToolPolicyProjection,
+	taskOptions?: TaskToolOptions,
 ): AgentTool[] {
 	const excluded = new Set(["NotebookEdit", "echo"]);
 	excluded.add("Skill");
@@ -380,9 +465,16 @@ export function productionSessionTools(
 		executionEnv,
 		...(managedProcess === undefined ? {} : { managedProcess }),
 		...(permissionRequester === undefined ? {} : { permissionRequester }),
+		...(toolPolicy === undefined ? {} : { toolPolicy }),
+		...(taskOptions === undefined ? {} : { taskOptions }),
 	})
 		.toContext()
 		.filter((tool: AgentTool) => !excluded.has(tool.name));
-	if (lspOptions !== undefined) tools.push(createLspTool(cwd, lspOptions));
+	if (lspOptions !== undefined && toolPolicy?.lsp?.enabled !== false) {
+		tools.push(createLspTool(cwd, {
+			...lspOptions,
+			...(toolPolicy?.lsp?.timeoutMs === undefined ? {} : { timeoutMs: toolPolicy.lsp.timeoutMs }),
+		}));
+	}
 	return tools;
 }

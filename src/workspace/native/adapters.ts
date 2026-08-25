@@ -124,6 +124,14 @@ class NativePathAdapter implements WorkspacePathAdapter {
 	}
 }
 
+/** 供 workspace settings/安全组合复用的 canonical path adapter。 */
+export function createNativeWorkspacePathAdapter(
+	platform: WorkspacePlatform,
+	syscall: PathSyscallPort = defaultSyscall(),
+): WorkspacePathAdapter {
+	return new NativePathAdapter(platform, syscall);
+}
+
 interface GitRunResult {
 	readonly stdout: string;
 	readonly signaled: boolean;

@@ -2,14 +2,19 @@
 
 import { resolve } from "node:path";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
+import { SettingsResolver, type EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { replaySession } from "../storage/session-codec.ts";
 import type { RunledgerLayout } from "../runtime/contracts/public.ts";
 import type { Models } from "../models.ts";
 import type { TraceRecorderFactory } from "../runtime/trace/composition.ts";
 import { InteractiveSessionController } from "../runtime/interactive-session-controller.ts";
+import type { ProviderRequestGate } from "../runtime/agents/child-model-runtime.ts";
 import { createStdlibTools } from "../runtime/tools/index.ts";
-import { createPlanMemoryTools } from "../runtime/tools/plan-memory-tools.ts";
+import {
+	createPlanMemoryTools,
+	type HostDomainToolClient,
+} from "../runtime/tools/plan-memory-tools.ts";
 import type { HostSessionOpenRequest, HostSessionRuntime } from "./runtime-host-service.ts";
 import type { ProductionManagedProcessPort } from "./runtime-host-process.ts";
 import type { ProductionHostSecurity } from "./runtime-host-security.ts";
@@ -49,6 +54,10 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly systemPrompt: string;
 	readonly models: Models;
 	readonly settings: ProjectSettings;
+	/** Host composition freezes one effective settings snapshot for each session factory. */
+	readonly runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
+	/** Host-wide provider gate shared by root, child, title, and summarizer requests. */
+	readonly providerGate?: ProviderRequestGate;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
 	readonly processPort?: ProductionManagedProcessPort;
 	readonly toolResultOverflowStore?: ToolResultOverflowStore;
@@ -95,6 +104,30 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly extensionAdapter?: AdapterIdentityRef;
 	/** The resident Host's sole canonical Runtime event writer. */
 	readonly runtimeEventWriter?: RuntimeEventWriter;
+}
+
+/** Host factory 的唯一 settings fallback；tools 与 controller 必须共享同一快照。 */
+export function resolveProductionHostRuntimeSettings(
+	options: Pick<ProductionHostSessionFactoryOptions, "settings" | "runtimeSettings">,
+): EffectiveRuntimeSettingsSnapshot {
+	return options.runtimeSettings ?? new SettingsResolver({ user: options.settings }).effectiveRuntimeSnapshot();
+}
+
+/**
+ * Host domain tools follow the same immutable settings snapshot as the Session
+ * controller.  A disabled capability is omitted from the model schema rather
+ * than exposed as a tool that can only fail after a provider call.
+ */
+export function registerProductionHostDomainTools(
+	tools: ToolRegistry,
+	client: HostDomainToolClient,
+	runtimeSettings: Pick<EffectiveRuntimeSettingsSnapshot, "plan" | "sessionPolicy">,
+): void {
+	for (const tool of createPlanMemoryTools(client)) {
+		if (tool.name === "plan_write" && !runtimeSettings.plan.enabled) continue;
+		if (tool.name.startsWith("memory_") && runtimeSettings.sessionPolicy.memoryBackend === "off") continue;
+		tools.register(tool, { namespace: "stdlib" });
+	}
 }
 
 export interface ProductionHostHookRuntimeOptions {
@@ -175,6 +208,7 @@ export function resolveProductionSessionWorkspace(input: {
 
 export function createProductionHostSessionFactory(options: ProductionHostSessionFactoryOptions): (input: HostSessionOpenRequest) => Promise<HostSessionRuntime> {
 	return async (input) => {
+		const runtimeSettings = resolveProductionHostRuntimeSettings(options);
 		const sessionGeneration = input.sessionGeneration ?? 1;
 		if (!Number.isSafeInteger(sessionGeneration) || sessionGeneration < 1) throw new Error("Host session generation is invalid");
 		const storedBinding = options.workspaceBinding ?? await options.workspaceBindingStore?.read();
@@ -210,6 +244,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				...(executionEnv === undefined ? {} : { executionEnv }),
 				...(options.skillLoader === undefined ? {} : { skillLoader: options.skillLoader }),
 				...(security === undefined ? {} : { permissionRequester: security.permissionRequester }),
+				toolPolicy: runtimeSettings.toolPolicy,
 			});
 			if (options.domainClient !== undefined) {
 				// 绑定 session 的 domain client：agent 工具的 plan.write / memory.*
@@ -219,9 +254,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 					query: (operation, body = {}) => options.domainClient!.query(operation, { sessionId, ...body }),
 					command: (operation, body = {}) => options.domainClient!.command(operation, { sessionId, ...body }),
 				};
-				for (const tool of createPlanMemoryTools(bound)) {
-					tools.register(tool, { namespace: "stdlib" });
-				}
+				registerProductionHostDomainTools(tools, bound, runtimeSettings);
 			}
 			const authorizationPolicy = options.planStateProvider === undefined
 				? security?.toolAuthorizationPolicy
@@ -262,7 +295,9 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				layout: options.layout,
 				systemPrompt: security === undefined ? options.systemPrompt : composePermissionsSystemPrompt(options.systemPrompt, security.snapshot),
 				models: options.models,
-				settings: options.settings,
+					settings: options.settings,
+				runtimeSettings,
+				...(options.providerGate === undefined ? {} : { providerGate: options.providerGate }),
 				replay,
 				ledger: manager.ledger(),
 				tools: tools.toContext(),

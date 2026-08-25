@@ -135,11 +135,11 @@ class PendingMessageQueue {
 
 export class Agent {
   private _state: AgentState;
-  private readonly _streamFn: StreamFn;
+  private _streamFn: StreamFn;
   private readonly _ledger: LedgerSink | undefined;
   private readonly _convertToLlm: (messages: AgentMessage[]) => Promise<Message[]> | Message[];
   private readonly subscribers: Set<AgentEventSink>;
-  private readonly _loopConfig: Partial<AgentLoopConfig>;
+  private _loopConfig: Partial<AgentLoopConfig>;
   private readonly _toolExecution: "sequential" | "parallel";
   private readonly _signal?: AbortSignal;
   private readonly _traceRecorderFactory: TraceRecorderFactory | undefined;
@@ -187,6 +187,18 @@ export class Agent {
 
   setTools(tools: AgentTool[]): void {
     this._state.tools = tools.slice();
+  }
+
+  /** Prompt admission may replace the governed provider stream between runs. */
+  setStreamFn(streamFn: StreamFn): void {
+    if (this._inFlight) throw new Error("cannot replace streamFn during an active run");
+    this._streamFn = streamFn;
+  }
+
+  /** Prompt admission may adopt a new immutable loop policy between runs. */
+  setLoopConfig(config: Partial<AgentLoopConfig>): void {
+    if (this._inFlight) throw new Error("cannot replace loop config during an active run");
+    this._loopConfig = { ...this._loopConfig, ...config };
   }
 
   setSystemPrompt(prompt: string): void {

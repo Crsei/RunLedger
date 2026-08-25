@@ -143,6 +143,8 @@ export interface SecuritySnapshot {
 	readonly rules: readonly SecurityRule[];
 	readonly sources: readonly SecurityPolicySource[];
 	readonly workspaceRoot: string;
+	/** Canonical roots admitted for this session; workspaceRoot remains the primary worktree. */
+	readonly workspaceRoots?: readonly string[];
 	readonly tempRoot: string;
 	readonly policyDigest: RuntimeDigest;
 	readonly createdAt: string;

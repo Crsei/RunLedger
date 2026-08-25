@@ -194,6 +194,44 @@ describe("B2 timeline selectors", () => {
 		expect(blocks.filter((block) => block.kind === "text").map((block) => block.content).join("\n")).not.toContain("+ after");
 	});
 
+	it("projects a read.renderMarkdown tool body as a Timeline Markdown block", () => {
+		const content = { text: "# heading\n\nbody", truncated: false, byteLength: 15 };
+		const blocks = rowToBlocks(row({
+			kind: "tool",
+			id: "tool:read",
+			toolCallId: "read",
+			toolName: { text: "read", truncated: false, byteLength: 4 },
+			status: "succeeded",
+			presentation: {
+				state: "known",
+				value: {
+					renderer: "read",
+					title: { text: "read", truncated: false, byteLength: 4 },
+					chips: [],
+					body: [{ kind: "markdown", content }],
+					result: {
+						kind: "read",
+						lineCount: { state: "known", value: 3 },
+						truncated: false,
+						renderMarkdown: true,
+					},
+					timestamps: { startedAt: "2026-08-06T00:00:00.000Z" },
+				},
+			},
+		}));
+
+		expect(blocks).toContainEqual({
+			id: "timeline-tool:read/markdown-0",
+			entryId: "tool:read",
+			partId: "tool:read/markdown-0",
+			contentGeneration: 0,
+			finalized: true,
+			kind: "markdown",
+			content: "# heading\n\nbody",
+			streaming: false,
+		});
+	});
+
 	it("projects notices with severity prefix", () => {
 		const blocks = rowToBlocks(row({ kind: "notice", severity: "error", message: { text: "boom", truncated: false, byteLength: 4 } }));
 		expect(blocks).toEqual([{

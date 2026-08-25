@@ -347,6 +347,7 @@ export interface TUIOptions {
   readonly performanceObserver?: TuiPerformanceObserver;
   readonly syntaxThemeName?: string;
   readonly syntaxThemeController?: SyntaxThemeController;
+  readonly renderMermaid?: boolean;
 }
 export interface Terminal {
   start(onInput: (data: string) => void, onResize: () => void): void;
@@ -398,6 +399,7 @@ export class TUI extends Container {
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private readonly syntaxThemeName: string | undefined;
   private readonly syntaxThemeController: SyntaxThemeController | undefined;
+  private readonly renderMermaid: boolean;
   private overlay: Component | undefined;
   private overlayOptions: OverlayOptions | undefined;
   private overlayHidden = false;
@@ -410,6 +412,7 @@ export class TUI extends Container {
     this.performanceObserver = options.performanceObserver;
     this.syntaxThemeName = options.syntaxThemeName;
     this.syntaxThemeController = options.syntaxThemeController;
+    this.renderMermaid = options.renderMermaid !== false;
   }
   addInputListener(listener: InputListener): () => void { this.inputListeners.push(listener); return () => { const i = this.inputListeners.indexOf(listener); if (i >= 0) this.inputListeners.splice(i, 1); }; }
   addBeforeRenderListener(listener: RenderPreparationListener): () => void {
@@ -548,6 +551,7 @@ export class TUI extends Container {
           }
         },
         performanceObserver: this.performanceObserver,
+        renderMermaid: this.renderMermaid,
         initialSyntaxThemeName: this.syntaxThemeName,
         syntaxThemeController: this.syntaxThemeController,
       });
@@ -686,7 +690,7 @@ export class TUI extends Container {
       });
       return;
     }
-    const footerText = visibleFooter.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(" · "));
+    const footerText = visibleFooter.map((line) => typeof line === "string" ? line : line.segments.map((segment) => segment.text).join(line.separator ?? " · "));
     const statusText = this.statusIndicator === undefined ? [] : [statusIndicatorPlainText(this.statusIndicator, width)];
     const editorOutput = composerFrame?.rows.map((row) => row.text)
       ?? this.focusedComponent?.render(width)
@@ -705,7 +709,7 @@ function blockTextForTerminal(block: PresentationBlock): string {
 	`diff ${block.document.path.text}`,
 	...block.document.hunks.flatMap((hunk) => hunk.lines.map((line) => `${line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " "} ${line.text.text}`)),
   ].join("\n");
-  if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
+  if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(block.separator ?? " · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
   return block.content;

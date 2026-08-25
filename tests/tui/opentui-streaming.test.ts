@@ -18,6 +18,7 @@ import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 import type { AssistantMessage } from "../../src/types.ts";
 import type { TuiEvent } from "../../src/tui/types.ts";
+import { SettingsResolver } from "../../src/storage/settings-resolver.ts";
 
 class TestTerminal implements Terminal {
   readonly columns = 80;
@@ -614,6 +615,42 @@ describe("Plan 18 streaming state", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("display.smoothStreaming=false flushes each streaming delta immediately", async () => {
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: () => {
+        throw new Error("stream not called");
+      },
+    });
+    const mode = new InteractiveMode({
+      agent,
+      terminal: new TestTerminal(),
+      runtimeSettings: new SettingsResolver({ user: { display: { smoothStreaming: false } } }).effectiveRuntimeSnapshot(),
+    });
+    const runPromise = mode.run();
+    await Promise.resolve();
+    const handleEvent = Reflect.get(mode, "handleEvent");
+    expect(typeof handleEvent).toBe("function");
+    if (typeof handleEvent !== "function") return;
+    const dispatch = (handleEvent as (event: TuiEvent) => void).bind(mode);
+    dispatch({ type: "message_start", timestamp: 0, role: "assistant" });
+    dispatch({
+      type: "message_update",
+      timestamp: 1,
+      assistantMessageEvent: {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "immediate",
+        partial: assistantPartial("immediate"),
+      },
+    });
+
+    const refs = Reflect.get(mode, "refs") as { chat: ChatContainer };
+    expect(refs.chat.present(80)).toContainEqual(expect.objectContaining({ content: "immediate" }));
+    mode.quit();
+    await runPromise;
   });
 
   test("terminal assistant event drains pending text before finalizing without duplicating the partial", async () => {

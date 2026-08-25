@@ -84,6 +84,8 @@ export interface HostSecurityCompositionOptions {
 	readonly cwd: string;
 	/** Cold-replayed canonical binding; absent only for an explicit source workspace. */
 	readonly workspaceBinding?: PersistedWorkspaceBinding;
+	/** Canonical workspace roots resolved from the immutable settings snapshot. */
+	readonly additionalWorkspaceRoots?: readonly string[];
 	readonly sessionId?: string;
 	readonly principalId?: string;
 	readonly sandboxBackend?: SandboxBackend;
@@ -441,6 +443,7 @@ async function loadSnapshot(options: HostSecurityCompositionOptions): Promise<Se
 	const resolved = resolveSecuritySnapshot({
 		layers: loaded.value,
 		workspaceRoot: resolve(options.workspaceBinding?.worktreePath ?? options.cwd),
+		workspaceRoots: options.additionalWorkspaceRoots,
 		tempRoot: resolve(options.layout.tmp, options.scope.workspaceStorageKey),
 		createdAt: (options.now ?? (() => new Date()))().toISOString(),
 	});
@@ -666,7 +669,7 @@ async function prepareSandboxPlan(
 	request: HostProcessSecurityRequest,
 	requestDigest: RuntimeDigest,
 ): Promise<Awaited<ReturnType<SandboxBackend["prepare"]>>> {
-	const writeRoots = snapshot.filesystem.writeRoots.filter((path) => pathWithin(workspace.worktreePath, path) && existsSync(path));
+	const writeRoots = snapshot.filesystem.writeRoots.filter((path) => (snapshot.workspaceRoots?.some((root) => pathWithin(root, path)) ?? pathWithin(workspace.worktreePath, path)) && existsSync(path));
 	const readRoots = snapshot.filesystem.readRoots.filter((path) => existsSync(path));
 	const denyRead = snapshot.filesystem.denyRead.filter((path) => existsSync(path));
 	const protectedPaths = snapshot.filesystem.protectedPaths.filter((path) => existsSync(path));

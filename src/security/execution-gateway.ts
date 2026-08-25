@@ -313,7 +313,8 @@ export class ExecutionGateway {
 		if (!sameWorkspace(request.workspace, this.#options.workspace)) return invalid("gateway workspace binding is stale");
 		if (!sameDigest(this.#options.snapshot.policyDigest, snapshotDigest(this.#options.snapshot)) || !sameDigest(request.snapshot.policyDigest, snapshotDigest(request.snapshot))) return invalid("gateway security policy snapshot digest is invalid");
 		if (!sameDigest(request.snapshot.policyDigest, this.#options.snapshot.policyDigest)) return invalid("gateway security policy digest is stale");
-		if (request.snapshot.workspaceRoot !== this.#options.workspace.worktreePath || !pathWithin(this.#options.workspace.worktreePath, request.cwd)) return invalid("gateway request cwd is outside the workspace policy");
+		const workspaceRoots = request.snapshot.workspaceRoots ?? [request.snapshot.workspaceRoot];
+		if (request.snapshot.workspaceRoot !== this.#options.workspace.worktreePath || !workspaceRoots.some((root) => pathWithin(root, request.cwd))) return invalid("gateway request cwd is outside the workspace policy");
 		if (!constraintSnapshot) return invalid("gateway constraint decision is missing");
 		if (!validDigest(constraintInput.requestDigest) || !validDigest(constraintInput.policyDigest)) return invalid("gateway constraint digest is malformed");
 		if (!sameDigest(constraintInput.requestDigest, expectedRequestDigest)) return invalid("gateway constraint request digest is stale");

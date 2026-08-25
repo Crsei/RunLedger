@@ -159,8 +159,20 @@ function getRetryAfterDelayMs(headers: Headers): number | undefined {
 }
 
 function capRetryDelayMs(delayMs: number, options?: StreamOptions): number {
-	const maxRetryDelayMs = options?.maxRetryDelayMs ?? DEFAULT_MAX_RETRY_DELAY_MS;
-	return maxRetryDelayMs > 0 ? Math.min(delayMs, maxRetryDelayMs) : delayMs;
+	const configuredMax = options?.maxRetryDelayMs;
+	const maxRetryDelayMs = configuredMax === undefined || !Number.isFinite(configuredMax) || configuredMax < 0
+		? DEFAULT_MAX_RETRY_DELAY_MS
+		: Math.floor(configuredMax);
+	return Math.min(Math.max(0, delayMs), maxRetryDelayMs);
+}
+
+function configuredBaseDelayMs(options?: StreamOptions): number {
+	const baseDelayMs = options?.retryBaseDelayMs ?? BASE_DELAY_MS;
+	return Number.isSafeInteger(baseDelayMs) && baseDelayMs >= 0 ? baseDelayMs : BASE_DELAY_MS;
+}
+
+function exponentialRetryDelayMs(options: StreamOptions | undefined, attempt: number): number {
+	return capRetryDelayMs(configuredBaseDelayMs(options) * 2 ** attempt, options);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -394,13 +406,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 
 					const errorText = await response.text();
 					if (attempt < maxRetries && isRetryableError(response.status, errorText)) {
-						const retryAfterDelayMs = getRetryAfterDelayMs(response.headers);
-						const delayMs =
-							retryAfterDelayMs === undefined
-								? BASE_DELAY_MS * 2 ** attempt
-								: response.status === 429
-									? capRetryDelayMs(retryAfterDelayMs, options)
-									: retryAfterDelayMs;
+					const retryAfterDelayMs = getRetryAfterDelayMs(response.headers);
+					const delayMs =
+						retryAfterDelayMs === undefined
+							? exponentialRetryDelayMs(options, attempt)
+							: capRetryDelayMs(retryAfterDelayMs, options);
 
 						await sleep(delayMs, options?.signal);
 						continue;
@@ -422,7 +432,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 					lastError = error instanceof Error ? error : new Error(String(error));
 					// Network errors are retryable
 					if (attempt < maxRetries && !lastError.message.includes("usage limit")) {
-						const delayMs = BASE_DELAY_MS * 2 ** attempt;
+						const delayMs = exponentialRetryDelayMs(options, attempt);
 						await sleep(delayMs, options?.signal);
 						continue;
 					}

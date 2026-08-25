@@ -70,6 +70,54 @@ describe("FileArtifactStore", () => {
 		})).rejects.toBeInstanceOf(ArtifactIntegrityError);
 	});
 
+	it("rejects CAS reuse when source or redaction policy provenance changes", async () => {
+		const store = await createStore();
+		const bytes = new TextEncoder().encode("provenance-bound content");
+		const sourceA = "a".repeat(64);
+		const sourceB = "b".repeat(64);
+
+		await store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy-a",
+			sourceDigest: sourceA,
+		});
+
+		await expect(store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy-a",
+			sourceDigest: sourceB,
+		})).rejects.toBeInstanceOf(ArtifactIntegrityError);
+
+		await expect(store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy-b",
+			sourceDigest: sourceA,
+		})).rejects.toBeInstanceOf(ArtifactIntegrityError);
+	});
+
+	it("does not complete a CAS object whose metadata commit is missing", async () => {
+		const store = await createStore();
+		const bytes = new TextEncoder().encode("metadata commit boundary");
+		const sourceDigest = "c".repeat(64);
+		const ref = await store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy-c",
+			sourceDigest,
+		});
+		await rm(join(store.metadataRoot, "sha256", ref.digest.slice(0, 2), `${ref.digest}.json`));
+
+		await expect(store.put({
+			bytes,
+			mediaType: "text/plain",
+			redactionPolicyDigest: "policy-c",
+			sourceDigest,
+		})).rejects.toBeInstanceOf(ArtifactIntegrityError);
+	});
+
 	it("rejects an artifact ref that could escape the CAS root", async () => {
 		const store = await createStore();
 		const ref = await store.put({

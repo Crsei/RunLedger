@@ -43,6 +43,8 @@ interface CommittedTranscriptProjection {
 interface CommittedTranscriptProjectionVariants {
 	visible?: CommittedTranscriptProjection;
 	hidden?: CommittedTranscriptProjection;
+	visibleWithCacheMissMarker?: CommittedTranscriptProjection;
+	hiddenWithCacheMissMarker?: CommittedTranscriptProjection;
 }
 
 const committedProjectionCache = new WeakMap<readonly TimelineRow[], CommittedTranscriptProjectionVariants>();
@@ -53,15 +55,18 @@ let nextProjectionRevision = 1;
 export function projectTranscriptOverlay(
 	state: TimelineState,
 	themeGeneration = 0,
-	options: { readonly hideThinking?: boolean } = {},
+	options: { readonly hideThinking?: boolean; readonly cacheMissMarker?: boolean } = {},
 ): TranscriptOverlayView {
 	const hidden = options.hideThinking === true;
-	const variantKey = hidden ? "hidden" : "visible";
+	const cacheMissMarker = options.cacheMissMarker === true;
+	const variantKey = hidden
+		? cacheMissMarker ? "hiddenWithCacheMissMarker" : "hidden"
+		: cacheMissMarker ? "visibleWithCacheMissMarker" : "visible";
 	let variants = committedProjectionCache.get(state.committedRows);
 	let committed = variants?.[variantKey];
 	if (committed === undefined) {
 		committed = {
-			blocks: timelineToBlocks(state, { includeActive: false, hideThinking: hidden }),
+			blocks: timelineToBlocks(state, { includeActive: false, hideThinking: hidden, cacheMissMarker }),
 			revision: `committed-${nextProjectionRevision}`,
 		};
 		nextProjectionRevision += 1;
@@ -72,7 +77,9 @@ export function projectTranscriptOverlay(
 	const activeRows = state.activeOrder
 		.map((id) => state.activeRowsByCorrelationId[id])
 		.filter((row): row is TimelineRow => row !== undefined);
-	const liveTail = activeRows.flatMap((row) => rowToBlocks(row, { hideThinking: hidden }));
+	const activeIds = new Set(activeRows.map((row) => row.id));
+	const liveTail = timelineToBlocks(state, { hideThinking: hidden, cacheMissMarker })
+		.filter((block) => block.entryId !== undefined && activeIds.has(block.entryId));
 	return {
 		rows: committed.blocks,
 		...(liveTail.length > 0 ? { liveTail } : {}),
@@ -101,7 +108,7 @@ export function transcriptBlockLines(block: PresentationBlock, width = 80): read
 	if (block.kind === "diff") return diffDisplayLines(block as DiffBlock, width);
 	if (block.kind === "notice") return noticeDisplayLines((block as NoticeBlock).message, width);
 	if (block.kind === "separator") return [block.content ?? formatSeparatorLabel(block.label, block.metrics)];
-	if (block.kind === "status-line") return [block.segments.map((segment) => segment.text).join(" · ")];
+	if (block.kind === "status-line") return [block.segments.map((segment) => segment.text).join(block.separator ?? " · ")];
 	if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)];
 	if (block.kind === "input") return [block.title, block.message, block.value];
 	if (block.kind === "text" || block.kind === "markdown") return block.content.split("\n");

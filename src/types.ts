@@ -208,6 +208,12 @@ export interface StreamOptions {
 	 */
 	maxRetryDelayMs?: number;
 	/**
+	 * Base delay in milliseconds for transports that expose a governed retry loop.
+	 * Adapters without that capability must report the option as unsupported rather
+	 * than silently claiming to apply it.
+	 */
+	retryBaseDelayMs?: number;
+	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
@@ -315,6 +321,8 @@ export interface ImagesOptions {
 	 * Default: 60000 (60 seconds). Set to 0 to disable the cap.
 	 */
 	maxRetryDelayMs?: number;
+	/** Base retry delay projected by the shared settings seam when supported. */
+	retryBaseDelayMs?: number;
 	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.

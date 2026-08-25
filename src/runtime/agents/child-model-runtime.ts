@@ -15,6 +15,8 @@ import { createRuntimeId } from "../protocol/ids.ts";
 import type { AgentTool, LlmContext, StreamFn } from "../types.ts";
 import type { ModelRouteDecision, ModelRouteRequest } from "../model-routing/types.ts";
 import type { MultiAgentResult } from "./types.ts";
+import { applyRetryPolicy, type RetryPolicy } from "../retry/policy.ts";
+import type { ProviderPolicyProjection } from "../../storage/settings-policies.ts";
 
 export interface ChildModelRequestRouter {
 	route(request: ModelRouteRequest): ModelRouteDecision | Promise<ModelRouteDecision>;
@@ -56,6 +58,20 @@ export interface ChildModelRuntimeFactoryOptions {
 	readonly sessionId: string;
 	readonly getSelection: () => ChildModelSelection;
 	readonly modelRequestRouter?: ChildModelRequestRouter;
+	readonly retryPolicy?: RetryPolicy;
+	readonly providerPolicy?: ProviderPolicyProjection;
+	readonly getRetryPolicy?: () => RetryPolicy | undefined;
+	readonly getProviderPolicy?: () => ProviderPolicyProjection | undefined;
+	readonly providerGate?: ProviderRequestGate;
+}
+
+export interface ProviderRequestGate {
+	acquire(provider: string, signal?: AbortSignal): Promise<() => void>;
+	reconfigure?(policy?: ProviderPolicyProjection): void;
+}
+
+export function createProviderRequestGate(policy?: ProviderPolicyProjection): ProviderRequestGate {
+	return new ProviderRequestGateImpl(policy);
 }
 
 export function createChildModelRuntimeFactory(
@@ -63,6 +79,8 @@ export function createChildModelRuntimeFactory(
 ): ChildModelRuntimeFactoryPort {
 	return {
 		prepare: async (input) => {
+			const retryPolicy = options.getRetryPolicy?.() ?? options.retryPolicy;
+			const providerPolicy = options.getProviderPolicy?.() ?? options.providerPolicy;
 			const selection = options.getSelection();
 			const model = selection.model;
 			if (model === undefined) return failure("runtime_unavailable", "parent Session has no available model selection");
@@ -95,6 +113,9 @@ export function createChildModelRuntimeFactory(
 						models: options.models,
 						modelRequestRouter: options.modelRequestRouter,
 						sessionId: options.sessionId,
+						retryPolicy,
+						providerPolicy,
+						providerGate: options.providerGate,
 					}),
 				}),
 			};
@@ -106,15 +127,134 @@ export function createSessionModelStreamFn(options: {
 	readonly models: Models;
 	readonly sessionId: string;
 	readonly modelRequestRouter?: ChildModelRequestRouter;
+	readonly retryPolicy?: RetryPolicy;
+	readonly providerPolicy?: ProviderPolicyProjection;
+	readonly providerGate?: ProviderRequestGate;
 }): StreamFn {
+	const providerGate = options.providerGate ?? createProviderRequestGate(options.providerPolicy);
 	return async (requestModel, context, streamOptions) => {
+		if (options.providerPolicy?.disabledProviders?.includes(requestModel.provider)) {
+			return deniedModelStream(requestModel, {
+				requestId: createRuntimeId("command", runtimeDigest({ sessionId: options.sessionId, provider: requestModel.provider, model: requestModel.id }).digest.slice(0, 48)),
+				outcome: "deny",
+				targetProviderId: requestModel.provider,
+				targetModelId: requestModel.id,
+				targetProfileId: `${requestModel.provider}/${requestModel.id}`,
+				manifestDigest: runtimeDigest({}),
+				reasonCode: "provider_disabled_by_settings",
+				diagnostics: [],
+				decisionDigest: runtimeDigest({ reason: "provider_disabled_by_settings", provider: requestModel.provider }),
+			});
+		}
 		if (options.modelRequestRouter !== undefined) {
 			const request = createModelRouteRequest(options.sessionId, requestModel, context, streamOptions);
 			const decision = await options.modelRequestRouter.route(request);
 			if (decision.outcome !== "compatible") return deniedModelStream(requestModel, decision);
 		}
-		return options.models.streamSimple(requestModel, context as Context, streamOptions);
+		const effectiveOptions = options.retryPolicy === undefined
+			? streamOptions
+			: applyRetryPolicy(streamOptions ?? {}, options.retryPolicy);
+		const release = await providerGate.acquire(requestModel.provider, streamOptions?.signal);
+		try {
+			const stream = options.models.streamSimple(requestModel, context as Context, effectiveOptions);
+			void stream.result().then(release, release);
+			return stream;
+		} catch (error) {
+			release();
+			throw error;
+		}
 	};
+}
+
+interface ProviderWaiter {
+	readonly resolve: (release: () => void) => void;
+	readonly reject: (error: Error) => void;
+	readonly signal?: AbortSignal;
+	onAbort?: () => void;
+}
+
+/** Session-owned provider semaphore；只限制请求数，不改变任何授权或路由决定。 */
+class ProviderRequestGateImpl implements ProviderRequestGate {
+	#limits: Readonly<Record<string, number>>;
+	readonly #active = new Map<string, number>();
+	readonly #waiters = new Map<string, ProviderWaiter[]>();
+
+	public constructor(policy: ProviderPolicyProjection | undefined) {
+		this.#limits = Object.freeze({ ...(policy?.maxInFlightRequests ?? {}) });
+	}
+
+	public reconfigure(policy?: ProviderPolicyProjection): void {
+		this.#limits = Object.freeze({ ...(policy?.maxInFlightRequests ?? {}) });
+		for (const provider of this.#waiters.keys()) this.drain(provider);
+	}
+
+	public acquire(provider: string, signal?: AbortSignal): Promise<() => void> {
+		const limit = this.#limits[provider];
+		if (limit === undefined) return Promise.resolve(() => undefined);
+		if (signal?.aborted === true) return Promise.reject(new Error("provider concurrency wait aborted"));
+		const active = this.#active.get(provider) ?? 0;
+		if (active < limit) {
+			this.#active.set(provider, active + 1);
+			return Promise.resolve(this.releaseOnce(provider));
+		}
+		return new Promise<() => void>((resolve, reject) => {
+			const waiter: ProviderWaiter = { resolve, reject, ...(signal === undefined ? {} : { signal }) };
+			const onAbort = (): void => {
+				const queue = this.#waiters.get(provider);
+				if (queue !== undefined) {
+					const index = queue.indexOf(waiter);
+					if (index >= 0) queue.splice(index, 1);
+					if (queue.length === 0) this.#waiters.delete(provider);
+				}
+				reject(new Error("provider concurrency wait aborted"));
+			};
+			waiter.onAbort = onAbort;
+			signal?.addEventListener("abort", onAbort, { once: true });
+			const queue = this.#waiters.get(provider) ?? [];
+			queue.push(waiter);
+			this.#waiters.set(provider, queue);
+		});
+	}
+
+	private releaseOnce(provider: string): () => void {
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			const active = this.#active.get(provider) ?? 0;
+			if (active <= 1) this.#active.delete(provider);
+			else this.#active.set(provider, active - 1);
+			this.drain(provider);
+		};
+	}
+
+	private drain(provider: string): void {
+		const limit = this.#limits[provider];
+		const queue = this.#waiters.get(provider);
+		if (queue === undefined) return;
+		if (limit === undefined) {
+			this.#waiters.delete(provider);
+			for (const waiter of queue) {
+				waiter.signal?.removeEventListener("abort", waiter.onAbort!);
+				waiter.resolve(() => undefined);
+			}
+			return;
+		}
+		let active = this.#active.get(provider) ?? 0;
+		while (active < limit && queue.length > 0) {
+			const waiter = queue.shift();
+			if (waiter === undefined) break;
+			if (waiter.signal?.aborted === true) {
+				waiter.reject(new Error("provider concurrency wait aborted"));
+				continue;
+			}
+			waiter.signal?.removeEventListener("abort", waiter.onAbort!);
+			active += 1;
+			this.#active.set(provider, active);
+			waiter.resolve(this.releaseOnce(provider));
+		}
+		if (queue.length === 0) this.#waiters.delete(provider);
+	}
 }
 
 function createModelRouteRequest(

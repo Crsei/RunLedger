@@ -16,6 +16,7 @@ import type { ChildModelRuntimeFactoryPort } from "./child-model-runtime.ts";
 import type { AgentGraphNode } from "./graph-projection.ts";
 import {
 	buildMultiAgentPolicyReceipt,
+	applyTaskPolicyNarrowing,
 	resolveMultiAgentPolicy,
 	validateSpawnSubagentRequest,
 } from "./limits.ts";
@@ -28,6 +29,7 @@ import type {
 	ValidatedSpawnSubagentInput,
 } from "./types.ts";
 import { createSpawnAgentTool, type SpawnAgentDomainPort } from "./spawn-tool.ts";
+import type { TaskPolicyProjection } from "../../storage/settings-policies.ts";
 
 export const MULTI_AGENT_OPERATION_MANIFEST: readonly SessionProtocolOperationDescriptor[] = Object.freeze([
 	Object.freeze({ operation: "agent.inspect", capability: "session.multi-agent", access: "read" }),
@@ -39,6 +41,8 @@ export interface SessionMultiAgentPolicySources {
 	readonly runtimeEnabled: boolean;
 	readonly user?: unknown;
 	readonly workspace?: unknown;
+	/** Effective settings task projection; only narrows the bounded M1 runtime. */
+	readonly taskPolicy?: TaskPolicyProjection;
 }
 
 export interface MultiAgentChildRuntimeSource {
@@ -86,10 +90,14 @@ export function deriveSpawnEffectId(sessionId: SessionId, toolCallId: ToolCallId
 export async function createMultiAgentDomain(
 	options: MultiAgentDomainCompositionOptions,
 ): Promise<MultiAgentDomainCreationResult> {
-	const resolution = resolveMultiAgentPolicy({
+	const baseResolution = resolveMultiAgentPolicy({
 		runtimeEnabled: options.policySources.runtimeEnabled,
 		user: options.policySources.user,
 		workspace: options.policySources.workspace,
+	});
+	const resolution = Object.freeze({
+		...baseResolution,
+		policy: applyTaskPolicyNarrowing(baseResolution.policy, options.policySources.taskPolicy),
 	});
 	if (!resolution.policy.enabled) return { ok: true, value: undefined };
 

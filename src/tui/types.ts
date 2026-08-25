@@ -187,6 +187,8 @@ export interface FooterSnapshotProvider {
   getContextUsage?(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined;
   /** One immutable, provenance-aware usage projection for the footer. */
   getUsageSnapshot?(): UsageSnapshot | undefined;
+  /** Immutable presentation-only settings snapshot; Footer 对未知值 fail closed。 */
+  getDisplaySettings?(): unknown;
   /** 可选会话标题/线程展示标签；未提供时不以 session id 伪造。 */
   getThreadLabel?(): string | undefined;
   /** 当前 run 的安全计时投影；等待态的 activeDurationMs 已冻结。 */

@@ -7,13 +7,29 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { mkdtemp, rm, writeFile, readFile, stat } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
 import { localExecutionEnv } from "../src/runtime/execution-env.ts";
+import { buildShellInvocation } from "../src/utils/shell.ts";
 
 describe("localExecutionEnv", () => {
+	it("builds shell-specific command arguments for Git Bash, cmd, and configured POSIX shells", () => {
+		expect(buildShellInvocation("C:\\Program Files\\Git\\bin\\bash.exe", "echo hello")).toEqual({
+			executable: "C:\\Program Files\\Git\\bin\\bash.exe",
+			args: ["-c", "echo hello"],
+		});
+		expect(buildShellInvocation("C:\\Windows\\System32\\cmd.exe", "echo hello")).toEqual({
+			executable: "C:\\Windows\\System32\\cmd.exe",
+			args: ["/d", "/s", "/c", "echo hello"],
+		});
+		expect(buildShellInvocation("/opt/company/bin/zsh", "echo hello")).toEqual({
+			executable: "/opt/company/bin/zsh",
+			args: ["-c", "echo hello"],
+		});
+	});
+
   it("fs.writeFile / fs.stat / fs.readFile 往返一致", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "runledger-env-"));
     try {
@@ -74,6 +90,27 @@ describe("localExecutionEnv", () => {
       const env = localExecutionEnv(dir);
       const r = await env.shell.exec("false", { timeoutMs: 5000 });
       expect(r.exitCode).not.toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a configured executable shell and rejects an invalid shell path", async () => {
+    if (process.platform === "win32") return;
+    const dir = await mkdtemp(path.join(tmpdir(), "runledger-env-configured-shell-"));
+    try {
+      const shell = path.join(dir, "shell");
+      await writeFile(shell, "#!/bin/sh\nprintf configured-shell\n", "utf8");
+      await chmod(shell, 0o755);
+
+      const env = localExecutionEnv(dir, { shellPath: shell });
+      const result = await env.shell.exec("ignored", { timeoutMs: 5000 });
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe("configured-shell");
+
+      expect(() => localExecutionEnv(dir, { shellPath: path.join(dir, "missing-shell") })).toThrowError(
+        expect.objectContaining({ code: "shell_path_unavailable" }),
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

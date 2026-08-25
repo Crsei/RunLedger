@@ -11,6 +11,7 @@ export interface SandboxBackendFactoryOptions {
 	readonly probe?: SandboxProbePort;
 	readonly linuxShellProgram?: string;
 	readonly macosShellProgram?: string;
+	readonly windowsShellProgram?: string;
 }
 
 const missingProbe: SandboxProbePort = { which: async () => undefined };
@@ -26,6 +27,6 @@ export function createSandboxBackend(platform: SandboxPlatformInput, options: Sa
 	const probe = options.probe ?? missingProbe;
 	if (selected === "linux") return new LinuxBwrapBackend(probe, options.linuxShellProgram);
 	if (selected === "macos") return new MacOsSeatbeltBackend(probe, options.macosShellProgram);
-	if (selected === "windows") return new UnavailableSandboxBackend("windows", "native Windows sandbox backend is unavailable; no implicit downgrade is allowed", "cmd.exe");
+	if (selected === "windows") return new UnavailableSandboxBackend("windows", "native Windows sandbox backend is unavailable; no implicit downgrade is allowed", options.windowsShellProgram ?? "cmd.exe");
 	return new UnavailableSandboxBackend("unknown", `sandbox backend is unavailable for platform ${platform}`);
 }

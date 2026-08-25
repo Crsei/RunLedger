@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,8 +9,10 @@ import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout
 import { MemoryLedger } from "../../src/runtime/ledger/memory-ledger.ts";
 import type { SessionReplay } from "../../src/storage/session-codec.ts";
 import { loadProjectSettings, saveProjectSettings } from "../../src/storage/settings-manager.ts";
-import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model } from "../../src/types.ts";
+import { SettingsResolver } from "../../src/storage/settings-resolver.ts";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "../../src/types.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
+import { localExecutionEnv } from "../../src/runtime/execution-env.ts";
 import type { ExtensionHookRuntime } from "../../src/extensions/turn-lifecycle.ts";
 import { Type } from "typebox";
 import type { AgentEvent, AgentTool } from "../../src/runtime/types.ts";
@@ -93,7 +95,7 @@ function apiKeyAuth(): ProviderAuth {
   };
 }
 
-function fixtureModels(onStream?: () => void) {
+function fixtureModels(onStream?: (options?: SimpleStreamOptions) => void) {
   const models = createModels();
   const p1 = model("p1", "m1");
   const p2 = model("p2", "m2");
@@ -104,14 +106,14 @@ function fixtureModels(onStream?: () => void) {
       auth: apiKeyAuth(),
       models: [entry[1]],
       api: {
-        stream: (requestModel, context) => {
-          onStream?.();
-          return stopStream(requestModel, context);
-        },
-        streamSimple: (requestModel, context) => {
-          onStream?.();
-          return stopStream(requestModel, context);
-        },
+				stream: (requestModel, context, options) => {
+					onStream?.(options);
+					return stopStream(requestModel, context);
+				},
+				streamSimple: (requestModel, context, options) => {
+					onStream?.(options);
+					return stopStream(requestModel, context);
+				},
       },
     }));
   }
@@ -131,6 +133,198 @@ const INTERACTION: AuthInteraction = {
 };
 
 describe("InteractiveSessionController", () => {
+	it("uses the injected immutable runtime settings snapshot for model policy", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const runtimeSettings = new SettingsResolver({
+			user: { disabledProviders: [p1.provider], retry: { maxRetries: 4 }, steeringMode: "all" },
+		}).effectiveRuntimeSnapshot();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: {},
+			runtimeSettings,
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		expect(controller.runtimeSettingsSnapshot()).toBe(runtimeSettings);
+		expect(controller.runtimeSettingsSnapshot().retry.maxRetries).toBe(4);
+		expect(Object.isFrozen(controller.runtimeSettingsSnapshot())).toBe(true);
+		await expect(controller.selectModel(p1)).rejects.toThrow("disabled by settings");
+		controller.dispose();
+	});
+
+	it("binds runtime settings metadata to the startup runtime config event", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const runtimeSettings = new SettingsResolver({
+			user: { retry: { maxRetries: 4 }, display: { showTokenUsage: false } },
+		}).effectiveRuntimeSnapshot();
+		const ledger = new MemoryLedger();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			runtimeSettings,
+			replay: EMPTY_REPLAY,
+			ledger,
+			tools: [],
+		});
+
+		const entry = (await ledger.entries()).find((candidate) =>
+			candidate.type === "custom" && candidate.payload.kind === "runtime.config"
+		);
+		expect(entry).toMatchObject({
+			payload: {
+				source: "startup",
+				settingsDigest: runtimeSettings.digest.digest,
+				settingsSourceLayers: {
+					"retry.maxRetries": "user",
+					"display.showTokenUsage": "user",
+				},
+				settingsApplyModes: {
+					"retry.maxRetries": "next-turn",
+					"display.showTokenUsage": "live",
+				},
+				settingsDiagnostics: [],
+			},
+		});
+		controller.dispose();
+	});
+
+	it("applies the injected tool policy when the controller builds default tools", async () => {
+		const cwd = await tempDir();
+		await writeFile(join(cwd, "policy-lines.txt"), "line1\nline2\nline3\n", "utf8");
+		const { models, p1 } = fixtureModels();
+		const runtimeSettings = new SettingsResolver({
+			user: { tools: { read: { defaultLimit: 1 } } },
+		}).effectiveRuntimeSnapshot();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			runtimeSettings,
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			executionEnv: localExecutionEnv(cwd),
+		});
+
+		const tools = (controller as unknown as { readonly tools: readonly AgentTool[] }).tools;
+		const read = tools.find((tool) => tool.name === "read");
+		if (read === undefined) throw new Error("read tool missing");
+		const result = await read.execute("controller-policy-read", { path: "policy-lines.txt", lineNumbers: false });
+		const text = (result.content[0] as { readonly text: string }).text;
+		expect(text).toContain("line1");
+		expect(text).not.toContain("line2");
+		controller.dispose();
+	});
+
+	it("does not let a legacy retry policy override the injected snapshot", async () => {
+		const cwd = await tempDir();
+		let received: SimpleStreamOptions | undefined;
+		const { models, p1 } = fixtureModels((options) => { received = options; });
+		const runtimeSettings = new SettingsResolver({
+			user: { retry: { maxRetries: 4, baseDelayMs: 80, maxDelayMs: 400 } },
+		}).effectiveRuntimeSnapshot();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			runtimeSettings,
+			retryPolicy: { enabled: true, maxRetries: 0, baseDelayMs: 1, maxDelayMs: 1 },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		await controller.login(p1.provider, "api_key", INTERACTION);
+		await controller.prompt("snapshot wins");
+
+		expect(received).toMatchObject({ maxRetries: 4, retryBaseDelayMs: 80, maxRetryDelayMs: 400 });
+		controller.dispose();
+	});
+
+	it("captures the next-turn runtime snapshot at prompt admission", async () => {
+		const cwd = await tempDir();
+		const received: SimpleStreamOptions[] = [];
+		const { models, p1 } = fixtureModels((options) => { if (options !== undefined) received.push(options); });
+		const startupSettings = new SettingsResolver({ user: { retry: { maxRetries: 0 } } }).effectiveRuntimeSnapshot();
+		const turnSettings = new SettingsResolver({
+			user: {
+				retry: { maxRetries: 4, baseDelayMs: 80, maxDelayMs: 400 },
+				steeringMode: "all",
+				followUpMode: "all",
+			},
+		}).effectiveRuntimeSnapshot();
+		const runtimeSettingsForTurn = vi.fn(async () => turnSettings);
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			runtimeSettings: startupSettings,
+			runtimeSettingsForTurn,
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+		await controller.login(p1.provider, "api_key", INTERACTION);
+
+		await controller.prompt("next turn");
+
+		expect(runtimeSettingsForTurn).toHaveBeenCalledTimes(1);
+		expect(controller.runtimeSettingsSnapshot()).toBe(turnSettings);
+		expect(received.at(-1)).toMatchObject({ maxRetries: 4, retryBaseDelayMs: 80, maxRetryDelayMs: 400 });
+		const agent = controller as unknown as { readonly agent?: { readonly steeringMode: string; readonly followUpMode: string } };
+		expect(agent.agent).toMatchObject({ steeringMode: "all", followUpMode: "all" });
+		controller.dispose();
+	});
+
+	it("passes the Host-owned compaction summarizer into the production Agent composition", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const runtimeSettings = new SettingsResolver({
+			user: { compaction: { thresholdTokens: 1, retainRecentTurns: 1, minCompactedTurns: 1 } },
+		}).effectiveRuntimeSnapshot();
+		const compactionSummarizer = vi.fn(() => "production summary");
+		const replay: SessionReplay = {
+			...EMPTY_REPLAY,
+			messages: [
+				{ role: "user", content: [{ type: "text", text: "old question" }] },
+				{ role: "assistant", content: [{ type: "text", text: "old answer" }], stopReason: "stop" },
+			],
+		};
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			runtimeSettings,
+			compactionSummarizer,
+			replay,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+		await controller.login(p1.provider, "api_key", INTERACTION);
+
+		await controller.prompt("new question");
+
+		expect(compactionSummarizer).toHaveBeenCalledTimes(1);
+		controller.dispose();
+	});
+
 	it("defaults an explicitly selected model without a thinking setting to high", async () => {
 		const cwd = await tempDir();
 		const { models, p1 } = fixtureModels();
@@ -596,6 +790,25 @@ describe("InteractiveSessionController", () => {
     await controller.selectModel({ provider: "p1", id: "m1" } as Model<Api>);
     expect(controller.currentSelection.model?.baseUrl).toBe(p1.baseUrl);
     expect(controller.currentSelection.model?.provider).toBe("p1");
+		controller.dispose();
+	});
+
+	it("does not select a provider disabled by the effective settings policy", async () => {
+		const cwd = await tempDir();
+		const { models, p1 } = fixtureModels();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { disabledProviders: ["p1"] },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		await expect(controller.selectModel(p1)).rejects.toThrow("disabled by settings");
+		expect(controller.currentSelection.model).toBeUndefined();
 		controller.dispose();
 	});
 

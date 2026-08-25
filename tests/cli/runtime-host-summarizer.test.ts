@@ -42,7 +42,11 @@ function manifest(profiles: readonly ModelCapabilityProfile[], aliases: Readonly
 	return { ...body, manifestDigest: runtimeDigest(body) };
 }
 
-function mockModels(reply: string | Error, available = true): Models {
+function mockModels(
+	reply: string | Error,
+	available = true,
+	onOptions?: (options: unknown) => void,
+): Models {
 	const model: Model<Api> = {
 		id: "summary-model",
 		provider: "provider",
@@ -51,7 +55,8 @@ function mockModels(reply: string | Error, available = true): Models {
 	};
 	return {
 		getModel: (provider: string, id: string) => (available && provider === "provider" && id === "summary-model" ? model : undefined),
-		completeSimple: async (_model, _context) => {
+		completeSimple: async (_model, _context, options) => {
+			onOptions?.(options);
 			if (reply instanceof Error) throw reply;
 			const message: AssistantMessage = {
 				role: "assistant",
@@ -134,6 +139,30 @@ describe("createProductionSummarizer", () => {
 		const result = await summarizer({ transcript: "transcript", sessionId: "session-summarizer" });
 
 		expect(result).toMatchObject({ ok: false, code: "summarizer_request_failed" });
+	});
+
+	it("uses the effective retry policy and releases the shared provider gate", async () => {
+		let receivedOptions: unknown;
+		let releaseCount = 0;
+		const acquireCalls: string[] = [];
+		const summarizer = createProductionSummarizer({
+			models: mockModels("summary", true, (options) => { receivedOptions = options; }),
+			router: router(),
+			retryPolicy: { enabled: true, maxRetries: 2, baseDelayMs: 125, maxDelayMs: 900 },
+			providerGate: {
+				acquire: async (provider) => {
+					acquireCalls.push(provider);
+					return () => { releaseCount += 1; };
+				},
+			},
+		});
+
+		const result = await summarizer({ transcript: "transcript", sessionId: "session-summarizer" });
+
+		expect(result.ok).toBe(true);
+		expect(receivedOptions).toMatchObject({ maxRetries: 2, maxRetryDelayMs: 900, retryBaseDelayMs: 125 });
+		expect(acquireCalls).toEqual(["provider"]);
+		expect(releaseCount).toBe(1);
 	});
 });
 

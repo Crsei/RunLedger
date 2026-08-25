@@ -74,6 +74,11 @@ import { localExecutionEnv } from "./execution-env.ts";
 import { makeToolContext } from "./tool-context.ts";
 import { DEFAULT_MAX_BYTES } from "./tools/tool-support.ts";
 import { runtimeDigest } from "./protocol/foundation.ts";
+import { compactMessages, type CompactionPolicy, type CompactionTriggerReason } from "./context/compaction/cut-planner.ts";
+import { ContextAssemblyError } from "./context/context-engine.ts";
+import { TokenEstimator } from "./context/token-estimator.ts";
+import type { ToolPolicyProjection } from "../storage/settings-policies.ts";
+import { redactRuntimeArtifactText } from "./trace/redaction.ts";
 
 /**
  * 与 pi 对齐的对外接口。本期只实现 runAgentLoop 与 runAgentLoopContinue,
@@ -162,6 +167,9 @@ export async function runAgentLoop(
   let approvalExpirations = 0;
   let loopModel = config.model;
   let loopReasoning = config.reasoning;
+  let pendingCompactionTrigger = config.compactionTrigger;
+  let modelSwitchPending = false;
+  let continuingAfterToolCall = false;
   let pendingMessages: AgentMessage[] = await config.getSteeringMessages?.() ?? [];
 
   // inner loop
@@ -185,6 +193,8 @@ export async function runAgentLoop(
       break;
     }
     turn++;
+    const midTurn = continuingAfterToolCall;
+    continuingAfterToolCall = false;
     const tStart = Date.now();
     await fire(
       { type: "turn_start", timestamp: tStart, turn },
@@ -223,9 +233,38 @@ export async function runAgentLoop(
       pendingMessages = [];
     }
 
-    // 1. AgentMessage → LLM Message[],在边界处做了角色译码
+    // 1. AgentMessage → model-visible projection → LLM Message[]。raw messages
+    // 永远留在本地 state/ledger；compaction 只替换本次 provider request 的视图。
     const convertFn = config.convertToLlm ?? defaultConvertToLlm;
-    const llmMessages = await convertFn(messages);
+    const compactionPolicy: CompactionPolicy | undefined = config.runtimeSettings?.compaction ?? config.compactionPolicy;
+    const triggerReason: CompactionTriggerReason = pendingCompactionTrigger
+      ?? (modelSwitchPending ? "model_switch" : "threshold");
+    pendingCompactionTrigger = undefined;
+    modelSwitchPending = false;
+    let projectedMessages: readonly AgentMessage[] = messages;
+    const summarize = config.compactionSummarizer;
+    const projectForModelRequest = async (reason: CompactionTriggerReason) => {
+      if (compactionPolicy === undefined || summarize === undefined) return undefined;
+      return compactMessages({
+        messages,
+        policy: compactionPolicy,
+        contextWindow: loopModel.contextWindow,
+        estimatedInputTokens: estimateAgentMessages(messages),
+        midTurn,
+        reason,
+        summarize: ({ compactedMessages, cut, reason: summaryReason }) => summarize({
+          messages: compactedMessages,
+          cut,
+          reason: summaryReason,
+          model: loopModel,
+          sessionId,
+          turn,
+        }),
+      });
+    };
+    const initialCompaction = await projectForModelRequest(triggerReason);
+    if (initialCompaction?.status === "compacted") projectedMessages = initialCompaction.projectedMessages;
+    let llmMessages = await convertFn(projectedMessages.slice());
 
     let llmContext: LlmContext = {
       systemPrompt: context.systemPrompt,
@@ -234,15 +273,38 @@ export async function runAgentLoop(
     };
 
     if (config.modelContextAssembler !== undefined) {
-		const assembled = await config.modelContextAssembler({
-			model: loopModel,
-			context: llmContext,
-			sessionId,
-			turn,
-		});
-		llmContext = assembled.context;
-		await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
-	}
+      try {
+        const assembled = await config.modelContextAssembler({
+          model: loopModel,
+          context: llmContext,
+          sessionId,
+          turn,
+        });
+        llmContext = assembled.context;
+        await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
+      } catch (error) {
+        // A single bounded overflow retry may compact raw history. No provider
+        // request has been sent yet, so retrying this request is side-effect free.
+        if (!(error instanceof ContextAssemblyError)) throw error;
+        const overflowCompaction = await projectForModelRequest("overflow");
+        if (overflowCompaction?.status !== "compacted") throw error;
+        projectedMessages = overflowCompaction.projectedMessages;
+        llmMessages = await convertFn(projectedMessages.slice());
+        llmContext = {
+          systemPrompt: context.systemPrompt,
+          messages: llmMessages,
+          tools: context.tools,
+        };
+        const assembled = await config.modelContextAssembler({
+          model: loopModel,
+          context: llmContext,
+          sessionId,
+          turn,
+        });
+        llmContext = assembled.context;
+        await config.contextAssemblySink?.({ sessionId, turn, model: loopModel, receipt: assembled.receipt });
+      }
+    }
 
     const traceModel = config.traceRecorder
       ? await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext })
@@ -461,6 +523,7 @@ export async function runAgentLoop(
     if (update) {
       applyTurnUpdate(update, context);
       if (update.model) {
+			if (!sameModel(loopModel, update.model)) modelSwitchPending = true;
         loopModel = update.model;
       }
       if (update.thinkingLevel !== undefined) {
@@ -511,7 +574,10 @@ export async function runAgentLoop(
     // steering 优先于 follow-up,且只在当前工具批次完成后注入。
     pendingMessages = await config.getSteeringMessages?.() ?? [];
     const hasMoreToolCalls = toolCalls.length > 0 && assistantStopReason === "toolUse";
-    if (hasMoreToolCalls || pendingMessages.length > 0) continue;
+    if (hasMoreToolCalls || pendingMessages.length > 0) {
+      continuingAfterToolCall = hasMoreToolCalls;
+      continue;
+    }
 
     pendingMessages = await config.getFollowUpMessages?.() ?? [];
     if (pendingMessages.length > 0) continue;
@@ -547,6 +613,15 @@ export async function runAgentLoop(
 function isApprovalExpiration(result: ToolResultContent): boolean {
   if (result.isError !== true || typeof result.details !== "object" || result.details === null || Array.isArray(result.details)) return false;
   return (result.details as Readonly<Record<string, unknown>>).errorCode === "approval_expired";
+}
+
+function estimateAgentMessages(messages: readonly AgentMessage[]): number {
+  const serialized = JSON.stringify(messages) ?? "";
+  return new TokenEstimator().estimate(serialized);
+}
+
+function sameModel(left: AgentLoopConfig["model"], right: AgentLoopConfig["model"]): boolean {
+  return left.api === right.api && left.provider === right.provider && left.id === right.id;
 }
 
 function validateRunBudget(budget: AgentLoopConfig["runBudget"]): void {
@@ -966,7 +1041,13 @@ async function executePreparedToolCall(
     await updateChain;
     // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
     const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
-    const content = await applyToolResultBudget(result.content, maxChars, p.toolCall.id, config.toolResultOverflowStore);
+    const content = await applyToolResultBudget(
+      result.content,
+      maxChars,
+      p.toolCall.id,
+      config.toolResultOverflowStore,
+      config.runtimeSettings?.toolPolicy,
+    );
     return {
       content,
       isError: result.isError === true,
@@ -1013,49 +1094,266 @@ async function applyToolResultBudget(
   maxChars: number,
   toolCallId: string,
   overflowStore?: ToolResultOverflowStore,
+  policy?: ToolPolicyProjection,
 ): Promise<(TextContent | ImageContent)[]> {
   const out: (TextContent | ImageContent)[] = [];
   let totalChars = 0;
+  let totalBytes = 0;
   let overflowStarted = false;
+  const charBudget = Math.max(0, maxChars);
+  const byteBudget = positiveInteger(policy?.artifactSpillThreshold);
   for (const block of content) {
     if (block.type !== "text") {
       out.push(block);
       continue;
     }
-    const len = block.text.length;
-    if (totalChars + len <= maxChars) {
-      out.push(block);
-      totalChars += len;
+    if (overflowStarted) continue;
+    const shaped = shapeToolText(
+      block.text,
+      Math.max(0, charBudget - totalChars),
+      byteBudget === 0 ? Number.POSITIVE_INFINITY : Math.max(0, byteBudget - totalBytes),
+      policy,
+    );
+    if (!shaped.truncated) {
+      out.push({ type: "text", text: redactRuntimeArtifactText(block.text) });
+      totalChars += block.text.length;
+      totalBytes += byteLength(block.text);
       continue;
     }
-    // 第一次超预算:把"剩余配额"那一截留下用,剩余部分落盘
-    if (!overflowStarted) {
-      overflowStarted = true;
-      const remain = Math.max(0, maxChars - totalChars);
-      const inlineTail = remain > 0 ? block.text.slice(0, remain) : "";
-      const droppedTail = remain > 0 ? block.text.slice(remain) : block.text;
-      let hint = `\n\nOutput exceeds ${maxChars} chars; remaining content truncated by the Host boundary.`;
-      if (overflowStore !== undefined && droppedTail.length > 0) {
-        try {
-          const sourceDigest = runtimeDigest(droppedTail);
-          const stored = await overflowStore.put({
-            toolCallId,
-            bytes: new TextEncoder().encode(droppedTail),
-            mediaType: "text/plain; charset=utf-8",
-            sourceDigest,
-          });
-          hint = `\n\nOutput exceeds ${maxChars} chars; remaining content is available through governed artifact ${stored.ref.digest.digest} (${stored.ref.size ?? droppedTail.length} bytes).`;
-        } catch {
-          // Best effort only: the inline result remains usable and no local
-          // path is exposed when the Host store is unavailable.
-        }
-      }
-      out.push({ type: "text", text: `${inlineTail}${hint}` });
-      totalChars = maxChars;
+    if (!shaped.budgetTruncated && shaped.columnTruncated) {
+      const hint = await persistToolOverflow({
+        toolCallId,
+        omitted: shaped.omitted,
+        visible: shaped.visible,
+        charBudget,
+        byteBudget,
+        budgetTruncated: false,
+        columnTruncated: true,
+        columnLimit: policy?.outputMaxColumns,
+        overflowStore,
+      });
+      out.push({ type: "text", text: `${redactRuntimeArtifactText(shaped.visible)}${hint}` });
+      totalChars += shaped.visible.length;
+      totalBytes += byteLength(shaped.visible);
+      continue;
     }
-    // 后续 text block 全部丢弃(只在第一次溢出时落盘一次);不丢图像
+    overflowStarted = true;
+    const hint = await persistToolOverflow({
+      toolCallId,
+      omitted: shaped.omitted,
+      visible: shaped.visible,
+      charBudget,
+      byteBudget,
+      budgetTruncated: shaped.budgetTruncated,
+      columnTruncated: shaped.columnTruncated,
+      columnLimit: policy?.outputMaxColumns,
+      overflowStore,
+    });
+    out.push({ type: "text", text: `${redactRuntimeArtifactText(shaped.visible)}${hint}` });
+    totalChars = charBudget;
+    totalBytes = byteBudget === 0 ? totalBytes : byteBudget;
   }
   return out;
+}
+
+interface ShapedToolText {
+  readonly visible: string;
+  readonly omitted: string;
+  readonly truncated: boolean;
+  readonly budgetTruncated: boolean;
+  readonly columnTruncated: boolean;
+}
+
+function shapeToolText(text: string, charBudget: number, byteBudget: number, policy?: ToolPolicyProjection): ShapedToolText {
+  const column = applyColumnCap(text, policy?.outputMaxColumns);
+  const charBudgetExceeded = column.visible.length > charBudget;
+  const byteBudgetExceeded = byteLength(column.visible) > byteBudget;
+  if (!charBudgetExceeded && !byteBudgetExceeded && column.omitted.length === 0) {
+    return { visible: text, omitted: "", truncated: false, budgetTruncated: false, columnTruncated: false };
+  }
+
+  if (!charBudgetExceeded && !byteBudgetExceeded) {
+    return {
+      visible: column.visible,
+      omitted: column.omitted,
+      truncated: true,
+      budgetTruncated: false,
+      columnTruncated: column.omitted.length > 0,
+    };
+  }
+
+  if (!byteBudgetExceeded) {
+    const windowed = splitHeadCharacters(column.visible, charBudget);
+    return {
+      visible: windowed.text,
+      omitted: joinOmitted(column.omitted, windowed.rest),
+      truncated: true,
+      budgetTruncated: true,
+      columnTruncated: column.omitted.length > 0,
+    };
+  }
+
+  const windowed = shapeBudgetWindow(column.visible, byteBudget, policy);
+  return {
+    visible: windowed.visible,
+    omitted: joinOmitted(column.omitted, windowed.omitted),
+    truncated: true,
+    budgetTruncated: true,
+    columnTruncated: column.omitted.length > 0,
+  };
+}
+
+function shapeBudgetWindow(
+  text: string,
+  budget: number,
+  policy?: ToolPolicyProjection,
+): { readonly visible: string; readonly omitted: string } {
+  const headBytes = positiveInteger(policy?.artifactHeadBytes);
+  const tailBytes = positiveInteger(policy?.artifactTailBytes);
+  const tailLines = positiveInteger(policy?.artifactTailLines);
+
+  if (headBytes > 0) {
+    const head = splitHeadBytes(text, Math.min(headBytes, Math.floor(budget / 2)));
+    const tailLimit = tailBytes > 0 ? Math.min(tailBytes, Math.max(0, budget - byteLength(head.text))) : Math.max(0, budget - byteLength(head.text));
+    const tail = splitTailBytes(head.rest, tailLimit);
+    const middleMarker = head.rest.length > tail.text.length ? "\n\n[… middle output elided …]\n\n" : "";
+    return {
+      visible: `${head.text}${middleMarker}${tail.text}`,
+      omitted: tail.omitted,
+    };
+  }
+
+  if (tailLines > 0) {
+    const lineWindow = splitTailLines(text, tailLines);
+    const tail = tailBytes > 0
+      ? splitTailBytes(lineWindow.text, Math.min(tailBytes, budget))
+      : splitTailBytes(lineWindow.text, budget);
+    return {
+      visible: tail.text,
+      omitted: joinOmitted(lineWindow.omitted, tail.omitted),
+    };
+  }
+
+  if (tailBytes > 0) {
+    const tail = splitTailBytes(text, Math.min(tailBytes, budget));
+    return { visible: tail.text, omitted: tail.omitted };
+  }
+
+  // Preserve the pre-settings prefix behavior when no window is requested.
+  const head = splitHeadBytes(text, budget);
+  return { visible: head.text, omitted: head.rest };
+}
+
+function positiveInteger(value: number | undefined): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+function byteLength(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+function splitHeadBytes(value: string, maxBytes: number): { readonly text: string; readonly rest: string } {
+  const bytes = Buffer.from(value, "utf8");
+  if (maxBytes >= bytes.byteLength) return { text: value, rest: "" };
+  const cut = utf8HeadBoundary(bytes, Math.max(0, maxBytes));
+  return {
+    text: bytes.subarray(0, cut).toString("utf8"),
+    rest: bytes.subarray(cut).toString("utf8"),
+  };
+}
+
+function splitHeadCharacters(value: string, maxCharacters: number): { readonly text: string; readonly rest: string } {
+  if (maxCharacters >= value.length) return { text: value, rest: "" };
+  const cut = Math.max(0, maxCharacters);
+  return { text: value.slice(0, cut), rest: value.slice(cut) };
+}
+
+function splitTailBytes(value: string, maxBytes: number): { readonly omitted: string; readonly text: string } {
+  const bytes = Buffer.from(value, "utf8");
+  if (maxBytes >= bytes.byteLength) return { omitted: "", text: value };
+  const start = utf8TailBoundary(bytes, Math.max(0, maxBytes));
+  return {
+    omitted: bytes.subarray(0, start).toString("utf8"),
+    text: bytes.subarray(start).toString("utf8"),
+  };
+}
+
+function utf8HeadBoundary(bytes: Buffer, maxBytes: number): number {
+  let cut = Math.min(bytes.byteLength, maxBytes);
+  while (cut > 0 && cut < bytes.byteLength && (bytes[cut]! & 0xc0) === 0x80) cut -= 1;
+  return cut;
+}
+
+function utf8TailBoundary(bytes: Buffer, maxBytes: number): number {
+  let start = Math.max(0, bytes.byteLength - maxBytes);
+  while (start < bytes.byteLength && (bytes[start]! & 0xc0) === 0x80) start += 1;
+  return start;
+}
+
+function splitTailLines(value: string, count: number): { readonly omitted: string; readonly text: string } {
+  const lines = value.split("\n");
+  if (lines.length <= count) return { omitted: "", text: value };
+  const splitAt = lines.length - count;
+  return {
+    omitted: `${lines.slice(0, splitAt).join("\n")}\n`,
+    text: lines.slice(splitAt).join("\n"),
+  };
+}
+
+function applyColumnCap(value: string, maxColumns: number | undefined): { readonly visible: string; readonly omitted: string } {
+  const limit = positiveInteger(maxColumns);
+  if (limit === 0) return { visible: value, omitted: "" };
+  const omitted: string[] = [];
+  const visible = value.split("\n").map((line) => {
+    if (line.length <= limit) return line;
+    omitted.push(line.slice(limit));
+    return `${line.slice(0, limit)}…`;
+  }).join("\n");
+  return { visible, omitted: omitted.join("\n") };
+}
+
+function joinOmitted(first: string, second: string): string {
+  if (first.length === 0) return second;
+  if (second.length === 0) return first;
+  return `${first}${second}`;
+}
+
+async function persistToolOverflow(input: {
+  readonly toolCallId: string;
+  readonly omitted: string;
+  readonly visible: string;
+  readonly charBudget: number;
+  readonly byteBudget: number;
+  readonly budgetTruncated: boolean;
+  readonly columnTruncated: boolean;
+  readonly columnLimit?: number;
+  readonly overflowStore?: ToolResultOverflowStore;
+}): Promise<string> {
+  const budgetLabel = input.byteBudget > 0
+    ? `${input.byteBudget} bytes`
+    : `${input.charBudget} chars`;
+  const columnLabel = input.columnLimit !== undefined && input.columnLimit > 0
+    ? `Output lines were truncated to ${input.columnLimit} columns by the Host boundary.`
+    : "Output was truncated by the Host boundary.";
+  let hint = input.budgetTruncated
+    ? `\n\nOutput exceeds ${budgetLabel}; remaining content truncated by the Host boundary.`
+    : `\n\n${columnLabel}`;
+  if (input.overflowStore === undefined || input.omitted.length === 0) return hint;
+  try {
+    const bytes = new TextEncoder().encode(redactRuntimeArtifactText(input.omitted));
+    const stored = await input.overflowStore.put({
+      toolCallId: input.toolCallId,
+      bytes,
+      mediaType: "text/plain; charset=utf-8",
+      sourceDigest: runtimeDigest(input.omitted),
+    });
+    hint = input.budgetTruncated
+      ? `\n\nOutput exceeds ${budgetLabel}; remaining content is available through governed artifact ${stored.ref.digest.digest} (${stored.ref.size ?? bytes.byteLength} bytes).`
+      : `\n\n${columnLabel} Omitted content is available through governed artifact ${stored.ref.digest.digest} (${stored.ref.size ?? bytes.byteLength} bytes).`;
+  } catch {
+    // Best effort only: keep the bounded text and never expose a local path.
+  }
+  return hint;
 }
 
 /**

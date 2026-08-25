@@ -22,6 +22,9 @@ import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
+import { loadProjectSettings } from "../storage/settings-manager.ts";
+import type { EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
+import { SettingsResolver } from "../storage/settings-resolver.ts";
 import type { SecurityConfigDocument } from "../security/types.ts";
 import { EndpointStore, type HostEndpointRecord } from "../storage/host/endpoint-store.ts";
 import { hostStartupElectionRelativeLocator } from "../runtime/contracts/storage-layout.ts";
@@ -49,6 +52,8 @@ export interface LocalRuntimeHostScopeOptions {
 	readonly layout: RunledgerLayout;
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
+	/** Host compatibility must bind the already-resolved immutable snapshot when available. */
+	readonly runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
 	/** Verified digest of the executable distribution used by both client and Host. */
 	readonly hostBuildDigest?: ReturnType<typeof runtimeDigest>;
 	/** 显式 CLI security 层属于 resident Host 固定组合，必须参与兼容性 fence。 */
@@ -87,7 +92,7 @@ export function createLocalRuntimeHostScope(options: LocalRuntimeHostScopeOption
 			processBackend: "governed",
 			securityOverride: options.securityOverride ?? null,
 		}),
-		settingsDigest: runtimeDigest(runtimeSettings),
+		settingsDigest: options.runtimeSettings?.digest ?? runtimeDigest(runtimeSettings),
 		modelCatalogDigest: runtimeDigest({ catalog: "builtin" }),
 		tracePolicyDigest,
 		securityAdapterDigest: productionSecurityAdapterDigest(),
@@ -232,6 +237,8 @@ export interface ConnectProductionRuntimeHostOptions {
 	readonly cwd: string;
 	readonly settings: ProjectSettings;
 	readonly hostBuildDigest: ReturnType<typeof runtimeDigest>;
+	/** Already-resolved user/workspace/session settings; when absent this function resolves canonical user/workspace layers. */
+	readonly runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
 	/** CLI 显式 security override，作为最高优先级 `cli` 层注入 Host。 */
 	readonly securityOverride?: SecurityConfigDocument;
 	readonly workspaceBindingMode?: "auto" | "disabled";
@@ -246,14 +253,32 @@ export async function connectProductionRuntimeHost(
 	options: ConnectProductionRuntimeHostOptions,
 ): Promise<ProductionRuntimeHostConnection> {
 	if (process.platform !== "linux") throw new Error("production local Host transport is unavailable on this platform");
-	const { scope } = await resolveLocalRuntimeHostScope({
+	const initialRuntimeSettings = options.runtimeSettings ?? new SettingsResolver({ user: options.settings }).effectiveRuntimeSnapshot();
+	let resolved = await resolveLocalRuntimeHostScope({
 		layout: options.layout,
 		cwd: options.cwd,
 		settings: options.settings,
+		runtimeSettings: initialRuntimeSettings,
 		hostBuildDigest: options.hostBuildDigest,
 		...(options.securityOverride === undefined ? {} : { securityOverride: options.securityOverride }),
 		...(options.workspaceBindingMode === undefined ? {} : { workspaceBindingMode: options.workspaceBindingMode }),
 	});
+	if (options.runtimeSettings === undefined) {
+		const workspaceSettings = await loadProjectSettings({ layout: options.layout, workspaceKey: resolved.scope.workspaceStorageKey });
+		const effectiveRuntimeSettings = new SettingsResolver({ user: options.settings, workspace: workspaceSettings }).effectiveRuntimeSnapshot();
+		if (effectiveRuntimeSettings.digest.digest !== initialRuntimeSettings.digest.digest) {
+			resolved = await resolveLocalRuntimeHostScope({
+				layout: options.layout,
+				cwd: options.cwd,
+				settings: options.settings,
+				runtimeSettings: effectiveRuntimeSettings,
+				hostBuildDigest: options.hostBuildDigest,
+				...(options.securityOverride === undefined ? {} : { securityOverride: options.securityOverride }),
+				...(options.workspaceBindingMode === undefined ? {} : { workspaceBindingMode: options.workspaceBindingMode }),
+			});
+		}
+	}
+	const { scope } = resolved;
 	const endpointStore = new EndpointStore(options.layout, scope.workspaceStorageKey);
 	const socketPath = productionHostSocketPath(options.layout, scope.workspaceStorageKey);
 	const helperPath = options.peerCredentialHelperPath ?? defaultLinuxPeerCredentialHelperPath();

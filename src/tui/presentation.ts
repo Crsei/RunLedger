@@ -79,6 +79,8 @@ export type PresentationBlock = (
     id?: string;
     kind: "status-line";
     segments: readonly import("./highlight/status-style.ts").StatusLineSegment[];
+    /** status-line segments 的显示分隔符；缺省保持既有 " · "。 */
+    separator?: string;
   }
   | { id?: string; kind: "separator"; label: string; content?: string; metrics?: readonly string[] }
   | {

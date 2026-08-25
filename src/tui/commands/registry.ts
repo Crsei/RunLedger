@@ -39,6 +39,7 @@ export type SlashCommandActionType =
   | "config.theme"
   | "config.composer-shape"
   | "config.setup-wizard"
+  | "config.settings"
   | "auth.login"
   | "auth.logout"
   | "recovery.open"
@@ -216,7 +217,14 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       availableDuringTask: false,
       unavailableDuringTaskMessage: "Composer shape is available when the current turn is idle.",
     }),
-    command("setup", "Run the user setup wizard", 13.6, {
+    command("settings", "Browse and edit RunLedger settings", 13.6, {
+      actionType: "config.settings",
+      category: "config",
+      policy: READONLY_POLICY,
+      availableDuringTask: false,
+      unavailableDuringTaskMessage: "Settings are available when the current turn is idle.",
+    }),
+    command("setup", "Run the user setup wizard", 13.7, {
       actionType: "config.setup-wizard",
       category: "config",
       policy: READONLY_POLICY,

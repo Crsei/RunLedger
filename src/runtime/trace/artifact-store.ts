@@ -40,6 +40,9 @@ export class FileArtifactStore {
 		const bytes = new Uint8Array(input.bytes);
 		const digest = createHash("sha256").update(bytes).digest("hex");
 		const artifactId = `artifact_${digest}`;
+		if (input.redactionPolicyDigest.length === 0 || (input.sourceDigest !== undefined && !isSha256Digest(input.sourceDigest))) {
+			throw new ArtifactIntegrityError(artifactId);
+		}
 		const ref: TraceArtifactRef = {
 			storage: "artifact",
 			artifactId,
@@ -80,6 +83,7 @@ export class FileArtifactStore {
 			metadataPresent = false;
 		}
 		if (!metadataPresent) {
+			if (present) throw new ArtifactIntegrityError(ref.artifactId);
 			const metadata: ArtifactMetadata = {
 				...ref,
 				storedDigest: digest,
@@ -89,7 +93,10 @@ export class FileArtifactStore {
 			};
 			await writeFile(metadataPath, JSON.stringify(metadata), { encoding: "utf8", mode: 0o600 });
 		} else {
-			await this.metadata(ref);
+			const existing = await this.metadata(ref);
+			if (existing.redactionPolicyDigest !== input.redactionPolicyDigest || existing.sourceDigest !== input.sourceDigest) {
+				throw new ArtifactIntegrityError(ref.artifactId);
+			}
 		}
 		return ref;
 	}
@@ -112,7 +119,10 @@ export class FileArtifactStore {
 			value.storedDigest !== ref.digest ||
 			value.size !== ref.size ||
 			value.mediaType !== ref.mediaType ||
-			typeof value.redactionPolicyDigest !== "string"
+			typeof value.redactionPolicyDigest !== "string" ||
+			value.redactionPolicyDigest.length === 0 ||
+			(value.sourceDigest !== undefined && !isSha256Digest(value.sourceDigest)) ||
+			typeof value.createdAt !== "string"
 		) {
 			throw new ArtifactIntegrityError(ref.artifactId);
 		}
@@ -126,6 +136,10 @@ export class FileArtifactStore {
 	private metadataPath(ref: TraceArtifactRef): string {
 		return path.join(this.metadataRoot, "sha256", ref.digest.slice(0, 2), `${ref.digest}.json`);
 	}
+}
+
+function isSha256Digest(value: unknown): value is string {
+	return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
 }
 
 function assertValidRef(ref: TraceArtifactRef): void {

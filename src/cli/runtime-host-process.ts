@@ -2,7 +2,7 @@
 
 import { isAbsolute } from "node:path";
 import { runtimePathFlavor as runtimePlatformPathFlavor } from "../workspace/runtime-platform.ts";
-import { defaultShell } from "../utils/shell.ts";
+import { buildShellInvocation, defaultShell } from "../utils/shell.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../runtime/host/types.ts";
 import { RUNTIME_HOST_BOUNDS } from "../runtime/host/types.ts";
@@ -579,7 +579,7 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 	private resolveCommand(request: ManagedProcessRequest): { readonly executable: string; readonly args: readonly string[]; readonly cwd: string } {
 		const descriptor = this.commands.get(request.correlationId);
 		if (!descriptor) throw new Error("process command resolver unavailable after restart");
-		return { executable: defaultShell(), args: ["-lc", descriptor.command], cwd: descriptor.cwd };
+		return { ...buildShellInvocation(defaultShell(), descriptor.command, { login: true }), cwd: descriptor.cwd };
 	}
 
 	private async applyInitialMutation(

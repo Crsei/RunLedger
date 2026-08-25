@@ -5,7 +5,6 @@
  * settings 与任意 sessionDir 不再参与 canonical settings authority。
  */
 
-import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,6 +19,32 @@ import {
 } from "../runtime/agents/index.ts";
 import { canonicalDigest } from "../runtime/protocol/canonical-json.ts";
 import { runtimeDigest, type RuntimeDigest } from "../runtime/protocol/foundation.ts";
+import {
+	normalizeDisplaySettings,
+	normalizeGitSettings,
+	normalizeCompactionSettings,
+	normalizeMemorySettings,
+	normalizePlanSettings,
+	normalizeProviderSettings,
+	normalizeRetrySettings,
+	normalizeStartupSettings,
+	normalizeTaskSettings,
+	normalizeToolsSettings,
+	normalizeWorkspaceSettings,
+	normalizeSettingValue,
+	type CompactionSettings,
+	type DisplaySettings,
+	type GitSettings,
+	type MemorySettings,
+	type PlanSettings,
+	type ProviderSettings,
+	type RetrySettings,
+	type SettingScope,
+	type StartupSettings,
+	type TaskSettings,
+	type ToolsSettings,
+	type WorkspaceSettings,
+} from "./settings-schema.ts";
 
 const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
@@ -29,7 +54,6 @@ const SETTINGS_LOCK_OPTS = {
 	realpath: false,
 } as const;
 const WORKSPACE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
-const SYNTAX_THEME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const COMPOSER_SHAPE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,63}$/u;
 
 export interface SettingsStoreOptions {
@@ -40,6 +64,13 @@ export interface SettingsStoreOptions {
 	 * `layout.projects/<workspaceKey>/settings.json`.
 	 */
 	readonly workspaceKey?: string;
+}
+
+export interface LoadedProjectSettingsDocument {
+	/** Safe canonical projection consumed by ordinary settings readers. */
+	readonly settings: ProjectSettings;
+	/** Parsed source retained only for schema diagnostics/effective resolution. */
+	readonly source: Readonly<Record<string, unknown>>;
 }
 
 /** 用户级或 workspace 级 settings schema。sessionDir 不属于 canonical schema。 */
@@ -58,10 +89,35 @@ export interface ProjectSettings {
 	hideThinkingBlock?: boolean;
 	/** syntax theme 名；dark/light 是兼容输入，分别映射为自适应 pair。 */
 	theme?: string;
+	/** 启动时选择 TUI 状态符号族；运行中不热切换。 */
+	symbolPreset?: "unicode" | "nerd" | "ascii";
+	/** 启动时启用色盲友好语义色；不改变中性色或运行时语义。 */
+	colorBlindMode?: boolean;
+	statusLine?: DisplaySettings["statusLine"];
+	display?: DisplaySettings["display"];
+	tui?: DisplaySettings["tui"];
+	/** 启动策略；CLI/session override 由 composition root 另行覆盖。 */
+	autoResume?: boolean;
+	startup?: StartupSettings["startup"];
+	/** 用户级受治理 shell executable；路径不存在/不可执行时启动 fail closed。 */
+	shellPath?: string;
 	/** /model 选择器可见模型白名单;空数组或 undefined 表示无白名单 */
 	enabledModels?: string[];
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
+	/** 已有 provider stream seam 使用的统一 retry policy。 */
+	retry?: RetrySettings;
+	/** 已有 compaction cut planner 使用的基础 policy。 */
+	compaction?: CompactionSettings;
+	/** 已有 Host memory domain 使用的 backend 选择。 */
+	memory?: MemorySettings;
+	tools?: ToolsSettings;
+	disabledProviders?: readonly string[];
+	providers?: ProviderSettings;
+	git?: GitSettings;
+	task?: TaskSettings;
+	workspace?: WorkspaceSettings;
+	plan?: PlanSettings;
 	/** 用户级本地 trace 记录策略；workspace settings 不拥有该 authority。 */
 	recording?: RecordingSettings;
 	/** M1 bounded root delegation policy；workspace 层只能进一步收窄。 */
@@ -189,8 +245,21 @@ export function getSettingsPath(options: SettingsStoreOptions): string {
 export async function loadProjectSettings(
 	options: SettingsStoreOptions,
 ): Promise<ProjectSettings> {
+	return (await loadProjectSettingsDocument(options)).settings;
+}
+
+/** Load both the safe projection and the parsed diagnostic source in one read. */
+export async function loadProjectSettingsDocument(
+	options: SettingsStoreOptions,
+): Promise<LoadedProjectSettingsDocument> {
 	const path = getSettingsPath(options);
-	return readSettingsFile(path, options.workspaceKey === undefined);
+	let text: string;
+	try {
+		text = await fs.readFile(path, "utf8");
+	} catch {
+		return { settings: {}, source: Object.freeze({}) };
+	}
+	return parseSettingsDocument(text, path, options.workspaceKey === undefined, options.workspaceKey === undefined ? "user" : "workspace");
 }
 
 /**
@@ -226,7 +295,12 @@ export function loadProjectSettingsSync(
 	} catch {
 		return {};
 	}
-	return parseSettings(text, path, options.workspaceKey === undefined);
+	return parseSettingsDocument(
+		text,
+		path,
+		options.workspaceKey === undefined,
+		options.workspaceKey === undefined ? "user" : "workspace",
+	).settings;
 }
 
 /** 写入 canonical settings；sessionDir 在触及目标前被结构化拒绝。 */
@@ -239,7 +313,7 @@ export async function saveProjectSettings(
 	await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
 	const release = await acquireSettingsLock(path);
 	try {
-		await writeSettingsFile(path, sanitizeProjectSettings(settings as Record<string, unknown>, options.workspaceKey === undefined));
+		await saveProjectSettingsUnlocked(options, settings);
 	} finally {
 		await release();
 	}
@@ -257,11 +331,15 @@ export async function updateProjectSettings(
 	await fs.mkdir(dirname(path), SETTINGS_MKDIR_OPTS);
 	const release = await acquireSettingsLock(path);
 	try {
-		const current = await readSettingsFile(path, options.workspaceKey === undefined);
+		const current = await loadProjectSettings(options);
 		const next = await update(current);
 		assertSupportedSettings(options, path, next);
-		const sanitized = sanitizeProjectSettings(next as Record<string, unknown>, options.workspaceKey === undefined);
-		await writeSettingsFile(path, sanitized);
+		const sanitized = sanitizeProjectSettings(
+			next as Record<string, unknown>,
+			options.workspaceKey === undefined,
+			options.workspaceKey === undefined ? "user" : "workspace",
+		);
+		await saveProjectSettingsUnlocked(options, sanitized);
 		return sanitized;
 	} finally {
 		await release();
@@ -275,28 +353,27 @@ async function acquireSettingsLock(path: string): Promise<() => Promise<void>> {
 	});
 }
 
-async function readSettingsFile(path: string, allowRecording: boolean): Promise<ProjectSettings> {
-	let text: string;
+async function saveProjectSettingsUnlocked(
+	options: SettingsStoreOptions,
+	settings: ProjectSettingsInput,
+): Promise<void> {
+	const path = getSettingsPath(options);
+	const serialized = JSON.stringify(
+		sanitizeProjectSettings(
+			settings as Record<string, unknown>,
+			options.workspaceKey === undefined,
+			options.workspaceKey === undefined ? "user" : "workspace",
+		),
+		null,
+		2,
+	) + "\n";
+	const temporaryPath = `${path}.tmp-${process.pid}-${process.hrtime.bigint().toString(36)}`;
 	try {
-		text = await fs.readFile(path, "utf8");
-	} catch {
-		return {};
-	}
-	return parseSettings(text, path, allowRecording);
-}
-
-async function writeSettingsFile(path: string, settings: ProjectSettings): Promise<void> {
-	const temporary = `${path}.${randomUUID()}.tmp`;
-	try {
-		await fs.writeFile(
-			temporary,
-			JSON.stringify(settings, null, 2) + "\n",
-			{ ...SETTINGS_WRITE_OPTS, flag: "wx" },
-		);
-		await fs.rename(temporary, path);
-		await fs.chmod(path, 0o600);
-	} finally {
-		await fs.unlink(temporary).catch(() => undefined);
+		await fs.writeFile(temporaryPath, serialized, SETTINGS_WRITE_OPTS);
+		await fs.rename(temporaryPath, path);
+	} catch (error) {
+		await fs.rm(temporaryPath, { force: true }).catch(() => undefined);
+		throw error;
 	}
 }
 
@@ -310,7 +387,7 @@ export function resolveRecapSettings(settings: { readonly recap?: unknown }): Ef
 	});
 }
 
-function parseSettings(text: string, path: string, allowRecording: boolean): ProjectSettings {
+function parseSettingsDocument(text: string, path: string, allowRecording: boolean, source: SettingScope): LoadedProjectSettingsDocument {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
@@ -319,9 +396,11 @@ function parseSettings(text: string, path: string, allowRecording: boolean): Pro
 			`[runledger] settings parse failed at ${path}: ${String(error)}\n` +
 				"  回退空 settings,流程继续。\n",
 		);
-		return {};
+		return { settings: {}, source: Object.freeze({}) };
 	}
-	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		return { settings: {}, source: Object.freeze({}) };
+	}
 	const raw = parsed as Record<string, unknown>;
 	if (
 		allowRecording &&
@@ -334,7 +413,10 @@ function parseSettings(text: string, path: string, allowRecording: boolean): Pro
 	if (Object.prototype.hasOwnProperty.call(raw, "multiAgent") && multiAgentValidation.diagnostics.length > 0) {
 		process.stderr.write(`[runledger] invalid_multi_agent_settings at ${path}; multi-agent disabled\n`);
 	}
-	return sanitizeProjectSettings(raw, allowRecording);
+	return {
+		settings: sanitizeProjectSettings(raw, allowRecording, source),
+		source: Object.freeze({ ...raw }),
+	};
 }
 
 interface InternalSettingsLayer extends LayeredSettingsLayer {
@@ -397,7 +479,7 @@ function makeSettingsLayer(
 	return {
 		source,
 		path,
-		settings: sanitizeProjectSettings(raw, allowRecording),
+		settings: sanitizeProjectSettings(raw, allowRecording, source),
 		multiAgent,
 		sourceDigest: runtimeDigest(raw),
 		multiAgentDiagnostics: Object.freeze([...diagnostics]),
@@ -435,7 +517,11 @@ function assertSupportedSettings(
 }
 
 /** 把裸 JSON 对象清洗成 canonical ProjectSettings，丢弃 legacy/未知字段。 */
-function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = true): ProjectSettings {
+function sanitizeProjectSettings(
+	raw: Record<string, unknown>,
+	allowRecording = true,
+	source: SettingScope = "user",
+): ProjectSettings {
 	const out: ProjectSettings = {};
 	if (typeof raw.autoTitle === "boolean") out.autoTitle = raw.autoTitle;
 	const recap = sanitizeRecapSettings(raw.recap);
@@ -444,7 +530,19 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
 	if (isThinkingLevel(raw.thinkingLevel)) out.thinkingLevel = raw.thinkingLevel;
 	if (typeof raw.hideThinkingBlock === "boolean") out.hideThinkingBlock = raw.hideThinkingBlock;
-	if (isSyntaxThemeName(raw.theme)) out.theme = raw.theme;
+	const theme = normalizeSettingValue("theme", raw.theme, source);
+	if (Object.hasOwn(raw, "theme") && theme.ok) out.theme = theme.value as string;
+	const display = normalizeDisplaySettings(raw, source);
+	if (display?.symbolPreset !== undefined) out.symbolPreset = display.symbolPreset;
+	if (display?.colorBlindMode !== undefined) out.colorBlindMode = display.colorBlindMode;
+	if (display?.statusLine !== undefined) out.statusLine = display.statusLine;
+	if (display?.display !== undefined) out.display = display.display;
+	if (display?.tui !== undefined) out.tui = display.tui;
+	const startup = normalizeStartupSettings(raw, source);
+	if (startup?.autoResume !== undefined) out.autoResume = startup.autoResume;
+	if (startup?.startup !== undefined) out.startup = startup.startup;
+	const shellPath = normalizeSettingValue("shellPath", raw.shellPath, source);
+	if (Object.hasOwn(raw, "shellPath") && shellPath.ok) out.shellPath = shellPath.value as string;
 	if (Array.isArray(raw.enabledModels)) {
 		const filtered = raw.enabledModels.filter(
 			(value): value is string => typeof value === "string" && value.length > 0,
@@ -457,6 +555,26 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (raw.followUpMode === "one-at-a-time" || raw.followUpMode === "all") {
 		out.followUpMode = raw.followUpMode;
 	}
+	const retry = normalizeRetrySettings(raw.retry, source);
+	if (retry !== undefined) out.retry = retry;
+	const compaction = normalizeCompactionSettings(raw.compaction, source);
+	if (compaction !== undefined) out.compaction = compaction;
+	const memory = normalizeMemorySettings(raw.memory, source);
+	if (memory !== undefined) out.memory = memory;
+	const tools = normalizeToolsSettings(raw.tools, source);
+	if (tools !== undefined) out.tools = tools;
+	const disabledProviders = normalizeSettingValue("disabledProviders", raw.disabledProviders, source);
+	if (Object.hasOwn(raw, "disabledProviders") && disabledProviders.ok) out.disabledProviders = disabledProviders.value as readonly string[];
+	const providers = normalizeProviderSettings(raw.providers, source);
+	if (providers !== undefined) out.providers = providers;
+	const git = normalizeGitSettings(raw.git, source);
+	if (git !== undefined) out.git = git;
+	const task = normalizeTaskSettings(raw.task, source);
+	if (task !== undefined) out.task = task;
+	const workspace = normalizeWorkspaceSettings(raw.workspace, source);
+	if (workspace !== undefined) out.workspace = workspace;
+	const plan = normalizePlanSettings(raw.plan, source);
+	if (plan !== undefined) out.plan = plan;
 	if (allowRecording) {
 		const recording = sanitizeRecordingSettings(raw.recording);
 		if (recording) out.recording = recording;
@@ -515,10 +633,6 @@ function sanitizeComposerSettings(value: unknown): ComposerSettings | undefined 
 	const shape = value.shape;
 	if (typeof shape !== "string" || !COMPOSER_SHAPE_ID_PATTERN.test(shape)) return undefined;
 	return { shape };
-}
-
-function isSyntaxThemeName(value: unknown): value is string {
-	return typeof value === "string" && !value.includes("..") && SYNTAX_THEME_NAME_PATTERN.test(value);
 }
 
 /** 将缺失或非法配置解析为安全且不可变的启动快照。 */

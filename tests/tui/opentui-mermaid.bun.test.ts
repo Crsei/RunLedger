@@ -4,7 +4,7 @@ import { createOpenTuiComponentRuntimeFromRenderer } from "../../src/tui/opentui
 import { MermaidBlockRenderable } from "../../src/tui/opentui/mermaid-block-renderable.ts";
 import { TuiPerformanceObserver } from "../../src/tui/opentui/performance-observer.ts";
 
-async function renderMarkdown(content: string, height = 20, width = 80): Promise<{
+async function renderMarkdown(content: string, height = 20, width = 80, renderMermaid = true): Promise<{
   readonly frame: string;
   readonly destroy: () => void;
 }> {
@@ -12,6 +12,7 @@ async function renderMarkdown(content: string, height = 20, width = 80): Promise
   const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
     onInput: () => {},
     onResize: () => {},
+    renderMermaid,
   });
   runtime.update({
     body: [{ id: "assistant-mermaid", kind: "markdown", content, streaming: false }],
@@ -39,6 +40,22 @@ function findMermaidBlock(root: { getChildren(): Array<unknown> }): MermaidBlock
 }
 
 describe("OpenTUI Mermaid code-block seam", () => {
+  test("keeps Mermaid source when the effective display setting disables rendering", async () => {
+    const rendered = await renderMarkdown([
+      "```mermaid",
+      "flowchart TD",
+      "  A[Start] --> B[Done]",
+      "```",
+    ].join("\n"), 20, 80, false);
+    try {
+      expect(rendered.frame).toContain("flowchart TD");
+      expect(rendered.frame).toContain("A[Start] --> B[Done]");
+      expect(rendered.frame).not.toContain("┌");
+    } finally {
+      rendered.destroy();
+    }
+  });
+
   test("projects a closed Mermaid fence through the real Unicode engine", async () => {
     const rendered = await renderMarkdown([
       "```mermaid",

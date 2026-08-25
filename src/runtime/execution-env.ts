@@ -12,7 +12,7 @@
 import { readFile, writeFile, stat, readdir, mkdir, rm, rename } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import * as path from "node:path";
-import { findGitBash } from "../utils/shell.ts";
+import { buildShellInvocation, defaultShell, resolveConfiguredShellPath } from "../utils/shell.ts";
 
 /** 文件元信息:对齐 node:fs Stats 子集,只保留工具实际需要的字段。 */
 export interface FileStats {
@@ -94,14 +94,29 @@ export interface ExecutionEnv {
   network?: Network;
 }
 
+export interface LocalExecutionEnvOptions {
+  /** settings.shellPath 的已解析输入；配置失败时 fail closed。 */
+  shellPath?: string;
+}
+
 /**
  * 默认本地 ExecutionEnv。基于 `node:fs/promises` + `node:child_process`。
  * Windows 下走 git-bash(由 utils/shell.ts 探测),其他平台走 `bash`/`sh`。
  */
-export function localExecutionEnv(initialCwd: string = process.cwd()): ExecutionEnv {
+export function localExecutionEnv(
+  initialCwd: string = process.cwd(),
+  options?: LocalExecutionEnvOptions,
+): ExecutionEnv {
+  const configuredShell = options?.shellPath === undefined
+    ? undefined
+    : resolveConfiguredShellPath(options.shellPath);
+  if (configuredShell !== undefined && !configuredShell.ok) {
+    const error = Object.assign(new Error(configuredShell.message), { code: configuredShell.code });
+    throw error;
+  }
   return {
     fs: localFs(),
-    shell: localShell(),
+    shell: localShell(configuredShell?.path),
     cwd: initialCwd,
     network: localNetwork(),
   };
@@ -160,7 +175,7 @@ function localFs(): FileSystem {
   };
 }
 
-function localShell(): Shell {
+function localShell(configuredShellPath?: string): Shell {
   return {
     async exec(cmd, opts) {
       const cwd = opts?.cwd ?? process.cwd();
@@ -170,25 +185,12 @@ function localShell(): Shell {
       const stdin = opts?.stdin;
       const signal = opts?.signal;
 
-      // 平台 shell 选择:Windows 走 git-bash;Posix 走 sh 兜底(若 bash 不在 PATH)
-      let shellCmd: string;
-      let shellArgs: string[];
-      if (process.platform === "win32") {
-        try {
-          shellCmd = findGitBash();
-          shellArgs = ["-c", cmd];
-        } catch {
-          // git-bash 找不到 → cmd.exe 兜底
-          shellCmd = process.env.COMSPEC ?? "cmd.exe";
-          shellArgs = ["/d", "/s", "/c", cmd];
-        }
-      } else {
-        shellCmd = "bash";
-        shellArgs = ["-c", cmd];
-      }
+      // 显式 shellPath 由 composition root 校验后直接使用；未配置时保留平台默认。
+      const shellCmd = defaultShell(configuredShellPath);
+      const shellInvocation = buildShellInvocation(shellCmd, cmd);
 
       return new Promise<ShellResult>((resolve) => {
-        const child: ChildProcess = spawn(shellCmd, shellArgs, {
+        const child: ChildProcess = spawn(shellInvocation.executable, shellInvocation.args, {
           cwd,
           env: { ...process.env, ...env },
           windowsHide: true,

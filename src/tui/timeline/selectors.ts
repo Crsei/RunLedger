@@ -7,13 +7,16 @@
 
 import type { PresentationBlock, PresentationBlockMetadata } from "../presentation.ts";
 import type { SafeToolUsageView } from "../presentation/tools/types.ts";
-import type { TimelineRow, TimelineState } from "./types.ts";
+import type { TimelineAssistantUsage, TimelineRow, TimelineState } from "./types.ts";
 import { diffLineNumberWidth } from "../opentui/block-layout.ts";
+import { detectCacheInvalidation, hasCacheFootprint } from "./cache-invalidation.ts";
 
 export interface TimelineToBlocksOptions {
 	readonly includeActive?: boolean;
 	/** 仅跳过 thinking block 的展示投影；TimelineRow 原始数据保持不变。 */
 	readonly hideThinking?: boolean;
+	/** 在已确认 prompt cache 从 warm 变 cold 的 assistant turn 上显示 divider。 */
+	readonly cacheMissMarker?: boolean;
 }
 
 /** 按 committed + active（activeOrder 顺序）产出稳定 id 的 blocks。 */
@@ -21,6 +24,7 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 	const blocks: PresentationBlock[] = [];
 	const includeActive = options.includeActive ?? true;
 	let rowsSinceBoundary: TimelineRow[] = [];
+	let previousAssistantUsage: TimelineAssistantUsage | undefined;
 	for (const row of state.committedRows) {
 		if (row.kind === "run-boundary") {
 			if (hasWorkActivity(rowsSinceBoundary)) {
@@ -34,18 +38,39 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 			continue;
 		}
 		rowsSinceBoundary.push(row);
+		let invalidation: ReturnType<typeof detectCacheInvalidation>;
+		if (options.cacheMissMarker === true && row.kind === "assistant" && row.usageDetails !== undefined) {
+			invalidation = detectCacheInvalidation(previousAssistantUsage, row.usageDetails);
+			if (invalidation !== undefined) blocks.push(cacheMissBlock(row, invalidation.reprocessedTokens));
+		}
 		blocks.push(...rowToBlocks(row, options));
+		if (row.kind === "assistant" && hasCacheFootprint(row.usageDetails)) previousAssistantUsage = row.usageDetails;
 	}
 	if (includeActive) {
 		for (const id of state.activeOrder) {
 			const row = state.activeRowsByCorrelationId[id];
 			if (row !== undefined) {
 				rowsSinceBoundary.push(row);
+				let invalidation: ReturnType<typeof detectCacheInvalidation>;
+				if (options.cacheMissMarker === true && row.kind === "assistant" && row.usageDetails !== undefined) {
+					invalidation = detectCacheInvalidation(previousAssistantUsage, row.usageDetails);
+					if (invalidation !== undefined) blocks.push(cacheMissBlock(row, invalidation.reprocessedTokens));
+				}
 				blocks.push(...rowToBlocks(row, options));
+				if (row.kind === "assistant" && hasCacheFootprint(row.usageDetails)) previousAssistantUsage = row.usageDetails;
 			}
 		}
 	}
 	return blocks;
+}
+
+function cacheMissBlock(row: Extract<TimelineRow, { readonly kind: "assistant" }>, reprocessedTokens: number): PresentationBlock {
+		return {
+			id: `timeline-${row.id}/cache-miss`,
+			...partMetadata(row, `${row.id}/cache-miss`),
+			kind: "separator",
+			label: `⊘ cache miss · ${formatCompactCount(reprocessedTokens)} tokens`,
+		};
 }
 
 /** 单行 -> blocks；assistant 行拆 thinking + text 两个 markdown block。 */
@@ -109,19 +134,31 @@ export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions =
 				}];
 			}
 			const lines = toolLines(row);
-			const diffBlocks = presentation?.body.flatMap((block, index): PresentationBlock[] => block.kind === "diff"
-				? [{
-					id: `${baseId}/diff-${index}`,
-					...partMetadata(row, `${row.id}/diff-${index}`),
-					kind: "diff",
-					document: block.document,
-					showLineNumbers: true,
-					lineNumberWidth: diffDocumentLineNumberWidth(block.document),
-					syntaxHighlight: true,
-					...(row.status === "running" ? { streaming: true } : {}),
-				}]
-				: []) ?? [];
-			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", content: lines.join("\n") }, ...diffBlocks];
+			const detailBlocks = presentation?.body.flatMap((block, index): PresentationBlock[] => {
+				if (block.kind === "diff") {
+					return [{
+						id: `${baseId}/diff-${index}`,
+						...partMetadata(row, `${row.id}/diff-${index}`),
+						kind: "diff",
+						document: block.document,
+						showLineNumbers: true,
+						lineNumberWidth: diffDocumentLineNumberWidth(block.document),
+						syntaxHighlight: true,
+						...(row.status === "running" ? { streaming: true } : {}),
+					}];
+				}
+				if (block.kind === "markdown") {
+					return [{
+						id: `${baseId}/markdown-${index}`,
+						...partMetadata(row, `${row.id}/markdown-${index}`),
+						kind: "markdown",
+						content: block.content.text,
+						streaming: row.status === "running",
+					}];
+				}
+				return [];
+			}) ?? [];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", content: lines.join("\n") }, ...detailBlocks];
 		}
 		case "notice": {
 			const prefix = row.severity === "error" ? "error: " : row.severity === "warning" ? "warning: " : "note: ";

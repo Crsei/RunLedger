@@ -75,6 +75,16 @@ describe("slash command registry", () => {
 		});
 	});
 
+	it("registers /settings as the canonical settings selector entrypoint", () => {
+		expect(findCommand("settings")).toMatchObject({
+			canonicalName: "settings",
+			actionType: "config.settings",
+			category: "config",
+			availableDuringTask: false,
+			supportsInlineArgs: false,
+		});
+	});
+
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
     expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);

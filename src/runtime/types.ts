@@ -43,6 +43,8 @@ import type { RuntimeContentRef, RuntimeDigest } from "./protocol/foundation.ts"
 import type { CapabilityClaim } from "./protocol/capability.ts";
 import type { ContextAssemblyReceipt } from "./context/types.ts";
 import type { RuntimeContextSource } from "./context/runtime-adapter.ts";
+import type { CompactionCutPlan, CompactionPolicy, CompactionTriggerReason } from "./context/compaction/cut-planner.ts";
+import type { EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
 
 // ===== 工具 =====
 
@@ -366,6 +368,19 @@ export type ContextAssemblySink = (input: {
 	readonly receipt: ContextAssemblyReceipt;
 }) => void | Promise<void>;
 
+export interface CompactionSummaryRequest {
+	readonly messages: readonly AgentMessage[];
+	readonly cut: Extract<CompactionCutPlan, { readonly kind: "cut" }>;
+	readonly reason: CompactionTriggerReason;
+	readonly model: Model<Api>;
+	readonly sessionId: string;
+	readonly turn: number;
+}
+
+export type CompactionSummarizer = (
+	input: CompactionSummaryRequest,
+) => string | Promise<string | undefined> | undefined;
+
 // ===== StreamFn =====
 
 /**
@@ -388,6 +403,14 @@ export interface StreamFn {
  */
 export interface AgentLoopConfig {
   model: Model<Api>;
+  /** Effective settings are frozen at Session composition and own compaction authority. */
+  runtimeSettings?: EffectiveRuntimeSettingsSnapshot;
+  /** Compatibility seam; ignored whenever runtimeSettings is injected. */
+  compactionPolicy?: CompactionPolicy;
+  /** One-shot trigger consumed by the first model request of this run. */
+  compactionTrigger?: CompactionTriggerReason;
+  /** Optional Host-owned summarizer; absence keeps the raw projection unchanged. */
+  compactionSummarizer?: CompactionSummarizer;
   /** Purpose label propagated to the Host model route without prompt content. */
   requestKind?: "interactive" | "idle-recap" | "auto-title";
   /** 当前有效 thinking level;off 时请求不发送 reasoning。 */

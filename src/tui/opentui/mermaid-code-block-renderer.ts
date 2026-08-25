@@ -15,6 +15,7 @@ import type { TuiPerformanceObserver } from "./performance-observer.ts";
 export interface MermaidCodeBlockRendererOptions {
   readonly performanceObserver?: TuiPerformanceObserver;
   readonly getThemeMode?: () => "dark" | "light";
+  readonly renderMermaid?: boolean;
 }
 
 export type MermaidCodeBlockRenderer = NonNullable<MarkdownOptions["renderNode"]> & {
@@ -33,6 +34,7 @@ export function createMermaidCodeBlockRenderer(
   const projectionCache = new MermaidProjectionCache();
   const renderNode = createMarkdownCodeBlockRenderer({
     mermaid: (token, context) => {
+      if (options.renderMermaid === false) return context.defaultRender();
       const fence = inspectMermaidFence(token.raw);
       if (!fence.ok) return context.defaultRender();
 

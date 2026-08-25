@@ -200,4 +200,37 @@ describe("same-model Session title lifecycle", () => {
 		expect(completeSimple).not.toHaveBeenCalled();
 		lifecycle.dispose();
 	});
+
+	it("uses the Session retry snapshot and shared provider gate for direct completion", async () => {
+		const selected = model("coding-provider", "coding-model");
+		const release = vi.fn();
+		const acquire = vi.fn(async () => release);
+		let resolveCompletion: ((message: AssistantMessage) => void) | undefined;
+		const completeSimple = vi.fn(() => new Promise<AssistantMessage>((resolve) => {
+			resolveCompletion = resolve;
+		}));
+		const lifecycle = new SessionTitleLifecycle({
+			...options(),
+			models: { completeSimple } as unknown as Models,
+			getSelection: () => ({ model: selected }),
+			getCurrentTitle: () => undefined,
+			setAutoTitle: vi.fn(),
+			retryPolicy: { enabled: true, maxRetries: 2, baseDelayMs: 125, maxDelayMs: 900 },
+			providerGate: { acquire },
+		});
+
+		lifecycle.handleAcceptedInput("Use the configured request policy for this title");
+		await vi.waitFor(() => expect(completeSimple).toHaveBeenCalledTimes(1));
+		expect(acquire).toHaveBeenCalledWith("coding-provider", expect.any(AbortSignal));
+		expect(completeSimple.mock.calls[0]?.[2]).toMatchObject({
+			maxRetries: 2,
+			maxRetryDelayMs: 900,
+			retryBaseDelayMs: 125,
+		});
+		expect(release).not.toHaveBeenCalled();
+
+		resolveCompletion?.(completion("<title>Configured title</title>"));
+		await vi.waitFor(() => expect(release).toHaveBeenCalledTimes(1));
+		lifecycle.dispose();
+	});
 });

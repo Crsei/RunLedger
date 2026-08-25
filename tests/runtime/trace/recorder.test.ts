@@ -85,14 +85,14 @@ describe("RuntimeTraceRecorder", () => {
 			apiKey: "sk-secret",
 			headers: { authorization: "Bearer secret" },
 			env: { OPIK_API_KEY: "secret" },
-			text: "safe",
+			text: "password=hunter2 Authorization: Bearer inline-secret",
 		});
 
-		expect(value).toEqual({
+		expect(value).toMatchObject({
 			apiKey: "[REDACTED]",
 			headers: "[REDACTED]",
 			env: "[REDACTED]",
-			text: "safe",
+			text: "password=[REDACTED_CREDENTIAL] Authorization: [REDACTED_CREDENTIAL]",
 		});
 	});
 

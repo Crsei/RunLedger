@@ -15,6 +15,7 @@ import {
 	type ValidatedSpawnSubagentInput,
 } from "./types.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
+import type { TaskPolicyProjection } from "../../storage/settings-policies.ts";
 
 export const MULTI_AGENT_HARD_LIMITS: Readonly<MultiAgentLimits> = Object.freeze({
 	maxChildrenPerRoot: 3,
@@ -117,6 +118,37 @@ export function resolveMultiAgentPolicy(input: ResolveMultiAgentPolicyInput): Mu
 	});
 }
 
+/**
+ * Intersect the generic task settings with the current M1 bounded runtime.
+ * M1 still fixes direct-root depth and one active child; task settings must
+ * never widen those invariants. Only limits already represented by the child
+ * runtime are projected here.
+ */
+export function applyTaskPolicyNarrowing(
+	policy: MultiAgentPolicy,
+	taskPolicy?: TaskPolicyProjection,
+): MultiAgentPolicy {
+	if (taskPolicy === undefined) return policy;
+	const maxModelTurnsPerAgent = taskPolicy.softRequestBudget === undefined || taskPolicy.softRequestBudget <= 0
+		? policy.limits.maxModelTurnsPerAgent
+		: Math.min(policy.limits.maxModelTurnsPerAgent, taskPolicy.softRequestBudget);
+	const maxActiveDurationMsPerAgent = taskPolicy.maxRuntimeMs === undefined || taskPolicy.maxRuntimeMs <= 0
+		? policy.limits.maxActiveDurationMsPerAgent
+		: Math.min(policy.limits.maxActiveDurationMsPerAgent, taskPolicy.maxRuntimeMs);
+	const disabledAgents = taskPolicy.disabledAgents === undefined
+		? policy.disabledAgents
+		: Object.freeze([...taskPolicy.disabledAgents]);
+	return Object.freeze({
+		...policy,
+		limits: Object.freeze({
+			...policy.limits,
+			maxModelTurnsPerAgent,
+			maxActiveDurationMsPerAgent,
+		}),
+		...(disabledAgents === undefined ? {} : { disabledAgents }),
+	});
+}
+
 export function validateMultiAgentSettingsSource(
 	value: unknown,
 	path: string,
@@ -162,6 +194,9 @@ export function validateSpawnSubagentRequest(
 
 	const role = input.role;
 	if (!isSubagentRole(role)) return failure("invalid_request", "role is not a supported subagent role", "role");
+	if (policy.disabledAgents?.includes(role) === true) {
+		return failure("unsupported_feature", "the requested agent role is disabled by task settings", "role");
+	}
 	const objective = validateBoundedUtf8Text(input.objective, {
 		field: "objective",
 		minBytes: 1,

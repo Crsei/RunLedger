@@ -110,6 +110,30 @@ export function loadTheme(name: ThemeName): Theme {
 }
 
 /**
+ * 将语义色替换为色盲友好的蓝/橙/朱红组合；中性色保持原主题不变。
+ * 返回新对象，避免修改 dark/light 预设或其他 TUI 引用。
+ */
+export function applyColorBlindMode(theme: Theme, enabled: boolean): Theme {
+  if (!enabled) return theme;
+  const success = "#0072b2";
+  const warning = "#e69f00";
+  const error = "#d55e00";
+  const info = "#56b4e9";
+  return {
+    ...theme,
+    success,
+    warning,
+    error,
+    info,
+    toolCall: warning,
+    toolResult: success,
+    toolError: error,
+    status: info,
+    link: success,
+  };
+}
+
+/**
  * 应用 env 覆盖到 theme(M6 真实装)。
  *
  * 通过 RUNLEDGER_THEME_<KEY> 覆盖 Theme 的某项颜色;KEY 取大写形式,

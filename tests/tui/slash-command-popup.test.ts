@@ -41,8 +41,8 @@ describe("SlashCommandPopup 过滤", () => {
     popup.setFilter("/m");
     expect(names(popup)).toEqual(["model", "mcp", "memory"]);
     popup.setFilter("/s");
-		expect(popup.getVisibleRows().map((row) => row.name)).toEqual(["sessions", "shape", "setup", "skills", "skillsproviders", "scrollbar"]);
-		expect(names(popup)).toEqual(["resume", "shape", "setup", "skills", "skillsproviders", "scrollbar"]);
+		expect(popup.getVisibleRows().map((row) => row.name)).toEqual(["sessions", "shape", "settings", "setup", "skills", "skillsproviders", "scrollbar"]);
+		expect(names(popup)).toEqual(["resume", "shape", "settings", "setup", "skills", "skillsproviders", "scrollbar"]);
     popup.setFilter("/c");
     expect(popup.getVisibleRows().map((row) => row.name)).toEqual(["commands", "clear", "compact"]);
   });

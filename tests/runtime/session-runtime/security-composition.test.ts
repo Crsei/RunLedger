@@ -104,6 +104,7 @@ async function composition(input: {
 	};
 	readonly bashAnalyzer?: BashSecurityAnalyzerPort;
 	readonly approvalTimeoutMs?: number;
+	readonly additionalWorkspaceRoots?: readonly string[];
 }) {
 	const home = join(root, "home");
 	await fs.mkdir(home, { recursive: true });
@@ -129,6 +130,7 @@ async function composition(input: {
 		...(input.bashClassificationAudit === undefined ? {} : { bashClassificationAudit: input.bashClassificationAudit }),
 		...(input.bashAnalyzer === undefined ? {} : { bashAnalyzer: input.bashAnalyzer }),
 		...(input.approvalTimeoutMs === undefined ? {} : { approvalTimeoutMs: input.approvalTimeoutMs }),
+		...(input.additionalWorkspaceRoots === undefined ? {} : { additionalWorkspaceRoots: input.additionalWorkspaceRoots }),
 	});
 }
 
@@ -142,6 +144,30 @@ function unavailableAnalyzer(): BashSecurityAnalyzerPort {
 }
 
 describe("session-scoped Security/ExecutionGateway composition", () => {
+	it("includes canonical additional workspace roots in governed reads and writes", async () => {
+		const additionalRoot = join(root, "additional");
+		const outside = await fs.mkdtemp(join(tmpdir(), "runledger-session-security-outside-"));
+		await fs.mkdir(additionalRoot, { recursive: true });
+		const security = await composition({
+			document: { profile: "workspace-write", approvalPolicy: "on-request", sandbox: "off" },
+			additionalWorkspaceRoots: [additionalRoot],
+			approvalPorts: {
+				prompter: { request: async () => ({ decision: "allow-once" as const, decidedBy: createRuntimeId("principal", "additional-root-approver") }) },
+				stateStore: new MemoryApprovalStateStore(),
+				audit: { requested: async () => undefined, decided: async () => undefined, revoked: async () => undefined },
+			},
+		});
+		try {
+			expect(security.snapshot.filesystem.readRoots).toContain(additionalRoot);
+			expect(security.snapshot.filesystem.writeRoots).toContain(additionalRoot);
+			await expect(security.executionEnv.fs.writeFile(join(additionalRoot, "allowed.txt"), "allowed")).resolves.toBeUndefined();
+			await expect(security.executionEnv.fs.writeFile(join(outside, "blocked.txt"), "blocked")).rejects.toThrow(/outside allowed roots|policy/iu);
+		} finally {
+			await security.close();
+			await fs.rm(outside, { recursive: true, force: true });
+		}
+	});
+
 	it("routes AST classification through the Session shell and closes its worker pool", async () => {
 		const security = await composition({
 			document: {
