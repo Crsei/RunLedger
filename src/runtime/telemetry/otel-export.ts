@@ -241,7 +241,10 @@ export async function shutdownTelemetryExport(): Promise<void> {
 		meterProvider = undefined;
 		metricRecorder = undefined;
 	}
-	await Promise.all(shutdowns);
+	const results = await Promise.allSettled(shutdowns);
+	if (results.some((result) => result.status === "rejected")) {
+		console.warn("[runledger] OTEL export shutdown failed; continuing process shutdown");
+	}
 }
 
 export function resolveSignalConfig(): SignalConfig {
@@ -535,5 +538,8 @@ export async function flushTelemetryExport(): Promise<void> {
 	if (traceProvider) flushes.push(traceProvider.forceFlush());
 	if (logProvider) flushes.push(logProvider.forceFlush());
 	if (meterProvider) flushes.push(meterProvider.forceFlush());
-	await Promise.all(flushes);
+	const results = await Promise.allSettled(flushes);
+	if (results.some((result) => result.status === "rejected")) {
+		console.warn("[runledger] OTEL export flush failed; continuing without blocking runtime");
+	}
 }

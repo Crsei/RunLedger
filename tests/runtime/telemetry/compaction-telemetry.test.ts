@@ -8,7 +8,7 @@
  *   - gateway(auth-gateway dispatch 走同一 helper)
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { context, trace } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import {
@@ -19,7 +19,18 @@ import {
 } from "@opentelemetry/sdk-trace-base";
 
 import { mockModel } from "../../../src/index.ts";
+import { startAuthGatewayServer } from "../../../src/auth-gateway/server.ts";
+import { createProductionSummarizer, SUMMARIZER_ALIAS } from "../../../src/cli/runtime-host-summarizer.ts";
 import { createSessionModelStreamFn } from "../../../src/runtime/agents/child-model-runtime.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import {
+	loadModelCompatibilityManifest,
+	ModelCompatibilityRouter,
+	type ModelCompatibilityManifestDocument,
+} from "../../../src/runtime/model-routing/router.ts";
+import type { ModelCapabilityProfile } from "../../../src/runtime/model-routing/types.ts";
+import { SessionTitleLifecycle } from "../../../src/runtime/session-runtime/title-lifecycle.ts";
 import { instrumentedCompleteSimple, resolveTelemetry } from "../../../src/runtime/telemetry/telemetry.ts";
 import { PiGenAIAttr } from "../../../src/runtime/telemetry/semconv.ts";
 import type { AssistantMessage, Context, Model, SimpleStreamOptions } from "../../../src/types.ts";
@@ -68,6 +79,46 @@ function messageFor(model: Model, text: string): AssistantMessage {
 
 function findSpan(spans: ReadableSpan[], name: string): ReadableSpan | undefined {
 	return spans.find(s => s.name === name);
+}
+
+function productionSummarizerRouter(): ModelCompatibilityRouter {
+	const profile: ModelCapabilityProfile = {
+		profileId: "telemetry-summarizer",
+		providerId: mockModel.provider,
+		modelId: mockModel.id,
+		manifestVersion: "1",
+		manifestDigest: runtimeDigest("telemetry-summarizer-profile"),
+		contextWindow: mockModel.contextWindow,
+		maxOutputTokens: mockModel.maxTokens,
+		reasoningProtocol: "none",
+		toolProtocol: "none",
+		imageInput: false,
+		compaction: "summary",
+		status: "verified",
+	};
+	const body = {
+		version: 1 as const,
+		profiles: [profile],
+		aliases: { [SUMMARIZER_ALIAS]: profile.profileId },
+	};
+	const document: ModelCompatibilityManifestDocument = {
+		...body,
+		manifestDigest: runtimeDigest(body),
+	};
+	const loaded = loadModelCompatibilityManifest(document);
+	if (!loaded.ok) throw new Error(loaded.error.code);
+	return new ModelCompatibilityRouter(loaded.value);
+}
+
+function completedStream(model: Model, text: string) {
+	const message = messageFor(model, text);
+	const stream = createAssistantMessageEventStream();
+	queueMicrotask(() => {
+		stream.push({ type: "start", partial: message });
+		stream.push({ type: "done", reason: "stop", message });
+		stream.end(message);
+	});
+	return stream;
 }
 
 describe("oneshot kinds", () => {
@@ -192,6 +243,88 @@ describe("child runtime streamFn telemetry", () => {
 		const finished = exporter.getFinishedSpans();
 		expect(finished).toHaveLength(1);
 		expect(finished[0]!.status.code).toBe(2); // ERROR
+	});
+});
+
+describe("production oneshot composition telemetry", () => {
+	it("emits compaction_summary through createProductionSummarizer", async () => {
+		const models = {
+			getModel: (provider: string, id: string) => provider === mockModel.provider && id === mockModel.id ? mockModel : undefined,
+			completeSimple: () => Promise.resolve(messageFor(mockModel, "production summary")),
+		} as unknown as Models;
+		const summarize = createProductionSummarizer({
+			models,
+			router: productionSummarizerRouter(),
+			telemetry: { captureMessageContent: "none" },
+		});
+
+		const result = await summarize({ transcript: "user: summarize this production turn", sessionId: "telemetry-compaction" });
+
+		expect(result.ok).toBe(true);
+		const chat = findSpan(exporter.getFinishedSpans(), "chat mock-1");
+		expect(chat?.attributes[PiGenAIAttr.OneshotKind]).toBe("compaction_summary");
+	});
+
+	it("emits auto_title through SessionTitleLifecycle", async () => {
+		const sessionId = createRuntimeId("session", "telemetry-auto-title");
+		const setAutoTitle = vi.fn();
+		const lifecycle = new SessionTitleLifecycle({
+			sessionId,
+			fence: {
+				sessionId,
+				runtimeId: createRuntimeId("runtime", "telemetry-auto-title"),
+				generation: 1,
+			},
+			models: {
+				completeSimple: () => Promise.resolve(messageFor(mockModel, "<title>Telemetry production title</title>")),
+			} as unknown as Models,
+			getSelection: () => ({ model: mockModel }),
+			getCurrentTitle: () => undefined,
+			setAutoTitle,
+			telemetry: { captureMessageContent: "none" },
+		});
+
+		try {
+			lifecycle.handleAcceptedInput("Create a production title for the telemetry implementation");
+			await vi.waitFor(() => expect(setAutoTitle).toHaveBeenCalledTimes(1));
+		} finally {
+			lifecycle.dispose();
+		}
+
+		const chat = findSpan(exporter.getFinishedSpans(), "chat mock-1");
+		expect(chat?.attributes[PiGenAIAttr.OneshotKind]).toBe("auto_title");
+	});
+
+	it("emits gateway through startAuthGatewayServer dispatch", async () => {
+		const models = {
+			getProvider: (provider: string) => provider === mockModel.provider ? {} : undefined,
+			getModel: (provider: string, id: string) => provider === mockModel.provider && id === mockModel.id ? mockModel : undefined,
+			getModels: () => [mockModel],
+			getAvailable: () => Promise.resolve([mockModel]),
+			getAuth: () => Promise.resolve({ auth: { apiKey: "upstream-secret" } }),
+			streamSimple: (model: Model) => completedStream(model, "gateway response"),
+		} as unknown as Models;
+		const server = await startAuthGatewayServer({
+			bindHost: "127.0.0.1",
+			port: 0,
+			token: "gateway-secret",
+			models,
+			telemetry: { captureMessageContent: "none" },
+		});
+
+		try {
+			const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
+				method: "POST",
+				headers: { authorization: "Bearer gateway-secret", "content-type": "application/json" },
+				body: JSON.stringify({ model: mockModel.id, messages: [{ role: "user", content: "ping" }] }),
+			});
+			expect(response.status, await response.text()).toBe(200);
+		} finally {
+			await server.close();
+		}
+
+		const chat = findSpan(exporter.getFinishedSpans(), "chat mock-1");
+		expect(chat?.attributes[PiGenAIAttr.OneshotKind]).toBe("gateway");
 	});
 });
 

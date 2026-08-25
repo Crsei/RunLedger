@@ -2,7 +2,7 @@
 
 ## 状态
 
-implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并回主线后复跑门禁）。P0–P6 全部完成：插桩核心（`src/runtime/telemetry/`）、agent-loop 接线、oneshot 四调用点、OTLP 三信号导出引导、52 个新增测试全绿。AGENTS.md §1.3 已移除「OpenTelemetry / metrics」排除项。
+implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并回主线后复跑门禁并完成审计修复）。P0–P6 全部完成：插桩核心（`src/runtime/telemetry/`）、agent-loop 接线、oneshot 四调用点、OTLP 三信号导出引导、collector 故障隔离、59 个新增测试全绿。AGENTS.md §1.3 已移除「OpenTelemetry / metrics」排除项。
 
 ## 目标
 
@@ -36,7 +36,7 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
 - **D3 与本地 trace store 不强制关联**：OTEL span 与 `RuntimeTraceRecorder` 各自独立 traceId/节点树。phase 1 不加属性桥接；可选后续在 `invoke_agent` 上补 `pi.runledger.trace_id` 属性，另行专项。
 - **D4 日志信号裁剪**：RunLedger 无中央 logger，log 信号只投递结构化 run-summary 事件（对应 pi `pi.omp.agent.run.completed`）与 telemetry warning；不新增全局 logger 接缝。
 - **D5 service.name 默认 `runledger`**：资源合并逻辑照搬（`resourceFromAttributes({service.name:"runledger"}).merge(detectResources([envDetector]))`），`OTEL_SERVICE_NAME` 仍可覆盖。
-- **D6 SDK 依赖线照搬 oh-my-pi 锁定线**：`@opentelemetry/api ^1.9.1`（由 1.9.0 提升）、`api-logs ^0.220.0`、`exporter-{logs,metrics,trace}-otlp-proto ^0.220.0`、`context-async-hooks ^2.9.0`、`resources ^2.9.0`、`sdk-logs ^0.220.0`、`sdk-metrics ^2.9.0`、`sdk-trace-base ^2.9.0`、`sdk-trace-node ^2.9.0`。RunLedger 跑 Node，1.x OTLP 线的 Bun 死锁不适用，但保持一致便于对照复验。
+- **D6 SDK 依赖线按冻结快照的实际解析结果固定**：oh-my-pi catalog 声明 `context-async-hooks` / `resources` / `sdk-{metrics,trace-base,trace-node}` 为 `^2.9.0`，但快照 `bun.lock` 的 direct 依赖实际解析为 `2.10.0`，`0.220.0` exporters 的内部依赖仍为 `2.9.0`。RunLedger 因此固定 direct `@opentelemetry/api 1.9.1`、`api-logs` / exporters / `sdk-logs 0.220.0`、其余 direct SDK `2.10.0`；不为匹配 semver 下界而降级。
 - **D7 enum → const 对象**：`GenAIAttr` / `OpenAIAttr` / `PiGenAIAttr` / `PiGenAIAggregateAttr` 由 `const enum` 转 `as const` 对象 + `type X = (typeof X)[keyof typeof X]` 提取，满足 `erasableSyntaxOnly`。
 - **D8 EventLoopKeepalive 省略**：Node 事件循环不会在长 promise 上冻结 timers；保留 `instrumentedCompleteSimple` 签名与调用点，删 `using _keepalive` 及其依赖。
 - **D9 文件布局**：
@@ -96,15 +96,17 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
   - `initTelemetryExport()`：幂等；`OTEL_SDK_DISABLED=true` 或无任何 endpoint → no-op；`resolveSignalConfig`/`signalEnabled` 逐信号判定（endpoint 回退、`EXPORTER=none`、非 `http/protobuf` 禁用并 warn）。
   - `registerProviders`：resource merge（D5）→ trace（`NodeTracerProvider` + `BatchSpanProcessor` + `OTLPTraceExporter` + `AsyncLocalStorageContextManager`）→ metric（`MeterProvider` + `PeriodicExportingMetricReader` + `AgentMetricRecorder`：`gen_ai.client.token.usage` 直方图、`pi.omp.agent.chat.cost.estimated_usd` counter、runs/steps/chats/tools/errors counter + duration 直方图）→ log（`LoggerProvider` + `BatchLogRecordProcessor` + `OTLPLogExporter`；按 D4 只发 run-summary 与 warning，`OTEL_LOG_LEVEL` 过滤，携带 active span context）。
   - `createTelemetryExportConfig(config)`：把 `onChatUsage`（metrics）与 `onRunEnd`（metrics + run-summary log）merge 进既有 `AgentTelemetryConfig`。
-  - `flushTelemetryExport()`：`forceFlush` 三信号；30s `setInterval().unref()`；退出钩子 `provider.shutdown()`（对齐 pi postmortem 钩子，RunLedger 用进程退出/服务关闭接缝）。
+  - `flushTelemetryExport()` / `shutdownTelemetryExport()`：三信号并行执行并用 `Promise.allSettled` 隔离 collector/exporter 拒绝，只输出不含 endpoint/凭据的通用 warning，不把 telemetry 故障升级为 turn 或进程关闭失败；30s `setInterval().unref()`；退出钩子 `provider.shutdown()`（对齐 pi postmortem 钩子，RunLedger 用进程退出/服务关闭接缝）。
 - 接线：`src/cli/main.ts` 与 session-runtime composition（`process-composition.ts`）启动路径 `await initTelemetryExport()`，启用后 `AgentLoopConfig.telemetry = createTelemetryExportConfig(...)`；flush 挂到 turn 结束（`interactive-session-controller` 的 turn 边界）与 print-mode/退出路径。
-- 门禁：`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 指向本地测试 collector 的 smoke（或 `OTEL_TRACES_EXPORTER=none` 负向断言）；`tests/runtime/telemetry/otel-export.test.ts` 覆盖 signal 判定矩阵。
+- 门禁：`tests/runtime/telemetry/otel-export.test.ts` 独立子进程启动本地 collector，断言 trace/log/metric 三条真实 `application/x-protobuf` wire 非空；同文件覆盖 signal 判定矩阵与 collector unavailable 时 flush/shutdown 仍 resolve。
 
 ### P5 测试移植
 
 - 移植并适配 `packages/agent/test/{otel,run-summary,compaction-telemetry}.test.ts`（oh-my-pi 用 Vitest + `InMemorySpanExporter` + `AsyncLocalStorageContextManager`，与 RunLedger Vitest 一致）：
   - span 名/属性（request/response/usage/内容采集三档）/父子关系/status 断言；
   - 关闭时零 span、run-summary 聚合字段、oneshot kind 标签；
+  - `createProductionSummarizer`、`SessionTitleLifecycle`、`startAuthGatewayServer` 与 child streamFn 四条真实生产组合链的 oneshot kind；
+  - OTLP 三信号真实 protobuf wire、collector outage 隔离与 async env 生命周期；
   - mock streamFn 替代 pi mock provider（`src/runtime/providers/mock-stream.ts` 已具备）。
 - 门禁：`npm test`（新增测试 + 全量 401+ 回归）。
 
@@ -121,13 +123,13 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
 |---|---|---|
 | A1 | `AgentLoopConfig.telemetry: {}` 时 runAgentLoop 产出 `invoke_agent`→`chat`/`execute_tool` 父子 span，属性符合 `gen_ai.*` + `pi.gen_ai.*` | otel.test.ts 断言通过 |
 | A2 | 不传 `telemetry` 时零 span、零 tracer 查找（性能不回归） | otel.test.ts 关闭态断言 |
-| A3 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 设置后 span 可达本地 collector | smoke 或 exporter 配置断言 |
+| A3 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 设置后 span 可达本地 collector | otel-export.test.ts 三信号真实 protobuf wire 断言 |
 | A4 | `OTEL_SDK_DISABLED=true` / 无 endpoint → init no-op | otel-export.test.ts |
 | A5 | 协议非 `http/protobuf` → 对应信号禁用并 warn | otel-export.test.ts |
 | A6 | `OTEL_LOG_LEVEL` 过滤生效；run-summary 事件含 step/tool/token/cost 字段 | otel-export.test.ts |
 | A7 | metrics：token 直方图 + pi 扩展 counter 在 run 后记录 | otel-export.test.ts |
 | A8 | 内容采集 none/summary/full 三档 + env 默认生效 | otel.test.ts |
-| A9 | oneshot 调用（compaction/auto-title/child/gateway）打 `pi.gen_ai.oneshot.kind` | compaction-telemetry.test.ts |
+| A9 | oneshot 调用（compaction/auto-title/child/gateway）打 `pi.gen_ai.oneshot.kind` | compaction-telemetry.test.ts 四条生产组合链 |
 | A10 | `npm run check` / `npm test` / `npm run build` 全绿 | 门禁输出 |
 | A11 | AGENTS.md §1.3 移除 OTEL 排除项 | diff 审查 |
 
@@ -149,19 +151,19 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
 | `AsyncLocalStorageContextManager` 在流式/并行工具下的上下文传播 | `runInActiveSpan` 原样包裹所有 chat/tool 体，与 pi 语义一致 |
 | oneshot 调用点无 agent loop 上下文 | 按调用点选 `recordManualChatTelemetry` / `resolveTelemetry`，A9 断言 kind 标签 |
 | 与主线未提交改动冲突 | D10 独立 worktree，完成后按仓库提交纪律合并 |
-| exporter 依赖线在新 Node 下的行为差异 | D6 锁定 oh-my-pi 验证线；P4 smoke 用真实本地 collector 验证一次 |
+| exporter 依赖线在新 Node 下的行为差异 | D6 固定冻结快照的 direct/transitive 实际解析线；P4 三信号真实本地 collector wire 持续回归 |
 
 ## 状态表
 
 | 阶段 | 状态 | 证据 |
 |---|---|---|
-| P0 依赖与骨架 | implemented | 11 个 OTEL SDK 依赖按 D6 锁定线加入(api ^1.9.1 / sdk-* ^2.9.0 / exporter-* ^0.220.0),`npm run check` 通过 |
+| P0 依赖与骨架 | implemented | 11 个 OTEL SDK 依赖按 D6 实际解析线固定(api 1.9.1 / direct SDK 2.10.0 / exporter 与 sdk-logs 0.220.0；exporter transitive SDK 2.9.0),`npm run check` 通过 |
 | P1 插桩核心移植 | implemented | `semconv.ts`(D7 const 对象)+ `run-collector.ts` + `telemetry.ts` 移植完成,公开面全保留;类型适配见「实施记录」 |
 | P2 agent-loop 接线 | implemented | `AgentLoopConfig.telemetry` / `AgentOptions.telemetry` 转发;invoke/chat/tool 三档 span + step 计数 + `recordSkippedTool` 截断路径 |
 | P3 oneshot 接线 | implemented | `instrumentedCompleteSimple`(completeImpl 必需)+ 四调用点 kind:compaction_summary / auto_title / child_agent / gateway |
-| P4 OTLP 导出引导 | implemented | `otel-export.ts`(init/flush/shutdown + 三信号 + AgentMetricRecorder + run-summary log);CLI main + gateway CLI + domain/controller 接线;turn 边界 flush |
-| P5 测试移植 | implemented | `tests/runtime/telemetry/` 4 文件 52 测试全绿(otel / run-summary / compaction-telemetry / otel-export);全量 `npm test` 回归通过 |
-| P6 文档与门禁 | implemented | 本文档状态表 + env 契约 + 实施记录;AGENTS.md §1.3 移除 OTEL 排除、§1.2 增专项条目;`npm run check` / `npm test` / `npm run build` 全绿(见验收矩阵) |
+| P4 OTLP 导出引导 | implemented | `otel-export.ts`(init/flush/shutdown + 三信号 + AgentMetricRecorder + run-summary log);CLI main + gateway CLI + domain/controller 接线;turn 边界 flush;flush/shutdown collector 拒绝均 best-effort 隔离 |
+| P5 测试移植 | implemented | `tests/runtime/telemetry/` 4 文件 59 测试全绿(otel / run-summary / compaction-telemetry / otel-export);真实 production oneshot 组合、三信号 protobuf wire 与 collector outage 回归已固化;全量 `npm test` 回归通过 |
+| P6 文档与门禁 | implemented | 本文档状态表 + env 契约 + 实施记录;AGENTS.md §1.3 移除 OTEL 排除、§1.2 增专项条目;2026-08-25 fresh `npm run check` / `npm test` / `npm run build` 全绿(见验收矩阵) |
 
 ## 验收矩阵结果
 
@@ -169,14 +171,14 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
 |---|---|---|
 | A1 | `AgentLoopConfig.telemetry: {}` 时 runAgentLoop 产出 `invoke_agent`→`chat`/`execute_tool` 父子 span,属性符合 `gen_ai.*` + `pi.gen_ai.*` | otel.test.ts 断言通过 |
 | A2 | 不传 `telemetry` 时零 span、零 tracer 查找(性能不回归) | otel.test.ts「emits no spans」通过 |
-| A3 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 设置后 span 可达本地 collector | otel-export.test.ts「registers providers」断言 exporter 装配;真实 wire smoke 见下 |
+| A3 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` 设置后 span 可达本地 collector | otel-export.test.ts「exports non-empty protobuf payloads for traces, logs, and metrics」在独立子进程断言三信号真实 wire 的 path/content-type/body |
 | A4 | `OTEL_SDK_DISABLED=true` / 无 endpoint → init no-op | otel-export.test.ts 通过 |
 | A5 | 协议非 `http/protobuf` → 对应信号禁用并 warn | otel-export.test.ts signalEnabled 矩阵通过 |
 | A6 | `OTEL_LOG_LEVEL` 过滤生效;run-summary 事件含 step/tool/token/cost 字段 | parseOtelLogLevel + emitRunSummaryLog 字段集在 otel-export.test.ts / run-summary.test.ts 断言 |
 | A7 | metrics:token 直方图 + pi 扩展 counter 在 run 后记录 | AgentMetricRecorder + InMemoryMetricExporter 断言 9 个 metric 与 data points 通过 |
 | A8 | 内容采集 none/summary/full 三档 + env 默认生效 | otel.test.ts content-capture describe 通过 |
-| A9 | oneshot 调用(compaction/auto-title/child/gateway)打 `pi.gen_ai.oneshot.kind` | compaction-telemetry.test.ts 通过 |
-| A10 | `npm run check` / `npm test` / `npm run build` 全绿 | 门禁输出(见下) |
+| A9 | oneshot 调用(compaction/auto-title/child/gateway)打 `pi.gen_ai.oneshot.kind` | compaction-telemetry.test.ts 直接执行 `createProductionSummarizer`、`SessionTitleLifecycle`、child streamFn、`startAuthGatewayServer` 四条生产组合链并通过 |
+| A10 | `npm run check` / `npm test` / `npm run build` 全绿 | fresh check 通过；Vitest 481 files / 2992 passed / 3 skipped；Bun OpenTUI 19 files / 153 passed；build 通过；全局链接的 compiled `runledger --version` 通过 |
 | A11 | AGENTS.md §1.3 移除 OTEL 排除项 | diff 审查 |
 
 ## OpenTelemetry export 环境变量契约
@@ -194,7 +196,7 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
 | `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` | 内容采集默认档:`true`/`1`/`yes`/`full` → `full`,`summary` → `summary`,缺省 `none`;可被 `AgentTelemetryConfig.captureMessageContent` 覆盖 |
 | `OTEL_SDK_DISABLED` | `true` 时 `initTelemetryExport()` no-op |
 
-运行时行为:turn 结束(turn 边界)+ 30s unref 定时 + 进程退出(`beforeExit` / SIGINT / SIGTERM best-effort)三处 flush;退出路径 `shutdownTelemetryExport()` 幂等关闭三信号 provider。span/metric/log 只在真实 provider 注册后产生,未配置时零开销。
+运行时行为:turn 结束(turn 边界)+ 30s unref 定时 + 进程退出(`beforeExit` / SIGINT / SIGTERM best-effort)三处 flush;退出路径 `shutdownTelemetryExport()` 幂等关闭三信号 provider。flush/shutdown 使用 `Promise.allSettled`,collector/exporter 拒绝只记录通用 warning,不会使成功 turn 或进程关闭失败。span/metric/log 只在真实 provider 注册后产生,未配置时零开销。
 
 ## 实施记录(相对 oh-my-pi 的裁剪与适配)
 
@@ -205,6 +207,7 @@ implemented（2026-08-25，worktree `RunLedger-oh-my-pi-telemetry-port` 合并�
 - **pi-ai barrel 补齐**:`src/types.ts` 新增 `ToolChoice` / `ServiceTier` / `shouldSendServiceTier`(provider-string 版)与 `SimpleStreamOptions.toolChoice` / `serviceTier`,保持 pi-ai parity。
 - **D4 日志裁剪**:`otel-export.ts` 无中央 logger sink,只发 run-summary 事件(`pi.omp.agent.run.completed`)与 telemetry warning;`logger.warn` → `console.warn`;`postmortem` → 导出 `shutdownTelemetryExport()` + 进程退出接缝。
 - **测试接缝**:`otel-export.ts` 导出 `resolveSignalConfig` / `signalEnabled` / `parseOtelLogLevel` / `AgentMetricRecorder` 供矩阵与 metrics 断言。
+- **collector 故障隔离**:`flushTelemetryExport()` / `shutdownTelemetryExport()` 不传播单个或多个 exporter rejection；独立子进程回归使用不可达 loopback collector 验证 turn 边界与关闭路径均以 0 退出。
+- **真实 OTLP wire**:`otel-export.test.ts` 的本地 HTTP collector 同时接收 `/v1/traces`、`/v1/logs`、`/v1/metrics`，三者均断言 `application/x-protobuf` 且 body 非空。
 - **child_agent kind**:pi 无此 kind;child runtime 的 streamFn 在 streamSimple 层打 chat span(kind=child_agent),child 的 `Agent` 不传 loop telemetry,避免双 span。
 - **测试框架**:oh-my-pi 用 bun:test + `agentLoop` 流 API + pi mock provider;RunLedger 用 Vitest + `runAgentLoop` + `mockStreamFn`/`singleTurnStreamFn`,InMemorySpanExporter + AsyncLocalStorageContextManager 一致。
-- **门禁差异**:`npm test` 中 `composer-shape-pty` 与 `acceptance-runners` 两个失败是 worktree 环境问题(全局 `runledger` npm link 指向主 worktree、Host native 二进制未在 worktree 构建),与 telemetry 改动无关;主 worktree 基线同样失败。

@@ -3,6 +3,7 @@
  * metrics 记录(AgentMetricRecorder + InMemoryMetricReader)。
  */
 
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryMetricExporter, MeterProvider, PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { metrics } from "@opentelemetry/api";
@@ -38,13 +39,13 @@ const ENV_KEYS = [
 	"OTEL_LOG_LEVEL",
 ] as const;
 
-function withEnv(env: Record<string, string>, fn: () => void | Promise<void>): Promise<void> {
+async function withEnv(env: Record<string, string>, fn: () => void | Promise<void>): Promise<void> {
 	const previous = new Map<string, string | undefined>();
 	for (const key of ENV_KEYS) previous.set(key, process.env[key]);
 	try {
 		for (const key of ENV_KEYS) delete process.env[key];
 		Object.assign(process.env, env);
-		return Promise.resolve(fn());
+		await fn();
 	} finally {
 		for (const [key, value] of previous) {
 			if (value === undefined) delete process.env[key];
@@ -53,11 +54,37 @@ function withEnv(env: Record<string, string>, fn: () => void | Promise<void>): P
 	}
 }
 
-afterEach(() => {
-	void shutdownTelemetryExport();
+function runTelemetryChild(source: readonly string[], env: Record<string, string> = {}) {
+	return spawnSync(
+		process.execPath,
+		["--import", "tsx", "--input-type=module", "-e", source.join("\n")],
+		{
+			cwd: process.cwd(),
+			encoding: "utf8",
+			env: {
+				...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OTEL_"))),
+				...env,
+			},
+			timeout: 15_000,
+		},
+	);
+}
+
+afterEach(async () => {
+	await shutdownTelemetryExport();
 });
 
 describe("signalEnabled matrix", () => {
+	it("keeps environment overrides active until an async callback completes", async () => {
+		let endpointAfterAwait: string | undefined;
+		await withEnv({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, async () => {
+			await Promise.resolve();
+			endpointAfterAwait = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+		});
+
+		expect(endpointAfterAwait).toBe("http://collector:4318");
+	});
+
 	it("enables a signal only when an endpoint is set", () => {
 		expect(signalEnabled("trace", undefined, undefined, undefined)).toBe(false);
 		expect(signalEnabled("trace", "http://localhost:4318/v1/traces", undefined, undefined)).toBe(true);
@@ -84,8 +111,8 @@ describe("signalEnabled matrix", () => {
 		expect(signalEnabled("log", "http://localhost:4318", undefined, "http/protobuf")).toBe(true);
 	});
 
-	it("resolveSignalConfig reads per-signal endpoint fallback from the shared endpoint", () => {
-		withEnv({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, () => {
+	it("resolveSignalConfig reads per-signal endpoint fallback from the shared endpoint", async () => {
+		await withEnv({ OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, () => {
 			const config: SignalConfig = resolveSignalConfig();
 			expect(config.trace).toBe(true);
 			expect(config.log).toBe(true);
@@ -93,20 +120,26 @@ describe("signalEnabled matrix", () => {
 		});
 	});
 
-	it("per-signal protocol overrides the shared protocol", () => {
-		withEnv(
-			{
-				OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
-				OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
-				OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
-			},
-			() => {
-				const config: SignalConfig = resolveSignalConfig();
-				expect(config.trace).toBe(true);
-				expect(config.log).toBe(false);
-				expect(config.metric).toBe(false);
-			},
-		);
+	it("per-signal protocol overrides the shared protocol", async () => {
+		const spy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+		try {
+			await withEnv(
+				{
+					OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+					OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",
+					OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
+				},
+				() => {
+					const config: SignalConfig = resolveSignalConfig();
+					expect(config.trace).toBe(true);
+					expect(config.log).toBe(false);
+					expect(config.metric).toBe(false);
+				},
+			);
+			expect(spy).toHaveBeenCalledTimes(2);
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });
 
@@ -155,6 +188,97 @@ describe("initTelemetryExport", () => {
 			expect(createTelemetryExportConfig(config)).toBe(config);
 			expect(createTelemetryExportConfig(undefined)).toBeUndefined();
 		});
+	});
+
+	it("keeps an unavailable collector from rejecting a turn-boundary flush", () => {
+		const result = runTelemetryChild(
+			[
+				'const telemetry = await import("./src/runtime/telemetry/otel-export.ts");',
+				'const { trace } = await import("@opentelemetry/api");',
+				"await telemetry.initTelemetryExport();",
+				'trace.getTracer("collector-outage-test").startSpan("turn-complete").end();',
+				"await telemetry.flushTelemetryExport();",
+				'process.stdout.write("flush-resolved\\n");',
+			],
+			{
+				OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://127.0.0.1:1/v1/traces",
+				OTEL_EXPORTER_OTLP_TIMEOUT: "100",
+			},
+		);
+
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain("flush-resolved");
+	});
+
+	it("keeps an unavailable collector from rejecting telemetry shutdown", () => {
+		const result = runTelemetryChild(
+			[
+				'const telemetry = await import("./src/runtime/telemetry/otel-export.ts");',
+				'const { trace } = await import("@opentelemetry/api");',
+				"await telemetry.initTelemetryExport();",
+				'trace.getTracer("collector-outage-test").startSpan("process-exit").end();',
+				"await telemetry.shutdownTelemetryExport();",
+				'process.stdout.write("shutdown-resolved\\n");',
+			],
+			{
+				OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://127.0.0.1:1/v1/traces",
+				OTEL_EXPORTER_OTLP_TIMEOUT: "100",
+			},
+		);
+
+		expect(result.status, result.stderr).toBe(0);
+		expect(result.stdout).toContain("shutdown-resolved");
+	});
+
+	it("exports non-empty protobuf payloads for traces, logs, and metrics", () => {
+		const result = runTelemetryChild(
+			[
+				'const { createServer } = await import("node:http");',
+				'const { trace } = await import("@opentelemetry/api");',
+				"const requests = [];",
+				"const server = createServer((request, response) => {",
+				"  const chunks = [];",
+				"  request.on('data', chunk => chunks.push(chunk));",
+				"  request.on('end', () => {",
+				"    requests.push({ url: request.url, contentType: request.headers['content-type'], size: Buffer.concat(chunks).byteLength });",
+				"    response.writeHead(200);",
+				"    response.end();",
+				"  });",
+				"});",
+				"await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });",
+				"const address = server.address();",
+				"if (!address || typeof address === 'string') throw new Error('collector address unavailable');",
+				"process.env.OTEL_EXPORTER_OTLP_ENDPOINT = `http://127.0.0.1:${address.port}`;",
+				'const telemetry = await import("./src/runtime/telemetry/otel-export.ts");',
+				'const runCollector = await import("./src/runtime/telemetry/run-collector.ts");',
+				"await telemetry.initTelemetryExport();",
+				"const config = telemetry.createTelemetryExportConfig(undefined);",
+				"if (!config) throw new Error('telemetry export config unavailable');",
+				"const span = trace.getTracer('otlp-wire-test').startSpan('three-signal-smoke');",
+				"await config.onChatUsage?.({",
+				"  span, agent: { id: 'wire-agent', name: 'wire-agent' }, conversationId: 'wire-conversation', stepNumber: 0,",
+				"  model: 'wire-model', provider: 'wire-provider', usage: { inputTokens: 2, outputTokens: 1, totalTokens: 3 },",
+				"  cost: { usd: 0.001 },",
+				"});",
+				"span.end();",
+				"const summary = { ...runCollector.emptyAgentRunSummary(), stepCount: 1, chats: { total: 1, byStopReason: { stop: 1 }, totalLatencyMs: 1 } };",
+				"const coverage = { ...runCollector.emptyAgentRunCoverage(), modelsUsed: ['wire-model'], providersUsed: ['wire-provider'] };",
+				"config.onRunEnd?.(summary, coverage);",
+				"await telemetry.flushTelemetryExport();",
+				"await telemetry.shutdownTelemetryExport();",
+				"await new Promise(resolve => server.close(resolve));",
+				"process.stdout.write(`${JSON.stringify(requests)}\\n`);",
+			],
+		);
+
+		expect(result.status, result.stderr).toBe(0);
+		const requests = JSON.parse(result.stdout.trim()) as Array<{ url: string; contentType: string; size: number }>;
+		for (const path of ["/v1/traces", "/v1/logs", "/v1/metrics"]) {
+			const request = requests.find((candidate) => candidate.url === path);
+			expect(request, `${path} was not exported`).toBeDefined();
+			expect(request?.contentType).toBe("application/x-protobuf");
+			expect(request?.size).toBeGreaterThan(0);
+		}
 	});
 });
 
