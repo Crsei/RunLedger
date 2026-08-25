@@ -229,7 +229,19 @@ export { createManagedProcessOverlayFromRenderer } from "./opentui/process-overl
 export { LoadedResourcesComponent, type LoadedResourceKind, type LoadedResourceEntry, type LoadedResourcesComponentProps } from "./components/loaded-resources.ts";
 export { ChatContainer } from "./components/chat-container.ts";
 export { WelcomeComponent, WELCOME_SESSION_SLOTS, type WelcomeComponentProps, type RecentSession } from "./components/welcome.ts";
-export { logo, LOGO_GAP, logoLineWidth, renderLogo } from "./components/logo.ts";
+export {
+  DEFAULT_LOGO_LETTERS,
+  LOGO_GAP,
+  LOGO_LETTER_FORMS,
+  MAX_LOGO_LETTERS,
+  logo,
+  logoLineWidth,
+  mapLogoLetters,
+  normalizeLogoLetters,
+  renderLogo,
+  type LogoGlyph,
+  type LogoLetter,
+} from "./components/logo.ts";
 export { loadTips, pickTip, renderWelcomeTip, TIPS } from "./components/welcome-tips.ts";
 export { PlanUpdateRenderable, type PlanUpdateRenderableOptions } from "./opentui/plan-update-renderable.ts";
 export {

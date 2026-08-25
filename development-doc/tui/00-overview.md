@@ -92,7 +92,7 @@ development-doc/tui/            本计划所在目录
 
 ## 4. 文档导航
 
-> 本文的 pi-tui 内容保留为历史设计输入。当前 renderer 迁移只以 `17-opentui-refactor-plan.md` 为权威；被动数据合同占位以 `17-passive-data-contract-placeholder-plan.md` 为配套计划；迁移后的流式渲染、长会话性能与交互体验只以 `18-opentui-streaming-performance-ux-plan.md` 为权威；已提前建立的数据结构如何分批接入生产 TUI 只以 `19-passive-contract-integration-plan.md` 为权威；slash 命令输入、补全、派发与二级展示链路由 `20-codex-slash-command-adaptation-plan.md` 跟踪；Mermaid fenced block 的 Unicode 内联投影及条件性 PNG artifact 能力只以 `21-mermaid-diagram-rendering-implementation-plan.md` 为权威；主对话垂直滚动条的 OpenCode 行为适配、显隐 preference、内建 bar 投影与真实鼠标验收只以 `22-opencode-conversation-scrollbar-adaptation-plan.md` 为权威。
+> 本文的 pi-tui 内容保留为历史设计输入。当前 renderer 迁移只以 `17-opentui-refactor-plan.md` 为权威；被动数据合同占位以 `17-passive-data-contract-placeholder-plan.md` 为配套计划；迁移后的流式渲染、长会话性能与交互体验只以 `18-opentui-streaming-performance-ux-plan.md` 为权威；已提前建立的数据结构如何分批接入生产 TUI 只以 `19-passive-contract-integration-plan.md` 为权威；slash 命令输入、补全、派发与二级展示链路由 `20-codex-slash-command-adaptation-plan.md` 跟踪；Mermaid fenced block 的 Unicode 内联投影及条件性 PNG artifact 能力只以 `21-mermaid-diagram-rendering-implementation-plan.md` 为权威；主对话垂直滚动条的 OpenCode 行为适配、显隐 preference、内建 bar 投影与真实鼠标验收只以 `22-opencode-conversation-scrollbar-adaptation-plan.md` 为权威；composer shape 的纯样式契约、OpenTUI adapter、`/shape` 选择器与用户级持久化只以 `26-composer-shape-switch-plan.md` 为权威。
 
 | 文档 | 内容 |
 |------|------|
@@ -119,6 +119,7 @@ development-doc/tui/            本计划所在目录
 | `23-codex-syntax-highlighting-replication-plan.md` | 以同源 syntect/two-face native bridge 复刻 fenced code、exec、cwd/status、diff 与 32 个主题；以完整 prebuild matrix、纯文本降级和 path privacy 为启用门 |
 | `24-codex-session-display-replication-plan.md` | 会话展示区块级复刻：plan-update(todo)、exec 前缀/截断、diff 行号 gutter、per-turn 分隔、状态指示行、Ctrl+T 转写视图与 status line 段补全；渲染/流式/高亮/滚动继续由 17/18/22/23 持有权威 |
 | `25-pi-working-loader-shimmer-replication-plan.md` | 已完成并验收 oh-my-pi working loader 渐变运行态：classic/KITT shimmer 引擎（纯函数）、状态指示行零宽渐变着色、esc bracket 字形与 `display.shimmer` 设置；spinner/elapsed/details/帧调度仍由 24 持有权威 |
+| `26-composer-shape-switch-plan.md` | 对照 oh-my-pi Composer Shape 的 7 个纯样式、带回退 registry、OpenTUI native adapter、`/shape` 预览/提交与用户级 `composer.shape`；extension/setup wizard 保持 deferred |
 
 阅读顺序:`00 → 01 → 02 → 03`(原 pi-tui 设计主路径)→ `04/05/06`(原渲染与定制)→ `07`(历史落地节奏)→ `08/09`(跨项目参照与远期设计)。`10` 是历史更新计划。OpenTUI renderer 重构先以 `17-opentui-refactor-plan.md` 为当前执行入口，并从 `reference/00-opentui-component-index.md` 查组件能力；被动数据合同另读 `17-passive-data-contract-placeholder-plan.md`，它不替换 renderer authority；renderer 计划 P8 获得证据后，再按 `18-opentui-streaming-performance-ux-plan.md` 执行性能与体验阶段；生产接入则从 `19-passive-contract-integration-plan.md` 的 B0 开始，逐域切换单一 state owner；slash 命令链路查 `20-codex-slash-command-adaptation-plan.md`；Mermaid terminal projection 查 `21-mermaid-diagram-rendering-implementation-plan.md` 及配套许可清单。主对话滚动条的当前候选实现与证据查 `22-opencode-conversation-scrollbar-adaptation-plan.md` §0.1/§5.0：它只补 presentation preference 与内建 bar，没有重写 ScrollBox；真实鼠标/视觉和标准全局链接仍不能冒充已验收；代码、命令和状态栏高亮从 `23-codex-syntax-highlighting-replication-plan.md` 的 H0 packaging spike 开始，native matrix 未闭合前保持 plaintext fallback。
 

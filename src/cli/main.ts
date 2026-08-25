@@ -439,6 +439,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       composerShapeSettingsPort,
       showWelcome,
       version: VERSION,
+      logoLetters: settings.logo,
     });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {

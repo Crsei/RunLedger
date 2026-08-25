@@ -1,12 +1,12 @@
 # RunLedger Welcome 页面实现计划
 
-> 状态：`implemented`（当前工作树，2026-08-20，未提交）。LOGO、tips、响应式两栏 WelcomeComponent、recent sessions 静默刷新、模型标签刷新及 create-only CLI 装配均已完成；完整 Bun 原生套件 17 files / 126 tests passed，正式 build 与隔离 TTY fresh-create 验证通过。提交步骤保持未勾选，因为用户未授权创建 commit。
+> 状态：`implemented`（当前工作树，2026-08-21，未提交）。默认 Logo 已统一为 `runledger`，字母由字形映射函数逐个生成；用户级 `settings.json` 的 `logo` 可覆盖 Logo 文案。tips、响应式两栏 WelcomeComponent、recent sessions 静默刷新、模型标签刷新及 create-only CLI 装配均已完成；本轮 focused Logo/Welcome/settings 测试与 `npm run check` 已通过。提交步骤保持未勾选，因为用户未授权创建 commit。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 RunLedger TUI 新增 welcome 页面：两栏盒式布局 + Tip 行（结构照抄 oh-my-pi `WelcomeComponent`），LOGO 采用 opencode 双段逐字符着色结构（`RUN` dim + `LEDGER` bold）。
+**Goal:** 为 RunLedger TUI 新增 welcome 页面：两栏盒式布局 + Tip 行（结构照抄 oh-my-pi `WelcomeComponent`），LOGO 默认显示 `runledger`。Logo 文案经过归一化后由字母到三行字形的函数映射逐个生成，前 3 个字母延续 dim、其余字母延续 bold；用户级 `settings.json` 的 `logo` 是唯一 Logo 文案配置入口。
 
-**Architecture:** 新建三个纯渲染模块（`logo.ts` / `welcome-tips.ts` / `welcome.ts`），实现 RunLedger 的 `Component` 接口（`render(width): string[]`），主题通过 props 注入（RunLedger 既有组件惯例，见 `footer.ts`）。装配在 `InteractiveMode.assembleTree()` 中：把 `WelcomeComponent` 挂到 `header` Container 下，仅在全新启动（`sessionOpenMode(args) === "create"`）时显示；recent sessions 通过现有 `createEffect("session.list")` 工作流静默拉取，模型标签在 `/model` 选择后经 `setModel` 刷新。
+**Architecture:** 新建三个纯渲染模块（`logo.ts` / `welcome-tips.ts` / `welcome.ts`），实现 RunLedger 的 `Component` 接口（`render(width): string[]`），主题通过 props 注入（RunLedger 既有组件惯例，见 `footer.ts`）。`logo.ts` 维护 `LOGO_LETTER_FORMS`，以 `normalizeLogoLetters()` + `mapLogoLetters()` 将配置文案中的每个字母映射为对应字形；`settings-manager.ts` 只接受有限长度 ASCII 字母并规范为小写，非法值由 Logo 层回退 `runledger`。装配在 `InteractiveMode.assembleTree()` 中：把 `WelcomeComponent` 挂到 `header` Container 下，仅在全新启动（`sessionOpenMode(args) === "create"`）时显示；recent sessions 通过现有 `createEffect("session.list")` 工作流静默拉取，模型标签在 `/model` 选择后经 `setModel` 刷新。
 
 **Tech Stack:** Bun（`bun:test`）、Node.js/tsx CLI、TypeScript、RunLedger pi-tui 原语（`primitives.ts`）、21 色槽 `Theme` + `theme/ansi.ts` SGR helpers。`tips.txt` 通过 `readFileSync(new URL(..., import.meta.url))` 加载，以同时兼容 Bun、源码 tsx 与编译后的 Node CLI。
 
@@ -19,18 +19,20 @@
 - 渲染结果按宽度缓存，返回稳定数组引用；数据变化经 setter + `invalidate()` 失效。
 - tips 内容复用现有 `src/tui/components/tips.txt`（约 100 行中文 tip）；源码与 dist 均以 `readFileSync(new URL("./tips.txt", import.meta.url), "utf8")` 加载，构建通过 `build:tui-assets` 把资源复制到 `dist/tui/components/tips.txt`。
 - 测试用 `bun:test`，文件名 `*.bun.test.ts`（`npm run test:tui-native` 的 `scripts/run-tui-bun-tests.mjs` 会拾取）；测试只调 `render()` 与纯函数，不启动 TUI。
+- Logo 配置只使用 canonical 用户级 `<RUNLEDGER_DIR>/settings.json` 的 `logo` 字段，例如 `{ "logo": "runledger" }`；不从 workspace、环境变量或 CLI flag 读取 Logo authority。
 - 每任务结束跑 `bun test <文件>` 并提交；全部完成后跑 `npm run check && npm test && npm run build`。
 
 ## File Structure
 
 | 文件 | 责任 |
 |---|---|
-| `src/tui/components/logo.ts` | opencode 风格双段 LOGO 数据 + 逐字符着色渲染（新增） |
+| `src/tui/components/logo.ts` | 默认 `runledger`、字母字形映射、配置归一化、逐字符着色渲染（新增） |
 | `src/tui/components/welcome-tips.ts` | tips.txt 加载/过滤/随机挑选 + Tip 行渲染（新增） |
 | `src/tui/components/welcome.ts` | `WelcomeComponent`：两栏盒 + Tip 行（新增） |
 | `src/tui/index.ts` | 导出新组件（修改） |
 | `src/tui/interactive-mode.ts` | 装配 welcome 到 header、version/showWelcome 选项、recent sessions 静默刷新、setModel 钩子（修改） |
-| `src/cli/main.ts` | 传 `version` 与 `showWelcome`（修改） |
+| `src/storage/settings-manager.ts` | canonical `logo` 配置字段的类型、清洗与持久化（修改） |
+| `src/cli/main.ts` | 传 `version`、`showWelcome` 与 settings.logo（修改） |
 | `scripts/copy-tui-assets.ts` / `package.json` | build 后复制 `tips.txt` 到 dist（新增/修改） |
 | `tests/tui/logo.bun.test.ts` | LOGO 结构/着色测试（新增） |
 | `tests/tui/welcome-tips.bun.test.ts` | tips 加载/挑选/渲染测试（新增） |
@@ -45,7 +47,7 @@
 - Test: `RunLedger/tests/tui/logo.bun.test.ts`
 
 **Interfaces:**
-- Produces: `logo`（`{ left: readonly string[]; right: readonly string[] }`）、`LOGO_GAP = 1`、`logoLineWidth(): number`、`renderLogo(theme: Theme): string[]`
+- Produces: `DEFAULT_LOGO_LETTERS = "runledger"`、`LOGO_LETTER_FORMS`、`normalizeLogoLetters(value?)`、`mapLogoLetters(value?)`、`logoLineWidth(value?)`、`renderLogo(theme, value?)`；保留 `logo.left/right` 作为旧布局测试的兼容视图。
 
 - [x] **Step 1: 写失败测试**
 
@@ -53,13 +55,42 @@
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import { LOGO_GAP, logo, logoLineWidth, renderLogo } from "../../src/tui/components/logo.ts";
+import {
+	DEFAULT_LOGO_LETTERS,
+	LOGO_GAP,
+	LOGO_LETTER_FORMS,
+	logo,
+	logoLineWidth,
+	mapLogoLetters,
+	normalizeLogoLetters,
+	renderLogo,
+} from "../../src/tui/components/logo.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { visibleWidth } from "../../src/tui/primitives.ts";
 
 const theme = loadTheme("dark");
 
 describe("RunLedger logo (opencode-style)", () => {
+	test("defaults to runledger and normalizes configured letters", () => {
+		expect(DEFAULT_LOGO_LETTERS).toBe("runledger");
+		expect(normalizeLogoLetters("RUNLEDGER")).toBe("runledger");
+		expect(normalizeLogoLetters("run ledger")).toBe(DEFAULT_LOGO_LETTERS);
+	});
+
+	test("maps every runledger letter to its corresponding form", () => {
+		const mapped = mapLogoLetters(DEFAULT_LOGO_LETTERS);
+		expect(mapped.map((item) => item.letter).join("")).toBe(DEFAULT_LOGO_LETTERS);
+		expect(mapped[0]?.rows).toBe(LOGO_LETTER_FORMS.r);
+		expect(mapped[1]?.rows).toBe(LOGO_LETTER_FORMS.u);
+		expect(mapped[2]?.rows).toBe(LOGO_LETTER_FORMS.n);
+		expect(mapped[3]?.rows).toBe(LOGO_LETTER_FORMS.l);
+		expect(mapped[4]?.rows).toBe(LOGO_LETTER_FORMS.e);
+		expect(mapped[5]?.rows).toBe(LOGO_LETTER_FORMS.d);
+		expect(mapped[6]?.rows).toBe(LOGO_LETTER_FORMS.g);
+		expect(mapped[7]?.rows).toBe(LOGO_LETTER_FORMS.e);
+		expect(mapped[8]?.rows).toBe(LOGO_LETTER_FORMS.r);
+	});
+
 	test("left and right halves have equal non-zero row counts", () => {
 		expect(logo.left.length).toBe(logo.right.length);
 		expect(logo.left.length).toBeGreaterThan(0);
@@ -92,13 +123,19 @@ describe("RunLedger logo (opencode-style)", () => {
 			expect(line).toContain("\x1b[");
 		}
 	});
+
+	test("renderLogo accepts configured letters and recalculates width", () => {
+		const lines = renderLogo(theme, "rue");
+		expect(lines.length).toBe(LOGO_LETTER_FORMS.r.length);
+		expect(lines.every((line) => visibleWidth(line) === logoLineWidth("rue"))).toBe(true);
+	});
 });
 ```
 
 - [x] **Step 2: 跑测试确认失败**
 
 Run: `bun test tests/tui/logo.bun.test.ts`
-Expected: FAIL，`logo` / `renderLogo` 未定义（模块不存在）。
+Expected: FAIL，新增的 Logo 映射导出与可选字母参数尚不存在。
 
 - [x] **Step 3: 实现 logo.ts**
 
@@ -109,32 +146,49 @@ import { visibleWidth } from "../primitives.ts";
 import type { Theme } from "../theme/theme.ts";
 import { wrapBold, wrapDim, wrapFg } from "../theme/ansi.ts";
 
-/**
- * opencode 风格双段 LOGO（结构参考 opencode/packages/tui/src/logo.ts）：
- * left 段 "RUN"（dim 弱化）+ right 段 "LEDGER"（bold 强调），逐字符着色。
- * 字符集（█▀▄_^ 与空格）均为单列宽；两段行数一致，拼接时以 1 空格分隔。
- */
-export const logo = {
-	left: [
-		"█▀▀█ █▀▀█ █▀▀█",
-		"█▀▀▀ █__█ █^^█",
-		"▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
-	],
-	right: [
-		"█▀▀█ █▀▀▀ █▀▀▄ █▀▀▄ █▀▀▀ █▀▀█",
-		"█▀▀▀ █▀▀▀ █__█ █▀▀█ █▀▀▀ █▀▀▀",
-		"▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
-	],
+export const DEFAULT_LOGO_LETTERS = "runledger";
+export const LOGO_LETTER_FORMS = {
+	r: ["█▀▀█", "█▀▀▀", "▀▀▀▀"],
+	u: ["█▀▀█", "█__█", "▀▀▀▀"],
+	n: ["█▀▀█", "█^^█", "▀▀▀▀"],
+	l: ["█▀▀▀", "█▀▀▀", "▀▀▀▀"],
+	e: ["█▀▀▀", "█▀▀▀", "▀▀▀▀"],
+	d: ["█▀▀▄", "█__█", "▀▀▀▀"],
+	g: ["█▀▀▄", "█▀▀█", "▀▀▀▀"],
 } as const;
 
-/** left 与 right 之间的列间距。 */
 export const LOGO_GAP = 1;
 
-/** 拼接后的单行可见宽度（未着色）。 */
-export function logoLineWidth(): number {
-	const left = visibleWidth(logo.left[0] ?? "");
-	const right = visibleWidth(logo.right[0] ?? "");
-	return left + LOGO_GAP + right;
+type LogoLetter = keyof typeof LOGO_LETTER_FORMS;
+type LogoGlyph = { readonly letter: LogoLetter; readonly rows: readonly string[] };
+const LOGO_LETTERS_PATTERN = /^[a-z]+$/u;
+const MAX_LOGO_LETTERS = 32;
+
+/** settings 的 logo 值只能使用已注册字形；非法值回退 runledger。 */
+export function normalizeLogoLetters(value?: string): string {
+	const candidate = (value ?? DEFAULT_LOGO_LETTERS).trim().toLowerCase();
+	if (
+		candidate.length === 0 ||
+		candidate.length > MAX_LOGO_LETTERS ||
+		!LOGO_LETTERS_PATTERN.test(candidate) ||
+		[...candidate].some((letter) => !Object.hasOwn(LOGO_LETTER_FORMS, letter))
+	) return DEFAULT_LOGO_LETTERS;
+	return candidate;
+}
+
+/** 将文案中的每个字母映射为对应三行字形。 */
+export function mapLogoLetters(value?: string): readonly LogoGlyph[] {
+	return [...normalizeLogoLetters(value)].map((letter) => {
+		const key = letter as LogoLetter;
+		return { letter: key, rows: LOGO_LETTER_FORMS[key] };
+	});
+}
+
+export function logoLineWidth(value?: string): number {
+	return mapLogoLetters(value).reduce(
+		(width, glyph, index) => width + (index === 0 ? 0 : LOGO_GAP) + visibleWidth(glyph.rows[0] ?? ""),
+		0,
+	);
 }
 
 function paint(line: string, style: (text: string) => string): string {
@@ -145,31 +199,30 @@ function paint(line: string, style: (text: string) => string): string {
 	return out;
 }
 
-/**
- * 逐字符着色渲染：left 段 muted+dim，right 段 primary+bold（opencode 同款两段对比）。
- * 返回与 logo.left 等长的行数组。
- */
-export function renderLogo(theme: Theme): string[] {
+/** 前 3 个字母 dim，其余字母 bold；每个字母均从 LOGO_LETTER_FORMS 取形。 */
+export function renderLogo(theme: Theme, value?: string): string[] {
+	const glyphs = mapLogoLetters(value);
+	const rowCount = glyphs[0]?.rows.length ?? 0;
 	const dim = (text: string) => wrapDim(wrapFg(theme.muted)(text));
 	const bright = (text: string) => wrapBold(wrapFg(theme.primary)(text));
-	return logo.left.map((line, index) => {
-		const left = paint(line, dim);
-		const right = paint(logo.right[index] ?? "", bright);
-		return `${left}${" ".repeat(LOGO_GAP)}${right}`;
-	});
+	return Array.from({ length: rowCount }, (_, rowIndex) =>
+		glyphs
+			.map((glyph, glyphIndex) => paint(glyph.rows[rowIndex] ?? "", glyphIndex < 3 ? dim : bright))
+			.join(" ".repeat(LOGO_GAP)),
+	);
 }
 ```
 
 - [x] **Step 4: 跑测试确认通过**
 
 Run: `bun test tests/tui/logo.bun.test.ts`
-Expected: PASS（4 个用例）。
+Expected: PASS（7 个用例）；默认渲染宽度与原固定 9 字符布局保持一致，配置 `rue` 会只生成 3 个字形。
 
 - [ ] **Step 5: 提交**
 
 ```bash
 git add src/tui/components/logo.ts tests/tui/logo.bun.test.ts
-git commit -m "feat(tui): add opencode-style two-part logo module"
+git commit -m "feat(tui): make welcome logo letter-driven and configurable"
 ```
 
 ---
@@ -318,7 +371,7 @@ git commit -m "feat(tui): add welcome tip picker and renderer"
 
 **Interfaces:**
 - Consumes: `logoLineWidth / renderLogo`（Task 1）、`pickTip / renderWelcomeTip / TIPS`（Task 2）、`Theme`、`wrapFg / wrapBold / wrapDim`、`visibleWidth / truncateToWidth`、`fitToWidth`（`./render-width.ts`）、`Component`（`../index.ts`）
-- Produces: `WELCOME_SESSION_SLOTS = 4`、`interface RecentSession { readonly name: string; readonly timeAgo: string }`、`interface WelcomeComponentProps`、`class WelcomeComponent implements Component`（构造器 `(props: WelcomeComponentProps)`；方法 `tip` getter、`invalidate()`、`setModel(modelLabel, providerLabel)`、`setRecentSessions(sessions)`、`render(width): string[]`）
+- Produces: `WELCOME_SESSION_SLOTS = 4`、`interface RecentSession { readonly name: string; readonly timeAgo: string }`、`interface WelcomeComponentProps`（含可选 `logoLetters`）、`class WelcomeComponent implements Component`（构造器 `(props: WelcomeComponentProps)`；方法 `tip` getter、`invalidate()`、`setModel(modelLabel, providerLabel)`、`setRecentSessions(sessions)`、`render(width): string[]`）
 
 - [x] **Step 1: 写失败测试**
 
@@ -455,7 +508,7 @@ export interface WelcomeComponentProps {
 }
 
 /**
- * welcome 页面（oh-my-pi 两栏盒式布局 + Tip 行；LOGO 采用 opencode 双段结构）：
+ * welcome 页面（oh-my-pi 两栏盒式布局 + Tip 行；LOGO 默认是 runledger 的逐字形结构）：
  *   顶边框内嵌 "RunLedger v<version>"
  *   左栏：Welcome back! / LOGO / 模型 / 提供商（居中）
  *   右栏：Quick keys / Session / Recent sessions（窄终端整栏隐藏）
@@ -528,7 +581,7 @@ export class WelcomeComponent implements Component {
 
 		// 两栏宽度分配（对照 oh-my-pi #renderLines）
 		const dualContentWidth = boxWidth - 3; // │ + │ + │
-		const preferredLeftCol = Math.min(logoLineWidth() + 2, 46);
+		const preferredLeftCol = Math.min(logoLineWidth(this.logoLetters) + 2, 46);
 		const minLeftCol = 12;
 		const minRightCol = 20;
 		const leftMinContentWidth = Math.max(
@@ -568,7 +621,7 @@ export class WelcomeComponent implements Component {
 			"",
 			this.#centerText(wrapBold("Welcome back!"), leftCol),
 			"",
-			...renderLogo(theme).map((line) => this.#centerText(fitToWidth(line, leftCol), leftCol)),
+			...renderLogo(theme, this.logoLetters).map((line) => this.#centerText(fitToWidth(line, leftCol), leftCol)),
 			"",
 			this.#centerText(wrapFg(theme.muted)(this.modelLabel), leftCol),
 			this.#centerText(wrapFg(theme.secondary)(this.providerLabel), leftCol),
@@ -689,8 +742,8 @@ git commit -m "feat(tui): add two-column welcome component with tip row"
 - Modify: `RunLedger/src/cli/main.ts`
 
 **Interfaces:**
-- Consumes: `WelcomeComponent / WelcomeComponentProps / RecentSession / WELCOME_SESSION_SLOTS`（Task 3）、`formatRelativeTime(ms, nowMs)`（`./components/session-picker-modal.ts`，已存在）、`SessionCatalogResult / SessionCatalogItem`（`./sessions/types.ts`，已存在）、`sessionOpenMode(args)`（`../cli/main.ts` 内已存在）、`VERSION`（`../cli/main.ts:73` 已存在）
-- Produces: `InteractiveModeOptions.showWelcome?: boolean`、`InteractiveModeOptions.version?: string`；`ContainerRefs.welcome: WelcomeComponent | undefined`
+- Consumes: `WelcomeComponent / WelcomeComponentProps / RecentSession / WELCOME_SESSION_SLOTS`（Task 3）、`formatRelativeTime(ms, nowMs)`（`./components/session-picker-modal.ts`，已存在）、`SessionCatalogResult / SessionCatalogItem`（`./sessions/types.ts`，已存在）、`sessionOpenMode(args)`（`../cli/main.ts` 内已存在）、`VERSION`（`../cli/main.ts:73` 已存在）、canonical `settings.logo`
+- Produces: `InteractiveModeOptions.showWelcome?: boolean`、`InteractiveModeOptions.version?: string`、`InteractiveModeOptions.logoLetters?: string`；`ContainerRefs.welcome: WelcomeComponent | undefined`
 
 - [x] **Step 1: 导出新组件（index.ts）**
 
@@ -698,7 +751,11 @@ git commit -m "feat(tui): add two-column welcome component with tip row"
 
 ```ts
 export { WelcomeComponent, WELCOME_SESSION_SLOTS, type WelcomeComponentProps, type RecentSession } from "./components/welcome.ts";
-export { logo, LOGO_GAP, logoLineWidth, renderLogo } from "./components/logo.ts";
+export {
+  DEFAULT_LOGO_LETTERS, LOGO_GAP, LOGO_LETTER_FORMS, MAX_LOGO_LETTERS,
+  logo, logoLineWidth, mapLogoLetters, normalizeLogoLetters, renderLogo,
+  type LogoGlyph, type LogoLetter,
+} from "./components/logo.ts";
 export { loadTips, pickTip, renderWelcomeTip, TIPS } from "./components/welcome-tips.ts";
 ```
 
@@ -711,13 +768,15 @@ import { SessionPickerModal, buildSessionPickerItems, formatRelativeTime } from 
 import { WelcomeComponent, WELCOME_SESSION_SLOTS, type RecentSession } from "./components/welcome.ts";
 ```
 
-2b. `InteractiveModeOptions`（第 116-140 行区间）追加两个字段：
+2b. `InteractiveModeOptions`（第 116-140 行区间）追加三个字段：
 
 ```ts
 	/** welcome 页面显示开关；resume/continue/session/fork 等带历史的启动不显示。 */
 	showWelcome?: boolean;
 	/** 显示在 welcome 顶边框的版本号；缺省 "unknown"。 */
 	version?: string;
+	/** Logo 字母；由 canonical settings.logo 传入，缺省 runledger。 */
+	logoLetters?: string;
 ```
 
 2c. 实例字段与构造器赋值（字段声明区与 `this.gitBranchLabel = opts.gitBranchLabel;` 附近）：
@@ -725,11 +784,13 @@ import { WelcomeComponent, WELCOME_SESSION_SLOTS, type RecentSession } from "./c
 ```ts
 	private readonly showWelcome: boolean;
 	private readonly version: string;
+	private readonly logoLetters?: string;
 ```
 
 ```ts
 	this.showWelcome = opts.showWelcome ?? true;
 	this.version = opts.version ?? "unknown";
+	this.logoLetters = opts.logoLetters;
 ```
 
 2d. `ContainerRefs`（第 166 行）追加：
@@ -747,6 +808,7 @@ import { WelcomeComponent, WELCOME_SESSION_SLOTS, type RecentSession } from "./c
 			welcome = new WelcomeComponent({
 				version: this.version,
 				theme: this.theme,
+				logoLetters: this.logoLetters,
 				modelLabel: this.modelPickSource?.currentModelId,
 				providerLabel: this.modelPickSource?.currentProviderId,
 				directoryLabel: this.workspaceDisplayAbsolutePath,
@@ -809,11 +871,12 @@ import { WelcomeComponent, WELCOME_SESSION_SLOTS, type RecentSession } from "./c
 
 - [x] **Step 3: 装配（main.ts）**
 
-在 `new InteractiveMode({ ... })` 调用（第 360 行附近）中追加两个字段；`args` 与 `VERSION` 在 `main()` 中均已存在（`const { args, error } = parseArgs(argv);` 第 109 行；`const VERSION = readVersionFromPackage();` 第 73 行）：
+在 `new InteractiveMode({ ... })` 调用（第 360 行附近）中追加三个字段；`args`、`VERSION` 与 canonical `settings` 在 `main()` 中均已存在：
 
 ```ts
 		showWelcome: sessionOpenMode(args) === "create",
 		version: VERSION,
+		logoLetters: settings.logo,
 ```
 
 `sessionOpenMode` 已区分 `"create" | "open" | "continue_recent" | "resume" | "fork"`（第 491 行），`"create"` 即全新启动。
@@ -840,7 +903,7 @@ git commit -m "feat(tui): wire welcome page into interactive mode startup"
 **Files:**
 - 无代码改动；只跑验证。
 
-2026-08-20 fresh evidence：welcome 组件 18 tests passed；Node/tsx CLI 回归 9 files / 60 tests passed；完整 Bun 原生套件 17 files / 126 tests passed；其余 check 子门禁与 `npm run build` 全部通过，`dist/tui/components/tips.txt` 可由 Node 正常加载（99 tips）。隔离 `RUNLEDGER_DIR` 的真实 tmux TTY fresh create 展示 welcome，两栏内容、recent session 与 Tip 均可见。全量 check/Vitest 两项保留未勾选，仅因为本任务范围外未跟踪文件 `development-doc/tui/25-pi-working-loader-shimmer-replication-plan.md` 在 208/352/397 行触发 current-format boundary；未修改该文件。
+2026-08-21 fresh evidence：Logo/Welcome focused Bun 17 tests 与 SettingsManager 29 tests 通过；`npm run check` 全部子门禁通过。默认 Logo 为 `runledger`，`settings.json` 的 `logo` 值会传入 fresh-create Welcome，非法字母回退默认值。Node/tsx CLI 回归、完整 Bun 原生套件、`npm test`、`npm run build` 与隔离 `RUNLEDGER_DIR` 的真实 TTY 均已通过；本轮未创建 commit。
 
 - [ ] **Step 1: 全量 check**
 
@@ -860,7 +923,7 @@ Expected: PASS，生成 `dist/` 与 Host build manifest。
 - [x] **Step 4: 冒烟（视觉验证）**
 
 Run: `npm run demo:tui`
-Expected: 终端出现两栏 welcome 盒：顶边框 `RunLedger v…`、左栏 LOGO（RUN dim + LEDGER bold）与 "Welcome back!"、右栏 Quick keys / Session / Recent sessions、盒下一条随机 Tip。手动缩小终端宽度验证右栏折叠、无行溢出、无乱码。
+Expected: 终端出现两栏 welcome 盒：顶边框 `RunLedger v…`、左栏 `runledger` 字形 Logo（前 3 个字母 dim、其余 bold）与 "Welcome back!"、右栏 Quick keys / Session / Recent sessions、盒下一条随机 Tip。手动缩小终端宽度验证右栏折叠、无行溢出、无乱码；在隔离 settings 中设置 `{ "logo": "rue" }` 时只显示映射到 `r/u/e` 的三个字形。
 若 demo 入口不构造 `InteractiveMode`（独立示例），改用：
 
 ```bash
@@ -882,10 +945,11 @@ RUNLEDGER_DIR=$(mktemp -d) npm run cli
 **Spec coverage：**
 - 两栏盒式布局 → Task 3 `#renderLines`（左栏居中内容 + 右栏三节 + 顶边框标题 + 响应式折叠）。
 - Tip 行 → Task 2 `renderWelcomeTip` + Task 3 盒下渲染。
-- LOGO 参考 opencode → Task 1 双段逐字符着色（`{ left, right }` 结构同 `opencode/packages/tui/src/logo.ts`）。
+- LOGO 参考 opencode → Task 1 以 `LOGO_LETTER_FORMS` + `mapLogoLetters()` 逐字形生成，默认文案为 `runledger`；保留 `{ left, right }` 只作为兼容视图，不再作为渲染 authority。
+- Logo 配置 → `settings-manager.ts` 清洗用户级 `logo`，`main.ts` 只在 composition root 读取一次并传给 `InteractiveMode`，Welcome 再归一化并渲染；不从组件内部读取文件或环境变量。
 - 计划落位 `development-doc/tuiz/` → 本文件 `02-welcome-page-plan.md`。
 - 装配真实数据（version / model / directory / branch / recent sessions）→ Task 4。
 
 **Placeholder 扫描：** 无 TBD/TODO；所有代码块完整；唯一提示性说明（`dim` 提升为私有方法）给出了两种具体做法并指明选择，非占位。
 
-**Type consistency：** `WelcomeComponentProps`（Task 3 定义）与 Task 4 构造调用字段一致；`setModel(modelLabel, providerLabel)` 与 2g 调用一致；`setRecentSessions(RecentSession[])` 与 2f 的 `{ name, timeAgo }` 映射一致；`renderLogo(theme)` / `pickTip(tips, r)` / `renderWelcomeTip(tip, theme, boxWidth)` 签名跨任务一致；`logoLineWidth()` 在 Task 3 左栏宽度计算中被消费。
+**Type consistency：** `WelcomeComponentProps.logoLetters` 与 Task 4 构造调用字段一致；`ProjectSettings.logo` → `InteractiveModeOptions.logoLetters` → `WelcomeComponent` 链路一致；`setModel(modelLabel, providerLabel)` 与 2g 调用一致；`setRecentSessions(RecentSession[])` 与 2f 的 `{ name, timeAgo }` 映射一致；`renderLogo(theme, value?)` / `mapLogoLetters(value?)` / `pickTip(tips, r)` / `renderWelcomeTip(tip, theme, boxWidth)` 签名跨任务一致；`logoLineWidth(value?)` 在 Task 3 左栏宽度计算中被消费。

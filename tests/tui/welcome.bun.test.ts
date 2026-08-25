@@ -4,6 +4,7 @@ import {
 	WELCOME_SESSION_SLOTS,
 	type WelcomeComponentProps,
 } from "../../src/tui/components/welcome.ts";
+import { renderLogo } from "../../src/tui/components/logo.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { visibleWidth } from "../../src/tui/primitives.ts";
 
@@ -76,6 +77,14 @@ describe("WelcomeComponent", () => {
 
 	test("renders a Tip row beneath the box", () => {
 		expect(makeWelcome().render(100).join("\n")).toContain("Tip:");
+	});
+
+	test("uses the configured logo letters when calculating and rendering the left column", () => {
+		const welcome = makeWelcome({ logoLetters: "rue" });
+		const joined = welcome.render(100).join("\n");
+		expect(joined).toContain(renderLogo(theme, "rue")[0] ?? "");
+		expect(joined).not.toContain(renderLogo(theme)[0] ?? "");
+		expect(visibleWidth(welcome.render(100)[0] ?? "")).toBeLessThanOrEqual(100);
 	});
 
 	test("returns [] below the minimum box width", () => {

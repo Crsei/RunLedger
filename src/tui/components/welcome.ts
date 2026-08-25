@@ -3,7 +3,7 @@ import { truncateToWidth, visibleWidth } from "../primitives.ts";
 import type { Theme } from "../theme/theme.ts";
 import { wrapBold, wrapDim, wrapFg } from "../theme/ansi.ts";
 import { fitToWidth } from "./render-width.ts";
-import { logoLineWidth, renderLogo } from "./logo.ts";
+import { logoLineWidth, normalizeLogoLetters, renderLogo } from "./logo.ts";
 import { pickTip, renderWelcomeTip, TIPS } from "./welcome-tips.ts";
 
 /** 固定槽位避免后台 catalog 刷新时改变 welcome 盒高。 */
@@ -17,6 +17,8 @@ export interface RecentSession {
 export interface WelcomeComponentProps {
 	readonly version: string;
 	readonly theme: Theme;
+	/** Logo 字母；缺省使用 `runledger`，非法值回退默认字形。 */
+	readonly logoLetters?: string;
 	readonly modelLabel?: string;
 	readonly providerLabel?: string;
 	readonly thinkingLabel?: string;
@@ -29,6 +31,7 @@ export interface WelcomeComponentProps {
 export class WelcomeComponent implements Component {
 	readonly version: string;
 	readonly theme: Theme;
+	private readonly logoLetters: string;
 	private modelLabel: string;
 	private providerLabel: string;
 	private readonly thinkingLabel: string;
@@ -42,6 +45,7 @@ export class WelcomeComponent implements Component {
 	constructor(props: WelcomeComponentProps) {
 		this.version = props.version;
 		this.theme = props.theme;
+		this.logoLetters = normalizeLogoLetters(props.logoLetters);
 		this.modelLabel = props.modelLabel ?? "unknown";
 		this.providerLabel = props.providerLabel ?? "unknown";
 		this.thinkingLabel = props.thinkingLabel ?? "unknown";
@@ -86,7 +90,7 @@ export class WelcomeComponent implements Component {
 		const dualContentWidth = boxWidth - 3;
 		const minLeftCol = 12;
 		const minRightCol = 20;
-		const preferredLeftCol = Math.min(logoLineWidth() + 2, 46);
+		const preferredLeftCol = Math.min(logoLineWidth(this.logoLetters) + 2, 46);
 		const leftMinContentWidth = Math.max(
 			minLeftCol,
 			visibleWidth("Welcome back!"),
@@ -119,7 +123,7 @@ export class WelcomeComponent implements Component {
 			"",
 			this.centerText(wrapBold("Welcome back!"), leftCol),
 			"",
-			...renderLogo(this.theme).map((line) => this.centerText(fitToWidth(line, leftCol), leftCol)),
+			...renderLogo(this.theme, this.logoLetters).map((line) => this.centerText(fitToWidth(line, leftCol), leftCol)),
 			"",
 			this.centerText(wrapFg(this.theme.muted)(this.modelLabel), leftCol),
 			this.centerText(wrapFg(this.theme.secondary)(this.providerLabel), leftCol),
