@@ -2,7 +2,7 @@ import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
 import type { Api, Model, ModelThinkingLevel } from "../types.ts";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
-import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
+import { updateProjectSettings } from "../storage/settings-manager.ts";
 import type { RunledgerLayout } from "./contracts/public.ts";
 import type { SessionReplay, SessionRuntimeConfig } from "../storage/session-codec.ts";
 import { appendRuntimeConfig } from "../storage/session-codec.ts";
@@ -541,16 +541,13 @@ export class InteractiveSessionController {
 
   private async persistSelection(source: "model" | "thinking"): Promise<void> {
     const config = this.configSnapshot();
-	const persisted = await loadProjectSettings({ layout: this.layout });
-    this.settings = {
-	  ...persisted,
-	  ...this.settings,
-	  ...(persisted.theme === undefined ? {} : { theme: persisted.theme }),
-      provider: config.provider,
-      model: config.model,
-      thinkingLevel: config.thinkingLevel,
-    };
-    await saveProjectSettings({ layout: this.layout }, this.settings);
+	this.settings = await updateProjectSettings({ layout: this.layout }, (current) => ({
+		...this.settings,
+		...current,
+		provider: config.provider,
+		model: config.model,
+		thinkingLevel: config.thinkingLevel,
+	}));
     await appendRuntimeConfig(this.ledgerSink, config, source);
   }
 }

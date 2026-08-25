@@ -49,6 +49,19 @@ describe.skipIf(IS_WINDOWS)("R3/R4 production Host composition", () => {
 		expect(second.compatibilityDigest.digest).not.toBe(first.compatibilityDigest.digest);
 	});
 
+	it("keeps the presentation-only composer shape out of the Host settings digest", () => {
+		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
+		const withoutShape = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: { model: "fixed" } });
+		const withShape = createLocalRuntimeHostScope({
+			layout,
+			cwd: "/workspace/project",
+			settings: { model: "fixed", composer: { shape: "rail" } },
+		});
+
+		expect(withShape.settingsDigest).toEqual(withoutShape.settingsDigest);
+		expect(withShape.compatibilityDigest).toEqual(withoutShape.compatibilityDigest);
+	});
+
 	it("fences an existing Host when the explicit CLI security override changes", () => {
 		const layout = buildRunledgerLayout("/tmp/runledger-home", "posix");
 		const defaultScope = createLocalRuntimeHostScope({ layout, cwd: "/workspace/project", settings: {} });

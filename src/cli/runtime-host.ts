@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { AuthStorage } from "../storage/auth-storage.ts";
 import { registerConfiguredProxyProvidersFromHome } from "../providers/configured-proxy.ts";
-import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
+import { loadProjectSettings, updateProjectSettings } from "../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../storage/settings-manager.ts";
 import { builtinModels } from "../providers/all.ts";
 import { EndpointStore } from "../storage/host/endpoint-store.ts";
@@ -150,10 +150,11 @@ export async function runResidentRuntimeHost(): Promise<void> {
 		skillsPolicyLoader: async () => resolveSkillsPolicy((await loadProjectSettings({ layout })).skills, undefined),
 		updateSkillsProviderPolicy: async (providerId, enabled, scope) => {
 			if (scope !== "user") throw new Error("workspace-scoped provider mutation is not wired in the resident Host path");
-			const current = await loadProjectSettings({ layout });
-			const providers = { ...(current.skills?.providers ?? {}) };
-			providers[providerId] = enabled;
-			await saveProjectSettings({ layout }, { ...current, skills: { enabled: current.skills?.enabled ?? true, providers } });
+			await updateProjectSettings({ layout }, (current) => {
+				const providers = { ...(current.skills?.providers ?? {}) };
+				providers[providerId] = enabled;
+				return { ...current, skills: { enabled: current.skills?.enabled ?? true, providers } };
+			});
 		},
 	});
 	const extensionLoad = await extensionManager.load();

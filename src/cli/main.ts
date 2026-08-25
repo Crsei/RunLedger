@@ -70,6 +70,9 @@ import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
 import { createCliSessionModelRequestRouterFactory } from "./session-model-router.ts";
 import { runAuthGatewayCommand } from "./auth-gateway-cli.ts";
 import { createCliHideThinkingSettings, resolveHideThinkingBlock } from "./hide-thinking-settings.ts";
+import { createCliComposerShapeSettings } from "./composer-shape-settings.ts";
+import { createComposerShapeRegistry } from "../tui/composer/registry.ts";
+import { createCliComposerShapeComposition } from "./composer-shape-composition.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -145,6 +148,13 @@ export async function main(argv: readonly string[]): Promise<void> {
     await mkdir(layout.home, { recursive: true, mode: 0o700 });
   }
   const settings = await loadProjectSettings({ layout });
+  const composerShapeRegistry = createComposerShapeRegistry();
+  const composerShapeComposition = createCliComposerShapeComposition({ registry: composerShapeRegistry });
+  const composerShapeLoad = composerShapeComposition.load();
+  if (!composerShapeLoad.ok) {
+    process.stderr.write(`[runledger] composer shape contributions unavailable (${composerShapeLoad.diagnostic.code}); using builtins\n`);
+  }
+  const composerShapeSettingsPort = createCliComposerShapeSettings(layout, composerShapeRegistry);
   const syntaxThemes = await composeCliSyntaxThemes(layout, settings.theme);
   const tuiPreferences = await createCliTuiPreferences(layout);
   if (tuiPreferences.startupDiagnostic !== undefined) {
@@ -348,6 +358,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       await entry.runtime.waitForStopped();
       if (entry.ownerFence !== undefined) entry.store.reclaimSessionWithoutUserMessages(entry.ownerFence);
     }));
+    composerShapeComposition.dispose();
     db.close();
     if (process.env.RUNLEDGER_DEBUG === "1") {
       process.stderr.write("[runledger] exit. all owned Session runtimes stopped\n");
@@ -357,6 +368,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   async function runInteractiveView(view: CliSessionView) {
 	const showWelcome = showWelcomeOnNextView;
 	showWelcomeOnNextView = false;
+	const composerShapeSettings = await loadProjectSettings({ layout });
 	const effectiveCwd = view.embedded.effectiveCwd;
 	const gitDisplay = effectiveCwd === undefined
 	  ? {}
@@ -376,6 +388,9 @@ export async function main(argv: readonly string[]): Promise<void> {
       preferencesPort: tuiPreferences.port,
       hideThinkingBlock: resolveHideThinkingBlock(args.hideThinking, settings.hideThinkingBlock),
       hideThinkingSettingsPort: createCliHideThinkingSettings(layout),
+      composerShape: composerShapeSettings.composer?.shape,
+      composerShapeRegistry,
+      composerShapeSettingsPort,
       showWelcome,
       version: VERSION,
     });

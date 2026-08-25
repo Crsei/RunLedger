@@ -557,6 +557,28 @@ describe("InteractiveSessionController", () => {
 		controller.dispose();
 	});
 
+	it("preserves a concurrently saved composer shape when model selection persists", async () => {
+		const cwd = await tempDir();
+		const layout = buildRunledgerLayout(join(cwd, "home"), "posix");
+		const { models, p1 } = fixtureModels();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout,
+			systemPrompt: "test",
+			models,
+		settings: { composer: { shape: "box" }, steeringMode: "all" },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		await saveProjectSettings({ layout }, { composer: { shape: "rail" } });
+		await controller.selectModel(p1);
+
+		expect(await loadProjectSettings({ layout })).toMatchObject({ composer: { shape: "rail" }, steeringMode: "all", provider: "p1", model: "m1" });
+		controller.dispose();
+	});
+
 	it("resolves the full catalog model on selectModel even when the wire passes a minimal shape", async () => {
     const cwd = await tempDir();
     const { models, p1 } = fixtureModels();

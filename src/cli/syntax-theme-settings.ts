@@ -1,5 +1,5 @@
 import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
-import { loadProjectSettings, saveProjectSettings } from "../storage/settings-manager.ts";
+import { updateProjectSettings } from "../storage/settings-manager.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES } from "../tui/highlight/theme-controller.ts";
 import type { SyntaxThemeSettingsPort } from "../tui/interactive-mode.ts";
 
@@ -15,8 +15,7 @@ export function createCliSyntaxThemeSettings(
 				return { ok: false, code: "syntax_theme_invalid" };
 			}
 			try {
-				const current = await loadProjectSettings({ layout });
-				await saveProjectSettings({ layout }, { ...current, theme: name });
+				await updateProjectSettings({ layout }, (current) => ({ ...current, theme: name }));
 				return { ok: true };
 			} catch {
 				return { ok: false, code: "syntax_theme_save_failed" };

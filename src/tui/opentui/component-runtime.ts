@@ -5,7 +5,9 @@ import {
   MarkdownRenderable,
   ScrollBoxRenderable,
   SelectRenderable,
+  RGBA,
   StyledText,
+  TextAttributes,
   TextRenderable,
   TextareaRenderable,
   createCliRenderer,
@@ -13,6 +15,7 @@ import {
   type KeyEvent,
   type MouseEvent,
   type Renderable,
+  type TextChunk,
 } from "@opentui/core";
 import stringWidth from "string-width";
 import { ansiToStyledText } from "./ansi-styled-text.ts";
@@ -42,12 +45,21 @@ import { splitClosedStreamingTable } from "./streaming-table-split.ts";
 import { BodySignatureTracker } from "./body-signature.ts";
 import { settled, type PresentationPart } from "../timeline/part-stability.ts";
 import { shimmerStatusLine, type ShimmerStatusLineOptions } from "./shimmer-status-line.ts";
+import { composerStatusConsumption, type ComposerChromeFrame } from "../composer/frame.ts";
 
 /** 输入区外观(由主题/终端背景计算,帧驱动下发到原生组件)。 */
 export interface EditorAppearance {
   readonly backgroundColor: string;
   readonly promptColor: string;
   readonly placeholderColor: string;
+  readonly borderColor?: string;
+  readonly accentColor?: string;
+  readonly surfaceColor?: string;
+}
+
+export interface ComposerScrollbarPresentation {
+  readonly visible: boolean;
+  readonly position: number;
 }
 
 export interface TranscriptScrollPresentation {
@@ -65,6 +77,8 @@ export interface OpenTuiComponentFrame {
   editorHeight?: number;
   /** 输入区外观;缺省不铺背景 / 不染色(测试与未接线环境保持原样)。 */
   editorAppearance?: EditorAppearance;
+  /** Composer 的纯 chrome frame；Textarea 仍由 native editor 自己持有编辑状态。 */
+  composerFrame?: ComposerChromeFrame;
   /** 主对话内建 scrollbar 的纯 presentation；缺省保持 hidden。 */
   transcriptScrollPresentation?: TranscriptScrollPresentation;
   /** editor 上方的运行中状态指示行；undefined 时占用零高度。 */
@@ -86,6 +100,7 @@ export interface OpenTuiComponentRuntimeOptions {
   onResize(): void;
   onActions?(actions: readonly TuiAction[]): void;
   onThemeMode?(mode: "dark" | "light"): void;
+  onComposerScrollChange?(presentation: ComposerScrollbarPresentation): void;
   /** 终端回复的原始 OSC 序列(含 OSC 11 背景色);由调用方解析。 */
   onOsc?(sequence: string): void;
   performanceObserver?: TuiPerformanceObserver;
@@ -116,6 +131,7 @@ class RunLedgerTextareaRenderable extends TextareaRenderable {
 
 export interface OpenTuiComponentRuntime {
   update(frame: OpenTuiComponentFrame): void;
+  setComposerShape(frame: ComposerChromeFrame | undefined): void;
   getLastDirtyPartIds(): readonly string[];
   destroy(): void;
 }
@@ -168,6 +184,84 @@ function promptStyledText(hex: string): StyledText {
   const g = Number.parseInt(value.slice(2, 4), 16);
   const b = Number.parseInt(value.slice(4, 6), 16);
   return ansiToStyledText(`\x1b[1m\x1b[38;2;${r};${g};${b}m›\x1b[22m\x1b[39m `);
+}
+
+function suffixAtDisplayWidth(value: string, start: number): string {
+	let consumed = 0;
+	let suffix = "";
+	for (const grapheme of graphemes(value)) {
+		if (consumed >= start) suffix += grapheme;
+		consumed += displayWidth(grapheme);
+	}
+	return suffix;
+}
+
+function composerColor(value: string | undefined): RGBA | undefined {
+	if (value === undefined || value.length === 0) return undefined;
+	try {
+		return RGBA.fromHex(value);
+	} catch {
+		return undefined;
+	}
+}
+
+function composerRowsStyledText(
+	rows: readonly ComposerChromeFrame["rows"][number][],
+	start: number,
+	width: number,
+): StyledText {
+	const chunks: TextChunk[] = [];
+	for (const [rowIndex, row] of rows.entries()) {
+		if (rowIndex > 0) chunks.push({ __isChunk: true, text: "\n" });
+		let skip = Math.max(0, start);
+		let remaining = Math.max(0, width);
+		for (const run of row.runs) {
+			if (remaining <= 0) break;
+			const runWidth = displayWidth(run.text);
+			if (skip >= runWidth) {
+				skip -= runWidth;
+				continue;
+			}
+			const suffix = suffixAtDisplayWidth(run.text, skip);
+			const text = truncateDisplayWidth(suffix, remaining);
+			skip = 0;
+			if (text.length === 0) continue;
+			const foreground = composerColor(run.foregroundColor);
+			const background = composerColor(run.backgroundColor);
+			chunks.push({
+				__isChunk: true,
+				text,
+				...(foreground === undefined ? {} : { fg: foreground }),
+				...(background === undefined ? {} : { bg: background }),
+				...(run.bold === true ? { attributes: TextAttributes.BOLD } : {}),
+			});
+			remaining -= displayWidth(text);
+		}
+	}
+	return new StyledText(chunks);
+}
+
+function composerScrollbarStyledText(
+	frame: ComposerChromeFrame,
+	rowStart: number,
+	rowCount: number,
+): StyledText {
+	const chunks: TextChunk[] = [];
+	const foreground = composerColor(frame.theme.accentColor);
+	const background = composerColor(frame.theme.surfaceColor);
+	const thumbStart = frame.scrollbarRect === undefined ? -1 : frame.scrollbarRect.thumbY - frame.inputRect.y;
+	const thumbEnd = thumbStart < 0 ? -1 : thumbStart + (frame.scrollbarRect?.thumbHeight ?? 0);
+	for (let index = 0; index < rowCount; index += 1) {
+		if (index > 0) chunks.push({ __isChunk: true, text: "\n" });
+		const row = rowStart + index;
+		chunks.push({
+			__isChunk: true,
+			text: row >= thumbStart && row < thumbEnd ? "█" : "│",
+			...(foreground === undefined ? {} : { fg: foreground }),
+			...(background === undefined ? {} : { bg: background }),
+		});
+	}
+	return new StyledText(chunks);
 }
 
 function blockKey(block: PresentationBlock, index: number): string {
@@ -278,9 +372,83 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     flexShrink: 0,
     content: "",
   });
-  // 输入区 = 左 gutter(prompt 2 列)+ textarea,上下留白各 1 行(codex composer
-  // inset(top=1, left=LIVE_PREFIX_COLS, bottom=1, right=1) 的 row 布局复刻)。
-  const editorRow = new BoxRenderable(renderer, {
+	const composerHost = new BoxRenderable(renderer, {
+		id: "runledger-composer-host",
+		width: "100%",
+		flexShrink: 0,
+		flexDirection: "column",
+	});
+	const composerTop = new TextRenderable(renderer, {
+		id: "runledger-composer-top",
+		width: "100%",
+		height: 0,
+		flexShrink: 0,
+		content: "",
+	});
+	const composerBottom = new TextRenderable(renderer, {
+		id: "runledger-composer-bottom",
+		width: "100%",
+		height: 0,
+		flexShrink: 0,
+		content: "",
+	});
+	const composerGap = new TextRenderable(renderer, {
+		id: "runledger-composer-gap",
+		width: "100%",
+		height: 0,
+		flexShrink: 0,
+		content: "",
+	});
+	const composerBottomBar = new TextRenderable(renderer, {
+		id: "runledger-composer-bottom-bar",
+		width: "100%",
+		height: 0,
+		flexShrink: 0,
+		content: "",
+	});
+	const composerInputLeft = new TextRenderable(renderer, {
+		id: "runledger-composer-input-left",
+		position: "absolute",
+		left: 0,
+		top: 0,
+		width: 0,
+		height: 0,
+		selectable: false,
+		content: "",
+	});
+	const composerInputUnderlay = new TextRenderable(renderer, {
+		id: "runledger-composer-input-underlay",
+		position: "absolute",
+		left: 0,
+		top: 0,
+		width: 0,
+		height: 0,
+		selectable: false,
+		content: "",
+	});
+	const composerInputRight = new TextRenderable(renderer, {
+		id: "runledger-composer-input-right",
+		position: "absolute",
+		left: 0,
+		top: 0,
+		width: 0,
+		height: 0,
+		selectable: false,
+		content: "",
+	});
+	const composerRightRail = new TextRenderable(renderer, {
+		id: "runledger-composer-right-rail",
+		position: "absolute",
+		right: 0,
+		top: 0,
+		width: 0,
+		height: 0,
+		selectable: false,
+		content: "",
+	});
+	// 默认输入区保留既有 codex composer 的 inset；有 ComposerChromeFrame 时
+	// 由 adapter 改为 frame 的输入矩形，但不替换 TextareaRenderable。
+	const editorRow = new BoxRenderable(renderer, {
     id: "runledger-editor-row",
     width: "100%",
     height: 3,
@@ -305,8 +473,17 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     placeholder: "Message RunLedger…",
     wrapMode: "word",
   });
-  editorRow.add(editorPrompt);
-  editorRow.add(editor);
+	editorRow.add(editorPrompt);
+	editorRow.add(editor);
+	composerHost.add(composerTop);
+	composerHost.add(composerInputUnderlay);
+	composerHost.add(editorRow);
+	composerHost.add(composerBottom);
+	composerHost.add(composerGap);
+	composerHost.add(composerBottomBar);
+	composerHost.add(composerInputLeft);
+	composerHost.add(composerInputRight);
+	composerHost.add(composerRightRail);
   const footer = new TextRenderable(renderer, {
     id: "runledger-footer",
     width: "100%",
@@ -316,7 +493,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   screen.add(transcript);
   screen.add(newContent);
   screen.add(statusIndicator);
-  screen.add(editorRow);
+	screen.add(composerHost);
   screen.add(footer);
   renderer.root.add(screen);
   editor.focus();
@@ -356,11 +533,104 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     themeController: syntaxThemeController,
   });
   let previousNativeCellsUpdated = 0;
-  let requestedEditorHeight = 3;
-  let lastEditorHeight = 3;
-  let lastEditorAppearance: EditorAppearance | undefined;
-  let lastTranscriptScrollPresentation: TranscriptScrollPresentation | undefined;
-  const copySelection = (selectedText: string | undefined): boolean => {
+	let requestedEditorHeight = 3;
+	let lastEditorHeight = 3;
+	let lastEditorAppearance: EditorAppearance | undefined;
+	let activeComposerFrame: ComposerChromeFrame | undefined;
+	let lastComposerScrollPresentation: ComposerScrollbarPresentation | undefined;
+	let lastTranscriptScrollPresentation: TranscriptScrollPresentation | undefined;
+	const applyComposerInputRows = (next: ComposerChromeFrame | undefined, height: number, rowStart: number): void => {
+		const allInputRows = next?.inputRows ?? [];
+		const boundedHeight = Math.max(0, Math.min(allInputRows.length, height));
+		const maxStart = Math.max(0, allInputRows.length - boundedHeight);
+		const visibleStart = Math.max(0, Math.min(rowStart, maxStart));
+		const inputRows = allInputRows.slice(visibleStart, visibleStart + boundedHeight);
+		const inputLeftWidth = next?.inputRect.x ?? 0;
+		const inputRightStart = next === undefined ? 0 : next.inputRect.x + next.inputRect.width;
+		const inputRightWidth = next === undefined ? 0 : Math.max(0, next.terminalWidth - inputRightStart);
+		composerInputLeft.content = inputRows.length === 0
+			? ""
+			: composerRowsStyledText(inputRows, 0, inputLeftWidth);
+		composerInputLeft.top = next?.inputRect.y ?? 0;
+		composerInputLeft.width = inputLeftWidth;
+		composerInputLeft.height = inputRows.length;
+		composerInputUnderlay.content = next === undefined || inputRows.length === 0
+			? ""
+			: composerRowsStyledText(inputRows, next.inputRect.x, next.inputRect.width);
+		composerInputUnderlay.left = next?.inputRect.x ?? 0;
+		composerInputUnderlay.top = next?.inputRect.y ?? 0;
+		composerInputUnderlay.width = next?.inputRect.width ?? 0;
+		composerInputUnderlay.height = inputRows.length;
+		composerInputRight.content = inputRows.length === 0
+			? ""
+			: composerRowsStyledText(inputRows, inputRightStart, inputRightWidth);
+		composerInputRight.left = inputRightStart;
+		composerInputRight.top = next?.inputRect.y ?? 0;
+		composerInputRight.width = inputRightWidth;
+		composerInputRight.height = inputRows.length;
+		// side border style 把 scrollbar glyph 作为 frame 右边界；无边框 style 保留独立 rail，
+		// 避免覆盖 Textarea 文本。
+		const scrollbarRows = next?.scrollbarRect !== undefined && next.rightChromeWidth === 0 ? inputRows : [];
+		composerRightRail.content = next === undefined || scrollbarRows.length === 0
+			? ""
+			: composerScrollbarStyledText(next, visibleStart, scrollbarRows.length);
+		composerRightRail.top = next?.inputRect.y ?? 0;
+		composerRightRail.width = scrollbarRows.length === 0 ? 0 : next?.scrollbarRect?.width ?? 0;
+		composerRightRail.height = scrollbarRows.length;
+	};
+	const applyComposerFrame = (next: ComposerChromeFrame | undefined): void => {
+		activeComposerFrame = next;
+		composerTop.content = next === undefined || next.topRows.length === 0
+			? ""
+			: composerRowsStyledText(next.topRows, 0, next.terminalWidth);
+		composerTop.height = next?.topRows.length ?? 0;
+		composerBottom.content = next === undefined || next.bottomRows.length === 0
+			? ""
+			: composerRowsStyledText(next.bottomRows, 0, next.terminalWidth);
+		composerBottom.height = next?.bottomRows.length ?? 0;
+		composerGap.content = "";
+		composerGap.height = next === undefined ? 0 : next.bottomBarRows.length === 0 ? 0 : next.bottomBarGap;
+		composerBottomBar.content = next === undefined || next.bottomBarRows.length === 0
+			? ""
+			: composerRowsStyledText(next.bottomBarRows, 0, next.terminalWidth);
+		composerBottomBar.height = next?.bottomBarRows.length ?? 0;
+		applyComposerInputRows(next, next?.inputRows.length ?? 0, 0);
+
+		if (next === undefined) {
+			composerHost.height = "auto";
+			editor.wrapMode = "word";
+			editorRow.paddingTop = 1;
+			editorRow.paddingRight = 1;
+			editorRow.paddingBottom = 1;
+			editorRow.paddingLeft = 0;
+			editorRow.border = false;
+			editorRow.customBorderChars = undefined;
+			editorPrompt.width = 2;
+			editorPrompt.content = "› ";
+			editorRow.height = lastEditorHeight;
+			lastComposerScrollPresentation = undefined;
+			return;
+		}
+
+		composerHost.height = Math.max(1, next.totalHeight);
+		editor.wrapMode = "char";
+		editorRow.paddingTop = 0;
+		editorRow.paddingRight = Math.max(
+				0,
+				renderer.width - next.inputRect.x - next.inputRect.width,
+			);
+			editorRow.paddingBottom = 0;
+			editorRow.paddingLeft = Math.max(
+				0,
+				next.inputRect.x,
+			);
+		editorRow.border = false;
+		editorRow.customBorderChars = undefined;
+		editorPrompt.width = 0;
+		editorPrompt.content = "";
+		editorRow.height = Math.max(1, next.inputRows.length);
+	};
+	const copySelection = (selectedText: string | undefined): boolean => {
     if (selectedText === undefined || selectedText.length === 0) return false;
     renderer.copyToClipboardOSC52(selectedText);
     return true;
@@ -378,6 +648,15 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     renderer.requestRender();
   };
   editorRow.onMouseScroll = scrollTranscriptForWheel;
+	composerHost.onMouseScroll = scrollTranscriptForWheel;
+	composerTop.onMouseScroll = scrollTranscriptForWheel;
+	composerBottom.onMouseScroll = scrollTranscriptForWheel;
+	composerGap.onMouseScroll = scrollTranscriptForWheel;
+	composerBottomBar.onMouseScroll = scrollTranscriptForWheel;
+	composerInputLeft.onMouseScroll = scrollTranscriptForWheel;
+	composerInputUnderlay.onMouseScroll = scrollTranscriptForWheel;
+	composerInputRight.onMouseScroll = scrollTranscriptForWheel;
+	composerRightRail.onMouseScroll = scrollTranscriptForWheel;
   newContent.onMouseScroll = scrollTranscriptForWheel;
   footer.onMouseScroll = scrollTranscriptForWheel;
   renderer.keyInput.on("keypress", (key) => {
@@ -416,7 +695,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   renderer.on("resize", onResize);
   renderer.on("focus", onFocus);
   renderer.on("blur", onBlur);
-  const onThemeMode = (mode: "dark" | "light"): void => {
+	  const onThemeMode = (mode: "dark" | "light"): void => {
     mermaidThemeMode = mode;
     syntaxThemeController.setTerminalMode(mode);
     const previousStyle = syntaxStyle;
@@ -431,9 +710,23 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     }
     previousStyle.destroy();
     options.onThemeMode?.(mode);
-  };
-  renderer.on("theme_mode", onThemeMode);
-  const onFrame = (): void => {
+	  };
+	  renderer.on("theme_mode", onThemeMode);
+	const reportComposerScrollPresentation = (): void => {
+		const viewportHeight = Math.max(1, editor.height);
+		const totalRows = Math.max(editor.virtualLineCount, editor.editorView.getTotalVirtualLineCount());
+		const visible = activeComposerFrame !== undefined && totalRows > viewportHeight;
+		const maxScroll = Math.max(0, totalRows - viewportHeight);
+		const position = visible && maxScroll > 0
+			? Math.max(0, Math.min(1, editor.scrollY / maxScroll))
+			: 0;
+		const next: ComposerScrollbarPresentation = { visible, position };
+		if (lastComposerScrollPresentation?.visible === next.visible
+			&& lastComposerScrollPresentation.position === next.position) return;
+		lastComposerScrollPresentation = next;
+		options.onComposerScrollChange?.(next);
+	};
+	  const onFrame = (): void => {
     const stats = renderer.getNativeStats();
     const cellsUpdated = Math.max(0, stats.cellsUpdated - previousNativeCellsUpdated);
     previousNativeCellsUpdated = stats.cellsUpdated;
@@ -441,14 +734,18 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       durationMs: Math.max(0, stats.nativeLastFrameTime),
       cellsUpdated,
     });
-    updateTranscriptHighlightAdmission(transcript, bodyNodes, settledMarkdownStates);
-  };
+	    updateTranscriptHighlightAdmission(transcript, bodyNodes, settledMarkdownStates);
+		reportComposerScrollPresentation();
+	  };
   renderer.on("frame", onFrame);
 
-  return {
-    update: (frame) => {
-      const projectionStartedAt = Date.now();
-      const requestedScrollPresentation = frame.transcriptScrollPresentation ?? {
+	return {
+		update: (frame) => {
+			const projectionStartedAt = Date.now();
+			if (frame.composerFrame !== activeComposerFrame) {
+				applyComposerFrame(frame.composerFrame);
+			}
+			const requestedScrollPresentation = frame.transcriptScrollPresentation ?? {
         visible: false,
         trackColor: "",
         thumbColor: "",
@@ -717,24 +1014,45 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       statusIndicator.visible = projectedStatus.length > 0;
       statusIndicator.content = projectedStatus.length > 0 ? ansiToStyledText(projectedStatus) : "";
       statusIndicator.height = plainStatus.length > 0 ? plainStatus.split("\n").length : 0;
-      // OpenTUI 的 native word-wrap 是原生路径的测量 authority；用真实 textarea
-      // 宽度(width - prompt 2 - right inset 1)校正纯组件估算，避免隐藏尾行。
-      const editorInnerWidth = Math.max(1, renderer.width - 3);
-      const measuredLines = editor.editorView.measureForDimensions(editorInnerWidth, 0x7fff)?.lineCount ?? 1;
-      const desiredEditorHeight = Math.max(3, requestedEditorHeight, measuredLines + 2);
-      // footer 与至少 1 行 transcript 必须留在 viewport 内；达到上限后 textarea
-      // 由 OpenTUI 自己滚动，而不是把 footer 推出屏幕。
-      const footerHeight = Math.max(1, frame.footer.length);
-      const maxEditorHeight = Math.max(1, renderer.height - footerHeight - statusIndicator.height - 1);
-      const boundedEditorHeight = Math.min(desiredEditorHeight, maxEditorHeight);
-      if (boundedEditorHeight !== lastEditorHeight) {
-        lastEditorHeight = boundedEditorHeight;
-        editorRow.height = lastEditorHeight;
-      }
+		  // OpenTUI 的 native word-wrap 是原生路径的测量 authority；用真实 textarea
+		  // 宽度校正纯组件估算，避免隐藏尾行。
+		  const editorInnerWidth = Math.max(1, activeComposerFrame?.inputRect.width ?? renderer.width - 3);
+		  const measuredLines = editor.editorView.measureForDimensions(editorInnerWidth, 0x7fff)?.lineCount ?? 1;
+		  const chromeHeight = activeComposerFrame === undefined
+			  ? 0
+			  : activeComposerFrame.topRows.length
+			    + activeComposerFrame.bottomRows.length
+			    + (activeComposerFrame.bottomBarRows.length === 0 ? 0 : activeComposerFrame.bottomBarGap)
+			    + activeComposerFrame.bottomBarRows.length;
+		  const desiredEditorHeight = activeComposerFrame === undefined
+			  ? Math.max(3, requestedEditorHeight, measuredLines + 2)
+			  : Math.max(1, activeComposerFrame.inputRows.length, measuredLines);
+		  // footer 与至少 1 行 transcript 必须留在 viewport 内；达到上限后 textarea
+		  // 由 OpenTUI 自己滚动，而不是把 footer 推出屏幕。
+			  const visibleFooter = footerAfterComposerConsumption(frame.footer, activeComposerFrame);
+			  const footerHeight = activeComposerFrame === undefined
+				  ? Math.max(1, visibleFooter.length)
+				  : visibleFooter.length;
+			  const maxEditorHeight = Math.max(1, renderer.height - footerHeight - statusIndicator.height - 1 - chromeHeight);
+			  const boundedEditorHeight = Math.min(desiredEditorHeight, maxEditorHeight);
+		  if (boundedEditorHeight !== lastEditorHeight) {
+			lastEditorHeight = boundedEditorHeight;
+			editorRow.height = lastEditorHeight;
+		  }
+			  if (activeComposerFrame !== undefined) {
+				applyComposerInputRows(activeComposerFrame, boundedEditorHeight, editor.scrollY);
+				composerHost.height = chromeHeight + boundedEditorHeight;
+			  }
       const appearance = frame.editorAppearance;
       if (appearance !== undefined && appearance !== lastEditorAppearance) {
         if (lastEditorAppearance === undefined || lastEditorAppearance.backgroundColor !== appearance.backgroundColor) {
           editorRow.backgroundColor = appearance.backgroundColor;
+          composerHost.backgroundColor = appearance.backgroundColor;
+          composerTop.bg = appearance.backgroundColor;
+          composerBottom.bg = appearance.backgroundColor;
+          composerGap.bg = appearance.backgroundColor;
+          composerBottomBar.bg = appearance.backgroundColor;
+          composerRightRail.bg = appearance.backgroundColor;
         }
         if (lastEditorAppearance === undefined || lastEditorAppearance.promptColor !== appearance.promptColor) {
           editorPrompt.content = appearance.promptColor.length > 0
@@ -746,8 +1064,9 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         }
         lastEditorAppearance = appearance;
       }
-      footer.content = styledFooter(frame.footer, syntaxHighlightService, syntaxThemeController);
-      footer.height = footerHeight;
+	      footer.content = styledFooter(visibleFooter, syntaxHighlightService, syntaxThemeController);
+	      footer.height = footerHeight;
+		  footer.visible = footerHeight > 0;
       updateNewContentIndicator();
 
       if (frame.overlay) {
@@ -805,11 +1124,14 @@ export function createOpenTuiComponentRuntimeFromRenderer(
           overlay.top = undefined;
           overlay.bottom = footerHeight + boundedEditorHeight + 1;
         } else if (bottomLeft) {
-          overlay.backgroundColor = undefined;
+          overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
           overlay.top = undefined;
           overlay.bottom = 5;
         } else {
-          overlay.backgroundColor = undefined;
+          // 捕获型 modal 必须先铺满自己的 surface；否则短于上一帧的
+          // TextRenderable 行不会覆盖底下的 composer/欢迎页 cell，真实终端
+          // capture 会留下 `pressiEnter` 一类的旧字符残留。
+          overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
           overlay.top = Math.max(0, Math.floor((renderer.height - modalHeight) / 2));
           overlay.bottom = undefined;
         }
@@ -922,14 +1244,18 @@ export function createOpenTuiComponentRuntimeFromRenderer(
         }
         editor.focus();
       }
-      options.performanceObserver?.recordProjection({
-        durationMs: Math.max(0, Date.now() - projectionStartedAt),
-        processedChars: frameCharacterCount(frame),
-        dirtyEntries: lastDirtyPartIds.length,
-      });
-      renderer.requestRender();
-    },
-    getLastDirtyPartIds: () => lastDirtyPartIds,
+			options.performanceObserver?.recordProjection({
+				durationMs: Math.max(0, Date.now() - projectionStartedAt),
+				processedChars: frameCharacterCount(frame),
+				dirtyEntries: lastDirtyPartIds.length,
+			});
+			renderer.requestRender();
+		},
+		setComposerShape: (frame) => {
+			applyComposerFrame(frame);
+			renderer.requestRender();
+		},
+		getLastDirtyPartIds: () => lastDirtyPartIds,
     destroy: () => {
       renderer.off("frame", onFrame);
       renderer.off("selection", onSelection);
@@ -1015,6 +1341,21 @@ function countNewlines(text: string): number {
 
 function boundedStatusPrefix(prefix: string, width: number): string {
   return truncateDisplayWidth(prefix, Math.max(0, width - 1));
+}
+
+function footerAfterComposerConsumption(
+	lines: OpenTuiComponentFrame["footer"],
+	frame: ComposerChromeFrame | undefined,
+): OpenTuiComponentFrame["footer"] {
+	if (frame === undefined) return lines;
+	const consumption = composerStatusConsumption(frame);
+	let statusIndex = 0;
+	return lines.filter((line) => {
+		if (typeof line === "string" || line.kind !== "status-line") return true;
+		const current = statusIndex;
+		statusIndex += 1;
+		return current === 0 ? !consumption.identity : current === 1 ? !consumption.usage : true;
+	});
 }
 
 function styledFooter(
