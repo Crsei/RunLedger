@@ -7,6 +7,8 @@ import type { ModelCompatibilityRouter } from "../../model-routing/router.ts";
 import type { ModelRouteDecision, ModelRouteRequest } from "../../model-routing/types.ts";
 import type { ProviderRequestGate } from "../../agents/child-model-runtime.ts";
 import { applyRetryPolicy, DEFAULT_RETRY_POLICY, type RetryPolicy } from "../../retry/policy.ts";
+import { instrumentedCompleteSimple, resolveTelemetry, type AgentTelemetryConfig } from "../../telemetry/telemetry.ts";
+import type { Context } from "../../../types.ts";
 
 export const SUMMARIZER_ALIAS = "summarizer";
 export const MAX_SUMMARY_CHARS = 32_000;
@@ -25,6 +27,8 @@ export function createProductionSummarizer(options: {
 	readonly maxSummaryChars?: number;
 	readonly retryPolicy?: RetryPolicy;
 	readonly providerGate?: ProviderRequestGate;
+	/** OTEL oneshot 插桩配置(compaction_summary)。缺省不插桩。 */
+	readonly telemetry?: AgentTelemetryConfig;
 }): ProductionSummarizer {
 	return async (input) => {
 		const manifest = options.router.manifest();
@@ -78,10 +82,15 @@ export function createProductionSummarizer(options: {
 			releaseProvider = options.providerGate === undefined
 				? undefined
 				: await options.providerGate.acquire(model.provider);
-			message = await options.models.completeSimple(
+			message = await instrumentedCompleteSimple(
 				model,
-				context as never,
+				context as Context,
 				applyRetryPolicy({}, options.retryPolicy ?? DEFAULT_RETRY_POLICY),
+				{
+					telemetry: resolveTelemetry(options.telemetry, input.sessionId),
+					oneshotKind: "compaction_summary",
+					completeImpl: (m, c, o) => options.models.completeSimple(m, c, o),
+				},
 			);
 		} catch (error) {
 			return { ok: false, code: "summarizer_request_failed", message: error instanceof Error ? error.message : "summarizer model request failed" };

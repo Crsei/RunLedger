@@ -1,7 +1,16 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { ModelsError, type Models } from "../models.ts";
 import type { AuthResult } from "../auth/types.ts";
-import type { Api, AssistantMessageEvent, Model, SimpleStreamOptions } from "../types.ts";
+import type { Api, AssistantMessage, AssistantMessageEvent, Model, SimpleStreamOptions } from "../types.ts";
+import {
+	failChatSpan,
+	finishChatSpan,
+	resolveTelemetry,
+	runInActiveSpan,
+	startChatSpan,
+	type AgentTelemetryConfig,
+} from "../runtime/telemetry/telemetry.ts";
+import { PiGenAIAttr } from "../runtime/telemetry/semconv.ts";
 import { GatewayCodecError, type GatewayEventSource, type GatewayRequest } from "./codecs/shared.ts";
 import { decodeRequest as decodeChatRequest, encodeStream as encodeChatStream } from "./codecs/chat-completions.ts";
 import { decodeRequest as decodeMessagesRequest, encodeStream as encodeMessagesStream } from "./codecs/messages.ts";
@@ -30,6 +39,8 @@ export interface AuthGatewayServerOptions {
 	readonly noAuth?: boolean;
 	readonly idleTimeoutMs?: number;
 	readonly models?: Models;
+	/** OTEL oneshot 插桩配置(gateway)。缺省不插桩。 */
+	readonly telemetry?: AgentTelemetryConfig;
 }
 
 export interface AuthGatewayServerHandle {
@@ -118,6 +129,7 @@ export function validateAuthGatewayServerOptions(options: AuthGatewayServerOptio
 		idleTimeoutMs,
 		...(options.token === undefined ? {} : { token: options.token }),
 		...(options.models === undefined ? {} : { models: options.models }),
+		...(options.telemetry === undefined ? {} : { telemetry: options.telemetry }),
 	};
 }
 
@@ -305,6 +317,7 @@ async function dispatchGatewayRequest(
 	models: Models,
 	wire: GatewayWire,
 	activeRequests: Set<AbortController>,
+	telemetryConfig?: AgentTelemetryConfig,
 ): Promise<void> {
 	const codec = CODECS[wire];
 	let decoded: GatewayRequest;
@@ -334,19 +347,46 @@ async function dispatchGatewayRequest(
 		return;
 	}
 
+	// OTEL:gateway 无 agent loop,按 oneshot chat span 插桩(kind=gateway)。
+	const telemetry = resolveTelemetry(telemetryConfig, undefined);
+	const gatewayOptions = decoded.options as SimpleStreamOptions;
+	const chatSpan = startChatSpan(telemetry, model, {
+		stepNumber: -1,
+		request: {
+			reasoningEffort: typeof gatewayOptions.reasoning === "string" ? gatewayOptions.reasoning : undefined,
+			serviceTier: gatewayOptions.serviceTier,
+			toolChoice: gatewayOptions.toolChoice,
+			tools: decoded.context.tools,
+			systemPrompt: decoded.context.systemPrompt,
+			messages: decoded.context.messages,
+		},
+	});
+	if (chatSpan) chatSpan.setAttribute(PiGenAIAttr.OneshotKind, "gateway");
+	let capturedHeaders: Readonly<Record<string, string>> | undefined;
+
 	const controller = new AbortController();
 	activeRequests.add(controller);
 	const detachAbort = attachAbortSignal(req, res, controller);
 	let stream: AsyncIterable<AssistantMessageEvent>;
 	try {
+		const userOnResponse = gatewayOptions.onResponse;
+		const captureOnResponse: NonNullable<SimpleStreamOptions["onResponse"]> = (response, modelInfo) => {
+			capturedHeaders = response.headers;
+			return userOnResponse?.(response, modelInfo);
+		};
 		stream = models.streamSimple(
 			model,
 			decoded.context,
-			{ ...decoded.options, signal: controller.signal } as SimpleStreamOptions,
+			{ ...gatewayOptions, signal: controller.signal, onResponse: captureOnResponse } as SimpleStreamOptions,
 		);
 	} catch (error) {
 		detachAbort();
 		activeRequests.delete(controller);
+		failChatSpan(telemetry, chatSpan, {
+			errorObject: error,
+			responseHeaders: capturedHeaders,
+			baseUrl: model.baseUrl,
+		});
 		writeWireError(res, wire, errorStatus(error), redactSecrets(errorMessage(error), secrets), errorCode(error));
 		return;
 	}
@@ -355,10 +395,20 @@ async function dispatchGatewayRequest(
 		const iterator = stream[Symbol.asyncIterator]();
 		const first = await iterator.next();
 		if (first.done || first.value === undefined) {
+			failChatSpan(telemetry, chatSpan, {
+				errorObject: new Error("Provider stream ended without a response"),
+				responseHeaders: capturedHeaders,
+				baseUrl: model.baseUrl,
+			});
 			writeUpstreamFailure(res, wire, "Provider stream ended without a response", secrets);
 			return;
 		}
 		if (first.value.type === "error") {
+			await finishChatSpan(telemetry, chatSpan, first.value.error, {
+				stepNumber: -1,
+				responseHeaders: capturedHeaders,
+				baseUrl: model.baseUrl,
+			});
 			writeUpstreamFailure(res, wire, first.value.error.errorMessage ?? "Provider request failed", secrets);
 			return;
 		}
@@ -368,12 +418,41 @@ async function dispatchGatewayRequest(
 			"cache-control": "no-cache, no-transform",
 			connection: "keep-alive",
 		});
-		for await (const line of codec.encodeStream(prependEvent(first.value, iterator))) {
-			if (res.destroyed) break;
-			res.write(redactSecrets(line, secrets));
-		}
+		// tee 生成器在编码消费的同时记录最终消息,避免二次消费 / result() 悬挂。
+		let finalMessage: AssistantMessage | undefined;
+		const teeWithFinal: AsyncGenerator<AssistantMessageEvent> = (async function* () {
+			for await (const ev of prependEvent(first.value, iterator)) {
+				if (ev.type === "done") finalMessage = ev.message;
+				else if (ev.type === "error") finalMessage = ev.error;
+				yield ev;
+			}
+		})();
+		await runInActiveSpan(chatSpan, async () => {
+			for await (const line of codec.encodeStream(teeWithFinal)) {
+				if (res.destroyed) break;
+				res.write(redactSecrets(line, secrets));
+			}
+		});
 		if (!res.writableEnded && !res.destroyed) res.end();
+		if (finalMessage !== undefined) {
+			await finishChatSpan(telemetry, chatSpan, finalMessage, {
+				stepNumber: -1,
+				responseHeaders: capturedHeaders,
+				baseUrl: model.baseUrl,
+			});
+		} else {
+			failChatSpan(telemetry, chatSpan, {
+				errorObject: new Error("Provider stream ended without a terminal event"),
+				responseHeaders: capturedHeaders,
+				baseUrl: model.baseUrl,
+			});
+		}
 	} catch (error) {
+		failChatSpan(telemetry, chatSpan, {
+			errorObject: error,
+			responseHeaders: capturedHeaders,
+			baseUrl: model.baseUrl,
+		});
 		if (!res.headersSent) writeWireError(res, wire, errorStatus(error), redactSecrets(errorMessage(error), secrets), errorCode(error));
 		else if (!res.writableEnded && !res.destroyed) res.end();
 	} finally {
@@ -383,7 +462,7 @@ async function dispatchGatewayRequest(
 }
 
 function createRequestHandler(
-	options: Required<Pick<AuthGatewayServerOptions, "noAuth">> & Pick<AuthGatewayServerOptions, "token" | "models">,
+	options: Required<Pick<AuthGatewayServerOptions, "noAuth">> & Pick<AuthGatewayServerOptions, "token" | "models" | "telemetry">,
 	activeRequests: Set<AbortController>,
 ): (req: IncomingMessage, res: ServerResponse) => void {
 	return (req, res) => {
@@ -428,7 +507,7 @@ function createRequestHandler(
 				writeNotImplemented(res);
 				return;
 			}
-			void dispatchGatewayRequest(req, res, options.models, wire, activeRequests).catch((error: unknown) => {
+			void dispatchGatewayRequest(req, res, options.models, wire, activeRequests, options.telemetry).catch((error: unknown) => {
 				if (!res.headersSent) writeGatewayFailure(res, wire, error);
 				else if (!res.writableEnded && !res.destroyed) res.end();
 			});

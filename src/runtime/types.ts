@@ -38,6 +38,7 @@ import type {
 import type { Static, TSchema } from "typebox";
 import type { LedgerSink } from "./ledger/types.ts";
 import type { ToolContext } from "./tool-context.ts";
+import type { AgentTelemetryConfig } from "./telemetry/telemetry.ts";
 import type { RuntimeTraceRecorder } from "./trace/recorder.ts";
 import type { RuntimeContentRef, RuntimeDigest } from "./protocol/foundation.ts";
 import type { CapabilityClaim } from "./protocol/capability.ts";
@@ -468,6 +469,12 @@ export interface AgentLoopConfig {
   ledger?: LedgerSink;
   /** 可选:Runtime Trace recorder;不启用时 agent loop 保持既有 ledger-only 行为。 */
   traceRecorder?: RuntimeTraceRecorder;
+  /**
+   * 可选:OpenTelemetry 插桩配置(GenAI semantic-convention span + run summary)。
+   * 传 `{}` 启用默认插桩;不传(undefined)时 agent loop 零 tracer 查找,
+   * 保持既有 ledger-only 行为(与 traceRecorder 同注释风格)。
+   */
+  telemetry?: AgentTelemetryConfig;
   /**
    * Host-owned overflow sink. Tool results exceeding their inline budget may
    * be persisted only through this port; the agent loop never chooses a path

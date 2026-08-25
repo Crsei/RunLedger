@@ -17,6 +17,15 @@ import type { ModelRouteDecision, ModelRouteRequest } from "../model-routing/typ
 import type { MultiAgentResult } from "./types.ts";
 import { applyRetryPolicy, type RetryPolicy } from "../retry/policy.ts";
 import type { ProviderPolicyProjection } from "../../storage/settings-policies.ts";
+import {
+	failChatSpan,
+	finishChatSpan,
+	resolveTelemetry,
+	runInActiveSpan,
+	startChatSpan,
+	type AgentTelemetryConfig,
+} from "../telemetry/telemetry.ts";
+import { PiGenAIAttr } from "../telemetry/semconv.ts";
 
 export interface ChildModelRequestRouter {
 	route(request: ModelRouteRequest): ModelRouteDecision | Promise<ModelRouteDecision>;
@@ -63,6 +72,8 @@ export interface ChildModelRuntimeFactoryOptions {
 	readonly getRetryPolicy?: () => RetryPolicy | undefined;
 	readonly getProviderPolicy?: () => ProviderPolicyProjection | undefined;
 	readonly providerGate?: ProviderRequestGate;
+	/** OTEL oneshot 插桩配置(child_agent)。child 不跑主 loop 插桩,由 streamFn 打 span。 */
+	readonly telemetry?: AgentTelemetryConfig;
 }
 
 export interface ProviderRequestGate {
@@ -116,6 +127,8 @@ export function createChildModelRuntimeFactory(
 						retryPolicy,
 						providerPolicy,
 						providerGate: options.providerGate,
+						telemetry: options.telemetry,
+						oneshotKind: "child_agent",
 					}),
 				}),
 			};
@@ -130,6 +143,12 @@ export function createSessionModelStreamFn(options: {
 	readonly retryPolicy?: RetryPolicy;
 	readonly providerPolicy?: ProviderPolicyProjection;
 	readonly providerGate?: ProviderRequestGate;
+	/**
+	 * OTEL oneshot 插桩配置。主 Agent 的 loop 已自行打 chat span,传 undefined;
+	 * child runtime(不走 loop 插桩)传 telemetry + oneshotKind("child_agent")。
+	 */
+	readonly telemetry?: AgentTelemetryConfig;
+	readonly oneshotKind?: string;
 }): StreamFn {
 	const providerGate = options.providerGate ?? createProviderRequestGate(options.providerPolicy);
 	return async (requestModel, context, streamOptions) => {
@@ -155,11 +174,59 @@ export function createSessionModelStreamFn(options: {
 			? streamOptions
 			: applyRetryPolicy(streamOptions ?? {}, options.retryPolicy);
 		const release = await providerGate.acquire(requestModel.provider, streamOptions?.signal);
+		// OTEL:child runtime 不跑主 loop 插桩,这里在 streamFn 层打 chat span
+		// (oneshot kind = child_agent)。主 Agent 的 streamFn 不传 telemetry,短路。
+		const telemetry = resolveTelemetry(options.telemetry, options.sessionId);
+		const chatSpan = startChatSpan(telemetry, requestModel, {
+			stepNumber: -1,
+			request: {
+				reasoningEffort: typeof streamOptions?.reasoning === "string" ? streamOptions.reasoning : undefined,
+				serviceTier: streamOptions?.serviceTier,
+				toolChoice: streamOptions?.toolChoice,
+				tools: context.tools,
+				systemPrompt: context.systemPrompt,
+				messages: context.messages,
+			},
+		});
+		if (chatSpan && options.oneshotKind) chatSpan.setAttribute(PiGenAIAttr.OneshotKind, options.oneshotKind);
+		let capturedHeaders: Readonly<Record<string, string>> | undefined;
+		const userOnResponse = effectiveOptions?.onResponse;
+		const captureOnResponse: NonNullable<SimpleStreamOptions["onResponse"]> = (response, modelInfo) => {
+			capturedHeaders = response.headers;
+			return userOnResponse?.(response, modelInfo);
+		};
 		try {
-			const stream = options.models.streamSimple(requestModel, context as Context, effectiveOptions);
-			void stream.result().then(release, release);
+			const stream = await runInActiveSpan(chatSpan, async () =>
+				options.models.streamSimple(requestModel, context as Context, {
+					...effectiveOptions,
+					onResponse: captureOnResponse,
+				}),
+			);
+			void stream.result().then(
+				(message) => {
+					void finishChatSpan(telemetry, chatSpan, message, {
+						stepNumber: -1,
+						serviceTier: effectiveOptions?.serviceTier,
+						responseHeaders: capturedHeaders,
+						baseUrl: requestModel.baseUrl,
+					}).then(release, release);
+				},
+				(error) => {
+					failChatSpan(telemetry, chatSpan, {
+						errorObject: error,
+						responseHeaders: capturedHeaders,
+						baseUrl: requestModel.baseUrl,
+					});
+					release();
+				},
+			);
 			return stream;
 		} catch (error) {
+			failChatSpan(telemetry, chatSpan, {
+				errorObject: error,
+				responseHeaders: capturedHeaders,
+				baseUrl: requestModel.baseUrl,
+			});
 			release();
 			throw error;
 		}

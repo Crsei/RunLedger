@@ -20,6 +20,7 @@ import { replaySession } from "../../storage/session-codec.ts";
 import type { ExecutionEnv } from "../execution-env.ts";
 import { createStdlibTools, type StdlibToolsOptions } from "../tools/index.ts";
 import { InteractiveSessionController, type ModelRequestRouter, type RuntimeSelectionOverrides, type SessionTitleChangedEvent } from "../interactive-session-controller.ts";
+import type { AgentTelemetryConfig } from "../telemetry/telemetry.ts";
 import type { AgentTool } from "../types.ts";
 import type { Models } from "../../models.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
@@ -93,6 +94,8 @@ export interface SessionDomainCompositionOptions {
 	/** Host-owned route gate shared by coding and title completions. */
 	readonly modelRequestRouter?: ModelRequestRouter;
 	readonly traceRecorderFactory?: TraceRecorderFactory;
+	/** OTEL 插桩配置;经 controller 转发到 Agent loop 与 oneshot 调用点。 */
+	readonly telemetry?: AgentTelemetryConfig;
 	/** Session Event Store + 当前 driver reverse-request 的 approval authority。 */
 	readonly approvalPorts?: SessionApprovalPorts;
 	/** CLI > managed > project > user 的 session-scoped Security 配置层。 */
@@ -257,6 +260,7 @@ export async function assembleSessionDomain(
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
+		telemetry: options.telemetry,
 		extensionHookRuntime: extensions.hookRuntime,
 		extensionHookSnapshotId: () => extensions.turnLifecycle?.snapshotId(),
 		extensionTurnAdmission: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.admitTurn(),
@@ -336,6 +340,7 @@ export async function assembleSessionDomain(
 			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
 			retryPolicy: () => controller.retryPolicySnapshot,
 			providerGate: controller.providerRequestGate,
+			telemetry: options.telemetry,
 		});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
 	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);

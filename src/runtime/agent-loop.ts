@@ -66,7 +66,7 @@ import type {
   ToolResultOverflowStore,
   AgentRunTerminationReason,
 } from "./types.ts";
-import type { AssistantMessage, ImageContent, Message, StopReason, TextContent, Tool, ToolCall } from "../types.ts";
+import type { AssistantMessage, ImageContent, Message, SimpleStreamOptions, StopReason, TextContent, Tool, ToolCall } from "../types.ts";
 import { validateToolArguments } from "../utils/validation.ts";
 import { newId } from "./ledger/types.ts";
 import type { LedgerSink, LedgerEntry } from "./ledger/types.ts";
@@ -79,6 +79,23 @@ import { ContextAssemblyError } from "./context/context-engine.ts";
 import { TokenEstimator } from "./context/token-estimator.ts";
 import type { ToolPolicyProjection } from "../storage/settings-policies.ts";
 import { redactRuntimeArtifactText } from "./trace/redaction.ts";
+
+import type { AgentTelemetryConfig } from "./telemetry/telemetry.ts";
+import {
+  failChatSpan,
+  finishChatSpan,
+  finishExecuteToolSpan,
+  finishInvokeAgentSpan,
+  recordSkippedTool,
+  resolveTelemetry,
+  runInActiveSpan,
+  startChatSpan,
+  startExecuteToolSpan,
+  startInvokeAgentSpan,
+} from "./telemetry/telemetry.ts";
+import type { AgentTelemetry } from "./telemetry/telemetry.ts";
+import type { ToolStatus } from "./telemetry/run-collector.ts";
+import type { Span } from "@opentelemetry/api";
 
 /**
  * 与 pi 对齐的对外接口。本期只实现 runAgentLoop 与 runAgentLoopContinue,
@@ -98,6 +115,14 @@ export async function runAgentLoop(
   const sessionId = ledger?.sessionId ?? newId();
   const runId = `run-${newId()}`;
 
+  // OTEL 插桩:整轮 run 包裹在 invoke_agent span 内(对齐 pi runLoop 结构)。
+  // telemetry 未配置时 resolveTelemetry 返回 undefined,所有 helper 短路零开销。
+  const telemetry = resolveTelemetry(config.telemetry, sessionId);
+  const invokeAgentSpan = startInvokeAgentSpan(telemetry, config.model);
+  const stepCounter = { count: 0 };
+  let caughtError: unknown;
+  try {
+    return await runInActiveSpan(invokeAgentSpan, async () => {
   if (config.traceRecorder) {
     await config.traceRecorder.startRun({ agentId: sessionId });
   }
@@ -310,29 +335,49 @@ export async function runAgentLoop(
       ? await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext })
       : undefined;
 
-    // 2. 取 streamFn
+    // 2. 取 streamFn + OTEL chat span。chat span 包裹 streamFn 调用与
+    // 消费循环,使 provider HTTP 调用(可能 lazy 到首次 next())落在 span 上下文内。
     const fn = streamFn;
     if (!fn) {
       throw new Error("streamFn is required (avoid passing undefined)");
     }
+    const chatStepNumber = stepCounter.count;
+    stepCounter.count += 1;
+    const chatSpan = startChatSpan(telemetry, loopModel, {
+      parent: invokeAgentSpan,
+      stepNumber: chatStepNumber,
+      request: {
+        reasoningEffort: typeof loopReasoning === "string" ? loopReasoning : undefined,
+        tools: llmContext.tools,
+        systemPrompt: llmContext.systemPrompt,
+        messages: llmContext.messages,
+      },
+    });
+    let capturedHeaders: Readonly<Record<string, string>> | undefined;
+    const captureOnResponse: NonNullable<SimpleStreamOptions["onResponse"]> = (response) => {
+      capturedHeaders = response.headers;
+    };
+
+    // 3. 消费 stream,边 emit message_* 事件,边累积 assistant content
+    const assistantContent: AssistantAgentMessage["content"] = [];
+    let assistantStopReason: StopReason = "stop" as StopReason;
+    let assistantUsage: AssistantAgentMessage["usage"] | undefined;
+    let assistantErrorMessage: string | undefined;
+    let providerMessage: AssistantMessage | undefined;
+    let messageOpen = false;
+    let streamStartedAt: number | undefined;
+    try {
+      await runInActiveSpan(chatSpan, async () => {
     const stream = await Promise.resolve(
       fn(loopModel, llmContext, {
         apiKey: config.apiKey,
         env: config.env,
         signal,
         metadata: { requestKind: config.requestKind ?? "interactive" },
+        onResponse: captureOnResponse,
         ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
       }),
     );
-
-    // 3. 消费 stream,边 emit message_* 事件,边累积 assistant content
-    const assistantContent: AssistantAgentMessage["content"] = [];
-    let assistantStopReason: StopReason = "stop";
-    let assistantUsage: AssistantAgentMessage["usage"] | undefined;
-    let assistantErrorMessage: string | undefined;
-    let providerMessage: AssistantMessage | undefined;
-    let messageOpen = false;
-    let streamStartedAt: number | undefined;
     for await (const ev of stream) {
       const ts = Date.now();
       if (ev.type === "start") {
@@ -394,6 +439,15 @@ export async function runAgentLoop(
         assistantErrorMessage = ev.error.errorMessage;
       }
     }
+      });
+    } catch (chatError) {
+      failChatSpan(telemetry, chatSpan, {
+        errorObject: chatError,
+        responseHeaders: capturedHeaders,
+        baseUrl: loopModel.baseUrl,
+      });
+      throw chatError;
+    }
     const measuredDurationMs = providerMessage !== undefined
       && providerMessage.durationMs === undefined
       && providerMessage.stopReason !== "error"
@@ -407,6 +461,21 @@ export async function runAgentLoop(
     const retainedDurationMs = retainedProviderMessage?.durationMs;
     const retainedTimingSource = retainedProviderMessage?.timingSource
       ?? (retainedDurationMs === undefined ? undefined : "provider");
+    // OTEL:用最终 provider message 收尾 chat span(usage/成本/gateway 属性 +
+    // emitChatUsage);流结束无终端消息时按失败记。
+    if (retainedProviderMessage !== undefined) {
+      await finishChatSpan(telemetry, chatSpan, retainedProviderMessage, {
+        stepNumber: chatStepNumber,
+        responseHeaders: capturedHeaders,
+        baseUrl: loopModel.baseUrl,
+      });
+    } else {
+      failChatSpan(telemetry, chatSpan, {
+        errorObject: new Error("provider stream ended without a terminal event"),
+        responseHeaders: capturedHeaders,
+        baseUrl: loopModel.baseUrl,
+      });
+    }
     const assistantMessage: AssistantAgentMessage = {
       role: "assistant",
       content: retainedProviderMessage?.content ?? assistantContent,
@@ -462,7 +531,7 @@ export async function runAgentLoop(
       let toolResults: ToolResultContent[];
       if (assistantStopReason === "length") {
         // 截断降级路径:不真正执行,每工具合成 isError ToolResultContent
-        toolResults = await failToolCallsFromTruncatedMessage(toolCalls, fire, sessionId);
+        toolResults = await failToolCallsFromTruncatedMessage(toolCalls, fire, sessionId, telemetry);
       } else {
         // 5. 执行
         toolResults = await executeToolCalls(
@@ -475,6 +544,8 @@ export async function runAgentLoop(
           signal ?? new AbortController().signal,
           fire,
           sessionId,
+          telemetry,
+          invokeAgentSpan,
         );
       }
       for (const r of toolResults) {
@@ -608,6 +679,16 @@ export async function runAgentLoop(
   // 同步 context.messages
   context.messages = messages;
   return messages;
+    });
+  } catch (err) {
+    caughtError = err;
+    throw err;
+  } finally {
+    finishInvokeAgentSpan(telemetry, invokeAgentSpan, {
+      stepCount: stepCounter.count,
+      errorObject: caughtError,
+    });
+  }
 }
 
 function isApprovalExpiration(result: ToolResultContent): boolean {
@@ -779,6 +860,8 @@ async function executeToolCalls(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  telemetry: AgentTelemetry | undefined,
+  invokeAgentSpan: Span | undefined,
 ): Promise<ToolResultContent[]> {
   const mode = resolveExecutionMode(toolCalls, tools, config.toolExecution ?? "sequential");
   if (mode === "parallel") {
@@ -786,16 +869,16 @@ async function executeToolCalls(
     // execute 并发,finalize 按 await 实际完成顺序串行
     const prepared: PreparedToolCall[] = [];
     for (const tc of toolCalls) {
-      const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
+      const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId, telemetry, invokeAgentSpan);
       prepared.push(p);
     }
     const results = await Promise.all(
-      prepared.map((p) => executePreparedToolCall(p, config, signal, fire, sessionId)),
+      prepared.map((p) => executePreparedToolCall(p, config, signal, fire, sessionId, telemetry)),
     );
     const out: ToolResultContent[] = [];
     for (let i = 0; i < prepared.length; i++) {
       out.push(
-        await finalizeExecutedToolCall(prepared[i]!, results[i]!, context, config, signal, fire, sessionId),
+        await finalizeExecutedToolCall(prepared[i]!, results[i]!, context, config, signal, fire, sessionId, telemetry),
       );
     }
     return out;
@@ -803,9 +886,9 @@ async function executeToolCalls(
   // sequential
   const out: ToolResultContent[] = [];
   for (const tc of toolCalls) {
-    const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId);
-    const r = await executePreparedToolCall(p, config, signal, fire, sessionId);
-    out.push(await finalizeExecutedToolCall(p, r, context, config, signal, fire, sessionId));
+    const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId, telemetry, invokeAgentSpan);
+    const r = await executePreparedToolCall(p, config, signal, fire, sessionId, telemetry);
+    out.push(await finalizeExecutedToolCall(p, r, context, config, signal, fire, sessionId, telemetry));
   }
   return out;
 }
@@ -843,6 +926,8 @@ interface PreparedToolCall {
   args: unknown;
   /** beforeToolCall 已被调用且返回 block:true,直接合成 isError result */
   blocked?: { reason?: string };
+  /** OTEL execute_tool span,prepare 阶段 start,finalize 阶段 finish。 */
+  telemetrySpan?: Span;
 }
 
 /**
@@ -859,7 +944,18 @@ async function prepareToolCall(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  telemetry: AgentTelemetry | undefined,
+  invokeAgentSpan: Span | undefined,
 ): Promise<PreparedToolCall> {
+  const tool = tools.find((t) => t.name === tc.name);
+  // OTEL execute_tool span 于 prepare 前开始(携带工具元数据),finalize 收尾。
+  const telemetrySpan = startExecuteToolSpan(telemetry, {
+    tool,
+    toolName: tc.name,
+    toolCallId: tc.id,
+    args: tc.arguments,
+    parent: invokeAgentSpan,
+  });
   const tStart = Date.now();
   await fire(
     {
@@ -878,14 +974,14 @@ async function prepareToolCall(
     },
   );
 
-  const tool = tools.find((t) => t.name === tc.name);
   if (!tool) {
-    return { toolCall: tc, tool: undefined, args: tc.arguments };
+    return { toolCall: tc, tool: undefined, args: tc.arguments, telemetrySpan };
   }
 
   // signal 已取消时 immediately 终止
   if (signal?.aborted) {
-    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted" } };
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: "Operation aborted" }, telemetrySpan,
+    };
   }
 
   // schema 校验:先把 raw args 走 prepareArguments,再 validate
@@ -893,7 +989,8 @@ async function prepareToolCall(
   try {
     preparedArgs = prepareToolArguments(tool, tc, tc.arguments);
   } catch (e) {
-    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e) } };
+    return { toolCall: tc, tool, args: tc.arguments, blocked: { reason: (e as Error).message ?? String(e) }, telemetrySpan,
+    };
   }
 
   // beforeToolCall hook
@@ -912,6 +1009,7 @@ async function prepareToolCall(
           tool,
           args: preparedArgs,
           blocked: { reason: (before as BeforeToolCallResult).reason },
+        telemetrySpan,
         };
       }
 			if (before !== undefined && Object.hasOwn(before, "updatedInput")) {
@@ -923,6 +1021,7 @@ async function prepareToolCall(
 						tool,
 						args: preparedArgs,
 						blocked: { reason: `updated tool input failed schema validation: ${(e as Error).message ?? String(e)}` },
+					telemetrySpan,
 					};
 				}
 				const reauthorized = await config.beforeToolCall({
@@ -938,6 +1037,7 @@ async function prepareToolCall(
 						tool,
 						args: preparedArgs,
 						blocked: { reason: reauthorized.reason },
+					telemetrySpan,
 					};
 				}
 				if (reauthorized !== undefined && Object.hasOwn(reauthorized, "updatedInput")) {
@@ -946,6 +1046,7 @@ async function prepareToolCall(
 						tool,
 						args: preparedArgs,
 						blocked: { reason: "tool input changed again during reauthorization" },
+					telemetrySpan,
 					};
 				}
 			}
@@ -957,11 +1058,12 @@ async function prepareToolCall(
         tool,
         args: preparedArgs,
         blocked: { reason: (e as Error).message ?? String(e) },
+      telemetrySpan,
       };
     }
   }
 
-  return { toolCall: tc, tool, args: preparedArgs };
+  return { toolCall: tc, tool, args: preparedArgs, telemetrySpan };
 }
 
 function prepareToolArguments(tool: AgentTool, toolCall: AgentToolCall, input: unknown): unknown {
@@ -985,6 +1087,7 @@ async function executePreparedToolCall(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  telemetry: AgentTelemetry | undefined,
 ): Promise<AgentToolExecutedResult> {
   // blocked / tool 未找到 → 立即合成 isError 内容,不调 execute
   if (p.blocked) {
@@ -1030,38 +1133,45 @@ async function executePreparedToolCall(
     toolCallId: p.toolCall.id,
   });
 
+  // 工具执行体跑在 execute_tool span 的 active 上下文内(pi 同款),
+  // 使工具内部产生的 span 挂到 execute_tool 下。void 仅为满足 telemetry
+  // 未启用时的短路;telemetry 变量在此保留以便语义对照。
+  void telemetry;
   try {
-    const result = await p.tool.execute(
-      p.toolCall.id,
-      p.args as never,
-      signal,
-      onUpdate,
-      toolContext,
-    );
-    await updateChain;
-    // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
-    const maxChars = p.tool.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
-    const content = await applyToolResultBudget(
-      result.content,
-      maxChars,
-      p.toolCall.id,
-      config.toolResultOverflowStore,
-      config.runtimeSettings?.toolPolicy,
-    );
-    return {
-      content,
-      isError: result.isError === true,
-      details: result.details,
-      addedToolNames: result.addedToolNames,
-      terminate: result.terminate,
-    };
+    return await runInActiveSpan(p.telemetrySpan, async () => {
+      const result = await p.tool!.execute(
+        p.toolCall.id,
+        p.args as never,
+        signal,
+        onUpdate,
+        toolContext,
+      );
+      await updateChain;
+      // 超 maxResultSizeChars 的 result content 文本溢出落盘 + 路径 hint
+      const maxChars = p.tool!.maxResultSizeChars ?? DEFAULT_MAX_BYTES;
+      const content = await applyToolResultBudget(
+        result.content,
+        maxChars,
+        p.toolCall.id,
+        config.toolResultOverflowStore,
+        config.runtimeSettings?.toolPolicy,
+      );
+      return {
+        content,
+        isError: result.isError === true,
+        details: result.details,
+        addedToolNames: result.addedToolNames,
+        terminate: result.terminate,
+      };
+    });
   } catch (e) {
     await updateChain;
-	const errorCode = codedError(e);
+    const errorCode = codedError(e);
     return {
       content: [{ type: "text", text: (e as Error).message ?? String(e) }],
       isError: true,
       details: errorCode === undefined ? undefined : { errorCode },
+      errorObject: e,
     };
   }
 }
@@ -1078,6 +1188,8 @@ interface AgentToolExecutedResult {
   details?: unknown;
   addedToolNames?: string[];
   terminate?: boolean;
+  /** 工具 execute() 抛出的原始错误;finalize 用它在 execute_tool span 上 recordException。 */
+  errorObject?: unknown;
 }
 
 /**
@@ -1367,6 +1479,7 @@ async function finalizeExecutedToolCall(
   signal: AbortSignal | undefined,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  telemetry: AgentTelemetry | undefined,
 ): Promise<ToolResultContent> {
   let finalContent: (TextContent | ImageContent)[] = r.content;
   let finalDetails: unknown = r.details;
@@ -1445,6 +1558,23 @@ async function finalizeExecutedToolCall(
     },
   );
 
+  // OTEL:收尾 execute_tool span。status 六态推导:blocked → beforeToolCall
+  // 阻断;aborted → 执行期 run signal 已取消;error → isError;否则 ok。
+  const status: ToolStatus = p.blocked
+    ? "blocked"
+    : finalIsError
+      ? (signal?.aborted === true ? "aborted" : "error")
+      : "ok";
+  finishExecuteToolSpan(telemetry, p.telemetrySpan, {
+    result: finalContent,
+    isError: finalIsError,
+    status,
+    errorMessage: p.blocked?.reason,
+    errorObject: r.errorObject,
+    toolCallId: p.toolCall.id,
+    toolName: p.toolCall.name,
+  });
+
   return result;
 }
 
@@ -1453,9 +1583,16 @@ async function failToolCallsFromTruncatedMessage(
   toolCalls: AgentToolCall[],
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  telemetry: AgentTelemetry | undefined,
 ): Promise<ToolResultContent[]> {
   const results: ToolResultContent[] = [];
   for (const tc of toolCalls) {
+    // OTEL:截断路径不产生 execute_tool span,按 skipped 记入 run summary。
+    recordSkippedTool(telemetry, {
+      toolCallId: tc.id,
+      toolName: tc.name,
+      status: "skipped",
+    });
     const errorText = "Tool call was not executed because the assistant response reached the output limit and its arguments may be incomplete.";
     const started = Date.now();
     await fire(

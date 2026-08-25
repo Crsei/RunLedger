@@ -27,6 +27,7 @@ import type {
 import type { AssistantMessage, Message, ModelThinkingLevel } from "../types.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type { TraceRecorderFactory } from "./trace/composition.ts";
+import type { AgentTelemetryConfig } from "./telemetry/telemetry.ts";
 import { newId } from "./ledger/types.ts";
 
 export interface EphemeralTurnRequest {
@@ -96,6 +97,11 @@ export interface AgentOptions {
   followUpMode?: QueueMode;
   /** 每个 prompt/run 创建独立 recorder；不得跨 run 复用有状态 recorder。 */
   traceRecorderFactory?: TraceRecorderFactory;
+  /**
+   * 可选:OpenTelemetry 插桩配置。prompt() 转发到 loop config(镜像
+   * traceRecorderFactory 模式);不传时 agent loop 零 tracer 查找。
+   */
+  telemetry?: AgentTelemetryConfig;
 }
 
 class PendingMessageQueue {
@@ -143,6 +149,7 @@ export class Agent {
   private readonly _toolExecution: "sequential" | "parallel";
   private readonly _signal?: AbortSignal;
   private readonly _traceRecorderFactory: TraceRecorderFactory | undefined;
+  private readonly _telemetryConfig: AgentTelemetryConfig | undefined;
   private readonly steeringQueue: PendingMessageQueue;
   private readonly followUpQueue: PendingMessageQueue;
   /** M8c:中断当前 turn 用的内部 controller;每次 prompt() 重建 */
@@ -169,6 +176,7 @@ export class Agent {
     this._toolExecution = opts.toolExecution ?? "sequential";
     this._signal = opts.signal;
     this._traceRecorderFactory = opts.traceRecorderFactory;
+    this._telemetryConfig = opts.telemetry;
     this.steeringQueue = new PendingMessageQueue(opts.steeringMode ?? "one-at-a-time");
     this.followUpQueue = new PendingMessageQueue(opts.followUpMode ?? "one-at-a-time");
     this.subscribers = new Set();
@@ -331,6 +339,7 @@ export class Agent {
       // ledger 已是 AgentLoopConfig 第一公民,直接挂入类型契约
       ledger: this._ledger,
       traceRecorder,
+      telemetry: this._telemetryConfig,
       getSteeringMessages: async () => {
         const drained = this.steeringQueue.drain();
         await this.emitQueueUpdate();

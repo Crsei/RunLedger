@@ -45,6 +45,7 @@ import { installSessionStoreSchema } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
 import { OwnerStore } from "../storage/session-store/owner-store.ts";
 import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult, type SessionWorkspaceFactory } from "./embedded-session-runtime.ts";
+import { createTelemetryExportConfig, flushTelemetryExport, initTelemetryExport, shutdownTelemetryExport } from "../runtime/telemetry/otel-export.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "./session-interactive-controller.ts";
 import { builtinModels } from "../providers/all.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
@@ -186,6 +187,11 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   const traceRecorderFactory = composeCliTraceRecorderFactory(layout, settings);
 
+  // OTEL:标准 OTEL_* env 驱动;无 endpoint / OTEL_SDK_DISABLED 时 no-op。
+  // 启用后把 metrics/log 钩子 merge 进 AgentLoopConfig.telemetry。
+  await initTelemetryExport();
+  const telemetryConfig = createTelemetryExportConfig(undefined);
+
   // §4.2:owner discovery 前只读冻结 schema header;too-new/too-old 全部 fail closed。
   // 首次运行(fresh 空库)直接安装首个 schema;非空库 missing_header 视为损坏。
   const db = openSessionDatabase(layout.database);
@@ -317,10 +323,12 @@ export async function main(argv: readonly string[]): Promise<void> {
 					models,
 					providerGate,
 					retryPolicy,
+					telemetry: telemetryConfig,
 				}),
 				retryPolicy: runtimeSettings.retry,
 			models,
 			traceRecorderFactory,
+			telemetry: telemetryConfig,
 			modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
 			multiAgent: await multiAgentPolicySourcesFor(typedSessionId, runtimeSettings.taskPolicy),
 			overrides: {
@@ -403,6 +411,9 @@ export async function main(argv: readonly string[]): Promise<void> {
     }));
     composerShapeComposition.dispose();
     db.close();
+    // OTEL:退出路径 flush + shutdown(forceFlush 再关闭,幂等 no-op)。
+    await flushTelemetryExport();
+    await shutdownTelemetryExport();
     if (process.env.RUNLEDGER_DEBUG === "1") {
       process.stderr.write("[runledger] exit. all owned Session runtimes stopped\n");
     }
