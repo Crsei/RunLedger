@@ -13,6 +13,7 @@ import type { ProviderRequestGate } from "../runtime/agents/child-model-runtime.
 import type { RetryPolicy } from "../runtime/retry/policy.ts";
 import type { CompactionSummarizer } from "../runtime/types.ts";
 import { createProductionSummarizer } from "../runtime/context/compaction/production-summarizer.ts";
+import type { AgentTelemetryConfig } from "../runtime/telemetry/telemetry.ts";
 
 export interface CliSessionModelRequestRouterFactory {
 	forSession(input: { readonly sessionId: SessionId; readonly workspaceStorageKey: string }): ModelRequestRouter;
@@ -20,6 +21,7 @@ export interface CliSessionModelRequestRouterFactory {
 		readonly models: Models;
 		readonly providerGate: ProviderRequestGate;
 		readonly retryPolicy: RetryPolicy;
+		readonly telemetry?: AgentTelemetryConfig;
 	}): CompactionSummarizer;
 }
 
@@ -32,13 +34,14 @@ export async function createCliSessionModelRequestRouterFactory(options: {
 	const writers = new Map<string, JsonlRuntimeEventStore>();
 	const routers = new Map<string, ModelRequestRouter>();
 	return {
-		compactionSummarizer: ({ models, providerGate, retryPolicy }) => {
+		compactionSummarizer: ({ models, providerGate, retryPolicy, telemetry }) => {
 			if (!compatibility.ok) return async () => undefined;
 			const summarize = createProductionSummarizer({
 				models,
 				router: compatibility.router,
 				providerGate,
 				retryPolicy,
+				telemetry,
 			});
 			return async (input) => {
 				const result = await summarize({

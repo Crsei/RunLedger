@@ -8,6 +8,7 @@ import { createRuntimeId } from "../protocol/ids.ts";
 import type { ModelRouteRequest } from "../model-routing/types.ts";
 import type { ChildModelRequestRouter } from "../agents/child-model-runtime.ts";
 import type { ProviderRequestGate } from "../agents/child-model-runtime.ts";
+import { instrumentedCompleteSimple, resolveTelemetry, type AgentTelemetryConfig } from "../telemetry/telemetry.ts";
 import { applyRetryPolicy, DEFAULT_RETRY_POLICY, type RetryPolicy } from "../retry/policy.ts";
 import { assistantTextForSessionTitle, isLowSignalTitleInput, normalizeGeneratedSessionTitle, SESSION_TITLE_SYSTEM_PROMPT } from "./title-generator.ts";
 
@@ -34,6 +35,8 @@ export interface SessionTitleLifecycleOptions {
 	readonly providerGate?: ProviderRequestGate;
 	readonly enabled?: boolean;
 	readonly timeoutMs?: number;
+	/** OTEL oneshot 插桩配置(auto_title)。缺省不插桩。 */
+	readonly telemetry?: AgentTelemetryConfig;
 	readonly onFailure?: (reason: "no-model" | "low-signal" | "command" | "busy" | "cancelled" | "provider-error" | "empty" | "invalid-output" | "stale") => void;
 }
 
@@ -118,13 +121,17 @@ export class SessionTitleLifecycle {
 				? undefined
 				: await this.options.providerGate.acquire(model.provider, controller.signal);
 			const completion = await Promise.race([
-				this.options.models.completeSimple(model, context, applyRetryPolicy({
+				instrumentedCompleteSimple(model, context, applyRetryPolicy({
 					signal: controller.signal,
 					maxTokens: 64,
 					temperature: 0,
 					reasoning: "minimal",
 					timeoutMs,
-			}, typeof this.options.retryPolicy === "function" ? this.options.retryPolicy() : this.options.retryPolicy ?? DEFAULT_RETRY_POLICY)),
+			}, typeof this.options.retryPolicy === "function" ? this.options.retryPolicy() : this.options.retryPolicy ?? DEFAULT_RETRY_POLICY), {
+					telemetry: resolveTelemetry(this.options.telemetry, this.options.sessionId),
+					oneshotKind: "auto_title",
+					completeImpl: (m, c, o) => this.options.models.completeSimple(m, c, o),
+				}),
 				abortOnSignal(controller.signal),
 			]);
 			if (this.disposed || controller.signal.aborted) {

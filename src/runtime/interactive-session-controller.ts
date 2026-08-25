@@ -32,6 +32,8 @@ import type { SessionDomainMutationContext, SessionDomainRequestContext, Session
 import type { AgentRunSummary } from "./session-runtime/run-timing.ts";
 import type { LedgerEntry } from "./ledger/types.ts";
 import { createStdlibTools } from "./tools/index.ts";
+import type { AgentTelemetryConfig } from "./telemetry/telemetry.ts";
+import { flushTelemetryExport } from "./telemetry/otel-export.ts";
 import {
   AllowAllToolAuthorizationPolicy,
   authorizationBeforeToolCall,
@@ -90,6 +92,8 @@ export interface InteractiveSessionControllerOptions {
   toolsForRuntimeSettings?: (settings: EffectiveRuntimeSettingsSnapshot) => AgentTool[];
   authorizationPolicy?: ToolAuthorizationPolicy;
   traceRecorderFactory?: TraceRecorderFactory;
+  /** OTEL 插桩配置;转发到 Agent(loop chat/tool span)与 oneshot 调用点。 */
+  telemetry?: AgentTelemetryConfig;
   executionEnv?: ExecutionEnv;
   toolResultOverflowStore?: ToolResultOverflowStore;
   /** Host-owned bounded model request assembly; local tests may omit it. */
@@ -254,6 +258,7 @@ export class InteractiveSessionController {
 	private readonly additionalTools: AgentTool[] = [];
   private readonly policy: ToolAuthorizationPolicy;
   private readonly traceRecorderFactory: TraceRecorderFactory | undefined;
+  private readonly telemetryConfig: AgentTelemetryConfig | undefined;
   private readonly executionEnv: ExecutionEnv | undefined;
   private readonly toolResultOverflowStore: ToolResultOverflowStore | undefined;
   private readonly modelContextAssembler: ModelContextAssembler | undefined;
@@ -295,6 +300,7 @@ export class InteractiveSessionController {
     this.tools = opts.tools ?? this.toolsForRuntimeSettings?.(this.runtimeSettings) ?? [];
     this.policy = opts.authorizationPolicy ?? new AllowAllToolAuthorizationPolicy();
     this.traceRecorderFactory = opts.traceRecorderFactory;
+    this.telemetryConfig = opts.telemetry;
     this.executionEnv = opts.executionEnv;
     this.toolResultOverflowStore = opts.toolResultOverflowStore;
     this.modelContextAssembler = opts.modelContextAssembler;
@@ -483,6 +489,9 @@ export class InteractiveSessionController {
 	      const acceptedInput = promptText(submitted?.finalInput, text);
 	      this.onAcceptedUserPrompt?.(acceptedInput);
 	      await agent.prompt(acceptedInput);
+	      // turn 边界 flush:长驻进程(Session Owner server)下让 span/metric/log
+	      // 及时到达 collector,而不是等 batch 窗口。未启用时是廉价 no-op。
+	      await flushTelemetryExport();
     } catch (error) {
       await this.extensionTurnAbort?.().catch(() => undefined);
       throw error;
@@ -528,6 +537,7 @@ export class InteractiveSessionController {
 	  getRetryPolicy: () => this.retryPolicy,
 	  getProviderPolicy: () => this.providerPolicy,
 	  providerGate: this.providerGate,
+	  telemetry: this.telemetryConfig,
     });
 	}
 
@@ -594,6 +604,7 @@ export class InteractiveSessionController {
       steeringMode: this.runtimeSettings.sessionPolicy.steeringMode,
       followUpMode: this.runtimeSettings.sessionPolicy.followUpMode,
       traceRecorderFactory: this.traceRecorderFactory,
+      telemetry: this.telemetryConfig,
     });
     this.unsubscribeAgent = this.agent.subscribe((event) => this.dispatch(event));
   }

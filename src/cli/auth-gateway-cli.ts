@@ -16,6 +16,7 @@ import {
 	startAuthGatewayServer,
 	type AuthGatewayServerHandle,
 } from "../auth-gateway/server.ts";
+import { createTelemetryExportConfig, flushTelemetryExport, initTelemetryExport, shutdownTelemetryExport } from "../runtime/telemetry/otel-export.ts";
 
 export const AUTH_GATEWAY_USAGE = `Usage: runledger auth-gateway <serve|token|status|check> [options]
 
@@ -226,15 +227,20 @@ export async function runAuthGatewayCommand(argv: readonly string[], dependencie
 
 	const token = await ensureAuthGatewayToken(tokenPath);
 	const models = dependencies.models ?? await createGatewayModels(home);
+	// OTEL:gateway 进程同样走标准 env 引导;退出时 flush + shutdown。
+	await initTelemetryExport();
 	const server = await (dependencies.startServer ?? startAuthGatewayServer)({
 		bindHost: parsed.command.bindHost,
 		port: parsed.command.port,
 		noAuth: parsed.command.noAuth,
 		token,
 		models,
+		telemetry: createTelemetryExportConfig(undefined),
 	});
 	writeStdout(`runledger auth-gateway listening on ${server.bindHost}:${server.port}\n`);
 	await waitForShutdown(server);
+	await flushTelemetryExport();
+	await shutdownTelemetryExport();
 }
 
 async function waitForShutdown(server: AuthGatewayServerHandle): Promise<void> {

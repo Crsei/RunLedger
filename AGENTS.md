@@ -166,6 +166,14 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 - fresh create 启动显示响应式两栏 Welcome 页面（RUN/LEDGER 双段 LOGO、当前 Session 摘要、最近会话与 Tip）；resume/continue/fork 及同进程后续 Session 视图不重复显示。
 - `tips.txt` 通过 `readFileSync(new URL(..., import.meta.url))` 同时兼容 Bun、tsx 与 Node，构建时复制到 `dist/tui/components/tips.txt`，全局 `runledger` 继续只加载 `dist`。
 
+#### 1.2.ve OpenTelemetry 插桩与 OTLP 导出（P0–P6，2026-08-25）
+
+- `src/runtime/telemetry/` 移植 oh-my-pi `packages/agent/src/{telemetry,run-collector}.ts` + `packages/coding-agent/src/telemetry-export.ts`（快照 06aecdd5）：GenAI semantic-convention span（`invoke_agent` / `chat` / `execute_tool` / `handoff` / oneshot `chat`）+ `pi.gen_ai.*` 扩展属性 + 内容采集三档（none/summary/full）+ 成本/网关/归一化钩子 + per-run `AgentRunSummary` / `AgentRunCoverage` run-collector；全部 opt-in（`AgentLoopConfig.telemetry` / `AgentOptions.telemetry`），不传时零 tracer 查找；
+- `AgentLoopConfig.telemetry: {}` 即启用；agent-loop 在 streamFn 调用点打 chat span（`runInActiveSpan` 包裹调用与消费），工具三阶段 prepare→finalize 打 execute_tool span，length 截断路径走 `recordSkippedTool`；step 计数注入 run-collector；
+- oneshot 调用点经 `instrumentedCompleteSimple`（completeImpl 必填，RunLedger 无独立 `completeSimple` 导出）打 `pi.gen_ai.oneshot.kind`：`compaction_summary`（production-summarizer）、`auto_title`（title-lifecycle）、`child_agent`（child runtime streamFn，child 不跑 loop 插桩避免双 span）、`gateway`（auth-gateway dispatch）；
+- OTLP 导出由标准 `OTEL_*` env 驱动（D2，不进 settings；`recording.mode` 仍是本地审计记录唯一 authority）：`initTelemetryExport()` 幂等、`OTEL_SDK_DISABLED=true` 或无 endpoint no-op、只支持 `http/protobuf`、service.name 默认 `runledger`；trace/log/metric 三信号 + `AgentMetricRecorder`（token 直方图 / `pi.omp.agent.*` counter）+ run-summary log 事件（D4，无中央 logger sink）；turn 边界 + 30s unref 定时 + 退出 `shutdownTelemetryExport()` 三处 flush；
+- 测试：`tests/runtime/telemetry/{otel,run-summary,compaction-telemetry,otel-export}.test.ts` 52 测试（InMemorySpanExporter + AsyncLocalStorageContextManager + mock streamFn）。状态入口为 `development-doc/telemetry/01-telemetry-port-plan.md`（含 env 契约与验收矩阵结果）；门禁 `npm run check` / `npm test` / `npm run build` 全绿。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;
@@ -175,7 +183,7 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 - Compaction / branch summarization;
 - Skills (`SKILL.md` 加载) / Prompt templates;
 - `streamProxy` (browser → backend);
-- OpenTelemetry / metrics / RBAC / 多租户;
+- RBAC / 多租户;
 - pi `compat.ts` / `legacy-api-aliases.ts` / `env-api-keys.ts` / `cli.ts` 这些 coding-agent 产物层。
 
 ## 2. 代码风格

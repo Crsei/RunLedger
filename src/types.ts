@@ -131,6 +131,61 @@ export interface ThinkingBudgets {
 // Base options all providers share
 export type CacheRetention = "none" | "short" | "long";
 
+export type ToolChoice =
+	| "auto"
+	| "none"
+	| "any"
+	| "required"
+	| { type: "function"; name: string }
+	| { type: "function"; function: { name: string } }
+	| { type: "tool"; name: string }
+	| { type: "computer" };
+
+/**
+ * Service tier hint for processing priority / cost control. These are the
+ * values providers consume on the wire:
+ *
+ * - OpenAI / OpenAI-Codex: sent verbatim as the `service_tier` field
+ *   (`flex`/`scale`/`priority`).
+ * - Google (Gemini API + Vertex AI): sent as the top-level `serviceTier`
+ *   field (`flex`/`priority`).
+ * - OpenRouter: passed through as `service_tier`; OpenRouter realizes it for
+ *   the OpenAI- and Google-family upstreams it supports and ignores it
+ *   otherwise.
+ * - Direct Anthropic: `"priority"` is translated into `speed: "fast"` plus the
+ *   fast-mode beta on supported Opus models. Other tiers are ignored.
+ */
+export type ServiceTier = "auto" | "default" | "flex" | "scale" | "priority";
+
+/**
+ * True when the tier should be sent on the wire as the provider's service-tier
+ * request field. `auto` is never forwarded — it is OpenAI's implicit default, so
+ * omitting `service_tier` is identical to requesting `auto`, and the Codex
+ * (ChatGPT OAuth) endpoint rejects an explicit `auto` outright. OpenAI /
+ * OpenAI-Codex accept every other {@link ServiceTier}; Google (Gemini API +
+ * Vertex) and OpenRouter accept `flex`/`priority`; Fireworks Serverless
+ * realizes only its Priority serving path. Anthropic is absent because it
+ * realizes `priority` via `speed: "fast"`.
+ */
+export function shouldSendServiceTier(
+	serviceTier: ServiceTier | null | undefined,
+	provider: string | undefined,
+): boolean {
+	if (!serviceTier || serviceTier === "auto") return false;
+	if (provider === "openai" || provider === "openai-codex") return true;
+	if (provider === "openrouter") {
+		return serviceTier === "flex" || serviceTier === "scale" || serviceTier === "priority";
+	}
+	if (provider === "google") {
+		return serviceTier === "flex" || serviceTier === "priority";
+	}
+	// Vertex realizes only priority (via header); flex has no documented control.
+	if (provider === "google-vertex" || provider === "fireworks") {
+		return serviceTier === "priority";
+	}
+	return false;
+}
+
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
@@ -337,6 +392,10 @@ export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
+	/** Optional tool choice override for compatible providers */
+	toolChoice?: ToolChoice;
+	/** OpenAI service tier for processing priority/cost control. Ignored by non-OpenAI providers. */
+	serviceTier?: ServiceTier;
 }
 
 // Generic StreamFunction with typed options.
