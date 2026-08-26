@@ -11,7 +11,8 @@ import {
 	type RunledgerLayout,
 	type RuntimePathFlavor,
 } from "../contracts/storage-layout.ts";
-import { createRuntimeId, type TraceId } from "../protocol/ids.ts";
+import { createRuntimeId, isRuntimeId, type SessionId, type TraceId } from "../protocol/ids.ts";
+import { writeSessionTraceIndex } from "../telemetry/local/trace-index.ts";
 import { FileArtifactStore } from "./artifact-store.ts";
 import { JsonlTraceEventStore } from "./event-store.ts";
 import {
@@ -83,7 +84,7 @@ export function createLocalTraceRecorderFactory(
 					metadataRoot: options.layout.artifactMetadata,
 				})
 				: undefined;
-			return new RuntimeTraceRecorder({
+			const recorder = new RuntimeTraceRecorder({
 				eventStore,
 				...(artifactStore === undefined ? {} : { artifactStore }),
 				traceId,
@@ -99,6 +100,20 @@ export function createLocalTraceRecorderFactory(
 					recordingConfigDigest: recordingConfigDigest(options.config),
 				},
 			});
+			if (isRuntimeId(input.sessionId, "session")) {
+				try {
+					await writeSessionTraceIndex(options.layout, {
+						format: "runledger.telemetry.session-trace-index",
+						version: 1,
+						sessionId: input.sessionId as SessionId,
+						traceId,
+						eventRelativeLocator: relativeLocator,
+					});
+				} catch {
+					onDiagnostic({ code: "trace_index_write_failed", message: "trace recording degraded: trace_index_write_failed" });
+				}
+			}
+			return recorder;
 		},
 	};
 }

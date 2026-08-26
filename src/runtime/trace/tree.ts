@@ -81,6 +81,7 @@ export class TraceTreeProjection {
 			...(event.cost === undefined ? {} : { cost: event.cost }),
 			...(event.error === undefined ? {} : { error: event.error }),
 			...(event.metadata === undefined ? {} : { metadata: event.metadata }),
+			...(event.observation === undefined ? {} : { observation: event.observation }),
 			children,
 		};
 	}

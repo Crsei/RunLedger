@@ -42,6 +42,8 @@ export interface NetworkRequest {
   headers: Record<string, string>;
   body?: string | Buffer;
   maxBytes: number;
+  /** Internal routing label; never enters the public observation. */
+  telemetryChannel?: "mcp_http" | "governed_http";
 }
 
 /** Bounded network response returned by the Host policy broker. */

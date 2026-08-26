@@ -79,6 +79,13 @@ import { ContextAssemblyError } from "./context/context-engine.ts";
 import { TokenEstimator } from "./context/token-estimator.ts";
 import type { ToolPolicyProjection } from "../storage/settings-policies.ts";
 import { redactRuntimeArtifactText } from "./trace/redaction.ts";
+import { createRuntimeId, parseRuntimeId, type TraceId } from "./protocol/ids.ts";
+import {
+  createLocalTelemetryContext,
+  runWithLocalTelemetry,
+} from "./telemetry/local/provider.ts";
+import { recordLogicalSessionState } from "./telemetry/local/memory.ts";
+import { runWithProviderTelemetry } from "../utils/provider-fetch-context.ts";
 
 import type { AgentTelemetryConfig } from "./telemetry/telemetry.ts";
 import {
@@ -331,6 +338,21 @@ export async function runAgentLoop(
       }
     }
 
+    const logicalTelemetry = localTelemetryContext(config, sessionId, turn, "provider");
+    if (logicalTelemetry !== undefined) {
+      await recordLogicalSessionState(logicalTelemetry.port, {
+        correlation: logicalTelemetry.correlation,
+        state: {
+          messages: llmContext.messages,
+          toolResults: llmContext.messages.filter((message) => message.role === "toolResult"),
+          planTask: null,
+          checkpointDescriptor: null,
+          contextCurrentTokens: estimateAgentMessages(projectedMessages),
+          contextCurrentTokensAccuracy: "estimated",
+        },
+      });
+    }
+
     const traceModel = config.traceRecorder
       ? await config.traceRecorder.startModel({ turn, model: loopModel, context: llmContext })
       : undefined;
@@ -367,79 +389,85 @@ export async function runAgentLoop(
     let messageOpen = false;
     let streamStartedAt: number | undefined;
     try {
-      await runInActiveSpan(chatSpan, async () => {
-    const stream = await Promise.resolve(
-      fn(loopModel, llmContext, {
-        apiKey: config.apiKey,
-        env: config.env,
-        signal,
-        metadata: { requestKind: config.requestKind ?? "interactive" },
-        onResponse: captureOnResponse,
-        ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
-      }),
-    );
-    for await (const ev of stream) {
-      const ts = Date.now();
-      if (ev.type === "start") {
-        if (!messageOpen) {
-          messageOpen = true;
-          streamStartedAt = ts;
-          await fire({
-            type: "message_start",
-            timestamp: ts,
-            role: "assistant",
-          });
+      const providerTelemetryContext = localTelemetryContext(config, sessionId, turn, "provider");
+      const consumeProviderStream = () => runInActiveSpan(chatSpan, async () => {
+        const stream = await Promise.resolve(
+          fn(loopModel, llmContext, {
+            apiKey: config.apiKey,
+            env: config.env,
+            signal,
+            metadata: { requestKind: config.requestKind ?? "interactive" },
+            onResponse: captureOnResponse,
+            ...(loopReasoning && loopReasoning !== "off" ? { reasoning: loopReasoning } : {}),
+          }),
+        );
+        for await (const ev of stream) {
+          const ts = Date.now();
+          if (ev.type === "start") {
+            if (!messageOpen) {
+              messageOpen = true;
+              streamStartedAt = ts;
+              await fire({
+                type: "message_start",
+                timestamp: ts,
+                role: "assistant",
+              });
+            }
+          } else if (ev.type === "text_start" || ev.type === "text_end" || ev.type === "thinking_start" || ev.type === "thinking_delta" || ev.type === "thinking_end" || ev.type === "toolcall_start" || ev.type === "toolcall_delta") {
+            // 暂不消费,但 forward 给 observer
+            await fire({
+              type: "message_update",
+              timestamp: ts,
+              assistantMessageEvent: ev,
+            });
+          } else if (ev.type === "text_delta") {
+            // 合并相邻 text 块,避免每个 delta 一个 TextContent
+            const last = assistantContent[assistantContent.length - 1];
+            if (last && last.type === "text") {
+              // 不可变 update:用 spread 创建新对象以避免上层引用混乱
+              assistantContent[assistantContent.length - 1] = {
+                type: "text",
+                text: (last as { type: "text"; text: string }).text + ev.delta,
+              };
+            } else {
+              assistantContent.push({ type: "text", text: ev.delta });
+            }
+            await fire({
+              type: "message_update",
+              timestamp: ts,
+              assistantMessageEvent: ev,
+            });
+          } else if (ev.type === "toolcall_end") {
+            const toolCall = ev.toolCall;
+            // 直接 push pi-ai ToolCall 视图,保留完整字段
+            assistantContent.push(toolCall);
+            await fire({
+              type: "message_update",
+              timestamp: ts,
+              assistantMessageEvent: {
+                type: "toolcall_end",
+                contentIndex: ev.contentIndex,
+                toolCall,
+                partial: ev.partial,
+              },
+            });
+          } else if (ev.type === "done") {
+            providerMessage = ev.message;
+            assistantStopReason = ev.message.stopReason;
+            assistantUsage = ev.message.usage;
+            assistantErrorMessage = ev.message.errorMessage;
+          } else if (ev.type === "error") {
+            providerMessage = ev.error;
+            assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
+            assistantErrorMessage = ev.error.errorMessage;
+          }
         }
-      } else if (ev.type === "text_start" || ev.type === "text_end" || ev.type === "thinking_start" || ev.type === "thinking_delta" || ev.type === "thinking_end" || ev.type === "toolcall_start" || ev.type === "toolcall_delta") {
-        // 暂不消费,但 forward 给 observer
-        await fire({
-          type: "message_update",
-          timestamp: ts,
-          assistantMessageEvent: ev,
-        });
-      } else if (ev.type === "text_delta") {
-        // 合并相邻 text 块,避免每个 delta 一个 TextContent
-        const last = assistantContent[assistantContent.length - 1];
-        if (last && last.type === "text") {
-          // 不可变 update:用 spread 创建新对象以避免上层引用混乱
-          assistantContent[assistantContent.length - 1] = {
-            type: "text",
-            text: (last as { type: "text"; text: string }).text + ev.delta,
-          };
-        } else {
-          assistantContent.push({ type: "text", text: ev.delta });
-        }
-        await fire({
-          type: "message_update",
-          timestamp: ts,
-          assistantMessageEvent: ev,
-        });
-      } else if (ev.type === "toolcall_end") {
-        const toolCall = ev.toolCall;
-        // 直接 push pi-ai ToolCall 视图,保留完整字段
-        assistantContent.push(toolCall);
-        await fire({
-          type: "message_update",
-          timestamp: ts,
-          assistantMessageEvent: {
-            type: "toolcall_end",
-            contentIndex: ev.contentIndex,
-            toolCall,
-            partial: ev.partial,
-          },
-        });
-      } else if (ev.type === "done") {
-        providerMessage = ev.message;
-        assistantStopReason = ev.message.stopReason;
-        assistantUsage = ev.message.usage;
-        assistantErrorMessage = ev.message.errorMessage;
-      } else if (ev.type === "error") {
-        providerMessage = ev.error;
-        assistantStopReason = ev.error.stopReason === "aborted" ? "aborted" : "error";
-        assistantErrorMessage = ev.error.errorMessage;
-      }
-    }
       });
+      if (providerTelemetryContext === undefined) {
+        await consumeProviderStream();
+      } else {
+        await runWithProviderTelemetry(providerTelemetryContext, consumeProviderStream);
+      }
     } catch (chatError) {
       failChatSpan(telemetry, chatSpan, {
         errorObject: chatError,
@@ -544,6 +572,7 @@ export async function runAgentLoop(
           signal ?? new AbortController().signal,
           fire,
           sessionId,
+          turn,
           telemetry,
           invokeAgentSpan,
         );
@@ -860,6 +889,7 @@ async function executeToolCalls(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  turn: number,
   telemetry: AgentTelemetry | undefined,
   invokeAgentSpan: Span | undefined,
 ): Promise<ToolResultContent[]> {
@@ -873,7 +903,7 @@ async function executeToolCalls(
       prepared.push(p);
     }
     const results = await Promise.all(
-      prepared.map((p) => executePreparedToolCall(p, config, signal, fire, sessionId, telemetry)),
+      prepared.map((p) => executePreparedToolCall(p, config, signal, fire, sessionId, turn, telemetry)),
     );
     const out: ToolResultContent[] = [];
     for (let i = 0; i < prepared.length; i++) {
@@ -887,7 +917,7 @@ async function executeToolCalls(
   const out: ToolResultContent[] = [];
   for (const tc of toolCalls) {
     const p = await prepareToolCall(tc, tools, messages, assistantMessage, context, config, signal, fire, sessionId, telemetry, invokeAgentSpan);
-    const r = await executePreparedToolCall(p, config, signal, fire, sessionId, telemetry);
+    const r = await executePreparedToolCall(p, config, signal, fire, sessionId, turn, telemetry);
     out.push(await finalizeExecutedToolCall(p, r, context, config, signal, fire, sessionId, telemetry));
   }
   return out;
@@ -1087,6 +1117,7 @@ async function executePreparedToolCall(
   signal: AbortSignal,
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  turn: number,
   telemetry: AgentTelemetry | undefined,
 ): Promise<AgentToolExecutedResult> {
   // blocked / tool 未找到 → 立即合成 isError 内容,不调 execute
@@ -1137,8 +1168,7 @@ async function executePreparedToolCall(
   // 使工具内部产生的 span 挂到 execute_tool 下。void 仅为满足 telemetry
   // 未启用时的短路;telemetry 变量在此保留以便语义对照。
   void telemetry;
-  try {
-    return await runInActiveSpan(p.telemetrySpan, async () => {
+  const executeWithSpan = () => runInActiveSpan(p.telemetrySpan, async () => {
       const result = await p.tool!.execute(
         p.toolCall.id,
         p.args as never,
@@ -1164,6 +1194,9 @@ async function executePreparedToolCall(
         terminate: result.terminate,
       };
     });
+  try {
+    const localContext = localTelemetryContext(config, sessionId, turn, "tool", p.toolCall.id);
+    return await (localContext === undefined ? executeWithSpan() : runWithLocalTelemetry(localContext, executeWithSpan));
   } catch (e) {
     await updateChain;
     const errorCode = codedError(e);
@@ -1174,6 +1207,33 @@ async function executePreparedToolCall(
       errorObject: e,
     };
   }
+}
+
+function localTelemetryContext(
+  config: AgentLoopConfig,
+  sessionId: string,
+  turn: number,
+  kind: "provider" | "tool",
+  toolCallId?: string,
+) {
+  const recorder = config.traceRecorder;
+  if (recorder === undefined) return undefined;
+  const session = parseRuntimeId("session", sessionId) ?? createRuntimeId("session", safeTelemetrySeed(sessionId));
+  const agent = createRuntimeId("agent", safeTelemetrySeed(`agent-${sessionId}`));
+  const correlation = {
+    sessionId: session,
+    traceId: recorder.traceId as TraceId,
+    ownerGeneration: recorder.ownerGeneration(),
+    agentId: agent,
+    turnId: createRuntimeId("turn", safeTelemetrySeed(`${sessionId}-${turn}`)),
+    ...(toolCallId === undefined ? {} : { toolCallId: createRuntimeId("toolCall", safeTelemetrySeed(toolCallId)) }),
+  };
+  return createLocalTelemetryContext(recorder.localTelemetryPort(), correlation, "llm_http", kind);
+}
+
+function safeTelemetrySeed(value: string): string {
+  const sanitized = value.replace(/[^A-Za-z0-9._~-]/gu, "_");
+  return (sanitized.length === 0 ? "unknown" : sanitized).slice(0, 128);
 }
 
 function codedError(value: unknown): string | undefined {

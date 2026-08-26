@@ -67,12 +67,14 @@ export function createPosixNodePtyAdapter(options: NodePtyAdapterOptions = {}): 
 
 class NodePtyProcess implements PtyAdapterProcess {
 	private readonly terminal: IPty;
+	public readonly pid: number;
 	private readonly encoder = new TextEncoder();
 	private readonly finished: Promise<{ readonly exitCode: number | null; readonly signal: string | null }>;
 	private exited = false;
 
 	public constructor(terminal: IPty) {
 		this.terminal = terminal;
+		this.pid = terminal.pid;
 		this.finished = new Promise((resolve) => {
 			terminal.onExit((event) => {
 				this.exited = true;

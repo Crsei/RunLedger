@@ -1,6 +1,7 @@
 import type { ProviderEnv } from "../types.ts";
 import { getCachedProviderProxyUrl } from "./node-http-proxy.ts";
 import { createProxyFetchForUrl } from "./proxy-agent.ts";
+import { meteredProviderFetch } from "../runtime/telemetry/local/provider.ts";
 
 type FetchInput = Parameters<typeof globalThis.fetch>[0];
 type FetchInit = Parameters<typeof globalThis.fetch>[1];
@@ -25,5 +26,5 @@ export function fetchWithProviderProxy(
 		return globalThis.fetch(input, init);
 	}
 
-	return createProxyFetchForUrl(targetUrl, proxyUrl)(input, init);
+	return meteredProviderFetch(createProxyFetchForUrl(targetUrl, proxyUrl), input, init);
 }

@@ -64,6 +64,15 @@ describe("local trace composition", () => {
 			failurePolicy: "fail_closed",
 			recordingConfigDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),
 		});
+		const indexPath = join(layout.projections, "telemetry", "session-traces", "session_events", "trace_composition.json");
+		const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<string, unknown>;
+		expect(index).toEqual({
+			format: "runledger.telemetry.session-trace-index",
+			version: 1,
+			sessionId: "session_events",
+			traceId: "trace_composition",
+			eventRelativeLocator: "events/2026/08/02/trace_composition.jsonl",
+		});
 		expect(existsSync(layout.artifacts)).toBe(false);
 	});
 
@@ -100,6 +109,26 @@ describe("local trace composition", () => {
 
 		await expect(factory.create({ sessionId: createRuntimeId("session", "symlink") }))
 			.rejects.toBeInstanceOf(TraceStorageSecurityError);
+		expect(await readdir(outside)).toEqual([]);
+	});
+
+	it("does not materialize derived trace-index directories through a projections symlink", async () => {
+		if (process.platform === "win32") return;
+		const root = await fixtureRoot();
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		const outside = join(root, "outside-projections");
+		await mkdir(layout.home, { recursive: true });
+		await mkdir(outside, { recursive: true });
+		await symlink(outside, layout.projections, "dir");
+		const diagnostics: string[] = [];
+		const factory = createLocalTraceRecorderFactory({
+			layout,
+			config: { mode: "events", failurePolicy: "fail_closed" },
+			onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.code),
+		});
+
+		expect(await factory.create({ sessionId: createRuntimeId("session", "index-symlink") })).toBeDefined();
+		expect(diagnostics).toEqual(["trace_index_write_failed"]);
 		expect(await readdir(outside)).toEqual([]);
 	});
 });

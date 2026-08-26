@@ -79,12 +79,28 @@ describe("CLI main() --help / --version", () => {
     expect(r.stderr).toContain("RUNLEDGER_DIR");
   });
 
-  it("RUNLEDGER_SESSION_DIR 非空时 fail closed + exit 2", () => {
-    const r = runCli(["--continue"], { RUNLEDGER_SESSION_DIR: "/tmp/legacy" });
-    expect(r.status).toBe(2);
-    expect(r.stderr).toContain("RUNLEDGER_SESSION_DIR");
-    expect(r.stderr).toContain("unsupported_environment_override");
-  });
+	it("RUNLEDGER_SESSION_DIR 非空时 fail closed + exit 2", () => {
+		const r = runCli(["--continue"], { RUNLEDGER_SESSION_DIR: "/tmp/legacy" });
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("RUNLEDGER_SESSION_DIR");
+		expect(r.stderr).toContain("unsupported_environment_override");
+	});
+
+	it("telemetry status uses the resolved home read-only", () => {
+		const home = mkdtempSync(join(tmpdir(), "runledger-cli-telemetry-status-"));
+		try {
+			const r = runCli(["telemetry", "status", "--format", "json"], { RUNLEDGER_DIR: home });
+			expect(r.status).toBe(0);
+			expect(JSON.parse(r.stdout) as unknown).toMatchObject({
+				format: "runledger.telemetry.status",
+				localStore: { state: "missing" },
+				recording: { mode: "off" },
+			});
+			expect(r.stderr).not.toContain(home);
+		} finally {
+			rmSync(home, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("startup autoResume session selection", () => {

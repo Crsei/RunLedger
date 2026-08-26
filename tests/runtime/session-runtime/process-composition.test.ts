@@ -12,6 +12,8 @@ import type { SessionProcessDomainPort } from "../../../src/runtime/session-runt
 import { IS_WINDOWS } from "../../helpers/platform.ts";
 import type { AttemptPort } from "../../../src/runtime/session-runtime/attempt-gateway.ts";
 import type { TraceRecorderFactory } from "../../../src/runtime/trace/composition.ts";
+import type { RuntimeTraceRecorder } from "../../../src/runtime/trace/recorder.ts";
+import type { LocalTelemetryPort } from "../../../src/runtime/telemetry/local/port.ts";
 import { createBashTool } from "../../../src/runtime/tools/bash.ts";
 import { openSessionDatabase, type SessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
@@ -63,6 +65,28 @@ function securitySource(): SessionSecurityConfigSource {
 			text: JSON.stringify({ profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" }),
 		}),
 	};
+}
+
+function testTraceRecorder(input: {
+	readonly traceId: string;
+	readonly recordManagedProcessOutput?: (value: Record<string, unknown>) => Promise<void>;
+	readonly finishRun?: (value: unknown) => Promise<void>;
+	readonly observe?: LocalTelemetryPort["observe"];
+}): RuntimeTraceRecorder {
+	const localTelemetryPort: LocalTelemetryPort = {
+		observe: input.observe ?? (async () => ({ ok: true })),
+		bind: async (_correlation, operation) => await operation(),
+		currentCorrelation: () => undefined,
+		forceSample: async () => undefined,
+		close: async () => undefined,
+	};
+	return {
+		traceId: input.traceId,
+		startRun: async () => undefined,
+		localTelemetryPort: () => localTelemetryPort,
+		recordManagedProcessOutput: async (value) => await input.recordManagedProcessOutput?.(value as Record<string, unknown>),
+		finishRun: async (value) => await input.finishRun?.(value),
+	} as unknown as RuntimeTraceRecorder;
 }
 
 describe("S4 Session managed process composition", () => {
@@ -581,14 +605,14 @@ describe("S4 Session managed process composition", () => {
 		const recorded: Record<string, unknown>[] = [];
 		const lifecycle: string[] = [];
 		const factory: TraceRecorderFactory = {
-			create: async (input) => ({
+			create: async (input) => testTraceRecorder({
 				traceId: input.traceId ?? createRuntimeId("trace", "process-trace"),
-				recordManagedProcessOutput: async (value: Record<string, unknown>) => {
+				recordManagedProcessOutput: async (value) => {
 					recorded.push(value);
 					lifecycle.push("output");
 				},
-				finishRun: async (value: { readonly phase: string }) => { lifecycle.push(`terminal:${value.phase}`); },
-			} as never),
+				finishRun: async (value) => { lifecycle.push(`terminal:${(value as { readonly phase: string }).phase}`); },
+			}),
 		};
 		const process = sessionDomain.createSessionProcessComposition({
 			layout,
@@ -649,11 +673,11 @@ describe("S4 Session managed process composition", () => {
 			recordingMode: "events",
 			recordingFailurePolicy: "fail_closed",
 			traceRecorderFactory: {
-				create: async () => ({
+				create: async () => testTraceRecorder({
 					traceId: createRuntimeId("trace", "process-trace-failed"),
 					recordManagedProcessOutput: async () => undefined,
-					finishRun: async (value: unknown) => { terminals.push(value); },
-				} as never),
+					finishRun: async (value) => { terminals.push(value); },
+				}),
 			},
 		});
 		const started = await process.mutate("session.process.start", {
@@ -676,6 +700,109 @@ describe("S4 Session managed process composition", () => {
 			phase: "failed",
 			error: { code: "process_failed", message: "managed process failed", outcomeCertain: true },
 		}]);
+	});
+
+	it("fail_closed surfaces a managed-process memory sampler startup failure at shutdown", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-memory-start-failure"),
+			runtimeId: createRuntimeId("runtime", "process-memory-start-failure"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-memory-start-failure");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-memory-start-failure"),
+			securitySources: [securitySource()],
+		});
+		const failure = new Error("managed-process memory startup write failed");
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+			recordingMode: "events",
+			recordingFailurePolicy: "fail_closed",
+			traceRecorderFactory: {
+				create: async () => testTraceRecorder({
+					traceId: createRuntimeId("trace", "process-memory-start-failure"),
+					observe: async (observation) => {
+						if (observation.kind === "managed_process_memory") throw failure;
+						return { ok: true };
+					},
+				}),
+			},
+		});
+		const started = await process.mutate("session.process.start", {
+			command: "node -e \"setTimeout(()=>{},30000)\"",
+			cwd: root,
+			timeoutMs: 30_000,
+			backend: "pipe",
+			executionMode: "background",
+		}, { correlationId: "correlation_memory_start_failure", effectId: "effect_memory_start_failure", expectedRevision: 0 });
+		expect(started).toMatchObject({ ok: true });
+		await expect(process.shutdown("paused")).rejects.toBe(failure);
+	});
+
+	it("fail_closed surfaces a managed-process terminal memory sample failure at shutdown", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-memory-terminal-failure"),
+			runtimeId: createRuntimeId("runtime", "process-memory-terminal-failure"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-memory-terminal-failure");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-memory-terminal-failure"),
+			securitySources: [securitySource()],
+		});
+		const failure = new Error("managed-process terminal memory write failed");
+		let observations = 0;
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			security: security.managedProcess,
+			recordingMode: "events",
+			recordingFailurePolicy: "fail_closed",
+			traceRecorderFactory: {
+				create: async () => testTraceRecorder({
+					traceId: createRuntimeId("trace", "process-memory-terminal-failure"),
+					observe: async (observation) => {
+						if (observation.kind !== "managed_process_memory") return { ok: true };
+						observations += 1;
+						if (observations > 1) throw failure;
+						return { ok: true };
+					},
+				}),
+			},
+		});
+		const started = await process.mutate("session.process.start", {
+			command: "node -e \"setTimeout(()=>{},30000)\"",
+			cwd: root,
+			timeoutMs: 30_000,
+			backend: "pipe",
+			executionMode: "background",
+		}, { correlationId: "correlation_memory_terminal_failure", effectId: "effect_memory_terminal_failure", expectedRevision: 0 });
+		expect(started).toMatchObject({ ok: true });
+		for (let poll = 0; poll < 100 && observations === 0; poll += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(observations).toBe(1);
+		await expect(process.shutdown("paused")).rejects.toBe(failure);
 	});
 
 	it("uses the owner-fenced Session Event Store as process truth without Host fields", async () => {
@@ -816,15 +943,15 @@ describe("S4 Session managed process composition", () => {
 		const workspaceId = createRuntimeId("workspace", "process-takeover");
 		const traceEvents: Array<{ readonly traceId: string; readonly event: string; readonly value?: unknown }> = [];
 		const traceRecorderFactory: TraceRecorderFactory = {
-			create: async (input) => ({
+			create: async (input) => testTraceRecorder({
 				traceId: input.traceId ?? createRuntimeId("trace", "process-takeover"),
 				recordManagedProcessOutput: async () => {
 					traceEvents.push({ traceId: String(input.traceId), event: "output" });
 				},
-				finishRun: async (value: unknown) => {
+				finishRun: async (value) => {
 					traceEvents.push({ traceId: String(input.traceId), event: "terminal", value });
 				},
-			} as never),
+			}),
 		};
 		const create = async (generation: number) => {
 			const fence: OwnerFence = { sessionId, runtimeId: createRuntimeId("runtime", `process-takeover-${generation}`), generation };
@@ -931,11 +1058,11 @@ describe("S4 Session managed process composition", () => {
 			recordingMode: "events",
 			recordingFailurePolicy: "fail_closed",
 			traceRecorderFactory: {
-				create: async () => ({
+				create: async () => testTraceRecorder({
 					traceId: createRuntimeId("trace", "process-shutdown"),
 					recordManagedProcessOutput: async () => undefined,
-					finishRun: async (value: unknown) => { terminals.push(value); },
-				} as never),
+					finishRun: async (value) => { terminals.push(value); },
+				}),
 			},
 		});
 		const started = await process.mutate("session.process.start", {

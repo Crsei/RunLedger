@@ -28,6 +28,7 @@ import type {
 	McpToolDefinition,
 	McpTransportClient,
 } from "./types.ts";
+import { withMeteredNetworkRequest } from "../../runtime/telemetry/local/provider.ts";
 
 export interface SdkMcpClientFactoryOptions {
 	readonly clientName?: string;
@@ -48,15 +49,20 @@ export function createMcpGatewayFetch(network: PolicyNetworkClient, maxBytes = 2
 		let body: string | Buffer | undefined;
 		if (typeof init.body === "string") body = init.body;
 		else if (init.body !== undefined) body = Buffer.from(await new Response(init.body).arrayBuffer());
-		const result = await network.request({
+		const request = {
 			url,
 			method: init.method ?? "GET",
 			headers,
 			...(body === undefined ? {} : { body }),
 			maxBytes,
-		}, init.signal ?? undefined);
-		if (!result.ok) throw new Error(result.error.message);
-		return new Response(new Uint8Array(result.value.body), { status: result.value.status, headers: result.value.headers });
+			telemetryChannel: "mcp_http" as const,
+		};
+		const result = await withMeteredNetworkRequest(request, init.signal ?? undefined, async (meteredRequest, signal) => {
+			const value = await network.request(meteredRequest, signal);
+			if (!value.ok) throw new Error(value.error.message);
+			return { status: value.value.status, headers: value.value.headers, body: value.value.body, finalUrl: value.value.finalUrl };
+		});
+		return new Response(new Uint8Array(result.body), { status: result.status, headers: result.headers });
 	};
 }
 
@@ -68,13 +74,15 @@ export function createMcpExecutionEnvFetch(network: Network, maxBytes = 2 * 1024
 		let body: string | Buffer | undefined;
 		if (typeof init.body === "string") body = init.body;
 		else if (init.body !== undefined) body = Buffer.from(await new Response(init.body).arrayBuffer());
-		const result = await network.request({
+		const request = {
 			url,
 			method: init.method ?? "GET",
 			headers,
 			...(body === undefined ? {} : { body }),
 			maxBytes,
-		}, init.signal ?? undefined);
+			telemetryChannel: "mcp_http" as const,
+		};
+		const result = await withMeteredNetworkRequest(request, init.signal ?? undefined, (meteredRequest, signal) => network.request(meteredRequest, signal));
 		return new Response(new Uint8Array(result.body), { status: result.status, headers: result.headers });
 	};
 }

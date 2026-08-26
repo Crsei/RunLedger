@@ -22,6 +22,7 @@ import type { Static } from "typebox";
 import { localNetwork } from "./local-defaults.ts";
 import type { Network } from "../execution-env.ts";
 import type { AgentTool } from "../types.ts";
+import { withMeteredNetworkRequest } from "../telemetry/local/provider.ts";
 
 export const webFetchSchema = Type.Object({
   url: Type.String({ description: "目标 URL;HTTP 自动升级 HTTPS" }),
@@ -85,12 +86,13 @@ export function createWebFetchTool(options: WebFetchToolOptions = {}): AgentTool
         url = new URL(input.replace(/^http:/i, "https:"));
       }
       const maxBytes = params.maxBytes ?? DEFAULT_MAX;
-	  const r = await network.request({
-	    url: url.toString(),
-	    method: "GET",
-	    headers: { "user-agent": "RunLedger/0.0.1 (+webfetch)" },
-	    maxBytes,
-	  }, signal);
+		  const request = {
+		    url: url.toString(),
+		    method: "GET",
+		    headers: { "user-agent": "RunLedger/0.0.1 (+webfetch)" },
+		    maxBytes,
+		  };
+		  const r = await withMeteredNetworkRequest(request, signal, (meteredRequest, meteredSignal) => network.request(meteredRequest, meteredSignal));
 	  if (r.status >= 300 && r.status < 400) {
         // redirect:跨 host 报错
 	    const loc = r.headers["location"] ?? r.headers["Location"];

@@ -26,7 +26,7 @@
 | Plugin / MCP / Skill / Hooks | [`plugin-mcp-skill-hooks/01-implementation-plan.md`](plugin-mcp-skill-hooks/01-implementation-plan.md)、[`plugin-mcp-skill-hooks/02-skill-registry-discovery-provider-refactor-plan.md`](plugin-mcp-skill-hooks/02-skill-registry-discovery-provider-refactor-plan.md) | 扩展 discovery/trust/snapshot、Skill、Hook、MCP、Plugin；目标为 SessionRuntime-owned lifecycle 与 managed process 接线 | 本专项里程碑证据、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结，当前先解决多平台 path/Git/Shell/process/cleanup 适配 | `00` 总入口、`01` 当前适配状态、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
-| Telemetry / OTel | [`telemetry/README.md`](telemetry/README.md)、[`telemetry/01-telemetry-port-plan.md`](telemetry/01-telemetry-port-plan.md) | oh-my-pi telemetry 移植：GenAI semconv 插桩、run 聚合、OTLP trace/log/metric 导出与 env 契约；与本地 trace store 相互独立 | `telemetry/01` 状态表、当前代码/tests |
+| Telemetry / Coding Agent Efficiency | [`telemetry/README.md`](telemetry/README.md)、[`telemetry/01-telemetry-port-plan.md`](telemetry/01-telemetry-port-plan.md)、[`telemetry/02-coding-agent-efficiency-semantic-layer-plan.md`](telemetry/02-coding-agent-efficiency-semantic-layer-plan.md) | Plan 01 已实现 GenAI semconv、run 聚合与 OTLP trace/log/metric；Plan 02 已完成 M0–M3 的 typed local observation/hash-replay、traffic/process I/O、memory、CLI/TUI query，M4–M5 仍规划 Verified Progress 效率语义，M6 保留 human acceptance 边界 | OTel 当前状态查 `telemetry/01` 与代码/tests；Efficiency M0–M6 状态查 `telemetry/02` |
 | Session Audit Note | [`note/README.md`](note/README.md) | 当前打开 session 的 `/audit` 只读调用树、计量与 Artifact 阅读模式 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
 | Settings Gap Note | [`notez/README.md`](notez/README.md) | 对照 oh-my-pi `SETTINGS_SCHEMA` 的 RunLedger 缺失设置盘点：重试 → 运维；模型/采样为待核实项 | [`notez/00-settings-gap-vs-oh-my-pi.md`](notez/00-settings-gap-vs-oh-my-pi.md) |
 | Settings Completion | [`settings/README.md`](settings/README.md) | 按低/中/高难度把正文 settings 缺口拆成可执行计划；H0 逐 capability 区分 settings/capability 缺失；附录 A/B 暂不实现；逐 group 验收以矩阵为准 | [`settings/01-low-complexity-settings-plan.md`](settings/01-low-complexity-settings-plan.md)、[`settings/02-medium-complexity-runtime-settings-plan.md`](settings/02-medium-complexity-runtime-settings-plan.md)、[`settings/03-high-complexity-capability-settings-plan.md`](settings/03-high-complexity-capability-settings-plan.md)、[`settings/04-settings-acceptance-matrix.md`](settings/04-settings-acceptance-matrix.md)、[`settings/05-high-complexity-capability-inventory.md`](settings/05-high-complexity-capability-inventory.md) |
@@ -114,6 +114,10 @@ development-doc/
 │   ├── 03-high-complexity-capability-settings-plan.md
 │   ├── 04-settings-acceptance-matrix.md
 │   └── 05-high-complexity-capability-inventory.md
+├── telemetry/
+│   ├── README.md
+│   ├── 01-telemetry-port-plan.md
+│   └── 02-coding-agent-efficiency-semantic-layer-plan.md
 ├── plugin/
 │   └── 01-tree-sitter-bash-ast-port-plan.md
 ├── providers/

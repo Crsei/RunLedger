@@ -38,6 +38,15 @@ export interface PipeProcessBackendOptions {
 	readonly createOutputStore: (
 		input: PipeSpawnInput,
 	) => FileProcessOutputStore;
+	/** Host-private observation seam; it receives bytes, never process text. */
+	readonly onProcessIo?: (input: {
+		readonly handle: ExecutionHandleRef;
+		readonly stream: "stdin" | "stdout" | "stderr";
+		readonly observedBytes: number;
+		readonly retainedBytes: number;
+	}) => void | Promise<void>;
+	/** Host-private process identity; PID never crosses the public process DTO. */
+	readonly onProcessSpawned?: (input: { readonly handle: ExecutionHandleRef; readonly pid: number }) => void | Promise<void>;
 }
 
 export interface PipeSpawnInput {
@@ -97,12 +106,16 @@ interface PrivatePipeProcess {
 export class PipeProcessBackend {
 	private readonly resolveCommand: PipeProcessBackendOptions["resolveCommand"];
 	private readonly createOutputStore: PipeProcessBackendOptions["createOutputStore"];
+	private readonly onProcessIo: PipeProcessBackendOptions["onProcessIo"];
+	private readonly onProcessSpawned: PipeProcessBackendOptions["onProcessSpawned"];
 	private readonly processes = new Map<string, PrivatePipeProcess>();
 	private readonly receipts = new Map<string, BackendSpawnReceipt>();
 
 	public constructor(options: PipeProcessBackendOptions) {
 		this.resolveCommand = options.resolveCommand;
 		this.createOutputStore = options.createOutputStore;
+		this.onProcessIo = options.onProcessIo;
+		this.onProcessSpawned = options.onProcessSpawned;
 	}
 
 	public async spawn(input: PipeSpawnInput): Promise<PipeSpawnResult> {
@@ -132,6 +145,7 @@ export class PipeProcessBackend {
 					stdio: ["pipe", "pipe", "pipe"],
 				});
 		const privateProcess = this.createPrivateProcess(child, output, input, containment);
+		if (child.pid !== undefined) void this.onProcessSpawned?.({ handle: input.handle, pid: child.pid });
 		const receiptDigest = runtimeDigest({
 			handle: input.handle,
 			spawnClaimDigest: input.spawnClaimDigest,
@@ -232,10 +246,11 @@ export class PipeProcessBackend {
 			stopRequested = true;
 			stopProcess("SIGTERM");
 		};
-		const appendText = (text: string): void => {
+		const appendText = (text: string, stream: "stdout" | "stderr", observedBytes = 0): void => {
 			const clipped = clipUtf8Output(text, Math.max(0, maxOutputBytes - outputBytes));
 			outputBytes += clipped.byteLength;
 			if (clipped.truncated || clipped.byteLength < Buffer.byteLength(text, "utf8")) outputBudgetExceeded = true;
+			void this.onProcessIo?.({ handle: input.handle, stream, observedBytes, retainedBytes: clipped.byteLength });
 			if (clipped.text.length === 0) {
 				if (outputBudgetExceeded) stopRoot();
 				return;
@@ -248,8 +263,8 @@ export class PipeProcessBackend {
 		};
 		const stdoutDecoder = new TextDecoder("utf-8");
 		const stderrDecoder = new TextDecoder("utf-8");
-		child.stdout.on("data", (chunk: Buffer) => appendText(stdoutDecoder.decode(chunk, { stream: true })));
-		child.stderr.on("data", (chunk: Buffer) => appendText(stderrDecoder.decode(chunk, { stream: true })));
+		child.stdout.on("data", (chunk: Buffer) => appendText(stdoutDecoder.decode(chunk, { stream: true }), "stdout", chunk.byteLength));
+		child.stderr.on("data", (chunk: Buffer) => appendText(stderrDecoder.decode(chunk, { stream: true }), "stderr", chunk.byteLength));
 		// A fast child may close stdin between the capability check and a write.
 		// Keep the stream error observable by the operation callback without
 		// allowing a late EPIPE event to escape as an uncaught process error.
@@ -264,8 +279,8 @@ export class PipeProcessBackend {
 			if (settled) return;
 			settled = true;
 			if (durationTimer) clearTimeout(durationTimer);
-			appendText(stdoutDecoder.decode());
-			appendText(stderrDecoder.decode());
+			appendText(stdoutDecoder.decode(), "stdout");
+			appendText(stderrDecoder.decode(), "stderr");
 			void outputTail.then(async () => {
 				if (supervisorSettlementReady !== undefined && supervisorSettlement === undefined) {
 					await Promise.race([
@@ -350,10 +365,14 @@ export class PipeProcessBackend {
 					const onError = (): void => finish({ ok: false, code: "backend_unavailable" });
 					stdin.once("error", onError);
 					try {
-						stdin.write(value, "utf8", (error: Error | null | undefined) => {
-							finish(error
-								? { ok: false, code: "backend_unavailable" }
-								: { ok: true, receiptDigest: runtimeDigest({ operation: "write", handle: privateProcess.handle, size: Buffer.byteLength(value, "utf8") }) });
+					stdin.write(value, "utf8", (error: Error | null | undefined) => {
+						if (!error) {
+							const bytes = Buffer.byteLength(value, "utf8");
+							void this.onProcessIo?.({ handle: privateProcess.handle, stream: "stdin", observedBytes: bytes, retainedBytes: bytes });
+						}
+						finish(error
+							? { ok: false, code: "backend_unavailable" }
+							: { ok: true, receiptDigest: runtimeDigest({ operation: "write", handle: privateProcess.handle, size: Buffer.byteLength(value, "utf8") }) });
 						});
 					} catch {
 						finish({ ok: false, code: "backend_unavailable" });

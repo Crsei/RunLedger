@@ -69,7 +69,7 @@ import { matchesKey } from "./index.ts";
 import { findCommand, commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
 import { SlashCommandPopup } from "./components/slash-command-popup.ts";
 import type { TuiOverlayState } from "./application/state.ts";
-import type { ExecutionId } from "../runtime/protocol/ids.ts";
+import type { ExecutionId, SessionId } from "../runtime/protocol/ids.ts";
 import type { ExtensionResourceView } from "./extensions/types.ts";
 import type { HostFrameEnvelope } from "../runtime/host/types.ts";
 import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
@@ -77,6 +77,7 @@ import { decodeAuthEvent, decodeAuthPrompt } from "../runtime/session-runtime/cr
 import type { ProcessOverlayController, ProcessOverlayHostClient } from "./process/controller-adapter.ts";
 import { ProcessOverlayComponent } from "./process/overlay-component.ts";
 import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
+import { TelemetryOverlayComponent } from "./components/telemetry-overlay.ts";
 import { DeltaCoalescer, type AppendTextDelta } from "./opentui/delta-coalescer.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import { approvalChoices, approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
@@ -128,6 +129,7 @@ import {
   type UsageObservation,
   type UsageSnapshot,
 } from "../runtime/usage/index.ts";
+import type { LocalTelemetryQuery } from "../runtime/telemetry/local/query.ts";
 
 function freezeDisplaySettings(
 	value: EffectiveRuntimeSettingsSnapshot["display"] | undefined,
@@ -215,6 +217,8 @@ export interface InteractiveModeOptions {
   preferencesPort?: TuiPreferencesPort;
   /** `hideThinkingBlock` 的 canonical settings 写端口；TUI 不持有 layout/path。 */
   hideThinkingSettingsPort?: HideThinkingSettingsPort;
+  /** M3:只读 telemetry query port；TUI 不持有 layout/path。 */
+  telemetryQuery?: LocalTelemetryQuery;
   /** Runtime settings reload port；只允许 live presentation projection 进入当前 TUI。 */
   settingsRuntimeStore?: SettingsRuntimeStorePort;
 	/** `/settings` 的唯一 typed read/write port；TUI 不持有 layout/path。 */
@@ -341,6 +345,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly preferencesPort?: TuiPreferencesPort;
   private readonly shimmerMode: TuiShimmerMode;
   private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
+  private readonly telemetryQuery?: LocalTelemetryQuery;
 	private readonly settingsEditorPort?: SettingsEditorPort;
   private hideThinkingBlock: boolean;
   private displaySettingsSnapshot: EffectiveRuntimeSettingsSnapshot["display"];
@@ -360,6 +365,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private unsubscribePermissionInput: (() => void) | undefined;
   private transcriptOverlay: TranscriptOverlayComponent | undefined;
   private unsubscribeTranscriptInput: (() => void) | undefined;
+  private telemetryOverlay: TelemetryOverlayComponent | undefined;
+  private telemetryEditorSnapshot: { readonly text: string; readonly cursorOffset: number } | undefined;
 
   // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
   private slashPopup: SlashCommandPopup | undefined;
@@ -390,6 +397,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.preferencesPort = opts.preferencesPort;
     this.shimmerMode = opts.initialPreferences?.display.shimmer ?? "classic";
 		this.hideThinkingSettingsPort = opts.hideThinkingSettingsPort;
+		this.telemetryQuery = opts.telemetryQuery;
 	this.settingsEditorPort = opts.settingsEditorPort;
 		this.displaySettingsSnapshot = freezeDisplaySettings(opts.runtimeSettings?.display);
 		this.theme = applyEnvOverrides(applyColorBlindMode(
@@ -702,6 +710,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** B3:overlay 状态意图写入 store；组件/焦点仍由 renderer 管理（view side-effect）。 */
   private showOverlayModal(component: Component, options?: OverlayOptions, kind: Exclude<TuiOverlayState["state"], "closed"> = "command"): void {
+		const existingTelemetry = this.telemetryOverlay;
+		if (existingTelemetry !== undefined && this.ui.getOverlay() === existingTelemetry && existingTelemetry !== component) {
+			this.finishTelemetryOverlay(existingTelemetry);
+		}
     // 真实 modal 抢占 overlay 槽;slash 补全弹窗随之失效(防止幽灵引用)
     this.slashPopup = undefined;
     this.slashOverlayHandle = undefined;
@@ -716,6 +728,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** B3:overlay 关闭意图写入 store。 */
   private closeOverlay(): void {
+    const telemetry = this.telemetryOverlay;
+    if (telemetry !== undefined && this.ui.getOverlay() === telemetry) {
+      this.finishTelemetryOverlay(telemetry);
+      return;
+    }
     if (this.ui.getOverlay() === this.slashPopup) {
       this.slashPopup = undefined;
       this.slashOverlayHandle = undefined;
@@ -723,6 +740,53 @@ export class InteractiveMode implements FooterSnapshotProvider {
     if (this.ui.getOverlay() === this.transcriptOverlay) this.transcriptOverlay = undefined;
     this.store.dispatch({ type: "overlay.close" });
     this.ui.hideOverlay();
+  }
+
+  /** M3:打开只读 telemetry projection；不会中断当前 Agent turn。 */
+  private openTelemetryOverlay(): void {
+    const query = this.telemetryQuery;
+    if (query === undefined) {
+      this.showNotice("Telemetry is unavailable in this session.", "error");
+      return;
+    }
+    const rawSessionId = this.controller?.sessionId ?? this.agent?.sessionId;
+    if (rawSessionId === undefined || rawSessionId.length === 0) {
+      this.showNotice("Telemetry session identity is unavailable.", "error");
+      return;
+    }
+    this.telemetryEditorSnapshot = {
+      text: this.refs.editor.getText(),
+      cursorOffset: this.refs.editor.getCursorOffset(),
+    };
+    let overlay: TelemetryOverlayComponent | undefined;
+    overlay = new TelemetryOverlayComponent({
+      query,
+      sessionId: rawSessionId as SessionId,
+      getViewportHeight: () => Math.max(4, this.terminal.rows - 4),
+      onChange: () => this.ui.requestRender(),
+      onClose: () => {
+        if (overlay !== undefined) this.finishTelemetryOverlay(overlay);
+      },
+    });
+    this.telemetryOverlay = overlay;
+    this.showOverlayModal(overlay, { anchor: "center" });
+    void overlay.open().catch(() => this.showNotice("Telemetry refresh failed.", "error"));
+  }
+
+  private finishTelemetryOverlay(overlay: TelemetryOverlayComponent): void {
+    if (this.telemetryOverlay !== overlay) return;
+    this.telemetryOverlay = undefined;
+    overlay.close();
+    const snapshot = this.telemetryEditorSnapshot;
+    this.telemetryEditorSnapshot = undefined;
+    this.store.dispatch({ type: "overlay.close" });
+    if (this.ui.getOverlay() === overlay) this.ui.hideOverlay();
+    if (snapshot !== undefined) {
+      if (this.refs.editor.getText() !== snapshot.text) this.refs.editor.setText(snapshot.text);
+      this.refs.editor.setCursor(snapshot.cursorOffset);
+    }
+    this.ui.setFocus(this.refs.editor);
+    this.ui.requestRender();
   }
 
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
@@ -945,6 +1009,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeTranscriptInput?.();
     this.unsubscribeTranscriptInput = undefined;
     this.transcriptOverlay = undefined;
+    if (this.telemetryOverlay !== undefined) {
+      const telemetry = this.telemetryOverlay;
+      if (this.ui.getOverlay() === telemetry) this.finishTelemetryOverlay(telemetry);
+      else {
+        this.telemetryOverlay = undefined;
+        telemetry.close();
+        this.telemetryEditorSnapshot = undefined;
+      }
+    }
     this.unsubscribeBoundaryActions?.();
     this.unsubscribeBoundaryActions = undefined;
     this.ui.setAppIntentHandler(undefined);
@@ -2010,6 +2083,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "recovery.open":
         void this.runRecoveryWorkflow(arg);
+        return;
+      case "telemetry.open":
+        this.openTelemetryOverlay();
         return;
       case "process.list":
         this.openProcessList();

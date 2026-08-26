@@ -33,6 +33,7 @@ export interface PtyAdapterExit {
 }
 
 export interface PtyAdapterProcess {
+	readonly pid?: number;
 	onOutput(listener: (chunk: Uint8Array) => void): () => void;
 	wait(): Promise<PtyAdapterExit>;
 	write(input: string): Promise<void>;
@@ -58,6 +59,14 @@ export interface PtyProcessBackendOptions {
 		readonly request: ManagedProcessRequest;
 		readonly constraintSnapshot: ExecutionConstraintSnapshot;
 	}) => FileProcessOutputStore;
+	/** Host-private observation seam; it receives bytes, never terminal text. */
+	readonly onProcessIo?: (input: {
+		readonly handle: ExecutionHandleRef;
+		readonly stream: "stdin" | "pty_output";
+		readonly observedBytes: number;
+		readonly retainedBytes: number;
+	}) => void | Promise<void>;
+	readonly onProcessSpawned?: (input: { readonly handle: ExecutionHandleRef; readonly pid: number }) => void | Promise<void>;
 }
 
 export type PtyProcessOutcome = "completed" | "failed" | "timed_out" | "killed" | "uncertain";
@@ -111,6 +120,8 @@ export class PtyProcessBackend {
 	private readonly adapter: PtyAdapter;
 	private readonly resolveCommand: PtyProcessBackendOptions["resolveCommand"];
 	private readonly createOutputStore: PtyProcessBackendOptions["createOutputStore"];
+	private readonly onProcessIo: PtyProcessBackendOptions["onProcessIo"];
+	private readonly onProcessSpawned: PtyProcessBackendOptions["onProcessSpawned"];
 	private readonly processes = new Map<string, PrivatePtyProcess>();
 	private readonly receipts = new Map<string, BackendSpawnReceipt>();
 
@@ -118,6 +129,8 @@ export class PtyProcessBackend {
 		this.adapter = options.adapter;
 		this.resolveCommand = options.resolveCommand;
 		this.createOutputStore = options.createOutputStore;
+		this.onProcessIo = options.onProcessIo;
+		this.onProcessSpawned = options.onProcessSpawned;
 	}
 
 	public async spawn(input: {
@@ -147,6 +160,7 @@ export class PtyProcessBackend {
 		if (command.executable.length === 0 || !isAbsolute(command.cwd)) throw new Error("PTY command descriptor is invalid");
 		const output = this.createOutputStore({ handle: input.handle, request: input.request, constraintSnapshot: input.constraintSnapshot });
 		const process = await this.adapter.spawn({ command, handle: input.handle, request: input.request, constraintSnapshot: input.constraintSnapshot });
+		if (process.pid !== undefined) void this.onProcessSpawned?.({ handle: input.handle, pid: process.pid });
 		const privateProcess = this.createPrivateProcess(process, output, input);
 		const receiptDigest = runtimeDigest({
 			handle: input.handle,
@@ -225,10 +239,11 @@ export class PtyProcessBackend {
 		const decoder = new TextDecoder("utf-8");
 		const appendOutput = (chunk: Uint8Array): void => {
 			const text = decoder.decode(chunk, { stream: true });
-			if (text.length === 0) return;
 			const clipped = clipUtf8Output(text, Math.max(0, maxOutputBytes - outputBytes));
 			outputBytes += clipped.byteLength;
 			if (clipped.truncated || clipped.byteLength < Buffer.byteLength(text, "utf8")) outputBudgetExceeded = true;
+			void this.onProcessIo?.({ handle: input.handle, stream: "pty_output", observedBytes: chunk.byteLength, retainedBytes: clipped.byteLength });
+			if (text.length === 0) return;
 			if (clipped.text.length === 0) {
 				if (outputBudgetExceeded) stopRoot();
 				return;
@@ -245,6 +260,7 @@ export class PtyProcessBackend {
 			if (durationTimer) clearTimeout(durationTimer);
 			const remaining = decoder.decode();
 			if (remaining.length > 0) {
+				void this.onProcessIo?.({ handle: input.handle, stream: "pty_output", observedBytes: 0, retainedBytes: Buffer.byteLength(remaining, "utf8") });
 				outputTail = outputTail.then(async () => {
 					const result = await output.append(remaining);
 					if (!result.ok) outputFailed = true;
@@ -308,6 +324,8 @@ export class PtyProcessBackend {
 				}
 				try {
 					await privateProcess.process.write(value);
+					const bytes = Buffer.byteLength(value, "utf8");
+					void this.onProcessIo?.({ handle: privateProcess.handle, stream: "stdin", observedBytes: bytes, retainedBytes: bytes });
 					return { ok: true, receiptDigest: runtimeDigest({ operation: "write", handle: privateProcess.handle, size: Buffer.byteLength(value, "utf8") }) };
 				} catch {
 					return { ok: false, code: "backend_unavailable" };

@@ -125,6 +125,8 @@ const HELP_TEXT = `Usage: runledger [options]
       auth-gateway <command>  启动/管理本地前向代理网关
       settings list|get|set|reset
                               读取或修改 canonical settings
+      telemetry status|report
+                              只读查询本地 traffic/resource report
       --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR
       --debug                 RUNLEDGER_DEBUG=1,stderr log
   -v, --version               打版本退出

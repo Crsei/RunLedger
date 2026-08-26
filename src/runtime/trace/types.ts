@@ -1,3 +1,5 @@
+import type { TelemetryObservation } from "../telemetry/local/types.ts";
+
 export type TraceNodeKind =
 	| "trace"
 	| "agent"
@@ -6,7 +8,8 @@ export type TraceNodeKind =
 	| "tool"
 	| "tool_attempt"
 	| "context"
-	| "verification";
+	| "verification"
+	| "observation";
 
 export type TraceEventPhase = "started" | "finished" | "failed" | "interrupted";
 
@@ -78,6 +81,7 @@ export interface TraceEventInput {
 	readonly cost?: TraceCost;
 	readonly error?: TraceError;
 	readonly metadata?: TraceMetadata;
+	readonly observation?: TelemetryObservation;
 }
 
 export interface TraceEvent extends TraceEventInput {
@@ -101,5 +105,6 @@ export interface TraceTreeNode {
 	readonly cost?: TraceCost;
 	readonly error?: TraceError;
 	readonly metadata?: TraceMetadata;
+	readonly observation?: TelemetryObservation;
 	readonly children: readonly TraceTreeNode[];
 }

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,5 +68,19 @@ describe("JsonlTraceEventStore", () => {
 	it("does not accept an event from another trace", async () => {
 		const store = await createStore();
 		await expect(store.append(input({ traceId: "trace_other" }))).rejects.toThrow("trace id");
+	});
+
+	it("supports read-only replay without creating missing parent directories", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-trace-readonly-"));
+		roots.push(root);
+		const parent = join(root, "not-created");
+		const store = new JsonlTraceEventStore({
+			filePath: join(parent, "events.jsonl"),
+			traceId: "trace_demo",
+			createDirectories: false,
+		});
+
+		await expect(store.events()).resolves.toEqual([]);
+		expect(existsSync(parent)).toBe(false);
 	});
 });

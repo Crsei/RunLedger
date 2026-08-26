@@ -134,6 +134,7 @@ describe("R6 governed pipe process backend", () => {
 				args: ["-e", "process.stdout.write('hello😀\\n')"],
 				cwd: root,
 			};
+			const ioEvents: Array<{ stream: string; observedBytes: number; retainedBytes: number }> = [];
 			const options: PipeProcessBackendOptions = {
 				resolveCommand: () => command,
 				createOutputStore: () => new FileProcessOutputStore({
@@ -142,6 +143,7 @@ describe("R6 governed pipe process backend", () => {
 					executionId: createRuntimeId("execution", "backend"),
 					attemptId: createRuntimeId("attempt", "backend"),
 				}),
+				onProcessIo: (event) => ioEvents.push({ stream: event.stream, observedBytes: event.observedBytes, retainedBytes: event.retainedBytes }),
 			};
 			const backend = new PipeProcessBackend(options);
 			const decision = await evaluateExecutionConstraints(decisionInput(value), createBuiltinNoneExecutionDecisionProviders());
@@ -172,6 +174,8 @@ describe("R6 governed pipe process backend", () => {
 			const output = await first.process.output.read({ sequence: 0, byteOffset: 0 }, 128);
 			expect(output.ok).toBe(true);
 			if (output.ok) expect(output.page.text).toBe("hello😀\n");
+			expect(ioEvents.filter((event) => event.stream === "stdout").reduce((total, event) => total + event.observedBytes, 0)).toBe(Buffer.byteLength("hello😀\n", "utf8"));
+			expect(ioEvents.some((event) => event.stream === "stdout" && event.retainedBytes > 0)).toBe(true);
 		} finally {
 			await rm(root, { recursive: true, force: true });
 		}

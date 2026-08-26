@@ -43,6 +43,7 @@ export type SlashCommandActionType =
   | "auth.login"
   | "auth.logout"
   | "recovery.open"
+  | "telemetry.open"
   | "process.list"
   | "process.terminal"
   | "extension.mcp"
@@ -239,6 +240,11 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       usage: "[status|assess|verify <attemptId>|resume <reason>]",
       argumentSchema: [schema("action", "status|assess|verify <attemptId>|resume <reason>", false)],
     }),
+		command("telemetry", "Inspect local traffic and resource observations", 14.5, {
+			actionType: "telemetry.open",
+			category: "telemetry",
+			policy: READONLY_POLICY,
+		}),
     command("processes", "List managed processes", 14, { actionType: "process.list", category: "process", policy: READONLY_POLICY }),
     command("terminal", "Open managed terminal", 15, {
       actionType: "process.terminal",

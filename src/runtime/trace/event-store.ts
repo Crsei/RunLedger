@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import * as path from "node:path";
 import { canonicalDigest, canonicalJson } from "../protocol/canonical-json.ts";
+import { isTelemetryObservation } from "../telemetry/local/schemas.ts";
 import type { TraceEvent, TraceEventInput } from "./types.ts";
 
 export class TraceEventStoreCorruptionError extends Error {
@@ -16,6 +17,8 @@ export class TraceEventStoreCorruptionError extends Error {
 export interface JsonlTraceEventStoreOptions {
 	readonly filePath: string;
 	readonly traceId: string;
+	/** Read-only projections must not create storage directories while replaying. */
+	readonly createDirectories?: boolean;
 }
 
 function eventBody(input: TraceEventInput, sequence: number, previousEventHash: string | null): Record<string, unknown> {
@@ -49,6 +52,12 @@ function parseEvent(value: unknown, filePath: string, lineNumber: number): Trace
 	) {
 		throw new TraceEventStoreCorruptionError(filePath, `line ${lineNumber} has an invalid event shape`);
 	}
+	if (event.kind === "observation" && !isTelemetryObservation(event.observation)) {
+		throw new TraceEventStoreCorruptionError(filePath, `line ${lineNumber} has an invalid observation schema`);
+	}
+	if (event.kind !== "observation" && event.observation !== undefined) {
+		throw new TraceEventStoreCorruptionError(filePath, `line ${lineNumber} attaches an observation to a non-observation node`);
+	}
 	const body = { ...event } as Record<string, unknown>;
 	delete body.eventHash;
 	if (canonicalDigest(body) !== event.eventHash) {
@@ -60,6 +69,7 @@ function parseEvent(value: unknown, filePath: string, lineNumber: number): Trace
 export class JsonlTraceEventStore {
 	public readonly filePath: string;
 	public readonly traceId: string;
+	readonly #createDirectories: boolean;
 	readonly #events: TraceEvent[] = [];
 	#initialized = false;
 	#initializing: Promise<void> | undefined;
@@ -68,6 +78,7 @@ export class JsonlTraceEventStore {
 	public constructor(options: JsonlTraceEventStoreOptions) {
 		this.filePath = options.filePath;
 		this.traceId = options.traceId;
+		this.#createDirectories = options.createDirectories !== false;
 	}
 
 	public async initialize(): Promise<void> {
@@ -105,7 +116,7 @@ export class JsonlTraceEventStore {
 	}
 
 	async #load(): Promise<void> {
-		await mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
+		if (this.#createDirectories) await mkdir(path.dirname(this.filePath), { recursive: true, mode: 0o700 });
 		let content: string;
 		try {
 			content = await readFile(this.filePath, "utf8");
@@ -137,6 +148,8 @@ export class JsonlTraceEventStore {
 	async #appendOne(input: TraceEventInput): Promise<TraceEvent> {
 		await this.initialize();
 		if (input.traceId !== this.traceId) throw new Error("trace id does not match event store");
+		if (input.kind === "observation" && !isTelemetryObservation(input.observation)) throw new Error("invalid observation schema");
+		if (input.kind !== "observation" && input.observation !== undefined) throw new Error("observation requires an observation node");
 		if (this.#events.some((event) => event.eventId === input.eventId)) throw new Error("event id already exists");
 		const sequence = this.#events.length + 1;
 		const previousEventHash = this.#events.at(-1)?.eventHash ?? null;

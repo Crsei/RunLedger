@@ -27,6 +27,9 @@ import type {
 } from "./types.ts";
 import { TraceTreeProjection } from "./tree.ts";
 import { redactRuntimeArtifactText } from "./redaction.ts";
+import { createLocalTelemetryPort } from "../telemetry/local/recorder.ts";
+import type { LocalTelemetryPort } from "../telemetry/local/port.ts";
+import type { SessionId, TraceId } from "../protocol/ids.ts";
 
 export interface TraceClock {
 	now(): number;
@@ -48,7 +51,7 @@ export interface RuntimeTraceRecorderOptions {
 export type TraceRecorderStatus = "active" | "degraded" | "failed";
 
 export interface TraceRecordingDiagnostic {
-	readonly code: "event_store_write_failed" | "artifact_store_write_failed";
+	readonly code: "event_store_write_failed" | "artifact_store_write_failed" | "trace_index_write_failed";
 	readonly message: string;
 }
 
@@ -131,6 +134,7 @@ export class RuntimeTraceRecorder {
 	#eventStoreDisabled = false;
 	#artifactStoreDisabled = false;
 	readonly #reportedDiagnostics = new Set<TraceRecordingDiagnostic["code"]>();
+	readonly #localTelemetryPort: LocalTelemetryPort;
 
 	public constructor(options: RuntimeTraceRecorderOptions) {
 		this.traceId = options.traceId;
@@ -142,10 +146,31 @@ export class RuntimeTraceRecorder {
 		this.#redactionPolicyDigest = options.redactionPolicyDigest;
 		this.#metadata = options.metadata ?? {};
 		this.#clock = options.clock ?? defaultClock;
+		const localTelemetryPort = createLocalTelemetryPort({
+			eventStore: options.eventStore,
+			traceId: options.traceId as TraceId,
+			...(typeof options.metadata?.sessionId === "string" ? { sessionId: options.metadata.sessionId as SessionId } : {}),
+			...(typeof options.metadata?.ownerGeneration === "number" ? { ownerGeneration: options.metadata.ownerGeneration } : {}),
+			mode: options.mode,
+			failurePolicy: options.failurePolicy,
+		});
+		if (localTelemetryPort === undefined) throw new Error("local telemetry port requires recording to be enabled");
+		this.#localTelemetryPort = localTelemetryPort;
 	}
 
 	public get status(): TraceRecorderStatus {
 		return this.#status;
+	}
+
+	/** Session Runtime 只在 recording enabled 时从已创建的 Trace recorder 取得本地 port。 */
+	public localTelemetryPort(): LocalTelemetryPort {
+		return this.#localTelemetryPort;
+	}
+
+	/** Agent Loop correlation 复用 factory 注入的 Session Owner 代际。 */
+	public ownerGeneration(): number {
+		const value = this.#metadata.ownerGeneration;
+		return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 	}
 
 	public async startRun(input: { agentId?: string; metadata?: TraceMetadata } = {}): Promise<void> {
@@ -154,24 +179,30 @@ export class RuntimeTraceRecorder {
 		this.#finished = false;
 		this.#agentNodeId = `agent:${input.agentId ?? this.traceId}`;
 		const timestamp = this.#timestamp();
-		await this.#append({
-			nodeId: this.traceId,
-			parentNodeId: null,
-			kind: "trace",
-			name: "agent.run",
-			phase: "started",
-			timestamp,
-			metadata: { event: "trace.started", ...input.metadata, ...this.#metadata },
-		});
-		await this.#append({
-			nodeId: this.#agentNodeId,
-			parentNodeId: this.traceId,
-			kind: "agent",
-			name: "agent",
-			phase: "started",
-			timestamp,
-			metadata: { event: "agent.started" },
-		});
+		try {
+			await this.#append({
+				nodeId: this.traceId,
+				parentNodeId: null,
+				kind: "trace",
+				name: "agent.run",
+				phase: "started",
+				timestamp,
+				metadata: { event: "trace.started", ...input.metadata, ...this.#metadata },
+			});
+			await this.#append({
+				nodeId: this.#agentNodeId,
+				parentNodeId: this.traceId,
+				kind: "agent",
+				name: "agent",
+				phase: "started",
+				timestamp,
+				metadata: { event: "agent.started" },
+			});
+			await this.#localTelemetryPort.forceSample("run");
+		} catch (error) {
+			await this.#localTelemetryPort.close();
+			throw error;
+		}
 	}
 
 	/** 将已有 AgentEvent 投影为 trace 节点生命周期。 */
@@ -214,26 +245,31 @@ export class RuntimeTraceRecorder {
 		this.#finished = true;
 		const timestamp = this.#iso(input.timestamp ?? this.#clock.now());
 		const eventName = input.phase === "finished" ? "finished" : input.phase;
-		await this.#append({
-			nodeId: this.#agentNodeId ?? `agent:${this.traceId}`,
-			parentNodeId: this.traceId,
-			kind: "agent",
-			name: "agent",
-			phase: input.phase,
-			timestamp,
-			...(input.error === undefined ? {} : { error: input.error }),
-			metadata: { event: `agent.${eventName}` },
-		});
-		await this.#append({
-			nodeId: this.traceId,
-			parentNodeId: null,
-			kind: "trace",
-			name: "agent.run",
-			phase: input.phase,
-			timestamp,
-			...(input.error === undefined ? {} : { error: input.error }),
-			metadata: { event: `trace.${eventName}` },
-		});
+		try {
+			await this.#localTelemetryPort.forceSample("run");
+			await this.#append({
+				nodeId: this.#agentNodeId ?? `agent:${this.traceId}`,
+				parentNodeId: this.traceId,
+				kind: "agent",
+				name: "agent",
+				phase: input.phase,
+				timestamp,
+				...(input.error === undefined ? {} : { error: input.error }),
+				metadata: { event: `agent.${eventName}` },
+			});
+			await this.#append({
+				nodeId: this.traceId,
+				parentNodeId: null,
+				kind: "trace",
+				name: "agent.run",
+				phase: input.phase,
+				timestamp,
+				...(input.error === undefined ? {} : { error: input.error }),
+				metadata: { event: `trace.${eventName}` },
+			});
+		} finally {
+			await this.#localTelemetryPort.close();
+		}
 	}
 
 	/** 记录 Host-owned process output 的可观测投影，不复制 process truth。 */
@@ -410,6 +446,7 @@ export class RuntimeTraceRecorder {
 			timestamp: this.#iso(timestamp),
 			metadata: { event: "turn.started", turn },
 		});
+		await this.#localTelemetryPort.forceSample("turn");
 	}
 
 	async #finishTurn(turn: number, timestamp: number, stopReason?: StopReason): Promise<void> {
@@ -429,6 +466,7 @@ export class RuntimeTraceRecorder {
 				...(stopReason === undefined ? {} : { stopReason }),
 			},
 		});
+		await this.#localTelemetryPort.forceSample("turn");
 		if (this.#currentTurnNodeId === state.nodeId) this.#currentTurnNodeId = undefined;
 		if (this.#currentModelNodeId?.startsWith(`model:${this.traceId}:${turn}:`)) this.#currentModelNodeId = undefined;
 	}

@@ -17,10 +17,11 @@ describe("parseArgs 帮助/版本", () => {
     expect(parseArgs(["--version"]).args.version).toBe(true);
   });
 
-  it("USAGE 字符串包含 runledger 字面量与 --help", () => {
-    expect(USAGE).toContain("runledger");
-    expect(USAGE).toContain("--help");
-  });
+	it("USAGE 字符串包含 runledger 字面量与 --help", () => {
+		expect(USAGE).toContain("runledger");
+		expect(USAGE).toContain("--help");
+		expect(USAGE).toContain("telemetry status|report");
+	});
 
   it("USAGE advertises the canonical settings command surface", () => {
     expect(USAGE).toContain("settings list|get|set|reset");

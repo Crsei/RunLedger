@@ -11,8 +11,11 @@ import { makeEditorTheme, makeSelectListTheme } from "../../src/tui/theme/factor
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+import { emptySessionTelemetryReport } from "../../src/runtime/telemetry/local/report.ts";
+import type { LocalTelemetryQuery } from "../../src/runtime/telemetry/local/query.ts";
 import { createProcessOverlayController } from "../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../src/tui/process/types.ts";
+import { TelemetryOverlayComponent } from "../../src/tui/components/telemetry-overlay.ts";
 import { TranscriptOverlayComponent } from "../../src/tui/transcript-view.ts";
 import { WelcomeComponent } from "../../src/tui/components/welcome.ts";
 import type { TuiPreferencesDocument, TuiPreferencesPort } from "../../src/tui/preferences/types.ts";
@@ -580,6 +583,43 @@ describe("InteractiveMode lifecycle and global controls", () => {
     expect(internals.ui.hasOverlay()).toBe(false);
 
     terminal.send("\x04");
+    await running;
+  });
+
+  it("active turn can open /telemetry without pausing the Agent and Esc restores the editor", async () => {
+    const terminal = new FakeTerminal();
+    const controlled = interruptibleStream();
+    const agent = new Agent({
+      initialState: { systemPrompt: "test", model: mockModel },
+      streamFn: controlled.streamFn,
+    });
+    const sessionId = createRuntimeId("session", "telemetry-active");
+    const report = emptySessionTelemetryReport(sessionId, {
+      state: "recording_off",
+      reason: "recording_disabled",
+      recordingMode: "off",
+    });
+    const telemetryQuery: LocalTelemetryQuery = {
+      report: async () => ({ ok: true, report }),
+      status: async () => { throw new Error("not used"); },
+    };
+    const mode = new InteractiveMode({ agent, terminal, telemetryQuery });
+    const running = mode.run();
+
+    mode.echoPrompt("active work");
+    await controlled.started;
+    expect(agent.inFlight).toBe(true);
+
+    mode.echoPrompt("/telemetry");
+    const internals = mode as unknown as { ui: { getOverlay(): unknown; hasOverlay(): boolean } };
+    await vi.waitFor(() => expect(internals.ui.getOverlay()).toBeInstanceOf(TelemetryOverlayComponent));
+    expect(agent.inFlight).toBe(true);
+
+    terminal.send("\x1b");
+    expect(internals.ui.hasOverlay()).toBe(false);
+    expect(agent.inFlight).toBe(true);
+
+    mode.quit();
     await running;
   });
 

@@ -85,6 +85,16 @@ describe("slash command registry", () => {
 		});
 	});
 
+	it("registers /telemetry as a read-only command available during an active turn", () => {
+		expect(findCommand("telemetry")).toMatchObject({
+			canonicalName: "telemetry",
+			actionType: "telemetry.open",
+			category: "telemetry",
+			availableDuringTask: true,
+			supportsInlineArgs: false,
+		});
+	});
+
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
     expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);

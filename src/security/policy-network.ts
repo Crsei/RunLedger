@@ -12,6 +12,7 @@ export interface NetworkBrokerRequest {
 	readonly headers: Readonly<Record<string, string>>;
 	readonly body?: string | Buffer;
 	readonly maxBytes: number;
+	readonly telemetryChannel?: "mcp_http" | "governed_http";
 }
 
 export interface NetworkBrokerResponse {

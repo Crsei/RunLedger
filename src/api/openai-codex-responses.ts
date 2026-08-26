@@ -51,6 +51,7 @@ import { uuidv7 } from "../utils/uuid.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
+import { meterCurrentWebSocket } from "../runtime/telemetry/local/provider.ts";
 
 // ============================================================================
 // Configuration
@@ -1413,7 +1414,7 @@ async function processWebSocketStream(
 	websocketConnectTimeoutMs: number | undefined,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	const { socket, entry, reused, release } = await acquireWebSocket(
+	const { socket: rawSocket, entry, reused, release } = await acquireWebSocket(
 		model.provider,
 		url,
 		headers,
@@ -1422,6 +1423,7 @@ async function processWebSocketStream(
 		websocketConnectTimeoutMs,
 		options?.env,
 	);
+	const socket = meterCurrentWebSocket(rawSocket);
 	let keepConnection = true;
 	const useCachedContext = options?.transport === "websocket-cached" || options?.transport === "auto";
 	// ChatGPT Codex Responses rejects `store: true` ("Store must be set to false").
@@ -1483,6 +1485,7 @@ async function processWebSocketStream(
 		keepConnection = false;
 		throw error;
 	} finally {
+		socket.disposeTelemetry?.();
 		release({ keep: keepConnection });
 	}
 }

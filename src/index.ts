@@ -89,6 +89,7 @@ export * from "./runtime/providers/mock-stream.ts";
 export * from "./runtime/stdlib-stream.ts";
 export * from "./runtime/usage/index.ts";
 export * from "./runtime/trace/index.ts";
+export * from "./runtime/telemetry/local/index.ts";
 export * from "./runtime/host/types.ts";
 export * from "./runtime/host/contracts.ts";
 export * from "./runtime/host/driver.ts";

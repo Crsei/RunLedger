@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistantMessage } from "../../../src/types.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { runAgentLoop } from "../../../src/runtime/agent-loop.ts";
@@ -48,6 +48,7 @@ async function createRecorder(
 }
 
 afterEach(async () => {
+	vi.useRealTimers();
 	await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -78,6 +79,31 @@ describe("RuntimeTraceRecorder", () => {
 			expect.objectContaining({ kind: "agent", error: terminal.error, metadata: { event: "agent.failed" } }),
 			expect.objectContaining({ kind: "trace", error: terminal.error, metadata: { event: "trace.failed" } }),
 		]);
+	});
+
+	it("force-samples run and turn boundaries and stops the sampler when the run finishes", async () => {
+		vi.useFakeTimers();
+		const root = await mkdtemp(join(tmpdir(), "runledger-trace-recorder-"));
+		roots.push(root);
+		const eventStore = new JsonlTraceEventStore({ filePath: join(root, "events.jsonl"), traceId: "trace_lifecycle" });
+		const recorder = new RuntimeTraceRecorder({
+			eventStore,
+			traceId: "trace_lifecycle",
+			redactionPolicyDigest: "policy_trace_v1",
+			mode: "events",
+			failurePolicy: "fail_closed",
+			metadata: { sessionId: "session_lifecycle", ownerGeneration: 4 },
+		});
+
+		await recorder.startRun();
+		await recorder.recordAgentEvent({ type: "turn_start", timestamp: 1_000, turn: 1 });
+		await recorder.recordAgentEvent({ type: "turn_end", timestamp: 1_100, turn: 1, stopReason: "stop" });
+		await recorder.finishRun({ phase: "finished" });
+		const eventsAtFinish = await eventStore.events();
+		expect(eventsAtFinish.filter((event) => event.observation?.kind === "runtime_memory")).toHaveLength(4);
+
+		await vi.advanceTimersByTimeAsync(2_200);
+		expect(await eventStore.events()).toHaveLength(eventsAtFinish.length);
 	});
 
 	it("redacts credentials, auth headers, and environment values", () => {
@@ -337,7 +363,17 @@ describe("RuntimeTraceRecorder", () => {
 	});
 
 	it("connects agent loop model and tool lifecycle to a replayable tree", async () => {
-		const { eventStore, recorder } = await createRecorder();
+		const root = await mkdtemp(join(tmpdir(), "runledger-trace-recorder-"));
+		roots.push(root);
+		const eventStore = new JsonlTraceEventStore({ filePath: join(root, "events.jsonl"), traceId: "trace_agent_loop" });
+		const recorder = new RuntimeTraceRecorder({
+			eventStore,
+			traceId: "trace_agent_loop",
+			redactionPolicyDigest: "policy_trace_v1",
+			mode: "events",
+			failurePolicy: "fail_closed",
+			metadata: { sessionId: "session_agent_loop", ownerGeneration: 7 },
+		});
 		const context: AgentContext = { messages: [], tools: [echoTool] };
 		await runAgentLoop(
 			[{ role: "user", content: [{ type: "text", text: "hello" }] }],
@@ -358,6 +394,12 @@ describe("RuntimeTraceRecorder", () => {
 		expect(events.some((event) => event.kind === "model" && event.phase === "finished")).toBe(true);
 		expect(events.some((event) => event.kind === "tool" && event.phase === "finished")).toBe(true);
 		expect(events.filter((event) => event.kind === "context")).toHaveLength(1);
+		const logicalState = events.find((event) => event.observation?.kind === "logical_session_state")?.observation;
+		expect(logicalState).toMatchObject({
+			kind: "logical_session_state",
+			correlation: { ownerGeneration: 7 },
+			contextCurrentTokens: { availability: "available", accuracy: "estimated" },
+		});
 		const model = events.find((event) => event.kind === "model" && event.phase === "finished");
 		const tool = events.find((event) => event.kind === "tool" && event.phase === "finished");
 		expect(tool?.parentNodeId).toBe(model?.nodeId);

@@ -1,6 +1,7 @@
 /** Session-owned managed process composition。 */
 
 import { isAbsolute } from "node:path";
+import { readdir, readFile as readTextFile } from "node:fs/promises";
 import { buildShellInvocation, defaultShell } from "../../utils/shell.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
@@ -31,6 +32,9 @@ import type { RecordingFailurePolicy, RecordingMode } from "../../storage/settin
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
 import { SessionProcessJournal } from "./process-journal.ts";
 import { SessionProcessCompletionQueue } from "./process-completion-queue.ts";
+import { recordProcessIo as recordLocalProcessIo } from "../../runtime/telemetry/local/meter.ts";
+import type { TelemetryCorrelationContext } from "../../runtime/telemetry/local/types.ts";
+import { ManagedProcessMemorySampler, parseProcStat, recordManagedProcessMemory } from "../../runtime/telemetry/local/memory.ts";
 
 export interface SessionProcessCompositionOptions {
 	readonly layout: RunledgerLayout;
@@ -77,6 +81,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 	private readonly processAttempts = new Map<string, AttemptId>();
 	private readonly processTraceRecorders = new Map<string, Promise<RuntimeTraceRecorder | undefined>>();
 	private readonly processTraceTerminalTasks = new Map<string, Promise<void>>();
+	private readonly processMemorySamplerTasks = new Map<string, Promise<ManagedProcessMemorySampler | undefined>>();
 	private readonly finishedProcessTraces = new Set<string>();
 
 	public constructor(options: SessionProcessCompositionOptions) {
@@ -102,6 +107,8 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 				};
 			},
 			createOutputStore: output,
+			onProcessIo: (input) => this.recordProcessIo(input),
+			onProcessSpawned: (input) => this.startProcessMemorySampler(input),
 		});
 		const platform = runtimeWorkspacePlatform();
 		const pty = platform === "linux" || platform === "macos"
@@ -116,6 +123,8 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 					};
 				},
 				createOutputStore: output,
+				onProcessIo: (input) => this.recordProcessIo(input),
+				onProcessSpawned: (input) => this.startProcessMemorySampler(input),
 			})
 			: undefined;
 		const backend = new SessionCompositeProcessBackend(pipe.asManagerBackend(), pty?.asManagerBackend());
@@ -579,31 +588,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 	private async recordOutputMaterialization(handle: ExecutionHandleRef, record: ProcessOutputMaterializationRecord): Promise<void> {
 		const content = record.materialization.traceContent;
 		if (record.mode === "off" || content === undefined) return;
-		const factory = this.options.traceRecorderFactory;
-		if (factory === undefined) {
-			if (this.options.recordingFailurePolicy === "fail_closed") throw new Error("Session process Trace recorder is unavailable");
-			return;
-		}
-		const key = `${handle.executionId}:${handle.attemptId}`;
-		let recorderPromise = this.processTraceRecorders.get(key);
-		if (recorderPromise === undefined) {
-			const traceId = createRuntimeId("trace", runtimeDigest({
-				sessionId: this.options.fence.sessionId,
-				ownerGeneration: handle.sessionGeneration,
-				executionId: handle.executionId,
-				attemptId: handle.attemptId,
-			}).digest.slice(0, 64));
-			recorderPromise = factory.create({
-				sessionId: this.options.fence.sessionId,
-				ownerGeneration: this.options.fence.generation,
-				traceId,
-			}).catch((error: unknown) => {
-				if (this.options.recordingFailurePolicy === "fail_closed") throw error;
-				return undefined;
-			});
-			this.processTraceRecorders.set(key, recorderPromise);
-		}
-		const recorder = await recorderPromise;
+		const recorder = await this.processTraceRecorderFor(handle);
 		if (recorder === undefined) {
 			if (this.options.recordingFailurePolicy === "fail_closed") throw new Error("Session process Trace recorder is unavailable");
 			return;
@@ -618,12 +603,87 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 		});
 	}
 
+	/** 将 managed pipe/PTY 的真实 stream bytes 投影为 observation；正文仍只进入 output store。 */
+	private async recordProcessIo(input: {
+		readonly handle: ExecutionHandleRef;
+		readonly stream: "stdin" | "stdout" | "stderr" | "pty_output";
+		readonly observedBytes: number;
+		readonly retainedBytes: number;
+	}): Promise<void> {
+		if (this.options.recordingMode === "off") return;
+		const recorder = await this.processTraceRecorderFor(input.handle);
+		if (recorder === undefined) return;
+		const correlation: TelemetryCorrelationContext = {
+			sessionId: this.options.fence.sessionId,
+			traceId: recorder.traceId as TelemetryCorrelationContext["traceId"],
+			ownerGeneration: this.options.fence.generation,
+			executionId: input.handle.executionId,
+			attemptId: input.handle.attemptId,
+		};
+		const result = await recordLocalProcessIo(recorder.localTelemetryPort(), {
+			stream: input.stream,
+			observedBytes: input.observedBytes,
+			retainedBytes: input.retainedBytes,
+			correlation,
+		});
+		if (!result.ok && this.options.recordingFailurePolicy === "fail_closed") throw new Error(`process telemetry recording failed: ${result.code}`);
+	}
+
+	private async processTraceRecorderFor(handle: ExecutionHandleRef): Promise<RuntimeTraceRecorder | undefined> {
+		const factory = this.options.traceRecorderFactory;
+		if (factory === undefined) {
+			if (this.options.recordingFailurePolicy === "fail_closed" && this.options.recordingMode !== "off") throw new Error("Session process Trace recorder is unavailable");
+			return undefined;
+		}
+		const key = `${handle.executionId}:${handle.attemptId}`;
+		let recorderPromise = this.processTraceRecorders.get(key);
+		if (recorderPromise === undefined) {
+			const traceId = createRuntimeId("trace", runtimeDigest({
+				sessionId: this.options.fence.sessionId,
+				ownerGeneration: handle.sessionGeneration,
+				executionId: handle.executionId,
+				attemptId: handle.attemptId,
+			}).digest.slice(0, 64));
+			recorderPromise = factory.create({
+				sessionId: this.options.fence.sessionId,
+				ownerGeneration: this.options.fence.generation,
+				traceId,
+			}).then(async (recorder) => {
+				if (recorder !== undefined) await recorder.startRun({ agentId: `process-${handle.executionId}` });
+				return recorder;
+			}).catch((error: unknown) => {
+				if (this.options.recordingFailurePolicy === "fail_closed") throw error;
+				return undefined;
+			});
+			this.processTraceRecorders.set(key, recorderPromise);
+		}
+		return recorderPromise;
+	}
+
 	private async finishProcessTrace(summary: ManagedProcessSummary): Promise<void> {
 		const key = `${summary.handle.executionId}:${summary.handle.attemptId}`;
 		if (this.finishedProcessTraces.has(key)) return;
 		let task = this.processTraceTerminalTasks.get(key);
 		if (task === undefined) {
 			task = (async () => {
+				const memoryTask = this.processMemorySamplerTasks.get(key);
+				let memorySampler: ManagedProcessMemorySampler | undefined;
+				let memoryFailure: unknown;
+				try {
+					memorySampler = memoryTask === undefined ? undefined : await memoryTask;
+				} catch (error) {
+					memoryFailure = error;
+				}
+				if (memorySampler !== undefined) {
+					try {
+						await memorySampler.forceSample();
+					} catch (error) {
+						memoryFailure ??= error;
+					} finally {
+						await memorySampler.close();
+					}
+				}
+				this.processMemorySamplerTasks.delete(key);
 				const recorderPromise = this.processTraceRecorders.get(key);
 				if (recorderPromise === undefined) return;
 				const recorder = await recorderPromise;
@@ -631,6 +691,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 				await recorder.finishRun(processTraceTerminal(summary.state));
 				this.processTraceRecorders.delete(key);
 				this.finishedProcessTraces.add(key);
+				if (memoryFailure !== undefined && this.options.recordingFailurePolicy === "fail_closed") throw memoryFailure;
 			})();
 			this.processTraceTerminalTasks.set(key, task);
 		}
@@ -639,6 +700,53 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 		} finally {
 			this.processTraceTerminalTasks.delete(key);
 		}
+	}
+
+	private startProcessMemorySampler(input: { readonly handle: ExecutionHandleRef; readonly pid: number }): void {
+		if (this.options.recordingMode !== "events" && this.options.recordingMode !== "events_and_artifacts") return;
+		if (runtimeWorkspacePlatform() !== "linux") return;
+		const key = `${input.handle.executionId}:${input.handle.attemptId}`;
+		if (this.processMemorySamplerTasks.has(key)) return;
+		const task = (async (): Promise<ManagedProcessMemorySampler | undefined> => {
+			const recorder = await this.processTraceRecorderFor(input.handle);
+			if (recorder === undefined) return undefined;
+			const correlation: TelemetryCorrelationContext = {
+				sessionId: this.options.fence.sessionId,
+				traceId: recorder.traceId as TelemetryCorrelationContext["traceId"],
+				ownerGeneration: this.options.fence.generation,
+				executionId: input.handle.executionId,
+				attemptId: input.handle.attemptId,
+			};
+			let stat;
+			try {
+				stat = parseProcStat(await readTextFile(`/proc/${input.pid}/stat`, "utf8"));
+			} catch (error) {
+				await recordManagedProcessMemory(recorder.localTelemetryPort(), {
+					correlation,
+					sample: { ok: false, reason: processMemoryFailureReason(error) },
+				});
+				return undefined;
+			}
+			if (stat === undefined) {
+				await recordManagedProcessMemory(recorder.localTelemetryPort(), {
+					correlation,
+					sample: { ok: false, reason: "sample_failed" },
+				});
+				return undefined;
+			}
+			const sampler = new ManagedProcessMemorySampler({
+				root: { pid: input.pid, startTime: stat.startTime },
+				correlation,
+				observe: recorder.localTelemetryPort(),
+				listDirectory: async () => await readdir("/proc"),
+				readFile: async (path) => await readTextFile(path, "utf8"),
+			});
+			await sampler.start();
+			await sampler.forceSample();
+			return sampler;
+		})();
+		this.processMemorySamplerTasks.set(key, task);
+		void task.catch(() => undefined);
 	}
 
 	private async readRecoveredOutput(
@@ -695,6 +803,15 @@ function processTraceTerminal(state: ManagedProcessSummary["state"]): Parameters
 				error: { code: "process_interrupted", message: "managed process was interrupted", outcomeCertain: false },
 			};
 	}
+}
+
+function processMemoryFailureReason(error: unknown): "permission_denied" | "sample_failed" {
+	if (typeof error !== "object" || error === null) return "sample_failed";
+	const value = error as { readonly code?: unknown; readonly message?: unknown };
+	if (value.code === "EACCES" || value.code === "EPERM") return "permission_denied";
+	return typeof value.message === "string" && /permission denied|operation not permitted/iu.test(value.message)
+		? "permission_denied"
+		: "sample_failed";
 }
 
 export function createSessionProcessComposition(options: SessionProcessCompositionOptions): SessionManagedProcessComposition {

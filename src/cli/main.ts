@@ -21,7 +21,7 @@ import { registerConfiguredProxyProvidersFromHome } from "../providers/configure
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
 import { capabilityRowFor } from "../workspace/capability.ts";
 import { InteractiveMode } from "../tui/interactive-mode.ts";
-import { loadLayeredProjectSettings, loadProjectSettings } from "../storage/settings-manager.ts";
+import { loadLayeredProjectSettings, loadProjectSettings, resolveRecordingConfig } from "../storage/settings-manager.ts";
 import { SettingsRuntimeStore } from "../storage/settings-runtime-store.ts";
 import type { EffectiveRuntimeSettingsSnapshot } from "../storage/settings-resolver.ts";
 import type { TaskPolicyProjection } from "../storage/settings-policies.ts";
@@ -79,6 +79,8 @@ import { createComposerShapeRegistry } from "../tui/composer/registry.ts";
 import { createCliComposerShapeComposition } from "./composer-shape-composition.ts";
 import { runSettingsCommand } from "./settings-command.ts";
 import { SettingsCommandError } from "../storage/settings-service.ts";
+import { runTelemetryCommand, TelemetryCliError } from "./telemetry.ts";
+import { createLocalTelemetryQuery } from "../runtime/telemetry/local/query.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -114,6 +116,27 @@ export async function main(argv: readonly string[]): Promise<void> {
         ? error.message
         : "settings command failed";
       process.stderr.write(`[runledger] ${code}: ${detail}\n`);
+      process.exit(2);
+    }
+    return;
+  }
+  if (argv[0] === "telemetry") {
+    try {
+      // telemetry 是只读 projection：解析 canonical home 与 user recording
+      // authority，但不创建 default home、SQLite schema 或其它 storage。
+      const { layout } = await resolveRunledgerHome();
+      const settings = await loadProjectSettings({ layout });
+      await runTelemetryCommand(argv.slice(1), {
+        layout,
+        recording: resolveRecordingConfig(settings),
+      });
+    } catch (error) {
+      const code = error instanceof TelemetryCliError
+        ? error.code
+        : error instanceof RunledgerHomeError
+          ? error.code
+          : "telemetry_command_failed";
+      process.stderr.write(`[runledger] ${code}\n`);
       process.exit(2);
     }
     return;
@@ -186,6 +209,10 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.stderr.write(`[runledger] ${tuiPreferences.startupDiagnostic.code}; using hidden transcript scrollbar\n`);
   }
   const traceRecorderFactory = composeCliTraceRecorderFactory(layout, settings);
+  const telemetryQuery = createLocalTelemetryQuery({
+		layout,
+		recording: resolveRecordingConfig(settings),
+	});
 
   // OTEL:标准 OTEL_* env 驱动;无 endpoint / OTEL_SDK_DISABLED 时 no-op。
   // 启用后把 metrics/log 钩子 merge 进 AgentLoopConfig.telemetry。
@@ -445,6 +472,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       preferencesPort: tuiPreferences.port,
       hideThinkingBlock: resolveHideThinkingBlock(args.hideThinking, settings.hideThinkingBlock),
       hideThinkingSettingsPort: createCliHideThinkingSettings(layout),
+			telemetryQuery,
       composerShape: composerShapeSettings.composer?.shape,
       composerShapeRegistry,
       composerShapeSettingsPort,
