@@ -1,11 +1,52 @@
 import { describe, expect, test } from "bun:test";
-import { LOGO_GAP, logo, logoLineWidth, renderLogo } from "../../src/tui/components/logo.ts";
+import {
+	DEFAULT_LOGO_LETTERS,
+	LOGO_LETTER_FORMS,
+	logo,
+	logoLineWidth,
+	mapLogoLetters,
+	normalizeLogoLetters,
+	renderLogo,
+} from "../../src/tui/components/logo.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
 import { visibleWidth } from "../../src/tui/primitives.ts";
 
 const theme = loadTheme("dark");
 
-describe("RunLedger logo (opencode-style)", () => {
+describe("RunLedger logo", () => {
+	test("exposes RunLedger as the default logo text", () => {
+		expect(DEFAULT_LOGO_LETTERS).toBe("runledger");
+		expect(logo.letters).toBe(DEFAULT_LOGO_LETTERS);
+	});
+
+	test("renders only the default wordmark as visible RunLedger text", () => {
+		const plain = renderLogo(theme).join("\n").replace(/\x1b\[[0-9;]*m/gu, "");
+		expect(plain).toBe(DEFAULT_LOGO_LETTERS);
+		expect(plain).not.toContain("█");
+	});
+
+	test("maps every default letter to its corresponding glyph form", () => {
+		const mapped = mapLogoLetters();
+		expect(mapped.map((item) => item.letter).join("")).toBe(DEFAULT_LOGO_LETTERS);
+		expect(mapped.map((item) => item.rows)).toEqual([
+			LOGO_LETTER_FORMS.r,
+			LOGO_LETTER_FORMS.u,
+			LOGO_LETTER_FORMS.n,
+			LOGO_LETTER_FORMS.l,
+			LOGO_LETTER_FORMS.e,
+			LOGO_LETTER_FORMS.d,
+			LOGO_LETTER_FORMS.g,
+			LOGO_LETTER_FORMS.e,
+			LOGO_LETTER_FORMS.r,
+		]);
+	});
+
+	test("normalizes case and falls back for unsupported logo text", () => {
+		expect(normalizeLogoLetters("RUNLEDGER")).toBe(DEFAULT_LOGO_LETTERS);
+		expect(normalizeLogoLetters("run ledger")).toBe(DEFAULT_LOGO_LETTERS);
+		expect(normalizeLogoLetters("abc")).toBe(DEFAULT_LOGO_LETTERS);
+	});
+
 	test("left and right halves have equal non-zero row counts", () => {
 		expect(logo.left.length).toBe(logo.right.length);
 		expect(logo.left.length).toBeGreaterThan(0);
@@ -24,18 +65,22 @@ describe("RunLedger logo (opencode-style)", () => {
 		}
 	});
 
-	test("logoLineWidth is left + gap + right", () => {
-		expect(logoLineWidth()).toBe(
-			visibleWidth(logo.left[0] ?? "") + LOGO_GAP + visibleWidth(logo.right[0] ?? ""),
-		);
+	test("logoLineWidth matches the visible wordmark width", () => {
+		expect(logoLineWidth()).toBe(visibleWidth(DEFAULT_LOGO_LETTERS));
 	});
 
 	test("renderLogo paints per-char colors and preserves row widths", () => {
 		const lines = renderLogo(theme);
-		expect(lines.length).toBe(logo.left.length);
+		expect(lines.length).toBe(1);
 		for (const line of lines) {
-			expect(visibleWidth(line)).toBe(logoLineWidth());
+			expect(visibleWidth(line)).toBe(visibleWidth(DEFAULT_LOGO_LETTERS));
 			expect(line).toContain("\x1b[");
 		}
+	});
+
+	test("renderLogo accepts configured logo text and recalculates its width", () => {
+		const lines = renderLogo(theme, "rue");
+		expect(logoLineWidth("rue")).toBe(3);
+		expect(lines.every((line) => visibleWidth(line) === logoLineWidth("rue"))).toBe(true);
 	});
 });

@@ -78,6 +78,13 @@ describe("WelcomeComponent", () => {
 		expect(makeWelcome().render(100).join("\n")).toContain("Tip:");
 	});
 
+	test("renders the configured logo letters instead of the default logo", () => {
+		const customLines = makeWelcome({ logoLetters: "rue" }).render(50);
+		const plain = customLines.join("\n").replace(/\x1b\[[0-9;]*m/gu, "");
+		expect(plain).toContain("rue");
+		expect(plain).not.toContain("█");
+	});
+
 	test("returns [] below the minimum box width", () => {
 		expect(makeWelcome().render(3)).toEqual([]);
 	});

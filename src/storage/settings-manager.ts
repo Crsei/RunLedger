@@ -23,6 +23,7 @@ const SETTINGS_WRITE_OPTS = { encoding: "utf8", mode: 0o600 } as const;
 const SETTINGS_MKDIR_OPTS = { recursive: true, mode: 0o700 } as const;
 const WORKSPACE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,127}$/u;
 const SYNTAX_THEME_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const LOGO_LETTERS_PATTERN = /^[A-Za-z]{1,32}$/u;
 
 export interface SettingsStoreOptions {
 	readonly layout: RunledgerLayout;
@@ -48,6 +49,8 @@ export interface ProjectSettings {
 	thinkingLevel?: ModelThinkingLevel;
 	/** 是否仅在 TUI 展示层隐藏 thinking blocks；不改变模型请求或持久消息。 */
 	hideThinkingBlock?: boolean;
+	/** Welcome 页 Logo 字母；缺省由 TUI 使用 `runledger`。 */
+	logo?: string;
 	/** syntax theme 名；dark/light 是兼容输入，分别映射为自适应 pair。 */
 	theme?: string;
 	/** /model 选择器可见模型白名单;空数组或 undefined 表示无白名单 */
@@ -379,6 +382,10 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (typeof raw.model === "string" && raw.model.length > 0) out.model = raw.model;
 	if (isThinkingLevel(raw.thinkingLevel)) out.thinkingLevel = raw.thinkingLevel;
 	if (typeof raw.hideThinkingBlock === "boolean") out.hideThinkingBlock = raw.hideThinkingBlock;
+	if (typeof raw.logo === "string") {
+		const logo = raw.logo.trim();
+		if (LOGO_LETTERS_PATTERN.test(logo)) out.logo = logo.toLowerCase();
+	}
 	if (isSyntaxThemeName(raw.theme)) out.theme = raw.theme;
 	if (Array.isArray(raw.enabledModels)) {
 		const filtered = raw.enabledModels.filter(

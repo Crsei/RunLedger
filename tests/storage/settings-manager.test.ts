@@ -103,6 +103,17 @@ describe("loadProjectSettings", () => {
 		}
 	});
 
+	it("加载 Logo 字母配置并归一化大小写，丢弃非法值", async () => {
+		mkdirSync(layout.home, { recursive: true });
+		writeFileSync(layout.settings, JSON.stringify({ logo: "RUNLEDGER" }), "utf8");
+		expect(await loadProjectSettings({ layout })).toEqual({ logo: "runledger" });
+
+		for (const invalid of ["run ledger", "runledger1", "", 1, null]) {
+			writeFileSync(layout.settings, JSON.stringify({ logo: invalid }), "utf8");
+			expect(await loadProjectSettings({ layout })).toEqual({});
+		}
+	});
+
 	it("加载 canonical recap 配置并保留合法 enabled/idleSeconds", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(

@@ -258,6 +258,19 @@ describe("InteractiveMode lifecycle and global controls", () => {
 		expect(defaultRefs.welcome).toBeUndefined();
 	});
 
+	it("passes the configured logo letters into the real welcome component", () => {
+		const mode = new InteractiveMode({
+			agent: new Agent({ initialState: { systemPrompt: "test", model: mockModel }, streamFn: immediateStopStream() }),
+			terminal: new FakeTerminal(),
+			showWelcome: true,
+			logoLetters: "rue",
+		});
+		const welcome = (mode as unknown as { refs: { welcome?: WelcomeComponent } }).refs.welcome;
+		const plain = welcome?.render(50).join("\n").replace(/\x1b\[[0-9;]*m/gu, "") ?? "";
+		expect(plain).toContain("rue");
+		expect(plain).not.toContain("█");
+	});
+
 	it("silently refreshes welcome recent sessions through the governed catalog workflow", async () => {
 		const controller = new ContractController({
 			supportedOperations: ["session.catalog.list"],

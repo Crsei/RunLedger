@@ -161,6 +161,8 @@ export interface InteractiveModeOptions {
   showWelcome?: boolean;
   /** welcome 顶边框版本号。 */
   version?: string;
+  /** welcome Logo 字母；由 canonical settings 的 `logo` 传入。 */
+  logoLetters?: string;
 }
 
 export interface SessionSwitchTarget {
@@ -273,6 +275,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private hideThinkingBlock: boolean;
   private readonly showWelcome: boolean;
   private readonly version: string;
+  private readonly logoLetters?: string;
   private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
@@ -314,6 +317,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.hideThinkingBlock = opts.hideThinkingBlock ?? false;
     this.showWelcome = opts.showWelcome ?? false;
     this.version = opts.version ?? "unknown";
+    this.logoLetters = opts.logoLetters;
     this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
       configuredName: opts.syntaxThemeName,
@@ -446,6 +450,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 		welcome = new WelcomeComponent({
 			version: this.version,
 			theme: this.theme,
+			logoLetters: this.logoLetters,
 			modelLabel: this.getModelId(),
 			providerLabel: this.getProviderId(),
 			thinkingLabel: this.getThinkingLevel(),
