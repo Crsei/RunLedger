@@ -4,26 +4,60 @@ import { loadTheme } from "../../src/tui/theme/theme.ts";
 import type { FooterSnapshotProvider } from "../../src/tui/types.ts";
 import { visibleWidth } from "../../src/tui/primitives.ts";
 import { applyUsageObservation, createUsageAccumulator, usageSnapshot } from "../../src/runtime/usage/index.ts";
+import { createDefaultFooterFieldRegistry, type FooterSnapshot } from "../../src/tui/footer/field-registry.ts";
 
-function provider(threadLabel?: string): FooterSnapshotProvider {
+function provider(threadLabel?: string, extra: Partial<FooterSnapshot> = {}): FooterSnapshotProvider {
 	return {
-		isStreaming: () => false,
-		getStopReason: () => undefined,
-		getSessionId: () => "session-0123456789abcdef",
-		getThreadLabel: () => threadLabel,
-		getProviderId: () => "deepseek",
-		getModelId: () => "deepseek-v4-pro",
-		getThinkingLevel: () => "high",
-		getWorkspaceDisplayAbsolutePath: () => "/home/alice/work/RunLedger",
-		getGitBranchLabel: () => "feature/highlight",
-		getWorkspaceCapability: () => "ws:linux-verified",
+		getFooterSnapshot: () => ({
+			nowMs: 1_000,
+			isStreaming: false,
+			providerId: "deepseek",
+			modelId: "deepseek-v4-pro",
+			thinkingLevel: "high",
+			workspaceDisplayAbsolutePath: "/home/alice/work/RunLedger",
+			gitBranchLabel: "feature/highlight",
+			threadLabel,
+			queue: { steering: 0, followUp: 0 },
+			...extra,
+		}),
 	};
 }
 
+function footer(providerValue: FooterSnapshotProvider = provider()): Footer {
+	return new Footer({ theme: loadTheme("dark"), provider: providerValue, registry: createDefaultFooterFieldRegistry() });
+}
+
 describe("structured Footer status line", () => {
+	it("reflects dynamic field registration and unregistration from one immutable snapshot", () => {
+		const registry = createDefaultFooterFieldRegistry();
+		const snapshot: FooterSnapshot = {
+			nowMs: 1_000,
+			isStreaming: false,
+			modelId: "deepseek-v4-pro",
+			queue: { steering: 0, followUp: 0 },
+		};
+		const footer = new Footer({
+			theme: loadTheme("dark"),
+			registry,
+			provider: { getFooterSnapshot: () => snapshot },
+		});
+		const registered = registry.register({
+			id: "identity.dynamic",
+			row: "identity",
+			order: 45,
+			accent: "metadata",
+			project: () => "dynamic:on",
+		});
+		if (!registered.ok) throw new Error("dynamic registration failed");
+
+		expect(footer.render(120).join("\n")).toContain("dynamic:on");
+		expect(registered.unregister()).toBe(true);
+		expect(footer.render(120).join("\n")).not.toContain("dynamic:on");
+	});
+
 	it.each([60, 80, 143])("hides idle while keeping the model visible without exceeding %i columns", (width) => {
-		const footer = new Footer({ theme: loadTheme("dark"), provider: provider() });
-		const block = footer.present(width)[0];
+		const component = footer();
+		const block = component.present(width)[0];
 		expect(block?.kind).toBe("status-line");
 		if (block?.kind !== "status-line") return;
 		const text = block.segments.map((segment) => segment.text).join(" · ");
@@ -36,12 +70,12 @@ describe("structured Footer status line", () => {
 	});
 
 	it("hides the session id until a durable title is available", () => {
-		const unnamed = new Footer({ theme: loadTheme("dark"), provider: provider() });
+		const unnamed = footer();
 		const unnamedText = unnamed.present(143)[0];
 		if (unnamedText?.kind !== "status-line") throw new Error("status line missing");
 		expect(unnamedText.segments.some((segment) => segment.text === "session-0123456789abcdef")).toBe(false);
 
-		const titled = new Footer({ theme: loadTheme("dark"), provider: provider("Fix login flow") });
+		const titled = footer(provider("Fix login flow"));
 		const titledText = titled.present(143)[0];
 		if (titledText?.kind !== "status-line") throw new Error("status line missing");
 		expect(titledText.segments).toContainEqual({ accent: "thread", text: "Fix login flow" });
@@ -49,8 +83,8 @@ describe("structured Footer status line", () => {
 	});
 
 	it("assigns the agent runtime absolute path and Git branch their own semantic accents", () => {
-		const footer = new Footer({ theme: loadTheme("dark"), provider: provider() });
-		const block = footer.present(143)[0];
+		const component = footer();
+		const block = component.present(143)[0];
 		if (block?.kind !== "status-line") throw new Error("status line missing");
 		expect(block.segments).toEqual(expect.arrayContaining([
 			{ accent: "path", text: "/home/alice/work/RunLedger" },
@@ -90,12 +124,8 @@ describe("structured Footer status line", () => {
 			status: "completed",
 		});
 		const snapshot = usageSnapshot(accumulator, { usedTokens: 2_000, contextWindow: 8_000 }, "idle");
-		const footerProvider = {
-			...provider(),
-			getUsageSnapshot: () => snapshot,
-		};
-		const footer = new Footer({ theme: loadTheme("dark"), provider: footerProvider });
-		const blocks = footer.present(240);
+		const component = footer(provider(undefined, { usage: snapshot }));
+		const blocks = component.present(240);
 
 		expect(blocks).toHaveLength(2);
 		expect(blocks[0]?.kind).toBe("status-line");

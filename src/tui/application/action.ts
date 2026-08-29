@@ -18,6 +18,7 @@ export type TuiAction =
 	| { readonly type: "session.replace"; readonly generation: number; readonly sessionId: string }
 	| { readonly type: "session.title.changed"; readonly generation: number; readonly sessionId: string; readonly title: string }
 	| { readonly type: "composer.changed"; readonly draft: SafeBoundedText }
+	| { readonly type: "queue.changed"; readonly steering: number; readonly followUp: number }
 	| { readonly type: "interaction.select"; readonly id: string }
 	| { readonly type: "interaction.search-changed"; readonly query: string }
 	| { readonly type: "interaction.viewport-clear" }

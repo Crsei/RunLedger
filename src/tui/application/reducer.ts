@@ -25,6 +25,7 @@ export const TUI_ACTION_TYPES = [
 	"session.replace",
 	"session.title.changed",
 	"composer.changed",
+	"queue.changed",
 	"interaction.select",
 	"interaction.search-changed",
 	"interaction.viewport-clear",
@@ -61,6 +62,16 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 					composerEmpty: draft.text.length === 0,
 					generation: state.interaction.generation + 1,
 				},
+			};
+		}
+		case "queue.changed": {
+			if (!validQueueCount(action.steering) || !validQueueCount(action.followUp)) return state;
+			if (state.steeringCount.state === "known" && state.steeringCount.value === action.steering
+				&& state.followUpCount.state === "known" && state.followUpCount.value === action.followUp) return state;
+			return {
+				...state,
+				steeringCount: { state: "known", value: action.steering },
+				followUpCount: { state: "known", value: action.followUp },
 			};
 		}
 		case "interaction.select": {
@@ -158,6 +169,8 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 					...state.bootstrap,
 					session: { ...state.bootstrap.session, id: action.sessionId },
 				},
+				steeringCount: { state: "unknown", reason: "session-replaced" },
+				followUpCount: { state: "unknown", reason: "session-replaced" },
 				interaction: { ...state.interaction, generation: state.interaction.generation + 1 },
 			};
 		}
@@ -190,6 +203,10 @@ export function tuiReducer(state: TuiState, action: TuiAction): TuiState {
 			// 未知 action：稳定 unchanged（穷举防护见 TUI_ACTION_TYPES）
 			return state;
 	}
+}
+
+function validQueueCount(value: number): boolean {
+	return Number.isSafeInteger(value) && value >= 0;
 }
 
 /** 非法/未知 action 的确定性处理：返回 unchanged 状态。 */

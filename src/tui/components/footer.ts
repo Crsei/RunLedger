@@ -1,30 +1,31 @@
 /**
- * Footer 组件 —— 屏幕底部一行的 status / hint / model 组合显示。
+ * Footer 组件 —— 注册表驱动的多行参数展示。
  *
  * 对照 development-doc/tui/02-component-spec.md §2。
  *
  * 设计:
- *   - Footer 不订阅事件,通过 FooterSnapshotProvider 在 render 时 pull 当前快照;
- *   - render(width) 返回单行字符串;
- *   - 主题由 props.theme 注入;使用 status / hint / muted 色槽;
- *   - 失败护栏:provider 任何方法抛错时,Footer 自身 catch 并展示 "[footer:err]"。
+ *   - Footer 不订阅业务事件,通过 FooterSnapshotProvider 每帧 pull 一次快照;
+ *   - 字段注册、排序和窄屏优先级由 FooterFieldRegistry 管理;
+ *   - render(width) 返回零到多行纯文本 fallback;
+ *   - 失败护栏:快照或投影失败时展示 "[footer:err]"。
  */
 
 import type { Component } from "../index.ts";
 import type { Theme } from "../theme/theme.ts";
 import type { FooterSnapshotProvider } from "../types.ts";
 import { fitToWidth, padToWidth } from "./render-width.ts";
-import { formatActiveDuration } from "../timeline/selectors.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import type { StatusLineSegment } from "../highlight/status-style.ts";
 import { sanitizeLabel } from "../presentation/projectors.ts";
 import { visibleWidth } from "../primitives.ts";
-import { formatUsageSegments } from "../../runtime/usage/index.ts";
+import { fitProjectedFooterRows, type FooterFieldRegistry } from "../footer/field-registry.ts";
 
 export interface FooterProps {
   theme: Theme;
   /** InteractiveMode 实现的快照 provider;Footer 周期性 pull。 */
   provider: FooterSnapshotProvider;
+  /** InteractiveMode 实例级动态字段目录。 */
+  registry: FooterFieldRegistry;
 }
 
 export class Footer implements Component {
@@ -45,97 +46,17 @@ export class Footer implements Component {
   }
 
   present(width: number): PresentationBlock[] {
-		const fitted = fitStatusLineSegments(this.segments(), width);
-		const blocks: PresentationBlock[] = [{ kind: "status-line", segments: fitted }];
-		const usage = this.usageSegments(width);
-		if (usage.length > 0) blocks.push({ kind: "status-line", segments: usage });
-		return blocks;
-  }
-
-  private segments(): StatusLineSegment[] {
-	    try {
-      const streaming = this.props.provider.isStreaming();
-      const stopReason = this.props.provider.getStopReason();
-      const modelId = this.props.provider.getModelId();
-      const providerId = this.props.provider.getProviderId?.();
-      const thinking = this.props.provider.getThinkingLevel?.();
-      const workspaceDisplayAbsolutePath = this.props.provider.getWorkspaceDisplayAbsolutePath?.();
-      const gitBranchLabel = this.props.provider.getGitBranchLabel?.();
-	      const planProgress = this.props.provider.getPlanProgress?.();
-	      const contextUsage = this.props.provider.getContextUsage?.();
-	      const usageSnapshot = this.props.provider.getUsageSnapshot?.();
-      const threadLabel = this.props.provider.getThreadLabel?.();
-      const timing = this.props.provider.getRunTiming?.();
-      const now = this.props.provider.now?.() ?? Date.now();
-      const activeDurationMs = timing === undefined
-        ? 0
-        : timing.activeDurationMs + (timing.state === "working" && timing.lastResumedAtMs !== undefined ? Math.max(0, now - timing.lastResumedAtMs) : 0);
-      const status = timing?.state === "recovery_required"
-        ? "Recovery required"
-        : timing?.state === "working"
-        ? `Working ${formatActiveDuration(activeDurationMs)}`
-        : timing?.state === "waiting"
-          ? `Waiting for input · ${formatActiveDuration(activeDurationMs)}`
-          : streaming ? "..." : stopReason ? `done:${stopReason}` : "idle";
-	  const segments: StatusLineSegment[] = [];
-	  if (status !== "idle") segments.push({ accent: "state", text: status });
-	  segments.push(
-		...(workspaceDisplayAbsolutePath ? [{ accent: "path" as const, text: workspaceDisplayAbsolutePath }] : []),
-		...(gitBranchLabel ? [{ accent: "branch" as const, text: gitBranchLabel }] : []),
-		{ accent: "model", text: `${providerId ? `${providerId}/` : ""}${modelId}${thinking ? ` · think:${thinking}` : ""}` },
-		...(planProgress !== undefined && validProgress(planProgress)
-			? [{ accent: "progress" as const, text: `plan (${planProgress.completed}/${planProgress.total})` }]
-			: []),
-			...(usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens)
-				? [{ accent: "usage" as const, text: `usage ${formatTokenCount(contextUsage.totalTokens)}` }]
-				: []),
-			...(usageSnapshot === undefined && knownNonNegative(contextUsage?.totalTokens) && knownPositive(contextUsage.contextWindow)
-				? [{ accent: "limit" as const, text: `limit ${Math.min(100, Math.round((contextUsage.totalTokens / contextUsage.contextWindow) * 100))}%` }]
-			: []),
-		...(threadLabel ? [{ accent: "thread" as const, text: threadLabel }] : []),
-	  );
-	  return segments
-		.map((segment) => ({ ...segment, text: sanitizeLabel(segment.text) }))
-		.filter((segment) => segment.text.length > 0);
-    } catch {
-      // 失败护栏:provider 抛错时给出可观测的占位,不影响整屏渲染
-      return [{ accent: "state", text: "[footer:err]" }];
-	    }
-  }
-
-	private usageSegments(width: number): StatusLineSegment[] {
 		try {
-			const snapshot = this.props.provider.getUsageSnapshot?.();
-			if (snapshot === undefined) return [];
-			const segments = formatUsageSegments(snapshot).map((segment) => ({ ...segment }));
-			return fitUsageStatusLineSegments(segments, width);
+			const snapshot = this.props.provider.getFooterSnapshot();
+			return fitProjectedFooterRows(this.props.registry.project(snapshot).rows, width).map((row) => ({
+				kind: "status-line" as const,
+				segments: row.fields.map((field) => field.segment),
+			}));
 		} catch {
-			return [];
+			return [{ kind: "status-line", segments: [{ accent: "state", text: "[footer:err]" }] }];
 		}
 	}
 
-}
-
-export function formatTokenCount(value: number): string {
-	if (value < 1_000) return String(value);
-	if (value < 1_000_000) return `${(value / 1_000).toFixed(1)}k`;
-	return `${(value / 1_000_000).toFixed(1)}m`;
-}
-
-function validProgress(progress: { readonly completed: number; readonly total: number }): boolean {
-	return Number.isSafeInteger(progress.completed)
-		&& Number.isSafeInteger(progress.total)
-		&& progress.total > 0
-		&& progress.completed >= 0
-		&& progress.completed <= progress.total;
-}
-
-function knownNonNegative(value: number | undefined): value is number {
-	return value !== undefined && Number.isFinite(value) && value >= 0;
-}
-
-function knownPositive(value: number | undefined): value is number {
-	return value !== undefined && Number.isFinite(value) && value > 0;
 }
 
 const OPTIONAL_DROP_ORDER: readonly StatusLineSegment["accent"][] = [

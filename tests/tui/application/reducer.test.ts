@@ -104,6 +104,14 @@ describe("B3 application reducer", () => {
 		expect(state.interaction.viewportClearRevision).toBe(revision + 1);
 	});
 
+	it("projects queue counts into canonical fields with a same-value no-op", () => {
+		const state = initialState();
+		const queued = tuiReducer(state, { type: "queue.changed", steering: 2, followUp: 3 } as never);
+		expect(queued.steeringCount).toEqual({ state: "known", value: 2 });
+		expect(queued.followUpCount).toEqual({ state: "known", value: 3 });
+		expect(tuiReducer(queued, { type: "queue.changed", steering: 2, followUp: 3 } as never)).toBe(queued);
+	});
+
 	it("session.replace validates non-empty id and bumps interaction generation", () => {
 		const state = initialState();
 		expect(tuiReducer(state, { type: "session.replace", generation: 1, sessionId: "" })).toBe(state);
@@ -112,6 +120,14 @@ describe("B3 application reducer", () => {
 		expect(replaced.bootstrap.session.id).toBe("session-2");
 		expect(replaced.bootstrap.session.format).toBe("current-canonical");
 		expect(replaced.interaction.generation).toBe(state.interaction.generation + 1);
+	});
+
+	it("session.replace clears queue counts so the next Footer snapshot cannot reuse stale parameters", () => {
+		const queued = tuiReducer(initialState(), { type: "queue.changed", steering: 2, followUp: 3 } as never);
+		const replaced = tuiReducer(queued, { type: "session.replace", generation: 1, sessionId: "session-2" });
+
+		expect(replaced.steeringCount.state).toBe("unknown");
+		expect(replaced.followUpCount.state).toBe("unknown");
 	});
 
 	it("projects a durable title change into the bootstrap without changing session identity", () => {

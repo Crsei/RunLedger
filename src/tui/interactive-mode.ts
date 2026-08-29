@@ -6,7 +6,7 @@
  * M1 阶段("空骨架")目标:
  *   1. 装配组件树(header / loadedResources / chat / status / editor / footer)
  *      与 M2+ 的真实业务组件不同,M1 各 container 暂用 Spacer 占位;
- *   2. 实现 FooterSnapshotProvider 三个方法(isStreaming / getStopReason / getModelId / getSessionId);
+ *   2. 实现 FooterSnapshotProvider 单快照，并持有实例级 FooterFieldRegistry;
  *   3. handleEvent 把 TuiEvent 路由到各 container,M1 阶段除 agent_end / message_end
  *      更新 stopReason 之外其余 case 留 noop 占位(M2 起逐 case 落实);
  *   4. run() / quit() 对接 TUI.start / stop；外部控制不拥有进程级 singleton；
@@ -45,6 +45,13 @@ import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
 import { editorBackgroundFromTerminal } from "./theme/editor-background.ts";
 import { CustomEditor, type CustomEditorProps } from "./components/custom-editor.ts";
 import { Footer } from "./components/footer.ts";
+import {
+  createDefaultFooterFieldRegistry,
+  type FooterFieldDefinition,
+  type FooterFieldRegistrationResult,
+  type FooterFieldRegistry,
+  type FooterSnapshot,
+} from "./footer/field-registry.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
 import { AuthInputModal } from "./components/auth-input-modal.ts";
@@ -216,8 +223,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private unsubscribeTerminalBackground?: () => void;
   private unsubscribeRenderPreparation?: () => void;
   private unsubscribeBoundaryActions?: () => void;
+  private readonly footerRegistry: FooterFieldRegistry;
+  private unsubscribeFooterRegistry?: () => void;
 
-  // FooterSnapshotProvider 状态(只有 handleEvent 路径写)
+  // FooterSnapshotProvider 运行状态(只有 handleEvent 路径写)
   private streaming = false;
   private stopReason: string | undefined = undefined;
   private streamingGeneration = 0;
@@ -365,6 +374,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
       syntaxThemeName: opts.syntaxThemeName,
       syntaxThemeController: this.syntaxThemeController,
     });
+    this.footerRegistry = createDefaultFooterFieldRegistry();
+    this.unsubscribeFooterRegistry = this.footerRegistry.subscribe(() => this.ui.requestRender(true));
     this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => {
       this.flushStreamingDeltas();
@@ -479,7 +490,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       onDequeue: () => this.restoreQueuesToEditor(),
     };
     const editor = new CustomEditor(this.ui, editorTheme, editorProps);
-    const footer = new Footer({ theme: this.theme, provider: this });
+    const footer = new Footer({ theme: this.theme, provider: this, registry: this.footerRegistry });
 
     // 组件树结构(对照 02 §1):
     //   header / loadedResources / chat / editor / status / footer
@@ -634,6 +645,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       this.unsubscribeThemeMode = undefined;
       this.unsubscribeTerminalBackground?.();
       this.unsubscribeTerminalBackground = undefined;
+      this.disposeFooterRegistry();
       this.resolveExit({ kind: "quit" });
       throw error;
     }
@@ -755,6 +767,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.transcriptOverlay = undefined;
     this.unsubscribeBoundaryActions?.();
     this.unsubscribeBoundaryActions = undefined;
+    this.disposeFooterRegistry();
     this.ui.setAppIntentHandler(undefined);
     this.ui.stop();
     this.resolveExit(intent);
@@ -768,6 +781,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
    */
   echoPrompt(text: string): void {
     this.handleSubmit(text);
+  }
+
+  /** 可信内部模块的实例级 Footer 字段贡献入口。 */
+  registerFooterField(definition: FooterFieldDefinition): FooterFieldRegistrationResult {
+    return this.footerRegistry.register(definition);
   }
 
   /** Host 逆向 approval 请求：只收集并返回决策；Host receipt 未接入前不更新 approval workflow。 */
@@ -1562,6 +1580,37 @@ export class InteractiveMode implements FooterSnapshotProvider {
       state: active.state,
       activeDurationMs: active.activeDurationMs,
       ...(active.lastResumedAtMs === undefined ? {} : { lastResumedAtMs: active.lastResumedAtMs }),
+    };
+  }
+
+  /** FooterSnapshotProvider：一帧只组装一次不可变参数快照。 */
+  getFooterSnapshot(): FooterSnapshot {
+    const state = this.store.getState();
+    const stopReason = this.getStopReason();
+    const runTiming = this.getRunTiming();
+    const workspaceDisplayAbsolutePath = this.getWorkspaceDisplayAbsolutePath();
+    const gitBranchLabel = this.getGitBranchLabel();
+    const planProgress = this.getPlanProgress();
+    const contextUsage = this.getContextUsage();
+    const threadLabel = this.getThreadLabel();
+    return {
+      nowMs: Date.now(),
+      isStreaming: this.isStreaming(),
+      ...(stopReason === undefined ? {} : { stopReason }),
+      ...(runTiming === undefined ? {} : { runTiming }),
+      providerId: this.getProviderId(),
+      modelId: this.getModelId(),
+      thinkingLevel: this.getThinkingLevel(),
+      ...(workspaceDisplayAbsolutePath === undefined ? {} : { workspaceDisplayAbsolutePath }),
+      ...(gitBranchLabel === undefined ? {} : { gitBranchLabel }),
+      ...(planProgress === undefined ? {} : { planProgress }),
+      ...(contextUsage === undefined ? {} : { contextUsage }),
+      usage: this.getUsageSnapshot(),
+      ...(threadLabel === undefined ? {} : { threadLabel }),
+      queue: {
+        steering: tuiCount(state.steeringCount),
+        followUp: tuiCount(state.followUpCount),
+      },
     };
   }
   getModelId(): string {
@@ -2723,7 +2772,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.usageRunActive = false;
           this.activeUsageRunId = undefined;
           this.stopReason = ev.stopReason ?? this.stopReason ?? "stop";
-          this.refs.status.setStopReason(this.stopReason);
           if (isRunStopReason(this.stopReason)) {
             this.dispatchTimeline([{
               type: "run_end",
@@ -2747,11 +2795,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
           this.scheduleStatusIndicatorFrame();
           break;
         case "turn_start":
-          this.refs.status.setTurn(ev.turn);
-          break;
         case "turn_end":
-          this.refs.status.setTurn(ev.turn);
-          if (ev.stopReason) this.refs.status.setStopReason(ev.stopReason);
           break;
         case "message_start":
           if (!this.acceptUsageRunEvent(ev.runId)) break;
@@ -2770,7 +2814,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
         case "message_end": {
           if (!this.acceptUsageRunEvent(ev.runId)) break;
           this.stopReason = ev.stopReason ?? this.stopReason;
-          this.refs.status.setStopReason(this.stopReason);
           // 1) 先把帧前累积的 delta 快照送入
           this.flushStreamingDeltas();
           // 2) 用完整消息正文覆盖最后一次 delta 快照
@@ -2864,7 +2907,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
           break;
         }
         case "queue_update":
-          this.refs.status.setQueueCounts(ev.steering.length, ev.followUp.length);
+          this.store.dispatch({ type: "queue.changed", steering: ev.steering.length, followUp: ev.followUp.length });
           break;
       }
     } catch (e) {
@@ -2878,6 +2921,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
       queuedBytes: pressure.queuedBytes,
       oldestAgeMs: pressure.oldestAgeMs,
     });
+  }
+
+  private disposeFooterRegistry(): void {
+    this.unsubscribeFooterRegistry?.();
+    this.unsubscribeFooterRegistry = undefined;
+    this.footerRegistry.dispose();
   }
 
   private scheduleStatusIndicatorFrame(): void {
@@ -3078,6 +3127,10 @@ function isSessionCatalogResult(value: unknown): value is SessionCatalogResult {
 		&& typeof value.revision === "number"
 		&& Number.isSafeInteger(value.revision)
 		&& Array.isArray(value.items);
+}
+
+function tuiCount(field: TuiState["steeringCount"]): number {
+  return field.state === "known" && Number.isSafeInteger(field.value) && field.value >= 0 ? field.value : 0;
 }
 
 function isRecordArray(value: unknown): value is readonly Record<string, unknown>[] {

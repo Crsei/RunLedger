@@ -1,5 +1,5 @@
 /**
- * StatusComponent 单测:turn / stopReason / tokenUsage 渲染组合。
+ * StatusComponent 单测:隐藏内部 turn / stopReason,只渲染用户可用状态。
  *
  * 对照 src/tui/components/status.ts 与 development-doc/tui/02-component-spec.md §2。
  */
@@ -12,44 +12,17 @@ describe("StatusComponent", () => {
     const comp = new StatusComponent({});
     expect(comp.render(20)).toEqual([]);
   });
-  it("setTurn 后渲染 turn:n", () => {
-    const comp = new StatusComponent({});
-    comp.setTurn(2);
-    expect(comp.render(40)[0]).toContain("turn:2");
-  });
-  it("setStopReason 后渲染 stop:<reason>", () => {
-    const comp = new StatusComponent({});
-    comp.setStopReason("toolUse");
-    expect(comp.render(40)[0]).toContain("stop:toolUse");
-  });
-  it("setTokens 后渲染 tok:<in>/<out>", () => {
-    const comp = new StatusComponent({});
-    comp.setTokens(100, 200);
-    expect(comp.render(40)[0]).toContain("tok:100/200");
-  });
-  it("三者组合用双空格分隔", () => {
-    const comp = new StatusComponent({});
-    comp.setTurn(1);
-    comp.setStopReason("stop");
-    comp.setTokens(50, 60);
-    const line = comp.render(80)[0];
-    expect(line).toContain("turn:1  stop:stop  tok:50/60");
-  });
-  it("长串截断到 width", () => {
-    const comp = new StatusComponent({});
-    comp.setTurn(1);
-    comp.setStopReason("stop");
-    comp.setTokens(50, 60);
-    const line = comp.render(8)[0] ?? "";
-    expect(line.endsWith("…")).toBe(true);
-  });
-  it("renders and clears a transient idle recap without changing turn fields", () => {
-    const comp = new StatusComponent({});
-    comp.setTurn(3);
-    comp.setIdleRecap("ship the next action");
+	it("不再暴露 turn、stop、token 或 queue 参数 setter", () => {
+		const comp = new StatusComponent({});
+		for (const method of ["setTurn", "setStopReason", "setTokens", "setQueueCounts"]) {
+			expect(method in comp).toBe(false);
+		}
+	});
+	it("renders and clears a transient idle recap without exposing turn fields", () => {
+		const comp = new StatusComponent({});
+		comp.setIdleRecap("ship the next action");
     expect(comp.render(80)[0]).toContain("※ recap: ship the next action");
     comp.setIdleRecap(undefined);
-    expect(comp.render(80)[0]).not.toContain("recap:");
-    expect(comp.render(80)[0]).toContain("turn:3");
+    expect(comp.render(80)).toEqual([]);
   });
 });

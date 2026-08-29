@@ -57,9 +57,12 @@ export interface UsageContextInput {
 }
 
 export interface UsageDisplaySegment {
+	readonly id: UsageDisplayFieldId;
 	readonly accent: "usage" | "limit";
 	readonly text: string;
 }
+
+export type UsageDisplayFieldId = "input" | "output" | "cache-read" | "cache-write" | "hit" | "rate" | "cost" | "context";
 
 export function createUsageAccumulator(): UsageAccumulator {
 	return { observations: {} };
@@ -157,32 +160,32 @@ export function usageSnapshot(
 
 export function formatUsageSegments(snapshot: UsageSnapshot): readonly UsageDisplaySegment[] {
 	const segments: UsageDisplaySegment[] = [];
-	const pushUsage = (text: string): void => { segments.push({ accent: "usage", text }); };
-	const pushLimit = (text: string): void => { segments.push({ accent: "limit", text }); };
+	const pushUsage = (id: UsageDisplayFieldId, text: string): void => { segments.push({ id, accent: "usage", text }); };
+	const pushLimit = (id: UsageDisplayFieldId, text: string): void => { segments.push({ id, accent: "limit", text }); };
 	const input = quantityValue(snapshot.cumulative.input);
 	const output = quantityValue(snapshot.cumulative.output);
 	const cacheRead = quantityValue(snapshot.cumulative.cacheRead);
 	const cacheWrite = quantityValue(snapshot.cumulative.cacheWrite);
 	const cost = quantityValue(snapshot.cumulative.cost);
-	if (input !== undefined) pushUsage(`in ${formatTokenCount(input)}`);
-	if (output !== undefined) pushUsage(`out ${formatTokenCount(output)}`);
-	if (cacheRead !== undefined) pushUsage(`cache-read ${formatTokenCount(cacheRead)}`);
-	if (cacheWrite !== undefined) pushUsage(`cache-write ${formatTokenCount(cacheWrite)}`);
+	if (input !== undefined) pushUsage("input", `in ${formatTokenCount(input)}`);
+	if (output !== undefined) pushUsage("output", `out ${formatTokenCount(output)}`);
+	if (cacheRead !== undefined) pushUsage("cache-read", `cache-read ${formatTokenCount(cacheRead)}`);
+	if (cacheWrite !== undefined) pushUsage("cache-write", `cache-write ${formatTokenCount(cacheWrite)}`);
 	const hit = calculateCacheHitPercent({ input, cacheRead, cacheWrite });
-	if (hit !== null) pushUsage(`hit ${formatPercent(hit)}%`);
+	if (hit !== null) pushUsage("hit", `hit ${formatPercent(hit)}%`);
 	const rate = quantityValue(snapshot.latestRequest?.outputTokensPerSecond);
-	if (rate !== undefined) pushUsage(`${rate.toFixed(1)} tok/s`);
-	if (cost !== undefined) pushUsage(formatCost(cost));
+	if (rate !== undefined) pushUsage("rate", `${rate.toFixed(1)} tok/s`);
+	if (cost !== undefined) pushUsage("cost", formatCost(cost));
 	const context = snapshot.context;
 	const used = quantityValue(context?.usedTokens);
 	const window = quantityValue(context?.contextWindow);
 	const percent = quantityValue(context?.percent);
 	if (used !== undefined && window !== undefined && window > 0) {
-		pushLimit(`ctx ${formatTokenCount(used)}/${formatTokenCount(window)}${percent === undefined ? "" : ` (${formatPercent(percent)}%)`}`);
+		pushLimit("context", `ctx ${formatTokenCount(used)}/${formatTokenCount(window)}${percent === undefined ? "" : ` (${formatPercent(percent)}%)`}`);
 	} else if (used !== undefined) {
-		pushLimit(`ctx ${formatTokenCount(used)}`);
+		pushLimit("context", `ctx ${formatTokenCount(used)}`);
 	} else if (window !== undefined && window > 0) {
-		pushLimit(`ctx window ${formatTokenCount(window)}`);
+		pushLimit("context", `ctx window ${formatTokenCount(window)}`);
 	}
 	return segments;
 }
