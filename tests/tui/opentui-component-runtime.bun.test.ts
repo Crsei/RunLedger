@@ -1213,7 +1213,7 @@ describe("OpenTUI component projection", () => {
     expect(setup.renderer.isDestroyed).toBe(true);
   });
 
-  test("M8 editor row height is frame-driven with a 3-row default", async () => {
+  test("M8 editor row height is frame-driven with a 2-row default", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -1224,7 +1224,7 @@ describe("OpenTUI component projection", () => {
       await setup.renderOnce();
       const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
       expect(editorRow).toBeDefined();
-      expect(editorRow?.height).toBe(3);
+      expect(editorRow?.height).toBe(2);
 
       runtime.update({ body: [], editorText: "", editorHeight: 5, footer: [] });
       await setup.renderOnce();
@@ -1234,6 +1234,27 @@ describe("OpenTUI component projection", () => {
       await setup.renderOnce();
       expect(editorRow?.height).toBe(5);
       expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("");
+    } finally {
+      runtime.destroy();
+    }
+  });
+
+  test("M8 places footer parameters directly below the input row", async () => {
+    const setup = await createTestRenderer({ width: 40, height: 8 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
+      onInput: () => {},
+      onResize: () => {},
+    });
+    try {
+      runtime.update({ body: [], editorText: "", footer: ["parameters"] });
+      await setup.renderOnce();
+
+      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      const footer = setup.renderer.root.findDescendantById("runledger-footer");
+      expect(editorRow?.height).toBe(2);
+      expect((editor?.y ?? 0) + (editor?.height ?? 0)).toBe(footer?.y);
+      expect(footer?.plainText).toContain("parameters");
     } finally {
       runtime.destroy();
     }

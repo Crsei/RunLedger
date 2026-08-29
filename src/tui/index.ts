@@ -236,6 +236,8 @@ export { makeMarkdownTheme, makeSelectListTheme, makeEditorTheme } from "./theme
 export {
   EDITOR_LEFT_PAD,
   EDITOR_RIGHT_PAD,
+  EDITOR_TOP_PAD,
+  EDITOR_BOTTOM_PAD,
   EDITOR_VERTICAL_PAD,
   EDITOR_MIN_HEIGHT,
   DEFAULT_EDITOR_PLACEHOLDER,

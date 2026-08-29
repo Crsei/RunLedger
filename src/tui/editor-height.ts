@@ -3,22 +3,26 @@
  *
  * codex 侧:
  *   - inner_width = width - (LIVE_PREFIX_COLS + 1) - textarea_right_reserve;
- *   - 高度 = textarea.desired_height(inner_width) + 2(上下留白各 1);
- *   - composer 最小高度 Constraint::Min(3)。
+ *   - 高度 = textarea.desired_height(inner_width) + 1(仅保留顶部 1 行留白);
+ *   - composer 最小高度 Constraint::Min(2)。
  *
  * RunLedger 落地常量:
  *   - EDITOR_LEFT_PAD = 2(codex LIVE_PREFIX_COLS:prompt 列 + 1 空列);
  *   - EDITOR_RIGHT_PAD = 1;
- *   - EDITOR_VERTICAL_PAD = 1(上下各 1 行);
- *   - EDITOR_MIN_HEIGHT = 3。
+ *   - EDITOR_TOP_PAD = 1(输入框上方 1 行);
+ *   - EDITOR_BOTTOM_PAD = 0(参数行紧贴输入框);
+ *   - EDITOR_VERTICAL_PAD = 1(纵向留白总数,保留旧导出名);
+ *   - EDITOR_MIN_HEIGHT = 2。
  */
 
 import { visibleWidth, wrapTextWithAnsi } from "./primitives.ts";
 
 export const EDITOR_LEFT_PAD = 2;
 export const EDITOR_RIGHT_PAD = 1;
-export const EDITOR_VERTICAL_PAD = 1;
-export const EDITOR_MIN_HEIGHT = 3;
+export const EDITOR_TOP_PAD = 1;
+export const EDITOR_BOTTOM_PAD = 0;
+export const EDITOR_VERTICAL_PAD = EDITOR_TOP_PAD + EDITOR_BOTTOM_PAD;
+export const EDITOR_MIN_HEIGHT = EDITOR_TOP_PAD + 1 + EDITOR_BOTTOM_PAD;
 
 /** 空输入占位符;OpenTUI 侧由 TextareaRenderable.placeholder 承接同一文本。 */
 export const DEFAULT_EDITOR_PLACEHOLDER = "Message RunLedger…";
@@ -63,8 +67,8 @@ export function wrapCount(text: string, width: number): number {
   return wrapEditorText(text, width).length;
 }
 
-/** 输入区所需高度 = 折行数 + 上下留白,下限 EDITOR_MIN_HEIGHT。 */
+/** 输入区所需高度 = 折行数 + 顶部留白,下限 EDITOR_MIN_HEIGHT。 */
 export function editorHeight(text: string, width: number): number {
   const innerWidth = Math.max(1, width - EDITOR_LEFT_PAD - EDITOR_RIGHT_PAD);
-  return Math.max(EDITOR_MIN_HEIGHT, wrapCount(text, innerWidth) + EDITOR_VERTICAL_PAD * 2);
+  return Math.max(EDITOR_MIN_HEIGHT, wrapCount(text, innerWidth) + EDITOR_TOP_PAD + EDITOR_BOTTOM_PAD);
 }

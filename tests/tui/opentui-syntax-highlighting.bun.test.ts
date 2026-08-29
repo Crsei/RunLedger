@@ -116,7 +116,7 @@ describe("OpenTUI syntect Markdown seam", () => {
 		const code = (id: string) => ({
 			id,
 			kind: "markdown" as const,
-			content: `\`\`\`rust\n${id}\n\`\`\`\n${Array.from({ length: 14 }, (_, index) => `${id} filler ${index}`).join("\n")}`,
+			content: `\`\`\`rust\n${id}\n\`\`\`\n${Array.from({ length: 16 }, (_, index) => `${id} filler ${index}`).join("\n")}`,
 			streaming: false,
 		});
 		try {

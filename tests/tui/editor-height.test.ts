@@ -8,6 +8,8 @@ import {
   wrapCount,
   EDITOR_LEFT_PAD,
   EDITOR_RIGHT_PAD,
+  EDITOR_TOP_PAD,
+  EDITOR_BOTTOM_PAD,
   EDITOR_VERTICAL_PAD,
   EDITOR_MIN_HEIGHT,
 } from "../../src/tui/editor-height.ts";
@@ -28,25 +30,27 @@ describe("wrapCount", () => {
 });
 
 describe("editorHeight", () => {
-  it("常量与 codex 对齐:左 2 / 右 1 / 上下各 1 / 最小 3", () => {
+  it("常量与输入区布局对齐:左 2 / 右 1 / 上 1 / 下 0 / 最小 2", () => {
     expect(EDITOR_LEFT_PAD).toBe(2);
     expect(EDITOR_RIGHT_PAD).toBe(1);
+    expect(EDITOR_TOP_PAD).toBe(1);
+    expect(EDITOR_BOTTOM_PAD).toBe(0);
     expect(EDITOR_VERTICAL_PAD).toBe(1);
-    expect(EDITOR_MIN_HEIGHT).toBe(3);
+    expect(EDITOR_MIN_HEIGHT).toBe(2);
   });
-  it("空文本 = 最小高度 3", () => {
-    expect(editorHeight("", 60)).toBe(3);
+  it("空文本 = 最小高度 2", () => {
+    expect(editorHeight("", 60)).toBe(2);
   });
-  it("单行文本 = 3(1 行 + 上下留白,低于下限取 3)", () => {
-    expect(editorHeight("hi", 60)).toBe(3);
+  it("单行文本 = 2(1 行 + 顶部留白,低于下限取 2)", () => {
+    expect(editorHeight("hi", 60)).toBe(2);
   });
-  it("两行显式换行 -> 4(2 + 2)", () => {
-    expect(editorHeight("a\nb", 60)).toBe(4);
+  it("两行显式换行 -> 3(2 + 顶部留白)", () => {
+    expect(editorHeight("a\nb", 60)).toBe(3);
   });
-  it("窄终端折行增长:40 字符 / 20 列 -> 5(3 折行 + 2)", () => {
-    expect(editorHeight("a".repeat(40), 20)).toBe(5);
+  it("窄终端折行增长:40 字符 / 20 列 -> 4(3 折行 + 顶部留白)", () => {
+    expect(editorHeight("a".repeat(40), 20)).toBe(4);
   });
-  it("宽度不足时内部宽度至少 1 列,不崩溃(5 字符逐字折行 -> 5 + 2)", () => {
-    expect(editorHeight("hello", 1)).toBe(7);
+  it("宽度不足时内部宽度至少 1 列,不崩溃(5 字符逐字折行 -> 5 + 顶部留白)", () => {
+    expect(editorHeight("hello", 1)).toBe(6);
   });
 });
