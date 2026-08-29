@@ -116,7 +116,7 @@ describe("OpenTUI syntect Markdown seam", () => {
 		const code = (id: string) => ({
 			id,
 			kind: "markdown" as const,
-			content: `\`\`\`rust\n${id}\n\`\`\`\n${Array.from({ length: 16 }, (_, index) => `${id} filler ${index}`).join("\n")}`,
+			content: `\`\`\`rust\n${id}\n\`\`\`\n${Array.from({ length: 14 }, (_, index) => `${id} filler ${index}`).join("\n")}`,
 			streaming: false,
 		});
 		try {
@@ -417,7 +417,7 @@ describe("OpenTUI syntax-theme status line", () => {
 			await setup.renderOnce();
 			const footer = setup.renderer.root.findDescendantById("runledger-footer");
 			const chunks = footer?.content.chunks ?? [];
-			expect(chunks.map((chunk) => chunk.text).join("")).toBe("idle · ~/RunLedger · deepseek");
+			expect(chunks.map((chunk) => chunk.text).join("")).toBe("  idle · ~/RunLedger · deepseek");
 			expect(chunks.find((chunk) => chunk.text === "~/RunLedger")?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
 			expect(chunks.filter((chunk) => chunk.text === " · ").every((chunk) => (chunk.attributes ?? 0) !== 0)).toBe(true);
 		} finally {
@@ -451,7 +451,7 @@ describe("OpenTUI syntax-theme status line", () => {
 			const footer = setup.renderer.root.findDescendantById("runledger-footer");
 			const chunks = footer?.content.chunks ?? [];
 			expect(chunks.map((chunk) => chunk.text).join("")).toBe(
-				"idle · deepseek/deepseek-v4-pro · usage 12.3k",
+				"  idle · deepseek/deepseek-v4-pro · usage 12.3k",
 			);
 			for (const text of ["idle", "deepseek/deepseek-v4-pro", "usage 12.3k"]) {
 				expect(chunks.find((chunk) => chunk.text === text)?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
@@ -490,7 +490,7 @@ describe("OpenTUI syntax-theme status line", () => {
 			const footer = setup.renderer.root.findDescendantById("runledger-footer");
 			const chunks = footer?.content.chunks ?? [];
 			expect(footer?.height).toBe(2);
-			expect(chunks.map((chunk) => chunk.text).join("")).toBe("deepseek\nin 1.2k · 700.0 tok/s");
+			expect(chunks.map((chunk) => chunk.text).join("")).toBe("  deepseek\n  in 1.2k · 700.0 tok/s");
 			for (const text of ["deepseek", "in 1.2k", "700.0 tok/s"]) {
 				expect(chunks.find((chunk) => chunk.text === text)?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
 			}

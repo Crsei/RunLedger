@@ -278,8 +278,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     flexShrink: 0,
     content: "",
   });
-  // 输入区保持 3 行总高度,输入行上下各留 1 行。footer 向上覆盖底部留白,
-  // 让参数行紧随居中的输入内容。
+  // 对齐 codex ChatComposer:输入区保持 3 行总高度,输入行上下各留 1 行;
+  // footer 是紧随 composer 的独立区域,不覆盖输入区背景。
   const editorRow = new BoxRenderable(renderer, {
     id: "runledger-editor-row",
     width: "100%",
@@ -311,7 +311,6 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     id: "runledger-footer",
     width: "100%",
     flexShrink: 0,
-    marginTop: -1,
     content: "",
   });
   screen.add(transcript);
@@ -1028,9 +1027,11 @@ function styledFooter(
 			? ansiToStyledText(line)
 			: statusLineToStyledText(line.segments, (scopes) =>
 				service.foregroundForScopes(themeController.snapshot().activeName, scopes));
-		return index === 0
-			? [...styled.chunks]
-			: [...ansiToStyledText("\n").chunks, ...styled.chunks];
+		return [
+			...(index === 0 ? [] : ansiToStyledText("\n").chunks),
+			...ansiToStyledText("  ").chunks,
+			...styled.chunks,
+		];
 	});
 	return new StyledText(chunks);
 }
