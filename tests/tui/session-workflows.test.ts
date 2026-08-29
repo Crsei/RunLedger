@@ -325,14 +325,15 @@ describe("S2 InteractiveMode session workflows", () => {
 		try {
 			await settleFrames();
 			const status = (mode as unknown as { refs: { status: { render(width: number): string[] } } }).refs.status;
+			const statusText = (): string => status.render(100).join("\n");
 			emitRecap({ sessionId: controller.sessionId, requestId: "recap-new", ownerGeneration: 1, activityGeneration: 2, text: "current recap" });
-			expect(status.render(100)[0]).toContain("current recap");
+			expect(statusText()).toContain("current recap");
 			emitRecap({ sessionId: controller.sessionId, requestId: "recap-old", ownerGeneration: 1, activityGeneration: 1, text: "stale recap" });
-			expect(status.render(100)[0]).toContain("current recap");
+			expect(statusText()).toContain("current recap");
 			emitRecap({ sessionId: controller.sessionId, requestId: "recap-old", ownerGeneration: 1, activityGeneration: 1, cleared: true });
-			expect(status.render(100)[0]).toContain("current recap");
+			expect(statusText()).toContain("current recap");
 			emitRecap({ sessionId: controller.sessionId, requestId: "recap-new", ownerGeneration: 1, activityGeneration: 2, cleared: true });
-			expect(status.render(100)[0]).not.toContain("recap:");
+			expect(statusText()).not.toContain("recap:");
 		} finally {
 			mode.quit();
 			await running;

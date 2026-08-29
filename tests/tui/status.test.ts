@@ -8,11 +8,9 @@ import { describe, it, expect } from "vitest";
 import { StatusComponent } from "../../src/tui/components/status.ts";
 
 describe("StatusComponent", () => {
-  it("空状态 render 输出空白行(填充到 width)", () => {
+  it("空状态不占用 Footer 行", () => {
     const comp = new StatusComponent({});
-    const lines = comp.render(20);
-    expect(lines.length).toBe(1);
-    expect(lines[0]?.length).toBe(20);
+    expect(comp.render(20)).toEqual([]);
   });
   it("setTurn 后渲染 turn:n", () => {
     const comp = new StatusComponent({});

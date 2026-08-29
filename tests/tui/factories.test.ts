@@ -174,10 +174,10 @@ describe("Editor.render (codex 输入区复刻)", () => {
     expect(stripAnsi(lines[0] ?? "").startsWith("› x")).toBe(true);
     expect(stripAnsi(lines[1] ?? "").startsWith("  ")).toBe(true);
   });
-  it("desiredHeight 与 editorHeight 一致(空输入 2)", () => {
+  it("desiredHeight 与 editorHeight 一致(空输入 3)", () => {
     const comp = editor();
-    expect(comp.desiredHeight(60)).toBe(2);
-    comp.setText("a\nb");
     expect(comp.desiredHeight(60)).toBe(3);
+    comp.setText("a\nb");
+    expect(comp.desiredHeight(60)).toBe(4);
   });
 });

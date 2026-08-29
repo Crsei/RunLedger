@@ -6,7 +6,7 @@
  * 设计:
  *   - 持有 turn / stopReason / tokenUsage(input/output);
  *   - InteractiveMode.handleEvent 在 turn_start/turn_end/message_end 路径调相应 setter;
- *   - render 单行,左对齐,宽度被截到 width;
+ *   - 有内容时 render 单行,左对齐,宽度被截到 width;空状态不占 footer 行;
  *   - 仅文本展示(无 ANSI 色,色盲安全,05 §2 原则)。
  */
 
@@ -71,6 +71,7 @@ export class StatusComponent implements Component {
     }
     if (this.idleRecap !== undefined) parts.push(`※ recap: ${this.idleRecap}`);
     const line = parts.join("  ");
+    if (line.length === 0) return [];
     return [padToWidth(line, width)];
   }
 }

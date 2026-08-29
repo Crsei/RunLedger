@@ -17,6 +17,7 @@ import { SlashCommandPopup } from "../../src/tui/components/slash-command-popup.
 import { builtinCommandDescriptors } from "../../src/tui/commands/registry.ts";
 import { PermissionRequestView } from "../../src/tui/components/permission-request-view.ts";
 import { approvalChoices, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
+import { StatusComponent } from "../../src/tui/components/status.ts";
 
 describe("OpenTUI component projection", () => {
   test("keeps the native transcript scrollbar hidden by default and reserves space only when enabled", async () => {
@@ -1213,7 +1214,7 @@ describe("OpenTUI component projection", () => {
     expect(setup.renderer.isDestroyed).toBe(true);
   });
 
-  test("M8 editor row height is frame-driven with a 2-row default", async () => {
+  test("M8 editor row height is frame-driven with a 3-row default", async () => {
     const setup = await createTestRenderer({ width: 60, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -1224,7 +1225,7 @@ describe("OpenTUI component projection", () => {
       await setup.renderOnce();
       const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
       expect(editorRow).toBeDefined();
-      expect(editorRow?.height).toBe(2);
+      expect(editorRow?.height).toBe(3);
 
       runtime.update({ body: [], editorText: "", editorHeight: 5, footer: [] });
       await setup.renderOnce();
@@ -1239,22 +1240,26 @@ describe("OpenTUI component projection", () => {
     }
   });
 
-  test("M8 places footer parameters directly below the input row", async () => {
+  test("M8 vertically centers the input and places parameters directly after its line", async () => {
     const setup = await createTestRenderer({ width: 40, height: 8 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
       onResize: () => {},
     });
     try {
-      runtime.update({ body: [], editorText: "", footer: ["parameters"] });
+      const status = new StatusComponent({});
+      runtime.update({ body: [], editorText: "", footer: [...status.render(40), "parameters"] });
       await setup.renderOnce();
 
       const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
       const editor = setup.renderer.root.findDescendantById("runledger-editor");
       const footer = setup.renderer.root.findDescendantById("runledger-footer");
-      expect(editorRow?.height).toBe(2);
+      expect(editorRow?.height).toBe(3);
+      expect((editor?.y ?? 0) - (editorRow?.y ?? 0)).toBe(1);
       expect((editor?.y ?? 0) + (editor?.height ?? 0)).toBe(footer?.y);
-      expect(footer?.plainText).toContain("parameters");
+      expect((editorRow?.y ?? 0) + (editorRow?.height ?? 0)).toBe((footer?.y ?? 0) + 1);
+      expect(footer?.height).toBe(1);
+      expect(footer?.plainText).toBe("parameters");
     } finally {
       runtime.destroy();
     }
@@ -1344,7 +1349,8 @@ describe("OpenTUI component projection", () => {
       const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
       const footer = setup.renderer.root.findDescendantById("runledger-footer");
       expect(transcript?.height).toBeGreaterThanOrEqual(1);
-      expect((editorRow?.height ?? 0) + (footer?.height ?? 0) + (transcript?.height ?? 0)).toBeLessThanOrEqual(16);
+      // Footer 与输入区底部重叠 1 行,按实际占用高度计算 viewport。
+      expect((editorRow?.height ?? 0) + (footer?.height ?? 0) + (transcript?.height ?? 0) - 1).toBeLessThanOrEqual(16);
       expect((footer?.y ?? 16) + (footer?.height ?? 0)).toBeLessThanOrEqual(16);
       expect(setup.captureCharFrame()).toContain("footer-marker");
     } finally {

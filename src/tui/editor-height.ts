@@ -3,16 +3,16 @@
  *
  * codex 侧:
  *   - inner_width = width - (LIVE_PREFIX_COLS + 1) - textarea_right_reserve;
- *   - 高度 = textarea.desired_height(inner_width) + 1(仅保留顶部 1 行留白);
- *   - composer 最小高度 Constraint::Min(2)。
+ *   - 高度 = textarea.desired_height(inner_width) + 2(输入行上下各留 1 行);
+ *   - composer 最小高度 Constraint::Min(3)。
  *
  * RunLedger 落地常量:
  *   - EDITOR_LEFT_PAD = 2(codex LIVE_PREFIX_COLS:prompt 列 + 1 空列);
  *   - EDITOR_RIGHT_PAD = 1;
  *   - EDITOR_TOP_PAD = 1(输入框上方 1 行);
- *   - EDITOR_BOTTOM_PAD = 0(参数行紧贴输入框);
- *   - EDITOR_VERTICAL_PAD = 1(纵向留白总数,保留旧导出名);
- *   - EDITOR_MIN_HEIGHT = 2。
+ *   - EDITOR_BOTTOM_PAD = 1(输入框下方 1 行,原生 Footer 覆盖该行);
+ *   - EDITOR_VERTICAL_PAD = 2(纵向留白总数,保留旧导出名);
+ *   - EDITOR_MIN_HEIGHT = 3。
  */
 
 import { visibleWidth, wrapTextWithAnsi } from "./primitives.ts";
@@ -20,7 +20,7 @@ import { visibleWidth, wrapTextWithAnsi } from "./primitives.ts";
 export const EDITOR_LEFT_PAD = 2;
 export const EDITOR_RIGHT_PAD = 1;
 export const EDITOR_TOP_PAD = 1;
-export const EDITOR_BOTTOM_PAD = 0;
+export const EDITOR_BOTTOM_PAD = 1;
 export const EDITOR_VERTICAL_PAD = EDITOR_TOP_PAD + EDITOR_BOTTOM_PAD;
 export const EDITOR_MIN_HEIGHT = EDITOR_TOP_PAD + 1 + EDITOR_BOTTOM_PAD;
 

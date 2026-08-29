@@ -278,16 +278,17 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     flexShrink: 0,
     content: "",
   });
-  // 输入区 = 左 gutter(prompt 2 列)+ textarea,上方留白 1 行;底部不再留空行,
-  // 让 footer 参数行紧贴输入框。
+  // 输入区保持 3 行总高度,输入行上下各留 1 行。footer 向上覆盖底部留白,
+  // 让参数行紧随居中的输入内容。
   const editorRow = new BoxRenderable(renderer, {
     id: "runledger-editor-row",
     width: "100%",
-    height: 2,
+    height: 3,
     flexShrink: 0,
     flexDirection: "row",
     paddingTop: 1,
     paddingRight: 1,
+    paddingBottom: 1,
   });
   const editorPrompt = new TextRenderable(renderer, {
     id: "runledger-editor-prompt",
@@ -310,6 +311,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     id: "runledger-footer",
     width: "100%",
     flexShrink: 0,
+    marginTop: -1,
     content: "",
   });
   screen.add(transcript);
@@ -355,8 +357,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     themeController: syntaxThemeController,
   });
   let previousNativeCellsUpdated = 0;
-  let requestedEditorHeight = 2;
-  let lastEditorHeight = 2;
+  let requestedEditorHeight = 3;
+  let lastEditorHeight = 3;
   let lastEditorAppearance: EditorAppearance | undefined;
   let lastTranscriptScrollPresentation: TranscriptScrollPresentation | undefined;
   const copySelection = (selectedText: string | undefined): boolean => {
@@ -720,7 +722,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
       // 宽度(width - prompt 2 - right inset 1)校正纯组件估算，避免隐藏尾行。
       const editorInnerWidth = Math.max(1, renderer.width - 3);
       const measuredLines = editor.editorView.measureForDimensions(editorInnerWidth, 0x7fff)?.lineCount ?? 1;
-      const desiredEditorHeight = Math.max(2, requestedEditorHeight, measuredLines + 1);
+      const desiredEditorHeight = Math.max(3, requestedEditorHeight, measuredLines + 2);
       // footer 与至少 1 行 transcript 必须留在 viewport 内；达到上限后 textarea
       // 由 OpenTUI 自己滚动，而不是把 footer 推出屏幕。
       const footerHeight = Math.max(1, frame.footer.length);
