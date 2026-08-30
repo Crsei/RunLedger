@@ -15,7 +15,7 @@ import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/canonical-json.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
-import { SessionStore, SessionStoreError, sessionEventHash } from "../../../src/storage/session-store/session-store.ts";
+import { SessionStore, SessionStoreError, sessionEventHash, appendEventInTransaction } from "../../../src/storage/session-store/session-store.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 
 let dir: string;
@@ -548,6 +548,141 @@ describe("R2 checkpoint cache and authority rebuild", () => {
 		}
 		expect(fencedCheckpointError).toBeInstanceOf(SessionStoreError);
 		expect((fencedCheckpointError as SessionStoreError).code).toBe("owner_fenced");
+		store.database().close();
+	});
+});
+
+describe("R2 append atomicity and fence characterization", () => {
+	it("rolls back the whole append transaction when a later write in the same transaction fails", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "a");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const runtimeId = createRuntimeId("runtime", "r1");
+		ownerRow(store, sessionId, runtimeId, 1);
+		const fence = { sessionId, runtimeId, generation: 1 };
+		let boom: unknown;
+		try {
+			store.database().withImmediateTransactionSync((tx) => {
+				appendEventInTransaction(tx, fence, {
+					eventId: createRuntimeId("event", "1"),
+					ownerGeneration: 1,
+					eventType: "message",
+					payloadJson: "{}",
+					createdAtMs: 1,
+					expectedPreviousEventHash: null,
+				});
+				throw new Error("commit aborted");
+			});
+		} catch (error) {
+			boom = error;
+		}
+		expect((boom as Error | undefined)?.message).toBe("commit aborted");
+		expect(store.replaySessionEvents(sessionId)).toEqual([]);
+		expect(store.getSession(sessionId)?.headSequence).toBe(0);
+		expect(store.getSession(sessionId)?.status).toBe("active");
+		expect(store.catalogRevision()).toBe(1);
+		store.database().close();
+	});
+
+	it("rejects worktree locator writes from a fenced owner", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "a");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		ownerRow(store, sessionId, createRuntimeId("runtime", "r1"), 1);
+		let fencedLocatorError: unknown;
+		try {
+			store.putWorktreeLocator(
+				{ sessionId, runtimeId: createRuntimeId("runtime", "old"), generation: 0 },
+				{
+					locatorJson: JSON.stringify({ version: 1, worktreePathDigest: "abc" }),
+					repositoryId: createRuntimeId("repository", "r"),
+					eventType: "workspace.bound",
+					payload: { digest: "abc" },
+				},
+			);
+		} catch (error) {
+			fencedLocatorError = error;
+		}
+		expect(fencedLocatorError).toBeInstanceOf(SessionStoreError);
+		expect((fencedLocatorError as SessionStoreError).code).toBe("owner_fenced");
+		expect(store.getSession(sessionId)?.worktreeLocator).toBeUndefined();
+		store.database().close();
+	});
+
+	it("rejects an attempt receipt whose origin generation does not match the intent", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "a");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		const runtimeId = createRuntimeId("runtime", "r1");
+		ownerRow(store, sessionId, runtimeId, 1);
+		const fence = { sessionId, runtimeId, generation: 1 };
+		const commandId = createRuntimeId("command", "c1");
+		store.recordCommandIntent(fence, {
+			sessionId,
+			commandId,
+			requestDigest: digest("req"),
+			originGeneration: 1,
+			createdAtMs: 1,
+		});
+		let originMismatchError: unknown;
+		try {
+			store.appendAttemptReceipt(fence, {
+				receiptId: createRuntimeId("receipt", "1"),
+				sessionId,
+				commandId,
+				attemptId: createRuntimeId("attempt", "1"),
+				originGeneration: 2,
+				effectClass: "workspace_mutation",
+				outcome: "uncertain",
+				createdAtMs: 2,
+			});
+		} catch (error) {
+			originMismatchError = error;
+		}
+		expect(originMismatchError).toBeInstanceOf(SessionStoreError);
+		expect((originMismatchError as SessionStoreError).code).toBe("receipt_origin_mismatch");
+		expect(store.listAttemptReceipts(sessionId, commandId)).toEqual([]);
+		store.database().close();
+	});
+
+	it("rejects driver events from a fenced owner", () => {
+		const store = openStore();
+		const sessionId = createRuntimeId("session", "a");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+		});
+		ownerRow(store, sessionId, createRuntimeId("runtime", "r1"), 1);
+		let fencedDriverError: unknown;
+		try {
+			store.appendDriverEvent(
+				{ sessionId, runtimeId: createRuntimeId("runtime", "old"), generation: 0 },
+				"driver.claimed",
+				{ connectionId: createRuntimeId("connection", "a") },
+			);
+		} catch (error) {
+			fencedDriverError = error;
+		}
+		expect(fencedDriverError).toBeInstanceOf(SessionStoreError);
+		expect((fencedDriverError as SessionStoreError).code).toBe("owner_fenced");
+		expect(store.getSession(sessionId)?.driverRevision).toBe(0);
 		store.database().close();
 	});
 });

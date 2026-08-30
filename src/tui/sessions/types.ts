@@ -130,3 +130,29 @@ export type SessionTransitionState =
 	| { readonly state: "succeeded"; readonly generation: number; readonly intentId: string; readonly targetSessionId: string }
 	| { readonly state: "recovery-required"; readonly generation: number; readonly intentId: string; readonly message: string }
 	| { readonly state: "failed"; readonly generation: number; readonly intentId: string; readonly message: string; readonly retryable: boolean };
+
+/** workflow 结果守卫(S7 拆分后归置到结果类型所属模块)。 */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isSessionTitleResult(value: unknown): value is SessionTitleResult {
+	return isRecord(value)
+		&& typeof value.sessionId === "string" && value.sessionId.length > 0
+		&& typeof value.title === "string" && value.title.length > 0
+		&& (value.titleSource === "auto" || value.titleSource === "user")
+		&& typeof value.titleUpdatedAtMs === "number"
+		&& Number.isSafeInteger(value.titleUpdatedAtMs)
+		&& value.titleUpdatedAtMs >= 0
+		&& typeof value.catalogRevision === "number"
+		&& Number.isSafeInteger(value.catalogRevision)
+		&& value.catalogRevision >= 0;
+}
+
+export function isSessionCatalogResult(value: unknown): value is SessionCatalogResult {
+	return isRecord(value)
+		&& value.kind === "catalog"
+		&& typeof value.revision === "number"
+		&& Number.isSafeInteger(value.revision)
+		&& Array.isArray(value.items);
+}

@@ -1,0 +1,44 @@
+{
+  "modelsDev": [
+    {
+      "id": "fixture-primary",
+      "name": "Fixture Primary",
+      "api": "openai-responses",
+      "provider": "fixture-primary",
+      "baseUrl": "https://primary.example.invalid/v1",
+      "reasoning": false,
+      "input": ["text"],
+      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+      "contextWindow": 4096,
+      "maxTokens": 1024
+    }
+  ],
+  "openRouter": [
+    {
+      "id": "fixture/router",
+      "name": "Fixture Router",
+      "api": "openai-completions",
+      "provider": "fixture-router",
+      "baseUrl": "https://router.example.invalid/v1",
+      "reasoning": false,
+      "input": ["text"],
+      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+      "contextWindow": 4096,
+      "maxTokens": 1024
+    }
+  ],
+  "aiGateway": [
+    {
+      "id": "fixture-gateway",
+      "name": "Fixture Gateway",
+      "api": "anthropic-messages",
+      "provider": "fixture-gateway",
+      "baseUrl": "https://gateway.example.invalid/v1",
+      "reasoning": false,
+      "input": ["text"],
+      "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 },
+      "contextWindow": 4096,
+      "maxTokens": 1024
+    }
+  ]
+}

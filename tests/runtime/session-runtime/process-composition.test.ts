@@ -917,4 +917,117 @@ describe("S4 Session managed process composition", () => {
 			error: { code: "process_killed", message: "managed process was killed", outcomeCertain: true },
 		}]);
 	});
+
+	it("validates the output cursor before the process lookup", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-cursor-boundary"),
+			runtimeId: createRuntimeId("runtime", "process-cursor-boundary"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-cursor-boundary");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-cursor-boundary"),
+			securitySources: [securitySource()],
+		});
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-cursor-boundary"),
+			security: security.managedProcess,
+		});
+		const missingExecutionId = createRuntimeId("execution", "missing");
+
+		// 非法 cursor 必须先于 executionId lookup 被拒绝。
+		const invalidCursor = await process.query("session.process.output", {
+			executionId: missingExecutionId,
+			cursor: { sequence: -1, byteOffset: 0 },
+			maxBytes: 1_024,
+		}, { correlationId: "correlation_cursor_invalid", effectId: "effect_cursor_invalid" });
+		expect(invalidCursor).toMatchObject({ ok: false, status: "failed", code: "invalid_process_output_request" });
+
+		// 合法 cursor + 未知 executionId → unavailable,而不是校验错误。
+		const unknownProcess = await process.query("session.process.output", {
+			executionId: missingExecutionId,
+			cursor: { sequence: 0, byteOffset: 0 },
+			maxBytes: 1_024,
+		}, { correlationId: "correlation_cursor_unknown", effectId: "effect_cursor_unknown" });
+		expect(unknownProcess).toMatchObject({ ok: false, status: "unavailable", code: "process_not_found" });
+		await security.close();
+	});
+
+	it("rejects a non-start mutation with a stale domain revision without applying it", async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = {
+			sessionId: createRuntimeId("session", "process-stale-stop"),
+			runtimeId: createRuntimeId("runtime", "process-stale-stop"),
+			generation: 1,
+		};
+		const workspaceId = createRuntimeId("workspace", "process-stale-stop");
+		const security = await createSessionSecurity({
+			layout,
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-stale-stop"),
+			securitySources: [securitySource()],
+		});
+		const process = sessionDomain.createSessionProcessComposition({
+			layout,
+			store: ownedStore(layout, fence, workspaceId),
+			cwd: root,
+			fence,
+			workspaceId,
+			repositoryId: createRuntimeId("repository", "process-stale-stop"),
+			security: security.managedProcess,
+		});
+		const started = await process.mutate("session.process.start", {
+			command: "node -e \"setTimeout(()=>{},30000)\"",
+			cwd: root,
+			timeoutMs: 30_000,
+			backend: "pipe",
+			executionMode: "background",
+		}, {
+			correlationId: "correlation_stale_start",
+			effectId: "effect_stale_start",
+			expectedRevision: 0,
+		});
+		expect(started, JSON.stringify(started)).toMatchObject({ ok: true, status: "ok" });
+		if (!started.ok) return;
+		const executionId = String(started.value.executionId);
+
+		const stale = await process.mutate("session.process.stop", { executionId }, {
+			correlationId: "correlation_stale_stop",
+			effectId: "effect_stale_stop",
+			expectedRevision: 999,
+		});
+		expect(stale).toMatchObject({ ok: false, status: "stale", code: "domain_revision_conflict" });
+		expect(stale).toHaveProperty("currentRevision", expect.any(Number));
+
+		// stale stop 未生效:进程仍存在且未到达 terminal。
+		const listed = await process.query("session.process.list", {}, { correlationId: "correlation_stale_list", effectId: "effect_stale_list" });
+		expect(listed.ok).toBe(true);
+		if (!listed.ok || !("items" in listed.value)) throw new Error("process list failed");
+		const listedItems = listed.value.items;
+		expect(Array.isArray(listedItems)).toBe(true);
+		if (!Array.isArray(listedItems) || listedItems.length === 0) throw new Error("expected one live process");
+		expect(listedItems[0]?.terminal).toBeUndefined();
+
+		const stopped = await process.mutate("session.process.stop", { executionId }, {
+			correlationId: "correlation_fresh_stop",
+			effectId: "effect_fresh_stop",
+			expectedRevision: 1,
+		});
+		expect(stopped, JSON.stringify(stopped)).toMatchObject({ ok: true, status: "ok" });
+		await security.close();
+	});
 });

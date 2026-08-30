@@ -42,6 +42,7 @@
 | TUI / Codex Session Display | [`tui/24-codex-session-display-replication-plan.md`](tui/24-codex-session-display-replication-plan.md) | Codex 风格 session header、消息分组、工具调用与状态展示复制 | Plan 24 §S7 fresh gates、标准 PATH 隔离 TTY 与 session fixture 验收 |
 | TUI / Working Loader Shimmer | [`tui/25-pi-working-loader-shimmer-replication-plan.md`](tui/25-pi-working-loader-shimmer-replication-plan.md) | oh-my-pi working loader 渐变（classic/KITT shimmer）、esc bracket 字形与 `display.shimmer` 设置已实现 | Plan 25 S0–S4 accepted；full gates、标准 PATH 隔离 TTY 80/143 列三模式与零宽不变式测试 |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
+| Cross-cutting Modularization | [`plan/12-bloated-code-modularization-refactor-plan.md`](plan/12-bloated-code-modularization-refactor-plan.md) | SessionStore、Security、Process、AgentLoop、SessionRuntime、OpenTUI、InteractiveMode、provider adapters 与 model generator 的行为保持拆分 | S0–S5/S8/S9 implemented；S6/S7 automated PATH 候选已通过但 streaming/human 门禁未闭合；S10 受 Runtime 06 R9 阻塞，整体 `partial / blocked` |
 | Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 | LSP Server Adapter | [`plan/04-lsp-server-adaptation-plan.md`](plan/04-lsp-server-adaptation-plan.md) | defaults/config 自动探测、stdio JSON-RPC、LspClient、AgentTool、WorkspaceEdit、managed LinterClient 与 SessionRuntime governed 接线 | P0–P6 review 修复已通过 fresh check/test/build 与隔离 CLI/TTY；P7 修复后 Session-managed 真实语言服务器/TUI smoke pending，状态查本文 §状态表 |
 | Streaming Write 展示稳定性 | [`plan/05-streaming-prefix-stability-plan.md`](plan/05-streaming-prefix-stability-plan.md) | oh-my-pi 稳定前缀能力族移植：part 级 settled 契约、冻结前缀判定与字节稳定契约门、settled 行缓存、流式表格列宽锁定、流式 diff 行级高亮；不改 renderer/screen mode/OpenTUI 内部 | 本文 §现状核实与 §状态表；P2 `partial`、P3–P5 `implemented`、P6 `partial / blocked`；压力证据见 [`plan/05-streaming-prefix-stability-evidence-2026-08-15.json`](plan/05-streaming-prefix-stability-evidence-2026-08-15.json)，全量 check/test 的既有 TUI boundary blocker 不伪装为本任务通过 |
@@ -90,7 +91,11 @@ development-doc/
 │   ├── 05-streaming-prefix-stability-plan.md
 │   ├── 06-session-naming-and-auto-title-plan.md
 │   ├── 07-idle-recap-replication-plan.md
-│   └── 08-usage-status-line-replication-plan.md
+│   ├── 08-usage-status-line-replication-plan.md
+│   ├── 09-outbound-network-proxy-plan.md
+│   ├── 10-upstream-model-proxy-plan.md
+│   ├── 11-forward-proxy-gateway-plan.md
+│   └── 12-bloated-code-modularization-refactor-plan.md
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md
