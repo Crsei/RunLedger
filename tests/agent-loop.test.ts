@@ -437,4 +437,91 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
       }
     }
   });
+
+  it("terminates at the model turn budget with a typed budget summary", async () => {
+    const agent = new Agent({
+      initialState: {
+        systemPrompt: "",
+        model: mockModel,
+        tools: [echoTool],
+      },
+      streamFn: mockStreamFn,
+      loopConfig: {
+        runBudget: {
+          maxModelTurns: 1,
+          maxToolTurns: 4,
+          maxActiveDurationMs: 60_000,
+          maxApprovalExpirations: 2,
+          maxRepeatedFailureFingerprint: 3,
+        },
+      },
+    });
+    const events: AgentEvent[] = [];
+    agent.subscribe((ev) => {
+      events.push(ev);
+    });
+
+    const finalMessages = await agent.prompt("budget");
+
+    const ended = events[events.length - 1]!;
+    expect(ended).toMatchObject({
+      type: "agent_end",
+      stopReason: "length",
+      terminationReason: "model_turn_limit",
+    });
+    const tail = finalMessages[finalMessages.length - 1]!;
+    expect(tail.role).toBe("assistant");
+    expect(tail.stopReason).toBe("length");
+  });
+
+  it("consumes steering messages only at the next turn boundary", async () => {
+    const calls: readonly AgentMessage[][] = [];
+    let agent: Agent;
+    const streamFn: StreamFn = (requestModel, context) => {
+      calls.push(context.messages);
+      if (calls.length === 1) {
+        agent.steer({ role: "user", content: [{ type: "text", text: "steer" }] });
+      }
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message: AssistantMessage = {
+          role: "assistant",
+          content: [{ type: "text", text: calls.length === 1 ? "first" : "second" }],
+          api: requestModel.api,
+          provider: requestModel.provider,
+          model: requestModel.id,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          stopReason: "stop",
+          timestamp: Date.now(),
+        };
+        stream.push({ type: "start", partial: message });
+        stream.push({ type: "done", reason: "stop", message });
+        stream.end(message);
+      });
+      return stream;
+    };
+    agent = new Agent({
+      initialState: {
+        systemPrompt: "",
+        model: mockModel,
+        tools: [],
+      },
+      streamFn,
+    });
+    const events: AgentEvent[] = [];
+    agent.subscribe((ev) => {
+      events.push(ev);
+    });
+
+    await agent.prompt("go");
+
+    // steering 进入第二次 LLM 请求,而不是混入第一次。
+    expect(calls).toHaveLength(2);
+    expect(JSON.stringify(calls[1])).toContain("steer");
+    const firstTurnEnd = events.findIndex((e) => e.type === "turn_end");
+    const steeringStart = events.findIndex(
+      (e) => e.type === "message_start" && e.role === "user" && "message" in e && JSON.stringify(e.message).includes("steer"),
+    );
+    expect(steeringStart).toBeGreaterThan(firstTurnEnd);
+  });
 });

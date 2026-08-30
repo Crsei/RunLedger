@@ -19,6 +19,7 @@ const remoteControllerSource = readFileSync(join(root, "src/cli/session-interact
 const effectSource = readFileSync(join(root, "src/tui/application/effect.ts"), "utf8");
 const processAdapterSource = readFileSync(join(root, "src/tui/process/controller-adapter.ts"), "utf8");
 const interactiveModeSource = readFileSync(join(root, "src/tui/interactive-mode.ts"), "utf8");
+const approvalWorkflowSource = readFileSync(join(root, "src/tui/interactive/approval-workflow.ts"), "utf8");
 
 type Authority = "local" | "remote" | "facade" | "none";
 
@@ -163,7 +164,8 @@ describe("B0 authority map: passive contract workflows", () => {
 
   it("approval authority lives on the Host reverse frame handled by InteractiveMode", () => {
     expect(interactiveModeSource).toContain("handleReverseRequest");
-    expect(interactiveModeSource).toContain("parseApprovalReverseRequest");
+    // S7:解析实现在 interactive/approval-workflow.ts,由 facade 委托
+    expect(approvalWorkflowSource).toContain("parseApprovalReverseRequest");
   });
 
   it("process workflow reuses the existing facade and reducer (no second manager)", () => {

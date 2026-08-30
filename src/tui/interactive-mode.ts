@@ -1,22 +1,21 @@
 /**
- * InteractiveMode —— TUI 主控，组装 pure presentation tree 并接通 Agent 事件流。
+ * InteractiveMode —— TUI 主控 facade。
  *
- * 对照 development-doc/tui/02-component-spec.md §1 与 07-roadmap.md M1。
+ * S7 拆分后实现位于 `interactive/`:
+ * - `session-workflow.ts`      new/resume/fork/rename/catalog;
+ * - `model-workflow.ts`        provider/model/thinking 选择;
+ * - `auth-workflow.ts`         provider/login/logout 与 credential 交互;
+ * - `extension-workflow.ts`    MCP/plugins/skills/hooks 管理;
+ * - `plan-workflow.ts`         plan.inspect 与 domain command adapter;
+ * - `process-workflow.ts`      managed process list/terminal;
+ * - `approval-workflow.ts`     approval/credential reverse-request;
+ * - `streaming-controller.ts`  delta 队列/usage/flush;
+ * - `event-controller.ts`      TuiEvent → state/effect/timeline;
+ * - `input-controller.ts`      submit/follow-up/slash 弹窗/主题选择;
+ * - `types.ts`                 InteractiveModePorts 契约。
  *
- * M1 阶段("空骨架")目标:
- *   1. 装配组件树(header / loadedResources / chat / status / editor / footer)
- *      与 M2+ 的真实业务组件不同,M1 各 container 暂用 Spacer 占位;
- *   2. 实现 FooterSnapshotProvider 单快照，并持有实例级 FooterFieldRegistry;
- *   3. handleEvent 把 TuiEvent 路由到各 container,M1 阶段除 agent_end / message_end
- *      更新 stopReason 之外其余 case 留 noop 占位(M2 起逐 case 落实);
- *   4. run() / quit() 对接 TUI.start / stop；外部控制不拥有进程级 singleton；
- *   5. 失败护栏常量 MAX_CONSECUTIVE_INIT_FAILURES / INIT_FAILURE_BACKOFF_MS 在 spec 已定义,
- *      M1 不实际触发(无 init 重试路径)。
- *
- * 本 M1 阶段:
- *   - main 入口由 examples/tui-demo.ts 实例化 InteractiveMode 并 run;
- *   - 实际接 CLI 入口 src/cli/main.ts 留给 M7;
- *   - 与 Agent 的耦合只在 prompt 提交,不修改 agent._state.messages(对照 01 §6.1)。
+ * 本文件保留:生命周期/装配/命令注册表派发/公开查询与 FooterSnapshotProvider,
+ * 不再拥有 provider/auth/session/extension 的具体业务实现。
  */
 
 import {
@@ -33,13 +32,10 @@ import {
 } from "./index.ts";
 
 import type { Agent } from "../runtime/agent.ts";
-import type { AgentEvent, AgentMessage } from "../runtime/types.ts";
-import type { AssistantMessage, ModelThinkingLevel } from "../types.ts";
-import { getSupportedThinkingLevels } from "../models.ts";
-import type { AuthEvent, AuthInteraction, AuthPrompt, AuthType } from "../auth/types.ts";
-import type { InteractiveSessionControllerPort, SessionRecoveryStatus, SessionTitleChangedEvent } from "../runtime/interactive-session-controller.ts";
+import type { ModelThinkingLevel } from "../types.ts";
+import type { InteractiveSessionControllerPort, SessionRecoveryStatus } from "../runtime/interactive-session-controller.ts";
 
-import { adaptAgentEvent, type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
+import { type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
 import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
 import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
 import { editorBackgroundFromTerminal } from "./theme/editor-background.ts";
@@ -54,73 +50,58 @@ import {
 } from "./footer/field-registry.ts";
 import { LoadedResourcesComponent } from "./components/loaded-resources.ts";
 import { ChatContainer } from "./components/chat-container.ts";
-import { AuthInputModal } from "./components/auth-input-modal.ts";
-import { SearchableSelectorModal } from "./components/searchable-selector-modal.ts";
-import { SessionPickerModal, buildSessionPickerItems, formatRelativeTime } from "./components/session-picker-modal.ts";
-import { WelcomeComponent, WELCOME_SESSION_SLOTS } from "./components/welcome.ts";
-import { ListSelectionModal, type ListSelectionItem } from "./components/list-selection-modal.ts";
-import { ExtensionToggleModal, type ExtensionToggleItem } from "./components/extension-toggle-modal.ts";
-import { McpServersModal, type McpServerViewItem } from "./components/mcp-servers-modal.ts";
-import { StatusComponent } from "./components/status.ts";
-import { SelectorModal } from "./components/selector-modal.ts";
-import { PermissionRequestView } from "./components/permission-request-view.ts";
 import { SelectionView } from "./components/selection-view.ts";
-import type { SelectItem, RgbColor } from "./index.ts";
-import type { Component, InputListenerResult, OverlayHandle, OverlayOptions } from "./primitives.ts";
-import { matchesKey } from "./index.ts";
-import { findCommand, commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
-import { SlashCommandPopup } from "./components/slash-command-popup.ts";
-import type { TuiOverlayState } from "./application/state.ts";
-import type { ExecutionId } from "../runtime/protocol/ids.ts";
-import type { ExtensionResourceView } from "./extensions/types.ts";
-import type { HostFrameEnvelope } from "../runtime/host/types.ts";
-import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
-import { decodeAuthEvent, decodeAuthPrompt } from "../runtime/session-runtime/credential-reverse-request.ts";
-import type { ProcessOverlayController, ProcessOverlayHostClient } from "./process/controller-adapter.ts";
-import { ProcessOverlayComponent } from "./process/overlay-component.ts";
-import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
-import { DeltaCoalescer, type AppendTextDelta } from "./opentui/delta-coalescer.ts";
+import { PermissionRequestView } from "./components/permission-request-view.ts";
+import { StatusComponent } from "./components/status.ts";
+import { WelcomeComponent } from "./components/welcome.ts";
+import { TranscriptOverlayComponent, projectTranscriptOverlay } from "./transcript-view.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
-import { approvalChoices, approvalDecisionBody, parseApprovalReverseRequest, type ApprovalDecision } from "./approval.ts";
-import type { TuiBootstrapSnapshot } from "./presentation/types.ts";
+import type { UsageSnapshot } from "../runtime/usage/index.ts";
+import { projectInteractivePresentation } from "./presentation/projectors.ts";
+import { commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
+import { SlashCommandPopup } from "./components/slash-command-popup.ts";
+import type { Component, InputListenerResult, OverlayOptions } from "./primitives.ts";
+import { matchesKey } from "./index.ts";
+import type { RgbColor } from "./index.ts";
+import type { TuiOverlayState } from "./application/state.ts";
 import type { TuiState } from "./application/state.ts";
 import { createInitialTuiState } from "./application/initial-state.ts";
 import type { TimelineEvent } from "./timeline/types.ts";
-import { TimelineEventProjector } from "./timeline/event-projector.ts";
-import { projectInteractivePresentation } from "./presentation/projectors.ts";
 import type { TuiStore } from "./application/store.ts";
 import { createTuiStore } from "./application/store.ts";
 import type { TuiDomainPorts } from "./application/ports.ts";
 import { capabilitiesFromPorts } from "./application/ports.ts";
 import { createInteractiveSessionAdapter, type InteractiveSessionAdapter } from "./adapters/interactive-session.ts";
 import { createSessionResourcePortsFromController } from "./adapters/session-resources.ts";
-import { commandSessionController, createSessionDomainPortFromController, querySessionController, sessionAuthorityGeneration } from "./adapters/session-domain.ts";
+import { createSessionDomainPortFromController, sessionAuthorityGeneration } from "./adapters/session-domain.ts";
 import type { EffectRunner } from "./application/effect-runner.ts";
 import { createEffectRunner } from "./application/effect-runner.ts";
 import type { TuiEffect } from "./application/effect.ts";
 import type { CorrelatedRequestRef } from "./application/common.ts";
-import type { SessionCatalogResult, SessionTitleResult, SessionTransitionResult } from "./sessions/types.ts";
 import type {
   TuiPreferencesDocument,
   TuiPreferencesPort,
   TuiShimmerMode,
 } from "./preferences/types.ts";
-import { normalizeSessionTitle } from "../runtime/session-owner/title.ts";
 import { BUILTIN_SYNTAX_THEME_NAMES, SyntaxThemeController } from "./highlight/theme-controller.ts";
-import { STATUS_INDICATOR_FRAME_MS } from "./opentui/block-layout.ts";
-import { projectStatusIndicator } from "./presentation/projectors.ts";
-import { projectTranscriptOverlay, TranscriptOverlayComponent } from "./transcript-view.ts";
-import type { SafeUsageQuantity } from "./presentation/tools/types.ts";
-import {
-  applyUsageObservation,
-  seedUsageAccumulator,
-  usageObservationFromAssistantMessage,
-  usageSnapshot,
-  type UsageAccumulator,
-  type UsageContextInput,
-  type UsageObservation,
-  type UsageSnapshot,
-} from "../runtime/usage/index.ts";
+import { createProcessPassiveBridge } from "./process/passive-bridge.ts";
+import { ProcessOverlayComponent } from "./process/overlay-component.ts";
+import type { ProcessOverlayController, ProcessOverlayHostClient } from "./process/controller-adapter.ts";
+import type { HostFrameEnvelope } from "../runtime/host/types.ts";
+import type { SessionFrameEnvelope } from "../runtime/session-server/protocol.ts";
+import type { TuiBootstrapSnapshot } from "./presentation/types.ts";
+import { messageText } from "./interactive/input-helpers.ts";
+import type { InteractiveModePorts, WorkflowKey, WorkflowResult } from "./interactive/types.ts";
+import { SessionWorkflow } from "./interactive/session-workflow.ts";
+import { ModelWorkflow } from "./interactive/model-workflow.ts";
+import { AuthWorkflow } from "./interactive/auth-workflow.ts";
+import { ExtensionWorkflow } from "./interactive/extension-workflow.ts";
+import { PlanWorkflow } from "./interactive/plan-workflow.ts";
+import { ProcessWorkflow } from "./interactive/process-workflow.ts";
+import { ApprovalWorkflow } from "./interactive/approval-workflow.ts";
+import { StreamingController } from "./interactive/streaming-controller.ts";
+import { EventController } from "./interactive/event-controller.ts";
+import { InputController } from "./interactive/input-controller.ts";
 
 export interface SyntaxThemeSettingsPort {
   save(name: string): Promise<{ readonly ok: true } | { readonly ok: false; readonly code: string }>;
@@ -213,7 +194,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private theme: Theme;
   private readonly kb: KeybindingsManager;
-  private readonly refs: ContainerRefs;
+  // S7:协作者经 port.refs 访问;assembleTree 只填充成员,不替换对象
+  private readonly refs: ContainerRefs = {} as ContainerRefs;
   private unsubscribe?: () => void;
   private unsubscribeSessionTitle?: () => void;
   private unsubscribeIdleRecap?: () => void;
@@ -225,26 +207,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private unsubscribeBoundaryActions?: () => void;
   private readonly footerRegistry: FooterFieldRegistry;
   private unsubscribeFooterRegistry?: () => void;
-
-  // FooterSnapshotProvider 运行状态(只有 handleEvent 路径写)
-  private streaming = false;
-  private stopReason: string | undefined = undefined;
-  private streamingGeneration = 0;
-  private usageLifecycleObserved = false;
-  private usageRunActive = false;
-  private activeUsageRunId: string | undefined;
-  private usageAccumulator: UsageAccumulator;
-  private activeUsageRequestStartedAtMs: number | undefined;
-  private readonly streamingDeltas = new DeltaCoalescer({
-    softByteLimit: 256 * 1024,
-    hardByteLimit: 1024 * 1024,
-    softEventLimit: 512,
-    hardEventLimit: 4096,
-  });
-  // B2:帧前 flush 时按 correlationId 累积完整正文快照，再发 message_update
-  private readonly pendingMessageBuffers = new Map<string, { text: string; thinking: string }>();
-  // B2:Timeline 为 chat 内容的唯一业务 owner；DeltaCoalescer 只做 lossless append/帧前 drain。
-  private timelineProjector = new TimelineEventProjector();
 
   // B3:client-local store 为 interaction/presentation 的唯一 owner
   private store: TuiStore;
@@ -266,14 +228,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly gitBranchLabel?: string;
   private authAdapter: InteractiveSessionAdapter;
   private quitting = false;
-
-  // /model 二级弹窗缓存:workflow ready 快照投影,供二级 Esc 返回一级复用。
-  private modelPickSource: {
-    readonly models: readonly ModelPickerModel[];
-    readonly currentProviderId?: string;
-    readonly currentModelId?: string;
-  } | undefined;
-	private hostConnectionState: HostConnectionUiState = "ready";
+  private hostConnectionState: HostConnectionUiState = "ready";
   private readonly exitPromise: Promise<InteractiveExitIntent>;
   private readonly resolveExit: (intent: InteractiveExitIntent) => void;
   private processOverlayComponent: ProcessOverlayComponent | undefined;
@@ -288,19 +243,21 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
-  private activePermissionView: PermissionRequestView | undefined;
-  private unsubscribePermissionInput: (() => void) | undefined;
   private transcriptOverlay: TranscriptOverlayComponent | undefined;
   private unsubscribeTranscriptInput: (() => void) | undefined;
 
-  // P3:slash 输入期补全弹窗(nonCapturing overlay;editor 文本/光标变化驱动)
-  private slashPopup: SlashCommandPopup | undefined;
-  private slashOverlayHandle: OverlayHandle | undefined;
-  /** Esc 关闭后记忆当前命令 token;token 变化才恢复弹窗(对照 codex dismissed_command_token)。 */
-  private dismissedCommandToken: string | undefined;
-
-  /** B1-B3:TuiState 由 store 唯一持有（此字段已由 store 取代，防止误用）。 */
-  private readonly storeRef: undefined = undefined;
+  // S7 协作者
+  private readonly sessionWorkflow: SessionWorkflow;
+  private readonly modelWorkflow: ModelWorkflow;
+  private readonly authWorkflow: AuthWorkflow;
+  private readonly extensionWorkflow: ExtensionWorkflow;
+  private readonly planWorkflow: PlanWorkflow;
+  private readonly processWorkflow: ProcessWorkflow;
+  private readonly approvalWorkflow: ApprovalWorkflow;
+  private readonly streaming: StreamingController;
+  private readonly eventController: EventController;
+  private readonly inputController: InputController;
+  private readonly port: InteractiveModePorts;
 
   constructor(opts: InteractiveModeOptions) {
     if (!opts.controller && !opts.agent) {
@@ -309,9 +266,6 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.controller = opts.controller;
     this.agent = opts.agent;
     const initialMessages = this.controller?.messages ?? this.agent?.state.messages ?? [];
-    this.usageAccumulator = seedUsageAccumulator(initialMessages);
-    if (this.controller === undefined) this.timelineProjector.setMessageIndex(initialMessages.length);
-    this.getUsageSnapshot = this.getUsageSnapshot.bind(this);
     this.processOverlayController = opts.processOverlayController;
     this.performanceObserver = opts.performanceObserver;
     this.terminal = opts.terminal ?? new ProcessTerminal();
@@ -376,9 +330,25 @@ export class InteractiveMode implements FooterSnapshotProvider {
     });
     this.footerRegistry = createDefaultFooterFieldRegistry();
     this.unsubscribeFooterRegistry = this.footerRegistry.subscribe(() => this.ui.requestRender(true));
+
+    // S7:装配协作者(port 由本实例实现)
+    const port: InteractiveModePorts = this.createPort();
+    this.getUsageSnapshot = this.getUsageSnapshot.bind(this);
+    this.port = port;
+    this.streaming = new StreamingController(port, initialMessages, opts.performanceObserver);
+    this.eventController = new EventController(port, this.streaming);
+    this.inputController = new InputController(port);
+    this.sessionWorkflow = new SessionWorkflow(port);
+    this.modelWorkflow = new ModelWorkflow(port);
+    this.authWorkflow = new AuthWorkflow(port);
+    this.extensionWorkflow = new ExtensionWorkflow(port);
+    this.planWorkflow = new PlanWorkflow(port);
+    this.processWorkflow = new ProcessWorkflow(port);
+    this.approvalWorkflow = new ApprovalWorkflow(port);
+
     this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => {
-      this.flushStreamingDeltas();
+      this.streaming.flushStreamingDeltas();
       this.refreshStatusIndicator();
     });
     this.unsubscribeTranscriptInput = this.ui.addInputListener((data) => this.handleTranscriptInput(data));
@@ -389,11 +359,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.setAppIntentHandler({
       onInterrupt: () => {
         // nonCapturing 弹窗(如 slash 补全)不拦截 Ctrl+C
-        if (this.ui.hasCapturingOverlay() || this.activePermissionView !== undefined) return false;
+        if (this.ui.hasCapturingOverlay() || this.approvalWorkflow.hasActivePermissionView()) return false;
         this.handleInterrupt();
         return true;
       },
-      onExit: () => this.ui.hasOverlay() || this.activePermissionView !== undefined ? false : this.handleCtrlD(),
+      onExit: () => this.ui.hasOverlay() || this.approvalWorkflow.hasActivePermissionView() ? false : this.handleCtrlD(),
       onRefresh: () => this.ui.invalidate(),
     });
 
@@ -401,8 +371,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.kb = new KeybindingsManager(TUI_KEYBINDINGS);
     setKeybindings(this.kb);
 
-    // 装配组件树
-    this.refs = this.assembleTree();
+    // 装配组件树(只填充 this.refs 成员,协作者持有的 port.refs 是同一对象)
+    this.assembleTree();
     // B3:store 订阅驱动 chat presentation（timeline generation 变化才重投影）
     this.unsubscribeStore = this.store.subscribe((next) => {
       if (next.timeline.generation !== this.lastTimelineGeneration) {
@@ -432,13 +402,145 @@ export class InteractiveMode implements FooterSnapshotProvider {
       });
     }
     this.replayInitialHistory(opts.syntaxThemeWarnings ?? []);
-    void this.refreshWelcomeSessions();
+    void this.sessionWorkflow.refreshWelcomeSessions();
 
     void MAX_CONSECUTIVE_INIT_FAILURES;
     void INIT_FAILURE_BACKOFF_MS;
   }
 
-	public setHostConnectionState(state: HostConnectionUiState): void {
+  private createPort(): InteractiveModePorts {
+    const instance = this;
+    return {
+      ui: this.ui,
+      store: this.store,
+      runner: this.runner,
+      // controller/agent 可能在装配后由测试/上层替换 → 实时 getter
+      get controller(): InteractiveSessionControllerPort | undefined { return instance.controller; },
+      get agent(): Agent | undefined { return instance.agent; },
+      authAdapter: this.authAdapter,
+      theme: this.theme,
+      refs: this.refs,
+      get quitting(): boolean { return instance.quitting; },
+      hideThinkingSettingsPort: this.hideThinkingSettingsPort,
+      preferencesPort: this.preferencesPort,
+      shimmerMode: this.shimmerMode,
+      syntaxThemeController: this.syntaxThemeController,
+      syntaxThemeSettingsPort: this.syntaxThemeSettingsPort,
+      get processOverlayComponent(): ProcessOverlayComponent | undefined { return instance.processOverlayComponent; },
+      get hostConnectionState(): HostConnectionUiState { return instance.hostConnectionState; },
+      sessionPort: this.ports.session,
+      showNotice: (text, kind) => this.showNotice(text, kind),
+      showOverlayModal: (component, options, kind) => this.showOverlayModal(component, options, kind),
+      closeOverlay: () => this.closeOverlay(),
+      createEffect: (type, extra) => this.createEffect(type, extra),
+      waitForWorkflow: (key, requestId) => this.waitForWorkflow(key, requestId),
+      dispatchTimeline: (events) => this.eventController.dispatchTimeline(events),
+      requestExit: (intent) => this.requestExit(intent),
+      inFlight: () => this.inFlight(),
+      getSessionId: () => this.getSessionId(),
+      hideSlashPopup: () => this.inputController.hideSlashPopup(),
+      uiRequestRender: () => this.ui.requestRender(),
+      syncThinkingWorkflow: () => this.syncThinkingWorkflow(),
+      openModelSelector: (provider) => this.modelWorkflow.openModelSelector(provider),
+      nextCorrelationId: () => { this.correlationSequence += 1; return this.correlationSequence; },
+      nextEffectId: () => { this.effectSequence += 1; return this.effectSequence; },
+      processOverlaySnapshot: () => this.processOverlayController?.snapshot().open,
+      interruptCurrentTurn: () => this.interruptCurrentTurn(),
+      clearIdleRecapStatus: () => this.clearIdleRecapStatus(),
+      keyBindings: () => this.kb.getResolvedBindings(),
+      refreshSessionCatalog: async () => { await this.sessionWorkflow.loadSessionCatalog(); },
+      setStreaming: (value) => { this.streaming.setStreaming(value); },
+      setStopReason: (value) => { this.streaming.setStopReason(value); },
+      dispatchCommand: (command, arg) => this.dispatchCommand(command as RegisteredSlashCommand, arg),
+    };
+  }
+
+	  /** 测试/路由查询暴露:Agent 事件适配后的主控入口(委托 EventController)。 */
+  public handleEvent(ev: TuiEvent): void {
+    this.eventController.handleEvent(ev);
+  }
+
+  /** 测试/路由查询暴露:timeline 事件投影(委托 EventController)。 */
+  public dispatchTimeline(events: readonly TimelineEvent[]): void {
+    this.eventController.dispatchTimeline(events);
+  }
+
+  /** 测试/路由查询暴露:plan/compact/memory domain 命令(委托 PlanWorkflow)。 */
+  public runDomainCommand(operation: string, body: Record<string, unknown>, commandName: string, readOnly: boolean): Promise<void> {
+    return this.planWorkflow.runDomainCommand(operation, body, commandName, readOnly);
+  }
+
+  /** 测试/路由查询暴露:模型选择(委托 ModelWorkflow)。 */
+  public selectModelByKey(key: string): Promise<void> {
+    return this.modelWorkflow.selectModelByKey(key);
+  }
+
+  /** 测试/路由查询暴露:模型选择器(委托 ModelWorkflow)。 */
+  public openModelSelector(provider?: string): void {
+    this.modelWorkflow.openModelSelector(provider);
+  }
+
+  /** 测试/路由查询暴露:session catalog(委托 SessionWorkflow)。 */
+  public openSessionCatalog(): Promise<void> {
+    return this.sessionWorkflow.openSessionCatalog();
+  }
+
+  /** 测试/路由查询暴露:/new(委托 SessionWorkflow)。 */
+  public createNewSession(): Promise<void> {
+    return this.sessionWorkflow.createNewSession();
+  }
+
+  /** 测试/路由查询暴露:/fork(委托 SessionWorkflow)。 */
+  public forkCurrentSession(): Promise<void> {
+    return this.sessionWorkflow.forkCurrentSession();
+  }
+
+  /** 测试/路由查询暴露:/rename(委托 SessionWorkflow)。 */
+  public renameCurrentSession(title: string): Promise<void> {
+    return this.sessionWorkflow.renameCurrentSession(title);
+  }
+
+  /** 测试/路由查询暴露:thinking 选择器(委托 ModelWorkflow)。 */
+  public openThinkingSelector(): void {
+    this.modelWorkflow.openThinkingSelector();
+  }
+
+  /** 测试/路由查询暴露:MCP 管理视图(委托 ExtensionWorkflow)。 */
+  public openMcpServerSelector(): Promise<void> {
+    return this.extensionWorkflow.openMcpServerSelector();
+  }
+
+  /** 测试/路由查询暴露:plugins/skills/hooks 视图(委托 ExtensionWorkflow)。 */
+  public openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", kindLabel: string, commandName: string): Promise<void> {
+    return this.extensionWorkflow.openExtensionSelector(operation, kindLabel, commandName);
+  }
+
+  /** 测试/路由查询暴露:credential reverse-request(委托 ApprovalWorkflow)。 */
+  public handleCredentialReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
+    return this.approvalWorkflow.handleCredentialReverseRequest(frame, signal);
+  }
+
+  /** 活跃 permission view 读取(approval 测试)。 */
+  get activePermissionView(): PermissionRequestView | undefined {
+    return this.approvalWorkflow.activePermissionView;
+  }
+
+  /** slash 弹窗实例读取(弹窗状态机测试)。 */
+  get slashPopup(): SlashCommandPopup | undefined {
+    return this.inputController.slashPopup;
+  }
+
+  /** Esc dismiss 记忆读取(slash 弹窗测试)。 */
+  get dismissedCommandToken(): string | undefined {
+    return this.inputController.dismissedCommandToken;
+  }
+
+  /** /theme 选择器(委托 InputController)。 */
+  public openSyntaxThemePicker(): void {
+    this.inputController.openSyntaxThemePicker();
+  }
+
+  public setHostConnectionState(state: HostConnectionUiState): void {
 		if (this.hostConnectionState === state) return;
 		this.hostConnectionState = state;
 		const presentation = state === "ready"
@@ -453,8 +555,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
 		this.showNotice(presentation.text, presentation.kind);
 	}
 
-  /** 装配组件树并返回引用;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
-  private assembleTree(): ContainerRefs {
+  /** 装配组件树并填充 this.refs;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
+  private assembleTree(): void {
     const header = new Container();
     let welcome: WelcomeComponent | undefined;
     if (this.showWelcome) {
@@ -479,15 +581,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const editorProps: CustomEditorProps = {
       theme: this.theme,
       selectListTheme: this.makeSelectListTheme(),
-      onSubmit: (text) => this.handleSubmit(text),
+      onSubmit: (text) => this.inputController.handleSubmit(text),
       onChange: (text) => {
         this.clearIdleRecapStatus();
         this.controller?.notifyEditorActivity?.(text.trim().length === 0);
-        this.syncSlashPopup();
+        this.inputController.syncSlashPopup();
       },
-      onSlashPopupKey: (data) => this.handleSlashPopupKey(data),
-      onFollowUp: (text) => this.handleFollowUpSubmit(text),
-      onDequeue: () => this.restoreQueuesToEditor(),
+      onSlashPopupKey: (data) => this.inputController.handleSlashPopupKey(data),
+      onFollowUp: (text) => this.inputController.handleFollowUpSubmit(text),
+      onDequeue: () => this.inputController.restoreQueuesToEditor(),
     };
     const editor = new CustomEditor(this.ui, editorTheme, editorProps);
     const footer = new Footer({ theme: this.theme, provider: this, registry: this.footerRegistry });
@@ -505,7 +607,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     // Editor 拿焦点
     this.ui.setFocus(editor);
 
-    return { header, welcome, loadedResources, chat, status, editor, footer };
+    Object.assign(this.refs, { header, welcome, loadedResources, chat, status, editor, footer });
   }
 
   /** B1:bootstrap 派生；composition root 显式传入时优先。 */
@@ -531,8 +633,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** B3:overlay 状态意图写入 store；组件/焦点仍由 renderer 管理（view side-effect）。 */
   private showOverlayModal(component: Component, options?: OverlayOptions, kind: Exclude<TuiOverlayState["state"], "closed"> = "command"): void {
     // 真实 modal 抢占 overlay 槽;slash 补全弹窗随之失效(防止幽灵引用)
-    this.slashPopup = undefined;
-    this.slashOverlayHandle = undefined;
+    this.inputController.hideSlashPopup();
     this.transcriptOverlay = undefined;
     this.store.dispatch({
       type: "overlay.open",
@@ -544,10 +645,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** B3:overlay 关闭意图写入 store。 */
   private closeOverlay(): void {
-    if (this.ui.getOverlay() === this.slashPopup) {
-      this.slashPopup = undefined;
-      this.slashOverlayHandle = undefined;
-    }
+    this.inputController.hideSlashPopup();
     if (this.ui.getOverlay() === this.transcriptOverlay) this.transcriptOverlay = undefined;
     this.store.dispatch({ type: "overlay.close" });
     this.ui.hideOverlay();
@@ -555,7 +653,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
   private openTranscriptOverlay(): void {
-    if (this.quitting || this.ui.hasOverlay() || this.activePermissionView !== undefined) return;
+    if (this.quitting || this.ui.hasOverlay() || this.approvalWorkflow.hasActivePermissionView()) return;
     const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }), {
       getViewportHeight: () => Math.max(4, this.terminal.rows - 2),
       onClose: () => this.closeOverlay(),
@@ -571,12 +669,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
       return { consume: true };
     }
 	if (this.kb.matches(data, "tui.thinking.toggle")) {
-		if (this.ui.hasOverlay() || this.activePermissionView !== undefined) return undefined;
+		if (this.ui.hasOverlay() || this.approvalWorkflow.hasActivePermissionView()) return undefined;
 		this.toggleThinkingVisibility();
 		return { consume: true };
 	}
     if (!matchesKey(data, "ctrl+t")) return undefined;
-    if (this.ui.hasOverlay() || this.activePermissionView !== undefined) return undefined;
+    if (this.ui.hasOverlay() || this.approvalWorkflow.hasActivePermissionView()) return undefined;
     this.openTranscriptOverlay();
     return { consume: true };
   }
@@ -608,9 +706,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   async run(): Promise<InteractiveExitIntent> {
     if (this.quitting) return this.exitPromise;
     this.unsubscribe = this.controller
-      ? this.controller.subscribe((ev) => this.handleAgentEvent(ev))
-      : this.agent?.subscribe((ev) => this.handleAgentEvent(ev));
-    this.unsubscribeSessionTitle = this.controller?.subscribeSessionTitleChanged?.((event) => this.handleSessionTitleChanged(event));
+      ? this.controller.subscribe((ev) => this.eventController.handleAgentEvent(ev))
+      : this.agent?.subscribe((ev) => this.eventController.handleAgentEvent(ev));
+    this.unsubscribeSessionTitle = this.controller?.subscribeSessionTitleChanged?.((event) => this.eventController.handleSessionTitleChanged(event));
     this.unsubscribeIdleRecap = this.controller?.subscribeIdleRecap?.((event) => {
       if (event.cleared === true) {
         if (event.requestId !== this.idleRecapRequestId) return;
@@ -669,7 +767,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 空闲且输入区为空退出 TUI。
    */
   private handleInterrupt(): void {
-    if (this.streaming || this.inFlight()) {
+    if (this.streaming.isStreaming() || this.inFlight()) {
       this.interruptCurrentTurn();
       return;
     }
@@ -688,7 +786,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const queued = [
       ...(restored?.steering ?? []),
       ...(restored?.followUp ?? []),
-    ].map(messageText).filter((text) => text.length > 0);
+    ].map((message) => messageText(message)).filter((text) => text.length > 0);
     if (queued.length > 0) {
       const current = this.refs.editor.getText();
       this.refs.editor.setText([...queued, current].filter((text) => text.trim()).join("\n\n"));
@@ -729,6 +827,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     void this.requestQuit();
   }
 
+  /** 可信内部模块的实例级 Footer 字段贡献入口。 */
+  registerFooterField(definition: FooterFieldDefinition): FooterFieldRegistrationResult {
+    return this.footerRegistry.register(definition);
+  }
+
   private async requestQuit(): Promise<void> {
 	return this.requestExit({ kind: "quit" });
   }
@@ -736,11 +839,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private async requestExit(intent: InteractiveExitIntent): Promise<void> {
     if (this.quitting) return;
     this.quitting = true;
-    this.flushStreamingDeltas();
+    this.streaming.flushStreamingDeltas();
     // B8:先取消所有 in-flight effects，再执行 lifecycle cleanup（防止 Host 查询在销毁后回写）
     this.runner.cancelAll();
     // P2-2:destroy 清理所有 active timeline rows
-    this.dispatchTimeline(this.timelineProjector.project({ kind: "cleanup", reason: "destroy" }));
+    this.eventController.dispatchTimeline(this.streaming.project({ kind: "cleanup", reason: "destroy" }));
     if (this.inFlight()) {
       this.controller?.interrupt();
       this.agent?.interrupt();
@@ -780,141 +883,25 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 不调 agent.prompt 直绕，保证 handleSubmit 先投影 canonical user Timeline row。
    */
   echoPrompt(text: string): void {
-    this.handleSubmit(text);
-  }
-
-  /** 可信内部模块的实例级 Footer 字段贡献入口。 */
-  registerFooterField(definition: FooterFieldDefinition): FooterFieldRegistrationResult {
-    return this.footerRegistry.register(definition);
+    this.inputController.handleSubmit(text);
   }
 
   /** Host 逆向 approval 请求：只收集并返回决策；Host receipt 未接入前不更新 approval workflow。 */
   handleReverseRequest(frame: HostFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
-    return this.handleApprovalReverseRequest(frame.body, signal);
+    return this.approvalWorkflow.handleReverseRequest(frame, signal);
   }
 
   /** Session reverse-request 的唯一 TUI 分派：approval 与 credential 共用既有 UI authority。 */
   handleSessionReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
-    const requestKind = typeof frame.body.kind === "string" ? frame.body.kind : undefined;
-    if (requestKind === "approval_prompt") {
-      const body = isRecord(frame.body.body) ? frame.body.body : undefined;
-      return body === undefined
-        ? Promise.resolve({ ok: false, code: "reverse_request_invalid" })
-        : this.handleApprovalReverseRequest(body, signal);
-    }
-    if (requestKind === "credential_prompt" || requestKind === "credential_event") {
-      return this.handleCredentialReverseRequest(frame, signal);
-    }
-    return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
-  }
-
-  private handleApprovalReverseRequest(body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
-    const view = parseApprovalReverseRequest(body);
-    if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
-    if (this.activePermissionView !== undefined) return Promise.resolve({ ok: false, code: "approval_busy" });
-    if (signal.aborted) return Promise.resolve({ ok: false, code: "approval_aborted" });
-    return new Promise<Record<string, unknown>>((resolve) => {
-      let settled = false;
-      const finish = (responseBody: Record<string, unknown>): void => {
-        if (settled) return;
-        settled = true;
-        signal.removeEventListener("abort", onAbort);
-        this.unsubscribePermissionInput?.();
-        this.unsubscribePermissionInput = undefined;
-        this.refs.chat.clearReplacement(permissionView);
-        if (this.activePermissionView === permissionView) this.activePermissionView = undefined;
-        this.ui.setFocus(this.refs.editor);
-        this.ui.requestRender(true);
-        resolve(responseBody);
-      };
-      const onAbort = (): void => {
-        finish({ ok: false, code: "approval_aborted" });
-      };
-      const choose = (decision: ApprovalDecision): void => {
-        // 这里只记录用户决策意图；Host 是否接受由 reverse response 的调用方确认。
-        this.dispatchTimeline([{
-          type: "notice",
-          generation: 0,
-          correlationId: `approval-${this.store.getState().timeline.committedRows.length}`,
-          severity: "info",
-          message: { text: `approval ${decision.decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision.decision} for ${view.toolName}`).byteLength },
-        }]);
-        finish(approvalDecisionBody(decision));
-        if (decision.decision === "deny") {
-          // 先让 reverse response 的 continuation 发送 deny，再中断 canonical turn，
-          // 避免模型把单次拒绝当成可继续重试的新 permission 请求。
-          queueMicrotask(() => this.interruptCurrentTurn());
-        }
-      };
-	  const choices = approvalChoices(view);
-	  const permissionView = new PermissionRequestView({
-	    request: view,
-	    choices,
-	    onSelect: (choice) => choose(choice.decision),
-	    onCancel: () => choose({ decision: "cancel" }),
-	    onChange: () => this.ui.requestRender(true),
-	  });
-      signal.addEventListener("abort", onAbort, { once: true });
-	  if (this.ui.hasOverlay()) this.closeOverlay();
-	  this.activePermissionView = permissionView;
-	  this.refs.chat.setReplacement(permissionView, "permission-request");
-	  this.unsubscribePermissionInput = this.ui.addInputListener((data) => {
-	    if (this.activePermissionView !== permissionView) return undefined;
-	    permissionView.handleInput(data);
-	    return { consume: true };
-	  });
-	  this.ui.requestRender(true);
-    });
-  }
-
-  /**
-   * Session 协议 credential reverse-request:`/login` 的 secret/select 提示
-   * 由 server 侧 domain 经 reverse_request 投递到这里渲染,并把用户输入
-   * 经 reverse_response 送回;credential_event(info/auth_url/device_code)只展示。
-   */
-  handleCredentialReverseRequest(frame: SessionFrameEnvelope, signal: AbortSignal): Promise<Record<string, unknown>> {
-    const body = frame.body;
-    const requestKind = typeof body.kind === "string" ? body.kind : undefined;
-    if (requestKind === "credential_prompt") {
-      const prompt = decodeAuthPrompt(body.body);
-      if (prompt === undefined) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
-      // 提示用户 modal 已打开(部分终端下 overlay 渲染偶发不可见,notice 兜底)。
-      this.showNotice(`Credential prompt: ${prompt.message}`, "note");
-      return new Promise<Record<string, unknown>>((resolve) => {
-        let settled = false;
-        const finish = (result: Record<string, unknown>): void => {
-          if (settled) return;
-          settled = true;
-          this.closeOverlay();
-          resolve(result);
-        };
-        const onAbort = (): void => finish({ ok: false, code: "aborted" });
-        void this.promptAuth(prompt, new AbortController()).then(
-          (value) => finish({ ok: true, value }),
-          () => finish({ ok: false, code: "aborted" }),
-        );
-        if (signal.aborted) {
-          onAbort();
-          return;
-        }
-        signal.addEventListener("abort", onAbort, { once: true });
-      });
-    }
-    if (requestKind === "credential_event") {
-      const event = decodeAuthEvent(body.body);
-      if (event === undefined) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
-      this.showAuthEvent(event);
-      return Promise.resolve({});
-    }
-    return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
+    return this.approvalWorkflow.handleSessionReverseRequest(frame, signal);
   }
 
   /**
    * 打开 slash 命令选择器;清单唯一来源为命令注册表(commandsForContext)。
    * 选中项携带注册表 descriptor,经 dispatchCommand 统一派发(与 handleSubmit 同源)。
    */
-  openSlashCommands(): void {
-    this.hideSlashPopup();
+  public openSlashCommands(): void {
+    this.inputController.hideSlashPopup();
     const entries = commandsForContext({});
     const view = new SelectionView({
       title: "/commands",
@@ -936,7 +923,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * 打开预设 prompt 选择器(M5 占位,M7+ 真实模板接入)。
    */
   /** B5:/prompt —— 本地 demo 无 prompt authority 时显示 unavailable，不回退内建模板。 */
-  openPromptSelector(): void {
+  public openPromptSelector(): void {
     if (this.store.getState().capabilities.prompt.state !== "available") {
       this.showNotice("Prompt templates are unavailable in this session.", "error");
       return;
@@ -1012,576 +999,248 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
 	private applyRecoveryStatus(status: SessionRecoveryStatus): void {
 		const required = status.state === "recovery_required" || status.barrierState === "open";
-		if (required !== this.store.getState().recoveryRequired) this.resetUsageFromCanonicalMessages();
+		if (required !== this.store.getState().recoveryRequired) this.streaming.resetFromCanonicalMessages();
 		this.store.dispatch({ type: "recovery.set", required });
 		this.ui.requestRender();
 	}
 
-	private resetUsageFromCanonicalMessages(): void {
-		const messages = this.controller?.messages ?? this.agent?.state.messages ?? [];
-		this.usageAccumulator = seedUsageAccumulator(messages);
-		this.activeUsageRequestStartedAtMs = undefined;
-		this.usageRunActive = false;
-		this.activeUsageRunId = undefined;
-		this.streaming = false;
-		this.stopReason = undefined;
-		this.streamingGeneration += 1;
-	}
-
   /**
-   * B4+:打开 MCP server 管理视图(/mcp)。经 mcp.list 查询真实 catalog,
-   * r 重启走 mcp.restart,操作成功后重新查询刷新。
+   * P4:注册表派发 —— handleSubmit 与 openSlashCommands 的共同出口。
+   * 域逻辑(openXxxSelector / runDomainCommand / workflow)不动,只换入口形态;
+   * 任务运行中禁用的命令(availableDuringTask=false)在此统一拦截。
    */
-  openMcpServerSelector(): Promise<void> {
-    return this.openMcpServersModal();
-  }
-
-  /** B4+:打开 plugins/skills/hooks 管理视图(/plugins /skills /hooks)。 */
-  openExtensionSelector(operation: "plugin.list" | "skill.list" | "hook.list", _kindLabel: string, commandName: string): Promise<void> {
-    const kind = operation === "plugin.list" ? "plugin" : operation === "skill.list" ? "skill" : "hook";
-    return this.openExtensionToggleModal(kind, commandName);
-  }
-
-  /** /mcp:server 列表 + Enter 详情 + r 重启,全部经 Session domain 通道。 */
-  private async openMcpServersModal(): Promise<void> {
-    if (this.store.getState().capabilities.mcp.state !== "available") {
-      this.showNotice("MCP catalog is unavailable in this session.", "error");
+  private dispatchCommand(command: RegisteredSlashCommand, arg: string): void {
+    this.inputController.hideSlashPopup();
+    if (!command.availableDuringTask && this.inFlight()) {
+      this.showNotice(command.unavailableDuringTaskMessage ?? `/${command.canonicalName} is available when the current turn is idle.`, "note");
       return;
     }
-    const servers = await this.queryMcpServers();
-    if (servers === undefined) return;
-    let modal: McpServersModal | undefined;
-    modal = new McpServersModal({
-      title: `/mcp (${servers.length})`,
-      servers,
-      onRestart: (server) => {
-        void this.restartMcpServer(server, modal);
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  private async restartMcpServer(server: McpServerViewItem, modal: McpServersModal | undefined): Promise<void> {
-    const { serverId } = server;
-    const ok = await this.runSessionMutation("mcp.restart", { serverId }, "/mcp restart");
-    if (!ok || modal === undefined) return;
-    const fresh = await this.queryMcpServers();
-    if (fresh !== undefined) {
-      modal.update(fresh);
-      this.showNotice(`/mcp: ${server.displayName} restarted.`, "note");
-    }
-  }
-
-  /** /skillsproviders:只读 provider status 列表（mutation 仍走 authenticated Session command）。 */
-  private async openSkillProvidersModal(): Promise<void> {
-    const context = { correlationId: `corr-${this.correlationSequence + 1}`, effectId: `effect-${this.effectSequence + 1}` };
-    const result = await querySessionController(this.controller, "skill.provider.list", {}, context).catch((error: unknown) => {
-      this.showNotice(`/skillsproviders query failed: ${String(error)}`, "error");
-      return undefined;
-    });
-    if (result === undefined) return;
-    if (!result.ok) {
-      this.showNotice(`/skillsproviders query failed: ${result.code}`, "error");
-      return;
-    }
-    const rawItems = isRecordArray(result.value?.items) ? result.value.items : [];
-    const items: SelectItem[] = rawItems.flatMap((item) => {
-      if (!isRecord(item) || typeof item.providerId !== "string") return [];
-      const state = typeof item.state === "string" ? item.state : "unknown";
-      const candidateCount = typeof item.candidateCount === "number" ? item.candidateCount : 0;
-      const activeCount = typeof item.activeCount === "number" ? item.activeCount : 0;
-      const failedCount = typeof item.failedCount === "number" ? item.failedCount : 0;
-      const label = `${item.providerId} — ${state}`;
-      const description = `candidates=${candidateCount} active=${activeCount} failed=${failedCount}`;
-      return [{ value: item.providerId, label, description }];
-    });
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: `/skillsproviders (${items.length})`,
-      items,
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  private async queryMcpServers(): Promise<McpServerViewItem[] | undefined> {    const context = { correlationId: `corr-${this.correlationSequence + 1}`, effectId: `effect-${this.effectSequence + 1}` };
-    const result = await querySessionController(this.controller, "mcp.list", {}, context).catch((error: unknown) => {
-      this.showNotice(`/mcp query failed: ${String(error)}`, "error");
-      return undefined;
-    });
-    if (result === undefined) return undefined;
-    if (!result.ok) {
-      this.showNotice(`/mcp query failed: ${result.code}`, "error");
-      return undefined;
-    }
-    const items = isRecordArray(result.value?.items) ? result.value.items : isRecordArray(result.value?.servers) ? result.value.servers : [];
-    return items.flatMap((item) => {
-      if (!isRecord(item)) return [];
-      const view = mcpServerViewFromDomain(item);
-      return view === undefined ? [] : [view];
-    });
-  }
-
-  /** /plugins /skills /hooks:codex 风格 toggle 视图,Space/Enter 切换 enable,t 信任。 */
-  private async openExtensionToggleModal(kind: "plugin" | "skill" | "hook", commandName: string): Promise<void> {
-    const resources = await this.queryExtensionResources(kind, commandName);
-    if (resources === undefined) return;
-    if (resources.length === 0) {
-      this.showNotice(`No ${kind} resources are discovered in the current snapshot.`, "note");
-      return;
-    }
-    const items: ExtensionToggleItem[] = resources.map(resourceToToggleItem);
-    const showTrust = kind === "plugin" || kind === "hook";
-    const showReload = kind === "plugin";
-    let modal: ExtensionToggleModal | undefined;
-    modal = new ExtensionToggleModal({
-      title: `${commandName} (${items.length})`,
-      subtitle: kind === "skill"
-        ? "Turn skills on or off. Changes apply to the owning plugin and are saved automatically."
-        : kind === "hook"
-          ? "Toggle hooks and review their trust. Changes apply to the owning plugin."
-          : "Enable, disable, trust or untrust plugins. Changes are saved automatically.",
-      items,
-      showTrust,
-      showReload,
-      onToggle: (item) => {
-        void this.toggleExtensionItem(kind, item, modal);
-      },
-      onTrust: (item) => {
-        void this.trustExtensionItem(kind, item, modal);
-      },
-      onReload: () => {
-        void this.reloadExtensions(kind, commandName, modal);
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  private async toggleExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
-    if (item.pluginId === undefined) {
-      this.showNotice(`${kind} ${item.name} has no owning plugin and cannot be toggled.`, "error");
-      return;
-    }
-    const ok = await this.runSessionMutation(item.enabled ? "plugin.disable" : "plugin.enable", { pluginId: item.pluginId }, `/${kind} toggle`);
-    if (!ok || modal === undefined) return;
-    const fresh = await this.queryExtensionResources(kind, `/${kind}`);
-    if (fresh !== undefined) {
-      modal.update(fresh.map(resourceToToggleItem));
-      this.ui.requestRender();
-    }
-  }
-
-  private async trustExtensionItem(kind: "plugin" | "skill" | "hook", item: ExtensionToggleItem, modal: ExtensionToggleModal | undefined): Promise<void> {
-    if (item.pluginId === undefined) {
-      this.showNotice(`${kind} ${item.name} has no owning plugin and cannot be re-trusted.`, "error");
-      return;
-    }
-    const ok = await this.runSessionMutation(item.trusted ? "plugin.untrust" : "plugin.trust", { pluginId: item.pluginId }, `/${kind} trust`);
-    if (!ok || modal === undefined) return;
-    const fresh = await this.queryExtensionResources(kind, `/${kind}`);
-    if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
-  }
-
-  private async reloadExtensions(kind: "plugin" | "skill" | "hook", commandName: string, modal: ExtensionToggleModal | undefined): Promise<void> {
-    const ok = await this.runSessionMutation("extension.reload", {}, commandName);
-    if (!ok || modal === undefined) return;
-    const fresh = await this.queryExtensionResources(kind, commandName);
-    if (fresh !== undefined) modal.update(fresh.map(resourceToToggleItem));
-  }
-
-  /** Session domain mutation 公共 runner;失败投影 typed notice,返回成功与否。 */
-  private async runSessionMutation(operation: string, body: Record<string, unknown>, commandName: string): Promise<boolean> {
-    if (this.inFlight()) {
-      this.showNotice(`${commandName} is available when the current turn is idle.`, "note");
-      return false;
-    }
-    this.effectSequence += 1;
-    this.correlationSequence += 1;
-    const context = { correlationId: `corr-${this.correlationSequence}`, effectId: `effect-${this.effectSequence}` };
-    const result = await commandSessionController(this.controller, operation, body, { ...context, expectedRevision: 0 }).catch((error: unknown) => {
-      this.showNotice(`${commandName} failed: ${String(error)}`, "error");
-      return undefined;
-    });
-    if (result === undefined) return false;
-    if (!result.ok) {
-      this.showNotice(`${commandName} failed: ${result.code}`, "error");
-      return false;
-    }
-    return true;
-  }
-
-  /** 经 extension.inspect workflow 查询快照并按 kind 过滤(只读)。 */
-  private async queryExtensionResources(kind: "plugin" | "skill" | "hook", commandName: string): Promise<ExtensionResourceView[] | undefined> {
-    if (this.store.getState().capabilities.extensions.state !== "available") {
-      this.showNotice("Session domain query is unavailable in this session.", "error");
-      return undefined;
-    }
-    const effect = this.createEffect("extension.inspect");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("extensionWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
-      const value = workflow.value as { readonly resources?: readonly ExtensionResourceView[] };
-      return (value.resources ?? []).filter((resource) => resource.kind === kind);
-    }
-    if (workflow.state === "empty") {
-      return [];
-    }
-    if (workflow.state === "error") {
-      this.showNotice(`${commandName} query failed: ${workflow.message}`, "error");
-      return undefined;
-    }
-    this.showNotice(`${commandName} query is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
-    return undefined;
-  }
-
-  /** B7:/plan 走 plan.inspect workflow（typed adapter 投影，不再 raw 解析）。 */
-  private async openPlanWorkflow(): Promise<void> {
-    if (this.store.getState().capabilities.plan.state !== "available") {
-      this.showNotice("/plan requires an authenticated Host connection.", "error");
-      return;
-    }
-    if (this.inFlight()) {
-      this.showNotice("/plan is available when the current turn is idle.", "note");
-      return;
-    }
-    const effect = this.createEffect("plan.inspect", { planId: "", expectedRevision: 0 });
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("planWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
-      const view = workflow.value as { readonly reference?: { readonly planId: string; readonly revision: number; readonly digestPrefix: { readonly text: string } }; readonly title: { readonly text: string }; readonly status: string; readonly summary: { readonly text: string } };
-      this.showNotice(
-        `/plan: ${view.title.text} · ${view.status} · rev=${view.reference?.revision ?? 0}${view.summary.text.length > 0 ? ` · ${view.summary.text}` : ""}`,
-      );
-      return;
-    }
-    if (workflow.state === "error") {
-      this.showNotice(`/plan failed: ${workflow.message}`, "error");
-      return;
-    }
-    this.showNotice("/plan state is unavailable in this session.", "error");
-  }
-
-  /** 执行已协商的 Session domain 命令并把 typed 结果投影成 notice。 */
-  async runDomainCommand(
-    operation: string,
-    body: Record<string, unknown>,
-    commandName: string,
-    readOnly: boolean,
-  ): Promise<void> {
-    if (this.inFlight()) {
-      this.showNotice(`${commandName} is available when the current turn is idle.`, "note");
-      return;
-    }
-    this.effectSequence += 1;
-    this.correlationSequence += 1;
-    const context = { correlationId: `corr-${this.correlationSequence}`, effectId: `effect-${this.effectSequence}` };
-    const expectedRevision = typeof body.expectedRevision === "number" && Number.isSafeInteger(body.expectedRevision) ? body.expectedRevision : 0;
-    const result = await (readOnly
-      ? querySessionController(this.controller, operation, body, context)
-      : commandSessionController(this.controller, operation, body, { ...context, expectedRevision })).catch((error: unknown) => {
-      this.showNotice(`${commandName} failed: ${String(error)}`, "error");
-      return undefined;
-    });
-    if (result === undefined) return;
-    if (!result.ok) {
-      this.showNotice(`${commandName} failed: ${result.code}`, "error");
-      return;
-    }
-    const text = compactDomainResult(operation, result.value);
-    this.showNotice(`${commandName}: ${text}`, "note");
-  }
-
-  /** R9:打开 Host-owned managed process list；没有 facade 时保持显式不可用。 */
-  openProcessList(): void {
-    const overlay = this.processOverlayComponent;
-    if (!overlay) {
-      this.showNotice("Managed process view is unavailable in this session.", "error");
-      return;
-    }
-    this.showOverlayModal(overlay, { anchor: "center" }, "process");
-    void overlay.openList();
-  }
-
-  /** R9:按 safe execution id 打开 terminal overlay，不连接 raw PTY endpoint。 */
-  openProcessTerminal(executionId: string): void {
-    const overlay = this.processOverlayComponent;
-    if (!overlay || !isSafeExecutionId(executionId)) {
-      this.showNotice("A valid managed execution id is required.", "error");
-      return;
-    }
-    this.showOverlayModal(overlay, { anchor: "center" }, "process");
-    void overlay.openTerminal(executionId as ExecutionId);
-  }
-
-  /** 仅暴露给测试/上层 command router 的状态查询，不暴露 backend。 */
-  isProcessOverlayOpen(): boolean {
-    return this.processOverlayController?.snapshot().open ?? false;
-  }
-
-  /**
-   * B5:/model 选择器走 model workflow；controller 返回 authoritative selection
-   * 后再更新 view。local demo（无 controller）显示 unavailable，不回退假 registry。
-   */
-  openModelSelector(provider?: string): void {
-    void this.openModelWorkflowSelector(provider);
-  }
-
-  /** /model 二级弹窗的模型快照(workflow ready 值的投影)。 */
-  private async openModelWorkflowSelector(provider?: string): Promise<void> {
-    if (this.store.getState().capabilities.model.state !== "available") {
-      this.showNotice("Model selection is unavailable in this session.", "error");
-      return;
-    }
-    const effect = this.createEffect("model.list", { providerId: provider ?? "" });
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
-      const value = workflow.value as {
-        readonly models?: readonly { readonly providerId: string; readonly modelId: string; readonly label: { readonly text: string } }[];
-        readonly currentProviderId?: string;
-        readonly currentModelId?: string;
-      };
-      const models: ModelPickerModel[] = (value.models ?? []).map((model) => ({
-        providerId: model.providerId,
-        modelId: model.modelId,
-        label: model.label.text,
-      }));
-      if (models.length === 0) {
-        this.showNotice(provider
-          ? `No available models for ${provider}. Configure authentication first.`
-          : "No available models. Use /provider or /login first.", "error");
+    switch (command.actionType) {
+      case "session.create":
+        void this.sessionWorkflow.createNewSession();
         return;
-      }
-      this.modelPickSource = {
-        models,
-        currentProviderId: value.currentProviderId,
-        currentModelId: value.currentModelId,
-      };
-      if (provider !== undefined) this.openModelListModal(provider, { back: false });
-      else this.openModelQuickPickModal();
-      return;
-    }
-    if (workflow.state === "empty") {
-      this.showNotice("No available models. Use /provider or /login first.", "error");
-      return;
-    }
-    if (workflow.state === "error") {
-      this.showNotice(`Model discovery failed: ${workflow.message}`, "error");
-      return;
-    }
-    this.showNotice(`Model selection is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
-  }
-
-  /**
-   * 一级弹窗(对照 codex open_model_popup_with_presets):配置了模型的 provider
-   * 作为快速选择项,末尾固定 "All models" 进入全量列表。
-   */
-  private openModelQuickPickModal(): void {
-    const source = this.modelPickSource;
-    if (!source) return;
-    const counts = new Map<string, number>();
-    for (const model of source.models) {
-      counts.set(model.providerId, (counts.get(model.providerId) ?? 0) + 1);
-    }
-    const providers = [...counts.keys()];
-    const items: ListSelectionItem[] = providers.map((providerId) => ({
-      value: providerId,
-      name: providerId,
-      description: `${counts.get(providerId) ?? 0} available models`,
-      isCurrent: source.currentProviderId === providerId,
-    }));
-    const currentLabel = this.currentModelLabel(source);
-    items.push({
-      value: "all",
-      name: "All models",
-      description: currentLabel === undefined
-        ? "Choose a specific model and provider"
-        : `Choose a specific model and provider (current: ${currentLabel})`,
-    });
-    const modal = new ListSelectionModal({
-      title: "Select Model",
-      subtitle: "Pick a quick provider or browse all models.",
-      items,
-      selectListTheme: this.selectListTheme(),
-      onSelect: (item) => {
-        this.closeOverlay();
-        if (item.value === "all") this.openModelListModal(undefined, { back: true });
-        else this.openModelListModal(item.value, { back: true });
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  /**
-   * 二级弹窗(对照 codex open_all_models_popup):全量或单 provider 的模型列表,
-   * 行尾 (current) 标记当前选择;Esc 返回一级(back 时),否则关闭。
-   */
-  private openModelListModal(providerId: string | undefined, opts: { readonly back: boolean }): void {
-    const source = this.modelPickSource;
-    if (!source) return;
-    const models = providerId === undefined
-      ? source.models
-      : source.models.filter((model) => model.providerId === providerId);
-    if (models.length === 0) {
-      this.showNotice(`No available models for ${providerId}. Configure authentication first.`, "error");
-      return;
-    }
-    const currentLabel = this.currentModelLabel(source);
-    const items: ListSelectionItem[] = models.map((model) => ({
-      value: `${model.providerId}/${model.modelId}`,
-      name: model.label,
-      description: providerId === undefined ? `[${model.providerId}]` : model.modelId,
-      isCurrent: source.currentProviderId === model.providerId && source.currentModelId === model.modelId,
-    }));
-    const suffix = currentLabel === undefined ? "" : ` (current: ${currentLabel})`;
-    const modal = new ListSelectionModal({
-      title: providerId === undefined ? "Select Model and Provider" : `Select Model — ${providerId}`,
-      subtitle: providerId === undefined
-        ? `Choose a specific model and provider${suffix}`
-        : `Choose a specific model${suffix}`,
-      items,
-      selectListTheme: this.selectListTheme(),
-      onSelect: (item) => {
-        this.closeOverlay();
-        void this.selectModelByKey(item.value);
-      },
-      onCancel: () => {
-        this.closeOverlay();
-        if (opts.back) this.openModelQuickPickModal();
-      },
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  /** 当前模型在列表中的 label；不在列表时回退 modelId；都没有返回 undefined。 */
-  private currentModelLabel(source: { readonly models: readonly ModelPickerModel[]; readonly currentProviderId?: string; readonly currentModelId?: string }): string | undefined {
-    if (source.currentProviderId === undefined || source.currentModelId === undefined) return undefined;
-    const match = source.models.find((model) =>
-      model.providerId === source.currentProviderId && model.modelId === source.currentModelId,
-    );
-    return match?.label ?? source.currentModelId;
-  }
-
-  private selectListTheme(): SelectListTheme {
-    return makeSelectListTheme(this.theme);
-  }
-
-  /** B5:model.select effect；controller/Host 返回 authoritative selection 后 Footer 自动反映。 */
-  private async selectModelByKey(key: string): Promise<void> {
-    const slash = key.indexOf("/");
-    if (slash <= 0) return;
-    const providerId = key.slice(0, slash);
-    const modelId = key.slice(slash + 1);
-    if (providerId.length === 0 || modelId.length === 0) return;
-    const effect = this.createEffect("model.select", { providerId, modelId });
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-	    const workflow = await this.waitForWorkflow("modelWorkflow", effect.correlationId);
-	    if (workflow.state === "ready") {
-      await this.syncThinkingWorkflow();
-	      const selection = workflow.value as { readonly providerId?: string; readonly modelId?: string };
-	  this.refs.welcome?.setModel(selection.modelId ?? modelId, selection.providerId ?? providerId);
-      this.showNotice(`Model: ${selection.providerId ?? providerId}/${selection.modelId ?? modelId}`);
-    } else if (workflow.state === "error") {
-      this.showNotice(`Model switch failed: ${workflow.message}`, "error");
+      case "session.resume":
+        void this.sessionWorkflow.resumeSession(arg || undefined);
+        return;
+      case "session.fork":
+        void this.sessionWorkflow.forkCurrentSession();
+        return;
+      case "session.rename":
+        void this.sessionWorkflow.renameCurrentSession(arg);
+        return;
+      case "config.provider":
+        void this.authWorkflow.openProviderSelector();
+        return;
+      case "auth.login":
+        void this.authWorkflow.openLoginSelector(arg || undefined);
+        return;
+      case "auth.logout":
+        void this.authWorkflow.handleLogout(arg || undefined);
+        return;
+      case "config.model":
+        this.modelWorkflow.openModelSelector();
+        return;
+      case "config.thinking":
+        this.modelWorkflow.openThinkingSelector();
+        return;
+      case "config.hide-thinking":
+        void this.inputController.persistThinkingVisibility(this.toggleThinkingVisibility());
+        return;
+      case "config.theme":
+        this.inputController.openSyntaxThemePicker();
+        return;
+      case "recovery.open":
+        void this.runRecoveryWorkflow(arg);
+        return;
+      case "process.list":
+        this.processWorkflow.openProcessList();
+        return;
+      case "process.terminal":
+        if (arg.length === 0) {
+          this.showNotice("Use /terminal <executionId> to open a managed terminal.");
+          return;
+        }
+        this.processWorkflow.openProcessTerminal(arg);
+        return;
+      case "extension.mcp":
+        void this.extensionWorkflow.openMcpServerSelector();
+        return;
+      case "extension.plugins":
+        void this.extensionWorkflow.openExtensionSelector("plugin.list", "plugins", "/plugins");
+        return;
+      case "extension.skills":
+        void this.extensionWorkflow.openExtensionSelector("skill.list", "skills", "/skills");
+        return;
+      case "extension.skills.providers":
+        void this.extensionWorkflow.openSkillProvidersModal();
+        return;
+      case "extension.hooks":
+        void this.extensionWorkflow.openExtensionSelector("hook.list", "hooks", "/hooks");
+        return;
+      case "plan.inspect":
+        void this.planWorkflow.openPlanWorkflow();
+        return;
+      case "compaction.list":
+        void this.planWorkflow.runDomainCommand("compaction.list", {}, "/compact", true);
+        return;
+      case "memory.inspect":
+        void this.planWorkflow.runDomainCommand("memory.inspect", {}, "/memory", true);
+        return;
+      case "memory.propose":
+        if (arg.length === 0) {
+          this.showNotice("/remember <text> 需要提供要记住的内容。", "error");
+          return;
+        }
+        void this.planWorkflow.runDomainCommand("memory.propose", { scope: "workspace", title: arg.slice(0, 256), content: arg, sourceKind: "user" }, "/remember", false);
+        return;
+      case "prompt.select":
+        this.openPromptSelector();
+        return;
+      case "ui.help":
+        this.openSlashCommands();
+        return;
+      case "ui.clear":
+        this.streaming.clearPendingBuffers();
+        this.streaming.drainStreamingDeltas();
+        this.streaming.resetRows();
+        this.refs.chat.clear();
+        this.ui.requestRender();
+        return;
+      case "ui.scrollbar.toggle":
+        void this.inputController.toggleTranscriptScrollbar();
+        return;
+      case "ui.quit":
+        void this.requestQuit();
+        return;
     }
   }
 
-  /**
-   * B5:/thinking 选择器走 thinking workflow；level 由 controller.setThinkingLevel
-   * 持久化（authority），Footer 从 workflow 读取。
-   */
-  openThinkingSelector(): void {
-    void this.openThinkingWorkflowSelector();
+  private inFlight(): boolean {
+    return this.controller?.inFlight ?? this.agent?.inFlight ?? false;
   }
 
-  private async openThinkingWorkflowSelector(): Promise<void> {
-    if (this.store.getState().capabilities.thinking.state !== "available") {
-      this.showNotice("Thinking configuration is unavailable in this session.", "error");
-      return;
-    }
-    const effect = this.createEffect("thinking.inspect");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
-    if (workflow.state !== "ready") {
-      this.showNotice("Thinking configuration is unavailable in this session.", "error");
-      return;
-    }
-    const snapshot = workflow.value as { readonly level: string; readonly availableLevels: readonly string[] };
-    const levels = snapshot.availableLevels.length > 0 ? snapshot.availableLevels : [snapshot.level];
-    const items: SelectItem[] = levels.map((level) => ({
-      value: level,
-      label: level,
-      description: level === "off" ? "reasoning disabled" : "provider-supported reasoning",
-    }));
-    const modal = new SelectorModal({
-      theme: this.theme,
-      selectListTheme: makeSelectListTheme(this.theme),
-      title: "/thinking — switch thinking level",
-      items,
-      onSelect: (item) => {
-        this.closeOverlay();
-        void this.setThinkingLevel(item.value as ModelThinkingLevel);
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  /** B5:thinking.select effect；authoritative level 由 controller 返回。 */
-  async setThinkingLevel(level: ModelThinkingLevel): Promise<void> {
-    if (this.store.getState().capabilities.thinking.state !== "available") {
-      this.showNotice("Thinking configuration is unavailable in this session.", "error");
-      return;
-    }
-    const effect = this.createEffect("thinking.select", { level });
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
-    if (workflow.state === "error") {
-      this.showNotice(`Thinking switch failed: ${workflow.message}`, "error");
-    }
+  private showNotice(text: string, kind: "note" | "error" = "note"): void {
+    const severity = kind === "error" ? "error" : "info";
+    this.eventController.dispatchTimeline([{
+      type: "notice",
+      generation: 0,
+      correlationId: `notice-${this.store.getState().timeline.committedRows.length}-${this.store.getState().timeline.activeOrder.length}`,
+      severity,
+      message: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
+    }]);
     this.ui.requestRender();
   }
 
-  /** FooterSnapshotProvider:thinking level 从 thinking workflow 读取（ready 时）。 */
-  getThinkingLevel(): ModelThinkingLevel {
-    const workflow = this.store.getState().thinkingWorkflow;
-    if (workflow.state === "ready") {
-      const level = (workflow.value as { readonly level: ModelThinkingLevel | "unknown" }).level;
-      if (level !== "unknown") return level;
+  /** B4:生成唯一 effect（generation = authority generation；effectId/correlationId 递增）。 */
+	  private createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect {
+    this.effectSequence += 1;
+    this.correlationSequence += 1;
+    const ref: CorrelatedRequestRef = {
+      generation: this.store.getState().authorityGeneration,
+      effectId: `effect-${this.effectSequence}`,
+      correlationId: `corr-${this.correlationSequence}`,
+    };
+    const effect = { type, ...ref } as TuiEffect;
+    if (extra !== undefined) {
+      Object.assign(effect as unknown as Record<string, unknown>, extra);
     }
-    return "off";
+	    return effect;
+	  }
+
+  /** 首帧前同步当前 controller 的 authoritative thinking selection。 */
+  private async syncThinkingWorkflow(): Promise<void> {
+    if (this.store.getState().capabilities.thinking.state !== "available") return;
+    const effect = this.createEffect("thinking.inspect");
+    this.store.dispatch({ type: "query.start", effect });
+    this.runner.dispatch(effect);
+    await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
   }
 
-  /** FooterSnapshotProvider:由 Footer.render 周期性 pull。 */
-  isStreaming(): boolean {
-    return this.streaming;
+	  /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
+  private waitForWorkflow(key: WorkflowKey, requestId: string): Promise<WorkflowResult> {
+    return new Promise((resolve) => {
+      const check = (): void => {
+        const workflow = this.store.getState()[key] as { readonly state: string; readonly requestId?: string; readonly value?: unknown; readonly message?: string; readonly reason?: string };
+        if (workflow.state !== "loading" || workflow.requestId !== requestId) {
+          unsubscribe();
+          resolve(workflow);
+        }
+      };
+      const unsubscribe = this.store.subscribe(check);
+      check();
+    });
   }
-  getStopReason(): string | undefined {
-    return this.stopReason;
+
+	private replayInitialHistory(syntaxThemeWarnings: readonly string[] = []): void {
+		if (this.workspaceCapability?.endsWith("-unverified") === true) this.eventController.dispatchTimeline([{
+			type: "notice",
+			generation: 0,
+			correlationId: `workspace-capability-${this.store.getState().timeline.committedRows.length}`,
+			severity: "warning",
+			message: { text: this.workspaceCapability, truncated: false, byteLength: new TextEncoder().encode(this.workspaceCapability).byteLength },
+		}]);
+		if (this.controller !== undefined) for (const warning of this.controller.warnings) this.eventController.dispatchTimeline([{
+			type: "notice",
+			generation: 0,
+			correlationId: `warning-${this.store.getState().timeline.committedRows.length}`,
+			severity: "warning",
+			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
+		}]);
+		for (const warning of syntaxThemeWarnings) this.eventController.dispatchTimeline([{
+			type: "notice",
+			generation: 0,
+			correlationId: `syntax-theme-warning-${this.store.getState().timeline.committedRows.length}`,
+			severity: "warning",
+			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
+		}]);
+		if (!this.controller) return;
+		for (let index = 0; index < this.controller.messages.length; index += 1) {
+      const message = this.controller.messages[index];
+      if (message === undefined) continue;
+      this.eventController.dispatchTimeline(this.streaming.project({ kind: "replay-message", message, index }));
+    }
+    // 对齐 projector 计数，保证后续 live 行 id 不与 replay 冲突
+    this.streaming.setMessageIndex(this.controller.messages.length);
+    for (const run of this.controller.agentRuns ?? []) {
+      this.eventController.dispatchTimeline([{
+        type: "run_restore",
+        generation: 0,
+        runId: run.runId,
+        timestamp: run.startedAtMs,
+        status: run.status,
+        ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
+        ...(run.elapsedMs === undefined ? {} : { elapsedMs: run.elapsedMs }),
+        ...(run.activeDurationMs === undefined ? {} : { activeDurationMs: run.activeDurationMs }),
+        ...(run.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: run.messageCountAtEnd }),
+      }]);
+    }
+    if (this.controller.warnings.length > 0) {
+      for (const entry of this.controller.auditEntries) {
+        const name = typeof entry.payload.toolName === "string" ? entry.payload.toolName : "tool";
+        const content = typeof entry.payload.content === "string" ? `: ${entry.payload.content}` : "";
+        this.eventController.dispatchTimeline([{
+          type: "notice",
+          generation: 0,
+          correlationId: `audit-${this.store.getState().timeline.committedRows.length}`,
+          severity: "info",
+          message: { text: `${entry.type} ${name}${content}`, truncated: false, byteLength: new TextEncoder().encode(`${entry.type} ${name}${content}`).byteLength },
+        }]);
+      }
+    }
   }
-  getRunTiming(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined {
-	if (this.store.getState().recoveryRequired) {
-		const active = this.store.getState().timeline.activeRun;
-		return { state: "recovery_required", activeDurationMs: active?.activeDurationMs ?? 0 };
-	}
-    const active = this.store.getState().timeline.activeRun;
-    if (active === undefined) return undefined;
-    return {
-      state: active.state,
-      activeDurationMs: active.activeDurationMs,
-      ...(active.lastResumedAtMs === undefined ? {} : { lastResumedAtMs: active.lastResumedAtMs }),
-    };
+
+  private refreshStatusIndicator(): void {
+    this.streaming.refreshStatusIndicator();
   }
+
+  /** Clears the local-only recap slot and advances its client-side stale fence. */
+  private clearIdleRecapStatus(): void {
+    this.idleRecapRequestId = undefined;
+    this.idleRecapActivityGeneration += 1;
+    this.refs.status.setIdleRecap(undefined);
+  }
+
+  // ── FooterSnapshotProvider ──────────────────────────────────────────────
 
   /** FooterSnapshotProvider：一帧只组装一次不可变参数快照。 */
   getFooterSnapshot(): FooterSnapshot {
@@ -1612,6 +1271,22 @@ export class InteractiveMode implements FooterSnapshotProvider {
         followUp: tuiCount(state.followUpCount),
       },
     };
+  }
+
+  /** FooterSnapshotProvider:thinking level 从 thinking workflow 读取（ready 时）。 */
+  getThinkingLevel(): ModelThinkingLevel {
+    return this.modelWorkflow.getThinkingLevel();
+  }
+
+  /** FooterSnapshotProvider:由 Footer.render 周期性 pull。 */
+  isStreaming(): boolean {
+    return this.streaming.isStreaming();
+  }
+  getStopReason(): string | undefined {
+    return this.streaming.getStopReason();
+  }
+  getRunTiming(): { readonly state: "working" | "waiting" | "recovery_required"; readonly activeDurationMs: number; readonly lastResumedAtMs?: number } | undefined {
+    return this.streaming.getRunTiming();
   }
   getModelId(): string {
     const st = this.controller?.currentSelection.model ?? this.agent?.state.model;
@@ -1681,45 +1356,12 @@ export class InteractiveMode implements FooterSnapshotProvider {
    * Usage 行不消费这个近似 fallback。
    */
   getContextUsage(): { readonly totalTokens?: number; readonly contextWindow?: number } | undefined {
-    const state = this.store.getState();
-    const context = this.runtimeContextUsage();
-    let totalTokens = context?.usedTokens;
-    let contextWindow = context?.contextWindow;
-    if (totalTokens === undefined) {
-      const rows = [
-        ...state.timeline.committedRows,
-        ...state.timeline.activeOrder.flatMap((id) => {
-          const row = state.timeline.activeRowsByCorrelationId[id];
-          return row === undefined ? [] : [row];
-        }),
-      ];
-      for (let index = rows.length - 1; index >= 0; index -= 1) {
-        const row = rows[index];
-        if (row?.kind !== "assistant" || row.usage === undefined) continue;
-        const input = timelineUsageValue(row.usage.input);
-        const output = timelineUsageValue(row.usage.output);
-        if (input !== undefined && output !== undefined) {
-          totalTokens = input + output;
-          break;
-        }
-      }
-    }
-    if (contextWindow === undefined) {
-      const model = this.controller?.currentSelection.model ?? this.agent?.state.model;
-      if (typeof model === "object" && model !== null && Number.isFinite(model.contextWindow) && model.contextWindow > 0) {
-        contextWindow = model.contextWindow;
-      }
-    }
-    if (totalTokens === undefined && contextWindow === undefined) return undefined;
-    return {
-      ...(totalTokens === undefined ? {} : { totalTokens }),
-      ...(contextWindow === undefined ? {} : { contextWindow }),
-    };
+    return this.streaming.getContextUsage();
   }
 
   /** FooterSnapshotProvider：从 runtime reducer 读取唯一 usage 快照。 */
   getUsageSnapshot(): UsageSnapshot {
-    return usageSnapshot(this.usageAccumulator, this.runtimeContextUsage(), this.usageStatus());
+    return this.streaming.getUsageSnapshot();
   }
 
   /** 当前 Session 的可读标题；未命名时不把 durable session id 暴露到 status line。 */
@@ -1728,1199 +1370,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     return title === undefined || title.trim().length === 0 ? undefined : title;
   }
 
-  /** Editor.onSubmit 回调;空闲时作为 user prompt 投递,运行中自动排队为 follow-up 不打断当前 turn。 */
-  private handleSubmit(text: string): void {
-    if (text.length === 0) return;
-    this.clearIdleRecapStatus();
-    if (text.startsWith("/")) {
-      const [rawCommand, ...argParts] = text.slice(1).trim().split(/\s+/);
-      const name = rawCommand ?? "";
-      const arg = argParts.join(" ");
-      this.hideSlashPopup();
-      // 注册表唯一事实源:未知命令 → 原 default 分支行为(报错提示)
-      const command = findCommand(name);
-      if (command === undefined) {
-        this.showNotice(`Unknown command: /${name}`, "error");
-        return;
-      }
-      this.dispatchCommand(command, arg);
-      return;
-    }
-
-	if (this.hostConnectionState !== "ready") {
-		this.showNotice(this.hostConnectionState === "reconnecting" ? "host_reconnecting" : `host_${this.hostConnectionState}`, "error");
-		return;
-	}
-    this.streaming = true;
-    this.stopReason = undefined;
-    this.ui.requestRender();
-    const prompt = this.controller
-      ? this.controller.prompt(text, this.inFlight() ? "followUp" : undefined)
-      : this.inFlight()
-        ? Promise.resolve(this.agent!.followUp(text))
-        : this.agent!.prompt(text).then(() => undefined);
-    void prompt.then(
-      () => {
-        // 最终状态由 agent_end 路径写入。
-      },
-      (err: unknown) => {
-        this.streaming = false;
-        this.showNotice(String(err), "error");
-      },
-    );
-  }
-
-
-  private handleFollowUpSubmit(text: string): void {
-	if (this.hostConnectionState !== "ready") {
-		this.showNotice(this.hostConnectionState === "reconnecting" ? "host_reconnecting" : `host_${this.hostConnectionState}`, "error");
-		return;
-	}
-    if (!this.inFlight()) {
-      this.handleSubmit(text);
-      return;
-    }
-    const prompt = this.controller
-      ? this.controller.prompt(text, "followUp")
-      : Promise.resolve(this.agent!.followUp(text));
-    void prompt.catch((error: unknown) => this.showNotice(String(error), "error"));
-  }
-
-  private restoreQueuesToEditor(): void {
-    const queues = this.controller?.clearAllQueues();
-    if (!queues) {
-      this.showNotice("No queued messages to restore.");
-      return;
-    }
-    const queued = [...queues.steering, ...queues.followUp]
-      .map(messageText)
-      .filter((text) => text.length > 0);
-    if (queued.length === 0) {
-      this.showNotice("No queued messages to restore.");
-      return;
-    }
-    const current = this.refs.editor.getText();
-    this.refs.editor.setText([...queued, current].filter((text) => text.trim()).join("\n\n"));
-    this.showNotice(`Restored ${queued.length} queued message${queued.length === 1 ? "" : "s"}.`);
-  }
-
-  private inFlight(): boolean {
-    return this.controller?.inFlight ?? this.agent?.inFlight ?? false;
-  }
-
-  /**
-   * P4:注册表派发 —— handleSubmit 与 openSlashCommands 的共同出口。
-   * 域逻辑(openXxxSelector / runDomainCommand / workflow)不动,只换入口形态;
-   * 任务运行中禁用的命令(availableDuringTask=false)在此统一拦截。
-   */
-  private dispatchCommand(command: RegisteredSlashCommand, arg: string): void {
-    this.hideSlashPopup();
-    if (!command.availableDuringTask && this.inFlight()) {
-      this.showNotice(command.unavailableDuringTaskMessage ?? `/${command.canonicalName} is available when the current turn is idle.`, "note");
-      return;
-    }
-    switch (command.actionType) {
-      case "session.create":
-        void this.createNewSession();
-        return;
-      case "session.resume":
-        void this.resumeSession(arg || undefined);
-        return;
-      case "session.fork":
-        void this.forkCurrentSession();
-        return;
-      case "session.rename":
-        void this.renameCurrentSession(arg);
-        return;
-      case "config.provider":
-        void this.openProviderSelector();
-        return;
-      case "auth.login":
-        void this.openLoginSelector(arg || undefined);
-        return;
-      case "auth.logout":
-        void this.handleLogout(arg || undefined);
-        return;
-      case "config.model":
-        this.openModelSelector();
-        return;
-      case "config.thinking":
-        this.openThinkingSelector();
-        return;
-      case "config.hide-thinking":
-		void this.persistThinkingVisibility();
-		return;
-      case "config.theme":
-        this.openSyntaxThemePicker();
-        return;
-      case "recovery.open":
-        void this.runRecoveryWorkflow(arg);
-        return;
-      case "process.list":
-        this.openProcessList();
-        return;
-      case "process.terminal":
-        if (arg.length === 0) {
-          this.showNotice("Use /terminal <executionId> to open a managed terminal.");
-          return;
-        }
-        this.openProcessTerminal(arg);
-        return;
-      case "extension.mcp":
-        void this.openMcpServerSelector();
-        return;
-      case "extension.plugins":
-        void this.openExtensionSelector("plugin.list", "plugins", "/plugins");
-        return;
-      case "extension.skills":
-        void this.openExtensionSelector("skill.list", "skills", "/skills");
-        return;
-      case "extension.skills.providers":
-        void this.openSkillProvidersModal();
-        return;
-      case "extension.hooks":
-        void this.openExtensionSelector("hook.list", "hooks", "/hooks");
-        return;
-      case "plan.inspect":
-        void this.openPlanWorkflow();
-        return;
-      case "compaction.list":
-        void this.runDomainCommand("compaction.list", {}, "/compact", true);
-        return;
-      case "memory.inspect":
-        void this.runDomainCommand("memory.inspect", {}, "/memory", true);
-        return;
-      case "memory.propose":
-        if (arg.length === 0) {
-          this.showNotice("/remember <text> 需要提供要记住的内容。", "error");
-          return;
-        }
-        void this.runDomainCommand("memory.propose", { scope: "workspace", title: arg.slice(0, 256), content: arg, sourceKind: "user" }, "/remember", false);
-        return;
-      case "prompt.select":
-        this.openPromptSelector();
-        return;
-      case "ui.help":
-        this.openSlashCommands();
-        return;
-      case "ui.clear":
-        this.pendingMessageBuffers.clear();
-        this.streamingDeltas.drain();
-        this.timelineProjector.resetRows();
-        this.refs.chat.clear();
-        this.ui.requestRender();
-        return;
-      case "ui.scrollbar.toggle":
-        void this.toggleTranscriptScrollbar();
-        return;
-      case "ui.quit":
-        void this.requestQuit();
-        return;
-    }
-  }
-
-  private async toggleTranscriptScrollbar(): Promise<void> {
-    const visible = !this.store.getState().interaction.transcriptScrollbarVisible;
-    this.store.dispatch({ type: "interaction.transcript-scrollbar-set", visible });
-    this.ui.requestRender();
-    if (this.preferencesPort === undefined) return;
-    const result = await this.preferencesPort.save({
-      version: 2,
-      transcript: { scrollbar: visible ? "visible" : "hidden" },
-      display: { shimmer: this.shimmerMode },
-    });
-    if (!result.ok) {
-      this.showNotice("Scrollbar changed for this run but could not be saved.", "error");
-    }
-  }
-
-  private async persistThinkingVisibility(): Promise<void> {
-	const hidden = this.toggleThinkingVisibility();
-	if (this.hideThinkingSettingsPort === undefined) {
-		this.showNotice("Thinking visibility changed for this run but could not be saved.", "error");
-		return;
-	}
-	const result = await this.hideThinkingSettingsPort.save(hidden);
-	if (!result.ok) {
-		this.showNotice("Thinking visibility changed for this run but could not be saved.", "error");
-	}
-  }
-
-  openSyntaxThemePicker(): void {
-    this.hideSlashPopup();
-    this.syntaxThemeController.cancelPreview();
-    const opening = this.syntaxThemeController.snapshot();
-    const modal = new ListSelectionModal({
-      title: "Select Syntax Theme",
-      subtitle: "Preview with arrows; Enter saves, Esc restores.",
-      items: this.syntaxThemeController.themeEntries().map((entry) => ({
-		value: entry.name,
-		name: entry.name,
-		description: entry.available ? entry.kind : "load error",
-		isCurrent: entry.name === opening.activeName,
-		disabled: !entry.available,
-	  })),
-      initialSelectedValue: opening.activeName,
-      onSelectionChange: (item) => {
-        this.syntaxThemeController.preview(item.value);
-        this.ui.requestRender();
-      },
-      selectListTheme: this.selectListTheme(),
-      onSelect: (item) => { void this.persistSyntaxTheme(item.value); },
-      onCancel: () => {
-        this.syntaxThemeController.cancelPreview();
-        this.closeOverlay();
-        this.ui.requestRender();
-      },
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  private async persistSyntaxTheme(name: string): Promise<void> {
-    if (this.syntaxThemeController.snapshot().previewName !== name) {
-      const preview = this.syntaxThemeController.preview(name);
-      if (!preview.ok) return;
-    }
-    const saved = this.syntaxThemeSettingsPort === undefined
-      ? { ok: false as const, code: "theme_settings_unavailable" }
-      : await this.syntaxThemeSettingsPort.save(name);
-    if (!saved.ok) {
-      this.syntaxThemeController.cancelPreview();
-      this.closeOverlay();
-      this.showNotice("Syntax theme could not be saved; the previous theme was restored.", "error");
-      return;
-    }
-    this.syntaxThemeController.commitPreview();
-    this.closeOverlay();
-    this.ui.requestRender();
-  }
-
-  // ─── P3:slash 输入期补全弹窗(对照 codex sync_command_popup / slash_input) ───
-
-  /** 编辑器文本变化后同步弹窗状态:是否在编辑首行命令名、过滤串、dismiss 记忆。 */
-  private syncSlashPopup(): void {
-    const editing = this.editingSlashCommandName();
-    if (editing === undefined) {
-      this.hideSlashPopup();
-      return;
-    }
-    // Esc 关闭后同一 token 不再弹,token 变化才恢复
-    if (this.dismissedCommandToken !== undefined && editing.token === this.dismissedCommandToken) return;
-    this.dismissedCommandToken = undefined;
-    const popup = this.slashPopup ?? this.createSlashPopup();
-    popup.setFilter(editing.filter);
-    this.ui.requestRender();
-  }
-
-  /** 解析首行 `/name` 片段:光标在命令名编辑态返回 { token, filter },否则 undefined。 */
-  private editingSlashCommandName(): { readonly token: string; readonly filter: string } | undefined {
-    const text = this.refs.editor.getText();
-    const cursor = this.refs.editor.getCursor();
-    const firstLine = text.split("\n")[0] ?? "";
-    if (!firstLine.startsWith("/")) return undefined;
-    if (cursor.line !== 0) return undefined;
-    const nameEnd = firstLine.indexOf(" ", 1) === -1 ? firstLine.length : firstLine.indexOf(" ", 1);
-    if (cursor.col > nameEnd) return undefined;
-    const fragment = firstLine.slice(1, Math.min(nameEnd, cursor.col === 0 ? nameEnd : cursor.col));
-    return { token: firstLine.slice(1, nameEnd), filter: `/${fragment}` };
-  }
-
-  /** 当前首行 `/token`(Esc dismiss 记忆用)。 */
-  private currentSlashToken(): string | undefined {
-    const firstLine = (this.refs.editor.getText().split("\n")[0] ?? "");
-    if (!firstLine.startsWith("/")) return undefined;
-    const nameEnd = firstLine.indexOf(" ", 1) === -1 ? firstLine.length : firstLine.indexOf(" ", 1);
-    return firstLine.slice(1, nameEnd);
-  }
-
-  private createSlashPopup(): SlashCommandPopup {
-    const popup = new SlashCommandPopup({
-      commands: commandsForContext({}),
-      theme: this.makeSelectListTheme(),
-    });
-    this.slashPopup = popup;
-    this.slashOverlayHandle = this.ui.showOverlay(popup, { anchor: "bottom-left", nonCapturing: true });
-    this.ui.requestRender();
-    return popup;
-  }
-
-  private hideSlashPopup(): void {
-    this.slashOverlayHandle = undefined;
-    if (this.ui.getOverlay() !== this.slashPopup) {
-      // overlay 槽已被真实 modal 抢占,只清引用
-      this.slashPopup = undefined;
-      return;
-    }
-    this.slashPopup = undefined;
-    this.ui.hideOverlay();
-    this.ui.requestRender();
-  }
-
-  /** 弹窗激活期按键拦截(挂在 CustomEditor.handleInput 最前);返回 true 表示已消费。 */
-  private handleSlashPopupKey(data: string): boolean {
-    const popup = this.slashPopup;
-    if (popup === undefined) return false;
-    if (matchesKey(data, "up") || matchesKey(data, "ctrl+p")) {
-      popup.moveUp();
-      this.ui.requestRender();
-      return true;
-    }
-    if (matchesKey(data, "down") || matchesKey(data, "ctrl+n")) {
-      popup.moveDown();
-      this.ui.requestRender();
-      return true;
-    }
-    if (matchesKey(data, "tab") || matchesKey(data, "/")) {
-      this.completeSelectedSlashCommand(popup.selectedItem(), popup.selectedName());
-      this.ui.requestRender();
-      return true;
-    }
-    if (matchesKey(data, "enter")) {
-      const selected = popup.selectedItem();
-      if (selected === undefined) return false; // 无选中回退默认提交路径
-      this.acceptSelectedSlashCommand(selected, popup.selectedName());
-      this.ui.requestRender();
-      return true;
-    }
-    if (matchesKey(data, "escape")) {
-      this.dismissedCommandToken = this.currentSlashToken();
-      this.hideSlashPopup();
-      this.ui.requestRender();
-      return true;
-    }
-    return false;
-  }
-
-  /**
-   * Tab/`/` 补全:内联参数命令保留草稿尾(/re + "view the diff" → /review view the diff),
-   * 其余命令整串替换为 `/cmd `(对照 codex selected_command_completion)。
-   */
-  private completeSelectedSlashCommand(command: RegisteredSlashCommand | undefined, selectedName?: string): void {
-    if (command === undefined) return;
-    const completionName = selectedName ?? command.canonicalName;
-    const editor = this.refs.editor;
-    const text = editor.getText();
-    const firstLineEnd = text.indexOf("\n") === -1 ? text.length : text.indexOf("\n");
-    const whitespace = text.indexOf(" ", 1);
-    const tokenEnd = whitespace === -1 ? firstLineEnd : Math.min(whitespace, firstLineEnd);
-    const tail = text.slice(tokenEnd);
-    if (command.supportsInlineArgs && tail.trim().length > 0) {
-      const tailStartsWithSpace = /^\s/u.test(tail);
-      editor.setText(tailStartsWithSpace
-        ? `/${completionName}${tail}`
-        : `/${completionName} ${tail}`);
-      return;
-    }
-    editor.setText(`/${completionName} `);
-  }
-
-  /**
-   * Enter 接受高亮命令:内联参数命令先补全再带参派发,其余直接派发;
-   * 派发统一走 dispatchCommand(对照 codex InputResult::Command / CommandWithArgs)。
-   */
-  private acceptSelectedSlashCommand(command: RegisteredSlashCommand, selectedName?: string): void {
-    const editor = this.refs.editor;
-    if (command.supportsInlineArgs) {
-      const text = editor.getText();
-      const firstLineEnd = text.indexOf("\n") === -1 ? text.length : text.indexOf("\n");
-      const whitespace = text.indexOf(" ", 1);
-      const tokenEnd = whitespace === -1 ? firstLineEnd : Math.min(whitespace, firstLineEnd);
-      const arg = text.slice(tokenEnd).trim();
-      this.hideSlashPopup();
-      editor.addToHistory(`/${selectedName ?? command.canonicalName}${arg.length > 0 ? ` ${arg}` : ""}`);
-      editor.setText("");
-      this.dispatchCommand(command, arg);
-      return;
-    }
-    this.hideSlashPopup();
-    editor.setText("");
-    this.dispatchCommand(command, "");
-  }
-
-  private showNotice(text: string, kind: "note" | "error" = "note"): void {
-    const severity = kind === "error" ? "error" : "info";
-    this.dispatchTimeline([{
-      type: "notice",
-      generation: 0,
-      correlationId: `notice-${this.store.getState().timeline.committedRows.length}-${this.store.getState().timeline.activeOrder.length}`,
-      severity,
-      message: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
-    }]);
-    this.ui.requestRender();
-  }
-
-  /** S2:/resume 从 SQLite authority 拉取 catalog，不读取旧 JSONL selector。 */
-  async openSessionCatalog(): Promise<void> {
-    const catalog = await this.loadSessionCatalog();
-    if (catalog === undefined) return;
-    if (catalog.items.length === 0) {
-      this.showNotice("No canonical sessions are available.", "error");
-      return;
-    }
-    const current = catalog.items.find((item) => item.current);
-    const modal = new SessionPickerModal({
-      title: "/resume",
-      items: buildSessionPickerItems(catalog.items, Date.now()),
-      currentWorkspaceId: current?.workspaceId,
-      onSelect: (item) => {
-        this.closeOverlay();
-        const selected = catalog.items.find((candidate) => candidate.sessionId === item.value);
-        if (selected === undefined) return;
-        if (selected.current) {
-          this.showNotice(`${selected.sessionId} is already current.`);
-          return;
-        }
-        void this.resumeSession(selected.sessionId, catalog.revision);
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" }, "session");
-  }
-
-  /** S2:/new 使用刚读取的 catalog revision 做 CAS，成功后只返回 switch intent。 */
-  async createNewSession(): Promise<void> {
-    if (this.rejectSessionTransition()) return;
-    const catalog = await this.loadSessionCatalog();
-    if (catalog === undefined) return;
-    const transition = await this.runSessionTransition("session.create", { expectedRevision: catalog.revision });
-    if (transition !== undefined) await this.requestExit({ kind: "switch", action: "new", target: { sessionId: transition.targetSessionId } });
-  }
-
-  /** S2:/resume [sessionId]；无参数时复用 canonical catalog selector。 */
-  async resumeSession(targetSessionId?: string, knownRevision?: number): Promise<void> {
-    if (this.rejectSessionTransition()) return;
-    if (targetSessionId === undefined) {
-      await this.openSessionCatalog();
-      return;
-    }
-    let revision = knownRevision;
-    if (revision === undefined) {
-      const catalog = await this.loadSessionCatalog();
-      if (catalog === undefined) return;
-      const target = catalog.items.find((item) => item.sessionId === targetSessionId);
-      if (target === undefined) {
-        this.showNotice(`Session not found: ${targetSessionId}`, "error");
-        return;
-      }
-      revision = catalog.revision;
-    }
-    const transition = await this.runSessionTransition("session.resume", { targetSessionId, expectedRevision: revision });
-    if (transition !== undefined) await this.requestExit({ kind: "switch", action: "resume", target: { sessionId: transition.targetSessionId } });
-  }
-
-  /** S2:/fork 从 catalog 的 current row 读取 durable head，并同时 fence catalog/head。 */
-  async forkCurrentSession(): Promise<void> {
-    if (this.rejectSessionTransition()) return;
-    const catalog = await this.loadSessionCatalog();
-    if (catalog === undefined) return;
-    const current = catalog.items.find((item) => item.current && item.sessionId === this.getSessionId());
-    if (current === undefined) {
-      this.showNotice("Current Session is missing from the canonical catalog.", "error");
-      return;
-    }
-    const transition = await this.runSessionTransition("session.fork", {
-      sourceSessionId: current.sessionId,
-      expectedSourceHeadSequence: current.headSequence,
-      expectedRevision: catalog.revision,
-    });
-    if (transition !== undefined) await this.requestExit({ kind: "switch", action: "fork", target: { sessionId: transition.targetSessionId } });
-  }
-
-	/** `/rename <title>` uses the typed Session Domain effect workflow and catalog CAS. */
-	async renameCurrentSession(title: string): Promise<void> {
-		const normalizedTitle = normalizeSessionTitle(title);
-		if (normalizedTitle === null || /[\u0000-\u001F\u007F-\u009F]/u.test(title) || /\u001B(?:\[[0-?]*[ -\/]*[@-~]|\][^\u0007]*(?:\u0007|$))/u.test(title)) {
-			this.showNotice("Usage: /rename <title>", "error");
-			return;
-		}
-		if (this.rejectSessionTransition()) return;
-		const catalog = await this.loadSessionCatalog();
-		if (catalog === undefined) return;
-		const current = catalog.items.find((item) => item.sessionId === this.getSessionId());
-		if (current === undefined) {
-			this.showNotice("Current Session is missing from the canonical catalog.", "error");
-			return;
-		}
-		const port = this.ports.session;
-		if (port === undefined) {
-			this.showNotice("Session title mutation is unavailable on this connection.", "error");
-			return;
-		}
-		const effect = this.createEffect("session.rename", {
-			title: normalizedTitle,
-			expectedRevision: catalog.revision,
-			expectedTitle: current.title ?? null,
-		});
-		this.store.dispatch({ type: "query.start", effect });
-		this.runner.dispatch(effect);
-		const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
-		if (workflow.state !== "ready" || !isSessionTitleResult(workflow.value)) {
-			if (workflow.state === "error") this.showNotice(`/rename failed: ${workflow.message ?? "unknown outcome"}`, "error");
-			else this.showNotice("/rename did not complete.", "error");
-			return;
-		}
-		const result = workflow.value;
-		this.store.dispatch({
-			type: "session.title.changed",
-			generation: this.store.getState().authorityGeneration,
-			sessionId: result.sessionId,
-			title: result.title,
-		});
-		// The mutation result is authoritative for the immediate header; requery
-		// the catalog so picker/workflow state is refreshed from the same domain.
-		await this.loadSessionCatalog();
-		this.showNotice(`Session renamed: ${result.title}`);
-		this.ui.requestRender();
-	}
-
-  private rejectSessionTransition(): boolean {
-    if (this.inFlight()) {
-      this.showNotice("Session transitions are available when the current turn is idle.", "note");
-      return true;
-    }
-    if (this.store.getState().capabilities.sessionMutation.state !== "available") {
-      this.showNotice("Session mutation is unavailable on this connection.", "error");
-      return true;
-    }
-    return false;
-  }
-
-  private async loadSessionCatalog(): Promise<SessionCatalogResult | undefined> {
-    if (this.store.getState().capabilities.sessionCatalog.state !== "available") {
-      this.showNotice("Session catalog is unavailable on this connection.", "error");
-      return undefined;
-    }
-    const effect = this.createEffect("session.list");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
-      const value = workflow.value as SessionCatalogResult;
-      if (value.kind === "catalog") return value;
-    }
-    if (workflow.state === "error") this.showNotice(`Session catalog failed: ${workflow.message ?? "unknown"}`, "error");
-    else this.showNotice("Session catalog is empty or unavailable.", "error");
-    return undefined;
-  }
-
-  /** welcome 后台目录刷新失败时静默返回，不阻塞输入也不追加 notice。 */
-  private async refreshWelcomeSessions(): Promise<void> {
-	const welcome = this.refs.welcome;
-	if (welcome === undefined) return;
-	if (this.store.getState().capabilities.sessionCatalog.state !== "available") return;
-	const effect = this.createEffect("session.list");
-	this.store.dispatch({ type: "query.start", effect });
-	this.runner.dispatch(effect);
-	const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
-	if (workflow.state !== "ready" || !isSessionCatalogResult(workflow.value)) return;
-	const now = Date.now();
-	welcome.setRecentSessions(workflow.value.items.slice(0, WELCOME_SESSION_SLOTS).map((item) => ({
-		name: item.title ?? item.firstUserMessagePreview ?? item.sessionId,
-		timeAgo: formatRelativeTime(item.updatedAtMs, now),
-	})));
-	this.ui.requestRender();
-  }
-
-  private async runSessionTransition(
-    type: "session.create" | "session.resume" | "session.fork",
-    payload: Record<string, unknown>,
-  ): Promise<SessionTransitionResult | undefined> {
-    const effect = this.createEffect(type, payload);
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("sessionWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
-      const value = workflow.value as SessionTransitionResult;
-      if (value.kind === "transition") return value;
-    }
-    if (workflow.state === "error") this.showNotice(`Session transition failed: ${workflow.message ?? "unknown"}`, "error");
-    else this.showNotice("Session transition did not complete.", "error");
-    return undefined;
-  }
-
-  /** B5:/provider 走 provider workflow；configured → model selector，否则 auth 流。 */
-  private async openProviderSelector(): Promise<void> {
-    if (this.store.getState().capabilities.provider.state !== "available") {
-      this.showNotice("Provider configuration is unavailable in this session.", "error");
-      return;
-    }
-    const effect = this.createEffect("provider.list");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("providerWorkflow", effect.correlationId);
-    if (workflow.state !== "ready") {
-      this.showNotice("Provider configuration is unavailable in this session.", "error");
-      return;
-    }
-    const providers = (workflow.value as { readonly providers?: readonly { readonly providerId: string; readonly label: { readonly text: string }; readonly status: string; readonly authKinds: readonly string[] }[] }).providers ?? [];
-    const modal = new SearchableSelectorModal({
-      title: "/provider — all built-ins",
-      items: providers.map((provider) => ({
-        value: provider.providerId,
-        label: provider.label.text,
-        description: provider.status === "ready"
-          ? "configured"
-          : provider.authKinds.length > 0
-            ? `login: ${provider.authKinds.join("/")}`
-            : "ambient credential required",
-      })),
-      maxVisible: 12,
-      onSelect: (item) => {
-        this.closeOverlay();
-        const provider = providers.find((entry) => entry.providerId === item.value);
-        if (!provider) return;
-        if (provider.status === "ready") {
-          this.openModelSelector(provider.providerId);
-        } else if (provider.authKinds.length > 0) {
-          void this.startLogin(provider.providerId);
-        } else {
-          this.showNotice(
-            `${provider.label.text} uses ambient credentials. Configure its environment/profile, then reopen /provider.`,
-            "error",
-          );
-        }
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  /** B5:/login 走 auth workflow（auth.inspect 找 provider，再 auth.login effect）。 */
-  private async openLoginSelector(providerId?: string): Promise<void> {
-    if (this.store.getState().capabilities.auth.state !== "available") {
-      this.showNotice("Login is unavailable in this session.", "error");
-      return;
-    }
-    const effect = this.createEffect("auth.inspect");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
-    if (workflow.state !== "ready") {
-      this.showNotice("Login is unavailable in this session.", "error");
-      return;
-    }
-    const providers = (workflow.value as { readonly providers?: readonly { readonly providerId: string; readonly providerLabel: { readonly text: string }; readonly configured: string; readonly authKind: string }[] }).providers ?? [];
-    if (providerId) {
-      const provider = providers.find((entry) => entry.providerId === providerId);
-      if (!provider) {
-        this.showNotice(`Unknown provider: ${providerId}`, "error");
-        return;
-      }
-      await this.startLogin(provider.providerId);
-      return;
-    }
-    const loginable = providers.filter((provider) => provider.authKind !== "unknown" && provider.configured !== "yes");
-    if (loginable.length === 0) {
-      this.showNotice("No providers require interactive login.", "note");
-      return;
-    }
-    const modal = new SearchableSelectorModal({
-      title: "/login — provider",
-      items: loginable.map((provider) => ({
-        value: provider.providerId,
-        label: provider.providerLabel.text,
-        description: provider.authKind,
-      })),
-      maxVisible: 12,
-      onSelect: (item) => {
-        this.closeOverlay();
-        const provider = loginable.find((entry) => entry.providerId === item.value);
-        if (provider) void this.startLogin(provider.providerId);
-      },
-      onCancel: () => this.closeOverlay(),
-    });
-    this.showOverlayModal(modal, { anchor: "bottom-left" });
-  }
-
-  /** B5:auth.login effect；interaction（secret/URL 提示）是短生命周期 owner。 */
-  private async startLogin(providerId: string): Promise<void> {
-    if (this.store.getState().capabilities.auth.state !== "available") {
-      this.showNotice("Login is unavailable in this session.", "error");
-      return;
-    }
-    const authKind = await this.providerAuthKind(providerId);
-    if (authKind === undefined) {
-      this.showNotice(`${providerId} has no interactive login flow; configure ambient credentials.`, "error");
-      return;
-    }
-    const abortController = new AbortController();
-    const interaction: AuthInteraction = {
-      signal: abortController.signal,
-      prompt: (prompt) => this.promptAuth(prompt, abortController),
-      notify: (event) => this.showAuthEvent(event),
-    };
-    this.authAdapter.setAuthInteraction(interaction);
-    this.showNotice(`Starting ${authKind} login for ${providerId}…`);
-    const effect = this.createEffect("auth.login", { providerId, authKind });
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
-    this.authAdapter.setAuthInteraction(undefined);
-    if (workflow.state === "ready") {
-      this.showNotice(`Authenticated ${providerId}.`);
-      this.openModelSelector(providerId);
-    } else if (workflow.state === "error") {
-      if (!abortController.signal.aborted) this.showNotice(`Login failed: ${workflow.message}`, "error");
-    } else {
-      this.showNotice(`Login is unavailable: ${workflow.state === "unavailable" ? workflow.reason : "unknown outcome"}`, "error");
-    }
-  }
-
-  /** B5:从 auth workflow 读 provider 的 authKind（避免直接调 controller）。 */
-  private async providerAuthKind(providerId: string): Promise<"api-key" | "oauth" | undefined> {
-    const effect = this.createEffect("auth.inspect");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
-    if (workflow.state !== "ready") return undefined;
-    const providers = (workflow.value as { readonly providers?: readonly { readonly providerId: string; readonly authKind: string }[] }).providers ?? [];
-    const kind = providers.find((entry) => entry.providerId === providerId)?.authKind;
-    return kind === "oauth" ? "oauth" : kind === "api-key" ? "api-key" : undefined;
-  }
-
-  private selectAuthType(types: AuthType[]): Promise<AuthType | undefined> {
-    return new Promise((resolve) => {
-      const modal = new SelectorModal({
-        theme: this.theme,
-        selectListTheme: makeSelectListTheme(this.theme),
-        title: "Authentication method",
-        items: types.map((type) => ({ value: type, label: type === "api_key" ? "API key" : "OAuth" })),
-        onSelect: (item) => {
-          this.closeOverlay();
-          resolve(item.value as AuthType);
-        },
-        onCancel: () => {
-          this.closeOverlay();
-          resolve(undefined);
-        },
-      });
-      this.showOverlayModal(modal, { anchor: "bottom-left" });
-    });
-  }
-
-  private promptAuth(prompt: AuthPrompt, owner: AbortController): Promise<string> {
-    if (prompt.type === "select") {
-      return new Promise((resolve, reject) => {
-        const cancel = () => {
-          this.closeOverlay();
-          reject(new Error("Authentication cancelled"));
-        };
-        const modal = new SelectorModal({
-          theme: this.theme,
-          selectListTheme: makeSelectListTheme(this.theme),
-          title: prompt.message,
-          items: prompt.options.map((option) => ({
-            value: option.id,
-            label: option.label,
-            description: option.description,
-          })),
-          onSelect: (item) => {
-            this.closeOverlay();
-            resolve(item.value);
-          },
-          onCancel: () => {
-            owner.abort();
-            cancel();
-          },
-        });
-        prompt.signal?.addEventListener("abort", cancel, { once: true });
-        this.showOverlayModal(modal, { anchor: "bottom-left" });
-      });
-    }
-    return new Promise((resolve, reject) => {
-      const cancel = () => {
-        this.closeOverlay();
-        reject(new Error("Authentication cancelled"));
-      };
-      const modal = new AuthInputModal({
-        title: prompt.type === "secret" ? "Secret" : "Authentication input",
-        message: prompt.message,
-        placeholder: prompt.placeholder,
-        secret: prompt.type === "secret",
-        onSubmit: (value) => {
-          this.closeOverlay();
-          resolve(value);
-        },
-        onCancel: () => {
-          owner.abort();
-          cancel();
-        },
-      });
-      prompt.signal?.addEventListener("abort", cancel, { once: true });
-      this.showOverlayModal(modal, { anchor: "bottom-left" });
-    });
-  }
-
-  private showAuthEvent(event: AuthEvent): void {
-    if (event.type === "info") {
-      const links = event.links?.map((link) => link.url).join(" ") ?? "";
-      this.showNotice(`${event.message}${links ? ` ${links}` : ""}`);
-    } else if (event.type === "auth_url") {
-      this.showNotice(`${event.instructions ?? "Open this URL:"} ${event.url}`);
-    } else if (event.type === "device_code") {
-      this.showNotice(`Open ${event.verificationUri} and enter code ${event.userCode}`);
-    } else {
-      this.showNotice(event.message);
-    }
-  }
-
-  /** B5:/logout 走 auth.logout effect；controller/Host 返回 authoritative 结果。 */
-  private async handleLogout(providerId?: string): Promise<void> {
-    if (this.store.getState().capabilities.auth.state !== "available") {
-      this.showNotice("Logout is unavailable in this session.", "error");
-      return;
-    }
-    const id = providerId ?? this.controller?.currentSelection.provider;
-    if (!id) {
-      this.showNotice("No provider selected.", "error");
-      return;
-    }
-    const effect = this.createEffect("auth.logout", { providerId: id });
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    const workflow = await this.waitForWorkflow("authWorkflow", effect.correlationId);
-    if (workflow.state === "ready") {
-      this.showNotice(`Logged out ${id}.`);
-    } else if (workflow.state === "error") {
-      this.showNotice(`Logout failed: ${workflow.message}`, "error");
-    }
-  }
-
-	private replayInitialHistory(syntaxThemeWarnings: readonly string[] = []): void {
-		if (this.workspaceCapability?.endsWith("-unverified") === true) this.dispatchTimeline([{
-			type: "notice",
-			generation: 0,
-			correlationId: `workspace-capability-${this.store.getState().timeline.committedRows.length}`,
-			severity: "warning",
-			message: { text: this.workspaceCapability, truncated: false, byteLength: new TextEncoder().encode(this.workspaceCapability).byteLength },
-		}]);
-		if (this.controller !== undefined) for (const warning of this.controller.warnings) this.dispatchTimeline([{
-			type: "notice",
-			generation: 0,
-			correlationId: `warning-${this.store.getState().timeline.committedRows.length}`,
-			severity: "warning",
-			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
-		}]);
-		for (const warning of syntaxThemeWarnings) this.dispatchTimeline([{
-			type: "notice",
-			generation: 0,
-			correlationId: `syntax-theme-warning-${this.store.getState().timeline.committedRows.length}`,
-			severity: "warning",
-			message: { text: warning, truncated: false, byteLength: new TextEncoder().encode(warning).byteLength },
-		}]);
-		if (!this.controller) return;
-		for (let index = 0; index < this.controller.messages.length; index += 1) {
-      const message = this.controller.messages[index];
-      if (message === undefined) continue;
-      this.dispatchTimeline(this.timelineProjector.project({ kind: "replay-message", message, index }));
-    }
-    // 对齐 projector 计数，保证后续 live 行 id 不与 replay 冲突
-    this.timelineProjector.setMessageIndex(this.controller.messages.length);
-    for (const run of this.controller.agentRuns ?? []) {
-      this.dispatchTimeline([{
-        type: "run_restore",
-        generation: 0,
-        runId: run.runId,
-        timestamp: run.startedAtMs,
-        status: run.status,
-        ...(run.stopReason === undefined ? {} : { stopReason: run.stopReason }),
-        ...(run.elapsedMs === undefined ? {} : { elapsedMs: run.elapsedMs }),
-        ...(run.activeDurationMs === undefined ? {} : { activeDurationMs: run.activeDurationMs }),
-        ...(run.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: run.messageCountAtEnd }),
-      }]);
-    }
-    if (this.controller.warnings.length > 0) {
-      for (const entry of this.controller.auditEntries) {
-        const name = typeof entry.payload.toolName === "string" ? entry.payload.toolName : "tool";
-        const content = typeof entry.payload.content === "string" ? `: ${entry.payload.content}` : "";
-        this.dispatchTimeline([{
-          type: "notice",
-          generation: 0,
-          correlationId: `audit-${this.store.getState().timeline.committedRows.length}`,
-          severity: "info",
-          message: { text: `${entry.type} ${name}${content}`, truncated: false, byteLength: new TextEncoder().encode(`${entry.type} ${name}${content}`).byteLength },
-        }]);
-      }
-    }
-  }
-
-  /** B4:生成唯一 effect（generation = authority generation；effectId/correlationId 递增）。 */
-	  private createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect {
-    this.effectSequence += 1;
-    this.correlationSequence += 1;
-    const ref: CorrelatedRequestRef = {
-      generation: this.store.getState().authorityGeneration,
-      effectId: `effect-${this.effectSequence}`,
-      correlationId: `corr-${this.correlationSequence}`,
-    };
-    const effect = { type, ...ref } as TuiEffect;
-    if (extra !== undefined) {
-      Object.assign(effect as unknown as Record<string, unknown>, extra);
-    }
-	    return effect;
-	  }
-
-  /** 首帧前同步当前 controller 的 authoritative thinking selection。 */
-  private async syncThinkingWorkflow(): Promise<void> {
-    if (this.store.getState().capabilities.thinking.state !== "available") return;
-    const effect = this.createEffect("thinking.inspect");
-    this.store.dispatch({ type: "query.start", effect });
-    this.runner.dispatch(effect);
-    await this.waitForWorkflow("thinkingWorkflow", effect.correlationId);
-  }
-
-	  /** B4:等待指定 workflow 离开 loading（结果落地或失败），返回其终态。 */
-  private waitForWorkflow(key: "sessionWorkflow" | "extensionWorkflow" | "providerWorkflow" | "modelWorkflow" | "thinkingWorkflow" | "authWorkflow" | "promptWorkflow" | "keymapWorkflow" | "runtimeSnapshotWorkflow" | "processWorkflow" | "taskGoalWorkflow" | "planWorkflow" | "agentWorkflow" | "securityModeWorkflow" | "workspaceGitWorkflow" | "updateWorkflow" | "queueWorkflow" | "approvalWorkflow" | "shutdownWorkflow", requestId: string): Promise<{
-    readonly state: string;
-    readonly value?: unknown;
-    readonly message?: string;
-    readonly reason?: string;
-  }> {
-    return new Promise((resolve) => {
-      const check = (): void => {
-        const workflow = this.store.getState()[key] as { readonly state: string; readonly requestId?: string; readonly value?: unknown; readonly message?: string; readonly reason?: string };
-        if (workflow.state !== "loading" || workflow.requestId !== requestId) {
-          unsubscribe();
-          resolve(workflow);
-        }
-      };
-      const unsubscribe = this.store.subscribe(check);
-      check();
-    });
-  }
-
-  /** B2/B3:TimelineEvent -> store（reducer 更新 timeline，订阅者投影到 ChatContainer）。 */
-  private timelineEventGeneration = 0;
-  private dispatchTimeline(events: readonly TimelineEvent[]): void {
-    for (const event of events) {
-      this.timelineEventGeneration += 1;
-      this.store.dispatch({ type: "timeline.event", event: { ...event, generation: this.timelineEventGeneration } });
-    }
-  }
-
-  /** Agent.subscribe 回调,适配为 TuiEvent 后分发。 */
-  private handleAgentEvent(ev: AgentEvent): void {
-    let adapted: TuiEvent;
-    try {
-      adapted = adaptAgentEvent(ev);
-    } catch (e) {
-      process.stderr.write(`[interactive-mode] adaptAgentEvent failed: ${String(e)}\n`);
-      return;
-    }
-    this.handleEvent(adapted);
-  }
-
-  /** Durable title events update the immediate strip and requery catalog state. */
-  private handleSessionTitleChanged(event: SessionTitleChangedEvent): void {
-		if (this.quitting || event.sessionId !== this.getSessionId()) return;
-		this.store.dispatch({
-			type: "session.title.changed",
-			generation: this.store.getState().authorityGeneration,
-			sessionId: event.sessionId,
-			title: event.title,
-		});
-		this.ui.requestRender();
-		const workflow = this.store.getState().sessionWorkflow;
-		if (workflow.state === "loading") return;
-		if (workflow.state === "ready" && isSessionCatalogResult(workflow.value)) {
-			const current = workflow.value.items.find((item) => item.sessionId === event.sessionId);
-			if (current?.title === event.title && (event.sequence === undefined || current.headSequence >= event.sequence)) return;
-		}
-    void this.loadSessionCatalog();
-  }
-
-  /** Clears the local-only recap slot and advances its client-side stale fence. */
-  private clearIdleRecapStatus(): void {
-    this.idleRecapRequestId = undefined;
-    this.idleRecapActivityGeneration += 1;
-    this.refs.status.setIdleRecap(undefined);
-  }
-
-  /**
-   * 主控 switch：message_* 统一投影到 canonical Timeline 并流式更新；
-   * user 消息块在 handleSubmit 阶段已 push,事件流不再处理 user 分支;
-   * 其余 case 留 noop 占位,M3 起逐 case 落实(对照 03-event-binding §1 表)。
-   */
-  private handleEvent(ev: TuiEvent): void {
-    try {
-      switch (ev.type) {
-        case "agent_start":
-          this.flushStreamingDeltas();
-          this.clearIdleRecapStatus();
-          this.streamingGeneration += 1;
-          this.usageLifecycleObserved = true;
-          this.usageRunActive = true;
-          this.activeUsageRunId = ev.runId ?? `legacy-live-${ev.timestamp}`;
-          this.streaming = true;
-          this.stopReason = undefined;
-          this.activeUsageRequestStartedAtMs = undefined;
-          this.dispatchTimeline([{
-            type: "run_start",
-            generation: 0,
-            runId: ev.runId ?? `legacy-live-${ev.timestamp}`,
-            timestamp: ev.timestamp,
-            activeDurationMs: 0,
-          }]);
-          this.scheduleStatusIndicatorFrame();
-          break;
-        case "agent_end":
-          {
-          const activeRunId = this.store.getState().timeline.activeRun?.runId;
-          if (activeRunId === undefined || (ev.runId !== undefined && ev.runId !== activeRunId)) break;
-          this.flushStreamingDeltas();
-          this.streaming = false;
-          this.usageRunActive = false;
-          this.activeUsageRunId = undefined;
-          this.stopReason = ev.stopReason ?? this.stopReason ?? "stop";
-          if (isRunStopReason(this.stopReason)) {
-            this.dispatchTimeline([{
-              type: "run_end",
-              generation: 0,
-              runId: ev.runId ?? activeRunId,
-              timestamp: ev.timestamp,
-              stopReason: this.stopReason,
-              ...(ev.elapsedMs === undefined ? {} : { elapsedMs: ev.elapsedMs }),
-              ...(ev.activeDurationMs === undefined ? {} : { activeDurationMs: ev.activeDurationMs }),
-              ...(ev.messageCountAtEnd === undefined ? {} : { messageCountAtEnd: ev.messageCountAtEnd }),
-            }]);
-          }
-          break;
-          }
-        case "agent_work_pause":
-          this.dispatchTimeline([{ type: "run_pause", generation: 0, runId: ev.runId, waitId: ev.waitId, reason: ev.reason, timestamp: ev.timestamp, activeDurationMs: ev.activeDurationMs }]);
-          this.scheduleStatusIndicatorFrame();
-          break;
-        case "agent_work_resume":
-          this.dispatchTimeline([{ type: "run_resume", generation: 0, runId: ev.runId, waitId: ev.waitId, timestamp: ev.timestamp, activeDurationMs: ev.activeDurationMs }]);
-          this.scheduleStatusIndicatorFrame();
-          break;
-        case "turn_start":
-        case "turn_end":
-          break;
-        case "message_start":
-          if (!this.acceptUsageRunEvent(ev.runId)) break;
-          this.flushStreamingDeltas();
-          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
-          if (ev.role === "assistant") {
-            this.activeUsageRequestStartedAtMs = ev.timestamp;
-            this.observeAssistantUsage(
-              this.timelineProjector.currentAssistantCorrelationId(),
-              ev.message,
-              ev.timestamp,
-              "streaming",
-            );
-          }
-          break;
-        case "message_end": {
-          if (!this.acceptUsageRunEvent(ev.runId)) break;
-          this.stopReason = ev.stopReason ?? this.stopReason;
-          // 1) 先把帧前累积的 delta 快照送入
-          this.flushStreamingDeltas();
-          // 2) 用完整消息正文覆盖最后一次 delta 快照
-          if (ev.message?.role === "assistant") {
-            this.observeAssistantUsage(
-              this.timelineProjector.currentAssistantCorrelationId(),
-              ev.message,
-              ev.timestamp,
-              ev.stopReason === "error" || ev.stopReason === "aborted" ? "error" : "completed",
-            );
-            const text = messageAssistantText(ev.message);
-            const thinking = messageAssistantThinking(ev.message);
-            const correlationId = this.timelineProjector.currentAssistantCorrelationId();
-            const finalEvents: TimelineEvent[] = [{
-              type: "message_update",
-              generation: 0,
-              correlationId,
-              text: { text, truncated: false, byteLength: new TextEncoder().encode(text).byteLength },
-              ...(thinking.length > 0 ? { thinking: { text: thinking, truncated: false, byteLength: new TextEncoder().encode(thinking).byteLength } } : {}),
-            }];
-            this.dispatchTimeline(finalEvents);
-          }
-          // 3) 提交行
-          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
-          this.pendingMessageBuffers.delete(this.timelineProjector.currentAssistantCorrelationId());
-          this.activeUsageRequestStartedAtMs = undefined;
-          break;
-        }
-        case "message_update": {
-          if (!this.acceptUsageRunEvent(ev.runId)) break;
-          const e = ev.assistantMessageEvent;
-          const partial = "partial" in e ? e.partial : undefined;
-          if (partial?.role === "assistant") {
-            this.observeAssistantUsage(
-              this.timelineProjector.currentAssistantCorrelationId(),
-              partial,
-              ev.timestamp,
-              "streaming",
-            );
-          }
-          if (e.type === "done" || e.type === "error") {
-            this.observeAssistantUsage(
-              this.timelineProjector.currentAssistantCorrelationId(),
-              e.type === "done" ? e.message : e.error,
-              ev.timestamp,
-              e.type === "error" ? "error" : "completed",
-            );
-            // done/error 即 stream fan-in 终点;先把已接受正文送入最终 frame。
-            this.flushStreamingDeltas();
-            break;
-          }
-          if (partial !== undefined && partial.role !== "assistant") break;
-          switch (e.type) {
-            case "text_delta":
-              this.queueAssistantDelta({
-                kind: "append-text",
-                entryId: "assistant",
-                partId: `text:${e.contentIndex}`,
-                channel: "text",
-                generation: this.streamingGeneration,
-                text: e.delta,
-                receivedAt: Date.now(),
-              });
-              break;
-            case "thinking_delta":
-              this.queueAssistantDelta({
-                kind: "append-text",
-                entryId: "assistant",
-                partId: `thinking:${e.contentIndex}`,
-                channel: "thinking",
-                generation: this.streamingGeneration,
-                text: e.delta,
-                receivedAt: Date.now(),
-              });
-              break;
-            default:
-              break;
-          }
-          break;
-        }
-        case "tool_execution_start":
-          this.flushStreamingDeltas();
-          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
-          break;
-        case "tool_execution_update":
-          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
-          break;
-        case "tool_execution_end": {
-          this.flushStreamingDeltas();
-          this.dispatchTimeline(this.timelineProjector.project({ kind: "tui-event", event: ev }));
-          break;
-        }
-        case "queue_update":
-          this.store.dispatch({ type: "queue.changed", steering: ev.steering.length, followUp: ev.followUp.length });
-          break;
-      }
-    } catch (e) {
-      // 异常不外抛(对照 02 §1 不可变契约);记 stderr
-      process.stderr.write(`[interactive-mode] handleEvent ${ev.type} failed: ${String(e)}\n`);
-    }
-    // 任何事件后都请求一次合帧；stream backlog 超过预算时由 scheduler 提前让出一帧。
-    const pressure = this.streamingDeltas.pressure;
-    this.ui.requestRender(false, {
-      queuedEvents: pressure.queuedEvents,
-      queuedBytes: pressure.queuedBytes,
-      oldestAgeMs: pressure.oldestAgeMs,
-    });
+  /** 仅暴露给测试/上层 command router 的状态查询，不暴露 backend。 */
+  isProcessOverlayOpen(): boolean {
+    return this.processWorkflow.isProcessOverlayOpen();
   }
 
   private disposeFooterRegistry(): void {
@@ -2928,286 +1380,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeFooterRegistry = undefined;
     this.footerRegistry.dispose();
   }
-
-  private scheduleStatusIndicatorFrame(): void {
-    if (this.quitting || this.shimmerMode === "disabled") return;
-    this.ui.scheduleFrameIn(STATUS_INDICATOR_FRAME_MS);
-  }
-
-  private refreshStatusIndicator(): void {
-    const nowMs = Date.now();
-    const activeRun = this.store.getState().timeline.activeRun;
-    this.ui.setStatusIndicator(projectStatusIndicator(activeRun, {
-      nowMs,
-      animationFrame: Math.floor(nowMs / STATUS_INDICATOR_FRAME_MS),
-      interruptKey: this.statusInterruptKey(),
-    }), {
-      mode: this.shimmerMode,
-      nowMs,
-      theme: this.theme,
-      truecolor: /^(?:truecolor|24bit)$/iu.test(process.env.COLORTERM ?? ""),
-    });
-    if (activeRun?.state === "working" || activeRun?.state === "waiting") {
-      this.scheduleStatusIndicatorFrame();
-    }
-  }
-
-  private statusInterruptKey(): string | undefined {
-    const configured = this.kb.getResolvedBindings()["tui.input.interrupt"];
-    const key = Array.isArray(configured) ? configured[0] : configured;
-    if (key === undefined) return undefined;
-    const control = /^ctrl\+([a-z])$/iu.exec(key);
-    return control === null ? key : `^${control[1]!.toUpperCase()}`;
-  }
-
-  private queueAssistantDelta(delta: AppendTextDelta): void {
-    const before = this.streamingDeltas.stats;
-    this.performanceObserver?.recordQueued({
-      events: 1,
-      bytes: new TextEncoder().encode(delta.text).byteLength,
-    });
-    this.streamingDeltas.push(delta);
-    const after = this.streamingDeltas.stats;
-    this.performanceObserver?.recordCoalesced({
-      textEvents: after.mergedTextEvents - before.mergedTextEvents,
-      supersededStatusEvents: after.supersededStatusEvents - before.supersededStatusEvents,
-    });
-    this.recordStreamingQueueDepth();
-    if (!this.ui.isStarted) this.flushStreamingDeltas();
-  }
-
-  private flushStreamingDeltas(): void {
-    let changed = false;
-    for (const delta of this.streamingDeltas.drain()) {
-      if (delta.kind !== "append-text") continue;
-      const buffer = this.pendingMessageBuffers.get(this.timelineProjector.currentAssistantCorrelationId()) ?? { text: "", thinking: "" };
-      if (delta.channel === "thinking") buffer.thinking += delta.text;
-      else buffer.text += delta.text;
-      this.pendingMessageBuffers.set(this.timelineProjector.currentAssistantCorrelationId(), buffer);
-      changed = true;
-    }
-    if (changed) {
-      // 每次 flush 发完整快照（单调累积；行正文只会增长），buffer 在 message_end 时清除
-      const correlationId = this.timelineProjector.currentAssistantCorrelationId();
-      const buffer = this.pendingMessageBuffers.get(correlationId);
-      if (buffer !== undefined && (buffer.text.length > 0 || buffer.thinking.length > 0)) {
-        this.dispatchTimeline([{
-          type: "message_update",
-          generation: 0,
-          correlationId,
-          text: { text: buffer.text, truncated: false, byteLength: new TextEncoder().encode(buffer.text).byteLength },
-          ...(buffer.thinking.length > 0 ? { thinking: { text: buffer.thinking, truncated: false, byteLength: new TextEncoder().encode(buffer.thinking).byteLength } } : {}),
-        }]);
-      }
-    }
-    this.recordStreamingQueueDepth();
-  }
-
-  private recordStreamingQueueDepth(): void {
-    const pressure = this.streamingDeltas.pressure;
-    this.performanceObserver?.recordQueueDepth({
-      events: pressure.queuedEvents,
-      bytes: pressure.queuedBytes,
-      oldestAgeMs: pressure.oldestAgeMs,
-      pressureLevel: pressure.level,
-    });
-  }
-
-  private observeAssistantUsage(
-    id: string,
-    message: AgentMessage | AssistantMessage | undefined,
-    observedAtMs: number,
-    status: UsageObservation["status"],
-  ): void {
-    if (message?.role !== "assistant") return;
-    const observation = usageObservationFromAssistantMessage(id, message, "provider", status);
-    this.usageAccumulator = applyUsageObservation(this.usageAccumulator, {
-      ...observation,
-      observedAtMs,
-      ...(this.activeUsageRequestStartedAtMs === undefined ? {} : { streamStartedAtMs: this.activeUsageRequestStartedAtMs }),
-    });
-  }
-
-  private acceptUsageRunEvent(runId: string | undefined): boolean {
-    if (!this.usageLifecycleObserved) return true;
-    if (!this.usageRunActive) return false;
-    return runId === undefined || this.activeUsageRunId === undefined || runId === this.activeUsageRunId;
-  }
-
-  private usageStatus(): UsageSnapshot["status"] {
-    if (this.store.getState().recoveryRequired) return "unavailable";
-    const activeRun = this.store.getState().timeline.activeRun;
-    if (activeRun?.state === "waiting") return "waiting";
-    if (this.streaming || activeRun?.state === "working") return "streaming";
-    if (this.stopReason === "error" || this.stopReason === "aborted") return "error";
-    return "idle";
-  }
-
-  /** Usage row 只接受 runtime snapshot；旧 getter 的 input+output 仅是 legacy approximate fallback。 */
-  private runtimeContextUsage(): UsageContextInput | undefined {
-    const workflow = this.store.getState().runtimeSnapshotWorkflow;
-    const snapshot = workflow.state === "ready"
-      ? workflow.value
-      : workflow.state === "loading" || workflow.state === "error"
-        ? workflow.previous
-        : undefined;
-    const usedTokens = snapshot?.context.state === "known" && snapshot.context.value.totalTokens.state === "known"
-      ? snapshot.context.value.totalTokens.value
-      : undefined;
-    let contextWindow = snapshot?.context.state === "known" && snapshot.context.value.contextWindow.state === "known"
-      ? snapshot.context.value.contextWindow.value
-      : undefined;
-    if (contextWindow === undefined) {
-      const model = this.controller?.currentSelection.model ?? this.agent?.state.model;
-      if (typeof model === "object" && model !== null && Number.isFinite(model.contextWindow) && model.contextWindow > 0) {
-        contextWindow = model.contextWindow;
-      }
-    }
-    if (usedTokens === undefined && contextWindow === undefined) return undefined;
-    return {
-      ...(usedTokens === undefined ? {} : { usedTokens }),
-      ...(contextWindow === undefined ? {} : { contextWindow }),
-    };
-  }
-}
-
-function isSafeExecutionId(value: string): boolean {
-  return /^execution_[A-Za-z0-9._~-]{1,128}$/u.test(value);
-}
-
-function messageText(message: AgentMessage): string {
-  if (message.role !== "user") return "";
-  return message.content.map((content) => content.text).join("");
-}
-
-function messageAssistantText(message: AgentMessage): string {
-  if (message.role !== "assistant") return "";
-  return message.content
-    .filter((content) => content.type === "text")
-    .map((content) => content.text)
-    .join("");
-}
-
-function messageAssistantThinking(message: AgentMessage): string {
-  if (message.role !== "assistant") return "";
-  return message.content
-    .filter((content) => content.type === "thinking")
-    .map((content) => content.thinking)
-    .join("");
-}
-
-function isRunStopReason(value: string | undefined): value is "stop" | "length" | "toolUse" | "error" | "aborted" {
-  return value === "stop" || value === "length" || value === "toolUse" || value === "error" || value === "aborted";
-}
-
-function timelineUsageValue(quantity: SafeUsageQuantity): number | undefined {
-  return quantity.state === "exact" || quantity.state === "estimated" ? quantity.value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isSessionTitleResult(value: unknown): value is SessionTitleResult {
-	return isRecord(value)
-		&& typeof value.sessionId === "string" && value.sessionId.length > 0
-		&& typeof value.title === "string" && value.title.length > 0
-		&& (value.titleSource === "auto" || value.titleSource === "user")
-		&& typeof value.titleUpdatedAtMs === "number"
-		&& Number.isSafeInteger(value.titleUpdatedAtMs)
-		&& value.titleUpdatedAtMs >= 0
-		&& typeof value.catalogRevision === "number"
-		&& Number.isSafeInteger(value.catalogRevision)
-		&& value.catalogRevision >= 0;
-}
-
-function isSessionCatalogResult(value: unknown): value is SessionCatalogResult {
-	return isRecord(value)
-		&& value.kind === "catalog"
-		&& typeof value.revision === "number"
-		&& Number.isSafeInteger(value.revision)
-		&& Array.isArray(value.items);
 }
 
 function tuiCount(field: TuiState["steeringCount"]): number {
   return field.state === "known" && Number.isSafeInteger(field.value) && field.value >= 0 ? field.value : 0;
-}
-
-function isRecordArray(value: unknown): value is readonly Record<string, unknown>[] {
-  return Array.isArray(value) && value.every((item) => isRecord(item));
-}
-
-/** mcp.list raw snapshot -> McpServersModal 视图项(bounded,缺失字段落缺省)。 */
-function mcpServerViewFromDomain(value: Record<string, unknown>): McpServerViewItem | undefined {
-  const serverId = typeof value.serverId === "string" ? value.serverId : "";
-  const displayName = typeof value.displayName === "string" ? value.displayName : serverId;
-  if (displayName.length === 0) return undefined;
-  const tools = isRecordArray(value.tools) ? value.tools.map((tool) => ({
-    rawName: typeof tool.rawName === "string" ? tool.rawName : typeof tool.name === "string" ? tool.name : "unknown",
-    ...(typeof tool.description === "string" && tool.description.length > 0 ? { description: tool.description.slice(0, 200) } : {}),
-    isReadOnly: tool.isReadOnly === true,
-    isDestructive: tool.isDestructive !== false,
-  })) : [];
-  const diagnostics = isRecordArray(value.diagnostics) ? value.diagnostics.map((item) => ({
-    code: typeof item.code === "string" ? item.code : "mcp.diagnostic",
-    message: typeof item.message === "string" ? item.message : "",
-    severity: typeof item.severity === "string" ? item.severity : "error",
-  })).filter((item) => item.message.length > 0) : [];
-  return {
-    serverId: serverId || `mcp-server:${displayName}`,
-    displayName,
-    transport: typeof value.transport === "string" ? value.transport : "unknown",
-    required: value.required === true,
-    state: typeof value.state === "string" ? value.state : "stopped",
-    generation: typeof value.generation === "number" ? value.generation : 0,
-    tools,
-    diagnostics,
-  };
-}
-
-/** ExtensionResourceView(typed adapter 投影)-> ExtensionToggleModal 项。 */
-function resourceToToggleItem(resource: ExtensionResourceView): ExtensionToggleItem {
-  return {
-    resourceId: resource.resourceId,
-    name: resource.label.text,
-    ...(resource.description === undefined ? {} : { description: resource.description.text }),
-    ...(resource.pluginId === undefined ? {} : { pluginId: resource.pluginId.text }),
-    enabled: resource.enabled,
-    trusted: resource.trusted,
-    ready: resource.ready,
-    trustLabel: resource.trust,
-  };
-}
-
-/** 把 domain 命令结果压缩为单行 notice 文本（只读展示，不解析执行）。 */
-function compactDomainResult(operation: string, body: Record<string, unknown>): string {
-  if (body.ok === false) {
-    return typeof body.code === "string" ? `rejected: ${body.code}` : "rejected";
-  }
-  const short = (value: unknown, max = 240): string => {
-    const text = typeof value === "string" ? value : JSON.stringify(value);
-    return text.length > max ? `${text.slice(0, max)}…` : text;
-  };
-  switch (operation) {
-    case "plan.inspect": {
-      const state = isRecord(body.state) ? body.state : undefined;
-      if (state === undefined) return "no plan state";
-      return `status=${String(state.status ?? "?")} revision=${String(state.revision ?? "?")}${state.approval === undefined ? "" : ` approval=${String((state.approval as { status?: string }).status ?? "?")}`}`;
-    }
-    case "compaction.list": {
-      const checkpoints = Array.isArray(body.checkpoints) ? body.checkpoints : [];
-      return `checkpoints=${checkpoints.length}${checkpoints.length === 0 ? "" : ` latest=${String((checkpoints.at(-1) as { status?: string } | undefined)?.status ?? "?")}`}`;
-    }
-    case "memory.inspect": {
-      const memory = isRecord(body.memory) ? body.memory : undefined;
-      if (memory === undefined) return "no memory state";
-      return `records=${String(memory.recordCount ?? "?")} proposals=${String(memory.proposalCount ?? "?")} generation=${String(memory.generation ?? "?")}`;
-    }
-    case "memory.propose": {
-      const proposal = isRecord(body.proposal) ? body.proposal : undefined;
-      return proposal === undefined ? "proposal created" : `proposal ${String(proposal.proposalId ?? "?")} pending approval`;
-    }
-    default:
-      return short(body);
-  }
 }

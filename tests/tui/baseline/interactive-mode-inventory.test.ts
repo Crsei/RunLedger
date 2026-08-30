@@ -7,8 +7,10 @@
  *   2. 生产切换后删除本文件中对应旧清单断言；
  * 同一提交内不得同时保留旧字段与新 reducer 双写。
  *
- * B2 已迁移（2026-08-06）：toolCallComponents / pendingAssistantPartials /
- * chat.push / chat.clear 作为业务 owner 删除；Timeline 取代（见 mutableFields 注释）。
+ * S7 已迁移（2026-08-29）：streaming/stopReason/streamingGeneration/
+ * streamingDeltas/pendingMessageBuffers 移入 `interactive/streaming-controller.ts`；
+ * compactDomainResult 移入 `interactive/plan-workflow.ts`；Footer registry/reducer
+ * 接管参数状态后，旧 refs.status.* mutation 已退休。
  */
 
 import { readFileSync } from "node:fs";
@@ -17,17 +19,22 @@ import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
 const source = readFileSync(join(root, "src/tui/interactive-mode.ts"), "utf8");
+const interactiveDir = (name: string): string => readFileSync(join(root, `src/tui/interactive/${name}.ts`), "utf8");
 
-/** B3 前仍由 InteractiveMode 持有的本地交互/流式字段。 */
+/** S7 后仍由 InteractiveMode facade 持有的本地交互/生命周期字段。 */
 const mutableFields = [
+  "quitting",
+  "processOverlayComponent",
+  "consecutiveInitFailures",
+];
+
+/** S7 已迁移到 interactive/streaming-controller.ts 的流式字段。 */
+const streamFields = [
   "streaming",
   "stopReason",
   "streamingGeneration",
   "streamingDeltas",
   "pendingMessageBuffers",
-  "quitting",
-  "processOverlayComponent",
-  "consecutiveInitFailures",
 ];
 
 /** B2 已迁移到 Timeline 的字段必须不再作为 InteractiveMode mutable 状态存在。 */
@@ -68,13 +75,18 @@ const retiredHostParsing = [
   "descriptor.identity",
 ];
 
+/** S7 后 facade 与 interactive/ 模块的组件 mutation 站点。 */
 const componentMutationSites = [
   "refs.chat.setTimelineBlocks",
-  "refs.status.setTurn",
-  "refs.status.setStopReason",
-  "refs.status.setQueueCounts",
   "refs.editor.setText",
   "refs.editor.getText",
+];
+
+/** S7 迁移后又由 Footer registry/reducer 退休的组件 mutation。 */
+const retiredMigratedMutationSites: ReadonlyArray<{ readonly file: string; readonly site: string }> = [
+  { file: "streaming-controller", site: "refs.status.setStopReason" },
+  { file: "event-controller", site: "refs.status.setTurn" },
+  { file: "event-controller", site: "refs.status.setQueueCounts" },
 ];
 
 describe("B0 InteractiveMode inventory characterization", () => {
@@ -82,6 +94,18 @@ describe("B0 InteractiveMode inventory characterization", () => {
     for (const field of mutableFields) {
       expect(source, `mutable field ${field}`).toContain(field);
     }
+  });
+
+  it("pins the streaming fields S7 moved into the streaming controller", () => {
+    const streamSource = interactiveDir("streaming-controller");
+    for (const field of streamFields) {
+      expect(streamSource, `stream field ${field}`).toContain(field);
+    }
+    // facade 不再直接声明流式状态字段(streaming 控制器实例字段除外)
+    for (const field of ["stopReason", "streamingGeneration", "streamingDeltas", "pendingMessageBuffers"]) {
+      expect(source, `facade must not own ${field}`).not.toMatch(new RegExp(`private\\s+(?:readonly\\s+)?${field}\\b`, "u"));
+    }
+    expect(source).toMatch(/private\s+readonly\s+streaming:\s+StreamingController;/u);
   });
 
   it("pins the fields B2/B5 already migrated as retired (no state owner remains)", () => {
@@ -107,8 +131,9 @@ describe("B0 InteractiveMode inventory characterization", () => {
   });
 
   it("pins the raw Host response parsing to be replaced by typed validators", () => {
+    const planSource = interactiveDir("plan-workflow");
     for (const fragment of hostRawResponseParsing) {
-      expect(source, `raw Host parsing ${fragment}`).toContain(fragment);
+      expect(planSource, `raw Host parsing ${fragment}`).toContain(fragment);
     }
   });
 
@@ -121,6 +146,9 @@ describe("B0 InteractiveMode inventory characterization", () => {
   it("pins the component mutation sites to be replaced by timeline/reducer projections", () => {
     for (const site of componentMutationSites) {
       expect(source, `component mutation ${site}`).toContain(site);
+    }
+    for (const { file, site } of retiredMigratedMutationSites) {
+      expect(interactiveDir(file), `retired component mutation ${site} in ${file}`).not.toContain(site);
     }
   });
 

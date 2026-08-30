@@ -479,9 +479,12 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(source).toContain("bashClassificationAudit: options.bashClassificationAudit");
 		expect(source).toContain("createSessionBashClassificationAudit");
 		expect(source).not.toContain("localExecutionEnv");
+		// S2 拆分后 composition 实现位于 src/security/composition/session-security.ts；
+		// facade 保留统一 access resolver 重导出与防重复 resolver 检查。
+		const securityRootSource = readFileSync(join(process.cwd(), "src/security/composition/session-security.ts"), "utf8");
 		expect(securitySource).toContain("resolveToolAccessRequestsWithBashAnalyzer");
 		expect(securitySource).not.toContain("function bashAccessRequests(");
-		expect(securitySource).toContain("await bashAnalyzer.initialize?.()");
+		expect(securityRootSource).toContain("await bashAnalyzer.initialize?.()");
 	});
 
 	it("binds production Trace recording to the Session owner generation", () => {
@@ -913,5 +916,74 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		await expect(security.executionEnv.shell.exec("printf blocked"))
 			.rejects.toThrow(/sandbox|unavailable|denied/u);
 		expect(processCalls).toBe(0);
+	});
+
+	it("settles the gateway attempt when the leaf effect fails so a repeated identical write can proceed", async () => {
+		let failingWrites = 1;
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "on-request", sandbox: "off" },
+			onWrite: () => {
+				if (failingWrites > 0) {
+					failingWrites -= 1;
+					throw new Error("leaf boom");
+				}
+			},
+			approvalPorts: {
+				prompter: {
+					request: async () => ({ decision: "allow" as const, decidedBy: createRuntimeId("principal", "tester") }),
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+			},
+		});
+		try {
+			// 同一 requestId(command digest)的第二次写必须能通过:第一次 effect
+			// 失败后 gateway attempt 已 settle,不能被 started 残留阻塞成 recovery。
+			await expect(security.executionEnv.fs.writeFile(join(root, "repeat.txt"), "x"))
+				.rejects.toThrow(/filesystem write failed/u);
+			await expect(security.executionEnv.fs.writeFile(join(root, "repeat.txt"), "x"))
+				.resolves.toBeUndefined();
+		} finally {
+			await security.close();
+		}
+	});
+
+	it("rejects malformed managed-process requests before opening any approval prompt", async () => {
+		let prompts = 0;
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "on-request", sandbox: "off" },
+			approvalPorts: {
+				prompter: {
+					request: async () => {
+						prompts += 1;
+						return { decision: "allow" as const, decidedBy: createRuntimeId("principal", "tester") };
+					},
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+			},
+		});
+		try {
+			await expect(security.managedProcess.prepare({
+				commandId: createRuntimeId("command", "malformed"),
+				command: "echo hi",
+				cwd: root,
+				timeoutMs: 0,
+				backend: "pipe",
+				executionMode: "foreground",
+				requestDigest: runtimeDigest("malformed-prepare"),
+			})).resolves.toMatchObject({ ok: false, error: { code: "invalid_request" } });
+			expect(prompts).toBe(0);
+		} finally {
+			await security.close();
+		}
 	});
 });
