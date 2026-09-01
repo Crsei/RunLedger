@@ -21,6 +21,20 @@ import type {
 } from "./session-store.ts";
 import { SessionStoreError } from "./session-store-error.ts";
 
+/**
+ * Fork 只能重放不携带 live authority 的 conversation/domain history。
+ * owner/driver/process/approval/workspace/recovery 事件一律属于 source，
+ * 新 Session 从无 owner、driver revision 0 开始。
+ */
+const FORK_REPLAY_EVENT_TYPES = new Set([
+	"message",
+	"tool_call",
+	"ledger.message",
+	"agent.event",
+	"session.title_changed",
+	"session.idle_recap",
+]);
+
 export function catalogRevisionInTransaction(db: Pick<SessionDatabase, "querySingle">): number {
 	const row = db.querySingle("SELECT catalog_revision FROM store_control WHERE singleton_id = 1");
 	return Number(row?.catalog_revision ?? 0);
@@ -233,8 +247,8 @@ export class CatalogRepository {
 					`INSERT INTO sessions
 					 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-				  worktree_locator_json, settings_digest, title, title_source, title_updated_at_ms)
-				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?, NULL, NULL, NULL)`,
+				  worktree_locator_json, source_workspace_locator_json, settings_digest, title, title_source, title_updated_at_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?, ?, NULL, NULL, NULL)`,
 					[
 						input.sessionId,
 						input.workspaceId,
@@ -243,6 +257,7 @@ export class CatalogRepository {
 						now,
 						now,
 						input.worktreeLocator ?? null,
+						input.sourceWorkspaceLocator ?? null,
 						input.settingsDigest,
 					],
 				);
@@ -257,11 +272,9 @@ export class CatalogRepository {
 		return this.getSession(input.sessionId)!;
 	}
 
-	/** fork:同一事务内创建新 session 并复制 source 全部事件(新 hash 链,sequence 重排)。 */
+	/** fork:冻结 source head，只重放 allowlist history，并写入目标 Session 自己的 lineage event。 */
 	public forkSession(input: CreateSessionInput & { readonly sourceSessionId: string; readonly expectedSourceHeadSequence?: number }): SessionCatalogRecord {
 		this.assertAdmissionReady();
-		const source = this.getSession(input.sourceSessionId);
-		if (!source) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
 		let forked: SessionCatalogRecord | undefined;
 		this.db.withImmediateTransactionSync((tx) => {
 			if (input.expectedCatalogRevision !== undefined) {
@@ -269,29 +282,51 @@ export class CatalogRepository {
 					throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the fork transaction");
 				}
 			}
-			const sourceHead = tx.querySingle("SELECT head_sequence FROM sessions WHERE session_id = ?", [input.sourceSessionId]);
-			if (sourceHead === undefined) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
-			if (input.expectedSourceHeadSequence !== undefined && Number(sourceHead.head_sequence) !== input.expectedSourceHeadSequence) {
+			// source 的 catalog state 和 event head 必须由同一 BEGIN IMMEDIATE snapshot
+			// 读取。不能先在事务外读 title，再在事务内复制 title event，否则并发 rename
+			// 会留下 target catalog/event projection drift。
+			const source = tx.querySingle(
+				"SELECT head_sequence, title, title_source, title_updated_at_ms FROM sessions WHERE session_id = ?",
+				[input.sourceSessionId],
+			);
+			if (source === undefined) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
+			if (input.expectedSourceHeadSequence !== undefined && Number(source.head_sequence) !== input.expectedSourceHeadSequence) {
 				throw new SessionStoreError("fork_source_head_conflict", "fork source head advanced before the fork transaction");
 			}
 			tx.runSync(
 				`INSERT INTO sessions
-				 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
+					 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-				  worktree_locator_json, settings_digest, title, title_source, title_updated_at_ms)
-				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?, ?, ?, ?)`,
-				[input.sessionId, input.workspaceId, input.repositoryId, "active", Date.now(), Date.now(), input.settingsDigest, source.title ?? null, source.titleSource ?? null, source.titleUpdatedAtMs ?? null],
+				  worktree_locator_json, source_workspace_locator_json, settings_digest, title, title_source, title_updated_at_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?, ?, ?, ?, ?)`,
+				[
+					input.sessionId,
+					input.workspaceId,
+					input.repositoryId,
+					"active",
+					Date.now(),
+					Date.now(),
+					input.sourceWorkspaceLocator ?? null,
+					input.settingsDigest,
+					source.title === null ? null : String(source.title),
+					source.title_source === null ? null : String(source.title_source),
+					source.title_updated_at_ms === null ? null : Number(source.title_updated_at_ms),
+				],
 			);
 			const sourceEvents = tx.queryAll(
-				"SELECT event_id, owner_generation, event_type, payload_json, created_at_ms FROM session_events WHERE session_id = ? ORDER BY sequence",
+				"SELECT sequence, event_id, event_type, payload_json, current_event_hash, created_at_ms FROM session_events WHERE session_id = ? ORDER BY sequence",
 				[input.sourceSessionId],
 			);
+			if (sourceEvents.length !== Number(source.head_sequence)) {
+				throw new SessionStoreError("fork_source_head_conflict", "fork source event count does not match its frozen head");
+			}
 			let previous: string | null = null;
-			for (let index = 0; index < sourceEvents.length; index += 1) {
-				const event = sourceEvents[index]!;
-				const sequence = index + 1;
+			let sequence = 0;
+			for (const event of sourceEvents) {
+				if (!FORK_REPLAY_EVENT_TYPES.has(String(event.event_type))) continue;
+				sequence += 1;
 				// event_id 全局 UNIQUE:fork 必须确定性 re-key(由 source eventId + 目标
-				// sessionId 派生),payload 原样保留;重试 fork 幂等。
+				// sessionId 派生);不把 source owner generation 带入新 Session。
 				const eventId = createRuntimeId("event", canonicalDigest({ source: String(event.event_id), target: input.sessionId }).slice(0, 32));
 				const current = sessionEventHash(
 					input.sessionId,
@@ -310,7 +345,7 @@ export class CatalogRepository {
 						input.sessionId,
 						sequence,
 						eventId,
-						Number(event.owner_generation),
+						0,
 						String(event.event_type),
 						String(event.payload_json),
 						previous,
@@ -320,9 +355,33 @@ export class CatalogRepository {
 				);
 				previous = current;
 			}
+			sequence += 1;
+			const now = Date.now();
+			const sourceHeadHash = sourceEvents.length === 0 ? null : String(sourceEvents.at(-1)!.current_event_hash);
+			const lineageEventId = createRuntimeId(
+				"event",
+				canonicalDigest({
+					type: "session.forked",
+					sourceSessionId: input.sourceSessionId,
+					sourceHeadSequence: Number(source.head_sequence),
+					targetSessionId: input.sessionId,
+				}).slice(0, 32),
+			);
+			const lineagePayload = JSON.stringify({
+				sourceSessionId: input.sourceSessionId,
+				sourceHeadSequence: Number(source.head_sequence),
+				sourceHeadHash,
+			});
+			const lineageHash = sessionEventHash(input.sessionId, sequence, lineageEventId, "session.forked", lineagePayload, previous);
+			tx.runSync(
+				"INSERT INTO session_events " +
+				"(session_id, sequence, event_id, owner_generation, event_type, payload_json, previous_event_hash, current_event_hash, created_at_ms) " +
+				"VALUES (?, ?, ?, 0, 'session.forked', ?, ?, ?, ?)",
+				[input.sessionId, sequence, lineageEventId, lineagePayload, previous, lineageHash, now],
+			);
 			tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [
-				sourceEvents.length,
-				Date.now(),
+				sequence,
+				now,
 				input.sessionId,
 			]);
 			tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");

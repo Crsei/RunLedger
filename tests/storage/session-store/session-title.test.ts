@@ -227,10 +227,58 @@ describe("SessionStore session titles", () => {
 			titleSource: "auto",
 			titleUpdatedAtMs: titled.titleUpdatedAtMs,
 		});
-		expect(store.replaySessionEvents(forkId).map((event) => JSON.parse(event.payloadJson))).toEqual(
-			store.replaySessionEvents(source.sessionId).map((event) => JSON.parse(event.payloadJson)),
+		const sourceEvents = store.replaySessionEvents(source.sessionId);
+		const forkEvents = store.replaySessionEvents(forkId);
+		expect(forkEvents.slice(0, -1).map((event) => JSON.parse(event.payloadJson))).toEqual(
+			sourceEvents.map((event) => JSON.parse(event.payloadJson)),
 		);
+		expect(forkEvents.at(-1)).toMatchObject({
+			eventType: "session.forked",
+			ownerGeneration: 0,
+			payloadJson: JSON.stringify({
+				sourceSessionId: source.sessionId,
+				sourceHeadSequence: sourceEvents.length,
+				sourceHeadHash: sourceEvents.at(-1)!.currentEventHash,
+			}),
+		});
 		expect(store.rebuildFromEvents(forkId)).toMatchObject({ title: titled.title, titleSource: "auto" });
+		store.database().close();
+	});
+
+	it("takes the fork title snapshot inside the frozen source transaction", () => {
+		const store = openStore();
+		const source = createOwnedSession(store, "title-fork-transaction-source");
+		const fence = { sessionId: source.sessionId, runtimeId: source.runtimeId, generation: source.generation };
+		const database = store.database();
+		const originalTransaction = database.withImmediateTransactionSync.bind(database);
+		let interleavedTitleWrite = false;
+		Object.defineProperty(database, "withImmediateTransactionSync", {
+			configurable: true,
+			value: <T>(callback: (transaction: typeof database) => T): T => {
+				if (!interleavedTitleWrite) {
+					interleavedTitleWrite = true;
+					store.setTitle(fence, {
+						title: "Title committed just before fork transaction",
+						source: "user",
+						trigger: "manual-rename",
+					});
+				}
+				return originalTransaction(callback);
+			},
+		});
+
+		const forkId = createRuntimeId("session", "title-fork-transaction-target");
+		const forked = store.forkSession({
+			sessionId: forkId,
+			sourceSessionId: source.sessionId,
+			workspaceId: createRuntimeId("workspace", "title-fork-transaction-target"),
+			repositoryId: createRuntimeId("repository", "title-fork-transaction-target"),
+			settingsDigest: "d".repeat(64),
+		});
+
+		expect(interleavedTitleWrite).toBe(true);
+		expect(forked).toMatchObject({ title: "Title committed just before fork transaction", titleSource: "user" });
+		expect(store.projectSession(forkId)).toMatchObject({ title: "Title committed just before fork transaction", titleSource: "user" });
 		store.database().close();
 	});
 

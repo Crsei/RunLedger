@@ -167,7 +167,7 @@ describe("R2 catalog and lifecycle", () => {
 		store.database().close();
 	});
 
-	it("forks a session by copying all events into a new hash chain", () => {
+	it("fork replays only allowed history and resets lifecycle projection", () => {
 		const store = openStore();
 		const sourceId = createRuntimeId("session", "source");
 		store.createSession({
@@ -187,14 +187,24 @@ describe("R2 catalog and lifecycle", () => {
 			createdAtMs: 1,
 			expectedPreviousEventHash: null,
 		});
-		const firstEvent = store.replaySessionEvents(sourceId).at(-1)!;
+		store.appendDriverEvent(fence, "driver.claimed", { clientId: "source-driver" });
+		const claimed = store.replaySessionEvents(sourceId).at(-1)!;
 		store.appendEvent(fence, {
 			eventId: createRuntimeId("event", "2"),
 			ownerGeneration: 1,
 			eventType: "tool_call",
 			payloadJson: JSON.stringify({ name: "echo" }),
 			createdAtMs: 2,
-			expectedPreviousEventHash: firstEvent.currentEventHash,
+			expectedPreviousEventHash: claimed.currentEventHash,
+		});
+		const toolCall = store.replaySessionEvents(sourceId).at(-1)!;
+		store.appendEvent(fence, {
+			eventId: createRuntimeId("event", "closed"),
+			ownerGeneration: 1,
+			eventType: "session.closed",
+			payloadJson: JSON.stringify({ reason: "source complete" }),
+			createdAtMs: 3,
+			expectedPreviousEventHash: toolCall.currentEventHash,
 		});
 
 		const forkId = createRuntimeId("session", "fork");
@@ -205,12 +215,20 @@ describe("R2 catalog and lifecycle", () => {
 			repositoryId: createRuntimeId("repository", "r"),
 			settingsDigest: "d".repeat(64),
 		});
-		expect(forked.headSequence).toBe(2);
 		const sourceEvents = store.replaySessionEvents(sourceId);
 		const forkEvents = store.replaySessionEvents(forkId);
-		expect(forkEvents.map((e) => e.payloadJson)).toEqual(sourceEvents.map((e) => e.payloadJson));
+		expect(forkEvents.map((event) => event.eventType)).toEqual(["message", "tool_call", "session.forked"]);
+		expect(forkEvents.map((event) => event.ownerGeneration)).toEqual([0, 0, 0]);
+		expect(forkEvents.slice(0, 2).map((event) => event.payloadJson)).toEqual([sourceEvents[0]?.payloadJson, sourceEvents[2]?.payloadJson]);
+		expect(JSON.parse(forkEvents[2]!.payloadJson)).toEqual({
+			sourceSessionId: sourceId,
+			sourceHeadSequence: sourceEvents.length,
+			sourceHeadHash: sourceEvents.at(-1)!.currentEventHash,
+		});
 		expect(forkEvents[0]?.previousEventHash).toBeNull();
 		expect(forkEvents[0]?.currentEventHash).not.toBe(sourceEvents[0]?.currentEventHash);
+		expect(forked.headSequence).toBe(3);
+		expect(store.projectSession(forkId)).toMatchObject({ status: "active", driverRevision: 0, headSequence: 3 });
 		store.database().close();
 	});
 

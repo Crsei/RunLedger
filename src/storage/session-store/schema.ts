@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import type { SessionDatabase } from "./database.ts";
 
-export const SESSION_STORE_SCHEMA_VERSION = 2 as const;
+export const SESSION_STORE_SCHEMA_VERSION = 3 as const;
 
 /** §4.3 首版逻辑 schema 的 exact SQL(版本化 migration 以本常量为唯一 source)。 */
 export const SESSION_STORE_SCHEMA_V1_SQL = `
@@ -114,7 +114,7 @@ CREATE INDEX idx_session_checkpoints_lookup ON session_checkpoints(session_id, s
 CREATE INDEX idx_command_receipts_lookup ON command_attempt_receipts(session_id, command_id);
 `;
 
-/** Current complete canonical DDL; new installs use it and legacy stores upgrade through migration SQL. */
+/** 当前 title schema 之前的完整 DDL；旧 store 先升级到此结构。 */
 export const SESSION_STORE_SCHEMA_V2_SQL = `
 CREATE TABLE schema_meta (
   schema_version INTEGER PRIMARY KEY,
@@ -244,6 +244,11 @@ BEGIN
 END;
 `;
 
+/** 当前 schema 为普通 Session 保存 source workspace binding；不再只依赖启动 cwd。 */
+export const SESSION_STORE_SCHEMA_V3_SQL = SESSION_STORE_SCHEMA_V2_SQL + `
+ALTER TABLE sessions ADD COLUMN source_workspace_locator_json TEXT;
+`;
+
 /** Exact legacy -> current structural migration; no title data is inferred from legacy events. */
 export const SESSION_STORE_SCHEMA_V1_TO_V2_SQL = `
 ALTER TABLE store_control ADD COLUMN catalog_revision INTEGER NOT NULL DEFAULT 0 CHECK (catalog_revision >= 0);
@@ -267,8 +272,13 @@ BEGIN
 END;
 `;
 
+/** title schema → current:旧 Session 不猜测 source binding，首次 open/resume 必须显式 rebind/migrate。 */
+export const SESSION_STORE_SCHEMA_V2_TO_V3_SQL = `
+ALTER TABLE sessions ADD COLUMN source_workspace_locator_json TEXT;
+`;
+
 /** 规范化 DDL 文本的 canonical sha256(hex 64 字符),作为 schema format digest。 */
-export function sessionStoreSchemaFormatDigest(sql: string = SESSION_STORE_SCHEMA_V2_SQL): string {
+export function sessionStoreSchemaFormatDigest(sql: string = SESSION_STORE_SCHEMA_V3_SQL): string {
 	return createHash("sha256").update(sql.replace(/\r\n/g, "\n")).digest("hex");
 }
 
@@ -280,7 +290,7 @@ export function installSessionStoreSchema(db: SessionDatabase): void {
 	}
 	const formatDigest = sessionStoreSchemaFormatDigest();
 	db.withImmediateTransactionSync((tx) => {
-		tx.execSync(SESSION_STORE_SCHEMA_V2_SQL);
+		tx.execSync(SESSION_STORE_SCHEMA_V3_SQL);
 		tx.runSync("INSERT INTO schema_meta (schema_version, format_digest, applied_at_ms) VALUES (?, ?, ?)", [
 			SESSION_STORE_SCHEMA_VERSION,
 			formatDigest,

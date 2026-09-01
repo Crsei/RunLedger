@@ -56,6 +56,8 @@ export interface SessionCatalogRecord {
 	readonly lastDriverClientId?: string;
 	readonly driverRevision: number;
 	readonly worktreeLocator?: string;
+	/** 正常 source workspace 的私有 canonical locator；缺失的 legacy row 不可自动 resume。 */
+	readonly sourceWorkspaceLocator?: string;
 	readonly settingsDigest: string;
 	readonly title?: string;
 	readonly titleSource?: SessionTitleSource;
@@ -80,6 +82,7 @@ export interface CreateSessionInput {
 	readonly repositoryId: string;
 	readonly settingsDigest: string;
 	readonly worktreeLocator?: string;
+	readonly sourceWorkspaceLocator?: string;
 	readonly status?: string;
 	readonly expectedCatalogRevision?: number;
 }

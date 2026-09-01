@@ -53,6 +53,9 @@ export function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord
 		lastDriverClientId: row.last_driver_client_id === null ? undefined : String(row.last_driver_client_id),
 		driverRevision: Number(row.driver_revision),
 		worktreeLocator: row.worktree_locator_json === null ? undefined : String(row.worktree_locator_json),
+		sourceWorkspaceLocator: row.source_workspace_locator_json === null || row.source_workspace_locator_json === undefined
+			? undefined
+			: String(row.source_workspace_locator_json),
 		settingsDigest: String(row.settings_digest),
 		title: row.title === null || row.title === undefined ? undefined : String(row.title),
 		titleSource: row.title_source === "auto" || row.title_source === "user" ? row.title_source : undefined,

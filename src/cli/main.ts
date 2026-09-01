@@ -37,8 +37,8 @@ import {
 	type ControlCommand,
 } from "./control-commands.ts";
 import { openSessionDatabase } from "../storage/session-store/database.ts";
-import { checkStoreCompatibility, migrateSessionStoreV1ToV2, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
-import { installSessionStoreSchema } from "../storage/session-store/schema.ts";
+import { checkStoreCompatibility, migrateSessionStoreToCurrent, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
+import { installSessionStoreSchema, SESSION_STORE_SCHEMA_VERSION } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
 import { OwnerStore } from "../storage/session-store/owner-store.ts";
 import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult, type SessionWorkspaceFactory } from "./embedded-session-runtime.ts";
@@ -56,6 +56,7 @@ import { composeCliTraceRecorderFactory } from "./trace-config.ts";
 import { createSessionWorkspaceFactory } from "../runtime/session-runtime/worktree-composition.ts";
 import { createWorkspaceAdaptersForCurrentPlatform } from "../workspace/factory.ts";
 import { createProductionGitCommandPort } from "./session-git-command.ts";
+import type { GitCommandPort } from "../worktree/ports.ts";
 import { JsonlWorktreeRegistryStore, WorktreeRegistry } from "../worktree/registry.ts";
 import {
   createProcessOverlayController,
@@ -70,6 +71,11 @@ import { workspaceStorageKey } from "../runtime/contracts/storage-layout.ts";
 import { createCliSessionModelRequestRouterFactory } from "./session-model-router.ts";
 import { runAuthGatewayCommand } from "./auth-gateway-cli.ts";
 import { createCliHideThinkingSettings, resolveHideThinkingBlock } from "./hide-thinking-settings.ts";
+import {
+	assertSessionWorkspaceMatches,
+	resolveSessionWorkspaceIdentity,
+	sessionWorkspaceMatches,
+} from "./session-workspace-identity.ts";
 
 const VERSION = readVersionFromPackage();
 
@@ -168,8 +174,8 @@ export async function main(argv: readonly string[]): Promise<void> {
     }
   }
   let compatibility = checkStoreCompatibility(db);
-  if (compatibility.ok && compatibility.header.storeVersion === 1) {
-    const migration = migrateSessionStoreV1ToV2(db);
+  if (compatibility.ok && compatibility.header.storeVersion < SESSION_STORE_SCHEMA_VERSION) {
+    const migration = migrateSessionStoreToCurrent(db);
     if (!migration.ok) {
       db.close();
 		process.stderr.write(`[runledger] session store legacy -> current migration failed: ${migration.code}: ${migration.detail}\n`);
@@ -189,13 +195,14 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.exit(2);
   }
   const store = new SessionStore(db);
-  const ownerStore = new OwnerStore(db);
-  const authorityId = createRuntimeId("authority", "session-owner-runtime");
-  const tenantId = createRuntimeId("tenant", "local-user");
+	const ownerStore = new OwnerStore(db);
+	const authorityId = createRuntimeId("authority", "session-owner-runtime");
+	const tenantId = createRuntimeId("tenant", "local-user");
+	const worktreeGit = createProductionGitCommandPort();
 
-  let sessionId: SessionId;
-  try {
-    sessionId = await resolveSessionId(store, args, cwd);
+	let sessionId: SessionId;
+	try {
+		sessionId = await resolveSessionId(store, args, cwd, worktreeGit);
   } catch (error) {
     db.close();
     process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
@@ -229,8 +236,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   await registerConfiguredProxyProvidersFromHome(models, layout.home);
   await models.refresh({ allowNetwork: false });
   const modelRequestRouters = await createCliSessionModelRequestRouterFactory({ layout, authorityId, tenantId });
-  const worktreeGit = createProductionGitCommandPort();
-  const worktreeRegistry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout));
+	const worktreeRegistry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout));
   const workspaceFactoryFor = async (targetSessionId: string): Promise<SessionWorkspaceFactory | undefined> => {
     const record = store.getSession(targetSessionId);
     if (record?.worktreeLocator !== undefined && args.noWorktree) {
@@ -452,15 +458,18 @@ export async function resolveSessionId(
 	store: SessionStore,
 	args: ReturnType<typeof parseArgs>["args"],
 	cwd: string,
+	git?: GitCommandPort,
 ): Promise<SessionId> {
 	const mode = sessionOpenMode(args);
+	const workspace = await resolveSessionWorkspaceIdentity(cwd, git);
 	if (mode === "create") {
 		const sessionId = createRuntimeId("session", `cwd-${cwd.replace(/[^A-Za-z0-9._~-]/g, "_").slice(0, 40)}-${Date.now().toString(36)}`);
 		store.createSession({
 			sessionId,
-			workspaceId: createRuntimeId("workspace", "default"),
-			repositoryId: createRuntimeId("repository", "default"),
+			workspaceId: workspace.workspaceId,
+			repositoryId: workspace.repositoryId,
 			settingsDigest: "d".repeat(64),
+			sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 		});
 		return sessionId;
 	}
@@ -468,6 +477,7 @@ export async function resolveSessionId(
 		if (args.sessionId !== undefined) {
 			const record = store.getSession(args.sessionId);
 			if (!record) throw new Error(`session not found: ${args.sessionId}`);
+			assertSessionWorkspaceMatches(record, workspace);
 			return record.sessionId as SessionId;
 		}
 		// --session <path> 是 legacy JSONL 路径:新 Runtime 不读取,要求显式迁移。
@@ -480,20 +490,25 @@ export async function resolveSessionId(
 		if (args.fork === undefined) throw new Error("--fork <sessionId> required");
 		const source = store.getSession(args.fork);
 		if (!source) throw new Error(`fork source not found: ${args.fork}`);
+		assertSessionWorkspaceMatches(source, workspace);
 		const sessionId = createRuntimeId("session", `fork-${args.fork.slice(-16)}-${Date.now().toString(36)}`);
 		store.forkSession({
 			sessionId,
 			sourceSessionId: source.sessionId as SessionId,
-			workspaceId: source.workspaceId,
-			repositoryId: source.repositoryId,
+			workspaceId: workspace.workspaceId,
+			repositoryId: workspace.repositoryId,
 			settingsDigest: source.settingsDigest,
+			sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 		});
 		return sessionId;
 	}
 	// resume / continue_recent:从 SQLite catalog 选最近 session。
-	const candidates = store.listSessions().filter((record) => record.status === "active" || record.status === "paused" || record.status === "recovery_required");
+	const candidates = store.listSessions().filter((record) =>
+		(record.status === "active" || record.status === "paused" || record.status === "recovery_required")
+		&& sessionWorkspaceMatches(record, workspace),
+	);
 	const recent = candidates.sort((a, b) => b.updatedAtMs - a.updatedAtMs)[0];
-	if (recent === undefined) throw new Error("no session to resume; create a new session first");
+	if (recent === undefined) throw new Error("no session matches the current workspace binding; create a new Session or use explicit rebind/migrate");
 	return recent.sessionId as SessionId;
 }
 

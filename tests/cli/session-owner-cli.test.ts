@@ -19,6 +19,7 @@ import { createRuntimeId, type SessionId } from "../../src/runtime/protocol/ids.
 import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { resolveSessionWorkspaceIdentity } from "../../src/cli/session-workspace-identity.ts";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 const cleanup: string[] = [];
@@ -69,17 +70,19 @@ function openDb(home: string): { querySingle: (sql: string, params?: readonly un
 	};
 }
 
-function seedSessionWithUserMessage(home: string, seed: string): SessionId {
+async function seedSessionWithUserMessage(home: string, seed: string): Promise<SessionId> {
 	const db = openSessionDatabase(join(home, "state.db"));
 	const store = new SessionStore(db);
 	const ownerStore = new OwnerStore(db);
 	const sessionId = createRuntimeId("session", seed);
 	const runtimeId = createRuntimeId("runtime", seed);
+	const workspace = await resolveSessionWorkspaceIdentity(process.cwd());
 	store.createSession({
 		sessionId,
-		workspaceId: createRuntimeId("workspace", "default"),
-		repositoryId: createRuntimeId("repository", "default"),
+		workspaceId: workspace.workspaceId,
+		repositoryId: workspace.repositoryId,
 		settingsDigest: "d".repeat(64),
+		sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 	});
 	db.runSync(
 		"INSERT INTO session_owners (session_id, runtime_id, generation, state, updated_at_ms) VALUES (?, ?, 1, 'running', ?)",
@@ -122,10 +125,10 @@ describe("R7 standard CLI session-owner path", () => {
 		db.close();
 	});
 
-	it("--resume re-attaches the existing session with a monotonic generation", () => {
+	it("--resume re-attaches the existing session with a monotonic generation", async () => {
 		const { home } = setupHome();
 		expectSessionLifecycleOk(runCli([], home));
-		const sessionId = seedSessionWithUserMessage(home, "resume");
+		const sessionId = await seedSessionWithUserMessage(home, "resume");
 		const db = openDb(home);
 		const first = db.querySingle("SELECT generation FROM session_owners WHERE session_id = ?", [sessionId]);
 		expectSessionLifecycleOk(runCli(["--resume"], home));
@@ -134,10 +137,10 @@ describe("R7 standard CLI session-owner path", () => {
 		db.close();
 	});
 
-	it("--fork creates an independent session with generation starting at 1", () => {
+	it("--fork creates an independent session with generation starting at 1", async () => {
 		const { home } = setupHome();
 		expectSessionLifecycleOk(runCli([], home));
-		const sourceSessionId = seedSessionWithUserMessage(home, "fork-source");
+		const sourceSessionId = await seedSessionWithUserMessage(home, "fork-source");
 		const db = openDb(home);
 		expectSessionLifecycleOk(runCli(["--fork", sourceSessionId], home));
 		const forked = db.queryAll("SELECT session_id FROM sessions ORDER BY created_at_ms");

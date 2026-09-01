@@ -8,7 +8,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -256,8 +256,20 @@ function printPlan(plan: readonly TestBucketPlan[], listFiles: boolean): void {
 	console.log(JSON.stringify(output, null, 2));
 }
 
+type ExecutionMode = "plan" | "executed";
+type CleanupVerification = "verified" | "failed" | "unknown" | "not_applicable";
+
+interface CleanupEvidence {
+	readonly childProcesses: CleanupVerification;
+	readonly descendants: CleanupVerification;
+	readonly sockets: CleanupVerification;
+	readonly tempRoots: CleanupVerification;
+	readonly status: CleanupVerification;
+}
+
 interface TestExecutionEvidence {
-	readonly schemaId: "runledger.test-execution-evidence.v1";
+	readonly schemaId: "runledger.test-execution-evidence.v2";
+	readonly executionMode: ExecutionMode;
 	readonly commit: string;
 	readonly dirtyPaths: readonly string[];
 	readonly dirtyDigest: string;
@@ -273,7 +285,7 @@ interface TestExecutionEvidence {
 	readonly process: { readonly exitCode: number; readonly signal: string | null; readonly timeoutKind: "watchdog" | null };
 	readonly platform: { readonly os: string; readonly arch: string; readonly libc: "unavailable" };
 	readonly artifacts: { readonly buildManifestDigest: null; readonly logDigest: null };
-	readonly cleanup: { readonly childProcesses: "settled"; readonly sockets: "not_applicable"; readonly tempRoots: "removed"; readonly status: "clean" };
+	readonly cleanup: CleanupEvidence;
 }
 
 function sha256(value: string): string {
@@ -317,6 +329,71 @@ async function writeExecutionEvidence(path: string, evidence: TestExecutionEvide
 	await writeFile(target, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
 }
 
+function plannedCleanupEvidence(): CleanupEvidence {
+	return {
+		childProcesses: "not_applicable",
+		descendants: "not_applicable",
+		sockets: "not_applicable",
+		tempRoots: "not_applicable",
+		status: "not_applicable",
+	};
+}
+
+async function executedCleanupEvidence(root: string, processGroups: readonly number[], processGroupsSupported: boolean, childProcesses: CleanupVerification): Promise<CleanupEvidence> {
+	let descendants: CleanupVerification = processGroupsSupported ? "verified" : "unknown";
+	if (processGroupsSupported) {
+		for (const processGroup of processGroups) {
+			try {
+				process.kill(-processGroup, 0);
+				descendants = "failed";
+				break;
+			} catch (error) {
+				if (!(error instanceof Error) || !("code" in error) || error.code !== "ESRCH") {
+					descendants = "unknown";
+					break;
+				}
+			}
+		}
+	}
+	let sockets: CleanupVerification = process.platform === "win32" ? "not_applicable" : "verified";
+	try {
+		if (process.platform !== "win32" && await containsSocket(root)) sockets = "failed";
+	} catch {
+		sockets = "unknown";
+	}
+	let tempRoots: CleanupVerification = "verified";
+	try {
+		await rm(root, { recursive: true, force: false });
+		try {
+			await lstat(root);
+			tempRoots = "failed";
+		} catch (error) {
+			if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") tempRoots = "unknown";
+		}
+	} catch {
+		tempRoots = "failed";
+	}
+	const fields = [childProcesses, descendants, sockets, tempRoots];
+	const status: CleanupVerification = fields.includes("failed")
+		? "failed"
+		: fields.includes("unknown")
+			? "unknown"
+			: fields.every((field) => field === "not_applicable")
+				? "not_applicable"
+				: "verified";
+	return { childProcesses, descendants, sockets, tempRoots, status };
+}
+
+async function containsSocket(root: string): Promise<boolean> {
+	const entries = await readdir(root, { withFileTypes: true });
+	for (const entry of entries) {
+		const path = join(root, entry.name);
+		if (entry.isSocket()) return true;
+		if (entry.isDirectory() && await containsSocket(path)) return true;
+	}
+	return false;
+}
+
 async function run(): Promise<void> {
 	const arguments_ = parseCliArguments(process.argv.slice(2));
 	const repoRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -337,16 +414,23 @@ async function run(): Promise<void> {
 	}
 	const plan = buildTestBucketPlan(entries, { mode: arguments_.mode, repoRoot, bucket: arguments_.bucket });
 	if (arguments_.bucket !== undefined && plan.length === 0) throw new Error(`bucket has no eligible files: ${arguments_.bucket}`);
+	const executionMode: ExecutionMode = arguments_.dryRun || arguments_.listFiles ? "plan" : "executed";
 	const startedAt = new Date().toISOString();
 	const startedAtMs = Date.now();
 	let exitCode = 0;
 	let signal: string | null = null;
 	let timeoutKind: "watchdog" | null = null;
-	const isolatedHome = await mkdtemp(join(tmpdir(), "runledger-test-runner-"));
+	let cleanup = plannedCleanupEvidence();
+	let isolatedHome: string | undefined;
+	const processGroups: number[] = [];
+	let childProcesses: CleanupVerification = "not_applicable";
+	const processGroupsSupported = process.platform !== "win32";
 	try {
 		if (arguments_.dryRun || arguments_.listFiles) {
 			printPlan(plan, arguments_.listFiles);
 		} else {
+			isolatedHome = await mkdtemp(join(tmpdir(), "runledger-test-runner-"));
+			childProcesses = "verified";
 			for (const bucket of plan) {
 				for (const chunk of bucket.chunks) {
 					console.log(`[${bucket.bucket}] ${chunk.command} ${chunk.args.join(" ")}`);
@@ -355,8 +439,14 @@ async function run(): Promise<void> {
 						env: sanitizedTestEnvironment(isolatedHome),
 						stdio: "inherit",
 						shell: false,
+						detached: processGroupsSupported,
 						timeout: bucket.watchdogMs,
 					});
+					if (result.pid === undefined) {
+						childProcesses = "unknown";
+					} else if (processGroupsSupported) {
+						processGroups.push(result.pid);
+					}
 					signal = result.signal;
 					if (result.error !== undefined) {
 						exitCode = 1;
@@ -372,11 +462,18 @@ async function run(): Promise<void> {
 			}
 		}
 	} finally {
-		await rm(isolatedHome, { recursive: true, force: true });
+		if (isolatedHome !== undefined) {
+			cleanup = await executedCleanupEvidence(isolatedHome, processGroups, processGroupsSupported, childProcesses);
+			if (cleanup.status !== "verified") {
+				exitCode = exitCode === 0 ? 1 : exitCode;
+				process.exitCode = exitCode;
+			}
+		}
 		if (arguments_.evidenceFile !== undefined) {
 			const dirtyPaths = currentDirtyPaths(repoRoot);
 			const evidence: TestExecutionEvidence = {
-				schemaId: "runledger.test-execution-evidence.v1",
+				schemaId: "runledger.test-execution-evidence.v2",
+				executionMode,
 				commit: currentCommit(repoRoot),
 				dirtyPaths,
 				dirtyDigest: sha256(dirtyPaths.join("\n")),
@@ -398,7 +495,7 @@ async function run(): Promise<void> {
 				process: { exitCode, signal, timeoutKind },
 				platform: { os: process.platform, arch: process.arch, libc: "unavailable" },
 				artifacts: { buildManifestDigest: null, logDigest: null },
-				cleanup: { childProcesses: "settled", sockets: "not_applicable", tempRoots: "removed", status: "clean" },
+				cleanup,
 			};
 			await writeExecutionEvidence(arguments_.evidenceFile, evidence);
 		}

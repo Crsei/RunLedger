@@ -7,11 +7,12 @@ import { openSessionDatabase } from "../../../src/storage/session-store/database
 import {
 	SESSION_STORE_SCHEMA_V1_SQL,
 	SESSION_STORE_SCHEMA_V2_SQL,
+	SESSION_STORE_SCHEMA_V3_SQL,
 	SESSION_STORE_SCHEMA_VERSION,
 	installSessionStoreSchema,
 	sessionStoreSchemaFormatDigest,
 } from "../../../src/storage/session-store/schema.ts";
-import { checkStoreCompatibility, migrateSessionStoreV1ToV2 } from "../../../src/storage/session-store/schema-compatibility.ts";
+import { checkStoreCompatibility, migrateSessionStoreToCurrent, migrateSessionStoreV1ToV2 } from "../../../src/storage/session-store/schema-compatibility.ts";
 
 let directory: string;
 
@@ -41,7 +42,7 @@ describe("Session Store legacy to current title migration", () => {
 	it("adds nullable title projection columns and records the current digest without guessing legacy titles", () => {
 		const db = installV1Database();
 		const result = migrateSessionStoreV1ToV2(db);
-		expect(result).toEqual({ ok: true, storeVersion: SESSION_STORE_SCHEMA_VERSION });
+		expect(result).toEqual({ ok: true, storeVersion: 2 });
 		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 2, admission: "ready" } });
 		expect(db.querySingle("SELECT title, title_source, title_updated_at_ms FROM sessions WHERE session_id = ?", ["session_legacy"])).toEqual({
 			title: null,
@@ -51,6 +52,20 @@ describe("Session Store legacy to current title migration", () => {
 		expect(db.querySingle("SELECT catalog_revision FROM store_control WHERE singleton_id = 1")).toEqual({ catalog_revision: 1 });
 		expect(db.querySingle("SELECT format_digest FROM schema_meta WHERE schema_version = 2")).toEqual({
 			format_digest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V2_SQL),
+		});
+		db.close();
+	});
+
+	it("upgrades title-schema rows to current without inventing a source workspace binding", () => {
+		const db = installV1Database();
+		expect(migrateSessionStoreV1ToV2(db)).toEqual({ ok: true, storeVersion: 2 });
+		expect(migrateSessionStoreToCurrent(db)).toEqual({ ok: true, storeVersion: SESSION_STORE_SCHEMA_VERSION });
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 3, admission: "ready" } });
+		expect(db.querySingle("SELECT source_workspace_locator_json FROM sessions WHERE session_id = ?", ["session_legacy"])).toEqual({
+			source_workspace_locator_json: null,
+		});
+		expect(db.querySingle("SELECT format_digest FROM schema_meta WHERE schema_version = 3")).toEqual({
+			format_digest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL),
 		});
 		db.close();
 	});
@@ -69,7 +84,7 @@ describe("Session Store legacy to current title migration", () => {
 	it("installs new stores with an unnamed title state", () => {
 		const db = openSessionDatabase(join(directory, "fresh.db"));
 		installSessionStoreSchema(db);
-		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 2 } });
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: SESSION_STORE_SCHEMA_VERSION } });
 		db.close();
 	});
 });

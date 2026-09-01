@@ -16,7 +16,7 @@ const ENTRIES: readonly TestInventoryEntry[] = [
 	{ path: "tests/tui/layout.bun.test.ts", runner: "bun", executionBucket: "tui-native", collected: null, defaultLocal: true, prCi: true, nightly: false },
 	{ path: "native/syntax-highlighter/src/lib.rs", runner: "cargo", executionBucket: "rust-native", collected: null, defaultLocal: false, prCi: true, nightly: false },
 ];
-const TEST_EXECUTION_EVIDENCE_SCHEMA_ID = ["runledger", "test-execution-evidence", "v" + "1"].join(".");
+const TEST_EXECUTION_EVIDENCE_SCHEMA_ID = ["runledger", "test-execution-evidence", "v" + "2"].join(".");
 
 const temporaryDirectories: string[] = [];
 
@@ -117,7 +117,7 @@ describe("test bucket runner", () => {
 		expect(result.stderr).toContain("no inventory test files selected");
 	});
 
-	it("writes a sanitized, versioned execution manifest for a selected dry-run", () => {
+	it("writes a plan-only evidence manifest for a selected dry-run", () => {
 		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 		const temporaryDirectory = mkdtempSync(join(tmpdir(), "runledger-test-evidence-"));
 		temporaryDirectories.push(temporaryDirectory);
@@ -138,6 +138,7 @@ describe("test bucket runner", () => {
 		expect(result.status).toBe(0);
 		const evidence = JSON.parse(readFileSync(evidenceFile, "utf8")) as {
 			schemaId: string;
+			executionMode: "plan";
 			commit: string;
 			dirtyDigest: string;
 			cwdDigest: string;
@@ -145,21 +146,89 @@ describe("test bucket runner", () => {
 			commandArgv: Array<{ command: string; args: string[] }>;
 			files: { discovered: number; selected: number; collected: null };
 			process: { exitCode: number; signal: null; timeoutKind: null };
-			cleanup: { childProcesses: "settled"; status: "clean" };
+			cleanup: { childProcesses: "not_applicable"; descendants: "not_applicable"; sockets: "not_applicable"; tempRoots: "not_applicable"; status: "not_applicable" };
 		};
 		expect(evidence).toMatchObject({
 			schemaId: TEST_EXECUTION_EVIDENCE_SCHEMA_ID,
+			executionMode: "plan",
 			commit: expect.stringMatching(/^[a-f0-9]{40}$/),
 			dirtyDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
 			cwdDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
 			bucket: ["fast"],
 			files: { discovered: expect.any(Number), selected: 1, collected: null },
 			process: { exitCode: 0, signal: null, timeoutKind: null },
-			cleanup: { childProcesses: "settled", status: "clean" },
+			cleanup: { childProcesses: "not_applicable", descendants: "not_applicable", sockets: "not_applicable", tempRoots: "not_applicable", status: "not_applicable" },
 		});
 		expect(evidence.commandArgv).toEqual([
 			{ command: process.execPath, args: expect.arrayContaining(["run", "tests/scripts/run-test-buckets.test.ts"]) },
 		]);
+	});
+
+	it("records verified cleanup only after an executed runner exits", () => {
+		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+		const temporaryDirectory = mkdtempSync(join(tmpdir(), "runledger-test-evidence-executed-"));
+		temporaryDirectories.push(temporaryDirectory);
+		const evidenceFile = join(temporaryDirectory, "evidence.json");
+		const result = spawnSync(process.execPath, [
+			"--import",
+			"tsx",
+			"scripts/run-test-buckets.ts",
+			"--bucket",
+			"fast",
+			"--file",
+			"tests/scripts/test-inventory.test.ts",
+			"--evidence-file",
+			evidenceFile,
+		], { cwd: repoRoot, encoding: "utf8", timeout: 30_000 });
+
+		expect(result.status).toBe(0);
+		const evidence = JSON.parse(readFileSync(evidenceFile, "utf8")) as {
+			schemaId: string;
+			executionMode: "executed";
+			cleanup: { childProcesses: "verified"; descendants: "verified"; sockets: "verified"; tempRoots: "verified"; status: "verified" };
+		};
+		expect(evidence).toMatchObject({
+			schemaId: TEST_EXECUTION_EVIDENCE_SCHEMA_ID,
+			executionMode: "executed",
+			cleanup: { childProcesses: "verified", descendants: "verified", sockets: "verified", tempRoots: "verified", status: "verified" },
+		});
+	});
+
+	// Unix socket leak 的创建/回收由被选中的 probe test 完成，Windows 不把
+	// Named Pipe 误报为 filesystem socket verification。
+	(process.platform === "win32" ? it.skip : it)("fails the executed gate when a test leaves a socket in its isolated root", () => {
+		const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+		const temporaryDirectory = mkdtempSync(join(tmpdir(), "runledger-test-evidence-socket-"));
+		temporaryDirectories.push(temporaryDirectory);
+		const evidenceFile = join(temporaryDirectory, "evidence.json");
+		const result = spawnSync(process.execPath, [
+			"--import",
+			"tsx",
+			"scripts/run-test-buckets.ts",
+			"--bucket",
+			"fast",
+			"--file",
+			"tests/scripts/test-runner-cleanup-probe.test.ts",
+			"--evidence-file",
+			evidenceFile,
+		], {
+			cwd: repoRoot,
+			encoding: "utf8",
+			timeout: 30_000,
+			env: { ...process.env, RUNLEDGER_TEST_CLEANUP_PROBE: "socket" },
+		});
+
+		expect(result.status).toBe(1);
+		const evidence = JSON.parse(readFileSync(evidenceFile, "utf8")) as {
+			executionMode: "executed";
+			process: { exitCode: number };
+			cleanup: { sockets: "failed"; status: "failed" };
+		};
+		expect(evidence).toMatchObject({
+			executionMode: "executed",
+			process: { exitCode: 1 },
+			cleanup: { sockets: "failed", status: "failed" },
+		});
 	});
 
 	it("publishes a bounded watchdog budget for each resource-sensitive chunk", () => {

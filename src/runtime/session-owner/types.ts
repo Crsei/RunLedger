@@ -396,5 +396,5 @@ export interface SessionCheckpointDescriptor {
  * store_schema_too_new,低于 MIN 且无对应 migration 返回 store_schema_too_old。
  */
 export const SESSION_STORE_SCHEMA_MIN = 1 as const;
-export const SESSION_STORE_SCHEMA_MAX = 2 as const;
-export const SESSION_STORE_SCHEMA_CURRENT = 2 as const;
+export const SESSION_STORE_SCHEMA_MAX = 3 as const;
+export const SESSION_STORE_SCHEMA_CURRENT = 3 as const;

@@ -288,6 +288,7 @@ export class SessionDomainRouter {
 					workspaceId: source.workspaceId,
 					repositoryId: source.repositoryId,
 					settingsDigest: source.settingsDigest,
+					sourceWorkspaceLocator: source.sourceWorkspaceLocator,
 					expectedCatalogRevision: currentRevision,
 				});
 				const settled = this.attempts.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation, targetSessionId }));
@@ -374,6 +375,7 @@ export class SessionDomainRouter {
 					workspaceId: source.workspaceId,
 					repositoryId: source.repositoryId,
 					settingsDigest: source.settingsDigest,
+					sourceWorkspaceLocator: source.sourceWorkspaceLocator,
 				});
 				const settled = this.attempts.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation, targetSessionId, sourceSessionId, sourceHeadSequence: expectedSourceHeadSequence }));
 				if (!settled.ok) return { ok: false, status: "failed", code: settled.code, operation };
