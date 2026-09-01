@@ -27,6 +27,7 @@
 | Worktree / Sandbox / Permission | [`worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md`](worktree-sandbox-permisson/00-worktree-sandbox-permission-plan.md)、[`01-multiplatform-workspace-path-adaptation-plan.md`](worktree-sandbox-permisson/01-multiplatform-workspace-path-adaptation-plan.md) | Workspace/Worktree、Permission/Approval、ExecutionGateway；OS sandbox 扩展已冻结，当前先解决多平台 path/Git/Shell/process/cleanup 适配 | `00` 总入口、`01` 当前适配状态、当前代码/tests、`runtime/04`、目标 `runtime/06` 与现行基线 `runtime/05` |
 | Runtime Trace / Opik | [`runtime/trace/README.md`](runtime/trace/README.md) | Event Store、Artifact Store、模型/工具/上下文/耗时/Token/费用记录、Opik 投影与父子树 | `runtime/trace/00-opik-agent-observability-plan.md`、当前代码/tests |
 | Session Audit Note | [`note/README.md`](note/README.md) | 当前打开 session 的 `/audit` 只读调用树、计量与 Artifact 阅读模式 | [`note/00-session-audit-reading-mode-plan.md`](note/00-session-audit-reading-mode-plan.md)、Runtime Trace 当前代码/tests |
+| Test Strategy / Runner | [`test/README.md`](test/README.md)、[`test/01-test-strategy-and-runner-hardening-plan.md`](test/01-test-strategy-and-runner-hardening-plan.md) | 测试 inventory、唯一 runner 归属、资源分桶、PR CI、构建/CLI/PTY smoke、确定性、跨平台与人工/live 证据边界 | 当前 runner/config/tests；异步方法见 [`test/async-state-machine.md`](test/async-state-machine.md) |
 | Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md)、[`providers/02-oh-my-pi-provider-port-execution-checklist.md`](providers/02-oh-my-pi-provider-port-execution-checklist.md) | 历史 pi-ai 全量移植；oh-my-pi 当前新增 provider 的差集、适配批次、特殊协议、动态 catalog、认证和生产验收清单 | 当前实现查 `AGENTS.md` §1.1；增量执行状态查 `providers/02` |
 | Storage / CLI | [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md)、[`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | 用户级单一 home 破坏性迁移 handoff（S0–S5 已完成）;旧项目级 `.runledger/`、settings、session 与 CLI 计划仅作为 superseded 迁移输入 | 迁移状态与最终证据查 `02`;旧布局历史见 [`project-cli-layout.md`](project-cli-layout.md) |
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`09` 专题导航 | `AGENTS.md` §1.2.x、§5 |
@@ -130,6 +131,10 @@ development-doc/
 ├── storage-cli/
 │   ├── 01-project-layout-cli-plan.md
 │   └── 02-user-home-migration-handoff.md
+├── test/
+│   ├── README.md
+│   ├── 01-test-strategy-and-runner-hardening-plan.md
+│   └── async-state-machine.md
 └── tui/
     ├── 00-overview.md
     ├── 01-architecture.md

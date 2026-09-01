@@ -45,16 +45,16 @@ describe("OpenTUI framework boundary", () => {
       scripts?: Record<string, string>;
     };
     const shim = readFileSync(join(process.cwd(), "bin", "runledger.js"), "utf8").replace(/\r\n/g, "\n");
-    const tuiRunner = readFileSync(join(process.cwd(), "scripts", "run-tui-bun-tests.mjs"), "utf8");
+    const tuiRunner = readFileSync(join(process.cwd(), "scripts", "run-test-buckets.ts"), "utf8");
 
     expect(shim.startsWith("#!/usr/bin/env node\n")).toBe(true);
     expect(shim).toContain("[runledger] Bun");
     expect(shim).toContain('spawnSync("bun"');
     // 跨平台 runner 展开 glob 后显式调用 bun test(Windows cmd 不展开通配符)。
-    expect(packageJson.scripts?.["test:tui-native"]).toContain("run-tui-bun-tests.mjs");
+    expect(packageJson.scripts?.["test:tui-native"]).toContain("run-test-buckets.ts");
     expect(tuiRunner).toContain('"bun"');
     expect(tuiRunner).toContain('["test",');
-    expect(packageJson.scripts?.test).toContain("npm run test:tui-native");
+    expect(packageJson.scripts?.test).toContain("npm run test:local");
   });
 
   it("通过 npm 风格符号链接启动时仍定位 package 内的 dist", { skip: !CAN_SYMLINK }, () => {

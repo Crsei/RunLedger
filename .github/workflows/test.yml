@@ -1,0 +1,256 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  RUNLEDGER_DIR: ${{ runner.temp }}/runledger
+  ANTHROPIC_API_KEY: ''
+  AWS_ACCESS_KEY_ID: ''
+  AWS_SECRET_ACCESS_KEY: ''
+  AWS_SESSION_TOKEN: ''
+  AZURE_OPENAI_API_KEY: ''
+  DEEPSEEK_API_KEY: ''
+  GOOGLE_API_KEY: ''
+  OPENAI_API_KEY: ''
+  OPENAI_BASE_URL: ''
+  OPENROUTER_API_KEY: ''
+  XAI_API_KEY: ''
+  HTTP_PROXY: ''
+  HTTPS_PROXY: ''
+  ALL_PROXY: ''
+
+jobs:
+  inventory-and-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run test:inventory
+      - run: npm run check
+
+  test-fast:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      - name: Run fast bucket
+        run: |
+          set -o pipefail
+          npm run test:fast -- --evidence-file "$RUNNER_TEMP/test-fast-evidence.json" 2>&1 | tee "$RUNNER_TEMP/test-fast.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-fast-evidence
+          path: |
+            $RUNNER_TEMP/test-fast-evidence.json
+            $RUNNER_TEMP/test-fast.log
+          if-no-files-found: warn
+
+  test-singleton:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      - name: Run singleton bucket
+        run: |
+          set -o pipefail
+          npm run test:singleton -- --evidence-file "$RUNNER_TEMP/test-singleton-evidence.json" 2>&1 | tee "$RUNNER_TEMP/test-singleton.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-singleton-evidence
+          path: |
+            $RUNNER_TEMP/test-singleton-evidence.json
+            $RUNNER_TEMP/test-singleton.log
+          if-no-files-found: warn
+
+  test-runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      - name: Run runtime bucket
+        run: |
+          set -o pipefail
+          npm run test:runtime -- --evidence-file "$RUNNER_TEMP/test-runtime-evidence.json" 2>&1 | tee "$RUNNER_TEMP/test-runtime.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-runtime-evidence
+          path: |
+            $RUNNER_TEMP/test-runtime-evidence.json
+            $RUNNER_TEMP/test-runtime.log
+          if-no-files-found: warn
+
+  test-security-storage:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      - name: Run security-storage bucket
+        run: |
+          set -o pipefail
+          npm run test:security-storage -- --evidence-file "$RUNNER_TEMP/test-security-storage-evidence.json" 2>&1 | tee "$RUNNER_TEMP/test-security-storage.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-security-storage-evidence
+          path: |
+            $RUNNER_TEMP/test-security-storage-evidence.json
+            $RUNNER_TEMP/test-security-storage.log
+          if-no-files-found: warn
+
+  test-integration-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      - name: Run integration bucket
+        run: |
+          set -o pipefail
+          npm run test:integration -- --evidence-file "$RUNNER_TEMP/test-integration-evidence.json" 2>&1 | tee "$RUNNER_TEMP/test-integration.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-integration-evidence
+          path: |
+            $RUNNER_TEMP/test-integration-evidence.json
+            $RUNNER_TEMP/test-integration.log
+          if-no-files-found: warn
+
+  test-tui-native-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci
+      - name: Run tui-native bucket
+        run: |
+          set -o pipefail
+          npm run test:tui-native -- --evidence-file "$RUNNER_TEMP/test-tui-native-evidence.json" 2>&1 | tee "$RUNNER_TEMP/test-tui-native.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-tui-native-evidence
+          path: |
+            $RUNNER_TEMP/test-tui-native-evidence.json
+            $RUNNER_TEMP/test-tui-native.log
+          if-no-files-found: warn
+
+  build-and-cli-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm run build
+      - run: sudo apt-get update && sudo apt-get install --yes tmux
+      - name: Run built CLI smoke
+        run: npm run test:smoke > "$RUNNER_TEMP/cli-smoke-evidence.json" 2> "$RUNNER_TEMP/cli-smoke.log"
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-smoke-evidence
+          path: |
+            $RUNNER_TEMP/cli-smoke-evidence.json
+            $RUNNER_TEMP/cli-smoke.log
+          if-no-files-found: warn
+
+  test-gate:
+    if: ${{ always() }}
+    needs:
+      - inventory-and-check
+      - test-fast
+      - test-singleton
+      - test-runtime
+      - test-security-storage
+      - test-integration-linux
+      - test-tui-native-linux
+      - build-and-cli-smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every job to succeed
+        env:
+          GATE_RESULTS: ${{ toJson(needs) }}
+        run: |
+          for result in \
+            "${{ needs.inventory-and-check.result }}" \
+            "${{ needs.test-fast.result }}" \
+            "${{ needs.test-singleton.result }}" \
+            "${{ needs.test-runtime.result }}" \
+            "${{ needs.test-security-storage.result }}" \
+            "${{ needs.test-integration-linux.result }}" \
+            "${{ needs.test-tui-native-linux.result }}" \
+            "${{ needs.build-and-cli-smoke.result }}"; do
+            if [ "$result" != "success" ]; then
+              printf 'required test job did not succeed: %s\\n' "$result" >&2
+              exit 1
+            fi
+          done
