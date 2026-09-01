@@ -12,7 +12,7 @@ import {
 	installSessionStoreSchema,
 	sessionStoreSchemaFormatDigest,
 } from "../../../src/storage/session-store/schema.ts";
-import { checkStoreCompatibility, migrateSessionStoreToCurrent, migrateSessionStoreV1ToV2 } from "../../../src/storage/session-store/schema-compatibility.ts";
+import { checkStoreCompatibility, migrateSessionStoreToCurrent, migrateSessionStoreV1ToV2, migrateSessionStoreV2ToV3 } from "../../../src/storage/session-store/schema-compatibility.ts";
 
 let directory: string;
 
@@ -67,6 +67,23 @@ describe("Session Store legacy to current title migration", () => {
 		expect(db.querySingle("SELECT format_digest FROM schema_meta WHERE schema_version = 3")).toEqual({
 			format_digest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL),
 		});
+		db.close();
+	});
+
+	it("applies the additive workspace-binding migration without disrupting an active owner", () => {
+		const db = installV1Database();
+		expect(migrateSessionStoreV1ToV2(db)).toEqual({ ok: true, storeVersion: 2 });
+		db.runSync("INSERT INTO session_owners (session_id, runtime_id, generation, state, updated_at_ms) VALUES (?, ?, 1, 'running', 1)", [
+			"session_legacy",
+			"runtime_legacy",
+		]);
+
+		expect(migrateSessionStoreV2ToV3(db)).toEqual({ ok: true, storeVersion: 3 });
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 3, admission: "ready" } });
+		expect(db.querySingle("SELECT source_workspace_locator_json FROM sessions WHERE session_id = ?", ["session_legacy"])).toEqual({
+			source_workspace_locator_json: null,
+		});
+		expect(db.querySingle("SELECT state FROM session_owners WHERE session_id = ?", ["session_legacy"])).toEqual({ state: "running" });
 		db.close();
 	});
 

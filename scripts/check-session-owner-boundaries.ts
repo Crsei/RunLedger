@@ -148,6 +148,9 @@ const DIRECT_CONTROLLER_PATTERNS: readonly RegExp[] = [
  * - beginOfflineMigration / applyStructuralMigration / abortOfflineMigration /
  *   resumeOfflineMigration / applySessionStatusProjectionRepair:migration gate
  *   用“匹配 epoch + 零 active owner 证明”替代 fence(R1/P4);
+ * - migrateSessionStoreV2ToV3:唯一冻结的 online-compatible migration；仅追加
+ *   nullable source workspace locator，事务内重验 v2 + admission=ready，不修改
+ *   owner row，旧二进制可忽略新列继续运行；
  * - installSessionStoreSchema:首次 DDL 安装(R1);
  * - migrateJsonlSessions / pruneLegacyArchive:显式一次性 JSONL migration/prune,
  *   同样以零 active legacy writer 证明替代 fence(R2)。
@@ -159,6 +162,7 @@ const FENCELESS_WRITE_ALLOWLIST: readonly string[] = [
 	"tryClaim",
 	"beginOfflineMigration",
 	"applyStructuralMigration",
+	"migrateSessionStoreV2ToV3",
 	"abortOfflineMigration",
 	"resumeOfflineMigration",
 	"applySessionStatusProjectionRepair",

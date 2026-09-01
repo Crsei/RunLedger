@@ -6,10 +6,11 @@
  * - Client 在 owner discovery 前只能读取冻结的 schema header/store_control;
  *   高于 MAX → store_schema_too_new,低于 MIN 且无对应 migration →
  *   store_schema_too_old;protocol negotiation 不能覆盖 storage incompatibility;
- * - 所有 structural migration 必须 offline-only:先 BEGIN IMMEDIATE 置
- *   admission=migration_blocked 并证明零 active owner,再 BEGIN EXCLUSIVE
- *   重验后应用一个事务性 DDL migration;migrator crash 后 persisted
- *   migration_blocked 保持 fail closed,只能显式 resume/abort。
+ * - 影响既有读写语义的 structural migration 必须 offline-only:先 BEGIN
+ *   IMMEDIATE 置 admission=migration_blocked 并证明零 active owner,再 BEGIN
+ *   EXCLUSIVE 重验后应用一个事务性 DDL migration;migrator crash 后 persisted
+ *   migration_blocked 保持 fail closed,只能显式 resume/abort；只追加 nullable
+ *   column 的兼容迁移可在短事务内与旧 owner 共存。
  */
 
 import { SESSION_STORE_SCHEMA_MAX, SESSION_STORE_SCHEMA_MIN } from "../../runtime/session-owner/types.ts";
@@ -262,7 +263,12 @@ export function migrateSessionStoreV1ToV2(db: SessionDatabase): ApplyStructuralM
 	return applied;
 }
 
-/** title schema → current 只增加正常 source workspace locator，旧 row 保持 NULL 并在 open 时 fail closed。 */
+/**
+ * title schema → current 只追加 nullable source workspace locator，旧二进制
+ * 忽略该列仍可读写，因此不能用 offline gate 拒绝正在运行的 owner。DDL 与
+ * header 在同一短写事务中提交；若同时已有另一个新 CLI 完成升级，则返回
+ * alreadyCurrent。旧 row 保持 NULL，open/resume 继续 fail closed。
+ */
 export function migrateSessionStoreV2ToV3(db: SessionDatabase): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 3; readonly alreadyCurrent: true } {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
@@ -272,17 +278,38 @@ export function migrateSessionStoreV2ToV3(db: SessionDatabase): ApplyStructuralM
 	if (compatibility.header.storeVersion !== 2) {
 		return { ok: false, code: "migration_failed", detail: `unsupported migration source version ${compatibility.header.storeVersion}` };
 	}
-	const gateResult = beginOfflineMigration(db);
-	if (!gateResult.ok) return { ok: false, code: "active_owners_present", detail: gateResult.detail };
-	return applyStructuralMigration(db, {
-		gate: gateResult.gate,
-		nextVersion: 3,
-		nextSql: SESSION_STORE_SCHEMA_V2_TO_V3_SQL,
-		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL),
-	});
+	let alreadyCurrent = false;
+	try {
+		db.withImmediateTransactionSync((tx) => {
+			const locked = checkStoreCompatibility(tx);
+			if (!locked.ok) throw new Error(locked.detail);
+			if (locked.header.storeVersion === 3) {
+				alreadyCurrent = true;
+				return;
+			}
+			if (locked.header.storeVersion !== 2) throw new Error(`unsupported migration source version ${locked.header.storeVersion}`);
+			if (locked.header.admission !== "ready") throw new Error("cannot apply additive migration while offline migration is blocked");
+			tx.execSync(SESSION_STORE_SCHEMA_V2_TO_V3_SQL);
+			const updated = tx.runSync("UPDATE schema_meta SET schema_version = ?, format_digest = ?, applied_at_ms = ? WHERE schema_version = 2", [
+				3,
+				sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL),
+				Date.now(),
+			]);
+			if (updated.changes !== 1) throw new Error("schema header changed during additive migration");
+		});
+	} catch (error) {
+		const afterFailure = checkStoreCompatibility(db);
+		if (afterFailure.ok && afterFailure.header.storeVersion === 3) {
+			return { ok: true, storeVersion: 3, alreadyCurrent: true };
+		}
+		return { ok: false, code: "migration_failed", detail: error instanceof Error ? error.message : String(error) };
+	}
+	return alreadyCurrent
+		? { ok: true, storeVersion: 3, alreadyCurrent: true }
+		: { ok: true, storeVersion: 3 };
 }
 
-/** 标准 CLI 在 owner discovery 前完成每一步 offline structural migration。 */
+/** 标准 CLI 在 owner discovery 前完成必需的 schema migration。 */
 export function migrateSessionStoreToCurrent(
 	db: SessionDatabase,
 ): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 3; readonly alreadyCurrent: true } {

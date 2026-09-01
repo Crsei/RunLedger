@@ -44,7 +44,7 @@ Runtime: Attached Clients = 0..N during startup/shutdown, 1..N while serving
 6. Event + Receipt 是 authority；checkpoint 只是可删除、可重建的 acceleration cache。
 7. generation 是不可省略的 durable-write fencing token；它不能 fence filesystem、Git、subprocess、MCP、network 或其他外部副作用。
 8. crash takeover 必须先进入 `RECOVERY_REQUIRED`，完成旧副作用核验或获得显式人工继续 receipt 后才能开放新副作用。
-9. 所有 SQLite structural migration 都是 offline-only：必须先阻止新 claim，并证明零 active Session Owner。
+9. 改变既有读写语义的 SQLite structural migration 是 offline-only：必须先阻止新 claim，并证明零 active Session Owner。唯一已授权的兼容例外是 schema version 2→3：只追加 nullable `source_workspace_locator_json`，旧二进制忽略该列仍可读写，故以短 `BEGIN IMMEDIATE` 事务原子写 DDL + schema header，不改变 owner row 或 admission；它不得推广为通用 hot migration。
 10. 第一版明确不实现 machine daemon、后台常驻、平台专用 IPC、hot migration 或 token-level resume。
 
 本文不是在现有 Runtime Host 外再增加一层 SessionLease。目标是删除 machine/workspace leader 及其 lifecycle，把唯一并发仲裁收敛为 SQLite 中的 `session_owners` 行和 `generation` 条件写。
@@ -188,7 +188,7 @@ STORE_SCHEMA_CURRENT
 
 Client 在 owner discovery 前只能读取冻结的 schema header/`store_control`。若 DB version 高于 `STORE_SCHEMA_MAX`，立即返回 `store_schema_too_new`；低于 `STORE_SCHEMA_MIN` 且当前 binary 不拥有对应 migration 时返回 `store_schema_too_old`。protocol negotiation 不能覆盖 storage incompatibility。
 
-所有 structural migration 必须按以下 offline protocol 执行：
+除下述唯一 version 2→3 兼容追加外，所有 structural migration 必须按以下 offline protocol 执行：
 
 ```text
 BEGIN IMMEDIATE
@@ -209,6 +209,7 @@ BEGIN IMMEDIATE
 - migration 发现任何 active owner 时必须恢复 `ready` 并退出，不能把 stale heartbeat 当作零 owner、不能 kill/takeover owner；crash/stale Session 必须先由兼容 binary 完成正常 takeover、`RECOVERY_REQUIRED` 收口和 clean release；
 - migration 进程崩溃时 SQLite DDL transaction 回滚，而 persisted `migration_blocked` 保持 fail closed；只能由同一兼容 migration tool 显式 resume/abort；
 - structural schema 在首版冻结后尽量冻结。新增 Agent feature 优先使用版本化 `event_type`、`payload_json`、receipt payload、snapshot/cache format 和 capability，而不是新增/修改 column；
+- version 2→3 只允许固定 DDL `ALTER TABLE sessions ADD COLUMN source_workspace_locator_json TEXT`：同一短写事务内重验 exact schema version two header + `admission=ready`，原子更新 DDL 与 version/digest，不写 `session_owners`、不阻断 claim。所有既有 row 保持 `NULL`，open/resume 不得猜测 binding，必须 fail closed 并要求显式 rebind/migrate；除此之外任何 column/约束/索引/触发器变更仍必须走 offline protocol。
 - 零 active owner 的真实多进程证明、旧 binary `store_schema_too_new` 和 claim-vs-migration race 都是 R1 阻塞门禁。
 
 ### 4.3 首版逻辑 schema
@@ -742,7 +743,7 @@ src/
 
 - [x] 更新 `04` public contract：`RuntimeHostScope`/Host generation 替换为 session owner identity/fence；保留 driver/domain revision 的独立含义。`04` §3.8 已移除 `runtime.*` Host 事件并新增 §3.9 Session Owner 合同；当前 catalog 中 `runtime.*` 事件由 `owner.*`/`driver.*`/`recovery.*` 取代，Host 术语只允许出现在 legacy 源码与 `05` 历史文档。
 - [x] 冻结 `SessionOwnerRecord`、`OwnerFence`、endpoint、handshake、owner/recovery event、command/attempt receipt、checkpoint cache 和 typed error schemas。实现于 `src/runtime/session-owner/{types,schemas}.ts` 与 `src/runtime/session-server/protocol.ts`（纯契约模块，纳入 `check:runtime-boundaries` 扫描与 public barrel）；fixtures 见 `tests/runtime/session-owner/contracts.test.ts`（10 tests）与 `tests/runtime/session-server/protocol.test.ts`（4 tests），先 RED 后 GREEN。
-- [x] 固定四条 P0 invariant：offline-only schema migration（`upgrade_requires_sessions_closed`/`store_schema_too_new/too_old` typed error）、generation 不 fence 外部副作用（§4.5 注释 + `recovery.*` 事件）、crash takeover 进入 `RECOVERY_REQUIRED`（owner state 枚举含 `recovery_required`）、attachment count 决定 runtime lifetime（`OWNER_RELEASE_REASONS = paused/detached/error/fenced`）。
+- [x] 固定四条 P0 invariant：非兼容 structural schema migration 为 offline-only（`upgrade_requires_sessions_closed`/`store_schema_too_new/too_old` typed error）；唯一 version 2→3 nullable source-locator 追加在 owner 共存时短事务提交且旧 row 继续 fail closed；generation 不 fence 外部副作用（§4.5 注释 + `recovery.*` 事件）、crash takeover 进入 `RECOVERY_REQUIRED`（owner state 枚举含 `recovery_required`）、attachment count 决定 runtime lifetime（`OWNER_RELEASE_REASONS = paused/detached/error/fenced`）。
 - [x] 固定同用户本机 threat model、token 保存/脱敏、TCP bind、DB mode/ACL、stale + 3 probes 条件。`SESSION_OWNER_HEARTBEAT_PARAMS` 冻结 3s/20s/1s/20s/3 probes/250ms；`SESSION_OWNER_AUTH_TOKEN_BYTES = 32`、token 只存 owner row + 内存，record/DTO/event schema 均拒绝额外字段；endpoint schema 只允许 `127.0.0.1`。
 - [x] 固定 connection-scoped driver、Event + Receipt authority、checkpoint cache 和 legacy archive 边界。`driver.*` 事件递增 driverRevision，`sessions.last_driver_client_id` 仅 audit；`CommandAttemptReceipt` guard 强制 `settledGeneration >= originGeneration`；`SessionCheckpointDescriptor` 只带 digest 不内联 snapshot_json；`COMMAND_EFFECT_CLASSES` 冻结 canonical effect classification。
 - [x] 新增 `check:session-owner-boundaries`：禁止新 machine leader、daemon、UDS/Named Pipe、production Host import 和 direct controller fallback。见 `scripts/check-session-owner-boundaries.ts`，已接入 `npm run check`；R0-frozen legacy consumer allowlist（19 个既有文件）与 legacy Host 内部前缀豁免；新 session 模块禁止 Host/TUI import、`detached`/`spawnBackground`/Named Pipe/`unix:`/`0.0.0.0`/`::`、Host election 依赖与 Client 直连 controller（只有 `src/runtime/session-runtime/` 可组合）。
@@ -758,12 +759,12 @@ src/
 - [x] 为 `RunledgerLayout` 添加 `database`/`worktrees`/`migrationBackups`，保持单一 home authority。`RunledgerLayout` 新增 `state.db`/`worktrees/`/`migration-backup/` 三个字段并同步 storage-layout contract tests。
 - [x] 实现 DB open、100ms busy 上限、异步 bounded jitter retry、error taxonomy、transaction wrapper、close/checkpoint。见 `src/storage/session-store/database.ts`（固定 PRAGMA：WAL/synchronous=FULL/foreign_keys=ON/busy_timeout=100/trusted_schema=OFF；`runAsync` 释放 event loop 后用 setTimeout + bounded exponential backoff/jitter 重试；typed `SessionStoreDatabaseError`）。`node:sqlite` 是 experimental builtin，不在 Node 22 builtinModules 白名单，vitest 无法 externalize，故用 `createRequire` 运行时加载并保留 `@types/node` type-only import。
 - [x] 实现 exact schema、`schema_meta`、`store_control`、`STORE_SCHEMA_MIN/MAX/CURRENT` 和 format digest。见 `src/storage/session-store/schema.ts`（§4.3 全量 DDL 唯一 source + canonical sha256 format digest）与 `schema-compatibility.ts`（MIN/MAX 窗口、too-new/too-old/digest mismatch fail closed）。
-- [x] 实现 offline-only migration admission gate；零 active owner、claim-vs-migration、migrator crash 和旧 binary too-new 全部用真实多进程测试。gate 流程：`BEGIN IMMEDIATE` → admission=migration_blocked → 零 owner 证明 → COMMIT；migration 在 `BEGIN EXCLUSIVE` 重验 gate epoch + 零 owner 后应用；crash 后 persisted blocked 只允许显式 resume/abort。测试见 `tests/storage/session-store/{schema-compatibility,migration}.test.ts`，用两个真实 `node` 进程（`tests/fixtures/session-store/db-worker.mjs`）证明并发 open、跨进程 busy ≤100ms、crash 回滚、old binary too-new。
+- [x] 实现 offline-only migration admission gate；零 active owner、claim-vs-migration、migrator crash 和旧 binary too-new 全部用真实多进程测试。gate 流程：`BEGIN IMMEDIATE` → admission=migration_blocked → 零 owner 证明 → COMMIT；migration 在 `BEGIN EXCLUSIVE` 重验 gate epoch + 零 owner 后应用；crash 后 persisted blocked 只允许显式 resume/abort。唯一 version 2→3 nullable source-locator 追加不使用 gate：与旧 owner 共存的单测证明它不改变 owner row，旧 row 保持未绑定。测试见 `tests/storage/session-store/{schema-compatibility,migration}.test.ts`，用两个真实 `node` 进程（`tests/fixtures/session-store/db-worker.mjs`）证明并发 open、跨进程 busy ≤100ms、crash 回滚、old binary too-new。
 - [x] 冻结首版 structural core；新增领域能力优先扩展 versioned payload，不随意做 DDL。`SESSION_STORE_SCHEMA_MIN=MAX=CURRENT=1` 已冻结在 session-owner contract。
 - [x] POSIX mode/symlink/no-follow；Windows capability 没证据时 typed `unverified_platform`，不得伪造等价 ACL。见 `src/storage/session-store/platform-capability.ts`（linux verified 0600；macos/windows `unverified_platform`，fileModeFloor=null）。
 - [x] 测试 WAL reopen、process crash recovery、disk full/readonly/corruption、migration rollback 和 bounded query。`database.test.ts` 覆盖 symlink/mode/not-a-database fail-closed 与 busy 上限；`event-loop-latency.test.ts` 覆盖单次 wait ≤100ms、重试期间 event loop 释放、bounded catalog query 与 WAL reopen；`migration.test.ts` 覆盖跨进程 crash rollback。disk full/readonly 分类已进 error taxonomy，注入式测试留 R6.5 fault matrix。
 
-退出条件：两个真实进程可同时打开 DB（已达成，跨进程测试）；主 event loop 单次 DB wait 不超过 100ms（已达成，busy_timeout=100 + latency fixtures）；structural migration 只在 admission blocked + 零 active owner 下发生（已达成，gate 测试）；损坏/未知新版本 fail closed（已达成，too-new/too-old/digest/missing-header 测试）。
+退出条件：两个真实进程可同时打开 DB（已达成，跨进程测试）；主 event loop 单次 DB wait 不超过 100ms（已达成，busy_timeout=100 + latency fixtures）；非兼容 structural migration 只在 admission blocked + 零 active owner 下发生，version 2→3 仅按上述固定 additive path 与旧 owner 共存（已达成，gate/migration 测试）；损坏/未知新版本 fail closed（已达成，too-new/too-old/digest/missing-header 测试）。
 
 ### R2：SessionStore 与 JSONL 显式迁移
 
@@ -861,7 +862,7 @@ src/
 
 - [x] `src/cli/main.ts` 改为 resolve store → resolve sessionId → attach/claim → local TCP facade → TUI。fresh home 首次运行安装 schema；`readStoreHeader`/`checkStoreCompatibility` 前置 fail closed；`resolveSessionId`(create/open/resume/fork)→ `createEmbeddedSessionRuntime` → `SessionInteractiveController` → `InteractiveMode`；本地 view 与 remote view 同一 TCP facade。
 - [x] `/new`、`/resume`、`/fork` 使用 §8 语义；修复 owner view/remote view 的 attachment 计数。`sessionOpenMode` 映射 + `resolveSessionId` 实现；`onAttachmentCountChange` 驱动 headless-attached owner loop，attachment 归零才 pause/release。
-- [x] schema upgrade 需要零 active owner；不满足时标准入口返回 `upgrade_requires_sessions_closed`，不得边运行边 migration。claim 事务内 `assertAdmissionReady` + admission gate；migration_blocked 时标准入口 exit 2（`session-owner-cli.test.ts` 覆盖）。
+- [x] 非兼容 schema upgrade 需要零 active owner；不满足时标准入口返回 `upgrade_requires_sessions_closed`，不得边运行边 migration。唯一 version 2→3 nullable source-locator 追加以固定短事务与旧 owner 共存；claim 事务内 `assertAdmissionReady` + admission gate；migration_blocked 时标准入口 exit 2（`session-owner-cli.test.ts` 覆盖）。
 - [x] JSONL 首次转换只归档 source，不物理删除；新 Runtime 不读取 archive。R2 `migrate session-store` 语义保留；`--session <legacy path>` 返回 typed 迁移提示。
 - [x] 最后一个 attachment 尝试关闭且 Session 仍 active 时显示 pause 警告；完成 bounded checkpoint/settlement/release。main.ts finally：inFlight 时 stderr 警告 + interrupt → `runtime.pause("paused")`（paused checkpoint + owner release unowned）。
 - [x] 删除 `host` CLI dispatch/help；增加只读 session owner diagnostics 时只能针对 exact session，不引入全机 manager。main.ts 移除 `host` 分支；USAGE 移除 Host 运维命令段；`args.test.ts` 断言 USAGE 不再含 `runledger host`。
@@ -1034,7 +1035,7 @@ tests/cli/session-owner-production.test.ts
 5. 保留一个旧 generation child effect 的受控 fixture；证明新 generation 的 DB 写安全不等于 child 已停止，barrier 收口前所有新副作用 `spawnCount=0`。
 6. 暂停旧 owner 后让 B takeover，再恢复旧 owner；旧 owner 的 durable mutation 均得到 `owner_fenced`，不伪造 external effect 已撤销。
 7. heartbeat stale 但任一次 endpoint/handshake probe 成功；不得 takeover。覆盖 laptop sleep/wake。
-8. active owner 存在时 schema migration 返回 `upgrade_requires_sessions_closed`；升级后 old binary 返回 `store_schema_too_new`。
+8. active owner 存在时非兼容 schema migration 返回 `upgrade_requires_sessions_closed`；唯一 version 2→3 nullable source-locator 追加不得改 owner row，升级后 old binary 可忽略该列继续运行。
 9. 最后一个 attachment 关闭 active session；process 被 settle、cache checkpoint 写入、owner 为 unowned，机器上无 resident RunLedger runtime。
 10. 删除全部 checkpoint 后重新打开 S1；从 Event + Receipt full replay 恢复，不重复 prompt、model call 或 side-effect tool。
 11. Linux/macOS/Windows runner 使用完全相同 TCP/server/store production code path。
@@ -1076,7 +1077,7 @@ preflight no active legacy owner/writer and no active Session Owner
 出现以下任一情况立即停止阶段，不继续扩大实现：
 
 - 无法证明某个 production write 绑定 OwnerFence；
-- structural migration 期间存在 active owner，或 binary schema range 无法确定；
+- 非兼容 structural migration 期间存在 active owner，或 binary schema range 无法确定；
 - 任何实现把 generation 描述成可以 fence/撤销外部副作用；
 - crash takeover 未先进入 `RECOVERY_REQUIRED`，或 barrier 只存在于 UI；
 - checkpoint 含有无法从 Event + Receipt 重建的唯一事实；
@@ -1137,7 +1138,7 @@ R9 回滚后遗留：旧 Host 源码/脚本/测试已恢复（`git status` 无�
 - [ ] 标准 `runledger` 进程内可 owner 一个 Session，也可 attach 另一个 owner；无独立 resident Host。
 - [ ] 同一 Session 的并发 contender 只有一个 generation 能写；不同 Session 可并行运行。
 - [ ] owner discovery/claim/heartbeat/takeover 只有 SQLite + authenticated localhost TCP 两个机制。
-- [ ] structural schema migration 只在 admission blocked + 零 active owner 下发生；binary 严格执行 `STORE_SCHEMA_MIN/MAX`。
+- [ ] 非兼容 structural schema migration 只在 admission blocked + 零 active owner 下发生；唯一 version 2→3 nullable source-locator 追加满足本节的 online-compatible 限制；binary 严格执行 `STORE_SCHEMA_MIN/MAX`。
 - [ ] `DatabaseSync` 单次 blocking wait 不超过 100ms；busy retry 释放 event loop 后异步、有界执行。
 - [ ] Event + Receipt 是 authority，checkpoint/projection 可全部删除并重建；cache 不保存唯一事实。
 - [ ] 旧 JSONL 只显式迁移并归档；新 Runtime 不读取 archive，物理删除需要独立 prune 确认。
