@@ -236,11 +236,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly preferencesPort?: TuiPreferencesPort;
   private readonly shimmerMode: TuiShimmerMode;
   private readonly hideThinkingSettingsPort?: HideThinkingSettingsPort;
-  private hideThinkingBlock: boolean;
-  private readonly showWelcome: boolean;
-  private readonly version: string;
-  private readonly logoLetters?: string;
-  private readonly syntaxThemeController: SyntaxThemeController;
+	private hideThinkingBlock: boolean;
+	private readonly showWelcome: boolean;
+	private readonly version: string;
+	private readonly logoLetters?: string;
+	private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
   private transcriptOverlay: TranscriptOverlayComponent | undefined;
