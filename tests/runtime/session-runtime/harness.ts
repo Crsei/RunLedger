@@ -20,6 +20,7 @@ import { SESSION_CORE_PROTOCOL_MANIFEST } from "../../../src/runtime/session-ser
 import type { LateBoundHumanInputWaitPort } from "../../../src/runtime/session-runtime/approval-reverse-request.ts";
 import type { LateBoundAgentRunBudgetUsage } from "../../../src/runtime/session-runtime/run-timing.ts";
 import type { EffectiveRecapSettings } from "../../../src/storage/settings-manager.ts";
+import { resolveSessionWorkspaceIdentity } from "../../../src/cli/session-workspace-identity.ts";
 
 export interface RuntimeHarness {
 	readonly dir: string;
@@ -48,10 +49,12 @@ export async function createRuntimeHarness(seed = "h", options: {
 	const store = new SessionStore(db);
 	const ownerStore = new OwnerStore(db);
 	const sessionId = createRuntimeId("session", seed);
+	const workspace = await resolveSessionWorkspaceIdentity(dir);
 	store.createSession({
 		sessionId,
-		workspaceId: createRuntimeId("workspace", "w"),
-		repositoryId: createRuntimeId("repository", "r"),
+		workspaceId: workspace.workspaceId,
+		repositoryId: workspace.repositoryId,
+		sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 		settingsDigest: "d".repeat(64),
 	});
 	let runtime: SessionRuntime | undefined;

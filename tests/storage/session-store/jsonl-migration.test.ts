@@ -17,6 +17,8 @@ import { openSessionDatabase } from "../../../src/storage/session-store/database
 import { installSessionStoreSchema, SESSION_STORE_SCHEMA_VERSION } from "../../../src/storage/session-store/schema.ts";
 import { beginOfflineMigration } from "../../../src/storage/session-store/schema-compatibility.ts";
 import { SessionStore, sessionEventHash } from "../../../src/storage/session-store/session-store.ts";
+import { projectSessionReplay } from "../../../src/storage/session-codec.ts";
+import { resolveSessionWorkspaceIdentity, sessionWorkspaceMatches } from "../../../src/cli/session-workspace-identity.ts";
 import {
 	JsonlMigrationError,
 	enumerateCanonicalJsonl,
@@ -27,11 +29,14 @@ import {
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/public.ts";
 
 let dir: string;
+let workspace: string;
 let layout: ReturnType<typeof buildRunledgerLayout>;
 let db: ReturnType<typeof openSessionDatabase>;
 
 beforeEach(() => {
 	dir = mkdtempSync(join(tmpdir(), "session-store-migrate-"));
+	workspace = join(dir, "workspace");
+	mkdirSync(workspace, { recursive: true, mode: 0o700 });
 	layout = buildRunledgerLayout(dir, "posix");
 	mkdirSync(layout.sessions, { recursive: true, mode: 0o700 });
 	mkdirSync(join(layout.sessions, "2026", "08", "01"), { recursive: true, mode: 0o700 });
@@ -58,7 +63,7 @@ function ledgerEntry(id: string, sessionId: string, type: string, payload: Recor
 	return JSON.stringify({ id, sessionId, parentId: id, timestamp, type, payload });
 }
 
-function writeFixtureSession(name: string, sessionId: string, entries: string[], cwd = "/work/a"): string {
+function writeFixtureSession(name: string, sessionId: string, entries: string[], cwd = workspace): string {
 	const lines = [ledgerHeader(sessionId, cwd), ...entries];
 	const filePath = join(layout.sessions, "2026", "08", "01", `${name}.jsonl`);
 	writeFileSync(filePath, lines.join("\n") + "\n", { mode: 0o600 });
@@ -67,7 +72,11 @@ function writeFixtureSession(name: string, sessionId: string, entries: string[],
 
 function standardEntries(sessionId: string): string[] {
 	return [
-		ledgerEntry(createRuntimeId("event", "e1"), sessionId, "message", { role: "user", content: [{ type: "text", text: "hi" }] }, 1000),
+		ledgerEntry(createRuntimeId("event", "e1"), sessionId, "message", {
+			role: "user",
+			content: [{ type: "text", text: "hi" }],
+			message: { role: "user", content: [{ type: "text", text: "hi" }] },
+		}, 1000),
 		ledgerEntry(createRuntimeId("event", "e2"), sessionId, "tool_call", { name: "echo", input: { text: "hi" } }, 2000),
 		ledgerEntry(createRuntimeId("event", "e3"), sessionId, "tool_result", { output: "hi" }, 3000),
 	];
@@ -108,9 +117,10 @@ describe("R2 JSONL preflight", () => {
 });
 
 describe("R2 JSONL import and archive", () => {
-	it("imports, verifies and atomically archives the source without deleting it", async () => {
+	it("imports a workspace-bound canonical ledger that production replay can reopen before archive", async () => {
 		const sessionId = createRuntimeId("session", "s1");
 		writeFixtureSession("s1", sessionId, standardEntries(sessionId));
+		const identity = await resolveSessionWorkspaceIdentity(workspace);
 		const gate = holdGate();
 		try {
 			const result = await migrateJsonlSessions({ layout, db, confirmArchive: true }, gate);
@@ -121,20 +131,25 @@ describe("R2 JSONL import and archive", () => {
 			const archived = readFileSync(join(result.archiveDir, "sessions", "2026", "08", "01", "s1.jsonl"), "utf8");
 			expect(archived).toContain(JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] }));
 			expect(readFileSync(join(result.archiveDir, "manifest.json"), "utf8")).toContain(result.manifest.manifestDigest);
-			// SQLite target 可无损重放。
-			const store = new SessionStore(db);
-			const events = store.replaySessionEvents(sessionId);
-			expect(events).toHaveLength(3);
-			expect(events[0]?.previousEventHash).toBeNull();
-			expect(events[2]?.currentEventHash).toBe(
-				sessionEventHash(sessionId, 3, events[2]!.eventId, "tool_result", events[2]!.payloadJson, events[1]!.currentEventHash),
-			);
-			expect(store.replaySessionEvents(sessionId).length).toBe(3);
 		} finally {
 			gate.release();
 		}
-		// gate 释放后 projection 可读。
-		expect(new SessionStore(db).projectSession(sessionId).headSequence).toBe(3);
+		// gate 释放后以 production catalog admission + ledger replay 实际重开。
+		const store = new SessionStore(db);
+		const events = store.replaySessionEvents(sessionId);
+		expect(events).toHaveLength(3);
+		expect(events.map((event) => event.eventType)).toEqual(["ledger.message", "ledger.tool_call", "ledger.tool_result"]);
+		expect(sessionWorkspaceMatches(store.getSession(sessionId)!, identity)).toBe(true);
+		const replay = projectSessionReplay(events
+			.filter((event) => event.eventType.startsWith("ledger."))
+			.map((event) => JSON.parse(event.payloadJson)));
+		expect(replay.messages).toMatchObject([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+		expect(replay.auditEntries.map((entry) => entry.type)).toEqual(["tool_call", "tool_result"]);
+		expect(events[0]?.previousEventHash).toBeNull();
+		expect(events[2]?.currentEventHash).toBe(
+			sessionEventHash(sessionId, 3, events[2]!.eventId, "ledger.tool_result", events[2]!.payloadJson, events[1]!.currentEventHash),
+		);
+		expect(store.projectSession(sessionId).headSequence).toBe(3);
 	});
 
 	it("keeps the source in place and the target incomplete when import fails", async () => {

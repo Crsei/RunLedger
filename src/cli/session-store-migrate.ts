@@ -15,8 +15,10 @@ import { openSessionDatabase } from "../storage/session-store/database.ts";
 import { installSessionStoreSchema, sessionStoreSchemaFormatDigest } from "../storage/session-store/schema.ts";
 import { checkStoreCompatibility, beginOfflineMigration } from "../storage/session-store/schema-compatibility.ts";
 import { JsonlMigrationError, migrateJsonlSessions, pruneLegacyArchive } from "../storage/session-store/jsonl-migration.ts";
+import { resolveSessionWorkspaceIdentity } from "../workspace/session-identity.ts";
+import { createProductionGitCommandPort } from "./session-git-command.ts";
 
-const SESSION_STORE_MIGRATE_USAGE = `Usage: runledger migrate session-store --confirm-archive [--workspace-id <id>] [--repository-id <id>]
+const SESSION_STORE_MIGRATE_USAGE = `Usage: runledger migrate session-store --confirm-archive
 
 Import the current-format canonical JSONL sessions into <runledgerHome>/state.db,
 then atomically archive the verified source under migration-backup/session-store/.
@@ -31,40 +33,22 @@ Requires the exact manifest digest and explicit confirmation.
 
 export interface SessionStoreMigrateArgs {
 	readonly confirmArchive: boolean;
-	readonly workspaceId?: string;
-	readonly repositoryId?: string;
 }
 
 export function parseSessionStoreMigrateArgs(argv: readonly string[]): { args?: SessionStoreMigrateArgs; error?: string } {
 	let confirmArchive = false;
-	let workspaceId: string | undefined;
-	let repositoryId: string | undefined;
 	for (const arg of argv) {
 		if (arg === "--confirm-archive") {
 			confirmArchive = true;
 			continue;
 		}
-		if (arg === "--workspace-id" || arg === "--repository-id") {
-			return { error: `${arg} 需要值\n${SESSION_STORE_MIGRATE_USAGE}` };
-		}
-		if (arg.startsWith("--workspace-id=")) {
-			workspaceId = arg.slice("--workspace-id=".length);
-			continue;
-		}
-		if (arg.startsWith("--repository-id=")) {
-			repositoryId = arg.slice("--repository-id=".length);
-			continue;
+		if (arg === "--workspace-id" || arg === "--repository-id" || arg.startsWith("--workspace-id=") || arg.startsWith("--repository-id=")) {
+			return { error: `${arg} 不再拥有 migration workspace authority; binding 必须由已确认 JSONL header.cwd 解析\n${SESSION_STORE_MIGRATE_USAGE}` };
 		}
 		return { error: `migrate session-store 不支持参数: ${arg}\n${SESSION_STORE_MIGRATE_USAGE}` };
 	}
 	if (!confirmArchive) return { error: "migrate session-store 需要显式 --confirm-archive\n" + SESSION_STORE_MIGRATE_USAGE };
-	if (workspaceId !== undefined && !workspaceId.startsWith("workspace_")) {
-		return { error: `--workspace-id 必须是 workspace_ 前缀的 Runtime ID\n${SESSION_STORE_MIGRATE_USAGE}` };
-	}
-	if (repositoryId !== undefined && !repositoryId.startsWith("repository_")) {
-		return { error: `--repository-id 必须是 repository_ 前缀的 Runtime ID\n${SESSION_STORE_MIGRATE_USAGE}` };
-	}
-	return { args: { confirmArchive, workspaceId, repositoryId } };
+	return { args: { confirmArchive } };
 }
 
 export interface PruneLegacyArgs {
@@ -128,13 +112,13 @@ export async function runMigrateSessionStoreCommand(argv: readonly string[]): Pr
 			return;
 		}
 		try {
-			const result = await migrateJsonlSessions(
+		const git = createProductionGitCommandPort();
+		const result = await migrateJsonlSessions(
 				{
 					layout,
 					db,
 					confirmArchive: parsed.args.confirmArchive,
-					workspaceId: parsed.args.workspaceId,
-					repositoryId: parsed.args.repositoryId,
+					resolveWorkspaceIdentity: (cwd) => resolveSessionWorkspaceIdentity(cwd, git),
 				},
 				gateResult.gate,
 			);

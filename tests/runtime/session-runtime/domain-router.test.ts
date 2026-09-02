@@ -1,8 +1,11 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntimeHarness, type RuntimeHarness } from "./harness.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { SessionDomainRouter } from "../../../src/runtime/session-runtime/domain-router.ts";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
+import { resolveSessionWorkspaceIdentity } from "../../../src/cli/session-workspace-identity.ts";
 
 let harness: RuntimeHarness | undefined;
 
@@ -229,13 +232,17 @@ describe("S1 Session Domain Router", () => {
 		});
 	});
 
-	it("publishes and serves the canonical SQLite session catalog without path or invented metadata", async () => {
+	it("filters the catalog to the current workspace binding without exposing paths", async () => {
 		harness = await createRuntimeHarness("domain-catalog-list");
 		const secondId = createRuntimeId("session", "catalog-second");
+		const otherWorkspace = join(harness.dir, "other-workspace");
+		mkdirSync(otherWorkspace);
+		const otherIdentity = await resolveSessionWorkspaceIdentity(otherWorkspace);
 		harness.store.createSession({
 			sessionId: secondId,
-			workspaceId: createRuntimeId("workspace", "catalog-w"),
-			repositoryId: createRuntimeId("repository", "catalog-r"),
+			workspaceId: otherIdentity.workspaceId,
+			repositoryId: otherIdentity.repositoryId,
+			sourceWorkspaceLocator: otherIdentity.sourceWorkspaceLocator,
 			settingsDigest: "e".repeat(64),
 			worktreeLocator: JSON.stringify({ root: "/private/worktree" }),
 		});
@@ -261,19 +268,13 @@ describe("S1 Session Domain Router", () => {
 			operation: "session.catalog.list",
 			domainRevision: 2,
 			value: {
-				items: expect.arrayContaining([
-					expect.objectContaining({
-						sessionId: secondId,
-						workspaceId: createRuntimeId("workspace", "catalog-w"),
-						repositoryId: createRuntimeId("repository", "catalog-r"),
-						status: "active",
-						headSequence: 0,
-						driverRevision: 0,
-						current: false,
-					}),
-					]),
+				items: [expect.objectContaining({
+					sessionId: harness.sessionId,
+					current: true,
+				})],
 			},
 		});
+		expect(JSON.stringify(result)).not.toContain(secondId);
 		expect(JSON.stringify(result)).not.toContain("/private/worktree");
 		expect(JSON.stringify(result)).not.toContain("settingsDigest");
 		expect(JSON.stringify(result)).not.toContain("title");
@@ -501,13 +502,17 @@ describe("S1 Session Domain Router", () => {
 		expect(harness.store.listAllAttemptReceipts(harness.sessionId)).toHaveLength(0);
 	});
 
-	it("validates a resumable SQLite target without changing catalog state", async () => {
+	it("rejects a resumable target from another workspace without changing catalog state", async () => {
 		harness = await createRuntimeHarness("domain-resume-target");
 		const targetSessionId = createRuntimeId("session", "resume-target");
+		const otherWorkspace = join(harness.dir, "resume-other-workspace");
+		mkdirSync(otherWorkspace);
+		const otherIdentity = await resolveSessionWorkspaceIdentity(otherWorkspace);
 		harness.store.createSession({
 			sessionId: targetSessionId,
-			workspaceId: createRuntimeId("workspace", "resume-w"),
-			repositoryId: createRuntimeId("repository", "resume-r"),
+			workspaceId: otherIdentity.workspaceId,
+			repositoryId: otherIdentity.repositoryId,
+			sourceWorkspaceLocator: otherIdentity.sourceWorkspaceLocator,
 			settingsDigest: "f".repeat(64),
 			status: "paused",
 		});
@@ -532,11 +537,11 @@ describe("S1 Session Domain Router", () => {
 		expect(result).toMatchObject({
 			ok: true,
 			result: {
-				ok: true,
-				status: "ok",
+				ok: false,
+				status: "denied",
+				code: "session_workspace_mismatch",
 				operation: "session.resume",
-				domainRevision: 2,
-				value: { targetSessionId },
+				currentRevision: 2,
 			},
 		});
 		expect(harness.store.listSessions()).toHaveLength(2);

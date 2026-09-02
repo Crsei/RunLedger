@@ -21,12 +21,13 @@
 
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { dirname, join, relative, sep, win32 } from "node:path";
+import { dirname, isAbsolute, join, relative, sep, win32 } from "node:path";
 import lockfile from "proper-lockfile";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
-import { runtimeDigest } from "../../runtime/protocol/foundation.ts";
-import { createRuntimeId, type SessionId } from "../../runtime/protocol/ids.ts";
-import { isCurrentLedgerEntry, isCurrentLedgerHeader } from "../../runtime/ledger/types.ts";
+import { isCurrentLedgerEntry, isCurrentLedgerHeader, type LedgerEntry } from "../../runtime/ledger/types.ts";
+import { createLedgerEventId } from "../../runtime/session-runtime/sqlite-ledger.ts";
+import { projectSessionReplay } from "../session-codec.ts";
+import { resolveSessionWorkspaceIdentity, SessionWorkspaceAdmission, type SessionWorkspaceIdentity } from "../../workspace/session-identity.ts";
 import type { RunledgerLayout } from "../../runtime/contracts/public.ts";
 import type { SessionDatabase } from "./database.ts";
 import { sessionEventHash } from "./session-store.ts";
@@ -64,8 +65,8 @@ export interface JsonlSourceFileRecord {
 	readonly createdAtMs: number;
 	readonly fileMode: number;
 	readonly lines: readonly string[];
-	readonly workspaceId: string;
-	readonly repositoryId: string;
+	/** Legacy header cwd, only accepted through --confirm-archive migration. */
+	readonly sourceWorkspaceCwd: string;
 }
 
 export interface JsonlMigrationManifest {
@@ -91,9 +92,12 @@ export interface MigrateJsonlOptions {
 	readonly layout: RunledgerLayout;
 	readonly db: SessionDatabase;
 	readonly confirmArchive: boolean;
-	/** 未提供时按 header metadata.cwd 确定性派生(与 Host identity 规则一致)。 */
-	readonly workspaceId?: string;
-	readonly repositoryId?: string;
+	/** CLI passes its production Git-aware resolver; direct tests may use the pure default. */
+	readonly resolveWorkspaceIdentity?: (cwd: string) => Promise<SessionWorkspaceIdentity>;
+}
+
+interface BoundJsonlSourceFileRecord extends JsonlSourceFileRecord {
+	readonly workspace: SessionWorkspaceIdentity;
 }
 
 function sha256Hex(value: string): string {
@@ -153,7 +157,7 @@ export async function enumerateCanonicalJsonl(layout: RunledgerLayout): Promise<
 					throw new JsonlMigrationError("unsupported_session_format", `unsupported entry at line ${index + 1}: ${childPath}`);
 				}
 			}
-			const cwd = typeof header.metadata?.cwd === "string" ? header.metadata.cwd : "";
+			const sourceWorkspaceCwd = typeof header.metadata?.cwd === "string" ? header.metadata.cwd : "";
 			records.push({
 				relativeLocator: relative(layout.home, childPath).split(sep).join("/"),
 				sha256: sha256Hex(content),
@@ -163,8 +167,7 @@ export async function enumerateCanonicalJsonl(layout: RunledgerLayout): Promise<
 				createdAtMs: header.createdAt,
 				fileMode: stat.mode & 0o777,
 				lines,
-				workspaceId: createRuntimeId("workspace", runtimeDigest({ home: layout.home, cwd }).digest.slice(0, 32)),
-				repositoryId: createRuntimeId("repository", runtimeDigest({ cwd }).digest.slice(0, 32)),
+				sourceWorkspaceCwd,
 			});
 		}
 	}
@@ -250,14 +253,15 @@ export async function migrateJsonlSessions(options: MigrateJsonlOptions, gate: M
 	const files = await enumerateCanonicalJsonl(options.layout);
 	const releaseLegacyLocks = await proveNoActiveLegacyWriter(options.layout, files);
 	try {
+		const boundFiles = await bindSourceWorkspaceIdentities(files, options.resolveWorkspaceIdentity);
 		const manifest = buildManifest(files, sha256Hex(SESSION_STORE_SCHEMA_VERSION.toString()));
 		const archiveDir = join(options.layout.migrationBackups, "session-store", manifest.manifestDigest);
 
 		// 导入:单个事务,任何失败整体回滚,source 保持原位。
-		importJsonlIntoSqlite(options, files);
+		importJsonlIntoSqlite(options.db, boundFiles);
 
 		// 全量 verify:counts + hash chain + archive 未写入前 target 必须可重放。
-		verifyImport(options.db, manifest);
+		verifyImport(options.db, manifest, boundFiles);
 
 		// mark committed:先写 manifest 到 archive 目录。
 		await fs.mkdir(archiveDir, { recursive: true, mode: 0o700 });
@@ -279,7 +283,7 @@ export async function migrateJsonlSessions(options: MigrateJsonlOptions, gate: M
 				throw new JsonlMigrationError("archive_failed", `archive digest mismatch: ${file.relativeLocator}`);
 			}
 		}
-		verifyImport(options.db, manifest);
+		verifyImport(options.db, manifest, boundFiles);
 
 		return {
 			manifest,
@@ -292,32 +296,56 @@ export async function migrateJsonlSessions(options: MigrateJsonlOptions, gate: M
 	}
 }
 
-function importJsonlIntoSqlite(options: MigrateJsonlOptions, files: readonly JsonlSourceFileRecord[]): void {
+async function bindSourceWorkspaceIdentities(
+	files: readonly JsonlSourceFileRecord[],
+	resolver: ((cwd: string) => Promise<SessionWorkspaceIdentity>) | undefined,
+): Promise<BoundJsonlSourceFileRecord[]> {
+	const resolveIdentity = resolver ?? resolveSessionWorkspaceIdentity;
+	return Promise.all(files.map(async (file) => {
+		if (!isAbsolute(file.sourceWorkspaceCwd)) {
+			throw new JsonlMigrationError("invalid_source", `legacy session requires an absolute workspace cwd: ${file.relativeLocator}`);
+		}
+		try {
+			const workspace = await resolveIdentity(file.sourceWorkspaceCwd);
+			return { ...file, workspace };
+		} catch (error) {
+			throw new JsonlMigrationError(
+				"invalid_source",
+				`legacy session workspace binding cannot be resolved for ${file.relativeLocator}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+		}
+	}));
+}
+
+function importJsonlIntoSqlite(db: SessionDatabase, files: readonly BoundJsonlSourceFileRecord[]): void {
 	try {
-		options.db.withImmediateTransactionSync((tx) => {
+		db.withImmediateTransactionSync((tx) => {
 			for (const file of files) {
 				const now = Date.now();
 				tx.runSync(
 					`INSERT INTO sessions
 					 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 					  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-					  worktree_locator_json, settings_digest)
-					 VALUES (?, ?, ?, 'active', ?, ?, 0, NULL, NULL, 0, NULL, ?)`,
+					  worktree_locator_json, source_workspace_locator_json, settings_digest)
+					 VALUES (?, ?, ?, 'active', ?, ?, 0, NULL, NULL, 0, NULL, ?, ?)`,
 					[
 						file.sessionId,
-						options.workspaceId ?? file.workspaceId,
-						options.repositoryId ?? file.repositoryId,
+						file.workspace.workspaceId,
+						file.workspace.repositoryId,
 						file.createdAtMs,
 						now,
+						file.workspace.sourceWorkspaceLocator,
 						file.headerDigest,
 					],
 				);
 				let previous: string | null = null;
 				for (let index = 0; index < file.entryCount; index += 1) {
 					const raw = file.lines[index + 1]!;
-					const entry = JSON.parse(raw) as Record<string, unknown>;
+					const entry = JSON.parse(raw) as LedgerEntry;
 					const sequence = index + 1;
-					const currentHash = sessionEventHash(file.sessionId, sequence, String(entry.id), String(entry.type), raw, previous);
+					const eventType = `ledger.${entry.type}`;
+					const eventId = createLedgerEventId(file.sessionId, entry.id);
+					const currentHash = sessionEventHash(file.sessionId, sequence, eventId, eventType, raw, previous);
 					tx.runSync(
 						`INSERT INTO session_events
 						 (session_id, sequence, event_id, owner_generation, event_type, payload_json,
@@ -326,8 +354,8 @@ function importJsonlIntoSqlite(options: MigrateJsonlOptions, files: readonly Jso
 						[
 							file.sessionId,
 							sequence,
-							String(entry.id),
-							String(entry.type),
+							eventId,
+							eventType,
 							raw,
 							previous,
 							currentHash,
@@ -349,7 +377,11 @@ function importJsonlIntoSqlite(options: MigrateJsonlOptions, files: readonly Jso
 	}
 }
 
-function verifyImport(db: SessionDatabase, manifest: JsonlMigrationManifest): void {
+function verifyImport(
+	db: SessionDatabase,
+	manifest: JsonlMigrationManifest,
+	boundFiles: readonly BoundJsonlSourceFileRecord[],
+): void {
 	try {
 		const sessionsRow = db.querySingle("SELECT COUNT(*) AS n FROM sessions");
 		if (Number(sessionsRow?.n) !== manifest.sessionsCount) {
@@ -359,7 +391,23 @@ function verifyImport(db: SessionDatabase, manifest: JsonlMigrationManifest): vo
 		if (Number(eventsRow?.n) !== manifest.totalEntries) {
 			throw new JsonlMigrationError("verify_failed", "imported event count does not match the manifest");
 		}
+		const boundBySession = new Map(boundFiles.map((file) => [file.sessionId, file]));
 		for (const file of manifest.files) {
+			const bound = boundBySession.get(file.sessionId);
+			if (bound === undefined) throw new JsonlMigrationError("verify_failed", `workspace binding missing for ${file.sessionId}`);
+			const catalog = db.querySingle(
+				"SELECT workspace_id, repository_id, source_workspace_locator_json FROM sessions WHERE session_id = ?",
+				[file.sessionId],
+			);
+			if (catalog === undefined) throw new JsonlMigrationError("verify_failed", `catalog missing for ${file.sessionId}`);
+			const admission = SessionWorkspaceAdmission.fromIdentity(bound.workspace);
+			if (!admission.admits({
+				workspaceId: String(catalog.workspace_id),
+				repositoryId: String(catalog.repository_id),
+				sourceWorkspaceLocator: catalog.source_workspace_locator_json === null ? undefined : String(catalog.source_workspace_locator_json),
+			})) {
+				throw new JsonlMigrationError("verify_failed", `workspace binding cannot reopen ${file.sessionId}`);
+			}
 			const events = db.queryAll(
 				"SELECT sequence, event_id, event_type, payload_json, previous_event_hash, current_event_hash FROM session_events WHERE session_id = ? ORDER BY sequence",
 				[file.sessionId],
@@ -368,6 +416,7 @@ function verifyImport(db: SessionDatabase, manifest: JsonlMigrationManifest): vo
 				throw new JsonlMigrationError("verify_failed", `entry count mismatch for ${file.sessionId}`);
 			}
 			let previous: string | null = null;
+			const ledgerEntries: LedgerEntry[] = [];
 			for (const row of events) {
 				const storedPrevious = row.previous_event_hash === null ? null : String(row.previous_event_hash);
 				const expected = sessionEventHash(
@@ -381,8 +430,20 @@ function verifyImport(db: SessionDatabase, manifest: JsonlMigrationManifest): vo
 				if (expected !== String(row.current_event_hash) || storedPrevious !== previous) {
 					throw new JsonlMigrationError("verify_failed", `hash chain mismatch for ${file.sessionId}@${String(row.sequence)}`);
 				}
+				let entry: unknown;
+				try {
+					entry = JSON.parse(String(row.payload_json)) as unknown;
+				} catch {
+					throw new JsonlMigrationError("verify_failed", `ledger payload is not JSON for ${file.sessionId}@${String(row.sequence)}`);
+				}
+				if (!isCurrentLedgerEntry(entry) || entry.sessionId !== file.sessionId || String(row.event_type) !== `ledger.${entry.type}`) {
+					throw new JsonlMigrationError("verify_failed", `ledger event is not production-replayable for ${file.sessionId}@${String(row.sequence)}`);
+				}
+				ledgerEntries.push(entry);
 				previous = String(row.current_event_hash);
 			}
+			// 复用标准 runtime 的 ledger projection，禁止只核数量/hash 就归档。
+			projectSessionReplay(ledgerEntries);
 		}
 	} catch (error) {
 		if (error instanceof JsonlMigrationError) throw error;

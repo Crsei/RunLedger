@@ -17,6 +17,8 @@ import { openSessionDatabase } from "../../../src/storage/session-store/database
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore, SessionStoreError, sessionEventHash, appendEventInTransaction } from "../../../src/storage/session-store/session-store.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
+import { projectSessionReplay } from "../../../src/storage/session-codec.ts";
+import type { LedgerEntry } from "../../../src/runtime/ledger/types.ts";
 
 let dir: string;
 
@@ -167,7 +169,7 @@ describe("R2 catalog and lifecycle", () => {
 		store.database().close();
 	});
 
-	it("fork replays only allowed history and resets lifecycle projection", () => {
+	it("fork projects every canonical ledger record onto its own session lineage and retains tool/config audit", () => {
 		const store = openStore();
 		const sourceId = createRuntimeId("session", "source");
 		store.createSession({
@@ -179,24 +181,32 @@ describe("R2 catalog and lifecycle", () => {
 		const runtimeId = createRuntimeId("runtime", "r1");
 		ownerRow(store, sourceId, runtimeId, 1);
 		const fence = { sessionId: sourceId, runtimeId, generation: 1 };
-		store.appendEvent(fence, {
-			eventId: createRuntimeId("event", "1"),
-			ownerGeneration: 1,
-			eventType: "message",
-			payloadJson: JSON.stringify({ role: "user", content: [{ type: "text", text: "hi" }] }),
-			createdAtMs: 1,
-			expectedPreviousEventHash: null,
-		});
+		const appendLedger = (eventId: string, type: "message" | "tool_call" | "tool_result" | "custom", payload: Record<string, unknown>, timestamp: number): void => {
+			const tail = store.replaySessionEvents(sourceId).at(-1);
+			store.appendEvent(fence, {
+				eventId: createRuntimeId("event", eventId),
+				ownerGeneration: 1,
+				eventType: `ledger.${type}`,
+				payloadJson: JSON.stringify({
+					id: `legacy_${eventId}`,
+					sessionId: sourceId,
+					parentId: sourceId,
+					timestamp,
+					type,
+					payload,
+				}),
+				createdAtMs: timestamp,
+				expectedPreviousEventHash: tail?.currentEventHash ?? null,
+			});
+		};
+		appendLedger("user", "message", {
+			role: "user",
+			message: { role: "user", content: [{ type: "text", text: "hi" }] },
+		}, 1);
 		store.appendDriverEvent(fence, "driver.claimed", { clientId: "source-driver" });
-		const claimed = store.replaySessionEvents(sourceId).at(-1)!;
-		store.appendEvent(fence, {
-			eventId: createRuntimeId("event", "2"),
-			ownerGeneration: 1,
-			eventType: "tool_call",
-			payloadJson: JSON.stringify({ name: "echo" }),
-			createdAtMs: 2,
-			expectedPreviousEventHash: claimed.currentEventHash,
-		});
+		appendLedger("tool-call", "tool_call", { toolCallId: "call_1", toolName: "echo", input: { text: "hi" } }, 2);
+		appendLedger("tool-result", "tool_result", { toolCallId: "call_1", toolName: "echo", content: "hi", isError: false }, 3);
+		appendLedger("config", "custom", { kind: "runtime.config", provider: "deepseek", model: "v4", thinkingLevel: "high" }, 4);
 		const toolCall = store.replaySessionEvents(sourceId).at(-1)!;
 		store.appendEvent(fence, {
 			eventId: createRuntimeId("event", "closed"),
@@ -217,18 +227,32 @@ describe("R2 catalog and lifecycle", () => {
 		});
 		const sourceEvents = store.replaySessionEvents(sourceId);
 		const forkEvents = store.replaySessionEvents(forkId);
-		expect(forkEvents.map((event) => event.eventType)).toEqual(["message", "tool_call", "session.forked"]);
-		expect(forkEvents.map((event) => event.ownerGeneration)).toEqual([0, 0, 0]);
-		expect(forkEvents.slice(0, 2).map((event) => event.payloadJson)).toEqual([sourceEvents[0]?.payloadJson, sourceEvents[2]?.payloadJson]);
-		expect(JSON.parse(forkEvents[2]!.payloadJson)).toEqual({
+		expect(forkEvents.map((event) => event.eventType)).toEqual([
+			"ledger.message",
+			"ledger.tool_call",
+			"ledger.tool_result",
+			"ledger.custom",
+			"session.forked",
+		]);
+		expect(forkEvents.map((event) => event.ownerGeneration)).toEqual([0, 0, 0, 0, 0]);
+		const forkLedgerEntries = forkEvents.slice(0, -1).map((event) => JSON.parse(event.payloadJson) as LedgerEntry);
+		expect(forkLedgerEntries.map((entry) => entry.sessionId)).toEqual([forkId, forkId, forkId, forkId]);
+		expect(forkLedgerEntries[0]?.parentId).toBe(forkId);
+		expect(forkLedgerEntries.slice(1).map((entry, index) => entry.parentId)).toEqual(forkLedgerEntries.slice(0, -1).map((entry) => entry.id));
+		expect(forkLedgerEntries.map((entry) => entry.id)).not.toContain("legacy_user");
+		const replay = projectSessionReplay(forkLedgerEntries);
+		expect(replay.messages).toMatchObject([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+		expect(replay.auditEntries.map((entry) => entry.type)).toEqual(["tool_call", "tool_result"]);
+		expect(replay.config).toMatchObject({ provider: "deepseek", model: "v4", thinkingLevel: "high" });
+		expect(JSON.parse(forkEvents[4]!.payloadJson)).toEqual({
 			sourceSessionId: sourceId,
 			sourceHeadSequence: sourceEvents.length,
 			sourceHeadHash: sourceEvents.at(-1)!.currentEventHash,
 		});
 		expect(forkEvents[0]?.previousEventHash).toBeNull();
 		expect(forkEvents[0]?.currentEventHash).not.toBe(sourceEvents[0]?.currentEventHash);
-		expect(forked.headSequence).toBe(3);
-		expect(store.projectSession(forkId)).toMatchObject({ status: "active", driverRevision: 0, headSequence: 3 });
+		expect(forked.headSequence).toBe(5);
+		expect(store.projectSession(forkId)).toMatchObject({ status: "active", driverRevision: 0, headSequence: 5 });
 		store.database().close();
 	});
 

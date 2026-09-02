@@ -3,6 +3,7 @@ import type { SessionStore } from "../../storage/session-store/session-store.ts"
 import type { SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
 import type { AttemptPort } from "./attempt-gateway.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
+import { SessionWorkspaceAdmission } from "../../workspace/session-identity.ts";
 import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
 
@@ -115,8 +116,10 @@ export class SessionDomainRouter {
 		if (!validEnvelope(input)) {
 			return { ok: false, status: "failed", code: "invalid_domain_envelope", operation };
 		}
-			if (operation === "session.catalog.list") {
-				const sessions = this.store.listSessions();
+		if (operation === "session.catalog.list") {
+				const current = this.store.getSession(this.sessionId);
+				const admission = current === undefined ? undefined : SessionWorkspaceAdmission.fromRecord(current);
+				const sessions = admission === undefined ? [] : this.store.listSessions().filter((session) => admission.admits(session));
 				return {
 				ok: true,
 				status: "ok",
@@ -322,6 +325,11 @@ export class SessionDomainRouter {
 			}
 			if (!new Set(["active", "paused", "recovery_required"]).has(target.status)) {
 				return { ok: false, status: "denied", code: "session_not_resumable", operation, currentRevision };
+			}
+			const current = this.store.getSession(this.sessionId);
+			const admission = current === undefined ? undefined : SessionWorkspaceAdmission.fromRecord(current);
+			if (admission === undefined || !admission.admits(target)) {
+				return { ok: false, status: "denied", code: "session_workspace_mismatch", operation, currentRevision };
 			}
 			return { ok: true, status: "ok", operation, domainRevision: currentRevision, value: { targetSessionId } };
 		}

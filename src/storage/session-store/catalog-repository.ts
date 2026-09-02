@@ -20,20 +20,7 @@ import type {
 	SetSessionTitleInput,
 } from "./session-store.ts";
 import { SessionStoreError } from "./session-store-error.ts";
-
-/**
- * Fork 只能重放不携带 live authority 的 conversation/domain history。
- * owner/driver/process/approval/workspace/recovery 事件一律属于 source，
- * 新 Session 从无 owner、driver revision 0 开始。
- */
-const FORK_REPLAY_EVENT_TYPES = new Set([
-	"message",
-	"tool_call",
-	"ledger.message",
-	"agent.event",
-	"session.title_changed",
-	"session.idle_recap",
-]);
+import { ForkLedgerProjector } from "./fork-projector.ts";
 
 export function catalogRevisionInTransaction(db: Pick<SessionDatabase, "querySingle">): number {
 	const row = db.querySingle("SELECT catalog_revision FROM store_control WHERE singleton_id = 1");
@@ -272,7 +259,7 @@ export class CatalogRepository {
 		return this.getSession(input.sessionId)!;
 	}
 
-	/** fork:冻结 source head，只重放 allowlist history，并写入目标 Session 自己的 lineage event。 */
+	/** fork:冻结 source head，typed 投影 canonical ledger，并写入目标自己的 lineage event。 */
 	public forkSession(input: CreateSessionInput & { readonly sourceSessionId: string; readonly expectedSourceHeadSequence?: number }): SessionCatalogRecord {
 		this.assertAdmissionReady();
 		let forked: SessionCatalogRecord | undefined;
@@ -322,18 +309,22 @@ export class CatalogRepository {
 			}
 			let previous: string | null = null;
 			let sequence = 0;
+			const projector = new ForkLedgerProjector(input.sourceSessionId, input.sessionId);
 			for (const event of sourceEvents) {
-				if (!FORK_REPLAY_EVENT_TYPES.has(String(event.event_type))) continue;
+				const projected = projector.project({
+					eventId: String(event.event_id),
+					eventType: String(event.event_type),
+					payloadJson: String(event.payload_json),
+					createdAtMs: Number(event.created_at_ms),
+				});
+				if (projected === undefined) continue;
 				sequence += 1;
-				// event_id 全局 UNIQUE:fork 必须确定性 re-key(由 source eventId + 目标
-				// sessionId 派生);不把 source owner generation 带入新 Session。
-				const eventId = createRuntimeId("event", canonicalDigest({ source: String(event.event_id), target: input.sessionId }).slice(0, 32));
 				const current = sessionEventHash(
 					input.sessionId,
 					sequence,
-					eventId,
-					String(event.event_type),
-					String(event.payload_json),
+					projected.eventId,
+					projected.eventType,
+					projected.payloadJson,
 					previous,
 				);
 				tx.runSync(
@@ -344,13 +335,13 @@ export class CatalogRepository {
 					[
 						input.sessionId,
 						sequence,
-						eventId,
+						projected.eventId,
 						0,
-						String(event.event_type),
-						String(event.payload_json),
+						projected.eventType,
+						projected.payloadJson,
 						previous,
 						current,
-						Number(event.created_at_ms),
+						projected.createdAtMs,
 					],
 				);
 				previous = current;

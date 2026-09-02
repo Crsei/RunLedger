@@ -27,23 +27,25 @@ function runCli(args: string[], env: Record<string, string>): { stdout: string; 
 	return { stdout: result.stdout ?? "", stderr: result.stderr ?? "", status: result.status };
 }
 
-function setupHome(): { root: string; home: string } {
+function setupHome(): { root: string; home: string; workspace: string } {
 	const root = mkdtempSync(join(tmpdir(), "runledger-session-store-cli-"));
 	cleanup.push(root);
 	const home = join(root, "home");
+	const workspace = join(root, "workspace");
 	mkdirSync(home, { recursive: true, mode: 0o700 });
+	mkdirSync(workspace, { recursive: true, mode: 0o700 });
 	mkdirSync(join(home, "sessions", "2026", "08", "01"), { recursive: true, mode: 0o700 });
-	return { root, home };
+	return { root, home, workspace };
 }
 
-function writeFixtureSession(home: string, sessionId: string): string {
+function writeFixtureSession(home: string, sessionId: string, workspace: string): string {
 	const filePath = join(home, "sessions", "2026", "08", "01", "s1.jsonl");
 	const header = JSON.stringify({
 		type: "ledger",
 		id: createRuntimeId("event", "h"),
 		createdAt: 1_752_000_000_000,
 		sessionId,
-		metadata: { cwd: "/work/a" },
+		metadata: { cwd: workspace },
 	});
 	const entry = JSON.stringify({
 		id: createRuntimeId("event", "e1"),
@@ -67,12 +69,21 @@ describe("runledger migrate session-store", () => {
 		const unknownFlag = runCli(["migrate", "session-store", "--confirm-archive", "--dry-run"], { RUNLEDGER_DIR: home });
 		expect(unknownFlag.status).toBe(2);
 		expect(unknownFlag.stderr).toContain("不支持参数");
+
+		const deprecatedWorkspaceOverride = runCli([
+			"migrate",
+			"session-store",
+			"--confirm-archive",
+			"--workspace-id=workspace_override",
+		], { RUNLEDGER_DIR: home });
+		expect(deprecatedWorkspaceOverride.status).toBe(2);
+		expect(deprecatedWorkspaceOverride.stderr).toContain("不再拥有 migration workspace authority");
 	});
 
 	it("imports, verifies and archives the canonical JSONL in an isolated home", () => {
-		const { root, home } = setupHome();
+		const { root, home, workspace } = setupHome();
 		const sessionId = createRuntimeId("session", "cli1");
-		const sourcePath = writeFixtureSession(home, sessionId);
+		const sourcePath = writeFixtureSession(home, sessionId, workspace);
 		const result = runCli(["migrate", "session-store", "--confirm-archive"], { RUNLEDGER_DIR: home });
 		expect(result.status).toBe(0);
 		expect(result.stdout).toContain("committed");
@@ -89,8 +100,8 @@ describe("runledger migrate session-store", () => {
 	});
 
 	it("fails closed with legacy_host_active while a legacy writer holds the lock", () => {
-		const { home } = setupHome();
-		writeFixtureSession(home, createRuntimeId("session", "cli2"));
+		const { home, workspace } = setupHome();
+		writeFixtureSession(home, createRuntimeId("session", "cli2"), workspace);
 		// 模拟 active legacy writer:预创建 proper-lockfile 锁文件。
 		const lockPath = join(home, "sessions", "2026", "08", "01", "s1.jsonl.lock");
 		writeFileSync(lockPath, "held\n", { mode: 0o600 });
@@ -114,8 +125,8 @@ describe("runledger storage prune-legacy", () => {
 	});
 
 	it("deletes the verified archive only after migration", () => {
-		const { home } = setupHome();
-		writeFixtureSession(home, createRuntimeId("session", "cli3"));
+		const { home, workspace } = setupHome();
+		writeFixtureSession(home, createRuntimeId("session", "cli3"), workspace);
 		const migrated = runCli(["migrate", "session-store", "--confirm-archive"], { RUNLEDGER_DIR: home });
 		expect(migrated.status).toBe(0);
 		const digestMatch = /manifest=([a-f0-9]{64})/u.exec(migrated.stdout);

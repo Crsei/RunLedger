@@ -75,6 +75,7 @@ import {
 	assertSessionWorkspaceMatches,
 	resolveSessionWorkspaceIdentity,
 	sessionWorkspaceMatches,
+	type SessionWorkspaceIdentity,
 } from "./session-workspace-identity.ts";
 
 const VERSION = readVersionFromPackage();
@@ -201,7 +202,9 @@ export async function main(argv: readonly string[]): Promise<void> {
 	const worktreeGit = createProductionGitCommandPort();
 
 	let sessionId: SessionId;
+	let currentWorkspace: SessionWorkspaceIdentity;
 	try {
+		currentWorkspace = await resolveSessionWorkspaceIdentity(cwd, worktreeGit);
 		sessionId = await resolveSessionId(store, args, cwd, worktreeGit);
   } catch (error) {
     db.close();
@@ -261,6 +264,11 @@ export async function main(argv: readonly string[]): Promise<void> {
   };
   const ownedRuntimeRegistry = new Map<string, EmbeddedSessionRuntimeResult>();
   const openView = async (targetSessionId: string): Promise<CliSessionView> => {
+	const target = store.getSession(targetSessionId);
+	if (target === undefined) throw new Error(`session not found: ${targetSessionId}`);
+	// /resume 的 Domain admission 只是第一道门；任何 view composition 都必须
+	// 在使用 cwd、tools、security scope 之前复验同一 binding。
+	assertSessionWorkspaceMatches(target, currentWorkspace);
 	const typedSessionId = targetSessionId as SessionId;
 	const workspaceStorageKey = workspaceStorageKeyFor(typedSessionId);
     const embedded = await createEmbeddedSessionRuntime({
