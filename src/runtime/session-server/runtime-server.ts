@@ -100,6 +100,8 @@ interface ServerConnection {
 	outbox: Buffer[];
 	writing: boolean;
 	reverseRequests: Map<string, PendingReverseRequest>;
+	/** 已结束 request 的短期去重窗，只接受同一 connection 的迟到/重复回包。 */
+	retiredReverseRequests: Map<string, ReturnType<typeof setTimeout>>;
 	closed: boolean;
 }
 
@@ -260,6 +262,7 @@ export class SessionRuntimeServer implements OwnerTransport {
 			outbox: [],
 			writing: false,
 			reverseRequests: new Map(),
+			retiredReverseRequests: new Map(),
 			closed: false,
 		};
 		this.connections.add(connection);
@@ -346,11 +349,13 @@ export class SessionRuntimeServer implements OwnerTransport {
 				}
 				const pending = connection.reverseRequests.get(requestFrameId);
 				if (!pending) {
+					if (connection.retiredReverseRequests.has(requestFrameId)) return;
 					this.destroy(connection);
 					return;
 				}
 				connection.reverseRequests.delete(requestFrameId);
 				clearTimeout(pending.timeoutId);
+				this.retireReverseRequest(connection, requestFrameId);
 				pending.resolve(frame);
 				return;
 			}
@@ -608,16 +613,40 @@ export class SessionRuntimeServer implements OwnerTransport {
 		const frame = this.frameFor("reverse_request", { kind: request.kind, body: request.body });
 		return new Promise<SessionFrameEnvelope>((resolve, reject) => {
 			const timeoutId = setTimeout(() => {
-				connection.reverseRequests.delete(frame.frameId);
+				if (!connection.reverseRequests.delete(frame.frameId)) return;
+				this.retireReverseRequest(connection, frame.frameId);
 				reject(new Error("reverse request timed out"));
 			}, timeoutMs);
 			connection.reverseRequests.set(frame.frameId, { resolve, reject, timeoutId });
 			if (!this.enqueue(connection, frame)) {
 				clearTimeout(timeoutId);
-				connection.reverseRequests.delete(frame.frameId);
+				if (!connection.reverseRequests.delete(frame.frameId)) return;
+				this.retireReverseRequest(connection, frame.frameId);
 				reject(new Error("reverse request could not be delivered"));
 			}
 		});
+	}
+
+	/**
+	 * request 已经 timeout / settled 后，客户端可能仍在调度其 reverse_response。
+	 * 只记住本 server 发出的有限 ID，避免它被误作协议攻击而断开健康连接。
+	 */
+	private retireReverseRequest(connection: ServerConnection, requestFrameId: string): void {
+		const existing = connection.retiredReverseRequests.get(requestFrameId);
+		if (existing !== undefined) clearTimeout(existing);
+		while (connection.retiredReverseRequests.size >= SESSION_PROTOCOL_BOUNDS.maxReverseRequestWaiters) {
+			const oldest = connection.retiredReverseRequests.keys().next().value;
+			if (oldest === undefined) break;
+			const timeoutId = connection.retiredReverseRequests.get(oldest);
+			if (timeoutId !== undefined) clearTimeout(timeoutId);
+			connection.retiredReverseRequests.delete(oldest);
+		}
+		const timeoutId = setTimeout(() => {
+			if (connection.retiredReverseRequests.get(requestFrameId) === timeoutId) {
+				connection.retiredReverseRequests.delete(requestFrameId);
+			}
+		}, SESSION_PROTOCOL_BOUNDS.maxWaitMs);
+		connection.retiredReverseRequests.set(requestFrameId, timeoutId);
 	}
 
 	// ── outbox / backpressure / lifecycle ─────────────────────────────────
@@ -671,6 +700,8 @@ export class SessionRuntimeServer implements OwnerTransport {
 			pending.reject(new Error("connection closed"));
 		}
 		connection.reverseRequests.clear();
+		for (const timeoutId of connection.retiredReverseRequests.values()) clearTimeout(timeoutId);
+		connection.retiredReverseRequests.clear();
 		if (connection.initialized) this.options.onAttachmentCountChange?.(this.connectionCounts());
 	}
 

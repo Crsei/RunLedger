@@ -28,7 +28,14 @@ function collectTypeScriptFiles(root: string): string[] {
 }
 
 describe("OpenTUI framework boundary", () => {
-  it("生产 TUI 与 package 依赖不再引用 pi-tui", () => {
+	it("configures the OpenTUI diagnostic console to remain suppressed on renderer errors", () => {
+		const factory = readFileSync(join(process.cwd(), "src", "tui", "opentui", "component-runtime", "index.ts"), "utf8");
+		expect(factory).toContain('consoleMode: "disabled"');
+		expect(factory).toContain("openConsoleOnError: false");
+		expect(factory).toContain("renderer.console.hide()");
+	});
+
+	it("生产 TUI 与 package 依赖不再引用 pi-tui", () => {
     const legacyPackage = "@earendil-works/" + "pi-tui";
     const sourceMatches = collectTypeScriptFiles(join(process.cwd(), "src", "tui"))
       .filter((path) => readFileSync(path, "utf8").includes(legacyPackage));

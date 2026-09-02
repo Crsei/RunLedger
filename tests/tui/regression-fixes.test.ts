@@ -274,6 +274,33 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
+	it("expires a Session approval locally before a stale allow response can be sent", async () => {
+		vi.useFakeTimers();
+		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
+		const abort = new AbortController();
+		const expiresAt = new Date(Date.now() + 25).toISOString();
+		const pending = mode.handleSessionReverseRequest({
+			frameId: "approval-expiry",
+			kind: "reverse_request",
+			protocolVersion: 1,
+			body: {
+				kind: "approval_prompt",
+				body: { requestType: "permission", toolName: "bash", summary: "write workspace file", expiresAt },
+			},
+		} as SessionFrameEnvelope, abort.signal);
+		try {
+			await vi.advanceTimersByTimeAsync(25);
+			expect(Reflect.get(mode, "activePermissionView")).toBeUndefined();
+			await expect(pending).resolves.toEqual({ ok: false, code: "approval_expired" });
+			const notices = mode.getTuiState().timeline.committedRows.filter((row) => row.kind === "notice");
+			expect(notices.map((row) => row.message.text)).toContain("Approval expired; command was not run");
+		} finally {
+			abort.abort();
+			await pending;
+			vi.useRealTimers();
+		}
+	});
+
 	it("fails closed when a second permission request arrives while the conversation view is active", async () => {
 		const mode = new InteractiveMode({ controller: new ContractController(), terminal: new FakeTerminal() });
 		const first = mode.handleReverseRequest(reverseFrame(), new AbortController().signal);

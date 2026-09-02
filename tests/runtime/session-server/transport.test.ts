@@ -57,6 +57,13 @@ async function tryHandshake(overrides: Record<string, unknown> = {}): Promise<{ 
 	}
 }
 
+function onlyConnectionId(): string {
+	const server = harness!.server as unknown as { readonly connections: Set<{ readonly connectionId: string }> };
+	const connection = [...server.connections][0];
+	if (connection === undefined) throw new Error("expected one initialized connection");
+	return connection.connectionId;
+}
+
 describe("R4 transport handshake", () => {
 	it("accepts a correct handshake with the row token", async () => {
 		await setup();
@@ -160,6 +167,64 @@ describe("R4 transport handshake", () => {
 			body: { commandId: "command_1", kind: "prompt", body: {} },
 		});
 		await closed;
+	});
+
+	it("keeps the TCP connection usable when a timed-out reverse request receives a late response", async () => {
+		const h = await setup();
+		let resolveHandler: ((body: Record<string, unknown>) => void) | undefined;
+		let markHandlerEntered: (() => void) | undefined;
+		const handlerEntered = new Promise<void>((resolve) => { markHandlerEntered = resolve; });
+		const transport = await SessionClientTransport.connect(h.server.endpoint!.port, {
+			reverseRequestHandler: async () => new Promise<Record<string, unknown>>((resolve) => {
+				resolveHandler = resolve;
+				markHandlerEntered?.();
+			}),
+		});
+		try {
+			await transport.request(handshakeFrame() as never);
+			const reverse = h.server.requestToConnection(
+				onlyConnectionId(),
+				{ kind: "approval_prompt", body: { requestType: "permission" } },
+				10,
+			);
+			await handlerEntered;
+			await expect(reverse).rejects.toThrow("reverse request timed out");
+			if (resolveHandler === undefined) throw new Error("reverse handler was not installed");
+			resolveHandler({ ok: true, decision: "allow-once" });
+			await new Promise<void>((resolve) => setTimeout(resolve, 25));
+
+			await expect(transport.request({
+				frameId: "snapshot_after_late_reverse_response",
+				kind: "query_request",
+				protocolVersion: SESSION_PROTOCOL_VERSION,
+				body: { kind: "snapshot", body: {} },
+			})).resolves.toMatchObject({
+				kind: "query_result",
+				body: { ok: true, kind: "snapshot" },
+			});
+		} finally {
+			await transport.close();
+		}
+	});
+
+	it("still closes the connection for a reverse response that was never issued", async () => {
+		const h = await setup();
+		const transport = await SessionClientTransport.connect(h.server.endpoint!.port);
+		try {
+			await transport.request(handshakeFrame() as never);
+			const closed = new Promise<void>((resolve) => {
+				transport.onClose(() => resolve());
+			});
+			transport.notify({
+				frameId: "unknown_reverse_response",
+				kind: "reverse_response",
+				protocolVersion: SESSION_PROTOCOL_VERSION,
+				body: { requestFrameId: "reverse_request_never_issued", ok: true },
+			});
+			await closed;
+		} finally {
+			await transport.close();
+		}
 	});
 
 	it("rejects handshake while the owner is still starting", async () => {

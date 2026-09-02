@@ -247,7 +247,10 @@ export async function createOpenTuiComponentRuntime(
     screenMode: "alternate-screen",
     exitOnCtrlC: false,
     consoleMode: "disabled",
+    openConsoleOnError: false,
   });
+  // OpenTUI 的 SHOW_CONSOLE 会在构造期直接显示覆盖层，需显式清除。
+  renderer.console.hide();
   return createOpenTuiComponentRuntimeFromRenderer(renderer, options);
 }
 

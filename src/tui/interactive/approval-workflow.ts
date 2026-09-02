@@ -59,11 +59,18 @@ export class ApprovalWorkflow {
 		if (!view) return Promise.resolve({ ok: false, code: "reverse_request_invalid" });
 		if (this.activePermissionView !== undefined) return Promise.resolve({ ok: false, code: "approval_busy" });
 		if (signal.aborted) return Promise.resolve({ ok: false, code: "approval_aborted" });
+		const deadline = view.expiresAt === undefined ? undefined : Date.parse(view.expiresAt);
+		if (deadline !== undefined && (!Number.isFinite(deadline) || deadline <= Date.now())) {
+			port.showNotice("Approval expired; command was not run", "error");
+			return Promise.resolve({ ok: false, code: "approval_expired" });
+		}
 		return new Promise<Record<string, unknown>>((resolve) => {
 			let settled = false;
+			let expiryTimeout: ReturnType<typeof setTimeout> | undefined;
 			const finish = (responseBody: Record<string, unknown>): void => {
 				if (settled) return;
 				settled = true;
+				if (expiryTimeout !== undefined) clearTimeout(expiryTimeout);
 				signal.removeEventListener("abort", onAbort);
 				this.unsubscribePermissionInput?.();
 				this.unsubscribePermissionInput = undefined;
@@ -76,7 +83,16 @@ export class ApprovalWorkflow {
 			const onAbort = (): void => {
 				finish({ ok: false, code: "approval_aborted" });
 			};
+			const expire = (): void => {
+				if (settled) return;
+				port.showNotice("Approval expired; command was not run", "error");
+				finish({ ok: false, code: "approval_expired" });
+			};
 			const choose = (decision: ApprovalDecision): void => {
+				if (deadline !== undefined && Date.now() >= deadline) {
+					expire();
+					return;
+				}
 				// 这里只记录用户决策意图；Host 是否接受由 reverse response 的调用方确认。
 				port.dispatchTimeline([{
 					type: "notice",
@@ -109,6 +125,9 @@ export class ApprovalWorkflow {
 				permissionView.handleInput(data);
 				return { consume: true };
 			});
+			if (deadline !== undefined) {
+				expiryTimeout = setTimeout(expire, Math.max(0, deadline - Date.now()));
+			}
 			port.uiRequestRender();
 		});
 	}
