@@ -23,6 +23,7 @@ import {
 } from "./fixtures/contract-integration.ts";
 import type { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
+import { explorationPlainText } from "../../src/tui/opentui/exploration-renderable.ts";
 import type { PresentationBlock } from "../../src/tui/presentation.ts";
 import type { AgentMessage } from "../../src/runtime/types.ts";
 import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
@@ -40,7 +41,9 @@ function plainFrame(terminal: { frame(): string }): string {
 function chatText(mode: InteractiveMode): string {
   const refs = (mode as unknown as { refs: { chat: ChatContainer } }).refs;
   const blocks: PresentationBlock[] = refs.chat.present(120);
-  return blocks.map((block) => ("content" in block ? block.content : "")).join("\n");
+  return blocks.map((block) => block.kind === "exploration"
+    ? explorationPlainText(block, 120)
+    : "content" in block ? block.content : "").join("\n");
 }
 
 function seededReplayController(): ContractController {
@@ -80,17 +83,18 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
     });
   }
 
-  test("history replay renders historical user/assistant/tool rows in order", async () => {
+  test("history replay renders historical user/assistant plus the read summary in order", async () => {
     const harness = createContractHarness({ controller: seededReplayController() });
     try {
       await settleFrames();
       const text = chatText(harness.mode);
       const userIndex = text.indexOf("historical user text");
       const assistantIndex = text.indexOf("historical assistant text");
-      const toolIndex = text.indexOf("historical tool result text");
+      const toolIndex = text.indexOf("Read <path>");
       expect(userIndex).toBeGreaterThanOrEqual(0);
       expect(assistantIndex).toBeGreaterThanOrEqual(0);
       expect(toolIndex).toBeGreaterThanOrEqual(0);
+      expect(text).not.toContain("historical tool result text");
       expect(userIndex).toBeLessThan(assistantIndex);
       expect(assistantIndex).toBeLessThan(toolIndex);
     } finally {

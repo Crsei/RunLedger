@@ -10,6 +10,7 @@ import {
 import { FrameScheduler, type FrameBacklogSnapshot } from "./opentui/frame-scheduler.ts";
 import { planUpdatePlainText } from "./opentui/plan-update-renderable.ts";
 import { noticePlainText } from "./opentui/notice-renderable.ts";
+import { explorationPlainText } from "./opentui/exploration-renderable.ts";
 import { formatSeparatorLabel } from "./opentui/block-layout.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { PresentationBlock, StatusIndicatorView } from "./presentation.ts";
@@ -658,6 +659,12 @@ function blockTextForTerminal(block: PresentationBlock): string {
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
+  if (block.kind === "exploration") return explorationPlainText(block, 80);
+  if (block.kind === "tool-detail") return [
+    `${block.action.label.text} ${block.action.query?.text ?? block.action.target.text}`,
+    ...block.body.flatMap((body) => body.kind === "text" ? [body.content.text] : []),
+    ...(block.action.errorSummary === undefined ? [] : [`error: ${block.action.errorSummary.text}`]),
+  ].join("\n");
   return block.content;
 }
 

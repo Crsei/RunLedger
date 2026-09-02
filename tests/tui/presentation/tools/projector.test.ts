@@ -101,7 +101,16 @@ describe("B2 safe tool projector", () => {
 
 	it("read/grep result metadata only exposes structured counts", () => {
 		const readMeta = projectToolResultMetadata({ toolName: "read", details: { lineCount: 42, truncated: true }, content: [] });
-		expect(readMeta).toEqual({ kind: "read", lineCount: { state: "known", value: 42 }, truncated: true });
+		expect(readMeta).toMatchObject({
+			kind: "read",
+			lineCount: { state: "known", value: 42 },
+			truncated: true,
+			exploration: {
+				resultCount: { state: "known", value: 42 },
+				resultUnit: "lines",
+				sourceTruncated: true,
+			},
+		});
 		const grepMeta = projectToolResultMetadata({ toolName: "grep", details: { matchCount: 3, fileCount: 2 }, content: [] });
 		expect(grepMeta.kind).toBe("grep");
 		if (grepMeta.kind === "grep") {

@@ -1,5 +1,10 @@
-import type { SafeBoundedText } from "./presentation/tools/types.ts";
+import type {
+	SafeBoundedText,
+	SafeExplorationResult,
+	SafeToolBodyBlock,
+} from "./presentation/tools/types.ts";
 import type { PresentationPart } from "./timeline/part-stability.ts";
+import type { TimelineStatus } from "./timeline/types.ts";
 
 export type PlanStepStatus = "pending" | "in-progress" | "completed";
 
@@ -41,6 +46,35 @@ export interface PresentationBlockMetadata extends Partial<PresentationPart> {
 	readonly themeGeneration?: number;
 }
 
+/** main surface 的只读发现摘要；不包含工具成功正文。 */
+export interface ExplorationActionView {
+	readonly id: string;
+	readonly kind: "read" | "search" | "list";
+	readonly label: SafeBoundedText;
+	readonly target: SafeBoundedText;
+	readonly query?: SafeBoundedText;
+	readonly status: TimelineStatus;
+	readonly result?: SafeExplorationResult;
+	readonly errorSummary?: SafeBoundedText;
+}
+
+export type ExplorationBlock = PresentationBlockMetadata & {
+	id?: string;
+	kind: "exploration";
+	state: "active" | "completed" | "completed-with-errors";
+	actions: readonly ExplorationActionView[];
+	/** 仅为主面的显示预算投影；不改变 actions / durable Timeline。 */
+	omittedActions?: number;
+};
+
+/** transcript surface 的单调用详情；正文仅来自 safe presentation。 */
+export type ToolDetailBlock = PresentationBlockMetadata & {
+	id?: string;
+	kind: "tool-detail";
+	action: ExplorationActionView;
+	body: readonly SafeToolBodyBlock[];
+};
+
 export type PresentationBlock = (
   | { id?: string; kind: "text"; content: string }
   | { id?: string; kind: "markdown"; content: string; streaming: boolean }
@@ -75,6 +109,8 @@ export type PresentationBlock = (
   }
 	| PlanUpdateBlock
 	| NoticeBlock
+	| ExplorationBlock
+	| ToolDetailBlock
   | {
     id?: string;
     kind: "status-line";

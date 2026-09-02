@@ -95,7 +95,7 @@
 - 不新建语法高亮、theme 或颜色转换（23 权威）；
 - 不改变 shell 输出 retention（`SHELL_TAIL_LINES_PER_CHANNEL=100` 不变，转写视图只显示 bounded tail 并标记 truncated）；
 - 不实现 Codex 的终端 scrollback 直写与 raw-lines 复制语义（RunLedger 的选择/复制由 OpenTUI `selectable` 承担）；
-- 不实现 exploring 分组（Read/List/Search/Run 归组），见 D9；
+- exploring 分组不属于 Plan 24 的验收范围，当前由 Plan 26 独立推进，见 D9；
 - 不把 plan/todo 或转写视图变成 Runtime durable state 或 ledger 正文；
 - 不放宽 `WorkspaceExecutionEnvelope` 的 native path 脱敏规则。
 
@@ -181,9 +181,9 @@ plan 步骤、todo 文本、exec 输出、diff 行、separator 标签都必须�
 
 所有新 renderable 基于 `selectable` 的 StyledText；样式（颜色、DIM、粗体）只叠加不改变文本内容。glyph 前缀（`✔ `、`  │ `）属于显示层，复制时是否包含由 OpenTUI selection 语义决定，不额外维护第二份 raw 文本。
 
-### D9：exploring 分组暂缓
+### D9：exploring 分组由 Plan 26 承接
 
-Codex 的 `Exploring` / `Read·List·Search·Run` 归组依赖对 read/grep 类工具的相邻归并，RunLedger 当前每个 tool call 是独立行。归并会改变行 identity（与 18 的 keyed identity 冲突），默认关闭。开启条件：先有 read/grep 的结构化行展示，再由独立计划评估归并，本文不实现。
+Codex 的 `Exploring` / `Read·List·Search` 归组依赖对只读发现工具的相邻归并，RunLedger 当前每个 tool call 是独立行。本文保持该能力不在 Plan 24 的已验收范围内；后续结构化摘要、main/transcript 双 surface、稳定 identity 与截断元数据修复只以 [`26-codex-exploration-output-summary-plan.md`](26-codex-exploration-output-summary-plan.md) 为权威。Plan 26 当前为 `partial`：自动门禁和隔离 PATH TTY smoke 已有 fresh evidence，真实探索调用、S6 性能/重放和人工视觉/复制仍未闭合。普通 Run/Unknown 不属于 Codex `is_exploring_call` 白名单，不应并入探索组。
 
 ---
 

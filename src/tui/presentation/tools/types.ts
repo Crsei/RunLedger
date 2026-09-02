@@ -15,6 +15,9 @@ export type SafeToolRenderer =
 	| "write"
 	| "read"
 	| "grep"
+	| "find"
+	| "glob"
+	| "ls"
 	| "media"
 	| "goal"
 	| "shell";
@@ -24,7 +27,10 @@ export type SafeToolInputMetadata =
 	| { readonly kind: "edit"; readonly path: SafeBoundedText; readonly editCount: SafeCount }
 	| { readonly kind: "write"; readonly path: SafeBoundedText; readonly lineCount: SafeCount; readonly byteCount: SafeCount }
 	| { readonly kind: "read"; readonly path: SafeBoundedText; readonly offset?: SafeCount; readonly limit?: SafeCount }
-	| { readonly kind: "grep"; readonly path: SafeBoundedText }
+	| { readonly kind: "grep"; readonly path: SafeBoundedText; readonly query: SafeBoundedText }
+	| { readonly kind: "find"; readonly path: SafeBoundedText; readonly pattern: SafeBoundedText }
+	| { readonly kind: "glob"; readonly path: SafeBoundedText; readonly pattern: SafeBoundedText }
+	| { readonly kind: "ls"; readonly path: SafeBoundedText }
 	| { readonly kind: "shell"; readonly commandLabel: SafeBoundedText; readonly background?: boolean };
 
 export type SafeDiffLine =
@@ -83,11 +89,28 @@ export interface SafePlanUpdate {
 	readonly steps: readonly SafePlanStep[];
 }
 
+/**
+ * 只读发现工具的结构化结果。source 与 presentation 的截断 authority 分离，
+ * 缺失的运行时字段保持 unknown，绝不由空正文推断为 0。
+ */
+export interface SafeExplorationResult {
+	readonly kind: "exploration";
+	readonly resultCount: SafeCount;
+	readonly resultUnit: "lines" | "matches" | "files" | "entries";
+	readonly sourceTruncated: boolean;
+	readonly presentationTruncated: boolean;
+	readonly outputLines: SafeCount;
+	readonly totalLines: SafeCount;
+}
+
 export type SafeToolResultMetadata =
 	| { readonly kind: "generic" }
 	| { readonly kind: "edit"; readonly document?: SafeDiffDocument; readonly addedLines?: SafeCount; readonly removedLines?: SafeCount }
-	| { readonly kind: "read"; readonly lineCount: SafeCount; readonly truncated: boolean }
-	| { readonly kind: "grep"; readonly matchCount: SafeCount; readonly fileCount: SafeCount; readonly samples: readonly SafeBoundedText[]; readonly truncated: boolean }
+	| { readonly kind: "read"; readonly lineCount: SafeCount; readonly truncated: boolean; readonly exploration: SafeExplorationResult }
+	| { readonly kind: "grep"; readonly matchCount: SafeCount; readonly fileCount: SafeCount; readonly samples: readonly SafeBoundedText[]; readonly truncated: boolean; readonly exploration: SafeExplorationResult }
+	| { readonly kind: "find"; readonly exploration: SafeExplorationResult }
+	| { readonly kind: "glob"; readonly exploration: SafeExplorationResult }
+	| { readonly kind: "ls"; readonly exploration: SafeExplorationResult }
 	| { readonly kind: "media"; readonly items: readonly SafeMediaView[] }
 	| { readonly kind: "shell"; readonly chunks: readonly SafeShellChunk[]; readonly truncated: boolean; readonly exitCode: SafeCount; readonly durationMs: SafeCount; readonly background: boolean }
 	| { readonly kind: "goal"; readonly goalId: SafeBoundedText; readonly phase: SafeBoundedText; readonly revision: number; readonly evidenceCount: SafeCount };

@@ -42,7 +42,10 @@ export type ReadToolInput = Static<typeof readSchema>;
 
 /** read details —— pi 同款:仅承载 truncation 信息。 */
 export interface ReadToolDetails {
-  truncation?: TruncationResult;
+  /** 每次执行均报告 Runtime source 截断边界，供安全 presentation 区分来源。 */
+  truncation: TruncationResult;
+  /** 返回给 Agent 的正文行数（不含 continuation hint）。 */
+  lineCount: number;
   /** 命中 mtime 去重缓存;UI / ledger 可选消费 */
   cacheHit?: boolean;
 }
@@ -181,8 +184,7 @@ export function createReadTool(
         displayText = `${outText}\n\n${hints.join("\n")}`;
       }
 
-      const details: ReadToolDetails = {};
-      if (truncation.truncated) details.truncation = truncation;
+      const details: ReadToolDetails = { truncation, lineCount: truncation.outputLines };
       if (cacheHit) details.cacheHit = true;
       return {
         content: [{ type: "text", text: displayText }],

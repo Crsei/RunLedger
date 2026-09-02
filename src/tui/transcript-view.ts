@@ -61,7 +61,7 @@ export function projectTranscriptOverlay(
 	let committed = variants?.[variantKey];
 	if (committed === undefined) {
 		committed = {
-			blocks: timelineToBlocks(state, { includeActive: false, hideThinking: hidden }),
+			blocks: timelineToBlocks(state, { includeActive: false, hideThinking: hidden, surface: "transcript" }),
 			revision: `committed-${nextProjectionRevision}`,
 		};
 		nextProjectionRevision += 1;
@@ -72,7 +72,7 @@ export function projectTranscriptOverlay(
 	const activeRows = state.activeOrder
 		.map((id) => state.activeRowsByCorrelationId[id])
 		.filter((row): row is TimelineRow => row !== undefined);
-	const liveTail = activeRows.flatMap((row) => rowToBlocks(row, { hideThinking: hidden }));
+	const liveTail = activeRows.flatMap((row) => rowToBlocks(row, { hideThinking: hidden, surface: "transcript" }));
 	return {
 		rows: committed.blocks,
 		...(liveTail.length > 0 ? { liveTail } : {}),
@@ -100,12 +100,48 @@ export function transcriptBlockLines(block: PresentationBlock, width = 80): read
 	}
 	if (block.kind === "diff") return diffDisplayLines(block as DiffBlock, width);
 	if (block.kind === "notice") return noticeDisplayLines((block as NoticeBlock).message, width);
+	if (block.kind === "tool-detail") return toolDetailLines(block);
 	if (block.kind === "separator") return [block.content ?? formatSeparatorLabel(block.label, block.metrics)];
 	if (block.kind === "status-line") return [block.segments.map((segment) => segment.text).join(" · ")];
 	if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)];
 	if (block.kind === "input") return [block.title, block.message, block.value];
 	if (block.kind === "text" || block.kind === "markdown") return block.content.split("\n");
 	return [];
+}
+
+function toolDetailLines(block: Extract<PresentationBlock, { readonly kind: "tool-detail" }>): readonly string[] {
+	const lines = [`${block.action.label.text} ${block.action.query?.text ?? block.action.target.text}`];
+	for (const body of block.body) {
+		if (body.kind === "text" && body.content.text.length > 0) lines.push(body.content.text);
+	}
+	const bodyContainsErrorSummary = block.action.errorSummary !== undefined
+		&& block.body.some((body) => body.kind === "text" && body.content.text.includes(block.action.errorSummary!.text));
+	if (block.action.errorSummary !== undefined && !bodyContainsErrorSummary) lines.push(`error: ${block.action.errorSummary.text}`);
+	if (block.action.result?.sourceTruncated === true) lines.push(sourceTruncationMarker(block.action.result));
+	if (block.action.result?.presentationTruncated === true) lines.push("… TUI preview truncated at 64 KiB");
+	lines.push(toolDetailStatus(block.action.status, block.action.result));
+	return lines;
+}
+
+function sourceTruncationMarker(result: import("./presentation/tools/types.ts").SafeExplorationResult): string {
+	const output = knownCount(result.outputLines);
+	const total = knownCount(result.totalLines);
+	if (output !== undefined && total !== undefined) return `… Runtime output truncated (${output}/${total} lines)`;
+	if (output !== undefined) return `… Runtime output truncated (${output} lines retained)`;
+	return "… Runtime output truncated";
+}
+
+function toolDetailStatus(
+	status: import("./timeline/types.ts").TimelineStatus,
+	result: import("./presentation/tools/types.ts").SafeExplorationResult | undefined,
+): string {
+	const icon = status === "succeeded" ? "✓" : status === "pending" || status === "running" ? "…" : "✗";
+	if (result === undefined || result.resultCount.state !== "known") return icon;
+	return `${icon} · ${result.resultCount.value} ${result.resultUnit}`;
+}
+
+function knownCount(count: import("./presentation/tools/types.ts").SafeCount): number | undefined {
+	return count.state === "known" ? count.value : undefined;
 }
 
 /** 只读 pager：只消费键盘，不把任何输入写回 composer。 */

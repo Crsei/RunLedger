@@ -61,6 +61,7 @@ describe("glob tool", () => {
       expect(lines.some((l) => l.includes("src"))).toBe(false);
       expect(lines.some((l) => l.includes("node_modules"))).toBe(false);
       expect(lines.some((l) => l.includes(".git"))).toBe(false);
+		expect(r.details).toMatchObject({ matchCount: 1, truncation: { truncated: false, outputLines: 1, totalLines: 1 } });
     } finally {
       // tmp 由 OS 兜底清理
     }

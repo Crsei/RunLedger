@@ -47,7 +47,9 @@ const grepSchema = Type.Object({
 export type GrepToolInput = Static<typeof grepSchema>;
 
 export interface GrepToolDetails {
-  truncation?: TruncationResult;
+  truncation: TruncationResult;
+  matchCount: number;
+  fileCount: number;
   matchLimitReached?: number;
 }
 
@@ -124,10 +126,10 @@ export function createGrepTool(
         .map((l) => (l.length > MAX_LINE_LENGTH ? l.slice(0, MAX_LINE_LENGTH) + "… [truncated]" : l))
         .join("\n");
       const { text, truncation } = truncateHead(trimmed, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes: DEFAULT_MAX_BYTES });
-      const details: GrepToolDetails = {};
-      if (truncation.truncated) details.truncation = truncation;
       // 实际匹配行数(rg 输出按行计)≈ trim 后行数
       const matchCount = trimmed.split("\n").filter((l) => l.length > 0).length;
+      const fileCount = new Set(trimmed.split("\n").filter((line) => line.length > 0).map((line) => line.split(":", 1)[0]!)).size;
+      const details: GrepToolDetails = { truncation, matchCount, fileCount };
       if (matchCount >= limit) details.matchLimitReached = limit;
 
       return {

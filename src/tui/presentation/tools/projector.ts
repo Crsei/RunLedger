@@ -13,6 +13,7 @@ import type {
 	SafeDiffDocument,
 	SafeDiffHunk,
 	SafeDiffLine,
+	SafeExplorationResult,
 	SafeExecLayout,
 	SafePlanStepStatus,
 	SafePlanUpdate,
@@ -119,6 +120,12 @@ export function rendererForTool(toolName: string): SafeToolRenderer {
 			return "read";
 		case "grep":
 			return "grep";
+		case "find":
+			return "find";
+		case "glob":
+			return "glob";
+		case "ls":
+			return "ls";
 		case "goal":
 			return "goal";
 		default:
@@ -166,7 +173,25 @@ export function projectInputMetadata(toolName: string, args: unknown): SafeToolI
 				limit: safeCount(args.limit),
 			};
 		case "grep":
-			return { kind: "grep", path: path() ?? boundedToolText("<pattern>") };
+			return {
+				kind: "grep",
+				path: path() ?? boundedToolText("<path>"),
+				query: boundedToolText(typeof args.pattern === "string" ? args.pattern : "<pattern>", LABEL_BOUND_BYTES),
+			};
+		case "find":
+			return {
+				kind: "find",
+				path: path() ?? boundedToolText("<path>"),
+				pattern: boundedToolText(typeof args.pattern === "string" ? args.pattern : "<pattern>", LABEL_BOUND_BYTES),
+			};
+		case "glob":
+			return {
+				kind: "glob",
+				path: path() ?? boundedToolText("<path>"),
+				pattern: boundedToolText(typeof args.pattern === "string" ? args.pattern : "<pattern>", LABEL_BOUND_BYTES),
+			};
+		case "ls":
+			return { kind: "ls", path: path() ?? boundedToolText("<path>") };
 		default:
 			return { kind: "generic" };
 	}
@@ -311,8 +336,9 @@ export function projectToolResultMetadata(result: { readonly toolName: string; r
 		case "read":
 			return {
 				kind: "read",
-				lineCount: safeCount(details.lineCount),
-				truncated: details.truncated === true,
+				lineCount: safeCount(details.lineCount ?? nestedTruncation(details)?.outputLines),
+				truncated: sourceTruncated(details, []),
+				exploration: explorationResult(details, result.content, "lines", details.lineCount),
 			};
 		case "grep":
 			return {
@@ -320,11 +346,55 @@ export function projectToolResultMetadata(result: { readonly toolName: string; r
 				matchCount: safeCount(details.matchCount),
 				fileCount: safeCount(details.fileCount),
 				samples: [],
-				truncated: details.truncated === true,
+				truncated: sourceTruncated(details, ["matchLimitReached"]),
+				exploration: explorationResult(details, result.content, "matches", details.matchCount, ["matchLimitReached"]),
+			};
+		case "find":
+			return {
+				kind: "find",
+				exploration: explorationResult(details, result.content, "files", details.resultCount, ["resultLimitReached"]),
+			};
+		case "glob":
+			return {
+				kind: "glob",
+				exploration: explorationResult(details, result.content, "files", details.matchCount, ["limitReached"]),
+			};
+		case "ls":
+			return {
+				kind: "ls",
+				exploration: explorationResult(details, result.content, "entries", details.entryCount, ["entryLimitReached"]),
 			};
 		default:
 			return { kind: "generic" };
 	}
+}
+
+function explorationResult(
+	details: Record<string, unknown>,
+	content: unknown,
+	resultUnit: SafeExplorationResult["resultUnit"],
+	resultCount: unknown,
+	limitKeys: readonly string[] = [],
+): SafeExplorationResult {
+	const truncation = nestedTruncation(details);
+	return {
+		kind: "exploration",
+		resultCount: safeCount(resultCount),
+		resultUnit,
+		sourceTruncated: sourceTruncated(details, limitKeys),
+		presentationTruncated: boundedToolText(toolResultText(content), TOOL_TEXT_BOUND_BYTES).truncated,
+		outputLines: safeCount(truncation?.outputLines),
+		totalLines: safeCount(truncation?.totalLines),
+	};
+}
+
+function nestedTruncation(details: Record<string, unknown>): Record<string, unknown> | undefined {
+	return isRecord(details.truncation) ? details.truncation : undefined;
+}
+
+function sourceTruncated(details: Record<string, unknown>, limitKeys: readonly string[]): boolean {
+	if (details.truncated === true || nestedTruncation(details)?.truncated === true) return true;
+	return limitKeys.some((key) => details[key] === true || typeof details[key] === "number");
 }
 
 /** 解析 runtime edit 的 unified diff；只保留有界 patch 行，不接收完整 before/after。 */

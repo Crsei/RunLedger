@@ -37,7 +37,7 @@ export type GlobToolInput = Static<typeof globSchema>;
 
 export interface GlobToolDetails {
   matchCount: number;
-  truncation?: TruncationResult;
+  truncation: TruncationResult;
   /** 命中条目达到 limit 时为 true,见 details.matchCount == limit */
   limitReached?: boolean;
 }
@@ -214,8 +214,8 @@ export function createGlobTool(
       });
       const details: GlobToolDetails = {
         matchCount: lines.length,
+        truncation,
       };
-      if (truncation.truncated) details.truncation = truncation;
       if (limitReached) details.limitReached = true;
 
       return {

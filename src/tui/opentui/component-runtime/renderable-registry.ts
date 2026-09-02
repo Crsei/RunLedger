@@ -5,6 +5,7 @@ import { ExecRenderable } from "../exec-renderable.ts";
 import { DiffRenderable } from "../diff-renderable.ts";
 import { PlanUpdateRenderable } from "../plan-update-renderable.ts";
 import { NoticeRenderable } from "../notice-renderable.ts";
+import { ExplorationRenderable } from "../exploration-renderable.ts";
 import { ansiToStyledText } from "../ansi-styled-text.ts";
 import { createRunLedgerSyntaxStyle } from "../syntax-style.ts";
 import { BodySignatureTracker } from "../body-signature.ts";
@@ -166,6 +167,8 @@ export class RenderableRegistry {
       if (current.contentKey !== contentKey) current.renderable.updateBlock(block);
     } else if (block.kind === "notice" && current.renderable instanceof NoticeRenderable) {
       if (current.contentKey !== contentKey) current.renderable.updateBlock(block);
+    } else if (block.kind === "exploration" && current.renderable instanceof ExplorationRenderable) {
+      if (current.contentKey !== contentKey) current.renderable.updateBlock(block);
     } else if (current.renderable instanceof TextRenderable && current.contentKey !== contentKey) {
       current.renderable.content = ansiToStyledText(contentKey);
     }
@@ -186,6 +189,8 @@ export class RenderableRegistry {
       ? new PlanUpdateRenderable(renderer, { ...common, block })
       : block.kind === "notice"
       ? new NoticeRenderable(renderer, { ...common, block, highlightService: this.port.syntaxHighlightService, themeController: this.port.syntaxThemeController })
+      : block.kind === "exploration"
+      ? new ExplorationRenderable(renderer, { ...common, block })
       : new TextRenderable(renderer, { ...common, content: ansiToStyledText(blockText(block)) });
     if (block.kind === "markdown" && !block.streaming && renderable instanceof MarkdownRenderable) {
       renderable.streaming = false;

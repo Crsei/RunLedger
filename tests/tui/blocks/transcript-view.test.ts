@@ -185,6 +185,36 @@ describe("transcript view projection", () => {
 			"✓ • 10ms",
 		]);
 	});
+
+	it("keeps Runtime and TUI truncation markers distinct for exploration detail", () => {
+		const detail: PresentationBlock = {
+			kind: "tool-detail",
+			action: {
+				id: "read-1",
+				kind: "read",
+				label: bounded("Read"),
+				target: bounded("src/large.ts"),
+				status: "succeeded",
+				result: {
+					kind: "exploration",
+					resultCount: { state: "known", value: 2000 },
+					resultUnit: "lines",
+					sourceTruncated: true,
+					presentationTruncated: true,
+					outputLines: { state: "known", value: 2000 },
+					totalLines: { state: "known", value: 2300 },
+				},
+			},
+			body: [{ kind: "text", content: bounded("safe retained preview") }],
+		};
+
+		expect(transcriptBlockLines(detail, 80)).toEqual(expect.arrayContaining([
+			"safe retained preview",
+			"… Runtime output truncated (2000/2300 lines)",
+			"… TUI preview truncated at 64 KiB",
+			"✓ · 2000 lines",
+		]));
+	});
 });
 
 describe("TranscriptOverlayComponent", () => {

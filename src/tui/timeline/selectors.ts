@@ -9,20 +9,46 @@ import type { PresentationBlock, PresentationBlockMetadata } from "../presentati
 import type { SafeToolUsageView } from "../presentation/tools/types.ts";
 import type { TimelineRow, TimelineState } from "./types.ts";
 import { diffLineNumberWidth } from "../opentui/block-layout.ts";
+import {
+	explorationBlockForRows,
+	explorationDetailForRow,
+	isExplorationRow,
+} from "../presentation/tools/exploration.ts";
+
+export type TimelineProjectionSurface = "main" | "transcript";
 
 export interface TimelineToBlocksOptions {
 	readonly includeActive?: boolean;
 	/** 仅跳过 thinking block 的展示投影；TimelineRow 原始数据保持不变。 */
 	readonly hideThinking?: boolean;
+	/** main 仅显示探索摘要；transcript 按原始 tool call 显示有界详情。 */
+	readonly surface?: TimelineProjectionSurface;
 }
 
 /** 按 committed + active（activeOrder 顺序）产出稳定 id 的 blocks。 */
 export function timelineToBlocks(state: TimelineState, options: TimelineToBlocksOptions = {}): PresentationBlock[] {
 	const blocks: PresentationBlock[] = [];
 	const includeActive = options.includeActive ?? true;
+	const surface = options.surface ?? "main";
 	let rowsSinceBoundary: TimelineRow[] = [];
+	let explorationRows: TimelineRow[] = [];
+	const flushExploration = (finalized: boolean): void => {
+		const block = explorationBlockForRows(explorationRows, finalized);
+		if (block !== undefined) blocks.push(block);
+		explorationRows = [];
+	};
+	const appendRow = (row: TimelineRow): void => {
+		if (surface === "main" && isExplorationRow(row)) {
+			if (explorationRows.length >= 32) flushExploration(true);
+			explorationRows.push(row);
+			return;
+		}
+		flushExploration(true);
+		blocks.push(...rowToBlocks(row, options));
+	};
 	for (const row of state.committedRows) {
 		if (row.kind === "run-boundary") {
+			flushExploration(true);
 			if (hasWorkActivity(rowsSinceBoundary)) {
 				for (const block of rowToBlocks(row, options)) {
 					blocks.push(block.kind === "separator"
@@ -34,17 +60,19 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 			continue;
 		}
 		rowsSinceBoundary.push(row);
-		blocks.push(...rowToBlocks(row, options));
+		appendRow(row);
 	}
 	if (includeActive) {
 		for (const id of state.activeOrder) {
 			const row = state.activeRowsByCorrelationId[id];
 			if (row !== undefined) {
 				rowsSinceBoundary.push(row);
-				blocks.push(...rowToBlocks(row, options));
+				appendRow(row);
 			}
 		}
 	}
+	// 末尾组仍可能在同一 turn 中追加新的探索动作，不能进入 settled cache。
+	flushExploration(false);
 	return blocks;
 }
 
@@ -76,6 +104,22 @@ export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions =
 		}
 		case "tool": {
 			const presentation = row.presentation.state === "known" ? row.presentation.value : undefined;
+			if (options.surface === "transcript") {
+				const detail = explorationDetailForRow(row, rowFinalized(row));
+				if (detail !== undefined) {
+					return [{
+						id: `tool-detail-${row.id}`,
+						...partMetadata(row, `${row.id}/tool-detail`),
+						kind: "tool-detail",
+						action: detail.action,
+						body: detail.body,
+					}];
+				}
+			}
+			if (options.surface !== "transcript") {
+				const exploration = explorationBlockForRows([row], rowFinalized(row));
+				if (exploration !== undefined) return [exploration];
+			}
 			if (presentation?.renderer === "plan") {
 				const plan = presentation.plan;
 				if (plan === undefined || (plan.steps.length === 0 && plan.explanation === undefined)) return [];

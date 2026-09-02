@@ -24,7 +24,8 @@ const lsSchema = Type.Object({
 export type LsToolInput = Static<typeof lsSchema>;
 
 export interface LsToolDetails {
-  truncation?: TruncationResult;
+  truncation: TruncationResult;
+  entryCount: number;
   entryLimitReached?: number;
 }
 
@@ -90,9 +91,8 @@ export function createLsTool(
         maxBytes: DEFAULT_MAX_BYTES,
       });
 
-      const details: LsToolDetails = {};
+      const details: LsToolDetails = { truncation, entryCount: lines.length };
       if (entryLimitReached !== undefined) details.entryLimitReached = entryLimitReached;
-      if (truncation.truncated) details.truncation = truncation;
 
       const hint =
         entryLimitReached !== undefined ? `\n(后 ${entryLimitReached} 条已截断,请使用 limit=${limit * 2} 或更精确 path)` : "";

@@ -13,6 +13,7 @@ import type { DiffRenderable } from "../diff-renderable.ts";
 import type { ExecRenderable } from "../exec-renderable.ts";
 import type { NoticeRenderable } from "../notice-renderable.ts";
 import type { PlanUpdateRenderable } from "../plan-update-renderable.ts";
+import type { ExplorationRenderable } from "../exploration-renderable.ts";
 import type { PresentationBlock, StatusIndicatorView } from "../../presentation.ts";
 import type { StatusLineSegment } from "../../highlight/status-style.ts";
 import type { TuiAction } from "../../application/action.ts";
@@ -73,7 +74,7 @@ export interface OpenTuiComponentRuntime {
   destroy(): void;
 }
 
-type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable | PlanUpdateRenderable | NoticeRenderable;
+type BodyRenderable = TextRenderable | MarkdownRenderable | ExecRenderable | DiffRenderable | PlanUpdateRenderable | NoticeRenderable | ExplorationRenderable;
 type OverlayRenderable = TextRenderable | InputRenderable | SelectRenderable | ExecRenderable;
 
 export interface KeyedRenderable<T extends BodyRenderable | OverlayRenderable> {

@@ -232,6 +232,20 @@ export {
 export { loadTips, pickTip, renderWelcomeTip, TIPS } from "./components/welcome-tips.ts";
 export { PlanUpdateRenderable, type PlanUpdateRenderableOptions } from "./opentui/plan-update-renderable.ts";
 export {
+  ExplorationRenderable,
+  explorationDisplayLines,
+  explorationPlainText,
+  type ExplorationRenderableOptions,
+} from "./opentui/exploration-renderable.ts";
+export {
+	explorationActionForRow,
+	explorationBlockForRows,
+	explorationDetailForRow,
+	explorationKindForTool,
+	isExplorationRow,
+	type ExplorationKind,
+} from "./presentation/tools/exploration.ts";
+export {
   TRANSCRIPT_MAX_BLOCKS,
   TRANSCRIPT_OUTPUT_MAX_LINES,
   TranscriptOverlayComponent,

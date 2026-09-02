@@ -80,8 +80,11 @@ describe("S7 canonical Timeline information equivalence", () => {
 		const failedUpdate = failedEvents.find((event) => event.type === "tool_update");
 		if (failedUpdate?.type !== "tool_update" || failedUpdate.presentation.state !== "known") throw new Error("missing failed update");
 		const failed: TimelineRow = { ...failedStart, status: "failed", presentation: failedUpdate.presentation };
-		expect(textOf(failed)).toContain("✗ read");
-		expect(textOf(failed)).toContain("error: not found");
+		expect(rowToBlocks(failed)).toMatchObject([{
+			kind: "exploration",
+			state: "completed-with-errors",
+			actions: [{ id: "read-1", status: "failed", errorSummary: { text: "not found" } }],
+		}]);
 	});
 
 	it("keeps bounded shell stdout/stderr tails, background, exit code and duration distinct", () => {

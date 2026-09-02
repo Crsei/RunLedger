@@ -31,7 +31,8 @@ const findSchema = Type.Object({
 export type FindToolInput = Static<typeof findSchema>;
 
 export interface FindToolDetails {
-  truncation?: TruncationResult;
+  truncation: TruncationResult;
+  resultCount: number;
   resultLimitReached?: number;
 }
 
@@ -81,9 +82,8 @@ export function createFindTool(
         maxLines: Number.MAX_SAFE_INTEGER,
         maxBytes: DEFAULT_MAX_BYTES,
       });
-      const details: FindToolDetails = {};
-      if (truncation.truncated) details.truncation = truncation;
       const lines = r.stdout.split("\n").filter((l) => l.length > 0).length;
+      const details: FindToolDetails = { truncation, resultCount: lines };
       if (lines >= limit) details.resultLimitReached = limit;
 
       return {

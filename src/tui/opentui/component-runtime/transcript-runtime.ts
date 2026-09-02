@@ -9,6 +9,7 @@ import { plainExecText } from "../exec-renderable.ts";
 import { diffPlainText } from "../diff-renderable.ts";
 import { planUpdatePlainText } from "../plan-update-renderable.ts";
 import { noticePlainText } from "../notice-renderable.ts";
+import { explorationPlainText } from "../exploration-renderable.ts";
 import { settled, type PresentationPart } from "../../timeline/part-stability.ts";
 import { statusIndicatorPlainText } from "./footer-editor-runtime.ts";
 import type { OpenTuiComponentFrame } from "./types.ts";
@@ -35,6 +36,8 @@ export function blockText(block: PresentationBlock): string {
   if (block.kind === "status-line") return block.segments.map((segment) => segment.text).join(" · ");
   if (block.kind === "plan-update") return planUpdatePlainText(block);
   if (block.kind === "notice") return noticePlainText(block);
+  if (block.kind === "exploration") return explorationPlainText(block);
+  if (block.kind === "tool-detail") return block.action.label.text;
   return block.content;
 }
 
@@ -88,6 +91,10 @@ export function blockCharacterCount(block: string | PresentationBlock): number {
     ? planUpdatePlainText(block).length
     : block.kind === "notice"
     ? noticePlainText(block).length
+    : block.kind === "exploration"
+    ? explorationPlainText(block).length
+    : block.kind === "tool-detail"
+    ? block.action.label.text.length
     : block.content.length;
 }
 

@@ -45,6 +45,7 @@ describe("stdlib tools (cross-platform)", () => {
     expect((r.content[0] as { text: string }).text).toContain("line2");
     expect((r.content[0] as { text: string }).text).toContain("line3");
     expect((r.content[0] as { text: string }).text).not.toContain("line4");
+		expect(r.details).toMatchObject({ lineCount: 2, truncation: { truncated: false, outputLines: 2, totalLines: 2 } });
   });
 
   it("read: 不存在文件抛错", async () => {
@@ -169,6 +170,7 @@ describe("stdlib tools (cross-platform)", () => {
       literal: true,
     });
     expect((r.content[0] as { text: string }).text).toContain("needle");
+		expect(r.details).toMatchObject({ matchCount: 1, truncation: { truncated: false, outputLines: 1, totalLines: 1 } });
     // 至少有 ripgrep probe + grep fallback 两次调用
     expect(calls.find((c) => c.cmd.startsWith("grep"))).toBeDefined();
   });
@@ -203,6 +205,7 @@ describe("stdlib tools (cross-platform)", () => {
     const tool = createFindTool(dir, { shell: mockShell as never });
     const r = await tool.execute("tc1", { pattern: "*.ts", path: "." });
     expect((r.content[0] as { text: string }).text).toContain("c.ts");
+		expect(r.details).toMatchObject({ resultCount: 1, truncation: { truncated: false, outputLines: 1, totalLines: 1 } });
     expect(calls.find((c) => c.cmd.startsWith("find"))).toBeDefined();
   });
 
@@ -214,6 +217,7 @@ describe("stdlib tools (cross-platform)", () => {
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("subdir/");
     expect(text).toContain("f.txt");
+		expect(r.details).toMatchObject({ entryCount: 2, truncation: { truncated: false, outputLines: 2, totalLines: 2 } });
   });
 
   it("ls: 不存在路径 → 抛错", async () => {
