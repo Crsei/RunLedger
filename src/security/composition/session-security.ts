@@ -30,6 +30,7 @@ import {
 	type SessionProcessLeaf,
 } from "../integration/session-local-leaves.ts";
 import { ApprovalCoordinator, HeadlessDenyPrompter, type ApprovalAuditPort, type ApprovalStateStorePort } from "../permission/approval-coordinator.ts";
+import { DeterministicAutoApprovalReviewer } from "../permission/auto-approval-reviewer.ts";
 import { PermissionEngine } from "../permission/engine.ts";
 import { BashSecurityAnalyzer } from "../permission/bash-ast/classifier.ts";
 import type { BashSecurityAnalyzerPort, BashClassificationAuditPort, BashShadowTelemetryPort } from "../permission/bash-ast/types.ts";
@@ -38,7 +39,7 @@ import type { RequestPermissionsPort } from "../tools/request-permissions.ts";
 import type { FileSystemBrokerPort } from "../policy-filesystem.ts";
 import type { NetworkBrokerPort } from "../policy-network.ts";
 import { createSandboxBackend } from "../sandbox/factory.ts";
-import type { SandboxBackend } from "../sandbox/types.ts";
+import type { SandboxBackend, SandboxCapability } from "../sandbox/types.ts";
 import type { GovernedProcessEnvironment, SessionToolchainProbe, SessionToolchainSnapshot } from "../toolchain.ts";
 import type { PermissionPrompter, SecuritySnapshot } from "../types.ts";
 import { createConstraintProviders, createWorkspaceEnvelope, type ProcessBinding } from "./constraint-providers.ts";
@@ -86,6 +87,10 @@ export interface SessionSecurityCompositionOptions {
 
 export interface SessionSecurityComposition {
 	readonly snapshot: SecuritySnapshot;
+	/** 与 snapshot loader 完全相同的 canonical workspace settings locator key。 */
+	readonly workspaceStorageKey: string;
+	/** 当前 Host backend 的 capability proof；只用于安全设置可用性投影。 */
+	readonly sandboxCapability: SandboxCapability;
 	readonly executionEnv: ExecutionEnv;
 	readonly authorizationPolicy: ToolAuthorizationPolicy;
 	readonly managedProcess: SessionManagedProcessSecurity;
@@ -129,6 +134,7 @@ export async function createSessionSecurity(
 		runtimeWorkspacePlatform(),
 		{ probe: { which: findLocalExecutable } },
 	);
+	const sandboxCapability = await sandboxBackend.probe();
 	const filesystemBroker = options.filesystemBroker ?? createLocalFileSystemBroker();
 	const networkBroker = options.networkBroker ?? createLocalNetworkBroker();
 	const processLeaf = options.processLeaf ?? createLocalSessionProcessLeaf();
@@ -150,6 +156,7 @@ export async function createSessionSecurity(
 	const approvalCoordinator = new ApprovalCoordinator(options.approvalPorts === undefined
 		? {
 			prompter: new HeadlessDenyPrompter(),
+			...(snapshot.approvalReviewer === "auto-review" ? { autoReviewer: new DeterministicAutoApprovalReviewer() } : {}),
 			...(options.now === undefined ? {} : { clock: options.now }),
 			...(options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs }),
 		}
@@ -157,6 +164,7 @@ export async function createSessionSecurity(
 			prompter: options.approvalPorts.prompter,
 			store: options.approvalPorts.stateStore,
 			audit: options.approvalPorts.audit,
+			...(snapshot.approvalReviewer === "auto-review" ? { autoReviewer: new DeterministicAutoApprovalReviewer() } : {}),
 			...(options.now === undefined ? {} : { clock: options.now }),
 			...(options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs }),
 		});
@@ -207,6 +215,8 @@ export async function createSessionSecurity(
 	};
 	return {
 		snapshot,
+		workspaceStorageKey: storageKey,
+		sandboxCapability,
 		executionEnv,
 		authorizationPolicy: new GovernedToolAuthorizationPolicy(),
 		managedProcess,

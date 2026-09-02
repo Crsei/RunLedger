@@ -44,10 +44,29 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 			}
 			const roots = request.operation === "read" ? snapshot.filesystem.readRoots : snapshot.filesystem.writeRoots;
 			if (snapshot.profile.filesystemMode !== "unrestricted" && !roots.some((root) => within(root, target))) {
+				if (
+					request.operation !== "read" &&
+					snapshot.profile.name === "workspace-write" &&
+					snapshot.profile.approvalPolicy === "on-request"
+				) {
+					return {
+						action: "ask",
+						reason: "workspace-external mutation requires an exact one-shot approval",
+						matchedRuleIds: ["builtin-root-boundary-escalation"],
+						source: "builtin",
+					};
+				}
 				return { action: "deny", reason: "target is outside allowed roots", matchedRuleIds: ["builtin-root-boundary"], source: "builtin" };
+			}
+			if (request.operation !== "read" && snapshot.profile.filesystemMode === "unrestricted") {
+				return { action: "allow", reason: "unrestricted filesystem profile allows mutation", matchedRuleIds: ["builtin-unrestricted-write"], source: "builtin" };
 			}
 			return request.operation === "read"
 				? { action: "allow", reason: "read is inside an allowed root", matchedRuleIds: ["builtin-read-root"], source: "builtin" }
+				: snapshot.profile.name === "workspace-write" &&
+					snapshot.profile.approvalPolicy === "on-request" &&
+					within(snapshot.workspaceRoot, target)
+					? { action: "allow", reason: "ordinary workspace mutation is allowed by Ask for approval", matchedRuleIds: ["builtin-workspace-write"], source: "builtin" }
 				: { action: "ask", reason: "filesystem mutation requires exact approval", matchedRuleIds: ["builtin-write-approval"], source: "builtin" };
 		}
 		case "shell": {

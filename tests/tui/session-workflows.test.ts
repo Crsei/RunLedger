@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { ContractController, ContractTerminal, contractAssistantMessage, settleFrames } from "./fixtures/contract-integration.ts";
@@ -37,6 +38,43 @@ function sessionController() {
 }
 
 describe("S2 InteractiveMode session workflows", () => {
+	it("routes /permissions through the Host security domain into the permission cards", async () => {
+		const terminal = new ContractTerminal();
+		const sourceDigest = runtimeDigest({ profile: "workspace-write" });
+		const querySessionDomain = vi.fn(async (): Promise<Record<string, unknown>> => ({
+			domainRevision: 6,
+			scope: "user",
+			document: { profile: "workspace-write" },
+			sourceDigest,
+			appliesTo: "new_sessions",
+			editable: true,
+		}));
+		const controller = new ContractController({
+			supportedOperations: ["security.settings.inspect", "security.settings.update"],
+			querySessionDomain,
+			commandSessionDomain: async () => ({ domainRevision: 6 }),
+		});
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			terminal.send("/permissions");
+			terminal.send("\r");
+			await vi.waitFor(() => expect(querySessionDomain).toHaveBeenCalledWith(
+				"security.settings.inspect",
+				{ scope: "user" },
+				expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }),
+			));
+			await vi.waitFor(() => {
+				const overlay = (mode as unknown as { ui: { getOverlay(): { render(width: number): readonly string[] } | undefined } }).ui.getOverlay();
+				expect(overlay?.render(120).join("\n")).toContain("Ask for approval");
+			});
+		} finally {
+			mode.quit();
+			await running;
+		}
+	});
+
 	it("re-seeds usage from canonical messages when owner recovery changes state", () => {
 		const canonical = contractAssistantMessage({
 			usage: {

@@ -8,7 +8,7 @@ import { parseSecurityConfigDocument, parseSecurityConfigLayer } from "../../src
 const repo = (relative: string): string => resolve("/repo", relative);
 
 describe("security config", () => {
-	it("uses fail-closed workspace defaults and protects runtime metadata", () => {
+	it("uses review-gated workspace defaults and protects runtime metadata", () => {
 		const result = resolveSecuritySnapshot({
 			layers: [],
 			workspaceRoot: "/repo",
@@ -21,7 +21,7 @@ describe("security config", () => {
 				name: "workspace-write",
 				approvalPolicy: "on-request",
 				sandbox: "workspace-write",
-				network: { mode: "deny", allowedHosts: [] },
+				network: { mode: "review", allowedHosts: [] },
 			},
 			filesystem: { protectedPaths: [repo(".git"), repo(".runledger")] },
 		} });
@@ -29,7 +29,7 @@ describe("security config", () => {
 
 	it("rejects unknown symbolic paths and exact-schema extensions", () => {
 		expect(parseSecurityConfigDocument({ profile: "workspace-write", unexpected: true })).toMatchObject({ ok: false });
-		const layer = parseSecurityConfigLayer("managed", JSON.stringify({ filesystem: { writeRoots: [":unknown"] } }));
+		const layer = parseSecurityConfigLayer("project", JSON.stringify({ filesystem: { writeRoots: [":unknown"] } }));
 		expect(layer).toMatchObject({ ok: true });
 		if (!layer.ok) return;
 		expect(resolveSecuritySnapshot({
@@ -96,5 +96,21 @@ describe("security config", () => {
 			},
 		});
 		expect(result).toMatchObject({ ok: false, error: { code: "invalid_config" } });
+	});
+
+	it("accepts managed policy only as constraints and deny-oriented hardening", () => {
+		expect(parseSecurityConfigLayer("managed", JSON.stringify({
+			profile: "danger-full-access",
+		}))).toMatchObject({ ok: false, error: { code: "invalid_config" } });
+		expect(parseSecurityConfigLayer("managed", JSON.stringify({
+			managedConstraints: {
+				allowedProfiles: ["workspace-write"],
+				allowedApprovalPolicies: ["on-request"],
+				minimumSandbox: "workspace-write",
+				forceNetworkDeny: false,
+			},
+			filesystem: { denyWrite: ["secrets"] },
+			rules: [{ id: "deny-push", action: "deny", kind: "shell", pattern: "git push*" }],
+		}))).toMatchObject({ ok: true });
 	});
 });

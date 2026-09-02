@@ -24,6 +24,8 @@ import type { Models } from "../../models.ts";
 import type { RunledgerLayout } from "../contracts/storage-layout.ts";
 import type { ProjectSettings } from "../../storage/settings-manager.ts";
 import { resolveRecordingConfig } from "../../storage/settings-manager.ts";
+import { SecuritySettingsPort } from "../../storage/security-settings-port.ts";
+import { builtinPermissionPresets } from "../../security/config/presets.ts";
 import type { TraceRecorderFactory } from "../trace/composition.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -62,6 +64,8 @@ import { createSessionProductionToolSource } from "../agents/capability-subset.t
 import { createMultiAgentDomain, type SessionMultiAgentPolicySources } from "../agents/domain.ts";
 import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
 import type { PreviousOwnerLiveness } from "../agents/supervisor.ts";
+import { composeSessionResourceDomains } from "./resource-domain-composition.ts";
+import { createSecuritySettingsResourceDomain } from "./security-settings-domain.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -174,6 +178,20 @@ export async function assembleSessionDomain(
 		baseToolNames: baseTools.map((tool) => tool.name),
 		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
+	const managedSecuritySettings = security.snapshot.sources.some((source) => source === "managed" || source === "organization");
+	const securitySettings = createSecuritySettingsResourceDomain({
+		generation: fence.generation,
+		settings: new SecuritySettingsPort({
+			layout: options.layout,
+			workspaceKey: security.workspaceStorageKey,
+			workspaceRoot: options.cwd,
+			tempRoot: options.layout.tmp,
+			managedReadOnly: managedSecuritySettings,
+		}),
+		managedReadOnly: managedSecuritySettings,
+		attemptPort: () => attemptPort.get(),
+	});
+	const resources = composeSessionResourceDomains([extensions.resources, securitySettings]);
 	const composedTools = [...baseTools, ...extensions.tools];
 	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
 	let titleLifecycle: SessionTitleLifecycle | undefined;
@@ -282,7 +300,7 @@ export async function assembleSessionDomain(
 		childRuntime,
 		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
 		process,
-		resources: extensions.resources,
+		resources,
 		planInspection,
 		start: extensions.start,
 			shutdown: async (reason) => {
@@ -307,8 +325,13 @@ export async function assembleSessionDomain(
 			filesystemMode: security.snapshot.profile.filesystemMode,
 			networkMode: security.snapshot.profile.network.mode,
 			sandboxMode: security.snapshot.profile.sandbox,
+			approvalReviewer: security.snapshot.approvalReviewer ?? "user",
 			policyDigest: security.snapshot.policyDigest,
+			...(security.snapshot.managedConstraintsDigest === undefined ? {} : { managedConstraintsDigest: security.snapshot.managedConstraintsDigest }),
 			sourceCount: security.snapshot.sources.length,
+			presetAvailability: builtinPermissionPresets().map((preset) => managedSecuritySettings
+				? { id: preset.id, state: "unavailable" as const, reason: "managed_security_read_only" }
+				: { id: preset.id, ...preset.availability(undefined, security.sandboxCapability) }),
 			bashAnalyzerMode: security.snapshot.bashAnalyzer?.mode,
 			bashAnalyzerSource: security.snapshot.bashAnalyzer?.source,
 			bashAnalyzerConfigDigest: security.snapshot.bashAnalyzer?.configDigest,

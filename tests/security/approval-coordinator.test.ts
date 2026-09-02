@@ -23,7 +23,7 @@ const NOW = new Date("2026-08-04T00:00:00.000Z");
 function snapshot(): SecuritySnapshot {
 	return {
 		profile: {
-			name: "workspace-write",
+			name: "custom",
 			approvalPolicy: "on-request",
 			filesystemMode: "workspace-write",
 			network: { mode: "deny", allowedHosts: [] },

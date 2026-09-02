@@ -11,6 +11,8 @@ import {
 } from "../runtime/contracts/public.ts";
 import type { HostWorkspaceExecutionContext } from "./types.ts";
 import {
+	CanonicalPathResolver,
+	FileAccessGuard,
 	pathWithin,
 	PolicyFileSystem,
 	type FileSystemBrokerPort,
@@ -23,11 +25,13 @@ import {
 	type ApprovalRevalidationPort,
 } from "./permission/approval-coordinator.ts";
 import { PermissionEngine } from "./permission/engine.ts";
+import { autoApprovalReviewInputDigest, type AutoApprovalReviewInput } from "./permission/auto-approval-reviewer.ts";
 import type { MemoryPermissionGrantStore } from "./permission/grants.ts";
 import type {
 	AccessRequest,
 	AuthorizationRequest,
 	AuthorizationResult,
+	PendingFilesystemEscalation,
 	SecurityResult,
 	SecuritySnapshot,
 } from "./types.ts";
@@ -160,11 +164,9 @@ function approvalReceiptIsBound(request: AuthorizationRequest, authorization: Au
 
 export class ExecutionGateway {
 	readonly #options: ExecutionGatewayOptions;
-	readonly #filesystem: PolicyFileSystem;
 
 	public constructor(options: ExecutionGatewayOptions) {
 		this.#options = options;
-		this.#filesystem = new PolicyFileSystem(options.filesystemBroker, options.workspace.cwd, options.snapshot);
 	}
 
 	public async authorize(
@@ -195,9 +197,32 @@ export class ExecutionGateway {
 			cwd: input.request.cwd,
 			policyDigest: input.request.snapshot.policyDigest,
 		});
-		const authorized = await this.#options.approvalCoordinator.authorize(input.request, evaluation, revalidate, signal);
+		const autoReview = await this.#autoReviewInput(input.request, evaluation);
+		const authorized = await this.#options.approvalCoordinator.authorize(input.request, evaluation, revalidate, signal, autoReview);
 		if (!authorized.ok) return authorized;
 		return this.#finishAuthorization(input, authorized.value);
+	}
+
+	async #autoReviewInput(
+		request: AuthorizationRequest,
+		evaluation: ReturnType<PermissionEngine["evaluate"]>,
+	): Promise<AutoApprovalReviewInput | undefined> {
+		if (request.snapshot.approvalReviewer !== "auto-review" || evaluation.decision !== "ask" || request.requests.length !== 1) return undefined;
+		const target = request.requests[0];
+		if (target?.kind !== "filesystem" || target.operation !== "write") return undefined;
+		const decision = evaluation.requestDecisions[0];
+		if (decision === undefined || decision.action !== "ask" || decision.matchedRuleIds.includes("builtin-root-boundary-escalation")) return undefined;
+		const canonical = await new CanonicalPathResolver(this.#options.filesystemBroker, this.#options.workspace.cwd).resolve(target.path);
+		if (!canonical.ok || !pathWithin(request.snapshot.workspaceRoot, canonical.value.canonicalPath)) return undefined;
+		const ordinary = new FileAccessGuard(request.snapshot).check("write", canonical.value);
+		if (!ordinary.ok) return undefined;
+		const body = {
+			request,
+			evaluation,
+			canonicalTarget: canonical.value.canonicalPath,
+			sessionGeneration: request.workspace.leaseRevision,
+		};
+		return { ...body, inputDigest: autoApprovalReviewInputDigest(body) };
 	}
 
 	async #finishAuthorization(
@@ -263,6 +288,9 @@ export class ExecutionGateway {
 		if (input.request.snapshot.profile.sandbox === "off" && input.constraintInput.modes.sandbox !== "none") return invalid("constraint sandbox mode is weaker than the current off policy");
 		const requiresProcessSandbox = input.request.requests.some((request) => request.kind === "shell") || input.request.toolName === "bash";
 		if (requiresProcessSandbox && input.request.snapshot.profile.sandbox !== "off" && input.constraintInput.modes.sandbox === "none") return invalid("restrictive sandbox decision is missing");
+		const escalations = await this.#filesystemEscalations(input.request, input.authorization);
+		if (!escalations.ok) return escalations;
+		const filesystem = new PolicyFileSystem(this.#options.filesystemBroker, this.#options.workspace.cwd, this.#options.snapshot, escalations.value);
 		const complete = this.#completion(input.request, input.authorization);
 		return {
 			ok: true,
@@ -271,8 +299,8 @@ export class ExecutionGateway {
 				authorizationDigest: input.authorizationDigest,
 				requestDigest: input.requestDigest,
 				constraintSnapshot: input.constraintSnapshot!,
-				fs: this.#filesystem,
-				filesystem: this.#filesystem,
+				fs: filesystem,
+				filesystem,
 				network: new PolicyNetworkClient(
 					this.#options.networkBroker,
 					this.#options.snapshot.profile.network,
@@ -281,6 +309,49 @@ export class ExecutionGateway {
 				finalLeaf: this.#options.finalLeaf,
 				complete,
 			},
+		};
+	}
+
+	async #filesystemEscalations(
+		request: AuthorizationRequest,
+		authorization: AuthorizationResult,
+	): Promise<SecurityResult<readonly PendingFilesystemEscalation[]>> {
+		const evaluation = this.#options.permissionEngine.evaluate(request.requests, request.snapshot);
+		const eligible = evaluation.requestDecisions
+			.map((decision, index) => ({ decision, request: request.requests[index] }))
+			.filter((entry): entry is {
+				readonly decision: typeof evaluation.requestDecisions[number];
+				readonly request: Extract<AccessRequest, { readonly kind: "filesystem" }>;
+			} => entry.request?.kind === "filesystem" &&
+				(entry.request.operation === "write" || entry.request.operation === "delete") &&
+				entry.decision.matchedRuleIds.includes("builtin-root-boundary-escalation"));
+		if (eligible.length === 0) return { ok: true, value: [] };
+		if (
+			authorization.decisionSource !== "approval" ||
+			authorization.approval?.decision !== "allowed" ||
+			authorization.approval.scope !== "once" ||
+			eligible.length !== 1 ||
+			request.requests.length !== 1
+		) return denied("workspace-external filesystem escalation requires one exact allow-once approval");
+		const target = eligible[0]!.request;
+		if (target.operation !== "write" && target.operation !== "delete") return denied("workspace-external filesystem escalation has an invalid operation");
+		const resolver = new CanonicalPathResolver(this.#options.filesystemBroker, this.#options.workspace.cwd);
+		const canonical = await resolver.resolve(target.path);
+		if (!canonical.ok) return canonical;
+		const ordinaryGuard = new FileAccessGuard(this.#options.snapshot);
+		const ordinary = ordinaryGuard.check(target.operation, canonical.value);
+		if (ordinary.ok) return { ok: true, value: [] };
+		if (ordinary.error.code !== "path_escape") return ordinary;
+		return {
+			ok: true,
+			value: [{
+				operation: target.operation,
+				canonicalTarget: canonical.value.canonicalPath,
+				requestedPath: target.path,
+				policyDigest: request.snapshot.policyDigest,
+				sessionGeneration: request.workspace.leaseRevision,
+				scope: "once",
+			}],
 		};
 	}
 

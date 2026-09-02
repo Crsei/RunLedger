@@ -36,12 +36,14 @@ export type SecurityPolicySource = (typeof SECURITY_POLICY_SOURCES)[number];
 export const PERMISSION_PROFILE_NAMES = [
 	"read-only",
 	"workspace-write",
+	"approve-for-me",
 	"headless-workspace",
 	"danger-full-access",
 	"custom",
 ] as const;
 export type PermissionProfileName = (typeof PERMISSION_PROFILE_NAMES)[number];
 export type ApprovalPolicyName = "on-request" | "never" | "untrusted" | "granular";
+export type ApprovalReviewerName = "user" | "auto-review";
 export type NetworkPolicyMode = "deny" | "allow" | "allowlist" | "review";
 export type NetworkApprovalProtocol = "http" | "https" | "socks5-tcp" | "socks5-udp";
 export type FilesystemAccessOperation = "read" | "write" | "delete";
@@ -104,6 +106,7 @@ export interface SecurityProfile {
 export interface PermissionProfileDefinition {
 	readonly extends?: string;
 	readonly approvalPolicy?: ApprovalPolicyName;
+	readonly approvalReviewer?: ApprovalReviewerName;
 	readonly granularApproval?: GranularApprovalConfig;
 	readonly filesystemMode?: SecurityProfile["filesystemMode"];
 	readonly sandbox?: SandboxProfileName;
@@ -115,12 +118,15 @@ export interface SecurityConfigDocument {
 	readonly profile?: string;
 	readonly profiles?: Readonly<Record<string, PermissionProfileDefinition>>;
 	readonly approvalPolicy?: ApprovalPolicyName;
+	readonly approvalReviewer?: ApprovalReviewerName;
 	readonly granularApproval?: GranularApprovalConfig;
 	readonly sandbox?: SandboxProfileName;
 	readonly network?: NetworkPolicy;
 	readonly filesystem?: Partial<FilesystemPolicy>;
 	readonly rules?: readonly Omit<SecurityRule, "source">[];
 	readonly bashAnalyzerMode?: BashSecurityAnalyzerMode;
+	/** 仅 managed/organization source 可声明的不可放宽上限。 */
+	readonly managedConstraints?: ManagedSecurityConstraints;
 }
 
 export interface ManagedSecurityConstraints {
@@ -139,6 +145,8 @@ export interface SecurityConfigLayer {
 
 export interface SecuritySnapshot {
 	readonly profile: SecurityProfile;
+	/** 旧 replay snapshot 未携带该字段时按 user 处理。 */
+	readonly approvalReviewer?: ApprovalReviewerName;
 	readonly filesystem: FilesystemPolicy;
 	readonly rules: readonly SecurityRule[];
 	readonly sources: readonly SecurityPolicySource[];
@@ -147,6 +155,20 @@ export interface SecuritySnapshot {
 	readonly policyDigest: RuntimeDigest;
 	readonly createdAt: string;
 	readonly bashAnalyzer?: BashAnalyzerResolution;
+	readonly managedConstraintsDigest?: RuntimeDigest;
+}
+
+/**
+ * Host 在一次 external filesystem approval 后构造的临时能力。
+ * 它不写入 settings、不扩展 root，也只能匹配同一个 canonical target。
+ */
+export interface PendingFilesystemEscalation {
+	readonly operation: "write" | "delete";
+	readonly canonicalTarget: string;
+	readonly requestedPath: string;
+	readonly policyDigest: RuntimeDigest;
+	readonly sessionGeneration: number;
+	readonly scope: "once";
 }
 
 export interface PolicyDecision {
@@ -233,6 +255,8 @@ export type SecurityErrorCode =
 	| "protected_path"
 	| "network_denied"
 	| "registry_failed"
+	| "revision_conflict"
+	| "settings_unavailable"
 	| "git_failed"
 	| "cleanup_failed";
 

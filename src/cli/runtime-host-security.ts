@@ -42,6 +42,7 @@ import {
 } from "../security/permission/approval-coordinator.ts";
 import { analyzeShellCommand } from "../security/permission/shell-analyzer.ts";
 import { PermissionEngine } from "../security/permission/engine.ts";
+import { DeterministicAutoApprovalReviewer } from "../security/permission/auto-approval-reviewer.ts";
 import { MemoryPermissionGrantStore } from "../security/permission/grants.ts";
 import type { GovernedPermissionRequest, RequestPermissionsPort } from "../security/tools/request-permissions.ts";
 import { pathWithin, type FileSystemBrokerPort } from "../security/policy-filesystem.ts";
@@ -212,6 +213,7 @@ export async function createProductionHostSecurity(
 		prompter: options.permissionPrompter ?? new HeadlessDenyPrompter(),
 		store: approvalStore,
 		audit,
+		...(snapshot.approvalReviewer === "auto-review" ? { autoReviewer: new DeterministicAutoApprovalReviewer() } : {}),
 	});
 	const permissionGrantStore = new MemoryPermissionGrantStore(options.now ?? (() => new Date()));
 	const bindings = new Map<string, ProcessBinding>();

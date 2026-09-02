@@ -37,6 +37,7 @@ export type SlashCommandActionType =
   | "config.thinking"
   | "config.hide-thinking"
   | "config.theme"
+  | "config.permissions"
   | "auth.login"
   | "auth.logout"
   | "recovery.open"
@@ -207,6 +208,13 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       category: "config",
       policy: READONLY_POLICY,
     }),
+    command("permissions", "Configure permissions for new Sessions", 13.5, {
+		actionType: "config.permissions",
+		category: "config",
+		policy: IDLE_ONLY_POLICY,
+		availableDuringTask: false,
+		unavailableDuringTaskMessage: "/permissions is available when the current turn is idle.",
+	}),
     command("recovery", "Inspect or resolve crash recovery", 14, {
       actionType: "recovery.open",
       category: "recovery",

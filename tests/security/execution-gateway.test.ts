@@ -28,6 +28,7 @@ import {
 } from "../../src/security/integration/runtime-gateway-adapter.ts";
 import type { FileSystemBrokerPort } from "../../src/security/policy-filesystem.ts";
 import { ApprovalCoordinator, MemoryApprovalStateStore } from "../../src/security/permission/approval-coordinator.ts";
+import { DeterministicAutoApprovalReviewer } from "../../src/security/permission/auto-approval-reviewer.ts";
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
 import { LinuxBwrapBackend } from "../../src/security/sandbox/linux-bwrap.ts";
 import type { SandboxBackend, SandboxCapability, SandboxDecisionReceipt, SandboxLaunchPlan, SandboxPrepareRequest } from "../../src/security/sandbox/types.ts";
@@ -93,6 +94,7 @@ function snapshot(
 			network: { mode: "allow", allowedHosts: [] },
 			sandbox,
 		},
+		approvalReviewer: "user" as const,
 		filesystem: {
 			readRoots: [root],
 			writeRoots: [root],
@@ -219,6 +221,99 @@ function unavailableBackend(): SandboxBackend {
 }
 
 describe("ExecutionGateway", () => {
+	it("uses deterministic local review for an eligible Approve for me workspace write without prompting the user", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-auto-review-"));
+		roots.push(root);
+		await mkdir(join(root, "src"));
+		const base = snapshot(root);
+		const { policyDigest: _basePolicyDigest, ...baseBody } = base;
+		const body = {
+			...baseBody,
+			profile: {
+				...base.profile,
+				name: "approve-for-me",
+				network: { mode: "review" as const, allowedHosts: [] },
+			},
+			approvalReviewer: "auto-review" as const,
+		};
+		const currentSnapshot: SecuritySnapshot = { ...body, policyDigest: runtimeDigest(body) };
+		const baseRequest = authorizationRequest(root, currentSnapshot);
+		const request: AuthorizationRequest = {
+			...baseRequest,
+			toolName: "write",
+			argumentsDigest: runtimeDigest({ path: "src/generated.ts", data: "export {};" }),
+			requests: [{ kind: "filesystem", operation: "write", path: "src/generated.ts" }],
+		};
+		const requestDigest = gatewayRequestDigest(request);
+		const binding = await constraint(request, currentSnapshot, requestDigest);
+		let prompts = 0;
+		const gateway = new ExecutionGateway({
+			snapshot: currentSnapshot,
+			workspace: request.workspace,
+			filesystemBroker: broker,
+			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
+			permissionEngine: new PermissionEngine(),
+			approvalCoordinator: new ApprovalCoordinator({
+				prompter: { request: async () => {
+					prompts += 1;
+					return { decision: "deny", decidedBy: createRuntimeId("principal", "unexpected-user-prompt") };
+				} },
+				autoReviewer: new DeterministicAutoApprovalReviewer(),
+			}),
+			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
+		});
+
+		const opened = await gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot });
+		expect(opened).toMatchObject({ ok: true, value: { authorization: { outcome: "allow", decisionSource: "approval", approval: { scope: "once" } } } });
+		expect(prompts).toBe(0);
+	});
+
+	it("consumes an approved workspace-external write as one canonical exact-path escalation", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-external-root-"));
+		const outside = await mkdtemp(join(tmpdir(), "runledger-gateway-external-target-"));
+		roots.push(root, outside);
+		const base = snapshot(root);
+		const { policyDigest: _basePolicyDigest, ...baseBody } = base;
+		const body = {
+			...baseBody,
+			profile: {
+				...base.profile,
+				name: "workspace-write",
+				network: { mode: "review" as const, allowedHosts: [] },
+			},
+		};
+		const currentSnapshot: SecuritySnapshot = { ...body, policyDigest: runtimeDigest(body) };
+		const target = join(outside, "approved-once.txt");
+		const baseRequest = authorizationRequest(root, currentSnapshot);
+		const request: AuthorizationRequest = {
+			...baseRequest,
+			toolName: "write",
+			argumentsDigest: runtimeDigest({ path: target, data: "approved" }),
+			requests: [{ kind: "filesystem", operation: "write", path: target }],
+		};
+		const requestDigest = gatewayRequestDigest(request);
+		const binding = await constraint(request, currentSnapshot, requestDigest);
+		const gateway = new ExecutionGateway({
+			snapshot: currentSnapshot,
+			workspace: request.workspace,
+			filesystemBroker: broker,
+			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
+			permissionEngine: new PermissionEngine(),
+			approvalCoordinator: new ApprovalCoordinator({
+				prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "external-write") }) },
+			}),
+			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
+		});
+
+		const opened = await gateway.authorize({ request, requestDigest, constraintInput: binding.input, constraintSnapshot: binding.snapshot });
+		expect(opened).toMatchObject({ ok: true });
+		if (!opened.ok) return;
+		expect(await opened.value.fs.writeFile(target, "approved")).toMatchObject({ ok: true });
+		expect(await opened.value.fs.writeFile(target, "must-not-repeat")).toMatchObject({ ok: false });
+		expect(await opened.value.complete()).toMatchObject({ ok: true });
+		expect(await readFile(target, "utf8")).toBe("approved");
+	});
+
 	it("preserves an expired approval as a typed denial", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-gateway-expired-"));
 		roots.push(root);

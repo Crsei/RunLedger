@@ -75,6 +75,21 @@ describe("slash command registry", () => {
 		});
 	});
 
+	it("does not reserve /settings for Permissions on this rollback baseline", () => {
+		expect(findCommand("settings")).toBeUndefined();
+	});
+
+	it("registers /permissions as the only Permissions entrypoint", () => {
+		expect(findCommand("permissions")).toMatchObject({
+			canonicalName: "permissions",
+			aliases: [],
+			actionType: "config.permissions",
+			category: "config",
+			availableDuringTask: false,
+		});
+		expect(findCommand("settings")?.actionType).not.toBe("config.permissions");
+	});
+
   it("commandsForContext 隐藏 /help,但直接输入与 /commands 别名仍可解析", () => {
     const visible = commandsForContext({});
     expect(visible.some((entry) => entry.canonicalName === "help")).toBe(false);

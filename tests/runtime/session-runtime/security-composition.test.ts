@@ -142,6 +142,22 @@ function unavailableAnalyzer(): BashSecurityAnalyzerPort {
 }
 
 describe("session-scoped Security/ExecutionGateway composition", () => {
+	it("exposes the actual sandbox capability for preset availability projection", async () => {
+		const security = await composition({
+			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off" },
+		});
+		try {
+			expect(security.sandboxCapability).toMatchObject({
+				backendId: "unknown-sandbox-unavailable",
+				status: "unavailable",
+				supportsFilesystemIsolation: false,
+				supportsChildIsolation: false,
+			});
+		} finally {
+			await security.close();
+		}
+	});
+
 	it("routes AST classification through the Session shell and closes its worker pool", async () => {
 		const security = await composition({
 			document: {
@@ -503,14 +519,18 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(mainSource).not.toContain("HostWorkspaceBindingService");
 	});
 
-	it("wires durable approval reverse requests and read-only security inspection into production", () => {
+	it("wires durable approval reverse requests and Host-owned security settings into production", () => {
 		const embeddedSource = readFileSync(join(process.cwd(), "src/cli/embedded-session-runtime.ts"), "utf8");
 		const domainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
+		const settingsDomainSource = readFileSync(join(process.cwd(), "src/runtime/session-runtime/security-settings-domain.ts"), "utf8");
 		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
 		expect(embeddedSource).toContain("createSessionApprovalPorts");
 		expect(domainSource).toContain("approvalPorts: options.approvalPorts");
 		expect(domainSource).toContain('"session.security.inspect"');
 		expect(domainSource).toContain('"session.approval.reverse"');
+		expect(domainSource).toContain("createSecuritySettingsResourceDomain");
+		expect(domainSource).toContain("composeSessionResourceDomains");
+		expect(settingsDomainSource).toContain('"security.settings.update"');
 		expect(mainSource).toContain("handleSessionReverseRequest");
 	});
 
@@ -852,7 +872,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		expect(leafCalls).toBe(0);
 	});
 
-	it("uses the injected Session durable approval ports for an on-request write", async () => {
+	it("uses the injected Session durable approval ports for a custom on-request write", async () => {
 		let prompts = 0;
 		const approvalPorts = {
 			prompter: {
@@ -869,7 +889,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			},
 		};
 		const security = await composition({
-			document: { profile: "workspace-write", approvalPolicy: "on-request", sandbox: "off" },
+			document: { profile: "custom", approvalPolicy: "on-request", sandbox: "off" },
 			approvalPorts,
 		});
 		const target = join(root, "approved.txt");

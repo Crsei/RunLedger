@@ -2,7 +2,12 @@
 
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { runtimeWorkspacePlatform } from "../workspace/runtime-platform.ts";
-import type { FilesystemAccessOperation, SecurityResult, SecuritySnapshot } from "./types.ts";
+import type {
+	FilesystemAccessOperation,
+	PendingFilesystemEscalation,
+	SecurityResult,
+	SecuritySnapshot,
+} from "./types.ts";
 
 export interface BrokerFileStats {
 	readonly size: number;
@@ -92,9 +97,22 @@ export class CanonicalPathResolver {
 
 export class FileAccessGuard {
 	readonly #snapshot: SecuritySnapshot;
+	readonly #escalations: readonly PendingFilesystemEscalation[];
+	readonly #consumedEscalations = new Set<string>();
 
-	public constructor(snapshot: SecuritySnapshot) {
+	public constructor(snapshot: SecuritySnapshot, escalations: readonly PendingFilesystemEscalation[] = []) {
 		this.#snapshot = snapshot;
+		this.#escalations = escalations;
+	}
+
+	#matchingEscalation(operation: FilesystemAccessOperation, path: CanonicalPathResolution): PendingFilesystemEscalation | undefined {
+		if (operation !== "write" && operation !== "delete") return undefined;
+		return this.#escalations.find((escalation) =>
+			escalation.operation === operation &&
+			escalation.canonicalTarget === path.canonicalPath &&
+			escalation.policyDigest.digest === this.#snapshot.policyDigest.digest &&
+			escalation.scope === "once",
+		);
 	}
 
 	public check(operation: FilesystemAccessOperation, path: CanonicalPathResolution): SecurityResult<void> {
@@ -106,7 +124,20 @@ export class FileAccessGuard {
 		if (denied.some((entry) => candidates.some((candidate) => wildcardPathMatch(entry, candidate)))) return failure("protected_path", "filesystem target matches a deny rule");
 		if (this.#snapshot.profile.filesystemMode === "unrestricted") return { ok: true, value: undefined };
 		const roots = operation === "read" ? this.#snapshot.filesystem.readRoots : this.#snapshot.filesystem.writeRoots;
-		if (!roots.some((root) => pathWithin(root, path.canonicalPath))) return failure("path_escape", "filesystem target escapes the allowed roots");
+		if (!roots.some((root) => pathWithin(root, path.canonicalPath))) {
+			if (this.#matchingEscalation(operation, path) !== undefined) return { ok: true, value: undefined };
+			return failure("path_escape", "filesystem target escapes the allowed roots");
+		}
+		return { ok: true, value: undefined };
+	}
+
+	/** 在 canonical revalidation 后消耗一次性 external filesystem grant。 */
+	public consumeEscalation(operation: FilesystemAccessOperation, path: CanonicalPathResolution): SecurityResult<void> {
+		const escalation = this.#matchingEscalation(operation, path);
+		if (escalation === undefined) return { ok: true, value: undefined };
+		const key = `${escalation.operation}:${escalation.canonicalTarget}:${escalation.policyDigest.digest}`;
+		if (this.#consumedEscalations.has(key)) return failure("path_escape", "filesystem escalation was already consumed");
+		this.#consumedEscalations.add(key);
 		return { ok: true, value: undefined };
 	}
 }
@@ -116,10 +147,15 @@ export class PolicyFileSystem {
 	readonly #resolver: CanonicalPathResolver;
 	readonly #guard: FileAccessGuard;
 
-	public constructor(broker: FileSystemBrokerPort, cwd: string, snapshot: SecuritySnapshot) {
+	public constructor(
+		broker: FileSystemBrokerPort,
+		cwd: string,
+		snapshot: SecuritySnapshot,
+		escalations: readonly PendingFilesystemEscalation[] = [],
+	) {
 		this.#broker = broker;
 		this.#resolver = new CanonicalPathResolver(broker, cwd);
-		this.#guard = new FileAccessGuard(snapshot);
+		this.#guard = new FileAccessGuard(snapshot, escalations);
 	}
 
 	async #path(operation: FilesystemAccessOperation, requestedPath: string): Promise<SecurityResult<CanonicalPathResolution>> {
@@ -137,6 +173,8 @@ export class PolicyFileSystem {
 		const repeated = await this.#path(operation, requestedPath);
 		if (!repeated.ok) return repeated;
 		if (repeated.value.canonicalPath !== previous.canonicalPath) return failure("path_escape", "filesystem target changed before execution");
+		const consumed = this.#guard.consumeEscalation(operation, repeated.value);
+		if (!consumed.ok) return consumed;
 		return repeated;
 	}
 

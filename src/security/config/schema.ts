@@ -20,10 +20,18 @@ const approvalPolicy = Type.Union([
 	Type.Literal("untrusted"),
 	Type.Literal("granular"),
 ]);
+const approvalReviewer = Type.Union([Type.Literal("user"), Type.Literal("auto-review")]);
 const bashAnalyzerMode = Type.Union([
 	Type.Literal("legacy"),
 	Type.Literal("shadow"),
 	Type.Literal("ast"),
+]);
+const sandboxProfile = Type.Union([
+	Type.Literal("off"),
+	Type.Literal("read-only"),
+	Type.Literal("workspace-write"),
+	Type.Literal("strict"),
+	Type.Literal("external"),
 ]);
 const granularApproval = Type.Object({
 	sandboxApproval: Type.Boolean(),
@@ -46,27 +54,28 @@ const filesystemPolicy = Type.Object({
 const permissionProfile = Type.Object({
 	extends: Type.Optional(profileId),
 	approvalPolicy: Type.Optional(approvalPolicy),
+	approvalReviewer: Type.Optional(approvalReviewer),
 	granularApproval: Type.Optional(granularApproval),
 	filesystemMode: Type.Optional(Type.Union([Type.Literal("read-only"), Type.Literal("workspace-write"), Type.Literal("unrestricted")])),
-	sandbox: Type.Optional(Type.Union([
-		Type.Literal("off"), Type.Literal("read-only"), Type.Literal("workspace-write"), Type.Literal("strict"), Type.Literal("external"),
-	])),
+	sandbox: Type.Optional(sandboxProfile),
 	network: Type.Optional(networkPolicy),
 	filesystem: Type.Optional(filesystemPolicy),
+}, { additionalProperties: false });
+const managedConstraints = Type.Object({
+	allowedProfiles: Type.Array(profileId, { minItems: 1, maxItems: 256, uniqueItems: true }),
+	allowedApprovalPolicies: Type.Array(approvalPolicy, { minItems: 1, maxItems: 4, uniqueItems: true }),
+	minimumSandbox: sandboxProfile,
+	forceNetworkDeny: Type.Boolean(),
+	minimumBashAnalyzerMode: Type.Optional(bashAnalyzerMode),
 }, { additionalProperties: false });
 
 export const SecurityConfigDocumentSchema = Type.Object({
 	profile: Type.Optional(profileId),
 	profiles: Type.Optional(Type.Record(profileId, permissionProfile)),
 	approvalPolicy: Type.Optional(approvalPolicy),
+	approvalReviewer: Type.Optional(approvalReviewer),
 	granularApproval: Type.Optional(granularApproval),
-	sandbox: Type.Optional(Type.Union([
-		Type.Literal("off"),
-		Type.Literal("read-only"),
-		Type.Literal("workspace-write"),
-		Type.Literal("strict"),
-		Type.Literal("external"),
-	])),
+	sandbox: Type.Optional(sandboxProfile),
 	network: Type.Optional(networkPolicy),
 	filesystem: Type.Optional(filesystemPolicy),
 	rules: Type.Optional(Type.Array(Type.Object({
@@ -79,6 +88,7 @@ export const SecurityConfigDocumentSchema = Type.Object({
 		pattern: token,
 	}, { additionalProperties: false }), { maxItems: 1024 })),
 	bashAnalyzerMode: Type.Optional(bashAnalyzerMode),
+	managedConstraints: Type.Optional(managedConstraints),
 }, { additionalProperties: false });
 
 function failure(message: string): SecurityResult<never> {
@@ -103,6 +113,28 @@ export function parseSecurityConfigDocument(value: unknown): SecurityResult<Secu
 	return { ok: true, value: document };
 }
 
+/**
+ * managed 层不是另一份可被优先级挑选的用户配置。它只能声明 ceiling 与
+ * deny/ask/protected 等收紧条件，避免 managed profile/network/sandbox 变成
+ * 能被 CLI 或 project 语义覆盖的普通基线。
+ */
+function validateManagedDocument(document: SecurityConfigDocument): SecurityResult<SecurityConfigDocument> {
+	if (
+		document.profile !== undefined ||
+		document.profiles !== undefined ||
+		document.approvalPolicy !== undefined ||
+		document.approvalReviewer !== undefined ||
+		document.granularApproval !== undefined ||
+		document.sandbox !== undefined ||
+		document.network !== undefined
+	) return failure("managed security config may only declare constraints and hardening fields");
+	if (document.filesystem?.readRoots !== undefined || document.filesystem?.writeRoots !== undefined) {
+		return failure("managed security config may not broaden filesystem roots");
+	}
+	if (document.rules?.some((rule) => rule.action === "allow")) return failure("managed security config may not allow a rule");
+	return { ok: true, value: document };
+}
+
 export function parseSecurityConfigLayer(source: SecurityPolicySource, text: string): SecurityResult<SecurityConfigLayer> {
 	if (!SECURITY_POLICY_SOURCES.includes(source)) return failure(`unknown security policy source: ${source}`);
 	let parsed: unknown;
@@ -113,7 +145,14 @@ export function parseSecurityConfigLayer(source: SecurityPolicySource, text: str
 	}
 	const document = parseSecurityConfigDocument(parsed);
 	if (!document.ok) return document;
-	return { ok: true, value: { source, document: document.value, documentDigest: runtimeDigest(document.value) } };
+	if (document.value.managedConstraints !== undefined && source !== "managed" && source !== "organization") {
+		return failure("managedConstraints is only valid in a managed or organization security source");
+	}
+	const constrained = source === "managed" || source === "organization"
+		? validateManagedDocument(document.value)
+		: document;
+	if (!constrained.ok) return constrained;
+	return { ok: true, value: { source, document: constrained.value, documentDigest: runtimeDigest(constrained.value) } };
 }
 
 export function securityConfigDigest(document: SecurityConfigDocument): string {

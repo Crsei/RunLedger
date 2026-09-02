@@ -30,8 +30,14 @@ import {
 	type ExecPrefixRule,
 } from "./exec-prefix-rule.ts";
 import { normalizeNetworkApprovalKey, type NetworkApprovalKey } from "../network/network-approval.ts";
+import type {
+	AutoApprovalReviewAuditPort,
+	AutoApprovalReviewInput,
+	AutoApprovalReviewerPort,
+} from "./auto-approval-reviewer.ts";
 
 export const SYSTEM_APPROVAL_PRINCIPAL_ID = createRuntimeId("principal", "runledger-system-approval");
+export const AUTO_REVIEW_APPROVAL_PRINCIPAL_ID = createRuntimeId("principal", "runledger-auto-review");
 
 export interface ApprovalStateStorePort {
 	read(approvalId: ApprovalId): Promise<ApprovalReceiptRef | undefined>;
@@ -136,6 +142,8 @@ export interface ApprovalCoordinatorOptions {
 	readonly store?: ApprovalStateStorePort;
 	/** Host-owned canonical event sink; omitted only for isolated unit tests. */
 	readonly audit?: ApprovalAuditPort;
+	readonly autoReviewer?: AutoApprovalReviewerPort;
+	readonly autoReviewAudit?: AutoApprovalReviewAuditPort;
 	readonly clock?: () => Date;
 	readonly timeoutMs?: number;
 }
@@ -291,6 +299,8 @@ export class ApprovalCoordinator {
 	readonly #prompter: PermissionPrompter;
 	readonly #store: ApprovalStateStorePort;
 	readonly #audit?: ApprovalAuditPort;
+	readonly #autoReviewer?: AutoApprovalReviewerPort;
+	readonly #autoReviewAudit?: AutoApprovalReviewAuditPort;
 	readonly #clock: () => Date;
 	readonly #timeoutMs: number;
 	readonly #pending = new Map<string, Promise<SecurityResult<AuthorizationResult>>>();
@@ -299,6 +309,8 @@ export class ApprovalCoordinator {
 		this.#prompter = options.prompter;
 		this.#store = options.store ?? new MemoryApprovalStateStore();
 		this.#audit = options.audit;
+		this.#autoReviewer = options.autoReviewer;
+		this.#autoReviewAudit = options.autoReviewAudit;
 		this.#clock = options.clock ?? (() => new Date());
 		this.#timeoutMs = Math.max(1, options.timeoutMs ?? 30_000);
 	}
@@ -308,13 +320,14 @@ export class ApprovalCoordinator {
 		evaluation: SecurityAccessEvaluation,
 		revalidate: ApprovalRevalidationPort,
 		signal?: AbortSignal,
+		autoReview?: AutoApprovalReviewInput,
 	): Promise<SecurityResult<AuthorizationResult>> {
 		if (evaluation.decision === "deny") return Promise.resolve({ ok: true, value: { outcome: "deny", decisionSource: "builtin", requests: request.requests, policyDigest: request.snapshot.policyDigest, reason: evaluation.reason } });
 		if (evaluation.decision === "allow") return Promise.resolve({ ok: true, value: { outcome: "allow", decisionSource: "builtin", requests: request.requests, policyDigest: request.snapshot.policyDigest, reason: evaluation.reason } });
 		const key = `${request.sessionId}/${request.toolCallId}`;
 		const existing = this.#pending.get(key);
 		if (existing) return existing;
-		const pending = this.#coordinate(request, evaluation, revalidate, signal);
+		const pending = this.#coordinate(request, evaluation, revalidate, signal, autoReview);
 		this.#pending.set(key, pending);
 		void pending.finally(() => {
 			if (this.#pending.get(key) === pending) this.#pending.delete(key);
@@ -384,6 +397,7 @@ export class ApprovalCoordinator {
 		evaluation: SecurityAccessEvaluation,
 		revalidate: ApprovalRevalidationPort,
 		signal?: AbortSignal,
+		autoReview?: AutoApprovalReviewInput,
 	): Promise<SecurityResult<AuthorizationResult>> {
 		const shellRequest = request.requests.length === 1 && request.requests[0]?.kind === "shell" ? request.requests[0] : undefined;
 		const networkRequest = request.requests.length === 1 && request.requests[0]?.kind === "network" ? request.requests[0] : undefined;
@@ -448,11 +462,17 @@ export class ApprovalCoordinator {
 		} catch {
 			return failure("approval request audit is unavailable", "approval_stale");
 		}
-		const raced = await this.#racePrompt(prompt, signal);
+		const automatic = await this.#runAutoReview(autoReview, signal);
+		const raced = automatic === undefined
+			? await this.#racePrompt(prompt, signal)
+			: { kind: "response" as const, response: automatic };
 		let response: PermissionPromptResponse = raced.kind === "response"
 			? raced.response
 			: { decision: raced.kind === "timeout" ? "cancel" : "cancel", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID };
 		if (response.decision === "allow-session" && request.requests.some((item) => item.kind === "shell" && isDangerousExecCommand(item.command))) {
+			response = { decision: "allow-once", decidedBy: response.decidedBy };
+		}
+		if (response.decision === "allow-session" && evaluation.requestDecisions.some((decision) => decision.matchedRuleIds.includes("builtin-root-boundary-escalation"))) {
 			response = { decision: "allow-once", decidedBy: response.decidedBy };
 		}
 		let prefixRule: ExecPrefixRule | undefined;
@@ -523,6 +543,28 @@ export class ApprovalCoordinator {
 				reason: outcome === "allow" ? evaluation.reason : `approval ${committedReceipt.decision}`,
 			},
 		};
+	}
+
+	async #runAutoReview(input: AutoApprovalReviewInput | undefined, signal?: AbortSignal): Promise<PermissionPromptResponse | undefined> {
+		if (input === undefined || input.request.snapshot.approvalReviewer !== "auto-review" || this.#autoReviewer === undefined) return undefined;
+		let result: Awaited<ReturnType<AutoApprovalReviewerPort["review"]>>;
+		try {
+			result = await this.#autoReviewer.review(input, signal);
+			await this.#autoReviewAudit?.recorded({
+				inputDigest: input.inputDigest,
+				policyDigest: input.request.snapshot.policyDigest,
+				sessionGeneration: input.sessionGeneration,
+				classificationVersion: result.classificationVersion,
+				decision: result.decision,
+				reason: result.reason,
+			});
+		} catch {
+			return undefined;
+		}
+		if (result.decision === "ask-user") return undefined;
+		return result.decision === "allow-once"
+			? { decision: "allow-once", decidedBy: AUTO_REVIEW_APPROVAL_PRINCIPAL_ID }
+			: { decision: "deny", decidedBy: AUTO_REVIEW_APPROVAL_PRINCIPAL_ID, reason: result.reason };
 	}
 
 	/**

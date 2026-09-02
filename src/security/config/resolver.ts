@@ -3,14 +3,14 @@
 import { resolve } from "node:path";
 import { runtimeDigest } from "../../runtime/contracts/public.ts";
 import type { SandboxProfileName } from "../../runtime/contracts/public.ts";
-import { PERMISSION_PROFILE_NAMES } from "../types.ts";
 import { resolveBashSecurityAnalyzerMode } from "../permission/bash-ast/mode.ts";
+import { builtinApprovalReviewer, builtinSecurityProfile } from "./presets.ts";
 import type {
+	ApprovalReviewerName,
 	ApprovalPolicyName,
 	FilesystemPolicy,
 	ManagedSecurityConstraints,
 	PermissionProfileDefinition,
-	PermissionProfileName,
 	SecurityConfigLayer,
 	SecurityProfile,
 	SecurityResult,
@@ -38,20 +38,6 @@ function firstValue<T>(layers: readonly SecurityConfigLayer[], read: (layer: Sec
 	return undefined;
 }
 
-function defaultProfile(name: PermissionProfileName): SecurityProfile {
-	switch (name) {
-		case "read-only":
-			return { name, approvalPolicy: "on-request", filesystemMode: "read-only", network: { mode: "deny", allowedHosts: [] }, sandbox: "read-only" };
-		case "headless-workspace":
-			return { name, approvalPolicy: "never", filesystemMode: "workspace-write", network: { mode: "deny", allowedHosts: [] }, sandbox: "workspace-write" };
-		case "danger-full-access":
-			return { name, approvalPolicy: "never", filesystemMode: "unrestricted", network: { mode: "allow", allowedHosts: [] }, sandbox: "off" };
-		case "custom":
-		case "workspace-write":
-			return { name, approvalPolicy: "on-request", filesystemMode: "workspace-write", network: { mode: "deny", allowedHosts: [] }, sandbox: "workspace-write" };
-	}
-}
-
 interface NamedProfileRecord {
 	readonly definition: PermissionProfileDefinition;
 	readonly source: SecurityConfigLayer["source"];
@@ -59,19 +45,21 @@ interface NamedProfileRecord {
 
 interface ResolvedProfile {
 	readonly profile: SecurityProfile;
+	readonly approvalReviewer: ApprovalReviewerName;
 	readonly filesystemDefinitions: readonly Partial<FilesystemPolicy>[];
 }
 
 type FilesystemPathListKey = "readRoots" | "writeRoots" | "denyRead" | "denyWrite" | "protectedPaths";
 
-function namedProfiles(layers: readonly SecurityConfigLayer[]): ReadonlyMap<string, NamedProfileRecord> {
+function namedProfiles(layers: readonly SecurityConfigLayer[]): SecurityResult<ReadonlyMap<string, NamedProfileRecord>> {
 	const profiles = new Map<string, NamedProfileRecord>();
 	for (const layer of layers) {
 		for (const [id, definition] of Object.entries(layer.document.profiles ?? {})) {
+			if (builtinSecurityProfile(id) !== undefined) return failure(`builtin permission profile cannot be redefined: ${id}`);
 			if (!profiles.has(id)) profiles.set(id, { definition, source: layer.source });
 		}
 	}
-	return profiles;
+	return { ok: true, value: profiles };
 }
 
 function resolveProfile(
@@ -79,13 +67,18 @@ function resolveProfile(
 	profiles: ReadonlyMap<string, NamedProfileRecord>,
 	stack: readonly string[] = [],
 ): SecurityResult<ResolvedProfile> {
-	if ((PERMISSION_PROFILE_NAMES as readonly string[]).includes(id)) {
-		return { ok: true, value: { profile: defaultProfile(id as PermissionProfileName), filesystemDefinitions: [] } };
+	const builtin = builtinSecurityProfile(id);
+	if (builtin !== undefined) {
+		return { ok: true, value: { profile: builtin, approvalReviewer: builtinApprovalReviewer(id) ?? "user", filesystemDefinitions: [] } };
 	}
 	if (stack.includes(id)) return failure(`invalid_config: permission profile inheritance cycle: ${[...stack, id].join(" -> ")}`);
 	const record = profiles.get(id);
 	if (record === undefined) return failure(`invalid_config: permission profile is undefined: ${id}`);
-	const base = resolveProfile(record.definition.extends ?? "workspace-write", profiles, [...stack, id]);
+	const parent = record.definition.extends ?? "workspace-write";
+	if (builtinSecurityProfile(parent) !== undefined && parent !== "read-only" && parent !== "workspace-write") {
+		return failure(`named permission profile cannot extend builtin profile: ${parent}`);
+	}
+	const base = resolveProfile(parent, profiles, [...stack, id]);
 	if (!base.ok) return base;
 	const definition = record.definition;
 	const profile: SecurityProfile = {
@@ -102,6 +95,7 @@ function resolveProfile(
 		ok: true,
 		value: {
 			profile,
+			approvalReviewer: definition.approvalReviewer ?? base.value.approvalReviewer,
 			filesystemDefinitions: [definition.filesystem ?? {}, ...base.value.filesystemDefinitions],
 		},
 	};
@@ -148,24 +142,30 @@ export interface ResolveSecuritySnapshotOptions {
 
 export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions): SecurityResult<SecuritySnapshot> {
 	const selectedName = firstValue(options.layers, (layer) => layer.document.profile) ?? "workspace-write";
-	const resolvedProfile = resolveProfile(selectedName, namedProfiles(options.layers));
+	const profiles = namedProfiles(options.layers);
+	if (!profiles.ok) return profiles;
+	const resolvedProfile = resolveProfile(selectedName, profiles.value);
 	if (!resolvedProfile.ok) return resolvedProfile;
 	const defaults = resolvedProfile.value.profile;
 	const approvalPolicy = firstValue(options.layers, (layer) => layer.document.approvalPolicy) ?? defaults.approvalPolicy;
 	const granularApproval = firstValue(options.layers, (layer) => layer.document.granularApproval) ?? defaults.granularApproval;
+	const approvalReviewer = firstValue(options.layers, (layer) => layer.document.approvalReviewer) ?? resolvedProfile.value.approvalReviewer;
 	if (approvalPolicy === "granular" && granularApproval === undefined) return failure("granular approval policy requires granularApproval");
 	const sandbox = firstValue(options.layers, (layer) => layer.document.sandbox) ?? defaults.sandbox;
 	const network = firstValue(options.layers, (layer) => layer.document.network) ?? defaults.network;
+	const constraints = options.constraints ?? firstValue(
+		options.layers.filter((layer) => layer.source === "managed" || layer.source === "organization"),
+		(layer) => layer.document.managedConstraints,
+	);
 	const bashAnalyzer = resolveBashSecurityAnalyzerMode({
 		user: firstValue(options.layers.filter((layer) => layer.source === "user"), (layer) => layer.document.bashAnalyzerMode),
 		project: firstValue(options.layers.filter((layer) => layer.source === "project"), (layer) => layer.document.bashAnalyzerMode),
 		cli: firstValue(options.layers.filter((layer) => layer.source === "cli" || layer.source === "session"), (layer) => layer.document.bashAnalyzerMode),
-		managedMinimum: options.constraints?.minimumBashAnalyzerMode ?? firstValue(
+		managedMinimum: constraints?.minimumBashAnalyzerMode ?? firstValue(
 			options.layers.filter((layer) => layer.source === "managed" || layer.source === "organization"),
 			(layer) => layer.document.bashAnalyzerMode,
 		),
 	});
-	const constraints = options.constraints;
 	if (constraints) {
 		if (!constraints.allowedProfiles.includes(selectedName)) return failure(`profile is forbidden by managed policy: ${selectedName}`);
 		if (!constraints.allowedApprovalPolicies.includes(approvalPolicy)) return failure(`approval policy is forbidden by managed policy: ${approvalPolicy}`);
@@ -200,6 +200,7 @@ export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions)
 	};
 	const body = {
 		profile,
+		approvalReviewer,
 		filesystem,
 		rules,
 		sources: [...new Set(options.layers.map((layer) => layer.source))],
@@ -207,6 +208,7 @@ export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions)
 		tempRoot: options.tempRoot,
 		createdAt: options.createdAt,
 		bashAnalyzer,
+		...(constraints === undefined ? {} : { managedConstraintsDigest: runtimeDigest(constraints) }),
 	};
 	return { ok: true, value: { ...body, policyDigest: runtimeDigest(body) } };
 }

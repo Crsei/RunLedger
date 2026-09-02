@@ -99,6 +99,7 @@ import { ExtensionWorkflow } from "./interactive/extension-workflow.ts";
 import { PlanWorkflow } from "./interactive/plan-workflow.ts";
 import { ProcessWorkflow } from "./interactive/process-workflow.ts";
 import { ApprovalWorkflow } from "./interactive/approval-workflow.ts";
+import { PermissionsWorkflow } from "./permissions/workflow.ts";
 import { StreamingController } from "./interactive/streaming-controller.ts";
 import { EventController } from "./interactive/event-controller.ts";
 import { InputController } from "./interactive/input-controller.ts";
@@ -254,6 +255,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly planWorkflow: PlanWorkflow;
   private readonly processWorkflow: ProcessWorkflow;
   private readonly approvalWorkflow: ApprovalWorkflow;
+  private readonly permissionsWorkflow: PermissionsWorkflow;
   private readonly streaming: StreamingController;
   private readonly eventController: EventController;
   private readonly inputController: InputController;
@@ -345,6 +347,22 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.planWorkflow = new PlanWorkflow(port);
     this.processWorkflow = new ProcessWorkflow(port);
     this.approvalWorkflow = new ApprovalWorkflow(port);
+    this.permissionsWorkflow = new PermissionsWorkflow({
+      controller: this.controller,
+      theme: this.theme,
+      showOverlay: (component) => this.showOverlayModal(component, { anchor: "center" }),
+      closeOverlay: () => this.closeOverlay(),
+      showNotice: (message, kind) => this.showNotice(message, kind),
+      requestRender: () => this.ui.requestRender(),
+      nextRequest: () => {
+        this.correlationSequence += 1;
+        this.effectSequence += 1;
+        return {
+          correlationId: `corr-${this.correlationSequence}`,
+          effectId: `effect-${this.effectSequence}`,
+        };
+      },
+    });
 
     this.refreshTranscriptScrollPresentation();
     this.unsubscribeRenderPreparation = this.ui.addBeforeRenderListener(() => {
@@ -1048,6 +1066,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "config.theme":
         this.inputController.openSyntaxThemePicker();
+        return;
+      case "config.permissions":
+        void this.permissionsWorkflow.open();
         return;
       case "recovery.open":
         void this.runRecoveryWorkflow(arg);
