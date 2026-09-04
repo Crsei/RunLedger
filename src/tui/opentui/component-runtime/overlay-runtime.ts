@@ -17,15 +17,14 @@ import { ansiToStyledText } from "../ansi-styled-text.ts";
 import { blockText, renderableId } from "./transcript-runtime.ts";
 import type { KeyedRenderable, OverlayRenderable } from "./types.ts";
 
-export function overlaySelectHeight(options: readonly { readonly description?: string }[]): number {
-  // SelectRenderable 在 showDescription=true 时始终为每项保留两行，哪怕
-  // description 为空；按同一布局契约给高度，避免安全决策被裁成单项。
-  return Math.max(2, Math.min(12, options.length * 2));
+export function overlaySelectHeight(options: readonly { readonly description?: string }[], heightLimit = 12): number {
+  const rowHeight = options.some((option) => (option.description?.length ?? 0) > 0) ? 2 : 1;
+  return Math.max(1, Math.min(12, Math.max(1, heightLimit), options.length * rowHeight));
 }
 
 export function overlayBlockHeight(block: PresentationBlock): number {
   if (block.kind === "select") {
-    return 1 + (block.query === undefined ? 0 : 1) + overlaySelectHeight(block.options);
+    return (block.title.length > 0 ? 1 : 0) + (block.query === undefined ? 0 : 1) + overlaySelectHeight(block.options);
   }
   if (block.kind === "input") return 3;
   return blockText(block).split("\n").length;
@@ -96,16 +95,18 @@ export function getOverlaySelectNode(
   options: { name: string; description: string; value: string }[],
   selectedIndex: number,
   onInput: (data: string) => void,
+  heightLimit = 12,
 ): SelectRenderable {
   const old = previous.get(key);
   const node = old?.kind === "select" && old.renderable instanceof SelectRenderable
     ? old.renderable
-    : createOverlaySelectNode(renderer, old, key, options, selectedIndex);
-  const contentKey = `${JSON.stringify(options)}\u0000${selectedIndex}`;
+    : createOverlaySelectNode(renderer, old, key, options, selectedIndex, heightLimit);
+  const contentKey = `${JSON.stringify(options)}\u0000${selectedIndex}\u0000${heightLimit}`;
   if (old?.contentKey !== contentKey) {
     node.options = options;
     node.selectedIndex = selectedIndex;
-    node.height = overlaySelectHeight(options);
+    node.showDescription = options.some((option) => option.description.length > 0);
+    node.height = overlaySelectHeight(options, heightLimit);
   }
   node.onMouseDown = (event) => handleOverlaySelectMouseDown(node, event, onInput);
   next.set(key, { kind: "select", renderable: node, contentKey });
@@ -207,15 +208,16 @@ function createOverlaySelectNode(
   key: string,
   options: { name: string; description: string; value: string }[],
   selectedIndex: number,
+  heightLimit: number,
 ): SelectRenderable {
   disposeWrongOverlayNode(old, "select");
   return new SelectRenderable(renderer, {
     id: renderableId("runledger-overlay", key),
     width: "100%",
-    height: overlaySelectHeight(options),
+    height: overlaySelectHeight(options, heightLimit),
     options,
     selectedIndex,
-    showDescription: true,
+    showDescription: options.some((option) => option.description.length > 0),
     showSelectionIndicator: true,
   });
 }

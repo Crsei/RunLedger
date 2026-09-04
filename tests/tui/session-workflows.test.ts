@@ -55,6 +55,8 @@ describe("S2 InteractiveMode session workflows", () => {
 			commandSessionDomain: async () => ({ domainRevision: 6 }),
 		});
 		const mode = new InteractiveMode({ controller, terminal });
+		const ui = (mode as unknown as { ui: { showOverlay(component: unknown, options?: unknown): unknown } }).ui;
+		const showOverlay = vi.spyOn(ui, "showOverlay");
 		const running = mode.run();
 		try {
 			await settleFrames();
@@ -69,6 +71,12 @@ describe("S2 InteractiveMode session workflows", () => {
 				const overlay = (mode as unknown as { ui: { getOverlay(): { render(width: number): readonly string[] } | undefined } }).ui.getOverlay();
 				expect(overlay?.render(120).join("\n")).toContain("Ask for approval");
 			});
+			expect(showOverlay).toHaveBeenLastCalledWith(expect.anything(), { anchor: "bottom-left" });
+			const overlay = (mode as unknown as { ui: { getOverlay(): { handleInput?(data: string): void } | undefined } }).ui.getOverlay();
+			overlay?.handleInput?.("down");
+			overlay?.handleInput?.("down");
+			overlay?.handleInput?.("enter");
+			expect(showOverlay).toHaveBeenLastCalledWith(expect.anything(), { anchor: "bottom-left" });
 		} finally {
 			mode.quit();
 			await running;

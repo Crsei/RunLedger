@@ -200,10 +200,10 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		const pending = mode.handleReverseRequest(reverseFrame(), signal);
 		expect(mode.getTuiState().capabilities.approval.state).toBe("unavailable");
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
-		// permission view 取代对话区，选择 3 会拒绝当前工具并停止当前 turn。
+		// permission view 使用 Composer 上方的二级选择界面，选择 3 会拒绝当前工具并停止当前 turn。
 		await new Promise<void>((resolve) => setTimeout(resolve, 0));
 		const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
-		expect(ui.hasOverlay()).toBe(false);
+		expect(ui.hasOverlay()).toBe(true);
 		const permissionView = Reflect.get(mode, "activePermissionView") as { handleInput(data: string): void } | undefined;
 		permissionView?.handleInput("3");
 		const body = await pending;
@@ -212,7 +212,7 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		expect(mode.getTuiState().approvalWorkflow.state).toBe("unavailable");
 	});
 
-	it("replaces the conversation with a Codex-style permission view and restores it after selection", async () => {
+	it("keeps the conversation visible while showing the permission view above the Composer", async () => {
 		const terminal = new FakeTerminal();
 		const controller = new ContractController({
 			messages: [{ role: "user", content: [{ type: "text", text: "historical conversation" }] }],
@@ -235,10 +235,12 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 			}, new AbortController().signal);
 			await new Promise<void>((resolve) => setTimeout(resolve, 20));
 
-			const ui = (mode as unknown as { ui: { hasOverlay(): boolean } }).ui;
-			expect(ui.hasOverlay()).toBe(false);
-			const permissionView = conversationText(mode);
-			expect(permissionView).not.toContain("historical conversation");
+			const ui = (mode as unknown as {
+				ui: { hasOverlay(): boolean; getOverlay(): { render(width: number): readonly string[] } | undefined };
+			}).ui;
+			expect(ui.hasOverlay()).toBe(true);
+			expect(conversationText(mode)).toContain("historical conversation");
+			const permissionView = ui.getOverlay()?.render(120).join("\n") ?? "";
 			expect(permissionView).toContain("Would you like to run the following command?");
 			expect(permissionView).toContain("Environment: local");
 			expect(permissionView).toContain("Reason: Sandbox blocked tsx from creating its IPC socket.");
@@ -256,6 +258,7 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 			});
 			await new Promise<void>((resolve) => setTimeout(resolve, 20));
 			expect(conversationText(mode)).toContain("historical conversation");
+			expect(ui.hasOverlay()).toBe(false);
 		} finally {
 			mode.quit();
 			await running;

@@ -350,7 +350,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.permissionsWorkflow = new PermissionsWorkflow({
       controller: this.controller,
       theme: this.theme,
-      showOverlay: (component) => this.showOverlayModal(component, { anchor: "center" }),
+      showOverlay: (component) => this.showOverlayModal(component, { anchor: "bottom-left" }),
       closeOverlay: () => this.closeOverlay(),
       showNotice: (message, kind) => this.showNotice(message, kind),
       requestRender: () => this.ui.requestRender(),

@@ -292,7 +292,14 @@ export { StatusComponent, type StatusComponentProps } from "./components/status.
 // M5 选择器与模态
 export { SelectorModal, type SelectorModalProps } from "./components/selector-modal.ts";
 export { PermissionRequestView, type PermissionRequestViewProps } from "./components/permission-request-view.ts";
-export { ListSelectionModal, type ListSelectionItem, type ListSelectionModalProps } from "./components/list-selection-modal.ts";
+export {
+  SecondarySelectionView,
+  ListSelectionModal,
+  type SecondarySelectionItem,
+  type SecondarySelectionViewProps,
+  type ListSelectionItem,
+  type ListSelectionModalProps,
+} from "./components/list-selection-modal.ts";
 export { ExtensionToggleModal, type ExtensionToggleItem, type ExtensionToggleModalProps } from "./components/extension-toggle-modal.ts";
 export { McpServersModal, type McpServerViewItem, type McpServersModalProps } from "./components/mcp-servers-modal.ts";
 export { SlashCommandSelector, type SlashCommandSelectorProps } from "./components/slash-command-selector.ts";

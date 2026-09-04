@@ -27,7 +27,6 @@ export class ApprovalWorkflow {
 	private readonly port: InteractiveModePorts;
 	/** 活跃 permission view(approval 测试读取);busy 拒绝依赖它。 */
 	activePermissionView: PermissionRequestView | undefined;
-	private unsubscribePermissionInput: (() => void) | undefined;
 
 	public constructor(port: InteractiveModePorts) {
 		this.port = port;
@@ -72,9 +71,7 @@ export class ApprovalWorkflow {
 				settled = true;
 				if (expiryTimeout !== undefined) clearTimeout(expiryTimeout);
 				signal.removeEventListener("abort", onAbort);
-				this.unsubscribePermissionInput?.();
-				this.unsubscribePermissionInput = undefined;
-				port.refs.chat.clearReplacement(permissionView);
+				if (port.ui.getOverlay() === permissionView) port.closeOverlay();
 				if (this.activePermissionView === permissionView) this.activePermissionView = undefined;
 				port.ui.setFocus(port.refs.editor);
 				port.uiRequestRender();
@@ -119,12 +116,7 @@ export class ApprovalWorkflow {
 			signal.addEventListener("abort", onAbort, { once: true });
 			if (port.ui.hasOverlay()) port.closeOverlay();
 			this.activePermissionView = permissionView;
-			port.refs.chat.setReplacement(permissionView, "permission-request");
-			this.unsubscribePermissionInput = port.ui.addInputListener((data) => {
-				if (this.activePermissionView !== permissionView) return undefined;
-				permissionView.handleInput(data);
-				return { consume: true };
-			});
+			port.showOverlayModal(permissionView, { anchor: "bottom-left" });
 			if (deadline !== undefined) {
 				expiryTimeout = setTimeout(expire, Math.max(0, deadline - Date.now()));
 			}

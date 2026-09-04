@@ -84,7 +84,7 @@ export class OpenTuiFrameRuntime {
     this.previousBodySignature = body.signature;
     const { footerHeight, editorHeight } = this.applyEditorAndFooter(frame);
     this.updateNewContentIndicator();
-    this.overlayController.update(frame, footerHeight, editorHeight);
+    this.overlayController.update(frame, footerHeight, editorHeight, this.port.statusIndicator.height);
     this.port.options.performanceObserver?.recordProjection({
       durationMs: Math.max(0, Date.now() - projectionStartedAt),
       processedChars: frameCharacterCount(frame),

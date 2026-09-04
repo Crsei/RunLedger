@@ -1,5 +1,5 @@
 /**
- * ListSelectionModal —— codex 风格列表选择弹窗(/model 及其二级列表)。
+ * SecondarySelectionView —— 统一的 Codex 风格二级选择界面。
  *
  * 对照 codex-rs `bottom_pane/list_selection_view.rs` 的展示格式:
  *   - 头部:bold 标题 + dim 副标题;
@@ -13,12 +13,12 @@
  * 本组件复刻 codex 的编号行 + current/default 标记 + 标题/副标题/footer 结构。
  */
 
-import type { Component, SelectListTheme } from "../index.ts";
-import { matchesKey, visibleWidth } from "../index.ts";
+import type { Component, SelectListTheme } from "../primitives.ts";
+import { matchesKey, visibleWidth } from "../primitives.ts";
 import { wrapBold, wrapDim } from "../theme/ansi.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 
-export interface ListSelectionItem {
+export interface SecondarySelectionItem {
   readonly value: string;
   readonly name: string;
   readonly description?: string;
@@ -29,27 +29,31 @@ export interface ListSelectionItem {
   readonly disabled?: boolean;
 }
 
-export interface ListSelectionModalProps {
+export interface SecondarySelectionViewProps {
   readonly title: string;
   readonly subtitle?: string;
-  readonly items: readonly ListSelectionItem[];
+  readonly items: readonly SecondarySelectionItem[];
   readonly maxVisible?: number;
   readonly initialSelectedValue?: string;
-  readonly onSelectionChange?: (item: ListSelectionItem) => void;
+  readonly onSelectionChange?: (item: SecondarySelectionItem) => void;
   /** 底部提示行,默认 "Press Enter to confirm or Esc to go back"(对照 codex standard_popup_hint_line)。 */
   readonly footerHint?: string;
   readonly selectListTheme: SelectListTheme;
-  readonly onSelect: (item: ListSelectionItem) => void;
+  readonly onSelect: (item: SecondarySelectionItem) => void;
   readonly onCancel: () => void;
+  /** 二级界面可选的预览行，位于标题/副标题与选项之间。 */
+  readonly detailLines?: readonly string[];
+  /** 业务快捷键映射到 item.value；未匹配时仍走通用导航。 */
+  readonly shortcutValue?: (data: string) => string | undefined;
 }
 
 const DEFAULT_FOOTER_HINT = "Press Enter to confirm or Esc to go back";
 
-export class ListSelectionModal implements Component {
-  private readonly props: ListSelectionModalProps;
-  private selectedIndex = 0;
+export class SecondarySelectionView implements Component {
+  protected readonly props: SecondarySelectionViewProps;
+  protected selectedIndex = 0;
 
-  constructor(props: ListSelectionModalProps) {
+  constructor(props: SecondarySelectionViewProps) {
     this.props = props;
     const selected = props.initialSelectedValue === undefined
       ? -1
@@ -63,13 +67,18 @@ export class ListSelectionModal implements Component {
 
   handleInput(data: string): void {
     const items = this.props.items;
+    const shortcutValue = this.props.shortcutValue?.(data);
+    if (shortcutValue !== undefined) {
+      this.selectValue(shortcutValue);
+      return;
+    }
     if (matchesKey(data, "up")) {
-	  this.selectedIndex = this.nextEnabledIndex(-1);
+      this.selectedIndex = this.nextEnabledIndex(-1);
       this.notifySelectionChange();
       return;
     }
     if (matchesKey(data, "down")) {
-	  this.selectedIndex = this.nextEnabledIndex(1);
+      this.selectedIndex = this.nextEnabledIndex(1);
       this.notifySelectionChange();
       return;
     }
@@ -87,12 +96,22 @@ export class ListSelectionModal implements Component {
     }
     if (matchesKey(data, "enter")) {
       const selected = items[this.selectedIndex];
-	  if (selected && !selected.disabled) this.props.onSelect(selected);
+      if (selected && !selected.disabled) this.props.onSelect(selected);
+      return;
+    }
+    if (/^[1-9]$/u.test(data)) {
+      const selected = items[Number(data) - 1];
+      if (selected && !selected.disabled) this.props.onSelect(selected);
       return;
     }
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       this.props.onCancel();
     }
+  }
+
+  protected selectValue(value: string): void {
+    const selected = this.props.items.find((item) => item.value === value);
+    if (selected !== undefined && !selected.disabled) this.props.onSelect(selected);
   }
 
   private notifySelectionChange(): void {
@@ -101,13 +120,13 @@ export class ListSelectionModal implements Component {
   }
 
   private nextEnabledIndex(direction: -1 | 1): number {
-	const items = this.props.items;
-	if (items.length === 0) return 0;
-	for (let offset = 1; offset <= items.length; offset += 1) {
-	  const index = (this.selectedIndex + direction * offset + items.length) % items.length;
-	  if (items[index]?.disabled !== true) return index;
-	}
-	return this.selectedIndex;
+    const items = this.props.items;
+    if (items.length === 0) return 0;
+    for (let offset = 1; offset <= items.length; offset += 1) {
+      const index = (this.selectedIndex + direction * offset + items.length) % items.length;
+      if (items[index]?.disabled !== true) return index;
+    }
+    return this.selectedIndex;
   }
 
   render(width: number): string[] {
@@ -116,6 +135,7 @@ export class ListSelectionModal implements Component {
     const maxVisible = this.props.maxVisible ?? 8;
     const lines: string[] = [wrapBold(this.props.title)];
     if (this.props.subtitle !== undefined) lines.push(wrapDim(this.props.subtitle));
+    if (this.props.detailLines !== undefined) lines.push(...this.props.detailLines);
     if (items.length === 0) {
       lines.push(wrapDim(theme.noMatch("No matching items")));
     } else {
@@ -154,12 +174,17 @@ export class ListSelectionModal implements Component {
   }
 
   /** name + current/default 标记(对照 codex build_rows 的 name_with_marker)。 */
-  private rowName(item: ListSelectionItem): string {
+  private rowName(item: SecondarySelectionItem): string {
     if (item.isCurrent) return `${item.name} (current)`;
     if (item.isDefault) return `${item.name} (default)`;
     return item.name;
   }
 }
+
+/** 兼容旧名；新代码应使用 SecondarySelectionView。 */
+export { SecondarySelectionView as ListSelectionModal };
+export type ListSelectionItem = SecondarySelectionItem;
+export type ListSelectionModalProps = SecondarySelectionViewProps;
 
 /** 超宽时按可见宽度截断并追加 "…"(对照 codex build_full_line truncated 路径)。 */
 function truncateName(name: string, limit: number): string {

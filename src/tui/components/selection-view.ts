@@ -10,10 +10,9 @@
  *   - render:标题 + 副标题 + 列表 + footer 提示,窄终端下逐行截断不溢出。
  */
 
-import type { Component, SelectItem, SelectListTheme } from "../index.ts";
-import { SelectList } from "../index.ts";
-import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
+import type { SelectListTheme } from "../primitives.ts";
 import type { PresentationBlock } from "../presentation.ts";
+import { SecondarySelectionView } from "./list-selection-modal.ts";
 
 export interface SelectionItem {
   readonly name: string;
@@ -38,54 +37,38 @@ export interface SelectionViewProps {
   readonly onCancel?: () => void;
 }
 
-export class SelectionView implements Component {
-  private readonly list: SelectList;
-  private readonly props: SelectionViewProps;
+export class SelectionView extends SecondarySelectionView {
+  private readonly selectionProps: SelectionViewProps;
 
   constructor(props: SelectionViewProps) {
-    this.props = props;
-    const items: SelectItem[] = props.items.map((item) => ({
-      value: item.name,
-      label: item.name,
-      description: item.description,
-    }));
-    this.list = new SelectList(
-      items,
-      props.maxVisible ?? Math.min(props.items.length, 8),
-      props.selectListTheme,
-    );
-    this.list.onSelect = (item) => {
-      const selection = props.items.find((candidate) => candidate.name === item.value);
-      if (selection?.dismissOnSelect === true) props.onDismiss?.();
-      if (selection?.action !== undefined) selection.action();
-      else if (selection !== undefined) props.onSelect?.(selection);
-    };
-    this.list.onCancel = props.onCancel;
-  }
-
-  invalidate(): void {
-    this.list.invalidate();
-  }
-
-  handleInput(data: string): void {
-    this.list.handleInput(data);
-  }
-
-  render(width: number): string[] {
-    const lines: string[] = [];
-    if (this.props.title !== undefined) lines.push(fitToWidth(this.props.title, width));
-    if (this.props.subtitle !== undefined) lines.push(fitToWidth(this.props.subtitle, width));
-    lines.push(...fitLinesToWidth(this.list.render(width), width));
-    if (this.props.footerHint !== undefined) lines.push(fitToWidth(this.props.footerHint, width));
-    return lines;
+    super({
+      title: props.title ?? "",
+      subtitle: props.subtitle,
+      footerHint: props.footerHint,
+      items: props.items.map((item, index) => ({ value: String(index), name: item.name, description: item.description })),
+      maxVisible: props.maxVisible,
+      selectListTheme: props.selectListTheme,
+      onSelect: (item) => {
+        const selection = props.items[Number(item.value)];
+        if (selection?.dismissOnSelect === true) props.onDismiss?.();
+        if (selection?.action !== undefined) selection.action();
+        else if (selection !== undefined) props.onSelect?.(selection);
+      },
+      onCancel: () => props.onCancel?.(),
+    });
+    this.selectionProps = props;
   }
 
   present(): PresentationBlock[] {
     return [{
       kind: "select",
-      title: this.props.title ?? "",
-      options: this.list.getVisibleItems(),
-      selectedIndex: this.list.getSelectedIndex(),
+      title: this.selectionProps.title ?? "",
+      options: this.selectionProps.items.map((item, index) => ({
+        value: String(index),
+        label: item.name,
+        description: item.description,
+      })),
+      selectedIndex: this.selectedIndex,
     }];
   }
 }

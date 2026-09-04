@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import stripAnsi from "strip-ansi";
+import { SecondarySelectionView } from "../../src/tui/components/list-selection-modal.ts";
 import { SelectionView, type SelectionItem } from "../../src/tui/components/selection-view.ts";
 import { makeSelectListTheme } from "../../src/tui/theme/factories.ts";
 import { loadTheme } from "../../src/tui/theme/theme.ts";
@@ -13,6 +14,11 @@ const archiveItems: SelectionItem[] = [
 const hits: string[] = [];
 
 describe("SelectionView", () => {
+	it("复用统一二级选择结构", () => {
+		const view = new SelectionView({ title: "pick", items: archiveItems, selectListTheme: theme });
+		expect(view).toBeInstanceOf(SecondarySelectionView);
+	});
+
   it("渲染标题/副标题/列表/footer 提示,Enter 触发 action,Esc 触发 onCancel", () => {
     let cancelled = 0;
     const view = new SelectionView({

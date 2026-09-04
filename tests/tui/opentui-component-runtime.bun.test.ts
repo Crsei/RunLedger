@@ -774,7 +774,9 @@ describe("OpenTUI component projection", () => {
       runtime.update({
         body: [],
         editorText: "",
-        footer: ["idle"],
+        editorHeight: 5,
+        statusIndicator: { indicator: "●", header: "Waiting", elapsed: "1s" },
+        footer: ["identity", "usage"],
         overlay: [{
           kind: "select",
           title: "/commands",
@@ -791,11 +793,15 @@ describe("OpenTUI component projection", () => {
         readonly width?: number;
         readonly bottom?: number;
         readonly border?: boolean;
+        readonly backgroundColor?: { readonly a: number };
       } | undefined;
       expect(overlayBox?.left).toBe(1);
       expect(overlayBox?.width).toBe(72);
-      expect(overlayBox?.bottom).toBe(5);
+      // capturing secondary views stay attached immediately above the
+      // current Composer + Footer stack, even when either grows.
+      expect(overlayBox?.bottom).toBe(9);
       expect(overlayBox?.border).toBe(true);
+      expect(overlayBox?.backgroundColor?.a).toBe(1);
     } finally {
       runtime.destroy();
     }
@@ -1170,7 +1176,7 @@ describe("OpenTUI component projection", () => {
     expect(setup.renderer.isDestroyed).toBe(true);
   });
 
-  test("S6 renders a Codex-style permission request in the transcript without an overlay", async () => {
+  test("renders a Codex-style permission request in the secondary view above the Composer", async () => {
     const setup = await createTestRenderer({ width: 72, height: 16 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
       onInput: () => {},
@@ -1193,20 +1199,32 @@ describe("OpenTUI component projection", () => {
         onCancel: () => {},
       });
       runtime.update({
-        body: view.present(72),
+        body: [{ id: "history", kind: "text", content: "historical conversation" }],
         editorText: "",
         footer: ["Waiting for approval"],
+        overlay: view.present(68),
+        overlayAnchor: "bottom-left",
       });
       await setup.renderOnce();
       const frame = setup.captureCharFrame();
+      expect(setup.renderer.root.findDescendantById("runledger-block-history")?.plainText).toBe("historical conversation");
       expect(frame).toContain("Would you like to run the following command?");
       expect(frame).toContain("Environment: local");
       expect(frame).toContain("$ npm run check");
       expect(frame).toContain("Yes, proceed");
       expect(frame).toContain("No, and tell RunLedger what to do differently");
       expect(frame).toContain("Waiting for approval");
-      expect(setup.renderer.root.findDescendantById("runledger-overlay")).toBeUndefined();
-      expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-editor");
+      const overlay = setup.renderer.root.findDescendantById("runledger-overlay");
+      const select = setup.renderer.root.findDescendantById("runledger-overlay-select-2");
+      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      expect(overlay).toBeDefined();
+      expect(select).toBeDefined();
+      expect(editorRow).toBeDefined();
+      if (overlay !== undefined && select !== undefined && editorRow !== undefined) {
+        expect(overlay.screenY + overlay.height).toBeLessThanOrEqual(editorRow.screenY);
+        expect(select.screenY + select.height).toBeLessThanOrEqual(overlay.screenY + overlay.height - 1);
+      }
+      expect(setup.renderer.currentFocusedRenderable?.id).toBe("runledger-overlay-select-2");
     } finally {
       runtime.destroy();
     }

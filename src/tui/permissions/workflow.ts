@@ -5,7 +5,7 @@ import { parseSecurityConfigDocument } from "../../security/config/schema.ts";
 import type { SecurityConfigDocument } from "../../security/types.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import type { SessionDomainMutationContext, SessionDomainRequestContext, SessionDomainResult } from "../../runtime/session-runtime/domain-router.ts";
-import { ListSelectionModal } from "../components/list-selection-modal.ts";
+import { SecondarySelectionView } from "../components/list-selection-modal.ts";
 import type { Component } from "../index.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
 import type { Theme } from "../theme/theme.ts";
@@ -84,7 +84,7 @@ export class PermissionsWorkflow {
 				disabled: !view.editable || unavailable,
 			};
 		});
-		const modal = new ListSelectionModal({
+		const modal = new SecondarySelectionView({
 			title: "Permissions",
 			subtitle: view.editable
 				? "Choose how new Sessions can access files, commands, and the network."
@@ -106,7 +106,7 @@ export class PermissionsWorkflow {
 	}
 
 	#openFullAccessConfirmation(view: PermissionSettingsView): void {
-		const modal = new ListSelectionModal({
+		const modal = new SecondarySelectionView({
 			title: "Confirm Full Access",
 			subtitle: "This allows editing files outside this workspace and network access without routine approval.",
 			items: [

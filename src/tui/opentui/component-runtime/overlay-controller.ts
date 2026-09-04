@@ -17,7 +17,7 @@ export class OverlayController {
     this.port = port;
   }
 
-  public update(frame: OpenTuiComponentFrame, footerHeight: number, editorHeight: number): void {
+  public update(frame: OpenTuiComponentFrame, footerHeight: number, editorHeight: number, statusIndicatorHeight: number): void {
     if (!frame.overlay) {
       this.dispose();
       this.port.editor.focus();
@@ -29,9 +29,13 @@ export class OverlayController {
     const interactive = blocks.some((block) => block.kind === "select" || block.kind === "input");
     const bottomLeft = frame.overlayAnchor === "bottom-left";
     const compact = frame.overlayNonCapturing === true && bottomLeft;
+    const composerTopOffset = footerHeight + editorHeight + statusIndicatorHeight + 1;
     const modalWidth = transcriptVariant ? renderer.width : Math.max(1, Math.floor(renderer.width * 0.9));
-    const contentHeight = blocks.reduce((height, block) => height + overlayBlockHeight(block), 0) + 4;
-    const maxHeight = Math.max(1, Math.floor(renderer.height * 0.8));
+    const chromeHeight = compact ? 0 : bottomLeft ? 2 : 4;
+    const contentHeight = blocks.reduce((height, block) => height + overlayBlockHeight(block), 0) + chromeHeight;
+    const screenMaxHeight = Math.max(1, Math.floor(renderer.height * 0.8));
+    const attachedMaxHeight = bottomLeft ? Math.max(1, renderer.height - composerTopOffset) : screenMaxHeight;
+    const maxHeight = Math.min(screenMaxHeight, attachedMaxHeight);
     const modalHeight = interactive
       ? Math.min(maxHeight, Math.max(Math.max(1, Math.floor(renderer.height * 0.5)), contentHeight))
       : Math.min(maxHeight, contentHeight);
@@ -42,6 +46,8 @@ export class OverlayController {
     overlay.borderStyle = "rounded";
     overlay.border = !compact && !transcriptVariant;
     overlay.padding = compact ? 0 : 1;
+    overlay.paddingTop = bottomLeft ? 0 : compact ? 0 : 1;
+    overlay.paddingBottom = bottomLeft ? 0 : compact ? 0 : 1;
     if (transcriptVariant) {
       overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
       overlay.top = 0;
@@ -51,18 +57,25 @@ export class OverlayController {
     } else if (compact) {
       overlay.backgroundColor = undefined;
       overlay.top = undefined;
-      overlay.bottom = footerHeight + editorHeight + 1;
+      overlay.bottom = composerTopOffset;
     } else if (bottomLeft) {
-      overlay.backgroundColor = undefined;
+      overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
       overlay.top = undefined;
-      overlay.bottom = 5;
+      overlay.bottom = composerTopOffset;
     } else {
       overlay.backgroundColor = undefined;
       overlay.top = Math.max(0, Math.floor((renderer.height - modalHeight) / 2));
       overlay.bottom = undefined;
     }
     if (!transcriptVariant) overlay.height = interactive ? modalHeight : "auto";
-    this.reconcileNodes(overlay, blocks);
+    const fixedBlockHeight = blocks.reduce((height, block) => block.kind === "select"
+      ? height + (block.title.length > 0 ? 1 : 0) + (block.query === undefined ? 0 : 1)
+      : height + overlayBlockHeight(block), 0);
+    const selectCount = blocks.filter((block) => block.kind === "select").length;
+    const selectHeightLimit = selectCount === 0
+      ? 12
+      : Math.max(1, Math.floor((modalHeight - chromeHeight - fixedBlockHeight) / selectCount));
+    this.reconcileNodes(overlay, blocks, selectHeightLimit);
   }
 
   public dispose(): void {
@@ -84,14 +97,14 @@ export class OverlayController {
     return this.overlay;
   }
 
-  private reconcileNodes(overlay: BoxRenderable, blocks: ReturnType<typeof toPresentationBlock>[]): void {
+  private reconcileNodes(overlay: BoxRenderable, blocks: ReturnType<typeof toPresentationBlock>[], selectHeightLimit: number): void {
     const next = new Map<string, KeyedRenderable<OverlayRenderable>>();
     const desired: OverlayRenderable[] = [];
     let focus: InputRenderable | SelectRenderable | undefined;
     for (const [index, block] of blocks.entries()) {
       const baseKey = block.id ?? String(index);
       if (block.kind === "select") {
-        desired.push(getOverlayTextNode(this.port.renderer, this.nodes, next, `title-${baseKey}`, block.title));
+        if (block.title.length > 0) desired.push(getOverlayTextNode(this.port.renderer, this.nodes, next, `title-${baseKey}`, block.title));
         if (block.query !== undefined) {
           const query = getOverlayInputNode(this.port.renderer, this.nodes, next, `query-${baseKey}`, block.query, "Filter…");
           desired.push(query);
@@ -105,6 +118,7 @@ export class OverlayController {
           block.options.map((option) => ({ name: option.label, description: option.description ?? "", value: option.value })),
           block.selectedIndex,
           this.port.options.onInput,
+          selectHeightLimit,
         );
         desired.push(select);
         focus ??= select;

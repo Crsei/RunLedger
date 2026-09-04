@@ -1,9 +1,9 @@
-/** Codex 风格的 transcript 内 permission 请求；不使用 overlay。 */
+/** Codex 风格 permission 请求；复用统一二级选择结构。 */
 
-import type { Component } from "../primitives.ts";
 import { matchesKey, wrapTextWithAnsi } from "../primitives.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import type { ApprovalChoice, ApprovalReverseRequestView } from "../approval.ts";
+import { SecondarySelectionView } from "./list-selection-modal.ts";
 
 export interface PermissionRequestViewProps {
 	readonly request: ApprovalReverseRequestView;
@@ -13,43 +13,49 @@ export interface PermissionRequestViewProps {
 	readonly onChange?: () => void;
 }
 
-export class PermissionRequestView implements Component {
+const PLAIN_SELECT_THEME = {
+	selectedPrefix: (text: string): string => text,
+	selectedText: (text: string): string => text,
+	description: (text: string): string => text,
+	scrollInfo: (text: string): string => text,
+	noMatch: (text: string): string => text,
+	matchHighlight: (text: string): string => text,
+};
+
+export class PermissionRequestView extends SecondarySelectionView {
 	readonly #request: ApprovalReverseRequestView;
 	readonly #choices: readonly ApprovalChoice[];
-	readonly #onSelect: (choice: ApprovalChoice) => void;
-	readonly #onCancel: () => void;
-	readonly #onChange: (() => void) | undefined;
-	#selectedIndex = 0;
 
 	public constructor(props: PermissionRequestViewProps) {
+		const choices = codexPermissionChoices(props.choices);
+		const command = shellCommand(props.request);
+		super({
+			title: command === undefined ? "Would you like to allow the following request?" : "Would you like to run the following command?",
+			detailLines: [
+				"",
+				"  Environment: local",
+				`  Reason: ${safeLine(props.request.summary)}`,
+				"",
+				...(command === undefined ? requestLines(props.request) : [`  $ ${command}`]),
+				"",
+			],
+			items: choices.map((choice) => ({
+				value: choice.id,
+				name: choiceLabel(choice),
+				description: choice.description,
+			})),
+			selectListTheme: PLAIN_SELECT_THEME,
+			footerHint: "Press Enter to confirm; Esc denies the request",
+			onSelect: (item) => {
+				const choice = choices.find((candidate) => candidate.id === item.value);
+				if (choice !== undefined) props.onSelect(choice);
+			},
+			onCancel: props.onCancel,
+			onSelectionChange: () => props.onChange?.(),
+			shortcutValue: (data) => shortcutChoiceId(data, choices),
+		});
 		this.#request = props.request;
-		this.#choices = codexPermissionChoices(props.choices);
-		this.#onSelect = props.onSelect;
-		this.#onCancel = props.onCancel;
-		this.#onChange = props.onChange;
-	}
-
-	public invalidate(): void {}
-
-	public handleInput(data: string): void {
-		if (this.#choices.length === 0) {
-			this.#onCancel();
-			return;
-		}
-		if (matchesKey(data, "up")) this.#move(-1);
-		else if (matchesKey(data, "down")) this.#move(1);
-		else if (matchesKey(data, "enter")) this.#select(this.#selectedIndex);
-		else if (matchesKey(data, "escape")) this.#selectDecision("deny");
-		else if (matchesKey(data, "ctrl+c")) this.#onCancel();
-		else if (data === "y" || data === "Y") this.#selectDecision("allow-once");
-		else if (data === "p" || data === "P") this.#selectPersistent();
-		else if (/^[1-9]$/u.test(data)) this.#select(Number(data) - 1);
-	}
-
-	public render(width: number): string[] {
-		const safeWidth = Math.max(1, width);
-		return permissionLines(this.#request, this.#choices, this.#selectedIndex)
-			.flatMap((line) => wrapTextWithAnsi(line, safeWidth));
+		this.#choices = choices;
 	}
 
 	public present(width: number): PresentationBlock[] {
@@ -73,32 +79,10 @@ export class PermissionRequestView implements Component {
 				options: this.#choices.map((choice, index) => ({
 					value: choice.id,
 					label: `${index + 1}. ${choiceLabel(choice)}`,
-					description: choice.description,
 				})),
-				selectedIndex: this.#selectedIndex,
+				selectedIndex: this.selectedIndex,
 			},
 		];
-	}
-
-	#move(delta: number): void {
-		this.#selectedIndex = (this.#selectedIndex + delta + this.#choices.length) % this.#choices.length;
-		this.#onChange?.();
-	}
-
-	#select(index: number): void {
-		const choice = this.#choices[index];
-		if (choice !== undefined) this.#onSelect(choice);
-	}
-
-	#selectDecision(decision: string): void {
-		const index = this.#choices.findIndex((choice) => choice.decision.decision === decision);
-		if (index >= 0) this.#select(index);
-		else this.#onCancel();
-	}
-
-	#selectPersistent(): void {
-		const index = this.#choices.findIndex((choice) => choice.decision.decision === "allow-with-prefix-rule" || choice.decision.decision === "allow-with-network-rule" || choice.decision.decision === "allow-session");
-		if (index >= 0) this.#select(index);
 	}
 }
 
@@ -112,28 +96,25 @@ function codexPermissionChoices(choices: readonly ApprovalChoice[]): readonly Ap
 	return [once, persistent, deny].filter((choice): choice is ApprovalChoice => choice !== undefined);
 }
 
-function permissionLines(request: ApprovalReverseRequestView, choices: readonly ApprovalChoice[], selectedIndex: number): string[] {
-	const command = shellCommand(request);
-	const lines = [
-		command === undefined ? "Would you like to allow the following request?" : "Would you like to run the following command?",
-		"",
-		"  Environment: local",
-		`  Reason: ${safeLine(request.summary)}`,
-	];
-	if (command !== undefined) lines.push("", `  $ ${command}`);
-	else lines.push("", ...requestLines(request));
-	lines.push("");
-	for (const [index, choice] of choices.entries()) {
-		const marker = index === selectedIndex ? "›" : " ";
-		lines.push(`${marker} ${index + 1}. ${choiceLabel(choice)}`);
-	}
-	return lines;
-}
-
 function shellCommand(request: ApprovalReverseRequestView): string | undefined {
 	return request.requests?.length === 1 && request.requests[0]?.kind === "shell"
 		? safeLine(request.requests[0].command)
 		: undefined;
+}
+
+function shortcutChoiceId(data: string, choices: readonly ApprovalChoice[]): string | undefined {
+	const decision = data === "y" || data === "Y"
+		? "allow-once"
+		: data === "p" || data === "P"
+			? "persistent"
+			: matchesKey(data, "escape")
+				? "deny"
+				: undefined;
+	if (decision === undefined) return undefined;
+	const choice = decision === "persistent"
+		? choices.find((candidate) => candidate.decision.decision === "allow-with-prefix-rule" || candidate.decision.decision === "allow-with-network-rule" || candidate.decision.decision === "allow-session")
+		: choices.find((candidate) => candidate.decision.decision === decision);
+	return choice?.id;
 }
 
 function requestLines(request: ApprovalReverseRequestView): string[] {

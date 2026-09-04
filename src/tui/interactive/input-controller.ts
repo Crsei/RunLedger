@@ -6,7 +6,7 @@
  * 也归本 controller(presentation 输入面)。
  */
 
-import { ListSelectionModal } from "../components/list-selection-modal.ts";
+import { SecondarySelectionView } from "../components/list-selection-modal.ts";
 import { SlashCommandPopup } from "../components/slash-command-popup.ts";
 import { matchesKey } from "../index.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
@@ -131,7 +131,7 @@ export class InputController {
 		this.hideSlashPopup();
 		this.port.syntaxThemeController.cancelPreview();
 		const opening = this.port.syntaxThemeController.snapshot();
-		const modal = new ListSelectionModal({
+		const modal = new SecondarySelectionView({
 			title: "Select Syntax Theme",
 			subtitle: "Preview with arrows; Enter saves, Esc restores.",
 			items: this.port.syntaxThemeController.themeEntries().map((entry) => ({

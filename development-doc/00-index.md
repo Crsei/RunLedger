@@ -30,7 +30,7 @@
 | Test Strategy / Runner | [`test/README.md`](test/README.md)、[`test/01-test-strategy-and-runner-hardening-plan.md`](test/01-test-strategy-and-runner-hardening-plan.md) | 测试 inventory、唯一 runner 归属、资源分桶、PR CI、构建/CLI/PTY smoke、确定性、跨平台与人工/live 证据边界 | 当前 runner/config/tests；异步方法见 [`test/async-state-machine.md`](test/async-state-machine.md) |
 | Provider | [`providers/01-pi-ai-migration-plan.md`](providers/01-pi-ai-migration-plan.md)、[`providers/02-oh-my-pi-provider-port-execution-checklist.md`](providers/02-oh-my-pi-provider-port-execution-checklist.md) | 历史 pi-ai 全量移植；oh-my-pi 当前新增 provider 的差集、适配批次、特殊协议、动态 catalog、认证和生产验收清单 | 当前实现查 `AGENTS.md` §1.1；增量执行状态查 `providers/02` |
 | Storage / CLI | [`storage-cli/02-user-home-migration-handoff.md`](storage-cli/02-user-home-migration-handoff.md)、[`storage-cli/01-project-layout-cli-plan.md`](storage-cli/01-project-layout-cli-plan.md) | 用户级单一 home 破坏性迁移 handoff（S0–S5 已完成）;旧项目级 `.runledger/`、settings、session 与 CLI 计划仅作为 superseded 迁移输入 | 迁移状态与最终证据查 `02`;旧布局历史见 [`project-cli-layout.md`](project-cli-layout.md) |
-| 界面框架术语 | [`frame/README.md`](frame/README.md) | TUI、工具展示、输入/参数区域、审批与安全配置的名称、层级、当前源码位置与易混淆边界 | [`frame/00-tui-and-security-terminology.md`](frame/00-tui-and-security-terminology.md)、当前代码 |
+| 界面框架术语 | [`frame/README.md`](frame/README.md) | TUI、工具展示、输入/参数区域、Composer 上方统一二级选择界面、审批与安全配置的名称和层级 | [`frame/00-tui-and-security-terminology.md`](frame/00-tui-and-security-terminology.md)、当前代码 |
 | TUI | [`tui/00-overview.md`](tui/00-overview.md) | TUI 总体设计与 `01`–`09` 专题导航 | `AGENTS.md` §1.2.x、§5 |
 | TUI | [`tui/10-documentation-update-plan.md`](tui/10-documentation-update-plan.md) | 跨项目 lessons 与远程控制路线文档更新记录 | [`tui/08-cross-project-lessons.md`](tui/08-cross-project-lessons.md)、[`tui/09-remote-control-roadmap.md`](tui/09-remote-control-roadmap.md) |
 | TUI / OpenTUI | [`tui/17-opentui-refactor-plan.md`](tui/17-opentui-refactor-plan.md) | pi-tui → OpenTUI imperative core 实现、PTY/native frame 与全仓门禁证据 | [`tui/reference/00-opentui-component-index.md`](tui/reference/00-opentui-component-index.md) |
@@ -102,6 +102,9 @@ development-doc/
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md
+├── frame/
+│   ├── README.md
+│   └── 00-tui-and-security-terminology.md
 ├── plugin/
 │   └── 01-tree-sitter-bash-ast-port-plan.md
 ├── providers/

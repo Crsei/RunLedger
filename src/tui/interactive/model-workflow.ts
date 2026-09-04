@@ -5,7 +5,7 @@
  * authoritative selection 由 controller/Host 返回后更新 view。
  */
 
-import { ListSelectionModal, type ListSelectionItem } from "../components/list-selection-modal.ts";
+import { SecondarySelectionView, type SecondarySelectionItem } from "../components/list-selection-modal.ts";
 import { SelectorModal } from "../components/selector-modal.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
 import type { SelectItem } from "../primitives.ts";
@@ -98,7 +98,7 @@ export class ModelWorkflow {
 			counts.set(model.providerId, (counts.get(model.providerId) ?? 0) + 1);
 		}
 		const providers = [...counts.keys()];
-		const items: ListSelectionItem[] = providers.map((providerId) => ({
+		const items: SecondarySelectionItem[] = providers.map((providerId) => ({
 			value: providerId,
 			name: providerId,
 			description: `${counts.get(providerId) ?? 0} available models`,
@@ -112,7 +112,7 @@ export class ModelWorkflow {
 				? "Choose a specific model and provider"
 				: `Choose a specific model and provider (current: ${currentLabel})`,
 		});
-		const modal = new ListSelectionModal({
+		const modal = new SecondarySelectionView({
 			title: "Select Model",
 			subtitle: "Pick a quick provider or browse all models.",
 			items,
@@ -142,14 +142,14 @@ export class ModelWorkflow {
 			return;
 		}
 		const currentLabel = this.currentModelLabel(source);
-		const items: ListSelectionItem[] = models.map((model) => ({
+		const items: SecondarySelectionItem[] = models.map((model) => ({
 			value: `${model.providerId}/${model.modelId}`,
 			name: model.label,
 			description: providerId === undefined ? `[${model.providerId}]` : model.modelId,
 			isCurrent: source.currentProviderId === model.providerId && source.currentModelId === model.modelId,
 		}));
 		const suffix = currentLabel === undefined ? "" : ` (current: ${currentLabel})`;
-		const modal = new ListSelectionModal({
+		const modal = new SecondarySelectionView({
 			title: providerId === undefined ? "Select Model and Provider" : `Select Model — ${providerId}`,
 			subtitle: providerId === undefined
 				? `Choose a specific model and provider${suffix}`

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { approvalChoices, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
+import { ListSelectionModal } from "../../src/tui/components/list-selection-modal.ts";
 import { PermissionRequestView } from "../../src/tui/components/permission-request-view.ts";
 
 function shellRequest() {
@@ -15,6 +16,12 @@ function shellRequest() {
 }
 
 describe("PermissionRequestView", () => {
+	it("uses the shared secondary selection view structure", () => {
+		const request = shellRequest();
+		const view = new PermissionRequestView({ request, choices: approvalChoices(request), onSelect: vi.fn(), onCancel: vi.fn() });
+		expect(view).toBeInstanceOf(ListSelectionModal);
+	});
+
 	it.each([
 		["y", { decision: "allow-once" }],
 		["p", { decision: "allow-with-prefix-rule", prefixRule: ["npm", "run", "check"] }],
