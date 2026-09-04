@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { Value } from "typebox/value";
 import type { AgentTool } from "../types.ts";
 import type { RuntimeDigest } from "../protocol/foundation.ts";
-import { RuntimeDigestSchema } from "../protocol/foundation-schemas.ts";
+import { RuntimeDigestSchema, RuntimeIdSchema } from "../protocol/foundation-schemas.ts";
 
 export type HarnessProfileId = "standard" | "minimal";
 
@@ -138,6 +138,28 @@ export const HarnessProfileDescriptorSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const HarnessCompositionReceiptSchema = Type.Object(
+	{
+		sessionId: RuntimeIdSchema,
+		ownerGeneration: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+		profile: HarnessProfileRefSchema,
+		promptDigest: RuntimeDigestSchema,
+		tools: Type.Array(Type.Object(
+			{
+				name: Type.String({ pattern: "^[A-Za-z][A-Za-z0-9_-]*$", minLength: 1, maxLength: 128 }),
+				descriptorDigest: RuntimeDigestSchema,
+			},
+			{ additionalProperties: false },
+		), { maxItems: 128 }),
+		toolManifestDigest: RuntimeDigestSchema,
+		contextPolicyDigest: RuntimeDigestSchema,
+		extensions: HarnessExtensionsSchema,
+		multiAgent: Type.Boolean(),
+		compositionDigest: RuntimeDigestSchema,
+	},
+	{ additionalProperties: false },
+);
+
 export function isHarnessProfileRef(value: unknown): value is HarnessProfileRef {
 	return Value.Check(HarnessProfileRefSchema, value);
 }
@@ -147,4 +169,8 @@ export function isHarnessProfileDescriptor(value: unknown): value is HarnessProf
 	if (value.prompt.mode === "complete" ? value.prompt.text === undefined : value.prompt.text !== undefined) return false;
 	if (value.tools.mode === "standard" ? value.tools.allowlist.length !== 0 : value.tools.allowlist.length === 0) return false;
 	return new Set(value.tools.allowlist).size === value.tools.allowlist.length;
+}
+
+export function isHarnessCompositionReceipt(value: unknown): value is HarnessCompositionReceipt {
+	return Value.Check(HarnessCompositionReceiptSchema, value);
 }

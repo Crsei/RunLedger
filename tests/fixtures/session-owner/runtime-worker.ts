@@ -29,17 +29,22 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
-import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
+import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionClient } from "../../../src/cli/session-client.ts";
 import { createEmbeddedSessionRuntime } from "../../../src/cli/embedded-session-runtime.ts";
 import { gatedExecutionEnv } from "../../../src/runtime/session-runtime/attempt-gateway.ts";
 import { localExecutionEnv } from "../../../src/runtime/execution-env.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
+import { builtinModels } from "../../../src/providers/all.ts";
+import { AuthStorage } from "../../../src/storage/auth-storage.ts";
+import { loadProjectSettings } from "../../../src/storage/settings-manager.ts";
+import type { AgentTool } from "../../../src/runtime/types.ts";
 
 const [command, dbPath, sessionId, workDir, jsonArgsRaw] = process.argv.slice(2);
 const jsonArgs = jsonArgsRaw === undefined ? {} : (JSON.parse(jsonArgsRaw) as Record<string, unknown>);
@@ -61,6 +66,45 @@ function openStores(): { store: SessionStore; ownerStore: OwnerStore } {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+async function embeddedOptions(store: SessionStore, ownerStore: OwnerStore) {
+	if (jsonArgs.profileComposition !== true) return { sessionId: sessionId as SessionId, store, ownerStore };
+	const layout = buildRunledgerLayout(dirname(dbPath), "posix");
+	const settings = await loadProjectSettings({ layout });
+	const models = builtinModels({ credentials: AuthStorage.create(layout) });
+	await models.refresh({ allowNetwork: false });
+	return {
+		sessionId: sessionId as SessionId,
+		store,
+		ownerStore,
+		domain: {
+			cwd: workDir,
+			layout,
+			settings,
+			models,
+			securitySources: [{
+				source: "cli" as const,
+				read: async () => ({ status: "available" as const, text: JSON.stringify({ profile: "danger-full-access" }) }),
+			}],
+		},
+	};
+}
+
+function compositionProjection(store: SessionStore): Record<string, unknown> {
+	const event = store.replaySessionEvents(sessionId).filter((candidate) => candidate.eventType === "harness.composed").at(-1);
+	if (event === undefined) return {};
+	const receipt = JSON.parse(event.payloadJson) as {
+		readonly ownerGeneration?: number;
+		readonly profile?: { readonly id?: string; readonly version?: number };
+		readonly compositionDigest?: { readonly digest?: string };
+	};
+	return {
+		harnessProfileId: receipt.profile?.id,
+		harnessProfileVersion: receipt.profile?.version,
+		harnessCompositionGeneration: receipt.ownerGeneration,
+		harnessCompositionDigest: receipt.compositionDigest?.digest,
+	};
+}
+
 try {
 	if (command === "setup") {
 		const db = openSessionDatabase(dbPath);
@@ -70,7 +114,7 @@ try {
 			sessionId: sessionId as SessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
-			harnessProfile: standardHarnessProfileRef(),
+			harnessProfile: jsonArgs.profile === "minimal" ? minimalHarnessProfileRef() : standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		db.close();
@@ -101,7 +145,7 @@ try {
 		}
 	} else if (command === "embedded") {
 		const { store, ownerStore } = openStores();
-		const embedded = await createEmbeddedSessionRuntime({ sessionId: sessionId as SessionId, store, ownerStore });
+		const embedded = await createEmbeddedSessionRuntime(await embeddedOptions(store, ownerStore));
 		if (embedded.runtime === undefined) {
 			out({ ok: false, pid: process.pid, code: "attached_not_owner" });
 			process.exit(0);
@@ -113,6 +157,9 @@ try {
 			runtimeState: embedded.runtime.runtimeState,
 			port: embedded.server.endpoint?.port,
 			attachments: embedded.server.connectionCounts(),
+			usedCheckpoint: embedded.runtime.restoredCheckpoint !== undefined,
+			checkpointId: embedded.runtime.restoredCheckpoint?.checkpoint.descriptor.checkpointId,
+			...compositionProjection(store),
 		});
 		// reportFence:不等待 release,直接等待被 fence 后的完整 self-stop。
 		if (jsonArgs.reportFence === true) {
@@ -179,7 +226,7 @@ try {
 	} else if (command === "takeover-deadline") {
 		const { store, ownerStore } = openStores();
 		const outcome = await Promise.race([
-			createEmbeddedSessionRuntime({ sessionId: sessionId as SessionId, store, ownerStore }),
+			createEmbeddedSessionRuntime(await embeddedOptions(store, ownerStore)),
 			sleep(Number(jsonArgs.deadlineMs ?? 10_000)).then(() => ({ timeout: true as const })),
 		]);
 		if ("timeout" in outcome) {
@@ -213,11 +260,12 @@ try {
 			gatedRejected,
 			spawnCount,
 			unresolvedRemaining,
+			...compositionProjection(store),
 		});
 		process.exit(0);
 	} else if (command === "crash-after-attempt") {
 		const { store, ownerStore } = openStores();
-		const embedded = await createEmbeddedSessionRuntime({ sessionId: sessionId as SessionId, store, ownerStore });
+		const embedded = await createEmbeddedSessionRuntime(await embeddedOptions(store, ownerStore));
 		if (embedded.runtime === undefined) {
 			out({ ok: false, pid: process.pid, code: "attached_not_owner" });
 			process.exit(0);
@@ -232,12 +280,34 @@ try {
 			out({ ok: false, pid: process.pid, code: "mkfifo_unavailable" });
 			process.exit(0);
 		}
-		const gated = gatedExecutionEnv(localExecutionEnv(workDir), () => embedded.runtime, sessionId as SessionId);
-		out({ ok: true, pid: process.pid, generation: embedded.owner.currentFence?.generation, attemptStarted: true });
+		let pending: Promise<unknown>;
+		if (jsonArgs.profileComposition === true) {
+			const controller = (embedded.runtime as unknown as {
+				readonly domain?: { readonly controller: { readonly tools: readonly AgentTool[] } };
+			}).domain?.controller;
+			const bash = controller?.tools.find((tool) => tool.name === "bash");
+			if (bash === undefined) throw new Error("minimal governed bash is unavailable");
+			pending = bash.execute(
+				createRuntimeId("toolCall", `profile-crash-${process.pid}`),
+				{ command: `cat ${JSON.stringify(fifo)}` },
+			);
+		} else {
+			const gated = gatedExecutionEnv(localExecutionEnv(workDir), () => embedded.runtime, sessionId as SessionId);
+			pending = gated.fs.writeFile(fifo, "boom");
+		}
+		const attemptDeadline = Date.now() + 5_000;
+		while (embedded.runtime.unresolvedAttemptsCount() === 0 && Date.now() < attemptDeadline) await sleep(25);
+		out({
+			ok: true,
+			pid: process.pid,
+			generation: embedded.owner.currentFence?.generation,
+			attemptStarted: embedded.runtime.unresolvedAttemptsCount() > 0,
+			...compositionProjection(store),
+		});
 		// 阻塞直到被 SIGKILL;不 settle,保留 unresolved started receipt。
-		await gated.fs.writeFile(fifo, "boom").then(
-			() => out({ ok: true, pid: process.pid, outcome: "write_completed_unexpectedly" }),
-			() => out({ ok: true, pid: process.pid, outcome: "write_rejected" }),
+		await pending.then(
+			(result) => out({ ok: true, pid: process.pid, outcome: "write_completed_unexpectedly", result }),
+			(error) => out({ ok: true, pid: process.pid, outcome: "write_rejected", error: String(error) }),
 		);
 		process.exit(0);
 	} else {
