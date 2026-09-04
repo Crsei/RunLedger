@@ -197,10 +197,78 @@ describe("minimal@1 production composition", () => {
 			);
 			expect(editResult.isError).not.toBe(true);
 			expect(readFileSync(join(root, "minimal-edit.txt"), "utf8")).toBe("after\n");
-		const settledEffects = store.listAllAttemptReceipts(sessionId)
-			.filter((receipt) => receipt.outcome === "committed")
-			.map((receipt) => receipt.effectClass);
-		expect(settledEffects).toEqual(expect.arrayContaining(["process_spawn", "workspace_mutation"]));
+			const settledEffects = store.listAllAttemptReceipts(sessionId)
+				.filter((receipt) => receipt.outcome === "committed")
+				.map((receipt) => receipt.effectClass);
+			expect(settledEffects).toEqual(expect.arrayContaining(["process_spawn", "workspace_mutation"]));
+		} finally {
+			await embedded?.handle.close().catch(() => undefined);
+			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+		}
+	});
+
+	it("keeps the exact minimal surface while a restrictive permission profile rejects mutation", async () => {
+		const root = mkdtempSync(join(tmpdir(), "runledger-harness-minimal-readonly-"));
+		roots.push(root);
+		const home = join(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const sessionId = createRuntimeId("session", "minimal-readonly-permission");
+		const target = join(root, "readonly-edit.txt");
+		writeFileSync(target, "before\n", "utf8");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "minimal-readonly-permission"),
+			repositoryId: createRuntimeId("repository", "minimal-readonly-permission"),
+			harnessProfile: minimalHarnessProfileRef(),
+			settingsDigest: "d".repeat(64),
+		});
+		const settings = await loadProjectSettings({ layout });
+		const models = builtinModels({ credentials: AuthStorage.create(layout) });
+		await models.refresh({ allowNetwork: false });
+		let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			embedded = await createEmbeddedSessionRuntime({
+				sessionId,
+				store,
+				ownerStore,
+				domain: {
+					cwd: root,
+					layout,
+					settings,
+					models,
+					securitySources: [{
+						source: "cli",
+						read: async () => ({
+							status: "available",
+							text: JSON.stringify({ profile: "read-only", approvalPolicy: "never" }),
+						}),
+					}],
+				},
+			});
+			if (embedded.runtime === undefined) throw new Error("production runtime was not claimed");
+			const domain = (embedded.runtime as unknown as { readonly domain?: SessionDomainPort }).domain;
+			if (domain === undefined) throw new Error("production domain was not assembled");
+			expect(domain.controller.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
+			await expect(domain.controller.tools[1]!.execute(
+				createRuntimeId("toolCall", "minimal-readonly-edit"),
+				{ path: "readonly-edit.txt", edits: [{ oldText: "before", newText: "after" }] },
+			)).rejects.toThrow(/denied|policy|write|allowed roots/u);
+			expect(readFileSync(target, "utf8")).toBe("before\n");
+			expect(store.listAllAttemptReceipts(sessionId).map((receipt) => ({
+				effectClass: receipt.effectClass,
+				outcome: receipt.outcome,
+			}))).toEqual([
+				{ effectClass: "workspace_mutation", outcome: "started" },
+				{ effectClass: "workspace_mutation", outcome: "uncertain" },
+			]);
+			expect(store.replaySessionEvents(sessionId).filter((event) => event.eventType === "harness.composed"))
+				.toHaveLength(1);
 		} finally {
 			await embedded?.handle.close().catch(() => undefined);
 			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
