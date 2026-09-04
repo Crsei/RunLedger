@@ -1,6 +1,6 @@
 # RunLedger 会话级极简 Harness Profile 实施计划
 
-> 文档状态：in progress；P0–P3 implemented，P4–P5 not started
+> 文档状态：in progress；P0–P4 implemented，P5 not started
 > 基线复核：2026-09-04，`rollback/before-composer-shape@cc827e67e81b`
 > 实施工作树：`RunLedger-minimal-harness-profile` / `feat/minimal-harness-profile`
 > 目标入口：标准 `runledger` CLI 的 `main.ts → createEmbeddedSessionRuntime() → assembleSessionDomain()`
@@ -16,6 +16,8 @@ P2 fresh evidence（2026-09-04）：`assembleSessionDomain()` 现在先解析 ca
 P3 fresh evidence（2026-09-04）：CLI 新增仅限 fresh create 的 `--harness-profile standard|minimal`，缺值、未知值以及 open/resume/continue/fork override 均 fail closed；默认 create 写入 `standard@1`，显式 minimal 写入 `minimal@1`。Session Domain 的 create 可继承当前 profile 或显式选择 builtin ID，fork 继续由原子事务复制 source ref；catalog、create/resume/fork response 与 snapshot 均投影 profile ID/version。TUI `/new`、`/new standard`、`/new minimal` 已接线，未知参数在 mutation 前拒绝；普通/dense/expanded catalog 行和永久只读 header 分别显示 Harness，并与 Permission、Thinking 分栏，未新增 profile mutation operation。RED 为首轮 8 files / 114 tests 中 13 个预期失败，普通 catalog 行另观察到 1 个预期失败；GREEN 为 9 files / 122 tests，广覆盖 Stable Green 为 64 files / 467 tests。fresh 门禁为 `npm run test:inventory` 493 owned files / 0 diagnostics、`npm run check`、完整 `npm test`（全部 Vitest buckets 与 Bun TUI-native 19 files / 138 tests）、`npm run build`、`npm run test:smoke` 和 `git diff --check` 全部通过。全局 `runledger` 及 npm global link 均解析到本工作树；无凭据、隔离 `RUNLEDGER_DIR` 的真实 120-column tmux TTY 分别验证默认 standard 与显式 minimal fresh create、exact catalog ref/digest、durable user message 后 clean exit 和新进程 `--resume`，恢复前后 session ID/ref/digest 与 `Harness`/`Permission`/`Thinking` header 一致。该证据不覆盖 P4 的 crash takeover/checkpoint/receipt recovery 矩阵，也不替代 dark/light、80/143 列、真实 IME 等人工验收。没有 commit 或 push。
 
 提交更新（2026-09-04）：以上“没有 commit”均记录对应阶段取得门禁证据时的状态；P0–P3 实现与测试随后统一提交为 `1dba2d3`（`feat(runtime): preserve immutable harness profiles per session`），尚未 push。P4–P5 不在该提交中。
+
+P4 fresh evidence（2026-09-04）：`restoreSession()` 现在先解析 catalog 的 exact builtin ref，再校验 durable event hash chain 和所有 `harness.composed` receipt，最后才使用可丢弃 checkpoint cache；malformed/session/generation/profile/composition-digest/duplicate-generation 均返回 typed diagnostic，catalog ref 损坏返回 `harness_profile_corruption`。healthy minimal attach 不产生 client-side receipt；真实多进程 minimal governed `bash` 在 Attempt Gateway 内阻塞后 SIGKILL，takeover generation 1 → 2 保持 ref/composition digest，recovery barrier 保持 open 且新增副作用 `spawnCount=0`；clean resume 的 checkpoint hit/corrupt/deleted 三路径一致，旧 generation 写 receipt 被 owner fence 拒绝。RED 为 1 file / 4 个预期失败；GREEN 扩展为 9 tests，生产多进程 suite 10 tests 通过；focused 10 files / 93 tests 通过。`npm run check`、runtime bucket 128 files / 669 tests 与 security-storage bucket 98 files / 589 passed / 3 macOS-only skipped 均连续两轮通过。实现提交为 `1dccaa4`（`feat(runtime): audit harness composition across recovery`），尚未 push；P5 最终全量门禁与 built CLI 矩阵不在该提交中。
 
 ## 0. 结论
 
@@ -448,7 +450,7 @@ Stable Green：standard PATH built CLI 与 minimal PATH built CLI 各创建一�
 
 ### P4：恢复、故障与审计闭环
 
-状态：not started。
+状态：implemented（`1dccaa4`）；最终全量生产验收仍由 P5 收口。
 
 目标：attach/takeover/checkpoint/trace 不发生模式漂移。
 
@@ -466,6 +468,8 @@ GREEN：补齐 restore validation、receipt persistence/trace projection 和 typ
 Stable Green：Session Owner focused suite、runtime/security/storage buckets 连续两次通过；进程级 takeover fixture 验证实际 SQLite durability。
 
 提交边界：`feat(runtime): audit harness composition across recovery`。
+
+完成效果：catalog ref、durable event chain 与 bounded composition receipt 在 checkpoint cache 之前完成 authority-first 校验；receipt 的 exact schema、Session、owner generation、catalog profile、composition digest 与 generation uniqueness 均 fail closed。真实 SQLite 多进程 fixture 已覆盖 healthy attach、minimal governed bash 崩溃、generation takeover、recovery barrier，以及 checkpoint hit/corrupt/deleted 的 ref/digest 稳定性；旧 owner 无法追加 receipt。fork lineage 的原子 profile 继承继续由 P1/P3 的 Store/CLI/Session Domain 直接测试覆盖。
 
 ### P5：生产验收与文档收口
 
