@@ -127,9 +127,10 @@ describe("slash command registry", () => {
       expect(byName.get(name)?.availableDuringTask).toBe(false);
     }
     // 支持内联参数的命令
-    for (const name of ["resume", "login", "logout", "recovery", "terminal", "remember"]) {
-      expect(byName.get(name)?.supportsInlineArgs).toBe(true);
-    }
+		for (const name of ["new", "resume", "login", "logout", "recovery", "terminal", "remember"]) {
+			expect(byName.get(name)?.supportsInlineArgs).toBe(true);
+		}
+		expect(byName.get("new")?.usage).toBe("[standard|minimal]");
     expect(byName.get("terminal")?.argumentSchema[0]?.required).toBe(true);
   });
 

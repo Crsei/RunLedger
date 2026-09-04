@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * RED-01(P0-1):标准第二客户端立即 attach 健康 owner。
  *
@@ -40,6 +41,7 @@ function setupSession(seed: string): SessionId {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	db.close();

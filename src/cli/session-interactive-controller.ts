@@ -32,9 +32,12 @@ import type {
 } from "../runtime/interactive-session-controller.ts";
 import type { OwnedSessionHandle } from "./session-client.ts";
 import type { AgentRunSummary } from "../runtime/session-runtime/run-timing.ts";
+import type { HarnessProfileRef } from "../runtime/harness-profiles/index.ts";
 
 export interface SessionInteractiveSnapshot {
 	readonly sessionId: string;
+	readonly harnessProfile: HarnessProfileRef;
+	readonly permissionProfile: string;
 	readonly messages: readonly AgentMessage[];
 	readonly warnings: readonly string[];
 	readonly auditEntries: readonly LedgerEntry[];

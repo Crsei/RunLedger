@@ -18,6 +18,7 @@ import {
 	RuntimeTraceRecorder,
 	type TraceRecordingDiagnostic,
 } from "./recorder.ts";
+import type { TraceMetadata } from "./types.ts";
 
 export interface TraceRecorderFactoryInput {
 	readonly sessionId: string;
@@ -25,6 +26,8 @@ export interface TraceRecorderFactoryInput {
 	readonly ownerGeneration?: number;
 	/** Optional stable identity for Host-owned work that may be materialized after restart. */
 	readonly traceId?: TraceId;
+	/** Session composition root 提供的 bounded trace metadata。 */
+	readonly metadata?: TraceMetadata;
 }
 
 export interface TraceRecorderFactory {
@@ -92,6 +95,7 @@ export function createLocalTraceRecorderFactory(
 				failurePolicy: options.config.failurePolicy,
 				onDiagnostic,
 				metadata: {
+					...input.metadata,
 					sessionId: input.sessionId,
 					...(input.ownerGeneration === undefined ? {} : { ownerGeneration: input.ownerGeneration }),
 					recordingMode: options.config.mode,

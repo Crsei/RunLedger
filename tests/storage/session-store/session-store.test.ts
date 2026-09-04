@@ -19,6 +19,7 @@ import { SessionStore, SessionStoreError, sessionEventHash, appendEventInTransac
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { projectSessionReplay } from "../../../src/storage/session-codec.ts";
 import type { LedgerEntry } from "../../../src/runtime/ledger/types.ts";
+import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 
 let dir: string;
 
@@ -46,6 +47,67 @@ function ownerRow(store: SessionStore, sessionId: string, runtimeId: string, gen
 const digest = (seed: string) => ({ algorithm: "sha256", digest: canonicalDigest({ seed }) }) as const;
 
 describe("R2 catalog and lifecycle", () => {
+	it("requires and returns a validated durable harness profile ref", () => {
+		const store = openStore();
+		const minimal = minimalHarnessProfileRef();
+		const created = store.createSession({
+			sessionId: createRuntimeId("session", "minimal-profile"),
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+			harnessProfile: minimal,
+		});
+		expect(created.harnessProfile).toEqual(minimal);
+		expect(store.getSession(created.sessionId)?.harnessProfile).toEqual(minimal);
+		store.database().close();
+	});
+
+	it("rejects a create ref whose digest does not match the builtin descriptor", () => {
+		const store = openStore();
+		const standard = standardHarnessProfileRef();
+		expect(() => store.createSession({
+			sessionId: createRuntimeId("session", "bad-profile"),
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "d".repeat(64),
+			harnessProfile: {
+				...standard,
+				descriptorDigest: { algorithm: "sha256", digest: "0".repeat(64) as typeof standard.descriptorDigest.digest },
+			},
+		})).toThrowError(/descriptor digest mismatch/u);
+		expect(store.listSessions()).toHaveLength(0);
+		store.database().close();
+	});
+
+	it("inherits the source profile atomically when forking", () => {
+		const store = openStore();
+		const minimal = minimalHarnessProfileRef();
+		const source = store.createSession({
+			sessionId: createRuntimeId("session", "profile-source"),
+			workspaceId: createRuntimeId("workspace", "w"),
+			repositoryId: createRuntimeId("repository", "r"),
+			settingsDigest: "a".repeat(64),
+			sourceWorkspaceLocator: "source-locator",
+			harnessProfile: minimal,
+		});
+		const forkInput = {
+			sessionId: createRuntimeId("session", "profile-fork"),
+			sourceSessionId: source.sessionId,
+			workspaceId: createRuntimeId("workspace", "ignored"),
+			repositoryId: createRuntimeId("repository", "ignored"),
+			settingsDigest: "b".repeat(64),
+		};
+		const forked = store.forkSession(forkInput);
+		expect(forked).toMatchObject({
+			workspaceId: source.workspaceId,
+			repositoryId: source.repositoryId,
+			settingsDigest: source.settingsDigest,
+			sourceWorkspaceLocator: source.sourceWorkspaceLocator,
+			harnessProfile: minimal,
+		});
+		store.database().close();
+	});
+
 	it("persists a private current worktree locator with an owner-fenced audit event", () => {
 		const store = openStore();
 		const sessionId = createRuntimeId("session", "workspace-binding");
@@ -53,6 +115,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "workspace-binding");
@@ -91,6 +154,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId: createRuntimeId("session", "a"),
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		expect(created).toMatchObject({ status: "active", headSequence: 0, driverRevision: 0 });
@@ -101,6 +165,7 @@ describe("R2 catalog and lifecycle", () => {
 				sessionId: createRuntimeId("session", "a"),
 				workspaceId: createRuntimeId("workspace", "w"),
 				repositoryId: createRuntimeId("repository", "r"),
+				harnessProfile: standardHarnessProfileRef(),
 				settingsDigest: "d".repeat(64),
 			}),
 		).toThrowError(SessionStoreError);
@@ -114,6 +179,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "reclaim-running");
@@ -132,6 +198,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		ownerRow(store, sessionId, runtimeId, 1);
@@ -148,6 +215,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId: createRuntimeId("session", "catalog-cas-existing"),
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const target = createRuntimeId("session", "catalog-cas-target");
@@ -157,6 +225,7 @@ describe("R2 catalog and lifecycle", () => {
 				sessionId: target,
 				workspaceId: createRuntimeId("workspace", "w"),
 				repositoryId: createRuntimeId("repository", "r"),
+				harnessProfile: standardHarnessProfileRef(),
 				settingsDigest: "d".repeat(64),
 				expectedCatalogRevision: 0,
 			});
@@ -176,6 +245,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId: sourceId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -221,9 +291,6 @@ describe("R2 catalog and lifecycle", () => {
 		const forked = store.forkSession({
 			sessionId: forkId,
 			sourceSessionId: sourceId,
-			workspaceId: createRuntimeId("workspace", "w"),
-			repositoryId: createRuntimeId("repository", "r"),
-			settingsDigest: "d".repeat(64),
 		});
 		const sourceEvents = store.replaySessionEvents(sourceId);
 		const forkEvents = store.replaySessionEvents(forkId);
@@ -263,6 +330,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId: sourceId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "fork-cas-runtime");
@@ -283,9 +351,6 @@ describe("R2 catalog and lifecycle", () => {
 				sessionId: forkId,
 				sourceSessionId: sourceId,
 				expectedSourceHeadSequence: 0,
-				workspaceId: createRuntimeId("workspace", "w"),
-				repositoryId: createRuntimeId("repository", "r"),
-				settingsDigest: "d".repeat(64),
 			});
 		} catch (caught) {
 			error = caught;
@@ -304,6 +369,7 @@ describe("R2 catalog and lifecycle", () => {
 			sessionId: sourceId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const forkId = createRuntimeId("session", "fork-catalog-cas-target");
@@ -314,9 +380,6 @@ describe("R2 catalog and lifecycle", () => {
 				sourceSessionId: sourceId,
 				expectedSourceHeadSequence: 0,
 				expectedCatalogRevision: 0,
-				workspaceId: createRuntimeId("workspace", "w"),
-				repositoryId: createRuntimeId("repository", "r"),
-				settingsDigest: "d".repeat(64),
 			});
 		} catch (caught) {
 			error = caught;
@@ -336,6 +399,7 @@ describe("R2 owner-fenced event append", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -373,6 +437,7 @@ describe("R2 owner-fenced event append", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -431,6 +496,7 @@ describe("R2 command intent and append-only receipts", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -491,6 +557,7 @@ describe("R2 checkpoint cache and authority rebuild", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -543,6 +610,7 @@ describe("R2 checkpoint cache and authority rebuild", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -567,6 +635,7 @@ describe("R2 checkpoint cache and authority rebuild", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		ownerRow(store, sessionId, createRuntimeId("runtime", "r1"), 1);
@@ -602,6 +671,7 @@ describe("R2 append atomicity and fence characterization", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -638,6 +708,7 @@ describe("R2 append atomicity and fence characterization", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		ownerRow(store, sessionId, createRuntimeId("runtime", "r1"), 1);
@@ -668,6 +739,7 @@ describe("R2 append atomicity and fence characterization", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const runtimeId = createRuntimeId("runtime", "r1");
@@ -709,6 +781,7 @@ describe("R2 append atomicity and fence characterization", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		ownerRow(store, sessionId, createRuntimeId("runtime", "r1"), 1);

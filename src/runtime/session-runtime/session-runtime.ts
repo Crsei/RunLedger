@@ -404,6 +404,8 @@ export class SessionRuntime implements SessionController {
 	/** R7:领域投影(消息/审计/选择)经同一 facade 供 client 重建 TUI 状态。 */
 	public domainSnapshot(): Record<string, unknown> {
 		const domain = this.domain?.snapshot();
+		const catalog = this.store.getSession(this.sessionId);
+		const security = this.domain?.securityInspection?.();
 		const projection = domain === undefined
 			? { messages: [], warnings: [], auditEntries: [], toolCount: 0, inFlight: false, selection: { thinkingLevel: "off" } }
 			: {
@@ -419,6 +421,8 @@ export class SessionRuntime implements SessionController {
 			ok: true,
 			kind: "snapshot",
 			...this.snapshot(),
+			harnessProfile: catalog?.harnessProfile,
+			permissionProfile: typeof security?.profile === "string" ? security.profile : "unknown",
 			...projection,
 		};
 	}

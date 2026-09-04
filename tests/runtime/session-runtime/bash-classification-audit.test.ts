@@ -9,6 +9,7 @@ import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 
 const roots: string[] = [];
 
@@ -45,6 +46,7 @@ async function fixture() {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "bash-audit"),
 		repositoryId: createRuntimeId("repository", "bash-audit"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	const fence: OwnerFence = {

@@ -54,6 +54,7 @@ import { SelectionView } from "./components/selection-view.ts";
 import { PermissionRequestView } from "./components/permission-request-view.ts";
 import { StatusComponent } from "./components/status.ts";
 import { WelcomeComponent } from "./components/welcome.ts";
+import { SessionProfileHeaderComponent } from "./components/session-profile-header.ts";
 import { TranscriptOverlayComponent, projectTranscriptOverlay } from "./transcript-view.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { UsageSnapshot } from "../runtime/usage/index.ts";
@@ -146,6 +147,10 @@ export interface InteractiveModeOptions {
   hideThinkingSettingsPort?: HideThinkingSettingsPort;
   /** thinking blocks 的启动展示状态；仅影响 projection。 */
   hideThinkingBlock?: boolean;
+  /** 当前 Session 的 durable Harness ref；只读展示，不提供 mutation。 */
+  harnessProfile?: { readonly id: "standard" | "minimal"; readonly version: 1 };
+  /** 当前 Session Security 的 effective profile；与 Harness/Thinking 分栏。 */
+  permissionProfile?: string;
   /** 仅全新启动视图展示 welcome；resume/continue/fork 传 false。 */
   showWelcome?: boolean;
   /** welcome 顶边框版本号。 */
@@ -240,7 +245,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
 	private hideThinkingBlock: boolean;
 	private readonly showWelcome: boolean;
 	private readonly version: string;
-	private readonly logoLetters?: string;
+  private readonly logoLetters?: string;
+	private readonly harnessProfile?: InteractiveModeOptions["harnessProfile"];
+	private readonly permissionProfile?: string;
 	private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
@@ -283,6 +290,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.showWelcome = opts.showWelcome ?? false;
     this.version = opts.version ?? "unknown";
     this.logoLetters = opts.logoLetters;
+	this.harnessProfile = opts.harnessProfile;
+	this.permissionProfile = opts.permissionProfile;
     this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
       configuredName: opts.syntaxThemeName,
@@ -504,8 +513,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /** 测试/路由查询暴露:/new(委托 SessionWorkflow)。 */
-  public createNewSession(): Promise<void> {
-    return this.sessionWorkflow.createNewSession();
+  public createNewSession(profile?: string): Promise<void> {
+	return this.sessionWorkflow.createNewSession(profile);
   }
 
   /** 测试/路由查询暴露:/fork(委托 SessionWorkflow)。 */
@@ -576,6 +585,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** 装配组件树并填充 this.refs;M2 起把 LoadedResources / Chat 等 container 换成真实组件。 */
   private assembleTree(): void {
     const header = new Container();
+	if (this.harnessProfile !== undefined) {
+		header.addChild(new SessionProfileHeaderComponent({
+			harnessProfile: this.harnessProfile,
+			permissionProfile: this.permissionProfile ?? "unknown",
+			thinkingLevel: () => this.controller?.currentSelection.thinkingLevel ?? this.getThinkingLevel(),
+		}));
+	}
     let welcome: WelcomeComponent | undefined;
     if (this.showWelcome) {
 		welcome = new WelcomeComponent({
@@ -1035,7 +1051,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     switch (command.actionType) {
       case "session.create":
-        void this.sessionWorkflow.createNewSession();
+		void this.sessionWorkflow.createNewSession(arg);
         return;
       case "session.resume":
         void this.sessionWorkflow.resumeSession(arg || undefined);

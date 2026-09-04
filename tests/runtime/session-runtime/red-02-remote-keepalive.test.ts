@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * RED-02(P0-3):local UI detach 不再无条件终止 owner。
  *
@@ -42,6 +43,7 @@ function setupSession(seed: string): SessionId {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	db.close();

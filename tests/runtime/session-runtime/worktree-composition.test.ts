@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -94,6 +95,7 @@ describe.skipIf(process.platform === "win32")("Session worktree production compo
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "worktree-composition"),
 			repositoryId: createRuntimeId("repository", "placeholder"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const registry = new WorktreeRegistry(new MemoryWorktreeRegistryStore());

@@ -18,6 +18,7 @@ import { openSessionDatabase } from "../../src/storage/session-store/database.ts
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 
 let dir: string;
 
@@ -39,6 +40,7 @@ async function openEmbedded(): Promise<{ readonly embedded: EmbeddedSessionRunti
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	const embedded = await createEmbeddedSessionRuntime({ sessionId, store, ownerStore });
@@ -110,6 +112,7 @@ describe("standard CLI Session Owner lifecycle", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "workspace-lifecycle"),
 			repositoryId: createRuntimeId("repository", "workspace-lifecycle"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const calls: string[] = [];
@@ -193,6 +196,8 @@ describe("standard CLI Session Owner lifecycle", () => {
 	it("uses the queried snapshot durable head as the subscription cursor", async () => {
 		const { embedded, store } = await openEmbedded();
 		const snapshot = await fetchDomainSnapshot(embedded);
+		expect(snapshot.harnessProfile).toEqual(standardHarnessProfileRef());
+		expect(snapshot.permissionProfile).toBe("unknown");
 		expect(snapshot.eventCursor).toBe(embedded.runtime?.currentHeadSequence());
 		expect(snapshot.eventCursor).toBeGreaterThan(0);
 		expect(snapshot.agentRuns).toEqual([]);

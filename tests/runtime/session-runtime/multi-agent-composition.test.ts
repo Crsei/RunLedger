@@ -1,3 +1,4 @@
+import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -173,6 +174,7 @@ describe("SessionRuntime multi-agent composition", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", workspaceId),
 			repositoryId: createRuntimeId("repository", repositoryId),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -240,6 +242,7 @@ describe("SessionRuntime multi-agent composition", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", workspaceId),
 			repositoryId: createRuntimeId("repository", repositoryId),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -272,6 +275,62 @@ describe("SessionRuntime multi-agent composition", () => {
 		}
 	});
 
+	it("keeps child composition unavailable for minimal@1 even when every multi-agent gate is open", async () => {
+		const root = mkdtempSync(join(tmpdir(), "runledger-session-multi-agent-minimal-"));
+		const home = join(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const workspaceId = "multi-agent-minimal";
+		const repositoryId = "multi-agent-minimal";
+		const workspaceKey = workspacePolicyKey(workspaceId, repositoryId);
+		await saveProjectSettings({ layout }, { multiAgent: { enabled: true } });
+		await saveProjectSettings({ layout, workspaceKey }, { multiAgent: { enabled: true } });
+		const sessionId = createRuntimeId("session", "multi-agent-minimal");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", workspaceId),
+			repositoryId: createRuntimeId("repository", repositoryId),
+			harnessProfile: minimalHarnessProfileRef(),
+			settingsDigest: "d".repeat(64),
+		});
+		const settings = await loadProjectSettings({ layout });
+		const models = builtinModels({ credentials: AuthStorage.create(layout) });
+		await models.refresh({ allowNetwork: false });
+		let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			const sources = await layeredMultiAgentSources(layout, workspaceKey);
+			embedded = await createEmbeddedSessionRuntime({
+				sessionId,
+				store,
+				ownerStore,
+				domain: {
+					cwd: root,
+					layout,
+					settings,
+					models,
+					securitySources: noPromptTestSecurity,
+					multiAgent: { runtimeEnabled: true, ...sources },
+				},
+			});
+			expect(embedded.runtime).toBeDefined();
+			const productionDomain = (embedded.runtime as unknown as { readonly domain?: SessionDomainPort }).domain;
+			expect(productionDomain?.childRuntime).toBeUndefined();
+			expect(productionDomain?.multiAgent).toBeUndefined();
+			expect(productionDomain?.controller.toolCount).toBe(2);
+			expect(embedded.handle.supports("agent.inspect")).toBe(false);
+			expect(store.replaySessionEvents(sessionId).some((event) => event.eventType === "agent.root_registered")).toBe(false);
+		} finally {
+			await embedded?.handle.close().catch(() => undefined);
+			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("uses verified crash-takeover liveness to stop a durable child and close its real attempt barrier before readiness", async () => {
 		const root = mkdtempSync(join(tmpdir(), "runledger-session-multi-agent-takeover-"));
 		const home = join(root, "home");
@@ -291,6 +350,7 @@ describe("SessionRuntime multi-agent composition", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", workspaceId),
 			repositoryId: createRuntimeId("repository", repositoryId),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });

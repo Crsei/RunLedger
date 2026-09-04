@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
@@ -43,6 +44,7 @@ function ownedStore(layout: ReturnType<typeof buildRunledgerLayout>, fence: Owne
 			sessionId: fence.sessionId,
 			workspaceId,
 			repositoryId: createRuntimeId("repository", `process-${fence.sessionId.slice(-24)}`),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 	}
@@ -653,6 +655,7 @@ describe("S4 Session managed process composition", () => {
 			sessionId: fence.sessionId,
 			workspaceId,
 			repositoryId: createRuntimeId("repository", "process-event-store"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		store.database().runSync(

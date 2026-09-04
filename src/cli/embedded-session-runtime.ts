@@ -243,6 +243,8 @@ export async function createEmbeddedSessionRuntime(options: EmbeddedSessionRunti
 			);
 	} catch (error) {
 		await workspace?.release("error").catch(() => undefined);
+		claimOwner.release("error");
+		await server.closeCandidate().catch(() => undefined);
 		throw error;
 	}
 	runtime = new SessionRuntime({

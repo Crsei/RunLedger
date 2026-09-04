@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ function openStore(): { readonly store: SessionStore; readonly sessionId: Sessio
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	database.runSync(

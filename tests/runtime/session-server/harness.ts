@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R4 测试 harness:内存 DB + 真实 claim + 真实 TCP RuntimeServer + 测试 controller。
  * 与生产共用 SessionStore/OwnerStore/SessionOwner/SessionRuntimeServer 代码路径。
@@ -106,6 +107,7 @@ export async function createServerHarness(): Promise<ServerHarness> {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	let claimedFence: { readonly sessionId: SessionId; readonly runtimeId: string; readonly generation: number } | undefined;

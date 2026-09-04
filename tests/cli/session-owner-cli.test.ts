@@ -19,6 +19,7 @@ import { createRuntimeId, type SessionId } from "../../src/runtime/protocol/ids.
 import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { resolveSessionWorkspaceIdentity } from "../../src/cli/session-workspace-identity.ts";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
@@ -81,6 +82,7 @@ async function seedSessionWithUserMessage(home: string, seed: string): Promise<S
 		sessionId,
 		workspaceId: workspace.workspaceId,
 		repositoryId: workspace.repositoryId,
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 		sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 	});

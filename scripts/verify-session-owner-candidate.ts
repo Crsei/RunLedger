@@ -18,6 +18,7 @@
  *   RUNLEDGER_DIR=<预创建绝对隔离目录> npx tsx scripts/verify-session-owner-candidate.ts
  */
 
+import { standardHarnessProfileRef } from "../src/runtime/harness-profiles/index.ts";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -102,6 +103,7 @@ async function runFaultMatrix(): Promise<void> {
 			sessionId: freshId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		store.database().close();
@@ -149,6 +151,7 @@ async function runFaultMatrix(): Promise<void> {
 				sessionId: keepId,
 				workspaceId: createRuntimeId("workspace", "w"),
 				repositoryId: createRuntimeId("repository", "r"),
+				harnessProfile: standardHarnessProfileRef(),
 				settingsDigest: "d".repeat(64),
 			});
 			store.database().close();
@@ -201,6 +204,7 @@ async function runFaultMatrix(): Promise<void> {
 				sessionId: crashId,
 				workspaceId: createRuntimeId("workspace", "w"),
 				repositoryId: createRuntimeId("repository", "r"),
+				harnessProfile: standardHarnessProfileRef(),
 				settingsDigest: "d".repeat(64),
 			});
 			store.database().close();
@@ -236,6 +240,7 @@ async function runFaultMatrix(): Promise<void> {
 				sessionId: gateId,
 				workspaceId: createRuntimeId("workspace", "w"),
 				repositoryId: createRuntimeId("repository", "r"),
+				harnessProfile: standardHarnessProfileRef(),
 				settingsDigest: "d".repeat(64),
 			});
 			store.database().close();
@@ -276,6 +281,7 @@ async function latencyMeasurement(ctx: CandidateContext): Promise<void> {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const elapsed = performance.now() - t0;
@@ -297,6 +303,7 @@ async function latencyMeasurement(ctx: CandidateContext): Promise<void> {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		parIds.push(sessionId);

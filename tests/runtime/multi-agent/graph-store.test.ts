@@ -8,6 +8,7 @@ import { encodeAgentGraphEventPayload, type AgentGraphCommand } from "../../../s
 import { AgentGraphStore } from "../../../src/runtime/agents/graph-store.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import type { AppendEventInput, SessionEventRecord } from "../../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
@@ -30,6 +31,7 @@ beforeEach(() => {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "graph"),
 		repositoryId: createRuntimeId("repository", "graph"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	database.runSync(

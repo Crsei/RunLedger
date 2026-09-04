@@ -13,6 +13,7 @@ import { openSessionDatabase } from "../../src/storage/session-store/database.ts
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { createSessionProductionToolSource } from "../../src/runtime/agents/capability-subset.ts";
 import { AgentGraphStore } from "../../src/runtime/agents/graph-store.ts";
 import type { AgentGraphCommand } from "../../src/runtime/agents/graph-events.ts";
@@ -220,6 +221,7 @@ async function createFixture(seed: string): Promise<FaultFixture> {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", `fault-${seed}`),
 		repositoryId: createRuntimeId("repository", `fault-${seed}`),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "f".repeat(64),
 	});
 	let port = 40_000;

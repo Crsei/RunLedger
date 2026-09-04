@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R5 测试 harness:真实 claim + SessionRuntime + TCP server 组合。
  * 覆盖 checkpoint/restore/recovery barrier 的 integration 入口。
@@ -55,6 +56,7 @@ export async function createRuntimeHarness(seed = "h", options: {
 		workspaceId: workspace.workspaceId,
 		repositoryId: workspace.repositoryId,
 		sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	let runtime: SessionRuntime | undefined;

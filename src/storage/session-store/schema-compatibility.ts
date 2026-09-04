@@ -21,6 +21,8 @@ import {
 	SESSION_STORE_SCHEMA_V2_SQL,
 	SESSION_STORE_SCHEMA_V2_TO_V3_SQL,
 	SESSION_STORE_SCHEMA_V3_SQL,
+	SESSION_STORE_SCHEMA_V3_TO_V4_SQL,
+	SESSION_STORE_SCHEMA_V4_SQL,
 	SESSION_STORE_SCHEMA_VERSION,
 	sessionStoreSchemaFormatDigest,
 } from "./schema.ts";
@@ -96,9 +98,11 @@ export function checkStoreCompatibility(db: SessionDatabase): StoreSchemaCompati
 		? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V1_SQL)
 		: storeVersion === 2
 			? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V2_SQL)
-			: storeVersion === SESSION_STORE_SCHEMA_VERSION
+			: storeVersion === 3
 				? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL)
-				: undefined;
+				: storeVersion === SESSION_STORE_SCHEMA_VERSION
+					? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V4_SQL)
+					: undefined;
 	if (expectedDigest !== undefined && formatDigest !== expectedDigest) {
 		return { ok: false, code: "format_digest_mismatch", detail: "schema format digest does not match the binary expectation" };
 	}
@@ -309,18 +313,52 @@ export function migrateSessionStoreV2ToV3(db: SessionDatabase): ApplyStructuralM
 		: { ok: true, storeVersion: 3 };
 }
 
+/** Profile identity 会改变所有新 row 的必填语义，只允许零 active owner 的 offline migration。 */
+export function migrateSessionStoreV3ToV4(
+	db: SessionDatabase,
+): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 4; readonly alreadyCurrent: true } {
+	const compatibility = checkStoreCompatibility(db);
+	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
+	if (compatibility.header.storeVersion === 4) {
+		return { ok: true, storeVersion: 4, alreadyCurrent: true };
+	}
+	if (compatibility.header.storeVersion !== 3) {
+		return { ok: false, code: "migration_failed", detail: `unsupported migration source version ${compatibility.header.storeVersion}` };
+	}
+	const gateResult = beginOfflineMigration(db);
+	if (!gateResult.ok) {
+		return {
+			ok: false,
+			code: gateResult.code === "active_owners_present" ? "active_owners_present" : "migration_failed",
+			detail: gateResult.detail,
+		};
+	}
+	return applyStructuralMigration(db, {
+		gate: gateResult.gate,
+		nextVersion: 4,
+		nextSql: SESSION_STORE_SCHEMA_V3_TO_V4_SQL,
+		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V4_SQL),
+	});
+}
+
 /** 标准 CLI 在 owner discovery 前完成必需的 schema migration。 */
 export function migrateSessionStoreToCurrent(
 	db: SessionDatabase,
-): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 3; readonly alreadyCurrent: true } {
+): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 4; readonly alreadyCurrent: true } {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
-	if (compatibility.header.storeVersion === 3) return { ok: true, storeVersion: 3, alreadyCurrent: true };
+	if (compatibility.header.storeVersion === 4) return { ok: true, storeVersion: 4, alreadyCurrent: true };
 	if (compatibility.header.storeVersion === 1) {
 		const titleSchemaMigration = migrateSessionStoreV1ToV2(db);
 		if (!titleSchemaMigration.ok) return titleSchemaMigration;
 	}
-	return migrateSessionStoreV2ToV3(db);
+	const afterTitle = checkStoreCompatibility(db);
+	if (!afterTitle.ok) return { ok: false, code: "migration_failed", detail: afterTitle.detail };
+	if (afterTitle.header.storeVersion === 2) {
+		const workspaceMigration = migrateSessionStoreV2ToV3(db);
+		if (!workspaceMigration.ok) return workspaceMigration;
+	}
+	return migrateSessionStoreV3ToV4(db);
 }
 
 /** 显式 abort:gate 持有者(epoch 匹配)恢复 ready。migrator crash 后唯一合法出口之一。 */

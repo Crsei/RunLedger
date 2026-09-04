@@ -9,6 +9,8 @@ import type { CommandAttemptReceipt } from "../../runtime/session-owner/types.ts
 import { normalizeSessionTitle } from "../../runtime/session-owner/title.ts";
 import type { RuntimeDigest } from "../../runtime/protocol/foundation.ts";
 import type { SessionCatalogRecord, SessionEventRecord } from "./session-store.ts";
+import { resolveHarnessProfile, type HarnessProfileRef } from "../../runtime/harness-profiles/index.ts";
+import { SessionStoreError } from "./session-store-error.ts";
 
 export function rowToEvent(row: Record<string, unknown>): SessionEventRecord {
 	return {
@@ -57,6 +59,7 @@ export function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord
 			? undefined
 			: String(row.source_workspace_locator_json),
 		settingsDigest: String(row.settings_digest),
+		harnessProfile: rowToHarnessProfile(row),
 		title: row.title === null || row.title === undefined ? undefined : String(row.title),
 		titleSource: row.title_source === "auto" || row.title_source === "user" ? row.title_source : undefined,
 		titleUpdatedAtMs: row.title_updated_at_ms === null || row.title_updated_at_ms === undefined ? undefined : Number(row.title_updated_at_ms),
@@ -64,6 +67,21 @@ export function rowToCatalog(row: Record<string, unknown>): SessionCatalogRecord
 			? undefined
 			: normalizeSessionTitle(String(row.first_user_message_preview)) ?? undefined,
 	};
+}
+
+export function rowToHarnessProfile(row: Record<string, unknown>): HarnessProfileRef {
+	const resolved = resolveHarnessProfile({
+		id: row.harness_profile_id,
+		version: row.harness_profile_version,
+		descriptorDigest: {
+			algorithm: "sha256",
+			digest: row.harness_profile_digest,
+		},
+	});
+	if (!resolved.ok) {
+		throw new SessionStoreError("projection_invalid", `invalid stored harness profile: ${resolved.error.message}`);
+	}
+	return resolved.ref;
 }
 
 /** Catalog projection owns the bounded first-user-message fallback; TUI never reads events directly. */

@@ -30,6 +30,7 @@ import type {
 } from "../../runtime/session-owner/types.ts";
 import type { SessionId } from "../../runtime/protocol/ids.ts";
 import type { SessionTitleModelRef, SessionTitleSource, SessionTitleState } from "../../runtime/session-owner/title.ts";
+import type { HarnessProfileRef } from "../../runtime/harness-profiles/index.ts";
 
 export {
 	SESSION_STORE_ERROR_CODES,
@@ -59,6 +60,7 @@ export interface SessionCatalogRecord {
 	/** 正常 source workspace 的私有 canonical locator；缺失的 legacy row 不可自动 resume。 */
 	readonly sourceWorkspaceLocator?: string;
 	readonly settingsDigest: string;
+	readonly harnessProfile: HarnessProfileRef;
 	readonly title?: string;
 	readonly titleSource?: SessionTitleSource;
 	readonly titleUpdatedAtMs?: number;
@@ -81,9 +83,17 @@ export interface CreateSessionInput {
 	readonly workspaceId: string;
 	readonly repositoryId: string;
 	readonly settingsDigest: string;
+	readonly harnessProfile: HarnessProfileRef;
 	readonly worktreeLocator?: string;
 	readonly sourceWorkspaceLocator?: string;
 	readonly status?: string;
+	readonly expectedCatalogRevision?: number;
+}
+
+export interface ForkSessionInput {
+	readonly sessionId: SessionId;
+	readonly sourceSessionId: string;
+	readonly expectedSourceHeadSequence?: number;
 	readonly expectedCatalogRevision?: number;
 }
 
@@ -174,7 +184,7 @@ export class SessionStore {
 		return this.catalog.createSession(input);
 	}
 
-	public forkSession(input: CreateSessionInput & { readonly sourceSessionId: string; readonly expectedSourceHeadSequence?: number }): SessionCatalogRecord {
+	public forkSession(input: ForkSessionInput): SessionCatalogRecord {
 		return this.catalog.forkSession(input);
 	}
 

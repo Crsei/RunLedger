@@ -49,7 +49,7 @@ import { createSessionBashClassificationAudit } from "./bash-classification-audi
 import type { AgentRunBudgetUsage } from "../types.ts";
 import { SessionTitleLifecycle } from "./title-lifecycle.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
-import { createProductionSessionExtensionComposition } from "./extension-composition.ts";
+import { createProductionSessionExtensionComposition, type SessionExtensionComposition } from "./extension-composition.ts";
 import { createSessionPlanInspection } from "./plan-composition.ts";
 import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
 import { createLspTool, type LspToolOptions } from "../../lsp/tool.ts";
@@ -66,6 +66,14 @@ import type { ChildRuntimeProviderPort } from "../agents/child-runtime.ts";
 import type { PreviousOwnerLiveness } from "../agents/supervisor.ts";
 import { composeSessionResourceDomains } from "./resource-domain-composition.ts";
 import { createSecuritySettingsResourceDomain } from "./security-settings-domain.ts";
+import {
+	HarnessCompositionError,
+	MINIMAL_HARNESS_SYSTEM_PROMPT,
+	createHarnessCompositionReceipt,
+	resolveHarnessComposition,
+	resolveHarnessProfile,
+} from "../harness-profiles/index.ts";
+import type { HarnessCompositionReceipt } from "../harness-profiles/index.ts";
 export { createSessionProcessComposition } from "./process-composition.ts";
 
 export interface SessionDomainCompositionOptions {
@@ -106,6 +114,18 @@ export async function assembleSessionDomain(
 	const replay = await replayDomain(ledger, restored);
 	const catalog = store.getSession(sessionId);
 	if (catalog === undefined) throw new Error(`session not found during domain composition: ${sessionId}`);
+	const harnessProfile = resolveHarnessProfile(catalog.harnessProfile);
+	if (!harnessProfile.ok) throw new HarnessCompositionError(harnessProfile.error.code, harnessProfile.error.message);
+	if (
+		harnessProfile.descriptor.prompt.mode === "complete"
+		&& options.systemPrompt !== undefined
+		&& options.systemPrompt !== harnessProfile.descriptor.prompt.text
+	) {
+		throw new HarnessCompositionError(
+			"harness_prompt_override_conflict",
+			`${catalog.harnessProfile.id}@${catalog.harnessProfile.version} does not accept a system prompt override`,
+		);
+	}
 	if (attemptPort === undefined) throw new Error("session attempt gateway is required for production composition");
 	const toolchainProbe = createLocalSessionToolchainProbe();
 	const toolchainResult = await resolveSessionToolchainSnapshot({
@@ -149,35 +169,31 @@ export async function assembleSessionDomain(
 	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
 	const executionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
-	const lspOptions: LspToolOptions = {
-		spawn: createGovernedLspSpawner(process.toolClient()),
-		writeOperations: createGovernedLspWriteOperations(executionEnv.fs),
-		scope: sessionId,
-		linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
-	};
-	const traceRecorderFactory = options.traceRecorderFactory === undefined
-		? undefined
-		: {
-			create: (input: Parameters<TraceRecorderFactory["create"]>[0]) => options.traceRecorderFactory!.create({
-				...input,
-				sessionId,
-				ownerGeneration: fence.generation,
-			}),
-			};
+	const lspOptions: LspToolOptions | undefined = harnessProfile.descriptor.tools.mode === "standard"
+		? {
+			spawn: createGovernedLspSpawner(process.toolClient()),
+			writeOperations: createGovernedLspWriteOperations(executionEnv.fs),
+			scope: sessionId,
+			linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
+		}
+		: undefined;
 	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions);
-	const extensions = await createProductionSessionExtensionComposition({
-		layout: options.layout,
-		cwd: options.cwd,
-		store,
-		fence,
-		workspaceId: catalog.workspaceId,
-		repositoryId: catalog.repositoryId,
-		executionEnv,
-		managedProcess: process.toolClient(),
-		attemptPort: () => attemptPort.get(),
-		baseToolNames: baseTools.map((tool) => tool.name),
-		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
-	});
+	let extensions: SessionExtensionComposition | undefined;
+	if (Object.values(harnessProfile.descriptor.extensions).some(Boolean)) {
+		extensions = await createProductionSessionExtensionComposition({
+			layout: options.layout,
+			cwd: options.cwd,
+			store,
+			fence,
+			workspaceId: catalog.workspaceId,
+			repositoryId: catalog.repositoryId,
+			executionEnv,
+			managedProcess: process.toolClient(),
+			attemptPort: () => attemptPort.get(),
+			baseToolNames: baseTools.map((tool) => tool.name),
+			skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
+		});
+	}
 	const securitySettings = createSecuritySettingsResourceDomain({
 		generation: fence.generation,
 		settings: new SecuritySettingsPort({
@@ -189,47 +205,92 @@ export async function assembleSessionDomain(
 		}),
 		attemptPort: () => attemptPort.get(),
 	});
-	const resources = composeSessionResourceDomains([extensions.resources, securitySettings]);
-	const composedTools = [...baseTools, ...extensions.tools];
+	const resources = composeSessionResourceDomains([
+		...(extensions === undefined ? [] : [extensions.resources]),
+		securitySettings,
+	]);
+	const governedTools = [
+		...baseTools,
+		...(extensions === undefined || !harnessProfile.descriptor.extensions.tools ? [] : extensions.tools),
+	];
+	const standardSystemPrompt = harnessProfile.descriptor.prompt.mode === "assembled"
+		? options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents)
+		: MINIMAL_HARNESS_SYSTEM_PROMPT;
+	const harnessComposition = resolveHarnessComposition({
+		ref: catalog.harnessProfile,
+		systemPrompt: standardSystemPrompt,
+		governedTools,
+	});
+	const compositionReceipt = createHarnessCompositionReceipt({
+		sessionId,
+		ownerGeneration: fence.generation,
+		descriptor: harnessProfile.descriptor,
+		composition: harnessComposition,
+	});
+	persistHarnessCompositionReceipt(store, fence, compositionReceipt);
+	const traceRecorderFactory = options.traceRecorderFactory === undefined
+		? undefined
+		: {
+			create: (input: Parameters<TraceRecorderFactory["create"]>[0]) => options.traceRecorderFactory!.create({
+				...input,
+				sessionId,
+				ownerGeneration: fence.generation,
+				metadata: {
+					harnessProfileId: compositionReceipt.profile.id,
+					harnessProfileVersion: compositionReceipt.profile.version,
+					harnessCompositionDigest: compositionReceipt.compositionDigest.digest,
+				},
+			}),
+		};
 	const titleListeners = new Set<(event: SessionTitleChangedEvent) => void>();
 	let titleLifecycle: SessionTitleLifecycle | undefined;
 	const controller = await InteractiveSessionController.create({
 		cwd: options.cwd,
 		layout: options.layout,
-		systemPrompt: options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents),
+		systemPrompt: harnessComposition.systemPrompt,
 		models: options.models,
 		settings: options.settings,
 		replay,
 		ledger,
-			overrides: options.overrides,
-			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
-		tools: composedTools,
+		overrides: options.overrides,
+		...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
+		tools: [...harnessComposition.tools],
 		executionEnv,
 		authorizationPolicy: security.authorizationPolicy,
 		traceRecorderFactory,
-		extensionHookRuntime: extensions.hookRuntime,
-		extensionHookSnapshotId: () => extensions.turnLifecycle?.snapshotId(),
-		extensionTurnAdmission: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.admitTurn(),
-			extensionTurnAbort: extensions.turnLifecycle === undefined ? undefined : () => extensions.turnLifecycle!.cancelTurn(),
-			onModelSelectionChanged: () => titleLifecycle?.selectionChanged(),
-			...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
-			onAcceptedUserPrompt: (text) => titleLifecycle?.handleAcceptedInput(text),
+		...(extensions?.hookRuntime === undefined || !harnessProfile.descriptor.extensions.hooks
+			? {}
+			: { extensionHookRuntime: extensions.hookRuntime }),
+		...(extensions?.turnLifecycle === undefined || !harnessProfile.descriptor.extensions.lifecycle
+			? {}
+			: {
+				extensionHookSnapshotId: () => extensions!.turnLifecycle?.snapshotId(),
+				extensionTurnAdmission: () => extensions!.turnLifecycle!.admitTurn(),
+				extensionTurnAbort: () => extensions!.turnLifecycle!.cancelTurn(),
+			}),
+		onModelSelectionChanged: () => titleLifecycle?.selectionChanged(),
+		...(runBudgetUsage === undefined ? {} : { runBudgetUsage }),
+		onAcceptedUserPrompt: (text) => titleLifecycle?.handleAcceptedInput(text),
 		modelContextAssembler: async (input) => assembleAgentModelContext({
 			...input,
-			sources: extensions.contextSources(input.model.contextWindow),
+			sources: extensions === undefined || !harnessProfile.descriptor.extensions.context
+				? []
+				: extensions.contextSources(input.model.contextWindow),
 		}),
 	});
-	const childRuntime = {
-		productionToolSource: createSessionProductionToolSource({
-			sessionId,
-			cwd: options.cwd,
-			executionEnv,
-			authorizationPolicy: security.authorizationPolicy,
-			tools: composedTools,
-		}),
-		modelRuntimeFactory: controller.createChildModelRuntimeFactory(),
-	};
-	const multiAgentResult = options.multiAgent === undefined
+	const childRuntime = !harnessProfile.descriptor.multiAgent
+		? undefined
+		: {
+			productionToolSource: createSessionProductionToolSource({
+				sessionId,
+				cwd: options.cwd,
+				executionEnv,
+				authorizationPolicy: security.authorizationPolicy,
+				tools: governedTools,
+			}),
+			modelRuntimeFactory: controller.createChildModelRuntimeFactory(),
+		};
+	const multiAgentResult = options.multiAgent === undefined || childRuntime === undefined
 		? { ok: true as const, value: undefined }
 		: await createMultiAgentDomain({
 			sessionId,
@@ -238,7 +299,7 @@ export async function assembleSessionDomain(
 			fence,
 			policySources: options.multiAgent,
 			childRuntime: {
-				systemPrompt: options.systemPrompt ?? buildSystemPrompt(options.cwd, options.layout.agents),
+				systemPrompt: harnessComposition.systemPrompt,
 				productionToolSource: childRuntime.productionToolSource,
 				modelRuntimeFactory: childRuntime.modelRuntimeFactory,
 			},
@@ -251,37 +312,37 @@ export async function assembleSessionDomain(
 			fence,
 			models: options.models,
 			enabled: options.settings.autoTitle !== false,
-			getSelection: () => controller.currentSelection,
-			getCurrentTitle: () => store.getSession(sessionId)?.title,
-				setAutoTitle: (input) => {
-					const titled = store.setTitle(fence, {
-						title: input.title,
-						source: "auto",
-					expectedTitle: input.expectedTitle,
-					trigger: input.trigger,
-						modelRef: { providerId: input.providerId, modelId: input.modelId },
-					});
-					const event = store.replaySessionEvents(sessionId).at(-1);
-					if (event?.eventType !== "session.title_changed") return;
-					const titleEvent: SessionTitleChangedEvent = {
-						sessionId,
-						title: titled.title!,
-						source: "auto",
-						sequence: event.sequence,
-					};
-					for (const listener of titleListeners) {
-						try {
-							listener(titleEvent);
-						} catch {
-							// A subscriber cannot turn a committed title into a failed mutation.
-						}
-					}
-				},
-			...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
-		});
+		getSelection: () => controller.currentSelection,
+		getCurrentTitle: () => store.getSession(sessionId)?.title,
+		setAutoTitle: (input) => {
+			const titled = store.setTitle(fence, {
+				title: input.title,
+				source: "auto",
+				expectedTitle: input.expectedTitle,
+				trigger: input.trigger,
+				modelRef: { providerId: input.providerId, modelId: input.modelId },
+			});
+			const event = store.replaySessionEvents(sessionId).at(-1);
+			if (event?.eventType !== "session.title_changed") return;
+			const titleEvent: SessionTitleChangedEvent = {
+				sessionId,
+				title: titled.title!,
+				source: "auto",
+				sequence: event.sequence,
+			};
+			for (const listener of titleListeners) {
+				try {
+					listener(titleEvent);
+				} catch {
+					// A subscriber cannot turn a committed title into a failed mutation.
+				}
+			}
+		},
+		...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
+	});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
 	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);
-	const removeExtensionLifecycle = extensions.turnLifecycle === undefined
+	const removeExtensionLifecycle = extensions?.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
 	const planInspection = createSessionPlanInspection({
@@ -289,23 +350,23 @@ export async function assembleSessionDomain(
 		store,
 		policyCeilingDigest: security.snapshot.policyDigest,
 	});
-		return {
-			controller,
-			subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
-				titleListeners.add(listener);
-				return () => titleListeners.delete(listener);
-			},
-		childRuntime,
+	return {
+		controller,
+		subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
+			titleListeners.add(listener);
+			return () => titleListeners.delete(listener);
+		},
+		...(childRuntime === undefined ? {} : { childRuntime }),
 		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
 		process,
 		resources,
 		planInspection,
-		start: extensions.start,
-			shutdown: async (reason) => {
-				titleLifecycle?.dispose();
-				removeExtensionLifecycle?.();
+		...(extensions === undefined ? {} : { start: extensions.start }),
+		shutdown: async (reason) => {
+			titleLifecycle?.dispose();
+			removeExtensionLifecycle?.();
 			try {
-				await extensions.shutdown(reason);
+				await extensions?.shutdown(reason);
 			} finally {
 				try {
 					await shutdownAll(sessionId);
@@ -345,6 +406,33 @@ export async function assembleSessionDomain(
 			providerStatuses: [],
 		}),
 	};
+}
+
+function persistHarnessCompositionReceipt(
+	store: SessionStore,
+	fence: OwnerFence,
+	receipt: HarnessCompositionReceipt,
+): void {
+	const payloadJson = JSON.stringify(receipt);
+	const existing = store.replaySessionEvents(fence.sessionId).filter((event) =>
+		event.eventType === "harness.composed" && event.ownerGeneration === fence.generation,
+	);
+	if (existing.length > 0) {
+		if (existing.length === 1 && existing[0]!.payloadJson === payloadJson) return;
+		throw new HarnessCompositionError(
+			"harness_composition_conflict",
+			`owner generation ${fence.generation} already has a different harness composition receipt`,
+		);
+	}
+	const tail = store.replaySessionEvents(fence.sessionId).at(-1);
+	store.appendEvent(fence, {
+		eventId: `event_harness_composed_${fence.sessionId.slice(-12)}_${fence.generation}`,
+		ownerGeneration: fence.generation,
+		eventType: "harness.composed",
+		payloadJson,
+		createdAtMs: Date.now(),
+		expectedPreviousEventHash: tail?.currentEventHash ?? null,
+	});
 }
 
 function runledgerPackageRoot(): string {

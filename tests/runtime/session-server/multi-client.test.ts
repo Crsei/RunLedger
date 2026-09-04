@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R4:multi-client fixtures(06 §6.4/§R4 退出条件)。
  *
@@ -163,6 +164,7 @@ describe("R4 multi-client", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		// 每个 Session 一个独立 server(server 只服务一个 sessionId + generation)。

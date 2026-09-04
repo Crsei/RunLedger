@@ -6,6 +6,7 @@ import { runtimeDigest } from "../protocol/foundation.ts";
 import { SessionWorkspaceAdmission } from "../../workspace/session-identity.ts";
 import type { SessionPlanInspection } from "./plan-composition.ts";
 import type { OwnerFence } from "../session-owner/types.ts";
+import { resolveHarnessProfileId } from "../harness-profiles/index.ts";
 
 export const SESSION_DOMAIN_RESULT_STATUSES = [
 	"ok",
@@ -135,6 +136,8 @@ export class SessionDomainRouter {
 						updatedAtMs: session.updatedAtMs,
 						headSequence: session.headSequence,
 							driverRevision: session.driverRevision,
+							harnessProfileId: session.harnessProfile.id,
+							harnessProfileVersion: session.harnessProfile.version,
 						title: session.title,
 						titleSource: session.titleSource,
 						titleUpdatedAtMs: session.titleUpdatedAtMs,
@@ -269,11 +272,24 @@ export class SessionDomainRouter {
 			if (source === undefined) {
 				return { ok: false, status: "failed", code: "session_not_found", operation };
 			}
+			const payload = recordValue(input.payload);
+			if (Object.keys(payload).some((key) => key !== "harnessProfileId")) {
+				return { ok: false, status: "failed", code: "invalid_harness_profile_payload", operation, currentRevision };
+			}
+			let targetHarnessProfile = source.harnessProfile;
+			if (Object.hasOwn(payload, "harnessProfileId")) {
+				const resolved = resolveHarnessProfileId(payload.harnessProfileId);
+				if (!resolved.ok) {
+					return { ok: false, status: "failed", code: resolved.error.code, operation, currentRevision };
+				}
+				targetHarnessProfile = resolved.ref;
+			}
 			const begun = this.attempts.beginAttempt("workspace_mutation", runtimeDigest({
 				operation,
 				correlationId: input.correlationId,
 				effectId: input.effectId,
 				expectedRevision: input.expectedRevision,
+				harnessProfile: targetHarnessProfile,
 			}));
 			if ("error" in begun) {
 				return {
@@ -291,6 +307,7 @@ export class SessionDomainRouter {
 					workspaceId: source.workspaceId,
 					repositoryId: source.repositoryId,
 					settingsDigest: source.settingsDigest,
+					harnessProfile: targetHarnessProfile,
 					sourceWorkspaceLocator: source.sourceWorkspaceLocator,
 					expectedCatalogRevision: currentRevision,
 				});
@@ -301,7 +318,11 @@ export class SessionDomainRouter {
 					status: "ok",
 					operation,
 						domainRevision: this.store.catalogRevision(),
-					value: { targetSessionId },
+					value: {
+						targetSessionId,
+						harnessProfileId: targetHarnessProfile.id,
+						harnessProfileVersion: targetHarnessProfile.version,
+					},
 					receipt: { attemptId: begun.attemptId, commandId: begun.commandId, outcome: "committed" },
 				};
 			} catch (error) {
@@ -331,7 +352,17 @@ export class SessionDomainRouter {
 			if (admission === undefined || !admission.admits(target)) {
 				return { ok: false, status: "denied", code: "session_workspace_mismatch", operation, currentRevision };
 			}
-			return { ok: true, status: "ok", operation, domainRevision: currentRevision, value: { targetSessionId } };
+			return {
+				ok: true,
+				status: "ok",
+				operation,
+				domainRevision: currentRevision,
+				value: {
+					targetSessionId,
+					harnessProfileId: target.harnessProfile.id,
+					harnessProfileVersion: target.harnessProfile.version,
+				},
+			};
 		}
 		if (operation === "session.fork") {
 			const catalogRevision = this.store.catalogRevision();
@@ -380,10 +411,6 @@ export class SessionDomainRouter {
 					sourceSessionId,
 					expectedSourceHeadSequence,
 					expectedCatalogRevision: catalogRevision,
-					workspaceId: source.workspaceId,
-					repositoryId: source.repositoryId,
-					settingsDigest: source.settingsDigest,
-					sourceWorkspaceLocator: source.sourceWorkspaceLocator,
 				});
 				const settled = this.attempts.settleAttempt(begun.attemptId, "committed", runtimeDigest({ operation, targetSessionId, sourceSessionId, sourceHeadSequence: expectedSourceHeadSequence }));
 				if (!settled.ok) return { ok: false, status: "failed", code: settled.code, operation };
@@ -392,7 +419,13 @@ export class SessionDomainRouter {
 					status: "ok",
 					operation,
 					domainRevision: this.store.catalogRevision(),
-					value: { targetSessionId, sourceSessionId, sourceHeadSequence: expectedSourceHeadSequence },
+					value: {
+						targetSessionId,
+						sourceSessionId,
+						sourceHeadSequence: expectedSourceHeadSequence,
+						harnessProfileId: source.harnessProfile.id,
+						harnessProfileVersion: source.harnessProfile.version,
+					},
 					receipt: { attemptId: begun.attemptId, commandId: begun.commandId, outcome: "committed" },
 				};
 			} catch (error) {

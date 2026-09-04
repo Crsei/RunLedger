@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,6 +37,7 @@ describe("versioned Session status projection repair", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "projection-drift"),
 			repositoryId: createRuntimeId("repository", "projection-drift"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const owner = new SessionOwner({ store, ownerStore, transport: createTcpOwnerTransport() });
@@ -74,6 +76,7 @@ describe("versioned Session status projection repair", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "title-drift"),
 			repositoryId: createRuntimeId("repository", "title-drift"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const owner = new SessionOwner({ store, ownerStore, transport: createTcpOwnerTransport() });

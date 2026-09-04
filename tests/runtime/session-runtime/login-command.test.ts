@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R6:SessionRuntime `login` 命令 —— driver 专属、reverse-request interaction
  * 注入、失败 typed 化。
@@ -47,7 +48,7 @@ function openCtx(): Ctx {
 	const store = new SessionStore(db);
 	const ownerStore = new OwnerStore(db);
 	const sessionId = createRuntimeId("session", "login");
-	store.createSession({ sessionId, workspaceId: createRuntimeId("workspace", "w"), repositoryId: createRuntimeId("repository", "r"), settingsDigest: "d".repeat(64) });
+	store.createSession({ sessionId, workspaceId: createRuntimeId("workspace", "w"), repositoryId: createRuntimeId("repository", "r"), settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
 	return { store, ownerStore, sessionId };
 }
 

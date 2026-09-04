@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * RED-04(P0-4):旧 generation 的生产 Runtime 完整 self-stop。
  *
@@ -58,6 +59,7 @@ function setupSession(seed: string): SessionId {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	db.close();

@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R6/credential reverse-request 端到端:真实 TCP 上 driver 连接经
  * reverse-request 完成 api-key login 并写入 auth.json。
@@ -24,6 +25,7 @@ import { SessionRuntime, type SessionDomainPort } from "../../../src/runtime/ses
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { SessionClient } from "../../../src/cli/session-client.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "../../../src/cli/session-interactive-controller.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
 import { SESSION_PROTOCOL_VERSION, type SessionFrameEnvelope } from "../../../src/runtime/session-server/protocol.ts";
@@ -110,7 +112,7 @@ describe("credential reverse-request login end-to-end", () => {
 	it("completes api-key login over real TCP and writes auth.json", async () => {
 		const { store, ownerStore } = openStores();
 		const sessionId = createRuntimeId("session", "e2e");
-		store.createSession({ sessionId, workspaceId: createRuntimeId("workspace", "w"), repositoryId: createRuntimeId("repository", "r"), settingsDigest: "d".repeat(64) });
+		store.createSession({ sessionId, workspaceId: createRuntimeId("workspace", "w"), repositoryId: createRuntimeId("repository", "r"), settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
 
 		const server = new SessionRuntimeServer({ sessionId, store, controller: nullController(sessionId) });
 		const owner = new SessionOwner({ store, ownerStore, transport: server });
@@ -137,6 +139,8 @@ describe("credential reverse-request login end-to-end", () => {
 		if (!opened.ok) throw new Error(`local attach failed: ${opened.code}`);
 		const snapshot: SessionInteractiveSnapshot = {
 			sessionId,
+			harnessProfile: standardHarnessProfileRef(),
+			permissionProfile: "workspace-write",
 			messages: [],
 			warnings: [],
 			auditEntries: [],

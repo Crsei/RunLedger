@@ -76,7 +76,9 @@ export function createSessionDomainPort(domain: SessionDomainPortInput): Session
 			if (items === undefined) return malformed(request, "session.catalog.list");
 			return { ok: true, ref: request, value: { kind: "catalog", revision: result.domainRevision, items } };
 		},
-		create: async (request) => transition(domain, request, "session.create", "create", {}),
+		create: async (request) => transition(domain, request, "session.create", "create", {
+			...(request.harnessProfileId === undefined ? {} : { harnessProfileId: request.harnessProfileId }),
+		}),
 		resume: async (request) => transition(domain, request, "session.resume", "resume", { targetSessionId: request.targetSessionId }),
 			fork: async (request) => transition(domain, request, "session.fork", "fork", {
 				sourceSessionId: request.sourceSessionId,
@@ -114,7 +116,11 @@ async function transition(
 	const result = await invoke(request, () => domain.command!(operation, payload, { ...context(request), expectedRevision: request.expectedRevision }));
 	if (!result.ok) return result;
 	const targetSessionId = stringValue(result.value.targetSessionId);
-	if (targetSessionId === undefined) return malformed(request, operation);
+	const harnessProfileId = harnessProfileIdValue(result.value.harnessProfileId);
+	const harnessProfileVersion = result.value.harnessProfileVersion === 1 ? 1 : undefined;
+	if (targetSessionId === undefined || harnessProfileId === undefined || harnessProfileVersion === undefined) {
+		return malformed(request, operation);
+	}
 	return {
 		ok: true,
 		ref: request,
@@ -123,6 +129,8 @@ async function transition(
 			operation: transitionOperation,
 			targetSessionId,
 			catalogRevision: result.domainRevision,
+			harnessProfileId,
+			harnessProfileVersion,
 			...(result.receipt === undefined ? {} : { attemptId: result.receipt.attemptId }),
 		},
 	};
@@ -167,8 +175,11 @@ function catalogItems(value: unknown): readonly SessionCatalogItem[] | undefined
 		const updatedAtMs = integerValue(candidate.updatedAtMs);
 		const headSequence = integerValue(candidate.headSequence);
 		const driverRevision = integerValue(candidate.driverRevision);
+		const harnessProfileId = harnessProfileIdValue(candidate.harnessProfileId);
+		const harnessProfileVersion = candidate.harnessProfileVersion === 1 ? 1 : undefined;
 		if (sessionId === undefined || workspaceId === undefined || repositoryId === undefined || status === undefined
 			|| createdAtMs === undefined || updatedAtMs === undefined || headSequence === undefined || driverRevision === undefined
+			|| harnessProfileId === undefined || harnessProfileVersion === undefined
 			|| typeof candidate.current !== "boolean") return undefined;
 			const title = optionalStringValue(candidate.title);
 			const titleSource = candidate.titleSource === "auto" || candidate.titleSource === "user" ? candidate.titleSource : undefined;
@@ -178,6 +189,7 @@ function catalogItems(value: unknown): readonly SessionCatalogItem[] | undefined
 			if (candidate.titleUpdatedAtMs !== undefined && titleUpdatedAtMs === undefined) return undefined;
 			items.push({
 				sessionId, workspaceId, repositoryId, status, createdAtMs, updatedAtMs, headSequence, driverRevision,
+				harnessProfileId, harnessProfileVersion,
 				...(title === undefined ? {} : { title }),
 				...(titleSource === undefined ? {} : { titleSource }),
 				...(titleUpdatedAtMs === undefined ? {} : { titleUpdatedAtMs }),
@@ -202,6 +214,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function harnessProfileIdValue(value: unknown): "standard" | "minimal" | undefined {
+	return value === "standard" || value === "minimal" ? value : undefined;
 }
 
 function optionalStringValue(value: unknown): string | undefined {

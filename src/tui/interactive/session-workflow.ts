@@ -47,11 +47,19 @@ export class SessionWorkflow {
 	}
 
 	/** S2:/new 使用刚读取的 catalog revision 做 CAS，成功后只返回 switch intent。 */
-	public async createNewSession(): Promise<void> {
+	public async createNewSession(requestedProfile?: string): Promise<void> {
 		if (this.rejectSessionTransition()) return;
+		const profile = requestedProfile?.trim();
+		if (profile !== undefined && profile !== "" && profile !== "standard" && profile !== "minimal") {
+			this.port.showNotice("Usage: /new [standard|minimal]", "error");
+			return;
+		}
 		const catalog = await this.loadSessionCatalog();
 		if (catalog === undefined) return;
-		const transition = await this.runSessionTransition("session.create", { expectedRevision: catalog.revision });
+		const transition = await this.runSessionTransition("session.create", {
+			expectedRevision: catalog.revision,
+			...(profile === undefined || profile === "" ? {} : { harnessProfileId: profile }),
+		});
 		if (transition !== undefined) await this.port.requestExit({ kind: "switch", action: "new", target: { sessionId: transition.targetSessionId } });
 	}
 

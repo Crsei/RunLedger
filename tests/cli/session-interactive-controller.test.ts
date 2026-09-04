@@ -16,6 +16,12 @@ import {
 import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 import type { SessionClientTransport } from "../../src/runtime/session-server/client-transport.ts";
 import type { AssistantMessage } from "../../src/types.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
+
+const sessionPresentation = {
+	harnessProfile: standardHarnessProfileRef(),
+	permissionProfile: "workspace-write",
+} as const;
 
 function assistantMessage(output: number): AssistantMessage {
 	return {
@@ -52,6 +58,7 @@ function controller(detail: string | undefined): SessionInteractiveController {
 	const handle = { transport: failingTransport(detail) } as unknown as OwnedSessionHandle;
 	const snapshot: SessionInteractiveSnapshot = {
 		sessionId: "session_fixture",
+		...sessionPresentation,
 		messages: [],
 		warnings: [],
 		auditEntries: [],
@@ -74,6 +81,7 @@ describe("SessionInteractiveController command error surfacing", () => {
 		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
 		const instance = new SessionInteractiveController(handle, {
 			sessionId: "session_fixture",
+			...sessionPresentation,
 			messages: [assistantMessage(5)],
 			warnings: [],
 			auditEntries: [],
@@ -222,6 +230,7 @@ describe("SessionInteractiveController command error surfacing", () => {
 		} as unknown as OwnedSessionHandle;
 		const snapshot: SessionInteractiveSnapshot = {
 			sessionId: "session_fixture",
+			...sessionPresentation,
 			messages: [],
 			warnings: [],
 			auditEntries: [],
@@ -303,6 +312,7 @@ describe("SessionInteractiveController command error surfacing", () => {
 		} as unknown as OwnedSessionHandle;
 		const snapshot: SessionInteractiveSnapshot = {
 			sessionId: "session_fixture",
+			...sessionPresentation,
 			messages: [],
 			warnings: [],
 			auditEntries: [],
@@ -348,6 +358,7 @@ describe("SessionInteractiveController login over the wire", () => {
 		const handle = { transport } as unknown as OwnedSessionHandle;
 		const snapshot: SessionInteractiveSnapshot = {
 			sessionId: "session_fixture",
+			...sessionPresentation,
 			messages: [],
 			warnings: [],
 			auditEntries: [],
@@ -376,6 +387,7 @@ describe("SessionInteractiveController login over the wire", () => {
 		const handle = { transport } as unknown as OwnedSessionHandle;
 		const snapshot: SessionInteractiveSnapshot = {
 			sessionId: "session_fixture",
+			...sessionPresentation,
 			messages: [],
 			warnings: [],
 			auditEntries: [],

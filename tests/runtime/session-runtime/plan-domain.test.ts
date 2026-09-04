@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -33,7 +34,7 @@ describe("SessionRuntime Plan domain", () => {
 		const sessionId = createRuntimeId("session", "production-plan");
 		const workspaceId = createRuntimeId("workspace", "production-plan");
 		const repositoryId = createRuntimeId("repository", "production-plan");
-		store.createSession({ sessionId, workspaceId, repositoryId, settingsDigest: "d".repeat(64) });
+		store.createSession({ sessionId, workspaceId, repositoryId, settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
 		const settings = await loadProjectSettings({ layout });
 		const models = builtinModels({ credentials: AuthStorage.create(layout) });
 		await models.refresh({ allowNetwork: false });
