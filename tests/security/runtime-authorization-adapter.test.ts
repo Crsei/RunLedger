@@ -21,7 +21,7 @@ function fixture(): { request: AuthorizationRequest; capability: CapabilityReque
 	const traceId = createRuntimeId("trace", "adapter-test");
 	const requestId = createRuntimeId("command", "adapter-test");
 	const policyDigest = runtimeDigest({ policy: "adapter" });
-	const argumentsDigest = runtimeDigest({ path: "file.ts" });
+	const argumentsDigest = runtimeDigest({ path: "../external/file.ts" });
 	const workspace = {
 		authorityId, tenantId, principalId, sessionId, workspaceId, repositoryId,
 		worktreePath: "/repo",
@@ -38,7 +38,7 @@ function fixture(): { request: AuthorizationRequest; capability: CapabilityReque
 	};
 	const request: AuthorizationRequest = {
 		requestId, sessionId, turnId: createRuntimeId("turn", "adapter-test"), toolCallId,
-		toolName: "write", argumentsDigest, cwd: "/repo", requests: [{ kind: "filesystem", operation: "write", path: "file.ts" }], workspace, snapshot,
+		toolName: "write", argumentsDigest, cwd: "/repo", requests: [{ kind: "filesystem", operation: "write", path: "../external/file.ts" }], workspace, snapshot,
 	};
 	const capability: CapabilityRequest = {
 		requestId,

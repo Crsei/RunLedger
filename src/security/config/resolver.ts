@@ -5,6 +5,7 @@ import { runtimeDigest } from "../../runtime/contracts/public.ts";
 import type { SandboxProfileName } from "../../runtime/contracts/public.ts";
 import { resolveBashSecurityAnalyzerMode } from "../permission/bash-ast/mode.ts";
 import { builtinApprovalReviewer, builtinSecurityProfile } from "./presets.ts";
+import { validateResolvedWorkspaceSecurity } from "./workspace-scope.ts";
 import type {
 	ApprovalReviewerName,
 	ApprovalPolicyName,
@@ -140,7 +141,7 @@ export interface ResolveSecuritySnapshotOptions {
 	readonly constraints?: ManagedSecurityConstraints;
 }
 
-export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions): SecurityResult<SecuritySnapshot> {
+function resolveSecuritySnapshotUnchecked(options: ResolveSecuritySnapshotOptions): SecurityResult<SecuritySnapshot> {
 	const selectedName = firstValue(options.layers, (layer) => layer.document.profile) ?? "workspace-write";
 	const profiles = namedProfiles(options.layers);
 	if (!profiles.ok) return profiles;
@@ -208,7 +209,25 @@ export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions)
 		tempRoot: options.tempRoot,
 		createdAt: options.createdAt,
 		bashAnalyzer,
-		...(constraints === undefined ? {} : { managedConstraintsDigest: runtimeDigest(constraints) }),
+		...(constraints === undefined ? {} : {
+			managedConstraints: constraints,
+			managedConstraintsDigest: runtimeDigest(constraints),
+		}),
 	};
 	return { ok: true, value: { ...body, policyDigest: runtimeDigest(body) } };
+}
+
+export function resolveSecuritySnapshot(options: ResolveSecuritySnapshotOptions): SecurityResult<SecuritySnapshot> {
+	const resolved = resolveSecuritySnapshotUnchecked(options);
+	if (!resolved.ok) return resolved;
+	const workspaceLayer = options.layers.find((layer) => layer.source === "project");
+	const userLayer = options.layers.find((layer) => layer.source === "user");
+	if (workspaceLayer === undefined || userLayer === undefined) return resolved;
+	const baseline = resolveSecuritySnapshotUnchecked({
+		...options,
+		layers: options.layers.filter((layer) => layer.source !== "project"),
+	});
+	if (!baseline.ok) return baseline;
+	const workspaceScope = validateResolvedWorkspaceSecurity(resolved.value, baseline.value, workspaceLayer.document);
+	return workspaceScope.ok ? resolved : workspaceScope;
 }

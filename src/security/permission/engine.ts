@@ -46,7 +46,7 @@ function builtinDecision(request: AccessRequest, snapshot: SecuritySnapshot): Po
 			if (snapshot.profile.filesystemMode !== "unrestricted" && !roots.some((root) => within(root, target))) {
 				if (
 					request.operation !== "read" &&
-					snapshot.profile.name === "workspace-write" &&
+					(snapshot.profile.name === "workspace-write" || snapshot.profile.name === "approve-for-me") &&
 					snapshot.profile.approvalPolicy === "on-request"
 				) {
 					return {

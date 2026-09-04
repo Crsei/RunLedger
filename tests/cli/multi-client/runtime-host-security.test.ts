@@ -240,7 +240,7 @@ describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway compositi
 		})).rejects.toThrow(/Runtime event writer|event writer/iu);
 	});
 
-	it("uses the canonical default snapshot and denies workspace-external writes before raw IO", async () => {
+	it("uses the canonical default snapshot and requires approval for workspace-external writes before raw IO", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-"));
 		roots.push(root);
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
@@ -253,18 +253,20 @@ describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway compositi
 		});
 
 		expect(security.snapshot.profile.name).toBe("workspace-write");
-		expect(security.snapshot.profile.network.mode).toBe("deny");
+		expect(security.snapshot.profile.network.mode).toBe("review");
 		expect(security.snapshot.policyDigest).toMatchObject({ algorithm: "sha256" });
 
 		const env = security.createExecutionEnv({ toolCallId: createRuntimeId("toolCall", "host-security-write") });
 		await writeFile(join(root, "inside.txt"), "governed read");
 		await expect(env.fs.readFile(join(root, "inside.txt"))).resolves.toEqual(Buffer.from("governed read"));
-		await expect(env.fs.writeFile(join(root, "..", "outside.txt"), "must not write")).rejects.toThrow(/allowed roots|protected|path_escape/iu);
+		await expect(env.fs.writeFile(join(root, "..", "outside.txt"), "must not write")).rejects.toThrow(/approval/iu);
 	});
 
 	it("revokes an allow-once receipt after a governed filesystem effect settles", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-revocation-"));
+		const external = await mkdtemp(join(tmpdir(), "runledger-host-security-revocation-external-"));
 		roots.push(root);
+		roots.push(external);
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const events: string[] = [];
 		const security = await createProductionHostSecurity({
@@ -282,12 +284,12 @@ describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway compositi
 		});
 		const env = security.createExecutionEnv({ toolCallId: createRuntimeId("toolCall", "host-security-revocation") });
 
-		await env.fs.writeFile(join(root, "created.txt"), "governed");
+		await env.fs.writeFile(join(external, "created.txt"), "governed");
 
 		expect(events).toEqual(["permission.requested", "permission.decided", "permission.revoked"]);
 	});
 
-	it("does not expose a raw network fallback when the canonical policy denies network", async () => {
+	it("does not expose a raw network fallback when canonical review has no approval", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-security-network-"));
 		roots.push(root);
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
@@ -302,7 +304,7 @@ describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway compositi
 		});
 
 		const env = security.createExecutionEnv({ toolCallId: createRuntimeId("toolCall", "host-security-network-call") });
-		await expect(env.network?.request({ url: "https://example.com", method: "GET", headers: {}, maxBytes: 1_024 })).rejects.toThrow(/network/iu);
+		await expect(env.network?.request({ url: "https://example.com", method: "GET", headers: {}, maxBytes: 1_024 })).rejects.toThrow(/approval/iu);
 		expect(brokerCalls).toBe(0);
 	});
 

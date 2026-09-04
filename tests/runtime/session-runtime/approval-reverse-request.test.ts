@@ -130,6 +130,39 @@ describe("Session durable approval reverse requests", () => {
 		value.close();
 	});
 
+	it("persists redacted deterministic auto-review classification evidence", async () => {
+		const module = await loadModule();
+		if (module === undefined) return;
+		const value = await fixture();
+		const ports = module.createSessionApprovalPorts({
+			store: value.store,
+			fence: value.fence,
+			sender: { requestToConnection: async () => response({ ok: true, decision: "allow-once" }) },
+			driverConnectionId: () => createRuntimeId("connection", "approval-driver"),
+		});
+
+		await ports.autoReviewAudit?.recorded({
+			inputDigest: runtimeDigest({ request: "auto-review" }),
+			policyDigest: runtimeDigest({ policy: "auto-review" }),
+			sessionGeneration: value.fence.generation,
+			classificationVersion: "deterministic-rules-current",
+			decision: "allow-once",
+			reason: "canonical_workspace_source_write",
+		});
+
+		const event = value.store.replaySessionEvents(value.fence.sessionId).at(-1);
+		expect(event?.eventType).toBe("approval.auto_reviewed");
+		expect(JSON.parse(event?.payloadJson ?? "{}")).toMatchObject({
+			inputDigest: expect.objectContaining({ algorithm: "sha256" }),
+			policyDigest: expect.objectContaining({ algorithm: "sha256" }),
+			sessionGeneration: value.fence.generation,
+			classificationVersion: "deterministic-rules-current",
+			decision: "allow-once",
+			reason: "canonical_workspace_source_write",
+		});
+		value.close();
+	});
+
 	it("retries on a newly claimed driver before expiry and rejects an old-generation response", async () => {
 		const module = await loadModule();
 		if (module === undefined) return;

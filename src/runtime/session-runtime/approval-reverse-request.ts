@@ -32,6 +32,7 @@ import type {
 } from "../../security/types.ts";
 import type { ReverseRequestSender } from "./credential-reverse-request.ts";
 import { decodePermissionPromptResponse } from "../../security/permission/approval-response.ts";
+import type { AutoApprovalReviewAuditPort } from "../../security/permission/auto-approval-reviewer.ts";
 
 export const APPROVAL_REVERSE_REQUEST_KIND = "approval_prompt" as const;
 
@@ -39,6 +40,7 @@ export interface SessionApprovalPorts {
 	readonly prompter: PermissionPrompter;
 	readonly stateStore: ApprovalAmendmentStateStorePort;
 	readonly audit: ApprovalAuditPort;
+	readonly autoReviewAudit: AutoApprovalReviewAuditPort;
 }
 
 export interface SessionApprovalPortsOptions {
@@ -76,7 +78,36 @@ export function createSessionApprovalPorts(options: SessionApprovalPortsOptions)
 		prompter: new SessionReverseApprovalPrompter(options),
 		stateStore,
 		audit: new SessionApprovalAudit(options.store, options.fence),
+		autoReviewAudit: new SessionAutoApprovalReviewAudit(options.store, options.fence),
 	};
+}
+
+class SessionAutoApprovalReviewAudit implements AutoApprovalReviewAuditPort {
+	readonly #store: SessionStore;
+	readonly #fence: OwnerFence;
+
+	public constructor(store: SessionStore, fence: OwnerFence) {
+		this.#store = store;
+		this.#fence = fence;
+	}
+
+	public async recorded(input: Parameters<AutoApprovalReviewAuditPort["recorded"]>[0]): Promise<void> {
+		if (input.sessionGeneration !== this.#fence.generation) throw new Error("auto-review audit belongs to a stale owner generation");
+		appendApprovalEvent(
+			this.#store,
+			this.#fence,
+			"approval.auto_reviewed",
+			`auto-review-${input.inputDigest.digest}-${input.classificationVersion}`,
+			{
+				inputDigest: input.inputDigest,
+				policyDigest: input.policyDigest,
+				sessionGeneration: input.sessionGeneration,
+				classificationVersion: input.classificationVersion.slice(0, 128),
+				decision: input.decision,
+				reason: input.reason.slice(0, 128),
+			},
+		);
+	}
 }
 
 class SessionApprovalStateStore implements ApprovalAmendmentStateStorePort {
@@ -259,7 +290,7 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 function appendApprovalEvent(
 	store: SessionStore,
 	fence: OwnerFence,
-	eventType: "approval.requested" | "approval.decided" | "approval.revoked",
+	eventType: "approval.requested" | "approval.decided" | "approval.revoked" | "approval.auto_reviewed",
 	seed: string,
 	payload: Record<string, unknown>,
 ): void {

@@ -178,7 +178,6 @@ export async function assembleSessionDomain(
 		baseToolNames: baseTools.map((tool) => tool.name),
 		skillCompatibility: { osUserHome: homedir(), projectBoundary: options.cwd },
 	});
-	const managedSecuritySettings = security.snapshot.sources.some((source) => source === "managed" || source === "organization");
 	const securitySettings = createSecuritySettingsResourceDomain({
 		generation: fence.generation,
 		settings: new SecuritySettingsPort({
@@ -186,9 +185,8 @@ export async function assembleSessionDomain(
 			workspaceKey: security.workspaceStorageKey,
 			workspaceRoot: options.cwd,
 			tempRoot: options.layout.tmp,
-			managedReadOnly: managedSecuritySettings,
+			...(security.snapshot.managedConstraints === undefined ? {} : { managedConstraints: security.snapshot.managedConstraints }),
 		}),
-		managedReadOnly: managedSecuritySettings,
 		attemptPort: () => attemptPort.get(),
 	});
 	const resources = composeSessionResourceDomains([extensions.resources, securitySettings]);
@@ -329,9 +327,10 @@ export async function assembleSessionDomain(
 			policyDigest: security.snapshot.policyDigest,
 			...(security.snapshot.managedConstraintsDigest === undefined ? {} : { managedConstraintsDigest: security.snapshot.managedConstraintsDigest }),
 			sourceCount: security.snapshot.sources.length,
-			presetAvailability: builtinPermissionPresets().map((preset) => managedSecuritySettings
-				? { id: preset.id, state: "unavailable" as const, reason: "managed_security_read_only" }
-				: { id: preset.id, ...preset.availability(undefined, security.sandboxCapability) }),
+			presetAvailability: builtinPermissionPresets().map((preset) => ({
+				id: preset.id,
+				...preset.availability(security.snapshot.managedConstraints, security.sandboxCapability),
+			})),
 			bashAnalyzerMode: security.snapshot.bashAnalyzer?.mode,
 			bashAnalyzerSource: security.snapshot.bashAnalyzer?.source,
 			bashAnalyzerConfigDigest: security.snapshot.bashAnalyzer?.configDigest,

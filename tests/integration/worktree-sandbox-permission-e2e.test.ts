@@ -3,9 +3,9 @@
  *
  *   1. 临时 Git repo 建初始 commit；
  *   2. 创建 RunLedger session worktree；
- *   3. 解析 workspace-write + network deny；
+ *   3. 解析 workspace-write + network review；
  *   4. read 自动允许；
- *   5. write 触发 exact approval 并写入 worktree；
+ *   5. workspace 内 write 自动允许；
  *   6. source repo 保持不变；
  *   7. workspace 外写被 permission 拒绝；
  *   8. shell network 被拒绝；
@@ -159,7 +159,7 @@ describe("worktree → sandbox → permission 全链路 E2E", () => {
 			const worktreePath = created.value.worktreePath;
 			const effectiveCwd = created.value.effectiveCwd;
 
-			// 3. 解析 workspace-write + network deny
+			// 3. 解析 workspace-write + network review
 			const eventWriter = new JsonlRuntimeEventStore({ layout, workspaceStorageKey: scope.workspaceStorageKey });
 			const securityOptions: HostSecurityCompositionOptions = {
 				layout,
@@ -174,14 +174,14 @@ describe("worktree → sandbox → permission 全链路 E2E", () => {
 			};
 			const security = await createProductionHostSecurity(securityOptions);
 			expect(security.snapshot.profile.name).toBe("workspace-write");
-			expect(security.snapshot.profile.network.mode).toBe("deny");
+			expect(security.snapshot.profile.network.mode).toBe("review");
 
 			// 4. read 自动允许
 			const readEnv = security.createExecutionEnv({ sessionId, principalId, toolCallId: createRuntimeId("toolCall", "e2e-read") });
 			const readResult = await readEnv.fs.readFile(join(worktreePath, "README.md"));
 			expect(readResult.toString("utf8")).toContain("initial");
 
-			// 5. write 触发 exact approval 并写入 worktree
+			// 5. workspace 内 write 自动允许并写入 worktree
 			let prompts = 0;
 			const writeSecurity = await createProductionHostSecurity({
 				...securityOptions,
@@ -191,18 +191,24 @@ describe("worktree → sandbox → permission 全链路 E2E", () => {
 			});
 			const writeEnv = writeSecurity.createExecutionEnv({ sessionId, principalId, toolCallId: createRuntimeId("toolCall", "e2e-write") });
 			await writeEnv.fs.writeFile(join(worktreePath, "agent.txt"), "written by governed env");
-			expect(prompts).toBeGreaterThan(0);
+			expect(prompts).toBe(0);
 			await expect(readFile(join(worktreePath, "agent.txt"), "utf8")).resolves.toContain("written by governed env");
 
 			// 6. source repo 保持不变
 			await expect(access(join(source, "agent.txt"))).rejects.toThrow();
 
-			// 7. workspace 外写被 permission 拒绝
-			const outsideWrite = join(root, "outside.txt");
-			await expect(writeEnv.fs.writeFile(outsideWrite, "must not land")).rejects.toThrow();
+			const deniedSecurity = await createProductionHostSecurity({
+				...securityOptions,
+				permissionPrompter: { request: async () => ({ decision: "deny", decidedBy: principalId }) },
+			});
+			const deniedEnv = deniedSecurity.createExecutionEnv({ sessionId, principalId, toolCallId: createRuntimeId("toolCall", "e2e-denied") });
 
-			// 8. shell network 被拒绝
-			const networkResult = await writeEnv.network?.request({ url: "https://example.com", method: "GET", headers: {}, maxBytes: 1_024 })
+			// 7. workspace 外写进入 exact approval，并在拒绝后阻断
+			const outsideWrite = join(root, "outside.txt");
+			await expect(deniedEnv.fs.writeFile(outsideWrite, "must not land")).rejects.toThrow();
+
+			// 8. network review 在拒绝后不进入 raw broker
+			const networkResult = await deniedEnv.network?.request({ url: "https://example.com", method: "GET", headers: {}, maxBytes: 1_024 })
 				.then(() => "allowed", () => "denied");
 			expect(networkResult).toBe("denied");
 

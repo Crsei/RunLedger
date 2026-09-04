@@ -155,6 +155,8 @@ export interface SecuritySnapshot {
 	readonly policyDigest: RuntimeDigest;
 	readonly createdAt: string;
 	readonly bashAnalyzer?: BashAnalyzerResolution;
+	/** Host-private managed ceiling；对外只投影 digest/availability。 */
+	readonly managedConstraints?: ManagedSecurityConstraints;
 	readonly managedConstraintsDigest?: RuntimeDigest;
 }
 

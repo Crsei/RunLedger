@@ -7,7 +7,10 @@ import lockfile from "proper-lockfile";
 import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import { runtimeDigest, type RuntimeDigest } from "../runtime/contracts/public.ts";
 import type { SecurityConfigDocument, SecurityResult } from "../security/types.ts";
+import type { ManagedSecurityConstraints } from "../security/types.ts";
 import { parseSecurityConfigLayer } from "../security/config/schema.ts";
+import { resolveSecuritySnapshot } from "../security/config/resolver.ts";
+import { validateWorkspaceSecurityDocument } from "../security/config/workspace-scope.ts";
 import { getSettingsPath } from "./settings-manager.ts";
 
 export type SecuritySettingsScope = "user" | "workspace";
@@ -30,8 +33,8 @@ export interface SecuritySettingsPortOptions {
 	/** 当前仅保留为 Host composition identity；settings port 不接收 TUI path。 */
 	readonly workspaceRoot: string;
 	readonly tempRoot: string;
-	/** Managed source 生效时，settings 仅可 inspect，不能被本地用户改写。 */
-	readonly managedReadOnly?: boolean;
+	/** Managed ceiling 逐项校验候选配置，而不是把全部本地设置冻结。 */
+	readonly managedConstraints?: ManagedSecurityConstraints;
 }
 
 const DIRECTORY_MODE = 0o700;
@@ -75,51 +78,6 @@ function securitySection(root: Record<string, unknown>, scope: SecuritySettingsS
 	return parsed.ok ? { ok: true, value: parsed.value.document } : parsed;
 }
 
-const PROFILE_SCOPE: Readonly<Record<string, number>> = Object.freeze({
-	"read-only": 0,
-	"headless-workspace": 1,
-	"workspace-write": 1,
-	"approve-for-me": 1,
-	custom: 1,
-	"danger-full-access": 2,
-});
-
-/** workspace 不能通过选择比 user baseline 更宽的内置 profile 来放宽权限。 */
-function validateWorkspaceProfile(document: SecurityConfigDocument, user: SecurityConfigDocument): SecurityResult<void> {
-	if (document.profile === undefined) return { ok: true, value: undefined };
-	const candidateScope = PROFILE_SCOPE[document.profile];
-	const userProfile = user.profile ?? "workspace-write";
-	const userScope = PROFILE_SCOPE[userProfile];
-	if (candidateScope === undefined || userScope === undefined) {
-		return document.profile === userProfile
-			? { ok: true, value: undefined }
-			: failure("invalid_config", "workspace security profile must not replace an unranked user profile");
-	}
-	return candidateScope <= userScope
-		? { ok: true, value: undefined }
-		: failure("invalid_config", "workspace security profile would widen the user baseline");
-}
-
-/** project scope 只能选已知更窄 profile 并附加 deny/ask hardening。 */
-function validateWorkspaceHardening(document: SecurityConfigDocument): SecurityResult<void> {
-	if (document.profiles !== undefined) return failure("invalid_config", "workspace security cannot define permission profiles");
-	if (
-		document.approvalPolicy !== undefined ||
-		document.approvalReviewer !== undefined ||
-		document.granularApproval !== undefined ||
-		document.sandbox !== undefined ||
-		document.network !== undefined ||
-		document.bashAnalyzerMode !== undefined
-	) return failure("invalid_config", "workspace security may only select a profile and add deny-only hardening");
-	if (document.filesystem?.readRoots !== undefined || document.filesystem?.writeRoots !== undefined) {
-		return failure("invalid_config", "workspace security may not add filesystem roots");
-	}
-	if (document.rules?.some((rule) => rule.action === "allow")) {
-		return failure("invalid_config", "workspace security may not allow a rule");
-	}
-	return { ok: true, value: undefined };
-}
-
 /**
  * TUI 与 canonical JSON 之间的唯一 durable adapter。它保留非 security
  * 设置，使用 source digest compare-and-swap，且永不修改当前 session snapshot。
@@ -148,7 +106,6 @@ export class SecuritySettingsPort {
 	}
 
 	public async update(input: SecuritySettingsUpdate): Promise<SecurityResult<SecuritySettingsInspection>> {
-		if (this.#options.managedReadOnly === true) return failure("policy_denied", "managed security policy is read-only");
 		const path = this.#path(input.scope);
 		const candidate = parseSecurityConfigLayer(sourceFor(input.scope), JSON.stringify(input.document));
 		if (!candidate.ok) return candidate;
@@ -166,15 +123,27 @@ export class SecuritySettingsPort {
 			if (!root.ok) return root;
 			const currentDigest = runtimeDigest(root.value.security ?? null);
 			if (!sameDigest(currentDigest, input.expectedSourceDigest)) return failure("revision_conflict", "security settings source digest changed");
+			let layers = [candidate.value];
 			if (input.scope === "workspace") {
 				const userRoot = await this.#readRoot(this.#path("user"));
 				if (!userRoot.ok) return userRoot;
 				const userSecurity = securitySection(userRoot.value, "user");
 				if (!userSecurity.ok) return userSecurity;
-				const scopeCheck = validateWorkspaceProfile(candidate.value.document, userSecurity.value);
+				const scopeCheck = validateWorkspaceSecurityDocument(candidate.value.document, userSecurity.value);
 				if (!scopeCheck.ok) return scopeCheck;
-				const hardeningCheck = validateWorkspaceHardening(candidate.value.document);
-				if (!hardeningCheck.ok) return hardeningCheck;
+				const userLayer = parseSecurityConfigLayer("user", JSON.stringify(userSecurity.value));
+				if (!userLayer.ok) return userLayer;
+				layers = [candidate.value, userLayer.value];
+			}
+			if (this.#options.managedConstraints !== undefined) {
+				const resolved = resolveSecuritySnapshot({
+					layers,
+					workspaceRoot: this.#options.workspaceRoot,
+					tempRoot: this.#options.tempRoot,
+					createdAt: new Date(0).toISOString(),
+					constraints: this.#options.managedConstraints,
+				});
+				if (!resolved.ok) return resolved;
 			}
 			const next = { ...root.value, security: candidate.value.document };
 			await this.#writeAtomically(path, next);

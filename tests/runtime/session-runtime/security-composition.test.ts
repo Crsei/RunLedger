@@ -30,6 +30,7 @@ import {
 } from "../../../src/security/session-composition.ts";
 import type { GovernedProcessEnvironment, SessionToolchainProbe, SessionToolchainSnapshot } from "../../../src/security/toolchain.ts";
 import type { BashSecurityAnalyzerPort } from "../../../src/security/permission/bash-ast/types.ts";
+import type { AutoApprovalReviewAuditPort } from "../../../src/security/permission/auto-approval-reviewer.ts";
 
 let root: string;
 
@@ -92,6 +93,7 @@ async function composition(input: {
 		readonly prompter: PermissionPrompter;
 		readonly stateStore: MemoryApprovalStateStore;
 		readonly audit: ApprovalAuditPort;
+		readonly autoReviewAudit?: AutoApprovalReviewAuditPort;
 	};
 	readonly toolchain?: SessionToolchainSnapshot;
 	readonly processEnvironment?: GovernedProcessEnvironment;
@@ -897,6 +899,40 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		await expect(security.executionEnv.fs.writeFile(target, "approved")).resolves.toBeUndefined();
 		expect(prompts).toBe(1);
 		expect(readFileSync(target, "utf8")).toBe("approved");
+	});
+
+	it("routes Approve for me classification evidence through the Session durable audit port", async () => {
+		let prompts = 0;
+		const records: Parameters<AutoApprovalReviewAuditPort["recorded"]>[0][] = [];
+		const security = await composition({
+			document: { profile: "approve-for-me", sandbox: "off" },
+			approvalPorts: {
+				prompter: {
+					request: async () => {
+						prompts += 1;
+						return { decision: "deny" as const, decidedBy: createRuntimeId("principal", "session-driver") };
+					},
+				},
+				stateStore: new MemoryApprovalStateStore(),
+				audit: {
+					requested: async () => undefined,
+					decided: async () => undefined,
+					revoked: async () => undefined,
+				},
+				autoReviewAudit: { recorded: async (record) => { records.push(record); } },
+			},
+		});
+		try {
+			await expect(security.executionEnv.fs.writeFile(join(root, "auto-reviewed.ts"), "approved")).resolves.toBeUndefined();
+			expect(prompts).toBe(0);
+			expect(records).toMatchObject([{
+				classificationVersion: "deterministic-rules-current",
+				decision: "allow-once",
+				reason: "canonical_workspace_source_write",
+			}]);
+		} finally {
+			await security.close();
+		}
 	});
 
 	it("rejects network deny before the network broker or fetch leaf", async () => {

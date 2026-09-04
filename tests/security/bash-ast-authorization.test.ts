@@ -353,7 +353,7 @@ describe("Bash AST authorization", () => {
 			layers: [
 				{
 					source: "user",
-					document: { bashAnalyzerMode: "ast" },
+					document: { bashAnalyzerMode: "ast", network: { mode: "deny", allowedHosts: [] } },
 					documentDigest: "1".repeat(64),
 				},
 				{

@@ -60,6 +60,25 @@ describe("SecuritySettingsPort", () => {
 		expect(result).toMatchObject({ ok: false, error: { code: "invalid_config" } });
 	});
 
+	it("refuses a workspace auto-review profile over a headless user baseline", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-security-settings-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		await writeFile(layout.settings, JSON.stringify({ security: { profile: "headless-workspace" } }), "utf8");
+		const port = new SecuritySettingsPort({ layout, workspaceKey: "workspace-1", workspaceRoot: "/repo", tempRoot: "/tmp/runledger" });
+
+		const initial = await port.inspect({ scope: "workspace" });
+		if (!initial.ok) throw new Error(initial.error.message);
+		const result = await port.update({
+			scope: "workspace",
+			expectedSourceDigest: initial.value.sourceDigest,
+			document: { profile: "approve-for-me" },
+		});
+
+		expect(result).toMatchObject({ ok: false, error: { code: "invalid_config" } });
+	});
+
 	it("refuses workspace fields that could widen a user baseline despite a narrower selected profile", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-security-settings-"));
 		roots.push(root);
@@ -122,7 +141,7 @@ describe("SecuritySettingsPort", () => {
 		});
 	});
 
-	it("keeps managed security settings read-only", async () => {
+	it("keeps user settings editable when a managed source only supplies constraints", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-security-settings-"));
 		roots.push(root);
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
@@ -131,7 +150,12 @@ describe("SecuritySettingsPort", () => {
 			layout,
 			workspaceRoot: "/repo",
 			tempRoot: "/tmp/runledger",
-			managedReadOnly: true,
+			managedConstraints: {
+				allowedProfiles: ["workspace-write", "approve-for-me"],
+				allowedApprovalPolicies: ["on-request"],
+				minimumSandbox: "workspace-write",
+				forceNetworkDeny: false,
+			},
 		});
 
 		const initial = await port.inspect({ scope: "user" });
@@ -142,6 +166,34 @@ describe("SecuritySettingsPort", () => {
 			document: { profile: "approve-for-me" },
 		});
 
-		expect(result).toMatchObject({ ok: false, error: { code: "policy_denied" } });
+		expect(result).toMatchObject({ ok: true, value: { document: { profile: "approve-for-me" } } });
+	});
+
+	it("rejects a user preset outside the managed allowed profile set", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-security-settings-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const port = new SecuritySettingsPort({
+			layout,
+			workspaceRoot: "/repo",
+			tempRoot: "/tmp/runledger",
+			managedConstraints: {
+				allowedProfiles: ["workspace-write", "approve-for-me"],
+				allowedApprovalPolicies: ["on-request"],
+				minimumSandbox: "workspace-write",
+				forceNetworkDeny: false,
+			},
+		});
+		const initial = await port.inspect({ scope: "user" });
+		if (!initial.ok) throw new Error(initial.error.message);
+
+		const result = await port.update({
+			scope: "user",
+			expectedSourceDigest: initial.value.sourceDigest,
+			document: { profile: "danger-full-access" },
+		});
+
+		expect(result).toMatchObject({ ok: false, error: { code: "invalid_config" } });
 	});
 });

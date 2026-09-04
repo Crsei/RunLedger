@@ -45,10 +45,9 @@ describe("security settings Session resource domain", () => {
 		}]);
 	});
 
-	it("projects managed settings as inspectable but non-editable", async () => {
+	it("keeps constraint-governed settings editable for values accepted by the settings port", async () => {
 		const domain = createSecuritySettingsResourceDomain({
 			generation: 8,
-			managedReadOnly: true,
 			settings: {
 				inspect: async ({ scope }) => ({ ok: true, value: { scope, document: { profile: "workspace-write" }, sourceDigest: runtimeDigest({ profile: "workspace-write" }) } }),
 				update: async () => ({ ok: false, error: { code: "policy_denied", message: "unused", retryable: false } }),
@@ -57,7 +56,7 @@ describe("security settings Session resource domain", () => {
 
 		expect(await domain.query("security.settings.inspect", { scope: "user" }, { correlationId: "correlation-managed", effectId: "effect-managed" })).toMatchObject({
 			ok: true,
-			value: { editable: false },
+			value: { editable: true },
 		});
 	});
 

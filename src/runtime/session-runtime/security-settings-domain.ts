@@ -20,8 +20,6 @@ export interface SecuritySettingsPort {
 export interface SecuritySettingsResourceDomainOptions {
 	readonly generation: number;
 	readonly settings: SecuritySettingsPort;
-	/** managed/organization source 生效时仅允许 inspect。 */
-	readonly managedReadOnly?: boolean;
 	/** 由 SessionRuntime 在 active owner 上绑定；缺失时仅限低层测试接缝。 */
 	readonly attemptPort?: () => AttemptPort | undefined;
 }
@@ -44,7 +42,7 @@ export function createSecuritySettingsResourceDomain(options: SecuritySettingsRe
 			if (scope === undefined) return failed(operation, "security_settings_scope_required");
 			const inspected = await options.settings.inspect({ scope });
 			return inspected.ok
-				? ok(operation, options.generation, inspectionValue(inspected.value, options.managedReadOnly))
+				? ok(operation, options.generation, inspectionValue(inspected.value))
 				: settingsFailure(operation, inspected.error.code);
 		},
 		mutate: async (operation, payload, context) => {
@@ -91,11 +89,11 @@ export function createSecuritySettingsResourceDomain(options: SecuritySettingsRe
 				}
 				return settingsFailure(operation, updated.error.code);
 			}
-			if (begun === undefined) return ok(operation, options.generation, inspectionValue(updated.value, options.managedReadOnly));
+			if (begun === undefined) return ok(operation, options.generation, inspectionValue(updated.value));
 			if (!awaitSettle(attempt, begun.attemptId, "committed", { operation, sourceDigest: updated.value.sourceDigest.digest })) {
 				return failed(operation, "attempt_settle_failed");
 			}
-			return ok(operation, options.generation, inspectionValue(updated.value, options.managedReadOnly), {
+			return ok(operation, options.generation, inspectionValue(updated.value), {
 				attemptId: begun.attemptId,
 				commandId: begun.commandId,
 				outcome: "committed",
@@ -116,13 +114,13 @@ function digestOf(value: unknown): RuntimeDigest | undefined {
 		: undefined;
 }
 
-function inspectionValue(value: SecuritySettingsInspection, managedReadOnly = false): Record<string, unknown> {
+function inspectionValue(value: SecuritySettingsInspection): Record<string, unknown> {
 	return {
 		scope: value.scope,
 		document: value.document,
 		sourceDigest: value.sourceDigest,
 		appliesTo: "new_sessions",
-		editable: !managedReadOnly,
+		editable: true,
 	};
 }
 

@@ -80,7 +80,9 @@ describe.runIf(process.platform === "linux")("Host security event evidence", () 
 
 	it("records an approval request and durable decision through the same Host event writer", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-permission-host-events-"));
+		const external = await mkdtemp(join(tmpdir(), "runledger-permission-host-events-external-"));
 		roots.push(root);
+		roots.push(external);
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		const hostScope = scope();
 		const principal = createRuntimeId("principal", "permission-host-events");
@@ -97,7 +99,7 @@ describe.runIf(process.platform === "linux")("Host security event evidence", () 
 			},
 		});
 
-		await security.createExecutionEnv({ sessionId, principalId: principal, toolCallId: createRuntimeId("toolCall", "permission-host-events"), cwd: root }).fs.writeFile(join(root, "approved.txt"), "approved");
+		await security.createExecutionEnv({ sessionId, principalId: principal, toolCallId: createRuntimeId("toolCall", "permission-host-events"), cwd: root }).fs.writeFile(join(external, "approved.txt"), "approved");
 		const eventPath = join(layout.state, "hosts", hostScope.workspaceStorageKey, "runtime-events", `${sessionId}.jsonl`);
 		const events = (await readFile(eventPath, "utf8"))
 			.split(/\r?\n/u)

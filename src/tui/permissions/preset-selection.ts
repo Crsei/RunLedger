@@ -21,14 +21,17 @@ export function applySystemPermissionPreset(
 		sandbox: _sandbox,
 		network: _network,
 		filesystem,
+		rules,
 		...remaining
 	} = document;
 	const hardening = filesystemHardening(filesystem);
+	const hardeningRules = rules?.filter((rule) => rule.action !== "allow");
 	return {
 		...remaining,
 		profile: preset.id,
 		approvalReviewer: preset.reviewer,
 		...(hardening === undefined ? {} : { filesystem: hardening }),
+		...(hardeningRules === undefined || hardeningRules.length === 0 ? {} : { rules: hardeningRules }),
 	};
 }
 

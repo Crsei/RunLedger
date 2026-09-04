@@ -6,12 +6,13 @@
 >
 > 用户目标：在 TUI 中首先提供三个可理解、可审计的系统预设：**Ask for approval**、**Approve for me**、**Full Access**；完整的命名 profile、filesystem/network/rules/bash 设置随后才进入 Advanced。
 
-## 实施状态（2026-09-02）
+## 实施状态（更新于 2026-09-04）
 
 - 已落地（P1/P4/P5 的可验证切片）：三项 builtin preset、`approvalReviewer`、managed constraints、`SecuritySettingsPort` 的原子 CAS 保存、Session Owner 的 `security.settings.inspect/update`、workspace deny-only 收紧校验，以及唯一的 `/permissions` 三卡选择器和 Full Access 二次确认。
 - Host inspection 会投影 reviewer、managed constraint digest、sandbox capability 与三项 preset availability；TUI 对 Host 标记 unavailable 的预设禁用选择。保存只作用于后续 Session，当前 immutable snapshot 不会被改写。
-- 尚未完成：Advanced 的 Profile/Inheritance、Approvals/Granular、Filesystem、Network、Rules、Bash 与 Effective-policy 编辑页；reviewer 分类审计完整接线；`runledger security inspect`；三预设的完整真实 external-write/network E2E 与人工跨平台验收。因此 P2、P3、P5（Advanced）和 P6 仍为 partial/pending，不能宣称计划整体完成。
-- 本次 fresh evidence：focused 78 tests、`npm run check`、`npm test`、`npm run build` 通过；隔离 `RUNLEDGER_DIR` 的 linked `runledger` TTY 已捕帧验证三卡和 Full Access confirm，未写入真实用户配置。
+- 2026-09-04 复核修正已闭合六个安全缺口：启动 resolver 与 durable settings port 都禁止 workspace 扩大 user baseline；`headless-workspace`、`workspace-write`、`approve-for-me` 不再按相同粗粒度 rank 处理；切换系统预设会移除旧 `allow` rule；Approve for me 的 workspace 外写回落到精确 user approval；managed source 只以具体 constraints 限制候选值而不再冻结全部本地设置；deterministic reviewer 的 input/policy digest、generation、classification version、decision 与有界 reason 已写入 Session hash-chain event store。
+- automated production evidence 已覆盖 canonical user/project settings 三预设、普通 workspace write、workspace 外 write 的 allow/deny/revoke、network review 拒绝不触达 raw broker、managed availability 与 auto-review durable audit。尚未完成：Advanced 的 Profile/Inheritance、Approvals/Granular、Filesystem、Network、Rules、Bash 与 Effective-policy 编辑页；`runledger security inspect`；人工跨平台验收。因此 P5（Advanced）与 P6 的 CLI/human 部分仍为 partial/pending，不能宣称计划整体完成。
+- 2026-09-04 fresh evidence：security/session/TUI 宽集 42 files / 244 tests 通过（macOS-only 3 tests 按平台跳过）；完整 `npm run check`、`npm test`、`npm run build` 均 exit 0。全局链接解析到本仓库 `bin/runledger.js`；隔离 `RUNLEDGER_DIR` 的真实 tmux TTY 已捕帧验证三卡、Full Access confirm/cancel、Approve for me 保存与重新打开后的 current 状态，并以 Esc + Ctrl+D 干净退出。未读写真实用户配置。
 - 后续修正（2026-09-02）：`/settings` 不再作为 permissions 的 alias；本分支的 `HEAD` 没有 SettingsWorkbench，完整历史实现位于分叉的 `session-owner-runtime@cb15812`，恢复它必须作为独立 settings-runtime 移植处理，不能用权限页替代。新增 `config-file-permission-presets.integration.test.ts` 在隔离 user/project `settings.json#security` 写入三个预设，并经 governed filesystem 实际写入目标文件；同时修复 `danger-full-access` 把正常 unrestricted write 错误变成 approval deny 的缺口。
 
 ## 0. 决策摘要

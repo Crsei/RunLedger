@@ -31,6 +31,7 @@ import {
 } from "../integration/session-local-leaves.ts";
 import { ApprovalCoordinator, HeadlessDenyPrompter, type ApprovalAuditPort, type ApprovalStateStorePort } from "../permission/approval-coordinator.ts";
 import { DeterministicAutoApprovalReviewer } from "../permission/auto-approval-reviewer.ts";
+import type { AutoApprovalReviewAuditPort } from "../permission/auto-approval-reviewer.ts";
 import { PermissionEngine } from "../permission/engine.ts";
 import { BashSecurityAnalyzer } from "../permission/bash-ast/classifier.ts";
 import type { BashSecurityAnalyzerPort, BashClassificationAuditPort, BashShadowTelemetryPort } from "../permission/bash-ast/types.ts";
@@ -77,6 +78,7 @@ export interface SessionSecurityCompositionOptions {
 		readonly prompter: PermissionPrompter;
 		readonly stateStore: ApprovalStateStorePort;
 		readonly audit: ApprovalAuditPort;
+		readonly autoReviewAudit?: AutoApprovalReviewAuditPort;
 	};
 	readonly bashShadowTelemetry?: BashShadowTelemetryPort;
 	readonly bashClassificationAudit?: BashClassificationAuditPort;
@@ -164,6 +166,7 @@ export async function createSessionSecurity(
 			prompter: options.approvalPorts.prompter,
 			store: options.approvalPorts.stateStore,
 			audit: options.approvalPorts.audit,
+			...(options.approvalPorts.autoReviewAudit === undefined ? {} : { autoReviewAudit: options.approvalPorts.autoReviewAudit }),
 			...(snapshot.approvalReviewer === "auto-review" ? { autoReviewer: new DeterministicAutoApprovalReviewer() } : {}),
 			...(options.now === undefined ? {} : { clock: options.now }),
 			...(options.approvalTimeoutMs === undefined ? {} : { timeoutMs: options.approvalTimeoutMs }),
