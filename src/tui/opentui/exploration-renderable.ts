@@ -76,6 +76,7 @@ interface ActionLine {
 	readonly actionCount: number;
 	/** 同一逻辑动作的所有换行片段共享 key，省略数按动作而非屏幕行计算。 */
 	readonly actionKey: number;
+	readonly detail?: boolean;
 }
 
 function coalescedActionLines(actions: readonly ExplorationActionView[]): readonly ActionLine[] {
@@ -84,6 +85,9 @@ function coalescedActionLines(actions: readonly ExplorationActionView[]): readon
 		const action = actions[index]!;
 		if (action.kind !== "read") {
 			lines.push({ text: actionLine(action), actionCount: 1, actionKey });
+			if (action.errorSummary !== undefined) {
+				lines.push({ text: action.errorSummary.text, actionCount: 1, actionKey, detail: true });
+			}
 			index += 1;
 			continue;
 		}
@@ -93,6 +97,11 @@ function coalescedActionLines(actions: readonly ExplorationActionView[]): readon
 			index += 1;
 		}
 		lines.push({ text: readLine(reads), actionCount: reads.length, actionKey });
+		for (const read of reads) {
+			if (read.errorSummary !== undefined) {
+				lines.push({ text: read.errorSummary.text, actionCount: reads.length, actionKey, detail: true });
+			}
+		}
 	}
 	return lines;
 }
@@ -101,7 +110,7 @@ function readLine(actions: readonly ExplorationActionView[]): string {
 	const counts = new Map<string, number>();
 	for (const action of actions) counts.set(action.target.text, (counts.get(action.target.text) ?? 0) + 1);
 	const paths = [...counts.entries()].map(([path, count]) => count > 1 ? `${path} ×${count}` : path);
-	const suffix = actions.some((action) => action.status !== "succeeded") ? " · failed" : "";
+	const suffix = actions.some((action) => failedStatus(action.status)) ? " · failed" : "";
 	return `Read ${paths.join(", ")}${suffix}`;
 }
 
@@ -115,7 +124,7 @@ function actionLine(action: ExplorationActionView): string {
 }
 
 function wrapActionLine(line: ActionLine, width: number): readonly ActionLine[] {
-	const prefix = "  └ ";
+	const prefix = line.detail === true ? "    " : "  └ ";
 	const continuation = "    ";
 	const contentWidth = Math.max(1, width - displayWidth(prefix));
 	const wrapped = wrapDisplayWidth(line.text, contentWidth, Math.max(1, graphemes(line.text).length + 1));
@@ -124,6 +133,10 @@ function wrapActionLine(line: ActionLine, width: number): readonly ActionLine[] 
 		actionCount: line.actionCount,
 		actionKey: line.actionKey,
 	}));
+}
+
+function failedStatus(status: ExplorationActionView["status"]): boolean {
+	return status === "failed" || status === "cancelled" || status === "aborted";
 }
 
 function budgetActionLines(lines: readonly ActionLine[], actionCount: number): readonly string[] {

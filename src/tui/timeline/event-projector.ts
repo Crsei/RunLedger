@@ -104,6 +104,8 @@ export class TimelineEventProjector {
 					message: boundedToolText(input.message, MESSAGE_TEXT_BOUND_BYTES),
 				}];
 			case "cleanup":
+				this.shellChunks.clear();
+				this.activeToolPresentation.clear();
 				return [{
 					type: "cleanup",
 					generation: 0,
@@ -153,24 +155,36 @@ export class TimelineEventProjector {
 			});
 			events.push({ type: "message_end", generation: 0, correlationId: row.id, status });
 			for (const toolCall of message.content.filter((content) => content.type === "toolCall")) {
-				events.push(...this.toolStartEnd(toolCall.id, toolCall.name, toolCall.arguments));
+				const presentation = projectToolStart(toolCall.name, toolCall.arguments, this.startedAt);
+				this.activeToolPresentation.set(toolCall.id, presentation);
+				const toolRow = this.toolRow(toolCall.id, toolCall.name, presentation, "running");
+				events.push({ type: "tool_start", generation: 0, correlationId: toolCall.id, row: toolRow });
 			}
 			return events;
 		}
 		const events: TimelineEvent[] = [];
 		for (const content of message.content) {
-			const start = projectToolStart(content.toolName, {}, this.startedAt);
-			const resultText = toolContentText(content.content);
+			const active = this.activeToolPresentation.get(content.toolCallId);
+			const start = active ?? projectToolStart(content.toolName, {}, this.startedAt);
 			const presentation = projectToolEnd(
-				resultText.length > 0
-					? { ...start, body: [...start.body, { kind: "text", content: boundedToolText(resultText, MESSAGE_TEXT_BOUND_BYTES) }] }
-					: start,
+				start,
 				{ content: content.content, details: content.details, isError: content.isError === true },
 				this.startedAt,
 			);
 			const status: TimelineStatus = content.isError === true ? "failed" : "succeeded";
-			const row = this.toolRow(content.toolCallId, content.toolName, presentation, status);
-			events.push({ type: "tool_start", generation: 0, correlationId: content.toolCallId, row });
+			this.shellChunks.delete(content.toolCallId);
+			this.activeToolPresentation.delete(content.toolCallId);
+			if (active === undefined) {
+				const row = this.toolRow(content.toolCallId, content.toolName, presentation, status);
+				events.push({ type: "tool_start", generation: 0, correlationId: content.toolCallId, row });
+			} else {
+				events.push({
+					type: "tool_update",
+					generation: 0,
+					correlationId: content.toolCallId,
+					presentation: { state: "known", value: presentation },
+				});
+			}
 			events.push({ type: "tool_end", generation: 0, correlationId: content.toolCallId, status });
 		}
 		return events;
@@ -283,15 +297,6 @@ export class TimelineEventProjector {
 		}
 	}
 
-	private toolStartEnd(toolCallId: string, toolName: string, args: unknown): TimelineEvent[] {
-		const presentation = projectToolStart(toolName, args, this.startedAt);
-		const row = this.toolRow(toolCallId, toolName, presentation, "succeeded");
-		return [
-			{ type: "tool_start", generation: 0, correlationId: toolCallId, row },
-			{ type: "tool_end", generation: 0, correlationId: toolCallId, status: "succeeded" },
-		];
-	}
-
 	private messageRow(role: "user" | "assistant", index: number, options: {
 		text: string;
 		status: TimelineStatus;
@@ -400,11 +405,4 @@ function assistantThinking(message: { readonly role?: string; readonly content?:
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function toolContentText(content: readonly unknown[]): string {
-	return content
-		.filter((item): item is { type: string; text: string } => isRecord(item) && item.type === "text" && typeof item.text === "string")
-		.map((item) => item.text)
-		.join("");
 }

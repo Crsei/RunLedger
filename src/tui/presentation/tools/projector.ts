@@ -340,15 +340,18 @@ export function projectToolResultMetadata(result: { readonly toolName: string; r
 				truncated: sourceTruncated(details, []),
 				exploration: explorationResult(details, result.content, "lines", details.lineCount),
 			};
-		case "grep":
+		case "grep": {
+			const resultUnit = details.resultUnit === "files" ? "files" : "matches";
+			const resultCount = details.resultCount ?? details.matchCount;
 			return {
 				kind: "grep",
 				matchCount: safeCount(details.matchCount),
 				fileCount: safeCount(details.fileCount),
 				samples: [],
 				truncated: sourceTruncated(details, ["matchLimitReached"]),
-				exploration: explorationResult(details, result.content, "matches", details.matchCount, ["matchLimitReached"]),
+				exploration: explorationResult(details, result.content, resultUnit, resultCount, ["matchLimitReached"]),
 			};
+		}
 		case "find":
 			return {
 				kind: "find",

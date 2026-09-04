@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { TimelineEventProjector } from "../../../src/tui/timeline/event-projector.ts";
 import { createInitialTimelineState, timelineReducer } from "../../../src/tui/timeline/reducer.ts";
+import { timelineToBlocks } from "../../../src/tui/timeline/selectors.ts";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import type { TuiEvent } from "../../../src/tui/types.ts";
 
@@ -35,6 +36,24 @@ function assistantMessage(extra: object = {}): Parameters<TimelineEventProjector
 			provider: mockModel.provider,
 			model: mockModel.id,
 			...extra,
+		},
+	};
+}
+
+function toolResultMessage(): Parameters<TimelineEventProjector["project"]>[0] {
+	return {
+		kind: "replay-message",
+		index: 2,
+		message: {
+			role: "toolResult",
+			content: [{
+				type: "toolResult",
+				toolCallId: "call-1",
+				toolName: "read",
+				content: [{ type: "text", text: "export const answer = 42;" }],
+				isError: false,
+				details: { lineCount: 1, truncation: { truncated: false, outputLines: 1, totalLines: 1 } },
+			}],
 		},
 	};
 }
@@ -130,10 +149,106 @@ describe("B2 timeline event-projector", () => {
 		});
 	});
 
-	it("replay tool call cycles release active presentation state", () => {
+	it("replay assistant tool calls stay active until the matching tool result", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
 		projector.project(assistantMessage());
+		expect(projector.snapshot().activeToolPresentation["call-1"]?.input).toMatchObject({
+			kind: "read",
+			path: { text: "src/a.ts" },
+		});
+
+		projector.project(toolResultMessage());
 		expect(projector.snapshot().activeToolPresentation["call-1"]).toBeUndefined();
+	});
+
+	it("replay merges a tool call and result into one row without losing arguments or body", () => {
+		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		const events = [
+			...projector.project(assistantMessage()),
+			...projector.project(toolResultMessage()),
+		];
+		let timeline = createInitialTimelineState();
+		for (const event of events) timeline = timelineReducer(timeline, event);
+
+		const tools = timeline.committedRows.filter((row) => row.kind === "tool");
+		expect(tools).toHaveLength(1);
+		expect(tools[0]).toMatchObject({
+			kind: "tool",
+			id: "tool:call-1",
+			toolCallId: "call-1",
+			status: "succeeded",
+			presentation: {
+				state: "known",
+				value: {
+					input: { kind: "read", path: { text: "src/a.ts" } },
+					body: [{ kind: "text", content: { text: "export const answer = 42;" } }],
+				},
+			},
+		});
+	});
+
+	it("live and replay produce the same final exploration row and projections", () => {
+		const replayProjector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		const replayEvents = [
+			...replayProjector.project(assistantMessage()),
+			...replayProjector.project(toolResultMessage()),
+		];
+		let replayTimeline = createInitialTimelineState();
+		for (const event of replayEvents) replayTimeline = timelineReducer(replayTimeline, event);
+
+		const liveProjector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		const liveEvents = [
+			...liveProjector.project({
+				kind: "tui-event",
+				event: { type: "tool_execution_start", timestamp: 0, toolCallId: "call-1", toolName: "read", args: { path: "src/a.ts" } },
+			}),
+			...liveProjector.project({
+				kind: "tui-event",
+				event: {
+					type: "tool_execution_end",
+					timestamp: 1,
+					toolCallId: "call-1",
+					toolName: "read",
+					isError: false,
+					result: {
+						type: "toolResult",
+						toolCallId: "call-1",
+						toolName: "read",
+						content: [{ type: "text", text: "export const answer = 42;" }],
+						details: { lineCount: 1, truncation: { truncated: false, outputLines: 1, totalLines: 1 } },
+					},
+				},
+			}),
+		];
+		let liveTimeline = createInitialTimelineState();
+		for (const event of liveEvents) liveTimeline = timelineReducer(liveTimeline, event);
+
+		const replayTools = replayTimeline.committedRows.filter((row) => row.kind === "tool");
+		const liveTools = liveTimeline.committedRows.filter((row) => row.kind === "tool");
+		expect(replayTools).toHaveLength(1);
+		expect(liveTools).toHaveLength(1);
+		const replayTool = replayTools[0];
+		const liveTool = liveTools[0];
+		if (replayTool?.kind !== "tool" || liveTool?.kind !== "tool") throw new Error("missing final tool row");
+		expect(liveTool).toMatchObject({
+			id: replayTool.id,
+			toolCallId: replayTool.toolCallId,
+			status: replayTool.status,
+		});
+		if (replayTool.presentation.state !== "known" || liveTool.presentation.state !== "known") throw new Error("missing final tool presentation");
+		expect(liveTool.presentation.value).toMatchObject({
+			input: replayTool.presentation.value.input,
+			body: replayTool.presentation.value.body,
+			result: replayTool.presentation.value.result,
+		});
+
+		const replayMain = timelineToBlocks(replayTimeline).filter((block) => block.kind === "exploration");
+		const liveMain = timelineToBlocks(liveTimeline).filter((block) => block.kind === "exploration");
+		const replayTranscript = timelineToBlocks(replayTimeline, { surface: "transcript" }).filter((block) => block.kind === "tool-detail");
+		const liveTranscript = timelineToBlocks(liveTimeline, { surface: "transcript" }).filter((block) => block.kind === "tool-detail");
+		expect(liveMain).toEqual(replayMain);
+		expect(liveTranscript).toEqual(replayTranscript);
+		expect(new Set(replayTimeline.committedRows.map((row) => row.id)).size).toBe(replayTimeline.committedRows.length);
 	});
 
 	it("maps live tui-event message flow to the same row id scheme", () => {
@@ -200,15 +315,44 @@ describe("B2 timeline event-projector", () => {
 
 	it("cleanup events project deterministically", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		projector.project(assistantMessage());
+		expect(projector.snapshot().activeToolPresentation["call-1"]).toBeDefined();
 		const events = projector.project({ kind: "cleanup", reason: "abort", correlationId: "assistant:0" });
 		expect(events).toEqual([{ type: "cleanup", generation: 0, correlationId: "assistant:0", reason: "abort" }]);
+		expect(projector.snapshot().activeToolPresentation).toEqual({});
 	});
 
 	it("P2-2: global cleanup projects without a correlationId (reducer cleans all active rows)", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
+		projector.project(assistantMessage());
+		projector.project({
+			kind: "tui-event",
+			event: { type: "tool_execution_start", timestamp: 0, toolCallId: "shell-1", toolName: "bash", args: { command: "pwd" } },
+		});
+		projector.project({
+			kind: "tui-event",
+			event: {
+				type: "tool_execution_update",
+				timestamp: 1,
+				toolCallId: "shell-1",
+				toolName: "bash",
+				partialResult: {
+					type: "toolResult",
+					toolCallId: "shell-1",
+					toolName: "bash",
+					content: [],
+					details: { stdoutChunk: "still running\n" },
+				},
+			},
+		});
+		expect(Object.keys(projector.snapshot().activeToolPresentation)).toEqual(["call-1", "shell-1"]);
+		expect(projector.snapshot().shellChunks["shell-1"]).toHaveLength(1);
+
 		const events = projector.project({ kind: "cleanup", reason: "destroy" });
 		expect(events).toEqual([{ type: "cleanup", generation: 0, reason: "destroy" }]);
 		expect(events[0]).not.toHaveProperty("correlationId");
+		expect(projector.snapshot().activeToolPresentation).toEqual({});
+		expect(projector.snapshot().shellChunks).toEqual({});
 	});
 
 	it("P1-2: shell chunks accumulate across updates in the bounded typed result", () => {

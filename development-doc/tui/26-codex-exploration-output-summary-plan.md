@@ -4,13 +4,15 @@
 >
 > 计划日期：2026-09-02
 >
+> 最近复核：2026-09-04
+>
 > RunLedger 基线：`rollback/before-composer-shape@4cdddfe1cdd95ecf2356d395916678fff331c8d1`
 >
 > Codex 固定参照：`main@0b175e643`
 >
 > 上游关系：承接 [`24-codex-session-display-replication-plan.md`](24-codex-session-display-replication-plan.md) D9 暂缓的 `Exploring` 分组；不改写 Plan 24 已验收的 exec、diff、状态行和 Ctrl+T 基础能力。
 >
-> 交付性质：S0–S5 范围的核心代码与自动化合同已落入当前脏工作树；S6 专项性能/重放门禁、带真实探索调用的标准 PATH TTY，以及 dark/light 人工视觉与复制验收尚未完成。因此本文不能标记为 `implemented` 或 `accepted`。
+> 交付性质：S0–S6 的核心代码与自动化合同已落入当前脏工作树；带真实探索调用的标准 PATH TTY，以及 dark/light 人工视觉与复制验收尚未完成。因此本文不能标记为 `implemented` 或 `accepted`。
 
 ---
 
@@ -59,14 +61,17 @@
 - 单元测试证明纯投影合同；Bun native 测试证明 OpenTUI frame；tmux/PTY 证明标准入口；人工验收才证明 dark/light 可读性。四类证据不得互相替代。
 - “压缩显示”只指 TUI presentation，不得被描述为 Context Compaction、LLM 输出压缩、ledger 压缩或 Runtime 丢弃结果。
 
-### 0.4 当前实施与 fresh evidence（2026-09-02）
+### 0.4 当前实施与 fresh evidence（2026-09-04）
 
 - 当前脏工作树已加入第一方精确分类、safe exploration metadata、main/transcript 双 surface、相邻分组、`ExplorationRenderable` 和 transcript 的 Runtime/TUI 双截断 marker；`Agent` tool result、Session schema、ledger、Trace 与 shell retention 未改。
 - 成功 `read/grep/find/glob/ls` 的 main projection 不含 body；transcript 按 `toolCallId` 保留 safe bounded detail。失败 read 在 main 保留一行安全错误，在 transcript 保留完整 bounded error 一次。
 - 归组保留原始 `TimelineRow`/`toolCallId`，group id 固定为首 row；每组至多 32 actions。新增 RED→GREEN 覆盖了 body 零泄漏、nested Runtime truncation、精确分类、相邻/跨 shell 分组、失败去重、1,000 条 read 有界分组，以及“单个超长动作不可被误报为省略 1 个动作”。
-- 本轮 fresh automated gates：`npm run check`、`npm test`、`npm run build` 与 `git diff --check` 均通过；全量测试中的 Bun native 分桶包含 exploration renderable 和生产 history replay 摘要断言。
-- 标准入口已确认 `/home/nzq/.npm-global/bin/runledger` 链接到本工作树；隔离 `RUNLEDGER_DIR` 的 tmux TTY 在 40×24、80×24、143×30 启动。40 列还验证 Ctrl+T 空 transcript 打开/关闭、PageUp 与 Ctrl+D 干净退出；80/143 列验证启动与 Ctrl+D 退出。
-- 未闭合：S6 的专门 10,000-row/replay-cache/session-switch 性能证据；带真实模型的 read/search/list/failed-read 标准 PATH TTY；dark/light 人工视觉与鼠标选择复制。隔离 TTY 没有凭据，不能替代这些验证。
+- replay assistant toolCall 与后续 toolResult 现按同一 `toolCallId` 合并成单一 row；live/replay 的最终 path、body、status、main block 与 transcript detail 等价，stable row id 无重复。任何 abort/destroy/session-switch lifecycle cleanup 都会释放 `activeToolPresentation` 与 `shellChunks`，不把旧 Session 的活动分组带入下一视图。
+- 10,000 个 committed rows + active exploration tail 的专门测试中，第二个 read 追加后前 10,000 个投影对象全部保持 identity；缓存计数为 10,000 次 settled hit，第二轮只有尾组 1 次 miss（累计 miss 10,002，含首轮冷投影 10,001）。
+- grep 的结构化计数排除 context 与 `--`，`files-with-matches` 使用 `files` 单位；新增 RED→GREEN 证明 `file-2-old.ts:8:needle` 不会被文件名中的 `-2-` 误判为 context，同时保留 legacy `matchCount` replay 兼容。
+- 本轮 fresh automated gates：focused Vitest 7 files / 72 tests、Bun OpenTUI native 138 tests、`npm run check`、`npm test`、`npm run build` 与 `git diff --check` 均通过；native assertion 总数在并行任务修改期间发生变化，不作为本专项固定口径。
+- 标准入口已确认 `/home/nzq/.npm-global/bin/runledger` 与 npm global link 指向本工作树；fresh 隔离 `RUNLEDGER_DIR` 的 80×24 tmux TTY 启动并以 Ctrl+D `exit=0`。2026-09-02 的 40×24、80×24、143×30 启停证据仍作为历史证据，不冒充本轮 fresh 验证。
+- 未闭合：带真实模型的 read/search/list/failed-read 标准 PATH TTY；dark/light 人工视觉与鼠标选择复制。隔离 TTY 没有凭据，不能替代这些验证。
 
 ---
 
@@ -448,23 +453,23 @@ AgentEvent / replay AgentMessage
 
 ### S6 · Replay、生产接线与性能
 
-- [ ] 从 canonical session messages 恢复 toolCall args 与 toolResult details，保证 path/query/正文能按相同 toolCallId 关联；不得产生重复 stable row id。
-- [ ] 验证 Session Owner 标准 CLI composition 使用同一 selector 路径，无 legacy TUI 旁路。
-- [ ] 10,000 个历史 rows + 1 个 active exploration action 压测：只更新 live group，committed transcript cache 命中。
-- [ ] 1,000 次相邻 read 的 main projection 有界；不创建 1,000 个正文 native child。
-- [ ] session switch、abort、destroy 清除 active group，不污染下一 Session。
+- [x] 从 canonical session messages 恢复 toolCall args 与 toolResult details，保证 path/query/正文能按相同 toolCallId 关联；不得产生重复 stable row id。
+- [x] 验证 Session Owner 标准 CLI composition 使用同一 selector 路径，无 legacy TUI 旁路。
+- [x] 10,000 个历史 rows + 1 个 active exploration action 压测：只更新 live group，committed transcript cache 命中。
+- [x] 1,000 次相邻 read 的 main projection 有界；不创建 1,000 个正文 native child。
+- [x] session switch、abort、destroy 清除 active group，不污染下一 Session。
 
 **S6 门禁**：live/replay 等价、无 duplicate ID、无跨 Session 串组；性能预算和 before/after 数字写回本文。
 
 ### S7 · 全量门禁与真实 TTY 验收
 
-- [ ] `npm run check`（完整输出，无 error/warning/info 遗漏）。
-- [ ] focused Vitest：projector、selectors、timeline equivalence、transcript view、runtime tool details。
-- [ ] `npm test` 全量。
-- [ ] Bun OpenTUI native tests 全量。
-- [ ] `npm run build`。
-- [ ] `git diff --check`。
-- [ ] `which runledger`、`readlink -f`、`npm ls -g --depth=0 runledger` 确认标准入口指向本工作树；否则先构建并按规则 `npm link`。
+- [x] `npm run check`（完整输出，无 error/warning/info 遗漏）。
+- [x] focused Vitest：projector、selectors、timeline equivalence、transcript view、runtime tool details。
+- [x] `npm test` 全量。
+- [x] Bun OpenTUI native tests 全量。
+- [x] `npm run build`。
+- [x] `git diff --check`。
+- [x] `which runledger`、`readlink -f`、`npm ls -g --depth=0 runledger` 确认标准入口指向本工作树；否则先构建并按规则 `npm link`。
 - [ ] 隔离 `RUNLEDGER_DIR` + 真实 tmux TTY：40/80/143 列，dark/light，连续 read/search/list、失败 read、Ctrl+T 打开/关闭、PageUp、选择复制、Ctrl+D 干净退出。
 - [ ] 人工确认主面板不再出现文件正文，摘要无破版，详情 marker 可理解，错误没有被压掉。
 
@@ -556,12 +561,12 @@ tests/tui/opentui-exploration-summary.bun.test.ts
 
 本计划只有同时满足以下条件才能标记 `implemented/accepted`：
 
-- [ ] 主时间线对 `read/grep/find/glob/ls` 成功结果只显示结构化摘要，正文零泄漏；
-- [ ] Ctrl+T 按原始调用显示 safe bounded 详情，并正确区分 Runtime/TUI 两类截断；
-- [ ] 相邻探索归组不改变 TimelineRow/toolCallId/durable state，live/replay 最终显示等价；
-- [ ] error/cancel/abort 可见，unknown 不归零，generic/MCP/plugin 不被误分类；
-- [ ] group/action/renderable/cache 全部有界，长会话无全历史重建；
-- [ ] focused/full check/test/build/diff-check 全绿，任何任务外失败单独记录；
+- [x] 主时间线对 `read/grep/find/glob/ls` 成功结果只显示结构化摘要，正文零泄漏；
+- [x] Ctrl+T 按原始调用显示 safe bounded 详情，并正确区分 Runtime/TUI 两类截断；
+- [x] 相邻探索归组不改变 TimelineRow/toolCallId/durable state，live/replay 最终显示等价；
+- [x] error/cancel/abort 可见，unknown 不归零，generic/MCP/plugin 不被误分类；
+- [x] group/action/renderable/cache 全部有界，长会话无全历史重建；
+- [x] focused/full check/test/build/diff-check 全绿，任何任务外失败单独记录；
 - [ ] 标准 PATH 隔离 TTY 覆盖 40/80/143 列和 Ctrl+T 生命周期；
 - [ ] dark/light 人工视觉与选择复制完成；
 - [ ] fresh evidence、commit、工作树边界和仍存缺口回写本文及两个索引。

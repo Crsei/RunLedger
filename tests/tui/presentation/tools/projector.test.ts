@@ -118,4 +118,34 @@ describe("B2 safe tool projector", () => {
 			expect(grepMeta.fileCount).toEqual({ state: "known", value: 2 });
 		}
 	});
+
+	it("uses the canonical grep result count and unit while preserving legacy replay fallback", () => {
+		const files = projectToolResultMetadata({
+			toolName: "grep",
+			details: { fileCount: 2, resultCount: 2, resultUnit: "files" },
+			content: [],
+		});
+		expect(files).toMatchObject({
+			kind: "grep",
+			matchCount: { state: "unknown" },
+			fileCount: { state: "known", value: 2 },
+			exploration: {
+				resultCount: { state: "known", value: 2 },
+				resultUnit: "files",
+			},
+		});
+
+		const legacy = projectToolResultMetadata({
+			toolName: "grep",
+			details: { matchCount: 3, fileCount: 1 },
+			content: [],
+		});
+		expect(legacy).toMatchObject({
+			kind: "grep",
+			exploration: {
+				resultCount: { state: "known", value: 3 },
+				resultUnit: "matches",
+			},
+		});
+	});
 });

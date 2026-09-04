@@ -57,6 +57,19 @@ function failedReadRow(error: string): TimelineRow {
 	};
 }
 
+function runningReadRow(path = "src/pending.ts", id = "read-running"): TimelineRow {
+	return {
+		kind: "tool",
+		id: `tool:${id}`,
+		timestamp: startedAt,
+		displayOrder: 0,
+		status: "running",
+		toolCallId: id,
+		toolName: { text: "read", truncated: false, byteLength: 4 },
+		presentation: { state: "known", value: projectToolStart("read", { path }, startedAt) },
+	};
+}
+
 describe("Codex exploration output summary", () => {
 	it("classifies only exact first-party discovery tool names", () => {
 		expect(explorationKindForTool("read")).toBe("read");
@@ -148,6 +161,41 @@ describe("Codex exploration output summary", () => {
 
 		expect(lines.join("\n")).toContain("Check the workspace path and retry.");
 		expect(lines.filter((line) => line.includes("Path not found: missing.ts"))).toHaveLength(1);
+	});
+
+	it("does not label a running read as failed", () => {
+		const block = timelineToBlocks(state(runningReadRow()))[0];
+		expect(block).toMatchObject({ kind: "exploration", state: "active" });
+		if (block?.kind !== "exploration") throw new Error("expected exploration block");
+		const rendered = explorationDisplayLines(block, 80).join("\n");
+		expect(rendered).toContain("• Exploring");
+		expect(rendered).toContain("Read src/pending.ts");
+		expect(rendered).not.toContain("failed");
+	});
+
+	it("shows the bounded failure reason on the main exploration surface", () => {
+		const block = timelineToBlocks(state(failedReadRow("Path not found: missing.ts\nCheck the workspace path.")))[0];
+		if (block?.kind !== "exploration") throw new Error("expected exploration block");
+		expect(explorationDisplayLines(block, 80)).toEqual([
+			"• Explored with errors",
+			"  └ Read missing.ts · failed",
+			"    Path not found: missing.ts",
+		]);
+	});
+
+	it("keeps a mixed failed and running exploration group active", () => {
+		const failed = failedReadRow("Path not found: missing.ts");
+		const running = runningReadRow("src/still-reading.ts");
+		const timeline: TimelineState = {
+			...state(failed),
+			committedRows: [failed],
+			activeRowsByCorrelationId: { "read-running": running },
+			activeOrder: ["read-running"],
+		};
+		const block = timelineToBlocks(timeline)[0];
+		expect(block).toMatchObject({ kind: "exploration", state: "active" });
+		if (block?.kind !== "exploration") throw new Error("expected exploration block");
+		expect(explorationDisplayLines(block, 80)[0]).toBe("• Exploring");
 	});
 
 	it("bounds a long adjacent read history to groups of at most 32 actions", () => {

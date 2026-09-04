@@ -48,8 +48,10 @@ export type GrepToolInput = Static<typeof grepSchema>;
 
 export interface GrepToolDetails {
   truncation: TruncationResult;
-  matchCount: number;
+  matchCount?: number;
   fileCount: number;
+  resultCount: number;
+  resultUnit: "matches" | "files";
   matchLimitReached?: number;
 }
 
@@ -126,11 +128,15 @@ export function createGrepTool(
         .map((l) => (l.length > MAX_LINE_LENGTH ? l.slice(0, MAX_LINE_LENGTH) + "… [truncated]" : l))
         .join("\n");
       const { text, truncation } = truncateHead(trimmed, { maxLines: Number.MAX_SAFE_INTEGER, maxBytes: DEFAULT_MAX_BYTES });
-      // 实际匹配行数(rg 输出按行计)≈ trim 后行数
-      const matchCount = trimmed.split("\n").filter((l) => l.length > 0).length;
-      const fileCount = new Set(trimmed.split("\n").filter((line) => line.length > 0).map((line) => line.split(":", 1)[0]!)).size;
-      const details: GrepToolDetails = { truncation, matchCount, fileCount };
-      if (matchCount >= limit) details.matchLimitReached = limit;
+      const counts = grepOutputCounts(trimmed, outputFormat, searchPath);
+      const details: GrepToolDetails = {
+        truncation,
+        fileCount: counts.fileCount,
+        resultCount: counts.resultCount,
+        resultUnit: outputFormat === "files-with-matches" ? "files" : "matches",
+        ...(counts.matchCount === undefined ? {} : { matchCount: counts.matchCount }),
+      };
+      if (counts.matchCount !== undefined && counts.matchCount >= limit) details.matchLimitReached = limit;
 
       return {
         content: [{ type: "text", text: isError ? `${r.stderr}\n${r.stdout}` : text }],
@@ -139,6 +145,34 @@ export function createGrepTool(
       };
     },
   };
+}
+
+function grepOutputCounts(
+  output: string,
+  outputFormat: "text" | "files-with-matches",
+  searchPath: string,
+): { matchCount?: number; fileCount: number; resultCount: number } {
+  const lines = output.split(/\r?\n/u).filter((line) => line.length > 0);
+  if (outputFormat === "files-with-matches") {
+    const fileCount = new Set(lines).size;
+    return { fileCount, resultCount: fileCount };
+  }
+  const matchLines = lines.filter((line) => line !== "--" && !isContextLine(line));
+  const files = new Set(matchLines.map((line) => grepOutputFile(line, searchPath)));
+  return { matchCount: matchLines.length, fileCount: files.size, resultCount: matchLines.length };
+}
+
+function isContextLine(line: string): boolean {
+  if (/^\d+:/u.test(line) || /:\d+:/u.test(line)) return false;
+  return /^\d+-/u.test(line) || /^.+?-\d+-/u.test(line);
+}
+
+function grepOutputFile(line: string, searchPath: string): string {
+  const numbered = line.match(/^(.+?)(?::\d+:|-\d+-)/u);
+  if (numbered?.[1] !== undefined) return numbered[1];
+  if (/^\d+:/u.test(line)) return searchPath;
+  const separator = line.indexOf(":", /^[A-Za-z]:[\\/]/u.test(line) ? 2 : 0);
+  return separator < 0 ? searchPath : line.slice(0, separator);
 }
 
 function buildRgArgs(

@@ -46,4 +46,59 @@ describe("OpenTUI exploration summary", () => {
 			renderable.destroyRecursively();
 		}
 	});
+
+	test("keeps a running read active without a failed suffix", async () => {
+		const setup = await createTestRenderer({ width: 40, height: 6 });
+		const renderable = new ExplorationRenderable(setup.renderer, {
+			id: "exploration-running",
+			width: "100%",
+			block: {
+				id: "exploration-tool:running",
+				kind: "exploration",
+				state: "active",
+				actions: [{ id: "running", kind: "read", label: bounded("Read"), target: bounded("src/pending.ts"), status: "running" }],
+			},
+		});
+		setup.renderer.root.add(renderable);
+		try {
+			await setup.renderOnce();
+			const frame = setup.captureCharFrame();
+			expect(frame).toContain("• Exploring");
+			expect(frame).toContain("Read src/pending.ts");
+			expect(frame).not.toContain("failed");
+		} finally {
+			renderable.destroyRecursively();
+		}
+	});
+
+	test("renders a failed read reason on the main frame", async () => {
+		const setup = await createTestRenderer({ width: 50, height: 8 });
+		const renderable = new ExplorationRenderable(setup.renderer, {
+			id: "exploration-failed",
+			width: "100%",
+			block: {
+				id: "exploration-tool:failed",
+				kind: "exploration",
+				state: "completed-with-errors",
+				actions: [{
+					id: "failed",
+					kind: "read",
+					label: bounded("Read"),
+					target: bounded("missing.ts"),
+					status: "failed",
+					errorSummary: bounded("Path not found: missing.ts"),
+				}],
+			},
+		});
+		setup.renderer.root.add(renderable);
+		try {
+			await setup.renderOnce();
+			const frame = setup.captureCharFrame();
+			expect(frame).toContain("• Explored with errors");
+			expect(frame).toContain("Read missing.ts · failed");
+			expect(frame).toContain("Path not found: missing.ts");
+		} finally {
+			renderable.destroyRecursively();
+		}
+	});
 });

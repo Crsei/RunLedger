@@ -72,7 +72,7 @@ export function explorationBlockForRows(rows: readonly TimelineRow[], finalized:
 		contentGeneration: last.generation ?? 0,
 		finalized,
 		kind: "exploration",
-		state: hasError ? "completed-with-errors" : hasActive ? "active" : "completed",
+		state: hasActive ? "active" : hasError ? "completed-with-errors" : "completed",
 		actions,
 	};
 }

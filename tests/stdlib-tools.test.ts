@@ -175,6 +175,85 @@ describe("stdlib tools (cross-platform)", () => {
     expect(calls.find((c) => c.cmd.startsWith("grep"))).toBeDefined();
   });
 
+  it("grep: context 输出只计真实命中行", async () => {
+    const file = path.join(dir, "context.txt").replace(/\\/g, "/");
+    const mockShell = {
+      async exec(cmd: string) {
+        if (cmd === "rg --version") return { stdout: "ripgrep 14", stderr: "", exitCode: 0 };
+        return {
+          stdout: [
+            `${file}:2:needle first`,
+            `${file}-3-context after first`,
+            "--",
+            `${file}-7-context before second`,
+            `${file}:8:needle second`,
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+    const tool = createGrepTool(dir, { shell: mockShell as never });
+    const result = await tool.execute("tc-context", { pattern: "needle", path: ".", context: 1 });
+
+    expect(result.details).toMatchObject({
+      matchCount: 2,
+      fileCount: 1,
+      resultCount: 2,
+      resultUnit: "matches",
+    });
+  });
+
+  it("grep: 文件名中的 -数字- 不会把真实命中误判为 context", async () => {
+    const file = path.join(dir, "file-2-old.ts").replace(/\\/g, "/");
+    const mockShell = {
+      async exec(cmd: string) {
+        if (cmd === "rg --version") return { stdout: "ripgrep 14", stderr: "", exitCode: 0 };
+        return {
+          stdout: [
+            `${file}-7-context before match`,
+            `${file}:8:needle`,
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    };
+    const tool = createGrepTool(dir, { shell: mockShell as never });
+    const result = await tool.execute("tc-context-hyphenated-path", { pattern: "needle", path: ".", context: 1 });
+
+    expect(result.details).toMatchObject({
+      matchCount: 1,
+      fileCount: 1,
+      resultCount: 1,
+      resultUnit: "matches",
+    });
+  });
+
+  it("grep: files-with-matches 以文件数作为结果单位", async () => {
+    const first = path.join(dir, "a.ts").replace(/\\/g, "/");
+    const second = path.join(dir, "b.ts").replace(/\\/g, "/");
+    const mockShell = {
+      async exec(cmd: string) {
+        if (cmd === "rg --version") return { stdout: "ripgrep 14", stderr: "", exitCode: 0 };
+        return { stdout: `${first}\n${second}\n`, stderr: "", exitCode: 0 };
+      },
+    };
+    const tool = createGrepTool(dir, { shell: mockShell as never });
+    const result = await tool.execute("tc-files", {
+      pattern: "needle",
+      path: ".",
+      outputFormat: "files-with-matches",
+    });
+
+    expect(result.details).toMatchObject({
+      fileCount: 2,
+      resultCount: 2,
+      resultUnit: "files",
+    });
+    expect(result.details).not.toHaveProperty("matchCount");
+  });
+
   it("find: 找 .ts 文件(fallback find -name)", { skip: process.platform === "win32" }, async () => {
     await writeFile(path.join(dir, "a.ts"), "export const x = 1;", "utf-8");
     await writeFile(path.join(dir, "b.txt"), "hello", "utf-8");
