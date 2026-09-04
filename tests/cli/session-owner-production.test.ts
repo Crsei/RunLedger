@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { minimalHarnessProfileRef, standardHarnessProfileRef, type HarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { createRuntimeId, type SessionId } from "../../src/runtime/protocol/ids.ts";
 
@@ -43,7 +44,7 @@ function openStores(): { store: SessionStore; ownerStore: OwnerStore } {
 	return { store: new SessionStore(db), ownerStore: new OwnerStore(db) };
 }
 
-function setupSession(seed = "prod"): SessionId {
+function setupSession(seed = "prod", harnessProfile: HarnessProfileRef = standardHarnessProfileRef()): SessionId {
 	const db = openSessionDatabase(join(dir, "state.db"));
 	const installed = db.querySingle("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'");
 	if (installed === undefined || Number(installed.n) === 0) {
@@ -55,6 +56,7 @@ function setupSession(seed = "prod"): SessionId {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile,
 		settingsDigest: "d".repeat(64),
 	});
 	db.close();
@@ -148,6 +150,29 @@ describe("R6 production composition", () => {
 		writeFileSync(join(dir, "release"), "release");
 	});
 
+	it("a healthy attach observes minimal without composing a client-side receipt", { timeout: 60_000 }, async () => {
+		const sessionId = setupSession("minimal-healthy-attach", minimalHarnessProfileRef());
+		const holder = spawnWorkerAsync("embedded", sessionId, { profileComposition: true });
+		await waitFor(() => hasCompleteResultLine(holder.stdout()), 20_000, "minimal owner composition frame");
+		const ownerResult = lastResultLine(holder.stdout());
+		expect(ownerResult).toMatchObject({
+			ok: true,
+			generation: 1,
+			harnessProfileId: "minimal",
+			harnessCompositionGeneration: 1,
+		});
+
+		const attach = spawnWorkerAsync("attach", sessionId, { holdMs: 500 });
+		await waitFor(() => hasCompleteResultLine(attach.stdout()), 20_000, "minimal attach frame");
+		expect(lastResultLine(attach.stdout())).toMatchObject({ ok: true, outcome: "attached", generation: 1 });
+		await waitFor(() => attach.child.exitCode !== null, 5_000, "minimal attach exit");
+		const { store } = openStores();
+		expect(store.replaySessionEvents(sessionId).filter((event) => event.eventType === "harness.composed")).toHaveLength(1);
+		expect(store.getSession(sessionId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		store.database().close();
+		writeFileSync(join(dir, "release"), "release");
+	});
+
 	it("owner crash → takeover → RECOVERY_REQUIRED with the same event head", async () => {
 		const sessionId = setupSession("crash");
 		const holder = spawnWorkerAsync("embedded", sessionId);
@@ -174,6 +199,121 @@ describe("R6 production composition", () => {
 		const ownerEvents = events.filter((event) => event.eventType.startsWith("owner."));
 		expect(ownerEvents.some((event) => event.eventType === "owner.taken_over")).toBe(true);
 		store.database().close();
+	});
+
+	it("minimal governed bash crash preserves the profile receipt across a real process takeover", { timeout: 60_000 }, async () => {
+		const sessionId = setupSession("minimal-profile-crash", minimalHarnessProfileRef());
+		const holder = spawnWorkerAsync("crash-after-attempt", sessionId, { profileComposition: true });
+		await waitFor(() => hasCompleteResultLine(holder.stdout()), 20_000, "minimal crash attempt frame");
+		const first = lastResultLine(holder.stdout());
+		expect(first, holder.stdout()).toMatchObject({
+			ok: true,
+			generation: 1,
+			attemptStarted: true,
+			harnessProfileId: "minimal",
+			harnessProfileVersion: 1,
+			harnessCompositionGeneration: 1,
+		});
+		const firstDigest = String(first.harnessCompositionDigest);
+		expect(firstDigest).toMatch(/^[a-f0-9]{64}$/u);
+
+		holder.child.kill("SIGKILL");
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const { ownerStore } = openStores();
+		ownerStore.database().runSync(
+			"UPDATE session_owners SET heartbeat_at_ms = ? WHERE session_id = ?",
+			[Date.now() - 60_000, sessionId],
+		);
+		ownerStore.database().close();
+
+		const takeover = runWorkerSync("takeover-deadline", sessionId, {
+			deadlineMs: 25_000,
+			probeBarrier: true,
+			profileComposition: true,
+		});
+		expect(takeover).toMatchObject({
+			ok: true,
+			generation: 2,
+			runtimeState: "recovery_required",
+			barrierState: "open",
+			gatedRejected: true,
+			spawnCount: 0,
+			unresolvedRemaining: 1,
+			harnessProfileId: "minimal",
+			harnessProfileVersion: 1,
+			harnessCompositionGeneration: 2,
+			harnessCompositionDigest: firstDigest,
+		});
+
+		const { store } = openStores();
+		const receipts = store.replaySessionEvents(sessionId)
+			.filter((event) => event.eventType === "harness.composed")
+			.map((event) => JSON.parse(event.payloadJson) as {
+				readonly ownerGeneration: number;
+				readonly compositionDigest: { readonly digest: string };
+			});
+		expect(receipts.map((receipt) => receipt.ownerGeneration)).toEqual([1, 2]);
+		expect(new Set(receipts.map((receipt) => receipt.compositionDigest.digest))).toEqual(new Set([firstDigest]));
+		expect(store.getSession(sessionId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		store.database().close();
+	});
+
+	it.each([
+		["checkpoint hit", "hit", true],
+		["corrupt checkpoint", "corrupt", false],
+		["deleted checkpoint", "deleted", false],
+	] as const)("clean minimal resume preserves its composition with a %s", { timeout: 60_000 }, async (_label, mode, expectedHit) => {
+		const sessionId = setupSession(`minimal-resume-${mode}`, minimalHarnessProfileRef());
+		const firstOwner = spawnWorkerAsync("embedded", sessionId, { profileComposition: true });
+		await waitFor(() => hasCompleteResultLine(firstOwner.stdout()), 20_000, "first minimal owner frame");
+		const first = lastResultLine(firstOwner.stdout());
+		expect(first).toMatchObject({
+			ok: true,
+			generation: 1,
+			usedCheckpoint: false,
+			harnessProfileId: "minimal",
+			harnessCompositionGeneration: 1,
+		});
+		const firstDigest = String(first.harnessCompositionDigest);
+		writeFileSync(join(dir, "release"), "release");
+		await waitFor(() => firstOwner.stdout().includes('"paused_after_last_attachment"'), 20_000, "first minimal owner release");
+		await waitFor(() => firstOwner.child.exitCode !== null, 5_000, "first minimal owner exit");
+		rmSync(join(dir, "release"), { force: true });
+
+		if (mode !== "hit") {
+			const { store } = openStores();
+			const checkpointId = store.getSession(sessionId)?.currentCheckpointId;
+			if (checkpointId === undefined) throw new Error("paused checkpoint was not persisted");
+			if (mode === "corrupt") {
+				store.database().runSync(
+					"UPDATE session_checkpoints SET snapshot_json = ? WHERE checkpoint_id = ?",
+					["{}", checkpointId],
+				);
+			} else {
+				store.database().runSync("UPDATE sessions SET current_checkpoint_id = NULL WHERE session_id = ?", [sessionId]);
+				store.database().runSync("DELETE FROM session_checkpoints WHERE checkpoint_id = ?", [checkpointId]);
+			}
+			store.database().close();
+		}
+
+		const resumedOwner = spawnWorkerAsync("embedded", sessionId, { profileComposition: true });
+		await waitFor(() => hasCompleteResultLine(resumedOwner.stdout()), 20_000, "resumed minimal owner frame");
+		const resumed = lastResultLine(resumedOwner.stdout());
+		expect(resumed).toMatchObject({
+			ok: true,
+			generation: 2,
+			usedCheckpoint: expectedHit,
+			harnessProfileId: "minimal",
+			harnessProfileVersion: 1,
+			harnessCompositionGeneration: 2,
+			harnessCompositionDigest: firstDigest,
+		});
+		const { store } = openStores();
+		const receipts = store.replaySessionEvents(sessionId).filter((event) => event.eventType === "harness.composed");
+		expect(receipts).toHaveLength(2);
+		expect(store.getSession(sessionId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		store.database().close();
+		writeFileSync(join(dir, "release"), "release");
 	});
 
 	it("two different sessions run with parallel owners", { timeout: 60_000 }, async () => {

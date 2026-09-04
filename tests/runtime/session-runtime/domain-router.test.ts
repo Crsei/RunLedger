@@ -1,3 +1,4 @@
+import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -243,6 +244,7 @@ describe("S1 Session Domain Router", () => {
 			workspaceId: otherIdentity.workspaceId,
 			repositoryId: otherIdentity.repositoryId,
 			sourceWorkspaceLocator: otherIdentity.sourceWorkspaceLocator,
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "e".repeat(64),
 			worktreeLocator: JSON.stringify({ root: "/private/worktree" }),
 		});
@@ -270,6 +272,8 @@ describe("S1 Session Domain Router", () => {
 			value: {
 				items: [expect.objectContaining({
 					sessionId: harness.sessionId,
+					harnessProfileId: "standard",
+					harnessProfileVersion: 1,
 					current: true,
 				})],
 			},
@@ -467,6 +471,71 @@ describe("S1 Session Domain Router", () => {
 		]);
 	});
 
+	it("creates an explicit builtin profile from a bounded payload and returns its read-only projection", async () => {
+		harness = await createRuntimeHarness("domain-create-minimal");
+		const result = await harness.runtime.handleCommand({
+			commandId: createRuntimeId("command", "catalog-create-minimal"),
+			kind: "domain_command",
+			body: {
+				sessionId: harness.sessionId,
+				generation: harness.fence.generation,
+				correlationId: "correlation_catalog_create_minimal",
+				effectId: "effect_catalog_create_minimal",
+				operation: "session.create",
+				expectedRevision: 1,
+				payload: { harnessProfileId: "minimal" },
+			},
+		}, {
+			connectionId: createRuntimeId("connection", "catalog-create-minimal-driver"),
+			clientId: "client_catalog_create_minimal_driver",
+			isDriver: true,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			result: {
+				ok: true,
+				value: {
+					targetSessionId: expect.stringMatching(/^session_/u),
+					harnessProfileId: "minimal",
+					harnessProfileVersion: 1,
+				},
+			},
+		});
+		if (!result.ok || result.result.ok !== true) throw new Error("minimal create failed");
+		const target = harness.store.getSession(String(result.result.value.targetSessionId));
+		expect(target?.harnessProfile).toEqual(minimalHarnessProfileRef());
+	});
+
+	it("rejects unknown profile IDs and executable descriptor-shaped create payloads before mutation", async () => {
+		harness = await createRuntimeHarness("domain-create-invalid-profile");
+		for (const payload of [
+			{ harnessProfileId: "custom" },
+			{ harnessProfileId: "minimal", descriptor: { tools: ["bash"] } },
+		]) {
+			const result = await harness.runtime.handleCommand({
+				commandId: createRuntimeId("command", `catalog-create-invalid-${JSON.stringify(payload).length}`),
+				kind: "domain_command",
+				body: {
+					sessionId: harness.sessionId,
+					generation: harness.fence.generation,
+					correlationId: `correlation_catalog_create_invalid_${JSON.stringify(payload).length}`,
+					effectId: `effect_catalog_create_invalid_${JSON.stringify(payload).length}`,
+					operation: "session.create",
+					expectedRevision: 1,
+					payload,
+				},
+			}, {
+				connectionId: createRuntimeId("connection", "catalog-create-invalid-driver"),
+				clientId: "client_catalog_create_invalid_driver",
+				isDriver: true,
+			});
+			expect(result).toMatchObject({ ok: true, result: { ok: false, status: "failed" } });
+		}
+		expect(harness.store.listSessions()).toHaveLength(1);
+		expect(harness.store.listAllAttemptReceipts(harness.sessionId)).toHaveLength(0);
+	});
+
 	it("returns recovery_required without spawning a catalog mutation while the barrier is open", async () => {
 		harness = await createRuntimeHarness("domain-create-recovery", { crashTakeover: true });
 		const result = await harness.runtime.handleCommand({
@@ -513,6 +582,7 @@ describe("S1 Session Domain Router", () => {
 			workspaceId: otherIdentity.workspaceId,
 			repositoryId: otherIdentity.repositoryId,
 			sourceWorkspaceLocator: otherIdentity.sourceWorkspaceLocator,
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "f".repeat(64),
 			status: "paused",
 		});
@@ -604,6 +674,7 @@ describe("S1 Session Domain Router", () => {
 				payload: {
 					sourceSessionId: harness.sessionId,
 					expectedSourceHeadSequence: source.headSequence,
+					harnessProfileId: "minimal",
 				},
 			},
 		}, {
@@ -630,6 +701,7 @@ describe("S1 Session Domain Router", () => {
 		if (!result.ok || result.result.ok !== true) throw new Error("fork failed");
 		const targetSessionId = String(result.result.value.targetSessionId);
 		expect(harness.store.getSession(targetSessionId)?.headSequence).toBe(source.headSequence);
+		expect(harness.store.getSession(targetSessionId)?.harnessProfile).toEqual(standardHarnessProfileRef());
 		expect(harness.store.listSessions()).toHaveLength(2);
 		expect(harness.store.listAllAttemptReceipts(harness.sessionId).map((receipt) => receipt.outcome)).toEqual(["started", "committed"]);
 	});

@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -36,6 +37,7 @@ function createOwnedSession(store: SessionStore, suffix = "title"): {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	store.database().runSync(
@@ -216,9 +218,6 @@ describe("SessionStore session titles", () => {
 		const forked = store.forkSession({
 			sessionId: forkId,
 			sourceSessionId: source.sessionId,
-			workspaceId: createRuntimeId("workspace", "title-fork-target"),
-			repositoryId: createRuntimeId("repository", "title-fork-target"),
-			settingsDigest: "d".repeat(64),
 		});
 
 		expect(forked.sessionId).not.toBe(source.sessionId);
@@ -271,9 +270,6 @@ describe("SessionStore session titles", () => {
 		const forked = store.forkSession({
 			sessionId: forkId,
 			sourceSessionId: source.sessionId,
-			workspaceId: createRuntimeId("workspace", "title-fork-transaction-target"),
-			repositoryId: createRuntimeId("repository", "title-fork-transaction-target"),
-			settingsDigest: "d".repeat(64),
 		});
 
 		expect(interleavedTitleWrite).toBe(true);
@@ -292,9 +288,6 @@ describe("SessionStore session titles", () => {
 		store.forkSession({
 			sessionId: createRuntimeId("session", "title-revision-fork"),
 			sourceSessionId: source.sessionId,
-			workspaceId: createRuntimeId("workspace", "title-revision-fork"),
-			repositoryId: createRuntimeId("repository", "title-revision-fork"),
-			settingsDigest: "d".repeat(64),
 		});
 		const afterFork = store.catalogRevision();
 		expect(afterFork).toBe(beforeFork + 1);

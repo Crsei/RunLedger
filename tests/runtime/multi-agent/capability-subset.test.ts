@@ -287,10 +287,10 @@ describe("governed child capability subset and model seam", () => {
 		controller.dispose();
 	});
 
-	it("wires the registered production source and child runtime into Session Domain composition", () => {
+	it("wires the registered production source only for profiles that admit a child runtime", () => {
 		const source = readFileSync(join(process.cwd(), "src/runtime/session-runtime/domain.ts"), "utf8");
 		expect(source).toContain("createSessionProductionToolSource");
-		expect(source).toContain("const childRuntime =");
-		expect(source).toContain("\n\t\tchildRuntime,");
+		expect(source).toContain("const childRuntime = !harnessProfile.descriptor.multiAgent");
+		expect(source).toContain("...(childRuntime === undefined ? {} : { childRuntime })");
 	});
 });

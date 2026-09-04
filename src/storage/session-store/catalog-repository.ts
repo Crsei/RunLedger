@@ -8,19 +8,21 @@
 
 import type { SessionDatabase } from "./database.ts";
 import { appendEventInTransaction, sessionEventHash, verifyOwnerFence } from "./event-append.ts";
-import { catalogSelectSql, rowToCatalog, boundedTitleRef } from "./row-mappers.ts";
+import { catalogSelectSql, rowToCatalog, rowToHarnessProfile, boundedTitleRef } from "./row-mappers.ts";
 import { createRuntimeId } from "../../runtime/protocol/ids.ts";
 import { canonicalDigest } from "../../runtime/protocol/canonical-json.ts";
 import { normalizeSessionTitle } from "../../runtime/session-owner/title.ts";
 import type { OwnerFence } from "../../runtime/session-owner/types.ts";
 import type {
 	CreateSessionInput,
+	ForkSessionInput,
 	PutWorktreeLocatorInput,
 	SessionCatalogRecord,
 	SetSessionTitleInput,
 } from "./session-store.ts";
 import { SessionStoreError } from "./session-store-error.ts";
 import { ForkLedgerProjector } from "./fork-projector.ts";
+import { resolveHarnessProfile } from "../../runtime/harness-profiles/index.ts";
 
 export function catalogRevisionInTransaction(db: Pick<SessionDatabase, "querySingle">): number {
 	const row = db.querySingle("SELECT catalog_revision FROM store_control WHERE singleton_id = 1");
@@ -222,6 +224,10 @@ export class CatalogRepository {
 		if (!input.sessionId.startsWith("session_")) {
 			throw new SessionStoreError("invalid_input", `invalid session id: ${input.sessionId}`);
 		}
+		const harnessProfile = resolveHarnessProfile(input.harnessProfile);
+		if (!harnessProfile.ok) {
+			throw new SessionStoreError("invalid_input", harnessProfile.error.message);
+		}
 		const now = Date.now();
 		try {
 			this.db.withImmediateTransactionSync((tx) => {
@@ -234,8 +240,10 @@ export class CatalogRepository {
 					`INSERT INTO sessions
 					 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-				  worktree_locator_json, source_workspace_locator_json, settings_digest, title, title_source, title_updated_at_ms)
-				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?, ?, NULL, NULL, NULL)`,
+				  worktree_locator_json, source_workspace_locator_json, settings_digest,
+				  harness_profile_id, harness_profile_version, harness_profile_digest,
+				  title, title_source, title_updated_at_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
 					[
 						input.sessionId,
 						input.workspaceId,
@@ -246,6 +254,9 @@ export class CatalogRepository {
 						input.worktreeLocator ?? null,
 						input.sourceWorkspaceLocator ?? null,
 						input.settingsDigest,
+						harnessProfile.ref.id,
+						harnessProfile.ref.version,
+						harnessProfile.ref.descriptorDigest.digest,
 					],
 				);
 				tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
@@ -260,7 +271,7 @@ export class CatalogRepository {
 	}
 
 	/** fork:冻结 source head，typed 投影 canonical ledger，并写入目标自己的 lineage event。 */
-	public forkSession(input: CreateSessionInput & { readonly sourceSessionId: string; readonly expectedSourceHeadSequence?: number }): SessionCatalogRecord {
+	public forkSession(input: ForkSessionInput): SessionCatalogRecord {
 		this.assertAdmissionReady();
 		let forked: SessionCatalogRecord | undefined;
 		this.db.withImmediateTransactionSync((tx) => {
@@ -269,32 +280,38 @@ export class CatalogRepository {
 					throw new SessionStoreError("catalog_revision_conflict", "catalog revision changed before the fork transaction");
 				}
 			}
-			// source 的 catalog state 和 event head 必须由同一 BEGIN IMMEDIATE snapshot
-			// 读取。不能先在事务外读 title，再在事务内复制 title event，否则并发 rename
-			// 会留下 target catalog/event projection drift。
+			// source catalog/profile/event head 必须从同一 BEGIN IMMEDIATE snapshot 复制。
 			const source = tx.querySingle(
-				"SELECT head_sequence, title, title_source, title_updated_at_ms FROM sessions WHERE session_id = ?",
+				`SELECT head_sequence, workspace_id, repository_id, settings_digest, source_workspace_locator_json,
+				        harness_profile_id, harness_profile_version, harness_profile_digest, title, title_source, title_updated_at_ms
+				   FROM sessions WHERE session_id = ?`,
 				[input.sourceSessionId],
 			);
 			if (source === undefined) throw new SessionStoreError("fork_source_not_found", `source session not found: ${input.sourceSessionId}`);
 			if (input.expectedSourceHeadSequence !== undefined && Number(source.head_sequence) !== input.expectedSourceHeadSequence) {
 				throw new SessionStoreError("fork_source_head_conflict", "fork source head advanced before the fork transaction");
 			}
+			const harnessProfile = rowToHarnessProfile(source);
 			tx.runSync(
 				`INSERT INTO sessions
 					 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms,
 				  head_sequence, current_checkpoint_id, last_driver_client_id, driver_revision,
-				  worktree_locator_json, source_workspace_locator_json, settings_digest, title, title_source, title_updated_at_ms)
-				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?, ?, ?, ?, ?)`,
+				  worktree_locator_json, source_workspace_locator_json, settings_digest,
+				  harness_profile_id, harness_profile_version, harness_profile_digest,
+				  title, title_source, title_updated_at_ms)
+				 VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				[
 					input.sessionId,
-					input.workspaceId,
-					input.repositoryId,
+					String(source.workspace_id),
+					String(source.repository_id),
 					"active",
 					Date.now(),
 					Date.now(),
-					input.sourceWorkspaceLocator ?? null,
-					input.settingsDigest,
+					source.source_workspace_locator_json === null ? null : String(source.source_workspace_locator_json),
+					String(source.settings_digest),
+					harnessProfile.id,
+					harnessProfile.version,
+					harnessProfile.descriptorDigest.digest,
 					source.title === null ? null : String(source.title),
 					source.title_source === null ? null : String(source.title_source),
 					source.title_updated_at_ms === null ? null : Number(source.title_updated_at_ms),
@@ -370,11 +387,7 @@ export class CatalogRepository {
 				"VALUES (?, ?, ?, 0, 'session.forked', ?, ?, ?, ?)",
 				[input.sessionId, sequence, lineageEventId, lineagePayload, previous, lineageHash, now],
 			);
-			tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [
-				sequence,
-				now,
-				input.sessionId,
-			]);
+			tx.runSync("UPDATE sessions SET head_sequence = ?, updated_at_ms = ? WHERE session_id = ?", [sequence, now, input.sessionId]);
 			tx.runSync("UPDATE store_control SET catalog_revision = catalog_revision + 1 WHERE singleton_id = 1");
 		});
 		forked = this.getSession(input.sessionId);

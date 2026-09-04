@@ -12,9 +12,9 @@ const NOW_MS = 1_000_000_000_000;
 // updated desc 顺序:11111111(1m 前更新)> 22222222(1h 前更新)> 33333333(2d 前);
 // created desc 顺序:22222222(1h 前创建)> 11111111(1d 前创建)> 33333333(2d 前创建)。
 const catalogItems: SessionCatalogItem[] = [
-	{ sessionId: "session_11111111aaaaaaaa", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: NOW_MS - 86_400_000, updatedAtMs: NOW_MS - 60_000, headSequence: 7, driverRevision: 1, title: "Fix login button", titleSource: "user", titleUpdatedAtMs: NOW_MS - 50_000, current: true },
-	{ sessionId: "session_22222222bbbbbbbb", workspaceId: "workspace-1", repositoryId: "repository-1", status: "paused", createdAtMs: NOW_MS - 3_600_000, updatedAtMs: NOW_MS - 3_600_000, headSequence: 5, driverRevision: 0, firstUserMessagePreview: "Resume paused session", current: false },
-	{ sessionId: "session_33333333cccccccc", workspaceId: "workspace-2", repositoryId: "repository-2", status: "completed", createdAtMs: NOW_MS - 2 * 86_400_000, updatedAtMs: NOW_MS - 2 * 86_400_000, headSequence: 12, driverRevision: 2, current: false },
+	{ sessionId: "session_11111111aaaaaaaa", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: NOW_MS - 86_400_000, updatedAtMs: NOW_MS - 60_000, headSequence: 7, driverRevision: 1, harnessProfileId: "minimal", harnessProfileVersion: 1, title: "Fix login button", titleSource: "user", titleUpdatedAtMs: NOW_MS - 50_000, current: true },
+	{ sessionId: "session_22222222bbbbbbbb", workspaceId: "workspace-1", repositoryId: "repository-1", status: "paused", createdAtMs: NOW_MS - 3_600_000, updatedAtMs: NOW_MS - 3_600_000, headSequence: 5, driverRevision: 0, harnessProfileId: "standard", harnessProfileVersion: 1, firstUserMessagePreview: "Resume paused session", current: false },
+	{ sessionId: "session_33333333cccccccc", workspaceId: "workspace-2", repositoryId: "repository-2", status: "completed", createdAtMs: NOW_MS - 2 * 86_400_000, updatedAtMs: NOW_MS - 2 * 86_400_000, headSequence: 12, driverRevision: 2, harnessProfileId: "standard", harnessProfileVersion: 1, current: false },
 ];
 
 function items(): SessionPickerItem[] {
@@ -55,16 +55,18 @@ describe("buildSessionPickerItems", () => {
 		expect(rows[0]).toMatchObject({
 			value: "session_11111111aaaaaaaa",
 			label: "Fix login button · active · current",
-			description: "workspace-1 · head 7 · 1m ago",
+			description: "workspace-1 · Harness: minimal@1 · head 7 · 1m ago",
 			denseLabel: "1m ago    Fix login button · active",
-			denseDescription: "head 7 · workspace-1",
+			denseDescription: "minimal@1 · head 7 · workspace-1",
 			current: true,
 		});
 		expect(rows[1]!.label).toBe("Resume paused session · paused");
 		expect(rows[2]!.label).toBe("Untitled · 2d ago · completed");
 		expect(rows[0]!.expandedDescription).toContain("session_11111111aaaaaaaa");
 		expect(rows[0]!.expandedDescription).toContain("created 1d ago");
+		expect(rows[0]!.expandedDescription).toContain("Harness: minimal@1");
 		expect(rows[0]!.searchText).toContain("workspace-1");
+		expect(rows[0]!.searchText).toContain("minimal@1");
 	});
 
 	it("marks non-current rows without the current suffix", () => {
@@ -143,13 +145,13 @@ describe("SessionPickerModal", () => {
 	it("ctrl+e expands the selected row description", () => {
 		const modal = makeModal(undefined, undefined, "workspace-1");
 		const select = presentSelect(modal);
-		expect(select.options[0]!.description).toBe("workspace-1 · head 7 · 1m ago");
+		expect(select.options[0]!.description).toBe("workspace-1 · Harness: minimal@1 · head 7 · 1m ago");
 		modal.handleInput("ctrl+e");
 		const expanded = presentSelect(modal);
 		expect(expanded.options[0]!.description).toContain("session_11111111aaaaaaaa");
 		expect(expanded.options[0]!.description).toContain("driver 1");
 		modal.handleInput("ctrl+e");
-		expect(presentSelect(modal).options[0]!.description).toBe("workspace-1 · head 7 · 1m ago");
+		expect(presentSelect(modal).options[0]!.description).toBe("workspace-1 · Harness: minimal@1 · head 7 · 1m ago");
 	});
 
 	it("ctrl+o toggles between comfortable and dense rows", () => {
@@ -158,7 +160,7 @@ describe("SessionPickerModal", () => {
 		modal.handleInput("ctrl+o");
 		const dense = presentSelect(modal);
 		expect(dense.options[0]!.label).toBe("1m ago    Fix login button · active");
-		expect(dense.options[0]!.description).toBe("head 7 · workspace-1");
+		expect(dense.options[0]!.description).toBe("minimal@1 · head 7 · workspace-1");
 		modal.handleInput("ctrl+o");
 		expect(presentSelect(modal).options[0]!.label).toContain("· active");
 	});

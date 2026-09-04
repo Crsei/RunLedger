@@ -41,6 +41,8 @@ describe("S2 session domain adapter", () => {
 					updatedAtMs: 20,
 					headSequence: 4,
 					driverRevision: 3,
+					harnessProfileId: "minimal",
+					harnessProfileVersion: 1,
 					current: false,
 					title: "must-not-leak",
 					cwd: "/native/path",
@@ -65,6 +67,8 @@ describe("S2 session domain adapter", () => {
 					updatedAtMs: 20,
 					headSequence: 4,
 					driverRevision: 3,
+					harnessProfileId: "minimal",
+					harnessProfileVersion: 1,
 					current: false,
 					title: "must-not-leak",
 				}],
@@ -75,7 +79,13 @@ describe("S2 session domain adapter", () => {
 	it("maps create/resume/fork to typed mutation envelopes and recovery_required to uncertain", async () => {
 		const command = vi.fn(async (operation: string) => operation === "session.create"
 			? { ok: false as const, status: "recovery_required" as const, code: "recovery_barrier_active", operation, currentRevision: 8 }
-			: { ok: true as const, status: "ok" as const, operation, domainRevision: 8, value: { targetSessionId: "session-target" } });
+			: {
+				ok: true as const,
+				status: "ok" as const,
+				operation,
+				domainRevision: 8,
+				value: { targetSessionId: "session-target", harnessProfileId: "standard", harnessProfileVersion: 1 },
+			});
 		const port = createSessionDomainPort({ query: vi.fn(), command, supports: () => true });
 		await expect(port.create({ ...ref, expectedRevision: 8 })).resolves.toMatchObject({
 			ok: false,
@@ -91,6 +101,35 @@ describe("S2 session domain adapter", () => {
 		});
 		expect(command).toHaveBeenNthCalledWith(2, "session.resume", { targetSessionId: "session-target" }, { correlationId: "corr-session", effectId: "effect-session", expectedRevision: 8 });
 		expect(command).toHaveBeenNthCalledWith(3, "session.fork", { sourceSessionId: "session-source", expectedSourceHeadSequence: 5 }, { correlationId: "corr-session", effectId: "effect-session", expectedRevision: 8 });
+	});
+
+	it("passes only the selected builtin profile ID through a create mutation", async () => {
+		const command = vi.fn(async (operation: string) => ({
+			ok: true as const,
+			status: "ok" as const,
+			operation,
+			domainRevision: 9,
+			value: {
+				targetSessionId: "session-minimal",
+				harnessProfileId: "minimal",
+				harnessProfileVersion: 1,
+			},
+		}));
+		const port = createSessionDomainPort({ query: vi.fn(), command, supports: () => true });
+
+		await expect(port.create({ ...ref, expectedRevision: 8, harnessProfileId: "minimal" })).resolves.toMatchObject({
+			ok: true,
+			value: {
+				operation: "create",
+				harnessProfileId: "minimal",
+				harnessProfileVersion: 1,
+			},
+		});
+		expect(command).toHaveBeenCalledWith(
+			"session.create",
+			{ harnessProfileId: "minimal" },
+			{ correlationId: "corr-session", effectId: "effect-session", expectedRevision: 8 },
+		);
 	});
 
 	it("preserves the committed catalog revision for a title mutation", async () => {

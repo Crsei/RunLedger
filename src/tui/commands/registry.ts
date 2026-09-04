@@ -136,7 +136,14 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       hidden: true,
     }),
     command("clear", "Clear chat", 2, { actionType: "ui.clear", category: "ui" }),
-    command("new", "Create a Session in this workspace", 4, { actionType: "session.create", category: "session", policy: IDLE_ONLY_POLICY }),
+    command("new", "Create or inherit a Session harness profile", 4, {
+		actionType: "session.create",
+		category: "session",
+		policy: IDLE_ONLY_POLICY,
+		supportsInlineArgs: true,
+		usage: "[standard|minimal]",
+		argumentSchema: [schema("harnessProfile", "Builtin harness profile", false)],
+	}),
     command("resume", "Browse or resume a canonical Session", 5, {
       actionType: "session.resume",
       aliases: ["sessions"],

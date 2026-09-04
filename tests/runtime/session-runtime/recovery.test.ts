@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R5:crash recovery fixtures(06 §7.3/§R5 退出条件)。
  *
@@ -51,6 +52,7 @@ function openCtx(seed = "rec"): Ctx {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	return { store, ownerStore, sessionId };

@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { SessionClient } from "../../src/cli/session-client.ts";
 import { SessionProcessRegistry } from "../../src/cli/embedded-session-runtime.ts";
@@ -97,6 +98,7 @@ describe("R6 session client", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		installRunningOwner(store, sessionId, "dead", 43191);
@@ -121,6 +123,7 @@ describe("R6 session client", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		installRunningOwner(store, sessionId, "old", 43193);
@@ -162,6 +165,7 @@ describe("R6 session client", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const client = makeClient();
@@ -177,6 +181,7 @@ describe("R6 session client", () => {
 			sessionId: sourceId,
 			workspaceId: createRuntimeId("workspace", "w"),
 			repositoryId: createRuntimeId("repository", "r"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		// source 已到 generation 3。
@@ -189,9 +194,6 @@ describe("R6 session client", () => {
 		store.forkSession({
 			sessionId: forkId,
 			sourceSessionId: sourceId,
-			workspaceId: createRuntimeId("workspace", "w"),
-			repositoryId: createRuntimeId("repository", "r"),
-			settingsDigest: "d".repeat(64),
 		});
 		// §8.2:fork 新 Session generation 独立从 1 开始;worktree/approval/process
 		// 活跃句柄不继承(owner row 为空)。

@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ function setupOwnedSession(): { readonly dbPath: string; readonly sessionId: Ses
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "title-multi-connection"),
 		repositoryId: createRuntimeId("repository", "title-multi-connection"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	db.runSync(

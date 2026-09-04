@@ -13,6 +13,7 @@ import {
 	sessionStoreSchemaFormatDigest,
 } from "../../../src/storage/session-store/schema.ts";
 import { checkStoreCompatibility, migrateSessionStoreToCurrent, migrateSessionStoreV1ToV2, migrateSessionStoreV2ToV3 } from "../../../src/storage/session-store/schema-compatibility.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 
 let directory: string;
 
@@ -38,7 +39,49 @@ function installV1Database() {
 	return db;
 }
 
+function installRevision3Database() {
+	const db = openSessionDatabase(join(directory, "state.db"));
+	db.withImmediateTransactionSync((tx) => {
+		tx.execSync(SESSION_STORE_SCHEMA_V3_SQL);
+		tx.runSync("INSERT INTO schema_meta (schema_version, format_digest, applied_at_ms) VALUES (3, ?, 1)", [sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL)]);
+		tx.runSync("INSERT INTO store_control (singleton_id, admission, migration_epoch, catalog_revision, updated_at_ms) VALUES (1, 'ready', 0, 1, 1)");
+		tx.runSync(
+			"INSERT INTO sessions (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms, settings_digest) VALUES (?, ?, ?, 'active', 1, 1, ?)",
+			["session_legacy", "workspace_legacy", "repository_legacy", "d".repeat(64)],
+		);
+	});
+	return db;
+}
+
 describe("Session Store legacy to current title migration", () => {
+	it("migrates revision 3 offline and backfills every row with frozen standard@1", () => {
+		const db = installRevision3Database();
+		expect(migrateSessionStoreToCurrent(db)).toEqual({ ok: true, storeVersion: 4 });
+		const standard = standardHarnessProfileRef();
+		expect(db.querySingle(
+			"SELECT harness_profile_id, harness_profile_version, harness_profile_digest FROM sessions WHERE session_id = ?",
+			["session_legacy"],
+		)).toEqual({
+			harness_profile_id: standard.id,
+			harness_profile_version: standard.version,
+			harness_profile_digest: standard.descriptorDigest.digest,
+		});
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 4, admission: "ready" } });
+		db.close();
+	});
+
+	it("refuses the profile migration while an owner is active and leaves revision 3 ready", () => {
+		const db = installRevision3Database();
+		db.runSync("INSERT INTO session_owners (session_id, runtime_id, generation, state, updated_at_ms) VALUES (?, ?, 1, 'running', 1)", [
+			"session_legacy",
+			"runtime_legacy",
+		]);
+		expect(migrateSessionStoreToCurrent(db)).toMatchObject({ ok: false, code: "active_owners_present" });
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 3, admission: "ready" } });
+		expect(db.queryAll("PRAGMA table_info(sessions)").some((row) => row.name === "harness_profile_id")).toBe(false);
+		db.close();
+	});
+
 	it("adds nullable title projection columns and records the current digest without guessing legacy titles", () => {
 		const db = installV1Database();
 		const result = migrateSessionStoreV1ToV2(db);
@@ -60,12 +103,12 @@ describe("Session Store legacy to current title migration", () => {
 		const db = installV1Database();
 		expect(migrateSessionStoreV1ToV2(db)).toEqual({ ok: true, storeVersion: 2 });
 		expect(migrateSessionStoreToCurrent(db)).toEqual({ ok: true, storeVersion: SESSION_STORE_SCHEMA_VERSION });
-		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 3, admission: "ready" } });
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: SESSION_STORE_SCHEMA_VERSION, admission: "ready" } });
 		expect(db.querySingle("SELECT source_workspace_locator_json FROM sessions WHERE session_id = ?", ["session_legacy"])).toEqual({
 			source_workspace_locator_json: null,
 		});
-		expect(db.querySingle("SELECT format_digest FROM schema_meta WHERE schema_version = 3")).toEqual({
-			format_digest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL),
+		expect(db.querySingle("SELECT format_digest FROM schema_meta WHERE schema_version = ?", [SESSION_STORE_SCHEMA_VERSION])).toEqual({
+			format_digest: sessionStoreSchemaFormatDigest(),
 		});
 		db.close();
 	});

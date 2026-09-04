@@ -17,6 +17,7 @@ import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 
 const MODEL: Model<Api> = {
 	id: "supervisor-fixture-model",
@@ -59,6 +60,7 @@ beforeEach(() => {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "supervisor-workspace"),
 		repositoryId: createRuntimeId("repository", "supervisor-repository"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "s".repeat(64),
 	});
 	database.runSync(

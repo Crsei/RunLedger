@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R5:recovery barrier fixtures(06 §7.3)。
  *
@@ -37,6 +38,7 @@ function openStore(): { store: SessionStore; sessionId: SessionId; fence: { sess
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	const runtimeId = createRuntimeId("runtime", "r");

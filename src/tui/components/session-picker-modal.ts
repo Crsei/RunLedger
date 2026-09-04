@@ -72,19 +72,20 @@ export function buildSessionPickerItems(items: readonly SessionCatalogItem[], no
 		const current = item.current ? " · current" : "";
 		const head = `head ${item.headSequence}`;
 		const driver = `driver ${item.driverRevision}`;
+		const harness = `${item.harnessProfileId}@${item.harnessProfileVersion}`;
 		const displayName = safePickerLabel(item.title ?? item.firstUserMessagePreview ?? `Untitled · ${created}`) || `Untitled · ${created}`;
 		return {
 			value: item.sessionId,
 			label: `${displayName} · ${item.status}${current}`,
-			description: `${item.workspaceId} · ${head} · ${updated}`,
+			description: `${item.workspaceId} · Harness: ${harness} · ${head} · ${updated}`,
 			denseLabel: `${updated.padEnd(DENSE_DATE_WIDTH)}${displayName} · ${item.status}`,
-			denseDescription: `${head} · ${item.workspaceId}`,
-			expandedDescription: `${displayName} · ${item.sessionId} · ${item.workspaceId} · ${item.repositoryId} · ${head} · ${driver} · created ${created} · updated ${updated}${current}`,
+			denseDescription: `${harness} · ${head} · ${item.workspaceId}`,
+			expandedDescription: `${displayName} · ${item.sessionId} · ${item.workspaceId} · ${item.repositoryId} · Harness: ${harness} · ${head} · ${driver} · created ${created} · updated ${updated}${current}`,
 			workspaceId: item.workspaceId,
 			createdAtMs: item.createdAtMs,
 			updatedAtMs: item.updatedAtMs,
 			current: item.current,
-			searchText: `${item.sessionId} ${displayId} ${displayName} ${item.title ?? ""} ${item.firstUserMessagePreview ?? ""} ${item.workspaceId} ${item.repositoryId} ${item.status}`.toLowerCase(),
+			searchText: `${item.sessionId} ${displayId} ${displayName} ${item.title ?? ""} ${item.firstUserMessagePreview ?? ""} ${item.workspaceId} ${item.repositoryId} ${item.status} ${harness}`.toLowerCase(),
 		};
 	});
 }

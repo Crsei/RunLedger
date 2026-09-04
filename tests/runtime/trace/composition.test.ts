@@ -49,6 +49,11 @@ describe("local trace composition", () => {
 		const recorder = await factory.create({
 			sessionId: createRuntimeId("session", "events"),
 			ownerGeneration: 7,
+			metadata: {
+				harnessProfileId: "minimal",
+				harnessProfileVersion: 1,
+				harnessCompositionDigest: "a".repeat(64),
+			},
 		});
 		expect(recorder?.traceId).toBe("trace_composition");
 		await recorder?.startRun();
@@ -57,9 +62,12 @@ describe("local trace composition", () => {
 		const started = JSON.parse((await readFile(eventPath, "utf8")).split("\n")[0]!) as {
 			metadata?: Record<string, unknown>;
 		};
-		expect(started.metadata).toMatchObject({
-			sessionId: "session_events",
-			ownerGeneration: 7,
+			expect(started.metadata).toMatchObject({
+				sessionId: "session_events",
+				ownerGeneration: 7,
+				harnessProfileId: "minimal",
+				harnessProfileVersion: 1,
+				harnessCompositionDigest: "a".repeat(64),
 			recordingMode: "events",
 			failurePolicy: "fail_closed",
 			recordingConfigDigest: expect.stringMatching(/^[a-f0-9]{64}$/u),

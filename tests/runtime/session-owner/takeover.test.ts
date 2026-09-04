@@ -21,6 +21,7 @@ import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.t
 import { bindCandidateListener, probeOwner } from "../../../src/runtime/session-server/owner-probe.ts";
 import { generateOwnerAuthToken, ownerTokenConstantTimeEqual } from "../../../src/runtime/session-owner/fence.ts";
 import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { minimalHarnessProfileRef, standardHarnessProfileRef, type HarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 
 let dir: string;
 
@@ -42,13 +43,14 @@ function openStore(): { store: SessionStore; ownerStore: OwnerStore } {
 	return { store: new SessionStore(db), ownerStore: new OwnerStore(db) };
 }
 
-function createSession(store: SessionStore, seed = "a"): SessionId {
+function createSession(store: SessionStore, seed = "a", harnessProfile: HarnessProfileRef = standardHarnessProfileRef()): SessionId {
 	const sessionId = createRuntimeId("session", seed);
 	store.createSession({
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
 		settingsDigest: "d".repeat(64),
+		harnessProfile,
 	});
 	return sessionId;
 }
@@ -164,6 +166,22 @@ const timeout = (ms: number): Promise<{ ok: false; code: "test_timeout"; retryab
 	new Promise((resolve) => setTimeout(() => resolve({ ok: false, code: "test_timeout", retryable: true }), ms));
 
 describe("R3 crash takeover", () => {
+	it("increments owner generation without changing the durable harness profile", async () => {
+		const { store, ownerStore } = openStore();
+		const minimal = minimalHarnessProfileRef();
+		const sessionId = createSession(store, "minimal-takeover", minimal);
+		ownerStore.database().runSync(
+			`INSERT INTO session_owners
+			 (session_id, runtime_id, generation, state, port, heartbeat_at_ms, owner_started_at_ms, updated_at_ms)
+			 VALUES (?, 'runtime_stuck', 1, 'starting', NULL, NULL, 1, 1)`,
+			[sessionId],
+		);
+		const result = await makeOwner().open(sessionId);
+		expect(result).toMatchObject({ ok: true, outcome: "claimed", fence: { generation: 2 } });
+		expect(store.getSession(sessionId)?.harnessProfile).toEqual(minimal);
+		ownerStore.database().close();
+	});
+
 	it("takes over a stale owner after 3 consecutive probe failures (real listener closed)", async () => {
 		const { store, ownerStore } = openStore();
 		const sessionId = createSession(store);

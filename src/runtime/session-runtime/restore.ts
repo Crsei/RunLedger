@@ -13,6 +13,10 @@
 import type { SessionStore, SessionEventRecord } from "../../storage/session-store/session-store.ts";
 import { validateCheckpointCache, type CheckpointSnapshot } from "./checkpoint.ts";
 import type { SessionCheckpointDescriptor } from "../session-owner/types.ts";
+import {
+	auditHarnessCompositionReceipts,
+	type HarnessCompositionDiagnostic,
+} from "../harness-profiles/index.ts";
 
 export type RestoreOutcome =
 	| {
@@ -25,7 +29,12 @@ export type RestoreOutcome =
 			/** false = cache miss/corrupt/旧版,本次为 genesis full replay。 */
 			readonly usedCheckpoint: boolean;
 	  }
-	| { readonly ok: false; readonly code: "corruption" | "session_not_found"; readonly detail: string };
+	| {
+		readonly ok: false;
+		readonly code: "corruption" | "session_not_found" | "harness_profile_corruption" | "harness_composition_corruption";
+		readonly detail: string;
+		readonly diagnostic?: HarnessCompositionDiagnostic;
+	};
 
 export interface RestoreSessionOptions {
 	/** 指定 checkpoint(可选);缺省用 sessions.current_checkpoint_id。 */
@@ -40,17 +49,35 @@ export interface RestoreSessionOptions {
  *   durable authority 尾部连续。
  */
 export function restoreSession(store: SessionStore, sessionId: string, options: RestoreSessionOptions = {}): RestoreOutcome {
+	let record;
+	try {
+		record = store.getSession(sessionId);
+	} catch (error) {
+		return { ok: false, code: "harness_profile_corruption", detail: error instanceof Error ? error.message : String(error) };
+	}
+	if (record === undefined) {
+		return { ok: false, code: "session_not_found", detail: `session not found: ${sessionId}` };
+	}
 	let events: readonly SessionEventRecord[];
 	try {
 		events = store.replaySessionEvents(sessionId);
 	} catch (error) {
 		return { ok: false, code: "corruption", detail: error instanceof Error ? error.message : String(error) };
 	}
-	if (events.length === 0 && store.getSession(sessionId) === undefined) {
-		return { ok: false, code: "session_not_found", detail: `session not found: ${sessionId}` };
+	const compositionAudit = auditHarnessCompositionReceipts({
+		sessionId,
+		profile: record.harnessProfile,
+		events,
+	});
+	if (!compositionAudit.ok) {
+		return {
+			ok: false,
+			code: "harness_composition_corruption",
+			detail: compositionAudit.detail,
+			diagnostic: compositionAudit.diagnostic,
+		};
 	}
-	const record = store.getSession(sessionId);
-	const checkpointId = options.checkpointId ?? record?.currentCheckpointId;
+	const checkpointId = options.checkpointId ?? record.currentCheckpointId;
 	if (checkpointId !== undefined) {
 		const entry = store.getCheckpoint(checkpointId);
 		if (entry !== undefined && entry.sessionId === sessionId) {

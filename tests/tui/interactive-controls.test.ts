@@ -285,6 +285,8 @@ describe("InteractiveMode lifecycle and global controls", () => {
 					updatedAtMs: Date.now() - 60_000,
 					headSequence: 4,
 					driverRevision: 1,
+					harnessProfileId: "standard",
+					harnessProfileVersion: 1,
 					title: "Recent audit session",
 					current: false,
 				}],

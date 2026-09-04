@@ -3,6 +3,7 @@ import type { SessionCatalogResult, SessionTitleResult, SessionTransitionResult 
 
 export interface SessionCreateRequest extends TuiPortRequest {
 	readonly expectedRevision: number;
+	readonly harnessProfileId?: "standard" | "minimal";
 }
 
 export interface SessionResumeRequest extends TuiPortRequest {

@@ -40,6 +40,7 @@ import { openSessionDatabase } from "../storage/session-store/database.ts";
 import { checkStoreCompatibility, migrateSessionStoreToCurrent, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
 import { installSessionStoreSchema, SESSION_STORE_SCHEMA_VERSION } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
+import { isHarnessProfileRef, resolveHarnessProfileId, type HarnessProfileRef } from "../runtime/harness-profiles/index.ts";
 import { OwnerStore } from "../storage/session-store/owner-store.ts";
 import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult, type SessionWorkspaceFactory } from "./embedded-session-runtime.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "./session-interactive-controller.ts";
@@ -301,7 +302,15 @@ export async function main(argv: readonly string[]): Promise<void> {
     const processOverlayController = processOverlayClient === undefined
       ? undefined
       : createProcessOverlayController(processOverlayClient, { driver: role === "driver" });
-    return { sessionId: targetSessionId, embedded, controller, processOverlayClient, processOverlayController };
+    return {
+	  sessionId: targetSessionId,
+	  embedded,
+	  controller,
+	  processOverlayClient,
+	  processOverlayController,
+	  harnessProfile: snapshot.harnessProfile,
+	  permissionProfile: snapshot.permissionProfile,
+	};
   };
 
   let initialView: CliSessionView;
@@ -393,6 +402,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       showWelcome,
       version: VERSION,
       logoLetters: settings.logo,
+	  harnessProfile: view.harnessProfile,
+	  permissionProfile: view.permissionProfile,
     });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
     const onSigint = (): void => {
@@ -418,6 +429,8 @@ interface CliSessionView {
   readonly controller: SessionInteractiveController;
   readonly processOverlayClient: ProcessOverlayHostClient | undefined;
   readonly processOverlayController: ProcessOverlayController | undefined;
+	readonly harnessProfile: HarnessProfileRef;
+	readonly permissionProfile: string;
 }
 
 /**
@@ -469,14 +482,20 @@ export async function resolveSessionId(
 	git?: GitCommandPort,
 ): Promise<SessionId> {
 	const mode = sessionOpenMode(args);
+	if (mode !== "create" && args.harnessProfile !== undefined) {
+		throw new Error("--harness-profile is only valid when creating a new Session");
+	}
 	const workspace = await resolveSessionWorkspaceIdentity(cwd, git);
 	if (mode === "create") {
+		const profile = resolveHarnessProfileId(args.harnessProfile ?? "standard");
+		if (!profile.ok) throw new Error(`${profile.error.code}: ${profile.error.message}`);
 		const sessionId = createRuntimeId("session", `cwd-${cwd.replace(/[^A-Za-z0-9._~-]/g, "_").slice(0, 40)}-${Date.now().toString(36)}`);
 		store.createSession({
 			sessionId,
 			workspaceId: workspace.workspaceId,
 			repositoryId: workspace.repositoryId,
 			settingsDigest: "d".repeat(64),
+			harnessProfile: profile.ref,
 			sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 		});
 		return sessionId;
@@ -503,10 +522,6 @@ export async function resolveSessionId(
 		store.forkSession({
 			sessionId,
 			sourceSessionId: source.sessionId as SessionId,
-			workspaceId: workspace.workspaceId,
-			repositoryId: workspace.repositoryId,
-			settingsDigest: source.settingsDigest,
-			sourceWorkspaceLocator: workspace.sourceWorkspaceLocator,
 		});
 		return sessionId;
 	}
@@ -540,8 +555,14 @@ export async function fetchDomainSnapshot(embedded: EmbeddedSessionRuntimeResult
 		throw new Error("session snapshot query rejected");
 	}
 	const body = response.body as Record<string, unknown>;
+	if (!isHarnessProfileRef(body.harnessProfile)) throw new Error("session snapshot has an invalid harness profile");
+	if (typeof body.permissionProfile !== "string" || body.permissionProfile.length === 0) {
+		throw new Error("session snapshot has an invalid permission profile");
+	}
 	return {
 		sessionId: embedded.handle.sessionId,
+		harnessProfile: body.harnessProfile,
+		permissionProfile: body.permissionProfile,
 		messages: Array.isArray(body.messages) ? (body.messages as never[]) : [],
 		warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [],
 		auditEntries: Array.isArray(body.auditEntries) ? (body.auditEntries as never[]) : [],

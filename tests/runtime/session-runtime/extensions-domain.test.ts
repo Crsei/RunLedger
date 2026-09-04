@@ -1,3 +1,4 @@
+import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -130,6 +131,7 @@ describe("SessionRuntime extension domain", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "extensions"),
 			repositoryId: createRuntimeId("repository", "extensions"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -194,6 +196,7 @@ describe("SessionRuntime extension domain", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "required-mcp"),
 			repositoryId: createRuntimeId("repository", "required-mcp"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -214,6 +217,47 @@ describe("SessionRuntime extension domain", () => {
 		}
 	});
 
+	it("does not create or start the extension subsystem for minimal@1", async () => {
+		const root = mkdtempSync(resolve(tmpdir(), "runledger-session-minimal-no-extensions-"));
+		const home = resolve(root, "home");
+		mkdirSync(home, { recursive: true, mode: 0o700 });
+		const layout = buildRunledgerLayout(home, "posix");
+		writeMcpConfig(join(layout.state, "extensions", "user", "mcp.json"), "required-must-not-start", { enabled: true, required: true });
+		const db = openSessionDatabase(layout.database);
+		installSessionStoreSchema(db);
+		const store = new SessionStore(db);
+		const ownerStore = new OwnerStore(db);
+		const sessionId = createRuntimeId("session", "minimal-no-extensions");
+		store.createSession({
+			sessionId,
+			workspaceId: createRuntimeId("workspace", "minimal-no-extensions"),
+			repositoryId: createRuntimeId("repository", "minimal-no-extensions"),
+			harnessProfile: minimalHarnessProfileRef(),
+			settingsDigest: "d".repeat(64),
+		});
+		const settings = await loadProjectSettings({ layout });
+		const models = builtinModels({ credentials: AuthStorage.create(layout) });
+		await models.refresh({ allowNetwork: false });
+		let embedded: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
+		try {
+			embedded = await createEmbeddedSessionRuntime({
+				sessionId,
+				store,
+				ownerStore,
+				domain: { cwd: root, layout, settings, models, securitySources: noPromptTestSecurity },
+			});
+			expect(embedded.runtime).toBeDefined();
+			expect(embedded.handle.supports("extension.inspect")).toBe(false);
+			expect(embedded.handle.supports("mcp.list")).toBe(false);
+			expect(store.replaySessionEvents(sessionId).some((event) => event.eventType.startsWith("extension."))).toBe(false);
+		} finally {
+			await embedded?.handle.close().catch(() => undefined);
+			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
+			db.close();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	it("a real optional MCP startup failure remains auditable and permits activation", async () => {
 		const root = mkdtempSync(resolve(tmpdir(), "runledger-session-optional-mcp-"));
 		const home = resolve(root, "home");
@@ -229,6 +273,7 @@ describe("SessionRuntime extension domain", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "optional-mcp"),
 			repositoryId: createRuntimeId("repository", "optional-mcp"),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -273,8 +318,8 @@ describe("SessionRuntime extension domain", () => {
 		writeMcpConfig(workspaceMcpPath(layout, secondWorkspace, secondRepository), "second-only", { enabled: false, required: false });
 		const firstSessionId = createRuntimeId("session", "mcp-isolation-first");
 		const secondSessionId = createRuntimeId("session", "mcp-isolation-second");
-		store.createSession({ sessionId: firstSessionId, workspaceId: createRuntimeId("workspace", firstWorkspace), repositoryId: createRuntimeId("repository", firstRepository), settingsDigest: "d".repeat(64) });
-		store.createSession({ sessionId: secondSessionId, workspaceId: createRuntimeId("workspace", secondWorkspace), repositoryId: createRuntimeId("repository", secondRepository), settingsDigest: "d".repeat(64) });
+		store.createSession({ sessionId: firstSessionId, workspaceId: createRuntimeId("workspace", firstWorkspace), repositoryId: createRuntimeId("repository", firstRepository), settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
+		store.createSession({ sessionId: secondSessionId, workspaceId: createRuntimeId("workspace", secondWorkspace), repositoryId: createRuntimeId("repository", secondRepository), settingsDigest: "d".repeat(64), harnessProfile: standardHarnessProfileRef() });
 		let first: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
 		let second: Awaited<ReturnType<typeof createEmbeddedSessionRuntime>> | undefined;
 		try {

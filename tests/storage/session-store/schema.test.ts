@@ -12,10 +12,41 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import {
+	SESSION_STORE_SCHEMA_V3_SQL,
 	SESSION_STORE_SCHEMA_VERSION,
 	installSessionStoreSchema,
 	sessionStoreSchemaFormatDigest,
 } from "../../../src/storage/session-store/schema.ts";
+import * as sessionSchema from "../../../src/storage/session-store/schema.ts";
+
+const STANDARD_PROFILE_DIGEST = "377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238";
+const MINIMAL_PROFILE_DIGEST = "f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8a1a15fa7";
+const EXPECTED_HARNESS_SCHEMA_SQL = `
+ALTER TABLE sessions ADD COLUMN harness_profile_id TEXT NOT NULL DEFAULT 'standard'
+  CHECK (harness_profile_id IN ('standard', 'minimal'));
+ALTER TABLE sessions ADD COLUMN harness_profile_version INTEGER NOT NULL DEFAULT 1
+  CHECK (typeof(harness_profile_version) = 'integer' AND harness_profile_version = 1);
+ALTER TABLE sessions ADD COLUMN harness_profile_digest TEXT NOT NULL DEFAULT '${STANDARD_PROFILE_DIGEST}'
+  CHECK (length(harness_profile_digest) = 64 AND harness_profile_digest NOT GLOB '*[^0-9a-f]*');
+CREATE TRIGGER sessions_harness_profile_invariant_insert
+BEFORE INSERT ON sessions
+WHEN NOT (
+  (NEW.harness_profile_id = 'standard' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = '${STANDARD_PROFILE_DIGEST}')
+  OR (NEW.harness_profile_id = 'minimal' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = '${MINIMAL_PROFILE_DIGEST}')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'sessions harness profile ref is invalid');
+END;
+CREATE TRIGGER sessions_harness_profile_invariant_update
+BEFORE UPDATE OF harness_profile_id, harness_profile_version, harness_profile_digest ON sessions
+WHEN NOT (
+  (NEW.harness_profile_id = 'standard' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = '${STANDARD_PROFILE_DIGEST}')
+  OR (NEW.harness_profile_id = 'minimal' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = '${MINIMAL_PROFILE_DIGEST}')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'sessions harness profile ref is invalid');
+END;
+`;
 
 let dir: string;
 
@@ -69,6 +100,25 @@ describe("R1 exact 首版 schema", () => {
 		expect(sessionStoreSchemaFormatDigest()).not.toBe(sessionStoreSchemaFormatDigest("CREATE TABLE x (a);"));
 	});
 
+	it("freezes the current schema with exact harness profile columns and invariants", () => {
+		const exported = sessionSchema as unknown as Record<string, unknown>;
+		expect(SESSION_STORE_SCHEMA_VERSION).toBe(4);
+		expect(exported.SESSION_STORE_SCHEMA_V4_SQL).toBe(SESSION_STORE_SCHEMA_V3_SQL + EXPECTED_HARNESS_SCHEMA_SQL);
+		expect(exported.SESSION_STORE_SCHEMA_V3_TO_V4_SQL).toBe(EXPECTED_HARNESS_SCHEMA_SQL);
+		expect(sessionStoreSchemaFormatDigest()).toBe(sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL + EXPECTED_HARNESS_SCHEMA_SQL));
+
+		const db = openInstalled();
+		const columns = db.queryAll("PRAGMA table_info(sessions)")
+			.filter((row) => String(row.name).startsWith("harness_profile_"))
+			.map((row) => ({ name: row.name, notnull: row.notnull, dflt_value: row.dflt_value }));
+		expect(columns).toEqual([
+			{ name: "harness_profile_id", notnull: 1, dflt_value: "'standard'" },
+			{ name: "harness_profile_version", notnull: 1, dflt_value: "1" },
+			{ name: "harness_profile_digest", notnull: 1, dflt_value: `'${STANDARD_PROFILE_DIGEST}'` },
+		]);
+		db.close();
+	});
+
 	it("refuses to install twice and refuses to install over a foreign schema", () => {
 		const db = openSessionDatabase(join(dir, "state.db"));
 		installSessionStoreSchema(db);
@@ -83,6 +133,25 @@ describe("R1 exact 首版 schema", () => {
 });
 
 describe("R1 schema constraints", () => {
+	it("rejects invalid and mismatched harness profile refs in SQL", () => {
+		const db = openInstalled();
+		const insert = (sessionId: string, id: string, version: number, digest: string): void => {
+			db.runSync(
+				`INSERT INTO sessions
+				 (session_id, workspace_id, repository_id, status, created_at_ms, updated_at_ms, settings_digest,
+				  harness_profile_id, harness_profile_version, harness_profile_digest)
+				 VALUES (?, ?, ?, 'active', 1, 1, ?, ?, ?, ?)`,
+				[sessionId, "ws-" + "a".repeat(64), "repository_a", "d".repeat(64), id, version, digest],
+			);
+		};
+		expect(() => insert("session_minimal", "minimal", 1, MINIMAL_PROFILE_DIGEST)).not.toThrow();
+		expect(() => insert("session_bad_id", "custom", 1, STANDARD_PROFILE_DIGEST)).toThrowError();
+		expect(() => insert("session_bad_version", "standard", 2, STANDARD_PROFILE_DIGEST)).toThrowError();
+		expect(() => insert("session_bad_digest", "standard", 1, MINIMAL_PROFILE_DIGEST)).toThrowError();
+		expect(db.querySingle("SELECT harness_profile_id FROM sessions WHERE session_id = 'session_minimal'")).toEqual({ harness_profile_id: "minimal" });
+		db.close();
+	});
+
 	it("enforces sessions.status CHECK and session_owners.state CHECK", () => {
 		const db = openInstalled();
 		db.runSync(

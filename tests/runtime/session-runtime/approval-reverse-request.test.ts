@@ -12,6 +12,7 @@ import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 
 const roots: string[] = [];
 
@@ -66,6 +67,7 @@ async function fixture() {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "approval-reverse"),
 		repositoryId: createRuntimeId("repository", "approval-reverse"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	const fence: OwnerFence = { sessionId, runtimeId: createRuntimeId("runtime", "approval-reverse"), generation: 4 };

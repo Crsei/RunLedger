@@ -10,8 +10,8 @@ import type { SessionClientTransport } from "../../src/runtime/session-server/cl
 import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 
 const catalogItems = [
-	{ sessionId: "contract-session", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: 1, updatedAtMs: 3, headSequence: 7, driverRevision: 1, current: true },
-	{ sessionId: "session-paused", workspaceId: "workspace-1", repositoryId: "repository-1", status: "paused", createdAtMs: 2, updatedAtMs: 4, headSequence: 5, driverRevision: 0, current: false },
+	{ sessionId: "contract-session", workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: 1, updatedAtMs: 3, headSequence: 7, driverRevision: 1, harnessProfileId: "minimal", harnessProfileVersion: 1, current: true },
+	{ sessionId: "session-paused", workspaceId: "workspace-1", repositoryId: "repository-1", status: "paused", createdAtMs: 2, updatedAtMs: 4, headSequence: 5, driverRevision: 0, harnessProfileId: "standard", harnessProfileVersion: 1, current: false },
 ];
 
 function sessionController() {
@@ -30,7 +30,11 @@ function sessionController() {
 		status: "ok",
 		operation,
 		domainRevision: operation === "session.resume" ? 2 : 3,
-		value: { targetSessionId: operation === "session.resume" ? "session-paused" : operation === "session.create" ? "session-new" : "session-fork" },
+		value: {
+			targetSessionId: operation === "session.resume" ? "session-paused" : operation === "session.create" ? "session-new" : "session-fork",
+			harnessProfileId: "standard",
+			harnessProfileVersion: 1,
+		},
 		receipt: operation === "session.resume" ? undefined : { attemptId: `attempt-${operation}`, commandId: `command-${operation}`, outcome: "committed" },
 	}));
 	Object.assign(controller, { querySessionDomain, commandSessionDomain });
@@ -261,6 +265,30 @@ describe("S2 InteractiveMode session workflows", () => {
 		await (mode as unknown as { createNewSession(): Promise<void> }).createNewSession();
 		expect(await running).toEqual({ kind: "switch", action: "new", target: { sessionId: "session-new" } });
 		expect(commandSessionDomain).toHaveBeenCalledWith("session.create", {}, expect.objectContaining({ expectedRevision: 2 }));
+	});
+
+	it("/new minimal selects a builtin profile while plain /new keeps inheritance", async () => {
+		const terminal = new ContractTerminal();
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		await mode.createNewSession("minimal");
+		expect(await running).toEqual({ kind: "switch", action: "new", target: { sessionId: "session-new" } });
+		expect(commandSessionDomain).toHaveBeenCalledWith(
+			"session.create",
+			{ harnessProfileId: "minimal" },
+			expect.objectContaining({ expectedRevision: 2 }),
+		);
+	});
+
+	it("rejects an unknown /new profile before dispatching a domain mutation", async () => {
+		const terminal = new ContractTerminal();
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal });
+		await mode.createNewSession("custom");
+		expect(commandSessionDomain).not.toHaveBeenCalled();
+		expect(JSON.stringify(mode.getTuiState().timeline)).toContain("Usage: /new [standard|minimal]");
+		mode.quit();
 	});
 
 	it("/fork sends the current durable head fence and returns a fork switch intent", async () => {

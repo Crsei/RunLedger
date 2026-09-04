@@ -29,6 +29,14 @@ describe("parseArgs 帮助/版本", () => {
 });
 
 describe("parseArgs 会话操作旗", () => {
+	it("--harness-profile 只接受 standard|minimal 且出现在 usage", () => {
+		expect(parseArgs(["--harness-profile", "standard"]).args.harnessProfile).toBe("standard");
+		expect(parseArgs(["--harness-profile", "minimal"]).args.harnessProfile).toBe("minimal");
+		expect(parseArgs(["--harness-profile", "custom"]).error).toContain("standard/minimal");
+		expect(parseArgs(["--harness-profile"]).error).toContain("缺少值");
+		expect(USAGE).toContain("--harness-profile <profile>");
+	});
+
   it("-c / --continue 设 continueRecent=true", () => {
     expect(parseArgs(["-c"]).args.continueRecent).toBe(true);
     expect(parseArgs(["--continue"]).args.continueRecent).toBe(true);

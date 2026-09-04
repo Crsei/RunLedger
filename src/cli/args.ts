@@ -8,6 +8,7 @@
  *   --session-id <id>                  同 --session,但按精确 id 匹配
  *   --fork <pathOrId>                  从源文件 fork 到当前项目
  *                                       (本期只支持精确 path)
+ *   --harness-profile <profile>        fresh create 的 standard|minimal
  *   --model <id> / -m <id>             override settings.model
  *   --thinking <level>                 minimal|low|medium|high|xhigh|max
  *   --hide-thinking                    单次运行隐藏 thinking blocks（仅展示）
@@ -34,6 +35,7 @@ import type { ModelThinkingLevel } from "../types.ts";
 import type { ApprovalPolicyName, NetworkPolicyMode } from "../security/types.ts";
 import type { BashSecurityAnalyzerMode } from "../security/permission/bash-ast/types.ts";
 import type { SandboxProfileName } from "../runtime/contracts/public.ts";
+import type { HarnessProfileId } from "../runtime/harness-profiles/index.ts";
 import { controlCommandHelp } from "./control-commands.ts";
 
 const THINKING_LEVELS: ReadonlySet<string> = new Set<ModelThinkingLevel>([
@@ -64,6 +66,8 @@ export interface ParsedArgs {
   session?: string;
   sessionId?: string;
   fork?: string;
+  /** 仅 fresh create 可选；open/resume/continue/fork 由 durable row 决定。 */
+  harnessProfile?: HarnessProfileId;
   provider?: string;
   model?: string;
   thinking?: ModelThinkingLevel;
@@ -105,6 +109,8 @@ const HELP_TEXT = `Usage: runledger [options]
       --session <path>        直接打开已知 session 文件
       --session-id <id>       按 sessionId 直接打开 canonical 会话
       --fork <path>           从 canonical session 文件 fork 到当前 workspace
+      --harness-profile <profile>
+                              新建 Session 的 standard|minimal profile
   -m, --model <id>            覆盖 settings.model
       --provider <id>         覆盖 settings.provider
       --thinking <level>      off|minimal|low|medium|high|xhigh|max
@@ -147,6 +153,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let session: string | undefined;
   let sessionId: string | undefined;
   let fork: string | undefined;
+  let harnessProfile: HarnessProfileId | undefined;
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
@@ -257,6 +264,19 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         break;
       }
       fork = v;
+      continue;
+    }
+    if (a === "--harness-profile") {
+      const v = argv[++i];
+      if (v === undefined) {
+        error = `${a} 缺少值`;
+        break;
+      }
+      if (v !== "standard" && v !== "minimal") {
+        error = `--harness-profile 不合法:${v}(合法值 standard/minimal)`;
+        break;
+      }
+      harnessProfile = v;
       continue;
     }
     if (a === "--thinking") {
@@ -424,6 +444,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       session,
       sessionId,
       fork,
+      harnessProfile,
       provider,
       model,
       thinking,

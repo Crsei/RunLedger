@@ -18,6 +18,7 @@ import { openSessionDatabase } from "../../../src/storage/session-store/database
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { beginOfflineMigration } from "../../../src/storage/session-store/schema-compatibility.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner, SessionOwnerOpenError } from "../../../src/runtime/session-owner/session-owner.ts";
 import { createTcpOwnerTransport } from "../../../src/runtime/session-server/owner-probe.ts";
@@ -50,6 +51,7 @@ function createSession(store: SessionStore, seed = "a"): SessionId {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "w"),
 		repositoryId: createRuntimeId("repository", "r"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
 	return sessionId;

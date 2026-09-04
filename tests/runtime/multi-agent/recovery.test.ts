@@ -18,6 +18,7 @@ import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { createRuntimeHarness } from "../session-runtime/harness.ts";
 
 const MODEL: Model<Api> = {
@@ -65,6 +66,7 @@ beforeEach(() => {
 		sessionId,
 		workspaceId: createRuntimeId("workspace", "recovery-workspace"),
 		repositoryId: createRuntimeId("repository", "recovery-repository"),
+		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "r".repeat(64),
 	});
 	database.runSync(

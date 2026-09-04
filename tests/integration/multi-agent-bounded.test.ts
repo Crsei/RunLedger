@@ -13,6 +13,7 @@ import { openSessionDatabase } from "../../src/storage/session-store/database.ts
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { createEmbeddedSessionRuntime } from "../../src/cli/embedded-session-runtime.ts";
 import { makeToolContext } from "../../src/runtime/tool-context.ts";
 import type { SessionDomainPort } from "../../src/runtime/session-runtime/session-runtime.ts";
@@ -147,6 +148,7 @@ describe("bounded multi-agent production integration", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", workspaceId),
 			repositoryId: createRuntimeId("repository", workspaceId),
+			harnessProfile: standardHarnessProfileRef(),
 			settingsDigest: "i".repeat(64),
 		});
 		const models = createModels({ credentials: AuthStorage.create(layout) });

@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import type { SessionDatabase } from "./database.ts";
 
-export const SESSION_STORE_SCHEMA_VERSION = 3 as const;
+export const SESSION_STORE_SCHEMA_VERSION = 4 as const;
 
 /** §4.3 首版逻辑 schema 的 exact SQL(版本化 migration 以本常量为唯一 source)。 */
 export const SESSION_STORE_SCHEMA_V1_SQL = `
@@ -249,6 +249,36 @@ export const SESSION_STORE_SCHEMA_V3_SQL = SESSION_STORE_SCHEMA_V2_SQL + `
 ALTER TABLE sessions ADD COLUMN source_workspace_locator_json TEXT;
 `;
 
+/** Harness Profile durable identity；DEFAULT 只服务旧 row 回填与兼容窗口。 */
+export const SESSION_STORE_SCHEMA_V3_TO_V4_SQL = `
+ALTER TABLE sessions ADD COLUMN harness_profile_id TEXT NOT NULL DEFAULT 'standard'
+  CHECK (harness_profile_id IN ('standard', 'minimal'));
+ALTER TABLE sessions ADD COLUMN harness_profile_version INTEGER NOT NULL DEFAULT 1
+  CHECK (typeof(harness_profile_version) = 'integer' AND harness_profile_version = 1);
+ALTER TABLE sessions ADD COLUMN harness_profile_digest TEXT NOT NULL DEFAULT '377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238'
+  CHECK (length(harness_profile_digest) = 64 AND harness_profile_digest NOT GLOB '*[^0-9a-f]*');
+CREATE TRIGGER sessions_harness_profile_invariant_insert
+BEFORE INSERT ON sessions
+WHEN NOT (
+  (NEW.harness_profile_id = 'standard' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = '377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238')
+  OR (NEW.harness_profile_id = 'minimal' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = 'f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8a1a15fa7')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'sessions harness profile ref is invalid');
+END;
+CREATE TRIGGER sessions_harness_profile_invariant_update
+BEFORE UPDATE OF harness_profile_id, harness_profile_version, harness_profile_digest ON sessions
+WHEN NOT (
+  (NEW.harness_profile_id = 'standard' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = '377be8e8b88ac2f1f34122eb57592e300af62b375e6b6e01edc85d9d25de6238')
+  OR (NEW.harness_profile_id = 'minimal' AND NEW.harness_profile_version = 1 AND NEW.harness_profile_digest = 'f77ad882678905487fc76b109d8c88dac16622174553ae7bd08772f8a1a15fa7')
+)
+BEGIN
+  SELECT RAISE(ABORT, 'sessions harness profile ref is invalid');
+END;
+`;
+
+export const SESSION_STORE_SCHEMA_V4_SQL = SESSION_STORE_SCHEMA_V3_SQL + SESSION_STORE_SCHEMA_V3_TO_V4_SQL;
+
 /** Exact legacy -> current structural migration; no title data is inferred from legacy events. */
 export const SESSION_STORE_SCHEMA_V1_TO_V2_SQL = `
 ALTER TABLE store_control ADD COLUMN catalog_revision INTEGER NOT NULL DEFAULT 0 CHECK (catalog_revision >= 0);
@@ -278,7 +308,7 @@ ALTER TABLE sessions ADD COLUMN source_workspace_locator_json TEXT;
 `;
 
 /** 规范化 DDL 文本的 canonical sha256(hex 64 字符),作为 schema format digest。 */
-export function sessionStoreSchemaFormatDigest(sql: string = SESSION_STORE_SCHEMA_V3_SQL): string {
+export function sessionStoreSchemaFormatDigest(sql: string = SESSION_STORE_SCHEMA_V4_SQL): string {
 	return createHash("sha256").update(sql.replace(/\r\n/g, "\n")).digest("hex");
 }
 
@@ -290,7 +320,7 @@ export function installSessionStoreSchema(db: SessionDatabase): void {
 	}
 	const formatDigest = sessionStoreSchemaFormatDigest();
 	db.withImmediateTransactionSync((tx) => {
-		tx.execSync(SESSION_STORE_SCHEMA_V3_SQL);
+		tx.execSync(SESSION_STORE_SCHEMA_V4_SQL);
 		tx.runSync("INSERT INTO schema_meta (schema_version, format_digest, applied_at_ms) VALUES (?, ?, ?)", [
 			SESSION_STORE_SCHEMA_VERSION,
 			formatDigest,
