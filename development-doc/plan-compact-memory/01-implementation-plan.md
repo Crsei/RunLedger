@@ -1,17 +1,17 @@
 # RunLedger Plan Mode、Model/Context、Compaction 与 Memory 建设计划
 
-> 状态:专项权威执行计划;Context/Compaction/Memory/Plan 已有独占行为切片,Model Router、Host/生产 durable 接线仍未完成
-> 基线日期:2026-07-22;Runtime Host 适配校准:2026-08-04
+> 状态:专项权威执行计划;Memory 纯核心已有行为切片,但标准 Session Owner 生产入口仍为 `operation_unavailable`;Memory 交付按 Phase 8 的 M0–M8 推进
+> 基线日期:2026-07-22;行为切片校准:2026-08-04;Session Owner 交付审计:2026-09-04
 > 适用范围:`src/runtime/`、`src/storage/`、`src/tui/`、`src/cli/`、canonical `runledgerHome` 与对应测试
 > 参考取证:[`00-reference.md`](00-reference.md)
 > 上位计划:[`../runtime/04-governed-agent-harness-runtime-plan.md`](../runtime/04-governed-agent-harness-runtime-plan.md)
-> 生产 Host/Control Plane 计划(现行基线):[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md);替代实施权威(目标):[`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md)。新行为不得继续扩展 machine/workspace Host。
+> 生产 Session Owner Runtime 权威:[`../runtime/06-session-owner-runtime-replacement-plan.md`](../runtime/06-session-owner-runtime-replacement-plan.md);旧 Host 仅作为迁移输入:[`../runtime/05-multi-client-background-terminal-refactor-plan.md`](../runtime/05-multi-client-background-terminal-refactor-plan.md)。新行为不得继续扩展 machine/workspace Host。
 
 ## 0. 文档定位与执行规则
 
 本文件是 Model Compatibility 行为、Plan Mode、ContextEngine、Compaction 和 Memory 的唯一详细执行账本。上位 Runtime contract 计划独占公共数据结构、TypeBox schema、current event payload、fixtures 和 contract tests;本文件只消费这些契约,负责具体 router/reducer/service/store/算法、文件边界、PR 顺序、行为测试和逐项完成证据。不得再创建同主题 sibling plan 分散状态。
 
-生产接线还必须服从 Runtime Host 计划:标准 CLI/TUI 是轻客户端,同一 Host scope 只有 Host 持有 resident session、`Agent`、canonical writer、Queue 与 mutation authority。本专项的 mode/model/compact/memory command、query、subscription、approval 和 reload 都通过 Host Control Plane;client 不直接调用 `InteractiveSessionController`、不持有 store/service,也不创建第二 writer。Host transport、driver/observer、generation/revision fencing、durable command intent/receipt 与 subscription cursor 由 `runtime/05` 拥有,本文件只定义这些机制如何消费本领域 service。
+生产接线必须服从 Session Owner Runtime:标准 CLI/TUI 是轻客户端,每个 session 只有当前 owner 持有 `Agent`、canonical writer、Queue 与 mutation authority。本专项的 mode/model/compact/memory command、query、subscription、approval 和 reload 都通过 SessionRuntime domain;client 不直接调用 `InteractiveSessionController`、不持有 store/service,也不创建第二 writer。localhost transport、driver/observer、owner generation/driver revision fencing、durable command intent/attempt receipt 与 recovery 由 `runtime/06` 拥有,本文件只定义这些机制如何消费本领域 service。
 
 ### 0.1 2026-08-04 当前实现切片证据
 
@@ -24,7 +24,30 @@
 - 阶段提交证据：`68dab74`（`feat(plan-context): add bounded plan and memory behavior`），只包含上述 `src/runtime/context/**`、`src/runtime/modes/plan/**` 与对应测试路径；提交前 `git diff --cached --check` 通过。
 - 本地验证证据：`npm run check`、`npm test`（Vitest 144 files / 746 tests，Bun TUI 5 files / 44 assertions）、`npm run build`、`git diff --check` 均通过；该提交已落在当前分支，尚未 push。
 
-仍未实现或未接线：Model Compatibility Router、Plan Mode Host durable command/Capability Gateway/approval UI、真实 summarizer 与 compaction intent/commit、auto overflow/resume/fork/rewind/model switch、canonical memory records/`MEMORY.md`/可重建 index、Host durable command/receipt/event sink 与 CLI/TUI。故不得把当前切片标为 Phase 0–10 或专项完成。
+仍未实现或未接线：Model Compatibility Router、Plan Mode SessionRuntime durable command/Capability Gateway/approval UI、真实 summarizer 与 compaction intent/commit、auto overflow/resume/fork/rewind/model switch、canonical Memory SQLite records/可重建 index、SessionRuntime operation/receipt/event 与 CLI/TUI 闭环。故不得把当前切片标为 Phase 0–10 或专项完成。
+
+### 0.2 2026-09-04 Memory 交付审计与接管结论
+
+本节覆盖 0.1 中旧 Host 时代的 Memory 生产接线判断。纯函数和 legacy Host 测试只作为可复用输入,后续完成状态只由 Phase 8 的 M0–M8 与 Session Owner 证据更新。
+
+当前生产调用链为:
+
+```text
+src/cli/main.ts
+  -> src/cli/embedded-session-runtime.ts#createEmbeddedSessionRuntime
+  -> src/runtime/session-runtime/domain.ts#assembleSessionDomain
+  -> SessionRuntime domain operation manifest
+```
+
+审计结果:
+
+- 标准 Session Owner composition 尚未注入 Memory repository/service、operation domain、Agent tools、settings 或 model-context source。
+- 隔离 `RUNLEDGER_DIR` 实测 `runledger memory search release` 返回 `operation_unavailable`;文档宣称的 `runledger remember <text>` 被 parser 当作 action 并返回 `unsupported remember action`;显式 `runledger remember propose <text>` 最终仍为 `memory.propose operation_unavailable`。
+- `src/runtime/context/memory/{store,persistence,projection}.ts` 已覆盖 proposal/approve/reject/revoke、TTL/digest 过滤、有界 lexical search、exact snapshot codec 与只读 projection;这些是纯核心证据,不是标准 CLI 交付证据。
+- `src/cli/runtime-host-model-context.ts` 是 legacy Host 实现,不得再作为生产 authority。其已知缺口包括 Agent proposal digest 构造错误、TUI proposal 缺 provenance、自动注入没有 query、internal tool path 丢弃 domain event、`memory.search_recorded` 无 producer,以及 user scope 实际落在 workspace 分区。
+- 2026-09-04 定向验证为 9 files / 58 tests passed,主要证明 contract、纯核心、legacy Host 与工具 wrapper;它不证明 Session Owner persistence、operation、restart/takeover、CLI/TUI 或真实 model-context 注入。
+
+因此当前交付状态固定为:**core partial, production unavailable**。只有标准 CLI 经 Session Owner 完成 proposal -> approval -> restart -> search -> injection 全链路,且 response-loss/takeover 不重复 mutation 后,才能提升为 production partial;M8 全部门禁闭合后才能标记 implemented。
 
 下文不再使用上位 Runtime 的旧阶段编号,统一采用以下稳定契约域名称:
 
@@ -40,7 +63,7 @@
 - 每次只实施一个可独立验收的 PR 边界,完成后在对应复选框补 commit、验证命令和结果。
 - 上位 Runtime Model/Context 契约域的 allowlist 在本专项中是只读输入。不得在行为 PR 中顺手修改 `types.ts`、`schema.ts`、current event catalog 或 contract fixture,也不得重新定义同义类型。
 - 没有 current durable event、Capability Gateway 或 Artifact Store 的阶段不得用 current 临时旁路伪装完成;可以先落纯 reducer/pure planner 等行为函数,但用户可见功能必须等待前置门禁。
-- 没有 authenticated Runtime Host、driver fence 和 durable command receipt 的阶段不得把 client-local slash handler、TUI boolean 或直接 controller 调用作为生产闭环。
+- 没有 authenticated Session Owner Runtime、driver fence 和 durable command/attempt receipt 的阶段不得把 client-local slash handler、TUI boolean 或直接 controller 调用作为生产闭环。
 - Session 只接受当前 exact format。Plan Mode、compaction checkpoint、memory approval 和 context receipt 只写入当前唯一真源。
 - 不覆盖 raw ledger/history。Compaction 只改变 model-visible projection。
 - 不把 prompt 约束当权限。所有副作用由 capability/effect gate 判定。
@@ -98,7 +121,7 @@
 | Artifact CAS/metadata/retention/redaction | Runtime Artifact/Evidence 契约域 + 独立行为计划与验证证据 | plan revision、compaction input/output/diagnostic |
 | Resource snapshot/effect contract | Runtime Resource 契约域 + Plugin/MCP/Skill/Hooks 专项 M2–M5 | memory/plan tool 可见性和 MCP 副作用分类 |
 | Model/Plan/Context/Compaction/Memory 公共契约 | Runtime Model/Context 契约域 | 本专项全部 public type/schema/event/fixture 的唯一来源 |
-| Runtime Host/Control Plane、driver fence、durable command/subscription | `runtime/05` R0–R10 的已提交 baseline 与当前 hardening | 所有生产 command/query、approval、model switch、compact/memory mutation 和多客户端恢复 |
+| Session Owner Runtime、driver fence、durable command/attempt receipt | `runtime/06` 当前实现与验收状态 | 所有生产 command/query、approval、model switch、compact/memory mutation 和多客户端恢复 |
 
 允许提前落地的内容只有消费已冻结契约的纯 reducer、pure planner、adapter 和行为 fixture。用户可见 `/plan`、`/compact`、memory write 必须等待对应门禁真实可用。
 
@@ -113,12 +136,12 @@
 | `src/runtime/protocol/{events,schemas}.ts` 对应 payload/catalog | Runtime Model/Context 契约域 | 只发射已注册 event,不新建临时 event |
 | `tests/runtime-contracts/contracts/**`、`tests/runtime-contracts/fixtures/{model-routing,plan-mode,context,compaction,memory}/**` | Runtime Model/Context 契约域 | 只消费;behavior fixture 放专项目录 |
 | router/reducer/service/store/index/tools/专用 TUI 组件 | 本专项 | Runtime Model/Context 契约域不得回写实现 |
-| `agent-loop.ts`、Host resident-session/composition、`models*.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` | 串行集成 PR 的当期单一所有者 | 先交付 adapter,再通过 Host command/query/subscription 集成;禁止恢复 client-local controller authority |
+| `agent-loop.ts`、Session Owner composition、`models*.ts`、`src/cli/**`、`src/tui/**`、`src/index.ts` | 串行集成 PR 的当期单一所有者 | 先交付 adapter,再通过 SessionRuntime command/query/subscription 集成;禁止恢复 client-local controller authority |
 
 并行窗口内的稳定分工:
 
 1. 其他 Runtime 行为 owner 可继续修改自己的独占模块,本专项在 behavior path 实现 Model Router、Plan、Context、Compaction 和 Memory;双方都不直接修改对方的独占路径。
-2. 需要连接 Event Store、Gateway、Artifact、Extension snapshot、Orchestrator 或 Host 时,本专项先增加内部 adapter 并用 fake port 验证;共享根文件留到阶段的串行 integration commit。
+2. 需要连接 Event Store、Gateway、Artifact、Extension snapshot、Orchestrator 或 Session Owner 时,本专项先增加内部 adapter 并用 fake port 验证;共享根文件留到阶段的串行 integration commit。
 3. 串行集成前必须记录基线 commit、当期所有者和显式路径;handoff 期间其他计划不改同一文件。
 4. 上位 Runtime Model/Context 契约域完成只表示 contract 已冻结。本专项 Phase 10 完成后不向上位 contract 计划回写行为状态或复制实现 checklist;行为完成证据只保留在本文件。
 
@@ -185,7 +208,7 @@
 TUI / CLI / future API clients
         |
         v
-authenticated Runtime Host command/query/subscription
+authenticated Session Owner command/query/subscription
         |
         v
 ResidentSession / InteractiveSessionController / Runtime Commands
@@ -220,9 +243,9 @@ Large bodies -----------> Artifact Store/CAS
 - `ContextEngine` 只生成 model request context 和 receipt,不修改 canonical history。
 - `CompactionService` 生成并提交新 context projection checkpoint,不删除 raw events。
 - `MemoryService` 管 proposal/approval/search/injection,不决定 session mode。
-- Host-owned `InteractiveSessionController` 是 resident facade,不成为这些状态的事实源;client 只能消费远端 facade。
-- Host command 在执行副作用前写 durable intent,结果写 durable receipt;同 command ID/同 digest 重放原 receipt,异体 conflict,只有 intent 无 receipt 时返回 `uncertain_outcome` 且不重执行。
-- mode/model/plan/compaction/memory mutation 只允许当前 driver 携完整 Host/session generation 与 driver revision 发起;observer 只可 query/subscribe。
+- Session-owned `InteractiveSessionController` 是 resident facade,不成为这些状态的事实源;client 只能消费 SessionRuntime facade。
+- Session command 在执行副作用前写 durable intent,结果写 attempt receipt;同 command ID/同 digest 重放原 receipt,异体 conflict,只有 intent 无 receipt 时返回 `uncertain_outcome` 且不重执行。
+- mode/model/plan/compaction/memory mutation 只允许当前 driver 携完整 owner generation、driver revision 与 expected domain revision 发起;observer 只可 query/subscribe。
 
 ## 5. 目标代码与数据目录
 
@@ -265,21 +288,22 @@ src/runtime/
     memory/
       types.ts                 # Runtime Model/Context 契约域,本专项只读
       schema.ts                # Runtime Model/Context 契约域,本专项只读
-      service.ts
+      repository-port.ts       # SessionStore 的窄端口,不持有 SQLite 细节
+      service.ts               # proposal/approval/search/injection 语义
       approval-coordinator.ts
-      search.ts
       context-fragment.ts
       extraction.ts
 src/storage/
   plan-artifact-store.ts       # immutable revisions + mutable working pointer
-  memory-store.ts              # canonical records/proposals
-  memory-index.ts              # rebuildable lexical projection
   context-paths.ts             # scoped path resolution
+  session-store/
+    memory-repository.ts       # state.db canonical records/proposals/content/revision
+    memory-projection.ts       # rebuildable lexical projection
+src/runtime/session-runtime/
+  memory-composition.ts        # operation manifest、fence、attempt/event 接线
 src/runtime/tools/
   plan-write.ts                # 唯一 Plan Mode 写入口
-  memory-search.ts
-  memory-get.ts
-  memory-propose.ts
+  plan-memory-tools.ts         # 既有 Memory tools,改为只调用 Session domain
 src/tui/components/
   plan-approval.ts
   memory-approval.ts
@@ -295,8 +319,11 @@ tests/runtime-contracts/
     memory/
 tests/storage/
   plan-artifact-store.test.ts
-  memory-store.test.ts
-  memory-index.test.ts
+  session-store/memory-repository.test.ts
+tests/runtime/session-runtime/
+  memory-domain.test.ts
+tests/cli/
+  memory-session-owner.test.ts
 tests/tui/
   plan-approval.test.ts
   memory-approval.test.ts
@@ -314,9 +341,10 @@ tests/tui/
 ```text
 <runledgerHome>/
   settings.json                     # 用户级设置 authority
+  state.db                          # SessionStore + canonical Memory truth
   projects/<workspace-key>/
     settings.json                   # workspace 设置 authority
-  sessions/YYYY/MM/DD/*.jsonl       # canonical session/runtime event truth
+  sessions/YYYY/MM/DD/*.jsonl       # legacy/import source,不新增 Memory authority
   events/YYYY/MM/DD/*.jsonl         # Runtime Trace observability,非 mutation truth
   artifacts/sha256/...              # plan/summary/diagnostic 大正文 CAS
   artifact-metadata/sha256/...
@@ -326,9 +354,6 @@ tests/tui/
     memory/...                      # MEMORY.md/浏览视图,非事实源
   state/plan-context-memory/
     plans/...                       # immutable revision metadata + ArtifactRef
-    memory/
-      user/...                      # canonical user-scope record/proposal metadata
-      workspaces/<workspace-key>/...# canonical workspace-scope metadata
   cache/memory-index/...            # 可删除重建 lexical index
   tmp/...                           # 根内同文件系统临时写入
 ```
@@ -336,11 +361,11 @@ tests/tui/
 安全要求:
 
 - 目录默认 `0o700`,敏感 metadata/record 默认 `0o600`。
-- 文件更新使用同目录 temp + fsync + rename;跨 event/artifact 使用 intent -> object -> committed event。
+- Memory mutation 使用 owner-fenced SQLite transaction + command/attempt receipt;其他文件工件仍使用同目录 temp + fsync + rename。
 - plan/memory path 必须由 `workspaceId/sessionId/recordId` 解析,不接受模型输入绝对路径。
 - `runledgerHome` 只由 composition root 解析一次:`RUNLEDGER_DIR` 必须是既有绝对目录,否则使用默认用户级 `~/.runledger`;`RUNLEDGER_SESSION_DIR`、`--session-dir` 与 `settings.sessionDir` 一律 fail closed。
 - 本专项不得向 `<cwd>/.runledger/`、`~/.runledger/agent/` 或其他根外目录写入;workspace path 只参与 identity/metadata,不形成 storage authority。
-- `MEMORY.md` 是 approved record 的可重建人类可读投影;canonical truth 是 typed record/event receipt 与绑定的 ArtifactRef。
+- `MEMORY.md` 是 approved record 的可重建人类可读投影;canonical truth 是 `state.db` 中的 typed record/content/revision 与绑定的 event/attempt receipt。
 - index 可随时删除重建;index digest/mode 只作为 search receipt,不参与 record authority。
 - public event、Artifact metadata、TUI/模型结果不得包含绝对 home/cwd、CAS 物理路径或 private locator。
 
@@ -583,48 +608,61 @@ validator 至少检查:
 ### 6.6 Memory record 与 proposal
 
 ```ts
-export type MemoryScope = "user" | "workspace";
-export type MemoryStatus = "proposed" | "approved" | "changed_unreviewed" | "revoked" | "expired";
+export type MemoryScope = "user" | "workspace" | "session";
+export type MemoryTrust = "untrusted" | "proposed" | "approved" | "revoked" | "changed_unreviewed";
 
-export interface MemorySourceRef {
-  sourceType: "user" | "session" | "tool" | "web" | "mcp" | "import";
-  sourceId: string;
-  digest?: string;
-  trust: ContextTrust;
+export interface MemoryProvenance {
+  sourceKind: "user" | "agent" | "tool" | "import" | "compaction";
+  sourceRef: RuntimeContentRef;
+  sourceDigest: RuntimeDigest;
+  createdAt: string;
 }
 
 export interface MemoryRecord {
-  memoryId: string;
+  memoryId: MemoryId;
   scope: MemoryScope;
-  workspaceId?: string;
-  status: MemoryStatus;
+  workspaceId?: WorkspaceId;
+  sessionId?: SessionId;
   title: string;
-  content: string;
-  contentDigest: string;
-  sourceRefs: MemorySourceRef[];
-  approvalReceiptId?: string;
-  createdAt: string;
-  updatedAt: string;
+  contentDigest: RuntimeDigest;
+  contentRef: RuntimeContentRef;
+  revision: number;
+  trust: MemoryTrust;
+  provenance: MemoryProvenance;
+  approvedAt?: string;
   expiresAt?: string;
-  supersedes?: string;
+  revocationRevision: number;
+}
+
+export interface MemoryProposal {
+  proposalId: ProposalId;
+  memoryId: MemoryId;
+  scope: MemoryScope;
+  recordDigest: RuntimeDigest;
+  status: "pending" | "approved" | "rejected" | "expired";
+  approvalRef?: RuntimeContentRef;
+  createdAt: string;
 }
 
 export interface MemorySearchReceipt {
-  queryDigest: string;
-  mode: "lexical" | "hybrid";
-  indexDigest: string;
-  results: Array<{
-    memoryId: string;
-    contentDigest: string;
-    score: number;
-    stale: boolean;
-  }>;
+  receiptId: ReceiptId;
+  queryDigest: RuntimeDigest;
+  scope: MemoryScope;
+  workspaceId?: WorkspaceId;
+  sessionId?: SessionId;
+  mode: "lexical" | "vector" | "none";
+  resultIds: readonly MemoryId[];
+  indexDigest: RuntimeDigest;
+  sourceHead: RuntimeStreamHead;
+  createdAt: string;
 }
 ```
 
+当前 public contract 已有三种 scope,但 user scope 的稳定 authority key 仍须在 M0 冻结;若不能由 composition root 提供,不得在 behavior/storage 层自行用 workspace key 补位。
+
 首版 search:
 
-- global + current workspace 两个 scope,不跨未授权 workspace。
+- user + current workspace + current session 三个 scope,不跨未授权 authority/workspace/session。
 - lexical token/phrase match + stable score + source/recency tie-break。
 - `maxResults`、`maxSnippetChars`、`maxTotalTokens` 和 cursor 必须硬限制。
 - index 损坏时从 canonical record 重建;重建失败返回无结果 + diagnostic,不能返回陈旧未知数据。
@@ -650,15 +688,14 @@ compaction.summary_generated
 compaction.validated
 compaction.committed
 compaction.failed
-memory.proposal_created
-memory.approval_requested
-memory.approval_decided
-memory.publish_intent
-memory.published
+memory.proposed
+memory.approved
 memory.revoked
-memory.search_completed
+memory.search_recorded
 memory.context_injected
 ```
+
+当前 catalog 已有 `memory.proposed/approved/revoked/search_recorded`;`memory.context_injected` 是 M0 必须冻结的缺口。proposal/approval 的大正文只存在 canonical Memory content,事件只带 ref/digest/receipt。
 
 事件只保存 bounded metadata。plan/summary/memory 大正文进入 Artifact/Memory Store,事件保存 artifact ID/digest。所有 command 带 `commandId`/expected revision,重复请求返回同一结果或 conflict,不得重复产生审批/写入。
 
@@ -797,7 +834,7 @@ export interface MemorySettings {
 
 - `thresholdPercent` 必须给 output/tool/safety reserve 留空间,建议默认 80,允许范围 50–90。
 - memory 默认关闭直到 approval UI 和 provenance 完成;启用也不意味着允许自动发布。
-- CLI override 只作为 versioned per-request command 影响当前 session,必须由 Host 校验 expected session revision 并写 command receipt;持久设置必须经过 Host settings command 写入 canonical user/workspace settings。
+- CLI override 只作为 versioned per-request command 影响当前 session,必须由 Session Owner 校验 expected domain revision 并写 command/attempt receipt;持久设置必须经过 SessionRuntime settings operation 写入 canonical user/workspace settings。
 - `RUNLEDGER_DIR` 只在 composition root 启动时解析一次;`RUNLEDGER_SESSION_DIR`、`--session-dir` 和 `settings.sessionDir` 均不受支持。memory scope 必须使用 canonical workspace identity,不能从物理路径或目录名恢复 authority。
 
 ### 8.2 CLI/command surface
@@ -813,7 +850,7 @@ export interface MemorySettings {
 - `/remember <text>`:创建 user-authored proposal 并打开审批。
 - `/forget <query>`:选择 record 后创建 revoke proposal,不直接删除。
 
-Host/未来 API command 与 TUI 使用相同 payload,不得为 TUI 另建私有状态转换。所有 mutation 带 command ID、request digest、Host/session generation、driver revision 与 expected domain revision;query/subscription 使用 bounded cursor,`resync_required` 后从 durable projection 重新读取。
+SessionRuntime/未来 API command 与 TUI 使用相同 payload,不得为 TUI 另建私有状态转换。所有 mutation 带 command ID、request digest、owner generation、driver revision 与 expected domain revision;query/subscription 使用 bounded cursor,`resync_required` 后从 durable projection 重新读取。
 
 ### 8.3 TUI 投影
 
@@ -856,16 +893,16 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [ ] 验证 current event catalog 已包含本专项所有 lifecycle payload,每个大正文字段都使用 Artifact/Memory ref。
 - [ ] 验证 mode policy 只消费 Runtime capability/effect contract,不按 tool name 创建第二套决策类型。
 - [ ] 验证 command expected-revision/idempotency error、approval/artifact/workspace refs 与 Runtime Foundation 契约域、Runtime Workspace/Security 契约域和 Runtime Artifact/Evidence 契约域对齐。
-- [ ] 固定 `runtime/05` Host handoff:本专项 command/query/subscription 名称、driver-only mutation、Host/session generation、driver/domain revision、durable intent/receipt、cursor/resync 与 compatibility digest 输入。
+- [ ] 固定 `runtime/06` Session Owner handoff:本专项 command/query/subscription 名称、driver-only mutation、owner generation、driver/domain revision、durable intent/attempt receipt、cursor/resync 与 compatibility digest 输入。
 - [ ] 跑上位 contract tests 与专项 consumer compile test,记录冻结 contract commit。
 - [ ] 检查 behavior 目录不存在同义 `interface/type`、私有 event name 或复制 schema。
-- [ ] capability 未完成时只注册 internal adapter factory并由 Host 返回 typed unsupported,不暴露半成品命令或 client/direct 双生产路径。
+- [ ] capability 未完成时只注册 internal adapter factory并由 SessionRuntime 返回 typed unsupported,不暴露半成品命令或 client/direct 双生产路径。
 
 完成门槛:
 
 - consumer test 仅通过 public exports 编译,对 contract allowlist 的 diff 为空。
 - fixture 可表达 incompatible route、approval resume、multi-compaction chain 和 memory revoke/expire。
-- Event Store/Artifact/Capability/Resource/Host 依赖通过 typed port/fake 注入,没有隐式全局单例或 client-local writer。
+- Event Store/Artifact/Capability/Resource/Session Owner 依赖通过 typed port/fake 注入,没有隐式全局单例或 client-local writer。
 - 若契约不足,已按 §2.2 停在 Runtime contract PR,未在本专项引入临时兼容层。
 
 建议 commit:`test: verify plan context contract consumption`
@@ -910,7 +947,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [x] 实现 fragment registry、fixed layer order、stable ID/digest 和 per-fragment hard cap。
 - [x] 实现 conservative token estimator,接入 provider usage receipt 与模型 context window。
 - [~] 把现有 `systemPrompt/messages/tools` 转成首批 fragment/projection adapter；当前仅完成注入式 runtime adapter。
-- [~] 先在 `context/runtime-adapter.ts` 实现 `assemble()` seam;串行集成 PR 只把它接入 Host-owned resident Agent 的唯一 model-request 路径,并删除调用点私自拼接的新增路径。
+- [~] 先在 `context/runtime-adapter.ts` 实现 `assemble()` seam;串行集成 PR 只把它接入 Session-owned resident Agent 的唯一 model-request 路径,并删除调用点私自拼接的新增路径。
 - [ ] 持久化 bounded `context.assembled` receipt,正文不进 event。
 - [x] 为 omitted fragment、oversized tool result、missing budget 输出结构化诊断。
 
@@ -920,7 +957,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [x] policy/mode fragment 永不被普通 history 挤出。
 - [x] image/tool/reasoning 估算不会发生整数溢出。
 - [x] provider usage 缺失/异常时保守 fallback。
-- [~] 同一 checkpoint resume 生成相同 request-context fixture；当前有稳定 projection/checkpoint 行为，尚未接入 Host resume。
+- [~] 同一 checkpoint resume 生成相同 request-context fixture；当前有稳定 projection/checkpoint 行为，尚未接入 Session Owner resume。
 
 完成门槛:
 
@@ -940,7 +977,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [x] 实现纯 `PlanModeState` reducer 和合法 transition table。
 - [x] 实现 `PlanArtifactStore`,working pointer + immutable revision + digest。
 - [ ] 实现 user/agent entry command、mid-turn pending activation、安全点 delivery。
-- [ ] mode/plan mutation 由 Host durable command 调用 service;observer、stale generation/revision 和异体 command replay 在进入 reducer/store 前拒绝。
+- [ ] mode/plan mutation 由 SessionRuntime durable command 调用 service;observer、stale owner/driver/domain revision 和异体 command replay 在进入 reducer/store 前拒绝。
 - [ ] mode fragment 接入 ContextEngine,同 revision 不重复注入。
 - [ ] resume 折叠 transient state,保持 active/awaiting 状态。
 - [x] plan 外部修改检测,digest 漂移触发 approval invalidation。
@@ -1016,7 +1053,7 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [ ] stale revision approval 返回 conflict。
 - [ ] 外部改 plan 后旧 approval 自动失效。
 - [ ] decision 落盘成功但 UI 断连不会重复实施。
-- [ ] approval 作为 Host-owned reverse request 只允许 active driver resolve;driver disconnect 后 waiter 保留,新 driver 显式 claim 后继续,observer response 拒绝。
+- [ ] approval 作为 Session-owned reverse request 只允许 active driver resolve;driver disconnect 后 waiter 保留,新 driver 显式 claim 后继续,observer response 拒绝。
 - [ ] fresh fork 只携带 approved plan ref 和必要 context,不泄漏未批准 tail。
 - [ ] plan approval view snapshot/窄终端/空计划/大计划。
 
@@ -1039,8 +1076,8 @@ TUI 只保存滚动/焦点/临时输入。mode、approval、compaction、memory 
 - [ ] 实现 transcript/artifact input builder 和 output reserve。
 - [ ] 实现 summarizer adapter,工具关闭,单独 retry/timeout budget。
 - [~] 实现 summary validator、invariant digest 和 redaction scan；当前完成 invariant/checkpoint schema 校验，尚无真实 summarizer/redaction pipeline。
-- [~] 实现 checkpoint intent/commit 与 model-history projection replacement；当前仅有注入式内存 checkpoint lifecycle，未接 canonical event/Host commit。
-- [ ] `/compact [focus]` 通过 Host command 进入 resident session;start/completed/failed event 和 bounded query/subscription 状态接入,client detach 不取消已接受操作。
+- [~] 实现 checkpoint intent/commit 与 model-history projection replacement；当前仅有注入式内存 checkpoint lifecycle，未接 canonical event/SessionRuntime commit。
+- [ ] `/compact [focus]` 通过 SessionRuntime command 进入 resident session;start/completed/failed event 和 bounded query/subscription 状态接入,client detach 不取消已接受操作。
 - [ ] compaction 后重新注入当前 mode、workspace、approved plan 和 policy。
 
 golden tests:
@@ -1095,98 +1132,245 @@ golden tests:
 
 建议 commit:`context: make compaction safe across overflow resume and forks`
 
-### Phase 8:Memory Store、Search 与批准发布
+### Phase 8:Memory Session Owner 实现交付 M0–M8
 
-前置:Phase 2;Runtime Workspace/Security 契约域、Runtime Artifact/Evidence 契约域与对应安全/Artifact 行为门禁;统一 Approval Service。
+本阶段替代旧 Phase 8–10 的 Memory checklist。M0–M8 是不可跳序的生产交付链;Phase 9 的 compaction 联动并入 M7,原 Phase 10 中与 Memory 有关的发布门禁并入 M8。Model/Plan/Context/Compaction 的其他未完成项仍由 Phase 0–7 管理,不得借 Memory 完成状态一并勾选。
 
-目标:构建默认关闭、可人工批准的长期 memory MVP。
+#### 8.0 交付原则、状态口径与文件所有权
+
+硬规则:
+
+1. 唯一生产 authority 是 `createEmbeddedSessionRuntime()` 装配出的 Session Owner。不得给 `runtime-host-model-context.ts` 增加新 Memory 行为,也不得让 TUI/headless CLI 直接访问 `MemoryStore`。
+2. canonical truth 写入 `SessionStore` 的 `state.db`;event 只保存 ID、scope、revision、digest、receipt 与诊断 metadata,不复制 Memory 正文。`MEMORY.md` 若后续需要,只能是可删除重建的只读 projection。
+3. user scope 必须绑定 canonical user authority key,workspace scope 必须绑定 canonical workspace identity,session scope 绑定 `sessionId`;物理路径、workspace storage key 和当前 cwd 都不能代替 authority。
+4. mutation 必须同时满足 owner fence、active driver、expected domain revision、Memory optimistic revision 与 attempt intent/receipt;同 command ID/同 digest replay 原结果,异体 conflict,不确定结果不得盲目重试。
+5. `memory.enabled` 默认 `false`;关闭时不注册 Agent Memory tools、不做自动 recall/flush/extraction,但显式管理 query 的具体可见性由 M5 contract 固定。
+6. ordinary turn 对 Memory 失败采取 typed non-blocking degradation;approval、scope、digest、fence 或 schema 安全失败仍 fail closed,且留下不含正文的诊断。
+7. 每个 M 里程碑独立 RED -> GREEN -> full gate -> scoped commit。除非用户明确要求,只更新计划证据,不自动 commit/push。
+
+共享文件串行窗口:
+
+| 路径 | 里程碑 | 规则 |
+|---|---|---|
+| `src/storage/session-store/{schema,session-store}.ts` 与新 Memory repository | M1 | 先锁 schema version/offline migration,不得与其他 schema 任务交叉修改 |
+| `src/runtime/session-runtime/{domain,session-runtime,query-handler,command-routes/domain}.ts` 与新 Memory composition | M3 | 只通过 operation manifest 接线,不向 core router 加 Memory 特判 |
+| `src/runtime/tools/plan-memory-tools.ts`、Session production tool composition | M4 | 工具只调用 Session domain,不持有 repository/store |
+| `src/storage/settings-manager.ts`、model context assembler | M5 | turn admission 时解析 immutable snapshot,唯一 assembler 注入 |
+| `src/cli/control-commands.ts`、`src/tui/**` | M0/M6 | CLI/TUI 只做输入和 projection,不成为状态 authority |
+| `src/cli/runtime-host-model-context.ts` | M8 | 只做冻结/删除/迁移收尾,此前禁止继续扩展 |
+
+状态提升口径:
+
+- **core partial**:只证明纯 `MemoryStore`/codec/projection。
+- **production partial**:M0–M5 全绿,标准 Session Owner 可在默认关闭的 feature flag 下完成 durable proposal/search/injection。
+- **user-visible partial**:M6 全绿,headless CLI 与真实 TUI 共用同一审批链。
+- **implemented**:M0–M8 全部验收,含 restart/takeover/response-loss、compaction 与清理门禁;自动化结果与人工验收分开记录。
+
+| 里程碑 | 交付物 | 当前状态 | 退出条件摘要 |
+|---|---|---|---|
+| M0 | authority freeze + production RED | audit done / RED not started | standard CLI/SessionRuntime 缺口被真实失败测试锁定 |
+| M1 | `state.db` Memory repository | not started | offline migration、scope、transaction、rebuild/reopen 全绿 |
+| M2 | Session-owned Memory service | not started | 纯规则与 SQLite golden vectors 一致,无双写 |
+| M3 | SessionRuntime operation/event/receipt | not started | query/mutation 经 fence,replay/takeover 不重复副作用 |
+| M4 | governed Agent tools | not started | search/get/propose 只经 domain,无 approve/revoke 越权 |
+| M5 | settings + deterministic recall | not started | 默认关闭,唯一 Context assembler 可复现注入 receipt |
+| M6 | headless CLI + TUI approval/browser | not started | 同一 reverse-request lifecycle,无 raw JSON UX |
+| M7 | compaction/resume/session-end | not started | 自动路径只提 proposal,approved recall 可恢复 |
+| M8 | cutover + release gates | not started | legacy 不可达,自动化与人工验收分别闭合 |
+
+#### M0:冻结 Session Owner authority,建立生产 RED
+
+目标:先用失败测试锁定标准入口当前缺口,避免 legacy Host/fake port 继续提供假绿色。
 
 任务:
 
-- [~] 实现 user/workspace scoped proposal、approval/reject/revoke 与内存状态机；canonical store、atomic publish/revoke 尚未接线。
-- [ ] 实现 workspace identity mapping,同 repo clone/worktree 可选共享 workspace scope。
-- [ ] 生成 `MEMORY.md` 人类可读 projection,但不把它当唯一 metadata 真源。
-- [~] 实现 bounded deterministic lexical search；独立可重建 index、watch/digest scan 尚未实现。
-- [ ] 实现 `memory_search`、`memory_get`、`memory_propose` bounded tools。
-- [ ] 实现 `/remember` proposal 和 memory approval diff。
-- [ ] memory publish/revoke 走 Host durable command 与 driver/approval fence;同 command response-loss 重放 receipt,不得重复发布或撤销。
-- [x] 实现 TTL/staleness/revoked/changed_unreviewed 查询过滤。
-- [ ] ContextEngine 首 turn 只注入 approved records,记录 search/injection receipt。
+- [x] 记录 2026-09-04 当前调用链、命令结果与 9 files / 58 tests 的证据边界。
+- [ ] 修正 `parseControlCommand()` 的 grammar,使文档中的 `runledger remember <text>` 直接映射 `memory.propose`;是否保留 `remember propose <text>` alias 必须由同一 parser contract 明确,不能两种解析互相歧义。
+- [ ] 新增 Session Owner RED,证明 `memory.inspect/search/get/projection/propose/approve/reject/revoke` 在 production manifest 缺失时返回 `operation_unavailable`。
+- [ ] 新增标准 `src/cli/main.ts`/embedded runtime RED,不得用 `runtime-host-model-context.ts` 或手工 fake domain 替代。
+- [ ] 固定 event payload、Memory result/error、scope authority、approval reverse-request 和 settings contract 的缺口清单;公共 contract 不足时按 §2.2 单独冻结。
+
+测试落点:
+
+- `tests/cli/control-commands.test.ts`:documented remember grammar、空正文、action 歧义和 digest/provenance payload。
+- 新增 `tests/runtime/session-runtime/memory-domain.test.ts`:生产 manifest、query/mutation unavailable baseline、driver/observer boundary。
+- 新增 `tests/cli/memory-session-owner.test.ts`:隔离 `RUNLEDGER_DIR` 真正经过 standard CLI/embedded runtime。
+
+完成门槛:RED 必须因 Session Owner 尚未装配 Memory 而失败;不能因 fixture 拼错、legacy Host 被调用或测试跳过而失败。计划中记录 RED 命令与失败摘要后才进入 M1。
+
+建议 commit:`test(memory): pin session-owner delivery gaps`
+
+#### M1:在 SessionStore 建立 canonical Memory persistence
+
+目标:让 `state.db` 成为唯一可恢复、可迁移、可校验的 Memory 真源。
+
+任务:
+
+- [ ] 通过现有 offline migration 规则提升 schema version;活跃 owner 存在时 migration fail closed,不在线热改表。
+- [ ] 新增规范化 `memory_records`、`memory_proposals`、`memory_contents`、`memory_revisions` 与可重建 `memory_lexical_projection`（最终表名在 RED 中冻结）。
+- [ ] 每条 record/proposal 保存 scope kind + authority key、status、revision、content digest、source provenance、trust、TTL、created/updated/revoked metadata;正文只存 canonical content 表。
+- [ ] user/workspace/session scope 分别使用 user authority、catalog 中 canonical workspace identity、`sessionId`;若 user authority 尚无稳定来源,停止 M1 并先补 contract,不得退化为 workspace key。
+- [ ] 实现 owner-fenced repository,在同一 SQLite transaction 中校验 owner generation、expected Memory revision、写 content/state 并追加领域审计 metadata。
+- [ ] lexical projection 支持确定性 rebuild;投影损坏/缺失不改 canonical records,可显式 rebuild 或 typed degrade。
+- [ ] 数据库、目录和导出/诊断继续遵守 0600/0700 与正文不进日志要求。
 
 测试:
 
-- [x] global/workspace scope 隔离和 scope binding。
-- [~] proposal approve/edit/reject/revoke/expire 状态机；当前覆盖 approve/reject/revoke 与 expiry 过滤，edit/持久 expire command 尚未实现。
-- [x] external edit digest drift 停止注入。
-- [ ] index delete/corrupt/rebuild;lexical ordering 稳定。
-- [ ] search max results/snippet/token/cursor hard cap。
-- [ ] untrusted source 不能自行升级 approved。
-- [~] Memory Store failure 不阻断普通 turn；repository 以 typed persistence failure 返回，Host 注入降级尚未接线。
+- schema create/upgrade、活跃 owner 拒绝迁移、旧版本保持原文件、transaction rollback、双 connection revision conflict。
+- 三种 scope 隔离、user scope 跨 workspace 可见、workspace clone/worktree identity 规则、session scope 不越界。
+- TTL/revoke/digest/provenance exact round-trip、projection delete/corrupt/rebuild、SQLite reopen 后结果 byte-stable。
 
-完成门槛:
+完成门槛:重启数据库后纯 snapshot 无损恢复;删除 lexical projection 后可从 canonical 表重建相同排序;仓库中没有新 JSON canonical store 或 silent dual-write。
 
-- 每个 injected record 有 approval receipt 和有效 digest。
-- 删除 index 后可从 canonical records 完整重建同等 lexical 结果。
+建议 commit:`storage(memory): add fenced canonical sqlite repository`
 
-建议 commit:`memory: publish only approved scoped records with bounded search`
+#### M2:把纯 Memory 语义收敛为 Session-owned service
 
-### Phase 9:Memory 与 Compaction 联动
-
-前置:Phase 7–8。
-
-目标:保存值得长期复用的知识,同时在 compact 后恢复已批准上下文。
+目标:复用现有正确语义,去除内存快照/legacy Host 对生产行为的 ownership。
 
 任务:
 
-- [ ] 实现 pre-compaction flush threshold/once-per-cycle/lock。
-- [ ] flush output 通过 empty/NO_REPLY/header/length/redaction/exact dedup 检查。
-- [ ] flush 只创建 proposal,失败不阻止 compact。
-- [ ] 实现 post-compaction approved-memory search 和 bounded fragment。
-- [ ] 相同 checkpoint resume 复用 search receipt,record 变更时显式 invalidation。
-- [ ] session-end extraction 只生成 proposal;设置 eligibility/age/scan/concurrency/lease/backoff。
-- [ ] 高级 consolidation 延后为可选后台 job,仍通过 approval 发布差异。
+- [ ] 在 `src/runtime/context/memory/` 增加 repository port/service,将 proposal/approve/reject/revoke/search/get/projection 连接 M1 repository。
+- [ ] 保留 approved-only recall、provenance、trust、TTL、revoked、digest drift、bounded lexical ranking 与 stable pagination 语义。
+- [ ] approve/update/revoke 都绑定 proposal/record revision 和 approval receipt;`memory_propose` 永远只创建 pending proposal。
+- [ ] 将 persistence/index/repository 错误映射成 typed domain failure;自动 recall 失败可跳过,显式 mutation 失败不得假成功。
+- [ ] 对现有 `MemoryStore` 选择“纯规则内核”或“test/reference implementation”单一定位,禁止它与 SQLite service 双写。
 
-测试:
+测试:对同一 golden vector 同时运行纯内核与 SQLite service,断言状态机、排序、过滤、digest 与 error code 一致;覆盖 duplicate proposal、stale revision、approval replay、revoke replay 和时钟边界。
 
-- [ ] flush 在 hard compact threshold 前触发且每 cycle 一次。
-- [ ] `isFlushing` 抑制 auto compact,结束后正确释放。
-- [ ] flush sampler error/timeout/duplicate/oversize 均不中断 compact。
-- [ ] post-compact recovery 只返回 approved/non-stale/non-revoked record。
-- [ ] Plan Mode compact 后 mode + approved plan + memory fragment 均恢复。
-- [ ] 多进程 extraction lease 不重复处理同 session。
+完成门槛:生产 service 不读取 legacy JSON snapshot;所有 canonical mutation 可在 SQLite transaction/replay 后得到同一状态。
 
-完成门槛:
+建议 commit:`memory: run approved-only semantics on session repository`
 
-- compaction 前后 memory proposal 和 injection receipt 均可从 event/artifact 复核。
-- 未经批准的 flush/session summary 永不进入未来 session context。
+#### M3:注册 SessionRuntime operations、fencing 与 durable event
 
-建议 commit:`memory: bridge approved recall with compaction safely`
+目标:让所有客户端只通过 Session domain 访问 Memory,并在 response-loss/takeover 下保持 exactly-once outcome。
 
-### Phase 10:可观测性、文档、兼容与发布门禁
+operation manifest:
 
-前置:Phase 0–9。
-
-目标:让功能可运维、可回滚、可证明。
+- query:`memory.inspect`、`memory.list`、`memory.search`、`memory.get`、`memory.projection`。
+- mutation:`memory.propose`、`memory.approve`、`memory.reject`、`memory.revoke`。
 
 任务:
 
-- [ ] 增加 mode/approval/context/compaction/memory metrics,默认只记录 metadata/digest。
-- [ ] TUI `/context`、`/memory`、footer/status 与 warning surface 完整接 projection。
-- [ ] CLI help/settings schema/README/AGENTS.md/开发文档同步。
-- [ ] resume/open/fork 只接受当前 exact format;无法验证时原文件不变并返回 typed diagnostic。
-- [ ] canonical user/workspace settings 支持独立关闭 plan/auto-compact/memory,manual compact 可单独保留;设置由 Host 解析并进入 compatibility/config digest,不得形成 client 与 Host 两条生产路径。
-- [ ] 加 recovery/chaos/large-session/Windows path/permission 测试。
-- [ ] 建立 golden fixture 版本和上游行为差异记录。
-- [ ] 在本文件补齐所有 commit/验证证据;不向上位 Runtime contract 计划回写行为状态或复制实现 checklist。
+- [ ] 新增 `src/runtime/session-runtime/memory-composition.ts`,由 `assembleSessionDomain()` 注入 SessionStore、owner fence、scope authority、clock 和 approval port。
+- [ ] query 走 bounded projection;mutation 走 domain operation manifest、active-driver fence、expected domain/Memory revision 与 attempt gateway。
+- [ ] append `memory.proposed`、`memory.approved`、`memory.revoked`、`memory.search_recorded` 和 `memory.context_injected` metadata event;若 current catalog 缺 event,先走独立 contract PR。
+- [ ] query/recall receipt 记录 query digest、scope、result IDs/digests、index revision、limits 与 suppression reason,不记录 query/正文原文。
+- [ ] command response 丢失后同 ID/同 digest 返回已提交 receipt;prepared/activation-uncertain/running/takeover 矩阵不得重复 mutation。
+- [ ] observer 只可 query;stale owner、stale driver、stale domain revision、scope mismatch 和异体 replay fail closed。
 
-完成门槛:
+测试:扩展 M0 RED 为 GREEN,并覆盖独立 SQLite connections 的 concurrent propose/approve、owner fencing、driver handoff、disconnect/reconnect、attempt recovery 和 event replay projection。
 
-- `npm run check` 与 `npm test` 全绿。
-- 所有 failure mode 有用户可见错误、typed Runtime diagnostic 和安全 fallback。
-- 默认配置不自动发布 memory,不开放 Plan Mode 副作用逃逸。
-- restart/resume/fork/rewind/model switch 测试矩阵全部通过。
+完成门槛:standard CLI 的 `memory.inspect/search` 不再是 `operation_unavailable`;一次 mutation 在 event、attempt receipt 和 Memory revision 中可关联,正文不出现在 event JSON。
 
-建议 commit:`runtime: expose audited plan context and memory lifecycle`
+建议 commit:`runtime(memory): expose fenced session-domain operations`
+
+#### M4:接入 governed Agent Memory tools
+
+目标:让 root Agent 使用最小、可治理、不会越权发布的 Memory 工具面。
+
+任务:
+
+- [ ] 注册 `memory_search`、`memory_get`、`memory_propose`;工具实现只调用 Session domain internal bridge,不得直接导入 repository/`MemoryStore`。
+- [ ] `memory_search/get` 标记为只读 capability,强制 max results/snippet/token/scope;`memory_propose` 是 mutation,只能生成 pending proposal。
+- [ ] proposal 的 `sourceRef/sourceDigest/contentDigest` 从 canonical bytes 构造,禁止用 raw content 充当 digest;来源含 session/turn/tool identity。
+- [ ] internal bridge 必须保留 M3 的 receipt/event,不能重现 legacy Host 的“返回结果但丢事件”。
+- [ ] child Agent 默认不获得 Memory mutation;若未来开放 search/get,必须由 bounded multi-agent policy 显式授予只读子集。
+
+测试:生产 tool composition 可见性、feature-off 隐藏、schema hard cap、scope escape、malformed result、provenance/digest、internal event persistence、child capability 不升级。
+
+完成门槛:真实 Session Owner Agent turn 能 search/get/propose;任一工具都不能直接 approve/revoke 或绕过 ExecutionGateway/attempt receipt。
+
+建议 commit:`tools(memory): route governed recall and proposals through session domain`
+
+#### M5:接入 settings、deterministic recall 与唯一 Context assembler
+
+目标:以安全默认和 immutable turn snapshot 将 approved Memory 注入模型上下文。
+
+任务:
+
+- [ ] 在 canonical settings 增加 `memory.enabled`（默认 `false`）、`initialInjection`、`postCompactionRecovery`、`maxResults`、`maxSnippetChars`、`maxTokens` 与 TTL 上限;非法值 typed reject 或安全默认,workspace 层不得放宽 managed ceiling。
+- [ ] composition root 只解析一次 user/workspace/managed precedence,turn admission 固定 immutable Memory settings/revision;运行中设置变化只影响后续 turn。
+- [ ] 从 bounded 当前 user goal、approved plan/task 与本 turn user text 构造 deterministic query;空 query 显式 suppress,不得把全部 transcript 或 secret tool output送入检索。
+- [ ] 只通过 `assembleAgentModelContext()` 的 Memory layer 注入 approved、未过期、未撤销、scope 匹配且 digest 有效的 fragments;调用点不得私拼 system prompt。
+- [ ] 同一 turn/resume 复用 search/injection receipt;record/index/settings revision 变化必须产生显式 invalidation,不得静默换片段。
+- [ ] recall/repository failure 不阻断 ordinary turn,但输出 typed diagnostic 与 `suppressed/degraded` receipt;正文不进入 trace/event。
+
+测试:settings precedence/default/clamp、feature off 无工具无注入、deterministic query/order/budget、first turn、resume、record drift、TTL/revoke race、store failure degradation、ContextAssemblyReceipt 关联。
+
+完成门槛:M0–M5 全绿后状态可提升为 **production partial**;标准 Session Owner 重启后能检索并在开启配置时复现同一 Memory fragment 与 receipt。
+
+建议 commit:`context(memory): inject bounded approved recall from turn snapshots`
+
+#### M6:交付 headless CLI、TUI browser 与 reverse-request approval
+
+目标:让用户不用编写 JSON approval ref,在 headless 与真实 TUI 中完成同一 proposal/decision lifecycle。
+
+任务:
+
+- [ ] `runledger remember <text>` 先展示 scope/source/trust/TTL/diff preview,创建 proposal 后进入 Session Owner reverse-request approval;取消/断连保持 pending,不得自动批准。
+- [ ] `runledger memory list|search|get|projection` 共用 M3 query;approve/reject/revoke 使用 bounded ID 选择和 expected revision,不要求用户粘贴 raw JSON arguments。
+- [ ] `/memory` browser 按 proposed/approved/revoked 分组,展示来源、digest 短码、TTL/staleness 与 bounded preview。
+- [ ] `/remember <text>`、approve/reject/revoke 经 `SessionInteractiveController` 同一 operation contract;TUI 只持 focus/input/scroll。
+- [ ] active driver 才能 resolve approval;observer read-only,driver 断开后 reverse request 保留,新 driver claim 后恢复。
+- [ ] `/forget` 仅在 revoke proposal + approval 语义冻结后加入,否则保持未实现,不做直接删除 alias。
+
+测试:headless parser/stdio、real embedded runtime、TUI reconnect、driver handoff、narrow terminal、空/超长/多字节正文、approval response-loss、stale selection/revision、sensitive content 不进 notice/log。
+
+完成门槛:M6 全绿后状态可提升为 **user-visible partial**;CLI 与 TUI 对同一 proposal 产生相同 domain transition/event sequence,且未经 approval 的内容不进入 search/context。
+
+建议 commit:`ui(memory): add resumable proposal approval and browser`
+
+#### M7:接入 compaction、resume 与 session-end proposal
+
+目标:在压缩前提议长期知识,压缩后只恢复已批准 Memory,不让模型摘要自动成为事实。
+
+任务:
+
+- [ ] pre-compact flush 在 hard threshold 前、每 checkpoint cycle 最多一次;输出经 empty/NO_REPLY/header/length/redaction/exact-dedup 校验后只创建 proposal。
+- [ ] flush timeout/error/oversize 不阻止 compaction;状态在 finally 释放,避免 `isFlushing` 与 auto-compact 互相热循环。
+- [ ] post-compaction recovery 使用 M5 deterministic recall,只读 approved/nonexpired/nonrevoked/scope-matching records。
+- [ ] 相同 checkpoint resume 复用 query/fragment receipt;Memory/index/settings revision 变化时写 invalidation 后重新检索。
+- [ ] session-end extraction 只创建 proposal,具备 eligibility、age、lease、retry/backoff、concurrency 和 exact dedup;owner crash/takeover 不重复提案。
+- [ ] MVP 不实现 background dream/consolidation、自动 publish 或跨 scope merge。
+
+测试:once-per-cycle、flush/compact race、sampler timeout、duplicate proposal、multi-process lease、checkpoint resume、Plan Mode + approved plan + Memory recovery、response-loss/takeover。
+
+完成门槛:每次 flush/search/injection 都能关联 checkpoint/turn receipt;任何自动路径最多生成 pending proposal,未批准摘要永不进入未来 session context。
+
+建议 commit:`memory: bridge approved recall with compaction checkpoints`
+
+#### M8:cutover、清理与发布验收
+
+目标:删除双 authority,证明标准入口在故障、平台和人工交互下可交付。
+
+任务:
+
+- [ ] 冻结或删除 `runtime-host-model-context.ts` 中 Memory authority、duplicate JSON persistence 与不可达 command path;保留文件时必须有静态边界测试证明标准 CLI 不可达。
+- [ ] 若决定支持 legacy Memory 数据,只提供显式、离线、digest 校验后的单向 import/migration;不 silent scan、不 dual-read/dual-write、不自动删除源。若不支持,返回 typed unsupported 并保持源不变。
+- [ ] 同步 CLI help、TUI tips、settings schema、README/AGENTS 与本计划,删除尚未可用或语法错误的宣传。
+- [ ] 增加静态检查:production composition 不导入 legacy Memory authority;TUI/CLI/tools 不直接导入 repository/`MemoryStore`;event/trace 不含正文。
+- [ ] 补齐 Linux 自动化 candidate、macOS/Windows path/schema runner 证据或明确 gap;不得把 Linux-only 结果表述为跨平台通过。
+- [ ] 在本节逐项记录 commit、完整命令、files/tests/assertions、日期和未完成项;历史 58-test 结果不得冒充 fresh release gate。
+
+自动化发布门禁:
+
+- [ ] `npm run check` 完整通过,无 error/warning/info 遗漏。
+- [ ] `npm test`、`npm run build` 完整通过;涉及 TUI 时同时运行 Bun/OpenTUI suite。
+- [ ] 隔离 `RUNLEDGER_DIR` 的 standard CLI 覆盖 propose -> approve -> process restart -> search -> model-context injection -> revoke。
+- [ ] fault matrix 覆盖 response-loss、owner takeover、driver reconnect、SQLite busy/rollback、projection corruption/rebuild、expired/revoked/drift 与 store unavailable。
+- [ ] `git diff --check`、schema compatibility、execution/platform boundary scripts 与 secret scan 通过。
+
+独立人工验收（不能由单测代填）:
+
+- [ ] 真实 TTY 中 `/memory`、`/remember`、approve/reject/revoke 的 dark/light、窄终端、键盘/IME、断线重连与 clean exit。
+- [ ] 使用真实模型确认 injected fragment 有界、来源可读、未批准内容不可见,并核对 event/Trace/日志不含正文。
+- [ ] reviewer 独立核对 scope 隔离、权限提示、默认关闭和 legacy 数据处理结论。
+
+完成门槛:M0–M8 全部关闭,自动化与人工证据分别记录,legacy authority 不可达且无双写,方可把 Memory 标为 **implemented**。
+
+建议 commit:`memory: cut over session-owner delivery and retire legacy authority`
 
 ## 10. 验证矩阵
 
@@ -1243,7 +1427,7 @@ golden tests:
 | 外部 memory 编辑 | 未审内容被注入 | digest scan -> changed_unreviewed |
 | index 漂移 | 错误/陈旧检索 | rebuildable projection + index digest receipt |
 | TUI 成为事实源 | reconnect/resume 丢状态 | reducer projection,UI 只存临时交互 |
-| client 直接调用 controller/store | 多 client 分叉状态、绕过 writer/driver fence | 所有生产 mutation/query/subscription 经 authenticated Host,client 只持 remote facade |
+| client 直接调用 controller/store | 多 client 分叉状态、绕过 writer/driver fence | 所有生产 mutation/query/subscription 经 authenticated Session Owner,client 只持 remote facade |
 | command response-loss | 重复 compact、重复 memory publish 或重复 mode transition | durable intent/receipt + command/request digest + uncertain 不重执行 |
 | storage root 漂移 | 项目目录和旧 agent home 形成双真源 | 单一 `runledgerHome` + canonical layout;旧路径与 sessionDir authority fail closed |
 | Runtime contract 与 behavior 漂移 | 双真源、并行合并冲突 | contract allowlist 只读 + 独立 contract PR + consumer test |
@@ -1268,8 +1452,8 @@ golden tests:
 - [ ] pre-compact flush 只产 proposal,失败不阻止 compact。
 - [ ] post-compact recovery 只读 approved、有效、scope 匹配的 record。
 - [ ] TUI/CLI/未来 API 复用同一 command/query/event schema。
-- [ ] 标准 CLI/TUI 只通过 authenticated Runtime Host 访问本专项;Host 是 resident service/store/event writer owner,observer 无 mutation authority。
-- [ ] 所有领域 mutation 绑定 Host/session generation、driver revision、expected domain revision 与 durable command receipt;response-loss 不重复副作用。
+- [ ] 标准 CLI/TUI 只通过 authenticated Session Owner Runtime 访问本专项;owner 是 resident service/store/event writer authority,observer 无 mutation authority。
+- [ ] 所有领域 mutation 绑定 owner generation、driver revision、expected domain revision 与 durable command/attempt receipt;response-loss 不重复副作用。
 - [ ] 所有本地数据只写 canonical `runledgerHome` 子树,不写 `<cwd>/.runledger/`、`~/.runledger/agent/` 或任意 sessionDir。
 - [ ] 所有 session 与 runtime 数据只遵循当前 exact format,不提供旧格式兼容、迁移、双写或隐式转换。
 - [ ] `npm run check` 完整通过。
