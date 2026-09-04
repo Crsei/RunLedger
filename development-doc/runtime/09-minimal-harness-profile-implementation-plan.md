@@ -1,6 +1,6 @@
 # RunLedger 会话级极简 Harness Profile 实施计划
 
-> 文档状态：in progress；P0–P4 implemented，P5 not started
+> 文档状态：implemented；P0–P5 complete（Linux automated acceptance）；human visual/IME 与 macOS/Windows runner pending
 > 基线复核：2026-09-04，`rollback/before-composer-shape@cc827e67e81b`
 > 实施工作树：`RunLedger-minimal-harness-profile` / `feat/minimal-harness-profile`
 > 目标入口：标准 `runledger` CLI 的 `main.ts → createEmbeddedSessionRuntime() → assembleSessionDomain()`
@@ -18,6 +18,8 @@ P3 fresh evidence（2026-09-04）：CLI 新增仅限 fresh create 的 `--harness
 提交更新（2026-09-04）：以上“没有 commit”均记录对应阶段取得门禁证据时的状态；P0–P3 实现与测试随后统一提交为 `1dba2d3`（`feat(runtime): preserve immutable harness profiles per session`），尚未 push。P4–P5 不在该提交中。
 
 P4 fresh evidence（2026-09-04）：`restoreSession()` 现在先解析 catalog 的 exact builtin ref，再校验 durable event hash chain 和所有 `harness.composed` receipt，最后才使用可丢弃 checkpoint cache；malformed/session/generation/profile/composition-digest/duplicate-generation 均返回 typed diagnostic，catalog ref 损坏返回 `harness_profile_corruption`。healthy minimal attach 不产生 client-side receipt；真实多进程 minimal governed `bash` 在 Attempt Gateway 内阻塞后 SIGKILL，takeover generation 1 → 2 保持 ref/composition digest，recovery barrier 保持 open 且新增副作用 `spawnCount=0`；clean resume 的 checkpoint hit/corrupt/deleted 三路径一致，旧 generation 写 receipt 被 owner fence 拒绝。RED 为 1 file / 4 个预期失败；GREEN 扩展为 9 tests，生产多进程 suite 10 tests 通过；focused 10 files / 93 tests 通过。`npm run check`、runtime bucket 128 files / 669 tests 与 security-storage bucket 98 files / 589 passed / 3 macOS-only skipped 均连续两轮通过。实现提交为 `1dccaa4`（`feat(runtime): audit harness composition across recovery`），尚未 push；P5 最终全量门禁与 built CLI 矩阵不在该提交中。
+
+P5 fresh evidence（2026-09-04）：新增 restrictive Permission + minimal 的 production composition 验收，精确模型表面仍为 `bash/edit`，`edit` 在 governed filesystem 前拒绝、文件零变化，Attempt receipt 为 `started → uncertain`；既有 danger-full-access 场景同时证明两个工具成功执行并产生 committed process/workspace receipts。该验收提交为 `03a3e06`（`test(runtime): prove minimal harness cannot widen permissions`）。自动门禁为 inventory 494 owned files / 0 diagnostics、canonical focused 60 files / 433 tests、runtime 128 files / 670 tests、security-storage 98 files / 589 passed / 3 macOS-only skipped、TUI-native 19 files / 138 tests、`npm run check`、完整 `npm test`、`npm run build`、`npm run test:smoke` 与 `git diff --check` 全部通过。built smoke 的 candidate 固定为本工作树 `bin/runledger.js → dist/cli/cli.js`，隔离 home 下 version/help 与 tmux startup/clean exit 通过。标准 PATH 在指向本工作树时完成 fresh standard、fresh minimal、minimal 新进程 resume 与 fork；隔离 SQLite 证明 source generation 1/2 与 fork generation 1 的 profile ref、composition digest 及 `bash/edit` manifest 一致。另以同一 built candidate 对真实 Bun owner 执行 SIGKILL，generation 3 → 4 takeover 进入 `recovery_required`，profile ref/composition digest/两工具不漂移；最终全局 link 已重新核验指向本工作树。测试临时 home 与本次进程均已清理，未读取或修改真实用户 home，尚未 push。dark/light、80/143 列、真实键盘、中文 IME 仍为 human pending；macOS/Windows 真实 runner 仍为 platform pending，均不被 tmux/单元证据替代。
 
 ## 0. 结论
 
@@ -473,7 +475,7 @@ Stable Green：Session Owner focused suite、runtime/security/storage buckets �
 
 ### P5：生产验收与文档收口
 
-状态：not started。
+状态：implemented / Linux automated accepted；human visual/IME 与 macOS/Windows runner pending。
 
 自动门禁：
 
@@ -514,6 +516,8 @@ git diff --check
 | standard + minimal 并存 | 两个 Session 的 prompt/tool/context/lifecycle 隔离 |
 
 人工验收只记录产品显示：dark/light、80/143 列、真实键盘输入、中文 IME、干净退出。自动 PTY/frame 测试不能标记为 human verified。
+
+完成效果：最小 E2E 矩阵的代码/进程/Linux built-CLI 部分均有直接证据。fresh standard/minimal、minimal resume/fork/takeover、restrictive/permissive Permission 与 standard/minimal isolation 已闭合；profile 始终只缩小模型表面，不修改 Security authority。built CLI TTY 已证明 120 列 startup/clean exit，但没有提升 dark/light、80/143、真实键盘或中文 IME 的人工状态；macOS/Windows runner 也继续保持 pending。
 
 ---
 

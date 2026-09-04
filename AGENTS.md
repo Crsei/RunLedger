@@ -166,6 +166,15 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 - fresh create 启动显示响应式两栏 Welcome 页面（RUN/LEDGER 双段 LOGO、当前 Session 摘要、最近会话与 Tip）；resume/continue/fork 及同进程后续 Session 视图不重复显示。
 - `tips.txt` 通过 `readFileSync(new URL(..., import.meta.url))` 同时兼容 Bun、tsx 与 Node，构建时复制到 `dist/tui/components/tips.txt`，全局 `runledger` 继续只加载 `dist`。
 
+#### 1.2.ve 会话级 Minimal Harness Profile（P0–P5，2026-09-04）
+
+- `standard@1` / `minimal@1` 是 Session 创建时冻结的 immutable Harness Profile；V4 Session Store 保存 exact builtin ref，fork 原子继承，resume/attach/takeover 只消费 durable catalog authority，checkpoint cache 不拥有 profile authority；
+- `minimal@1` 的完整 system prompt 固定为 `You are a helpful software engineer assistant.`，provider-facing 工具按顺序严格只有 governed `bash`、`edit`；不创建模型侧 MCP/Skill/Hook/extension lifecycle，不注入 extension context，也不装配 child/multi-agent；
+- Harness 只缩小模型表面，不改变 Permission/Approval/Sandbox/Network authority；`bash` 仍经 managed process、Security/ExecutionGateway、Attempt Gateway 与 owner fence，`edit` 仍经 governed filesystem；
+- 每个 owner generation 在 Agent/model call 前持久化 bounded `harness.composed` receipt；恢复按 catalog ref → event hash chain → receipt semantic audit → optional checkpoint cache 的顺序 fail closed；
+- CLI 仅 fresh create 接受 `--harness-profile standard|minimal`；TUI `/new [standard|minimal]` 只创建新 Session，catalog/header 只读显示 Harness，不提供 mutation；
+- 权威状态与 fresh evidence 见 `development-doc/runtime/09-minimal-harness-profile-implementation-plan.md`。P0–P5 的 Linux automated/built-CLI 验收已完成；dark/light、80/143、真实键盘/中文 IME 与 macOS/Windows runner 仍 pending，不标记 human/cross-platform verified。
+
 ### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
 
 - `transformContext` 上下文变换;
