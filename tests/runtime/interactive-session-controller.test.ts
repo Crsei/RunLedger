@@ -6,6 +6,7 @@ import type { AuthInteraction, ProviderAuth } from "../../src/auth/types.ts";
 import { createModels, createProvider } from "../../src/models.ts";
 import { InteractiveSessionController } from "../../src/runtime/interactive-session-controller.ts";
 import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
+import { canonicalJson } from "../../src/runtime/protocol/canonical-json.ts";
 import { MemoryLedger } from "../../src/runtime/ledger/memory-ledger.ts";
 import type { SessionReplay } from "../../src/storage/session-codec.ts";
 import { loadProjectSettings, saveProjectSettings } from "../../src/storage/settings-manager.ts";
@@ -221,6 +222,67 @@ describe("InteractiveSessionController", () => {
 		});
 
 		expect(controller.currentSelection.thinkingLevel).toBe("high");
+		controller.dispose();
+	});
+
+	it("falls back from a persisted model that the Host compatibility policy does not verify", async () => {
+		const cwd = await tempDir();
+		const { models, p1, p2 } = fixtureModels();
+		await models.login("p1", "api_key", INTERACTION);
+		await models.login("p2", "api_key", INTERACTION);
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p1.provider, model: p1.id },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			isModelSelectable: (candidate) => candidate.provider === p2.provider && candidate.id === p2.id,
+		});
+
+		expect(controller.currentSelection).toMatchObject({ provider: p2.provider, model: p2 });
+		controller.dispose();
+	});
+
+	it("exposes only Host-verified models through the interactive selection boundary", async () => {
+		const cwd = await tempDir();
+		const { models, p1, p2 } = fixtureModels();
+		await models.login("p1", "api_key", INTERACTION);
+		await models.login("p2", "api_key", INTERACTION);
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models,
+			settings: { provider: p2.provider, model: p2.id },
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+			isModelSelectable: (candidate) => candidate.provider === p2.provider && candidate.id === p2.id,
+		});
+
+		expect(await controller.getAvailableModels()).toEqual([p2]);
+		await expect(controller.selectModel(p1)).rejects.toThrow("model profile is not verified: p1/m1");
+		controller.dispose();
+	});
+
+	it("omits absent optional model fields from the Host selection snapshot", async () => {
+		const cwd = await tempDir();
+		const controller = await InteractiveSessionController.create({
+			cwd,
+			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test",
+			models: createModels(),
+			settings: {},
+			replay: EMPTY_REPLAY,
+			ledger: new MemoryLedger(),
+			tools: [],
+		});
+
+		expect(controller.currentSelection).toEqual({ thinkingLevel: "off" });
+		expect(() => canonicalJson(controller.currentSelection)).not.toThrow();
 		controller.dispose();
 	});
 

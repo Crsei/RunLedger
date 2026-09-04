@@ -2,6 +2,7 @@
 
 import { resolve } from "node:path";
 import type { ProjectSettings } from "../storage/settings-manager.ts";
+import type { Api, Model } from "../types.ts";
 import { SessionManager } from "../storage/session-manager.ts";
 import { replaySession } from "../storage/session-codec.ts";
 import type { RunledgerLayout } from "../runtime/contracts/public.ts";
@@ -77,6 +78,8 @@ export interface ProductionHostSessionFactoryOptions {
 	readonly contextAssemblySink?: ContextAssemblySink;
 	/** Host-owned route gate created after the canonical session identity is known. */
 	readonly createModelRequestRouter?: (sessionId: string) => ModelRequestRouter;
+	/** Canonical compatibility preflight shared by startup restoration and `/model`. */
+	readonly isModelSelectable?: (model: Model<Api>) => boolean;
 	/** Host-owned Plan Mode state read used only for pre-execution denial. */
 	readonly planStateProvider?: (sessionId: string) => PlanModeState | undefined;
 	/** Host composition creates the MCP adapter against this session's process facade. */
@@ -275,6 +278,7 @@ export function createProductionHostSessionFactory(options: ProductionHostSessio
 				executionEnv,
 				toolResultOverflowStore: options.toolResultOverflowStore,
 				authorizationPolicy,
+				...(options.isModelSelectable === undefined ? {} : { isModelSelectable: options.isModelSelectable }),
                 ...(options.createModelRequestRouter === undefined ? {} : { modelRequestRouter: options.createModelRequestRouter(manager.sessionId()) }),
                 modelContextAssembler: options.contextSourceProvider === undefined
                   ? assembleAgentModelContext

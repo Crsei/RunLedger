@@ -129,6 +129,12 @@ export class ModelCompatibilityRouter {
 		return this.#manifest;
 	}
 
+	/** Model discovery/selection preflight；最终 provider dispatch 仍必须调用 route()。 */
+	public isVerifiedProfile(profileId: string): boolean {
+		const resolved = this.#manifest.aliases[profileId] ?? profileId;
+		return this.#profiles.get(resolved)?.status === "verified";
+	}
+
 	public route(request: ModelRouteRequest): ModelRouteDecision {
 		if (!isModelRouteRequest(request)) {
 			return makeDecision({ request, outcome: "deny", reasonCode: "invalid_request", diagnostics: [diagnostic("invalid_request", "model route request failed exact validation")] });

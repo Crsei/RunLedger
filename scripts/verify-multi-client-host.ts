@@ -102,7 +102,7 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 		if (claimed.body.ok !== true) return { passed: false, outcome: "fail", checks, failures: ["production driver claim failed"] };
 		driverFence = fenceFrom(claimed);
 		if (driverFence === undefined) return { passed: false, outcome: "fail", checks, failures: ["driver claim omitted the updated fence"] };
-		const staleMutation = await command(first, "session-stale-fence", "session.set_thinking", { sessionId, level: "off", ...initialFence });
+		const staleMutation = await command(first, "session-stale-fence", "session.clear_queues", { sessionId, ...initialFence });
 		if (staleMutation.body.code !== "driver_revision_conflict") {
 			return { passed: false, outcome: "fail", checks, failures: ["stale driver revision was not rejected"] };
 		}
@@ -118,8 +118,8 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 		if (secondClaim.body.ok !== true || driverFence === undefined) {
 			return { passed: false, outcome: "fail", checks, failures: ["second client driver claim failed"] };
 		}
-		const secondMutation = await command(second, "session-thinking-second-driver", "session.set_thinking", { sessionId, level: "off", ...driverFence });
-		const oldDriverMutation = await command(first, "session-thinking-old-driver", "session.set_thinking", { sessionId, level: "off", ...driverFence });
+		const secondMutation = await command(second, "session-clear-second-driver", "session.clear_queues", { sessionId, ...driverFence });
+		const oldDriverMutation = await command(first, "session-clear-old-driver", "session.clear_queues", { sessionId, ...driverFence });
 		if (secondMutation.body.ok !== true || oldDriverMutation.body.code !== "observer_mutation_forbidden") {
 			return { passed: false, outcome: "fail", checks, failures: ["transferred driver authority was not enforced"] };
 		}
@@ -135,10 +135,10 @@ export async function runMultiClientHostVerification(options: AcceptanceRunnerOp
 		}
 		checks.push("explicit_driver_transfer");
 
-		const thinking = await command(first, "session-thinking", "session.set_thinking", { sessionId, level: "off", ...driverFence }, "session-thinking-command");
-		const thinkingRetry = await command(first, "session-thinking-retry", "session.set_thinking", { sessionId, level: "off", ...driverFence }, "session-thinking-command");
-		const observerMutation = await command(second, "session-observer-thinking", "session.set_thinking", { sessionId, level: "off", ...driverFence });
-		if (thinking.body.ok !== true || thinkingRetry.body.ok !== true || observerMutation.body.code !== "observer_mutation_forbidden") {
+		const cleared = await command(first, "session-clear", "session.clear_queues", { sessionId, ...driverFence }, "session-clear-command");
+		const clearedRetry = await command(first, "session-clear-retry", "session.clear_queues", { sessionId, ...driverFence }, "session-clear-command");
+		const observerMutation = await command(second, "session-observer-clear", "session.clear_queues", { sessionId, ...driverFence });
+		if (cleared.body.ok !== true || clearedRetry.body.ok !== true || observerMutation.body.code !== "observer_mutation_forbidden") {
 			return { passed: false, outcome: "fail", checks, failures: ["production driver/idempotency fence failed"] };
 		}
 		checks.push("driver_fence", "command_idempotency");

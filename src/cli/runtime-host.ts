@@ -256,6 +256,9 @@ export async function runResidentRuntimeHost(): Promise<void> {
 			systemPrompt: buildSystemPrompt(cwd, layout.agents),
 			models,
 			settings,
+			isModelSelectable: modelCompatibility.ok
+				? (model) => modelCompatibility.router.isVerifiedProfile(`${model.provider}/${model.id}`)
+				: () => false,
 			traceRecorderFactory,
 			toolResultOverflowStore,
 			processPort,

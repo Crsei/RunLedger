@@ -71,6 +71,8 @@ export interface InteractiveSessionControllerOptions {
   contextAssemblySink?: ContextAssemblySink;
   /** Host-owned compatibility gate; provider dispatch is forbidden when it denies. */
   modelRequestRouter?: ModelRequestRouter;
+	/** Host-owned model discovery/selection preflight derived from the canonical compatibility manifest. */
+	isModelSelectable?: (model: Model<Api>) => boolean;
   /** Optional Host extension lifecycle facade; omitted in low-level controller tests. */
   extensionHookRuntime?: ExtensionHookRuntime;
   /** Current published extension snapshot identity used to bind hook invocations. */
@@ -220,6 +222,7 @@ export class InteractiveSessionController {
   private readonly modelContextAssembler: ModelContextAssembler | undefined;
   private readonly contextAssemblySink: ContextAssemblySink | undefined;
   private readonly modelRequestRouter: ModelRequestRouter | undefined;
+	private readonly isModelSelectable: ((model: Model<Api>) => boolean) | undefined;
   private readonly extensionHookRuntime: ExtensionHookRuntime | undefined;
   private readonly extensionHookSnapshotId: (() => string | undefined) | undefined;
   private readonly extensionTurnAdmission: (() => Promise<void>) | undefined;
@@ -252,6 +255,7 @@ export class InteractiveSessionController {
     this.modelContextAssembler = opts.modelContextAssembler;
     this.contextAssemblySink = opts.contextAssemblySink;
     this.modelRequestRouter = opts.modelRequestRouter;
+	this.isModelSelectable = opts.isModelSelectable;
     this.extensionHookRuntime = opts.extensionHookRuntime;
     this.extensionHookSnapshotId = opts.extensionHookSnapshotId;
     this.extensionTurnAdmission = opts.extensionTurnAdmission;
@@ -291,7 +295,12 @@ export class InteractiveSessionController {
   }
 
   get currentSelection(): RuntimeSelection {
-    return { ...this.selection };
+	const { provider, model, thinkingLevel } = this.selection;
+	return {
+		...(provider === undefined ? {} : { provider }),
+		...(model === undefined ? {} : { model }),
+		thinkingLevel,
+	};
   }
 
   get messages(): readonly AgentMessage[] {
@@ -355,10 +364,15 @@ export class InteractiveSessionController {
   async getAvailableModels(provider?: string): Promise<readonly Model<Api>[]> {
     const available = await this.models.getAvailable(provider);
     const enabled = this.settings.enabledModels;
-    if (!enabled || enabled.length === 0) return available;
-    return available.filter((model) => enabled.some((entry) =>
-      entry === model.id || entry === `${model.provider}/${model.id}`
-    ));
+	const enabledModels = !enabled || enabled.length === 0
+		? available
+		: available.filter((model) => enabled.some((entry) =>
+			entry === model.id || entry === `${model.provider}/${model.id}`
+		));
+	const isModelSelectable = this.isModelSelectable;
+	return isModelSelectable === undefined
+		? enabledModels
+		: enabledModels.filter((model) => isModelSelectable(model));
   }
 
   async login(providerId: string, type: AuthType, interaction: AuthInteraction): Promise<Credential> {
@@ -375,6 +389,9 @@ export class InteractiveSessionController {
     // 命令面只传 { provider, id } 等最小形状,按 catalog 解析完整 model
     // (baseUrl/api/reasoning/compat 等),避免流式调用时字段缺失。
     const resolved = this.models.getModel(model.provider, model.id) ?? model;
+	if (this.isModelSelectable?.(resolved) === false) {
+		throw new Error(`model profile is not verified: ${resolved.provider}/${resolved.id}`);
+	}
     const thinkingLevel = clampThinkingLevel(resolved, "high");
 		this.selection = { provider: resolved.provider, model: resolved, thinkingLevel };
 		this.onModelSelectionChanged?.();
@@ -584,10 +601,19 @@ async function resolveInitialSelection(
       );
     }
   }
+	if (model !== undefined && opts.isModelSelectable?.(model) === false) {
+		if (opts.overrides?.provider || opts.overrides?.model) {
+			throw new Error(`model profile is not verified: ${model.provider}/${model.id}`);
+		}
+		model = undefined;
+	}
   if (!model && (opts.overrides?.provider || opts.overrides?.model)) {
     throw new Error(`Unknown model selection: ${provider ?? "<provider>"}/${modelId ?? "<model>"}`);
   }
-  if (!model) model = (await opts.models.getAvailable())[0];
+	if (!model) {
+		const available = await opts.models.getAvailable();
+		model = available.find((candidate) => opts.isModelSelectable?.(candidate) !== false);
+	}
   return {
     provider: model?.provider ?? provider,
     model,

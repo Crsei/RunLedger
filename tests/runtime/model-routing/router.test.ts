@@ -61,6 +61,18 @@ describe("ModelCompatibilityRouter", () => {
 		expect(decision.decisionDigest).toEqual(runtimeDigest(decisionBody));
 	});
 
+	it("reports only verified canonical or aliased profiles as selectable", () => {
+		const router = new ModelCompatibilityRouter(manifest([
+			profile(),
+			profile({ profileId: "provider/unverified", modelId: "unverified", status: "unknown" }),
+		], { "provider/alias": "provider/model" }));
+
+		expect(router.isVerifiedProfile("provider/model")).toBe(true);
+		expect(router.isVerifiedProfile("provider/alias")).toBe(true);
+		expect(router.isVerifiedProfile("provider/unverified")).toBe(false);
+		expect(router.isVerifiedProfile("provider/missing")).toBe(false);
+	});
+
 	it("fails closed for unknown, retired, and capability-incompatible profiles", () => {
 		const router = new ModelCompatibilityRouter(manifest([
 			profile({ profileId: "retired/model", modelId: "retired", status: "retired" }),
