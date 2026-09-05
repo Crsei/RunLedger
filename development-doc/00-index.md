@@ -14,6 +14,7 @@
 
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
+| Codex 提示词模板 | [`notez/README.md`](notez/README.md) | 创建任务、执行、debug、重构、文档和协作提示词 | 可复制模板，不作为项目实现状态或自动执行指令 |
 | 项目运行与结构审计 | [`audit/README.md`](audit/README.md)、[`2026-09-05 审计与修复记录`](audit/2026-09-05-runtime-and-structure.md) | 运行缺陷修复、过度防御清理、依赖边界及 check/build/test/真实 CLI 复验 | 原始审计与修复后证据分开；剩余拆包及外部/人工/平台验收见清单，不替代领域计划 |
 | Runtime Contract | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威 contract:公共类型/schema、event payload、adapter port、ref/receipt/snapshot/projection、逻辑保存分类与 `RUNLEDGER_DIR`/默认 `~/.runledger` 单一用户级布局 | contract work package 证据;行为和迁移状态查对应专项、当前代码/tests 与 `AGENTS.md` |
 | Runtime | [`runtime/00-reference.md`](runtime/00-reference.md) | 可治理 Agent Harness Runtime 的设计输入与问题域 | `runtime/04-governed-agent-harness-runtime-plan.md` |
