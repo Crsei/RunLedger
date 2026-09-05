@@ -1,4 +1,5 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,19 +11,19 @@ import { startDualWireProxy, type DualWireProxy } from "../fixtures/dual-wire-pr
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");
 
 interface RunningGateway {
-	readonly child: ChildProcessWithoutNullStreams;
+	readonly child: ChildProcessByStdio<null, Readable, Readable>;
 	readonly token: string;
 	readonly port: number;
 	stop(): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
-function waitForExit(child: ChildProcessWithoutNullStreams): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+function waitForExit(child: ChildProcessByStdio<null, Readable, Readable>): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
 	return new Promise((resolveExit) => {
 		child.once("exit", (code, signal) => resolveExit({ code, signal }));
 	});
 }
 
-async function waitForListening(child: ChildProcessWithoutNullStreams): Promise<number> {
+async function waitForListening(child: ChildProcessByStdio<null, Readable, Readable>): Promise<number> {
 	return new Promise((resolvePort, reject) => {
 		let output = "";
 		const timer = setTimeout(() => reject(new Error("auth gateway did not become ready")), 10_000);
@@ -157,7 +158,8 @@ describe("auth-gateway real HTTP smoke", () => {
 			await new Promise<void>((resolveWrite) => setTimeout(resolveWrite, 25));
 			return current;
 		});
-		const responses = await Promise.all(requests.map(([path, body]) => request(gateway, path, body)));
+		const runningGateway = gateway;
+		const responses = await Promise.all(requests.map(([path, body]) => request(runningGateway, path, body)));
 		await concurrentCredentialWrite;
 		for (const [index, [path, _body, terminalMarker]] of requests.entries()) {
 			const response = responses[index];
@@ -168,7 +170,7 @@ describe("auth-gateway real HTTP smoke", () => {
 			expect(text, path).toContain("fixture-openai");
 			expect(text, path).toContain(terminalMarker);
 		}
-		const persistedCredentials = JSON.parse(await readFile(join(home, "auth.json"))) as Record<string, { type?: string }>;
+		const persistedCredentials = JSON.parse(await readFile(join(home, "auth.json"), "utf8")) as Record<string, { type?: string }>;
 		expect(persistedCredentials["lm-studio"]?.type).toBe("api_key");
 
 		const upstreamRequests = upstream.observations.filter((entry) => entry.url === "/v1/chat/completions");

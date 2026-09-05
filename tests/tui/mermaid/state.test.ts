@@ -17,6 +17,7 @@ describe("bounded Mermaid state diagrams", () => {
 
     expect(result).toMatchObject({ ok: true, diagram: { kind: "state", direction: "LR" } });
     if (!result.ok) return;
+    if (result.diagram.kind !== "state") throw new Error("expected state");
     const start = result.diagram.states.find((state) => state.stateType === "start");
     const end = result.diagram.states.find((state) => state.stateType === "end");
     expect(start).toBeDefined();
@@ -51,6 +52,7 @@ describe("bounded Mermaid state diagrams", () => {
 
     expect(result).toMatchObject({ ok: true, diagram: { kind: "state" } });
     if (!result.ok) return;
+    if (result.diagram.kind !== "state") throw new Error("expected state");
     expect(result.diagram.states).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "Waiting", label: "Waiting for input" }),
       expect.objectContaining({ id: "Check", stateType: "choice" }),
@@ -69,6 +71,7 @@ describe("bounded Mermaid state diagrams", () => {
 
     expect(result).toMatchObject({ ok: true, diagram: { kind: "state" } });
     if (!result.ok) return;
+    if (result.diagram.kind !== "state") throw new Error("expected state");
     expect(result.diagram.states).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "等待", label: "等待" }),
       expect.objectContaining({ id: "运行中", label: "运行中" }),

@@ -6,7 +6,7 @@
  * OpenTUI native heap 互相污染。
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, type SpawnOptions, type SpawnSyncOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -434,14 +434,16 @@ async function run(): Promise<void> {
 			for (const bucket of plan) {
 				for (const chunk of bucket.chunks) {
 					console.log(`[${bucket.bucket}] ${chunk.command} ${chunk.args.join(" ")}`);
-					const result = spawnSync(chunk.command, chunk.args, {
+					// Node 的同步实现保留 detached；@types/node 的 SpawnSyncOptions 未声明该字段。
+					const spawnOptions: SpawnSyncOptions & Pick<SpawnOptions, "detached"> = {
 						cwd: repoRoot,
 						env: sanitizedTestEnvironment(isolatedHome),
 						stdio: "inherit",
 						shell: false,
 						detached: processGroupsSupported,
 						timeout: bucket.watchdogMs,
-					});
+					};
+					const result = spawnSync(chunk.command, chunk.args, spawnOptions);
 					if (result.pid === undefined) {
 						childProcesses = "unknown";
 					} else if (processGroupsSupported) {

@@ -503,6 +503,7 @@ describe("S1 Session Domain Router", () => {
 			},
 		});
 		if (!result.ok || result.result.ok !== true) throw new Error("minimal create failed");
+		if (typeof result.result.value !== "object" || result.result.value === null || !("targetSessionId" in result.result.value)) throw new Error("target session missing");
 		const target = harness.store.getSession(String(result.result.value.targetSessionId));
 		expect(target?.harnessProfile).toEqual(minimalHarnessProfileRef());
 	});
@@ -699,6 +700,7 @@ describe("S1 Session Domain Router", () => {
 			},
 		});
 		if (!result.ok || result.result.ok !== true) throw new Error("fork failed");
+		if (typeof result.result.value !== "object" || result.result.value === null || !("targetSessionId" in result.result.value)) throw new Error("target session missing");
 		const targetSessionId = String(result.result.value.targetSessionId);
 		expect(harness.store.getSession(targetSessionId)?.headSequence).toBe(source.headSequence);
 		expect(harness.store.getSession(targetSessionId)?.harnessProfile).toEqual(standardHarnessProfileRef());

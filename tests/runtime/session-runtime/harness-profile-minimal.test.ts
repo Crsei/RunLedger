@@ -109,7 +109,9 @@ describe("minimal@1 production composition", () => {
 
 			expect(controller.systemPrompt).toBe(MINIMAL_HARNESS_SYSTEM_PROMPT);
 			expect(controller.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
-			expect(Object.keys(controller.tools[0]!.parameters.properties)).toEqual([
+			const parameters = controller.tools[0]!.parameters;
+			if (!("properties" in parameters) || typeof parameters.properties !== "object" || parameters.properties === null) throw new Error("expected object tool schema");
+			expect(Object.keys(parameters.properties)).toEqual([
 				"command",
 				"timeout",
 				"stdin",
@@ -254,8 +256,9 @@ describe("minimal@1 production composition", () => {
 			if (embedded.runtime === undefined) throw new Error("production runtime was not claimed");
 			const domain = (embedded.runtime as unknown as { readonly domain?: SessionDomainPort }).domain;
 			if (domain === undefined) throw new Error("production domain was not assembled");
-			expect(domain.controller.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
-			await expect(domain.controller.tools[1]!.execute(
+			const controller = domain.controller as InspectableController;
+			expect(controller.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
+			await expect(controller.tools[1]!.execute(
 				createRuntimeId("toolCall", "minimal-readonly-edit"),
 				{ path: "readonly-edit.txt", edits: [{ oldText: "before", newText: "after" }] },
 			)).rejects.toThrow(/denied|policy|write|allowed roots/u);

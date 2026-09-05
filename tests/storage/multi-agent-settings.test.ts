@@ -157,7 +157,7 @@ describe("layered multi-agent settings", () => {
 
 	it("fails closed for an invalid workspace storage key", async () => {
 		const { layout } = fixture();
-		await expect(loadLayeredProjectSettings({ layout, workspaceKey: "../outside" })).rejects.toMatchObject<Partial<SettingsStorageError>>({
+		await expect(loadLayeredProjectSettings({ layout, workspaceKey: "../outside" })).rejects.toMatchObject({
 			code: "invalid_workspace_key",
 		});
 	});

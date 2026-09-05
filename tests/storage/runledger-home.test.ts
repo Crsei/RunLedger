@@ -70,14 +70,14 @@ describe("resolveRunledgerHome", () => {
 				state: "directory",
 				canonicalPath: "/tmp/should-not-be-used",
 			}),
-		})).rejects.toMatchObject<RunledgerHomeError>({ code: "override_not_absolute" });
+		})).rejects.toMatchObject({ code: "override_not_absolute" });
 
 		await expect(resolveRunledgerHome({
 			env: { RUNLEDGER_DIR: "/missing" },
 			userHome: "/home/alice",
 			pathFlavor: "posix",
 			probeOverride: () => ({ rawValue: "/missing", state: "missing" }),
-		})).rejects.toMatchObject<RunledgerHomeError>({ code: "override_missing" });
+		})).rejects.toMatchObject({ code: "override_missing" });
 	});
 
 	it("does not accept an empty override as an invitation to use the default", async () => {
@@ -86,6 +86,6 @@ describe("resolveRunledgerHome", () => {
 			userHome: "/home/alice",
 			pathFlavor: "posix",
 			probeOverride: () => ({ rawValue: "", state: "missing" }),
-		})).rejects.toMatchObject<RunledgerHomeError>({ code: "override_empty" });
+		})).rejects.toMatchObject({ code: "override_empty" });
 	});
 });

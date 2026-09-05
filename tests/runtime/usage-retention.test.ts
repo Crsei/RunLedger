@@ -63,7 +63,8 @@ describe("provider usage and timing retention", () => {
 			streamFn,
 		);
 
-		const end = events.find((event) => event.type === "message_end" && event.role === "assistant");
+		const end = events.find((event) => event.type === "message_end");
+		if (end?.type !== "message_end" || end.role !== "assistant") throw new Error("assistant completion missing");
 		const start = events.find((event) => event.type === "agent_start");
 		expect(end?.runId).toBe(start?.runId);
 		expect(end?.message).toMatchObject({
@@ -127,7 +128,8 @@ describe("provider usage and timing retention", () => {
 			streamFn,
 		);
 
-		const end = events.find((event) => event.type === "message_end" && event.role === "assistant");
+		const end = events.find((event) => event.type === "message_end");
+		if (end?.type !== "message_end" || end.role !== "assistant") throw new Error("assistant completion missing");
 		if (end?.message?.role !== "assistant") throw new Error("assistant completion missing");
 		expect(end.message.timingSource).toBe("measured");
 		expect(end.message.durationMs).toBeGreaterThan(0);

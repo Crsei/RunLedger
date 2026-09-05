@@ -4,9 +4,9 @@ import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { AuthStorage } from "../../src/storage/auth-storage.ts";
-import { createModels } from "../../src/models.ts";
+import { createModels, type Provider } from "../../src/models.ts";
 import { createAssistantMessageEventStream } from "../../src/utils/event-stream.ts";
-import type { AssistantMessage, Api, Model, Provider } from "../../src/types.ts";
+import type { AssistantMessage, Api, Model } from "../../src/types.ts";
 import { checkConfiguredGatewayProviders, parseAuthGatewayArgs } from "../../src/cli/auth-gateway-cli.ts";
 
 const CLI_PATH = resolve(process.cwd(), "src", "cli", "cli.ts");

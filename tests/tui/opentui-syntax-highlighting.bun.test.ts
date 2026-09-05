@@ -1,3 +1,4 @@
+import { requireNode, ScrollBoxRenderable, TextRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import type { HighlightResult } from "../../src/tui/highlight/contracts.ts";
@@ -123,7 +124,7 @@ describe("OpenTUI syntect Markdown seam", () => {
 			runtime.update({ body: [code("first"), code("second"), code("third")], editorText: "", footer: [] });
 			await settle(setup.renderOnce);
 			expect(native.calls.map((call) => call.source)).toEqual(["third"]);
-			const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+			const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
 			expect(transcript).toBeDefined();
 			if (!transcript || !("scrollTop" in transcript)) return;
 			transcript.scrollTop = 0;
@@ -415,7 +416,7 @@ describe("OpenTUI syntax-theme status line", () => {
 				] }],
 			});
 			await setup.renderOnce();
-			const footer = setup.renderer.root.findDescendantById("runledger-footer");
+			const footer = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
 			const chunks = footer?.content.chunks ?? [];
 			expect(chunks.map((chunk) => chunk.text).join("")).toBe("  idle · ~/RunLedger · deepseek");
 			expect(chunks.find((chunk) => chunk.text === "~/RunLedger")?.fg?.toInts().slice(0, 3)).toEqual([228, 11, 11]);
@@ -448,7 +449,7 @@ describe("OpenTUI syntax-theme status line", () => {
 				] }],
 			});
 			await setup.renderOnce();
-			const footer = setup.renderer.root.findDescendantById("runledger-footer");
+			const footer = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
 			const chunks = footer?.content.chunks ?? [];
 			expect(chunks.map((chunk) => chunk.text).join("")).toBe(
 				"  idle · deepseek/deepseek-v4-pro · usage 12.3k",
@@ -487,7 +488,7 @@ describe("OpenTUI syntax-theme status line", () => {
 				],
 			});
 			await setup.renderOnce();
-			const footer = setup.renderer.root.findDescendantById("runledger-footer");
+			const footer = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
 			const chunks = footer?.content.chunks ?? [];
 			expect(footer?.height).toBe(2);
 			expect(chunks.map((chunk) => chunk.text).join("")).toBe("  deepseek\n  in 1.2k · 700.0 tok/s");

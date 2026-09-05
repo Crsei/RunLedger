@@ -1,3 +1,4 @@
+import type { AutoApprovalReviewAuditPort } from "../../../src/security/permission/auto-approval-reviewer.ts";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,6 +38,7 @@ interface ApprovalModule {
 			withHumanInputWait<T>(waitId: string, reason: "approval" | "credential", operation: () => Promise<T>): Promise<T>;
 		};
 	}): {
+		readonly autoReviewAudit: AutoApprovalReviewAuditPort;
 		readonly prompter: { request(prompt: PermissionPrompt, signal?: AbortSignal): Promise<Record<string, unknown>> };
 		readonly stateStore: {
 			read(approvalId: string): Promise<unknown>;

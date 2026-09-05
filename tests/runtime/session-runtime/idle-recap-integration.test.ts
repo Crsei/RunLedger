@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { SessionClient } from "../../../src/cli/session-client.ts";
 import { SessionInteractiveController } from "../../../src/cli/session-interactive-controller.ts";
@@ -47,7 +48,7 @@ function createFakeRecapDomain(): FakeRecapDomain {
 		prompt: async () => undefined,
 		runEphemeralTurn: async (request: EphemeralSessionTurnRequest) => {
 			requests.push(request);
-			return await new Promise<string | undefined>((resolve) => resolvers.push(resolve));
+			return await new Promise<string | undefined>((resolve) => { resolvers.push(resolve); });
 		},
 		notifyEditorActivity: () => undefined,
 		interrupt: () => undefined,
@@ -90,7 +91,7 @@ async function command(harness: RuntimeHarness, transport: { request(frame: any)
 	});
 }
 
-async function attachController(harness: RuntimeHarness, clientId: string, eventCursor = harness.runtime.currentHeadSequence(), onFrame?: (frame: unknown) => void): Promise<{ readonly handle: Awaited<ReturnType<SessionClient["attachTo"]>> extends { ok: true; handle: infer H } ? H : never; readonly controller: SessionInteractiveController }> {
+async function attachController(harness: RuntimeHarness, clientId: string, eventCursor = harness.runtime.currentHeadSequence(), onFrame?: (frame: unknown) => void): Promise<{ readonly handle: Extract<Awaited<ReturnType<SessionClient["attachTo"]>>, { ok: true }>["handle"]; readonly controller: SessionInteractiveController }> {
 	const client = new SessionClient({ store: harness.store, ownerStore: harness.ownerStore, claimTransport: harness.server, clientId: `client_${clientId}` as never });
 	const record = harness.ownerStore.readOwner(harness.sessionId);
 	if (record === undefined || harness.server.endpoint === undefined) throw new Error("owner is not attachable");
@@ -99,6 +100,7 @@ async function attachController(harness: RuntimeHarness, clientId: string, event
 	onFrame && opened.handle.transport.onEvent(onFrame as (frame: any) => void);
 	const snapshot = harness.runtime.domainSnapshot();
 	const controller = new SessionInteractiveController(opened.handle, {
+			harnessProfile: standardHarnessProfileRef(), permissionProfile: "workspace-write",
 		sessionId: harness.sessionId,
 		messages: snapshot.messages as AgentMessage[],
 		warnings: snapshot.warnings as string[],
@@ -109,7 +111,7 @@ async function attachController(harness: RuntimeHarness, clientId: string, event
 		driverRevision: harness.server.driverRevision(),
 	});
 	await controller.resumeEvents();
-	return { handle: opened.handle as never, controller };
+	return { handle: opened.handle, controller };
 }
 
 async function waitForRequests(domain: FakeRecapDomain, count: number): Promise<void> {
@@ -141,8 +143,8 @@ describe("SessionRuntime idle recap production composition", () => {
 		let late: Awaited<ReturnType<typeof attachController>> | undefined;
 		const driverEvents: unknown[] = [];
 		const observerEvents: unknown[] = [];
-		driver.controller.subscribeIdleRecap?.((event) => driverEvents.push(event));
-		observer.controller.subscribeIdleRecap?.((event) => observerEvents.push(event));
+		driver.controller.subscribeIdleRecap?.((event) => { driverEvents.push(event); });
+		observer.controller.subscribeIdleRecap?.((event) => { observerEvents.push(event); });
 		try {
 			const claim = await command(harness, driver.handle.transport, "driver_claim", {});
 			expect(claim.body).toMatchObject({ ok: true });
@@ -165,7 +167,7 @@ describe("SessionRuntime idle recap production composition", () => {
 			expect(harness.runtime.currentHeadSequence()).toBe(harness.store.replaySessionEvents(harness.sessionId).at(-1)?.sequence);
 
 			const lateFrames: unknown[] = [];
-			late = await attachController(harness, "idle-recap-late-client", 0, (frame) => lateFrames.push(frame));
+			late = await attachController(harness, "idle-recap-late-client", 0, (frame) => { lateFrames.push(frame); });
 			await new Promise((resolve) => setTimeout(resolve, 50));
 			expect(lateFrames.some((frame) => (frame as { body?: { eventType?: string } }).body?.eventType === "session.idle_recap")).toBe(false);
 
@@ -188,7 +190,7 @@ describe("SessionRuntime idle recap production composition", () => {
 		const harness = await createRuntimeHarness("idle-recap-selection", { domain: domain.domain, recapSettings: { enabled: true, idleSeconds: 1 } });
 		const driver = await attachController(harness, "idle-recap-selection-client");
 		const events: unknown[] = [];
-		driver.controller.subscribeIdleRecap?.((event) => events.push(event));
+		driver.controller.subscribeIdleRecap?.((event) => { events.push(event); });
 		try {
 			expect((await command(harness, driver.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
 			domain.emit({ type: "agent_end", timestamp: Date.now(), runId: "run-selection-1", stopReason: "stop", messageCountAtEnd: 1 });
@@ -215,7 +217,7 @@ describe("SessionRuntime idle recap production composition", () => {
 		const harness = await createRuntimeHarness("idle-recap-diagnostic", { domain: domain.domain, recapSettings: { enabled: true, idleSeconds: 1 } });
 		const driver = await attachController(harness, "idle-recap-diagnostic-client");
 		const events: unknown[] = [];
-		driver.controller.subscribeIdleRecap?.((event) => events.push(event));
+		driver.controller.subscribeIdleRecap?.((event) => { events.push(event); });
 		try {
 			expect((await command(harness, driver.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
 			domain.emit({ type: "agent_end", timestamp: Date.now(), runId: "run-diagnostic", stopReason: "stop", messageCountAtEnd: 1 });
@@ -224,7 +226,7 @@ describe("SessionRuntime idle recap production composition", () => {
 			const durableBeforeDiagnostic = harness.store.replaySessionEvents(harness.sessionId);
 			const diagnostic: EphemeralTurnDiagnostic = {
 				kind: "idle-recap",
-				requestId: request.requestId,
+				requestId: request.requestId ?? (() => { throw new Error("ephemeral request identity missing"); })(),
 				ownerGeneration: request.ownerGeneration,
 				activityGeneration: request.activityGeneration,
 				code: "router_denied",
@@ -234,7 +236,7 @@ describe("SessionRuntime idle recap production composition", () => {
 			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			expect(events).toEqual([expect.objectContaining({
-				requestId: request.requestId,
+				requestId: request.requestId ?? (() => { throw new Error("ephemeral request identity missing"); })(),
 				diagnostic,
 			})]);
 			expect(events[0]).not.toHaveProperty("text");
@@ -280,7 +282,7 @@ describe("SessionRuntime idle recap production composition", () => {
 			await new Promise((resolve) => setTimeout(resolve, 75));
 			replacement = await attachController(harness, "idle-recap-reconnect-second");
 			const replacementEvents: unknown[] = [];
-			replacement.controller.subscribeIdleRecap?.((event) => replacementEvents.push(event));
+			replacement.controller.subscribeIdleRecap?.((event) => { replacementEvents.push(event); });
 			expect((await command(harness, replacement.handle.transport, "driver_claim", {})).body).toMatchObject({ ok: true });
 
 			domain.resolveNext("stale after driver reconnect");

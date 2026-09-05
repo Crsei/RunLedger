@@ -20,6 +20,13 @@ import {
 } from "../../src/runtime/tasks/task-tools.ts";
 import type { LedgerEntry } from "../../src/runtime/ledger/types.ts";
 
+
+function taskIdFrom(result: { readonly details?: unknown }): string {
+  const details = result.details;
+  if (typeof details !== "object" || details === null || !("taskId" in details) || typeof details.taskId !== "string") throw new Error("taskId missing from tool result");
+  return details.taskId;
+}
+
 describe("Task tools", () => {
   it("Task create 写 ledger custom entry,返回 taskId", async () => {
     const ledger = new MemoryLedger();
@@ -30,7 +37,7 @@ describe("Task tools", () => {
     expect(text).toMatch(/priority: high/);
     expect(text).toMatch(/status: pending/);
     // taskId 形如 task-{8 字符}
-    expect(r.details?.taskId).toMatch(/^task-/);
+    expect(taskIdFrom(r)).toMatch(/^task-/);
     // ledger 被写了一条 custom entry
     const entries = ledger.findByType("custom");
     expect(entries.length).toBe(1);
@@ -45,7 +52,7 @@ describe("Task tools", () => {
     const upTool = createTaskUpdateTool({ ledger });
     const listTool = createTaskListTool({ ledger });
     const creation = await taskTool.execute("tc", { content: "do task A", priority: "medium" });
-    const taskId = creation.details?.taskId as string;
+    const taskId = taskIdFrom(creation);
     await upTool.execute("tc", { taskId, status: "in_progress" });
     await upTool.execute("tc", { taskId, status: "completed", content: "done A" });
     const r = await listTool.execute("tc", {});
@@ -62,17 +69,17 @@ describe("Task tools", () => {
     const listTool = createTaskListTool({ ledger });
     const a = await taskTool.execute("tc", { content: "A", priority: "high" });
     const b = await taskTool.execute("tc", { content: "B", priority: "high" });
-    await upTool.execute("tc", { taskId: a.details?.taskId as string, status: "in_progress" });
-    await upTool.execute("tc", { taskId: b.details?.taskId as string, status: "in_progress" });
+    await upTool.execute("tc", { taskId: taskIdFrom(a), status: "in_progress" });
+    await upTool.execute("tc", { taskId: taskIdFrom(b), status: "in_progress" });
     const r = await listTool.execute("tc", { status: "in_progress" });
     const text = (r.content[0] as { text: string }).text;
     // B 是最新 in_progress;A 应该自动回退
-    expect(text).toContain(b.details?.taskId as string);
-    expect(text).not.toContain(a.details?.taskId as string);
+    expect(text).toContain(taskIdFrom(b));
+    expect(text).not.toContain(taskIdFrom(a));
     // 全量列表: A 现在是 pending
     const r2 = await listTool.execute("tc", {});
     const text2 = (r2.content[0] as { text: string }).text;
-    expect(text2).toContain(a.details?.taskId as string);
+    expect(text2).toContain(taskIdFrom(a));
     expect(text2).toMatch(/pending.*A|A.*pending/);
   });
 

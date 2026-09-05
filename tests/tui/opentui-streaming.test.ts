@@ -6,6 +6,7 @@ import {
 import {
   FrameScheduler,
   type FrameClock,
+  type FrameTimerHandle,
 } from "../../src/tui/opentui/frame-scheduler.ts";
 import { RenderCache } from "../../src/tui/opentui/render-cache.ts";
 import { HeightIndex } from "../../src/tui/opentui/viewport-window.ts";
@@ -56,7 +57,8 @@ class TestClock implements FrameClock {
     return id;
   }
 
-  clearTimeout(handle: number): void {
+  clearTimeout(handle: FrameTimerHandle): void {
+    if (typeof handle !== "number") throw new Error("unexpected native timer in manual clock");
     this.timers.delete(handle);
   }
 

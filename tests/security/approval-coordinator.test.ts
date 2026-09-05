@@ -74,7 +74,6 @@ function request(): AuthorizationRequest {
 		toolName: "write",
 		argumentsDigest: runtimeDigest({ path: "file.ts", contentDigest: "x" }),
 		cwd: "/repo",
-			cwdDigest: runtimeDigest("/repo"),
 		requests: [{ kind: "filesystem", operation: "write", path: "file.ts" }],
 		workspace,
 		snapshot: snapshot(),
@@ -112,8 +111,9 @@ describe("ApprovalCoordinator", () => {
 		const authorized = await coordinator.authorize(value, evaluation(value), () => validRevalidation(value));
 		expect(authorized).toMatchObject({ ok: true, value: { approval: { decision: "allowed", decisionRevision: 1 } } });
 		if (!authorized.ok || authorized.value.approval === undefined) return;
+		const approval = authorized.value.approval;
 		const candidate = coordinator as ApprovalCoordinator & {
-			consumeAllowOnce?: (request: AuthorizationRequest, receipt: typeof authorized.value.approval) => Promise<unknown>;
+			consumeAllowOnce?: (request: AuthorizationRequest, receipt: typeof approval) => Promise<unknown>;
 		};
 		expect(candidate.consumeAllowOnce).toBeTypeOf("function");
 		const consumed = await candidate.consumeAllowOnce!(value, authorized.value.approval);

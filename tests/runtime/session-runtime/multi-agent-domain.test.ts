@@ -1,3 +1,4 @@
+import { buildMultiAgentPolicyReceipt, resolveMultiAgentPolicy } from "../../../src/runtime/agents/limits.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import { createRuntimeHarness, type RuntimeHarness } from "./harness.ts";
@@ -20,6 +21,12 @@ import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import type { MultiAgentPolicy, ChildReport, SubagentInvocationContext } from "../../../src/runtime/agents/types.ts";
 import type { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+
+
+function multiAgentPolicyFixture(): Pick<MultiAgentDomainPort, "policy" | "policyReceipt" | "rootAgentId" | "tools"> {
+	const resolution = resolveMultiAgentPolicy({ runtimeEnabled: true, user: { enabled: true } });
+	return { policy: resolution.policy, policyReceipt: buildMultiAgentPolicyReceipt({ runtimeEnabled: true, userSourceDigest: runtimeDigest({ enabled: true }), workspaceSourceDigest: runtimeDigest(null), resolution }), rootAgentId: createRuntimeId("agent", "fixture-root"), tools: [] };
+}
 
 let harness: RuntimeHarness | undefined;
 
@@ -55,7 +62,7 @@ function readTool(): AgentTool {
 		description: "read",
 		parameters: schema,
 		isReadOnly: () => true,
-		capabilityClaims: [{ name: "repository_read", resourceKind: "filesystem", scope: "invocation" }],
+		capabilityClaims: [{ name: "repository_read", resourceKind: "filesystem", scope: "invocation", resourceDigest: runtimeDigest("fixture-resource"), constraintsDigest: runtimeDigest("fixture-constraints") }],
 		execute: async (): Promise<AgentToolResult> => ({ content: [{ type: "text", text: "ok" }], details: {} }),
 	};
 }
@@ -148,6 +155,7 @@ describe("Session Domain multi-agent consumer", () => {
 
 	it("makes inspect read-only, exposes only spawn/cancel mutations, and blocks spawn during recovery", async () => {
 		const multiAgent: MultiAgentDomainPort = {
+		...multiAgentPolicyFixture(),
 			operationManifest: [
 				{ operation: "agent.inspect", capability: "session.multi-agent", access: "read" },
 				{ operation: "agent.spawn", capability: "session.multi-agent", access: "mutate" },
@@ -164,7 +172,7 @@ describe("Session Domain multi-agent consumer", () => {
 			snapshot: () => ({ messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, inFlight: false, providerStatuses: [] }),
 		};
 		harness = await createRuntimeHarness("multi-agent-domain-routing", { domain, crashTakeover: true });
-		expect(harness.runtime.protocolManifest().operationManifest).toEqual(expect.arrayContaining(multiAgent.operationManifest));
+		expect(harness.runtime.protocolManifest().operationManifest).toEqual(expect.arrayContaining([...multiAgent.operationManifest]));
 
 		const inspect = await harness.runtime.handleQuery({
 			kind: "domain_query",

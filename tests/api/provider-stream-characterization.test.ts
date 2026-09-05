@@ -27,7 +27,7 @@ describe("provider stream protocol characterization", () => {
 		handleContentBlockDelta({ contentBlockIndex: 1, delta: { toolUse: { input: '{"path":"a' } } }, blocks, output, stream);
 		handleContentBlockDelta({ contentBlockIndex: 1, delta: { toolUse: { input: '.txt"}' } } }, blocks, output, stream);
 		handleContentBlockStop({ contentBlockIndex: 1 }, blocks, output, stream);
-		handleMetadata({ usage: { inputTokens: 7, outputTokens: 5, cacheReadInputTokens: 2, totalTokens: 14 } }, bedrockModel(), output);
+		handleMetadata({ metrics: { latencyMs: 1 }, usage: { inputTokens: 7, outputTokens: 5, cacheReadInputTokens: 2, totalTokens: 14 } }, bedrockModel(), output);
 		output.stopReason = mapBedrockStopReason("tool_use").stopReason;
 		stream.end(output);
 

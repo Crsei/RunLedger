@@ -40,7 +40,9 @@ describe("MemoryStore snapshot persistence", () => {
 		if (!decoded.ok) return;
 		const restored = new MemoryStore({ clock: () => new Date("2026-08-04T00:00:00.000Z") });
 		expect(restored.restore(decoded.value)).toMatchObject({ ok: true });
-		expect(restored.search({ scope: "workspace", workspaceId, query: "review" }).value.results).toHaveLength(1);
+		const search1 = restored.search({ scope: "workspace", workspaceId, query: "review" });
+		if (!search1.ok) throw new Error("memory search fixture failed");
+		expect(search1.value.results).toHaveLength(1);
 
 		const tampered = {
 			...decoded.value,
@@ -95,6 +97,8 @@ describe("MemoryStore snapshot persistence", () => {
 		const second = new MemoryStore({ clock: () => new Date("2026-08-04T00:00:00.000Z") });
 		const hydrated = new MemoryStoreRepository(second, persistence);
 		expect(await hydrated.hydrate()).toMatchObject({ ok: true });
-		expect(second.search({ scope: "workspace", workspaceId, query: "durable" }).value.results).toHaveLength(1);
+		const search2 = second.search({ scope: "workspace", workspaceId, query: "durable" });
+		if (!search2.ok) throw new Error("memory search fixture failed");
+		expect(search2.value.results).toHaveLength(1);
 	});
 });

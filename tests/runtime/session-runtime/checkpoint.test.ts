@@ -18,7 +18,7 @@ import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { putSessionCheckpoint, restoreCheckpointReplay, validateCheckpointCache, SESSION_CHECKPOINT_CACHE_SCHEMA } from "../../../src/runtime/session-runtime/checkpoint.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { SESSION_CHECKPOINT_BOUNDARIES } from "../../../src/runtime/session-owner/types.ts";
-import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { createRuntimeId, type SessionId, type RuntimeInstanceId } from "../../../src/runtime/protocol/ids.ts";
 import { SessionRuntime, type SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import type { AgentEvent, AgentEventSink } from "../../../src/runtime/types.ts";
 
@@ -38,7 +38,7 @@ function openStore(): { store: SessionStore; ownerStore: OwnerStore } {
 	return { store: new SessionStore(db), ownerStore: new OwnerStore(db) };
 }
 
-async function claimedHarness(seed = "ck"): Promise<{ store: SessionStore; sessionId: SessionId; fence: { sessionId: SessionId; runtimeId: string; generation: number } }> {
+async function claimedHarness(seed = "ck"): Promise<{ store: SessionStore; sessionId: SessionId; fence: { sessionId: SessionId; runtimeId: RuntimeInstanceId; generation: number } }> {
 	const { store, ownerStore } = openStore();
 	const sessionId = createRuntimeId("session", seed);
 	store.createSession({

@@ -36,7 +36,6 @@ const request: SandboxPrepareRequest = {
 	network: "deny",
 	command: "true",
 	cwd: "/repo",
-		cwdDigest: runtimeDigest("/repo"),
 	environment: {},
 	timeoutMs: 1_000,
 };

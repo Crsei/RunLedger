@@ -24,7 +24,8 @@ describe("streaming table split", () => {
 			tailText: "assistant tail",
 			rowCount: 3,
 		});
-		expect(split?.prefixText + split?.tailText).toBe(source);
+		if (split === undefined) throw new Error("expected closed table split");
+        expect(split.prefixText + split.tailText).toBe(source);
 	});
 
 	test("keeps the same settled table prefix while the tail grows", () => {

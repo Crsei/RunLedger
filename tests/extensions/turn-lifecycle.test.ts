@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
+import type { ExtensionSnapshot } from "../../src/extensions/snapshot.ts";
+import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { ExtensionTurnLifecycle } from "../../src/extensions/turn-lifecycle.ts";
-import type { ExtensionReloadResult, ExtensionPublicSnapshot } from "../../src/extensions/host-manager.ts";
+import type { ExtensionReloadResult } from "../../src/extensions/host-manager.ts";
 
-function snapshot(generation: number): ExtensionPublicSnapshot {
+function snapshot(generation: number): ExtensionSnapshot {
 	return {
-		snapshotId: `snapshot_extension-${generation}`,
+		snapshotId: createRuntimeId("snapshot", `extension-${generation}`),
 		generation,
 		createdAt: "2026-08-05T00:00:00.000Z",
 		digest: String(generation).repeat(64),
 		counts: { plugins: 0, skills: 0, hooks: 0, mcpServers: 0, mcpTools: 0, ready: 0, blocked: 0, disabled: 0, error: 0 },
 		descriptors: [],
 		diagnostics: [],
+		skillProviders: [],
 	};
 }
 

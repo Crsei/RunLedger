@@ -52,13 +52,20 @@ function stoppedAssistant(stopReason: "stop" | "aborted" = "stop"): AssistantMes
     provider: mockModel.provider,
     model: mockModel.id,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-    ...(stopReason === "aborted" ? { stopReason: "aborted" as const } : {}),
+    stopReason,
+    timestamp: 0,
   };
 }
 
 function immediateStopStream(): StreamFn {
-  return async (_ctx, _signal): Promise<AssistantMessageEventStream> =>
-    createAssistantMessageEventStream([{ type: "message_start" }, { type: "done", message: stoppedAssistant() }]);
+  return (): AssistantMessageEventStream => {
+    const stream = createAssistantMessageEventStream();
+    const message = stoppedAssistant();
+    stream.push({ type: "start", partial: message });
+    stream.push({ type: "done", reason: "stop", message });
+    stream.end(message);
+    return stream;
+  };
 }
 
 function interruptibleStream(): {
@@ -221,7 +228,7 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
       const ui = (mode as unknown as { ui: TUI }).ui;
       const overlay = ui.getOverlay();
       expect(overlay).toBeInstanceOf(SelectionView);
-      const options = overlay?.present?.()[0];
+      const options = overlay?.present?.(terminal.columns)[0];
       expect(options?.kind).toBe("select");
       if (options?.kind === "select") {
         expect(options.options.some((option) => option.label === "/help")).toBe(false);

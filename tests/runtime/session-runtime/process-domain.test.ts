@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SessionProtocolOperationDescriptor } from "../../../src/runtime/session-server/protocol.ts";
 import type { SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
@@ -183,6 +184,7 @@ describe("S4 Session process domain", () => {
 		expect(attached).toMatchObject({ ok: true });
 		if (!attached.ok) return;
 		const controller = new SessionInteractiveController(attached.handle, {
+			harnessProfile: standardHarnessProfileRef(), permissionProfile: "workspace-write",
 			sessionId: harness.sessionId,
 			messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" },
 			toolCount: 0, eventCursor: 0, driverRevision: 0, agentRuns: [],

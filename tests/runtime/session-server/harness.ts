@@ -15,7 +15,7 @@ import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
 import { SessionRuntimeServer, SESSION_MUTATING_COMMAND_KINDS, type SessionController } from "../../../src/runtime/session-server/runtime-server.ts";
 import { freezeSessionProtocolManifest } from "../../../src/runtime/session-server/protocol.ts";
-import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { createRuntimeId, type SessionId, type RuntimeInstanceId } from "../../../src/runtime/protocol/ids.ts";
 
 export { SessionRuntimeServer, SessionOwner };
 
@@ -27,7 +27,7 @@ export interface ServerHarness {
 	readonly server: SessionRuntimeServer;
 	readonly sessionId: SessionId;
 	readonly token: string;
-	readonly fence: { readonly sessionId: SessionId; readonly runtimeId: string; readonly generation: number };
+	readonly fence: { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number };
 	cleanup(): void;
 }
 
@@ -35,7 +35,7 @@ export interface TestControllerOptions {
 	readonly sessionId: SessionId;
 	readonly store: SessionStore;
 	/** prompt 时取当前 owner fence(claim 后才可用)。 */
-	readonly getFence: () => { readonly sessionId: SessionId; readonly runtimeId: string; readonly generation: number };
+	readonly getFence: () => { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number };
 	/** prompt 时追加的 durable 事件(assistant delta)。 */
 	readonly onPrompt?: () => void;
 }
@@ -62,6 +62,7 @@ export function createTestController(options: TestControllerOptions): SessionCon
 			headSequence: eventSequence,
 			sessionStatus: "active",
 			runtimeState: "running",
+			agentRuns: [],
 		}),
 		isMutatingKind: (kind) => (SESSION_MUTATING_COMMAND_KINDS as readonly string[]).includes(kind),
 		async handleCommand(request, meta) {
@@ -110,7 +111,7 @@ export async function createServerHarness(): Promise<ServerHarness> {
 		harnessProfile: standardHarnessProfileRef(),
 		settingsDigest: "d".repeat(64),
 	});
-	let claimedFence: { readonly sessionId: SessionId; readonly runtimeId: string; readonly generation: number } | undefined;
+	let claimedFence: { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number } | undefined;
 	const controller = createTestController({
 		sessionId,
 		store,

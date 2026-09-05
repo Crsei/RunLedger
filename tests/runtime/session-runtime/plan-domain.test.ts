@@ -48,6 +48,7 @@ describe("SessionRuntime Plan domain", () => {
 				domain: { cwd: root, layout, settings, models, securitySources: noPromptTestSecurity },
 			});
 			controller = new SessionInteractiveController(embedded.handle, {
+			harnessProfile: standardHarnessProfileRef(), permissionProfile: "workspace-write",
 				sessionId,
 				messages: [],
 				warnings: [],

@@ -1,3 +1,4 @@
+import type { ConnectionId } from "../../../src/runtime/protocol/ids.ts";
 /**
  * R4:RuntimeServer transport fixtures(06 §6.1/§6.2)。
  *
@@ -57,8 +58,8 @@ async function tryHandshake(overrides: Record<string, unknown> = {}): Promise<{ 
 	}
 }
 
-function onlyConnectionId(): string {
-	const server = harness!.server as unknown as { readonly connections: Set<{ readonly connectionId: string }> };
+function onlyConnectionId(): ConnectionId {
+	const server = harness!.server as unknown as { readonly connections: Set<{ readonly connectionId: ConnectionId }> };
 	const connection = [...server.connections][0];
 	if (connection === undefined) throw new Error("expected one initialized connection");
 	return connection.connectionId;

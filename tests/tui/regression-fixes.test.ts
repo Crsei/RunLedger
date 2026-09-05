@@ -12,7 +12,7 @@ import { mockModel } from "../../src/runtime/providers/mock-stream.ts";
 import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import type { Terminal } from "../../src/tui/index.ts";
 import type { HostFrameEnvelope } from "../../src/runtime/host/types.ts";
-import type { SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
+import { SESSION_PROTOCOL_VERSION, type SessionFrameEnvelope } from "../../src/runtime/session-server/protocol.ts";
 import type { ProviderWorkflowPort, ProviderCatalogSnapshot } from "../../src/tui/providers/types.ts";
 import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
 import type { PresentationBlock } from "../../src/tui/presentation.ts";
@@ -285,12 +285,12 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		const pending = mode.handleSessionReverseRequest({
 			frameId: "approval-expiry",
 			kind: "reverse_request",
-			protocolVersion: 1,
+			protocolVersion: SESSION_PROTOCOL_VERSION,
 			body: {
 				kind: "approval_prompt",
 				body: { requestType: "permission", toolName: "bash", summary: "write workspace file", expiresAt },
 			},
-		} as SessionFrameEnvelope, abort.signal);
+		} satisfies SessionFrameEnvelope, abort.signal);
 		try {
 			await vi.advanceTimersByTimeAsync(25);
 			expect(Reflect.get(mode, "activePermissionView")).toBeUndefined();
@@ -400,7 +400,7 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 	});
 
 	function credentialFrame(body: Record<string, unknown>): SessionFrameEnvelope {
-		return { frameId: "cred-1", kind: "reverse_request", protocolVersion: 1, body } as SessionFrameEnvelope;
+		return { frameId: "cred-1", kind: "reverse_request", protocolVersion: SESSION_PROTOCOL_VERSION, body };
 	}
 
 	it("R6: credential reverse-request prompt renders and returns the entered secret", async () => {

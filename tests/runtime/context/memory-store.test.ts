@@ -33,14 +33,18 @@ describe("MemoryStore", () => {
 		expect(proposed.ok).toBe(true);
 		if (!proposed.ok) return;
 		expect(proposed.value.record.trust).toBe("proposed");
-		expect(store.search({ query: "audit", scope: "workspace", workspaceId: workspaceA }).value.results).toEqual([]);
+		const search1 = store.search({ query: "audit", scope: "workspace", workspaceId: workspaceA });
+		if (!search1.ok) throw new Error("memory search fixture failed");
+		expect(search1.value.results).toEqual([]);
 
 		const approval = store.approve({
 			proposalId: proposed.value.proposal.proposalId,
 			approvalRef: sourceRef("approval receipt"),
 		});
 		expect(approval.ok).toBe(true);
-		expect(store.search({ query: "audit", scope: "workspace", workspaceId: workspaceA }).value.results).toHaveLength(1);
+		const search2 = store.search({ query: "audit", scope: "workspace", workspaceId: workspaceA });
+		if (!search2.ok) throw new Error("memory search fixture failed");
+		expect(search2.value.results).toHaveLength(1);
 	});
 
 	it("enforces workspace scope, bounded lexical results, and stable receipts", () => {
@@ -58,7 +62,9 @@ describe("MemoryStore", () => {
 		expect(result.value.results[0]?.memoryId).toBe(first.value.record.memoryId);
 		expect(result.value.results[0]?.snippet.length).toBeLessThanOrEqual(5);
 		expect(isMemorySearchReceipt(result.value.receipt)).toBe(true);
-		expect(store.search({ query: "alpha", scope: "workspace", workspaceId: workspaceB }).value.results[0]?.memoryId).toBe(second.value.record.memoryId);
+		const search3 = store.search({ query: "alpha", scope: "workspace", workspaceId: workspaceB });
+		if (!search3.ok) throw new Error("memory search fixture failed");
+		expect(search3.value.results[0]?.memoryId).toBe(second.value.record.memoryId);
 	});
 
 	it("stops injecting an approved record after content digest drift or revoke", () => {
@@ -67,7 +73,9 @@ describe("MemoryStore", () => {
 		if (!proposed.ok) throw new Error("fixture proposal failed");
 		store.approve({ proposalId: proposed.value.proposal.proposalId, approvalRef: sourceRef("approval") });
 		expect(store.markContentDigest(proposed.value.record.memoryId, runtimeDigest("changed"))).toMatchObject({ ok: true });
-		expect(store.search({ query: "task", scope: "session", sessionId: sessionA }).value.results).toEqual([]);
+		const search4 = store.search({ query: "task", scope: "session", sessionId: sessionA });
+		if (!search4.ok) throw new Error("memory search fixture failed");
+		expect(search4.value.results).toEqual([]);
 		expect(store.revoke(proposed.value.record.memoryId)).toMatchObject({ ok: true });
 	});
 });

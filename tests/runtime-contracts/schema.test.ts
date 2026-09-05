@@ -75,7 +75,7 @@ describe("Runtime current schema", () => {
 	});
 
 	it("rejects retired contract fields and unknown event types", () => {
-		const base: Record<string, unknown> = exactSessionEvent();
+		const base = exactSessionEvent();
 
 		expect(validateRuntimeEvent({ ...base, formatRevision: 4 })).toMatchObject({
 			ok: false,

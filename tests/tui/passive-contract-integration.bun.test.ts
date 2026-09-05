@@ -162,7 +162,7 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       expect(kinds).toContain("tool");
       const assistant = timeline.committedRows.find((r) => r.kind === "assistant" && r.text.text.includes("contract reply"));
       expect(assistant).toBeDefined();
-      expect(assistant?.streaming).toBe(false);
+      expect(assistant?.kind === "assistant" && assistant.streaming).toBe(false);
       const tool = timeline.committedRows.find((r) => r.kind === "tool" && r.toolCallId === "tool_call_contract_1");
       expect(tool?.status).toBe("succeeded");
       // 历史 replay 与 live 共用同一 timeline；稳定 row id 不重复
@@ -277,7 +277,7 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       expect(first).toContain("1 available models");
       expect(first).toContain("2. deepseek (current)");
       expect(first).toContain("All models");
-      expect(first).toContain("Choose a specific model and provider (current: deepseek-v4-pro)");
+      expect(first).toContain("Choose a specific model and provider (current: DeepSeek V4 Pro)");
       // Enter 选中第一个 provider → 二级单 provider 模型列表
       harness.terminal.send("\r");
       await settleFrames();
@@ -293,8 +293,8 @@ describe("B0 baseline: standard InteractiveMode production behavior", () => {
       await settleFrames();
       const all = overlayText();
       expect(all).toContain("Select Model and Provider");
-      expect(all).toContain("1. claude-x");
-      expect(all).toContain("2. deepseek-v4-pro (current)");
+      expect(all).toContain("1. Claude X");
+      expect(all).toContain("2. DeepSeek V4 Pro (current)");
     } finally {
       // 无论断言成败,先逐级 Esc 关掉两级 overlay,dispose 的 Esc+Ctrl+D 才能退出
       harness.terminal.send("\x1b");

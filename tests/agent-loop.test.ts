@@ -75,7 +75,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
 			ledger,
 		});
 		const events: AgentEvent[] = [];
-		agent.subscribe((event) => events.push(event));
+		agent.subscribe((event) => { events.push(event); });
 		const before = agent.state;
 
 		const result = await (agent as unknown as {
@@ -433,7 +433,7 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
       const first = toolResultMsg.content[0];
       expect(first).toBeDefined();
       if (first && first.type === "toolResult") {
-        expect(first.content[0]?.text).toBe("ping");
+        expect(first.content[0]).toMatchObject({ type: "text", text: "ping" });
       }
     }
   });
@@ -471,11 +471,11 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     });
     const tail = finalMessages[finalMessages.length - 1]!;
     expect(tail.role).toBe("assistant");
-    expect(tail.stopReason).toBe("length");
+    expect(tail).toMatchObject({ role: "assistant", stopReason: "length" });
   });
 
   it("consumes steering messages only at the next turn boundary", async () => {
-    const calls: readonly AgentMessage[][] = [];
+    const calls: Context["messages"][] = [];
     let agent: Agent;
     const streamFn: StreamFn = (requestModel, context) => {
       calls.push(context.messages);

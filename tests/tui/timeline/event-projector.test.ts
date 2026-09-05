@@ -64,9 +64,8 @@ describe("B2 timeline event-projector", () => {
 		const second = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
 		const eventsA = first.project(userMessage());
 		const eventsB = second.project(userMessage());
-		expect(eventsA[0]!.type).toBe("message_start");
-		expect(eventsA[0]!.row.id).toBe("user:0");
-		expect(eventsB[0]!.row.id).toBe(eventsA[0]!.row.id);
+		expect(eventsA[0]).toMatchObject({ type: "message_start", row: { id: "user:0" } });
+		expect(eventsB[0]).toMatchObject({ type: "message_start", row: { id: "user:0" } });
 		expect(eventsA).toHaveLength(2); // start + end
 	});
 
@@ -255,7 +254,7 @@ describe("B2 timeline event-projector", () => {
 		const projector = new TimelineEventProjector({ messageIndex: 0, displayOrder: 0, startedAt });
 		const startEvent: TuiEvent = { type: "message_start", timestamp: 0, role: "assistant" };
 		const start = projector.project({ kind: "tui-event", event: startEvent });
-		expect(start[0]!.row.id).toBe("assistant:0");
+		expect(start[0]).toMatchObject({ type: "message_start", row: { id: "assistant:0" } });
 		expect(projector.currentAssistantCorrelationId()).toBe("assistant:0");
 	});
 

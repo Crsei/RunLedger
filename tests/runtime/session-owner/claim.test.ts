@@ -150,7 +150,7 @@ describe("R3 claim", () => {
 		const owner = makeOwner();
 		const result = await owner.open(sessionId);
 		expect(result.ok && result.outcome === "claimed").toBe(true);
-		if (!result.ok) throw new Error("expected claim");
+		if (!result.ok || result.outcome !== "claimed") throw new Error("expected claim");
 		const events = store.replaySessionEvents(sessionId);
 		const claimed = events.filter((event) => event.eventType === "owner.claimed");
 		expect(claimed).toHaveLength(1);
@@ -177,7 +177,7 @@ describe("R3 claim", () => {
 		const second = makeOwner();
 		const result = await second.open(sessionId);
 		expect(result.ok && result.outcome === "claimed").toBe(true);
-		if (!result.ok) throw new Error("expected claim");
+		if (!result.ok || result.outcome !== "claimed") throw new Error("expected claim");
 		expect(result.fence.generation).toBe(2);
 		expect(ownerStore.readOwner(sessionId)?.generation).toBe(2);
 		expect(store.getSession(sessionId)?.status).toBe("active");
@@ -311,7 +311,7 @@ describe("R3 claim", () => {
 		const result = await loser.tryClaim({
 			mode: "takeover",
 			sessionId,
-			expected: { runtimeId: "runtime_ghost", generation: 99, state: "running" },
+			expected: { runtimeId: createRuntimeId("runtime", "ghost"), generation: 99, state: "running" },
 		});
 		expect(result.ok).toBe(false);
 		if (result.ok) throw new Error("expected loss");

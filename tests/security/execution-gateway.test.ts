@@ -11,7 +11,6 @@ import {
 	type ExecutionConstraintModes,
 	type ExecutionConstraintSnapshot,
 	type RuntimeDigest,
-	type WorkspaceExecutionEnvelope,
 } from "../../src/runtime/contracts/public.ts";
 import {
 	ExecutionGateway,
@@ -32,7 +31,7 @@ import { DeterministicAutoApprovalReviewer } from "../../src/security/permission
 import { PermissionEngine } from "../../src/security/permission/engine.ts";
 import { LinuxBwrapBackend } from "../../src/security/sandbox/linux-bwrap.ts";
 import type { SandboxBackend, SandboxCapability, SandboxDecisionReceipt, SandboxLaunchPlan, SandboxPrepareRequest } from "../../src/security/sandbox/types.ts";
-import type { AuthorizationRequest, AuthorizationResult, SecuritySnapshot } from "../../src/security/types.ts";
+import type { AuthorizationRequest, AuthorizationResult, SecuritySnapshot, HostWorkspaceExecutionContext } from "../../src/security/types.ts";
 
 const roots: string[] = [];
 
@@ -49,7 +48,7 @@ const broker: FileSystemBrokerPort = {
 	},
 	realpath,
 	readdir,
-	mkdir,
+	mkdir: async (path, options) => { await mkdir(path, options); },
 	rm,
 	rename,
 };
@@ -58,7 +57,7 @@ afterEach(async () => {
 	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
-function envelope(root: string): WorkspaceExecutionEnvelope {
+function envelope(root: string): HostWorkspaceExecutionContext {
 	return {
 		authorityId: createRuntimeId("authority", "gateway-test"),
 		tenantId: createRuntimeId("tenant", "gateway-test"),
@@ -86,7 +85,7 @@ function snapshot(
 	sandbox: "off" | "workspace-write" = "off",
 	bashAnalyzer?: SecuritySnapshot["bashAnalyzer"],
 ): SecuritySnapshot {
-	const body = {
+	const body: Omit<SecuritySnapshot, "policyDigest"> = {
 		profile: {
 			name: sandbox === "off" ? "danger-full-access" : "workspace-write",
 			approvalPolicy: "on-request",
@@ -122,7 +121,6 @@ function authorizationRequest(root: string, currentSnapshot: SecuritySnapshot): 
 		toolName: "read",
 		argumentsDigest: runtimeDigest({ path: "README.md" }),
 		cwd: root,
-			cwdDigest: runtimeDigest(root),
 		requests: [{ kind: "filesystem", operation: "read", path: "README.md" }],
 		workspace,
 		snapshot: currentSnapshot,
@@ -412,7 +410,7 @@ describe("ExecutionGateway", () => {
 			networkBroker: { request: async () => ({ status: 200, headers: {}, body: Buffer.from("ok"), finalUrl: "https://example.com" }) },
 			permissionEngine: new PermissionEngine(),
 			approvalCoordinator: new ApprovalCoordinator({ prompter: { request: async () => { throw new Error("AST simple must not prompt"); } } }),
-			bashClassificationAudit: { record: async (record) => { records.push(record); } },
+			bashClassificationAudit: { record: async (record) => { records.push({ ...record }); } },
 			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
 		});
 
@@ -470,7 +468,7 @@ describe("ExecutionGateway", () => {
 			approvalCoordinator: new ApprovalCoordinator({
 				prompter: { request: async () => ({ decision: "allow-once", decidedBy: createRuntimeId("principal", "bash-approver") }) },
 			}),
-			bashClassificationAudit: { record: async (record) => { records.push(record); } },
+			bashClassificationAudit: { record: async (record) => { records.push({ ...record }); } },
 			finalLeaf: new HostProcessFinalLeafAdapter({ sandboxBackend: unavailableBackend() }),
 		});
 
@@ -667,7 +665,6 @@ describe("HostProcessFinalLeafAdapter", () => {
 			network: "deny",
 			command: "printf ok",
 			cwd: root,
-				cwdDigest: runtimeDigest(root),
 			environment: {},
 			timeoutMs: 1_000,
 		} satisfies SandboxPrepareRequest);

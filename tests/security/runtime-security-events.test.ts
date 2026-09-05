@@ -69,7 +69,7 @@ describe("HostSecurityAuditAdapter", () => {
 		const adapter = new HostSecurityAuditAdapter({
 			authorityId: createRuntimeId("authority", "security-events"),
 			tenantId: createRuntimeId("tenant", "security-events"),
-			writer: { append: async (input) => { events.push({ type: input.type, payload: input.payload as Record<string, unknown> }); return {} as never; } },
+			writer: { append: async (input) => { events.push({ type: input.type, payload: { ...input.payload } }); return {} as never; } },
 		});
 		const value = request();
 		const pending = ticket(value);

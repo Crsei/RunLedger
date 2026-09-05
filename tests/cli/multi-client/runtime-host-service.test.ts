@@ -49,9 +49,9 @@ function scope(): RuntimeHostScope {
 }
 
 function fakeSession(
-	sessionId = createRuntimeId("session", "service"),
+	sessionId: string = createRuntimeId("session", "service"),
 	eventsPerPrompt = 1,
-): HostSessionRuntime {
+): HostSessionRuntime & { readonly promptCount: number } {
 	const listeners = new Set<AgentEventSink>();
 	const messages: AgentMessage[] = [];
 	let promptCount = 0;
@@ -83,7 +83,7 @@ function fakeSession(
 				const event: AgentEvent = {
 					type: "agent_end",
 					timestamp: Date.now(),
-					message: { role: "assistant", content: [{ type: "text", text: `${text}-${index}` }], stopReason: "stop" },
+					stopReason: "stop",
 				};
 				for (const listener of listeners) await listener(event);
 				if (eventsPerPrompt > 1) await new Promise<void>((resolve) => setImmediate(resolve));
@@ -621,7 +621,7 @@ describe.skipIf(IS_WINDOWS)("production Resident Runtime Host service", () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-host-service-"));
 		const socketPath = join(root, "host.sock");
 		const hostScope = createHostCompatibilityEnvelope(scope());
-		const sessions = new Map<string, HostSessionRuntime>();
+		const sessions = new Map<string, ReturnType<typeof fakeSession>>();
 		let principalCounter = 0;
 		const host = new ResidentRuntimeHost({
 			socketPath,

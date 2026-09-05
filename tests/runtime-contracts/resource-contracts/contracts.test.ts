@@ -1,13 +1,11 @@
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { resourceIdentityDigest, resourceIdentityKey, isRuntimeToolInvocation } from "../../../src/runtime/resources/schemas.ts";
 import { createResourceLifecycleEvent } from "../../../src/runtime/resources/events.ts";
 import type { RuntimeToolDescriptor } from "../../../src/runtime/resources/types.ts";
 
-const digest = {
-	algorithm: "sha256",
-	digest: "5".repeat(64),
-} as const;
+const digest = runtimeDigest("5");
 
 function descriptor(): RuntimeToolDescriptor {
 	return {

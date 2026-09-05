@@ -353,6 +353,7 @@ describe("bounded agent graph projection", () => {
 			agentId: childAgentId,
 			terminal: terminalRecord(),
 		}, 5);
+		if (!("terminal" in finishedPayload)) throw new Error("finished fixture is missing terminal");
 		const { terminal: _terminal, ...missingTerminal } = finishedPayload;
 		expect(decodeAgentGraphEventPayload("agent.finished", missingTerminal)).toMatchObject({
 		ok: false,

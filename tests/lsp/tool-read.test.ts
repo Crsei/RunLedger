@@ -37,7 +37,7 @@ async function answerInitialize(transport: FakeTransport): Promise<void> {
 		throw new Error("initialize request was not emitted");
 }
 
-async function waitForRequest(transport: FakeTransport, method: string): Promise<ReturnType<FakeTransport["lastRequest"]>> {
+async function waitForRequest(transport: FakeTransport, method: string): Promise<NonNullable<ReturnType<FakeTransport["lastRequest"]>>> {
 	for (let i = 0; i < 50; i += 1) {
 		const request = transport.lastRequest(method);
 		if (request !== undefined) return request;

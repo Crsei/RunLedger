@@ -1,3 +1,4 @@
+import { requireNode, BoxRenderable, ScrollBoxRenderable } from "./fixtures/opentui-nodes.ts";
 import { test, expect, describe } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import {
@@ -65,7 +66,7 @@ describe("OpenTUI S5 status indicator frame", () => {
 			await setup.renderOnce();
 
 			const status = setup.renderer.root.findDescendantById("runledger-status-indicator");
-			const editor = setup.renderer.root.findDescendantById("runledger-editor-row");
+			const editor = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
 			const captured = setup.captureCharFrame();
 			expect(status?.height).toBe(4);
 			expect((status?.y ?? 0)).toBeLessThan(editor?.y ?? 0);
@@ -86,14 +87,14 @@ describe("OpenTUI S5 status indicator frame", () => {
 		try {
 			runtime.update(frame({ indicator: "⠋", header: "Working", elapsed: "12s", interruptKey: "^C" }));
 			await setup.renderOnce();
-			const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+			const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
 			const body = setup.renderer.root.findDescendantById("runledger-block-history");
 			const transcriptId = transcript?.num;
 			const bodyId = body?.num;
 
 			runtime.update(frame({ indicator: "⠙", header: "Working", elapsed: "13s", interruptKey: "^C" }));
 			await setup.renderOnce();
-			expect(setup.renderer.root.findDescendantById("runledger-transcript")?.num).toBe(transcriptId);
+			expect(requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable)?.num).toBe(transcriptId);
 			expect(setup.renderer.root.findDescendantById("runledger-block-history")?.num).toBe(bodyId);
 
 			runtime.update({ body: [{ id: "history", kind: "text", content: "stable transcript" }], editorText: "", footer: [] });

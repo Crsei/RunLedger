@@ -1,3 +1,4 @@
+import { describe, expect, test } from "bun:test";
 import { TextAttributes } from "@opentui/core";
 import { createTestRenderer } from "@opentui/core/testing";
 import stringWidth from "string-width";

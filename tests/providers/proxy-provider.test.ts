@@ -1,3 +1,4 @@
+import type { ProxyWire } from "../../src/providers/proxy-discovery.ts";
 import { describe, expect, test } from "vitest";
 import type { Api, AssistantMessage, Context, Model, ProviderStreams } from "../../src/types.ts";
 import { AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
@@ -5,7 +6,6 @@ import { InMemoryModelsStore, type ProviderModelsStore } from "../../src/models-
 import {
 	createProxyProvider,
 	type ProxyProviderOptions,
-	type ProxyWire,
 	type ProxyWireProbeInput,
 } from "../../src/providers/proxy-provider.ts";
 

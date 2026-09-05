@@ -15,7 +15,7 @@ import lockfile from "proper-lockfile";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema, SESSION_STORE_SCHEMA_VERSION } from "../../../src/storage/session-store/schema.ts";
-import { beginOfflineMigration } from "../../../src/storage/session-store/schema-compatibility.ts";
+import { beginOfflineMigration, type MigrationGateHandle } from "../../../src/storage/session-store/schema-compatibility.ts";
 import { SessionStore, sessionEventHash } from "../../../src/storage/session-store/session-store.ts";
 import { projectSessionReplay } from "../../../src/storage/session-codec.ts";
 import { resolveSessionWorkspaceIdentity, sessionWorkspaceMatches } from "../../../src/cli/session-workspace-identity.ts";
@@ -82,11 +82,11 @@ function standardEntries(sessionId: string): string[] {
 	];
 }
 
-function holdGate(): { release: () => void } {
+function holdGate(): MigrationGateHandle {
 	const gate = beginOfflineMigration(db);
 	expect(gate).toMatchObject({ ok: true });
 	if (!gate.ok) throw new Error("gate failed");
-	return { release: gate.gate.release };
+	return gate.gate;
 }
 
 describe("R2 JSONL preflight", () => {

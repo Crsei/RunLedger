@@ -6,7 +6,8 @@ import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { JsonlRuntimeEventStore } from "../../../src/storage/host/runtime-event-store.ts";
-import type { ExtensionPublicSnapshot, ExtensionReloadResult } from "../../../src/extensions/host-manager.ts";
+import type { ExtensionReloadResult } from "../../../src/extensions/host-manager.ts";
+import type { ExtensionSnapshot } from "../../../src/extensions/snapshot.ts";
 import type { SecuritySnapshot } from "../../../src/security/types.ts";
 import type { HostRuntimeDomainContext } from "../../../src/cli/runtime-host-service.ts";
 import { createHostDomainPorts } from "../../../src/cli/runtime-host-domains.ts";
@@ -14,7 +15,7 @@ import { createHostDomainPorts } from "../../../src/cli/runtime-host-domains.ts"
 function securitySnapshot(): SecuritySnapshot {
 	return {
 		profile: { name: "workspace-write", approvalPolicy: "on-request", filesystemMode: "workspace-write", network: { mode: "deny", allowedHosts: [] }, sandbox: "off" },
-		filesystem: { mode: "workspace-write", workspaceRoot: "/private/workspace", protectedPaths: [] },
+		filesystem: { readRoots: ["/private/workspace"], writeRoots: ["/private/workspace"], denyRead: [], denyWrite: [], protectedPaths: [] },
 		rules: [],
 		sources: ["user"],
 		workspaceRoot: "/private/workspace",
@@ -24,16 +25,19 @@ function securitySnapshot(): SecuritySnapshot {
 	};
 }
 
-function snapshot(): ExtensionPublicSnapshot {
+function snapshot(): ExtensionSnapshot {
 	return {
 		snapshotId: "snapshot_extension-domain",
 		generation: 1,
 		createdAt: "2026-08-05T00:00:00.000Z",
 		digest: "d".repeat(64),
+		skillProviders: [],
 		counts: { plugins: 1, skills: 0, hooks: 0, mcpServers: 0, mcpTools: 0, ready: 0, blocked: 1, disabled: 0, error: 0 },
 		descriptors: [{
 			kind: "plugin",
 			identity: { kind: "plugin", qualifiedId: "plugin:fixture", version: "1.0.0", source: "project", digest: "plugin-digest" },
+			resource: { resourceId: createRuntimeId("resource", "extension-fixture"), kind: "plugin", qualifiedId: "plugin:fixture", version: "1.0.0", source: "project", digest: runtimeDigest("plugin-digest") },
+			provenance: { source: "project", sourceLocatorDigest: runtimeDigest("fixture-source") },
 			displayName: "fixture",
 			enabled: true,
 			trusted: false,
@@ -72,6 +76,9 @@ describe("Host extension domain adapter", () => {
 			setEnabled: async () => reloadResult,
 			trust: async () => reloadResult,
 			untrust: async () => reloadResult,
+			trustSkill: async () => reloadResult,
+			untrustSkill: async () => reloadResult,
+			setSkillProviderEnabled: async () => reloadResult,
 		};
 		const ports = createHostDomainPorts({
 			security: { snapshot: securitySnapshot() },

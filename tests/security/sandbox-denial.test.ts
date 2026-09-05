@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../src/runtime/protocol/foundation.ts";
-import type { WorkspaceExecutionEnvelope } from "../../src/runtime/contracts/public.ts";
+import type { HostWorkspaceExecutionContext } from "../../src/security/types.ts";
 import { LinuxBwrapBackend } from "../../src/security/sandbox/linux-bwrap.ts";
 import { classifySandboxDenial, isSandboxDenial, sandboxDenialReason } from "../../src/security/sandbox/denial.ts";
 import type { SandboxPrepareRequest } from "../../src/security/sandbox/types.ts";
@@ -11,7 +11,7 @@ function digest(value: string): RuntimeDigest {
 }
 
 function request(): SandboxPrepareRequest {
-	const workspace: WorkspaceExecutionEnvelope = {
+	const workspace: HostWorkspaceExecutionContext = {
 		authorityId: createRuntimeId("authority", "sandbox-denial"),
 		tenantId: createRuntimeId("tenant", "sandbox-denial"),
 		principalId: createRuntimeId("principal", "sandbox-denial"),
@@ -44,7 +44,6 @@ function request(): SandboxPrepareRequest {
 		network: "deny",
 		command: "true",
 		cwd: "/repo",
-			cwdDigest: runtimeDigest("/repo"),
 		environment: {},
 		timeoutMs: 1_000,
 	};

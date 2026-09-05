@@ -1,3 +1,4 @@
+import { requireNode, BoxRenderable, ScrollBoxRenderable, TextRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import stringWidth from "string-width";
@@ -23,15 +24,15 @@ describe("OpenTUI idle recap status projection", () => {
 				});
 				await setup.renderOnce();
 
-				const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-				const editor = setup.renderer.root.findDescendantById("runledger-editor-row");
-				const footer = setup.renderer.root.findDescendantById("runledger-footer");
+				const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
+				const editor = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
+				const footer = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
 				const frame = setup.captureCharFrame();
 				expect(frame).toContain("※ recap: 目标 🚀 next action");
 				expect(frame.split("\n").every((line) => stringWidth(stripAnsi(line)) <= width)).toBe(true);
 				expect((footer?.y ?? 0)).toBeGreaterThan(editor?.y ?? 0);
 				expect(footer?.plainText).toContain("※ recap: 目标 🚀 next action");
-				expect(transcript?.getChildren().map((child) => child.plainText).join("\n")).not.toContain("recap:");
+				expect(transcript?.getChildren().map((child) => requireNode(transcript, child.id, TextRenderable).plainText).join("\n")).not.toContain("recap:");
 			} finally {
 				runtime.destroy();
 			}

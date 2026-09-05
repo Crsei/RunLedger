@@ -56,7 +56,7 @@ describe("R4 Host-owned remote session facade", () => {
 			eventCursor: 0,
 		});
 		const events: string[] = [];
-		controller.subscribe((event) => events.push(event.type));
+		controller.subscribe((event) => { events.push(event.type); });
 		await controller.resumeEvents();
 		await controller.prompt("hello");
 		transport.emit({ type: "agent_end", timestamp: 3 }, 3);
@@ -107,11 +107,11 @@ describe("R4 Host-owned remote session facade", () => {
 		controller.applyRecoverySnapshot({
 			sessionId: "session_remote",
 			selection: { provider: "fake", thinkingLevel: "high" },
-			messages: [{ role: "user", content: "restored" }],
+			messages: [{ role: "user", content: [{ type: "text", text: "restored" }] }],
 			warnings: ["recovered"], auditEntries: [], toolCount: 2,
 			hostGeneration: 3, sessionGeneration: 2, driverRevision: 5, eventCursor: 11,
 		});
-		expect(controller.messages).toEqual([{ role: "user", content: "restored" }]);
+		expect(controller.messages).toEqual([{ role: "user", content: [{ type: "text", text: "restored" }] }]);
 		expect(controller.warnings).toEqual(["recovered"]);
 		expect(controller.currentSelection).toMatchObject({ thinkingLevel: "high" });
 		expect(controller.driverFence()).toEqual({ expectedHostGeneration: 3, expectedSessionGeneration: 2, expectedDriverRevision: 5 });

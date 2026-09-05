@@ -263,7 +263,7 @@ describe("Host-facing extension adapters", () => {
 			},
 			sourceRoot: { source: "project", sourceKey: "project:fixture", rootPath: "/fixture", priority: 1 },
 			priority: 1,
-			trustBinding: { identity: skillIdentity, canonicalPath: "/fixture/review", binding: { rootDigest: runtimeDigest("root").digest, manifestDigest: runtimeDigest("manifest").digest, configDigest: runtimeDigest("config").digest, assetsDigest: runtimeDigest("assets").digest, capabilityDigest: runtimeDigest("capabilities").digest, combinedDigest: skillIdentity.digest.digest }, principalId: identity.principalId },
+			trustBinding: { identity: skillIdentity, canonicalPath: "/fixture/review", binding: { commandDigest: runtimeDigest("command").digest, rootDigest: runtimeDigest("root").digest, manifestDigest: runtimeDigest("manifest").digest, configDigest: runtimeDigest("config").digest, assetsDigest: runtimeDigest("assets").digest, capabilityDigest: runtimeDigest("capabilities").digest, combinedDigest: skillIdentity.digest.digest }, principalId: identity.principalId },
 		};
 		const catalog = new SkillCatalog([descriptor]);
 		const skill = new RuntimeSkillAdapter({ catalog, resources: { catalog: okPort("resource_catalog") }, adapter });

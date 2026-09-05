@@ -1,3 +1,4 @@
+import type { OwnerProbeInput } from "../../../src/runtime/session-owner/session-owner.ts";
 /**
  * R3:crash takeover fixtures(06 §5.3/§5.4)。
  *
@@ -70,7 +71,7 @@ function realTransport() {
 		async closeCandidate() {
 			return undefined;
 		},
-		async probe(endpoint: { host: "127.0.0.1"; port: number }, input: { sessionId: string; expectedRuntimeId: string; expectedGeneration: number; authToken: string }, timeoutMs: number) {
+		async probe(endpoint: { host: "127.0.0.1"; port: number }, input: OwnerProbeInput, timeoutMs: number) {
 			return probeOwner(endpoint, input, timeoutMs);
 		},
 	};
@@ -89,7 +90,7 @@ function controllableTransport(): { transport: ReturnType<typeof realTransport>;
 			async closeCandidate() {
 				return undefined;
 			},
-			async probe(endpoint: { host: "127.0.0.1"; port: number }, input: { sessionId: string; expectedRuntimeId: string; expectedGeneration: number; authToken: string }, timeoutMs: number) {
+			async probe(endpoint: { host: "127.0.0.1"; port: number }, input: OwnerProbeInput, timeoutMs: number) {
 				return probeOwner(endpoint, input, timeoutMs);
 			},
 		},

@@ -150,9 +150,9 @@ describe("Session governed toolchain and process environment", () => {
 			const requestDigest = runtimeDigest("request");
 			const result = await createLocalSessionProcessLeaf().execute({
 				backendId: "off",
-				requested: "danger-full-access",
-				resolved: "danger-full-access",
-				effective: "danger-full-access",
+				requested: "off",
+				resolved: "off",
+				effective: "off",
 				enforcement: "off",
 				policyDigest,
 				requestDigest,

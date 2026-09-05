@@ -242,7 +242,7 @@ describe("governed child capability subset and model seam", () => {
 		expect(providerCalls).toBe(0);
 		expect(routeCalls).toBe(0);
 		if (!prepared.ok) return;
-		const stream = await prepared.value.streamFn(selected, { systemPrompt: "child system", messages: [], tools: prepared.value.tools });
+		const stream = await prepared.value.streamFn(selected, { systemPrompt: "child system", messages: [], tools: [...prepared.value.tools] });
 		await stream.result();
 		expect(providerCalls).toBe(1);
 		expect(routeCalls).toBe(1);

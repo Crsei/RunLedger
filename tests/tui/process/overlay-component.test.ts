@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { createProcessOverlayController } from "../../../src/tui/process/controller-adapter.ts";
 import { ProcessOverlayComponent } from "../../../src/tui/process/overlay-component.ts";
@@ -14,7 +15,7 @@ const item: ProcessOverlayItem = {
 	canWrite: true,
 	canResize: true,
 	canStop: true,
-	commandDisplay: { authority: "spawned", label: "npm test", receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } },
+	commandDisplay: { authority: "spawned", label: "npm test", receiptDigest: runtimeDigest("process-overlay-receipt") },
 };
 
 describe("R9 process overlay component", () => {

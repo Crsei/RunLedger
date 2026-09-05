@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it } from "vitest";
 import {
 	RUNTIME_ADAPTER_PORT_ACTIONS,
@@ -15,7 +16,7 @@ import {
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import * as resourcePorts from "../../src/runtime/resources/ports.ts";
 
-const digest = { algorithm: "sha256", digest: "a".repeat(64) } as const;
+const digest = runtimeDigest("a");
 const receiptRef = { subjectKind: "receipt", digest } as const;
 const identity = {
 	authorityId: createRuntimeId("authority", "ports"),
@@ -25,7 +26,7 @@ const identity = {
 	issuedAt: "2026-08-02T00:00:00.000Z",
 } as const;
 
-function requestFor<P extends RuntimeAdapterPortName>(port: P, action: string): AdapterPortRequest<P> {
+function requestFor<P extends RuntimeAdapterPortName>(port: P, action: AdapterPortRequest<P>["action"]): AdapterPortRequest<P> {
 	return {
 		port,
 		action,
@@ -40,7 +41,7 @@ function requestFor<P extends RuntimeAdapterPortName>(port: P, action: string): 
 	};
 }
 
-function resultFor(request: AdapterPortRequest): AdapterPortResult {
+function resultFor<P extends RuntimeAdapterPortName>(request: AdapterPortRequest<P>): AdapterPortResult<P> {
 	return {
 		port: request.port,
 		action: request.action,

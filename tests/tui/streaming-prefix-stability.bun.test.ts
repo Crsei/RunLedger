@@ -54,7 +54,7 @@ test("keeps settled OpenTUI rows byte-stable while a markdown part grows", async
         if (settledNode === undefined) continue;
         const rows = setup.captureCharFrame().split("\n")
           .slice(settledNode.screenY, settledNode.screenY + settledNode.height);
-        expect(rows.slice(0, previousRows.length)).toEqual(previousRows);
+        expect(rows.slice(0, previousRows.length)).toEqual([...previousRows]);
         previousRows = rows;
         previous = settled;
       }

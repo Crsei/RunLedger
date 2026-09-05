@@ -20,7 +20,7 @@ import { emitProviderData } from "../../scripts/model-generation/emit-provider-d
 import { emitModelTypes } from "../../scripts/model-generation/emit-model-types.ts";
 
 function completionsModel(id: string, provider: string, baseUrl: string): Model<"openai-completions"> {
-	return { id, name: id, api: "openai-completions", provider, baseUrl, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+	return { contextWindow: 4096, maxTokens: 1024, id, name: id, api: "openai-completions", provider, baseUrl, reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 }
 
 describe("S9 detectOpenAICompletionsCompat", () => {

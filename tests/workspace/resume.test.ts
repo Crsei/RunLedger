@@ -41,7 +41,7 @@ const REGISTERED = [
 	"",
 ].join("\n");
 
-function resumeRequest(record: Parameters<typeof encodePrivateLocator>[0]) {
+function resumeRequest(record: ReturnType<typeof encodePrivateLocator>) {
 	return { record, repo: "/repo", expectedBaseCommit: COMMIT, effectiveSubdir: "packages/app" };
 }
 

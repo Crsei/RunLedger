@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { IS_LINUX, IS_MACOS } from "../helpers/platform.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../src/runtime/protocol/foundation.ts";
-import type { WorkspaceExecutionEnvelope } from "../../src/runtime/contracts/public.ts";
+import type { HostWorkspaceExecutionContext } from "../../src/security/types.ts";
 import { MacOsSeatbeltBackend } from "../../src/security/sandbox/macos-seatbelt.ts";
 import type { SandboxPrepareRequest, SandboxProbe } from "../../src/security/sandbox/types.ts";
 
@@ -11,7 +11,7 @@ function digest(value: string): RuntimeDigest {
 }
 
 function request(overrides: Partial<SandboxPrepareRequest> = {}): SandboxPrepareRequest {
-	const workspace: WorkspaceExecutionEnvelope = {
+	const workspace: HostWorkspaceExecutionContext = {
 		authorityId: createRuntimeId("authority", "sandbox-macos"),
 		tenantId: createRuntimeId("tenant", "sandbox-macos"),
 		principalId: createRuntimeId("principal", "sandbox-macos"),
@@ -44,7 +44,6 @@ function request(overrides: Partial<SandboxPrepareRequest> = {}): SandboxPrepare
 		network: "deny",
 		command: "pwd",
 		cwd: "/repo",
-			cwdDigest: runtimeDigest("/repo"),
 		environment: {},
 		timeoutMs: 1_000,
 		...overrides,

@@ -22,13 +22,12 @@ function documentFor(path: string, lines: readonly string[], start = 1) {
 		hunks: [{
 			oldStart: start,
 			newStart: start,
-			lines: lines.map((text, index) => ({
-				kind: index % 3 === 1 ? "delete" as const : index % 3 === 2 ? "add" as const : "context" as const,
-				...(index % 3 === 1 ? { oldLine: start + index } : {}),
-				...(index % 3 === 2 ? { newLine: start + index } : {}),
-				...(index % 3 === 0 ? { oldLine: start + index, newLine: start + index } : {}),
-				text: bounded(text),
-			})),
+			lines: lines.map((text, index) => {
+                const content = bounded(text);
+                if (index % 3 === 1) return { kind: "delete" as const, oldLine: start + index, text: content };
+                if (index % 3 === 2) return { kind: "add" as const, newLine: start + index, text: content };
+                return { kind: "context" as const, oldLine: start + index, newLine: start + index, text: content };
+            }),
 		}],
 		addedLines: { state: "known" as const, value: lines.filter((_, index) => index % 3 === 2).length },
 		removedLines: { state: "known" as const, value: lines.filter((_, index) => index % 3 === 1).length },

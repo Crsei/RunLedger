@@ -116,7 +116,7 @@ describe("passive command, session, and interaction contracts", () => {
 		const workflow: SessionWorkflowState[] = [
 			{ state: "idle", generation: 1 },
 			{ state: "loading", generation: 1, requestId: "request-1" },
-			{ state: "ready", generation: 1, value: { kind: "catalog", items: [summary] } },
+			{ state: "ready", generation: 1, value: { kind: "catalog", revision: 0, items: [{ sessionId: summary.id, workspaceId: "workspace-1", repositoryId: "repository-1", status: "active", createdAtMs: Date.parse(summary.createdAt), updatedAtMs: Date.parse(summary.updatedAt), headSequence: 0, driverRevision: 0, harnessProfileId: "standard", harnessProfileVersion: 1, current: true }] } },
 			{ state: "empty", generation: 1 },
 			{ state: "error", generation: 1, code: "unavailable", message: "not assembled", retryable: false },
 		];
@@ -156,6 +156,9 @@ describe("passive command, session, and interaction contracts", () => {
 			transcriptScrollbarVisible: false,
 			toolDetailsExpanded: false,
 			composerEmpty: true,
+                composerDraft: { text: "", byteLength: 0, truncated: false },
+                viewport: { columns: 80, rows: 24 },
+                terminalFocused: true,
 			transitionFrozen: false,
 		};
 		expect(structuredClone({ overlays, interaction })).toEqual({ overlays, interaction });

@@ -9,7 +9,7 @@ import {
 	AIAND_STATIC_MODELS,
 } from "../../src/providers/aiand-catalog.ts";
 import { loadPortedProviderModels } from "../ported-provider-catalog.ts";
-import type { Api, Model } from "../../src/types.ts";
+import type { Api, Model, OpenAICompletionsCompat } from "../../src/types.ts";
 import {
 	applyOpenAICompletionsCompatMetadata,
 	GITHUB_COPILOT_EXTENDED_CONTEXT_MODELS,

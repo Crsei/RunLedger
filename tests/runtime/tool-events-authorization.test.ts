@@ -60,7 +60,8 @@ function oneToolThenStopStream(toolCall: ToolCall): StreamFn {
       if (!hasResult) {
         stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: message });
       }
-      stream.push({ type: "done", reason: message.stopReason, message });
+      if (message.stopReason === "error" || message.stopReason === "aborted") throw new Error("expected successful fixture message");
+			stream.push({ type: "done", reason: message.stopReason, message });
       stream.end(message);
     });
     return stream;
@@ -137,7 +138,7 @@ describe("tool event payload and authorization", () => {
       label: "fixture",
       description: "fixture tool",
       parameters,
-      execute(): AgentToolResult {
+      async execute(): Promise<AgentToolResult> {
         executed = true;
         return { content: [{ type: "text", text: "should not run" }], details: {} };
       },

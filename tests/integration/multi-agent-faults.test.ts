@@ -7,8 +7,8 @@ import type { AgentTool, AgentToolResult, ToolAuthorizationPolicy } from "../../
 import type { ExecutionEnv } from "../../src/runtime/execution-env.ts";
 import { createRuntimeId, type SessionId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
-import { SessionOwner } from "../../src/runtime/session-owner/session-owner.ts";
-import { SESSION_OWNER_HEARTBEAT_PARAMS, type OwnerFence, type OwnerTransport } from "../../src/runtime/session-owner/types.ts";
+import { SessionOwner, type OwnerTransport } from "../../src/runtime/session-owner/session-owner.ts";
+import { SESSION_OWNER_HEARTBEAT_PARAMS, type OwnerFence } from "../../src/runtime/session-owner/types.ts";
 import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { OwnerStore } from "../../src/storage/session-store/owner-store.ts";
@@ -92,7 +92,7 @@ function readTool(): AgentTool {
 		description: "read",
 		parameters: schema,
 		isReadOnly: () => true,
-		capabilityClaims: [{ name: "repository_read", resourceKind: "filesystem", scope: "invocation" }],
+		capabilityClaims: [{ name: "repository_read", resourceKind: "filesystem", scope: "invocation", resourceDigest: runtimeDigest("fixture-resource"), constraintsDigest: runtimeDigest("fixture-constraints") }],
 		execute: async (): Promise<AgentToolResult> => ({ content: [{ type: "text", text: "fixture" }], details: {} }),
 	};
 }
@@ -409,7 +409,10 @@ describe("bounded multi-agent owner recreation fault matrix", () => {
 		const calls = { prepare: 0 };
 		let settleCalls = 0;
 		const attemptPort: NonNullable<AgentSupervisorOptions["attemptPort"]> = {
-			beginAttempt: (input) => ({ status: "started", commandId: input.commandId, attemptId: input.attemptId }),
+			beginAttempt: (input) => {
+				if (typeof input === "string") throw new Error("expected stable attempt request");
+				return { status: "started", commandId: input.commandId, attemptId: input.attemptId };
+			},
 			settleAttempt: () => {
 				settleCalls += 1;
 				return { ok: false, code: "settlement_ack_lost" };

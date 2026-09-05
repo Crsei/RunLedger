@@ -12,7 +12,7 @@ import { installSessionStoreSchema } from "../../../src/storage/session-store/sc
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
-import { SessionRuntimeServer } from "../../../src/runtime/session-server/runtime-server.ts";
+import { SessionRuntimeServer, type SessionController } from "../../../src/runtime/session-server/runtime-server.ts";
 import { SessionRuntime, type SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
@@ -104,11 +104,11 @@ export async function createRuntimeHarness(seed = "h", options: {
 	};
 }
 
-function nullController(sessionId: SessionId) {
+function nullController(sessionId: SessionId): SessionController {
 	return {
 		sessionId,
 		protocolManifest: () => SESSION_CORE_PROTOCOL_MANIFEST,
-		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
+		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting", agentRuns: [] }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),
 		onEvent: () => () => undefined,

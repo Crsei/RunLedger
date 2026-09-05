@@ -76,7 +76,7 @@ describe("Host tool admission in Plan Mode", () => {
 	});
 
 	it("denies a write-capability tool before execute even when it is in the Host registry", () => {
-		const tool = { ...echoTool, name: "write", capabilityClaims: [claim("workspace_write", "filesystem")] };
+		const tool: typeof echoTool = { ...echoTool, name: "write", capabilityClaims: [claim("workspace_write", "filesystem")] };
 		const policy = new HostGovernedToolAuthorizationPolicy({ planState: () => activeState });
 		expect(policy.authorize(request(tool))).toMatchObject({ decision: "deny", reason: expect.stringContaining("plan_mode_write_denied") });
 	});

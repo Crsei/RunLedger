@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it } from "vitest";
 import { isCompactionCheckpoint } from "../../../src/runtime/context/compaction/schema.ts";
 import type { CompactionCheckpoint } from "../../../src/runtime/context/compaction/types.ts";
@@ -12,7 +13,7 @@ import type { PlanModeState } from "../../../src/runtime/modes/plan/types.ts";
 import { RUNTIME_EVENT_TYPES } from "../../../src/runtime/protocol/events.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 
-const digest = { algorithm: "sha256", digest: "8".repeat(64) } as const;
+const digest = runtimeDigest("8");
 const sessionId = createRuntimeId("session", "contract-consumer");
 const sourceHead = { streamId: sessionId, sequence: 4, eventHash: digest } as const;
 const sourceRange = {

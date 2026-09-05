@@ -14,11 +14,14 @@ export interface BunProxyAgent {
 export type NodeProxyAgent = HttpProxyAgent<string> | HttpsProxyAgent<string>;
 export type ProxyAgent = NodeProxyAgent | BunProxyAgent;
 
+/** SDK 只依赖 fetch 调用合同，不要求 Bun 的静态 preconnect 等辅助成员。 */
+export type FetchFunction = (...args: Parameters<typeof globalThis.fetch>) => ReturnType<typeof globalThis.fetch>;
+
 export interface ProxyFetchOptions {
 	/** Use the direct node-fetch bridge even when global fetch is test-wrapped or routed. */
 	readonly forceNodeFetch?: boolean;
 	/** Use this already-captured fetch implementation instead of looking up global fetch later. */
-	readonly baseFetch?: typeof globalThis.fetch;
+	readonly baseFetch?: FetchFunction;
 }
 
 type NodeFetchFunction = (
@@ -125,7 +128,7 @@ export function createProxyFetchForUrl(
 	targetUrl: string | URL,
 	proxyUrl: string | URL,
 	options: ProxyFetchOptions = {},
-): typeof globalThis.fetch {
+): FetchFunction {
 	const agent = createProxyAgentForUrl(targetUrl, proxyUrl);
 	const baseFetch = options.baseFetch ?? globalThis.fetch;
 

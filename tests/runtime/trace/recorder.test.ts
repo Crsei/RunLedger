@@ -22,7 +22,7 @@ const roots: string[] = [];
 
 async function createRecorder(
 	clock?: { now: () => number; monotonic: () => number },
-	mode: RecordingMode = "events_and_artifacts",
+	mode: Exclude<RecordingMode, "off"> = "events_and_artifacts",
 	failurePolicy: RecordingFailurePolicy = "fail_closed",
 ) {
 	const root = await mkdtemp(join(tmpdir(), "runledger-trace-recorder-"));

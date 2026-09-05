@@ -72,7 +72,8 @@ class NodeTestExtensionStorage implements ExtensionStoragePort {
 
 class TracingStorage implements ExtensionStoragePort {
 	public readonly probeCalls: string[] = [];
-	public constructor(public readonly inner: ExtensionStoragePort) {}
+	public readonly inner: ExtensionStoragePort;
+	public constructor(inner: ExtensionStoragePort) { this.inner = inner; }
 
 	public async realpath(path: string) { this.probeCalls.push(`realpath:${path}`); return this.inner.realpath(path); }
 	public async stat(path: string, options?: { followSymlinks?: boolean }) { this.probeCalls.push(`stat:${path}`); return this.inner.stat(path, options); }

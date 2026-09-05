@@ -1,3 +1,6 @@
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
+import type { SkillDescriptor } from "../../../src/extensions/skills/types.ts";
 import { describe, expect, it } from "vitest";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import { defaultConvertToLlm } from "../../../src/runtime/agent-loop.ts";
@@ -124,8 +127,8 @@ describe("Host model request context adapter", () => {
 		const descriptorBase = {
 			kind: "skill" as const,
 			identity: { kind: "skill" as const, qualifiedId: "skill:user:fixture:plain", version: "1", source: "user" as const, digest: "a".repeat(64) },
-			resource: { resourceId: "resource_a", kind: "skill" as const, qualifiedId: "skill:user:fixture:plain", version: "1", source: "user" as const, digest: { algorithm: "sha256" as const, digest: "a".repeat(64) } },
-			provenance: { source: "user" as const, sourceLocatorDigest: { algorithm: "sha256" as const, digest: "b".repeat(64) } },
+			resource: { resourceId: createRuntimeId("resource", "a"), kind: "skill" as const, qualifiedId: "skill:user:fixture:plain", version: "1", source: "user" as const, digest: runtimeDigest("a") },
+			provenance: { source: "user" as const, sourceLocatorDigest: runtimeDigest("b") },
 			displayName: "plain",
 			description: "plain skill",
 			sourcePath: "/fixture/plain/SKILL.md",
@@ -138,7 +141,7 @@ describe("Host model request context adapter", () => {
 			diagnostics: [],
 			capabilities: [],
 		};
-		const skills = [
+		const skills: SkillDescriptor[] = [
 			{
 				descriptor: { ...descriptorBase },
 				frontmatter: { name: "plain", description: "plain skill", userInvocable: true, disableModelInvocation: false, metadata: {} },
@@ -148,7 +151,7 @@ describe("Host model request context adapter", () => {
 				resourceSet: { qualifiedId: "skill:user:fixture:plain", metadata: {} as never, body: {} as never, budget: { maxBytes: 1, maxEntries: 1 } },
 				sourceRoot: { source: "user" as const, sourceKey: "user:fixture", rootPath: "/fixture", priority: 100 },
 				priority: 100,
-				trustBinding: { identity: {} as never, canonicalPath: "/fixture/plain", binding: {} as never, principalId: "principal_a" },
+				trustBinding: { identity: {} as never, canonicalPath: "/fixture/plain", binding: {} as never, principalId: createRuntimeId("principal", "a") },
 			},
 			{
 				descriptor: { ...descriptorBase, identity: { ...descriptorBase.identity, qualifiedId: "skill:user:fixture:hidden" }, displayName: "hidden", description: "hidden skill" },
@@ -159,7 +162,7 @@ describe("Host model request context adapter", () => {
 				resourceSet: { qualifiedId: "skill:user:fixture:hidden", metadata: {} as never, body: {} as never, budget: { maxBytes: 1, maxEntries: 1 } },
 				sourceRoot: { source: "user" as const, sourceKey: "user:fixture", rootPath: "/fixture", priority: 100 },
 				priority: 100,
-				trustBinding: { identity: {} as never, canonicalPath: "/fixture/hidden", binding: {} as never, principalId: "principal_a" },
+				trustBinding: { identity: {} as never, canonicalPath: "/fixture/hidden", binding: {} as never, principalId: createRuntimeId("principal", "a") },
 			},
 		];
 		const fragmentId = `skill-catalog-${"e".repeat(32)}`;

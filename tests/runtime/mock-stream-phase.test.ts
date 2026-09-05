@@ -16,7 +16,7 @@ import type { LlmContext } from "../../src/runtime/types.ts";
 
 function mkContext(toolResultCount: number): LlmContext {
   const msgs: LlmContext["messages"] = [];
-  msgs.push({ role: "user", content: [{ type: "text", text: "hi" }] });
+  msgs.push({ role: "user", content: [{ type: "text", text: "hi" }], timestamp: 1 });
   for (let i = 0; i < toolResultCount; i++) {
     msgs.push({
       role: "toolResult",
@@ -38,7 +38,7 @@ describe("mockStreamFn phase detection", () => {
 
   it("mockStreamFn 调用 onPhase 钩子一次,phase 与 detectMockPhase 一致", async () => {
     const captured: number[] = [];
-    const stream = mockStreamFn(mockModel, mkContext(0), {
+    const stream = await mockStreamFn(mockModel, mkContext(0), {
       onPhase: (p: number) => captured.push(p),
     } as never);
     // AsyncIterableIterator:全部耗尽 stream
@@ -50,7 +50,7 @@ describe("mockStreamFn phase detection", () => {
 
   it("phase 1 context 同样触发 onPhase(1)", async () => {
     const captured: number[] = [];
-    const stream = mockStreamFn(mockModel, mkContext(2), {
+    const stream = await mockStreamFn(mockModel, mkContext(2), {
       onPhase: (p: number) => captured.push(p),
     } as never);
     for await (const _e of stream) {

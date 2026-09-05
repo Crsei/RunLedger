@@ -1,3 +1,4 @@
+import { requireNode, TextRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createOpenTuiComponentRuntimeFromRenderer } from "../../src/tui/opentui/component-runtime.ts";
@@ -36,15 +37,15 @@ describe("OpenTUI streaming part stability", () => {
 			runtime.update(frame("draft"));
 			await setup.renderOnce();
 			expect(runtime.getLastDirtyPartIds()).toEqual(["assistant:history/text", "assistant:active/text"]);
-			const firstHistory = setup.renderer.root.findDescendantById("runledger-block-history");
+			const firstHistory = requireNode(setup.renderer.root, "runledger-block-history", TextRenderable);
 			const firstHistoryText = firstHistory?.plainText;
-			const firstActive = setup.renderer.root.findDescendantById("runledger-block-active");
+			const firstActive = requireNode(setup.renderer.root, "runledger-block-active", TextRenderable);
 
 			runtime.update(frame("draft grew"));
 			await setup.renderOnce();
 			expect(runtime.getLastDirtyPartIds()).toEqual(["assistant:active/text"]);
-			const secondHistory = setup.renderer.root.findDescendantById("runledger-block-history");
-			const secondActive = setup.renderer.root.findDescendantById("runledger-block-active");
+			const secondHistory = requireNode(setup.renderer.root, "runledger-block-history", TextRenderable);
+			const secondActive = requireNode(setup.renderer.root, "runledger-block-active", TextRenderable);
 
 			expect(secondHistory?.num).toBe(firstHistory?.num);
 			expect(secondHistory?.plainText).toBe(firstHistoryText);

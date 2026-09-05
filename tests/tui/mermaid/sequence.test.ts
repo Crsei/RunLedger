@@ -56,6 +56,7 @@ describe("bounded Mermaid sequence diagrams", () => {
 
     expect(result).toMatchObject({ ok: true, diagram: { kind: "sequence" } });
     if (!result.ok) return;
+    if (result.diagram.kind !== "sequence") throw new Error("expected sequence");
     expect(result.diagram.participants.map((participant) => participant.id)).toEqual(["客户端", "服务端"]);
     expect(result.diagram.notes).toEqual([
       expect.objectContaining({ position: "over", participantIds: ["客户端", "服务端"], text: "请求链路 🚀" }),

@@ -1,5 +1,5 @@
 import * as fs from "node:fs/promises";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, type Stats } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -42,7 +42,7 @@ function localBroker(): FileSystemBrokerPort {
 	};
 }
 
-function toStats(value: Awaited<ReturnType<typeof fs.stat>>) {
+function toStats(value: Stats) {
 	return {
 		size: value.size,
 		mtimeMs: value.mtimeMs,

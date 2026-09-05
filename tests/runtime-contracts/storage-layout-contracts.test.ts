@@ -117,6 +117,7 @@ describe("RunLedger single-home storage contract", () => {
 			`state/processes/${workspaceKey}/${executionId}/${attemptId}.json`,
 		);
 		expect(() => hostEndpointRelativeLocator("../escape")).toThrow();
+		// @ts-expect-error 故意传入错误 ID kind，验证运行时拒绝。
 		expect(() => processStateRelativeLocator(workspaceKey, createRuntimeId("session", "wrong"), attemptId)).toThrow();
 	});
 });

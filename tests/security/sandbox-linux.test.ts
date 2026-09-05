@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { IS_LINUX, IS_MACOS } from "../helpers/platform.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../src/runtime/protocol/foundation.ts";
-import type { WorkspaceExecutionEnvelope } from "../../src/runtime/contracts/public.ts";
+import type { HostWorkspaceExecutionContext } from "../../src/security/types.ts";
 import { LinuxBwrapBackend } from "../../src/security/sandbox/linux-bwrap.ts";
 import type { SandboxPrepareRequest, SandboxProbe } from "../../src/security/sandbox/types.ts";
 
@@ -10,7 +10,7 @@ function digest(value: string): RuntimeDigest {
 	return runtimeDigest(value);
 }
 
-function envelope(): WorkspaceExecutionEnvelope {
+function envelope(): HostWorkspaceExecutionContext {
 	return {
 		authorityId: createRuntimeId("authority", "sandbox-linux"),
 		tenantId: createRuntimeId("tenant", "sandbox-linux"),
@@ -47,7 +47,6 @@ function request(overrides: Partial<SandboxPrepareRequest> = {}): SandboxPrepare
 		network: "deny",
 		command: "printf ok",
 		cwd: "/repo",
-			cwdDigest: runtimeDigest("/repo"),
 		environment: { Z_LAST: "last", PATH: "/usr/bin" },
 		timeoutMs: 1_000,
 		...overrides,

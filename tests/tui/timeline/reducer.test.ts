@@ -13,8 +13,8 @@ import type { TimelineEvent, TimelineRow } from "../../../src/tui/timeline/types
 
 const bounded = { text: "hello", truncated: false, byteLength: 5 };
 
-function assistantStart(correlationId = "assistant:0"): TimelineEvent {
-	const row: TimelineRow = {
+function assistantStart(correlationId = "assistant:0"): Extract<TimelineEvent, { type: "message_start" }> & { row: Extract<TimelineRow, { kind: "assistant" }> } {
+	const row: Extract<TimelineRow, { kind: "assistant" }> = {
 		kind: "assistant",
 		id: correlationId,
 		timestamp: "2026-08-06T00:00:00.000Z",
@@ -65,18 +65,20 @@ describe("B2 timeline reducer", () => {
 		expect(state.committedRows).toHaveLength(0);
 		expect(state.cursor.activeMessageId).toBe("assistant:0");
 		state = timelineReducer(state, { type: "message_update", generation: 1, correlationId: "assistant:0", text: { text: "hello world", truncated: false, byteLength: 11 } });
-		expect(state.activeRowsByCorrelationId["assistant:0"]!.text.text).toBe("hello world");
+		expect(state.activeRowsByCorrelationId["assistant:0"]).toMatchObject({ kind: "assistant", text: { text: "hello world" } });
 		state = timelineReducer(state, { type: "message_end", generation: 1, correlationId: "assistant:0", status: "succeeded" });
 		expect(state.activeOrder).toEqual([]);
 		expect(state.committedRows).toHaveLength(1);
 		expect(state.committedRows[0]!.status).toBe("succeeded");
-		expect(state.committedRows[0]!.text.text).toBe("hello world");
+		expect(state.committedRows[0]).toMatchObject({ kind: "assistant", text: { text: "hello world" } });
 		expect(state.committedRows[0]!).toMatchObject({ kind: "assistant", streaming: false });
 	});
 
 	it("tracks user and assistant message indexes in the cursor", () => {
 		let state = createInitialTimelineState();
-		state = timelineReducer(state, { ...assistantStart("user:0"), ...({ row: { ...(assistantStart("user:0").row as TimelineRow), kind: "user" as const } }) });
+		const start = assistantStart("user:0");
+		const { streaming: _streaming, ...row } = start.row;
+		state = timelineReducer(state, { ...start, row: { ...row, kind: "user" } });
 		expect(state.cursor.messageIndex).toBe(1);
 		state = timelineReducer(state, assistantStart("assistant:1"));
 		expect(state.cursor.messageIndex).toBe(2);

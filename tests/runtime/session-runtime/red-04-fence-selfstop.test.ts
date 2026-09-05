@@ -25,7 +25,7 @@ import { installSessionStoreSchema } from "../../../src/storage/session-store/sc
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
-import { SessionRuntimeServer } from "../../../src/runtime/session-server/runtime-server.ts";
+import { SessionRuntimeServer, type SessionController } from "../../../src/runtime/session-server/runtime-server.ts";
 import { SessionRuntime } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { LateBoundAttemptPort } from "../../../src/runtime/session-runtime/attempt-gateway.ts";
@@ -45,7 +45,7 @@ afterEach(() => {
 	rmSyncRetry(dir);
 });
 
-function openStores(): { store: SessionStore; ownerStore: OwnerStore; db: import("../../src/storage/session-store/database.ts").SessionDatabase } {
+function openStores(): { store: SessionStore; ownerStore: OwnerStore; db: import("../../../src/storage/session-store/database.ts").SessionDatabase } {
 	const db = openSessionDatabase(join(dir, "state.db"));
 	return { store: new SessionStore(db), ownerStore: new OwnerStore(db), db };
 }
@@ -138,7 +138,7 @@ describe("RED-04 a fenced production runtime fully self-stops", () => {
 			opened.handle.transport.request({
 				frameId: `post_fence_${Date.now().toString(36)}`,
 				kind: "query_request",
-				protocolVersion: 1,
+				protocolVersion: 3,
 				body: { kind: "snapshot", body: {} },
 			}),
 		).rejects.toThrow();
@@ -187,10 +187,10 @@ describe("RED-04 a fenced production runtime fully self-stops", () => {
 	}, 60_000);
 });
 
-function nullController(sessionId: SessionId) {
+function nullController(sessionId: SessionId): SessionController {
 	return {
 		sessionId,
-		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
+		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting", agentRuns: [] }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),
 		onEvent: () => () => undefined,

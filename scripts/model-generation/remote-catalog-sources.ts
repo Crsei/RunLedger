@@ -11,6 +11,16 @@ interface NvidiaNimModelListItem {
 	id: string;
 }
 
+interface OpenRouterCatalogModel {
+	id: string;
+	name: string;
+	supported_parameters?: string[];
+	architecture?: { modality?: string };
+	pricing?: { prompt?: string; completion?: string; input_cache_read?: string; input_cache_write?: string };
+	top_provider?: { context_length?: number; max_completion_tokens?: number };
+	context_length?: number;
+}
+
 interface AiGatewayModel {
 	id: string;
 	name?: string;
@@ -59,7 +69,7 @@ export async function fetchOpenRouterModels(strict: boolean): Promise<Model<any>
 		console.log("Fetching models from OpenRouter API...");
 		const response = await fetch("https://openrouter.ai/api/v1/models");
 		if (!response.ok) throw new Error(`OpenRouter API returned ${response.status}`);
-		const data = await response.json();
+		const data = await response.json() as { data: OpenRouterCatalogModel[] };
 
 		const models: Model<any>[] = [];
 
@@ -121,7 +131,7 @@ export async function fetchAiGatewayModels(strict: boolean): Promise<Model<any>[
 		console.log("Fetching models from Vercel AI Gateway API...");
 		const response = await fetch(`${AI_GATEWAY_MODELS_URL}/models`);
 		if (!response.ok) throw new Error(`Vercel AI Gateway API returned ${response.status}`);
-		const data = await response.json();
+		const data = await response.json() as { data?: AiGatewayModel[] };
 		const models: Model<any>[] = [];
 
 		const toNumber = (value: string | number | undefined): number => {

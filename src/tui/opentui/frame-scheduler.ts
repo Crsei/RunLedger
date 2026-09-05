@@ -1,7 +1,10 @@
+/** 宿主 timer 与注入的手动时钟均可提供稳定句柄。 */
+export type FrameTimerHandle = ReturnType<typeof globalThis.setTimeout> | number;
+
 export interface FrameClock {
   now(): number;
-  setTimeout(callback: () => void, delayMs: number): ReturnType<typeof globalThis.setTimeout>;
-  clearTimeout(handle: ReturnType<typeof globalThis.setTimeout>): void;
+  setTimeout(callback: () => void, delayMs: number): FrameTimerHandle;
+  clearTimeout(handle: FrameTimerHandle): void;
 }
 
 export type FrameReason = "window" | "force" | "terminal" | "input" | "scheduled";
@@ -42,8 +45,8 @@ export class FrameScheduler {
   private readonly frameWindowMs: number;
   private readonly backlogLimits: Required<FrameBacklogLimits>;
   private readonly onFrame: FrameSchedulerOptions["onFrame"];
-  private timer: ReturnType<typeof globalThis.setTimeout> | undefined;
-  private scheduledTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  private timer: FrameTimerHandle | undefined;
+  private scheduledTimer: FrameTimerHandle | undefined;
   private scheduledAt = 0;
   private scheduledFrameAt = 0;
   private dirty = false;

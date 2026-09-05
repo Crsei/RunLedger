@@ -30,6 +30,7 @@ describe("Host-injected stdlib ExecutionEnv", () => {
 				readdir: async () => [],
 				mkdir: async () => {},
 				rm: async () => {},
+			rename: async () => { throw new Error("unexpected rename"); },
 			},
 			shell: {
 				exec: async (command) => {
@@ -76,6 +77,7 @@ describe("Host-injected stdlib ExecutionEnv", () => {
 				readdir: async () => [],
 				mkdir: async () => {},
 				rm: async () => {},
+			rename: async () => { throw new Error("unexpected rename"); },
 			},
 			shell: {
 				exec: async (command) => {

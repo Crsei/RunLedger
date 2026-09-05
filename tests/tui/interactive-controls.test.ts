@@ -878,7 +878,7 @@ describe("InteractiveMode lifecycle and global controls", () => {
 			outputSize: 0,
 			canWrite: true,
 			canResize: true,
-			canStop: true,
+			canStop: true, commandDisplay: { authority: "unavailable" },
 		};
 		const processOverlay = createProcessOverlayController({
 			listProcesses: async () => [process],

@@ -27,8 +27,8 @@ function openStore(): SessionStore {
 }
 
 function createOwnedSession(store: SessionStore, suffix = "title"): {
-	readonly sessionId: ReturnType<typeof createRuntimeId>;
-	readonly runtimeId: ReturnType<typeof createRuntimeId>;
+	readonly sessionId: ReturnType<typeof createRuntimeId<"session">>;
+	readonly runtimeId: ReturnType<typeof createRuntimeId<"runtime">>;
 	readonly generation: number;
 } {
 	const sessionId = createRuntimeId("session", suffix);

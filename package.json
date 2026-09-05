@@ -73,7 +73,7 @@
     "check:bash-ast-assets": "tsx scripts/check-bash-ast-assets.ts",
     "check:platform-boundaries": "tsx scripts/check-platform-boundaries.ts",
     "check:session-owner-boundaries": "tsx scripts/check-session-owner-boundaries.ts",
-    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && npm run check:bash-ast-assets && npm run check:package-boundaries && tsc --noEmit -p tsconfig.json",
+    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && npm run check:bash-ast-assets && npm run check:package-boundaries && npm run check:consumers && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
     "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
@@ -101,10 +101,11 @@
     "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts",
     "verify:session-owner-candidate": "tsx scripts/verify-session-owner-candidate.ts",
     "check:tui-boundaries": "tsx scripts/check-tui-boundaries.ts",
-    "build:native": "npm run build:linux-peer-credential-helper && npm run build:syntax-highlighter",
-    "build:typescript": "tsc -p tsconfig.json",
+    "check:package-boundaries": "tsx scripts/check-package-boundaries.ts",
+    "check:consumers": "tsx scripts/check-typecheck-coverage.ts && tsc --noEmit -p tsconfig.tests.json && tsc --noEmit -p tsconfig.bun-tests.json && tsc --noEmit -p tsconfig.scripts.json && tsc --noEmit -p tsconfig.examples.json",
     "build:contracts": "tsc -p tsconfig.contracts.json",
-    "check:package-boundaries": "tsx scripts/check-package-boundaries.ts"
+    "build:typescript": "tsc -p tsconfig.json",
+    "build:native": "npm run build:linux-peer-credential-helper && npm run build:syntax-highlighter"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",
@@ -129,22 +130,23 @@
     "web-tree-sitter": "0.26.11"
   },
   "optionalDependencies": {
-    "@runledger/syntax-highlighter-linux-x64-gnu": "0.0.1",
-    "@runledger/syntax-highlighter-linux-arm64-gnu": "0.0.1",
-    "@runledger/syntax-highlighter-linux-x64-musl": "0.0.1",
-    "@runledger/syntax-highlighter-linux-arm64-musl": "0.0.1",
-    "@runledger/syntax-highlighter-darwin-x64": "0.0.1",
     "@runledger/syntax-highlighter-darwin-arm64": "0.0.1",
-    "@runledger/syntax-highlighter-win32-x64-msvc": "0.0.1",
-    "@runledger/syntax-highlighter-win32-arm64-msvc": "0.0.1"
+    "@runledger/syntax-highlighter-darwin-x64": "0.0.1",
+    "@runledger/syntax-highlighter-linux-arm64-gnu": "0.0.1",
+    "@runledger/syntax-highlighter-linux-arm64-musl": "0.0.1",
+    "@runledger/syntax-highlighter-linux-x64-gnu": "0.0.1",
+    "@runledger/syntax-highlighter-linux-x64-musl": "0.0.1",
+    "@runledger/syntax-highlighter-win32-arm64-msvc": "0.0.1",
+    "@runledger/syntax-highlighter-win32-x64-msvc": "0.0.1"
   },
   "devDependencies": {
+    "@types/bun": "1.3.14",
     "@types/node": "^22.10.0",
     "@types/proper-lockfile": "4.1.4",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
     "typescript-language-server": "^5.3.0",
-    "vitest": "^2.1.8"
+    "vitest": "3.2.6"
   },
   "directories": {
     "doc": "docs",

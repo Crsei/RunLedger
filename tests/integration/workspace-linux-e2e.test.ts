@@ -204,7 +204,6 @@ describe("workspace adapters Linux E2E (real git)", { timeout: 60_000 }, () => {
 			repo,
 			expectedBaseCommit: baseCommit,
 			effectiveSubdir: ".",
-			checkLease: async () => undefined,
 		});
 		expect(resumed).toMatchObject({ ok: true, effectiveCwd: target, headCommit: baseCommit });
 

@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R5:crash recovery fixtures(06 §7.3/§R5 退出条件)。
@@ -18,7 +19,7 @@ import { installSessionStoreSchema } from "../../../src/storage/session-store/sc
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
 import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
-import { SessionRuntimeServer } from "../../../src/runtime/session-server/runtime-server.ts";
+import { SessionRuntimeServer, type SessionController } from "../../../src/runtime/session-server/runtime-server.ts";
 import { SessionRuntime } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { bindCandidateListener } from "../../../src/runtime/session-server/owner-probe.ts";
@@ -90,7 +91,7 @@ async function crashWithUnresolvedAttempt(ctx: Ctx): Promise<{ priorGeneration: 
 	ctx.store.recordCommandIntent(fence, {
 		sessionId: ctx.sessionId,
 		commandId: createRuntimeId("command", "tool"),
-		requestDigest: { algorithm: "sha256", digest: "a".repeat(64) },
+		requestDigest: runtimeDigest("crash-tool-request"),
 		originGeneration: fence.generation,
 		createdAtMs: Date.now(),
 	});
@@ -133,11 +134,11 @@ async function takeoverRuntime(ctx: Ctx): Promise<{ runtime: SessionRuntime; own
 	return { runtime, owner, server };
 }
 
-function nullController(sessionId: SessionId) {
+function nullController(sessionId: SessionId): SessionController {
 	return {
 		sessionId,
 		protocolManifest: () => SESSION_CORE_PROTOCOL_MANIFEST,
-		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
+		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting", agentRuns: [] }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),
 		onEvent: () => () => undefined,
@@ -189,7 +190,7 @@ describe("R5 crash recovery", () => {
 	it("enters RECOVERY_REQUIRED unconditionally after a crash takeover", async () => {
 		const ctx = openCtx();
 		await crashWithUnresolvedAttempt(ctx);
-		const { runtime } = await takeoverRuntime(ctx);
+		const { runtime, server } = await takeoverRuntime(ctx);
 		expect(runtime.runtimeState).toBe("recovery_required");
 		expect(runtime.barrierState).toBe("open");
 		expect(runtime.isRecoveryRequired).toBe(true);
@@ -197,14 +198,14 @@ describe("R5 crash recovery", () => {
 		expect(ctx.ownerStore.readOwner(ctx.sessionId)?.state).toBe("recovery_required");
 		// 事件序列连续:hash chain 校验通过(restore 已做)。
 		expect(runtime.restoredCheckpoint).toBeUndefined();
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 
 	it("blocks normal prompt admission while the barrier is open (spawnCount stays 0)", async () => {
 		const ctx = openCtx();
 		await crashWithUnresolvedAttempt(ctx);
-		const { runtime } = await takeoverRuntime(ctx);
+		const { runtime, server } = await takeoverRuntime(ctx);
 		const prompt = await runtime.handleCommand(
 			{ commandId: createRuntimeId("command", "p"), kind: "prompt", body: { promptText: "hi" } },
 			{ connectionId: createRuntimeId("connection", "c"), clientId: "client_x", isDriver: true },
@@ -218,14 +219,14 @@ describe("R5 crash recovery", () => {
 		// 只读检查允许。
 		const readonly = runtime.beginAttempt("readonly");
 		expect("attemptId" in readonly).toBe(true);
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 
 	it("settles the prior attempt via recovery.verify with origin/settled generations", async () => {
 		const ctx = openCtx();
 		const { priorGeneration } = await crashWithUnresolvedAttempt(ctx);
-		const { runtime } = await takeoverRuntime(ctx);
+		const { runtime, server } = await takeoverRuntime(ctx);
 		expect(runtime.unresolvedAttemptsCount()).toBe(1);
 		const explain = await runtime.handleCommand(
 			{ commandId: createRuntimeId("command", "exp"), kind: "recovery_explain", body: {} },
@@ -250,14 +251,14 @@ describe("R5 crash recovery", () => {
 		const receipts = ctx.store.listAllAttemptReceipts(ctx.sessionId);
 		const settled = receipts.find((receipt) => receipt.outcome === "verified");
 		expect(settled?.settledGeneration).toBeGreaterThanOrEqual(priorGeneration);
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 
 	it("auto-closes with recovery.verified_clean when no unresolved attempt exists", async () => {
 		const ctx = openCtx();
 		// 无 unresolved attempt 的 crash:直接收口。
-		const { runtime } = await takeoverRuntime(ctx);
+		const { runtime, server } = await takeoverRuntime(ctx);
 		expect(runtime.runtimeState).toBe("recovery_required");
 		const assess = await runtime.handleCommand(
 			{ commandId: createRuntimeId("command", "a"), kind: "recovery_assess", body: {} },
@@ -268,14 +269,14 @@ describe("R5 crash recovery", () => {
 		expect(runtime.barrierState).toBe("closed");
 		const events = ctx.store.replaySessionEvents(ctx.sessionId);
 		expect(events.some((event) => event.eventType === "recovery.verified_clean")).toBe(true);
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 
 	it("resume_despite_uncertainty records the explicit human decision and reopens side effects", async () => {
 		const ctx = openCtx();
 		await crashWithUnresolvedAttempt(ctx);
-		const { runtime } = await takeoverRuntime(ctx);
+		const { runtime, server } = await takeoverRuntime(ctx);
 		expect(runtime.runtimeState).toBe("recovery_required");
 		const resume = await runtime.handleCommand(
 			{ commandId: createRuntimeId("command", "r"), kind: "recovery_resume", body: { reasonCode: "user-accepted-uncertainty" } },
@@ -291,18 +292,18 @@ describe("R5 crash recovery", () => {
 		expect(decision).toBeDefined();
 		const payload = JSON.parse(decision!.payloadJson) as Record<string, unknown>;
 		expect(payload.reasonCode).toBe("user-accepted-uncertainty");
-		expect(payload.settledGeneration).toBe(runtime.fence.generation);
+		expect(payload.settledGeneration).toBe(server.currentFence?.generation);
 		// 收口后 side-effect 恢复(新的 generation 记录 attempt)。
 		const attempt = runtime.beginAttempt("process_spawn");
 		expect("attemptId" in attempt).toBe(true);
 		expect(runtime.sideEffectSpawnCount).toBe(1);
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 
 	it("timeline queries the live durable event stream after runtime startup", async () => {
 		const ctx = openCtx("timeline-live");
-		const { runtime, owner } = await takeoverRuntime(ctx);
+		const { runtime, owner, server } = await takeoverRuntime(ctx);
 		const fence = owner.currentFence;
 		if (fence === undefined) throw new Error("owner fence missing");
 		const tail = ctx.store.replaySessionEvents(ctx.sessionId).at(-1);
@@ -323,7 +324,7 @@ describe("R5 crash recovery", () => {
 			eventType: "test.after_startup",
 			payload: { live: true },
 		});
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 
@@ -344,8 +345,8 @@ describe("R5 crash recovery", () => {
 		await controlled.closeListener();
 		ctx.ownerStore.database().runSync("UPDATE session_owners SET heartbeat_at_ms = ? WHERE session_id = ?", [Date.now() - 60_000, ctx.sessionId]);
 		// 新 owner takeover。
-		const { runtime } = await takeoverRuntime(ctx);
-		expect(runtime.fence.generation).toBe(claimed.fence.generation + 1);
+		const { runtime, server } = await takeoverRuntime(ctx);
+		expect(server.currentFence?.generation).toBe(claimed.fence.generation + 1);
 		// 旧 owner 的 durable write 被拒(owner_fenced)。
 		const oldFence = claimed.fence;
 		expect(() =>
@@ -365,7 +366,7 @@ describe("R5 crash recovery", () => {
 		expect(fencedFence).toMatchObject({ sessionId: ctx.sessionId, runtimeId: oldFence.runtimeId, generation: oldFence.generation });
 		// 不把"DB fence"宣称成"外部副作用已停止":事件流中无 recovery.verified_clean。
 		expect(ctx.store.replaySessionEvents(ctx.sessionId).some((event) => event.eventType === "recovery.verified_clean")).toBe(false);
-		await runtime.server.close();
+		await server.close();
 		ctx.store.database().close();
 	});
 });

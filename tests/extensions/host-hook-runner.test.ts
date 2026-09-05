@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it } from "vitest";
 import type { ExecutionHandleRef } from "../../src/runtime/process/types.ts";
 import type { OutputCursor } from "../../src/runtime/process/output.ts";
@@ -19,7 +20,7 @@ function handle(): ExecutionHandleRef {
 		executionId: "execution_hook" as ExecutionHandleRef["executionId"],
 		attemptId: "attempt_hook" as ExecutionHandleRef["attemptId"],
 		revision: 1,
-		requestDigest: { algorithm: "sha256", digest: "a".repeat(64) },
+		requestDigest: runtimeDigest("a"),
 	};
 }
 
@@ -54,14 +55,14 @@ class FakeManagedProcess {
 	public async processWait(_handle: ExecutionHandleRef, _timeoutMs: number, _actor: "driver" | "observer"): Promise<ControlPlaneWaitResult> {
 		await new Promise<void>((resolve) => setTimeout(resolve, 2));
 		return (this.stopped || (this.finishOnOutput && this.outputRead))
-			? { ok: true, outcome: "terminal", summary: { handle: this.execution, state: "completed", outputCursor: { sequence: 1, byteOffset: 21 }, outputSize: 21, capabilities: { canWrite: false, canEof: false, canResize: false, canStop: false, canReadOutput: true }, terminal: { state: "completed", exitCode: 0, evidenceRef: { subjectKind: "content", digest: { algorithm: "sha256", digest: "b".repeat(64) } } } }, nextCursor: { sequence: 1, byteOffset: 21 } }
+			? { ok: true, outcome: "terminal", summary: { handle: this.execution, state: "completed", outputCursor: { sequence: 1, byteOffset: 21 }, outputSize: 21, capabilities: { canWrite: false, canEof: false, canResize: false, canStop: false, canReadOutput: true }, terminal: { state: "completed", exitCode: 0, evidenceRef: { subjectKind: "content", digest: runtimeDigest("b") } } }, nextCursor: { sequence: 1, byteOffset: 21 } }
 			: { ok: true, outcome: "running", summary: { handle: this.execution, state: "running", outputCursor: { sequence: 1, byteOffset: 21 }, outputSize: 21, capabilities: { canWrite: false, canEof: false, canResize: false, canStop: true, canReadOutput: true } }, nextCursor: { sequence: 1, byteOffset: 21 } };
 	}
 
 	public async stop(_handle: ExecutionHandleRef, _actor: "driver" | "observer", signal?: NodeJS.Signals): Promise<ControlPlaneMutationResult> {
 		this.stops.push(signal ?? "SIGTERM");
 		this.stopped = true;
-		return { ok: true, operation: "stop", receiptDigest: { algorithm: "sha256", digest: "c".repeat(64) }, summary: { handle: this.execution, state: "killed", outputCursor: { sequence: 1, byteOffset: 21 }, outputSize: 21, capabilities: { canWrite: false, canEof: false, canResize: false, canStop: false, canReadOutput: true } } };
+		return { ok: true, operation: "stop", receiptDigest: runtimeDigest("c"), summary: { handle: this.execution, state: "killed", outputCursor: { sequence: 1, byteOffset: 21 }, outputSize: 21, capabilities: { canWrite: false, canEof: false, canResize: false, canStop: false, canReadOutput: true } } };
 	}
 
 	public async write(): Promise<ControlPlaneMutationResult> {

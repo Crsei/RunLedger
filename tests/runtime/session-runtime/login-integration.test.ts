@@ -1,4 +1,3 @@
-import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R6/credential reverse-request 端到端:真实 TCP 上 driver 连接经
  * reverse-request 完成 api-key login 并写入 auth.json。
@@ -20,7 +19,7 @@ import { OwnerStore } from "../../../src/storage/session-store/owner-store.ts";
 import { AuthStorage } from "../../../src/storage/auth-storage.ts";
 import { builtinModels } from "../../../src/providers/all.ts";
 import { SessionOwner } from "../../../src/runtime/session-owner/session-owner.ts";
-import { SessionRuntimeServer } from "../../../src/runtime/session-server/runtime-server.ts";
+import { SessionRuntimeServer, type SessionController } from "../../../src/runtime/session-server/runtime-server.ts";
 import { SessionRuntime, type SessionDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { SessionClient } from "../../../src/cli/session-client.ts";
@@ -170,10 +169,10 @@ describe("credential reverse-request login end-to-end", () => {
 	});
 });
 
-function nullController(sessionId: SessionId) {
+function nullController(sessionId: SessionId): SessionController {
 	return {
 		sessionId,
-		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting" }),
+		snapshot: () => ({ sessionId, headSequence: 0, sessionStatus: "active", runtimeState: "starting", agentRuns: [] }),
 		handleCommand: async () => ({ ok: false as const, code: "not_bound" }),
 		handleQuery: async () => ({ ok: false, kind: "not_bound" }),
 		onEvent: () => () => undefined,

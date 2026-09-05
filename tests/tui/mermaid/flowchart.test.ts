@@ -14,6 +14,7 @@ describe("bounded Mermaid flowcharts", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    if (result.diagram.kind !== "flowchart") throw new Error("expected flowchart");
     expect(result.diagram.kind).toBe("flowchart");
     expect(result.diagram.direction).toBe("TD");
     expect(result.diagram.nodes.map((node) => node.id)).toEqual(["A", "B", "C"]);
@@ -29,6 +30,7 @@ describe("bounded Mermaid flowcharts", () => {
     ].join("\n"));
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
+    if (parsed.diagram.kind !== "flowchart") throw new Error("expected flowchart");
 
     const projected = renderMermaidDiagram(parsed.diagram, 40);
     expect(projected).toMatchObject({ ok: true, width: 40 });
@@ -48,6 +50,7 @@ describe("bounded Mermaid flowcharts", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    if (result.diagram.kind !== "flowchart") throw new Error("expected flowchart");
     expect(result.diagram.kind).toBe("flowchart");
     expect(result.diagram.nodes.map((node) => node.id)).toEqual(["A", "B", "C"]);
     expect(result.diagram.edges.map((edge) => [edge.from, edge.to])).toEqual([

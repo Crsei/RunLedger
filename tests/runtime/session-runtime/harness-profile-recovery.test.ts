@@ -11,7 +11,7 @@ import {
 	type HarnessProfileRef,
 } from "../../../src/runtime/harness-profiles/index.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
-import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { createRuntimeId, type SessionId, type RuntimeInstanceId } from "../../../src/runtime/protocol/ids.ts";
 import { putSessionCheckpoint } from "../../../src/runtime/session-runtime/checkpoint.ts";
 import { restoreSession } from "../../../src/runtime/session-runtime/restore.ts";
 import { openSessionDatabase } from "../../../src/storage/session-store/database.ts";
@@ -28,7 +28,7 @@ afterEach(() => {
 function fixture(profile: HarnessProfileRef = standardHarnessProfileRef()): {
 	readonly store: SessionStore;
 	readonly sessionId: SessionId;
-	readonly fence: { readonly sessionId: SessionId; readonly runtimeId: string; readonly generation: number };
+	readonly fence: { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number };
 } {
 	const root = mkdtempSync(join(tmpdir(), "runledger-harness-recovery-"));
 	roots.push(root);
@@ -75,7 +75,7 @@ function standardReceipt(sessionId: SessionId, ownerGeneration = 1): HarnessComp
 
 function appendReceipt(
 	store: SessionStore,
-	fence: { readonly sessionId: SessionId; readonly runtimeId: string; readonly generation: number },
+	fence: { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number },
 	receipt: HarnessCompositionReceipt,
 	seed: string,
 ): void {

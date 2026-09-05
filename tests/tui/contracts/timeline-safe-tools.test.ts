@@ -51,7 +51,7 @@ describe("passive Timeline and safe tool contracts", () => {
 		const rows: TimelineRow[] = [
 			{ kind: "user", id: "user-1", timestamp: "2026-08-05T00:00:00.000Z", displayOrder: 1, status: "succeeded", text: bounded },
 			{ kind: "assistant", id: "assistant-1", timestamp: "2026-08-05T00:00:01.000Z", displayOrder: 2, status: "running", text: bounded, streaming: true, thinking: bounded, usage: { input: { state: "unavailable", reason: "not reported" }, output: { state: "unavailable", reason: "not reported" } } },
-			{ kind: "tool", id: "tool-1", timestamp: "2026-08-05T00:00:02.000Z", displayOrder: 3, status: "succeeded", toolCallId: "call-1", toolName: bounded, presentation: { state: "ready", value: { renderer: "generic", title: bounded, chips: [], body: [], timestamps: { startedAt: "2026-08-05T00:00:02.000Z" } } } },
+			{ kind: "tool", id: "tool-1", timestamp: "2026-08-05T00:00:02.000Z", displayOrder: 3, status: "succeeded", toolCallId: "call-1", toolName: bounded, presentation: { state: "known", value: { renderer: "generic", title: bounded, chips: [], body: [], timestamps: { startedAt: "2026-08-05T00:00:02.000Z" } } } },
 			{ kind: "notice", id: "notice-1", timestamp: "2026-08-05T00:00:03.000Z", displayOrder: 4, status: "succeeded", severity: "info", message: bounded },
 			{ kind: "goal", id: "goal-1", timestamp: "2026-08-05T00:00:04.000Z", displayOrder: 5, status: "running", goalId: "goal-1", label: bounded, phase: bounded },
 			{ kind: "queue", id: "queue-1", timestamp: "2026-08-05T00:00:05.000Z", displayOrder: 6, status: "pending", queueId: "queue-1", state: "pending", label: bounded },
@@ -93,7 +93,7 @@ describe("passive Timeline and safe tool contracts", () => {
 			{ kind: "edit", path, editCount: { state: "known", value: 1 } },
 			{ kind: "write", path, lineCount: { state: "known", value: 2 }, byteCount: { state: "known", value: 12 } },
 			{ kind: "read", path, offset: { state: "known", value: 0 }, limit: { state: "known", value: 2 } },
-			{ kind: "grep", path },
+			{ kind: "grep", path, query: path },
 			{ kind: "shell", commandLabel: path },
 		];
 		const diff: SafeDiffDocument = {
@@ -110,14 +110,15 @@ describe("passive Timeline and safe tool contracts", () => {
 			artifact: { state: "unavailable", reason: "not recorded" },
 			truncated: false,
 		};
-		const result: SafeToolResultMetadata[] = [
+		const exploration = { kind: "exploration", resultCount: { state: "known", value: 2 }, resultUnit: "lines", sourceTruncated: false, presentationTruncated: false, outputLines: { state: "known", value: 2 }, totalLines: { state: "known", value: 2 } } as const;
+        const result: SafeToolResultMetadata[] = [
 			{ kind: "generic" },
 			{ kind: "edit", document: diff, addedLines: { state: "known", value: 0 }, removedLines: { state: "known", value: 0 } },
-			{ kind: "read", lineCount: { state: "known", value: 2 }, truncated: false },
-			{ kind: "grep", matchCount: { state: "known", value: 1 }, fileCount: { state: "known", value: 1 }, samples: [path], truncated: false },
+			{ kind: "read", exploration, lineCount: { state: "known", value: 2 }, truncated: false },
+			{ kind: "grep", exploration: { ...exploration, resultUnit: "matches", resultCount: { state: "known", value: 1 } }, matchCount: { state: "known", value: 1 }, fileCount: { state: "known", value: 1 }, samples: [path], truncated: false },
 			{ kind: "media", items: [media] },
 			{ kind: "shell", chunks: [{ channel: "stdout", text: path }], truncated: false, exitCode: { state: "known", value: 0 }, durationMs: { state: "known", value: 1 }, background: false },
-			{ kind: "goal", goalId: "goal-1", phase: path, revision: 1, evidenceCount: { state: "known", value: 1 } },
+			{ kind: "goal", goalId: path, phase: path, revision: 1, evidenceCount: { state: "known", value: 1 } },
 		];
 		const usage: SafeToolUsageView = {
 			input: { state: "unavailable", reason: "not reported" },

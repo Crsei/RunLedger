@@ -28,6 +28,13 @@ import { createTaskTool, createTaskUpdateTool, createTaskListTool } from "../src
 import { createTodoWriteTool } from "../src/runtime/tools/todo-write.ts";
 import { createMultiEditTool } from "../src/runtime/tools/multi-edit.ts";
 
+function requireTaskId(details: unknown): string {
+  if (typeof details !== "object" || details === null || !("taskId" in details) || typeof details.taskId !== "string") {
+    throw new Error("Task creation did not return a taskId");
+  }
+  return details.taskId;
+}
+
 async function main() {
   const dir = await mkdtemp(path.join(tmpdir(), "m3-demo-"));
   try {
@@ -52,12 +59,12 @@ async function main() {
     const task = createTaskTool({ ledger });
     const up = createTaskUpdateTool({ ledger });
     const list = createTaskListTool({ ledger });
-    const a = (await task.execute("demo", { content: "实现 Task 类型", priority: "high" })).details?.taskId;
-    const b = (await task.execute("demo", { content: "lockfile 机制", priority: "high" })).details?.taskId;
-    const c = (await task.execute("demo", { content: "high-water mark 演示", priority: "medium" })).details?.taskId;
-    await up.execute("demo", { taskId: a as string, status: "in_progress" });
-    await up.execute("demo", { taskId: b as string, status: "in_progress" });
-    await up.execute("demo", { taskId: b as string, status: "completed" });
+    const a = requireTaskId((await task.execute("demo", { content: "实现 Task 类型", priority: "high" })).details);
+    const b = requireTaskId((await task.execute("demo", { content: "lockfile 机制", priority: "high" })).details);
+    const c = requireTaskId((await task.execute("demo", { content: "high-water mark 演示", priority: "medium" })).details);
+    await up.execute("demo", { taskId: a, status: "in_progress" });
+    await up.execute("demo", { taskId: b, status: "in_progress" });
+    await up.execute("demo", { taskId: b, status: "completed" });
     console.log("  现存任务清单:");
     (await list.execute("demo", {})).content.forEach((c) => console.log("   ", (c as { text: string }).text));
 

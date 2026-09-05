@@ -24,7 +24,8 @@ import { mockStreamFn, mockModel } from "../src/runtime/providers/mock-stream.ts
 import { MemoryLedger } from "../src/runtime/ledger/memory-ledger.ts";
 import { InteractiveMode } from "../src/tui/interactive-mode.ts";
 import { createAnthropicAgent } from "../src/runtime/agents/create-anthropic-agent.ts";
-import type { ThinkingLevel, Model } from "../src/types.ts";
+import { ANTHROPIC_MODELS } from "../src/providers/anthropic.models.ts";
+import type { ThinkingLevel } from "../src/types.ts";
 
 interface RuntimePlan {
   agent: Agent;
@@ -46,33 +47,9 @@ function planRuntime(): RuntimePlan {
   const anthropicKey = process.env.ANTHROPIC_API_KEY;
   if (anthropicKey) {
     // 真实路径:claude-sonnet-4-5 默认 + 几个候选
-    const sonnet: Model<"anthropic-messages"> = {
-      id: "claude-sonnet-4-5-20250929",
-      provider: "anthropic",
-      api: "anthropic-messages",
-      baseUrl: "https://api.anthropic.com",
-      contextWindow: 200_000,
-      maxOutputTokens: 8192,
-      reasoning: true,
-    } as Model<"anthropic-messages">;
-    const haiku: Model<"anthropic-messages"> = {
-      id: "claude-haiku-4-5-20251001",
-      provider: "anthropic",
-      api: "anthropic-messages",
-      baseUrl: "https://api.anthropic.com",
-      contextWindow: 200_000,
-      maxOutputTokens: 8192,
-      reasoning: false,
-    } as Model<"anthropic-messages">;
-    const opus: Model<"anthropic-messages"> = {
-      id: "claude-opus-4-1-20250805",
-      provider: "anthropic",
-      api: "anthropic-messages",
-      baseUrl: "https://api.anthropic.com",
-      contextWindow: 200_000,
-      maxOutputTokens: 8192,
-      reasoning: true,
-    } as Model<"anthropic-messages">;
+    const sonnet = ANTHROPIC_MODELS["claude-sonnet-4-5-20250929"];
+    const haiku = ANTHROPIC_MODELS["claude-haiku-4-5-20251001"];
+    const opus = ANTHROPIC_MODELS["claude-opus-4-1-20250805"];
 
     // thinking closure:让 streamFn 每次按当前 thinkingLevel 重新读取(用 mutable 容器)
     const thinkingRef: { level: ThinkingLevel } = { level: "minimal" };

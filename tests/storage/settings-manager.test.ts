@@ -290,7 +290,7 @@ describe("saveProjectSettings", () => {
 		await expect(saveProjectSettings(
 			{ layout, workspaceKey: "ws-fixture" },
 			{ recording: { mode: "events", failurePolicy: "best_effort" } },
-		)).rejects.toMatchObject<Partial<SettingsStorageError>>({
+		)).rejects.toMatchObject({
 			code: "unsupported_setting",
 			field: "recording",
 		});
@@ -301,7 +301,7 @@ describe("saveProjectSettings", () => {
 		await expect(saveProjectSettings(
 			{ layout },
 			{ recording: { mode: "invalid", failurePolicy: "best_effort" } } as never,
-		)).rejects.toMatchObject<Partial<SettingsStorageError>>({
+		)).rejects.toMatchObject({
 			code: "unsupported_setting",
 			field: "recording",
 		});

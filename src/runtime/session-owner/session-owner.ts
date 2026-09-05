@@ -106,13 +106,16 @@ export function evaluateOwnerRow(record: SessionOwnerRecord, nowMs: number, prob
 	return { outcome: "probe", record, probeInput, expected: targetFromRecord(record) };
 }
 
+/** 参数结构沿用默认项，数值允许受控注入而非锁定默认字面量。 */
+export type SessionOwnerHeartbeatParams = { readonly [K in keyof typeof SESSION_OWNER_HEARTBEAT_PARAMS]: number };
+
 /**
  * R3:SessionOwner 实例。一个实例对应一个 Session 的 claim/heartbeat/release;
  * 不跨 Session 调度,不构成 machine-wide registry。
  */
 export class SessionOwner {
 	private readonly options: SessionOwnerOptions;
-	private readonly params: typeof SESSION_OWNER_HEARTBEAT_PARAMS;
+	private readonly params: SessionOwnerHeartbeatParams;
 	private fence: OwnerFence | undefined;
 	private authTokenHex = "";
 	private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -120,7 +123,7 @@ export class SessionOwner {
 	private stopping = false;
 	private lastClaimMode: "fresh" | "takeover" | undefined;
 
-	public constructor(options: SessionOwnerOptions, params: typeof SESSION_OWNER_HEARTBEAT_PARAMS = SESSION_OWNER_HEARTBEAT_PARAMS) {
+	public constructor(options: SessionOwnerOptions, params: SessionOwnerHeartbeatParams = SESSION_OWNER_HEARTBEAT_PARAMS) {
 		this.options = options;
 		this.params = params;
 	}

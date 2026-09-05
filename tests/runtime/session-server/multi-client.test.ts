@@ -1,3 +1,4 @@
+import type { OwnerFence } from "../../../src/runtime/session-owner/types.ts";
 import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 /**
  * R4:multi-client fixtures(06 §6.4/§R4 退出条件)。
@@ -171,9 +172,9 @@ describe("R4 multi-client", () => {
 		const server2 = new SessionRuntimeServer({
 			sessionId,
 			store: h.store,
-			controller: createTestController({ sessionId, store: h.store, getFence: () => fence2 }),
+			controller: createTestController({ sessionId, store: h.store, getFence: () => { if (fence2 === undefined) throw new Error("owner not claimed"); return fence2; } }),
 		});
-		let fence2: { sessionId: string; runtimeId: string; generation: number } | undefined;
+		let fence2: OwnerFence | undefined;
 		const client = new SessionClient({
 			store: h.store,
 			ownerStore: h.ownerStore,

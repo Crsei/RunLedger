@@ -1,3 +1,4 @@
+import type { SessionResourceDomainPort } from "../../../src/runtime/session-runtime/session-runtime.ts";
 import { describe, expect, it } from "vitest";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
@@ -29,6 +30,7 @@ describe("security settings Session resource domain", () => {
 			domainRevision: 7,
 			value: { scope: "user", document: { profile: "workspace-write" }, sourceDigest: initialDigest, appliesTo: "new_sessions", editable: true },
 		});
+		if (domain.mutate === undefined) throw new Error("settings mutation missing");
 		expect(await domain.mutate("security.settings.update", {
 			scope: "workspace",
 			expectedSourceDigest: initialDigest,
@@ -76,6 +78,7 @@ describe("security settings Session resource domain", () => {
 			}),
 		});
 
+		if (domain.mutate === undefined) throw new Error("settings mutation missing");
 		const result = await domain.mutate("security.settings.update", {
 			scope: "user",
 			expectedSourceDigest: runtimeDigest({}),
@@ -94,7 +97,7 @@ describe("security settings Session resource domain", () => {
 				update: async () => ({ ok: false, error: { code: "policy_denied", message: "unused", retryable: false } }),
 			},
 		});
-		const existing = {
+		const existing: SessionResourceDomainPort = {
 			operationManifest: [{ operation: "extension.inspect", capability: "session.extensions", access: "read" as const }],
 			query: async (operation: string) => ({ ok: true as const, status: "ok" as const, operation, domainRevision: 3, value: { source: "existing" } }),
 		};

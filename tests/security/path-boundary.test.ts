@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { canCreateSymlink } from "../helpers/platform.ts";
 import { mkdir, mkdtemp, readFile, realpath, readdir, rename, rm, stat, lstat, symlink, writeFile } from "node:fs/promises";
@@ -29,7 +30,7 @@ const broker: FileSystemBrokerPort = {
 	},
 	realpath,
 	readdir,
-	mkdir,
+	mkdir: async (path, options) => { await mkdir(path, options); },
 	rm,
 	rename,
 };
@@ -42,7 +43,7 @@ function snapshot(root: string): SecuritySnapshot {
 	return {
 		profile: { name: "workspace-write", approvalPolicy: "on-request", filesystemMode: "workspace-write", network: { mode: "deny", allowedHosts: [] }, sandbox: "workspace-write" },
 		filesystem: { readRoots: [root], writeRoots: [root], denyRead: [], denyWrite: [], protectedPaths: [join(root, ".git"), join(root, ".runledger")] },
-		rules: [], sources: ["builtin"], workspaceRoot: root, tempRoot: join(root, ".tmp"), policyDigest: { algorithm: "sha256", digest: "e".repeat(64) as `${string}` }, createdAt: "2026-08-04T00:00:00.000Z",
+		rules: [], sources: ["builtin"], workspaceRoot: root, tempRoot: join(root, ".tmp"), policyDigest: runtimeDigest("e"), createdAt: "2026-08-04T00:00:00.000Z",
 	};
 }
 

@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it } from "vitest";
 import { buildExtensionSnapshot } from "../../src/extensions/snapshot.ts";
 import { mergeExtensionConfigLayers } from "../../src/extensions/config-layers.ts";
@@ -5,10 +6,7 @@ import { DEFAULT_EXTENSION_SCAN_LIMITS, extensionDiagnostic } from "../../src/ex
 import type { ExtensionResourceDescriptor } from "../../src/extensions/types.ts";
 import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 
-const digest = {
-	algorithm: "sha256",
-	digest: "6".repeat(64),
-} as const;
+const digest = runtimeDigest("6");
 
 function descriptor(): ExtensionResourceDescriptor {
 	return {

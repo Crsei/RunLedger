@@ -100,7 +100,7 @@ describe("Host MCP runtime composition", () => {
 			sessionId,
 			principalId,
 			cwd: "/workspace",
-			authorize: async () => ({ ok: true, value: { authorization: { outcome: "allow" }, authorizationDigest: runtimeDigest("authorized") } }),
+			authorize: async () => ({ ok: true, value: { authorization: { outcome: "allow", decisionSource: "user", requests: [], policyDigest: runtimeDigest("policy"), reason: "fixture authorized" }, authorizationDigest: runtimeDigest("authorized") } }),
 		});
 		const request = {
 			port: "resource_invocation" as const,

@@ -87,14 +87,15 @@ function emitMessage(
 	if (message.content.length > 0) {
 		for (const [contentIndex, content] of message.content.entries()) {
 			if (content.type === "text") {
-				stream.push({ type: "text_delta", contentIndex, delta: content.text });
+				stream.push({ type: "text_delta", contentIndex, delta: content.text, partial: message });
 			}
 			if (content.type === "toolCall") {
 				stream.push({ type: "toolcall_end", contentIndex, toolCall: content, partial: message });
 			}
 		}
 	}
-	stream.push({ type: "done", reason: message.stopReason, message });
+	if (message.stopReason === "error" || message.stopReason === "aborted") throw new Error("expected successful fixture message");
+			stream.push({ type: "done", reason: message.stopReason, message });
 	stream.end(message);
 }
 

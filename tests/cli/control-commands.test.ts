@@ -124,13 +124,13 @@ describe("skill control commands", () => {
 
 	it("maps skill requests to domain operations with bounded bodies", () => {
 		const list = parseControlCommand(["skill", "provider", "list"]);
-		expect(list.ok && controlCommandRequest(list.command)).toEqual({ operation: "skill.provider.list", body: {}, mutation: false });
+		expect(list?.ok && controlCommandRequest(list.command)).toEqual({ operation: "skill.provider.list", body: {}, mutation: false });
 		const enable = parseControlCommand(["skill", "provider", "enable", "runledger-user"]);
-		expect(enable.ok && controlCommandRequest(enable.command)).toEqual({ operation: "skill.provider.enable", body: { providerId: "runledger-user" }, mutation: true });
+		expect(enable?.ok && controlCommandRequest(enable.command)).toEqual({ operation: "skill.provider.enable", body: { providerId: "runledger-user" }, mutation: true });
 		const workspaceDisable = parseControlCommand(["skill", "provider", "disable", "codex-user", "--scope=workspace"]);
-		expect(workspaceDisable.ok && controlCommandRequest(workspaceDisable.command)).toEqual({ operation: "skill.provider.disable", body: { providerId: "codex-user", scope: "workspace" }, mutation: true });
+		expect(workspaceDisable?.ok && controlCommandRequest(workspaceDisable.command)).toEqual({ operation: "skill.provider.disable", body: { providerId: "codex-user", scope: "workspace" }, mutation: true });
 		const trust = parseControlCommand(["skill", "trust", "skill:user:abc:review"]);
-		expect(trust.ok && controlCommandRequest(trust.command)).toEqual({ operation: "skill.trust", body: { skillId: "skill:user:abc:review" }, mutation: true });
+		expect(trust?.ok && controlCommandRequest(trust.command)).toEqual({ operation: "skill.trust", body: { skillId: "skill:user:abc:review" }, mutation: true });
 		expect(controlCommandQueryOperation({ group: "skill", action: "trust", args: ["x"], mutation: true })).toBe("skill.list");
 		expect(controlCommandQueryOperation({ group: "skill", action: "provider", args: ["list"], mutation: false })).toBeUndefined();
 	});

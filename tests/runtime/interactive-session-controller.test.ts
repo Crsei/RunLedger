@@ -659,7 +659,7 @@ describe("InteractiveSessionController", () => {
 		await controller.login(p1.provider, "api_key", INTERACTION);
 		const before = controller.messages;
 		const events: AgentEvent[] = [];
-		controller.subscribe((event) => events.push(event));
+		controller.subscribe((event) => { events.push(event); });
 
 		const result = await (controller as unknown as {
 			runEphemeralTurn(input: { promptText: string; requestId: string; signal: AbortSignal }): Promise<string | undefined>;

@@ -24,7 +24,9 @@ const runFile = promisify(execFile);
 class RealGitCommandPort implements GitCommandPort {
 	public async run(request: GitCommandRequest, signal?: AbortSignal): Promise<GitCommandResult> {
 		try {
-			const result = await runFile("git", request.arguments as string[], { cwd: request.cwd, input: request.stdin, signal, timeout: request.timeoutMs });
+			const pending = runFile("git", request.arguments as string[], { cwd: request.cwd, signal, timeout: request.timeoutMs });
+			pending.child.stdin?.end(request.stdin);
+			const result = await pending;
 			return { stdout: result.stdout, stderr: result.stderr, exitCode: 0, signaled: false };
 		} catch (error) {
 			const value = error as { stdout?: string; stderr?: string; code?: number | string; killed?: boolean };

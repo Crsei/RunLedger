@@ -53,7 +53,7 @@ function setupSession(seed: string): SessionId {
 	return sessionId;
 }
 
-function openStores(): { store: SessionStore; ownerStore: OwnerStore; db: import("../../src/storage/session-store/database.ts").SessionDatabase } {
+function openStores(): { store: SessionStore; ownerStore: OwnerStore; db: import("../../../src/storage/session-store/database.ts").SessionDatabase } {
 	const db = openSessionDatabase(join(dir, "state.db"));
 	return { store: new SessionStore(db), ownerStore: new OwnerStore(db), db };
 }

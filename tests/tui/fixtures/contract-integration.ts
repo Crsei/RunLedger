@@ -22,7 +22,7 @@ import type {
   SessionTitleChangedSink,
 } from "../../../src/runtime/interactive-session-controller.ts";
 import type { AuthInteraction, AuthType, Credential } from "../../../src/auth/types.ts";
-import type { AssistantMessage, ModelThinkingLevel } from "../../../src/types.ts";
+import type { Api, AssistantMessage, Model, ModelThinkingLevel } from "../../../src/types.ts";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import type { LedgerEntry } from "../../../src/runtime/ledger/types.ts";
 import { InteractiveMode } from "../../../src/tui/interactive-mode.ts";
@@ -37,10 +37,13 @@ export class ContractTerminal implements Terminal {
   startCount = 0;
   stopCount = 0;
 
-  constructor(
-    private readonly columnsValue = 80,
-    private readonly rowsValue = 24,
-  ) {}
+  private readonly columnsValue: number;
+  private readonly rowsValue: number;
+
+  constructor(columnsValue = 80, rowsValue = 24) {
+    this.columnsValue = columnsValue;
+    this.rowsValue = rowsValue;
+  }
 
   get columns(): number {
     return this.columnsValue;
@@ -125,6 +128,7 @@ export interface ContractControllerOptions {
   readonly toolCount?: number;
   readonly providerStatuses?: readonly ContractProviderStatus[];
   readonly availableModels?: readonly ContractModelOption[];
+  readonly onPrompt?: (text: string) => void;
   readonly onLogin?: (providerId: string) => Promise<void>;
   readonly onLogout?: (providerId: string) => Promise<void>;
   readonly querySessionDomain?: (operation: string, body: Record<string, unknown>, context?: SessionDomainRequestContext) => Promise<Record<string, unknown>>;
@@ -229,8 +233,8 @@ export class ContractController implements InteractiveSessionControllerPort {
   getProvider(): undefined {
     return undefined;
   }
-  async getAvailableModels(): Promise<readonly { readonly provider: string; readonly id: string }[]> {
-    return (this.options.availableModels ?? []).map((model) => ({ provider: model.provider, id: model.id }));
+  async getAvailableModels(provider?: string): Promise<readonly Model<Api>[]> {
+    return (this.options.availableModels ?? []).filter((model) => provider === undefined || model.provider === provider).map((model) => ({ ...mockModel, provider: model.provider, id: model.id, name: model.name ?? model.id }));
   }
   async login(providerId: string, _type: AuthType, _interaction: AuthInteraction): Promise<Credential> {
     await this.options.onLogin?.(providerId);
@@ -270,6 +274,7 @@ export class ContractController implements InteractiveSessionControllerPort {
         type: "text_delta",
         contentIndex: 0,
         delta: "contract reply",
+        partial: contractAssistantMessage({ content: [{ type: "text", text: "contract reply" }] }),
       },
     });
     this.emit({

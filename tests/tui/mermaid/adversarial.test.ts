@@ -17,6 +17,7 @@ describe("Mermaid bounded parser adversarial inputs", () => {
     const result = parseMermaidSource("flowchart TD\r\n%% comment\r\nA[Start] --> B[End]\r\n");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
+    if (result.diagram.kind !== "flowchart") throw new Error("expected flowchart");
     expect(result.diagram.nodes.map((node) => node.label)).toEqual(["Start", "End"]);
   });
 
@@ -24,6 +25,7 @@ describe("Mermaid bounded parser adversarial inputs", () => {
     const parsed = parseMermaidSource("flowchart LR\nA[界] --> B[👩‍💻]");
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
+    if (parsed.diagram.kind !== "flowchart") throw new Error("expected flowchart");
     const rendered = renderMermaidDiagram(parsed.diagram, 40);
     expect(rendered.ok).toBe(true);
     if (!rendered.ok) return;
@@ -43,6 +45,7 @@ describe("Mermaid bounded parser adversarial inputs", () => {
     const control = parseMermaidSource("flowchart TD\nA[\u0000\u200b] --> B[Done]");
     expect(control.ok).toBe(true);
     if (control.ok) {
+      if (control.diagram.kind !== "flowchart") throw new Error("expected flowchart");
       expect(control.diagram.nodes[0]?.label).not.toContain("\u0000");
       expect(() => renderMermaidDiagram(control.diagram, 40)).not.toThrow();
     }

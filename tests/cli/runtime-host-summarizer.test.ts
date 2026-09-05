@@ -45,23 +45,29 @@ function manifest(profiles: readonly ModelCapabilityProfile[], aliases: Readonly
 function mockModels(reply: string | Error, available = true): Models {
 	const model: Model<Api> = {
 		id: "summary-model",
+		name: "Summary model",
+		baseUrl: "https://fixture.invalid",
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 32_000,
 		provider: "provider",
-		api: "openai",
+		api: "openai-completions",
 		maxTokens: 4_000,
 	};
 	return {
 		getModel: (provider: string, id: string) => (available && provider === "provider" && id === "summary-model" ? model : undefined),
-		completeSimple: async (_model, _context) => {
+		completeSimple: async (_model: Model<Api>, _context: Context) => {
 			if (reply instanceof Error) throw reply;
 			const message: AssistantMessage = {
 				role: "assistant",
 				content: [{ type: "text", text: reply }],
-				api: "openai",
+				api: "openai-completions",
 				provider: "provider",
 				model: "summary-model",
 				stopReason: "stop",
 				timestamp: Date.now(),
-				usage: { input: 10, output: 5 },
+				usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 			};
 			return message;
 		},

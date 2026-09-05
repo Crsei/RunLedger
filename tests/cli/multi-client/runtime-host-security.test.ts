@@ -218,7 +218,7 @@ describe.skipIf(IS_WINDOWS)("production Host Security/ExecutionGateway compositi
 		expect(security).toHaveProperty("permissionRequester");
 		const policy = (security as unknown as { readonly toolAuthorizationPolicy: ToolAuthorizationPolicy }).toolAuthorizationPolicy;
 		expect(policy).toBeDefined();
-		const governed = security as typeof security & { readonly permissionRequester: Parameters<typeof createStdlibTools>[1]["permissionRequester"] };
+		const governed = security as typeof security & { readonly permissionRequester: NonNullable<Parameters<typeof createStdlibTools>[1]>["permissionRequester"] };
 		expect(createStdlibTools(root, {
 			requireExecutionEnv: true,
 			executionEnv: security.createExecutionEnv(),

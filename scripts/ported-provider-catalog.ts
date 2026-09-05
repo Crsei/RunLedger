@@ -105,7 +105,7 @@ interface PortedProviderConfig {
 	/** vendored JSON 中的来源 key。 */
 	sourceKey: string;
 	/** 目标 provider id(identity 重写: xai-oauth → xai)。 */
-	provider: string;
+	provider: KnownProvider;
 	/** 覆盖 vendored baseUrl(模板或占位 URL 由 runtime factory 再解析)。 */
 	baseUrl?: string;
 	/** 覆盖所有模型的 api(不设置时保留 vendored per-model api)。 */
@@ -190,7 +190,7 @@ const PORTED_PROVIDER_CONFIGS: readonly PortedProviderConfig[] = [
 ];
 
 /** 来源无 bundled catalog 的 provider hand-seed(运行时动态发现为准)。 */
-const HAND_SEEDED_MODELS: readonly Model<"openai-completions">[] = [
+const HAND_SEEDED_MODELS: readonly (Model<"openai-completions"> & { provider: KnownProvider })[] = [
 	{
 		id: "claude-opus-4-8",
 		name: "Claude Opus 4.8",

@@ -1,17 +1,20 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createProxyFetchForUrl } from "./proxy-agent.ts";
+import { createProxyFetchForUrl, type FetchFunction } from "./proxy-agent.ts";
 
 interface ProviderFetchScope {
-	readonly fetch: typeof globalThis.fetch;
+	readonly fetch: FetchFunction;
 }
 
 const providerFetchScopes = new AsyncLocalStorage<ProviderFetchScope>();
 let fallbackFetch = globalThis.fetch;
 
-const routedFetch: typeof globalThis.fetch = (input, init) => {
-	const scope = providerFetchScopes.getStore();
-	return scope ? scope.fetch(input, init) : fallbackFetch(input, init);
-};
+// 只拦截调用，保留 Bun fetch.preconnect 等宿主函数成员。
+const routedFetch = new Proxy(globalThis.fetch, {
+	apply(_target, _receiver, args: Parameters<typeof globalThis.fetch>) {
+		const scope = providerFetchScopes.getStore();
+		return scope ? scope.fetch(...args) : fallbackFetch(...args);
+	},
+});
 
 function installProviderFetchRouter(): void {
 	if (globalThis.fetch === routedFetch) return;

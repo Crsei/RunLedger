@@ -15,10 +15,12 @@ class FakeConnection implements ReconnectableHostConnection {
 	private readonly events = new Set<(frame: HostFrameEnvelope) => void>();
 	private readonly closes = new Set<(error: Error) => void>();
 
-	constructor(
-		readonly endpoint: HostEndpointRecord,
-		private readonly responder: (frame: HostFrameEnvelope) => Promise<HostFrameEnvelope>,
-	) {}
+	readonly endpoint: HostEndpointRecord;
+	private readonly responder: (frame: HostFrameEnvelope) => Promise<HostFrameEnvelope>;
+	constructor(endpoint: HostEndpointRecord, responder: (frame: HostFrameEnvelope) => Promise<HostFrameEnvelope>) {
+		this.endpoint = endpoint;
+		this.responder = responder;
+	}
 
 	request(frame: HostFrameEnvelope): Promise<HostFrameEnvelope> {
 		this.requests.push(frame);

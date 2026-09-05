@@ -11,14 +11,16 @@ import { describe, expect, it } from "vitest";
 import type { SkillDescriptor, SkillTrustBinding } from "../../../src/extensions/skills/types.ts";
 import type { SkillDiscoveryObservation, SkillProviderStatus, SkillRegistrySnapshot } from "../../../src/extensions/skills/registry.ts";
 import { extensionDiagnostic } from "../../../src/extensions/diagnostics.ts";
+import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 
 function binding(): SkillTrustBinding {
 	return {
-		identity: { resourceId: "resource_a", kind: "skill", qualifiedId: "skill:user:fixture:release-review", version: "1", source: "user", digest: { algorithm: "sha256", digest: "d".repeat(64) } },
+		identity: { resourceId: createRuntimeId("resource", "a"), kind: "skill", qualifiedId: "skill:user:fixture:release-review", version: "1", source: "user", digest: runtimeDigest("d") },
 		canonicalPath: "/fixture/skills/release-review",
-		binding: { rootDigest: "root", manifestDigest: "manifest", configDigest: "config", assetsDigest: "assets", capabilityDigest: "capability", combinedDigest: "combined" },
-		principalId: "principal_a",
-		receiptId: "receipt_a",
+		binding: { rootDigest: runtimeDigest("root").digest, manifestDigest: runtimeDigest("manifest").digest, configDigest: runtimeDigest("config").digest, assetsDigest: runtimeDigest("assets").digest, commandDigest: runtimeDigest("command").digest, capabilityDigest: runtimeDigest("capability").digest, combinedDigest: runtimeDigest("combined").digest },
+		principalId: createRuntimeId("principal", "a"),
+		receiptId: createRuntimeId("receipt", "a"),
 	};
 }
 
@@ -26,6 +28,7 @@ describe("P1 Skill registry schema", () => {
 	it("constructs a frozen SkillDiscoveryObservation with plugin and external-registry fields", () => {
 		const observation: SkillDiscoveryObservation = Object.freeze({
 			providerId: "runledger-plugin",
+			priority: 1,
 			source: "plugin",
 			level: "plugin",
 			canonicalRoot: "/fixture/plugin",
@@ -76,7 +79,19 @@ describe("P1 Skill registry schema", () => {
 	});
 
 	it("keeps SkillDescriptor assignable to the snapshot all/active views", () => {
-		const descriptor = { qualifiedId: "skill:user:fixture:release-review" } as unknown as SkillDescriptor;
+		const trustBinding = binding();
+		const identity = trustBinding.identity;
+		const descriptor: SkillDescriptor = {
+			descriptor: { identity: { kind: "skill", qualifiedId: identity.qualifiedId, version: "1", source: "user", digest: identity.digest.digest }, resource: identity, provenance: { source: "user", sourceLocatorDigest: runtimeDigest("fixture") }, enabled: true, trusted: true, ready: true },
+			frontmatter: { name: "release-review", description: "Review releases", userInvocable: true, disableModelInvocation: false, metadata: {} },
+			rootPath: trustBinding.canonicalPath,
+			skillFile: `${trustBinding.canonicalPath}/SKILL.md`,
+			bodyDigest: runtimeDigest("fixture body").digest,
+			resourceSet: { qualifiedId: identity.qualifiedId, metadata: { role: "metadata", identity, contentDigest: runtimeDigest("metadata").digest, byteLength: 8, entryCount: 1, capabilities: [] }, body: { role: "body", identity, contentDigest: runtimeDigest("fixture body").digest, byteLength: 12, entryCount: 1, capabilities: [] }, budget: { maxBytes: 1024, maxEntries: 16 } },
+			sourceRoot: { source: "user", sourceKey: "user:fixture", rootPath: "/fixture/skills", priority: 1 },
+			priority: 1,
+			trustBinding,
+		};
 		const snapshot: SkillRegistrySnapshot = {
 			generation: 1,
 			digest: "b".repeat(64),
@@ -87,6 +102,6 @@ describe("P1 Skill registry schema", () => {
 			userInvocable: [descriptor],
 			diagnostics: [],
 		};
-		expect(snapshot.all[0]?.qualifiedId).toBe("skill:user:fixture:release-review");
+		expect(snapshot.all[0]?.descriptor.identity.qualifiedId).toBe("skill:user:fixture:release-review");
 	});
 });

@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 /**
  * R2:SessionStore API fixtures(06 §4.3/§4.4/§4.5)。
  *
@@ -44,7 +45,7 @@ function ownerRow(store: SessionStore, sessionId: string, runtimeId: string, gen
 	);
 }
 
-const digest = (seed: string) => ({ algorithm: "sha256", digest: canonicalDigest({ seed }) }) as const;
+const digest = (seed: string) => runtimeDigest({ seed });
 
 describe("R2 catalog and lifecycle", () => {
 	it("requires and returns a validated durable harness profile ref", () => {
@@ -802,6 +803,6 @@ describe("R2 append atomicity and fence characterization", () => {
 	});
 });
 
-function fenceOf(sessionId: string, runtimeId: string) {
+function fenceOf(sessionId: ReturnType<typeof createRuntimeId<"session">>, runtimeId: ReturnType<typeof createRuntimeId<"runtime">>) {
 	return { sessionId, runtimeId, generation: 1 };
 }

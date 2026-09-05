@@ -1,3 +1,4 @@
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/resolver.ts";
 import { describe, expect, it, vi } from "vitest";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
@@ -183,6 +184,8 @@ describe("S2 InteractiveMode session workflows", () => {
 		} as unknown as OwnedSessionHandle;
 		const controller = new SessionInteractiveController(handle, {
 			sessionId: "contract-session",
+            harnessProfile: standardHarnessProfileRef(),
+            permissionProfile: "guarded",
 			messages: [],
 			warnings: [],
 			auditEntries: [],

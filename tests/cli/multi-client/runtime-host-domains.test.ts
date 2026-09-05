@@ -63,7 +63,7 @@ function securitySnapshot(): SecuritySnapshot {
 			network: { mode: "deny", allowedHosts: [] },
 			sandbox: "off",
 		},
-		filesystem: { mode: "workspace-write", workspaceRoot: "/private/workspace", protectedPaths: [] },
+		filesystem: { readRoots: ["/private/workspace"], writeRoots: ["/private/workspace"], denyRead: [], denyWrite: [], protectedPaths: [] },
 		rules: [],
 		sources: ["user"],
 		workspaceRoot: "/private/workspace",

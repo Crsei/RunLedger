@@ -115,7 +115,7 @@ function stopStream(calls: { count: number }, text = "bounded child report"): St
 		const message = assistant(text);
 		queueMicrotask(() => {
 			stream.push({ type: "start", partial: { ...message, content: [] } });
-			stream.push({ type: "text_delta", contentIndex: 0, delta: text });
+			stream.push({ type: "text_delta", contentIndex: 0, delta: text, partial: message });
 			stream.push({ type: "done", reason: "stop", message });
 			stream.end(message);
 		});
@@ -131,7 +131,7 @@ function gatedStopStream(gate: { started: boolean; release: Promise<void> }, cal
 		const message = assistant("gated child report");
 		void gate.release.then(() => {
 			stream.push({ type: "start", partial: { ...message, content: [] } });
-			stream.push({ type: "text_delta", contentIndex: 0, delta: "gated child report" });
+			stream.push({ type: "text_delta", contentIndex: 0, delta: "gated child report", partial: message });
 			stream.push({ type: "done", reason: "stop", message });
 			stream.end(message);
 		});
@@ -593,6 +593,7 @@ describe("bounded child supervisor", () => {
 		const attemptPort: NonNullable<AgentSupervisorOptions["attemptPort"]> = {
 			beginAttempt: (input) => {
 				beginCalls += 1;
+				if (typeof input === "string") throw new Error("expected stable attempt request");
 				return { status: "started", commandId: input.commandId, attemptId: input.attemptId };
 			},
 			settleAttempt: () => {

@@ -17,9 +17,9 @@ const target = resolveNativeSyntaxPackage({ platform, arch: process.arch, ...(pl
 if (!target.ok) throw new Error(target.reason);
 const availability = loadNativeSyntaxAddonFromPackage({
 	packageName: target.packageName,
-	resolvePackageJson: (name) => require.resolve(`${name}/package.json`),
-	readFile: (path) => require("node:fs").readFileSync(path) as Uint8Array,
-	loadModule: (path) => require(path) as unknown,
+	resolvePackageJson: (name: string) => require.resolve(`${name}/package.json`),
+	readFile: (path: string) => require("node:fs").readFileSync(path) as Uint8Array,
+	loadModule: (path: string) => require(path) as unknown,
 });
 if (!availability.ok) throw new Error(availability.reason);
 const result = await availability.addon.highlightAsync("const clean = true;", "javascript", "catppuccin-mocha");

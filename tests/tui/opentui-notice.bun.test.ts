@@ -1,3 +1,4 @@
+import { requireNode, TextRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import { createOpenTuiComponentRuntimeFromRenderer } from "../../src/tui/opentui/component-runtime.ts";
@@ -28,7 +29,7 @@ describe("OpenTUI Codex notice block", () => {
 		try {
 			runtime.update({ body: rowToBlocks(row), editorText: "", footer: [] });
 			await setup.renderOnce();
-			const notice = setup.renderer.root.findDescendantById("runledger-block-timeline-notice-warning");
+			const notice = requireNode(setup.renderer.root, "runledger-block-timeline-notice-warning", TextRenderable);
 			expect(notice).toBeDefined();
 			expect(notice?.plainText).toContain("⚠ warning: ");
 			expect(notice?.plainText.split("\n").some((line) => line.startsWith("  "))).toBe(true);

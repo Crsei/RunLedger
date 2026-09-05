@@ -46,7 +46,7 @@ describe("resident ExtensionHostManager", () => {
 			const manager = new ExtensionHostManager({ pluginManager, skillRegistry, now: () => new Date("2026-08-05T00:00:00.000Z") });
 			const first = await manager.load();
 			expect(first.status).toBe("ready");
-			if (first.status !== "ready") return;
+			if (first.status !== "ready" || first.snapshot === undefined) throw new Error("extension snapshot unavailable");
 			expect(manager.currentHooks()).toEqual([]);
 			expect(first.snapshot.generation).toBe(1);
 			expect(first.snapshot.counts.plugins).toBe(1);

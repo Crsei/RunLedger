@@ -132,7 +132,8 @@ async function main(): Promise<void> {
 				normalized_win32: pathApi.win32.normalize(input),
 			};
 		}
-		evidence.path = { platform, cases: pathCases };
+		const pathEvidence: Record<string, unknown> = { platform, cases: pathCases };
+		evidence.path = pathEvidence;
 		writeRaw("path-is-absolute.txt", JSON.stringify(pathCases, null, 2));
 
 		// --- 2.2 大小写保留与比较身份（真实 filesystem） ---
@@ -144,7 +145,7 @@ async function main(): Promise<void> {
 			`lstat(mixedcase) exists on current fs: ${lowerStat !== undefined}`,
 			`fs is case-sensitive if mixedcase is absent`,
 		].join("\n"));
-		evidence.path.caseSensitiveProbe = { created: join(caseRoot, "MixedCase"), lowerVariantExists: lowerStat !== undefined };
+		pathEvidence.caseSensitiveProbe = { created: join(caseRoot, "MixedCase"), lowerVariantExists: lowerStat !== undefined };
 
 		// --- 2.3 existing realpath 与 symlink 身份 ---
 		const symRoot = join(sandbox, "symlink");
@@ -161,7 +162,7 @@ async function main(): Promise<void> {
 		writeRaw("symlink-create.txt", `${symlinkProbe.stdout}${symlinkProbe.stderr}`);
 		writeRaw("realpath.txt", `${realpathProbe.stdout}${realpathProbe.stderr}`);
 		writeRaw("lstat.txt", `${lstatProbe.stdout}${lstatProbe.stderr}`);
-		evidence.path.symlink = {
+		pathEvidence.symlink = {
 			createExitCode: symlinkProbe.exitCode,
 			realpath: realpathProbe.stdout.trim(),
 			lstat: lstatProbe.stdout.trim(),
@@ -187,7 +188,7 @@ async function main(): Promise<void> {
 		`, join(sandbox, "not-existing", "deeper", "candidate.txt")]);
 		probes.ancestor = ancestorProbe;
 		writeRaw("nearest-existing-ancestor.txt", `${ancestorProbe.stdout}${ancestorProbe.stderr}`);
-		evidence.path.candidateProbe = {
+		pathEvidence.candidateProbe = {
 			candidate: join(sandbox, "not-existing", "deeper", "candidate.txt"),
 			output: ancestorProbe.stdout.trim(),
 		};

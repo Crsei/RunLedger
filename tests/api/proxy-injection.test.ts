@@ -41,7 +41,8 @@ vi.mock("@anthropic-ai/sdk", () => {
 
 vi.mock("@mistralai/mistralai", () => {
 	class MockHTTPClient {
-		constructor(public readonly options: unknown) {}
+		readonly options: unknown;
+		constructor(options: unknown) { this.options = options; }
 	}
 
 	class MockMistral {
@@ -96,7 +97,6 @@ function imagesModel(provider: string, baseUrl: string): ImagesModel<"openrouter
 		baseUrl,
 		input: ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		maxTokens: 1024,
 		output: ["text", "image"],
 	};
 }

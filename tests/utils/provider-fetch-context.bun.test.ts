@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { afterEach, describe, expect, test } from "bun:test";
 import { runWithProviderProxyFetch } from "../../src/utils/provider-fetch-context.ts";
 
+const originalPreconnect = globalThis.fetch.preconnect;
 const servers: ReturnType<typeof createServer>[] = [];
 
 afterEach(async () => {
@@ -13,6 +14,11 @@ afterEach(async () => {
 });
 
 describe("provider fetch context in Bun", () => {
+	test("preserves the runtime fetch helpers when installing the global router", async () => {
+		await runWithProviderProxyFetch("http://target.runledger.test", "http://127.0.0.1:1", async () => undefined);
+		expect(globalThis.fetch.preconnect).toBe(originalPreconnect);
+	});
+
 	test("routes a scoped SDK fetch without recursively re-entering the router", async () => {
 		const requests: string[] = [];
 		const proxy = createServer((request, response) => {

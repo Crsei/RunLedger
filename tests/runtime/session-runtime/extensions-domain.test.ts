@@ -44,6 +44,7 @@ function managerStub(extra: Record<string, unknown> = {}): Parameters<typeof cre
 		untrust: async () => readyReload,
 		trustSkill: async () => readyReload,
 		untrustSkill: async () => readyReload,
+		setSkillProviderEnabled: async () => readyReload,
 		publicSnapshot: () => undefined,
 		...extra,
 	} as Parameters<typeof createSessionExtensionComposition>[0]["manager"];
@@ -592,10 +593,9 @@ describe("SessionRuntime extension domain", () => {
 		try {
 			const manifest = harness.runtime.protocolManifest();
 			expect(manifest.protocolCapabilities).toEqual(expect.arrayContaining(["session.extensions", "session.mcp"]));
-			expect(manifest.operationManifest).toEqual(expect.arrayContaining(operationManifest));
+			expect(manifest.operationManifest).toEqual(expect.arrayContaining([...operationManifest]));
 
 			const result = await harness.runtime.handleQuery({
-				queryId: "query_extension_inspect",
 				kind: "domain_query",
 				body: {
 					sessionId: harness.sessionId,
@@ -880,6 +880,7 @@ describe("SessionRuntime extension domain", () => {
 		const calls: string[] = [];
 		const reloaded: ExtensionReloadResult = { status: "ready", snapshot: {
 			snapshotId: "snapshot_reloaded",
+			skillProviders: [],
 			generation: 2,
 			createdAt: "2026-08-09T00:00:00.000Z",
 			descriptors: [],
@@ -897,6 +898,9 @@ describe("SessionRuntime extension domain", () => {
 				trust: async (pluginId) => { calls.push(`trust:${pluginId}`); return reloaded; },
 				untrust: async (pluginId) => { calls.push(`untrust:${pluginId}`); return reloaded; },
 				publicSnapshot: () => reloaded.snapshot ?? undefined,
+				trustSkill: async () => reloaded,
+				untrustSkill: async () => reloaded,
+				setSkillProviderEnabled: async () => reloaded,
 			},
 			mcp: {
 				start: async () => ({ ok: true, snapshots: [], requiredFailures: [] }),

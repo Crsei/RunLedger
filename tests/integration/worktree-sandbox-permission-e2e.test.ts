@@ -223,7 +223,7 @@ describe("worktree → sandbox → permission 全链路 E2E", () => {
 				timeoutMs: 5_000,
 				backend: "pipe",
 				executionMode: "foreground",
-				containment: "workspace",
+				containment: "process_group",
 				requestDigest: runtimeDigest({ command: "echo governed", cwd: effectiveCwd }),
 			});
 			expect(processPrepared.ok, JSON.stringify(processPrepared)).toBe(true);

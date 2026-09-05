@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { rmSyncRetry, rmRetry } from "../../helpers/cleanup.ts";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, type Stats } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,6 +26,7 @@ import {
 import {
 	createSessionSecurity,
 	type SessionProcessLeaf,
+	type SessionSecurityCompositionOptions,
 	type SessionSecurityConfigSource,
 } from "../../../src/security/session-composition.ts";
 import type { GovernedProcessEnvironment, SessionToolchainProbe, SessionToolchainSnapshot } from "../../../src/security/toolchain.ts";
@@ -74,7 +75,7 @@ function filesystemBroker(onWrite: () => void): FileSystemBrokerPort {
 	};
 }
 
-function toStats(value: Awaited<ReturnType<typeof fs.stat>>) {
+function toStats(value: Stats) {
 	return {
 		size: value.size,
 		mtimeMs: value.mtimeMs,
@@ -99,11 +100,8 @@ async function composition(input: {
 	readonly processEnvironment?: GovernedProcessEnvironment;
 	readonly toolchainProbe?: SessionToolchainProbe;
 	readonly unrestrictedShell?: Shell;
-	readonly bashShadowTelemetry?: { record(record: Record<string, unknown>): Promise<void> };
-	readonly bashClassificationAudit?: {
-		record(record: Record<string, unknown>): Promise<void>;
-		link?(record: Record<string, unknown>): Promise<void>;
-	};
+	readonly bashShadowTelemetry?: SessionSecurityCompositionOptions["bashShadowTelemetry"];
+	readonly bashClassificationAudit?: SessionSecurityCompositionOptions["bashClassificationAudit"];
 	readonly bashAnalyzer?: BashSecurityAnalyzerPort;
 	readonly approvalTimeoutMs?: number;
 }) {
@@ -180,7 +178,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		} finally {
 			await security.close();
 		}
-		expect(await security.bashAnalyzer.status()).toMatchObject({ workerHealth: "closed" });
+		expect(await security.bashAnalyzer.status?.()).toMatchObject({ workerHealth: "closed" });
 	});
 
 	it("wires redacted AST classification into the Session Gateway audit port", async () => {
@@ -190,8 +188,8 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			document: { profile: "danger-full-access", approvalPolicy: "never", sandbox: "off", bashAnalyzerMode: "ast" },
 			unrestrictedShell: { exec: async () => ({ stdout: "audited", stderr: "", exitCode: 0 }) },
 			bashClassificationAudit: {
-				record: async (record) => { records.push(record); },
-				link: async (record) => { links.push(record); },
+				record: async (record) => { records.push({ ...record }); },
+				link: async (record) => { links.push({ ...record }); },
 			},
 		});
 		try {
@@ -222,7 +220,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 				exec: async () => ({ stdout: "shadow", stderr: "", exitCode: 0 }),
 			},
 			bashShadowTelemetry: {
-				record: async (record) => { records.push(record); },
+				record: async (record) => { records.push({ ...record }); },
 			},
 		});
 		try {
@@ -919,7 +917,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 					decided: async () => undefined,
 					revoked: async () => undefined,
 				},
-				autoReviewAudit: { recorded: async (record) => { records.push(record); } },
+				autoReviewAudit: { recorded: async (record) => { records.push({ ...record }); } },
 			},
 		});
 		try {
@@ -986,7 +984,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 			},
 			approvalPorts: {
 				prompter: {
-					request: async () => ({ decision: "allow" as const, decidedBy: createRuntimeId("principal", "tester") }),
+					request: async () => ({ decision: "allow-once" as const, decidedBy: createRuntimeId("principal", "tester") }),
 				},
 				stateStore: new MemoryApprovalStateStore(),
 				audit: {
@@ -1016,7 +1014,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 				prompter: {
 					request: async () => {
 						prompts += 1;
-						return { decision: "allow" as const, decidedBy: createRuntimeId("principal", "tester") };
+						return { decision: "allow-once" as const, decidedBy: createRuntimeId("principal", "tester") };
 					},
 				},
 				stateStore: new MemoryApprovalStateStore(),

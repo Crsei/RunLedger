@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { request as httpRequest } from "node:http";
-import type { AssistantMessage, Api, Context, Model, Provider, StreamOptions } from "../../src/types.ts";
+import type { AssistantMessage, Api, Context, Model, StreamOptions } from "../../src/types.ts";
 import { AuthStorage } from "../../src/storage/auth-storage.ts";
-import { createModels, type MutableModels } from "../../src/models.ts";
+import { createModels, type MutableModels, type Provider } from "../../src/models.ts";
 import { createAssistantMessageEventStream, AssistantMessageEventStream } from "../../src/utils/event-stream.ts";
 import { startAuthGatewayServer, type AuthGatewayServerHandle } from "../../src/auth-gateway/server.ts";
 

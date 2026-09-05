@@ -184,15 +184,12 @@ describe("M4 占位工具", () => {
           { content: "task B", status: "in_progress" },
         ],
       });
-      expect(r1.details.written).toBe(2);
-      expect(r1.details.deleted).toBe(0);
+      expect(r1.details).toMatchObject({ written: 2, deleted: 0 });
       // 第二轮:只保留 A,旧 B 被删
       const r2 = await tool.execute("tc", {
         todos: [{ content: "task A", status: "in_progress" }],
       });
-      expect(r2.details.written).toBe(0);
-      expect(r2.details.updated).toBe(1);
-      expect(r2.details.deleted).toBe(1);
+      expect(r2.details).toMatchObject({ written: 0, updated: 1, deleted: 1 });
     });
   });
 });

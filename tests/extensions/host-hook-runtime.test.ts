@@ -155,13 +155,13 @@ describe("HostHookRuntime", () => {
 			managedProcess,
 			extensionManager: {
 				currentHooks: () => [definition],
-				beginTurn: () => ({ snapshotId, generation: 1, createdAt: "2026-08-05T00:00:00.000Z", digest: "a".repeat(64), descriptors: [], diagnostics: [], counts: { plugins: 0, skills: 0, hooks: 1, mcpServers: 0, mcpTools: 0, ready: 1, blocked: 0, disabled: 0, error: 0 } }),
+				beginTurn: () => ({ snapshotId, generation: 1, createdAt: "2026-08-05T00:00:00.000Z", digest: "a".repeat(64), descriptors: [], diagnostics: [], skillProviders: [], counts: { plugins: 0, skills: 0, hooks: 1, mcpServers: 0, mcpTools: 0, ready: 1, blocked: 0, disabled: 0, error: 0 } }),
 				endTurn: async () => undefined,
 			},
 			security: {
 				authorizeResource: async () => {
 					authorized += 1;
-					return { ok: true, value: { authorization: { outcome: "allow", decisionSource: "policy", requests: [], policyDigest: runtimeDigest("policy"), reason: "fixture" }, authorizationDigest: runtimeDigest("authorization") } };
+					return { ok: true, value: { authorization: { outcome: "allow", decisionSource: "builtin", requests: [], policyDigest: runtimeDigest("policy"), reason: "fixture" }, authorizationDigest: runtimeDigest("authorization") } };
 				},
 			},
 			identity: {

@@ -57,6 +57,7 @@ function oneToolThenStop(call: ToolCall): StreamFn {
 			const message = hasResult ? assistant([{ type: "text", text: "done" }], "stop") : assistant([call], "toolUse");
 			stream.push({ type: "start", partial: { ...message, content: [] } });
 			if (!hasResult) stream.push({ type: "toolcall_end", contentIndex: 0, toolCall: call, partial: message });
+			if (message.stopReason === "error" || message.stopReason === "aborted") throw new Error("expected successful fixture message");
 			stream.push({ type: "done", reason: message.stopReason, message });
 			stream.end(message);
 		});

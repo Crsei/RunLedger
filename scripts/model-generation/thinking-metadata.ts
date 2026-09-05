@@ -226,7 +226,7 @@ export function applyThinkingLevelMetadata(model: Model<any>): void {
 		mergeThinkingLevelMap(model, ANT_LING_RING_THINKING_LEVEL_MAP);
 	}
 	if (model.provider === "github-copilot") {
-		const override = GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES[model.id];
+		const override = Object.entries(GITHUB_COPILOT_THINKING_LEVEL_OVERRIDES).find(([id]) => id === model.id)?.[1];
 		if (override) {
 			mergeThinkingLevelMap(model, override);
 		}

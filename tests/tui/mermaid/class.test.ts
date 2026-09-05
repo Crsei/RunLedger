@@ -41,6 +41,7 @@ describe("bounded Mermaid class diagrams", () => {
 
     expect(result).toMatchObject({ ok: true, diagram: { kind: "class" } });
     if (!result.ok) return;
+    if (result.diagram.kind !== "class") throw new Error("expected class");
     expect(result.diagram.classes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "容器",

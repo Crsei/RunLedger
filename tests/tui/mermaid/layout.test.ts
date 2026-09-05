@@ -7,6 +7,7 @@ function parseFlowchart(source: string) {
   const result = parseMermaidSource(source);
   expect(result.ok).toBe(true);
   if (!result.ok) throw new Error(`expected flowchart, got ${result.reason}`);
+  if (result.diagram.kind !== "flowchart") throw new Error("expected flowchart");
   return result.diagram;
 }
 

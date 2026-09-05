@@ -10,6 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createProcessOverlayController, type ProcessOverlayHostClient } from "../../../src/tui/process/controller-adapter.ts";
 import { createProcessPassiveBridge } from "../../../src/tui/process/passive-bridge.ts";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 
 const executionId = createRuntimeId("execution", "bridge");
@@ -20,10 +21,10 @@ const request = { generation: 1, effectId: "e-1", correlationId: "c-1", signal: 
 function client(): ProcessOverlayHostClient {
 	return {
 		listProcesses: async () => [
-			{ executionId, attemptId, state: "running", outputCursor: { sequence: 1, byteOffset: 5 }, outputSize: 120, canWrite: true, canResize: true, canStop: true },
+			{ executionId, attemptId, state: "running", outputCursor: { sequence: 1, byteOffset: 5 }, outputSize: 120, canWrite: true, canResize: true, canStop: true, commandDisplay: { authority: "unavailable" } },
 		],
 		processOutput: async (_id, cursor) => ({ ok: true as const, text: "out", startCursor: cursor, endCursor: { sequence: 2, byteOffset: 3 }, nextCursor: { sequence: 2, byteOffset: 3 }, truncated: false, head: { sequence: 2, byteOffset: 3 } }),
-		writeStdin: async (_id, input) => ({ ok: true, receiptDigest: { algorithm: "sha256", digest: "abc123def456" } as never }),
+		writeStdin: async (_id, input) => ({ ok: true, receiptDigest: runtimeDigest("passive-process-receipt") }),
 		stopProcess: async () => ({ ok: true }),
 	};
 }

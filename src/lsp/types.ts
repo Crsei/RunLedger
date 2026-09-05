@@ -263,7 +263,7 @@ export const LSP_ACTIONS = [
 export type LspAction = (typeof LSP_ACTIONS)[number];
 
 export const lspSchema = Type.Object({
-	action: Type.Union(LSP_ACTIONS.map((action) => Type.Literal(action))),
+	action: Type.Enum(LSP_ACTIONS),
 	file: Type.Optional(Type.String({ description: "文件路径;symbols/request 的 workspace 形态可用 \"*\";diagnostics 仅支持单文件" })),
 	line: Type.Optional(Type.Number({ minimum: 1, description: "1 起始行号" })),
 	symbol: Type.Optional(Type.String({ description: "行内符号子串;支持 name#N 出现次选择器" })),

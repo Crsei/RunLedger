@@ -1,3 +1,4 @@
+import { buildMultiAgentPolicyReceipt, resolveMultiAgentPolicy } from "../../../src/runtime/agents/limits.ts";
 import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -21,6 +22,12 @@ import { AgentGraphStore } from "../../../src/runtime/agents/graph-store.ts";
 import { deriveRootAgentId } from "../../../src/runtime/agents/domain.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 
+
+function multiAgentPolicyFixture(): Pick<MultiAgentDomainPort, "policy" | "policyReceipt" | "rootAgentId" | "tools"> {
+	const resolution = resolveMultiAgentPolicy({ runtimeEnabled: true, user: { enabled: true } });
+	return { policy: resolution.policy, policyReceipt: buildMultiAgentPolicyReceipt({ runtimeEnabled: true, userSourceDigest: runtimeDigest({ enabled: true }), workspaceSourceDigest: runtimeDigest(null), resolution }), rootAgentId: createRuntimeId("agent", "fixture-root"), tools: [] };
+}
+
 let harness: RuntimeHarness | undefined;
 
 afterEach(async () => {
@@ -33,6 +40,7 @@ afterEach(async () => {
 
 function domain(): SessionDomainPort {
 	const multiAgent: MultiAgentDomainPort = {
+		...multiAgentPolicyFixture(),
 		operationManifest: [
 			{ operation: "agent.inspect", capability: "session.multi-agent", access: "read" },
 			{ operation: "agent.spawn", capability: "session.multi-agent", access: "mutate" },
@@ -123,6 +131,7 @@ describe("SessionRuntime multi-agent composition", () => {
 	it("rejects a non-record payload before routing an async multi-agent operation", async () => {
 		let queries = 0;
 		const multiAgent: MultiAgentDomainPort = {
+		...multiAgentPolicyFixture(),
 			operationManifest: [
 				{ operation: "agent.inspect", capability: "session.multi-agent", access: "read" },
 			],

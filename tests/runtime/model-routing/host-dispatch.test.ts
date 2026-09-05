@@ -93,7 +93,7 @@ describe("Host model request dispatch", () => {
 				},
 			},
 		}));
-		const calls = { count: 0 };
+		const calls: { count: number; kind?: string } = { count: 0 };
 		const controller = await InteractiveSessionController.create({
 			cwd: process.cwd(),
 			layout: buildRunledgerLayout(process.cwd(), "posix"),

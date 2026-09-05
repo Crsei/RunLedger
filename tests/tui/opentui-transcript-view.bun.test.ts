@@ -1,3 +1,4 @@
+import { requireNode, ScrollBoxRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import {
@@ -25,7 +26,7 @@ describe("OpenTUI transcript overlay", () => {
 				footer: [],
 			} satisfies OpenTuiComponentFrame);
 			await setup.renderOnce();
-			const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
+			const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
 			expect(transcript).toBeDefined();
 			if (!transcript) return;
 			transcript.scrollTop = 7;

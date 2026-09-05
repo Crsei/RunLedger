@@ -38,7 +38,7 @@ function formatCost(cost: { input?: number; output?: number; currency?: string }
 }
 
 function printSample(providerId: string, limit = 3): void {
-	const catalog = MODELS[providerId];
+	const catalog = Object.entries(MODELS).find(([id]) => id === providerId)?.[1];
 	if (catalog === undefined) {
 		console.log(`  [${providerId}] 不存在`);
 		return;
@@ -54,7 +54,7 @@ function printSample(providerId: string, limit = 3): void {
 
 async function main(): Promise<void> {
 	const providerIds = Object.keys(MODELS);
-	const totalModels = providerIds.reduce((sum, id) => sum + Object.keys(MODELS[id] ?? {}).length, 0);
+	const totalModels = Object.values(MODELS).reduce((sum, catalog) => sum + Object.keys(catalog).length, 0);
 
 	console.log("=== RunLedger pi-ai 移植层 demo ===");
 	console.log(`  Providers: ${providerIds.length}`);
@@ -102,7 +102,7 @@ async function demoMockLoop(): Promise<void> {
 	});
 
 	const events: AgentEvent[] = [];
-	agent.subscribe((ev) => events.push(ev));
+	agent.subscribe((ev) => { events.push(ev); });
 
 	const final = await agent.prompt("hello");
 
@@ -150,7 +150,7 @@ async function demoDeepseekLoop(): Promise<void> {
 		const piCtx: Context = {
 			systemPrompt: ctx.systemPrompt,
 			messages: ctx.messages,
-			tools: ctx.tools.map((t) => ({
+			tools: ctx.tools?.map((t) => ({
 				name: t.name,
 				description: t.description,
 				parameters: t.parameters,

@@ -33,7 +33,8 @@ describe("Harness Profile tool projection", () => {
 		const projected = projectHarnessTools(minimalDescriptor(), tools);
 		expect(projected.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
 		expect(projected.manifestDigest.digest).toBe(MINIMAL_TOOL_MANIFEST_DIGEST);
-		expect(projected.tools[0]!.parameters.properties).not.toHaveProperty("run_in_background");
+		expect(projected.tools[0]!.parameters).toHaveProperty("properties");
+		expect(projected.tools[0]!.parameters).not.toHaveProperty("properties.run_in_background");
 	});
 
 	it("fails closed when an allowlisted governed tool is missing or duplicated", () => {

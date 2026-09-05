@@ -1,3 +1,4 @@
+import { requireNode, MarkdownRenderable, BoxRenderable, ScrollBoxRenderable, TextRenderable, TextareaRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, spyOn, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
 import stringWidth from "string-width";
@@ -42,13 +43,11 @@ describe("OpenTUI component projection", () => {
         },
       } as Parameters<typeof runtime.update>[0]);
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       expect(transcript.verticalScrollBar.visible).toBe(false);
       const transcriptId = transcript.num;
-      const editorId = setup.renderer.root.findDescendantById("runledger-editor")?.num;
-      const firstBodyId = setup.renderer.root.findDescendantById("runledger-block-scrollbar-entry-0")?.num;
+      const editorId = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).num;
+      const firstBodyId = requireNode(setup.renderer.root, "runledger-block-scrollbar-entry-0", TextRenderable).num;
       const hiddenBodyWidth = transcript.getChildren()[0]?.width;
 
       runtime.update({
@@ -68,8 +67,8 @@ describe("OpenTUI component projection", () => {
       expect(transcript.verticalScrollBar.slider.x).toBe(39);
       expect(transcript.getChildren()[0]?.width).toBeLessThan(hiddenBodyWidth ?? 0);
       expect(transcript.num).toBe(transcriptId);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.num).toBe(editorId);
-      expect(setup.renderer.root.findDescendantById("runledger-block-scrollbar-entry-0")?.num).toBe(firstBodyId);
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).num).toBe(editorId);
+      expect(requireNode(setup.renderer.root, "runledger-block-scrollbar-entry-0", TextRenderable).num).toBe(firstBodyId);
     } finally {
       runtime.destroy();
     }
@@ -90,9 +89,7 @@ describe("OpenTUI component projection", () => {
     try {
       runtime.update(frame("#112233", "#445566") as Parameters<typeof runtime.update>[0]);
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       const barId = transcript.verticalScrollBar.num;
       expect(transcript.verticalScrollBar.slider.backgroundColor.toInts()).toEqual([17, 34, 51, 255]);
       expect(transcript.verticalScrollBar.slider.foregroundColor.toInts()).toEqual([68, 85, 102, 255]);
@@ -129,9 +126,7 @@ describe("OpenTUI component projection", () => {
         },
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       transcript.scrollTop = 0;
       await setup.renderOnce();
       const slider = transcript.verticalScrollBar.slider;
@@ -175,9 +170,7 @@ describe("OpenTUI component projection", () => {
         transcriptScrollPresentation: { visible: false, trackColor: "#112233", thumbColor: "#445566" },
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       const bottom = transcript.scrollTop;
       await setup.mockMouse.scroll(10, 10, "up");
       await setup.renderOnce();
@@ -186,7 +179,7 @@ describe("OpenTUI component projection", () => {
       setup.mockInput.pressKey("\x1b[5~");
       await setup.renderOnce();
       expect(transcript.scrollTop).toBeLessThan(afterWheel);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("draft");
     } finally {
       runtime.destroy();
     }
@@ -210,10 +203,8 @@ describe("OpenTUI component projection", () => {
         transcriptScrollPresentation: { visible: true, trackColor: "#112233", thumbColor: "#445566" },
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      const first = setup.renderer.root.findDescendantById("runledger-block-resize-entry-0");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
+      const first = requireNode(setup.renderer.root, "runledger-block-resize-entry-0", TextRenderable);
       transcript.scrollTop = 0;
       await setup.renderOnce();
       const firstId = first?.num;
@@ -225,14 +216,14 @@ describe("OpenTUI component projection", () => {
       expect(transcript.verticalScrollBar.x + transcript.verticalScrollBar.width).toBe(143);
       expect(transcript.verticalScrollBar.viewportSize).not.toBe(narrowViewportSize);
       expect(transcript.verticalScrollBar.scrollSize).toBeLessThan(narrowScrollSize);
-      expect(setup.renderer.root.findDescendantById("runledger-block-resize-entry-0")?.num).toBe(firstId);
+      expect(requireNode(setup.renderer.root, "runledger-block-resize-entry-0", TextRenderable).num).toBe(firstId);
       expect(transcript.scrollTop).toBe(0);
 
       setup.resize(40, 12);
       await setup.renderOnce();
       expect(transcript.verticalScrollBar.x + transcript.verticalScrollBar.width).toBe(40);
       expect(transcript.verticalScrollBar.scrollPosition).toBe(transcript.scrollTop);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("draft");
     } finally {
       runtime.destroy();
     }
@@ -259,9 +250,7 @@ describe("OpenTUI component projection", () => {
     try {
       runtime.update(frame(false));
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       transcript.scrollTop = 10;
       await setup.renderOnce();
 
@@ -306,9 +295,7 @@ describe("OpenTUI component projection", () => {
         transcriptScrollPresentation: { visible: true, trackColor: "#112233", thumbColor: "#445566" },
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       transcript.scrollTop = 0;
       await setup.renderOnce();
       const before = transcript.scrollTop;
@@ -332,11 +319,11 @@ describe("OpenTUI component projection", () => {
       { kind: "assistant", id: "assistant:1", timestamp: "2026-08-09T00:00:00.000Z", displayOrder: 1, status: "succeeded", streaming: false, thinking: bounded("thinking first line\nthinking final suffix"), text: bounded("assistant first paragraph\n\nassistant final suffix") },
     ];
     try {
-      runtime.update({ body: rows.flatMap(rowToBlocks), editorText: "", footer: [] });
+      runtime.update({ body: rows.flatMap((row) => rowToBlocks(row)), editorText: "", footer: [] });
       await setup.renderOnce();
-      expect(setup.renderer.root.findDescendantById("runledger-block-timeline-user-0")?.plainText).toBe("user first line\nuser final suffix");
-      expect(setup.renderer.root.findDescendantById("runledger-block-timeline-assistant-1-thinking")).toBeDefined();
-      expect(setup.renderer.root.findDescendantById("runledger-block-timeline-assistant-1-text")).toBeDefined();
+      expect(requireNode(setup.renderer.root, "runledger-block-timeline-user-0", TextRenderable).plainText).toBe("user first line\nuser final suffix");
+      expect(requireNode(setup.renderer.root, "runledger-block-timeline-assistant-1-thinking", MarkdownRenderable)).toBeDefined();
+      expect(requireNode(setup.renderer.root, "runledger-block-timeline-assistant-1-text", MarkdownRenderable)).toBeDefined();
       const frame = setup.captureCharFrame();
       expect(frame).toContain("thinking final suffix");
       expect(frame).toContain("assistant final suffix");
@@ -361,7 +348,7 @@ describe("OpenTUI component projection", () => {
         const line = setup.captureCharFrame().split("\n").find((candidate) => candidate.includes("stop · Worked for 12s"));
         expect(line).toBeDefined();
         expect(stringWidth((line ?? "").trimEnd())).toBe(width);
-        expect(setup.renderer.root.findDescendantById("runledger-block-timeline-run-run-native")).toBeDefined();
+        expect(requireNode(setup.renderer.root, "runledger-block-timeline-run-run-native", TextRenderable)).toBeDefined();
       }
     } finally {
       runtime.destroy();
@@ -372,7 +359,7 @@ describe("OpenTUI component projection", () => {
     const inputs: string[] = [];
     const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
-      onInput: (data) => inputs.push(data),
+      onInput: (data: string) => inputs.push(data),
       onResize: () => {},
     });
     try {
@@ -402,7 +389,7 @@ describe("OpenTUI component projection", () => {
     const inputs: string[] = [];
     const copy = spyOn(setup.renderer, "copyToClipboardOSC52").mockReturnValue(true);
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
-      onInput: (data) => inputs.push(data),
+      onInput: (data: string) => inputs.push(data),
       onResize: () => {},
     });
     try {
@@ -451,9 +438,9 @@ describe("OpenTUI component projection", () => {
       });
       await setup.renderOnce();
 
-      const historyBefore = setup.renderer.root.findDescendantById("runledger-block-history-1");
-      const activeBefore = setup.renderer.root.findDescendantById("runledger-block-active-1");
-      const editorBefore = setup.renderer.root.findDescendantById("runledger-editor");
+      const historyBefore = requireNode(setup.renderer.root, "runledger-block-history-1", TextRenderable);
+      const activeBefore = requireNode(setup.renderer.root, "runledger-block-active-1", MarkdownRenderable);
+      const editorBefore = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
       const overlayBefore = setup.renderer.root.findDescendantById("runledger-overlay");
       expect(historyBefore).toBeDefined();
       expect(activeBefore).toBeDefined();
@@ -471,12 +458,12 @@ describe("OpenTUI component projection", () => {
       });
       await setup.renderOnce();
 
-      expect(setup.renderer.root.findDescendantById("runledger-block-history-1")?.num)
-        .toBe(historyBefore?.num);
-      expect(setup.renderer.root.findDescendantById("runledger-block-active-1")?.num)
-        .toBe(activeBefore?.num);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.num)
-        .toBe(editorBefore?.num);
+      expect(requireNode(setup.renderer.root, "runledger-block-history-1", TextRenderable).num)
+        .toBe(historyBefore.num);
+      expect(requireNode(setup.renderer.root, "runledger-block-active-1", MarkdownRenderable).num)
+        .toBe(activeBefore.num);
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).num)
+        .toBe(editorBefore.num);
       expect(setup.renderer.root.findDescendantById("runledger-overlay")?.num)
         .toBe(overlayBefore?.num);
       expect(setup.captureCharFrame()).toContain("first second");
@@ -528,9 +515,9 @@ describe("OpenTUI component projection", () => {
         footer: [],
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript?.getChildren().length).toBe(100);
-      expect(transcript?.viewportCulling).toBe(true);
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
+      expect(transcript.getChildren().length).toBe(100);
+      expect(transcript.viewportCulling).toBe(true);
     } finally {
       runtime.destroy();
     }
@@ -550,9 +537,7 @@ describe("OpenTUI component projection", () => {
       }));
       runtime.update({ body: rows(40), editorText: "", footer: [] });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       transcript.scrollTop = 0;
       runtime.update({
         body: [...rows(40), { id: "entry-40", kind: "text", content: "new output" }],
@@ -583,14 +568,12 @@ describe("OpenTUI component projection", () => {
         footer: [],
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       const bottom = transcript.scrollTop;
       setup.mockInput.pressKey("\x1b[5~");
       await setup.renderOnce();
       expect(transcript.scrollTop).toBeLessThan(bottom);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("draft");
     } finally {
       runtime.destroy();
     }
@@ -613,9 +596,7 @@ describe("OpenTUI component projection", () => {
         footer: [],
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       const bottom = transcript.scrollTop;
 
       // 用户提交请求后鼠标通常仍停在 composer；滚轮仍应移动 session 历史。
@@ -631,7 +612,7 @@ describe("OpenTUI component projection", () => {
       await setup.mockMouse.scroll(10, 11, "up");
       await setup.renderOnce();
       expect(transcript.scrollTop).toBeLessThan(bottom);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("draft");
     } finally {
       runtime.destroy();
     }
@@ -646,9 +627,7 @@ describe("OpenTUI component projection", () => {
     try {
       runtime.update({ body: [], editorText: "", footer: [] });
       await setup.renderOnce();
-      const editor = setup.renderer.root.findDescendantById("runledger-editor");
-      expect(editor).toBeDefined();
-      if (!editor) return;
+      const editor = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
       for (const ch of "hello") {
         runtime.update({ body: [], editorText: editor.plainText + ch, footer: [] });
         await setup.renderOnce();
@@ -677,9 +656,9 @@ describe("OpenTUI component projection", () => {
       } as Parameters<typeof runtime.update>[0] & { readonly editorCursorOffset: number };
       runtime.update(frame);
       await setup.renderOnce();
-      const editor = setup.renderer.root.findDescendantById("runledger-editor");
-      expect(editor?.plainText).toBe("hello");
-      expect(editor?.cursorOffset).toBe(2);
+      const editor = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
+      expect(editor.plainText).toBe("hello");
+      expect(editor.cursorOffset).toBe(2);
     } finally {
       runtime.destroy();
     }
@@ -695,10 +674,10 @@ describe("OpenTUI component projection", () => {
       const cjk = "测试中文输入";
       runtime.update({ body: [], editorText: cjk, editorCursorOffset: cjk.length, footer: [] });
       await setup.renderOnce();
-      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      const editor = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
       expect(setup.renderer.getCursorState()).toMatchObject({
-        x: (editor?.screenX ?? 0) + stringWidth(cjk) + 1,
-        y: (editor?.screenY ?? 0) + 1,
+        x: editor.screenX + stringWidth(cjk) + 1,
+        y: editor.screenY + 1,
         visible: true,
       });
 
@@ -706,10 +685,10 @@ describe("OpenTUI component projection", () => {
       const mixed = "abc测试xyz中文尾";
       runtime.update({ body: [], editorText: mixed, editorCursorOffset: mixed.length, footer: [] });
       await setup.renderOnce();
-      expect(editor?.visualCursor.visualRow).toBe(1);
+      expect(editor.visualCursor.visualRow).toBe(1);
       expect(setup.renderer.getCursorState()).toMatchObject({
-        x: (editor?.screenX ?? 0) + stringWidth("xyz中文尾") + 1,
-        y: (editor?.screenY ?? 0) + 2,
+        x: editor.screenX + stringWidth("xyz中文尾") + 1,
+        y: editor.screenY + 2,
         visible: true,
       });
     } finally {
@@ -936,9 +915,7 @@ describe("OpenTUI component projection", () => {
       }));
       runtime.update({ body: rows(40), editorText: "draft", footer: [] });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       transcript.scrollTop = 0;
       runtime.update({ body: rows(41), editorText: "draft", footer: [] });
       await setup.renderOnce();
@@ -951,7 +928,7 @@ describe("OpenTUI component projection", () => {
         await setup.renderOnce();
       }
       expect(setup.captureCharFrame()).not.toContain("new content");
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("draft");
     } finally {
       runtime.destroy();
     }
@@ -964,9 +941,7 @@ describe("OpenTUI component projection", () => {
       onResize: () => {},
     });
     try {
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript).toBeDefined();
-      if (!transcript) return;
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
       let text = "line\n";
       let sawIndicator = false;
       for (let i = 0; i < 60; i++) {
@@ -1008,9 +983,9 @@ describe("OpenTUI component projection", () => {
         footer: [],
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      expect(transcript?.getChildren().length).toBe(10_000);
-      expect(transcript?.viewportCulling).toBe(true);
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
+      expect(transcript.getChildren().length).toBe(10_000);
+      expect(transcript.viewportCulling).toBe(true);
       expect(setup.captureCharFrame()).toContain("history 9999");
     } finally {
       runtime.destroy();
@@ -1034,13 +1009,13 @@ describe("OpenTUI component projection", () => {
           footer: ["idle · deepseek-v4-pro"],
         });
         await setup.renderOnce();
-        const editorBefore = setup.renderer.root.findDescendantById("runledger-editor");
+        const editorBefore = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
         setup.resize(width, 18);
         await setup.renderOnce();
         const lines = setup.captureCharFrame().split("\n");
         expect(lines.every((line) => stringWidth(stripAnsi(line)) <= width)).toBe(true);
-        expect(setup.renderer.root.findDescendantById("runledger-editor")?.num).toBe(editorBefore?.num);
-        expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("draft");
+        expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).num).toBe(editorBefore.num);
+        expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("draft");
       } finally {
         runtime.destroy();
       }
@@ -1053,10 +1028,10 @@ describe("OpenTUI component projection", () => {
     const actions: Array<{ readonly type: string }> = [];
     const themeModes: string[] = [];
     const runtimeOptions = {
-      onInput: (data) => inputs.push(data),
+      onInput: (data: string) => inputs.push(data),
       onResize: () => {},
       onActions: (next: readonly { readonly type: string }[]) => actions.push(...next),
-      onThemeMode: (mode) => themeModes.push(mode),
+      onThemeMode: (mode: "dark" | "light") => themeModes.push(mode),
     };
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, runtimeOptions);
     try {
@@ -1207,7 +1182,7 @@ describe("OpenTUI component projection", () => {
       });
       await setup.renderOnce();
       const frame = setup.captureCharFrame();
-      expect(setup.renderer.root.findDescendantById("runledger-block-history")?.plainText).toBe("historical conversation");
+      expect(requireNode(setup.renderer.root, "runledger-block-history", TextRenderable).plainText).toBe("historical conversation");
       expect(frame).toContain("Would you like to run the following command?");
       expect(frame).toContain("Environment: local");
       expect(frame).toContain("$ npm run check");
@@ -1216,7 +1191,7 @@ describe("OpenTUI component projection", () => {
       expect(frame).toContain("Waiting for approval");
       const overlay = setup.renderer.root.findDescendantById("runledger-overlay");
       const select = setup.renderer.root.findDescendantById("runledger-overlay-select-2");
-      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const editorRow = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
       expect(overlay).toBeDefined();
       expect(select).toBeDefined();
       expect(editorRow).toBeDefined();
@@ -1240,18 +1215,18 @@ describe("OpenTUI component projection", () => {
     try {
       runtime.update({ body: [], editorText: "", footer: [] });
       await setup.renderOnce();
-      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const editorRow = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
       expect(editorRow).toBeDefined();
-      expect(editorRow?.height).toBe(3);
+      expect(editorRow.height).toBe(3);
 
       runtime.update({ body: [], editorText: "", editorHeight: 5, footer: [] });
       await setup.renderOnce();
-      expect(editorRow?.height).toBe(5);
+      expect(editorRow.height).toBe(5);
 
       runtime.update({ body: [], editorText: "", footer: [] });
       await setup.renderOnce();
-      expect(editorRow?.height).toBe(5);
-      expect(setup.renderer.root.findDescendantById("runledger-editor")?.plainText).toBe("");
+      expect(editorRow.height).toBe(5);
+      expect(requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable).plainText).toBe("");
     } finally {
       runtime.destroy();
     }
@@ -1267,13 +1242,13 @@ describe("OpenTUI component projection", () => {
       runtime.update({ body: [], editorText: "", footer: ["identity", "parameters"] });
       await setup.renderOnce();
 
-      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
-      const editor = setup.renderer.root.findDescendantById("runledger-editor");
-      const footer = setup.renderer.root.findDescendantById("runledger-footer");
-      expect(editorRow?.height).toBe(3);
-      expect((editor?.y ?? 0) - (editorRow?.y ?? 0)).toBe(1);
-      expect((editor?.y ?? 0) + (editor?.height ?? 0) + 1).toBe(footer?.y);
-      expect((editorRow?.y ?? 0) + (editorRow?.height ?? 0)).toBe(footer?.y);
+      const editorRow = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
+      const editor = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
+      const footer = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
+      expect(editorRow.height).toBe(3);
+      expect(editor.y - editorRow.y).toBe(1);
+      expect(editor.y + editor.height + 1).toBe(footer?.y);
+      expect(editorRow.y + editorRow.height).toBe(footer?.y);
       expect(footer?.height).toBe(2);
       expect(footer?.plainText).toBe("  identity\n  parameters");
       const frame = setup.captureCharFrame().split("\n");
@@ -1298,7 +1273,7 @@ describe("OpenTUI component projection", () => {
         footer: [],
       });
       await setup.renderOnce();
-      const prompt = setup.renderer.root.findDescendantById("runledger-editor-prompt");
+      const prompt = requireNode(setup.renderer.root, "runledger-editor-prompt", TextRenderable);
       expect(prompt?.plainText).toBe("› ");
       expect(setup.captureCharFrame().split("\n").every((line) => stringWidth(stripAnsi(line)) <= 40)).toBe(true);
     } finally {
@@ -1315,13 +1290,13 @@ describe("OpenTUI component projection", () => {
     try {
       runtime.update({ body: [], editorText: "draft", footer: [] });
       await setup.renderOnce();
-      const prompt = setup.renderer.root.findDescendantById("runledger-editor-prompt");
-      const editor = setup.renderer.root.findDescendantById("runledger-editor");
+      const prompt = requireNode(setup.renderer.root, "runledger-editor-prompt", TextRenderable);
+      const editor = requireNode(setup.renderer.root, "runledger-editor", TextareaRenderable);
       expect(prompt?.x).toBe(0);
       expect(prompt?.width).toBe(2);
-      expect(editor?.x).toBe(2);
-      expect(editor?.width).toBe(37);
-      expect((editor?.x ?? 0) + (editor?.width ?? 0)).toBe(39);
+      expect(editor.x).toBe(2);
+      expect(editor.width).toBe(37);
+      expect(editor.x + editor.width).toBe(39);
     } finally {
       runtime.destroy();
     }
@@ -1364,11 +1339,11 @@ describe("OpenTUI component projection", () => {
         footer: ["hint-marker", "footer-marker"],
       });
       await setup.renderOnce();
-      const transcript = setup.renderer.root.findDescendantById("runledger-transcript");
-      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
-      const footer = setup.renderer.root.findDescendantById("runledger-footer");
-      expect(transcript?.height).toBeGreaterThanOrEqual(1);
-      expect((editorRow?.height ?? 0) + (footer?.height ?? 0) + (transcript?.height ?? 0)).toBeLessThanOrEqual(16);
+      const transcript = requireNode(setup.renderer.root, "runledger-transcript", ScrollBoxRenderable);
+      const editorRow = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
+      const footer = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
+      expect(transcript.height).toBeGreaterThanOrEqual(1);
+      expect(editorRow.height + (footer?.height ?? 0) + (transcript.height ?? 0)).toBeLessThanOrEqual(16);
       expect((footer?.y ?? 16) + (footer?.height ?? 0)).toBeLessThanOrEqual(16);
       expect(setup.captureCharFrame()).toContain("footer-marker");
     } finally {
@@ -1391,8 +1366,8 @@ describe("OpenTUI component projection", () => {
         footer: [footer[0]!],
       });
       await setup.renderOnce();
-      const editorRow = setup.renderer.root.findDescendantById("runledger-editor-row");
-      const oneRowEditorHeight = editorRow?.height ?? 0;
+      const editorRow = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
+      const oneRowEditorHeight = editorRow.height ?? 0;
 
       runtime.update({
         body: ["transcript-marker"],
@@ -1401,11 +1376,11 @@ describe("OpenTUI component projection", () => {
         footer,
       });
       await setup.renderOnce();
-      const twoRowEditor = setup.renderer.root.findDescendantById("runledger-editor-row");
-      const footerNode = setup.renderer.root.findDescendantById("runledger-footer");
-      expect(footerNode?.height).toBe(2);
+      const twoRowEditor = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
+      const footerNode = requireNode(setup.renderer.root, "runledger-footer", TextRenderable);
+      expect(footerNode.height).toBe(2);
       expect((twoRowEditor?.height ?? 0)).toBeLessThan(oneRowEditorHeight);
-      expect((twoRowEditor?.height ?? 0) + (footerNode?.height ?? 0) + 1).toBeLessThanOrEqual(10);
+      expect((twoRowEditor?.height ?? 0) + (footerNode.height ?? 0) + 1).toBeLessThanOrEqual(10);
 
       setup.resize(24, 10);
       runtime.update({
@@ -1415,7 +1390,7 @@ describe("OpenTUI component projection", () => {
         footer,
       });
       await setup.renderOnce();
-      expect(setup.renderer.root.findDescendantById("runledger-footer")?.height).toBe(2);
+      expect(requireNode(setup.renderer.root, "runledger-footer", TextRenderable).height).toBe(2);
       expect(setup.captureCharFrame()).toContain("out 300");
     } finally {
       runtime.destroy();
@@ -1440,9 +1415,9 @@ describe("OpenTUI component projection", () => {
         footer: [],
       });
       await setup.renderOnce();
-      const row = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const row = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
       expect(row?.backgroundColor.toInts().slice(0, 3)).toEqual([0x28, 0x2a, 0x30]);
-      const prompt = setup.renderer.root.findDescendantById("runledger-editor-prompt");
+      const prompt = requireNode(setup.renderer.root, "runledger-editor-prompt", TextRenderable);
       expect(prompt?.plainText).toBe("› ");
       const placeholderSpan = setup.captureSpans().lines
         .flatMap((line) => line.spans)
@@ -1452,7 +1427,7 @@ describe("OpenTUI component projection", () => {
         .flatMap((line) => line.spans)
         .find((span) => span.text.includes("›"));
       expect(promptSpan?.fg.toInts().slice(0, 3)).toEqual([0x7d, 0xcf, 0xff]);
-      expect(promptSpan?.attributes & 1).toBe(1); // TextAttributes.BOLD
+      expect((promptSpan?.attributes ?? 0) & 1).toBe(1); // TextAttributes.BOLD
     } finally {
       runtime.destroy();
     }
@@ -1509,7 +1484,7 @@ describe("OpenTUI component projection", () => {
       await setup.renderOnce();
       setup.renderer.emit("theme_mode", "light");
       await setup.renderOnce();
-      const row = setup.renderer.root.findDescendantById("runledger-editor-row");
+      const row = requireNode(setup.renderer.root, "runledger-editor-row", BoxRenderable);
       expect(row?.backgroundColor.toInts().slice(0, 3)).toEqual([0xf4, 0xf4, 0xf4]);
     } finally {
       runtime.destroy();

@@ -16,7 +16,7 @@ import { openSessionDatabase } from "../../../src/storage/session-store/database
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
 import { RecoveryBarrier, type RecoveryDecision } from "../../../src/runtime/session-runtime/recovery-barrier.ts";
-import { createRuntimeId, type SessionId } from "../../../src/runtime/protocol/ids.ts";
+import { createRuntimeId, type SessionId, type RuntimeInstanceId } from "../../../src/runtime/protocol/ids.ts";
 import { canonicalDigest } from "../../../src/runtime/protocol/canonical-json.ts";
 
 let dir: string;
@@ -29,7 +29,7 @@ afterEach(() => {
 	rmSyncRetry(dir);
 });
 
-function openStore(): { store: SessionStore; sessionId: SessionId; fence: { sessionId: SessionId; runtimeId: string; generation: number } } {
+function openStore(): { store: SessionStore; sessionId: SessionId; fence: { sessionId: SessionId; runtimeId: RuntimeInstanceId; generation: number } } {
 	const db = openSessionDatabase(join(dir, "state.db"));
 	installSessionStoreSchema(db);
 	const store = new SessionStore(db);

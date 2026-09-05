@@ -11,7 +11,7 @@ import {
 	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
 	CLOUDFLARE_WORKERS_AI_BASE_URL,
 } from "../../src/api/cloudflare.ts";
-import type { Model, ModelCost } from "../../src/types.ts";
+import type { Api, Model, ModelCost, OpenAICompletionsCompat, OpenAIResponsesCompat } from "../../src/types.ts";
 import {
 	COPILOT_STATIC_HEADERS,
 	getAnthropicMessagesCompat,
@@ -985,7 +985,7 @@ export async function loadModelsDevData(strict: boolean): Promise<Model<any>[]> 
 		console.log("Fetching models from models.dev API...");
 		const response = await fetch("https://models.dev/api.json");
 		if (!response.ok) throw new Error(`models.dev API returned ${response.status}`);
-		const data = await response.json();
+		const data = await response.json() as Record<string, { models?: Record<string, ModelsDevModel> }>;
 		const nvidiaNimModelIds = data.nvidia?.models ? await fetchNvidiaNimModelIds(strict) : new Map<string, string>();
 		return normalizeModelsDevData(data, nvidiaNimModelIds);
 	} catch (error) {

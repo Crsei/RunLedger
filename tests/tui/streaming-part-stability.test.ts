@@ -111,7 +111,7 @@ describe("streaming part stability", () => {
 		chat.setTimelineBlocks([block("new lineage", 4)], 4);
 		const current = chat.present(80);
 
-		expect(current[0]?.content).toBe("new lineage");
+		expect(current[0]?.kind === "text" ? current[0].content : undefined).toBe("new lineage");
 		expect(chat.getPresentationCacheSnapshot()).toMatchObject({ entries: 1, misses: 2 });
 	});
 

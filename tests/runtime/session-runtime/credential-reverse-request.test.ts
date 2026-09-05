@@ -15,14 +15,14 @@ import {
 	type ReverseRequestSender,
 } from "../../../src/runtime/session-runtime/credential-reverse-request.ts";
 
-function stubSender(reply: (frame: SessionFrameEnvelope) => Record<string, unknown>): { sender: ReverseRequestSender; requests: Array<{ kind: string; body: Record<string, unknown> }> } {
+function stubSender(reply: (frame: Pick<SessionFrameEnvelope, "kind" | "body">) => Record<string, unknown>): { sender: ReverseRequestSender; requests: Array<{ kind: string; body: Record<string, unknown> }> } {
 	const requests: Array<{ kind: string; body: Record<string, unknown> }> = [];
 	return {
 		requests,
 		sender: {
-			requestToConnection: async (_connectionId: ConnectionId, request: { kind: string; body: Record<string, unknown> }): Promise<SessionFrameEnvelope> => {
+			requestToConnection: async (_connectionId: ConnectionId, request: Pick<SessionFrameEnvelope, "kind" | "body">): Promise<SessionFrameEnvelope> => {
 				requests.push({ kind: request.kind, body: request.body });
-				return { frameId: "reverse_response_1", kind: "reverse_response" as const, protocolVersion: 1, body: reply({ kind: request.kind, body: request.body }) };
+				return { frameId: "reverse_response_1", kind: "reverse_response" as const, protocolVersion: 3, body: reply({ kind: request.kind, body: request.body }) };
 			},
 		},
 	};

@@ -41,15 +41,15 @@ describe("llama.cpp provider", () => {
 		expect(auth).toBeDefined();
 		const env = async (name: string) => (name === "LLAMA_CPP_API_KEY" ? "env-key" : undefined);
 
-		expect(await auth!.resolve({ ctx: { env }, credential: { type: "api_key", key: "stored" } })).toEqual({
+		expect(await auth!.resolve({ ctx: { env, fileExists: async () => false }, credential: { type: "api_key", key: "stored" } })).toEqual({
 			auth: { apiKey: "stored" },
 			source: "stored credential",
 		});
-		expect(await auth!.resolve({ ctx: { env }, credential: undefined })).toEqual({
+		expect(await auth!.resolve({ ctx: { env, fileExists: async () => false }, credential: undefined })).toEqual({
 			auth: { apiKey: "env-key" },
 			source: "LLAMA_CPP_API_KEY",
 		});
-		expect(await auth!.resolve({ ctx: { env: async () => undefined }, credential: undefined })).toEqual({
+		expect(await auth!.resolve({ ctx: { env: async () => undefined, fileExists: async () => false }, credential: undefined })).toEqual({
 			auth: { apiKey: "llama-cpp-local" },
 			source: "local no-auth",
 		});

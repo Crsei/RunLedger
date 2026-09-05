@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it } from "vitest";
 import { resolveSecuritySnapshot } from "../../src/security/config/resolver.ts";
 import {
@@ -62,9 +63,8 @@ function snapshot(
 		sources: ["builtin"],
 		workspaceRoot: "/repo",
 		tempRoot: "/tmp/session",
-		policyDigest: "b".repeat(64),
+		policyDigest: runtimeDigest("b"),
 		createdAt: "2026-07-30T00:00:00.000Z",
-		operatingMode: yolo ? "yolo" : "guarded",
 		bashAnalyzer: {
 			mode: "ast",
 			source: "cli",
@@ -320,12 +320,11 @@ describe("Bash AST authorization", () => {
 		expect(legacy.ok).toBe(true);
 		expect(shadow.ok).toBe(true);
 		if (!legacy.ok || !shadow.ok) return;
-		const policy = snapshot("on-request");
-		policy.bashAnalyzer = {
+		const policy: SecuritySnapshot = { ...snapshot("on-request"), bashAnalyzer: {
 			mode: "shadow",
 			source: "cli",
 			configDigest: "d".repeat(64),
-		};
+		} };
 		expect(new PermissionEngine().evaluate(shadow.value, policy).decision)
 			.toBe(new PermissionEngine().evaluate(legacy.value, policy).decision);
 		expect(shadow.value).toHaveLength(1);
@@ -354,17 +353,17 @@ describe("Bash AST authorization", () => {
 				{
 					source: "user",
 					document: { bashAnalyzerMode: "ast", network: { mode: "deny", allowedHosts: [] } },
-					documentDigest: "1".repeat(64),
+					documentDigest: runtimeDigest("1"),
 				},
 				{
 					source: "project",
 					document: { bashAnalyzerMode: "legacy" },
-					documentDigest: "2".repeat(64),
+					documentDigest: runtimeDigest("2"),
 				},
 				{
 					source: "session",
 					document: { bashAnalyzerMode: "shadow" },
-					documentDigest: "3".repeat(64),
+					documentDigest: runtimeDigest("3"),
 				},
 			],
 			workspaceRoot: "/repo",

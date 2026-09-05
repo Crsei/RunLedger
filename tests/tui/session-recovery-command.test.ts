@@ -11,11 +11,11 @@ class RecoveryController extends ContractController {
 		sideEffectSpawnCount: 0,
 	};
 
-	override async recoveryStatus() {
+	async recoveryStatus() {
 		return this.status;
 	}
 
-	override async recoveryAssess() {
+	async recoveryAssess() {
 		this.status = {
 			state: "ready",
 			barrierState: "closed",

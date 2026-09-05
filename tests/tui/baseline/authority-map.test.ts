@@ -21,7 +21,7 @@ const processAdapterSource = readFileSync(join(root, "src/tui/process/controller
 const interactiveModeSource = readFileSync(join(root, "src/tui/interactive-mode.ts"), "utf8");
 const approvalWorkflowSource = readFileSync(join(root, "src/tui/interactive/approval-workflow.ts"), "utf8");
 
-type Authority = "local" | "remote" | "facade" | "none";
+type Authority = "local+remote" | "local" | "remote" | "facade" | "none";
 
 interface WorkflowAuthority {
   readonly workflow: string;

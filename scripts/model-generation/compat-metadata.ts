@@ -271,7 +271,11 @@ export function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean
 	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
 }
 
-export const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
+type OptionalCompletionsCompatKeys = "cacheControlFormat" | "deferredToolsMode" | "sessionAffinityFormat";
+export type OpenAICompletionsResolvedCompat = Required<Omit<OpenAICompletionsCompat, OptionalCompletionsCompatKeys>>
+	& Pick<OpenAICompletionsCompat, OptionalCompletionsCompatKeys>;
+
+export const OPENAI_COMPLETIONS_DEFAULT_COMPAT: OpenAICompletionsResolvedCompat = {
 	supportsStore: true,
 	supportsDeveloperRole: true,
 	supportsReasoningEffort: true,
@@ -289,13 +293,6 @@ export const OPENAI_COMPLETIONS_DEFAULT_COMPAT = {
 	supportsStrictMode: true,
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
-} satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat" | "deferredToolsMode">> & {
-	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
-	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
-};
-
-export type OpenAICompletionsResolvedCompat = typeof OPENAI_COMPLETIONS_DEFAULT_COMPAT & {
-	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 };
 
 export function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessagesCompat): void {

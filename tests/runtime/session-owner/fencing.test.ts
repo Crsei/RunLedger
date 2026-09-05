@@ -1,3 +1,4 @@
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 /**
  * R3:OwnerFence 全写入 fence fixtures(06 §4.5/§5.4)。
  *
@@ -64,7 +65,7 @@ function makeOwner(): SessionOwner {
 	return new SessionOwner({ store, ownerStore, transport: createTcpOwnerTransport() });
 }
 
-const digest = (seed: string) => ({ algorithm: "sha256", digest: canonicalDigest({ seed }) }) as const;
+const digest = (seed: string) => runtimeDigest({ seed });
 
 async function claimOwner(sessionId: SessionId): Promise<{ owner: SessionOwner; fence: { sessionId: SessionId; runtimeId: RuntimeInstanceId; generation: number } }> {
 	const owner = makeOwner();

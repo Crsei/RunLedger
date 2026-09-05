@@ -11,6 +11,10 @@ import { InteractiveMode } from "../../src/tui/interactive-mode.ts";
 import { TUI, type Terminal } from "../../src/tui/index.ts";
 import { ContractController, settleFrames } from "./fixtures/contract-integration.ts";
 import type { SessionDomainResult } from "../../src/runtime/session-runtime/domain-router.ts";
+import type { TuiEffect } from "../../src/tui/application/effect.ts";
+import type { PlanWorkflow } from "../../src/tui/interactive/plan-workflow.ts";
+import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
+import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 
 class FakeTerminal implements Terminal {
   private input: ((data: string) => void) | undefined;
@@ -228,6 +232,30 @@ describe("TUI extension mutation wiring routes through commandSessionDomain", ()
 });
 
 describe("TUI plan/compact/memory domain commands", () => {
+  it("/plan queries the current session without manufacturing a plan reference", async () => {
+    const sessionId = createRuntimeId("session", "plan-workflow");
+    const digest = runtimeDigest("plan-workflow");
+    const query = vi.fn(async () => ({ state: {
+      status: "inactive", sessionId, goalId: createRuntimeId("goal", "plan-workflow"), revision: 3,
+      policyCeilingDigest: digest, sourceHead: { streamId: sessionId, sequence: 4, eventHash: digest },
+      projectionDigest: digest, completeness: "complete", updatedAt: "2026-09-05T00:00:00.000Z",
+    } }));
+    const controller = new ContractController({ querySessionDomain: query });
+    const mode = new InteractiveMode({ controller, terminal: new FakeTerminal() });
+    // 只观察 facade 的 effect 边界，workflow、runner 和 Session adapter 均为真实实现。
+    const workflow = mode as unknown as {
+      planWorkflow: PlanWorkflow;
+      createEffect(type: TuiEffect["type"], extra?: Record<string, unknown>): TuiEffect;
+      showNotice(text: string, kind?: "note" | "error"): void;
+    };
+    const createEffect = vi.spyOn(workflow, "createEffect");
+    const notice = vi.spyOn(workflow, "showNotice");
+    await workflow.planWorkflow.openPlanWorkflow();
+    expect(createEffect).toHaveBeenCalledWith("plan.inspect", undefined);
+    expect(query).toHaveBeenCalledWith("plan.inspect", {}, expect.objectContaining({ correlationId: expect.any(String), effectId: expect.any(String) }));
+    expect(notice).toHaveBeenCalledWith(expect.stringContaining("rev=3"), undefined);
+  });
+
   it("runs /plan /compact /memory queries through the Session domain channel", async () => {
     const terminal = new FakeTerminal();
     const agent = new Agent({

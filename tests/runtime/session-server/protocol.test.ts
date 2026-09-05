@@ -19,6 +19,9 @@ import {
 	SessionHandshakeResponseSchema,
 	frameByteLength,
 	handshakeMatchesFence,
+	type SessionHandshakeRequest,
+	type SessionFrameEnvelope,
+	type ClientId,
 } from "../../../src/runtime/session-server/protocol.ts";
 
 const sessionId = () => createRuntimeId("session", "fixture");
@@ -45,13 +48,13 @@ describe("R0 session-scoped protocol contracts", () => {
 	});
 
 	it("validates the handshake request and rejects wrong session/runtime/token shapes", () => {
-		const request = {
+		const request: SessionHandshakeRequest = {
 			protocolVersion: SESSION_PROTOCOL_VERSION,
 			sessionId: sessionId(),
 			expectedRuntimeId: runtimeId(),
 			expectedGeneration: 3,
 			authToken: "a".repeat(64),
-			clientId: "client_ui-a",
+			clientId: "client_ui-a" as ClientId,
 			clientCapabilities: ["snapshot", "subscription"],
 		};
 		expect(Value.Check(SessionHandshakeRequestSchema, request)).toBe(true);
@@ -64,13 +67,13 @@ describe("R0 session-scoped protocol contracts", () => {
 
 	it("rejects a handshake whose session/runtime/generation does not match the owner fence", () => {
 		const fence = { sessionId: sessionId(), runtimeId: runtimeId(), generation: 3 };
-		const request = {
+		const request: SessionHandshakeRequest = {
 			protocolVersion: SESSION_PROTOCOL_VERSION,
 			sessionId: sessionId(),
 			expectedRuntimeId: runtimeId(),
 			expectedGeneration: 3,
 			authToken: "a".repeat(64),
-			clientId: "client_ui-a",
+			clientId: "client_ui-a" as ClientId,
 			clientCapabilities: [],
 		};
 		expect(handshakeMatchesFence(request, fence)).toEqual({ ok: true });
@@ -119,7 +122,7 @@ describe("R0 session-scoped protocol contracts", () => {
 	});
 
 	it("freezes frame kinds and rejects unknown or oversized frames", () => {
-		const envelope = {
+		const envelope: SessionFrameEnvelope = {
 			frameId: "frame-fixture",
 			kind: "initialize_request",
 			protocolVersion: SESSION_PROTOCOL_VERSION,

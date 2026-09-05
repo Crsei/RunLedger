@@ -29,7 +29,7 @@ describe("ChatContainer", () => {
 		chat.setTimelineBlocks([{ id: "timeline-run:run-1", kind: "separator", label: "stop · Worked for 1m 00s" }], 1);
 		const block = chat.present(width)[0];
 		expect(block).toMatchObject({ id: "timeline-run:run-1", kind: "separator" });
-		expect(block && "content" in block ? visibleWidth(block.content) : -1).toBe(width);
+		expect(block && "content" in block ? visibleWidth(block.content ?? "") : -1).toBe(width);
 		expect(block && "content" in block ? block.content : "").toContain("stop · Worked for 1m 00s");
 	});
 
