@@ -152,6 +152,7 @@ export const DEFAULT_TEST_EXECUTION_BUCKET_RULES: readonly TestExecutionBucketRu
 			"tests/integration/**/*.test.ts",
 			"tests/**/*e2e.test.ts",
 			"tests/cli/multi-client/**/*.test.ts",
+            "tests/cli/launcher.test.ts",
 			"tests/extensions/integration/**/*.test.ts",
 		],
 	},

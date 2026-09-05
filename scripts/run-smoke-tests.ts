@@ -1,4 +1,4 @@
-/** 构建产物 CLI smoke：只运行无交互命令，绝不读取用户级 RunLedger 状态。 */
+/** 构建产物 CLI smoke：隔离用户状态，验证无交互命令和可选 TTY 生命周期。 */
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -32,6 +32,11 @@ interface SmokeEvidence {
 		readonly runner: "tmux";
 		readonly startup: "observed";
 		readonly cleanExit: "observed";
+		readonly readyMarkers: readonly string[];
+		readonly startupFrameDigest: string;
+		readonly launcherPid: number;
+		readonly exitCode: 0;
+		readonly remainingDescendants: 0;
 	};
 }
 
@@ -174,26 +179,95 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<boo
 	return predicate();
 }
 
+interface ProcessIdentity {
+	readonly pid: number;
+	readonly parentPid: number;
+	readonly groupPid: number;
+	readonly startedAt: string;
+}
+
+function processSnapshot(): ProcessIdentity[] {
+	const result = spawnSync("ps", ["-eo", "pid=,ppid=,pgid=,stat=,lstart="], { encoding: "utf8", timeout: 5_000 });
+	if (result.error !== undefined || result.status !== 0) throw new Error("cannot inspect TUI descendant processes");
+	return result.stdout.trim().split("\n").flatMap((line) => {
+		const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/.exec(line);
+		if (match === null || match[4]?.startsWith("Z")) return [];
+		return [{ pid: Number(match[1]), parentPid: Number(match[2]), groupPid: Number(match[3]), startedAt: match[5] ?? "" }];
+	});
+}
+
+function shellQuote(value: string): string {
+	return "'" + value.replaceAll("'", "'\\''") + "'";
+}
+
+// Welcome 标题可能被换行 Tip 推出视口；输入区才是稳定的就绪标记。
+const READY_MARKERS = ["Message RunLedger"] as const;
+
 async function runTtySmoke(repoRoot: string, binPath: string, environment: NodeJS.ProcessEnv): Promise<NonNullable<SmokeEvidence["tty"]>> {
 	const identifier = `runledger-smoke-${process.pid}-${randomUUID().replaceAll("-", "")}`;
 	const session = identifier;
 	const socket = identifier;
+	const descendants = new Map<number, ProcessIdentity>();
+	const groups = new Set<number>();
+	let launcherPid: number | undefined;
+	let frame = "";
+	const paneState = (): { dead: boolean; exitCode: number | null } => {
+		const state = runTmux(repoRoot, environment, socket, ["display-message", "-p", "-t", session, "#{pane_dead}|#{pane_dead_status}"]).trim().split("|");
+		return { dead: state[0] === "1", exitCode: /^\d+$/.test(state[1] ?? "") ? Number(state[1]) : null };
+	};
+	const observeProcesses = (): ProcessIdentity[] => {
+		const snapshot = processSnapshot();
+		let discovered = true;
+		while (discovered) {
+			discovered = false;
+			for (const entry of snapshot) {
+				if (descendants.get(entry.pid)?.startedAt === entry.startedAt) continue;
+				if (entry.pid !== launcherPid && !descendants.has(entry.parentPid) && !groups.has(entry.groupPid)) continue;
+				descendants.set(entry.pid, entry);
+				groups.add(entry.groupPid);
+				discovered = true;
+			}
+		}
+		return snapshot.filter((entry) => descendants.get(entry.pid)?.startedAt === entry.startedAt);
+	};
 	try {
-		runTmux(repoRoot, environment, socket, ["new-session", "-d", "-s", session, "-x", "100", "-y", "30", "-c", repoRoot, process.execPath, binPath]);
-		const started = await waitFor(() => {
-			if (!tmuxSessionExists(repoRoot, environment, socket, session)) return false;
-			return runTmux(repoRoot, environment, socket, ["capture-pane", "-p", "-t", session]).trim().length > 0;
-		}, 10_000);
-		if (!started) throw new Error("tmux TUI did not render a startup frame");
+		// 先固定 remain-on-exit 再启动应用，捕获启动即崩溃的真实退出码；兼容 tmux 2.6。
+		runTmux(repoRoot, environment, socket, ["new-session", "-d", "-s", session, "-x", "100", "-y", "30", "-c", repoRoot, "sleep 3600"]);
+		runTmux(repoRoot, environment, socket, ["set-window-option", "-t", session, "remain-on-exit", "on"]);
+		runTmux(repoRoot, environment, socket, ["respawn-pane", "-k", "-t", session, `exec ${shellQuote(process.execPath)} ${shellQuote(binPath)}`]);
+		launcherPid = Number(runTmux(repoRoot, environment, socket, ["display-message", "-p", "-t", session, "#{pane_pid}"]).trim());
+		if (!Number.isSafeInteger(launcherPid) || launcherPid <= 0) throw new Error("tmux launcher PID is unavailable");
+		const checkStartup = (): boolean => {
+			observeProcesses();
+			const state = paneState();
+			if (state.dead) throw new Error(`TUI exited before ready interaction (exit ${state.exitCode ?? "unknown"})`);
+			frame = runTmux(repoRoot, environment, socket, ["capture-pane", "-p", "-t", session]);
+			if (/\[runledger\]\s*fatal:|(?:Syntax|Reference|Type)Error:/.test(frame)) throw new Error("TUI startup reported a fatal error");
+			return READY_MARKERS.every((marker) => frame.includes(marker));
+		};
+		if (!await waitFor(checkStartup, 10_000)) throw new Error("tmux TUI did not render the RunLedger ready markers");
+		await delay(150);
+		if (!checkStartup()) throw new Error("TUI ready frame did not remain available for interaction");
+		const startupFrameDigest = createHash("sha256").update(frame).digest("hex");
 		runTmux(repoRoot, environment, socket, ["send-keys", "-t", session, "C-d"]);
-		let stopped = await waitFor(() => !tmuxSessionExists(repoRoot, environment, socket, session), 3_000);
+		const hasExited = (): boolean => { observeProcesses(); return paneState().dead; };
+		let stopped = await waitFor(hasExited, 3_000);
 		if (!stopped) {
 			runTmux(repoRoot, environment, socket, ["send-keys", "-t", session, "Escape", "C-d"]);
-			stopped = await waitFor(() => !tmuxSessionExists(repoRoot, environment, socket, session), 7_000);
+			stopped = await waitFor(hasExited, 7_000);
 		}
 		if (!stopped) throw new Error("tmux TUI did not exit after Ctrl+D");
-		return { runner: "tmux", startup: "observed", cleanExit: "observed" };
+		const { exitCode } = paneState();
+		if (exitCode !== 0) throw new Error(`TUI did not exit cleanly (exit ${exitCode ?? "unknown"})`);
+		if (!await waitFor(() => observeProcesses().length === 0, 1_000)) throw new Error("TUI left descendant processes running after exit");
+		return { runner: "tmux", startup: "observed", cleanExit: "observed", readyMarkers: READY_MARKERS, startupFrameDigest, launcherPid, exitCode: 0, remainingDescendants: 0 };
 	} finally {
+		// 负向用例也清理已识别的 detached child；绝不按全局进程名结束任务。
+		for (const entry of observeProcesses()) {
+			try { process.kill(entry.pid, "SIGKILL"); } catch (error: unknown) {
+				if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+			}
+		}
 		if (tmuxSessionExists(repoRoot, environment, socket, session)) {
 			const result = spawnSync("tmux", ["-L", socket, "kill-session", "-t", session], { cwd: repoRoot, encoding: "utf8", env: environment, timeout: 5_000 });
 			if (result.error !== undefined || result.status !== 0) throw new Error("tmux cleanup failed");

@@ -56,7 +56,7 @@ describe("OpenTUI framework boundary", () => {
 
     expect(shim.startsWith("#!/usr/bin/env node\n")).toBe(true);
     expect(shim).toContain("[runledger] Bun");
-    expect(shim).toContain('spawnSync("bun"');
+    // Bun 的实际调用和 dist 定位由下方符号链接测试及 launcher 生命周期回归覆盖。
     // 跨平台 runner 展开 glob 后显式调用 bun test(Windows cmd 不展开通配符)。
     expect(packageJson.scripts?.["test:tui-native"]).toContain("run-test-buckets.ts");
     expect(tuiRunner).toContain('"bun"');
