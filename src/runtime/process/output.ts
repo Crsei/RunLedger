@@ -12,6 +12,9 @@ export interface OutputCursor {
 	readonly byteOffset: number;
 }
 
+/** 分流只用于已知 pipe 来源；缺少来源的历史记录只能以 combined 读取。 */
+export type ProcessOutputStream = "stdout" | "stderr";
+
 export interface ClippedUtf8Output {
 	readonly text: string;
 	readonly byteLength: number;

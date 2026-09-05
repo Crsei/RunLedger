@@ -17,6 +17,7 @@ import { createBashTool } from "../../../src/runtime/tools/bash.ts";
 import { openSessionDatabase, type SessionDatabase } from "../../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
+import { createGovernedLspSpawner } from "../../../src/runtime/session-runtime/lsp-composition.ts";
 
 let root: string;
 const stores = new Map<string, { readonly db: SessionDatabase; readonly store: SessionStore }>();
@@ -68,6 +69,25 @@ function securitySource(): SessionSecurityConfigSource {
 }
 
 describe("S4 Session managed process composition", () => {
+	it("preserves protocol stdout and sanitized stderr through the Session security and process composition", { skip: IS_WINDOWS }, async () => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = { sessionId: createRuntimeId("session", "protocol-streams"), runtimeId: createRuntimeId("runtime", "protocol-streams"), generation: 1 };
+		const workspaceId = createRuntimeId("workspace", "protocol-streams");
+		const security = await createSessionSecurity({ layout, cwd: root, fence, workspaceId, repositoryId: createRuntimeId("repository", "protocol-streams"), securitySources: [securitySource()] });
+		const composition = sessionDomain.createSessionProcessComposition({ layout, store: ownedStore(layout, fence, workspaceId), cwd: root, fence, workspaceId, security: security.managedProcess });
+		try {
+			const transport = await createGovernedLspSpawner(composition.toolClient()).spawn(globalThis.process.execPath, ["-e", "process.stderr.write('session config failed password=private-value\\n');process.stdout.write('Content-Length: 2\\r\\n\\r\\n{}');process.exitCode=7"], root);
+			const stdout = new Response(transport.stdout).text();
+			expect(await transport.exited).toBe(7);
+			expect(await stdout).toBe("Content-Length: 2\r\n\r\n{}");
+			expect(transport.peekStderr()).toContain("session config failed password=[REDACTED]");
+			expect(transport.peekStderr()).not.toContain("private-value");
+		} finally {
+			await composition.shutdown("detached");
+		}
+	});
+
 	it("preserves a typed approval expiry through foreground Bash", async () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		await mkdir(layout.home, { recursive: true });
@@ -944,7 +964,6 @@ describe("S4 Session managed process composition", () => {
 			cwd: root,
 			fence,
 			workspaceId,
-			repositoryId: createRuntimeId("repository", "process-cursor-boundary"),
 			security: security.managedProcess,
 		});
 		const missingExecutionId = createRuntimeId("execution", "missing");
@@ -990,7 +1009,6 @@ describe("S4 Session managed process composition", () => {
 			cwd: root,
 			fence,
 			workspaceId,
-			repositoryId: createRuntimeId("repository", "process-stale-stop"),
 			security: security.managedProcess,
 		});
 		const started = await process.mutate("session.process.start", {

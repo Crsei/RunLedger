@@ -19,7 +19,7 @@ import {
 } from "../../runtime/process/execution-decision.ts";
 import type { BackendLaunchPlan, BackendSpawnInput, BackendSpawnPort, BackendSpawnReceipt } from "../../runtime/process/manager.ts";
 import { RUNTIME_HOST_BOUNDS } from "../../runtime/host/types.ts";
-import { clipUtf8Output, PROCESS_OUTPUT_BOUNDS } from "../../runtime/process/output.ts";
+import { clipUtf8Output, PROCESS_OUTPUT_BOUNDS, type ProcessOutputStream } from "../../runtime/process/output.ts";
 import {
 	FileProcessOutputStore,
 } from "./output-store.ts";
@@ -232,7 +232,7 @@ export class PipeProcessBackend {
 			stopRequested = true;
 			stopProcess("SIGTERM");
 		};
-		const appendText = (text: string): void => {
+		const appendText = (text: string, stream: ProcessOutputStream): void => {
 			const clipped = clipUtf8Output(text, Math.max(0, maxOutputBytes - outputBytes));
 			outputBytes += clipped.byteLength;
 			if (clipped.truncated || clipped.byteLength < Buffer.byteLength(text, "utf8")) outputBudgetExceeded = true;
@@ -241,15 +241,15 @@ export class PipeProcessBackend {
 				return;
 			}
 			outputTail = outputTail.then(async () => {
-				const result = await output.append(clipped.text);
+				const result = await output.append(clipped.text, stream);
 				if (!result.ok) outputFailed = true;
 				if (outputBudgetExceeded) stopRoot();
 			});
 		};
 		const stdoutDecoder = new TextDecoder("utf-8");
 		const stderrDecoder = new TextDecoder("utf-8");
-		child.stdout.on("data", (chunk: Buffer) => appendText(stdoutDecoder.decode(chunk, { stream: true })));
-		child.stderr.on("data", (chunk: Buffer) => appendText(stderrDecoder.decode(chunk, { stream: true })));
+		child.stdout.on("data", (chunk: Buffer) => appendText(stdoutDecoder.decode(chunk, { stream: true }), "stdout"));
+		child.stderr.on("data", (chunk: Buffer) => appendText(stderrDecoder.decode(chunk, { stream: true }), "stderr"));
 		// A fast child may close stdin between the capability check and a write.
 		// Keep the stream error observable by the operation callback without
 		// allowing a late EPIPE event to escape as an uncaught process error.
@@ -264,8 +264,8 @@ export class PipeProcessBackend {
 			if (settled) return;
 			settled = true;
 			if (durationTimer) clearTimeout(durationTimer);
-			appendText(stdoutDecoder.decode());
-			appendText(stderrDecoder.decode());
+			appendText(stdoutDecoder.decode(), "stdout");
+			appendText(stderrDecoder.decode(), "stderr");
 			void outputTail.then(async () => {
 				if (supervisorSettlementReady !== undefined && supervisorSettlement === undefined) {
 					await Promise.race([

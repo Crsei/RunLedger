@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -16,6 +16,8 @@ import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
 import type { RuntimeHostScope } from "../../src/runtime/host/types.ts";
 import { IS_WINDOWS } from "../helpers/platform.ts";
+import { createGovernedLspSpawner } from "../../src/runtime/session-runtime/lsp-composition.ts";
+import type { ExecutionHandleRef } from "../../src/runtime/process/types.ts";
 
 const requireFromTest = createRequire(import.meta.url);
 
@@ -41,6 +43,110 @@ function processScope(): RuntimeHostScope {
 }
 
 describe("official MCP SDK transport factory", () => {
+	it("reaps a managed MCP child after invalid protocol output without waiting for its lifetime limit", { skip: IS_WINDOWS }, async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-mcp-invalid-protocol-"));
+		const sessionId = createRuntimeId("session", "invalid-protocol");
+		const processPort = new ProductionManagedProcessPort({ layout: buildRunledgerLayout(join(root, "home"), "posix"), scope: processScope(), hostGeneration: 1, allowTestOnlyUnrestrictedExecution: true });
+		const manager = new McpConnectionManager({ factory: createSdkMcpClientFactory({ managedProcess: processPort.toolClient(sessionId, 1, "principal_mcp"), managedProcessCwd: process.cwd() }) });
+		try {
+			const started = await manager.start({ serverId: "mcp-server:invalid", displayName: "invalid", transport: "stdio", enabled: true, trusted: true, required: true, startupTimeoutMs: 10_000, toolTimeoutMs: 5_000, stdio: { command: process.execPath, args: ["-e", "process.stderr.write('protocol fixture failed\\n');process.stdout.write('invalid JSON\\n');setInterval(()=>{},1000)"] } });
+			expect(started.ok).toBe(false);
+			await manager.closeAll();
+			await vi.waitFor(async () => {
+				const states = (await processPort.list(sessionId)).map((item) => item.state);
+				expect(states).toHaveLength(1);
+				expect(states[0]).toMatch(/^(completed|failed|timed_out|killed)$/u);
+			}, { timeout: 1500 });
+		} finally {
+			await manager.closeAll();
+			for (const item of await processPort.list(sessionId)) {
+				if (typeof item.executionId === "string") await processPort.stop(sessionId, item.executionId, "driver", "SIGKILL");
+			}
+			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+		}
+	});
+
+	it.each([
+		["mcp", "typed-failure"], ["mcp", "rejected"], ["lsp", "typed-failure"], ["lsp", "rejected"],
+	] as const)("reaps a managed %s child after stderr reader %s", { skip: IS_WINDOWS }, async (protocol, mode) => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-mcp-reader-failure-"));
+		const sessionId = createRuntimeId("session", "reader-failure");
+		const processPort = new ProductionManagedProcessPort({ layout: buildRunledgerLayout(join(root, "home"), "posix"), scope: processScope(), hostGeneration: 1, allowTestOnlyUnrestrictedExecution: true });
+		const original = processPort.toolClient(sessionId, 1, "principal_mcp");
+		let handle: ExecutionHandleRef | undefined;
+		const calls: string[] = [];
+		const instrumented: typeof original = {
+			...original,
+			start: async (input) => { const result = await original.start(input); if (result.ok) handle = result.handle; return result; },
+			processOutput: async (...args) => {
+				if (args[3] === "stderr") {
+					calls.push("stderr-failed");
+					if (mode === "rejected") throw new Error("synthetic stderr read rejection");
+					return { ok: false, code: "backend_unavailable" };
+				}
+				return original.processOutput(...args);
+			},
+			stop: async (...args) => { calls.push(`stop:${args[2]}`); return original.stop(...args); },
+			processWait: async (...args) => { calls.push("wait"); return original.processWait(...args); },
+		};
+		const manager = new McpConnectionManager({ factory: createSdkMcpClientFactory({ managedProcess: instrumented, managedProcessCwd: process.cwd() }) });
+		try {
+			if (protocol === "mcp") {
+				const started = await manager.start({ serverId: "mcp-server:reader-failure", displayName: "reader-failure", transport: "stdio", enabled: true, trusted: true, required: true, startupTimeoutMs: 10_000, toolTimeoutMs: 5_000, stdio: { command: process.execPath, args: ["-e", "setInterval(()=>{},1000)"] } });
+				expect(started.ok).toBe(false);
+				await manager.closeAll();
+			} else {
+				const lsp = await createGovernedLspSpawner(instrumented).spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], process.cwd());
+				expect(await lsp.exited).toBe(1);
+			}
+			expect(calls).toEqual(["stderr-failed", "stop:SIGTERM", "wait"]);
+			const states = (await processPort.list(sessionId)).map((item) => item.state);
+			expect(states).toHaveLength(1);
+			expect(states[0]).toMatch(/^(completed|failed|timed_out|killed)$/u);
+		} finally {
+			await manager.closeAll();
+			if (handle !== undefined) { await original.stop(handle, "driver", "SIGKILL"); await original.processWait(handle, 1_000, "driver"); }
+			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+		}
+	});
+
+	it.each(["mcp", "lsp"])("retains bounded sanitized stderr for failed managed %s without contaminating stdout", { skip: IS_WINDOWS }, async (protocol) => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-protocol-diagnostics-"));
+		const sessionId = createRuntimeId("session", "protocol-diagnostics");
+		const processPort = new ProductionManagedProcessPort({ layout: buildRunledgerLayout(join(root, "home"), "posix"), scope: processScope(), hostGeneration: 1, allowTestOnlyUnrestrictedExecution: true });
+		const managedProcess = processPort.toolClient(sessionId, 1, "principal_mcp");
+		const manager = new McpConnectionManager({ factory: createSdkMcpClientFactory({ managedProcess, managedProcessCwd: process.cwd() }) });
+		const diagnostic = "\u001b[31mfixture invalid configuration token=fixture-secret\u001b[0m\n";
+		const script = `process.stderr.write('noise\\n'.repeat(80_000)+${JSON.stringify(diagnostic)},()=>{process.exitCode=7});`;
+		try {
+			if (protocol === "mcp") {
+				const config = { serverId: "mcp-server:failure", displayName: "failure", transport: "stdio" as const, enabled: true, trusted: true, required: true, startupTimeoutMs: 5_000, toolTimeoutMs: 5_000, stdio: { command: process.execPath, args: ["-e", script] } };
+				const started = await manager.start(config);
+				expect(started.ok).toBe(false);
+				const diagnostics = JSON.stringify(manager.snapshot(config.serverId)?.diagnostics);
+				expect(diagnostics).toContain("fixture invalid configuration");
+				expect(diagnostics).not.toContain("fixture-secret");
+				expect(Buffer.byteLength(diagnostics)).toBeLessThan(10_000);
+			} else {
+				const lsp = await createGovernedLspSpawner(managedProcess).spawn(process.execPath, ["-e", `process.stdout.write('Content-Length: 2\\r\\n\\r\\n{}');${script}`], process.cwd());
+				const stdout = new Response(lsp.stdout).text();
+				expect(await lsp.exited).toBe(7);
+				expect(await stdout).toBe("Content-Length: 2\r\n\r\n{}");
+				expect(lsp.peekStderr()).toContain("fixture invalid configuration");
+				expect(lsp.peekStderr()).not.toContain("fixture-secret");
+				expect(lsp.peekStderr()).not.toContain("\u001b");
+				expect(Buffer.byteLength(lsp.peekStderr())).toBeLessThanOrEqual(8192);
+				const missing = await createGovernedLspSpawner(managedProcess).spawn(join(root, "missing-executable"), [], process.cwd());
+				await missing.exited;
+				expect(missing.peekStderr()).toContain("missing-executable");
+			}
+			expect((await processPort.list(sessionId)).every((item) => item.state !== "running" && item.state !== "starting")).toBe(true);
+		} finally {
+			await manager.closeAll();
+			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+		}
+	});
+
 	it("adapts the Host ExecutionEnv network port without a raw fetch fallback", async () => {
 		let calls = 0;
 		const fetcher = createMcpExecutionEnvFetch({
@@ -162,7 +268,7 @@ describe("official MCP SDK transport factory", () => {
 				"process.stderr.write('managed fixture booted\\n');",
 			"const server=new Server({name:'runledger-managed-fixture',version:'1.0.0'},{capabilities:{tools:{}}});",
 			"server.setRequestHandler(ListToolsRequestSchema,async()=>({tools:[{name:'managed',inputSchema:{type:'object'}}]}));",
-			"server.setRequestHandler(CallToolRequestSchema,async()=>({content:[{type:'text',text:'managed-ok'}]}));",
+			"server.setRequestHandler(CallToolRequestSchema,async(req)=>{if(req.params.arguments?.crash){process.stderr.write('fixture tool crashed token=private-crash-value\\n',()=>process.exit(7));return new Promise(()=>{});}return {content:[{type:'text',text:'managed-ok'}]}});",
 			"server.connect(new StdioServerTransport());",
 		].join("");
 		const processPort = new ProductionManagedProcessPort({ layout, scope, hostGeneration: 1, allowTestOnlyUnrestrictedExecution: true });
@@ -186,6 +292,10 @@ describe("official MCP SDK transport factory", () => {
 			if (!started.ok) return;
 			expect(await manager.call({ serverId: "mcp-server:managed", toolName: "managed", input: {} })).toMatchObject({ ok: true, value: { content: [{ text: "managed-ok" }] } });
 			await assertManagedProcess();
+			const crashed = await manager.call({ serverId: "mcp-server:managed", toolName: "managed", input: { crash: true } });
+			expect(crashed.ok).toBe(false);
+			expect(JSON.stringify(crashed)).toContain("fixture tool crashed token=[REDACTED]");
+			expect(JSON.stringify(crashed)).not.toContain("private-crash-value");
 		} finally {
 			await manager.closeAll();
 			await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { runtimeDigest, type RuntimeDigest } from "../../../src/runtime/protocol/foundation.ts";
-import type { ExecutionHandleRef } from "../../../src/runtime/process/types.ts";
+import type { ExecutionHandleRef, ManagedProcessSummary } from "../../../src/runtime/process/types.ts";
 import { createProcessOutputTool } from "../../../src/runtime/tools/process-output.ts";
 import { createProcessWaitTool } from "../../../src/runtime/tools/process-wait.ts";
 import { createWriteStdinTool } from "../../../src/runtime/tools/write-stdin.ts";
@@ -23,6 +23,10 @@ function handle(): ExecutionHandleRef {
 		revision: 2,
 		requestDigest: digest("request"),
 	};
+}
+
+function summary(state: ManagedProcessSummary["state"]): ManagedProcessSummary {
+	return { handle: handle(), state, outputCursor: { sequence: 0, byteOffset: 0 }, outputSize: 0, capabilities: { canWrite: true, canEof: true, canResize: true, canStop: true, canReadOutput: true } };
 }
 
 describe("R8 managed process tools", () => {
@@ -64,7 +68,7 @@ describe("R8 managed process tools", () => {
 		const tool = createProcessWaitTool({
 			processWait: async (_handle, timeoutMs) => {
 				timeout = timeoutMs;
-				return { ok: true as const, outcome: "terminal" as const, summary: { state: "completed" }, nextCursor: { sequence: 2, byteOffset: 7 } };
+				return { ok: true as const, outcome: "terminal" as const, summary: summary("completed"), nextCursor: { sequence: 2, byteOffset: 7 } };
 			},
 		});
 		const result = await tool.execute("toolCall_wait", { handle: handle(), timeout_ms: 25 });
@@ -76,8 +80,8 @@ describe("R8 managed process tools", () => {
 	it("does not let an observer write or stop a process", async () => {
 		let writes = 0;
 		const client = {
-			write: async () => { writes += 1; return { ok: true as const, operation: "write" as const, receiptDigest: digest("write"), summary: { state: "running" } }; },
-			stop: async () => { writes += 1; return { ok: true as const, operation: "stop" as const, receiptDigest: digest("stop"), summary: { state: "running" } }; },
+			write: async () => { writes += 1; return { ok: true as const, operation: "write" as const, receiptDigest: digest("write"), summary: summary("running") }; },
+			stop: async () => { writes += 1; return { ok: true as const, operation: "stop" as const, receiptDigest: digest("stop"), summary: summary("running") }; },
 		};
 		const write = createWriteStdinTool(client, { actor: "observer" });
 		const stop = createProcessStopTool(client, { actor: "observer" });
@@ -89,9 +93,9 @@ describe("R8 managed process tools", () => {
 	it("routes driver stdin, stop, and PTY resize through the injected facade", async () => {
 		const calls: string[] = [];
 		const client = {
-			write: async () => { calls.push("write"); return { ok: true as const, operation: "write" as const, receiptDigest: digest("write"), summary: { state: "running" } }; },
-			stop: async () => { calls.push("stop"); return { ok: true as const, operation: "stop" as const, receiptDigest: digest("stop"), summary: { state: "running" } }; },
-			resize: async () => { calls.push("resize"); return { ok: true as const, operation: "resize" as const, receiptDigest: digest("resize"), summary: { state: "running" } }; },
+			write: async () => { calls.push("write"); return { ok: true as const, operation: "write" as const, receiptDigest: digest("write"), summary: summary("running") }; },
+			stop: async () => { calls.push("stop"); return { ok: true as const, operation: "stop" as const, receiptDigest: digest("stop"), summary: summary("running") }; },
+			resize: async () => { calls.push("resize"); return { ok: true as const, operation: "resize" as const, receiptDigest: digest("resize"), summary: summary("running") }; },
 		};
 		const driver = { actor: "driver" as const };
 		expect((await createWriteStdinTool(client, driver).execute("w", { handle: handle(), input: "x" })).isError).not.toBe(true);

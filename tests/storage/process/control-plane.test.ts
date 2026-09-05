@@ -295,7 +295,7 @@ describe("R8 managed process control plane", () => {
 			for (let attempt = 0; attempt < 100 && materializationRecords.length === 0; attempt += 1) {
 				await new Promise<void>((resolve) => setTimeout(resolve, 5));
 			}
-				expect((await manager.query(created.handle)).summary.state).toBe("completed");
+				expect(manager.query(created.handle)).toMatchObject({ ok: true, summary: { state: "completed" } });
 				expect(artifactCalls).toBe(1);
 				expect(materializationRecords).toHaveLength(1);
 				expect(materializationRecords[0]?.materialization.artifactRef?.storage).toBe("artifact");
@@ -428,7 +428,7 @@ describe("R8 managed process control plane", () => {
 			for (let attempt = 0; attempt < 100 && artifactAttempts === 0; attempt += 1) {
 				await new Promise<void>((resolve) => setTimeout(resolve, 5));
 			}
-			expect((await manager.query(created.handle)).summary.state).toBe("completed");
+			expect(manager.query(created.handle)).toMatchObject({ ok: true, summary: { state: "completed" } });
 			expect(await queue.pending()).toEqual([]);
 			expect(artifactAttempts).toBe(1);
 		const retry = await plane.processWait(created.handle, 10, "driver");

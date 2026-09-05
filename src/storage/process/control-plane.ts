@@ -32,7 +32,7 @@ import type {
 	ProcessState,
 	ProcessTerminalState,
 } from "../../runtime/process/types.ts";
-import type { OutputCursor } from "../../runtime/process/output.ts";
+import type { OutputCursor, ProcessOutputStream } from "../../runtime/process/output.ts";
 import type { FileProcessOutputStore, ProcessOutputReadResult } from "./output-store.ts";
 import type { RecordingFailurePolicy } from "../../storage/settings-manager.ts";
 
@@ -212,7 +212,7 @@ export class ManagedProcessControlPlane {
 		return this.backend.handles?.() ?? [];
 	}
 
-	public lifecycleProcesses(timeoutMs = RUNTIME_HOST_BOUNDS.maxWaitMs): readonly RuntimeHostLifecycleProcess[] {
+	public lifecycleProcesses(timeoutMs: number = RUNTIME_HOST_BOUNDS.maxWaitMs): readonly RuntimeHostLifecycleProcess[] {
 		return this.activeHandles().map((handle) => this.createLifecycleProcess(handle, timeoutMs));
 	}
 
@@ -234,7 +234,7 @@ export class ManagedProcessControlPlane {
 	}
 
 	/** 把一个 Host-owned process 映射为 R10 admission/drain/seal/settle port。 */
-	public createLifecycleProcess(handle: ExecutionHandleRef, timeoutMs = RUNTIME_HOST_BOUNDS.maxWaitMs): RuntimeHostLifecycleProcess {
+	public createLifecycleProcess(handle: ExecutionHandleRef, timeoutMs: number = RUNTIME_HOST_BOUNDS.maxWaitMs): RuntimeHostLifecycleProcess {
 		if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > RUNTIME_HOST_BOUNDS.maxWaitMs) {
 			throw new Error("lifecycle timeout is outside the bounded range");
 		}
@@ -311,13 +311,14 @@ export class ManagedProcessControlPlane {
 		handle: ExecutionHandleRef,
 		cursor: OutputCursor,
 		maxBytes = RUNTIME_HOST_BOUNDS.maxOutputPageBytes,
+		stream?: ProcessOutputStream,
 	): Promise<ControlPlaneOutputResult> {
 		const control = this.backend.control(handle);
 		if (!control) return { ok: false, code: "backend_unavailable" };
 		if (!Number.isSafeInteger(maxBytes) || maxBytes < 0 || maxBytes > RUNTIME_HOST_BOUNDS.maxOutputPageBytes) {
 			return { ok: false, code: "output_cursor_invalid" };
 		}
-		const result = await control.output.read(cursor, maxBytes);
+		const result = await control.output.read(cursor, maxBytes, stream);
 		if (!result.ok) return mapOutputError(result);
 		const checkpointed = await this.checkpointOutputHead(handle, control);
 		if (!checkpointed.ok) return checkpointed;

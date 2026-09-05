@@ -15,6 +15,7 @@ import {
 	clipUtf8Output,
 	PROCESS_OUTPUT_BOUNDS,
 	type OutputCursor,
+	type ProcessOutputStream,
 } from "../../runtime/process/output.ts";
 import type { RunledgerLayout } from "../../runtime/contracts/storage-layout.ts";
 
@@ -84,6 +85,7 @@ export type ProcessOutputReadAllResult =
 	| { readonly ok: false; readonly code: ProcessOutputStoreErrorCode };
 
 interface OutputRecord {
+	readonly stream?: ProcessOutputStream;
 	readonly sequence: number;
 	readonly startByte: number;
 	readonly endByte: number;
@@ -151,7 +153,7 @@ export class FileProcessOutputStore {
 		});
 	}
 
-	public async append(text: string): Promise<ProcessOutputAppendResult> {
+	public async append(text: string, stream?: ProcessOutputStream): Promise<ProcessOutputAppendResult> {
 		if (text.length === 0) return this.headResult();
 		return this.serial(async () => {
 			try {
@@ -166,6 +168,7 @@ export class FileProcessOutputStore {
 					startByte: loaded.metadata.head.byteOffset,
 					endByte: loaded.metadata.head.byteOffset + size,
 					text,
+					...(stream === undefined ? {} : { stream }),
 				};
 				await this.ensureDirectory();
 				await appendFile(this.filePathValue, `${canonicalJson(record)}\n`, { encoding: "utf8", mode: 0o600 });
@@ -191,7 +194,7 @@ export class FileProcessOutputStore {
 		});
 	}
 
-	public async read(cursor: OutputCursor, maxBytes: number = PROCESS_OUTPUT_BOUNDS.maxPageBytes): Promise<ProcessOutputReadResult> {
+	public async read(cursor: OutputCursor, maxBytes: number = PROCESS_OUTPUT_BOUNDS.maxPageBytes, stream?: ProcessOutputStream): Promise<ProcessOutputReadResult> {
 		if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error("maxBytes must be a non-negative safe integer");
 		return this.serial(async () => {
 			try {
@@ -211,6 +214,11 @@ export class FileProcessOutputStore {
 					const offset = Math.max(cursor.byteOffset, record.startByte) - record.startByte;
 					const suffix = suffixAtByteOffset(record.text, offset);
 					if (suffix === undefined) return { ok: false, code: "output_cursor_invalid" };
+					// 游标始终在原始记录序列上推进，另一 stream 与无来源记录不进入协议。
+					if (stream !== undefined && record.stream !== stream) {
+						nextCursor = { sequence: record.sequence, byteOffset: record.endByte };
+						continue;
+					}
 					const clipped = clipUtf8Output(suffix, remaining);
 					text += clipped.text;
 					nextCursor = {
@@ -466,9 +474,10 @@ export class FileProcessOutputStore {
 				!Number.isSafeInteger(endByte) ||
 				typeof text !== "string" ||
 				endByte < startByte ||
-				Buffer.byteLength(text, "utf8") !== endByte - startByte
+				Buffer.byteLength(text, "utf8") !== endByte - startByte ||
+				(parsed.stream !== undefined && parsed.stream !== "stdout" && parsed.stream !== "stderr")
 			) throw new Error("invalid private output record");
-			records.push({ sequence, startByte, endByte, text });
+			records.push({ sequence, startByte, endByte, text, ...(parsed.stream === undefined ? {} : { stream: parsed.stream }) });
 		}
 		return records;
 	}
@@ -488,7 +497,7 @@ export class FileProcessOutputStore {
 			if (record.startByte < cursor.byteOffset) {
 				const suffix = suffixAtByteOffset(record.text, cursor.byteOffset - record.startByte);
 				if (suffix === undefined) throw new Error("invalid retention cursor");
-				retained.push({ sequence: record.sequence, startByte: cursor.byteOffset, endByte: record.endByte, text: suffix });
+				retained.push({ ...record, startByte: cursor.byteOffset, text: suffix });
 			} else retained.push(record);
 		}
 		await this.rewrite(retained);

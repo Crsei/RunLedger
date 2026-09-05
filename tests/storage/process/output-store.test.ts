@@ -9,6 +9,37 @@ import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import { FileProcessOutputStore } from "../../../src/storage/process/output-store.ts";
 
 describe("R7 private durable process output", () => {
+	it("separates protocol streams while advancing the original cursor across other and legacy records", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-process-streams-"));
+		try {
+			const options = {
+				layout: buildRunledgerLayout(join(root, "home"), "posix"),
+				workspaceStorageKey: "ws-" + "d".repeat(64),
+				executionId: createRuntimeId("execution", "streams"),
+				attemptId: createRuntimeId("attempt", "streams"),
+			};
+			const store = new FileProcessOutputStore(options);
+			await store.append("legacy");
+			await store.append("diagnostic", "stderr");
+			await store.append("世ab", "stdout");
+			await store.append("tail", "stderr");
+			const recovered = new FileProcessOutputStore(options);
+			const first = await recovered.read({ sequence: 0, byteOffset: 0 }, 3, "stdout");
+			expect(first).toMatchObject({ ok: true, page: { text: "世", nextCursor: { sequence: 3, byteOffset: 19 }, truncated: true } });
+			if (!first.ok) throw new Error("first page unavailable");
+			const rest = await recovered.read(first.page.nextCursor, 64, "stdout");
+			expect(rest).toMatchObject({ ok: true, page: { text: "ab", nextCursor: await store.head(), truncated: false } });
+			expect(await recovered.read({ sequence: 0, byteOffset: 0 }, 64, "stderr")).toMatchObject({ ok: true, page: { text: "diagnostictail", nextCursor: await store.head() } });
+			expect(await recovered.read({ sequence: 0, byteOffset: 0 }, 64)).toMatchObject({ ok: true, page: { text: "legacydiagnostic世abtail" } });
+			await recovered.compactBefore(first.page.nextCursor);
+			expect(await recovered.read(first.page.nextCursor, 64, "stdout")).toMatchObject({ ok: true, page: { text: "ab" } });
+			await recovered.append("坏", "stderr");
+			expect(await recovered.read({ sequence: 5, byteOffset: 26 }, 64, "stdout")).toEqual({ ok: false, code: "output_cursor_invalid" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps UTF-8 boundaries, bounded pages, and recovers from the private store", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-process-output-"));
 		try {
@@ -168,7 +199,8 @@ describe("R7 private durable process output", () => {
 			expect(await store.pin("trace", first.cursor)).toEqual({ ok: true });
 			const blocked = await store.planRetention(second.cursor);
 			expect(blocked).toMatchObject({ ok: true, plan: { blockedBy: ["trace"] } });
-			expect(await store.commitRetention(blocked.ok ? blocked.plan : { before: second.cursor, sourceHead: second.cursor, planDigest: digest("invalid") })).toEqual({
+			if (!blocked.ok) throw new Error("retention plan unavailable");
+			expect(await store.commitRetention(blocked.plan)).toEqual({
 			ok: false,
 			code: "output_retention_blocked",
 		});

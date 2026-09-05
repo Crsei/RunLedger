@@ -1,10 +1,14 @@
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { describe, expect, it, vi } from "vitest";
 import { createGovernedLinterFactories, createGovernedLspSpawner, createGovernedLspWriteOperations } from "../../../src/runtime/session-runtime/lsp-composition.ts";
 import type { FileSystem } from "../../../src/runtime/execution-env.ts";
 import type { ExecutionHandleRef, ManagedProcessSummary } from "../../../src/runtime/process/types.ts";
-import type { OutputCursor } from "../../../src/runtime/process/output.ts";
+import type { OutputCursor, ProcessOutputStream } from "../../../src/runtime/process/output.ts";
+import type { ControlPlaneOutputResult, ControlPlaneWaitResult } from "../../../src/storage/process/control-plane.ts";
+import { createSdkMcpClientFactory } from "../../../src/extensions/mcp/sdk-factory.ts";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { StderrDiagnostics } from "../../../src/runtime/process/stderr-diagnostics.ts";
 
 const executionHandle: ExecutionHandleRef = {
 	authorityId: "authority_lsp" as ExecutionHandleRef["authorityId"],
@@ -16,7 +20,7 @@ const executionHandle: ExecutionHandleRef = {
 	executionId: "execution_lsp" as ExecutionHandleRef["executionId"],
 	attemptId: "attempt_lsp" as ExecutionHandleRef["attemptId"],
 	revision: 1,
-	requestDigest: { algorithm: "sha256", digest: "a".repeat(64) },
+	requestDigest: runtimeDigest("a"),
 };
 
 function processSummary(state: "running" | "completed" | "killed"): ManagedProcessSummary {
@@ -36,7 +40,7 @@ function processSummary(state: "running" | "completed" | "killed"): ManagedProce
 			terminal: {
 				state,
 				...(state === "completed" ? { exitCode: 0 } : {}),
-				evidenceRef: { subjectKind: "content", digest: { algorithm: "sha256", digest: "b".repeat(64) } },
+				evidenceRef: { subjectKind: "content", digest: runtimeDigest("b") },
 			},
 		}),
 	};
@@ -81,7 +85,7 @@ class FakeManagedLspProcess {
 		return {
 			ok: true as const,
 			operation: "write" as const,
-			receiptDigest: { algorithm: "sha256" as const, digest: "c".repeat(64) },
+			receiptDigest: runtimeDigest("c"),
 			summary: processSummary("running"),
 		};
 	}
@@ -91,7 +95,7 @@ class FakeManagedLspProcess {
 		return {
 			ok: true as const,
 			operation: "stop" as const,
-			receiptDigest: { algorithm: "sha256" as const, digest: "d".repeat(64) },
+			receiptDigest: runtimeDigest("d"),
 			summary: processSummary("killed"),
 		};
 	}
@@ -112,6 +116,85 @@ const memoryFs: FileSystem = {
 };
 
 describe("lsp-composition", () => {
+	it.each(["lsp", "mcp"])("lets %s stdout progress when stderr never catches up with its moving head", async (protocol) => {
+		const base = new FakeManagedLspProcess();
+		let stderrPages = 0;
+		let stdoutReads = 0;
+		let stderrPagesBeforeStdout: number | undefined;
+		let stopped = false;
+		let head: OutputCursor = { sequence: 0, byteOffset: 0 };
+		let stdout = protocol === "lsp" ? "Content-Length: 2\r\n\r\n{}" : "";
+		const port = {
+			start: base.start.bind(base),
+			resize: base.resize.bind(base),
+			stop: async () => { stopped = true; return base.stop(executionHandle, "driver", "SIGTERM"); },
+			write: async (handle: ExecutionHandleRef, actor: "driver" | "observer", text: string) => {
+				const message = JSON.parse(text) as { id?: unknown; method?: string };
+				if (message.method === "initialize") stdout += JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "bounded-fixture", version: "1" } } }) + "\n";
+				return base.write(handle, actor, text);
+			},
+			processWait: async (): Promise<ControlPlaneWaitResult> => {
+				await new Promise<void>((resolve) => setTimeout(resolve, 0));
+				return { ok: true, outcome: stopped || protocol === "lsp" ? "terminal" : "timed_out", summary: processSummary(stopped || protocol === "lsp" ? "completed" : "running"), nextCursor: head };
+			},
+			processOutput: async (_handle: ExecutionHandleRef, cursor: OutputCursor, _maxBytes: number, stream?: ProcessOutputStream): Promise<ControlPlaneOutputResult> => {
+				let text = "";
+				if (stream === "stderr") {
+					stderrPages += 1;
+					// 有限 watchdog 代替真正无限输出，避免错误实现锁死测试 runner。
+					if (stderrPages > 32) throw new Error("stderr pump monopolized the output reader");
+					text = "continuous diagnostic\n";
+				} else {
+					stdoutReads += 1;
+					stderrPagesBeforeStdout ??= stderrPages;
+					text = stdout;
+					stdout = "";
+				}
+				head = { sequence: head.sequence + 1, byteOffset: head.byteOffset + Buffer.byteLength(text) };
+				return { ok: true, page: { handle: executionHandle, startCursor: cursor, endCursor: head, nextCursor: head, text, truncated: stream === "stderr" }, head: { sequence: head.sequence + 1, byteOffset: head.byteOffset + 1 } };
+			},
+		};
+		if (protocol === "lsp") {
+			const transport = await createGovernedLspSpawner(port).spawn("/fixture/lsp", [], "/workspace");
+			expect(await new Response(transport.stdout).text()).toBe("Content-Length: 2\r\n\r\n{}");
+			expect(await transport.exited).toBe(0);
+		} else {
+			const factory = createSdkMcpClientFactory({ managedProcess: port, managedProcessCwd: "/workspace" });
+			const client = await factory.connect({ serverId: "mcp-server:bounded", displayName: "bounded", transport: "stdio", enabled: true, trusted: true, required: true, startupTimeoutMs: 1000, toolTimeoutMs: 1000, stdio: { command: "/fixture/mcp" } });
+			await client.close();
+		}
+		expect(stdoutReads).toBeGreaterThan(0);
+		expect(stderrPagesBeforeStdout).toBeLessThanOrEqual(4);
+	});
+
+	it.each(["'", '"'])("redacts the complete %s-quoted credential across chunks", (quote) => {
+		const diagnostics = new StderrDiagnostics();
+		diagnostics.append(`password=${quote}first `);
+		expect(diagnostics.peek()).not.toContain("first");
+		diagnostics.append(`second${quote}\napi_key=${quote}alpha ${quote === '"' ? '\\"' : "\\'"}beta`);
+		expect(diagnostics.peek()).not.toContain("second");
+		expect(diagnostics.peek()).not.toContain("beta");
+		diagnostics.append(`${quote} status=failed\n`);
+		expect(diagnostics.peek()).toBe(`password=${quote}[REDACTED]${quote}\napi_key=${quote}[REDACTED]${quote} status=failed\n`);
+	});
+
+	it("bounds and sanitizes diagnostic lines across chunks without exposing a truncated credential suffix", () => {
+		const diagnostics = new StderrDiagnostics();
+		diagnostics.append("\u001b[31mBearer top");
+		diagnostics.append("secret\u001b[0m\napi_key='split-");
+		diagnostics.append("secret'\n");
+		expect(diagnostics.peek()).toBe("Bearer [REDACTED]\napi_key='[REDACTED]'\n");
+		diagnostics.append("token=" + "s".repeat(10_000));
+		diagnostics.append("private-suffix\n");
+		expect(diagnostics.peek()).not.toContain("private-suffix");
+		expect(diagnostics.peek()).toContain("[diagnostic line truncated]");
+		diagnostics.append("final: missing module 世界\n".repeat(1000));
+		expect(diagnostics.peek()).not.toContain("sssss");
+		expect(Buffer.byteLength(diagnostics.peek())).toBeLessThanOrEqual(8192);
+		expect(diagnostics.peek()).not.toContain("�");
+		expect(diagnostics.peek()).toContain("final: missing module 世界");
+	});
+
 	it("Biome/SwiftLint factory 通过 Session managed foreground process", async () => {
 		const calls: Array<{ command: string; cwd: string; signal?: AbortSignal; maxOutputChars?: number }> = [];
 		const managed = {
@@ -170,7 +253,7 @@ describe("lsp-composition", () => {
 
 		expect(process.starts).toHaveLength(1);
 		expect(process.starts[0]).toMatchObject({ cwd: "/workspace" });
-		expect(process.starts[0]?.command).toBe("'/opt/lsp server/bin/lsp' '--stdio' 'safe value' 2>/dev/null");
+		expect(process.starts[0]?.command).toBe("'/opt/lsp server/bin/lsp' '--stdio' 'safe value'");
 		expect(process.starts[0]?.signal).toBeUndefined();
 
 		await transport.stdin.write("Content-Length: 2\r\n\r\n{}");

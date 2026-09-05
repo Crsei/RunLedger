@@ -9,7 +9,7 @@ import { RUNTIME_HOST_BOUNDS } from "../runtime/host/types.ts";
 import { createRuntimeId, type CommandId, type ExecutionId } from "../runtime/protocol/ids.ts";
 import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import type { ManagedProcessRequest, ExecutionHandleRef, ManagedProcessSummary } from "../runtime/process/types.ts";
-import { clipUtf8Output, type OutputCursor } from "../runtime/process/output.ts";
+import { clipUtf8Output, type OutputCursor, type ProcessOutputStream } from "../runtime/process/output.ts";
 import {
 	createProductionExecutionDecisionProviders,
 	type ExecutionConstraintInput,
@@ -308,7 +308,7 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 				executionMode: "background",
 				commandId: createRuntimeId("command", runtimeDigest({ sessionId, command: input.command, cwd: input.cwd, now: Date.now() }).digest.slice(0, 64)),
 			}),
-			processOutput: (handle, cursor, maxBytes) => this.processOutputHandle(handle, cursor, maxBytes),
+			processOutput: (handle, cursor, maxBytes, stream) => this.processOutputHandle(handle, cursor, maxBytes, stream),
 			processWait: (handle, timeoutMs, actor) => this.processWaitHandle(handle, timeoutMs, actor),
 			exec: (input) => this.executeForeground({ sessionId, sessionGeneration, principalId, ...input }),
 			write: (handle, actor, input) => this.plane.write(handle, actor, input),
@@ -541,10 +541,11 @@ export class ProductionManagedProcessPort implements HostProcessPort {
 		handle: ExecutionHandleRef,
 		cursor: { readonly sequence: number; readonly byteOffset: number },
 		maxBytes: number,
+		stream?: ProcessOutputStream,
 	): Promise<ControlPlaneOutputResult> {
 		const control = this.backend.control(handle);
-		if (control) return this.plane.processOutput(handle, cursor, maxBytes);
-		const result = await this.createOutputStore(handle).read(cursor, maxBytes);
+		if (control) return this.plane.processOutput(handle, cursor, maxBytes, stream);
+		const result = await this.createOutputStore(handle).read(cursor, maxBytes, stream);
 		if (!result.ok) {
 			return {
 				ok: false,

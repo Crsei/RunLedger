@@ -1,3 +1,4 @@
+import type { ExecutionHandleRef, ManagedProcessRequest } from "../../../src/runtime/process/types.ts";
 import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
@@ -6,8 +7,6 @@ import {
 	ExecutionHandleRefSchema,
 	ManagedProcessRequestSchema,
 	validateManagedProcessRequest,
-	type ExecutionHandleRef,
-	type ManagedProcessRequest,
 } from "../../../src/runtime/process/schemas.ts";
 import {
 	createInitialProcessProjection,
@@ -239,6 +238,7 @@ describe("R1 deterministic process state and event projection", () => {
 			nextState: "running",
 			previousEventHash: starting.eventHash,
 			spawnReceiptDigest: digest("f"),
+			// @ts-expect-error 故意注入非法 cursor，验证 replay 拒绝损坏的持久化 payload。
 			outputCursor: 4,
 			outputSize: 4,
 		});

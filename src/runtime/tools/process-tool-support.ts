@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { Static } from "typebox";
 import type { RuntimeContentRef, RuntimeDigest } from "../protocol/foundation.ts";
 import type { ExecutionHandleRef } from "../process/types.ts";
+import type { ProcessOutputStream } from "../process/output.ts";
 import { ExecutionHandleRefSchema } from "../process/schemas.ts";
 import type { ControlPlaneActor, ControlPlaneOutputResult, ControlPlaneWaitResult, ControlPlaneMutationResult } from "../../storage/process/control-plane.ts";
 import { RUNTIME_HOST_BOUNDS } from "../host/types.ts";
@@ -18,7 +19,7 @@ export const outputCursorSchema = Type.Object({
 export type ProcessToolCursor = Static<typeof outputCursorSchema>;
 
 export interface ProcessToolClient {
-	processOutput(handle: ExecutionHandleRef, cursor: ProcessToolCursor, maxBytes: number): Promise<ControlPlaneOutputResult>;
+	processOutput(handle: ExecutionHandleRef, cursor: ProcessToolCursor, maxBytes: number, stream?: ProcessOutputStream): Promise<ControlPlaneOutputResult>;
 	processWait(handle: ExecutionHandleRef, timeoutMs: number, actor: ControlPlaneActor): Promise<ControlPlaneWaitResult>;
 	write(handle: ExecutionHandleRef, actor: ControlPlaneActor, input: string): Promise<ControlPlaneMutationResult>;
 	stop(handle: ExecutionHandleRef, actor: ControlPlaneActor, signal?: NodeJS.Signals): Promise<ControlPlaneMutationResult>;

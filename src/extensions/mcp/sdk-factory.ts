@@ -18,6 +18,7 @@ import type { PolicyNetworkClient } from "../../security/policy-network.ts";
 import type { Network } from "../../runtime/execution-env.ts";
 import type { ExecutionHandleRef } from "../../runtime/process/types.ts";
 import type { OutputCursor } from "../../runtime/process/output.ts";
+import { StderrDiagnostics, STDERR_DRAIN_BOUNDS } from "../../runtime/process/stderr-diagnostics.ts";
 import type { ProcessToolClient } from "../../runtime/tools/process-tool-support.ts";
 import type { ManagedBackgroundBashOperations } from "../../runtime/tools/bash.ts";
 import type {
@@ -114,7 +115,7 @@ function managedStdioCommand(config: McpServerConfig): string {
 		.filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/u.test(key) && !RESERVED_ENVIRONMENT_KEYS.has(key) && !key.startsWith("RUNLEDGER_"))
 		.sort(([left], [right]) => left.localeCompare(right));
 	const assignments = environment.map(([key, value]) => `${key}=${shellQuote(value)}`);
-	return [...assignments, shellQuote(config.stdio.command), ...(config.stdio.args ?? []).map(shellQuote), "2>/dev/null"].join(" ");
+	return [...assignments, shellQuote(config.stdio.command), ...(config.stdio.args ?? []).map(shellQuote)].join(" ");
 }
 
 function sameCursor(left: OutputCursor, right: OutputCursor): boolean {
@@ -139,6 +140,8 @@ class HostManagedMcpTransport implements Transport {
 	private readonly signal: AbortSignal | undefined;
 	private handle: ExecutionHandleRef | undefined;
 	private cursor: OutputCursor = { sequence: 0, byteOffset: 0 };
+	private stderrCursor: OutputCursor = { sequence: 0, byteOffset: 0 };
+	private readonly diagnostics = new StderrDiagnostics();
 	private pendingText = "";
 	private pumpPromise: Promise<void> | undefined;
 	private abortListener: (() => void) | undefined;
@@ -193,8 +196,13 @@ class HostManagedMcpTransport implements Transport {
 		if (!written.ok) throw new Error(`MCP managed transport write failed: ${written.code}`);
 	}
 
+	public peekStderr(): string { return this.diagnostics.peek(); }
+
 	public async close(): Promise<void> {
-		if (this.closed) return;
+		if (this.closed) {
+			await this.pumpPromise?.catch(() => undefined);
+			return;
+		}
 		this.closed = true;
 		if (this.signal !== undefined && this.abortListener !== undefined) this.signal.removeEventListener("abort", this.abortListener);
 		const handle = this.handle;
@@ -216,8 +224,9 @@ class HostManagedMcpTransport implements Transport {
 	private async pumpOutput(): Promise<void> {
 		try {
 			while (!this.closed && this.handle !== undefined) {
+				await this.drainStderr(this.handle);
 				const before = this.cursor;
-				const output = await this.processPort.processOutput(this.handle, this.cursor, 64 * 1024);
+				const output = await this.processPort.processOutput(this.handle, this.cursor, 64 * 1024, "stdout");
 				if (!output.ok) throw new Error(`MCP managed transport output failed: ${output.code}`);
 				this.cursor = output.page.nextCursor;
 				if (output.page.text.length > 0) this.consumeText(output.page.text);
@@ -226,10 +235,14 @@ class HostManagedMcpTransport implements Transport {
 				const waited = await this.processPort.processWait(this.handle, 500, "driver");
 				if (!waited.ok) throw new Error(`MCP managed transport wait failed: ${waited.code}`);
 				if (waited.outcome === "terminal" || waited.outcome === "uncertain") {
-					const trailing = await this.processPort.processOutput(this.handle, this.cursor, 64 * 1024);
-					if (trailing.ok) {
+					await this.drainStderr(this.handle, waited.nextCursor);
+					while (!this.closed) {
+						const trailingBefore = this.cursor;
+						const trailing = await this.processPort.processOutput(this.handle, this.cursor, 64 * 1024, "stdout");
+						if (!trailing.ok) break;
 						this.cursor = trailing.page.nextCursor;
 						if (trailing.page.text.length > 0) this.consumeText(trailing.page.text);
+						if (!trailing.page.truncated || sameCursor(trailingBefore, this.cursor)) break;
 					}
 					if (this.pendingText.trim().length > 0) throw new Error("MCP managed transport ended with an incomplete JSONL message");
 					break;
@@ -239,9 +252,24 @@ class HostManagedMcpTransport implements Transport {
 			if (!this.closed) {
 				this.reportError(error instanceof Error ? error : new Error("MCP managed transport failed"));
 				this.closed = true;
+				// SDK 收到 onclose 后会丢弃 transport；先回收仍可能存活的受管进程。
+				if (this.handle !== undefined) await this.stopAndReap(this.handle);
 			}
 		} finally {
 			this.notifyClose();
+		}
+	}
+
+	private async drainStderr(handle: ExecutionHandleRef, terminalHead?: OutputCursor): Promise<void> {
+		const maxPages = terminalHead === undefined ? STDERR_DRAIN_BOUNDS.livePages : STDERR_DRAIN_BOUNDS.terminalPages;
+		for (let page = 0; page < maxPages && !this.closed; page += 1) {
+			if (terminalHead !== undefined && this.stderrCursor.byteOffset >= terminalHead.byteOffset) return;
+			const before = this.stderrCursor;
+			const output = await this.processPort.processOutput(handle, before, 64 * 1024, "stderr");
+			if (!output.ok) throw new Error(`MCP stderr unavailable: ${output.code}`);
+			this.stderrCursor = output.page.nextCursor;
+			this.diagnostics.append(output.page.text);
+			if (!output.page.truncated || sameCursor(before, this.stderrCursor)) return;
 		}
 	}
 
@@ -309,6 +337,12 @@ function toolDefinition(value: { readonly name: string; readonly description?: s
 	};
 }
 
+function withManagedDiagnostics(transport: Transport, error: unknown): unknown {
+	if (!(transport instanceof HostManagedMcpTransport)) return error;
+	const stderr = transport.peekStderr();
+	return stderr.length === 0 ? error : new Error(`${error instanceof Error ? error.message : "MCP operation failed"}; stderr: ${stderr}`);
+}
+
 class SdkMcpTransportClient implements McpTransportClient {
 	readonly #client: Client;
 	readonly #transport: Transport;
@@ -320,17 +354,25 @@ class SdkMcpTransportClient implements McpTransportClient {
 	}
 
 	public async listTools(signal?: AbortSignal): Promise<readonly McpToolDefinition[]> {
-		const result = await this.#client.listTools({}, { signal });
-		return result.tools.map((tool) => toolDefinition(tool));
+		try {
+			const result = await this.#client.listTools({}, { signal });
+			return result.tools.map((tool) => toolDefinition(tool));
+		} catch (error) {
+			throw withManagedDiagnostics(this.#transport, error);
+		}
 	}
 
 	public async callTool(toolName: string, input: unknown, signal?: AbortSignal): Promise<McpRawToolResult> {
 		const argumentsValue = isRecord(input) ? input : { value: input };
-		const result = await this.#client.callTool({ name: toolName, arguments: argumentsValue }, undefined, { signal });
-		return {
-			isError: result.isError === true,
-			content: Array.isArray(result.content) ? result.content.map((item) => rawContent(item)) : [],
-		};
+		try {
+			const result = await this.#client.callTool({ name: toolName, arguments: argumentsValue }, undefined, { signal });
+			return {
+				isError: result.isError === true,
+				content: Array.isArray(result.content) ? result.content.map((item) => rawContent(item)) : [],
+			};
+		} catch (error) {
+			throw withManagedDiagnostics(this.#transport, error);
+		}
 	}
 
 	public async close(): Promise<void> {
@@ -379,7 +421,7 @@ export function createSdkMcpClientFactory(options: SdkMcpClientFactoryOptions = 
 				return new SdkMcpTransportClient(client, transport);
 			} catch (error) {
 				await transport.close().catch(() => undefined);
-				throw error;
+				throw withManagedDiagnostics(transport, error);
 			}
 		},
 	};

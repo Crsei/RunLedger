@@ -55,7 +55,7 @@ describe.skipIf(IS_WINDOWS)("production Host managed process port", () => {
 			});
 			const port = new ProductionManagedProcessPort({ layout, scope: hostScope, hostGeneration: 1 });
 			const candidate = port as ProductionManagedProcessPort & {
-				registerSessionSecurity?: (sessionId: string, security: typeof security) => () => void;
+				registerSessionSecurity?: (sessionId: string, composition: typeof security) => () => void;
 			};
 			expect(candidate.registerSessionSecurity).toBeTypeOf("function");
 			const remove = candidate.registerSessionSecurity!(sessionId, security);
@@ -324,7 +324,9 @@ describe.skipIf(IS_WINDOWS)("production Host managed process port", () => {
 			expect(typeof facade.commitRetention).toBe("function");
 			expect(typeof facade.pinOutput).toBe("function");
 			expect(typeof facade.unpinOutput).toBe("function");
-			const plan = await facade.planRetention(sessionId, created.handle.executionId, page.nextCursor);
+			const nextCursor = page.nextCursor;
+			if (typeof nextCursor !== "object" || nextCursor === null || !("sequence" in nextCursor) || typeof nextCursor.sequence !== "number" || !("byteOffset" in nextCursor) || typeof nextCursor.byteOffset !== "number") throw new Error("output cursor missing");
+			const plan = await facade.planRetention(sessionId, created.handle.executionId, { sequence: nextCursor.sequence, byteOffset: nextCursor.byteOffset });
 			expect(plan).toMatchObject({ ok: true, plan: { before: page.nextCursor } });
 			expect(await facade.pinOutput(sessionId, created.handle.executionId, "trace-pin", { sequence: 0, byteOffset: 0 })).toEqual({ ok: true });
 			const blocked = await facade.commitRetention(sessionId, created.handle.executionId, plan.plan);

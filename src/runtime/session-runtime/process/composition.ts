@@ -238,7 +238,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 				findHandle: (executionId) => this.findHandle(executionId),
 				mutate: (operation, payload, context) => this.mutate(operation, payload, context),
 			}),
-			processOutput: (handle, cursor, maxBytes) => this.plane.processOutput(handle, cursor, maxBytes),
+			processOutput: (handle, cursor, maxBytes, stream) => this.plane.processOutput(handle, cursor, maxBytes, stream),
 			processWait: (handle, timeoutMs, actor) => this.plane.processWait(handle, timeoutMs, actor),
 			write: (handle, actor, input) => this.plane.write(handle, actor, input),
 			stop: (handle, actor, signal) => this.plane.stop(handle, actor, signal),
