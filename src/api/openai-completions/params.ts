@@ -55,7 +55,7 @@ export function buildParams(
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
-		model: model.id,
+		model: model.compat?.wireModelId ?? model.id,
 		messages,
 		stream: true,
 		prompt_cache_key:
@@ -199,6 +199,25 @@ export function buildParams(
 		}
 	}
 
+	if (model.provider === "cline-pass" && model.reasoning) {
+		const clineParams = params as typeof params & { reasoning?: { enabled: boolean } | { max_tokens: number } };
+		if (!options?.reasoningEffort && model.thinkingLevelMap?.off !== null) {
+			delete clineParams.reasoning_effort;
+			clineParams.reasoning = { enabled: false };
+		} else if (options?.reasoningEffort) {
+			const level = options.reasoningEffort;
+			const customBudget = level === "xhigh" || level === "max" ? undefined : options.thinkingBudgets?.[level];
+			const budget = customBudget ?? model.compat?.reasoningBudgetMap?.[level];
+			if (budget !== undefined) {
+				delete clineParams.reasoning_effort;
+				clineParams.reasoning = { max_tokens: budget };
+			}
+		}
+	}
+	if (model.provider === "yolo-auto" && model.id === "deepseek-flash-v4" && options?.toolChoice !== undefined) {
+		delete params.reasoning_effort;
+		(params as typeof params & { chat_template_kwargs: { thinking: boolean } }).chat_template_kwargs = { thinking: false };
+	}
 	return params;
 }
 

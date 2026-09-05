@@ -25,6 +25,10 @@ export const AIAND_MODELS = values as {
 		id: "moonshotai/kimi-k3";
 		provider: "aiand";
 	};
+	"motif-technologies/motif-3": Model<"openai-completions"> & {
+		id: "motif-technologies/motif-3";
+		provider: "aiand";
+	};
 	"openai/gpt-oss-120b": Model<"openai-completions"> & {
 		id: "openai/gpt-oss-120b";
 		provider: "aiand";
@@ -33,8 +37,16 @@ export const AIAND_MODELS = values as {
 		id: "qwen/qwen3.6-27b";
 		provider: "aiand";
 	};
+	"qwen/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b";
+		provider: "aiand";
+	};
 	"zai-org/glm-5.2": Model<"openai-completions"> & {
 		id: "zai-org/glm-5.2";
+		provider: "aiand";
+	};
+	"zai-org/glm-5.3": Model<"openai-completions"> & {
+		id: "zai-org/glm-5.3";
 		provider: "aiand";
 	};
 };

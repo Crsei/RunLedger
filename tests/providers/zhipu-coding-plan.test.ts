@@ -39,7 +39,7 @@ describe("zhipu-coding-plan provider", () => {
 			reasoning: true,
 			compat: { thinkingFormat: "zai", supportsDeveloperRole: false },
 		});
-		expect(provider.getModels().length).toBe(12);
+		expect(provider.getModels().length).toBe(15);
 	});
 
 	test("is present in the builtin generated model catalog", () => {

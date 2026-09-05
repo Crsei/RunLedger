@@ -25,6 +25,10 @@ export const ALIBABA_TOKEN_PLAN_MODELS = values as {
 		id: "qwen3.7-plus";
 		provider: "alibaba-token-plan";
 	};
+	"qwen3.8-flash": Model<"openai-completions"> & {
+		id: "qwen3.8-flash";
+		provider: "alibaba-token-plan";
+	};
 	"qwen3.8-max": Model<"openai-completions"> & {
 		id: "qwen3.8-max";
 		provider: "alibaba-token-plan";

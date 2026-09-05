@@ -13,6 +13,26 @@ export const CEREBRAS_MODELS = values as {
 		id: "gpt-oss-120b";
 		provider: "cerebras";
 	};
+	"llama3.1-8b": Model<"openai-completions"> & {
+		id: "llama3.1-8b";
+		provider: "cerebras";
+	};
+	"qwen-3-235b-a22b-instruct-2507": Model<"openai-completions"> & {
+		id: "qwen-3-235b-a22b-instruct-2507";
+		provider: "cerebras";
+	};
+	"qwen-3-coder-480b": Model<"openai-completions"> & {
+		id: "qwen-3-coder-480b";
+		provider: "cerebras";
+	};
+	"qwen-3.8-27b": Model<"openai-completions"> & {
+		id: "qwen-3.8-27b";
+		provider: "cerebras";
+	};
+	"zai-glm-4.6": Model<"openai-completions"> & {
+		id: "zai-glm-4.6";
+		provider: "cerebras";
+	};
 	"zai-glm-4.7": Model<"openai-completions"> & {
 		id: "zai-glm-4.7";
 		provider: "cerebras";

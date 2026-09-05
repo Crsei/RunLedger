@@ -25,6 +25,10 @@ export const ZENMUX_MODELS = values as {
 		id: "anthropic/claude-fable-5-free";
 		provider: "zenmux";
 	};
+	"anthropic/claude-fable-5.1": Model<"anthropic-messages"> & {
+		id: "anthropic/claude-fable-5.1";
+		provider: "zenmux";
+	};
 	"anthropic/claude-haiku-4.5": Model<"anthropic-messages"> & {
 		id: "anthropic/claude-haiku-4.5";
 		provider: "zenmux";
@@ -161,12 +165,24 @@ export const ZENMUX_MODELS = values as {
 		id: "deepseek/deepseek-v4-flash-free";
 		provider: "zenmux";
 	};
+	"deepseek/deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-vision-exp";
+		provider: "zenmux";
+	};
+	"deepseek/deepseek-v4-flash-vision-exp-free": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-vision-exp-free";
+		provider: "zenmux";
+	};
 	"deepseek/deepseek-v4-pro": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-pro";
 		provider: "zenmux";
 	};
 	"deepseek/deepseek-v4-pro-free": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-pro-free";
+		provider: "zenmux";
+	};
+	"dots-studio/dots3-note-prev": Model<"openai-completions"> & {
+		id: "dots-studio/dots3-note-prev";
 		provider: "zenmux";
 	};
 	"google/gemini-2.0-flash": Model<"openai-completions"> & {
@@ -229,6 +245,14 @@ export const ZENMUX_MODELS = values as {
 		id: "google/gemini-3.6-flash";
 		provider: "zenmux";
 	};
+	"google/gemini-3.7-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.7-flash";
+		provider: "zenmux";
+	};
+	"google/gemini-3.8-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.8-flash";
+		provider: "zenmux";
+	};
 	"google/gemini-embedding-2": Model<"openai-completions"> & {
 		id: "google/gemini-embedding-2";
 		provider: "zenmux";
@@ -239,6 +263,10 @@ export const ZENMUX_MODELS = values as {
 	};
 	"google/gemma-4-26b-a4b-it": Model<"openai-completions"> & {
 		id: "google/gemma-4-26b-a4b-it";
+		provider: "zenmux";
+	};
+	"google/gemma-4-31b-it": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it";
 		provider: "zenmux";
 	};
 	"inclusionai/ling-1t": Model<"openai-completions"> & {
@@ -255,6 +283,10 @@ export const ZENMUX_MODELS = values as {
 	};
 	"inclusionai/ling-3.0-flash": Model<"openai-completions"> & {
 		id: "inclusionai/ling-3.0-flash";
+		provider: "zenmux";
+	};
+	"inclusionai/ling-3.0-tiny": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-tiny";
 		provider: "zenmux";
 	};
 	"inclusionai/ling-flash-2.0": Model<"openai-completions"> & {
@@ -325,12 +357,32 @@ export const ZENMUX_MODELS = values as {
 		id: "meta/llama-4-scout-17b-16e-instruct";
 		provider: "zenmux";
 	};
+	"meta/muse-image-1.0": Model<"openai-completions"> & {
+		id: "meta/muse-image-1.0";
+		provider: "zenmux";
+	};
 	"meta/muse-spark-1.1": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.1";
 		provider: "zenmux";
 	};
 	"meta/muse-spark-1.2": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.2";
+		provider: "zenmux";
+	};
+	"meta/muse-spark-1.3": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3";
+		provider: "zenmux";
+	};
+	"meta/muse-spark-1.3-contributor": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3-contributor";
+		provider: "zenmux";
+	};
+	"mindai/macaron-v1-tall": Model<"openai-completions"> & {
+		id: "mindai/macaron-v1-tall";
+		provider: "zenmux";
+	};
+	"mindai/macaron-v1-venti": Model<"openai-completions"> & {
+		id: "mindai/macaron-v1-venti";
 		provider: "zenmux";
 	};
 	"minimax/minimax-m2": Model<"openai-completions"> & {
@@ -411,6 +463,10 @@ export const ZENMUX_MODELS = values as {
 	};
 	"moonshotai/kimi-k3-free": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k3-free";
+		provider: "zenmux";
+	};
+	"nex-agi/nex-n2-pro": Model<"openai-completions"> & {
+		id: "nex-agi/nex-n2-pro";
 		provider: "zenmux";
 	};
 	"openai/chat-latest": Model<"openai-completions"> & {
@@ -633,8 +689,24 @@ export const ZENMUX_MODELS = values as {
 		id: "qwen/qwen3.7-plus";
 		provider: "zenmux";
 	};
+	"qwen/qwen3.8-2.4t-a95b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-2.4t-a95b";
+		provider: "zenmux";
+	};
+	"qwen/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b";
+		provider: "zenmux";
+	};
+	"qwen/qwen3.8-flash": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-flash";
+		provider: "zenmux";
+	};
 	"qwen/qwen3.8-max": Model<"openai-completions"> & {
 		id: "qwen/qwen3.8-max";
+		provider: "zenmux";
+	};
+	"qwen/qwen3.8-max-0902": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-max-0902";
 		provider: "zenmux";
 	};
 	"sapiens-ai/agnes-1.5-flash": Model<"openai-completions"> & {
@@ -651,6 +723,14 @@ export const ZENMUX_MODELS = values as {
 	};
 	"sapiens-ai/agnes-2.0-flash": Model<"openai-completions"> & {
 		id: "sapiens-ai/agnes-2.0-flash";
+		provider: "zenmux";
+	};
+	"sapiens-ai/agnes-2.5-flash": Model<"openai-completions"> & {
+		id: "sapiens-ai/agnes-2.5-flash";
+		provider: "zenmux";
+	};
+	"sapiens-ai/agnes-2.5-pro": Model<"openai-completions"> & {
+		id: "sapiens-ai/agnes-2.5-pro";
 		provider: "zenmux";
 	};
 	"stepfun/step-3": Model<"openai-completions"> & {
@@ -753,12 +833,20 @@ export const ZENMUX_MODELS = values as {
 		id: "x-ai/grok-4.5-free";
 		provider: "zenmux";
 	};
+	"x-ai/grok-4.6": Model<"openai-completions"> & {
+		id: "x-ai/grok-4.6";
+		provider: "zenmux";
+	};
 	"x-ai/grok-build-0.1": Model<"openai-completions"> & {
 		id: "x-ai/grok-build-0.1";
 		provider: "zenmux";
 	};
 	"x-ai/grok-code-fast-1": Model<"openai-completions"> & {
 		id: "x-ai/grok-code-fast-1";
+		provider: "zenmux";
+	};
+	"x-ai/grok-imagine-image-2.0": Model<"openai-completions"> & {
+		id: "x-ai/grok-imagine-image-2.0";
 		provider: "zenmux";
 	};
 	"xiaomi/mimo-v2-flash": Model<"openai-completions"> & {
@@ -839,6 +927,18 @@ export const ZENMUX_MODELS = values as {
 	};
 	"z-ai/glm-5.2-free": Model<"openai-completions"> & {
 		id: "z-ai/glm-5.2-free";
+		provider: "zenmux";
+	};
+	"z-ai/glm-5.3": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3";
+		provider: "zenmux";
+	};
+	"z-ai/glm-5.3-flash": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-flash";
+		provider: "zenmux";
+	};
+	"z-ai/glm-5.3-free": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-free";
 		provider: "zenmux";
 	};
 	"z-ai/glm-5v-turbo": Model<"openai-completions"> & {

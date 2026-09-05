@@ -125,4 +125,12 @@ export const MISTRAL_MODELS = values as {
 		id: "pixtral-large-latest";
 		provider: "mistral";
 	};
+	"voxtral-small-latest": Model<"mistral-conversations"> & {
+		id: "voxtral-small-latest";
+		provider: "mistral";
+	};
+	"zai-glm-5-2": Model<"mistral-conversations"> & {
+		id: "zai-glm-5-2";
+		provider: "mistral";
+	};
 };

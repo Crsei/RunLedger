@@ -5,6 +5,10 @@ import values from "./data/together.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const TOGETHER_MODELS = values as {
+	"MiniMaxAI/MiniMax-M2.5": Model<"openai-completions"> & {
+		id: "MiniMaxAI/MiniMax-M2.5";
+		provider: "together";
+	};
 	"MiniMaxAI/MiniMax-M2.7": Model<"openai-completions"> & {
 		id: "MiniMaxAI/MiniMax-M2.7";
 		provider: "together";
@@ -15,6 +19,22 @@ export const TOGETHER_MODELS = values as {
 	};
 	"Qwen/Qwen2.5-7B-Instruct-Turbo": Model<"openai-completions"> & {
 		id: "Qwen/Qwen2.5-7B-Instruct-Turbo";
+		provider: "together";
+	};
+	"Qwen/Qwen3-235B-A22B-Instruct-2507-tput": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3-235B-A22B-Instruct-2507-tput";
+		provider: "together";
+	};
+	"Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8";
+		provider: "together";
+	};
+	"Qwen/Qwen3-Coder-Next-FP8": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3-Coder-Next-FP8";
+		provider: "together";
+	};
+	"Qwen/Qwen3.5-397B-A17B": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3.5-397B-A17B";
 		provider: "together";
 	};
 	"Qwen/Qwen3.5-9B": Model<"openai-completions"> & {
@@ -29,8 +49,36 @@ export const TOGETHER_MODELS = values as {
 		id: "Qwen/Qwen3.7-Max";
 		provider: "together";
 	};
+	"deepseek-ai/DeepSeek-R1": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-R1";
+		provider: "together";
+	};
+	"deepseek-ai/DeepSeek-V3": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V3";
+		provider: "together";
+	};
+	"deepseek-ai/DeepSeek-V3-1": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V3-1";
+		provider: "together";
+	};
+	"deepseek-ai/DeepSeek-V3.1": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V3.1";
+		provider: "together";
+	};
+	"deepseek-ai/DeepSeek-V4-Flash-0731": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Flash-0731";
+		provider: "together";
+	};
 	"deepseek-ai/DeepSeek-V4-Pro": Model<"openai-completions"> & {
 		id: "deepseek-ai/DeepSeek-V4-Pro";
+		provider: "together";
+	};
+	"deepseek-ai/DeepSeek-V4-Pro-0813": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Pro-0813";
+		provider: "together";
+	};
+	"essentialai/Rnj-1-Instruct": Model<"openai-completions"> & {
+		id: "essentialai/Rnj-1-Instruct";
 		provider: "together";
 	};
 	"google/gemma-4-31B-it": Model<"openai-completions"> & {
@@ -41,12 +89,32 @@ export const TOGETHER_MODELS = values as {
 		id: "meta-llama/Llama-3.3-70B-Instruct-Turbo";
 		provider: "together";
 	};
+	"meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": Model<"openai-completions"> & {
+		id: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8";
+		provider: "together";
+	};
+	"meta-llama/Llama-4-Scout-17B-16E-Instruct": Model<"openai-completions"> & {
+		id: "meta-llama/Llama-4-Scout-17B-16E-Instruct";
+		provider: "together";
+	};
+	"moonshotai/Kimi-K2-Instruct-0905": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2-Instruct-0905";
+		provider: "together";
+	};
+	"moonshotai/Kimi-K2.5": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K2.5";
+		provider: "together";
+	};
 	"moonshotai/Kimi-K2.6": Model<"openai-completions"> & {
 		id: "moonshotai/Kimi-K2.6";
 		provider: "together";
 	};
 	"moonshotai/Kimi-K2.7-Code": Model<"openai-completions"> & {
 		id: "moonshotai/Kimi-K2.7-Code";
+		provider: "together";
+	};
+	"moonshotai/Kimi-K3": Model<"openai-completions"> & {
+		id: "moonshotai/Kimi-K3";
 		provider: "together";
 	};
 	"nvidia/nemotron-3-ultra-550b-a55b": Model<"openai-completions"> & {
@@ -65,8 +133,28 @@ export const TOGETHER_MODELS = values as {
 		id: "thinkingmachines/Inkling";
 		provider: "together";
 	};
+	"zai-org/GLM-4.7": Model<"openai-completions"> & {
+		id: "zai-org/GLM-4.7";
+		provider: "together";
+	};
+	"zai-org/GLM-5": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5";
+		provider: "together";
+	};
+	"zai-org/GLM-5.1": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5.1";
+		provider: "together";
+	};
 	"zai-org/GLM-5.2": Model<"openai-completions"> & {
 		id: "zai-org/GLM-5.2";
+		provider: "together";
+	};
+	"zai-org/GLM-5.3": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5.3";
+		provider: "together";
+	};
+	"zai-org/GLM-5.3-Flash": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5.3-Flash";
 		provider: "together";
 	};
 };

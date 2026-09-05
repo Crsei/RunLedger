@@ -8,7 +8,7 @@
 import {
 	AIAND_STATIC_MODELS,
 } from "../../src/providers/aiand-catalog.ts";
-import { loadPortedProviderModels } from "../ported-provider-catalog.ts";
+import { mergePortedProviderModels } from "../ported-provider-catalog.ts";
 import type { Api, Model, OpenAICompletionsCompat } from "../../src/types.ts";
 import {
 	applyOpenAICompletionsCompatMetadata,
@@ -53,7 +53,7 @@ export function normalizeProviderCatalogs(allModels: Model<any>[]): Record<strin
 			...(model.thinkingLevelMap ? { thinkingLevelMap: { ...model.thinkingLevelMap } } : {}),
 		})),
 	);
-	allModels.push(...loadPortedProviderModels());
+	allModels = mergePortedProviderModels(allModels);
 
 	// Temporary overrides until upstream model metadata is corrected.
 	for (const candidate of allModels) {

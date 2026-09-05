@@ -1,88 +1,36 @@
 #!/usr/bin/env node
-/**
- * 从 oh-my-pi 冻结快照提取 bundled catalog 子集,生成 RunLedger 生成器的
- * 可复现模型数据源(vendored snapshot)。
- *
- * 用法:
- *   node scripts/sources/extract-oh-my-pi-models.ts <oh-my-pi checkout 路径>
- *
- * 输出: scripts/sources/oh-my-pi-provider-models-17.2.15.json
- *   { "<providerId>": [<raw model entry>, ...] }
- *   条目保留来源字段(id/name/api/baseUrl/reasoning/input/cost/contextWindow/
- *   maxTokens/compat),由 scripts/generate-models.ts 在生成时归一化为目标 Model。
- *
- * 只提取本移植清单新增 provider 的条目;identity 映射(azure/xai-oauth/moonshot)
- * 由生成器侧重写,不在此处改写来源数据。
- */
+/** 提取固定来源的可移植 catalog 字段；原始文件摘要用于核对来源，不运行上游代码。 */
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { readFileSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
-import { fileURLToPath } from "url";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const sourceRoot = process.argv[2];
-if (!sourceRoot) {
-	console.error("usage: node scripts/sources/extract-oh-my-pi-models.ts <oh-my-pi checkout>");
-	process.exit(1);
+if (!sourceRoot) throw new Error("usage: node scripts/sources/extract-oh-my-pi-models.ts <oh-my-pi checkout>");
+const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: sourceRoot, encoding: "utf8" }).trim();
+const expectedCommit = "9bafadd50317d68850324dbb4ca6a978995b3ae2";
+if (commit !== expectedCommit) throw new Error(`source HEAD differs from reviewed snapshot: ${commit}`);
+const catalogPath = "packages/catalog/src/models.json";
+if (execFileSync("git", ["status", "--porcelain", "--", catalogPath, "packages/catalog/package.json"], { cwd: sourceRoot, encoding: "utf8" }).trim()) {
+	throw new Error("source catalog or version has uncommitted changes");
 }
-
-/** 需要 vendored 的 provider 集合(见 02-oh-my-pi-provider-port-execution-checklist.md 矩阵)。 */
-const VENDORED_PROVIDER_IDS = [
-	// A 批次:已有 adapter 可复用
-	"aimlapi",
-	"baseten",
-	"coreweave",
-	"firepass",
-	"gmi-cloud",
-	"nanogpt",
-	"novita",
-	"qianfan",
-	"synthetic",
-	"venice",
-	"zhipu-coding-plan",
-	// B 批次:auth/区域/多协议
-	"alibaba-coding-plan",
-	"alibaba-token-plan",
-	"bedrock-mantle",
-	"kilo",
-	"kimi-code",
-	"meta",
-	"minimax-code",
-	"minimax-code-cn",
-	"opencode-zen",
-	"qwen-portal",
-	"sakana",
-	"umans",
-	"wafer-serverless",
-	"zenmux",
-	// xai-oauth 条目并入已有 xai provider(identity 映射,见矩阵行)
-	"xai-oauth",
-] as const;
-
-type JsonRecord = Record<string, unknown>;
-
-interface BundledModelsFile {
-	[providerId: string]: Record<string, JsonRecord>;
-}
-
-const modelsPath = join(sourceRoot, "packages/catalog/src/models.json");
-const bundled = JSON.parse(readFileSync(modelsPath, "utf8")) as BundledModelsFile;
-
-const output: Record<string, JsonRecord[]> = {};
-for (const providerId of VENDORED_PROVIDER_IDS) {
-	const entries = bundled[providerId];
-	if (!entries) {
-		console.error(`source bundled catalog has no entry for "${providerId}"`);
-		process.exit(1);
-	}
-	output[providerId] = Object.keys(entries)
-		.sort()
-		.map((id) => entries[id]);
-}
-
-const outPath = join(__dirname, "oh-my-pi-provider-models-17.2.15.json");
-writeFileSync(outPath, `${JSON.stringify(output, null, "\t")}\n`);
-console.log(`wrote ${outPath}`);
-for (const [id, entries] of Object.entries(output)) {
-	console.log(`  ${id}: ${entries.length} entries`);
-}
+const raw = readFileSync(join(sourceRoot, catalogPath));
+const bundled = JSON.parse(raw.toString()) as Record<string, Record<string, Record<string, unknown>>>;
+const previous = JSON.parse(execFileSync("git", ["show", "06aecdd51f07e689e970ceaa180abe2be0c14bbb:packages/catalog/src/models.json"], { cwd: sourceRoot, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 })) as typeof bundled;
+const removedModels = Object.fromEntries(Object.keys(bundled).filter((id) => previous[id]).map((id) => [
+	id, Object.keys(previous[id]!).filter((key) => !bundled[id]![key]).sort(),
+]));
+const compatFields = new Set(["supportsStore", "supportsDeveloperRole", "supportsReasoningEffort", "supportsUsageInStreaming", "thinkingFormat", "requiresReasoningContentForToolCalls", "requiresReasoningContentForAllAssistantTurns", "supportsStrictMode", "maxTokensField", "requiresToolResultName", "requiresAssistantAfterToolResult", "requiresThinkingAsText", "supportsLongPromptCacheRetention", "wireModelIdMode", "includeEncryptedReasoning"]);
+const fields = ["id", "name", "api", "baseUrl", "reasoning", "input", "cost", "contextWindow", "maxTokens", "thinking", "compat"];
+const providers = Object.fromEntries(Object.entries(bundled).sort(([a], [b]) => a.localeCompare(b)).map(([id, models]) => [
+	id, Object.keys(models).sort().map((key) => Object.fromEntries(fields.filter((field) => models[key]![field] !== undefined).map((field) => [field, field === "compat" ? Object.fromEntries(Object.entries(models[key]![field] as Record<string, unknown>).filter(([key]) => compatFields.has(key))) : models[key]![field]]))),
+]));
+const output = {
+	source: { repository: "oh-my-pi", commit, version: "18.1.9", catalogPath, sha256: createHash("sha256").update(raw).digest("hex"), license: "MIT" },
+	providers,
+	removedModels,
+};
+const outPath = join(dirname(fileURLToPath(import.meta.url)), "oh-my-pi-provider-models-18.1.9.json");
+writeFileSync(outPath, `${JSON.stringify(output)}\n`);
+console.log(`wrote ${outPath}: ${Object.keys(providers).length} providers`);

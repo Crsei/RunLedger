@@ -5,6 +5,22 @@ import values from "./data/groq.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const GROQ_MODELS = values as {
+	"deepseek-r1-distill-llama-70b": Model<"openai-completions"> & {
+		id: "deepseek-r1-distill-llama-70b";
+		provider: "groq";
+	};
+	"gemma2-9b-it": Model<"openai-completions"> & {
+		id: "gemma2-9b-it";
+		provider: "groq";
+	};
+	"groq/compound": Model<"openai-completions"> & {
+		id: "groq/compound";
+		provider: "groq";
+	};
+	"groq/compound-mini": Model<"openai-completions"> & {
+		id: "groq/compound-mini";
+		provider: "groq";
+	};
 	"llama-3.1-8b-instant": Model<"openai-completions"> & {
 		id: "llama-3.1-8b-instant";
 		provider: "groq";
@@ -13,8 +29,32 @@ export const GROQ_MODELS = values as {
 		id: "llama-3.3-70b-versatile";
 		provider: "groq";
 	};
+	"llama3-70b-8192": Model<"openai-completions"> & {
+		id: "llama3-70b-8192";
+		provider: "groq";
+	};
+	"llama3-8b-8192": Model<"openai-completions"> & {
+		id: "llama3-8b-8192";
+		provider: "groq";
+	};
+	"meta-llama/llama-4-maverick-17b-128e-instruct": Model<"openai-completions"> & {
+		id: "meta-llama/llama-4-maverick-17b-128e-instruct";
+		provider: "groq";
+	};
 	"meta-llama/llama-4-scout-17b-16e-instruct": Model<"openai-completions"> & {
 		id: "meta-llama/llama-4-scout-17b-16e-instruct";
+		provider: "groq";
+	};
+	"mistral-saba-24b": Model<"openai-completions"> & {
+		id: "mistral-saba-24b";
+		provider: "groq";
+	};
+	"moonshotai/kimi-k2-instruct": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2-instruct";
+		provider: "groq";
+	};
+	"moonshotai/kimi-k2-instruct-0905": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2-instruct-0905";
 		provider: "groq";
 	};
 	"openai/gpt-oss-120b": Model<"openai-completions"> & {
@@ -29,8 +69,20 @@ export const GROQ_MODELS = values as {
 		id: "openai/gpt-oss-safeguard-20b";
 		provider: "groq";
 	};
+	"qwen-qwq-32b": Model<"openai-completions"> & {
+		id: "qwen-qwq-32b";
+		provider: "groq";
+	};
 	"qwen/qwen3-32b": Model<"openai-completions"> & {
 		id: "qwen/qwen3-32b";
+		provider: "groq";
+	};
+	"qwen/qwen3.6-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.6-27b";
+		provider: "groq";
+	};
+	"qwen/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b";
 		provider: "groq";
 	};
 };

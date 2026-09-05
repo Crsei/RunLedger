@@ -148,6 +148,8 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 
 #### 1.2.vb oh-my-pi 新增 Provider 移植（2026-08，partial/deferred 批次）
 
+2026-09-05 增量已应用：来源 oh-my-pi 18.1.9，新增 abliteration / cline-pass / deepinfra / yolo-auto；当前 72 个 builtin factory、70 份静态 catalog、4,710 个模型。详情与外部 E2E / canonical compatibility profile 边界见同一清单 §0.4。下方 2026-08 数量与 worktree 是历史快照。
+
 唯一状态入口：`development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md`（来源快照 oh-my-pi 06aecdd5 v17.2.15，目标基线 b5100b2）。当前 `src/providers/` 有 68 个 builtin provider（原 36/37 + 本批新增），实现于独立 worktree `RunLedger-oh-my-pi-provider-port`，未提交。
 
 状态分层（不要混用）：

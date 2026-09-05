@@ -9,8 +9,16 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "deepseek-v4-flash";
 		provider: "opencode-go";
 	};
+	"deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
+		id: "deepseek-v4-flash-vision-exp";
+		provider: "opencode-go";
+	};
 	"deepseek-v4-pro": Model<"openai-completions"> & {
 		id: "deepseek-v4-pro";
+		provider: "opencode-go";
+	};
+	"glm-5": Model<"openai-completions"> & {
+		id: "glm-5";
 		provider: "opencode-go";
 	};
 	"glm-5.1": Model<"openai-completions"> & {
@@ -21,8 +29,36 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "glm-5.2";
 		provider: "opencode-go";
 	};
+	"glm-5.3": Model<"openai-completions"> & {
+		id: "glm-5.3";
+		provider: "opencode-go";
+	};
+	"glm-5.3-flash": Model<"openai-completions"> & {
+		id: "glm-5.3-flash";
+		provider: "opencode-go";
+	};
+	"gpt-5.6-luna": Model<"openai-responses"> & {
+		id: "gpt-5.6-luna";
+		provider: "opencode-go";
+	};
 	"grok-4.5": Model<"openai-responses"> & {
 		id: "grok-4.5";
+		provider: "opencode-go";
+	};
+	"grok-4.6": Model<"openai-responses"> & {
+		id: "grok-4.6";
+		provider: "opencode-go";
+	};
+	"hy3": Model<"openai-completions"> & {
+		id: "hy3";
+		provider: "opencode-go";
+	};
+	"hy4-preview": Model<"openai-completions"> & {
+		id: "hy4-preview";
+		provider: "opencode-go";
+	};
+	"kimi-k2.5": Model<"openai-completions"> & {
+		id: "kimi-k2.5";
 		provider: "opencode-go";
 	};
 	"kimi-k2.6": Model<"openai-completions"> & {
@@ -37,6 +73,18 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "kimi-k3";
 		provider: "opencode-go";
 	};
+	"longcat-2.0": Model<"openai-completions"> & {
+		id: "longcat-2.0";
+		provider: "opencode-go";
+	};
+	"mimo-v2-omni": Model<"openai-completions"> & {
+		id: "mimo-v2-omni";
+		provider: "opencode-go";
+	};
+	"mimo-v2-pro": Model<"openai-completions"> & {
+		id: "mimo-v2-pro";
+		provider: "opencode-go";
+	};
 	"mimo-v2.5": Model<"openai-completions"> & {
 		id: "mimo-v2.5";
 		provider: "opencode-go";
@@ -45,12 +93,32 @@ export const OPENCODE_GO_MODELS = values as {
 		id: "mimo-v2.5-pro";
 		provider: "opencode-go";
 	};
+	"minimax-m2.5": Model<"anthropic-messages"> & {
+		id: "minimax-m2.5";
+		provider: "opencode-go";
+	};
 	"minimax-m2.7": Model<"openai-completions"> & {
 		id: "minimax-m2.7";
 		provider: "opencode-go";
 	};
 	"minimax-m3": Model<"anthropic-messages"> & {
 		id: "minimax-m3";
+		provider: "opencode-go";
+	};
+	"muse-spark-1.2-contributor": Model<"openai-responses"> & {
+		id: "muse-spark-1.2-contributor";
+		provider: "opencode-go";
+	};
+	"muse-spark-1.3-contributor": Model<"openai-responses"> & {
+		id: "muse-spark-1.3-contributor";
+		provider: "opencode-go";
+	};
+	"ox-alpha-free": Model<"openai-completions"> & {
+		id: "ox-alpha-free";
+		provider: "opencode-go";
+	};
+	"qwen3.5-plus": Model<"openai-completions"> & {
+		id: "qwen3.5-plus";
 		provider: "opencode-go";
 	};
 	"qwen3.6-plus": Model<"openai-completions"> & {
@@ -63,6 +131,14 @@ export const OPENCODE_GO_MODELS = values as {
 	};
 	"qwen3.7-plus": Model<"anthropic-messages"> & {
 		id: "qwen3.7-plus";
+		provider: "opencode-go";
+	};
+	"qwen3.8-flash": Model<"anthropic-messages"> & {
+		id: "qwen3.8-flash";
+		provider: "opencode-go";
+	};
+	"qwen3.8-max": Model<"openai-completions"> & {
+		id: "qwen3.8-max";
 		provider: "opencode-go";
 	};
 };

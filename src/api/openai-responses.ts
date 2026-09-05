@@ -67,6 +67,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEn
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
+		includeEncryptedReasoning: model.compat?.includeEncryptedReasoning ?? true,
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
@@ -282,13 +283,13 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
 			};
-			params.include = ["reasoning.encrypted_content"];
+			if (compat.includeEncryptedReasoning) params.include = ["reasoning.encrypted_content"];
 		} else if (model.provider !== "github-copilot" && model.thinkingLevelMap?.off !== null) {
 			params.reasoning = {
 				effort: (model.thinkingLevelMap?.off ?? "none") as NonNullable<typeof params.reasoning>["effort"],
 			};
 		}
-		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
+		if (model.provider === "xai" && compat.includeEncryptedReasoning) params.include = ["reasoning.encrypted_content"];
 	}
 
 	return params;

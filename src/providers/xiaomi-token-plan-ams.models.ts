@@ -5,6 +5,10 @@ import values from "./data/xiaomi-token-plan-ams.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const XIAOMI_TOKEN_PLAN_AMS_MODELS = values as {
+	"mimo-v2-omni": Model<"openai-completions"> & {
+		id: "mimo-v2-omni";
+		provider: "xiaomi-token-plan-ams";
+	};
 	"mimo-v2-pro": Model<"openai-completions"> & {
 		id: "mimo-v2-pro";
 		provider: "xiaomi-token-plan-ams";

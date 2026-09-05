@@ -271,7 +271,7 @@ export function isAnthropicTemperatureUnsupportedModel(modelId: string): boolean
 	return id.includes("opus-4-7") || id.includes("opus-4.7") || id.includes("opus-4-8") || id.includes("opus-4.8");
 }
 
-type OptionalCompletionsCompatKeys = "cacheControlFormat" | "deferredToolsMode" | "sessionAffinityFormat";
+type OptionalCompletionsCompatKeys = "cacheControlFormat" | "deferredToolsMode" | "sessionAffinityFormat" | "wireModelId" | "reasoningBudgetMap";
 export type OpenAICompletionsResolvedCompat = Required<Omit<OpenAICompletionsCompat, OptionalCompletionsCompatKeys>>
 	& Pick<OpenAICompletionsCompat, OptionalCompletionsCompatKeys>;
 

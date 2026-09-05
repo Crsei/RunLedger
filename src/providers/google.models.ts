@@ -5,12 +5,36 @@ import values from "./data/google.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const GOOGLE_MODELS = values as {
+	"deep-research-max-preview-04-2026": Model<"google-generative-ai"> & {
+		id: "deep-research-max-preview-04-2026";
+		provider: "google";
+	};
+	"deep-research-preview-04-2026": Model<"google-generative-ai"> & {
+		id: "deep-research-preview-04-2026";
+		provider: "google";
+	};
+	"gemini-1.5-flash": Model<"google-generative-ai"> & {
+		id: "gemini-1.5-flash";
+		provider: "google";
+	};
+	"gemini-1.5-flash-8b": Model<"google-generative-ai"> & {
+		id: "gemini-1.5-flash-8b";
+		provider: "google";
+	};
+	"gemini-1.5-pro": Model<"google-generative-ai"> & {
+		id: "gemini-1.5-pro";
+		provider: "google";
+	};
 	"gemini-2.0-flash": Model<"google-generative-ai"> & {
 		id: "gemini-2.0-flash";
 		provider: "google";
 	};
 	"gemini-2.0-flash-lite": Model<"google-generative-ai"> & {
 		id: "gemini-2.0-flash-lite";
+		provider: "google";
+	};
+	"gemini-2.5-computer-use-preview-10-2025": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-computer-use-preview-10-2025";
 		provider: "google";
 	};
 	"gemini-2.5-flash": Model<"google-generative-ai"> & {
@@ -21,8 +45,36 @@ export const GOOGLE_MODELS = values as {
 		id: "gemini-2.5-flash-lite";
 		provider: "google";
 	};
+	"gemini-2.5-flash-lite-preview-06-17": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-flash-lite-preview-06-17";
+		provider: "google";
+	};
+	"gemini-2.5-flash-lite-preview-09-2025": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-flash-lite-preview-09-2025";
+		provider: "google";
+	};
+	"gemini-2.5-flash-preview-04-17": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-flash-preview-04-17";
+		provider: "google";
+	};
+	"gemini-2.5-flash-preview-05-20": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-flash-preview-05-20";
+		provider: "google";
+	};
+	"gemini-2.5-flash-preview-09-2025": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-flash-preview-09-2025";
+		provider: "google";
+	};
 	"gemini-2.5-pro": Model<"google-generative-ai"> & {
 		id: "gemini-2.5-pro";
+		provider: "google";
+	};
+	"gemini-2.5-pro-preview-05-06": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-pro-preview-05-06";
+		provider: "google";
+	};
+	"gemini-2.5-pro-preview-06-05": Model<"google-generative-ai"> & {
+		id: "gemini-2.5-pro-preview-06-05";
 		provider: "google";
 	};
 	"gemini-3-flash-preview": Model<"google-generative-ai"> & {
@@ -37,8 +89,16 @@ export const GOOGLE_MODELS = values as {
 		id: "gemini-3.1-flash-lite";
 		provider: "google";
 	};
+	"gemini-3.1-flash-lite-image": Model<"google-generative-ai"> & {
+		id: "gemini-3.1-flash-lite-image";
+		provider: "google";
+	};
 	"gemini-3.1-flash-lite-preview": Model<"google-generative-ai"> & {
 		id: "gemini-3.1-flash-lite-preview";
+		provider: "google";
+	};
+	"gemini-3.1-flash-live-preview": Model<"google-generative-ai"> & {
+		id: "gemini-3.1-flash-live-preview";
 		provider: "google";
 	};
 	"gemini-3.1-pro-preview": Model<"google-generative-ai"> & {
@@ -53,6 +113,22 @@ export const GOOGLE_MODELS = values as {
 		id: "gemini-3.5-flash";
 		provider: "google";
 	};
+	"gemini-3.5-flash-lite": Model<"google-generative-ai"> & {
+		id: "gemini-3.5-flash-lite";
+		provider: "google";
+	};
+	"gemini-3.6-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.6-flash";
+		provider: "google";
+	};
+	"gemini-3.7-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.7-flash";
+		provider: "google";
+	};
+	"gemini-3.8-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.8-flash";
+		provider: "google";
+	};
 	"gemini-flash-latest": Model<"google-generative-ai"> & {
 		id: "gemini-flash-latest";
 		provider: "google";
@@ -61,12 +137,48 @@ export const GOOGLE_MODELS = values as {
 		id: "gemini-flash-lite-latest";
 		provider: "google";
 	};
+	"gemini-live-2.5-flash": Model<"google-generative-ai"> & {
+		id: "gemini-live-2.5-flash";
+		provider: "google";
+	};
+	"gemini-live-2.5-flash-preview-native-audio": Model<"google-generative-ai"> & {
+		id: "gemini-live-2.5-flash-preview-native-audio";
+		provider: "google";
+	};
+	"gemini-robotics-er-1.6-preview": Model<"google-generative-ai"> & {
+		id: "gemini-robotics-er-1.6-preview";
+		provider: "google";
+	};
+	"gemma-3-27b-it": Model<"google-generative-ai"> & {
+		id: "gemma-3-27b-it";
+		provider: "google";
+	};
+	"gemma-4-26b": Model<"google-generative-ai"> & {
+		id: "gemma-4-26b";
+		provider: "google";
+	};
 	"gemma-4-26b-a4b-it": Model<"google-generative-ai"> & {
 		id: "gemma-4-26b-a4b-it";
 		provider: "google";
 	};
+	"gemma-4-26b-it": Model<"google-generative-ai"> & {
+		id: "gemma-4-26b-it";
+		provider: "google";
+	};
+	"gemma-4-31b": Model<"google-generative-ai"> & {
+		id: "gemma-4-31b";
+		provider: "google";
+	};
 	"gemma-4-31b-it": Model<"google-generative-ai"> & {
 		id: "gemma-4-31b-it";
+		provider: "google";
+	};
+	"gemma-4-E2B-it": Model<"google-generative-ai"> & {
+		id: "gemma-4-E2B-it";
+		provider: "google";
+	};
+	"gemma-4-E4B-it": Model<"google-generative-ai"> & {
+		id: "gemma-4-E4B-it";
 		provider: "google";
 	};
 };

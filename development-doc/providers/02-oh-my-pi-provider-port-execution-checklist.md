@@ -1,8 +1,8 @@
 # oh-my-pi 新增 Provider 移植到 RunLedger：执行清单
 
-> 状态：实施中；A 批次首个 provider `aiand` 已完成代码与自动化门禁，仍标记为 `partial`。
+> 当前增量：2026-09-05 已将 oh-my-pi 18.1.9 的 4 个新 provider 与兼容 catalog 更新应用到主工作区；真实外部凭据 E2E 仍为 pending。最新证据见 §0.4。
 >
-> 本文以 oh-my-pi 06aecdd51f07e689e970ceaa180abe2be0c14bbb（v17.2.15）为来源快照，以 RunLedger b5100b29624bfb04cf0ea5bcb48d80a9b3e39387（session-owner-runtime）为目标基线。来源或目标 HEAD 变化后，必须先重跑 P0 清单，不能直接复用本文的差集结论。
+> 下方 2026-08-16 的版本、数量、worktree 和验证结果均为历史快照，不能代表本次状态。
 
 ## 0. 当前基线与范围判定
 
@@ -12,6 +12,38 @@
   src/cli/main.ts、src/cli/workspace-display-label.ts、src/tui/components/footer.ts、src/tui/interactive-mode.ts、src/tui/types.ts 及两个对应测试文件。
 - [x] 已确认 oh-my-pi 当前 CATALOG_PROVIDERS 有 68 个 chat/model provider，bundled catalog 有 64 个 provider、4214 个模型；这两个数字不等价，动态/特殊 provider 不能仅按 models.json 是否有条目判断是否支持。
 - [x] 已固定来源 commit、包版本、目标分支和独立 worktree；不得在上述 dirty checkout 中清理、reset、rebase 或广泛 staging。
+
+### 0.4 增量同步（2026-09-05，当前）
+
+来源：oh-my-pi `9bafadd50317d68850324dbb4ca6a978995b3ae2`（18.1.9，来源工作树干净）；比较起点 `06aecdd51f07e689e970ceaa180abe2be0c14bbb`（17.2.15）。目标基线：RunLedger `bd8dc1c7093a68801820f8018448bd6c7db6972f`，分支 `rollback/before-composer-shape`。实现阶段直接应用到主工作区；提交阶段仅包含本次 provider 代码、生成物、测试与文档段落，不含既有 CLI/TUI/模型选择及架构文档改动。未推送。
+
+| 新 provider | 目标协议 | API key 环境变量 | 静态模型 | 状态 |
+|---|---|---|---:|---|
+| abliteration | openai-responses | `ABLITERATION_API_KEY`，备用 `ABLIT_KEY` | 3 | partial；自动化与本地 HTTP 已接通，外部凭据 E2E pending |
+| cline-pass | openai-completions | `CLINE_API_KEY` | 18 | partial；订阅/免费模型 ID、Cline headers、思考预算已接通，外部凭据 E2E pending |
+| deepinfra | openai-completions | `DEEPINFRA_API_KEY` | 106 | partial；公开 metadata discovery、计价和 SSE 已接通，外部凭据 E2E pending |
+| yolo-auto | openai-completions | `YOLO_AUTO_API_KEY` | 1 | partial；flat-rate、chat-template thinking、tool-choice 禁用 thinking 已接通，外部凭据 E2E pending |
+
+- 总计 72 个 builtin factory、70 份静态 catalog、4,710 个模型；本次前为 68 / 66 / 3,457。新增 1,263 个模型，移除来源明确退役的 10 个旧条目，已有 55 份 catalog 更新。包括 GLM 5.3、DeepSeek Flash vision、OpenAI Cyber/Daybreak 与 NanoGPT 等目录更新。
+- 唯一活动来源为 `scripts/sources/oh-my-pi-provider-models-18.1.9.json`，包含来源 commit、原始 catalog SHA-256、可移植字段与退役 ID。`extract-oh-my-pi-models.ts` 校验来源 HEAD 和 catalog 干净状态，按白名单裁剪来源 compat；旧 17.2.15 文件只保留为历史输入。上游 MIT notice 位于 `scripts/sources/oh-my-pi-LICENSE`。
+- `scripts/ported-provider-catalog.ts` 同步模型元数据，保留目标已有 native API、base URL、headers、compat、分层价格和本地 thinking 修正；Azure 继续经目标 OpenAI→Azure 生成链。来源 `openrouter` 映射到目标 `openai-completions`，Mistral 保留目标 conversations；Google Vertex 仅接收已支持的 Vertex API，ZAI 仅接收目标现有 completions 模型。
+- 来源已移除的 `opencode` provider 在 RunLedger 保留，避免改变已有 provider/settings/session 身份；target-only provider/model 也保留。来源 LiteLLM 多协议、XAI 既有模型切换 Responses、ZAI/Vertex 其他协议分支，以及统一 compat/auth/transportFetch 架构重写不在本次 catalog 合并中自动替换。§7 的特殊协议和 OAuth 暂缓项继续成立，不能据此宣称与 oh-my-pi 全量行为等价。
+- 四个新 provider 的 discovery 共用 5 秒超时与调用方 AbortSignal，区分 Cline roster、DeepInfra metadata 和普通 `/models`；空/坏响应与 HTTP 错误不覆盖上次成功结果。DeepInfra 仅纳入 `chat` 模型，避免把 context 总容量误作输出上限；未知模型使用保守容量回退。继续采用 RunLedger 的静态基线加动态 overlay、进程内 ModelsStore，不宣称上游的目录替换语义或跨进程持久化。
+- ClinePass 保留公共 model ID，只在请求端增加订阅前缀，免费模型保持 raw ID；思考预算来自固定快照。Abliteration 不请求其不支持的 encrypted reasoning 字段。
+- **主工作区 CLI 使用前置条件**：当前工作区另有未提交的 model compatibility admission 修复，要求 canonical manifest 包含对应 verified profile，否则标准 CLI 返回 `model profile is not verified`。该 CLI 修复不属于本次 provider 提交；本次 TUI smoke 基于包含该修复的工作区，不能据此宣称 provider 提交自身引入了该 gate。真实用户 settings/auth/manifest 均未改动；隔离目录中明确标注的 UI fixture profile 不能视为真实模型能力认证。
+
+验证记录（本次）：
+
+- RED：新增注册/请求回归 12 项先失败；discovery 4 项先失败；旧目录退役、分层价格保留和 XAI encrypted-reasoning 显式关闭回归先失败，再实现并转绿。
+- `npm run generate-models -- --source frozen --frozen-input <本轮基线快照>`：离线生成完成；相同输入重跑的全部生成文件 SHA-256 一致。活动来源快照 SHA-256：`29670a5491e94d6bb5bfacad80cf367131acd13b00190e0fa703a81fed490a94`。
+- 新增 4 files / 25 tests 全部通过：注册/请求 13、discovery 5、目录合并 3、真实 loopback TCP HTTP/SSE 4。HTTP 测试经过 Models、认证和四个 provider 的生产 adapter，凭据和服务端均为本地 fixture。
+- 主工作区 `npm run build`：通过。
+- 主工作区 `npm run check`：被并行任务创建的 `development-doc/audit/evidence/2026-09-05-cli-tui-commands/test-agent/focused-evidence.json:2` 的内部版本标记挡住；未修改该无关文件。
+- 临时验证 worktree `/tmp/RunLedger-provider-validation-20260905`：复制当前 tracked 改动与本次新增文件，排除上述无关 untracked 审计产物；最终代码与主工作区逐文件一致，完整 `npm run check` 和 build 通过。check 含 571 个 contract consumer、0 diagnostics，以及 Rust 12 tests。
+- 默认 `npm test` 各 bucket 的通过证据合计 Vitest 484 files / 3,020 tests，Bun 19 files / 139 tests / 1,039 assertions。明细：fast 221 / 1,525；singleton 9 / 77；runtime 129 / 681；security-storage 98 / 593；integration 27 / 144。原全量运行完成 singleton/runtime/security-storage 后，integration 被旧测试对仓库目录名含 `RunLedger` 的断言中断；修正临时目录名后，最终 build、fast、integration、tui-native 顺序重跑全部 exit 0。最后的分层价格与 compat 修正由最终 fast 覆盖；这不是一次主工作区 `npm test` 从头到尾 exit 0 的声明。
+- PATH `runledger --version`：`runledger 0.0.1`；`/home/nzq/.npm-global/bin/runledger` 指向本仓库 `bin/runledger.js`，实际加载已重建 dist。使用隔离 `RUNLEDGER_DIR`、fake key 和明确标注的 UI fixture compatibility profile，真实 tmux TTY 显示 `cline-pass / kimi-k3` Welcome 与 `/model` 选择器；Esc、Ctrl+D 干净退出，exit 0。未调用外部模型，不提升为真人视觉、IME 或真实凭据 E2E 验收。
+- 实现阶段日志、冻结输入与 TTY 捕获位于 `/tmp/runledger-provider-update-ye85guw9/`；共涉及 143 个文件。该阶段最终 `git diff --check` 通过，任务开始前的 staged diff 字节一致。
+- 提交前独立复验：从上述目标基线构造仅含本次 143 个文件的候选，AGENTS / README / 总索引仅纳入 provider 段落；既有 13 个暂存文件及其他文档改动均排除。候选完整 `npm run check`（568 consumers / 0 diagnostics、Rust 12 tests）、`npm run build`、一次从头到尾的 `npm test` 均 exit 0；Vitest 481 files / 3,015 tests，Bun 19 files / 139 tests / 1,037 assertions。该数量与前述包含并行 CLI/TUI 修复的工作区不同，分别保留证据，不混算。日志位于 `/tmp/runledger-provider-commit-kuktf_94/`。
 
 ### 0.3 本轮实施证据（全批次，2026-08-16）
 

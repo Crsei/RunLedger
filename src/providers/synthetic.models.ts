@@ -5,8 +5,8 @@ import values from "./data/synthetic.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const SYNTHETIC_MODELS = values as {
-	"hf:Qwen/Qwen3.6-27B": Model<"openai-completions"> & {
-		id: "hf:Qwen/Qwen3.6-27B";
+	"hf:Qwen/Qwen3.8-27B": Model<"openai-completions"> & {
+		id: "hf:Qwen/Qwen3.8-27B";
 		provider: "synthetic";
 	};
 	"hf:moonshotai/Kimi-K3": Model<"openai-completions"> & {
@@ -27,6 +27,10 @@ export const SYNTHETIC_MODELS = values as {
 	};
 	"hf:zai-org/GLM-5.2": Model<"openai-completions"> & {
 		id: "hf:zai-org/GLM-5.2";
+		provider: "synthetic";
+	};
+	"hf:zai-org/GLM-5.3-Flash": Model<"openai-completions"> & {
+		id: "hf:zai-org/GLM-5.3-Flash";
 		provider: "synthetic";
 	};
 	"syn:large:text": Model<"openai-completions"> & {

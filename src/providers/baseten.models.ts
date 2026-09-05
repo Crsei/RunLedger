@@ -13,6 +13,10 @@ export const BASETEN_MODELS = values as {
 		id: "deepseek-ai/DeepSeek-V4-Pro";
 		provider: "baseten";
 	};
+	"deepseek-ai/DeepSeek-V4-Pro-0813": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Pro-0813";
+		provider: "baseten";
+	};
 	"moonshotai/Kimi-K2.6": Model<"openai-completions"> & {
 		id: "moonshotai/Kimi-K2.6";
 		provider: "baseten";
@@ -51,6 +55,18 @@ export const BASETEN_MODELS = values as {
 	};
 	"zai-org/GLM-5.2-Fast": Model<"openai-completions"> & {
 		id: "zai-org/GLM-5.2-Fast";
+		provider: "baseten";
+	};
+	"zai-org/GLM-5.3": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5.3";
+		provider: "baseten";
+	};
+	"zai-org/GLM-5.3-Fast": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5.3-Fast";
+		provider: "baseten";
+	};
+	"zai-org/GLM-5.3-Flash": Model<"openai-completions"> & {
+		id: "zai-org/GLM-5.3-Flash";
 		provider: "baseten";
 	};
 };

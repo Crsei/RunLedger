@@ -45,4 +45,32 @@ export const MOONSHOTAI_MODELS = values as {
 		id: "kimi-k3";
 		provider: "moonshotai";
 	};
+	"moonshot-v1-128k": Model<"openai-completions"> & {
+		id: "moonshot-v1-128k";
+		provider: "moonshotai";
+	};
+	"moonshot-v1-128k-vision-preview": Model<"openai-completions"> & {
+		id: "moonshot-v1-128k-vision-preview";
+		provider: "moonshotai";
+	};
+	"moonshot-v1-32k": Model<"openai-completions"> & {
+		id: "moonshot-v1-32k";
+		provider: "moonshotai";
+	};
+	"moonshot-v1-32k-vision-preview": Model<"openai-completions"> & {
+		id: "moonshot-v1-32k-vision-preview";
+		provider: "moonshotai";
+	};
+	"moonshot-v1-8k": Model<"openai-completions"> & {
+		id: "moonshot-v1-8k";
+		provider: "moonshotai";
+	};
+	"moonshot-v1-8k-vision-preview": Model<"openai-completions"> & {
+		id: "moonshot-v1-8k-vision-preview";
+		provider: "moonshotai";
+	};
+	"moonshot-v1-auto": Model<"openai-completions"> & {
+		id: "moonshot-v1-auto";
+		provider: "moonshotai";
+	};
 };

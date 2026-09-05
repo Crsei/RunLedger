@@ -42,7 +42,7 @@ describe("GMI Cloud provider", () => {
 			provider: "gmi-cloud",
 			baseUrl: GMI_CLOUD_BASE_URL,
 		});
-		expect(model?.compat).toBeUndefined();
+		expect(model?.compat).toMatchObject({ supportsDeveloperRole: false, thinkingFormat: "openai" });
 
 		const auth = await provider.auth.apiKey?.resolve({
 			ctx: {

@@ -42,7 +42,7 @@ describe("AIML API provider", () => {
 			provider: "aimlapi",
 			baseUrl: AIMLAPI_BASE_URL,
 		});
-		expect(model?.compat).toBeUndefined();
+		expect(model?.compat).toMatchObject({ supportsDeveloperRole: false, thinkingFormat: "qwen" });
 
 		const auth = await provider.auth.apiKey?.resolve({
 			ctx: {

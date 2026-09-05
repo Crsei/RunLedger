@@ -17,6 +17,10 @@ export const OPENCODE_ZEN_MODELS = values as {
 		id: "claude-fable-5";
 		provider: "opencode-zen";
 	};
+	"claude-fable-5-1": Model<"anthropic-messages"> & {
+		id: "claude-fable-5-1";
+		provider: "opencode-zen";
+	};
 	"claude-haiku-4-5": Model<"anthropic-messages"> & {
 		id: "claude-haiku-4-5";
 		provider: "opencode-zen";
@@ -95,6 +99,14 @@ export const OPENCODE_ZEN_MODELS = values as {
 	};
 	"gemini-3.6-flash": Model<"google-generative-ai"> & {
 		id: "gemini-3.6-flash";
+		provider: "opencode-zen";
+	};
+	"gemini-3.7-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.7-flash";
+		provider: "opencode-zen";
+	};
+	"gemini-3.8-flash": Model<"google-generative-ai"> & {
+		id: "gemini-3.8-flash";
 		provider: "opencode-zen";
 	};
 	"glm-4.6": Model<"openai-completions"> & {
@@ -201,6 +213,10 @@ export const OPENCODE_ZEN_MODELS = values as {
 		id: "grok-4.5";
 		provider: "opencode-zen";
 	};
+	"grok-4.6": Model<"openai-responses"> & {
+		id: "grok-4.6";
+		provider: "opencode-zen";
+	};
 	"grok-build-0.1": Model<"openai-responses"> & {
 		id: "grok-build-0.1";
 		provider: "opencode-zen";
@@ -239,6 +255,10 @@ export const OPENCODE_ZEN_MODELS = values as {
 	};
 	"ling-2.6-flash-free": Model<"openai-completions"> & {
 		id: "ling-2.6-flash-free";
+		provider: "opencode-zen";
+	};
+	"ling-3.0-flash-fin-free": Model<"openai-completions"> & {
+		id: "ling-3.0-flash-fin-free";
 		provider: "opencode-zen";
 	};
 	"ling-3.0-flash-free": Model<"openai-completions"> & {
@@ -293,12 +313,28 @@ export const OPENCODE_ZEN_MODELS = values as {
 		id: "minimax-m3-free";
 		provider: "opencode-zen";
 	};
+	"muse-spark-1.2": Model<"openai-responses"> & {
+		id: "muse-spark-1.2";
+		provider: "opencode-zen";
+	};
+	"muse-spark-1.2-contributor-free": Model<"openai-responses"> & {
+		id: "muse-spark-1.2-contributor-free";
+		provider: "opencode-zen";
+	};
+	"muse-spark-1.3-contributor-free": Model<"openai-responses"> & {
+		id: "muse-spark-1.3-contributor-free";
+		provider: "opencode-zen";
+	};
 	"nemotron-3-super-free": Model<"openai-completions"> & {
 		id: "nemotron-3-super-free";
 		provider: "opencode-zen";
 	};
 	"nemotron-3-ultra-free": Model<"openai-completions"> & {
 		id: "nemotron-3-ultra-free";
+		provider: "opencode-zen";
+	};
+	"nemotron-3.5-lightning-free": Model<"openai-completions"> & {
+		id: "nemotron-3.5-lightning-free";
 		provider: "opencode-zen";
 	};
 	"north-mini-code-free": Model<"openai-completions"> & {
@@ -323,6 +359,10 @@ export const OPENCODE_ZEN_MODELS = values as {
 	};
 	"trinity-large-preview-free": Model<"openai-completions"> & {
 		id: "trinity-large-preview-free";
+		provider: "opencode-zen";
+	};
+	"x-preview-f-free": Model<"openai-completions"> & {
+		id: "x-preview-f-free";
 		provider: "opencode-zen";
 	};
 };

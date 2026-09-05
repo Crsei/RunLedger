@@ -42,7 +42,7 @@ describe("Baseten provider", () => {
 			provider: "baseten",
 			baseUrl: BASETEN_BASE_URL,
 		});
-		expect(model?.compat).toBeUndefined();
+		expect(model?.compat).toMatchObject({ supportsDeveloperRole: false, thinkingFormat: "openai" });
 		// 缺 /v1 时自动补齐
 		expect(basetenProvider({ baseUrl: "https://inference.baseten.test" }).baseUrl).toBe(
 			"https://inference.baseten.test/v1",
@@ -79,7 +79,7 @@ describe("Baseten provider", () => {
 			id: "zai-org/GLM-5.2",
 			name: "GLM 5.2",
 			reasoning: true,
-			input: ["text"],
+			input: ["text", "image"],
 			contextWindow: 1048576,
 			maxTokens: 262144,
 			cost: { input: 1.4, output: 4.4, cacheRead: 0.14, cacheWrite: 0 },
@@ -137,9 +137,9 @@ describe("Baseten provider", () => {
 			maxTokens: 16384,
 		});
 		expect(provider.getModels().find((entry) => entry.id === "deepseek-ai/DeepSeek-V4-Flash-0731")).toMatchObject({
-			name: "Deepseek V4 Flash 0731",
+			name: "DeepSeek V4 Flash 0731",
 			contextWindow: 1048576,
-			maxTokens: 1048576,
+			maxTokens: 384000,
 			cost: { input: 0.13, output: 0.26, cacheRead: 0.028, cacheWrite: 0 },
 		});
 	});

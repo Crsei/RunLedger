@@ -42,7 +42,7 @@ describe("NanoGPT provider", () => {
 			provider: "nanogpt",
 			baseUrl: NANOGPT_BASE_URL,
 		});
-		expect(model?.compat).toBeUndefined();
+		expect(model?.compat).toMatchObject({ supportsDeveloperRole: false, thinkingFormat: "openai" });
 		// 缺 /v1 时自动补齐
 		expect(nanogptProvider({ baseUrl: "https://nano-gpt.test" }).baseUrl).toBe("https://nano-gpt.test/v1");
 

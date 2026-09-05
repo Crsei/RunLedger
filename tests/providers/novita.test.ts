@@ -42,7 +42,7 @@ describe("Novita provider", () => {
 			provider: "novita",
 			baseUrl: NOVITA_BASE_URL,
 		});
-		expect(model?.compat).toBeUndefined();
+		expect(model?.compat).toMatchObject({ supportsDeveloperRole: false, thinkingFormat: "openai" });
 		// 缺 /v1 时自动补齐
 		expect(novitaProvider({ baseUrl: "https://api.novita.test/openai" }).baseUrl).toBe(
 			"https://api.novita.test/openai/v1",
@@ -77,7 +77,7 @@ describe("Novita provider", () => {
 
 		expect(model).toMatchObject({
 			id: "Sao10K/L3-8B-Stheno-v3.2",
-			name: "L3 8B Stheno V3.2",
+			name: "Llama 3 8B Stheno V3.2",
 			reasoning: false,
 			input: ["text"],
 			contextWindow: 8192,

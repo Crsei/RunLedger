@@ -45,7 +45,7 @@ describe("coreweave provider", () => {
 			provider: "coreweave",
 			baseUrl: COREWEAVE_BASE_URL,
 		});
-		expect(provider.getModels().length).toBe(34);
+		expect(provider.getModels().length).toBe(38);
 		expect(provider.refreshModels).toBeTypeOf("function");
 	});
 

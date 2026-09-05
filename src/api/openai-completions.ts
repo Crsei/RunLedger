@@ -390,6 +390,7 @@ export const streamSimple: StreamFunction<"openai-completions", SimpleStreamOpti
 	return stream(model, context, {
 		...base,
 		reasoningEffort,
+		thinkingBudgets: options?.thinkingBudgets,
 		toolChoice,
 	} satisfies OpenAICompletionsOptions);
 };

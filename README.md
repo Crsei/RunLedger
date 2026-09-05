@@ -1,5 +1,7 @@
 # RunLedger
 
+> Provider 当前状态（2026-09-05）：72 个 builtin provider、70 份静态 catalog、4,710 个模型；本次新增 Abliteration、ClinePass、DeepInfra、Yolo-Auto。实现、验证与 CLI compatibility profile 前置条件见 [provider 增量同步记录](development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md#04-增量同步2026-09-05当前)。下方 pi-ai 移植数量为早期快照。
+
 企业级 **可审计** Agent Runtime 的最小可运行脚手架,本期已接入 pi-ai 全量移植层(provider 抽象 + 凭据 + OAuth 流 + 模型 catalog),并在其上**复活了 agent-loop + Agent + ledger + echo tool + mock-stream** 的最小可运行形态,经真实 LLM(deepseek-v4-pro)端到端验证。
 
 > 名字来源:`Run` + `Ledger`,即"运行账本"。每次 agent 启动 → LLM 调用 → 工具执行 → 结束的全程事件,以 append-only JSONL 落盘,形成不可篡改的审计线索。

@@ -29,10 +29,6 @@ export const NOVITA_MODELS = values as {
 		id: "bunny";
 		provider: "novita";
 	};
-	"deepseek/deepseek-ocr": Model<"openai-completions"> & {
-		id: "deepseek/deepseek-ocr";
-		provider: "novita";
-	};
 	"deepseek/deepseek-ocr-2": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-ocr-2";
 		provider: "novita";
@@ -59,14 +55,6 @@ export const NOVITA_MODELS = values as {
 	};
 	"deepseek/deepseek-r1/community": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-r1/community";
-		provider: "novita";
-	};
-	"deepseek/deepseek-v3-0324": Model<"openai-completions"> & {
-		id: "deepseek/deepseek-v3-0324";
-		provider: "novita";
-	};
-	"deepseek/deepseek-v3-turbo": Model<"openai-completions"> & {
-		id: "deepseek/deepseek-v3-turbo";
 		provider: "novita";
 	};
 	"deepseek/deepseek-v3.1": Model<"openai-completions"> & {
@@ -97,8 +85,16 @@ export const NOVITA_MODELS = values as {
 		id: "deepseek/deepseek-v4-flash-0731";
 		provider: "novita";
 	};
+	"deepseek/deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-vision-exp";
+		provider: "novita";
+	};
 	"deepseek/deepseek-v4-pro": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-pro";
+		provider: "novita";
+	};
+	"deepseek/deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-pro-0813";
 		provider: "novita";
 	};
 	"deepseek/deepseek_v3": Model<"openai-completions"> & {
@@ -133,28 +129,20 @@ export const NOVITA_MODELS = values as {
 		id: "gt-4p";
 		provider: "novita";
 	};
-	"inclusionai/ling-2.6-1t": Model<"openai-completions"> & {
-		id: "inclusionai/ling-2.6-1t";
-		provider: "novita";
-	};
-	"inclusionai/ling-2.6-flash": Model<"openai-completions"> & {
-		id: "inclusionai/ling-2.6-flash";
-		provider: "novita";
-	};
 	"inclusionai/ling-3.0-flash": Model<"openai-completions"> & {
 		id: "inclusionai/ling-3.0-flash";
 		provider: "novita";
 	};
-	"inclusionai/ling-3.0-tiny": Model<"openai-completions"> & {
-		id: "inclusionai/ling-3.0-tiny";
+	"inclusionai/ling-3.0-flash-fin": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-fin";
 		provider: "novita";
 	};
-	"inclusionai/ring-2.6-1t": Model<"openai-completions"> & {
-		id: "inclusionai/ring-2.6-1t";
+	"inclusionai/ling-3.0-flash-sante": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-sante";
 		provider: "novita";
 	};
-	"kwaipilot/kat-coder-pro": Model<"openai-completions"> & {
-		id: "kwaipilot/kat-coder-pro";
+	"inclusionai/ling-3.0-flash-vl": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-vl";
 		provider: "novita";
 	};
 	"meta-llama/llama-3.1-8b-instruct": Model<"openai-completions"> & {
@@ -369,6 +357,18 @@ export const NOVITA_MODELS = values as {
 		id: "qwen/qwen3.7-max";
 		provider: "novita";
 	};
+	"qwen/qwen3.8-2.4t-a95b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-2.4t-a95b";
+		provider: "novita";
+	};
+	"qwen/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b";
+		provider: "novita";
+	};
+	"qwen/qwen3.8-flash": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-flash";
+		provider: "novita";
+	};
 	"qwen/qwen3.8-max": Model<"openai-completions"> & {
 		id: "qwen/qwen3.8-max";
 		provider: "novita";
@@ -451,6 +451,14 @@ export const NOVITA_MODELS = values as {
 	};
 	"zai-org/glm-5.2": Model<"openai-completions"> & {
 		id: "zai-org/glm-5.2";
+		provider: "novita";
+	};
+	"zai-org/glm-5.3": Model<"openai-completions"> & {
+		id: "zai-org/glm-5.3";
+		provider: "novita";
+	};
+	"zai-org/glm-5.3-flash": Model<"openai-completions"> & {
+		id: "zai-org/glm-5.3-flash";
 		provider: "novita";
 	};
 	"zai-org/glm-5v-turbo": Model<"openai-completions"> & {

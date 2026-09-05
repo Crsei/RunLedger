@@ -21,6 +21,14 @@ export const OPENROUTER_MODELS = values as {
 		id: "aion-labs/aion-3.0-mini";
 		provider: "openrouter";
 	};
+	"alibaba/tongyi-deepresearch-30b-a3b": Model<"openai-completions"> & {
+		id: "alibaba/tongyi-deepresearch-30b-a3b";
+		provider: "openrouter";
+	};
+	"allenai/olmo-3.1-32b-instruct": Model<"openai-completions"> & {
+		id: "allenai/olmo-3.1-32b-instruct";
+		provider: "openrouter";
+	};
 	"amazon/nova-2-lite-v1": Model<"openai-completions"> & {
 		id: "amazon/nova-2-lite-v1";
 		provider: "openrouter";
@@ -45,12 +53,44 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-3-haiku";
 		provider: "openrouter";
 	};
+	"anthropic/claude-3.5-haiku": Model<"openai-completions"> & {
+		id: "anthropic/claude-3.5-haiku";
+		provider: "openrouter";
+	};
+	"anthropic/claude-3.5-sonnet": Model<"openai-completions"> & {
+		id: "anthropic/claude-3.5-sonnet";
+		provider: "openrouter";
+	};
+	"anthropic/claude-3.7-sonnet": Model<"openai-completions"> & {
+		id: "anthropic/claude-3.7-sonnet";
+		provider: "openrouter";
+	};
+	"anthropic/claude-3.7-sonnet:thinking": Model<"openai-completions"> & {
+		id: "anthropic/claude-3.7-sonnet:thinking";
+		provider: "openrouter";
+	};
 	"anthropic/claude-fable-5": Model<"openai-completions"> & {
 		id: "anthropic/claude-fable-5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-fable-5.1": Model<"openai-completions"> & {
+		id: "anthropic/claude-fable-5.1";
+		provider: "openrouter";
+	};
+	"anthropic/claude-fable-5.1:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-fable-5.1:batch";
+		provider: "openrouter";
+	};
+	"anthropic/claude-fable-5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-fable-5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-haiku-4.5": Model<"openai-completions"> & {
 		id: "anthropic/claude-haiku-4.5";
+		provider: "openrouter";
+	};
+	"anthropic/claude-haiku-4.5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-haiku-4.5:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-4": Model<"openai-completions"> & {
@@ -61,12 +101,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-opus-4.1";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-4.1:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.1:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-opus-4.5": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-4.5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-opus-4.6": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.6";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-4.6-fast": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.6-fast";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-4.6:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.6:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-4.7": Model<"openai-completions"> & {
@@ -77,12 +133,32 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-opus-4.7-fast";
 		provider: "openrouter";
 	};
+	"anthropic/claude-opus-4.7:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.7:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-opus-4.8": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.8";
 		provider: "openrouter";
 	};
 	"anthropic/claude-opus-4.8-fast": Model<"openai-completions"> & {
 		id: "anthropic/claude-opus-4.8-fast";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-4.8:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-4.8:batch";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-5": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-5";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-5-fast": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-5-fast";
+		provider: "openrouter";
+	};
+	"anthropic/claude-opus-5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-opus-5:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-sonnet-4": Model<"openai-completions"> & {
@@ -93,16 +169,48 @@ export const OPENROUTER_MODELS = values as {
 		id: "anthropic/claude-sonnet-4.5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-sonnet-4.5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-sonnet-4.5:batch";
+		provider: "openrouter";
+	};
 	"anthropic/claude-sonnet-4.6": Model<"openai-completions"> & {
 		id: "anthropic/claude-sonnet-4.6";
+		provider: "openrouter";
+	};
+	"anthropic/claude-sonnet-4.6:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-sonnet-4.6:batch";
 		provider: "openrouter";
 	};
 	"anthropic/claude-sonnet-5": Model<"openai-completions"> & {
 		id: "anthropic/claude-sonnet-5";
 		provider: "openrouter";
 	};
+	"anthropic/claude-sonnet-5:batch": Model<"openai-completions"> & {
+		id: "anthropic/claude-sonnet-5:batch";
+		provider: "openrouter";
+	};
+	"arcee-ai/trinity-large-preview": Model<"openai-completions"> & {
+		id: "arcee-ai/trinity-large-preview";
+		provider: "openrouter";
+	};
+	"arcee-ai/trinity-large-preview:free": Model<"openai-completions"> & {
+		id: "arcee-ai/trinity-large-preview:free";
+		provider: "openrouter";
+	};
 	"arcee-ai/trinity-large-thinking": Model<"openai-completions"> & {
 		id: "arcee-ai/trinity-large-thinking";
+		provider: "openrouter";
+	};
+	"arcee-ai/trinity-large-thinking:free": Model<"openai-completions"> & {
+		id: "arcee-ai/trinity-large-thinking:free";
+		provider: "openrouter";
+	};
+	"arcee-ai/trinity-mini": Model<"openai-completions"> & {
+		id: "arcee-ai/trinity-mini";
+		provider: "openrouter";
+	};
+	"arcee-ai/trinity-mini:free": Model<"openai-completions"> & {
+		id: "arcee-ai/trinity-mini:free";
 		provider: "openrouter";
 	};
 	"arcee-ai/virtuoso-large": Model<"openai-completions"> & {
@@ -113,12 +221,32 @@ export const OPENROUTER_MODELS = values as {
 		id: "auto";
 		provider: "openrouter";
 	};
+	"baidu/cobuddy:free": Model<"openai-completions"> & {
+		id: "baidu/cobuddy:free";
+		provider: "openrouter";
+	};
+	"baidu/ernie-4.5-21b-a3b": Model<"openai-completions"> & {
+		id: "baidu/ernie-4.5-21b-a3b";
+		provider: "openrouter";
+	};
+	"baidu/ernie-4.5-vl-28b-a3b": Model<"openai-completions"> & {
+		id: "baidu/ernie-4.5-vl-28b-a3b";
+		provider: "openrouter";
+	};
 	"bytedance-seed/seed-1.6": Model<"openai-completions"> & {
 		id: "bytedance-seed/seed-1.6";
 		provider: "openrouter";
 	};
 	"bytedance-seed/seed-1.6-flash": Model<"openai-completions"> & {
 		id: "bytedance-seed/seed-1.6-flash";
+		provider: "openrouter";
+	};
+	"bytedance-seed/seed-2-1-turbo": Model<"openai-completions"> & {
+		id: "bytedance-seed/seed-2-1-turbo";
+		provider: "openrouter";
+	};
+	"bytedance-seed/seed-2.0-code": Model<"openai-completions"> & {
+		id: "bytedance-seed/seed-2.0-code";
 		provider: "openrouter";
 	};
 	"bytedance-seed/seed-2.0-lite": Model<"openai-completions"> & {
@@ -165,6 +293,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "deepseek/deepseek-v3.1-terminus";
 		provider: "openrouter";
 	};
+	"deepseek/deepseek-v3.1-terminus:exacto": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v3.1-terminus:exacto";
+		provider: "openrouter";
+	};
 	"deepseek/deepseek-v3.2": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v3.2";
 		provider: "openrouter";
@@ -177,8 +309,48 @@ export const OPENROUTER_MODELS = values as {
 		id: "deepseek/deepseek-v4-flash";
 		provider: "openrouter";
 	};
+	"deepseek/deepseek-v4-flash-0731": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-0731";
+		provider: "openrouter";
+	};
+	"deepseek/deepseek-v4-flash-0731:batch": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-0731:batch";
+		provider: "openrouter";
+	};
+	"deepseek/deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-vision-exp";
+		provider: "openrouter";
+	};
+	"deepseek/deepseek-v4-flash:free": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash:free";
+		provider: "openrouter";
+	};
 	"deepseek/deepseek-v4-pro": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-pro";
+		provider: "openrouter";
+	};
+	"deepseek/deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-pro-0813";
+		provider: "openrouter";
+	};
+	"deepseek/deepseek-v4-pro-0813:batch": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-pro-0813:batch";
+		provider: "openrouter";
+	};
+	"dots-studio/dots-3-note-preview:free": Model<"openai-completions"> & {
+		id: "dots-studio/dots-3-note-preview:free";
+		provider: "openrouter";
+	};
+	"essentialai/rnj-1-instruct": Model<"openai-completions"> & {
+		id: "essentialai/rnj-1-instruct";
+		provider: "openrouter";
+	};
+	"google/gemini-2.0-flash-001": Model<"openai-completions"> & {
+		id: "google/gemini-2.0-flash-001";
+		provider: "openrouter";
+	};
+	"google/gemini-2.0-flash-lite-001": Model<"openai-completions"> & {
+		id: "google/gemini-2.0-flash-lite-001";
 		provider: "openrouter";
 	};
 	"google/gemini-2.5-flash": Model<"openai-completions"> & {
@@ -187,6 +359,22 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"google/gemini-2.5-flash-lite": Model<"openai-completions"> & {
 		id: "google/gemini-2.5-flash-lite";
+		provider: "openrouter";
+	};
+	"google/gemini-2.5-flash-lite-preview-09-2025": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-flash-lite-preview-09-2025";
+		provider: "openrouter";
+	};
+	"google/gemini-2.5-flash-lite:batch": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-flash-lite:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-2.5-flash-preview-09-2025": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-flash-preview-09-2025";
+		provider: "openrouter";
+	};
+	"google/gemini-2.5-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-flash:batch";
 		provider: "openrouter";
 	};
 	"google/gemini-2.5-pro": Model<"openai-completions"> & {
@@ -201,12 +389,24 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-2.5-pro-preview-05-06";
 		provider: "openrouter";
 	};
+	"google/gemini-2.5-pro:batch": Model<"openai-completions"> & {
+		id: "google/gemini-2.5-pro:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3-flash-preview": Model<"openai-completions"> & {
 		id: "google/gemini-3-flash-preview";
 		provider: "openrouter";
 	};
+	"google/gemini-3-flash-preview:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3-flash-preview:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3-pro-image": Model<"openai-completions"> & {
 		id: "google/gemini-3-pro-image";
+		provider: "openrouter";
+	};
+	"google/gemini-3-pro-preview": Model<"openai-completions"> & {
+		id: "google/gemini-3-pro-preview";
 		provider: "openrouter";
 	};
 	"google/gemini-3.1-flash-lite": Model<"openai-completions"> & {
@@ -217,6 +417,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-3.1-flash-lite-preview";
 		provider: "openrouter";
 	};
+	"google/gemini-3.1-flash-lite:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.1-flash-lite:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3.1-pro-preview": Model<"openai-completions"> & {
 		id: "google/gemini-3.1-pro-preview";
 		provider: "openrouter";
@@ -225,8 +429,48 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemini-3.1-pro-preview-customtools";
 		provider: "openrouter";
 	};
+	"google/gemini-3.1-pro-preview:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.1-pro-preview:batch";
+		provider: "openrouter";
+	};
 	"google/gemini-3.5-flash": Model<"openai-completions"> & {
 		id: "google/gemini-3.5-flash";
+		provider: "openrouter";
+	};
+	"google/gemini-3.5-flash-lite": Model<"openai-completions"> & {
+		id: "google/gemini-3.5-flash-lite";
+		provider: "openrouter";
+	};
+	"google/gemini-3.5-flash-lite:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.5-flash-lite:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-3.5-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.5-flash:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-3.6-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.6-flash";
+		provider: "openrouter";
+	};
+	"google/gemini-3.6-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.6-flash:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-3.7-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.7-flash";
+		provider: "openrouter";
+	};
+	"google/gemini-3.7-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.7-flash:batch";
+		provider: "openrouter";
+	};
+	"google/gemini-3.8-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.8-flash";
+		provider: "openrouter";
+	};
+	"google/gemini-3.8-flash:batch": Model<"openai-completions"> & {
+		id: "google/gemini-3.8-flash:batch";
 		provider: "openrouter";
 	};
 	"google/gemma-3-12b-it": Model<"openai-completions"> & {
@@ -235,6 +479,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"google/gemma-3-27b-it": Model<"openai-completions"> & {
 		id: "google/gemma-3-27b-it";
+		provider: "openrouter";
+	};
+	"google/gemma-3-27b-it:free": Model<"openai-completions"> & {
+		id: "google/gemma-3-27b-it:free";
 		provider: "openrouter";
 	};
 	"google/gemma-4-26b-a4b-it": Model<"openai-completions"> & {
@@ -249,6 +497,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "google/gemma-4-31b-it";
 		provider: "openrouter";
 	};
+	"google/gemma-4-31b-it:batch": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it:batch";
+		provider: "openrouter";
+	};
 	"google/gemma-4-31b-it:free": Model<"openai-completions"> & {
 		id: "google/gemma-4-31b-it:free";
 		provider: "openrouter";
@@ -257,24 +509,76 @@ export const OPENROUTER_MODELS = values as {
 		id: "ibm-granite/granite-4.1-8b";
 		provider: "openrouter";
 	};
+	"ibm-granite/granite-4.2-8b": Model<"openai-completions"> & {
+		id: "ibm-granite/granite-4.2-8b";
+		provider: "openrouter";
+	};
+	"inception/mercury": Model<"openai-completions"> & {
+		id: "inception/mercury";
+		provider: "openrouter";
+	};
 	"inception/mercury-2": Model<"openai-completions"> & {
 		id: "inception/mercury-2";
+		provider: "openrouter";
+	};
+	"inception/mercury-2.5-preview": Model<"openai-completions"> & {
+		id: "inception/mercury-2.5-preview";
+		provider: "openrouter";
+	};
+	"inception/mercury-coder": Model<"openai-completions"> & {
+		id: "inception/mercury-coder";
 		provider: "openrouter";
 	};
 	"inclusionai/ling-2.6-1t": Model<"openai-completions"> & {
 		id: "inclusionai/ling-2.6-1t";
 		provider: "openrouter";
 	};
+	"inclusionai/ling-2.6-1t:free": Model<"openai-completions"> & {
+		id: "inclusionai/ling-2.6-1t:free";
+		provider: "openrouter";
+	};
 	"inclusionai/ling-2.6-flash": Model<"openai-completions"> & {
 		id: "inclusionai/ling-2.6-flash";
+		provider: "openrouter";
+	};
+	"inclusionai/ling-2.6-flash:free": Model<"openai-completions"> & {
+		id: "inclusionai/ling-2.6-flash:free";
+		provider: "openrouter";
+	};
+	"inclusionai/ling-3.0-flash": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash";
+		provider: "openrouter";
+	};
+	"inclusionai/ling-3.0-flash-fin": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-fin";
+		provider: "openrouter";
+	};
+	"inclusionai/ling-3.0-flash-fin:free": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-fin:free";
+		provider: "openrouter";
+	};
+	"inclusionai/ling-3.0-flash:free": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash:free";
+		provider: "openrouter";
+	};
+	"inclusionai/ling-3.0-tiny:free": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-tiny:free";
 		provider: "openrouter";
 	};
 	"inclusionai/ring-2.6-1t": Model<"openai-completions"> & {
 		id: "inclusionai/ring-2.6-1t";
 		provider: "openrouter";
 	};
+	"inclusionai/ring-2.6-1t:free": Model<"openai-completions"> & {
+		id: "inclusionai/ring-2.6-1t:free";
+		provider: "openrouter";
+	};
 	"kwaipilot/kat-coder-air-v2.5": Model<"openai-completions"> & {
 		id: "kwaipilot/kat-coder-air-v2.5";
+		provider: "openrouter";
+	};
+	"kwaipilot/kat-coder-pro": Model<"openai-completions"> & {
+		id: "kwaipilot/kat-coder-pro";
 		provider: "openrouter";
 	};
 	"kwaipilot/kat-coder-pro-v2": Model<"openai-completions"> & {
@@ -283,6 +587,30 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"kwaipilot/kat-coder-pro-v2.5": Model<"openai-completions"> & {
 		id: "kwaipilot/kat-coder-pro-v2.5";
+		provider: "openrouter";
+	};
+	"liquid/lfm-2.5-1.2b-thinking:free": Model<"openai-completions"> & {
+		id: "liquid/lfm-2.5-1.2b-thinking:free";
+		provider: "openrouter";
+	};
+	"liquid/lfm-2.5-2.6b:free": Model<"openai-completions"> & {
+		id: "liquid/lfm-2.5-2.6b:free";
+		provider: "openrouter";
+	};
+	"meituan/longcat-2.0": Model<"openai-completions"> & {
+		id: "meituan/longcat-2.0";
+		provider: "openrouter";
+	};
+	"meituan/longcat-flash-chat": Model<"openai-completions"> & {
+		id: "meituan/longcat-flash-chat";
+		provider: "openrouter";
+	};
+	"meta-llama/llama-3-8b-instruct": Model<"openai-completions"> & {
+		id: "meta-llama/llama-3-8b-instruct";
+		provider: "openrouter";
+	};
+	"meta-llama/llama-3.1-405b-instruct": Model<"openai-completions"> & {
+		id: "meta-llama/llama-3.1-405b-instruct";
 		provider: "openrouter";
 	};
 	"meta-llama/llama-3.1-70b-instruct": Model<"openai-completions"> & {
@@ -297,6 +625,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "meta-llama/llama-3.3-70b-instruct";
 		provider: "openrouter";
 	};
+	"meta-llama/llama-3.3-70b-instruct:free": Model<"openai-completions"> & {
+		id: "meta-llama/llama-3.3-70b-instruct:free";
+		provider: "openrouter";
+	};
 	"meta-llama/llama-4-maverick": Model<"openai-completions"> & {
 		id: "meta-llama/llama-4-maverick";
 		provider: "openrouter";
@@ -305,8 +637,32 @@ export const OPENROUTER_MODELS = values as {
 		id: "meta-llama/llama-4-scout";
 		provider: "openrouter";
 	};
+	"meta/muse-glimmer-30b": Model<"openai-completions"> & {
+		id: "meta/muse-glimmer-30b";
+		provider: "openrouter";
+	};
+	"meta/muse-glimmer-30b:batch": Model<"openai-completions"> & {
+		id: "meta/muse-glimmer-30b:batch";
+		provider: "openrouter";
+	};
 	"meta/muse-spark-1.1": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.1";
+		provider: "openrouter";
+	};
+	"meta/muse-spark-1.2": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.2";
+		provider: "openrouter";
+	};
+	"meta/muse-spark-1.2-contributor": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.2-contributor";
+		provider: "openrouter";
+	};
+	"meta/muse-spark-1.3": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3";
+		provider: "openrouter";
+	};
+	"meta/muse-spark-1.3-contributor": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3-contributor";
 		provider: "openrouter";
 	};
 	"minimax/minimax-m1": Model<"openai-completions"> & {
@@ -325,20 +681,48 @@ export const OPENROUTER_MODELS = values as {
 		id: "minimax/minimax-m2.5";
 		provider: "openrouter";
 	};
+	"minimax/minimax-m2.5:free": Model<"openai-completions"> & {
+		id: "minimax/minimax-m2.5:free";
+		provider: "openrouter";
+	};
 	"minimax/minimax-m2.7": Model<"openai-completions"> & {
 		id: "minimax/minimax-m2.7";
+		provider: "openrouter";
+	};
+	"minimax/minimax-m2.7:free": Model<"openai-completions"> & {
+		id: "minimax/minimax-m2.7:free";
 		provider: "openrouter";
 	};
 	"minimax/minimax-m3": Model<"openai-completions"> & {
 		id: "minimax/minimax-m3";
 		provider: "openrouter";
 	};
+	"minimax/minimax-m3:batch": Model<"openai-completions"> & {
+		id: "minimax/minimax-m3:batch";
+		provider: "openrouter";
+	};
+	"minimax/minimax-m3:free": Model<"openai-completions"> & {
+		id: "minimax/minimax-m3:free";
+		provider: "openrouter";
+	};
 	"mistralai/codestral-2508": Model<"openai-completions"> & {
 		id: "mistralai/codestral-2508";
 		provider: "openrouter";
 	};
+	"mistralai/codestral-2508:batch": Model<"openai-completions"> & {
+		id: "mistralai/codestral-2508:batch";
+		provider: "openrouter";
+	};
 	"mistralai/devstral-2512": Model<"openai-completions"> & {
 		id: "mistralai/devstral-2512";
+		provider: "openrouter";
+	};
+	"mistralai/devstral-medium": Model<"openai-completions"> & {
+		id: "mistralai/devstral-medium";
+		provider: "openrouter";
+	};
+	"mistralai/devstral-small": Model<"openai-completions"> & {
+		id: "mistralai/devstral-small";
 		provider: "openrouter";
 	};
 	"mistralai/ministral-14b-2512": Model<"openai-completions"> & {
@@ -353,6 +737,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "mistralai/ministral-8b-2512";
 		provider: "openrouter";
 	};
+	"mistralai/ministral-8b-2512:batch": Model<"openai-completions"> & {
+		id: "mistralai/ministral-8b-2512:batch";
+		provider: "openrouter";
+	};
 	"mistralai/mistral-large": Model<"openai-completions"> & {
 		id: "mistralai/mistral-large";
 		provider: "openrouter";
@@ -361,8 +749,16 @@ export const OPENROUTER_MODELS = values as {
 		id: "mistralai/mistral-large-2407";
 		provider: "openrouter";
 	};
+	"mistralai/mistral-large-2411": Model<"openai-completions"> & {
+		id: "mistralai/mistral-large-2411";
+		provider: "openrouter";
+	};
 	"mistralai/mistral-large-2512": Model<"openai-completions"> & {
 		id: "mistralai/mistral-large-2512";
+		provider: "openrouter";
+	};
+	"mistralai/mistral-large-2512:batch": Model<"openai-completions"> & {
+		id: "mistralai/mistral-large-2512:batch";
 		provider: "openrouter";
 	};
 	"mistralai/mistral-medium-3": Model<"openai-completions"> & {
@@ -373,8 +769,16 @@ export const OPENROUTER_MODELS = values as {
 		id: "mistralai/mistral-medium-3-5";
 		provider: "openrouter";
 	};
+	"mistralai/mistral-medium-3-5:batch": Model<"openai-completions"> & {
+		id: "mistralai/mistral-medium-3-5:batch";
+		provider: "openrouter";
+	};
 	"mistralai/mistral-medium-3.1": Model<"openai-completions"> & {
 		id: "mistralai/mistral-medium-3.1";
+		provider: "openrouter";
+	};
+	"mistralai/mistral-medium-3.1:batch": Model<"openai-completions"> & {
+		id: "mistralai/mistral-medium-3.1:batch";
 		provider: "openrouter";
 	};
 	"mistralai/mistral-nemo": Model<"openai-completions"> & {
@@ -385,16 +789,44 @@ export const OPENROUTER_MODELS = values as {
 		id: "mistralai/mistral-saba";
 		provider: "openrouter";
 	};
+	"mistralai/mistral-small-24b-instruct-2501": Model<"openai-completions"> & {
+		id: "mistralai/mistral-small-24b-instruct-2501";
+		provider: "openrouter";
+	};
 	"mistralai/mistral-small-2603": Model<"openai-completions"> & {
 		id: "mistralai/mistral-small-2603";
+		provider: "openrouter";
+	};
+	"mistralai/mistral-small-2603:batch": Model<"openai-completions"> & {
+		id: "mistralai/mistral-small-2603:batch";
+		provider: "openrouter";
+	};
+	"mistralai/mistral-small-3.1-24b-instruct": Model<"openai-completions"> & {
+		id: "mistralai/mistral-small-3.1-24b-instruct";
+		provider: "openrouter";
+	};
+	"mistralai/mistral-small-3.1-24b-instruct:free": Model<"openai-completions"> & {
+		id: "mistralai/mistral-small-3.1-24b-instruct:free";
 		provider: "openrouter";
 	};
 	"mistralai/mistral-small-3.2-24b-instruct": Model<"openai-completions"> & {
 		id: "mistralai/mistral-small-3.2-24b-instruct";
 		provider: "openrouter";
 	};
+	"mistralai/mistral-small-creative": Model<"openai-completions"> & {
+		id: "mistralai/mistral-small-creative";
+		provider: "openrouter";
+	};
 	"mistralai/mixtral-8x22b-instruct": Model<"openai-completions"> & {
 		id: "mistralai/mixtral-8x22b-instruct";
+		provider: "openrouter";
+	};
+	"mistralai/mixtral-8x7b-instruct": Model<"openai-completions"> & {
+		id: "mistralai/mixtral-8x7b-instruct";
+		provider: "openrouter";
+	};
+	"mistralai/pixtral-large-2411": Model<"openai-completions"> & {
+		id: "mistralai/pixtral-large-2411";
 		provider: "openrouter";
 	};
 	"mistralai/voxtral-small-24b-2507": Model<"openai-completions"> & {
@@ -409,6 +841,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "moonshotai/kimi-k2-0905";
 		provider: "openrouter";
 	};
+	"moonshotai/kimi-k2-0905:exacto": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2-0905:exacto";
+		provider: "openrouter";
+	};
 	"moonshotai/kimi-k2-thinking": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k2-thinking";
 		provider: "openrouter";
@@ -421,12 +857,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "moonshotai/kimi-k2.6";
 		provider: "openrouter";
 	};
+	"moonshotai/kimi-k2.6:free": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2.6:free";
+		provider: "openrouter";
+	};
 	"moonshotai/kimi-k2.7-code": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k2.7-code";
 		provider: "openrouter";
 	};
+	"moonshotai/kimi-k2.7-code:batch": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2.7-code:batch";
+		provider: "openrouter";
+	};
 	"moonshotai/kimi-k3": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k3";
+		provider: "openrouter";
+	};
+	"moonshotai/kimi-k3:batch": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k3:batch";
+		provider: "openrouter";
+	};
+	"nex-agi/deepseek-v3.1-nex-n1": Model<"openai-completions"> & {
+		id: "nex-agi/deepseek-v3.1-nex-n1";
 		provider: "openrouter";
 	};
 	"nex-agi/nex-n2-mini": Model<"openai-completions"> & {
@@ -435,6 +887,26 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"nex-agi/nex-n2-pro": Model<"openai-completions"> & {
 		id: "nex-agi/nex-n2-pro";
+		provider: "openrouter";
+	};
+	"nex-agi/nex-n2-pro:free": Model<"openai-completions"> & {
+		id: "nex-agi/nex-n2-pro:free";
+		provider: "openrouter";
+	};
+	"nousresearch/deephermes-3-mistral-24b-preview": Model<"openai-completions"> & {
+		id: "nousresearch/deephermes-3-mistral-24b-preview";
+		provider: "openrouter";
+	};
+	"nousresearch/hermes-4-70b": Model<"openai-completions"> & {
+		id: "nousresearch/hermes-4-70b";
+		provider: "openrouter";
+	};
+	"nvidia/llama-3.1-nemotron-70b-instruct": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-70b-instruct";
+		provider: "openrouter";
+	};
+	"nvidia/llama-3.3-nemotron-super-49b-v1.5": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.3-nemotron-super-49b-v1.5";
 		provider: "openrouter";
 	};
 	"nvidia/nemotron-3-nano-30b-a3b": Model<"openai-completions"> & {
@@ -461,12 +933,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "nvidia/nemotron-3-ultra-550b-a55b";
 		provider: "openrouter";
 	};
+	"nvidia/nemotron-3-ultra-550b-a55b:batch": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3-ultra-550b-a55b:batch";
+		provider: "openrouter";
+	};
 	"nvidia/nemotron-3-ultra-550b-a55b:free": Model<"openai-completions"> & {
 		id: "nvidia/nemotron-3-ultra-550b-a55b:free";
 		provider: "openrouter";
 	};
+	"nvidia/nemotron-3.5-lightning": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning";
+		provider: "openrouter";
+	};
+	"nvidia/nemotron-3.5-lightning:free": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning:free";
+		provider: "openrouter";
+	};
 	"nvidia/nemotron-nano-12b-v2-vl:free": Model<"openai-completions"> & {
 		id: "nvidia/nemotron-nano-12b-v2-vl:free";
+		provider: "openrouter";
+	};
+	"nvidia/nemotron-nano-9b-v2": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-nano-9b-v2";
 		provider: "openrouter";
 	};
 	"nvidia/nemotron-nano-9b-v2:free": Model<"openai-completions"> & {
@@ -485,8 +973,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-3.5-turbo-16k";
 		provider: "openrouter";
 	};
+	"openai/gpt-3.5-turbo:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-3.5-turbo:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-4": Model<"openai-completions"> & {
 		id: "openai/gpt-4";
+		provider: "openrouter";
+	};
+	"openai/gpt-4-0314": Model<"openai-completions"> & {
+		id: "openai/gpt-4-0314";
+		provider: "openrouter";
+	};
+	"openai/gpt-4-1106-preview": Model<"openai-completions"> & {
+		id: "openai/gpt-4-1106-preview";
 		provider: "openrouter";
 	};
 	"openai/gpt-4-turbo": Model<"openai-completions"> & {
@@ -497,6 +997,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-4-turbo-preview";
 		provider: "openrouter";
 	};
+	"openai/gpt-4-turbo:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4-turbo:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-4.1": Model<"openai-completions"> & {
 		id: "openai/gpt-4.1";
 		provider: "openrouter";
@@ -505,8 +1009,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-4.1-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-4.1-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4.1-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-4.1-nano": Model<"openai-completions"> & {
 		id: "openai/gpt-4.1-nano";
+		provider: "openrouter";
+	};
+	"openai/gpt-4.1-nano:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4.1-nano:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-4.1:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4.1:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-4o": Model<"openai-completions"> & {
@@ -525,12 +1041,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-4o-2024-11-20";
 		provider: "openrouter";
 	};
+	"openai/gpt-4o-audio-preview": Model<"openai-completions"> & {
+		id: "openai/gpt-4o-audio-preview";
+		provider: "openrouter";
+	};
 	"openai/gpt-4o-mini": Model<"openai-completions"> & {
 		id: "openai/gpt-4o-mini";
 		provider: "openrouter";
 	};
 	"openai/gpt-4o-mini-2024-07-18": Model<"openai-completions"> & {
 		id: "openai/gpt-4o-mini-2024-07-18";
+		provider: "openrouter";
+	};
+	"openai/gpt-4o-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4o-mini:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-4o:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-4o:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-4o:extended": Model<"openai-completions"> & {
+		id: "openai/gpt-4o:extended";
 		provider: "openrouter";
 	};
 	"openai/gpt-5": Model<"openai-completions"> & {
@@ -541,16 +1073,40 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5-codex";
 		provider: "openrouter";
 	};
+	"openai/gpt-5-codex:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-codex:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5-image": Model<"openai-completions"> & {
+		id: "openai/gpt-5-image";
+		provider: "openrouter";
+	};
+	"openai/gpt-5-image-mini": Model<"openai-completions"> & {
+		id: "openai/gpt-5-image-mini";
+		provider: "openrouter";
+	};
 	"openai/gpt-5-mini": Model<"openai-completions"> & {
 		id: "openai/gpt-5-mini";
+		provider: "openrouter";
+	};
+	"openai/gpt-5-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-mini:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5-nano": Model<"openai-completions"> & {
 		id: "openai/gpt-5-nano";
 		provider: "openrouter";
 	};
+	"openai/gpt-5-nano:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-nano:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5-pro:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.1": Model<"openai-completions"> & {
@@ -573,6 +1129,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.1-codex-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.1:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.1:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.2": Model<"openai-completions"> & {
 		id: "openai/gpt-5.2";
 		provider: "openrouter";
@@ -587,6 +1147,14 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"openai/gpt-5.2-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.2-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.2-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.2-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.2:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.2:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.3-chat": Model<"openai-completions"> & {
@@ -605,12 +1173,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.4-mini";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.4-mini:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.4-nano": Model<"openai-completions"> & {
 		id: "openai/gpt-5.4-nano";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.4-nano:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4-nano:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.4-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.4-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.4-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.4:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.4:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.5": Model<"openai-completions"> & {
@@ -621,12 +1205,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.5-pro";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.5-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.5-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.5:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.5:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.6-luna": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-luna";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.6-luna-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-luna-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-luna-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-luna-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-luna:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-luna:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.6-sol": Model<"openai-completions"> & {
@@ -637,12 +1237,32 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-5.6-sol-pro";
 		provider: "openrouter";
 	};
+	"openai/gpt-5.6-sol-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-sol-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-sol:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-sol:batch";
+		provider: "openrouter";
+	};
 	"openai/gpt-5.6-terra": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-terra";
 		provider: "openrouter";
 	};
 	"openai/gpt-5.6-terra-pro": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-terra-pro";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-terra-pro:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-terra-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5.6-terra:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-terra:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-5:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-5:batch";
 		provider: "openrouter";
 	};
 	"openai/gpt-audio": Model<"openai-completions"> & {
@@ -661,6 +1281,18 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/gpt-oss-120b";
 		provider: "openrouter";
 	};
+	"openai/gpt-oss-120b:batch": Model<"openai-completions"> & {
+		id: "openai/gpt-oss-120b:batch";
+		provider: "openrouter";
+	};
+	"openai/gpt-oss-120b:exacto": Model<"openai-completions"> & {
+		id: "openai/gpt-oss-120b:exacto";
+		provider: "openrouter";
+	};
+	"openai/gpt-oss-120b:free": Model<"openai-completions"> & {
+		id: "openai/gpt-oss-120b:free";
+		provider: "openrouter";
+	};
 	"openai/gpt-oss-20b": Model<"openai-completions"> & {
 		id: "openai/gpt-oss-20b";
 		provider: "openrouter";
@@ -675,6 +1307,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"openai/o1": Model<"openai-completions"> & {
 		id: "openai/o1";
+		provider: "openrouter";
+	};
+	"openai/o1:batch": Model<"openai-completions"> & {
+		id: "openai/o1:batch";
 		provider: "openrouter";
 	};
 	"openai/o3": Model<"openai-completions"> & {
@@ -693,8 +1329,24 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/o3-mini-high";
 		provider: "openrouter";
 	};
+	"openai/o3-mini-high:batch": Model<"openai-completions"> & {
+		id: "openai/o3-mini-high:batch";
+		provider: "openrouter";
+	};
+	"openai/o3-mini:batch": Model<"openai-completions"> & {
+		id: "openai/o3-mini:batch";
+		provider: "openrouter";
+	};
 	"openai/o3-pro": Model<"openai-completions"> & {
 		id: "openai/o3-pro";
+		provider: "openrouter";
+	};
+	"openai/o3-pro:batch": Model<"openai-completions"> & {
+		id: "openai/o3-pro:batch";
+		provider: "openrouter";
+	};
+	"openai/o3:batch": Model<"openai-completions"> & {
+		id: "openai/o3:batch";
 		provider: "openrouter";
 	};
 	"openai/o4-mini": Model<"openai-completions"> & {
@@ -709,12 +1361,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "openai/o4-mini-high";
 		provider: "openrouter";
 	};
+	"openai/o4-mini-high:batch": Model<"openai-completions"> & {
+		id: "openai/o4-mini-high:batch";
+		provider: "openrouter";
+	};
+	"openai/o4-mini:batch": Model<"openai-completions"> & {
+		id: "openai/o4-mini:batch";
+		provider: "openrouter";
+	};
+	"openrouter/aurora-alpha": Model<"openai-completions"> & {
+		id: "openrouter/aurora-alpha";
+		provider: "openrouter";
+	};
 	"openrouter/auto": Model<"openai-completions"> & {
 		id: "openrouter/auto";
 		provider: "openrouter";
 	};
 	"openrouter/auto-beta": Model<"openai-completions"> & {
 		id: "openrouter/auto-beta";
+		provider: "openrouter";
+	};
+	"openrouter/elephant-alpha": Model<"openai-completions"> & {
+		id: "openrouter/elephant-alpha";
 		provider: "openrouter";
 	};
 	"openrouter/free": Model<"openai-completions"> & {
@@ -725,12 +1393,32 @@ export const OPENROUTER_MODELS = values as {
 		id: "openrouter/fusion";
 		provider: "openrouter";
 	};
+	"openrouter/healer-alpha": Model<"openai-completions"> & {
+		id: "openrouter/healer-alpha";
+		provider: "openrouter";
+	};
+	"openrouter/hunter-alpha": Model<"openai-completions"> & {
+		id: "openrouter/hunter-alpha";
+		provider: "openrouter";
+	};
+	"openrouter/owl-alpha": Model<"openai-completions"> & {
+		id: "openrouter/owl-alpha";
+		provider: "openrouter";
+	};
 	"poolside/laguna-m.1": Model<"openai-completions"> & {
 		id: "poolside/laguna-m.1";
 		provider: "openrouter";
 	};
 	"poolside/laguna-m.1:free": Model<"openai-completions"> & {
 		id: "poolside/laguna-m.1:free";
+		provider: "openrouter";
+	};
+	"poolside/laguna-s-2.1": Model<"openai-completions"> & {
+		id: "poolside/laguna-s-2.1";
+		provider: "openrouter";
+	};
+	"poolside/laguna-s-2.1:free": Model<"openai-completions"> & {
+		id: "poolside/laguna-s-2.1:free";
 		provider: "openrouter";
 	};
 	"poolside/laguna-xs-2.1": Model<"openai-completions"> & {
@@ -741,12 +1429,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "poolside/laguna-xs-2.1:free";
 		provider: "openrouter";
 	};
+	"poolside/laguna-xs.2": Model<"openai-completions"> & {
+		id: "poolside/laguna-xs.2";
+		provider: "openrouter";
+	};
+	"poolside/laguna-xs.2:free": Model<"openai-completions"> & {
+		id: "poolside/laguna-xs.2:free";
+		provider: "openrouter";
+	};
+	"prime-intellect/intellect-3": Model<"openai-completions"> & {
+		id: "prime-intellect/intellect-3";
+		provider: "openrouter";
+	};
 	"qwen/qwen-2.5-72b-instruct": Model<"openai-completions"> & {
 		id: "qwen/qwen-2.5-72b-instruct";
 		provider: "openrouter";
 	};
 	"qwen/qwen-2.5-7b-instruct": Model<"openai-completions"> & {
 		id: "qwen/qwen-2.5-7b-instruct";
+		provider: "openrouter";
+	};
+	"qwen/qwen-max": Model<"openai-completions"> & {
+		id: "qwen/qwen-max";
 		provider: "openrouter";
 	};
 	"qwen/qwen-plus": Model<"openai-completions"> & {
@@ -759,6 +1463,14 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"qwen/qwen-plus-2025-07-28:thinking": Model<"openai-completions"> & {
 		id: "qwen/qwen-plus-2025-07-28:thinking";
+		provider: "openrouter";
+	};
+	"qwen/qwen-turbo": Model<"openai-completions"> & {
+		id: "qwen/qwen-turbo";
+		provider: "openrouter";
+	};
+	"qwen/qwen-vl-max": Model<"openai-completions"> & {
+		id: "qwen/qwen-vl-max";
 		provider: "openrouter";
 	};
 	"qwen/qwen3-14b": Model<"openai-completions"> & {
@@ -793,6 +1505,14 @@ export const OPENROUTER_MODELS = values as {
 		id: "qwen/qwen3-32b";
 		provider: "openrouter";
 	};
+	"qwen/qwen3-4b": Model<"openai-completions"> & {
+		id: "qwen/qwen3-4b";
+		provider: "openrouter";
+	};
+	"qwen/qwen3-4b:free": Model<"openai-completions"> & {
+		id: "qwen/qwen3-4b:free";
+		provider: "openrouter";
+	};
 	"qwen/qwen3-8b": Model<"openai-completions"> & {
 		id: "qwen/qwen3-8b";
 		provider: "openrouter";
@@ -817,6 +1537,14 @@ export const OPENROUTER_MODELS = values as {
 		id: "qwen/qwen3-coder-plus";
 		provider: "openrouter";
 	};
+	"qwen/qwen3-coder:exacto": Model<"openai-completions"> & {
+		id: "qwen/qwen3-coder:exacto";
+		provider: "openrouter";
+	};
+	"qwen/qwen3-coder:free": Model<"openai-completions"> & {
+		id: "qwen/qwen3-coder:free";
+		provider: "openrouter";
+	};
 	"qwen/qwen3-max": Model<"openai-completions"> & {
 		id: "qwen/qwen3-max";
 		provider: "openrouter";
@@ -827,6 +1555,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"qwen/qwen3-next-80b-a3b-instruct": Model<"openai-completions"> & {
 		id: "qwen/qwen3-next-80b-a3b-instruct";
+		provider: "openrouter";
+	};
+	"qwen/qwen3-next-80b-a3b-instruct:free": Model<"openai-completions"> & {
+		id: "qwen/qwen3-next-80b-a3b-instruct:free";
 		provider: "openrouter";
 	};
 	"qwen/qwen3-next-80b-a3b-thinking": Model<"openai-completions"> & {
@@ -881,6 +1613,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "qwen/qwen3.5-9b";
 		provider: "openrouter";
 	};
+	"qwen/qwen3.5-9b:batch": Model<"openai-completions"> & {
+		id: "qwen/qwen3.5-9b:batch";
+		provider: "openrouter";
+	};
 	"qwen/qwen3.5-flash-02-23": Model<"openai-completions"> & {
 		id: "qwen/qwen3.5-flash-02-23";
 		provider: "openrouter";
@@ -913,12 +1649,52 @@ export const OPENROUTER_MODELS = values as {
 		id: "qwen/qwen3.6-plus";
 		provider: "openrouter";
 	};
+	"qwen/qwen3.6-plus-preview:free": Model<"openai-completions"> & {
+		id: "qwen/qwen3.6-plus-preview:free";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.6-plus:free": Model<"openai-completions"> & {
+		id: "qwen/qwen3.6-plus:free";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.7-flash": Model<"openai-completions"> & {
+		id: "qwen/qwen3.7-flash";
+		provider: "openrouter";
+	};
 	"qwen/qwen3.7-max": Model<"openai-completions"> & {
 		id: "qwen/qwen3.7-max";
 		provider: "openrouter";
 	};
 	"qwen/qwen3.7-plus": Model<"openai-completions"> & {
 		id: "qwen/qwen3.7-plus";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.8-2.4t-a95b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-2.4t-a95b";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.8-2.4t-a95b:batch": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-2.4t-a95b:batch";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.8-flash": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-flash";
+		provider: "openrouter";
+	};
+	"qwen/qwen3.8-max": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-max";
+		provider: "openrouter";
+	};
+	"qwen/qwq-32b": Model<"openai-completions"> & {
+		id: "qwen/qwq-32b";
+		provider: "openrouter";
+	};
+	"reka/reka-edge": Model<"openai-completions"> & {
+		id: "reka/reka-edge";
 		provider: "openrouter";
 	};
 	"rekaai/reka-edge": Model<"openai-completions"> & {
@@ -933,12 +1709,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "sakana/fugu-ultra";
 		provider: "openrouter";
 	};
+	"sakana/sakana-namazu": Model<"openai-completions"> & {
+		id: "sakana/sakana-namazu";
+		provider: "openrouter";
+	};
+	"sao10k/l3-euryale-70b": Model<"openai-completions"> & {
+		id: "sao10k/l3-euryale-70b";
+		provider: "openrouter";
+	};
 	"sao10k/l3.1-euryale-70b": Model<"openai-completions"> & {
 		id: "sao10k/l3.1-euryale-70b";
 		provider: "openrouter";
 	};
+	"stealth/ox-alpha": Model<"openai-completions"> & {
+		id: "stealth/ox-alpha";
+		provider: "openrouter";
+	};
 	"stepfun/step-3.5-flash": Model<"openai-completions"> & {
 		id: "stepfun/step-3.5-flash";
+		provider: "openrouter";
+	};
+	"stepfun/step-3.5-flash:free": Model<"openai-completions"> & {
+		id: "stepfun/step-3.5-flash:free";
 		provider: "openrouter";
 	};
 	"stepfun/step-3.7-flash": Model<"openai-completions"> & {
@@ -953,8 +1745,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "tencent/hy3-preview";
 		provider: "openrouter";
 	};
+	"tencent/hy3-preview:free": Model<"openai-completions"> & {
+		id: "tencent/hy3-preview:free";
+		provider: "openrouter";
+	};
 	"tencent/hy3:free": Model<"openai-completions"> & {
 		id: "tencent/hy3:free";
+		provider: "openrouter";
+	};
+	"tencent/hy4-preview": Model<"openai-completions"> & {
+		id: "tencent/hy4-preview";
+		provider: "openrouter";
+	};
+	"thedrummer/rocinante-12b": Model<"openai-completions"> & {
+		id: "thedrummer/rocinante-12b";
 		provider: "openrouter";
 	};
 	"thedrummer/unslopnemo-12b": Model<"openai-completions"> & {
@@ -965,12 +1769,80 @@ export const OPENROUTER_MODELS = values as {
 		id: "thinkingmachines/inkling";
 		provider: "openrouter";
 	};
+	"thinkingmachines/inkling-small": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling-small";
+		provider: "openrouter";
+	};
+	"thinkingmachines/inkling-small:batch": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling-small:batch";
+		provider: "openrouter";
+	};
+	"thinkingmachines/inkling-small:free": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling-small:free";
+		provider: "openrouter";
+	};
+	"thinkingmachines/inkling:batch": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling:batch";
+		provider: "openrouter";
+	};
+	"thinkingmachines/inkling:free": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling:free";
+		provider: "openrouter";
+	};
+	"tngtech/deepseek-r1t2-chimera": Model<"openai-completions"> & {
+		id: "tngtech/deepseek-r1t2-chimera";
+		provider: "openrouter";
+	};
+	"tngtech/tng-r1t-chimera": Model<"openai-completions"> & {
+		id: "tngtech/tng-r1t-chimera";
+		provider: "openrouter";
+	};
 	"upstage/solar-pro-3": Model<"openai-completions"> & {
 		id: "upstage/solar-pro-3";
 		provider: "openrouter";
 	};
+	"upstage/solar-pro-3:free": Model<"openai-completions"> & {
+		id: "upstage/solar-pro-3:free";
+		provider: "openrouter";
+	};
+	"upstage/solar-pro4": Model<"openai-completions"> & {
+		id: "upstage/solar-pro4";
+		provider: "openrouter";
+	};
+	"x-ai/grok-3": Model<"openai-completions"> & {
+		id: "x-ai/grok-3";
+		provider: "openrouter";
+	};
+	"x-ai/grok-3-beta": Model<"openai-completions"> & {
+		id: "x-ai/grok-3-beta";
+		provider: "openrouter";
+	};
+	"x-ai/grok-3-mini": Model<"openai-completions"> & {
+		id: "x-ai/grok-3-mini";
+		provider: "openrouter";
+	};
+	"x-ai/grok-3-mini-beta": Model<"openai-completions"> & {
+		id: "x-ai/grok-3-mini-beta";
+		provider: "openrouter";
+	};
+	"x-ai/grok-4": Model<"openai-completions"> & {
+		id: "x-ai/grok-4";
+		provider: "openrouter";
+	};
+	"x-ai/grok-4-fast": Model<"openai-completions"> & {
+		id: "x-ai/grok-4-fast";
+		provider: "openrouter";
+	};
+	"x-ai/grok-4.1-fast": Model<"openai-completions"> & {
+		id: "x-ai/grok-4.1-fast";
+		provider: "openrouter";
+	};
 	"x-ai/grok-4.20": Model<"openai-completions"> & {
 		id: "x-ai/grok-4.20";
+		provider: "openrouter";
+	};
+	"x-ai/grok-4.20-beta": Model<"openai-completions"> & {
+		id: "x-ai/grok-4.20-beta";
 		provider: "openrouter";
 	};
 	"x-ai/grok-4.3": Model<"openai-completions"> & {
@@ -981,8 +1853,28 @@ export const OPENROUTER_MODELS = values as {
 		id: "x-ai/grok-4.5";
 		provider: "openrouter";
 	};
+	"x-ai/grok-4.6": Model<"openai-completions"> & {
+		id: "x-ai/grok-4.6";
+		provider: "openrouter";
+	};
 	"x-ai/grok-build-0.1": Model<"openai-completions"> & {
 		id: "x-ai/grok-build-0.1";
+		provider: "openrouter";
+	};
+	"x-ai/grok-code-fast-1": Model<"openai-completions"> & {
+		id: "x-ai/grok-code-fast-1";
+		provider: "openrouter";
+	};
+	"xiaomi/mimo-v2-flash": Model<"openai-completions"> & {
+		id: "xiaomi/mimo-v2-flash";
+		provider: "openrouter";
+	};
+	"xiaomi/mimo-v2-omni": Model<"openai-completions"> & {
+		id: "xiaomi/mimo-v2-omni";
+		provider: "openrouter";
+	};
+	"xiaomi/mimo-v2-pro": Model<"openai-completions"> & {
+		id: "xiaomi/mimo-v2-pro";
 		provider: "openrouter";
 	};
 	"xiaomi/mimo-v2.5": Model<"openai-completions"> & {
@@ -993,6 +1885,10 @@ export const OPENROUTER_MODELS = values as {
 		id: "xiaomi/mimo-v2.5-pro";
 		provider: "openrouter";
 	};
+	"z-ai/glm-4-32b": Model<"openai-completions"> & {
+		id: "z-ai/glm-4-32b";
+		provider: "openrouter";
+	};
 	"z-ai/glm-4.5": Model<"openai-completions"> & {
 		id: "z-ai/glm-4.5";
 		provider: "openrouter";
@@ -1001,12 +1897,20 @@ export const OPENROUTER_MODELS = values as {
 		id: "z-ai/glm-4.5-air";
 		provider: "openrouter";
 	};
+	"z-ai/glm-4.5-air:free": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.5-air:free";
+		provider: "openrouter";
+	};
 	"z-ai/glm-4.5v": Model<"openai-completions"> & {
 		id: "z-ai/glm-4.5v";
 		provider: "openrouter";
 	};
 	"z-ai/glm-4.6": Model<"openai-completions"> & {
 		id: "z-ai/glm-4.6";
+		provider: "openrouter";
+	};
+	"z-ai/glm-4.6:exacto": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.6:exacto";
 		provider: "openrouter";
 	};
 	"z-ai/glm-4.6v": Model<"openai-completions"> & {
@@ -1037,6 +1941,26 @@ export const OPENROUTER_MODELS = values as {
 		id: "z-ai/glm-5.2";
 		provider: "openrouter";
 	};
+	"z-ai/glm-5.2:batch": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.2:batch";
+		provider: "openrouter";
+	};
+	"z-ai/glm-5.2:free": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.2:free";
+		provider: "openrouter";
+	};
+	"z-ai/glm-5.3": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3";
+		provider: "openrouter";
+	};
+	"z-ai/glm-5.3-flash": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-flash";
+		provider: "openrouter";
+	};
+	"z-ai/glm-5.3-flash:batch": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-flash:batch";
+		provider: "openrouter";
+	};
 	"z-ai/glm-5v-turbo": Model<"openai-completions"> & {
 		id: "z-ai/glm-5v-turbo";
 		provider: "openrouter";
@@ -1055,6 +1979,10 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"~anthropic/claude-sonnet-latest": Model<"openai-completions"> & {
 		id: "~anthropic/claude-sonnet-latest";
+		provider: "openrouter";
+	};
+	"~deepseek/deepseek-v4-flash-latest": Model<"openai-completions"> & {
+		id: "~deepseek/deepseek-v4-flash-latest";
 		provider: "openrouter";
 	};
 	"~google/gemini-flash-latest": Model<"openai-completions"> & {
@@ -1079,6 +2007,14 @@ export const OPENROUTER_MODELS = values as {
 	};
 	"~x-ai/grok-latest": Model<"openai-completions"> & {
 		id: "~x-ai/grok-latest";
+		provider: "openrouter";
+	};
+	"~z-ai/glm-flash-latest": Model<"openai-completions"> & {
+		id: "~z-ai/glm-flash-latest";
+		provider: "openrouter";
+	};
+	"~z-ai/glm-latest": Model<"openai-completions"> & {
+		id: "~z-ai/glm-latest";
 		provider: "openrouter";
 	};
 };

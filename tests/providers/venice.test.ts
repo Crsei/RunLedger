@@ -38,7 +38,7 @@ describe("venice provider", () => {
 			baseUrl: VENICE_BASE_URL,
 			compat: { supportsUsageInStreaming: false },
 		});
-		expect(provider.getModels().length).toBe(134);
+		expect(provider.getModels().length).toBe(146);
 	});
 
 	test("is present in the builtin generated model catalog", () => {

@@ -21,6 +21,14 @@ export const WAFER_SERVERLESS_MODELS = values as {
 		id: "GLM-5.2";
 		provider: "wafer-serverless";
 	};
+	"GLM-5.3": Model<"openai-completions"> & {
+		id: "GLM-5.3";
+		provider: "wafer-serverless";
+	};
+	"GLM-5.3-Flash": Model<"openai-completions"> & {
+		id: "GLM-5.3-Flash";
+		provider: "wafer-serverless";
+	};
 	"GLM5.2-Turbo": Model<"openai-completions"> & {
 		id: "GLM5.2-Turbo";
 		provider: "wafer-serverless";

@@ -1,3 +1,7 @@
+import { abliterationProvider } from "./abliteration.ts";
+import { clinePassProvider } from "./cline-pass.ts";
+import { deepinfraProvider } from "./deepinfra.ts";
+import { yoloAutoProvider } from "./yolo-auto.ts";
 import { createImagesModels, type ImagesProvider, type MutableImagesModels } from "../images-models.ts";
 import { MODELS } from "../models.generated.ts";
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
@@ -113,6 +117,10 @@ export interface BuiltinProviderOptions {
 /** All built-in providers, freshly constructed. */
 export function builtinProviders(options: BuiltinProviderOptions = {}): Provider[] {
 	return [
+		abliterationProvider(),
+		clinePassProvider(),
+		deepinfraProvider(),
+		yoloAutoProvider(),
 		aiandProvider(),
 		aimlapiProvider(),
 		alibabaCodingPlanProvider(),

@@ -33,4 +33,12 @@ export const OPENAI_CODEX_MODELS = values as {
 		id: "gpt-5.6-terra";
 		provider: "openai-codex";
 	};
+	"gpt-6-astra": Model<"openai-codex-responses"> & {
+		id: "gpt-6-astra";
+		provider: "openai-codex";
+	};
+	"gpt-daybreak-blue-latest": Model<"openai-codex-responses"> & {
+		id: "gpt-daybreak-blue-latest";
+		provider: "openai-codex";
+	};
 };

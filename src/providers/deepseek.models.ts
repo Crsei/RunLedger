@@ -9,6 +9,10 @@ export const DEEPSEEK_MODELS = values as {
 		id: "deepseek-v4-flash";
 		provider: "deepseek";
 	};
+	"deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
+		id: "deepseek-v4-flash-vision-exp";
+		provider: "deepseek";
+	};
 	"deepseek-v4-pro": Model<"openai-completions"> & {
 		id: "deepseek-v4-pro";
 		provider: "deepseek";

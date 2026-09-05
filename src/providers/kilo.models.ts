@@ -121,6 +121,10 @@ export const KILO_MODELS = values as {
 		id: "anthropic/claude-fable-5";
 		provider: "kilo";
 	};
+	"anthropic/claude-fable-5.1": Model<"openai-completions"> & {
+		id: "anthropic/claude-fable-5.1";
+		provider: "kilo";
+	};
 	"anthropic/claude-haiku-4.5": Model<"openai-completions"> & {
 		id: "anthropic/claude-haiku-4.5";
 		provider: "kilo";
@@ -261,6 +265,14 @@ export const KILO_MODELS = values as {
 		id: "bytedance-seed/seed-1.6-flash";
 		provider: "kilo";
 	};
+	"bytedance-seed/seed-2-1-turbo": Model<"openai-completions"> & {
+		id: "bytedance-seed/seed-2-1-turbo";
+		provider: "kilo";
+	};
+	"bytedance-seed/seed-2.0-code": Model<"openai-completions"> & {
+		id: "bytedance-seed/seed-2.0-code";
+		provider: "kilo";
+	};
 	"bytedance-seed/seed-2.0-lite": Model<"openai-completions"> & {
 		id: "bytedance-seed/seed-2.0-lite";
 		provider: "kilo";
@@ -361,6 +373,10 @@ export const KILO_MODELS = values as {
 		id: "deepseek/deepseek-v4-flash-0731";
 		provider: "kilo";
 	};
+	"deepseek/deepseek-v4-flash-vision-exp": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-flash-vision-exp";
+		provider: "kilo";
+	};
 	"deepseek/deepseek-v4-flash:discounted": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-flash:discounted";
 		provider: "kilo";
@@ -373,8 +389,16 @@ export const KILO_MODELS = values as {
 		id: "deepseek/deepseek-v4-pro";
 		provider: "kilo";
 	};
+	"deepseek/deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-pro-0813";
+		provider: "kilo";
+	};
 	"deepseek/deepseek-v4-pro:discounted": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-pro:discounted";
+		provider: "kilo";
+	};
+	"dots-studio/dots-3-note-preview:free": Model<"openai-completions"> & {
+		id: "dots-studio/dots-3-note-preview:free";
 		provider: "kilo";
 	};
 	"eleutherai/llemma_7b": Model<"openai-completions"> & {
@@ -481,6 +505,14 @@ export const KILO_MODELS = values as {
 		id: "google/gemini-3.6-flash";
 		provider: "kilo";
 	};
+	"google/gemini-3.7-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.7-flash";
+		provider: "kilo";
+	};
+	"google/gemini-3.8-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.8-flash";
+		provider: "kilo";
+	};
 	"google/gemma-2-27b-it": Model<"openai-completions"> & {
 		id: "google/gemma-2-27b-it";
 		provider: "kilo";
@@ -533,12 +565,20 @@ export const KILO_MODELS = values as {
 		id: "ibm-granite/granite-4.1-8b";
 		provider: "kilo";
 	};
+	"ibm-granite/granite-4.2-8b": Model<"openai-completions"> & {
+		id: "ibm-granite/granite-4.2-8b";
+		provider: "kilo";
+	};
 	"inception/mercury": Model<"openai-completions"> & {
 		id: "inception/mercury";
 		provider: "kilo";
 	};
 	"inception/mercury-2": Model<"openai-completions"> & {
 		id: "inception/mercury-2";
+		provider: "kilo";
+	};
+	"inception/mercury-2.5-preview": Model<"openai-completions"> & {
+		id: "inception/mercury-2.5-preview";
 		provider: "kilo";
 	};
 	"inception/mercury-coder": Model<"openai-completions"> & {
@@ -563,6 +603,14 @@ export const KILO_MODELS = values as {
 	};
 	"inclusionai/ling-3.0-flash": Model<"openai-completions"> & {
 		id: "inclusionai/ling-3.0-flash";
+		provider: "kilo";
+	};
+	"inclusionai/ling-3.0-flash-fin": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-fin";
+		provider: "kilo";
+	};
+	"inclusionai/ling-3.0-flash-fin:free": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-flash-fin:free";
 		provider: "kilo";
 	};
 	"inclusionai/ling-3.0-flash:free": Model<"openai-completions"> & {
@@ -649,6 +697,10 @@ export const KILO_MODELS = values as {
 		id: "liquid/lfm-2.2-6b";
 		provider: "kilo";
 	};
+	"liquid/lfm-2.5-2.6b:free": Model<"openai-completions"> & {
+		id: "liquid/lfm-2.5-2.6b:free";
+		provider: "kilo";
+	};
 	"liquid/lfm2-8b-a1b": Model<"openai-completions"> & {
 		id: "liquid/lfm2-8b-a1b";
 		provider: "kilo";
@@ -659,6 +711,10 @@ export const KILO_MODELS = values as {
 	};
 	"meituan/longcat-2.0": Model<"openai-completions"> & {
 		id: "meituan/longcat-2.0";
+		provider: "kilo";
+	};
+	"meituan/longcat-2.0-free": Model<"openai-completions"> & {
+		id: "meituan/longcat-2.0-free";
 		provider: "kilo";
 	};
 	"meituan/longcat-flash-chat": Model<"openai-completions"> & {
@@ -729,12 +785,28 @@ export const KILO_MODELS = values as {
 		id: "meta-llama/llama-guard-4-12b:free";
 		provider: "kilo";
 	};
+	"meta/muse-glimmer-30b": Model<"openai-completions"> & {
+		id: "meta/muse-glimmer-30b";
+		provider: "kilo";
+	};
 	"meta/muse-spark-1.1": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.1";
 		provider: "kilo";
 	};
 	"meta/muse-spark-1.2": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.2";
+		provider: "kilo";
+	};
+	"meta/muse-spark-1.2-contributor": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.2-contributor";
+		provider: "kilo";
+	};
+	"meta/muse-spark-1.3": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3";
+		provider: "kilo";
+	};
+	"meta/muse-spark-1.3-contributor": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3-contributor";
 		provider: "kilo";
 	};
 	"microsoft/phi-4": Model<"openai-completions"> & {
@@ -781,12 +853,20 @@ export const KILO_MODELS = values as {
 		id: "minimax/minimax-m2.7";
 		provider: "kilo";
 	};
+	"minimax/minimax-m2.7:free": Model<"openai-completions"> & {
+		id: "minimax/minimax-m2.7:free";
+		provider: "kilo";
+	};
 	"minimax/minimax-m3": Model<"openai-completions"> & {
 		id: "minimax/minimax-m3";
 		provider: "kilo";
 	};
 	"minimax/minimax-m3:discounted": Model<"openai-completions"> & {
 		id: "minimax/minimax-m3:discounted";
+		provider: "kilo";
+	};
+	"minimax/minimax-m3:free": Model<"openai-completions"> & {
+		id: "minimax/minimax-m3:free";
 		provider: "kilo";
 	};
 	"mistralai/codestral-2508": Model<"openai-completions"> & {
@@ -811,6 +891,10 @@ export const KILO_MODELS = values as {
 	};
 	"mistralai/ministral-3b-2512": Model<"openai-completions"> & {
 		id: "mistralai/ministral-3b-2512";
+		provider: "kilo";
+	};
+	"mistralai/ministral-8b": Model<"openai-completions"> & {
+		id: "mistralai/ministral-8b";
 		provider: "kilo";
 	};
 	"mistralai/ministral-8b-2512": Model<"openai-completions"> & {
@@ -1037,6 +1121,14 @@ export const KILO_MODELS = values as {
 		id: "nvidia/nemotron-3.5-content-safety:free";
 		provider: "kilo";
 	};
+	"nvidia/nemotron-3.5-lightning": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning";
+		provider: "kilo";
+	};
+	"nvidia/nemotron-3.5-lightning:free": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning:free";
+		provider: "kilo";
+	};
 	"nvidia/nemotron-nano-12b-v2-vl": Model<"openai-completions"> & {
 		id: "nvidia/nemotron-nano-12b-v2-vl";
 		provider: "kilo";
@@ -1247,6 +1339,10 @@ export const KILO_MODELS = values as {
 	};
 	"openai/gpt-5.6-sol": Model<"openai-completions"> & {
 		id: "openai/gpt-5.6-sol";
+		provider: "kilo";
+	};
+	"openai/gpt-5.6-sol-discounted": Model<"openai-completions"> & {
+		id: "openai/gpt-5.6-sol-discounted";
 		provider: "kilo";
 	};
 	"openai/gpt-5.6-sol-pro": Model<"openai-completions"> & {
@@ -1665,6 +1761,18 @@ export const KILO_MODELS = values as {
 		id: "qwen/qwen3.7-plus:free";
 		provider: "kilo";
 	};
+	"qwen/qwen3.8-2.4t-a95b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-2.4t-a95b";
+		provider: "kilo";
+	};
+	"qwen/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b";
+		provider: "kilo";
+	};
+	"qwen/qwen3.8-flash": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-flash";
+		provider: "kilo";
+	};
 	"qwen/qwen3.8-max": Model<"openai-completions"> & {
 		id: "qwen/qwen3.8-max";
 		provider: "kilo";
@@ -1699,6 +1807,10 @@ export const KILO_MODELS = values as {
 	};
 	"sakana/fugu-ultra": Model<"openai-completions"> & {
 		id: "sakana/fugu-ultra";
+		provider: "kilo";
+	};
+	"sakana/sakana-namazu": Model<"openai-completions"> & {
+		id: "sakana/sakana-namazu";
 		provider: "kilo";
 	};
 	"sao10k/l3-euryale-70b": Model<"openai-completions"> & {
@@ -1741,6 +1853,10 @@ export const KILO_MODELS = values as {
 		id: "stealth/gpt-5.6-sol";
 		provider: "kilo";
 	};
+	"stealth/ox-alpha": Model<"openai-completions"> & {
+		id: "stealth/ox-alpha";
+		provider: "kilo";
+	};
 	"stealth/qwen3.6-plus": Model<"openai-completions"> & {
 		id: "stealth/qwen3.6-plus";
 		provider: "kilo";
@@ -1769,6 +1885,18 @@ export const KILO_MODELS = values as {
 		id: "tencent/hunyuan-a13b-instruct";
 		provider: "kilo";
 	};
+	"tencent/hy-mt2-1.8b": Model<"openai-completions"> & {
+		id: "tencent/hy-mt2-1.8b";
+		provider: "kilo";
+	};
+	"tencent/hy-mt2-30b-a3b": Model<"openai-completions"> & {
+		id: "tencent/hy-mt2-30b-a3b";
+		provider: "kilo";
+	};
+	"tencent/hy-mt2-7b": Model<"openai-completions"> & {
+		id: "tencent/hy-mt2-7b";
+		provider: "kilo";
+	};
 	"tencent/hy3": Model<"openai-completions"> & {
 		id: "tencent/hy3";
 		provider: "kilo";
@@ -1783,6 +1911,10 @@ export const KILO_MODELS = values as {
 	};
 	"tencent/hy3:free": Model<"openai-completions"> & {
 		id: "tencent/hy3:free";
+		provider: "kilo";
+	};
+	"tencent/hy4-preview": Model<"openai-completions"> & {
+		id: "tencent/hy4-preview";
 		provider: "kilo";
 	};
 	"thedrummer/cydonia-24b-v4.1": Model<"openai-completions"> & {
@@ -1809,6 +1941,14 @@ export const KILO_MODELS = values as {
 		id: "thinkingmachines/inkling-small";
 		provider: "kilo";
 	};
+	"thinkingmachines/inkling-small:free": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling-small:free";
+		provider: "kilo";
+	};
+	"thinkingmachines/inkling:free": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling:free";
+		provider: "kilo";
+	};
 	"tngtech/deepseek-r1t2-chimera": Model<"openai-completions"> & {
 		id: "tngtech/deepseek-r1t2-chimera";
 		provider: "kilo";
@@ -1819,6 +1959,10 @@ export const KILO_MODELS = values as {
 	};
 	"upstage/solar-pro-3": Model<"openai-completions"> & {
 		id: "upstage/solar-pro-3";
+		provider: "kilo";
+	};
+	"upstage/solar-pro4": Model<"openai-completions"> & {
+		id: "upstage/solar-pro4";
 		provider: "kilo";
 	};
 	"writer/palmyra-x5": Model<"openai-completions"> & {
@@ -1875,6 +2019,10 @@ export const KILO_MODELS = values as {
 	};
 	"x-ai/grok-4.5": Model<"openai-completions"> & {
 		id: "x-ai/grok-4.5";
+		provider: "kilo";
+	};
+	"x-ai/grok-4.6": Model<"openai-completions"> & {
+		id: "x-ai/grok-4.6";
 		provider: "kilo";
 	};
 	"x-ai/grok-build-0.1": Model<"openai-completions"> & {
@@ -1969,6 +2117,18 @@ export const KILO_MODELS = values as {
 		id: "z-ai/glm-5.2";
 		provider: "kilo";
 	};
+	"z-ai/glm-5.2:free": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.2:free";
+		provider: "kilo";
+	};
+	"z-ai/glm-5.3": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3";
+		provider: "kilo";
+	};
+	"z-ai/glm-5.3-flash": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-flash";
+		provider: "kilo";
+	};
 	"z-ai/glm-5v-turbo": Model<"openai-completions"> & {
 		id: "z-ai/glm-5v-turbo";
 		provider: "kilo";
@@ -2015,6 +2175,14 @@ export const KILO_MODELS = values as {
 	};
 	"~x-ai/grok-latest": Model<"openai-completions"> & {
 		id: "~x-ai/grok-latest";
+		provider: "kilo";
+	};
+	"~z-ai/glm-flash-latest": Model<"openai-completions"> & {
+		id: "~z-ai/glm-flash-latest";
+		provider: "kilo";
+	};
+	"~z-ai/glm-latest": Model<"openai-completions"> & {
+		id: "~z-ai/glm-latest";
 		provider: "kilo";
 	};
 };

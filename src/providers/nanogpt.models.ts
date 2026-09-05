@@ -117,6 +117,14 @@ export const NANOGPT_MODELS = values as {
 		id: "Gemma-3-27B-it-Abliterated";
 		provider: "nanogpt";
 	};
+	"Gemma-4-26B-A4B-MeroMero": Model<"openai-completions"> & {
+		id: "Gemma-4-26B-A4B-MeroMero";
+		provider: "nanogpt";
+	};
+	"Gemma-4-26B-A4B-MeroMero:thinking": Model<"openai-completions"> & {
+		id: "Gemma-4-26B-A4B-MeroMero:thinking";
+		provider: "nanogpt";
+	};
 	"Gemma-4-31B-Agares-v1": Model<"openai-completions"> & {
 		id: "Gemma-4-31B-Agares-v1";
 		provider: "nanogpt";
@@ -211,6 +219,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"Gemma-4-31B-MeroMero": Model<"openai-completions"> & {
 		id: "Gemma-4-31B-MeroMero";
+		provider: "nanogpt";
+	};
+	"Gemma-4-31B-MeroMero-v2": Model<"openai-completions"> & {
+		id: "Gemma-4-31B-MeroMero-v2";
+		provider: "nanogpt";
+	};
+	"Gemma-4-31B-MeroMero-v2:thinking": Model<"openai-completions"> & {
+		id: "Gemma-4-31B-MeroMero-v2:thinking";
 		provider: "nanogpt";
 	};
 	"Gemma-4-31B-Musica-v1": Model<"openai-completions"> & {
@@ -483,6 +499,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"NousResearch/DeepHermes-3-Mistral-24B-Preview": Model<"openai-completions"> & {
 		id: "NousResearch/DeepHermes-3-Mistral-24B-Preview";
+		provider: "nanogpt";
+	};
+	"NousResearch/hermes-3-llama-3.1-70b": Model<"openai-completions"> & {
+		id: "NousResearch/hermes-3-llama-3.1-70b";
 		provider: "nanogpt";
 	};
 	"QwQ-32B-ArliAI-RpR-v1": Model<"openai-completions"> & {
@@ -781,6 +801,14 @@ export const NANOGPT_MODELS = values as {
 		id: "TEE/deepseek-v4-pro";
 		provider: "nanogpt";
 	};
+	"TEE/deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "TEE/deepseek-v4-pro-0813";
+		provider: "nanogpt";
+	};
+	"TEE/deepseek-v4-pro-0813:thinking": Model<"openai-completions"> & {
+		id: "TEE/deepseek-v4-pro-0813:thinking";
+		provider: "nanogpt";
+	};
 	"TEE/deepseek-v4-pro:thinking": Model<"openai-completions"> & {
 		id: "TEE/deepseek-v4-pro:thinking";
 		provider: "nanogpt";
@@ -799,6 +827,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"TEE/gemma4-31b": Model<"openai-completions"> & {
 		id: "TEE/gemma4-31b";
+		provider: "nanogpt";
+	};
+	"TEE/gemma4-31b:thinking": Model<"openai-completions"> & {
+		id: "TEE/gemma4-31b:thinking";
 		provider: "nanogpt";
 	};
 	"TEE/glm-4.6": Model<"openai-completions"> & {
@@ -833,6 +865,14 @@ export const NANOGPT_MODELS = values as {
 		id: "TEE/glm-5.2:thinking";
 		provider: "nanogpt";
 	};
+	"TEE/glm-5.3": Model<"openai-completions"> & {
+		id: "TEE/glm-5.3";
+		provider: "nanogpt";
+	};
+	"TEE/glm-5.3-flash": Model<"openai-completions"> & {
+		id: "TEE/glm-5.3-flash";
+		provider: "nanogpt";
+	};
 	"TEE/gpt-oss-120b": Model<"openai-completions"> & {
 		id: "TEE/gpt-oss-120b";
 		provider: "nanogpt";
@@ -853,6 +893,10 @@ export const NANOGPT_MODELS = values as {
 		id: "TEE/kimi-k2.6";
 		provider: "nanogpt";
 	};
+	"TEE/kimi-k2.7-code": Model<"openai-completions"> & {
+		id: "TEE/kimi-k2.7-code";
+		provider: "nanogpt";
+	};
 	"TEE/kimi-k3": Model<"openai-completions"> & {
 		id: "TEE/kimi-k3";
 		provider: "nanogpt";
@@ -871,6 +915,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"TEE/minimax-m2.5": Model<"openai-completions"> & {
 		id: "TEE/minimax-m2.5";
+		provider: "nanogpt";
+	};
+	"TEE/muse-glimmer-30b": Model<"openai-completions"> & {
+		id: "TEE/muse-glimmer-30b";
 		provider: "nanogpt";
 	};
 	"TEE/qwen2.5-vl-72b-instruct": Model<"openai-completions"> & {
@@ -911,6 +959,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"TEE/qwen3.6-35b-a3b-uncensored": Model<"openai-completions"> & {
 		id: "TEE/qwen3.6-35b-a3b-uncensored";
+		provider: "nanogpt";
+	};
+	"TEE/qwen3.8-27b": Model<"openai-completions"> & {
+		id: "TEE/qwen3.8-27b";
 		provider: "nanogpt";
 	};
 	"THUDM/GLM-4-32B-0414": Model<"openai-completions"> & {
@@ -989,6 +1041,26 @@ export const NANOGPT_MODELS = values as {
 		id: "abacusai/Dracarys-72B-Instruct";
 		provider: "nanogpt";
 	};
+	"abliterated-model": Model<"openai-completions"> & {
+		id: "abliterated-model";
+		provider: "nanogpt";
+	};
+	"abliterated-model-large": Model<"openai-completions"> & {
+		id: "abliterated-model-large";
+		provider: "nanogpt";
+	};
+	"abliteration-ai/abliterated-model": Model<"openai-completions"> & {
+		id: "abliteration-ai/abliterated-model";
+		provider: "nanogpt";
+	};
+	"abliteration-ai/abliterated-model-large": Model<"openai-completions"> & {
+		id: "abliteration-ai/abliterated-model-large";
+		provider: "nanogpt";
+	};
+	"abliteration-ai/abliterated-model-large-v2": Model<"openai-completions"> & {
+		id: "abliteration-ai/abliterated-model-large-v2";
+		provider: "nanogpt";
+	};
 	"aion-labs/aion-1.0": Model<"openai-completions"> & {
 		id: "aion-labs/aion-1.0";
 		provider: "nanogpt";
@@ -1021,8 +1093,20 @@ export const NANOGPT_MODELS = values as {
 		id: "alibaba/qwen3.6-27b";
 		provider: "nanogpt";
 	};
+	"alibaba/qwen3.6-27b:thinking": Model<"openai-completions"> & {
+		id: "alibaba/qwen3.6-27b:thinking";
+		provider: "nanogpt";
+	};
 	"alibaba/qwen3.6-flash": Model<"openai-completions"> & {
 		id: "alibaba/qwen3.6-flash";
+		provider: "nanogpt";
+	};
+	"alibaba/qwen3.8-flash": Model<"openai-completions"> & {
+		id: "alibaba/qwen3.8-flash";
+		provider: "nanogpt";
+	};
+	"alibaba/qwen3.8-max-0902": Model<"openai-completions"> & {
+		id: "alibaba/qwen3.8-max-0902";
 		provider: "nanogpt";
 	};
 	"allenai/molmo-2-8b": Model<"openai-completions"> & {
@@ -1067,6 +1151,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"anthropic/claude-fable-5": Model<"openai-completions"> & {
 		id: "anthropic/claude-fable-5";
+		provider: "nanogpt";
+	};
+	"anthropic/claude-fable-5.1": Model<"openai-completions"> & {
+		id: "anthropic/claude-fable-5.1";
 		provider: "nanogpt";
 	};
 	"anthropic/claude-fable-latest": Model<"openai-completions"> & {
@@ -1215,6 +1303,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"brave-research": Model<"openai-completions"> & {
 		id: "brave-research";
+		provider: "nanogpt";
+	};
+	"bytedance-seed/seed-2-1-turbo": Model<"openai-completions"> & {
+		id: "bytedance-seed/seed-2-1-turbo";
+		provider: "nanogpt";
+	};
+	"bytedance-seed/seed-2.0-code": Model<"openai-completions"> & {
+		id: "bytedance-seed/seed-2.0-code";
 		provider: "nanogpt";
 	};
 	"bytedance-seed/seed-2.0-lite": Model<"openai-completions"> & {
@@ -1441,6 +1537,10 @@ export const NANOGPT_MODELS = values as {
 		id: "deepseek-ai/DeepSeek-V3.1-Terminus:thinking";
 		provider: "nanogpt";
 	};
+	"deepseek-ai/DeepSeek-V3.1:thinking": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V3.1:thinking";
+		provider: "nanogpt";
+	};
 	"deepseek-ai/deepseek-v3.2-exp": Model<"openai-completions"> & {
 		id: "deepseek-ai/deepseek-v3.2-exp";
 		provider: "nanogpt";
@@ -1529,6 +1629,14 @@ export const NANOGPT_MODELS = values as {
 		id: "deepseek/deepseek-v4-pro";
 		provider: "nanogpt";
 	};
+	"deepseek/deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-pro-0813";
+		provider: "nanogpt";
+	};
+	"deepseek/deepseek-v4-pro-0813:thinking": Model<"openai-completions"> & {
+		id: "deepseek/deepseek-v4-pro-0813:thinking";
+		provider: "nanogpt";
+	};
 	"deepseek/deepseek-v4-pro-cheaper": Model<"openai-completions"> & {
 		id: "deepseek/deepseek-v4-pro-cheaper";
 		provider: "nanogpt";
@@ -1547,6 +1655,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"dmind/dmind-1-mini": Model<"openai-completions"> & {
 		id: "dmind/dmind-1-mini";
+		provider: "nanogpt";
+	};
+	"dots-studio/dots-3-note-preview": Model<"openai-completions"> & {
+		id: "dots-studio/dots-3-note-preview";
+		provider: "nanogpt";
+	};
+	"dots-studio/dots-3-note-preview:free": Model<"openai-completions"> & {
+		id: "dots-studio/dots-3-note-preview:free";
 		provider: "nanogpt";
 	};
 	"doubao-1-5-thinking-pro-250415": Model<"openai-completions"> & {
@@ -1749,6 +1865,42 @@ export const NANOGPT_MODELS = values as {
 		id: "gemma-4-12b-it";
 		provider: "nanogpt";
 	};
+	"gemma-4-26b-a4b-it-chimerax": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-chimerax";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-it-darksoul": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-darksoul";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-it-luminous": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-luminous";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-it-moonlight": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-moonlight";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-it-musica": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-musica";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-it-opusdistill": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-opusdistill";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-it-shadowsiren": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-it-shadowsiren";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-uncensored": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-uncensored";
+		provider: "nanogpt";
+	};
+	"gemma-4-26b-a4b-uncensored:thinking": Model<"openai-completions"> & {
+		id: "gemma-4-26b-a4b-uncensored:thinking";
+		provider: "nanogpt";
+	};
 	"gemma-4-31B-Fabled": Model<"openai-completions"> & {
 		id: "gemma-4-31B-Fabled";
 		provider: "nanogpt";
@@ -1767,6 +1919,34 @@ export const NANOGPT_MODELS = values as {
 	};
 	"gemma-4-31B-MeroMero": Model<"openai-completions"> & {
 		id: "gemma-4-31B-MeroMero";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-darkidol": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-darkidol";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-fabled": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-fabled";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-garnet": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-garnet";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-gembrain": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-gembrain";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-gemsicle": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-gemsicle";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-isometry": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-isometry";
+		provider: "nanogpt";
+	};
+	"gemma-4-31b-it-novelist": Model<"openai-completions"> & {
+		id: "gemma-4-31b-it-novelist";
 		provider: "nanogpt";
 	};
 	"gemma-4-e2b-it": Model<"openai-completions"> & {
@@ -1873,6 +2053,14 @@ export const NANOGPT_MODELS = values as {
 		id: "google/gemini-3.6-flash";
 		provider: "nanogpt";
 	};
+	"google/gemini-3.7-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.7-flash";
+		provider: "nanogpt";
+	};
+	"google/gemini-3.8-flash": Model<"openai-completions"> & {
+		id: "google/gemini-3.8-flash";
+		provider: "nanogpt";
+	};
 	"google/gemini-flash-1.5": Model<"openai-completions"> & {
 		id: "google/gemini-flash-1.5";
 		provider: "nanogpt";
@@ -1893,8 +2081,80 @@ export const NANOGPT_MODELS = values as {
 		id: "google/gemma-4-26b-a4b-it";
 		provider: "nanogpt";
 	};
+	"google/gemma-4-26b-a4b-it-chimerax": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-chimerax";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it-darksoul": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-darksoul";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it-luminous": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-luminous";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it-moonlight": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-moonlight";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it-musica": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-musica";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it-opusdistill": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-opusdistill";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it-shadowsiren": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it-shadowsiren";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-it:thinking": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-it:thinking";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-uncensored": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-uncensored";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-26b-a4b-uncensored:thinking": Model<"openai-completions"> & {
+		id: "google/gemma-4-26b-a4b-uncensored:thinking";
+		provider: "nanogpt";
+	};
 	"google/gemma-4-31b-it": Model<"openai-completions"> & {
 		id: "google/gemma-4-31b-it";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-darkidol": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-darkidol";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-fabled": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-fabled";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-garnet": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-garnet";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-gembrain": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-gembrain";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-gemsicle": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-gemsicle";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-isometry": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-isometry";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it-novelist": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it-novelist";
+		provider: "nanogpt";
+	};
+	"google/gemma-4-31b-it:thinking": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it:thinking";
 		provider: "nanogpt";
 	};
 	"grok-3-beta": Model<"openai-completions"> & {
@@ -1965,6 +2225,14 @@ export const NANOGPT_MODELS = values as {
 		id: "ibm-granite/granite-4.1-8b";
 		provider: "nanogpt";
 	};
+	"ibm-granite/granite-4.2-8b": Model<"openai-completions"> & {
+		id: "ibm-granite/granite-4.2-8b";
+		provider: "nanogpt";
+	};
+	"inception/mercury-2.5-preview": Model<"openai-completions"> & {
+		id: "inception/mercury-2.5-preview";
+		provider: "nanogpt";
+	};
 	"inclusionai/ling-2.6-1t": Model<"openai-completions"> & {
 		id: "inclusionai/ling-2.6-1t";
 		provider: "nanogpt";
@@ -1979,6 +2247,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"inclusionai/ling-3.0-flash:thinking": Model<"openai-completions"> & {
 		id: "inclusionai/ling-3.0-flash:thinking";
+		provider: "nanogpt";
+	};
+	"inclusionai/ling-3.0-tiny": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-tiny";
+		provider: "nanogpt";
+	};
+	"inclusionai/ling-3.0-tiny:thinking": Model<"openai-completions"> & {
+		id: "inclusionai/ling-3.0-tiny:thinking";
 		provider: "nanogpt";
 	};
 	"inclusionai/ring-2.6-1t": Model<"openai-completions"> & {
@@ -2065,6 +2341,10 @@ export const NANOGPT_MODELS = values as {
 		id: "liquid/lfm-2-24b-a2b";
 		provider: "nanogpt";
 	};
+	"liquid/lfm-2.5-2.6b": Model<"openai-completions"> & {
+		id: "liquid/lfm-2.5-2.6b";
+		provider: "nanogpt";
+	};
 	"longcat-2.0": Model<"openai-completions"> & {
 		id: "longcat-2.0";
 		provider: "nanogpt";
@@ -2121,6 +2401,10 @@ export const NANOGPT_MODELS = values as {
 		id: "meta-llama/llama-4-scout";
 		provider: "nanogpt";
 	};
+	"meta/muse-glimmer-30b": Model<"openai-completions"> & {
+		id: "meta/muse-glimmer-30b";
+		provider: "nanogpt";
+	};
 	"meta/muse-spark-1.1": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.1";
 		provider: "nanogpt";
@@ -2131,6 +2415,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"meta/muse-spark-1.2-contributor": Model<"openai-completions"> & {
 		id: "meta/muse-spark-1.2-contributor";
+		provider: "nanogpt";
+	};
+	"meta/muse-spark-1.3": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3";
+		provider: "nanogpt";
+	};
+	"meta/muse-spark-1.3-contributor": Model<"openai-completions"> & {
+		id: "meta/muse-spark-1.3-contributor";
 		provider: "nanogpt";
 	};
 	"microsoft/MAI-DS-R1-FP8": Model<"openai-completions"> & {
@@ -2453,6 +2745,14 @@ export const NANOGPT_MODELS = values as {
 		id: "nvidia/nemotron-3-ultra-550b-a55b:thinking";
 		provider: "nanogpt";
 	};
+	"nvidia/nemotron-3.5-lightning": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning";
+		provider: "nanogpt";
+	};
+	"nvidia/nemotron-3.5-lightning:thinking": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning:thinking";
+		provider: "nanogpt";
+	};
 	"nvidia/nvidia-nemotron-nano-9b-v2": Model<"openai-completions"> & {
 		id: "nvidia/nvidia-nemotron-nano-9b-v2";
 		provider: "nanogpt";
@@ -2697,6 +2997,30 @@ export const NANOGPT_MODELS = values as {
 		id: "openai/o4-mini-high";
 		provider: "nanogpt";
 	};
+	"ornith-ai/ornith-1.5-35b-a3b": Model<"openai-completions"> & {
+		id: "ornith-ai/ornith-1.5-35b-a3b";
+		provider: "nanogpt";
+	};
+	"ornith-ai/ornith-1.5-35b-a3b:thinking": Model<"openai-completions"> & {
+		id: "ornith-ai/ornith-1.5-35b-a3b:thinking";
+		provider: "nanogpt";
+	};
+	"ornith-ai/ornith-1.5-397b": Model<"openai-completions"> & {
+		id: "ornith-ai/ornith-1.5-397b";
+		provider: "nanogpt";
+	};
+	"ornith-ai/ornith-1.5-397b:thinking": Model<"openai-completions"> & {
+		id: "ornith-ai/ornith-1.5-397b:thinking";
+		provider: "nanogpt";
+	};
+	"ornith-ai/ornith-1.5-9b": Model<"openai-completions"> & {
+		id: "ornith-ai/ornith-1.5-9b";
+		provider: "nanogpt";
+	};
+	"ornith-ai/ornith-1.5-9b:thinking": Model<"openai-completions"> & {
+		id: "ornith-ai/ornith-1.5-9b:thinking";
+		provider: "nanogpt";
+	};
 	"owl": Model<"openai-completions"> & {
 		id: "owl";
 		provider: "nanogpt";
@@ -2781,8 +3105,20 @@ export const NANOGPT_MODELS = values as {
 		id: "qwen/Qwen3-235B-A22B-Instruct-2507-TEE";
 		provider: "nanogpt";
 	};
+	"qwen/Qwen3-235B-A22B-Thinking-2507": Model<"openai-completions"> & {
+		id: "qwen/Qwen3-235B-A22B-Thinking-2507";
+		provider: "nanogpt";
+	};
 	"qwen/Qwen3-Next-80B-A3B-Instruct": Model<"openai-completions"> & {
 		id: "qwen/Qwen3-Next-80B-A3B-Instruct";
+		provider: "nanogpt";
+	};
+	"qwen/Qwen3.6-35B-A3B": Model<"openai-completions"> & {
+		id: "qwen/Qwen3.6-35B-A3B";
+		provider: "nanogpt";
+	};
+	"qwen/Qwen3.6-35B-A3B:thinking": Model<"openai-completions"> & {
+		id: "qwen/Qwen3.6-35B-A3B:thinking";
 		provider: "nanogpt";
 	};
 	"qwen/qwen-2.5-72b-instruct": Model<"openai-completions"> & {
@@ -2841,6 +3177,38 @@ export const NANOGPT_MODELS = values as {
 		id: "qwen/qwen3.5-plus";
 		provider: "nanogpt";
 	};
+	"qwen/qwen3.6-35b-a3b-uncensored": Model<"openai-completions"> & {
+		id: "qwen/qwen3.6-35b-a3b-uncensored";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.6-35b-a3b-uncensored:thinking": Model<"openai-completions"> & {
+		id: "qwen/qwen3.6-35b-a3b-uncensored:thinking";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.8-2.4t-a95b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-2.4t-a95b";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.8-27b-fable": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b-fable";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.8-27b-obliterated": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b-obliterated";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.8-27b-obliterated:thinking": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b-obliterated:thinking";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.8-27b-uncensored": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b-uncensored";
+		provider: "nanogpt";
+	};
+	"qwen/qwen3.8-27b-uncensored:thinking": Model<"openai-completions"> & {
+		id: "qwen/qwen3.8-27b-uncensored:thinking";
+		provider: "nanogpt";
+	};
 	"qwen/qwq-32b-preview": Model<"openai-completions"> & {
 		id: "qwen/qwq-32b-preview";
 		provider: "nanogpt";
@@ -2869,6 +3237,10 @@ export const NANOGPT_MODELS = values as {
 		id: "qwen3-vl-235b-a22b-thinking";
 		provider: "nanogpt";
 	};
+	"qwen3.5-0.8b": Model<"openai-completions"> & {
+		id: "qwen3.5-0.8b";
+		provider: "nanogpt";
+	};
 	"qwen3.5-122b-a10b": Model<"openai-completions"> & {
 		id: "qwen3.5-122b-a10b";
 		provider: "nanogpt";
@@ -2881,8 +3253,24 @@ export const NANOGPT_MODELS = values as {
 		id: "qwen3.5-27b";
 		provider: "nanogpt";
 	};
+	"qwen3.5-27b:thinking": Model<"openai-completions"> & {
+		id: "qwen3.5-27b:thinking";
+		provider: "nanogpt";
+	};
+	"qwen3.5-2b": Model<"openai-completions"> & {
+		id: "qwen3.5-2b";
+		provider: "nanogpt";
+	};
 	"qwen3.5-35b-a3b": Model<"openai-completions"> & {
 		id: "qwen3.5-35b-a3b";
+		provider: "nanogpt";
+	};
+	"qwen3.5-35b-a3b:thinking": Model<"openai-completions"> & {
+		id: "qwen3.5-35b-a3b:thinking";
+		provider: "nanogpt";
+	};
+	"qwen3.5-4b": Model<"openai-completions"> & {
+		id: "qwen3.5-4b";
 		provider: "nanogpt";
 	};
 	"qwen3.5-flash": Model<"openai-completions"> & {
@@ -2913,8 +3301,24 @@ export const NANOGPT_MODELS = values as {
 		id: "qwen3.7-max";
 		provider: "nanogpt";
 	};
+	"qwen3.7-max:thinking": Model<"openai-completions"> & {
+		id: "qwen3.7-max:thinking";
+		provider: "nanogpt";
+	};
 	"qwen3.7-plus": Model<"openai-completions"> & {
 		id: "qwen3.7-plus";
+		provider: "nanogpt";
+	};
+	"qwen3.7-plus:thinking": Model<"openai-completions"> & {
+		id: "qwen3.7-plus:thinking";
+		provider: "nanogpt";
+	};
+	"qwen3.8-27b": Model<"openai-completions"> & {
+		id: "qwen3.8-27b";
+		provider: "nanogpt";
+	};
+	"qwen3.8-27b:thinking": Model<"openai-completions"> & {
+		id: "qwen3.8-27b:thinking";
 		provider: "nanogpt";
 	};
 	"qwen3.8-max": Model<"openai-completions"> & {
@@ -2993,6 +3397,10 @@ export const NANOGPT_MODELS = values as {
 		id: "soob3123/amoral-gemma3-27B-v2";
 		provider: "nanogpt";
 	};
+	"stealth/ox-alpha": Model<"openai-completions"> & {
+		id: "stealth/ox-alpha";
+		provider: "nanogpt";
+	};
 	"step-2-16k-exp": Model<"openai-completions"> & {
 		id: "step-2-16k-exp";
 		provider: "nanogpt";
@@ -3039,6 +3447,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"tencent/hy3-preview": Model<"openai-completions"> & {
 		id: "tencent/hy3-preview";
+		provider: "nanogpt";
+	};
+	"tencent/hy4-preview": Model<"openai-completions"> & {
+		id: "tencent/hy4-preview";
 		provider: "nanogpt";
 	};
 	"thedrummer/skyfall-36b-v2": Model<"openai-completions"> & {
@@ -3095,6 +3507,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"upstage/solar-pro-3": Model<"openai-completions"> & {
 		id: "upstage/solar-pro-3";
+		provider: "nanogpt";
+	};
+	"upstage/solar-pro4": Model<"openai-completions"> & {
+		id: "upstage/solar-pro4";
+		provider: "nanogpt";
+	};
+	"upstage/solar-pro4:thinking": Model<"openai-completions"> & {
+		id: "upstage/solar-pro4:thinking";
 		provider: "nanogpt";
 	};
 	"v0-1.0-md": Model<"openai-completions"> & {
@@ -3155,6 +3575,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"x-ai/grok-4.5": Model<"openai-completions"> & {
 		id: "x-ai/grok-4.5";
+		provider: "nanogpt";
+	};
+	"x-ai/grok-4.6": Model<"openai-completions"> & {
+		id: "x-ai/grok-4.6";
 		provider: "nanogpt";
 	};
 	"x-ai/grok-build-0.1": Model<"openai-completions"> & {
@@ -3225,6 +3649,22 @@ export const NANOGPT_MODELS = values as {
 		id: "yi-medium-200k";
 		provider: "nanogpt";
 	};
+	"z-ai/GLM-4.5-Air": Model<"openai-completions"> & {
+		id: "z-ai/GLM-4.5-Air";
+		provider: "nanogpt";
+	};
+	"z-ai/GLM-4.5-Air:thinking": Model<"openai-completions"> & {
+		id: "z-ai/GLM-4.5-Air:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/GLM-4.6-turbo": Model<"openai-completions"> & {
+		id: "z-ai/GLM-4.6-turbo";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.5": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.5";
+		provider: "nanogpt";
+	};
 	"z-ai/glm-4.5v": Model<"openai-completions"> & {
 		id: "z-ai/glm-4.5v";
 		provider: "nanogpt";
@@ -3233,12 +3673,108 @@ export const NANOGPT_MODELS = values as {
 		id: "z-ai/glm-4.6";
 		provider: "nanogpt";
 	};
+	"z-ai/glm-4.6-original": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.6-original";
+		provider: "nanogpt";
+	};
 	"z-ai/glm-4.6:thinking": Model<"openai-completions"> & {
 		id: "z-ai/glm-4.6:thinking";
 		provider: "nanogpt";
 	};
+	"z-ai/glm-4.6v": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.6v";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.6v-flash-original": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.6v-flash-original";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.6v-original": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.6v-original";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7-flash": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7-flash";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7-flash-original": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7-flash-original";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7-flash-original:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7-flash-original:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7-flash:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7-flash:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7-original": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7-original";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7-original:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7-original:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-4.7:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-4.7:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5": Model<"openai-completions"> & {
+		id: "z-ai/glm-5";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5-original": Model<"openai-completions"> & {
+		id: "z-ai/glm-5-original";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5-original:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-5-original:thinking";
+		provider: "nanogpt";
+	};
 	"z-ai/glm-5-turbo": Model<"openai-completions"> & {
 		id: "z-ai/glm-5-turbo";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.1": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.1";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.1:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.1:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.2": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.2";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.2:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.2:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.3": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.3-flash": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-flash";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.3-flash-uncensored": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3-flash-uncensored";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5.3:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.3:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-5:thinking": Model<"openai-completions"> & {
+		id: "z-ai/glm-5:thinking";
 		provider: "nanogpt";
 	};
 	"z-ai/glm-5v-turbo": Model<"openai-completions"> & {
@@ -3247,6 +3783,10 @@ export const NANOGPT_MODELS = values as {
 	};
 	"z-ai/glm-5v-turbo:thinking": Model<"openai-completions"> & {
 		id: "z-ai/glm-5v-turbo:thinking";
+		provider: "nanogpt";
+	};
+	"z-ai/glm-latest": Model<"openai-completions"> & {
+		id: "z-ai/glm-latest";
 		provider: "nanogpt";
 	};
 	"zai-org/GLM-4.5-Air": Model<"openai-completions"> & {
@@ -3297,6 +3837,14 @@ export const NANOGPT_MODELS = values as {
 		id: "zai-org/glm-4.7-flash-original";
 		provider: "nanogpt";
 	};
+	"zai-org/glm-4.7-flash-original:thinking": Model<"openai-completions"> & {
+		id: "zai-org/glm-4.7-flash-original:thinking";
+		provider: "nanogpt";
+	};
+	"zai-org/glm-4.7-flash:thinking": Model<"openai-completions"> & {
+		id: "zai-org/glm-4.7-flash:thinking";
+		provider: "nanogpt";
+	};
 	"zai-org/glm-4.7-original": Model<"openai-completions"> & {
 		id: "zai-org/glm-4.7-original";
 		provider: "nanogpt";
@@ -3335,6 +3883,14 @@ export const NANOGPT_MODELS = values as {
 	};
 	"zai-org/glm-5.2:thinking": Model<"openai-completions"> & {
 		id: "zai-org/glm-5.2:thinking";
+		provider: "nanogpt";
+	};
+	"zai-org/glm-5.3": Model<"openai-completions"> & {
+		id: "zai-org/glm-5.3";
+		provider: "nanogpt";
+	};
+	"zai-org/glm-5.3:thinking": Model<"openai-completions"> & {
+		id: "zai-org/glm-5.3:thinking";
 		provider: "nanogpt";
 	};
 	"zai-org/glm-5:thinking": Model<"openai-completions"> & {

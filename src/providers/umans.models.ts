@@ -13,8 +13,12 @@ export const UMANS_MODELS = values as {
 		id: "umans-deepseek-v4-flash-0731";
 		provider: "umans";
 	};
-	"umans-deepseek-v4-flash-0731-lab": Model<"anthropic-messages"> & {
-		id: "umans-deepseek-v4-flash-0731-lab";
+	"umans-deepseek-v4-flash-vision-exp-lab": Model<"anthropic-messages"> & {
+		id: "umans-deepseek-v4-flash-vision-exp-lab";
+		provider: "umans";
+	};
+	"umans-deepseek-v4-pro-0813": Model<"anthropic-messages"> & {
+		id: "umans-deepseek-v4-pro-0813";
 		provider: "umans";
 	};
 	"umans-flash": Model<"anthropic-messages"> & {
@@ -23,6 +27,14 @@ export const UMANS_MODELS = values as {
 	};
 	"umans-glm-5.2": Model<"anthropic-messages"> & {
 		id: "umans-glm-5.2";
+		provider: "umans";
+	};
+	"umans-glm-5.3": Model<"anthropic-messages"> & {
+		id: "umans-glm-5.3";
+		provider: "umans";
+	};
+	"umans-glm-5.3-flash-lab": Model<"anthropic-messages"> & {
+		id: "umans-glm-5.3-flash-lab";
 		provider: "umans";
 	};
 	"umans-kimi-k2.7": Model<"anthropic-messages"> & {

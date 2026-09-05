@@ -3,6 +3,7 @@
  */
 
 import OpenAI from "openai";
+import { clinePassHeaders } from "../cline-pass-headers.ts";
 import type { Context, Model, ProviderEnv, ProviderHeaders } from "../../types.ts";
 import { getCachedProviderProxyUrl } from "../../utils/node-http-proxy.ts";
 import { createProxyFetchForUrl } from "../../utils/proxy-agent.ts";
@@ -34,6 +35,7 @@ export function createClient(
 	env?: ProviderEnv,
 ) {
 	const headers: ProviderHeaders = { ...model.headers };
+	if (model.provider === "cline-pass") Object.assign(headers, clinePassHeaders(sessionId));
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({

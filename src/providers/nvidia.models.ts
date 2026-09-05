@@ -5,6 +5,162 @@ import values from "./data/nvidia.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const NVIDIA_MODELS = values as {
+	"01-ai/yi-large": Model<"openai-completions"> & {
+		id: "01-ai/yi-large";
+		provider: "nvidia";
+	};
+	"abacusai/dracarys-llama-3.1-70b-instruct": Model<"openai-completions"> & {
+		id: "abacusai/dracarys-llama-3.1-70b-instruct";
+		provider: "nvidia";
+	};
+	"abacusai/dracarys-llama-3_1-70b-instruct": Model<"openai-completions"> & {
+		id: "abacusai/dracarys-llama-3_1-70b-instruct";
+		provider: "nvidia";
+	};
+	"adept/fuyu-8b": Model<"openai-completions"> & {
+		id: "adept/fuyu-8b";
+		provider: "nvidia";
+	};
+	"ai21labs/jamba-1.5-large-instruct": Model<"openai-completions"> & {
+		id: "ai21labs/jamba-1.5-large-instruct";
+		provider: "nvidia";
+	};
+	"aisingapore/sea-lion-7b-instruct": Model<"openai-completions"> & {
+		id: "aisingapore/sea-lion-7b-instruct";
+		provider: "nvidia";
+	};
+	"baai/bge-m3": Model<"openai-completions"> & {
+		id: "baai/bge-m3";
+		provider: "nvidia";
+	};
+	"bigcode/starcoder2-15b": Model<"openai-completions"> & {
+		id: "bigcode/starcoder2-15b";
+		provider: "nvidia";
+	};
+	"bytedance/seed-oss-36b-instruct": Model<"openai-completions"> & {
+		id: "bytedance/seed-oss-36b-instruct";
+		provider: "nvidia";
+	};
+	"databricks/dbrx-instruct": Model<"openai-completions"> & {
+		id: "databricks/dbrx-instruct";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-coder-6.7b-instruct": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-coder-6.7b-instruct";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-r1-0528": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-r1-0528";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v3.1": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v3.1";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v3.1-terminus": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v3.1-terminus";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v3.2": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v3.2";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v4-flash": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v4-flash";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v4-flash-0731": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v4-flash-0731";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v4-pro": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v4-pro";
+		provider: "nvidia";
+	};
+	"deepseek-ai/deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "deepseek-ai/deepseek-v4-pro-0813";
+		provider: "nvidia";
+	};
+	"google/codegemma-1.1-7b": Model<"openai-completions"> & {
+		id: "google/codegemma-1.1-7b";
+		provider: "nvidia";
+	};
+	"google/codegemma-7b": Model<"openai-completions"> & {
+		id: "google/codegemma-7b";
+		provider: "nvidia";
+	};
+	"google/deplot": Model<"openai-completions"> & {
+		id: "google/deplot";
+		provider: "nvidia";
+	};
+	"google/gemma-2-27b-it": Model<"openai-completions"> & {
+		id: "google/gemma-2-27b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-2-2b-it": Model<"openai-completions"> & {
+		id: "google/gemma-2-2b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-2b": Model<"openai-completions"> & {
+		id: "google/gemma-2b";
+		provider: "nvidia";
+	};
+	"google/gemma-3-12b-it": Model<"openai-completions"> & {
+		id: "google/gemma-3-12b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-3-1b-it": Model<"openai-completions"> & {
+		id: "google/gemma-3-1b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-3-27b-it": Model<"openai-completions"> & {
+		id: "google/gemma-3-27b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-3-4b-it": Model<"openai-completions"> & {
+		id: "google/gemma-3-4b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-3n-e2b-it": Model<"openai-completions"> & {
+		id: "google/gemma-3n-e2b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-3n-e4b-it": Model<"openai-completions"> & {
+		id: "google/gemma-3n-e4b-it";
+		provider: "nvidia";
+	};
+	"google/gemma-4-31b-it": Model<"openai-completions"> & {
+		id: "google/gemma-4-31b-it";
+		provider: "nvidia";
+	};
+	"google/recurrentgemma-2b": Model<"openai-completions"> & {
+		id: "google/recurrentgemma-2b";
+		provider: "nvidia";
+	};
+	"ibm/granite-3.0-3b-a800m-instruct": Model<"openai-completions"> & {
+		id: "ibm/granite-3.0-3b-a800m-instruct";
+		provider: "nvidia";
+	};
+	"ibm/granite-3.0-8b-instruct": Model<"openai-completions"> & {
+		id: "ibm/granite-3.0-8b-instruct";
+		provider: "nvidia";
+	};
+	"ibm/granite-34b-code-instruct": Model<"openai-completions"> & {
+		id: "ibm/granite-34b-code-instruct";
+		provider: "nvidia";
+	};
+	"ibm/granite-8b-code-instruct": Model<"openai-completions"> & {
+		id: "ibm/granite-8b-code-instruct";
+		provider: "nvidia";
+	};
+	"meta/codellama-70b": Model<"openai-completions"> & {
+		id: "meta/codellama-70b";
+		provider: "nvidia";
+	};
+	"meta/llama-3.1-405b-instruct": Model<"openai-completions"> & {
+		id: "meta/llama-3.1-405b-instruct";
+		provider: "nvidia";
+	};
 	"meta/llama-3.1-70b-instruct": Model<"openai-completions"> & {
 		id: "meta/llama-3.1-70b-instruct";
 		provider: "nvidia";
@@ -17,6 +173,14 @@ export const NVIDIA_MODELS = values as {
 		id: "meta/llama-3.2-11b-vision-instruct";
 		provider: "nvidia";
 	};
+	"meta/llama-3.2-1b-instruct": Model<"openai-completions"> & {
+		id: "meta/llama-3.2-1b-instruct";
+		provider: "nvidia";
+	};
+	"meta/llama-3.2-3b-instruct": Model<"openai-completions"> & {
+		id: "meta/llama-3.2-3b-instruct";
+		provider: "nvidia";
+	};
 	"meta/llama-3.2-90b-vision-instruct": Model<"openai-completions"> & {
 		id: "meta/llama-3.2-90b-vision-instruct";
 		provider: "nvidia";
@@ -25,20 +189,284 @@ export const NVIDIA_MODELS = values as {
 		id: "meta/llama-3.3-70b-instruct";
 		provider: "nvidia";
 	};
+	"meta/llama-4-maverick-17b-128e-instruct": Model<"openai-completions"> & {
+		id: "meta/llama-4-maverick-17b-128e-instruct";
+		provider: "nvidia";
+	};
+	"meta/llama-4-scout-17b-16e-instruct": Model<"openai-completions"> & {
+		id: "meta/llama-4-scout-17b-16e-instruct";
+		provider: "nvidia";
+	};
+	"meta/llama-guard-4-12b": Model<"openai-completions"> & {
+		id: "meta/llama-guard-4-12b";
+		provider: "nvidia";
+	};
+	"meta/llama2-70b": Model<"openai-completions"> & {
+		id: "meta/llama2-70b";
+		provider: "nvidia";
+	};
+	"meta/llama3-70b-instruct": Model<"openai-completions"> & {
+		id: "meta/llama3-70b-instruct";
+		provider: "nvidia";
+	};
+	"meta/llama3-8b-instruct": Model<"openai-completions"> & {
+		id: "meta/llama3-8b-instruct";
+		provider: "nvidia";
+	};
+	"meta/muse-glimmer-30b": Model<"openai-completions"> & {
+		id: "meta/muse-glimmer-30b";
+		provider: "nvidia";
+	};
+	"microsoft/kosmos-2": Model<"openai-completions"> & {
+		id: "microsoft/kosmos-2";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3-medium-128k-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3-medium-128k-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3-medium-4k-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3-medium-4k-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3-small-128k-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3-small-128k-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3-small-8k-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3-small-8k-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3-vision-128k-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3-vision-128k-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3.5-moe-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3.5-moe-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-3.5-vision-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-3.5-vision-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-4-mini-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-4-mini-instruct";
+		provider: "nvidia";
+	};
+	"microsoft/phi-4-multimodal-instruct": Model<"openai-completions"> & {
+		id: "microsoft/phi-4-multimodal-instruct";
+		provider: "nvidia";
+	};
+	"minimaxai/minimax-m2": Model<"openai-completions"> & {
+		id: "minimaxai/minimax-m2";
+		provider: "nvidia";
+	};
+	"minimaxai/minimax-m2.1": Model<"openai-completions"> & {
+		id: "minimaxai/minimax-m2.1";
+		provider: "nvidia";
+	};
+	"minimaxai/minimax-m2.5": Model<"openai-completions"> & {
+		id: "minimaxai/minimax-m2.5";
+		provider: "nvidia";
+	};
+	"minimaxai/minimax-m2.7": Model<"openai-completions"> & {
+		id: "minimaxai/minimax-m2.7";
+		provider: "nvidia";
+	};
 	"minimaxai/minimax-m3": Model<"openai-completions"> & {
 		id: "minimaxai/minimax-m3";
+		provider: "nvidia";
+	};
+	"mistralai/codestral-22b-instruct-v0.1": Model<"openai-completions"> & {
+		id: "mistralai/codestral-22b-instruct-v0.1";
+		provider: "nvidia";
+	};
+	"mistralai/devstral-2-123b-instruct-2512": Model<"openai-completions"> & {
+		id: "mistralai/devstral-2-123b-instruct-2512";
+		provider: "nvidia";
+	};
+	"mistralai/ministral-14b-instruct-2512": Model<"openai-completions"> & {
+		id: "mistralai/ministral-14b-instruct-2512";
+		provider: "nvidia";
+	};
+	"mistralai/mistral-7b-instruct-v0.3": Model<"openai-completions"> & {
+		id: "mistralai/mistral-7b-instruct-v0.3";
+		provider: "nvidia";
+	};
+	"mistralai/mistral-7b-instruct-v03": Model<"openai-completions"> & {
+		id: "mistralai/mistral-7b-instruct-v03";
+		provider: "nvidia";
+	};
+	"mistralai/mistral-large": Model<"openai-completions"> & {
+		id: "mistralai/mistral-large";
+		provider: "nvidia";
+	};
+	"mistralai/mistral-large-2-instruct": Model<"openai-completions"> & {
+		id: "mistralai/mistral-large-2-instruct";
 		provider: "nvidia";
 	};
 	"mistralai/mistral-large-3-675b-instruct-2512": Model<"openai-completions"> & {
 		id: "mistralai/mistral-large-3-675b-instruct-2512";
 		provider: "nvidia";
 	};
+	"mistralai/mistral-medium-3.5-128b": Model<"openai-completions"> & {
+		id: "mistralai/mistral-medium-3.5-128b";
+		provider: "nvidia";
+	};
+	"mistralai/mistral-nemotron": Model<"openai-completions"> & {
+		id: "mistralai/mistral-nemotron";
+		provider: "nvidia";
+	};
+	"mistralai/mistral-small-3.1-24b-instruct-2503": Model<"openai-completions"> & {
+		id: "mistralai/mistral-small-3.1-24b-instruct-2503";
+		provider: "nvidia";
+	};
 	"mistralai/mistral-small-4-119b-2603": Model<"openai-completions"> & {
 		id: "mistralai/mistral-small-4-119b-2603";
 		provider: "nvidia";
 	};
+	"mistralai/mixtral-8x22b-instruct": Model<"openai-completions"> & {
+		id: "mistralai/mixtral-8x22b-instruct";
+		provider: "nvidia";
+	};
+	"mistralai/mixtral-8x22b-v0.1": Model<"openai-completions"> & {
+		id: "mistralai/mixtral-8x22b-v0.1";
+		provider: "nvidia";
+	};
+	"mistralai/mixtral-8x7b-instruct": Model<"openai-completions"> & {
+		id: "mistralai/mixtral-8x7b-instruct";
+		provider: "nvidia";
+	};
+	"mistralai/mixtral-8x7b-instruct-v0.1": Model<"openai-completions"> & {
+		id: "mistralai/mixtral-8x7b-instruct-v0.1";
+		provider: "nvidia";
+	};
+	"moonshotai/kimi-k2-instruct": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2-instruct";
+		provider: "nvidia";
+	};
+	"moonshotai/kimi-k2-instruct-0905": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2-instruct-0905";
+		provider: "nvidia";
+	};
+	"moonshotai/kimi-k2-thinking": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2-thinking";
+		provider: "nvidia";
+	};
+	"moonshotai/kimi-k2.5": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k2.5";
+		provider: "nvidia";
+	};
 	"moonshotai/kimi-k2.6": Model<"openai-completions"> & {
 		id: "moonshotai/kimi-k2.6";
+		provider: "nvidia";
+	};
+	"moonshotai/kimi-k3": Model<"openai-completions"> & {
+		id: "moonshotai/kimi-k3";
+		provider: "nvidia";
+	};
+	"nv-mistralai/mistral-nemo-12b-instruct": Model<"openai-completions"> & {
+		id: "nv-mistralai/mistral-nemo-12b-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/ai-synthetic-video-detector": Model<"openai-completions"> & {
+		id: "nvidia/ai-synthetic-video-detector";
+		provider: "nvidia";
+	};
+	"nvidia/cosmos-reason2-8b": Model<"openai-completions"> & {
+		id: "nvidia/cosmos-reason2-8b";
+		provider: "nvidia";
+	};
+	"nvidia/embed-qa-4": Model<"openai-completions"> & {
+		id: "nvidia/embed-qa-4";
+		provider: "nvidia";
+	};
+	"nvidia/gliner-pii": Model<"openai-completions"> & {
+		id: "nvidia/gliner-pii";
+		provider: "nvidia";
+	};
+	"nvidia/ising-calibration-1-35b-a3b": Model<"openai-completions"> & {
+		id: "nvidia/ising-calibration-1-35b-a3b";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemoguard-8b-content-safety": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemoguard-8b-content-safety";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemoguard-8b-topic-control": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemoguard-8b-topic-control";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemotron-51b-instruct": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-51b-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemotron-70b-instruct": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-70b-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemotron-nano-8b-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-nano-8b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemotron-nano-vl-8b-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-nano-vl-8b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemotron-safety-guard-8b-v3": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-safety-guard-8b-v3";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.1-nemotron-ultra-253b-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.1-nemotron-ultra-253b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.2-nv-embedqa-1b-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.2-nv-embedqa-1b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.3-nemotron-super-49b-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.3-nemotron-super-49b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3.3-nemotron-super-49b-v1.5": Model<"openai-completions"> & {
+		id: "nvidia/llama-3.3-nemotron-super-49b-v1.5";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3_3-nemotron-super-49b-v1": Model<"openai-completions"> & {
+		id: "nvidia/llama-3_3-nemotron-super-49b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/llama-3_3-nemotron-super-49b-v1_5": Model<"openai-completions"> & {
+		id: "nvidia/llama-3_3-nemotron-super-49b-v1_5";
+		provider: "nvidia";
+	};
+	"nvidia/llama-nemotron-embed-1b-v2": Model<"openai-completions"> & {
+		id: "nvidia/llama-nemotron-embed-1b-v2";
+		provider: "nvidia";
+	};
+	"nvidia/llama-nemotron-embed-vl-1b-v2": Model<"openai-completions"> & {
+		id: "nvidia/llama-nemotron-embed-vl-1b-v2";
+		provider: "nvidia";
+	};
+	"nvidia/llama3-chatqa-1.5-70b": Model<"openai-completions"> & {
+		id: "nvidia/llama3-chatqa-1.5-70b";
+		provider: "nvidia";
+	};
+	"nvidia/mistral-nemo-minitron-8b-8k-instruct": Model<"openai-completions"> & {
+		id: "nvidia/mistral-nemo-minitron-8b-8k-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/nemoretriever-parse": Model<"openai-completions"> & {
+		id: "nvidia/nemoretriever-parse";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-3-content-safety": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3-content-safety";
 		provider: "nvidia";
 	};
 	"nvidia/nemotron-3-nano-30b-a3b": Model<"openai-completions"> & {
@@ -57,8 +485,84 @@ export const NVIDIA_MODELS = values as {
 		id: "nvidia/nemotron-3-ultra-550b-a55b";
 		provider: "nvidia";
 	};
+	"nvidia/nemotron-3.5-content-safety": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-content-safety";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-3.5-lightning-30b-a3b": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-3.5-lightning-30b-a3b";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-4-340b-instruct": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-4-340b-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-4-340b-reward": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-4-340b-reward";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-content-safety-reasoning-4b": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-content-safety-reasoning-4b";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-mini-4b-instruct": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-mini-4b-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-nano-12b-v2-vl": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-nano-12b-v2-vl";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-nano-3-30b-a3b": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-nano-3-30b-a3b";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-parse": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-parse";
+		provider: "nvidia";
+	};
+	"nvidia/nemotron-voicechat": Model<"openai-completions"> & {
+		id: "nvidia/nemotron-voicechat";
+		provider: "nvidia";
+	};
+	"nvidia/neva-22b": Model<"openai-completions"> & {
+		id: "nvidia/neva-22b";
+		provider: "nvidia";
+	};
+	"nvidia/nv-embed-v1": Model<"openai-completions"> & {
+		id: "nvidia/nv-embed-v1";
+		provider: "nvidia";
+	};
+	"nvidia/nv-embedcode-7b-v1": Model<"openai-completions"> & {
+		id: "nvidia/nv-embedcode-7b-v1";
+		provider: "nvidia";
+	};
+	"nvidia/nv-embedqa-e5-v5": Model<"openai-completions"> & {
+		id: "nvidia/nv-embedqa-e5-v5";
+		provider: "nvidia";
+	};
+	"nvidia/nv-embedqa-mistral-7b-v2": Model<"openai-completions"> & {
+		id: "nvidia/nv-embedqa-mistral-7b-v2";
+		provider: "nvidia";
+	};
+	"nvidia/nvclip": Model<"openai-completions"> & {
+		id: "nvidia/nvclip";
+		provider: "nvidia";
+	};
 	"nvidia/nvidia-nemotron-nano-9b-v2": Model<"openai-completions"> & {
 		id: "nvidia/nvidia-nemotron-nano-9b-v2";
+		provider: "nvidia";
+	};
+	"nvidia/riva-translate-4b-instruct": Model<"openai-completions"> & {
+		id: "nvidia/riva-translate-4b-instruct";
+		provider: "nvidia";
+	};
+	"nvidia/riva-translate-4b-instruct-v1.1": Model<"openai-completions"> & {
+		id: "nvidia/riva-translate-4b-instruct-v1.1";
+		provider: "nvidia";
+	};
+	"nvidia/vila": Model<"openai-completions"> & {
+		id: "nvidia/vila";
 		provider: "nvidia";
 	};
 	"openai/gpt-oss-120b": Model<"openai-completions"> & {
@@ -69,6 +573,50 @@ export const NVIDIA_MODELS = values as {
 		id: "openai/gpt-oss-20b";
 		provider: "nvidia";
 	};
+	"poolside/laguna-xs-2.1": Model<"openai-completions"> & {
+		id: "poolside/laguna-xs-2.1";
+		provider: "nvidia";
+	};
+	"qwen/qwen2.5-coder-32b-instruct": Model<"openai-completions"> & {
+		id: "qwen/qwen2.5-coder-32b-instruct";
+		provider: "nvidia";
+	};
+	"qwen/qwen2.5-coder-7b-instruct": Model<"openai-completions"> & {
+		id: "qwen/qwen2.5-coder-7b-instruct";
+		provider: "nvidia";
+	};
+	"qwen/qwen3-235b-a22b": Model<"openai-completions"> & {
+		id: "qwen/qwen3-235b-a22b";
+		provider: "nvidia";
+	};
+	"qwen/qwen3-coder-480b-a35b-instruct": Model<"openai-completions"> & {
+		id: "qwen/qwen3-coder-480b-a35b-instruct";
+		provider: "nvidia";
+	};
+	"qwen/qwen3-next-80b-a3b-instruct": Model<"openai-completions"> & {
+		id: "qwen/qwen3-next-80b-a3b-instruct";
+		provider: "nvidia";
+	};
+	"qwen/qwen3-next-80b-a3b-thinking": Model<"openai-completions"> & {
+		id: "qwen/qwen3-next-80b-a3b-thinking";
+		provider: "nvidia";
+	};
+	"qwen/qwen3.5-122b-a10b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.5-122b-a10b";
+		provider: "nvidia";
+	};
+	"qwen/qwen3.5-397b-a17b": Model<"openai-completions"> & {
+		id: "qwen/qwen3.5-397b-a17b";
+		provider: "nvidia";
+	};
+	"sarvamai/sarvam-m": Model<"openai-completions"> & {
+		id: "sarvamai/sarvam-m";
+		provider: "nvidia";
+	};
+	"snowflake/arctic-embed-l": Model<"openai-completions"> & {
+		id: "snowflake/arctic-embed-l";
+		provider: "nvidia";
+	};
 	"stepfun-ai/step-3.5-flash": Model<"openai-completions"> & {
 		id: "stepfun-ai/step-3.5-flash";
 		provider: "nvidia";
@@ -77,8 +625,56 @@ export const NVIDIA_MODELS = values as {
 		id: "stepfun-ai/step-3.7-flash";
 		provider: "nvidia";
 	};
+	"stockmark/stockmark-2-100b-instruct": Model<"openai-completions"> & {
+		id: "stockmark/stockmark-2-100b-instruct";
+		provider: "nvidia";
+	};
+	"thinkingmachines/inkling": Model<"openai-completions"> & {
+		id: "thinkingmachines/inkling";
+		provider: "nvidia";
+	};
+	"upstage/solar-10.7b-instruct": Model<"openai-completions"> & {
+		id: "upstage/solar-10.7b-instruct";
+		provider: "nvidia";
+	};
+	"upstage/solar-10_7b-instruct": Model<"openai-completions"> & {
+		id: "upstage/solar-10_7b-instruct";
+		provider: "nvidia";
+	};
+	"writer/palmyra-creative-122b": Model<"openai-completions"> & {
+		id: "writer/palmyra-creative-122b";
+		provider: "nvidia";
+	};
+	"writer/palmyra-fin-70b-32k": Model<"openai-completions"> & {
+		id: "writer/palmyra-fin-70b-32k";
+		provider: "nvidia";
+	};
+	"writer/palmyra-med-70b": Model<"openai-completions"> & {
+		id: "writer/palmyra-med-70b";
+		provider: "nvidia";
+	};
+	"writer/palmyra-med-70b-32k": Model<"openai-completions"> & {
+		id: "writer/palmyra-med-70b-32k";
+		provider: "nvidia";
+	};
+	"z-ai/glm-5.1": Model<"openai-completions"> & {
+		id: "z-ai/glm-5.1";
+		provider: "nvidia";
+	};
 	"z-ai/glm-5.2": Model<"openai-completions"> & {
 		id: "z-ai/glm-5.2";
+		provider: "nvidia";
+	};
+	"z-ai/glm4.7": Model<"openai-completions"> & {
+		id: "z-ai/glm4.7";
+		provider: "nvidia";
+	};
+	"z-ai/glm5": Model<"openai-completions"> & {
+		id: "z-ai/glm5";
+		provider: "nvidia";
+	};
+	"zyphra/zamba2-7b-instruct": Model<"openai-completions"> & {
+		id: "zyphra/zamba2-7b-instruct";
 		provider: "nvidia";
 	};
 };

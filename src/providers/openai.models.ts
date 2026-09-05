@@ -5,6 +5,18 @@ import values from "./data/openai.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const OPENAI_MODELS = values as {
+	"codex-mini-latest": Model<"openai-responses"> & {
+		id: "codex-mini-latest";
+		provider: "openai";
+	};
+	"daybreak-blue-latest": Model<"openai-responses"> & {
+		id: "daybreak-blue-latest";
+		provider: "openai";
+	};
+	"daybreak-red-latest": Model<"openai-responses"> & {
+		id: "daybreak-red-latest";
+		provider: "openai";
+	};
 	"gpt-4": Model<"openai-responses"> & {
 		id: "gpt-4";
 		provider: "openai";
@@ -141,16 +153,36 @@ export const OPENAI_MODELS = values as {
 		id: "gpt-5.5-pro";
 		provider: "openai";
 	};
+	"gpt-5.6": Model<"openai-responses"> & {
+		id: "gpt-5.6";
+		provider: "openai";
+	};
+	"gpt-5.6-cyber": Model<"openai-responses"> & {
+		id: "gpt-5.6-cyber";
+		provider: "openai";
+	};
 	"gpt-5.6-luna": Model<"openai-responses"> & {
 		id: "gpt-5.6-luna";
+		provider: "openai";
+	};
+	"gpt-5.6-luna-pro": Model<"openai-responses"> & {
+		id: "gpt-5.6-luna-pro";
 		provider: "openai";
 	};
 	"gpt-5.6-sol": Model<"openai-responses"> & {
 		id: "gpt-5.6-sol";
 		provider: "openai";
 	};
+	"gpt-5.6-sol-pro": Model<"openai-responses"> & {
+		id: "gpt-5.6-sol-pro";
+		provider: "openai";
+	};
 	"gpt-5.6-terra": Model<"openai-responses"> & {
 		id: "gpt-5.6-terra";
+		provider: "openai";
+	};
+	"gpt-5.6-terra-pro": Model<"openai-responses"> & {
+		id: "gpt-5.6-terra-pro";
 		provider: "openai";
 	};
 	"gpt-realtime-2.1": Model<"openai-responses"> & {

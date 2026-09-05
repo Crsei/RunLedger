@@ -42,7 +42,7 @@ describe("Qianfan provider", () => {
 			provider: "qianfan",
 			baseUrl: QIANFAN_BASE_URL,
 		});
-		expect(model?.compat).toBeUndefined();
+		expect(model?.compat).toMatchObject({ supportsDeveloperRole: false, thinkingFormat: "openai" });
 		// 缺 /v2 时自动补齐
 		expect(qianfanProvider({ baseUrl: "https://qianfan.baidubce.com" }).baseUrl).toBe(QIANFAN_BASE_URL);
 

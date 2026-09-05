@@ -32,6 +32,10 @@ export type KnownImagesApi = "openrouter-images";
 export type ImagesApi = KnownImagesApi | (string & {});
 
 export type KnownProvider =
+	| "abliteration"
+	| "cline-pass"
+	| "deepinfra"
+	| "yolo-auto"
 	| "aiand"
 	| "amazon-bedrock"
 	| "ant-ling"
@@ -533,6 +537,10 @@ export type AssistantMessageEvent =
  * Use this to override URL-based auto-detection for custom providers.
  */
 export interface OpenAICompletionsCompat {
+	/** 请求端模型 ID；保持 catalog/session 的公共 ID 不变。 */
+	wireModelId?: string;
+	/** ClinePass 的按思考档位计费 token 预算。 */
+	reasoningBudgetMap?: Partial<Record<ThinkingLevel, number>>;
 	/** Whether the provider supports the `store` field. Default: auto-detected from URL. */
 	supportsStore?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: auto-detected from URL. */
@@ -587,6 +595,8 @@ export interface OpenAICompletionsCompat {
 
 /** Compatibility settings for OpenAI Responses APIs. */
 export interface OpenAIResponsesCompat {
+	/** 网关不支持加密 reasoning 时显式关闭请求该字段；默认开启。 */
+	includeEncryptedReasoning?: boolean;
 	/** Whether the provider supports the `developer` role (vs `system`). Default: true. */
 	supportsDeveloperRole?: boolean;
 	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */

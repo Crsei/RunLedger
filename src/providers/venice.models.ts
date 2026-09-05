@@ -29,6 +29,10 @@ export const VENICE_MODELS = values as {
 		id: "claude-fable-5";
 		provider: "venice";
 	};
+	"claude-fable-5-1": Model<"openai-completions"> & {
+		id: "claude-fable-5-1";
+		provider: "venice";
+	};
 	"claude-opus-4-5": Model<"openai-completions"> & {
 		id: "claude-opus-4-5";
 		provider: "venice";
@@ -97,8 +101,16 @@ export const VENICE_MODELS = values as {
 		id: "deepseek-v4-flash-0731";
 		provider: "venice";
 	};
+	"deepseek-v4-flash-0731-fast": Model<"openai-completions"> & {
+		id: "deepseek-v4-flash-0731-fast";
+		provider: "venice";
+	};
 	"deepseek-v4-pro": Model<"openai-completions"> & {
 		id: "deepseek-v4-pro";
+		provider: "venice";
+	};
+	"deepseek-v4-pro-0813": Model<"openai-completions"> & {
+		id: "deepseek-v4-pro-0813";
 		provider: "venice";
 	};
 	"e2ee-deepseek-v4-flash": Model<"openai-completions"> & {
@@ -193,6 +205,14 @@ export const VENICE_MODELS = values as {
 		id: "gemini-3-6-flash";
 		provider: "venice";
 	};
+	"gemini-3-7-flash": Model<"openai-completions"> & {
+		id: "gemini-3-7-flash";
+		provider: "venice";
+	};
+	"gemini-3-8-flash": Model<"openai-completions"> & {
+		id: "gemini-3-8-flash";
+		provider: "venice";
+	};
 	"gemini-3-flash-preview": Model<"openai-completions"> & {
 		id: "gemini-3-flash-preview";
 		provider: "venice";
@@ -247,6 +267,10 @@ export const VENICE_MODELS = values as {
 	};
 	"grok-4-5": Model<"openai-completions"> & {
 		id: "grok-4-5";
+		provider: "venice";
+	};
+	"grok-4-6": Model<"openai-completions"> & {
+		id: "grok-4-6";
 		provider: "venice";
 	};
 	"grok-41-fast": Model<"openai-completions"> & {
@@ -335,6 +359,10 @@ export const VENICE_MODELS = values as {
 	};
 	"mistral-small-3-2-24b-instruct": Model<"openai-completions"> & {
 		id: "mistral-small-3-2-24b-instruct";
+		provider: "venice";
+	};
+	"nvidia-nemotron-3-5-lightning-30b-a3b": Model<"openai-completions"> & {
+		id: "nvidia-nemotron-3-5-lightning-30b-a3b";
 		provider: "venice";
 	};
 	"nvidia-nemotron-3-nano-30b-a3b": Model<"openai-completions"> & {
@@ -433,6 +461,14 @@ export const VENICE_MODELS = values as {
 		id: "qwen-3-7-plus";
 		provider: "venice";
 	};
+	"qwen-3-8-2-4t-a95b": Model<"openai-completions"> & {
+		id: "qwen-3-8-2-4t-a95b";
+		provider: "venice";
+	};
+	"qwen-3-8-27b": Model<"openai-completions"> & {
+		id: "qwen-3-8-27b";
+		provider: "venice";
+	};
 	"qwen-3-8-max": Model<"openai-completions"> & {
 		id: "qwen-3-8-max";
 		provider: "venice";
@@ -489,6 +525,10 @@ export const VENICE_MODELS = values as {
 		id: "seed-2-1-turbo";
 		provider: "venice";
 	};
+	"stealth-ox-alpha": Model<"openai-completions"> & {
+		id: "stealth-ox-alpha";
+		provider: "venice";
+	};
 	"tencent-hy3-preview": Model<"openai-completions"> & {
 		id: "tencent-hy3-preview";
 		provider: "venice";
@@ -507,6 +547,14 @@ export const VENICE_MODELS = values as {
 	};
 	"xiaomi-mimo-v2-5": Model<"openai-completions"> & {
 		id: "xiaomi-mimo-v2-5";
+		provider: "venice";
+	};
+	"z-ai-glm-5-3": Model<"openai-completions"> & {
+		id: "z-ai-glm-5-3";
+		provider: "venice";
+	};
+	"z-ai-glm-5-3-flash": Model<"openai-completions"> & {
+		id: "z-ai-glm-5-3-flash";
 		provider: "venice";
 	};
 	"z-ai-glm-5-turbo": Model<"openai-completions"> & {

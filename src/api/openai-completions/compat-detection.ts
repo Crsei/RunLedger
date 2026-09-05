@@ -6,7 +6,7 @@ import type { Model, OpenAICompletionsCompat } from "../../types.ts";
 
 export type ResolvedOpenAICompletionsCompat = Omit<
 	Required<OpenAICompletionsCompat>,
-	"cacheControlFormat" | "deferredToolsMode"
+	"cacheControlFormat" | "deferredToolsMode" | "wireModelId" | "reasoningBudgetMap"
 > & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];

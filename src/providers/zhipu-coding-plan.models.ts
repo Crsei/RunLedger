@@ -49,6 +49,18 @@ export const ZHIPU_CODING_PLAN_MODELS = values as {
 		id: "glm-5.2-highspeed[1m]";
 		provider: "zhipu-coding-plan";
 	};
+	"glm-5.3": Model<"openai-completions"> & {
+		id: "glm-5.3";
+		provider: "zhipu-coding-plan";
+	};
+	"glm-5.3-flash": Model<"openai-completions"> & {
+		id: "glm-5.3-flash";
+		provider: "zhipu-coding-plan";
+	};
+	"glm-5.3-highspeed": Model<"openai-completions"> & {
+		id: "glm-5.3-highspeed";
+		provider: "zhipu-coding-plan";
+	};
 	"glm-5v-turbo": Model<"openai-completions"> & {
 		id: "glm-5v-turbo";
 		provider: "zhipu-coding-plan";

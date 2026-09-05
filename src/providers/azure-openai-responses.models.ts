@@ -5,6 +5,18 @@ import values from "./data/azure-openai-responses.json" with { type: "json" };
 import type { Model } from "../types.ts";
 
 export const AZURE_OPENAI_RESPONSES_MODELS = values as {
+	"codex-mini-latest": Model<"azure-openai-responses"> & {
+		id: "codex-mini-latest";
+		provider: "azure-openai-responses";
+	};
+	"daybreak-blue-latest": Model<"azure-openai-responses"> & {
+		id: "daybreak-blue-latest";
+		provider: "azure-openai-responses";
+	};
+	"daybreak-red-latest": Model<"azure-openai-responses"> & {
+		id: "daybreak-red-latest";
+		provider: "azure-openai-responses";
+	};
 	"gpt-4": Model<"azure-openai-responses"> & {
 		id: "gpt-4";
 		provider: "azure-openai-responses";
@@ -141,16 +153,36 @@ export const AZURE_OPENAI_RESPONSES_MODELS = values as {
 		id: "gpt-5.5-pro";
 		provider: "azure-openai-responses";
 	};
+	"gpt-5.6": Model<"azure-openai-responses"> & {
+		id: "gpt-5.6";
+		provider: "azure-openai-responses";
+	};
+	"gpt-5.6-cyber": Model<"azure-openai-responses"> & {
+		id: "gpt-5.6-cyber";
+		provider: "azure-openai-responses";
+	};
 	"gpt-5.6-luna": Model<"azure-openai-responses"> & {
 		id: "gpt-5.6-luna";
+		provider: "azure-openai-responses";
+	};
+	"gpt-5.6-luna-pro": Model<"azure-openai-responses"> & {
+		id: "gpt-5.6-luna-pro";
 		provider: "azure-openai-responses";
 	};
 	"gpt-5.6-sol": Model<"azure-openai-responses"> & {
 		id: "gpt-5.6-sol";
 		provider: "azure-openai-responses";
 	};
+	"gpt-5.6-sol-pro": Model<"azure-openai-responses"> & {
+		id: "gpt-5.6-sol-pro";
+		provider: "azure-openai-responses";
+	};
 	"gpt-5.6-terra": Model<"azure-openai-responses"> & {
 		id: "gpt-5.6-terra";
+		provider: "azure-openai-responses";
+	};
+	"gpt-5.6-terra-pro": Model<"azure-openai-responses"> & {
+		id: "gpt-5.6-terra-pro";
 		provider: "azure-openai-responses";
 	};
 	"gpt-realtime-2.1": Model<"azure-openai-responses"> & {

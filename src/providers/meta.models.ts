@@ -17,4 +17,12 @@ export const META_MODELS = values as {
 		id: "muse-spark-1.2-contributor";
 		provider: "meta";
 	};
+	"muse-spark-1.3": Model<"openai-responses"> & {
+		id: "muse-spark-1.3";
+		provider: "meta";
+	};
+	"muse-spark-1.3-contributor": Model<"openai-responses"> & {
+		id: "muse-spark-1.3-contributor";
+		provider: "meta";
+	};
 };

@@ -27,7 +27,7 @@ function modelsResponse(data: readonly Record<string, unknown>[]): Response {
 describe("synthetic provider", () => {
 	test("exposes the bundled OpenAI-compatible catalog and env-key auth", () => {
 		const provider = syntheticProvider();
-		const model = provider.getModels().find((entry) => entry.id === "hf:Qwen/Qwen3.6-27B");
+		const model = provider.getModels().find((entry) => entry.id === "hf:Qwen/Qwen3.8-27B");
 
 		expect(provider.id).toBe("synthetic");
 		expect(provider.name).toBe("Synthetic");
@@ -43,7 +43,7 @@ describe("synthetic provider", () => {
 
 	test("is present in the builtin generated model catalog", () => {
 		const catalog = MODELS["synthetic"] as Record<string, { provider?: string; api?: string }> | undefined;
-		expect(catalog?.["hf:Qwen/Qwen3.6-27B"]).toMatchObject({
+		expect(catalog?.["hf:Qwen/Qwen3.8-27B"]).toMatchObject({
 			provider: "synthetic",
 			api: "openai-completions",
 		});
@@ -128,7 +128,7 @@ describe("synthetic provider", () => {
 				// 仅 none 档位:纯 off 开关,不点亮 reasoning。
 				{ id: "syn:small:text", reasoning_parameters: { efforts: ["none"] } },
 				// wire 静默:参考模型投票(reasoning/vision)。
-				{ id: "hf:Qwen/Qwen3.6-27B" },
+				{ id: "hf:Qwen/Qwen3.8-27B" },
 			]);
 		const provider = syntheticProvider({ fetch: fetchImpl });
 		const refresh = provider.refreshModels;
@@ -144,7 +144,7 @@ describe("synthetic provider", () => {
 		expect(noneEffort).toMatchObject({ reasoning: false, input: ["text"] });
 		expect(noneEffort?.thinkingLevelMap).toEqual({ minimal: "none" });
 
-		const silent = provider.getModels().find((entry) => entry.id === "hf:Qwen/Qwen3.6-27B");
+		const silent = provider.getModels().find((entry) => entry.id === "hf:Qwen/Qwen3.8-27B");
 		expect(silent).toMatchObject({ reasoning: true, input: ["text", "image"] });
 	});
 

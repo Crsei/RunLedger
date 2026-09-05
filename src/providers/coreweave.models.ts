@@ -53,6 +53,10 @@ export const COREWEAVE_MODELS = values as {
 		id: "Qwen/Qwen3.6-35B-A3B";
 		provider: "coreweave";
 	};
+	"Qwen/Qwen3.8-27B": Model<"openai-completions"> & {
+		id: "Qwen/Qwen3.8-27B";
+		provider: "coreweave";
+	};
 	"deepseek-ai/DeepSeek-V3.1": Model<"openai-completions"> & {
 		id: "deepseek-ai/DeepSeek-V3.1";
 		provider: "coreweave";
@@ -69,12 +73,20 @@ export const COREWEAVE_MODELS = values as {
 		id: "deepseek-ai/DeepSeek-V4-Pro";
 		provider: "coreweave";
 	};
+	"deepseek-ai/DeepSeek-V4-Pro-0813": Model<"openai-completions"> & {
+		id: "deepseek-ai/DeepSeek-V4-Pro-0813";
+		provider: "coreweave";
+	};
 	"google/gemma-4-31B-it": Model<"openai-completions"> & {
 		id: "google/gemma-4-31B-it";
 		provider: "coreweave";
 	};
 	"ibm-granite/granite-4.1-8b": Model<"openai-completions"> & {
 		id: "ibm-granite/granite-4.1-8b";
+		provider: "coreweave";
+	};
+	"ibm-granite/granite-4.2-8b": Model<"openai-completions"> & {
+		id: "ibm-granite/granite-4.2-8b";
 		provider: "coreweave";
 	};
 	"meta-llama/Llama-3.1-70B-Instruct": Model<"openai-completions"> & {
@@ -119,6 +131,10 @@ export const COREWEAVE_MODELS = values as {
 	};
 	"nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B": Model<"openai-completions"> & {
 		id: "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B";
+		provider: "coreweave";
+	};
+	"nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B": Model<"openai-completions"> & {
+		id: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B";
 		provider: "coreweave";
 	};
 	"openai/gpt-oss-120b": Model<"openai-completions"> & {

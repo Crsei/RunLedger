@@ -1,20 +1,5 @@
-/**
- * oh-my-pi 新增 provider 移植的模型数据源(2026-08 批次)。
- *
- * 唯一来源: scripts/sources/oh-my-pi-provider-models-17.2.15.json —— 由
- * scripts/sources/extract-oh-my-pi-models.ts 从 oh-my-pi 冻结快照
- * (06aecdd51f07e689e970ceaa180abe2be0c14bbb, v17.2.15) 的
- * packages/catalog/src/models.json 提取。
- *
- * 生成契约:
- * - vendored 条目按 provider 映射表归一化为目标 Model(api/baseUrl/compat
- *   白名单化,maxTokens null 回退);
- * - 来源无 bundled catalog 的 provider(litellm / lm-studio / siliconflow /
- *   siliconflow-cn / vllm)使用下方 hand-seed 占位,运行时动态发现为准;
- * - 禁止手工编辑 src/models.generated.ts 或 src/providers/data/*.json。
- */
-
-import values from "./sources/oh-my-pi-provider-models-17.2.15.json" with { type: "json" };
+/** oh-my-pi 18.1.9 固定 catalog；协议与身份映射仍由 RunLedger 拥有。 */
+import snapshot from "./sources/oh-my-pi-provider-models-18.1.9.json" with { type: "json" };
 import type {
 	Api,
 	KnownProvider,
@@ -25,7 +10,7 @@ import type {
 
 type JsonRecord = Record<string, unknown>;
 
-const PORTED = values as Record<string, JsonRecord[]>;
+const PORTED = snapshot.providers as Record<string, JsonRecord[]>;
 
 /** maxTokens 为 null 时的回退输出上限:不超过 context,且不越过 64K。 */
 const MAX_TOKENS_FALLBACK = 65_536;
@@ -38,6 +23,13 @@ const COMPLETIONS_COMPAT_KEYS = new Set([
 	"supportsUsageInStreaming",
 	"thinkingFormat",
 	"requiresReasoningContentForToolCalls",
+	"requiresReasoningContentForAllAssistantTurns",
+	"supportsStrictMode",
+	"maxTokensField",
+	"requiresToolResultName",
+	"requiresAssistantAfterToolResult",
+	"requiresThinkingAsText",
+	"supportsLongPromptCacheRetention",
 ]);
 
 /** 来源 thinkingFormat 到 RunLedger 枚举的映射("kimi" 无等价 dialect,归入 "zai" 的 thinking:{type} 编码)。 */
@@ -70,8 +62,16 @@ function mapCompletionsCompat(raw: unknown): OpenAICompletionsCompat | undefined
 			if (mapped) compat.thinkingFormat = mapped;
 			continue;
 		}
-		if (key === "requiresReasoningContentForToolCalls") {
+		if (key === "requiresReasoningContentForToolCalls" || key === "requiresReasoningContentForAllAssistantTurns") {
 			if (value === true) compat.requiresReasoningContentOnAssistantMessages = true;
+			continue;
+		}
+		if (key === "maxTokensField") {
+			if (value === "max_tokens" || value === "max_completion_tokens") compat.maxTokensField = value;
+			continue;
+		}
+		if (key === "supportsLongPromptCacheRetention") {
+			if (typeof value === "boolean") compat.supportsLongCacheRetention = value;
 			continue;
 		}
 		if (typeof value === "boolean") {
@@ -114,6 +114,8 @@ interface PortedProviderConfig {
 	compat?: OpenAICompletionsCompat | OpenAIResponsesCompat;
 	/** 过滤掉不适合作为 builtin 的模型 id。 */
 	filterModel?: (id: string) => boolean;
+	/** 只同步目标已有协议支持的条目。 */
+	filterApi?: Api;
 }
 
 /**
@@ -121,6 +123,10 @@ interface PortedProviderConfig {
  * development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md §2.1。
  */
 const PORTED_PROVIDER_CONFIGS: readonly PortedProviderConfig[] = [
+	{ sourceKey: "abliteration", provider: "abliteration" },
+	{ sourceKey: "cline-pass", provider: "cline-pass" },
+	{ sourceKey: "deepinfra", provider: "deepinfra" },
+	{ sourceKey: "yolo-auto", provider: "yolo-auto" },
 	// A 批次
 	{ sourceKey: "aimlapi", provider: "aimlapi" },
 	{ sourceKey: "baseten", provider: "baseten" },
@@ -187,6 +193,35 @@ const PORTED_PROVIDER_CONFIGS: readonly PortedProviderConfig[] = [
 		filterModel: (id) => !["grok-4.3", "grok-4.5", "grok-build-0.1"].includes(id),
 	},
 	{ sourceKey: "zenmux", provider: "zenmux" },
+	{ sourceKey: "aiand", provider: "aiand" },
+	{ sourceKey: "amazon-bedrock", provider: "amazon-bedrock" },
+	{ sourceKey: "anthropic", provider: "anthropic" },
+	{ sourceKey: "cerebras", provider: "cerebras" },
+	{ sourceKey: "cloudflare-ai-gateway", provider: "cloudflare-ai-gateway" },
+	{ sourceKey: "deepseek", provider: "deepseek" },
+	{ sourceKey: "fireworks", provider: "fireworks" },
+	{ sourceKey: "github-copilot", provider: "github-copilot" },
+	{ sourceKey: "google", provider: "google" },
+	{ sourceKey: "groq", provider: "groq" },
+	{ sourceKey: "huggingface", provider: "huggingface" },
+	{ sourceKey: "minimax", provider: "minimax" },
+	{ sourceKey: "minimax-cn", provider: "minimax-cn" },
+	{ sourceKey: "nvidia", provider: "nvidia" },
+	{ sourceKey: "openai", provider: "openai" },
+	{ sourceKey: "openai-codex", provider: "openai-codex" },
+	{ sourceKey: "opencode-go", provider: "opencode-go" },
+	{ sourceKey: "together", provider: "together" },
+	{ sourceKey: "vercel-ai-gateway", provider: "vercel-ai-gateway" },
+	{ sourceKey: "xai", provider: "xai" },
+	{ sourceKey: "xiaomi", provider: "xiaomi" },
+	{ sourceKey: "xiaomi-token-plan-ams", provider: "xiaomi-token-plan-ams" },
+	{ sourceKey: "xiaomi-token-plan-cn", provider: "xiaomi-token-plan-cn" },
+	{ sourceKey: "xiaomi-token-plan-sgp", provider: "xiaomi-token-plan-sgp" },
+	{ sourceKey: "moonshot", provider: "moonshotai" },
+	{ sourceKey: "mistral", provider: "mistral", api: "mistral-conversations" },
+	{ sourceKey: "openrouter", provider: "openrouter", api: "openai-completions" },
+	{ sourceKey: "google-vertex", provider: "google-vertex", filterApi: "google-vertex" },
+	{ sourceKey: "zai", provider: "zai", filterApi: "openai-completions" },
 ];
 
 /** 来源无 bundled catalog 的 provider hand-seed(运行时动态发现为准)。 */
@@ -280,6 +315,7 @@ const HAND_SEEDED_MODELS: readonly (Model<"openai-completions"> & { provider: Kn
 function mapVendoredEntry(entry: JsonRecord, config: PortedProviderConfig): Model<Api> | undefined {
 	const id = typeof entry.id === "string" ? entry.id : "";
 	if (!id) return undefined;
+	if (config.filterApi && entry.api !== config.filterApi) return undefined;
 	if (config.filterModel && !config.filterModel(id)) return undefined;
 	const contextWindow = positiveNumber(entry.contextWindow, 4096);
 	const api = (config.api ?? (typeof entry.api === "string" ? (entry.api as Api) : "openai-completions")) as Api;
@@ -304,6 +340,36 @@ function mapVendoredEntry(entry: JsonRecord, config: PortedProviderConfig): Mode
 		}
 	} else if (api === "openai-responses" && config.compat) {
 		(model as Model<"openai-responses">).compat = config.compat as OpenAIResponsesCompat;
+	}
+	const thinking = isRecord(entry.thinking) ? entry.thinking : undefined;
+	if (thinking && Array.isArray(thinking.efforts)) {
+		const map: NonNullable<Model<Api>["thinkingLevelMap"]> = {};
+		const efforts = thinking.efforts;
+		const effortMap = isRecord(thinking.effortMap) ? thinking.effortMap : {};
+		for (const level of ["minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+			map[level] = efforts.includes(level) ? (typeof effortMap[level] === "string" ? effortMap[level] : level) : null;
+		}
+		if (thinking.requiresEffort === true) map.off = null;
+		model.thinkingLevelMap = map;
+	}
+	if (config.provider === "abliteration") {
+		(model as Model<"openai-responses">).compat = { supportsDeveloperRole: false, supportsLongCacheRetention: false, includeEncryptedReasoning: false };
+	}
+	if (config.provider === "cline-pass") {
+		const compat = (model as Model<"openai-completions">).compat ??= {};
+		compat.wireModelId = isRecord(entry.compat) && entry.compat.wireModelIdMode === "raw" ? id : `cline-pass/${id}`;
+		if (thinking?.mode === "budget" && isRecord(thinking.effortBudgets)) {
+			compat.reasoningBudgetMap = {};
+			for (const level of ["minimal", "low", "medium", "high", "xhigh", "max"] as const) {
+				const budget = thinking.effortBudgets[level];
+				if (typeof budget === "number" && budget > 0) compat.reasoningBudgetMap[level] = budget;
+			}
+		}
+	}
+	if (config.provider === "yolo-auto") {
+		const compat = (model as Model<"openai-completions">).compat ??= {};
+		compat.chatTemplateKwargs = { thinking: { $var: "thinking.enabled" }, reasoning_effort: { $var: "thinking.effort", omitWhenOff: true } };
+		compat.requiresReasoningContentOnAssistantMessages = true;
 	}
 	return model;
 }
@@ -337,3 +403,20 @@ export const PORTED_PROVIDER_IDS = [
 	...PORTED_PROVIDER_CONFIGS.map((config) => config.provider),
 	...new Set(HAND_SEEDED_MODELS.map((model) => model.provider)),
 ] as const satisfies readonly KnownProvider[];
+
+/** 源 catalog 优先同步模型元数据；已有 native transport、URL 和 compat 继续以目标为准。 */
+export function mergePortedProviderModels(models: Model<Api>[]): Model<Api>[] {
+	const original = new Map(models.map((model) => [`${model.provider}\0${model.id}`, model]));
+	const preserve = new Set<string>(["aiand", "amazon-bedrock", "anthropic", "cerebras", "cloudflare-ai-gateway", "deepseek", "fireworks", "github-copilot", "google", "groq", "huggingface", "minimax", "minimax-cn", "nvidia", "openai", "openai-codex", "opencode-go", "together", "vercel-ai-gateway", "xai", "xiaomi", "xiaomi-token-plan-ams", "xiaomi-token-plan-cn", "xiaomi-token-plan-sgp", "moonshotai", "mistral", "openrouter", "google-vertex", "zai"]);
+	const ported = loadPortedProviderModels().map((model) => {
+		const previous = original.get(`${model.provider}\0${model.id}`);
+		if (!previous || !preserve.has(model.provider)) return model;
+		return { ...previous, ...model, api: previous.api, baseUrl: previous.baseUrl, compat: previous.compat,
+			thinkingLevelMap: previous.thinkingLevelMap ?? model.thinkingLevelMap,
+			cost: { ...model.cost, ...(previous.cost.tiers ? { tiers: previous.cost.tiers } : {}) } };
+	});
+	const keys = new Set(ported.map((model) => `${model.provider}\0${model.id}`));
+	const retired = new Set(PORTED_PROVIDER_CONFIGS.flatMap((config) =>
+		((snapshot.removedModels as Record<string, string[]>)[config.sourceKey] ?? []).map((id) => `${config.provider}\0${id}`)));
+	return [...ported, ...models.filter((model) => !keys.has(`${model.provider}\0${model.id}`) && !retired.has(`${model.provider}\0${model.id}`))];
+}
