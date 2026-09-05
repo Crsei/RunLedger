@@ -25,6 +25,7 @@ export interface Component {
   present?(width: number): PresentationBlock[];
   getPresentationVersion?(): number;
   handleInput?(data: string): void;
+  handlePaste?(text: string): void;
   /** 组件期望的渲染高度(OpenTUI 路径由帧驱动,缺省 3)。 */
   desiredHeight?(width: number): number;
   invalidate(): void;
@@ -240,6 +241,10 @@ export class Editor implements Component, Focusable {
     this.cursorCodePoints = Array.from(this.text).length;
     this.onChange?.(this.text);
     this.tui.requestRender();
+  }
+  /** 粘贴按文本插入，不能把换行或控制字符当成提交/退出快捷键。 */
+  handlePaste(text: string): void {
+    this.replaceRangeAtCursor(text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, ""));
   }
   /** 在光标位置插入文本,光标移至插入内容之后(粘贴/输入路径共用)。 */
   insertTextAtCursor(text: string): void { this.replaceRangeAtCursor(text); }
@@ -508,6 +513,7 @@ export class TUI extends Container {
     if (this.terminal instanceof ProcessTerminal) {
       this.runtime = await createOpenTuiComponentRuntime({
         onInput: (data) => this.handleInput(data, true),
+        onPaste: (text) => this.handlePaste(text),
         onResize: () => this.requestRender(),
         onActions: (actions) => this.emitActions(actions),
         onThemeMode: (mode) => {
@@ -548,6 +554,17 @@ export class TUI extends Container {
     } else this.frameScheduler.markDirty(backlog);
   }
   invalidate(): void { super.invalidate(); this.requestRender(true); }
+  handlePaste(text: string): void {
+    const captures = this.hasCapturingOverlay();
+    const target = captures ? this.overlay : this.focusedComponent;
+    if (target?.handlePaste !== undefined) target.handlePaste(text);
+    else target?.handleInput?.(text);
+    if (!captures && target !== null && target !== undefined && "getText" in target) {
+      const draft = (target as Component & { getText(): string }).getText();
+      this.emitActions(normalizeAppInput({ kind: "composer-changed", draft }));
+    }
+    this.requestRender(true);
+  }
   private handleInput(input: string, boundaryActionsDispatched = false): void {
     const appInput = appInputForKeypress(input);
     if (appInput !== undefined) {
@@ -682,7 +699,7 @@ export const Key = {
 } as const;
 
 const RAW_KEYS: Record<string, readonly string[]> = {
-  enter: ["\r", "\n"], return: ["\r", "\n"], escape: ["\x1b"], esc: ["\x1b"], tab: ["\t"], backspace: ["\x7f", "\x08"],
+  enter: ["\r"], return: ["\r"], escape: ["\x1b"], esc: ["\x1b"], tab: ["\t"], backspace: ["\x7f", "\x08"],
   up: ["\x1b[A"], down: ["\x1b[B"], right: ["\x1b[C"], left: ["\x1b[D"], pageUp: ["\x1b[5~"], pageDown: ["\x1b[6~"],
   "shift+enter": ["\x1b[13;2u"], "ctrl+j": ["\x0a"], "alt+enter": ["\x1b\r", "\x1b[27;3;13~"], "alt+up": ["\x1bp", "\x1b[1;3A"],
 };

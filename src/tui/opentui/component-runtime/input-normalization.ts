@@ -5,6 +5,8 @@
 import type { KeyEvent } from "@opentui/core";
 
 export function normalizedInputFor(key: KeyEvent): string {
+  // 传统终端将 Ctrl+J 发为 LF，OpenTUI 会把它命名为 return；保留它与 CR 的区别。
+  if (key.sequence === "\n" || key.raw === "\n") return "ctrl+j";
   const aliases: Record<string, string> = {
     return: "enter",
     pageup: "pageUp",

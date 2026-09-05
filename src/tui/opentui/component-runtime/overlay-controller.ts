@@ -36,7 +36,7 @@ export class OverlayController {
     const screenMaxHeight = Math.max(1, Math.floor(renderer.height * 0.8));
     const attachedMaxHeight = bottomLeft ? Math.max(1, renderer.height - composerTopOffset) : screenMaxHeight;
     const maxHeight = Math.min(screenMaxHeight, attachedMaxHeight);
-    const modalHeight = interactive
+    const modalHeight = interactive && !bottomLeft
       ? Math.min(maxHeight, Math.max(Math.max(1, Math.floor(renderer.height * 0.5)), contentHeight))
       : Math.min(maxHeight, contentHeight);
     const overlay = this.ensureOverlay(transcriptVariant);

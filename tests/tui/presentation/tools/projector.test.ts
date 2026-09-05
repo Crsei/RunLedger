@@ -149,3 +149,25 @@ describe("B2 safe tool projector", () => {
 		});
 	});
 });
+
+describe("persisted bash feedback", () => {
+	it("reconstructs text output after replay without duplicating live chunks", () => {
+		const start = projectToolStart("bash", { command: "printf audit-ok" }, startedAt);
+		const result = { content: [{ type: "text", text: "STDOUT:\naudit-ok\nSTDERR:\nwarning\nEXIT: 0" }], details: { outputFormat: "text", exitCode: 0 }, isError: false };
+		const replay = projectToolEnd(start, result, startedAt);
+		expect(replay.result?.kind === "shell" ? [...replay.result.chunks] : []).toMatchObject([
+			{ channel: "stdout", text: { text: "audit-ok" } }, { channel: "stderr", text: { text: "warning" } },
+		]);
+		const live = projectToolEnd({ ...start, result: { kind: "shell", chunks: [projectShellChunk("stdout", "audit-ok"), projectShellChunk("stderr", "warning")], truncated: false, exitCode: { state: "unknown", reason: "not-reported" }, durationMs: { state: "unknown", reason: "not-reported" }, background: false } }, result, startedAt);
+		expect(live.result).toEqual(replay.result);
+	});
+
+	it("restores stream-json channels and keeps empty output empty", () => {
+		const start = projectToolStart("bash", {}, startedAt);
+		const result = projectToolEnd(start, { content: [{ type: "text", text: '{"type":"stdout","line":"ok"}\n{"type":"stderr","line":"warn"}\n{"type":"exit","code":1}' }], details: { outputFormat: "stream-json", exitCode: 1 }, isError: true }, startedAt);
+		expect(result.result?.kind === "shell" ? [...result.result.chunks] : []).toMatchObject([{ channel: "stdout", text: { text: "ok" } }, { channel: "stderr", text: { text: "warn" } }]);
+		const empty = projectToolEnd(start, { content: [{ type: "text", text: "EXIT: 0" }], details: { outputFormat: "text", exitCode: 0 }, isError: false }, startedAt).result;
+		expect(empty?.kind).toBe("shell");
+		if (empty?.kind === "shell") expect(empty.chunks).toHaveLength(0);
+	});
+});

@@ -288,7 +288,9 @@ export function projectToolEnd(
 	let metadata = projectToolResultMetadata({ toolName: presentation.title.text, details: result.details, content: result.content });
 	if (metadata.kind === "shell") {
 		const previous = presentation.result?.kind === "shell" ? presentation.result : undefined;
-		const bounded = boundShellChunks([...(previous?.chunks ?? []), ...metadata.chunks]);
+		// 重放只有最终 receipt；仅在没有流式输出时恢复，避免实时卡片重复正文。
+		const chunks = [...(previous?.chunks ?? []), ...metadata.chunks];
+		const bounded = boundShellChunks(chunks.length > 0 ? chunks : persistedShellChunks(resultText, result.details));
 		metadata = {
 			...metadata,
 			chunks: bounded,
@@ -310,6 +312,35 @@ export function projectToolEnd(
 		error: result.isError ? boundedToolText(resultText, TOOL_TEXT_BOUND_BYTES) : undefined,
 		timestamps: { ...presentation.timestamps, endedAt },
 	};
+}
+
+/** 读取 bash 的两种既有输出格式；退出状态仍只取结构化 details。 */
+function persistedShellChunks(text: string, details: unknown): SafeShellChunk[] {
+	if (isRecord(details) && details.outputFormat === "stream-json") {
+		const channels: Record<"stdout" | "stderr", string[]> = { stdout: [], stderr: [] };
+		try {
+			for (const line of text.split("\n")) {
+				const value: unknown = JSON.parse(line);
+				if (!isRecord(value)) return [];
+				if ((value.type === "stdout" || value.type === "stderr") && typeof value.line === "string") {
+					channels[value.type].push(value.line);
+				} else if (value.type !== "exit") return [];
+			}
+		} catch { return []; }
+		return (["stdout", "stderr"] as const).flatMap((channel) => {
+			const output = channels[channel].join("\n");
+			return output.length > 0 ? [projectShellChunk(channel, output)] : [];
+		});
+	}
+	const exit = text.match(/(?:^|\n)EXIT: -?\d+$/u);
+	if (exit === null) return text.length > 0 ? [projectShellChunk("stderr", text)] : [];
+	const output = text.slice(0, exit.index);
+	if (output.startsWith("STDERR:\n")) return [projectShellChunk("stderr", output.slice(8))];
+	if (!output.startsWith("STDOUT:\n")) return [];
+	const split = output.indexOf("\nSTDERR:\n", 8);
+	return split < 0
+		? [projectShellChunk("stdout", output.slice(8))]
+		: [projectShellChunk("stdout", output.slice(8, split)), projectShellChunk("stderr", output.slice(split + 9))];
 }
 
 /** ToolResultContent -> 有界 result metadata；只提取结构化已知字段。 */

@@ -187,7 +187,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     event.stopPropagation();
     const text = new TextDecoder().decode(event.bytes);
     options.onActions?.(normalizeAppInput({ kind: "paste", text }));
-    options.onInput(text);
+    if (options.onPaste !== undefined) options.onPaste(text);
+    else options.onInput(text);
   });
   // OpenTUI 自身会查询终端默认色(OSC 10/11);把回复原样转发给上层解析,
   // 避免本适配层与 primitives 互相引用。

@@ -55,6 +55,7 @@ export interface OpenTuiComponentFrame {
 
 export interface OpenTuiComponentRuntimeOptions {
   onInput(data: string): void;
+  onPaste?(text: string): void;
   onResize(): void;
   onActions?(actions: readonly TuiAction[]): void;
   onThemeMode?(mode: "dark" | "light"): void;
