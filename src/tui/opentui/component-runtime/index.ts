@@ -95,6 +95,8 @@ export function createOpenTuiComponentRuntimeFromRenderer(
   editorRow.add(editor);
   const footer = new TextRenderable(renderer, {
     id: "runledger-footer",
+    // Footer 已逐行投影；软换行会挤掉固定高度内的后续费用行。
+    wrapMode: "none",
     width: "100%",
     flexShrink: 0,
     content: "",

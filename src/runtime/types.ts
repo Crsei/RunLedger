@@ -470,8 +470,8 @@ export interface AgentRunBudgetUsage {
 }
 
 export const DEFAULT_AGENT_RUN_BUDGET: AgentRunBudget = Object.freeze({
-  maxModelTurns: 32,
-  maxToolTurns: 16,
+  maxModelTurns: 256,
+  maxToolTurns: 128,
   maxActiveDurationMs: 900_000,
   maxRepeatedFailureFingerprint: 3,
   maxApprovalExpirations: 2,

@@ -81,7 +81,7 @@ export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions =
 	const baseId = `timeline-${row.id}`;
 	switch (row.kind) {
 		case "user":
-			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", content: row.text.text }];
+			return [{ id: baseId, ...partMetadata(row, `${row.id}/text`), kind: "text", role: "user", content: row.text.text }];
 		case "assistant": {
 			const blocks: PresentationBlock[] = [];
 			if (options.hideThinking !== true && row.thinking !== undefined && row.thinking.text.length > 0) {

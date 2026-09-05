@@ -1,5 +1,7 @@
 # RunLedger TUI Codex 语法高亮完整复刻计划
 
+> 2026-09-05 修复：提交后的用户消息绘制整行输入框背景；Markdown 行内命令与链接使用 dark/light 青蓝色，并补齐 `markup.link.label/url`。OpenTUI 的 peer 固定 `web-tree-sitter 0.25.10`；Bash AST 通过 `web-tree-sitter-bash` 别名保留 `0.26.11`，避免缺失 `tree-sitter.wasm` 导致整段高亮初始化失败。
+
 > 状态：**planned，尚未实现**
 >
 > 计划日期：2026-08-12

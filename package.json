@@ -127,7 +127,8 @@
     "strip-ansi": "7.1.2",
     "tree-sitter-bash": "0.25.1",
     "typebox": "1.1.38",
-    "web-tree-sitter": "0.26.11"
+    "web-tree-sitter": "0.25.10",
+    "web-tree-sitter-bash": "npm:web-tree-sitter@0.26.11"
   },
   "optionalDependencies": {
     "@runledger/syntax-highlighter-darwin-arm64": "0.0.1",

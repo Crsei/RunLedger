@@ -1,5 +1,7 @@
 # RunLedger 输入区 Usage Status Line 复刻计划
 
+> 2026-09-05 修复：费用字段不再作为窄屏的首个丢弃项；原生 Footer 禁止软换行，避免第一行超宽挤掉后续费用行。78/141 可用列回归及隔离 CLI 的 80/143 列合成历史 TTY 均保留累计费用。费用仍来自 canonical session usage；provider 未提供费用时不伪造金额。
+
 > 状态：`partial`。P1–P4 已实现并有 focused/runtime/native 证据；P5 真实 provider/TTY 与 P6 人工验收仍未完成。本文件继续作为 usage status line 的唯一状态入口。
 >
 > 基线：RunLedger `session-owner-runtime` / `4eecd499e715f3d588388fdbde937ec4699d9ab0`，2026-08-17；oh-my-pi `main` / `06aecdd51f07e689e970ceaa180abe2be0c14bbb`，工作树干净。

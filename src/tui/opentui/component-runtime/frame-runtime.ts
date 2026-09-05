@@ -75,7 +75,7 @@ export class OpenTuiFrameRuntime {
     const projectionStartedAt = Date.now();
     const wasFollowing = isAtBottom(this.port.transcript);
     this.applyScrollPresentation(frame);
-    const body = this.registry.reconcile(frame.body);
+    const body = this.registry.reconcile(frame.body, frame.editorAppearance?.backgroundColor);
     this.lastDirtyPartIds = body.dirtyPartIds;
     if (this.previousBodySignature.length > 0 && body.changed) {
       if (body.signature.length < this.previousBodySignature.length || wasFollowing) this.pendingNewContent = 0;

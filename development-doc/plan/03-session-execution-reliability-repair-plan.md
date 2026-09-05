@@ -1,5 +1,7 @@
 # RunLedger Session 执行可靠性修复计划
 
+> 2026-09-05 默认预算调整：模型轮次 256、工具轮次 128，避免正常多步任务在 16 个工具轮次后提前停止；15 分钟 active time、重复失败及审批过期保护保留。显式预算继续覆盖默认值。
+
 > 文档状态：implementing。P0、P2–P6 已实现并通过 focused 回归；P1 的
 > sandbox-off/foreground/background/pipe/PTY 共享工具链与环境已实现，限制性
 > sandbox runtime mounts 受 ADR 04 冻结而 blocked；P7 已完成本地全量门禁，

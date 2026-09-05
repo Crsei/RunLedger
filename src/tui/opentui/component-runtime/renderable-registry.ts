@@ -1,6 +1,6 @@
 /** Transcript body renderable 的唯一 create/update/destroy owner。 */
 
-import { MarkdownRenderable, TextRenderable, type CliRenderer, type ScrollBoxRenderable } from "@opentui/core";
+import { MarkdownRenderable, TextRenderable, type CliRenderer, type ScrollBoxRenderable, type OptimizedBuffer } from "@opentui/core";
 import { ExecRenderable } from "../exec-renderable.ts";
 import { DiffRenderable } from "../diff-renderable.ts";
 import { PlanUpdateRenderable } from "../plan-update-renderable.ts";
@@ -10,6 +10,7 @@ import { ansiToStyledText } from "../ansi-styled-text.ts";
 import { createRunLedgerSyntaxStyle } from "../syntax-style.ts";
 import { BodySignatureTracker } from "../body-signature.ts";
 import { splitClosedStreamingTable } from "../streaming-table-split.ts";
+import { loadTheme } from "../../theme/theme.ts";
 import type { PresentationBlock } from "../../presentation.ts";
 import { chooseSettledMarkdownSpan, finalizeMarkdownChildren, updateMermaidTheme, updateTranscriptHighlightAdmission } from "./highlight-admission.ts";
 import { blockKey, blockSignatureText, blockText, isSettledPresentationBlock, renderableId, toPresentationBlock } from "./transcript-runtime.ts";
@@ -29,13 +30,16 @@ export class RenderableRegistry {
   private bodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
   private settledMarkdownStates = new Map<string, SettledMarkdownState>();
   private readonly bodySignatureTracker = new BodySignatureTracker();
+  private userForeground = loadTheme("dark").primary;
+  private userBackground = loadTheme("dark").editorBackground;
   private syntaxStyle = createRunLedgerSyntaxStyle();
 
   public constructor(port: RenderableRegistryPort) {
     this.port = port;
   }
 
-  public reconcile(body: OpenTuiComponentFrame["body"]): RenderableReconciliation {
+  public reconcile(body: OpenTuiComponentFrame["body"], userBackground?: string): RenderableReconciliation {
+    this.userBackground = userBackground ?? this.userBackground;
     const { renderer, transcript } = this.port;
     const nextBodyNodes = new Map<string, KeyedRenderable<BodyRenderable>>();
     const nextSettledMarkdownStates = new Map<string, SettledMarkdownState>();
@@ -102,8 +106,10 @@ export class RenderableRegistry {
   }
 
   public applyThemeMode(mode: "dark" | "light"): void {
+    this.userForeground = loadTheme(mode).primary;
+    this.userBackground = loadTheme(mode).editorBackground;
     const previousStyle = this.syntaxStyle;
-    this.syntaxStyle = createRunLedgerSyntaxStyle();
+    this.syntaxStyle = createRunLedgerSyntaxStyle(mode);
     for (const node of this.bodyNodes.values()) {
       if (node.renderable instanceof MarkdownRenderable) node.renderable.syntaxStyle = this.syntaxStyle;
       updateMermaidTheme(node.renderable, mode);
@@ -172,6 +178,10 @@ export class RenderableRegistry {
     } else if (current.renderable instanceof TextRenderable && current.contentKey !== contentKey) {
       current.renderable.content = ansiToStyledText(contentKey);
     }
+    if (block.kind === "text" && current.renderable instanceof TextRenderable) {
+      current.renderable.bg = block.role === "user" ? this.userBackground : undefined;
+      if (block.role === "user") current.renderable.fg = this.userForeground;
+    }
     current.contentKey = contentKey;
     return current;
   }
@@ -191,7 +201,7 @@ export class RenderableRegistry {
       ? new NoticeRenderable(renderer, { ...common, block, highlightService: this.port.syntaxHighlightService, themeController: this.port.syntaxThemeController })
       : block.kind === "exploration"
       ? new ExplorationRenderable(renderer, { ...common, block })
-      : new TextRenderable(renderer, { ...common, content: ansiToStyledText(blockText(block)) });
+      : new (block.kind === "text" && block.role === "user" ? UserMessageRenderable : TextRenderable)(renderer, { ...common, ...(block.kind === "text" && block.role === "user" ? { bg: this.userBackground, fg: this.userForeground } : {}), content: ansiToStyledText(blockText(block)) });
     if (block.kind === "markdown" && !block.streaming && renderable instanceof MarkdownRenderable) {
       renderable.streaming = false;
       finalizeMarkdownChildren(renderable);
@@ -221,5 +231,13 @@ function disposeMissing<T extends BodyRenderable | MarkdownRenderable>(
     if (next.has(key)) continue;
     transcript.remove(node.renderable);
     node.renderable.destroyRecursively();
+  }
+}
+
+/** 文字 bg 只覆盖字形；用户消息的整行背景须覆盖换行后的空白列。 */
+class UserMessageRenderable extends TextRenderable {
+  protected override renderSelf(buffer: OptimizedBuffer): void {
+    buffer.fillRect(this.screenX, this.screenY, this.width, this.height, this.bg);
+    super.renderSelf(buffer);
   }
 }

@@ -143,6 +143,10 @@ describe("FooterFieldRegistry", () => {
 			"$0.03",
 			"ctx 18.2k/128.0k (14.2%)",
 		]);
+		for (const width of [78, 141]) {
+			const fitted = fitProjectedFooterRows(projection.rows, width);
+			expect(fitted.find((row) => row.row === "usage")?.fields.find((field) => field.id === "usage.cost")?.segment.text).toBe("$0.03");
+		}
 	});
 
 	it("drops optional usage fields by descriptor priority rather than rendered text", () => {

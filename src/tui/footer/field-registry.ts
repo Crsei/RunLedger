@@ -220,7 +220,7 @@ function builtinFooterFields(): readonly FooterFieldDefinition[] {
 		usageField("usage.cache-write", 40, "usage", "cache-write", 30),
 		usageField("usage.hit", 50, "usage", "hit", 20),
 		usageField("usage.rate", 60, "usage", "rate"),
-		usageField("usage.cost", 70, "usage", "cost", 10),
+		usageField("usage.cost", 70, "usage", "cost"),
 		usageField("usage.context", 80, "limit", "context"),
 	];
 }

@@ -338,7 +338,7 @@ describe("InteractiveSessionController", () => {
 		let toolCalls = 0;
 		const loopingStream = (): AssistantMessageEventStream => {
 			modelCalls += 1;
-			if (modelCalls > 16) throw new Error("production default run budget was omitted");
+			if (modelCalls > 128) throw new Error("production default run budget was omitted");
 			const call: ToolCall = { type: "toolCall", id: `controller-budget-${modelCalls}`, name: "budget-loop", arguments: {} };
 			const usage: AssistantMessage["usage"] = {
 				input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
@@ -390,8 +390,8 @@ describe("InteractiveSessionController", () => {
 		await controller.login(selected.provider, "api_key", INTERACTION);
 
 		await expect(controller.prompt("loop until bounded")).resolves.toBeUndefined();
-		expect(modelCalls).toBe(16);
-		expect(toolCalls).toBe(16);
+		expect(modelCalls).toBe(128);
+		expect(toolCalls).toBe(128);
 		expect(events.at(-1)).toMatchObject({ type: "agent_end", stopReason: "length", terminationReason: "tool_turn_limit" });
 		controller.dispose();
 	});

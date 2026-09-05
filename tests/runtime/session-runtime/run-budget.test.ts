@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Type } from "typebox";
 import { runAgentLoop } from "../../../src/runtime/agent-loop.ts";
+import { DEFAULT_AGENT_RUN_BUDGET } from "../../../src/runtime/types.ts";
 import type { AgentEvent, AgentTool, StreamFn } from "../../../src/runtime/types.ts";
 import { createAssistantMessageEventStream } from "../../../src/utils/event-stream.ts";
 import type { Api, AssistantMessage, Model, ToolCall } from "../../../src/types.ts";
@@ -30,6 +31,33 @@ const USAGE: AssistantMessage["usage"] = {
 const parameters = Type.Object({ value: Type.String() });
 
 describe("production Agent run budget", () => {
+	it("completes a productive task beyond the former sixteen tool turns", async () => {
+		let calls = 0;
+		const tool: AgentTool<typeof parameters> = {
+			name: "budget", label: "budget", description: "fixture", parameters,
+			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+		};
+		const streamFn: StreamFn = () => {
+			calls++;
+			const message = calls <= 20
+				? assistant([{ type: "toolCall", id: `step-${calls}`, name: "budget", arguments: { value: String(calls) } }], "toolUse")
+				: assistant([{ type: "text", text: "finished" }], "stop");
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: { ...message, content: [] } });
+				stream.push({ type: "done", reason: message.stopReason === "toolUse" ? "toolUse" : "stop", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+		const events: AgentEvent[] = [];
+		await runAgentLoop([{ role: "user", content: [{ type: "text", text: "work" }] }], { messages: [], tools: [tool], systemPrompt: "" },
+			{ model: MODEL, runBudget: DEFAULT_AGENT_RUN_BUDGET },
+			async (event) => { events.push(event); }, undefined, streamFn);
+		expect(calls).toBe(21);
+		expect(events.at(-1)).toMatchObject({ type: "agent_end", stopReason: "stop" });
+	});
+
 	it("stops before an extra model or tool call when the model-turn budget is exhausted", async () => {
 		let modelCalls = 0;
 		let toolCalls = 0;

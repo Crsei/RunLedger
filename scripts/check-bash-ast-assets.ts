@@ -38,7 +38,7 @@ async function assertAssets(): Promise<void> {
 
 async function assertSingleWasmLoader(): Promise<void> {
 	const moduleRoot = join(root, "src", "security", "permission", "bash-ast");
-	const files = (await readdir(moduleRoot)).filter((name) => name.endsWith(".ts") && name !== "worker.ts");
+	const files = (await readdir(moduleRoot)).filter((name) => name.endsWith(".ts") && !name.endsWith(".d.ts") && name !== "worker.ts");
 	for (const name of files) {
 		const text = await readFile(join(moduleRoot, name), "utf8");
 		if (/from ["']web-tree-sitter|Language\.load|Parser\.init/u.test(text)) {
@@ -60,9 +60,9 @@ async function assertPackageManifest(): Promise<void> {
 	if (!packageJson.files?.includes("assets/tree-sitter")) {
 		throw new Error("package.json files must include assets/tree-sitter");
 	}
-	for (const name of ["tree-sitter-bash", "web-tree-sitter"] as const) {
+	for (const name of ["tree-sitter-bash", "web-tree-sitter-bash"] as const) {
 		const version = packageJson.dependencies?.[name];
-		if (version !== (name === "tree-sitter-bash" ? "0.25.1" : "0.26.11")) {
+		if (version !== (name === "tree-sitter-bash" ? "0.25.1" : "npm:web-tree-sitter@0.26.11")) {
 			throw new Error(`package.json must pin ${name} to an exact version`);
 		}
 	}

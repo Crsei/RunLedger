@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parentPort, workerData } from "node:worker_threads";
-import { Language, Parser, type Node } from "web-tree-sitter";
+import { Language, Parser, type Node } from "web-tree-sitter-bash";
 import { classifySerializedBashAst } from "./walker.ts";
 import { precheckBashCommand } from "./precheck.ts";
 import {

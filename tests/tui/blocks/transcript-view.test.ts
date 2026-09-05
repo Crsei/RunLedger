@@ -98,6 +98,7 @@ describe("transcript view projection", () => {
 			contentGeneration: 0,
 			finalized: true,
 			kind: "text",
+			role: "user",
 			content: "committed question",
 		}]);
 		expect(second.rows).toBe(first.rows);

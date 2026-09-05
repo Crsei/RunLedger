@@ -1,3 +1,4 @@
+import { CodeRenderable, type Renderable } from "@opentui/core";
 import { requireNode, MarkdownRenderable, BoxRenderable, ScrollBoxRenderable, TextRenderable, TextareaRenderable } from "./fixtures/opentui-nodes.ts";
 import { describe, expect, spyOn, test } from "bun:test";
 import { createTestRenderer } from "@opentui/core/testing";
@@ -20,6 +21,42 @@ import { PermissionRequestView } from "../../src/tui/components/permission-reque
 import { approvalChoices, parseApprovalReverseRequest } from "../../src/tui/approval.ts";
 
 describe("OpenTUI component projection", () => {
+  test("renders submitted user background and cyan inline commands and file links", async () => {
+    const setup = await createTestRenderer({ width: 80, height: 18 });
+    const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, { onInput: () => {}, onResize: () => {} });
+    const row: TimelineRow = { kind: "user", id: "sent", timestamp: "2026-09-05T00:00:00.000Z", displayOrder: 0, status: "succeeded", text: { text: "submitted prompt", truncated: false, byteLength: 16 } };
+    try {
+      for (const mode of ["dark", "light"] as const) {
+        setup.renderer.emit("theme_mode", mode);
+        const theme = loadTheme(mode);
+        runtime.update({
+          body: [...rowToBlocks(row), { id: "reply", kind: "markdown", content: "Run `npm test` and open [source](src/index.ts:12).", streaming: false }],
+          editorText: "", footer: ["identity "+"x".repeat(72), { kind: "status-line", segments: [{ accent: "usage", text: "$0.03" }] }],
+          editorAppearance: { backgroundColor: theme.editorBackground, promptColor: theme.accent, placeholderColor: theme.muted },
+        });
+        await setup.renderOnce();
+        const node = requireNode(setup.renderer.root, "runledger-block-timeline-sent", TextRenderable);
+        const expectedBackground = mode === "dark" ? [40, 42, 48] : [244, 244, 244];
+        expect(node.bg.toInts().slice(0, 3)).toEqual(expectedBackground);
+        const waitForHighlights = async (node: Renderable): Promise<void> => {
+          if (node instanceof CodeRenderable) await node.highlightingDone;
+          for (const child of node.getChildren()) await waitForHighlights(child);
+        };
+        for (let pass = 0; pass < 3; pass++) {
+          await waitForHighlights(setup.renderer.root);
+          await setup.renderOnce();
+        }
+        expect(setup.captureCharFrame()).toContain("$0.03");
+        const userLine = setup.captureSpans().lines.find((line) => line.spans.some((span) => span.text.includes("submitted prompt")));
+        expect(userLine?.spans.every((span) => span.bg.toInts().slice(0, 3).join(",") === expectedBackground.join(","))).toBe(true);
+        const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+        for (const label of ["npm test", "source", "src/index.ts:12"]) {
+          expect(spans.find((span) => span.text.includes(label))?.fg.toInts().slice(0, 3)).toEqual(mode === "dark" ? [125, 207, 255] : [0, 102, 204]);
+        }
+      }
+    } finally { runtime.destroy(); setup.renderer.destroy(); }
+  });
+
   test("keeps the native transcript scrollbar hidden by default and reserves space only when enabled", async () => {
     const setup = await createTestRenderer({ width: 40, height: 10 });
     const runtime = createOpenTuiComponentRuntimeFromRenderer(setup.renderer, {
