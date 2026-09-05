@@ -1,3 +1,4 @@
+import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
 /**
  * RunLedger CLI 主入口(R7:Session Owner path)。
  *
@@ -236,7 +237,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     };
   };
 
-  const models = builtinModels({ credentials: AuthStorage.create(layout) });
+  const models = builtinModels({ credentials: AuthStorage.create(layout) }, { kimiCode: { getDeviceId: createKimiCodeDeviceIdProvider(layout) } });
   await registerConfiguredProxyProvidersFromHome(models, layout.home);
   await models.refresh({ allowNetwork: false });
   const modelRequestRouters = await createCliSessionModelRequestRouterFactory({ layout, authorityId, tenantId });

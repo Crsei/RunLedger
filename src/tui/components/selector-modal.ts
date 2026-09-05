@@ -13,7 +13,7 @@
  * Up/Down/Enter/Esc 等。
  */
 
-import { Box, SelectList, type SelectItem, type Component, type SelectListTheme, type SelectListLayoutOptions } from "../index.ts";
+import { Box, SelectList, type SelectItem, type Component, type SelectListTheme, type SelectListLayoutOptions } from "../primitives.ts";
 import type { Theme } from "../theme/theme.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 import type { PresentationBlock } from "../presentation.ts";

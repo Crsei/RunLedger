@@ -1,4 +1,7 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createKimiCodeOAuth, kimiCodeOAuth } from "../../src/auth/oauth/kimi-code.ts";
 import type { AuthEvent, AuthInteraction, OAuthCredential } from "../../src/auth/types.ts";
 
@@ -55,13 +58,37 @@ function oauthCredential(overrides: Partial<OAuthCredential> = {}): OAuthCredent
 	return { type: "oauth", access: "access-1", refresh: "refresh-1", expires: 1, ...overrides };
 }
 
-afterEach(() => {
+let isolatedHome: string;
+beforeEach(async () => {
+	isolatedHome = await mkdtemp(join(tmpdir(), "runledger-kimi-oauth-"));
+	vi.stubEnv("RUNLEDGER_DIR", isolatedHome);
+});
+
+afterEach(async () => {
+	await rm(isolatedHome, { recursive: true, force: true });
 	vi.restoreAllMocks();
 	vi.useRealTimers();
 	vi.unstubAllEnvs();
 });
 
 describe("Kimi Code OAuth flow", () => {
+	test("does not resolve or write storage when no device identity port is injected", async () => {
+		const { fetchImpl } = recordFetch([() => jsonResponse({ access_token: "access-2", expires_in: 1800 })]);
+		await createKimiCodeOAuth({ fetch: fetchImpl }).refresh(oauthCredential());
+		expect(await readdir(isolatedHome)).toEqual([]);
+	});
+
+	test("uses the injected device identity independently for each OAuth instance", async () => {
+		const { fetchImpl, calls } = recordFetch([() => jsonResponse({ access_token: "access-2", expires_in: 1800 })]);
+		const first = createKimiCodeOAuth({ fetch: fetchImpl, getDeviceId: () => "first-device" });
+		const second = createKimiCodeOAuth({ fetch: fetchImpl, getDeviceId: () => "second-device" });
+		await first.refresh(oauthCredential());
+		await second.refresh(oauthCredential());
+		await first.refresh(oauthCredential());
+		expect(calls.map((call) => new Headers(call.init?.headers).get("X-Msh-Device-Id"))).toEqual(["first-device", "second-device", "first-device"]);
+		expect(await readdir(isolatedHome)).toEqual([]);
+	});
+
 	test("exposes the default binding and derives request auth from the access token", async () => {
 		expect(kimiCodeOAuth.name).toBe("Kimi Code");
 		expect(kimiCodeOAuth.loginLabel).toBe("Sign in with Kimi");

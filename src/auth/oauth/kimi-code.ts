@@ -3,17 +3,13 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { arch, hostname, platform, release, version as osVersion } from "node:os";
-import { dirname, join } from "node:path";
-import { getAgentDir } from "../../storage/paths.ts";
 import type { AuthInteraction, OAuthAuth, OAuthCredential } from "../types.ts";
 import { pollOAuthDeviceCodeFlow } from "./device-code.ts";
 
 const KIMI_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 const DEFAULT_OAUTH_HOST = "https://auth.kimi.com";
 const KIMI_CLI_VERSION = "1.0";
-const DEVICE_ID_FILENAME = "kimi-device-id";
 // 源实现:token 过期前 5 分钟提前刷新,避免请求中途失效
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 // 源实现:服务端未返回 expires_in 时回退 15 分钟
@@ -38,6 +34,8 @@ type KimiDeviceCode = {
 
 export interface KimiCodeOAuthOptions {
 	fetch?: typeof fetch;
+	/** 安装设备标识由应用层提供；OAuth 不解析或持久化用户目录。 */
+	getDeviceId?: () => string;
 }
 
 function resolveOAuthHost(): string {
@@ -63,32 +61,8 @@ function getDeviceModel(): string {
 	return formatDeviceModel(label, currentRelease, currentArch);
 }
 
-// 设备 id 标识本机安装;持久化尽力而为,目录缺失/不可写绝不能阻断请求头构造,退化为进程级临时 id
-let getDeviceId = (): string => {
-	const deviceIdPath = join(getAgentDir(), DEVICE_ID_FILENAME);
-	try {
-		const existing = readFileSync(deviceIdPath, "utf-8").trim();
-		if (existing) {
-			getDeviceId = () => existing;
-			return existing;
-		}
-	} catch {
-		// 读不到设备 id 文件:下方重新生成
-	}
-
-	const deviceId = randomUUID().replace(/-/gu, "");
-	try {
-		mkdirSync(dirname(deviceIdPath), { recursive: true });
-		writeFileSync(deviceIdPath, `${deviceId}\n`, { mode: 0o600 });
-	} catch {
-		// 持久化失败 → 本次进程使用临时 id
-	}
-	getDeviceId = () => deviceId;
-	return deviceId;
-};
-
 // Kimi 服务端要求的 CLI 设备元数据请求头(与源实现逐字段对齐)
-function kimiHeaders(): Record<string, string> {
+function kimiHeaders(deviceId: string): Record<string, string> {
 	return {
 		"User-Agent": `KimiCLI/${KIMI_CLI_VERSION}`,
 		"X-Msh-Platform": "kimi_cli",
@@ -96,7 +70,7 @@ function kimiHeaders(): Record<string, string> {
 		"X-Msh-Device-Name": sanitizeHeaderValue(hostname(), "unknown"),
 		"X-Msh-Device-Model": sanitizeHeaderValue(getDeviceModel(), "unknown"),
 		"X-Msh-Os-Version": sanitizeHeaderValue(osVersion(), "unknown"),
-		"X-Msh-Device-Id": sanitizeHeaderValue(getDeviceId(), "unknown"),
+		"X-Msh-Device-Id": sanitizeHeaderValue(deviceId, "unknown"),
 	};
 }
 
@@ -131,19 +105,19 @@ function validateVerificationUri(raw: string): string {
 }
 
 async function postForm(
-	fetchImpl: typeof fetch,
+	client: KimiOAuthHttpClient,
 	url: string,
 	fields: Record<string, string>,
 	signal?: AbortSignal,
 ): Promise<OAuthHttpResponse> {
 	let response: Response;
 	try {
-		response = await fetchImpl(url, {
+		response = await client.fetch(url, {
 			method: "POST",
 			headers: {
 				Accept: "application/json",
 				"Content-Type": "application/x-www-form-urlencoded",
-				...kimiHeaders(),
+				...kimiHeaders(client.getDeviceId()),
 			},
 			body: new URLSearchParams(fields),
 			signal,
@@ -219,9 +193,9 @@ function credentialsFromTokenResponse(body: JsonObject, previousRefreshToken?: s
 	};
 }
 
-async function requestDeviceCode(fetchImpl: typeof fetch, signal?: AbortSignal): Promise<KimiDeviceCode> {
+async function requestDeviceCode(client: KimiOAuthHttpClient, signal?: AbortSignal): Promise<KimiDeviceCode> {
 	const response = await postForm(
-		fetchImpl,
+		client,
 		`${resolveOAuthHost()}/api/oauth/device_authorization`,
 		{ client_id: KIMI_CLIENT_ID },
 		signal,
@@ -233,7 +207,7 @@ async function requestDeviceCode(fetchImpl: typeof fetch, signal?: AbortSignal):
 }
 
 async function pollForTokens(
-	fetchImpl: typeof fetch,
+	client: KimiOAuthHttpClient,
 	device: KimiDeviceCode,
 	signal?: AbortSignal,
 ): Promise<OAuthCredential> {
@@ -244,7 +218,7 @@ async function pollForTokens(
 		signal,
 		poll: async () => {
 			const response = await postForm(
-				fetchImpl,
+				client,
 				`${resolveOAuthHost()}/api/oauth/token`,
 				{
 					grant_type: "urn:ietf:params:oauth:grant-type:device_code",
@@ -277,8 +251,8 @@ async function pollForTokens(
 	});
 }
 
-async function loginKimi(fetchImpl: typeof fetch, interaction: AuthInteraction): Promise<OAuthCredential> {
-	const device = await requestDeviceCode(fetchImpl, interaction.signal);
+async function loginKimi(client: KimiOAuthHttpClient, interaction: AuthInteraction): Promise<OAuthCredential> {
+	const device = await requestDeviceCode(client, interaction.signal);
 	interaction.notify({
 		type: "device_code",
 		userCode: device.userCode,
@@ -286,16 +260,16 @@ async function loginKimi(fetchImpl: typeof fetch, interaction: AuthInteraction):
 		intervalSeconds: device.intervalSeconds,
 		expiresInSeconds: device.expiresInSeconds,
 	});
-	return pollForTokens(fetchImpl, device, interaction.signal);
+	return pollForTokens(client, device, interaction.signal);
 }
 
 async function refreshKimi(
-	fetchImpl: typeof fetch,
+	client: KimiOAuthHttpClient,
 	refreshToken: string,
 	signal?: AbortSignal,
 ): Promise<OAuthCredential> {
 	const response = await postForm(
-		fetchImpl,
+		client,
 		`${resolveOAuthHost()}/api/oauth/token`,
 		{
 			grant_type: "refresh_token",
@@ -310,13 +284,22 @@ async function refreshKimi(
 	return credentialsFromTokenResponse(response.body, refreshToken);
 }
 
+interface KimiOAuthHttpClient {
+	readonly fetch: typeof fetch;
+	readonly getDeviceId: () => string;
+}
+
 export function createKimiCodeOAuth(options: KimiCodeOAuthOptions = {}): OAuthAuth {
-	const fetchImpl = options.fetch ?? globalThis.fetch;
+	let temporaryDeviceId: string | undefined;
+	const client: KimiOAuthHttpClient = {
+		fetch: options.fetch ?? globalThis.fetch,
+		getDeviceId: options.getDeviceId ?? (() => temporaryDeviceId ??= randomUUID().replace(/-/gu, "")),
+	};
 	return {
 		name: "Kimi Code",
 		loginLabel: "Sign in with Kimi",
-		login: (interaction) => loginKimi(fetchImpl, interaction),
-		refresh: (credential, signal) => refreshKimi(fetchImpl, credential.refresh, signal),
+		login: (interaction) => loginKimi(client, interaction),
+		refresh: (credential, signal) => refreshKimi(client, credential.refresh, signal),
 		async toAuth(credential) {
 			// resolveStoredOAuth 会包上 { auth, source };此处只派生请求鉴权(xai 同款语义)
 			return { apiKey: credential.access };

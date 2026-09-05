@@ -1,3 +1,4 @@
+import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
 /** Resident Host process entry used by the production connect-or-spawn path. */
 
 import { Value } from "typebox/value";
@@ -93,7 +94,7 @@ export async function runResidentRuntimeHost(): Promise<void> {
 	const settings = await loadProjectSettings({ layout });
 	const recording = resolveRecordingConfig(settings);
 	const traceRecorderFactory = createLocalTraceRecorderFactory({ layout, config: recording });
-	const models = builtinModels({ credentials: AuthStorage.create(layout) });
+	const models = builtinModels({ credentials: AuthStorage.create(layout) }, { kimiCode: { getDeviceId: createKimiCodeDeviceIdProvider(layout) } });
 	await registerConfiguredProxyProvidersFromHome(models, layout.home);
 	await models.refresh({ allowNetwork: false });
 	const modelCompatibility = await loadCanonicalModelCompatibilityRouter(layout);

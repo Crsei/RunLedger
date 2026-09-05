@@ -1,5 +1,5 @@
-import stringWidth from "string-width";
-import stripAnsi from "strip-ansi";
+import { visibleWidth, sliceByColumn, truncateToWidth, wrapTextWithAnsi } from "./text-layout.ts";
+export { visibleWidth, sliceByColumn, truncateToWidth, wrapTextWithAnsi, hyperlink } from "./text-layout.ts";
 import {
   createOpenTuiComponentRuntime,
   type OpenTuiComponentFrame,
@@ -743,53 +743,6 @@ let keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
 export function setKeybindings(next: KeybindingsManager): void { keybindings = next; }
 export function getKeybindings(): KeybindingsManager { return keybindings; }
 
-const ESCAPE_PATTERN = /(?:\x1B\][^\x07]*(?:\x07|\x1B\\)|\x1B\[[0-?]*[ -\/]*[@-~]|\x1B_[^\x07]*\x07)/gu;
-export function visibleWidth(value: string): number { return stringWidth(stripAnsi(value.replace(ESCAPE_PATTERN, ""))); }
-function tokenize(value: string): string[] {
-  const tokens: string[] = [];
-  let offset = 0;
-  for (const match of value.matchAll(ESCAPE_PATTERN)) {
-    if (match.index > offset) tokens.push(...Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value.slice(offset, match.index)), (entry) => entry.segment));
-    tokens.push(match[0]);
-    offset = match.index + match[0].length;
-  }
-  if (offset < value.length) tokens.push(...Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value.slice(offset)), (entry) => entry.segment));
-  return tokens;
-}
-export function sliceByColumn(value: string, start: number, end = Number.POSITIVE_INFINITY, _preserveAnsi = false): string {
-  let column = 0;
-  let result = "";
-  for (const token of tokenize(value)) {
-    const width = visibleWidth(token);
-    if (width === 0) { if (column >= start && column < end) result += token; continue; }
-    if (column >= start && column + width <= end) result += token;
-    column += width;
-    if (column >= end) break;
-  }
-  return result;
-}
-export function truncateToWidth(value: string, width: number, ellipsis = ""): string {
-  if (visibleWidth(value) <= width) return value;
-  const suffix = visibleWidth(ellipsis) <= width ? ellipsis : "";
-  const body = sliceByColumn(value, 0, Math.max(0, width - visibleWidth(suffix)), true);
-  return body + suffix + (value.includes("\x1b[") ? "\x1b[0m" : "");
-}
-export function wrapTextWithAnsi(value: string, width: number): string[] {
-  if (width <= 0) return [""];
-  if (value.length === 0) return [""];
-  const lines: string[] = [];
-  for (const source of value.split("\n")) {
-    let rest = source;
-    while (visibleWidth(rest) > width) {
-      const line = sliceByColumn(rest, 0, width, true);
-      lines.push(line);
-      rest = sliceByColumn(rest, width, Number.POSITIVE_INFINITY, true);
-    }
-    lines.push(rest);
-  }
-  return lines;
-}
-export function hyperlink(text: string, url: string): string { return `\x1b]8;;${url}\x07${text}\x1b]8;;\x07`; }
 
 export interface RgbColor { r: number; g: number; b: number }
 /**

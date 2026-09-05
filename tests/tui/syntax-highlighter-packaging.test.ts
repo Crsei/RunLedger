@@ -48,8 +48,10 @@ describe("syntax highlighter packaging", () => {
 		const nativeBuild = packageJson.scripts?.["build:syntax-highlighter"] ?? "";
 
 		expect(nativeBuild).toContain("scripts/build-syntax-highlighter.ts");
-		expect(build.indexOf("build:syntax-highlighter")).toBeGreaterThanOrEqual(0);
-		expect(build.indexOf("build:syntax-highlighter")).toBeLessThan(build.indexOf("tsc -p tsconfig.json"));
+		expect(packageJson.scripts?.["build:native"]).toContain("npm run build:syntax-highlighter");
+		expect(packageJson.scripts?.["build:typescript"]).toBe("tsc -p tsconfig.json");
+		expect(build.indexOf("npm run build:native")).toBeGreaterThanOrEqual(0);
+		expect(build.indexOf("npm run build:native")).toBeLessThan(build.indexOf("npm run build:typescript"));
 		expect(packageJson.scripts?.["check:syntax-highlighter"]).toContain("cargo test");
 		expect(packageJson.scripts?.check).toContain("check:syntax-highlighter");
 	});

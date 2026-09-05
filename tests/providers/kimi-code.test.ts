@@ -6,6 +6,7 @@ import { kimiCodeProvider } from "../../src/providers/kimi-code.ts";
 const KIMI_CODE_BASE = "https://api.kimi.com/coding/v1";
 
 afterEach(() => {
+	vi.unstubAllEnvs();
 	vi.restoreAllMocks();
 });
 
@@ -31,6 +32,20 @@ function headerValue(headers: unknown, name: string): string | undefined {
 }
 
 describe("Kimi Code provider", () => {
+	test("passes the device identity and fetch ports into lazy OAuth", async () => {
+		const headers: string[] = [];
+		const provider = kimiCodeProvider({
+			getDeviceId: () => "provider-device",
+			fetch: async (_url, init) => {
+				headers.push(new Headers(init?.headers).get("X-Msh-Device-Id") ?? "");
+				return new Response(JSON.stringify({ access_token: "access", expires_in: 3600 }), { status: 200 });
+			},
+		});
+		if (provider.auth.oauth === undefined) throw new Error("OAuth missing");
+		await provider.auth.oauth.refresh({ type: "oauth", access: "old", refresh: "refresh", expires: 1 });
+		expect(headers).toEqual(["provider-device"]);
+	});
+
 	test("exposes the bundled OpenAI-compatible catalog, fixed headers, and env-key auth", async () => {
 		const provider = kimiCodeProvider();
 		const model = provider.getModels().find((entry) => entry.id === "k3");

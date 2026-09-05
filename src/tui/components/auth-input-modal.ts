@@ -1,5 +1,5 @@
-import type { Component } from "../index.ts";
-import { isNavigationKey, matchesKey } from "../index.ts";
+import type { Component } from "../primitives.ts";
+import { isNavigationKey, matchesKey } from "../primitives.ts";
 import { fitLinesToWidth } from "./render-width.ts";
 import type { PresentationBlock } from "../presentation.ts";
 

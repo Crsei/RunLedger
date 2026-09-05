@@ -1,5 +1,5 @@
-import type { Component, SelectItem } from "../index.ts";
-import { matchesKey } from "../index.ts";
+import type { Component, SelectItem } from "../primitives.ts";
+import { matchesKey } from "../primitives.ts";
 import { fitLinesToWidth } from "./render-width.ts";
 import type { PresentationBlock } from "../presentation.ts";
 

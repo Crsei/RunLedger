@@ -15,7 +15,7 @@
  *   - EDITOR_MIN_HEIGHT = 3。
  */
 
-import { visibleWidth, wrapTextWithAnsi } from "./primitives.ts";
+import { visibleWidth, wrapTextWithAnsi } from "./text-layout.ts";
 
 export const EDITOR_LEFT_PAD = 2;
 export const EDITOR_RIGHT_PAD = 1;

@@ -14,8 +14,8 @@
  * enabled/trusted/ready 三态,desc 列复用现有 ListSelectionModal 的对齐截断。
  */
 
-import type { Component } from "../index.ts";
-import { matchesKey, visibleWidth } from "../index.ts";
+import type { Component } from "../primitives.ts";
+import { matchesKey, visibleWidth } from "../primitives.ts";
 import { wrapBold, wrapDim } from "../theme/ansi.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 

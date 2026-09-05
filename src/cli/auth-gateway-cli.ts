@@ -1,3 +1,4 @@
+import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
 import { mkdir, stat } from "node:fs/promises";
 import { resolveRunledgerHome, type ResolvedRunledgerHome } from "../storage/runledger-home.ts";
 import { AuthStorage } from "../storage/auth-storage.ts";
@@ -178,7 +179,7 @@ async function resolvedHome(dependencies: AuthGatewayCliDependencies): Promise<R
 }
 
 async function createGatewayModels(home: ResolvedRunledgerHome): Promise<Models> {
-	const models = builtinModels({ credentials: AuthStorage.create(home.layout) });
+	const models = builtinModels({ credentials: AuthStorage.create(home.layout) }, { kimiCode: { getDeviceId: createKimiCodeDeviceIdProvider(home.layout) } });
 	await registerConfiguredProxyProvidersFromHome(models, home.layout.home);
 	await models.refresh({ allowNetwork: false });
 	return models;

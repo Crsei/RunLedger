@@ -14,9 +14,9 @@
  * CustomEditor 只持有 onSubmit / appInterrupt / appExit 三回调引。
  */
 
-import { Editor, matchesKey, type TUI, type EditorTheme } from "../index.ts";
+import { Editor, matchesKey, type TUI, type EditorTheme } from "../primitives.ts";
 import type { Theme } from "../theme/theme.ts";
-import type { SelectListTheme } from "../index.ts";
+import type { SelectListTheme } from "../primitives.ts";
 
 /** CustomEditor 构造参数(由 InteractiveMode 装配时传入)。 */
 export interface CustomEditorProps {

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src/contracts",
+    "outDir": "./dist/contracts",
+    "incremental": false
+  },
+  "include": [
+    "src/contracts/**/*.ts"
+  ]
+}

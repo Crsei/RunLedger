@@ -1,5 +1,5 @@
-import type { Component } from "../index.ts";
-import { matchesKey } from "../index.ts";
+import type { Component } from "../primitives.ts";
+import { matchesKey } from "../primitives.ts";
 import type { PresentationBlock } from "../presentation.ts";
 import { fitLinesToWidth, fitToWidth } from "./render-width.ts";
 import type { SessionCatalogItem } from "../sessions/types.ts";

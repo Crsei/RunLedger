@@ -1,6 +1,6 @@
 import { openAICompletionsApi } from "../api/openai-completions.lazy.ts";
 import { envApiKeyAuth, lazyOAuth } from "../auth/helpers.ts";
-import { createKimiCodeOAuth } from "../auth/oauth/kimi-code.ts";
+import { createKimiCodeOAuth, type KimiCodeOAuthOptions } from "../auth/oauth/kimi-code.ts";
 import { createProvider, type Provider, type RefreshModelsContext } from "../models.ts";
 import type { Model } from "../types.ts";
 import { KIMI_CODE_MODELS } from "./kimi-code.models.ts";
@@ -15,6 +15,7 @@ const KIMI_CODE_HEADERS: Record<string, string> = {
 export interface KimiCodeProviderOptions {
 	baseUrl?: string;
 	fetch?: typeof fetch;
+	getDeviceId?: KimiCodeOAuthOptions["getDeviceId"];
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -127,7 +128,7 @@ export function kimiCodeProvider(options: KimiCodeProviderOptions = {}): Provide
 			oauth: lazyOAuth({
 				name: "Kimi Code",
 				loginLabel: "Sign in with Kimi",
-				load: async () => createKimiCodeOAuth(),
+				load: async () => createKimiCodeOAuth({ fetch: options.fetch, getDeviceId: options.getDeviceId }),
 			}),
 		},
 		models: staticModels,

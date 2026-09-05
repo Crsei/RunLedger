@@ -8,7 +8,7 @@
 
 import { SecondarySelectionView } from "../components/list-selection-modal.ts";
 import { SlashCommandPopup } from "../components/slash-command-popup.ts";
-import { matchesKey } from "../index.ts";
+import { matchesKey } from "../primitives.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
 import { findCommand, commandsForContext, type RegisteredSlashCommand } from "../commands/registry.ts";
 import type { OverlayHandle } from "../primitives.ts";

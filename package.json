@@ -47,6 +47,10 @@
     "./utils/*": {
       "import": "./dist/utils/*.js",
       "types": "./dist/utils/*.d.ts"
+    },
+    "./contracts": {
+      "import": "./dist/contracts/index.js",
+      "types": "./dist/contracts/index.d.ts"
     }
   },
   "files": [
@@ -60,7 +64,7 @@
     "build:syntax-highlighter": "tsx scripts/build-syntax-highlighter.ts",
     "build:tui-assets": "tsx scripts/copy-tui-assets.ts",
     "check:syntax-highlighter": "cargo test --locked --manifest-path native/syntax-highlighter/Cargo.toml",
-    "build": "npm run build:linux-peer-credential-helper && npm run build:syntax-highlighter && tsc -p tsconfig.json && npm run build:tui-assets && tsx scripts/generate-host-build-manifest.ts",
+    "build": "npm run build:native && npm run build:typescript && npm run build:tui-assets && tsx scripts/generate-host-build-manifest.ts",
     "check:current-format": "tsx scripts/check-current-format.ts",
     "check:storage-boundaries": "tsx scripts/check-storage-boundaries.ts",
     "check:runtime-boundaries": "tsx scripts/check-runtime-boundaries.ts",
@@ -69,7 +73,7 @@
     "check:bash-ast-assets": "tsx scripts/check-bash-ast-assets.ts",
     "check:platform-boundaries": "tsx scripts/check-platform-boundaries.ts",
     "check:session-owner-boundaries": "tsx scripts/check-session-owner-boundaries.ts",
-    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && npm run check:bash-ast-assets && tsc --noEmit -p tsconfig.json",
+    "check": "npm run check:current-format && npm run check:storage-boundaries && npm run check:runtime-boundaries && npm run check:contract-consumers && npm run check:execution-boundaries && npm run check:platform-boundaries && npm run check:tui-boundaries && npm run check:session-owner-boundaries && npm run check:syntax-highlighter && npm run check:bash-ast-assets && npm run check:package-boundaries && tsc --noEmit -p tsconfig.json",
     "demo": "tsx examples/run.ts",
     "demo:tui": "bun examples/tui-demo.ts",
     "benchmark:tui-streaming": "tsx scripts/benchmark-tui-streaming.ts",
@@ -96,7 +100,11 @@
     "verify:host-build-replacement": "tsx scripts/verify-host-build-replacement.ts",
     "verify:runtime-host-audit": "tsx scripts/verify-runtime-host-audit.ts",
     "verify:session-owner-candidate": "tsx scripts/verify-session-owner-candidate.ts",
-    "check:tui-boundaries": "tsx scripts/check-tui-boundaries.ts"
+    "check:tui-boundaries": "tsx scripts/check-tui-boundaries.ts",
+    "build:native": "npm run build:linux-peer-credential-helper && npm run build:syntax-highlighter",
+    "build:typescript": "tsc -p tsconfig.json",
+    "build:contracts": "tsc -p tsconfig.contracts.json",
+    "check:package-boundaries": "tsx scripts/check-package-boundaries.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.91.1",

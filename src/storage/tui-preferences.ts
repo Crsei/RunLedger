@@ -10,13 +10,13 @@ import {
   type TuiPreferencesDocument,
   type TuiPreferencesLoadResult,
   type TuiPreferencesSaveResult,
-} from "../tui/preferences/types.ts";
+} from "../contracts/settings/tui-preferences.ts";
 
 const FILE_NAME = "tui-preferences.json";
 const DIRECTORY_MODE = 0o700;
 const FILE_MODE = 0o600;
 
-export { createDefaultTuiPreferences } from "../tui/preferences/types.ts";
+export { createDefaultTuiPreferences } from "../contracts/settings/tui-preferences.ts";
 
 export async function loadTuiPreferences(layout: RunledgerLayout): Promise<TuiPreferencesLoadResult> {
   try {

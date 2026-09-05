@@ -13,7 +13,7 @@ import { firepassProvider } from "./firepass.ts";
 import { gmiCloudProvider } from "./gmi-cloud.ts";
 import { llamaCppProvider } from "./llama-cpp.ts";
 import { kiloProvider } from "./kilo.ts";
-import { kimiCodeProvider } from "./kimi-code.ts";
+import { kimiCodeProvider, type KimiCodeProviderOptions } from "./kimi-code.ts";
 import { litellmProvider } from "./litellm.ts";
 import { lmStudioProvider } from "./lm-studio.ts";
 import { metaProvider } from "./meta.ts";
@@ -106,8 +106,12 @@ export function getBuiltinModels<TProvider extends BuiltinProvider>(
 		: [];
 }
 
+export interface BuiltinProviderOptions {
+	readonly kimiCode?: KimiCodeProviderOptions;
+}
+
 /** All built-in providers, freshly constructed. */
-export function builtinProviders(): Provider[] {
+export function builtinProviders(options: BuiltinProviderOptions = {}): Provider[] {
 	return [
 		aiandProvider(),
 		aimlapiProvider(),
@@ -119,7 +123,7 @@ export function builtinProviders(): Provider[] {
 		firepassProvider(),
 		gmiCloudProvider(),
 		kiloProvider(),
-		kimiCodeProvider(),
+		kimiCodeProvider(options.kimiCode),
 		llamaCppProvider(),
 		litellmProvider(),
 		lmStudioProvider(),
@@ -181,9 +185,9 @@ export function builtinProviders(): Provider[] {
 }
 
 /** A `Models` collection with every built-in provider registered. */
-export function builtinModels(options?: CreateModelsOptions): MutableModels {
+export function builtinModels(options?: CreateModelsOptions, providerOptions?: BuiltinProviderOptions): MutableModels {
 	const models = createModels(options);
-	for (const provider of builtinProviders()) {
+	for (const provider of builtinProviders(providerOptions)) {
 		models.setProvider(provider);
 	}
 	return models;
