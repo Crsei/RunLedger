@@ -21,6 +21,8 @@ P4 fresh evidence（2026-09-04）：`restoreSession()` 现在先解析 catalog �
 
 P5 fresh evidence（2026-09-04）：新增 restrictive Permission + minimal 的 production composition 验收，精确模型表面仍为 `bash/edit`，`edit` 在 governed filesystem 前拒绝、文件零变化，Attempt receipt 为 `started → uncertain`；既有 danger-full-access 场景同时证明两个工具成功执行并产生 committed process/workspace receipts。该验收提交为 `03a3e06`（`test(runtime): prove minimal harness cannot widen permissions`）。自动门禁为 inventory 494 owned files / 0 diagnostics、canonical focused 60 files / 433 tests、runtime 128 files / 670 tests、security-storage 98 files / 589 passed / 3 macOS-only skipped、TUI-native 19 files / 138 tests、`npm run check`、完整 `npm test`、`npm run build`、`npm run test:smoke` 与 `git diff --check` 全部通过。built smoke 的 candidate 固定为本工作树 `bin/runledger.js → dist/cli/cli.js`，隔离 home 下 version/help 与 tmux startup/clean exit 通过。标准 PATH 在指向本工作树时完成 fresh standard、fresh minimal、minimal 新进程 resume 与 fork；隔离 SQLite 证明 source generation 1/2 与 fork generation 1 的 profile ref、composition digest 及 `bash/edit` manifest 一致。另以同一 built candidate 对真实 Bun owner 执行 SIGKILL，generation 3 → 4 takeover 进入 `recovery_required`，profile ref/composition digest/两工具不漂移；最终全局 link 已重新核验指向本工作树。测试临时 home 与本次进程均已清理，未读取或修改真实用户 home，尚未 push。dark/light、80/143 列、真实键盘、中文 IME 仍为 human pending；macOS/Windows 真实 runner 仍为 platform pending，均不被 tmux/单元证据替代。
 
+后续入口规划见 [Runtime 10：Agent Mode 入口实施计划](10-agent-mode-entry-implementation-plan.md)（planned）。该计划不改变本文已实现的 `minimal@1 = bash/edit` 或会话 profile 不可变合同；shell-only、新版本和 Plan 入口尚未实施。
+
 ## 0. 结论
 
 RunLedger 的“极简模式”应实现为不可变的**会话级 Harness Profile**，而不是 Permission Profile、模型 thinking level、Agent Loop 内布尔分支或旧 Runtime Host feature flag。
