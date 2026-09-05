@@ -1,10 +1,12 @@
 # RunLedger 开发规则
 
-> RunLedger 是一个面向 企业级可审计 Agent Runtime 的最小可运行脚手架,参考 `pi` 项目 (`packages/agent` 与 `packages/ai`) 的架构。本期已完成 pi-ai 全量移植,以及 agent-loop / Agent / ledger / mock-stream / echo tool / stdlib 工具集 / ExecutionEnv / stdlibStreamFn 桥接的最小可运行复活(真实 LLM 已用 `asset/api-key.json` 中 deepseek-v4-pro 通过 `npm run demo` 验证,mock 模式仍保留为单测入口)。
+> RunLedger 是面向可审计 Agent 执行的运行时。标准 CLI 通过 Bun 加载 `dist`，使用 session-scoped embedded Session Owner Runtime 与用户级 SQLite authority；TUI 消费 command/query/subscription。
+>
+> 当前实现与验收状态查 [development-doc/00-index.md](development-doc/00-index.md) 及其专题入口。本文件各里程碑的数量和验证结果为当时快照，不能替代当前工作树的检查；最新运行复查见 [2026-09-05 审计与修复记录](development-doc/audit/2026-09-05-runtime-and-structure.md)。
 
 ## 1. 范围
 
-### 1.1 已完成(`src/` 顶层 + `src/api/` + `src/auth/` + `src/providers/` + `src/storage/` + `src/utils/` + `src/compat/`)
+### 1.1 早期 pi-ai 移植快照（历史）(`src/` 顶层 + `src/api/` + `src/auth/` + `src/providers/` + `src/storage/` + `src/utils/` + `src/compat/`)
 
 从 pi `packages/ai/src` 移植的全量 LLM provider 抽象层与凭据/OAuth 流:
 
@@ -16,7 +18,7 @@
 - 顶层 `models.ts` / `models-store.ts` / `models.generated.ts` / `images-models.ts` / `image-models.ts` / `image-models.generated.ts` / `images.ts` / `images-api-registry.ts` / `session-resources.ts` / `oauth.ts` / `bun-oauth.ts` / `bedrock-provider.ts`;
 - `scripts/generate-models.ts` —— pi 自动模型 catalog 生成脚本(已迁移,跑 `npm run generate-models` 重新生成 `src/providers/data/*.json` 与 `src/models.generated.ts`)。
 
-### 1.2 已复活(`src/runtime/`,纳入 typecheck + `npm test` + `npm run demo`)
+### 1.2 早期 agent-loop 复活快照（历史）(`src/runtime/`,纳入 typecheck + `npm test` + `npm run demo`)
 
 `agent-loop` 核心循环与 ledger 在 RunLedger 自研骨架基础上对接 pi-ai `AssistantMessageEventStream` 与 `Model<Api>` 类型:
 
@@ -106,7 +108,7 @@
 - `main.test.ts` / `migrate.test.ts` —— 早期退出、legacy authority 负向路径与 destructive migrate 通过 spawnSync 真跑 cli.ts；真 TUI 路径因 stdin 阻塞留 manual smoke test。
 - `trace-config.test.ts` —— CLI 默认关闭本地记录，并在用户显式配置后启用工具正文 Artifact 模式。
 
-当前 `npm test` 为 Vitest 73 files / 401 tests，加 Bun OpenTUI 2 files / 3 tests / 36 assertions 全绿。`npm run check`、`npm test` 与 `npm run build` 应同时通过再行 commit。
+2026-08-02 当时的 `npm test` 为 Vitest 73 files / 401 tests，加 Bun OpenTUI 2 files / 3 tests / 36 assertions 全绿。`npm run check`、`npm test` 与 `npm run build` 应同时通过再行 commit。
 
 `npm link` 后 PATH 上的 `runledger` 命令可直接打开 TUI；旧根外 session path 不再直接 open/fork，迁移必须显式使用：
 `runledger --help` / `runledger --version` / `runledger` / `runledger -c` / `runledger --resume` / `runledger migrate --source <path> --confirm-delete` / `runledger workspace capability`。
@@ -121,7 +123,9 @@
 
 #### 1.2.w Session Owner Runtime 替代（2026-08-07，复核修正）
 
-`development-doc/runtime/06-session-owner-runtime-replacement-plan.md` 是唯一替代计划。当前工作树状态：R0–R5 implemented；R6 partial/blocked；R6.5 Linux automated candidate PASS but not accepted；R7 标准 CLI 已切换但验收随 R8 pending；R8 not accepted；R9 not started（先前删除尝试已 reverted，旧 Host 只保留为安全窗口且标准 CLI 不可达）。已修复并覆盖：
+[Runtime 06](development-doc/runtime/06-session-owner-runtime-replacement-plan.md) 是唯一替代计划。2026-09-05 核对该入口：R0–R6 implemented；R6.5 Linux automated candidate PASS but not accepted；R7 标准 CLI 已切换且本机多窗口/crash takeover 已有历史验证，验收仍随 R8 pending；R8 partial/not accepted；R9 not started。旧 Host 仅保留为安全窗口，标准 CLI 不可达；本次修复不提升人工或跨平台验收。
+
+以下保留 2026-08-07 的实现/测试快照，后续完成情况以 Runtime 06 为准：
 
 - P0-1 健康 owner 即时 attach（统一 open 不再无限 retry）、factory attached 分支 `runtime: undefined` 不再崩溃；
 - P0-2 生产工具副作用经 `attempt-gateway.ts` 进入 recovery barrier（Write/Bash/WebFetch 各自 beginAttempt/settleAttempt；崩溃留下 unresolved started receipt，takeover assess() 不误判 clean）；
@@ -130,9 +134,9 @@
 - checkpoint live head、六个 boundary、replay-ready cache + durable tail、非 replay-ready genesis fallback；
 - Session Security/Gateway production composition（CLI source 优先，filesystem/network/sandbox final leaf fail closed）；通用 security 类型不再以 Host 命名，legacy Host 只使用兼容 alias；
 - RED 测试：`tests/runtime/session-runtime/red-01..04`、`security-composition.test.ts`、checkpoint/recovery suites；candidate runner 覆盖 keepalive、gate-crash、10 个独立子进程/SQLite connection 并发 claim 和内容 digest manifest。
-- R6 blocking gaps：真实 managed process/PTY/output、MCP/Hook/Skill/Plugin、worktree cold-resume/revalidation、Trace production factory、approval/credential reverse-request UI。
+- 当时 R6 blocking gaps（历史）：真实 managed process/PTY/output、MCP/Hook/Skill/Plugin、worktree cold-resume/revalidation、Trace production factory、approval/credential reverse-request UI。
 - 遗留门禁：真实 model/MCP/PTY/worktree candidate、macOS/Windows runner、标准 PATH fault rehearsal、独立只读审计与 R8 human acceptance；`human-verified` 需真人填写，R9 只能在这些门禁闭合后开始。
-- 2026-08-07 fresh 本地门禁：`npm run check`、Session Owner focused 34 files / 209 tests、Vitest 260 files / 1427 tests、Bun OpenTUI 4 files / 29 tests、`npm run build`、隔离 Linux candidate 全部通过；该证据不提升 R6/R6.5/R8 的未完成项。
+- 2026-08-07 fresh 本地门禁：`npm run check`、Session Owner focused 34 files / 209 tests、Vitest 260 files / 1427 tests、Bun OpenTUI 4 files / 29 tests、`npm run build`、隔离 Linux candidate 全部通过；该历史证据不提升当时 R6/R6.5/R8 的未完成项。
 
 #### 1.2.va 有界根级子 Agent 委托（M0–M5、M6 Task 9）
 
@@ -175,7 +179,9 @@ M6 Task 9 fresh evidence：`tests/integration/multi-agent-bounded.test.ts` 与 `
 - CLI 仅 fresh create 接受 `--harness-profile standard|minimal`；TUI `/new [standard|minimal]` 只创建新 Session，catalog/header 只读显示 Harness，不提供 mutation；
 - 权威状态与 fresh evidence 见 `development-doc/runtime/09-minimal-harness-profile-implementation-plan.md`。P0–P5 的 Linux automated/built-CLI 验收已完成；dark/light、80/143、真实键盘/中文 IME 与 macOS/Windows runner 仍 pending，不标记 human/cross-platform verified。
 
-### 1.3 显式不实现(以 `// TODO(pi):` 注释占位)
+### 1.3 早期移植暂缓项（历史 `// TODO(pi):` 输入）
+
+以下记录最初的移植边界，后续专题可能已实现相关能力；当前范围与验收以对应唯一计划及生产代码为准。
 
 - `transformContext` 上下文变换;
 - `thinkingBudgets` / `temperature` / `maxTokens` / `transport` / `maxRetries`;

@@ -51,9 +51,9 @@ Runtime: Attached Clients = 0..N during startup/shutdown, 1..N while serving
 
 ## 1. 当前基线与替换边界
 
-### 1.1 当前 HEAD 的事实
+### 1.1 替代计划建立时的历史基线
 
-当前生产入口和持久化仍具有以下形态：
+以下是替代前 Host 形态及迁移目标，不代表当前生产入口；当前实现与验收状态见文首，标准 CLI 已使用 Session Owner：
 
 | 当前能力 | 当前入口 | 替换结论 |
 |---|---|---|
@@ -69,7 +69,7 @@ Runtime: Attached Clients = 0..N during startup/shutdown, 1..N while serving
 | Security/Worktree/Gateway | `src/security/**`、`src/worktree/**` | 保留 fail-closed final leaf；fence 改绑 `sessionId + generation` |
 | Trace/Event/Artifact | `src/runtime/trace/**` | 保留审计与 CAS；owner generation 成为统一归属键 |
 
-当前没有 `src/daemon/` 目录，但 `src/cli/runtime-host.ts` 实际承担 resident Host/daemon 角色。替换不能只改名；独立进程启动、全局 discover、Host 运维命令、socket、peer helper、build handover 和 workspace writer lease 都必须从生产路径消失。
+历史基线没有 `src/daemon/` 目录，但 `src/cli/runtime-host.ts` 承担 resident Host/daemon 角色。替换不能只改名；独立进程启动、全局 discover、Host 运维命令、socket、peer helper、build handover 和 workspace writer lease 都必须从生产路径消失。
 
 ### 1.2 保留的治理语义
 
