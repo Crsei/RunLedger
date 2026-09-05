@@ -1,3 +1,4 @@
+import type { Api, Model } from "../../../src/types.ts";
 /**
  * B4：interactive-session / Session resource adapters 验收。
  *
@@ -13,7 +14,7 @@ import { createSessionResourcePorts } from "../../../src/tui/adapters/session-re
 import { capabilitiesFromPorts } from "../../../src/tui/application/ports.ts";
 import type { CapabilityInput, TuiDomainPorts } from "../../../src/tui/application/ports.ts";
 import type { InteractiveSessionControllerPort, ProviderStatus, RuntimeSelection } from "../../../src/runtime/interactive-session-controller.ts";
-import type { Model } from "../../../src/types.ts";
+import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
 import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import type { PlanApprovalRef, PlanArtifactRef, PlanModeState, PlanModeStatus } from "../../../src/runtime/modes/plan/types.ts";
@@ -27,6 +28,7 @@ function fakeController(overrides: Partial<InteractiveSessionControllerPort> = {
 	];
 	return {
 		sessionId: "session-1",
+        subscribe: () => () => {},
 		inFlight: false,
 		currentSelection: { thinkingLevel: "off" } as RuntimeSelection,
 		messages: [],
@@ -38,7 +40,7 @@ function fakeController(overrides: Partial<InteractiveSessionControllerPort> = {
 		getFollowUpMessages: () => [],
 		getProviderStatuses: vi.fn(async () => statuses),
 		getProvider: () => undefined,
-		getAvailableModels: vi.fn(async () => [{ provider: "anthropic", id: "claude-x", name: "Claude X", api: {} } as Model<unknown>]),
+		getAvailableModels: vi.fn(async () => [{ ...mockModel, provider: "anthropic", id: "claude-x", name: "Claude X" }]),
 		login: vi.fn(async () => ({ provider: "anthropic", type: "api_key", key: "k" } as never)),
 		logout: vi.fn(async () => undefined),
 		selectModel: vi.fn(async () => undefined),
@@ -66,7 +68,8 @@ describe("B4 interactive-session adapter", () => {
 
 	it("projects model catalog with unknown context window instead of zero", async () => {
 		const controller = fakeController({
-			getAvailableModels: vi.fn(async () => [{ provider: "anthropic", id: "claude-x", name: "Claude X" } as Model<unknown>]),
+			// 外部 catalog 缺字段的非法输入，用于验证 adapter 不补造 context window。
+            getAvailableModels: vi.fn(async () => [{ ...mockModel, provider: "anthropic", id: "claude-x", name: "Claude X", contextWindow: undefined } as unknown as Model<Api>]),
 		});
 		const ports = createInteractiveSessionAdapter(controller).ports;
 		const result = await ports.model!.list({ ...request, providerId: "anthropic" });
@@ -175,7 +178,6 @@ describe("B4 Session resource adapter", () => {
 		const ports = createSessionResourcePorts({ query, supports: (operation) => operation === "plan.inspect" });
 		const result = await ports.plan!.inspect({
 			...request,
-			reference: { repositoryId, planId: goalId, revision: 0, digestPrefix: { text: "", byteLength: 0, truncated: false } },
 		});
 
 		expect(result.ok).toBe(true);
@@ -238,7 +240,6 @@ describe("B4 Session resource adapter", () => {
 			});
 			const result = await ports.plan!.inspect({
 				...request,
-				reference: { repositoryId, planId: goalId, revision: 0, digestPrefix: { text: "", byteLength: 0, truncated: false } },
 			});
 			expect(result.ok && result.value.status).toBe(expected[status]);
 		}
@@ -291,7 +292,6 @@ describe("B4 Session resource adapter", () => {
 		const ports = createSessionResourcePorts({ query, supports: () => true });
 		const planResult = await ports.plan!.inspect({
 			...request,
-			reference: { repositoryId: "repo-1", planId: "plan-1", revision: 0, digestPrefix: { text: "", truncated: false, byteLength: 0 } },
 		});
 		expect(planResult.ok).toBe(true);
 		if (planResult.ok) expect(planResult.value.status).toBe("unknown");

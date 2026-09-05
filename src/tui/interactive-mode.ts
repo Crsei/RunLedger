@@ -29,7 +29,7 @@ import {
   TUI_KEYBINDINGS,
   type EditorTheme,
   type SelectListTheme,
-} from "./index.ts";
+} from "./primitives.ts";
 
 import type { Agent } from "../runtime/agent.ts";
 import type { ModelThinkingLevel } from "../types.ts";
@@ -62,8 +62,8 @@ import { projectInteractivePresentation } from "./presentation/projectors.ts";
 import { commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
 import { SlashCommandPopup } from "./components/slash-command-popup.ts";
 import type { Component, InputListenerResult, OverlayOptions } from "./primitives.ts";
-import { matchesKey } from "./index.ts";
-import type { RgbColor } from "./index.ts";
+import { matchesKey } from "./primitives.ts";
+import type { RgbColor } from "./primitives.ts";
 import type { TuiOverlayState } from "./application/state.ts";
 import type { TuiState } from "./application/state.ts";
 import { createInitialTuiState } from "./application/initial-state.ts";
@@ -203,6 +203,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   // S7:协作者经 port.refs 访问;assembleTree 只填充成员,不替换对象
   private readonly refs: ContainerRefs = {} as ContainerRefs;
   private unsubscribe?: () => void;
+  private unsubscribeWarnings?: () => void;
   private unsubscribeSessionTitle?: () => void;
   private unsubscribeIdleRecap?: () => void;
   private idleRecapRequestId: string | undefined;
@@ -743,6 +744,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
       ? this.controller.subscribe((ev) => this.eventController.handleAgentEvent(ev))
       : this.agent?.subscribe((ev) => this.eventController.handleAgentEvent(ev));
     this.unsubscribeSessionTitle = this.controller?.subscribeSessionTitleChanged?.((event) => this.eventController.handleSessionTitleChanged(event));
+    this.unsubscribeWarnings = this.controller?.subscribeWarnings?.((warning) => {
+      if (!this.quitting) this.showNotice(warning, "error");
+    });
     this.unsubscribeIdleRecap = this.controller?.subscribeIdleRecap?.((event) => {
       if (event.cleared === true) {
         if (event.requestId !== this.idleRecapRequestId) return;
@@ -769,6 +773,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     } catch (error) {
       this.unsubscribe?.();
       this.unsubscribe = undefined;
+      this.unsubscribeWarnings?.();
+      this.unsubscribeWarnings = undefined;
       this.unsubscribeSessionTitle?.();
       this.unsubscribeSessionTitle = undefined;
       this.unsubscribeIdleRecap?.();
@@ -889,6 +895,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
     }
     this.unsubscribeSessionTitle?.();
     this.unsubscribeSessionTitle = undefined;
+    this.unsubscribeWarnings?.();
+    this.unsubscribeWarnings = undefined;
     this.unsubscribeIdleRecap?.();
     this.unsubscribeIdleRecap = undefined;
     this.unsubscribeStore?.();

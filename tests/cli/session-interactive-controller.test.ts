@@ -7,7 +7,7 @@
  * "domain_prompt_failed",用户无法知道真正原因。
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { OwnedSessionHandle } from "../../src/cli/session-client.ts";
 import {
 	SessionInteractiveController,
@@ -31,6 +31,7 @@ function assistantMessage(output: number): AssistantMessage {
 		provider: "fixture",
 		model: "fixture-model",
 		stopReason: "stop",
+		timestamp: 1,
 		usage: {
 			input: 10,
 			output,
@@ -46,7 +47,7 @@ function assistantMessage(output: number): AssistantMessage {
 function failingTransport(detail: string | undefined): SessionClientTransport {
 	const request = async (_frame: SessionFrameEnvelope): Promise<SessionFrameEnvelope> => ({
 		kind: "command_result",
-		protocolVersion: 1,
+		protocolVersion: 3,
 		frameId: "result_1",
 		body: { ok: false, code: "domain_prompt_failed", ...(detail === undefined ? {} : { detail }) },
 	});
@@ -54,8 +55,10 @@ function failingTransport(detail: string | undefined): SessionClientTransport {
 	return { request, onEvent } as unknown as SessionClientTransport;
 }
 
-function controller(detail: string | undefined): SessionInteractiveController {
-	const handle = { transport: failingTransport(detail) } as unknown as OwnedSessionHandle;
+function controller(detail: string | undefined, request?: SessionClientTransport["request"]): SessionInteractiveController {
+	const transport = failingTransport(detail);
+	if (request !== undefined) transport.request = request;
+	const handle = { transport } as unknown as OwnedSessionHandle;
 	const snapshot: SessionInteractiveSnapshot = {
 		sessionId: "session_fixture",
 		...sessionPresentation,
@@ -71,6 +74,36 @@ function controller(detail: string | undefined): SessionInteractiveController {
 }
 
 describe("SessionInteractiveController command error surfacing", () => {
+	it.each(["interrupt", "clear_queues", "editor_activity"])("reports a rejected %s through the existing warning channel", async (operation) => {
+		const instance = controller(undefined, async (): Promise<SessionFrameEnvelope> => ({ kind: "command_result", protocolVersion: 3, frameId: "rejected", body: { ok: false, code: "driver_lease_lost", detail: "driver was replaced" } }));
+		try {
+			if (operation === "interrupt") expect(instance.interrupt()).toBeUndefined();
+			else if (operation === "clear_queues") expect(instance.clearAllQueues()).toEqual({ steering: [], followUp: [] });
+			else expect(instance.notifyEditorActivity(true)).toBeUndefined();
+			await vi.waitFor(() => expect(instance.warnings).toEqual([`${operation} failed: driver_lease_lost: driver was replaced`]));
+			expect(instance.messages).toEqual([]);
+			expect(instance.inFlight).toBe(false);
+		} finally { instance.dispose(); }
+	});
+
+	it("reports an upstream AbortError while this controller is active", async () => {
+		const instance = controller(undefined, async () => { throw new DOMException("upstream cancelled the request", "AbortError"); });
+		try {
+			instance.interrupt();
+			await vi.waitFor(() => expect(instance.warnings).toEqual(["interrupt failed: upstream cancelled the request"]));
+		} finally { instance.dispose(); }
+	});
+
+	it.each(["driver_lease_lost", "AbortError"])("does not publish a late %s failure after dispose", async (kind) => {
+		let rejectRequest!: (error: Error) => void;
+		const instance = controller(undefined, () => new Promise((_resolve, reject) => { rejectRequest = reject; }));
+		instance.interrupt();
+		instance.dispose();
+		rejectRequest(kind === "AbortError" ? new DOMException("disposed request", "AbortError") : new Error(kind));
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(instance.warnings).toEqual([]);
+	});
+
 	it("keeps the canonical message projection current after a live assistant event", () => {
 		let wireListener: ((frame: SessionFrameEnvelope) => void) | undefined;
 		const transport = {
@@ -122,7 +155,7 @@ describe("SessionInteractiveController command error surfacing", () => {
 			notify: () => undefined,
 		} as unknown as SessionClientTransport;
 		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
-		const instance = new SessionInteractiveController(handle, { sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0, agentRuns: [] });
+		const instance = new SessionInteractiveController(handle, { ...sessionPresentation, sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0, agentRuns: [] });
 		expect(await instance.resumeEvents()).toBe("subscribed");
 		const seen: string[] = [];
 		instance.subscribe((event) => { seen.push(`${event.type}:${event.type === "agent_start" || event.type === "agent_end" ? event.runId : ""}`); });
@@ -140,10 +173,10 @@ describe("SessionInteractiveController command error surfacing", () => {
 		} as unknown as SessionClientTransport;
 		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
 		const instance = new SessionInteractiveController(handle, {
-			sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
+			...sessionPresentation, sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
 		});
 		const seen: unknown[] = [];
-		instance.subscribeSessionTitleChanged((event) => seen.push(event));
+		instance.subscribeSessionTitleChanged((event) => { seen.push(event); });
 
 		wireListener?.({
 			frameId: "title-event",
@@ -169,10 +202,10 @@ describe("SessionInteractiveController command error surfacing", () => {
 		} as unknown as SessionClientTransport;
 		const handle = { transport, sessionId: "session_fixture", generation: 1, supports: () => true } as unknown as OwnedSessionHandle;
 		const instance = new SessionInteractiveController(handle, {
-			sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
+			...sessionPresentation, sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
 		});
 		const seen: unknown[] = [];
-		instance.subscribeIdleRecap((event) => seen.push(event));
+		instance.subscribeIdleRecap((event) => { seen.push(event); });
 
 		wireListener?.({
 			frameId: "recap-event",
@@ -202,7 +235,7 @@ describe("SessionInteractiveController command error surfacing", () => {
 			supports: (operation: string) => operation === "session.catalog.list",
 		} as unknown as OwnedSessionHandle;
 		const instance = new SessionInteractiveController(handle, {
-			sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
+			...sessionPresentation, sessionId: "session_fixture", messages: [], warnings: [], auditEntries: [], selection: { thinkingLevel: "off" }, toolCount: 0, eventCursor: 0, driverRevision: 0,
 		});
 		await expect(instance.querySessionDomain("session.catalog.list", {}, { correlationId: "", effectId: "effect-valid" })).resolves.toEqual({
 			ok: false,
@@ -274,6 +307,7 @@ describe("SessionInteractiveController command error surfacing", () => {
 		} as unknown as OwnedSessionHandle;
 		const instance = new SessionInteractiveController(handle, {
 			sessionId: "session_fixture",
+			...sessionPresentation,
 			messages: [],
 			warnings: [],
 			auditEntries: [],
@@ -351,7 +385,7 @@ describe("SessionInteractiveController login over the wire", () => {
 		const transport = {
 			request: async (frame: SessionFrameEnvelope): Promise<SessionFrameEnvelope> => {
 				frames.push({ kind: frame.kind, body: frame.body as Record<string, unknown> });
-				return { kind: "command_result" as const, protocolVersion: 1, frameId: "result_1", body: { ok: true, kind: "login", result: {} } };
+				return { kind: "command_result" as const, protocolVersion: 3, frameId: "result_1", body: { ok: true, kind: "login", result: {} } };
 			},
 			onEvent: (): (() => void) => () => undefined,
 		} as unknown as SessionClientTransport;
@@ -378,7 +412,7 @@ describe("SessionInteractiveController login over the wire", () => {
 		const transport = {
 			request: async (): Promise<SessionFrameEnvelope> => ({
 				kind: "command_result" as const,
-				protocolVersion: 1,
+				protocolVersion: 3,
 				frameId: "result_1",
 				body: { ok: false, code: "login_failed", detail: "login cancelled by user" },
 			}),

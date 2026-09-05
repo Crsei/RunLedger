@@ -126,6 +126,8 @@ export type SessionIdleRecapSink = (event: SessionIdleRecapEvent) => void | Prom
 /** Client-side contract shared by the Host-owned and local test controllers. */
 export interface InteractiveSessionControllerPort {
   subscribe(listener: AgentEventSink): () => void;
+	/** 客户端异步命令失败复用 warnings 投影，不进入 AgentEvent/replay。 */
+	readonly subscribeWarnings?: (listener: (warning: string) => void) => () => void;
 	/** Optional durable title-event subscription; absent on legacy/local controllers. */
 	readonly subscribeSessionTitleChanged?: (listener: SessionTitleChangedSink) => () => void;
 	/** Optional transient idle recap subscription; never part of AgentEvent/replay. */

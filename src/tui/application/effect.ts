@@ -25,7 +25,7 @@ export type TuiEffect =
 	| ({ readonly type: "approval.inspect" } & CorrelatedRequestRef)
 	| ({ readonly type: "approval.resolve"; readonly approvalId: string; readonly expectedDecisionRevision: number; readonly decision: "allowed" | "denied" | "cancelled" } & CorrelatedRequestRef)
 	| ({ readonly type: "task-goal.inspect" } & CorrelatedRequestRef)
-	| ({ readonly type: "plan.inspect"; readonly planId: string; readonly expectedRevision: number } & CorrelatedRequestRef)
+	| ({ readonly type: "plan.inspect" } & CorrelatedRequestRef)
 	| ({ readonly type: "agent.inspect" } & CorrelatedRequestRef)
 	| ({ readonly type: "extension.inspect" } & CorrelatedRequestRef)
 	| ({ readonly type: "runtime-snapshot.inspect" } & CorrelatedRequestRef)

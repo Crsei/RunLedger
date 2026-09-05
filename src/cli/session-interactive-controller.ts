@@ -53,6 +53,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private readonly transport: SessionClientTransport;
 	private readonly supportsOperation: (operation: string) => boolean;
 	private readonly listeners = new Set<AgentEventSink>();
+	private readonly warningListeners = new Set<(warning: string) => void>();
 	private readonly titleListeners = new Set<SessionTitleChangedSink>();
 	private readonly idleRecapListeners = new Set<SessionIdleRecapSink>();
 	private readonly pendingTitleEvents: SessionTitleChangedEvent[] = [];
@@ -121,6 +122,11 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			for (const event of this.pendingTitleEvents.splice(0)) void listener(event);
 		}
 		return () => this.titleListeners.delete(listener);
+	}
+
+	public subscribeWarnings(listener: (warning: string) => void): () => void {
+		this.warningListeners.add(listener);
+		return () => this.warningListeners.delete(listener);
 	}
 
 	public subscribeIdleRecap(listener: SessionIdleRecapSink): () => void {
@@ -231,15 +237,15 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	}
 
 	public notifyEditorActivity(editorEmpty: boolean): void {
-		void this.command("editor_activity", { empty: editorEmpty }).catch(() => undefined);
+		this.commandInBackground("editor_activity", { empty: editorEmpty });
 	}
 
 	public interrupt(): void {
-		void this.command("interrupt", {}).catch(() => undefined);
+		this.commandInBackground("interrupt", {});
 	}
 
 	public clearAllQueues(): { steering: UserAgentMessage[]; followUp: UserAgentMessage[] } {
-		void this.command("clear_queues", {}).catch(() => undefined);
+		this.commandInBackground("clear_queues", {});
 		return { steering: [], followUp: [] };
 	}
 
@@ -323,6 +329,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.disposed = true;
 		this.removeTransportListener();
 		this.listeners.clear();
+		this.warningListeners.clear();
 		this.titleListeners.clear();
 		this.idleRecapListeners.clear();
 		this.pendingTitleEvents.splice(0);
@@ -355,6 +362,16 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			throw new Error(detail === undefined ? code : `${code}: ${detail}`);
 		}
 		return typeof result === "object" && result !== null ? (result as Record<string, unknown>) : {};
+	}
+
+	private commandInBackground(kind: string, body: Record<string, unknown>): void {
+		void this.command(kind, body).catch((error: unknown) => {
+			// 只有本地 dispose 使反馈过期；活跃连接的 AbortError 仍是真实失败。
+			if (this.disposed) return;
+			const warning = `${kind} failed: ${error instanceof Error ? error.message : String(error)}`;
+			this.warningState.push(warning);
+			for (const listener of this.warningListeners) listener(warning);
+		});
 	}
 
 	private receive(frame: SessionFrameEnvelope): void {

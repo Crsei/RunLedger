@@ -23,7 +23,7 @@ export class PlanWorkflow {
 			port.showNotice("/plan is available when the current turn is idle.", "note");
 			return;
 		}
-		const effect = port.createEffect("plan.inspect", { planId: "", expectedRevision: 0 });
+		const effect = port.createEffect("plan.inspect");
 		port.store.dispatch({ type: "query.start", effect });
 		port.runner.dispatch(effect);
 		const workflow = await port.waitForWorkflow("planWorkflow", effect.correlationId);

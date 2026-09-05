@@ -27,5 +27,6 @@ export type PlanRenderWorkflowState =
 	| { readonly state: "error"; readonly generation: number; readonly code: string; readonly message: string; readonly retryable: boolean };
 
 export interface PlanRenderQueryPort {
-	readonly inspect: (input: TuiPortRequest & { readonly reference: PlanRenderReference }) => Promise<PlanRenderQueryResult>;
+	/** 查询当前 Session 的 Plan；reference 只来自实际查询结果。 */
+	readonly inspect: (input: TuiPortRequest) => Promise<PlanRenderQueryResult>;
 }

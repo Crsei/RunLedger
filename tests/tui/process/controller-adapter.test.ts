@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { runtimeDigest } from "../../../src/runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import * as processAdapters from "../../../src/tui/process/controller-adapter.ts";
 import { createProcessOverlayController } from "../../../src/tui/process/controller-adapter.ts";
 import { createSessionProcessOverlayClient } from "../../../src/tui/process/controller-adapter.ts";
-import type { ProcessOverlayHostClient } from "../../../src/tui/process/controller-adapter.ts";
+import type { ProcessOverlayHostClient, SessionProcessOverlayControllerPort } from "../../../src/tui/process/controller-adapter.ts";
 import type { ProcessOverlayItem } from "../../../src/tui/process/types.ts";
 
 const executionId = createRuntimeId("execution", "controller");
@@ -16,18 +17,16 @@ const item: ProcessOverlayItem = {
 	canWrite: true,
 	canResize: true,
 	canStop: true,
-	commandDisplay: { authority: "spawned", label: "npm test", receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } },
+	commandDisplay: { authority: "spawned", label: "npm test", receiptDigest: runtimeDigest("process-overlay-receipt") },
 };
 
 describe("R9 process overlay Host facade adapter", () => {
 	it("builds a process overlay client only from negotiated Session operations", async () => {
-		const factory = (processAdapters as typeof processAdapters & {
-			createSessionProcessOverlayClient?: (controller: Record<string, unknown>) => ProcessOverlayHostClient | undefined;
-		}).createSessionProcessOverlayClient;
+		const factory = processAdapters.createSessionProcessOverlayClient;
 		expect(factory).toBeTypeOf("function");
 		if (factory === undefined) return;
 		const calls: string[] = [];
-		const controller = {
+		const controller: SessionProcessOverlayControllerPort = {
 			supports: (operation: string) => new Set([
 				"session.process.list",
 				"session.process.output",
@@ -45,7 +44,7 @@ describe("R9 process overlay Host facade adapter", () => {
 			},
 			commandSessionDomain: async (operation: string) => {
 				calls.push(operation);
-				return { ok: true, status: "ok", operation, domainRevision: 4, value: { receiptDigest: { algorithm: "sha256", digest: "a".repeat(64) } } };
+				return { ok: true, status: "ok", operation, domainRevision: 4, value: { receiptDigest: runtimeDigest("process-overlay-receipt") } };
 			},
 		};
 		const client = factory(controller);
@@ -60,7 +59,7 @@ describe("R9 process overlay Host facade adapter", () => {
 	});
 
 	it("maps legacy or malformed command metadata to unavailable without reading raw command", async () => {
-		const controller = {
+		const controller: SessionProcessOverlayControllerPort = {
 			supports: (operation: string) => operation === "session.process.list" || operation === "session.process.output",
 			querySessionDomain: async (operation: string) => ({
 				ok: true, status: "ok", operation, domainRevision: 0,
@@ -68,7 +67,7 @@ describe("R9 process overlay Host facade adapter", () => {
 					? { items: [{ ...item, commandDisplay: undefined, command: "must-not-display" }] }
 					: { text: "", startCursor: item.outputCursor, endCursor: item.outputCursor, nextCursor: item.outputCursor, truncated: false, head: item.outputCursor },
 			}),
-			commandSessionDomain: async () => ({ ok: false, code: "unsupported" }),
+			commandSessionDomain: async (operation) => ({ ok: false, status: "unavailable", operation, code: "unsupported" }),
 		};
 		const client = createSessionProcessOverlayClient(controller);
 		expect(client).toBeDefined();
@@ -93,7 +92,7 @@ describe("R9 process overlay Host facade adapter", () => {
 
 	it("routes terminal mutations through the Host facade and never gives them to observers", async () => {
 		const calls: string[] = [];
-		const client = {
+		const client: ProcessOverlayHostClient = {
 			listProcesses: async () => [item],
 			processOutput: async (_id, cursor) => ({ ok: true as const, text: "", startCursor: cursor, endCursor: cursor, nextCursor: cursor, truncated: false, head: cursor }),
 			writeStdin: async (_id: typeof executionId, input: string) => {

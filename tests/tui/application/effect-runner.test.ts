@@ -37,21 +37,22 @@ describe("B4 effect runner", () => {
 	it("S2: routes all session catalog and transition effects through the session port", async () => {
 		const calls: string[] = [];
 		const session: SessionWorkflowPort = {
+            rename: async (request) => ({ ok: true, ref: request, value: { sessionId: "session-current", title: request.title, titleSource: "user", titleUpdatedAtMs: 0, catalogRevision: request.expectedRevision + 1 } }),
 			list: async (request) => {
 				calls.push("list");
 				return { ok: true, ref: request, value: { kind: "catalog", revision: 0, items: [] } };
 			},
 			create: async (request) => {
 				calls.push(`create:${request.expectedRevision}`);
-				return { ok: true, ref: request, value: { kind: "transition", operation: "create", targetSessionId: "session-new", catalogRevision: 1 } };
+				return { ok: true, ref: request, value: { kind: "transition", harnessProfileId: "standard", harnessProfileVersion: 1, operation: "create", targetSessionId: "session-new", catalogRevision: 1 } };
 			},
 			resume: async (request) => {
 				calls.push(`resume:${request.targetSessionId}:${request.expectedRevision}`);
-				return { ok: true, ref: request, value: { kind: "transition", operation: "resume", targetSessionId: request.targetSessionId, catalogRevision: request.expectedRevision } };
+				return { ok: true, ref: request, value: { kind: "transition", harnessProfileId: "standard", harnessProfileVersion: 1, operation: "resume", targetSessionId: request.targetSessionId, catalogRevision: request.expectedRevision } };
 			},
 			fork: async (request) => {
 				calls.push(`fork:${request.sourceSessionId}:${request.expectedSourceHeadSequence}:${request.expectedRevision}`);
-				return { ok: true, ref: request, value: { kind: "transition", operation: "fork", targetSessionId: "session-fork", catalogRevision: request.expectedRevision + 1 } };
+				return { ok: true, ref: request, value: { kind: "transition", harnessProfileId: "standard", harnessProfileVersion: 1, operation: "fork", targetSessionId: "session-fork", catalogRevision: request.expectedRevision + 1 } };
 			},
 		};
 		const results: TuiResult[] = [];
@@ -132,7 +133,7 @@ describe("B4 effect runner", () => {
 	it("reports port rejection as failed with retryable error", async () => {
 		const results: TuiResult[] = [];
 		const port = catalogPort();
-		const failing = { ...port, list: async (request: Parameters<ProviderWorkflowPort["list"]>[0]) => ({ ok: false, ref: request, error: { code: "boom", message: "port failed", retryable: true } }) };
+		const failing: ProviderWorkflowPort = { ...port, list: async (request: Parameters<ProviderWorkflowPort["list"]>[0]) => ({ ok: false, ref: request, error: { code: "boom", message: "port failed", retryable: true } }) };
 		const runner = createEffectRunner({
 			ports: { provider: failing },
 			currentGeneration: () => 1,
@@ -146,7 +147,7 @@ describe("B4 effect runner", () => {
 	it("marks uncertain results with recoveryRequired and never optimistically commits", async () => {
 		const results: TuiResult[] = [];
 		const port = catalogPort();
-		const uncertain = { ...port, list: async (request: Parameters<ProviderWorkflowPort["list"]>[0]) => ({ ok: false, ref: request, error: { code: "unknown", message: "unclear", retryable: false, recoveryRequired: true } }) };
+		const uncertain: ProviderWorkflowPort = { ...port, list: async (request: Parameters<ProviderWorkflowPort["list"]>[0]) => ({ ok: false, ref: request, error: { code: "unknown", message: "unclear", retryable: false, recoveryRequired: true } }) };
 		const runner = createEffectRunner({
 			ports: { provider: uncertain },
 			currentGeneration: () => 1,
@@ -161,7 +162,7 @@ describe("B4 effect runner", () => {
 		const results: TuiResult[] = [];
 		const port = catalogPort();
 		let capturedSignal: unknown;
-		const portWithSignal = { ...port, list: async (request: Parameters<ProviderWorkflowPort["list"]>[0]) => {
+		const portWithSignal: ProviderWorkflowPort = { ...port, list: async (request: Parameters<ProviderWorkflowPort["list"]>[0]) => {
 			capturedSignal = request.signal;
 			return { ok: true, ref: request, value: { providers: [], models: [], generation: 1 } };
 		} };
