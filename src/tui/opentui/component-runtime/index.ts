@@ -210,6 +210,7 @@ export function createOpenTuiComponentRuntimeFromRenderer(
     options.onThemeMode?.(mode);
   };
   renderer.on("theme_mode", onThemeMode);
+  if (renderer.themeMode === "dark" || renderer.themeMode === "light") onThemeMode(renderer.themeMode);
   const onFrame = (): void => {
     const stats = renderer.getNativeStats();
     const cellsUpdated = Math.max(0, stats.cellsUpdated - previousNativeCellsUpdated);

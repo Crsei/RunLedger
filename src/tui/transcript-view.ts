@@ -1,3 +1,5 @@
+import type { Theme } from "./theme/theme.ts";
+import { wrapFgTruecolor } from "./theme/ansi.ts";
 import type { NoticeBlock, PresentationBlock } from "./presentation.ts";
 import type { TimelineRow, TimelineState } from "./timeline/types.ts";
 import { rowToBlocks, timelineToBlocks } from "./timeline/selectors.ts";
@@ -30,6 +32,7 @@ export interface TranscriptOverlayView {
 }
 
 export interface TranscriptOverlayOptions {
+	readonly theme?: Theme;
 	readonly onClose?: () => void;
 	readonly getViewportHeight?: () => number;
 	readonly maxBlocks?: number;
@@ -147,6 +150,7 @@ function knownCount(count: import("./presentation/tools/types.ts").SafeCount): n
 /** 只读 pager：只消费键盘，不把任何输入写回 composer。 */
 export class TranscriptOverlayComponent implements Component {
 	private view: TranscriptOverlayView;
+	private readonly theme?: Theme;
 	private readonly onClose?: () => void;
 	private readonly getViewportHeight: () => number;
 	private readonly maxBlocks: number;
@@ -162,6 +166,7 @@ export class TranscriptOverlayComponent implements Component {
 	constructor(view: TranscriptOverlayView, options: TranscriptOverlayOptions = {}) {
 		this.view = view;
 		this.onClose = options.onClose;
+		this.theme = options.theme;
 		this.getViewportHeight = options.getViewportHeight ?? (() => 24);
 		this.maxBlocks = Math.max(1, Math.floor(options.maxBlocks ?? TRANSCRIPT_MAX_BLOCKS));
 		this.themeGeneration = normalizedGeneration(view.themeGeneration);
@@ -254,17 +259,23 @@ export class TranscriptOverlayComponent implements Component {
 				const cached = this.settledLineCache.get(key);
 				if (cached !== undefined) return cached;
 				const lines = this.view.rows.slice(segment.start, segment.end)
-					.flatMap((block) => transcriptBlockLines(block, width))
-					.flatMap((line) => wrapTranscriptLine(line, width));
+					.flatMap((block) => this.styledBlockLines(block, width));
 				this.settledLineCache.set(key, lines, stringArrayBytes(lines));
 				return lines;
 			}
 			const lines = active.slice(segment.start, segment.end)
-				.flatMap((block) => transcriptBlockLines(block, width))
-				.flatMap((line) => wrapTranscriptLine(line, width));
+				.flatMap((block) => this.styledBlockLines(block, width));
 			return lines;
 		});
 	}
+
+	private styledBlockLines(block: PresentationBlock, width: number): string[] {
+    const lines = transcriptBlockLines(block, width).flatMap(line => wrapTranscriptLine(line, width));
+    if (!this.theme) return lines;
+    const color = block.kind === "markdown" ? (block.variant === "thinking" ? this.theme.thinkingText : this.theme.assistantMessage)
+      : block.kind === "text" && block.role === "user" ? this.theme.userMessage : this.theme.primary;
+    return lines.map(wrapFgTruecolor(color));
+  }
 
 	private pageSize(): number {
 		return Math.max(1, Math.floor(this.getViewportHeight()) - 2);

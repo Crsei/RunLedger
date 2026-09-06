@@ -12,7 +12,7 @@
 
 import type { MarkdownTheme, SelectListTheme, EditorTheme } from "../index.ts";
 import type { Theme } from "./theme.ts";
-import { wrapFg, wrapBg, wrapBold, wrapItalic, wrapUnderline, wrapStrikethrough } from "./ansi.ts";
+import { wrapFgTruecolor as wrapFg, wrapBg, wrapBold, wrapItalic, wrapUnderline, wrapStrikethrough } from "./ansi.ts";
 
 const identity = (text: string): string => text;
 

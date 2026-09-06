@@ -1,3 +1,4 @@
+import { parseUiThemeSettings, type UiThemeSettings } from "../contracts/ui-theme.ts";
 import { isAgentMode, type AgentMode } from "../runtime/harness-profiles/agent-mode.ts";
 /**
  * 用户级 Settings 加载/落盘。
@@ -56,6 +57,7 @@ export interface ProjectSettings {
 	logo?: string;
 	/** syntax theme 名；dark/light 是兼容输入，分别映射为自适应 pair。 */
 	theme?: string;
+	uiTheme?: UiThemeSettings;
 	/** /model 选择器可见模型白名单;空数组或 undefined 表示无白名单 */
 	enabledModels?: string[];
 	steeringMode?: QueueMode;
@@ -275,6 +277,10 @@ function parseSettings(text: string, path: string, allowRecording: boolean): Pro
 	if (Object.prototype.hasOwnProperty.call(raw, "multiAgent") && multiAgentValidation.diagnostics.length > 0) {
 		process.stderr.write(`[runledger] invalid_multi_agent_settings at ${path}; multi-agent disabled\n`);
 	}
+	if (allowRecording) {
+		const invalid = parseUiThemeSettings(raw.uiTheme).diagnostics;
+		if (invalid.length > 0) process.stderr.write(`[runledger] invalid UI theme fields: ${invalid.join(", ")}\n`);
+	}
 	return sanitizeProjectSettings(raw, allowRecording);
 }
 
@@ -394,6 +400,10 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 		if (LOGO_LETTERS_PATTERN.test(logo)) out.logo = logo.toLowerCase();
 	}
 	if (isSyntaxThemeName(raw.theme)) out.theme = raw.theme;
+	if (allowRecording) {
+		const parsed = parseUiThemeSettings(raw.uiTheme);
+		if (parsed.value !== undefined) out.uiTheme = parsed.value;
+	}
 	if (Array.isArray(raw.enabledModels)) {
 		const filtered = raw.enabledModels.filter(
 			(value): value is string => typeof value === "string" && value.length > 0,

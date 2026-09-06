@@ -1,3 +1,4 @@
+import { resolveUiTheme } from "../../theme/ui-theme.ts";
 /** Frame orchestration:layout、body registry、overlay owner 与 render scheduling。 */
 
 import { BoxRenderable, ScrollBoxRenderable, TextRenderable, type CliRenderer } from "@opentui/core";
@@ -27,6 +28,7 @@ export interface FrameRuntimePort {
 }
 
 export class OpenTuiFrameRuntime {
+  private terminalMode: "dark" | "light" = "dark";
   private readonly port: FrameRuntimePort;
   private readonly registry: RenderableRegistry;
   private readonly overlayController: OverlayController;
@@ -55,8 +57,10 @@ export class OpenTuiFrameRuntime {
   }
 
   public applyThemeMode(mode: "dark" | "light"): void {
+    this.terminalMode = mode;
     this.port.syntaxThemeController.setTerminalMode(mode);
-    this.registry.applyThemeMode(mode);
+    this.registry.applyTerminalMode(mode);
+    // 界面颜色由 frame 中的有效快照决定，终端事件只驱动 syntax theme。
   }
 
   public updateHighlightAdmission(): void {
@@ -73,6 +77,13 @@ export class OpenTuiFrameRuntime {
 
   public update(frame: OpenTuiComponentFrame): void {
     const projectionStartedAt = Date.now();
+    this.registry.applyTheme(frame.uiTheme ?? resolveUiTheme({}, this.terminalMode, {}));
+    if (frame.uiTheme) {
+      this.port.screen.backgroundColor = frame.uiTheme.colors.background;
+      this.port.footer.fg = frame.uiTheme.colors.primary;
+      this.port.editor.textColor = frame.uiTheme.colors.primary;
+      this.port.statusIndicator.fg = frame.uiTheme.colors.status;
+    }
     const wasFollowing = isAtBottom(this.port.transcript);
     this.applyScrollPresentation(frame);
     const body = this.registry.reconcile(frame.body, frame.editorAppearance?.backgroundColor);

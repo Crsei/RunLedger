@@ -383,6 +383,8 @@ export class ProcessTerminal implements Terminal {
 }
 
 export class TUI extends Container {
+  private uiTheme: OpenTuiComponentFrame["uiTheme"];
+  setUiTheme(theme: OpenTuiComponentFrame["uiTheme"]): void { this.uiTheme = theme; this.requestRender(); }
   readonly terminal: Terminal;
   private focusedComponent: Component | null = null;
   private readonly inputListeners: InputListener[] = [];
@@ -648,6 +650,7 @@ export class TUI extends Container {
         editorCursorOffset,
         editorHeight,
         editorAppearance: this.editorAppearance,
+        uiTheme: this.uiTheme,
         transcriptScrollPresentation: this.transcriptScrollPresentation,
         statusIndicator: this.statusIndicator,
         statusIndicatorShimmer: this.statusIndicatorShimmer,

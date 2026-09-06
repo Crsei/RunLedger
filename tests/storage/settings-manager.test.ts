@@ -55,6 +55,16 @@ describe("loadProjectSettings", () => {
 		expect(loadProjectSettingsSync({ layout })).toEqual({ theme: "company-audit" });
 	});
 
+	it("preserves user UI theme through other settings writes and drops workspace UI theme", async () => {
+    const uiTheme = { preset: "neutral" as const, mode: "auto" as const, colors: { dark: { thinkingText: "#778899" } } };
+    await saveProjectSettings({ layout }, { uiTheme, theme: "catppuccin-mocha" });
+    const current = await loadProjectSettings({ layout });
+    await saveProjectSettings({ layout }, { ...current, hideThinkingBlock: true });
+    expect(loadProjectSettingsSync({ layout })).toMatchObject({ uiTheme, theme: "catppuccin-mocha", hideThinkingBlock: true });
+    await saveProjectSettings({ layout, workspaceKey: "theme-test" }, { uiTheme });
+    expect(await loadProjectSettings({ layout, workspaceKey: "theme-test" })).toEqual({});
+  });
+
 	beforeEach(() => {
 		cwd = tmpCwd();
 		layout = canonicalFixture(cwd);

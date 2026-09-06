@@ -20,6 +20,7 @@ import type { TuiAction } from "../../application/action.ts";
 import type { OverlayAnchor, OverlayVariant } from "../../primitives.ts";
 import type { TuiPerformanceObserver } from "../performance-observer.ts";
 import type { SyntaxHighlightService } from "../../highlight/service.ts";
+import type { UiThemeSnapshot } from "../../theme/ui-theme.ts";
 import type { SyntaxThemeController } from "../../highlight/theme-controller.ts";
 import type { ShimmerStatusLineOptions } from "../shimmer-status-line.ts";
 import type { SettledSpan } from "../settled-prefix.ts";
@@ -38,6 +39,7 @@ export interface TranscriptScrollPresentation {
 }
 
 export interface OpenTuiComponentFrame {
+  readonly uiTheme?: UiThemeSnapshot;
   readonly body: readonly (string | PresentationBlock)[];
   readonly footer: readonly (string | { readonly kind: "status-line"; readonly segments: readonly StatusLineSegment[] })[];
   readonly overlay?: readonly (string | PresentationBlock)[];
@@ -81,11 +83,13 @@ type OverlayRenderable = TextRenderable | InputRenderable | SelectRenderable | E
 export interface KeyedRenderable<T extends BodyRenderable | OverlayRenderable> {
   readonly kind: string;
   readonly renderable: T;
+  variant?: "thinking";
   contentKey?: string;
   streaming?: boolean;
 }
 
 export interface SettledMarkdownState {
+  readonly variant?: "thinking";
   readonly span: SettledSpan;
   readonly renderable: MarkdownRenderable;
 }

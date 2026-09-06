@@ -37,7 +37,9 @@ import type { ModelThinkingLevel } from "../types.ts";
 import type { InteractiveSessionControllerPort, SessionRecoveryStatus } from "../runtime/interactive-session-controller.ts";
 
 import { type FooterSnapshotProvider, type TuiEvent } from "./types.ts";
-import { loadTheme, applyEnvOverrides, type Theme } from "./theme/theme.ts";
+import type { Theme } from "./theme/theme.ts";
+import type { UiThemeSettings } from "../contracts/ui-theme.ts";
+import { resolveUiTheme, type UiThemeSnapshot } from "./theme/ui-theme.ts";
 import { makeEditorTheme, makeSelectListTheme } from "./theme/factories.ts";
 import { editorBackgroundFromTerminal } from "./theme/editor-background.ts";
 import { CustomEditor, type CustomEditorProps } from "./components/custom-editor.ts";
@@ -124,6 +126,7 @@ export interface InteractiveModeOptions {
   terminal?: Terminal;
   /** 主题名，默认 dark；运行时由 OpenTUI theme_mode 更新。 */
   themeName?: "dark" | "light";
+  uiTheme?: UiThemeSettings;
   syntaxThemeName?: string;
   syntaxThemeController?: SyntaxThemeController;
   syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
@@ -202,6 +205,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly processOverlayController: ProcessOverlayController | undefined;
   private readonly performanceObserver: TuiPerformanceObserver | undefined;
   private theme: Theme;
+  private readonly uiThemeSettings: UiThemeSettings;
+  private uiThemeSnapshot: UiThemeSnapshot;
+  private uiThemeGeneration = 0;
   private readonly kb: KeybindingsManager;
   // S7:协作者经 port.refs 访问;assembleTree 只填充成员,不替换对象
   private readonly refs: ContainerRefs = {} as ContainerRefs;
@@ -283,7 +289,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.processOverlayController = opts.processOverlayController;
     this.performanceObserver = opts.performanceObserver;
     this.terminal = opts.terminal ?? new ProcessTerminal();
-    this.theme = applyEnvOverrides(loadTheme(opts.themeName ?? "dark"));
+    this.uiThemeSettings = opts.uiTheme ?? {};
+    this.uiThemeSnapshot = resolveUiTheme(this.uiThemeSettings, opts.themeName ?? "dark");
+    this.theme = { ...this.uiThemeSnapshot.colors };
     this.workspaceCapability = opts.workspaceCapability;
     this.workspaceDisplayAbsolutePath = opts.workspaceDisplayAbsolutePath;
     this.gitBranchLabel = opts.gitBranchLabel;
@@ -414,7 +422,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
         this.refs.chat.setTimelineBlocks(presentation.timeline, next.timeline.generation);
       }
       if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
-        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }));
+        this.transcriptOverlay.update(projectTranscriptOverlay(next.timeline, this.syntaxThemeController.snapshot().revision + this.uiThemeGeneration, { hideThinking: this.hideThinkingBlock }));
       }
       if (next.interaction.transcriptScrollbarVisible !== this.lastTranscriptScrollbarVisible) {
         this.refreshTranscriptScrollPresentation();
@@ -434,7 +442,8 @@ export class InteractiveMode implements FooterSnapshotProvider {
         getTerminalSize: () => ({ columns: this.terminal.columns, rows: this.terminal.rows }),
       });
     }
-    this.replayInitialHistory(opts.syntaxThemeWarnings ?? []);
+    this.ui.setUiTheme(this.uiThemeSnapshot);
+    this.replayInitialHistory([...(opts.syntaxThemeWarnings ?? []), ...this.uiThemeSnapshot.diagnostics.map(field => `Invalid UI theme field: ${field}`)]);
     void this.sessionWorkflow.refreshWelcomeSessions();
 
     void MAX_CONSECUTIVE_INIT_FAILURES;
@@ -708,8 +717,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
   private openTranscriptOverlay(): void {
     if (this.quitting || this.ui.hasOverlay() || this.approvalWorkflow.hasActivePermissionView()) return;
-    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision, { hideThinking: this.hideThinkingBlock }), {
+    const overlay = new TranscriptOverlayComponent(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision + this.uiThemeGeneration, { hideThinking: this.hideThinkingBlock }), {
       getViewportHeight: () => Math.max(4, this.terminal.rows - 2),
+      theme: this.theme,
       onClose: () => this.closeOverlay(),
     });
     this.showOverlayModal(overlay, { anchor: "center", variant: "transcript" }, "transcript");
@@ -742,7 +752,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 	if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
 		this.transcriptOverlay.update(projectTranscriptOverlay(
 			state.timeline,
-			this.syntaxThemeController.snapshot().revision,
+			this.syntaxThemeController.snapshot().revision + this.uiThemeGeneration,
 			{ hideThinking: this.hideThinkingBlock },
 		));
 	}
@@ -815,7 +825,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
    */
   private refreshEditorAppearance(rgb?: RgbColor): void {
     this.ui.setEditorAppearance({
-      backgroundColor: editorBackgroundFromTerminal(this.theme, rgb ?? this.ui.getTerminalBackgroundRgb()),
+      backgroundColor: this.uiThemeSnapshot.editorBackgroundExplicit ? this.theme.editorBackground : editorBackgroundFromTerminal(this.theme, this.uiThemeSnapshot.backgroundExplicit ? undefined : rgb ?? this.ui.getTerminalBackgroundRgb()),
       promptColor: this.theme.accent,
       placeholderColor: this.theme.hint,
     });
@@ -865,7 +875,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** OpenTUI theme_mode 变更后刷新共享 ThemeRef,并重算输入区外观。 */
   private maybeSwitchTheme(scheme: "dark" | "light"): void {
-    Object.assign(this.theme, applyEnvOverrides(loadTheme(scheme)));
+    const next = resolveUiTheme(this.uiThemeSettings, scheme);
+    if (next.revision === this.uiThemeSnapshot.revision) return;
+    this.uiThemeSnapshot = next;
+    this.uiThemeGeneration += 1;
+    Object.assign(this.theme, next.colors);
+    this.ui.setUiTheme(next);
+    this.transcriptOverlay?.update(projectTranscriptOverlay(this.store.getState().timeline, this.syntaxThemeController.snapshot().revision + this.uiThemeGeneration, { hideThinking: this.hideThinkingBlock }));
     this.refreshEditorAppearance();
     this.refreshTranscriptScrollPresentation();
     this.ui.invalidate();

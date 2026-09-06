@@ -1,280 +1,64 @@
 # 05 · 主题系统
 
-> 本文包含历史主题设计。可配置主体色槽、三套预设及思考灰色的拟实施合同见 [Plan 27](27-configurable-ui-theme-and-thinking-color-plan.md)，状态为 planned；本文中的 `thinkingFg` 不代表当前代码已有该字段。
+RunLedger 使用用户级 `settings.json` 的 `uiTheme` 配置主体颜色；`theme` 与 `/theme` 保持代码语法高亮的既有含义。实施与验收见 [Plan 27](27-configurable-ui-theme-and-thinking-color-plan.md)。
 
-> 本文档定义 RunLedger TUI 的 21 色槽主题 schema、dark/light 占位值、`theme.fg/bg` API,以及 OSC 11 跟随切换的接入路径。
+## 配置
 
----
-
-## 1. 设计动机
-
-pi 主题有 ~70 个色槽,服务于彩蛋 / 扩展 / 各种细化状态。RunLedger 只复刻 11 个业务组件,把色槽收敛到 **21 个**,达成:
-
-- 每个槽都有明确使用场景(无"孤儿槽");
-- dark/light 两套默认值落地即可演示;
-- 未来如果要扩展,新增槽即可,不破坏 decode。
-
----
-
-## 2. 色槽 schema
-
-```ts
-// src/tui/theme/theme.ts
-export interface ThemeColors {
-  // ── 基础文字 ──────────────────────────────────────
-  text: string;        // 主文本,默认前景色
-  dim: string;         // 次要文本(注释 / 时间戳 / placeholder)
-  accent: string;      // 强调(logo / 当前项 marker / 加粗 token)
-  secondary: string;   // 次强调(sidebar 状语 / 工具名)
-  error: string;       // 错误文本 + error 状态边框
-  success: string;      // 成功结果(✓ / done 状态)
-  border: string;      // 通用边框
-
-  // ── 消息气泡 ──────────────────────────────────────
-  userMessageBg: string;       // 用户消息背景色
-  assistantMessageBg: string;  // 助手消息背景色(暗,pod 0 透明感)
-  thinkingFg: string;          // thinking 块文本色(展开后)
-
-  // ── 工具 ──────────────────────────────────────────
-  toolPendingBg: string;       // 工具运行中边框色
-  toolBorder: string;          // 工具默认 / 完成边框色
-  toolErrorBg: string;         // 工具错误边框色 + 错误结果背景
-  bashCommand: string;         // bash 命令文本色
-  bashStdout: string;          // bash 输出文本色
-  bashStderr: string;          // bash 错误文本色
-
-  // ── 状态 / 提示 ───────────────────────────────────
-  statusWorking: string;       // spinner working 颜色
-  statusError: string;         // spinner error 颜色
-  pendingBlocked: string;      // PendingMessages 阻塞着色
-  footerBg: string;            // footer 背景色
-
-  // ── 输入区 ────────────────────────────────────────
-  editorBackground: string;    // 输入区整块背景(codex user_message_bg 静态回退值)
-
-  // ── markdown code ────────────────────────────────
-  mdCodeBlock: string;         // ``` 块边框 + 背景
-}
-```
-
-**总数 = 21**。可以做到"少 1 项无法运行,多 1 项可被精简"。每个槽与组件的对应见第 4 节。
-
----
-
-## 3. Theme API
-
-```ts
-// src/tui/theme/theme.ts
-export interface Theme {
-  readonly scheme: "dark" | "light";
-  readonly colors: Readonly<ThemeColors>;
-  /** 用色槽包裹文本作为前景色(自动 reset) */
-  fg(key: ColorKey, text: string): string;
-  /** 用色槽作为背景色包裹 */
-  bg(key: BgColorKey, text: string): string;
-}
-
-export type ColorKey = keyof ThemeColors;
-export type BgColorKey =
-  | "userMessageBg"
-  | "assistantMessageBg"
-  | "toolPendingBg"
-  | "toolErrorBg"
-  | "footerBg"
-  | "mdCodeBlock";
-
-export function loadTheme(scheme: "dark" | "light", overrides?: Partial<ThemeColors>): Theme;
-```
-
-`fg` / `bg` 内部用 ANSI 24-bit truecolor `\x1b[38;2;R;G;Bm...\x1b[39m` / `\x1b[48;2;R;G;Bm...\x1b[49m`,自动 reset。
-
-color 解析: `#RRGGBB` / `rgb(r,g,b)` / 命名色(可选,本期不实现,只 16 进制)。
-
----
-
-## 4. 色槽到组件映射表
-
-| 色槽 | 使用组件 | 使用场景 |
-|------|----------|----------|
-| `text` | 所有 leaf 组件 | 默认前景 |
-| `dim` | `KeybindingHints` 提示、`FooterComponent` 标签、时间戳 | 次要信息 |
-| `accent` | `KeybindingHints` logo、`SelectList` 高亮、`DynamicBorder` running 状态 | 焦点区 |
-| `secondary` | `ToolExecutionComponent` `toolName`、`FooterComponent` model label | 标签类 |
-| `error` | `ToolExecutionComponent` error 边框、`StatusIndicator` error spinner、错误 tool_result | 错误展示 |
-| `success` | `ToolExecutionComponent` done 状态、✓ 标记 | 成功 |
-| `border` | `CustomMessageComponent` 框线、`LoadedResources` 分隔 | 通用 |
-| `userMessageBg` | `UserMessageComponent` 背景 | 整区块 |
-| `assistantMessageBg` | `AssistantMessageComponent` 背景(可选) | 整区块 |
-| `thinkingFg` | thinking 块文本(展开时) | 折叠展开 |
-| `toolPendingBg` | `ToolExecutionComponent` 边框 running | 工具状态 |
-| `toolBorder` | `ToolExecutionComponent` 边框 done | 同上 |
-| `toolErrorBg` | `ToolExecutionComponent` 边框 error / result | 同上 |
-| `bashCommand` | `BashExecutionComponent.commandText` | shell 高亮 |
-| `bashStdout` | `BashExecutionComponent.appendOutput` | stdout 色 |
-| `bashStderr` | `BashExecutionComponent.appendError` | stderr 色 |
-| `statusWorking` | `StatusIndicator.kind="working"` | spinner 主体 |
-| `statusError` | `StatusIndicator.kind="error"` | 错误 spinner |
-| `pendingBlocked` | `PendingMessages.state="blocked"` | 着色警示 |
-| `footerBg` | `FooterComponent` 整行背景 | 状态栏 |
-| `editorBackground` | `Editor` / 原生输入区(editorRow)背景 | 整区块(codex `user_message_bg_rgb` 的静态回退;运行时由 `theme/editor-background.ts` 按终端背景重算) |
-| `mdCodeBlock` | `Markdown` 渲染 ``` ` ``` 块 | 代码块 |
-
-> 2026-08-09(计划 02):色槽从 20 扩到 21。`editorBackground` 为输入区专用背景槽,不
-> 与 surface/border 混用;默认值 = `computeEditorBackground(解析 theme.background)`。
-> OSC 11 可用时,OpenTUI 路径的输入区背景由终端真实背景实时重算(见
-> [`../plan/02-codex-input-area-replica-plan.md`](../plan/02-codex-input-area-replica-plan.md) S4)。
-
-每个色槽只对应上表中的 1 种用途(单一职责)。
-
----
-
-## 5. dark.json(占位值)
+位置由 composition root 的 `RunledgerLayout.settings` 决定，默认 `~/.runledger/settings.json`；合法 `RUNLEDGER_DIR` 使用该目录的 settings。仅用户层生效，workspace 层忽略 `uiTheme`。修改后重启生效。
 
 ```json
 {
-  "$schema": "./theme-schema.json",
-  "scheme": "dark",
-  "colors": {
-    "text": "#e6e6e6",
-    "dim": "#808080",
-    "accent": "#7aa2f7",
-    "secondary": "#bb9af7",
-    "error": "#f7768e",
-    "success": "#9ece6a",
-    "border": "#3b3f50",
-    "userMessageBg": "#1f2430",
-    "assistantMessageBg": "#16181e",
-    "thinkingFg": "#9d7cd8",
-    "toolPendingBg": "#1a1b26",
-    "toolBorder": "#414868",
-    "toolErrorBg": "#34162a",
-    "bashCommand": "#7dcfff",
-    "bashStdout": "#c0caf5",
-    "bashStderr": "#f7768e",
-    "statusWorking": "#7aa2f7",
-    "statusError": "#f7768e",
-    "pendingBlocked": "#e0af68",
-    "footerBg": "#16181e",
-    "mdCodeBlock": "#1a1b26"
-  }
-}
-```
-
-色调参考 Tokyo Night(M 网络),warm-cool 平衡,对 Windows Terminal / iTerm2 / Kitty 默认配色都兼容。
-
----
-
-## 6. light.json(占位值)
-
-```json
-{
-  "$schema": "./theme-schema.json",
-  "scheme": "light",
-  "colors": {
-    "text": "#343b58",
-    "dim": "#9699a3",
-    "accent": "#34548a",
-    "secondary": "#8c4ab8",
-    "error": "#8c4351",
-    "success": "#485e30",
-    "border": "#d5d3d1",
-    "userMessageBg": "#e9e8e6",
-    "assistantMessageBg": "#f5f5f5",
-    "thinkingFg": "#8c4ab8",
-    "toolPendingBg": "#e3e3e3",
-    "toolBorder": "#9aa5ce",
-    "toolErrorBg": "#f0d4dc",
-    "bashCommand": "#34548a",
-    "bashStdout": "#343b58",
-    "bashStderr": "#8c4351",
-    "statusWorking": "#34548a",
-    "statusError": "#8c4351",
-    "pendingBlocked": "#915c00",
-    "footerBg": "#e9e8e6",
-    "mdCodeBlock": "#f0f0f0"
-  }
-}
-```
-
-色调参考 Tokyo Night Light / Day,亮主题下保留 accents 反差。
-
----
-
-## 7. `theme-schema.json`(JSON Schema)
-
-为了让 M5 选择器可视化,需要写出 schema。本期仅需校验"color 字段是合法 #RRGGBB"。schema 摘要:
-
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["scheme", "colors"],
-  "properties": {
-    "scheme": { "enum": ["dark", "light"] },
+  "uiTheme": {
+    "preset": "default",
+    "mode": "auto",
     "colors": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "text": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
-        // ...(20 个槽同上)
-      }
+      "common": { "accent": "#7dcfff" },
+      "dark": { "thinkingText": "#777d88" },
+      "light": { "thinkingText": "#6c6c6c" }
     }
   }
 }
 ```
 
-完整 schema 在 M6 写实现时落地(M6 写 schema 与 dark/light 双 json + controller),本期 schema 只列规格。
+预设为 `default`、`neutral`、`high-contrast`，各含 dark/light。缺省 `default + auto`。`mode` 支持 auto、dark、light；auto 跟随 OpenTUI `theme_mode`，探测前使用 dark，固定模式不随终端事件改变。配置示例见 [examples/ui-themes](../../examples/ui-themes/README.md)。
 
----
+优先级从低到高：内置预设 → `colors.common` → 当前模式的 `colors.dark/light` → `RUNLEDGER_THEME_<KEY>`。KEY 为字段名全大写，例如 `RUNLEDGER_THEME_THINKINGTEXT=#909090`。
 
-## 8. 资源覆盖加载
+仅接受 `#RRGGBB`。错误字段忽略并提示，保留其他合法值；不执行命令、不读取任意主题路径、不自动创建或覆盖用户配置。未配置字段继承预设。显式 `editorBackground` 优先于终端背景探测；未覆盖时沿用背景混色算法。无显式 `background` 时保留终端背景对输入区的自适应。
 
-```ts
-// 启动顺序
-const theme = loadTheme(process.env.RUNLEDGER_THEME_SCHEME === "light" ? "light" : "dark", {
-  // 允许 RUNLEDGER_THEME_<KEY> 覆盖单个色槽
-  ...(process.env.RUNLEDGER_THEME_ACCENT && { accent: process.env.RUNLEDGER_THEME_ACCENT }),
-});
-```
+## 色槽与使用位置
 
-这样开头即可点对点覆盖:
+| 色槽 | 使用范围 |
+| --- | --- |
+| `primary` | 一般原生文本、输入文字、overlay 普通文字；Footer 无 syntax 颜色的文字 |
+| `assistantMessage` | 普通回答 Markdown 默认文字、transcript 回答 |
+| `thinkingText` | 思考 Markdown 默认文字、稳定片段、transcript 思考 |
+| `userMessage` | 用户消息文字、transcript 用户文字 |
+| `secondary` | 选择列表描述、shimmer 中间色、传统组件次要文字 |
+| `accent` | 输入提示、选择项前景、Markdown 行内代码、shimmer 高亮 |
+| `muted` | 分隔文字、shimmer 低亮度、传统组件弱提示 |
+| `hint` | 输入 placeholder、提示文字、shimmer 键位 |
+| `info` | Markdown 标题、info notice 基础文字 |
+| `warning`、`error` | 对应 notice 的基础文字；局部 syntax 状态标记仍可覆盖 |
+| `success` | 传统 Markdown 工厂代码块的默认色；native 代码块由 syntax theme 控制 |
+| `background` | 主界面和 overlay 表面、输入区混色的回退背景 |
+| `surface` | 滚动轨道、overlay 输入表面 |
+| `surfaceAlt` | overlay 选择项背景 |
+| `border` | overlay 边框、输入主题边框 |
+| `editorBackground` | 输入区和用户消息整行背景 |
+| `toolCall`、`toolResult`、`toolError` | 运行中、成功、失败工具块基础文字及探索摘要；命令 syntax/输出 ANSI/状态标记保留局部颜色 |
+| `status` | 非 shimmer 状态行基础色、Welcome 元数据 |
+| `link` | Markdown 链接文字与 URL |
 
-```
-RUNLEDGER_THEME_ACCENT=#ff00aa tsx examples/tui-demo.ts
-```
+色槽控制对应基础文字；代码块、diff、Mermaid 与 Footer 的 syntax 语义色不被强制统一染色。思考默认只改变叙述文字颜色，保留 Markdown 局部高亮，不默认增加斜体。
 
----
+## 实现接线
 
-## 9. 主题切换控制器
+- `src/contracts/ui-theme.ts` 定义纯配置 DTO 与输入校验，storage 不依赖 TUI。
+- `src/tui/theme/ui-theme.ts` 解析完整的不可变颜色快照，记录背景覆盖来源与展示 revision。
+- `InteractiveMode` 将同一快照下发给 OpenTUI frame，原组件读取共享 Theme；UI 模式和 syntax theme 的真实终端模式分开。
+- `rowToBlocks()` 将思考标记为 Markdown `variant: thinking`；registry 管理普通/思考样式，稳定前缀与主题切换均保留语义。
+- OpenTUI `MarkdownRenderable` 的 `fg` 和 syntax default 同步更新。切换主题必须先 `refreshStyles()` 更新子节点，再恢复 finalized 状态并释放旧样式，避免已完成段落变空白。
+- transcript 先按可见文字宽度换行，再使用 truecolor ANSI 着色；主题 generation 使历史行缓存失效。
 
-`InteractiveThemeController`(spec 见 02 文档 §16)的接入步骤:
-
-1. 启动时由 pi-tui `ProcessTerminal` 触发 OSC 11 探测;
-2. 收到响应 → 解析为 `dark` / `light`;
-3. 若与当前不同,调用 `loadTheme(newScheme)` → 把新 Theme 引用传给 InteractiveMode;
-4. InteractiveMode **不**主动遍历组件重渲,直接 `ui.requestRender()` 全量重渲一次,后续组件 render 调 `theme.get()` 自动拿新值;
-5. 编辑器边框颜色(`EditorTheme.borderColor`)由 controller 同步 update(`setEditorThemeBorder(color)`)。
-
----
-
-## 10. 与 pi 的差异点
-
-| 维度 | pi | RunLedger |
-|------|----|-----------|
-| 槽数 | ~70 | 20 |
-| 槽分配粒度 | 多个 nested variant(如 `accentBright`, `accentDim`) | 单 `accent` + 字符变体(`Bold`, `Italic`) 通过 ANSI 修饰 |
-| 主题文件命名 | `theme/theme.ts` + `dark.json` | `theme/theme.ts` + `dark.json`(同名同结构,本期能浅表对照) |
-| OSC 11 | 通过 `theme-controller.ts` 自动切 | System 层不动,接入路径相同 |
-| 用户自定义 | pi 支持 `pi.json` 全量覆盖 | 仅支持 `RUNLEDGER_THEME_<KEY>` env |
-| env 覆盖形态 | (不适用,pi 走配置文件) | 与 `claude-code-bun` 同形态 env-driven(`RUNLEDGER_THEME_ACCENT` 等),机制完全等价,无新增 |
-
-`claude-code-bun` 主题机制虽然基于 React/Ink,但**用 env 覆盖单个色槽**的形态与 RunLedger 一致,RunLedger 采纳此形态作本期唯一自定义入口,不引入 `~/.runledger/theme.json` 等额外配置文件。
-
----
-
-## 11. 验收标准
-
-- `npm run check` 通过;
-- `tsx examples/tui-demo.ts` 切终端 OSC 11 颜色后,RunLedger 1 秒内自动切到对应 dark/light;
-- `RUNLEDGER_THEME_ACCENT=#ff00aa tsx examples/tui-demo.ts` 看到 logo 强调色变化;
-- 单测:`theme.test.ts` 验证 21 槽全部存在且 `#RRGGBB` 合法。
+自动化证据、构建后的 CLI 验证与人工/跨平台验收分别记录在 Plan 27；不得用自动字符捕获宣称人工视觉通过。

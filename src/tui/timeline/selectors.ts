@@ -90,6 +90,7 @@ export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions =
 					...partMetadata(row, `${row.id}/thinking`),
 					kind: "markdown",
 					content: row.thinking.text,
+					variant: "thinking",
 					streaming: row.streaming,
 				});
 			}

@@ -1,6 +1,6 @@
 /** Overlay 树的唯一 create/update/destroy owner。 */
 
-import { BoxRenderable, InputRenderable, SelectRenderable } from "@opentui/core";
+import { BoxRenderable, InputRenderable, SelectRenderable, TextRenderable } from "@opentui/core";
 import { blockText, toPresentationBlock } from "./transcript-runtime.ts";
 import { getOverlayCommandNode, getOverlayInputNode, getOverlaySelectNode, getOverlayTextNode, overlayBlockHeight } from "./overlay-runtime.ts";
 import type { KeyedRenderable, OpenTuiComponentFrame, OverlayRenderable } from "./types.ts";
@@ -44,12 +44,13 @@ export class OverlayController {
     overlay.right = undefined;
     overlay.width = transcriptVariant || compact ? renderer.width : modalWidth;
     overlay.borderStyle = "rounded";
+    if (frame.uiTheme) overlay.borderColor = frame.uiTheme.colors.border;
     overlay.border = !compact && !transcriptVariant;
     overlay.padding = compact ? 0 : 1;
     overlay.paddingTop = bottomLeft ? 0 : compact ? 0 : 1;
     overlay.paddingBottom = bottomLeft ? 0 : compact ? 0 : 1;
     if (transcriptVariant) {
-      overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
+      overlay.backgroundColor = frame.uiTheme?.colors.background ?? (renderer.themeMode === "light" ? "#ffffff" : "#0b0e14");
       overlay.top = 0;
       overlay.bottom = 0;
       overlay.height = renderer.height;
@@ -59,11 +60,11 @@ export class OverlayController {
       overlay.top = undefined;
       overlay.bottom = composerTopOffset;
     } else if (bottomLeft) {
-      overlay.backgroundColor = renderer.themeMode === "light" ? "#ffffff" : "#0b0e14";
+      overlay.backgroundColor = frame.uiTheme?.colors.background ?? (renderer.themeMode === "light" ? "#ffffff" : "#0b0e14");
       overlay.top = undefined;
       overlay.bottom = composerTopOffset;
     } else {
-      overlay.backgroundColor = undefined;
+      overlay.backgroundColor = frame.uiTheme?.colors.background;
       overlay.top = Math.max(0, Math.floor((renderer.height - modalHeight) / 2));
       overlay.bottom = undefined;
     }
@@ -76,6 +77,27 @@ export class OverlayController {
       ? 12
       : Math.max(1, Math.floor((modalHeight - chromeHeight - fixedBlockHeight) / selectCount));
     this.reconcileNodes(overlay, blocks, selectHeightLimit);
+    if (frame.uiTheme) {
+      const theme = frame.uiTheme.colors;
+      for (const node of this.nodes.values()) {
+        if (node.renderable instanceof TextRenderable) node.renderable.fg = theme.primary;
+        if (node.renderable instanceof SelectRenderable) {
+          node.renderable.backgroundColor = theme.background;
+          node.renderable.textColor = theme.primary;
+          node.renderable.focusedBackgroundColor = theme.background;
+          node.renderable.focusedTextColor = theme.primary;
+          node.renderable.selectedBackgroundColor = theme.surfaceAlt;
+          node.renderable.selectedTextColor = theme.accent;
+          node.renderable.descriptionColor = theme.secondary;
+          node.renderable.selectedDescriptionColor = theme.secondary;
+        }
+        if (node.renderable instanceof InputRenderable) {
+          node.renderable.backgroundColor = theme.surface;
+          node.renderable.textColor = theme.primary;
+          node.renderable.placeholderColor = theme.hint;
+        }
+      }
+    }
   }
 
   public dispose(): void {

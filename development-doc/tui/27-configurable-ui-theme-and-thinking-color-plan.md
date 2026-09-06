@@ -1,8 +1,8 @@
 # RunLedger TUI 可配置主体色槽与思考灰色实施计划
 
-> 状态：**planned / 未实现、未验收**。
+> 状态：**implemented / Linux 自动化与构建后 TTY 已验证**。
 > 日期：2026-09-06。源码核对基线：`rollback/before-composer-shape@96c7fa4`。
-> 本次交付仅为计划文档；下列字段、预设与命令行为均为拟实施合同。
+> 配置、预设与渲染接线已实现；最终验证结果见 §8，人工与跨平台验收单独记录。
 
 ## 1. 目标与范围
 
@@ -166,9 +166,25 @@
 
 | 阶段 | 状态 |
 | --- | --- |
-| 计划与配置合同 | 已记录；尚未实现 |
-| P1 配置与解析 | pending |
-| P2 统一主题传递 | pending |
-| P3 思考样式接线 | pending |
-| P4 测试与交付 | pending |
+| 计划与配置合同 | 已落实到代码与配置说明 |
+| P1 配置与解析 | implemented |
+| P2 统一主题传递 | implemented |
+| P3 思考样式接线 | implemented |
+| P4 测试与交付 | implemented；主 PATH 集成记录见 §8 |
 | 人工与跨平台验收 | pending |
+
+## 8. 实施记录与证据（2026-09-06）
+
+- 新增 `src/contracts/ui-theme.ts` 纯配置合同，保持 storage → contracts 的依赖方向；没有 storage → TUI 反向依赖。
+- 用户级 `uiTheme` 支持三套预设、auto/dark/light、common/模式/env 覆盖及字段级安全诊断。示例见 [examples/ui-themes](../../examples/ui-themes/README.md)，现行色槽映射见 [05-theme.md](05-theme.md)。
+- 主界面与 transcript 的思考色已接通，保持普通回答与用户文字独立配置；复用节点、稳定表格前缀、主题 revision 和 shimmer 颜色缓存均覆盖更新路径。
+- OpenTUI 的 `fg` 与 syntax default 必须同时设置。主题切换先 `refreshStyles()`，再恢复 finalized 子节点；回归曾复现“主题切换后已完成段落空白”，修复后通过实际字符格颜色验证。
+- UI 固定模式不覆盖 syntax theme / Mermaid 的真实终端模式。初始终端模式可能为 null，只有 dark/light 信号参与解析。
+- 新增测试 `ui-theme.test.ts`、`ui-theme-rendering.bun.test.ts`，扩充 settings 保存往返测试；未把原工作树的其他测试改动纳入本专项。
+- 可重放 CLI 验证工具见 [tests/manual/ui-theme](../../tests/manual/ui-theme/README.md)。第一轮完整矩阵 13/13 通过：三预设 × 两模式 × 两宽度，加单槽覆盖，主面与 transcript 色值符合预期，所有 CLI 退出 0。证据 `/tmp/rl-theme-matrix-pw5wdr_l/summary.json`；使用独立工作树的构建后 CLI，属于 Linux 真实 TTY 合成历史验证。
+- 原始提交基线的全量测试在 `tests/tui/adapters/adapters.test.ts` 出现两项既有 Plan Mode `unknown`/`inactive` 预期失败。原工作树已有该修正；为验证最终合入状态，临时借用原工作树现有测试改动后重新运行门禁，借用文件不进入本专项提交。
+- auto 模式额外通过真实终端通知 + OSC 10/11 回复验证：思考从 `#777d88` 切换为 `#6c6c6c`，transcript 同步且退出 0；证据 `/tmp/rl-theme-matrix-i02tmhoa/summary.json`。重放工具已将此例纳入完整 14 例矩阵。
+- 最终 `npm run check`、`npm run build` 退出 0，完整日志 `/tmp/rl-plan27-check-delivery.log`、`/tmp/rl-plan27-build-delivery.log`。
+- `npm test` 的 singleton/runtime/security-storage/integration 分组全部通过；在 native 分组发现默认链接颜色兼容回归后，将 `link` 的默认值对齐原有 cyan。随后完整重跑 `npm run test:fast`、`npm run test:tui-native`，均退出 0（native 149 tests）。所有 local 分组已有通过证据，但没有将先前退出 1 的单次 `npm test` 记作退出 0。日志 `/tmp/rl-plan27-integrated-tests.log`、`/tmp/rl-plan27-fast-delivery.log`、`/tmp/rl-plan27-native-delivery.log`。
+- 最终构建后 CLI 完整矩阵 14/14 通过：`/tmp/rl-theme-matrix-1ij6pvpu/summary.json`，含 auto 切换；主面/transcript 思考颜色一致、所有 CLI 退出 0。
+- 原工作树 PATH CLI 集成证据在合入构建后追加。人工视觉、中文 IME、真实 provider 与 macOS/Windows 未执行，不宣称通过。

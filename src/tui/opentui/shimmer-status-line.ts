@@ -22,7 +22,7 @@ interface StatusPalettes {
 	readonly hint: ShimmerPalette;
 }
 
-const paletteCache = new WeakMap<Theme, Map<boolean, StatusPalettes>>();
+const paletteCache = new WeakMap<Theme, Map<string, StatusPalettes>>();
 
 function foregroundOpen(hex: string, truecolor: boolean): string {
 	const wrapped = (truecolor ? wrapFgTruecolor(hex) : wrapFg(hex, false))("");
@@ -32,10 +32,11 @@ function foregroundOpen(hex: string, truecolor: boolean): string {
 function statusPalettes(theme: Theme, truecolor: boolean): StatusPalettes {
 	let byCapability = paletteCache.get(theme);
 	if (byCapability === undefined) {
-		byCapability = new Map<boolean, StatusPalettes>();
+		byCapability = new Map<string, StatusPalettes>();
 		paletteCache.set(theme, byCapability);
 	}
-	const cached = byCapability.get(truecolor);
+	const key = `${truecolor}:${theme.muted}:${theme.secondary}:${theme.accent}:${theme.hint}`;
+	const cached = byCapability.get(key);
 	if (cached !== undefined) return cached;
 	const muted = foregroundOpen(theme.muted, truecolor);
 	const palettes: StatusPalettes = {
@@ -51,7 +52,8 @@ function statusPalettes(theme: Theme, truecolor: boolean): StatusPalettes {
 			high: { ansi: foregroundOpen(theme.hint, truecolor) },
 		},
 	};
-	byCapability.set(truecolor, palettes);
+	if (byCapability.size >= 4) byCapability.clear();
+	byCapability.set(key, palettes);
 	return palettes;
 }
 

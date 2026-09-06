@@ -397,6 +397,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       workspaceDisplayAbsolutePath: workspaceDisplayAbsolutePathForView({ effectiveCwd }),
       gitBranchLabel: gitDisplay.branchLabel,
       syntaxThemeName: settings.theme,
+      uiTheme: settings.uiTheme,
       syntaxThemeController: syntaxThemes.controller,
       syntaxThemeSettingsPort: createCliSyntaxThemeSettings(layout, syntaxThemes.customThemeNames),
       syntaxThemeWarnings: syntaxThemes.takeWarnings(),

@@ -1,17 +1,6 @@
-/**
- * TUI 主题:21 色槽 schema 的核心类型与 dark/light 加载入口。
- *
- * 对照 development-doc/tui/05-theme.md §1 与 §3:
- *   - Theme 接口包含 21 个色槽 + accentBold/Italic 字符变体;
- *   - loadTheme(name) 在 M1 阶段只支持 "dark" 硬编码色值;
- *   - env 覆盖 RUNLEDGER_THEME_<KEY> 在 M6 接入,本期占位函数 noop;
- *   - 中文注释与色槽保持简洁技术化,不堆形容词。
- *
- * dark/light 由 OpenTUI theme_mode 事件切换，不再保留第二套终端探测 authority。
- */
-
-/** ANSI 16 色基础槽 + accent 字符变体,共 21 项(对照 05-theme.md §3 表)。 */
+/** 界面基础色槽；配置解析、预设与覆盖规则见 ui-theme.ts。 */
 export interface Theme {
+  thinkingText: string;
   /** 8 个基础前景槽。 */
   primary: string;
   secondary: string;
@@ -39,11 +28,12 @@ export interface Theme {
   link: string;
 }
 
-/** 本期支持的预设名;light 与 auto 在 M6 接入。 */
+/** 有效的终端配色模式；auto 在配置解析层解析。 */
 export type ThemeName = "dark" | "light";
 
 /** dark 主题默认色值。 */
 const DARK_THEME: Theme = {
+  thinkingText: "#777d88",
   primary: "#e6e6e6",
   secondary: "#a0a0a0",
   accent: "#7dcfff",
@@ -59,18 +49,19 @@ const DARK_THEME: Theme = {
   // 静态回退值 = computeEditorBackground(解析 background);OSC 11 可用时由
   // theme/editor-background.ts 重算,两者对默认主题保持一致。
   editorBackground: "#282a30",
-  userMessage: "#7dcfff",
+  userMessage: "#e6e6e6",
   assistantMessage: "#e6e6e6",
   toolCall: "#e5c07b",
   toolResult: "#7fd1a4",
   toolError: "#f7768e",
   status: "#7aa2f7",
   hint: "#666666",
-  link: "#7aa2f7",
+  link: "#7dcfff",
 };
 
-/** light 主题占位;M6 阶段补真值。 */
+/** light 主题默认色值。 */
 const LIGHT_THEME: Theme = {
+  thinkingText: "#6c6c6c",
   primary: "#1a1a1a",
   secondary: "#444444",
   accent: "#0066cc",
@@ -85,21 +76,17 @@ const LIGHT_THEME: Theme = {
   border: "#cccccc",
   // 亮主题回退值 = computeEditorBackground(#ffffff) = 4% 黑混入。
   editorBackground: "#f4f4f4",
-  userMessage: "#0066cc",
+  userMessage: "#1a1a1a",
   assistantMessage: "#1a1a1a",
   toolCall: "#a07000",
   toolResult: "#2a8a4a",
   toolError: "#c01030",
   status: "#3050c0",
   hint: "#888888",
-  link: "#3050c0",
+  link: "#0066cc",
 };
 
-/**
- * 按预设名加载 theme;不存在的名字回退到 dark,记 stderr 一行。
- *
- * env 覆盖 RUNLEDGER_THEME_<KEY> 在 M6 阶段加入,本期保持纯预设。
- */
+/** 返回基础 dark/light 预设；调用方不得修改共享对象。 */
 export function loadTheme(name: ThemeName): Theme {
   switch (name) {
     case "dark":
@@ -110,7 +97,7 @@ export function loadTheme(name: ThemeName): Theme {
 }
 
 /**
- * 应用 env 覆盖到 theme(M6 真实装)。
+ * 兼容入口：应用合法的 hex 环境覆盖；生产使用 resolveUiTheme。
  *
  * 通过 RUNLEDGER_THEME_<KEY> 覆盖 Theme 的某项颜色;KEY 取大写形式,
  * 例如 RUNLEDGER_THEME_PRIMARY="#ffffff"。
@@ -122,7 +109,7 @@ export function applyEnvOverrides(theme: Theme, env: NodeJS.ProcessEnv = process
   for (const k of keys) {
     const envKey = `RUNLEDGER_THEME_${k.toUpperCase()}`;
     const v = env[envKey];
-    if (typeof v === "string" && v.length > 0) {
+    if (typeof v === "string" && /^#[0-9a-fA-F]{6}$/u.test(v)) {
       (next[k] as string) = v;
     }
   }
