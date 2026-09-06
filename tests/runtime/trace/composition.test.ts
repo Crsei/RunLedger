@@ -6,7 +6,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildRunledgerLayout } from "../../../src/runtime/contracts/storage-layout.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
 import {
-	TraceStorageSecurityError,
 	createLocalTraceRecorderFactory,
 } from "../../../src/runtime/trace/composition.ts";
 import { mockModel } from "../../../src/runtime/providers/mock-stream.ts";
@@ -106,8 +105,9 @@ describe("local trace composition", () => {
 			config: { mode: "events", failurePolicy: "best_effort" },
 		});
 
-		await expect(factory.create({ sessionId: createRuntimeId("session", "symlink") }))
-			.rejects.toBeInstanceOf(TraceStorageSecurityError);
+		expect(await factory.create({ sessionId: createRuntimeId("session", "symlink") })).toBeUndefined();
 		expect(await readdir(outside)).toEqual([]);
+    const strict = createLocalTraceRecorderFactory({ layout, config: { mode: "events", failurePolicy: "fail_closed" }, onDiagnostic: () => undefined });
+    await expect(strict.create({ sessionId: createRuntimeId("session", "strict-symlink") })).rejects.toThrow("recorder_initialization_failed");
 	});
 });

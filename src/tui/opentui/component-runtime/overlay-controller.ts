@@ -25,7 +25,7 @@ export class OverlayController {
     }
     const { renderer } = this.port;
     const blocks = frame.overlay.map(toPresentationBlock);
-    const transcriptVariant = frame.overlayVariant === "transcript";
+    const transcriptVariant = (frame.overlayVariant === "transcript" || frame.overlayVariant === "trajectory");
     const interactive = blocks.some((block) => block.kind === "select" || block.kind === "input");
     const bottomLeft = frame.overlayAnchor === "bottom-left";
     const compact = frame.overlayNonCapturing === true && bottomLeft;
@@ -40,6 +40,15 @@ export class OverlayController {
       ? Math.min(maxHeight, Math.max(Math.max(1, Math.floor(renderer.height * 0.5)), contentHeight))
       : Math.min(maxHeight, contentHeight);
     const overlay = this.ensureOverlay(transcriptVariant);
+    overlay.onMouseScroll = frame.overlayVariant === "trajectory" ? (event) => {
+      event.preventDefault(); event.stopPropagation();
+      this.port.options.onInput(`trajectory:mouse:${event.scroll?.direction === "up" ? "up" : "down"}:${event.x - overlay.screenX - 1}:${event.y - overlay.screenY - 1}`);
+    } : undefined;
+    overlay.onMouseDown = frame.overlayVariant === "trajectory" ? (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault(); event.stopPropagation();
+      this.port.options.onInput(`trajectory:mouse:click:${event.x - overlay.screenX - 1}:${event.y - overlay.screenY - 1}`);
+    } : undefined;
     overlay.left = transcriptVariant ? 0 : compact ? 0 : bottomLeft ? 1 : Math.max(0, Math.floor((renderer.width - modalWidth) / 2));
     overlay.right = undefined;
     overlay.width = transcriptVariant || compact ? renderer.width : modalWidth;

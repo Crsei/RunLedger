@@ -71,6 +71,7 @@ export class SessionAttemptController {
 				originGeneration: this.port.fence.generation,
 				createdAtMs: Date.now(),
 			});
+			this.port.domain?.trajectory?.invalidate();
 			if (stableRequest !== undefined) return result;
 			if (result.status === "started") return { attemptId, commandId };
 			return result;
@@ -105,6 +106,7 @@ export class SessionAttemptController {
 			this.port.onFenced();
 			return { ok: false, code: "owner_fenced" };
 		}
+		this.port.domain?.trajectory?.invalidate();
 		return { ok: true };
 	}
 

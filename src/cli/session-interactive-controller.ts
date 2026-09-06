@@ -1,3 +1,4 @@
+import type { TrajectoryClientPort, TrajectoryPage, TrajectoryDetail, TrajectoryResult } from "../runtime/contracts/trajectory.ts";
 /**
  * R7:session-scoped interactive controller(R6 §8.3 本地 owner view 也走 TCP
  * facade 的 TUI 侧适配器)。
@@ -54,6 +55,8 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 	private readonly transport: SessionClientTransport;
 	private readonly supportsOperation: (operation: string) => boolean;
 	private readonly listeners = new Set<AgentEventSink>();
+	private readonly trajectoryListeners = new Set<() => void>();
+	public readonly trajectory: TrajectoryClientPort;
 	private readonly warningListeners = new Set<(warning: string) => void>();
 	private readonly titleListeners = new Set<SessionTitleChangedSink>();
 	private readonly idleRecapListeners = new Set<SessionIdleRecapSink>();
@@ -93,6 +96,21 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		// attach 的 cursor 可能已越过 agent_start；从同一快照恢复活跃 run。
 		this.inFlightValue = this.runSummaryState.some((run) => run.status === "active");
 		this.removeTransportListener = handle.transport.onEvent((frame) => this.receive(frame));
+		this.trajectory = {
+			page: (request = {}) => this.trajectoryQuery<TrajectoryPage>("trajectory.page", { ...request }),
+			detail: (recordId, field, cursor) => this.trajectoryQuery<TrajectoryDetail>("trajectory.detail", { recordId, field, ...(cursor === undefined ? {} : { cursor }) }),
+			subscribe: (listener) => { this.trajectoryListeners.add(listener); return () => this.trajectoryListeners.delete(listener); },
+		};
+	}
+
+
+	private async trajectoryQuery<T>(operation: string, payload: Record<string, unknown>): Promise<TrajectoryResult<T>> {
+		if (!this.supportsOperation(operation)) return { ok: false, code: "trajectory_unavailable" };
+		try {
+			const id = `trajectory-${++this.sequence}`;
+			const result = await this.querySessionDomain(operation, payload, { correlationId: id, effectId: id });
+			return result.ok ? { ok: true, value: result.value as unknown as T } : { ok: false, code: result.code };
+		} catch { return { ok: false, code: "trajectory_disconnected" }; }
 	}
 
 	public driverFence(): { readonly expectedDriverRevision: number } {
@@ -332,6 +350,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.disposed = true;
 		this.removeTransportListener();
 		this.listeners.clear();
+		this.trajectoryListeners.clear();
 		this.warningListeners.clear();
 		this.titleListeners.clear();
 		this.idleRecapListeners.clear();
@@ -385,6 +404,11 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			return;
 		}
 		if (frame.kind !== "subscription_event") return;
+		if (frame.body.eventType === "trajectory.changed") {
+			const payload = frame.body.payload as Record<string, unknown> | undefined;
+			if (payload?.ownerGeneration === this.sessionGeneration) for (const listener of this.trajectoryListeners) listener();
+			return;
+		}
 		const sequence = numberValue(frame.body.sequence);
 		if (sequence !== undefined && sequence <= this.eventCursor) return;
 		if (sequence !== undefined) this.eventCursor = sequence;

@@ -15,10 +15,12 @@ afterEach(async () => {
 });
 
 describe("CLI trace configuration", () => {
-	it("keeps recording off when user settings omit it", async () => {
-		const layout = buildRunledgerLayout("/tmp/runledger-cli-trace-off", "posix");
+	it("starts events recording when user settings omit it", async () => {
+		const root = await mkdtemp(join(tmpdir(), "runledger-cli-trace-default-"));
+		roots.push(root);
+		const layout = buildRunledgerLayout(root, "posix");
 		const factory = composeCliTraceRecorderFactory(layout, {});
-		expect(await factory.create({ sessionId: createRuntimeId("session", "off") })).toBeUndefined();
+		expect(await factory.create({ sessionId: createRuntimeId("session", "off") })).toBeDefined();
 	});
 
 	it("allows artifact body recording when user settings explicitly enable it", async () => {

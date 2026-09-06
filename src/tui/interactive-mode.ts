@@ -1,3 +1,4 @@
+import { TrajectoryPanel } from "./trajectory/panel.ts";
 import { agentModeIdentityPresentation, agentModeToolsSummary } from "../runtime/harness-profiles/agent-mode.ts";
 /**
  * InteractiveMode —— TUI 主控 facade。
@@ -263,6 +264,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
   private lastTranscriptScrollbarVisible: boolean | undefined;
   private transcriptOverlay: TranscriptOverlayComponent | undefined;
+  private trajectoryPanel: TrajectoryPanel | undefined;
   private unsubscribeTranscriptInput: (() => void) | undefined;
 
   // S7 协作者
@@ -698,6 +700,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     // 真实 modal 抢占 overlay 槽;slash 补全弹窗随之失效(防止幽灵引用)
     this.inputController.hideSlashPopup();
     this.transcriptOverlay = undefined;
+    if (component !== this.trajectoryPanel) { this.trajectoryPanel?.dispose(); this.trajectoryPanel = undefined; }
     this.store.dispatch({
       type: "overlay.open",
       overlay: { state: kind, requestId: `overlay-${this.store.getState().interaction.generation + 1}` },
@@ -710,8 +713,32 @@ export class InteractiveMode implements FooterSnapshotProvider {
   private closeOverlay(): void {
     this.inputController.hideSlashPopup();
     if (this.ui.getOverlay() === this.transcriptOverlay) this.transcriptOverlay = undefined;
+    this.trajectoryPanel?.dispose(); this.trajectoryPanel = undefined;
     this.store.dispatch({ type: "overlay.close" });
     this.ui.hideOverlay();
+  }
+
+  private openTrajectory(arg: string): void {
+    if (arg === "close") { if (this.trajectoryPanel !== undefined) this.closeOverlay(); return; }
+    if (arg !== "" && arg !== "status") { this.showNotice("/trajectory [close|status]", "error"); return; }
+    const client = this.controller?.trajectory;
+    if (!client) { this.showNotice("Trajectory is unavailable for this session.", "error"); return; }
+    if (arg === "status") {
+      void client.page({ pageSize: 1 }).then((result) => {
+        if (!result.ok) { this.showNotice(result.code, "error"); return; }
+        const { status, watermark } = result.value;
+        this.showNotice(`Recording ${status.mode} / ${status.health} · ${status.historyCoverage} · ${status.recordedBytes} bytes · session ${watermark.sessionSequence} / trace ${watermark.traceRevision}${status.diagnostics.length ? ` · ${status.diagnostics.join(", ")}` : ""}`);
+      });
+      return;
+    }
+    if (this.quitting || this.ui.hasOverlay() || this.approvalWorkflow.hasActivePermissionView()) return;
+    const panel = new TrajectoryPanel({ client, sessionId: this.controller!.sessionId,
+      preferences: this.preferencesPort, getHeight: () => Math.max(8, this.terminal.rows - 2),
+      onChange: () => this.ui.requestRender(), onClose: () => this.closeOverlay(),
+    });
+    this.trajectoryPanel = panel;
+    this.showOverlayModal(panel, { anchor: "center", variant: "trajectory" }, "transcript");
+    void panel.open();
   }
 
   /** Ctrl+T 的只读 transcript overlay；不改变主对话 ScrollBox 的位置或内容。 */
@@ -728,6 +755,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
   /** transcript overlay 捕获期间所有键都不应落入 composer；未知键保持只读。 */
   private handleTranscriptInput(data: string): InputListenerResult {
+    if (this.trajectoryPanel !== undefined && this.ui.getOverlay() === this.trajectoryPanel) {
+      this.trajectoryPanel.handleInput(data);
+      return { consume: true };
+    }
     if (this.transcriptOverlay !== undefined && this.ui.getOverlay() === this.transcriptOverlay) {
       this.transcriptOverlay.handleInput(data);
       return { consume: true };
@@ -942,6 +973,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.unsubscribeTerminalBackground = undefined;
     this.unsubscribeRenderPreparation?.();
     this.unsubscribeRenderPreparation = undefined;
+    this.trajectoryPanel?.dispose(); this.trajectoryPanel = undefined;
     this.unsubscribeTranscriptInput?.();
     this.unsubscribeTranscriptInput = undefined;
     this.transcriptOverlay = undefined;
@@ -1186,6 +1218,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
         return;
       case "prompt.select":
         this.openPromptSelector();
+        return;
+      case "ui.trajectory":
+        this.openTrajectory(arg);
         return;
       case "ui.help":
         this.openSlashCommands();

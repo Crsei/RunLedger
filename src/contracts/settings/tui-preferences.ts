@@ -3,6 +3,7 @@ export type TuiShimmerMode = "classic" | "kitt" | "disabled";
 /** 本地 TUI presentation preference；不包含 Session 或滚动位置。 */
 export interface TuiPreferencesDocument {
   readonly version: 2;
+  readonly trajectory?: { readonly duration: boolean; readonly turnsCollapsed: boolean; readonly callsCollapsed: boolean };
   readonly transcript: {
     readonly scrollbar: "hidden" | "visible";
   };

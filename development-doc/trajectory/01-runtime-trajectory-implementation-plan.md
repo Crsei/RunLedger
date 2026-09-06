@@ -2,13 +2,13 @@
 
 ## 1. 状态与目标
 
-日期：2026-09-06。状态：**planned，尚未实施**。本次授权范围为编写实施计划，不修改运行时代码或用户配置。
+日期：2026-09-06。状态：**已在独立工作树实现本地记录、owner 查询与面板；P6 验收按证据逐项收口**。实际默认值已改为 events，显式 off 保留。自动化、CLI/TTY 与人工/跨平台验收分开记录，见 [实施与验证记录](02-implementation-verification.md)。
 
 目标：用户在对话运行中通过 `/trajectory` 查看 Run → Step → Model/Call/Attempt 的执行结构、耗时、输入输出与用量；支持历史分页、搜索、折叠、时间范围定位和实时跟随。本地轨迹事件默认开启，用户可通过 canonical settings 关闭。
 
 本计划参考本地 deepseek-harness `47f943859b` 的 Trajectory，不移植其 Cordis、Web renderer 或产品内并行委派机制。Duration 是时间轴显示控制，Turns 与 Calls 是折叠控制，不将三个标签误当统计字段。
 
-### 当前基线
+### 实施前基线
 
 | 层 | 当前实现 | 本专项补齐 |
 |---|---|---|
@@ -70,7 +70,7 @@
 4. 在 CLI composition 时冻结有效配置与 digest；文件修改对下次启动生效。连接仍在运行的 owner 不重新解释客户端配置；面板展示 owner 实际有效模式。
 5. off 不关闭必要的 Session 持久化/审计，不删除历史 Trace，不回填过去未记录的数据。旧会话仍可查询，有缺口则展示范围和原因。
 6. 默认 events 不等于默认保存所有原始请求/响应、token chunk 或无限工具输出。大输出详情只在确实保存且允许访问时提供；无正文不伪造完整性。
-7. 代码落地默认值时，同批更新根 AGENTS.md recording 条款、settings schema/help/tests 与 Trace Phase 03 文档；本次计划不提前改变其当前默认 off 的事实描述。
+7. 代码落地默认值时，同批更新根 AGENTS.md recording 条款、settings schema/help/tests 与 Trace Phase 03 文档；实现已同步默认 events；历史 off 配置保持原意。
 
 ### 失败与资源语义
 
@@ -146,7 +146,7 @@ Duration 关闭时按顺序等宽；开启时按区间耗时缩放并压缩空�
 | 阶段 | 交付物 | 验收出口 |
 |---|---|---|
 | P0 合同与基线 | 核对 Run/Trace turn 语义；冻结 DTO、cursor、事件映射与指标来源；隔离 fixtures | 关联映射、未知值、旧格式规则经审阅；无运行行为变化 |
-| P1 默认记录 | 逐字段解析、显式 off、诊断与配置 digest；默认 events；同步说明/AGENTS | 缺省、部分配置、非法配置、升级保留 off、owner 配置冻结测试通过；默认发布仍受 P2 门禁 |
+| P1 默认记录 | 逐字段解析、显式 off、诊断与配置 digest；默认 events；同步说明/AGENTS | 缺省、部分配置、非法配置、升级保留 off、owner 配置冻结测试通过；与 P2 资源界限同批交付 |
 | P2 记录完整性与索引 | 稳定关联 ID、缺口事件、失败策略、资源上限、可重建索引 | 写满/崩溃/接管/重启、队列压力与磁盘测量通过；不存在不可见丢失 |
 | P3 查询与订阅 | page/detail/search、auth/generation 校验、复合 watermark、重连恢复 | 分页覆盖全历史且无重复遗漏；大小边界、旧格式、off 历史读取通过 |
 | P4 基础轨迹面板 | 命令、Run/Step/Call 层级、详情、折叠、历史分页、Follow | 运行中打开/关闭不影响模型执行、draft、主滚动位置；关闭录制状态可解释 |
@@ -181,3 +181,16 @@ P0 → P1/P2 → P3 → P4 → P5 → P6。提交按能力边界拆分；实现�
 本专题是本地轨迹查询/交互的权威入口；既有 Trace Phase 01–03 继续维护 Store/recorder/config 实现事实。Phase 04 中本地树查询与 CLI/TUI 展示移交本专项，远程 Opik/outbox 仍独立 planned，不作为本地轨迹交付前提。
 
 完成须同时满足：默认 events 与显式关闭有效；数据关联与缺口可解释；面板能分页查看完整可用历史；Duration/Turns/Calls、详情与搜索可用；故障和性能门禁通过；文档事实一致。只有计划存在、类型存在或 mock 界面可见均不算实施完成。
+
+## 10. 当前实现决策
+
+- `src/runtime/contracts/trajectory.ts` 冻结 owner-scoped DTO；Session → Run、Agent Loop turn → Step。各流序号分开保留，新增 Attempt receipt 位置，不比较无关日志序号。
+- 独立 `projections/trajectory/<session-digest>.sqlite` 是可重建 cache，不修改 Session authority schema。owner 启动时流式发现历史、校验完整 hash 前缀；后续打开面板只查询 cache。损坏 cache 隔离后重建；缺失日志和不完整尾部显示 degraded。
+- Trace 持久化回调接入 Agent 与 managed process 两条生产路径。Session 安全公开内容、Trace digest/artifact 和 Attempt receipts 合并显示。无法证明 Call 归属的旧/现有回执明确标记 association unavailable；不根据相邻顺序猜测。process output 是回执下的内容记录，不增加执行 attempt 数量。
+- 查询采用先订阅失效通知、再取 snapshot 的衔接方式；失效通知限频、无 durable sequence，面板从带 generation/Session/Trace/Attempt watermark 的快照重新查询。Follow 关闭时保留当前阅读快照，手动翻页或重试刷新，避免后台替换窗口造成锚点跳动。
+- 实际页上限冻结为 200 条和 192 KiB（给 transport envelope 留余量），正文块 48 KiB，TUI 窗口 400 条，搜索 128 字符。Session 索引批次按 4 MiB 正文预算读取；单事件超过 8 MiB 时显式 degraded 并停止该前缀重放。Session 正文安全预览最多 2 MiB，过大明确 unavailable；不把截断预览标为完整正文。
+- 写队列每个 Trace 最多 256 条；单事件输入 64 KiB；单 Trace 最多 100,000 条或 128 MiB。batch=1、逐条 flush；单次写入 deadline 5 秒，写入故障后不继续追加到可疑 hash chain。触达界限走 failure policy；不删除用户旧文件。历史 events()/tree() 是显式批量 reader，仍受单 Trace 上限约束。
+- Duration 仅缩放有计时证据的节点、压缩空闲并保留重叠；Calls 折叠 attempt 子项但保留 Call 行。Session/Trace 到达顺序不决定面板层级顺序。小额 cost 保留微额精度，计费来源仍显示 provider 或 pricing_table，不等同账单。
+- `/trajectory status` 独立显示 owner 的 recording/coverage/watermark；完整面板支持 Duration/Turns/Calls、详情、分页、全历史安全摘要搜索、时间范围、Follow、鼠标选择和滚动。关闭面板不改变 recording。
+
+本轮没有开发 Sandbox、远程 Opik/OTLP、可写或并行 child。真实 provider 多步骤、人工 IME/视觉及 macOS/Windows 仍需对应环境证据。

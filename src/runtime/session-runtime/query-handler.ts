@@ -35,6 +35,12 @@ export class SessionQueryHandler {
 		switch (request.kind) {
 			case "domain_query": {
 					const operation = typeof request.body.operation === "string" ? request.body.operation : "unknown";
+					const trajectory = this.port.domain?.trajectory;
+					if (trajectory?.operationManifest.some((entry) => entry.operation === operation)) {
+						const validated = this.port.domainRouter.query(request.body);
+						if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return validated;
+						return trajectory.query(operation, objectValue(request.body.payload) ?? {});
+					}
 					const multiAgent = this.port.domain?.multiAgent;
 					if (multiAgent !== undefined && multiAgent.operationManifest.some((entry) => entry.operation === operation)) {
 						const validated = this.port.domainRouter.query(request.body);

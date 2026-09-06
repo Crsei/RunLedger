@@ -51,7 +51,7 @@ export async function runAgentLoop(
   const runId = `run-${newId()}`;
 
   if (config.traceRecorder) {
-    await config.traceRecorder.startRun({ agentId: sessionId });
+    await config.traceRecorder.startRun({ agentId: sessionId, metadata: { runId } });
   }
 
   // emit + ledger 联合写入辅助

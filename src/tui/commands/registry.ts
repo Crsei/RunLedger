@@ -29,6 +29,7 @@ export type SlashCommandActionType =
   | "ui.help"
   | "ui.clear"
   | "ui.scrollbar.toggle"
+  | "ui.trajectory"
   | "ui.quit"
   | "session.mode"
   | "session.mode.minimal"
@@ -302,6 +303,10 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       argumentSchema: [schema("text", "Memory content to propose", true)],
     }),
 	    command("prompt", "Pick prompt template", 26, { actionType: "prompt.select", category: "prompts", policy: READONLY_POLICY }),
+    command("trajectory", "Inspect running session trajectory", 27, {
+      actionType: "ui.trajectory", category: "ui", policy: READONLY_POLICY,
+      supportsInlineArgs: true, usage: "[close|status]", requiredOperation: "trajectory.page",
+    }),
 	    command("scrollbar", "Toggle the conversation scrollbar", 27, {
       actionType: "ui.scrollbar.toggle",
       category: "ui",

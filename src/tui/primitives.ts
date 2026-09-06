@@ -45,7 +45,7 @@ export function isFocusable(component: Component | null): component is Component
 export type OverlayAnchor = "center" | "top-left" | "top-right" | "bottom-left" | "bottom-right" | "top-center" | "bottom-center" | "left-center" | "right-center";
 export type SizeValue = number | `${number}%`;
 export interface OverlayMargin { top?: number; right?: number; bottom?: number; left?: number }
-export type OverlayVariant = "modal" | "transcript";
+export type OverlayVariant = "modal" | "transcript" | "trajectory";
 export interface OverlayOptions {
   anchor?: OverlayAnchor;
   width?: SizeValue;
@@ -634,7 +634,7 @@ export class TUI extends Container {
       : undefined;
     // modal 内容宽度与 OpenTUI runtime 的 modalWidth(=90% 宽,边框+padding 各 2)对齐,
     // 避免文本 overlay 按 width-4 渲染时被原生渲染器二次换行挤出固定高度。
-    const overlayContentWidth = this.overlayOptions?.variant === "transcript"
+    const overlayContentWidth = (this.overlayOptions?.variant === "transcript" || this.overlayOptions?.variant === "trajectory")
       ? Math.max(1, width - 2)
       : Math.max(1, Math.floor(Math.max(1, width) * 0.9) - 4);
     const overlay = this.hasOverlay() && this.overlay

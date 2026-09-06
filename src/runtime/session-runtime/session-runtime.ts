@@ -1,3 +1,4 @@
+import type { TrajectoryService } from "../trajectory/service.ts";
 /**
  * R5/R6/R7:SessionRuntime(06 §7) —— lifecycle facade 与 collaborator wiring。
  *
@@ -65,6 +66,7 @@ export interface SessionDomainPort {
 	readonly planInspection?: () => SessionPlanInspection;
 	readonly process?: SessionProcessDomainPort;
 	readonly resources?: SessionResourceDomainPort;
+	readonly trajectory?: TrajectoryService;
 	/** 外部资源只可在 attempt port 绑定后、server activate 前启动。 */
 	start?(): Promise<void>;
 	/** SessionRuntime 退出时关闭本 Session 私有的外部资源。 */
@@ -165,6 +167,7 @@ export class SessionRuntime implements SessionController {
 	private readonly lifecycle: SessionLifecycleController;
 	private readonly commandHandler: SessionCommandHandler;
 	private readonly queryHandler: SessionQueryHandler;
+	private trajectoryListener: (() => void) | undefined;
 
 	public constructor(options: SessionRuntimeOptions) {
 		this.sessionId = options.sessionId;
@@ -177,7 +180,7 @@ export class SessionRuntime implements SessionController {
 			ownerFence: options.fence,
 			...(options.domain?.securityInspection === undefined ? {} : { securityInspection: options.domain.securityInspection }),
 			...(options.domain?.planInspection === undefined ? {} : { planInspection: options.domain.planInspection }),
-			...(options.domain?.multiAgent === undefined ? {} : { additionalOperations: options.domain.multiAgent.operationManifest }),
+			additionalOperations: [...(options.domain?.multiAgent?.operationManifest ?? []), ...(options.domain?.trajectory?.operationManifest ?? [])],
 		});
 		this.lifecycleCleanup = options.lifecycleCleanup;
 		this.restored = options.restored;
@@ -212,6 +215,7 @@ export class SessionRuntime implements SessionController {
 			persistence: this.persistence,
 			idleRecap: this.idleRecap,
 			onDomainListenersDisposed: () => {
+				this.trajectoryListener?.();
 				this.domainListener?.();
 				this.domainTitleListener?.();
 			},
@@ -261,10 +265,12 @@ export class SessionRuntime implements SessionController {
 		options.humanInputWaitPortRef?.bind(this);
 		options.runBudgetUsageRef?.bind(this);
 		if (this.domain !== undefined) {
+			this.trajectoryListener = this.domain.trajectory?.subscribe(() => this.emit({ eventType: "trajectory.changed", payload: { ownerGeneration: this.fence.generation } }));
 			// R7:领域 AgentEvent 以 owner-fenced durable event 落库并广播,
 			// 恢复时从权威流重建(checkpoint 可删)。
 			this.domainListener = this.domain.controller.subscribe((event) => {
 				this.persistence.acceptDomainEvent(event);
+				this.domain?.trajectory?.invalidate();
 				this.idleRecap.handleDomainAgentEvent(event);
 				});
 			this.domainTitleListener = this.domain.subscribeTitleChanged?.((event) => {

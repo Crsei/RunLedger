@@ -63,7 +63,7 @@ export interface ProjectSettings {
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
 	/** 用户级本地 trace 记录策略；workspace settings 不拥有该 authority。 */
-	recording?: RecordingSettings;
+	recording?: Partial<RecordingSettings>;
 	/** M1 bounded root delegation policy；workspace 层只能进一步收窄。 */
 	multiAgent?: MultiAgentSettingsSource;
 	/** 版本化 skills provider policy（user/workspace 均可写，workspace 只能收窄）。 */
@@ -112,7 +112,7 @@ export interface SkillsSettings {
 export type EffectiveRecordingConfig = Readonly<RecordingSettings>;
 
 export const DEFAULT_RECORDING_CONFIG: EffectiveRecordingConfig = Object.freeze({
-	mode: "off",
+	mode: "events",
 	failurePolicy: "best_effort",
 });
 
@@ -257,14 +257,14 @@ function parseSettings(text: string, path: string, allowRecording: boolean): Pro
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
-	} catch (error) {
-		process.stderr.write(
-			`[runledger] settings parse failed at ${path}: ${String(error)}\n` +
-				"  回退空 settings,流程继续。\n",
-		);
-		return {};
+	} catch {
+		process.stderr.write(allowRecording ? "[runledger] invalid_settings_json; using empty settings with recording disabled\n" : "[runledger] invalid_workspace_settings_json; using empty workspace settings\n");
+		return allowRecording ? { recording: { mode: "off" } } : {};
 	}
-	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		if (allowRecording) process.stderr.write("[runledger] invalid_settings_document; recording disabled\n");
+		return allowRecording ? { recording: { mode: "off" } } : {};
+	}
 	const raw = parsed as Record<string, unknown>;
 	if (
 		allowRecording &&
@@ -419,6 +419,7 @@ function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = 
 	if (allowRecording) {
 		const recording = sanitizeRecordingSettings(raw.recording);
 		if (recording) out.recording = recording;
+		else if (Object.prototype.hasOwnProperty.call(raw, "recording")) out.recording = { mode: "off", failurePolicy: "best_effort" };
 	}
 	const multiAgent = sanitizeMultiAgentSettings(raw.multiAgent);
 	if (multiAgent !== undefined) out.multiAgent = multiAgent;
@@ -471,7 +472,8 @@ function isSyntaxThemeName(value: unknown): value is string {
 
 /** 将缺失或非法配置解析为安全且不可变的启动快照。 */
 export function resolveRecordingConfig(settings: { readonly recording?: unknown }): EffectiveRecordingConfig {
-	return Object.freeze(sanitizeRecordingSettings(settings.recording) ?? { ...DEFAULT_RECORDING_CONFIG });
+	if (!Object.prototype.hasOwnProperty.call(settings, "recording")) return DEFAULT_RECORDING_CONFIG;
+	return Object.freeze(sanitizeRecordingSettings(settings.recording) ?? { mode: "off", failurePolicy: "best_effort" });
 }
 
 export function recordingConfigDigest(config: EffectiveRecordingConfig): string {
@@ -481,8 +483,11 @@ export function recordingConfigDigest(config: EffectiveRecordingConfig): string 
 function sanitizeRecordingSettings(value: unknown): RecordingSettings | undefined {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
 	const raw = value as Record<string, unknown>;
-	if (!isRecordingMode(raw.mode) || !isRecordingFailurePolicy(raw.failurePolicy)) return undefined;
-	return { mode: raw.mode, failurePolicy: raw.failurePolicy };
+	if (Object.keys(raw).some((key) => key !== "mode" && key !== "failurePolicy")) return undefined;
+	const mode = raw.mode === undefined ? DEFAULT_RECORDING_CONFIG.mode : raw.mode;
+	const failurePolicy = raw.failurePolicy === undefined ? DEFAULT_RECORDING_CONFIG.failurePolicy : raw.failurePolicy;
+	if (!isRecordingMode(mode) || !isRecordingFailurePolicy(failurePolicy)) return undefined;
+	return { mode, failurePolicy };
 }
 
 function isRecordingMode(value: unknown): value is RecordingMode {

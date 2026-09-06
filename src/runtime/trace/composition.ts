@@ -16,9 +16,10 @@ import { FileArtifactStore } from "./artifact-store.ts";
 import { JsonlTraceEventStore } from "./event-store.ts";
 import {
 	RuntimeTraceRecorder,
+	TraceRecordingError,
 	type TraceRecordingDiagnostic,
 } from "./recorder.ts";
-import type { TraceMetadata } from "./types.ts";
+import type { TraceEvent, TraceMetadata } from "./types.ts";
 
 export interface TraceRecorderFactoryInput {
 	readonly sessionId: string;
@@ -28,6 +29,8 @@ export interface TraceRecorderFactoryInput {
 	readonly traceId?: TraceId;
 	/** Session composition root 提供的 bounded trace metadata。 */
 	readonly metadata?: TraceMetadata;
+	readonly onRecorded?: (event: TraceEvent, relativeLocator: string) => void | Promise<void>;
+	readonly onDiagnostic?: (diagnostic: TraceRecordingDiagnostic) => void;
 }
 
 export interface TraceRecorderFactory {
@@ -63,6 +66,7 @@ export function createLocalTraceRecorderFactory(
 	return {
 		create: async (input) => {
 			if (options.config.mode === "off") return undefined;
+			try {
 			const traceId = input.traceId ?? createTraceId();
 			await assertNoSymlinkComponents(options.layout.home, options.layout.events);
 			const createdAt = now().toISOString();
@@ -93,7 +97,8 @@ export function createLocalTraceRecorderFactory(
 				redactionPolicyDigest: options.redactionPolicyDigest ?? "policy_trace_v1",
 				mode: options.config.mode,
 				failurePolicy: options.config.failurePolicy,
-				onDiagnostic,
+				onDiagnostic: (diagnostic) => { onDiagnostic(diagnostic); input.onDiagnostic?.(diagnostic); },
+				onRecorded: input.onRecorded === undefined ? undefined : (event) => input.onRecorded!(event, path.relative(options.layout.home, filePath).split(path.sep).join("/")),
 				metadata: {
 					...input.metadata,
 					sessionId: input.sessionId,
@@ -103,6 +108,13 @@ export function createLocalTraceRecorderFactory(
 					recordingConfigDigest: recordingConfigDigest(options.config),
 				},
 			});
+			} catch (error) {
+				const diagnostic: TraceRecordingDiagnostic = { code: "recorder_initialization_failed", message: "trace recorder initialization failed" };
+				onDiagnostic(diagnostic);
+				input.onDiagnostic?.(diagnostic);
+				if (options.config.failurePolicy === "fail_closed") throw new TraceRecordingError(diagnostic.code, error);
+				return undefined;
+			}
 		},
 	};
 }

@@ -1,3 +1,4 @@
+import { TrajectoryService } from "../trajectory/service.ts";
 import { SessionPlanDomain } from "./plan-domain.ts";
 import { createSessionPlanTools } from "./plan-tools.ts";
 import { planReadOnlyExecutionEnv } from "./plan-execution.ts";
@@ -161,6 +162,13 @@ export async function assembleSessionDomain(
 		bashClassificationAudit: options.bashClassificationAudit ?? createSessionBashClassificationAudit({ store, fence }),
 	});
 	const recording = resolveRecordingConfig(options.settings);
+	const trajectory = new TrajectoryService({ layout: options.layout, store, sessionId, generation: fence.generation, config: recording });
+	const observedTraceFactory: TraceRecorderFactory | undefined = options.traceRecorderFactory === undefined ? undefined : {
+		create: (input) => options.traceRecorderFactory!.create({ ...input, sessionId, ownerGeneration: fence.generation,
+			onRecorded: (event, locator) => trajectory.recorded(event, locator),
+			onDiagnostic: (diagnostic) => trajectory.diagnostic(diagnostic),
+		}),
+	};
 	const process = createSessionProcessComposition({
 		layout: options.layout,
 		store,
@@ -171,7 +179,7 @@ export async function assembleSessionDomain(
 		attemptPort: () => attemptPort.get(),
 		recordingMode: recording.mode,
 		recordingFailurePolicy: recording.failurePolicy,
-		...(options.traceRecorderFactory === undefined ? {} : { traceRecorderFactory: options.traceRecorderFactory }),
+		...(observedTraceFactory === undefined ? {} : { traceRecorderFactory: observedTraceFactory }),
 	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
 	const governedExecutionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
@@ -238,10 +246,10 @@ export async function assembleSessionDomain(
 		governedTools,
 	});
 	let compositionReceipt: HarnessCompositionReceipt;
-	const traceRecorderFactory = options.traceRecorderFactory === undefined
+	const traceRecorderFactory = observedTraceFactory === undefined
 		? undefined
 		: {
-			create: (input: Parameters<TraceRecorderFactory["create"]>[0]) => options.traceRecorderFactory!.create({
+			create: (input: Parameters<TraceRecorderFactory["create"]>[0]) => observedTraceFactory.create({
 				...input,
 				sessionId,
 				ownerGeneration: fence.generation,
@@ -379,6 +387,7 @@ export async function assembleSessionDomain(
 	}) : () => planDomain.inspect();
 	return {
 		controller,
+		trajectory,
 		subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
 			titleListeners.add(listener);
 			return () => titleListeners.delete(listener);
@@ -403,11 +412,11 @@ export async function assembleSessionDomain(
 					await shutdownAll(sessionId);
 					clearLinterClientCache(sessionId);
 				} finally {
-					await security.close();
+					try { await trajectory.close(); } finally { await security.close(); }
 				}
 			}
 		},
-		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan"],
+		protocolCapabilities: ["session.approval.reverse", "session.security.inspect", "session.plan", "session.trajectory"],
 		securityInspection: () => ({
 			ownerGeneration: fence.generation,
 			profile: security.snapshot.profile.name,

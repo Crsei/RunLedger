@@ -22,8 +22,8 @@ export async function createCliTuiPreferences(
   const port: TuiPreferencesPort = {
     load: async () => ({ preferences: current }),
     save: async (next) => {
-      current = next;
-      const result = await saveTuiPreferences(layout, next);
+      current = { ...current, ...next, ...(next.trajectory === undefined && current.trajectory !== undefined ? { trajectory: current.trajectory } : {}) };
+      const result = await saveTuiPreferences(layout, current);
       return result;
     },
   };

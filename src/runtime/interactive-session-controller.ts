@@ -1,3 +1,4 @@
+import type { TrajectoryClientPort } from "./contracts/trajectory.ts";
 import type { AuthInteraction, AuthType, Credential } from "../auth/types.ts";
 import { clampThinkingLevel, type Models, type Provider } from "../models.ts";
 import type { Api, Model, ModelThinkingLevel } from "../types.ts";
@@ -125,6 +126,7 @@ export type SessionIdleRecapSink = (event: SessionIdleRecapEvent) => void | Prom
 
 /** Client-side contract shared by the Host-owned and local test controllers. */
 export interface InteractiveSessionControllerPort {
+  readonly trajectory?: TrajectoryClientPort;
   subscribe(listener: AgentEventSink): () => void;
 	/** 客户端异步命令失败复用 warnings 投影，不进入 AgentEvent/replay。 */
 	readonly subscribeWarnings?: (listener: (warning: string) => void) => () => void;

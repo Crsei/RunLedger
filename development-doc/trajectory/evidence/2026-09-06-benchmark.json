@@ -1,0 +1,10 @@
+{
+  "events": 100000,
+  "writeMs": 221380.906732,
+  "rebuildMs": 81488.94997399999,
+  "queryP95Ms": 3.1600430000107735,
+  "maxPageBytes": 61743,
+  "eventBytes": 51744368,
+  "cacheBytes": 62267392,
+  "rssPeakBytes": 189939712
+}

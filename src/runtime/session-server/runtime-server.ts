@@ -568,6 +568,13 @@ export class SessionRuntimeServer implements OwnerTransport {
 	}
 
 	private broadcastEvent(event: SessionControllerEvent): void {
+		if (event.eventType === "trajectory.changed") {
+			for (const connection of this.connections) {
+				if (!connection.initialized || connection.closed) continue;
+				this.enqueue(connection, this.frameFor("subscription_event", { eventType: event.eventType, payload: event.payload }));
+			}
+			return;
+		}
 		if (event.eventType === "session.idle_recap") {
 			const driverConnectionId = this.driverState.driver?.connectionId;
 			if (driverConnectionId === undefined) return;

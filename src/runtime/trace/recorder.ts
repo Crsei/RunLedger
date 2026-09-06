@@ -20,6 +20,7 @@ import type {
 	TraceCost,
 	TraceError,
 	TraceEventInput,
+	TraceEvent,
 	TraceEventPhase,
 	TraceMetadata,
 	TraceTreeNode,
@@ -42,12 +43,13 @@ export interface RuntimeTraceRecorderOptions {
 	readonly onDiagnostic?: (diagnostic: TraceRecordingDiagnostic) => void;
 	readonly metadata?: TraceMetadata;
 	readonly clock?: TraceClock;
+	readonly onRecorded?: (event: TraceEvent) => void | Promise<void>;
 }
 
 export type TraceRecorderStatus = "active" | "degraded" | "failed";
 
 export interface TraceRecordingDiagnostic {
-	readonly code: "event_store_write_failed" | "artifact_store_write_failed";
+	readonly code: "event_store_write_failed" | "artifact_store_write_failed" | "recorder_initialization_failed";
 	readonly message: string;
 }
 
@@ -118,6 +120,7 @@ export class RuntimeTraceRecorder {
 	readonly #redactionPolicyDigest: string;
 	readonly #metadata: TraceMetadata;
 	readonly #clock: TraceClock;
+	readonly #onRecorded: RuntimeTraceRecorderOptions["onRecorded"];
 	readonly #turns = new Map<number, TraceTurnState>();
 	readonly #tools = new Map<string, TraceToolState>();
 	#agentNodeId: string | undefined;
@@ -141,6 +144,7 @@ export class RuntimeTraceRecorder {
 		this.#redactionPolicyDigest = options.redactionPolicyDigest;
 		this.#metadata = options.metadata ?? {};
 		this.#clock = options.clock ?? defaultClock;
+		this.#onRecorded = options.onRecorded;
 	}
 
 	public get status(): TraceRecorderStatus {
@@ -501,11 +505,12 @@ export class RuntimeTraceRecorder {
 	async #append(input: Omit<TraceEventInput, "eventId" | "traceId">, eventId = `event:${randomUUID()}`): Promise<void> {
 		if (this.#eventStoreDisabled) return;
 		try {
-			await this.#eventStore.append({
+			const recorded = await this.#eventStore.append({
 				eventId,
 				traceId: this.traceId,
 				...input,
 			});
+			try { await this.#onRecorded?.(recorded); } catch { /* cache 观察者失败不能关闭已持久化的 Trace。 */ }
 		} catch (error) {
 			this.#eventStoreDisabled = true;
 			this.#handleFailure("event_store_write_failed", error);

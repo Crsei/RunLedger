@@ -112,8 +112,10 @@ function sanitizePreferences(value: unknown): TuiPreferencesDocument {
   const document = isRecord(value) ? value : {};
   const transcript = isRecord(document.transcript) ? document.transcript : {};
   const display = isRecord(document.display) ? document.display : {};
+  const trajectory = isRecord(document.trajectory) ? document.trajectory : undefined;
   return {
     version: 2,
+    ...(trajectory === undefined ? {} : { trajectory: { duration: trajectory.duration === true, turnsCollapsed: trajectory.turnsCollapsed === true, callsCollapsed: trajectory.callsCollapsed === true } }),
     transcript: {
       scrollbar: transcript.scrollbar === "visible" ? "visible" : "hidden",
     },

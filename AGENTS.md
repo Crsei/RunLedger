@@ -47,7 +47,7 @@ RunLedger 是面向可审计 Agent 执行的运行时。标准 CLI 通过 Bun �
 - canonical home 由 composition root 解析一次：`RUNLEDGER_DIR` 必须是既有绝对目录，否则默认 `~/.runledger`；消费注入的 `RunledgerLayout`。
 - 不恢复项目 `.runledger/`、旧 `~/.runledger/agent/` 或任意 session 路径作为隐式 authority；`settings.sessionDir`、`RUNLEDGER_SESSION_DIR`、`--session-dir` 保持拒绝。
 - 旧数据迁移必须走显式迁移入口与确认参数；不新增猜测格式、静默 import 或 fallback。迁移方式及验收查 Storage/CLI 专题。
-- recording 仅由用户级 settings 授权，默认 `off + best_effort`；不把本地 Trace 当作远程 exporter、OTLP 或已完成 Opik 接线。
+- recording 仅由用户级 settings 授权，默认 `events + best_effort`，用户可显式设为 `off` 关闭；不把本地 Trace 当作远程 exporter、OTLP 或已完成 Opik 接线。
 - `resolve-config-value.ts` 仅支持字面值与 `${ENV_VAR}`，不引入 `$(cmd)` 执行。
 - 测试始终使用隔离 `RUNLEDGER_DIR`，不得操作真实用户目录或复制真实凭据到测试目录。
 

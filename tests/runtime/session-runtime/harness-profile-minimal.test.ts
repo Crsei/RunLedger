@@ -177,6 +177,8 @@ describe("minimal@1 production composition", () => {
 			expect(compositionReceipt).not.toHaveProperty("systemPrompt");
 			await controller.traceRecorderFactory?.create({ sessionId: "caller-session-id-is-not-authority" });
 			expect(traceInputs).toEqual([{
+				onRecorded: expect.any(Function),
+				onDiagnostic: expect.any(Function),
 				sessionId,
 				ownerGeneration: embedded.ownerFence?.generation,
 				metadata: {
@@ -191,6 +193,8 @@ describe("minimal@1 production composition", () => {
 				{ command: "printf minimal-governed-bash" },
 			);
 			expect(bashResult).toMatchObject({ isError: false, details: { exitCode: 0 } });
+      expect(traceInputs.length).toBeGreaterThan(1);
+      for (const input of traceInputs) expect(input).toMatchObject({ sessionId, ownerGeneration: embedded.ownerFence?.generation, onRecorded: expect.any(Function), onDiagnostic: expect.any(Function) });
 			const editResult = profile.version === 2 ? await controller.tools[0]!.execute(createRuntimeId("toolCall", "minimal-shell-write"), { command: "printf 'after\\n' > minimal-edit.txt" }) : await controller.tools[1]!.execute(
 				createRuntimeId("toolCall", "minimal-governed-edit"),
 				{

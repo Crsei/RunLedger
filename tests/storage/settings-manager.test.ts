@@ -166,7 +166,7 @@ describe("loadProjectSettings", () => {
 		expect(resolveRecapSettings({ recap: { idleSeconds: 99999 } })).toEqual({ enabled: true, idleSeconds: 3600 });
 	});
 
-	it("加载用户级 recording 配置", async () => {
+	it("recording 含未知字段时关闭记录", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(
 			layout.settings,
@@ -181,13 +181,13 @@ describe("loadProjectSettings", () => {
 		);
 
 		expect(await loadProjectSettings({ layout })).toEqual({
-			recording: { mode: "events", failurePolicy: "fail_closed" },
+			recording: { mode: "off", failurePolicy: "best_effort" },
 		});
 	});
 
-	it("recording 缺失或非法时解析为安全默认值", async () => {
+	it("recording 缺省开启而非法配置关闭", async () => {
 		expect(resolveRecordingConfig({})).toEqual({
-			mode: "off",
+			mode: "events",
 			failurePolicy: "best_effort",
 		});
 		expect(resolveRecordingConfig({
@@ -205,7 +205,7 @@ describe("loadProjectSettings", () => {
 		}), "utf8");
 		const write = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 
-		expect(await loadProjectSettings({ layout })).toEqual({});
+		expect(await loadProjectSettings({ layout })).toMatchObject({ recording: { mode: "off" } });
 		const diagnostic = write.mock.calls.map((call) => String(call[0])).join("");
 		expect(diagnostic).toContain("invalid_recording_settings");
 		expect(diagnostic).not.toContain("secret-invalid-mode");
@@ -224,16 +224,16 @@ describe("loadProjectSettings", () => {
 		}));
 	});
 
-	it("损坏 JSON 回退空 settings,不抛错", async () => {
+	it("损坏 JSON 关闭 recording,不抛错", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(layout.settings, "{ this is { not valid JSON", "utf8");
-		expect(await loadProjectSettings({ layout })).toEqual({});
+		expect(await loadProjectSettings({ layout })).toEqual({ recording: { mode: "off" } });
 	});
 
-	it("JSON 是数组或字符串而非对象时回退空", async () => {
+	it("JSON 是数组或字符串而非对象时关闭 recording", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(layout.settings, "[1,2,3]", "utf8");
-		expect(await loadProjectSettings({ layout })).toEqual({});
+		expect(await loadProjectSettings({ layout })).toEqual({ recording: { mode: "off" } });
 	});
 });
 
