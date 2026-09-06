@@ -1,5 +1,7 @@
 # RunLedger TUI 复刻计划 · 00 总览
 
+> 可配置主体色槽与思考灰色的新实施入口：[Plan 27](27-configurable-ui-theme-and-thinking-color-plan.md)（planned）。该计划定义拟新增的用户级 `uiTheme` 与内置预设；下文保留历史设计，不代表当前 OpenTUI 实现。
+
 > 本目录是 RunLedger 复刻 pi TUI 的开发计划。pi 的 TUI 由两部分组成:
 >
 > 1. `@earendil-works/pi-tui`(`pi/packages/tui/`)—— 通用 TUI 框架,差分渲染 + Kitty 键盘协议 + Overlay 系统,依赖极轻(仅 `marked` / `get-east-asian-width` / `chalk`);

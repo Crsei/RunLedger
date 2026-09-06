@@ -1,5 +1,7 @@
 # 05 · 主题系统
 
+> 本文包含历史主题设计。可配置主体色槽、三套预设及思考灰色的拟实施合同见 [Plan 27](27-configurable-ui-theme-and-thinking-color-plan.md)，状态为 planned；本文中的 `thinkingFg` 不代表当前代码已有该字段。
+
 > 本文档定义 RunLedger TUI 的 21 色槽主题 schema、dark/light 占位值、`theme.fg/bg` API,以及 OSC 11 跟随切换的接入路径。
 
 ---
