@@ -235,6 +235,7 @@ export class InteractiveSessionController {
 	private readonly onModelSelectionChanged: (() => void) | undefined;
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
+  private readonly initialModelWarning: string | undefined;
   private agent: Agent | undefined;
   private unsubscribeAgent: (() => void) | undefined;
 
@@ -267,6 +268,11 @@ export class InteractiveSessionController {
 	this.onAcceptedUserPrompt = opts.onAcceptedUserPrompt;
 	this.onModelSelectionChanged = opts.onModelSelectionChanged;
     this.selection = selection;
+    const requestedModel = (opts.replay.config.provider === selection.provider ? opts.replay.config.model : undefined)
+      ?? (opts.settings.provider === selection.provider ? opts.settings.model : undefined);
+    this.initialModelWarning = selection.model === undefined && requestedModel !== undefined
+      ? `Configured model ${selection.provider ?? "<provider>"}/${requestedModel} is unavailable. Use /login to refresh its catalog or /model to select a verified model. No substitute model was selected.`
+      : undefined;
     this.ensureAgent();
   }
 
@@ -310,7 +316,9 @@ export class InteractiveSessionController {
   }
 
   get warnings(): readonly string[] {
-    return this.replay.warnings;
+    return this.selection.model === undefined && this.initialModelWarning !== undefined
+      ? [...this.replay.warnings, this.initialModelWarning]
+      : this.replay.warnings;
   }
 
   get auditEntries() {
@@ -604,15 +612,12 @@ async function resolveInitialSelection(
     }
   }
 	if (model !== undefined && opts.isModelSelectable?.(model) === false) {
-		if (opts.overrides?.provider || opts.overrides?.model) {
-			throw new Error(`model profile is not verified: ${model.provider}/${model.id}`);
-		}
-		model = undefined;
+		throw new Error(`model profile is not verified: ${model.provider}/${model.id}; verify this profile or explicitly select a verified model. No substitute model was selected.`);
 	}
   if (!model && (opts.overrides?.provider || opts.overrides?.model)) {
     throw new Error(`Unknown model selection: ${provider ?? "<provider>"}/${modelId ?? "<model>"}`);
   }
-	if (!model) {
+	if (!model && !modelId) {
 		const available = await opts.models.getAvailable();
 		model = available.find((candidate) => opts.isModelSelectable?.(candidate) !== false);
 	}

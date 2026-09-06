@@ -29,7 +29,7 @@ const labelForKind: Readonly<Record<ExplorationKind, string>> = {
 
 /** 只有精确工具名与对应的安全输入 metadata 同时存在时才可进入探索展示。 */
 export function explorationActionForRow(row: TimelineRow): ExplorationActionView | undefined {
-	if (row.kind !== "tool" || row.presentation.state !== "known") return undefined;
+	if (row.kind !== "tool" || row.status === "unknown" || row.presentation.state !== "known") return undefined;
 	const kind = explorationKindForTool(row.toolName.text);
 	if (kind === undefined) return undefined;
 	const input = row.presentation.value.input;

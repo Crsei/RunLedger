@@ -262,6 +262,7 @@ export function createBashTool(
         if (r.stdout) combined.push(`STDOUT:\n${r.stdout}`);
         if (r.stderr) combined.push(`STDERR:\n${r.stderr}`);
         combined.push(`EXIT: ${r.exitCode}`);
+        if (r.exitCode === 127) combined.push("Tool environment hint: verify command availability and versions inside this bash tool with command -v and version commands; host PATH and absolute tool paths may differ.");
         text = combined.join("\n");
       }
       return {

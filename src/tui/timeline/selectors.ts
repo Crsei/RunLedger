@@ -282,6 +282,7 @@ function toolLines(row: Extract<TimelineRow, { readonly kind: "tool" }>): string
 
 function statusIcon(status: Extract<TimelineRow, { readonly kind: "tool" }>["status"]): string {
 	switch (status) {
+		case "unknown": return "? Outcome unknown ·";
 		case "pending": return "⏳";
 		case "running": return "…";
 		case "succeeded": return "✓";

@@ -25,7 +25,7 @@ export class SessionClientTransport {
 	private readonly maxFrameBytes: number;
 	private readonly maxPendingRequests: number;
 	private reverseRequestHandler: SessionClientTransportOptions["reverseRequestHandler"];
-	private readonly reverseControllers = new Set<AbortController>();
+	private readonly reverseControllers = new Map<string, AbortController>();
 	private readonly pending = new Map<string, PendingRequest>();
 	private readonly eventListeners = new Set<(frame: SessionFrameEnvelope) => void>();
 	private readonly closeListeners = new Set<(error: Error) => void>();
@@ -171,7 +171,7 @@ export class SessionClientTransport {
 		this.closed = true;
 		for (const pending of this.pending.values()) pending.reject(error);
 		this.pending.clear();
-		for (const controller of this.reverseControllers) controller.abort(error);
+		for (const controller of this.reverseControllers.values()) controller.abort(error);
 		this.reverseControllers.clear();
 	}
 
@@ -190,12 +190,21 @@ export class SessionClientTransport {
 
 	private async handleReverseRequest(frame: SessionFrameEnvelope): Promise<void> {
 		if (this.closed) return;
+		if (frame.body.kind === "reverse_request_cancel") {
+			const body = frame.body.body;
+			if (typeof body === "object" && body !== null && !Array.isArray(body)) {
+				const id = (body as Record<string, unknown>).requestFrameId;
+				if (typeof id === "string") this.reverseControllers.get(id)?.abort(new Error("reverse request cancelled by owner"));
+			}
+			this.notify(this.reverseResponse(frame, { ok: true }));
+			return;
+		}
 		if (this.reverseControllers.size >= SESSION_PROTOCOL_BOUNDS.maxReverseRequestWaiters) {
 			this.notify(this.reverseResponse(frame, { ok: false, code: "reverse_request_capacity_exceeded" }));
 			return;
 		}
 		const controller = new AbortController();
-		this.reverseControllers.add(controller);
+		this.reverseControllers.set(frame.frameId, controller);
 		try {
 			const result =
 				this.reverseRequestHandler === undefined
@@ -205,7 +214,7 @@ export class SessionClientTransport {
 		} catch {
 			this.notify(this.reverseResponse(frame, { ok: false, code: "reverse_request_failed" }));
 		} finally {
-			this.reverseControllers.delete(controller);
+			this.reverseControllers.delete(frame.frameId);
 		}
 	}
 

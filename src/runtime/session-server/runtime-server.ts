@@ -323,6 +323,13 @@ export class SessionRuntimeServer implements OwnerTransport {
 				this.destroy(connection);
 				return;
 			}
+			// prompt 等待整个 run；中断必须即时进入同一鉴权和 driver 校验路径。
+			if (connection.initialized && frame.kind === "command_request" && frame.body.kind === "interrupt") {
+				void this.route(connection, frame)
+					.catch(() => this.destroy(connection))
+					.finally(() => { connection.pendingFrames = Math.max(0, connection.pendingFrames - 1); });
+				continue;
+			}
 			connection.processing = connection.processing
 				.then(() => this.route(connection, frame))
 				.catch(() => this.destroy(connection))
@@ -609,7 +616,9 @@ export class SessionRuntimeServer implements OwnerTransport {
 		connectionId: ConnectionId,
 		request: { readonly kind: string; readonly body: Record<string, unknown> },
 		timeoutMs: number = SESSION_PROTOCOL_BOUNDS.maxWaitMs,
+		signal?: AbortSignal,
 	): Promise<SessionFrameEnvelope> {
+		if (signal?.aborted) return Promise.reject(new Error("reverse request aborted"));
 		const connection = [...this.connections].find((candidate) => candidate.connectionId === connectionId && candidate.initialized);
 		if (!connection || connection.closed) return Promise.reject(new Error("connection unavailable"));
 		if (connection.reverseRequests.size >= SESSION_PROTOCOL_BOUNDS.maxReverseRequestWaiters) {
@@ -617,18 +626,26 @@ export class SessionRuntimeServer implements OwnerTransport {
 		}
 		const frame = this.frameFor("reverse_request", { kind: request.kind, body: request.body });
 		return new Promise<SessionFrameEnvelope>((resolve, reject) => {
-			const timeoutId = setTimeout(() => {
+			const cancel = (message: string): void => {
 				if (!connection.reverseRequests.delete(frame.frameId)) return;
-				this.retireReverseRequest(connection, frame.frameId);
-				reject(new Error("reverse request timed out"));
-			}, timeoutMs);
-			connection.reverseRequests.set(frame.frameId, { resolve, reject, timeoutId });
-			if (!this.enqueue(connection, frame)) {
 				clearTimeout(timeoutId);
-				if (!connection.reverseRequests.delete(frame.frameId)) return;
+				signal?.removeEventListener("abort", onAbort);
 				this.retireReverseRequest(connection, frame.frameId);
-				reject(new Error("reverse request could not be delivered"));
-			}
+				// 控制帧沿同一认证连接撤销精确请求，不产生审批决策或新增等待者。
+				const cancellation = this.frameFor("reverse_request", { kind: "reverse_request_cancel", body: { requestFrameId: frame.frameId } });
+				this.retireReverseRequest(connection, cancellation.frameId);
+				this.enqueue(connection, cancellation);
+				reject(new Error(message));
+			};
+			const onAbort = (): void => cancel("reverse request aborted");
+			const timeoutId = setTimeout(() => cancel("reverse request timed out"), timeoutMs);
+			connection.reverseRequests.set(frame.frameId, {
+				resolve: (response) => { signal?.removeEventListener("abort", onAbort); resolve(response); },
+				reject: (error) => { signal?.removeEventListener("abort", onAbort); reject(error); },
+				timeoutId,
+			});
+			signal?.addEventListener("abort", onAbort, { once: true });
+			if (!this.enqueue(connection, frame)) cancel("reverse request could not be delivered");
 		});
 	}
 
@@ -639,7 +656,8 @@ export class SessionRuntimeServer implements OwnerTransport {
 	private retireReverseRequest(connection: ServerConnection, requestFrameId: string): void {
 		const existing = connection.retiredReverseRequests.get(requestFrameId);
 		if (existing !== undefined) clearTimeout(existing);
-		while (connection.retiredReverseRequests.size >= SESSION_PROTOCOL_BOUNDS.maxReverseRequestWaiters) {
+		// 每次撤销保留原请求和控制帧两个 ID，覆盖满容量同时撤销。
+		while (connection.retiredReverseRequests.size >= SESSION_PROTOCOL_BOUNDS.maxReverseRequestWaiters * 2) {
 			const oldest = connection.retiredReverseRequests.keys().next().value;
 			if (oldest === undefined) break;
 			const timeoutId = connection.retiredReverseRequests.get(oldest);

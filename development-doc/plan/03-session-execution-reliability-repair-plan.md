@@ -1,5 +1,7 @@
 # RunLedger Session 执行可靠性修复计划
 
+> 2026-09-06 增量：Harness 修复已落地，check/build 与 TTY 通过；修复工作树全量测试受两处已复现的 Plan Mode 基线断言阻塞；用户随后明确要求合并回原分支。当前证据见 §1.2，以下早期 P7 全绿记录仅代表当时基线。
+
 > 2026-09-05 默认预算调整：模型轮次 256、工具轮次 128，避免正常多步任务在 16 个工具轮次后提前停止；15 分钟 active time、重复失败及审批过期保护保留。显式预算继续覆盖默认值。
 
 > 文档状态：implementing。P0、P2–P6 已实现并通过 focused 回归；P1 的
@@ -55,6 +57,29 @@ Vitest 为 297 files / 1724 passed，另有 1 file / 3 macOS-only tests skipped�
 Bun/OpenTUI 为 3 files / 44 passed / 222 assertions；`npm run build` 与
 `git diff --check` 通过。上述结果证明当前 checkout 的源码与构建门禁，不替代
 restrictive sandbox、联合 candidate、linked CLI/TTY、三平台或 R8 人工接受证据。
+
+### 1.2 2026-09-06 开发案例暴露的 Harness 修复
+
+在独立 `fix/development-case-harness` 工作树修复以下生产接线问题；原六例生成代码中的业务缺陷不属于本次范围。
+
+| 问题与触发 | 修复后的行为 | 回归证据 |
+|---|---|---|
+| 配置模型存在但未准入，启动静默选择另一模型 | 明确拒绝未验证模型；未知配置模型保留未选择状态并提示 `/login` / `/model`，不擅自替换 | interactive-session-controller 回归；TTY 启动拒绝且零模型请求 |
+| 审批传输超时或迟到响应跨过 receipt 期限，落成 approval_stale | 按绝对期限记 expired；拒绝文本携带实际错误码与命令未执行的解释 | approval-coordinator 的 channel / allow / revalidation（含报错与绑定变化）期限回归；真实 TTY 超时 |
+| foreground/background prepare 丢失取消信号 | 私有 signal 传至 Security 审批等待，取消后不启动进程，已准备的授权完成收尾 | process-composition 的 exec/start 真实 Security 回归 |
+| 同连接长 prompt 阻塞 interrupt | 已认证的 interrupt 即时进入同一 manifest / driver 校验；保留 pending 上限，其余命令顺序不变 | 真实 TCP 挂起 prompt 回归，observer 中断仍拒绝 |
+| 审批占用键盘时 Ctrl+C 不生效；Owner 取消后 UI 等待未结束 | Ctrl+C / Esc 结束审批并中断 run；Owner 按原 requestFrameId 撤销客户端等待，迟到响应在有限窗口内忽略 | TUI 键盘回归、TCP 取消和迟到响应回归、构建后 TTY |
+| repeated_tool_failure / approval_expiration_limit 被笼统解释为预算用尽 | 最终摘要写明重复工具失败或审批过期，说明任务未完成 | agent-loop 实际终止事件与摘要回归 |
+| 恢复后未完成工具仍显示活动态 | 无当前 run 时关闭旧活动投影，显示 Outcome unknown；assess 后 Footer 与 recovery 状态同步，不伪造工具结果 | recovery-command 投影和 Footer 回归；同 Session TTY 恢复 |
+| bash 环境缺少命令时缺少排查线索 | exit 127 文本提示在工具环境内核对 command -v、版本及 PATH | stdlib-tools 缺失命令回归；不改变冻结的 minimal@1 工具 manifest |
+
+反向请求撤销沿已有认证 `reverse_request` envelope 使用 `reverse_request_cancel` 控制消息，不创建新的审批决策、authority 或 waiter。客户端按原帧 ID 取消，server 有限保留原请求与控制帧 ID；未知响应仍拒绝。没有修改 OS sandbox。
+
+本次 fresh 验证：`npm run check` 与 `npm run build` 通过；真实 TTY 六项通过，artifact root `/tmp/runledger-harness-repair-rq7ey05p`，正常退出 0、剩余 owned PID 为空，结果包含 3739 个 dist 文件 digest。审批超时 wall 30.427 秒、active 0.421 秒；审批中断 run 以 aborted 结束，elapsed 0.328 秒。此数值仅对应本地确定性 fixture。
+
+完整 `npm test` 在 `tests/tui/adapters/adapters.test.ts` 两个 Plan Mode 断言处失败：期望 inactive 映射为 unknown，基线适配器实际返回 inactive。原始提交 `8c1989c` 的独立 archive 副本同样复现 2 failed / 17 passed（`/tmp/runledger-harness-baseline-test.log`）；本任务未改动该适配器或测试。其余文件已按原分桶补跑，可运行测试通过、1 个 macOS-only 文件的 3 条测试跳过（`/tmp/runledger-harness-repair-tests-remaining.log`，包含 Bun 144 tests）；最后两条迟到复验回归补充后，approval-coordinator 共 14 tests 通过，check/build/TTY 再次通过。全量门禁尚未通过，不以排除失败文件后的测试替代全量通过；此前按仓库提交规则保留未提交；用户随后明确要求合并回原分支。原工作树已有两处断言修正，合并时保留其未提交归属，不混入本修复提交。
+
+可复跑流程和证据边界见 [Harness 执行可靠性回归](../../tests/manual/harness-repair/README.md)。真实外部 DeepSeek、原六例重跑、人工视觉/IME 与 macOS/Windows 仍需对应证据；本次不提升 R8/R9 验收状态。
 
 ## 2. 事故基线与已确认事实
 

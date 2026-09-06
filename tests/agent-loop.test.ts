@@ -19,6 +19,7 @@ import {
 import type { AgentEvent } from "../src/index.ts";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "../src/types.ts";
 import { createAssistantMessageEventStream } from "../src/utils/event-stream.ts";
+import { DEFAULT_AGENT_RUN_BUDGET } from "../src/runtime/types.ts";
 import type { StreamFn } from "../src/runtime/types.ts";
 import { defaultConvertToLlm } from "../src/runtime/agent-loop.ts";
 
@@ -436,6 +437,33 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
         expect(first.content[0]).toMatchObject({ type: "text", text: "ping" });
       }
     }
+  });
+
+  it.each([
+    ["policy_denied", "repeated_tool_failure", "repeated tool failures", 3],
+    ["approval_expired", "approval_expiration_limit", "approval expirations", 2],
+  ] as const)("explains %s termination without claiming token exhaustion", async (code, reason, text, count) => {
+    let turns = 0;
+    const streamFn: StreamFn = (model) => {
+      const stream = createAssistantMessageEventStream();
+      queueMicrotask(() => {
+        const message = assistantMessageFor(model, [{ type: "toolCall", id: `failure-${++turns}`, name: "echo", arguments: { text: "test" } }], "toolUse");
+        stream.push({ type: "done", reason: "toolUse", message });
+        stream.end(message);
+      });
+      return stream;
+    };
+    const agent = new Agent({
+      initialState: { systemPrompt: "", model: mockModel, tools: [{ ...echoTool, execute: async () => ({ content: [{ type: "text", text: code }], details: { errorCode: code }, isError: true }) }] },
+      streamFn, loopConfig: { runBudget: DEFAULT_AGENT_RUN_BUDGET },
+    });
+    const events: AgentEvent[] = [];
+    agent.subscribe((event) => { events.push(event); });
+    const messages = await agent.prompt("test failures");
+    expect(turns).toBe(count);
+    expect(events.at(-1)).toMatchObject({ type: "agent_end", stopReason: "length", terminationReason: reason });
+    expect(messages.at(-1)).toMatchObject({ role: "assistant", content: [{ type: "text", text: expect.stringContaining(text) }] });
+    expect(JSON.stringify(messages.at(-1))).not.toContain("execution budget was exhausted");
   });
 
   it("terminates at the model turn budget with a typed budget summary", async () => {

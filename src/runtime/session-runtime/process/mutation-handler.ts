@@ -42,7 +42,7 @@ export class ProcessMutationHandler {
 	public async mutate(
 		operation: string,
 		payload: Record<string, unknown>,
-		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number },
+		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number; readonly signal?: AbortSignal },
 	): Promise<SessionDomainResult> {
 		if (operation !== "session.process.start") {
 			const executionId = this.port.stringValue(payload.executionId);
@@ -95,6 +95,7 @@ export class ProcessMutationHandler {
 			effectId: context.effectId,
 		}).digest.slice(0, 64));
 		const requestDigest = runtimeDigest({ command, cwd, timeoutMs, backend, executionMode });
+		if (context.signal?.aborted) return this.port.domainFailure(operation, "denied", "approval_cancelled");
 		const prepared = await this.port.options.security.prepare({
 			commandId: correlationId,
 			command,
@@ -103,8 +104,12 @@ export class ProcessMutationHandler {
 			backend,
 			executionMode,
 			requestDigest,
-		});
+		}, context.signal);
 		if (!prepared.ok) return this.port.domainFailure(operation, "denied", prepared.error.code);
+		if (context.signal?.aborted) {
+			const completed = await prepared.value.complete();
+			return this.port.domainFailure(operation, "denied", completed.ok ? "approval_cancelled" : completed.error.code);
+		}
 		const attemptPort = this.port.attemptPort();
 		const begun = attemptPort?.beginAttempt("process_spawn", requestDigest);
 		if (begun !== undefined && "error" in begun) {
@@ -141,12 +146,17 @@ export class ProcessMutationHandler {
 			beforeSpawn: async () => {
 				const finalLeaf = await prepared.value.validateFinalLeaf();
 				if (!finalLeaf.ok) throw new Error(`${finalLeaf.error.code}: ${finalLeaf.error.message}`);
+				if (context.signal?.aborted) throw new Error("process start cancelled before spawn");
 			},
 		});
 		if (!created.ok) {
 			if (begun !== undefined && created.code !== "uncertain_outcome") {
 				const settled = attemptPort?.settleAttempt(begun.attemptId, "rejected", runtimeDigest({ code: created.code }));
 				if (settled !== undefined && !settled.ok) return this.port.domainFailure(operation, "failed", settled.code);
+			}
+			if (created.code !== "uncertain_outcome") {
+				const completed = await prepared.value.complete();
+				if (!completed.ok) return this.port.domainFailure(operation, "failed", completed.error.code);
 			}
 			return this.port.domainFailure(operation, created.code.includes("denied") ? "denied" : "failed", created.code);
 		}

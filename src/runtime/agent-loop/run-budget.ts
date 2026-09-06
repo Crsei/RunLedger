@@ -66,11 +66,14 @@ export async function appendBudgetTerminationSummary(
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
 ): Promise<void> {
-  const text = reason === "model_turn_limit"
-    ? "Run stopped because the model turn limit was reached."
-    : reason === "tool_turn_limit"
-      ? "Run stopped because the tool turn limit was reached."
-      : "Run stopped because its execution budget was exhausted.";
+  const summaries: Record<AgentRunTerminationReason, string> = {
+    model_turn_limit: "Run stopped because the model turn limit was reached.",
+    tool_turn_limit: "Run stopped because the tool turn limit was reached.",
+    active_duration_limit: "Run stopped because the active execution time limit was reached.",
+    repeated_tool_failure: "Run stopped after repeated tool failures. Review the failed tool results before retrying; the task is incomplete.",
+    approval_expiration_limit: "Run stopped after repeated approval expirations. Review the pending operation before requesting fresh approval; the task is incomplete.",
+  };
+  const text = summaries[reason];
   const message: AssistantAgentMessage = {
     role: "assistant",
     content: [{ type: "text", text }],

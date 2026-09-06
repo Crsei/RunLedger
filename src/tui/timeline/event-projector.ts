@@ -35,7 +35,7 @@ export type TimelineProjectionInput =
 	| { readonly kind: "replay-message"; readonly message: AgentMessage; readonly index: number }
 	| { readonly kind: "tui-event"; readonly event: TuiEvent }
 	| { readonly kind: "notice"; readonly severity: "info" | "warning" | "error"; readonly message: string; readonly correlationId: string }
-	| { readonly kind: "cleanup"; readonly reason: "session-switch" | "abort" | "destroy"; readonly correlationId?: string };
+	| { readonly kind: "cleanup"; readonly reason: "session-switch" | "abort" | "destroy" | "recovery"; readonly correlationId?: string };
 
 export interface TimelineProjectorSeed {
 	readonly messageIndex: number;

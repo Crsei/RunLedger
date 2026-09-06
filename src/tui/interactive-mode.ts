@@ -400,7 +400,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.ui.setAppIntentHandler({
       onInterrupt: () => {
         // nonCapturing 弹窗(如 slash 补全)不拦截 Ctrl+C
-        if (this.ui.hasCapturingOverlay() || this.approvalWorkflow.hasActivePermissionView()) return false;
+        if (this.approvalWorkflow.hasActivePermissionView()) {
+          this.approvalWorkflow.activePermissionView?.handleInput("escape");
+          return true;
+        }
+        if (this.ui.hasCapturingOverlay()) return false;
         this.handleInterrupt();
         return true;
       },
@@ -1076,6 +1080,11 @@ export class InteractiveMode implements FooterSnapshotProvider {
 
 	private applyRecoveryStatus(status: SessionRecoveryStatus): void {
 		const required = status.state === "recovery_required" || status.barrierState === "open";
+		if (!this.controller?.inFlight && (required || this.store.getState().recoveryRequired)) {
+			// 恢复评估不证明旧工具的执行结果；只结束旧活动展示，保留结果未知。
+			this.streaming.flushStreamingDeltas();
+			this.eventController.dispatchTimeline(this.streaming.project({ kind: "cleanup", reason: "recovery" }));
+		}
 		if (required !== this.store.getState().recoveryRequired) this.streaming.resetFromCanonicalMessages();
 		this.store.dispatch({ type: "recovery.set", required });
 		this.ui.requestRender();

@@ -103,6 +103,12 @@ describe("stdlib tools (cross-platform)", () => {
     expect((r.content[0] as { text: string }).text).toContain("ping");
   });
 
+  it("bash: missing command explains how to inspect the tool environment", async () => {
+    const result = await createBashTool(dir).execute("missing", { command: "runledger_nonexistent_command_8be1" });
+    expect(result.details?.exitCode).toBe(127);
+    expect((result.content[0] as { text: string }).text).toContain("command -v");
+  });
+
   it("bash: 非零 exit 标 details.exitCode 非 0", async () => {
     const tool = createBashTool(dir);
     const r = await tool.execute("tc1", { command: "false" });

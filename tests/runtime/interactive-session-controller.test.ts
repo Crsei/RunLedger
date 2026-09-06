@@ -225,12 +225,12 @@ describe("InteractiveSessionController", () => {
 		controller.dispose();
 	});
 
-	it("falls back from a persisted model that the Host compatibility policy does not verify", async () => {
+	it("rejects an unverified persisted model even when another authenticated model is available", async () => {
 		const cwd = await tempDir();
 		const { models, p1, p2 } = fixtureModels();
 		await models.login("p1", "api_key", INTERACTION);
 		await models.login("p2", "api_key", INTERACTION);
-		const controller = await InteractiveSessionController.create({
+		await expect(InteractiveSessionController.create({
 			cwd,
 			layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
 			systemPrompt: "test",
@@ -240,10 +240,7 @@ describe("InteractiveSessionController", () => {
 			ledger: new MemoryLedger(),
 			tools: [],
 			isModelSelectable: (candidate) => candidate.provider === p2.provider && candidate.id === p2.id,
-		});
-
-		expect(controller.currentSelection).toMatchObject({ provider: p2.provider, model: p2 });
-		controller.dispose();
+		})).rejects.toThrow("model profile is not verified: p1/m1");
 	});
 
 	it("exposes only Host-verified models through the interactive selection boundary", async () => {
@@ -527,6 +524,35 @@ describe("InteractiveSessionController", () => {
 
 		expect(order).toEqual(["admit", "hook", "abort"]);
 		controller.dispose();
+	});
+
+	it("keeps an unavailable configured model unselected and leaves login available", async () => {
+		const cwd = await tempDir();
+		const { models, p2 } = fixtureModels();
+		await models.login("p2", "api_key", INTERACTION);
+		const controller = await InteractiveSessionController.create({
+			cwd, layout: buildRunledgerLayout(join(cwd, "home"), "posix"), systemPrompt: "test", models,
+			settings: { provider: "p1", model: "not-in-catalog" }, replay: EMPTY_REPLAY, ledger: new MemoryLedger(), tools: [],
+		});
+		try {
+			expect(controller.currentSelection.model).toBeUndefined();
+			expect(controller.warnings.join(" ")).toContain("Configured model p1/not-in-catalog is unavailable");
+			await controller.login("p1", "api_key", INTERACTION);
+			await controller.selectModel(p2);
+			expect(controller.currentSelection.model).toBe(p2);
+			expect(controller.warnings).toEqual([]);
+		} finally { controller.dispose(); }
+	});
+
+	it("does not substitute another model for unverified settings", async () => {
+		const cwd = await tempDir();
+		const { models } = fixtureModels();
+		await expect(InteractiveSessionController.create({
+			cwd, layout: buildRunledgerLayout(join(cwd, "home"), "posix"),
+			systemPrompt: "test", models, settings: { provider: "p1", model: "m1" },
+			replay: EMPTY_REPLAY, ledger: new MemoryLedger(), tools: [],
+			isModelSelectable: (candidate) => candidate.provider !== "p1",
+		})).rejects.toThrow("model profile is not verified: p1/m1");
 	});
 
 	it("选择优先级为 CLI override > session > settings，并解析 provider/model 形式", async () => {

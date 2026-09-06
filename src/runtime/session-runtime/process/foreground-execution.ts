@@ -24,7 +24,7 @@ export interface ForegroundExecutionPort {
 	mutate(
 		operation: string,
 		payload: Record<string, unknown>,
-		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number },
+		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number; readonly signal?: AbortSignal },
 	): Promise<SessionDomainResult>;
 }
 
@@ -48,8 +48,9 @@ export async function executeForegroundProcess(input: ManagedForegroundBashInput
 		correlationId: `correlation_${contextSeed.digest.slice(0, 64)}`,
 		effectId: `effect_${contextSeed.digest.slice(0, 64)}`,
 		expectedRevision: port.revision(),
+		...(input.signal === undefined ? {} : { signal: input.signal }),
 	});
-	if (!started.ok) throw Object.assign(new Error("foreground process rejected"), { code: started.code });
+	if (!started.ok) throw Object.assign(new Error(processStartRejection(started.code)), { code: started.code });
 	const executionId = stringValue(started.value.executionId);
 	const handle = executionId === undefined ? undefined : port.findHandle(executionId);
 	if (handle === undefined) throw new Error("foreground process handle is unavailable");
@@ -156,4 +157,16 @@ function stringValue(value: unknown): string | undefined {
 
 function sameOutputCursor(left: OutputCursor, right: OutputCursor): boolean {
 	return left.sequence === right.sequence && left.byteOffset === right.byteOffset;
+}
+
+function processStartRejection(code: string): string {
+	const guidance: Readonly<Record<string, string>> = {
+		approval_expired: "Approval expired; the command was not run. Request fresh approval before retrying.",
+		approval_cancelled: "Approval was cancelled; the command was not run. Stop and wait for user direction.",
+		approval_stale: "Approval validation failed; the command was not run. Request a fresh approval; changing shell syntax does not repair approval state.",
+		policy_denied: "Policy denied the command; it was not run. Do not retry equivalent commands to bypass the decision.",
+		domain_revision_conflict: "Session state changed before process start. Refresh session state before retrying.",
+		recovery_barrier_active: "Session recovery is required. Use /recovery assess and resolve pending attempts before continuing.",
+	};
+	return `Process start rejected (${code}). ${guidance[code] ?? "Inspect the session error before retrying; execution was not confirmed."}`;
 }

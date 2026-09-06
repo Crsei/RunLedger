@@ -16,7 +16,7 @@ import { SESSION_PROTOCOL_VERSION, type SessionFrameEnvelope } from "../../src/r
 import type { ProviderWorkflowPort, ProviderCatalogSnapshot } from "../../src/tui/providers/types.ts";
 import type { ChatContainer } from "../../src/tui/components/chat-container.ts";
 import type { PresentationBlock } from "../../src/tui/presentation.ts";
-import { ContractController, createContractHarness, settleFrames } from "./fixtures/contract-integration.ts";
+import { ContractController, ContractTerminal, createContractHarness, settleFrames } from "./fixtures/contract-integration.ts";
 
 describe("thinking initialization", () => {
 	it("hydrates the authoritative thinking level before the first new-session footer render", async () => {
@@ -187,6 +187,38 @@ describe("P1 regression fixes at InteractiveMode level", () => {
 		expect(JSON.stringify(mode.getTuiState())).toContain("Host reconnected");
 		mode.setHostConnectionState("build_mismatch");
 		expect(JSON.stringify(mode.getTuiState())).toContain("Host build mismatch");
+	});
+
+	it.each(["\x03", "\x1b"])("interrupts the canonical turn from an approval modal with %j", async (key) => {
+		class InterruptTrackingController extends ContractController {
+			interruptCount = 0;
+			override interrupt(): void { this.interruptCount += 1; }
+		}
+		const controller = new InterruptTrackingController({ inFlight: true });
+		const terminal = new ContractTerminal();
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			const pending = mode.handleReverseRequest(reverseFrame(), new AbortController().signal);
+			terminal.send(key);
+			await expect(pending).resolves.toEqual({ ok: true, decision: "deny" });
+			expect(controller.interruptCount).toBe(1);
+		} finally { mode.quit(); await running; }
+	});
+
+	it("consumes approval shortcuts without adding them to the Composer", async () => {
+		const terminal = new ContractTerminal();
+		const mode = new InteractiveMode({ controller: new ContractController({ inFlight: true }), terminal });
+		const running = mode.run();
+		try {
+			await settleFrames();
+			const pending = mode.handleReverseRequest(reverseFrame(), new AbortController().signal);
+			terminal.send("y");
+			await expect(pending).resolves.toEqual({ ok: true, decision: "allow-once" });
+			const editor = (mode as unknown as { refs: { editor: { getText(): string } } }).refs.editor;
+			expect(editor.getText()).toBe("");
+		} finally { mode.quit(); await running; }
 	});
 
 	it("P1-3: reverse approval returns a decision without fabricating a completed workflow", async () => {

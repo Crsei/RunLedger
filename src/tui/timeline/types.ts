@@ -25,7 +25,8 @@ export type TimelineStatus =
 	| "succeeded"
 	| "failed"
 	| "cancelled"
-	| "aborted";
+	| "aborted"
+	| "unknown";
 
 export interface TimelineRowBase {
 	readonly id: string;
@@ -132,4 +133,4 @@ export type TimelineEvent =
 	| { readonly type: "run_resume"; readonly generation: number; readonly runId: string; readonly waitId: string; readonly timestamp: number; readonly activeDurationMs: number }
 	| { readonly type: "run_end"; readonly generation: number; readonly runId: string; readonly timestamp: number; readonly stopReason: "stop" | "length" | "toolUse" | "error" | "aborted"; readonly elapsedMs?: number; readonly activeDurationMs?: number; readonly messageCountAtEnd?: number }
 	| { readonly type: "run_restore"; readonly generation: number; readonly runId: string; readonly timestamp: number; readonly status: "completed" | "active" | "recovery_required"; readonly stopReason?: "stop" | "length" | "toolUse" | "error" | "aborted"; readonly elapsedMs?: number; readonly activeDurationMs?: number; readonly messageCountAtEnd?: number }
-	| { readonly type: "cleanup"; readonly generation: number; readonly correlationId?: string; readonly reason: "session-switch" | "abort" | "destroy" };
+	| { readonly type: "cleanup"; readonly generation: number; readonly correlationId?: string; readonly reason: "session-switch" | "abort" | "destroy" | "recovery" };

@@ -175,11 +175,11 @@ export function timelineReducer(state: TimelineState, event: TimelineEvent): Tim
 		case "cleanup": {
 			const affected = state.activeOrder.filter((id) => event.correlationId === undefined || id === event.correlationId);
 			if (affected.length === 0) return state.activeRun === undefined ? state : { ...state, generation, activeRun: undefined };
-			const status: TimelineStatus = event.reason === "abort" ? "aborted" : "cancelled";
+			const status: TimelineStatus = event.reason === "recovery" ? "unknown" : event.reason === "abort" ? "aborted" : "cancelled";
 			const nextCommitted = [...state.committedRows];
 			for (const id of affected) {
 				const row = state.activeRowsByCorrelationId[id];
-				if (row !== undefined) nextCommitted.push({ ...row, status });
+				if (row !== undefined) nextCommitted.push({ ...row, status, ...(row.kind === "assistant" ? { streaming: false } : {}) });
 			}
 			const activeRowsByCorrelationId = { ...state.activeRowsByCorrelationId };
 			for (const id of affected) delete activeRowsByCorrelationId[id];

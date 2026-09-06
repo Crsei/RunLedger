@@ -94,6 +94,28 @@ function validRevalidation(value: AuthorizationRequest) {
 }
 
 describe("ApprovalCoordinator", () => {
+	it.each(["channel", "allow", "revalidation", "revalidation-error", "revalidation-change"])("records expiry instead of stale receipt when %s settles after the deadline", async (scenario) => {
+		let now = NOW;
+		const value = request();
+		const coordinator = new ApprovalCoordinator({
+			clock: () => now,
+			timeoutMs: 100,
+			prompter: { request: async () => {
+				if (!scenario.startsWith("revalidation")) now = new Date(NOW.getTime() + 101);
+				if (scenario === "channel") throw new Error("transport deadline");
+				return { decision: "allow-once", decidedBy: createRuntimeId("principal", "approver") };
+			} },
+		});
+		const result = await coordinator.authorize(value, evaluation(value), () => {
+			now = new Date(NOW.getTime() + 101);
+			if (scenario === "revalidation-error") throw new Error("late validation error");
+			if (scenario === "revalidation-change") return { ...validRevalidation(value), cwd: "/changed" };
+			return validRevalidation(value);
+		});
+		expect(result).toMatchObject({ ok: true, value: { outcome: "deny", approval: { decision: "expired" } } });
+		if (result.ok) expect(isApprovalReceiptRef(result.value.approval)).toBe(true);
+	});
+
 	it("durably revokes an allow-once receipt after the authorized effect completes", async () => {
 		const events: string[] = [];
 		const value = request();
