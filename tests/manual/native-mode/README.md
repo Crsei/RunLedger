@@ -68,6 +68,29 @@ python3 tests/manual/native-mode/run.py --mode plan --theme light --width 80
 
 ## 维护与验证
 
+### 并发运行与结果汇总
+
+单例脚本之间可以并发：每例有独立 HOME、RUNLEDGER_DIR、工作目录、SQLite 和 tmux socket。批量入口 [run_matrix.py](run_matrix.py) 使用有界线程池编排独立 CLI 进程，不改变产品内的 multi-agent 策略。
+
+```bash
+# 3 模式 × 2 主题 × 2 宽度，共 12 例，同时最多运行 3 例。
+PYTHONDONTWRITEBYTECODE=1 python3 tests/manual/native-mode/run_matrix.py --jobs 3
+
+# 仅同时比较三个模式，全部使用 dark / 143 列。
+PYTHONDONTWRITEBYTECODE=1 python3 tests/manual/native-mode/run_matrix.py --jobs 3 --themes dark --widths 143
+```
+
+先完成构建，再启动矩阵；运行中不要重建共享 dist 或改写被测入口。`--jobs` 支持 1–16，默认 3；并发量应按本机资源调整，负载过高可能导致就绪超时。其余 `--height`、`--timeout`、`--executable`、`--output-parent` 与单例含义一致。`--jobs 1` 可用于串行复验。
+
+每批新建 `runledger-mode-matrix-*` 目录，每例单独保存截图、SQLite、原始 `result.json` 和包含耗时的 `case.json`。批次结束写出：
+
+- `summary.md`：按模式统计通过/失败，并逐例展示结果、耗时、CLI 退出码和证据链接。
+- `summary.json`：完整的各例结果、失败原因、开始/结束相对时间、总耗时及活动用例峰值。
+
+单例失败不会取消其他用例；只要有失败，批次就退出 1，全部通过退出 0。活动用例峰值包含准备和清理时间，不等同于同时就绪的 TUI 数量。汇总只统计本批次目录，避免混入以前的结果。若整个批次被中断，最终汇总可能缺失，仍可查看已完成用例的 `case.json` 和各例 `result.json`；中断清理边界与单例相同。
+
+并发回归使用同步屏障证明至少两个用例同时执行，并验证并发上限、独立目录，以及单例异常后的完整失败汇总；与其他 Python 回归一并执行下列命令。
+
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/manual/native-mode -p 'test_*.py' -v
 npm run check
@@ -94,3 +117,7 @@ git diff --check
 当前共享工作树构建后，标准 PATH 确认指向本仓库 `bin/runledger.js`。default / dark / 143×42、minimal / light / 80×42、plan / light / 80×42 均通过上述流程，主 pane 退出码均为 0。default 与 minimal 的空会话正常回收，plan 会话保留为 paused。Python 故障回归 4 项通过，`npm run check`、`npm run build` 与 `npm test` 均以退出码 0 完成。全量测试日志位于 `/tmp/runledger-native-mode-test.log`，check 完整日志位于 `/tmp/runledger-native-mode-check.log`。此记录属于当时包含既有未提交修改的工作树，不代表仅此文档提交的干净 checkout。
 
 本地证据目录分别为 `/tmp/runledger-mode-native-079komfm`、`/tmp/runledger-mode-native-xh0y0r7i`、`/tmp/runledger-mode-native-x658j420`；临时目录不是长期存储，复验请重新运行命令。
+
+同日并发矩阵验证：`--jobs 3`，12/12 例通过，default、minimal、plan 各 4/4；覆盖 dark/light × 80/143 列，活动用例峰值 3，总耗时 17.957 秒。12 个证据目录与 tmux socket 均互不相同，CLI 均退出 0，结束后未残留本批次 tmux session。逐例与模式汇总位于 `/tmp/runledger-mode-matrix-_br4_ffg/summary.md` 和 `summary.json`。
+
+并发入口的 Python 回归共 5 项通过，check/build 重新执行并通过；完整日志分别为 `/tmp/runledger-mode-matrix-check.log`、`/tmp/runledger-mode-matrix-build.log`。本次仅修改独立 Python 编排与文档，未重复不收集这些 Python 用例的全量 `npm test`；其上一轮结果见前述记录。
