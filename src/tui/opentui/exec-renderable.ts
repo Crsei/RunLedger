@@ -172,7 +172,7 @@ function commandDisplayLines(command: string, width: number, continuationPrefix 
 }
 
 function mainCommandDisplayLines(block: ExecBlock, width: number): string[] {
-	const prefix = `${mainStatusBullet(block)} ${block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `;
+	const prefix = `${mainStatusBullet(block)} ${block.status === "unknown" ? "Outcome unknown:" : block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `;
 	const commandWidth = Math.max(1, width - displayWidth(prefix));
 	const normalized = stripShellLoginWrapper(block.command).replace(/\r\n?/gu, "\n");
 	const logicalLines = normalized.split("\n");
@@ -247,6 +247,7 @@ function mainStatusBullet(block: ExecBlock): string {
 
 function transcriptResultLine(block: ExecBlock): string | undefined {
 	const duration = block.durationMs === undefined ? "" : ` • ${formatExecDuration(block.durationMs)}`;
+	if (block.status === "unknown") return "? Outcome unknown (no recorded result)";
 	if (block.status === "succeeded") return `✓${duration}`;
 	if (["failed", "cancelled", "aborted"].includes(block.status)) {
 		const exit = block.exitCode === undefined ? "exit" : String(block.exitCode);
@@ -288,7 +289,7 @@ function styledExecText(
 		: styledCommandLines(
 			source,
 			width,
-			`${mainStatusBullet(block)} ${block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `,
+			`${mainStatusBullet(block)} ${block.status === "unknown" ? "Outcome unknown:" : block.status === "running" || block.status === "pending" ? "Running" : "Ran"} `,
 			block.continuationPrefix ?? EXEC_CONTINUATION_PREFIX,
 			block.continuationMaxLines ?? EXEC_CONTINUATION_MAX_LINES,
 			execPrefixColor(block, resolveForeground),

@@ -99,7 +99,7 @@ export class ApprovalWorkflow {
 					message: { text: `approval ${decision.decision} for ${view.toolName}`, truncated: false, byteLength: new TextEncoder().encode(`approval ${decision.decision} for ${view.toolName}`).byteLength },
 				}]);
 				finish(approvalDecisionBody(decision));
-				if (decision.decision === "deny") {
+				if (decision.decision === "deny" || decision.decision === "cancel") {
 					// 先让 reverse response 的 continuation 发送 deny，再中断 canonical turn，
 					// 避免模型把单次拒绝当成可继续重试的新 permission 请求。
 					queueMicrotask(() => this.interruptCurrentTurn());

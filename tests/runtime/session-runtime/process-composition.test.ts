@@ -1,6 +1,6 @@
 import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,9 @@ import { openSessionDatabase, type SessionDatabase } from "../../../src/storage/
 import { installSessionStoreSchema } from "../../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../../src/storage/session-store/session-store.ts";
 import { createGovernedLspSpawner } from "../../../src/runtime/session-runtime/lsp-composition.ts";
+
+import { MemoryApprovalStateStore } from "../../../src/security/permission/approval-coordinator.ts";
+import type { PermissionPromptResponse } from "../../../src/security/types.ts";
 
 let root: string;
 const stores = new Map<string, { readonly db: SessionDatabase; readonly store: SessionStore }>();
@@ -69,6 +72,50 @@ function securitySource(): SessionSecurityConfigSource {
 }
 
 describe("S4 Session managed process composition", () => {
+	it.each(["exec", "start"] as const)("cancels approval before %s can spawn a process", async (method) => {
+		const layout = buildRunledgerLayout(join(root, "home"), "posix");
+		await mkdir(layout.home, { recursive: true });
+		const fence: OwnerFence = { sessionId: createRuntimeId("session", "approval-abort"), runtimeId: createRuntimeId("runtime", "approval-abort"), generation: 1 };
+		const workspaceId = createRuntimeId("workspace", "approval-abort");
+		let cancelPrompt: (() => void) | undefined;
+		let promptSignal: AbortSignal | undefined;
+		const security = await createSessionSecurity({
+			layout, cwd: root, fence, workspaceId, repositoryId: createRuntimeId("repository", "approval-abort"),
+			securitySources: [{ source: "cli", read: async () => ({ status: "available", text: JSON.stringify({ profile: "workspace-write", approvalPolicy: "on-request", sandbox: "off" }) }) }],
+			approvalPorts: {
+				stateStore: new MemoryApprovalStateStore(),
+				audit: { requested: async () => undefined, decided: async () => undefined, revoked: async () => undefined },
+				prompter: { request: async (_prompt, signal) => {
+					promptSignal = signal;
+					return new Promise<PermissionPromptResponse>((resolve) => {
+						cancelPrompt = () => resolve({ decision: "cancel", decidedBy: createRuntimeId("principal", "fixture") });
+						signal?.addEventListener("abort", cancelPrompt, { once: true });
+					});
+				} },
+			},
+		});
+		const process = sessionDomain.createSessionProcessComposition({ layout, store: ownedStore(layout, fence, workspaceId), cwd: root, fence, workspaceId, security: security.managedProcess });
+		const abort = new AbortController();
+		const run = process.toolClient()[method]({ command: "printf forbidden > never-created", cwd: root, timeoutMs: 5_000, signal: abort.signal })
+			.then((result) => result, (error: unknown) => error);
+		try {
+			await vi.waitFor(() => expect(cancelPrompt).toBeTypeOf("function"));
+			abort.abort();
+			await vi.waitFor(() => expect(promptSignal?.aborted).toBe(true), { timeout: 500 });
+			const result = await run;
+			if (method === "start") expect(result).toMatchObject({ ok: false, code: "approval_cancelled" });
+			else expect(result).toMatchObject({ code: "approval_cancelled", message: expect.stringContaining("command was not run") });
+			expect(existsSync(join(root, "never-created"))).toBe(false);
+			const listed = await process.query("session.process.list", {}, { correlationId: "list", effectId: "list" });
+			expect(listed).toMatchObject({ ok: true, value: { items: [] } });
+		} finally {
+			cancelPrompt?.();
+			await run;
+			await process.shutdown("paused");
+			await security.close();
+		}
+	});
+
 	it("preserves protocol stdout and sanitized stderr through the Session security and process composition", { skip: IS_WINDOWS }, async () => {
 		const layout = buildRunledgerLayout(join(root, "home"), "posix");
 		await mkdir(layout.home, { recursive: true });

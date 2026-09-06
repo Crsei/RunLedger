@@ -195,7 +195,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 	public async mutate(
 		operation: string,
 		payload: Record<string, unknown>,
-		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number },
+		context: { readonly correlationId: string; readonly effectId: string; readonly expectedRevision: number; readonly signal?: AbortSignal },
 	): Promise<SessionDomainResult> {
 		return this.mutationHandler.mutate(operation, payload, context);
 	}
@@ -220,6 +220,7 @@ export class SessionManagedProcessComposition implements SessionProcessDomainPor
 					correlationId: `correlation_${contextSeed.digest.slice(0, 64)}`,
 					effectId: `effect_${contextSeed.digest.slice(0, 64)}`,
 					expectedRevision: this.revision(),
+					...(input.signal === undefined ? {} : { signal: input.signal }),
 				});
 				if (!result.ok) return { ok: false, code: result.code };
 				const executionId = stringValue(result.value.executionId);

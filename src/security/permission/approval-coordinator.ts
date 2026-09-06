@@ -380,7 +380,7 @@ export class ApprovalCoordinator {
 			timeoutId = setTimeout(() => {
 				controller.abort("approval timeout");
 				resolve({ kind: "timeout" });
-			}, this.#timeoutMs);
+			}, Math.max(0, Math.min(this.#timeoutMs, Date.parse(prompt.expiresAt) - this.#clock().getTime())));
 		});
 		const promptResult = this.#prompter.request(prompt, controller.signal)
 			.then((response): PromptRace => ({ kind: "response", response }))
@@ -463,7 +463,7 @@ export class ApprovalCoordinator {
 			return failure("approval request audit is unavailable", "approval_stale");
 		}
 		const automatic = await this.#runAutoReview(autoReview, signal);
-		const raced = automatic === undefined
+		let raced = automatic === undefined
 			? await this.#racePrompt(prompt, signal)
 			: { kind: "response" as const, response: automatic };
 		let response: PermissionPromptResponse = raced.kind === "response"
@@ -502,6 +502,13 @@ export class ApprovalCoordinator {
 			if (current.argumentsDigest.digest !== request.argumentsDigest.digest || current.cwd !== request.cwd || current.policyDigest.digest !== request.snapshot.policyDigest.digest) {
 					return this.#commitDenied(request, ticket, response, "abort", "approval binding changed before execution");
 			}
+		}
+		// 传输超时、迟到响应及复验均可能越过同一审批期限；必须落 expired，不能提交无效的 cancelled/allowed receipt。
+		if (this.#clock().getTime() >= Date.parse(prompt.expiresAt)) {
+			raced = { kind: "timeout" };
+			response = { decision: "cancel", decidedBy: SYSTEM_APPROVAL_PRINCIPAL_ID };
+			prefixRule = undefined;
+			networkRule = undefined;
 		}
 		const selectedTicket = response.decision === "allow-session" || response.decision === "allow-with-prefix-rule" || response.decision === "allow-with-network-rule" ? sessionTicket : ticket;
 		const receipt = createApprovalReceipt(
@@ -641,7 +648,9 @@ export class ApprovalCoordinator {
 		reason: "abort" | "timeout" | "channel",
 		message: string,
 	): Promise<SecurityResult<AuthorizationResult>> {
-		const receipt = createApprovalReceipt(ticket, response, reason, this.#clock().toISOString());
+		const now = this.#clock();
+		const expiredAt = ticket.expiresAt !== undefined && now.getTime() >= Date.parse(ticket.expiresAt) ? ticket.expiresAt : undefined;
+		const receipt = createApprovalReceipt(ticket, response, expiredAt === undefined ? reason : "timeout", expiredAt ?? now.toISOString());
 		const committed = await this.#store.commit(receipt, 0);
 		if (!committed.ok) return committed;
 		try {

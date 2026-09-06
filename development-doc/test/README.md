@@ -9,6 +9,8 @@
 3. [`Python + tmux 模式入口测试`](../../tests/manual/native-mode/README.md)：临时 Python 脚本归档、可复用本地 TTY 流程、故障路径检查和验收边界。
 4. [`真实开发案例试跑`](../../tests/manual/development-cases/README.md)：完整执行、多轮修改、中断恢复等六类案例，以及模型额度阻碍的实际证据。
 
+5. [Harness 执行可靠性回归](../../tests/manual/harness-repair/README.md)：本地 HTTP fixture 驱动真实 CLI/TTY，核对持久化事件和副作用。
+
 ## 文档职责
 
 - 实施顺序、状态、门禁和停止规则只在 `01-test-strategy-and-runner-hardening-plan.md` 维护。

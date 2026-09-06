@@ -1,5 +1,7 @@
 # Session Owner Runtime 替代计划
 
+> 2026-09-06 Harness 执行可靠性增量：审批期限与取消传播、同连接即时中断、恢复旧工具 Outcome unknown 和 Footer 同步，见 [执行可靠性计划 §1.2](../plan/03-session-execution-reliability-repair-plan.md#12-2026-09-06-开发案例暴露的-harness-修复)。构建后 Linux TTY 使用本地 HTTP fixture，不替代真实 provider、人工或跨平台验收。
+
 > 状态：**R0–R6 implemented；R6.5 Linux automated candidate PASS but not accepted（真实领域组合、macOS/Windows、独立审计缺失）；R7 标准 CLI 已切换且 Linux 真实多窗口/crash takeover 已验证，但验收仍随 R8 pending；R8 partial/not accepted；R9 not started（旧 Host 仅保留为安全窗口）**
 > 建立日期：2026-08-07
 > 准入修订：2026-08-07 已纳入 offline-only schema migration、external-effect recovery barrier、attachment-count lifetime、100ms SQLite busy 上限、connection-scoped driver、candidate-before-cutover、legacy archive 与 checkpoint-cache 八项阻塞/收紧要求。

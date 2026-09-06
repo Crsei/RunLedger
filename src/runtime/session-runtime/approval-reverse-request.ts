@@ -260,7 +260,7 @@ class SessionReverseApprovalPrompter implements PermissionPrompter {
 						cwd: prompt.cwd,
 						expiresAt: prompt.expiresAt,
 					},
-				}, Math.max(1, deadline - Date.now()));
+				}, Math.max(1, deadline - Date.now()), signal);
 				this.#assertFence();
 					const decidedBy = createRuntimeId("principal", `session-driver-${connectionId.slice(-64)}`);
 					const decision = decodePermissionPromptResponse(frame.body, decidedBy);

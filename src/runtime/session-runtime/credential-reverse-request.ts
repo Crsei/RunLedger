@@ -152,6 +152,7 @@ export interface ReverseRequestSender {
 		connectionId: ConnectionId,
 		request: { readonly kind: string; readonly body: Record<string, unknown> },
 		timeoutMs?: number,
+		signal?: AbortSignal,
 	): Promise<SessionFrameEnvelope>;
 }
 

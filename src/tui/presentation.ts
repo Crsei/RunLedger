@@ -83,7 +83,7 @@ export type PresentationBlock = (
     id?: string;
     kind: "exec";
     command: string;
-    status: "pending" | "running" | "succeeded" | "failed" | "cancelled" | "aborted";
+    status: TimelineStatus;
     output: readonly { readonly channel: "stdout" | "stderr"; readonly text: string }[];
     exitCode?: number;
     durationMs?: number;

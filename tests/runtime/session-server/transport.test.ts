@@ -7,7 +7,7 @@ import type { ConnectionId } from "../../../src/runtime/protocol/ids.ts";
  */
 
 import net from "node:net";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SessionClientTransport } from "../../../src/runtime/session-server/client-transport.ts";
 import { SESSION_PROTOCOL_VERSION } from "../../../src/runtime/session-server/protocol.ts";
 import { createRuntimeId } from "../../../src/runtime/protocol/ids.ts";
@@ -170,6 +170,31 @@ describe("R4 transport handshake", () => {
 		await closed;
 	});
 
+	it("cancels an exact approval waiter over TCP and keeps the connection usable", async () => {
+		const h = await setup();
+		let handlerSignal: AbortSignal | undefined;
+		let release: (() => void) | undefined;
+		const transport = await SessionClientTransport.connect(h.server.endpoint!.port, {
+			reverseRequestHandler: async (_frame, signal) => {
+				handlerSignal = signal;
+				await new Promise<void>((resolve) => { release = resolve; signal.addEventListener("abort", () => resolve(), { once: true }); });
+				return { ok: false, code: "approval_aborted" };
+			},
+		});
+		try {
+			await transport.request(handshakeFrame() as never);
+			const abort = new AbortController();
+			const reverse = h.server.requestToConnection(onlyConnectionId(), { kind: "approval_prompt", body: {} }, 30_000, abort.signal);
+			const rejected = expect(reverse).rejects.toThrow("reverse request aborted");
+			await vi.waitFor(() => expect(handlerSignal).toBeDefined());
+			abort.abort();
+			await rejected;
+			await vi.waitFor(() => expect(handlerSignal?.aborted).toBe(true));
+			await expect(transport.request({ frameId: "after_cancel", kind: "query_request", protocolVersion: SESSION_PROTOCOL_VERSION, body: { kind: "snapshot", body: {} } }))
+				.resolves.toMatchObject({ kind: "query_result", body: { ok: true } });
+		} finally { release?.(); await transport.close(); }
+	});
+
 	it("keeps the TCP connection usable when a timed-out reverse request receives a late response", async () => {
 		const h = await setup();
 		let resolveHandler: ((body: Record<string, unknown>) => void) | undefined;
@@ -245,5 +270,39 @@ describe("R4 transport handshake", () => {
 		await expect(
 			SessionClientTransport.connect(port),
 		).rejects.toBeTruthy();
+	});
+});
+
+
+describe("interrupt during an in-flight prompt", () => {
+	it("dispatches driver interrupt immediately and still rejects an observer", async () => {
+		let releasePrompt!: () => void;
+		const promptGate = new Promise<void>((resolve) => { releasePrompt = resolve; });
+		const onPrompt = vi.fn(() => promptGate);
+		const onInterrupt = vi.fn();
+		harness = await createServerHarness({ onPrompt, onInterrupt });
+		const driver = await SessionClientTransport.connect(harness.server.endpoint!.port);
+		const observer = await SessionClientTransport.connect(harness.server.endpoint!.port);
+		const command = (frameId: string, kind: string) => ({ frameId: `cmd_${frameId}`, kind: "command_request" as const, protocolVersion: SESSION_PROTOCOL_VERSION, body: { commandId: `command_${frameId}`, kind, body: {} } });
+		let prompt: ReturnType<typeof driver.request> | undefined;
+		try {
+			await driver.request(handshakeFrame() as never);
+			await observer.request(handshakeFrame({ clientId: "client_observer" }) as never);
+			expect((await driver.request(command("claim", "driver_claim"))).body.ok).toBe(true);
+			prompt = driver.request(command("prompt", "prompt"));
+			await vi.waitFor(() => expect(onPrompt).toHaveBeenCalledOnce());
+			expect((await observer.request(command("observer_interrupt", "interrupt"))).body).toMatchObject({ ok: false, code: "observer_mutation_forbidden" });
+			expect(onInterrupt).not.toHaveBeenCalled();
+			let response: unknown;
+			const interrupt = driver.request(command("interrupt", "interrupt")).then((frame) => { response = frame.body; });
+			await vi.waitFor(() => expect(response).toMatchObject({ ok: true, kind: "interrupt" }), { timeout: 1000 });
+			await interrupt;
+			expect(onInterrupt).toHaveBeenCalledOnce();
+		} finally {
+			releasePrompt();
+			await prompt;
+			await driver.close();
+			await observer.close();
+		}
 	});
 });

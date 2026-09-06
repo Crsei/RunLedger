@@ -37,7 +37,8 @@ export interface TestControllerOptions {
 	/** prompt 时取当前 owner fence(claim 后才可用)。 */
 	readonly getFence: () => { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number };
 	/** prompt 时追加的 durable 事件(assistant delta)。 */
-	readonly onPrompt?: () => void;
+	readonly onPrompt?: () => void | Promise<void>;
+	readonly onInterrupt?: () => void;
 }
 
 /** 测试 controller:prompt 走 owner-fenced appendEvent + 广播;其余 command 拒绝。 */
@@ -55,6 +56,7 @@ export function createTestController(options: TestControllerOptions): SessionCon
 				{ operation: "session.driver.claim", capability: "session.core", access: "mutate" },
 				{ operation: "session.driver.release", capability: "session.core", access: "mutate" },
 				{ operation: "session.prompt", capability: "session.core", access: "mutate" },
+				{ operation: "session.interrupt", capability: "session.core", access: "mutate" },
 			],
 		}),
 		snapshot: () => ({
@@ -66,6 +68,10 @@ export function createTestController(options: TestControllerOptions): SessionCon
 		}),
 		isMutatingKind: (kind) => (SESSION_MUTATING_COMMAND_KINDS as readonly string[]).includes(kind),
 		async handleCommand(request, meta) {
+			if (request.kind === "interrupt" && meta.isDriver) {
+				options.onInterrupt?.();
+				return { ok: true, kind: "interrupt", result: {} };
+			}
 			if (request.kind !== "prompt") return { ok: false, code: "unknown_command" };
 			if (!meta.isDriver) return { ok: false, code: "observer_mutation_forbidden" };
 			promptCount += 1;
@@ -82,7 +88,7 @@ export function createTestController(options: TestControllerOptions): SessionCon
 			for (const listener of listeners) {
 				listener({ eventType: "assistant.delta", payload: { text: `response-${promptCount}` }, sequence: eventSequence });
 			}
-			options.onPrompt?.();
+			await options.onPrompt?.();
 			return { ok: true, kind: "prompt", result: { accepted: true, promptCount } };
 		},
 		async handleQuery(request) {
@@ -97,7 +103,7 @@ export function createTestController(options: TestControllerOptions): SessionCon
 }
 
 /** 完整 harness:create session → claim → publish running → activate server。 */
-export async function createServerHarness(): Promise<ServerHarness> {
+export async function createServerHarness(callbacks: Pick<TestControllerOptions, "onPrompt" | "onInterrupt"> = {}): Promise<ServerHarness> {
 	const dir = mkdtempSync(join(tmpdir(), "session-server-harness-"));
 	const db = openSessionDatabase(join(dir, "state.db"));
 	installSessionStoreSchema(db);
@@ -113,6 +119,7 @@ export async function createServerHarness(): Promise<ServerHarness> {
 	});
 	let claimedFence: { readonly sessionId: SessionId; readonly runtimeId: RuntimeInstanceId; readonly generation: number } | undefined;
 	const controller = createTestController({
+		...callbacks,
 		sessionId,
 		store,
 		getFence: () => {

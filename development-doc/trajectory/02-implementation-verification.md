@@ -57,3 +57,9 @@
 - 超过安全预览限制的已保存正文显示 unavailable，不宣称可无限读取；digest-only 内容不能全文搜索。
 - 开发索引中指向 `tests/manual/development-cases/README.md` 的既有链接在独立基线缺少目标；主工作树中该目录属于其他未提交工作，本任务不复制或提交。
 - 没有实现 Opik/OTLP、Sandbox 专项或产品内并行/可写 child。
+
+## 合并兼容性复验
+
+将轨迹提交 `740f1f9` 与原分支的运行时修复 `2a12eea` 三方合并，无冲突。重叠的 controller、runtime-server、interactive-mode 已审阅，保留两侧行为。
+
+合并版本 `npm run check` 退出码 0；传输、交互 controller、轨迹配置/服务/面板、TUI 回归与恢复命令共 7 个文件、79 项测试通过。重新执行完整 `npm test`，仍为上文相同的两个既有 Plan Mode 断言失败。原工作树的本地修改与本次轨迹文件没有路径交集，合并交付前后核对原有暂存、未暂存 patch 和文件内容。
