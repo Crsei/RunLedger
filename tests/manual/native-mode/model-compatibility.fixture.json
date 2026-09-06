@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "profiles": [
+    {
+      "profileId": "openai/gpt-5",
+      "providerId": "openai",
+      "modelId": "gpt-5",
+      "manifestVersion": "mode-ui-fixture",
+      "manifestDigest": {
+        "algorithm": "sha256",
+        "digest": "7d22efa92b7d0b238a267645c045a756f7fdbe5bdbdf26c6b0cba383591bf2ab"
+      },
+      "contextWindow": 400000,
+      "maxOutputTokens": 16384,
+      "reasoningProtocol": "native",
+      "toolProtocol": "json",
+      "imageInput": true,
+      "compaction": "none",
+      "status": "verified"
+    },
+    {
+      "profileId": "openai/gpt-5-mini",
+      "providerId": "openai",
+      "modelId": "gpt-5-mini",
+      "manifestVersion": "mode-ui-fixture",
+      "manifestDigest": {
+        "algorithm": "sha256",
+        "digest": "7d22efa92b7d0b238a267645c045a756f7fdbe5bdbdf26c6b0cba383591bf2ab"
+      },
+      "contextWindow": 400000,
+      "maxOutputTokens": 16384,
+      "reasoningProtocol": "native",
+      "toolProtocol": "json",
+      "imageInput": true,
+      "compaction": "none",
+      "status": "verified"
+    }
+  ],
+  "aliases": {},
+  "manifestDigest": {
+    "algorithm": "sha256",
+    "digest": "c1d22751c8ab5d781ac88001e339307fdc0266a7cb45eab1cc1e3db9de9f5ec1"
+  }
+}

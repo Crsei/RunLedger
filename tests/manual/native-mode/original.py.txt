@@ -1,0 +1,20 @@
+import os,sys,json,tempfile,subprocess,pathlib,time,sqlite3
+ROOT=pathlib.Path('/tmp/runledger-mode-native-path')
+if sys.argv[1]=='prepare':
+ r=pathlib.Path(tempfile.mkdtemp(prefix='runledger-mode-native-')); ROOT.write_text(str(r)); (r/'home/state/model-compatibility').mkdir(parents=True)
+ (r/'home/settings.json').write_text(json.dumps(dict(theme='dark',autoTitle=False,agentMode='default',enabledModels=['openai/gpt-5','openai/gpt-5-mini'])))
+ print(r);sys.exit()
+r=pathlib.Path(ROOT.read_text()); name='runledger-mode-native'
+def tm(*args): return subprocess.check_output(['tmux',*args],text=True)
+def frame(): return tm('capture-pane','-pt',name)
+if sys.argv[1]=='launch':
+ args=['runledger','--mode','default','--provider','openai','--model','gpt-5','--thinking','low','--permission-profile','danger-full-access']
+ env={k:os.environ[k] for k in ['PATH','HOME','LANG'] if k in os.environ};env.update(TERM='xterm-256color',RUNLEDGER_DIR=str(r/'home'),OPENAI_API_KEY='runledger-mode-test-placeholder')
+ launch=r/'launch.py'; launch.write_text('import subprocess,pathlib\np=subprocess.run('+repr(args)+',env='+repr(env)+')\npathlib.Path('+repr(str(r/'exit-code'))+').write_text(str(p.returncode))\n')
+ tm('new-session','-d','-s',name,'-x','143','-y','42','bash');tm('set-option','-t',name,'remain-on-exit','on');tm('respawn-pane','-k','-t',name,'python3 '+str(launch));print(r)
+elif sys.argv[1]=='send':
+ tm('send-keys','-t',name,*sys.argv[2:])
+elif sys.argv[1]=='capture':
+ s=frame(); (r/(sys.argv[2]+'.txt')).write_text(s);print(s)
+elif sys.argv[1]=='db':
+ c=sqlite3.connect(r/'home/state.db'); print(c.execute("select name from sqlite_master where type='table' and name like '%session%' ").fetchall())

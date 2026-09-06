@@ -12,6 +12,8 @@
 
 ## 模块导航
 
+本地交互测试方法：[`Python + tmux 模式入口测试`](../tests/manual/native-mode/README.md)。
+
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
 | Codex 提示词模板 | [`notez/README.md`](notez/README.md) | 创建任务、执行、debug、重构、文档和协作提示词 | 可复制模板，不作为项目实现状态或自动执行指令 |

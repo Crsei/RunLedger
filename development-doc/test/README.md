@@ -6,6 +6,7 @@
 
 1. [`01-test-strategy-and-runner-hardening-plan.md`](01-test-strategy-and-runner-hardening-plan.md)：当前测试体系建设的权威实施计划，覆盖测试发现、分桶、CI、PTY/CLI smoke、跨平台和验收边界。
 2. [`async-state-machine.md`](async-state-machine.md)：异步状态机、虚拟时间、显式 gate、资源释放和多观察面断言的测试方法附录。
+3. [`Python + tmux 模式入口测试`](../../tests/manual/native-mode/README.md)：临时 Python 脚本归档、可复用本地 TTY 流程、故障路径检查和验收边界。
 
 ## 文档职责
 
