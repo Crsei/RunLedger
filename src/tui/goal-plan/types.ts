@@ -11,7 +11,7 @@ export interface PlanRenderReference {
 export interface PlanRenderView {
 	readonly reference: PlanRenderReference;
 	readonly title: SafeBoundedText;
-	readonly status: "verified" | "in-progress" | "blocked" | "unknown";
+	readonly status: "verified" | "in-progress" | "blocked" | "inactive" | "unknown";
 	readonly summary: SafeBoundedText;
 	readonly evidenceCount: { readonly state: "known" | "unknown" | "unavailable"; readonly value?: number; readonly reason?: string };
 }

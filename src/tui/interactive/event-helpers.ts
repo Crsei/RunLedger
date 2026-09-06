@@ -6,10 +6,14 @@ import type { AgentMessage } from "../../runtime/types.ts";
 
 export function messageAssistantText(message: AgentMessage): string {
 	if (message.role !== "assistant") return "";
-	return message.content
+	const text = message.content
 		.filter((content) => content.type === "text")
 		.map((content) => content.text)
 		.join("");
+	if (text.length > 0) return text;
+	return message.stopReason === "error" && message.errorMessage
+		? `Error: ${message.errorMessage}`
+		: "";
 }
 
 export function messageAssistantThinking(message: AgentMessage): string {

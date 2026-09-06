@@ -268,6 +268,11 @@ export class SessionRuntimeServer implements OwnerTransport {
 		this.connections.add(connection);
 		socket.on("data", (chunk: Buffer) => this.receive(connection, chunk));
 		socket.on("drain", () => this.flush(connection));
+		socket.once("end", () => {
+			// 协议要求双向常驻连接；对端 EOF 已结束 attachment，不能等待待发响应排空。
+			this.onDisconnect(connection);
+			socket.destroy();
+		});
 		socket.once("close", () => this.onDisconnect(connection));
 		socket.on("error", () => this.destroy(connection));
 	}

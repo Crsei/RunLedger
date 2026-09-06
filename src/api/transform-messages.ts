@@ -186,13 +186,22 @@ export function transformMessages<TApi extends Api>(
 			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
 			insertSyntheticToolResults();
 
-			// Skip errored/aborted assistant messages entirely.
-			// These are incomplete turns that shouldn't be replayed:
-			// - May have partial content (reasoning without message, incomplete tool calls)
-			// - Replaying them can cause API errors (e.g., OpenAI "reasoning without following item")
-			// - The model should retry from the last valid state
+			// 失败或中断的 provider 正文可能结构不完整，不能原样重放。
+			// 保留固定且不含原正文的 assistant 边界，避免下一条 user 消息与失败请求合并。
 			const assistantMsg = msg as AssistantMessage;
 			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				const boundary: AssistantMessage = {
+					...assistantMsg,
+					content: [{
+						type: "text",
+						text: assistantMsg.stopReason === "aborted"
+							? "[Previous assistant response was interrupted before completion.]"
+							: "[Previous assistant response failed before completion.]",
+					}],
+					stopReason: "stop",
+				};
+				delete boundary.errorMessage;
+				result.push(boundary);
 				continue;
 			}
 

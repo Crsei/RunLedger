@@ -15,12 +15,14 @@
 
 import type { CommandDescriptor, CommandPolicy } from "./types.ts";
 
-/** 命令上下文门控;当前只有可见性,派发期门控由 availableDuringTask 表达。 */
+/** 命令上下文门控;Session 能力来自当前连接的协商结果。 */
 export interface SlashCommandContext {
   /** 是否展示 debug 命令(/commands 弹窗默认隐藏;直接输入仍可解析)。 */
   readonly showDebugCommands?: boolean;
   /** 动态命令按注册顺序插入 `/model` 之后。 */
   readonly dynamicCommands?: readonly RegisteredSlashCommand[];
+  /** 省略时仅返回静态目录；真实 TUI 必须注入当前 Session 的精确判断。 */
+  readonly supportsOperation?: (operation: string) => boolean;
 }
 
 export type SlashCommandActionType =
@@ -74,6 +76,10 @@ export interface RegisteredSlashCommand extends CommandDescriptor {
   readonly usage?: string;
   /** 任务运行中被拒时的稳定用户文案。 */
   readonly unavailableDuringTaskMessage?: string;
+  /** 命令入口实际查询或变更的 operation，不根据菜单名称猜测。 */
+  readonly requiredOperation?: string;
+  /** 当前 Session 不提供能力时可执行的替代操作。 */
+  readonly unavailableHint?: string;
 }
 
 const DEFAULT_POLICY: CommandPolicy = {
@@ -252,15 +258,16 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       argumentSchema: [schema("executionId", "Managed process execution id", true)],
     }),
 	    command("quit", "Exit safely", 16, { actionType: "ui.quit", category: "ui", aliases: ["exit"] }),
-	    command("mcp", "List connected MCP servers", 17, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY }),
-	    command("plugins", "List discovered plugins", 18, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY }),
-	    command("skills", "List discovered skills", 19, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY }),
-	    command("skillsproviders", "List skill discovery providers", 20, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY }),
-	    command("hooks", "List configured hooks", 21, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY }),
+	    command("mcp", "List connected MCP servers", 17, { actionType: "extension.mcp", category: "extensions", policy: READONLY_POLICY, requiredOperation: "mcp.list", unavailableHint: "Use /new standard to work with extensions." }),
+	    command("plugins", "List discovered plugins", 18, { actionType: "extension.plugins", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
+	    command("skills", "List discovered skills", 19, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
+	    command("skillsproviders", "List skill discovery providers", 20, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY, requiredOperation: "skill.provider.list", unavailableHint: "Use /new standard to work with extensions." }),
+	    command("hooks", "List configured hooks", 21, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY, requiredOperation: "extension.inspect", unavailableHint: "Use /new standard to work with extensions." }),
 	    command("plan", "Inspect or review the current plan", 22, {
       actionType: "plan.inspect",
       category: "plan",
       policy: READONLY_POLICY,
+      requiredOperation: "plan.inspect",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/plan is available when the current turn is idle.",
     }),
@@ -268,6 +275,8 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       actionType: "compaction.list",
       category: "domain",
       policy: READONLY_POLICY,
+      requiredOperation: "compaction.list",
+      unavailableHint: "Start a new session with /new, then include a short summary.",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/compact is available when the current turn is idle.",
     }),
@@ -275,6 +284,8 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       actionType: "memory.inspect",
       category: "domain",
       policy: READONLY_POLICY,
+      requiredOperation: "memory.inspect",
+      unavailableHint: "Use a normal message for context, or /resume to open a saved conversation.",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/memory is available when the current turn is idle.",
     }),
@@ -282,6 +293,8 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       actionType: "memory.propose",
       category: "domain",
       policy: IDLE_ONLY_POLICY,
+      requiredOperation: "memory.propose",
+      unavailableHint: "Use a normal message for context, or /resume to open a saved conversation.",
       availableDuringTask: false,
       unavailableDuringTaskMessage: "/remember is available when the current turn is idle.",
       supportsInlineArgs: true,
@@ -306,12 +319,26 @@ export function isCommandVisibleForContext(entry: RegisteredSlashCommand, contex
 
 /** 展示可见命令;debug 命令默认隐藏(直接输入仍可解析,对照 codex is_visible)。 */
 export function commandsForContext(context: SlashCommandContext = {}): readonly RegisteredSlashCommand[] {
-  const builtins = builtinCommandDescriptors().filter((entry) => isCommandVisibleForContext(entry, context));
-  const dynamic = (context.dynamicCommands ?? []).filter((entry) => isCommandVisibleForContext(entry, context));
+  const projectAvailability = (entry: RegisteredSlashCommand): RegisteredSlashCommand => context.supportsOperation === undefined || isCommandAvailable(entry, context.supportsOperation)
+    ? entry
+    : { ...entry, description: `${entry.description} · Unavailable in this session` };
+  const builtins = builtinCommandDescriptors().filter((entry) => isCommandVisibleForContext(entry, context)).map(projectAvailability);
+  const dynamic = (context.dynamicCommands ?? []).filter((entry) => isCommandVisibleForContext(entry, context)).map(projectAvailability);
   if (dynamic.length === 0) return builtins;
   const modelIndex = builtins.findIndex((entry) => entry.canonicalName === "model");
   const insertionIndex = modelIndex === -1 ? builtins.length : modelIndex + 1;
   return [...builtins.slice(0, insertionIndex), ...dynamic, ...builtins.slice(insertionIndex)];
+}
+
+/** 静态描述不能授予能力；菜单与派发均使用同一精确 operation 判断。 */
+export function isCommandAvailable(command: RegisteredSlashCommand, supportsOperation: (operation: string) => boolean): boolean {
+  return command.requiredOperation === undefined || supportsOperation(command.requiredOperation);
+}
+
+/** typed 错误保留可检索标识，正文说明当前 Session 的限制与替代操作。 */
+export function unavailableCommandMessage(commandName: string): string {
+  const command = findCommand(commandName.replace(/^\//u, ""));
+  return `${commandName} is unavailable in this session (operation_unavailable).${command?.unavailableHint ? ` ${command.unavailableHint}` : ""}`;
 }
 
 /** canonicalName 或别名精确查找;小写归一,无命中返回 undefined。 */

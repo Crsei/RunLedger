@@ -215,13 +215,16 @@ export async function runAuthGatewayCommand(argv: readonly string[], dependencie
 		if (parsed.command.action === "check" && parsed.command.strict) {
 			const models = dependencies.models ?? await createGatewayModels(home);
 			const providers = await checkConfiguredGatewayProviders(models);
-			output({ ok: token.configured && providers.length > 0 && providers.every((provider) => provider.ok), strict: true, token, providers }, parsed.command.json, writeStdout);
+			const ok = token.configured && providers.length > 0 && providers.every((provider) => provider.ok);
+			output({ ok, strict: true, token, providers }, parsed.command.json, writeStdout);
+			if (!ok) process.exitCode = 1;
 			return;
 		}
 		const result = parsed.command.action === "check"
 			? { ok: token.configured, strict: false, token }
 			: { ok: true, token };
 		output(result, parsed.command.json, writeStdout);
+		if (!result.ok) process.exitCode = 1;
 		return;
 	}
 

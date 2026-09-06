@@ -321,6 +321,10 @@ export async function runAgentLoop(
     }
     if (messageOpen || providerMessage) {
       const ts = Date.now();
+      // provider 可在响应头到达前失败；终态仍须有成对的消息边界供实时消费者投影。
+      if (!messageOpen) {
+        await fire({ type: "message_start", timestamp: ts, role: "assistant" });
+      }
       await fire(
         {
           type: "message_end",

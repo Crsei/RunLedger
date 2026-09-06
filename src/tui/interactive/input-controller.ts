@@ -216,7 +216,7 @@ export class InputController {
 
 	private createSlashPopup(): SlashCommandPopup {
 		const popup = new SlashCommandPopup({
-			commands: commandsForContext({}),
+			commands: commandsForContext({ supportsOperation: (operation) => this.port.controller?.supports?.(operation) === true }),
 			theme: this.selectListTheme(),
 		});
 		this.slashPopup = popup;

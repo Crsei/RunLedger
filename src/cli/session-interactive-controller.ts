@@ -90,6 +90,8 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 		this.eventCursor = snapshot.eventCursor;
 		this.driverRevision = snapshot.driverRevision;
 		this.runSummaryState = snapshot.agentRuns ?? [];
+		// attach 的 cursor 可能已越过 agent_start；从同一快照恢复活跃 run。
+		this.inFlightValue = this.runSummaryState.some((run) => run.status === "active");
 		this.removeTransportListener = handle.transport.onEvent((frame) => this.receive(frame));
 	}
 
@@ -234,7 +236,7 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 
 	public async prompt(text: string, behavior?: "steer" | "followUp"): Promise<void> {
 		const kind = this.inFlightValue ? (behavior === "followUp" ? "follow_up" : "steer") : "prompt";
-		await this.command(kind, behavior === undefined ? { promptText: text } : { text });
+		await this.command(kind, kind === "prompt" ? { promptText: text } : { text });
 	}
 
 	public notifyEditorActivity(editorEmpty: boolean): void {
@@ -418,13 +420,16 @@ export class SessionInteractiveController implements InteractiveSessionControlle
 			}
 			return;
 		}
-		if (!isAgentEvent(event)) {
+		// ledger 等持久记录共享订阅流，但不拥有 Agent 的运行/空闲状态。
+		if (frame.body.eventType !== "agent.event" || !isAgentEvent(event)) {
 			this.ackCursor();
 			return;
 		}
 		this.applyCanonicalMessageEvent(event);
-		this.inFlightValue = event.type !== "agent_end";
+		// 队列通知可在空闲时产生；只有 run 的边界事件改变忙碌状态。
+		if (event.type === "agent_start") this.inFlightValue = true;
 		if (event.type === "agent_end") {
+			this.inFlightValue = false;
 			for (const resolve of this.idleWaiters.splice(0)) resolve();
 		}
 		if (this.listeners.size === 0) {

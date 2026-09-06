@@ -335,7 +335,7 @@ async function inspectPlan(query: ResourceQuery, request: TuiPortRequest): Promi
 
 function planRenderStatus(status: PlanModeStatus): PlanRenderView["status"] {
 	switch (status) {
-		case "inactive": return "unknown";
+		case "inactive": return "inactive";
 		case "pending":
 		case "active": return "in-progress";
 		case "awaiting_approval": return "blocked";

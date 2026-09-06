@@ -289,6 +289,7 @@ export async function main(argv: readonly string[]): Promise<void> {
         models,
 		traceRecorderFactory,
 		modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
+		isModelSelectable: modelRequestRouters.isModelSelectable,
 		multiAgent: await multiAgentPolicySourcesFor(typedSessionId),
         overrides: selectionOverridesBySession.get(targetSessionId) ?? {
           ...(args.provider === undefined ? {} : { provider: args.provider }),
@@ -631,7 +632,7 @@ export async function runControlCommand(
 			correlationId,
 			effectId: "control_query_1",
 		});
-		process.stdout.write(`${JSON.stringify(response)}\n`);
+		writeControlResult(response);
 		return;
 	}
 	const queryOperation = controlCommandQueryOperation(command);
@@ -641,14 +642,14 @@ export async function runControlCommand(
 		effectSequence += 1;
 		const inspected = await controller.querySessionDomain(queryOperation, {}, { correlationId, effectId: `control_query_${effectSequence}` });
 		if (!inspected.ok) {
-			process.stdout.write(`${JSON.stringify(inspected)}\n`);
+			writeControlResult(inspected);
 			return;
 		}
 		inspectedBody = inspected.value;
 		domainRevision = inspected.domainRevision;
 	}
 	const request = {
-		operation: command.group === "remember" ? "memory.propose" : command.group === "plan" && command.action === "approve" ? "plan.resolve_approval" : `${command.group}.${command.action}`,
+		operation: directRequest.operation,
 		body: controlCommandBody(command, domainRevision, inspectedBody),
 	};
 	effectSequence += 1;
@@ -657,7 +658,13 @@ export async function runControlCommand(
 		effectId: `control_command_${effectSequence}`,
 		expectedRevision: domainRevision,
 	});
+	writeControlResult(response);
+}
+
+/** 保留结构化错误，同时让 shell 可判断失败；退出前仍完成 Session 清理。 */
+function writeControlResult(response: { readonly ok: boolean }): void {
 	process.stdout.write(`${JSON.stringify(response)}\n`);
+	if (!response.ok) process.exitCode = 1;
 }
 
 /** CLI security flags → 最高优先级 `cli` 层 document;无 flags 时 undefined。 */

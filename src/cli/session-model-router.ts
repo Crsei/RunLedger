@@ -8,9 +8,11 @@ import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
 import { runtimeDigest } from "../runtime/protocol/foundation.ts";
 import { createRuntimeId } from "../runtime/protocol/ids.ts";
 import { JsonlRuntimeEventStore } from "../storage/runtime-event-store.ts";
+import type { Api, Model } from "../types.ts";
 
 export interface CliSessionModelRequestRouterFactory {
 	forSession(input: { readonly sessionId: SessionId; readonly workspaceStorageKey: string }): ModelRequestRouter;
+	isModelSelectable(model: Model<Api>): boolean;
 }
 
 export async function createCliSessionModelRequestRouterFactory(options: {
@@ -22,6 +24,9 @@ export async function createCliSessionModelRequestRouterFactory(options: {
 	const writers = new Map<string, JsonlRuntimeEventStore>();
 	const routers = new Map<string, ModelRequestRouter>();
 	return {
+		isModelSelectable: (model) => compatibility.ok
+			? compatibility.router.isVerifiedProfile(`${model.provider}/${model.id}`)
+			: false,
 		forSession: ({ sessionId, workspaceStorageKey }) => {
 			const key = `${workspaceStorageKey}:${sessionId}`;
 			const prior = routers.get(key);

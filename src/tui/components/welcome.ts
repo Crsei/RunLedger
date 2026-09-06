@@ -25,6 +25,8 @@ export interface WelcomeComponentProps {
 	readonly directoryLabel?: string;
 	readonly branchLabel?: string;
 	readonly recentSessions?: readonly RecentSession[];
+	/** 扣除 composer、footer 和其他 header 行后的可用高度。 */
+	readonly getAvailableHeight?: () => number;
 }
 
 /** 两栏启动页；窄终端仅保留左栏，盒下 Tip 保持同一宽度预算。 */
@@ -39,7 +41,9 @@ export class WelcomeComponent implements Component {
 	private readonly branchLabel: string;
 	private recentSessions: readonly RecentSession[];
 	private selectedTip: string | undefined;
+	private readonly getAvailableHeight: (() => number) | undefined;
 	private cachedWidth = -1;
+	private cachedHeight = -1;
 	private cachedLines: string[] | undefined;
 
 	constructor(props: WelcomeComponentProps) {
@@ -52,6 +56,7 @@ export class WelcomeComponent implements Component {
 		this.directoryLabel = props.directoryLabel ?? "unknown";
 		this.branchLabel = props.branchLabel ?? "unknown";
 		this.recentSessions = props.recentSessions ?? [];
+		this.getAvailableHeight = props.getAvailableHeight;
 	}
 
 	get tip(): string | undefined {
@@ -76,16 +81,21 @@ export class WelcomeComponent implements Component {
 	}
 
 	render(width: number): string[] {
-		if (this.cachedLines !== undefined && this.cachedWidth === width) return this.cachedLines;
-		this.cachedLines = this.renderLines(width);
+		const requestedHeight = this.getAvailableHeight?.() ?? Number.POSITIVE_INFINITY;
+		const height = Number.isFinite(requestedHeight) ? Math.max(0, Math.floor(requestedHeight)) : Number.POSITIVE_INFINITY;
+		if (this.cachedLines !== undefined && this.cachedWidth === width && this.cachedHeight === height) return this.cachedLines;
+		this.cachedLines = this.renderLines(width, height);
 		this.cachedWidth = width;
+		this.cachedHeight = height;
 		return this.cachedLines;
 	}
 
-	private renderLines(termWidth: number): string[] {
+	private renderLines(termWidth: number, availableHeight: number): string[] {
 		const safeTermWidth = Math.max(0, Math.floor(termWidth));
 		const boxWidth = Math.min(100, Math.max(0, safeTermWidth - 2));
-		if (boxWidth < 4) return [];
+		if (boxWidth < 4 || availableHeight < 2) return [];
+		const tipLines = renderWelcomeTip(this.tip ?? "", this.theme, boxWidth).slice(0, Math.max(0, availableHeight - 2));
+		const contentHeight = Math.max(0, availableHeight - tipLines.length - 2);
 
 		const dualContentWidth = boxWidth - 3;
 		const minLeftCol = 12;
@@ -131,7 +141,7 @@ export class WelcomeComponent implements Component {
 
 		if (showRightColumn) {
 			const sectionSeparator = ` ${horizontal(rightCol - 2)}`;
-			const rightLines = [
+			let rightLines = [
 				` ${wrapBold(wrapFg(this.theme.accent)("Quick keys"))}`,
 				` ${wrapFg(this.theme.muted)("/")}${wrapFg(this.theme.hint)(" for commands")}`,
 				` ${wrapFg(this.theme.muted)("Enter")}${wrapFg(this.theme.hint)(" to send")}`,
@@ -150,16 +160,37 @@ export class WelcomeComponent implements Component {
 				...this.renderRecentLines(rightCol),
 				"",
 			];
-			for (let index = 0; index < Math.max(leftLines.length, rightLines.length); index++) {
+			if (rightLines.length > contentHeight) {
+				// 短终端合并快捷键，先保留启动信息，再按剩余高度展示最近会话。
+				rightLines = [
+					` ${wrapBold(wrapFg(this.theme.accent)("Quick keys"))}`,
+					` ${wrapFg(this.theme.hint)("/ for commands · Enter to send")}`,
+					` ${wrapFg(this.theme.hint)("Alt+Enter to queue follow-up")}`,
+					` ${wrapFg(this.theme.hint)("Ctrl+C to interrupt · Ctrl+D to exit")}`,
+					sectionSeparator,
+					` ${wrapBold(wrapFg(this.theme.accent)("Session"))}`,
+					this.sessionLine("model", this.modelLabel, rightCol),
+					this.sessionLine("provider", this.providerLabel, rightCol),
+					this.sessionLine("thinking", this.thinkingLabel, rightCol),
+					this.sessionLine("dir", this.directoryLabel, rightCol),
+					this.sessionLine("branch", this.branchLabel, rightCol),
+				];
+				const recentSlots = Math.min(WELCOME_SESSION_SLOTS, contentHeight - rightLines.length - 1);
+				if (recentSlots > 0) rightLines.push(
+					` ${wrapBold(wrapFg(this.theme.accent)("Recent sessions"))}`,
+					...this.renderRecentLines(rightCol).slice(0, recentSlots),
+				);
+			}
+			for (let index = 0; index < Math.min(contentHeight, Math.max(leftLines.length, rightLines.length)); index++) {
 				lines.push(`${border("│")}${this.fitAndPad(leftLines[index] ?? "", leftCol)}${border("│")}${this.fitAndPad(rightLines[index] ?? "", rightCol)}${border("│")}`);
 			}
 			lines.push(`${border("└")}${horizontal(leftCol)}${border("┴")}${horizontal(rightCol)}${border("┘")}`);
 		} else {
-			for (const line of leftLines) lines.push(`${border("│")}${this.fitAndPad(line, leftCol)}${border("│")}`);
+			for (const line of leftLines.slice(0, contentHeight)) lines.push(`${border("│")}${this.fitAndPad(line, leftCol)}${border("│")}`);
 			lines.push(`${border("└")}${horizontal(leftCol)}${border("┘")}`);
 		}
 
-		lines.push(...renderWelcomeTip(this.tip ?? "", this.theme, boxWidth));
+		lines.push(...tipLines);
 		return lines.map((line) => fitToWidth(line, safeTermWidth));
 	}
 

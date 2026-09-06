@@ -59,9 +59,13 @@ export interface PruneLegacyArgs {
 export function parsePruneLegacyArgs(argv: readonly string[]): { args?: PruneLegacyArgs; error?: string } {
 	let manifestDigest: string | undefined;
 	let confirmDelete = false;
-	for (const arg of argv) {
+	for (let index = 0; index < argv.length; index += 1) {
+		const arg = argv[index]!;
 		if (arg === "--manifest") {
-			return { error: "--manifest 需要值\n" + PRUNE_LEGACY_USAGE };
+			const value = argv[++index];
+			if (value === undefined || value.length === 0 || value.startsWith("-")) return { error: "--manifest 需要值\n" + PRUNE_LEGACY_USAGE };
+			manifestDigest = value;
+			continue;
 		}
 		if (arg.startsWith("--manifest=")) {
 			manifestDigest = arg.slice("--manifest=".length);

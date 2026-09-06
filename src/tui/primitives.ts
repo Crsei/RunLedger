@@ -19,6 +19,7 @@ import { appInputForKeypress, normalizeAppInput } from "./input/normalize-action
 import { EDITOR_LEFT_PAD, EDITOR_RIGHT_PAD, DEFAULT_EDITOR_PLACEHOLDER, editorHeight, wrapEditorText } from "./editor-height.ts";
 import type { EditorAppearance } from "./opentui/component-runtime.ts";
 import type { SyntaxThemeController } from "./highlight/theme-controller.ts";
+import { FOOTER_INDENT } from "./footer/layout.ts";
 
 export interface Component {
   render(width: number): string[];
@@ -613,13 +614,14 @@ export class TUI extends Container {
       kind: "text",
       content: component.render(width).join("\n"),
     }]);
+    const footerWidth = Math.max(1, width - (this.runtime === undefined ? 0 : FOOTER_INDENT.length));
     const footer = footerComponents.flatMap((component): Array<OpenTuiComponentFrame["footer"][number]> => {
-      const presented = component.present?.(width);
+      const presented = component.present?.(footerWidth);
       if (presented !== undefined) {
         return presented.flatMap((block): Array<OpenTuiComponentFrame["footer"][number]> =>
           block.kind === "status-line" ? [block] : [blockTextForTerminal(block)]);
       }
-      return component.render(width);
+      return component.render(footerWidth);
     });
     const editorText = this.focusedComponent && "getText" in this.focusedComponent
       ? (this.focusedComponent as Component & { getText(): string }).getText()

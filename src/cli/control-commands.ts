@@ -93,9 +93,10 @@ const MUTATIONS = new Set([
 	"worktree.create", "worktree.resume", "worktree.release",
 	"plugin.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust",
 	"skill.trust", "skill.untrust",
+	"mcp.restart",
 	"plan.enter", "plan.activate", "plan.write", "plan.approve", "plan.reject", "plan.request_approval", "plan.cancel", "plan.settle_exit",
 	"compact.run", "context.assemble",
-	"memory.propose", "memory.approve", "memory.reject", "memory.revoke",
+	"remember.propose", "memory.approve", "memory.reject", "memory.revoke",
 ]);
 
 /** Returns undefined when argv is an ordinary prompt/forward-compatible positional. */
@@ -103,9 +104,9 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	const rawGroup = positional[0];
 	if (rawGroup === undefined || !GROUPS.has(rawGroup)) return undefined;
 	const group = rawGroup as ControlGroup;
-	const rawAction = positional[1] ?? DEFAULT_ACTIONS[group];
+	const rawAction = group === "remember" ? "propose" : positional[1] ?? DEFAULT_ACTIONS[group];
 	if (!ACTIONS[group].has(rawAction)) return { ok: false, error: `unsupported ${group} action: ${rawAction}` };
-	const args = positional.slice(2);
+	const args = positional.slice(group === "remember" && positional[1] !== "propose" ? 1 : 2);
 	const key = `${group}.${rawAction}`;
 	if ((group === "plugin" && ["enable", "disable", "trust", "untrust"].includes(rawAction)) && args.length < 1) {
 		return { ok: false, error: `${rawAction} requires a plugin id` };
@@ -233,7 +234,11 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			break;
 	}
 	return {
-		operation: key === "remember.propose" ? "memory.propose" : (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval" : key === "skill.provider" ? `skill.provider.${command.args[0] ?? "list"}` : key,
+		operation: key === "security.inspect" ? "session.security.inspect"
+			: key === "plugin.reload" ? "extension.reload"
+			: key === "remember.propose" ? "memory.propose"
+			: (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval"
+			: key === "skill.provider" ? `skill.provider.${command.args[0] ?? "list"}` : key,
 		body,
 		mutation: command.mutation,
 	};
@@ -283,14 +288,18 @@ export function controlCommandBody(command: ControlCommand, domainRevision: numb
 
 export function controlCommandHelp(): string {
 	return [
-		"Control commands are executed by the authenticated resident Host:",
+		"Control commands use the authenticated Session Owner's negotiated capabilities.",
+		"Availability depends on the current Session; unavailable operations return a nonzero exit code:",
 		"  runledger security inspect",
 		"  runledger worktree list|inspect|create|resume|release confirm",
 		"  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]",
 		"  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>",
+		"    Standard Sessions currently support user-scoped provider policy; workspace scope is unavailable.",
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
+		"    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.",
 		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
 		"  runledger compact list|run '<source-range-json>' <transcript>",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",
+		"    worktree, compact, context, memory/remember and plan mutations are unavailable in standard Sessions.",
 	].join("\n");
 }

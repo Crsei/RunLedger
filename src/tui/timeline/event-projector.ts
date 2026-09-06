@@ -126,15 +126,12 @@ export class TimelineEventProjector {
 			];
 		}
 		if (message.role === "assistant") {
-			const text = message.content
-				.filter((content) => content.type === "text")
-				.map((content) => content.text)
-				.join("");
+			const text = assistantText(message);
 			const thinking = message.content
 				.filter((content) => content.type === "thinking")
 				.map((content) => content.thinking)
 				.join("");
-			const status: TimelineStatus = message.stopReason === "aborted" ? "aborted" : "succeeded";
+			const status: TimelineStatus = message.stopReason === "error" ? "failed" : message.stopReason === "aborted" ? "aborted" : "succeeded";
 			const usageDetails = projectAssistantUsage(message, "replayed");
 			const row = this.messageRow("assistant", index, {
 				text,
@@ -351,12 +348,21 @@ export class TimelineEventProjector {
 	}
 }
 
-function assistantText(message: { readonly role?: string; readonly content?: readonly unknown[] } | undefined): string {
+function assistantText(message: {
+	readonly role?: string;
+	readonly content?: readonly unknown[];
+	readonly stopReason?: string;
+	readonly errorMessage?: string;
+} | undefined): string {
 	if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
-	return message.content
+	const text = message.content
 		.filter((content): content is { type: string; text: string } => isRecord(content) && content.type === "text" && typeof content.text === "string")
 		.map((content) => content.text)
 		.join("");
+	if (text.length > 0) return text;
+	return message.stopReason === "error" && typeof message.errorMessage === "string" && message.errorMessage.length > 0
+		? `Error: ${message.errorMessage}`
+		: "";
 }
 
 /** 把 canonical assistant message 投影为可回放的单 request usage。 */

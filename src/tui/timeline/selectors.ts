@@ -133,13 +133,20 @@ export function rowToBlocks(row: TimelineRow, options: TimelineToBlocksOptions =
 			}
 			if (presentation?.renderer === "shell" && presentation.input?.kind === "shell") {
 				const result = presentation.result?.kind === "shell" ? presentation.result : undefined;
+				const output: Array<{ channel: "stdout" | "stderr"; text: string }> = result?.chunks.map((chunk) => ({
+					channel: chunk.channel,
+					text: chunk.safeSgrText?.text ?? chunk.text.text,
+				})) ?? [];
+				if (output.length === 0 && presentation.error?.text) {
+					output.push({ channel: "stderr", text: presentation.error.text });
+				}
 				return [{
 					id: baseId,
 					...partMetadata(row, `${row.id}/exec`),
 					kind: "exec",
 					command: presentation.input.commandLabel.text,
 					status: row.status,
-					output: result?.chunks.map((chunk) => ({ channel: chunk.channel, text: chunk.safeSgrText?.text ?? chunk.text.text })) ?? [],
+					output,
 					...(result?.exitCode.state === "known" ? { exitCode: result.exitCode.value } : {}),
 					...(result?.durationMs.state === "known" ? { durationMs: result.durationMs.value } : {}),
 					...(result?.background === true || presentation.input.background === true ? { background: true } : {}),

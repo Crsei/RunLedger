@@ -7,6 +7,7 @@ import type { PlanModeState } from "../../runtime/modes/plan/types.ts";
 import { SecondarySelectionView, type SecondarySelectionItem } from "../components/list-selection-modal.ts";
 import { makeSelectListTheme } from "../theme/factories.ts";
 import { querySessionController, commandSessionController } from "../adapters/session-domain.ts";
+import { unavailableCommandMessage } from "../commands/registry.ts";
 import type { InteractiveModePorts } from "./types.ts";
 
 export class PlanWorkflow {
@@ -131,7 +132,9 @@ export class PlanWorkflow {
 		});
 		if (result === undefined) return;
 		if (!result.ok) {
-			port.showNotice(`${commandName} failed: ${result.code}`, "error");
+			port.showNotice(result.code === "operation_unavailable"
+				? unavailableCommandMessage(commandName)
+				: `${commandName} failed: ${result.code}`, "error");
 			return;
 		}
 		const text = compactDomainResult(operation, result.value);

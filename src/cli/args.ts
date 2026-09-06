@@ -424,6 +424,16 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       error = "unsupported_cli_authority: --session-dir 已拒绝;请使用预创建的 RUNLEDGER_DIR";
       break;
     }
+    // skill provider 的 scope 由领域 parser 校验，保留给控制命令而非 unknown。
+    if (positional[0] === "skill" && positional[1] === "provider" && (a === "--scope" || a.startsWith("--scope="))) {
+      const value = a === "--scope" ? argv[++i] : a.slice("--scope=".length);
+      if (value === undefined || value.length === 0 || value.startsWith("-")) {
+        error = "--scope 缺少值";
+        break;
+      }
+      positional.push(`--scope=${value}`);
+      continue;
+    }
     // --flag=value 形式
     if (a.startsWith("--") && a.includes("=")) {
       const eq = a.indexOf("=");

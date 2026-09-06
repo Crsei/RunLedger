@@ -12,6 +12,7 @@ import type { SyntaxHighlightService } from "../../highlight/service.ts";
 import type { SyntaxThemeController } from "../../highlight/theme-controller.ts";
 import { displayWidth, graphemes, truncateDisplayWidth, wrapDisplayWidth } from "../../mermaid/display-width.ts";
 import type { OpenTuiComponentFrame } from "./types.ts";
+import { FOOTER_INDENT } from "../../footer/layout.ts";
 
 export class RunLedgerTextareaRenderable extends TextareaRenderable {
   protected override renderCursor(_buffer: Parameters<TextareaRenderable["render"]>[0]): void {
@@ -89,7 +90,7 @@ export function styledFooter(
 				service.foregroundForScopes(themeController.snapshot().activeName, scopes));
 		return [
 			...(index === 0 ? [] : ansiToStyledText("\n").chunks),
-			...ansiToStyledText("  ").chunks,
+			...ansiToStyledText(FOOTER_INDENT).chunks,
 			...styled.chunks,
 		];
 	});

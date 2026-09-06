@@ -55,12 +55,13 @@ import { SelectionView } from "./components/selection-view.ts";
 import { PermissionRequestView } from "./components/permission-request-view.ts";
 import { StatusComponent } from "./components/status.ts";
 import { WelcomeComponent } from "./components/welcome.ts";
+import { FOOTER_INDENT } from "./footer/layout.ts";
 import { SessionProfileHeaderComponent } from "./components/session-profile-header.ts";
 import { TranscriptOverlayComponent, projectTranscriptOverlay } from "./transcript-view.ts";
 import type { TuiPerformanceObserver } from "./opentui/performance-observer.ts";
 import type { UsageSnapshot } from "../runtime/usage/index.ts";
 import { projectInteractivePresentation } from "./presentation/projectors.ts";
-import { commandsForContext, type RegisteredSlashCommand } from "./commands/registry.ts";
+import { commandsForContext, isCommandAvailable, unavailableCommandMessage, type RegisteredSlashCommand } from "./commands/registry.ts";
 import { SlashCommandPopup } from "./components/slash-command-popup.ts";
 import type { Component, InputListenerResult, OverlayOptions } from "./primitives.ts";
 import { matchesKey } from "./primitives.ts";
@@ -613,6 +614,15 @@ export class InteractiveMode implements FooterSnapshotProvider {
 			thinkingLabel: this.getThinkingLevel(),
 			directoryLabel: this.workspaceDisplayAbsolutePath,
 			branchLabel: this.gitBranchLabel,
+			getAvailableHeight: () => {
+				const width = Math.max(1, this.terminal.columns);
+				const footerWidth = Math.max(1, width - FOOTER_INDENT.length);
+				// 模型 context、recap 等会增加 footer 行数，预算读取本帧真实组件投影。
+				const footerHeight = Math.max(1, status.render(footerWidth).length + footer.present(footerWidth).length);
+				const headerHeight = header.children.filter((child) => child !== welcome)
+					.reduce((height, child) => height + child.render(width).length, 0);
+				return this.terminal.rows - editor.desiredHeight(width) - footerHeight - headerHeight - loadedResources.render(width).length;
+			},
 		});
 		header.addChild(new Spacer(1));
 		header.addChild(welcome);
@@ -953,7 +963,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
    */
   public openSlashCommands(): void {
     this.inputController.hideSlashPopup();
-    const entries = commandsForContext({});
+    const entries = commandsForContext({ supportsOperation: this.authAdapter.supports });
     const view = new SelectionView({
       title: "/commands",
       items: entries.map((entry) => ({
@@ -1064,6 +1074,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.inputController.hideSlashPopup();
     if (!command.availableDuringTask && this.inFlight()) {
       this.showNotice(command.unavailableDuringTaskMessage ?? `/${command.canonicalName} is available when the current turn is idle.`, "note");
+      return;
+    }
+    if (!isCommandAvailable(command, this.authAdapter.supports)) {
+      this.showNotice(unavailableCommandMessage(`/${command.canonicalName}`), "error");
       return;
     }
     switch (command.actionType) {
