@@ -4,6 +4,6 @@
 
 | 文档 | 状态 | 内容 |
 |---|---|---|
-| [`00-session-audit-reading-mode-plan.md`](00-session-audit-reading-mode-plan.md) | planned | 当前打开 session 的 `/audit` 调用树、计量和 Artifact 阅读模式 |
+| [`00-session-audit-reading-mode-plan.md`](00-session-audit-reading-mode-plan.md) | superseded | 历史 `/audit` 方案，由[运行轨迹专项](../trajectory/01-runtime-trajectory-implementation-plan.md)接替 |
 
-当前唯一实施入口是上述计划。状态必须以代码、测试和计划内验收证据更新，不能从本文推断功能已经实现。
+当前实施入口是[运行轨迹专项](../trajectory/01-runtime-trajectory-implementation-plan.md)，不再单独实现 `/audit` 面板。状态必须以代码、测试和计划内验收证据更新，不能从本文推断功能已经实现。

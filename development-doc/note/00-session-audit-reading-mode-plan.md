@@ -1,6 +1,6 @@
 # Session Audit 阅读模式计划
 
-> 状态：planned，当前只完成设计，不代表 `/audit` 已实现。
+> 状态：superseded（2026-09-06）。本方案未实施；由[运行轨迹专项](../trajectory/01-runtime-trajectory-implementation-plan.md)接替。以下内容保留为历史设计，不再作为实施指令。新方案使用 `/trajectory`，支持运行中查询与分页索引；不再执行本文 idle-only、全量扫描及独立 `/audit` 面板方案。
 >
 > 入口：在已经打开的 canonical session 中输入 `/audit`，进入只读调用审计视图。
 >

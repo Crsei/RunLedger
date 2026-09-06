@@ -26,3 +26,7 @@
 ## 依赖边界
 
 Storage S0–S5 的 canonical user home 已作为生产写入前置条件。标准 CLI 默认 `recording.mode=off`；用户可在 canonical settings 中显式开启 `events` 或 `events_and_artifacts`。当前不存在“本地 Artifact 正文必须等待 PermissionEngine、Approval、Sandbox”的需求，因此不设置预防性 capability gate；三者有明确策略与 receipt 后再由安全专项接线。Opik 不可用不得阻断 Event Store 或 Agent 执行。
+
+## 本地轨迹专项
+
+[运行轨迹实施计划](../../trajectory/01-runtime-trajectory-implementation-plan.md) 接管本地树查询与 TUI 交互规划，目标包括默认 events、配置 off 和 `/trajectory` 面板；状态为 planned。当前默认 off 仍有效，实施默认值变更时同步 Phase 03 与根 AGENTS.md。Opik/outbox 继续由 Phase 04 维护，不作为本地面板前提。

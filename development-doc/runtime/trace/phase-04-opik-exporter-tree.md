@@ -13,7 +13,7 @@ planned。本阶段未开始；本地 Event Store、Artifact Store 和 recording
 - `OpikTransportPort`：封装 SDK generated trace/span REST resources；不把 SDK batch queue 的 flush 完成当作 durable ACK；
 - `OpikExporter`：写本地 outbox 后批量发送，记录 `spooled/delivery_pending/acknowledged/retry_scheduled/reconciliation_required/failed`；
 - 稳定保存 Opik trace/span ID 与 RunLedger node ID，重复投递不重复建节点；
-- `TraceTreeProjection` 查询 DTO、CLI/TUI 只读展示；
+- 本地 `TraceTreeProjection` 查询 DTO、CLI/TUI 只读展示已移交[运行轨迹专项](../../trajectory/01-runtime-trajectory-implementation-plan.md)规划；本阶段只消费其结果，不重复建设本地面板；
 - exporter 使用独立配置与凭据 authority，不改变本地 `recording.mode`。
 
 ## 验收
