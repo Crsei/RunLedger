@@ -1,6 +1,7 @@
 /** Session-owned child model/router seam；不持有 credential 或 Agent state。 */
 
 import type { Models } from "../../models.ts";
+import { transformMessages } from "../../api/transform-messages.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -147,7 +148,10 @@ function createModelRouteRequest(
 		...(activityGeneration === undefined ? {} : { activityGeneration }),
 	}).digest.slice(0, 48));
 	const traceId = createRuntimeId("trace", runtimeDigest({ requestId, sessionId }).digest.slice(0, 48));
-	const content = JSON.stringify(contextBody);
+	// 预算按目标模型可发送的历史估算；图片降级和私有推理移除后不再计入原始载荷。
+	// provider 仍接收原始 context，自行执行带目标 ID 规则的最终转换。
+	const requestMessages = transformMessages(context.messages, model);
+	const content = JSON.stringify({ ...contextBody, messages: requestMessages });
 	return {
 		requestId,
 		operation: "request",
@@ -159,8 +163,8 @@ function createModelRouteRequest(
 		requiredContextTokens: Math.ceil(Buffer.byteLength(content, "utf8") / 3),
 		requiredOutputTokens: options?.maxTokens ?? model.maxTokens,
 		requiresTools: (context.tools?.length ?? 0) > 0,
-		requiresReasoningReplay: context.messages.some((message) => message.role === "assistant" && message.content.some((part) => part.type === "thinking")),
-		requiresImages: context.messages.some((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((part) => part.type === "image")),
+		requiresReasoningReplay: requestMessages.some((message) => message.role === "assistant" && message.content.some((part) => part.type === "thinking")),
+		requiresImages: requestMessages.some((message) => (message.role === "user" || message.role === "toolResult") && Array.isArray(message.content) && message.content.some((part) => part.type === "image")),
 		traceId,
 	};
 }

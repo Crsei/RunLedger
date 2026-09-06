@@ -1,7 +1,8 @@
 /** Standard Session Owner CLI composition for governed model routing receipts. */
 
 import { createModelRequestReceiptRouter } from "./model-request-receipt-router.ts";
-import { loadCanonicalModelCompatibilityRouter } from "./model-compatibility-manifest.ts";
+import { createCatalogModelRouter } from "../runtime/model-routing/catalog-router.ts";
+import type { Models } from "../models.ts";
 import type { ModelRequestRouter } from "../runtime/interactive-session-controller.ts";
 import type { AuthorityId, SessionId, TenantId } from "../runtime/contracts/public.ts";
 import type { RunledgerLayout } from "../runtime/contracts/storage-layout.ts";
@@ -19,14 +20,13 @@ export async function createCliSessionModelRequestRouterFactory(options: {
 	readonly layout: RunledgerLayout;
 	readonly authorityId: AuthorityId;
 	readonly tenantId: TenantId;
+	readonly models: Models;
 }): Promise<CliSessionModelRequestRouterFactory> {
-	const compatibility = await loadCanonicalModelCompatibilityRouter(options.layout);
+	const catalogRouter = createCatalogModelRouter(options.models);
 	const writers = new Map<string, JsonlRuntimeEventStore>();
 	const routers = new Map<string, ModelRequestRouter>();
 	return {
-		isModelSelectable: (model) => compatibility.ok
-			? compatibility.router.isVerifiedProfile(`${model.provider}/${model.id}`)
-			: false,
+		isModelSelectable: (model) => options.models.getModel(model.provider, model.id) !== undefined,
 		forSession: ({ sessionId, workspaceStorageKey }) => {
 			const key = `${workspaceStorageKey}:${sessionId}`;
 			const prior = routers.get(key);
@@ -42,7 +42,7 @@ export async function createCliSessionModelRequestRouterFactory(options: {
 				principalId: createRuntimeId("principal", `session-model-${runtimeDigest(workspaceStorageKey).digest.slice(0, 48)}`),
 				sessionId,
 				writer,
-				...(compatibility.ok ? { router: compatibility.router } : { unavailableCode: compatibility.error.code }),
+				router: catalogRouter,
 			});
 			routers.set(key, router);
 			return router;

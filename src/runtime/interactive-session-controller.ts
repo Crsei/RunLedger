@@ -70,9 +70,9 @@ export interface InteractiveSessionControllerOptions {
   modelContextAssembler?: ModelContextAssembler;
   /** Host-owned canonical receipt sink; local tests may omit it. */
   contextAssemblySink?: ContextAssemblySink;
-  /** Host-owned compatibility gate; provider dispatch is forbidden when it denies. */
+  /** Session-owned catalog/budget route receipt; provider dispatch is forbidden when it denies. */
   modelRequestRouter?: ModelRequestRouter;
-	/** Host-owned model discovery/selection preflight derived from the canonical compatibility manifest. */
+	/** Optional model selection policy; standard CLI uses the current provider catalog. */
 	isModelSelectable?: (model: Model<Api>) => boolean;
   /** Optional Host extension lifecycle facade; omitted in low-level controller tests. */
   extensionHookRuntime?: ExtensionHookRuntime;
@@ -238,8 +238,12 @@ export class InteractiveSessionController {
   private readonly listeners = new Set<AgentEventSink>();
   private selection: RuntimeSelection;
   private readonly initialModelWarning: string | undefined;
+  private readonly initialThinkingLevel: ModelThinkingLevel | undefined;
   private agent: Agent | undefined;
   private unsubscribeAgent: (() => void) | undefined;
+  private selectionChangePending = false;
+  private promptPending = false;
+  private selectionPersistenceWarning: string | undefined;
 
   private constructor(
     opts: InteractiveSessionControllerOptions,
@@ -270,10 +274,11 @@ export class InteractiveSessionController {
 	this.onAcceptedUserPrompt = opts.onAcceptedUserPrompt;
 	this.onModelSelectionChanged = opts.onModelSelectionChanged;
     this.selection = selection;
+    this.initialThinkingLevel = opts.overrides?.thinkingLevel ?? opts.replay.config.thinkingLevel ?? opts.settings.thinkingLevel;
     const requestedModel = (opts.replay.config.provider === selection.provider ? opts.replay.config.model : undefined)
       ?? (opts.settings.provider === selection.provider ? opts.settings.model : undefined);
     this.initialModelWarning = selection.model === undefined && requestedModel !== undefined
-      ? `Configured model ${selection.provider ?? "<provider>"}/${requestedModel} is unavailable. Use /login to refresh its catalog or /model to select a verified model. No substitute model was selected.`
+      ? `Configured model ${selection.provider ?? "<provider>"}/${requestedModel} is unavailable. Use /login to refresh its catalog or /model to select an available model. No substitute model was selected.`
       : undefined;
     this.ensureAgent();
   }
@@ -318,9 +323,10 @@ export class InteractiveSessionController {
   }
 
   get warnings(): readonly string[] {
-    return this.selection.model === undefined && this.initialModelWarning !== undefined
+    const warnings = this.selection.model === undefined && this.initialModelWarning !== undefined
       ? [...this.replay.warnings, this.initialModelWarning]
       : this.replay.warnings;
+    return this.selectionPersistenceWarning === undefined ? warnings : [...warnings, this.selectionPersistenceWarning];
   }
 
   get auditEntries() {
@@ -398,29 +404,44 @@ export class InteractiveSessionController {
   }
 
   async selectModel(model: Model<Api>): Promise<void> {
-    // 命令面只传 { provider, id } 等最小形状,按 catalog 解析完整 model
-    // (baseUrl/api/reasoning/compat 等),避免流式调用时字段缺失。
-    const resolved = this.models.getModel(model.provider, model.id) ?? model;
-	if (this.isModelSelectable?.(resolved) === false) {
-		throw new Error(`model profile is not verified: ${resolved.provider}/${resolved.id}`);
-	}
-    const thinkingLevel = clampThinkingLevel(resolved, "high");
-		this.selection = { provider: resolved.provider, model: resolved, thinkingLevel };
-		this.onModelSelectionChanged?.();
-		this.ensureAgent();
-    this.agent?.setModel(resolved);
-    this.agent?.setThinkingLevel(thinkingLevel);
-    await this.persistSelection("model");
+    this.beginSelectionChange();
+    try {
+      // 命令面仅携带身份；不接受调用方伪造的 endpoint、能力或目录外模型。
+      const resolved = this.models.getModel(model.provider, model.id);
+      if (resolved === undefined) throw new Error(`Unknown model selection: ${model.provider}/${model.id}`);
+      if (this.isModelSelectable?.(resolved) === false) {
+        throw new Error(`Model selection is unavailable: ${resolved.provider}/${resolved.id}`);
+      }
+      const available = await this.getAvailableModels(resolved.provider);
+      if (!available.some((candidate) => candidate.provider === resolved.provider && candidate.id === resolved.id)) {
+        throw new Error(`Model ${resolved.provider}/${resolved.id} is not available. Check provider login and enabled models.`);
+      }
+      const thinkingLevel = clampThinkingLevel(resolved, this.selection.model ? this.selection.thinkingLevel : this.initialThinkingLevel ?? "high");
+      await this.persistSelection({ provider: resolved.provider, model: resolved, thinkingLevel }, "model");
+    } finally {
+      this.selectionChangePending = false;
+    }
   }
 
   async setThinkingLevel(level: ModelThinkingLevel): Promise<ModelThinkingLevel> {
-    const model = this.selection.model;
-    if (!model) throw new Error("Select a model before configuring thinking.");
-    const effective = clampThinkingLevel(model, level);
-    this.selection = { ...this.selection, thinkingLevel: effective };
-    this.agent?.setThinkingLevel(effective);
-    await this.persistSelection("thinking");
-    return effective;
+    this.beginSelectionChange();
+    try {
+      const model = this.selection.model;
+      if (!model) throw new Error("Select a model before configuring thinking.");
+      if (!["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level)) throw new Error("Invalid thinking level");
+      const effective = clampThinkingLevel(model, level);
+      await this.persistSelection({ ...this.selection, thinkingLevel: effective }, "thinking");
+      return effective;
+    } finally {
+      this.selectionChangePending = false;
+    }
+  }
+
+  private beginSelectionChange(): void {
+    if (this.inFlight || this.promptPending || this.selectionChangePending) {
+      throw new Error("Wait for the active request or model change to finish before changing model or thinking level.");
+    }
+    this.selectionChangePending = true;
   }
 
   async prompt(text: string, behavior?: "steer" | "followUp"): Promise<void> {
@@ -432,18 +453,24 @@ export class InteractiveSessionController {
       else agent.steer(text);
       return;
     }
-    const auth = await this.models.getAuth(model);
-    if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
-    await this.extensionTurnAdmission?.();
+    if (this.selectionChangePending || this.promptPending) throw new Error("Wait for the pending request or model change to finish.");
+    this.promptPending = true;
+    let admitted = false;
     try {
+      const auth = await this.models.getAuth(model);
+      if (!auth) throw new Error(`Provider ${model.provider} is not configured. Use /login ${model.provider}.`);
+      await this.extensionTurnAdmission?.();
+      admitted = true;
       const submitted = await this.runExtensionHook("UserPromptSubmit", { text });
       if (submitted?.blocked || submitted?.decision === "deny" || submitted?.decision === "aborted") throw new Error("UserPromptSubmit hook denied the prompt");
 	      const acceptedInput = promptText(submitted?.finalInput, text);
 	      this.onAcceptedUserPrompt?.(acceptedInput);
 	      await agent.prompt(acceptedInput);
     } catch (error) {
-      await this.extensionTurnAbort?.().catch(() => undefined);
+      if (admitted) await this.extensionTurnAbort?.().catch(() => undefined);
       throw error;
+    } finally {
+      this.promptPending = false;
     }
   }
 
@@ -568,19 +595,24 @@ export class InteractiveSessionController {
     };
   }
 
-  private async persistSelection(source: "model" | "thinking"): Promise<void> {
-    const config = this.configSnapshot();
-	const persisted = await loadProjectSettings({ layout: this.layout });
-    this.settings = {
-	  ...persisted,
-	  ...this.settings,
-	  ...(persisted.theme === undefined ? {} : { theme: persisted.theme }),
-      provider: config.provider,
-      model: config.model,
-      thinkingLevel: config.thinkingLevel,
-    };
-    await saveProjectSettings({ layout: this.layout }, this.settings);
+  private async persistSelection(selection: RuntimeSelection, source: "model" | "thinking"): Promise<void> {
+    const config = { provider: selection.provider, model: selection.model?.id, thinkingLevel: selection.thinkingLevel };
+    // Session ledger 是选择的 authority；写入失败时保留原模型和思考程度。
     await appendRuntimeConfig(this.ledgerSink, config, source);
+    this.selection = selection;
+    this.ensureAgent();
+    if (selection.model) this.agent?.setModel(selection.model);
+    this.agent?.setThinkingLevel(selection.thinkingLevel);
+    this.onModelSelectionChanged?.();
+    try {
+      const persisted = await loadProjectSettings({ layout: this.layout });
+      this.settings = { ...this.settings, ...persisted, ...config };
+      await saveProjectSettings({ layout: this.layout }, this.settings);
+      this.selectionPersistenceWarning = undefined;
+    } catch {
+      // 默认值保存失败不撤销已持久化的 session 选择，也不伪报切换失败。
+      this.selectionPersistenceWarning = "Session model selection was saved, but user defaults could not be updated.";
+    }
   }
 }
 
@@ -614,7 +646,7 @@ async function resolveInitialSelection(
     }
   }
 	if (model !== undefined && opts.isModelSelectable?.(model) === false) {
-		throw new Error(`model profile is not verified: ${model.provider}/${model.id}; verify this profile or explicitly select a verified model. No substitute model was selected.`);
+		throw new Error(`Model selection is unavailable: ${model.provider}/${model.id}. No substitute model was selected.`);
 	}
   if (!model && (opts.overrides?.provider || opts.overrides?.model)) {
     throw new Error(`Unknown model selection: ${provider ?? "<provider>"}/${modelId ?? "<model>"}`);

@@ -15,6 +15,9 @@ export interface TrajectoryRecord {
   readonly stepId?: string;
   readonly kind: TrajectoryKind;
   readonly name: string;
+  readonly provider?: string;
+  readonly model?: string;
+  readonly api?: string;
   readonly summary: string;
   readonly state: TrajectoryState;
   readonly startedAtMs?: number;

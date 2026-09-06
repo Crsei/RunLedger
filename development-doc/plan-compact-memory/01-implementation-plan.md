@@ -81,13 +81,27 @@ src/cli/main.ts
 - 实施前重新核对本文件列出的上游路径和 RunLedger 当前 HEAD,快照不是依赖锁。
 - 每个代码 PR 必须运行完整 `npm run check` 与 `npm test`;涉及生成物、依赖或模型 catalog 时再执行仓库规定的额外命令。
 
+### 0.3 2026-09-06 标准 Session 的目录准入与请求时历史转换
+
+本节覆盖下文早期计划中“所有模型必须先写入 verified manifest”“普通模型切换必须 fork”的生产入口要求。用户明确要求采用 oh-my-pi 的模型目录与请求侧转换方式；参考本地 oh-my-pi `9bafadd503` 的 `model-controls.ts`、`model-thinking.ts` 与 `transform-messages.ts`，按 RunLedger 既有 authority 和 adapter 边界实现。
+
+- 标准 CLI 的 `session-model-router.ts` 注入当前 `Models` 目录；不再读取用户级 model compatibility manifest。缺失、损坏或只包含其他模型的旧清单不阻止目录中的模型启动。未知模型、无凭据/不在 enabledModels 中的交互选择和不足的请求预算仍有明确错误，不静默替换用户指定的模型。
+- `model.routed` 有界 receipt 继续持久化；写入失败仍禁止 provider dispatch。现有 manifest loader / `ModelCompatibilityRouter` 作为旧调用方的独立实现保留，不是标准 Session 的必经准入入口，也不代表真实 provider 已认证。
+- 同一 Session 在空闲时切换模型，保留对话和可支持的思考程度；请求准入或执行期间拒绝模型/thinking 修改。先完成目录/认证配置/选择策略检查，再 owner-fenced 写入 `runtime.config`，最后修改活跃 Agent。Session 写入失败保留原选择；用户默认配置保存失败不撤销已提交的 Session 选择，并在 warnings 中说明。
+- 请求侧 adapter 对历史副本移除跨模型私有签名、将可见推理转为文本、规范化并去重工具 ID、将真实工具结果放回对应调用窗口，补齐明确标错的缺失结果。孤立结果仅作为低权限 user 文本保留。原始 Session 历史不改写；没有身份的旧记录保持 unknown，不用当前模型回填猜测。预算按转换后的历史估算，省略的图片不会按原始 base64 大小阻止文本模型请求。
+- Session 的 assistant 消息保留其自身 provider/model/api；provider 未提供身份时使用本次请求模型。Trace model span 已有 provider/model/api，继续保留。TrajectoryRecord 新增可选 provider/model/api，并以 provider/model 命名；可重建轨迹 cache 更新格式后从 Session/Trace 重建，关闭 recording 不影响必要 Session 记录。
+
+行为回归入口：`tests/api/model-switch-history.test.ts`、`tests/runtime/model-routing/catalog-router.test.ts`、`tests/runtime/model-switch.test.ts`。覆盖真实 adapter 到本地 HTTP 服务的跨 provider 请求、同一 Session 恢复和切回、凭据/目录/持久化失败、请求期间的切换拒绝，以及 Session/Trace/轨迹模型身份。2026-09-06 验证：`npm run check`、`npm run build`、5 个相关测试文件共 35 tests、`git diff --check` 通过。`npm test` 在既有暂存测试 `tests/runtime/session-runtime/model-selection-policy.test.ts` 失败：其期待把显式配置的被策略排除模型静默替换为另一模型；原始提交 `bbc578c` 加入同一测试后复现失败。本轮未改动该测试，随后通过标准 bucket runner 补跑其余 177 个测试文件，全部通过；不记为完整 `npm test` 通过。
+
+构建后的真实 PATH `runledger` 在独立 tmux/隔离 `RUNLEDGER_DIR` 验证通过：无 manifest 的 DeepSeek Pro 启动；本地 HTTP fixture A 执行 governed bash 工具后，同一 Session 通过 `/model` 切换至 B，B 请求包含 A 的工具结果；SQLite 与 Trace 模型身份为 A、A、B，`/trajectory` 显示对应 provider/model，Ctrl+D 退出码 0 且无残留测试进程。测试进程使用假凭据并清除代理变量，首次继承代理的脚本未完成登录。未调用真实 DeepSeek/provider，未完成人工视觉/中文 IME 或 macOS/Windows 验收。
+
 ## 1. 目标、成功标准与非目标
 
 ### 1.1 目标
 
 构建一个可恢复、可审计、权限闭合的上下文体系:
 
-1. 模型与 summarizer 只通过已验证 Compatibility Manifest/profile 路由,不兼容切换明确 fork 或 deny。
+1. 标准 Session 的模型选择与请求路由按 §0.3 使用目录、预算和请求侧历史转换；summarizer/compaction 的额外能力约束由其专项验证，不以普通模型已可用推断已通过。
 2. 用户或 Agent 可进入 Plan Mode,只读探索并维护一个受版本控制的计划工件。
 3. 计划必须经过结构化审批才能进入实施;批准内容以 revision + digest 固定。
 4. 上下文接近模型窗口时可手动或自动 compact,但原始审计记录保持完整。
@@ -98,7 +112,7 @@ src/cli/main.ts
 
 ### 1.2 用户可见成功标准
 
-- model/summarizer 路由都有 manifest/profile/digest/reason receipt;未知或不兼容切换不会静默复用 provider-private state。
+- 模型路由保留能力 digest/reason receipt；切换不静默复用跨模型 provider-private state，标准请求由 adapter 转换历史。
 - `/plan` 或 CLI mode 设置进入 Plan Mode;footer/status 明确显示 `mode:plan`。
 - Plan Mode 下 read/grep/find/ls/glob 等只读工具可用;write/edit/multi-edit/bash、未知副作用 MCP 和写型子 Agent fail closed。
 - 只有专用 plan writer 能修改当前计划工件;外部篡改后旧审批自动失效。
@@ -166,7 +180,7 @@ src/cli/main.ts
 
 ### 3.1 Model Compatibility
 
-1. model/profile/alias 只由已验证 manifest 解析,不在 ContextEngine、CompactionService 或 Orchestrator 中硬编码模型名。
+1. 标准 model 由当前 Models 目录解析；显式 manifest/profile/alias 使用者仍校验其文档。不在 ContextEngine、CompactionService 或 Orchestrator 中硬编码模型名。
 2. route decision 同时绑定 manifest digest、profile digest、request capability 和 session model state;任一变化重新计算。
 3. 未知能力是 incompatible/deny,不是 optimistic allow。
 4. provider-private reasoning/signature/cache state 只由原 adapter 持有,不通过公共 context 传给其他 provider。

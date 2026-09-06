@@ -16,6 +16,13 @@ export function safeText(value: unknown, limit = 4_096): string {
     .slice(0, limit);
 }
 function state(reason: unknown): TrajectoryState { return reason === "error" ? "failed" : reason === "aborted" ? "cancelled" : "succeeded"; }
+function modelIdentity(value: Record<string, unknown>): { provider?: string; model?: string; api?: string } {
+  return {
+    ...(string(value.provider) === undefined ? {} : { provider: safeText(value.provider, 256) }),
+    ...(string(value.model) === undefined ? {} : { model: safeText(value.model, 256) }),
+    ...(string(value.api) === undefined ? {} : { api: safeText(value.api, 128) }),
+  };
+}
 function textContent(value: unknown): unknown {
   const message = object(value);
   return Array.isArray(message.content) ? message.content.filter((part) => object(part).type === "text").map((part) => object(part).text).join("\n") : message.content ?? value;
@@ -84,8 +91,12 @@ export function projectSessionEvent(index: TrajectoryIndex, event: Record<string
     const message = object(event.message);
     const usage = object(message.usage);
     const old = index.find(id);
+    const identity = assistant ? modelIdentity(message) : {};
     put(id, { parentId: assistant ? stepId : runId, stepId: assistant ? stepId : undefined,
-      kind: assistant ? "model" : "message", name: assistant ? safeText(message.model ?? "Assistant", 128) : safeText(event.role ?? "Message", 128),
+      ...identity,
+      kind: assistant ? "model" : "message", name: assistant
+        ? identity.provider && identity.model ? `${identity.provider}/${identity.model}` : safeText(message.model ?? old?.name ?? "Assistant", 128)
+        : safeText(event.role ?? "Message", 128),
       ...(type === "message_start" ? { startedAtMs: time } : { endedAtMs: time, state: state(event.stopReason ?? message.stopReason),
         summary: safeText(textContent(message)), output: "session", sessionOutputSeq: seq,
         durationMs: numeric(message.durationMs) ?? (time !== undefined && old?.startedAtMs !== undefined ? Math.max(0, time - old.startedAtMs) : undefined),
@@ -113,6 +124,7 @@ export function projectTraceEvent(index: TrajectoryIndex, event: TraceEvent, run
     : event.kind === "tool_attempt" && event.name === "process.output" ? "context" : event.kind === "tool_attempt" ? "attempt" : event.kind === "verification" ? "context" : event.kind,
     name: safeText(event.name, 128), summary: "", state: "running", source: "trace", generation,
     input: "unavailable", output: "unavailable", ...old,
+    ...(event.kind === "model" ? modelIdentity(object(event.metadata)) : {}),
     ...(parentId === undefined ? {} : { parentId }), ...(stepId === undefined ? {} : { stepId }),
     ...(event.phase === "started" ? { startedAtMs: Number.isFinite(time) ? time : undefined }
       : { endedAtMs: Number.isFinite(time) ? time : undefined, state: event.phase === "failed" ? "failed" : event.phase === "interrupted" ? "interrupted" : "succeeded" }),

@@ -2,6 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createModels } from "../../src/models.ts";
 import { createCliSessionModelRequestRouterFactory } from "../../src/cli/session-model-router.ts";
 import { buildRunledgerLayout } from "../../src/runtime/contracts/storage-layout.ts";
 import { runtimeDigest } from "../../src/runtime/protocol/foundation.ts";
@@ -9,7 +10,7 @@ import { createRuntimeId } from "../../src/runtime/protocol/ids.ts";
 import type { ModelRouteRequest } from "../../src/runtime/model-routing/types.ts";
 
 describe("standard CLI Session model routing composition", () => {
-	it("fails closed through the canonical route gate and writes a bounded receipt", async () => {
+	it("denies a model absent from the catalog and writes a bounded receipt", async () => {
 		const root = await mkdtemp(join(tmpdir(), "runledger-session-model-router-"));
 		try {
 			const layout = buildRunledgerLayout(root, "posix");
@@ -17,6 +18,7 @@ describe("standard CLI Session model routing composition", () => {
 			const sessionId = createRuntimeId("session", "standard-cli-model-router");
 			const factory = await createCliSessionModelRequestRouterFactory({
 				layout,
+				models: createModels(),
 				authorityId: createRuntimeId("authority", "session-owner-runtime"),
 				tenantId: createRuntimeId("tenant", "local-user"),
 			});
@@ -37,7 +39,7 @@ describe("standard CLI Session model routing composition", () => {
 				traceId: createRuntimeId("trace", "standard-cli-recap"),
 			};
 
-			await expect(router.route(request)).resolves.toMatchObject({ outcome: "deny", reasonCode: "manifest_missing" });
+			await expect(router.route(request)).resolves.toMatchObject({ outcome: "deny", reasonCode: "model_unknown" });
 			const receiptPath = join(layout.state, "hosts", workspaceStorageKey, "runtime-events", `${sessionId}.jsonl`);
 			const receipt = JSON.parse((await readFile(receiptPath, "utf8")).trim()) as Record<string, unknown>;
 			expect(receipt).toMatchObject({ type: "model.routed", payload: { requestKind: "idle-recap" } });

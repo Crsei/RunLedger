@@ -22,9 +22,9 @@ export class TrajectoryIndex {
       CREATE TABLE IF NOT EXISTS trajectory_sources (trace_id TEXT PRIMARY KEY, locator TEXT NOT NULL,
         offset INTEGER NOT NULL DEFAULT 0, sequence INTEGER NOT NULL DEFAULT 0, hash TEXT, run_id TEXT, generation INTEGER NOT NULL DEFAULT 0);
       CREATE INDEX IF NOT EXISTS trajectory_source_run ON trajectory_sources(run_id);`);
-    if (this.get("version") !== "1") {
+    if (this.get("version") !== "2") {
       this.db.execSync("DELETE FROM trajectory_records; DELETE FROM trajectory_sources; DELETE FROM trajectory_meta;");
-      this.set("version", "1");
+      this.set("version", "2");
     }
   }
   get(key: string): string | undefined { return this.db.querySingle("SELECT value FROM trajectory_meta WHERE key = ?", [key])?.value as string | undefined; }

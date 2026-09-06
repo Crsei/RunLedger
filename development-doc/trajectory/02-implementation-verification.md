@@ -12,6 +12,8 @@
 
 ## 自动化证据
 
+2026-09-06 模型切换补充：轨迹模型节点保留可选 `provider` / `model` / `api`，显示完整 `provider/model`，避免不同 provider 的同名模型混淆。数据分别来自 Session assistant 事件和 Trace model metadata；旧记录缺少身份时不推测补齐。可重建 cache 格式更新后重新消费原始日志。`tests/runtime/model-switch.test.ts` 覆盖同一 Session 的切换、恢复、切回，以及两种来源合并后的身份保留；普通模型准入与转换规则见 [Plan/Context §0.3](../plan-compact-memory/01-implementation-plan.md#03-2026-09-06-标准-session-的目录准入与请求时历史转换)。
+
 运行期间完整保留各命令日志。首次独立工作树缺少 node-pty 原生模块，执行 `npm rebuild node-pty` 后重跑；这些首次启动失败不计作行为验证。
 
 | 验证 | 结果与边界 |

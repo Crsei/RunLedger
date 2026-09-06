@@ -146,6 +146,7 @@ describe("InteractiveSessionController", () => {
 			tools: [],
 		});
 
+		await controller.login("p1", "api_key", INTERACTION);
 		await controller.selectModel(p1);
 
 		expect(controller.currentSelection.thinkingLevel).toBe("high");
@@ -169,6 +170,8 @@ describe("InteractiveSessionController", () => {
 		} as unknown as Parameters<typeof InteractiveSessionController.create>[0];
 		const controller = await InteractiveSessionController.create(options);
 
+		await controller.login("p1", "api_key", INTERACTION);
+		await controller.login("p2", "api_key", INTERACTION);
 		await controller.selectModel(p1);
 		await controller.selectModel(p2);
 
@@ -201,6 +204,7 @@ describe("InteractiveSessionController", () => {
 			tools: [],
 		});
 
+		await controller.login("p1", "api_key", INTERACTION);
 		await controller.selectModel(highOnly);
 
 		expect(controller.currentSelection.thinkingLevel).toBe("high");
@@ -225,7 +229,7 @@ describe("InteractiveSessionController", () => {
 		controller.dispose();
 	});
 
-	it("rejects an unverified persisted model even when another authenticated model is available", async () => {
+	it("rejects a policy-excluded persisted model even when another authenticated model is available", async () => {
 		const cwd = await tempDir();
 		const { models, p1, p2 } = fixtureModels();
 		await models.login("p1", "api_key", INTERACTION);
@@ -240,10 +244,10 @@ describe("InteractiveSessionController", () => {
 			ledger: new MemoryLedger(),
 			tools: [],
 			isModelSelectable: (candidate) => candidate.provider === p2.provider && candidate.id === p2.id,
-		})).rejects.toThrow("model profile is not verified: p1/m1");
+		})).rejects.toThrow("Model selection is unavailable: p1/m1");
 	});
 
-	it("exposes only Host-verified models through the interactive selection boundary", async () => {
+	it("exposes only policy-allowed models through the interactive selection boundary", async () => {
 		const cwd = await tempDir();
 		const { models, p1, p2 } = fixtureModels();
 		await models.login("p1", "api_key", INTERACTION);
@@ -261,7 +265,7 @@ describe("InteractiveSessionController", () => {
 		});
 
 		expect(await controller.getAvailableModels()).toEqual([p2]);
-		await expect(controller.selectModel(p1)).rejects.toThrow("model profile is not verified: p1/m1");
+		await expect(controller.selectModel(p1)).rejects.toThrow("Model selection is unavailable: p1/m1");
 		controller.dispose();
 	});
 
@@ -544,7 +548,7 @@ describe("InteractiveSessionController", () => {
 		} finally { controller.dispose(); }
 	});
 
-	it("does not substitute another model for unverified settings", async () => {
+	it("does not substitute another model for policy-excluded settings", async () => {
 		const cwd = await tempDir();
 		const { models } = fixtureModels();
 		await expect(InteractiveSessionController.create({
@@ -552,7 +556,7 @@ describe("InteractiveSessionController", () => {
 			systemPrompt: "test", models, settings: { provider: "p1", model: "m1" },
 			replay: EMPTY_REPLAY, ledger: new MemoryLedger(), tools: [],
 			isModelSelectable: (candidate) => candidate.provider !== "p1",
-		})).rejects.toThrow("model profile is not verified: p1/m1");
+		})).rejects.toThrow("Model selection is unavailable: p1/m1");
 	});
 
 	it("选择优先级为 CLI override > session > settings，并解析 provider/model 形式", async () => {
@@ -640,6 +644,7 @@ describe("InteractiveSessionController", () => {
 			tools: [],
 		});
 		await saveProjectSettings({ layout }, { theme: "ansi" });
+		await controller.login("p1", "api_key", INTERACTION);
 		await controller.selectModel(p1);
 		expect(await loadProjectSettings({ layout })).toMatchObject({ theme: "ansi", provider: "p1", model: "m1" });
 		controller.dispose();
@@ -659,6 +664,7 @@ describe("InteractiveSessionController", () => {
       tools: [],
     });
     // 命令面 select_model 只传 { provider, id }(无 baseUrl/compat 等字段)。
+    await controller.login("p1", "api_key", INTERACTION);
     await controller.selectModel({ provider: "p1", id: "m1" } as Model<Api>);
     expect(controller.currentSelection.model?.baseUrl).toBe(p1.baseUrl);
     expect(controller.currentSelection.model?.provider).toBe("p1");

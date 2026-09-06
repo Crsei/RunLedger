@@ -242,7 +242,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   const models = builtinModels({ credentials: AuthStorage.create(layout) }, { kimiCode: { getDeviceId: createKimiCodeDeviceIdProvider(layout) } });
   await registerConfiguredProxyProvidersFromHome(models, layout.home);
   await models.refresh({ allowNetwork: false });
-  const modelRequestRouters = await createCliSessionModelRequestRouterFactory({ layout, authorityId, tenantId });
+  const modelRequestRouters = await createCliSessionModelRequestRouterFactory({ layout, authorityId, tenantId, models });
 	const worktreeRegistry = new WorktreeRegistry(new JsonlWorktreeRegistryStore(layout));
   const workspaceFactoryFor = async (targetSessionId: string): Promise<SessionWorkspaceFactory | undefined> => {
     const record = store.getSession(targetSessionId);

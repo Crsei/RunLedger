@@ -238,6 +238,7 @@ export async function runAgentLoop(
             type: "message_start",
             timestamp: ts,
             role: "assistant",
+            message: { role: "assistant", content: [], stopReason: "stop", api: loopModel.api, provider: loopModel.provider, model: loopModel.id },
           });
         }
       } else if (ev.type === "text_start" || ev.type === "text_end" || ev.type === "thinking_start" || ev.type === "thinking_delta" || ev.type === "thinking_end" || ev.type === "toolcall_start" || ev.type === "toolcall_delta") {
@@ -308,9 +309,9 @@ export async function runAgentLoop(
       stopReason: assistantStopReason,
       usage: assistantUsage,
       errorMessage: assistantErrorMessage,
-      api: retainedProviderMessage?.api,
-      provider: retainedProviderMessage?.provider,
-      model: retainedProviderMessage?.model,
+      api: retainedProviderMessage?.api ?? loopModel.api,
+      provider: retainedProviderMessage?.provider ?? loopModel.provider,
+      model: retainedProviderMessage?.model ?? loopModel.id,
       timestamp: retainedProviderMessage?.timestamp,
       durationMs: retainedDurationMs,
       ttftMs: retainedProviderMessage?.ttftMs,

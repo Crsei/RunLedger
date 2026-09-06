@@ -68,6 +68,7 @@ export function transformMessages<TApi extends Api>(
 ): Message[] {
 	// Build a map of original tool call IDs to normalized IDs
 	const toolCallIdMap = new Map<string, string>();
+	const usedToolCallIds = new Set<string>();
 	// Normalize null/undefined content from untyped callers (custom tools, hand-built
 	// histories, old session files) so downstream code can rely on the type contract.
 	const normalizedMessages = messages.map((msg) => (msg.content == null ? { ...msg, content: [] } : msg));
@@ -92,6 +93,18 @@ export function transformMessages<TApi extends Api>(
 		// Assistant messages need transformation check
 		if (msg.role === "assistant") {
 			const assistantMsg = msg as AssistantMessage;
+			// 不重放失败正文或未完成的签名；其工具结果在配对阶段降为普通历史文本。
+			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
+				const boundary: AssistantMessage = {
+					...assistantMsg,
+					content: [{ type: "text", text: assistantMsg.stopReason === "aborted"
+						? "[Previous assistant response was interrupted before completion.]"
+						: "[Previous assistant response failed before completion.]" }],
+					stopReason: "stop",
+				};
+				delete boundary.errorMessage;
+				return boundary;
+			}
 			const isSameModel =
 				assistantMsg.provider === model.provider &&
 				assistantMsg.api === model.api &&
@@ -112,7 +125,7 @@ export function transformMessages<TApi extends Api>(
 					if (isSameModel) return block;
 					return {
 						type: "text" as const,
-						text: block.thinking,
+						text: `${block.thinking}\n\n`,
 					};
 				}
 
@@ -133,13 +146,23 @@ export function transformMessages<TApi extends Api>(
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}
 
-					if (!isSameModel && normalizeToolCallId) {
-						const normalizedId = normalizeToolCallId(toolCall.id, model, assistantMsg);
-						if (normalizedId !== toolCall.id) {
-							toolCallIdMap.set(toolCall.id, normalizedId);
-							normalizedToolCall = { ...normalizedToolCall, id: normalizedId };
-						}
+					let normalizedId = !isSameModel && normalizeToolCallId
+						? normalizeToolCallId(toolCall.id, model, assistantMsg) : toolCall.id;
+					// 截断或去掉 Responses item 部分可能产生冲突；前缀保留唯一性并再次经过目标规范化。
+					if (usedToolCallIds.has(normalizedId)) {
+						let suffix = usedToolCallIds.size;
+						const limit = suffix * 2 + 2;
+						do {
+							const candidate = `rl${suffix++}_${toolCall.id}`;
+							normalizedId = normalizeToolCallId ? normalizeToolCallId(candidate, model, assistantMsg) : candidate;
+						} while (usedToolCallIds.has(normalizedId) && suffix < limit);
+						if (usedToolCallIds.has(normalizedId)) throw new Error("Tool call ID normalizer cannot produce distinct IDs");
+						normalizedToolCall = { ...normalizedToolCall };
+						delete normalizedToolCall.thoughtSignature;
 					}
+					usedToolCallIds.add(normalizedId);
+					toolCallIdMap.set(toolCall.id, normalizedId);
+					if (normalizedId !== toolCall.id) normalizedToolCall = { ...normalizedToolCall, id: normalizedId };
 
 					return normalizedToolCall;
 				}
@@ -155,78 +178,38 @@ export function transformMessages<TApi extends Api>(
 		return msg;
 	});
 
-	// Second pass: insert synthetic empty tool results for orphaned tool calls
-	// This preserves thinking signatures and satisfies API requirements
+	// 每个保留的调用后恰好放一个结果；延迟到达的真实结果优先于合成结果。
+	type IndexedResult = { index: number; message: ToolResultMessage };
+	const resultsById = new Map<string, IndexedResult[]>();
+	for (let index = 0; index < transformed.length; index++) {
+		const message = transformed[index];
+		if (message.role !== "toolResult") continue;
+		const entries = resultsById.get(message.toolCallId) ?? [];
+		entries.push({ index, message });
+		resultsById.set(message.toolCallId, entries);
+	}
 	const result: Message[] = [];
-	let pendingToolCalls: ToolCall[] = [];
-	let existingToolResultIds = new Set<string>();
-	const insertSyntheticToolResults = () => {
-		if (pendingToolCalls.length > 0) {
-			for (const tc of pendingToolCalls) {
-				if (!existingToolResultIds.has(tc.id)) {
-					result.push({
-						role: "toolResult",
-						toolCallId: tc.id,
-						toolName: tc.name,
-						content: [{ type: "text", text: "No result provided" }],
-						isError: true,
-						timestamp: Date.now(),
-					} as ToolResultMessage);
-				}
+	for (let index = 0; index < transformed.length; index++) {
+		const message = transformed[index];
+		if (message.role === "toolResult") {
+			if (!usedToolCallIds.has(message.toolCallId)) {
+				// 压缩/失败边界可能留下孤立结果；按低权限 user 文本保留，不伪造 tool_use。
+				const text = message.content.filter((part): part is TextContent => part.type === "text").map((part) => part.text).join("\n");
+				if (text) result.push({ role: "user", content: `[Previous tool result: ${message.toolName}]\n${text}`, timestamp: message.timestamp });
 			}
-			pendingToolCalls = [];
-			existingToolResultIds = new Set();
+			continue;
 		}
-	};
-
-	for (let i = 0; i < transformed.length; i++) {
-		const msg = transformed[i];
-
-		if (msg.role === "assistant") {
-			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
-			insertSyntheticToolResults();
-
-			// 失败或中断的 provider 正文可能结构不完整，不能原样重放。
-			// 保留固定且不含原正文的 assistant 边界，避免下一条 user 消息与失败请求合并。
-			const assistantMsg = msg as AssistantMessage;
-			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-				const boundary: AssistantMessage = {
-					...assistantMsg,
-					content: [{
-						type: "text",
-						text: assistantMsg.stopReason === "aborted"
-							? "[Previous assistant response was interrupted before completion.]"
-							: "[Previous assistant response failed before completion.]",
-					}],
-					stopReason: "stop",
-				};
-				delete boundary.errorMessage;
-				result.push(boundary);
-				continue;
-			}
-
-			// Track tool calls from this assistant message
-			const toolCalls = assistantMsg.content.filter((b) => b.type === "toolCall") as ToolCall[];
-			if (toolCalls.length > 0) {
-				pendingToolCalls = toolCalls;
-				existingToolResultIds = new Set();
-			}
-
-			result.push(msg);
-		} else if (msg.role === "toolResult") {
-			existingToolResultIds.add(msg.toolCallId);
-			result.push(msg);
-		} else if (msg.role === "user") {
-			// User message interrupts tool flow - insert synthetic results for orphaned calls
-			insertSyntheticToolResults();
-			result.push(msg);
-		} else {
-			result.push(msg);
+		result.push(message);
+		if (message.role !== "assistant") continue;
+		for (const block of message.content) {
+			if (block.type !== "toolCall") continue;
+			const actual = resultsById.get(block.id)?.find((entry) => entry.index > index);
+			result.push(actual?.message ?? {
+				role: "toolResult", toolCallId: block.id, toolName: block.name,
+				content: [{ type: "text", text: "No result provided" }], isError: true,
+				timestamp: message.timestamp,
+			});
 		}
 	}
-
-	// If the conversation ends with unresolved tool calls, synthesize results now.
-	insertSyntheticToolResults();
-
 	return result;
 }
