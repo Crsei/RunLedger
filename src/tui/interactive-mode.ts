@@ -1,3 +1,4 @@
+import { agentModeIdentityPresentation, agentModeToolsSummary } from "../runtime/harness-profiles/agent-mode.ts";
 /**
  * InteractiveMode —— TUI 主控 facade。
  *
@@ -148,7 +149,8 @@ export interface InteractiveModeOptions {
   /** thinking blocks 的启动展示状态；仅影响 projection。 */
   hideThinkingBlock?: boolean;
   /** 当前 Session 的 durable Harness ref；只读展示，不提供 mutation。 */
-  harnessProfile?: { readonly id: "standard" | "minimal"; readonly version: 1 };
+  harnessProfile?: { readonly id: "standard" | "minimal" | "plan"; readonly version: 1 | 2 };
+  harnessToolNames?: readonly string[];
   /** 当前 Session Security 的 effective profile；与 Harness/Thinking 分栏。 */
   permissionProfile?: string;
   /** 仅全新启动视图展示 welcome；resume/continue/fork 传 false。 */
@@ -248,6 +250,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
 	private readonly version: string;
   private readonly logoLetters?: string;
 	private readonly harnessProfile?: InteractiveModeOptions["harnessProfile"];
+	private readonly harnessToolNames?: readonly string[];
 	private readonly permissionProfile?: string;
 	private readonly syntaxThemeController: SyntaxThemeController;
   private readonly syntaxThemeSettingsPort?: SyntaxThemeSettingsPort;
@@ -292,6 +295,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     this.version = opts.version ?? "unknown";
     this.logoLetters = opts.logoLetters;
 	this.harnessProfile = opts.harnessProfile;
+	this.harnessToolNames = opts.harnessToolNames;
 	this.permissionProfile = opts.permissionProfile;
     this.syntaxThemeController = opts.syntaxThemeController ?? new SyntaxThemeController({
       availableThemes: BUILTIN_SYNTAX_THEME_NAMES,
@@ -466,6 +470,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       requestExit: (intent) => this.requestExit(intent),
       inFlight: () => this.inFlight(),
       getSessionId: () => this.getSessionId(),
+      getHarnessToolNames: () => this.getHarnessToolNames(),
       hideSlashPopup: () => this.inputController.hideSlashPopup(),
       uiRequestRender: () => this.ui.requestRender(),
       syncThinkingWorkflow: () => this.syncThinkingWorkflow(),
@@ -514,6 +519,10 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
 
   /** 测试/路由查询暴露:/new(委托 SessionWorkflow)。 */
+  public switchAgentMode(mode?: string): Promise<void> {
+    return this.sessionWorkflow.switchAgentMode(mode);
+  }
+
   public createNewSession(profile?: string): Promise<void> {
 	return this.sessionWorkflow.createNewSession(profile);
   }
@@ -1058,6 +1067,13 @@ export class InteractiveMode implements FooterSnapshotProvider {
       return;
     }
     switch (command.actionType) {
+      case "session.mode":
+        void this.sessionWorkflow.switchAgentMode(arg);
+        return;
+      case "session.mode.minimal":
+        if (arg.trim() !== "") this.showNotice("Usage: /minimal", "error");
+        else void this.sessionWorkflow.switchAgentMode("minimal");
+        return;
       case "session.create":
 		void this.sessionWorkflow.createNewSession(arg);
         return;
@@ -1297,6 +1313,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
     const planProgress = this.getPlanProgress();
     const contextUsage = this.getContextUsage();
     const threadLabel = this.getThreadLabel();
+    const mode = this.harnessProfile === undefined ? undefined : agentModeIdentityPresentation(this.harnessProfile);
     return {
       nowMs: Date.now(),
       isStreaming: this.isStreaming(),
@@ -1305,6 +1322,7 @@ export class InteractiveMode implements FooterSnapshotProvider {
       providerId: this.getProviderId(),
       modelId: this.getModelId(),
       thinkingLevel: this.getThinkingLevel(),
+      ...(this.harnessProfile === undefined ? {} : { agentMode: mode?.mode ?? "unavailable", toolsSummary: mode === undefined ? "unavailable" : agentModeToolsSummary(mode, this.harnessToolNames), permissionProfile: this.permissionProfile }),
       ...(workspaceDisplayAbsolutePath === undefined ? {} : { workspaceDisplayAbsolutePath }),
       ...(gitBranchLabel === undefined ? {} : { gitBranchLabel }),
       ...(planProgress === undefined ? {} : { planProgress }),
@@ -1340,6 +1358,9 @@ export class InteractiveMode implements FooterSnapshotProvider {
   }
   getProviderId(): string {
     return this.controller?.currentSelection.provider ?? this.agent?.state.model.provider ?? "<no-provider>";
+  }
+  getHarnessToolNames(): readonly string[] | undefined {
+    return this.harnessToolNames;
   }
   getSessionId(): string {
     // B1:session identity 由 TuiState bootstrap 唯一持有

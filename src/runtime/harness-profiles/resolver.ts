@@ -10,7 +10,7 @@ import {
 	type HarnessProfileResolution,
 } from "./types.ts";
 
-function key(id: HarnessProfileId, version: 1): string {
+function key(id: HarnessProfileId, version: number): string {
 	return `${id}@${version}`;
 }
 
@@ -22,18 +22,28 @@ export function harnessProfileDescriptorDigest(descriptor: HarnessProfileDescrip
 	return runtimeDigest(descriptor);
 }
 
-function refFor(id: HarnessProfileId): HarnessProfileRef {
-	const descriptor = descriptorByKey.get(key(id, 1));
-	if (descriptor === undefined) throw new Error(`builtin harness profile missing: ${id}@1`);
+function refFor(id: HarnessProfileId, version: 1 | 2 = 1): HarnessProfileRef {
+	const descriptor = descriptorByKey.get(key(id, version));
+	if (descriptor === undefined) throw new Error(`builtin harness profile missing: ${id}@${version}`);
 	return Object.freeze({
 		id,
-		version: 1,
+		version,
 		descriptorDigest: Object.freeze(harnessProfileDescriptorDigest(descriptor)),
 	});
 }
 
 const STANDARD_REF = refFor("standard");
 const MINIMAL_REF = refFor("minimal");
+const SHELL_ONLY_REF = refFor("minimal", 2);
+const PLAN_REF = refFor("plan");
+
+export function planHarnessProfileRef(): HarnessProfileRef {
+	return PLAN_REF;
+}
+
+export function shellOnlyHarnessProfileRef(): HarnessProfileRef {
+	return SHELL_ONLY_REF;
+}
 
 export function standardHarnessProfileRef(): HarnessProfileRef {
 	return STANDARD_REF;
@@ -45,7 +55,7 @@ export function minimalHarnessProfileRef(): HarnessProfileRef {
 
 export function resolveHarnessProfileId(id: unknown): HarnessProfileResolution {
 	if (id === "standard") return resolveHarnessProfile(STANDARD_REF);
-	if (id === "minimal") return resolveHarnessProfile(MINIMAL_REF);
+	if (id === "minimal") return resolveHarnessProfile(SHELL_ONLY_REF);
 	return {
 		ok: false,
 		error: {
@@ -102,6 +112,6 @@ function isUnsupportedIdentity(value: unknown): value is { readonly id: unknown;
 	if (typeof value !== "object" || value === null) return false;
 	const record = value as Record<string, unknown>;
 	if (!("id" in record) || !("version" in record)) return false;
-	return (typeof record.id === "string" && record.id !== "standard" && record.id !== "minimal")
-		|| (typeof record.version === "number" && record.version !== 1);
+	return (typeof record.id === "string" && record.id !== "standard" && record.id !== "minimal" && record.id !== "plan")
+		|| (typeof record.version === "number" && !descriptorByKey.has(`${String(record.id)}@${record.version}`));
 }

@@ -70,6 +70,15 @@ describe("standard CLI Session Owner lifecycle", () => {
 		store.database().close();
 	});
 
+	it("preserves an empty switch source so failed target admission can reopen it", async () => {
+		const { embedded, store } = await openEmbedded();
+		const sessionId = embedded.handle.sessionId;
+		await embedded.handle.close();
+		await pauseIfLastAttachment(embedded, false, true);
+		expect(store.getSession(sessionId)).toBeDefined();
+		store.database().close();
+	});
+
 	it("keeps a Session that contains a durable user message", async () => {
 		const { embedded, store } = await openEmbedded();
 		const sessionId = embedded.handle.sessionId;

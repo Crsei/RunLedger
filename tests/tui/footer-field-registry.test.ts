@@ -26,6 +26,14 @@ function field(id: string, order: number, text = id): FooterFieldDefinition {
 }
 
 describe("FooterFieldRegistry", () => {
+	it.each([80, 143])("preserves the active mode at %i columns before optional tool details", (width) => {
+		const registry = createDefaultFooterFieldRegistry();
+		const projected = registry.project({ ...snapshot, agentMode: "minimal", toolsSummary: "shell", workspaceDisplayAbsolutePath: "/very/long/workspace/path/that/must/compress", permissionProfile: "workspace-write" });
+		const fields = fitProjectedFooterRows(projected.rows, width).flatMap((row) => row.fields);
+		expect(fields.find((entry) => entry.id === "identity.mode")?.segment.text).toBe("Mode: minimal");
+		if (width === 143) expect(fields.find((entry) => entry.id === "identity.tools")?.segment.text).toBe("Tools: shell");
+	});
+
 	it("orders registered fields by order and registration sequence", () => {
 		const registry = new FooterFieldRegistry();
 		expect(registry.register(field("identity.model", 20)).ok).toBe(true);

@@ -582,7 +582,7 @@ describe("session-scoped Security/ExecutionGateway composition", () => {
 		const mainSource = readFileSync(join(process.cwd(), "src/cli/main.ts"), "utf8");
 		expect(domainSource).toContain("const process = createSessionProcessComposition");
 		expect(domainSource).toContain("process.toolClient()");
-		expect(domainSource).toContain("process,");
+		expect(domainSource).toContain("...(planDomain === undefined ? { process } : {})");
 		expect(embeddedSource).toContain("await domain?.process?.recoverUnattached?.()");
 		expect(mainSource).toContain("createSessionProcessOverlayClient(controller)");
 		expect(mainSource).toContain("processOverlayController: view.processOverlayController");

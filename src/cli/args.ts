@@ -35,6 +35,7 @@ import type { ModelThinkingLevel } from "../types.ts";
 import type { ApprovalPolicyName, NetworkPolicyMode } from "../security/types.ts";
 import type { BashSecurityAnalyzerMode } from "../security/permission/bash-ast/types.ts";
 import type { SandboxProfileName } from "../runtime/contracts/public.ts";
+import { isAgentMode, type AgentMode } from "../runtime/harness-profiles/agent-mode.ts";
 import type { HarnessProfileId } from "../runtime/harness-profiles/index.ts";
 import { controlCommandHelp } from "./control-commands.ts";
 
@@ -68,6 +69,7 @@ export interface ParsedArgs {
   fork?: string;
   /** 仅 fresh create 可选；open/resume/continue/fork 由 durable row 决定。 */
   harnessProfile?: HarnessProfileId;
+  mode?: AgentMode;
   provider?: string;
   model?: string;
   thinking?: ModelThinkingLevel;
@@ -109,6 +111,7 @@ const HELP_TEXT = `Usage: runledger [options]
       --session <path>        直接打开已知 session 文件
       --session-id <id>       按 sessionId 直接打开 canonical 会话
       --fork <path>           从 canonical session 文件 fork 到当前 workspace
+      --mode <mode>           新建 Session: default|minimal|plan
       --harness-profile <profile>
                               新建 Session 的 standard|minimal profile
   -m, --model <id>            覆盖 settings.model
@@ -154,6 +157,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
   let sessionId: string | undefined;
   let fork: string | undefined;
   let harnessProfile: HarnessProfileId | undefined;
+  let mode: AgentMode | undefined;
   let provider: string | undefined;
   let model: string | undefined;
   let thinking: ModelThinkingLevel | undefined;
@@ -264,6 +268,19 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         break;
       }
       fork = v;
+      continue;
+    }
+    if (a === "--mode" || a.startsWith("--mode=")) {
+      const value = a === "--mode" ? argv[++i] : a.slice("--mode=".length);
+      if (!isAgentMode(value)) {
+        error = "--mode 需要 default|minimal|plan";
+        break;
+      }
+      if (mode !== undefined && mode !== value) {
+        error = "conflicting --mode arguments";
+        break;
+      }
+      mode = value;
       continue;
     }
     if (a === "--harness-profile") {
@@ -425,6 +442,10 @@ export function parseArgs(argv: readonly string[]): ParseResult {
     positional.push(a);
   }
 
+  if (error === undefined && mode !== undefined && harnessProfile !== undefined
+      && (mode === "default" ? "standard" : mode) !== harnessProfile) {
+    error = "--mode conflicts with --harness-profile";
+  }
   if (worktree !== undefined && noWorktree) {
     error = "--worktree 与 --no-worktree 互斥";
   }
@@ -445,6 +466,7 @@ export function parseArgs(argv: readonly string[]): ParseResult {
       sessionId,
       fork,
       harnessProfile,
+      mode,
       provider,
       model,
       thinking,

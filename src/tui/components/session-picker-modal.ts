@@ -1,3 +1,4 @@
+import { agentModeIdentityPresentation } from "../../runtime/harness-profiles/agent-mode.ts";
 import type { Component } from "../primitives.ts";
 import { matchesKey } from "../primitives.ts";
 import type { PresentationBlock } from "../presentation.ts";
@@ -72,15 +73,16 @@ export function buildSessionPickerItems(items: readonly SessionCatalogItem[], no
 		const current = item.current ? " · current" : "";
 		const head = `head ${item.headSequence}`;
 		const driver = `driver ${item.driverRevision}`;
-		const harness = `${item.harnessProfileId}@${item.harnessProfileVersion}`;
+		const mode = agentModeIdentityPresentation({ id: item.harnessProfileId, version: item.harnessProfileVersion });
+		const harness = `${mode?.mode ?? "unavailable"} (${item.harnessProfileId}@${item.harnessProfileVersion})`;
 		const displayName = safePickerLabel(item.title ?? item.firstUserMessagePreview ?? `Untitled · ${created}`) || `Untitled · ${created}`;
 		return {
 			value: item.sessionId,
 			label: `${displayName} · ${item.status}${current}`,
-			description: `${item.workspaceId} · Harness: ${harness} · ${head} · ${updated}`,
+			description: `${item.workspaceId} · Mode: ${harness} · ${head} · ${updated}`,
 			denseLabel: `${updated.padEnd(DENSE_DATE_WIDTH)}${displayName} · ${item.status}`,
 			denseDescription: `${harness} · ${head} · ${item.workspaceId}`,
-			expandedDescription: `${displayName} · ${item.sessionId} · ${item.workspaceId} · ${item.repositoryId} · Harness: ${harness} · ${head} · ${driver} · created ${created} · updated ${updated}${current}`,
+			expandedDescription: `${displayName} · ${item.sessionId} · ${item.workspaceId} · ${item.repositoryId} · Mode: ${harness} · ${head} · ${driver} · created ${created} · updated ${updated}${current}`,
 			workspaceId: item.workspaceId,
 			createdAtMs: item.createdAtMs,
 			updatedAtMs: item.updatedAtMs,

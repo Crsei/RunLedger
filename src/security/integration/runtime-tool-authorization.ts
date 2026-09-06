@@ -9,6 +9,7 @@
  */
 
 import type {
+	AgentTool,
 	ToolAuthorizationDecision,
 	ToolAuthorizationPolicy,
 	ToolAuthorizationRequest,
@@ -18,6 +19,8 @@ import type { PlanModeState } from "../../runtime/modes/plan/types.ts";
 
 const GOVERNED_TOOL_NAMES = new Set([
 	"read",
+	"plan_read",
+	"plan_write",
 	"write",
 	"edit",
 	"MultiEdit",
@@ -46,13 +49,19 @@ const GOVERNED_TOOL_NAMES = new Set([
 export class GovernedToolAuthorizationPolicy implements ToolAuthorizationPolicy {
 	readonly #planState: (() => PlanModeState | undefined) | undefined;
 	readonly #basePolicy: ToolAuthorizationPolicy | undefined;
+	readonly #planArtifactWriter: AgentTool | undefined;
+	readonly #planProfileReadonly: boolean;
 
 	public constructor(options: {
 		readonly basePolicy?: ToolAuthorizationPolicy;
 		readonly planState?: () => PlanModeState | undefined;
+		readonly planArtifactWriter?: AgentTool;
+		readonly planProfileReadonly?: boolean;
 	} = {}) {
 		this.#basePolicy = options.basePolicy;
 		this.#planState = options.planState;
+		this.#planArtifactWriter = options.planArtifactWriter;
+		this.#planProfileReadonly = options.planProfileReadonly === true;
 	}
 
 	public authorize(request: ToolAuthorizationRequest, signal?: AbortSignal): ToolAuthorizationDecision | Promise<ToolAuthorizationDecision> {
@@ -69,8 +78,13 @@ export class GovernedToolAuthorizationPolicy implements ToolAuthorizationPolicy 
 		if (!GOVERNED_TOOL_NAMES.has(request.tool.name)) {
 			return { decision: "deny", reason: `tool ${request.tool.name} is not admitted by the governed composition` };
 		}
-		if (this.#planState !== undefined) {
-			const planDecision = evaluatePlanModeCapabilities({ state: this.#planState(), claims: request.tool.capabilityClaims ?? [] });
+		if (this.#planState !== undefined || this.#planProfileReadonly) {
+			const state = this.#planState?.();
+			// 仅允许 composition 注入的同一工件 writer 实例；不按工具名赋予写权限。
+			if (request.tool === this.#planArtifactWriter) {
+				return state?.status === "active" ? { decision: "allow" } : { decision: "deny", reason: "plan artifact is not editable in the current state" };
+			}
+			const planDecision = evaluatePlanModeCapabilities({ state, claims: request.tool.capabilityClaims ?? [], enforceReadonly: this.#planProfileReadonly });
 			if (planDecision.decision === "deny") return { decision: "deny", reason: `${planDecision.reasonCode} at mode revision ${planDecision.modeRevision}` };
 		}
 		return { decision: "allow" };

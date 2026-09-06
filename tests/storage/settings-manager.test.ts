@@ -29,6 +29,14 @@ describe("loadProjectSettings", () => {
 	let cwd: string;
 	let layout: RunledgerLayout;
 
+	it("round-trips user agentMode and rejects invalid or workspace defaults", async () => {
+		await saveProjectSettings({ layout }, { agentMode: "minimal" });
+		expect(await loadProjectSettings({ layout })).toMatchObject({ agentMode: "minimal" });
+		await expect(saveProjectSettings({ layout, workspaceKey: "mode-workspace" }, { agentMode: "plan" })).rejects.toThrow("agentMode");
+		writeFileSync(layout.settings, JSON.stringify({ agentMode: "unknown" }));
+		await expect(loadProjectSettings({ layout })).rejects.toThrow("agentMode");
+	});
+
 	it("accepts a Codex syntax theme name and drops unsafe path-like theme values", async () => {
 		mkdirSync(layout.home, { recursive: true });
 		writeFileSync(layout.settings, JSON.stringify({ theme: "catppuccin-mocha" }));

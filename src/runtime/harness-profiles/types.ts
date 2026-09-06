@@ -6,17 +6,17 @@ import type { AgentTool } from "../types.ts";
 import type { RuntimeDigest } from "../protocol/foundation.ts";
 import { RuntimeDigestSchema, RuntimeIdSchema } from "../protocol/foundation-schemas.ts";
 
-export type HarnessProfileId = "standard" | "minimal";
+export type HarnessProfileId = "standard" | "minimal" | "plan";
 
 export interface HarnessProfileRef {
 	readonly id: HarnessProfileId;
-	readonly version: 1;
+	readonly version: 1 | 2;
 	readonly descriptorDigest: RuntimeDigest;
 }
 
 export interface HarnessProfileDescriptor {
 	readonly id: HarnessProfileId;
-	readonly version: 1;
+	readonly version: 1 | 2;
 	readonly prompt: {
 		readonly mode: "assembled" | "complete";
 		readonly text?: string;
@@ -36,6 +36,7 @@ export interface HarnessProfileDescriptor {
 }
 
 export interface ResolvedHarnessComposition {
+	readonly manifestFormat: "descriptor-digests@1";
 	readonly ref: HarnessProfileRef;
 	readonly systemPrompt: string;
 	readonly tools: readonly AgentTool[];
@@ -46,6 +47,7 @@ export interface ResolvedHarnessComposition {
 }
 
 export interface HarnessCompositionReceipt {
+	readonly manifestFormat?: "descriptor-digests@1";
 	readonly sessionId: string;
 	readonly ownerGeneration: number;
 	readonly profile: HarnessProfileRef;
@@ -85,12 +87,13 @@ export type HarnessProfileResolution =
 const HarnessProfileIdSchema = Type.Union([
 	Type.Literal("standard"),
 	Type.Literal("minimal"),
+	Type.Literal("plan"),
 ]);
 
 export const HarnessProfileRefSchema = Type.Object(
 	{
 		id: HarnessProfileIdSchema,
-		version: Type.Literal(1),
+		version: Type.Union([Type.Literal(1), Type.Literal(2)]),
 		descriptorDigest: RuntimeDigestSchema,
 	},
 	{ additionalProperties: false },
@@ -129,7 +132,7 @@ const HarnessExtensionsSchema = Type.Object(
 export const HarnessProfileDescriptorSchema = Type.Object(
 	{
 		id: HarnessProfileIdSchema,
-		version: Type.Literal(1),
+		version: Type.Union([Type.Literal(1), Type.Literal(2)]),
 		prompt: HarnessPromptSchema,
 		tools: HarnessToolsSchema,
 		extensions: HarnessExtensionsSchema,
@@ -140,6 +143,7 @@ export const HarnessProfileDescriptorSchema = Type.Object(
 
 export const HarnessCompositionReceiptSchema = Type.Object(
 	{
+		manifestFormat: Type.Optional(Type.Literal("descriptor-digests@1")),
 		sessionId: RuntimeIdSchema,
 		ownerGeneration: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
 		profile: HarnessProfileRefSchema,
@@ -161,11 +165,11 @@ export const HarnessCompositionReceiptSchema = Type.Object(
 );
 
 export function isHarnessProfileRef(value: unknown): value is HarnessProfileRef {
-	return Value.Check(HarnessProfileRefSchema, value);
+	return Value.Check(HarnessProfileRefSchema, value) && supportedIdentity(value.id, value.version);
 }
 
 export function isHarnessProfileDescriptor(value: unknown): value is HarnessProfileDescriptor {
-	if (!Value.Check(HarnessProfileDescriptorSchema, value)) return false;
+	if (!Value.Check(HarnessProfileDescriptorSchema, value) || !supportedIdentity(value.id, value.version)) return false;
 	if (value.prompt.mode === "complete" ? value.prompt.text === undefined : value.prompt.text !== undefined) return false;
 	if (value.tools.mode === "standard" ? value.tools.allowlist.length !== 0 : value.tools.allowlist.length === 0) return false;
 	return new Set(value.tools.allowlist).size === value.tools.allowlist.length;
@@ -173,4 +177,8 @@ export function isHarnessProfileDescriptor(value: unknown): value is HarnessProf
 
 export function isHarnessCompositionReceipt(value: unknown): value is HarnessCompositionReceipt {
 	return Value.Check(HarnessCompositionReceiptSchema, value);
+}
+
+function supportedIdentity(id: HarnessProfileId, version: number): boolean {
+	return version === 1 || (id === "minimal" && version === 2);
 }

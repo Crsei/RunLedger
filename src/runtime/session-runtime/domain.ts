@@ -1,3 +1,7 @@
+import { SessionPlanDomain } from "./plan-domain.ts";
+import { createSessionPlanTools } from "./plan-tools.ts";
+import { planReadOnlyExecutionEnv } from "./plan-execution.ts";
+import { GovernedToolAuthorizationPolicy } from "../../security/integration/runtime-tool-authorization.ts";
 /**
  * R7:SessionRuntime 领域装配(06 §7.1)。
  *
@@ -50,7 +54,7 @@ import type { AgentRunBudgetUsage } from "../types.ts";
 import { SessionTitleLifecycle } from "./title-lifecycle.ts";
 import { createSessionProcessComposition } from "./process-composition.ts";
 import { createProductionSessionExtensionComposition, type SessionExtensionComposition } from "./extension-composition.ts";
-import { createSessionPlanInspection } from "./plan-composition.ts";
+import { createSessionPlanInspection, type SessionPlanInspection } from "./plan-composition.ts";
 import { assembleAgentModelContext } from "../context/model-request-adapter.ts";
 import { createLspTool, type LspToolOptions } from "../../lsp/tool.ts";
 import { shutdownAll } from "../../lsp/client.ts";
@@ -168,7 +172,16 @@ export async function assembleSessionDomain(
 		...(options.traceRecorderFactory === undefined ? {} : { traceRecorderFactory: options.traceRecorderFactory }),
 	});
 	// recovery attempt fence 包裹 governed 最终叶；任何一层缺失都 fail closed。
-	const executionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
+	const governedExecutionEnv = gatedExecutionEnv(security.executionEnv, () => attemptPort.get(), sessionId);
+	const planDomain = catalog.harnessProfile.id === "plan" ? new SessionPlanDomain({
+		store, fence,
+		workspaceId: catalog.workspaceId as Parameters<typeof createSessionProcessComposition>[0]["workspaceId"],
+		repositoryId: catalog.repositoryId as SessionPlanInspection["repositoryId"],
+		policyCeilingDigest: security.snapshot.policyDigest,
+		attemptPort: () => attemptPort.get(),
+	}) : undefined;
+	const executionEnv = planDomain === undefined ? governedExecutionEnv : planReadOnlyExecutionEnv(governedExecutionEnv);
+	const planTools = planDomain === undefined ? [] : createSessionPlanTools(planDomain);
 	const lspOptions: LspToolOptions | undefined = harnessProfile.descriptor.tools.mode === "standard"
 		? {
 			spawn: createGovernedLspSpawner(process.toolClient()),
@@ -177,7 +190,7 @@ export async function assembleSessionDomain(
 			linterFactories: createGovernedLinterFactories(process.toolClient(), executionEnv.fs),
 		}
 		: undefined;
-	const baseTools = productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions);
+	const baseTools = [...productionSessionTools(options.cwd, executionEnv, process.toolClient(), security.permissionRequester, lspOptions), ...planTools];
 	let extensions: SessionExtensionComposition | undefined;
 	if (Object.values(harnessProfile.descriptor.extensions).some(Boolean)) {
 		extensions = await createProductionSessionExtensionComposition({
@@ -208,6 +221,7 @@ export async function assembleSessionDomain(
 	const resources = composeSessionResourceDomains([
 		...(extensions === undefined ? [] : [extensions.resources]),
 		securitySettings,
+		...(planDomain === undefined ? [] : [planDomain]),
 	]);
 	const governedTools = [
 		...baseTools,
@@ -221,13 +235,7 @@ export async function assembleSessionDomain(
 		systemPrompt: standardSystemPrompt,
 		governedTools,
 	});
-	const compositionReceipt = createHarnessCompositionReceipt({
-		sessionId,
-		ownerGeneration: fence.generation,
-		descriptor: harnessProfile.descriptor,
-		composition: harnessComposition,
-	});
-	persistHarnessCompositionReceipt(store, fence, compositionReceipt);
+	let compositionReceipt: HarnessCompositionReceipt;
 	const traceRecorderFactory = options.traceRecorderFactory === undefined
 		? undefined
 		: {
@@ -256,7 +264,10 @@ export async function assembleSessionDomain(
 		...(options.modelRequestRouter === undefined ? {} : { modelRequestRouter: options.modelRequestRouter }),
 		tools: [...harnessComposition.tools],
 		executionEnv,
-		authorizationPolicy: security.authorizationPolicy,
+		authorizationPolicy: planDomain === undefined ? security.authorizationPolicy : new GovernedToolAuthorizationPolicy({
+			basePolicy: security.authorizationPolicy, planState: () => planDomain.inspect().state,
+			planProfileReadonly: true, planArtifactWriter: planTools.find((tool) => tool.name === "plan_write"),
+		}),
 		traceRecorderFactory,
 		...(extensions?.hookRuntime === undefined || !harnessProfile.descriptor.extensions.hooks
 			? {}
@@ -342,14 +353,27 @@ export async function assembleSessionDomain(
 	});
 	if (!multiAgentResult.ok) throw new Error(`${multiAgentResult.error.code}: ${multiAgentResult.error.message}`);
 	if (multiAgentResult.value !== undefined) controller.addTools(multiAgentResult.value.tools);
+	// controller.create 只恢复配置；完整工具注册和 receipt 落盘后才交付可运行 domain。
+	const finalComposition = resolveHarnessComposition({
+		ref: catalog.harnessProfile,
+		systemPrompt: standardSystemPrompt,
+		governedTools: [...governedTools, ...(multiAgentResult.value?.tools ?? [])],
+	});
+	compositionReceipt = createHarnessCompositionReceipt({
+		sessionId,
+		ownerGeneration: fence.generation,
+		descriptor: harnessProfile.descriptor,
+		composition: finalComposition,
+	});
+	persistHarnessCompositionReceipt(store, fence, compositionReceipt);
 	const removeExtensionLifecycle = extensions?.turnLifecycle === undefined
 		? undefined
 		: controller.subscribe((event) => extensions.turnLifecycle!.handle(event));
-	const planInspection = createSessionPlanInspection({
+	const planInspection = planDomain === undefined ? createSessionPlanInspection({
 		sessionId,
 		store,
 		policyCeilingDigest: security.snapshot.policyDigest,
-	});
+	}) : () => planDomain.inspect();
 	return {
 		controller,
 		subscribeTitleChanged: (listener: (event: SessionTitleChangedEvent) => void) => {
@@ -358,12 +382,16 @@ export async function assembleSessionDomain(
 		},
 		...(childRuntime === undefined ? {} : { childRuntime }),
 		...(multiAgentResult.value === undefined ? {} : { multiAgent: multiAgentResult.value }),
-		process,
+		...(planDomain === undefined ? { process } : {}),
 		resources,
 		planInspection,
-		...(extensions === undefined ? {} : { start: extensions.start }),
+		start: async () => {
+			await planDomain?.start();
+			await extensions?.start();
+		},
 		shutdown: async (reason) => {
 			titleLifecycle?.dispose();
+			if (planDomain !== undefined) await process.shutdown(reason);
 			removeExtensionLifecycle?.();
 			try {
 				await extensions?.shutdown(reason);
@@ -402,6 +430,7 @@ export async function assembleSessionDomain(
 			auditEntries: controller.auditEntries,
 			selection: controller.currentSelection,
 			toolCount: controller.toolCount,
+			harnessToolNames: compositionReceipt.tools.map((tool) => tool.name),
 			inFlight: controller.inFlight,
 			providerStatuses: [],
 		}),

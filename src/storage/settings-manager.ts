@@ -1,3 +1,4 @@
+import { isAgentMode, type AgentMode } from "../runtime/harness-profiles/agent-mode.ts";
 /**
  * 用户级 Settings 加载/落盘。
  *
@@ -37,6 +38,8 @@ export interface SettingsStoreOptions {
 
 /** 用户级或 workspace 级 settings schema。sessionDir 不属于 canonical schema。 */
 export interface ProjectSettings {
+	/** 仅用户级新建默认；恢复与 TUI 新建继承 durable profile。 */
+	agentMode?: AgentMode;
 	/** 是否允许首个合格用户输入触发异步 Session 自动标题；缺省开启。 */
 	autoTitle?: boolean;
 	/** 空闲 recap 的用户级开关与延迟；运行时会解析为完整有效快照。 */
@@ -374,7 +377,11 @@ function assertSupportedSettings(
 
 /** 把裸 JSON 对象清洗成 canonical ProjectSettings，丢弃 legacy/未知字段。 */
 function sanitizeProjectSettings(raw: Record<string, unknown>, allowRecording = true): ProjectSettings {
+	if (Object.hasOwn(raw, "agentMode") && (!allowRecording || !isAgentMode(raw.agentMode))) {
+		throw new Error("agentMode must be default|minimal|plan in user settings");
+	}
 	const out: ProjectSettings = {};
+	if (isAgentMode(raw.agentMode)) out.agentMode = raw.agentMode;
 	if (typeof raw.autoTitle === "boolean") out.autoTitle = raw.autoTitle;
 	const recap = sanitizeRecapSettings(raw.recap);
 	if (recap !== undefined) out.recap = recap;

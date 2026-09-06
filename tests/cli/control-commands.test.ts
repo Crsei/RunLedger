@@ -85,7 +85,6 @@ describe("Host control command parsing", () => {
 		const command: ControlCommand = { group: "plan", action: "write", args: ["#", "next"], mutation: true };
 		expect(controlCommandQueryOperation(command)).toBe("plan.inspect");
 		expect(controlCommandBody(command, 7, { state: { revision: 3, plan: { revision: 1 } } })).toEqual({
-			expectedDomainRevision: 7,
 			expectedRevision: 3,
 			expectedPlanRevision: 1,
 		content: "# next",

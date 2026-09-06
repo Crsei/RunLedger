@@ -37,6 +37,14 @@ runledger --fork <path>.jsonl         # fork canonical home 内的 session
 runledger migrate --source <path> --confirm-delete  # 显式破坏性迁移旧 source
 ```
 
+Agent mode 使用 `runledger --mode default|minimal|plan` 新建会话，TUI 使用 `/mode` 或 `/mode <name>`，`/minimal` 直接选择 minimal。选择不同模式会新建空会话并保留当前模型/thinking，原会话仍可恢复；有未发送草稿或正在执行时拒绝切换。Footer 显示当前实际模式与工具摘要，权限仍由 `/permissions` 独立管理。
+
+- `default`：标准工具集，按当前策略装配扩展等能力。
+- `minimal`：新会话为 `minimal@2`，模型只见 governed `bash`；旧 `minimal@1` 恢复/fork 保留 bash/edit。shell-only 不代表只读，shell 分类与权限拒绝规则保持生效。
+- `plan`：只提供 read/glob/ls 和 plan_read/plan_write；只能修改 Session 内的计划工件，禁止 shell、网络和工作区写入。`/plan` 审阅正文并请求/批准/拒绝/取消/结束工作流；批准不会放开工作区写入，实施时用 `/mode default` 新建会话。
+
+可在用户级 `settings.json` 设置 `"agentMode": "minimal"`（也接受 `default` / `plan`）。新建优先级为 CLI > 用户设置 > default；workspace 设置不接受此项。恢复、attach、continue、fork 使用已有 durable profile，拒绝 CLI 覆盖。旧 `--harness-profile standard|minimal` 保留为兼容入口，新建 minimal 同样选 `minimal@2`。详见 [Agent Mode 实施与验收](development-doc/runtime/10-agent-mode-entry-implementation-plan.md)。
+
 Storage/CLI 当前只写单一用户级 home：`RUNLEDGER_DIR`（必须是预创建的绝对目录）或默认 `~/.runledger`；session 位于 `sessions/YYYY/MM/DD/`，workspace settings 位于 `projects/<workspace-key>/settings.json`。旧项目级 `.runledger/`、`~/.runledger/agent/` 与任意 `sessionDir` 只可作为显式迁移 source；不提供只读 import、dry-run、fallback 或物理 rollback。详见 [`development-doc/storage-cli/02-user-home-migration-handoff.md`](./development-doc/storage-cli/02-user-home-migration-handoff.md)。
 
 ## 架构(本期)

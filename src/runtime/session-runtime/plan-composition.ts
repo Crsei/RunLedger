@@ -21,8 +21,8 @@ export interface SessionPlanInspectionOptions {
 
 /**
  * 从 Session catalog 与已校验的 append-only event head 重建未激活 Plan 状态。
- * 当前 Session Runtime 尚未开放 Plan mutation，因此不能产生 active 状态或
- * 伪造 plan artifact；一旦 mutation 接线，须改为重放 canonical Plan events。
+ * standard/minimal 不开放 Plan mutation，因此不产生 active 状态或伪造工件。
+ * plan@1 由 SessionPlanDomain 重放 canonical Plan events。
  */
 export function createSessionPlanInspection(options: SessionPlanInspectionOptions): () => SessionPlanInspection {
 	return () => {

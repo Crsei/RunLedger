@@ -56,7 +56,7 @@ function installRevision3Database() {
 describe("Session Store legacy to current title migration", () => {
 	it("migrates revision 3 offline and backfills every row with frozen standard@1", () => {
 		const db = installRevision3Database();
-		expect(migrateSessionStoreToCurrent(db)).toEqual({ ok: true, storeVersion: 4 });
+		expect(migrateSessionStoreToCurrent(db)).toEqual({ ok: true, storeVersion: SESSION_STORE_SCHEMA_VERSION });
 		const standard = standardHarnessProfileRef();
 		expect(db.querySingle(
 			"SELECT harness_profile_id, harness_profile_version, harness_profile_digest FROM sessions WHERE session_id = ?",
@@ -66,7 +66,7 @@ describe("Session Store legacy to current title migration", () => {
 			harness_profile_version: standard.version,
 			harness_profile_digest: standard.descriptorDigest.digest,
 		});
-		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: 4, admission: "ready" } });
+		expect(checkStoreCompatibility(db)).toMatchObject({ ok: true, header: { storeVersion: SESSION_STORE_SCHEMA_VERSION, admission: "ready" } });
 		db.close();
 	});
 

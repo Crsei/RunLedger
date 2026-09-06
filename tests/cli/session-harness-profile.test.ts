@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { shellOnlyHarnessProfileRef } from "../../src/runtime/harness-profiles/resolver.ts";
 import { parseArgs } from "../../src/cli/args.ts";
 import { resolveSessionId } from "../../src/cli/main.ts";
-import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
+import { standardHarnessProfileRef } from "../../src/runtime/harness-profiles/index.ts";
 import { openSessionDatabase } from "../../src/storage/session-store/database.ts";
 import { installSessionStoreSchema } from "../../src/storage/session-store/schema.ts";
 import { SessionStore } from "../../src/storage/session-store/session-store.ts";
@@ -33,13 +34,24 @@ function args(argv: readonly string[]) {
 }
 
 describe("CLI harness profile selection", () => {
+	it("uses settings only for fresh create, and explicit mode wins", async () => {
+		const { store, workspace } = fixture();
+		const minimalId = await resolveSessionId(store, args([]), workspace, undefined, "minimal");
+		expect(store.getSession(minimalId)?.harnessProfile).toEqual(shellOnlyHarnessProfileRef());
+		const standardId = await resolveSessionId(store, args(["--mode", "default"]), workspace, undefined, "minimal");
+		expect(store.getSession(standardId)?.harnessProfile).toEqual(standardHarnessProfileRef());
+		expect(await resolveSessionId(store, args(["--session-id", minimalId]), workspace, undefined, "default")).toBe(minimalId);
+		await expect(resolveSessionId(store, args(["--session-id", minimalId, "--mode", "default"]), workspace)).rejects.toThrow("only valid when creating");
+		store.database().close();
+	});
+
 	it("uses standard by default and freezes an explicit minimal profile on fresh create", async () => {
 		const { store, workspace } = fixture();
 		const standardId = await resolveSessionId(store, args([]), workspace);
 		const minimalId = await resolveSessionId(store, args(["--harness-profile", "minimal"]), workspace);
 
 		expect(store.getSession(standardId)?.harnessProfile).toEqual(standardHarnessProfileRef());
-		expect(store.getSession(minimalId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		expect(store.getSession(minimalId)?.harnessProfile).toEqual(shellOnlyHarnessProfileRef());
 		store.database().close();
 	});
 
@@ -55,7 +67,7 @@ describe("CLI harness profile selection", () => {
 		]) {
 			await expect(resolveSessionId(store, args(argv), workspace)).rejects.toThrow("only valid when creating");
 		}
-		expect(store.getSession(sourceId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		expect(store.getSession(sourceId)?.harnessProfile).toEqual(shellOnlyHarnessProfileRef());
 		store.database().close();
 	});
 
@@ -64,7 +76,7 @@ describe("CLI harness profile selection", () => {
 		const sourceId = await resolveSessionId(store, args(["--harness-profile", "minimal"]), workspace);
 		const forkId = await resolveSessionId(store, args(["--fork", sourceId]), workspace);
 
-		expect(store.getSession(forkId)?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		expect(store.getSession(forkId)?.harnessProfile).toEqual(shellOnlyHarnessProfileRef());
 		store.database().close();
 	});
 });

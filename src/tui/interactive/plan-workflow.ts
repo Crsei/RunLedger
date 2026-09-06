@@ -2,6 +2,10 @@
  * S7 拆分:plan workflow 与 domain command adapter。
  */
 
+import { isValidPlanModeState } from "../../runtime/modes/plan/reducer.ts";
+import type { PlanModeState } from "../../runtime/modes/plan/types.ts";
+import { SecondarySelectionView, type SecondarySelectionItem } from "../components/list-selection-modal.ts";
+import { makeSelectListTheme } from "../theme/factories.ts";
 import { querySessionController, commandSessionController } from "../adapters/session-domain.ts";
 import type { InteractiveModePorts } from "./types.ts";
 
@@ -23,6 +27,10 @@ export class PlanWorkflow {
 			port.showNotice("/plan is available when the current turn is idle.", "note");
 			return;
 		}
+		if (port.controller?.supports?.("plan.request_approval") === true) {
+			await this.openApprovalReview();
+			return;
+		}
 		const effect = port.createEffect("plan.inspect");
 		port.store.dispatch({ type: "query.start", effect });
 		port.runner.dispatch(effect);
@@ -39,6 +47,64 @@ export class PlanWorkflow {
 			return;
 		}
 		port.showNotice("/plan state is unavailable in this session.", "error");
+	}
+
+	/** 审阅固定快照的全部正文；提交时绑定 revision、digest 与 approvalId。 */
+	private async openApprovalReview(): Promise<void> {
+		const port = this.port;
+		const result = await querySessionController(port.controller, "plan.inspect", {}, {
+			correlationId: `corr-${port.nextCorrelationId()}`, effectId: `effect-${port.nextEffectId()}`,
+		}).catch(() => undefined);
+		if (result?.ok !== true || !isValidPlanModeState(result.value.state) || typeof result.value.content !== "string") {
+			port.showNotice("/plan review is unavailable; refresh after reconnecting.", "error"); return;
+		}
+		const state = result.value.state;
+		// 固定短行分页，保证常见窄终端能够逐页审阅，不以截断摘要代替正文。
+		const lines = result.value.content.replace(/[\x00-\x08\x0b-\x1f\x7f]/gu, "�").split("\n").flatMap((line) => {
+			const chars = Array.from(line); const chunks: string[] = [];
+			for (let index = 0; index < chars.length; index += 24) chunks.push(chars.slice(index, index + 24).join(""));
+			return chunks.length === 0 ? [""] : chunks;
+		});
+		const pages = Math.max(1, Math.ceil(lines.length / 4));
+		const show = (page: number): void => {
+			const items: SecondarySelectionItem[] = [];
+			if (page < pages - 1) items.push({ value: "next", name: "Next page" });
+			if (page > 0) items.push({ value: "previous", name: "Previous page" });
+			if (page === pages - 1) {
+				if (state.status === "active") items.push({ value: "plan.request_approval", name: "Request approval", disabled: state.plan?.revision === 0 });
+				if (state.status === "awaiting_approval") items.push({ value: "approve", name: "Approve this revision" }, { value: "reject", name: "Reject this revision" });
+				if (state.status === "exit_pending") items.push({ value: "plan.settle_exit", name: "Finish plan workflow" });
+			}
+			if (state.status === "active" || state.status === "awaiting_approval") items.push({ value: "plan.cancel", name: "Cancel plan workflow" });
+			items.push({ value: "close", name: "Close" });
+			port.showOverlayModal(new SecondarySelectionView({
+				title: `Plan · ${state.status} · ${page + 1}/${pages}`,
+				subtitle: `rev ${state.plan?.revision ?? 0} · ${state.plan?.digest.digest.slice(0, 12) ?? "unavailable"}`,
+				detailLines: lines.slice(page * 4, page * 4 + 4), items,
+				footerHint: "Plan mode remains read-only. /mode default creates a new session.",
+				selectListTheme: makeSelectListTheme(port.theme),
+				onCancel: () => port.closeOverlay(),
+				onSelect: (item) => {
+					port.closeOverlay();
+					if (item.value === "next") show(page + 1);
+					else if (item.value === "previous") show(page - 1);
+					else if (item.value !== "close") void this.resolveReview(item.value, state);
+				},
+			}), { anchor: "bottom-left" });
+		};
+		show(0);
+	}
+
+	private async resolveReview(action: string, state: PlanModeState): Promise<void> {
+		const resolving = action === "approve" || action === "reject";
+		const operation = resolving ? "plan.resolve_approval" : action;
+		const body: Record<string, unknown> = { expectedRevision: state.revision };
+		if (resolving || action === "plan.request_approval") {
+			body.expectedPlanRevision = state.plan?.revision; body.expectedPlanDigest = state.plan?.digest;
+		}
+		if (resolving) { body.approvalId = state.approval?.approvalId; body.decision = action === "approve" ? "approved" : "rejected"; }
+		await this.runDomainCommand(operation, body, "/plan", false);
+		await this.openPlanWorkflow();
 	}
 
 	/** 执行已协商的 Session domain 命令并把 typed 结果投影成 notice。 */

@@ -1,3 +1,7 @@
+import { AGENT_MODES, agentModeIdentityPresentation, isAgentMode, resolveAgentMode } from "../../runtime/harness-profiles/agent-mode.ts";
+import { sanitizeLabel } from "../presentation/projectors.ts";
+import { SecondarySelectionView } from "../components/list-selection-modal.ts";
+import { makeSelectListTheme } from "../theme/factories.ts";
 /**
  * S7 拆分:session workflow —— new/resume/fork/rename/catalog。
  *
@@ -16,6 +20,69 @@ export class SessionWorkflow {
 
 	public constructor(port: InteractiveModePorts) {
 		this.port = port;
+	}
+
+	/** 不修改既有 profile；所有入口复用 catalog CAS 与 session.create。 */
+	public async switchAgentMode(requestedMode?: string): Promise<void> {
+		const requested = requestedMode?.trim();
+		if (requested !== undefined && requested !== "" && !isAgentMode(requested)) {
+			this.port.showNotice("Usage: /mode [default|minimal|plan]", "error");
+			return;
+		}
+		if (this.rejectSessionTransition()) return;
+		if (this.port.refs.editor.getText().trim() !== "") {
+			this.port.showNotice("Agent mode creates a new Session. Submit or clear the current draft first; your draft is preserved.", "note");
+			return;
+		}
+		const catalog = await this.loadSessionCatalog();
+		if (catalog === undefined) return;
+		const current = catalog.items.find((item) => item.current && item.sessionId === this.port.getSessionId());
+		if (current === undefined) {
+			this.port.showNotice("Current Session is missing from the canonical catalog.", "error");
+			return;
+		}
+		if (requested === undefined || requested === "") {
+			const presentation = agentModeIdentityPresentation({ id: current.harnessProfileId, version: current.harnessProfileVersion });
+			const modal = new SecondarySelectionView({
+				title: "Select agent mode",
+				subtitle: `Current: ${presentation?.mode ?? "unavailable"} (${current.harnessProfileId}@${current.harnessProfileVersion}). Creates a new Session; this Session remains resumable.`,
+				items: [...AGENT_MODES.map((mode) => {
+					const target = resolveAgentMode(mode);
+					return {
+						value: mode, name: mode,
+						description: !target.ok ? "Unavailable" : mode === "default" ? "Standard toolset (subject to policy)" : mode === "minimal" ? "Shell-only primitive toolset" : "Read/analyze; write only the plan artifact",
+						isCurrent: target.ok && target.ref.id === current.harnessProfileId && target.ref.version === current.harnessProfileVersion,
+					};
+				}), { value: "tools", name: "Current tools", description: "Inspect the effective model-visible tool table" }],
+				selectListTheme: makeSelectListTheme(this.port.theme),
+				onSelect: (item) => { this.port.closeOverlay(); if (item.value === "tools") this.showCurrentTools(); else void this.switchAgentMode(item.value); },
+				onCancel: () => this.port.closeOverlay(),
+			});
+			this.port.showOverlayModal(modal, { anchor: "bottom-left" }, "session");
+			return;
+		}
+		const target = resolveAgentMode(requested);
+		if (!target.ok) { this.port.showNotice(`Agent mode unavailable: ${target.code}`, "error"); return; }
+		if (target.ref.id === current.harnessProfileId && target.ref.version === current.harnessProfileVersion) {
+			this.port.showNotice(`Mode ${requested} is already current (${target.ref.id}@${target.ref.version}).`);
+			return;
+		}
+		this.port.showNotice(`Creating a new ${requested} Session. Current Session can be resumed.`);
+		const transition = await this.runSessionTransition("session.create", { expectedRevision: catalog.revision, agentMode: requested });
+		if (transition !== undefined) await this.port.requestExit({ kind: "switch", action: "new", target: { sessionId: transition.targetSessionId } });
+	}
+
+	private showCurrentTools(): void {
+		const names = this.port.getHarnessToolNames?.();
+		this.port.showOverlayModal(new SecondarySelectionView({
+			title: "Current model tools",
+			subtitle: names === undefined ? "Effective tool table is unavailable on this connection." : `${names.length} tools from the current Session composition`,
+			items: (names ?? []).map((name) => ({ value: name, name: sanitizeLabel(name, 256) })),
+			selectListTheme: makeSelectListTheme(this.port.theme),
+			footerHint: "Arrow keys to browse; Esc to return",
+			onSelect: () => undefined,
+			onCancel: () => { this.port.closeOverlay(); void this.switchAgentMode(); },
+		}), { anchor: "bottom-left" }, "session");
 	}
 
 	/** S2:/resume 从 SQLite authority 拉取 catalog，不读取旧 JSONL selector。 */

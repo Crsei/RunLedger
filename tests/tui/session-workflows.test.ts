@@ -260,6 +260,87 @@ describe("S2 InteractiveMode session workflows", () => {
 		expect(controller.disposed).toBe(false);
 	});
 
+	it("/mode minimal creates the latest profile even when current minimal is legacy", async () => {
+		const terminal = new ContractTerminal();
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await mode.switchAgentMode("minimal");
+			expect(await running).toEqual({ kind: "switch", action: "new", target: { sessionId: "session-new" } });
+			expect(commandSessionDomain).toHaveBeenCalledWith("session.create", { agentMode: "minimal" }, expect.objectContaining({ expectedRevision: 2 }));
+		} finally { mode.quit(); }
+	});
+
+	it.each([["/minimal", "minimal"], ["/mode plan", "plan"]])("dispatches %s through the Session create boundary", async (command, targetMode) => {
+		const terminal = new ContractTerminal();
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal });
+		const running = mode.run();
+		try {
+			await settleFrames(); terminal.send(command); terminal.send("\r");
+			await vi.waitFor(() => expect(commandSessionDomain).toHaveBeenCalledWith("session.create", { agentMode: targetMode }, expect.objectContaining({ expectedRevision: 2 })));
+			expect(await running).toMatchObject({ kind: "switch", action: "new" });
+		} finally { mode.quit(); }
+	});
+
+	it("cancels the mode picker without creating a Session", async () => {
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		const ui = (mode as unknown as { ui: { getOverlay(): { render(width: number): string[]; handleInput(data: string): void } | undefined } }).ui;
+		try {
+			await mode.switchAgentMode();
+			expect(ui.getOverlay()!.render(143).join("\n")).toContain("Creates a new Session");
+			ui.getOverlay()!.handleInput("\x1b");
+			expect(ui.getOverlay()).toBeUndefined();
+			expect(commandSessionDomain).not.toHaveBeenCalled();
+		} finally { mode.quit(); }
+	});
+
+	it("shows the actual current tool table without changing mode", async () => {
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal(), harnessToolNames: ["bash"] });
+		const ui = (mode as unknown as { ui: { getOverlay(): { render(width: number): string[]; handleInput(data: string): void } } }).ui;
+		try {
+			await mode.switchAgentMode(); ui.getOverlay().handleInput("4");
+			const text = ui.getOverlay().render(80).join("\n");
+			expect(text).toContain("1 tools from the current Session composition");
+			expect(text).toContain("bash"); expect(text).not.toContain("edit");
+			expect(commandSessionDomain).not.toHaveBeenCalled();
+		} finally { mode.quit(); }
+	});
+
+	it("selecting the current exact mode is a no-op", async () => {
+		const { controller, commandSessionDomain, querySessionDomain } = sessionController();
+		querySessionDomain.mockResolvedValue({ ok: true, status: "ok", operation: "session.catalog.list", domainRevision: 2, value: { items: catalogItems.map((item) => item.current ? { ...item, harnessProfileVersion: 2 } : item) } });
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		try { await mode.switchAgentMode("minimal"); expect(commandSessionDomain).not.toHaveBeenCalled(); } finally { mode.quit(); }
+	});
+
+	it.each(["domain_revision_conflict", "driver_required", "recovery_barrier_active", "transport_closed", "session_create_failed"])("keeps the current Session after %s", async (code) => {
+		const { controller, commandSessionDomain } = sessionController();
+		commandSessionDomain.mockResolvedValue({ ok: false, status: "failed", operation: "session.create", code });
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		try {
+			await mode.switchAgentMode("default");
+			expect(mode.getTuiState().bootstrap.session.id).toBe("contract-session");
+			expect(JSON.stringify(mode.getTuiState().timeline)).toContain(code);
+		} finally { mode.quit(); }
+	});
+
+	it("rejects invalid mode arguments and preserves an unsent draft", async () => {
+		const { controller, commandSessionDomain } = sessionController();
+		const mode = new InteractiveMode({ controller, terminal: new ContractTerminal() });
+		await mode.switchAgentMode("minimal extra");
+		expect(commandSessionDomain).not.toHaveBeenCalled();
+		const editor = (mode as unknown as { refs: { editor: { setText(text: string): void; getText(): string } } }).refs.editor;
+		editor.setText("unsent draft");
+		await mode.switchAgentMode("default");
+		expect(commandSessionDomain).not.toHaveBeenCalled();
+		expect(editor.getText()).toBe("unsent draft");
+		mode.quit();
+	});
+
 	it("/new creates in the current catalog revision and returns a new-session switch intent", async () => {
 		const terminal = new ContractTerminal();
 		const { controller, commandSessionDomain } = sessionController();

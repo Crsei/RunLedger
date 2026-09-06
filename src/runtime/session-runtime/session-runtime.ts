@@ -115,6 +115,7 @@ export interface SessionDomainSnapshot {
 	readonly auditEntries: readonly LedgerEntry[];
 	readonly selection: RuntimeSelection;
 	readonly toolCount: number;
+	readonly harnessToolNames?: readonly string[];
 	readonly inFlight: boolean;
 	readonly providerStatuses: readonly ProviderStatus[];
 }
@@ -414,6 +415,7 @@ export class SessionRuntime implements SessionController {
 				auditEntries: domain.auditEntries,
 				selection: domain.selection,
 				toolCount: domain.toolCount,
+				harnessToolNames: domain.harnessToolNames,
 				inFlight: domain.inFlight,
 				providerStatuses: domain.providerStatuses,
 			};

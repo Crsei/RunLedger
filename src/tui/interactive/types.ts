@@ -90,6 +90,7 @@ export interface InteractiveModePorts {
 	requestExit(intent: InteractiveExitIntent): Promise<void>;
 	inFlight(): boolean;
 	getSessionId(): string;
+	getHarnessToolNames?(): readonly string[] | undefined;
 	hideSlashPopup(): void;
 	uiRequestRender(): void;
 	syncThinkingWorkflow(): Promise<void>;

@@ -28,6 +28,13 @@ function minimalDescriptor() {
 }
 
 describe("Harness Profile tool projection", () => {
+	it("projects minimal@2 to the same governed bash descriptor without edit", () => {
+		const tools = productionSessionTools("/workspace", inertExecutionEnv("/workspace"));
+		const legacy = projectHarnessTools(minimalDescriptor(), tools);
+		const shell = projectHarnessTools(builtinHarnessProfiles().find((profile) => profile.id === "minimal" && profile.version === 2)!, tools);
+		expect(shell.tools.map((tool) => tool.name)).toEqual(["bash"]);
+		expect(shell.tools[0]!.parameters).toEqual(legacy.tools[0]!.parameters);
+	});
 	it("pins the minimal@1 ordered provider manifest and removes background handles", () => {
 		const tools = productionSessionTools("/workspace", inertExecutionEnv("/workspace"));
 		const projected = projectHarnessTools(minimalDescriptor(), tools);

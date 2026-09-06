@@ -2,6 +2,7 @@
 
 import { runtimeDigest } from "../protocol/foundation.ts";
 import type { AgentTool } from "../types.ts";
+import { harnessToolReceiptTable } from "./tool-receipt-table.ts";
 import { projectHarnessTools } from "./tool-projection.ts";
 import { resolveHarnessProfile } from "./resolver.ts";
 import type { HarnessProfileRef, ResolvedHarnessComposition } from "./types.ts";
@@ -37,20 +38,24 @@ export function resolveHarnessComposition(
 		history: "selected",
 		extensionSources: resolved.descriptor.extensions.context,
 	});
+	const manifestFormat = "descriptor-digests@1";
+	const toolManifestDigest = runtimeDigest(harnessToolReceiptTable(projected.tools));
 	const compositionDigest = runtimeDigest({
+		manifestFormat,
 		ref: resolved.ref,
 		promptDigest,
-		toolManifestDigest: projected.manifestDigest,
+		toolManifestDigest,
 		contextPolicyDigest,
 		extensions: resolved.descriptor.extensions,
 		multiAgent: resolved.descriptor.multiAgent,
 	});
 	return Object.freeze({
+		manifestFormat,
 		ref: resolved.ref,
 		systemPrompt,
 		tools: projected.tools,
 		promptDigest,
-		toolManifestDigest: projected.manifestDigest,
+		toolManifestDigest,
 		contextPolicyDigest,
 		compositionDigest,
 	});

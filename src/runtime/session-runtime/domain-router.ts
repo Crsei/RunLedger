@@ -1,3 +1,4 @@
+import { resolveAgentMode } from "../harness-profiles/agent-mode.ts";
 import { createRuntimeId, type SessionId } from "../protocol/ids.ts";
 import type { SessionStore } from "../../storage/session-store/session-store.ts";
 import type { SessionProtocolOperationDescriptor } from "../session-server/protocol.ts";
@@ -273,14 +274,22 @@ export class SessionDomainRouter {
 				return { ok: false, status: "failed", code: "session_not_found", operation };
 			}
 			const payload = recordValue(input.payload);
-			if (Object.keys(payload).some((key) => key !== "harnessProfileId")) {
+			if (Object.keys(payload).some((key) => key !== "harnessProfileId" && key !== "agentMode")) {
 				return { ok: false, status: "failed", code: "invalid_harness_profile_payload", operation, currentRevision };
 			}
 			let targetHarnessProfile = source.harnessProfile;
+			if (Object.hasOwn(payload, "agentMode")) {
+				const resolved = resolveAgentMode(payload.agentMode);
+				if (!resolved.ok) return { ok: false, status: "failed", code: resolved.code, operation, currentRevision };
+				targetHarnessProfile = resolved.ref;
+			}
 			if (Object.hasOwn(payload, "harnessProfileId")) {
 				const resolved = resolveHarnessProfileId(payload.harnessProfileId);
 				if (!resolved.ok) {
 					return { ok: false, status: "failed", code: resolved.error.code, operation, currentRevision };
+				}
+				if (Object.hasOwn(payload, "agentMode") && resolved.ref.descriptorDigest.digest !== targetHarnessProfile.descriptorDigest.digest) {
+					return { ok: false, status: "failed", code: "agent_mode_profile_conflict", operation, currentRevision };
 				}
 				targetHarnessProfile = resolved.ref;
 			}

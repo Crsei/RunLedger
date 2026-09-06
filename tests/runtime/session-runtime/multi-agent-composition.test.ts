@@ -213,6 +213,10 @@ describe("SessionRuntime multi-agent composition", () => {
 			expect(multiAgent?.tools.map((tool) => tool.name)).toEqual(["spawn_agent"]);
 			expect(productionSource?.tools.some((tool) => tool.name === "spawn_agent")).toBe(false);
 			expect(productionDomain?.controller.toolCount).toBe((productionSource?.tools.length ?? 0) + 1);
+			const receiptEvent = store.replaySessionEvents(sessionId).find((event) => event.eventType === "harness.composed");
+			const receipt = JSON.parse(receiptEvent!.payloadJson) as { tools: { name: string }[] };
+			expect(receipt.tools.map((tool) => tool.name)).toContain("spawn_agent");
+			expect(receipt.tools).toHaveLength(productionDomain!.controller.toolCount);
 			expect(embedded.handle.supports("agent.inspect")).toBe(true);
 
 			const rootEvent = store.replaySessionEvents(sessionId).find((event) => event.eventType === "agent.root_registered");

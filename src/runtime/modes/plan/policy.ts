@@ -12,6 +12,8 @@ import type { PlanModeState } from "./types.ts";
 export interface PlanModeCapabilityRequest {
 	readonly state: PlanModeState | undefined;
 	readonly claims: readonly CapabilityClaim[];
+	/** immutable Plan harness 在 workflow 退出后仍不开放 workspace effects。 */
+	readonly enforceReadonly?: boolean;
 }
 
 export type PlanModeCapabilityDecision =
@@ -37,7 +39,7 @@ const RESTRICTED_STATUSES = new Set<PlanModeState["status"]>(["active", "awaitin
 export function evaluatePlanModeCapabilities(request: PlanModeCapabilityRequest): PlanModeCapabilityDecision {
 	const state = request.state;
 	const modeRevision = state?.revision ?? 0;
-	if (state === undefined || !RESTRICTED_STATUSES.has(state.status)) return { decision: "allow", modeRevision };
+	if (!request.enforceReadonly && (state === undefined || !RESTRICTED_STATUSES.has(state.status))) return { decision: "allow", modeRevision };
 	if (request.claims.length === 0) return { decision: "deny", modeRevision, reasonCode: "plan_mode_unknown_effect" };
 	for (const claim of request.claims) {
 		const denied = denyReason(claim);
@@ -57,5 +59,6 @@ function denyReason(claim: CapabilityClaim): PlanModeDenyReason | undefined {
 		case "credential": return "plan_mode_credential_denied";
 		case "deploy": return "plan_mode_deploy_denied";
 		case "cross_workspace": return "plan_mode_cross_workspace_denied";
+		default: return "plan_mode_unknown_effect";
 	}
 }

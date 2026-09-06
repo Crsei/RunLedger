@@ -1,3 +1,4 @@
+import type { RuntimeSelectionOverrides } from "../runtime/interactive-session-controller.ts";
 import { createKimiCodeDeviceIdProvider } from "../storage/kimi-device-id.ts";
 /**
  * RunLedger CLI 主入口(R7:Session Owner path)。
@@ -41,7 +42,8 @@ import { openSessionDatabase } from "../storage/session-store/database.ts";
 import { checkStoreCompatibility, migrateSessionStoreToCurrent, readStoreHeader } from "../storage/session-store/schema-compatibility.ts";
 import { installSessionStoreSchema, SESSION_STORE_SCHEMA_VERSION } from "../storage/session-store/schema.ts";
 import { SessionStore } from "../storage/session-store/session-store.ts";
-import { isHarnessProfileRef, resolveHarnessProfileId, type HarnessProfileRef } from "../runtime/harness-profiles/index.ts";
+import { resolveAgentMode, type AgentMode } from "../runtime/harness-profiles/agent-mode.ts";
+import { isHarnessProfileRef, type HarnessProfileRef } from "../runtime/harness-profiles/index.ts";
 import { OwnerStore } from "../storage/session-store/owner-store.ts";
 import { createEmbeddedSessionRuntime, type EmbeddedSessionRuntimeResult, type SessionWorkspaceFactory } from "./embedded-session-runtime.ts";
 import { SessionInteractiveController, type SessionInteractiveSnapshot } from "./session-interactive-controller.ts";
@@ -207,7 +209,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	let currentWorkspace: SessionWorkspaceIdentity;
 	try {
 		currentWorkspace = await resolveSessionWorkspaceIdentity(cwd, worktreeGit);
-		sessionId = await resolveSessionId(store, args, cwd, worktreeGit);
+		sessionId = await resolveSessionId(store, args, cwd, worktreeGit, settings.agentMode);
   } catch (error) {
     db.close();
     process.stderr.write(`[runledger] ${error instanceof Error ? error.message : String(error)}\n`);
@@ -264,6 +266,8 @@ export async function main(argv: readonly string[]): Promise<void> {
       workspace: adapters.value,
     });
   };
+  const selectionOverridesBySession = new Map<string, RuntimeSelectionOverrides>();
+  const retainedTransitionSources = new Set<string>();
   const ownedRuntimeRegistry = new Map<string, EmbeddedSessionRuntimeResult>();
   const openView = async (targetSessionId: string): Promise<CliSessionView> => {
 	const target = store.getSession(targetSessionId);
@@ -286,7 +290,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 		traceRecorderFactory,
 		modelRequestRouter: modelRequestRouters.forSession({ sessionId: typedSessionId, workspaceStorageKey }),
 		multiAgent: await multiAgentPolicySourcesFor(typedSessionId),
-        overrides: {
+        overrides: selectionOverridesBySession.get(targetSessionId) ?? {
           ...(args.provider === undefined ? {} : { provider: args.provider }),
           ...(args.model === undefined ? {} : { model: args.model }),
           ...(args.thinking === undefined ? {} : { thinkingLevel: args.thinking }),
@@ -310,6 +314,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	  processOverlayClient,
 	  processOverlayController,
 	  harnessProfile: snapshot.harnessProfile,
+	  harnessToolNames: snapshot.harnessToolNames,
 	  permissionProfile: snapshot.permissionProfile,
 	};
   };
@@ -353,7 +358,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       detach: async (view) => {
         view.controller.dispose();
         await view.embedded.handle.close().catch(() => undefined);
-        await pauseIfLastAttachment(view.embedded, false);
+        await pauseIfLastAttachment(view.embedded, false, retainedTransitionSources.has(view.sessionId));
         if (view.embedded.runtime !== undefined && (view.embedded.runtime.runtimeState === "stopping" || view.embedded.runtime.runtimeState === "fenced")) {
           await view.embedded.runtime.waitForStopped();
           ownedRuntimeRegistry.delete(view.sessionId);
@@ -370,7 +375,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       if (entry.runtime === undefined) return;
       if (entry.server.connectionCounts() === 0) await entry.runtime.shutdownAfterLastAttachment("paused");
       await entry.runtime.waitForStopped();
-      if (entry.ownerFence !== undefined) entry.store.reclaimSessionWithoutUserMessages(entry.ownerFence);
+      if (entry.ownerFence !== undefined && !retainedTransitionSources.has(entry.ownerFence.sessionId)) entry.store.reclaimSessionWithoutUserMessages(entry.ownerFence);
     }));
     db.close();
     if (process.env.RUNLEDGER_DEBUG === "1") {
@@ -404,6 +409,7 @@ export async function main(argv: readonly string[]): Promise<void> {
       version: VERSION,
       logoLetters: settings.logo,
 	  harnessProfile: view.harnessProfile,
+	  harnessToolNames: view.harnessToolNames,
 	  permissionProfile: view.permissionProfile,
     });
     view.embedded.handle.transport.setReverseRequestHandler((frame, signal) => activeInteractive.handleSessionReverseRequest(frame, signal));
@@ -416,7 +422,19 @@ export async function main(argv: readonly string[]): Promise<void> {
     process.stdin.once("end", onStdinEnd);
     if (process.stdin.readableEnded) queueMicrotask(onStdinEnd);
     try {
-      return await activeInteractive.run();
+      const intent = await activeInteractive.run();
+      if (intent.kind === "switch") retainedTransitionSources.add(view.sessionId);
+      if (intent.kind === "switch" && intent.action === "new") {
+        const selection = view.controller.currentSelection;
+        const overrides: RuntimeSelectionOverrides = {
+          ...(selection.provider === undefined ? {} : { provider: selection.provider }),
+          ...(selection.model === undefined ? {} : { model: selection.model.id }),
+          thinkingLevel: selection.thinkingLevel,
+        };
+        selectionOverridesBySession.set(intent.target.sessionId, overrides);
+        selectionOverridesBySession.set(view.sessionId, overrides);
+      }
+      return intent;
     } finally {
       process.off("SIGINT", onSigint);
       process.stdin.off("end", onStdinEnd);
@@ -431,6 +449,7 @@ interface CliSessionView {
   readonly processOverlayClient: ProcessOverlayHostClient | undefined;
   readonly processOverlayController: ProcessOverlayController | undefined;
 	readonly harnessProfile: HarnessProfileRef;
+	readonly harnessToolNames?: readonly string[];
 	readonly permissionProfile: string;
 }
 
@@ -440,7 +459,7 @@ interface CliSessionView {
  * (attachment count 决定 runtime lifetime)。attach 分支(runtime undefined)
  * 或 owner 已在 count=0 回调中 pause 时均为幂等空操作。
  */
-export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResult, waitForRemote = true): Promise<void> {
+export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResult, waitForRemote = true, retainSession = false): Promise<void> {
   const runtime = embedded.runtime;
   if (runtime === undefined) return;
   if (!waitForRemote) {
@@ -453,7 +472,7 @@ export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResu
       return;
     }
     await runtime.shutdownAfterLastAttachment("paused");
-    if (embedded.ownerFence !== undefined) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
+    if (embedded.ownerFence !== undefined && !retainSession) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
     return;
   }
   // 等待本地 socket close 事件被 server 处理(attachment count 收敛到真值)。
@@ -467,12 +486,12 @@ export async function pauseIfLastAttachment(embedded: EmbeddedSessionRuntimeResu
     }
     if (waitForRemote) {
       await runtime.waitForStopped();
-      if (embedded.ownerFence !== undefined) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
+      if (embedded.ownerFence !== undefined && !retainSession) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
     }
     return;
   }
   await runtime.shutdownAfterLastAttachment("paused");
-  if (embedded.ownerFence !== undefined) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
+  if (embedded.ownerFence !== undefined && !retainSession) embedded.store.reclaimSessionWithoutUserMessages(embedded.ownerFence);
 }
 
 /** §8.1/§8.2:从 SQLite catalog resolve sessionId(create/open/resume/fork)。 */
@@ -481,15 +500,16 @@ export async function resolveSessionId(
 	args: ReturnType<typeof parseArgs>["args"],
 	cwd: string,
 	git?: GitCommandPort,
+	defaultMode?: AgentMode,
 ): Promise<SessionId> {
 	const mode = sessionOpenMode(args);
-	if (mode !== "create" && args.harnessProfile !== undefined) {
-		throw new Error("--harness-profile is only valid when creating a new Session");
+	if (mode !== "create" && (args.harnessProfile !== undefined || args.mode !== undefined)) {
+		throw new Error("--mode / --harness-profile is only valid when creating a new Session");
 	}
 	const workspace = await resolveSessionWorkspaceIdentity(cwd, git);
 	if (mode === "create") {
-		const profile = resolveHarnessProfileId(args.harnessProfile ?? "standard");
-		if (!profile.ok) throw new Error(`${profile.error.code}: ${profile.error.message}`);
+		const profile = resolveAgentMode(args.mode ?? (args.harnessProfile === "standard" ? "default" : args.harnessProfile) ?? defaultMode ?? "default");
+		if (!profile.ok) throw new Error(profile.code);
 		const sessionId = createRuntimeId("session", `cwd-${cwd.replace(/[^A-Za-z0-9._~-]/g, "_").slice(0, 40)}-${Date.now().toString(36)}`);
 		store.createSession({
 			sessionId,
@@ -568,6 +588,7 @@ export async function fetchDomainSnapshot(embedded: EmbeddedSessionRuntimeResult
 		warnings: Array.isArray(body.warnings) ? (body.warnings as string[]) : [],
 		auditEntries: Array.isArray(body.auditEntries) ? (body.auditEntries as never[]) : [],
 		selection: (body.selection ?? { thinkingLevel: "off" }) as SessionInteractiveSnapshot["selection"],
+		harnessToolNames: Array.isArray(body.harnessToolNames) && body.harnessToolNames.every((name) => typeof name === "string") ? body.harnessToolNames : undefined,
 		toolCount: typeof body.toolCount === "number" ? body.toolCount : 0,
 		eventCursor: typeof body.headSequence === "number" && Number.isSafeInteger(body.headSequence) ? body.headSequence : 0,
 		driverRevision: 0,

@@ -1,3 +1,4 @@
+import { agentModeIdentityPresentation } from "../../runtime/harness-profiles/agent-mode.ts";
 /** 当前 Session 的只读 Harness/Security/Thinking 身份条。 */
 
 import type { Component } from "../primitives.ts";
@@ -5,8 +6,8 @@ import { fitToWidth } from "./render-width.ts";
 
 export interface SessionProfileHeaderProps {
 	readonly harnessProfile: {
-		readonly id: "standard" | "minimal";
-		readonly version: 1;
+		readonly id: "standard" | "minimal" | "plan";
+		readonly version: 1 | 2;
 	};
 	readonly permissionProfile: string;
 	readonly thinkingLevel: () => string;
@@ -24,7 +25,8 @@ export class SessionProfileHeaderComponent implements Component {
 	}
 
 	public render(width: number): string[] {
-		const line = `Harness: ${this.props.harnessProfile.id}@${this.props.harnessProfile.version}`
+		const mode = agentModeIdentityPresentation(this.props.harnessProfile);
+		const line = `Mode: ${mode?.mode ?? "unavailable"}  Harness: ${this.props.harnessProfile.id}@${this.props.harnessProfile.version}`
 			+ `  Permission: ${this.props.permissionProfile}`
 			+ `  Thinking: ${this.props.thinkingLevel()}`;
 		return [fitToWidth(line, width)];

@@ -8,7 +8,7 @@
 | [Runtime 06](06-session-owner-runtime-replacement-plan.md) | Session Owner、生命周期、迁移与生产验收 |
 | [Runtime 08](08-bounded-multi-agent-system-plan.md) | bounded multi-agent 与明确非目标 |
 | [Runtime 09](09-minimal-harness-profile-implementation-plan.md) | 不可变 Harness Profile 的现有实现与验收 |
-| [Runtime 10：Agent Mode 入口](10-agent-mode-entry-implementation-plan.md) | planned：`/mode`、CLI 与 Footer；产品决策及 shell-only/Plan 后续依赖 |
+| [Runtime 10：Agent Mode 入口](10-agent-mode-entry-implementation-plan.md) | `/mode`、CLI/config/Footer、minimal@2 与 plan@1；实施及各类验收门禁 |
 | [Trace](trace/README.md) | 记录与导出专题 |
 
 完整开发模块导航见 [开发索引](../00-index.md)。

@@ -10,6 +10,7 @@
  * typed corruption/migration error;checkpoint 自身损坏不能阻止可验证的 full replay。
  */
 
+import { SessionStoreError } from "../../storage/session-store/session-store-error.ts";
 import type { SessionStore, SessionEventRecord } from "../../storage/session-store/session-store.ts";
 import { validateCheckpointCache, type CheckpointSnapshot } from "./checkpoint.ts";
 import type { SessionCheckpointDescriptor } from "../session-owner/types.ts";
@@ -53,7 +54,12 @@ export function restoreSession(store: SessionStore, sessionId: string, options: 
 	try {
 		record = store.getSession(sessionId);
 	} catch (error) {
-		return { ok: false, code: "harness_profile_corruption", detail: error instanceof Error ? error.message : String(error) };
+		return {
+			ok: false,
+			code: error instanceof SessionStoreError && error.code === "projection_invalid" && error.message.startsWith("invalid stored harness profile:")
+				? "harness_profile_corruption" : "corruption",
+			detail: error instanceof Error ? error.message : String(error),
+		};
 	}
 	if (record === undefined) {
 		return { ok: false, code: "session_not_found", detail: `session not found: ${sessionId}` };

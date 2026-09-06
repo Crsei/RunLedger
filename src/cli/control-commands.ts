@@ -82,7 +82,7 @@ const ACTIONS: Readonly<Record<ControlGroup, ReadonlySet<string>>> = {
 	skill: new Set(["list", "provider", "trust", "untrust"]),
 	hook: new Set(["list"]),
 	mcp: new Set(["list", "inspect", "doctor", "restart"]),
-	plan: new Set(["inspect", "enter", "activate", "write", "approve", "cancel"]),
+	plan: new Set(["inspect", "enter", "activate", "write", "request_approval", "approve", "reject", "cancel", "settle_exit"]),
 	compact: new Set(["run", "list"]),
 	context: new Set(["inspect", "assemble"]),
 	memory: new Set(["search", "get", "projection", "approve", "reject", "revoke"]),
@@ -93,7 +93,7 @@ const MUTATIONS = new Set([
 	"worktree.create", "worktree.resume", "worktree.release",
 	"plugin.reload", "plugin.enable", "plugin.disable", "plugin.trust", "plugin.untrust",
 	"skill.trust", "skill.untrust",
-	"plan.enter", "plan.activate", "plan.write", "plan.approve", "plan.cancel",
+	"plan.enter", "plan.activate", "plan.write", "plan.approve", "plan.reject", "plan.request_approval", "plan.cancel", "plan.settle_exit",
 	"compact.run", "context.assemble",
 	"memory.propose", "memory.approve", "memory.reject", "memory.revoke",
 ]);
@@ -125,7 +125,7 @@ export function parseControlCommand(positional: readonly string[]): ControlComma
 	if (group === "memory" && rawAction === "search" && args.length < 1) return { ok: false, error: "search requires a query" };
 	if (group === "remember" && args.length < 1) return { ok: false, error: "remember requires a proposal text" };
 	if (group === "plan" && rawAction === "write" && args.length < 1) return { ok: false, error: "write requires plan text" };
-	if (group === "plan" && rawAction === "approve" && args.length < 1) return { ok: false, error: "approve requires an approval id" };
+	if (group === "plan" && ["approve", "reject"].includes(rawAction) && args.length < 1) return { ok: false, error: `${rawAction} requires an approval id` };
 	if (group === "memory" && rawAction === "approve" && args.length < 2) return { ok: false, error: "approve requires a proposal id and approval reference JSON" };
 	if (group === "memory" && (rawAction === "reject" || rawAction === "revoke") && args.length < 1) return { ok: false, error: `${rawAction} requires an id` };
 	if (group === "worktree" && rawAction === "release" && args[0] !== "confirm") return { ok: false, error: "release requires the explicit confirm token" };
@@ -205,8 +205,9 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			body.content = command.args.join(" ");
 			break;
 		case "plan.approve":
+		case "plan.reject":
 			body.approvalId = command.args[0];
-			body.decision = "approved";
+			body.decision = command.action === "reject" ? "rejected" : "approved";
 			break;
 		case "compact.run":
 			body.reason = "manual";
@@ -232,7 +233,7 @@ export function controlCommandRequest(command: ControlCommand): HostControlReque
 			break;
 	}
 	return {
-		operation: key === "remember.propose" ? "memory.propose" : key === "plan.approve" ? "plan.resolve_approval" : key === "skill.provider" ? `skill.provider.${command.args[0] ?? "list"}` : key,
+		operation: key === "remember.propose" ? "memory.propose" : (key === "plan.approve" || key === "plan.reject") ? "plan.resolve_approval" : key === "skill.provider" ? `skill.provider.${command.args[0] ?? "list"}` : key,
 		body,
 		mutation: command.mutation,
 	};
@@ -264,15 +265,15 @@ function integerValue(value: unknown): number | undefined {
 export function controlCommandBody(command: ControlCommand, domainRevision: number, inspectedBody: Record<string, unknown> = {}): Record<string, unknown> {
 	const request = controlCommandRequest(command);
 	const body: Record<string, unknown> = { ...request.body };
-	if (command.mutation) body.expectedDomainRevision = domainRevision;
+	if (command.mutation && command.group !== "plan") body.expectedDomainRevision = domainRevision;
 	if (command.group === "plan") {
 		const state = objectValue(inspectedBody.state);
 		const revision = integerValue(state?.revision);
-		if (revision !== undefined && ["enter", "activate", "write", "approve", "cancel"].includes(command.action)) body.expectedRevision = revision;
+		if (revision !== undefined && command.mutation) body.expectedRevision = revision;
 		const plan = objectValue(state?.plan);
 		const planRevision = integerValue(plan?.revision);
-		if (command.action === "write" && planRevision !== undefined) body.expectedPlanRevision = planRevision;
-		if (command.action === "approve" && planRevision !== undefined && objectValue(plan)?.digest !== undefined) {
+		if (["write", "activate"].includes(command.action) && planRevision !== undefined) body.expectedPlanRevision = planRevision;
+		if (["approve", "reject", "request_approval"].includes(command.action) && planRevision !== undefined && objectValue(plan)?.digest !== undefined) {
 			body.expectedPlanRevision = planRevision;
 			body.expectedPlanDigest = objectValue(plan)?.digest;
 		}
@@ -288,7 +289,7 @@ export function controlCommandHelp(): string {
 		"  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]",
 		"  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>",
 		"  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]",
-		"  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel",
+		"  runledger plan inspect|enter|activate|write|request_approval|approve|reject <approval-id>|cancel|settle_exit",
 		"  runledger compact list|run '<source-range-json>' <transcript>",
 		"  runledger memory search|get|approve|reject|revoke   runledger remember <text>",
 	].join("\n");

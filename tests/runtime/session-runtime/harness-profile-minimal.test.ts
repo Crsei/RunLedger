@@ -1,3 +1,4 @@
+import { shellOnlyHarnessProfileRef } from "../../../src/runtime/harness-profiles/resolver.ts";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,7 +60,7 @@ type InspectableController = SessionDomainPort["controller"] & {
 };
 
 describe("minimal@1 production composition", () => {
-	it("projects the durable profile to the exact provider-facing prompt, tools, and empty-source context", async () => {
+	it.each([minimalHarnessProfileRef(), shellOnlyHarnessProfileRef()])("projects durable profile $version to the exact provider-facing surface", async (profile) => {
 		const root = mkdtempSync(join(tmpdir(), "runledger-harness-minimal-"));
 		roots.push(root);
 		const home = join(root, "home");
@@ -75,7 +76,7 @@ describe("minimal@1 production composition", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "minimal-production-composition"),
 			repositoryId: createRuntimeId("repository", "minimal-production-composition"),
-			harnessProfile: minimalHarnessProfileRef(),
+			harnessProfile: profile,
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -93,7 +94,7 @@ describe("minimal@1 production composition", () => {
 					layout,
 					settings,
 					models,
-					securitySources: noPromptTestSecurity,
+					securitySources: profile.version === 2 ? [{ source: "cli", read: async () => ({ status: "available", text: JSON.stringify({ profile: "danger-full-access", bashAnalyzerMode: "ast" }) }) }] : noPromptTestSecurity,
 					traceRecorderFactory: {
 						create: async (input) => {
 							traceInputs.push(input);
@@ -108,7 +109,7 @@ describe("minimal@1 production composition", () => {
 			const controller = domain.controller as InspectableController;
 
 			expect(controller.systemPrompt).toBe(MINIMAL_HARNESS_SYSTEM_PROMPT);
-			expect(controller.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
+			expect(controller.tools.map((tool) => tool.name)).toEqual(profile.version === 1 ? ["bash", "edit"] : ["bash"]);
 			const parameters = controller.tools[0]!.parameters;
 			if (!("properties" in parameters) || typeof parameters.properties !== "object" || parameters.properties === null) throw new Error("expected object tool schema");
 			expect(Object.keys(parameters.properties)).toEqual([
@@ -127,7 +128,7 @@ describe("minimal@1 production composition", () => {
 					output_format: bashSchema.properties.output_format,
 				},
 			});
-			expect(controller.tools[1]!.parameters).toEqual(editSchema);
+			if (profile.version === 1) expect(controller.tools[1]!.parameters).toEqual(editSchema);
 			expect(controller.extensionHookRuntime).toBeUndefined();
 			expect(controller.extensionTurnAdmission).toBeUndefined();
 			expect(controller.extensionTurnAbort).toBeUndefined();
@@ -169,7 +170,7 @@ describe("minimal@1 production composition", () => {
 			expect(compositionReceipt).toMatchObject({
 				sessionId,
 				ownerGeneration: embedded.ownerFence?.generation,
-				profile: minimalHarnessProfileRef(),
+				profile,
 				extensions: { tools: false, context: false, hooks: false, lifecycle: false },
 				multiAgent: false,
 			});
@@ -180,7 +181,7 @@ describe("minimal@1 production composition", () => {
 				ownerGeneration: embedded.ownerFence?.generation,
 				metadata: {
 					harnessProfileId: "minimal",
-					harnessProfileVersion: 1,
+					harnessProfileVersion: profile.version,
 					harnessCompositionDigest: (compositionReceipt.compositionDigest as { readonly digest: string }).digest,
 				},
 			}]);
@@ -190,19 +191,32 @@ describe("minimal@1 production composition", () => {
 				{ command: "printf minimal-governed-bash" },
 			);
 			expect(bashResult).toMatchObject({ isError: false, details: { exitCode: 0 } });
-			const editResult = await controller.tools[1]!.execute(
+			const editResult = profile.version === 2 ? await controller.tools[0]!.execute(createRuntimeId("toolCall", "minimal-shell-write"), { command: "printf 'after\\n' > minimal-edit.txt" }) : await controller.tools[1]!.execute(
 				createRuntimeId("toolCall", "minimal-governed-edit"),
 				{
 					path: "minimal-edit.txt",
 					edits: [{ oldText: "before", newText: "after" }],
 				},
 			);
-			expect(editResult.isError).not.toBe(true);
+			expect(editResult.isError, JSON.stringify(editResult)).not.toBe(true);
 			expect(readFileSync(join(root, "minimal-edit.txt"), "utf8")).toBe("after\n");
+			if (profile.version === 2) {
+				const output = await controller.tools[0]!.execute(createRuntimeId("toolCall", "shell-output-bound"), { command: "printf '%0400000d' 0" });
+				expect(output).toMatchObject({ isError: false, details: { stdoutTruncated: 300_000 } });
+				const timeout = await controller.tools[0]!.execute(createRuntimeId("toolCall", "shell-timeout"), { command: "sleep 2", timeout: 50 });
+				expect(timeout.isError).toBe(true);
+				const abort = new AbortController();
+				const timer = setTimeout(() => abort.abort(), 100);
+				try {
+					const cancelled = await controller.tools[0]!.execute(createRuntimeId("toolCall", "shell-cancel"), { command: "sleep 3", timeout: 5_000 }, abort.signal);
+					expect(cancelled.isError).toBe(true);
+				} finally { clearTimeout(timer); }
+			}
+
 			const settledEffects = store.listAllAttemptReceipts(sessionId)
 				.filter((receipt) => receipt.outcome === "committed")
 				.map((receipt) => receipt.effectClass);
-			expect(settledEffects).toEqual(expect.arrayContaining(["process_spawn", "workspace_mutation"]));
+			expect(settledEffects).toEqual(expect.arrayContaining(profile.version === 1 ? ["process_spawn", "workspace_mutation"] : ["process_spawn"]));
 		} finally {
 			await embedded?.handle.close().catch(() => undefined);
 			await embedded?.runtime?.shutdownAfterLastAttachment("paused");
@@ -210,7 +224,7 @@ describe("minimal@1 production composition", () => {
 		}
 	});
 
-	it("keeps the exact minimal surface while a restrictive permission profile rejects mutation", async () => {
+	it.each([minimalHarnessProfileRef(), shellOnlyHarnessProfileRef()])("keeps minimal $version surface while restrictive permission rejects mutation", async (profile) => {
 		const root = mkdtempSync(join(tmpdir(), "runledger-harness-minimal-readonly-"));
 		roots.push(root);
 		const home = join(root, "home");
@@ -227,7 +241,7 @@ describe("minimal@1 production composition", () => {
 			sessionId,
 			workspaceId: createRuntimeId("workspace", "minimal-readonly-permission"),
 			repositoryId: createRuntimeId("repository", "minimal-readonly-permission"),
-			harnessProfile: minimalHarnessProfileRef(),
+			harnessProfile: profile,
 			settingsDigest: "d".repeat(64),
 		});
 		const settings = await loadProjectSettings({ layout });
@@ -257,8 +271,11 @@ describe("minimal@1 production composition", () => {
 			const domain = (embedded.runtime as unknown as { readonly domain?: SessionDomainPort }).domain;
 			if (domain === undefined) throw new Error("production domain was not assembled");
 			const controller = domain.controller as InspectableController;
-			expect(controller.tools.map((tool) => tool.name)).toEqual(["bash", "edit"]);
-			await expect(controller.tools[1]!.execute(
+			expect(controller.tools.map((tool) => tool.name)).toEqual(profile.version === 1 ? ["bash", "edit"] : ["bash"]);
+			if (profile.version === 2) {
+				const result = await controller.tools[0]!.execute(createRuntimeId("toolCall", "minimal-readonly-shell"), { command: "printf changed > readonly-edit.txt" });
+				expect(result).toMatchObject({ isError: true, details: { errorCode: "policy_denied" } });
+			} else await expect(controller.tools[1]!.execute(
 				createRuntimeId("toolCall", "minimal-readonly-edit"),
 				{ path: "readonly-edit.txt", edits: [{ oldText: "before", newText: "after" }] },
 			)).rejects.toThrow(/denied|policy|write|allowed roots/u);
@@ -266,7 +283,7 @@ describe("minimal@1 production composition", () => {
 			expect(store.listAllAttemptReceipts(sessionId).map((receipt) => ({
 				effectClass: receipt.effectClass,
 				outcome: receipt.outcome,
-			}))).toEqual([
+			}))).toEqual(profile.version === 2 ? [] : [
 				{ effectClass: "workspace_mutation", outcome: "started" },
 				{ effectClass: "workspace_mutation", outcome: "uncertain" },
 			]);

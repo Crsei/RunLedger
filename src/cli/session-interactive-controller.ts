@@ -43,6 +43,7 @@ export interface SessionInteractiveSnapshot {
 	readonly auditEntries: readonly LedgerEntry[];
 	readonly selection: RuntimeSelection;
 	readonly toolCount: number;
+	readonly harnessToolNames?: readonly string[];
 	readonly eventCursor: number;
 	readonly driverRevision: number;
 	readonly agentRuns?: readonly AgentRunSummary[];

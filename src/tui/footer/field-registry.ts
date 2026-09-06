@@ -19,6 +19,9 @@ export interface FooterSnapshot {
 	};
 	readonly providerId?: string;
 	readonly modelId: string;
+	readonly agentMode?: string;
+	readonly toolsSummary?: string;
+	readonly permissionProfile?: string;
 	readonly thinkingLevel?: ModelThinkingLevel;
 	readonly workspaceDisplayAbsolutePath?: string;
 	readonly gitBranchLabel?: string;
@@ -206,6 +209,9 @@ function projectedField(definition: FooterFieldDefinition, text: string): Projec
 function builtinFooterFields(): readonly FooterFieldDefinition[] {
 	return [
 		field("activity.queue", "activity", 10, "metadata", queueText),
+		{ ...field("identity.mode", "identity", 0, "state", (snapshot) => snapshot.agentMode === undefined ? undefined : `Mode: ${snapshot.agentMode}`), minWidth: 13 },
+		field("identity.tools", "identity", 45, "metadata", (snapshot) => snapshot.toolsSummary === undefined ? undefined : `Tools: ${snapshot.toolsSummary}`, 10),
+		field("identity.permission", "identity", 46, "metadata", (snapshot) => snapshot.permissionProfile === undefined ? undefined : `Permission: ${snapshot.permissionProfile}`, 60),
 		field("identity.state", "identity", 10, "state", statusText),
 		field("identity.path", "identity", 20, "path", (snapshot) => snapshot.workspaceDisplayAbsolutePath),
 		field("identity.branch", "identity", 30, "branch", (snapshot) => snapshot.gitBranchLabel, 50),

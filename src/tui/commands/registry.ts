@@ -28,6 +28,8 @@ export type SlashCommandActionType =
   | "ui.clear"
   | "ui.scrollbar.toggle"
   | "ui.quit"
+  | "session.mode"
+  | "session.mode.minimal"
   | "session.create"
   | "session.resume"
   | "session.fork"
@@ -196,6 +198,16 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
       availableDuringTask: false,
       unavailableDuringTaskMessage: "Configuration commands are available when the current turn is idle.",
     }),
+    command("mode", "Select agent mode (creates a new Session)", 10.1, {
+      actionType: "session.mode", category: "session", policy: IDLE_ONLY_POLICY,
+      supportsInlineArgs: true, availableDuringTask: false,
+      usage: "[default|minimal|plan]",
+      argumentSchema: [schema("mode", "Agent mode", false)],
+    }),
+    command("minimal", "Create a shell-only Session", 10.2, {
+      actionType: "session.mode.minimal", category: "session", policy: IDLE_ONLY_POLICY,
+      supportsInlineArgs: true, availableDuringTask: false, hiddenInFullList: true,
+    }),
     command("thinking", "Switch thinking level", 11, {
       actionType: "config.thinking",
       category: "config",
@@ -245,7 +257,7 @@ export function builtinCommandDescriptors(): readonly RegisteredSlashCommand[] {
 	    command("skills", "List discovered skills", 19, { actionType: "extension.skills", category: "extensions", policy: READONLY_POLICY }),
 	    command("skillsproviders", "List skill discovery providers", 20, { actionType: "extension.skills.providers", category: "extensions", policy: READONLY_POLICY }),
 	    command("hooks", "List configured hooks", 21, { actionType: "extension.hooks", category: "extensions", policy: READONLY_POLICY }),
-	    command("plan", "Inspect Plan Mode state", 22, {
+	    command("plan", "Inspect or review the current plan", 22, {
       actionType: "plan.inspect",
       category: "plan",
       policy: READONLY_POLICY,

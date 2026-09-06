@@ -146,6 +146,36 @@ describe("Harness Profile authority-first recovery", () => {
 		store.database().close();
 	});
 
+	it("rejects a changed tool table even when its stored aggregate digests are retained", () => {
+		const { store, sessionId, fence } = fixture();
+		appendReceipt(store, fence, {
+			...standardReceipt(sessionId),
+			tools: [{ name: "injected", descriptorDigest: runtimeDigest("injected") }],
+		}, "tool-table-tamper");
+		expect(restoreSession(store, sessionId)).toMatchObject({
+			ok: false,
+			code: "harness_composition_corruption",
+			diagnostic: { code: "tool_manifest_mismatch" },
+		});
+		store.database().close();
+	});
+
+	it("rejects self-consistent receipt flags that violate the builtin descriptor", () => {
+		const { store, sessionId, fence } = fixture();
+		const receipt = { ...standardReceipt(sessionId), multiAgent: false };
+		const { manifestFormat, profile: ref, promptDigest, toolManifestDigest, contextPolicyDigest, extensions, multiAgent } = receipt;
+		appendReceipt(store, fence, {
+			...receipt,
+			compositionDigest: runtimeDigest({ manifestFormat, ref, promptDigest, toolManifestDigest, contextPolicyDigest, extensions, multiAgent }),
+		}, "descriptor-tamper");
+		expect(restoreSession(store, sessionId)).toMatchObject({
+			ok: false,
+			code: "harness_composition_corruption",
+			diagnostic: { code: "descriptor_mismatch" },
+		});
+		store.database().close();
+	});
+
 	it("rejects duplicate composition receipts for one owner generation", () => {
 		const { store, sessionId, fence } = fixture();
 		const receipt = standardReceipt(sessionId);

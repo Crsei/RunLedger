@@ -22,7 +22,7 @@ describe("slashPopupFilterToken", () => {
 describe("SlashCommandPopup 过滤", () => {
   it("空过滤 → 全量列表且不隐藏别名命令", () => {
     const popup = new SlashCommandPopup({ commands, theme });
-    expect(names(popup)).toEqual(commands.map((entry) => entry.canonicalName));
+    expect(names(popup)).toEqual(commands.filter((entry) => !entry.hiddenInFullList).map((entry) => entry.canonicalName));
     expect(visible(popup)[0]).toContain("/help");
   });
 
@@ -37,9 +37,9 @@ describe("SlashCommandPopup 过滤", () => {
   it("非空过滤:exact 匹配在前,prefix 匹配在后,保持注册表顺序", () => {
     const popup = new SlashCommandPopup({ commands, theme });
     popup.setFilter("/mo");
-    expect(names(popup)).toEqual(["model"]);
+    expect(names(popup)).toEqual(["model", "mode"]);
     popup.setFilter("/m");
-    expect(names(popup)).toEqual(["model", "mcp", "memory"]);
+    expect(names(popup)).toEqual(["model", "mode", "minimal", "mcp", "memory"]);
     popup.setFilter("/s");
     expect(popup.getVisibleRows().map((row) => row.name)).toEqual(["sessions", "skills", "skillsproviders", "scrollbar"]);
     expect(names(popup)).toEqual(["resume", "skills", "skillsproviders", "scrollbar"]);
@@ -117,7 +117,7 @@ describe("SlashCommandPopup 高亮与选中", () => {
     popup.moveDown();
     popup.moveDown();
     const lines = visible(popup);
-    expect(stripAnsi(lines[lines.length - 1]!)).toContain(`(4/${commands.length})`);
+    expect(stripAnsi(lines[lines.length - 1]!)).toContain(`(4/${commands.filter((entry) => !entry.hiddenInFullList).length})`);
     expect(lines.length).toBeLessThanOrEqual(6);
   });
 

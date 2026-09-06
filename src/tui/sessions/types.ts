@@ -45,8 +45,8 @@ export interface SessionCatalogItem {
 	readonly updatedAtMs: number;
 	readonly headSequence: number;
 	readonly driverRevision: number;
-	readonly harnessProfileId: "standard" | "minimal";
-	readonly harnessProfileVersion: 1;
+	readonly harnessProfileId: "standard" | "minimal" | "plan";
+	readonly harnessProfileVersion: 1 | 2;
 	readonly title?: string;
 	readonly titleSource?: "auto" | "user";
 	readonly titleUpdatedAtMs?: number;
@@ -108,8 +108,8 @@ export type SessionTransitionResult = {
 	readonly operation: "create" | "resume" | "fork";
 	readonly targetSessionId: string;
 	readonly catalogRevision: number;
-	readonly harnessProfileId: "standard" | "minimal";
-	readonly harnessProfileVersion: 1;
+	readonly harnessProfileId: "standard" | "minimal" | "plan";
+	readonly harnessProfileVersion: 1 | 2;
 	readonly attemptId?: string;
 };
 export type SessionWorkflowValue = SessionCatalogResult | SessionDetailResult | SessionPreviewResult | SessionTransitionResult | SessionTitleResult;

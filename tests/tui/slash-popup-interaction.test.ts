@@ -145,7 +145,7 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
 
       terminal.send("o");
       const rows2 = internals.slashPopup!.getVisibleRows().map((row) => row.command.canonicalName);
-      expect(rows2).toEqual(["model"]);
+      expect(rows2).toEqual(["model", "mode"]);
       expect(internals.slashPopup?.selectedItem()?.canonicalName).toBe("model");
     } finally {
       await quit(mode, internals, terminal, running);

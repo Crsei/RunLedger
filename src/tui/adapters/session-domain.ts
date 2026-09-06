@@ -78,6 +78,7 @@ export function createSessionDomainPort(domain: SessionDomainPortInput): Session
 		},
 		create: async (request) => transition(domain, request, "session.create", "create", {
 			...(request.harnessProfileId === undefined ? {} : { harnessProfileId: request.harnessProfileId }),
+			...(request.agentMode === undefined ? {} : { agentMode: request.agentMode }),
 		}),
 		resume: async (request) => transition(domain, request, "session.resume", "resume", { targetSessionId: request.targetSessionId }),
 			fork: async (request) => transition(domain, request, "session.fork", "fork", {
@@ -117,7 +118,7 @@ async function transition(
 	if (!result.ok) return result;
 	const targetSessionId = stringValue(result.value.targetSessionId);
 	const harnessProfileId = harnessProfileIdValue(result.value.harnessProfileId);
-	const harnessProfileVersion = result.value.harnessProfileVersion === 1 ? 1 : undefined;
+	const harnessProfileVersion = harnessProfileVersionValue(result.value.harnessProfileId, result.value.harnessProfileVersion);
 	if (targetSessionId === undefined || harnessProfileId === undefined || harnessProfileVersion === undefined) {
 		return malformed(request, operation);
 	}
@@ -176,7 +177,7 @@ function catalogItems(value: unknown): readonly SessionCatalogItem[] | undefined
 		const headSequence = integerValue(candidate.headSequence);
 		const driverRevision = integerValue(candidate.driverRevision);
 		const harnessProfileId = harnessProfileIdValue(candidate.harnessProfileId);
-		const harnessProfileVersion = candidate.harnessProfileVersion === 1 ? 1 : undefined;
+		const harnessProfileVersion = harnessProfileVersionValue(candidate.harnessProfileId, candidate.harnessProfileVersion);
 		if (sessionId === undefined || workspaceId === undefined || repositoryId === undefined || status === undefined
 			|| createdAtMs === undefined || updatedAtMs === undefined || headSequence === undefined || driverRevision === undefined
 			|| harnessProfileId === undefined || harnessProfileVersion === undefined
@@ -216,8 +217,8 @@ function stringValue(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function harnessProfileIdValue(value: unknown): "standard" | "minimal" | undefined {
-	return value === "standard" || value === "minimal" ? value : undefined;
+function harnessProfileIdValue(value: unknown): "standard" | "minimal" | "plan" | undefined {
+	return value === "standard" || value === "minimal" || value === "plan" ? value : undefined;
 }
 
 function optionalStringValue(value: unknown): string | undefined {
@@ -226,4 +227,8 @@ function optionalStringValue(value: unknown): string | undefined {
 
 function integerValue(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function harnessProfileVersionValue(id: unknown, value: unknown): 1 | 2 | undefined {
+	return value === 1 ? 1 : id === "minimal" && value === 2 ? 2 : undefined;
 }

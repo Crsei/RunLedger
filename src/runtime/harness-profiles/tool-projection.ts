@@ -5,7 +5,10 @@ import type { AgentTool } from "../types.ts";
 import { runtimeDigest, type RuntimeDigest } from "../protocol/foundation.ts";
 import { createMinimalBashDelegate, HarnessToolProjectionError } from "./minimal-bash.ts";
 
-const MINIMAL_V1_TOOL_MANIFEST_DIGEST = "3325e5598de3f84582ef89c65532a6c969355c3eb4821bd19c4529ea7bdacafc";
+const MINIMAL_MANIFESTS: Readonly<Record<number, string>> = {
+	1: "3325e5598de3f84582ef89c65532a6c969355c3eb4821bd19c4529ea7bdacafc",
+	2: "ae5d2f08cd47a0c48d2a1408eae36e4cac0376a3f8a7d9bc339b8894c2350712",
+};
 
 export interface HarnessToolProjection {
 	readonly tools: readonly AgentTool[];
@@ -29,9 +32,10 @@ export function projectHarnessTools(
 		return name === "bash" ? createMinimalBashDelegate(tool) : tool;
 	});
 	const result = projection(projected);
-	if (result.manifestDigest.digest !== MINIMAL_V1_TOOL_MANIFEST_DIGEST) {
+	const expected = descriptor.id === "plan" ? "7b5b2a3c5e04a75321d057bbdc9dac200dc97878088e62427f49afb1c3640f5e" : MINIMAL_MANIFESTS[descriptor.version];
+	if (result.manifestDigest.digest !== expected) {
 		throw new HarnessToolProjectionError(
-			`minimal@1 tool manifest drift: ${result.manifestDigest.digest}`,
+			`${descriptor.id}@${descriptor.version} tool manifest drift: ${result.manifestDigest.digest}`,
 		);
 	}
 	return result;

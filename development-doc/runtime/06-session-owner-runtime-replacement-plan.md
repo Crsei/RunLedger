@@ -13,6 +13,8 @@
 > message-count/lifecycle projection、process Trace terminal settlement 与 durable
 > delta coalescing；不提升 R6.5/R8、standard PATH、三平台或 human acceptance。
 
+> 2026-09-05 Agent Mode 接线：见 [Runtime 10](10-agent-mode-entry-implementation-plan.md)。schema 4 → 5 为零 active owner 的 structural migration；边界检查只为 `schema.ts` 中该固定列复制 SQL 增加精确豁免，不开放任意无 fence 写入。CLI 切换时保留源 Session，避免目标准入失败后无法返回；正常退出仍回收无用户消息的普通会话，但 plan@1 工件与审批状态不按此规则回收。Plan mutation 使用 owner-fenced events 与 Attempt Gateway。该增量不提升 R8/R9 或跨平台验收状态。
+
 ## 0. 决策摘要
 
 RunLedger 从机器或 workspace 级 resident Host 改为 session-scoped embedded runtime：

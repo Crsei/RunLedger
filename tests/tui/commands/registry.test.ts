@@ -117,7 +117,7 @@ describe("slash command registry", () => {
       readonly dynamicCommands: readonly [typeof serviceTier];
     };
     const names = commandsForContext(context).map((entry) => entry.canonicalName);
-    expect(names.slice(names.indexOf("model"), names.indexOf("model") + 3)).toEqual(["model", "service-tier", "thinking"]);
+    expect(names.slice(names.indexOf("model"), names.indexOf("model") + 3)).toEqual(["model", "service-tier", "mode"]);
   });
 
   it("内联参数/任务门控位符合既有行为(对照 codex available_during_task)", () => {

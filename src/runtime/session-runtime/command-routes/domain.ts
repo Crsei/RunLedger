@@ -35,6 +35,8 @@ export function createDomainCommandRoutes(port: SessionCommandPort): Pick<Sessio
 			const resources = port.domain?.resources;
 			if (resources?.mutate !== undefined && resources.operationManifest.some((entry) => entry.operation === operation && entry.access === "mutate")) {
 				if (port.state() === "recovery_required") return recoveryBlocked(operation);
+				const validated = port.domainRouter.mutate(request.body, meta.isDriver);
+				if (validated.status !== "unavailable" || validated.code !== "operation_unavailable") return success(validated);
 				return success(await resources.mutate(operation, objectValue(request.body.payload) ?? {}, mutationContext(request.body)));
 			}
 			const result = port.domainRouter.mutate(request.body, meta.isDriver);

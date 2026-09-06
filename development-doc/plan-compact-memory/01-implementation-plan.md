@@ -13,6 +13,16 @@
 
 生产接线必须服从 Session Owner Runtime:标准 CLI/TUI 是轻客户端,每个 session 只有当前 owner 持有 `Agent`、canonical writer、Queue 与 mutation authority。本专项的 mode/model/compact/memory command、query、subscription、approval 和 reload 都通过 SessionRuntime domain;client 不直接调用 `InteractiveSessionController`、不持有 store/service,也不创建第二 writer。localhost transport、driver/observer、owner generation/driver revision fencing、durable command intent/attempt receipt 与 recovery 由 `runtime/06` 拥有,本文件只定义这些机制如何消费本领域 service。
 
+### 2026-09-05 Plan Session Owner 接线
+
+[Runtime 10](../runtime/10-agent-mode-entry-implementation-plan.md) 本次授权全部阶段，`plan@1` 在 `session-runtime/plan-domain.ts` 生产装配 Plan authority。沿用本专题 reducer/artifact store；计划正文与 revision 以 bounded、owner-fenced Session events 持久化并重放，mutation 经过 Attempt Gateway。工件没有任意文件路径，模型不能批准自身计划。
+
+新会话自动进入 active；`plan.write` 后 `plan.request_approval` 绑定 artifact revision/digest，`plan.resolve_approval` 再绑定 approvalId 与 state revision。拒绝后可修改，取消结束流程，批准后 `plan.settle_exit` 结束。`/plan` 分页审阅固定正文，CLI 对称提供 inspect/write/request_approval/approve/reject/cancel/settle_exit。完成后需要新 Plan 会话才能重新发起流程。
+
+Plan harness 的五工具为 read/glob/ls/plan_read/plan_write，禁用扩展与 child，不注册 process mutation；工具 admission 拒绝未知效果，仅 composition 注入的工件 writer 实例有例外，执行环境进一步拒绝 shell/network/工作区 mutation。审批或退出不改变 immutable profile；实施需 `/mode default` 新建会话。default/minimal 仍只有被动 Plan inspect，不隐式变为 Plan。Memory/Compaction 的既有交付状态不因这项接线改变。
+
+自动化与真实 CLI/TUI 门禁以 Runtime 10 记录为准；不将 mock/PTY 结果写成人工或跨平台验收。
+
 ### 0.1 2026-08-04 当前实现切片证据
 
 以下是当前分支已提交独占切片的局部行为证据，不代表本专项或对应产品阶段完成。复选框约定：`[x]` 表示当前切片有直接实现与测试，`[~]` 表示部分实现或仍缺生产接线，`[ ]` 表示尚未实现。

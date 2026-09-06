@@ -23,6 +23,8 @@ import {
 	SESSION_STORE_SCHEMA_V3_SQL,
 	SESSION_STORE_SCHEMA_V3_TO_V4_SQL,
 	SESSION_STORE_SCHEMA_V4_SQL,
+	SESSION_STORE_SCHEMA_V4_TO_V5_SQL,
+	SESSION_STORE_SCHEMA_V5_SQL,
 	SESSION_STORE_SCHEMA_VERSION,
 	sessionStoreSchemaFormatDigest,
 } from "./schema.ts";
@@ -100,8 +102,10 @@ export function checkStoreCompatibility(db: SessionDatabase): StoreSchemaCompati
 			? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V2_SQL)
 			: storeVersion === 3
 				? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V3_SQL)
-				: storeVersion === SESSION_STORE_SCHEMA_VERSION
+				: storeVersion === 4
 					? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V4_SQL)
+					: storeVersion === SESSION_STORE_SCHEMA_VERSION
+						? sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V5_SQL)
 					: undefined;
 	if (expectedDigest !== undefined && formatDigest !== expectedDigest) {
 		return { ok: false, code: "format_digest_mismatch", detail: "schema format digest does not match the binary expectation" };
@@ -341,13 +345,29 @@ export function migrateSessionStoreV3ToV4(
 	});
 }
 
+/** 新 mode ref 不被旧 binary 支持，必须在零 active owner 时升级。 */
+export function migrateSessionStoreV4ToV5(db: SessionDatabase): ApplyStructuralMigrationResult {
+	const compatibility = checkStoreCompatibility(db);
+	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
+	if (compatibility.header.storeVersion === 5) return { ok: true, storeVersion: 5 };
+	if (compatibility.header.storeVersion !== 4) return { ok: false, code: "migration_failed", detail: "expected schema 4" };
+	const gate = beginOfflineMigration(db);
+	if (!gate.ok) return { ok: false, code: gate.code === "active_owners_present" ? "active_owners_present" : "migration_failed", detail: gate.detail };
+	return applyStructuralMigration(db, {
+		gate: gate.gate,
+		nextVersion: 5,
+		nextSql: SESSION_STORE_SCHEMA_V4_TO_V5_SQL,
+		nextFormatDigest: sessionStoreSchemaFormatDigest(SESSION_STORE_SCHEMA_V5_SQL),
+	});
+}
+
 /** 标准 CLI 在 owner discovery 前完成必需的 schema migration。 */
 export function migrateSessionStoreToCurrent(
 	db: SessionDatabase,
-): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 4; readonly alreadyCurrent: true } {
+): ApplyStructuralMigrationResult | { readonly ok: true; readonly storeVersion: 5; readonly alreadyCurrent: true } {
 	const compatibility = checkStoreCompatibility(db);
 	if (!compatibility.ok) return { ok: false, code: "migration_failed", detail: compatibility.detail };
-	if (compatibility.header.storeVersion === 4) return { ok: true, storeVersion: 4, alreadyCurrent: true };
+	if (compatibility.header.storeVersion === 5) return { ok: true, storeVersion: 5, alreadyCurrent: true };
 	if (compatibility.header.storeVersion === 1) {
 		const titleSchemaMigration = migrateSessionStoreV1ToV2(db);
 		if (!titleSchemaMigration.ok) return titleSchemaMigration;
@@ -358,7 +378,13 @@ export function migrateSessionStoreToCurrent(
 		const workspaceMigration = migrateSessionStoreV2ToV3(db);
 		if (!workspaceMigration.ok) return workspaceMigration;
 	}
-	return migrateSessionStoreV3ToV4(db);
+	const afterWorkspace = checkStoreCompatibility(db);
+	if (!afterWorkspace.ok) return { ok: false, code: "migration_failed", detail: afterWorkspace.detail };
+	if (afterWorkspace.header.storeVersion === 3) {
+		const profileMigration = migrateSessionStoreV3ToV4(db);
+		if (!profileMigration.ok) return profileMigration;
+	}
+	return migrateSessionStoreV4ToV5(db);
 }
 
 /** 显式 abort:gate 持有者(epoch 匹配)恢复 ready。migrator crash 后唯一合法出口之一。 */

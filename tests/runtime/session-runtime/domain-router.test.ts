@@ -1,4 +1,5 @@
-import { minimalHarnessProfileRef, standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
+import { shellOnlyHarnessProfileRef } from "../../../src/runtime/harness-profiles/resolver.ts";
+import { standardHarnessProfileRef } from "../../../src/runtime/harness-profiles/index.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -498,14 +499,14 @@ describe("S1 Session Domain Router", () => {
 				value: {
 					targetSessionId: expect.stringMatching(/^session_/u),
 					harnessProfileId: "minimal",
-					harnessProfileVersion: 1,
+					harnessProfileVersion: 2,
 				},
 			},
 		});
 		if (!result.ok || result.result.ok !== true) throw new Error("minimal create failed");
 		if (typeof result.result.value !== "object" || result.result.value === null || !("targetSessionId" in result.result.value)) throw new Error("target session missing");
 		const target = harness.store.getSession(String(result.result.value.targetSessionId));
-		expect(target?.harnessProfile).toEqual(minimalHarnessProfileRef());
+		expect(target?.harnessProfile).toEqual(shellOnlyHarnessProfileRef());
 	});
 
 	it("rejects unknown profile IDs and executable descriptor-shaped create payloads before mutation", async () => {

@@ -5,7 +5,7 @@ import type { SafeBoundedText } from "../presentation/tools/types.ts";
 
 export type TuiEffect =
 	| ({ readonly type: "session.list" } & CorrelatedRequestRef)
-	| ({ readonly type: "session.create"; readonly expectedRevision: number; readonly harnessProfileId?: "standard" | "minimal" } & CorrelatedRequestRef)
+	| ({ readonly type: "session.create"; readonly expectedRevision: number; readonly harnessProfileId?: "standard" | "minimal"; readonly agentMode?: "default" | "minimal" | "plan" } & CorrelatedRequestRef)
 	| ({ readonly type: "session.resume"; readonly targetSessionId: string; readonly expectedRevision: number } & CorrelatedRequestRef)
 	| ({ readonly type: "session.fork"; readonly sourceSessionId: string; readonly expectedSourceHeadSequence: number; readonly expectedRevision: number } & CorrelatedRequestRef)
 	| ({ readonly type: "session.rename"; readonly title: string; readonly expectedRevision: number; readonly expectedTitle?: string | null } & CorrelatedRequestRef)

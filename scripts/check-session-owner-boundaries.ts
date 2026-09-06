@@ -187,6 +187,9 @@ export function scanFenceFreeWrites(repoRoot: string, files: readonly string[]):
 			const line = lines[index]!;
 			const trimmed = line.trim();
 			if (!WRITE_SQL_PATTERN.test(line)) continue;
+			// schema 5 的固定 identity 列复制由 applyStructuralMigration 的离线 gate 执行。
+			if (relativeFile === "src/storage/session-store/schema.ts"
+				&& trimmed === "UPDATE sessions SET harness_profile_id_v5 = harness_profile_id, harness_profile_version_v5 = harness_profile_version;") continue;
 			if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) continue;
 			const signature = findEnclosingSignature(lines, index);
 			if (signature === undefined) {

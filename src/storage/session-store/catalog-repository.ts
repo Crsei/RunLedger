@@ -128,7 +128,7 @@ export class CatalogRepository {
 		return this.getSession(fence.sessionId)!;
 	}
 
-	/** 正常退出后的 Session 回收入口；有 durable user message 时保留。 */
+	/** 正常退出后的 Session 回收入口；用户消息或 Plan 工件所在会话必须保留。 */
 	public reclaimSessionWithoutUserMessages(fence: OwnerFence): boolean {
 		this.assertAdmissionReady();
 		let reclaimed = false;
@@ -136,6 +136,7 @@ export class CatalogRepository {
 			reclaimed = tx.runSync(
 			`DELETE FROM sessions
 			 WHERE session_id = ?
+			   AND harness_profile_id <> 'plan'
 			   AND EXISTS (
 			     SELECT 1
 			       FROM session_owners
