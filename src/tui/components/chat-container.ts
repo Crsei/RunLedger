@@ -254,6 +254,7 @@ export class ChatContainer implements Component {
 }
 
 function separatorLine(label: string, width: number): string {
+  if (label.length === 0) return "─".repeat(Math.max(0, width));
   const prefix = `─ ${label} `;
   if (width <= 0) return "";
   if (prefix.length >= width) return fitToWidth(prefix, width);

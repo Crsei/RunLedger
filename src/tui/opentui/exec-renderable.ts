@@ -137,7 +137,7 @@ export function execDisplayLines(block: ExecDisplayBlock, width = 80): readonly 
 	if (block.kind === "command") return commandDisplayLines(block.command, boundedWidth);
 	const lines = mainCommandDisplayLines(block, boundedWidth);
 	const outputLines = outputDisplayLines(block, boundedWidth);
-	return [...lines, ...outputLines];
+	return outputLines.length > 0 ? [...lines, "", ...outputLines] : lines;
 }
 
 /** Codex transcript form：完整命令、bounded retention 输出与独立结果行。 */
@@ -297,7 +297,7 @@ function styledExecText(
 	if (block.kind === "command") return flattenStyledLines(commandLines);
 	if (block.background === true) appendStyledBackground(commandLines, width);
 	const outputLines = styledOutputLines(block, width);
-	return flattenStyledLines([...commandLines, ...outputLines]);
+	return flattenStyledLines(outputLines.length > 0 ? [...commandLines, { chunks: [], plain: "" }, ...outputLines] : commandLines);
 }
 
 function styledCommandLines(source: StyledText, width: number, initialPrefix: string, continuationPrefix: string, continuationMaxLines: number, initialFg?: RGBA): StyledLine[] {

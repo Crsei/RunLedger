@@ -1,5 +1,15 @@
 # 04 · 渲染与终端协议细节
 
+## 当前 OpenTUI 时间线间距
+
+时间线在工具观察结束后的下一条 assistant 消息前插入整宽横线，实时流式与历史回放共用投影。一次循环内的多个工具保留在同组；用户新消息与运行结束会重置循环边界。
+
+推理、正文、工具、提示与横线等可见内容块之间留一行空白，命令和输出之间也留一行。空的流式占位不占行，Markdown 稳定前缀和增量尾部仍属于同一块；代码与输出内部行距保留。回归入口：[`opentui-loop-spacing.bun.test.ts`](../../tests/tui/opentui-loop-spacing.bun.test.ts)。
+
+2026-09-06：Linux 原生渲染测试与构建后 PATH `runledger` 的隔离 SQLite 会话回放验证了 80/143 列间距、整宽横线、空 stderr 和 Ctrl+D 退出码 0。该证据不替代人工视觉、中文 IME 或跨平台验收。
+
+以下保留早期 pi-tui 设计。
+
 > 本文档描述 RunLedger TUI 复用 pi-tui 时的渲染层细节、Overlay 用法、滚动策略、ANSI 同步、节流参数,以及 RunLedger 必须保留 / 必须明确放弃的 pi 行为。
 
 ---

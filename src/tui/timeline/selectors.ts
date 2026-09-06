@@ -32,12 +32,21 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 	const surface = options.surface ?? "main";
 	let rowsSinceBoundary: TimelineRow[] = [];
 	let explorationRows: TimelineRow[] = [];
+	let hasLoopTools = false;
 	const flushExploration = (finalized: boolean): void => {
 		const block = explorationBlockForRows(explorationRows, finalized);
 		if (block !== undefined) blocks.push(block);
 		explorationRows = [];
 	};
 	const appendRow = (row: TimelineRow): void => {
+		// 工具观察后的下一条 assistant 消息开启新一轮；实时与回放使用相同边界。
+		if (row.kind === "assistant" && hasLoopTools) {
+			flushExploration(true);
+			blocks.push({ id: `timeline-${row.id}/loop`, kind: "separator", label: "" });
+			hasLoopTools = false;
+		}
+		if (row.kind === "tool") hasLoopTools = true;
+		if (row.kind === "user") hasLoopTools = false;
 		if (surface === "main" && isExplorationRow(row)) {
 			if (explorationRows.length >= 32) flushExploration(true);
 			explorationRows.push(row);
@@ -57,6 +66,7 @@ export function timelineToBlocks(state: TimelineState, options: TimelineToBlocks
 				}
 			}
 			rowsSinceBoundary = [];
+			hasLoopTools = false;
 			continue;
 		}
 		rowsSinceBoundary.push(row);
@@ -263,6 +273,8 @@ function toolLines(row: Extract<TimelineRow, { readonly kind: "tool" }>): string
 		if (input !== undefined) lines.push(`  ${input}`);
 		const chips = presentation.chips.map((chip) => chip.label.text).filter((text) => text.length > 0 && !["pending", "running", "ok", "error", "shell"].includes(text));
 		if (chips.length > 0) lines.push(`  ${chips.join("  ")}`);
+		if (presentation.body.some((block) => block.kind === "text" && block.content.text.length > 0)
+			|| presentation.result?.kind === "shell" || presentation.error !== undefined) lines.push("");
 		for (const block of presentation.body) {
 			if (block.kind === "text" && block.content.text.length > 0) lines.push(`  ${block.content.text}`);
 		}

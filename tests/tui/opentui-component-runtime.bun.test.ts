@@ -444,7 +444,8 @@ describe("OpenTUI component projection", () => {
         footer: ["idle"],
       });
       await setup.renderOnce();
-      await setup.mockMouse.drag(0, 0, 18, 1);
+      const answer = requireNode(setup.renderer.root, "runledger-block-assistant-1", MarkdownRenderable);
+      await setup.mockMouse.drag(0, 0, 18, answer.screenY);
       const selectedText = setup.renderer.getSelection()?.getSelectedText();
       expect(selectedText).toContain("user: copy this");
       expect(selectedText).toContain("assistant:");
@@ -960,7 +961,7 @@ describe("OpenTUI component projection", () => {
       expect(setup.renderer.root.findDescendantById("runledger-new-content")).toBeDefined();
       expect(setup.captureCharFrame()).toContain("new content");
 
-      for (let index = 0; index < 8; index += 1) {
+      for (let index = 0; index < 41 && setup.captureCharFrame().includes("new content"); index += 1) {
         setup.mockInput.pressKey("\x1b[6~");
         await setup.renderOnce();
       }

@@ -104,7 +104,7 @@ export function transcriptBlockLines(block: PresentationBlock, width = 80): read
 	if (block.kind === "diff") return diffDisplayLines(block as DiffBlock, width);
 	if (block.kind === "notice") return noticeDisplayLines((block as NoticeBlock).message, width);
 	if (block.kind === "tool-detail") return toolDetailLines(block);
-	if (block.kind === "separator") return [block.content ?? formatSeparatorLabel(block.label, block.metrics)];
+	if (block.kind === "separator") return [block.content ?? (block.label.length === 0 ? "─".repeat(Math.max(1, Math.floor(width))) : formatSeparatorLabel(block.label, block.metrics))];
 	if (block.kind === "status-line") return [block.segments.map((segment) => segment.text).join(" · ")];
 	if (block.kind === "select") return [block.title, ...block.options.map((option) => option.label)];
 	if (block.kind === "input") return [block.title, block.message, block.value];

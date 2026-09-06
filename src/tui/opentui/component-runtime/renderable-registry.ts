@@ -59,6 +59,7 @@ export class RenderableRegistry {
       contentKey: isSettledPresentationBlock(block) ? "" : blockSignatureText(block),
     })));
 
+    let hasVisibleBlock = false;
     for (const { block, key } of keyedBodyBlocks) {
       const previous = this.bodyNodes.get(key);
       const previousSettled = this.settledMarkdownStates.get(key);
@@ -96,6 +97,13 @@ export class RenderableRegistry {
         ? (splitMarkdown && settledSpan !== undefined ? block.content.slice(settledSpan.end) : block.content)
         : blockText(block);
       const current = this.reconcileNode(block, key, contentKey, previous);
+      // 空的流式占位保留节点身份，但不占行；Markdown 稳定前缀与尾部属于同一块。
+      const visible = !((block.kind === "markdown" || block.kind === "text") && block.content.length === 0);
+      current.renderable.visible = visible;
+      const leading = settledRenderable ?? current.renderable;
+      leading.marginTop = visible && hasVisibleBlock ? 1 : 0;
+      if (settledRenderable !== undefined) current.renderable.marginTop = 0;
+      if (visible) hasVisibleBlock = true;
       nextBodyNodes.set(key, current);
       if (settledRenderable !== undefined) desiredBodyNodes.push(settledRenderable);
       desiredBodyNodes.push(current.renderable);
