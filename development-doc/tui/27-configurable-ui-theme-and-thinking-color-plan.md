@@ -187,4 +187,6 @@
 - 最终 `npm run check`、`npm run build` 退出 0，完整日志 `/tmp/rl-plan27-check-delivery.log`、`/tmp/rl-plan27-build-delivery.log`。
 - `npm test` 的 singleton/runtime/security-storage/integration 分组全部通过；在 native 分组发现默认链接颜色兼容回归后，将 `link` 的默认值对齐原有 cyan。随后完整重跑 `npm run test:fast`、`npm run test:tui-native`，均退出 0（native 149 tests）。所有 local 分组已有通过证据，但没有将先前退出 1 的单次 `npm test` 记作退出 0。日志 `/tmp/rl-plan27-integrated-tests.log`、`/tmp/rl-plan27-fast-delivery.log`、`/tmp/rl-plan27-native-delivery.log`。
 - 最终构建后 CLI 完整矩阵 14/14 通过：`/tmp/rl-theme-matrix-1ij6pvpu/summary.json`，含 auto 切换；主面/transcript 思考颜色一致、所有 CLI 退出 0。
-- 原工作树 PATH CLI 集成证据在合入构建后追加。人工视觉、中文 IME、真实 provider 与 macOS/Windows 未执行，不宣称通过。
+- 实现提交 `f052aaa` 已快进合入 `rollback/before-composer-shape`；原工作树 `npm run build` 退出 0（`/tmp/rl-plan27-main-build.log`）。`command -v`、`readlink -f`、`npm ls -g --depth=0` 确認全局入口指向本仓库 `bin/runledger.js`。
+- 实际 PATH `runledger` 完整矩阵再次 14/14 通过，所有退出码为 0：`/tmp/rl-theme-matrix-cmwpc9ah/summary.json`（`/tmp/rl-plan27-path-matrix.log`）。原有暂存 patch 与 20 个既有测试文件逐一核对未变。
+- 人工视觉、中文 IME、真实 provider 与 macOS/Windows 未执行，不宣称通过。
