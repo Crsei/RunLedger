@@ -1,0 +1,426 @@
+[
+  {
+    "id": "help",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--help"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.774,
+    "stdout": "Usage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n",
+    "stderr": ""
+  },
+  {
+    "id": "version",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--version"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.281,
+    "stdout": "runledger 0.0.1\n",
+    "stderr": ""
+  },
+  {
+    "id": "workspace_help",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "workspace",
+      "--help"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.308,
+    "stdout": "usage: runledger workspace <capability>\n\ncommands:\n  capability   显示各平台 path/Git/Shell/process/cleanup 适配证据状态（只读）\n",
+    "stderr": ""
+  },
+  {
+    "id": "workspace_capability",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "workspace",
+      "capability"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.445,
+    "stdout": "workspace capability (per real-runner evidence; 不构成 OS sandbox/containment 承诺)\nlinux     path=verified   git=verified   process=verified   cleanup=verified   adapter=available\n           note: real-runner evidence 2026-08-06 (tests/fixtures/platform-evidence/linux)\nmacos     path=unverified git=unverified process=unverified cleanup=unverified adapter=unsupported\n           note: no real runner evidence; APFS case/firmlink/process-group pending (evidence-verification-gaps.md)\nwindows   path=unverified git=unverified process=unverified cleanup=unverified adapter=unsupported\n           note: no real runner evidence; drive/UNC/junction/Git Bash/PowerShell/process-tree pending (evidence-verification-gaps.md)\ncurrent runner: linux (verified)\n证据与缺口: development-doc/worktree-sandbox-permisson/evidence-verification-gaps.md\n",
+    "stderr": ""
+  },
+  {
+    "id": "workspace_unknown",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "workspace",
+      "bogus"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.388,
+    "stdout": "",
+    "stderr": "[runledger] unknown workspace command: bogus\n\nusage: runledger workspace <capability>\n\ncommands:\n  capability   显示各平台 path/Git/Shell/process/cleanup 适配证据状态（只读）\n"
+  },
+  {
+    "id": "gateway_help",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "--help"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.228,
+    "stdout": "Usage: runledger auth-gateway <serve|token|status|check> [options]\n\n  serve [--bind <host:port>] [--no-auth]\n  token [--regenerate] [--json]\n  status [--json]\n  check [--strict] [--json]\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_status",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "status",
+      "--json"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.145,
+    "stdout": "{\"ok\":true,\"token\":{\"configured\":false}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_check",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "check",
+      "--json"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.16,
+    "stdout": "{\"ok\":false,\"strict\":false,\"token\":{\"configured\":false}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_check_strict",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "check",
+      "--strict",
+      "--json"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.41,
+    "stdout": "{\"ok\":false,\"strict\":true,\"token\":{\"configured\":false},\"providers\":[{\"providerId\":\"llama.cpp\",\"ok\":false,\"error\":\"no available model\"},{\"providerId\":\"litellm\",\"modelId\":\"claude-opus-4-8\",\"ok\":false},{\"providerId\":\"lm-studio\",\"modelId\":\"llama-3-8b\",\"ok\":false},{\"providerId\":\"vllm\",\"modelId\":\"gpt-oss-20b\",\"ok\":false}]}\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_invalid",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "serve",
+      "--bind",
+      "bad"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.075,
+    "stdout": "",
+    "stderr": "[runledger] --bind 必须是 host:port\n"
+  },
+  {
+    "id": "invalid_thinking",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--thinking",
+      "invalid"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.224,
+    "stdout": "",
+    "stderr": "[runledger] --thinking 不合法:invalid(合法值 off/minimal/low/medium/high/xhigh/max)\n\nUsage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n"
+  },
+  {
+    "id": "missing_model",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--model"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.041,
+    "stdout": "",
+    "stderr": "[runledger] --model 缺少值\n\nUsage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n"
+  },
+  {
+    "id": "legacy_session_dir",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--session-dir",
+      "/tmp/forbidden"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.132,
+    "stdout": "",
+    "stderr": "[runledger] unsupported_cli_authority: --session-dir 已拒绝;请使用预创建的 RUNLEDGER_DIR\n\nUsage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n"
+  },
+  {
+    "id": "invalid_harness",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--harness-profile",
+      "bogus"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.203,
+    "stdout": "",
+    "stderr": "[runledger] --harness-profile 不合法:bogus(合法值 standard/minimal)\n\nUsage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n"
+  },
+  {
+    "id": "invalid_control",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "worktree",
+      "bogus"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.133,
+    "stdout": "",
+    "stderr": "[runledger] unsupported worktree action: bogus\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n"
+  },
+  {
+    "id": "prune_manifest_documented",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "storage",
+      "prune-legacy",
+      "--manifest",
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "--confirm-delete"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.041,
+    "stdout": "",
+    "stderr": "[runledger] --manifest 需要值\nUsage: runledger storage prune-legacy --manifest <digest> --confirm-delete\n\nPhysically delete the verified migration archive migration-backup/session-store/<digest>.\nRequires the exact manifest digest and explicit confirmation.\n"
+  },
+  {
+    "id": "prune_manifest_equals",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "storage",
+      "prune-legacy",
+      "--manifest=0000000000000000000000000000000000000000000000000000000000000000",
+      "--confirm-delete"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.446,
+    "stdout": "",
+    "stderr": "[runledger] prune-legacy failed: source_read_failed: archive manifest not found or unreadable: 0000000000000000000000000000000000000000000000000000000000000000\n"
+  },
+  {
+    "id": "security_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "security",
+      "inspect"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 3.245,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"security.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "worktree_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "worktree",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 3.323,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"worktree.list\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plugin_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plugin",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.498,
+    "stdout": "{\"requestFrameId\":\"c2_mtntsfk6\",\"ok\":true,\"status\":\"ok\",\"operation\":\"plugin.list\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.559,
+    "stdout": "{\"requestFrameId\":\"c2_mtntshji\",\"ok\":true,\"status\":\"ok\",\"operation\":\"skill.list\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.609,
+    "stdout": "{\"requestFrameId\":\"c2_mtntsjjr\",\"ok\":true,\"status\":\"ok\",\"operation\":\"skill.provider.list\",\"domainRevision\":1,\"value\":{\"items\":[{\"providerId\":\"runledger-user\",\"displayName\":\"RunLedger user skills\",\"rank\":100,\"effectiveEnabled\":true,\"state\":\"unavailable\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0,\"lastError\":\"no compatible skill directory is available\"},{\"providerId\":\"runledger-workspace\",\"displayName\":\"RunLedger workspace skills\",\"rank\":200,\"effectiveEnabled\":true,\"state\":\"unavailable\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0,\"lastError\":\"no compatible skill directory is available\"},{\"providerId\":\"runledger-plugin\",\"displayName\":\"RunLedger plugin skill contributions\",\"rank\":400,\"effectiveEnabled\":true,\"state\":\"loaded\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"codex-user\",\"displayName\":\"Codex user skills\",\"rank\":2000,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"codex-project\",\"displayName\":\"Codex project skills\",\"rank\":2100,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"agents-user\",\"displayName\":\"Agents user skills\",\"rank\":2200,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"agents-project\",\"displayName\":\"Agents project skills\",\"rank\":2300,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"claude-user\",\"displayName\":\"Claude user skills\",\"rank\":2400,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"claude-project\",\"displayName\":\"Claude project skills\",\"rank\":2500,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"claude-plugins\",\"displayName\":\"Claude installed plugins\",\"rank\":2600,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0}]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "hook_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "hook",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.618,
+    "stdout": "{\"requestFrameId\":\"c2_mtntsll4\",\"ok\":true,\"status\":\"ok\",\"operation\":\"hook.list\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "mcp_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "mcp",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.629,
+    "stdout": "{\"requestFrameId\":\"c2_mtntsnm9\",\"ok\":true,\"status\":\"ok\",\"operation\":\"mcp.list\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plan_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plan",
+      "inspect"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.496,
+    "stdout": "{\"requestFrameId\":\"c2_mtntspjv\",\"ok\":true,\"status\":\"ok\",\"operation\":\"plan.inspect\",\"domainRevision\":0,\"value\":{\"repositoryId\":\"repository_10b537b35932c3a8e2b1b97c051b1be402260378d2003795\",\"state\":{\"status\":\"inactive\",\"sessionId\":\"session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtntsolp\",\"goalId\":\"goal_347737c7e9d4d41f1372bb083938df868e016ca33a836a0e\",\"revision\":0,\"policyCeilingDigest\":{\"algorithm\":\"sha256\",\"digest\":\"b5a9df70301c5b623758594da1193c4a5c782e0bfe307a5a3368d118f8cb2f5b\"},\"sourceHead\":{\"streamId\":\"session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtntsolp\",\"sequence\":4,\"eventHash\":{\"algorithm\":\"sha256\",\"digest\":\"67ca22746ed94535238edfd019a6f0ff70c92a784499b51fb26ca8adcd19b3e3\"}},\"completeness\":\"complete\",\"updatedAt\":\"2026-09-05T03:31:08.248Z\",\"projectionDigest\":{\"algorithm\":\"sha256\",\"digest\":\"783a04701133f87123636b2d0626a5c3579efa6331b446e1dff297934b4ba85f\"}}}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "compact_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "compact",
+      "list"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.837,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"compact.list\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "context_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "context",
+      "inspect"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.737,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"context.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "memory_search",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "memory",
+      "search",
+      "audit-no-match"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.727,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"memory.search\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "settings_help",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "settings",
+      "--help"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.317,
+    "stdout": "Usage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n",
+    "stderr": ""
+  },
+  {
+    "id": "telemetry_help",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "telemetry",
+      "--help"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.655,
+    "stdout": "Usage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n",
+    "stderr": ""
+  },
+  {
+    "id": "unknown_flag",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--not-a-real-runledger-flag"
+    ],
+    "exit_code": -15,
+    "timeout": true,
+    "duration_seconds": 3.024,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "id": "unknown_command",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "not-a-real-runledger-command"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.918,
+    "stdout": "\u001b[?2031h\u001b]10;?\u0007\u001b]11;?\u0007\u001b[>0q\u001b[?25l\u001b[s\u001b[6n\u001bP+q4d73\u001b\\\u001b[?1016$p\u001b[?2027$p\u001b[?2031$p\u001b[?1004$p\u001b[?2004$p\u001b[?2026$p\u001b[?u\u001b]99;i=opentui-notifications:p=?;\u001b\\\u001b]1337;Capabilities\u001b\\\u001b[H\u001b]66;w=1; \u001b\\\u001b[6n\u001b[H\u001b]66;s=2; \u001b\\\u001b[6n\u001b[u\u001b[s\u001b[?1049h\u001b[>4;1m\u001b[?2027h\u001b[?2004h\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1006h\u001b[14t\u001b[?2026h\u001b[?25l\u001b[1;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[1;2H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[1;3H\u001b[38;2;192;192;192m\u001b[49m<no-model>\u001b[0m\u001b[1;13H\u001b[38;2;255;255;255m\u001b[49m  \u001b[0m\u001b[1;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[1;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[1;17H\u001b[38;2;192;192;192m\u001b[49mCtrl+D to exit\u001b[0m\u001b[1;31H\u001b[38;2;255;255;255m\u001b[49m                                               \u001b[0m\u001b[1;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[1;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[2;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[2;2H\u001b[38;2;192;192;192m\u001b[49m<no-provider>\u001b[0m\u001b[2;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[2;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[2;17H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m────────────────────────────────────────────────────────────\u001b[0m\u001b[2;77H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[2;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[2;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[3;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[3;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[3;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[3;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[3;17H\u001b[38;2;0;0;255m\u001b[49m\u001b[1mSession\u001b[0m\u001b[3;24H\u001b[38;2;255;255;255m\u001b[49m                                                      \u001b[0m\u001b[3;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[3;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[4;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[4;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[4;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[4;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[4;17H\u001b[38;2;192;192;192m\u001b[49mmodel:\u001b[0m\u001b[4;23H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[4;24H\u001b[38;2;0;0;255m\u001b[49m<no-model>\u001b[0m\u001b[4;34H\u001b[38;2;255;255;255m\u001b[49m                                            \u001b[0m\u001b[4;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[4;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[5;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[5;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[5;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[5;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[5;17H\u001b[38;2;192;192;192m\u001b[49mprovider:\u001b[0m\u001b[5;26H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[5;27H\u001b[38;2;0;0;255m\u001b[49m<no-provider>\u001b[0m\u001b[5;40H\u001b[38;2;255;255;255m\u001b[49m                                      \u001b[0m\u001b[5;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[5;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[6;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[6;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[6;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[6;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[6;17H\u001b[38;2;192;192;192m\u001b[49mthinking:\u001b[0m\u001b[6;26H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[6;27H\u001b[38;2;0;0;255m\u001b[49moff\u001b[0m\u001b[6;30H\u001b[38;2;255;255;255m\u001b[49m                                                \u001b[0m\u001b[6;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[6;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[7;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[7;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[7;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[7;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[7;17H\u001b[38;2;192;192;192m\u001b[49mdir:\u001b[0m\u001b[7;21H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[7;22H\u001b[38;2;0;0;255m\u001b[49m/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunL…\u001b[0m\u001b[7;72H\u001b[38;2;255;255;255m\u001b[49m      \u001b[0m\u001b[7;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[7;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[8;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[8;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[8;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[8;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[8;17H\u001b[38;2;192;192;192m\u001b[49mbranch:\u001b[0m\u001b[8;24H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[8;25H\u001b[38;2;0;0;255m\u001b[49mrollback/before-composer-shape\u001b[0m\u001b[8;55H\u001b[38;2;255;255;255m\u001b[49m                       \u001b[0m\u001b[8;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[8;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[9;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[9;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[9;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[9;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[9;17H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m────────────────────────────────────────────────────────────\u001b[0m\u001b[9;77H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[9;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[9;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[10;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[10;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[10;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[10;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[10;17H\u001b[38;2;0;0;255m\u001b[49m\u001b[1mRecent sessions\u001b[0m\u001b[10;32H\u001b[38;2;255;255;255m\u001b[49m                                              \u001b[0m\u001b[10;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[10;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[11;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[11;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[11;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[11;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[11;17H\u001b[38;2;192;192;192m\u001b[49m\u001b[2m • \u001b[0m\u001b[11;20H\u001b[38;2;192;192;192m\u001b[49msession_cwd-_data2-HDD-SATA-20T_Digital_avatar_\u001b[0m\u001b[11;67H\u001b[38;2;192;192;192m\u001b[49m\u001b[2m (just now)\u001b[0m\u001b[11;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[11;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[12;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[12;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[12;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[12;16H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[12;17H\u001b[38;2;192;192;192m\u001b[49m\u001b[2m • \u001b[0m\u001b[12;20H\u001b[38;2;192;192;192m\u001b[49msession_cwd-_data2-HDD-SATA-20T_Digital_avatar_\u001b[0m\u001b[12;67H\u001b[38;2;192;192;192m\u001b[49m\u001b[2m (just now)\u001b[0m\u001b[12;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[12;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[13;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[13;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[13;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[13;16H\u001b[38;2;255;255;255m\u001b[49m                                                              \u001b[0m\u001b[13;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[13;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[14;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[14;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[14;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[14;16H\u001b[38;2;255;255;255m\u001b[49m                                                              \u001b[0m\u001b[14;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[14;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[15;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[15;2H\u001b[38;2;255;255;255m\u001b[49m             \u001b[0m\u001b[15;15H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[15;16H\u001b[38;2;255;255;255m\u001b[49m                                                              \u001b[0m\u001b[15;78H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m│\u001b[0m\u001b[15;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[16;1H\u001b[38;2;0;0;0m\u001b[49m\u001b[2m└─────────────┴──────────────────────────────────────────────────────────────┘\u001b[0m\u001b[16;79H\u001b[38;2;255;255;255m\u001b[49m  \u001b[17;1H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b[17;2H\u001b[38;2;0;0;255m\u001b[49m\u001b[3mTip: \u001b[0m\u001b[17;7H\u001b[38;2;192;192;192m\u001b[49m\u001b[3m/theme 打开语法主题选择器；方向键预览，Enter 保存，Esc 恢复原主题。\u001b[0m\u001b[17;74H\u001b[38;2;255;255;255m\u001b[49m       \u001b[18;1H\u001b[38;2;255;255;255m\u001b[49m                                                                                \u001b[19;1H\u001b[38;2;255;255;255m\u001b[49m                                                                                \u001b[20;1H\u001b[38;2;255;255;255m\u001b[49m                                                                                \u001b[21;1H\u001b[38;2;255;255;255m\u001b[49m                                                                                \u001b[22;1H\u001b[38;2;255;255;255m\u001b[49m› \u001b[0m\u001b[22;3H\u001b[38;2;102;102;102m\u001b[49mMessage RunLedger…\u001b[0m\u001b[22;21H\u001b[38;2;255;255;255m\u001b[49m                                                            \u001b[23;1H\u001b[38;2;255;255;255m\u001b[49m                                                                                \u001b[24;1H\u001b[38;2;255;255;255m\u001b[49m  \u001b[0m\u001b[24;3H\u001b[38;2;171;223;167m\u001b[49m/data2-HDD-SATA-20T/Digital_avatar/haowe…\u001b[0m\u001b[24;44H\u001b[38;2;255;255;255m\u001b[49m\u001b[2m · \u001b[0m\u001b[24;47H\u001b[38;2;246;226;183m\u001b[49m<no-provider>/<no-model> · think:\u001b[0m\u001b[24;80H\u001b[38;2;255;255;255m\u001b[49m \u001b[0m\u001b]12;#ffffff\u0007\u001b[1 q\u001b[22;3H\u001b[?25h\u001b[?2026l\u001b[?25h\u001b[0m\u001b]22;\u0007\u001b[>4;0m\u001b[?1003l\u001b[?1002l\u001b[?1000l\u001b[?1006l\u001b[?2004l\u001b[?1049l\u001b[?2031l\u001b]0;\u0007\u001b]12;default\u0007\u001b]112\u0007\u001b[0 q\u001b[?25h\u001b[?25h",
+    "stderr": ""
+  }
+]

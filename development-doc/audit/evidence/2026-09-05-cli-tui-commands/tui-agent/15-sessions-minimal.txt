@@ -1,0 +1,30 @@
+Harness: minimal@1  Permission: workspace-write  Thinking: off
+
+⚠ note: Thinking blocks hidden (display only).
+⚠ note: Session renamed: TUI smoke 最小会话
+
+
+
+
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────╮
+ │ Filter: [Cwd]  All    Sort: [Updated]  Created                                         │
+ │ /resume (1)                                                                            │
+ │ Filter…                                                                                │
+ │  ▶ TUI smoke 最小会话 · active · current                                               │
+ │    workspace_0fceab77ccb8e1e7f134facbd88604bec4662f86d1e2b64d · Harness: minimal@1 · h │
+ │ enter resume · esc close · ↑/↓ browse · ctrl+e expand · ctrl+o density                 │
+ │ ctrl+f filter · ctrl+s sort · 1/1                                                      │
+ │                                                                                        │
+ │                                                                                        │
+ │                                                                                        │
+ │                                                                                        │
+ │                                                                                        │
+ │                                                                                        │
+ ╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital_avatar/haow… · <no-provider>/<no-model> · think:off · TUI smoke

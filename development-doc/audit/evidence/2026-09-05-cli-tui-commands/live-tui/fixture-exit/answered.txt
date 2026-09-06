@@ -1,0 +1,38 @@
+Harness: standard@1  Permission: workspace-write  Thinking: off
+
+┌─── RunLedger v0.0.1 ─────────────────────────────────────────────────────────────────────────────┐
+│                      │ Quick keys                                                                │
+│    Welcome back!     │ / for commands                                                            │
+│                      │ Enter to send                                                             │
+│      runledger       │ Alt+Enter to queue follow-up                                              │
+│                      │ Ctrl+C to interrupt                                                       │
+│     gpt-4.1-mini     │ Ctrl+D to exit                                                            │
+│azure-openai-responses│ ───────────────────────────────────────────────────────────────────────── │
+│                      │ Session                                                                   │
+│                      │ model: gpt-4.1-mini                                                       │
+│                      │ provider: azure-openai-responses                                          │
+│                      │ thinking: off                                                             │
+│                      │ dir: /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger               │
+│                      │ branch: rollback/before-composer-shape                                    │
+│                      │ ───────────────────────────────────────────────────────────────────────── │
+│                      │ Recent sessions                                                           │
+│                      │  • session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtntzmn (just now)│
+│                      │                                                                           │
+│                      │                                                                           │
+│                      │                                                                           │
+│                      │                                                                           │
+└──────────────────────┴───────────────────────────────────────────────────────────────────────────┘
+ Tip: /login [provider-id] 启动指定 provider 的认证流程；/logout [provider-id] 删除对应 provider 的
+      持久凭据。
+
+
+请只回答数字：2 + 2 等于多少？
+4
+
+
+
+
+› Message RunLedger…
+
+  done:stop · /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/R… · azure-openai-responses/gpt-4.1-mini · think:off ·
+运行测试

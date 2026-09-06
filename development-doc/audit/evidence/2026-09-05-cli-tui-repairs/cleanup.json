@@ -1,0 +1,29 @@
+{
+  "fixtureServerPids": [
+    16554
+  ],
+  "fixtureServersTerminated": true,
+  "liveSockets": {
+    "rl-audit-live-fixture-diagnose-repair20260905": {
+      "serverPresent": false
+    },
+    "rl-audit-live-fixture-diagnose2-repair20260905": {
+      "serverPresent": false
+    },
+    "rl-audit-live-fixture-diagnose3-repair20260905": {
+      "serverPresent": false
+    },
+    "rl-audit-live-fixture-diagnose4-repair20260905": {
+      "serverPresent": false
+    },
+    "rl-audit-live-fixture-final-repair20260905": {
+      "serverPresent": false
+    },
+    "rl-audit-live-fixture-narrow-repair20260905": {
+      "serverPresent": false
+    },
+    "rl-audit-live-fixture-narrow-final-repair20260905": {
+      "serverPresent": false
+    }
+  }
+}

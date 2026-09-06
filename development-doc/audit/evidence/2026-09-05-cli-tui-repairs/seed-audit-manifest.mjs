@@ -1,0 +1,10 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { runtimeDigest } from '/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger/dist/runtime/protocol/foundation.js';
+import { loadModelCompatibilityManifest } from '/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger/dist/runtime/model-routing/router.js';
+const root = '/tmp/runledger-command-repair-20260905/live-tui/'+process.argv[2]+'/state/state/model-compatibility';
+const body={ version:1, profiles:[{profileId:'azure-openai-responses/gpt-4.1-mini',providerId:'azure-openai-responses',modelId:'gpt-4.1-mini',manifestVersion:'audit-fixture-20260905',manifestDigest:runtimeDigest('audit-only input; not production qualification'),contextWindow:1047576,maxOutputTokens:32768,reasoningProtocol:'none',toolProtocol:'json',imageInput:true,compaction:'none',status:'verified'}],aliases:{} };
+const manifest={...body,manifestDigest:runtimeDigest(body)};
+if(!loadModelCompatibilityManifest(manifest).ok) throw new Error('fixture invalid');
+await mkdir(root,{recursive:true,mode:0o700});
+await writeFile(root+'/manifest.json',JSON.stringify(manifest,null,2),{mode:0o600});
+console.log('Audit fixture seeded in isolated home only; does not constitute production model qualification.');

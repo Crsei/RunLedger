@@ -1,0 +1,30 @@
+Harness: minimal@1  Permission: workspace-write  Thinking: off
+
+⚠ note: Thinking blocks hidden (display only).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger · <no-provider>/<no-model> · think:off

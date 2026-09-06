@@ -1,0 +1,20 @@
+ M AGENTS.md
+ M README.md
+ M development-doc/00-index.md
+M  src/api/transform-messages.ts
+M  src/cli/main.ts
+M  src/cli/session-model-router.ts
+M  src/runtime/session-runtime/domain.ts
+M  src/tui/interactive/event-helpers.ts
+M  src/tui/timeline/event-projector.ts
+M  src/tui/timeline/selectors.ts
+A  tests/api/transform-messages.test.ts
+M  tests/cli/session-model-router.test.ts
+A  tests/runtime/session-runtime/model-selection-policy.test.ts
+A  tests/tui/interactive/event-helpers.test.ts
+M  tests/tui/timeline/event-projector.test.ts
+M  tests/tui/timeline/selectors.test.ts
+?? development-doc/note/review-note.md
+?? development-doc/plan/13-package-boundary-workspace-refactor-plan.md
+?? docs/architecture.md
+?? docs/subsystems/

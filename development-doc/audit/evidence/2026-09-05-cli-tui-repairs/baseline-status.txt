@@ -1,0 +1,163 @@
+ M AGENTS.md
+ M README.md
+ M development-doc/00-index.md
+ M development-doc/audit/README.md
+ M development-doc/providers/02-oh-my-pi-provider-port-execution-checklist.md
+ M scripts/model-generation/compat-metadata.ts
+ M scripts/model-generation/provider-normalization.ts
+ M scripts/ported-provider-catalog.ts
+ M scripts/sources/extract-oh-my-pi-models.ts
+ M src/api/openai-completions.ts
+ M src/api/openai-completions/client.ts
+ M src/api/openai-completions/compat-detection.ts
+ M src/api/openai-completions/params.ts
+ M src/api/openai-completions/types.ts
+ M src/api/openai-responses.ts
+M  src/api/transform-messages.ts
+M  src/cli/main.ts
+M  src/cli/session-model-router.ts
+ M src/models.generated.ts
+ M src/providers/aiand.models.ts
+ M src/providers/alibaba-token-plan.models.ts
+ M src/providers/all.ts
+ M src/providers/amazon-bedrock.models.ts
+ M src/providers/anthropic.models.ts
+ M src/providers/azure-openai-responses.models.ts
+ M src/providers/baseten.models.ts
+ M src/providers/cerebras.models.ts
+ M src/providers/cloudflare-ai-gateway.models.ts
+ M src/providers/coreweave.models.ts
+ M src/providers/data/aiand.json
+ M src/providers/data/aimlapi.json
+ M src/providers/data/alibaba-coding-plan.json
+ M src/providers/data/alibaba-token-plan.json
+ M src/providers/data/amazon-bedrock.json
+ M src/providers/data/anthropic.json
+ M src/providers/data/azure-openai-responses.json
+ M src/providers/data/baseten.json
+ M src/providers/data/bedrock-mantle.json
+ M src/providers/data/cerebras.json
+ M src/providers/data/cloudflare-ai-gateway.json
+ M src/providers/data/coreweave.json
+ M src/providers/data/deepseek.json
+ M src/providers/data/firepass.json
+ M src/providers/data/fireworks.json
+ M src/providers/data/github-copilot.json
+ M src/providers/data/gmi-cloud.json
+ M src/providers/data/google-vertex.json
+ M src/providers/data/google.json
+ M src/providers/data/groq.json
+ M src/providers/data/huggingface.json
+ M src/providers/data/kilo.json
+ M src/providers/data/kimi-code.json
+ M src/providers/data/meta.json
+ M src/providers/data/minimax-cn.json
+ M src/providers/data/minimax-code-cn.json
+ M src/providers/data/minimax-code.json
+ M src/providers/data/minimax.json
+ M src/providers/data/mistral.json
+ M src/providers/data/moonshotai.json
+ M src/providers/data/nanogpt.json
+ M src/providers/data/novita.json
+ M src/providers/data/nvidia.json
+ M src/providers/data/openai-codex.json
+ M src/providers/data/openai.json
+ M src/providers/data/opencode-go.json
+ M src/providers/data/opencode-zen.json
+ M src/providers/data/openrouter.json
+ M src/providers/data/qianfan.json
+ M src/providers/data/qwen-portal.json
+ M src/providers/data/sakana.json
+ M src/providers/data/synthetic.json
+ M src/providers/data/together.json
+ M src/providers/data/umans.json
+ M src/providers/data/venice.json
+ M src/providers/data/vercel-ai-gateway.json
+ M src/providers/data/wafer-serverless.json
+ M src/providers/data/xai.json
+ M src/providers/data/xiaomi-token-plan-ams.json
+ M src/providers/data/xiaomi-token-plan-cn.json
+ M src/providers/data/xiaomi-token-plan-sgp.json
+ M src/providers/data/xiaomi.json
+ M src/providers/data/zai.json
+ M src/providers/data/zenmux.json
+ M src/providers/data/zhipu-coding-plan.json
+ M src/providers/deepseek.models.ts
+ M src/providers/fireworks.models.ts
+ M src/providers/github-copilot.models.ts
+ M src/providers/google-vertex.models.ts
+ M src/providers/google.models.ts
+ M src/providers/groq.models.ts
+ M src/providers/huggingface.models.ts
+ M src/providers/kilo.models.ts
+ M src/providers/meta.models.ts
+ M src/providers/mistral.models.ts
+ M src/providers/moonshotai.models.ts
+ M src/providers/nanogpt.models.ts
+ M src/providers/novita.models.ts
+ M src/providers/nvidia.models.ts
+ M src/providers/openai-codex.models.ts
+ M src/providers/openai.models.ts
+ M src/providers/opencode-go.models.ts
+ M src/providers/opencode-zen.models.ts
+ M src/providers/openrouter.models.ts
+ M src/providers/synthetic.models.ts
+ M src/providers/together.models.ts
+ M src/providers/umans.models.ts
+ M src/providers/venice.models.ts
+ M src/providers/vercel-ai-gateway.models.ts
+ M src/providers/wafer-serverless.models.ts
+ M src/providers/xai.models.ts
+ M src/providers/xiaomi-token-plan-ams.models.ts
+ M src/providers/xiaomi-token-plan-cn.models.ts
+ M src/providers/xiaomi-token-plan-sgp.models.ts
+ M src/providers/zai.models.ts
+ M src/providers/zenmux.models.ts
+ M src/providers/zhipu-coding-plan.models.ts
+M  src/runtime/session-runtime/domain.ts
+M  src/tui/interactive/event-helpers.ts
+M  src/tui/timeline/event-projector.ts
+M  src/tui/timeline/selectors.ts
+ M src/types.ts
+A  tests/api/transform-messages.test.ts
+M  tests/cli/session-model-router.test.ts
+ M tests/providers/aimlapi.test.ts
+ M tests/providers/baseten.test.ts
+ M tests/providers/coreweave.test.ts
+ M tests/providers/gmi-cloud.test.ts
+ M tests/providers/nanogpt.test.ts
+ M tests/providers/novita.test.ts
+ M tests/providers/qianfan.test.ts
+ M tests/providers/synthetic.test.ts
+ M tests/providers/venice.test.ts
+ M tests/providers/zhipu-coding-plan.test.ts
+A  tests/runtime/session-runtime/model-selection-policy.test.ts
+A  tests/tui/interactive/event-helpers.test.ts
+M  tests/tui/timeline/event-projector.test.ts
+M  tests/tui/timeline/selectors.test.ts
+?? development-doc/audit/2026-09-05-cli-tui-command-audit.md
+?? development-doc/audit/evidence/
+?? development-doc/note/review-note.md
+?? development-doc/plan/13-package-boundary-workspace-refactor-plan.md
+?? docs/architecture.md
+?? docs/subsystems/
+?? scripts/sources/oh-my-pi-LICENSE
+?? scripts/sources/oh-my-pi-provider-models-18.1.9.json
+?? src/api/cline-pass-headers.ts
+?? src/providers/abliteration.models.ts
+?? src/providers/abliteration.ts
+?? src/providers/cline-pass.models.ts
+?? src/providers/cline-pass.ts
+?? src/providers/data/abliteration.json
+?? src/providers/data/cline-pass.json
+?? src/providers/data/deepinfra.json
+?? src/providers/data/yolo-auto.json
+?? src/providers/deepinfra.models.ts
+?? src/providers/deepinfra.ts
+?? src/providers/updated-provider-discovery.ts
+?? src/providers/yolo-auto.models.ts
+?? src/providers/yolo-auto.ts
+?? tests/providers/oh-my-pi-discovery.test.ts
+?? tests/providers/oh-my-pi-http.test.ts
+?? tests/providers/oh-my-pi-update.test.ts
+?? tests/providers/ported-catalog-update.test.ts

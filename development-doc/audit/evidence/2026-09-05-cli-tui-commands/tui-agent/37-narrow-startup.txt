@@ -1,0 +1,24 @@
+│ <no-model>  │ Ctrl+D to exit                                               │
+│<no-provider>│ ──────────────────────────────────────────────────────────── │
+│             │ Session                                                      │
+│             │ model: <no-model>                                            │
+│             │ provider: <no-provider>                                      │
+│             │ thinking: off                                                │
+│             │ dir: /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunL…      │
+│             │ branch: rollback/before-composer-shape                       │
+│             │ ──────────────────────────────────────────────────────────── │
+│             │ Recent sessions                                              │
+│             │  • session_cwd-_data2-HDD-SATA-20T_Digital_avatar_ (just now)│
+│             │                                                              │
+│             │                                                              │
+│             │                                                              │
+│             │                                                              │
+└─────────────┴──────────────────────────────────────────────────────────────┘
+ Tip: runledger --session-id <session-id> 按精确 canonical Session ID 打开会话
+      。
+
+
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital_avatar/haowe… · <no-provider>/<no-model> · think:

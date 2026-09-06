@@ -1,0 +1,38 @@
+│azure-openai-responses│ ───────────────────────────────────────────────────────────────────────── │
+│                      │ Session                                                                   │
+│                      │ model: gpt-4.1-mini                                                       │
+│                      │ provider: azure-openai-responses                                          │
+│                      │ thinking: off                                                             │
+│                      │ dir: /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger               │
+│                      │ branch: rollback/before-composer-shape                                    │
+│                      │ ───────────────────────────────────────────────────────────────────────── │
+│                      │ Recent sessions                                                           │
+│                      │  • session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtny6u8 (just now)│
+│                      │                                                                           │
+│                      │                                                                           │
+│                      │                                                                           │
+│                      │                                                                           │
+└──────────────────────┴───────────────────────────────────────────────────────────────────────────┘
+ Tip: runAgentLoop 与 Agent 支持 reasoning、toolCalls、steering、follow-up、interrupt、waitForIdle
+      与完整 agent/tool 事件。
+
+
+请只回答数字：2 + 2 等于多少？
+4
+上一轮回答是什么？请简短回答。
+上一轮回答：4
+请调用 read 读取当前项目 package.json 的前六行。
+• Explored
+  └ Read package.json
+工具结果：     1  {
+     2    "name": "runledger",
+     3    "version": "0.0.1",
+     4    "private": true,
+     5    "type": "module",
+     6    "description": "Enterprise auditable agent runtime (minimal viable scaffold)",
+─ stop · Worked for 0s • 1 tools • 56 tokens ───────────────────────────────────────────────────────────────────────────
+
+› Message RunLedge …
+
+  done:stop · /data2-HDD-SATA-20T/Digital_avatar/haoweiyao… · azure-openai-responses/gpt-4.1-mini · think:off · 运行测试
+  in 80 · out 32 · $0.00 · ctx window 1.0m

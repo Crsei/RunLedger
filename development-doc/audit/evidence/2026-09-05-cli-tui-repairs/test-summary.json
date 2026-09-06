@@ -1,0 +1,21 @@
+{
+  "command": "npm test",
+  "mode": "default local buckets",
+  "exitCode": 0,
+  "vitest": {
+    "filesPassed": 486,
+    "testsPassed": 3046
+  },
+  "bun": {
+    "filesPassed": 21,
+    "testsPassed": 144,
+    "assertions": 1065
+  },
+  "supplementalController": {
+    "filesPassed": 2,
+    "testsPassed": 28,
+    "note": "Overlaps the main run; covers final active snapshot initialization and newly added steering suite after main inventory was collected."
+  },
+  "projectSubagentIntegrationTests": 7,
+  "checkRustTestsPassed": 12
+}

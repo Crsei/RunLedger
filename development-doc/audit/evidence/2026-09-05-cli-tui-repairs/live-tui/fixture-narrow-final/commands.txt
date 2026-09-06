@@ -1,0 +1,24 @@
+Harness: standard@1  Permission: workspace-write  Thinking: off
+
+┌╭──────────────────────────────────────────────────────────────────────╮────┐
+││ /commands                                                            │    │
+││  ▶ /clear                                                            │    │
+││    Clear chat                                                        │    │
+││    /new [standard|minimal]                                           │    │
+││    Create or inherit a Session harness profile                       │─── │
+││    /resume [sessionId]                                               │    │
+││    Browse or resume a canonical Session                              │    │
+││    /fork                                                             │    │
+││    Fork the current durable head                                     │    │
+││    /rename <title>                                                   │    │
+││    Set the current Session display title                             │    │
+└│    /provider                                                         │────┘
+ │    Configure provider                                                │ sour
+ ╰──────────────────────────────────────────────────────────────────────╯
+
+
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital… · azure-openai-responses/gpt-4.1-mini · think:off
+  ctx window 1.0m

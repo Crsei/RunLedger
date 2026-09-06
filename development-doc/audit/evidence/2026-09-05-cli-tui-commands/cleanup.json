@@ -1,0 +1,64 @@
+{
+  "trackedProcesses": [
+    {
+      "pid": 29473,
+      "ppid": 29445,
+      "group": 29473,
+      "start": "790676379",
+      "state": "S",
+      "command": "node"
+    },
+    {
+      "pid": 13478,
+      "ppid": 53269,
+      "group": 13478,
+      "start": "790657851",
+      "state": "S",
+      "command": "node"
+    },
+    {
+      "pid": 29522,
+      "ppid": 29473,
+      "group": 29473,
+      "start": "790676394",
+      "state": "S",
+      "command": "bun"
+    },
+    {
+      "pid": 17683,
+      "ppid": 17678,
+      "group": 17683,
+      "start": "790673240",
+      "state": "S",
+      "command": "node"
+    },
+    {
+      "pid": 17782,
+      "ppid": 17683,
+      "group": 17683,
+      "start": "790673258",
+      "state": "S",
+      "command": "bun"
+    },
+    {
+      "pid": 26873,
+      "ppid": 26715,
+      "group": 26715,
+      "start": "790646851",
+      "state": "S",
+      "command": "bun"
+    },
+    {
+      "pid": 26715,
+      "ppid": 26710,
+      "group": 26715,
+      "start": "790646835",
+      "state": "S",
+      "command": "node"
+    }
+  ],
+  "normalQuit": false,
+  "cleanup": "targeted SIGTERM then SIGKILL when needed",
+  "forcedKillPids": [],
+  "remainingTrackedProcesses": []
+}

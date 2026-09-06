@@ -1,0 +1,42 @@
+{"time": 1788579038.0670743, "capture": "01-startup", "pane": "54758|0||100|30", "argv": ["start"]}
+{"time": 1788579047.140501, "capture": "02-question-1", "pane": "54758|0||100|30", "argv": ["send", "02-question-1", "你好，请计算 2 + 3。", "1"]}
+{"time": 1788579052.948152, "capture": "03-help", "pane": "54758|0||100|30", "argv": ["send", "03-help", "/help"]}
+{"time": 1788579060.0791402, "capture": "04-help-close", "pane": "54758|0||100|30", "argv": ["keys", "04-help-close", "Escape"]}
+{"time": 1788579061.4410567, "capture": "05-model", "pane": "54758|0||100|30", "argv": ["send", "05-model", "/model"]}
+{"time": 1788579066.2855735, "capture": "06-provider", "pane": "54758|0||100|30", "argv": ["send", "06-provider", "/provider"]}
+{"time": 1788579071.221348, "capture": "07-provider-close", "pane": "54758|0||100|30", "argv": ["keys", "07-provider-close", "Escape"]}
+{"time": 1788579072.5726497, "capture": "08-permissions", "pane": "54758|0||100|30", "argv": ["send", "08-permissions", "/permissions"]}
+{"time": 1788579079.1599746, "capture": "09-permissions-close", "pane": "54758|0||100|30", "argv": ["keys", "09-permissions-close", "Escape"]}
+{"time": 1788579080.4702559, "capture": "10-sessions", "pane": "54758|0||100|30", "argv": ["send", "10-sessions", "/sessions"]}
+{"time": 1788579090.1719906, "capture": "11-sessions-close", "pane": "54758|0||100|30", "argv": ["keys", "11-sessions-close", "Escape"]}
+{"time": 1788579092.4985433, "capture": "12-new-minimal", "pane": "54758|0||100|30", "argv": ["send", "12-new-minimal", "/new minimal", "2"]}
+{"time": 1788579099.2165298, "capture": "13-hide-thinking", "pane": "54758|0||100|30", "argv": ["send", "13-hide-thinking", "/hide-thinking"]}
+{"time": 1788579100.5328057, "capture": "14-rename", "pane": "54758|0||100|30", "argv": ["send", "14-rename", "/rename TUI smoke 最小会话"]}
+{"time": 1788579101.8656943, "capture": "15-sessions-minimal", "pane": "54758|0||100|30", "argv": ["send", "15-sessions-minimal", "/sessions"]}
+{"time": 1788579107.883911, "capture": "16-sessions-close", "pane": "54758|0||100|30", "argv": ["keys", "16-sessions-close", "Escape"]}
+{"time": 1788579109.2095342, "capture": "17-processes", "pane": "54758|0||100|30", "argv": ["send", "17-processes", "/processes"]}
+{"time": 1788579114.0758405, "capture": "18-processes-close", "pane": "54758|0||100|30", "argv": ["keys", "18-processes-close", "Escape"]}
+{"time": 1788579115.3951619, "capture": "19-plan", "pane": "54758|0||100|30", "argv": ["send", "19-plan", "/plan"]}
+{"time": 1788579121.224399, "capture": "20-compact", "pane": "54758|0||100|30", "argv": ["send", "20-compact", "/compact"]}
+{"time": 1788579122.551764, "capture": "21-memory", "pane": "54758|0||100|30", "argv": ["send", "21-memory", "/memory"]}
+{"time": 1788579123.8748834, "capture": "22-recovery", "pane": "54758|0||100|30", "argv": ["send", "22-recovery", "/recovery"]}
+{"time": 1788579131.449343, "capture": "23-terminal", "pane": "54758|0||100|30", "argv": ["send", "23-terminal", "/terminal"]}
+{"time": 1788579132.762885, "capture": "24-unknown", "pane": "54758|0||100|30", "argv": ["send", "24-unknown", "/settings"]}
+{"time": 1788579134.0797112, "capture": "25-question-2", "pane": "54758|0||100|30", "argv": ["send", "25-question-2", "请列出当前项目的主要目录。"]}
+{"time": 1788579142.803441, "capture": "26-new-standard", "pane": "54758|0||100|30", "argv": ["send", "26-new-standard", "/new standard"]}
+{"time": 1788579144.1120162, "capture": "27-standard-compact", "pane": "54758|0||100|30", "argv": ["send", "27-standard-compact", "/compact"]}
+{"time": 1788579145.425617, "capture": "28-standard-memory", "pane": "54758|0||100|30", "argv": ["send", "28-standard-memory", "/memory"]}
+{"time": 1788579152.0549483, "capture": "29-standard-compact-repeat", "pane": "54758|0||100|30", "argv": ["send", "29-standard-compact-repeat", "/compact"]}
+{"time": 1788579153.3687844, "capture": "30-standard-plan", "pane": "54758|0||100|30", "argv": ["send", "30-standard-plan", "/plan"]}
+{"time": 1788579154.6808417, "capture": "31-standard-remember", "pane": "54758|0||100|30", "argv": ["send", "31-standard-remember", "/remember 本次审计只验证命令链路。"]}
+{"time": 1788579169.367443, "capture": "33-narrow-sessions", "pane": "54758|0||100|30", "argv": ["send", "33-narrow-sessions", "/sessions"]}
+{"time": 1788579180.1398566, "capture": "34-narrow-sessions", "pane": "54758|0||100|30", "argv": ["capture", "34-narrow-sessions"]}
+{"time": 1788579190.6879442, "capture": "35-sessions-close", "pane": "54758|0||100|30", "argv": ["keys", "35-sessions-close", "Escape"]}
+{"time": 1788579193.005692, "capture": "36-quit", "pane": "54758|1|0|100|30", "argv": ["send", "36-quit", "/quit", "2"]}
+{"time": 1788579212.389379, "capture": "37-narrow-startup", "pane": "15603|0||80|24", "argv": ["start", "80", "24"]}
+{"time": 1788579219.3449457, "capture": "38-narrow-help", "pane": "15603|0||80|24", "argv": ["send", "38-narrow-help", "/help"]}
+{"time": 1788579220.155702, "capture": "39-narrow-help-close", "pane": "15603|0||80|24", "argv": ["keys", "39-narrow-help-close", "Escape"]}
+{"time": 1788579221.4747312, "capture": "40-narrow-sessions", "pane": "15603|0||80|24", "argv": ["send", "40-narrow-sessions", "/sessions"]}
+{"time": 1788579232.9667795, "capture": "41-narrow-sessions-close", "pane": "15603|0||80|24", "argv": ["keys", "41-narrow-sessions-close", "Escape"]}
+{"time": 1788579234.2812936, "capture": "42-narrow-toggle", "pane": "15603|0||80|24", "argv": ["send", "42-narrow-toggle", "/hide-thinking"]}
+{"time": 1788579235.088298, "capture": "43-narrow-ctrl-d", "pane": "15603|1|0|80|24", "argv": ["keys", "43-narrow-ctrl-d", "C-d"]}

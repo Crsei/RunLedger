@@ -1,0 +1,24 @@
+│ <no-model>  │ Ctrl+D to exit                                               │
+│<no-provider>│ ──────────────────────────────────────────────────────────── │
+│             │ Session                                                      │
+│             │ model: <no-model>                                            │
+│             │ provider: <no-provider>                                      │
+│             │ thinking: off                                                │
+│╭──────────────────────────────────────────────────────────────────────╮    │
+││ Filter: [Cwd]  All    Sort: [Updated]  Created                       │    │
+││ /resume (1)                                                          │─── │
+││ Filter…                                                              │    │
+││  ▶ Untitled · just now · active · current                            │now)│
+││    workspace_0fceab77ccb8e1e7f134facbd88604bec4662f86d1e2b64d · Harn │    │
+││ enter resume · esc close · ↑/↓ browse · ctrl+e expand · ctrl+o dens… │    │
+││ ctrl+f filter · ctrl+s sort · 1/1                                    │    │
+││                                                                      │    │
+└│                                                                      │────┘
+ │                                                                      │ 会话
+ ╰──────────────────────────────────────────────────────────────────────╯
+
+
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital_avatar/haowe… · <no-provider>/<no-model> · think:

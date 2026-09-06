@@ -1,0 +1,13 @@
+{
+  "timestamp": "2026-09-05T03:37:33.942202+00:00",
+  "owners": [
+    {
+      "session_id": "session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtnttai2",
+      "runtime_id": "runtime_owner-46811",
+      "generation": 1,
+      "state": "running",
+      "port": 46811,
+      "heartbeat_at_ms": 1788579451138
+    }
+  ]
+}

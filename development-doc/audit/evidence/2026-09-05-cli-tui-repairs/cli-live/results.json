@@ -1,0 +1,772 @@
+[
+  {
+    "id": "help",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--help"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 3927,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.484,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true
+    },
+    "pass": true,
+    "stdout": "Usage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands use the authenticated Session Owner's negotiated capabilities.\nAvailability depends on the current Session; unavailable operations return a nonzero exit code:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n    Standard Sessions currently support user-scoped provider policy; workspace scope is unavailable.\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n    worktree, compact, context, memory/remember and plan mutations are unavailable in standard Sessions.\n",
+    "stderr": ""
+  },
+  {
+    "id": "version",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "--version"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 5290,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.171,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true
+    },
+    "pass": true,
+    "stdout": "runledger 0.0.1\n",
+    "stderr": ""
+  },
+  {
+    "id": "workspace_capability",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "workspace",
+      "capability"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 6011,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.111,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true
+    },
+    "pass": true,
+    "stdout": "workspace capability (per real-runner evidence; 不构成 OS sandbox/containment 承诺)\nlinux     path=verified   git=verified   process=verified   cleanup=verified   adapter=available\n           note: real-runner evidence 2026-08-06 (tests/fixtures/platform-evidence/linux)\nmacos     path=unverified git=unverified process=unverified cleanup=unverified adapter=unsupported\n           note: no real runner evidence; APFS case/firmlink/process-group pending (evidence-verification-gaps.md)\nwindows   path=unverified git=unverified process=unverified cleanup=unverified adapter=unsupported\n           note: no real runner evidence; drive/UNC/junction/Git Bash/PowerShell/process-tree pending (evidence-verification-gaps.md)\ncurrent runner: linux (verified)\n证据与缺口: development-doc/worktree-sandbox-permisson/evidence-verification-gaps.md\n",
+    "stderr": ""
+  },
+  {
+    "id": "security_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "security",
+      "inspect"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 6711,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.464,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "session.security.inspect",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"requestFrameId\":\"c2_mtny7bfb\",\"ok\":true,\"status\":\"ok\",\"operation\":\"session.security.inspect\",\"domainRevision\":1,\"value\":{\"ownerGeneration\":1,\"profile\":\"workspace-write\",\"approvalPolicy\":\"on-request\",\"filesystemMode\":\"workspace-write\",\"networkMode\":\"review\",\"sandboxMode\":\"workspace-write\",\"approvalReviewer\":\"user\",\"policyDigest\":{\"algorithm\":\"sha256\",\"digest\":\"c97589eea4900144c6dbcfa561e953b465f270caf37daaf59d141a30acdf0217\"},\"sourceCount\":0,\"presetAvailability\":[{\"id\":\"workspace-write\",\"state\":\"available\"},{\"id\":\"approve-for-me\",\"state\":\"available\"},{\"id\":\"danger-full-access\",\"state\":\"available\"}],\"bashAnalyzerMode\":\"legacy\",\"bashAnalyzerSource\":\"default\",\"bashAnalyzerConfigDigest\":\"9480ab7d985aa90a9365ea0c476209c576cfbfd08735dfb0668bc76b20545a02\"}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "list"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 7954,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.753,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "skill.provider.list",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"requestFrameId\":\"c2_mtny7dkg\",\"ok\":true,\"status\":\"ok\",\"operation\":\"skill.provider.list\",\"domainRevision\":1,\"value\":{\"items\":[{\"providerId\":\"runledger-user\",\"displayName\":\"RunLedger user skills\",\"rank\":100,\"effectiveEnabled\":true,\"state\":\"unavailable\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0,\"lastError\":\"no compatible skill directory is available\"},{\"providerId\":\"runledger-workspace\",\"displayName\":\"RunLedger workspace skills\",\"rank\":200,\"effectiveEnabled\":true,\"state\":\"unavailable\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0,\"lastError\":\"no compatible skill directory is available\"},{\"providerId\":\"runledger-plugin\",\"displayName\":\"RunLedger plugin skill contributions\",\"rank\":400,\"effectiveEnabled\":true,\"state\":\"loaded\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"codex-user\",\"displayName\":\"Codex user skills\",\"rank\":2000,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"codex-project\",\"displayName\":\"Codex project skills\",\"rank\":2100,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"agents-user\",\"displayName\":\"Agents user skills\",\"rank\":2200,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"agents-project\",\"displayName\":\"Agents project skills\",\"rank\":2300,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"claude-user\",\"displayName\":\"Claude user skills\",\"rank\":2400,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"claude-project\",\"displayName\":\"Claude project skills\",\"rank\":2500,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0},{\"providerId\":\"claude-plugins\",\"displayName\":\"Claude installed plugins\",\"rank\":2600,\"effectiveEnabled\":false,\"state\":\"disabled\",\"candidateCount\":0,\"activeCount\":0,\"failedCount\":0}]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_disable_user",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "disable",
+      "runledger-user",
+      "--scope",
+      "user"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 9797,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.367,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "skill.provider.disable",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true,
+      "persisted_disabled": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":true,\"status\":\"ok\",\"operation\":\"skill.provider.disable\",\"domainRevision\":2,\"value\":{}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_enable_user",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "enable",
+      "runledger-user",
+      "--scope=user"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 10867,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.598,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "skill.provider.enable",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true,
+      "persisted_enabled": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":true,\"status\":\"ok\",\"operation\":\"skill.provider.enable\",\"domainRevision\":2,\"value\":{}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_workspace_rejected",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "disable",
+      "runledger-user",
+      "--scope=workspace"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 12486,
+    "exit_code": 1,
+    "timeout": false,
+    "duration_seconds": 2.627,
+    "expected": {
+      "exit_code": 1,
+      "ok": false,
+      "operation": "skill.provider.disable",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true,
+      "user_policy_preserved": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":false,\"status\":\"failed\",\"code\":\"extension_operation_failed\",\"operation\":\"skill.provider.disable\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_missing_scope",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "disable",
+      "runledger-user",
+      "--scope"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 13727,
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.049,
+    "expected": {
+      "exit_code": 2,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": "--scope 缺少值"
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "stderr": true
+    },
+    "pass": true,
+    "stdout": "",
+    "stderr": "[runledger] --scope 缺少值\n\nUsage: runledger [options]\n\n  -c, --continue              继续 canonical 用户 home 中的最近会话\n  -r, --resume                在 TUI 中选择当前项目的历史会话\n      --session <path>        直接打开已知 session 文件\n      --session-id <id>       按 sessionId 直接打开 canonical 会话\n      --fork <path>           从 canonical session 文件 fork 到当前 workspace\n      --harness-profile <profile>\n                              新建 Session 的 standard|minimal profile\n  -m, --model <id>            覆盖 settings.model\n      --provider <id>         覆盖 settings.provider\n      --thinking <level>      off|minimal|low|medium|high|xhigh|max\n      --hide-thinking         本次运行隐藏 thinking blocks（仅展示）\n      --permission-profile <name>\n                              read-only|workspace-write|danger-full-access|named-profile-id\n      --approval-policy <p>   on-request|never|untrusted|granular\n      --bash-analyzer <mode>  legacy|shadow|ast\n      --sandbox <profile>     off|read-only|workspace-write|strict|external\n      --network <mode>        deny|allow|allowlist|review\n      --network-host <host>   allowlist/review host，可重复\n      --worktree [label]      在 Host 创建/复用 session worktree\n      --worktree-ref <ref>    worktree 基线 ref\n      --worktree-branch <n>   worktree 分支名\n      --no-worktree           显式不使用 worktree(与 --worktree 互斥)\n      --experimental-multi-agent\n                              开启有界 multi-agent(仍需 user/workspace settings)\n      auth-gateway <command>  启动/管理本地前向代理网关\n      --session-dir <dir>     已拒绝;请使用预创建的 RUNLEDGER_DIR\n      --debug                 RUNLEDGER_DEBUG=1,stderr log\n  -v, --version               打版本退出\n  -h, --help                  本帮助\n\n环境变量:\n  <PROVIDER>_API_KEY           provider 可用的环境凭据之一;也可在 TUI /login\n  RUNLEDGER_DIR                已预创建的 canonical 用户 home 覆盖\n  RUNLEDGER_SESSION_DIR        已拒绝;不能改变 canonical session root\n\n布局参见 Runtime contract 与 development-doc/storage-cli/02-user-home-migration-handoff.md。\n\nControl commands use the authenticated Session Owner's negotiated capabilities.\nAvailability depends on the current Session; unavailable operations return a nonzero exit code:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n    Standard Sessions currently support user-scoped provider policy; workspace scope is unavailable.\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n    plugin inspect / mcp inspect are unavailable in standard Sessions; use plugin list / mcp list|doctor.\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n    worktree, compact, context, memory/remember and plan mutations are unavailable in standard Sessions.\n"
+  },
+  {
+    "id": "plugin_reload",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plugin",
+      "reload"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 14363,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.503,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "extension.reload",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":true,\"status\":\"ok\",\"operation\":\"extension.reload\",\"domainRevision\":2,\"value\":{}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plugin_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plugin",
+      "list"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 15446,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.617,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "plugin.list",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"requestFrameId\":\"c2_mtny7o7k\",\"ok\":true,\"status\":\"ok\",\"operation\":\"plugin.list\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "mcp_list",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "mcp",
+      "list"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 16837,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.416,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "mcp.list",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"requestFrameId\":\"c2_mtny7q2x\",\"ok\":true,\"status\":\"ok\",\"operation\":\"mcp.list\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "mcp_doctor",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "mcp",
+      "doctor"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 18172,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.494,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "mcp.doctor",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"requestFrameId\":\"c2_mtny7s0g\",\"ok\":true,\"status\":\"ok\",\"operation\":\"mcp.doctor\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "memory_query_unavailable",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "memory",
+      "search",
+      "audit-no-match"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 19584,
+    "exit_code": 1,
+    "timeout": false,
+    "duration_seconds": 2.56,
+    "expected": {
+      "exit_code": 1,
+      "ok": false,
+      "operation": "memory.search",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"memory.search\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "remember_documented",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "remember",
+      "audit-note"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 20862,
+    "exit_code": 1,
+    "timeout": false,
+    "duration_seconds": 2.508,
+    "expected": {
+      "exit_code": 1,
+      "ok": false,
+      "operation": "memory.inspect",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"memory.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "remember_explicit",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "remember",
+      "propose",
+      "audit-note"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 21982,
+    "exit_code": 1,
+    "timeout": false,
+    "duration_seconds": 2.605,
+    "expected": {
+      "exit_code": 1,
+      "ok": false,
+      "operation": "memory.inspect",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"memory.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plan_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plan",
+      "inspect"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 22978,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.461,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": "plan.inspect",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"requestFrameId\":\"c2_mtny7zuu\",\"ok\":true,\"status\":\"ok\",\"operation\":\"plan.inspect\",\"domainRevision\":0,\"value\":{\"repositoryId\":\"repository_10b537b35932c3a8e2b1b97c051b1be402260378d2003795\",\"state\":{\"status\":\"inactive\",\"sessionId\":\"session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtny7yvc\",\"goalId\":\"goal_1d4c8205de7e0db9efa4c3ce72870efcf4f07bb20cce8d95\",\"revision\":0,\"policyCeilingDigest\":{\"algorithm\":\"sha256\",\"digest\":\"854467d573abb9a6f61e67256f6e01be9e0067d1fea82243a780a0f19da3cc11\"},\"sourceHead\":{\"streamId\":\"session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtny7yvc\",\"sequence\":4,\"eventHash\":{\"algorithm\":\"sha256\",\"digest\":\"9c2c93da747225c15072e765283f19e0ebe6f6c24a26ed756ec5a6420fe241f2\"}},\"completeness\":\"complete\",\"updatedAt\":\"2026-09-05T05:34:59.908Z\",\"projectionDigest\":{\"algorithm\":\"sha256\",\"digest\":\"8d758a415f7bb30d04edb7cb3db1f2e31806dff97747e0417f175ff2cbd1126b\"}}}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plan_mutation_unavailable",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plan",
+      "enter"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 24132,
+    "exit_code": 1,
+    "timeout": false,
+    "duration_seconds": 2.288,
+    "expected": {
+      "exit_code": 1,
+      "ok": false,
+      "operation": "plan.enter",
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true,
+      "operation": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"plan.enter\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_status_missing",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "status",
+      "--json"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 24993,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.032,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":true,\"token\":{\"configured\":false}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_check_missing",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "check",
+      "--json"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 25500,
+    "exit_code": 1,
+    "timeout": false,
+    "duration_seconds": 1.06,
+    "expected": {
+      "exit_code": 1,
+      "ok": false,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":false,\"strict\":false,\"token\":{\"configured\":false}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "gateway_check_configured",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "auth-gateway",
+      "check",
+      "--json"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 26054,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.037,
+    "expected": {
+      "exit_code": 0,
+      "ok": true,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "ok": true
+    },
+    "pass": true,
+    "stdout": "{\"ok\":true,\"strict\":false,\"token\":{\"configured\":true,\"mode\":384}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "manifest_missing_confirmation",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "storage",
+      "prune-legacy",
+      "--manifest",
+      "0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "cwd": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/controls/state",
+    "pid": 26572,
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.034,
+    "expected": {
+      "exit_code": 2,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": "需要显式 --confirm-delete"
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "stderr": true
+    },
+    "pass": true,
+    "stdout": "",
+    "stderr": "[runledger] storage prune-legacy 需要显式 --confirm-delete\nUsage: runledger storage prune-legacy --manifest <digest> --confirm-delete\n\nPhysically delete the verified migration archive migration-backup/session-store/<digest>.\nRequires the exact manifest digest and explicit confirmation.\n"
+  },
+  {
+    "id": "migrate_spaced",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "migrate",
+      "session-store",
+      "--confirm-archive"
+    ],
+    "cwd": "/tmp/runledger-command-repair-20260905/cli-live/prune-spaced/workspace",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/prune-spaced/state",
+    "pid": 27024,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.211,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "manifest_emitted": true,
+      "source_archived": true
+    },
+    "pass": true,
+    "stdout": "[runledger] session-store migration committed: sessions=1 entries=1\n[runledger] manifest=e56f5a433bdfae4f8c56e8e3303f0c8ae839539b98baf750eebc76fa334082fd archive=/tmp/runledger-command-repair-20260905/cli-live/prune-spaced/state/migration-backup/session-store/e56f5a433bdfae4f8c56e8e3303f0c8ae839539b98baf750eebc76fa334082fd\n",
+    "stderr": ""
+  },
+  {
+    "id": "prune_spaced",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "storage",
+      "prune-legacy",
+      "--manifest",
+      "e56f5a433bdfae4f8c56e8e3303f0c8ae839539b98baf750eebc76fa334082fd",
+      "--confirm-delete"
+    ],
+    "cwd": "/tmp/runledger-command-repair-20260905/cli-live/prune-spaced/workspace",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/prune-spaced/state",
+    "pid": 27437,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.072,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "archive_deleted": true
+    },
+    "pass": true,
+    "stdout": "[runledger] prune-legacy committed: files=1 archive=/tmp/runledger-command-repair-20260905/cli-live/prune-spaced/state/migration-backup/session-store/e56f5a433bdfae4f8c56e8e3303f0c8ae839539b98baf750eebc76fa334082fd\n",
+    "stderr": ""
+  },
+  {
+    "id": "migrate_equals",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "migrate",
+      "session-store",
+      "--confirm-archive"
+    ],
+    "cwd": "/tmp/runledger-command-repair-20260905/cli-live/prune-equals/workspace",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/prune-equals/state",
+    "pid": 27884,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.161,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "manifest_emitted": true,
+      "source_archived": true
+    },
+    "pass": true,
+    "stdout": "[runledger] session-store migration committed: sessions=1 entries=1\n[runledger] manifest=de3b8abb81f3bfd3bd6a46adf1fec41ee3d706d63b0585734e650645687198f7 archive=/tmp/runledger-command-repair-20260905/cli-live/prune-equals/state/migration-backup/session-store/de3b8abb81f3bfd3bd6a46adf1fec41ee3d706d63b0585734e650645687198f7\n",
+    "stderr": ""
+  },
+  {
+    "id": "prune_equals",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "storage",
+      "prune-legacy",
+      "--manifest=de3b8abb81f3bfd3bd6a46adf1fec41ee3d706d63b0585734e650645687198f7",
+      "--confirm-delete"
+    ],
+    "cwd": "/tmp/runledger-command-repair-20260905/cli-live/prune-equals/workspace",
+    "runledger_dir": "/tmp/runledger-command-repair-20260905/cli-live/prune-equals/state",
+    "pid": 28349,
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 1.07,
+    "expected": {
+      "exit_code": 0,
+      "ok": null,
+      "operation": null,
+      "stderr_contains": null
+    },
+    "checks": {
+      "exit": true,
+      "bounded_completion": true,
+      "archive_deleted": true
+    },
+    "pass": true,
+    "stdout": "[runledger] prune-legacy committed: files=1 archive=/tmp/runledger-command-repair-20260905/cli-live/prune-equals/state/migration-backup/session-store/de3b8abb81f3bfd3bd6a46adf1fec41ee3d706d63b0585734e650645687198f7\n",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,232 @@
+[
+  {
+    "path": "baseline-head.txt",
+    "bytes": 41,
+    "sha256": "a30273a20163c7ce6f424b87713cb59748a1ac251449c99261b682b6158289bd"
+  },
+  {
+    "path": "baseline-status.txt",
+    "bytes": 730,
+    "sha256": "ea96ffdc07315798b9c1f7ff384d978b48c5f502b2310fab0b0e0712b5de2acb"
+  },
+  {
+    "path": "build.log",
+    "bytes": 652,
+    "sha256": "f1caea0faee567e68da77c4eaca97826f5f3aa36e74fdc950de3694c93c4e9b4"
+  },
+  {
+    "path": "candidate-digests.json",
+    "bytes": 1102,
+    "sha256": "aa930d463b34da0e95adbf5a47b0ff6dd1dc97574218ef3845048c76ff72c475"
+  },
+  {
+    "path": "candidate-final-verification.json",
+    "bytes": 42,
+    "sha256": "347f3eaa7ef1e9eff10ea0613435af01471753bbba2068aadbb8613330b1e240"
+  },
+  {
+    "path": "check.log",
+    "bytes": 3545,
+    "sha256": "b71da2786e91f79486d075a3c5b7709adfe70f504caa00a2eb09be5aeddeb7bd"
+  },
+  {
+    "path": "cleanup.json",
+    "bytes": 1204,
+    "sha256": "87b644e856662967f31b94fc81e5b28beb1be5e6f11ad234fb390f00656a2a56"
+  },
+  {
+    "path": "cli-agent/exit-diagnosis.md",
+    "bytes": 6046,
+    "sha256": "1ae2339cf050377c64cb3f77439952710adcd15ce7517d22ccb2fb06310aa59e"
+  },
+  {
+    "path": "cli-agent/exit-proc-snapshots.json",
+    "bytes": 4346,
+    "sha256": "5a1aa553be4b1f63ab9647b8e9a685b5260a5668f016c41c1caec45939b5c7f6"
+  },
+  {
+    "path": "cli-agent/extra-results.json",
+    "bytes": 4730,
+    "sha256": "a8480ba4a817b44f6bac259f3a4fd4ab5165bba9df6d3f637edcb199c0fffbcc"
+  },
+  {
+    "path": "cli-agent/mapped-owner-live.json",
+    "bytes": 321,
+    "sha256": "0437bd37c732c2b28e833161c2fcb69f48cc250831756bae3fa7d2ca9ef72872"
+  },
+  {
+    "path": "cli-agent/report.md",
+    "bytes": 9333,
+    "sha256": "2711b9b0a3a579cc293e87682a0a0eb94ea028161c8905a8f60dd6f18047564b"
+  },
+  {
+    "path": "cli-agent/results.json",
+    "bytes": 47741,
+    "sha256": "f089c74240ab9a27a4d53b4595fc614c2e2db3753f6918b6db95062435e299a8"
+  },
+  {
+    "path": "fixture-exit-observation.json",
+    "bytes": 127,
+    "sha256": "71bc6332e05dc134d278751baa2485f4c8e46359e3dead534ce04d8c1207e377"
+  },
+  {
+    "path": "fixture-requests.jsonl",
+    "bytes": 4800,
+    "sha256": "211d925ddc5a9fbc7b623d6ab456f7627fd98ac3f14896d591047d020060e75b"
+  },
+  {
+    "path": "fresh-fixture-exit-observation.json",
+    "bytes": 110,
+    "sha256": "0e6294a77d5947f6b74263db472e1c21f1de975eec22a207d47173674b58eb75"
+  },
+  {
+    "path": "live-tui/fixture/question-1-result.txt",
+    "bytes": 3406,
+    "sha256": "33433066164fba6b960ef26b4cde815e92a4c72c268b3eafd16802de4b8f3e4f"
+  },
+  {
+    "path": "live-tui/fixture/question-2-result.txt",
+    "bytes": 3470,
+    "sha256": "d4d56cc285d63b8ee56e257d4c95f3d5093f819241ae6b64a8ff9ab3d83c9959"
+  },
+  {
+    "path": "live-tui/fixture/question-3-result.txt",
+    "bytes": 3105,
+    "sha256": "8464be304620a692cec58be8b1520ad2c9dd56082974f4578ba706a0f4d15ead"
+  },
+  {
+    "path": "live-tui/fixture/question-4-result.txt",
+    "bytes": 2620,
+    "sha256": "f5f68cd0055c590a8f5b5bdce5d5b31b1be09fbabae6f4fb00eaaed92b58db75"
+  },
+  {
+    "path": "live-tui/fixture/question-5-error.txt",
+    "bytes": 2426,
+    "sha256": "52dbe1852ab864bee65ebc2b8bab0f552d07afe7b6c5fadffa993e4602d373a8"
+  },
+  {
+    "path": "live-tui/fixture/question-6-recovered.txt",
+    "bytes": 2258,
+    "sha256": "7dd188143b4da6a50d887b39a477aa36da9b1dc71285b59f3cf88474f8f7f7c0"
+  },
+  {
+    "path": "live-tui/fixture/resumed-after-stale-owner.txt",
+    "bytes": 1566,
+    "sha256": "6a89a98284297ea9fced2528bd2fc2350a44c0e2edc7b9485e1d4d3ea4a5fe7d"
+  },
+  {
+    "path": "live-tui/fixture-exit/answered.txt",
+    "bytes": 3412,
+    "sha256": "4f145cc5f1ca4364beaab954efbd97d5f16f27995298d52a72eae53da908184b"
+  },
+  {
+    "path": "live-tui/mapped/question-1-result.txt",
+    "bytes": 3449,
+    "sha256": "9146146d52ed7b726475b9d87febe08bcd18486e2bff86490b97fb2ca35435bc"
+  },
+  {
+    "path": "live-tui/original/startup.txt",
+    "bytes": 129,
+    "sha256": "07fb3fe04d5b85a28766ba79b50e9fd893ec9f1f00e1f878e8aba7f6d2289cf9"
+  },
+  {
+    "path": "test-agent/error-diagnosis/experiment-result.json",
+    "bytes": 1882,
+    "sha256": "952f4cc881faf7e3596194fb8c5cca45f2eb4f473ef02877b110571623ce946c"
+  },
+  {
+    "path": "test-agent/error-diagnosis/report.md",
+    "bytes": 4009,
+    "sha256": "6a382836b0f6f38d2ff00b8aed2168d0c400add0c52698b17879f34cbfa847ac"
+  },
+  {
+    "path": "test-agent/focused-evidence.log",
+    "bytes": 4698,
+    "sha256": "2ba5403a1bea0a8241881e0463f46d0081e9f29223d9596bd3fb5991547af41d"
+  },
+  {
+    "path": "test-agent/focused-tests.log",
+    "bytes": 12811,
+    "sha256": "c73a801e013ff0048d6e8c98cc720a75dc5e293a9b769c8d8a219ce34c7ff552"
+  },
+  {
+    "path": "test-agent/report.md",
+    "bytes": 3260,
+    "sha256": "2bed8ce35a2941d5d5abb3005d207a33c7515e85527a02ba4cd0703f07938881"
+  },
+  {
+    "path": "tui-agent/02-question-1.txt",
+    "bytes": 3315,
+    "sha256": "b21c32405fe5e1eec3922cb17621c33080b3a233ccb4bee9ecd377166f5f850c"
+  },
+  {
+    "path": "tui-agent/03-help.txt",
+    "bytes": 3432,
+    "sha256": "d10af6238fed279a005313bfa6c34dedc314d8c95dcc6cd3acb9020a12b2f299"
+  },
+  {
+    "path": "tui-agent/12-new-minimal.txt",
+    "bytes": 213,
+    "sha256": "2dd42d4b584f018bd9824b6313e5a905f0688e44e3984a2abb0bc2884462e735"
+  },
+  {
+    "path": "tui-agent/13-hide-thinking.txt",
+    "bytes": 261,
+    "sha256": "b285bb4f3c9f2ebc541bf0bf2de5df39eecdad231911ad22b0cff7789a1546a1"
+  },
+  {
+    "path": "tui-agent/15-sessions-minimal.txt",
+    "bytes": 2110,
+    "sha256": "1b274ba90c6f6eba82df4153707b95bdd82627f47e2e426be32300552eed1851"
+  },
+  {
+    "path": "tui-agent/28-standard-memory.txt",
+    "bytes": 262,
+    "sha256": "b273400e6d82c5ccf01550022cefa9771e87670f9fc3d620e0aeba4490407ca0"
+  },
+  {
+    "path": "tui-agent/29-standard-compact-repeat.txt",
+    "bytes": 311,
+    "sha256": "0e987ba8f89ae44b71b9ae98f26c553d978e9ed51850427da78e719b5403bb83"
+  },
+  {
+    "path": "tui-agent/30-standard-plan.txt",
+    "bytes": 383,
+    "sha256": "b166a8e4302bd2322dbb769a4794b8b2d592324ad5effd292192cb96990963b3"
+  },
+  {
+    "path": "tui-agent/31-standard-remember.txt",
+    "bytes": 433,
+    "sha256": "5b01b4918ae456fd776a8c2afe3e6bde7d80ba5a56ec0e1673f18255fb5006a5"
+  },
+  {
+    "path": "tui-agent/36-quit.txt",
+    "bytes": 42,
+    "sha256": "7563e9d45d3c76f4d285bba246ac2e4a25009d3ab3ba911ca427eb8e50d24ced"
+  },
+  {
+    "path": "tui-agent/37-narrow-startup.txt",
+    "bytes": 1963,
+    "sha256": "233bca6c736798c8eb2f1c4c69bfd5b2d2422f227d57db28e1166977b6772f12"
+  },
+  {
+    "path": "tui-agent/40-narrow-sessions.txt",
+    "bytes": 2090,
+    "sha256": "347f243012bf4eb0b5371b40167004d8a8f0bb6e30a7f0663f4efa3bdbb6d474"
+  },
+  {
+    "path": "tui-agent/43-narrow-ctrl-d.txt",
+    "bytes": 36,
+    "sha256": "851da15ee9e045658d2baca87195a7a78086db769272f724a8f0d563ca50bce4"
+  },
+  {
+    "path": "tui-agent/actions.jsonl",
+    "bytes": 5686,
+    "sha256": "0e277ae7158246b00fd241f9e9118d16ca9961ec9ea16f770c31aefb19f279a1"
+  },
+  {
+    "path": "tui-agent/report.md",
+    "bytes": 8339,
+    "sha256": "e63b4ce314e821c2fce85baa6468c8d17ab384643f510c45be433f3722ab6d81"
+  }
+]

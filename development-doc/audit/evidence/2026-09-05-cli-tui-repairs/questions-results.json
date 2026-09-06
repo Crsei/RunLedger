@@ -1,0 +1,38 @@
+[
+  {
+    "question": "请只回答数字：2 + 2 等于多少？",
+    "pass": true,
+    "elapsedSeconds": 0.81,
+    "frame": "question-1.txt"
+  },
+  {
+    "question": "上一轮回答是什么？请简短回答。",
+    "pass": true,
+    "elapsedSeconds": 0.83,
+    "frame": "question-2.txt"
+  },
+  {
+    "question": "请调用 read 读取当前项目 package.json 的前六行。",
+    "pass": true,
+    "elapsedSeconds": 0.81,
+    "frame": "question-3.txt"
+  },
+  {
+    "question": "请执行命令 printf audit-ok，并报告输出。",
+    "pass": true,
+    "elapsedSeconds": 1.57,
+    "frame": "question-4.txt"
+  },
+  {
+    "question": "触发错误，测试 provider 失败后的界面反馈。",
+    "pass": true,
+    "elapsedSeconds": 0.81,
+    "frame": "question-5.txt"
+  },
+  {
+    "question": "恢复后再问一次：2 + 2 等于多少？",
+    "pass": true,
+    "elapsedSeconds": 0.81,
+    "frame": "question-6.txt"
+  }
+]

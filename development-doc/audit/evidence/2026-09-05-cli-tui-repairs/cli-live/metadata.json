@@ -1,0 +1,8 @@
+{
+  "started_at": "2026-09-05T05:34:22.064875+00:00",
+  "executable": "/home/nzq/.npm-global/bin/runledger",
+  "real_executable": "/data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger/bin/runledger.js",
+  "dist_main_sha256": "b4a0565421fe7a8325d59d6548c69f5d7841ea1a944d248764827ecbedadd5c6",
+  "provider_credentials": "No provider credentials inherited or configured; controlled commands only. No external model requests.",
+  "repository_head": "bd8dc1c7093a68801820f8018448bd6c7db6972f"
+}

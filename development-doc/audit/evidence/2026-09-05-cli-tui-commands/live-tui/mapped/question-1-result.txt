@@ -1,0 +1,38 @@
+Harness: standard@1  Permission: workspace-write  Thinking: off
+
+┌─── RunLedger v0.0.1 ─────────────────────────────────────────────────────────────────────────────┐
+│                      │ Quick keys                                                                │
+│    Welcome back!     │ / for commands                                                            │
+│                      │ Enter to send                                                             │
+│      runledger       │ Alt+Enter to queue follow-up                                              │
+│                      │ Ctrl+C to interrupt                                                       │
+│     gpt-4.1-mini     │ Ctrl+D to exit                                                            │
+│azure-openai-responses│ ───────────────────────────────────────────────────────────────────────── │
+│                      │ Session                                                                   │
+│                      │ model: gpt-4.1-mini                                                       │
+│                      │ provider: azure-openai-responses                                          │
+│                      │ thinking: off                                                             │
+│                      │ dir: /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger               │
+│                      │ branch: rollback/before-composer-shape                                    │
+│                      │ ───────────────────────────────────────────────────────────────────────── │
+│                      │ Recent sessions                                                           │
+│                      │  • session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtnttai (just now)│
+│                      │                                                                           │
+│                      │                                                                           │
+│                      │                                                                           │
+│                      │                                                                           │
+└──────────────────────┴───────────────────────────────────────────────────────────────────────────┘
+ Tip: mockStreamFn 用于无密钥测试，按 toolResult 数量运行 phase 0/1/2；stdlibStreamFn 只是 mockStrea
+      mFn 的便利别名，不是新的协议。
+
+
+请只回答数字：2 + 2 等于多少？
+
+
+
+
+
+› Message RunLedger…
+
+  done:error · /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger · azure-openai-responses/gpt-4.1-mini · think:off
+  ctx window 1.0m

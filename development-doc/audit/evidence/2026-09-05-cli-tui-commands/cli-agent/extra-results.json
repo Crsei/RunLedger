@@ -1,0 +1,153 @@
+[
+  {
+    "id": "skill_provider_disable",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "disable",
+      "runledger-user"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 3.664,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"skill.provider\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_enable",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "enable",
+      "runledger-user"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.728,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"skill.provider\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "skill_provider_disable_workspace",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "skill",
+      "provider",
+      "disable",
+      "runledger-user",
+      "--scope=workspace"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 3.256,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"skill.provider\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "remember_documented",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "remember",
+      "audit-note"
+    ],
+    "exit_code": 2,
+    "timeout": false,
+    "duration_seconds": 1.189,
+    "stdout": "",
+    "stderr": "[runledger] unsupported remember action: audit-note\n\nControl commands are executed by the authenticated resident Host:\n  runledger security inspect\n  runledger worktree list|inspect|create|resume|release confirm\n  runledger plugin list|inspect|reload|enable|disable|trust|untrust [plugin-id]\n  runledger skill list|provider list|provider enable|disable <provider-id> [--scope user|workspace]|trust|untrust <skill-id>\n  runledger hook list   runledger mcp list|inspect|doctor|restart [server-id]\n  runledger plan inspect|enter|activate|write|approve <approval-id>|cancel\n  runledger compact list|run '<source-range-json>' <transcript>\n  runledger memory search|get|approve|reject|revoke   runledger remember <text>\n"
+  },
+  {
+    "id": "remember_explicit",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "remember",
+      "propose",
+      "audit-note"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.43,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"memory.propose\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plugin_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plugin",
+      "inspect"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.65,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"plugin.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plugin_reload",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plugin",
+      "reload"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.19,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"plugin.reload\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "mcp_doctor",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "mcp",
+      "doctor"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.662,
+    "stdout": "{\"requestFrameId\":\"c2_mtntu2ie\",\"ok\":true,\"status\":\"ok\",\"operation\":\"mcp.doctor\",\"domainRevision\":1,\"value\":{\"items\":[]}}\n",
+    "stderr": ""
+  },
+  {
+    "id": "mcp_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "mcp",
+      "inspect"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.426,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"mcp.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "worktree_inspect",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "worktree",
+      "inspect"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.641,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"worktree.inspect\"}\n",
+    "stderr": ""
+  },
+  {
+    "id": "plan_enter",
+    "argv": [
+      "/home/nzq/.npm-global/bin/runledger",
+      "plan",
+      "enter"
+    ],
+    "exit_code": 0,
+    "timeout": false,
+    "duration_seconds": 2.802,
+    "stdout": "{\"ok\":false,\"status\":\"unavailable\",\"code\":\"operation_unavailable\",\"operation\":\"plan.enter\"}\n",
+    "stderr": ""
+  }
+]

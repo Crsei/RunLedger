@@ -13,11 +13,12 @@
 ## 模块导航
 
 本地交互测试方法：[`Python + tmux 模式入口测试`](../tests/manual/native-mode/README.md)。
+真实开发任务试跑：[`六类开发案例与证据`](../tests/manual/development-cases/README.md)。
 
 | 开发模块 | 计划与设计文档 | 关注范围 | 当前事实入口 |
 |---|---|---|---|
 | Codex 提示词模板 | [`notez/README.md`](notez/README.md) | 创建任务、执行、debug、重构、文档和协作提示词 | 可复制模板，不作为项目实现状态或自动执行指令 |
-| 项目运行与结构审计 | [`audit/README.md`](audit/README.md)、[`2026-09-05 审计与修复记录`](audit/2026-09-05-runtime-and-structure.md) | 运行缺陷修复、过度防御清理、依赖边界及 check/build/test/真实 CLI 复验 | 原始审计与修复后证据分开；剩余拆包及外部/人工/平台验收见清单，不替代领域计划 |
+| 项目运行与结构审计 | [`audit/README.md`](audit/README.md)、[`2026-09-05 审计与修复记录`](audit/2026-09-05-runtime-and-structure.md)、[`CLI/TUI 命令与提问实测`](audit/2026-09-05-cli-tui-command-audit.md) | 运行缺陷修复、过度防御清理、依赖边界及 check/build/test/真实 CLI 复验 | 原始审计、命令修复与重新实测证据分开；剩余领域能力、拆包及外部/人工/平台验收见清单，不替代领域计划 |
 | Runtime Contract | [`runtime/04-governed-agent-harness-runtime-plan.md`](runtime/04-governed-agent-harness-runtime-plan.md) | 当前权威 contract:公共类型/schema、event payload、adapter port、ref/receipt/snapshot/projection、逻辑保存分类与 `RUNLEDGER_DIR`/默认 `~/.runledger` 单一用户级布局 | contract work package 证据;行为和迁移状态查对应专项、当前代码/tests 与 `AGENTS.md` |
 | Runtime | [`runtime/00-reference.md`](runtime/00-reference.md) | 可治理 Agent Harness Runtime 的设计输入与问题域 | `runtime/04-governed-agent-harness-runtime-plan.md` |
 | Runtime | [`runtime/01-minimum-runtime-scaffold-plan.md`](runtime/01-minimum-runtime-scaffold-plan.md) | 最小 Agent Runtime、事件流、ledger、mock stream、echo tool | `runtime/06-session-owner-runtime-replacement-plan.md` 与当前代码/测试 |
@@ -52,6 +53,7 @@
 | TUI / Codex Exploration Output | [`tui/26-codex-exploration-output-summary-plan.md`](tui/26-codex-exploration-output-summary-plan.md) | `read/grep/find/glob/ls` 主时间线摘要、相邻 Exploring 分组、Ctrl+T bounded 详情及双层截断元数据 | `partial`：核心实现、check/test/build 和隔离 PATH TTY smoke 已完成；S6 专项性能/重放、真实探索调用及 dark/light/复制人工验收仍 pending |
 | TUI / Session Runtime Integration Repair | [`plan/01-tui-session-runtime-integration-repair-plan.md`](plan/01-tui-session-runtime-integration-repair-plan.md) | 编排 TUI、Session Owner、CLI、Process/PTY、Approval、Worktree、Trace 与扩展的真实接线、等价清理和 R8/R9 门禁 | 状态分别回写 `runtime/06`、`tui/19` 及 Plugin/MCP、Worktree/Security、Trace 权威文档 |
 | Cross-cutting Modularization | [`plan/12-bloated-code-modularization-refactor-plan.md`](plan/12-bloated-code-modularization-refactor-plan.md) | SessionStore、Security、Process、AgentLoop、SessionRuntime、OpenTUI、InteractiveMode、provider adapters 与 model generator 的行为保持拆分 | S0–S5/S8/S9 implemented；S6/S7 automated PATH 候选已通过但 streaming/human 门禁未闭合；S10 受 Runtime 06 R9 阻塞，整体 `partial / blocked` |
+| Package Boundary / Workspace Refactor | [`plan/13-package-boundary-workspace-refactor-plan.md`](plan/13-package-boundary-workspace-refactor-plan.md) | 从单一 npm 包迁移到 contracts、AI、core、product-TUI 与 runledger app 的单向 workspace；先消除跨域环，再物理拆包 | `planned / staged`；P0–P4 可执行，legacy Host 最终收口 P5 受 Runtime 06 R8/R9 阻塞 |
 | Session Execution Reliability | [`plan/03-session-execution-reliability-repair-plan.md`](plan/03-session-execution-reliability-repair-plan.md) | 事故驱动的 governed toolchain、人工等待计时、run budget、lifecycle projection、process Trace 与 durable streaming 修复 | P0、P2–P6 implemented；P1 off-plan implemented、restrictive sandbox blocked；P7/R8/human acceptance pending |
 | LSP Server Adapter | [`plan/04-lsp-server-adaptation-plan.md`](plan/04-lsp-server-adaptation-plan.md) | defaults/config 自动探测、stdio JSON-RPC、LspClient、AgentTool、WorkspaceEdit、managed LinterClient 与 SessionRuntime governed 接线 | P0–P6 review 修复已通过 fresh check/test/build 与隔离 CLI/TTY；P7 修复后 Session-managed 真实语言服务器/TUI smoke pending，状态查本文 §状态表 |
 | Streaming Write 展示稳定性 | [`plan/05-streaming-prefix-stability-plan.md`](plan/05-streaming-prefix-stability-plan.md) | oh-my-pi 稳定前缀能力族移植：part 级 settled 契约、冻结前缀判定与字节稳定契约门、settled 行缓存、流式表格列宽锁定、流式 diff 行级高亮；不改 renderer/screen mode/OpenTUI 内部 | 本文 §现状核实与 §状态表；P2 `partial`、P3–P5 `implemented`、P6 `partial / blocked`；压力证据见 [`plan/05-streaming-prefix-stability-evidence-2026-08-15.json`](plan/05-streaming-prefix-stability-evidence-2026-08-15.json)，全量 check/test 的既有 TUI boundary blocker 不伪装为本任务通过 |
@@ -104,7 +106,8 @@ development-doc/
 │   ├── 09-outbound-network-proxy-plan.md
 │   ├── 10-upstream-model-proxy-plan.md
 │   ├── 11-forward-proxy-gateway-plan.md
-│   └── 12-bloated-code-modularization-refactor-plan.md
+│   ├── 12-bloated-code-modularization-refactor-plan.md
+│   └── 13-package-boundary-workspace-refactor-plan.md
 ├── note/
 │   ├── README.md
 │   └── 00-session-audit-reading-mode-plan.md

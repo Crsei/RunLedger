@@ -1,0 +1,136 @@
+[
+  {
+    "timestamp": "2026-09-05T03:38:09.898389+00:00",
+    "owners": [
+      {
+        "session_id": "session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtnttai2",
+        "runtime_id": "runtime_owner-46811",
+        "generation": 1,
+        "state": "running",
+        "port": 46811,
+        "heartbeat_at_ms": 1788579487162
+      }
+    ],
+    "processes": [
+      {
+        "pid": 26715,
+        "exists": true,
+        "wchan": "ep_poll",
+        "fds": {
+          "0": "/dev/pts/123",
+          "1": "/dev/pts/123",
+          "2": "/dev/pts/123",
+          "3": "anon_inode:[eventpoll]",
+          "4": "pipe:[566624191]",
+          "5": "pipe:[566624191]",
+          "6": "pipe:[566624192]",
+          "7": "pipe:[566624192]",
+          "8": "anon_inode:[eventfd]",
+          "9": "anon_inode:[eventpoll]",
+          "10": "pipe:[566652543]",
+          "11": "pipe:[566652543]",
+          "12": "anon_inode:[eventfd]",
+          "13": "anon_inode:[eventpoll]",
+          "14": "pipe:[566624194]",
+          "15": "pipe:[566624194]",
+          "16": "anon_inode:[eventfd]"
+        }
+      },
+      {
+        "pid": 26873,
+        "exists": true,
+        "wchan": "ep_poll",
+        "fds": {
+          "0": "/dev/pts/123",
+          "1": "/dev/pts/123",
+          "2": "/dev/pts/123",
+          "3": "/dev/urandom",
+          "4": "anon_inode:[eventpoll]",
+          "5": "anon_inode:[timerfd]",
+          "6": "anon_inode:[eventfd]",
+          "7": "anon_inode:[timerfd]",
+          "8": "anon_inode:[timerfd]",
+          "9": "/dev/urandom",
+          "10": "/proc/26873/statm",
+          "11": "/dev/pts/123",
+          "12": "/dev/pts/123",
+          "13": "/tmp/runledger-command-audit-20260905-7i4fzqru/live-tui/mapped/state/state.db",
+          "14": "/tmp/runledger-command-audit-20260905-7i4fzqru/live-tui/mapped/state/state.db-wal",
+          "15": "/tmp/runledger-command-audit-20260905-7i4fzqru/live-tui/mapped/state/state.db-shm",
+          "16": "socket:[566602677]",
+          "19": "/dev/pts/123",
+          "20": "anon_inode:[eventpoll]",
+          "21": "anon_inode:[timerfd]",
+          "22": "anon_inode:[eventfd]"
+        }
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-09-05T03:38:13.910896+00:00",
+    "owners": [
+      {
+        "session_id": "session_cwd-_data2-HDD-SATA-20T_Digital_avatar_haowe-mtnttai2",
+        "runtime_id": "runtime_owner-46811",
+        "generation": 1,
+        "state": "running",
+        "port": 46811,
+        "heartbeat_at_ms": 1788579493168
+      }
+    ],
+    "processes": [
+      {
+        "pid": 26715,
+        "exists": true,
+        "wchan": "ep_poll",
+        "fds": {
+          "0": "/dev/pts/123",
+          "1": "/dev/pts/123",
+          "2": "/dev/pts/123",
+          "3": "anon_inode:[eventpoll]",
+          "4": "pipe:[566624191]",
+          "5": "pipe:[566624191]",
+          "6": "pipe:[566624192]",
+          "7": "pipe:[566624192]",
+          "8": "anon_inode:[eventfd]",
+          "9": "anon_inode:[eventpoll]",
+          "10": "pipe:[566652543]",
+          "11": "pipe:[566652543]",
+          "12": "anon_inode:[eventfd]",
+          "13": "anon_inode:[eventpoll]",
+          "14": "pipe:[566624194]",
+          "15": "pipe:[566624194]",
+          "16": "anon_inode:[eventfd]"
+        }
+      },
+      {
+        "pid": 26873,
+        "exists": true,
+        "wchan": "ep_poll",
+        "fds": {
+          "0": "/dev/pts/123",
+          "1": "/dev/pts/123",
+          "2": "/dev/pts/123",
+          "3": "/dev/urandom",
+          "4": "anon_inode:[eventpoll]",
+          "5": "anon_inode:[timerfd]",
+          "6": "anon_inode:[eventfd]",
+          "7": "anon_inode:[timerfd]",
+          "8": "anon_inode:[timerfd]",
+          "9": "/dev/urandom",
+          "10": "/proc/26873/statm",
+          "11": "/dev/pts/123",
+          "12": "/dev/pts/123",
+          "13": "/tmp/runledger-command-audit-20260905-7i4fzqru/live-tui/mapped/state/state.db",
+          "14": "/tmp/runledger-command-audit-20260905-7i4fzqru/live-tui/mapped/state/state.db-wal",
+          "15": "/tmp/runledger-command-audit-20260905-7i4fzqru/live-tui/mapped/state/state.db-shm",
+          "16": "socket:[566602677]",
+          "19": "/dev/pts/123",
+          "20": "anon_inode:[eventpoll]",
+          "21": "anon_inode:[timerfd]",
+          "22": "anon_inode:[eventfd]"
+        }
+      }
+    ]
+  }
+]

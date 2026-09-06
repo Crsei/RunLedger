@@ -1,0 +1,81 @@
+{
+  "issue": "P2-07 TUI unavailable command surface",
+  "status": "implemented-focused-verified",
+  "ownership": [
+    "src/tui/commands/registry.ts",
+    "src/tui/interactive/input-controller.ts",
+    "src/tui/interactive/plan-workflow.ts",
+    "src/tui/interactive-mode.ts",
+    "tests/tui/commands/registry.test.ts",
+    "tests/tui/command-capabilities.test.ts"
+  ],
+  "sharedFileBoundary": {
+    "src/tui/interactive-mode.ts": [
+      "registry import",
+      "openSlashCommands commandsForContext",
+      "dispatchCommand availability guard"
+    ],
+    "src/tui/interactive/plan-workflow.ts": [
+      "registry helper import",
+      "runDomainCommand unavailable response"
+    ]
+  },
+  "validation": {
+    "red": {
+      "files": 2,
+      "failedTests": 8,
+      "passedTests": 16,
+      "exitCode": 1
+    },
+    "green": {
+      "files": 2,
+      "passedTests": 24,
+      "exitCode": 0
+    },
+    "regression": {
+      "files": 8,
+      "passedTests": 105,
+      "exitCode": 0
+    },
+    "tuiBoundary": "passed",
+    "diffCheck": "passed"
+  },
+  "pending": [
+    "root combined npm run check",
+    "root build",
+    "root built CLI/TUI smoke"
+  ],
+  "logSha256": {
+    "red": "f490fd91d0842ebd30639a29ca75e4e9c48d430475a54783171358c949e35f35",
+    "green": "8e9c7fa11dde26a812f458f73b25942103ebe3e7d433c0697f095071fd0bb632",
+    "regression": "ba22d84266943dd29e904739a3cfc9c9cbc67748d9d2d4576c568c788c841ae3"
+  },
+  "gitMutations": {
+    "stage": false,
+    "commit": false,
+    "push": false
+  },
+  "cleanup": {
+    "red": {
+      "childProcesses": "verified",
+      "descendants": "verified",
+      "sockets": "verified",
+      "tempRoots": "verified",
+      "status": "verified"
+    },
+    "green": {
+      "childProcesses": "verified",
+      "descendants": "verified",
+      "sockets": "verified",
+      "tempRoots": "verified",
+      "status": "verified"
+    },
+    "regression": {
+      "childProcesses": "verified",
+      "descendants": "verified",
+      "sockets": "verified",
+      "tempRoots": "verified",
+      "status": "verified"
+    }
+  }
+}

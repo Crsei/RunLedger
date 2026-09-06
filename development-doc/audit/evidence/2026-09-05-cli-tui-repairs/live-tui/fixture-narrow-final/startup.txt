@@ -1,0 +1,24 @@
+Harness: standard@1  Permission: workspace-write  Thinking: off
+
+┌─── RunLedger v0.0.1 ───────────────────────────────────────────────────────┐
+│                      │ Quick keys                                          │
+│    Welcome back!     │ / for commands · Enter to send                      │
+│                      │ Alt+Enter to queue follow-up                        │
+│      runledger       │ Ctrl+C to interrupt · Ctrl+D to exit                │
+│                      │ ─────────────────────────────────────────────────── │
+│     gpt-4.1-mini     │ Session                                             │
+│azure-openai-responses│ model: gpt-4.1-mini                                 │
+│                      │ provider: azure-openai-responses                    │
+│                      │ thinking: off                                       │
+│                      │ dir: /data2-HDD-SATA-20T/Digital_avatar/haowe…      │
+│                      │ branch: rollback/before-composer-shape              │
+└──────────────────────┴─────────────────────────────────────────────────────┘
+ Tip: migrate 不提供 --dry-ru 、--read-only 或 --fallback；执行前必须确认 sour
+      ce 范围，迁移失败时不要手工删除 source。
+
+
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital… · azure-openai-responses/gpt-4.1-mini · think:off
+  ctx window 1.0m

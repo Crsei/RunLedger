@@ -1,0 +1,24 @@
+│                      │ Quick keys                                          │
+│    Welcome back!     │ / for commands · Enter to send                      │
+│                      │ Alt+Enter to queue follow-up                        │
+│      runledger       │ Ctrl+C to interrupt · Ctrl+D to exit                │
+│                      │ ─────────────────────────────────────────────────── │
+│     gpt-4.1-mini     │ Session                                             │
+│azure-openai-responses│ model: gpt-4.1-mini                                 │
+│                      │ provider: azure-openai-responses                    │
+│                      │ thinking: off                                       │
+│                      │ dir: /data2-HDD-SATA-20T/Digital_avatar/haowe…      │
+│                      │ branch: rollback/before-composer-shape              │
+│                      │ Recent sessions                                     │
+│                      │  • session_cwd-_data2-HDD-SATA-20T_Digita (just now)│
+└──────────────────────┴─────────────────────────────────────────────────────┘
+ Tip: /processes 打开 managed process 列表；列表中 Enter 或 d 查看详情，t 直接
+      进入终端，Esc 关闭。
+
+
+⚠ note: /plan: Plan mode · inactive · rev=0 · Plan mode is inactive.
+
+› Message RunLedger…
+
+  /data2-HDD-SATA-20T/Digital… · azure-openai-responses/gpt-4.1-mini · think:off
+  ctx window 1.0m

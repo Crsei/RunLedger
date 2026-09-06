@@ -1,0 +1,30 @@
+Harness: standard@1  Permission: workspace-write  Thinking: off
+
+⚠ error: /memory failed: operation_unavailable
+⚠ error: /compact failed: operation_unavailable
+⚠ note: /plan: Plan mode · unknown · rev=0 · Plan mode is inactive.
+⚠ error: /remember failed: operation_unavailable
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+› Message RunLedge …
+
+  /data2-HDD-SATA-20T/Digital_avatar/haoweiyao/RunLedger · <no-provider>/<no-model> · think:off

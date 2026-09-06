@@ -1,0 +1,31 @@
+[
+  {
+    "case": "fixture-final",
+    "sessionStatuses": [
+      [
+        "paused",
+        1
+      ]
+    ],
+    "ownerStates": [
+      [
+        "unowned",
+        1
+      ]
+    ],
+    "activeOwnersRemaining": 0,
+    "ownerRows": 1
+  },
+  {
+    "case": "fixture-narrow",
+    "sessionStatuses": [],
+    "ownerStates": [],
+    "activeOwnersRemaining": 0,
+    "ownerRows": 0
+  },
+  {
+    "case": "fixture-narrow-final",
+    "ownerStates": [],
+    "activeOwnersRemaining": 0
+  }
+]
