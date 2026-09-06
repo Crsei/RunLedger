@@ -832,7 +832,7 @@ describe("S4 Session managed process composition", () => {
 		};
 		const first = await create(1);
 		const started = await first.mutate("session.process.start", {
-			command: "node -e \"process.stdout.write('takeover-output\\n');setTimeout(()=>{},30000)\"",
+			command: "node -e \"process.stdout.write('takeover-output\\nfixture-pid:'+process.pid+'\\n');setTimeout(()=>{},30000)\"",
 			cwd: root,
 			timeoutMs: 30_000,
 			backend: "pipe",
@@ -878,11 +878,26 @@ describe("S4 Session managed process composition", () => {
 		}
 		expect(recoveredOutput).toContain("takeover-output");
 
-		await first.mutate("session.process.stop", { executionId: started.value.executionId }, {
+		const stoppedByOldOwner = await first.mutate("session.process.stop", { executionId: started.value.executionId }, {
 			correlationId: "correlation_process_takeover_stop",
 			effectId: "effect_process_takeover_stop",
 			expectedRevision: started.domainRevision,
 		});
+		expect(stoppedByOldOwner.ok).toBe(false);
+		// 旧 owner 已失去 authority；测试负责清理自身启动的 fixture，不能假设 stop 生效。
+		const fixturePid = Number(/^fixture-pid:(\d+)$/mu.exec(recoveredOutput)?.[1]);
+		expect(Number.isSafeInteger(fixturePid) && fixturePid > 0).toBe(true);
+		globalThis.process.kill(fixturePid, "SIGTERM");
+		let exited = false;
+		for (let attempt = 0; attempt < 100 && !exited; attempt += 1) {
+			try { globalThis.process.kill(fixturePid, 0); }
+			catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+				exited = true;
+			}
+			if (!exited) await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+		expect(exited).toBe(true);
 	});
 
 	it("settles live processes during last-attachment shutdown", async () => {
