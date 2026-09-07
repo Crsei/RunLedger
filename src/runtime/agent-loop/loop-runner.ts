@@ -19,7 +19,7 @@ import {
 } from "./run-budget.ts";
 import { defaultConvertToLlm, serializeAssistant } from "./context-conversion.ts";
 import { executeToolCalls } from "./tool-call-preparation.ts";
-import { failToolCallsFromTruncatedMessage } from "./assistant-recovery.ts";
+import { failUnexecutedToolCalls } from "./assistant-recovery.ts";
 import type {
   AgentContext,
   AgentEvent,
@@ -222,9 +222,9 @@ export async function runAgentLoop(
 
     // 3. 消费 stream,边 emit message_* 事件,边累积 assistant content
     const assistantContent: AssistantAgentMessage["content"] = [];
-    let assistantStopReason: StopReason = "stop";
+    let assistantStopReason: StopReason = "error";
     let assistantUsage: AssistantAgentMessage["usage"] | undefined;
-    let assistantErrorMessage: string | undefined;
+    let assistantErrorMessage: string | undefined = "Assistant stream ended without a terminal event; tool calls were not executed.";
     let providerMessage: AssistantMessage | undefined;
     let messageOpen = false;
     let streamStartedAt: number | undefined;
@@ -360,9 +360,9 @@ export async function runAgentLoop(
 
     if (toolCalls.length > 0) {
       let toolResults: ToolResultContent[];
-      if (assistantStopReason === "length") {
-        // 截断降级路径:不真正执行,每工具合成 isError ToolResultContent
-        toolResults = await failToolCallsFromTruncatedMessage(toolCalls, fire, sessionId);
+      if (assistantStopReason === "length" || assistantStopReason === "error" || assistantStopReason === "aborted") {
+        // 先判模型终态，失败响应不能进入准入、审批或执行链。
+        toolResults = await failUnexecutedToolCalls(toolCalls, fire, sessionId, assistantStopReason);
       } else {
         // 5. 执行
         toolResults = await executeToolCalls(

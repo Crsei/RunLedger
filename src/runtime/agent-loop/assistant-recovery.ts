@@ -1,7 +1,7 @@
 /**
- * S4 拆分:truncated/assumed assistant 收口。
+ * 失败响应工具结算与 assumed assistant 查找。
  *
- * length 截断降级不真正执行工具;afterToolCall 的 assistantMessage
+ * 失败响应不真正执行工具；afterToolCall 的 assistantMessage
  * 从 context 倒序查找对应 toolCallId,兜底返回空 assistant。
  */
 
@@ -11,21 +11,26 @@ import type { ToolCall } from "../../types.ts";
 import type {
   AgentContext,
   AgentEvent,
-  AgentEventSink,
   AgentToolCall,
   AssistantAgentMessage,
   ToolResultContent,
 } from "../types.ts";
 
-/** length 截断降级:每工具合成 isError ToolResultContent,不真正执行。 */
-export async function failToolCallsFromTruncatedMessage(
+/** 失败终态只结算未执行结果，不进入工具准入或副作用链。 */
+export async function failUnexecutedToolCalls(
   toolCalls: AgentToolCall[],
   fire: (ev: AgentEvent, entry?: Omit<LedgerEntry, "sessionId">) => Promise<void>,
   sessionId: string,
+  reason: "length" | "error" | "aborted",
 ): Promise<ToolResultContent[]> {
   const results: ToolResultContent[] = [];
   for (const tc of toolCalls) {
-    const errorText = "Tool call was not executed because the assistant response reached the output limit and its arguments may be incomplete.";
+    const errorText = reason === "length"
+      ? "Tool call was not executed because the assistant response reached the output limit and its arguments may be incomplete. Split large payloads into smaller calls instead of repeating the truncated request."
+      : reason === "aborted"
+        ? "Tool call was not executed because the assistant response was aborted before tool admission."
+        : "Tool call was not executed because the provider stream failed before the assistant response completed.";
+    const details = { executed: false, errorCode: `assistant_response_${reason}` };
     const started = Date.now();
     await fire(
       {
@@ -52,6 +57,7 @@ export async function failToolCallsFromTruncatedMessage(
         text: errorText,
       }],
       isError: true,
+      details,
     };
     const ended = Date.now();
     await fire(
@@ -73,6 +79,7 @@ export async function failToolCallsFromTruncatedMessage(
           toolName: tc.name,
           isError: true,
           content: errorText,
+          details,
         },
       },
     );

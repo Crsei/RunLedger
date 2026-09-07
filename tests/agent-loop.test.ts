@@ -553,3 +553,80 @@ describe("runAgentLoop with mockStreamFn + echoTool", () => {
     expect(steeringStart).toBeGreaterThan(firstTurnEnd);
   });
 });
+
+describe("Plan 14 model terminal execution boundary", () => {
+  it.each(["error", "aborted", "length"] as const)("does not admit tools from a %s response", async (reason) => {
+    let executions = 0;
+    let admissions = 0;
+    const ledger = new MemoryLedger();
+    const events: AgentEvent[] = [];
+    const streamFn: StreamFn = (model) => {
+      const stream = createAssistantMessageEventStream();
+      const message = assistantMessageFor(model, [{ type: "toolCall", id: "unexecuted", name: "echo", arguments: { text: "do not execute" } }], reason);
+      queueMicrotask(() => {
+        if (reason === "length") stream.push({ type: "done", reason, message });
+        else stream.push({ type: "error", reason, error: message });
+        stream.end(message);
+      });
+      return stream;
+    };
+    const agent = new Agent({
+      initialState: { systemPrompt: "fixture", model: mockModel, tools: [{ ...echoTool, execute: async () => { executions++; return { content: [{ type: "text", text: "ok" }], details: {} }; } }] },
+      streamFn,
+      ledger,
+      loopConfig: { beforeToolCall: async () => { admissions++; } },
+    });
+    agent.subscribe((event) => { events.push(event); });
+    const messages = await agent.prompt("run");
+    expect(executions).toBe(0);
+    expect(admissions).toBe(0);
+    const results = messages.flatMap((message) => message.role === "toolResult" ? message.content : []);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ toolCallId: "unexecuted", isError: true });
+    expect(JSON.stringify(results[0]?.content)).toContain("not executed");
+    expect(events.filter((event) => event.type === "agent_end")).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({ type: "agent_end", stopReason: reason });
+    expect(ledger.entries().filter((entry) => entry.type === "tool_result")).toHaveLength(1);
+  });
+
+  it("does not execute a stream that ends without a terminal event", async () => {
+    let executions = 0;
+    const agent = new Agent({
+      initialState: { systemPrompt: "fixture", model: mockModel, tools: [{ ...echoTool, execute: async () => { executions++; return { content: [], details: {} }; } }] },
+      streamFn: (model) => {
+        const stream = createAssistantMessageEventStream();
+        const toolCall = { type: "toolCall" as const, id: "unfinished", name: "echo", arguments: { text: "unfinished" } };
+        const message = assistantMessageFor(model, [toolCall], "toolUse");
+        queueMicrotask(() => {
+          stream.push({ type: "toolcall_end", contentIndex: 0, toolCall, partial: message });
+          stream.end(message);
+        });
+        return stream;
+      },
+    });
+    const messages = await agent.prompt("run");
+    expect(executions).toBe(0);
+    expect(messages.find((message) => message.role === "assistant")).toMatchObject({ stopReason: "error" });
+  });
+
+  it.each(["toolUse", "stop"] as const)("executes a complete compatible %s response once", async (reason) => {
+    let executions = 0;
+    let requests = 0;
+    const streamFn: StreamFn = (model) => {
+      const stream = createAssistantMessageEventStream();
+      const first = requests++ === 0;
+      const message = assistantMessageFor(model, first ? [{ type: "toolCall", id: "complete", name: "echo", arguments: { text: "ok" } }] : [{ type: "text", text: "done" }], first ? reason : "stop");
+      queueMicrotask(() => {
+        stream.push({ type: "done", reason: first ? reason : "stop", message });
+        stream.end(message);
+      });
+      return stream;
+    };
+    const agent = new Agent({
+      initialState: { systemPrompt: "fixture", model: mockModel, tools: [{ ...echoTool, execute: async () => { executions++; return { content: [{ type: "text", text: "ok" }], details: {} }; } }] },
+      streamFn,
+    });
+    await agent.prompt("run");
+    expect(executions).toBe(1);
+  });
+});
