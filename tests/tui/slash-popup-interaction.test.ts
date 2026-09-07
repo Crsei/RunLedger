@@ -265,7 +265,7 @@ describe("slash popup 输入期状态机(对照 codex slash_popup_model_first_fo
       terminal.send("z");
       terminal.send("\r");
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      expect(timelineText(mode)).toContain("Unknown command: /zzz");
+      expect(timelineText(mode)).toContain('Unknown command: /zzz. Type "/" for a list of supported commands.');
     } finally {
       await quit(mode, internals, terminal, running);
     }
@@ -280,7 +280,7 @@ describe("slash 派发统一(对照 P4 四路径)", () => {
       terminal.send("/nosuch");
       terminal.send("\r");
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      expect(timelineText(mode)).toContain("Unknown command: /nosuch");
+      expect(timelineText(mode)).toContain('Unknown command: /nosuch. Type "/" for a list of supported commands.');
     } finally {
       await quit(mode, internals, terminal, running);
     }

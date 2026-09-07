@@ -38,7 +38,7 @@ export class InputController {
 			// 注册表唯一事实源:未知命令 → 原 default 分支行为(报错提示)
 			const command = findCommand(name);
 			if (command === undefined) {
-				this.port.showNotice(`Unknown command: /${name}`, "error");
+				this.port.showNotice(`Unknown command: /${name}. Type "/" for a list of supported commands.`, "error");
 				return;
 			}
 			this.port.dispatchCommand(command, arg);
