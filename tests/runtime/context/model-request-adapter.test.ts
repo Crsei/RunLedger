@@ -208,3 +208,65 @@ describe("Host model request context adapter", () => {
 		expect(first.receipt.projectionDigest).toEqual(second.receipt.projectionDigest);
 	});
 });
+
+describe("Plan 14 recent complete request context", () => {
+  it("retains recent numeric history instead of lexicographic fragment IDs", async () => {
+    const messages = await defaultConvertToLlm(Array.from({ length: 14 }, (_, index) => [user(`entry-${index}: ${"x".repeat(150)}`), assistant(`reply-${index}`)]).flat());
+    const assembled = assembleAgentModelContext({
+      model: { ...mockModel, contextWindow: 650, maxTokens: 64 },
+      context: { messages, tools: [] }, sessionId: "recent", turn: 1,
+    });
+    const text = JSON.stringify(assembled.context.messages);
+    expect(text).toContain("entry-13:");
+    expect(text).toContain("entry-12:");
+    expect(text).not.toContain("entry-0:");
+    const selected = assembled.context.messages.map((message) => messages.indexOf(message));
+    expect(selected).toEqual([...selected].sort((a, b) => a - b));
+  });
+
+  it("omits a whole oversized tool group and retains the task plus its steering correction", async () => {
+    const messages = await defaultConvertToLlm([
+      user("original task: inspect only"),
+      { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "large", name: "read", arguments: { payload: "x".repeat(5_000) } }] },
+      { role: "toolResult", content: [{ type: "toolResult", toolCallId: "large", toolName: "read", content: [{ type: "text", text: "old result" }], isError: false }] },
+      user("correction: do not modify files"),
+    ]);
+    const original = structuredClone(messages);
+    const assembled = assembleAgentModelContext({
+      model: { ...mockModel, contextWindow: 650, maxTokens: 64 },
+      context: { messages, tools: [] }, sessionId: "group", turn: 1,
+    });
+    expect(assembled.context.messages).toEqual([messages[0], messages[3]]);
+    expect(messages).toEqual(original);
+  });
+
+  it("fails explicitly when the required latest call and result group cannot fit", async () => {
+    const messages = await defaultConvertToLlm([
+      user("do the task"),
+      { role: "assistant", stopReason: "toolUse", content: [{ type: "toolCall", id: "large", name: "read", arguments: { payload: "x".repeat(5_000) } }] },
+      { role: "toolResult", content: [{ type: "toolResult", toolCallId: "large", toolName: "read", content: [{ type: "text", text: "last result" }], isError: false }] },
+    ]);
+    expect(() => assembleAgentModelContext({
+      model: { ...mockModel, contextWindow: 650, maxTokens: 64 },
+      context: { messages, tools: [] }, sessionId: "required-group", turn: 1,
+    })).toThrow(/budget/);
+  });
+
+  it("budgets target image conversion instead of the omitted base64 source", () => {
+    const assembled = assembleAgentModelContext({
+      model: { ...mockModel, input: ["text"], contextWindow: 650, maxTokens: 64 },
+      context: { messages: [{ role: "user", timestamp: 1, content: [{ type: "image", mimeType: "image/png", data: "A".repeat(50_000) }] }], tools: [] },
+      sessionId: "image-conversion", turn: 1,
+    });
+    expect(assembled.context.messages).toHaveLength(1);
+    expect(assembled.receipt.estimatedInputTokens).toBeLessThan(200);
+  });
+
+  it("rejects an actual tool schema that cannot fit instead of assuming a fixed reserve", () => {
+    expect(() => assembleAgentModelContext({
+      model: { ...mockModel, contextWindow: 5_000, maxTokens: 64 },
+      context: { messages: [], tools: [{ name: "huge", label: "Huge", execute: async () => ({ content: [], details: {} }), description: "x".repeat(30_000), parameters: { type: "object", properties: {} } }] },
+      sessionId: "tool-schema", turn: 1,
+    })).toThrow(/budget/);
+  });
+});

@@ -18,6 +18,8 @@ export interface RuntimeContextSource {
 	readonly mediaType?: string;
 	readonly subjectKind?: ContextSubjectKind;
 	readonly fragmentId?: string;
+	/** composition 显式指定私有选择顺序；省略时保持稳定 ID 排序。 */
+	readonly order?: number;
 }
 
 export type RuntimeContextRequestBase = Omit<ContextAssemblyRequest, "fragments">;
@@ -58,8 +60,8 @@ function sourceFragment(
 	const fragment: ContextFragment = {
 		fragmentId,
 		layer: source.layer,
-		// source 数组不是排序 authority；同层由 fragmentId 的稳定 tie-break 决定。
-		order: 0,
+		// source 数组不是排序 authority；调用方可提供已有 fragment order。
+		order: source.order ?? 0,
 		contentRef,
 		contentDigest,
 		estimatedTokens,

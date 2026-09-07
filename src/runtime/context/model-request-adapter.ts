@@ -1,12 +1,16 @@
-/** Assemble the one model-request projection owned by the resident Host. */
+/** Session Owner 的请求投影：完整依赖组、最近工作优先与最终输入预算。 */
 
-import type { Api, Message, Model } from "../../types.ts";
+import type { Message } from "../../types.ts";
+import { transformMessages } from "../../api/transform-messages.ts";
+import { groupRequestHistory } from "./history-groups.ts";
+import { conservativeTokenEstimate } from "./token-estimator.ts";
 import { createRuntimeId } from "../protocol/ids.ts";
 import { runtimeDigest } from "../protocol/foundation.ts";
 import { assembleRuntimeContext, type RuntimeContextSource } from "./runtime-adapter.ts";
 import type { ModelContextAssemblyInput, ModelContextAssemblyResult } from "../types.ts";
 
-const MAX_TOOL_RESERVE_TOKENS = 4_096;
+// 覆盖请求 envelope、消息分隔与工具表外层；正文和 schema 分别估算。
+const REQUEST_ENVELOPE_RESERVE = 128;
 
 /**
  * Converts the provider-facing context into bounded Runtime fragments, then
@@ -15,6 +19,7 @@ const MAX_TOOL_RESERVE_TOKENS = 4_096;
  * identity so a replay has a stable context digest.
  */
 export function assembleAgentModelContext(input: ModelContextAssemblyInput): ModelContextAssemblyResult {
+	const groups = groupRequestHistory(input.context.messages);
 	const requestContextDigest = runtimeDigest({
 		systemPrompt: input.context.systemPrompt ?? null,
 		messages: input.context.messages.map(stableMessage),
@@ -42,20 +47,20 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 			priority: "required",
 		},
 		...(input.sources ?? []),
-		...input.context.messages.map((message, index) => ({
-			fragmentId: `agent-history-${index}`,
-			key: `agent-history-${index}`,
+		...groups.map((group) => ({
+			fragmentId: `agent-history-${group.start}`,
+			key: `agent-history-${group.start}`,
 			layer: "history" as const,
-			content: JSON.stringify(stableMessage(message)),
+			content: JSON.stringify(transformMessages(group.messages, input.model).map(stableMessage)),
+			order: input.context.messages.length - 1 - group.end,
 			trust: "mixed" as const,
-			taint: message.role === "toolResult" ? "tool_output" as const : "user_input" as const,
-			priority: index === input.context.messages.length - 1 ? "required" as const : "normal" as const,
+			taint: group.messages.some((message) => message.role === "toolResult") ? "tool_output" as const : "user_input" as const,
+			priority: group.required ? "required" as const : "normal" as const,
 		})),
 	];
-	const outputReserve = Math.min(input.model.maxTokens, Math.max(0, input.model.contextWindow - 1));
-	const toolReserve = input.context.tools === undefined || input.context.tools.length === 0
-		? 0
-		: Math.min(MAX_TOOL_RESERVE_TOKENS, Math.max(0, input.model.contextWindow - outputReserve));
+	const outputReserve = input.model.maxTokens;
+	const toolDefinitions = input.context.tools?.map((tool) => ({ name: tool.name, description: tool.description, parameters: tool.parameters })) ?? [];
+	const toolReserve = REQUEST_ENVELOPE_RESERVE + (toolDefinitions.length === 0 ? 0 : conservativeTokenEstimate(JSON.stringify(toolDefinitions)));
 	const assembled = assembleRuntimeContext({
 		request: {
 			requestId,
@@ -68,7 +73,7 @@ export function assembleAgentModelContext(input: ModelContextAssemblyInput): Mod
 		sources,
 	});
 	const selected = new Set(assembled.receipt.fragmentIds);
-	const messages = input.context.messages.filter((_message, index) => selected.has(`agent-history-${index}`));
+	const messages = groups.filter((group) => selected.has(`agent-history-${group.start}`)).flatMap((group) => group.messages);
 	const baseSystemPrompt = selected.has("agent-system-prompt") ? input.context.systemPrompt : undefined;
 	const selectedSourceContent = assembled.fragments
 		.filter((fragment) => fragment.fragmentId !== "agent-system-prompt" && !fragment.fragmentId.startsWith("agent-history-"))

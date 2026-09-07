@@ -237,7 +237,8 @@ export class ContextEngine {
 
 		const settings: ContextAssemblyOptions = { ...this.#defaults, ...options };
 		const availableTokens = request.contextWindow - request.outputReserve - request.toolReserve;
-		const ordered = sortContextFragments(request.fragments);
+		// 先为所有 required/protected 留足预算，避免较早层的 optional 挤掉当前任务。
+		const ordered = sortContextFragments(request.fragments).sort((left, right) => Number(isProtected(right)) - Number(isProtected(left)));
 		const included: ContextFragment[] = [];
 		const omittedFragments: ContextOmission[] = [];
 		const diagnostics: ContextDiagnostic[] = [];
@@ -304,6 +305,7 @@ export class ContextEngine {
 			usedTokens += estimatedTokens;
 		}
 
+		included.sort(compareContextFragments);
 		const includedDescriptors = included.map((fragment) => ({
 			fragmentId: fragment.fragmentId,
 			layer: fragment.layer,
