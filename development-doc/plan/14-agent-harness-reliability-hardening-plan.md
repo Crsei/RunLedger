@@ -8,7 +8,7 @@
 >
 > 落文复核：并发任务将 HEAD 推进到 `953f8e1`；本计划涉及的 agent-loop、context、domain composition 与 runtime controller 相对审查基线无差异。该安全修复不属于本文提交，后续 H0 仍须核对最新状态。
 >
-> 实施基线为 `e0de411`。产品改动位于 sibling worktree `RunLedger-agent-harness-hardening` / `worktree/agent-harness-hardening`，未复制主树并发补丁。2026-09-07 的 RED→GREEN、生产 HTTP/Session Owner、Built CLI/TTY 与真实模型案例分别记录；不把模型试跑或本地 Linux 自动化当作 R8/R9、人工/跨平台验收。
+> 实施基线为 `e0de411`。产品改动在 sibling worktree `RunLedger-agent-harness-hardening` / `worktree/agent-harness-hardening` 完成后，以 `72da3ae` fast-forward 接回主分支 `rollback/before-composer-shape`；主树原有未提交改动保留。2026-09-07 的 RED→GREEN、生产 HTTP/Session Owner、Built CLI/TTY 与真实模型案例分别记录；不把模型试跑或本地 Linux 自动化当作 R8/R9、人工/跨平台验收。
 
 ## 1. 目标与权威边界
 
@@ -220,6 +220,10 @@ H1 在 admission 前拒绝 error/aborted/length；流缺失终态也按 error �
 
 最终构建的全部 emitted JavaScript 与已通过的 TTY / CLI 历史 fixture 的 dist 摘要逐文件一致；验证记录没有混用旧运行时代码。
 
+接回主树后的组合验证：`main-check.log` exit 0，594 consumers / 0 diagnostics。`main-tests.log` 的完整 `npm test` exit 1，被主树原有未提交的 `tests/runtime/session-runtime/model-selection-policy.test.ts` 阻塞：该测试期望把不可选的 `fixture/unverified` 自动替换为 `fixture/verified`，当前模型选择策略明确拒绝替换。将同一测试临时放入干净 `e0de411` 基线后得到相同错误（`baseline-model-policy.log`，1 failed），随后删除该临时副本；相关生产链路没有本专项差异。原测试保留，不修改权限或模型选择语义来促成通过。主树整体测试不能记为通过；这不覆盖上表隔离修复树全量通过的证据。
+
+主树 `main-build.log` exit 0；927 个 emitted JavaScript 文件与上述通过完整 TTY 回归的产物逐一相同。`command -v`、`readlink -f` 和 `npm ls -g --depth=0` 确认全局 `~/.npm-global/bin/runledger` 指向本主仓库。使用该全局入口运行 `context.py`，`main-cli-context.log` 与 `/tmp/runledger-harness-context-hnksl0sj/result.json` 记录近期 12 轮进入 HTTP、SQLite 保留全部 16 轮、退出 0、remaining_owned_pids=[]。接回前后的 32 个既有修改/新增文件已核对保留，原有 agent-loop 测试补丁原样重应用；本次没有提交这些并发改动或推送。
+
 H3 的精确窄窗口与多调用依赖组边界由真实 HTTP adapter 测试验证；额外 built CLI 长历史投影由 `tests/manual/harness-repair/context.py` 覆盖。`/tmp/runledger-plan14-cli-context-final.log` 和 `/tmp/runledger-harness-context-lsbukifb/result.json` 证明：16 轮较长输入后，实际 HTTP 请求保留最近 12 轮、省略最早输入，SQLite 原始 16 轮全部保留，退出 0、remaining_owned_pids=[]；请求体另存 wire-requests.json。该场景使用目录既有容量，未修改模型目录。原 TTY 失败产物保留：320k 输出曾超过 TCP 帧上限，默认文本 cap 修复后不再断连；回归脚本随后修正审批按键等待、跨 Session 事件排序和 idle 后退出的时序。最终成功不覆盖人工视觉/IME 或平台验收。
 
 额外 CLI 窄窗口尝试见 `/tmp/runledger-plan14-cli-context{,2,3}.log`：本地动态目录返回了测试模型，但自动化未成功选中，前两次未收到 prompt 终态，第三次在选择断言处停止。三个结果均 remaining_owned_pids=[]；未据此判定产品缺陷，也不记为预算选择通过。随后通过既有目录模型与更长历史的独立场景完成上述 CLI 投影验证，未扩展修改模型选择 UI。
@@ -230,7 +234,7 @@ H3 的精确窄窗口与多调用依赖组边界由真实 HTTP adapter 测试验
 
 before root `/tmp/runledger-plan14-before-fixed-i8409131`，after root `/tmp/runledger-plan14-after-2ooq9ui8`。独立验收 `/tmp/runledger-plan14-independent-rfgm7ln3/summary.json` 和各例 `verification.json` 保存实际 argv、退出码、输出、独立数据与事件指标；未修改生成代码来促成通过。源文件名和 CLI 参数按各生成物实际接口适配；下表检查数不能相加作为任务成功率。
 
-六例 runner 来自主工作树尚未提交的 `tests/manual/development-cases/`；本修复树没有复制或提交该目录，所以上述六例入口相对链接需该独立依赖进入基线后才在本树可用。其摘要已保存在 snapshot，独立验证结果可定位到实际执行版本。两个 Plan Mode 断言修正经用户明确授权，已独立提交为 `f1aca0b` 并纳入本修复树；提交前主树 `npm run check` 和该适配器 19 tests 通过（`/tmp/runledger-plan14-prerequisite-{check,test}.log`）。此前基线阻塞保留为历史证据，纳入后完整 check/test/build 均已通过。
+六例 runner 来自主工作树尚未提交的 `tests/manual/development-cases/`；本专项没有复制或提交该目录；接回主树后本地入口可用，干净 checkout 仍需该独立依赖进入基线。其摘要已保存在 snapshot，独立验证结果可定位到实际执行版本。两个 Plan Mode 断言修正经用户明确授权，已独立提交为 `f1aca0b` 并纳入本修复树；提交前主树 `npm run check` 和该适配器 19 tests 通过（`/tmp/runledger-plan14-prerequisite-{check,test}.log`）。此前基线阻塞保留为历史证据，纳入后隔离修复树完整 check/test/build 均已通过；主树组合状态见 §5.1。
 
 | 案例 | before 独立结果 | after 独立结果 |
 |---|---|---|
